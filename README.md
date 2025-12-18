@@ -1,6 +1,6 @@
 # RustyNES
 
-[![Build Status](https://github.com/yourusername/rustynes/workflows/CI/badge.svg)](https://github.com/yourusername/rustynes/actions)
+[![Build Status](https://github.com/doublegate/RustyNES/workflows/CI/badge.svg)](https://github.com/doublegate/RustyNES/actions)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE-MIT)
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](#platform-support)
@@ -9,7 +9,7 @@
 
 ---
 
-> **Status:** Architecture complete, implementation in progress. See [ROADMAP.md](ROADMAP.md) for development timeline.
+> **Status:** Pre-Implementation (Architecture & Documentation Complete). Ready to begin Phase 1 CPU implementation. See [ROADMAP.md](ROADMAP.md) for development timeline.
 
 ---
 
@@ -32,8 +32,8 @@
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/rustynes.git
-cd rustynes
+git clone https://github.com/doublegate/RustyNES.git
+cd RustyNES
 
 # Build and run
 cargo build --release
@@ -64,24 +64,34 @@ cargo run --release -p rustynes-desktop -- path/to/rom.nes
 
 ## Features
 
-### MVP (Phase 1)
-- [ ] Cycle-accurate 6502/2A03 CPU emulation
-- [ ] Dot-level 2C02 PPU rendering
-- [ ] Hardware-accurate 2A03 APU synthesis
-- [ ] Mappers 0, 1, 2, 3, 4 (80% game coverage)
+### Current Status
+- [x] **Architecture Design** - Complete modular crate structure with 10 component crates
+- [x] **Documentation** - 39 comprehensive specification and implementation guides covering CPU, PPU, APU, mappers, testing, and development
+- [x] **Project Setup** - Workspace structure created, ready for implementation
+- [ ] **Implementation** - Beginning Phase 1 (CPU, PPU, APU, mappers, GUI)
+
+### MVP (Phase 1) - Target: June 2026
+- [ ] Cycle-accurate 6502/2A03 CPU emulation (all 256 opcodes)
+- [ ] Dot-level 2C02 PPU rendering (341x262 scanlines)
+- [ ] Hardware-accurate 2A03 APU synthesis (all 5 channels)
+- [ ] Mappers 0, 1, 2, 3, 4 (80% game coverage, 500+ games)
 - [ ] Cross-platform GUI (egui + wgpu)
 - [ ] Save states and battery saves
 - [ ] Gamepad support (SDL2)
+- [ ] 85% TASVideos test suite pass rate
 
-### Planned (Phases 2-4)
-- [ ] RetroAchievements integration
-- [ ] GGPO-style rollback netplay
-- [ ] Lua 5.4 scripting
-- [ ] TAS recording/playback
-- [ ] Integrated debugger
-- [ ] Rewind and fast-forward
-- [ ] WebAssembly build
-- [ ] CRT/NTSC shaders
+### Planned (Phases 2-4) - Target: December 2027
+- [ ] RetroAchievements integration (rcheevos FFI)
+- [ ] GGPO-style rollback netplay (backroll-rs)
+- [ ] Lua 5.4 scripting with memory/GUI APIs
+- [ ] TAS recording/playback (FM2 format)
+- [ ] Integrated debugger (CPU, PPU, APU viewers)
+- [ ] Rewind, fast-forward, slow-motion
+- [ ] WebAssembly build with PWA support
+- [ ] CRT/NTSC shaders and video filters
+- [ ] Expansion audio (VRC6, VRC7, MMC5, FDS, N163, 5B)
+- [ ] 300+ mapper implementations (100%+ game coverage)
+- [ ] 100% TASVideos accuracy test pass rate
 
 See [ROADMAP.md](ROADMAP.md) for the complete development plan.
 
@@ -224,8 +234,8 @@ Dual-licensed under your choice of:
 
 ## Community
 
-- [GitHub Issues](https://github.com/yourusername/rustynes/issues) - Bug reports and feature requests
-- [GitHub Discussions](https://github.com/yourusername/rustynes/discussions) - Questions and ideas
+- [GitHub Issues](https://github.com/doublegate/RustyNES/issues) - Bug reports and feature requests
+- [GitHub Discussions](https://github.com/doublegate/RustyNES/discussions) - Questions and ideas
 
 ---
 
