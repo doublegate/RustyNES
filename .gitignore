@@ -50,10 +50,31 @@ flamegraph.svg
 
 # Documentation build
 /docs/_site/
+/target/doc/
 
 # Temporary files
 /tmp/
 *.tmp
+
+# WebAssembly / wasm-pack
+/pkg/
+/dist/
+*.wasm
+wasm-pack.log
+
+# Node.js (web frontend)
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Benchmark results
+/target/criterion/
+*.bench
+
+# FFI artifacts (rcheevos)
+*.a
+*.lib
 
 # Claude Code local files
 CLAUDE.local.md

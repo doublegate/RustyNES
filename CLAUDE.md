@@ -4,27 +4,66 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-RustyNES is a next-generation Nintendo Entertainment System (NES) emulator written in Rust. The project is in **pre-implementation phase** with comprehensive architecture design complete. Target: 100% TASVideos accuracy test pass rate, 300+ mappers, RetroAchievements, GGPO netplay, TAS tools, Lua scripting.
+RustyNES is a next-generation Nintendo Entertainment System (NES) emulator written in Rust. Target: 100% TASVideos accuracy test pass rate, 300+ mappers, RetroAchievements, GGPO netplay, TAS tools, Lua scripting.
 
-**Status:** Architecture design complete, implementation not yet started.
+**Status:** Architecture design complete, folder structure created, comprehensive documentation generated. Ready to begin Phase 1 implementation.
+
+## Quick Start
+
+```bash
+# Build (once Cargo.toml files are created)
+cargo build --workspace
+cargo build --release
+
+# Test
+cargo test --workspace
+cargo test -p rustynes-cpu
+
+# Run desktop GUI
+cargo run -p rustynes-desktop -- rom.nes
+
+# Lint and format
+cargo clippy --workspace -- -D warnings
+cargo fmt --check
+```
 
 ## Architecture
 
-### Workspace Structure (Planned)
+### Workspace Structure (Created)
 
 ```
 rustynes/
 ├── crates/
-│   ├── rustynes-core/         # Core emulation engine (no_std compatible)
-│   ├── rustynes-cpu/          # 6502 CPU (reusable for C64, Apple II)
-│   ├── rustynes-ppu/          # 2C02 PPU
-│   ├── rustynes-apu/          # 2A03 APU with expansion audio
-│   ├── rustynes-mappers/      # All mapper implementations
-│   ├── rustynes-desktop/      # egui/wgpu GUI frontend
-│   ├── rustynes-web/          # WebAssembly frontend
-│   ├── rustynes-tas/          # TAS recording/playback (FM2 format)
-│   ├── rustynes-netplay/      # GGPO rollback netcode (backroll-rs)
-│   └── rustynes-achievements/ # RetroAchievements (rcheevos FFI)
+│   ├── rustynes-core/src/         # Core emulation engine (no_std compatible)
+│   ├── rustynes-cpu/src/          # 6502 CPU (reusable for C64, Apple II)
+│   ├── rustynes-ppu/src/          # 2C02 PPU
+│   ├── rustynes-apu/src/          # 2A03 APU with expansion audio
+│   ├── rustynes-mappers/src/      # All mapper implementations
+│   ├── rustynes-desktop/src/      # egui/wgpu GUI frontend
+│   ├── rustynes-web/src/          # WebAssembly frontend
+│   ├── rustynes-tas/src/          # TAS recording/playback (FM2 format)
+│   ├── rustynes-netplay/src/      # GGPO rollback netcode (backroll-rs)
+│   └── rustynes-achievements/src/ # RetroAchievements (rcheevos FFI)
+├── docs/                          # 33+ documentation files
+│   ├── cpu/                       # 6502 CPU specification, timing, opcodes
+│   ├── ppu/                       # 2C02 PPU rendering, timing, scrolling
+│   ├── apu/                       # Audio channels, timing
+│   ├── bus/                       # Memory map, bus conflicts
+│   ├── mappers/                   # Mapper implementations (NROM, MMC1, MMC3, etc.)
+│   ├── api/                       # Core API, save states, configuration
+│   ├── testing/                   # Test ROM guide, nestest golden log
+│   ├── input/                     # Controller handling
+│   ├── dev/                       # Build, testing, contributing, debugging
+│   ├── formats/                   # File format specifications
+│   ├── features/                  # Advanced features documentation
+│   └── platform/                  # Platform-specific build info
+├── tests/                         # Integration tests
+├── benches/                       # Performance benchmarks
+├── examples/                      # Usage examples
+├── test-roms/                     # NES test ROM files (excluded from git)
+├── assets/                        # Static resources
+├── ref-docs/                      # Reference documentation (architecture spec)
+└── ref-proj/                      # Reference emulator projects (excluded from git)
 ```
 
 ### Core Design Principles
@@ -41,16 +80,16 @@ rustynes/
 - PPU: 5.369318 MHz (master ÷ 4), 3 dots per CPU cycle
 - Frame: 29,780 CPU cycles, 89,341 PPU dots
 
-## Commands (Planned)
+## Commands
 
-Once implementation begins, standard Cargo workspace commands apply:
+### Build & Run
 
 ```bash
 # Build
 cargo build --workspace
-cargo build --release
+cargo build --release --workspace
 
-# Test
+# Test (once implemented)
 cargo test --workspace                    # All tests
 cargo test -p rustynes-cpu                # Single crate
 cargo test cpu_lda_immediate              # Single test
@@ -59,9 +98,10 @@ cargo test cpu_lda_immediate              # Single test
 cargo run -p rustynes-desktop             # Desktop GUI
 cargo run -p rustynes-desktop -- rom.nes  # With ROM
 
-# Lint
+# Lint & Format
 cargo clippy --workspace -- -D warnings
 cargo fmt --check
+cargo fmt                                 # Auto-format
 
 # Benchmarks
 cargo bench -p rustynes-core
@@ -81,6 +121,22 @@ cargo test blargg_
 
 # Full TASVideos accuracy suite
 cargo test tasvideos_
+```
+
+### Development Workflow
+
+```bash
+# Pre-commit checks (recommended)
+cargo fmt --check && cargo clippy --workspace -- -D warnings && cargo test --workspace
+
+# Generate documentation
+cargo doc --workspace --no-deps --open
+
+# Check for unused dependencies
+cargo +nightly udeps --workspace
+
+# Security audit
+cargo audit
 ```
 
 ## Reference Materials
@@ -169,3 +225,102 @@ pub trait Mapper: Send {
     fn clock(&mut self, _cycles: u8) {}
 }
 ```
+
+## Code Style Guidelines
+
+### Rust Conventions
+
+- **Edition**: Rust 2021
+- **MSRV**: 1.75+ (for async traits in std)
+- **Format**: `rustfmt` with default settings
+- **Lints**: `clippy::pedantic` + `-D warnings`
+- **Unsafe**: Only permitted in FFI (rcheevos) and platform-specific audio; must be documented
+
+### Naming Conventions
+
+```rust
+// Types: PascalCase
+pub struct StatusRegister(u8);
+pub enum AddressingMode { ... }
+
+// Functions/methods: snake_case
+fn execute_instruction(&mut self) { ... }
+
+// Constants: SCREAMING_SNAKE_CASE
+const MASTER_CLOCK_NTSC: u32 = 21_477_272;
+
+// Module files: snake_case
+// cpu.rs, ppu.rs, memory_map.rs
+```
+
+### Error Handling
+
+```rust
+// Use thiserror for library errors
+#[derive(Debug, thiserror::Error)]
+pub enum EmulatorError {
+    #[error("Invalid ROM format: {0}")]
+    InvalidRom(String),
+    #[error("Unsupported mapper: {0}")]
+    UnsupportedMapper(u16),
+}
+
+// Return Result<T, EmulatorError> from fallible operations
+// Use anyhow for application-level errors in desktop/web crates
+```
+
+### Documentation
+
+- All public APIs must have doc comments
+- Include examples for non-trivial functions
+- Document panic conditions with `# Panics` section
+- Cross-reference related documentation files
+
+## Implementation Priorities
+
+### Phase 1: MVP (Current)
+
+1. **CPU**: Complete 6502 implementation with all 256 opcodes
+2. **PPU**: Basic rendering (backgrounds, sprites, scrolling)
+3. **APU**: Square, triangle, noise channels
+4. **Bus**: Memory mapping, DMA
+5. **Mappers**: NROM (0), MMC1 (1), UxROM (2), CNROM (3), MMC3 (4)
+6. **ROM Loading**: iNES format support
+
+### Test-Driven Development
+
+```bash
+# Validation order
+1. nestest.nes - CPU instruction accuracy
+2. blargg_instr_test - CPU timing
+3. blargg_ppu_tests - PPU behavior
+4. blargg_apu_tests - APU timing
+```
+
+## Documentation Index
+
+### Core Specifications
+- `docs/cpu/CPU_6502_SPECIFICATION.md` - Complete 6502 reference
+- `docs/cpu/CPU_TIMING_REFERENCE.md` - Cycle-accurate timing
+- `docs/ppu/PPU_2C02_SPECIFICATION.md` - Complete PPU reference
+- `docs/ppu/PPU_TIMING_DIAGRAM.md` - Dot-accurate timing
+- `docs/apu/APU_OVERVIEW.md` - Audio system overview
+
+### Implementation Guides
+- `docs/mappers/MAPPER_OVERVIEW.md` - Mapper architecture
+- `docs/testing/TEST_ROM_GUIDE.md` - Test ROM usage
+- `docs/testing/NESTEST_GOLDEN_LOG.md` - CPU validation reference
+- `docs/dev/BUILD.md` - Build instructions
+- `docs/dev/CONTRIBUTING.md` - Contribution guidelines
+
+### API Reference
+- `docs/api/CORE_API.md` - Emulator core API
+- `docs/api/SAVE_STATES.md` - Save state format
+- `docs/api/CONFIGURATION.md` - Configuration options
+
+## Related Files
+
+- `ARCHITECTURE.md` - Detailed system architecture (20K+ lines)
+- `OVERVIEW.md` - High-level project overview
+- `ROADMAP.md` - Development roadmap with milestones
+- `README.md` - GitHub landing page
