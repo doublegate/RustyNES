@@ -1,0 +1,67 @@
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.so
+*.dylib
+*.dll
+*.exe
+
+# Test ROMs (copyrighted)
+*.nes
+*.fds
+!test-roms/**/*.nes
+
+# Save files
+*.sav
+*.srm
+
+# Save states
+*.state
+*.savestate
+
+# Debug
+*.log
+*.pdb
+
+# Coverage
+*.gcno
+*.gcda
+coverage/
+tarpaulin-report.html
+
+# Profiling
+perf.data
+perf.data.old
+flamegraph.svg
+
+# Documentation build
+/docs/_site/
+
+# Temporary files
+/tmp/
+*.tmp
+
+# Claude Code local files
+CLAUDE.local.md
+/.claude/
+
+# Reference projects (cloned repos)
+/ref-proj/
+
+# Environment
+.env
+.env.local
