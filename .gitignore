@@ -12,6 +12,7 @@ Cargo.lock
 
 # OS
 .DS_Store
+._*
 Thumbs.db
 
 # Build artifacts
@@ -20,10 +21,36 @@ Thumbs.db
 *.dll
 *.exe
 
+# Platform-specific packages
+*.AppImage
+*.snap
+*.flatpak
+*.msi
+*.appx
+
 # Test ROMs (copyrighted)
 *.nes
 *.fds
 !test-roms/**/*.nes
+
+# NES Music files
+*.nsf
+*.nsfe
+*.nsf2
+
+# TAS movie files (may contain copyrighted content)
+*.fm2
+*.fm3
+*.bk2
+*.tasproj
+
+# Famicom Disk System
+*.qd
+
+# Game database files
+*.dat
+*.xml
+!assets/**/*.xml
 
 # Save files
 *.sav
@@ -33,9 +60,34 @@ Thumbs.db
 *.state
 *.savestate
 
+# Emulator state files
+*.snapshot
+*.quick*.state
+
+# Input recordings
+*.rec
+*.input
+
+# RAM dumps
+*.ram
+*.dump
+
+# Cheat files (user-specific)
+*.cht
+
 # Debug
 *.log
 *.pdb
+
+# Test output
+test-output/
+*.test.log
+*.golden
+
+# Fuzzing
+fuzz/
+corpus/
+artifacts/
 
 # Coverage
 *.gcno

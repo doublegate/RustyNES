@@ -8,6 +8,12 @@ RustyNES is a next-generation Nintendo Entertainment System (NES) emulator writt
 
 **Status:** Architecture design complete, folder structure created, comprehensive documentation generated. Ready to begin Phase 1 implementation.
 
+## Repository
+
+- **GitHub**: https://github.com/doublegate/RustyNES
+- **License**: MIT / Apache-2.0 (dual-licensed)
+- **Started**: December 2025
+
 ## Quick Start
 
 ```bash
@@ -44,7 +50,7 @@ rustynes/
 │   ├── rustynes-tas/src/          # TAS recording/playback (FM2 format)
 │   ├── rustynes-netplay/src/      # GGPO rollback netcode (backroll-rs)
 │   └── rustynes-achievements/src/ # RetroAchievements (rcheevos FFI)
-├── docs/                          # 33+ documentation files
+├── docs/                          # 40+ documentation files
 │   ├── cpu/                       # 6502 CPU specification, timing, opcodes
 │   ├── ppu/                       # 2C02 PPU rendering, timing, scrolling
 │   ├── apu/                       # Audio channels, timing
@@ -179,6 +185,16 @@ Cloned emulators for study and pattern reference:
 | 2: Features | 7-12 | RetroAchievements, netplay, TAS, Lua, debugger |
 | 3: Expansion | 13-18 | Expansion audio, 98% mappers, WebAssembly |
 | 4: Polish | 19-24 | Video filters, TAS editor, v1.0 release |
+
+## Development Timeline
+
+| Milestone | Target Date | Description |
+|-----------|-------------|-------------|
+| **Project Start** | December 2025 | Architecture & docs complete |
+| **M1: CPU Complete** | January 2026 | nestest.nes passes |
+| **M5: MVP Release** | June 2026 | 80% game compatibility |
+| **M8: Feature Complete** | December 2026 | All advanced features |
+| **M10: v1.0 Release** | December 2027 | 100% TASVideos accuracy |
 
 ## Accuracy Targets
 
@@ -318,9 +334,33 @@ pub enum EmulatorError {
 - `docs/api/SAVE_STATES.md` - Save state format
 - `docs/api/CONFIGURATION.md` - Configuration options
 
+### File Formats
+- `docs/formats/INES_FORMAT.md` - iNES header parsing
+- `docs/formats/NES20_FORMAT.md` - NES 2.0 extended format
+- `docs/formats/NSF_FORMAT.md` - NES Sound Format
+- `docs/formats/FM2_FORMAT.md` - TAS movie format
+
+### APU Deep-Dive
+- `docs/apu/APU_2A03_SPECIFICATION.md` - Complete APU reference
+- `docs/apu/APU_CHANNEL_*.md` - Individual channel specs
+
 ## Related Files
 
 - `ARCHITECTURE.md` - Detailed system architecture (20K+ lines)
 - `OVERVIEW.md` - High-level project overview
 - `ROADMAP.md` - Development roadmap with milestones
 - `README.md` - GitHub landing page
+
+## Quick Links
+
+- [README](README.md) - Project landing page
+- [ROADMAP](ROADMAP.md) - Development timeline
+- [ARCHITECTURE](ARCHITECTURE.md) - System design
+- [OVERVIEW](OVERVIEW.md) - Project philosophy
+- [Documentation Index](docs/DOCUMENTATION_INDEX.md) - All docs
+
+### External Resources
+
+- [NESdev Wiki](https://www.nesdev.org/wiki/) - Hardware reference
+- [TASVideos](https://tasvideos.org/) - Accuracy tests
+- [NesDev Forums](https://forums.nesdev.org/) - Community
