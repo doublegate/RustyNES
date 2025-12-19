@@ -35,7 +35,7 @@ pub struct Cpu {
     /// IRQ line state
     irq_pending: bool,
     /// CPU jammed (halt opcodes)
-    pub(crate) jammed: bool,
+    pub jammed: bool,
 }
 
 impl Cpu {
@@ -53,7 +53,7 @@ impl Cpu {
             y: 0,
             pc: 0,
             sp: 0xFD,
-            status: StatusFlags::from_bits_truncate(0x34), // I flag set, U flag set
+            status: StatusFlags::from_bits_truncate(0x24), // I flag set, U flag set
             cycles: 0,
             stall: 0,
             nmi_pending: false,
