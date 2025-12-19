@@ -72,15 +72,19 @@
 mod addressing;
 mod bus;
 mod cpu;
+pub mod ines;
 mod instructions;
 mod opcodes;
 mod status;
+pub mod trace;
 
 // Public exports
 pub use addressing::AddressingMode;
 pub use bus::Bus;
 pub use cpu::Cpu;
+pub use ines::{INesHeader, INesRom};
 pub use status::StatusFlags;
+pub use trace::CpuTracer;
 
 // Re-export for convenience
 pub use opcodes::OPCODE_TABLE;
