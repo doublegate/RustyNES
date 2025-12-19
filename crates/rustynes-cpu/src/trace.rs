@@ -42,9 +42,10 @@ impl TraceEntry {
         // Format opcode bytes
         let mut bytes_str = String::new();
         let opcode = self.opcode;
-        write!(bytes_str, "{opcode:02X}").unwrap();
+        // Writing to a String never fails
+        let _ = write!(bytes_str, "{opcode:02X}");
         for byte in &self.operand_bytes {
-            write!(bytes_str, " {byte:02X}").unwrap();
+            let _ = write!(bytes_str, " {byte:02X}");
         }
 
         // Unofficial opcodes have the * prefix "steal" one space from bytes field
