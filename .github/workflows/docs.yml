@@ -29,6 +29,22 @@ jobs:
       - name: Build documentation
         run: cargo doc --workspace --no-deps --all-features
 
+      - name: Create root index.html
+        run: |
+          cat > target/doc/index.html << 'EOF'
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+              <meta charset="utf-8">
+              <meta http-equiv="refresh" content="0; url=rustynes_cpu/index.html">
+              <title>RustyNES Documentation</title>
+          </head>
+          <body>
+              <p>Redirecting to <a href="rustynes_cpu/index.html">RustyNES CPU documentation</a>...</p>
+          </body>
+          </html>
+          EOF
+
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
         if: github.ref == 'refs/heads/main'
