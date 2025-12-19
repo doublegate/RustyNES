@@ -388,7 +388,7 @@ Dec 2025  Jan 2026  Feb 2026  Mar 2026  Apr 2026  May 2026  Jun 2026
 
 ### Test ROMs
 
-- `test-roms/nestest.nes` - CPU validation
+- `test-roms/cpu/nestest.nes` - CPU validation
 - Blargg test suite (to be acquired)
 - TASVideos accuracy suite (to be acquired)
 

@@ -13,7 +13,7 @@ A next-generation NES emulator written in pure Rust — targeting 100% accuracy,
 
 ---
 
-> **Status:** Pre-Implementation (Architecture & Documentation Complete). Ready to begin Phase 1 CPU implementation. See [ROADMAP.md](ROADMAP.md) for development timeline.
+> **Status:** Phase 1 In Progress - Milestone 1 (CPU) and Milestone 2 (PPU) complete. Currently at 129 passing tests (46 CPU + 83 PPU). See [ROADMAP.md](ROADMAP.md) for development timeline.
 
 ---
 

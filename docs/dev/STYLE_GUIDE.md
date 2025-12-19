@@ -440,7 +440,7 @@ use std::fs;
 
 #[test]
 fn test_nestest_rom() {
-    let rom_data = fs::read("test-roms/nestest.nes").unwrap();
+    let rom_data = fs::read("test-roms/cpu/nestest.nes").unwrap();
     let mut emu = Emulator::from_rom_data(&rom_data).unwrap();
 
     // Run in automated mode
@@ -585,7 +585,7 @@ pub fn read_oam(&self, addr: u8) -> u8 {
 
 Follow conventional commits:
 
-```
+```text
 <type>(<scope>): <description>
 
 [optional body]
@@ -606,7 +606,7 @@ Types:
 
 Examples:
 
-```
+```text
 feat(cpu): implement unofficial opcodes LAX and SAX
 
 Add support for the commonly used unofficial opcodes:
@@ -618,7 +618,7 @@ These are required for several commercial games.
 Closes #42
 ```
 
-```
+```text
 fix(ppu): correct sprite 0 hit timing
 
 The sprite 0 hit flag was being set one cycle early,

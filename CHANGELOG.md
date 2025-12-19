@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation & Organization - 2025-12-19
+
+#### Added
+
+- Milestone 2 (PPU) TODO documentation (M2-OVERVIEW, 5 sprint files)
+- Milestone 3 (APU) TODO documentation (M3-OVERVIEW)
+- Milestone 4 (Mappers) TODO documentation (M4-OVERVIEW)
+- CPU test ROM README.md with usage instructions and test status
+- `game-roms/` directory for user game ROM storage
+
+#### Changed
+
+- Reorganized test ROM structure: moved CPU test files to `test-roms/cpu/`
+- Updated all documentation references to new `test-roms/cpu/nestest.nes` path
+- Updated README.md status to reflect Phase 1 progress (Milestone 1 + 2 complete)
+- Updated .gitignore to exclude game-roms/ and allow test-roms log files
+
+---
+
+## [0.1.0] - 2025-12-19 (Milestone 1 & 2 Complete)
+
+**Status**: Phase 1 In Progress - CPU and PPU implementation complete
+
+This release marks the completion of Milestone 1 (CPU) and Milestone 2 (PPU), establishing the core emulation engine.
+
+### Added
+
+#### Milestone 1: CPU Implementation (Complete)
+
+- Cycle-accurate 6502/2A03 CPU emulation
+- All 256 opcodes (151 official + 105 unofficial)
+- All 13 addressing modes with cycle-accurate timing
+- Complete interrupt handling (NMI, IRQ, BRK, RESET)
+- Page-crossing penalty detection
+- 100% nestest.nes golden log match
+- Zero unsafe code throughout implementation
+- 46 unit tests for CPU validation
+
+#### Milestone 2: PPU Implementation (Complete)
+
+- Dot-level 2C02 PPU rendering (341 dots x 262 scanlines)
+- Background rendering with scrolling (Loopy scrolling model)
+- Sprite rendering with 8-sprite-per-scanline limit
+- Sprite 0 hit detection
+- Sprite overflow flag handling
+- VBlank and NMI timing (cycle-accurate)
+- OAM DMA support
+- Complete PPU register implementation (PPUCTRL, PPUMASK, PPUSTATUS, etc.)
+- Palette RAM with proper mirroring
+- VRAM addressing with nametable mirroring
+- 83 unit tests for PPU validation
+
+#### Documentation
+
+- Phase 1 TODO tracking system with milestone and sprint breakdowns
+- Comprehensive Milestone 1 documentation (overview + 5 sprint files)
+- Comprehensive Milestone 2 documentation (overview + 5 sprint files)
+
+### Test Results
+
+| Component | Tests | Status |
+|-----------|-------|--------|
+| CPU | 46 | All passing |
+| PPU | 83 | 81 passing, 2 ignored (timing precision) |
+| Total | 129 | 127 passing |
+
+### Notes
+
+- Two PPU tests ignored pending cycle-accurate timing refinement
+- Ready to begin Milestone 3 (APU) and Milestone 4 (Mappers)
+
+---
+
 ### Project Setup - 2025-12-18
 
 #### Added
@@ -56,8 +129,8 @@ RustyNES follows a phased development approach. See [ROADMAP.md](ROADMAP.md) for
 
 ### Phase 1: MVP (Target: June 2026)
 
-- [ ] Cycle-accurate 6502/2A03 CPU implementation
-- [ ] Dot-level 2C02 PPU rendering
+- [x] Cycle-accurate 6502/2A03 CPU implementation
+- [x] Dot-level 2C02 PPU rendering
 - [ ] Hardware-accurate 2A03 APU synthesis
 - [ ] Mappers 0, 1, 2, 3, 4 (80% game coverage)
 - [ ] Cross-platform desktop GUI (egui + wgpu)

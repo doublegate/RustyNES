@@ -175,7 +175,7 @@ cargo test -p rustynes-cpu
 - ✅ All instructions validated
 - ✅ Cycle-accurate execution
 
-**Test ROM:** `test-roms/nestest.nes`
+**Test ROM:** `test-roms/cpu/nestest.nes`
 
 ---
 

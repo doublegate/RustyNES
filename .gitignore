@@ -33,6 +33,9 @@ Thumbs.db
 *.fds
 !test-roms/**/*.nes
 
+# Game ROMs (user-specific, not tracked)
+/game-roms/
+
 # NES Music files
 *.nsf
 *.nsfe
@@ -78,6 +81,7 @@ Thumbs.db
 # Debug
 *.log
 *.pdb
+!test-roms/**/*.log
 
 # Test output
 test-output/

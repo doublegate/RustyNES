@@ -45,7 +45,7 @@ Achieved 100% golden log match with nestest.nes, the gold standard CPU validatio
 
 **Test ROM:**
 
-- `test-roms/nestest.nes`
+- `test-roms/cpu/nestest.nes`
 
 ---
 

@@ -124,13 +124,14 @@ fn nestest_golden_log_validation() {
         .join("..") // crates
         .join("..") // workspace root
         .join("test-roms")
+        .join("cpu")
         .join("nestest.nes");
 
     // Skip test if nestest.nes doesn't exist (test ROMs not included in repo)
     if !rom_path.exists() {
         eprintln!("Skipping nestest validation: nestest.nes not found at {rom_path:?}");
         eprintln!("To run this test, download nestest.nes from https://github.com/christopherpow/nes-test-roms");
-        eprintln!("and place it in the test-roms/ directory");
+        eprintln!("and place it in the test-roms/cpu/ directory");
         return;
     }
 
@@ -159,13 +160,14 @@ fn nestest_golden_log_validation() {
         .join("..") // crates
         .join("..") // workspace root
         .join("test-roms")
+        .join("cpu")
         .join("nestest.log");
 
     // Skip test if golden log doesn't exist
     if !golden_log_path.exists() {
         eprintln!("Skipping nestest validation: nestest.log not found at {golden_log_path:?}");
         eprintln!("To run this test, download nestest.log from https://github.com/christopherpow/nes-test-roms");
-        eprintln!("and place it in the test-roms/ directory");
+        eprintln!("and place it in the test-roms/cpu/ directory");
         return;
     }
 
