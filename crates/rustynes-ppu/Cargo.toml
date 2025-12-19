@@ -20,6 +20,7 @@ log.workspace = true
 [dev-dependencies]
 criterion.workspace = true
 proptest.workspace = true
+rustynes-cpu = { path = "../rustynes-cpu" }
 
 # Benchmarks will be added in a future milestone
 # [[bench]]
