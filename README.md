@@ -15,16 +15,16 @@
 
 ## Highlights
 
-| Feature | Description |
-|---------|-------------|
-| **Cycle-Accurate** | Sub-cycle precision for CPU, PPU, and APU - targeting 100% TASVideos test suite pass rate |
-| **300+ Mappers** | Comprehensive cartridge support covering all licensed games plus homebrew |
-| **RetroAchievements** | Native rcheevos integration for achievement hunting |
-| **GGPO Netplay** | Frame-perfect rollback netcode via backroll-rs |
-| **TAS Tools** | FM2 format support with rewind, frame advance, and movie recording |
-| **Lua Scripting** | Modern Lua 5.4 scripting via mlua for automation and bots |
-| **GPU Accelerated** | Cross-platform wgpu rendering with shader support |
-| **Pure Rust** | Zero unsafe code where possible, leveraging Rust's safety guarantees |
+| Feature               | Description                                                                               |
+| --------------------- | ----------------------------------------------------------------------------------------- |
+| **Cycle-Accurate**    | Sub-cycle precision for CPU, PPU, and APU - targeting 100% TASVideos test suite pass rate |
+| **300+ Mappers**      | Comprehensive cartridge support covering all licensed games plus homebrew                 |
+| **RetroAchievements** | Native rcheevos integration for achievement hunting                                       |
+| **GGPO Netplay**      | Frame-perfect rollback netcode via backroll-rs                                            |
+| **TAS Tools**         | FM2 format support with rewind, frame advance, and movie recording                        |
+| **Lua Scripting**     | Modern Lua 5.4 scripting via mlua for automation and bots                                 |
+| **GPU Accelerated**   | Cross-platform wgpu rendering with shader support                                         |
+| **Pure Rust**         | Zero unsafe code where possible, leveraging Rust's safety guarantees                      |
 
 ---
 
@@ -52,25 +52,27 @@ cargo run --release -p rustynes-desktop -- path/to/rom.nes
 
 ## Default Controls
 
-| NES | Keyboard | Gamepad |
-|-----|----------|---------|
-| D-Pad | WASD / Arrows | D-Pad |
-| A | K / Z | A Button |
-| B | J / X | B Button |
-| Start | Enter | Start |
-| Select | Right Shift | Select |
+| NES    | Keyboard      | Gamepad  |
+| ------ | ------------- | -------- |
+| D-Pad  | WASD / Arrows | D-Pad    |
+| A      | K / Z         | A Button |
+| B      | J / X         | B Button |
+| Start  | Enter         | Start    |
+| Select | Right Shift   | Select   |
 
 ---
 
 ## Features
 
 ### Current Status
+
 - [x] **Architecture Design** - Complete modular crate structure with 10 component crates
 - [x] **Documentation** - 39 comprehensive specification and implementation guides covering CPU, PPU, APU, mappers, testing, and development
 - [x] **Project Setup** - Workspace structure created, ready for implementation
 - [ ] **Implementation** - Beginning Phase 1 (CPU, PPU, APU, mappers, GUI)
 
 ### MVP (Phase 1) - Target: June 2026
+
 - [ ] Cycle-accurate 6502/2A03 CPU emulation (all 256 opcodes)
 - [ ] Dot-level 2C02 PPU rendering (341x262 scanlines)
 - [ ] Hardware-accurate 2A03 APU synthesis (all 5 channels)
@@ -81,6 +83,7 @@ cargo run --release -p rustynes-desktop -- path/to/rom.nes
 - [ ] 85% TASVideos test suite pass rate
 
 ### Planned (Phases 2-4) - Target: December 2027
+
 - [ ] RetroAchievements integration (rcheevos FFI)
 - [ ] GGPO-style rollback netplay (backroll-rs)
 - [ ] Lua 5.4 scripting with memory/GUI APIs
@@ -99,13 +102,13 @@ See [ROADMAP.md](ROADMAP.md) for the complete development plan.
 
 ## Platform Support
 
-| Platform | Status |
-|----------|--------|
-| **Windows x64** | Primary |
-| **Linux x64** | Primary |
+| Platform            | Status  |
+| ------------------- | ------- |
+| **Windows x64**     | Primary |
+| **Linux x64**       | Primary |
 | **macOS x64/ARM64** | Primary |
-| **WebAssembly** | Planned |
-| **Linux ARM64** | Planned |
+| **WebAssembly**     | Planned |
+| **Linux ARM64**     | Planned |
 
 ### System Requirements
 
@@ -116,39 +119,39 @@ See [ROADMAP.md](ROADMAP.md) for the complete development plan.
 
 ## Documentation
 
-| Document | Description |
-|----------|-------------|
-| [OVERVIEW.md](OVERVIEW.md) | Philosophy, accuracy goals, emulation approach |
+| Document                           | Description                                           |
+| ---------------------------------- | ----------------------------------------------------- |
+| [OVERVIEW.md](OVERVIEW.md)         | Philosophy, accuracy goals, emulation approach        |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System design, component relationships, Rust patterns |
-| [ROADMAP.md](ROADMAP.md) | Development phases and milestones |
+| [ROADMAP.md](ROADMAP.md)           | Development phases and milestones                     |
 
 ### Hardware Documentation
 
-| Component | Location |
-|-----------|----------|
+| Component      | Location                                                             |
+| -------------- | -------------------------------------------------------------------- |
 | **CPU (6502)** | [docs/cpu/](docs/cpu/) - Instruction set, timing, unofficial opcodes |
-| **PPU (2C02)** | [docs/ppu/](docs/ppu/) - Rendering, scrolling, sprite evaluation |
-| **APU (2A03)** | [docs/apu/](docs/apu/) - Audio channels, mixing, frame counter |
-| **Memory Bus** | [docs/bus/](docs/bus/) - Address space, bus conflicts |
-| **Mappers** | [docs/mappers/](docs/mappers/) - Cartridge banking and variants |
+| **PPU (2C02)** | [docs/ppu/](docs/ppu/) - Rendering, scrolling, sprite evaluation     |
+| **APU (2A03)** | [docs/apu/](docs/apu/) - Audio channels, mixing, frame counter       |
+| **Memory Bus** | [docs/bus/](docs/bus/) - Address space, bus conflicts                |
+| **Mappers**    | [docs/mappers/](docs/mappers/) - Cartridge banking and variants      |
 
 ### Development Guides
 
-| Guide | Purpose |
-|-------|---------|
-| [CONTRIBUTING](docs/dev/CONTRIBUTING.md) | Code style and PR process |
-| [BUILD](docs/dev/BUILD.md) | Toolchain and cross-compilation |
-| [TESTING](docs/dev/TESTING.md) | Test ROM suites and CI |
-| [DEBUGGING](docs/dev/DEBUGGING.md) | Built-in debugger usage |
-| [GLOSSARY](docs/dev/GLOSSARY.md) | NES terminology reference |
+| Guide                                    | Purpose                         |
+| ---------------------------------------- | ------------------------------- |
+| [CONTRIBUTING](docs/dev/CONTRIBUTING.md) | Code style and PR process       |
+| [BUILD](docs/dev/BUILD.md)               | Toolchain and cross-compilation |
+| [TESTING](docs/dev/TESTING.md)           | Test ROM suites and CI          |
+| [DEBUGGING](docs/dev/DEBUGGING.md)       | Built-in debugger usage         |
+| [GLOSSARY](docs/dev/GLOSSARY.md)         | NES terminology reference       |
 
 ### API Reference
 
-| API | Description |
-|-----|-------------|
-| [CORE_API](docs/api/CORE_API.md) | Embedding the emulator as a library |
-| [SAVE_STATES](docs/api/SAVE_STATES.md) | State serialization format |
-| [CONFIGURATION](docs/api/CONFIGURATION.md) | Runtime options and settings |
+| API                                        | Description                         |
+| ------------------------------------------ | ----------------------------------- |
+| [CORE_API](docs/api/CORE_API.md)           | Embedding the emulator as a library |
+| [SAVE_STATES](docs/api/SAVE_STATES.md)     | State serialization format          |
+| [CONFIGURATION](docs/api/CONFIGURATION.md) | Runtime options and settings        |
 
 ---
 
@@ -174,16 +177,19 @@ cargo fmt --all
 ### Platform Dependencies
 
 **Ubuntu/Debian:**
+
 ```bash
 sudo apt install build-essential cmake libsdl2-dev
 ```
 
 **Fedora:**
+
 ```bash
 sudo dnf install gcc cmake SDL2-devel
 ```
 
 **macOS:**
+
 ```bash
 brew install cmake sdl2
 ```
