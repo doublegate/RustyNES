@@ -1,0 +1,36 @@
+# Code ownership for RustyNES
+# See: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owner for everything
+* @doublegate
+
+# Core emulation components (require careful review)
+/crates/rustynes-cpu/ @doublegate
+/crates/rustynes-ppu/ @doublegate
+/crates/rustynes-apu/ @doublegate
+/crates/rustynes-core/ @doublegate
+
+# Mappers (can be delegated to mapper specialists)
+/crates/rustynes-mappers/ @doublegate
+
+# Frontend/GUI (can be delegated to UI specialists)
+/crates/rustynes-desktop/ @doublegate
+/crates/rustynes-web/ @doublegate
+
+# Advanced features (can be delegated to feature specialists)
+/crates/rustynes-tas/ @doublegate
+/crates/rustynes-netplay/ @doublegate
+/crates/rustynes-achievements/ @doublegate
+
+# Documentation
+/docs/ @doublegate
+*.md @doublegate
+
+# Build and CI configuration
+/.github/ @doublegate
+/Cargo.toml @doublegate
+/Cargo.lock @doublegate
+
+# Test ROMs (community contributions welcome)
+/tests/ @doublegate
+/benches/ @doublegate

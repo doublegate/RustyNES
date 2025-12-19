@@ -1,0 +1,12 @@
+---
+blank_issues_enabled: false
+contact_links:
+  - name: Question or Discussion
+    url: https://github.com/doublegate/RustyNES/discussions
+    about: Ask questions, share ideas, or discuss the project
+  - name: Documentation
+    url: https://github.com/doublegate/RustyNES/tree/main/docs
+    about: Browse comprehensive documentation for development and usage
+  - name: NESdev Wiki
+    url: https://www.nesdev.org/wiki/
+    about: General NES hardware and emulation questions
