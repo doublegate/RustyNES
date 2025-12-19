@@ -128,9 +128,11 @@ pnpm-lock.yaml
 *.a
 *.lib
 
-# Claude Code local files
+# AI assistant local files
 CLAUDE.local.md
 /.claude/
+WARP.md
+/.warp/
 
 # Reference projects (cloned repos)
 /ref-proj/

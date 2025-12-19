@@ -7,7 +7,9 @@
 [![Documentation](https://img.shields.io/badge/docs-latest-blue.svg)](https://doublegate.github.io/RustyNES/)
 [![codecov](https://codecov.io/gh/doublegate/RustyNES/branch/main/graph/badge.svg)](https://codecov.io/gh/doublegate/RustyNES)
 
-**A next-generation NES emulator written in pure Rust — targeting 100% accuracy, modern features, and safe code**
+## Overview
+
+A next-generation NES emulator written in pure Rust — targeting 100% accuracy, modern features, and safe code
 
 ---
 
@@ -253,17 +255,17 @@ Frame Timing:
 ### Architecture Overview
 
 ```text
-┌────────────────────────────────────────────────────────────┐
-│                      RustyNES Core                         │
-├─────────────┬─────────────┬─────────────┬──────────────────┤
-│   CPU       │    PPU      │    APU      │    Mappers       │
-│  (6502)     │  (2C02)     │  (2A03)     │  (0-300+)        │
-│             │             │             │                  │
-│ • Cycle     │ • Dot-level │ • 5 Channels│ • Banking        │
-│   accurate  │   rendering │ • Expansion │ • IRQ timing     │
-│ • All 256   │ • Scrolling │   audio     │ • Mirroring      │
-│   opcodes   │ • Sprites   │ • Mixing    │                  │
-└─────────────┴─────────────┴─────────────┴──────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│                      RustyNES Core                       │
+├─────────────┬─────────────┬─────────────┬────────────────┤
+│   CPU       │    PPU      │    APU      │    Mappers     │
+│  (6502)     │  (2C02)     │  (2A03)     │  (0-300+)      │
+│             │             │             │                │
+│ • Cycle     │ • Dot-level │ • 5 Channels│ • Banking      │
+│   accurate  │   rendering │ • Expansion │ • IRQ timing   │
+│ • All 256   │ • Scrolling │   audio     │ • Mirroring    │
+│   opcodes   │ • Sprites   │ • Mixing    │                │
+└─────────────┴─────────────┴─────────────┴────────────────┘
        │              │              │             │
        └──────────────┴──────────────┴─────────────┘
                          │
