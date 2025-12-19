@@ -1,0 +1,25 @@
+[package]
+name = "rustynes-apu"
+version = "0.2.0"
+edition = "2021"
+rust-version = "1.75"
+authors = ["RustyNES Contributors"]
+license = "MIT OR Apache-2.0"
+description = "2A03 APU (Audio Processing Unit) emulation for RustyNES"
+repository = "https://github.com/doublegate/RustyNES"
+keywords = ["nes", "emulator", "apu", "audio", "sound"]
+categories = ["emulators", "multimedia::audio"]
+
+[dependencies]
+bitflags = "2.4"
+log = "0.4"
+
+[dev-dependencies]
+env_logger = "0.11"
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+pedantic = "warn"

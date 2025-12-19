@@ -3,9 +3,9 @@ resolver = "2"
 members = [
     "crates/rustynes-cpu",
     "crates/rustynes-ppu",
+    "crates/rustynes-apu",
     # Future crates (commented out until implemented):
     # "crates/rustynes-core",
-    # "crates/rustynes-apu",
     # "crates/rustynes-mappers",
     # "crates/rustynes-desktop",
     # "crates/rustynes-web",
@@ -15,7 +15,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.75"
 authors = ["doublegate"]
