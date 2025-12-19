@@ -6,8 +6,8 @@ members = [
     "crates/rustynes-apu",
     "crates/rustynes-mappers",
     "crates/rustynes-core",
+    "crates/rustynes-desktop",
     # Future crates (commented out until implemented):
-    # "crates/rustynes-desktop",
     # "crates/rustynes-web",
     # "crates/rustynes-tas",
     # "crates/rustynes-netplay",

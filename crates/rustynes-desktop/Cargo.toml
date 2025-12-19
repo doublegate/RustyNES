@@ -1,0 +1,76 @@
+[package]
+name = "rustynes-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Desktop frontend for RustyNES NES emulator"
+
+[[bin]]
+name = "rustynes-desktop"
+path = "src/main.rs"
+
+[dependencies]
+# ═══════════════════════════════════════════════════════════════
+# UI FRAMEWORK (PRIMARY: ICED)
+# ═══════════════════════════════════════════════════════════════
+iced = { version = "0.13", features = [
+    "wgpu",           # GPU-accelerated rendering
+    "tokio",          # Async runtime
+    "image",          # Image loading
+    "svg",            # Vector icons
+    "canvas",         # Custom rendering
+    "advanced",       # Custom shaders
+]}
+iced_aw = "0.10"      # Additional widgets (badges, cards, modals, tabs)
+
+# ═══════════════════════════════════════════════════════════════
+# GRAPHICS
+# ═══════════════════════════════════════════════════════════════
+# Note: wgpu version comes from iced's dependencies (0.19)
+image = "0.25"        # Image loading
+bytemuck = { version = "1.14", features = ["derive"] }
+
+# ═══════════════════════════════════════════════════════════════
+# AUDIO
+# ═══════════════════════════════════════════════════════════════
+cpal = "0.15"         # Cross-platform audio
+rubato = "0.15"       # Sample rate conversion
+
+# ═══════════════════════════════════════════════════════════════
+# INPUT
+# ═══════════════════════════════════════════════════════════════
+gilrs = "0.11"        # Gamepad support
+
+# ═══════════════════════════════════════════════════════════════
+# FILE SYSTEM
+# ═══════════════════════════════════════════════════════════════
+rfd = "0.15"          # Native file dialogs
+directories = "5.0"   # Platform-specific paths
+
+# ═══════════════════════════════════════════════════════════════
+# ASYNC & UTILITIES
+# ═══════════════════════════════════════════════════════════════
+tokio = { version = "1.40", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"          # Config files
+tracing = "0.1"       # Logging
+tracing-subscriber = "0.3"
+thiserror = "1.0"     # Error handling
+
+# ═══════════════════════════════════════════════════════════════
+# CORE INTEGRATION
+# ═══════════════════════════════════════════════════════════════
+rustynes-core = { path = "../rustynes-core" }
+
+[features]
+default = []
+
+[lints]
+workspace = true

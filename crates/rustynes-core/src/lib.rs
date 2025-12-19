@@ -71,5 +71,5 @@ pub use console::Console;
 pub use input::{Button, Controller};
 
 // Re-export commonly used types from dependencies
-pub use rustynes_mappers::{Mapper, Mirroring, Rom, RomError};
+pub use rustynes_mappers::{create_mapper, Mapper, MapperError, Mirroring, Rom, RomError};
 pub use rustynes_ppu::{FRAME_HEIGHT, FRAME_WIDTH};
