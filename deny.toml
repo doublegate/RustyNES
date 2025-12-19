@@ -43,7 +43,11 @@ ignore = false
 registries = []
 
 [bans]
-multiple-versions = "warn"
+# Allow duplicate versions since they're caused by transitive dependencies from major
+# frameworks (iced, wgpu, image) that require different versions of common crates.
+# These duplicates are unavoidable until upstream crates converge on versions.
+# Examples: ahash, bitflags, block2, calloop, dirs-sys, fontdb, getrandom, etc.
+multiple-versions = "allow"
 wildcards = "allow"
 highlight = "all"
 workspace-default-features = "allow"
