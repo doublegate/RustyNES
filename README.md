@@ -13,7 +13,16 @@ A next-generation NES emulator written in pure Rust — targeting 100% accuracy,
 
 ---
 
-> **Status:** Phase 1 In Progress - Milestone 1 (CPU) and Milestone 2 (PPU) complete. Currently at 129 passing tests (46 CPU + 83 PPU). See [ROADMAP.md](ROADMAP.md) for development timeline.
+> **Status:** v0.1.0 Released - Phase 1 In Progress (33% Complete)
+>
+> **Milestones Completed:**
+>
+> - ✅ **M1: CPU** - Cycle-accurate 6502/2A03 with all 256 opcodes, 100% nestest.nes validation
+> - ✅ **M2: PPU** - Dot-level 2C02 rendering with background/sprite support
+>
+> **Current:** 129 passing tests (46 CPU + 83 PPU). Next: Milestone 3 (APU) and Milestone 4 (Mappers)
+>
+> See [ROADMAP.md](ROADMAP.md) and [to-dos/](to-dos/) for development timeline.
 
 ---
 
@@ -48,9 +57,23 @@ RustyNES combines **accuracy-first emulation** with **modern features** and the 
 
 ## Quick Start
 
-### Download Binaries (Coming Soon)
+### Recent Release: v0.1.0 (December 2025)
 
-Pre-built binaries will be available for Windows, Linux, and macOS when the MVP is released (target: June 2026).
+RustyNES has reached its first major milestone with the completion of CPU and PPU emulation:
+
+**What's New:**
+
+- Complete 6502/2A03 CPU implementation with all 256 opcodes
+- Dot-accurate 2C02 PPU rendering with background and sprite support
+- 129 comprehensive unit tests (46 CPU + 83 PPU)
+- 100% nestest.nes golden log match
+- Zero unsafe code throughout implementation
+
+See [CHANGELOG.md](CHANGELOG.md) for full details.
+
+### Download Binaries (Coming with M6)
+
+Pre-built binaries will be available when the Desktop GUI is complete (Milestone 6, target: June 2026). Currently, you can build from source and run the comprehensive test suite.
 
 ### Build from Source
 
@@ -67,12 +90,14 @@ Pre-built binaries will be available for Windows, Linux, and macOS when the MVP 
 git clone https://github.com/doublegate/RustyNES.git
 cd RustyNES
 
-# Build and run (once implemented)
-cargo build --release
-cargo run --release -p rustynes-desktop
+# Build all implemented crates (CPU and PPU)
+cargo build --workspace --release
 
-# Run with a ROM
-cargo run --release -p rustynes-desktop -- path/to/rom.nes
+# Run tests to verify installation
+cargo test --workspace
+
+# Note: The desktop GUI is not yet implemented (planned for Milestone 6)
+# Currently, only the CPU and PPU crates are complete with comprehensive test suites
 ```
 
 ### Platform-Specific Dependencies
@@ -102,54 +127,83 @@ brew install sdl2
 - Download SDL2 development libraries from [libsdl.org](https://libsdl.org)
 - Set `SDL2_PATH` environment variable to SDL2 location
 
-### Basic Usage Examples
+### Current Development Status
+
+The emulator is under active development. Currently implemented:
 
 ```bash
-# Run with a specific ROM
-./rustynes-desktop game.nes
+# Run all tests (CPU + PPU)
+cargo test --workspace
 
-# Enable debug logging
-RUST_LOG=debug ./rustynes-desktop game.nes
+# Run CPU tests only
+cargo test -p rustynes-cpu
 
-# Run test ROMs (for accuracy validation)
-cargo test nestest_rom
-cargo test blargg_cpu_tests
-cargo test blargg_ppu_tests
+# Run PPU tests only
+cargo test -p rustynes-ppu
+
+# Run with debug logging
+RUST_LOG=debug cargo test --workspace
+
+# Run benchmarks (once implemented)
+cargo bench --workspace
 ```
+
+**What's Working:**
+
+- Complete CPU emulation with all 256 opcodes
+- Full PPU rendering pipeline (backgrounds + sprites)
+- Comprehensive test suites (129 tests passing)
+
+**Coming Soon (M3-M6):**
+
+- APU audio synthesis
+- Mapper implementations (0, 1, 2, 3, 4)
+- Integration layer and ROM loading
+- Desktop GUI application
 
 ---
 
 ## Configuration
 
-RustyNES supports extensive configuration through:
+RustyNES will support extensive configuration through:
 
 - Configuration files (TOML format)
 - Command-line arguments
 - GUI settings panel
 
-See [docs/api/CONFIGURATION.md](docs/api/CONFIGURATION.md) for complete options.
+See [docs/api/CONFIGURATION.md](docs/api/CONFIGURATION.md) for planned configuration options.
 
-### Feature Flags
+**Note:** Configuration system will be implemented in Milestone 6 (Desktop GUI) as part of the complete application interface.
 
-Build with specific features enabled:
+### Crate Structure
+
+The project is organized as a Cargo workspace:
 
 ```bash
-# Build with all features
-cargo build --release --all-features
+# Build all implemented crates (currently CPU and PPU)
+cargo build --workspace --release
 
-# Build desktop GUI only
-cargo build --release -p rustynes-desktop
+# Build specific crate
+cargo build -p rustynes-cpu --release
+cargo build -p rustynes-ppu --release
 
-# Build WebAssembly
-wasm-pack build crates/rustynes-web --target web
+# Test specific crate
+cargo test -p rustynes-cpu
+cargo test -p rustynes-ppu
 
-# Build with specific features
-cargo build --release --features "netplay,tas,lua"
+# Generate documentation
+cargo doc --workspace --no-deps --open
 ```
+
+**Note:** Feature flags and advanced crates (desktop, web, TAS, netplay, achievements) will be implemented in later milestones. Currently, the focus is on core emulation accuracy.
 
 ---
 
-## Default Controls
+## Default Controls (Planned)
+
+Input handling will be implemented in Milestone 5 (Integration) and Milestone 6 (Desktop GUI).
+
+**Planned Default Bindings:**
 
 | NES    | Keyboard      | Gamepad  |
 | ------ | ------------- | -------- |
@@ -159,27 +213,45 @@ cargo build --release --features "netplay,tas,lua"
 | Start  | Enter         | Start    |
 | Select | Right Shift   | Select   |
 
+Controls will be fully configurable through the configuration system.
+
 ---
 
 ## Features
 
-### Current Status
+### Current Status (v0.1.0 - December 2025)
 
 - [x] **Architecture Design** - Complete modular crate structure with 10 component crates
 - [x] **Documentation** - 39 comprehensive specification and implementation guides covering CPU, PPU, APU, mappers, testing, and development
-- [x] **Project Setup** - Workspace structure created, ready for implementation
-- [ ] **Implementation** - Beginning Phase 1 (CPU, PPU, APU, mappers, GUI)
+- [x] **Project Setup** - Workspace structure created with CI/CD pipeline
+- [x] **Milestone 1: CPU** - Cycle-accurate 6502/2A03 emulation complete (46 tests passing)
+- [x] **Milestone 2: PPU** - Dot-level 2C02 rendering complete (83 tests passing)
+- [ ] **Milestone 3: APU** - Audio synthesis (planned for January-February 2026)
+- [ ] **Milestone 4: Mappers** - Essential mapper implementations (planned for March-May 2026)
+- [ ] **Milestone 5: Integration** - Console coordination and ROM loading
+- [ ] **Milestone 6: Desktop GUI** - Cross-platform interface with egui/wgpu
 
-### MVP (Phase 1) - Target: June 2026
+### MVP (Phase 1) - Target: June 2026 (33% Complete)
 
-- [ ] Cycle-accurate 6502/2A03 CPU emulation (all 256 opcodes)
-- [ ] Dot-level 2C02 PPU rendering (341x262 scanlines)
-- [ ] Hardware-accurate 2A03 APU synthesis (all 5 channels)
-- [ ] Mappers 0, 1, 2, 3, 4 (80% game coverage, 500+ games)
-- [ ] Cross-platform GUI (egui + wgpu)
-- [ ] Save states and battery saves
-- [ ] Gamepad support (SDL2)
-- [ ] 85% TASVideos test suite pass rate
+- [x] **Cycle-accurate 6502/2A03 CPU emulation** (all 256 opcodes) - ✅ M1 Complete
+  - All official and unofficial opcodes implemented
+  - Cycle-accurate timing with page-crossing penalties
+  - Complete interrupt handling (NMI, IRQ, BRK, RESET)
+  - 100% nestest.nes golden log match
+  - 46 comprehensive unit tests
+- [x] **Dot-level 2C02 PPU rendering** (341x262 scanlines) - ✅ M2 Complete
+  - Complete background rendering with scrolling
+  - Sprite rendering with 8-per-scanline limit
+  - Sprite 0 hit and overflow detection
+  - Accurate VBlank and NMI timing
+  - Loopy scrolling model implementation
+  - 83 comprehensive unit tests
+- [ ] Hardware-accurate 2A03 APU synthesis (all 5 channels) - 🔄 M3 Planned
+- [ ] Mappers 0, 1, 2, 3, 4 (80% game coverage, 500+ games) - 🔄 M4 Planned
+- [ ] Cross-platform GUI (egui + wgpu) - 🔄 M6 Planned
+- [ ] Save states and battery saves - 🔄 M5 Planned
+- [ ] Gamepad support (SDL2) - 🔄 M6 Planned
+- [ ] 85% TASVideos test suite pass rate - 🔄 In Progress
 
 ### Planned (Phases 2-4) - Target: December 2027
 
@@ -242,44 +314,59 @@ Frame Timing:
 - Target framerate: 60.0988 Hz (NTSC), 50.0070 Hz (PAL)
 ```
 
-### Accuracy Targets
+### Accuracy Targets and Progress
 
-| Component | Target | Validation |
-|-----------|--------|------------|
-| **CPU (6502)** | 100% instruction-level | nestest.nes golden log match |
-| **PPU (2C02)** | 100% cycle-accurate | ppu_vbl_nmi, sprite_hit_tests, scrolltest |
-| **APU (2A03)** | 99%+ hardware match | apu_test, dmc_tests, blargg suite |
-| **Mappers** | 100% for licensed | 700+ game compatibility matrix |
-| **Overall** | 100% TASVideos suite | 156 test ROM pass rate |
+| Component | Target | Status | Validation |
+|-----------|--------|--------|------------|
+| **CPU (6502)** | 100% instruction-level | ✅ **Complete** | nestest.nes golden log match (100%) |
+| **PPU (2C02)** | 100% cycle-accurate | ✅ **Complete** | Background + sprite rendering, VBlank/NMI |
+| **APU (2A03)** | 99%+ hardware match | 🔄 Planned (M3) | apu_test, dmc_tests, blargg suite |
+| **Mappers** | 100% for licensed | 🔄 Planned (M4) | 5 essential mappers (0, 1, 2, 3, 4) |
+| **Overall** | 100% TASVideos suite | 🔄 In Progress | Target: 85% by June 2026 |
+
+**Current Progress:** 33% (M1-M2 complete, M3-M6 planned)
+
+**Test Results (v0.1.0):**
+
+- CPU: 46/46 tests passing (100%)
+- PPU: 83/83 tests passing (100%)
+- Total: 129/129 tests passing (100%)
+- nestest.nes: Golden log match (100%)
+- Zero unsafe code across all implementations
 
 ### Architecture Overview
 
 ```text
-┌──────────────────────────────────────────────────────────┐
-│                      RustyNES Core                       │
-├─────────────┬─────────────┬─────────────┬────────────────┤
-│   CPU       │    PPU      │    APU      │    Mappers     │
-│  (6502)     │  (2C02)     │  (2A03)     │  (0-300+)      │
-│             │             │             │                │
-│ • Cycle     │ • Dot-level │ • 5 Channels│ • Banking      │
-│   accurate  │   rendering │ • Expansion │ • IRQ timing   │
-│ • All 256   │ • Scrolling │   audio     │ • Mirroring    │
-│   opcodes   │ • Sprites   │ • Mixing    │                │
-└─────────────┴─────────────┴─────────────┴────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│                      RustyNES Core                             │
+├─────────────┬─────────────┬─────────────┬──────────────────────┤
+│   CPU ✅    │    PPU ✅   │  APU 🔄     │    Mappers 🔄        │
+│  (6502)     │  (2C02)     │  (2A03)     │  (0-300+)            │
+│             │             │             │                      │
+│ • Cycle     │ • Dot-level │ • 5 Channels│ • Banking            │
+│   accurate  │   rendering │ • Expansion │ • IRQ timing         │
+│ • All 256   │ • Scrolling │   audio     │ • Mirroring          │
+│   opcodes   │ • Sprites   │ • Mixing    │                      │
+│ • 46 tests  │ • 83 tests  │ • Planned   │ • Planned            │
+└─────────────┴─────────────┴─────────────┴──────────────────────┘
        │              │              │             │
        └──────────────┴──────────────┴─────────────┘
                          │
               ┌──────────┴──────────┐
-              │     Memory Bus      │
+              │  Memory Bus 🔄      │
               │  (Address Space)    │
+              │  • M5 Integration   │
               └──────────┬──────────┘
                          │
        ┌─────────────────┼────────────────┐
        │                 │                │
 ┌──────┴──────┐   ┌──────┴──────┐   ┌─────┴─────┐
-│   Desktop   │   │     Web     │   │  Headless │
-│  (egui/wgpu)│   │   (WASM)    │   │   (API)   │
-└─────────────┘   └─────────────┘   └───────────┘
+│  Desktop 🔄 │   │   Web 🔄    │   │ Headless 🔄│
+│  (egui/wgpu)│   │   (WASM)    │   │   (API)    │
+│  • M6 GUI   │   │   • Phase 3 │   │  • Phase 2 │
+└─────────────┘   └─────────────┘   └────────────┘
+
+Legend: ✅ Complete | 🔄 Planned | Phase 1 MVP: M1-M6
 ```
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for comprehensive system design.
@@ -310,6 +397,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for comprehensive system design.
 | [OVERVIEW.md](OVERVIEW.md)         | Philosophy, accuracy goals, emulation approach        |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System design, component relationships, Rust patterns |
 | [ROADMAP.md](ROADMAP.md)           | Development phases and milestones                     |
+| [CHANGELOG.md](CHANGELOG.md)       | Version history and release notes                     |
+| [to-dos/](to-dos/)                 | Phase 1 milestone tracking and sprint plans           |
 
 ### Hardware Documentation
 
@@ -352,11 +441,16 @@ cargo build --workspace
 # Release build (optimized, ~10x faster runtime)
 cargo build --workspace --release
 
-# Build specific crate
-cargo build -p rustynes-desktop --release
+# Build specific implemented crate
+cargo build -p rustynes-cpu --release
+cargo build -p rustynes-ppu --release
 
-# Run tests
+# Run all tests (129 tests: 46 CPU + 83 PPU)
 cargo test --workspace
+
+# Run tests for specific crate
+cargo test -p rustynes-cpu
+cargo test -p rustynes-ppu
 
 # Run lints
 cargo clippy --workspace -- -D warnings
@@ -376,16 +470,21 @@ cargo build --workspace -- -D warnings
 
 # Build and run in watch mode (requires cargo-watch)
 cargo install cargo-watch
-cargo watch -x 'build --workspace'
+cargo watch -x 'test --workspace'
 
 # Run specific tests
 cargo test -p rustynes-cpu test_lda_immediate
+cargo test -p rustynes-ppu test_ppu_integration
 
 # Run with debug logging
-RUST_LOG=debug cargo run -p rustynes-desktop
+RUST_LOG=debug cargo test --workspace
 
-# Benchmark critical paths (requires nightly)
-cargo +nightly bench -p rustynes-core
+# Benchmark critical paths (once implemented)
+cargo bench -p rustynes-cpu
+cargo bench -p rustynes-ppu
+
+# Check for unused dependencies
+cargo +nightly udeps --workspace
 ```
 
 ### Cross-Compilation
@@ -404,35 +503,33 @@ cross build --target x86_64-pc-windows-gnu --release
 cross build --target armv7-unknown-linux-gnueabihf --release
 ```
 
-### WebAssembly Build
+### WebAssembly Build (Planned for Phase 3)
 
-```bash
-# Install wasm-pack
-cargo install wasm-pack
+WebAssembly support is planned for Phase 3 (Expansion). The rustynes-web crate will provide:
 
-# Build for web
-wasm-pack build crates/rustynes-web --target web --release
+- Browser-based emulation
+- PWA (Progressive Web App) support
+- IndexedDB save states
+- Touch/gamepad controls
+- WebAudio API integration
 
-# Build with specific features
-wasm-pack build crates/rustynes-web --target web --features "netplay,lua"
+**Implementation Timeline:** June-December 2027 (Phase 3)
 
-# Test in browser
-cd crates/rustynes-web/www
-npm install
-npm start
-```
+### Feature Flags (To Be Implemented)
 
-### Feature Flags Reference
+Feature flags will be introduced as advanced functionality is implemented:
 
-| Feature | Description | Default |
-|---------|-------------|---------|
-| `default` | Basic emulation | ✓ |
-| `netplay` | GGPO rollback netcode | ✗ |
-| `achievements` | RetroAchievements integration | ✗ |
-| `tas` | TAS recording/playback | ✗ |
-| `lua` | Lua 5.4 scripting | ✗ |
-| `debugger` | Advanced debugging tools | ✗ |
-| `expansion-audio` | VRC6/VRC7/N163/etc. audio | ✗ |
+| Feature | Description | Phase | Status |
+|---------|-------------|-------|--------|
+| `default` | Core emulation (CPU, PPU, APU) | 1 | 🔄 In Progress |
+| `netplay` | GGPO rollback netcode | 2 | ⏳ Planned |
+| `achievements` | RetroAchievements integration | 2 | ⏳ Planned |
+| `tas` | TAS recording/playback | 2 | ⏳ Planned |
+| `lua` | Lua 5.4 scripting | 2 | ⏳ Planned |
+| `debugger` | Advanced debugging tools | 2 | ⏳ Planned |
+| `expansion-audio` | VRC6/VRC7/N163/etc. audio | 3 | ⏳ Planned |
+
+**Current Focus:** Phase 1 MVP (core emulation without feature flags)
 
 ---
 
@@ -589,8 +686,9 @@ If you use RustyNES in academic research, please cite:
   author = {RustyNES Contributors},
   title = {RustyNES: A Next-Generation NES Emulator in Rust},
   year = {2025},
+  version = {0.1.0},
   url = {https://github.com/doublegate/RustyNES},
-  note = {Cycle-accurate Nintendo Entertainment System emulator}
+  note = {Cycle-accurate Nintendo Entertainment System emulator with complete CPU and PPU implementation}
 }
 ```
 
