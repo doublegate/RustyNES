@@ -6,15 +6,34 @@ version = 2
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "deny"
-ignore = []
+# Ignore unmaintained crates that are indirect dependencies from major frameworks
+# These will be resolved when upstream crates (iced, wgpu, image) update their dependencies
+ignore = [
+    "RUSTSEC-2024-0384",  # instant - unmaintained, indirect via iced_futures->wasm-timer->parking_lot
+                          # Not a security issue, just maintenance status. Waiting for iced upstream update.
+    "RUSTSEC-2024-0436",  # paste - unmaintained, indirect via wgpu-hal->metal and ravif->rav1e
+                          # Not a security issue, just maintenance status. Waiting for wgpu/image upstream updates.
+]
 
 [licenses]
 version = 2
-# Allow dual-licensed MIT/Apache-2.0 (standard Rust licensing)
+# Allow dual-licensed MIT/Apache-2.0 (standard Rust licensing) plus compatible OSI/FSF licenses
 allow = [
     "MIT",
     "Apache-2.0",
     "Unicode-3.0",  # Used by unicode-ident crate
+    # BSD family licenses (OSI approved, FSF Free/Libre, permissive)
+    "BSD-2-Clause",  # Used by arrayref, av1-grain, rav1e, v_frame
+    "BSD-3-Clause",  # Used by bindgen, exr, instant, lebe, ravif, tiny-skia
+    # Other permissive licenses (OSI approved, FSF Free/Libre)
+    "BSL-1.0",       # Boost Software License - used by clipboard-win, error-code
+    "CC0-1.0",       # Creative Commons Zero (public domain) - used by hexf-parse
+    "ISC",           # ISC License (similar to MIT) - used by inotify, libloading
+    "Zlib",          # zlib License (permissive) - used by slotmap
+    # Weak copyleft licenses (OSI approved, FSF Free/Libre, file-level copyleft)
+    "MPL-2.0",       # Mozilla Public License 2.0 - used by option-ext, resvg, usvg
+    # LLVM ecosystem licenses
+    "NCSA",          # University of Illinois/NCSA Open Source License - used by libfuzzer-sys
 ]
 confidence-threshold = 0.8
 exceptions = []
