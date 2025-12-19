@@ -23,12 +23,14 @@
 The MOS 6502 processor has **256 possible opcodes** (8-bit opcode space), but MOS Technology officially documented only **151 instructions** (56 unique mnemonics with multiple addressing modes). The remaining **105 opcodes** are **unofficial** or **illegal** instructions that were never documented but perform predictable operations due to the 6502's microcode architecture.
 
 **Key Facts:**
+
 - Unofficial opcodes are deterministic and reliable on genuine hardware
 - Several commercial NES games use them (intentionally or via compiler bugs)
 - Emulators must implement them for 100% compatibility
 - Some opcodes are unstable and produce unpredictable results
 
 **Terminology:**
+
 - **Unofficial**: Not documented by MOS Technology
 - **Illegal**: Alternative term for unofficial
 - **Undocumented**: Another synonym
@@ -48,6 +50,7 @@ The 6502 uses a **130-entry decode ROM** that maps opcodes to microcode sequence
 3. **Predictable Behavior**: The resulting operation is the logical combination of activated microcode
 
 **Example:**
+
 ```
 Official: LDA #imm (0xA9) - Load Accumulator
 Official: LDX #imm (0xA2) - Load X Register
@@ -169,6 +172,7 @@ These opcodes lock up the CPU (should be avoided):
 #### LAX - Load A and X
 
 **Opcode Variants:**
+
 - `0xA7` - Zero Page (3 cycles)
 - `0xB7` - Zero Page,Y (4 cycles)
 - `0xAF` - Absolute (4 cycles)
@@ -177,6 +181,7 @@ These opcodes lock up the CPU (should be avoided):
 - `0xB3` - (Indirect),Y (5 cycles, +1 if page crossed)
 
 **Operation:**
+
 ```
 A = X = memory
 N = bit 7 of value
@@ -186,6 +191,7 @@ Z = (value == 0)
 **Use Case:** Load the same value into both A and X with a single instruction (saves 1 byte and 2 cycles vs. `LDA` + `TAX`).
 
 **Implementation:**
+
 ```rust
 fn lax(&mut self, bus: &mut Bus, addr: u16) {
     let value = self.read(bus, addr);
@@ -198,12 +204,14 @@ fn lax(&mut self, bus: &mut Bus, addr: u16) {
 #### SAX - Store A AND X
 
 **Opcode Variants:**
+
 - `0x87` - Zero Page (3 cycles)
 - `0x97` - Zero Page,Y (4 cycles)
 - `0x8F` - Absolute (4 cycles)
 - `0x83` - (Indirect,X) (6 cycles)
 
 **Operation:**
+
 ```
 memory = A & X
 (no flags affected)
@@ -212,6 +220,7 @@ memory = A & X
 **Use Case:** Store bitwise AND of A and X in a single operation.
 
 **Implementation:**
+
 ```rust
 fn sax(&mut self, bus: &mut Bus, addr: u16) {
     let value = self.a & self.x;
@@ -222,6 +231,7 @@ fn sax(&mut self, bus: &mut Bus, addr: u16) {
 #### DCP - Decrement and Compare
 
 **Opcode Variants:**
+
 - `0xC7` - Zero Page (5 cycles)
 - `0xD7` - Zero Page,X (6 cycles)
 - `0xCF` - Absolute (6 cycles)
@@ -231,6 +241,7 @@ fn sax(&mut self, bus: &mut Bus, addr: u16) {
 - `0xD3` - (Indirect),Y (8 cycles)
 
 **Operation:**
+
 ```
 memory = memory - 1
 CMP A, memory
@@ -240,6 +251,7 @@ CMP A, memory
 **Use Case:** Decrement a counter and immediately compare it with A (common loop pattern).
 
 **Implementation:**
+
 ```rust
 fn dcp(&mut self, bus: &mut Bus, addr: u16) {
     // Read-Modify-Write cycle
@@ -259,6 +271,7 @@ fn dcp(&mut self, bus: &mut Bus, addr: u16) {
 #### ISC - Increment and Subtract with Carry
 
 **Opcode Variants:**
+
 - `0xE7` - Zero Page (5 cycles)
 - `0xF7` - Zero Page,X (6 cycles)
 - `0xEF` - Absolute (6 cycles)
@@ -268,6 +281,7 @@ fn dcp(&mut self, bus: &mut Bus, addr: u16) {
 - `0xF3` - (Indirect),Y (8 cycles)
 
 **Operation:**
+
 ```
 memory = memory + 1
 A = A - memory - (1 - C)
@@ -277,6 +291,7 @@ A = A - memory - (1 - C)
 **Use Case:** Increment a value and subtract it from A in one instruction.
 
 **Implementation:**
+
 ```rust
 fn isc(&mut self, bus: &mut Bus, addr: u16) {
     // Increment
@@ -294,6 +309,7 @@ fn isc(&mut self, bus: &mut Bus, addr: u16) {
 #### SLO - Shift Left and OR
 
 **Opcode Variants:**
+
 - `0x07` - Zero Page (5 cycles)
 - `0x17` - Zero Page,X (6 cycles)
 - `0x0F` - Absolute (6 cycles)
@@ -303,6 +319,7 @@ fn isc(&mut self, bus: &mut Bus, addr: u16) {
 - `0x13` - (Indirect),Y (8 cycles)
 
 **Operation:**
+
 ```
 memory = memory << 1
 A = A | memory
@@ -311,6 +328,7 @@ N, Z = result flags
 ```
 
 **Implementation:**
+
 ```rust
 fn slo(&mut self, bus: &mut Bus, addr: u16) {
     // ASL
@@ -330,6 +348,7 @@ fn slo(&mut self, bus: &mut Bus, addr: u16) {
 #### RLA - Rotate Left and AND
 
 **Opcode Variants:**
+
 - `0x27` - Zero Page (5 cycles)
 - `0x37` - Zero Page,X (6 cycles)
 - `0x2F` - Absolute (6 cycles)
@@ -339,6 +358,7 @@ fn slo(&mut self, bus: &mut Bus, addr: u16) {
 - `0x33` - (Indirect),Y (8 cycles)
 
 **Operation:**
+
 ```
 memory = (memory << 1) | C
 A = A & memory
@@ -347,6 +367,7 @@ N, Z = result flags
 ```
 
 **Implementation:**
+
 ```rust
 fn rla(&mut self, bus: &mut Bus, addr: u16) {
     // ROL
@@ -367,6 +388,7 @@ fn rla(&mut self, bus: &mut Bus, addr: u16) {
 #### SRE - Shift Right and XOR
 
 **Opcode Variants:**
+
 - `0x47` - Zero Page (5 cycles)
 - `0x57` - Zero Page,X (6 cycles)
 - `0x4F` - Absolute (6 cycles)
@@ -376,6 +398,7 @@ fn rla(&mut self, bus: &mut Bus, addr: u16) {
 - `0x53` - (Indirect),Y (8 cycles)
 
 **Operation:**
+
 ```
 memory = memory >> 1
 A = A ^ memory
@@ -384,6 +407,7 @@ N, Z = result flags
 ```
 
 **Implementation:**
+
 ```rust
 fn sre(&mut self, bus: &mut Bus, addr: u16) {
     // LSR
@@ -403,6 +427,7 @@ fn sre(&mut self, bus: &mut Bus, addr: u16) {
 #### RRA - Rotate Right and Add with Carry
 
 **Opcode Variants:**
+
 - `0x67` - Zero Page (5 cycles)
 - `0x77` - Zero Page,X (6 cycles)
 - `0x6F` - Absolute (6 cycles)
@@ -412,6 +437,7 @@ fn sre(&mut self, bus: &mut Bus, addr: u16) {
 - `0x73` - (Indirect),Y (8 cycles)
 
 **Operation:**
+
 ```
 memory = (memory >> 1) | (C << 7)
 A = A + memory + C
@@ -420,6 +446,7 @@ N, V, Z, C = ADC result flags
 ```
 
 **Implementation:**
+
 ```rust
 fn rra(&mut self, bus: &mut Bus, addr: u16) {
     // ROR
@@ -439,18 +466,22 @@ fn rra(&mut self, bus: &mut Bus, addr: u16) {
 #### Unofficial NOP Variants
 
 **Single-Byte NOPs:**
+
 - `0x1A`, `0x3A`, `0x5A`, `0x7A`, `0xDA`, `0xFA` - Implied (2 cycles)
 
 **Double-Byte NOPs (DOP/SKB):**
+
 - `0x80`, `0x82`, `0x89`, `0xC2`, `0xE2` - Immediate (2 cycles)
 - `0x04`, `0x44`, `0x64` - Zero Page (3 cycles)
 - `0x14`, `0x34`, `0x54`, `0x74`, `0xD4`, `0xF4` - Zero Page,X (4 cycles)
 
 **Triple-Byte NOPs (TOP/SKW):**
+
 - `0x0C` - Absolute (4 cycles)
 - `0x1C`, `0x3C`, `0x5C`, `0x7C`, `0xDC`, `0xFC` - Absolute,X (4 cycles, +1 if page crossed)
 
 **Implementation:**
+
 ```rust
 fn nop_read(&mut self, bus: &mut Bus, addr: u16) {
     let _ = self.read(bus, addr); // Dummy read (important!)
@@ -466,11 +497,13 @@ fn nop_read(&mut self, bus: &mut Bus, addr: u16) {
 **Opcode:** `0x8B` - Immediate (2 cycles)
 
 **Operation:**
+
 ```
 A = (A | MAGIC) & X & immediate
 ```
 
 **Issue:** The `MAGIC` constant varies across different 6502 variants:
+
 - Most common: `0xEE` or `0xFF`
 - May be `0x00`, `0x11`, or other values
 - Depends on manufacturing process and individual CPU
@@ -482,6 +515,7 @@ A = (A | MAGIC) & X & immediate
 **Opcode:** `0xAB` - Immediate (2 cycles)
 
 **Operation:**
+
 ```
 A = X = (A | MAGIC) & immediate
 ```
@@ -493,12 +527,14 @@ A = X = (A | MAGIC) & immediate
 #### SHY, SHX, SHA - Unstable Stores
 
 **Opcodes:**
+
 - `0x9C` - SHY Absolute,X (5 cycles)
 - `0x9E` - SHX Absolute,Y (5 cycles)
 - `0x9F` - SHA Absolute,Y (5 cycles)
 - `0x93` - SHA (Indirect),Y (6 cycles)
 
 **Operation (SHY example):**
+
 ```
 memory[addr] = Y & (addr_high + 1)
 ```

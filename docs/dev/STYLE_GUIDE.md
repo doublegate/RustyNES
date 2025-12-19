@@ -545,6 +545,7 @@ let coarse_y = ((addr >> 5) & 0x001F) as u8;
 ### When Allowed
 
 Unsafe code is permitted only for:
+
 - FFI (rcheevos, platform APIs)
 - Performance-critical paths with proven safety
 - Hardware register simulation
@@ -593,6 +594,7 @@ Follow conventional commits:
 ```
 
 Types:
+
 - `feat`: New feature
 - `fix`: Bug fix
 - `docs`: Documentation only

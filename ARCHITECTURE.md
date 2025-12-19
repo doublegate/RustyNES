@@ -191,6 +191,7 @@ impl Console {
 The CPU module implements a cycle-accurate Ricoh 2A03 (6502 without decimal mode).
 
 **Key Features:**
+
 - Table-driven instruction dispatch
 - Exact cycle timing with page-crossing penalties
 - Dummy read/write emulation for timing accuracy
@@ -198,6 +199,7 @@ The CPU module implements a cycle-accurate Ricoh 2A03 (6502 without decimal mode
 - Support for all unofficial opcodes
 
 **Interface:**
+
 ```rust
 pub trait CpuBus {
     fn read(&mut self, addr: u16) -> u8;
@@ -233,6 +235,7 @@ See [cpu/CPU_6502.md](cpu/CPU_6502.md) for complete specification.
 The PPU module implements dot-level rendering of the Ricoh 2C02.
 
 **Key Features:**
+
 - Per-dot rendering (341 dots × 262 scanlines)
 - Accurate scrolling (Loopy's model)
 - Sprite evaluation and rendering (8-sprite limit)
@@ -240,6 +243,7 @@ The PPU module implements dot-level rendering of the Ricoh 2C02.
 - VBlank and NMI timing
 
 **Interface:**
+
 ```rust
 pub trait PpuBus {
     fn read(&mut self, addr: u16) -> u8;
@@ -282,6 +286,7 @@ See [ppu/PPU_OVERVIEW.md](ppu/PPU_OVERVIEW.md) for complete specification.
 The APU module synthesizes 5 audio channels with hardware-accurate mixing.
 
 **Key Features:**
+
 - 2× Pulse wave channels (duty cycle, sweep, envelope)
 - Triangle wave channel (linear counter)
 - Noise channel (LFSR)
@@ -290,6 +295,7 @@ The APU module synthesizes 5 audio channels with hardware-accurate mixing.
 - Expansion audio support (VRC6, MMC5, etc.)
 
 **Interface:**
+
 ```rust
 pub struct Apu {
     // Channels
@@ -493,6 +499,7 @@ sequenceDiagram
 ### Memory Access Paths
 
 **CPU Memory Read:**
+
 ```
 CPU → Bus → Match address:
     $0000-$1FFF → Internal RAM
@@ -502,6 +509,7 @@ CPU → Bus → Match address:
 ```
 
 **PPU Memory Read:**
+
 ```
 PPU → Mapper:
     $0000-$1FFF → CHR-ROM/RAM (pattern tables)
@@ -727,11 +735,13 @@ let console = ConsoleBuilder::new()
 ### Hot Path Optimization
 
 Identified hot paths (70% of execution time):
+
 1. CPU instruction dispatch (30%)
 2. PPU pixel rendering (25%)
 3. Memory bus routing (15%)
 
 **Optimization strategies:**
+
 - Inline critical functions
 - Use jump tables for dispatch
 - Minimize bounds checking
@@ -740,6 +750,7 @@ Identified hot paths (70% of execution time):
 ### Memory Layout
 
 **Cache-friendly structure:**
+
 ```rust
 // Bad: Scattered fields
 struct Cpu {
@@ -768,6 +779,7 @@ struct Cpu {
 ### Profiling Strategy
 
 Use Criterion for micro-benchmarks:
+
 ```rust
 #[bench]
 fn bench_cpu_instruction(b: &mut Bencher) {
@@ -781,6 +793,7 @@ fn bench_cpu_instruction(b: &mut Bencher) {
 ```
 
 Target metrics:
+
 - <1000 ns per CPU instruction
 - <500 ns per PPU dot
 - <16.67 ms per frame (60 FPS)

@@ -257,6 +257,7 @@ fn sprite_evaluation_with_overflow_bug(&mut self) {
 ## Sprite 0 Hit
 
 The **sprite 0 hit flag** (PPUSTATUS bit 6) is set when:
+
 1. Non-transparent pixel of sprite 0 overlaps non-transparent background pixel
 2. Hit occurs at X position 1-255 (not 0, not 256+)
 3. Rendering is enabled (background and/or sprites)
@@ -287,11 +288,13 @@ fn check_sprite_0_hit(&mut self, bg_pixel: u8, sprite_pixel: u8, x: u16) {
 ### Practical Usage
 
 Sprite 0 hit is commonly used for:
+
 - **Split-screen scrolling** (status bar at top)
 - **Scanline detection** (trigger IRQ at specific scanline)
 - **Parallax effects**
 
 **Example:**
+
 ```rust
 // Wait for sprite 0 hit
 while (bus.read(0x2002) & 0x40) == 0 { }

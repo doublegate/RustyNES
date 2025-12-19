@@ -30,6 +30,7 @@ The **Ricoh 2A03** (NTSC) and **2A07** (PAL) are the CPUs used in the NES, which
 5. **DMC** - Delta Modulation Channel (sample playback)
 
 **Key Characteristics:**
+
 - Hardware synthesis (no PCM sample memory)
 - Real-time mixing of all channels
 - Frame counter for envelope/sweep updates
@@ -80,12 +81,14 @@ Dynamic Range:    ~15-bit (after mixing)
 Square wave generators with **duty cycle control** and **frequency sweep**:
 
 **Features:**
+
 - 4 duty cycles: 12.5%, 25%, 50%, 75%
 - Hardware envelope generator (volume fade)
 - Frequency sweep (pitch bend)
 - Length counter (note duration)
 
 **Typical Uses:**
+
 - Melody (Pulse 1)
 - Harmony (Pulse 2)
 - Sound effects
@@ -95,11 +98,13 @@ Square wave generators with **duty cycle control** and **frequency sweep**:
 Triangle wave generator with **no volume control**:
 
 **Features:**
+
 - Fixed volume (always maximum or silent)
 - Linear counter (alternative to length counter)
 - Higher frequency range than pulse channels
 
 **Typical Uses:**
+
 - Bass lines
 - Low-frequency sound effects
 - Percussion (combined with noise)
@@ -109,11 +114,13 @@ Triangle wave generator with **no volume control**:
 Pseudo-random noise generator using **Linear Feedback Shift Register (LFSR)**:
 
 **Features:**
+
 - Two modes: 15-bit (long period) and 6-bit (short period)
 - Hardware envelope
 - Length counter
 
 **Typical Uses:**
+
 - Percussion (drums, cymbals)
 - Explosions
 - Wind/water effects
@@ -123,12 +130,14 @@ Pseudo-random noise generator using **Linear Feedback Shift Register (LFSR)**:
 1-bit delta-encoded sample playback from CPU memory:
 
 **Features:**
+
 - 16 sample rates (4.2 kHz - 33.1 kHz)
 - Reads samples via DMA (steals CPU cycles)
 - 7-bit output level
 - Loop support
 
 **Typical Uses:**
+
 - Drum samples
 - Voice clips
 - Sound effects
@@ -173,6 +182,7 @@ The APU is controlled via **24 memory-mapped registers** at CPU addresses `$4000
 #### $4015 - Status/Enable
 
 **Write:**
+
 ```
 ---D NT21
    | ||||
@@ -184,6 +194,7 @@ The APU is controlled via **24 memory-mapped registers** at CPU addresses `$4000
 ```
 
 **Read:**
+
 ```
 IF-D NT21
 |||| ||||
@@ -198,6 +209,7 @@ IF-D NT21
 ```
 
 **Important:** Writing to $4015:
+
 - Clears DMC interrupt flag
 - If a channel is disabled, its length counter is set to 0
 - If DMC is enabled while bytes remaining = 0, restarts sample
@@ -212,6 +224,7 @@ MI-- ----
 ```
 
 **Modes:**
+
 - **4-step mode**: 4 quarter frames, generates IRQ
 - **5-step mode**: 5 quarter frames, no IRQ
 
@@ -337,6 +350,7 @@ output = pulse_out + tnd_out
 ```
 
 **Simplified Integer Implementation:**
+
 ```rust
 fn mix_channels(&self) -> f32 {
     // Pulse channels
@@ -411,6 +425,7 @@ Cycle 4: Read sample byte from memory
 
 **Conflict with OAM DMA:**
 If DMC DMA occurs during OAM DMA, the total stall can be:
+
 - Best case: +2 cycles
 - Worst case: +4 cycles
 

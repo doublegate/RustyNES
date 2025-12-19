@@ -31,6 +31,7 @@ The NES uses **two independent bus systems**:
 These buses operate **independently** but are **coordinated** through memory-mapped PPU registers ($2000-$2007) on the CPU bus.
 
 **Key Concepts:**
+
 - Address mirroring (RAM, PPU registers)
 - Open bus behavior (unconnected addresses)
 - Bus conflicts (simultaneous reads/writes)
@@ -57,6 +58,7 @@ CPU Bus (40-pin 6502):
 ### Bus Timing
 
 **Read Cycle:**
+
 ```
 Clock 1:  Address output on A0-A15
           R/W = 1
@@ -65,6 +67,7 @@ Clock 2:  CPU samples data
 ```
 
 **Write Cycle:**
+
 ```
 Clock 1:  Address output on A0-A15
           R/W = 0
@@ -117,6 +120,7 @@ Phase 2 (ALE low):  AD0-AD7 = data
 **Critical:** CPU bus and PPU bus operate **completely independently**. CPU accesses PPU registers ($2000-$2007), which **internally** trigger PPU bus operations.
 
 **Example: VRAM Read**
+
 ```
 CPU writes $20 to $2006  → PPU latches address high byte
 CPU writes $00 to $2006  → PPU latches address low byte
@@ -150,15 +154,18 @@ $8000-$FFFF   Cartridge PRG-ROM (32 KB typical)
 ### RAM Organization
 
 **Zero Page ($0000-$00FF):**
+
 - Fast access (2 cycles vs 4 for absolute addressing)
 - Used for variables, pointers, temporary storage
 
 **Stack ($0100-$01FF):**
+
 - Hardware stack (SP register = $01xx)
 - Grows downward from $01FF
 - Used by JSR, RTS, interrupts, PHA/PLA
 
 **General RAM ($0200-$07FF):**
+
 - $0200-$02FF: OAM buffer (sprite data for DMA)
 - $0300-$07FF: Variables, buffers, game data
 
@@ -174,6 +181,7 @@ $1800-$1FFF = Mirror 3
 ```
 
 **Address Calculation:**
+
 ```rust
 fn map_ram_address(addr: u16) -> u16 {
     addr & 0x07FF  // Mask to 2 KB
@@ -193,6 +201,7 @@ $3FF8-$3FFF = Mirror
 ```
 
 **Address Calculation:**
+
 ```rust
 fn map_ppu_register(addr: u16) -> u16 {
     0x2000 | (addr & 0x07)  // Mask to 8 registers
@@ -202,11 +211,13 @@ fn map_ppu_register(addr: u16) -> u16 {
 ### Cartridge Space
 
 **SRAM ($6000-$7FFF):**
+
 - Battery-backed save RAM
 - 8 KB typical (some mappers support more)
 - Read/write access
 
 **PRG-ROM ($8000-$FFFF):**
+
 - Program code and data
 - 32 KB typical (banked by mappers)
 - Read-only (bus conflict if writing)
@@ -256,6 +267,7 @@ Accessed by PPU during rendering for tile graphics.
 **Physical VRAM:** 2 KB in NES (enough for 2 nametables)
 
 **Mirroring Modes:**
+
 - **Horizontal:** NT0=NT1, NT2=NT3 (vertical scrolling)
 - **Vertical:** NT0=NT2, NT1=NT3 (horizontal scrolling)
 - **Single-screen:** All nametables map to one (fixed screen)
@@ -264,6 +276,7 @@ Accessed by PPU during rendering for tile graphics.
 ### Palette RAM
 
 **32 bytes of palette memory:**
+
 ```
 $3F00-$3F0F: Background palettes (4 palettes × 4 colors)
 $3F10-$3F1F: Sprite palettes (4 palettes × 4 colors)
@@ -283,6 +296,7 @@ The NES has **two DMA units**:
 ### CPU Halting Mechanism
 
 DMA halts the CPU using the **RDY pin**:
+
 ```
 RDY asserted (high):   CPU runs normally
 RDY deasserted (low):  CPU halts (repeats last read cycle)
@@ -305,11 +319,13 @@ Phase:      │get│put │get│put │get│put │get│put │
 ### OAM DMA ($4014)
 
 **Trigger:** Write page number to $4014
+
 ```rust
 cpu.write(0x4014, 0x02);  // Copy $0200-$02FF to OAM
 ```
 
 **Process:**
+
 ```
 1. Halt CPU on next cycle
 2. Alignment cycle (if next cycle is put)
@@ -319,6 +335,7 @@ cpu.write(0x4014, 0x02);  // Copy $0200-$02FF to OAM
 ```
 
 **Total Cycles:**
+
 - Even CPU cycle at write: 513 cycles (no alignment)
 - Odd CPU cycle at write: 514 cycles (1 alignment)
 
@@ -345,6 +362,7 @@ Cycle   Action
 **Trigger:** DMC audio channel sample buffer empty
 
 **Process:**
+
 ```
 1. Halt CPU
 2. Dummy cycle
@@ -360,6 +378,7 @@ Cycle   Action
 ### DMA Conflicts
 
 **OAM DMA + DMC DMA:**
+
 ```
 If DMC sample fetch occurs during OAM DMA:
   - DMC gets priority
@@ -373,11 +392,13 @@ If DMC sample fetch occurs during OAM DMA:
 **Critical Issue:** While CPU is halted, it **repeats the read cycle**, which can trigger side effects:
 
 **Affected Registers:**
+
 - $4016/$4017 (Controllers): Extra clock pulses
 - $2002 (PPU Status): Clears VBlank flag multiple times
 - $2007 (PPU Data): Increments address
 
 **Hardware Difference:**
+
 - **2A03 (NTSC):** Repeated reads are externally visible
 - **2A07 (PAL):** Reportedly fixes this issue
 
@@ -392,6 +413,7 @@ If DMC sample fetch occurs during OAM DMA:
 **Definition:** Reading from unmapped memory returns the **last value on the data bus**.
 
 **Mechanism:**
+
 ```rust
 let last_value = cpu.last_bus_value;  // Decays over time
 
@@ -403,6 +425,7 @@ match address {
 ```
 
 **Typical Values:**
+
 - Last instruction's operand high byte
 - Last read data value
 - 0xFF (if bus has decayed)
@@ -412,6 +435,7 @@ match address {
 The PPU has **two separate buses** with different open bus behavior:
 
 **I/O Bus (CPU side):**
+
 ```
 Reading $2002: Bits 7-5 = status, bits 4-0 = open bus
 Reading $2004: Bits 7-0 = OAM data (or open bus during rendering)
@@ -419,6 +443,7 @@ Reading $2007: Bits 7-0 = buffered VRAM data
 ```
 
 **Video Bus (PPU side):**
+
 ```
 Reading from unmapped VRAM: Returns low byte of address
 Example: Read from $1234 (unmapped) → returns $34
@@ -459,6 +484,7 @@ Result on bus:      $FF AND $FF = $42 (WRONG!)
 ### Conflict-Prone Scenarios
 
 **Mapper Register Writes:**
+
 ```rust
 // WRONG: Writing to ROM without ensuring data matches
 cpu.write(0x8000, 0x01);  // Select bank 1
@@ -469,6 +495,7 @@ cpu.write(0x8000 | (bank as u16), bank);  // ROM contains $01 at $8001
 ```
 
 **Common Mappers with Conflicts:**
+
 - **Mapper 0 (NROM):** No writable registers (no conflict)
 - **Mapper 2 (UxROM):** Conflicts if write value ≠ ROM value
 - **Mapper 3 (CNROM):** Conflicts if write value ≠ ROM value
@@ -477,6 +504,7 @@ cpu.write(0x8000 | (bank as u16), bank);  // ROM contains $01 at $8001
 ### Avoiding Bus Conflicts
 
 **Strategy 1: Match ROM Data**
+
 ```rust
 // Ensure ROM at write address contains the value being written
 rom[0x8000] = 0x00;
@@ -488,12 +516,14 @@ cpu.write(0x8000 | (bank as u16), bank);
 ```
 
 **Strategy 2: Use Writable RAM**
+
 ```rust
 // Some mappers provide writable registers at $6000-$7FFF
 cpu.write(0x6000, bank);  // No conflict (RAM, not ROM)
 ```
 
 **Strategy 3: Ignore Conflicts**
+
 ```rust
 // If ROM data matches write data, conflict is harmless
 // Games often write same value to multiple addresses

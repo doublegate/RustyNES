@@ -1,6 +1,7 @@
 # Debugging RustyNES
 
 **Table of Contents**
+
 - [Overview](#overview)
 - [Built-in Debugger](#built-in-debugger)
 - [Logging](#logging)
@@ -22,11 +23,13 @@ RustyNES provides comprehensive debugging tools for both developers and users tr
 ### Activating the Debugger
 
 **Compile with debugger feature**:
+
 ```bash
 cargo build --features debugger
 ```
 
 **Launch with debugger**:
+
 ```bash
 rustynes --debug rom.nes
 ```
@@ -34,6 +37,7 @@ rustynes --debug rom.nes
 ### Debugger Features
 
 **CPU Debugger**:
+
 - Disassembly view
 - Register inspection
 - Breakpoints (PC, memory read/write)
@@ -41,6 +45,7 @@ rustynes --debug rom.nes
 - Stack viewer
 
 **PPU Debugger**:
+
 - Nametable viewer
 - Pattern table viewer
 - Sprite viewer (OAM)
@@ -48,6 +53,7 @@ rustynes --debug rom.nes
 - VRAM inspector
 
 **Memory Viewer**:
+
 - CPU address space ($0000-$FFFF)
 - PPU address space ($0000-$3FFF)
 - Cartridge RAM/ROM
@@ -55,6 +61,7 @@ rustynes --debug rom.nes
 ### Debugger Commands
 
 **Execution Control**:
+
 ```
 s / step    - Step one instruction
 n / next    - Step over (JSR)
@@ -63,6 +70,7 @@ p / pause   - Pause execution
 ```
 
 **Breakpoints**:
+
 ```
 bp <addr>        - Set breakpoint at address
 bp del <addr>    - Delete breakpoint
@@ -71,6 +79,7 @@ watch <addr>     - Break on memory write
 ```
 
 **Inspection**:
+
 ```
 r / regs         - Display CPU registers
 m <addr> [len]   - Display memory
@@ -85,6 +94,7 @@ ppu              - Display PPU state
 ### Enable Logging
 
 **Environment variable**:
+
 ```bash
 RUST_LOG=debug cargo run -- rom.nes
 RUST_LOG=rustynes::cpu=trace cargo run -- rom.nes
@@ -119,6 +129,7 @@ trace - Extremely verbose (per-instruction)
 **Symptoms**: Incorrect sprites, background corruption
 
 **Debugging**:
+
 1. Enable PPU debugger
 2. Check pattern tables (correct tiles loaded?)
 3. Check nametables (correct tile IDs?)
@@ -126,6 +137,7 @@ trace - Extremely verbose (per-instruction)
 5. Check PPU register writes
 
 **Common Causes**:
+
 - PPU timing errors
 - Incorrect scrolling implementation
 - CHR banking bugs (mappers)
@@ -135,12 +147,14 @@ trace - Extremely verbose (per-instruction)
 **Symptoms**: Missing sound, distorted audio
 
 **Debugging**:
+
 1. Check APU register writes
 2. Verify channel enable flags ($4015)
 3. Check frame counter mode
 4. Inspect channel waveforms
 
 **Common Causes**:
+
 - APU timing errors
 - Incorrect mixer output
 - Sample rate mismatch
@@ -150,11 +164,13 @@ trace - Extremely verbose (per-instruction)
 **Symptoms**: Controller unresponsive
 
 **Debugging**:
+
 1. Log $4016/$4017 reads/writes
 2. Verify strobe sequence
 3. Check button state propagation
 
 **Common Causes**:
+
 - Missing strobe write
 - Incorrect read sequence
 - DPCM conflict (rare)
@@ -166,6 +182,7 @@ trace - Extremely verbose (per-instruction)
 ### Trace Logging
 
 **CPU trace** (compare with golden log):
+
 ```rust
 fn log_cpu_state(&self) {
     println!(
@@ -176,6 +193,7 @@ fn log_cpu_state(&self) {
 ```
 
 **Compare with nestest.log**:
+
 ```bash
 cargo run -- nestest.nes --log-cpu > output.log
 diff output.log nestest.log.golden
@@ -215,17 +233,20 @@ fn dump_ppu_state(&self) {
 ### Using nestest
 
 **Run with logging**:
+
 ```bash
 cargo run --release -- tests/roms/nestest.nes --automation
 ```
 
 **Expected output**:
+
 ```
 [PASS] nestest automated test
 All 8000+ instructions validated
 ```
 
 **On failure**:
+
 ```
 [FAIL] nestest: Mismatch at line 4523
 Expected: A:42 X:00 Y:00 P:24 SP:FD
@@ -235,11 +256,13 @@ Got:      A:43 X:00 Y:00 P:24 SP:FD
 ### blargg Tests
 
 **Run specific test**:
+
 ```bash
 cargo test --test blargg_cpu_exec_space
 ```
 
 **Interpret results**:
+
 - Test writes status to $6000
 - $00 = Pass
 - $01-$FF = Failure code
@@ -252,6 +275,7 @@ cargo test --test blargg_cpu_exec_space
 ### CPU Profiling (Linux)
 
 **Using perf**:
+
 ```bash
 cargo build --release
 perf record -g ./target/release/rustynes rom.nes
@@ -259,6 +283,7 @@ perf report
 ```
 
 **Using flamegraph**:
+
 ```bash
 cargo install flamegraph
 cargo flamegraph --bin rustynes -- rom.nes
@@ -267,6 +292,7 @@ cargo flamegraph --bin rustynes -- rom.nes
 ### Memory Profiling
 
 **Using valgrind (massif)**:
+
 ```bash
 valgrind --tool=massif ./target/release/rustynes rom.nes
 ms_print massif.out.<pid>
@@ -283,6 +309,7 @@ ms_print massif.out.<pid>
 ---
 
 **Related Documents**:
+
 - [TESTING.md](TESTING.md) - Test suite
 - [BUILD.md](BUILD.md) - Build instructions
 - [CONTRIBUTING.md](CONTRIBUTING.md) - Development workflow

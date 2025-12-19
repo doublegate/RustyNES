@@ -27,6 +27,7 @@
 The NES APU contains **one noise channel** that generates pseudo-random waveforms using a Linear Feedback Shift Register (LFSR). This channel is primarily used for percussion, explosions, and environmental sound effects.
 
 **Key Characteristics:**
+
 - 15-bit Linear Feedback Shift Register (LFSR)
 - Two modes: 32,767-step or 93-step sequences
 - Hardware envelope generator (volume control)
@@ -64,12 +65,14 @@ The noise channel consists of **five interconnected units**:
 ```
 
 **Signal Flow:**
+
 1. **Timer** counts down using selected period from lookup table
 2. **LFSR** shifts and generates pseudo-random bit (0 or 1)
 3. **Envelope** scales output by volume (0-15)
 4. **Length Counter** gates the output
 
 **Gating Logic:**
+
 ```
 Output = (LFSR bit 0 == 0) × Envelope × (Length > 0)
 ```
@@ -100,6 +103,7 @@ Output = (LFSR bit 0 == 0) × Envelope × (Length > 0)
 ```
 
 **Bit Definitions:**
+
 - **L (Loop)**: If 1, length counter is frozen and envelope loops
 - **C (Constant)**: If 1, volume = VVVV; if 0, envelope generates volume
 - **VVVV (Volume)**: Constant volume value OR envelope divider period
@@ -120,6 +124,7 @@ L--- PPPP
 ```
 
 **Bit Definitions:**
+
 - **L (Mode)**: Determines LFSR feedback tap
   - 0: XOR bits 0 and 1 (32,767-step sequence)
   - 1: XOR bits 0 and 6 (93 or 31-step sequence)
@@ -134,6 +139,7 @@ LLLL L---
 ```
 
 **Side Effects of Writing:**
+
 - Length counter is loaded from lookup table
 - **Envelope restarts** (sets divider to reload value)
 
@@ -166,6 +172,7 @@ A **Linear Feedback Shift Register** is a shift register with its input bit dete
 On each timer clock:
 
 **1. Feedback Calculation:**
+
 ```rust
 let bit0 = lfsr & 1;
 let feedback = if mode == 0 {
@@ -176,11 +183,13 @@ let feedback = if mode == 0 {
 ```
 
 **2. Shift Right:**
+
 ```rust
 lfsr >>= 1;
 ```
 
 **3. Insert Feedback:**
+
 ```rust
 if feedback {
     lfsr |= 0x4000;  // Set bit 14
@@ -190,6 +199,7 @@ if feedback {
 ### Initialization
 
 On power-up or reset:
+
 ```rust
 lfsr = 1;
 ```
@@ -253,6 +263,7 @@ impl NoiseChannel {
 **Sound Character:** White noise (broadband spectrum)
 
 **Use Cases:**
+
 - White noise effects (wind, static)
 - Cymbals and hi-hats
 - Explosion sounds
@@ -269,6 +280,7 @@ impl NoiseChannel {
 **Sound Character:** Metallic, periodic tone
 
 **Use Cases:**
+
 - Metallic percussion (snare drums)
 - Laser/electric sounds
 - Robot/mechanical effects
@@ -279,10 +291,12 @@ impl NoiseChannel {
 ### Sequence Length Analysis
 
 **Mode 0 (bits 0, 1):**
+
 - Maximum-length sequence: 2^15 - 1 = 32,767 steps
 - Covers all non-zero 15-bit values exactly once
 
 **Mode 1 (bits 0, 6):**
+
 - Not maximum-length: typically 93 steps
 - Can also produce 31-step sequence
 - Depends on LFSR seed value
@@ -303,11 +317,13 @@ The noise channel envelope is **identical to pulse channels**. See [APU_CHANNEL_
 ### Quick Reference
 
 **Mode 1: Constant Volume (C=1)**
+
 ```
 Output = VVVV (0-15)
 ```
 
 **Mode 2: Envelope Volume (C=0)**
+
 ```
 Output = Decay Level (15 → 0 over time)
 Clock: 240 Hz (NTSC quarter frames)
@@ -388,6 +404,7 @@ See [APU_CHANNEL_PULSE.md](APU_CHANNEL_PULSE.md#length-counter) for complete det
 The noise channel timer uses **fixed period values** selected by index (0-15):
 
 **NTSC Periods (CPU cycles):**
+
 ```rust
 const NOISE_PERIOD_NTSC: [u16; 16] = [
     4, 8, 16, 32, 64, 96, 128, 160,
@@ -396,6 +413,7 @@ const NOISE_PERIOD_NTSC: [u16; 16] = [
 ```
 
 **PAL Periods (CPU cycles):**
+
 ```rust
 const NOISE_PERIOD_PAL: [u16; 16] = [
     4, 8, 14, 30, 60, 88, 118, 148,
@@ -406,6 +424,7 @@ const NOISE_PERIOD_PAL: [u16; 16] = [
 ### Frequency Calculation
 
 **NTSC:**
+
 ```
 f_noise = f_CPU / (period × 2)
        = 1,789,773 / (period × 2)
@@ -438,6 +457,7 @@ Example (period index $0F):
 | $0F | 4068 | 440 Hz | 3778 | 440 Hz | Deep rumble |
 
 **Typical Usage:**
+
 - $00-$04: Cymbals, hi-hats (very short periods)
 - $05-$09: Snare drums
 - $0A-$0C: Tom drums
@@ -654,6 +674,7 @@ if cpu_cycle % 2 == 1 {
 ### Manual Testing
 
 **Mode 0 Test (White Noise):**
+
 ```
 Set: Mode=0, Period=$08, Volume=15
 Play for 1 second
@@ -661,6 +682,7 @@ Verify: Broadband white noise, no tonal quality
 ```
 
 **Mode 1 Test (Metallic Tone):**
+
 ```
 Set: Mode=1, Period=$08, Volume=15
 Play for 1 second
@@ -668,6 +690,7 @@ Verify: Metallic, periodic tone with clear pitch
 ```
 
 **Envelope Test:**
+
 ```
 Set: Mode=0, Period=$0A, Constant=0, Volume=15
 Trigger with $400F
@@ -675,6 +698,7 @@ Verify: Noise fades from loud to silent over ~1 second
 ```
 
 **Period Sweep Test:**
+
 ```
 For period in 0..16:
     Set period, play 500ms

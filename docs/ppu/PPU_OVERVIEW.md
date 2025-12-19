@@ -31,6 +31,7 @@ The **Ricoh 2C02** (NTSC) and **2C07** (PAL) are the Picture Processing Units us
 - Provides **VBlank interrupt** for timing game logic
 
 **Key Characteristics:**
+
 - Dot-level rendering (341 dots per scanline, 262 scanlines per frame)
 - Parallel processing (background and sprite evaluation occur simultaneously)
 - Limited sprite capacity (8 sprites per scanline, 64 total)
@@ -141,6 +142,7 @@ BGRs bMmG
 ```
 
 **Usage:**
+
 ```rust
 const SHOW_BACKGROUND: u8 = 0b0000_1000;
 const SHOW_SPRITES: u8    = 0b0001_0000;
@@ -165,11 +167,13 @@ VSO. ....
 ```
 
 **Important Side Effects:**
+
 - Reading `$2002` clears the VBlank flag (bit 7)
 - Reading `$2002` resets the `$2005`/`$2006` write latch
 - Race condition: Reading on same cycle VBlank is set suppresses NMI
 
 **Implementation:**
+
 ```rust
 fn read_status(&mut self) -> u8 {
     let status = self.status_register;
@@ -223,6 +227,7 @@ Second write: Low byte (bits 7-0 of address)
 **Address Range:** `$0000-$3FFF` (16 KB address space, mirrored)
 
 **Example:**
+
 ```rust
 // Set address to $2400
 ppu.write(0x2006, 0x24); // High byte
@@ -254,6 +259,7 @@ Second read: Returns previous VRAM value
 **Exception:** Reading palette data (`$3F00-$3FFF`) returns immediately without buffering.
 
 **Implementation:**
+
 ```rust
 fn read_ppudata(&mut self) -> u8 {
     let addr = self.vram_addr & 0x3FFF;
@@ -313,6 +319,7 @@ Example Tile:
 ```
 
 **Memory Layout:**
+
 - Pattern Table 0: `$0000-$0FFF` (256 tiles)
 - Pattern Table 1: `$1000-$1FFF` (256 tiles)
 
@@ -321,12 +328,14 @@ Example Tile:
 **Nametables** define which tiles appear on screen. The NES has **2 KB internal VRAM**, enough for 2 nametables. The other 2 are **mirrored**.
 
 **Nametable Structure** (1024 bytes):
+
 ```
 $0000-$03BF  Tile indices (32×30 = 960 bytes)
 $03C0-$03FF  Attribute table (64 bytes)
 ```
 
 **Mirroring Modes:**
+
 - **Horizontal:** `$2000=$2400`, `$2800=$2C00` (vertical scrolling games)
 - **Vertical:** `$2000=$2800`, `$2400=$2C00` (horizontal scrolling games)
 - **Single-Screen:** All nametables mirror the same 1 KB
@@ -349,6 +358,7 @@ Each byte controls a 4×4 tile area (32×32 pixels):
 ```
 
 **Attribute Table Address Calculation:**
+
 ```rust
 fn attribute_address(nametable_base: u16, tile_x: u8, tile_y: u8) -> u16 {
     let attr_x = tile_x / 4;
@@ -376,6 +386,7 @@ $3F1D-$3F1F  Sprite palette 3
 ```
 
 **Special Addresses:**
+
 - `$3F00`, `$3F04`, `$3F08`, `$3F0C`: Mirror the universal background color
 - `$3F10`, `$3F14`, `$3F18`, `$3F1C`: Also mirror the universal background color
 - Color `0` of each palette is transparent for sprites
@@ -427,6 +438,7 @@ Dots 65-256:   Scan primary OAM (64 sprites)
 ```
 
 **Sprite 0 Hit:**
+
 - Detects when sprite 0 (first sprite in OAM) overlaps non-transparent background pixel
 - Used for split-screen effects and raster timing
 - Set during rendering, cleared at dot 1 of pre-render scanline
@@ -486,6 +498,7 @@ Bit layout: %00BBGGRR
 ```
 
 **Special Colors:**
+
 - `$0D`: True black (safe for all TVs)
 - `$0E`, `$0F`: "Blacker than black" (may cause issues on some displays)
 - `$1D`, `$2D`, `$3D`: Equivalent to `$0D`

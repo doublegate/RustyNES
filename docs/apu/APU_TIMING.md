@@ -28,6 +28,7 @@ The APU operates on the **CPU clock** (1.789773 MHz for NTSC) and generates audi
 - **DMA Timing** - DMC sample reads and CPU stalls
 
 **Key Timing Points:**
+
 - Frame counter divides time into quarter-frames and half-frames
 - Channels run at different clock rates (pulse/noise/DMC vs. triangle)
 - Sample generation requires resampling from ~1.79 MHz to 48 kHz
@@ -86,11 +87,13 @@ Frame time: 29,829 CPU cycles (~16.67 ms)
 ```
 
 **IRQ Behavior:**
+
 - Frame IRQ flag set on cycle 29829
 - Flag persists for 3 CPU cycles (29829-29831)
 - IRQ triggered if not inhibited
 
 **Implementation:**
+
 ```rust
 pub fn clock_frame_counter_mode0(&mut self) {
     self.frame_cycle += 1;
@@ -141,6 +144,7 @@ No IRQ generation
 **Important:** 5-step mode does NOT generate IRQ.
 
 **Implementation:**
+
 ```rust
 pub fn clock_frame_counter_mode1(&mut self) {
     self.frame_cycle += 1;
@@ -174,11 +178,13 @@ MI-- ----
 ```
 
 **Write Side Effects:**
+
 - If written with mode 1 or IRQ inhibit 1: clear frame IRQ flag
 - If written with mode 1: immediately clock quarter frame and half frame
 - Reset frame counter divider (occurs 3-4 CPU cycles after write)
 
 **Implementation:**
+
 ```rust
 pub fn write_frame_counter(&mut self, value: u8) {
     let mode = (value & 0x80) != 0;
@@ -220,6 +226,7 @@ Example (Pulse, period = 500):
 ```
 
 **Timer Clock:**
+
 ```rust
 impl PulseChannel {
     pub fn clock_timer(&mut self) {
@@ -247,6 +254,7 @@ Example (Triangle, period = 1000):
 ```
 
 **Timer Clock:**
+
 ```rust
 impl Apu {
     pub fn step(&mut self, cpu_cycles: u8) {
@@ -394,6 +402,7 @@ Cycle 29832: Reset frame counter, IRQ flag cleared (if not re-triggered)
 ```
 
 **IRQ Polling:**
+
 ```rust
 pub fn irq_pending(&self) -> bool {
     (!self.irq_inhibit && self.frame_irq) || self.dmc_irq
@@ -401,6 +410,7 @@ pub fn irq_pending(&self) -> bool {
 ```
 
 **Clearing IRQ:**
+
 - Reading $4015 clears frame IRQ flag
 - Writing to $4017 with IRQ inhibit = 1 clears frame IRQ flag
 
@@ -416,6 +426,7 @@ Sample playback:
 ```
 
 **DMC IRQ Handling:**
+
 ```rust
 impl DmcChannel {
     pub fn on_sample_complete(&mut self) {
@@ -431,6 +442,7 @@ impl DmcChannel {
 ```
 
 **Clearing DMC IRQ:**
+
 - Writing to $4015 clears DMC IRQ flag
 
 ---

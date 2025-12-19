@@ -84,6 +84,7 @@ gantt
 ### Month 1-2: CPU Implementation
 
 **Deliverables:**
+
 - [ ] Cycle-accurate 6502 core
 - [ ] All official instructions (56 opcodes)
 - [ ] Unofficial opcodes (100+ variants)
@@ -92,6 +93,7 @@ gantt
 - [ ] Pass all Blargg CPU tests
 
 **Test ROMs:**
+
 - nestest.nes (automated mode)
 - instr_test-v5 (all official instructions)
 - cpu_interrupts_v2
@@ -99,6 +101,7 @@ gantt
 - cpu_exec_space
 
 **Acceptance Criteria:**
+
 - [ ] 100% nestest.nes match
 - [ ] All Blargg CPU tests pass
 - [ ] Unit tests for each instruction
@@ -107,6 +110,7 @@ gantt
 ### Month 2-4: PPU Implementation
 
 **Deliverables:**
+
 - [ ] Dot-level rendering (341×262 scanlines)
 - [ ] Background rendering (pattern fetch, scrolling)
 - [ ] Sprite rendering (evaluation, priority, sprite 0 hit)
@@ -115,6 +119,7 @@ gantt
 - [ ] Pass all Blargg PPU tests
 
 **Test ROMs:**
+
 - ppu_vbl_nmi
 - ppu_sprite_hit
 - ppu_sprite_overflow
@@ -123,6 +128,7 @@ gantt
 - oam_stress
 
 **Acceptance Criteria:**
+
 - [ ] All Blargg PPU tests pass
 - [ ] Sprite 0 hit works in Super Mario Bros.
 - [ ] Scrolling works in Zelda, Metroid
@@ -131,6 +137,7 @@ gantt
 ### Month 3-5: APU Implementation
 
 **Deliverables:**
+
 - [ ] Pulse channels (duty, envelope, sweep)
 - [ ] Triangle channel (linear counter)
 - [ ] Noise channel (LFSR)
@@ -140,6 +147,7 @@ gantt
 - [ ] 48 kHz output with resampling
 
 **Test ROMs:**
+
 - apu_test
 - blargg_apu_2005.07.30
 - dmc_tests
@@ -147,6 +155,7 @@ gantt
 - len_halt_timing
 
 **Acceptance Criteria:**
+
 - [ ] 95%+ Blargg APU tests pass
 - [ ] Music sounds correct in 10 test games
 - [ ] <20ms audio latency
@@ -155,6 +164,7 @@ gantt
 ### Month 4-6: Mappers & Integration
 
 **Deliverables:**
+
 - [ ] Mapper 0 (NROM) - 9.5% of games
 - [ ] Mapper 1 (MMC1/SxROM) - 27.9%
 - [ ] Mapper 2 (UxROM) - 10.6%
@@ -164,6 +174,7 @@ gantt
 - [ ] Save state support
 
 **Test Games:**
+
 - Super Mario Bros. (Mapper 0)
 - Legend of Zelda (Mapper 1)
 - Mega Man (Mapper 1)
@@ -171,6 +182,7 @@ gantt
 - Super Mario Bros. 3 (Mapper 4)
 
 **Acceptance Criteria:**
+
 - [ ] All 5 mappers fully functional
 - [ ] 100+ games playable
 - [ ] Save states work correctly
@@ -179,6 +191,7 @@ gantt
 ### Month 5-6: Desktop GUI
 
 **Deliverables:**
+
 - [ ] egui-based interface
 - [ ] wgpu rendering backend
 - [ ] SDL2 or cpal audio output
@@ -187,6 +200,7 @@ gantt
 - [ ] File browser for ROM loading
 
 **Features:**
+
 - [ ] Menu bar (File, Emulation, Settings)
 - [ ] Video settings (scale, filters)
 - [ ] Audio settings (volume, sample rate)
@@ -195,6 +209,7 @@ gantt
 - [ ] Screenshot capture
 
 **Acceptance Criteria:**
+
 - [ ] 60 FPS gameplay on mid-range hardware
 - [ ] No audio crackling
 - [ ] Gamepad auto-detection works
@@ -203,6 +218,7 @@ gantt
 ### Phase 1 Milestone: MVP Release
 
 **Release Checklist:**
+
 - [ ] Pass 85% of TASVideos test suite
 - [ ] 80%+ game compatibility (500+ games playable)
 - [ ] User documentation complete
@@ -219,6 +235,7 @@ gantt
 ### Month 7-8: RetroAchievements
 
 **Deliverables:**
+
 - [ ] rcheevos FFI integration
 - [ ] Achievement detection logic
 - [ ] UI notifications (toast popups)
@@ -227,6 +244,7 @@ gantt
 - [ ] Rich presence
 
 **Acceptance Criteria:**
+
 - [ ] Achievements unlock correctly in 10 test games
 - [ ] No false positives/negatives
 - [ ] Leaderboard submissions work
@@ -235,6 +253,7 @@ gantt
 ### Month 7-9: Netplay (GGPO)
 
 **Deliverables:**
+
 - [ ] backroll-rs integration (Rust GGPO port)
 - [ ] Save state serialization
 - [ ] Input prediction/rollback
@@ -243,6 +262,7 @@ gantt
 - [ ] NAT traversal (STUN/TURN)
 
 **Acceptance Criteria:**
+
 - [ ] 1-2 frame input lag over LAN
 - [ ] <5 frame rollback on 100ms ping
 - [ ] No desyncs in 30-minute sessions
@@ -251,6 +271,7 @@ gantt
 ### Month 8-9: TAS Tools
 
 **Deliverables:**
+
 - [ ] FM2 movie recording
 - [ ] FM2 playback
 - [ ] Frame advance
@@ -260,6 +281,7 @@ gantt
 - [ ] Cheat search
 
 **Acceptance Criteria:**
+
 - [ ] Can record and replay TAS movies
 - [ ] Deterministic execution (same inputs → same output)
 - [ ] Frame-perfect input timing
@@ -268,6 +290,7 @@ gantt
 ### Month 9-10: Lua Scripting
 
 **Deliverables:**
+
 - [ ] mlua 5.4 integration
 - [ ] Memory read/write API
 - [ ] Callback hooks (frame, scanline, instruction)
@@ -276,6 +299,7 @@ gantt
 - [ ] Example scripts (hitbox viewer, bot AI)
 
 **Acceptance Criteria:**
+
 - [ ] Can read/write RAM from Lua
 - [ ] Frame callbacks work at 60 Hz
 - [ ] Drawing primitives render correctly
@@ -284,6 +308,7 @@ gantt
 ### Month 10-11: Advanced Debugger
 
 **Deliverables:**
+
 - [ ] CPU debugger (disassembly, breakpoints, stepping)
 - [ ] PPU viewer (nametables, pattern tables, palettes, OAM)
 - [ ] APU viewer (channel waveforms, volume meters)
@@ -292,6 +317,7 @@ gantt
 - [ ] Code-data logger (CDL)
 
 **Acceptance Criteria:**
+
 - [ ] Breakpoints work reliably
 - [ ] PPU viewer updates in real-time
 - [ ] Trace logger captures execution
@@ -300,6 +326,7 @@ gantt
 ### Month 11-12: Quality of Life
 
 **Deliverables:**
+
 - [ ] Rewind (ring buffer of save states)
 - [ ] Fast-forward (uncapped speed)
 - [ ] Slow-motion (adjustable speed)
@@ -308,6 +335,7 @@ gantt
 - [ ] Screenshot/video recording
 
 **Acceptance Criteria:**
+
 - [ ] Rewind goes back 10+ seconds
 - [ ] Fast-forward reaches 10x speed
 - [ ] Cheats apply correctly
@@ -316,6 +344,7 @@ gantt
 ### Phase 2 Milestone: Feature Complete
 
 **Release Checklist:**
+
 - [ ] Pass 95% of TASVideos test suite
 - [ ] All advanced features functional
 - [ ] API documentation complete
@@ -331,6 +360,7 @@ gantt
 ### Month 13-15: Expansion Audio
 
 **Deliverables:**
+
 - [ ] VRC6 (2 pulse + sawtooth)
 - [ ] VRC7 (FM synthesis)
 - [ ] MMC5 (2 pulse + PCM)
@@ -339,11 +369,13 @@ gantt
 - [ ] FDS (wavetable + modulation)
 
 **Test Games:**
+
 - Castlevania III (VRC6)
 - Lagrange Point (VRC7)
 - Castlevania (FDS)
 
 **Acceptance Criteria:**
+
 - [ ] Expansion audio sounds accurate
 - [ ] Music matches hardware recordings
 - [ ] Proper channel mixing
@@ -353,6 +385,7 @@ gantt
 **Target:** 98% game coverage (50 total mappers)
 
 **Priority Mappers:**
+
 - [ ] Mapper 5 (MMC5) - ExROM
 - [ ] Mapper 7 (AxROM) - Battletoads
 - [ ] Mapper 9/10 (MMC2/4) - Punch-Out!!
@@ -364,6 +397,7 @@ gantt
 - [ ] + 30 more common mappers
 
 **Acceptance Criteria:**
+
 - [ ] All target games playable
 - [ ] Mapper-specific test ROMs pass
 - [ ] IRQ timing accurate
@@ -371,6 +405,7 @@ gantt
 ### Month 16-17: WebAssembly
 
 **Deliverables:**
+
 - [ ] wasm-pack build configuration
 - [ ] Web frontend (HTML/CSS/JS)
 - [ ] Browser audio/video APIs
@@ -379,6 +414,7 @@ gantt
 - [ ] PWA support
 
 **Acceptance Criteria:**
+
 - [ ] Runs in Chrome, Firefox, Safari
 - [ ] 60 FPS on desktop browsers
 - [ ] 30+ FPS on mobile
@@ -387,6 +423,7 @@ gantt
 ### Month 17-18: TAS Editor
 
 **Deliverables:**
+
 - [ ] Greenzone (verified frame history)
 - [ ] Bookmarks
 - [ ] Piano roll input editor
@@ -395,6 +432,7 @@ gantt
 - [ ] Input recording shortcuts
 
 **Acceptance Criteria:**
+
 - [ ] Can create/edit TAS movies
 - [ ] Greenzone manages 10,000+ frames
 - [ ] Branching works reliably
@@ -403,6 +441,7 @@ gantt
 ### Phase 3 Milestone: Expansion Complete
 
 **Release Checklist:**
+
 - [ ] Pass 98% of TASVideos test suite
 - [ ] 99%+ game compatibility
 - [ ] WebAssembly demo live
@@ -417,18 +456,21 @@ gantt
 ### Month 19-21: Performance Optimization
 
 **Targets:**
+
 - [ ] 1000+ FPS (16x real-time) on modern CPUs
 - [ ] <100 MB memory footprint
 - [ ] <5ms frame time
 - [ ] <10ms audio latency
 
 **Optimizations:**
+
 - [ ] CPU: Jump table dispatch, inline hot paths
 - [ ] PPU: SIMD pixel compositing, batch rendering
 - [ ] APU: Fast sinc resampling, SSE/NEON mixing
 - [ ] Mappers: Precomputed banking tables
 
 **Profiling:**
+
 - [ ] Criterion benchmarks for all components
 - [ ] Flamegraph analysis
 - [ ] Cache misses optimization
@@ -436,6 +478,7 @@ gantt
 ### Month 20-21: Video Filters
 
 **Deliverables:**
+
 - [ ] NTSC filter (Blargg)
 - [ ] CRT shader (scanlines, curvature, bloom)
 - [ ] Palette options (Composite, RGB, Custom)
@@ -443,6 +486,7 @@ gantt
 - [ ] Overscan cropping
 
 **Acceptance Criteria:**
+
 - [ ] Filters look authentic
 - [ ] <2ms overhead per frame
 - [ ] User-adjustable parameters
@@ -450,6 +494,7 @@ gantt
 ### Month 21-22: Final Testing
 
 **Test Plan:**
+
 - [ ] All 156 TASVideos tests pass
 - [ ] 100 most popular games fully playable
 - [ ] 24-hour stability test
@@ -458,6 +503,7 @@ gantt
 - [ ] Fuzzing for edge cases
 
 **Bug Fixes:**
+
 - [ ] Prioritize by severity
 - [ ] Test coverage for all fixes
 - [ ] Regression prevention
@@ -465,6 +511,7 @@ gantt
 ### Month 22-23: Documentation
 
 **Deliverables:**
+
 - [ ] User manual (PDF + web)
 - [ ] API reference (rustdoc)
 - [ ] Developer guide
@@ -473,6 +520,7 @@ gantt
 - [ ] Troubleshooting guide
 
 **Topics:**
+
 - Getting started
 - Configuration
 - Advanced features (TAS, netplay, debugging)
@@ -482,6 +530,7 @@ gantt
 ### Month 24: v1.0 Release
 
 **Release Checklist:**
+
 - [ ] 100% TASVideos accuracy
 - [ ] 300+ mappers implemented
 - [ ] All planned features complete
@@ -492,6 +541,7 @@ gantt
 - [ ] Binary packages for all platforms
 
 **Launch Activities:**
+
 - [ ] Reddit post (/r/emulation, /r/rust)
 - [ ] Hacker News submission
 - [ ] YouTube demo video
@@ -592,12 +642,14 @@ gantt
 ### Test ROM Validation
 
 **Essential (Must Pass):**
+
 - nestest.nes
 - blargg_nes_cpu_test5
 - blargg_ppu_tests
 - blargg_apu_2005.07.30
 
 **Additional:**
+
 - TASVideos accuracy test suite (156 ROMs)
 - mmc3_test
 - sprite_hit_tests_2005.10.05
@@ -606,11 +658,13 @@ gantt
 ### Game Compatibility Testing
 
 **Per Mapper:**
+
 - 10 commercial games
 - 5 homebrew games
 - Known edge cases
 
 **Regression Testing:**
+
 - CI pipeline runs on every commit
 - Automated save state comparison
 - Frame-by-frame screenshot diffing
@@ -622,6 +676,7 @@ gantt
 This roadmap balances **ambition** with **realism**, targeting v1.0 in 24 months with aggressive but achievable milestones. The phased approach ensures continuous value delivery, with each phase building upon a solid foundation.
 
 Success depends on:
+
 - **Community involvement** (testing, feedback, contributions)
 - **Rigorous testing** (test ROMs, real games, edge cases)
 - **Performance profiling** (optimize after correctness)

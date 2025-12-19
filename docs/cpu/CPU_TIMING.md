@@ -48,6 +48,7 @@ Ratio: 3 PPU dots per 1 CPU cycle (exact, no drift)
 ```
 
 **PAL Variant:**
+
 ```
 Master Clock (PAL): 26.601712 MHz
 ├─ CPU Clock: ÷16 = 1.662607 MHz (~601 ns/cycle)
@@ -107,6 +108,7 @@ Cycle 4: Read value from effective address, store in A
 ```
 
 **Implementation:**
+
 ```rust
 fn lda_absolute(&mut self, bus: &mut Bus) -> u8 {
     let lo = self.read(bus, self.pc);
@@ -136,10 +138,12 @@ Cycle 5: Read from BAH+1:(BAL + X) [correct page if crossed]
 ```
 
 **Critical Detail:** Cycle 4 occurs even if no page crossing happens. The CPU speculatively reads from the incorrect address, then either:
+
 - Uses that value (no page crossing)
 - Discards it and reads again with corrected high byte (page crossing occurred)
 
 **Implementation:**
+
 ```rust
 fn lda_absolute_x(&mut self, bus: &mut Bus) -> u8 {
     let lo = self.read(bus, self.pc);
@@ -183,6 +187,7 @@ Cycle 5: Write incremented value to address
 **Critical Detail:** RMW instructions always write the original value back before writing the modified value. This is observable behavior that some games exploit.
 
 **Implementation:**
+
 ```rust
 fn inc_zero_page(&mut self, bus: &mut Bus) -> u8 {
     let addr = self.read(bus, self.pc) as u16;
@@ -240,6 +245,7 @@ fn crosses_page_boundary(base: u16, indexed: u16) -> bool {
 ```
 
 **Example:**
+
 ```rust
 let base_addr = 0x20F0;
 let index = 0x20;
@@ -267,6 +273,7 @@ The 6502 always performs a predictable sequence of memory operations, including 
 #### Common Dummy Read Patterns
 
 **Absolute,X/Y with Page Crossing:**
+
 ```
 Address $20F0,X where X = $20:
   - Dummy read from $20:($F0 + $20) = $2010 [wrong page]
@@ -274,6 +281,7 @@ Address $20F0,X where X = $20:
 ```
 
 **Indirect Indexed (Indirect),Y:**
+
 ```
 ($80),Y where ($80) = $2000 and Y = $10:
   - Read pointer low byte from $80
@@ -294,10 +302,12 @@ INC $4014:
 ```
 
 **Critical for:**
+
 - **OAM DMA Trigger**: Writing to `$4014` triggers DMA even during the dummy write phase of an RMW instruction.
 - **Mapper State Machines**: Some mappers track write sequences and may be triggered by dummy writes.
 
 **Implementation:**
+
 ```rust
 // Always write original value back for RMW
 fn inc(&mut self, bus: &mut Bus, addr: u16) {
@@ -361,6 +371,7 @@ pub fn trigger_oam_dma(&mut self, bus: &mut Bus, page: u8) {
 ```
 
 **Important:** During OAM DMA:
+
 - CPU cannot execute instructions
 - DMC DMA can still occur (and will steal additional cycles)
 - PPU continues rendering normally
@@ -398,6 +409,7 @@ RESET > NMI > IRQ
 ```
 
 **Priority Rules:**
+
 1. RESET always takes precedence
 2. NMI can interrupt an IRQ handler
 3. IRQ is blocked by the I (interrupt disable) flag
@@ -418,12 +430,14 @@ Cycle 7: Fetch NMI vector high byte from $FFFB, jump to handler
 ```
 
 **Critical Timing Points:**
+
 - NMI triggered at dot 1 of scanline 241 (start of VBlank)
 - Takes 7 cycles to reach handler
 - Current instruction completes before NMI servicing begins
 - Reading `$2002` during cycle 1 of scanline 241 suppresses NMI (race condition)
 
 **Implementation:**
+
 ```rust
 fn service_nmi(&mut self, bus: &mut Bus) {
     self.cycles += 2; // Internal operations
@@ -452,6 +466,7 @@ Same cycle breakdown as NMI, but:
 ```
 
 **IRQ Polling Point:**
+
 ```rust
 fn check_irq(&self) -> bool {
     self.irq_line && (self.p & 0x04 == 0)

@@ -2048,36 +2048,42 @@ impl FrameTimer {
 ## Implementation Checklist
 
 ### Core
+
 - [ ] WASM entry point and init
 - [ ] Emulator wrapper with JS API
 - [ ] ROM loading (Uint8Array, URL, file drop)
 - [ ] Frame running loop
 
 ### Video
+
 - [ ] Canvas 2D rendering
 - [ ] WebGL rendering (optional)
 - [ ] Integer scaling
 - [ ] Scanline filter
 
 ### Audio
+
 - [ ] Web Audio API integration
 - [ ] Sample buffering
 - [ ] Volume control
 - [ ] Audio resume on interaction
 
 ### Input
+
 - [ ] Keyboard handlers
 - [ ] Gamepad API support
 - [ ] Configurable key bindings
 - [ ] Two-player support
 
 ### Storage
+
 - [ ] IndexedDB initialization
 - [ ] SRAM persistence
 - [ ] Save states
 - [ ] Settings storage
 
 ### UI
+
 - [ ] Load ROM button
 - [ ] Start/Pause/Reset controls
 - [ ] FPS display
@@ -2085,6 +2091,7 @@ impl FrameTimer {
 - [ ] Keyboard shortcuts
 
 ### Build
+
 - [ ] wasm-pack build script
 - [ ] wasm-opt optimization
 - [ ] Development server

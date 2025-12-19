@@ -90,6 +90,7 @@ Test ROMs are essential for verifying NES emulator accuracy. They range from bas
 ### Description
 
 nestest is the **gold standard** CPU test. It validates:
+
 - All official instructions
 - Addressing modes
 - Flag behavior
@@ -106,6 +107,7 @@ Expected Result: $00 written to $6000 (pass)
 ```
 
 **Automation mode advantages:**
+
 - No PPU/APU required
 - No controller input needed
 - Fast execution (~30,000 cycles)
@@ -121,10 +123,12 @@ Requires: Basic PPU rendering
 ### Expected Results
 
 **Success Indicators:**
+
 - Automation: Address $6000 contains $00
 - Interactive: All tests show "PASS" on screen
 
 **Failure Codes:**
+
 ```
 $01 = First test failed
 $02 = Second test failed
@@ -142,6 +146,7 @@ C5F7  86 00     STX $00 = 00                    A:00 X:00 Y:00 P:26 SP:FD CYC:13
 ```
 
 **Log Format:**
+
 ```
 PC    BYTES     DISASM                          A:xx X:xx Y:xx P:xx SP:xx CYC:xxx
 ```
@@ -189,14 +194,17 @@ PC    BYTES     DISASM                          A:xx X:xx Y:xx P:xx SP:xx CYC:xx
 ```
 
 **Expected Output:**
+
 ```
 All tests passed
 ```
 
 **Failure Example:**
+
 ```
 T4 10 0F
 ```
+
 - T4: Test 4 failed
 - 10 0F: Error code (see source for details)
 
@@ -206,6 +214,7 @@ T4 10 0F
 **Tests:** Indexed addressing dummy reads
 
 **What it tests:**
+
 - Zero page,X/Y: Reads from base address before adding index
 - Absolute,X/Y: Reads from incorrect page on page crossing
 - (Indirect),Y: Reads from incorrect address on page crossing
@@ -217,6 +226,7 @@ T4 10 0F
 **Component:** Interrupt timing and behavior
 
 **Subtests:**
+
 ```
 1-cli_latency.nes        - CLI/SEI timing
 2-nmi_and_brk.nes        - NMI vs BRK interaction
@@ -245,6 +255,7 @@ T4 10 0F
 **Component:** VBlank and NMI timing
 
 **Subtests:**
+
 ```
 1-frame_basics.nes    - Basic frame timing
 2-vbl_timing.nes      - VBlank flag timing
@@ -269,6 +280,7 @@ T4 10 0F
 **Component:** Sprite 0 hit detection
 
 **Subtests:**
+
 ```
 01-basics.nes          - Basic sprite 0 hit
 02-alignment.nes       - Pixel-perfect alignment
@@ -292,6 +304,7 @@ T4 10 0F
 **Component:** Sprite overflow bug emulation
 
 **What it tests:**
+
 - Secondary OAM overflow behavior
 - Hardware bug in sprite evaluation
 - Overflow flag timing
@@ -304,6 +317,7 @@ T4 10 0F
 **Component:** PPU VBlank and NMI
 
 **Subtests:**
+
 ```
 01-vbl_basics.nes      - VBlank flag basics
 02-vbl_set_time.nes    - Exact VBlank set timing
@@ -325,6 +339,7 @@ T4 10 0F
 **Component:** PPU rendering details
 
 **Subtests:**
+
 ```
 palette_ram.nes        - Palette RAM behavior
 sprite_ram.nes         - OAM behavior
@@ -344,6 +359,7 @@ vram_access.nes        - VRAM access during rendering
 **Component:** APU channels and frame counter
 
 **Subtests:**
+
 ```
 01-len_ctr.nes         - Length counter
 02-len_table.nes       - Length counter table
@@ -372,6 +388,7 @@ vram_access.nes        - VRAM access during rendering
 **Component:** DMC (Delta Modulation Channel)
 
 **Subtests:**
+
 ```
 01-basics.nes          - DMC basics
 02-loop.nes            - Loop flag behavior
@@ -394,6 +411,7 @@ vram_access.nes        - VRAM access during rendering
 **Component:** MMC3 mapper (004)
 
 **Subtests:**
+
 ```
 1-clocking.nes         - IRQ counter clocking
 2-details.nes          - IRQ counter details
@@ -464,6 +482,7 @@ Check test source code for error code meanings.
 #### On-Screen Text Output
 
 Many tests output text to screen:
+
 ```
 "Passed" = Success
 Error code = Failure (check source)
@@ -472,6 +491,7 @@ Error code = Failure (check source)
 #### Address $6000 Status Codes
 
 Some tests write result codes to $6000:
+
 ```
 $00 = Success
 $01-$FF = Error codes (test-specific)

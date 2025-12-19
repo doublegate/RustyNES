@@ -71,6 +71,7 @@ APU Frame Counter Rates:
 ### $4015 - Status Register
 
 **Write:**
+
 ```
 7  bit  0
 ---- ----
@@ -84,6 +85,7 @@ APU Frame Counter Rates:
 ```
 
 **Read:**
+
 ```
 7  bit  0
 ---- ----
@@ -147,6 +149,7 @@ MI-- ----
 ```
 
 **Write behavior:**
+
 - If bit 7 set: 5-step mode
 - If bit 6 set: Disable frame IRQ
 - Write immediately clocks all units if bit 7 is set
@@ -158,6 +161,7 @@ MI-- ----
 ### Pulse Channels (1 & 2)
 
 **Components:**
+
 - Timer (11-bit, clocked at APU rate)
 - Duty cycle generator (8-step sequencer)
 - Length counter
@@ -193,6 +197,7 @@ if length_counter > 0 && !sweep_muted() {
 ### Triangle Channel
 
 **Components:**
+
 - Timer (11-bit)
 - Linear counter (7-bit, reload value)
 - Length counter
@@ -221,6 +226,7 @@ if length_counter > 0 && linear_counter > 0 {
 ### Noise Channel
 
 **Components:**
+
 - Timer (4-bit period index)
 - 15-bit Linear Feedback Shift Register (LFSR)
 - Length counter
@@ -261,6 +267,7 @@ Period  Cycles
 ### DMC Channel
 
 **Components:**
+
 - Timer (4-bit period index)
 - Memory reader (fetches samples from $8000-$FFFF)
 - Output unit (7-bit counter)

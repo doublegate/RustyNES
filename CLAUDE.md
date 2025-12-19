@@ -10,7 +10,7 @@ RustyNES is a next-generation Nintendo Entertainment System (NES) emulator writt
 
 ## Repository
 
-- **GitHub**: https://github.com/doublegate/RustyNES
+- **GitHub**: <https://github.com/doublegate/RustyNES>
 - **License**: MIT / Apache-2.0 (dual-licensed)
 - **Started**: December 2025
 
@@ -37,7 +37,7 @@ cargo fmt --check
 
 ### Workspace Structure (Created)
 
-```
+```text
 rustynes/
 ├── crates/
 │   ├── rustynes-core/src/         # Core emulation engine (no_std compatible)
@@ -316,6 +316,7 @@ pub enum EmulatorError {
 ## Documentation Index
 
 ### Core Specifications
+
 - `docs/cpu/CPU_6502_SPECIFICATION.md` - Complete 6502 reference
 - `docs/cpu/CPU_TIMING_REFERENCE.md` - Cycle-accurate timing
 - `docs/ppu/PPU_2C02_SPECIFICATION.md` - Complete PPU reference
@@ -323,6 +324,7 @@ pub enum EmulatorError {
 - `docs/apu/APU_OVERVIEW.md` - Audio system overview
 
 ### Implementation Guides
+
 - `docs/mappers/MAPPER_OVERVIEW.md` - Mapper architecture
 - `docs/testing/TEST_ROM_GUIDE.md` - Test ROM usage
 - `docs/testing/NESTEST_GOLDEN_LOG.md` - CPU validation reference
@@ -330,17 +332,20 @@ pub enum EmulatorError {
 - `docs/dev/CONTRIBUTING.md` - Contribution guidelines
 
 ### API Reference
+
 - `docs/api/CORE_API.md` - Emulator core API
 - `docs/api/SAVE_STATES.md` - Save state format
 - `docs/api/CONFIGURATION.md` - Configuration options
 
 ### File Formats
+
 - `docs/formats/INES_FORMAT.md` - iNES header parsing
 - `docs/formats/NES20_FORMAT.md` - NES 2.0 extended format
 - `docs/formats/NSF_FORMAT.md` - NES Sound Format
 - `docs/formats/FM2_FORMAT.md` - TAS movie format
 
 ### APU Deep-Dive
+
 - `docs/apu/APU_2A03_SPECIFICATION.md` - Complete APU reference
 - `docs/apu/APU_CHANNEL_*.md` - Individual channel specs
 

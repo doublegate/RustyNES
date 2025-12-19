@@ -60,6 +60,7 @@ impl Timer {
 ```
 
 **Frequency Calculation:**
+
 ```
 CPU Clock = 1.789773 MHz
 
@@ -139,6 +140,7 @@ impl LengthCounter {
 ```
 
 **Length Counter Table:**
+
 ```rust
 const LENGTH_TABLE: [u8; 32] = [
     10, 254, 20,  2, 40,  4, 80,  6,  // 0x00-0x07
@@ -157,6 +159,7 @@ const LENGTH_TABLE: [u8; 32] = [
 Two identical pulse (square wave) channels with **duty cycle** control and **frequency sweep**.
 
 **Registers:**
+
 ```
 $4000/$4004: DDLC VVVV - Duty, loop, constant volume, volume/envelope
 $4001/$4005: EPPP NSSS - Sweep enable, period, negate, shift
@@ -256,6 +259,7 @@ impl Sweep {
 ```
 
 **Muting Conditions:**
+
 - Timer period < 8 (frequency too high)
 - Target period > $7FF (frequency too low)
 
@@ -327,6 +331,7 @@ impl PulseChannel {
 Triangle wave generator with **linear counter** (instead of envelope) and **no volume control**.
 
 **Registers:**
+
 ```
 $4008: CRRR RRRR - Control flag, linear counter reload
 $4009: (unused)
@@ -461,6 +466,7 @@ impl TriangleChannel {
 Pseudo-random noise generator using a **Linear Feedback Shift Register (LFSR)**.
 
 **Registers:**
+
 ```
 $400C: --LC VVVV - Loop envelope, constant volume, volume/envelope
 $400D: (unused)
@@ -579,6 +585,7 @@ impl NoiseChannel {
 1-bit **Delta Modulation Channel** for sample playback via DMA.
 
 **Registers:**
+
 ```
 $4010: IL-- RRRR - IRQ enable, loop, frequency/rate
 $4011: -DDD DDDD - Direct load (7-bit DAC)
@@ -596,6 +603,7 @@ const DMC_RATE_TABLE: [u16; 16] = [
 ```
 
 **Frequency Calculation:**
+
 ```
 frequency = CPU_CLOCK / rate_table[index]
 

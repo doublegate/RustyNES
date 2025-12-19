@@ -70,18 +70,21 @@ Default song to play when loaded (1-indexed).
 ### Bytes $008-$009: Load Address
 
 16-bit little-endian address where music data is loaded:
+
 - Range: `$8000-$FFFF` (typical)
 - For bankswitched NSFs: typically `$8000`
 
 ### Bytes $00A-$00B: Init Address
 
 Address of the INIT routine. Called once when a song starts:
+
 - **Input:** A = song number (0-indexed)
 - **Output:** None (sets up internal state)
 
 ### Bytes $00C-$00D: Play Address
 
 Address of the PLAY routine. Called at the play rate:
+
 - **Input:** None
 - **Output:** None (updates APU registers)
 
@@ -100,6 +103,7 @@ Address of the PLAY routine. Called at the play rate:
 ### Bytes $06E-$06F: NTSC Play Speed
 
 Play speed in microseconds (μs). Common values:
+
 - `$411A` (16666) = ~60.002 Hz (standard NTSC)
 - `$4E20` (20000) = 50 Hz
 - `$0000` = Use default (16666 for NTSC)
@@ -107,6 +111,7 @@ Play speed in microseconds (μs). Common values:
 ### Bytes $070-$077: Bankswitch Init Values
 
 8 bytes for initial bank configuration:
+
 ```
 Index  Bank      Address Range
 -----  ----      -------------
@@ -125,6 +130,7 @@ If all bytes are `$00`, no bankswitching is used.
 ### Bytes $078-$079: PAL Play Speed
 
 Play speed for PAL systems in microseconds:
+
 - `$4E20` (20000) = 50 Hz (standard PAL)
 - `$0000` = Use default (20000 for PAL)
 
@@ -582,6 +588,7 @@ $F000-$FFFF     $5FFF           4KB
 ### Bank Calculation
 
 The music data is divided into 4KB pages:
+
 - Page 0: bytes $0000-$0FFF of music data
 - Page 1: bytes $1000-$1FFF of music data
 - etc.
@@ -591,6 +598,7 @@ Writing to $5FFx selects which 4KB page appears in that address range.
 ### Non-Bankswitched NSFs
 
 If all bankswitch init bytes are $00:
+
 - Music data is loaded directly at Load Address
 - No bankswitching registers are active
 - Maximum size: 32KB ($8000-$FFFF)

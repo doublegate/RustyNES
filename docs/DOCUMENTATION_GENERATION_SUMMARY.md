@@ -22,6 +22,7 @@ This document summarizes the documentation generation effort for RustyNES, a nex
 ### Tier 0: P0 Critical Documents (6 documents)
 
 #### 1. CPU_6502_SPECIFICATION.md
+
 - **Location:** `/home/parobek/Code/RustyNES/docs/cpu/`
 - **Size:** 610 lines
 - **Scope:** Complete opcode matrix for all 256 opcodes (151 official + 105 unofficial)
@@ -33,6 +34,7 @@ This document summarizes the documentation generation effort for RustyNES, a nex
   - Opcode structure (AAABBBCC bit pattern)
 
 #### 2. CPU_TIMING_REFERENCE.md
+
 - **Location:** `/home/parobek/Code/RustyNES/docs/cpu/`
 - **Size:** 450+ lines
 - **Scope:** Per-instruction cycle counts with all penalties
@@ -45,6 +47,7 @@ This document summarizes the documentation generation effort for RustyNES, a nex
   - Integration with PPU (3:1 cycle ratio)
 
 #### 3. PPU_2C02_SPECIFICATION.md
+
 - **Location:** `/home/parobek/Code/RustyNES/docs/ppu/`
 - **Size:** 500+ lines
 - **Scope:** Complete 2C02 PPU register behavior
@@ -57,6 +60,7 @@ This document summarizes the documentation generation effort for RustyNES, a nex
   - Read buffer mechanics for $2007
 
 #### 4. PPU_TIMING_DIAGRAM.md
+
 - **Location:** `/home/parobek/Code/RustyNES/docs/ppu/`
 - **Size:** 475+ lines
 - **Scope:** Dot-by-dot timing for all 262 scanlines × 341 dots
@@ -70,6 +74,7 @@ This document summarizes the documentation generation effort for RustyNES, a nex
   - Register update timing
 
 #### 5. TEST_ROM_GUIDE.md
+
 - **Location:** `/home/parobek/Code/RustyNES/docs/testing/`
 - **Size:** 425+ lines
 - **Scope:** Complete test ROM inventory with expected results
@@ -83,6 +88,7 @@ This document summarizes the documentation generation effort for RustyNES, a nex
   - Test automation examples
 
 #### 6. NESTEST_GOLDEN_LOG.md
+
 - **Location:** `/home/parobek/Code/RustyNES/docs/testing/`
 - **Size:** 400+ lines
 - **Scope:** nestest.nes golden log format and comparison methodology
@@ -97,6 +103,7 @@ This document summarizes the documentation generation effort for RustyNES, a nex
 ### Tier 1: Component Deep-Dive Specifications (4 documents)
 
 #### 7. PPU_SCROLLING_INTERNALS.md
+
 - **Location:** `/home/parobek/Code/RustyNES/docs/ppu/`
 - **Size:** 425+ lines
 - **Scope:** Loopy's PPU scrolling implementation
@@ -110,6 +117,7 @@ This document summarizes the documentation generation effort for RustyNES, a nex
   - Split-screen scrolling techniques
 
 #### 8. PPU_SPRITE_EVALUATION.md
+
 - **Location:** `/home/parobek/Code/RustyNES/docs/ppu/`
 - **Size:** 475+ lines
 - **Scope:** Sprite evaluation, overflow bug, sprite 0 hit
@@ -123,6 +131,7 @@ This document summarizes the documentation generation effort for RustyNES, a nex
   - 8×8 vs 8×16 sprite modes
 
 #### 9. APU_2A03_SPECIFICATION.md
+
 - **Location:** `/home/parobek/Code/RustyNES/docs/apu/`
 - **Size:** 425+ lines
 - **Scope:** Complete APU channel specifications and frame sequencer
@@ -139,6 +148,7 @@ This document summarizes the documentation generation effort for RustyNES, a nex
 ### Tier 2: Mapper Documentation (1 document)
 
 #### 10. MAPPER_IMPLEMENTATION_GUIDE.md
+
 - **Location:** `/home/parobek/Code/RustyNES/docs/mappers/`
 - **Size:** 450+ lines
 - **Scope:** Complete guide for implementing new mappers
@@ -271,6 +281,7 @@ All created documents meet or exceed the following standards:
 ### Technical Accuracy
 
 All documents were created using:
+
 - Web research (NesDev wiki, forums)
 - Existing architecture design document
 - Technical reports from reference emulators

@@ -1,6 +1,7 @@
 # Save States
 
 **Table of Contents**
+
 - [Overview](#overview)
 - [Save State Format](#save-state-format)
 - [API](#api)
@@ -321,11 +322,13 @@ impl SaveStateHeader {
 ### When to Save
 
 **Good times**:
+
 - At frame boundaries (after `step_frame()`)
 - During VBlank (deterministic state)
 - User-triggered (explicit save/load)
 
 **Avoid**:
+
 - Mid-instruction
 - During DMA
 - Arbitrary cycle counts
@@ -368,10 +371,12 @@ if let Some(state) = rewind.pop() {
 ### Performance
 
 **State size** (approximate):
+
 - Uncompressed: ~50KB
 - Compressed: ~10-20KB (80% reduction)
 
 **Save/load time**:
+
 - Uncompressed: ~0.1ms
 - Compressed: ~2-5ms
 
@@ -388,5 +393,6 @@ if let Some(state) = rewind.pop() {
 ---
 
 **Related Documents**:
+
 - [CORE_API.md](CORE_API.md) - Embedding guide
 - [ARCHITECTURE.md](../ARCHITECTURE.md) - System design

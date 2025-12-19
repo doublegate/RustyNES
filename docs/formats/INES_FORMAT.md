@@ -175,6 +175,7 @@ B: PRG-RAM ($6000-$7FFF) (0 = present, 1 = not present, 2 = present with conflic
 #### Bytes 11-15: Padding
 
 These bytes should be zero. Non-zero values may indicate:
+
 - Corrupted header
 - Unofficial extensions
 - "DiskDude!" watermark (common corruption)
@@ -620,6 +621,7 @@ impl RomDatabase {
 Some ROM dumping tools (like NESticle's ROM tool) wrote "DiskDude!" into bytes 7-15, corrupting the mapper number.
 
 **Detection:**
+
 ```rust
 fn is_diskdude_corrupted(header: &[u8; 16]) -> bool {
     header[7..].starts_with(b"DiskDude")
@@ -639,6 +641,7 @@ Many early ROM dumps have incorrect mapper assignments.
 iNES 1.0 has poor PRG-RAM size support.
 
 **Solution:**
+
 - Default to 8KB when battery bit is set
 - Use ROM database for games requiring larger PRG-RAM
 - Migrate to NES 2.0 format

@@ -1,8 +1,8 @@
 # RustyNES - NES Emulator Project Documentation
 
-**Version:** 1.0.0  
-**Project:** RustyNES - Next-Generation NES Emulator in Rust  
-**Document Type:** Documentation Index & Planning Guide  
+**Version:** 1.0.0
+**Project:** RustyNES - Next-Generation NES Emulator in Rust
+**Document Type:** Documentation Index & Planning Guide
 **Status:** Planning Phase
 
 ---
@@ -247,6 +247,6 @@ For immediate development focus, create these documents first:
 
 ---
 
-**Document Version:** 1.0.0  
-**Last Updated:** 2025-12-18  
+**Document Version:** 1.0.0
+**Last Updated:** 2025-12-18
 **Status:** Documentation Planning Complete

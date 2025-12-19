@@ -100,6 +100,7 @@ Examples:
 ```
 
 **Operand Formats:**
+
 ```
 Immediate:     LDA #$42
 Zero Page:     LDA $80
@@ -112,6 +113,7 @@ Absolute,X:    LDA $1234,X @ 1244 = FF
 
 **"= VALUE" Suffix:**
 Shows value read from or written to memory:
+
 ```
 STA $80 = 42    - Write 0x42 to $0080
 LDA $80 = 42    - Read 0x42 from $0080
@@ -138,6 +140,7 @@ Examples:
 ```
 
 **Flag Bits:**
+
 ```
 Bit 7: N (Negative)
 Bit 6: V (Overflow)
@@ -170,6 +173,7 @@ Example: CYC:7, CYC:340, CYC:5432
 ```
 
 **Cycle Count Notes:**
+
 - Starts at 7 (after RESET sequence completes)
 - Increments by instruction cycle count
 - Includes page crossing penalties
@@ -197,6 +201,7 @@ Cycles: 7
 ### Why Start at Cycle 7?
 
 The RESET sequence takes 7 cycles:
+
 ```
 Cycle 1-2: Internal operations
 Cycle 3:   Decrement SP (no write)
@@ -211,6 +216,7 @@ After cycle 7: PC = $C000, begin nestest
 ### Completion Detection
 
 The test completes when:
+
 ```
 PC reaches $C66E (final instruction)
 Status code written to $6000:
@@ -327,6 +333,7 @@ pub fn step_with_logging(&mut self, bus: &mut Bus, logger: &mut CpuLogger) -> u8
 ### Exact Match Requirements
 
 Every character must match exactly:
+
 - **Uppercase hex:** Use `{:02X}` not `{:02x}`
 - **Padding:** Exact spacing in all fields
 - **Disassembly:** Format must match precisely

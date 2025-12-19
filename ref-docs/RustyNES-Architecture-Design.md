@@ -1757,7 +1757,7 @@ enum FrameCounterMode {
 }
 
 impl FrameCounter {
-    fn step(&mut self, pulse1: &mut PulseChannel, pulse2: &mut PulseChannel, 
+    fn step(&mut self, pulse1: &mut PulseChannel, pulse2: &mut PulseChannel,
             triangle: &mut TriangleChannel, noise: &mut NoiseChannel) {
         self.cycles += 1;
         match self.mode {
@@ -1865,10 +1865,10 @@ impl Vrc6Audio {
     fn output(&self) -> f32 {
         let p1 = if self.pulse1.enabled { self.pulse1.volume as f32 } else { 0.0 };
         let p2 = if self.pulse2.enabled { self.pulse2.volume as f32 } else { 0.0 };
-        let saw = if self.sawtooth.enabled { 
-            (self.sawtooth.accumulator >> 3) as f32 
-        } else { 
-            0.0 
+        let saw = if self.sawtooth.enabled {
+            (self.sawtooth.accumulator >> 3) as f32
+        } else {
+            0.0
         };
         (p1 + p2 + saw) / 63.0
     }
@@ -2376,17 +2376,17 @@ pub const NES_PALETTE: [[u8; 3]; 64] = [
     [68, 0, 100], [92, 0, 48], [84, 4, 0], [60, 24, 0],
     [32, 42, 0], [8, 58, 0], [0, 64, 0], [0, 60, 0],
     [0, 50, 60], [0, 0, 0], [0, 0, 0], [0, 0, 0],
-    
+
     [152, 150, 152], [8, 76, 196], [48, 50, 236], [92, 30, 228],
     [136, 20, 176], [160, 20, 100], [152, 34, 32], [120, 60, 0],
     [84, 90, 0], [40, 114, 0], [8, 124, 0], [0, 118, 40],
     [0, 102, 120], [0, 0, 0], [0, 0, 0], [0, 0, 0],
-    
+
     [236, 238, 236], [76, 154, 236], [120, 124, 236], [176, 98, 236],
     [228, 84, 236], [236, 88, 180], [236, 106, 100], [212, 136, 32],
     [160, 170, 0], [116, 196, 0], [76, 208, 32], [56, 204, 108],
     [56, 180, 204], [60, 60, 60], [0, 0, 0], [0, 0, 0],
-    
+
     [236, 238, 236], [168, 204, 236], [188, 188, 236], [212, 178, 236],
     [236, 174, 236], [236, 174, 212], [236, 180, 176], [228, 196, 144],
     [204, 210, 120], [180, 222, 120], [168, 226, 144], [152, 226, 180],
@@ -2863,12 +2863,12 @@ mod tests {
     fn test_cpu_lda_immediate() {
         let mut cpu = Cpu::new();
         let mut bus = Bus::new_test();
-        
+
         // LDA #$42
         bus.write(0x8000, 0xA9);
         bus.write(0x8001, 0x42);
         cpu.pc = 0x8000;
-        
+
         let cycles = cpu.step(&mut bus);
         assert_eq!(cpu.a, 0x42);
         assert_eq!(cycles, 2);
@@ -2879,14 +2879,14 @@ mod tests {
     #[test]
     fn test_ppu_vblank_nmi() {
         let mut ppu = Ppu::new();
-        
+
         // Run to VBlank (scanline 241, dot 1)
         ppu.ctrl.insert(PpuCtrl::NMI_ENABLE);
-        
+
         while ppu.scanline != 241 || ppu.dot != 1 {
             ppu.step(&mut bus, &mut mapper);
         }
-        
+
         assert!(ppu.status.contains(PpuStatus::VBLANK));
         assert!(ppu.nmi_pending);
     }
@@ -2899,7 +2899,7 @@ mod tests {
         pulse.envelope.volume = 15;
         pulse.timer_period = 100;
         pulse.duty = 2;  // 50% duty
-        
+
         // Test output varies with sequence position
         assert_eq!(pulse.output(), 0);  // Low part of duty
         pulse.sequence_pos = 2;
@@ -2915,14 +2915,14 @@ mod tests {
 fn test_nestest_rom() {
     let rom = load_rom("tests/test_roms/nestest.nes");
     let mut console = Console::new(rom);
-    
+
     // Run nestest automated mode
     console.cpu.pc = 0xC000;
-    
+
     for _ in 0..26554 {
         console.step();
     }
-    
+
     // Check result code
     let result = console.bus.read(0x0002);
     assert_eq!(result, 0x00, "nestest failed with code {}", result);
@@ -2932,12 +2932,12 @@ fn test_nestest_rom() {
 fn test_ppu_vbl_nmi() {
     let rom = load_rom("tests/test_roms/ppu_vbl_nmi/rom_singles/01-vbl_basics.nes");
     let mut console = Console::new(rom);
-    
+
     // Run for 10 frames
     for _ in 0..10 {
         console.step_frame();
     }
-    
+
     // Check pass/fail in RAM
     let result = console.bus.read(0x00F0);
     assert_eq!(result, 0x01, "VBL NMI test failed");
@@ -2955,15 +2955,15 @@ proptest! {
         let mut cpu1 = Cpu::new();
         let mut cpu2 = Cpu::new();
         let mut bus = Bus::new_test();
-        
+
         cpu1.a = a;
         cpu1.adc(&mut bus, b);
         let result1 = cpu1.a;
-        
+
         cpu2.a = b;
         cpu2.adc(&mut bus, a);
         let result2 = cpu2.a;
-        
+
         prop_assert_eq!(result1, result2);
     }
 
@@ -2971,10 +2971,10 @@ proptest! {
     fn test_ppu_coarse_x_increment(x in 0u8..32) {
         let mut addr = VramAddress(0);
         addr.set_coarse_x(x);
-        
+
         let original = addr.coarse_x();
         addr.increment_coarse_x();
-        
+
         if x == 31 {
             prop_assert_eq!(addr.coarse_x(), 0);
         } else {
@@ -2992,7 +2992,7 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 fn benchmark_cpu_instruction(c: &mut Criterion) {
     let mut cpu = Cpu::new();
     let mut bus = Bus::new_test();
-    
+
     c.bench_function("lda_immediate", |b| {
         b.iter(|| {
             cpu.pc = 0x8000;
@@ -3005,7 +3005,7 @@ fn benchmark_ppu_scanline(c: &mut Criterion) {
     let mut ppu = Ppu::new();
     let mut bus = Bus::new_test();
     let mut mapper = Box::new(Mapper0::new());
-    
+
     c.bench_function("render_scanline", |b| {
         b.iter(|| {
             for _ in 0..341 {

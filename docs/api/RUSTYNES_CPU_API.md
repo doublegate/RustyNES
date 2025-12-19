@@ -928,6 +928,7 @@ fn run_synchronized(
 ---
 
 **Related Documents:**
+
 - [CORE_API.md](CORE_API.md) - Main emulator API
 - [CPU_6502_SPECIFICATION.md](../cpu/CPU_6502_SPECIFICATION.md)
 - [CPU_TIMING_REFERENCE.md](../cpu/CPU_TIMING_REFERENCE.md)

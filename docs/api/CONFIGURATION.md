@@ -1,6 +1,7 @@
 # Configuration
 
 **Table of Contents**
+
 - [Overview](#overview)
 - [Configuration Structure](#configuration-structure)
 - [Emulation Settings](#emulation-settings)
@@ -115,6 +116,7 @@ impl Default for EmulationConfig {
 ```
 
 **Example**:
+
 ```rust
 config.emulation.speed = 2.0; // 2x speed (120 FPS)
 config.emulation.accuracy = AccuracyLevel::ScanlineAccurate; // Performance mode
@@ -180,6 +182,7 @@ impl Default for VideoConfig {
 ```
 
 **Example**:
+
 ```rust
 config.video.scale = 4; // 1024x960 output (256*4 x 240*4)
 config.video.filter = Filter::CrtShader;
@@ -246,6 +249,7 @@ impl Default for ChannelVolumes {
 ```
 
 **Example**:
+
 ```rust
 config.audio.volume = 0.8;
 config.audio.channel_volumes.dmc = 0.5; // Reduce DMC volume
@@ -296,6 +300,7 @@ impl Default for ControllerMapping {
 ```
 
 **Example**:
+
 ```rust
 config.input.controller1.a = KeyCode::A;
 config.input.controller1.b = KeyCode::S;
@@ -341,6 +346,7 @@ impl Default for AdvancedConfig {
 ```
 
 **Example**:
+
 ```rust
 config.advanced.rewind_enabled = true;
 config.advanced.overclock = 2.0; // 2x CPU speed
@@ -354,6 +360,7 @@ config.advanced.no_sprite_flicker = true; // Show all sprites
 ### TOML Format
 
 **config.toml**:
+
 ```toml
 [emulation]
 speed = 1.0
@@ -419,6 +426,7 @@ impl Config {
 ```
 
 **Usage**:
+
 ```rust
 // Load
 let config = Config::load_from_file("config.toml")?;
@@ -439,5 +447,6 @@ config.save_to_file("config.toml")?;
 ---
 
 **Related Documents**:
+
 - [BUILD.md](../dev/BUILD.md) - Feature flags
 - [ARCHITECTURE.md](../ARCHITECTURE.md) - System design

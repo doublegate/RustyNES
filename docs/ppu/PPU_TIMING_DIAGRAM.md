@@ -30,6 +30,7 @@ The NES PPU renders at **5.369318 MHz** (NTSC), generating one pixel (dot) per c
 - **Total: 89,342 dots/frame** (NTSC) or **106,392 dots/frame** (PAL)
 
 **Frame Rate:**
+
 - NTSC: 5369318 ÷ 341 ÷ 262 = **60.0988 Hz**
 - PAL: 5320342 ÷ 341 ÷ 312 = **50.0070 Hz**
 
@@ -85,6 +86,7 @@ Scanline   Dot Range    Type           Description
 **Purpose:** Render 256×240 visible picture
 
 **Activity:**
+
 - Dots 0-256: Fetch tiles, render pixels
 - Dots 257-320: Fetch sprite data for next scanline
 - Dots 321-336: Fetch first 2 tiles of next scanline
@@ -95,6 +97,7 @@ Scanline   Dot Range    Type           Description
 **Purpose:** Idle scanline, no rendering
 
 **Activity:**
+
 - PPU is idle
 - No memory access (safe to access VRAM)
 - Lasts full 341 dots
@@ -104,6 +107,7 @@ Scanline   Dot Range    Type           Description
 **Purpose:** Allow CPU to update VRAM/OAM
 
 **Activity:**
+
 - Scanline 241, dot 1: Set VBlank flag, trigger NMI (if enabled)
 - No rendering or memory access
 - Safe to write VRAM, OAM, palettes, scroll registers
@@ -113,6 +117,7 @@ Scanline   Dot Range    Type           Description
 **Purpose:** Prepare for next frame
 
 **Activity:**
+
 - Dot 1: Clear VBlank flag, sprite 0 hit, sprite overflow
 - Dots 280-304: Copy horizontal and vertical bits from t to v
 - Dots 321-336: Fetch first 2 tiles of scanline 0
@@ -153,10 +158,12 @@ Example for first tile:
 ```
 
 **Shift Registers:**
+
 - Shift left by 1 every dot (dots 2-257)
 - Reload every 8 dots with new tile data
 
 **Pixel Output:**
+
 - Dots 1-256: Output pixel from shift registers
 - Fine X scroll selects pixel within current tile
 
@@ -180,6 +187,7 @@ If fewer than 8 sprites on next scanline:
 ```
 
 **At Dot 257:**
+
 - Copy horizontal bits from t to v: `v = (v & 0xFBE0) | (t & 0x041F)`
 - Resets horizontal scroll position for next scanline
 
@@ -215,18 +223,21 @@ MMC5 mapper uses these fetches for scanline counting.
 ### Background Tile Fetch
 
 **Nametable Address:**
+
 ```
 NT addr = $2000 | (v & 0x0FFF)
 Where v = yyy NN YYYYY XXXXX
 ```
 
 **Attribute Table Address:**
+
 ```
 AT addr = $23C0 | (v & 0x0C00) | ((v >> 4) & 0x38) | ((v >> 2) & 0x07)
           $23C0 + nametable_select + coarse_y/4 + coarse_x/4
 ```
 
 **Pattern Table Address:**
+
 ```
 PT addr = (PPUCTRL.B × $1000) + (tile_id × 16) + fine_y
 PT low  = PT addr + 0
@@ -236,11 +247,13 @@ PT high = PT addr + 8
 ### Sprite Fetch
 
 **Sprite Tile Address (8×8 mode):**
+
 ```
 PT addr = (PPUCTRL.S × $1000) + (sprite_tile_id × 16) + sprite_y_offset
 ```
 
 **Sprite Tile Address (8×16 mode):**
+
 ```
 PT addr = ((sprite_tile_id & 0x01) × $1000) + ((sprite_tile_id & 0xFE) × 16) + sprite_y_offset
 ```
@@ -372,6 +385,7 @@ This makes odd frames 1 PPU dot shorter (~186 ns)
 ```
 
 **Implementation:**
+
 ```rust
 if self.odd_frame && rendering_enabled() && self.scanline == 261 && self.dot == 339 {
     self.dot = 0;
@@ -402,6 +416,7 @@ Dot 2-340: Continue VBlank
 ### Scanlines 242-260
 
 No special operations, PPU is idle. Safe for CPU to:
+
 - Write to $2000-$2007 (VRAM, OAM, palettes)
 - Update scroll registers
 - Transfer OAM via $4014 DMA

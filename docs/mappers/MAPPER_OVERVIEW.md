@@ -1,6 +1,7 @@
 # NES Mapper Overview
 
 **Table of Contents**
+
 - [Introduction](#introduction)
 - [Why Mappers Exist](#why-mappers-exist)
 - [Mapper Architecture](#mapper-architecture)
@@ -57,6 +58,7 @@ $0000-$1FFF: 8KB for CHR-ROM (graphics tiles)
 ### Additional Features
 
 Mappers also provide:
+
 - **IRQ counters**: For split-screen effects, raster effects
 - **Expansion audio**: Extra sound channels (VRC6, MMC5, N163)
 - **RAM**: Battery-backed save RAM, work RAM
@@ -95,12 +97,14 @@ CPU $8000-$BFFF now reads from physical ROM $14000-$17FFF (Bank 5)
 #### Common Banking Schemes
 
 **Fixed + Switchable** (UxROM, MMC1):
+
 ```
 $8000-$BFFF: Switchable 16KB bank
 $C000-$FFFF: Fixed to last bank (interrupt vectors)
 ```
 
 **Dual Switchable** (MMC3):
+
 ```
 $8000-$9FFF: Switchable 8KB bank 0
 $A000-$BFFF: Switchable 8KB bank 1
@@ -109,6 +113,7 @@ $E000-$FFFF: Fixed 8KB bank (-1, last bank)
 ```
 
 **Fully Switchable** (AxROM):
+
 ```
 $8000-$FFFF: Single switchable 32KB bank
 (Interrupt vectors must exist in every bank)
@@ -134,11 +139,13 @@ let physical = map_prg_address(0x9A00, 5, 0x2000);
 #### CHR-ROM vs CHR-RAM
 
 **CHR-ROM**:
+
 - Read-only graphics data
 - Bank-switched for more than 8KB of tiles
 - Common in early/mid-generation games
 
 **CHR-RAM**:
+
 - Writable RAM for dynamic graphics
 - No banking needed (typically 8KB)
 - Common in later games, all homebrew
@@ -146,17 +153,20 @@ let physical = map_prg_address(0x9A00, 5, 0x2000);
 #### Common CHR Banking Schemes
 
 **8KB Banks** (CNROM):
+
 ```
 $0000-$1FFF: Single switchable 8KB bank
 ```
 
 **4KB Banks** (MMC1):
+
 ```
 $0000-$0FFF: Switchable 4KB bank 0
 $1000-$1FFF: Switchable 4KB bank 1
 ```
 
 **2KB + 1KB Banks** (MMC3):
+
 ```
 $0000-$07FF: Switchable 2KB bank 0 (2 tiles)
 $0800-$0FFF: Switchable 2KB bank 1
@@ -217,6 +227,7 @@ fn get_mapper_number(header: &[u8; 16]) -> u8 {
 ### NES 2.0 Format
 
 **NES 2.0** extends iNES to support:
+
 - Mappers 0-4095 (vs iNES 0-255)
 - **Submappers** (4-bit variant identifiers)
 - Larger ROM sizes (up to exabytes theoretically)
@@ -255,10 +266,12 @@ Submapper     = (Byte 8 & 0xF0) >> 4
 **Example**: `NES-SLROM` (MMC1 board with specific PRG/CHR sizes)
 
 **Advantages**:
+
 - Precise hardware description
 - Extensible chunk-based format
 
 **Disadvantages**:
+
 - Less emulator support than iNES/NES 2.0
 - More complex parsing
 
@@ -286,6 +299,7 @@ Submapper     = (Byte 8 & 0xF0) >> 4
 ### Priority Implementation Order
 
 **Phase 1** (Essential - 80% coverage):
+
 1. Mapper 0 (NROM) - Baseline, no banking
 2. Mapper 1 (MMC1) - Most common, complex serial interface
 3. Mapper 2 (UxROM) - Simple PRG banking
@@ -294,6 +308,7 @@ Submapper     = (Byte 8 & 0xF0) >> 4
 6. Mapper 7 (AxROM) - Full 32KB banking
 
 **Phase 2** (Advanced - 95% coverage):
+
 - 5 (MMC5) - Expansion audio, exotic features
 - 9 (MMC2) - Punch-Out style latch
 - 10 (MMC4) - Similar to MMC2
@@ -302,6 +317,7 @@ Submapper     = (Byte 8 & 0xF0) >> 4
 - 23, 24, 25, 26 (VRC series) - Konami boards
 
 **Phase 3** (Comprehensive - 99%+):
+
 - Hundreds of unlicensed/obscure mappers
 - Homebrew mappers (30, 31, 218)
 - Multi-cart/educational boards
@@ -313,16 +329,19 @@ Submapper     = (Byte 8 & 0xF0) >> 4
 ### By Complexity
 
 **Simple Discrete Logic**:
+
 - Mappers 0, 2, 3, 7
 - No IRQ, basic banking
 - Easy to implement (< 100 lines)
 
 **Moderate ASIC**:
+
 - Mappers 1, 9, 10
 - Serial registers, latches
 - Medium complexity (100-300 lines)
 
 **Complex ASIC**:
+
 - Mappers 4, 5, 19
 - IRQ counters, expansion audio, multiply/divide
 - High complexity (300-1000+ lines)
@@ -330,6 +349,7 @@ Submapper     = (Byte 8 & 0xF0) >> 4
 ### By Manufacturer
 
 **Nintendo**:
+
 - MMC1 (Mapper 1)
 - MMC2 (Mapper 9)
 - MMC3 (Mapper 4)
@@ -337,6 +357,7 @@ Submapper     = (Byte 8 & 0xF0) >> 4
 - MMC5 (Mapper 5)
 
 **Konami**:
+
 - VRC1 (Mapper 75)
 - VRC2/4 (Mappers 21-25)
 - VRC3 (Mapper 73)
@@ -344,14 +365,17 @@ Submapper     = (Byte 8 & 0xF0) >> 4
 - VRC7 (Mapper 85)
 
 **Namco**:
+
 - Namco 163 (Mapper 19)
 - Namco 175/340 (Mapper 210)
 
 **Sunsoft**:
+
 - Sunsoft 4 (Mapper 68)
 - Sunsoft 5B (Mapper 69)
 
 **Unlicensed**:
+
 - Color Dreams (Mapper 11)
 - NINA-001 (Mapper 34)
 - Camerica/Codemasters (Mappers 71, 232)
@@ -359,11 +383,13 @@ Submapper     = (Byte 8 & 0xF0) >> 4
 ### By Features
 
 **IRQ Support**:
+
 - MMC3 (scanline counter)
 - MMC5 (configurable)
 - VRC series (CPU cycle counter)
 
 **Expansion Audio**:
+
 - VRC6 (3 channels: 2 pulse, 1 saw)
 - VRC7 (FM synthesis, 6 channels)
 - MMC5 (2 pulse + PCM)
@@ -371,6 +397,7 @@ Submapper     = (Byte 8 & 0xF0) >> 4
 - Sunsoft 5B (AY-3-8910 PSG)
 
 **Four-Screen VRAM**:
+
 - MMC5 (ExRAM)
 - Some unlicensed mappers
 
@@ -490,12 +517,14 @@ impl Mapper for MapperNNN {
 ### Test ROM Suites
 
 **Per-Mapper Test ROMs**:
+
 - `mapper###_test.nes` - Basic functionality tests
 - Bank switching verification
 - Register write/read tests
 - IRQ timing tests (if applicable)
 
 **Game-Based Testing**:
+
 | Mapper | Test Game | Tests |
 |--------|-----------|-------|
 | 0 | Super Mario Bros. | Baseline functionality |
@@ -571,6 +600,7 @@ fn test_full_rom_execution() {
 - [BUS_CONFLICTS.md](../bus/BUS_CONFLICTS.md) - Bus conflict behavior
 
 **Individual Mapper Documentation**:
+
 - [MAPPER_NROM.md](MAPPER_NROM.md) - Mapper 0
 - [MAPPER_MMC1.md](MAPPER_MMC1.md) - Mapper 1
 - [MAPPER_UXROM.md](MAPPER_UXROM.md) - Mapper 2
@@ -580,6 +610,7 @@ fn test_full_rom_execution() {
 ---
 
 **Related Documents**:
+
 - [BUS_CONFLICTS.md](../bus/BUS_CONFLICTS.md) - Understanding bus conflicts
 - [ARCHITECTURE.md](../ARCHITECTURE.md) - Overall system design
 - [TESTING.md](../dev/TESTING.md) - Test strategy and test ROMs

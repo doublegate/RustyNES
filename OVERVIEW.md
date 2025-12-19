@@ -55,12 +55,14 @@ RustyNES aims to be the **definitive NES emulator for the modern era** - combini
 Following Mesen2's philosophy, **accuracy is non-negotiable**. Every component (CPU, PPU, APU) must pass all relevant test ROMs before any optimization work begins. We target cycle-accurate emulation with sub-cycle precision where required.
 
 **Implementation Strategy:**
+
 - **CPU**: Cycle-accurate 6502 core with dummy read/write emulation
 - **PPU**: Per-dot rendering at 5.37 MHz (3x CPU clock)
 - **APU**: 1.789773 MHz execution with hardware-accurate mixing
 - **Mappers**: Cycle-based IRQ timing for MMC3/MMC5, VRC scanline counters
 
 **Why Accuracy Matters:**
+
 - Games rely on precise timing for sprite multiplexing
 - Many use mapper IRQs for split-screen effects
 - TAS movies require deterministic execution
@@ -77,6 +79,7 @@ Inspired by Ares's "half the code" philosophy, we prioritize **readable, maintai
 - Avoid premature optimization
 
 **Example Pattern:**
+
 ```rust
 // Strong typing for PPU registers using newtype pattern
 #[derive(Copy, Clone, Debug)]
@@ -100,6 +103,7 @@ Following DaveTCode's zero-unsafe approach:
 - Leverage type system for correctness (state machines as enums)
 
 **Benefits:**
+
 - Memory safety guaranteed at compile time
 - No data races in concurrent code
 - Easier reasoning about program behavior
@@ -128,6 +132,7 @@ rustynes-mappers/      # All mapper implementations
 ```
 
 **Use Cases:**
+
 - Embedding in other emulators
 - Academic research on NES hardware
 - Homebrew development tools
@@ -205,6 +210,7 @@ pub fn step(&mut self, bus: &mut Bus) -> u8 {
 ```
 
 **Why this approach:**
+
 - Simplifies instruction implementation
 - Natural handling of page-crossing penalties
 - Easy integration with PPU clock (3 PPU dots per CPU cycle)
@@ -220,12 +226,14 @@ Odd frames skip 1 dot (89,341 total)
 ```
 
 **Rendering pipeline per dot:**
+
 1. Fetch background tile data (every 8 dots)
 2. Evaluate sprites (dots 257-320)
 3. Output pixel to framebuffer
 4. Update scroll registers
 
 **Critical timing points:**
+
 - **Dot 1, Scanline 241**: VBlank flag set, NMI triggered
 - **Dot 257**: Copy horizontal scroll from T to V
 - **Dots 280-304, Scanline 261**: Copy vertical scroll from T to V
@@ -252,6 +260,7 @@ pub fn step(&mut self, cpu_cycles: u8) {
 ```
 
 **Why this approach:**
+
 - Matches hardware behavior (continuous analog output)
 - High-quality resampling (sinc interpolation)
 - Low latency (minimal buffering)
@@ -270,6 +279,7 @@ Ratio: 3 PPU dots per 1 CPU cycle (exact, no drift)
 ```
 
 **Implementation:**
+
 ```rust
 pub fn step(&mut self) -> u8 {
     let cpu_cycles = self.cpu.step(&mut self.bus);
@@ -298,12 +308,14 @@ RustyNES is designed for multiple user groups with diverse needs:
 ### 1. Emulation Enthusiasts
 
 **Needs:**
+
 - High accuracy for authentic gameplay
 - RetroAchievements integration
 - Save states and rewind
 - Customizable video/audio settings
 
 **Features:**
+
 - 100% game compatibility goal
 - CRT shaders and NTSC filters
 - Multiple controller support
@@ -312,12 +324,14 @@ RustyNES is designed for multiple user groups with diverse needs:
 ### 2. TAS Community
 
 **Needs:**
+
 - Frame-perfect execution
 - FM2 movie recording/playback
 - TAS editor with greenzone
 - Lua scripting for automation
 
 **Features:**
+
 - Deterministic emulation
 - Input recording/editing
 - RAM search and watch
@@ -326,12 +340,14 @@ RustyNES is designed for multiple user groups with diverse needs:
 ### 3. Netplay Users
 
 **Needs:**
+
 - Low-latency online play
 - Rollback netcode
 - Spectator mode
 - Tournament features
 
 **Features:**
+
 - GGPO rollback (1-2 frame lag)
 - Lobby system
 - Replay saving
@@ -340,12 +356,14 @@ RustyNES is designed for multiple user groups with diverse needs:
 ### 4. Homebrew Developers
 
 **Needs:**
+
 - Accurate hardware emulation
 - Advanced debugging tools
 - Test ROM automation
 - Performance profiling
 
 **Features:**
+
 - CPU/PPU/APU state viewers
 - Trace logger (instruction/scanline)
 - Code-data logger (CDL)
@@ -354,12 +372,14 @@ RustyNES is designed for multiple user groups with diverse needs:
 ### 5. Rust Developers
 
 **Needs:**
+
 - Clean reference implementation
 - Reusable components
 - Comprehensive documentation
 - Test coverage examples
 
 **Features:**
+
 - Well-documented crate APIs
 - Property-based testing examples
 - Benchmark suite
@@ -420,6 +440,7 @@ Planned optimizations (after accuracy validation):
 - **Mappers**: Precomputed banking tables
 
 **Target Performance:**
+
 - 1000+ FPS on modern CPUs (16x real-time)
 - <5ms frame time for 60 FPS gameplay
 - <100 MB memory footprint
@@ -427,16 +448,19 @@ Planned optimizations (after accuracy validation):
 ### Cross-Platform Strategy
 
 **Graphics**: wgpu (Vulkan/Metal/DX12/WebGPU)
+
 - Single codebase for all platforms
 - GPU-accelerated scanline rendering
 - Shader support for post-processing
 
 **Audio**: SDL2 or cpal
+
 - Low-latency output (<20ms)
 - Resampling to native rates (44.1/48 kHz)
 - Volume normalization
 
 **Input**: gilrs + winit
+
 - Gamepad auto-detection
 - Hotplug support
 - Customizable key bindings

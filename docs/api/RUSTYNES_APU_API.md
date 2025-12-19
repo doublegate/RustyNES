@@ -1060,6 +1060,7 @@ fn play_nsf_song(apu: &mut Apu<impl ApuBus>, song_data: &[u8]) {
 ---
 
 **Related Documents:**
+
 - [APU_2A03_SPECIFICATION.md](../apu/APU_2A03_SPECIFICATION.md)
 - [APU_CHANNEL_PULSE.md](../apu/APU_CHANNEL_PULSE.md)
 - [APU_CHANNEL_TRIANGLE.md](../apu/APU_CHANNEL_TRIANGLE.md)

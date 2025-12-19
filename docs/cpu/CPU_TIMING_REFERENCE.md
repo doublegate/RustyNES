@@ -82,6 +82,7 @@ fn page_crossed(base: u16, indexed: u16) -> bool {
 ```
 
 **Example:**
+
 ```
 LDA $10FF,X where X=$01
 Base:    $10FF (page $10)
@@ -332,6 +333,7 @@ ASL $1000,X  - Always 7 cycles
 ## Branch Timing
 
 Branches have variable timing based on:
+
 1. **Branch taken?**
 2. **Page boundary crossed?**
 
@@ -457,6 +459,7 @@ If write occurs on even CPU cycle:
 ```
 
 **Per-byte timing:**
+
 ```
 Cycle N+0: Read from $XX00
 Cycle N+1: Write to $2004
@@ -530,6 +533,7 @@ Cycle 7: Write shifted value, set flags
 **Purpose:** Maintain cycle alignment and respect hardware timing constraints.
 
 **Locations:**
+
 1. **Zero Page,X/Y addressing** - Read from base address before adding index
 2. **Indexed addressing page crossing** - Read from incorrect page
 3. **Stack operations** - Dummy read from $0100+SP during increment
@@ -557,6 +561,7 @@ Cycle 4: Read from $0100+(SP+1), load into A, set flags
 ### Dummy Writes
 
 **All RMW operations** write the original value back before writing the new value. This is critical for:
+
 - **Hardware registers** that react to writes
 - **Mapper banking** that detects write operations
 - **Bus conflict detection** on certain mappers
@@ -568,6 +573,7 @@ Cycle 4: Read from $0100+(SP+1), load into A, set flags
 ### Critical Test ROMs
 
 **nestest.nes** - Golden log comparison:
+
 ```
 C000  4C F5 C5  JMP $C5F5                       A:00 X:00 Y:00 P:24 SP:FD CYC:7
 C5F5  A2 00     LDX #$00                        A:00 X:00 Y:00 P:24 SP:FD CYC:10
@@ -576,6 +582,7 @@ C5F5  A2 00     LDX #$00                        A:00 X:00 Y:00 P:24 SP:FD CYC:10
 Each line shows exact cycle count after instruction execution.
 
 **cpu_timing_test6** - Tests all instructions:
+
 ```
 01-implied
 02-immediate

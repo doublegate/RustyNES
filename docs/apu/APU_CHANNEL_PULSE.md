@@ -28,6 +28,7 @@
 The NES APU contains **two independent pulse (square wave) channels** capable of generating variable-duty-cycle waveforms. These channels are the primary melodic voices in NES audio, used for lead melodies, harmonies, and sound effects.
 
 **Key Characteristics:**
+
 - 4 selectable duty cycles (12.5%, 25%, 50%, 75%)
 - Hardware envelope generator (volume control)
 - Frequency sweep unit (pitch bending)
@@ -36,6 +37,7 @@ The NES APU contains **two independent pulse (square wave) channels** capable of
 - 4-bit output (16 volume levels)
 
 **Differences Between Pulse 1 and Pulse 2:**
+
 - Pulse 1: Sweep unit uses ones' complement for negation
 - Pulse 2: Sweep unit uses two's complement for negation
 - Otherwise identical in functionality
@@ -65,6 +67,7 @@ Each pulse channel consists of **five interconnected units**:
 ```
 
 **Signal Flow:**
+
 1. **Timer** counts down, clocking the sequencer
 2. **Sequencer** outputs duty cycle waveform (0 or 1)
 3. **Envelope** scales output by volume (0-15)
@@ -72,6 +75,7 @@ Each pulse channel consists of **five interconnected units**:
 5. **Length Counter** gates the output
 
 **Gating Logic:**
+
 ```
 Output = Sequencer × Envelope × (Length > 0) × (Timer >= 8) × !SweepMute
 ```
@@ -105,6 +109,7 @@ DDLC VVVV
 ```
 
 **Bit Definitions:**
+
 - **DD (Duty)**: Selects waveform (0=12.5%, 1=25%, 2=50%, 3=25% inverted)
 - **L (Loop)**: If 1, length counter is frozen and envelope loops
 - **C (Constant)**: If 1, volume = VVVV; if 0, envelope generates volume
@@ -123,6 +128,7 @@ EPPP NSSS
 ```
 
 **Bit Definitions:**
+
 - **E (Enable)**: 0 = sweep disabled, 1 = sweep active
 - **PPP (Period)**: Divider period (0-7), clocked by frame counter
 - **N (Negate)**: Direction of sweep (0 = increase, 1 = decrease)
@@ -148,6 +154,7 @@ LLLL LTTT
 ```
 
 **Side Effects of Writing:**
+
 - Timer bits 8-10 are set
 - Length counter is loaded from lookup table
 - **Envelope restarts** (sets divider to reload value)
@@ -171,6 +178,7 @@ The 8-step sequencer generates four distinct pulse waveforms:
 | **3** | `1 0 0 1 1 1 1 1` | ▅▂▂▅▅▅▅▅ | 25% | Inverted (same timbre as duty 1) |
 
 **Sequencer Behavior:**
+
 - Clocked by timer every **8 × (timer + 1)** APU cycles
 - Steps through pattern in **reverse order**: 0, 7, 6, 5, 4, 3, 2, 1, 0, ...
 - Output is 1 or 0 (before envelope scaling)
@@ -210,24 +218,30 @@ The envelope provides **hardware-controlled volume fade** for attack-decay-susta
 ### Operation Modes
 
 **Mode 1: Constant Volume (C=1)**
+
 ```
 Output = VVVV (0-15)
 ```
+
 Volume is fixed at the value in register bits 0-3.
 
 **Mode 2: Envelope Volume (C=0)**
+
 ```
 Output = Decay Level (15 → 0 over time)
 ```
+
 Envelope automatically decrements from 15 to 0, providing fade-out.
 
 ### Envelope Timing
 
 **Clock Source:** Frame counter (quarter frames)
+
 - 4-step mode: 240 Hz (every ~4167 CPU cycles)
 - 5-step mode: 192 Hz (every ~5208 CPU cycles)
 
 **Divider Period:** VVVV controls fade speed
+
 - Period 0: Fastest (240 Hz / 1 = 240 Hz decay rate)
 - Period 15: Slowest (240 Hz / 16 = 15 Hz decay rate)
 
@@ -302,6 +316,7 @@ The sweep unit provides **automatic pitch bending** by periodically modifying th
 ### Sweep Calculation
 
 **Target Period Formula:**
+
 ```
 target = current_period >> shift_count
 
@@ -321,6 +336,7 @@ else:
 The sweep unit is clocked by the **frame counter at half frames** (120 Hz NTSC).
 
 **Divider Period (PPP):**
+
 - 0: 120 Hz (every half frame)
 - 1: 60 Hz
 - 2: 40 Hz
@@ -330,6 +346,7 @@ The sweep unit is clocked by the **frame counter at half frames** (120 Hz NTSC).
 ### Muting Conditions
 
 The sweep unit **mutes the channel** if:
+
 1. **Current period < 8** (ultrasonic frequency)
 2. **Target period > $7FF** (timer overflow)
 
@@ -342,6 +359,7 @@ fn is_muted(&self) -> bool {
 ### Reload Behavior
 
 Writing to $4001/$4005 sets a **reload flag**. On the next sweep clock:
+
 1. Divider is reloaded
 2. Reload flag is cleared
 
@@ -424,6 +442,7 @@ Writing to $4003/$4007 loads the length counter from this table (bits 7-3):
 ### Halt Flag
 
 The **loop/halt flag** (L bit in $4000/$4004) controls length counter behavior:
+
 - **L=0**: Counter decrements normally, channel stops when reaching 0
 - **L=1**: Counter is frozen, channel plays indefinitely
 
@@ -497,6 +516,7 @@ PAL:  f_CPU = 1.662607 MHz
 ```
 
 **Frequency Range (NTSC):**
+
 - Minimum: 54.6 Hz (timer = $7FF)
 - Maximum: 12.4 kHz (timer = $008, below this channel mutes)
 
@@ -748,6 +768,7 @@ pub fn load(&mut self, index: u8) {
 ### Manual Testing
 
 **Duty Cycle Verification:**
+
 ```
 For each duty (0-3):
     Play middle C (261.63 Hz, timer ~426)
@@ -755,6 +776,7 @@ For each duty (0-3):
 ```
 
 **Envelope Test:**
+
 ```
 Set: Constant=0, Loop=0, Volume=15
 Trigger note with $4003
@@ -762,6 +784,7 @@ Verify: Volume decays from 15 to 0 over ~1 second
 ```
 
 **Sweep Test:**
+
 ```
 // Upward sweep
 Set: Enable=1, Negate=0, Period=0, Shift=1

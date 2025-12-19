@@ -25,6 +25,7 @@ The Famicom Disk System (FDS) was a disk-based add-on for the Famicom released i
 ### Disk Drive
 
 The RAM Adapter contains:
+
 - 32 KB PRG-RAM at $6000-$DFFF
 - 8 KB CHR-RAM at PPU $0000-$1FFF
 - Wavetable sound channel

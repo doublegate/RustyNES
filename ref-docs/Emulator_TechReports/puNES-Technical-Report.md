@@ -125,14 +125,14 @@ typedef struct _cpu {
     BYTE X, Y;          // Index registers
     BYTE SP;            // Stack pointer
     BYTE P;             // Processor status
-    
+
     BYTE opcode;        // Current opcode
     BYTE tmp_byte;      // Temporary storage
     WORD tmp_ea;        // Effective address
-    
+
     SWORD cycles;       // Cycle counter
     SWORD stall_cycles; // DMA stall tracking
-    
+
     BYTE irq_delay;     // IRQ delay
     BYTE nmi_edge;      // NMI edge detection
 } _cpu;
@@ -222,24 +222,24 @@ typedef struct _ppu {
     WORD temp_addr;     // Temporary address (t)
     BYTE fine_x;        // Fine X scroll (3-bit)
     BYTE write_toggle;  // $2005/$2006 toggle
-    
+
     // Scanline state
     WORD scanline;      // Current scanline (0-261)
     WORD cycle;         // Current cycle (0-340)
     WORD frame;         // Frame counter
-    
+
     // Memory
     BYTE vram[0x2000];  // 8KB VRAM
     BYTE palette[32];   // Palette RAM
     BYTE oam[256];      // OAM (sprite memory)
     BYTE soam[32];      // Secondary OAM
-    
+
     // Rendering state
     BYTE bg_shifter_lo;
     BYTE bg_shifter_hi;
     BYTE at_shifter_lo;
     BYTE at_shifter_hi;
-    
+
     // Sprite state
     BYTE sprite_count;
     BYTE sprite_zero_hit;
@@ -260,25 +260,25 @@ void ppu_render_bg_pixel(void) {
     // Fetch tile index
     WORD tile_addr = 0x2000 | (ppu.vram_addr & 0x0FFF);
     BYTE tile_index = ppu_rd_mem(tile_addr);
-    
+
     // Fetch attribute byte
     WORD attr_addr = 0x23C0 | (ppu.vram_addr & 0x0C00) |
                      ((ppu.vram_addr >> 4) & 0x38) |
                      ((ppu.vram_addr >> 2) & 0x07);
     BYTE attr = ppu_rd_mem(attr_addr);
-    
+
     // Fetch pattern data
-    WORD pattern_addr = (ppu.ctrl & 0x10) << 8 | 
-                        (tile_index << 4) | 
+    WORD pattern_addr = (ppu.ctrl & 0x10) << 8 |
+                        (tile_index << 4) |
                         ((ppu.vram_addr >> 12) & 0x07);
     BYTE pattern_lo = ppu_rd_mem(pattern_addr);
     BYTE pattern_hi = ppu_rd_mem(pattern_addr + 8);
-    
+
     // Render pixel
     BYTE pixel = ((pattern_hi >> (7 - ppu.fine_x)) & 1) << 1 |
                  ((pattern_lo >> (7 - ppu.fine_x)) & 1);
     BYTE color = ppu.palette[pixel | (attr << 2)];
-    
+
     screen_put_pixel(ppu.cycle - 1, ppu.scanline, color);
 }
 ```
@@ -288,26 +288,26 @@ void ppu_render_bg_pixel(void) {
 void ppu_sprite_evaluation(void) {
     // Clear secondary OAM
     memset(ppu.soam, 0xFF, 32);
-    
+
     ppu.sprite_count = 0;
     ppu.sprite_zero_hit = 0;
-    
+
     // Evaluate sprites
     for (int i = 0; i < 64 && ppu.sprite_count < 8; i++) {
         BYTE y = ppu.oam[i * 4];
         BYTE height = (ppu.ctrl & 0x20) ? 16 : 8;
-        
+
         // Check if sprite is on scanline
         if (ppu.scanline >= y && ppu.scanline < y + height) {
             // Copy to secondary OAM
-            memcpy(&ppu.soam[ppu.sprite_count * 4], 
+            memcpy(&ppu.soam[ppu.sprite_count * 4],
                    &ppu.oam[i * 4], 4);
-            
+
             if (i == 0) ppu.sprite_zero_hit = 1;
             ppu.sprite_count++;
         }
     }
-    
+
     // Set overflow flag if more than 8 sprites
     if (ppu.sprite_count > 8) {
         ppu.status |= 0x20;  // Sprite overflow
@@ -503,22 +503,22 @@ class mainWindow : public QMainWindow {
 private:
     // Video output
     QOpenGLWidget *screen;
-    
+
     // Menu bar
     QMenu *menuFile;
     QMenu *menuNES;
     QMenu *menuSettings;
     QMenu *menuTools;
     QMenu *menuHelp;
-    
+
     // Toolbars
     QToolBar *toolBar;
-    
+
     // Status bar
     QStatusBar *statusBar;
     QLabel *statusFramerate;
     QLabel *statusController;
-    
+
     // Settings dialogs
     wdgSettingsVideo *settingsVideo;
     wdgSettingsAudio *settingsAudio;
@@ -633,13 +633,13 @@ From version 0.111 update:
 void video_shader_init(void) {
     // Vertex shader
     load_vertex_shader("vertex.glsl");
-    
+
     // Fragment shader (NTSC/CRT effects)
     load_fragment_shader("fragment.glsl");
-    
+
     // Compile and link
     compile_shader_program();
-    
+
     // Upload uniforms
     upload_shader_uniforms();
 }
@@ -865,7 +865,7 @@ impl RomDatabase {
 // FFmpeg recording
 struct Recorder {
     encoder: ffmpeg::Encoder,
-    
+
     fn start(&mut self, path: &Path) -> Result<()>;
     fn record_frame(&mut self, pixels: &[u8]);
     fn record_audio(&mut self, samples: &[i16]);

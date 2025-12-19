@@ -29,6 +29,7 @@ The PPU renders a **256×240 pixel display** using a two-layer system:
 Both layers are rendered **simultaneously** during each scanline, with pixel priority determined by sprite attributes and transparency.
 
 **Key Rendering Characteristics:**
+
 - Dot-level rendering (one pixel per PPU cycle)
 - Parallel background and sprite processing
 - 8 sprites per scanline limit (hardware limitation)
@@ -75,6 +76,7 @@ For each visible dot (1-256), the PPU outputs a pixel by:
    - Output to framebuffer
 
 **Pixel Multiplexer Logic:**
+
 ```
 if sprite_pixel.transparent && bg_pixel.transparent:
     output = universal_background_color
@@ -109,6 +111,7 @@ Cycle 8: Increment coarse X, reload shift registers
 ```
 
 **Memory Access Pattern:**
+
 ```
 Nametable Address:     $2000 | (v & 0x0FFF)
 Attribute Address:     $23C0 | (v & 0x0C00) | ((v >> 4) & 0x38) | ((v >> 2) & 0x07)
@@ -129,11 +132,13 @@ struct BgShiftRegisters {
 ```
 
 **Operation:**
+
 - **Load:** Every 8 dots, fetch next tile data and load into upper 8 bits
 - **Shift:** Every dot, shift all registers left by 1 bit
 - **Output:** Use fine X scroll to select which bit to output
 
 **Shift and Reload:**
+
 ```rust
 fn shift_registers(&mut self) {
     self.bg_shift_lo <<= 1;
@@ -188,6 +193,7 @@ fn get_attribute_bits(&self, tile_x: u8, tile_y: u8, attr_byte: u8) -> u8 {
 ```
 
 **Attribute Byte Layout:**
+
 ```
 7654 3210
 |||| ||||
@@ -213,6 +219,7 @@ Byte 3: X position (left edge, in pixels)
 ```
 
 **Attribute Byte (Byte 2):**
+
 ```
 7654 3210
 |||| ||||
@@ -239,6 +246,7 @@ Dots 65-256: Scan primary OAM (64 sprites)
 ```
 
 **Sprite Y Range Check:**
+
 ```rust
 fn sprite_in_range(&self, sprite_y: u8, scanline: u16, sprite_height: u8) -> bool {
     let sprite_top = sprite_y as u16;
@@ -313,6 +321,7 @@ Bottom half: Tile index | 0x01
 ```
 
 **Y Offset Calculation:**
+
 ```rust
 fn get_8x16_tile_index(&self, tile_byte: u8, row: u8) -> (u16, u8) {
     let pattern_table = if (tile_byte & 0x01) != 0 { 0x1000 } else { 0x0000 };
@@ -386,6 +395,7 @@ fn multiplex_pixel(&self, bg: BgPixel, sprite: Option<SpritePixel>) -> u8 {
 ### Definition
 
 **Sprite 0 hit** occurs when:
+
 1. Sprite 0 (first sprite in OAM) has an **opaque pixel** (color index ≠ 0)
 2. Background has an **opaque pixel** at the same position
 3. Both rendering layers are **enabled** ($2001 bits 3 and 4)
@@ -421,6 +431,7 @@ fn check_sprite_0_hit(&mut self, x: u8, bg_pixel: BgPixel, sprite_pixel: Option<
 - **Cleared:** At dot 1 of pre-render scanline (261)
 
 **Important Edge Cases:**
+
 - Hit does NOT occur if either pixel is transparent (color index 0)
 - Hit does NOT occur in leftmost 8 pixels unless both show_left flags are set
 - Hit occurs even if sprite priority places it behind background

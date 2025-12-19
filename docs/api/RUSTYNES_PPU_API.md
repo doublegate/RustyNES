@@ -941,6 +941,7 @@ fn show_debug_info(ppu: &Ppu<impl PpuBus>) {
 ---
 
 **Related Documents:**
+
 - [PPU_2C02_SPECIFICATION.md](../ppu/PPU_2C02_SPECIFICATION.md)
 - [PPU_TIMING_DIAGRAM.md](../ppu/PPU_TIMING_DIAGRAM.md)
 - [PPU_SCROLLING_INTERNALS.md](../ppu/PPU_SCROLLING_INTERNALS.md)

@@ -88,6 +88,7 @@ VBlank Time: 20 scanlines × 341 dots ÷ 5.369318 MHz = 1.27 ms
 ```
 
 **CPU Cycles per Frame:**
+
 ```
 Even Frame:  89,342 dots ÷ 3 = 29,780.67 CPU cycles
 Odd Frame:   89,341 dots ÷ 3 = 29,780.33 CPU cycles
@@ -114,6 +115,7 @@ Dots 337-340:    Unused nametable fetches
 ```
 
 **Rendering Pipeline:**
+
 - Background tile fetching (every 8 dots)
 - Sprite evaluation (dots 1-256)
 - Pixel output (dots 1-256)
@@ -141,6 +143,7 @@ Scanlines 241-260:    VBlank period (safe for VRAM access)
 **Duration:** 20 scanlines = 6,820 dots = ~1.27 ms
 
 **CPU Cycles Available:**
+
 ```
 6,820 dots ÷ 3 = 2,273 CPU cycles during VBlank
 ```
@@ -172,10 +175,12 @@ Scanline 241, Dot 1:
 
 **Race Condition:**
 If the CPU reads `$2002` on the **exact cycle** the VBlank flag is set:
+
 - VBlank flag is cleared (as expected)
 - NMI is **suppressed** (unexpected side effect)
 
 **Implementation:**
+
 ```rust
 if self.scanline == 241 && self.dot == 1 {
     self.status |= 0x80; // Set VBlank
@@ -199,6 +204,7 @@ Scanline 261, Dot 1:
 ```
 
 **Implementation:**
+
 ```rust
 if self.scanline == 261 && self.dot == 1 {
     self.status &= 0x1F; // Clear bits 7, 6, 5
@@ -217,6 +223,7 @@ Visible Scanlines, Dot 257:
 **Purpose:** Reset horizontal scroll at the end of each scanline to prepare for the next scanline.
 
 **Implementation:**
+
 ```rust
 if self.dot == 257 && self.scanline < 240 && rendering_enabled {
     // Copy horizontal scroll: coarse X, nametable X
@@ -235,6 +242,7 @@ Pre-Render Scanline, Dots 280-304:
 **Purpose:** Initialize vertical scroll at the start of each frame.
 
 **Implementation:**
+
 ```rust
 if self.scanline == 261 && self.dot >= 280 && self.dot <= 304 && rendering_enabled {
     // Copy vertical scroll: coarse Y, nametable Y, fine Y
@@ -251,6 +259,7 @@ During Rendering:
 ```
 
 **Implementation:**
+
 ```rust
 fn increment_coarse_x(&mut self) {
     if (self.vram_addr & 0x001F) == 31 {
@@ -272,6 +281,7 @@ Visible Scanlines, Dot 256:
 ```
 
 **Implementation:**
+
 ```rust
 fn increment_y(&mut self) {
     if (self.vram_addr & 0x7000) != 0x7000 {
@@ -324,6 +334,7 @@ Dot 0 (of 8): Increment coarse X
 ```
 
 **Example Timeline (Dots 1-8):**
+
 ```
 Dot 1: Fetch NT byte
 Dot 2: -
@@ -362,10 +373,12 @@ Odd frames:   Scanline 0 starts at dot 1 (340 dots total, skip dot 0)
 **Purpose:** Aligns the PPU frame timing to avoid NTSC color artifacts.
 
 **Condition:** Skip occurs ONLY if:
+
 - Frame count is odd
 - Background or sprite rendering is enabled ($2001 bits 3 or 4 set)
 
 **Implementation:**
+
 ```rust
 pub fn step(&mut self) {
     // Skip cycle 0 of scanline 0 on odd frames when rendering
@@ -392,6 +405,7 @@ pub fn step(&mut self) {
 ```
 
 **Effect on Frame Timing:**
+
 ```
 Even frame: 89,342 dots = 29,780.67 CPU cycles
 Odd frame:  89,341 dots = 29,780.33 CPU cycles

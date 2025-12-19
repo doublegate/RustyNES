@@ -39,18 +39,21 @@ While **test ROMs** (nestest, blargg suite, etc.) validate low-level accuracy, *
 ### Relationship to Test ROMs
 
 **Test ROMs** provide:
+
 - Precise diagnostic information
 - Isolated component testing
 - Pass/fail automation
 - Development-focused validation
 
 **Game ROMs** provide:
+
 - End-to-end validation
 - User experience verification
 - Compatibility metrics
 - Real-world workload testing
 
 **Best Practice**: Use both in tandem
+
 1. **Test ROMs first** - Fix fundamental accuracy issues
 2. **Game ROMs next** - Validate real-world behavior
 3. **Iterate** - Game failures inform which test ROMs to revisit
@@ -78,6 +81,7 @@ See [TEST_ROM_GUIDE.md](TEST_ROM_GUIDE.md) for comprehensive test ROM documentat
 Start with **L1** (boots) for all games in a tier, then progressively target **L2-L4** as accuracy improves.
 
 **Example Progression:**
+
 ```
 Week 1:  10 Tier 1 games boot (L1)
 Week 2:  10 Tier 1 games playable (L2)
@@ -171,6 +175,7 @@ Audio is harder to objectively test than video. Use comparative listening:
 #### Mapper 1 (MMC1 / SxROM) - 27.9% of games
 
 **Technical Characteristics:**
+
 - Serial write interface (5 writes to register)
 - PRG banking: 16KB switchable + 16KB fixed, or 32KB switchable
 - CHR banking: 4KB or 8KB
@@ -193,15 +198,18 @@ Audio is harder to objectively test than video. Use comparative listening:
 | **Dr. Mario** | 1990 | Nintendo | Falling blocks, music timing | Easy |
 
 **PPU Features:**
+
 - **Scrolling:** Zelda (omnidirectional), Metroid (vertical focus), Mega Man 2 (horizontal)
 - **Sprite 0 hit:** Mega Man 2 (weapon energy bars), Zelda (HUD)
 - **CHR banking:** Frequent pattern table updates for animations
 
 **APU Features:**
+
 - **Complex music:** Final Fantasy, Dr. Mario
 - **Sound effects:** Mega Man 2 weapon sounds, Zelda secrets
 
 **Known Challenges:**
+
 - **Serial write timing:** 5 consecutive writes to $8000-$FFFF, bit 7 resets
 - **Mega Man 2**: Infamously timing-sensitive, crashes on inaccurate emulators
 - **Zelda**: Save RAM must persist, complex scrolling edge cases
@@ -209,6 +217,7 @@ Audio is harder to objectively test than video. Use comparative listening:
 #### Mapper 2 (UxROM) - 10.6% of games
 
 **Technical Characteristics:**
+
 - Simple PRG banking: 16KB switchable at $8000, 16KB fixed at $C000
 - No CHR banking (8KB CHR-RAM standard)
 - Bus conflicts on some boards (see [BUS_CONFLICTS.md](../bus/BUS_CONFLICTS.md))
@@ -227,6 +236,7 @@ Audio is harder to objectively test than video. Use comparative listening:
 | **Teenage Mutant Ninja Turtles** | 1989 | Konami | Turtle switching, underwater level | Medium |
 
 **Known Challenges:**
+
 - **Bus conflicts**: Writes to $8000-$FFFF must AND with ROM data on some boards
 - **Mega Man**: Tight timing (classic test)
 - **Ghosts 'n Goblins**: Infamously difficult game, good stress test
@@ -234,6 +244,7 @@ Audio is harder to objectively test than video. Use comparative listening:
 #### Mapper 3 (CNROM) - 6.3% of games
 
 **Technical Characteristics:**
+
 - Simple CHR banking: 8KB switchable
 - No PRG banking (32KB fixed)
 - Single write to $8000-$FFFF selects CHR bank
@@ -249,12 +260,14 @@ Audio is harder to objectively test than video. Use comparative listening:
 | **Solomon's Key** | 1987 | Tecmo | Puzzle platformer, block creation | Medium |
 
 **Known Challenges:**
+
 - **Very simple mapper** - Usually works if NROM works
 - **CHR banking only** - Good test for graphics switching
 
 #### Mapper 4 (MMC3 / TxROM) - 23.4% of games
 
 **Technical Characteristics:**
+
 - Complex PRG banking: 8KB switchable banks, configurable layout
 - Complex CHR banking: 2KB + 1KB banks
 - **Scanline IRQ counter** - Critical feature for status bars, raster effects
@@ -278,14 +291,17 @@ Audio is harder to objectively test than video. Use comparative listening:
 | **TMNT III: The Manhattan Project** | 1991 | Konami | Beat-em-up, special moves | Medium |
 
 **PPU Features:**
+
 - **Scanline IRQ:** SMB3 status bar, Kirby's Adventure effects
 - **Split-screen:** Status bars on top/bottom
 - **Advanced scrolling:** Smooth omnidirectional (Kirby)
 
 **APU Features:**
+
 - **Complex soundtracks:** SMB3, Kirby's Adventure (advanced music)
 
 **Known Challenges:**
+
 - **Scanline IRQ timing**: Must trigger on PPU A12 rising edge (background fetch)
 - **Kirby's Adventure**: Largest licensed NES game (6 Mbit), heavy CHR banking
 - **SMB3**: Status bar requires precise IRQ timing or it shakes/glitches
@@ -312,6 +328,7 @@ Audio is harder to objectively test than video. Use comparative listening:
 #### Mapper 5 (MMC5 / ExROM) - Very Complex
 
 **Technical Characteristics:**
+
 - Advanced PRG banking (multiple modes)
 - Advanced CHR banking
 - ExRAM ($5C00-$5FFF) - Extended attribute table
@@ -329,6 +346,7 @@ Audio is harder to objectively test than video. Use comparative listening:
 | **Uncharted Waters** | 1991 | Koei | Complex menus, world map | Medium |
 
 **Known Challenges:**
+
 - **Most complex mapper** - Save for late implementation
 - **ExRAM modes** - Can be used as nametable, attribute, or regular RAM
 - **Expansion audio** - 2 additional pulse channels + PCM playback
@@ -339,6 +357,7 @@ Audio is harder to objectively test than video. Use comparative listening:
 #### Mapper 7 (AxROM) - 3.1% of games
 
 **Technical Characteristics:**
+
 - 32KB PRG banking (full $8000-$FFFF switchable)
 - One-screen mirroring control
 - No CHR banking (8KB CHR-RAM)
@@ -352,6 +371,7 @@ Audio is harder to objectively test than video. Use comparative listening:
 | **Wizards & Warriors** | 1987 | Acclaim | Platforming, item collection | Medium |
 
 **Known Challenges:**
+
 - **Battletoads**: [Infamously difficult to emulate](https://www.nesdev.org/wiki/Tricky-to-emulate_games) - requires precise CPU/PPU timing
   - Streams animation frames into CHR-RAM during rendering-disabled scanlines
   - Sprite 0 hit timing must be exact or game hangs entering first stage
@@ -361,6 +381,7 @@ Audio is harder to objectively test than video. Use comparative listening:
 #### Mapper 9 (MMC2 / PxROM) - Punch-Out style
 
 **Technical Characteristics:**
+
 - PRG banking: 8KB switchable at $8000, 24KB fixed
 - CHR banking: Latch-based (switches on PPU reads of $FD/$FE tiles)
 - 2 independent latches for $0000 and $1000 regions
@@ -373,6 +394,7 @@ Audio is harder to objectively test than video. Use comparative listening:
 | **Mike Tyson's Punch-Out!!** | 1987 | Nintendo | (Same as above, different opponent) | Hard |
 
 **Known Challenges:**
+
 - **CHR latch mechanism** - Banks switch based on which tiles PPU fetches
 - **Large sprites** - Uses advanced PPU techniques for big characters
 
@@ -478,6 +500,7 @@ Audio is harder to objectively test than video. Use comparative listening:
 #### VRC6 (Mappers 24/26) - Konami
 
 **Technical Characteristics:**
+
 - 2 additional pulse wave channels
 - 1 sawtooth wave channel
 - Used in Japanese Famicom games (not NES compatible)
@@ -491,17 +514,20 @@ Audio is harder to objectively test than video. Use comparative listening:
 | **Madara** | 1990 | Konami | Action RPG, VRC6 soundtrack | Japanese exclusive |
 
 **Audio Features:**
+
 - **Sawtooth channel** - Rich bass tones, "thudding" quality
 - **Extra pulse waves** - 6 total melodic channels (4 from 2A03 + 2 VRC6)
 - **Comparison**: VRC6 vs MMC5 - Sawtooth is key difference
 
 **Implementation Reference:**
+
 - [Famicom Expansion Audio](https://jsgroth.dev/blog/posts/famicom-expansion-audio/)
 - [Castlevania III with VRC6](https://callanbrown.com/index.php/castlevania-iii-with-full-famicom-audio/)
 
 #### VRC7 (Mapper 85) - Konami FM Synthesis
 
 **Technical Characteristics:**
+
 - Yamaha OPLL FM synthesis chip (customized YM2413)
 - 6 FM channels
 - Only 1 game uses VRC7 audio
@@ -513,12 +539,14 @@ Audio is harder to objectively test than video. Use comparative listening:
 | **Lagrange Point** | 1991 | Konami | Only VRC7 game, FM synth soundtrack | Japanese exclusive, rare |
 
 **Audio Features:**
+
 - **FM synthesis** - Rich, complex timbres unlike PSG
 - **Implementation challenge** - Requires YM2413 emulation core
 
 #### MMC5 (Mapper 5) - Nintendo
 
 **Technical Characteristics:**
+
 - 2 additional pulse channels (identical to 2A03)
 - 1 PCM channel
 - Only expansion usable on international NES
@@ -532,12 +560,14 @@ Audio is harder to objectively test than video. Use comparative listening:
 | **Shin 4-Nin Uchi Mahjong** | 1984 | Nintendo | MMC5 pulse waves | Obscure |
 
 **Audio Features:**
+
 - **2 pulse + PCM** - Less capable than VRC6 (no sawtooth)
 - **Comparison**: US Castlevania III uses MMC5 vs JP uses VRC6
 
 #### Namco 163 (Mapper 19)
 
 **Technical Characteristics:**
+
 - 1-8 wavetable channels (configurable)
 - Shared among channels (more channels = less fidelity per channel)
 
@@ -551,6 +581,7 @@ Audio is harder to objectively test than video. Use comparative listening:
 #### Sunsoft 5B (Mapper 69)
 
 **Technical Characteristics:**
+
 - AY-3-8910 PSG (Programmable Sound Generator)
 - 3 square wave channels
 - 1 noise channel
@@ -567,6 +598,7 @@ Audio is harder to objectively test than video. Use comparative listening:
 #### Famicom Disk System (FDS)
 
 **Technical Characteristics:**
+
 - Wavetable channel
 - Modulation unit
 - Proprietary disk format (.fds files)
@@ -590,6 +622,7 @@ Audio is harder to objectively test than video. Use comparative listening:
 #### Why Expansion Audio Matters
 
 While <1% of games, expansion audio is:
+
 - **Showcase feature** - Demonstrates emulator sophistication
 - **Accuracy benchmark** - Requires precise audio mixing
 - **Community favorite** - Castlevania III (VRC6 vs MMC5) is iconic comparison
@@ -618,27 +651,32 @@ While <1% of games, expansion audio is:
 ### Per-Tier Checkpoints
 
 **Tier 1 (NROM):**
+
 - [ ] 15/15 games: C1 (Boot)
 - [ ] 12/15 games: C3 (First Level)
 - [ ] 8/15 games: C6 (Complete)
 - [ ] 5/15 games: C7 (Accurate)
 
 **Tier 2 (MMC1/UxROM/CNROM/MMC3):**
+
 - [ ] 30/35 games: C1 (Boot)
 - [ ] 25/35 games: C3 (First Level)
 - [ ] 15/35 games: C6 (Complete)
 - [ ] SMB3, Kirby: C7 (Accurate)
 
 **Tier 3 (Advanced):**
+
 - [ ] 10/15 games: C1 (Boot)
 - [ ] 7/15 games: C3 (First Level)
 - [ ] Battletoads: C3 (First Level)
 
 **Tier 4 (Edge Cases):**
+
 - [ ] All edge case games: C3 (First Level)
 - [ ] 50% edge cases: C7 (Accurate)
 
 **Tier 5 (Expansion Audio):**
+
 - [ ] All expansion games: C4 (Audio accurate)
 
 ---
@@ -650,6 +688,7 @@ While <1% of games, expansion audio is:
 **This suite covers all essential mappers, PPU/APU features, and edge cases.**
 
 #### NROM (Mapper 0) - 8 games
+
 1. Super Mario Bros.
 2. Donkey Kong
 3. Ice Climber
@@ -660,66 +699,76 @@ While <1% of games, expansion audio is:
 8. Pinball
 
 #### MMC1 (Mapper 1) - 8 games
+
 9. The Legend of Zelda
-10. Metroid
-11. Mega Man 2
-12. Castlevania II
-13. Kid Icarus
-14. Blaster Master
-15. Final Fantasy
-16. Dr. Mario
+2. Metroid
+3. Mega Man 2
+4. Castlevania II
+5. Kid Icarus
+6. Blaster Master
+7. Final Fantasy
+8. Dr. Mario
 
 #### UxROM (Mapper 2) - 6 games
+
 17. Mega Man
-18. Castlevania
-19. Contra
-20. Duck Tales
-21. Ninja Gaiden II
-22. Batman
+2. Castlevania
+3. Contra
+4. Duck Tales
+5. Ninja Gaiden II
+6. Batman
 
 #### CNROM (Mapper 3) - 3 games
+
 23. Gradius
-24. Arkanoid
-25. Solomon's Key
+2. Arkanoid
+3. Solomon's Key
 
 #### MMC3 (Mapper 4) - 10 games
+
 26. Super Mario Bros. 3
-27. Mega Man 3
-28. Mega Man 4
-29. Kirby's Adventure
-30. Batman: Return of the Joker
-31. TMNT II: The Arcade Game
-32. Super Mario Bros. 2
-33. Crystalis
-34. StarTropics
-35. Chip 'n Dale: Rescue Rangers
+2. Mega Man 3
+3. Mega Man 4
+4. Kirby's Adventure
+5. Batman: Return of the Joker
+6. TMNT II: The Arcade Game
+7. Super Mario Bros. 2
+8. Crystalis
+9. StarTropics
+10. Chip 'n Dale: Rescue Rangers
 
 #### AxROM (Mapper 7) - 3 games
+
 36. Battletoads
-37. Marble Madness
-38. Wizards & Warriors
+2. Marble Madness
+3. Wizards & Warriors
 
 #### MMC2 (Mapper 9) - 1 game
+
 39. Punch-Out!!
 
 #### MMC5 (Mapper 5) - 2 games
+
 40. Castlevania III (US)
-41. Just Breed
+2. Just Breed
 
 #### Color Dreams (Mapper 11) - 1 game
+
 42. Crystal Mines
 
 #### Edge Cases - 5 games
+
 43. TMNT (sprite 0 edge case)
-44. Addams Family (status bar)
-45. Ninja Gaiden (complex sprite 0)
-46. Bee 52 (sprite overflow)
-47. Ghosts 'n Goblins (difficulty stress test)
+2. Addams Family (status bar)
+3. Ninja Gaiden (complex sprite 0)
+4. Bee 52 (sprite overflow)
+5. Ghosts 'n Goblins (difficulty stress test)
 
 #### Expansion Audio - 3 games
+
 48. Akumajou Densetsu (VRC6)
-49. Lagrange Point (VRC7)
-50. Gimmick! (Sunsoft 5B)
+2. Lagrange Point (VRC7)
+3. Gimmick! (Sunsoft 5B)
 
 ### Testing Frequency
 
@@ -778,7 +827,7 @@ While <1% of games, expansion audio is:
 [Specific things to watch for]
 ```
 
-### Example: Super Mario Bros.
+### Example: Super Mario Bros
 
 ```markdown
 ### Super Mario Bros.
@@ -831,18 +880,21 @@ While <1% of games, expansion audio is:
 ### Development Cycle Integration
 
 **Daily Development:**
+
 1. **Morning**: Run 10-game automated test
 2. **During development**: Test specific game for feature being implemented
 3. **Before commit**: Run 25-game subset
 4. **CI/CD**: Automated 10-game test on push
 
 **Weekly Validation:**
+
 1. Run full 50-game suite
 2. Document new failures/fixes
 3. Update testing matrix
 4. Check for regressions
 
 **Phase Milestones:**
+
 1. Run comprehensive test (100+ games)
 2. Run all test ROMs (nestest, blargg, TASVideos)
 3. Compare with accuracy targets (ROADMAP.md)
@@ -892,6 +944,7 @@ fn test_super_mario_bros_world_1_1() {
 ### Manual Testing Checklist
 
 **Per-Game Manual Test:**
+
 - [ ] ROM loads without error
 - [ ] Title screen renders correctly
 - [ ] Music plays (no pops/clicks)
@@ -903,11 +956,13 @@ fn test_super_mario_bros_world_1_1() {
 - [ ] Game completable (spot-check later levels)
 
 **Visual Comparison:**
+
 - Run RustyNES and Mesen2 side-by-side
 - Take screenshots at key points
 - Compare frame-by-frame if issues found
 
 **Audio Comparison:**
+
 - Record 30-second audio clip from RustyNES
 - Record same clip from Mesen2
 - Load both in Audacity, compare waveforms
@@ -961,6 +1016,7 @@ When a game fails, document:
 ### External Resources
 
 **NESdev Wiki:**
+
 - [Tricky-to-emulate games](https://www.nesdev.org/wiki/Tricky-to-emulate_games)
 - [Mapper List](https://www.nesdev.org/wiki/Mapper)
 - [NROM](https://www.nesdev.org/wiki/NROM)
@@ -971,6 +1027,7 @@ When a game fails, document:
 - [Expansion Audio Games](https://wiki.nesdev.com/w/index.php/List_of_games_with_expansion_audio)
 
 **Articles & Guides:**
+
 - [Advanced Nerdy Nights: Sprite 0 Hit](https://archive.nes.science/nintendoage-forums/nintendoage.com/forum/messageview6158-2.html?catid=22&threadid=36969)
 - [nesdoug: Sprite Zero](https://nesdoug.com/2018/09/05/18-sprite-zero/)
 - [Writing NES Emulator: PPU Scrolling](https://bugzmanov.github.io/nes_ebook/chapter_8.html)
@@ -978,24 +1035,28 @@ When a game fails, document:
 - [Elite Split-Screen Mode](https://elite.bbcelite.com/deep_dives/the_split-screen_mode_nes.html)
 
 **Expansion Audio:**
+
 - [Famicom Expansion Audio Blog](https://jsgroth.dev/blog/posts/famicom-expansion-audio/)
 - [Castlevania III Audio Comparison](https://callanbrown.com/index.php/castlevania-iii-with-full-famicom-audio/)
 - [VRC6 vs MMC5 Fidelity](https://classicalgaming.wordpress.com/2011/02/28/fidelity-concerns-akumajou-dentetsu-vs-castlevania-iii-draculas-curse/)
 - [NES Sound Expansion Chips](https://classicalgaming.wordpress.com/2011/02/27/fidelity-concerns-the-lost-sound-expansion-chips-of-the-nes/)
 
 **Emulator Development:**
+
 - [emudev: MMC1 and MMC3](https://emudev.de/nes-emulator/about-mappers-mmc1-and-mmc3/)
 - [nesdoug: MMC1](https://nesdoug.com/2019/10/02/22-advanced-mapper-mmc1/)
 - [nesdoug: MMC3](https://nesdoug.com/2019/11/11/23-advanced-mapper-mmc3/)
 - [TASVideos: NES Accuracy Tests](https://tasvideos.org/EmulatorResources/NESAccuracyTests)
 
 **Homebrew Development:**
+
 - [HonkeyPong](https://github.com/HonkeyKong/HonkeyPong) - NROM tutorial game
 - [Holy Mapperel](https://github.com/pinobatch/holy-mapperel) - Cartridge testing
 
 ### Related RustyNES Documentation
 
 **Core Documentation:**
+
 - [TEST_ROM_GUIDE.md](TEST_ROM_GUIDE.md) - Test ROM validation strategy
 - [NESTEST_GOLDEN_LOG.md](NESTEST_GOLDEN_LOG.md) - nestest golden log reference
 - [MAPPER_OVERVIEW.md](../mappers/MAPPER_OVERVIEW.md) - Mapper architecture
@@ -1004,6 +1065,7 @@ When a game fails, document:
 - [APU_OVERVIEW.md](../apu/APU_OVERVIEW.md) - Audio system
 
 **Mapper Documentation:**
+
 - [MAPPER_NROM.md](../mappers/MAPPER_NROM.md)
 - [MAPPER_MMC1.md](../mappers/MAPPER_MMC1.md)
 - [MAPPER_UXROM.md](../mappers/MAPPER_UXROM.md)
@@ -1011,6 +1073,7 @@ When a game fails, document:
 - [MAPPER_MMC3.md](../mappers/MAPPER_MMC3.md)
 
 **Project Planning:**
+
 - [ROADMAP.md](../../ROADMAP.md) - Development phases and milestones
 - [OVERVIEW.md](../../OVERVIEW.md) - Project vision
 - [CONTRIBUTING.md](../dev/CONTRIBUTING.md) - How to contribute

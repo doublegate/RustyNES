@@ -1711,36 +1711,42 @@ impl ExpansionAudio for FdsAudio {
 ### Per-Chip Requirements
 
 #### VRC6
+
 - [ ] Two pulse channels with 8 duty settings
 - [ ] Sawtooth channel with accumulator
 - [ ] Frequency halt register
 - [ ] Correct address mapping (may vary by variant)
 
 #### VRC7
+
 - [ ] 6 FM channels
 - [ ] 15 preset instruments + custom
 - [ ] Proper FM synthesis (sine tables, envelopes)
 - [ ] OPLL-compatible timing
 
 #### N163
+
 - [ ] Variable channel count (1-8)
 - [ ] Shared wavetable RAM
 - [ ] Per-channel update scheduling
 - [ ] Address auto-increment
 
 #### MMC5
+
 - [ ] Two pulse channels (no sweep/length)
 - [ ] 8-bit PCM channel
 - [ ] PCM IRQ support
 - [ ] Correct mixing levels
 
 #### Sunsoft 5B
+
 - [ ] Three square wave channels
 - [ ] Noise generator (LFSR)
 - [ ] Hardware envelope
 - [ ] Mixer control
 
 #### FDS
+
 - [ ] 64-sample wavetable
 - [ ] Frequency modulation
 - [ ] Volume envelope
@@ -1764,6 +1770,7 @@ impl ExpansionAudio for FdsAudio {
 ### Audio Comparison
 
 Record output from:
+
 1. Real hardware (Famicom + cartridge)
 2. Accurate emulators (Mesen, puNES)
 3. RustyNES implementation

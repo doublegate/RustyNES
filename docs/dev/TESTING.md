@@ -1,6 +1,7 @@
 # Testing RustyNES
 
 **Table of Contents**
+
 - [Overview](#overview)
 - [Test Suite Structure](#test-suite-structure)
 - [Running Tests](#running-tests)
@@ -91,6 +92,7 @@ cargo test -- --nocapture
 ### Core Test ROMs
 
 **nestest.nes** (CPU validation):
+
 ```bash
 cargo test --test nestest
 ```
@@ -98,11 +100,13 @@ cargo test --test nestest
 **Expected Result**: All 8000+ instructions pass golden log comparison
 
 **blargg's Test Suite** (CPU, APU, PPU):
+
 ```bash
 cargo test --test blargg_suite
 ```
 
 **Tests**:
+
 - cpu_exec_space
 - cpu_interrupts_v2
 - cpu_timing_test6
@@ -112,11 +116,13 @@ cargo test --test blargg_suite
 ### Acquiring Test ROMs
 
 **Sources**:
+
 - [NesDev Test ROMs](https://www.nesdev.org/wiki/Emulator_tests)
 - [blargg's test suite](http://blargg.8bitalley.com/nes-tests/)
 - [TASVideos Accuracy Tests](https://tasvideos.org/EmulatorResources/NESAccuracyTests)
 
 **Installation**:
+
 ```bash
 mkdir -p tests/roms
 cd tests/roms
@@ -228,11 +234,13 @@ fn test_nmi_generation() {
 ### TASVideos Test Suite
 
 **Automated validation**:
+
 ```bash
 cargo test --test tas_accuracy_suite
 ```
 
 **Categories**:
+
 - APU Tests (25)
 - CPU Tests (35)
 - PPU Tests (45)
@@ -241,6 +249,7 @@ cargo test --test tas_accuracy_suite
 ### Regression Testing
 
 **Add new regression test**:
+
 ```rust
 #[test]
 fn test_regression_sprite_zero_hit_timing() {
@@ -289,6 +298,7 @@ jobs:
 ---
 
 **Related Documents**:
+
 - [BUILD.md](BUILD.md) - Building the project
 - [CONTRIBUTING.md](CONTRIBUTING.md) - Development workflow
 - [DEBUGGING.md](DEBUGGING.md) - Debugging failing tests

@@ -135,6 +135,7 @@ Each position is either the letter (pressed) or `.` (not pressed):
 ### Command Characters
 
 Position 0 (before first `|`):
+
 - `.` = No command
 - `r` = Soft reset
 - `R` = Hard reset

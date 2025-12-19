@@ -197,7 +197,7 @@ struct CPU : MOS6502, Thread {
     Node::Object node;
     Memory::Writable<n8> ram;  // 2KB RAM
 
-    auto rate() const -> u32 { 
+    auto rate() const -> u32 {
         return Region::PAL() ? 16 : 12;  // Master clock divider
     }
 
@@ -302,11 +302,11 @@ struct PPU : Thread {
     Memory::Writable<n8> oam;    // 256-byte OAM
     Memory::Writable<n8> soam;   // 32-byte secondary OAM
 
-    auto rate() const -> u32 { 
+    auto rate() const -> u32 {
         return Region::PAL() ? 5 : 4;  // PPU clock divider
     }
-    auto vlines() const -> u32 { 
-        return Region::PAL() ? 312 : 262; 
+    auto vlines() const -> u32 {
+        return Region::PAL() ? 312 : 262;
     }
 
     auto main() -> void;
@@ -365,7 +365,7 @@ scroll.fineY = 3;
 ```cpp
 auto PPU::renderPixel() -> void {
     // Fetch tile data
-    auto tileAddr = 0x2000 | (scroll.nametable << 10) | 
+    auto tileAddr = 0x2000 | (scroll.nametable << 10) |
                     (scroll.tileY << 5) | scroll.tileX;
     auto tile = readCIRAM(tileAddr);
 
@@ -377,7 +377,7 @@ auto PPU::renderPixel() -> void {
     // Render pixel
     auto pixel = (chrHi >> (7 - scroll.fineX) & 1) << 1 |
                  (chrLo >> (7 - scroll.fineX) & 1);
-    
+
     screen.output(x, y, color(pixel));
 }
 ```
@@ -684,11 +684,11 @@ auto Famicom::load(string location) -> bool {
 auto Famicom::loadiNES(string location) -> bool {
     auto header = file::read(location, 16);
     auto mapper = header[6] >> 4 | header[7] & 0xF0;
-    
+
     // Database lookup
     auto board = database.find(mapper);
     cartridge.board = board->create();
-    
+
     return true;
 }
 ```

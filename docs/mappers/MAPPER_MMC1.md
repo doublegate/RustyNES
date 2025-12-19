@@ -1,6 +1,7 @@
 # Mapper 1: MMC1 (SxROM)
 
 **Table of Contents**
+
 - [Overview](#overview)
 - [Serial Write Interface](#serial-write-interface)
 - [Registers](#registers)
@@ -125,17 +126,20 @@ Bits:  43210
 ### PRG Banking Modes
 
 **Mode 0/1: 32KB switching**
+
 ```
 CPU $8000-$FFFF: Switchable 32KB bank (ignore low bit of bank number)
 ```
 
 **Mode 2: Fix first bank**
+
 ```
 CPU $8000-$BFFF: Fixed to bank 0
 CPU $C000-$FFFF: Switchable 16KB bank
 ```
 
 **Mode 3: Fix last bank (most common)**
+
 ```
 CPU $8000-$BFFF: Switchable 16KB bank
 CPU $C000-$FFFF: Fixed to last bank
@@ -144,11 +148,13 @@ CPU $C000-$FFFF: Fixed to last bank
 ### CHR Banking Modes
 
 **Mode 0: 8KB switching**
+
 ```
 PPU $0000-$1FFF: Switchable 8KB bank (ignore low bit)
 ```
 
 **Mode 1: Two 4KB banks**
+
 ```
 PPU $0000-$0FFF: Switchable 4KB bank (CHR Bank 0)
 PPU $1000-$1FFF: Switchable 4KB bank (CHR Bank 1)
@@ -286,6 +292,7 @@ impl Mapper for MMC1 {
 ---
 
 **Related Documents**:
+
 - [MAPPER_OVERVIEW.md](MAPPER_OVERVIEW.md)
 - [MAPPER_MMC3.md](MAPPER_MMC3.md)
 - [MEMORY_MAP.md](../bus/MEMORY_MAP.md)

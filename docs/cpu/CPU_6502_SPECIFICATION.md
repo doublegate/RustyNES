@@ -56,6 +56,7 @@ Absolute,X/Y:        4 cycles (+1 if page crossed for reads)
 ```
 
 **Page Crossing Penalty:** When indexed addressing crosses a 256-byte boundary:
+
 - **Read operations**: +1 cycle (LDA, LDX, LDY, CMP, etc.)
 - **Write operations**: Always take extra cycle (no conditional penalty)
 - **Read-Modify-Write**: Always take extra cycle
@@ -386,6 +387,7 @@ fn indexed_indirect(&self, bus: &Bus) -> u16 {
 ```
 
 **Example:** `LDA ($80,X)` with `X=$05`:
+
 1. Read ZP address: `$80 + $05 = $85`
 2. Read pointer: `[$85] = $20`, `[$86] = $30`
 3. Final address: `$3020`
@@ -412,6 +414,7 @@ fn indirect_indexed(&self, bus: &Bus) -> (u16, bool) {
 ```
 
 **Example:** `LDA ($80),Y` with `Y=$10`:
+
 1. Read pointer: `[$80] = $20`, `[$81] = $30`
 2. Base address: `$3020`
 3. Add Y: `$3020 + $10 = $3030`
@@ -444,6 +447,7 @@ fn jmp_indirect(&mut self, bus: &Bus) -> u16 {
 ```
 
 **Example:** `JMP ($10FF)`:
+
 - Reads low byte from `$10FF`
 - Reads high byte from `$1000` (not `$1100`!)
 

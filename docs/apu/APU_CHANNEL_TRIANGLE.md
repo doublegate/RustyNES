@@ -27,6 +27,7 @@
 The NES APU contains **one triangle wave channel** that produces a pseudo-triangle waveform using a 32-step sequencer. Unlike pulse channels, the triangle channel has **no volume control** - it outputs at a fixed amplitude or remains silent.
 
 **Key Characteristics:**
+
 - 32-step triangle wave sequencer
 - No volume control (always maximum or silent)
 - Linear counter (alternative to envelope)
@@ -64,16 +65,19 @@ The triangle channel consists of **four interconnected units**:
 ```
 
 **Signal Flow:**
+
 1. **Timer** counts down, clocking the sequencer
 2. **Sequencer** outputs triangle waveform (0-15)
 3. **Linear Counter** and **Length Counter** gate the output
 
 **Gating Logic:**
+
 ```
 Output = Sequencer × (Linear > 0) × (Length > 0)
 ```
 
 **Critical Difference from Pulse:**
+
 - No envelope generator
 - Linear counter provides precise timing control
 - No sweep unit
@@ -102,6 +106,7 @@ CRRR RRRR
 ```
 
 **Bit Definitions:**
+
 - **C (Control)**: If 1, length counter is halted and linear counter reload flag is set
 - **RRRRRRR (Reload)**: 7-bit value loaded into linear counter (0-127)
 
@@ -131,6 +136,7 @@ LLLL LTTT
 ```
 
 **Side Effects of Writing:**
+
 - Timer bits 8-10 are set
 - Length counter is loaded from lookup table (if enabled in $4015)
 - **Linear counter reload flag is set**
@@ -154,6 +160,7 @@ Value:  0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15
 ```
 
 **Waveform Visualization:**
+
 ```
 15 ▄
 14 ▐▀▄
@@ -174,6 +181,7 @@ Value:  0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15
 ```
 
 **Sequence Pattern:**
+
 - Steps 0-15: Descending (15 → 0)
 - Steps 16-31: Ascending (0 → 15)
 
@@ -182,6 +190,7 @@ Value:  0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15
 **Clock Rate:** Timer clocks sequencer at **CPU clock rate** (not CPU/2 like pulse channels)
 
 **Sequencer Advancement:**
+
 ```
 if linear_counter > 0 AND length_counter > 0:
     sequence_step = (sequence_step + 1) % 32
@@ -221,11 +230,13 @@ The linear counter is a **7-bit counter** (0-127) providing more precise timing 
 ### Purpose
 
 The linear counter allows:
+
 - Fine-grained note duration control
 - Automatic silencing without CPU intervention
 - Higher timing accuracy than length counter
 
 **Comparison:**
+
 - **Length Counter**: 5-bit (32 values), units of ~8.33ms (half frames)
 - **Linear Counter**: 7-bit (128 values), units of ~4.17ms (quarter frames)
 
@@ -234,6 +245,7 @@ The linear counter allows:
 **Clock Source:** Frame counter (quarter frames) - 240 Hz NTSC
 
 **State Machine:**
+
 ```
 State: counter (0-127), reload_flag (bool)
 
@@ -248,6 +260,7 @@ On quarter frame:
 ```
 
 **Key Behavior:**
+
 - Reload flag is set when writing $400B
 - Reload flag is set continuously when control flag = 1
 - Counter only reloads when reload flag is set
@@ -256,6 +269,7 @@ On quarter frame:
 ### Control Flag Modes
 
 **Mode 1: Control Flag = 0 (Normal)**
+
 ```
 Write $400B → reload_flag = true
 Next quarter frame → counter = reload_value, reload_flag = false
@@ -263,6 +277,7 @@ Following frames → counter decrements to 0
 ```
 
 **Mode 2: Control Flag = 1 (Hold)**
+
 ```
 reload_flag = true continuously
 Counter stays at reload_value (never decrements)
@@ -326,6 +341,7 @@ The triangle channel's length counter works **identically** to pulse channels, u
 ### Halt Behavior
 
 The **control flag** (C bit in $4008) halts the length counter:
+
 - **C=0**: Counter decrements normally
 - **C=1**: Counter is frozen at current value
 
@@ -375,6 +391,7 @@ PAL:  f_CPU = 1.662607 MHz
 ```
 
 **Frequency Range (NTSC):**
+
 - Minimum: 27.3 Hz (timer = $7FF, 2048 + 1 = 2049)
 - Maximum: 55.9 kHz (timer = $000, 0 + 1 = 1)
 
@@ -414,6 +431,7 @@ Since the triangle channel lacks volume control, games use four techniques to si
 ### Method 1: Disable via $4015
 
 **Most Common Method:**
+
 ```rust
 // Silence triangle channel
 apu.write(0x4015, 0b11111011);  // Clear bit 2
@@ -671,6 +689,7 @@ if self.linear_counter.is_active() && self.length_counter.is_active() {
 ### Manual Testing
 
 **Linear Counter Test:**
+
 ```
 Set: Control=0, Reload=127
 Write $400B
@@ -678,6 +697,7 @@ Verify: Channel plays for ~529ms (127 × 4.17ms)
 ```
 
 **Length Counter Test:**
+
 ```
 Set: Control=0, Reload=0
 Write $400B with length=$1F (72 half-frames)
@@ -685,6 +705,7 @@ Verify: Channel plays for 600ms (72 × 8.33ms)
 ```
 
 **Frequency Range Test:**
+
 ```
 Timer=$000: 55.9 kHz (ultrasonic, inaudible)
 Timer=$100: 6.98 kHz (high pitch)
@@ -693,6 +714,7 @@ Timer=$7FF: 27.3 Hz (low bass)
 ```
 
 **Counter Interaction Test:**
+
 ```
 Set: Control=0, Linear=10, Length=$00 (10)
 Write $400B

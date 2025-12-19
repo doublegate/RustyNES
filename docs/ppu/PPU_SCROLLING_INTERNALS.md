@@ -46,6 +46,7 @@ yyy NN YYYYY XXXXX
 ```
 
 **Address Mapping:**
+
 ```
 Bits 14-13: Nametable select
   00 = $2000 (top-left)
@@ -141,6 +142,7 @@ Split into:
 ```
 
 **Register Updates:**
+
 ```rust
 // First write: X scroll
 t = (t & 0xFFE0) | (data >> 3);  // t: ........ ...XXXXX = data >> 3
@@ -149,6 +151,7 @@ w = 1;                            // Toggle write latch
 ```
 
 **Example:**
+
 ```
 Write $2005 = $7D (scroll X = 125)
   Coarse X = $7D >> 3 = 15 (0x0F)
@@ -173,6 +176,7 @@ Split into:
 ```
 
 **Register Updates:**
+
 ```rust
 // Second write: Y scroll
 t = (t & 0x8FFF) | ((data & 0x07) << 12);  // t: .YYY.... ........ = data[2:0]
@@ -181,6 +185,7 @@ w = 0;                                      // Toggle write latch
 ```
 
 **Example:**
+
 ```
 Write $2005 = $5E (scroll Y = 94)
   Coarse Y = $5E >> 3 = 11 (0x0B)
@@ -205,6 +210,7 @@ Write $2005 = $5E (scroll Y = 94)
 ```
 
 **Register Updates:**
+
 ```rust
 // First write: high byte
 t = (t & 0x00FF) | ((data & 0x3F) << 8);  // t: ..AAAAAA ........ = data[5:0]
@@ -213,6 +219,7 @@ w = 1;                                     // Toggle write latch
 ```
 
 **Example:**
+
 ```
 Write $2006 = $3F (set high byte)
   t = (t & 0x00FF) | 0x3F00
@@ -230,6 +237,7 @@ AAAA AAAA
 ```
 
 **Register Updates:**
+
 ```rust
 // Second write: low byte
 t = (t & 0xFF00) | data;  // t: ........ AAAAAAAA = data
@@ -238,6 +246,7 @@ w = 0;                     // Toggle write latch
 ```
 
 **Example:**
+
 ```
 Write $2006 = $00 (set low byte, finalize address)
   t = (t & 0xFF00) | 0x00
@@ -268,6 +277,7 @@ fn increment_x(&mut self) {
 ```
 
 **Behavior:**
+
 ```
 v = $2000 (coarse X = 0) -> $2001 (coarse X = 1)
 v = $201F (coarse X = 31) -> $2400 (coarse X = 0, switch to right nametable)
@@ -306,6 +316,7 @@ fn increment_y(&mut self) {
 ```
 
 **Behavior:**
+
 ```
 Fine Y 0-6: Increment fine Y
 Fine Y = 7, Coarse Y = 0-28: Wrap fine Y, increment coarse Y
@@ -325,6 +336,7 @@ fn copy_horizontal(&mut self) {
 ```
 
 **Copies:**
+
 - Bit 10: Horizontal nametable
 - Bits 0-4: Coarse X
 
@@ -342,6 +354,7 @@ fn copy_vertical(&mut self) {
 ```
 
 **Copies:**
+
 - Bit 11: Vertical nametable
 - Bits 5-9: Coarse Y
 - Bits 12-14: Fine Y
@@ -366,6 +379,7 @@ bus.write(0x2005, new_y);  // Second write: Y
 ```
 
 **Timing Requirement:**
+
 - Must write during HBlank or VBlank
 - Recommended: Write at dot 257-320 (sprite fetch)
 - Affects rendering starting next scanline
@@ -381,6 +395,7 @@ bus.write(0x2000, ppuctrl);
 ```
 
 **Effect on t:**
+
 ```rust
 // PPUCTRL write updates t nametable bits
 t = (t & 0xF3FF) | ((value & 0x03) << 10);
@@ -400,6 +415,7 @@ Scanline 9-239: No scroll (status bar)
 ```
 
 **Implementation:**
+
 ```rust
 // During scanline 8 HBlank
 if ppu.scanline == 8 && ppu.dot == 257 {

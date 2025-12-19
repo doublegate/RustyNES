@@ -1,6 +1,7 @@
 # NES Bus Conflicts
 
 **Table of Contents**
+
 - [Overview](#overview)
 - [What is a Bus Conflict?](#what-is-a-bus-conflict)
 - [When Bus Conflicts Occur](#when-bus-conflicts-occur)
@@ -43,11 +44,13 @@ A **bus conflict** occurs when two logic devices attempt to output different val
 ### Electrical Behavior
 
 When two signals are asserted at different logic levels on the same wire:
+
 - The signal with **less impedance** (stronger drive) typically wins
 - In the NES, both CPU and mask ROMs drive **0 more strongly than 1**
 - The effective result is the **bitwise AND** of the two values
 
 **Example**:
+
 ```
 CPU writes:     10110101 (0xB5)
 ROM contains:   11001100 (0xCC)
@@ -69,12 +72,14 @@ Bus conflicts are specific to mapper implementations. They occur when:
 ### Why Some Mappers Have Conflicts
 
 **Discrete Logic Mappers** (UxROM, CNROM):
+
 - Use simple 74-series logic chips
 - ROM chip-select tied to **PRG A15** (active when address ≥ $8000)
 - **No write signal** to disable ROM output during CPU writes
 - Saves components but causes conflicts
 
 **ASIC Mappers** (MMC1, MMC3, MMC5):
+
 - Custom integrated circuits with sophisticated logic
 - Include **output enable control** that disables ROM during writes
 - **No bus conflicts** due to proper tri-state management
@@ -88,10 +93,12 @@ Through hardware testing, the following behavior has been confirmed:
 ### Conflict Resolution
 
 Both the CPU and mask ROMs in the NES era:
+
 - Drive **logic 0 more strongly than logic 1**
 - Result: Conflicts resolve to **bitwise AND**
 
 **Implementation Rule**:
+
 ```
 effective_value = cpu_written_value & rom_byte_at_address
 ```
@@ -99,6 +106,7 @@ effective_value = cpu_written_value & rom_byte_at_address
 ### Important Caveat
 
 **Programmers must not rely on this behavior.** The specific conflict resolution is undefined in the NES specification and may vary:
+
 - Different ROM chip manufacturers
 - Different board revisions
 - Clone consoles with different electrical characteristics
@@ -128,6 +136,7 @@ BankTable:
 ```
 
 **Why this works**:
+
 - `LDA BankTable, X` reads the bank number from ROM
 - `STA BankTable, X` writes the **same value** to the **same address**
 - CPU writes (e.g., 5) and ROM outputs (5) → **5 AND 5 = 5** (no conflict)
@@ -135,10 +144,12 @@ BankTable:
 ### Method 2: Dedicated Conflict-Free Regions
 
 Some boards include small regions where conflicts cannot occur:
+
 - **AxROM boards**: Some have a small ROM region with hardwired conflict-free bytes
 - **Custom boards**: May include registers in non-ROM space ($6000-$7FFF)
 
 **Example** (theoretical):
+
 ```assembly
 ; If ROM at $8000 is guaranteed to be $FF
 SwitchBank:
@@ -171,6 +182,7 @@ SwitchToBank3:
 **Description**: Simple discrete logic mapper for PRG-ROM bank switching
 
 **Registers**:
+
 - **Bank select**: Write to $8000-$FFFF
 - **Size**: 3-4 bits (8-16 banks of 16KB)
 - **Fixed bank**: Last bank always at $C000-$FFFF
@@ -178,6 +190,7 @@ SwitchToBank3:
 **Bus Conflicts**: **YES** (on original Nintendo boards)
 
 **Standard Implementation** (with conflicts):
+
 ```rust
 fn write_uxrom_with_conflicts(&mut self, addr: u16, value: u8) {
     if addr >= 0x8000 {
@@ -189,11 +202,13 @@ fn write_uxrom_with_conflicts(&mut self, addr: u16, value: u8) {
 ```
 
 **NES 2.0 Submappers**:
+
 - **Submapper 0**: Default iNES behavior (no conflicts in emulator)
 - **Submapper 1**: Explicit no conflicts
 - **Submapper 2**: Explicit conflicts (AND behavior)
 
 **Games Using UxROM**:
+
 - Mega Man (1-6)
 - Castlevania
 - Contra
@@ -204,12 +219,14 @@ fn write_uxrom_with_conflicts(&mut self, addr: u16, value: u8) {
 **Description**: Simple CHR-ROM bank switching
 
 **Registers**:
+
 - **CHR bank select**: Write to $8000-$FFFF
 - **Size**: 2 bits (4 banks of 8KB CHR)
 
 **Bus Conflicts**: **YES**
 
 **Implementation**:
+
 ```rust
 fn write_cnrom_with_conflicts(&mut self, addr: u16, value: u8) {
     if addr >= 0x8000 {
@@ -221,6 +238,7 @@ fn write_cnrom_with_conflicts(&mut self, addr: u16, value: u8) {
 ```
 
 **Games Using CNROM**:
+
 - Super Mario Bros.
 - Excitebike
 - Donkey Kong (many versions)
@@ -230,6 +248,7 @@ fn write_cnrom_with_conflicts(&mut self, addr: u16, value: u8) {
 **Description**: Bank switching with single-screen mirroring control
 
 **Registers**:
+
 - **Write to $8000-$FFFF**:
   - Bits 0-2: PRG bank (8 banks of 32KB)
   - Bit 4: Nametable select (single-screen mirroring)
@@ -237,6 +256,7 @@ fn write_cnrom_with_conflicts(&mut self, addr: u16, value: u8) {
 **Bus Conflicts**: **YES**
 
 **Implementation**:
+
 ```rust
 fn write_axrom_with_conflicts(&mut self, addr: u16, value: u8) {
     if addr >= 0x8000 {
@@ -250,6 +270,7 @@ fn write_axrom_with_conflicts(&mut self, addr: u16, value: u8) {
 ```
 
 **Games Using AxROM**:
+
 - Battletoads
 - Marble Madness
 - Jeopardy!
@@ -268,6 +289,7 @@ Several other mappers exhibit bus conflicts:
 | 180 | Crazy Climber | Yes (inverted UxROM) |
 
 **ASIC Mappers (No Conflicts)**:
+
 - Mapper 1 (MMC1)
 - Mapper 4 (MMC3)
 - Mapper 5 (MMC5)
@@ -387,10 +409,12 @@ impl Mapper for CNROM {
 ### Performance Considerations
 
 Bus conflict checking adds overhead:
+
 1. **Extra ROM read** to get the conflicting value
 2. **Bitwise AND** operation
 
 **Optimization**:
+
 - Only perform conflict checking for mappers that need it
 - Use compile-time feature flags for accuracy vs. speed
 
@@ -447,6 +471,7 @@ pub fn parse_nes20_header(header: &[u8; 16]) -> MapperInfo {
 ### Handling iNES 1.0 (No Submapper)
 
 For iNES 1.0 ROMs (without NES 2.0 header):
+
 - **Default to no conflicts** for maximum compatibility
 - Many unlicensed games require this behavior
 - Optionally allow user override in configuration
@@ -458,11 +483,13 @@ For iNES 1.0 ROMs (without NES 2.0 header):
 ### Test ROM Approach
 
 Create a test ROM that:
+
 1. Writes to mapper registers with **mismatched values**
 2. Verifies the **resulting bank** matches AND behavior
 3. Tests with both matching and conflicting writes
 
 **Pseudo-code**:
+
 ```assembly
 ; Test 1: Matching write (should always work)
 LDA BankTable + 5   ; Load 5 from ROM
@@ -540,6 +567,7 @@ fn test_cnrom_no_conflicts() {
 ---
 
 **Related Documents**:
+
 - [MEMORY_MAP.md](MEMORY_MAP.md) - NES memory architecture
 - [MAPPER_UXROM.md](../mappers/MAPPER_UXROM.md) - UxROM implementation
 - [MAPPER_CNROM.md](../mappers/MAPPER_CNROM.md) - CNROM implementation

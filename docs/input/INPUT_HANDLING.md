@@ -1,6 +1,7 @@
 # NES Input Handling
 
 **Table of Contents**
+
 - [Overview](#overview)
 - [Standard Controller](#standard-controller)
   - [Button Layout](#button-layout)
@@ -44,6 +45,7 @@ The NES provides two controller ports accessed through memory-mapped registers a
 ```
 
 **8 Buttons**:
+
 1. A
 2. B
 3. Select
@@ -56,10 +58,12 @@ The NES provides two controller ports accessed through memory-mapped registers a
 ### Hardware Implementation
 
 **4021 Shift Register**:
+
 - **Parallel Load**: When strobe is high, button states continuously load
 - **Serial Output**: When strobe is low, buttons read out one bit at a time
 
 **Electrical Properties**:
+
 - **Active Low**: Button pressed = low signal on data line
 - **Inverted Reading**: Low signal reads as 1, high signal reads as 0
 - **Pull-up**: Data line pulled high when no button pressed
@@ -69,12 +73,14 @@ The NES provides two controller ports accessed through memory-mapped registers a
 #### $4016: Controller Port 1 / Strobe
 
 **Write** (sets strobe for both controllers):
+
 ```
 Bit 0: Strobe (1 = latch buttons, 0 = serial mode)
 Bits 1-7: Unused (some expansion devices may use)
 ```
 
 **Read** (Controller 1 data):
+
 ```
 Bit 0: Controller 1 button state (current bit)
 Bits 1-4: Expansion port data (varies by device)
@@ -84,11 +90,13 @@ Bits 5-7: Open bus (typically $40)
 #### $4017: Controller Port 2 / Frame Counter
 
 **Write** (APU Frame Counter):
+
 ```
 Used by APU for frame counter mode
 ```
 
 **Read** (Controller 2 data):
+
 ```
 Bit 0: Controller 2 button state (current bit)
 Bits 1-4: Expansion port data
@@ -102,6 +110,7 @@ Bits 5-7: Open bus (typically $40 or $41)
 ### Polling Sequence
 
 **Step 1: Strobe** (latch current button states)
+
 ```assembly
 LDA #$01
 STA $4016       ; Strobe = 1 (latch buttons)
@@ -110,6 +119,7 @@ STA $4016       ; Strobe = 0 (enable serial reads)
 ```
 
 **Step 2: Read 8 Buttons**
+
 ```assembly
 ; Read 8 buttons for Controller 1
 LDX #8
@@ -129,6 +139,7 @@ ReadLoop:
 **Reads**: Space reads by 2+ CPU cycles each
 
 **Good Practice**: Strobe once per frame during VBlank
+
 ```assembly
 NMI_Handler:
     ; ... other VBlank tasks ...
@@ -142,6 +153,7 @@ NMI_Handler:
 ### Button State Format
 
 After polling, buttons are typically stored as:
+
 ```
 Bit 7: A
 Bit 6: B
@@ -160,6 +172,7 @@ Bit 0: Right
 ### Zapper (Light Gun)
 
 **$4016/$4017 bits**:
+
 - **Bit 3**: Light sense (1 = light detected)
 - **Bit 4**: Trigger (1 = pulled)
 
@@ -176,9 +189,11 @@ Bit 0: Right
 ### Four Score
 
 **4-player adapter** allowing 4 controllers:
+
 - Controllers 3 and 4 read through extended bit sequence
 
 **Detection**:
+
 ```
 Read bits 9-24 from $4016/$4017
 Four Score signature: $08 in bits 17-24
@@ -187,6 +202,7 @@ Four Score signature: $08 in bits 17-24
 ### Famicom Expansion Port
 
 **Additional Devices**:
+
 - Famicom Keyboard
 - Mahjong Controller
 - Barcode Battler
@@ -337,11 +353,13 @@ When the **APU DMC channel** is playing samples, it can cause **false reads** fr
 ### Workarounds
 
 **Game Side** (original games):
+
 - Poll controllers multiple times and compare
 - Avoid DPCM during critical input moments
 - Use majority vote from multiple polls
 
 **Emulator Side**:
+
 - Accurately emulate DMC DMA timing
 - Detect simultaneous DMC read + controller read
 - Optionally provide "conflict-free" mode for convenience
@@ -412,6 +430,7 @@ fn test_open_bus_behavior() {
 ### Integration Tests
 
 **Test ROM**: `controller_test.nes`
+
 - Verifies polling sequence
 - Tests button combinations
 - Checks open bus values
@@ -429,6 +448,7 @@ fn test_open_bus_behavior() {
 ---
 
 **Related Documents**:
+
 - [MEMORY_MAP.md](../bus/MEMORY_MAP.md) - Register locations
 - [APU_OVERVIEW.md](../apu/APU_OVERVIEW.md) - DMC channel details
 - [ARCHITECTURE.md](../ARCHITECTURE.md) - System overview

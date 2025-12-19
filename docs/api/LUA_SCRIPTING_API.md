@@ -102,6 +102,7 @@ engine.on_frame_end(&mut emulator)?;
 ### Initialization
 
 Scripts run their top-level code immediately upon loading. Use this for:
+
 - Defining global variables and functions
 - Registering event callbacks
 - Initial setup and configuration
@@ -566,6 +567,7 @@ Overlay drawing functions. All drawing is rendered after the game frame.
 #### Color Specification
 
 Colors can be specified as:
+
 - Color name: `"red"`, `"green"`, `"blue"`, `"white"`, `"black"`, `"yellow"`, `"cyan"`, `"magenta"`, `"gray"`, `"orange"`, `"purple"`, `"pink"`
 - Hex string: `"#FF0000"`, `"#00FF00FF"` (with alpha)
 - RGB table: `{r=255, g=0, b=0}` or `{255, 0, 0}`
@@ -681,6 +683,7 @@ print(string.format("Square1 freq: %d", s.square1.frequency))
 ```
 
 Returns a table with:
+
 - `square1`, `square2`: `{frequency, volume, duty, enabled}`
 - `triangle`: `{frequency, enabled}`
 - `noise`: `{frequency, volume, mode, enabled}`
@@ -1045,6 +1048,7 @@ engine.load_file("script_with_io.lua")?;
 ### Safe Globals
 
 These standard Lua globals are available:
+
 - `string`, `table`, `math` - Standard libraries
 - `pairs`, `ipairs`, `next` - Iteration
 - `type`, `tostring`, `tonumber` - Type functions
@@ -1054,6 +1058,7 @@ These standard Lua globals are available:
 ### Removed Globals
 
 These are removed for security:
+
 - `os` - Operating system access
 - `io` - File I/O (unless enabled)
 - `dofile`, `loadfile` - File running
@@ -1208,6 +1213,7 @@ end
 ```
 
 Error output:
+
 ```
 Script error at line 4: attempt to index a nil value (local 'value')
 Stack trace:
@@ -1241,6 +1247,7 @@ end
 ### Optimization Tips
 
 1. **Cache repeated reads**:
+
 ```lua
 -- Bad: Reads address every call
 function on_frame()
@@ -1258,7 +1265,8 @@ function on_frame()
 end
 ```
 
-2. **Minimize string formatting**:
+1. **Minimize string formatting**:
+
 ```lua
 -- Pre-compute static strings
 local health_label = "Health: "
@@ -1268,7 +1276,8 @@ function on_frame()
 end
 ```
 
-3. **Use conditional drawing**:
+1. **Use conditional drawing**:
+
 ```lua
 -- Only update display when value changes
 local last_health = 0

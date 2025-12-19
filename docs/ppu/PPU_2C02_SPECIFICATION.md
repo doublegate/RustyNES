@@ -119,6 +119,7 @@ VSO- ----
 ```
 
 **Side Effects:**
+
 - Reading $2002 **clears bit 7 (V flag)** immediately
 - Reading $2002 **clears the write latch** for $2005/$2006
 - Race condition: Reading $2002 within one PPU cycle of V flag being set may clear it before NMI is triggered
@@ -134,6 +135,7 @@ AAAA AAAA
 ```
 
 **Behavior:**
+
 - Sets address for OAMDATA reads/writes
 - Automatically incremented after write to $2004
 - **Corruption bug (2C02G):** Writing to OAMADDR corrupts OAM
@@ -141,11 +143,13 @@ AAAA AAAA
 ### OAMDATA ($2004) - Read/Write
 
 **Write:**
+
 - Writes byte to OAM[OAMADDR]
 - Increments OAMADDR after write
 - Writing during rendering corrupts OAM (avoid!)
 
 **Read:**
+
 - Returns OAM[OAMADDR]
 - Does **not** increment OAMADDR
 - Not readable on original 2C02, only 2C02G and later
@@ -155,6 +159,7 @@ AAAA AAAA
 ### PPUSCROLL ($2005) - Write ×2
 
 First write (w=0): Horizontal scroll
+
 ```
 7  bit  0
 ---- ----
@@ -165,6 +170,7 @@ XXXX XXXX
 ```
 
 Second write (w=1): Vertical scroll
+
 ```
 7  bit  0
 ---- ----
@@ -175,6 +181,7 @@ YYYY YYYY
 ```
 
 **Side Effects:**
+
 - Toggles write latch between 0 and 1
 - Affects internal registers `t` and `v`
 - Read $2002 to reset latch to first write
@@ -182,6 +189,7 @@ YYYY YYYY
 ### PPUADDR ($2006) - Write ×2
 
 First write (w=0): High byte
+
 ```
 7  bit  0
 ---- ----
@@ -191,6 +199,7 @@ First write (w=0): High byte
 ```
 
 Second write (w=1): Low byte
+
 ```
 7  bit  0
 ---- ----
@@ -200,6 +209,7 @@ AAAA AAAA
 ```
 
 **Side Effects:**
+
 - First write: Sets high byte of temporary VRAM address `t`
 - Second write: Sets low byte of `t` and copies `t` to `v`
 - Address auto-increments after $2007 access
@@ -207,21 +217,25 @@ AAAA AAAA
 ### PPUDATA ($2007) - Read/Write
 
 **Write:**
+
 - Writes to PPU address space at `v`
 - Increments `v` by 1 or 32 (based on PPUCTRL bit 2)
 
 **Read:**
+
 - Returns **buffered data** from previous read (except palette)
 - Palette reads ($3F00-$3FFF) return immediately but still update buffer
 - Increments `v` by 1 or 32
 
 **Buffer Behavior:**
+
 ```
 First read:  Returns garbage, loads actual data into buffer
 Second read: Returns previous data, loads new data into buffer
 ```
 
 **Palette Exception:**
+
 ```
 Read $3F00: Returns palette value immediately
             Buffer contains mirrored nametable data from $2F00
@@ -244,6 +258,7 @@ yyy NN YYYYY XXXXX
 ```
 
 **Usage:**
+
 - Current read/write address for VRAM
 - Updated during rendering for scrolling
 - Set via $2006 writes
@@ -255,6 +270,7 @@ yyy NN YYYYY XXXXX
 ```
 
 **Usage:**
+
 - Holds scroll/address data before transfer to `v`
 - Updated by $2005 and $2006 writes
 - Copied to `v` at specific rendering times
@@ -270,6 +286,7 @@ yyy NN YYYYY XXXXX
 ```
 
 **Usage:**
+
 - Holds fine X scroll (lower 3 bits of horizontal scroll)
 - Used for pixel selection from tile shift registers
 - Set by first $2005 write
@@ -281,6 +298,7 @@ yyy NN YYYYY XXXXX
 ```
 
 **Usage:**
+
 - Toggles between first/second write for $2005 and $2006
 - Reset by reading $2002
 - 0 = first write, 1 = second write
@@ -388,6 +406,7 @@ struct BackgroundShifters {
 ```
 
 **Usage:**
+
 - Shift left by 1 each dot (dots 2-257, 322-337)
 - Reloaded every 8 dots with next tile data
 
@@ -401,6 +420,7 @@ struct SpriteShifters {
 ```
 
 **Usage:**
+
 - Shift right by 1 each dot when sprite counter reaches 0
 - Loaded during sprite fetch (dots 257-320)
 
@@ -430,6 +450,7 @@ OAM       = Random values
 ### Write Ignored Period
 
 After power-up, writes to PPUCTRL/PPUMASK/PPUSCROLL/PPUADDR are **ignored** for:
+
 - **NTSC:** ~29,658 CPU cycles (~88,974 PPU dots)
 - **PAL:** ~33,132 CPU cycles
 
@@ -440,6 +461,7 @@ This is approximately **2 frames**.
 ### RESET Behavior
 
 On console reset (not power-up):
+
 - PPUCTRL, PPUMASK unchanged
 - PPUSCROLL, PPUADDR: write latch reset
 - PPUDATA: read buffer unchanged
@@ -452,6 +474,7 @@ On console reset (not power-up):
 ### OAM Decay
 
 OAM uses **dynamic RAM** that requires refresh. Without rendering enabled:
+
 - **NTSC:** Decay starts after a few seconds
 - **PAL:** Forced refresh occurs 24 scanlines after VBlank
 

@@ -1,6 +1,7 @@
 # Mapper 4: MMC3 (TxROM)
 
 **Table of Contents**
+
 - [Overview](#overview)
 - [Register Map](#register-map)
 - [Banking Modes](#banking-modes)
@@ -87,6 +88,7 @@ $E000 = Disable IRQ, $E001 = Enable IRQ
 ### PRG Banking
 
 **Mode 0 (PRG Mode = 0)**:
+
 ```
 CPU $8000-$9FFF: Switchable 8KB bank (R6)
 CPU $A000-$BFFF: Switchable 8KB bank (R7)
@@ -95,6 +97,7 @@ CPU $E000-$FFFF: Fixed to last bank
 ```
 
 **Mode 1 (PRG Mode = 1)**:
+
 ```
 CPU $8000-$9FFF: Fixed to second-last bank
 CPU $A000-$BFFF: Switchable 8KB bank (R7)
@@ -105,6 +108,7 @@ CPU $E000-$FFFF: Fixed to last bank
 ### CHR Banking
 
 **Normal (CHR A12 = 0)**:
+
 ```
 PPU $0000-$07FF: Switchable 2KB bank (R0)
 PPU $0800-$0FFF: Switchable 2KB bank (R1)
@@ -131,6 +135,7 @@ The MMC3's signature feature is a **scanline counter** that generates IRQs at sp
 ### Register Usage
 
 **Setup**:
+
 ```assembly
 LDA #239      ; Trigger at scanline 240 (VBlank start)
 STA $C000     ; Set IRQ latch
@@ -140,6 +145,7 @@ STA $E001     ; Enable IRQ
 ```
 
 **IRQ Handler**:
+
 ```assembly
 IRQHandler:
     ; Acknowledge IRQ
@@ -307,6 +313,7 @@ impl Mapper for MMC3 {
 ---
 
 **Related Documents**:
+
 - [MAPPER_OVERVIEW.md](MAPPER_OVERVIEW.md)
 - [MAPPER_MMC1.md](MAPPER_MMC1.md)
 - [PPU_TIMING.md](../ppu/PPU_TIMING.md) - Scanline timing

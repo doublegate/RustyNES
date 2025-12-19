@@ -1,6 +1,7 @@
 # Mapper 0: NROM
 
 **Table of Contents**
+
 - [Overview](#overview)
 - [Board Variants](#board-variants)
 - [Memory Map](#memory-map)
@@ -37,6 +38,7 @@
 **PRG-ROM**: 16KB (single bank)
 
 **Memory Layout**:
+
 ```
 CPU $8000-$BFFF: First 16KB of PRG-ROM
 CPU $C000-$FFFF: Mirror of $8000-$BFFF
@@ -45,6 +47,7 @@ CPU $C000-$FFFF: Mirror of $8000-$BFFF
 **Characteristic**: The same 16KB appears twice in CPU address space.
 
 **Example Games**:
+
 - Donkey Kong
 - Mario Bros.
 - Pinball
@@ -54,6 +57,7 @@ CPU $C000-$FFFF: Mirror of $8000-$BFFF
 **PRG-ROM**: 32KB (two banks)
 
 **Memory Layout**:
+
 ```
 CPU $8000-$BFFF: First 16KB of PRG-ROM
 CPU $C000-$FFFF: Second 16KB of PRG-ROM (unique)
@@ -62,6 +66,7 @@ CPU $C000-$FFFF: Second 16KB of PRG-ROM (unique)
 **Characteristic**: Full 32KB address space utilized.
 
 **Example Games**:
+
 - Super Mario Bros.
 - Excitebike
 - Ice Climber
@@ -72,6 +77,7 @@ CPU $C000-$FFFF: Second 16KB of PRG-ROM (unique)
 **PRG-ROM**: 40KB + 8KB (recent invention for homebrew)
 
 **Memory Layout**:
+
 ```
 CPU $6000-$7FFF: 8KB PRG-ROM (non-standard)
 CPU $8000-$FFFF: 32KB PRG-ROM (standard)
@@ -118,6 +124,7 @@ $2000-$3FFF: VRAM (nametables, palette) (NES internal)
 **Writable**: No (ROM)
 
 **Access**:
+
 - **NROM-128**: $8000-$FFFF both read from same 16KB
 - **NROM-256**: $8000-$BFFF (first 16KB), $C000-$FFFF (second 16KB)
 
@@ -393,6 +400,7 @@ fn test_super_mario_bros_boots() {
 ---
 
 **Related Documents**:
+
 - [MAPPER_OVERVIEW.md](MAPPER_OVERVIEW.md) - Mapper introduction
 - [MAPPER_UXROM.md](MAPPER_UXROM.md) - Next step: PRG banking
 - [MAPPER_CNROM.md](MAPPER_CNROM.md) - Next step: CHR banking

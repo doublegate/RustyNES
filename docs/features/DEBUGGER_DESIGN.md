@@ -2053,11 +2053,13 @@ crates/rustynes-debugger/
 ## Implementation Checklist
 
 ### Core Debugger
+
 - [ ] Debugger state machine
 - [ ] Event logging system
 - [ ] Integration hooks
 
 ### Breakpoints
+
 - [ ] Program counter breakpoints
 - [ ] Memory read/write breakpoints
 - [ ] Conditional expressions
@@ -2065,34 +2067,40 @@ crates/rustynes-debugger/
 - [ ] Temporary breakpoints
 
 ### Watchpoints
+
 - [ ] Value change detection
 - [ ] Range watching
 - [ ] Conditional triggers
 
 ### Disassembler
+
 - [ ] Full opcode table
 - [ ] Label substitution
 - [ ] Comment integration
 
 ### Tracing
+
 - [ ] nestest.log format
 - [ ] FCEUX format
 - [ ] Streaming to file
 - [ ] Filter by PC/scanline
 
 ### Memory Viewer
+
 - [ ] Hex dump display
 - [ ] Region switching
 - [ ] Search functionality
 - [ ] Change highlighting
 
 ### Profiler
+
 - [ ] Instruction counting
 - [ ] Cycle attribution
 - [ ] Memory access tracking
 - [ ] Function timing
 
 ### UI
+
 - [ ] CPU state panel
 - [ ] PPU state panel
 - [ ] Memory viewer panel

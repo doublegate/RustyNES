@@ -1,6 +1,7 @@
 # RustyNES Core API
 
 **Table of Contents**
+
 - [Overview](#overview)
 - [Core Library](#core-library)
 - [Console API](#console-api)
@@ -36,6 +37,7 @@ rustynes/
 ### Adding as Dependency
 
 **Cargo.toml**:
+
 ```toml
 [dependencies]
 rustynes-core = "0.1.0"
@@ -370,6 +372,7 @@ loop {
 ### Multi-Threaded Usage (Advanced)
 
 **Wrap in Mutex**:
+
 ```rust
 use std::sync::{Arc, Mutex};
 
@@ -406,5 +409,6 @@ std::thread::spawn(move || {
 ---
 
 **Related Documents**:
+
 - [BUILD.md](../dev/BUILD.md) - Building the library
 - [TESTING.md](../dev/TESTING.md) - Testing guidelines

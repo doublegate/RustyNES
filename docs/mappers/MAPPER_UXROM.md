@@ -1,6 +1,7 @@
 # Mapper 2: UxROM
 
 **Table of Contents**
+
 - [Overview](#overview)
 - [Board Variants](#board-variants)
 - [Memory Map](#memory-map)
@@ -42,6 +43,7 @@
 **Hardware**: 74HC161 (4-bit latch) + 74HC32 (OR gate)
 
 **Games**:
+
 - Mega Man (64KB)
 - Castlevania (128KB)
 - Metal Gear (128KB)
@@ -74,6 +76,7 @@ $C000-$FFFF: Fixed 16KB PRG-ROM bank (always last bank)
 ```
 
 **Key Point**: The last bank is **fixed** at $C000-$FFFF and contains:
+
 - Interrupt vectors ($FFFA-$FFFF)
 - Reset/initialization code
 - Bank switching routine
@@ -94,10 +97,12 @@ $2000-$3FFF: VRAM (nametables, palette)
 ### PRG-ROM Banking
 
 **Switchable Bank**: $8000-$BFFF (16KB)
+
 - Banks 0 to (N-1), where N = total number of banks
 - Selected by writing to $8000-$FFFF
 
 **Fixed Bank**: $C000-$FFFF (16KB)
+
 - Always mapped to the last bank
 - Contains reset vector and critical code
 
@@ -116,10 +121,12 @@ fn last_bank(&self) -> usize {
 ### Registers
 
 **Bank Select Register** (write-only):
+
 - **Address**: Any address in $8000-$FFFF
 - **Data Written**: Bank number
 
 **iNES Mapper 2** (no bus conflicts):
+
 ```
 Bits:  7654 3210
        ---- ----
@@ -129,6 +136,7 @@ Bits:  7654 3210
 ```
 
 **Original Hardware** (with bus conflicts):
+
 ```
 Actual bank = written_value AND rom_byte_at_address
 ```
@@ -156,6 +164,7 @@ STA $8000           ; Write to any address in $8000-$FFFF
 ```
 
 **Example**:
+
 ```assembly
 ; Switch to bank 3
 LDA #$03
@@ -165,11 +174,13 @@ STA $8000
 ### Fixed Bank Strategy
 
 **Why the last bank is fixed**:
+
 1. **Reset vector** at $FFFC-$FFFD must be accessible on power-up
 2. **Interrupt vectors** (NMI, IRQ) at $FFFA-$FFFF
 3. **Bank switching code** must be accessible from any bank
 
 **Code Organization**:
+
 ```
 Last Bank ($C000-$FFFF):
   - Reset handler
@@ -206,6 +217,7 @@ UxROM boards have **bus conflicts** because the ROM output is not disabled durin
 ### Problem
 
 When writing to $8000-$FFFF:
+
 - **CPU** puts the bank number on the data bus
 - **ROM** simultaneously outputs the byte at that address
 - **Conflict** if values differ
@@ -228,6 +240,7 @@ SwitchToBank:
 ```
 
 **Why this works**:
+
 - Reading `BankTable, X` loads the bank number from ROM
 - Writing to the same address puts the same value on the bus
 - CPU and ROM both output the same value → No conflict
@@ -490,6 +503,7 @@ fn test_mega_man_2() {
 ---
 
 **Related Documents**:
+
 - [MAPPER_OVERVIEW.md](MAPPER_OVERVIEW.md) - Mapper introduction
 - [MAPPER_NROM.md](MAPPER_NROM.md) - Simpler predecessor
 - [MAPPER_MMC1.md](MAPPER_MMC1.md) - More complex successor

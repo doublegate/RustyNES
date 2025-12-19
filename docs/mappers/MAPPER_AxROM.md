@@ -56,6 +56,7 @@ xxxM xPPP
 ### Mirroring
 
 Single-screen mirroring:
+
 - Bit 4 = 0: All nametables map to CIRAM $000-$3FF
 - Bit 4 = 1: All nametables map to CIRAM $400-$7FF
 

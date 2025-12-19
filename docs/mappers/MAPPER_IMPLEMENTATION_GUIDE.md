@@ -78,12 +78,14 @@ pub trait Mapper {
 ### Step 1: Research the Mapper
 
 **Resources:**
+
 - [NESdev Wiki Mapper Page](https://www.nesdev.org/wiki/Mapper)
 - NesDev forum discussions
 - Other emulator implementations (Mesen2, puNES)
 - Bootgod's ROM database
 
 **Key Information:**
+
 - PRG ROM banking configuration
 - CHR ROM/RAM banking
 - Mirroring control
@@ -456,6 +458,7 @@ impl Mapper for MapperVRC6 {
 ## Testing Checklist
 
 ### Basic Functionality
+
 - [ ] ROM loads without crashing
 - [ ] Title screen displays correctly
 - [ ] Basic gameplay works
@@ -463,23 +466,27 @@ impl Mapper for MapperVRC6 {
 - [ ] Sprites display correctly
 
 ### Banking
+
 - [ ] All PRG banks accessible
 - [ ] All CHR banks accessible
 - [ ] Bank switching doesn't cause corruption
 - [ ] Fixed banks remain fixed
 
 ### Special Features
+
 - [ ] Mirroring changes work correctly
 - [ ] IRQs trigger at correct time
 - [ ] PRG RAM saves/loads correctly
 - [ ] Bus conflicts handled (if applicable)
 
 ### Test ROMs
+
 - [ ] Mapper-specific test ROMs pass
 - [ ] Holy Diver (MMC3 IRQ stress test)
 - [ ] Mapper behavior matches hardware
 
 ### Commercial Games
+
 - [ ] 3-5 popular games work correctly
 - [ ] No crashes or freezes
 - [ ] Audio plays correctly

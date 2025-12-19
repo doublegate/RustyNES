@@ -24,12 +24,14 @@
 The PPU implements **hardware scrolling** via a complex internal register system discovered and documented by **Loopy** (Brad Taylor). Understanding this system is critical for accurate PPU emulation.
 
 **Key Concepts:**
+
 - **Two 15-bit internal registers**: `v` (current VRAM address) and `t` (temporary address)
 - **Fine X scroll**: 3-bit register for horizontal fine scrolling
 - **Write latch**: Toggle for $2005/$2006 two-write sequence
 - **Automatic updates**: Registers update during rendering at specific dots
 
 **Scrolling Range:**
+
 - **Horizontal**: 0-511 pixels (2 nametables wide)
 - **Vertical**: 0-479 pixels (2 nametables tall)
 
@@ -85,6 +87,7 @@ y  y  y  N  N  Y  Y  Y  Y  Y  X  X  X  X  X
 | **4-0** | Coarse X | 0-31 | Tile column |
 
 **Bit Masks:**
+
 ```rust
 const COARSE_X_MASK: u16 = 0x001F;  // Bits 0-4
 const COARSE_Y_MASK: u16 = 0x03E0;  // Bits 5-9
@@ -143,6 +146,7 @@ fn write_scroll_x(&mut self, value: u8) {
 ```
 
 **Bit Assignment:**
+
 ```
 Value:    HGFEDCBA
           |||||+++- Fine X scroll (3 bits) → fine_x register
@@ -165,6 +169,7 @@ fn write_scroll_y(&mut self, value: u8) {
 ```
 
 **Bit Assignment:**
+
 ```
 Value:    HGFEDCBA
           |||||+++- Fine Y scroll (3 bits) → t[14:12]
@@ -191,6 +196,7 @@ fn write_addr_high(&mut self, value: u8) {
 ```
 
 **Bit Assignment:**
+
 ```
 Value:    ..FEDCBA (only low 6 bits used)
             ||||||
@@ -347,6 +353,7 @@ Logical Layout:
 ```
 
 **Address Mapping:**
+
 ```rust
 fn horizontal_mirror(addr: u16) -> u16 {
     match (addr >> 10) & 0x03 {
@@ -372,6 +379,7 @@ Logical Layout:
 ```
 
 **Address Mapping:**
+
 ```rust
 fn vertical_mirror(addr: u16) -> u16 {
     match (addr >> 10) & 0x03 {

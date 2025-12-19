@@ -217,6 +217,7 @@ NCCC VVVV
 ### Wavetable Format
 
 Waveforms are stored as 4-bit samples (nibbles), two per byte:
+
 - Low nibble: First sample
 - High nibble: Second sample
 
@@ -510,6 +511,7 @@ fn mix_audio(apu_output: f32, n163_output: f32) -> f32 {
 ## Channel Count Considerations
 
 The N163 can enable 1-8 channels, but more channels mean:
+
 - Lower per-channel update rate (channels are time-multiplexed)
 - Potentially audible aliasing artifacts
 - Most games use 4-5 channels maximum

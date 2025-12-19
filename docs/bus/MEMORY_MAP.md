@@ -1,6 +1,7 @@
 # NES Memory Map Reference
 
 **Table of Contents**
+
 - [Overview](#overview)
 - [CPU Address Space](#cpu-address-space)
   - [Internal RAM](#internal-ram)
@@ -76,6 +77,7 @@ While the RAM can be used for any purpose, several areas have common uses:
 | $0300-$07FF | General purpose variables and buffers |
 
 **Implementation Note**: The mirroring is handled by simply masking the address:
+
 ```rust
 fn read_ram(&self, addr: u16) -> u8 {
     self.ram[(addr & 0x07FF) as usize]
@@ -107,6 +109,7 @@ The PPU exposes eight memory-mapped registers to the CPU. Because the address de
 | $2007 | PPUDATA | PPU Data | Read/Write |
 
 **Mirroring**: Any address in $2008-$3FFF maps to one of the eight registers:
+
 ```
 $2008 → $2000 (PPUCTRL)
 $2009 → $2001 (PPUMASK)
@@ -118,6 +121,7 @@ $3FF9 → $2001 (PPUMASK)
 ```
 
 **Implementation**:
+
 ```rust
 fn map_ppu_register(addr: u16) -> u16 {
     0x2000 + (addr & 0x0007)
@@ -153,6 +157,7 @@ This region contains registers for the APU (Audio Processing Unit) and I/O devic
 | $4017 | JOY2/FRAME | Controller 2 / Frame counter | Read/Write |
 
 **Note**: $4017 is dual-purpose:
+
 - **Write**: APU Frame Counter mode
 - **Read**: Controller 2 data
 
@@ -182,6 +187,7 @@ $C000-$FFFF   PRG-ROM Upper Bank (16KB)
 #### Mapper Variations
 
 Different mappers remap this space:
+
 - **UxROM (Mapper 2)**: $8000-$BFFF switchable, $C000-$FFFF fixed to last bank
 - **MMC1 (Mapper 1)**: Configurable 16KB or 32KB banking
 - **MMC3 (Mapper 4)**: Two 8KB banks at $8000/$A000, two 8KB fixed banks at $C000/$E000
@@ -201,6 +207,7 @@ The top 6 bytes of CPU address space contain three 16-bit vectors:
 **Little-Endian**: Vectors are stored low byte first (e.g., $FFFC = low byte, $FFFD = high byte).
 
 **Example**:
+
 ```
 $FFFC: $00
 $FFFD: $80
@@ -239,6 +246,7 @@ Pattern tables store sprite and background tile graphics. Each tile is 8x8 pixel
 #### Cartridge Mapping
 
 Pattern tables are usually mapped by the cartridge:
+
 - **CHR-ROM**: Read-only graphics data on cartridge
 - **CHR-RAM**: Writable RAM for dynamic graphics (common in later games)
 
@@ -249,6 +257,7 @@ Mappers can bank-switch pattern table regions for more than 512 tiles.
 **Address Range**: $2000-$2FFF (4KB logical, 2KB physical)
 
 Nametables define the layout of background tiles. Each nametable is 1024 bytes:
+
 - **960 bytes**: 30 rows × 32 columns of tile indices
 - **64 bytes**: Attribute table (2×2 tile color groups)
 
@@ -267,23 +276,27 @@ $27C0-$27FF: Nametable 1 attributes
 The NES has only **2KB of internal VRAM**, enough for two nametables. The other two are either mirrored or provided by cartridge RAM, depending on the **mirroring mode**:
 
 **Horizontal Mirroring** (vertical scrolling games):
+
 ```
 $2000 = $2400 (Nametable 0 = Nametable 1)
 $2800 = $2C00 (Nametable 2 = Nametable 3)
 ```
 
 **Vertical Mirroring** (horizontal scrolling games):
+
 ```
 $2000 = $2800 (Nametable 0 = Nametable 2)
 $2400 = $2C00 (Nametable 1 = Nametable 3)
 ```
 
 **Single-Screen** (stationary screens):
+
 ```
 All nametables mirror the same 1KB
 ```
 
 **Four-Screen** (advanced mappers like MMC5):
+
 ```
 Cartridge provides 2KB extra RAM for independent nametables
 ```
@@ -294,12 +307,14 @@ Cartridge provides 2KB extra RAM for independent nametables
 **Mirrored To**: $3F20-$3FFF
 
 Palette RAM stores color indices (pointing to the NES's master palette of 64 colors):
+
 - **$3F00-$3F0F**: Background palettes (4 palettes × 4 colors)
 - **$3F10-$3F1F**: Sprite palettes (4 palettes × 4 colors)
 
 #### Palette Structure
 
 Each palette consists of 4 colors:
+
 - **Color 0**: Transparent for sprites, backdrop for backgrounds
 - **Colors 1-3**: Opaque colors for the palette
 
@@ -307,6 +322,7 @@ Each palette consists of 4 colors:
 Similarly, $3F10, $3F14, $3F18, $3F1C mirror $3F00 (not $3F10).
 
 **Implementation**:
+
 ```rust
 fn read_palette(&self, addr: u16) -> u8 {
     let addr = addr & 0x1F;
@@ -355,6 +371,7 @@ $3FF8-$3FFF: Mirror
 Controlled by cartridge hardware (mirroring mode set by mapper):
 
 **Horizontal** (bit A10 ignored):
+
 ```rust
 fn horizontal_mirror(addr: u16) -> u16 {
     match (addr >> 10) & 0x03 {
@@ -366,6 +383,7 @@ fn horizontal_mirror(addr: u16) -> u16 {
 ```
 
 **Vertical** (bit A11 ignored):
+
 ```rust
 fn vertical_mirror(addr: u16) -> u16 {
     addr & 0x07FF
@@ -404,10 +422,12 @@ Reading from unmapped addresses returns the **last value on the data bus** (open
 ### PPUSTATUS ($2002) Special Case
 
 Reading $2002 returns:
+
 - **Bits 7-5**: Actual PPU status flags
 - **Bits 4-0**: Open bus (last value on bus)
 
 **Implementation**:
+
 ```rust
 fn read_ppustatus(&mut self) -> u8 {
     let status = (self.ppu_status & 0xE0) | (self.open_bus & 0x1F);
@@ -419,6 +439,7 @@ fn read_ppustatus(&mut self) -> u8 {
 ### Cartridge Open Bus
 
 Behavior varies by mapper:
+
 - **NROM**: Reads from unmapped regions typically return open bus
 - **Some mappers**: Pull certain bits high or low
 - **Advanced mappers**: May have complex open bus interactions
@@ -492,12 +513,14 @@ impl Bus {
 ### Testing
 
 **Test ROMs**:
+
 - `nestest.nes`: Comprehensive CPU bus testing
 - `ppu_vbl_nmi`: PPU register timing
 - `oam_read/write`: OAM access behavior
 - `open_bus_test`: Open bus decay
 
 **Unit Tests**:
+
 ```rust
 #[test]
 fn test_ram_mirroring() {
@@ -533,6 +556,7 @@ fn test_ppu_register_mirroring() {
 ---
 
 **Related Documents**:
+
 - [BUS_CONFLICTS.md](BUS_CONFLICTS.md) - Bus conflict behavior
 - [CPU_6502.md](../cpu/CPU_6502.md) - CPU instruction set
 - [PPU_OVERVIEW.md](../ppu/PPU_OVERVIEW.md) - PPU architecture

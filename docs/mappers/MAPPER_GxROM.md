@@ -168,6 +168,7 @@ PPU $1FFF maps to CHR ROM $5FFF
 ### MHROM Variant
 
 MHROM is similar but with different sizes:
+
 - 64 KB PRG ROM (2 x 32 KB banks)
 - 16 KB CHR ROM (2 x 8 KB banks)
 - Uses only bits 4 and 0 of register

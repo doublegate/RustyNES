@@ -28,6 +28,7 @@
 The NES APU contains **one Delta Modulation Channel (DMC)** that plays 1-bit delta-encoded samples from CPU memory. Unlike other channels, the DMC reads sample data via **Direct Memory Access (DMA)**, which stalls the CPU.
 
 **Key Characteristics:**
+
 - 1-bit delta modulation (increment/decrement output level)
 - 7-bit output counter (0-127)
 - Reads samples from CPU memory ($C000-$FFFF typically)
@@ -75,6 +76,7 @@ The DMC channel consists of **six interconnected units**:
 ```
 
 **Signal Flow:**
+
 1. **Timer** counts down using selected rate from lookup table
 2. **Memory Reader** fetches sample bytes via DMA when buffer empty
 3. **Sample Buffer** holds current byte being processed
@@ -105,6 +107,7 @@ IL-- RRRR
 ```
 
 **Bit Definitions:**
+
 - **I (IRQ Enable)**: If 1, DMC IRQ flag is set when sample completes
 - **L (Loop)**: If 1, sample automatically restarts when bytes remaining reaches 0
 - **RRRR (Rate)**: Index into rate table (see [Rate Table](#rate-table))
@@ -122,12 +125,14 @@ IL-- RRRR
 **Purpose:** Allows games to manually control the output level without sample playback.
 
 **Side Effects:**
+
 - Output level counter is set to D (0-127)
 - Sample playback continues normally if active
 
 **Hardware Quirk:** If the timer outputs a clock simultaneously with a $4011 write, the output level may not change. This is a rare edge case.
 
 **Typical Uses:**
+
 - Setting initial output level before sample playback
 - Creating simple waveforms via rapid writes
 - Clearing residual DC offset after sample completion
@@ -141,6 +146,7 @@ AAAA AAAA
 ```
 
 **Address Calculation:**
+
 ```
 Sample Address = $C000 + (A × $40)
 
@@ -164,6 +170,7 @@ LLLL LLLL
 ```
 
 **Length Calculation:**
+
 ```
 Sample Length = (L × $10) + 1 bytes
 
@@ -183,16 +190,19 @@ Examples:
 ### What is Delta Modulation?
 
 **Traditional PCM:** Stores absolute sample values (8-bit: 0-255)
+
 ```
 Samples: [64, 65, 67, 70, 68, 65, ...]
 ```
 
 **Delta Modulation:** Stores only changes (+1 or -1)
+
 ```
 Bits:    [1, 1, 1, 0, 0, ...]  (1=+1, 0=-1)
 ```
 
 **Output Reconstruction:**
+
 ```
 Start: 64
 Bit 1 (1): 64 + 1 = 65
@@ -219,6 +229,7 @@ if sample_bit == 1 {
 ```
 
 **Key Behaviors:**
+
 - Output changes by ±2 (not ±1)
 - Clamping prevents overflow (0-127 range)
 - No change if already at boundary
@@ -295,6 +306,7 @@ bytes_remaining -= 1;
 When bytes remaining reaches 0:
 
 **If Loop Flag = 1:**
+
 ```rust
 current_address = sample_start_address;
 bytes_remaining = sample_length;
@@ -302,6 +314,7 @@ bytes_remaining = sample_length;
 ```
 
 **If Loop Flag = 0:**
+
 ```rust
 // Stop playback
 sample_buffer_empty = true;
@@ -324,6 +337,7 @@ Worst case: 4 CPU cycles (fetch during opcode read)
 ```
 
 **Factors Affecting Duration:**
+
 - CPU instruction phase (fetch/decode/execute)
 - OAM DMA active (additional +1-2 cycles)
 - Alignment with CPU bus access
@@ -358,6 +372,7 @@ Worst case: 4 CPU cycles (fetch during opcode read)
 ### Sample Storage Strategies
 
 **Strategy 1: Fixed Location (Simple)**
+
 ```
 PRG-ROM $E000-$EFFF: 4KB sample bank
 $4012 = $80 (address = $E000)
@@ -365,12 +380,14 @@ $4013 = $FF (length = 4081 bytes)
 ```
 
 **Strategy 2: Mapper Banking (Flexible)**
+
 ```
 Use mapper (MMC3/MMC5) to bank samples into $C000-$DFFF
 $4012 varies based on current bank
 ```
 
 **Strategy 3: Multiple Small Samples**
+
 ```
 $C000-$C7FF: 8 samples × 256 bytes
 $4012 = $00, $04, $08, $0C, $10, $14, $18, $1C
@@ -386,6 +403,7 @@ $4013 = $0F (256 bytes each)
 The DMC output is a **7-bit value** (0-127), providing 128 discrete levels.
 
 **Comparison with Other Channels:**
+
 - Pulse/Noise: 4-bit (0-15)
 - Triangle: 4-bit (0-15)
 - DMC: 7-bit (0-127)
@@ -397,6 +415,7 @@ The DMC output is a **7-bit value** (0-127), providing 128 discrete levels.
 Games can write $4011 to manually control output level:
 
 **Example: Generate Triangle Wave**
+
 ```rust
 // 32-step triangle wave
 const TRIANGLE: [u8; 32] = [
@@ -413,6 +432,7 @@ for &level in &TRIANGLE {
 ```
 
 **Example: Bass Drum**
+
 ```rust
 // Sharp attack, exponential decay
 apu.write(0x4011, 127);  // Maximum
@@ -433,10 +453,12 @@ apu.write(0x4011, 64);   // Return to center
 ### IRQ Enable and Flag
 
 **IRQ Enable Bit (I in $4010):**
+
 - If 1: DMC IRQ flag is set when sample completes
 - If 0: No IRQ generated (and flag is cleared immediately)
 
 **IRQ Flag:**
+
 - Set when: Sample completes (bytes remaining = 0) with loop disabled
 - Cleared by: Reading $4015 or writing $4010 with I=0
 
@@ -471,6 +493,7 @@ fn check_apu_irq(&mut self) -> bool {
 ```
 
 **Usage Example: Streamed Audio**
+
 ```
 1. Start sample playback (1KB chunk)
 2. Wait for DMC IRQ
@@ -488,6 +511,7 @@ fn check_apu_irq(&mut self) -> bool {
 **Problem:** DMC sample fetch can corrupt controller reads on NTSC systems.
 
 **Mechanism:**
+
 1. CPU reads $4016/$4017 (controller ports)
 2. DMC DMA pulls RDY low, halting CPU
 3. DMC drives address bus for sample fetch
@@ -499,6 +523,7 @@ fn check_apu_irq(&mut self) -> bool {
 **Workaround Strategies:**
 
 **1. Read Multiple Times**
+
 ```rust
 let read1 = controller.read();
 let read2 = controller.read();
@@ -513,6 +538,7 @@ if read1 == read2 || read1 == read3 {
 ```
 
 **2. Disable DMC During Input Read**
+
 ```rust
 // Save DMC state
 let dmc_state = apu.read(0x4015);
@@ -535,6 +561,7 @@ Lower DMC frequencies reduce conflict probability.
 **Problem:** DMC DMA during $2007 (PPU data) read causes address increment glitches.
 
 **Mechanism:**
+
 1. CPU reads $2007
 2. DMC DMA interrupts
 3. PPU address increments multiple times
@@ -547,6 +574,7 @@ Lower DMC frequencies reduce conflict probability.
 **Problem:** DMC sample fetch during OAM DMA ($4014) extends the stall time.
 
 **Timing:**
+
 - Normal OAM DMA: 513-514 cycles
 - With DMC fetch: 515-516 cycles (additional +1-2 cycles)
 
@@ -765,6 +793,7 @@ const DMC_RATE_PAL: [u16; 16] = [
 ```
 
 **Frequency Calculation:**
+
 ```
 f_DMC = f_CPU / (rate × 8)
 
@@ -854,6 +883,7 @@ if (value & 0x80) == 0 {
 ### Manual Testing
 
 **Sample Playback Test:**
+
 ```
 Configure: Rate=$0F, Address=$C000, Length=$10 (257 bytes)
 Enable DMC via $4015
@@ -861,6 +891,7 @@ Verify: Sample plays correctly, IRQ fires on completion
 ```
 
 **Direct Output Test:**
+
 ```
 For level in 0..128:
     Write $4011 = level
@@ -868,6 +899,7 @@ For level in 0..128:
 ```
 
 **DMA Stall Test:**
+
 ```
 Run CPU-intensive code with DMC active
 Measure: Execution time increases proportionally to DMC rate

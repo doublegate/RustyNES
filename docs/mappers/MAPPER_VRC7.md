@@ -104,6 +104,7 @@ RS.. ..MM
 ### Overview
 
 The VRC7's audio is based on the Yamaha YM2413 (OPLL), a low-cost FM synthesis chip. It provides:
+
 - 6 melodic channels
 - 15 preset instrument patches + 1 custom patch
 - 2-operator FM synthesis per channel

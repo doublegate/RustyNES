@@ -1,6 +1,7 @@
 # Mapper 3: CNROM
 
 **Table of Contents**
+
 - [Overview](#overview)
 - [Memory Map](#memory-map)
 - [Technical Specifications](#technical-specifications)
@@ -55,6 +56,7 @@ $0000-$1FFF: Switchable 8KB CHR-ROM bank (4 banks available)
 
 **Address**: Write to any address in $8000-$FFFF
 **Format**:
+
 ```
 Bits:  76543210
        ||||||||
@@ -64,6 +66,7 @@ Bits:  76543210
 ```
 
 **Bank Calculation**:
+
 ```rust
 fn chr_bank_address(&self, ppu_addr: u16) -> usize {
     (self.chr_bank * 0x2000) + (ppu_addr as usize)
@@ -101,11 +104,13 @@ STA $8000           ; Write to any address in $8000-$FFFF
 ### Common Pattern: Dynamic Graphics
 
 Games use CHR banking to:
+
 - Change graphics between levels
 - Display different sprite sets
 - Show animated backgrounds
 
 **Example**:
+
 ```assembly
 ; Display title screen graphics
 LDA #$00
@@ -136,6 +141,7 @@ CNROM has **bus conflicts** because the ROM output is not disabled during writes
 ### Problem
 
 Writing to $8000-$FFFF causes:
+
 - **CPU** outputs the CHR bank number
 - **ROM** outputs the byte at that address
 - **Conflict** resolved by bitwise AND
@@ -312,6 +318,7 @@ fn test_bus_conflicts() {
 ---
 
 **Related Documents**:
+
 - [MAPPER_NROM.md](MAPPER_NROM.md) - Similar fixed PRG-ROM
 - [MAPPER_OVERVIEW.md](MAPPER_OVERVIEW.md) - Mapper introduction
 - [BUS_CONFLICTS.md](../bus/BUS_CONFLICTS.md) - Conflict details

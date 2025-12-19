@@ -54,6 +54,7 @@ Offset  Size  Description
 ### Bytes 0-3: Magic Number
 
 Identical to iNES:
+
 ```rust
 const NES_MAGIC: [u8; 4] = [0x4E, 0x45, 0x53, 0x1A];
 ```
@@ -69,6 +70,7 @@ Lower 8 bits of CHR-ROM size. Combined with byte 9 bits 4-7 for full size.
 ### Byte 6: Flags 6
 
 Same as iNES 1.0:
+
 ```
 7  bit  0
 ---------
@@ -95,6 +97,7 @@ S: Playchoice-10 / Extended console flag
 ```
 
 **Console Type (bits 2-3):**
+
 | Value | Meaning |
 |-------|---------|
 | 0     | iNES 1.0 format |
@@ -114,6 +117,7 @@ N: Mapper number bits 8-11
 ```
 
 **Mapper Number Calculation:**
+
 ```rust
 fn get_mapper_nes20(header: &[u8; 16]) -> u16 {
     let low = (header[6] >> 4) as u16;
@@ -144,6 +148,7 @@ P: PRG-ROM size MSB (bits 8-11)
 **Size Calculation:**
 
 For values 0-14 (exponent mode not used):
+
 ```rust
 fn get_prg_size_nes20(header: &[u8; 16]) -> usize {
     let lsb = header[4] as usize;
@@ -181,6 +186,7 @@ fn get_chr_size_nes20(header: &[u8; 16]) -> usize {
 **Exponent Mode (when MSB = $F):**
 
 When the MSB nibble is $F, the LSB byte uses exponent notation:
+
 ```
 LSB: EEEE EEMM
 E: Exponent (6 bits)
@@ -202,6 +208,7 @@ P: PRG-RAM (volatile) shift count
 ```
 
 **Size Calculation:**
+
 ```rust
 fn get_prg_ram_size(header: &[u8; 16]) -> usize {
     let shift = header[10] & 0x0F;
@@ -215,6 +222,7 @@ fn get_prg_nvram_size(header: &[u8; 16]) -> usize {
 ```
 
 **Shift Count Table:**
+
 | Shift | Size |
 |-------|------|
 | 0     | 0 (none) |
@@ -246,6 +254,7 @@ C: CHR-RAM (volatile) shift count
 ```
 
 **Size Calculation:**
+
 ```rust
 fn get_chr_ram_size(header: &[u8; 16]) -> usize {
     let shift = header[11] & 0x0F;
@@ -302,6 +311,7 @@ fn get_timing_mode(header: &[u8; 16]) -> TimingMode {
 When byte 7 bits 0-1 are non-zero, this byte has meaning:
 
 **VS System (byte 7 bit 0 set):**
+
 ```
 7  bit  0
 ---------
@@ -312,6 +322,7 @@ P: PPU type
 ```
 
 **VS PPU Types:**
+
 | Value | PPU |
 |-------|-----|
 | 0 | RP2C03B |
@@ -330,6 +341,7 @@ P: PPU type
 | 13-15 | Reserved |
 
 **VS Hardware Types:**
+
 | Value | Type |
 |-------|------|
 | 0 | VS Unisystem (normal) |
@@ -341,6 +353,7 @@ P: PPU type
 | 6 | VS Dual System (Raid on Bungeling Bay protection) |
 
 **Extended Console Type (byte 7 bits 0-1 == 3):**
+
 | Value | Console |
 |-------|---------|
 | 0 | Regular NES/Famicom/Dendy |
@@ -368,6 +381,7 @@ N: Number of miscellaneous ROM images
 ```
 
 This indicates additional ROM areas after PRG-ROM and CHR-ROM. Used for:
+
 - VS System character ROM
 - PlayChoice-10 INST-ROM and PROM
 
@@ -382,6 +396,7 @@ D: Default expansion device (0-63)
 ```
 
 **Common Expansion Devices:**
+
 | Value | Device |
 |-------|--------|
 | 0 | Unspecified |

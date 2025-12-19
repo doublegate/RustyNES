@@ -25,6 +25,7 @@
 RustyNES save states capture the **complete emulator state** at a specific moment, allowing instant save/load functionality. Unlike cartridge battery saves (SRAM), save states include all system registers, RAM, VRAM, and timing information.
 
 **Key Characteristics:**
+
 - Binary format with magic header
 - Version-tagged blocks for forward/backward compatibility
 - Optional compression (zstd recommended)
@@ -43,6 +44,7 @@ RustyNES save states capture the **complete emulator state** at a specific momen
 **Goal:** New emulator versions can load old save states, with graceful degradation for missing features.
 
 **Strategy:**
+
 - Block-based format with version tags
 - Unknown blocks are skipped (forward compatibility)
 - Missing blocks use default values (backward compatibility)
@@ -52,6 +54,7 @@ RustyNES save states capture the **complete emulator state** at a specific momen
 **Goal:** Loading a save state reproduces **exact** emulator behavior.
 
 **Requirements:**
+
 - All component state must be saved
 - Timing counters must be preserved
 - Random number generator state (if used)
@@ -62,6 +65,7 @@ RustyNES save states capture the **complete emulator state** at a specific momen
 **Goal:** Prevent data corruption from crashes or power loss.
 
 **Strategy:**
+
 - Atomic writes (temporary file + rename)
 - Integrity checksums
 - Backup rotation (keep 3 most recent)
@@ -71,6 +75,7 @@ RustyNES save states capture the **complete emulator state** at a specific momen
 **Goal:** Fast save/load times, reasonable file sizes.
 
 **Strategy:**
+
 - Binary format (not JSON/XML for bulk data)
 - Compression (zstd: fast + good ratio)
 - Lazy loading (defer PPU CHR decompression)
@@ -159,6 +164,7 @@ struct BlockHeader {
 ### Version Numbers
 
 **Format Version (in header):**
+
 ```
 Major.Minor → u16 = (Major << 8) | Minor
 
@@ -166,6 +172,7 @@ Example: Version 1.2 → 0x0102
 ```
 
 **Compatibility Rules:**
+
 - **Major version change:** Breaking changes (incompatible)
 - **Minor version change:** New blocks or fields (compatible)
 
@@ -189,6 +196,7 @@ match block_id {
 ### Forward Compatibility
 
 **Unknown Blocks:** Skip and continue
+
 ```rust
 if !supported_block_ids.contains(&block_id) {
     reader.skip(block_size)?;  // Skip unknown block
@@ -199,6 +207,7 @@ if !supported_block_ids.contains(&block_id) {
 ### Backward Compatibility
 
 **Missing Blocks:** Use defaults
+
 ```rust
 let cpu_state = match find_block(0x0010) {
     Some(block) => deserialize_cpu(block)?,
@@ -431,6 +440,7 @@ match mapper_id {
 ### Compression Options
 
 **Recommended:** zstd (Zstandard)
+
 - Fast compression/decompression
 - Good ratio (typically 60-80% reduction)
 - Adjustable levels (1-22)
@@ -440,6 +450,7 @@ match mapper_id {
 ### Compression Implementation
 
 **Level Selection:**
+
 ```rust
 match priority {
     Priority::Speed => zstd::compress(data, 1),   // Level 1: Fast
@@ -449,6 +460,7 @@ match priority {
 ```
 
 **Flags Field:**
+
 ```
 Bit 0: Compressed (1 = yes, 0 = no)
 Bit 1-2: Algorithm (00 = none, 01 = zstd, 10 = lz4, 11 = deflate)
@@ -458,11 +470,13 @@ Bit 3-15: Reserved
 ### Integrity Checking
 
 **CRC32 (fast, good for corruption detection):**
+
 ```rust
 let checksum = crc32::checksum(&savestate_data);
 ```
 
 **SHA256 (secure, slower):**
+
 ```rust
 let hash = sha256::digest(&savestate_data);
 ```
@@ -478,6 +492,7 @@ let hash = sha256::digest(&savestate_data);
 **Problem:** Save states are tied to specific ROM versions.
 
 **Solution:**
+
 1. Store ROM SHA256 hash in metadata
 2. Warn if hash doesn't match
 3. Allow loading with user confirmation (risk of desyncs)
@@ -487,6 +502,7 @@ let hash = sha256::digest(&savestate_data);
 **Problem:** Different emulator versions may have incompatible states.
 
 **Solution:**
+
 - Minor version differences: Load with warnings
 - Major version differences: Reject or migrate
 
@@ -495,6 +511,7 @@ let hash = sha256::digest(&savestate_data);
 **Problem:** Mapper implementation changes break old saves.
 
 **Solution:**
+
 - Version mapper state blocks independently
 - Provide migration functions for common changes
 
@@ -725,6 +742,7 @@ fn test_forward_compatibility() {
 ### Integration Tests
 
 Test with actual games:
+
 - Create save state mid-game
 - Load and verify game continues correctly
 - Test across different mappers

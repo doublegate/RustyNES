@@ -1,6 +1,7 @@
 # Building RustyNES
 
 **Table of Contents**
+
 - [Prerequisites](#prerequisites)
 - [Toolchain Setup](#toolchain-setup)
 - [Building](#building)
@@ -35,7 +36,7 @@
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-**Or visit**: https://rustup.rs
+**Or visit**: <https://rustup.rs>
 
 ### Verify Installation
 
@@ -63,6 +64,7 @@ cargo build
 **Output**: `target/debug/rustynes`
 
 **Characteristics**:
+
 - Debug symbols included
 - No optimizations
 - Fast compilation
@@ -77,6 +79,7 @@ cargo build --release
 **Output**: `target/release/rustynes`
 
 **Characteristics**:
+
 - Optimized for speed
 - No debug symbols (unless configured)
 - Slower compilation
@@ -110,16 +113,19 @@ RustyNES uses Cargo features for optional functionality:
 ### Build Examples
 
 **Minimal (headless emulation core)**:
+
 ```bash
 cargo build --release --no-default-features
 ```
 
 **With TAS support**:
+
 ```bash
 cargo build --release --features tas
 ```
 
 **Full featured**:
+
 ```bash
 cargo build --release --all-features
 ```
@@ -133,21 +139,25 @@ cargo build --release --all-features
 **Install Dependencies**:
 
 **Debian/Ubuntu**:
+
 ```bash
 sudo apt-get install libsdl2-dev libasound2-dev pkg-config
 ```
 
 **Fedora**:
+
 ```bash
 sudo dnf install SDL2-devel alsa-lib-devel
 ```
 
 **Arch**:
+
 ```bash
 sudo pacman -S sdl2 alsa-lib
 ```
 
 **Build**:
+
 ```bash
 cargo build --release
 ```
@@ -155,16 +165,19 @@ cargo build --release
 ### macOS
 
 **Install Dependencies**:
+
 ```bash
 brew install sdl2
 ```
 
 **Build**:
+
 ```bash
 cargo build --release
 ```
 
 **Apple Silicon Note**:
+
 ```bash
 # If SDL2 issues occur on ARM64:
 export LIBRARY_PATH="$LIBRARY_PATH:$(brew --prefix)/lib"
@@ -177,18 +190,21 @@ cargo build --release
 
 1. Install Visual Studio 2019+ with C++ tools
 2. Build:
+
 ```powershell
 cargo build --release
 ```
 
 **Option 2: MinGW-w64**
 
-1. Install MSYS2 from https://www.msys2.org/
+1. Install MSYS2 from <https://www.msys2.org/>
 2. Install toolchain:
+
 ```bash
 pacman -S mingw-w64-x86_64-rust mingw-w64-x86_64-SDL2
 ```
-3. Build:
+1. Build:
+
 ```bash
 cargo build --release
 ```
@@ -200,12 +216,14 @@ cargo build --release
 ### Linux to Windows
 
 **Install cross target**:
+
 ```bash
 rustup target add x86_64-pc-windows-gnu
 sudo apt-get install mingw-w64
 ```
 
 **Build**:
+
 ```bash
 cargo build --release --target x86_64-pc-windows-gnu
 ```
@@ -213,6 +231,7 @@ cargo build --release --target x86_64-pc-windows-gnu
 ### Linux to macOS
 
 **Using osxcross** (advanced):
+
 ```bash
 # See: https://github.com/tpoechtrager/osxcross
 rustup target add x86_64-apple-darwin
@@ -224,18 +243,21 @@ cargo build --release --target x86_64-apple-darwin
 ## WebAssembly Build
 
 **Install wasm32 target**:
+
 ```bash
 rustup target add wasm32-unknown-unknown
 cargo install wasm-bindgen-cli
 ```
 
 **Build WASM**:
+
 ```bash
 cargo build --release --target wasm32-unknown-unknown --features wasm
 wasm-bindgen --out-dir web/pkg --target web target/wasm32-unknown-unknown/release/rustynes.wasm
 ```
 
 **Serve**:
+
 ```bash
 cd web
 python3 -m http.server 8080
@@ -249,21 +271,24 @@ python3 -m http.server 8080
 ### "SDL2 not found"
 
 **Linux**:
+
 ```bash
 sudo apt-get install libsdl2-dev
 ```
 
 **macOS**:
+
 ```bash
 brew install sdl2
 export LIBRARY_PATH="$LIBRARY_PATH:$(brew --prefix)/lib"
 ```
 
-**Windows**: Download SDL2 development libraries from https://libsdl.org
+**Windows**: Download SDL2 development libraries from <https://libsdl.org>
 
 ### "linker 'cc' not found"
 
 **Install C compiler**:
+
 ```bash
 # Debian/Ubuntu
 sudo apt-get install build-essential
@@ -278,6 +303,7 @@ xcode-select --install
 ### Slow Debug Builds
 
 **Use release mode** for testing:
+
 ```bash
 cargo run --release
 ```
@@ -285,6 +311,7 @@ cargo run --release
 ### Out of Memory During Compilation
 
 **Reduce parallelism**:
+
 ```bash
 cargo build --release -j 2
 ```
@@ -300,6 +327,7 @@ cargo build --release -j 2
 ---
 
 **Related Documents**:
+
 - [CONTRIBUTING.md](CONTRIBUTING.md) - Development guidelines
 - [TESTING.md](TESTING.md) - Running tests
 - [DEBUGGING.md](DEBUGGING.md) - Debugging tools
