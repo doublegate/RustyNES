@@ -1,0 +1,524 @@
+//! Main PPU (Picture Processing Unit) implementation
+//!
+//! The Ricoh 2C02 PPU is responsible for generating the video output
+//! for the NES. It renders 256×240 pixel frames at 60Hz (NTSC).
+//!
+//! # Memory Map (PPU address space)
+//!
+//! ```text
+//! $0000-$0FFF: Pattern Table 0 (CHR ROM/RAM, via mapper)
+//! $1000-$1FFF: Pattern Table 1 (CHR ROM/RAM, via mapper)
+//! $2000-$2FFF: Nametables (internal VRAM with mirroring)
+//! $3F00-$3F1F: Palette RAM
+//! ```
+//!
+//! # CPU Registers ($2000-$2007)
+//!
+//! ```text
+//! $2000: PPUCTRL   - Control register
+//! $2001: PPUMASK   - Mask register
+//! $2002: PPUSTATUS - Status register
+//! $2003: OAMADDR   - OAM address
+//! $2004: OAMDATA   - OAM data
+//! $2005: PPUSCROLL - Scroll position
+//! $2006: PPUADDR   - VRAM address
+//! $2007: PPUDATA   - VRAM data
+//! ```
+
+use crate::background::Background;
+use crate::oam::{Oam, SecondaryOam};
+use crate::registers::{PpuCtrl, PpuMask, PpuStatus};
+use crate::scroll::ScrollRegisters;
+use crate::sprites::{SpriteEvaluator, SpriteRenderer};
+use crate::timing::Timing;
+use crate::vram::{Mirroring, Vram};
+
+/// Frame buffer width (256 pixels)
+pub const FRAME_WIDTH: usize = 256;
+/// Frame buffer height (240 pixels)
+pub const FRAME_HEIGHT: usize = 240;
+/// Frame buffer total size (256×240 = 61440 pixels)
+pub const FRAME_SIZE: usize = FRAME_WIDTH * FRAME_HEIGHT;
+
+/// PPU (Picture Processing Unit)
+///
+/// Implements the Ricoh 2C02 PPU for cycle-accurate NES emulation.
+pub struct Ppu {
+    // Registers
+    ctrl: PpuCtrl,
+    mask: PpuMask,
+    status: PpuStatus,
+    scroll: ScrollRegisters,
+
+    // Memory
+    vram: Vram,
+    oam: Oam,
+
+    // Rendering components
+    background: Background,
+    sprite_renderer: SpriteRenderer,
+    sprite_evaluator: SpriteEvaluator,
+    secondary_oam: SecondaryOam,
+
+    // Timing
+    timing: Timing,
+
+    // Frame buffer (palette indices 0-63)
+    frame_buffer: Vec<u8>,
+
+    // Internal state
+    vram_read_buffer: u8,
+    nmi_pending: bool,
+}
+
+impl Ppu {
+    /// Create new PPU
+    pub fn new(mirroring: Mirroring) -> Self {
+        Self {
+            ctrl: PpuCtrl::empty(),
+            mask: PpuMask::empty(),
+            status: PpuStatus::empty(),
+            scroll: ScrollRegisters::new(),
+            vram: Vram::new(mirroring),
+            oam: Oam::new(),
+            background: Background::new(),
+            sprite_renderer: SpriteRenderer::new(),
+            sprite_evaluator: SpriteEvaluator::new(),
+            secondary_oam: SecondaryOam::new(),
+            timing: Timing::new(),
+            frame_buffer: vec![0; FRAME_SIZE],
+            vram_read_buffer: 0,
+            nmi_pending: false,
+        }
+    }
+
+    /// Read from PPU register (CPU memory map $2000-$2007)
+    pub fn read_register(&mut self, addr: u16) -> u8 {
+        match addr & 0x07 {
+            // $2000: PPUCTRL (write-only)
+            0 => 0,
+
+            // $2001: PPUMASK (write-only)
+            1 => 0,
+
+            // $2002: PPUSTATUS
+            2 => {
+                let status = self.status.bits();
+                self.status.clear_vblank(); // Reading clears VBlank flag
+                self.scroll.read_ppustatus(); // Reset write latch
+                status
+            }
+
+            // $2003: OAMADDR (write-only)
+            3 => 0,
+
+            // $2004: OAMDATA
+            4 => self.oam.read(),
+
+            // $2005: PPUSCROLL (write-only)
+            5 => 0,
+
+            // $2006: PPUADDR (write-only)
+            6 => 0,
+
+            // $2007: PPUDATA
+            7 => {
+                let addr = self.scroll.vram_addr();
+                let data = self.vram.read(addr);
+
+                // Buffered read behavior
+                let result = if addr >= 0x3F00 {
+                    // Palette reads are immediate
+                    data
+                } else {
+                    // Normal reads return previous buffer
+                    let buffered = self.vram_read_buffer;
+                    self.vram_read_buffer = data;
+                    buffered
+                };
+
+                // Increment VRAM address
+                let increment = self.ctrl.vram_increment();
+                self.scroll.increment_vram(increment);
+
+                result
+            }
+
+            _ => unreachable!(),
+        }
+    }
+
+    /// Write to PPU register (CPU memory map $2000-$2007)
+    pub fn write_register(&mut self, addr: u16, value: u8) {
+        match addr & 0x07 {
+            // $2000: PPUCTRL
+            0 => {
+                self.ctrl = PpuCtrl::from_bits_truncate(value);
+                self.scroll.write_ppuctrl(value);
+
+                // Check NMI enable
+                if self.ctrl.nmi_enabled() && self.status.in_vblank() {
+                    self.nmi_pending = true;
+                }
+            }
+
+            // $2001: PPUMASK
+            1 => {
+                self.mask = PpuMask::from_bits_truncate(value);
+            }
+
+            // $2002: PPUSTATUS (read-only)
+            2 => {}
+
+            // $2003: OAMADDR
+            3 => {
+                self.oam.set_addr(value);
+            }
+
+            // $2004: OAMDATA
+            4 => {
+                self.oam.write(value);
+            }
+
+            // $2005: PPUSCROLL
+            5 => {
+                self.scroll.write_ppuscroll(value);
+            }
+
+            // $2006: PPUADDR
+            6 => {
+                self.scroll.write_ppuaddr(value);
+            }
+
+            // $2007: PPUDATA
+            7 => {
+                let addr = self.scroll.vram_addr();
+                self.vram.write(addr, value);
+
+                // Increment VRAM address
+                let increment = self.ctrl.vram_increment();
+                self.scroll.increment_vram(increment);
+            }
+
+            _ => unreachable!(),
+        }
+    }
+
+    /// Perform OAM DMA (copy 256 bytes from CPU memory)
+    pub fn oam_dma(&mut self, data: &[u8; 256]) {
+        self.oam.dma_write(data);
+    }
+
+    /// Step PPU by one dot
+    ///
+    /// Returns true if a frame is complete and NMI should be triggered.
+    pub fn step(&mut self) -> (bool, bool) {
+        let rendering_enabled = self.mask.rendering_enabled();
+
+        // Tick timing FIRST to advance to the next position
+        let frame_complete = self.timing.tick(rendering_enabled);
+
+        let scanline = self.timing.scanline();
+        let dot = self.timing.dot();
+
+        // VBlank flag management (check AFTER tick)
+        if self.timing.is_vblank_set_dot() {
+            self.status.set_vblank();
+            if self.ctrl.nmi_enabled() {
+                self.nmi_pending = true;
+            }
+        }
+
+        if self.timing.is_vblank_clear_dot() {
+            self.status.clear_vblank();
+            self.status.clear_sprite_flags();
+            self.nmi_pending = false;
+        }
+
+        // Rendering logic (visible and pre-render scanlines)
+        if rendering_enabled && self.timing.is_rendering_scanline() {
+            // Background rendering
+            if self.timing.is_visible_dot() || self.timing.is_prefetch_dot() {
+                self.background.shift_registers();
+                // TODO: Fetch tile data based on dot position
+            }
+
+            // Sprite rendering
+            if self.timing.is_visible_dot() {
+                self.sprite_renderer.tick();
+            }
+
+            // Scrolling updates
+            if self.timing.is_hori_copy_dot() {
+                self.scroll.copy_horizontal();
+            }
+
+            if self.timing.is_vert_copy_range() {
+                self.scroll.copy_vertical();
+            }
+
+            // Sprite evaluation (visible scanlines only)
+            if self.timing.is_visible_scanline() {
+                if self.timing.is_sprite_eval_start() {
+                    self.sprite_evaluator.start_evaluation();
+                    self.secondary_oam.clear();
+                }
+
+                if self.timing.is_sprite_eval_range() {
+                    self.sprite_evaluator.evaluate_step(
+                        self.oam.data(),
+                        scanline + 1, // Evaluate for next scanline
+                        self.ctrl.sprite_height(),
+                        &mut self.secondary_oam,
+                    );
+                }
+            }
+
+            // Render pixel (visible scanlines only)
+            if self.timing.is_visible_scanline() && self.timing.is_visible_dot() {
+                let x = dot - 1;
+                let y = scanline;
+                self.render_pixel(x as usize, y as usize);
+            }
+        }
+
+        let nmi = self.nmi_pending;
+        if nmi {
+            self.nmi_pending = false;
+        }
+
+        (frame_complete, nmi)
+    }
+
+    /// Render a single pixel
+    fn render_pixel(&mut self, x: usize, y: usize) {
+        let mut bg_pixel = 0;
+        let mut bg_palette = 0;
+
+        // Get background pixel
+        if self.mask.show_background() {
+            let fine_x = self.scroll.fine_x();
+            let (pixel, palette) = self.background.get_pixel(fine_x);
+            bg_pixel = pixel;
+            bg_palette = palette;
+        }
+
+        let mut sprite_pixel = 0;
+        let mut sprite_palette = 0;
+        let mut sprite_priority = false;
+        let mut sprite_zero = false;
+
+        // Get sprite pixel
+        if self.mask.show_sprites() {
+            if let Some((pixel, palette, priority, is_sprite_zero)) =
+                self.sprite_renderer.get_pixel()
+            {
+                sprite_pixel = pixel;
+                sprite_palette = palette;
+                sprite_priority = priority;
+                sprite_zero = is_sprite_zero;
+            }
+        }
+
+        // Sprite 0 hit detection
+        if sprite_zero && bg_pixel != 0 && sprite_pixel != 0 {
+            self.status.set_sprite_zero_hit();
+        }
+
+        // Multiplexing (determine final pixel)
+        let (final_pixel, final_palette) = if bg_pixel == 0 && sprite_pixel == 0 {
+            // Both transparent - use backdrop color
+            (0, 0)
+        } else if bg_pixel == 0 {
+            // Background transparent - show sprite
+            (sprite_pixel, sprite_palette)
+        } else if sprite_pixel == 0 {
+            // Sprite transparent - show background
+            (bg_pixel, bg_palette)
+        } else {
+            // Both opaque - check priority
+            if sprite_priority {
+                (bg_pixel, bg_palette)
+            } else {
+                (sprite_pixel, sprite_palette)
+            }
+        };
+
+        // Read palette and write to frame buffer
+        let palette_addr = (final_palette << 2) | final_pixel;
+        let color_index = self.vram.read_palette(palette_addr);
+
+        let offset = y * FRAME_WIDTH + x;
+        self.frame_buffer[offset] = color_index;
+    }
+
+    /// Get frame buffer (palette indices 0-63)
+    #[inline]
+    pub fn frame_buffer(&self) -> &[u8] {
+        &self.frame_buffer
+    }
+
+    /// Set nametable mirroring
+    pub fn set_mirroring(&mut self, mirroring: Mirroring) {
+        self.vram.set_mirroring(mirroring);
+    }
+
+    /// Reset to power-up state
+    pub fn reset(&mut self) {
+        self.ctrl = PpuCtrl::empty();
+        self.mask = PpuMask::empty();
+        self.status = PpuStatus::empty();
+        self.scroll = ScrollRegisters::new();
+        self.vram.reset();
+        self.oam.reset();
+        self.background.reset();
+        self.sprite_renderer.reset();
+        self.timing.reset();
+        self.frame_buffer.fill(0);
+        self.vram_read_buffer = 0;
+        self.nmi_pending = false;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ppu_creation() {
+        let ppu = Ppu::new(Mirroring::Horizontal);
+        assert_eq!(ppu.frame_buffer().len(), FRAME_SIZE);
+    }
+
+    #[test]
+    fn test_ppuctrl_write() {
+        let mut ppu = Ppu::new(Mirroring::Horizontal);
+
+        ppu.write_register(0x2000, 0x80); // Enable NMI
+        assert!(ppu.ctrl.nmi_enabled());
+    }
+
+    #[test]
+    fn test_ppustatus_read() {
+        let mut ppu = Ppu::new(Mirroring::Horizontal);
+
+        ppu.status.set_vblank();
+        let status = ppu.read_register(0x2002);
+
+        assert_eq!(status & 0x80, 0x80); // VBlank bit set
+        assert!(!ppu.status.in_vblank()); // Should be cleared after read
+    }
+
+    #[test]
+    fn test_oam_write() {
+        let mut ppu = Ppu::new(Mirroring::Horizontal);
+
+        ppu.write_register(0x2003, 0x00); // OAMADDR = 0
+        ppu.write_register(0x2004, 0x42); // OAMDATA = $42
+
+        ppu.write_register(0x2003, 0x00); // Reset OAMADDR
+        let value = ppu.read_register(0x2004);
+        assert_eq!(value, 0x42);
+    }
+
+    #[test]
+    fn test_vram_write_read() {
+        let mut ppu = Ppu::new(Mirroring::Horizontal);
+
+        // Write address $2000
+        ppu.write_register(0x2006, 0x20);
+        ppu.write_register(0x2006, 0x00);
+
+        // Write data
+        ppu.write_register(0x2007, 0x55);
+
+        // Read address $2000
+        ppu.write_register(0x2006, 0x20);
+        ppu.write_register(0x2006, 0x00);
+
+        // First read is buffered (returns garbage)
+        let _ = ppu.read_register(0x2007);
+        // Second read returns actual data
+        let value = ppu.read_register(0x2007);
+        assert_eq!(value, 0x55);
+    }
+
+    #[test]
+    fn test_palette_immediate_read() {
+        let mut ppu = Ppu::new(Mirroring::Horizontal);
+
+        // Write to palette
+        ppu.write_register(0x2006, 0x3F);
+        ppu.write_register(0x2006, 0x00);
+        ppu.write_register(0x2007, 0x0F);
+
+        // Read from palette (immediate, no buffer)
+        ppu.write_register(0x2006, 0x3F);
+        ppu.write_register(0x2006, 0x00);
+        let value = ppu.read_register(0x2007);
+        assert_eq!(value, 0x0F);
+    }
+
+    #[test]
+    fn test_vblank_flag() {
+        let mut ppu = Ppu::new(Mirroring::Horizontal);
+
+        // Step to VBlank set point (scanline 241, dot 1)
+        while ppu.timing.scanline() != 241 || ppu.timing.dot() != 0 {
+            ppu.step();
+        }
+
+        // Next step should set VBlank
+        ppu.step();
+        assert!(ppu.status.in_vblank());
+    }
+
+    #[test]
+    fn test_nmi_trigger() {
+        let mut ppu = Ppu::new(Mirroring::Horizontal);
+
+        // Enable NMI
+        ppu.write_register(0x2000, 0x80);
+
+        // Step to VBlank
+        while ppu.timing.scanline() != 241 || ppu.timing.dot() != 0 {
+            ppu.step();
+        }
+
+        // Next step should trigger NMI
+        let (_, nmi) = ppu.step();
+        assert!(nmi);
+    }
+
+    #[test]
+    fn test_scroll_write() {
+        let mut ppu = Ppu::new(Mirroring::Horizontal);
+
+        // Write X scroll = 100
+        ppu.write_register(0x2005, 100);
+        // Write Y scroll = 50
+        ppu.write_register(0x2005, 50);
+
+        // Verify scroll registers updated
+        assert_eq!(ppu.scroll.fine_x(), 100 & 0x07);
+    }
+
+    #[test]
+    fn test_oam_dma() {
+        let mut ppu = Ppu::new(Mirroring::Horizontal);
+        let mut data = [0u8; 256];
+
+        // Fill with test pattern
+        for (i, byte) in data.iter_mut().enumerate() {
+            *byte = i as u8;
+        }
+
+        ppu.oam_dma(&data);
+
+        // Verify OAM contents by reading each address
+        for i in 0..256u16 {
+            ppu.oam.set_addr(i as u8);
+            assert_eq!(ppu.oam.read(), i as u8);
+        }
+    }
+}

@@ -2,9 +2,9 @@
 resolver = "2"
 members = [
     "crates/rustynes-cpu",
+    "crates/rustynes-ppu",
     # Future crates (commented out until implemented):
     # "crates/rustynes-core",
-    # "crates/rustynes-ppu",
     # "crates/rustynes-apu",
     # "crates/rustynes-mappers",
     # "crates/rustynes-desktop",
