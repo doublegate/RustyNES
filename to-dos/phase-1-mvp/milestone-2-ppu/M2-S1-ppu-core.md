@@ -321,8 +321,8 @@ Create unit tests for register behavior and timing.
 
 ## Related Documentation
 
-- [PPU 2C02 Specification](../../docs/ppu/PPU_2C02_SPECIFICATION.md)
-- [PPU Timing Diagram](../../docs/ppu/PPU_TIMING_DIAGRAM.md)
+- [PPU 2C02 Specification](../../../docs/ppu/PPU_2C02_SPECIFICATION.md)
+- [PPU Timing Diagram](../../../docs/ppu/PPU_TIMING_DIAGRAM.md)
 - [PPU Registers](https://www.nesdev.org/wiki/PPU_registers)
 
 ---

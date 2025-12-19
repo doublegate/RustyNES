@@ -651,8 +651,8 @@ mod tests {
 
 ## Related Documentation
 
-- [Mapper Overview](../../docs/mappers/MAPPER_OVERVIEW.md)
-- [MMC1 Specification](../../docs/mappers/MAPPER_MMC1.md)
+- [Mapper Overview](../../../docs/mappers/MAPPER_OVERVIEW.md)
+- [MMC1 Specification](../../../docs/mappers/MAPPER_MMC1.md)
 - [NESdev Wiki - MMC1](https://www.nesdev.org/wiki/MMC1)
 
 ---

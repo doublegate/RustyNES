@@ -350,10 +350,10 @@ cargo test -p rustynes-ppu
 
 ## Related Documentation
 
-- [PPU Specification](../../docs/ppu/PPU_2C02_SPECIFICATION.md)
-- [PPU Timing Diagram](../../docs/ppu/PPU_TIMING_DIAGRAM.md)
-- [PPU Scrolling](../../docs/ppu/PPU_SCROLLING.md)
-- [Sprite Evaluation](../../docs/ppu/SPRITE_EVALUATION.md)
+- [PPU Specification](../../../docs/ppu/PPU_2C02_SPECIFICATION.md)
+- [PPU Timing Diagram](../../../docs/ppu/PPU_TIMING_DIAGRAM.md)
+- [PPU Scrolling](../../../docs/ppu/PPU_SCROLLING.md)
+- [Sprite Evaluation](../../../docs/ppu/SPRITE_EVALUATION.md)
 
 ---
 

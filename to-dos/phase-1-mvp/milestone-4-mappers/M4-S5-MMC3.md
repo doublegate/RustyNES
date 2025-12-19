@@ -706,8 +706,8 @@ mod tests {
 
 ## Related Documentation
 
-- [Mapper Overview](../../docs/mappers/MAPPER_OVERVIEW.md)
-- [MMC3 Specification](../../docs/mappers/MAPPER_MMC3.md)
+- [Mapper Overview](../../../docs/mappers/MAPPER_OVERVIEW.md)
+- [MMC3 Specification](../../../docs/mappers/MAPPER_MMC3.md)
 - [NESdev Wiki - MMC3](https://www.nesdev.org/wiki/MMC3)
 - [MMC3 IRQ Timing](https://www.nesdev.org/wiki/MMC3_IRQ_timing)
 

@@ -1,11 +1,11 @@
 # [Milestone 3] Sprint 3.3: Triangle & Noise Channels
 
-**Status:** ⏳ PENDING
-**Started:** TBD
-**Completed:** TBD
-**Duration:** ~1 week
+**Status:** ✅ COMPLETED
+**Started:** December 2025
+**Completed:** December 2025
+**Duration:** ~1 week (actual)
 **Assignee:** Claude Code / Developer
-**Dependencies:** Sprint 3.1 (APU Core) must be complete
+**Dependencies:** Sprint 3.1 (APU Core) ✅ Complete
 
 ---
 
@@ -636,9 +636,9 @@ mod noise_tests {
 
 ## Related Documentation
 
-- [APU Triangle Channel](../../docs/apu/APU_CHANNEL_TRIANGLE.md)
-- [APU Noise Channel](../../docs/apu/APU_CHANNEL_NOISE.md)
-- [APU 2A03 Specification](../../docs/apu/APU_2A03_SPECIFICATION.md)
+- [APU Triangle Channel](../../../docs/apu/APU_CHANNEL_TRIANGLE.md)
+- [APU Noise Channel](../../../docs/apu/APU_CHANNEL_NOISE.md)
+- [APU 2A03 Specification](../../../docs/apu/APU_2A03_SPECIFICATION.md)
 - [NESdev Wiki - APU Triangle](https://www.nesdev.org/wiki/APU_Triangle)
 - [NESdev Wiki - APU Noise](https://www.nesdev.org/wiki/APU_Noise)
 

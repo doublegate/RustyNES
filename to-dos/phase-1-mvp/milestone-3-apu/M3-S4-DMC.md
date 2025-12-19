@@ -1,11 +1,11 @@
 # [Milestone 3] Sprint 3.4: DMC Channel
 
-**Status:** ⏳ PENDING
-**Started:** TBD
-**Completed:** TBD
-**Duration:** ~1-2 weeks
+**Status:** ✅ COMPLETED
+**Started:** December 2025
+**Completed:** December 2025
+**Duration:** ~1 week (actual)
 **Assignee:** Claude Code / Developer
-**Dependencies:** Sprint 3.1 (APU Core) must be complete
+**Dependencies:** Sprint 3.1 (APU Core) ✅ Complete
 
 ---
 
@@ -655,9 +655,9 @@ mod tests {
 
 ## Related Documentation
 
-- [APU DMC Channel](../../docs/apu/APU_CHANNEL_DMC.md)
-- [APU 2A03 Specification](../../docs/apu/APU_2A03_SPECIFICATION.md)
-- [APU Overview](../../docs/apu/APU_OVERVIEW.md)
+- [APU DMC Channel](../../../docs/apu/APU_CHANNEL_DMC.md)
+- [APU 2A03 Specification](../../../docs/apu/APU_2A03_SPECIFICATION.md)
+- [APU Overview](../../../docs/apu/APU_OVERVIEW.md)
 - [NESdev Wiki - APU DMC](https://www.nesdev.org/wiki/APU_DMC)
 
 ---

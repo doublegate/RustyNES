@@ -119,7 +119,7 @@ fn crosses_page(addr1: u16, addr2: u16) -> bool {
 
 ## Related Documentation
 
-- [CPU Opcode Table](../../docs/cpu/CPU_OPCODE_TABLE.md)
+- [CPU Opcode Table](../../../docs/cpu/CPU_OPCODE_TABLE.md)
 - [Unofficial Opcodes](https://www.nesdev.org/undocumented_opcodes.txt)
 
 ---

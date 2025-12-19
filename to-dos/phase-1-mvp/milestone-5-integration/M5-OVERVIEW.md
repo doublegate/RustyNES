@@ -379,11 +379,11 @@ crates/rustynes-core/
 
 ## Related Documentation
 
-- [Core API](../../docs/api/CORE_API.md)
-- [Bus Architecture](../../docs/bus/BUS_OVERVIEW.md)
-- [Memory Map](../../docs/bus/MEMORY_MAP.md)
-- [Save States](../../docs/api/SAVE_STATES.md)
-- [Input Handling](../../docs/input/CONTROLLER.md)
+- [Core API](../../../docs/api/CORE_API.md)
+- [Bus Architecture](../../../docs/bus/BUS_OVERVIEW.md)
+- [Memory Map](../../../docs/bus/MEMORY_MAP.md)
+- [Save States](../../../docs/api/SAVE_STATES.md)
+- [Input Handling](../../../docs/input/CONTROLLER.md)
 
 ---
 

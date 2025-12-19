@@ -1,9 +1,9 @@
 # [Milestone 3] Sprint 3.1: APU Core & Frame Counter
 
-**Status:** ⏳ PENDING
-**Started:** TBD
-**Completed:** TBD
-**Duration:** ~1-2 weeks
+**Status:** ✅ COMPLETED
+**Started:** December 2025
+**Completed:** December 2025
+**Duration:** ~1 week (actual)
 **Assignee:** Claude Code / Developer
 
 ---
@@ -16,14 +16,14 @@ Establish the APU foundation with register interface, frame counter, and shared 
 
 ## Acceptance Criteria
 
-- [ ] APU register map ($4000-$4017) implemented
-- [ ] Frame counter with 4-step and 5-step modes
-- [ ] Frame IRQ generation (4-step mode only)
-- [ ] Envelope generator (shared by pulse/noise)
-- [ ] Length counter (shared by all channels)
-- [ ] Sweep unit (pulse channels only)
-- [ ] Zero unsafe code
-- [ ] Comprehensive unit tests
+- [x] APU register map ($4000-$4017) implemented
+- [x] Frame counter with 4-step and 5-step modes
+- [x] Frame IRQ generation (4-step mode only)
+- [x] Envelope generator (shared by pulse/noise)
+- [x] Length counter (shared by all channels)
+- [x] Sweep unit (pulse channels only)
+- [x] Zero unsafe code
+- [x] Comprehensive unit tests
 
 ---
 
@@ -738,9 +738,9 @@ mod tests {
 
 ## Related Documentation
 
-- [APU Overview](../../docs/apu/APU_OVERVIEW.md)
-- [APU 2A03 Specification](../../docs/apu/APU_2A03_SPECIFICATION.md)
-- [APU Frame Counter](../../docs/apu/APU_FRAME_COUNTER.md)
+- [APU Overview](../../../docs/apu/APU_OVERVIEW.md)
+- [APU 2A03 Specification](../../../docs/apu/APU_2A03_SPECIFICATION.md)
+- [APU Frame Counter](../../../docs/apu/APU_FRAME_COUNTER.md)
 - [NESdev Wiki - APU](https://www.nesdev.org/wiki/APU)
 - [NESdev Wiki - APU Frame Counter](https://www.nesdev.org/wiki/APU_Frame_Counter)
 

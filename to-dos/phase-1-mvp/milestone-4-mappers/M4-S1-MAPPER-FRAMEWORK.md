@@ -687,9 +687,9 @@ mod tests {
 
 ## Related Documentation
 
-- [Mapper Overview](../../docs/mappers/MAPPER_OVERVIEW.md)
-- [iNES Format](../../docs/formats/INES_FORMAT.md)
-- [NES 2.0 Format](../../docs/formats/NES20_FORMAT.md)
+- [Mapper Overview](../../../docs/mappers/MAPPER_OVERVIEW.md)
+- [iNES Format](../../../docs/formats/INES_FORMAT.md)
+- [NES 2.0 Format](../../../docs/formats/NES20_FORMAT.md)
 - [NESdev Wiki - Mapper](https://www.nesdev.org/wiki/Mapper)
 - [NESdev Wiki - iNES](https://www.nesdev.org/wiki/INES)
 - [NESdev Wiki - NES 2.0](https://www.nesdev.org/wiki/NES_2.0)

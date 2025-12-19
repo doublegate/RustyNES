@@ -507,9 +507,9 @@ mod integration_tests {
 
 ## Related Documentation
 
-- [Mapper Overview](../../docs/mappers/MAPPER_OVERVIEW.md)
-- [NROM Specification](../../docs/mappers/MAPPER_NROM.md)
-- [iNES Format](../../docs/formats/INES_FORMAT.md)
+- [Mapper Overview](../../../docs/mappers/MAPPER_OVERVIEW.md)
+- [NROM Specification](../../../docs/mappers/MAPPER_NROM.md)
+- [iNES Format](../../../docs/formats/INES_FORMAT.md)
 - [NESdev Wiki - NROM](https://www.nesdev.org/wiki/NROM)
 
 ---

@@ -446,9 +446,9 @@ crates/rustynes-desktop/
 
 ## Related Documentation
 
-- [Desktop Frontend](../../docs/platform/DESKTOP.md)
-- [Build Instructions](../../docs/dev/BUILD.md)
-- [Configuration](../../docs/api/CONFIGURATION.md)
+- [Desktop Frontend](../../../docs/platform/DESKTOP.md)
+- [Build Instructions](../../../docs/dev/BUILD.md)
+- [Configuration](../../../docs/api/CONFIGURATION.md)
 
 ---
 

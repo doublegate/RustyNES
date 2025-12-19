@@ -448,9 +448,9 @@ pub struct Ppu {
 
 ## Related Documentation
 
-- [PPU Overview](../../docs/ppu/PPU_OVERVIEW.md)
-- [PPU Specification](../../docs/ppu/PPU_2C02_SPECIFICATION.md)
-- [Test ROM Guide](../../docs/testing/TEST_ROM_GUIDE.md)
+- [PPU Overview](../../../docs/ppu/PPU_OVERVIEW.md)
+- [PPU Specification](../../../docs/ppu/PPU_2C02_SPECIFICATION.md)
+- [Test ROM Guide](../../../docs/testing/TEST_ROM_GUIDE.md)
 
 ---
 

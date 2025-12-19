@@ -282,8 +282,8 @@ Create unit tests for power-on state and RESET behavior.
 
 ## Related Documentation
 
-- [CPU 6502 Specification](../../docs/cpu/CPU_6502_SPECIFICATION.md)
-- [CPU Timing Reference](../../docs/cpu/CPU_TIMING_REFERENCE.md)
+- [CPU 6502 Specification](../../../docs/cpu/CPU_6502_SPECIFICATION.md)
+- [CPU Timing Reference](../../../docs/cpu/CPU_TIMING_REFERENCE.md)
 
 ---
 

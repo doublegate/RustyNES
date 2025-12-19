@@ -1,11 +1,11 @@
 # [Milestone 3] Sprint 3.2: Pulse Channels
 
-**Status:** ⏳ PENDING
-**Started:** TBD
-**Completed:** TBD
-**Duration:** ~1 week
+**Status:** ✅ COMPLETED
+**Started:** December 2025
+**Completed:** December 2025
+**Duration:** ~1 week (actual)
 **Assignee:** Claude Code / Developer
-**Dependencies:** Sprint 3.1 (APU Core) must be complete
+**Dependencies:** Sprint 3.1 (APU Core) ✅ Complete
 
 ---
 
@@ -533,8 +533,8 @@ mod tests {
 
 ## Related Documentation
 
-- [APU Pulse Channel](../../docs/apu/APU_CHANNEL_PULSE.md)
-- [APU 2A03 Specification](../../docs/apu/APU_2A03_SPECIFICATION.md)
+- [APU Pulse Channel](../../../docs/apu/APU_CHANNEL_PULSE.md)
+- [APU 2A03 Specification](../../../docs/apu/APU_2A03_SPECIFICATION.md)
 - [NESdev Wiki - APU Pulse](https://www.nesdev.org/wiki/APU_Pulse)
 - [NESdev Wiki - APU Sweep](https://www.nesdev.org/wiki/APU_Sweep)
 

@@ -545,9 +545,9 @@ mod tests_mapper3 {
 
 ## Related Documentation
 
-- [Mapper Overview](../../docs/mappers/MAPPER_OVERVIEW.md)
-- [UxROM Specification](../../docs/mappers/MAPPER_UXROM.md)
-- [CNROM Specification](../../docs/mappers/MAPPER_CNROM.md)
+- [Mapper Overview](../../../docs/mappers/MAPPER_OVERVIEW.md)
+- [UxROM Specification](../../../docs/mappers/MAPPER_UXROM.md)
+- [CNROM Specification](../../../docs/mappers/MAPPER_CNROM.md)
 - [NESdev Wiki - UxROM](https://www.nesdev.org/wiki/UxROM)
 - [NESdev Wiki - CNROM](https://www.nesdev.org/wiki/CNROM)
 

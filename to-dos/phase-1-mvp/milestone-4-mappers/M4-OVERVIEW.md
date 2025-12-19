@@ -369,14 +369,14 @@ crates/rustynes-mappers/
 
 ## Related Documentation
 
-- [Mapper Overview](../../docs/mappers/MAPPER_OVERVIEW.md)
-- [iNES Format](../../docs/formats/INES_FORMAT.md)
-- [NES 2.0 Format](../../docs/formats/NES20_FORMAT.md)
-- [Mapper 0 (NROM)](../../docs/mappers/MAPPER_000_NROM.md)
-- [Mapper 1 (MMC1)](../../docs/mappers/MAPPER_001_MMC1.md)
-- [Mapper 2 (UxROM)](../../docs/mappers/MAPPER_002_UXROM.md)
-- [Mapper 3 (CNROM)](../../docs/mappers/MAPPER_003_CNROM.md)
-- [Mapper 4 (MMC3)](../../docs/mappers/MAPPER_004_MMC3.md)
+- [Mapper Overview](../../../docs/mappers/MAPPER_OVERVIEW.md)
+- [iNES Format](../../../docs/formats/INES_FORMAT.md)
+- [NES 2.0 Format](../../../docs/formats/NES20_FORMAT.md)
+- [Mapper 0 (NROM)](../../../docs/mappers/MAPPER_000_NROM.md)
+- [Mapper 1 (MMC1)](../../../docs/mappers/MAPPER_001_MMC1.md)
+- [Mapper 2 (UxROM)](../../../docs/mappers/MAPPER_002_UXROM.md)
+- [Mapper 3 (CNROM)](../../../docs/mappers/MAPPER_003_CNROM.md)
+- [Mapper 4 (MMC3)](../../../docs/mappers/MAPPER_004_MMC3.md)
 
 ---
 
@@ -384,20 +384,27 @@ crates/rustynes-mappers/
 
 ### Pre-Sprint Preparation
 
-1. **Review Mapper Documentation**
-   - Study mapper specifications
-   - Review banking diagrams
-   - Understand IRQ timing (MMC3)
+1. **Review Mapper Documentation** ✅ READY
+   - [x] Verify `docs/mappers/MAPPER_OVERVIEW.md` exists
+   - [x] Verify `docs/mappers/MAPPER_NROM.md` exists (Mapper 0)
+   - [x] Verify `docs/mappers/MAPPER_MMC1.md` exists (Mapper 1)
+   - [x] Verify `docs/mappers/MAPPER_UXROM.md` exists (Mapper 2)
+   - [x] Verify `docs/mappers/MAPPER_CNROM.md` exists (Mapper 3)
+   - [x] Verify `docs/mappers/MAPPER_MMC3.md` exists (Mapper 4)
+   - [x] Verify `docs/formats/INES_FORMAT.md` exists
+   - [x] Verify `docs/formats/NES20_FORMAT.md` exists
+   - **Status:** All mapper documentation verified present
 
-2. **Set Up Crate**
-   - Create rustynes-mappers/Cargo.toml
-   - Add test ROM loader
-   - Set up integration test framework
+2. **Set Up Crate** ⏳ PENDING (Sprint 1)
+   - [ ] Create `crates/rustynes-mappers/Cargo.toml` with dependencies
+   - [ ] Create `crates/rustynes-mappers/src/lib.rs` with basic structure
+   - [ ] Add to workspace `Cargo.toml`
+   - **Status:** Directory structure exists, awaiting Sprint 1 kickoff
 
-3. **Acquire Test ROMs**
-   - Download mapper test ROMs
-   - Acquire 5 test games per mapper
-   - Set up test game library
+3. **Acquire Test ROMs** ⏳ PENDING (Sprint 1)
+   - [ ] Download mapper test ROMs from nesdev
+   - [ ] Set up test game library in `game-roms/mapper-*/`
+   - **Status:** See `game-roms/README.md` for ROM acquisition guide
 
 ### Sprint 1 Kickoff
 

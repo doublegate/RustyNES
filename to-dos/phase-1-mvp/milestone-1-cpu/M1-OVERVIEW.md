@@ -321,9 +321,9 @@ cargo test -p rustynes-cpu
 
 ## Related Documentation
 
-- [CPU Specification](../../docs/cpu/CPU_6502_SPECIFICATION.md)
-- [CPU Timing Reference](../../docs/cpu/CPU_TIMING_REFERENCE.md)
-- [nestest Guide](../../docs/testing/NESTEST_GOLDEN_LOG.md)
+- [CPU Specification](../../../docs/cpu/CPU_6502_SPECIFICATION.md)
+- [CPU Timing Reference](../../../docs/cpu/CPU_TIMING_REFERENCE.md)
+- [nestest Guide](../../../docs/testing/NESTEST_GOLDEN_LOG.md)
 
 ---
 

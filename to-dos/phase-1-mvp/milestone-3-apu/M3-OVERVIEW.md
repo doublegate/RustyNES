@@ -303,13 +303,13 @@ crates/rustynes-apu/
 
 ## Related Documentation
 
-- [APU 2A03 Specification](../../docs/apu/APU_2A03_SPECIFICATION.md)
-- [APU Frame Counter](../../docs/apu/APU_FRAME_COUNTER.md)
-- [APU Pulse Channel](../../docs/apu/APU_CHANNEL_PULSE.md)
-- [APU Triangle Channel](../../docs/apu/APU_CHANNEL_TRIANGLE.md)
-- [APU Noise Channel](../../docs/apu/APU_CHANNEL_NOISE.md)
-- [APU DMC Channel](../../docs/apu/APU_CHANNEL_DMC.md)
-- [APU Mixer](../../docs/apu/APU_MIXER.md)
+- [APU 2A03 Specification](../../../docs/apu/APU_2A03_SPECIFICATION.md)
+- [APU Frame Counter](../../../docs/apu/APU_FRAME_COUNTER.md)
+- [APU Pulse Channel](../../../docs/apu/APU_CHANNEL_PULSE.md)
+- [APU Triangle Channel](../../../docs/apu/APU_CHANNEL_TRIANGLE.md)
+- [APU Noise Channel](../../../docs/apu/APU_CHANNEL_NOISE.md)
+- [APU DMC Channel](../../../docs/apu/APU_CHANNEL_DMC.md)
+- [APU Mixer](../../../docs/apu/APU_MIXER.md)
 
 ---
 

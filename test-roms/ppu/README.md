@@ -91,51 +91,80 @@ Still implementing:
 - Sprite 0 hit detection
 - Complete background rendering
 
-## Additional Test ROMs to Download
+## Complete Test ROM Collection
 
-For comprehensive PPU validation, download these additional test suites:
+This directory contains **54 PPU test ROMs** covering:
 
-### VBL/NMI Tests (complete set)
+### VBL/NMI Tests (10 tests)
 
-```bash
-cd test-roms/ppu
-curl -L -O https://github.com/christopherpow/nes-test-roms/raw/master/ppu_vbl_nmi/rom_singles/04-nmi_control.nes
-curl -L -O https://github.com/christopherpow/nes-test-roms/raw/master/ppu_vbl_nmi/rom_singles/05-nmi_timing.nes
-curl -L -O https://github.com/christopherpow/nes-test-roms/raw/master/ppu_vbl_nmi/rom_singles/06-suppression.nes
-curl -L -O https://github.com/christopherpow/nes-test-roms/raw/master/ppu_vbl_nmi/rom_singles/07-nmi_on_timing.nes
-curl -L -O https://github.com/christopherpow/nes-test-roms/raw/master/ppu_vbl_nmi/rom_singles/08-nmi_off_timing.nes
-curl -L -O https://github.com/christopherpow/nes-test-roms/raw/master/ppu_vbl_nmi/rom_singles/09-even_odd_frames.nes
-curl -L -O https://github.com/christopherpow/nes-test-roms/raw/master/ppu_vbl_nmi/rom_singles/10-even_odd_timing.nes
-```
+Complete VBlank flag and NMI timing validation:
 
-### Sprite Hit Tests (complete set)
+- 01-vbl_basics.nes - 10-even_odd_timing.nes (complete set)
+- Tests VBL flag set/clear timing, NMI control, suppression, frame timing
 
-```bash
-cd test-roms/ppu
-curl -L -O https://github.com/christopherpow/nes-test-roms/raw/master/sprite_hit_tests_2005.10.05/03.corners.nes
-curl -L -O https://github.com/christopherpow/nes-test-roms/raw/master/sprite_hit_tests_2005.10.05/04.flip.nes
-curl -L -O https://github.com/christopherpow/nes-test-roms/raw/master/sprite_hit_tests_2005.10.05/05.left_clip.nes
-curl -L -O https://github.com/christopherpow/nes-test-roms/raw/master/sprite_hit_tests_2005.10.05/06.right_edge.nes
-curl -L -O https://github.com/christopherpow/nes-test-roms/raw/master/sprite_hit_tests_2005.10.05/07.screen_bottom.nes
-curl -L -O https://github.com/christopherpow/nes-test-roms/raw/master/sprite_hit_tests_2005.10.05/08.double_height.nes
-curl -L -O https://github.com/christopherpow/nes-test-roms/raw/master/sprite_hit_tests_2005.10.05/09.timing_basics.nes
-curl -L -O https://github.com/christopherpow/nes-test-roms/raw/master/sprite_hit_tests_2005.10.05/10.timing_order.nes
-curl -L -O https://github.com/christopherpow/nes-test-roms/raw/master/sprite_hit_tests_2005.10.05/11.edge_timing.nes
-```
+### Sprite Hit Tests (11 tests)
 
-### Other PPU Tests
+Sprite 0 collision detection (Quietust, 2005):
 
-```bash
-cd test-roms/ppu
-# Palette RAM test
-curl -L -O https://github.com/christopherpow/nes-test-roms/raw/master/blargg_ppu_tests_2005.09.15b/palette_ram.nes
+- spr_hit_basics.nes through spr_hit_edge_timing.nes
+- Tests collision detection, alignment, clipping, timing
 
-# Sprite RAM (OAM) test
-curl -L -O https://github.com/christopherpow/nes-test-roms/raw/master/blargg_ppu_tests_2005.09.15b/sprite_ram.nes
+### Sprite Overflow Tests (5 tests)
 
-# VRAM access test
-curl -L -O https://github.com/christopherpow/nes-test-roms/raw/master/blargg_ppu_tests_2005.09.15b/vram_access.nes
-```
+Tests PPU sprite evaluation bug behavior:
+
+- spr_overflow_basics.nes - Basic overflow flag behavior
+- spr_overflow_details.nes - Detailed overflow logic
+- spr_overflow_timing.nes - Overflow timing
+- spr_overflow_obscure.nes - Edge cases
+- spr_overflow_emulator.nes - Emulator-specific behavior
+
+**Source**: [blargg's sprite overflow tests](https://www.nesdev.org/wiki/Emulator_tests)
+
+### OAM (Sprite Memory) Tests (2 tests)
+
+Tests sprite RAM ($2003/$2004) behavior:
+
+- oam_read.nes - OAM read behavior and open bus
+- oam_stress.nes - OAM stress test
+
+### PPU Bus Tests (3 tests)
+
+Tests PPU data bus and buffer behavior:
+
+- open_bus.nes - PPU open bus behavior
+- read_buffer.nes - PPU read buffer ($2007)
+- test_ppu_read_buffer.nes - Detailed read buffer tests
+
+### Palette Tests (4 tests)
+
+Tests palette RAM behavior:
+
+- palette_ram.nes - Basic palette RAM test
+- palette.nes - Palette mirroring
+- color.nes - Color rendering test
+- full_palette*.nes - Complete 400+ color NTSC palette display
+
+### VBL/NMI Detailed Tests (10 tests)
+
+Individual VBL/NMI tests (vbl_nmi_* prefix):
+
+- vbl_nmi_basics.nes through vbl_nmi_timing.nes
+- Comprehensive VBL flag and NMI timing tests
+
+### Other Tests (9 tests)
+
+- sprite_ram.nes - Sprite RAM access patterns
+- vram_access.nes - VRAM ($2006/$2007) access patterns
+- scanline.nes - Scanline rendering test
+- ntsc_torture.nes - NTSC signal torture test
+- And others
+
+## Test ROM Sources
+
+- **[christopherpow/nes-test-roms](https://github.com/christopherpow/nes-test-roms)** - Primary source
+- **[TetaNES test_roms](https://github.com/lukexor/tetanes)** - Additional comprehensive tests
+- **[NESdev Wiki](https://www.nesdev.org/wiki/Emulator_tests)** - Test ROM documentation
 
 ## References
 

@@ -1,11 +1,11 @@
 # [Milestone 3] Sprint 3.5: APU Integration & Testing
 
-**Status:** ⏳ PENDING
-**Started:** TBD
-**Completed:** TBD
-**Duration:** ~1 week
+**Status:** ✅ COMPLETED
+**Started:** December 2025
+**Completed:** December 19, 2025
+**Duration:** ~1 week (actual)
 **Assignee:** Claude Code / Developer
-**Dependencies:** Sprints 3.1-3.4 must be complete
+**Dependencies:** Sprints 3.1-3.4 ✅ Complete
 
 ---
 
@@ -697,9 +697,9 @@ fn main() {
 
 ## Related Documentation
 
-- [APU Overview](../../docs/apu/APU_OVERVIEW.md)
-- [APU 2A03 Specification](../../docs/apu/APU_2A03_SPECIFICATION.md)
-- [APU Mixer](../../docs/apu/APU_MIXER.md)
+- [APU Overview](../../../docs/apu/APU_OVERVIEW.md)
+- [APU 2A03 Specification](../../../docs/apu/APU_2A03_SPECIFICATION.md)
+- [APU Mixer](../../../docs/apu/APU_MIXER.md)
 - [NESdev Wiki - APU](https://www.nesdev.org/wiki/APU)
 - [NESdev Wiki - APU Mixer](https://www.nesdev.org/wiki/APU_Mixer)
 
