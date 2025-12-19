@@ -935,10 +935,10 @@ All integration sprints completed ahead of schedule:
 **Current Status:** 398 tests passing across all 5 crates
 
 - rustynes-cpu: 46 tests (100% passing)
-- rustynes-ppu: 90 tests (97.8% passing, 2 ignored for timing precision)
-- rustynes-apu: 105 tests (100% passing)
+- rustynes-ppu: 83 tests (100% passing)
+- rustynes-apu: 150 tests (100% passing)
 - rustynes-mappers: 78 tests (100% passing)
-- rustynes-core: 69 tests (100% passing)
+- rustynes-core: 41 tests (100% passing)
 
 ### Integration Tests
 

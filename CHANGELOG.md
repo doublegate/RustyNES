@@ -128,15 +128,16 @@ This release marks the completion of **Milestone 5 (Integration)**, delivering t
 
 ### Test Coverage
 
-- **22 new tests** in rustynes-core
+- **41 new tests** in rustynes-core
 - **398 tests** total workspace-wide
 - **100% test pass rate**
 
 **Test Breakdown:**
 
-- Bus tests: 6 (RAM, PPU mirrors, controller, DMA, reset)
-- Console tests: 7 (creation, reset, step, frame, input)
-- Controller tests: 9 (buttons, strobe, serial read, edge detection)
+- Bus tests: 22 (memory map, PPU/APU/controller routing, DMA, mirroring, reset)
+- Console tests: 7 (creation, reset, step, frame, ROM loading, timing)
+- Input tests: 9 (controller strobe, button states, serial protocol)
+- Integration tests: 3 (CPU+PPU+APU synchronization, full system operation)
 
 ### Code Quality
 
@@ -200,8 +201,30 @@ This release adds `rustynes-core` to the workspace, completing the integration l
 | **PPU** | 83/83 | **100%** | Full rendering pipeline |
 | **APU** | 150/150 | **100%** | All 5 channels + mixer |
 | **Mappers** | 78/78 | **100%** | 5 mappers, 77.7% coverage |
-| **Core** | 22/22 | **100%** | Bus, console, input |
+| **Core** | 41/41 | **100%** | Bus, console, input, integration |
 | **Total** | 398/398 | **100%** | Production-ready |
+
+### Documentation Updates (December 19, 2025)
+
+**TODO Audit and Test ROM Planning:**
+
+- Comprehensive audit of all M1-M5 TODO files completed
+- Corrected 8 files from PENDING to COMPLETED status (M4 and M5 milestones)
+- Created comprehensive test ROM execution plan (tests/TEST_ROM_PLAN.md)
+  - 212 test ROM files inventoried across CPU, PPU, APU, and Mappers
+  - 172 unique test ROMs cataloged (after deduplication)
+  - Integration status documented for all test files
+  - Phase-based execution roadmap with success metrics
+  - Expected pass rate targets: 75%+ Phase 1, 85%+ Phase 2, 95%+ Phase 3, 100% Phase 4
+- Updated README.md with test ROM validation plan section
+- Updated ROADMAP.md with comprehensive test ROM inventory
+- Created TODO audit summary report (to-dos/TODO_AUDIT_SUMMARY_REPORT.md)
+
+**Project Documentation Status:**
+
+- All TODO files now accurately reflect implementation status (100% accuracy)
+- Complete visibility into test ROM collection and integration roadmap
+- Clear path forward for M6 test ROM integration with visual validation
 
 ### What's Next
 
@@ -214,6 +237,7 @@ This release adds `rustynes-core` to the workspace, completing the integration l
 - Configuration persistence
 - Cross-platform packaging
 - **First playable release!**
+- Test ROM integration with visual validation (212 test files)
 
 ### Notes
 
@@ -222,6 +246,7 @@ This release adds `rustynes-core` to the workspace, completing the integration l
 - Ready to build the desktop GUI (Milestone 6)
 - Zero unsafe code maintained across all 5 crates
 - On track for MVP release
+- Test ROM integration plan complete and ready for M6 execution
 
 ---
 

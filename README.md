@@ -837,9 +837,9 @@ If you use RustyNES in academic research, please cite:
   author = {RustyNES Contributors},
   title = {RustyNES: A Next-Generation NES Emulator in Rust},
   year = {2025},
-  version = {0.1.0},
+  version = {0.4.0},
   url = {https://github.com/doublegate/RustyNES},
-  note = {Cycle-accurate Nintendo Entertainment System emulator with complete CPU and PPU implementation}
+  note = {Cycle-accurate Nintendo Entertainment System emulator with complete CPU, PPU, APU, Mappers, and Integration layer}
 }
 ```
 
