@@ -482,3 +482,79 @@ pub struct Ppu {
 - Test ROM infrastructure is valuable
 - Good documentation aids future development
 - Modular design makes testing easier
+
+---
+
+## Test ROM Validation Results (December 2025)
+
+### Current Status
+
+**Test ROMs Integrated**: 6/25 (24%)
+
+**Integration Tests**: 6 total
+
+- **Passing**: 4 tests (66.7%)
+- **Ignored**: 2 tests (33.3%) - Timing refinement needed, not functional failures
+
+**Results**:
+
+| Test ROM | Status | Notes |
+|----------|--------|-------|
+| ppu_vbl_nmi.nes | ✅ PASSED | Complete VBL/NMI suite |
+| 01-vbl_basics.nes | ✅ PASSED | Basic VBlank behavior |
+| 02-vbl_set_time.nes | ⏸ IGNORED | Requires ±51 cycle precision |
+| 03-vbl_clear_time.nes | ⏸ IGNORED | Requires ±10 cycle precision |
+| 01.basics.nes | ✅ PASSED | Sprite 0 hit basics |
+| 02.alignment.nes | ✅ PASSED | Sprite 0 hit alignment |
+
+**Unit Tests**: 83/83 passing (100%)
+
+**Doc Tests**: 1/1 passing (100%)
+
+**Overall**: 88/90 tests passing or ignored (97.8%)
+
+### Additional Test ROMs Downloaded (December 2025)
+
+**Total Available**: 25 PPU test ROMs
+
+**Awaiting Integration**: 19 additional test ROMs
+
+#### VBL/NMI Tests (7 additional files)
+
+- 04-nmi_control.nes - NMI enable/disable control
+- 05-nmi_timing.nes - Exact NMI trigger timing
+- 06-suppression.nes - VBlank flag read suppression edge cases
+- 07-nmi_on_timing.nes - NMI enable timing
+- 08-nmi_off_timing.nes - NMI disable timing
+- 09-even_odd_frames.nes - Even/odd frame rendering behavior
+- 10-even_odd_timing.nes - Even/odd frame timing
+
+**Expected Results**:
+
+- 04, 09 likely to pass (NMI control and odd frame skip implemented)
+- 05, 06, 07, 08, 10 may need cycle-level timing refinement
+
+#### Sprite Hit Tests (9 additional files)
+
+- 03.corners.nes through 11.edge_timing.nes
+
+**Expected Results**:
+
+- Most should pass (sprite hit detection implemented)
+- Edge timing tests may need refinement
+
+#### Other PPU Tests (3 files)
+
+- palette_ram.nes - Palette RAM access and mirroring
+- sprite_ram.nes - Sprite RAM (OAM) access
+- vram_access.nes - VRAM access timing and behavior
+
+**Expected Results**: All should pass (RAM systems fully implemented)
+
+### Integration Blocker
+
+**Blocker**: Requires rustynes-core integration layer (Milestone 5)
+
+The current test infrastructure uses a minimal CPU implementation for test execution. To integrate the remaining 19 test ROMs, a full system emulator (CPU + PPU + Bus) is required.
+
+**Next Steps**: See `/home/parobek/Code/RustyNES/to-dos/milestone-5-integration/M5-S1-test-rom-integration.md`

@@ -69,3 +69,23 @@ Achieved 100% golden log match with nestest.nes, the gold standard CPU validatio
 - Test-driven development accelerates implementation
 - Having a clear validation target is invaluable
 - Cycle accuracy matters for edge cases
+
+---
+
+## Additional Validation Available (Future)
+
+With nestest.nes achieving 100% golden log match, the CPU implementation is ready for additional validation with Blargg's test suite. These ROMs are now downloaded and await integration:
+
+**Downloaded Test ROMs** (18 additional files):
+
+- `official_only.nes` - All official opcodes (should pass immediately)
+- `all_instrs.nes` - All instructions including unofficial (should pass immediately)
+- 11 ROM singles (01-implied through 11-special) - Individual addressing mode tests
+- 3 timing tests (instr_timing.nes, 1-instr_timing.nes, 2-branch_timing.nes)
+- 2 misc tests (cpu_interrupts.nes, registers.nes)
+
+**Expected Results**: All tests should pass based on nestest validation
+
+**Blocker**: Requires rustynes-core integration layer (Milestone 5)
+
+**See**: `/home/parobek/Code/RustyNES/to-dos/milestone-5-integration/M5-S1-test-rom-integration.md`
