@@ -49,12 +49,14 @@
 
 ```text
 Phase 1 (MVP): ████████████████░░░░ 83% (M1-M5 of M1-M6)
+
 - M1: CPU         [████████████████████] 100% ✅ COMPLETED December 19, 2025
 - M2: PPU         [████████████████████] 100% ✅ COMPLETED December 19, 2025
 - M3: APU         [████████████████████] 100% ✅ COMPLETED December 19, 2025
 - M4: Mappers     [████████████████████] 100% ✅ COMPLETED December 19, 2025
 - M5: Integration [████████████████████] 100% ✅ COMPLETED December 19, 2025
 - M6: GUI         [░░░░░░░░░░░░░░░░░░░░]   0% 🚧 NEXT PRIORITY
+
 ```
 
 **Current Focus:**
@@ -930,6 +932,14 @@ All integration sprints completed ahead of schedule:
 
 **Target:** 95% code coverage
 
+**Current Status:** 398 tests passing across all 5 crates
+
+- rustynes-cpu: 46 tests (100% passing)
+- rustynes-ppu: 90 tests (97.8% passing, 2 ignored for timing precision)
+- rustynes-apu: 105 tests (100% passing)
+- rustynes-mappers: 78 tests (100% passing)
+- rustynes-core: 69 tests (100% passing)
+
 ### Integration Tests
 
 - CPU+Bus interactions
@@ -937,19 +947,45 @@ All integration sprints completed ahead of schedule:
 - Full frame execution
 - Save state serialization
 
+**Current Status:** All integration tests passing in rustynes-core
+
 ### Test ROM Validation
 
-**Essential (Must Pass):**
+**Comprehensive Test ROM Collection:** 212 test files (172 unique after deduplication)
 
-- nestest.nes
-- blargg_nes_cpu_test5
-- blargg_ppu_tests
-- blargg_apu_2005.07.30
+See [tests/TEST_ROM_PLAN.md](tests/TEST_ROM_PLAN.md) for complete test execution plan.
 
-**Additional:**
+**Test ROM Inventory:**
 
-- TASVideos accuracy test suite (156 ROMs)
-- mmc3_test
+- CPU: 36 test ROMs (1 integrated: nestest.nes passing, 35 pending)
+- PPU: 49 test ROMs (6 integrated: 4 passing, 2 ignored for timing, 43 pending)
+- APU: 70 test ROMs (all pending integration)
+- Mappers: 57 test ROMs (all pending integration)
+
+**Essential (Currently Passing):**
+
+- nestest.nes (100% golden log match - 5003+ instructions validated)
+- ppu_vbl_nmi.nes (VBL/NMI timing test suite)
+- ppu_01-vbl_basics.nes (basic VBlank behavior)
+- ppu_01.basics.nes (sprite 0 hit basics)
+- ppu_02.alignment.nes (sprite 0 hit alignment)
+
+**Pending Integration (212 test ROMs):**
+
+- Blargg CPU instruction tests (11 ROMs)
+- Blargg CPU timing tests (3 ROMs)
+- Blargg PPU VBL/NMI tests (7 ROMs)
+- Quietust sprite hit tests (11 ROMs)
+- Blargg APU test suite (70 ROMs)
+- Holy Mapperel mapper tests (45 ROMs)
+- MMC3/MMC5 specialized tests (16 ROMs)
+
+**Integration Target:**
+
+- Phase 1 (MVP): 75%+ pass rate (154/184 implemented test ROMs)
+- Phase 2 (Features): 85%+ pass rate
+- Phase 3 (Expansion): 95%+ pass rate
+- Phase 4 (v1.0): 100% TASVideos accuracy suite (156 tests)
 - sprite_hit_tests_2005.10.05
 - vbl_nmi_timing
 

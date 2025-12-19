@@ -107,18 +107,25 @@ Pre-built binaries will be available when the Desktop GUI is complete (Milestone
 **Clone and Build:**
 
 ```bash
+
 # Clone the repository
+
 git clone https://github.com/doublegate/RustyNES.git
 cd RustyNES
 
 # Build all implemented crates (CPU, PPU, APU, Mappers, Core)
+
 cargo build --workspace --release
 
 # Run tests to verify installation
+
 cargo test --workspace
 
 # Note: The desktop GUI is not yet implemented (planned for Milestone 6)
+
+
 # Currently, the core emulation engine is complete with 398 comprehensive tests
+
 ```
 
 ### Platform-Specific Dependencies
@@ -153,11 +160,15 @@ brew install sdl2
 RustyNES demonstrates world-class emulation accuracy:
 
 ```bash
+
 # Run all tests (all crates)
+
 cargo test --workspace
+
 # Total: 398 tests - 46 CPU + 83 PPU + 150 APU + 78 Mappers + 41 Core
 
 # Run specific crate tests
+
 cargo test -p rustynes-cpu      # 46 tests (100%)
 cargo test -p rustynes-ppu      # 83 tests (100%)
 cargo test -p rustynes-apu      # 150 tests (100%)
@@ -165,9 +176,11 @@ cargo test -p rustynes-mappers  # 78 tests (100%)
 cargo test -p rustynes-core     # 41 tests (100%)
 
 # Run with debug logging
+
 RUST_LOG=debug cargo test --workspace
 
 # Run benchmarks (once implemented)
+
 cargo bench --workspace
 ```
 
@@ -180,9 +193,21 @@ cargo bench --workspace
 - **Core**: 100% complete - Integration layer with Bus, Console, Input, Save State framework
 - **Validation**: nestest.nes golden log match (5003+ instructions verified)
 
+**Test ROM Validation Plan:**
+
+RustyNES has a comprehensive test ROM collection with 212 test files:
+
+- **CPU**: 36 test ROMs (1 integrated, 35 pending)
+- **PPU**: 49 test ROMs (6 integrated, 43 pending)
+- **APU**: 70 test ROMs (all pending integration)
+- **Mappers**: 57 test ROMs (all pending integration)
+
+See [tests/TEST_ROM_PLAN.md](tests/TEST_ROM_PLAN.md) for the complete test execution plan. Test ROM integration will proceed during M6 (Desktop GUI) development to enable visual validation of rendering and audio output.
+
 **Coming Soon (M6):**
 
 - **M6**: Desktop GUI application (egui/wgpu) - NEXT PRIORITY for playable MVP release
+- **Test ROM Integration**: Execute 212 test ROMs with visual validation support
 
 ---
 
@@ -203,10 +228,13 @@ See [docs/api/CONFIGURATION.md](docs/api/CONFIGURATION.md) for planned configura
 The project is organized as a Cargo workspace:
 
 ```bash
+
 # Build all implemented crates
+
 cargo build --workspace --release
 
 # Build specific crate
+
 cargo build -p rustynes-cpu --release
 cargo build -p rustynes-ppu --release
 cargo build -p rustynes-apu --release
@@ -214,6 +242,7 @@ cargo build -p rustynes-mappers --release
 cargo build -p rustynes-core --release
 
 # Test specific crate
+
 cargo test -p rustynes-cpu
 cargo test -p rustynes-ppu
 cargo test -p rustynes-apu
@@ -221,6 +250,7 @@ cargo test -p rustynes-mappers
 cargo test -p rustynes-core
 
 # Generate documentation
+
 cargo doc --workspace --no-deps --open
 ```
 
@@ -355,11 +385,13 @@ Master Clock (NTSC): 21.477272 MHz
 └─ APU Clock: Same as CPU (1.789773 MHz)
 
 Frame Timing:
+
 - Scanlines: 262 (NTSC), 312 (PAL)
 - Dots per scanline: 341 (340 on odd frames)
 - Total PPU cycles: 89,342 (NTSC), 106,392 (PAL)
 - CPU cycles per frame: 29,781 (NTSC), 35,464 (PAL)
 - Target framerate: 60.0988 Hz (NTSC), 50.0070 Hz (PAL)
+
 ```
 
 ### Accuracy Targets and Progress
@@ -417,20 +449,20 @@ See [ROADMAP.md](ROADMAP.md) for the complete 24-month development plan and [to-
 ### Architecture Overview
 
 ```text
-┌────────────────────────────────────────────────────────────────┐
-│                    RustyNES Components                          │
-├─────────────┬─────────────┬─────────────┬──────────────────────┤
-│   CPU ✅    │    PPU ✅   │  APU ✅     │    Mappers ✅        │
-│  (6502)     │  (2C02)     │  (2A03)     │  (0, 1, 2, 3, 4)     │
-│             │             │             │                      │
-│ • 100%      │ • 100%      │ • 100%      │ • 100%               │
-│   Complete  │   Complete  │   Complete  │   Complete           │
-│ • Cycle     │ • Dot-level │ • 5 Channels│ • 77.7% games        │
-│   accurate  │   rendering │ • Non-linear│ • Banking            │
-│ • All 256   │ • Scrolling │   mixing    │ • IRQ timing         │
-│   opcodes   │ • Sprites   │ • 48 kHz    │ • Mirroring          │
-│ • 46 tests  │ • 83 tests  │ • 150 tests │ • 78 tests           │
-└─────────────┴─────────────┴─────────────┴──────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                    RustyNES Components                      │
+├─────────────┬─────────────┬─────────────┬───────────────────┤
+│   CPU ✅    │    PPU ✅   │  APU ✅     │    Mappers ✅      │
+│  (6502)     │  (2C02)     │  (2A03)     │  (0, 1, 2, 3, 4)  │
+│             │             │             │                   │
+│ • 100%      │ • 100%      │ • 100%      │ • 100%            │
+│   Complete  │   Complete  │   Complete  │   Complete        │
+│ • Cycle     │ • Dot-level │ • 5 Channels│ • 77.7% games     │
+│   accurate  │   rendering │ • Non-linear│ • Banking         │
+│ • All 256   │ • Scrolling │   mixing    │ • IRQ timing      │
+│   opcodes   │ • Sprites   │ • 48 kHz    │ • Mirroring       │
+│ • 46 tests  │ • 83 tests  │ • 150 tests │ • 78 tests        │
+└─────────────┴─────────────┴─────────────┴───────────────────┘
        │              │              │             │
        └──────────────┴──────────────┴─────────────┘
                          │
@@ -447,7 +479,7 @@ See [ROADMAP.md](ROADMAP.md) for the complete 24-month development plan and [to-
        ┌─────────────────┼────────────────┐
        │                 │                │
 ┌──────┴──────┐   ┌──────┴──────┐   ┌─────┴─────┐
-│  Desktop 🚧 │   │   Web 🔄    │   │ Headless 🔄│
+│  Desktop 🚧 │   │   Web 🔄     │   │ Headless 🔄│
 │  (egui/wgpu)│   │   (WASM)    │   │   (API)    │
 │  • M6 NEXT  │   │   • Phase 3 │   │  • Phase 2 │
 └─────────────┘   └─────────────┘   └────────────┘
@@ -521,13 +553,17 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for comprehensive system design.
 ### Standard Build
 
 ```bash
+
 # Debug build (faster compilation, includes debug symbols)
+
 cargo build --workspace
 
 # Release build (optimized, ~10x faster runtime)
+
 cargo build --workspace --release
 
 # Build specific crate
+
 cargo build -p rustynes-cpu --release
 cargo build -p rustynes-ppu --release
 cargo build -p rustynes-apu --release
@@ -535,9 +571,11 @@ cargo build -p rustynes-mappers --release
 cargo build -p rustynes-core --release
 
 # Run all tests (398 tests across 5 crates)
+
 cargo test --workspace
 
 # Run tests for specific crate
+
 cargo test -p rustynes-cpu       # 46 tests
 cargo test -p rustynes-ppu       # 83 tests
 cargo test -p rustynes-apu       # 150 tests
@@ -545,53 +583,68 @@ cargo test -p rustynes-mappers   # 78 tests
 cargo test -p rustynes-core      # 41 tests
 
 # Run lints
+
 cargo clippy --workspace -- -D warnings
 
 # Format code
+
 cargo fmt --all
 
 # Generate documentation
+
 cargo doc --workspace --no-deps --open
 ```
 
 ### Development Build
 
 ```bash
+
 # Build with all warnings
+
 cargo build --workspace -- -D warnings
 
 # Build and run in watch mode (requires cargo-watch)
+
 cargo install cargo-watch
 cargo watch -x 'test --workspace'
 
 # Run specific tests
+
 cargo test -p rustynes-cpu test_lda_immediate
 cargo test -p rustynes-ppu test_ppu_integration
 
 # Run with debug logging
+
 RUST_LOG=debug cargo test --workspace
 
 # Benchmark critical paths (once implemented)
+
 cargo bench -p rustynes-cpu
 cargo bench -p rustynes-ppu
 
 # Check for unused dependencies
+
 cargo +nightly udeps --workspace
 ```
 
 ### Cross-Compilation
 
 ```bash
+
 # Install cross-compilation tool
+
 cargo install cross
 
 # Build for Linux ARM64
+
 cross build --target aarch64-unknown-linux-gnu --release
 
 # Build for Windows from Linux
+
 cross build --target x86_64-pc-windows-gnu --release
 
 # Build for Raspberry Pi
+
 cross build --target armv7-unknown-linux-gnueabihf --release
 ```
 
@@ -645,22 +698,28 @@ Contributions of all kinds are welcome! Whether you're fixing bugs, adding featu
 ### Quick Contribution Workflow
 
 ```bash
+
 # 1. Fork and clone
+
 git clone https://github.com/YOUR_USERNAME/RustyNES.git
 cd RustyNES
 
 # 2. Create a feature branch
+
 git checkout -b feature/my-feature
 
 # 3. Make changes and test
+
 cargo test --workspace
 cargo clippy --workspace -- -D warnings
 cargo fmt --all
 
 # 4. Commit using conventional commits
+
 git commit -m "feat(cpu): implement ADC instruction"
 
 # 5. Push and create PR
+
 git push origin feature/my-feature
 ```
 

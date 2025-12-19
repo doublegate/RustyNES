@@ -1,9 +1,9 @@
 # [Milestone 4] Sprint 4.1: Mapper Framework & Infrastructure
 
-**Status:** ⏳ PENDING
-**Started:** TBD
-**Completed:** TBD
-**Duration:** ~1-2 weeks
+**Status:** ✅ COMPLETED
+**Started:** December 2025
+**Completed:** December 19, 2025
+**Duration:** 1 day (accelerated development)
 **Assignee:** Claude Code / Developer
 
 ---
@@ -58,7 +58,9 @@ Set up the rustynes-mappers crate with initial file structure and dependencies.
 **Implementation:**
 
 ```toml
+
 # Cargo.toml
+
 [package]
 name = "rustynes-mappers"
 version = "0.1.0"
@@ -182,7 +184,9 @@ Define nametable mirroring modes.
 **Implementation:**
 
 ```rust
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+
 pub enum Mirroring {
     /// Horizontal mirroring (vertical arrangement)
     /// Nametables: A A
@@ -271,17 +275,23 @@ use std::io::{self, Read};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
+
 pub enum RomError {
+
     #[error("Invalid iNES magic number")]
+
     InvalidMagic,
 
     #[error("Unsupported ROM format")]
+
     UnsupportedFormat,
 
     #[error("I/O error: {0}")]
+
     Io(#[from] io::Error),
 
     #[error("Invalid ROM size: PRG={0} CHR={1}")]
+
     InvalidSize(usize, usize),
 }
 
@@ -534,11 +544,15 @@ pub fn create_mapper(rom: Rom) -> Result<Box<dyn Mapper>, MapperError> {
 }
 
 #[derive(Debug, thiserror::Error)]
+
 pub enum MapperError {
+
     #[error("Unsupported mapper: {0}")]
+
     UnsupportedMapper(u16),
 
     #[error("ROM error: {0}")]
+
     Rom(#[from] RomError),
 }
 ```
@@ -573,7 +587,9 @@ Create comprehensive unit tests for ROM parsing and mapper infrastructure.
 **Tests:**
 
 ```rust
+
 #[cfg(test)]
+
 mod tests {
     use super::*;
 
@@ -593,6 +609,7 @@ mod tests {
     }
 
     #[test]
+
     fn test_valid_ines_header() {
         let header = create_ines_header(2, 1, 0, 0x00);
         let parsed = INesHeader::parse(&header).unwrap();
@@ -604,6 +621,7 @@ mod tests {
     }
 
     #[test]
+
     fn test_invalid_magic() {
         let mut header = create_ines_header(2, 1, 0, 0x00);
         header[0] = b'X';
@@ -612,6 +630,7 @@ mod tests {
     }
 
     #[test]
+
     fn test_mapper_number_calculation() {
         // Mapper 1 (MMC1)
         let header = create_ines_header(8, 0, 1, 0x00);
@@ -625,6 +644,7 @@ mod tests {
     }
 
     #[test]
+
     fn test_mirroring_modes() {
         // Horizontal
         let header = create_ines_header(2, 1, 0, 0x00);
@@ -643,6 +663,7 @@ mod tests {
     }
 
     #[test]
+
     fn test_battery_flag() {
         let header = create_ines_header(2, 1, 0, 0x02);
         let parsed = INesHeader::parse(&header).unwrap();
@@ -650,6 +671,7 @@ mod tests {
     }
 
     #[test]
+
     fn test_trainer_flag() {
         let header = create_ines_header(2, 1, 0, 0x04);
         let parsed = INesHeader::parse(&header).unwrap();
@@ -657,6 +679,7 @@ mod tests {
     }
 
     #[test]
+
     fn test_nes20_detection() {
         let mut header = create_ines_header(2, 1, 0, 0x00);
         header[7] = (header[7] & 0xF3) | 0x08; // Set NES 2.0 bits
@@ -701,6 +724,7 @@ mod tests {
 ### Mapper Number Calculation
 
 iNES format stores mapper number split across two nibbles:
+
 - Flags 6 bits 4-7: Lower nibble
 - Flags 7 bits 4-7: Upper nibble
 
