@@ -1,0 +1,26 @@
+[package]
+name = "rustynes-mappers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+description = "NES mapper implementations for RustyNES emulator"
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "rustynes_mappers"
+path = "src/lib.rs"

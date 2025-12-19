@@ -4,9 +4,9 @@ members = [
     "crates/rustynes-cpu",
     "crates/rustynes-ppu",
     "crates/rustynes-apu",
+    "crates/rustynes-mappers",
     # Future crates (commented out until implemented):
     # "crates/rustynes-core",
-    # "crates/rustynes-mappers",
     # "crates/rustynes-desktop",
     # "crates/rustynes-web",
     # "crates/rustynes-tas",
@@ -15,7 +15,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.75"
 authors = ["doublegate"]

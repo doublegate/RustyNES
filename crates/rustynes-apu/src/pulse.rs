@@ -251,6 +251,7 @@ impl Default for PulseChannel {
 }
 
 #[cfg(test)]
+#[allow(clippy::cast_sign_loss)]
 mod tests {
     use super::*;
 

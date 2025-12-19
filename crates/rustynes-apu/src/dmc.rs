@@ -323,6 +323,7 @@ impl Default for DmcChannel {
 }
 
 #[cfg(test)]
+#[allow(clippy::large_stack_arrays)]
 mod tests {
     use super::*;
 

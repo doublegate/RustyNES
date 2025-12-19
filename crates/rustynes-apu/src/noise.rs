@@ -189,6 +189,7 @@ impl Default for NoiseChannel {
 }
 
 #[cfg(test)]
+#[allow(clippy::unreadable_literal, clippy::overly_complex_bool_expr)]
 mod tests {
     use super::*;
 

@@ -202,12 +202,12 @@ mod tests {
     fn test_triangle_sequence() {
         // Verify sequence matches expected triangle wave
         // First half: 15 → 0
-        for i in 0..16 {
-            assert_eq!(TRIANGLE_SEQUENCE[i], 15 - i as u8);
+        for (i, &val) in TRIANGLE_SEQUENCE[..16].iter().enumerate() {
+            assert_eq!(val, 15 - u8::try_from(i).unwrap());
         }
         // Second half: 0 → 15
-        for i in 16..32 {
-            assert_eq!(TRIANGLE_SEQUENCE[i], (i - 16) as u8);
+        for (i, &val) in TRIANGLE_SEQUENCE[16..32].iter().enumerate() {
+            assert_eq!(val, u8::try_from(i).unwrap());
         }
     }
 

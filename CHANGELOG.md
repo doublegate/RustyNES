@@ -9,6 +9,231 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.0] - 2025-12-19 - "Mapping the Path Forward" (Milestone 4: Mappers Complete)
+
+**Status**: Phase 1 In Progress - CPU, PPU, APU, and Mappers implementation complete
+
+This release marks the completion of **Milestone 4 (Mappers)**, delivering a complete mapper subsystem that enables 77.7% NES game library compatibility. The implementation includes the 5 most important mappers covering the vast majority of commercial NES games.
+
+### Highlights
+
+- Complete mapper framework with trait-based abstraction
+- 5 mappers implemented: NROM (0), MMC1 (1), UxROM (2), CNROM (3), MMC3 (4)
+- 77.7% NES game library coverage
+- Full iNES and NES 2.0 ROM format support
+- Scanline IRQ support (MMC3 A12 edge detection)
+- Battery-backed SRAM interface
+- 78 comprehensive tests passing
+- Zero unsafe code throughout implementation
+- 3,401 lines of production code
+
+### Added - Mappers Implementation
+
+#### Framework Components
+
+- **Mapper Trait**: 13-method interface for all mapper implementations
+  - PRG-ROM read/write with bank switching
+  - CHR-ROM/RAM read/write with bank switching
+  - Dynamic mirroring control
+  - IRQ generation and acknowledgment
+  - CPU and PPU clock callbacks
+  - PRG-RAM interface for battery saves
+
+- **ROM Parser**: Complete iNES and NES 2.0 header support
+  - 16-byte iNES header parsing
+  - NES 2.0 extended format detection
+  - 12-bit mapper number support (NES 2.0)
+  - PRG-ROM/CHR-ROM size detection
+  - Battery-backed RAM detection
+  - Trainer support (512-byte)
+  - Mirroring mode detection
+
+- **Mirroring Modes**: All NES nametable arrangements
+  - Horizontal mirroring (vertical scrolling games)
+  - Vertical mirroring (horizontal scrolling games)
+  - Single-screen (lower/upper)
+  - Four-screen (extra VRAM required)
+
+- **Mapper Registry**: Factory pattern for dynamic mapper creation
+  - Mapper lookup by iNES number
+  - Mapper name lookup for debugging
+  - Supported mapper enumeration
+
+#### Mapper Implementations
+
+- **NROM (Mapper 0)** - 9.5% game coverage, 337 lines, 12 tests
+  - Simplest mapper (no bank switching)
+  - 16KB or 32KB PRG-ROM support
+  - 8KB CHR-ROM or CHR-RAM
+  - Fixed mirroring from header
+  - Games: Super Mario Bros., Donkey Kong, Balloon Fight, Ice Climber
+
+- **MMC1 (Mapper 1)** - 27.9% game coverage, 570 lines, 15 tests
+  - 5-bit serial shift register for configuration
+  - 4 PRG banking modes (32KB/16KB switchable/fixed)
+  - 2 CHR banking modes (8KB/4KB switchable)
+  - Programmable mirroring control
+  - 8KB battery-backed SRAM support
+  - Games: Legend of Zelda, Metroid, Final Fantasy, Mega Man 2, Castlevania II
+
+- **UxROM (Mapper 2)** - 10.6% game coverage, 321 lines, 11 tests
+  - 16KB switchable + 16KB fixed PRG banking
+  - 8KB CHR-RAM (no CHR-ROM banking)
+  - Bus conflict emulation
+  - Games: Mega Man, Castlevania, Duck Tales, Contra, Metal Gear
+
+- **CNROM (Mapper 3)** - 6.3% game coverage, 340 lines, 11 tests
+  - Fixed PRG-ROM (16KB or 32KB)
+  - 8KB switchable CHR-ROM banks
+  - Bus conflict emulation
+  - Games: Arkanoid, Solomon's Key, Paperboy, Gradius, Pipe Dream
+
+- **MMC3 (Mapper 4)** - 23.4% game coverage, 580 lines, 29 tests
+  - 8 bank select registers for flexible banking
+  - 2 PRG banking modes (swappable $8000 or $C000)
+  - 2 CHR banking modes (2KB+1KB or 1KB+2KB)
+  - Scanline counter IRQ with A12 edge detection
+  - PRG-RAM write protection
+  - 8KB battery-backed SRAM support
+  - Games: Super Mario Bros. 3, Mega Man 3-6, Kirby's Adventure, Ninja Gaiden
+
+### Technical Specifications
+
+**Mapper Coverage:**
+
+| Mapper | Name | Coverage | PRG Banking | CHR Banking | Special Features |
+|--------|------|----------|-------------|-------------|------------------|
+| 0 | NROM | 9.5% | None | None | - |
+| 1 | MMC1 | 27.9% | 16KB/32KB | 4KB/8KB | Shift register, SRAM |
+| 2 | UxROM | 10.6% | 16KB switch | None | Bus conflicts |
+| 3 | CNROM | 6.3% | None | 8KB switch | Bus conflicts |
+| 4 | MMC3 | 23.4% | 8KB switch | 1KB/2KB | Scanline IRQ, SRAM |
+| **Total** | - | **77.7%** | - | - | - |
+
+**ROM Format Support:**
+
+- iNES format (16-byte header)
+- NES 2.0 extended format
+- Mapper numbers 0-4095 (12-bit with NES 2.0)
+- PRG-ROM sizes up to 4MB
+- CHR-ROM sizes up to 2MB
+- Battery-backed SRAM detection
+
+### Test Coverage
+
+- **78 tests** total passing (all unit tests)
+- **Zero unsafe code** (`#![forbid(unsafe_code)]` in all modules)
+- **100% test pass rate**
+
+**Test Breakdown:**
+
+- NROM: 12 tests (PRG/CHR access, mirroring)
+- MMC1: 15 tests (shift register, banking modes, mirroring)
+- UxROM: 11 tests (PRG banking, bus conflicts)
+- CNROM: 11 tests (CHR banking, bus conflicts)
+- MMC3: 29 tests (banking, IRQ counter, A12 detection)
+
+### Code Quality
+
+- **Zero unsafe code** throughout mapper implementation
+- **#![forbid(unsafe_code)]** enforced at crate level
+- Comprehensive rustdoc documentation for all public APIs
+- 100% `clippy::pedantic` compliance
+- Hardware-accurate behavior matching reference emulators
+- Extensive use of type safety
+
+### Files Added
+
+```text
+crates/rustynes-mappers/src/
+├── lib.rs        (239 lines) - Public API, mapper factory
+├── mapper.rs     (322 lines) - Mapper trait definition
+├── mirroring.rs  (197 lines) - Mirroring modes
+├── rom.rs        (495 lines) - iNES/NES 2.0 parsing
+├── nrom.rs       (337 lines) - Mapper 0
+├── mmc1.rs       (570 lines) - Mapper 1
+├── uxrom.rs      (321 lines) - Mapper 2
+├── cnrom.rs      (340 lines) - Mapper 3
+└── mmc3.rs       (580 lines) - Mapper 4
+```
+
+### Total Lines of Code
+
+3,401 lines across 9 source files
+
+### What's Included
+
+This release adds the `rustynes-mappers` crate to the existing CPU, PPU, and APU libraries.
+
+**Crates Included:**
+
+- `rustynes-cpu` - Complete 6502 CPU emulation (46 tests)
+- `rustynes-ppu` - Complete 2C02 PPU emulation (83 tests)
+- `rustynes-apu` - Complete 2A03 APU emulation (150 tests)
+- `rustynes-mappers` - Complete mapper subsystem (78 tests) ✨ NEW
+
+**Coming Soon:**
+
+- `rustynes-core` - Integration layer (Milestone 5)
+- `rustynes-desktop` - GUI application (Milestone 6)
+
+### Test Results
+
+| Component | Tests | Pass Rate | Details |
+|-----------|-------|-----------|---------|
+| **CPU** | 46/46 | **100%** | All 256 opcodes validated |
+| **PPU** | 83/83 | **100%** | Full rendering pipeline |
+| **APU** | 150/150 | **100%** | All 5 channels + mixer |
+| **Mappers** | 78/78 | **100%** | 5 mappers, 77.7% coverage |
+| **Total** | 357/357 | **100%** | Production-ready quality |
+
+### Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/doublegate/RustyNES.git
+cd RustyNES
+
+# Build all implemented crates
+cargo build --workspace --release
+
+# Run comprehensive test suite
+cargo test --workspace
+
+# Expected output: 357+ tests passing
+
+# Generate documentation
+cargo doc --workspace --no-deps --open
+```
+
+### What's Next
+
+**Milestone 5 (Integration) - January 2026:**
+
+- Implement `rustynes-core` integration layer
+- Connect CPU + PPU + APU + Mappers + Bus
+- ROM loading and cartridge detection
+- Full-system test ROM validation
+
+**Milestone 6 (GUI) - March 2026:**
+
+- Cross-platform GUI (egui + wgpu)
+- ROM loading and gameplay
+- Save states and configuration
+- Audio/video synchronization
+- **MVP Release**: Playable emulator with 77.7% game compatibility
+
+### Notes
+
+- This is a library-only release (no desktop GUI yet)
+- Mapper implementation is hardware-accurate
+- MMC3 IRQ timing uses A12 edge detection (cycle-accurate)
+- Zero unsafe code maintained throughout all 4 crates
+- Ready to begin Milestone 5 (Integration) and Milestone 6 (GUI)
+- On track for MVP release
+
+---
+
 ## [0.2.0] - 2025-12-19 - "The Sound of Innovation" (Milestone 3: APU Complete)
 
 **Status**: Phase 1 In Progress - CPU, PPU, and APU implementation complete
@@ -553,8 +778,8 @@ RustyNES follows a phased development approach. See [ROADMAP.md](ROADMAP.md) for
 
 - [x] Cycle-accurate 6502/2A03 CPU implementation
 - [x] Dot-level 2C02 PPU rendering
-- [ ] Hardware-accurate 2A03 APU synthesis
-- [ ] Mappers 0, 1, 2, 3, 4 (80% game coverage)
+- [x] Hardware-accurate 2A03 APU synthesis
+- [x] Mappers 0, 1, 2, 3, 4 (77.7% game coverage)
 - [ ] Cross-platform desktop GUI (egui + wgpu)
 - [ ] Save states and battery saves
 - [ ] Gamepad support

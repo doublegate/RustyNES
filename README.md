@@ -8,9 +8,10 @@
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](#platform-support)
 [![Documentation](https://img.shields.io/badge/docs-latest-blue.svg)](https://doublegate.github.io/RustyNES/)
 [![codecov](https://codecov.io/gh/doublegate/RustyNES/branch/main/graph/badge.svg)](https://codecov.io/gh/doublegate/RustyNES)
-[![CPU Tests](https://img.shields.io/badge/CPU%20tests-144%20passing-brightgreen.svg)](#test-validation-status)
-[![PPU Tests](https://img.shields.io/badge/PPU%20tests-6%20passing-green.svg)](#test-validation-status)
+[![CPU Tests](https://img.shields.io/badge/CPU%20tests-46%20passing-brightgreen.svg)](#test-validation-status)
+[![PPU Tests](https://img.shields.io/badge/PPU%20tests-83%20passing-brightgreen.svg)](#test-validation-status)
 [![APU Tests](https://img.shields.io/badge/APU%20tests-150%20passing-brightgreen.svg)](#test-validation-status)
+[![Mapper Tests](https://img.shields.io/badge/Mapper%20tests-78%20passing-brightgreen.svg)](#test-validation-status)
 
 ## Overview
 
@@ -18,17 +19,18 @@ A next-generation NES emulator written in pure Rust — targeting 100% accuracy,
 
 ---
 
-> **Status:** v0.2.0 Released - Phase 1 In Progress (50% Complete)
+> **Status:** v0.3.0 Released - Phase 1 In Progress (67% Complete)
 >
 > **Milestones Completed:**
 >
 > - ✅ **M1: CPU** - Cycle-accurate 6502/2A03 with all 256 opcodes, 100% nestest.nes golden log validation
 > - ✅ **M2: PPU** - Complete dot-level 2C02 rendering with background/sprite support, VBlank/NMI timing
 > - ✅ **M3: APU** - Hardware-accurate 2A03 APU with 5 audio channels, 48 kHz output, non-linear mixing
+> - ✅ **M4: Mappers** - NROM, MMC1, UxROM, CNROM, MMC3 enabling 77.7% game library compatibility
 >
-> **Test Suite:** 300 tests passing (144 CPU • 6 PPU • 150 APU)
+> **Test Suite:** 357 tests passing (46 CPU • 83 PPU • 150 APU • 78 Mappers)
 >
-> **Next:** Milestone 4 (Mappers) - NROM, MMC1, UxROM, CNROM, MMC3 for 77.7% game compatibility
+> **Next:** Milestone 5 (Integration) - Connect all subsystems, ROM loading, full-system validation
 >
 > See [ROADMAP.md](ROADMAP.md) and [to-dos/](to-dos/) for development timeline.
 
@@ -65,25 +67,25 @@ RustyNES combines **accuracy-first emulation** with **modern features** and the 
 
 ## Quick Start
 
-### Recent Release: v0.2.0 (December 19, 2025)
+### Recent Release: v0.3.0 (December 19, 2025)
 
-RustyNES has reached its second major milestone with the completion of APU emulation:
+RustyNES has reached its fourth milestone with the completion of the Mapper subsystem:
 
 **What's New:**
 
-- Complete 2A03 APU implementation with all 5 audio channels (2 pulse, triangle, noise, DMC)
-- Hardware-accurate frame counter with 4-step and 5-step modes
-- Non-linear audio mixer with lookup tables matching hardware behavior
-- 48 kHz audio resampling with linear interpolation
-- 150 comprehensive APU unit tests (100% passing)
+- Complete mapper framework with trait-based abstraction for all mapper types
+- 5 mappers implemented: NROM (0), MMC1 (1), UxROM (2), CNROM (3), MMC3 (4)
+- 77.7% NES game library compatibility with these 5 mappers alone
+- Full iNES and NES 2.0 ROM format parsing
+- MMC3 scanline IRQ with A12 edge detection (cycle-accurate)
+- Battery-backed SRAM support for save games
+- 78 comprehensive mapper unit tests (100% passing)
 - Zero unsafe code throughout implementation
 
-**Previous Release: v0.1.0 (December 2025)**
+**Previous Releases:**
 
-- Complete 6502/2A03 CPU implementation with all 256 opcodes (151 official + 105 unofficial)
-- Dot-accurate 2C02 PPU rendering with background and sprite support
-- 144 CPU tests + 6 PPU tests passing
-- 100% nestest.nes golden log match (5003+ instructions verified)
+- **v0.2.0** - Complete 2A03 APU with 5 audio channels, 48 kHz output, non-linear mixing (150 tests)
+- **v0.1.0** - Complete 6502 CPU (256 opcodes) and 2C02 PPU (dot-accurate rendering)
 
 See [CHANGELOG.md](CHANGELOG.md) for full details.
 
