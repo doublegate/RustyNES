@@ -69,6 +69,9 @@ thiserror = "1.0"     # Error handling
 # ═══════════════════════════════════════════════════════════════
 rustynes-core = { path = "../rustynes-core" }
 
+[dev-dependencies]
+tempfile = "3.8"      # Temporary directories for tests
+
 [features]
 default = []
 

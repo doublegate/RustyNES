@@ -8,6 +8,8 @@
 use iced::Size;
 
 mod app;
+mod input;
+mod library;
 mod message;
 mod theme;
 mod view;
@@ -33,6 +35,7 @@ fn main() -> iced::Result {
         app::RustyNes::update,
         app::RustyNes::view,
     )
+    .subscription(app::RustyNes::subscription)
     .theme(app::RustyNes::theme)
     .window_size(Size::new(768.0, 720.0))
     .antialiasing(true)

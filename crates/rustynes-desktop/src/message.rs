@@ -33,4 +33,27 @@ pub enum Message {
 
     /// Exit application
     Exit,
+
+    // Input messages
+    /// Keyboard key pressed
+    KeyPressed(iced::keyboard::Key),
+
+    /// Keyboard key released
+    KeyReleased(iced::keyboard::Key),
+
+    /// Poll gamepads for input
+    PollGamepads,
+
+    // Library messages
+    /// Search ROMs in library
+    LibrarySearch(String),
+
+    /// Toggle between grid and list view
+    ToggleLibraryView,
+
+    /// Open directory picker for ROM library
+    SelectRomDirectory,
+
+    /// ROM directory selected from picker
+    RomDirectorySelected(Option<PathBuf>),
 }

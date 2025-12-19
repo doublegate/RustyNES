@@ -8,9 +8,11 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use iced::{Element, Task, Theme};
+use iced::{Element, Subscription, Task, Theme};
 use tracing::{error, info};
 
+use crate::input::{gamepad::GamepadManager, keyboard::KeyboardMapper, InputState};
+use crate::library::LibraryState;
 use crate::message::Message;
 use crate::view::View;
 use crate::viewport::ScalingMode;
@@ -35,6 +37,18 @@ pub struct RustyNes {
 
     /// Viewport scaling mode
     scaling_mode: ScalingMode,
+
+    /// Input state for both players
+    input_state: InputState,
+
+    /// Keyboard mapper
+    keyboard_mapper: KeyboardMapper,
+
+    /// Gamepad manager
+    gamepad_manager: Option<GamepadManager>,
+
+    /// ROM library state
+    library: LibraryState,
 }
 
 impl RustyNes {
@@ -45,13 +59,29 @@ impl RustyNes {
         // Create default framebuffer (256×240×3 RGB)
         let framebuffer = Arc::new(vec![0u8; 256 * 240 * 3]);
 
+        // Initialize gamepad manager (may fail on platforms without gamepad support)
+        let gamepad_manager = match GamepadManager::new() {
+            Ok(mgr) => {
+                info!("Gamepad support initialized");
+                Some(mgr)
+            }
+            Err(e) => {
+                error!("Failed to initialize gamepad support: {}", e);
+                None
+            }
+        };
+
         let app = Self {
-            current_view: View::Welcome,
+            current_view: View::Library,
             console: None,
             current_rom: None,
             theme: Theme::Dark,
             framebuffer,
             scaling_mode: ScalingMode::PixelPerfect,
+            input_state: InputState::new(),
+            keyboard_mapper: KeyboardMapper::new(),
+            gamepad_manager,
+            library: LibraryState::new(),
         };
 
         (app, Task::none())
@@ -83,6 +113,7 @@ impl RustyNes {
     }
 
     /// Update application state (Elm Update)
+    #[allow(clippy::too_many_lines)] // Elm update pattern naturally grows with features
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::None => Task::none(),
@@ -153,6 +184,83 @@ impl RustyNes {
                 info!("Exiting application");
                 iced::exit()
             }
+
+            // Input messages
+            Message::KeyPressed(key) => {
+                // Map to Player 1
+                if let Some(button) = self.keyboard_mapper.map_player1(&key) {
+                    self.input_state.player1.set(button, true);
+                }
+                // Map to Player 2
+                if let Some(button) = self.keyboard_mapper.map_player2(&key) {
+                    self.input_state.player2.set(button, true);
+                }
+
+                // Apply to console if one is loaded
+                if let Some(console) = &mut self.console {
+                    self.input_state.apply_to_console(console);
+                }
+
+                Task::none()
+            }
+
+            Message::KeyReleased(key) => {
+                // Map to Player 1
+                if let Some(button) = self.keyboard_mapper.map_player1(&key) {
+                    self.input_state.player1.set(button, false);
+                }
+                // Map to Player 2
+                if let Some(button) = self.keyboard_mapper.map_player2(&key) {
+                    self.input_state.player2.set(button, false);
+                }
+
+                // Apply to console if one is loaded
+                if let Some(console) = &mut self.console {
+                    self.input_state.apply_to_console(console);
+                }
+
+                Task::none()
+            }
+
+            Message::PollGamepads => {
+                if let Some(gamepad_mgr) = &mut self.gamepad_manager {
+                    gamepad_mgr.poll(&mut self.input_state.player1, &mut self.input_state.player2);
+
+                    // Apply to console if one is loaded
+                    if let Some(console) = &mut self.console {
+                        self.input_state.apply_to_console(console);
+                    }
+                }
+
+                Task::none()
+            }
+
+            // Library messages
+            Message::LibrarySearch(query) => {
+                self.library.set_search_query(query);
+                Task::none()
+            }
+
+            Message::ToggleLibraryView => {
+                self.library.toggle_view_mode();
+                Task::none()
+            }
+
+            Message::SelectRomDirectory => Task::future(async {
+                let handle = rfd::AsyncFileDialog::new()
+                    .set_title("Select ROM Directory")
+                    .pick_folder()
+                    .await;
+
+                Message::RomDirectorySelected(handle.map(|h| h.path().to_path_buf()))
+            }),
+
+            Message::RomDirectorySelected(maybe_dir) => {
+                if let Some(dir) = &maybe_dir {
+                    self.library.scan_directory(dir);
+                }
+                Task::none()
+            }
         }
     }
 
@@ -160,6 +268,7 @@ impl RustyNes {
     pub fn view(&self) -> Element<'_, Message> {
         match &self.current_view {
             View::Welcome => crate::views::welcome::view(self),
+            View::Library => crate::views::library::view(&self.library),
             View::Playing => crate::views::playing::view(self),
         }
     }
@@ -167,6 +276,26 @@ impl RustyNes {
     /// Get application theme
     pub fn theme(&self) -> Theme {
         self.theme.clone()
+    }
+
+    /// Subscriptions for ongoing events (keyboard, gamepad polling)
+    pub fn subscription(&self) -> Subscription<Message> {
+        use iced::keyboard;
+
+        // Keyboard events
+        let keyboard_sub = Subscription::batch(vec![
+            keyboard::on_key_press(|key, _modifiers| Some(Message::KeyPressed(key))),
+            keyboard::on_key_release(|key, _modifiers| Some(Message::KeyReleased(key))),
+        ]);
+
+        // Gamepad polling (every 16ms ≈ 60Hz)
+        let gamepad_sub = if self.gamepad_manager.is_some() {
+            iced::time::every(std::time::Duration::from_millis(16)).map(|_| Message::PollGamepads)
+        } else {
+            Subscription::none()
+        };
+
+        Subscription::batch(vec![keyboard_sub, gamepad_sub])
     }
     /// Asynchronously load ROM file data
     async fn load_rom_async(path: PathBuf) -> Result<Vec<u8>, String> {
