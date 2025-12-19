@@ -1,0 +1,5 @@
+# Reference documents (external design specs)
+ref-docs/
+
+# Generated documentation
+target/
