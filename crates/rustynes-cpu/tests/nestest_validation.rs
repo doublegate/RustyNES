@@ -116,6 +116,7 @@ fn compare_log_lines(line_num: usize, expected: &str, actual: &str) -> Result<()
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // Test function requires detailed validation logic
 fn nestest_golden_log_validation() {
     // Load nestest.nes ROM
     // Path is relative to workspace root
@@ -124,6 +125,14 @@ fn nestest_golden_log_validation() {
         .join("..") // workspace root
         .join("test-roms")
         .join("nestest.nes");
+
+    // Skip test if nestest.nes doesn't exist (test ROMs not included in repo)
+    if !rom_path.exists() {
+        eprintln!("Skipping nestest validation: nestest.nes not found at {rom_path:?}");
+        eprintln!("To run this test, download nestest.nes from https://github.com/christopherpow/nes-test-roms");
+        eprintln!("and place it in the test-roms/ directory");
+        return;
+    }
 
     let rom = INesRom::load(&rom_path).expect("Failed to load nestest.nes");
 
@@ -151,6 +160,14 @@ fn nestest_golden_log_validation() {
         .join("..") // workspace root
         .join("test-roms")
         .join("nestest.log");
+
+    // Skip test if golden log doesn't exist
+    if !golden_log_path.exists() {
+        eprintln!("Skipping nestest validation: nestest.log not found at {golden_log_path:?}");
+        eprintln!("To run this test, download nestest.log from https://github.com/christopherpow/nes-test-roms");
+        eprintln!("and place it in the test-roms/ directory");
+        return;
+    }
 
     let golden_log = std::fs::read_to_string(&golden_log_path).expect("Failed to load nestest.log");
 
