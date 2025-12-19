@@ -691,8 +691,8 @@ fn test_blargg_official_only() {
 - [Test ROM Guide](/home/parobek/Code/RustyNES/docs/testing/TEST_ROM_GUIDE.md)
 - [CPU README](/home/parobek/Code/RustyNES/test-roms/cpu/README.md)
 - [PPU README](/home/parobek/Code/RustyNES/test-roms/ppu/README.md)
-- [Phase 1 Overview](/home/parobek/Code/RustyNES/to-dos/PHASE-1-OVERVIEW.md)
-- [Milestone 5 Overview](/home/parobek/Code/RustyNES/to-dos/milestone-5-integration/M5-OVERVIEW.md)
+- [Phase 1 Overview](/home/parobek/Code/RustyNES/to-dos/phase-1-mvp/PHASE-1-OVERVIEW.md)
+- [Milestone 5 Overview](/home/parobek/Code/RustyNES/to-dos/phase-1-mvp/milestone-5-integration/M5-OVERVIEW.md)
 
 ## Notes
 

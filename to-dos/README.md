@@ -1,123 +1,115 @@
-# RustyNES Phase 1 TODO Tracker
+# RustyNES Development TODO Tracker
 
-**Version:** 1.0.0
+**Version:** 2.0.0
 **Last Updated:** 2025-12-19
-**Phase:** Phase 1 - MVP (Months 1-6)
-**Status:** In Progress (Milestone 1 Complete)
+**Current Phase:** Phase 1 - MVP (Months 1-6)
+**Project Status:** Active Development (M1 & M2 Complete)
 
 ---
 
 ## Overview
 
-This directory contains comprehensive TODO files tracking all tasks for Phase 1 of RustyNES development. Each milestone is broken down into sprints with detailed task lists, acceptance criteria, and progress tracking.
+This directory contains comprehensive TODO files tracking all tasks across all four phases of RustyNES development. Each phase is organized into milestones, with each milestone broken down into sprints containing detailed task lists, acceptance criteria, and progress tracking.
 
 ## Quick Navigation
 
-### Milestone Overviews
+### Phase Overviews
 
-- [Phase 1 Overview](PHASE-1-OVERVIEW.md) - Complete Phase 1 summary
-- [Milestone 1: CPU](milestone-1-cpu/M1-OVERVIEW.md) - ✅ **COMPLETED**
-- [Milestone 2: PPU](milestone-2-ppu/M2-OVERVIEW.md) - 🔄 In Progress
-- [Milestone 3: APU](milestone-3-apu/M3-OVERVIEW.md) - ⏳ Pending
-- [Milestone 4: Mappers](milestone-4-mappers/M4-OVERVIEW.md) - ⏳ Pending
-- [Milestone 5: Integration](milestone-5-integration/M5-OVERVIEW.md) - ⏳ Pending
-- [Milestone 6: GUI](milestone-6-gui/M6-OVERVIEW.md) - ⏳ Pending
-
-### Milestone 1: CPU (COMPLETED ✅)
-
-**Duration:** December 2025 - January 2026
-**Status:** Complete
-
-- [x] [Sprint 1: CPU Core](milestone-1-cpu/M1-S1-cpu-core.md) - Basic structure
-- [x] [Sprint 2: Opcodes](milestone-1-cpu/M1-S2-opcodes.md) - All 256 opcodes
-- [x] [Sprint 3: Addressing](milestone-1-cpu/M1-S3-addressing.md) - All addressing modes
-- [x] [Sprint 4: Interrupts](milestone-1-cpu/M1-S4-interrupts.md) - NMI, IRQ, BRK
-- [x] [Sprint 5: nestest](milestone-1-cpu/M1-S5-nestest.md) - Golden log validation
-
-**Key Achievements:**
-
-- Cycle-accurate 6502 implementation
-- All 256 opcodes (151 official + 105 unofficial)
-- Complete interrupt handling
-- Zero unsafe code
-- Comprehensive test suite
-
-### Milestone 2: PPU (IN PROGRESS 🔄)
-
-**Duration:** January 2026 - March 2026
-**Target Date:** March 2026
-
-- [ ] [Sprint 1: PPU Core](milestone-2-ppu/M2-S1-ppu-core.md) - Basic structure
-- [ ] [Sprint 2: Background Rendering](milestone-2-ppu/M2-S2-background.md) - Backgrounds
-- [ ] [Sprint 3: Sprite Rendering](milestone-2-ppu/M2-S3-sprites.md) - Sprites
-- [ ] [Sprint 4: Scrolling](milestone-2-ppu/M2-S4-scrolling.md) - Loopy scrolling
-- [ ] [Sprint 5: Timing](milestone-2-ppu/M2-S5-timing.md) - Dot-level accuracy
-
-### Milestone 3: APU (PENDING ⏳)
-
-**Duration:** February 2026 - April 2026
-**Target Date:** April 2026
-
-- [ ] [Sprint 1: APU Core](milestone-3-apu/M3-S1-apu-core.md) - Basic structure
-- [ ] [Sprint 2: Pulse Channels](milestone-3-apu/M3-S2-pulse.md) - Square waves
-- [ ] [Sprint 3: Triangle/Noise](milestone-3-apu/M3-S3-triangle-noise.md) - Triangle + Noise
-- [ ] [Sprint 4: DMC](milestone-3-apu/M3-S4-dmc.md) - Delta modulation
-- [ ] [Sprint 5: Mixing](milestone-3-apu/M3-S5-mixing.md) - Audio output
-
-### Milestone 4: Mappers (PENDING ⏳)
-
-**Duration:** March 2026 - May 2026
-**Target Date:** May 2026
-
-- [ ] [Sprint 1: Mapper Infrastructure](milestone-4-mappers/M4-S1-infrastructure.md) - Trait design
-- [ ] [Sprint 2: NROM & UxROM](milestone-4-mappers/M4-S2-basic.md) - Mappers 0, 2
-- [ ] [Sprint 3: MMC1](milestone-4-mappers/M4-S3-mmc1.md) - Mapper 1
-- [ ] [Sprint 4: CNROM](milestone-4-mappers/M4-S4-cnrom.md) - Mapper 3
-- [ ] [Sprint 5: MMC3](milestone-4-mappers/M4-S5-mmc3.md) - Mapper 4
-
-### Milestone 5: Integration (PENDING ⏳)
-
-**Duration:** April 2026 - May 2026
-**Target Date:** May 2026
-
-- [ ] [Sprint 1: Bus Integration](milestone-5-integration/M5-S1-bus.md) - Memory routing
-- [ ] [Sprint 2: Console](milestone-5-integration/M5-S2-console.md) - Master coordinator
-- [ ] [Sprint 3: Cartridge](milestone-5-integration/M5-S3-cartridge.md) - ROM loading
-- [ ] [Sprint 4: Save States](milestone-5-integration/M5-S4-save-states.md) - Serialization
-- [ ] [Sprint 5: Input](milestone-5-integration/M5-S5-input.md) - Controllers
-
-### Milestone 6: Desktop GUI (PENDING ⏳)
-
-**Duration:** May 2026 - June 2026
-**Target Date:** June 2026
-
-- [ ] [Sprint 1: GUI Framework](milestone-6-gui/M6-S1-framework.md) - egui setup
-- [ ] [Sprint 2: Video Output](milestone-6-gui/M6-S2-video.md) - wgpu rendering
-- [ ] [Sprint 3: Audio Output](milestone-6-gui/M6-S3-audio.md) - Sound playback
-- [ ] [Sprint 4: Input Handling](milestone-6-gui/M6-S4-input.md) - Controllers
-- [ ] [Sprint 5: UI Features](milestone-6-gui/M6-S5-ui.md) - Menus, settings
+- [Phase 1: MVP](phase-1-mvp/PHASE-1-OVERVIEW.md) - 🔄 **IN PROGRESS** (33% Complete)
+- [Phase 2: Advanced Features](phase-2-features/PHASE-2-OVERVIEW.md) - ⏳ Planned (Months 7-12)
+- [Phase 3: Expansion](phase-3-expansion/PHASE-3-OVERVIEW.md) - ⏳ Planned (Months 13-18)
+- [Phase 4: Polish & Release](phase-4-polish/PHASE-4-OVERVIEW.md) - ⏳ Planned (Months 19-24)
 
 ---
 
-## Progress Summary
+## Phase 1: MVP (Current - 33% Complete)
 
-### Overall Phase 1 Progress
+**Duration:** Months 1-6 (December 2025 - May 2026)
+**Goal:** Playable emulator with 80% game compatibility
 
-| Milestone | Status | Progress | Target Date |
-|-----------|--------|----------|-------------|
-| M1: CPU | ✅ Complete | 100% | January 2026 |
-| M2: PPU | 🔄 In Progress | 0% | March 2026 |
-| M3: APU | ⏳ Pending | 0% | April 2026 |
-| M4: Mappers | ⏳ Pending | 0% | May 2026 |
-| M5: Integration | ⏳ Pending | 0% | May 2026 |
-| M6: GUI | ⏳ Pending | 0% | June 2026 |
-| **Phase 1 Total** | 🔄 In Progress | **17%** | **June 2026** |
+### Milestones
 
-### Sprint Status
+- [Milestone 1: CPU](phase-1-mvp/milestone-1-cpu/M1-OVERVIEW.md) - ✅ **COMPLETED** (December 2025)
+- [Milestone 2: PPU](phase-1-mvp/milestone-2-ppu/M2-OVERVIEW.md) - ✅ **COMPLETED** (December 2025)
+- [Milestone 3: APU](phase-1-mvp/milestone-3-apu/M3-OVERVIEW.md) - ⏳ Planned (February 2026)
+- [Milestone 4: Mappers](phase-1-mvp/milestone-4-mappers/M4-OVERVIEW.md) - ⏳ Planned (February-March 2026)
+- [Milestone 5: Integration](phase-1-mvp/milestone-5-integration/M5-OVERVIEW.md) - 🔄 **IN PROGRESS** (January 2026)
+- [Milestone 6: GUI](phase-1-mvp/milestone-6-gui/M6-OVERVIEW.md) - ⏳ Planned (March-April 2026)
 
-- ✅ Completed: 5 sprints (Milestone 1)
-- 🔄 In Progress: 0 sprints
-- ⏳ Pending: 25 sprints (Milestones 2-6)
+---
+
+## Phase 2: Advanced Features (Planned)
+
+**Duration:** Months 7-12 (July 2026 - December 2026)
+**Goal:** Feature parity with modern emulators
+
+### Milestones
+
+- [Milestone 7: RetroAchievements](phase-2-features/milestone-7-achievements/README.md) - ⏳ Planned (August 2026)
+- [Milestone 8: Netplay](phase-2-features/milestone-8-netplay/README.md) - ⏳ Planned (September 2026)
+- [Milestone 9: Lua Scripting](phase-2-features/milestone-9-scripting/README.md) - ⏳ Planned (October 2026)
+- [Milestone 10: Debugger](phase-2-features/milestone-10-debugger/README.md) - ⏳ Planned (November 2026)
+
+---
+
+## Phase 3: Expansion (Planned)
+
+**Duration:** Months 13-18 (January 2027 - June 2027)
+**Goal:** Comprehensive mapper support and platform expansion
+
+### Milestones
+
+- [Milestone 11: WebAssembly](phase-3-expansion/milestone-11-webassembly/README.md) - ⏳ Planned (May 2027)
+- [Milestone 12: Expansion Audio](phase-3-expansion/milestone-12-expansion-audio/README.md) - ⏳ Planned (March 2027)
+- [Milestone 13: Additional Mappers](phase-3-expansion/milestone-13-extra-mappers/README.md) - ⏳ Planned (May 2027)
+- [Milestone 14: Mobile](phase-3-expansion/milestone-14-mobile/README.md) - ⏳ Optional
+
+---
+
+## Phase 4: Polish & Release (Planned)
+
+**Duration:** Months 19-24 (July 2027 - December 2027)
+**Goal:** Production-ready v1.0 release with 100% TASVideos accuracy
+
+### Milestones
+
+- [Milestone 15: Video Filters](phase-4-polish/milestone-15-video-filters/README.md) - ⏳ Planned (September 2027)
+- [Milestone 16: TAS Editor](phase-4-polish/milestone-16-tas-editor/README.md) - ⏳ Planned (June 2027)
+- [Milestone 17: Optimization](phase-4-polish/milestone-17-optimization/README.md) - ⏳ Planned (September 2027)
+- [Milestone 18: v1.0 Release](phase-4-polish/milestone-18-release/README.md) - ⏳ Planned (December 2027)
+
+## Overall Progress Summary
+
+### Phase Progress
+
+| Phase | Duration | Status | Progress | Target |
+|-------|----------|--------|----------|--------|
+| **Phase 1: MVP** | Months 1-6 | 🔄 In Progress | **33%** | May 2026 |
+| **Phase 2: Features** | Months 7-12 | ⏳ Planned | 0% | December 2026 |
+| **Phase 3: Expansion** | Months 13-18 | ⏳ Planned | 0% | June 2027 |
+| **Phase 4: Polish** | Months 19-24 | ⏳ Planned | 0% | December 2027 |
+
+### Milestone Summary
+
+| Phase | Completed | In Progress | Planned | Total |
+|-------|-----------|-------------|---------|-------|
+| Phase 1 | 2 | 1 | 3 | 6 |
+| Phase 2 | 0 | 0 | 4 | 4 |
+| Phase 3 | 0 | 0 | 4 | 4 |
+| Phase 4 | 0 | 0 | 4 | 4 |
+| **Total** | **2** | **1** | **15** | **18** |
+
+### Recent Achievements (December 2025)
+
+- ✅ M1: CPU Complete - 100% test pass rate (56/56 tests)
+- ✅ M2: PPU Complete - 97.8% test pass rate (88/90 tests)
+- ✅ Test ROM acquisition - 44 ROMs downloaded and documented
+- 🔄 M5: Integration testing in progress
+
+### Current Focus (January 2026)
+
+- 🔄 Sprint 5.1: rustynes-core integration layer (CRITICAL BLOCKER)
+- Integration testing (M5) in progress - 7/44 ROMs integrated
 
 ---
 

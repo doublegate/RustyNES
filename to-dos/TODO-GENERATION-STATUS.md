@@ -17,7 +17,7 @@ This document tracks the status of TODO file generation for RustyNES Phase 1 dev
 ### ✅ Phase-Level Files (Complete)
 
 - `to-dos/README.md` - TODO system overview
-- `to-dos/PHASE-1-OVERVIEW.md` - Phase 1 master plan
+- `to-dos/phase-1-mvp/PHASE-1-OVERVIEW.md` - Phase 1 master plan
 
 ### ✅ Milestone 1: CPU (Complete - 6 files)
 
