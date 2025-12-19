@@ -7,38 +7,190 @@ on:
       - 'v*.*.*'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  create-release:
-    name: Create Release
+  build-linux:
+    name: Build (Linux)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          draft: true
-          generate_release_notes: true
-          body: |
-            See CHANGELOG.md for release details.
+      - name: Install SDL2
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsdl2-dev
 
-  build-release:
-    name: Build (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-          - os: macos-latest
-            target: x86_64-apple-darwin
-    steps:
-      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: release-linux-${{ hashFiles('**/Cargo.lock') }}
+
       - name: Build
         run: cargo build --release --workspace
+
+      - name: Package artifacts
+        run: |
+          mkdir -p artifacts
+          # Package desktop binary if it exists
+          if [ -f target/release/rustynes-desktop ]; then
+            cp target/release/rustynes-desktop artifacts/
+            cd artifacts
+            tar czf rustynes-desktop-linux-x86_64.tar.gz rustynes-desktop
+            rm rustynes-desktop
+            cd ..
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: linux-x86_64
+          path: artifacts/*
+          retention-days: 7
+
+  build-macos:
+    name: Build (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install SDL2
+        run: brew install sdl2
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
+
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: release-macos-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build
+        run: cargo build --release --workspace
+
+      - name: Package artifacts
+        run: |
+          mkdir -p artifacts
+          # Package desktop binary if it exists
+          if [ -f target/release/rustynes-desktop ]; then
+            cp target/release/rustynes-desktop artifacts/
+            cd artifacts
+            tar czf rustynes-desktop-macos-x86_64.tar.gz rustynes-desktop
+            rm rustynes-desktop
+            cd ..
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: macos-x86_64
+          path: artifacts/*
+          retention-days: 7
+
+  build-windows:
+    name: Build (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: release-windows-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build
+        run: cargo build --release --workspace
+
+      - name: Package artifacts
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          # Package desktop binary if it exists
+          if [ -f target/release/rustynes-desktop.exe ]; then
+            cp target/release/rustynes-desktop.exe artifacts/
+            cd artifacts
+            7z a rustynes-desktop-windows-x86_64.zip rustynes-desktop.exe
+            rm rustynes-desktop.exe
+            cd ..
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows-x86_64
+          path: artifacts/*
+          retention-days: 7
+
+  create-release:
+    name: Create Release
+    needs: [build-linux, build-macos, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v6
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Check if release exists
+        id: check_release
+        run: |
+          if gh release view ${{ github.ref_name }} &>/dev/null; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Release ${{ github.ref_name }} already exists"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Release ${{ github.ref_name }} does not exist"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create release (if not exists)
+        if: steps.check_release.outputs.exists == 'false'
+        run: |
+          gh release create ${{ github.ref_name }} \
+            --title "RustyNES ${{ github.ref_name }}" \
+            --notes-file CHANGELOG.md \
+            --draft=false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifacts to release
+        run: |
+          # List artifacts for debugging
+          echo "Artifacts to upload:"
+          ls -lah artifacts/ || echo "No artifacts directory found"
+
+          # Upload all artifacts if they exist
+          if [ -d artifacts ] && [ "$(ls -A artifacts)" ]; then
+            gh release upload ${{ github.ref_name }} artifacts/* --clobber
+            echo "Artifacts uploaded successfully"
+          else
+            echo "No artifacts to upload (desktop binary may not exist yet)"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
