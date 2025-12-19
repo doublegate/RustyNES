@@ -138,3 +138,6 @@ CLAUDE.local.md
 # Environment
 .env
 .env.local
+
+# Pre-commit
+.pre-commit-cache/
