@@ -22,6 +22,8 @@
 
 ## Recent Updates (v2.0.0 - December 2025)
 
+**v0.1.0 Released - December 19, 2025** - First official release!
+
 **Major Milestones Completed:**
 
 - M1 (CPU): 100% test pass rate - All 256 opcodes validated against nestest.nes golden log
@@ -31,7 +33,7 @@
 **Project Status Change:**
 
 - Status changed from "Pre-Implementation" to "Active Development"
-- Phase 1 now 40% complete (2 of 5 major components done)
+- Phase 1 now 33% complete (2 of 6 milestones done)
 - Timeline accelerated: MVP target moved from June 2026 to May 2026
 
 **Current Focus:**
@@ -669,7 +671,7 @@ gantt
 
 ### Current Status (Active Development - December 2025)
 
-**Phase 1 Progress: 40% Complete** - M1 & M2 milestones complete, M5 integration in progress
+**Phase 1 Progress: 33% Complete** - M1 & M2 milestones complete, M5 integration in progress
 
 | Component | Status | Progress | Test Results |
 |-----------|--------|----------|--------------|
