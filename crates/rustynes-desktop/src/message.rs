@@ -169,4 +169,8 @@ pub enum Message {
     // Metrics
     /// Toggle performance metrics overlay (F3)
     ToggleMetrics,
+
+    // Emulation
+    /// Tick emulation (run one frame at ~60Hz)
+    Tick,
 }

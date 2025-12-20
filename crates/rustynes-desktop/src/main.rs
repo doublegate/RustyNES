@@ -14,6 +14,7 @@ mod library;
 mod loading;
 mod message;
 mod metrics;
+mod palette;
 mod runahead;
 mod theme;
 mod view;

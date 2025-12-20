@@ -442,6 +442,26 @@ impl RustyNes {
                 Task::none()
             }
 
+            Message::Tick => {
+                // Run one frame of emulation if console is loaded
+                if let Some(console) = &mut self.console {
+                    // Run one frame
+                    console.step_frame();
+
+                    // Convert palette indices to RGB
+                    let palette_buffer = console.framebuffer();
+                    let rgb_buffer = crate::palette::framebuffer_to_rgb(palette_buffer);
+
+                    // Update shared framebuffer
+                    self.framebuffer = Arc::new(rgb_buffer);
+
+                    // Update metrics (runahead not yet implemented)
+                    self.metrics.update_frame(false, 0);
+                }
+
+                Task::none()
+            }
+
             Message::Exit => {
                 info!("Exiting application");
                 iced::exit()
@@ -565,7 +585,7 @@ impl RustyNes {
         self.config.app.theme.to_iced_theme()
     }
 
-    /// Subscriptions for ongoing events (keyboard, gamepad polling)
+    /// Subscriptions for ongoing events (keyboard, gamepad polling, emulation ticks)
     pub fn subscription(&self) -> Subscription<Message> {
         use iced::keyboard;
         use iced::window;
@@ -590,11 +610,20 @@ impl RustyNes {
             Subscription::none()
         };
 
+        // Emulation tick (60Hz ≈ 16.67ms per frame)
+        // Only run when console is loaded and in Playing view
+        let emulation_sub = if self.console.is_some() && matches!(self.current_view, View::Playing)
+        {
+            iced::time::every(std::time::Duration::from_micros(16_667)).map(|_| Message::Tick)
+        } else {
+            Subscription::none()
+        };
+
         // Window resize events
         let window_sub = window::resize_events()
             .map(|(_, size)| Message::WindowResized(size.width, size.height));
 
-        Subscription::batch(vec![keyboard_sub, gamepad_sub, window_sub])
+        Subscription::batch(vec![keyboard_sub, gamepad_sub, emulation_sub, window_sub])
     }
     /// Asynchronously load ROM file data
     async fn load_rom_async(path: PathBuf) -> Result<Vec<u8>, String> {
