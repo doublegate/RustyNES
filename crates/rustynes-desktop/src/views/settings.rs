@@ -5,6 +5,7 @@ use iced::{Alignment, Element, Length};
 
 use crate::config::{AppConfig, CrtPreset, Region, ScalingMode};
 use crate::message::Message;
+use crate::theme::ThemeVariant;
 use crate::view::SettingsTab;
 
 /// Render settings view
@@ -17,6 +18,22 @@ pub fn view(config: &AppConfig, current_tab: SettingsTab) -> Element<'_, Message
     ]
     .spacing(10)
     .padding(10);
+
+    // Add theme selector at the top
+    let theme_selector = container(
+        row![
+            text("Theme:").width(Length::Fixed(80.0)),
+            pick_list(
+                ThemeVariant::all(),
+                Some(config.app.theme),
+                Message::UpdateTheme
+            )
+            .width(Length::Fixed(150.0)),
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center)
+        .padding(10),
+    );
 
     let content = match current_tab {
         SettingsTab::Emulation => emulation_settings(config),
@@ -35,6 +52,8 @@ pub fn view(config: &AppConfig, current_tab: SettingsTab) -> Element<'_, Message
 
     container(
         column![
+            theme_selector,
+            iced::widget::horizontal_rule(1),
             tabs,
             iced::widget::horizontal_rule(1),
             container(content)
@@ -45,7 +64,7 @@ pub fn view(config: &AppConfig, current_tab: SettingsTab) -> Element<'_, Message
             buttons,
         ]
         .width(Length::Fixed(700.0))
-        .height(Length::Fixed(600.0)),
+        .height(Length::Fixed(650.0)),
     )
     .center_x(Length::Fill)
     .center_y(Length::Fill)

@@ -161,4 +161,12 @@ pub enum Message {
     // Window events
     /// Window resized (width, height)
     WindowResized(f32, f32),
+
+    // Theme
+    /// Update theme
+    UpdateTheme(crate::theme::ThemeVariant),
+
+    // Metrics
+    /// Toggle performance metrics overlay (F3)
+    ToggleMetrics,
 }

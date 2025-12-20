@@ -8,19 +8,19 @@ use iced::{Element, Length};
 
 use crate::app::RustyNes;
 use crate::message::Message;
-use crate::theme::RustyTheme;
+use crate::theme::RustyPalette;
 
 /// Render the Welcome view
 pub fn view(_app: &RustyNes) -> Element<'_, Message> {
-    let theme = RustyTheme::dark();
+    let palette = RustyPalette::dark();
 
-    // Title with "Power Red" color (#E94560)
-    let title = text("RustyNES").size(48).color(theme.power_red);
+    // Title with "Power Red" color (primary)
+    let title = text("RustyNES").size(48).color(palette.primary);
 
     // Subtitle
     let subtitle = text("Next-Generation NES Emulator")
         .size(20)
-        .color(theme.coral_accent);
+        .color(palette.accent);
 
     // Version info
     let version = text(format!("v{}", env!("CARGO_PKG_VERSION"))).size(14);

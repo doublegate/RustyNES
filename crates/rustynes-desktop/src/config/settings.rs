@@ -191,6 +191,10 @@ pub struct ApplicationConfig {
 
     /// Window maximized state
     pub window_maximized: bool,
+
+    /// Application theme
+    #[serde(default)]
+    pub theme: crate::theme::ThemeVariant,
 }
 
 // Default implementations
@@ -269,6 +273,7 @@ impl Default for ApplicationConfig {
             window_width: 1024,
             window_height: 720,
             window_maximized: false,
+            theme: crate::theme::ThemeVariant::default(),
         }
     }
 }

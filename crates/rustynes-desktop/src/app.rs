@@ -14,7 +14,10 @@ use tracing::{error, info};
 use crate::config::AppConfig;
 use crate::input::{gamepad::GamepadManager, keyboard::KeyboardMapper, InputState};
 use crate::library::LibraryState;
+use crate::loading::LoadingState;
 use crate::message::Message;
+use crate::metrics::PerformanceMetrics;
+use crate::runahead::RunAheadManager;
 use crate::view::View;
 use rustynes_core::Console;
 
@@ -28,9 +31,6 @@ pub struct RustyNes {
 
     /// Currently loaded ROM path
     current_rom: Option<PathBuf>,
-
-    /// Application theme
-    theme: Theme,
 
     /// Application configuration
     config: AppConfig,
@@ -49,6 +49,20 @@ pub struct RustyNes {
 
     /// ROM library state
     library: LibraryState,
+
+    /// Loading state
+    #[allow(dead_code)] // Will be used when ROM loading UI is implemented
+    loading_state: LoadingState,
+
+    /// Performance metrics
+    metrics: PerformanceMetrics,
+
+    /// Show metrics overlay
+    show_metrics: bool,
+
+    /// Run-ahead manager (stub for MVP)
+    #[allow(dead_code)] // Stub for Phase 2, infrastructure only
+    runahead_manager: RunAheadManager,
 
     /// Show about dialog
     show_about: bool,
@@ -84,13 +98,16 @@ impl RustyNes {
             current_view: View::Library,
             console: None,
             current_rom: None,
-            theme: Theme::Dark,
             config,
             framebuffer,
             input_state: InputState::new(),
             keyboard_mapper: KeyboardMapper::new(),
             gamepad_manager,
             library: LibraryState::new(),
+            loading_state: LoadingState::None,
+            metrics: PerformanceMetrics::default(),
+            show_metrics: false,
+            runahead_manager: RunAheadManager::default(),
             show_about: false,
         };
 
@@ -105,6 +122,16 @@ impl RustyNes {
     /// Get scaling mode
     pub fn scaling_mode(&self) -> crate::config::ScalingMode {
         self.config.video.scaling_mode
+    }
+
+    /// Get show metrics flag
+    pub fn show_metrics(&self) -> bool {
+        self.show_metrics
+    }
+
+    /// Get performance metrics
+    pub fn metrics(&self) -> &PerformanceMetrics {
+        &self.metrics
     }
 
     /// Get window title based on current state
@@ -420,6 +447,23 @@ impl RustyNes {
                 iced::exit()
             }
 
+            // Theme
+            Message::UpdateTheme(theme) => {
+                info!("Changing theme to: {}", theme);
+                self.config.app.theme = theme;
+                Task::none()
+            }
+
+            // Metrics
+            Message::ToggleMetrics => {
+                self.show_metrics = !self.show_metrics;
+                info!(
+                    "Metrics overlay: {}",
+                    if self.show_metrics { "ON" } else { "OFF" }
+                );
+                Task::none()
+            }
+
             // Input messages
             Message::KeyPressed(key) => {
                 // Map to Player 1
@@ -518,7 +562,7 @@ impl RustyNes {
 
     /// Get application theme
     pub fn theme(&self) -> Theme {
-        self.theme.clone()
+        self.config.app.theme.to_iced_theme()
     }
 
     /// Subscriptions for ongoing events (keyboard, gamepad polling)
@@ -526,9 +570,16 @@ impl RustyNes {
         use iced::keyboard;
         use iced::window;
 
-        // Keyboard events
+        // Keyboard events (F3 for metrics, regular keys for input)
         let keyboard_sub = Subscription::batch(vec![
-            keyboard::on_key_press(|key, _modifiers| Some(Message::KeyPressed(key))),
+            keyboard::on_key_press(|key, _modifiers| {
+                // Check for F3 key to toggle metrics overlay
+                if matches!(key, keyboard::Key::Named(keyboard::key::Named::F3)) {
+                    Some(Message::ToggleMetrics)
+                } else {
+                    Some(Message::KeyPressed(key))
+                }
+            }),
             keyboard::on_key_release(|key, _modifiers| Some(Message::KeyReleased(key))),
         ]);
 
