@@ -8,11 +8,11 @@
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](#platform-support)
 [![Documentation](https://img.shields.io/badge/docs-latest-blue.svg)](https://doublegate.github.io/RustyNES/)
 [![codecov](https://codecov.io/gh/doublegate/RustyNES/branch/main/graph/badge.svg)](https://codecov.io/gh/doublegate/RustyNES)
-[![CPU Tests](https://img.shields.io/badge/CPU%20tests-47%20passing-brightgreen.svg)](#test-validation-status)
-[![PPU Tests](https://img.shields.io/badge/PPU%20tests-85%20passing%2C%202%20ignored-brightgreen.svg)](#test-validation-status)
-[![APU Tests](https://img.shields.io/badge/APU%20tests-136%20passing-brightgreen.svg)](#test-validation-status)
-[![Mapper Tests](https://img.shields.io/badge/Mapper%20tests-78%20passing-brightgreen.svg)](#test-validation-status)
-[![Core Tests](https://img.shields.io/badge/Core%20tests-18%20passing-brightgreen.svg)](#test-validation-status)
+[![CPU Tests](https://img.shields.io/badge/CPU%20tests-247%20passing-brightgreen.svg)](#test-validation-status)
+[![PPU Tests](https://img.shields.io/badge/PPU%20tests-88%20passing%2C%202%20ignored-brightgreen.svg)](#test-validation-status)
+[![APU Tests](https://img.shields.io/badge/APU%20tests-150%20passing-brightgreen.svg)](#test-validation-status)
+[![Mapper Tests](https://img.shields.io/badge/Mapper%20tests-167%20passing-brightgreen.svg)](#test-validation-status)
+[![Core Tests](https://img.shields.io/badge/Core%20tests-23%20passing-brightgreen.svg)](#test-validation-status)
 
 ## Overview
 
@@ -31,9 +31,11 @@ A next-generation NES emulator written in pure Rust — targeting 100% accuracy,
 > - ✅ **M5: Integration** - Complete rustynes-core layer with Bus, Console, Input, and Save State framework
 > - ✅ **M6: Desktop GUI** - Cross-platform Iced/wgpu application with ROM loading, audio playback, and full input support
 >
-> **Test Suite:** 392+ tests passing (47 CPU • 85 PPU • 136 APU • 78 Mappers • 18 Core • 28+ doctests), 6 ignored
+> **Test Suite:** 657 tests passing (247 CPU • 88 PPU • 150 APU • 167 Mappers • 23 Core • 32 doctests), 2 ignored
 >
-> **Next:** Phase 1.5 (Stabilization) - Enhanced testing, audio/video refinements, performance optimization, documentation
+> **Current:** Phase 1.5 (Stabilization) - Milestone 7 Sprints 1 & 2 Complete (CPU/PPU accuracy verification)
+>
+> **Next:** M7 Sprint 3 (Sprite 0 hit edge cases), Audio/video refinements, performance optimization
 >
 > See [ROADMAP.md](ROADMAP.md) and [to-dos/](to-dos/) for development timeline.
 
@@ -171,15 +173,15 @@ RustyNES demonstrates world-class emulation accuracy:
 
 cargo test --workspace
 
-# Total: 398 tests passing, 6 ignored - 47 CPU + 85 PPU + 136 APU + 78 Mappers + 18 Core + 32 doctests
+# Total: 657 tests passing, 2 ignored - 247 CPU + 88 PPU + 150 APU + 167 Mappers + 23 Core + 32 doctests
 
 # Run specific crate tests
 
-cargo test -p rustynes-cpu      # 47 tests (46 unit + 1 integration: nestest)
-cargo test -p rustynes-ppu      # 85 passing + 2 ignored (83 unit + 4 integration)
-cargo test -p rustynes-apu      # 136 tests (100%)
-cargo test -p rustynes-mappers  # 78 tests (100%)
-cargo test -p rustynes-core     # 18 tests (100%)
+cargo test -p rustynes-cpu      # 247 tests (238 unit + 9 doctests)
+cargo test -p rustynes-ppu      # 88 passing + 2 ignored (83 unit + 4 integration + 1 doctest + 2 ignored timing tests)
+cargo test -p rustynes-apu      # 150 tests (136 unit + 14 doctests)
+cargo test -p rustynes-mappers  # 167 tests (163 unit + 4 doctests)
+cargo test -p rustynes-core     # 23 tests (18 unit + 1 integration + 4 doctests)
 
 # Run with debug logging
 
@@ -419,28 +421,28 @@ Frame Timing:
 
 **Current Progress:** 100% Phase 1 MVP Complete (M1-M6)
 
-**Test Results (v0.5.0):**
+**Test Results (v0.5.0 + M7 Sprints 1 & 2):**
 
-- **CPU**: 47/47 tests passing (100%)
-  - All 256 opcodes validated (46 unit tests)
-  - nestest.nes golden log match (1 integration test: 5003+ instructions)
-- **PPU**: 85/87 tests passing (97.7% passing, 2 ignored for cycle-precision timing)
+- **CPU**: 247/247 tests passing (100%)
+  - All 256 opcodes validated (238 unit tests + 9 doctests)
+  - nestest.nes golden log match (comprehensive integration test: 5003+ instructions)
+  - M7 Sprint 1: 100% timing accuracy verification complete
+- **PPU**: 88/90 tests passing (97.8% passing, 2 ignored for architectural limitation)
   - Complete rendering pipeline (83 unit tests)
-  - 4 integration test ROMs (2 passing, 2 ignored: vbl_set_time, vbl_clear_time)
-  - VBlank/NMI timing, sprite 0 hit
-- **APU**: 136/136 tests passing (100%)
-  - All 5 audio channels
+  - 4 integration test ROMs passing + 2 ignored (vbl_set_time, vbl_clear_time require cycle-by-cycle CPU)
+  - VBlank/NMI timing, sprite 0 hit, race condition handling
+  - M7 Sprint 2: Timing accessors added, architectural analysis complete
+- **APU**: 150/150 tests passing (100%)
+  - All 5 audio channels (136 unit tests + 14 doctests)
   - Non-linear mixer, 48 kHz resampling
-- **Mappers**: 78/78 tests passing (100%)
-  - 5 mappers (NROM, MMC1, UxROM, CNROM, MMC3)
+- **Mappers**: 167/167 tests passing (100%)
+  - 5 mappers (NROM, MMC1, UxROM, CNROM, MMC3) - 163 unit tests + 4 doctests
   - 77.7% game coverage
-- **Core**: 18/18 tests passing (100%)
-  - Bus system memory routing
+- **Core**: 23/23 tests passing (100%)
+  - Bus system memory routing (18 unit tests + 1 integration + 4 doctests)
   - Console coordinator
   - Input system (controller strobe protocol)
-  - Integration tests
-- **Doctests**: 32/36 passing (89% - 4 ignored for file I/O in mappers)
-- **Total**: 398/404 tests passing (98.5%), 6 ignored
+- **Total**: 657/659 tests passing (99.7%), 2 ignored (architectural limitation)
 - **Code Quality**: Zero unsafe code across all 6 crates
 
 ### Development Roadmap
