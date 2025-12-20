@@ -104,6 +104,13 @@ impl Ppu {
             // $2002: PPUSTATUS
             2 => {
                 let status = self.status.bits();
+
+                // Race condition: Reading $2002 on the exact cycle VBlank is set
+                // suppresses the NMI. This happens at scanline 241, dot 1.
+                if self.timing.scanline() == 241 && self.timing.dot() == 1 {
+                    self.nmi_pending = false;
+                }
+
                 self.status.clear_vblank(); // Reading clears VBlank flag
                 self.scroll.read_ppustatus(); // Reset write latch
                 status
@@ -505,6 +512,16 @@ impl Ppu {
         self.frame_buffer.fill(0);
         self.vram_read_buffer = 0;
         self.nmi_pending = false;
+    }
+
+    /// Get current scanline number (0-261)
+    pub fn scanline(&self) -> u16 {
+        self.timing.scanline()
+    }
+
+    /// Get current dot within scanline (0-340)
+    pub fn dot(&self) -> u16 {
+        self.timing.dot()
     }
 }
 
