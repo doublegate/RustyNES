@@ -6,20 +6,20 @@ Calibrate APU timing and mixing to achieve hardware-accurate audio synthesis and
 
 ## Objectives
 
-- [ ] Achieve frame counter cycle precision (±1 cycle)
-- [ ] Fix DMC channel edge cases
+- [x] Achieve frame counter cycle precision (±1 cycle) ✅
+- [~] Fix DMC channel edge cases (cycle stealing documented for future enhancement)
 - [ ] Refine triangle linear counter timing
-- [ ] Calibrate non-linear mixer for hardware accuracy
+- [x] Calibrate non-linear mixer for hardware accuracy ✅
 - [ ] Validate channel interaction timing
 
 ## Tasks
 
-### Task 1: Frame Counter Precision
-- [ ] Verify 4-step mode timing (14,915 cycles, 29,829 cycles)
-- [ ] Verify 5-step mode timing (18,641 cycles, 37,282 cycles)
-- [ ] Test IRQ flag timing in 4-step mode
-- [ ] Validate quarter frame/half frame events
-- [ ] Handle write timing edge cases ($4017 writes)
+### Task 1: Frame Counter Precision ✅ COMPLETE
+- [x] Verify 4-step mode timing (7457, 14913, 22372, 29830 cycles) - **Fixed 22371→22372**
+- [x] Verify 5-step mode timing (7457, 14913, 22371, 37281 cycles)
+- [x] Test IRQ flag timing in 4-step mode
+- [x] Validate quarter frame/half frame events
+- [x] Handle write timing edge cases ($4017 writes)
 
 ### Task 2: DMC Channel Edge Cases
 - [ ] Test DMC DMA conflicts with CPU
@@ -35,12 +35,12 @@ Calibrate APU timing and mixing to achieve hardware-accurate audio synthesis and
 - [ ] Test with apu_lin_ctr.nes
 - [ ] Handle edge cases (reload while counting)
 
-### Task 4: Mixer Calibration
-- [ ] Verify non-linear mixing formula
-- [ ] Test output levels for all channels
-- [ ] Validate pulse channel mixing (0-15 volume)
-- [ ] Test TND mixing (triangle, noise, DMC)
-- [ ] Compare output to hardware recordings
+### Task 4: Mixer Calibration ✅ COMPLETE
+- [x] Verify non-linear mixing formula - **Implemented hardware-accurate NESdev formula**
+- [x] Test output levels for all channels - **TND lookup table corrected**
+- [x] Validate pulse channel mixing (0-15 volume)
+- [x] Test TND mixing (triangle, noise, DMC) - **Proper weighted calculation: 3*tri + 2*noise + dmc**
+- [ ] Compare output to hardware recordings (deferred to M8)
 
 ## Test ROMs
 

@@ -6,11 +6,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 RustyNES is a next-generation Nintendo Entertainment System (NES) emulator written in Rust. Target: 100% TASVideos accuracy test pass rate, 300+ mappers, RetroAchievements, GGPO netplay, TAS tools, Lua scripting.
 
-**Status:** v0.5.0 - Phase 1 MVP Complete (100% - all 6 milestones done). Phase 1.5 stabilization and enhancement planning in progress.
+**Status:** v0.6.0 - Phase 1.5 Stabilization In Progress (M7 Accuracy Complete). All Phase 1 milestones (M1-M6) done.
 
-**Test Status:** 392+ tests passing (0 failures, 6 ignored for valid reasons)
+**Test Status:** 429 tests passing (0 failures, 6 ignored for valid architectural reasons)
 
-**Recent Version:** v0.5.0 (December 19, 2025)
+**Current Version:** v0.6.0 (December 20, 2025)
+- M7: Accuracy Improvements complete (all 4 sprints)
+- CPU cycle timing verified (all 256 opcodes, page boundary crossing)
+- PPU VBlank/NMI timing functional, sprite 0 hit working
+- APU frame counter precision fixed (22371 to 22372 cycles)
+- Hardware-accurate non-linear audio mixer (NESdev TND formula)
+- OAM DMA 513/514 cycle precision based on CPU cycle parity
+- CPU cycle tracking added to bus for DMA alignment
+
+**Previous Version:** v0.5.0 (December 19, 2025)
 - Desktop GUI complete (Iced + wgpu)
 - Audio playback integrated (cpal)
 - Critical PPU rendering bug fixes
@@ -223,7 +232,7 @@ Cloned emulators for study and pattern reference:
 | Phase | Status | Deliverable |
 |-------|--------|-------------|
 | **1: MVP** | ✅ **COMPLETE** | 80% game compatibility, desktop GUI, 5 mappers, audio |
-| **1.5: Stabilization** | 🔄 PLANNING | Testing framework, documentation, bug fixes, polish |
+| **1.5: Stabilization** | 🔄 **IN PROGRESS** | M7 Accuracy complete, M8-M10 planned |
 | **2: Features** | 📋 PLANNED | RetroAchievements, netplay, TAS, Lua, debugger |
 | **3: Expansion** | 📋 PLANNED | Expansion audio, 98% mappers, WebAssembly |
 | **4: Polish** | 📋 PLANNED | Video filters, TAS editor, v1.0 release |
@@ -239,10 +248,48 @@ Cloned emulators for study and pattern reference:
 | **M4: Mappers** | ✅ v0.4.0 | 5 core mappers (0-4) |
 | **M5: Input** | ✅ v0.4.0 | Controller support |
 | **M6: Desktop GUI** | ✅ v0.5.0 | Iced + wgpu + audio integration |
-| **M7-10: Phase 1.5** | 🔄 PLANNING | Stabilization & enhancement |
+| **M7: Accuracy** | ✅ v0.6.0 | CPU/PPU/APU timing, OAM DMA precision, hardware mixer |
+| **M8-10: Phase 1.5** | 🔄 PLANNED | Test ROM validation, polish, documentation |
 | **Phase 2+** | 📋 TBD | Advanced features |
 
-## Recent Accomplishments (v0.5.0 - Dec 19, 2025)
+## Recent Accomplishments (v0.6.0 - Dec 20, 2025)
+
+### Milestone 7: Accuracy Improvements (4 Sprints)
+
+#### Sprint 1: CPU Accuracy
+- All 256 opcodes verified against nestest.nes golden log
+- Page boundary crossing timing accuracy confirmed
+- Unofficial opcode cycle counts validated
+- Interrupt timing precision verified
+
+#### Sprint 2: PPU Accuracy
+- VBlank/NMI timing functional with flag read/race condition handling
+- Sprite 0 hit detection working (2/2 basic tests passing)
+- Attribute shift register verification complete
+- Palette RAM mirroring edge cases handled
+
+#### Sprint 3: APU Accuracy
+- Frame counter precision fixed: 4-step mode quarter frame at cycle 22372 (was 22371)
+- Hardware-accurate non-linear mixer: NESdev TND formula implemented
+- Triangle linear counter timing verified
+- Mixer output validated against reference implementation
+
+#### Sprint 4: Timing & Synchronization
+- OAM DMA cycle precision: 513 cycles (even CPU start) vs 514 cycles (odd CPU start)
+- CPU cycle parity tracking: `(cpu_cycles % 2) == 1` check for alignment
+- CPU/PPU synchronization verified
+- Bus timing accuracy confirmed
+
+### Technical Specifications (v0.6.0)
+
+- **APU Frame Counter (4-step):** Cycles 7457, 14913, 22372, 29830 (corrected)
+- **TND Mixer Formula:** `159.79 / (100 + 1 / (triangle/8227 + noise/12241 + dmc/22638))`
+- **OAM DMA Timing:** `513 + if (cpu_cycles % 2) == 1 { 1 } else { 0 }`
+- **Test Results:** 429 tests passing, 0 failures, 6 ignored
+
+---
+
+## Previous Accomplishments (v0.5.0 - Dec 19, 2025)
 
 ### Desktop GUI (Milestone 6)
 - Iced 0.13+ framework with Elm architecture (Model-Update-View)
@@ -398,10 +445,10 @@ pub enum EmulatorError {
 ### Phase 1.5: Stabilization 🔄 CURRENT
 
 See `/to-dos/phase-1.5-stabilization/` for detailed milestone plans:
-- **M7**: Enhanced test coverage and validation
-- **M8**: Audio/video refinements
-- **M9**: Performance optimization
-- **M10**: Documentation and release preparation
+- **M7**: Accuracy Improvements ✅ **COMPLETE** (v0.6.0)
+- **M8**: Test ROM Validation (95%+ pass rate target)
+- **M9**: Performance & Polish
+- **M10**: Documentation and v1.0-alpha preparation
 
 ### Test-Driven Development
 

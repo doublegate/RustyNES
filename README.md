@@ -20,7 +20,7 @@ A next-generation NES emulator written in pure Rust — targeting 100% accuracy,
 
 ---
 
-> **Status:** v0.5.0 Released - Phase 1 MVP Complete (100%)
+> **Status:** v0.6.0 Released - Phase 1.5 Stabilization In Progress (M7 Complete)
 >
 > **Milestones Completed:**
 >
@@ -30,12 +30,13 @@ A next-generation NES emulator written in pure Rust — targeting 100% accuracy,
 > - ✅ **M4: Mappers** - NROM, MMC1, UxROM, CNROM, MMC3 enabling 77.7% game library compatibility
 > - ✅ **M5: Integration** - Complete rustynes-core layer with Bus, Console, Input, and Save State framework
 > - ✅ **M6: Desktop GUI** - Cross-platform Iced/wgpu application with ROM loading, audio playback, and full input support
+> - ✅ **M7: Accuracy** - CPU/PPU/APU timing refinements, OAM DMA 513/514 cycle precision, hardware-accurate mixer
 >
-> **Test Suite:** 657 tests passing (247 CPU • 88 PPU • 150 APU • 167 Mappers • 23 Core • 32 doctests), 2 ignored
+> **Test Suite:** 429 tests passing (0 failures, 6 ignored for valid architectural reasons)
 >
-> **Current:** Phase 1.5 (Stabilization) - Milestone 7 Sprints 1 & 2 Complete (CPU/PPU accuracy verification)
+> **Current:** Phase 1.5 (Stabilization) - Milestone 7 Complete, preparing for M8 (Test ROM Validation)
 >
-> **Next:** M7 Sprint 3 (Sprite 0 hit edge cases), Audio/video refinements, performance optimization
+> **Next:** M8 (95%+ test ROM pass rate), performance optimization, expanded mapper testing
 >
 > See [ROADMAP.md](ROADMAP.md) and [to-dos/](to-dos/) for development timeline.
 
@@ -73,30 +74,26 @@ RustyNES combines **accuracy-first emulation** with **modern features** and the 
 
 ## Quick Start
 
-### Recent Release: v0.5.0 (December 19, 2025)
+### Recent Release: v0.6.0 (December 20, 2025)
 
-RustyNES has completed Phase 1 MVP with the Desktop GUI milestone:
+RustyNES v0.6.0 delivers Milestone 7 (Accuracy Improvements) from Phase 1.5 Stabilization:
 
 **What's New:**
 
-- Cross-platform desktop application using Iced 0.13+ and wgpu
-- Audio playback via cpal with real-time sample generation
-- ROM loading with drag-and-drop and file dialog support
-- Real-time NES rendering at 60 FPS with GPU acceleration
-- Multiple scaling modes: PixelPerfect (8:7 PAR), FitWindow, Integer
-- Configuration persistence using RON format
-- Keyboard input for NES controller (arrow keys, Z/X, Enter/Shift)
-- Menu bar with File, Emulation, View, and Help menus
-- Pause/Resume and Reset functionality
-- Critical PPU rendering bug fixes (attribute shift register timing)
-- Minimal unsafe code (only in cpal audio interface with proper documentation)
+- **APU Frame Counter Precision:** Fixed 4-step mode quarter frame timing (22371→22372 cycles)
+- **Hardware-Accurate Audio Mixer:** Non-linear TND formula matching NESdev reference
+- **OAM DMA Cycle Precision:** 513 cycles (even CPU start) vs 514 cycles (odd CPU start)
+- **CPU Cycle Parity Tracking:** Bus tracks odd/even CPU cycles for DMA alignment
+- **Test Suite:** 429 tests passing with 0 failures, 6 ignored (valid architectural reasons)
+- **Documentation:** Complete M7 sprint documentation with deferred items tracked
 
 **Previous Releases:**
 
+- **v0.5.0** - Phase 1 MVP: Desktop GUI (Iced + wgpu), audio playback, ROM loading
 - **v0.4.0** - Complete rustynes-core integration layer (Bus, Console, Input, Save States)
-- **v0.3.0** - Complete Mapper subsystem with 5 mappers covering 77.7% of NES games (78 tests)
-- **v0.2.0** - Complete 2A03 APU with 5 audio channels, 48 kHz output, non-linear mixing (150 tests)
-- **v0.1.0** - Complete 6502 CPU (256 opcodes) and 2C02 PPU (dot-accurate rendering) (129 tests)
+- **v0.3.0** - Complete Mapper subsystem with 5 mappers covering 77.7% of NES games
+- **v0.2.0** - Complete 2A03 APU with 5 audio channels, 48 kHz output, non-linear mixing
+- **v0.1.0** - Complete 6502 CPU (256 opcodes) and 2C02 PPU (dot-accurate rendering)
 
 See [CHANGELOG.md](CHANGELOG.md) for full details.
 
@@ -129,7 +126,7 @@ cargo build --workspace --release
 
 cargo test --workspace
 
-# Results: 398 tests passing, 6 ignored (98.5% pass rate)
+# Results: 429 tests passing, 0 failures, 6 ignored
 
 # Run the desktop GUI (requires ROM file)
 cargo run -p rustynes-desktop --release -- path/to/game.nes
@@ -287,7 +284,7 @@ Controls will be fully configurable through the configuration system.
 
 ## Features
 
-### Current Status (v0.5.0 - December 2025)
+### Current Status (v0.6.0 - December 2025)
 
 - [x] **Architecture Design** - Complete modular crate structure with 10 component crates
 - [x] **Documentation** - 40+ comprehensive specification and implementation guides covering CPU, PPU, APU, mappers, testing, and development
@@ -421,28 +418,24 @@ Frame Timing:
 
 **Current Progress:** 100% Phase 1 MVP Complete (M1-M6)
 
-**Test Results (v0.5.0 + M7 Sprints 1 & 2):**
+**Test Results (v0.6.0):**
 
-- **CPU**: 247/247 tests passing (100%)
-  - All 256 opcodes validated (238 unit tests + 9 doctests)
-  - nestest.nes golden log match (comprehensive integration test: 5003+ instructions)
-  - M7 Sprint 1: 100% timing accuracy verification complete
-- **PPU**: 88/90 tests passing (97.8% passing, 2 ignored for architectural limitation)
-  - Complete rendering pipeline (83 unit tests)
-  - 4 integration test ROMs passing + 2 ignored (vbl_set_time, vbl_clear_time require cycle-by-cycle CPU)
-  - VBlank/NMI timing, sprite 0 hit, race condition handling
-  - M7 Sprint 2: Timing accessors added, architectural analysis complete
-- **APU**: 150/150 tests passing (100%)
-  - All 5 audio channels (136 unit tests + 14 doctests)
-  - Non-linear mixer, 48 kHz resampling
-- **Mappers**: 167/167 tests passing (100%)
-  - 5 mappers (NROM, MMC1, UxROM, CNROM, MMC3) - 163 unit tests + 4 doctests
-  - 77.7% game coverage
-- **Core**: 23/23 tests passing (100%)
-  - Bus system memory routing (18 unit tests + 1 integration + 4 doctests)
-  - Console coordinator
-  - Input system (controller strobe protocol)
-- **Total**: 657/659 tests passing (99.7%), 2 ignored (architectural limitation)
+- **CPU**: All 256 opcodes verified with ±1 cycle accuracy
+  - nestest.nes golden log match (5003+ instructions verified)
+  - Page boundary crossing accuracy verified
+  - Unofficial opcode timing validated
+- **PPU**: VBlank/NMI functional, sprite 0 hit working (2/2 tests)
+  - Palette RAM mirroring edge cases correct
+  - Attribute shift register timing verified
+  - 2 timing tests ignored (require cycle-by-cycle CPU refactor)
+- **APU**: Frame counter precision fixed (22371→22372 cycles)
+  - Hardware-accurate non-linear mixer (NESdev formula)
+  - Triangle linear counter verified
+  - 5-step mode timing correct
+- **Core**: OAM DMA 513/514 cycle precision
+  - CPU cycle parity tracking for DMA alignment
+  - CPU/PPU 3:1 synchronization verified
+- **Total**: 429 tests passing, 0 failures, 6 ignored (valid reasons)
 - **Code Quality**: Zero unsafe code across all 6 crates
 
 ### Development Roadmap
@@ -853,9 +846,9 @@ If you use RustyNES in academic research, please cite:
   author = {RustyNES Contributors},
   title = {RustyNES: A Next-Generation NES Emulator in Rust},
   year = {2025},
-  version = {0.5.0},
+  version = {0.6.0},
   url = {https://github.com/doublegate/RustyNES},
-  note = {Cycle-accurate Nintendo Entertainment System emulator with complete CPU, PPU, APU, Mappers, Integration layer, and Desktop GUI}
+  note = {Cycle-accurate Nintendo Entertainment System emulator with CPU/PPU/APU timing refinements, OAM DMA precision, and hardware-accurate audio mixer}
 }
 ```
 

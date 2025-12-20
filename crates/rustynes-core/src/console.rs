@@ -129,6 +129,9 @@ impl Console {
         // Step CPU (this will handle DMA internally via stall cycles)
         let cpu_cycles = self.cpu.step(&mut self.bus);
 
+        // Track CPU cycles for DMA timing (odd/even cycle detection)
+        self.bus.add_cpu_cycles(cpu_cycles);
+
         // Step PPU (3 dots per CPU cycle)
         // Use step_ppu which provides CHR ROM access from mapper for tile fetching
         for _ in 0..(cpu_cycles * 3) {

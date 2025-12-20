@@ -104,14 +104,21 @@ impl FrameCounter {
     /// ----   ------  ------
     /// 1      7457    Quarter frame (envelopes + linear counter)
     /// 2      14913   Half frame (envelopes, linear, length, sweep)
-    /// 3      22371   Quarter frame
+    /// 3      22372   Quarter frame (was 22371, corrected per NESdev research)
     /// 4      29829   Half frame + set IRQ flag (if enabled)
     ///        29830   Set IRQ flag
     ///        29831   Set IRQ flag, reset to 0
     /// ```
+    ///
+    /// # Timing Note
+    ///
+    /// APU frame counter ticks at 7456.5, 14912.5, 22371.5, 29829.5 APU cycles
+    /// (which are half CPU cycles), so CPU sees them at 7457, 14913, 22372, 29830.
+    /// The sequence was refined based on hardware testing documented on `NESdev`.
     fn clock_4step(&mut self) -> FrameAction {
         match self.cycle_count {
-            7457 | 22371 => FrameAction::QuarterFrame,
+            // Quarter frames at 7457 and 22372 (corrected from 22371)
+            7457 | 22372 => FrameAction::QuarterFrame,
             14913 => FrameAction::HalfFrame,
             29829 => {
                 if !self.irq_inhibit {
@@ -188,39 +195,39 @@ mod tests {
         let mut fc = FrameCounter::new();
         assert_eq!(fc.mode, 0);
 
-        // Clock to first quarter frame
+        // Clock to first quarter frame (cycle 7457)
         for _ in 0..7456 {
             assert_eq!(fc.clock(), FrameAction::None);
         }
         assert_eq!(fc.clock(), FrameAction::QuarterFrame);
 
-        // Clock to first half frame
+        // Clock to first half frame (cycle 14913)
         for _ in 0..7455 {
             assert_eq!(fc.clock(), FrameAction::None);
         }
         assert_eq!(fc.clock(), FrameAction::HalfFrame);
 
-        // Clock to second quarter frame
-        for _ in 0..7457 {
+        // Clock to second quarter frame (cycle 22372, corrected from 22371)
+        for _ in 0..7458 {
             assert_eq!(fc.clock(), FrameAction::None);
         }
         assert_eq!(fc.clock(), FrameAction::QuarterFrame);
 
-        // Clock to second half frame (with IRQ)
-        for _ in 0..7457 {
+        // Clock to second half frame with IRQ (cycle 29829)
+        for _ in 0..7456 {
             assert_eq!(fc.clock(), FrameAction::None);
         }
         assert!(!fc.irq_flag);
         assert_eq!(fc.clock(), FrameAction::HalfFrame);
         assert!(fc.irq_flag);
 
-        // Additional IRQ flag sets
+        // Additional IRQ flag sets (cycles 29830, 29831)
         assert_eq!(fc.clock(), FrameAction::None);
         assert!(fc.irq_flag);
         assert_eq!(fc.clock(), FrameAction::None);
         assert!(fc.irq_flag);
 
-        // Should reset
+        // Should reset to 0
         assert_eq!(fc.cycle_count, 0);
     }
 

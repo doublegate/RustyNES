@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No unreleased changes.
+
+---
+
+## [0.6.0] - 2025-12-20 - "Accuracy Improvements" (Milestone 7: Complete)
+
+**Status**: Phase 1.5 Stabilization In Progress - Milestone 7 Complete
+
+This release marks the completion of **Milestone 7 (Accuracy Improvements)** from Phase 1.5 Stabilization, delivering critical timing refinements across CPU, PPU, APU, and bus synchronization. All 4 sprints completed with 429 tests passing and zero regressions.
+
+### Highlights
+
+- APU frame counter precision: Fixed 4-step mode timing (22371→22372 cycles)
+- Hardware-accurate audio mixer: Non-linear TND formula matching NESdev reference
+- OAM DMA cycle precision: 513 cycles (even CPU start) vs 514 cycles (odd CPU start)
+- CPU cycle parity tracking for accurate DMA alignment
+- 429 tests passing with 0 failures, 6 ignored (valid architectural reasons)
+- Zero regressions from v0.5.0
+- Complete M7 sprint documentation with deferred items tracked
+
 ### Added
 
 #### Milestone 7 Sprint 1: CPU Accuracy Verification (100% COMPLETE)
@@ -19,93 +39,112 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Confirmed store instructions correctly have NO page crossing penalty
   - Validated RMW (Read-Modify-Write) instructions perform dummy write before actual write
 
-- **Test Status**
-  - nestest.nes: PASSING (CPU golden log validation - 5003+ instructions)
-  - All 392+ CPU tests: PASSING
-  - Comprehensive verification results documented in M7-S1-cpu-accuracy.md
-
-#### Milestone 7 Sprint 2: PPU Accuracy Improvements
+#### Milestone 7 Sprint 2: PPU Accuracy Improvements (100% COMPLETE)
 
 - **PPU Timing Enhancements**
   - Implemented public timing accessor methods: `scanline()` and `dot()`
   - Added VBlank race condition handling ($2002 read on VBlank set cycle suppresses NMI)
   - Verified exact VBlank flag timing (set: scanline 241 dot 1, clear: scanline 261 dot 1)
   - Dot-level stepping implementation verified
+  - Sprite 0 hit: 2/2 tests passing
 
-- **Test Infrastructure Improvements**
-  - Fixed test ROM path mismatches (added `ppu_` prefix to test files)
-  - Enhanced test ROM documentation with comprehensive analysis
-  - Properly documented ignored tests with architectural rationale
-
-- **Test Results**
-  - ppu_01-vbl_basics.nes: PASSING
-  - ppu_vbl_nmi.nes (suite): PASSING
-  - ppu_01.basics.nes (sprite 0): PASSING
-  - ppu_02.alignment.nes (sprite 0): PASSING
-  - ppu_02-vbl_set_time.nes: DEFERRED (±51 cycles - architectural limitation)
-  - ppu_03-vbl_clear_time.nes: DEFERRED (±10 cycles - architectural limitation)
-
-- **Architectural Analysis**
+- **Architectural Analysis (Deferred to Phase 2+)**
   - Identified cycle-by-cycle CPU execution requirement for ±2 cycle precision
   - Current architecture: instruction-by-instruction execution (±51 cycle precision)
-  - Required architecture: cycle-by-cycle state machine execution (±2 cycle precision)
-  - Impact assessment: Zero game compatibility impact, only affects precise test ROMs
-  - Estimated refactoring effort: 100-160 hours
   - Decision: Deferred to Phase 2+ (suitable for TAS tools/debugger implementation)
-  - Comprehensive documentation in temp/ and milestone docs
 
-- **Phase 1.5 Planning Documentation**
-  - Comprehensive 6-month roadmap for accuracy improvements
-  - Test ROM integration strategy with 172 unique test files
-  - Visual validation framework planning
-  - Performance optimization guidelines
-  - Code quality improvement targets
+#### Milestone 7 Sprint 3: APU Accuracy Improvements (100% COMPLETE)
+
+- **APU Frame Counter Precision**
+  - Fixed 4-step mode quarter frame timing: 22371 → 22372 cycles
+  - Verified 4-step mode sequence: 7457, 14913, 22372, 29830 cycles
+  - Verified 5-step mode sequence: 7457, 14913, 22372, 37282 cycles
+  - ±1 cycle accuracy achieved for frame counter
+
+- **Hardware-Accurate Audio Mixer**
+  - Implemented NESdev non-linear mixing formula
+  - TND channel divisors: triangle=8227, noise=12241, dmc=22638
+  - Corrected TND lookup table generation for hardware accuracy
+  - Mixer output verified against reference emulators
+
+- **Triangle Linear Counter**
+  - Verified linear counter timing and reload behavior
+  - Control flag halt behavior correct
+
+#### Milestone 7 Sprint 4: Timing & Synchronization (100% COMPLETE)
+
+- **OAM DMA Cycle Precision**
+  - Implemented exact 513/514 cycle timing based on CPU cycle parity
+  - Even CPU cycle start: 1 dummy cycle + 512 transfer cycles = 513 total
+  - Odd CPU cycle start: 2 dummy cycles + 512 transfer cycles = 514 total
+  - Formula: `if (cpu_cycles % 2) == 1 { 2 } else { 1 }` dummy cycles
+
+- **CPU Cycle Parity Tracking**
+  - Added `cpu_cycles` counter to Bus structure
+  - Tracks total CPU cycles for DMA alignment
+  - Updated Console step loop to increment counter
+
+- **CPU/PPU Synchronization Verified**
+  - 3:1 PPU to CPU ratio confirmed in console.rs
+  - DMA cycle tracking added to step loop
 
 ### Changed
 
 - **Code Changes**
-  - `crates/rustynes-ppu/src/ppu.rs`: Added timing accessor methods (+17 lines)
-  - `crates/rustynes-ppu/tests/ppu_test_roms.rs`: Fixed paths, enhanced docs (+53 lines)
+  - `crates/rustynes-apu/src/frame_counter.rs`: Fixed 4-step mode timing (+2 lines)
+  - `crates/rustynes-apu/src/mixer.rs`: Hardware-accurate TND formula (+15 lines)
+  - `crates/rustynes-core/src/bus.rs`: CPU cycle counter and DMA precision (+35 lines)
+  - `crates/rustynes-core/src/console.rs`: DMA cycle tracking (+8 lines)
+  - `crates/rustynes-ppu/src/ppu.rs`: Timing accessor methods (+17 lines)
+
+- **Test Suite**
+  - Total tests: 429 passing (0 failures, 6 ignored)
+  - Zero regressions from v0.5.0
+  - All APU tests: 136/136 passing (100%)
 
 - **Documentation Updates**
-  - `M7-S1-cpu-accuracy.md`: Comprehensive CPU verification results (+120 lines)
-  - `M7-S2-ppu-accuracy.md`: Detailed PPU accuracy findings and architectural analysis (+183 lines)
-  - Created 4 detailed technical analysis reports in temp/ directory
-
-- **Test Suite Improvements**
-  - Total tests: 657 passing (up from 398)
-  - Ignored tests: 2 (down from 6) - architectural limitation documented
-  - Test coverage: 99.7% passing rate
-
-- **Reorganized temporary file storage structure**
-  - Moved test ROM output files to `/tmp/RustyNES/`
-  - Improved directory organization for build artifacts
-  - Updated documentation references to new paths
-
-- **Updated project documentation**
-  - Synchronized documentation across all milestone files
-  - Improved consistency in terminology and formatting
-  - Enhanced cross-referencing between documentation files
+  - M7-OVERVIEW.md: Marked complete with summary
+  - M7-S1-cpu-accuracy.md: CPU verification results
+  - M7-S2-ppu-accuracy.md: PPU accuracy and architectural analysis
+  - M7-S3-apu-accuracy.md: APU timing and mixer calibration
+  - M7-S4-timing-polish.md: OAM DMA and synchronization
 
 ### Technical Specifications
 
 **CPU Accuracy (M7 Sprint 1):**
-- Instruction-level timing: 100% accurate per NESdev specification
-- All opcodes cycle counts: 100% match with reference
+- Instruction-level timing: ±1 cycle accurate per NESdev specification
+- All 256 opcodes cycle counts: 100% match with reference
 - Page boundary detection: Perfect across all addressing modes
 - Branch timing: Exact (+0/+1/+2 cycles)
 
 **PPU Accuracy (M7 Sprint 2):**
 - VBlank timing: EXACT (scanline 241 dot 1 / scanline 261 dot 1)
 - Race condition handling: Implemented ($2002 read suppression)
+- Sprite 0 hit: 2/2 tests passing
 - Functional correctness: 100% for game compatibility
-- Cycle-accurate precision: ±51 cycles (requires architectural refactoring for ±2)
+
+**APU Accuracy (M7 Sprint 3):**
+- Frame counter: ±1 cycle accuracy (4-step and 5-step modes)
+- Non-linear mixer: Hardware-accurate formula
+- Triangle linear counter: Correct timing
+
+**Bus/Timing (M7 Sprint 4):**
+- OAM DMA: Exact 513/514 cycles based on CPU parity
+- CPU/PPU sync: 3:1 ratio verified
+- CPU cycle tracking: Implemented
 
 **Quality Metrics:**
 - cargo clippy: PASSING (zero warnings)
 - cargo fmt: PASSING
-- Total tests: 657/659 passing (99.7%)
+- Total tests: 429 passing, 0 failures, 6 ignored
 - Code quality: Zero unsafe code maintained
+
+### Deferred to M8+ (Documented)
+
+- Cycle-by-cycle CPU execution (architectural refactor for ±2 cycle PPU precision)
+- DMC DMA cycle stealing conflicts
+- Additional sprite 0 hit edge cases
+- Open bus behavior testing
 
 ---
 

@@ -88,26 +88,49 @@ impl Mixer {
 
     /// Generate TND (Triangle/Noise/DMC) mixing lookup table
     ///
-    /// Uses formula: `output = 159.79 / ((1.0 / (i / 100.0)) + 100.0)`
+    /// Uses hardware-accurate formula from `NESdev`:
+    /// ```text
+    /// output = 159.79 / ((1 / (triangle/8227 + noise/12241 + dmc/22638)) + 100)
+    /// ```
     ///
-    /// The index represents the weighted sum:
-    /// - Triangle contributes 3× per unit
-    /// - Noise contributes 2× per unit
-    /// - DMC contributes 1× per unit
+    /// The table is indexed by a weighted sum: `3*triangle + 2*noise + dmc`
+    /// This allows us to pre-compute the complex non-linear mixing operation.
     ///
-    /// This matches the relative amplitudes of the analog circuits.
+    /// To reconstruct the individual channel contributions from the index:
+    /// - Maximum index: 3*15 + 2*15 + 127 = 202
+    /// - We need to compute: triangle/8227 + noise/12241 + dmc/22638
+    /// - But we only have the weighted sum, so we use approximation weights
+    ///
+    /// Simplified implementation: Index directly represents the combined
+    /// contribution scaled appropriately for the mixing curve.
     ///
     /// Special case: index 0 = 0.0 (silence)
     fn generate_tnd_table() -> [f32; 203] {
         let mut table = [0.0; 203];
 
-        for (i, entry) in table.iter_mut().enumerate() {
-            if i == 0 {
-                *entry = 0.0;
-            } else {
-                #[allow(clippy::cast_precision_loss)]
-                let i_f32 = i as f32;
-                *entry = 159.79 / ((1.0 / (i_f32 / 100.0)) + 100.0);
+        // Pre-compute for all possible combinations
+        // Index = 3*triangle + 2*noise + dmc
+        for triangle in 0..=15 {
+            for noise in 0..=15 {
+                for dmc in 0..=127 {
+                    #[allow(clippy::cast_sign_loss)]
+                    let index = (3 * triangle + 2 * noise + dmc) as usize;
+
+                    #[allow(clippy::cast_precision_loss)]
+                    let triangle_contrib = triangle as f32 / 8227.0;
+                    #[allow(clippy::cast_precision_loss)]
+                    let noise_contrib = noise as f32 / 12241.0;
+                    #[allow(clippy::cast_precision_loss)]
+                    let dmc_contrib = dmc as f32 / 22638.0;
+
+                    let tnd_sum = triangle_contrib + noise_contrib + dmc_contrib;
+
+                    if tnd_sum == 0.0 {
+                        table[index] = 0.0;
+                    } else {
+                        table[index] = 159.79 / ((1.0 / tnd_sum) + 100.0);
+                    }
+                }
             }
         }
 
@@ -139,9 +162,9 @@ impl Mixer {
     ///
     /// let mixer = Mixer::new();
     ///
-    /// // All channels at maximum
+    /// // All channels at maximum (hardware-accurate formula produces ~0.999)
     /// let output = mixer.mix(15, 15, 15, 15, 127);
-    /// assert!(output > 1.0);
+    /// assert!(output > 0.9 && output < 1.0);
     ///
     /// // All channels silent
     /// let silence = mixer.mix(0, 0, 0, 0, 0);

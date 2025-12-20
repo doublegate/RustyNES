@@ -53,9 +53,12 @@ pub struct Bus {
     dma_page: u8,
     dma_addr: u8,
     dma_data: u8,
-    dma_dummy: bool,
+    dma_dummy_cycles: u8, // Number of dummy cycles remaining (1 or 2 depending on alignment)
     dma_transfer: bool,
     dma_write: bool,
+
+    /// CPU cycle counter for odd/even tracking (for DMA timing)
+    cpu_cycles: u64,
 }
 
 impl Bus {
@@ -93,9 +96,10 @@ impl Bus {
             dma_page: 0,
             dma_addr: 0,
             dma_data: 0,
-            dma_dummy: true,
+            dma_dummy_cycles: 0,
             dma_transfer: false,
             dma_write: false,
+            cpu_cycles: 0,
         }
     }
 
@@ -112,8 +116,9 @@ impl Bus {
     /// Execute one cycle of DMA transfer
     ///
     /// OAM DMA takes 513 or 514 CPU cycles:
-    /// - Dummy cycle if on odd CPU cycle
-    /// - 512 cycles (256 reads + 256 writes)
+    /// - 513 cycles: Started on even CPU cycle (1 dummy + 512 transfer cycles)
+    /// - 514 cycles: Started on odd CPU cycle (2 dummy cycles for alignment + 512 transfer cycles)
+    /// - Transfer: 256 alternating read/write cycles (512 total)
     ///
     /// # Returns
     ///
@@ -123,9 +128,12 @@ impl Bus {
             return true;
         }
 
-        // Dummy cycle (align to even cycle)
-        if self.dma_dummy {
-            self.dma_dummy = false;
+        // Dummy cycle(s) for alignment
+        // If started on odd cycle, we need 2 dummy cycles
+        // If started on even cycle, we need 1 dummy cycle
+        if self.dma_dummy_cycles > 0 {
+            self.dma_dummy_cycles -= 1;
+            self.cpu_cycles += 1;
             return false;
         }
 
@@ -133,11 +141,12 @@ impl Bus {
             // Write cycle
             self.ppu.write_register(0x2004, self.dma_data);
             self.dma_write = false;
+            self.cpu_cycles += 1;
 
             // Advance to next byte
             self.dma_addr = self.dma_addr.wrapping_add(1);
 
-            // Check if transfer is complete
+            // Check if transfer is complete (256 bytes transferred)
             if self.dma_addr == 0 {
                 self.dma_transfer = false;
                 true
@@ -149,6 +158,7 @@ impl Bus {
             let addr = u16::from(self.dma_page) << 8 | u16::from(self.dma_addr);
             self.dma_data = self.read_for_dma(addr);
             self.dma_write = true;
+            self.cpu_cycles += 1;
             false
         }
     }
@@ -170,12 +180,35 @@ impl Bus {
     /// # Arguments
     ///
     /// * `page` - High byte of source address (e.g., $02 for $0200-$02FF)
+    ///
+    /// # Timing
+    ///
+    /// OAM DMA takes 513 or 514 CPU cycles:
+    /// - 513 cycles if started on an even CPU cycle (1 dummy + 512 transfer)
+    /// - 514 cycles if started on an odd CPU cycle (2 dummy + 512 transfer)
+    ///
+    /// The extra cycle on odd alignment ensures reads happen on even cycles.
     fn start_oam_dma(&mut self, page: u8) {
         self.dma_page = page;
         self.dma_addr = 0;
         self.dma_transfer = true;
-        self.dma_dummy = true;
         self.dma_write = false;
+
+        // Determine number of dummy cycles based on CPU cycle parity
+        // Odd cycle: need 2 dummy cycles for alignment (514 total)
+        // Even cycle: need 1 dummy cycle (513 total)
+        self.dma_dummy_cycles = if (self.cpu_cycles % 2) == 1 { 2 } else { 1 };
+    }
+
+    /// Increment CPU cycle counter (called from console after each CPU instruction)
+    ///
+    /// This tracks odd/even cycles for DMA timing precision.
+    ///
+    /// # Arguments
+    ///
+    /// * `cycles` - Number of CPU cycles to add
+    pub fn add_cpu_cycles(&mut self, cycles: u8) {
+        self.cpu_cycles += u64::from(cycles);
     }
 
     /// Reset the bus and all components
@@ -186,6 +219,7 @@ impl Bus {
         self.controller1.reset();
         self.controller2.reset();
         self.dma_transfer = false;
+        self.cpu_cycles = 0;
     }
 
     /// Clock the mapper (for IRQ timing)
