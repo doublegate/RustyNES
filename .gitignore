@@ -88,6 +88,11 @@ test-output/
 *.test.log
 *.golden
 
+# Test framework build artifacts
+/tests/framework/enhanced-validator/target/
+/tests/framework/*.exe
+/tests/framework/test_rom_validator
+
 # Fuzzing
 fuzz/
 corpus/
@@ -111,6 +116,7 @@ flamegraph.svg
 # Temporary files
 /tmp/
 *.tmp
+/temp/
 
 # WebAssembly / wasm-pack
 /pkg/

@@ -1,0 +1,8 @@
+[package]
+name = "enhanced-rom-validator"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rustynes-core = { path = "/home/parobek/Code/RustyNES/crates/rustynes-core" }
+chrono = "0.4"

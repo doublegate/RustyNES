@@ -6,7 +6,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 RustyNES is a next-generation Nintendo Entertainment System (NES) emulator written in Rust. Target: 100% TASVideos accuracy test pass rate, 300+ mappers, RetroAchievements, GGPO netplay, TAS tools, Lua scripting.
 
-**Status:** Architecture design complete, folder structure created, comprehensive documentation generated. Ready to begin Phase 1 implementation.
+**Status:** v0.5.0 - Phase 1 MVP Complete (100% - all 6 milestones done). Phase 1.5 stabilization and enhancement planning in progress.
+
+**Test Status:** 392+ tests passing (0 failures, 6 ignored for valid reasons)
+
+**Recent Version:** v0.5.0 (December 19, 2025)
+- Desktop GUI complete (Iced + wgpu)
+- Audio playback integrated (cpal)
+- Critical PPU rendering bug fixes
+- 5 mappers implemented (0, 1, 2, 3, 4)
+- CLI ROM loading
+- Configuration persistence
 
 ## Repository
 
@@ -64,10 +74,13 @@ rustynes/
 │   ├── features/                  # Advanced features documentation
 │   └── platform/                  # Platform-specific build info
 ├── tests/                         # Integration tests
+│   └── framework/                 # Test ROM validators and harness tools
 ├── benches/                       # Performance benchmarks
 ├── examples/                      # Usage examples
 ├── test-roms/                     # NES test ROM files (excluded from git)
 ├── assets/                        # Static resources
+├── images/                        # Screenshots and visual documentation
+├── temp/                          # Project-specific temporary files (gitignored)
 ├── ref-docs/                      # Reference documentation (architecture spec)
 └── ref-proj/                      # Reference emulator projects (excluded from git)
 ```
@@ -170,38 +183,116 @@ Cloned emulators for study and pattern reference:
 
 ## Key Dependencies
 
-- **Graphics**: `wgpu` (cross-platform GPU), `egui` (GUI)
-- **Audio**: `sdl2` or `cpal`
-- **Netplay**: `backroll` (GGPO rollback)
-- **Scripting**: `mlua` (Lua 5.4)
-- **Achievements**: `rcheevos-sys` (FFI bindings)
+- **Graphics**: `wgpu` (cross-platform GPU), `iced` (GUI framework)
+- **Audio**: `cpal` (cross-platform audio I/O)
+- **Netplay**: `backroll` (GGPO rollback) - planned for Phase 2
+- **Scripting**: `mlua` (Lua 5.4) - planned for Phase 2
+- **Achievements**: `rcheevos-sys` (FFI bindings) - planned for Phase 2
 - **Testing**: `criterion` (benchmarks), `proptest` (property-based)
+- **Serialization**: `serde`, `ron` (configuration format)
+
+## Architectural Decisions
+
+### GUI Framework: Iced (v0.13+)
+- **Chosen over**: egui, druid
+- **Rationale**: Type-safe Elm architecture, excellent wgpu integration, clean API
+- **Implementation**: Model-Update-View pattern with async Task system
+
+### Audio Backend: cpal
+- **Chosen over**: SDL2, rodio
+- **Rationale**: Cross-platform, low-latency, direct device access, no runtime dependencies
+- **Implementation**: Ring buffer (8192 samples) + output queue (2048 samples)
+
+### Graphics: wgpu + WGSL Shaders
+- **Rationale**: Cross-platform, modern API, WebAssembly compatible
+- **Implementation**: Fullscreen triangle with nearest-neighbor filtering
+
+### Configuration: RON Format
+- **Chosen over**: TOML, JSON
+- **Rationale**: Rust native, type-safe, supports complex structures
+- **Location**: Platform-specific config directory
+
+### Test Framework
+- Standalone validators in `tests/framework/`
+- Enhanced ROM validator for detailed diagnostics
+- Test ROM runner for automated validation
+- Preserved for reference but not actively maintained
 
 ## Implementation Phases
 
-| Phase | Months | Deliverable |
+| Phase | Status | Deliverable |
 |-------|--------|-------------|
-| 1: MVP | 1-6 | 80% game compatibility, desktop GUI |
-| 2: Features | 7-12 | RetroAchievements, netplay, TAS, Lua, debugger |
-| 3: Expansion | 13-18 | Expansion audio, 98% mappers, WebAssembly |
-| 4: Polish | 19-24 | Video filters, TAS editor, v1.0 release |
+| **1: MVP** | ✅ **COMPLETE** | 80% game compatibility, desktop GUI, 5 mappers, audio |
+| **1.5: Stabilization** | 🔄 PLANNING | Testing framework, documentation, bug fixes, polish |
+| **2: Features** | 📋 PLANNED | RetroAchievements, netplay, TAS, Lua, debugger |
+| **3: Expansion** | 📋 PLANNED | Expansion audio, 98% mappers, WebAssembly |
+| **4: Polish** | 📋 PLANNED | Video filters, TAS editor, v1.0 release |
 
 ## Development Timeline
 
-| Milestone | Target Date | Description |
-|-----------|-------------|-------------|
-| **Project Start** | December 2025 | Architecture & docs complete |
-| **M1: CPU Complete** | January 2026 | nestest.nes passes |
-| **M5: MVP Release** | June 2026 | 80% game compatibility |
-| **M8: Feature Complete** | December 2026 | All advanced features |
-| **M10: v1.0 Release** | December 2027 | 100% TASVideos accuracy |
+| Milestone | Status | Description |
+|-----------|--------|-------------|
+| **Project Start** | ✅ December 2025 | Architecture & docs complete |
+| **M1: CPU Complete** | ✅ v0.1.0 | nestest.nes passes (all 256 opcodes) |
+| **M2: PPU Rendering** | ✅ v0.2.0 | Background & sprite rendering |
+| **M3: APU Audio** | ✅ v0.3.0 | All 5 audio channels |
+| **M4: Mappers** | ✅ v0.4.0 | 5 core mappers (0-4) |
+| **M5: Input** | ✅ v0.4.0 | Controller support |
+| **M6: Desktop GUI** | ✅ v0.5.0 | Iced + wgpu + audio integration |
+| **M7-10: Phase 1.5** | 🔄 PLANNING | Stabilization & enhancement |
+| **Phase 2+** | 📋 TBD | Advanced features |
+
+## Recent Accomplishments (v0.5.0 - Dec 19, 2025)
+
+### Desktop GUI (Milestone 6)
+- Iced 0.13+ framework with Elm architecture (Model-Update-View)
+- wgpu rendering backend with WGSL shaders
+- NES framebuffer texture (256x240 RGBA) with zero-allocation updates
+- Multiple scaling modes: PixelPerfect (8:7 PAR), FitWindow, Integer
+- Configuration persistence (RON format)
+- Menu system and keyboard shortcuts
+
+### Audio System
+- cpal-based audio playback integrated
+- Two-tier buffer management strategy (8192 sample ring buffer + 2048 sample output queue)
+- Real-time sample generation synchronized with frame timing
+- Handles buffer underruns gracefully
+
+### Critical Bug Fixes
+- PPU attribute shift register timing fix (eliminated rendering artifacts)
+- Sprite pattern fetch timing simplified for accuracy
+- Security lints resolved in audio.rs (proper unsafe documentation)
+
+### Test Infrastructure
+- Enhanced ROM validator tools created
+- Comprehensive test ROM analysis framework
+- Test suite expanded to 392+ tests
+- Test framework tools archived in `tests/framework/`
+
+## Known Issues & Limitations
+
+### Audio
+- Occasional audio crackling under high system load (buffer underrun)
+- No resampling for non-44.1kHz output devices
+- Fixed latency (no dynamic adjustment)
+
+### PPU
+- Some attribute table edge cases may have minor glitches
+- Sprite overflow flag not fully cycle-accurate
+- Mid-scanline updates not yet supported for all registers
+
+### General
+- WebAssembly frontend not yet implemented
+- Save states not yet implemented
+- Debugger interface planned for Phase 2
+- Limited to NTSC timing (PAL support planned)
 
 ## Accuracy Targets
 
-- CPU: 100% nestest.nes golden log
-- PPU: 100% blargg PPU tests, sprite_hit, ppu_vbl_nmi
-- APU: 95%+ blargg APU tests
-- Overall: 100% TASVideos accuracy suite (156 tests)
+- CPU: 100% nestest.nes golden log ✅ **ACHIEVED**
+- PPU: 100% blargg PPU tests, sprite_hit, ppu_vbl_nmi 🔄 **IN PROGRESS**
+- APU: 95%+ blargg APU tests 🔄 **IN PROGRESS**
+- Overall: 100% TASVideos accuracy suite (156 tests) 📋 **PLANNED**
 
 ## Code Patterns
 
@@ -294,14 +385,23 @@ pub enum EmulatorError {
 
 ## Implementation Priorities
 
-### Phase 1: MVP (Current)
+### Phase 1: MVP ✅ COMPLETE
 
-1. **CPU**: Complete 6502 implementation with all 256 opcodes
-2. **PPU**: Basic rendering (backgrounds, sprites, scrolling)
-3. **APU**: Square, triangle, noise channels
-4. **Bus**: Memory mapping, DMA
-5. **Mappers**: NROM (0), MMC1 (1), UxROM (2), CNROM (3), MMC3 (4)
-6. **ROM Loading**: iNES format support
+1. **CPU**: Complete 6502 implementation with all 256 opcodes ✅
+2. **PPU**: Background & sprite rendering with scrolling ✅
+3. **APU**: All 5 channels (square1, square2, triangle, noise, DMC) ✅
+4. **Bus**: Memory mapping, DMA, mapper integration ✅
+5. **Mappers**: NROM (0), MMC1 (1), UxROM (2), CNROM (3), MMC3 (4) ✅
+6. **ROM Loading**: iNES format support ✅
+7. **Desktop GUI**: Iced + wgpu with audio integration ✅
+
+### Phase 1.5: Stabilization 🔄 CURRENT
+
+See `/to-dos/phase-1.5-stabilization/` for detailed milestone plans:
+- **M7**: Enhanced test coverage and validation
+- **M8**: Audio/video refinements
+- **M9**: Performance optimization
+- **M10**: Documentation and release preparation
 
 ### Test-Driven Development
 

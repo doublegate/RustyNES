@@ -29,11 +29,11 @@ A next-generation NES emulator written in pure Rust — targeting 100% accuracy,
 > - ✅ **M3: APU** - Hardware-accurate 2A03 APU with 5 audio channels, 48 kHz output, non-linear mixing
 > - ✅ **M4: Mappers** - NROM, MMC1, UxROM, CNROM, MMC3 enabling 77.7% game library compatibility
 > - ✅ **M5: Integration** - Complete rustynes-core layer with Bus, Console, Input, and Save State framework
-> - ✅ **M6: Desktop GUI** - Cross-platform egui/wgpu application with ROM loading, rendering, and input
+> - ✅ **M6: Desktop GUI** - Cross-platform Iced/wgpu application with ROM loading, audio playback, and full input support
 >
-> **Test Suite:** 398 tests passing (47 CPU • 85 PPU • 136 APU • 78 Mappers • 18 Core • 32 doctests), 6 ignored
+> **Test Suite:** 392+ tests passing (47 CPU • 85 PPU • 136 APU • 78 Mappers • 18 Core • 28+ doctests), 6 ignored
 >
-> **Next:** Phase 2 (Features) - RetroAchievements, netplay, TAS tools, Lua scripting, debugger
+> **Next:** Phase 1.5 (Stabilization) - Enhanced testing, audio/video refinements, performance optimization, documentation
 >
 > See [ROADMAP.md](ROADMAP.md) and [to-dos/](to-dos/) for development timeline.
 
@@ -63,8 +63,9 @@ RustyNES combines **accuracy-first emulation** with **modern features** and the 
 | **GGPO Netplay**      | Frame-perfect rollback netcode via backroll-rs                                            |
 | **TAS Tools**         | FM2 format support with rewind, frame advance, and movie recording                        |
 | **Lua Scripting**     | Modern Lua 5.4 scripting via mlua for automation and bots                                 |
-| **GPU Accelerated**   | Cross-platform wgpu rendering with shader support                                         |
-| **Pure Rust**         | Zero unsafe code where possible, leveraging Rust's safety guarantees                      |
+| **GPU Accelerated**   | Cross-platform wgpu rendering with WGSL shader support                                    |
+| **Modern GUI**        | Iced framework with Elm architecture for type-safe, responsive UI                         |
+| **Pure Rust**         | Minimal unsafe code (only in FFI boundaries), leveraging Rust's safety guarantees         |
 
 ---
 
@@ -76,15 +77,17 @@ RustyNES has completed Phase 1 MVP with the Desktop GUI milestone:
 
 **What's New:**
 
-- Cross-platform desktop application using egui and wgpu
+- Cross-platform desktop application using Iced 0.13+ and wgpu
+- Audio playback via cpal with real-time sample generation
 - ROM loading with drag-and-drop and file dialog support
 - Real-time NES rendering at 60 FPS with GPU acceleration
+- Multiple scaling modes: PixelPerfect (8:7 PAR), FitWindow, Integer
+- Configuration persistence using RON format
 - Keyboard input for NES controller (arrow keys, Z/X, Enter/Shift)
-- Menu bar with File, Emulation, and Help menus
+- Menu bar with File, Emulation, View, and Help menus
 - Pause/Resume and Reset functionality
-- Comprehensive test ROM validation harness (207 ROMs)
-- PRG-RAM support for test ROM result reporting
-- Zero unsafe code maintained across all 6 crates
+- Critical PPU rendering bug fixes (attribute shift register timing)
+- Minimal unsafe code (only in cpal audio interface with proper documentation)
 
 **Previous Releases:**
 

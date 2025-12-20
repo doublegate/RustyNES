@@ -1,8 +1,8 @@
 # RustyNES Development Roadmap
 
-**Document Version:** 2.5.0
+**Document Version:** 2.6.0
 **Last Updated:** 2025-12-20
-**Project Status:** Phase 1 MVP Complete, Phase 1.5 Planned (Milestones M1-M6 Complete, M7-M10 Planned)
+**Project Status:** Phase 1 MVP Complete (100%), Phase 1.5 Stabilization Planned (Milestones M1-M6 Complete, M7-M10 Planned)
 
 ---
 
@@ -32,8 +32,8 @@
 - M3 (APU): 100% test pass rate - All 5 audio channels implemented with cycle-accurate timing
 - M4 (Mappers): 100% test pass rate - 5 essential mappers covering 77.7% of licensed NES games
 - M5 (Integration): 100% test pass rate - Complete rustynes-core layer with Bus, Console, Input, Save State framework
-- M6 (Desktop GUI): Cross-platform egui/wgpu application with ROM loading, wgpu rendering, input handling
-- Test Suite: 400+ comprehensive tests passing across 6 crates
+- M6 (Desktop GUI): Cross-platform Iced/wgpu application with ROM loading, audio playback, wgpu rendering, input handling
+- Test Suite: 392+ comprehensive tests passing across 6 crates (0 failures, 6 ignored)
 
 **Version History:**
 
@@ -41,7 +41,7 @@
 - v0.2.0 (December 19, 2025): APU Complete - Added all 5 audio channels with 136 comprehensive tests
 - v0.3.0 (December 19, 2025): Mappers Complete - Added NROM, MMC1, UxROM, CNROM, MMC3 mappers with 78 tests
 - v0.4.0 (December 19, 2025): Integration Complete - Complete rustynes-core layer with 18 tests
-- v0.5.0 (December 19, 2025): Phase 1 MVP Complete - Desktop GUI with egui/wgpu, ROM loading, rendering, input
+- v0.5.0 (December 19, 2025): Phase 1 MVP Complete - Desktop GUI with Iced/wgpu, audio playback (cpal), ROM loading, rendering, input
 
 **Project Status Change:**
 
@@ -65,9 +65,10 @@ Phase 1 (MVP): ████████████████████ 100%
 
 **Current Focus:**
 
-- Phase 2 planning: RetroAchievements, Netplay, TAS Tools
+- Phase 1.5 planning: Enhanced testing, audio/video refinements, performance optimization
+- Comprehensive documentation updates
+- Bug fixes and stability improvements
 - Additional mapper support for expanded game compatibility
-- Performance optimization and polish
 
 **Timeline Updates:**
 
