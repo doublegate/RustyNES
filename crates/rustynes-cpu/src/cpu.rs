@@ -1500,6 +1500,23 @@ impl Cpu {
         let result = mode.resolve(self.pc, self.x, self.y, bus);
         self.pc = self.pc.wrapping_add(u16::from(mode.operand_bytes()));
 
+        // Perform dummy read for indexed addressing modes with page crossing
+        // This matches hardware behavior where CPU reads from incorrect address
+        // before applying the page boundary correction
+        if result.page_crossed {
+            match mode {
+                AddressingMode::AbsoluteX
+                | AddressingMode::AbsoluteY
+                | AddressingMode::IndirectIndexedY => {
+                    // Calculate the incorrect address (before page fix)
+                    // Take high byte from base, low byte from final address
+                    let incorrect_addr = (result.base_addr & 0xFF00) | (result.addr & 0x00FF);
+                    let _ = bus.read(incorrect_addr);
+                }
+                _ => {}
+            }
+        }
+
         let value = match mode {
             AddressingMode::Accumulator => self.a,
             _ => bus.read(result.addr),
@@ -1512,6 +1529,20 @@ impl Cpu {
     pub(crate) fn write_operand(&mut self, bus: &mut impl Bus, mode: AddressingMode, value: u8) {
         let result = mode.resolve(self.pc, self.x, self.y, bus);
         self.pc = self.pc.wrapping_add(u16::from(mode.operand_bytes()));
+
+        // Perform dummy write for indexed addressing modes
+        // Write operations ALWAYS perform a dummy write (unconditional, not just on page crossing)
+        match mode {
+            AddressingMode::AbsoluteX
+            | AddressingMode::AbsoluteY
+            | AddressingMode::IndirectIndexedY => {
+                // Calculate the incorrect address (before page fix)
+                let incorrect_addr = (result.base_addr & 0xFF00) | (result.addr & 0x00FF);
+                // Dummy write to incorrect address (this is what hardware does)
+                bus.write(incorrect_addr, value);
+            }
+            _ => {}
+        }
 
         match mode {
             AddressingMode::Accumulator => self.a = value,

@@ -137,6 +137,12 @@ pub struct AddressResult {
     ///
     /// Page crossing adds +1 cycle for read operations in certain modes
     pub page_crossed: bool,
+
+    /// Base address before index addition (for dummy read calculation)
+    ///
+    /// Used to calculate the incorrect address for dummy reads during
+    /// indexed addressing with page crossing
+    pub base_addr: u16,
 }
 
 impl AddressResult {
@@ -147,6 +153,7 @@ impl AddressResult {
         Self {
             addr,
             page_crossed: false,
+            base_addr: 0,
         }
     }
 
@@ -154,7 +161,22 @@ impl AddressResult {
     #[inline]
     #[must_use]
     pub const fn with_page_cross(addr: u16, page_crossed: bool) -> Self {
-        Self { addr, page_crossed }
+        Self {
+            addr,
+            page_crossed,
+            base_addr: 0,
+        }
+    }
+
+    /// Create a new address result with base address for dummy read calculation
+    #[inline]
+    #[must_use]
+    pub const fn with_base_and_cross(addr: u16, base_addr: u16, page_crossed: bool) -> Self {
+        Self {
+            addr,
+            page_crossed,
+            base_addr,
+        }
     }
 }
 
@@ -223,14 +245,14 @@ impl AddressingMode {
                 let base = bus.read_u16(pc);
                 let addr = base.wrapping_add(x as u16);
                 let crossed = page_crossed(base, addr);
-                AddressResult::with_page_cross(addr, crossed)
+                AddressResult::with_base_and_cross(addr, base, crossed)
             }
 
             Self::AbsoluteY => {
                 let base = bus.read_u16(pc);
                 let addr = base.wrapping_add(y as u16);
                 let crossed = page_crossed(base, addr);
-                AddressResult::with_page_cross(addr, crossed)
+                AddressResult::with_base_and_cross(addr, base, crossed)
             }
 
             Self::Indirect => {
@@ -265,7 +287,7 @@ impl AddressingMode {
                 let addr = base.wrapping_add(y as u16);
                 let crossed = page_crossed(base, addr);
 
-                AddressResult::with_page_cross(addr, crossed)
+                AddressResult::with_base_and_cross(addr, base, crossed)
             }
 
             Self::Relative => {
