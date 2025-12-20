@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Phase 1.5 (Stabilization & Accuracy) planning documentation
+  - Comprehensive 6-month roadmap for accuracy improvements
+  - Test ROM integration strategy with 172 unique test files
+  - Visual validation framework planning
+  - Performance optimization guidelines
+  - Code quality improvement targets
+
+### Changed
+
+- Reorganized temporary file storage structure
+  - Moved test ROM output files to `/tmp/RustyNES/`
+  - Improved directory organization for build artifacts
+  - Updated documentation references to new paths
+
+- Updated project documentation
+  - Synchronized documentation across all milestone files
+  - Improved consistency in terminology and formatting
+  - Enhanced cross-referencing between documentation files
+
 ---
 
 ## [0.5.0] - 2025-12-19 - "Phase 1 Complete" (Milestone 6: Desktop GUI)
@@ -153,7 +174,7 @@ This release delivers a complete, playable NES emulator for desktop platforms.
 ### Test Results
 
 | Component | Tests | Pass Rate | Details |
-|-----------|-------|-----------|---------|
+| --------- | ----- | --------- | ------- |
 | **CPU** | 47/47 | **100%** | All 256 opcodes validated |
 | **PPU** | 85/87 | **97.7%** | Full rendering pipeline, 2 ignored |
 | **APU** | 136/136 | **100%** | All 5 channels + mixer |
@@ -179,7 +200,7 @@ cargo run -p rustynes-desktop --release -- path/to/game.nes
 ### Keyboard Controls
 
 | Key | Action |
-|-----|--------|
+| --- | ------ |
 | Arrow Keys | D-Pad |
 | Z | A Button |
 | X | B Button |
@@ -312,7 +333,7 @@ This release marks the completion of **Milestone 5 (Integration)**, delivering t
 **Memory Map:**
 
 | Range | Size | Description |
-|-------|------|-------------|
+| ----- | ---- | ----------- |
 | $0000-$07FF | 2KB | Internal RAM |
 | $0800-$1FFF | 6KB | RAM mirrors |
 | $2000-$2007 | 8 bytes | PPU registers |
@@ -399,7 +420,7 @@ This release adds `rustynes-core` to the workspace, completing the integration l
 ### Test Results
 
 | Component | Tests | Pass Rate | Details |
-|-----------|-------|-----------|---------|
+| --------- | ----- | --------- | ------- |
 | **CPU** | 46/46 | **100%** | All 256 opcodes validated |
 | **PPU** | 83/83 | **100%** | Full rendering pipeline |
 | **APU** | 150/150 | **100%** | All 5 channels + mixer |
@@ -546,7 +567,7 @@ This release marks the completion of **Milestone 4 (Mappers)**, delivering a com
 **Mapper Coverage:**
 
 | Mapper | Name | Coverage | PRG Banking | CHR Banking | Special Features |
-|--------|------|----------|-------------|-------------|------------------|
+| ------ | ---- | -------- | ----------- | ----------- | ---------------- |
 | 0 | NROM | 9.5% | None | None | - |
 | 1 | MMC1 | 27.9% | 16KB/32KB | 4KB/8KB | Shift register, SRAM |
 | 2 | UxROM | 10.6% | 16KB switch | None | Bus conflicts |
@@ -624,7 +645,7 @@ This release adds the `rustynes-mappers` crate to the existing CPU, PPU, and APU
 ### Test Results
 
 | Component | Tests | Pass Rate | Details |
-|-----------|-------|-----------|---------|
+| --------- | ----- | --------- | ------- |
 | **CPU** | 46/46 | **100%** | All 256 opcodes validated |
 | **PPU** | 83/83 | **100%** | Full rendering pipeline |
 | **APU** | 150/150 | **100%** | All 5 channels + mixer |
@@ -897,7 +918,7 @@ This release adds the `rustynes-apu` crate to the existing CPU and PPU libraries
 ### Test Results
 
 | Component | Tests | Pass Rate | Details |
-|-----------|-------|-----------|---------|
+| --------- | ----- | --------- | ------- |
 | **CPU** | 46/46 | **100%** | All 256 opcodes validated |
 | **PPU** | 83/83 | **100%** | Full rendering pipeline |
 | **APU** | 150/150 | **100%** | All 5 channels + mixer + resampler |
@@ -1045,7 +1066,7 @@ This release provides the core CPU and PPU crates as libraries. No desktop GUI i
 ### Test Results
 
 | Component | Tests | Pass Rate | Details |
-|-----------|-------|-----------|---------|
+| --------- | ----- | --------- | ------- |
 | **CPU** | 56/56 | **100%** | All 256 opcodes validated |
 | **PPU** | 88/90 | **97.8%** | 2 ignored (timing refinement) |
 | **Total** | 144/146 | **98.6%** | World-class accuracy |
