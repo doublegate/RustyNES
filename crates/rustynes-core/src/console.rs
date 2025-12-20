@@ -120,7 +120,10 @@ impl Console {
         // Note: Don't reset frame_count (preserve for debugging)
     }
 
-    /// Execute one CPU instruction
+    /// Execute one CPU instruction (coarse-grained execution)
+    ///
+    /// This method runs one complete CPU instruction, then catches up
+    /// the PPU and APU. Use `tick()` for cycle-accurate execution.
     ///
     /// # Returns
     ///
@@ -172,6 +175,118 @@ impl Console {
         self.master_cycles += u64::from(cpu_cycles);
 
         cpu_cycles
+    }
+
+    /// Execute exactly one CPU cycle with perfect PPU/APU synchronization.
+    ///
+    /// This is the cycle-accurate execution mode. Each call:
+    /// - Advances the CPU by exactly one cycle
+    /// - Advances the PPU by exactly 3 dots (3:1 PPU:CPU ratio)
+    /// - Advances the APU by one step
+    ///
+    /// # Returns
+    ///
+    /// `(instruction_complete, frame_complete)`:
+    /// - `instruction_complete`: true when a CPU instruction boundary is reached
+    /// - `frame_complete`: true when a video frame has just been completed
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use rustynes_core::Console;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let rom_data = vec![0; 16 + 16384 + 8192];
+    /// let mut console = Console::from_rom_bytes(&rom_data)?;
+    ///
+    /// // Cycle-accurate main loop
+    /// loop {
+    ///     let (instr_done, frame_done) = console.tick();
+    ///
+    ///     if frame_done {
+    ///         let framebuffer = console.framebuffer();
+    ///         // ... render to screen ...
+    ///     }
+    /// }
+    /// # }
+    /// ```
+    pub fn tick(&mut self) -> (bool, bool) {
+        let mut frame_complete = false;
+
+        // Handle DMA if active (DMA steals CPU cycles)
+        if self.bus.dma_active() {
+            let dma_done = self.bus.tick_dma();
+            if !dma_done {
+                // DMA cycle - still advance PPU and APU
+                for _ in 0..3 {
+                    let (fc, nmi) = self.bus.step_ppu();
+                    if nmi {
+                        self.cpu.trigger_nmi();
+                    }
+                    if fc {
+                        frame_complete = true;
+                        self.frame_count += 1;
+                    }
+                }
+                self.bus.apu.step();
+                self.master_cycles += 1;
+                return (false, frame_complete);
+            }
+        }
+
+        // Execute one CPU cycle
+        let instruction_complete = self.cpu.tick(&mut self.bus);
+
+        // Track CPU cycles for DMA timing
+        self.bus.add_cpu_cycles(1);
+
+        // Step PPU (3 dots per CPU cycle)
+        for _ in 0..3 {
+            let (fc, nmi) = self.bus.step_ppu();
+            if nmi {
+                self.cpu.trigger_nmi();
+            }
+            if fc {
+                frame_complete = true;
+                self.frame_count += 1;
+            }
+        }
+
+        // Step APU (1 step per CPU cycle)
+        self.bus.apu.step();
+
+        // Clock mapper (once per CPU cycle for cycle-based timing)
+        self.bus.clock_mapper(1);
+
+        // Check for mapper IRQ
+        if self.bus.mapper_irq_pending() {
+            self.cpu.set_irq(true);
+        }
+
+        // Update master cycle count
+        self.master_cycles += 1;
+
+        (instruction_complete, frame_complete)
+    }
+
+    /// Execute instructions until a complete frame is rendered using cycle-accurate mode.
+    ///
+    /// This method uses the cycle-accurate `tick()` method for precise timing.
+    /// Use this when you need perfect emulation accuracy.
+    pub fn step_frame_accurate(&mut self) {
+        let target_frame = self.frame_count + 1;
+
+        // Run until frame is complete
+        while self.frame_count < target_frame {
+            self.tick();
+
+            // Safety check: prevent infinite loop
+            // A frame is ~29,780 CPU cycles, give it some margin
+            if self.master_cycles > (target_frame * 35000) {
+                log::error!("Frame didn't complete in expected time (accurate mode)");
+                break;
+            }
+        }
     }
 
     /// Execute instructions until a complete frame is rendered
