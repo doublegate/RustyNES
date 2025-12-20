@@ -66,6 +66,11 @@ fn check_blargg_result(console: &Console) -> (bool, bool, Option<String>) {
 
 /// Run a single Blargg test ROM and check result.
 fn run_blargg_test(rom_name: &str) -> Result<(), String> {
+    run_blargg_test_with_timeout(rom_name, MAX_FRAMES)
+}
+
+/// Run a single Blargg test ROM with custom timeout.
+fn run_blargg_test_with_timeout(rom_name: &str, max_frames: u32) -> Result<(), String> {
     // Construct path to test ROM
     let rom_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..") // crates/
@@ -93,7 +98,7 @@ fn run_blargg_test(rom_name: &str) -> Result<(), String> {
         Console::from_rom_bytes(&rom_data).map_err(|e| format!("Failed to create console: {e}"))?;
 
     // Run test
-    for frame in 0..MAX_FRAMES {
+    for frame in 0..max_frames {
         console.step_frame();
 
         // Check result (but give ROM a few frames to initialize)

@@ -759,13 +759,20 @@ impl Cpu {
         0
     }
 
-    /// LXA - Unstable Load A and X
+    /// LXA/ATX - Load A and X with immediate (unstable on real hardware)
+    ///
+    /// On real hardware, this opcode has unstable behavior due to analog bus effects.
+    /// However, for emulation purposes (and to pass test ROMs like Blargg's), we
+    /// implement the stable behavior: A = X = immediate value.
+    ///
+    /// Reference: Nestopia implementation, validated by Blargg test ROMs.
     pub(crate) fn lxa(&mut self, bus: &mut impl Bus) -> u8 {
         let value = bus.read(self.pc);
         self.pc = self.pc.wrapping_add(1);
-        // Magic constant: 0xEE is most common
-        self.a = (self.a | 0xEE) & value;
-        self.x = self.a;
+        // Load both A and X with the immediate value
+        // (Real hardware behavior is unstable and varies with temperature/RF)
+        self.a = value;
+        self.x = value;
         self.set_zn(self.a);
         0
     }
