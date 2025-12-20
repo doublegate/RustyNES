@@ -11,6 +11,7 @@ use std::sync::Arc;
 use iced::{Element, Subscription, Task, Theme};
 use tracing::{error, info};
 
+use crate::audio::AudioPlayer;
 use crate::config::AppConfig;
 use crate::input::{gamepad::GamepadManager, keyboard::KeyboardMapper, InputState};
 use crate::library::LibraryState;
@@ -64,13 +65,20 @@ pub struct RustyNes {
     #[allow(dead_code)] // Stub for Phase 2, infrastructure only
     runahead_manager: RunAheadManager,
 
+    /// Audio player (cpal stream)
+    audio_player: Option<AudioPlayer>,
+
     /// Show about dialog
     show_about: bool,
 }
 
 impl RustyNes {
     /// Create new application state
-    pub fn new() -> (Self, Task<Message>) {
+    ///
+    /// # Arguments
+    ///
+    /// * `rom_path` - Optional ROM file path from command-line arguments
+    pub fn new(rom_path: Option<PathBuf>) -> (Self, Task<Message>) {
         info!("Initializing RustyNES application");
 
         // Load configuration from disk
@@ -94,6 +102,18 @@ impl RustyNes {
             }
         };
 
+        // Initialize audio player (may fail on platforms without audio support)
+        let audio_player = match AudioPlayer::new() {
+            Ok(player) => {
+                info!("Audio playback initialized at {} Hz", player.sample_rate());
+                Some(player)
+            }
+            Err(e) => {
+                error!("Failed to initialize audio playback: {}", e);
+                None
+            }
+        };
+
         let app = Self {
             current_view: View::Library,
             console: None,
@@ -108,10 +128,19 @@ impl RustyNes {
             metrics: PerformanceMetrics::default(),
             show_metrics: false,
             runahead_manager: RunAheadManager::default(),
+            audio_player,
             show_about: false,
         };
 
-        (app, Task::none())
+        // Load ROM from CLI argument if provided
+        let task = if let Some(path) = rom_path {
+            info!("Loading ROM from CLI argument: {}", path.display());
+            Task::done(Message::LoadRom(path))
+        } else {
+            Task::none()
+        };
+
+        (app, task)
     }
 
     /// Get framebuffer for rendering
@@ -454,6 +483,17 @@ impl RustyNes {
 
                     // Update shared framebuffer
                     self.framebuffer = Arc::new(rgb_buffer);
+
+                    // Queue audio samples if audio is enabled and player is available
+                    if self.config.audio.enabled {
+                        if let Some(ref audio_player) = self.audio_player {
+                            let samples = console.audio_samples();
+                            if !samples.is_empty() {
+                                audio_player.queue_samples(samples);
+                                console.clear_audio_samples();
+                            }
+                        }
+                    }
 
                     // Update metrics (runahead not yet implemented)
                     self.metrics.update_frame(false, 0);

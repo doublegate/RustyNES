@@ -228,6 +228,7 @@ impl Ppu {
     /// # Returns
     ///
     /// (frame_complete, nmi_triggered)
+    #[allow(clippy::too_many_lines)] // PPU step naturally handles many timing states
     pub fn step_with_chr<F: Fn(u16) -> u8>(&mut self, read_chr: F) -> (bool, bool) {
         let rendering_enabled = self.mask.rendering_enabled();
 
@@ -340,6 +341,64 @@ impl Ppu {
                         self.ctrl.sprite_height(),
                         &mut self.secondary_oam,
                     );
+                }
+            }
+
+            // Sprite fetching (all rendering scanlines)
+            if self.timing.is_sprite_fetch_start() {
+                // Load sprites from secondary OAM into sprite renderer
+                let sprite_zero_in_range = self.sprite_evaluator.sprite_zero_in_range();
+                self.sprite_renderer
+                    .load_sprites(&self.secondary_oam, sprite_zero_in_range);
+            }
+
+            if self.timing.is_sprite_fetch_range() {
+                // Fetch sprite pattern data during dots 257-320 (8 dots per sprite, 8 sprites)
+                let fetch_cycle = dot - 257; // 0-63
+                let sprite_index = fetch_cycle / 8; // 0-7 (which sprite)
+                let fetch_step = fetch_cycle % 8; // 0-7 (which step in the 8-dot cycle)
+
+                // On step 7, fetch both pattern bytes and load into sprite renderer
+                // (simplified from hardware timing which fetches in steps 4 and 6)
+                if fetch_step == 7 {
+                    if let Some(sprite) = self.secondary_oam.get_sprite(sprite_index as u8) {
+                        let sprite_base = self.ctrl.sprite_table_addr();
+                        let tile_index = sprite.tile_index;
+
+                        // Calculate which row of the sprite to fetch
+                        // Note: We're fetching for scanline+1 (next scanline) since
+                        // sprite evaluation fills secondary OAM with sprites for next scanline
+                        let next_scanline = scanline + 1;
+                        let sprite_y = next_scanline.saturating_sub(sprite.y as u16);
+
+                        // Handle vertical flip
+                        let row = if sprite.attributes.flip_vertical() {
+                            7 - sprite_y
+                        } else {
+                            sprite_y
+                        };
+
+                        // Fetch pattern table low byte
+                        let pattern_addr_low = sprite_base + u16::from(tile_index) * 16 + row;
+                        let mut pattern_low = read_chr(pattern_addr_low);
+
+                        // Fetch pattern table high byte
+                        let pattern_addr_high = pattern_addr_low + 8;
+                        let mut pattern_high = read_chr(pattern_addr_high);
+
+                        // Handle horizontal flip
+                        if sprite.attributes.flip_horizontal() {
+                            pattern_low = pattern_low.reverse_bits();
+                            pattern_high = pattern_high.reverse_bits();
+                        }
+
+                        // Load pattern data into sprite renderer
+                        self.sprite_renderer.load_sprite_pattern(
+                            sprite_index as u8,
+                            pattern_low,
+                            pattern_high,
+                        );
+                    }
                 }
             }
 

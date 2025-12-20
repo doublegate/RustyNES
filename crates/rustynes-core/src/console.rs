@@ -309,6 +309,40 @@ impl Console {
         self.bus.controller2.buttons()
     }
 
+    // === Audio Methods ===
+
+    /// Get audio samples ready for playback
+    ///
+    /// Returns audio samples at the target sample rate (e.g., 48 kHz).
+    /// Call [`clear_audio_samples()`](Self::clear_audio_samples) after consuming.
+    ///
+    /// # Returns
+    ///
+    /// Slice of audio samples at target sample rate
+    #[must_use]
+    pub fn audio_samples(&self) -> &[f32] {
+        self.bus.apu.samples()
+    }
+
+    /// Clear the audio sample buffer
+    ///
+    /// Should be called after consuming samples via [`audio_samples()`](Self::audio_samples).
+    pub fn clear_audio_samples(&mut self) {
+        self.bus.apu.clear_samples();
+    }
+
+    /// Check if at least `min_samples` audio samples are available
+    ///
+    /// Useful for determining when to pull samples for audio output.
+    ///
+    /// # Arguments
+    ///
+    /// * `min_samples` - Minimum number of samples required
+    #[must_use]
+    pub fn audio_samples_ready(&self, min_samples: usize) -> bool {
+        self.bus.apu.samples_ready(min_samples)
+    }
+
     // === Testing/Debugging Methods ===
 
     /// Read memory at address without side effects (for testing)

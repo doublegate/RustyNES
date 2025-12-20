@@ -135,6 +135,15 @@ impl Background {
     pub fn shift_registers(&mut self) {
         self.pattern_shift_low <<= 1;
         self.pattern_shift_high <<= 1;
+
+        // Shift attribute registers and reload bit 0 from attribute byte latch
+        // This matches NES PPU hardware behavior where attribute shift registers
+        // shift left every cycle with bit 0 constantly reloaded
+        let attr_bit_0 = u8::from(self.attribute_byte & 0x01 != 0);
+        let attr_bit_1 = u8::from(self.attribute_byte & 0x02 != 0);
+
+        self.attribute_latch_low = (self.attribute_latch_low << 1) | attr_bit_0;
+        self.attribute_latch_high = (self.attribute_latch_high << 1) | attr_bit_1;
     }
 
     /// Get background pixel and palette
