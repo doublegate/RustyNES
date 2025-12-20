@@ -1,8 +1,8 @@
 # RustyNES Development Roadmap
 
-**Document Version:** 2.4.0
-**Last Updated:** 2025-12-19
-**Project Status:** Phase 1 MVP Complete (Milestones M1-M6 Complete)
+**Document Version:** 2.5.0
+**Last Updated:** 2025-12-20
+**Project Status:** Phase 1 MVP Complete, Phase 1.5 Planned (Milestones M1-M6 Complete, M7-M10 Planned)
 
 ---
 
@@ -11,7 +11,8 @@
 - [Overview](#overview)
 - [Development Phases](#development-phases)
 - [Phase 1: MVP (Months 1-6)](#phase-1-mvp-months-1-6)
-- [Phase 2: Advanced Features (Months 7-12)](#phase-2-advanced-features-months-7-12)
+- [Phase 1.5: Stabilization & Accuracy (Months 7-9)](#phase-15-stabilization--accuracy-months-7-9)
+- [Phase 2: Advanced Features (Months 10-15)](#phase-2-advanced-features-months-10-15)
 - [Phase 3: Expansion (Months 13-18)](#phase-3-expansion-months-13-18)
 - [Phase 4: Polish & Release (Months 19-24)](#phase-4-polish--release-months-19-24)
 - [Milestone Tracking](#milestone-tracking)
@@ -82,13 +83,15 @@ RustyNES development follows a **phased approach** with clear milestones and del
 
 ### Success Criteria
 
-| Metric | Phase 1 (MVP) | Phase 2 | Phase 3 | Phase 4 (v1.0) |
-|--------|---------------|---------|---------|----------------|
-| **Accuracy** | 85% TASVideos | 95% TASVideos | 98% TASVideos | 100% TASVideos |
-| **Mappers** | 5 (80% games) | 15 (95% games) | 50 (99% games) | 300+ (100%+) |
-| **Test Coverage** | 75% | 85% | 90% | 95% |
-| **Performance** | 100 FPS | 500 FPS | 1000 FPS | 1000+ FPS |
-| **Documentation** | Core APIs | All APIs | Full guide | Complete |
+| Metric | Phase 1 (MVP) | Phase 1.5 (Stabilization) | Phase 2 (Features) | Phase 3 (Expansion) | Phase 4 (v1.0) |
+|--------|---------------|---------------------------|--------------------|--------------------|----------------|
+| **Accuracy** | 5 tests passing | 95%+ test ROMs (202/212) | 95% TASVideos | 98% TASVideos | 100% TASVideos |
+| **Mappers** | 5 (77.7% games) | 5 (77.7% games) | 15 (95% games) | 50 (99% games) | 300+ (100%+) |
+| **Test Coverage** | 75% | 85% | 90% | 92% | 95% |
+| **Performance** | 100 FPS | 120+ FPS | 500 FPS | 1000 FPS | 1000+ FPS |
+| **Documentation** | Core APIs | Complete | All APIs | Full guide | Complete |
+| **Audio Quality** | Basic | High (A/V sync) | High | High | Professional |
+| **Stability** | MVP | Production-ready | Stable | Robust | Rock-solid |
 
 ---
 
@@ -103,14 +106,21 @@ gantt
     section Phase 1: MVP
     CPU Implementation           :done, 2025-12, 1m
     PPU Implementation           :done, 2025-12, 1m
-    APU Implementation           :2026-01, 2m
-    Basic Mappers (0-4)          :2026-01, 2m
-    Desktop GUI                  :2026-03, 2m
-    MVP Release                  :milestone, 2026-05, 0d
+    APU Implementation           :done, 2025-12, 1m
+    Basic Mappers (0-4)          :done, 2025-12, 1m
+    Desktop GUI                  :done, 2025-12, 1m
+    MVP Release (v0.5.0)         :milestone, 2025-12-19, 0d
+
+    section Phase 1.5: Stabilization
+    Accuracy Improvements        :2026-01, 1m
+    Test ROM Validation          :2026-02, 1m
+    Known Issues Resolution      :2026-03, 1m
+    Final Polish                 :2026-04, 1m
+    v1.0.0-alpha.1 Release       :milestone, 2026-04, 0d
 
     section Phase 2: Features
-    RetroAchievements           :2026-07, 2m
-    Netplay (GGPO)              :2026-07, 3m
+    RetroAchievements           :2026-05, 2m
+    Netplay (GGPO)              :2026-06, 3m
     TAS Tools                   :2026-08, 2m
     Lua Scripting               :2026-09, 2m
     Debugger                    :2026-10, 2m
@@ -380,7 +390,254 @@ gantt
 
 ---
 
-## Phase 2: Advanced Features (Months 7-12)
+## Phase 1.5: Stabilization & Accuracy (Months 7-9)
+
+**Goal:** Achieve 95%+ test ROM pass rate and production-ready stability
+
+**Duration:** 3-4 months (January-April 2026)
+**Version Progression:** v0.5.0 → v0.6.0 → v0.7.0 → v0.8.0 → v0.9.0/v1.0.0-alpha.1
+
+Phase 1.5 bridges Phase 1 MVP (v0.5.0) to Phase 2 Advanced Features, focusing on accuracy improvements, comprehensive test ROM validation, and resolving all known issues from the MVP release.
+
+### Overview
+
+**Current State (v0.5.0):**
+- Phase 1 MVP complete (all 6 milestones)
+- 5 test ROMs passing, ~200 pending integration
+- VBlank timing ±51 cycles (target: ±2 cycles)
+- Audio quality issues (pops, clicks, A/V sync drift)
+- No comprehensive performance benchmarking
+
+**Target State (v0.9.0/v1.0.0-alpha.1):**
+- 95%+ test ROM pass rate (202+/212 tests)
+- VBlank timing ±2 cycles
+- High-quality audio (no artifacts, perfect A/V sync)
+- 20%+ performance improvement (120+ FPS)
+- Zero critical bugs
+- Production-ready for Phase 2 advanced features
+
+### Milestone 7: Accuracy Improvements (v0.6.0)
+
+**Duration:** 1 month (January 2026)
+**Focus:** CPU, PPU, APU, Bus timing refinements
+
+**Objectives:**
+
+- [ ] CPU timing refinements (±1 cycle accuracy)
+- [ ] PPU VBlank precision (±51 cycles → ±2 cycles)
+- [ ] APU frame counter precision (±1 cycle)
+- [ ] Bus timing accuracy (OAM DMA 513-514 cycles)
+
+**Test ROM Targets:**
+
+- Pass vbl_set_time.nes, vbl_clear_time.nes (currently ignored)
+- Pass cpu_timing tests (7 ROMs)
+- Pass additional PPU timing tests
+
+**Deliverable:** v0.6.0 with improved timing accuracy (40-60 test ROMs passing, 20-30%)
+
+**Sprint Breakdown:**
+
+1. **Sprint 1:** CPU Accuracy (1 week)
+   - Instruction timing refinements
+   - Branch timing edge cases
+   - Interrupt timing precision
+
+2. **Sprint 2:** PPU Accuracy (1 week)
+   - VBlank timing precision (±2 cycles)
+   - Sprite evaluation timing
+   - Background rendering edge cases
+
+3. **Sprint 3:** APU Accuracy (1 week)
+   - Frame counter precision
+   - Envelope/sweep timing
+   - DMC timing
+
+4. **Sprint 4:** Bus & Timing Polish (1 week)
+   - OAM DMA cycle accuracy
+   - CPU/PPU synchronization
+   - Mapper IRQ timing
+
+### Milestone 8: Test ROM Validation (v0.7.0)
+
+**Duration:** 1 month (February 2026)
+**Focus:** Systematic test ROM integration and validation
+
+**Objectives:**
+
+- [ ] Integrate all 212 test ROMs into automated test harness
+- [ ] Achieve 95%+ test pass rate (202+/212 tests)
+- [ ] Document all test failures with root cause analysis
+- [ ] CI pipeline runs full test suite
+
+**Test ROM Coverage:**
+
+- CPU: 34/36 tests passing (94%)
+- PPU: 47/49 tests passing (96%)
+- APU: 67/70 tests passing (96%)
+- Mappers: 54/57 tests passing (95%)
+- **Overall: 202/212 tests passing (95%+)**
+
+**Deliverable:** v0.7.0 with 95%+ test pass rate
+
+**Sprint Breakdown:**
+
+1. **Sprint 1:** nestest & CPU Tests (1 week)
+   - Automated golden log comparison
+   - Blargg CPU instruction tests (14 ROMs)
+
+2. **Sprint 2:** Blargg CPU Tests (1 week)
+   - cpu_timing_test6 suite (7 ROMs)
+   - cpu_interrupts_v2 (7 ROMs)
+
+3. **Sprint 3:** Blargg PPU Tests (1 week)
+   - ppu_vbl_nmi (10 ROMs)
+   - ppu_sprite_hit (10 ROMs)
+   - ppu_open_bus (3 ROMs)
+
+4. **Sprint 4:** Blargg APU Tests (1 week)
+   - apu_test suite (11 ROMs)
+   - Additional APU tests (59 ROMs)
+
+5. **Sprint 5:** Mapper Tests (1 week)
+   - Holy Mapperel suite (45 ROMs)
+   - MMC3/MMC5 specialized tests (12 ROMs)
+
+### Milestone 9: Known Issues Resolution (v0.8.0)
+
+**Duration:** 1 month (March 2026)
+**Focus:** Audio quality, PPU edge cases, performance optimization, bug fixes
+
+**Objectives:**
+
+- [ ] Dynamic audio resampling (rubato)
+- [ ] Audio/video synchronization
+- [ ] PPU edge case fixes (sprite overflow, palette RAM)
+- [ ] 20%+ performance improvement (100 FPS → 120+ FPS)
+- [ ] Fix all critical bugs from GitHub issues
+
+**Audio Improvements:**
+
+- Dynamic resampling (NES 1.789773 MHz → PC 48 kHz)
+- Ring buffer management (prevent underrun/overflow)
+- Audio/video sync (frame callback timing)
+- Zero audio pops/clicks/crackling
+
+**PPU Edge Cases:**
+
+- Sprite overflow flag edge cases
+- Palette RAM reads ($3F04, $3F08, $3F0C)
+- Mid-scanline scrolling changes
+- Sprite 0 hit timing precision
+
+**Performance Optimization:**
+
+- Profiling with cargo-flamegraph
+- Benchmarking with criterion
+- Hot path optimization
+- Target: 120+ FPS (20%+ improvement)
+
+**Deliverable:** v0.8.0 with high-quality audio, PPU fixes, and optimized performance
+
+**Sprint Breakdown:**
+
+1. **Sprint 1:** Audio Improvements (1 week)
+   - Dynamic resampling implementation
+   - A/V synchronization
+   - Buffer management
+
+2. **Sprint 2:** PPU Edge Cases (1 week)
+   - Sprite overflow flag
+   - Palette RAM edge cases
+   - Scrolling edge cases
+
+3. **Sprint 3:** Performance Optimization (1 week)
+   - Profiling and benchmarking
+   - Hot path optimization
+   - 20%+ performance improvement
+
+4. **Sprint 4:** Bug Fixes & Polish (1 week)
+   - GitHub issue triage
+   - Critical bug fixes
+   - Error handling improvements
+
+### Milestone 10: Final Polish (v0.9.0/v1.0.0-alpha.1)
+
+**Duration:** 1 week (April 2026)
+**Focus:** UI/UX polish, documentation, release preparation
+
+**Objectives:**
+
+- [ ] UI/UX improvements (responsive design, theme support)
+- [ ] Comprehensive documentation (user guide, API docs, developer guide)
+- [ ] Full regression testing (202/212 tests, 95%+)
+- [ ] Build release binaries (Linux, macOS, Windows)
+- [ ] Decide version number (v0.9.0 or v1.0.0-alpha.1)
+- [ ] Publish GitHub release
+
+**UI/UX Improvements:**
+
+- Responsive layout (adapt to window size)
+- Theme support (light/dark mode)
+- Improved settings organization
+- Visual feedback (loading states, progress bars)
+- Accessibility (keyboard navigation, screen reader support)
+
+**Documentation:**
+
+- User guide (installation, usage, troubleshooting)
+- API documentation (rustdoc for all public APIs)
+- Developer guide (architecture, testing, contributing)
+- Known limitations and workarounds
+- FAQ
+
+**Version Decision:**
+
+- **v0.9.0:** If 90-94% test pass rate, minor issues remaining
+- **v1.0.0-alpha.1:** If 95%+ test pass rate, zero critical bugs, documentation complete
+
+**Deliverable:** v0.9.0 or v1.0.0-alpha.1 with polished UI, complete documentation, and multi-platform release
+
+**Sprint Breakdown:**
+
+1. **Sprint 1:** UI/UX Improvements (2 days)
+   - Responsive design
+   - Theme support
+   - Settings organization
+
+2. **Sprint 2:** Documentation (3 days)
+   - User guide
+   - API documentation
+   - Developer guide
+
+3. **Sprint 3:** Release Preparation (2 days)
+   - Full regression testing
+   - Binary builds
+   - GitHub release
+
+### Phase 1.5 Milestone: Stabilization Complete
+
+**Release Checklist:**
+
+- [ ] M7 (Accuracy): Complete
+- [ ] M8 (Test ROMs): Complete (95%+ pass rate)
+- [ ] M9 (Known Issues): Complete
+- [ ] M10 (Polish): Complete
+- [ ] 202+/212 test ROMs passing (95%+)
+- [ ] High-quality audio (no artifacts)
+- [ ] 120+ FPS performance
+- [ ] Zero critical bugs
+- [ ] Complete documentation
+- [ ] Multi-platform binaries
+- [ ] v0.9.0 or v1.0.0-alpha.1 released
+
+**Transition to Phase 2:**
+
+Phase 1.5 establishes a production-ready foundation for Phase 2 advanced features (RetroAchievements, netplay, TAS tools). With 95%+ accuracy and zero critical bugs, the emulator is ready for community use and advanced feature development.
+
+---
+
+## Phase 2: Advanced Features (Months 10-15)
 
 **Goal:** Feature parity with modern emulators
 
@@ -808,6 +1065,8 @@ gantt
 
 ### Key Milestones
 
+#### Phase 1: MVP (v0.1.0 - v0.5.0)
+
 - [x] **M1:** CPU passes nestest.nes - COMPLETED December 19, 2025
 - [x] **M2:** PPU renders first frame - COMPLETED December 19, 2025
 - [x] **M3:** APU outputs audio - COMPLETED December 19, 2025
@@ -815,15 +1074,42 @@ gantt
 - [x] **M5:** Integration testing complete - COMPLETED December 19, 2025
 - [x] **M6:** Desktop GUI - COMPLETED December 19, 2025
 - [x] **MVP:** First playable release (v0.5.0) - ACHIEVED December 19, 2025
-- [ ] **M7:** RetroAchievements working - PLANNED 2026
-- [ ] **M8:** Netplay functional - PLANNED 2026
-- [ ] **M9:** Feature complete - TARGET December 2026
-- [ ] **M10:** WebAssembly demo - PLANNED 2027
-- [ ] **M11:** v1.0 release - TARGET December 2027
 
-### Current Sprint Focus (Phase 2 Planning)
+#### Phase 1.5: Stabilization & Accuracy (v0.6.0 - v1.0.0-alpha.1)
 
-**Priority:** Phase 2 planning and additional feature development
+- [ ] **M7:** Accuracy improvements (v0.6.0) - PLANNED January 2026
+- [ ] **M8:** Test ROM validation (v0.7.0, 95%+ pass rate) - PLANNED February 2026
+- [ ] **M9:** Known issues resolution (v0.8.0) - PLANNED March 2026
+- [ ] **M10:** Final polish (v0.9.0/v1.0.0-alpha.1) - PLANNED April 2026
+- [ ] **Stabilization Complete:** Production-ready release - TARGET April 2026
+
+#### Phase 2: Advanced Features (v1.1.0 - v1.5.0)
+
+- [ ] **M11:** RetroAchievements working - PLANNED May-June 2026
+- [ ] **M12:** Netplay functional - PLANNED July-September 2026
+- [ ] **M13:** TAS Tools - PLANNED August-September 2026
+- [ ] **M14:** Lua Scripting - PLANNED September-October 2026
+- [ ] **M15:** Advanced Debugger - PLANNED October-November 2026
+- [ ] **Feature Complete** - TARGET December 2026
+
+#### Phase 3: Expansion (v1.6.0 - v1.9.0)
+
+- [ ] **M16:** Expansion audio - PLANNED January-March 2027
+- [ ] **M17:** Additional mappers (50 total) - PLANNED February-May 2027
+- [ ] **M18:** WebAssembly - PLANNED April-May 2027
+- [ ] **M19:** TAS Editor - PLANNED May-June 2027
+- [ ] **Expansion Complete** - TARGET June 2027
+
+#### Phase 4: Polish & Release (v1.10.0 - v1.0)
+
+- [ ] **M20:** Performance optimization - PLANNED July-September 2027
+- [ ] **M21:** Video filters - PLANNED August-September 2027
+- [ ] **M22:** Final testing & documentation - PLANNED September-November 2027
+- [ ] **v1.0 Release** - TARGET December 2027
+
+### Current Sprint Focus (Phase 1.5 Planning)
+
+**Priority:** Phase 1.5 stabilization and accuracy improvements
 
 #### Phase 1 - COMPLETED December 19, 2025
 
@@ -838,52 +1124,69 @@ All Phase 1 milestones completed ahead of schedule:
 
 **Achievement:** Complete MVP emulator with 6 crates, 400+ tests, zero unsafe code
 
-#### Phase 2 Planning
+#### Phase 1.5 Planning
 
-**Duration:** 2026
+**Duration:** January-April 2026 (3-4 months)
 
-**Objective:** Advanced features for competitive emulation
+**Objective:** Production-ready emulator with 95%+ accuracy
 
-**Planned Features:**
+**Planned Milestones:**
 
-1. RetroAchievements (M7)
-   - rcheevos FFI integration
-   - Achievement detection and notifications
-   - Leaderboard support
+1. **M7: Accuracy Improvements (v0.6.0)** - January 2026
+   - CPU timing refinements (±1 cycle)
+   - PPU VBlank precision (±2 cycles)
+   - APU frame counter precision
+   - Bus timing accuracy
 
-2. Netplay (M8)
-   - GGPO rollback netcode
-   - Lobby system
-   - Spectator mode
+2. **M8: Test ROM Validation (v0.7.0)** - February 2026
+   - Integrate all 212 test ROMs
+   - Achieve 95%+ pass rate (202+/212 tests)
+   - Automated test harness
+   - CI pipeline integration
 
-3. TAS Tools (M9)
-   - FM2 movie recording/playback
-   - Frame advance
-   - Input editing
+3. **M9: Known Issues Resolution (v0.8.0)** - March 2026
+   - Dynamic audio resampling
+   - Audio/video synchronization
+   - PPU edge case fixes
+   - 20%+ performance improvement
 
-4. Advanced Debugger
-   - CPU debugger with breakpoints
-   - PPU viewer (nametables, patterns, OAM)
-   - Memory viewer/editor
+4. **M10: Final Polish (v0.9.0/v1.0.0-alpha.1)** - April 2026
+   - UI/UX improvements
+   - Comprehensive documentation
+   - Multi-platform release binaries
+   - Production-ready release
 
-**Deliverable:** Feature-complete emulator competitive with modern alternatives
+**Deliverable:** Stable, accurate emulator ready for Phase 2 advanced features
+
+**Transition to Phase 2:** With 95%+ accuracy and zero critical bugs, begin RetroAchievements, netplay, and TAS tools development in May 2026.
 
 ### Risk & Blockers
 
 #### Current Status
 
-**No Critical Blockers** - Phase 1 MVP complete, ready for Phase 2 development
+**No Critical Blockers** - Phase 1 MVP complete, ready for Phase 1.5 stabilization
 
-#### Next Priorities
+#### Phase 1.5 Priorities
 
-1. **Phase 2 Planning** - January 2026
-   - Define detailed requirements for advanced features
-   - Prioritize between RetroAchievements, Netplay, and TAS tools
-   - Plan mapper expansion for additional game compatibility
+1. **M7: Accuracy Improvements** - January 2026
+   - VBlank timing precision (±51 cycles → ±2 cycles)
+   - CPU/PPU/APU timing refinements
+   - Pass currently-ignored timing tests
 
-2. **Additional Mapper Support**
-   - Target: 15 mappers for 95% game coverage
-   - Priority mappers: AxROM, MMC5, VRC6
+2. **M8: Test ROM Validation** - February 2026
+   - Integrate 212 test ROMs into automated harness
+   - Achieve 95%+ pass rate (202+/212 tests)
+   - Document failure root causes
+
+3. **M9: Known Issues Resolution** - March 2026
+   - Dynamic audio resampling (eliminate pops/clicks)
+   - PPU edge case fixes
+   - 20%+ performance improvement
+
+4. **M10: Final Polish** - April 2026
+   - UI/UX improvements
+   - Comprehensive documentation
+   - Multi-platform release
 
 #### Project Health
 
@@ -891,7 +1194,8 @@ All Phase 1 milestones completed ahead of schedule:
 - 400+ comprehensive tests passing across 6 crates
 - Zero unsafe code maintained across all crates
 - Cross-platform desktop application released
-- Strong foundation for Phase 2 advanced features
+- Phase 1.5 planning complete with detailed sprint documentation
+- Strong foundation for accuracy improvements and advanced features
 
 ---
 
@@ -1044,17 +1348,20 @@ RustyNES development has achieved a **major milestone** with Phase 1 MVP complet
 
 - Phase 1 is **100% complete (all 6 milestones done)**
 - MVP achieved **6+ months ahead of original June 2026 target**
-- Development shifting to Phase 2 advanced features
+- Phase 1.5 planning **complete** with comprehensive sprint documentation
+- Development transitioning to Phase 1.5 stabilization
 
-**Phase 2 Priorities:**
+**Phase 1.5 Priorities:**
 
-With Phase 1 MVP complete, development focuses on advanced features:
+With Phase 1 MVP complete, development focuses on stability and accuracy:
 
-- RetroAchievements integration (rcheevos FFI)
-- GGPO netplay with rollback
-- TAS tools (FM2 format support)
-- Advanced debugging capabilities
-- Additional mapper support (target: 15 mappers, 95% game coverage)
+- **M7:** Accuracy improvements (CPU/PPU/APU timing refinements)
+- **M8:** Test ROM validation (95%+ pass rate, 202+/212 tests)
+- **M9:** Known issues resolution (audio quality, PPU edge cases, performance)
+- **M10:** Final polish (UI/UX, documentation, multi-platform release)
+- **Target:** v0.9.0 or v1.0.0-alpha.1 by April 2026
+
+**Transition to Phase 2:** May 2026 (RetroAchievements, netplay, TAS tools)
 
 **What Makes This Significant:**
 
@@ -1072,7 +1379,7 @@ Success continues to depend on:
 - **Clear documentation** (lowering contribution barriers)
 - **Community involvement** (testing, feedback, contributions)
 
-**Next Steps:** Begin Phase 2 planning and advanced feature development!
+**Next Steps:** Begin Phase 1.5 stabilization (M7-M10) before advanced features in Phase 2!
 
 ---
 

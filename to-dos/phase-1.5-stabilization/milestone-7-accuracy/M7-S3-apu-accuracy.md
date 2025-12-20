@@ -1,0 +1,70 @@
+# M7 Sprint 3: APU Accuracy
+
+## Overview
+
+Calibrate APU timing and mixing to achieve hardware-accurate audio synthesis and prepare for blargg APU test suite in M8.
+
+## Objectives
+
+- [ ] Achieve frame counter cycle precision (±1 cycle)
+- [ ] Fix DMC channel edge cases
+- [ ] Refine triangle linear counter timing
+- [ ] Calibrate non-linear mixer for hardware accuracy
+- [ ] Validate channel interaction timing
+
+## Tasks
+
+### Task 1: Frame Counter Precision
+- [ ] Verify 4-step mode timing (14,915 cycles, 29,829 cycles)
+- [ ] Verify 5-step mode timing (18,641 cycles, 37,282 cycles)
+- [ ] Test IRQ flag timing in 4-step mode
+- [ ] Validate quarter frame/half frame events
+- [ ] Handle write timing edge cases ($4017 writes)
+
+### Task 2: DMC Channel Edge Cases
+- [ ] Test DMC DMA conflicts with CPU
+- [ ] Verify sample buffer behavior (empty/refill timing)
+- [ ] Test DMC rates (16 rate values)
+- [ ] Handle IRQ flag edge cases
+- [ ] Validate memory reader timing
+
+### Task 3: Triangle Linear Counter
+- [ ] Verify linear counter reload timing
+- [ ] Test halt flag behavior
+- [ ] Validate control flag interaction
+- [ ] Test with apu_lin_ctr.nes
+- [ ] Handle edge cases (reload while counting)
+
+### Task 4: Mixer Calibration
+- [ ] Verify non-linear mixing formula
+- [ ] Test output levels for all channels
+- [ ] Validate pulse channel mixing (0-15 volume)
+- [ ] Test TND mixing (triangle, noise, DMC)
+- [ ] Compare output to hardware recordings
+
+## Test ROMs
+
+| ROM | Status | Notes |
+|-----|--------|-------|
+| apu_test.nes | [ ] Pending | Comprehensive APU test suite |
+| apu_len_ctr.nes | [ ] Pending | Length counter timing |
+| apu_len_table.nes | [ ] Pending | Length counter table values |
+| apu_irq_flag.nes | [ ] Pending | IRQ flag timing |
+| apu_irq_flag_timing.nes | [ ] Pending | IRQ flag precise timing |
+| apu_lin_ctr.nes | [ ] Pending | Triangle linear counter |
+| apu_dmc.nes | [ ] Pending | DMC channel comprehensive |
+| apu_dmc_latency.nes | [ ] Pending | DMC DMA latency |
+
+## Acceptance Criteria
+
+- [ ] Frame counter timing accurate to ±1 cycle
+- [ ] apu_test.nes passes (basic APU test)
+- [ ] apu_len_ctr.nes passes
+- [ ] apu_lin_ctr.nes passes
+- [ ] DMC channel edge cases handled
+- [ ] Mixer output matches hardware recordings
+- [ ] Audio quality verified in test games
+
+## Version Target
+
+v0.6.0

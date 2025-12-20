@@ -5,10 +5,11 @@
 RustyNES follows [Semantic Versioning 2.0.0](https://semver.org/) with a phased approach to v1.0.0:
 
 - **v0.x.y** (Phase 1: MVP) - Pre-release development, breaking changes expected
-- **v1.0.0-alpha.x** (Phase 2: Features) - Feature additions, API stabilization
-- **v1.0.0-beta.x** (Phase 3: Expansion) - Feature complete, polish and optimization
-- **v1.0.0-rc.x** (Phase 4: Polish) - Release candidates, final testing
-- **v1.0.0** (Milestone 18) - Production release, TASVideos 100% accuracy
+- **v0.6.0 - v1.0.0-alpha.1** (Phase 1.5: Stabilization) - Accuracy improvements, test ROM validation
+- **v1.1.0 - v1.5.0** (Phase 2: Features) - Feature additions, API stabilization
+- **v1.6.0 - v1.9.0** (Phase 3: Expansion) - Feature complete, polish and optimization
+- **v1.10.0 - v1.0.0-rc.x** (Phase 4: Polish) - Release candidates, final testing
+- **v1.0.0** (Milestone 22) - Production release, TASVideos 100% accuracy
 
 ### Version Number Components
 
@@ -42,39 +43,63 @@ Phase 1 focuses on core emulation engine development with a working desktop GUI.
 - Each subsequent milestone represents significant functionality increase
 - v0.5.0 marks MVP completion: playable emulator with GUI
 
-### Phase 2: Advanced Features (v1.0.0-alpha.1 - v1.0.0-alpha.4)
+### Phase 1.5: Stabilization & Accuracy (v0.6.0 - v1.0.0-alpha.1)
+
+Phase 1.5 bridges Phase 1 MVP to Phase 2 Advanced Features, focusing on accuracy, stability, and comprehensive test ROM validation.
+
+| Milestone | Description | Version | Target Date | Status |
+|-----------|-------------|---------|-------------|--------|
+| **M7** | Accuracy Improvements | v0.6.0 | January 2026 | Pending |
+| **M8** | Test ROM Validation (95%+ pass rate) | v0.7.0 | February 2026 | Pending |
+| **M9** | Known Issues Resolution | v0.8.0 | March 2026 | Pending |
+| **M10** | Final Polish | v0.9.0 or v1.0.0-alpha.1 | April 2026 | Pending |
+
+**Phase 1.5 Rationale:**
+- v0.6.0 focuses on timing accuracy refinements (CPU, PPU, APU, Bus)
+- v0.7.0 integrates all 212 test ROMs with 95%+ pass rate target (202+/212 tests)
+- v0.8.0 resolves known issues (audio quality, PPU edge cases, performance)
+- v0.9.0/v1.0.0-alpha.1 decision based on quality gates:
+  - **v0.9.0**: If 90-94% test pass rate, minor issues remaining
+  - **v1.0.0-alpha.1**: If 95%+ test pass rate, zero critical bugs, documentation complete
+- Establishes production-ready foundation for Phase 2 advanced features
+- Version jump to v1.0.0-alpha.1 signals transition to feature development phase
+
+### Phase 2: Advanced Features (v1.1.0 - v1.5.0)
 
 Phase 2 adds advanced features for competitive and achievement-focused users.
 
 | Milestone | Description | Version | Target Date | Status |
 |-----------|-------------|---------|-------------|--------|
-| **M7** | RetroAchievements Integration | v1.0.0-alpha.1 | July 2026 | Pending |
-| **M8** | Netplay (GGPO) | v1.0.0-alpha.2 | September 2026 | Pending |
-| **M9** | Lua Scripting | v1.0.0-alpha.3 | October 2026 | Pending |
-| **M10** | Advanced Debugger | v1.0.0-alpha.4 | December 2026 | Pending |
+| **M11** | RetroAchievements Integration | v1.1.0 | May-June 2026 | Pending |
+| **M12** | Netplay (GGPO) | v1.2.0 | July-September 2026 | Pending |
+| **M13** | TAS Tools | v1.3.0 | August-September 2026 | Pending |
+| **M14** | Lua Scripting | v1.4.0 | September-October 2026 | Pending |
+| **M15** | Advanced Debugger | v1.5.0 | October-November 2026 | Pending |
 
 **Phase 2 Rationale:**
-- Alpha designation indicates feature additions with possible API changes
-- Each alpha increment represents a major user-facing feature
-- API begins stabilization for v1.0.0
-- No breaking changes to core emulation (backward compatible with v0.5.0 saves)
+- Minor version increments for each major feature addition
+- Each release represents significant user-facing functionality
+- API stabilization for v1.0.0 final release
+- Backward compatible with v1.0.0-alpha.1 save states
+- Focus on community features (achievements, netplay, TAS tools)
 
-### Phase 3: Platform Expansion (v1.0.0-beta.1 - v1.0.0-beta.4)
+### Phase 3: Platform Expansion (v1.6.0 - v1.9.0)
 
 Phase 3 expands platform support and completes mapper library.
 
 | Milestone | Description | Version | Target Date | Status |
 |-----------|-------------|---------|-------------|--------|
-| **M11** | WebAssembly Port | v1.0.0-beta.1 | February 2027 | Pending |
-| **M12** | Expansion Audio (VRC6, VRC7, MMC5, N163, FDS) | v1.0.0-beta.2 | April 2027 | Pending |
-| **M13** | Additional Mappers (300+ total) | v1.0.0-beta.3 | June 2027 | Pending |
-| **M14** | Mobile Support (iOS/Android) | v1.0.0-beta.4 | August 2027 | Pending |
+| **M16** | Expansion Audio (VRC6, VRC7, MMC5, N163, FDS) | v1.6.0 | January-March 2027 | Pending |
+| **M17** | Additional Mappers (50 total, 98% coverage) | v1.7.0 | February-May 2027 | Pending |
+| **M18** | WebAssembly Port | v1.8.0 | April-May 2027 | Pending |
+| **M19** | TAS Editor UI | v1.9.0 | May-June 2027 | Pending |
 
 **Phase 3 Rationale:**
-- Beta designation indicates feature completeness
-- Focus shifts to platform support and polish
-- API is stable, no breaking changes expected
-- Compatibility testing across all platforms
+- Continued minor version increments for major features
+- Focus on platform expansion and mapper completeness
+- API remains stable from Phase 2
+- WebAssembly brings browser-based emulation
+- TAS Editor completes tool-assisted speedrun workflow
 
 ### Phase 4: Release Polish (v1.0.0-rc.1 - v1.0.0)
 
@@ -82,10 +107,9 @@ Phase 4 focuses on polish, optimization, and v1.0.0 release readiness.
 
 | Milestone | Description | Version | Target Date | Status |
 |-----------|-------------|---------|-------------|--------|
-| **M15** | Video Filters & Shaders | v1.0.0-rc.1 | September 2027 | Pending |
-| **M16** | TAS Editor UI | v1.0.0-rc.2 | October 2027 | Pending |
-| **M17** | Performance Optimization | v1.0.0-rc.3 | November 2027 | Pending |
-| **M18** | v1.0 Release Readiness | v1.0.0 | December 2027 | Pending |
+| **M20** | Video Filters & Shaders | v1.0.0-rc.1 | September 2027 | Pending |
+| **M21** | Performance Optimization | v1.0.0-rc.2 | October 2027 | Pending |
+| **M22** | v1.0 Release Readiness | v1.0.0 | November-December 2027 | Pending |
 
 **Phase 4 Rationale:**
 - RC (Release Candidate) designation for final testing
@@ -113,10 +137,11 @@ All phases:
 
 ### When to Bump Prerelease (alpha/beta/rc)
 
-Phases 2-4:
-- **Alpha**: Each major feature addition (M7-M10)
-- **Beta**: Each platform expansion or major mapper group (M11-M14)
-- **RC**: Each polish milestone (M15-M17)
+Phases 1.5-4:
+- **Phase 1.5 (v0.6.0-v0.9.0)**: Minor version increments for accuracy milestones (M7-M10)
+- **Phase 2 (v1.1.0-v1.5.0)**: Minor version increments for feature additions (M11-M15)
+- **Phase 3 (v1.6.0-v1.9.0)**: Minor version increments for platform expansion (M16-M19)
+- **Phase 4 (RC)**: Release candidates for polish milestones (M20-M22)
 
 ### Breaking Changes Policy
 
@@ -167,20 +192,33 @@ Phases 2-4:
 
 ### Planned Versions
 
-- **v1.0.0-alpha.1** (Q3 2026) - M7 (RetroAchievements)
-- **v1.0.0-alpha.2** (Q3 2026) - M8 (Netplay)
-- **v1.0.0-alpha.3** (Q4 2026) - M9 (Lua Scripting)
-- **v1.0.0-alpha.4** (Q4 2026) - M10 (Debugger)
+#### Phase 1.5: Stabilization & Accuracy (2026 Q1-Q2)
 
-- **v1.0.0-beta.1** (Q1 2027) - M11 (WebAssembly)
-- **v1.0.0-beta.2** (Q2 2027) - M12 (Expansion Audio)
-- **v1.0.0-beta.3** (Q2 2027) - M13 (Additional Mappers)
-- **v1.0.0-beta.4** (Q3 2027) - M14 (Mobile)
+- **v0.6.0** (January 2026) - M7 (Accuracy Improvements)
+- **v0.7.0** (February 2026) - M8 (Test ROM Validation)
+- **v0.8.0** (March 2026) - M9 (Known Issues Resolution)
+- **v0.9.0 or v1.0.0-alpha.1** (April 2026) - M10 (Final Polish)
 
-- **v1.0.0-rc.1** (Q3 2027) - M15 (Video Filters)
-- **v1.0.0-rc.2** (Q4 2027) - M16 (TAS Editor)
-- **v1.0.0-rc.3** (Q4 2027) - M17 (Optimization)
-- **v1.0.0** (Q4 2027) - M18 (Release) - PRODUCTION RELEASE
+#### Phase 2: Advanced Features (2026 Q2-Q4)
+
+- **v1.1.0** (May-June 2026) - M11 (RetroAchievements)
+- **v1.2.0** (July-September 2026) - M12 (Netplay/GGPO)
+- **v1.3.0** (August-September 2026) - M13 (TAS Tools)
+- **v1.4.0** (September-October 2026) - M14 (Lua Scripting)
+- **v1.5.0** (October-November 2026) - M15 (Advanced Debugger)
+
+#### Phase 3: Platform Expansion (2027 Q1-Q2)
+
+- **v1.6.0** (January-March 2027) - M16 (Expansion Audio)
+- **v1.7.0** (February-May 2027) - M17 (Additional Mappers)
+- **v1.8.0** (April-May 2027) - M18 (WebAssembly Port)
+- **v1.9.0** (May-June 2027) - M19 (TAS Editor UI)
+
+#### Phase 4: Release Polish (2027 Q3-Q4)
+
+- **v1.0.0-rc.1** (September 2027) - M20 (Video Filters & Shaders)
+- **v1.0.0-rc.2** (October 2027) - M21 (Performance Optimization)
+- **v1.0.0** (November-December 2027) - M22 (Release Readiness) - PRODUCTION RELEASE
 
 ## Accuracy Milestones
 
@@ -189,8 +227,11 @@ Version requirements for accuracy:
 - **v0.2.0**: APU functional tests passing ✅
 - **v0.3.0**: 77.7% game compatibility (5 core mappers) ✅
 - **v0.5.0 (MVP)**: 77.7% game compatibility achieved ✅
-- **v1.0.0-alpha.4**: 95% game compatibility (target: 15 mappers)
-- **v1.0.0-beta.4**: 98% game compatibility (target: 50+ mappers)
+- **v0.6.0**: CPU/PPU/APU timing refinements (±1-2 cycle accuracy)
+- **v0.7.0**: 95%+ test ROM pass rate (202+/212 tests)
+- **v0.9.0/v1.0.0-alpha.1**: Production-ready stability (Phase 1.5 complete)
+- **v1.5.0**: 95% game compatibility (target: 15 mappers, Phase 2 complete)
+- **v1.9.0**: 98% game compatibility (target: 50+ mappers, Phase 3 complete)
 - **v1.0.0**: 100% TASVideos accuracy suite (156 tests)
 
 ## Git Tagging Strategy
@@ -319,12 +360,12 @@ Post-v1.0.0:
 
 ```
 2025 Q4: v0.1.0 (M1+M2), v0.2.0 (M3), v0.3.0 (M4), v0.4.0 (M5), v0.5.0 (M6 - MVP) ✅ COMPLETE
-2026 Q3: v1.0.0-alpha.1 (M7), v1.0.0-alpha.2 (M8)
-2026 Q4: v1.0.0-alpha.3 (M9), v1.0.0-alpha.4 (M10)
-2027 Q1: v1.0.0-beta.1 (M11)
-2027 Q2: v1.0.0-beta.2 (M12), v1.0.0-beta.3 (M13)
-2027 Q3: v1.0.0-beta.4 (M14), v1.0.0-rc.1 (M15)
-2027 Q4: v1.0.0-rc.2 (M16), v1.0.0-rc.3 (M17), v1.0.0 (M18)
+2026 Q1: v0.6.0 (M7 - Accuracy), v0.7.0 (M8 - Test ROMs)
+2026 Q2: v0.8.0 (M9 - Known Issues), v0.9.0/v1.0.0-alpha.1 (M10 - Polish)
+2026 Q2-Q3: v1.1.0 (M11 - RetroAchievements), v1.2.0 (M12 - Netplay)
+2026 Q3-Q4: v1.3.0 (M13 - TAS), v1.4.0 (M14 - Lua), v1.5.0 (M15 - Debugger)
+2027 Q1-Q2: v1.6.0 (M16 - Expansion Audio), v1.7.0 (M17 - Mappers), v1.8.0 (M18 - WASM), v1.9.0 (M19 - TAS Editor)
+2027 Q3-Q4: v1.0.0-rc.1 (M20 - Filters), v1.0.0-rc.2 (M21 - Optimization), v1.0.0 (M22 - Release)
 ```
 
 **Note**: Phase 1 MVP was completed 6+ months ahead of original schedule (December 2025 vs June 2026).
@@ -339,6 +380,6 @@ Post-v1.0.0:
 
 ---
 
-**Last Updated**: 2025-12-19
+**Last Updated**: 2025-12-20
 **Current Version**: v0.5.0 (Phase 1 MVP Complete)
-**Next Release**: v1.0.0-alpha.1 (M7 - RetroAchievements Integration)
+**Next Release**: v0.6.0 (M7 - Accuracy Improvements, Phase 1.5 Start)
