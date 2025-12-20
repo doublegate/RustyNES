@@ -29,9 +29,9 @@
 //! # }
 //! ```
 
-use crate::bus::Bus;
+use crate::bus::Bus as SystemBus;
 use crate::input::Button;
-use rustynes_cpu::Cpu;
+use rustynes_cpu::{Bus as CpuBus, Cpu};
 use rustynes_mappers::{create_mapper, Mapper, Rom, RomError};
 use thiserror::Error;
 
@@ -55,7 +55,7 @@ pub struct Console {
     cpu: Cpu,
 
     /// Memory bus (RAM, PPU, APU, mappers, controllers)
-    bus: Bus,
+    bus: SystemBus,
 
     /// Total cycles executed
     master_cycles: u64,
@@ -99,7 +99,7 @@ impl Console {
     #[must_use]
     pub fn new(mapper: Box<dyn Mapper>) -> Self {
         let mut cpu = Cpu::new();
-        let mut bus = Bus::new(mapper);
+        let mut bus = SystemBus::new(mapper);
 
         // Reset CPU (loads PC from $FFFC-$FFFD)
         cpu.reset(&mut bus);
@@ -306,6 +306,25 @@ impl Console {
     #[must_use]
     pub fn controller_2_buttons(&self) -> u8 {
         self.bus.controller2.buttons()
+    }
+
+    // === Testing/Debugging Methods ===
+
+    /// Read memory at address without side effects (for testing)
+    ///
+    /// This uses the bus peek method which doesn't trigger any hardware side effects.
+    /// Useful for test ROMs that write result codes to specific addresses.
+    ///
+    /// # Arguments
+    ///
+    /// * `addr` - Memory address to read
+    ///
+    /// # Returns
+    ///
+    /// Value at the specified address
+    #[must_use]
+    pub fn peek_memory(&self, addr: u16) -> u8 {
+        self.bus.peek(addr)
     }
 }
 

@@ -30,6 +30,10 @@ pub struct Bus {
     /// 2KB internal RAM
     ram: [u8; 0x800],
 
+    /// 8KB PRG-RAM / battery-backed SRAM ($6000-$7FFF)
+    /// Used by many test ROMs to report results
+    prg_ram: [u8; 0x2000],
+
     /// Picture Processing Unit
     pub ppu: Ppu,
 
@@ -80,6 +84,7 @@ impl Bus {
 
         Self {
             ram: [0; 0x800],
+            prg_ram: [0xFF; 0x2000], // Initialize PRG-RAM to 0xFF (test ROMs expect this)
             ppu: Ppu::new(ppu_mirroring),
             apu: Apu::new(),
             mapper,
@@ -176,6 +181,7 @@ impl Bus {
     /// Reset the bus and all components
     pub fn reset(&mut self) {
         self.ram = [0; 0x800];
+        self.prg_ram.fill(0xFF); // Initialize PRG-RAM to 0xFF (many test ROMs expect this)
         self.ppu.reset();
         self.controller1.reset();
         self.controller2.reset();
@@ -233,10 +239,13 @@ impl CpuBus for Bus {
             // Controller 2 (note: $4017 write goes to APU, read goes to controller)
             0x4017 => self.controller2.read(),
 
-            // Cartridge space (mapper-controlled)
-            0x4020..=0xFFFF => self.mapper.read_prg(addr),
+            // PRG-RAM / battery-backed SRAM ($6000-$7FFF)
+            0x6000..=0x7FFF => self.prg_ram[(addr - 0x6000) as usize],
 
-            // Unmapped region ($4018-$401F)
+            // Cartridge PRG-ROM (mapper-controlled)
+            0x8000..=0xFFFF => self.mapper.read_prg(addr),
+
+            // Unmapped regions ($4018-$401F, $4020-$5FFF)
             _ => 0, // Open bus
         }
     }
@@ -264,10 +273,13 @@ impl CpuBus for Bus {
                 self.controller2.write_strobe(value);
             }
 
-            // Cartridge space (mapper registers or PRG-RAM)
-            0x4020..=0xFFFF => self.mapper.write_prg(addr, value),
+            // PRG-RAM / battery-backed SRAM ($6000-$7FFF)
+            0x6000..=0x7FFF => self.prg_ram[(addr - 0x6000) as usize] = value,
 
-            // Unmapped region ($4018-$401F)
+            // Cartridge PRG-ROM / mapper registers ($8000-$FFFF)
+            0x8000..=0xFFFF => self.mapper.write_prg(addr, value),
+
+            // Unmapped regions ($4018-$401F, $4020-$5FFF)
             _ => {}
         }
     }
@@ -275,7 +287,8 @@ impl CpuBus for Bus {
     fn peek(&self, addr: u16) -> u8 {
         match addr {
             0x0000..=0x1FFF => self.ram[(addr & 0x07FF) as usize],
-            0x4020..=0xFFFF => self.mapper.read_prg(addr),
+            0x6000..=0x7FFF => self.prg_ram[(addr - 0x6000) as usize],
+            0x8000..=0xFFFF => self.mapper.read_prg(addr),
             _ => 0,
         }
     }
