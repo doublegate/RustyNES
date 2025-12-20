@@ -83,7 +83,14 @@ impl AudioPlayer {
             config,
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                 // Lock buffer and consume available samples
-                let mut buf = buffer.lock().unwrap();
+                let mut buf = match buffer.lock() {
+                    Ok(buf) => buf,
+                    Err(e) => {
+                        error!("Audio buffer mutex poisoned: {}", e);
+                        data.fill(0.0);
+                        return;
+                    }
+                };
 
                 if buf.is_empty() {
                     // No samples available - output silence
@@ -144,7 +151,13 @@ impl AudioPlayer {
             return;
         }
 
-        let mut buf = self.buffer.lock().unwrap();
+        let mut buf = match self.buffer.lock() {
+            Ok(buf) => buf,
+            Err(e) => {
+                error!("Audio buffer mutex poisoned, cannot queue samples: {}", e);
+                return;
+            }
+        };
 
         // Check buffer health
         if buf.len() > SOFT_LIMIT && buf.len() < HARD_LIMIT {
@@ -189,12 +202,23 @@ impl AudioPlayer {
     #[must_use]
     #[allow(dead_code)]
     pub fn buffer_size(&self) -> usize {
-        self.buffer.lock().unwrap().len()
+        match self.buffer.lock() {
+            Ok(buf) => buf.len(),
+            Err(e) => {
+                error!("Audio buffer mutex poisoned, returning 0: {}", e);
+                0
+            }
+        }
     }
 }
 
 impl Default for AudioPlayer {
     fn default() -> Self {
-        Self::new().expect("Failed to create audio player")
+        match Self::new() {
+            Ok(player) => player,
+            Err(e) => {
+                panic!("Failed to create audio player: {e}");
+            }
+        }
     }
 }
