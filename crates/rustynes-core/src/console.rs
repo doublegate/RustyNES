@@ -130,8 +130,9 @@ impl Console {
         let cpu_cycles = self.cpu.step(&mut self.bus);
 
         // Step PPU (3 dots per CPU cycle)
+        // Use step_ppu which provides CHR ROM access from mapper for tile fetching
         for _ in 0..(cpu_cycles * 3) {
-            let (frame_complete, nmi) = self.bus.ppu.step();
+            let (frame_complete, nmi) = self.bus.step_ppu();
 
             // Trigger NMI if PPU requests it
             if nmi {

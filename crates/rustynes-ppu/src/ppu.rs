@@ -209,10 +209,26 @@ impl Ppu {
         self.oam.dma_write(data);
     }
 
-    /// Step PPU by one dot
+    /// Step PPU by one dot (without CHR access - for backwards compatibility)
     ///
-    /// Returns true if a frame is complete and NMI should be triggered.
+    /// Returns (frame_complete, nmi_triggered).
+    /// Note: This method won't render tiles properly. Use `step_with_chr` for full rendering.
     pub fn step(&mut self) -> (bool, bool) {
+        self.step_with_chr(|_| 0)
+    }
+
+    /// Step PPU by one dot with CHR ROM access
+    ///
+    /// This method allows the PPU to read pattern table data from the mapper's CHR ROM.
+    ///
+    /// # Arguments
+    ///
+    /// * `read_chr` - Function to read CHR ROM at a given address (0x0000-0x1FFF)
+    ///
+    /// # Returns
+    ///
+    /// (frame_complete, nmi_triggered)
+    pub fn step_with_chr<F: Fn(u16) -> u8>(&mut self, read_chr: F) -> (bool, bool) {
         let rendering_enabled = self.mask.rendering_enabled();
 
         // Tick timing FIRST to advance to the next position
@@ -240,7 +256,60 @@ impl Ppu {
             // Background rendering
             if self.timing.is_visible_dot() || self.timing.is_prefetch_dot() {
                 self.background.shift_registers();
-                // TODO: Fetch tile data based on dot position
+
+                // 8-dot tile fetch cycle
+                // Dots are 1-indexed: 1-256 visible, 321-336 prefetch
+                let fetch_dot = dot;
+                match fetch_dot % 8 {
+                    1 => {
+                        // Fetch nametable byte (tile index)
+                        let nt_addr = 0x2000 | (self.scroll.vram_addr() & 0x0FFF);
+                        let tile_index = self.vram.read(nt_addr);
+                        self.background.set_nametable_byte(tile_index);
+                    }
+                    3 => {
+                        // Fetch attribute byte
+                        let v = self.scroll.vram_addr();
+                        let attr_addr =
+                            0x23C0 | (v & 0x0C00) | ((v >> 4) & 0x38) | ((v >> 2) & 0x07);
+                        let attr_byte = self.vram.read(attr_addr);
+                        self.background.set_attribute_byte(
+                            attr_byte,
+                            self.scroll.coarse_x(),
+                            self.scroll.coarse_y(),
+                        );
+                    }
+                    5 => {
+                        // Fetch pattern table low byte
+                        let bg_base = self.ctrl.bg_table_addr();
+                        let tile_index = self.background.nametable_byte();
+                        let fine_y = self.scroll.fine_y();
+                        let pattern_addr = bg_base + u16::from(tile_index) * 16 + u16::from(fine_y);
+                        let pattern_low = read_chr(pattern_addr);
+                        self.background.set_pattern_low(pattern_low);
+                    }
+                    7 => {
+                        // Fetch pattern table high byte
+                        let bg_base = self.ctrl.bg_table_addr();
+                        let tile_index = self.background.nametable_byte();
+                        let fine_y = self.scroll.fine_y();
+                        let pattern_addr =
+                            bg_base + u16::from(tile_index) * 16 + u16::from(fine_y) + 8;
+                        let pattern_high = read_chr(pattern_addr);
+                        self.background.set_pattern_high(pattern_high);
+                    }
+                    0 => {
+                        // Load shift registers and increment coarse X
+                        self.background.load_shift_registers();
+                        self.scroll.increment_x();
+                    }
+                    _ => {}
+                }
+
+                // Increment Y at dot 256
+                if dot == 256 {
+                    self.scroll.increment_y();
+                }
             }
 
             // Sprite rendering

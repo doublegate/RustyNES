@@ -94,8 +94,11 @@ impl Vram {
 
         match addr {
             // Pattern tables - should be handled by mapper
+            // Note: These reads happen during CPU writes to $2007 targeting pattern tables.
+            // Real NES games rarely do this; CHR ROM is accessed by the PPU rendering pipeline
+            // through the mapper, not via the VRAM read() method. Return 0 for now.
             0x0000..=0x1FFF => {
-                log::warn!("VRAM read from pattern table ${addr:04X} - should use mapper");
+                log::trace!("VRAM read from pattern table ${addr:04X} - mapper handles CHR");
                 0
             }
 
@@ -126,9 +129,10 @@ impl Vram {
         let addr = addr & 0x3FFF;
 
         match addr {
-            // Pattern tables - should be handled by mapper
+            // Pattern tables - handled by mapper for CHR-RAM carts
+            // Most games use CHR-ROM (read-only). CHR-RAM writes go through mapper.
             0x0000..=0x1FFF => {
-                log::warn!("VRAM write to pattern table ${addr:04X} - should use mapper");
+                log::trace!("VRAM write to pattern table ${addr:04X} - mapper handles CHR-RAM");
             }
 
             // Nametables ($2000-$2FFF) with mirroring

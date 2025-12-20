@@ -216,6 +216,23 @@ impl Bus {
     pub fn clear_mapper_irq(&mut self) {
         self.mapper.clear_irq();
     }
+
+    /// Step PPU by one dot with CHR ROM access from mapper
+    ///
+    /// This method bridges the PPU and mapper, allowing the PPU to fetch
+    /// pattern table data (CHR ROM) during background and sprite rendering.
+    ///
+    /// # Returns
+    ///
+    /// Tuple of (`frame_complete`, `nmi`):
+    /// - `frame_complete`: true if a complete frame was just rendered
+    /// - `nmi`: true if NMI should be triggered (`VBlank` start with NMI enabled)
+    pub fn step_ppu(&mut self) -> (bool, bool) {
+        // Borrow mapper immutably for CHR reads while PPU is borrowed mutably
+        // This works because they are separate fields of the struct
+        let mapper = &*self.mapper;
+        self.ppu.step_with_chr(|addr| mapper.read_chr(addr))
+    }
 }
 
 impl CpuBus for Bus {

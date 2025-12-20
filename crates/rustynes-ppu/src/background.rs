@@ -64,9 +64,14 @@ impl Background {
 
     /// Fetch nametable byte (tile index)
     #[inline]
-    #[allow(dead_code)] // Used in full rendering implementation
     pub fn set_nametable_byte(&mut self, byte: u8) {
         self.nametable_byte = byte;
+    }
+
+    /// Get nametable byte (tile index)
+    #[inline]
+    pub fn nametable_byte(&self) -> u8 {
+        self.nametable_byte
     }
 
     /// Fetch attribute table byte (palette)
