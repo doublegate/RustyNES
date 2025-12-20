@@ -8,6 +8,7 @@
 use iced::Size;
 
 mod app;
+mod config;
 mod input;
 mod library;
 mod message;
@@ -29,6 +30,14 @@ fn main() -> iced::Result {
 
     tracing::info!("Starting RustyNES Desktop v{}", env!("CARGO_PKG_VERSION"));
 
+    // Load configuration to get saved window size
+    let config = config::AppConfig::load().unwrap_or_default();
+    #[allow(clippy::cast_precision_loss)] // u32 to f32 for window size
+    let window_size = Size::new(
+        config.app.window_width as f32,
+        config.app.window_height as f32,
+    );
+
     // Run application using Iced 0.13 API
     iced::application(
         app::RustyNes::title,
@@ -37,7 +46,7 @@ fn main() -> iced::Result {
     )
     .subscription(app::RustyNes::subscription)
     .theme(app::RustyNes::theme)
-    .window_size(Size::new(768.0, 720.0))
+    .window_size(window_size)
     .antialiasing(true)
     .run_with(app::RustyNes::new)
 }

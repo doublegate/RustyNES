@@ -6,7 +6,7 @@
 use iced::{Rectangle, Size};
 
 /// Scaling modes for NES viewport
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[allow(dead_code)] // Variants will be used in settings UI (M6-S4)
 pub enum ScalingMode {
     /// 4:3 aspect ratio (classic CRT television)

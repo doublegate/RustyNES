@@ -1,8 +1,9 @@
 # RustyNES Desktop Platform Specification
 
-**Document Version:** 1.0.0
+**Document Version:** 1.1.0
 **Last Updated:** 2025-12-19
 **Milestone:** M6 - Desktop GUI (Phase 1 MVP)
+**Sprint Status:** Sprint 4 Complete (Settings & Persistence)
 
 ---
 
@@ -21,6 +22,8 @@
 - [Design System](#design-system)
 - [Performance Targets](#performance-targets)
 - [Implementation Phases](#implementation-phases)
+- [Sprint 4 Implementation](#sprint-4-implementation)
+- [UI/UX Design v2 Implementation](#uiux-design-v2-implementation)
 
 ---
 
@@ -1343,6 +1346,474 @@ fn bench_save_state(b: &mut Bencher) {
 - `crates/rustynes-desktop/src/widgets/toast.rs`
 - `crates/rustynes-desktop/src/widgets/modal.rs`
 - `crates/rustynes-desktop/src/hotkeys.rs`
+
+---
+
+## Sprint 4 Implementation
+
+### Overview
+
+Sprint 4 (Settings & Persistence) has been fully implemented, providing a comprehensive configuration system with TOML persistence and a tabbed settings UI following the Elm architecture pattern.
+
+### Implemented Files
+
+```
+crates/rustynes-desktop/
+├── src/
+│   ├── config/
+│   │   ├── mod.rs           # Module exports (AppConfig, settings types)
+│   │   └── settings.rs      # Complete settings data structures
+│   ├── views/
+│   │   └── settings.rs      # Tabbed settings UI implementation
+│   ├── app.rs               # Updated with settings integration
+│   ├── message.rs           # All settings-related message variants
+│   └── main.rs              # Window size persistence on startup
+└── Cargo.toml               # Added dependencies: toml, directories, thiserror
+```
+
+### Configuration System (`config/settings.rs`)
+
+The configuration system implements a hierarchical settings structure with TOML serialization:
+
+```rust
+/// Main application configuration (TOML serializable)
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AppConfig {
+    pub emulation: EmulationConfig,  // Speed, region, rewind settings
+    pub video: VideoConfig,          // Scaling, VSync, CRT shader, overscan
+    pub audio: AudioConfig,          // Output, sample rate, volume, buffer
+    pub input: InputConfig,          // Keyboard mappings, gamepad deadzone
+    pub app: ApplicationConfig,      // Recent ROMs, window state
+}
+```
+
+#### Emulation Settings
+
+```rust
+pub struct EmulationConfig {
+    pub speed: f32,                  // 1.0 = normal (0.25-3.0 range)
+    pub region: Region,              // NTSC (60.0988 Hz) or PAL (50.0070 Hz)
+    pub rewind_enabled: bool,        // Rewind feature toggle
+    pub rewind_buffer_size: usize,   // Frames (default: 600 = 10 seconds)
+}
+```
+
+#### Video Settings
+
+```rust
+pub struct VideoConfig {
+    pub scaling_mode: ScalingMode,   // AspectRatio4x3, PixelPerfect, Integer, Stretch
+    pub vsync: bool,                 // VSync toggle
+    pub crt_shader: bool,            // CRT effect enable
+    pub crt_preset: CrtPreset,       // None, Subtle, Moderate, Authentic, Custom
+    pub overscan: OverscanConfig,    // Top, bottom, left, right crop (0-16px)
+}
+```
+
+#### Audio Settings
+
+```rust
+pub struct AudioConfig {
+    pub enabled: bool,               // Audio output toggle
+    pub sample_rate: u32,            // 44100, 48000, or 96000 Hz
+    pub volume: f32,                 // Master volume (0.0-1.0)
+    pub buffer_size: u32,            // 512, 1024, 2048, or 4096 samples
+}
+```
+
+#### Input Settings
+
+```rust
+pub struct InputConfig {
+    pub keyboard_p1: KeyboardMapping, // Player 1 keyboard bindings
+    pub keyboard_p2: KeyboardMapping, // Player 2 keyboard bindings
+    pub gamepad_deadzone: f32,        // Analog stick deadzone (0.0-0.5)
+}
+
+pub struct KeyboardMapping {
+    pub up: String,
+    pub down: String,
+    pub left: String,
+    pub right: String,
+    pub a: String,
+    pub b: String,
+    pub select: String,
+    pub start: String,
+}
+```
+
+### Persistence Implementation
+
+**Config File Location (Platform-Specific):**
+
+- Linux: `~/.config/rustynes/RustyNES/config.toml`
+- macOS: `~/Library/Application Support/com.rustynes.RustyNES/config.toml`
+- Windows: `%APPDATA%\rustynes\RustyNES\config\config.toml`
+
+**Key Features:**
+
+1. **Automatic Loading**: Config loads on application startup via `AppConfig::load()`
+2. **Auto-Save on Exit**: Drop trait implementation saves config when application closes
+3. **Validation**: Loaded configs are validated for valid ranges (speed > 0, volume 0-1, etc.)
+4. **Default Creation**: Missing config file triggers creation with sensible defaults
+5. **Recent ROMs Tracking**: Maintains deduplicated list of last 10 played ROMs
+
+```rust
+impl AppConfig {
+    pub fn load() -> Result<Self, ConfigError>;
+    pub fn save(&self) -> Result<(), ConfigError>;
+    pub fn add_recent_rom(&mut self, path: PathBuf);
+    pub fn clear_recent_roms(&mut self);
+}
+```
+
+### Settings UI (`views/settings.rs`)
+
+The settings view implements a tabbed interface with four main categories:
+
+#### Tab Structure
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  [Emulation]  [Video]  [Audio]  [Input]                          │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  (Tab content with sliders, checkboxes, pick_lists)              │
+│                                                                  │
+├──────────────────────────────────────────────────────────────────┤
+│  [Reset to Defaults]                              [Close]        │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+#### Emulation Tab Controls
+
+| Control | Widget | Range/Values |
+|---------|--------|--------------|
+| Speed | Slider | 0.25x - 3.0x (step 0.25) |
+| Region | PickList | NTSC, PAL |
+| Enable Rewind | Checkbox | On/Off |
+| Buffer Size | Slider (conditional) | 60-3600 frames (step 60) |
+
+#### Video Tab Controls
+
+| Control | Widget | Range/Values |
+|---------|--------|--------------|
+| Scaling Mode | PickList | AspectRatio4x3, PixelPerfect, IntegerScaling, Stretch |
+| VSync | Checkbox | On/Off |
+| CRT Shader | Checkbox | On/Off |
+| CRT Preset | PickList (conditional) | Subtle, Moderate, Authentic |
+| Overscan (T/B/L/R) | Sliders | 0-16 pixels each |
+
+#### Audio Tab Controls
+
+| Control | Widget | Range/Values |
+|---------|--------|--------------|
+| Audio Output | Checkbox | On/Off |
+| Sample Rate | PickList | 44100, 48000, 96000 Hz |
+| Master Volume | Slider | 0-100% |
+| Buffer Size | PickList | 512, 1024, 2048, 4096 samples |
+
+#### Input Tab Controls
+
+| Control | Widget | Purpose |
+|---------|--------|---------|
+| Player 1 Keys | Button Grid | 8 buttons for key remapping |
+| Player 2 Keys | Button Grid | 8 buttons for key remapping |
+| Analog Deadzone | Slider | 0.0-0.5 (step 0.05) |
+
+### Message Types for Settings
+
+All settings-related messages follow the Elm architecture pattern:
+
+```rust
+pub enum Message {
+    // Navigation
+    OpenSettings,
+    CloseSettings,
+    SelectSettingsTab(SettingsTab),
+
+    // Emulation settings
+    UpdateEmulationSpeed(f32),
+    UpdateRegion(Region),
+    ToggleRewind(bool),
+    UpdateRewindBufferSize(usize),
+
+    // Video settings
+    UpdateScalingMode(ScalingMode),
+    ToggleVSync(bool),
+    ToggleCrtShader(bool),
+    UpdateCrtPreset(CrtPreset),
+    UpdateOverscanTop(u32),
+    UpdateOverscanBottom(u32),
+    UpdateOverscanLeft(u32),
+    UpdateOverscanRight(u32),
+
+    // Audio settings
+    ToggleAudio(bool),
+    UpdateSampleRate(u32),
+    UpdateVolume(f32),
+    UpdateBufferSize(u32),
+
+    // Input settings
+    UpdateGamepadDeadzone(f32),
+    RemapKey { player: u8, button: String },
+
+    // Persistence
+    SaveConfig,
+    ConfigSaved(Result<(), String>),
+    LoadConfig,
+    ConfigLoaded(Result<(), String>),
+    ResetSettingsToDefaults,
+
+    // Window events
+    WindowResized(f32, f32),
+}
+```
+
+### Window Geometry Persistence
+
+Window size is persisted across sessions:
+
+1. **Resize Event Subscription**: `iced::event::listen()` captures window resize events
+2. **State Update**: Window dimensions stored in `ApplicationConfig`
+3. **Startup Restoration**: `main.rs` applies saved dimensions to window settings
+
+```rust
+// In app.rs - subscription
+fn subscription(&self) -> Subscription<Message> {
+    iced::event::listen().map(|event| {
+        if let iced::Event::Window(iced::window::Event::Resized(size)) = event {
+            Message::WindowResized(size.width, size.height)
+        } else {
+            Message::None
+        }
+    })
+}
+
+// In main.rs - apply saved dimensions
+iced::application(...)
+    .window_size((config.app.window_width as f32, config.app.window_height as f32))
+```
+
+### About Dialog
+
+The About dialog provides application information and quick links:
+
+| Element | Content |
+|---------|---------|
+| Title | "RustyNES" with version |
+| Description | Accurate NES emulator |
+| Links | GitHub repository, Documentation |
+| Actions | Open URL (browser launch) |
+
+### Test Coverage
+
+The settings module includes comprehensive unit tests:
+
+- `test_default_config` - Validates default values
+- `test_config_serialization` - TOML round-trip serialization
+- `test_validation` - Range and constraint validation
+- `test_recent_roms` - Recent ROM list management
+- `test_recent_roms_limit` - 10-entry limit enforcement
+
+**Total Tests Passing:** 28
+
+---
+
+## UI/UX Design v2 Implementation
+
+This section documents how the [UI/UX Design v2 specification](../../ref-docs/RustyNES-UI_UX-Design-v2.md) is being implemented in the desktop application.
+
+### Color System Implementation
+
+The UI/UX v2 color system is applied as follows:
+
+#### Primary Palette (Current Status)
+
+| Color | Hex | Usage | Status |
+|-------|-----|-------|--------|
+| Console Black | `#1A1A2E` | Primary background | Planned (Theme) |
+| Deep Navy | `#16213E` | Secondary background | Planned (Theme) |
+| NES Blue | `#0F3460` | Accent color | Planned (Theme) |
+| Power Red | `#E94560` | Primary action | Planned (Theme) |
+| Coral Accent | `#FF6B6B` | Secondary action | Planned (Theme) |
+
+#### Current Implementation
+
+The MVP uses Iced's built-in theme system with customization planned for Sprint 5:
+
+```rust
+// Current: Iced built-in themes
+fn theme(&self) -> Theme {
+    Theme::Dark // Uses Iced's default dark theme
+}
+
+// Planned: Custom RustyNES theme
+fn theme(&self) -> Theme {
+    Theme::custom(
+        "RustyNES".to_string(),
+        Palette {
+            background: Color::from_rgb(0.102, 0.102, 0.180), // #1A1A2E
+            text: Color::from_rgb(0.973, 0.973, 0.949),       // #F8F8F2
+            primary: Color::from_rgb(0.914, 0.271, 0.376),    // #E94560
+            success: Color::from_rgb(0.133, 0.773, 0.369),    // #22C55E
+            danger: Color::from_rgb(0.937, 0.267, 0.267),     // #EF4444
+        },
+    )
+}
+```
+
+### Typography Implementation
+
+#### Current Font Usage
+
+| Category | v2 Spec | Current | Notes |
+|----------|---------|---------|-------|
+| UI Text | JetBrains Mono | System Default | Font loading in Sprint 5 |
+| Headers | Press Start 2P | System Default | Pixel font integration planned |
+| Body | Inter | System Default | Bundled font planned |
+
+#### Font Size Scale
+
+The 8px base grid from v2 is prepared for implementation:
+
+```rust
+// Planned font size constants
+pub const FONT_SIZE_XS: u16 = 10;    // Tooltips, timestamps
+pub const FONT_SIZE_SM: u16 = 12;    // Labels, secondary text
+pub const FONT_SIZE_BASE: u16 = 14;  // Body text, menus
+pub const FONT_SIZE_MD: u16 = 16;    // Button labels
+pub const FONT_SIZE_LG: u16 = 20;    // Section headers
+pub const FONT_SIZE_XL: u16 = 24;    // View titles
+pub const FONT_SIZE_2XL: u16 = 32;   // Hero text
+```
+
+### Glass Morphism Styling
+
+The v2 specification defines glass morphism effects. Current implementation uses Iced containers with planned enhancements:
+
+```rust
+// v2 Spec: Glass Morphism
+// - Background: rgba(26, 26, 46, 0.7)
+// - Backdrop-filter: blur(20px) saturate(180%)
+// - Border: 1px solid rgba(255, 255, 255, 0.1)
+// - Shadow: 0 8px 32px rgba(0, 0, 0, 0.3)
+
+// Current: Basic container styling
+container(content)
+    .width(Length::Fixed(700.0))
+    .height(Length::Fixed(600.0))
+    .center_x(Length::Fill)
+    .center_y(Length::Fill)
+
+// Planned: Custom container theme with glass effect
+fn glass_container() -> container::Style {
+    container::Style {
+        background: Some(Background::Color(
+            Color::from_rgba(0.102, 0.102, 0.180, 0.7)
+        )),
+        border: Border {
+            color: Color::from_rgba(1.0, 1.0, 1.0, 0.1),
+            width: 1.0,
+            radius: 12.0.into(),
+        },
+        shadow: Shadow {
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.3),
+            offset: Vector::new(0.0, 8.0),
+            blur_radius: 32.0,
+        },
+        ..Default::default()
+    }
+}
+```
+
+### Layout Grid System
+
+The settings UI follows the v2 layout principles:
+
+| Principle | Implementation |
+|-----------|----------------|
+| Fixed panel width | 700px settings panel |
+| Consistent spacing | 10px tab spacing, 15px element spacing |
+| Label alignment | 150px label width for consistent alignment |
+| Padding | 20px container padding, 10px button padding |
+
+### Component Styling
+
+#### Settings Tabs
+
+```rust
+// Tab button styling follows v2 guidelines
+fn tab_button(selected: SettingsTab, tab: SettingsTab) -> Button<'static, Message> {
+    let style = if selected == tab {
+        iced::widget::button::primary   // Highlighted tab
+    } else {
+        iced::widget::button::secondary // Inactive tab
+    };
+
+    button(text(tab.to_string()))
+        .style(style)
+        .on_press(Message::SelectSettingsTab(tab))
+}
+```
+
+#### Slider Controls
+
+Following v2's emphasis on visual feedback:
+
+```rust
+// Volume slider with percentage display
+row![
+    text("Master Volume:").width(Length::Fixed(150.0)),
+    slider(0.0..=1.0, config.audio.volume, Message::UpdateVolume)
+        .step(0.01),
+    text(format!("{:.0}%", config.audio.volume * 100.0))
+        .width(Length::Fixed(60.0)),
+]
+```
+
+### Latency Settings (v2 Enhancement)
+
+The v2 specification introduces advanced latency controls. Current status:
+
+| Feature | v2 Spec | Sprint 4 | Future Sprint |
+|---------|---------|----------|---------------|
+| Run-Ahead Frames | 1-4 configurable | Rewind system | Sprint 5 |
+| Frame Delay | 0-15 frames | Not implemented | Phase 2 |
+| Auto-detection | Per-game profiles | Not implemented | Phase 2 |
+| Latency Display | Real-time overlay | Not implemented | Sprint 5 |
+
+### Responsive Design
+
+Window resize handling enables responsive layouts:
+
+```rust
+// Window resize event tracking
+Message::WindowResized(width, height) => {
+    self.config.app.window_width = width as u32;
+    self.config.app.window_height = height as u32;
+    Command::none()
+}
+```
+
+### Accessibility Considerations
+
+Per v2 accessibility requirements:
+
+| Requirement | Status | Notes |
+|-------------|--------|-------|
+| Keyboard navigation | Partial | Tab navigation via Iced |
+| Screen reader support | Planned | egui accessibility features |
+| High contrast mode | Planned | Theme variant |
+| Font scaling | Planned | User preference setting |
+
+### Implementation Roadmap
+
+| Sprint | v2 Features to Implement |
+|--------|--------------------------|
+| Sprint 5 | Custom theme colors, basic CRT shader, performance overlay |
+| Phase 2 | Run-ahead UI, latency calibration wizard, glass morphism effects |
+| Phase 3 | HTPC mode, Cover Flow, controller-first navigation |
 
 ---
 

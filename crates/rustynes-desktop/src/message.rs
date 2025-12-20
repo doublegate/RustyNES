@@ -5,8 +5,8 @@
 
 use std::path::PathBuf;
 
-use crate::view::View;
-use crate::viewport::ScalingMode;
+use crate::config::{CrtPreset, Region, ScalingMode};
+use crate::view::{SettingsTab, View};
 
 /// All application messages (events)
 #[derive(Debug, Clone)]
@@ -56,4 +56,109 @@ pub enum Message {
 
     /// ROM directory selected from picker
     RomDirectorySelected(Option<PathBuf>),
+
+    // Settings UI
+    /// Open settings window
+    OpenSettings,
+
+    /// Close settings window
+    CloseSettings,
+
+    /// Select settings tab
+    SelectSettingsTab(SettingsTab),
+
+    /// Reset all settings to defaults
+    ResetSettingsToDefaults,
+
+    // Emulation settings
+    /// Update emulation speed
+    UpdateEmulationSpeed(f32),
+
+    /// Update region
+    UpdateRegion(Region),
+
+    /// Toggle rewind
+    ToggleRewind(bool),
+
+    /// Update rewind buffer size
+    UpdateRewindBufferSize(usize),
+
+    // Video settings
+    /// Update scaling mode
+    UpdateScalingMode(ScalingMode),
+
+    /// Toggle VSync
+    ToggleVSync(bool),
+
+    /// Toggle CRT shader
+    ToggleCrtShader(bool),
+
+    /// Update CRT preset
+    UpdateCrtPreset(CrtPreset),
+
+    /// Update overscan top
+    UpdateOverscanTop(u32),
+
+    /// Update overscan bottom
+    UpdateOverscanBottom(u32),
+
+    /// Update overscan left
+    UpdateOverscanLeft(u32),
+
+    /// Update overscan right
+    UpdateOverscanRight(u32),
+
+    // Audio settings
+    /// Toggle audio
+    ToggleAudio(bool),
+
+    /// Update sample rate
+    UpdateSampleRate(u32),
+
+    /// Update volume
+    UpdateVolume(f32),
+
+    /// Update buffer size
+    UpdateBufferSize(u32),
+
+    // Input settings
+    /// Update gamepad deadzone
+    UpdateGamepadDeadzone(f32),
+
+    /// Remap key (player, button name)
+    RemapKey { player: u8, button: String },
+
+    // Persistence
+    /// Save configuration to disk
+    SaveConfig,
+
+    /// Configuration saved (result)
+    ConfigSaved(Result<(), String>),
+
+    /// Load configuration from disk
+    LoadConfig,
+
+    /// Configuration loaded (result)
+    ConfigLoaded(Result<(), String>),
+
+    // Recent ROMs
+    /// Load recent ROM by index (0-9)
+    LoadRecentRom(usize),
+
+    /// Clear recent ROMs list
+    ClearRecentRoms,
+
+    // About dialog
+    /// Show about dialog
+    ShowAbout,
+
+    /// Close about dialog
+    CloseAbout,
+
+    /// Open URL in browser
+    OpenUrl(String),
+
+    // Window events
+    /// Window resized (width, height)
+    WindowResized(f32, f32),
 }
