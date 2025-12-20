@@ -1,5 +1,9 @@
 # RustyNES
 
+<p align="center">
+  <img src="images/RustyNES_Banner-Logo.jpg" alt="RustyNES Banner Logo" width="800">
+</p>
+
 > **Precise. Pure. Powerful.**
 
 [![Build Status](https://github.com/doublegate/RustyNES/workflows/CI/badge.svg)](https://github.com/doublegate/RustyNES/actions)
@@ -69,6 +73,10 @@ RustyNES combines **accuracy-first emulation** with **modern features** and the 
 | **GPU Accelerated**   | Cross-platform wgpu rendering with WGSL shader support                                    |
 | **Modern GUI**        | Iced framework with Elm architecture for type-safe, responsive UI                         |
 | **Pure Rust**         | Minimal unsafe code (only in FFI boundaries), leveraging Rust's safety guarantees         |
+
+<p align="center">
+  <img src="images/RustyNES_Arch-Blueprint_1.jpg" alt="RustyNES Architecture Blueprint" width="800">
+</p>
 
 ---
 
@@ -360,26 +368,9 @@ See [ROADMAP.md](ROADMAP.md) for the complete development plan.
 
 ### Comparison with Other Emulators
 
-| Feature | RustyNES | Mesen2 | FCEUX | puNES | TetaNES |
-|---------|----------|--------|-------|-------|---------|
-| **CPU Accuracy** | Cycle | Cycle | Cycle | Instruction | Cycle |
-| **PPU Accuracy** | Dot | Dot | Scanline | Dot | Dot |
-| **Mapper Count** | 300+ (goal) | 300+ | 200+ | 461+ | 10 |
-| **RetroAchievements** | ✓ | ✓ | ✗ | ✗ | ✗ |
-| **GGPO Netplay** | ✓ | ✗ | ✗ | ✗ | ✗ |
-| **TAS Editor** | ✓ | ✓ | ✓ | ✗ | ✗ |
-| **Lua Scripting** | ✓ (5.4) | ✓ (5.4) | ✓ (5.1) | ✗ | ✗ |
-| **Debugger** | Advanced | Advanced | Advanced | Basic | Basic |
-| **WebAssembly** | ✓ | ✗ | ✓ | ✗ | ✓ |
-| **Language** | Rust | C++ | C++ | C++ | Rust |
-| **License** | MIT/Apache | GPL-3.0 | GPL-2.0 | GPL-2.0 | GPL-3.0 |
-
-**RustyNES Advantages:**
-
-- Modern Rust codebase with memory safety guarantees
-- Unique combination of accuracy + netplay + RetroAchievements
-- Modular design allowing component reuse
-- Permissive dual licensing (MIT/Apache-2.0)
+<p align="center">
+  <img src="images/RustyNES_Emu-Compare.jpg" alt="RustyNES Emulator Comparison" width="800">
+</p>
 
 ---
 
