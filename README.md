@@ -17,7 +17,7 @@
 [![APU Tests](https://img.shields.io/badge/APU%20tests-150%20passing-brightgreen.svg)](#test-validation-status)
 [![Mapper Tests](https://img.shields.io/badge/Mapper%20tests-167%20passing-brightgreen.svg)](#test-validation-status)
 [![Core Tests](https://img.shields.io/badge/Core%20tests-23%20passing-brightgreen.svg)](#test-validation-status)
-[![Blargg CPU](https://img.shields.io/badge/Blargg%20CPU-19%2F20%20passing%20(95%25)-brightgreen.svg)](#test-validation-status)
+[![Blargg CPU](https://img.shields.io/badge/Blargg%20CPU-20%2F20%20passing%20(100%25)-brightgreen.svg)](#test-validation-status)
 [![Blargg PPU](https://img.shields.io/badge/Blargg%20PPU-24%2F24%20passing%20(100%25)-brightgreen.svg)](#test-validation-status)
 [![Blargg APU](https://img.shields.io/badge/Blargg%20APU-12%2F12%20passing%20(100%25)-brightgreen.svg)](#test-validation-status)
 
@@ -39,9 +39,9 @@ A next-generation NES emulator written in pure Rust — targeting 100% accuracy,
 > - ✅ **M6: Desktop GUI** - Cross-platform Iced/wgpu application with ROM loading, audio playback, and full input support
 > - ✅ **M7: Accuracy** - CPU/PPU/APU timing refinements, OAM DMA 513/514 cycle precision, hardware-accurate mixer
 >
-> **Test Suite:** 469+ tests passing (0 failures in unit/integration suites)
+> **Test Suite:** 471+ tests passing (0 failures in unit/integration suites)
 >
-> **Current:** Phase 1.5 (Stabilization) - M8 Sprints 1-4 Complete (100% Pass Rate across CPU/PPU/APU baselines)
+> **Current:** Phase 1.5 (Stabilization) - M8 Sprints 1-4 Complete (100% Pass Rate across all Blargg suites)
 >
 > **Next:** Milestone 8 Sprint 5: Mapper Tests
 >

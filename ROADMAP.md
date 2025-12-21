@@ -25,7 +25,7 @@
 
 **Milestone 8 Progress (IN PROGRESS - Sprints 1-4 COMPLETE):**
 
-- **Blargg CPU Tests:** 19/20 passing (95%). Fixed dummy read timing. 1 known limitation (NMI/BRK).
+- **Blargg CPU Tests:** 20/20 passing (100%). Fixed dummy read timing and NMI/BRK edge cases.
 - **Blargg PPU Tests:** 24/24 passing (100%).
   - **Cycle-Accurate Timing:** Implemented precise `tick()` state machine, resolving all VBlank/NMI jitter.
   - **Sprite Hit:** Passed all edge cases (alignment, corners, flip).

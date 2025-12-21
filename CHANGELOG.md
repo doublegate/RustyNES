@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Milestone 8 Sprint 2: CPU Accuracy Improvements (100% Pass Rate)
+
+- **Cycle-Accurate Interrupt Handling**
+  - Updated `Cpu::tick` state machine to correctly handle NMI hijacking during `BRK` execution (cycle 1 fetch replacement)
+  - Result: Passed `cpu_interrupts.nes` test #2 (NMI during BRK)
+  - Result: 100% pass rate on Blargg CPU tests (20/20)
+
 #### Milestone 8 Sprint 3: PPU Accuracy Improvements (100% Pass Rate)
 
 - **Cycle-Accurate CPU/PPU Synchronization**
