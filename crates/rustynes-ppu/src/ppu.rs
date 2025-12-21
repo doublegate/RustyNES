@@ -68,6 +68,8 @@ pub struct Ppu {
 
     // Internal state
     vram_read_buffer: u8,
+    open_bus_latch: u8,
+    decay_counter: u32,
     nmi_pending: bool,
 }
 
@@ -88,21 +90,32 @@ impl Ppu {
             timing: Timing::new(),
             frame_buffer: vec![0; FRAME_SIZE],
             vram_read_buffer: 0,
+            open_bus_latch: 0,
+            decay_counter: 0,
             nmi_pending: false,
         }
+    }
+
+    /// Refresh open bus decay counter (approx 1 second ~ 5.3M dots)
+    fn refresh_open_bus(&mut self) {
+        self.decay_counter = 5_300_000;
     }
 
     /// Read from PPU register (CPU memory map $2000-$2007)
     pub fn read_register(&mut self, addr: u16) -> u8 {
         match addr & 0x07 {
-            // $2000: PPUCTRL (write-only)
-            0 => 0,
+            // $2000: PPUCTRL (write-only) -> return open bus (do not refresh)
+            0 => self.open_bus_latch,
 
-            // $2001: PPUMASK (write-only)
-            1 => 0,
+            // $2001: PPUMASK (write-only) -> return open bus (do not refresh)
+            1 => self.open_bus_latch,
 
             // $2002: PPUSTATUS
             2 => {
+                // Reading $2002 only drives bits 7-5. Bits 4-0 are open bus (undriven).
+                // Therefore, we do NOT refresh the decay counter, so bits 4-0 continue to decay.
+                // (Technically bits 7-5 are refreshed, but our model has one counter).
+
                 let status = self.status.bits();
 
                 // Race condition: Reading $2002 on the exact cycle VBlank is set
@@ -113,30 +126,50 @@ impl Ppu {
 
                 self.status.clear_vblank(); // Reading clears VBlank flag
                 self.scroll.read_ppustatus(); // Reset write latch
-                status
+
+                // Return status (bits 7-5) + open bus (bits 4-0)
+                let result = (status & 0xE0) | (self.open_bus_latch & 0x1F);
+
+                // Update latch with result (actually only bits 7-5 are new, 4-0 are preserved)
+                self.open_bus_latch = result;
+
+                result
             }
 
-            // $2003: OAMADDR (write-only)
-            3 => 0,
+            // $2003: OAMADDR (write-only) -> return open bus (do not refresh)
+            3 => self.open_bus_latch,
 
             // $2004: OAMDATA
-            4 => self.oam.read(),
+            4 => {
+                // Reading refreshes open bus
+                self.refresh_open_bus();
 
-            // $2005: PPUSCROLL (write-only)
-            5 => 0,
+                let data = self.oam.read();
+                // Reading OAMDATA does NOT reliably update open bus on all revisions,
+                // but usually it does. Most emulators update it.
+                self.open_bus_latch = data;
+                data
+            }
 
-            // $2006: PPUADDR (write-only)
-            6 => 0,
+            // $2005: PPUSCROLL (write-only) -> return open bus (do not refresh)
+            5 => self.open_bus_latch,
+
+            // $2006: PPUADDR (write-only) -> return open bus (do not refresh)
+            6 => self.open_bus_latch,
 
             // $2007: PPUDATA
             7 => {
+                // Reading refreshes open bus
+                self.refresh_open_bus();
+
                 let addr = self.scroll.vram_addr();
                 let data = self.vram.read(addr);
 
                 // Buffered read behavior
                 let result = if addr >= 0x3F00 {
                     // Palette reads are immediate
-                    data
+                    // Bits 7-6 are open bus (from decay latch)
+                    (data & 0x3F) | (self.open_bus_latch & 0xC0)
                 } else {
                     // Normal reads return previous buffer
                     let buffered = self.vram_read_buffer;
@@ -148,6 +181,9 @@ impl Ppu {
                 let increment = self.ctrl.vram_increment();
                 self.scroll.increment_vram(increment);
 
+                // Update open bus latch with the value put on the bus
+                self.open_bus_latch = result;
+
                 result
             }
 
@@ -157,6 +193,10 @@ impl Ppu {
 
     /// Write to PPU register (CPU memory map $2000-$2007)
     pub fn write_register(&mut self, addr: u16, value: u8) {
+        // Writing to any register updates the open bus latch and refreshes decay
+        self.open_bus_latch = value;
+        self.refresh_open_bus();
+
         match addr & 0x07 {
             // $2000: PPUCTRL
             0 => {
@@ -237,6 +277,14 @@ impl Ppu {
     /// (frame_complete, nmi_triggered)
     #[allow(clippy::too_many_lines)] // PPU step naturally handles many timing states
     pub fn step_with_chr<F: Fn(u16) -> u8>(&mut self, read_chr: F) -> (bool, bool) {
+        // Open bus decay
+        if self.decay_counter > 0 {
+            self.decay_counter -= 1;
+            if self.decay_counter == 0 {
+                self.open_bus_latch = 0;
+            }
+        }
+
         let rendering_enabled = self.mask.rendering_enabled();
 
         // Tick timing FIRST to advance to the next position

@@ -159,10 +159,40 @@ impl Apu {
 
             // Frame counter
             0x4017 => {
-                self.frame_counter.write_control(value);
+                let action = self.frame_counter.write_control(value);
+                self.process_frame_action(action);
             }
 
             _ => {}
+        }
+    }
+
+    /// Process a frame counter action
+    fn process_frame_action(&mut self, action: FrameAction) {
+        match action {
+            FrameAction::QuarterFrame => {
+                // Clock envelopes and linear counter
+                self.pulse1.clock_envelope();
+                self.pulse2.clock_envelope();
+                self.triangle.clock_linear_counter();
+                self.noise.clock_envelope();
+            }
+            FrameAction::HalfFrame => {
+                // Clock envelopes, linear counter, length counters, and sweep units
+                self.pulse1.clock_envelope();
+                self.pulse2.clock_envelope();
+                self.triangle.clock_linear_counter();
+                self.noise.clock_envelope();
+
+                self.pulse1.clock_length_counter();
+                self.pulse2.clock_length_counter();
+                self.triangle.clock_length_counter();
+                self.noise.clock_length_counter();
+
+                self.pulse1.clock_sweep();
+                self.pulse2.clock_sweep();
+            }
+            FrameAction::None => {}
         }
     }
 
@@ -288,32 +318,7 @@ impl Apu {
 
         // Clock frame counter and handle frame actions
         let action = self.frame_counter.clock();
-
-        match action {
-            FrameAction::QuarterFrame => {
-                // Clock envelopes and linear counter
-                self.pulse1.clock_envelope();
-                self.pulse2.clock_envelope();
-                self.triangle.clock_linear_counter();
-                self.noise.clock_envelope();
-            }
-            FrameAction::HalfFrame => {
-                // Clock envelopes, linear counter, length counters, and sweep units
-                self.pulse1.clock_envelope();
-                self.pulse2.clock_envelope();
-                self.triangle.clock_linear_counter();
-                self.noise.clock_envelope();
-
-                self.pulse1.clock_length_counter();
-                self.pulse2.clock_length_counter();
-                self.triangle.clock_length_counter();
-                self.noise.clock_length_counter();
-
-                self.pulse1.clock_sweep();
-                self.pulse2.clock_sweep();
-            }
-            FrameAction::None => {}
-        }
+        self.process_frame_action(action);
 
         // Mix channel outputs and resample
         let mixed = self.mixer.mix(

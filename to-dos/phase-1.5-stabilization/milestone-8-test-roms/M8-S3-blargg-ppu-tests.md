@@ -10,7 +10,7 @@ Systematically pass the Blargg PPU test suite (49 tests) to validate VBlank/NMI 
 - [ ] Validate VBlank/NMI timing precision
 - [ ] Handle sprite 0 hit edge cases
 - [ ] Verify palette RAM mirroring
-- [ ] Test PPU open bus behavior
+- [x] Test PPU open bus behavior (Passed)
 - [ ] Ensure scrolling edge cases work
 
 ## Tasks
@@ -50,11 +50,11 @@ Systematically pass the Blargg PPU test suite (49 tests) to validate VBlank/NMI 
 - [ ] Test palette read edge cases
 
 ### Task 4: Open Bus Tests (3 tests)
-- [ ] Run ppu_open_bus/ppu_open_bus.nes (PPU open bus behavior)
-- [ ] Test $2000-$2007 open bus behavior
-- [ ] Test $2002 VBlank flag read (clear after read)
-- [ ] Verify $2004 OAM read behavior
-- [ ] Test $2007 VRAM read buffer behavior
+- [x] Run ppu_open_bus/ppu_open_bus.nes (PPU open bus behavior) - **Passed**
+- [x] Test $2000-$2007 open bus behavior
+- [x] Test $2002 VBlank flag read (clear after read)
+- [x] Verify $2004 OAM read behavior
+- [x] Test $2007 VRAM read buffer behavior
 
 ### Task 5: Rendering Edge Cases (20 tests)
 - [ ] Test sprite overflow flag behavior
@@ -92,7 +92,7 @@ Systematically pass the Blargg PPU test suite (49 tests) to validate VBlank/NMI 
 | ppu_sprite_hit/10-timing_order.nes | ❌ Fail | 0xFF |
 | ppu_sprite_hit/11-edge_timing.nes | ❌ Fail | 0xFF |
 | ppu_palette_ram/ppu_palette_ram.nes | ❌ Fail | 0xFF |
-| ppu_open_bus/ppu_open_bus.nes | ❌ Fail | Decay value failure |
+| ppu_open_bus/ppu_open_bus.nes | ✅ Pass | Open bus decay & latch fully implemented |
 
 **Additional PPU Tests (20+ ROMs):**
 - ppu_sprite_overflow/ (sprite overflow flag)
@@ -107,7 +107,7 @@ Systematically pass the Blargg PPU test suite (49 tests) to validate VBlank/NMI 
 - [ ] NMI timing precise (exact cycle)
 - [ ] Sprite 0 hit edge cases handled (9/11 passing)
 - [ ] Palette RAM mirroring correct
-- [ ] Open bus behavior verified
+- [x] Open bus behavior verified (Passed)
 - [ ] Zero regressions from v0.6.0 baseline
 - [ ] Scrolling edge cases working
 
