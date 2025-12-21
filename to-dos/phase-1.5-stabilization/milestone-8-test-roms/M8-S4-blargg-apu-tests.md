@@ -89,21 +89,21 @@ Systematically pass the Blargg APU test suite (70 tests) to validate audio chann
 
 | ROM | Status | Notes |
 |-----|--------|-------|
-| apu_test/1-len_ctr.nes | [ ] Pending | Length counter |
-| apu_test/2-len_table.nes | [ ] Pending | Length table values |
-| apu_test/3-irq_flag.nes | [ ] Pending | IRQ flag behavior |
-| apu_test/4-jitter.nes | [ ] Pending | APU jitter |
-| apu_test/5-len_timing.nes | [ ] Pending | Length counter timing |
-| apu_test/6-irq_flag_timing.nes | [ ] Pending | IRQ flag timing |
-| apu_test/7-dmc_basics.nes | [ ] Pending | DMC basics |
-| apu_test/8-dmc_rates.nes | [ ] Pending | DMC rates |
-| apu_frame_counter/*.nes | [ ] Pending | Frame counter tests (10) |
-| apu_lin_ctr/apu_lin_ctr.nes | [ ] Pending | Triangle linear counter |
-| apu_dmc/apu_dmc.nes | [ ] Pending | DMC comprehensive |
-| apu_dmc/apu_dmc_latency.nes | [ ] Pending | DMC DMA latency |
-| apu_mixer/apu_mixer.nes | [ ] Pending | Mixer output |
-| apu_sweep/apu_sweep.nes | [ ] Pending | Sweep unit |
-| apu_envelope/apu_envelope.nes | [ ] Pending | Envelope generator |
+| apu_test/1-len_ctr.nes | ❌ Fail | 0xFF |
+| apu_test/2-len_table.nes | ❌ Fail | 0xFF |
+| apu_test/3-irq_flag.nes | ❌ Fail | 0xFF |
+| apu_test/4-jitter.nes | ❌ Fail | 0xFF |
+| apu_test/5-len_timing.nes | ❌ Fail | First length too late |
+| apu_test/6-irq_flag_timing.nes | ❌ Fail | 0xFF |
+| apu_test/7-dmc_basics.nes | ❌ Fail | Reading IRQ flag shouldn't clear it |
+| apu_test/8-dmc_rates.nes | ❌ Fail | Rate 0 period too long |
+| apu_frame_counter/*.nes | [ ] Pending | |
+| apu_lin_ctr/apu_lin_ctr.nes | ❌ Fail | 0xFF |
+| apu_dmc/apu_dmc.nes | [ ] Pending | |
+| apu_dmc/apu_dmc_latency.nes | [ ] Pending | |
+| apu_mixer/apu_mixer.nes | [ ] Pending | |
+| apu_sweep/apu_sweep.nes | ❌ Fail | 0xFF |
+| apu_envelope/apu_envelope.nes | ❌ Fail | 0xFF |
 
 **Additional APU Tests (40+ ROMs):**
 - apu_pulse/ (pulse channel tests)
