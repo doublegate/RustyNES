@@ -216,6 +216,7 @@ impl Bus {
         self.ram = [0; 0x800];
         self.prg_ram.fill(0xFF); // Initialize PRG-RAM to 0xFF (many test ROMs expect this)
         self.ppu.reset();
+        self.apu.reset();
         self.controller1.reset();
         self.controller2.reset();
         self.dma_transfer = false;

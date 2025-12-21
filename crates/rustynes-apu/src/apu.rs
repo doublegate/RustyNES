@@ -481,6 +481,37 @@ mod tests {
     }
 
     #[test]
+    fn test_4step_mode_irq_generation() {
+        let mut apu = Apu::new();
+
+        // Write $00 to $4017: 4-step mode, IRQ enabled
+        apu.write_register(0x4017, 0x00);
+
+        // Initially no IRQ pending
+        assert!(!apu.irq_pending());
+
+        // Clock for 29828 cycles - no IRQ yet
+        for _ in 0..29828 {
+            apu.step();
+        }
+        assert!(!apu.irq_pending());
+
+        // Clock one more time to cycle 29829 - IRQ should fire
+        apu.step();
+        assert!(apu.irq_pending(), "IRQ should be pending at cycle 29829");
+
+        // Verify $4015 shows bit 6 set
+        let status = apu.read_register(0x4015);
+        assert_eq!(status & 0x40, 0x40, "$4015 bit 6 should be set");
+
+        // Reading $4015 clears the IRQ
+        assert!(
+            !apu.irq_pending(),
+            "IRQ should be cleared after reading $4015"
+        );
+    }
+
+    #[test]
     fn test_read_clears_frame_irq() {
         let mut apu = Apu::new();
 

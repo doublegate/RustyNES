@@ -33,9 +33,16 @@ pub struct Cpu {
     /// Stall cycles (for DMA)
     pub stall: u8,
     /// NMI pending flag
-    nmi_pending: bool,
+    pub(crate) nmi_pending: bool,
     /// IRQ line state
-    irq_pending: bool,
+    pub(crate) irq_pending: bool,
+    /// I flag value sampled at start of instruction (for interrupt polling)
+    /// IRQ check uses this instead of current I flag to implement proper timing
+    pub(crate) prev_irq_inhibit: bool,
+    /// Suppress NMI check for one instruction (set after BRK completes)
+    /// This ensures the first instruction of the interrupt handler executes
+    /// before checking for another NMI (required for nmi_and_brk test)
+    pub(crate) suppress_nmi_next: bool,
     /// CPU jammed (halt opcodes)
     pub jammed: bool,
 
@@ -84,6 +91,8 @@ impl Cpu {
             stall: 0,
             nmi_pending: false,
             irq_pending: false,
+            prev_irq_inhibit: true,
+            suppress_nmi_next: false,
             jammed: false,
             // Cycle-by-cycle state machine fields
             state: CpuState::default(),
@@ -114,6 +123,7 @@ impl Cpu {
         self.cycles += 7;
         self.nmi_pending = false;
         self.irq_pending = false;
+        self.prev_irq_inhibit = true;
         self.jammed = false;
         // Reset state machine to ready for next instruction
         self.state = CpuState::FetchOpcode;
@@ -147,15 +157,35 @@ impl Cpu {
             return 1;
         }
 
-        // Handle interrupts (polled on last cycle of previous instruction)
-        if self.nmi_pending {
+        // Sample I flag at start of this instruction (for next instruction's IRQ check)
+        let current_irq_inhibit = self.status.contains(StatusFlags::INTERRUPT_DISABLE);
+
+        // Check for NMI (Non-Maskable Interrupt) - Edge triggered
+        // NMI can be suppressed for one instruction after BRK completes
+        if self.nmi_pending && !self.suppress_nmi_next {
             self.nmi_pending = false;
+            // NMI sets I flag, so we must treat previous as inhibited to prevent immediate IRQ
+            self.prev_irq_inhibit = true;
             return self.handle_nmi(bus);
         }
 
-        if self.irq_pending && !self.status.contains(StatusFlags::INTERRUPT_DISABLE) {
+        // Clear NMI suppression flag (applies for one instruction only)
+        if self.suppress_nmi_next {
+            self.suppress_nmi_next = false;
+        }
+
+        // Check for IRQ (Maskable Interrupt) - Level triggered
+        // IRQ is ignored if I flag is set (Interrupt Disable).
+        // The check uses `prev_irq_inhibit` to model the 1-instruction latency
+        // of instructions that change the I flag (CLI, SEI, PLP, RTI).
+        if self.irq_pending && !self.prev_irq_inhibit {
+            // Entering ISR sets I flag, so we must treat previous as inhibited
+            self.prev_irq_inhibit = true;
             return self.handle_irq(bus);
         }
+
+        // Update prev_irq_inhibit for next instruction
+        self.prev_irq_inhibit = current_irq_inhibit;
 
         // Fetch opcode
         let opcode = bus.read(self.pc);
@@ -186,6 +216,12 @@ impl Cpu {
     /// IRQ is level-triggered - will fire every instruction while line is low and I=0.
     pub fn set_irq(&mut self, active: bool) {
         self.irq_pending = active;
+    }
+
+    /// Check if IRQ is pending.
+    #[must_use]
+    pub fn irq_pending(&self) -> bool {
+        self.irq_pending
     }
 
     /// Get total cycles executed.
@@ -263,9 +299,14 @@ impl Cpu {
 
     /// Fetch opcode cycle (cycle 1 of every instruction).
     fn tick_fetch_opcode(&mut self, bus: &mut impl Bus) -> bool {
+        // Sample I flag at start of this instruction (will be used for NEXT instruction's IRQ check)
+        let current_irq_inhibit = self.status.contains(StatusFlags::INTERRUPT_DISABLE);
+
         // Check for pending interrupts (polled on last cycle of previous instruction)
-        if self.nmi_pending {
+        // NMI is not affected by I flag, but can be suppressed for one instruction after BRK
+        if self.nmi_pending && !self.suppress_nmi_next {
             self.nmi_pending = false;
+            self.prev_irq_inhibit = current_irq_inhibit;
             // Start interrupt sequence - dummy read of current PC
             let _ = bus.read(self.pc);
             self.state = CpuState::InterruptPushPcHi;
@@ -274,7 +315,15 @@ impl Cpu {
             return false;
         }
 
-        if self.irq_pending && !self.status.contains(StatusFlags::INTERRUPT_DISABLE) {
+        // Clear NMI suppression flag (applies for one instruction only)
+        if self.suppress_nmi_next {
+            self.suppress_nmi_next = false;
+        }
+
+        // IRQ uses the I flag from the PREVIOUS instruction (prev_irq_inhibit)
+        // This implements the one-instruction delay after CLI/PLP/RTI
+        if self.irq_pending && !self.prev_irq_inhibit {
+            self.prev_irq_inhibit = current_irq_inhibit;
             // Start interrupt sequence - dummy read of current PC
             let _ = bus.read(self.pc);
             self.state = CpuState::InterruptPushPcHi;
@@ -282,6 +331,9 @@ impl Cpu {
             self.effective_addr = 0xFFFE;
             return false;
         }
+
+        // Update prev_irq_inhibit for next instruction
+        self.prev_irq_inhibit = current_irq_inhibit;
 
         // Fetch opcode from PC
         self.current_opcode = bus.read(self.pc);
@@ -699,12 +751,29 @@ impl Cpu {
                 return true;
             }
             InstructionType::Break => {
-                // BRK: push status with B flag set
+                // BRK: check for NMI hijacking
+                // If NMI is pending, it hijacks BRK by using the NMI vector instead of IRQ/BRK vector
+                // IMPORTANT: B flag is ALWAYS set to 1 when pushed from BRK, even when NMI hijacks!
+                // This allows software to detect NMI hijacking by checking B=1 in the NMI handler.
+                // Reference: Mesen2 NesCpu.cpp BRK(), NESdev wiki "6502 BRK and B bit"
+                let nmi_hijack = self.nmi_pending;
+                if nmi_hijack {
+                    self.nmi_pending = false;
+                }
+
+                // Push status with B flag ALWAYS set (even when NMI hijacks)
                 let value = self.status.to_stack_byte(true);
                 bus.write(0x0100 | u16::from(self.sp), value);
                 self.sp = self.sp.wrapping_sub(1);
                 self.status.insert(StatusFlags::INTERRUPT_DISABLE);
-                self.effective_addr = 0xFFFE; // IRQ/BRK vector
+
+                // Suppress NMI check for one instruction after BRK completes
+                // This ensures the first instruction of the handler executes before checking for NMI
+                // Reference: Mesen2 NesCpu.cpp BRK() "_prevNeedNmi = false"
+                self.suppress_nmi_next = true;
+
+                // Use NMI vector if hijacked, IRQ/BRK vector otherwise
+                self.effective_addr = if nmi_hijack { 0xFFFA } else { 0xFFFE };
                 self.state = CpuState::InterruptFetchVectorLo;
             }
             _ => {
@@ -1358,12 +1427,12 @@ impl Cpu {
             0x84 | 0x94 | 0x8C => self.sty(bus, addr_mode),
 
             // Transfer
-            0xAA => self.tax(),
-            0xA8 => self.tay(),
-            0x8A => self.txa(),
-            0x98 => self.tya(),
-            0xBA => self.tsx(),
-            0x9A => self.txs(),
+            0xAA => self.tax(bus),
+            0xA8 => self.tay(bus),
+            0x8A => self.txa(bus),
+            0x98 => self.tya(bus),
+            0xBA => self.tsx(bus),
+            0x9A => self.txs(bus),
 
             // Stack
             0x48 => self.pha(bus),
@@ -1380,10 +1449,10 @@ impl Cpu {
             // Increment/Decrement
             0xE6 | 0xF6 | 0xEE | 0xFE => self.inc(bus, addr_mode),
             0xC6 | 0xD6 | 0xCE | 0xDE => self.dec(bus, addr_mode),
-            0xE8 => self.inx(),
-            0xC8 => self.iny(),
-            0xCA => self.dex(),
-            0x88 => self.dey(),
+            0xE8 => self.inx(bus),
+            0xC8 => self.iny(bus),
+            0xCA => self.dex(bus),
+            0x88 => self.dey(bus),
 
             // Logic
             0x29 | 0x25 | 0x35 | 0x2D | 0x3D | 0x39 | 0x21 | 0x31 => self.and(bus, addr_mode),
@@ -1392,13 +1461,13 @@ impl Cpu {
             0x24 | 0x2C => self.bit(bus, addr_mode),
 
             // Shift/Rotate
-            0x0A => self.asl_acc(),
+            0x0A => self.asl_acc(bus),
             0x06 | 0x16 | 0x0E | 0x1E => self.asl(bus, addr_mode),
-            0x4A => self.lsr_acc(),
+            0x4A => self.lsr_acc(bus),
             0x46 | 0x56 | 0x4E | 0x5E => self.lsr(bus, addr_mode),
-            0x2A => self.rol_acc(),
+            0x2A => self.rol_acc(bus),
             0x26 | 0x36 | 0x2E | 0x3E => self.rol(bus, addr_mode),
-            0x6A => self.ror_acc(),
+            0x6A => self.ror_acc(bus),
             0x66 | 0x76 | 0x6E | 0x7E => self.ror(bus, addr_mode),
 
             // Compare
@@ -1425,14 +1494,14 @@ impl Cpu {
             0x00 => self.brk(bus),
 
             // Flags
-            0x18 => self.clc(),
-            0x38 => self.sec(),
-            0x58 => self.cli(),
-            0x78 => self.sei(),
-            0xB8 => self.clv(),
-            0xD8 => self.cld(),
-            0xF8 => self.sed(),
-            0xEA => self.nop(),
+            0x18 => self.clc(bus),
+            0x38 => self.sec(bus),
+            0x58 => self.cli(bus),
+            0x78 => self.sei(bus),
+            0xB8 => self.clv(bus),
+            0xD8 => self.cld(bus),
+            0xF8 => self.sed(bus),
+            0xEA => self.nop(bus),
 
             // Unofficial opcodes
             0xA7 | 0xB7 | 0xAF | 0xBF | 0xA3 | 0xB3 => self.lax(bus, addr_mode),
@@ -1456,7 +1525,7 @@ impl Cpu {
             0xBB => self.las(bus, addr_mode),
 
             // Unofficial NOPs
-            0x1A | 0x3A | 0x5A | 0x7A | 0xDA | 0xFA => self.nop(),
+            0x1A | 0x3A | 0x5A | 0x7A | 0xDA | 0xFA => self.nop(bus),
             0x80 | 0x82 | 0x89 | 0xC2 | 0xE2 => self.nop_read(bus, addr_mode),
             0x04 | 0x44 | 0x64 | 0x14 | 0x34 | 0x54 | 0x74 | 0xD4 | 0xF4 => {
                 self.nop_read(bus, addr_mode)

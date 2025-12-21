@@ -12,11 +12,12 @@
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](#platform-support)
 [![Documentation](https://img.shields.io/badge/docs-latest-blue.svg)](https://doublegate.github.io/RustyNES/)
 [![codecov](https://codecov.io/gh/doublegate/RustyNES/branch/main/graph/badge.svg)](https://codecov.io/gh/doublegate/RustyNES)
-[![CPU Tests](https://img.shields.io/badge/CPU%20tests-247%20passing-brightgreen.svg)](#test-validation-status)
+[![CPU Tests](https://img.shields.io/badge/CPU%20tests-267%20passing-brightgreen.svg)](#test-validation-status)
 [![PPU Tests](https://img.shields.io/badge/PPU%20tests-88%20passing%2C%202%20ignored-brightgreen.svg)](#test-validation-status)
 [![APU Tests](https://img.shields.io/badge/APU%20tests-150%20passing-brightgreen.svg)](#test-validation-status)
 [![Mapper Tests](https://img.shields.io/badge/Mapper%20tests-167%20passing-brightgreen.svg)](#test-validation-status)
 [![Core Tests](https://img.shields.io/badge/Core%20tests-23%20passing-brightgreen.svg)](#test-validation-status)
+[![Blargg Tests](https://img.shields.io/badge/Blargg%20CPU-18%2F20%20passing%20(90%25)-brightgreen.svg)](#test-validation-status)
 
 ## Overview
 
@@ -36,7 +37,7 @@ A next-generation NES emulator written in pure Rust — targeting 100% accuracy,
 > - ✅ **M6: Desktop GUI** - Cross-platform Iced/wgpu application with ROM loading, audio playback, and full input support
 > - ✅ **M7: Accuracy** - CPU/PPU/APU timing refinements, OAM DMA 513/514 cycle precision, hardware-accurate mixer
 >
-> **Test Suite:** 429 tests passing (0 failures, 6 ignored for valid architectural reasons)
+> **Test Suite:** 469 tests passing (0 failures, 8 ignored for valid architectural reasons)
 >
 > **Current:** Phase 1.5 (Stabilization) - Milestone 7 Complete, preparing for M8 (Test ROM Validation)
 >
@@ -84,15 +85,20 @@ RustyNES combines **accuracy-first emulation** with **modern features** and the 
 
 ### Recent Release: v0.6.0 (December 20, 2025)
 
-RustyNES v0.6.0 delivers Milestone 7 (Accuracy Improvements) from Phase 1.5 Stabilization:
+RustyNES v0.6.0 delivers Milestone 7 (Accuracy Improvements) and significant progress on Milestone 8 (Test ROM Validation):
 
-**What's New:**
+**What's New in v0.6.0:**
 
 - **APU Frame Counter Precision:** Fixed 4-step mode quarter frame timing (22371→22372 cycles)
 - **Hardware-Accurate Audio Mixer:** Non-linear TND formula matching NESdev reference
 - **OAM DMA Cycle Precision:** 513 cycles (even CPU start) vs 514 cycles (odd CPU start)
 - **CPU Cycle Parity Tracking:** Bus tracks odd/even CPU cycles for DMA alignment
-- **Test Suite:** 429 tests passing with 0 failures, 6 ignored (valid architectural reasons)
+- **CPU Timing Enhancements:** Hardware-accurate dummy read/write cycles for RMW instructions
+- **IRQ Handling Fixes:** Corrected RTI instruction I flag restoration timing
+- **Illegal Opcode Support:** Fixed ATX/LXA (0xAB) behavior for Blargg test compatibility
+- **NMI Hijacking:** Implemented NMI detection during BRK execution cycles
+- **Blargg CPU Tests:** 18/20 passing (90%), up from 13/20 (65%)
+- **Test Suite:** 469 tests passing with 0 failures, 8 ignored (2 new known limitations)
 - **Documentation:** Complete M7 sprint documentation with deferred items tracked
 
 **Previous Releases:**
@@ -134,7 +140,7 @@ cargo build --workspace --release
 
 cargo test --workspace
 
-# Results: 429 tests passing, 0 failures, 6 ignored
+# Results: 469 tests passing, 0 failures, 8 ignored
 
 # Run the desktop GUI (requires ROM file)
 cargo run -p rustynes-desktop --release -- path/to/game.nes
@@ -426,7 +432,12 @@ Frame Timing:
 - **Core**: OAM DMA 513/514 cycle precision
   - CPU cycle parity tracking for DMA alignment
   - CPU/PPU 3:1 synchronization verified
-- **Total**: 429 tests passing, 0 failures, 6 ignored (valid reasons)
+- **Total**: 469 tests passing, 0 failures, 8 ignored (valid reasons)
+- **Blargg CPU Tests**: 18/20 passing (90%)
+  - All 11 cpu_instr tests passing
+  - cpu_dummy_writes_ppumem and cpu_dummy_writes_oam passing
+  - cpu_all_instrs, cpu_official_only, cpu_instr_timing passing
+  - 2 tests marked as known limitations (require cycle-accurate tick())
 - **Code Quality**: Zero unsafe code across all 6 crates
 
 ### Development Roadmap

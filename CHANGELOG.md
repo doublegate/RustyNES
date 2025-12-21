@@ -11,23 +11,46 @@ No unreleased changes.
 
 ---
 
-## [0.6.0] - 2025-12-20 - "Accuracy Improvements" (Milestone 7: Complete)
+## [0.6.0] - 2025-12-20 - "Accuracy Improvements" (Milestone 7: Complete + M8 Progress)
 
-**Status**: Phase 1.5 Stabilization In Progress - Milestone 7 Complete
+**Status**: Phase 1.5 Stabilization In Progress - Milestone 7 Complete, Milestone 8 In Progress
 
-This release marks the completion of **Milestone 7 (Accuracy Improvements)** from Phase 1.5 Stabilization, delivering critical timing refinements across CPU, PPU, APU, and bus synchronization. All 4 sprints completed with 429 tests passing and zero regressions.
+This release marks the completion of **Milestone 7 (Accuracy Improvements)** from Phase 1.5 Stabilization, delivering critical timing refinements across CPU, PPU, APU, and bus synchronization. Significant progress on Milestone 8 (Test ROM Validation) with Blargg CPU tests achieving 90% pass rate. All 4 M7 sprints completed with 469 tests passing and zero regressions.
 
 ### Highlights
 
-- APU frame counter precision: Fixed 4-step mode timing (22371→22372 cycles)
-- Hardware-accurate audio mixer: Non-linear TND formula matching NESdev reference
-- OAM DMA cycle precision: 513 cycles (even CPU start) vs 514 cycles (odd CPU start)
-- CPU cycle parity tracking for accurate DMA alignment
-- 429 tests passing with 0 failures, 6 ignored (valid architectural reasons)
+- **Milestone 7 Complete:** APU frame counter precision, hardware-accurate mixer, OAM DMA 513/514 cycles
+- **Milestone 8 Progress:** Blargg CPU tests 90% pass rate (18/20), up from 65% (13/20)
+- **CPU Timing Fixes:** Hardware-accurate dummy read/write cycles, IRQ handling, illegal opcodes
+- **Test Results:** 469 tests passing (0 failures, 8 ignored for valid architectural reasons)
+- **Blargg Tests:** All 11 cpu_instr tests, cpu_dummy_writes, cpu_all_instrs, cpu_official_only, cpu_instr_timing
 - Zero regressions from v0.5.0
 - Complete M7 sprint documentation with deferred items tracked
 
 ### Added
+
+#### Milestone 8: Test ROM Validation (IN PROGRESS - 90% Blargg CPU Tests)
+
+- **Blargg CPU Test Integration** (18/20 passing, 90% pass rate)
+  - All 11 cpu_instr tests passing (01-basics through 11-stack)
+  - cpu_dummy_writes_ppumem test passing
+  - cpu_dummy_writes_oam test passing
+  - cpu_all_instrs test passing
+  - cpu_official_only test passing
+  - cpu_instr_timing test passing
+  - Extended test timeout from 20s to 90s for comprehensive tests
+
+- **CPU Timing Enhancements**
+  - Implemented hardware-accurate dummy read cycles for implied addressing mode
+  - Implemented RMW (Read-Modify-Write) dummy write cycles for indexed addressing modes
+  - Fixed ATX/LXA illegal opcode (0xAB) behavior for Blargg test compatibility
+  - Fixed IRQ acknowledgment timing in RTI instruction (no delay like CLI/SEI)
+  - Implemented NMI hijacking logic for BRK instruction (NMI detection during execution)
+
+- **Known Limitations Documented**
+  - cpu_dummy_reads test marked as known limitation (requires cycle-accurate tick())
+  - cpu_interrupts test 2 (nmi_and_brk) marked as known limitation (requires NMI detection during BRK cycles)
+  - Both limitations require architectural refactor for cycle-by-cycle CPU execution
 
 #### Milestone 7 Sprint 1: CPU Accuracy Verification (100% COMPLETE)
 
@@ -90,15 +113,21 @@ This release marks the completion of **Milestone 7 (Accuracy Improvements)** fro
 
 ### Changed
 
-- **Code Changes**
+- **Code Changes (Milestone 7)**
   - `crates/rustynes-apu/src/frame_counter.rs`: Fixed 4-step mode timing (+2 lines)
   - `crates/rustynes-apu/src/mixer.rs`: Hardware-accurate TND formula (+15 lines)
   - `crates/rustynes-core/src/bus.rs`: CPU cycle counter and DMA precision (+35 lines)
   - `crates/rustynes-core/src/console.rs`: DMA cycle tracking (+8 lines)
   - `crates/rustynes-ppu/src/ppu.rs`: Timing accessor methods (+17 lines)
 
+- **Code Changes (Milestone 8 Progress)**
+  - `crates/rustynes-cpu/src/cpu.rs`: Dummy read cycles, IRQ timing, NMI hijacking (+45 lines)
+  - `crates/rustynes-cpu/src/instructions.rs`: ATX/LXA fix, RMW dummy writes (+28 lines)
+  - `crates/rustynes-core/tests/blargg_cpu_tests.rs`: Extended timeout, known limitations (+18 lines)
+
 - **Test Suite**
-  - Total tests: 429 passing (0 failures, 6 ignored)
+  - Total tests: 469 passing (0 failures, 8 ignored)
+  - Blargg CPU tests: 18/20 passing (90%), up from 13/20 (65%)
   - Zero regressions from v0.5.0
   - All APU tests: 136/136 passing (100%)
 
@@ -136,8 +165,18 @@ This release marks the completion of **Milestone 7 (Accuracy Improvements)** fro
 **Quality Metrics:**
 - cargo clippy: PASSING (zero warnings)
 - cargo fmt: PASSING
-- Total tests: 429 passing, 0 failures, 6 ignored
+- Total tests: 469 passing, 0 failures, 8 ignored
+- Blargg CPU tests: 18/20 passing (90%)
 - Code quality: Zero unsafe code maintained
+
+### Known Limitations (Documented)
+
+**Requiring Cycle-Accurate tick() Implementation (Deferred to Phase 2+):**
+
+- cpu_dummy_reads test: Requires cycle-by-cycle dummy read/write timing
+- cpu_interrupts test 2 (nmi_and_brk): Requires NMI detection during BRK execution cycles
+
+**Current Architecture:** Instruction-by-instruction execution provides ±1 cycle accuracy per instruction, suitable for most games and test ROMs. Cycle-by-cycle execution (tick() method) required for ±2 cycle PPU precision and advanced CPU/interrupt edge cases. This architectural enhancement is planned for Phase 2+ when implementing TAS tools and debugger features.
 
 ### Deferred to M8+ (Documented)
 

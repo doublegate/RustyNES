@@ -35,11 +35,15 @@ pub struct FrameCounter {
 
 impl FrameCounter {
     /// Creates a new frame counter in 4-step mode
+    ///
+    /// Power-on state: Behaves as if $4017 written with $00
+    /// - Mode 0 (4-step)
+    /// - IRQ inhibit disabled (IRQ enabled)
     #[must_use]
     pub const fn new() -> Self {
         Self {
             mode: 0,
-            irq_inhibit: false,
+            irq_inhibit: false, // Power-on: IRQ enabled (as if $4017=$00 written)
             cycle_count: 0,
             irq_flag: false,
         }

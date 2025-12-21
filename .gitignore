@@ -139,6 +139,7 @@ pnpm-lock.yaml
 *.lib
 
 # AI assistant local files
+GEMINI.md
 CLAUDE.local.md
 /.claude/
 WARP.md
