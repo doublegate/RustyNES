@@ -220,12 +220,14 @@ mod tests {
 
         // Set period index 0
         noise.write_register(2, 0x00);
-        assert_eq!(noise.timer_period, 4);
+        // Rate 4. Timer = (4/2)-1 = 1.
+        assert_eq!(noise.timer_period, 1);
         assert!(!noise.mode);
 
         // Set period index 15 with mode flag
         noise.write_register(2, 0x8F);
-        assert_eq!(noise.timer_period, 4068);
+        // Rate 4068. Timer = (4068/2)-1 = 2033.
+        assert_eq!(noise.timer_period, 2033);
         assert!(noise.mode);
 
         // Clear mode flag

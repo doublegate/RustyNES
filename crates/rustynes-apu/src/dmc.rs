@@ -597,7 +597,8 @@ mod tests {
 
         // Next clock reloads timer
         assert_eq!(dmc.clock_timer(|addr| memory[addr as usize]), 0);
-        assert_eq!(dmc.timer_counter, 54);
+        // Reloads with N-1 (53)
+        assert_eq!(dmc.timer_counter, 53);
     }
 
     #[test]

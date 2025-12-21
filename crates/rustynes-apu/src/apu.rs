@@ -504,15 +504,15 @@ mod tests {
         // Initially no IRQ pending
         assert!(!apu.irq_pending());
 
-        // Clock for 29828 cycles - no IRQ yet
-        for _ in 0..29828 {
+        // Clock for 29829 cycles - no IRQ yet (delayed by 1 cycle in fix)
+        for _ in 0..29829 {
             apu.step();
         }
         assert!(!apu.irq_pending());
 
-        // Clock one more time to cycle 29829 - IRQ should fire
+        // Clock one more time to cycle 29830 - IRQ should fire
         apu.step();
-        assert!(apu.irq_pending(), "IRQ should be pending at cycle 29829");
+        assert!(apu.irq_pending(), "IRQ should be pending at cycle 29830");
 
         // Verify $4015 shows bit 6 set
         let status = apu.read_register(0x4015);
