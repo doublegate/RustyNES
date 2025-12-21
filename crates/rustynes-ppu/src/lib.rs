@@ -130,7 +130,7 @@ mod tests {
         ppu.reset();
 
         // Enable rendering
-        ppu.write_register(0x2001, 0x18); // Show BG and sprites
+        ppu.write_register(0x2001, 0x18, |_, _| {}); // Show BG and sprites
 
         // Step through one frame
         let mut steps = 0;
@@ -178,7 +178,7 @@ mod tests {
 
         // Next step should set VBlank
         ppu.step();
-        let status = ppu.read_register(0x2002);
+        let status = ppu.read_register(0x2002, |_| 0);
         assert_eq!(status & 0x80, 0x80); // VBlank flag set
     }
 
@@ -194,12 +194,12 @@ mod tests {
         let mut ppu = Ppu::new(Mirroring::Horizontal);
 
         // Write PPUCTRL
-        ppu.write_register(0x2000, 0x80);
+        ppu.write_register(0x2000, 0x80, |_, _| {});
         // Write PPUMASK
-        ppu.write_register(0x2001, 0x18);
+        ppu.write_register(0x2001, 0x18, |_, _| {});
 
         // Read PPUSTATUS (this is the only readable register besides OAMDATA/PPUDATA)
-        let status = ppu.read_register(0x2002);
+        let status = ppu.read_register(0x2002, |_| 0);
         assert_eq!(status & 0x80, 0); // VBlank not set yet
     }
 
@@ -208,17 +208,17 @@ mod tests {
         let mut ppu = Ppu::new(Mirroring::Horizontal);
 
         // Set OAM address
-        ppu.write_register(0x2003, 0x00);
+        ppu.write_register(0x2003, 0x00, |_, _| {});
 
         // Write sprite data
-        ppu.write_register(0x2004, 50); // Y position
-        ppu.write_register(0x2004, 0x42); // Tile index
-        ppu.write_register(0x2004, 0x00); // Attributes
-        ppu.write_register(0x2004, 100); // X position
+        ppu.write_register(0x2004, 50, |_, _| {}); // Y position
+        ppu.write_register(0x2004, 0x42, |_, _| {}); // Tile index
+        ppu.write_register(0x2004, 0x00, |_, _| {}); // Attributes
+        ppu.write_register(0x2004, 100, |_, _| {}); // X position
 
         // Read back
-        ppu.write_register(0x2003, 0x00);
-        assert_eq!(ppu.read_register(0x2004), 50);
+        ppu.write_register(0x2003, 0x00, |_, _| {});
+        assert_eq!(ppu.read_register(0x2004, |_| 0), 50);
     }
 
     #[test]
@@ -226,15 +226,15 @@ mod tests {
         let mut ppu = Ppu::new(Mirroring::Horizontal);
 
         // Write to nametable
-        ppu.write_register(0x2006, 0x20); // High byte
-        ppu.write_register(0x2006, 0x00); // Low byte
-        ppu.write_register(0x2007, 0x55); // Data
+        ppu.write_register(0x2006, 0x20, |_, _| {}); // High byte
+        ppu.write_register(0x2006, 0x00, |_, _| {}); // Low byte
+        ppu.write_register(0x2007, 0x55, |_, _| {}); // Data
 
         // Read back (with buffered read)
-        ppu.write_register(0x2006, 0x20);
-        ppu.write_register(0x2006, 0x00);
-        let _ = ppu.read_register(0x2007); // Dummy read
-        let value = ppu.read_register(0x2007); // Actual data
+        ppu.write_register(0x2006, 0x20, |_, _| {});
+        ppu.write_register(0x2006, 0x00, |_, _| {});
+        let _ = ppu.read_register(0x2007, |_| 0); // Dummy read
+        let value = ppu.read_register(0x2007, |_| 0); // Actual data
         assert_eq!(value, 0x55);
     }
 
@@ -243,13 +243,13 @@ mod tests {
         let mut ppu = Ppu::new(Mirroring::Horizontal);
 
         // Write scroll position
-        ppu.write_register(0x2005, 100); // X scroll
-        ppu.write_register(0x2005, 50); // Y scroll
+        ppu.write_register(0x2005, 100, |_, _| {}); // X scroll
+        ppu.write_register(0x2005, 50, |_, _| {}); // Y scroll
 
         // Reading PPUSTATUS should reset write latch
-        ppu.read_register(0x2002);
+        ppu.read_register(0x2002, |_| 0);
 
         // Next write should be X scroll again
-        ppu.write_register(0x2005, 10);
+        ppu.write_register(0x2005, 10, |_, _| {});
     }
 }

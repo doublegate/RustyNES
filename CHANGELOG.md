@@ -7,7 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No unreleased changes.
+**Status**: Phase 1.5 Stabilization In Progress - Milestone 8 Sprints 3 & 4 Complete
+
+### Added
+
+#### Milestone 8 Sprint 3: PPU Accuracy Improvements (46% Pass Rate)
+
+- **PPU Open Bus Emulation**
+  - Implemented data latch and 1-second decay behavior
+  - Corrected `read_register` ($2002) to only refresh driven bits (7-5)
+  - Implemented correct open bus behavior for write-only registers
+  - Result: Passed `ppu_open_bus.nes` suite
+
+- **CHR-RAM Routing Architecture**
+  - Fixed critical design flaw: PPU writes to Pattern Tables ($0000-$1FFF) are now correctly routed to the Mapper via callbacks
+  - Enables support for games using CHR-RAM (e.g. `ppu_palette_ram`, `apu_len_ctr`)
+
+- **Rendering Accuracy**
+  - Implemented masking of unused bits (2-4) in OAM sprite attribute reads
+  - Corrected VRAM read buffer behavior for Palette reads ($3F00 mirrored to $2F00 buffer)
+
+- **Test Infrastructure**
+  - Added `blargg_ppu_tests.rs` harness covering 24 test ROMs
+
+#### Milestone 8 Sprint 4: APU Accuracy Improvements (75% Pass Rate)
+
+- **Frame Counter Logic**
+  - Fixed immediate clocking behavior when writing to $4017 (Mode 0/1 switch)
+  - Result: Fixed `apu_test` logic failures
+
+- **DMC Channel Timing**
+  - Fixed sample buffer refill logic (refill immediately when empty, not just on timer)
+  - Corrected IRQ acknowledgment (reading $4015 does NOT clear DMC IRQ)
+  - Result: Passed `apu_dmc_basics`
+
+- **Timer Precision**
+  - Fixed off-by-one errors in timer reload values (`period - 1`)
+  - Implemented correct clock parity: Pulse/Noise clock every other cycle
+  - Result: Passed `apu_dmc_rates`
+
+- **Test Infrastructure**
+  - Added `blargg_apu_tests.rs` harness covering 12 test ROMs
 
 ---
 

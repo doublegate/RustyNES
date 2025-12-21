@@ -177,8 +177,10 @@ impl Timing {
         self.dot += 1;
 
         // Handle odd frame skip
-        if self.scanline == 0 && self.dot == 1 && self.is_odd_frame() && rendering_enabled {
-            self.dot = 2; // Skip dot 0
+        // On odd frames, if rendering is enabled, the pre-render scanline (261) is one dot shorter.
+        // Specifically, dot 339 is skipped.
+        if self.scanline == 261 && self.dot == 339 && self.is_odd_frame() && rendering_enabled {
+            self.dot = 340; // Skip dot 339
         }
 
         // End of scanline

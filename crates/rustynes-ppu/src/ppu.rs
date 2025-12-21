@@ -102,7 +102,12 @@ impl Ppu {
     }
 
     /// Read from PPU register (CPU memory map $2000-$2007)
-    pub fn read_register(&mut self, addr: u16) -> u8 {
+    ///
+    /// # Arguments
+    ///
+    /// * `addr` - Register address
+    /// * `read_chr` - Callback to read CHR memory (mapper) for addresses < $2000
+    pub fn read_register<F: FnMut(u16) -> u8>(&mut self, addr: u16, mut read_chr: F) -> u8 {
         match addr & 0x07 {
             // $2000: PPUCTRL (write-only) -> return open bus (do not refresh)
             0 => self.open_bus_latch,
@@ -163,13 +168,25 @@ impl Ppu {
                 self.refresh_open_bus();
 
                 let addr = self.scroll.vram_addr();
-                let data = self.vram.read(addr);
+
+                // Read from CHR (mapper) or VRAM/Palette
+                let data = if (addr & 0x3FFF) < 0x2000 {
+                    read_chr(addr & 0x3FFF)
+                } else {
+                    self.vram.read(addr)
+                };
 
                 // Buffered read behavior
                 let result = if addr >= 0x3F00 {
                     // Palette reads are immediate
                     // Bits 7-6 are open bus (from decay latch)
-                    (data & 0x3F) | (self.open_bus_latch & 0xC0)
+                    let pal_data = (data & 0x3F) | (self.open_bus_latch & 0xC0);
+
+                    // Reading the palette also updates the VRAM read buffer with
+                    // the contents of the mirrored nametable address ($2F00-$2FFF)
+                    self.vram_read_buffer = self.vram.read(addr - 0x1000);
+
+                    pal_data
                 } else {
                     // Normal reads return previous buffer
                     let buffered = self.vram_read_buffer;
@@ -186,13 +203,17 @@ impl Ppu {
 
                 result
             }
-
             _ => unreachable!(),
         }
     }
-
     /// Write to PPU register (CPU memory map $2000-$2007)
-    pub fn write_register(&mut self, addr: u16, value: u8) {
+    ///
+    /// # Arguments
+    ///
+    /// * `addr` - Register address
+    /// * `value` - Value to write
+    /// * `write_chr` - Callback to write CHR memory (mapper) for addresses < $2000
+    pub fn write_register<F: FnMut(u16, u8)>(&mut self, addr: u16, value: u8, mut write_chr: F) {
         // Writing to any register updates the open bus latch and refreshes decay
         self.open_bus_latch = value;
         self.refresh_open_bus();
@@ -240,7 +261,13 @@ impl Ppu {
             // $2007: PPUDATA
             7 => {
                 let addr = self.scroll.vram_addr();
-                self.vram.write(addr, value);
+
+                // Write to CHR (mapper) or VRAM/Palette
+                if (addr & 0x3FFF) < 0x2000 {
+                    write_chr(addr & 0x3FFF, value);
+                } else {
+                    self.vram.write(addr, value);
+                }
 
                 // Increment VRAM address
                 let increment = self.ctrl.vram_increment();
@@ -591,7 +618,7 @@ mod tests {
     fn test_ppuctrl_write() {
         let mut ppu = Ppu::new(Mirroring::Horizontal);
 
-        ppu.write_register(0x2000, 0x80); // Enable NMI
+        ppu.write_register(0x2000, 0x80, |_, _| {}); // Enable NMI
         assert!(ppu.ctrl.nmi_enabled());
     }
 
@@ -600,7 +627,7 @@ mod tests {
         let mut ppu = Ppu::new(Mirroring::Horizontal);
 
         ppu.status.set_vblank();
-        let status = ppu.read_register(0x2002);
+        let status = ppu.read_register(0x2002, |_| 0);
 
         assert_eq!(status & 0x80, 0x80); // VBlank bit set
         assert!(!ppu.status.in_vblank()); // Should be cleared after read
@@ -610,11 +637,11 @@ mod tests {
     fn test_oam_write() {
         let mut ppu = Ppu::new(Mirroring::Horizontal);
 
-        ppu.write_register(0x2003, 0x00); // OAMADDR = 0
-        ppu.write_register(0x2004, 0x42); // OAMDATA = $42
+        ppu.write_register(0x2003, 0x00, |_, _| {}); // OAMADDR = 0
+        ppu.write_register(0x2004, 0x42, |_, _| {}); // OAMDATA = $42
 
-        ppu.write_register(0x2003, 0x00); // Reset OAMADDR
-        let value = ppu.read_register(0x2004);
+        ppu.write_register(0x2003, 0x00, |_, _| {}); // Reset OAMADDR
+        let value = ppu.read_register(0x2004, |_| 0);
         assert_eq!(value, 0x42);
     }
 
@@ -623,20 +650,20 @@ mod tests {
         let mut ppu = Ppu::new(Mirroring::Horizontal);
 
         // Write address $2000
-        ppu.write_register(0x2006, 0x20);
-        ppu.write_register(0x2006, 0x00);
+        ppu.write_register(0x2006, 0x20, |_, _| {});
+        ppu.write_register(0x2006, 0x00, |_, _| {});
 
         // Write data
-        ppu.write_register(0x2007, 0x55);
+        ppu.write_register(0x2007, 0x55, |_, _| {});
 
         // Read address $2000
-        ppu.write_register(0x2006, 0x20);
-        ppu.write_register(0x2006, 0x00);
+        ppu.write_register(0x2006, 0x20, |_, _| {});
+        ppu.write_register(0x2006, 0x00, |_, _| {});
 
         // First read is buffered (returns garbage)
-        let _ = ppu.read_register(0x2007);
+        let _ = ppu.read_register(0x2007, |_| 0);
         // Second read returns actual data
-        let value = ppu.read_register(0x2007);
+        let value = ppu.read_register(0x2007, |_| 0);
         assert_eq!(value, 0x55);
     }
 
@@ -645,14 +672,14 @@ mod tests {
         let mut ppu = Ppu::new(Mirroring::Horizontal);
 
         // Write to palette
-        ppu.write_register(0x2006, 0x3F);
-        ppu.write_register(0x2006, 0x00);
-        ppu.write_register(0x2007, 0x0F);
+        ppu.write_register(0x2006, 0x3F, |_, _| {});
+        ppu.write_register(0x2006, 0x00, |_, _| {});
+        ppu.write_register(0x2007, 0x0F, |_, _| {});
 
         // Read from palette (immediate, no buffer)
-        ppu.write_register(0x2006, 0x3F);
-        ppu.write_register(0x2006, 0x00);
-        let value = ppu.read_register(0x2007);
+        ppu.write_register(0x2006, 0x3F, |_, _| {});
+        ppu.write_register(0x2006, 0x00, |_, _| {});
+        let value = ppu.read_register(0x2007, |_| 0);
         assert_eq!(value, 0x0F);
     }
 
@@ -675,7 +702,7 @@ mod tests {
         let mut ppu = Ppu::new(Mirroring::Horizontal);
 
         // Enable NMI
-        ppu.write_register(0x2000, 0x80);
+        ppu.write_register(0x2000, 0x80, |_, _| {});
 
         // Step to VBlank
         while ppu.timing.scanline() != 241 || ppu.timing.dot() != 0 {
@@ -692,9 +719,9 @@ mod tests {
         let mut ppu = Ppu::new(Mirroring::Horizontal);
 
         // Write X scroll = 100
-        ppu.write_register(0x2005, 100);
+        ppu.write_register(0x2005, 100, |_, _| {});
         // Write Y scroll = 50
-        ppu.write_register(0x2005, 50);
+        ppu.write_register(0x2005, 50, |_, _| {});
 
         // Verify scroll registers updated
         assert_eq!(ppu.scroll.fine_x(), 100 & 0x07);

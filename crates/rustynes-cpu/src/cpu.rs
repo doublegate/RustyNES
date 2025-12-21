@@ -831,6 +831,13 @@ impl Cpu {
     fn tick_pop_status(&mut self, bus: &mut impl Bus) -> bool {
         let value = bus.read(0x0100 | u16::from(self.sp));
         self.status = StatusFlags::from_stack_byte(value);
+
+        // Match RTI behavior from instructions.rs:
+        // If RTI restores I=1 (Disabled), interrupts must be blocked immediately for the NEXT instruction.
+        if self.status.contains(StatusFlags::INTERRUPT_DISABLE) {
+            self.prev_irq_inhibit = true;
+        }
+
         self.sp = self.sp.wrapping_add(1);
         self.operand_lo = bus.read(0x0100 | u16::from(self.sp));
         self.state = CpuState::PopHi;

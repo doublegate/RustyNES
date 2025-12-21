@@ -17,7 +17,9 @@
 [![APU Tests](https://img.shields.io/badge/APU%20tests-150%20passing-brightgreen.svg)](#test-validation-status)
 [![Mapper Tests](https://img.shields.io/badge/Mapper%20tests-167%20passing-brightgreen.svg)](#test-validation-status)
 [![Core Tests](https://img.shields.io/badge/Core%20tests-23%20passing-brightgreen.svg)](#test-validation-status)
-[![Blargg Tests](https://img.shields.io/badge/Blargg%20CPU-18%2F20%20passing%20(90%25)-brightgreen.svg)](#test-validation-status)
+[![Blargg CPU](https://img.shields.io/badge/Blargg%20CPU-18%2F20%20passing%20(90%25)-brightgreen.svg)](#test-validation-status)
+[![Blargg PPU](https://img.shields.io/badge/Blargg%20PPU-11%2F24%20passing%20(46%25)-yellow.svg)](#test-validation-status)
+[![Blargg APU](https://img.shields.io/badge/Blargg%20APU-9%2F12%20passing%20(75%25)-yellow.svg)](#test-validation-status)
 
 ## Overview
 
@@ -25,7 +27,7 @@ A next-generation NES emulator written in pure Rust — targeting 100% accuracy,
 
 ---
 
-> **Status:** v0.6.0 Released - Phase 1.5 Stabilization In Progress (M7 Complete)
+> **Status:** v0.6.0 Released - Phase 1.5 Stabilization In Progress (M8 Test ROM Validation)
 >
 > **Milestones Completed:**
 >
@@ -37,11 +39,11 @@ A next-generation NES emulator written in pure Rust — targeting 100% accuracy,
 > - ✅ **M6: Desktop GUI** - Cross-platform Iced/wgpu application with ROM loading, audio playback, and full input support
 > - ✅ **M7: Accuracy** - CPU/PPU/APU timing refinements, OAM DMA 513/514 cycle precision, hardware-accurate mixer
 >
-> **Test Suite:** 469 tests passing (0 failures, 8 ignored for valid architectural reasons)
+> **Test Suite:** 469+ tests passing (0 failures in unit/integration suites)
 >
-> **Current:** Phase 1.5 (Stabilization) - Milestone 7 Complete, preparing for M8 (Test ROM Validation)
+> **Current:** Phase 1.5 (Stabilization) - M8 Sprints 1-4 Complete (CPU/PPU/APU Baselines Established & Improved)
 >
-> **Next:** M8 (95%+ test ROM pass rate), performance optimization, expanded mapper testing
+> **Next:** Resolve remaining PPU/APU timing edge cases, NROM 0xFF failures, and Mapper tests
 >
 > See [ROADMAP.md](ROADMAP.md) and [to-dos/](to-dos/) for development timeline.
 
