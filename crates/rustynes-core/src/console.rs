@@ -120,7 +120,10 @@ impl Console {
         // Note: Don't reset frame_count (preserve for debugging)
     }
 
-    /// Execute one CPU instruction
+    /// Execute one CPU instruction (coarse-grained execution)
+    ///
+    /// This method runs one complete CPU instruction, then catches up
+    /// the PPU and APU. Use `tick()` for cycle-accurate execution.
     ///
     /// # Returns
     ///
@@ -156,10 +159,9 @@ impl Console {
         // Clock mapper (for cycle-based timers)
         self.bus.clock_mapper(cpu_cycles);
 
-        // Check for mapper IRQ
-        if self.bus.mapper_irq_pending() {
-            self.cpu.set_irq(true);
-        }
+        // Update IRQ line (level-triggered: high when any source is active)
+        let irq = self.bus.mapper_irq_pending() || self.bus.apu.irq_pending();
+        self.cpu.set_irq(irq);
 
         // Handle DMA if active
         while self.bus.dma_active() {
@@ -172,6 +174,117 @@ impl Console {
         self.master_cycles += u64::from(cpu_cycles);
 
         cpu_cycles
+    }
+
+    /// Execute exactly one CPU cycle with perfect PPU/APU synchronization.
+    ///
+    /// This is the cycle-accurate execution mode. Each call:
+    /// - Advances the CPU by exactly one cycle
+    /// - Advances the PPU by exactly 3 dots (3:1 PPU:CPU ratio)
+    /// - Advances the APU by one step
+    ///
+    /// # Returns
+    ///
+    /// `(instruction_complete, frame_complete)`:
+    /// - `instruction_complete`: true when a CPU instruction boundary is reached
+    /// - `frame_complete`: true when a video frame has just been completed
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use rustynes_core::Console;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let rom_data = vec![0; 16 + 16384 + 8192];
+    /// let mut console = Console::from_rom_bytes(&rom_data)?;
+    ///
+    /// // Cycle-accurate main loop
+    /// loop {
+    ///     let (instr_done, frame_done) = console.tick();
+    ///
+    ///     if frame_done {
+    ///         let framebuffer = console.framebuffer();
+    ///         // ... render to screen ...
+    ///     }
+    /// }
+    /// # }
+    /// ```
+    pub fn tick(&mut self) -> (bool, bool) {
+        let mut frame_complete = false;
+
+        // Handle DMA if active (DMA steals CPU cycles)
+        if self.bus.dma_active() {
+            let dma_done = self.bus.tick_dma();
+            if !dma_done {
+                // DMA cycle - still advance PPU and APU
+                for _ in 0..3 {
+                    let (fc, nmi) = self.bus.step_ppu();
+                    if nmi {
+                        self.cpu.trigger_nmi();
+                    }
+                    if fc {
+                        frame_complete = true;
+                        self.frame_count += 1;
+                    }
+                }
+                self.bus.apu.step();
+                self.master_cycles += 1;
+                return (false, frame_complete);
+            }
+        }
+
+        // Execute one CPU cycle
+        let instruction_complete = self.cpu.tick(&mut self.bus);
+
+        // Track CPU cycles for DMA timing
+        self.bus.add_cpu_cycles(1);
+
+        // Step PPU (3 dots per CPU cycle)
+        for _ in 0..3 {
+            let (fc, nmi) = self.bus.step_ppu();
+            if nmi {
+                self.cpu.trigger_nmi();
+            }
+            if fc {
+                frame_complete = true;
+                self.frame_count += 1;
+            }
+        }
+
+        // Step APU (1 step per CPU cycle)
+        self.bus.apu.step();
+
+        // Clock mapper (once per CPU cycle for cycle-based timing)
+        self.bus.clock_mapper(1);
+
+        // Update IRQ line (level-triggered: high when any source is active)
+        let irq = self.bus.mapper_irq_pending() || self.bus.apu.irq_pending();
+        self.cpu.set_irq(irq);
+
+        // Update master cycle count
+        self.master_cycles += 1;
+
+        (instruction_complete, frame_complete)
+    }
+
+    /// Execute instructions until a complete frame is rendered using cycle-accurate mode.
+    ///
+    /// This method uses the cycle-accurate `tick()` method for precise timing.
+    /// Use this when you need perfect emulation accuracy.
+    pub fn step_frame_accurate(&mut self) {
+        let target_frame = self.frame_count + 1;
+
+        // Run until frame is complete
+        while self.frame_count < target_frame {
+            self.tick();
+
+            // Safety check: prevent infinite loop
+            // A frame is ~29,780 CPU cycles, give it some margin
+            if self.master_cycles > (target_frame * 35000) {
+                log::error!("Frame didn't complete in expected time (accurate mode)");
+                break;
+            }
+        }
     }
 
     /// Execute instructions until a complete frame is rendered
@@ -214,6 +327,25 @@ impl Console {
     #[must_use]
     pub fn frame_count(&self) -> u64 {
         self.frame_count
+    }
+
+    // === Accessor Methods (for debugging/testing) ===
+
+    /// Get reference to the memory bus
+    #[must_use]
+    pub fn bus(&self) -> &SystemBus {
+        &self.bus
+    }
+
+    /// Get reference to the CPU
+    #[must_use]
+    pub fn cpu(&self) -> &Cpu {
+        &self.cpu
+    }
+
+    /// Get mutable reference to the CPU (internal use/testing)
+    pub fn cpu_mut(&mut self) -> &mut Cpu {
+        &mut self.cpu
     }
 
     // === Input Methods ===
@@ -423,14 +555,27 @@ mod tests {
 
     #[test]
     fn test_step_execution() {
-        let rom_data = create_test_rom();
+        let mut rom_data = create_test_rom();
+        // At 0x8000 (start of ROM): LDA #$42; STA $0000
+        // LDA #$42: A9 42
+        // STA $0000: 8D 00 00
+        // Offset 16 (Header)
+        rom_data[16] = 0xA9;
+        rom_data[17] = 0x42;
+        rom_data[18] = 0x8D;
+        rom_data[19] = 0x00;
+        rom_data[20] = 0x00;
+
         let mut console = Console::from_rom_bytes(&rom_data).unwrap();
 
-        // Step once
-        let cycles = console.step();
+        // Step for a while
+        // 1 cycle = ~559ns. Frame = ~29780 cycles.
+        // Step for 100 cycles
+        for _ in 0..100 {
+            console.step();
+        }
 
-        assert!(cycles > 0);
-        assert!(console.cycles() > 0);
+        assert!(console.cpu().get_cycles() >= 100);
     }
 
     #[test]
@@ -478,5 +623,100 @@ mod tests {
 
         assert!(!console.get_button_2(Button::A));
         assert!(console.get_button_2(Button::B));
+    }
+
+    #[test]
+    fn test_console_nmi() {
+        let mut rom_data = create_test_rom();
+
+        // Setup NMI vector at $FFFA to point to handler at $8010
+        // $FFFA is at offset $7FFA in ROM data
+        rom_data[16 + 0x3FFA] = 0x10;
+        rom_data[16 + 0x3FFB] = 0x80;
+
+        // Main code at $8000: Loop forever
+        // 8000: 4C 00 80 (JMP $8000)
+        rom_data[16] = 0x4C;
+        rom_data[17] = 0x00;
+        rom_data[18] = 0x80;
+
+        // NMI Handler at $8010: RTI
+        // 8010: 40 (RTI)
+        // Offset 0x0010
+        rom_data[16 + 0x0010] = 0xA9; // LDA immediate
+        rom_data[16 + 0x0011] = 0x01; // #$01
+        rom_data[16 + 0x0012] = 0x40; // RTI
+
+        let mut console = Console::from_rom_bytes(&rom_data).unwrap();
+
+        // Run main loop
+        for _ in 0..100 {
+            console.step();
+        }
+
+        // Trigger NMI
+        console.cpu_mut().trigger_nmi();
+
+        // Run until inside handler
+        let mut in_handler = false;
+        for _ in 0..100 {
+            console.step();
+            let pc = console.cpu().pc;
+            if (0x8010..=0x8012).contains(&pc) {
+                in_handler = true;
+                break;
+            }
+        }
+
+        assert!(in_handler, "CPU did not enter NMI handler");
+    }
+
+    #[test]
+    fn test_console_irq() {
+        let mut rom_data = create_test_rom();
+
+        // Setup IRQ vector at $FFFE to point to handler at $8020
+        rom_data[16 + 0x3FFE] = 0x20;
+        rom_data[16 + 0x3FFF] = 0x80;
+
+        // Main code: CLI (enable interrupts), then Loop
+        // 8000: 58 (CLI)
+        // 8001: 4C 01 80 (JMP $8001)
+        rom_data[16] = 0x58;
+        rom_data[17] = 0x4C;
+        rom_data[18] = 0x01;
+        rom_data[19] = 0x80;
+
+        // IRQ Handler at $8020: RTI
+        // 8020: A9 02 (LDA #$02)
+        // 8022: 40 (RTI)
+        // Offset 0x0020
+        rom_data[16 + 0x0020] = 0xA9; // LDA immediate
+        rom_data[16 + 0x0021] = 0x02; // #$02
+        rom_data[16 + 0x0022] = 0x40; // RTI
+
+        let mut console = Console::from_rom_bytes(&rom_data).unwrap();
+
+        // Run to enable interrupts
+        for _ in 0..100 {
+            console.step();
+        }
+
+        // Assert IRQ line
+        console.cpu_mut().set_irq(true);
+
+        // Run until inside handler
+        let mut in_handler = false;
+        // Run enough cycles to trigger IRQ logic
+        for _cycle in 0..100_000 {
+            console.step();
+            let pc = console.cpu().pc;
+            if (0x8020..=0x8024).contains(&pc) {
+                in_handler = true;
+                break;
+            }
+        }
+
+        assert!(in_handler, "CPU did not enter IRQ handler");
     }
 }

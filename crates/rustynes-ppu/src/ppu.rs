@@ -378,6 +378,10 @@ impl Ppu {
                         let next_scanline = scanline + 1;
                         let sprite_y = next_scanline.saturating_sub(sprite.y as u16);
 
+                        // Clamp sprite_y to valid range (0-7 for 8x8 sprites)
+                        // This prevents overflow when calculating flipped row
+                        let sprite_y = sprite_y.min(7);
+
                         // Handle vertical flip
                         let row = if sprite.attributes.flip_vertical() {
                             7 - sprite_y

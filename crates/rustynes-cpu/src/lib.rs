@@ -75,6 +75,7 @@ mod cpu;
 pub mod ines;
 mod instructions;
 mod opcodes;
+pub mod state;
 mod status;
 pub mod trace;
 

@@ -60,42 +60,48 @@ impl Cpu {
     //
 
     /// TAX - Transfer A to X
-    pub(crate) fn tax(&mut self) -> u8 {
+    pub(crate) fn tax(&mut self, bus: &mut impl Bus) -> u8 {
+        let _ = bus.read(self.pc); // Dummy read
         self.x = self.a;
         self.set_zn(self.x);
         0
     }
 
     /// TAY - Transfer A to Y
-    pub(crate) fn tay(&mut self) -> u8 {
+    pub(crate) fn tay(&mut self, bus: &mut impl Bus) -> u8 {
+        let _ = bus.read(self.pc); // Dummy read
         self.y = self.a;
         self.set_zn(self.y);
         0
     }
 
     /// TXA - Transfer X to A
-    pub(crate) fn txa(&mut self) -> u8 {
+    pub(crate) fn txa(&mut self, bus: &mut impl Bus) -> u8 {
+        let _ = bus.read(self.pc); // Dummy read
         self.a = self.x;
         self.set_zn(self.a);
         0
     }
 
     /// TYA - Transfer Y to A
-    pub(crate) fn tya(&mut self) -> u8 {
+    pub(crate) fn tya(&mut self, bus: &mut impl Bus) -> u8 {
+        let _ = bus.read(self.pc); // Dummy read
         self.a = self.y;
         self.set_zn(self.a);
         0
     }
 
     /// TSX - Transfer SP to X
-    pub(crate) fn tsx(&mut self) -> u8 {
+    pub(crate) fn tsx(&mut self, bus: &mut impl Bus) -> u8 {
+        let _ = bus.read(self.pc); // Dummy read
         self.x = self.sp;
         self.set_zn(self.x);
         0
     }
 
     /// TXS - Transfer X to SP
-    pub(crate) fn txs(&mut self) -> u8 {
+    pub(crate) fn txs(&mut self, bus: &mut impl Bus) -> u8 {
+        let _ = bus.read(self.pc); // Dummy read
         self.sp = self.x;
         0
     }
@@ -127,6 +133,12 @@ impl Cpu {
     pub(crate) fn plp(&mut self, bus: &mut impl Bus) -> u8 {
         let value = self.pop(bus);
         self.status = StatusFlags::from_stack_byte(value);
+
+        // PLP restores the I flag from the stack but does NOT update prev_irq_inhibit.
+        // The step() function handles the delay mechanism via sampling, which works
+        // correctly for PLP. Only RTI needs special handling because it's always
+        // executed from within an ISR where timing is different.
+
         0
     }
 
@@ -172,6 +184,24 @@ impl Cpu {
         self.adc_impl(!value);
     }
 
+    /// Helper for RMW instructions: perform dummy read for indexed modes
+    fn handle_rmw_dummy_cycle(
+        &mut self,
+        bus: &mut impl Bus,
+        mode: AddressingMode,
+        result: crate::addressing::AddressResult,
+    ) {
+        match mode {
+            AddressingMode::AbsoluteX
+            | AddressingMode::AbsoluteY
+            | AddressingMode::IndirectIndexedY => {
+                let incorrect_addr = (result.base_addr & 0xFF00) | (result.addr & 0x00FF);
+                let _ = bus.read(incorrect_addr);
+            }
+            _ => {}
+        }
+    }
+
     //
     // ========== INCREMENT/DECREMENT INSTRUCTIONS ==========
     //
@@ -180,6 +210,7 @@ impl Cpu {
     pub(crate) fn inc(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
         let result = mode.resolve(self.pc, self.x, self.y, bus);
         self.pc = self.pc.wrapping_add(u16::from(mode.operand_bytes()));
+        self.handle_rmw_dummy_cycle(bus, mode, result);
 
         let addr = result.addr;
         let value = bus.read(addr);
@@ -194,6 +225,7 @@ impl Cpu {
     pub(crate) fn dec(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
         let result = mode.resolve(self.pc, self.x, self.y, bus);
         self.pc = self.pc.wrapping_add(u16::from(mode.operand_bytes()));
+        self.handle_rmw_dummy_cycle(bus, mode, result);
 
         let addr = result.addr;
         let value = bus.read(addr);
@@ -205,28 +237,32 @@ impl Cpu {
     }
 
     /// INX - Increment X
-    pub(crate) fn inx(&mut self) -> u8 {
+    pub(crate) fn inx(&mut self, bus: &mut impl Bus) -> u8 {
+        let _ = bus.read(self.pc);
         self.x = self.x.wrapping_add(1);
         self.set_zn(self.x);
         0
     }
 
     /// INY - Increment Y
-    pub(crate) fn iny(&mut self) -> u8 {
+    pub(crate) fn iny(&mut self, bus: &mut impl Bus) -> u8 {
+        let _ = bus.read(self.pc);
         self.y = self.y.wrapping_add(1);
         self.set_zn(self.y);
         0
     }
 
     /// DEX - Decrement X
-    pub(crate) fn dex(&mut self) -> u8 {
+    pub(crate) fn dex(&mut self, bus: &mut impl Bus) -> u8 {
+        let _ = bus.read(self.pc);
         self.x = self.x.wrapping_sub(1);
         self.set_zn(self.x);
         0
     }
 
     /// DEY - Decrement Y
-    pub(crate) fn dey(&mut self) -> u8 {
+    pub(crate) fn dey(&mut self, bus: &mut impl Bus) -> u8 {
+        let _ = bus.read(self.pc);
         self.y = self.y.wrapping_sub(1);
         self.set_zn(self.y);
         0
@@ -276,7 +312,8 @@ impl Cpu {
     //
 
     /// ASL - Arithmetic Shift Left (Accumulator)
-    pub(crate) fn asl_acc(&mut self) -> u8 {
+    pub(crate) fn asl_acc(&mut self, bus: &mut impl Bus) -> u8 {
+        let _ = bus.read(self.pc);
         self.status.set(StatusFlags::CARRY, self.a & 0x80 != 0);
         self.a <<= 1;
         self.set_zn(self.a);
@@ -287,6 +324,7 @@ impl Cpu {
     pub(crate) fn asl(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
         let result = mode.resolve(self.pc, self.x, self.y, bus);
         self.pc = self.pc.wrapping_add(u16::from(mode.operand_bytes()));
+        self.handle_rmw_dummy_cycle(bus, mode, result);
 
         let addr = result.addr;
         let value = bus.read(addr);
@@ -299,7 +337,8 @@ impl Cpu {
     }
 
     /// LSR - Logical Shift Right (Accumulator)
-    pub(crate) fn lsr_acc(&mut self) -> u8 {
+    pub(crate) fn lsr_acc(&mut self, bus: &mut impl Bus) -> u8 {
+        let _ = bus.read(self.pc);
         self.status.set(StatusFlags::CARRY, self.a & 0x01 != 0);
         self.a >>= 1;
         self.set_zn(self.a);
@@ -310,6 +349,7 @@ impl Cpu {
     pub(crate) fn lsr(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
         let result = mode.resolve(self.pc, self.x, self.y, bus);
         self.pc = self.pc.wrapping_add(u16::from(mode.operand_bytes()));
+        self.handle_rmw_dummy_cycle(bus, mode, result);
 
         let addr = result.addr;
         let value = bus.read(addr);
@@ -322,7 +362,8 @@ impl Cpu {
     }
 
     /// ROL - Rotate Left (Accumulator)
-    pub(crate) fn rol_acc(&mut self) -> u8 {
+    pub(crate) fn rol_acc(&mut self, bus: &mut impl Bus) -> u8 {
+        let _ = bus.read(self.pc);
         let carry_in = u8::from(self.status.contains(StatusFlags::CARRY));
         self.status.set(StatusFlags::CARRY, self.a & 0x80 != 0);
         self.a = (self.a << 1) | carry_in;
@@ -334,6 +375,7 @@ impl Cpu {
     pub(crate) fn rol(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
         let result = mode.resolve(self.pc, self.x, self.y, bus);
         self.pc = self.pc.wrapping_add(u16::from(mode.operand_bytes()));
+        self.handle_rmw_dummy_cycle(bus, mode, result);
 
         let addr = result.addr;
         let value = bus.read(addr);
@@ -347,7 +389,8 @@ impl Cpu {
     }
 
     /// ROR - Rotate Right (Accumulator)
-    pub(crate) fn ror_acc(&mut self) -> u8 {
+    pub(crate) fn ror_acc(&mut self, bus: &mut impl Bus) -> u8 {
+        let _ = bus.read(self.pc);
         let carry_in = if self.status.contains(StatusFlags::CARRY) {
             0x80
         } else {
@@ -363,6 +406,7 @@ impl Cpu {
     pub(crate) fn ror(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
         let result = mode.resolve(self.pc, self.x, self.y, bus);
         self.pc = self.pc.wrapping_add(u16::from(mode.operand_bytes()));
+        self.handle_rmw_dummy_cycle(bus, mode, result);
 
         let addr = result.addr;
         let value = bus.read(addr);
@@ -521,6 +565,12 @@ impl Cpu {
     pub(crate) fn rti(&mut self, bus: &mut impl Bus) -> u8 {
         let p = self.pop(bus);
         self.status = StatusFlags::from_stack_byte(p);
+
+        // RTI restores the I flag from the stack. Update prev_irq_inhibit to the NEW value
+        // so IRQ polling uses the restored I flag value (no delay).
+        // This is different from CLI/SEI which have a 1-instruction delay.
+        self.prev_irq_inhibit = self.status.contains(StatusFlags::INTERRUPT_DISABLE);
+
         self.pc = self.pop_u16(bus);
         0
     }
@@ -528,10 +578,34 @@ impl Cpu {
     /// BRK - Force Interrupt
     pub(crate) fn brk(&mut self, bus: &mut impl Bus) -> u8 {
         self.pc = self.pc.wrapping_add(1); // BRK increments PC by 2 total
+
+        // Push PC to stack
         self.push_u16(bus, self.pc);
-        self.push(bus, self.status.to_stack_byte(true)); // B=1 for BRK
+
+        // CRITICAL TIMING: Check for NMI AFTER pushing PC but BEFORE pushing status
+        // This matches hardware timing - NMI that arrives during PC push can still hijack BRK
+        // Reference: Mesen2 NesCpu.cpp BRK() checks _needNmi after Push(PC) but before Push(flags)
+        // Reference: nmi_and_brk test ROM validates this exact timing
+        let nmi_hijack = self.nmi_pending;
+        if nmi_hijack {
+            self.nmi_pending = false;
+        }
+
+        // Push status with B flag ALWAYS set (even when NMI hijacks)
+        // IMPORTANT: B flag is ALWAYS set to 1 when pushed from BRK, even when NMI hijacks!
+        // This allows software to detect NMI hijacking by checking B=1 in the NMI handler.
+        // Reference: NESdev wiki "6502 BRK and B bit"
+        self.push(bus, self.status.to_stack_byte(true));
         self.status.insert(StatusFlags::INTERRUPT_DISABLE);
-        self.pc = bus.read_u16(0xFFFE); // IRQ/BRK vector
+
+        // Suppress NMI check for one instruction after BRK completes
+        // This ensures the first instruction of the handler executes before checking for NMI
+        // Reference: Mesen2 NesCpu.cpp BRK() "_prevNeedNmi = false"
+        self.suppress_nmi_next = true;
+
+        // Use NMI vector if hijacked, IRQ/BRK vector otherwise
+        let vector = if nmi_hijack { 0xFFFA } else { 0xFFFE };
+        self.pc = bus.read_u16(vector);
         0
     }
 
@@ -540,49 +614,57 @@ impl Cpu {
     //
 
     /// CLC - Clear Carry
-    pub(crate) fn clc(&mut self) -> u8 {
+    pub(crate) fn clc(&mut self, bus: &mut impl Bus) -> u8 {
+        let _ = bus.read(self.pc);
         self.status.remove(StatusFlags::CARRY);
         0
     }
 
     /// SEC - Set Carry
-    pub(crate) fn sec(&mut self) -> u8 {
+    pub(crate) fn sec(&mut self, bus: &mut impl Bus) -> u8 {
+        let _ = bus.read(self.pc);
         self.status.insert(StatusFlags::CARRY);
         0
     }
 
     /// CLI - Clear Interrupt Disable
-    pub(crate) fn cli(&mut self) -> u8 {
+    pub(crate) fn cli(&mut self, bus: &mut impl Bus) -> u8 {
+        let _ = bus.read(self.pc);
         self.status.remove(StatusFlags::INTERRUPT_DISABLE);
         0
     }
 
     /// SEI - Set Interrupt Disable
-    pub(crate) fn sei(&mut self) -> u8 {
+    pub(crate) fn sei(&mut self, bus: &mut impl Bus) -> u8 {
+        let _ = bus.read(self.pc);
         self.status.insert(StatusFlags::INTERRUPT_DISABLE);
         0
     }
 
     /// CLV - Clear Overflow
-    pub(crate) fn clv(&mut self) -> u8 {
+    pub(crate) fn clv(&mut self, bus: &mut impl Bus) -> u8 {
+        let _ = bus.read(self.pc);
         self.status.remove(StatusFlags::OVERFLOW);
         0
     }
 
     /// CLD - Clear Decimal (no effect on NES)
-    pub(crate) fn cld(&mut self) -> u8 {
+    pub(crate) fn cld(&mut self, bus: &mut impl Bus) -> u8 {
+        let _ = bus.read(self.pc);
         self.status.remove(StatusFlags::DECIMAL);
         0
     }
 
     /// SED - Set Decimal (no effect on NES)
-    pub(crate) fn sed(&mut self) -> u8 {
+    pub(crate) fn sed(&mut self, bus: &mut impl Bus) -> u8 {
+        let _ = bus.read(self.pc);
         self.status.insert(StatusFlags::DECIMAL);
         0
     }
 
     /// NOP - No Operation
-    pub(crate) fn nop(&mut self) -> u8 {
+    pub(crate) fn nop(&mut self, bus: &mut impl Bus) -> u8 {
+        let _ = bus.read(self.pc);
         0
     }
 
@@ -610,6 +692,7 @@ impl Cpu {
     pub(crate) fn dcp(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
         let result = mode.resolve(self.pc, self.x, self.y, bus);
         self.pc = self.pc.wrapping_add(u16::from(mode.operand_bytes()));
+        self.handle_rmw_dummy_cycle(bus, mode, result);
 
         let addr = result.addr;
         let value = bus.read(addr);
@@ -624,6 +707,7 @@ impl Cpu {
     pub(crate) fn isc(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
         let result = mode.resolve(self.pc, self.x, self.y, bus);
         self.pc = self.pc.wrapping_add(u16::from(mode.operand_bytes()));
+        self.handle_rmw_dummy_cycle(bus, mode, result);
 
         let addr = result.addr;
         let value = bus.read(addr);
@@ -638,6 +722,7 @@ impl Cpu {
     pub(crate) fn slo(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
         let result = mode.resolve(self.pc, self.x, self.y, bus);
         self.pc = self.pc.wrapping_add(u16::from(mode.operand_bytes()));
+        self.handle_rmw_dummy_cycle(bus, mode, result);
 
         let addr = result.addr;
         let value = bus.read(addr);
@@ -654,6 +739,7 @@ impl Cpu {
     pub(crate) fn rla(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
         let result = mode.resolve(self.pc, self.x, self.y, bus);
         self.pc = self.pc.wrapping_add(u16::from(mode.operand_bytes()));
+        self.handle_rmw_dummy_cycle(bus, mode, result);
 
         let addr = result.addr;
         let value = bus.read(addr);
@@ -671,6 +757,7 @@ impl Cpu {
     pub(crate) fn sre(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
         let result = mode.resolve(self.pc, self.x, self.y, bus);
         self.pc = self.pc.wrapping_add(u16::from(mode.operand_bytes()));
+        self.handle_rmw_dummy_cycle(bus, mode, result);
 
         let addr = result.addr;
         let value = bus.read(addr);
@@ -687,6 +774,7 @@ impl Cpu {
     pub(crate) fn rra(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
         let result = mode.resolve(self.pc, self.x, self.y, bus);
         self.pc = self.pc.wrapping_add(u16::from(mode.operand_bytes()));
+        self.handle_rmw_dummy_cycle(bus, mode, result);
 
         let addr = result.addr;
         let value = bus.read(addr);
@@ -759,13 +847,20 @@ impl Cpu {
         0
     }
 
-    /// LXA - Unstable Load A and X
+    /// LXA/ATX - Load A and X with immediate (unstable on real hardware)
+    ///
+    /// On real hardware, this opcode has unstable behavior due to analog bus effects.
+    /// However, for emulation purposes (and to pass test ROMs like Blargg's), we
+    /// implement the stable behavior: A = X = immediate value.
+    ///
+    /// Reference: Nestopia implementation, validated by Blargg test ROMs.
     pub(crate) fn lxa(&mut self, bus: &mut impl Bus) -> u8 {
         let value = bus.read(self.pc);
         self.pc = self.pc.wrapping_add(1);
-        // Magic constant: 0xEE is most common
-        self.a = (self.a | 0xEE) & value;
-        self.x = self.a;
+        // Load both A and X with the immediate value
+        // (Real hardware behavior is unstable and varies with temperature/RF)
+        self.a = value;
+        self.x = value;
         self.set_zn(self.a);
         0
     }
@@ -782,14 +877,42 @@ impl Cpu {
         0
     }
 
+    /// Helper for Store instructions: perform dummy write for indexed modes
+    fn handle_store_dummy_cycle(
+        &mut self,
+        bus: &mut impl Bus,
+        mode: AddressingMode,
+        result: crate::addressing::AddressResult,
+        value: u8,
+    ) {
+        match mode {
+            AddressingMode::AbsoluteX
+            | AddressingMode::AbsoluteY
+            | AddressingMode::IndirectIndexedY => {
+                let incorrect_addr = (result.base_addr & 0xFF00) | (result.addr & 0x00FF);
+                bus.write(incorrect_addr, value);
+            }
+            _ => {}
+        }
+    }
+
     /// SHA - Store A AND X AND (H+1) [unstable]
     pub(crate) fn sha(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
         let result = mode.resolve(self.pc, self.x, self.y, bus);
         self.pc = self.pc.wrapping_add(u16::from(mode.operand_bytes()));
 
-        let addr = result.addr;
+        // Perform dummy write (like STA)
+        self.handle_store_dummy_cycle(bus, mode, result, self.a);
+
+        let mut addr = result.addr;
         let addr_hi = ((addr >> 8) as u8).wrapping_add(1);
         let value = self.a & self.x & addr_hi;
+
+        // PB512 / Glitch: If page boundary crossed, high byte of address is replaced by value
+        if result.page_crossed {
+            addr = (u16::from(value) << 8) | (addr & 0x00FF);
+        }
+
         bus.write(addr, value);
         0
     }
@@ -802,9 +925,20 @@ impl Cpu {
         self.pc = self.pc.wrapping_add(1);
 
         let base = u16::from_le_bytes([lo, hi]);
-        let addr = base.wrapping_add(u16::from(self.x));
+        let mut addr = base.wrapping_add(u16::from(self.x));
+
+        // Perform dummy write (Absolute, X)
+        let incorrect_addr = (base & 0xFF00) | (addr & 0x00FF);
+        bus.write(incorrect_addr, self.y);
+
         let addr_hi = ((addr >> 8) as u8).wrapping_add(1);
         let value = self.y & addr_hi;
+
+        // PB512 / Glitch
+        if (base & 0xFF00) != (addr & 0xFF00) {
+            addr = (u16::from(value) << 8) | (addr & 0x00FF);
+        }
+
         bus.write(addr, value);
         0
     }
@@ -817,9 +951,20 @@ impl Cpu {
         self.pc = self.pc.wrapping_add(1);
 
         let base = u16::from_le_bytes([lo, hi]);
-        let addr = base.wrapping_add(u16::from(self.y));
+        let mut addr = base.wrapping_add(u16::from(self.y));
+
+        // Perform dummy write (Absolute, Y)
+        let incorrect_addr = (base & 0xFF00) | (addr & 0x00FF);
+        bus.write(incorrect_addr, self.x);
+
         let addr_hi = ((addr >> 8) as u8).wrapping_add(1);
         let value = self.x & addr_hi;
+
+        // PB512 / Glitch
+        if (base & 0xFF00) != (addr & 0xFF00) {
+            addr = (u16::from(value) << 8) | (addr & 0x00FF);
+        }
+
         bus.write(addr, value);
         0
     }
@@ -833,9 +978,20 @@ impl Cpu {
 
         self.sp = self.a & self.x;
         let base = u16::from_le_bytes([lo, hi]);
-        let addr = base.wrapping_add(u16::from(self.y));
+        let mut addr = base.wrapping_add(u16::from(self.y));
+
+        // Perform dummy write (Absolute, Y)
+        let incorrect_addr = (base & 0xFF00) | (addr & 0x00FF);
+        bus.write(incorrect_addr, self.a);
+
         let addr_hi = ((addr >> 8) as u8).wrapping_add(1);
         let value = self.a & self.x & addr_hi;
+
+        // PB512 / Glitch
+        if (base & 0xFF00) != (addr & 0xFF00) {
+            addr = (u16::from(value) << 8) | (addr & 0x00FF);
+        }
+
         bus.write(addr, value);
         0
     }
