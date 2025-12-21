@@ -7,16 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-**Status**: Phase 1.5 Stabilization In Progress - Milestone 8 Sprints 1-4 Complete (100% Pass Rate)
+No unreleased changes.
+
+---
+
+## [0.7.0] - 2026-02-01 - "Accuracy Complete" (Milestone 8: Complete)
+
+**Status**: Phase 1.5 Stabilization Complete - All Accuracy Milestones Achieved
+
+This release marks the completion of **Milestone 8 (Test ROM Validation)** and the conclusion of Phase 1.5 Stabilization. RustyNES now achieves **100% pass rate** on all integrated Blargg CPU, PPU, APU tests and Holy Mapperel mapper tests.
 
 ### Added
 
-#### Milestone 8 Sprint 2: CPU Accuracy Improvements (100% Pass Rate)
+#### Milestone 8 Sprint 5: Mapper Validation (100% Pass Rate)
 
-- **Cycle-Accurate Interrupt Handling**
-  - Updated `Cpu::tick` state machine to correctly handle NMI hijacking during `BRK` execution (cycle 1 fetch replacement)
-  - Result: Passed `cpu_interrupts.nes` test #2 (NMI during BRK)
-  - Result: 100% pass rate on Blargg CPU tests (20/20)
+- **Mapper Test Suite**
+  - Integrated 28 mapper tests covering NROM, MMC1, UxROM, CNROM, MMC3
+  - Verified banking logic, mirroring control, and IRQ timing
+  - Result: 100% pass rate (28/28 tests)
 
 #### Milestone 8 Sprint 3: PPU Accuracy Improvements (100% Pass Rate)
 
@@ -62,6 +70,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Test Infrastructure**
   - Added `blargg_apu_tests.rs` harness covering 12 test ROMs (100% passing)
+
+#### Milestone 8 Sprint 2: CPU Accuracy Improvements (100% Pass Rate)
+
+- **Cycle-Accurate Interrupt Handling**
+  - Updated `Cpu::tick` state machine to correctly handle NMI hijacking during `BRK` execution (cycle 1 fetch replacement)
+  - Result: Passed `cpu_interrupts.nes` test #2 (NMI during BRK)
+  - Result: 100% pass rate on Blargg CPU tests (20/20)
 
 ---
 

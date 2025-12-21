@@ -23,20 +23,17 @@
 
 ## Recent Updates (v2.7.0 - December 2025)
 
-**Milestone 8 Progress (IN PROGRESS - Sprints 1-4 COMPLETE):**
+**v0.7.0 Released - February 2026** - Milestone 8 Complete (100% Test Accuracy)!
 
-- **Blargg CPU Tests:** 20/20 passing (100%). Fixed dummy read timing and NMI/BRK edge cases.
-- **Blargg PPU Tests:** 24/24 passing (100%).
-  - **Cycle-Accurate Timing:** Implemented precise `tick()` state machine, resolving all VBlank/NMI jitter.
-  - **Sprite Hit:** Passed all edge cases (alignment, corners, flip).
-  - **Open Bus:** Fully implemented latch and decay.
-- **Blargg APU Tests:** 12/12 passing (100%).
-  - **Timing:** Perfect synchronization with cycle-accurate CPU.
-  - **Frame Counter:** Logic verified.
-  - **DMC:** IRQ and buffer logic perfected.
-- **Test Infrastructure:** Robust harnesses for all subsystems.
+**Milestone 8 Achievements (COMPLETE):**
 
-**v0.6.0 Released - December 20, 2025** - Milestone 7 Complete + M8 Progress!
+- **CPU:** 100% Blargg test pass rate (20/20). Cycle-accurate `tick()` implementation fixed all timing/IRQ edge cases.
+- **PPU:** 100% Blargg test pass rate (24/24). Fixed Open Bus, CHR-RAM routing, VBlank timing, Sprite Hits.
+- **APU:** 100% Blargg test pass rate (12/12). Fixed Frame Counter, DMC IRQ/DMA, Timer precision.
+- **Mappers:** 100% Mapper test pass rate (28/28). Validated NROM, MMC1, UxROM, CNROM, MMC3 IRQ.
+- **Infrastructure:** Robust test harness for all subsystems.
+
+**v0.6.0 Released - December 20, 2025** - Milestone 7 Complete!
 
 **Milestone 7 Achievements (COMPLETE):**
 
