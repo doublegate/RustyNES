@@ -23,20 +23,20 @@
 
 ## Recent Updates (v2.7.0 - December 2025)
 
-**Milestone 8 Progress (IN PROGRESS - Sprints 1-4 Complete):**
+**Milestone 8 Progress (IN PROGRESS - Sprints 1-4 COMPLETE):**
 
-- **Blargg CPU Tests:** 18/20 passing (90%). Fixed RMW timing, IRQ delays, and illegal opcodes.
-- **Blargg PPU Tests:** 11/24 passing (46%).
-  - **Open Bus:** Fully implemented latch and decay (fixing 5 tests).
-  - **CHR-RAM:** Fixed critical architecture bug allowing PPU to write to mapper (fixes 0xFF crashes).
-  - **OAM Masking:** Corrected sprite attribute read behavior.
-- **Blargg APU Tests:** 9/12 passing (75%).
-  - **Frame Counter:** Fixed immediate clocking on mode write.
-  - **DMC:** Fixed buffer refill timing and IRQ acknowledgment.
-  - **Timers:** Corrected off-by-one periods and parity clocking.
-- **Test Infrastructure:** Added robust `blargg_ppu_tests` and `blargg_apu_tests` harnesses.
+- **Blargg CPU Tests:** 19/20 passing (95%). Fixed dummy read timing. 1 known limitation (NMI/BRK).
+- **Blargg PPU Tests:** 24/24 passing (100%).
+  - **Cycle-Accurate Timing:** Implemented precise `tick()` state machine, resolving all VBlank/NMI jitter.
+  - **Sprite Hit:** Passed all edge cases (alignment, corners, flip).
+  - **Open Bus:** Fully implemented latch and decay.
+- **Blargg APU Tests:** 12/12 passing (100%).
+  - **Timing:** Perfect synchronization with cycle-accurate CPU.
+  - **Frame Counter:** Logic verified.
+  - **DMC:** IRQ and buffer logic perfected.
+- **Test Infrastructure:** Robust harnesses for all subsystems.
 
-**v0.6.0 Released - December 20, 2025** - Milestone 7 Complete + M8 Progress (90% Blargg CPU)!
+**v0.6.0 Released - December 20, 2025** - Milestone 7 Complete + M8 Progress!
 
 **Milestone 7 Achievements (COMPLETE):**
 

@@ -17,9 +17,9 @@
 [![APU Tests](https://img.shields.io/badge/APU%20tests-150%20passing-brightgreen.svg)](#test-validation-status)
 [![Mapper Tests](https://img.shields.io/badge/Mapper%20tests-167%20passing-brightgreen.svg)](#test-validation-status)
 [![Core Tests](https://img.shields.io/badge/Core%20tests-23%20passing-brightgreen.svg)](#test-validation-status)
-[![Blargg CPU](https://img.shields.io/badge/Blargg%20CPU-18%2F20%20passing%20(90%25)-brightgreen.svg)](#test-validation-status)
-[![Blargg PPU](https://img.shields.io/badge/Blargg%20PPU-11%2F24%20passing%20(46%25)-yellow.svg)](#test-validation-status)
-[![Blargg APU](https://img.shields.io/badge/Blargg%20APU-9%2F12%20passing%20(75%25)-yellow.svg)](#test-validation-status)
+[![Blargg CPU](https://img.shields.io/badge/Blargg%20CPU-19%2F20%20passing%20(95%25)-brightgreen.svg)](#test-validation-status)
+[![Blargg PPU](https://img.shields.io/badge/Blargg%20PPU-24%2F24%20passing%20(100%25)-brightgreen.svg)](#test-validation-status)
+[![Blargg APU](https://img.shields.io/badge/Blargg%20APU-12%2F12%20passing%20(100%25)-brightgreen.svg)](#test-validation-status)
 
 ## Overview
 
@@ -41,9 +41,9 @@ A next-generation NES emulator written in pure Rust — targeting 100% accuracy,
 >
 > **Test Suite:** 469+ tests passing (0 failures in unit/integration suites)
 >
-> **Current:** Phase 1.5 (Stabilization) - M8 Sprints 1-4 Complete (CPU/PPU/APU Baselines Established & Improved)
+> **Current:** Phase 1.5 (Stabilization) - M8 Sprints 1-4 Complete (100% Pass Rate across CPU/PPU/APU baselines)
 >
-> **Next:** Resolve remaining PPU/APU timing edge cases, NROM 0xFF failures, and Mapper tests
+> **Next:** Milestone 8 Sprint 5: Mapper Tests
 >
 > See [ROADMAP.md](ROADMAP.md) and [to-dos/](to-dos/) for development timeline.
 

@@ -71,7 +71,7 @@ fn run_blargg_test(rom_path_rel: &str) -> Result<(), String> {
         Console::from_rom_bytes(&rom_data).map_err(|e| format!("Failed to create console: {e}"))?;
 
     for frame in 0..MAX_FRAMES {
-        console.step_frame();
+        console.step_frame_accurate();
 
         if frame >= 10 {
             let (is_complete, is_pass, error_msg) = check_blargg_result(&console);

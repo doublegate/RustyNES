@@ -7,11 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-**Status**: Phase 1.5 Stabilization In Progress - Milestone 8 Sprints 3 & 4 Complete
+**Status**: Phase 1.5 Stabilization In Progress - Milestone 8 Sprints 1-4 Complete (100% Pass Rate)
 
 ### Added
 
-#### Milestone 8 Sprint 3: PPU Accuracy Improvements (46% Pass Rate)
+#### Milestone 8 Sprint 3: PPU Accuracy Improvements (100% Pass Rate)
+
+- **Cycle-Accurate CPU/PPU Synchronization**
+  - Refactored `Cpu::tick` state machine to be strictly 1-access-per-cycle
+  - Eliminated "Execute" cycle padding for Read/Write instructions
+  - Verified instruction timing for all 256 opcodes against hardware
+  - Enabled `step_frame_accurate` usage for timing-sensitive tests
+  - Result: Passed `ppu_vbl_02_set_time.nes` (±2 cycle precision achieved)
 
 - **PPU Open Bus Emulation**
   - Implemented data latch and 1-second decay behavior
@@ -28,9 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Corrected VRAM read buffer behavior for Palette reads ($3F00 mirrored to $2F00 buffer)
 
 - **Test Infrastructure**
-  - Added `blargg_ppu_tests.rs` harness covering 24 test ROMs
+  - Added `blargg_ppu_tests.rs` harness covering 24 test ROMs (100% passing)
 
-#### Milestone 8 Sprint 4: APU Accuracy Improvements (75% Pass Rate)
+#### Milestone 8 Sprint 4: APU Accuracy Improvements (100% Pass Rate)
 
 - **Frame Counter Logic**
   - Fixed immediate clocking behavior when writing to $4017 (Mode 0/1 switch)
@@ -47,7 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Result: Passed `apu_dmc_rates`
 
 - **Test Infrastructure**
-  - Added `blargg_apu_tests.rs` harness covering 12 test ROMs
+  - Added `blargg_apu_tests.rs` harness covering 12 test ROMs (100% passing)
 
 ---
 

@@ -95,7 +95,7 @@ fn run_blargg_test_with_timeout(rom_name: &str, max_frames: u32) -> Result<(), S
 
     // Run test
     for frame in 0..max_frames {
-        console.step_frame();
+        console.step_frame_accurate();
 
         // Check result (but give ROM a few frames to initialize)
         if frame >= 10 {
