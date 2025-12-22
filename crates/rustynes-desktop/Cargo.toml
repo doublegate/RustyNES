@@ -28,7 +28,7 @@ iced = { version = "0.13", features = [
     "canvas",         # Custom rendering
     "advanced",       # Custom shaders
 ]}
-iced_aw = "0.10"      # Additional widgets (badges, cards, modals, tabs)
+iced_aw = "0.13"      # Additional widgets (badges, cards, modals, tabs)
 
 # ═══════════════════════════════════════════════════════════════
 # GRAPHICS
