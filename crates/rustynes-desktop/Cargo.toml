@@ -62,7 +62,7 @@ serde = { version = "1.0", features = ["derive"] }
 toml = "0.8"          # Config files
 tracing = "0.1"       # Logging
 tracing-subscriber = "0.3"
-thiserror = "1.0"     # Error handling
+thiserror = "2.0"     # Error handling
 opener = "0.7"        # Open URLs in default browser
 
 # ═══════════════════════════════════════════════════════════════
