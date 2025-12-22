@@ -20,7 +20,7 @@ path = "src/main.rs"
 # ═══════════════════════════════════════════════════════════════
 # UI FRAMEWORK (PRIMARY: ICED)
 # ═══════════════════════════════════════════════════════════════
-iced = { version = "0.13", features = [
+iced = { version = "0.14", features = [
     "wgpu",           # GPU-accelerated rendering
     "tokio",          # Async runtime
     "image",          # Image loading
