@@ -267,19 +267,19 @@ mod tests {
         let mut timing = Timing::new();
 
         // Even frame (0) - no skip
-        timing.set_state(0, 0, 0);
+        timing.set_state(261, 338, 0);
         timing.tick(true);
-        assert_eq!(timing.dot(), 1);
+        assert_eq!(timing.dot(), 339);
 
-        // Odd frame (1) - skip dot 0
-        timing.set_state(0, 0, 1);
+        // Odd frame (1) - skip dot 339 on scanline 261 (pre-render)
+        timing.set_state(261, 338, 1);
         timing.tick(true);
-        assert_eq!(timing.dot(), 2); // Skipped to dot 2
+        assert_eq!(timing.dot(), 340); // Skipped dot 339
 
         // Odd frame but rendering disabled - no skip
-        timing.set_state(0, 0, 1);
+        timing.set_state(261, 338, 1);
         timing.tick(false);
-        assert_eq!(timing.dot(), 1); // No skip
+        assert_eq!(timing.dot(), 339); // No skip
     }
 
     #[test]

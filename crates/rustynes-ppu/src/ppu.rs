@@ -742,7 +742,14 @@ mod tests {
         // Verify OAM contents by reading each address
         for i in 0..256u16 {
             ppu.oam.set_addr(i as u8);
-            assert_eq!(ppu.oam.read(), i as u8);
+            let expected = if i % 4 == 2 {
+                // Attribute bytes (byte 2 of each sprite) have bits 2-4 masked
+                // due to hardware - these bits don't physically exist in PPU OAM
+                (i as u8) & 0xE3
+            } else {
+                i as u8
+            };
+            assert_eq!(ppu.oam.read(), expected);
         }
     }
 }
