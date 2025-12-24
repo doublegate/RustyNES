@@ -25,6 +25,7 @@ This release marks the **historic completion of Milestone 8 (Test ROM Validation
 - **PPU Open Bus Emulation:** Data latch with decay counter, correct read-only register handling
 - **CHR-RAM Support:** Fixed critical design flaw enabling pattern table writes to mappers
 - **APU Frame Counter:** Immediate clocking on $4017 write, DMC IRQ/DMA fixes
+- **PPU Unit Test Fixes:** OAM attribute byte masking (0xE3), odd frame skip timing correction
 - **Test Suite:** 500 tests passing (0 failures, 0 ignored)
 - **Documentation:** Comprehensive M8 technical analysis (docs/testing/MILESTONE_8_TEST_ROM_FIXES.md)
 
@@ -134,6 +135,25 @@ This release marks the **historic completion of Milestone 8 (Test ROM Validation
   - CNROM (Mapper 3): ✅ All tests passing (CHR banking)
   - MMC3 (Mapper 4): ✅ All tests passing (scanline IRQ, banking)
   - **Total: 28/28 Mapper tests (100% pass rate)**
+
+#### PPU Unit Test Fixes (Post-M8)
+
+- **OAM Attribute Byte Masking (`test_oam_dma`)**
+  - Applied 0xE3 mask to attribute byte read expectations
+  - Technical detail: Bits 2-4 of OAM attribute bytes (index % 4 == 2) don't physically exist in 2C02 PPU hardware
+  - Hardware behavior: These bits always read as 0 due to missing transistors in OAM RAM implementation
+  - Result: test_oam_dma now correctly validates hardware-accurate attribute byte masking
+
+- **Odd Frame Skip Timing Correction (`test_odd_frame_skip`)**
+  - Corrected test to verify skip at scanline 261 (pre-render line), dot 339
+  - Previously tested: scanline 0 (incorrect location)
+  - Hardware behavior: Odd frames skip final dot of pre-render scanline when rendering enabled
+  - Result: test_odd_frame_skip now correctly validates cycle-accurate odd frame behavior
+
+- **Impact**
+  - All 83 PPU unit tests now passing (100% pass rate)
+  - Improved hardware accuracy for OAM attribute reads
+  - Correct validation of NTSC odd frame timing behavior
 
 #### Test Infrastructure
 

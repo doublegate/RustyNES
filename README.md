@@ -17,9 +17,9 @@
 [![APU Tests](https://img.shields.io/badge/APU%20tests-150%20passing-brightgreen.svg)](#test-validation-status)
 [![Mapper Tests](https://img.shields.io/badge/Mapper%20tests-167%20passing-brightgreen.svg)](#test-validation-status)
 [![Core Tests](https://img.shields.io/badge/Core%20tests-23%20passing-brightgreen.svg)](#test-validation-status)
-[![Blargg CPU](https://img.shields.io/badge/Blargg%20CPU-20%2F20%20passing%20(100%25)-brightgreen.svg)](#test-validation-status)
-[![Blargg PPU](https://img.shields.io/badge/Blargg%20PPU-24%2F24%20passing%20(100%25)-brightgreen.svg)](#test-validation-status)
-[![Blargg APU](https://img.shields.io/badge/Blargg%20APU-12%2F12%20passing%20(100%25)-brightgreen.svg)](#test-validation-status)
+[![Blargg CPU](https://img.shields.io/badge/Blargg%20CPU-22%2F22%20passing%20(100%25)-brightgreen.svg)](#test-validation-status)
+[![Blargg PPU](https://img.shields.io/badge/Blargg%20PPU-25%2F25%20passing%20(100%25)-brightgreen.svg)](#test-validation-status)
+[![Blargg APU](https://img.shields.io/badge/Blargg%20APU-15%2F15%20passing%20(100%25)-brightgreen.svg)](#test-validation-status)
 [![Mapper Tests](https://img.shields.io/badge/Mapper%20Tests-28%2F28%20passing%20(100%25)-brightgreen.svg)](#test-validation-status)
 
 ## Overview
