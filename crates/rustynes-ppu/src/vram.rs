@@ -150,7 +150,7 @@ impl Vram {
             // Palette RAM ($3F00-$3FFF)
             0x3F00..=0x3FFF => {
                 let palette_addr = self.mirror_palette_addr(addr);
-                self.palette[palette_addr] = value;
+                self.palette[palette_addr] = value & 0x3F;
             }
 
             _ => unreachable!(),

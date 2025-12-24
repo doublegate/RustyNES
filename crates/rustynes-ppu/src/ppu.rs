@@ -68,6 +68,8 @@ pub struct Ppu {
 
     // Internal state
     vram_read_buffer: u8,
+    open_bus_latch: u8,
+    decay_counter: u32,
     nmi_pending: bool,
 }
 
@@ -88,21 +90,37 @@ impl Ppu {
             timing: Timing::new(),
             frame_buffer: vec![0; FRAME_SIZE],
             vram_read_buffer: 0,
+            open_bus_latch: 0,
+            decay_counter: 0,
             nmi_pending: false,
         }
     }
 
-    /// Read from PPU register (CPU memory map $2000-$2007)
-    pub fn read_register(&mut self, addr: u16) -> u8 {
-        match addr & 0x07 {
-            // $2000: PPUCTRL (write-only)
-            0 => 0,
+    /// Refresh open bus decay counter (approx 1 second ~ 5.3M dots)
+    fn refresh_open_bus(&mut self) {
+        self.decay_counter = 5_300_000;
+    }
 
-            // $2001: PPUMASK (write-only)
-            1 => 0,
+    /// Read from PPU register (CPU memory map $2000-$2007)
+    ///
+    /// # Arguments
+    ///
+    /// * `addr` - Register address
+    /// * `read_chr` - Callback to read CHR memory (mapper) for addresses < $2000
+    pub fn read_register<F: FnMut(u16) -> u8>(&mut self, addr: u16, mut read_chr: F) -> u8 {
+        match addr & 0x07 {
+            // $2000: PPUCTRL (write-only) -> return open bus (do not refresh)
+            0 => self.open_bus_latch,
+
+            // $2001: PPUMASK (write-only) -> return open bus (do not refresh)
+            1 => self.open_bus_latch,
 
             // $2002: PPUSTATUS
             2 => {
+                // Reading $2002 only drives bits 7-5. Bits 4-0 are open bus (undriven).
+                // Therefore, we do NOT refresh the decay counter, so bits 4-0 continue to decay.
+                // (Technically bits 7-5 are refreshed, but our model has one counter).
+
                 let status = self.status.bits();
 
                 // Race condition: Reading $2002 on the exact cycle VBlank is set
@@ -113,30 +131,62 @@ impl Ppu {
 
                 self.status.clear_vblank(); // Reading clears VBlank flag
                 self.scroll.read_ppustatus(); // Reset write latch
-                status
+
+                // Return status (bits 7-5) + open bus (bits 4-0)
+                let result = (status & 0xE0) | (self.open_bus_latch & 0x1F);
+
+                // Update latch with result (actually only bits 7-5 are new, 4-0 are preserved)
+                self.open_bus_latch = result;
+
+                result
             }
 
-            // $2003: OAMADDR (write-only)
-            3 => 0,
+            // $2003: OAMADDR (write-only) -> return open bus (do not refresh)
+            3 => self.open_bus_latch,
 
             // $2004: OAMDATA
-            4 => self.oam.read(),
+            4 => {
+                // Reading refreshes open bus
+                self.refresh_open_bus();
 
-            // $2005: PPUSCROLL (write-only)
-            5 => 0,
+                let data = self.oam.read();
+                // Reading OAMDATA does NOT reliably update open bus on all revisions,
+                // but usually it does. Most emulators update it.
+                self.open_bus_latch = data;
+                data
+            }
 
-            // $2006: PPUADDR (write-only)
-            6 => 0,
+            // $2005: PPUSCROLL (write-only) -> return open bus (do not refresh)
+            5 => self.open_bus_latch,
+
+            // $2006: PPUADDR (write-only) -> return open bus (do not refresh)
+            6 => self.open_bus_latch,
 
             // $2007: PPUDATA
             7 => {
+                // Reading refreshes open bus
+                self.refresh_open_bus();
+
                 let addr = self.scroll.vram_addr();
-                let data = self.vram.read(addr);
+
+                // Read from CHR (mapper) or VRAM/Palette
+                let data = if (addr & 0x3FFF) < 0x2000 {
+                    read_chr(addr & 0x3FFF)
+                } else {
+                    self.vram.read(addr)
+                };
 
                 // Buffered read behavior
                 let result = if addr >= 0x3F00 {
                     // Palette reads are immediate
-                    data
+                    // Bits 7-6 are open bus (from decay latch)
+                    let pal_data = (data & 0x3F) | (self.open_bus_latch & 0xC0);
+
+                    // Reading the palette also updates the VRAM read buffer with
+                    // the contents of the mirrored nametable address ($2F00-$2FFF)
+                    self.vram_read_buffer = self.vram.read(addr - 0x1000);
+
+                    pal_data
                 } else {
                     // Normal reads return previous buffer
                     let buffered = self.vram_read_buffer;
@@ -148,15 +198,26 @@ impl Ppu {
                 let increment = self.ctrl.vram_increment();
                 self.scroll.increment_vram(increment);
 
+                // Update open bus latch with the value put on the bus
+                self.open_bus_latch = result;
+
                 result
             }
-
             _ => unreachable!(),
         }
     }
-
     /// Write to PPU register (CPU memory map $2000-$2007)
-    pub fn write_register(&mut self, addr: u16, value: u8) {
+    ///
+    /// # Arguments
+    ///
+    /// * `addr` - Register address
+    /// * `value` - Value to write
+    /// * `write_chr` - Callback to write CHR memory (mapper) for addresses < $2000
+    pub fn write_register<F: FnMut(u16, u8)>(&mut self, addr: u16, value: u8, mut write_chr: F) {
+        // Writing to any register updates the open bus latch and refreshes decay
+        self.open_bus_latch = value;
+        self.refresh_open_bus();
+
         match addr & 0x07 {
             // $2000: PPUCTRL
             0 => {
@@ -200,7 +261,13 @@ impl Ppu {
             // $2007: PPUDATA
             7 => {
                 let addr = self.scroll.vram_addr();
-                self.vram.write(addr, value);
+
+                // Write to CHR (mapper) or VRAM/Palette
+                if (addr & 0x3FFF) < 0x2000 {
+                    write_chr(addr & 0x3FFF, value);
+                } else {
+                    self.vram.write(addr, value);
+                }
 
                 // Increment VRAM address
                 let increment = self.ctrl.vram_increment();
@@ -237,6 +304,14 @@ impl Ppu {
     /// (frame_complete, nmi_triggered)
     #[allow(clippy::too_many_lines)] // PPU step naturally handles many timing states
     pub fn step_with_chr<F: Fn(u16) -> u8>(&mut self, read_chr: F) -> (bool, bool) {
+        // Open bus decay
+        if self.decay_counter > 0 {
+            self.decay_counter -= 1;
+            if self.decay_counter == 0 {
+                self.open_bus_latch = 0;
+            }
+        }
+
         let rendering_enabled = self.mask.rendering_enabled();
 
         // Tick timing FIRST to advance to the next position
@@ -543,7 +618,7 @@ mod tests {
     fn test_ppuctrl_write() {
         let mut ppu = Ppu::new(Mirroring::Horizontal);
 
-        ppu.write_register(0x2000, 0x80); // Enable NMI
+        ppu.write_register(0x2000, 0x80, |_, _| {}); // Enable NMI
         assert!(ppu.ctrl.nmi_enabled());
     }
 
@@ -552,7 +627,7 @@ mod tests {
         let mut ppu = Ppu::new(Mirroring::Horizontal);
 
         ppu.status.set_vblank();
-        let status = ppu.read_register(0x2002);
+        let status = ppu.read_register(0x2002, |_| 0);
 
         assert_eq!(status & 0x80, 0x80); // VBlank bit set
         assert!(!ppu.status.in_vblank()); // Should be cleared after read
@@ -562,11 +637,11 @@ mod tests {
     fn test_oam_write() {
         let mut ppu = Ppu::new(Mirroring::Horizontal);
 
-        ppu.write_register(0x2003, 0x00); // OAMADDR = 0
-        ppu.write_register(0x2004, 0x42); // OAMDATA = $42
+        ppu.write_register(0x2003, 0x00, |_, _| {}); // OAMADDR = 0
+        ppu.write_register(0x2004, 0x42, |_, _| {}); // OAMDATA = $42
 
-        ppu.write_register(0x2003, 0x00); // Reset OAMADDR
-        let value = ppu.read_register(0x2004);
+        ppu.write_register(0x2003, 0x00, |_, _| {}); // Reset OAMADDR
+        let value = ppu.read_register(0x2004, |_| 0);
         assert_eq!(value, 0x42);
     }
 
@@ -575,20 +650,20 @@ mod tests {
         let mut ppu = Ppu::new(Mirroring::Horizontal);
 
         // Write address $2000
-        ppu.write_register(0x2006, 0x20);
-        ppu.write_register(0x2006, 0x00);
+        ppu.write_register(0x2006, 0x20, |_, _| {});
+        ppu.write_register(0x2006, 0x00, |_, _| {});
 
         // Write data
-        ppu.write_register(0x2007, 0x55);
+        ppu.write_register(0x2007, 0x55, |_, _| {});
 
         // Read address $2000
-        ppu.write_register(0x2006, 0x20);
-        ppu.write_register(0x2006, 0x00);
+        ppu.write_register(0x2006, 0x20, |_, _| {});
+        ppu.write_register(0x2006, 0x00, |_, _| {});
 
         // First read is buffered (returns garbage)
-        let _ = ppu.read_register(0x2007);
+        let _ = ppu.read_register(0x2007, |_| 0);
         // Second read returns actual data
-        let value = ppu.read_register(0x2007);
+        let value = ppu.read_register(0x2007, |_| 0);
         assert_eq!(value, 0x55);
     }
 
@@ -597,14 +672,14 @@ mod tests {
         let mut ppu = Ppu::new(Mirroring::Horizontal);
 
         // Write to palette
-        ppu.write_register(0x2006, 0x3F);
-        ppu.write_register(0x2006, 0x00);
-        ppu.write_register(0x2007, 0x0F);
+        ppu.write_register(0x2006, 0x3F, |_, _| {});
+        ppu.write_register(0x2006, 0x00, |_, _| {});
+        ppu.write_register(0x2007, 0x0F, |_, _| {});
 
         // Read from palette (immediate, no buffer)
-        ppu.write_register(0x2006, 0x3F);
-        ppu.write_register(0x2006, 0x00);
-        let value = ppu.read_register(0x2007);
+        ppu.write_register(0x2006, 0x3F, |_, _| {});
+        ppu.write_register(0x2006, 0x00, |_, _| {});
+        let value = ppu.read_register(0x2007, |_| 0);
         assert_eq!(value, 0x0F);
     }
 
@@ -627,7 +702,7 @@ mod tests {
         let mut ppu = Ppu::new(Mirroring::Horizontal);
 
         // Enable NMI
-        ppu.write_register(0x2000, 0x80);
+        ppu.write_register(0x2000, 0x80, |_, _| {});
 
         // Step to VBlank
         while ppu.timing.scanline() != 241 || ppu.timing.dot() != 0 {
@@ -644,9 +719,9 @@ mod tests {
         let mut ppu = Ppu::new(Mirroring::Horizontal);
 
         // Write X scroll = 100
-        ppu.write_register(0x2005, 100);
+        ppu.write_register(0x2005, 100, |_, _| {});
         // Write Y scroll = 50
-        ppu.write_register(0x2005, 50);
+        ppu.write_register(0x2005, 50, |_, _| {});
 
         // Verify scroll registers updated
         assert_eq!(ppu.scroll.fine_x(), 100 & 0x07);
@@ -667,7 +742,14 @@ mod tests {
         // Verify OAM contents by reading each address
         for i in 0..256u16 {
             ppu.oam.set_addr(i as u8);
-            assert_eq!(ppu.oam.read(), i as u8);
+            let expected = if i % 4 == 2 {
+                // Attribute bytes (byte 2 of each sprite) have bits 2-4 masked
+                // due to hardware - these bits don't physically exist in PPU OAM
+                (i as u8) & 0xE3
+            } else {
+                i as u8
+            };
+            assert_eq!(ppu.oam.read(), expected);
         }
     }
 }
