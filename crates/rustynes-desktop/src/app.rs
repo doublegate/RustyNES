@@ -68,6 +68,9 @@ pub struct RustyNes {
     /// Audio player (cpal stream)
     audio_player: Option<AudioPlayer>,
 
+    /// Audio sample rate (Hz) - used to configure APU when loading ROMs
+    audio_sample_rate: u32,
+
     /// Show about dialog
     show_about: bool,
 }
@@ -103,14 +106,15 @@ impl RustyNes {
         };
 
         // Initialize audio player (may fail on platforms without audio support)
-        let audio_player = match AudioPlayer::new() {
+        let (audio_player, audio_sample_rate) = match AudioPlayer::new() {
             Ok(player) => {
-                info!("Audio playback initialized at {} Hz", player.sample_rate());
-                Some(player)
+                let sample_rate = player.sample_rate();
+                info!("Audio playback initialized at {} Hz", sample_rate);
+                (Some(player), sample_rate)
             }
             Err(e) => {
                 error!("Failed to initialize audio playback: {}", e);
-                None
+                (None, 48000) // Default to 48000 Hz if audio init fails
             }
         };
 
@@ -129,6 +133,7 @@ impl RustyNes {
             show_metrics: false,
             runahead_manager: RunAheadManager::default(),
             audio_player,
+            audio_sample_rate,
             show_about: false,
         };
 
@@ -215,10 +220,17 @@ impl RustyNes {
                         Ok(rom) => {
                             match rustynes_core::create_mapper(&rom) {
                                 Ok(mapper) => {
-                                    let console = rustynes_core::Console::new(mapper);
+                                    // Create console with matching audio sample rate
+                                    let console = rustynes_core::Console::with_sample_rate(
+                                        mapper,
+                                        self.audio_sample_rate,
+                                    );
                                     self.console = Some(console);
                                     self.current_view = View::Playing;
-                                    info!("Console created, switching to Playing view");
+                                    info!(
+                                        "Console created with {} Hz audio, switching to Playing view",
+                                        self.audio_sample_rate
+                                    );
                                 }
                                 Err(e) => {
                                     error!("Failed to create mapper: {:?}", e);
@@ -474,8 +486,8 @@ impl RustyNes {
             Message::Tick => {
                 // Run one frame of emulation if console is loaded
                 if let Some(console) = &mut self.console {
-                    // Run one frame
-                    console.step_frame();
+                    // Run one frame with cycle-accurate timing
+                    console.step_frame_accurate();
 
                     // Convert palette indices to RGB
                     let palette_buffer = console.framebuffer();
