@@ -602,6 +602,11 @@ impl Ppu {
     pub fn dot(&self) -> u16 {
         self.timing.dot()
     }
+
+    /// Get PPUMASK register (for debugging)
+    pub fn mask(&self) -> PpuMask {
+        self.mask
+    }
 }
 
 #[cfg(test)]
