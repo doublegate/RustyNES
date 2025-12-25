@@ -1110,6 +1110,8 @@ Phase 1.5 establishes a production-ready foundation for Phase 2 advanced feature
 - Keyboard and gamepad input (gilrs)
 - Configuration persistence
 - Playback controls (pause, resume, reset)
+- **Cycle-accurate execution mode:** Desktop uses `step_frame_accurate()` for perfect CPU/PPU/APU synchronization
+- **Sample rate configuration:** Audio device sample rate detection and APU configuration
 - **Total: Cross-platform MVP release achieved**
 
 **Achievements:**
@@ -1117,6 +1119,7 @@ Phase 1.5 establishes a production-ready foundation for Phase 2 advanced feature
 - Zero unsafe code maintained across 6 crates
 - Complete Phase 1 MVP achieved
 - 6+ months ahead of original schedule
+- Desktop execution matches 100%-passing test suite (cycle-perfect timing)
 
 ### Key Milestones
 

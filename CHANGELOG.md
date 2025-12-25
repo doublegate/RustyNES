@@ -31,6 +31,23 @@ This release marks the **historic completion of Milestone 8 (Test ROM Validation
 
 ### Added
 
+#### Desktop Integration Fix (Post-M8)
+
+- **Cycle-Accurate Desktop Execution**
+  - **Root Cause:** Desktop application (`rustynes-desktop/src/app.rs`) used `step_frame()` method which batches entire CPU instructions before synchronizing PPU/APU
+  - **Problem:** Mid-frame register updates (PPU/APU writes during scanline rendering) were not processed until end of frame
+  - **Impact:** Timing-sensitive effects (sprite 0 hit, scroll splits, raster effects) rendered incorrectly or not at all
+  - **Fix:** Changed to `step_frame_accurate()` which executes 1 CPU cycle → 3 PPU dots → 1 APU step in strict alternation
+  - **Result:** Desktop now matches 100%-passing test suite execution mode with cycle-perfect synchronization
+  - Technical detail: `step_frame()` executes full instructions then catches up PPU/APU, suitable for batch processing but not cycle-accurate rendering
+
+- **Sample Rate Configuration APIs**
+  - Added `Bus::with_sample_rate(rate: u32)` constructor for configuring APU sample generation rate
+  - Added `Console::with_sample_rate(rate: u32)` constructor for end-to-end sample rate configuration
+  - Desktop application captures audio device sample rate (typically 44100 Hz or 48000 Hz) and passes to APU
+  - Result: Audio generated at exact device sample rate, eliminating pitch shifting from sample rate mismatch
+  - Backward compatibility: Default sample rate remains 48000 Hz if not specified
+
 #### Milestone 8 Sprint 1: CPU Accuracy Improvements (22/22 Blargg Tests - 100%)
 
 - **Cycle-Accurate CPU State Machine (`tick()` Method)**
