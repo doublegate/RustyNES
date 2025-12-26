@@ -22,6 +22,11 @@ use crate::runahead::RunAheadManager;
 use crate::view::View;
 use rustynes_core::Console;
 
+/// Number of frames to pre-warm the emulator after ROM load.
+/// In cycle-accurate mode, the PPU needs ~40 frames before rendering
+/// visible content. Pre-warming eliminates the grey screen on startup.
+const PREWARM_FRAMES: u32 = 50;
+
 /// Main application state (Elm Model)
 pub struct RustyNes {
     /// Current view/screen
@@ -221,15 +226,38 @@ impl RustyNes {
                             match rustynes_core::create_mapper(&rom) {
                                 Ok(mapper) => {
                                     // Create console with matching audio sample rate
-                                    let console = rustynes_core::Console::with_sample_rate(
+                                    let mut console = rustynes_core::Console::with_sample_rate(
                                         mapper,
                                         self.audio_sample_rate,
                                     );
+
+                                    // Pre-warm the emulator: run frames until PPU generates
+                                    // visible content. This eliminates the grey screen that
+                                    // occurs during the first ~40 frames in cycle-accurate mode.
+                                    info!(
+                                        "Pre-warming emulator for {} frames to eliminate grey screen...",
+                                        PREWARM_FRAMES
+                                    );
+                                    for _ in 0..PREWARM_FRAMES {
+                                        console.step_frame_accurate();
+                                    }
+
+                                    // Update framebuffer with pre-warmed content
+                                    let palette_buffer = console.framebuffer();
+                                    let rgb_buffer =
+                                        crate::palette::framebuffer_to_rgb(palette_buffer);
+                                    self.framebuffer = Arc::new(rgb_buffer);
+
+                                    // Clear audio samples generated during pre-warm
+                                    // to avoid audio burst on startup
+                                    console.clear_audio_samples();
+
                                     self.console = Some(console);
                                     self.current_view = View::Playing;
                                     info!(
-                                        "Console created with {} Hz audio, switching to Playing view",
-                                        self.audio_sample_rate
+                                        "Console created with {} Hz audio, pre-warmed to frame {}, switching to Playing view",
+                                        self.audio_sample_rate,
+                                        PREWARM_FRAMES
                                     );
                                 }
                                 Err(e) => {
@@ -489,11 +517,9 @@ impl RustyNes {
                     // Run one frame with cycle-accurate timing
                     console.step_frame_accurate();
 
-                    // Convert palette indices to RGB
+                    // Convert palette indices to RGB and update shared framebuffer
                     let palette_buffer = console.framebuffer();
                     let rgb_buffer = crate::palette::framebuffer_to_rgb(palette_buffer);
-
-                    // Update shared framebuffer
                     self.framebuffer = Arc::new(rgb_buffer);
 
                     // Queue audio samples if audio is enabled and player is available
