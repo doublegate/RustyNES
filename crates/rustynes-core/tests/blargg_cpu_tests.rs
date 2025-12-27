@@ -99,7 +99,7 @@ fn run_blargg_test_with_timeout(rom_name: &str, max_frames: u32) -> Result<(), S
 
     // Run test
     for frame in 0..max_frames {
-        console.step_frame();
+        console.step_frame_accurate();
 
         // Check result (but give ROM a few frames to initialize)
         if frame >= 10 {
@@ -225,25 +225,7 @@ fn cpu_branch_timing_2() {
 // Dummy Read/Write Tests
 // ============================================================================
 
-/// cpu_dummy_reads test - KNOWN LIMITATION
-///
-/// This test fails with "0xFF" error due to ROM timing sensitivity that requires
-/// full cycle-accurate tick() implementation for all dummy read/write cycles during
-/// instruction execution. The current implementation uses step() which bundles
-/// multiple cycles together, causing timing discrepancies that this test detects.
-///
-/// This is not a correctness bug - the CPU executes instructions properly and passes
-/// all other timing tests. However, cpu_dummy_reads specifically validates the exact
-/// cycle-by-cycle bus access patterns (including dummy reads/writes) that occur during
-/// instruction execution, which requires implementing a full cycle-accurate tick()
-/// state machine for every instruction.
-///
-/// Resolution: Will revisit after implementing full cycle-accurate execution with
-/// tick() method for all instructions (currently only partially implemented).
-///
-/// Reference: Claude-mem observations #7271, #7289, #7292
 #[test]
-#[ignore = "Requires full cycle-accurate tick() implementation for dummy read/write timing"]
 fn cpu_dummy_reads() {
     run_blargg_test("cpu_dummy_reads.nes").unwrap();
 }
@@ -262,20 +244,7 @@ fn cpu_dummy_writes_oam() {
 // Interrupt Tests
 // ============================================================================
 
-/// cpu_interrupts test - KNOWN LIMITATION (test 2 of 5)
-///
-/// Tests 1, 3, 4, 5 pass. Test 2 (nmi_and_brk) fails because it validates
-/// NMI hijacking of BRK instruction, which requires detecting NMI arrival
-/// during the BRK instruction's execution cycles.
-///
-/// In the current step() execution mode, the CPU completes an entire instruction
-/// before PPU catch-up occurs, so NMI triggered during BRK execution cannot be
-/// detected at the correct cycle. This requires full cycle-accurate tick()
-/// implementation where NMI is checked between each individual cycle.
-///
-/// Resolution: Will pass after implementing cycle-accurate tick() for all instructions.
 #[test]
-#[ignore = "Test 2 (nmi_and_brk) requires cycle-accurate NMI detection during BRK execution"]
 fn cpu_interrupts() {
     run_blargg_test("cpu_interrupts.nes").unwrap();
 }
@@ -364,12 +333,7 @@ fn debug_cpu_interrupts_apu() {
 
 /// Known limitation tests that require full cycle-accurate tick() implementation.
 /// These are tracked separately and don't cause the summary to fail.
-const KNOWN_LIMITATION_TESTS: &[&str] = &[
-    // Requires cycle-accurate dummy read/write timing during instruction execution
-    "cpu_dummy_reads.nes",
-    // Test 2 (nmi_and_brk) requires NMI detection during BRK execution cycles
-    "cpu_interrupts.nes",
-];
+const KNOWN_LIMITATION_TESTS: &[&str] = &[];
 
 #[test]
 #[allow(clippy::cast_precision_loss)]
