@@ -138,7 +138,15 @@ impl Oam {
     ///
     /// Note: Reads during rendering return garbage on real hardware.
     pub fn read(&self) -> u8 {
-        self.data[self.addr as usize]
+        let value = self.data[self.addr as usize];
+
+        // Mask unused bits (2-4) in byte 2 (attributes)
+        // These bits physically do not exist in the PPU OAM
+        if self.addr % 4 == 2 {
+            value & 0xE3
+        } else {
+            value
+        }
     }
 
     /// Write to OAM at current address (OAMDATA write)

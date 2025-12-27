@@ -83,7 +83,12 @@ impl NoiseChannel {
                 // P = Noise period index (0-15)
                 self.mode = (value & 0x80) != 0;
                 let period_index = value & 0x0F;
-                self.timer_period = NOISE_PERIOD_TABLE[period_index as usize];
+                let rate = NOISE_PERIOD_TABLE[period_index as usize];
+
+                // The noise timer is clocked every other CPU cycle.
+                // To get 'rate' CPU cycles, we need 'rate / 2' ticks.
+                // Reload with N-1 for correct countdown.
+                self.timer_period = (rate / 2).saturating_sub(1);
             }
             3 => {
                 // $400F: LLLL L---
@@ -215,12 +220,14 @@ mod tests {
 
         // Set period index 0
         noise.write_register(2, 0x00);
-        assert_eq!(noise.timer_period, 4);
+        // Rate 4. Timer = (4/2)-1 = 1.
+        assert_eq!(noise.timer_period, 1);
         assert!(!noise.mode);
 
         // Set period index 15 with mode flag
         noise.write_register(2, 0x8F);
-        assert_eq!(noise.timer_period, 4068);
+        // Rate 4068. Timer = (4068/2)-1 = 2033.
+        assert_eq!(noise.timer_period, 2033);
         assert!(noise.mode);
 
         // Clear mode flag
