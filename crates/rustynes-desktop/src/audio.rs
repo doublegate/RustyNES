@@ -1,224 +1,292 @@
-//! Audio playback using cpal.
+//! Audio output using cpal for low-latency playback.
 //!
-//! Manages audio stream creation and sample buffering for NES audio output.
+//! This module provides a thread-safe audio output system that:
+//! - Uses a ring buffer for lock-free sample transfer
+//! - Handles buffer underruns gracefully with silence
+//! - Supports dynamic volume control
+//! - Provides mute functionality
 
+use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Device, Stream, StreamConfig};
-use std::sync::{Arc, Mutex};
-use tracing::{error, info, warn};
+use cpal::{Device, SampleRate, Stream, StreamConfig};
+use log::{debug, error, info, warn};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::Arc;
 
-/// Audio player wrapping cpal audio stream
-pub struct AudioPlayer {
-    /// Audio output stream (must be kept alive)
+/// Size of the ring buffer in samples (mono).
+const RING_BUFFER_SIZE: usize = 8192;
+
+/// Thread-safe ring buffer for audio samples.
+struct RingBuffer {
+    buffer: Box<[f32; RING_BUFFER_SIZE]>,
+    read_pos: AtomicU32,
+    write_pos: AtomicU32,
+}
+
+impl RingBuffer {
+    fn new() -> Self {
+        // Use vec! to avoid large stack allocation, then convert to boxed slice and array
+        let buffer_vec: Vec<f32> = vec![0.0; RING_BUFFER_SIZE];
+        let buffer_slice: Box<[f32]> = buffer_vec.into_boxed_slice();
+        // SAFETY: We know the Vec was exactly RING_BUFFER_SIZE elements
+        let buffer: Box<[f32; RING_BUFFER_SIZE]> =
+            buffer_slice.try_into().expect("buffer size mismatch");
+
+        Self {
+            buffer,
+            read_pos: AtomicU32::new(0),
+            write_pos: AtomicU32::new(0),
+        }
+    }
+
+    /// Returns the number of samples available for reading.
+    fn available(&self) -> usize {
+        let write = self.write_pos.load(Ordering::Acquire);
+        let read = self.read_pos.load(Ordering::Acquire);
+        ((write.wrapping_sub(read)) as usize) % RING_BUFFER_SIZE
+    }
+
+    /// Returns the number of free slots for writing.
+    fn free(&self) -> usize {
+        RING_BUFFER_SIZE - self.available() - 1
+    }
+
+    /// Write samples to the buffer. Returns number of samples written.
+    fn write(&mut self, samples: &[f32]) -> usize {
+        let free = self.free();
+        let to_write = samples.len().min(free);
+
+        let write_pos = self.write_pos.load(Ordering::Acquire) as usize;
+
+        for (i, &sample) in samples.iter().take(to_write).enumerate() {
+            let pos = (write_pos + i) % RING_BUFFER_SIZE;
+            self.buffer[pos] = sample;
+        }
+
+        self.write_pos.store(
+            ((write_pos + to_write) % RING_BUFFER_SIZE) as u32,
+            Ordering::Release,
+        );
+
+        to_write
+    }
+
+    /// Read samples from the buffer. Returns number of samples read.
+    fn read(&self, output: &mut [f32]) -> usize {
+        let available = self.available();
+        let to_read = output.len().min(available);
+
+        let read_pos = self.read_pos.load(Ordering::Acquire) as usize;
+
+        for (i, sample) in output.iter_mut().take(to_read).enumerate() {
+            let pos = (read_pos + i) % RING_BUFFER_SIZE;
+            // SAFETY: We're reading from a fixed-size array with modulo indexing
+            *sample = self.buffer[pos];
+        }
+
+        self.read_pos.store(
+            ((read_pos + to_read) % RING_BUFFER_SIZE) as u32,
+            Ordering::Release,
+        );
+
+        to_read
+    }
+}
+
+/// Audio output system using cpal.
+pub struct AudioOutput {
+    /// The cpal audio stream (must be kept alive).
     _stream: Stream,
-    /// Shared audio buffer for communicating samples from emulator to audio thread
-    buffer: Arc<Mutex<Vec<f32>>>,
-    /// Sample rate (Hz)
+    /// Shared ring buffer for sample transfer.
+    buffer: Arc<std::sync::Mutex<RingBuffer>>,
+    /// Volume level (0.0 - 1.0).
+    volume: Arc<AtomicU32>,
+    /// Mute state.
+    muted: Arc<AtomicBool>,
+    /// Sample rate of the output device.
     sample_rate: u32,
 }
 
-impl AudioPlayer {
-    /// Create new audio player with default device
-    ///
-    /// # Returns
-    ///
-    /// Audio player or error if audio device/stream creation failed
+impl AudioOutput {
+    /// Create a new audio output system.
     ///
     /// # Errors
     ///
-    /// Returns error if:
-    /// - No audio output device is available
-    /// - Audio stream cannot be created
-    /// - Stream configuration is not supported
-    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        // Get default audio host
+    /// Returns an error if no audio device is available or stream creation fails.
+    pub fn new(sample_rate: u32, volume: f32, muted: bool) -> Result<Self> {
         let host = cpal::default_host();
 
-        // Get default output device
         let device = host
             .default_output_device()
-            .ok_or("No audio output device available")?;
-
-        let device_name = device.name().unwrap_or_else(|_| "Unknown".to_string());
-        info!("Using audio device: {}", device_name);
-
-        // Get default output config
-        let config = device.default_output_config()?;
-        let sample_rate = config.sample_rate().0;
-        let channels = config.channels();
+            .context("No audio output device available")?;
 
         info!(
-            "Audio config: {} Hz, {} channels, {:?}",
-            sample_rate,
-            channels,
-            config.sample_format()
+            "Using audio device: {}",
+            device.name().unwrap_or_else(|_| "Unknown".to_string())
         );
 
-        // Create shared buffer for audio samples
-        // Increased capacity to reduce buffer underruns (735 samples/frame * 4 frames = ~3000)
-        let buffer = Arc::new(Mutex::new(Vec::with_capacity(8192)));
+        let config = Self::find_config(&device, sample_rate)?;
+        let actual_sample_rate = config.sample_rate.0;
+
+        info!(
+            "Audio config: {} Hz, {} channels",
+            actual_sample_rate, config.channels
+        );
+
+        let buffer = Arc::new(std::sync::Mutex::new(RingBuffer::new()));
         let buffer_clone = Arc::clone(&buffer);
 
-        // Build audio stream
-        let stream = Self::build_stream(&device, &config.into(), buffer_clone, channels)?;
+        let volume_atomic = Arc::new(AtomicU32::new(volume.to_bits()));
+        let volume_clone = Arc::clone(&volume_atomic);
 
-        // Start playback
-        stream.play()?;
+        let muted_atomic = Arc::new(AtomicBool::new(muted));
+        let muted_clone = Arc::clone(&muted_atomic);
+
+        let channels = config.channels as usize;
+
+        let stream = device
+            .build_output_stream(
+                &config,
+                move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                    let vol = f32::from_bits(volume_clone.load(Ordering::Relaxed));
+                    let is_muted = muted_clone.load(Ordering::Relaxed);
+
+                    if is_muted {
+                        // Fill with silence when muted
+                        data.fill(0.0);
+                        return;
+                    }
+
+                    // Read mono samples and duplicate to all channels
+                    let mono_samples_needed = data.len() / channels;
+                    let mut mono_buffer = vec![0.0f32; mono_samples_needed];
+
+                    if let Ok(buf) = buffer_clone.lock() {
+                        let read = buf.read(&mut mono_buffer);
+                        // Fill remaining with silence if underrun
+                        if read < mono_samples_needed {
+                            mono_buffer[read..].fill(0.0);
+                        }
+                    } else {
+                        // Lock failed, fill with silence
+                        mono_buffer.fill(0.0);
+                    }
+
+                    // Distribute mono samples to all channels with volume
+                    for (i, chunk) in data.chunks_mut(channels).enumerate() {
+                        let sample = mono_buffer.get(i).copied().unwrap_or(0.0) * vol;
+                        chunk.fill(sample);
+                    }
+                },
+                move |err| {
+                    error!("Audio stream error: {err}");
+                },
+                None,
+            )
+            .context("Failed to build audio output stream")?;
+
+        stream.play().context("Failed to start audio stream")?;
+
+        debug!("Audio output initialized successfully");
 
         Ok(Self {
             _stream: stream,
             buffer,
-            sample_rate,
+            volume: volume_atomic,
+            muted: muted_atomic,
+            sample_rate: actual_sample_rate,
         })
     }
 
-    /// Build audio output stream
-    fn build_stream(
-        device: &Device,
-        config: &StreamConfig,
-        buffer: Arc<Mutex<Vec<f32>>>,
-        channels: u16,
-    ) -> Result<Stream, Box<dyn std::error::Error>> {
-        let stream = device.build_output_stream(
-            config,
-            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                // Lock buffer and consume available samples
-                let mut buf = match buffer.lock() {
-                    Ok(buf) => buf,
-                    Err(e) => {
-                        error!("Audio buffer mutex poisoned: {}", e);
-                        data.fill(0.0);
-                        return;
-                    }
-                };
+    /// Find a suitable audio configuration for the device.
+    fn find_config(device: &Device, preferred_rate: u32) -> Result<StreamConfig> {
+        let supported_configs = device
+            .supported_output_configs()
+            .context("Failed to query supported audio configs")?;
 
-                if buf.is_empty() {
-                    // No samples available - output silence
-                    data.fill(0.0);
-                    return;
-                }
+        // Try to find a config with the preferred sample rate
+        for config in supported_configs {
+            if config.min_sample_rate().0 <= preferred_rate
+                && config.max_sample_rate().0 >= preferred_rate
+            {
+                return Ok(config.with_sample_rate(SampleRate(preferred_rate)).into());
+            }
+        }
 
-                // Fill output buffer with available samples
-                let frames = data.len() / channels as usize;
-                let samples_needed = frames.min(buf.len());
-
-                for i in 0..samples_needed {
-                    let sample = buf[i];
-                    // Duplicate mono sample to all channels
-                    for c in 0..channels as usize {
-                        data[i * channels as usize + c] = sample;
-                    }
-                }
-
-                // If we didn't fill the entire buffer, pad with silence
-                if samples_needed < frames {
-                    for item in data.iter_mut().skip(samples_needed * channels as usize) {
-                        *item = 0.0;
-                    }
-                }
-
-                // Remove consumed samples from buffer
-                buf.drain(0..samples_needed);
-            },
-            move |err| {
-                error!("Audio stream error: {}", err);
-            },
-            None,
-        )?;
-
-        Ok(stream)
+        // Fall back to default config
+        device
+            .default_output_config()
+            .map(std::convert::Into::into)
+            .context("No suitable audio config found")
     }
 
-    /// Queue audio samples for playback
+    /// Queue audio samples for playback.
     ///
-    /// # Arguments
-    ///
-    /// * `samples` - Audio samples to queue (mono, -1.0 to 1.0 range)
-    ///
-    /// # Buffer Management
-    ///
-    /// The buffer uses a soft limit and hard limit approach:
-    /// - Soft limit (16384): Warning threshold for monitoring
-    /// - Hard limit (24576): Maximum capacity before dropping samples
-    ///
-    /// This larger buffer accommodates timing variances between emulation
-    /// frame generation (~60Hz) and audio hardware consumption rates.
-    pub fn queue_samples(&self, samples: &[f32]) {
-        const SOFT_LIMIT: usize = 16384; // ~370ms at 44.1kHz (warn but don't drop)
-        const HARD_LIMIT: usize = 24576; // ~555ms at 44.1kHz (drop to prevent unbounded growth)
-
-        if samples.is_empty() {
-            return;
+    /// Samples should be mono f32 values in the range -1.0 to 1.0.
+    /// Returns the number of samples actually queued.
+    pub fn queue_samples(&mut self, samples: &[f32]) -> usize {
+        if let Ok(mut buf) = self.buffer.lock() {
+            buf.write(samples)
+        } else {
+            warn!("Failed to lock audio buffer for writing");
+            0
         }
-
-        let mut buf = match self.buffer.lock() {
-            Ok(buf) => buf,
-            Err(e) => {
-                error!("Audio buffer mutex poisoned, cannot queue samples: {}", e);
-                return;
-            }
-        };
-
-        // Check buffer health
-        if buf.len() > SOFT_LIMIT && buf.len() < HARD_LIMIT {
-            // Log warning but don't drop samples yet
-            if buf.len() % 4096 == 0 {
-                // Only log every 4096 samples to reduce spam
-                warn!(
-                    "Audio buffer growing large: {} samples ({:.1}ms latency)",
-                    buf.len(),
-                    (buf.len() as f32 / self.sample_rate as f32) * 1000.0
-                );
-            }
-        }
-
-        // Prevent unbounded buffer growth (drop oldest samples if necessary)
-        if buf.len() + samples.len() > HARD_LIMIT {
-            let excess = (buf.len() + samples.len()) - HARD_LIMIT;
-            let drop_count = excess.min(buf.len());
-
-            // Only log if we're dropping a significant amount
-            if drop_count > 0 {
-                warn!(
-                    "Audio buffer overflow, dropping {} samples to maintain latency",
-                    drop_count
-                );
-            }
-
-            buf.drain(0..drop_count);
-        }
-
-        // Add new samples
-        buf.extend_from_slice(samples);
     }
 
-    /// Get audio sample rate
+    /// Set the volume level (0.0 - 1.0).
+    pub fn set_volume(&self, volume: f32) {
+        let volume = volume.clamp(0.0, 1.0);
+        self.volume.store(volume.to_bits(), Ordering::Relaxed);
+    }
+
+    /// Get the current volume level.
+    #[must_use]
+    pub fn volume(&self) -> f32 {
+        f32::from_bits(self.volume.load(Ordering::Relaxed))
+    }
+
+    /// Set the mute state.
+    pub fn set_muted(&self, muted: bool) {
+        self.muted.store(muted, Ordering::Relaxed);
+    }
+
+    /// Get the current mute state.
+    #[must_use]
+    pub fn is_muted(&self) -> bool {
+        self.muted.load(Ordering::Relaxed)
+    }
+
+    /// Toggle mute state.
+    pub fn toggle_mute(&self) {
+        let current = self.muted.load(Ordering::Relaxed);
+        self.muted.store(!current, Ordering::Relaxed);
+    }
+
+    /// Get the output sample rate.
     #[must_use]
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
     }
 
-    /// Get current buffer size (for debugging)
+    /// Get the number of samples available in the buffer.
     #[must_use]
-    #[allow(dead_code)]
-    pub fn buffer_size(&self) -> usize {
-        match self.buffer.lock() {
-            Ok(buf) => buf.len(),
-            Err(e) => {
-                error!("Audio buffer mutex poisoned, returning 0: {}", e);
-                0
-            }
-        }
+    pub fn buffer_available(&self) -> usize {
+        self.buffer.lock().map(|b| b.available()).unwrap_or(0)
+    }
+
+    /// Get the number of free slots in the buffer.
+    #[must_use]
+    pub fn buffer_free(&self) -> usize {
+        self.buffer.lock().map(|b| b.free()).unwrap_or(0)
     }
 }
 
-impl Default for AudioPlayer {
-    fn default() -> Self {
-        match Self::new() {
-            Ok(player) => player,
-            Err(e) => {
-                panic!("Failed to create audio player: {e}");
-            }
-        }
+impl std::fmt::Debug for AudioOutput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AudioOutput")
+            .field("sample_rate", &self.sample_rate)
+            .field("volume", &self.volume())
+            .field("muted", &self.is_muted())
+            .finish_non_exhaustive()
     }
 }

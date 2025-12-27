@@ -1,77 +1,121 @@
-// RustyNES Desktop Application
-#![doc = include_str!("../README.md")]
-#![warn(clippy::pedantic)]
-#![allow(clippy::cast_precision_loss)] // Color conversion from hex
-#![allow(clippy::multiple_crate_versions)] // Dependency version conflicts (transitive deps)
-#![allow(clippy::doc_markdown)] // README.md formatting
+//! `RustyNES` Desktop - NES Emulator Frontend
+//!
+//! A desktop frontend for the `RustyNES` emulator using egui + eframe.
+//!
+//! # Usage
+//!
+//! ```bash
+//! rustynes [OPTIONS] [ROM_PATH]
+//! ```
+//!
+//! # Examples
+//!
+//! ```bash
+//! # Launch without a ROM (opens file dialog)
+//! rustynes
+//!
+//! # Launch with a specific ROM
+//! rustynes path/to/game.nes
+//!
+//! # Launch with debug mode enabled
+//! rustynes --debug path/to/game.nes
+//! ```
 
-use std::env;
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+use anyhow::{Context, Result};
+use clap::Parser;
+use log::{error, info};
 use std::path::PathBuf;
 
-use iced::{window, Size};
+use rustynes_desktop::{Config, NesApp};
 
-mod app;
-mod audio;
-mod config;
-mod input;
-mod library;
-mod loading;
-mod message;
-mod metrics;
-mod palette;
-mod runahead;
-mod theme;
-mod view;
-mod viewport;
-mod views;
+/// Command-line arguments for `RustyNES`
+#[derive(Parser, Debug)]
+#[command(name = "rustynes")]
+#[command(author = "doublegate")]
+#[command(version = "0.7.0")]
+#[command(about = "A cycle-accurate NES emulator written in Rust")]
+#[command(long_about = None)]
+struct Args {
+    /// Path to a NES ROM file (.nes)
+    #[arg(value_name = "ROM")]
+    rom_path: Option<PathBuf>,
 
-fn main() -> iced::Result {
-    // Initialize logging
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .with_target(false)
-        .with_thread_ids(false)
-        .with_file(false)
-        .with_line_number(false)
-        .compact()
-        .init();
+    /// Start in fullscreen mode
+    #[arg(short, long)]
+    fullscreen: bool,
 
-    tracing::info!("Starting RustyNES Desktop v{}", env!("CARGO_PKG_VERSION"));
+    /// Window scale factor (1-8)
+    #[arg(short, long, default_value = "3")]
+    scale: u32,
 
-    // Parse command-line arguments for ROM path
-    let rom_path = env::args()
-        .nth(1)
-        .map(PathBuf::from)
-        .filter(|p| p.exists() && p.extension().is_some_and(|ext| ext == "nes"));
+    /// Enable debug mode (shows debug windows)
+    #[arg(short, long)]
+    debug: bool,
 
-    if let Some(ref path) = rom_path {
-        tracing::info!("ROM path provided via CLI: {}", path.display());
-    }
-
-    // Load configuration to get saved window size
-    let config = config::AppConfig::load().unwrap_or_default();
-    #[allow(clippy::cast_precision_loss)] // u32 to f32 for window size
-    let window_size = Size::new(
-        config.app.window_width as f32,
-        config.app.window_height as f32,
-    );
-
-    // TODO: Load icon from PNG file instead of generating (causes debug spam)
-    // For now, use default system icon
-
-    // Run application using Iced 0.13 API
-    iced::application(
-        app::RustyNes::title,
-        app::RustyNes::update,
-        app::RustyNes::view,
-    )
-    .subscription(app::RustyNes::subscription)
-    .theme(app::RustyNes::theme)
-    .window_size(window_size)
-    .window(window::Settings::default())
-    .antialiasing(true)
-    .run_with(move || app::RustyNes::new(rom_path.clone()))
+    /// Mute audio on startup
+    #[arg(short, long)]
+    mute: bool,
 }
 
-// Icon generation removed - was causing 5MB debug spam in logs
-// TODO: Load icon from PNG file in assets/ directory
+fn main() -> Result<()> {
+    // Initialize logging
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format_timestamp_millis()
+        .init();
+
+    info!("RustyNES v0.7.0 starting...");
+
+    // Parse command-line arguments
+    let args = Args::parse();
+
+    // Load or create configuration
+    let mut config = Config::load().unwrap_or_else(|e| {
+        error!("Failed to load config, using defaults: {e}");
+        Config::default()
+    });
+
+    // Apply command-line overrides
+    if args.fullscreen {
+        config.video.fullscreen = true;
+    }
+    if args.scale >= 1 && args.scale <= 8 {
+        config.video.scale = args.scale;
+    }
+    if args.debug {
+        config.debug.enabled = true;
+    }
+    if args.mute {
+        config.audio.muted = true;
+    }
+
+    // Calculate initial window size (scale is bounded 1-8, safe for f32)
+    #[allow(clippy::cast_precision_loss)]
+    let (width, height) = {
+        let scale = f32::from(config.video.scale as u16);
+        (256.0 * scale, 240.0 * scale + 25.0) // Extra for menu bar
+    };
+
+    // Set up native options for eframe
+    let native_options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([width, height])
+            .with_min_inner_size([256.0, 265.0])
+            .with_title("RustyNES")
+            .with_fullscreen(config.video.fullscreen),
+        vsync: config.video.vsync,
+        ..Default::default()
+    };
+
+    // Create and run the application
+    eframe::run_native(
+        "RustyNES",
+        native_options,
+        Box::new(move |cc| Ok(Box::new(NesApp::new(cc, config, args.rom_path)))),
+    )
+    .map_err(|e| anyhow::anyhow!("eframe error: {e}"))
+    .context("Failed to run application")?;
+
+    Ok(())
+}

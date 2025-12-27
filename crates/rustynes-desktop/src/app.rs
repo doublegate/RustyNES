@@ -1,758 +1,351 @@
-//! Main Iced application implementing the Elm architecture pattern.
+//! Main application implementing `eframe::App`.
 //!
-//! The Elm architecture consists of three parts:
-//! - Model: Application state (`RustyNes` struct)
-//! - Update: State transitions (`update()` function)
-//! - View: UI rendering (`view()` function)
+//! This module provides the core application structure that:
+//! - Implements the `eframe::App` trait for the main loop
+//! - Coordinates emulator, audio, and input
+//! - Renders the NES framebuffer as an egui texture
 
-use std::path::PathBuf;
-use std::sync::Arc;
+use crate::audio::AudioOutput;
+use crate::config::Config;
+use crate::gui;
+use crate::input::InputHandler;
 
-use iced::{Element, Subscription, Task, Theme};
-use tracing::{error, info};
-
-use crate::audio::AudioPlayer;
-use crate::config::AppConfig;
-use crate::input::{gamepad::GamepadManager, keyboard::KeyboardMapper, InputState};
-use crate::library::LibraryState;
-use crate::loading::LoadingState;
-use crate::message::Message;
-use crate::metrics::PerformanceMetrics;
-use crate::runahead::RunAheadManager;
-use crate::view::View;
+use egui::{ColorImage, TextureHandle, TextureOptions};
+use log::{error, info};
 use rustynes_core::Console;
+use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
-/// Main application state (Elm Model)
-pub struct RustyNes {
-    /// Current view/screen
-    current_view: View,
+/// NES display width in pixels.
+pub const NES_WIDTH: usize = 256;
+/// NES display height in pixels.
+pub const NES_HEIGHT: usize = 240;
 
-    /// Emulator core (None when no ROM loaded)
+/// Target frame rate (NTSC).
+const TARGET_FPS: f64 = 60.0988;
+/// Frame duration in nanoseconds.
+const FRAME_DURATION: Duration = Duration::from_nanos((1_000_000_000.0 / TARGET_FPS) as u64);
+
+/// Main NES emulator application.
+pub struct NesApp {
+    /// Configuration.
+    config: Config,
+    /// NES console.
     console: Option<Console>,
-
-    /// Currently loaded ROM path
-    current_rom: Option<PathBuf>,
-
-    /// Application configuration
-    config: AppConfig,
-
-    /// Shared framebuffer (updated by emulator, read by renderer)
-    framebuffer: Arc<Vec<u8>>,
-
-    /// Input state for both players
-    input_state: InputState,
-
-    /// Keyboard mapper
-    keyboard_mapper: KeyboardMapper,
-
-    /// Gamepad manager
-    gamepad_manager: Option<GamepadManager>,
-
-    /// ROM library state
-    library: LibraryState,
-
-    /// Loading state
-    #[allow(dead_code)] // Will be used when ROM loading UI is implemented
-    loading_state: LoadingState,
-
-    /// Performance metrics
-    metrics: PerformanceMetrics,
-
-    /// Show metrics overlay
-    show_metrics: bool,
-
-    /// Run-ahead manager (stub for MVP)
-    #[allow(dead_code)] // Stub for Phase 2, infrastructure only
-    runahead_manager: RunAheadManager,
-
-    /// Audio player (cpal stream)
-    audio_player: Option<AudioPlayer>,
-
-    /// Show about dialog
-    show_about: bool,
+    /// Audio output.
+    audio: Option<AudioOutput>,
+    /// Input handler.
+    input: InputHandler,
+    /// GUI state.
+    gui_state: gui::GuiState,
+    /// Whether the emulator is paused.
+    paused: bool,
+    /// Last frame time.
+    last_frame: Instant,
+    /// Accumulated time for frame timing.
+    accumulator: Duration,
+    /// NES framebuffer texture handle.
+    nes_texture: Option<TextureHandle>,
+    /// Framebuffer pixel data for the texture.
+    framebuffer: Vec<u8>,
 }
 
-impl RustyNes {
-    /// Create new application state
-    ///
-    /// # Arguments
-    ///
-    /// * `rom_path` - Optional ROM file path from command-line arguments
-    pub fn new(rom_path: Option<PathBuf>) -> (Self, Task<Message>) {
-        info!("Initializing RustyNES application");
+impl NesApp {
+    /// Create a new NES application.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn new(
+        cc: &eframe::CreationContext<'_>,
+        config: Config,
+        rom_path: Option<PathBuf>,
+    ) -> Self {
+        // Set up custom fonts and visuals if needed
+        let ctx = &cc.egui_ctx;
+        ctx.set_visuals(egui::Visuals::dark());
 
-        // Load configuration from disk
-        let config = AppConfig::load().unwrap_or_else(|e| {
-            error!("Failed to load config: {}, using defaults", e);
-            AppConfig::default()
-        });
-
-        // Create default framebuffer (256×240×3 RGB)
-        let framebuffer = Arc::new(vec![0u8; 256 * 240 * 3]);
-
-        // Initialize gamepad manager (may fail on platforms without gamepad support)
-        let gamepad_manager = match GamepadManager::new() {
-            Ok(mgr) => {
-                info!("Gamepad support initialized");
-                Some(mgr)
-            }
+        // Create audio output
+        let audio = match AudioOutput::new(
+            config.audio.sample_rate,
+            config.audio.volume,
+            config.audio.muted,
+        ) {
+            Ok(audio) => Some(audio),
             Err(e) => {
-                error!("Failed to initialize gamepad support: {}", e);
+                error!("Failed to initialize audio: {e}");
                 None
             }
         };
 
-        // Initialize audio player (may fail on platforms without audio support)
-        let audio_player = match AudioPlayer::new() {
-            Ok(player) => {
-                info!("Audio playback initialized at {} Hz", player.sample_rate());
-                Some(player)
-            }
-            Err(e) => {
-                error!("Failed to initialize audio playback: {}", e);
-                None
-            }
-        };
+        // Create input handler
+        let input = InputHandler::new(
+            &config.input.player1_keyboard,
+            &config.input.player2_keyboard,
+        );
 
-        let app = Self {
-            current_view: View::Library,
-            console: None,
-            current_rom: None,
-            config,
-            framebuffer,
-            input_state: InputState::new(),
-            keyboard_mapper: KeyboardMapper::new(),
-            gamepad_manager,
-            library: LibraryState::new(),
-            loading_state: LoadingState::None,
-            metrics: PerformanceMetrics::default(),
-            show_metrics: false,
-            runahead_manager: RunAheadManager::default(),
-            audio_player,
-            show_about: false,
-        };
+        // Create GUI state
+        let gui_state = gui::GuiState::new(&config);
 
-        // Load ROM from CLI argument if provided
-        let task = if let Some(path) = rom_path {
-            info!("Loading ROM from CLI argument: {}", path.display());
-            Task::done(Message::LoadRom(path))
-        } else {
-            Task::none()
-        };
-
-        (app, task)
-    }
-
-    /// Get framebuffer for rendering
-    pub fn framebuffer(&self) -> &Arc<Vec<u8>> {
-        &self.framebuffer
-    }
-
-    /// Get scaling mode
-    pub fn scaling_mode(&self) -> crate::config::ScalingMode {
-        self.config.video.scaling_mode
-    }
-
-    /// Get show metrics flag
-    pub fn show_metrics(&self) -> bool {
-        self.show_metrics
-    }
-
-    /// Get performance metrics
-    pub fn metrics(&self) -> &PerformanceMetrics {
-        &self.metrics
-    }
-
-    /// Get window title based on current state
-    pub fn title(&self) -> String {
-        if let Some(rom_path) = &self.current_rom {
-            format!(
-                "RustyNES - {}",
-                rom_path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("Unknown")
-            )
-        } else {
-            "RustyNES - NES Emulator".to_string()
-        }
-    }
-
-    /// Update application state (Elm Update)
-    #[allow(clippy::too_many_lines)] // Elm update pattern naturally grows with features
-    pub fn update(&mut self, message: Message) -> Task<Message> {
-        match message {
-            Message::None => Task::none(),
-
-            Message::NavigateTo(view) => {
-                info!("Navigating to view: {:?}", view);
-                self.current_view = view;
-                Task::none()
-            }
-
-            Message::OpenFileDialog => {
-                info!("Opening file dialog");
-                Task::future(async {
-                    if let Some(path) = Self::show_file_dialog().await {
-                        Message::LoadRom(path)
-                    } else {
-                        Message::None
-                    }
-                })
-            }
-
-            Message::LoadRom(path) => {
-                info!("Loading ROM from: {}", path.display());
-                self.current_rom = Some(path.clone());
-                Task::future(async move { Message::RomLoaded(Self::load_rom_async(path).await) })
-            }
-
-            Message::RomLoaded(result) => match result {
-                Ok(rom_data) => {
-                    info!("ROM loaded successfully, creating console...");
-                    // Parse ROM and create mapper
-                    match rustynes_core::Rom::load(&rom_data) {
-                        Ok(rom) => {
-                            match rustynes_core::create_mapper(&rom) {
-                                Ok(mapper) => {
-                                    let console = rustynes_core::Console::new(mapper);
-                                    self.console = Some(console);
-                                    self.current_view = View::Playing;
-                                    info!("Console created, switching to Playing view");
-                                }
-                                Err(e) => {
-                                    error!("Failed to create mapper: {:?}", e);
-                                    // TODO: Show error dialog in later sprint
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            error!("Failed to parse ROM: {:?}", e);
-                            // TODO: Show error dialog in later sprint
-                        }
-                    }
-                    Task::none()
+        // Load console if ROM was provided
+        let console = if let Some(ref rom_path) = rom_path {
+            match Self::load_rom(rom_path) {
+                Ok(console) => {
+                    info!("Loaded ROM: {}", rom_path.display());
+                    Some(console)
                 }
                 Err(e) => {
-                    error!("Failed to load ROM: {}", e);
-                    // TODO: Show error dialog in later sprint
-                    Task::none()
+                    error!("Failed to load ROM: {e}");
+                    None
                 }
-            },
-
-            Message::SetScalingMode(mode) => {
-                info!("Changing scaling mode to: {:?}", mode);
-                self.config.video.scaling_mode = mode;
-                Task::none()
             }
+        } else {
+            None
+        };
 
-            // Settings UI
-            Message::OpenSettings => {
-                info!("Opening settings");
-                self.current_view = View::Settings(crate::view::SettingsTab::Emulation);
-                Task::none()
+        // Initialize framebuffer (RGBA, 256x240)
+        let framebuffer = vec![0u8; NES_WIDTH * NES_HEIGHT * 4];
+
+        Self {
+            config,
+            console,
+            audio,
+            input,
+            gui_state,
+            paused: false,
+            last_frame: Instant::now(),
+            accumulator: Duration::ZERO,
+            nes_texture: None,
+            framebuffer,
+        }
+    }
+
+    /// Load a ROM file into a new console instance.
+    fn load_rom(path: &PathBuf) -> anyhow::Result<Console> {
+        let rom_data = std::fs::read(path)?;
+        Console::from_rom_bytes(&rom_data).map_err(|e| anyhow::anyhow!("{e}"))
+    }
+
+    /// Update the NES texture from the console framebuffer.
+    fn update_texture(&mut self, ctx: &egui::Context) {
+        // Get pixel data from console or use placeholder
+        if let Some(ref console) = self.console {
+            let fb = console.framebuffer();
+            let len = self.framebuffer.len().min(fb.len());
+            self.framebuffer[..len].copy_from_slice(&fb[..len]);
+        } else {
+            // Dark blue placeholder when no ROM is loaded
+            for pixel in self.framebuffer.chunks_exact_mut(4) {
+                pixel[0] = 32;
+                pixel[1] = 32;
+                pixel[2] = 64;
+                pixel[3] = 255;
             }
+        }
 
-            Message::CloseSettings => {
-                info!("Closing settings");
-                self.current_view = View::Library;
-                // Auto-save on close
-                let config = self.config.clone();
-                Task::future(async move {
-                    match config.save() {
-                        Ok(()) => Message::ConfigSaved(Ok(())),
-                        Err(e) => Message::ConfigSaved(Err(e.to_string())),
-                    }
-                })
-            }
+        // Create or update the texture
+        let image = ColorImage::from_rgba_unmultiplied([NES_WIDTH, NES_HEIGHT], &self.framebuffer);
 
-            Message::SelectSettingsTab(tab) => {
-                self.current_view = View::Settings(tab);
-                Task::none()
-            }
+        if let Some(ref mut texture) = self.nes_texture {
+            texture.set(image, TextureOptions::NEAREST);
+        } else {
+            self.nes_texture =
+                Some(ctx.load_texture("nes_framebuffer", image, TextureOptions::NEAREST));
+        }
+    }
 
-            Message::ResetSettingsToDefaults => {
-                info!("Resetting settings to defaults");
-                self.config = AppConfig::default();
-                let config = self.config.clone();
-                Task::future(async move {
-                    match config.save() {
-                        Ok(()) => Message::ConfigSaved(Ok(())),
-                        Err(e) => Message::ConfigSaved(Err(e.to_string())),
-                    }
-                })
-            }
+    /// Run emulation for one frame.
+    fn run_frame(&mut self) {
+        if let Some(ref mut console) = self.console {
+            // Update controller input
+            console.set_controller_1(self.input.player1_buttons());
+            console.set_controller_2(self.input.player2_buttons());
 
-            // Emulation settings
-            Message::UpdateEmulationSpeed(speed) => {
-                self.config.emulation.speed = speed;
-                Task::none()
-            }
+            // Run one frame
+            console.step_frame();
 
-            Message::UpdateRegion(region) => {
-                self.config.emulation.region = region;
-                Task::none()
-            }
-
-            Message::ToggleRewind(enabled) => {
-                self.config.emulation.rewind_enabled = enabled;
-                Task::none()
-            }
-
-            Message::UpdateRewindBufferSize(size) => {
-                self.config.emulation.rewind_buffer_size = size;
-                Task::none()
-            }
-
-            // Video settings
-            Message::UpdateScalingMode(mode) => {
-                self.config.video.scaling_mode = mode;
-                Task::none()
-            }
-
-            Message::ToggleVSync(enabled) => {
-                self.config.video.vsync = enabled;
-                Task::none()
-            }
-
-            Message::ToggleCrtShader(enabled) => {
-                self.config.video.crt_shader = enabled;
-                Task::none()
-            }
-
-            Message::UpdateCrtPreset(preset) => {
-                self.config.video.crt_preset = preset;
-                Task::none()
-            }
-
-            Message::UpdateOverscanTop(value) => {
-                self.config.video.overscan.top = value;
-                Task::none()
-            }
-
-            Message::UpdateOverscanBottom(value) => {
-                self.config.video.overscan.bottom = value;
-                Task::none()
-            }
-
-            Message::UpdateOverscanLeft(value) => {
-                self.config.video.overscan.left = value;
-                Task::none()
-            }
-
-            Message::UpdateOverscanRight(value) => {
-                self.config.video.overscan.right = value;
-                Task::none()
-            }
-
-            // Audio settings
-            Message::ToggleAudio(enabled) => {
-                self.config.audio.enabled = enabled;
-                Task::none()
-            }
-
-            Message::UpdateSampleRate(rate) => {
-                self.config.audio.sample_rate = rate;
-                Task::none()
-            }
-
-            Message::UpdateVolume(volume) => {
-                self.config.audio.volume = volume;
-                Task::none()
-            }
-
-            Message::UpdateBufferSize(size) => {
-                self.config.audio.buffer_size = size;
-                Task::none()
-            }
-
-            // Input settings
-            Message::UpdateGamepadDeadzone(deadzone) => {
-                self.config.input.gamepad_deadzone = deadzone;
-                Task::none()
-            }
-
-            Message::RemapKey {
-                player: _,
-                button: _,
-            } => {
-                // TODO: Implement key remapping in future sprint
-                Task::none()
-            }
-
-            // Persistence
-            Message::SaveConfig => {
-                let config = self.config.clone();
-                Task::future(async move {
-                    match config.save() {
-                        Ok(()) => Message::ConfigSaved(Ok(())),
-                        Err(e) => Message::ConfigSaved(Err(e.to_string())),
-                    }
-                })
-            }
-
-            Message::ConfigSaved(result) => {
-                if let Err(e) = result {
-                    error!("Failed to save config: {}", e);
-                } else {
-                    info!("Configuration saved successfully");
+            // Get audio samples and queue them
+            if let Some(ref mut audio) = self.audio {
+                let samples = console.audio_samples();
+                if !samples.is_empty() {
+                    audio.queue_samples(samples);
                 }
-                Task::none()
+                console.clear_audio_samples();
+            }
+        }
+    }
+
+    /// Handle keyboard input for special keys.
+    fn handle_special_keys(&mut self, ctx: &egui::Context) {
+        ctx.input(|i| {
+            // Toggle pause with F3
+            if i.key_pressed(egui::Key::F3) {
+                self.paused = !self.paused;
+                info!("Console {}", if self.paused { "paused" } else { "resumed" });
             }
 
-            Message::LoadConfig => Task::future(async {
-                match AppConfig::load() {
-                    Ok(_) => Message::ConfigLoaded(Ok(())),
-                    Err(e) => Message::ConfigLoaded(Err(e.to_string())),
-                }
-            }),
-
-            Message::ConfigLoaded(result) => {
-                match result {
-                    Ok(()) => {
-                        info!("Configuration loaded successfully");
-                    }
-                    Err(e) => {
-                        error!("Failed to load config: {}", e);
-                    }
-                }
-                Task::none()
-            }
-
-            // Recent ROMs
-            Message::LoadRecentRom(index) => {
-                if let Some(path) = self.config.app.recent_roms.get(index).cloned() {
-                    info!("Loading recent ROM: {}", path.display());
-                    Task::perform(async move { Message::LoadRom(path) }, |msg| msg)
-                } else {
-                    Task::none()
+            // Reset with F2
+            if i.key_pressed(egui::Key::F2) {
+                if let Some(ref mut console) = self.console {
+                    console.reset();
+                    info!("Console reset");
                 }
             }
 
-            Message::ClearRecentRoms => {
-                info!("Clearing recent ROMs list");
-                self.config.clear_recent_roms();
-                let config = self.config.clone();
-                Task::future(async move {
-                    match config.save() {
-                        Ok(()) => Message::ConfigSaved(Ok(())),
-                        Err(e) => Message::ConfigSaved(Err(e.to_string())),
-                    }
-                })
+            // Toggle debug mode with F1
+            if i.key_pressed(egui::Key::F1) {
+                self.config.debug.enabled = !self.config.debug.enabled;
             }
 
-            // About dialog
-            Message::ShowAbout => {
-                self.show_about = true;
-                Task::none()
+            // Toggle menu with Escape
+            if i.key_pressed(egui::Key::Escape) {
+                self.gui_state.toggle_menu();
             }
 
-            Message::CloseAbout => {
-                self.show_about = false;
-                Task::none()
-            }
-
-            Message::OpenUrl(url) => {
-                info!("Opening URL: {}", url);
-                // Open URL in browser
-                if let Err(e) = opener::open(&url) {
-                    error!("Failed to open URL: {}", e);
+            // Toggle mute with M
+            if i.key_pressed(egui::Key::M) {
+                if let Some(ref audio) = self.audio {
+                    audio.toggle_mute();
                 }
-                Task::none()
             }
+        });
+    }
 
-            Message::WindowResized(width, height) => {
-                // Update window size in config
-                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                {
-                    self.config.app.window_width = width as u32;
-                    self.config.app.window_height = height as u32;
+    /// Handle keyboard input for NES controller.
+    fn handle_controller_keys(&mut self, ctx: &egui::Context) {
+        // Only process input if egui doesn't want it
+        if ctx.wants_keyboard_input() {
+            return;
+        }
+
+        ctx.input(|i| {
+            use crate::input::NesButton;
+            use egui::Key;
+
+            // Map egui keys to controller buttons
+            let key_mappings = [
+                (Key::Z, NesButton::A),
+                (Key::X, NesButton::B),
+                (Key::Backspace, NesButton::Select),
+                (Key::Enter, NesButton::Start),
+                (Key::ArrowUp, NesButton::Up),
+                (Key::ArrowDown, NesButton::Down),
+                (Key::ArrowLeft, NesButton::Left),
+                (Key::ArrowRight, NesButton::Right),
+            ];
+
+            for (key, button) in key_mappings {
+                if i.key_pressed(key) {
+                    self.input.set_button(1, button, true);
                 }
-                Task::none()
+                if i.key_released(key) {
+                    self.input.set_button(1, button, false);
+                }
             }
+        });
+    }
 
-            Message::Tick => {
-                // Run one frame of emulation if console is loaded
-                if let Some(console) = &mut self.console {
-                    // Run one frame
-                    console.step_frame();
-
-                    // Convert palette indices to RGB
-                    let palette_buffer = console.framebuffer();
-                    let rgb_buffer = crate::palette::framebuffer_to_rgb(palette_buffer);
-
-                    // Update shared framebuffer
-                    self.framebuffer = Arc::new(rgb_buffer);
-
-                    // Queue audio samples if audio is enabled and player is available
-                    if self.config.audio.enabled {
-                        if let Some(ref audio_player) = self.audio_player {
-                            let samples = console.audio_samples();
-                            if !samples.is_empty() {
-                                audio_player.queue_samples(samples);
-                                console.clear_audio_samples();
-                            }
+    /// Handle file drops.
+    fn handle_dropped_files(&mut self, ctx: &egui::Context) {
+        ctx.input(|i| {
+            for file in &i.raw.dropped_files {
+                if let Some(ref path) = file.path {
+                    info!("File dropped: {}", path.display());
+                    match Self::load_rom(path) {
+                        Ok(console) => {
+                            self.console = Some(console);
+                            self.paused = false;
+                            self.config.recent_roms.add(path.clone());
+                        }
+                        Err(e) => {
+                            error!("Failed to load dropped file: {e}");
                         }
                     }
-
-                    // Update metrics (runahead not yet implemented)
-                    self.metrics.update_frame(false, 0);
                 }
-
-                Task::none()
             }
+        });
+    }
+}
 
-            Message::Exit => {
-                info!("Exiting application");
-                iced::exit()
-            }
+impl eframe::App for NesApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Request continuous repaint for smooth emulation
+        ctx.request_repaint();
 
-            // Theme
-            Message::UpdateTheme(theme) => {
-                info!("Changing theme to: {}", theme);
-                self.config.app.theme = theme;
-                Task::none()
-            }
+        // Handle input
+        self.handle_special_keys(ctx);
+        self.handle_controller_keys(ctx);
+        self.handle_dropped_files(ctx);
 
-            // Metrics
-            Message::ToggleMetrics => {
-                self.show_metrics = !self.show_metrics;
-                info!(
-                    "Metrics overlay: {}",
-                    if self.show_metrics { "ON" } else { "OFF" }
-                );
-                Task::none()
-            }
+        // Poll gamepads
+        self.input.poll_gamepads();
 
-            // Input messages
-            Message::KeyPressed(key) => {
-                // Map to Player 1
-                if let Some(button) = self.keyboard_mapper.map_player1(&key) {
-                    self.input_state.player1.set(button, true);
-                }
-                // Map to Player 2
-                if let Some(button) = self.keyboard_mapper.map_player2(&key) {
-                    self.input_state.player2.set(button, true);
-                }
+        // Frame timing and emulation
+        let now = Instant::now();
+        let delta = now - self.last_frame;
+        self.last_frame = now;
 
-                // Apply to console if one is loaded
-                if let Some(console) = &mut self.console {
-                    self.input_state.apply_to_console(console);
-                }
+        if !self.paused {
+            self.accumulator += delta;
 
-                Task::none()
-            }
-
-            Message::KeyReleased(key) => {
-                // Map to Player 1
-                if let Some(button) = self.keyboard_mapper.map_player1(&key) {
-                    self.input_state.player1.set(button, false);
-                }
-                // Map to Player 2
-                if let Some(button) = self.keyboard_mapper.map_player2(&key) {
-                    self.input_state.player2.set(button, false);
-                }
-
-                // Apply to console if one is loaded
-                if let Some(console) = &mut self.console {
-                    self.input_state.apply_to_console(console);
-                }
-
-                Task::none()
-            }
-
-            Message::PollGamepads => {
-                if let Some(gamepad_mgr) = &mut self.gamepad_manager {
-                    gamepad_mgr.poll(&mut self.input_state.player1, &mut self.input_state.player2);
-
-                    // Apply to console if one is loaded
-                    if let Some(console) = &mut self.console {
-                        self.input_state.apply_to_console(console);
-                    }
-                }
-
-                Task::none()
-            }
-
-            // Library messages
-            Message::LibrarySearch(query) => {
-                self.library.set_search_query(query);
-                Task::none()
-            }
-
-            Message::ToggleLibraryView => {
-                self.library.toggle_view_mode();
-                Task::none()
-            }
-
-            Message::SelectRomDirectory => Task::future(async {
-                let handle = rfd::AsyncFileDialog::new()
-                    .set_title("Select ROM Directory")
-                    .pick_folder()
-                    .await;
-
-                Message::RomDirectorySelected(handle.map(|h| h.path().to_path_buf()))
-            }),
-
-            Message::RomDirectorySelected(maybe_dir) => {
-                if let Some(dir) = &maybe_dir {
-                    self.library.scan_directory(dir);
-                }
-                Task::none()
+            // Run emulation to catch up
+            while self.accumulator >= FRAME_DURATION {
+                self.accumulator -= FRAME_DURATION;
+                self.run_frame();
             }
         }
-    }
 
-    /// Render UI (Elm View)
-    pub fn view(&self) -> Element<'_, Message> {
-        let main_view = match &self.current_view {
-            View::Welcome => crate::views::welcome::view(self),
-            View::Library => crate::views::library::view(&self.library),
-            View::Playing => crate::views::playing::view(self),
-            View::Settings(tab) => crate::views::settings::view(&self.config, *tab),
-        };
+        // Update the framebuffer texture
+        self.update_texture(ctx);
 
-        // Overlay about dialog if shown
-        if self.show_about {
-            iced::widget::stack![main_view, about_dialog(),].into()
-        } else {
-            main_view
-        }
-    }
+        // Render GUI (menu bar and overlays)
+        gui::render(
+            ctx,
+            &mut self.gui_state,
+            &mut self.config,
+            &mut self.console,
+            &self.audio,
+            &mut self.paused,
+        );
 
-    /// Get application theme
-    pub fn theme(&self) -> Theme {
-        self.config.app.theme.to_iced_theme()
-    }
+        // Render the NES display in the central panel
+        egui::CentralPanel::default().show(ctx, |ui| {
+            // Calculate the best fit size while maintaining aspect ratio
+            let available_size = ui.available_size();
 
-    /// Subscriptions for ongoing events (keyboard, gamepad polling, emulation ticks)
-    pub fn subscription(&self) -> Subscription<Message> {
-        use iced::keyboard;
-        use iced::window;
+            // NES aspect ratio is 256:240 (1.067), but with 8:7 pixel aspect correction it's ~1.14
+            let nes_aspect = if self.config.video.pixel_aspect_correction {
+                256.0 * (8.0 / 7.0) / 240.0
+            } else {
+                256.0 / 240.0
+            };
 
-        // Keyboard events (F3 for metrics, regular keys for input)
-        let keyboard_sub = Subscription::batch(vec![
-            keyboard::on_key_press(|key, _modifiers| {
-                // Check for F3 key to toggle metrics overlay
-                if matches!(key, keyboard::Key::Named(keyboard::key::Named::F3)) {
-                    Some(Message::ToggleMetrics)
+            let (display_width, display_height) = {
+                let width_from_height = available_size.y * nes_aspect;
+                let height_from_width = available_size.x / nes_aspect;
+
+                if width_from_height <= available_size.x {
+                    (width_from_height, available_size.y)
                 } else {
-                    Some(Message::KeyPressed(key))
+                    (available_size.x, height_from_width)
                 }
-            }),
-            keyboard::on_key_release(|key, _modifiers| Some(Message::KeyReleased(key))),
-        ]);
+            };
 
-        // Gamepad polling (every 16ms ≈ 60Hz)
-        let gamepad_sub = if self.gamepad_manager.is_some() {
-            iced::time::every(std::time::Duration::from_millis(16)).map(|_| Message::PollGamepads)
-        } else {
-            Subscription::none()
-        };
-
-        // Emulation tick (60Hz ≈ 16.67ms per frame)
-        // Only run when console is loaded and in Playing view
-        let emulation_sub = if self.console.is_some() && matches!(self.current_view, View::Playing)
-        {
-            iced::time::every(std::time::Duration::from_micros(16_667)).map(|_| Message::Tick)
-        } else {
-            Subscription::none()
-        };
-
-        // Window resize events
-        let window_sub = window::resize_events()
-            .map(|(_, size)| Message::WindowResized(size.width, size.height));
-
-        Subscription::batch(vec![keyboard_sub, gamepad_sub, emulation_sub, window_sub])
-    }
-    /// Asynchronously load ROM file data
-    async fn load_rom_async(path: PathBuf) -> Result<Vec<u8>, String> {
-        // Read ROM file
-        let rom_data = tokio::fs::read(&path)
-            .await
-            .map_err(|e| format!("Failed to read ROM file: {e}"))?;
-
-        Ok(rom_data)
+            // Center the display using vertical and horizontal centering
+            ui.vertical_centered(|ui| {
+                ui.add_space((available_size.y - display_height) / 2.0);
+                if let Some(ref texture) = self.nes_texture {
+                    ui.image(egui::load::SizedTexture::new(
+                        texture.id(),
+                        egui::vec2(display_width, display_height),
+                    ));
+                }
+            });
+        });
     }
 
-    /// Show native file dialog for ROM selection
-    async fn show_file_dialog() -> Option<PathBuf> {
-        tokio::task::spawn_blocking(|| {
-            rfd::FileDialog::new()
-                .add_filter("NES ROM", &["nes"])
-                .set_title("Open NES ROM")
-                .pick_file()
-        })
-        .await
-        .ok()
-        .flatten()
-    }
-}
-
-/// Render About dialog as modal overlay
-fn about_dialog() -> Element<'static, Message> {
-    use iced::widget::{button, column, container, row, text};
-    use iced::{Alignment, Length};
-
-    let version = env!("CARGO_PKG_VERSION");
-
-    container(
-        container(
-            column![
-                text("RustyNES").size(28),
-                text(format!("Version {version}")).size(14),
-                iced::widget::vertical_space().height(10),
-                text("A next-generation NES emulator written in Rust"),
-                iced::widget::vertical_space().height(20),
-                text("Features:").size(16),
-                text("• Cycle-accurate CPU emulation"),
-                text("• Dot-accurate PPU rendering"),
-                text("• Save states and rewind"),
-                text("• Game library management"),
-                iced::widget::vertical_space().height(20),
-                row![
-                    button("GitHub").on_press(Message::OpenUrl(
-                        "https://github.com/doublegate/RustyNES".to_string()
-                    )),
-                    button("Documentation").on_press(Message::OpenUrl(
-                        "https://github.com/doublegate/RustyNES/blob/main/README.md".to_string()
-                    )),
-                ]
-                .spacing(10),
-                iced::widget::vertical_space().height(20),
-                button("Close")
-                    .on_press(Message::CloseAbout)
-                    .width(Length::Fill),
-            ]
-            .spacing(10)
-            .padding(30)
-            .width(Length::Fixed(400.0))
-            .align_x(Alignment::Center),
-        )
-        .style(container::bordered_box),
-    )
-    .center_x(Length::Fill)
-    .center_y(Length::Fill)
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .style(|_theme: &Theme| {
-        // Semi-transparent dark overlay
-        iced::widget::container::Style {
-            background: Some(iced::Background::Color(iced::Color::from_rgba(
-                0.0, 0.0, 0.0, 0.7,
-            ))),
-            ..Default::default()
-        }
-    })
-    .into()
-}
-
-/// Auto-save configuration on application exit
-impl Drop for RustyNes {
-    fn drop(&mut self) {
-        info!("Saving configuration on exit");
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        // Save configuration on exit
         if let Err(e) = self.config.save() {
-            error!("Failed to save configuration: {e}");
+            error!("Failed to save config: {e}");
         }
+        info!("RustyNES exiting");
     }
 }

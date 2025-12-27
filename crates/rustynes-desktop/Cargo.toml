@@ -1,80 +1,71 @@
 [package]
 name = "rustynes-desktop"
-version.workspace = true
-edition.workspace = true
-rust-version.workspace = true
-authors.workspace = true
-license.workspace = true
-repository.workspace = true
-homepage.workspace = true
-documentation.workspace = true
-keywords.workspace = true
-categories.workspace = true
-description = "Desktop frontend for RustyNES NES emulator"
+version = "0.7.0"
+edition = "2021"
+rust-version = "1.75"
+authors = ["doublegate"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/doublegate/RustyNES"
+homepage = "https://github.com/doublegate/RustyNES"
+documentation = "https://docs.rs/rustynes-desktop"
+keywords = ["nes", "emulator", "desktop", "egui"]
+categories = ["emulators", "games"]
+description = "Desktop frontend for RustyNES NES emulator using egui + eframe"
 
 [[bin]]
-name = "rustynes-desktop"
+name = "rustynes"
 path = "src/main.rs"
 
 [dependencies]
-# ═══════════════════════════════════════════════════════════════
-# UI FRAMEWORK (PRIMARY: ICED)
-# ═══════════════════════════════════════════════════════════════
-iced = { version = "0.13", features = [
-    "wgpu",           # GPU-accelerated rendering
-    "tokio",          # Async runtime
-    "image",          # Image loading
-    "svg",            # Vector icons
-    "canvas",         # Custom rendering
-    "advanced",       # Custom shaders
-]}
-iced_aw = "0.10"      # Additional widgets (badges, cards, modals, tabs)
-
-# ═══════════════════════════════════════════════════════════════
-# GRAPHICS
-# ═══════════════════════════════════════════════════════════════
-# Note: wgpu version comes from iced's dependencies (0.19)
-image = "0.25"        # Image loading
-bytemuck = { version = "1.14", features = ["derive"] }
-
-# ═══════════════════════════════════════════════════════════════
-# AUDIO
-# ═══════════════════════════════════════════════════════════════
-cpal = "0.15"         # Cross-platform audio
-rubato = "0.15"       # Sample rate conversion
-
-# ═══════════════════════════════════════════════════════════════
-# INPUT
-# ═══════════════════════════════════════════════════════════════
-gilrs = "0.11"        # Gamepad support
-
-# ═══════════════════════════════════════════════════════════════
-# FILE SYSTEM
-# ═══════════════════════════════════════════════════════════════
-rfd = "0.15"          # Native file dialogs
-directories = "5.0"   # Platform-specific paths
-
-# ═══════════════════════════════════════════════════════════════
-# ASYNC & UTILITIES
-# ═══════════════════════════════════════════════════════════════
-tokio = { version = "1.40", features = ["full"] }
-serde = { version = "1.0", features = ["derive"] }
-toml = "0.8"          # Config files
-tracing = "0.1"       # Logging
-tracing-subscriber = "0.3"
-thiserror = "1.0"     # Error handling
-opener = "0.7"        # Open URLs in default browser
-
-# ═══════════════════════════════════════════════════════════════
-# CORE INTEGRATION
-# ═══════════════════════════════════════════════════════════════
+# Core emulation
 rustynes-core = { path = "../rustynes-core" }
 
+# Graphics - eframe handles egui + window + rendering
+eframe = { version = "0.29", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+egui = "0.29"
+egui_extras = { version = "0.29", features = ["image"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+# Audio
+cpal = "0.15"
+
+# Input
+gilrs = "0.11"
+
+# Utilities
+anyhow = "1.0"
+thiserror = "1.0"
+log = "0.4"
+env_logger = "0.11"
+
+# Configuration
+serde = { version = "1.0", features = ["derive"] }
+ron = "0.8"
+
+# Platform paths and file dialogs
+directories = "5.0"
+rfd = "0.15"
+
+# CLI argument parsing
+clap = { version = "4.5", features = ["derive"] }
+
 [dev-dependencies]
-tempfile = "3.8"      # Temporary directories for tests
+tempfile = "3.8"
 
 [features]
 default = []
 
-[lints]
-workspace = true
+[lints.rust]
+unsafe_code = "warn"
+missing_docs = "warn"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_lossless = "allow"
+cast_possible_wrap = "allow"
+must_use_candidate = "allow"
+cargo_common_metadata = "allow"

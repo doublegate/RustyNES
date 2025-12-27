@@ -6,11 +6,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 RustyNES is a next-generation Nintendo Entertainment System (NES) emulator written in Rust. Target: 100% TASVideos accuracy test pass rate, 300+ mappers, RetroAchievements, GGPO netplay, TAS tools, Lua scripting.
 
-**Status:** v0.6.0 - Phase 1.5 Stabilization In Progress (M7 Accuracy Complete). All Phase 1 milestones (M1-M6) done.
+**Status:** v0.7.0 - Phase 1.5 Stabilization In Progress (M7-M8 Complete). All Phase 1 milestones (M1-M6) done.
 
 **Test Status:** 429 tests passing (0 failures, 6 ignored for valid architectural reasons)
 
-**Current Version:** v0.6.0 (December 20, 2025)
+**Current Version:** v0.7.0 (December 27, 2025)
+- Desktop GUI reimplemented with egui + pixels + winit
+- Immediate mode GUI for debug windows and overlays
+- pixels crate for efficient NES framebuffer rendering
+- winit for cross-platform window management
+- cpal for low-latency audio output
+- Native file dialogs with rfd
+- Gamepad support with gilrs
+
+**Previous Version:** v0.6.0 (December 20, 2025)
 - M7: Accuracy Improvements complete (all 4 sprints)
 - CPU cycle timing verified (all 256 opcodes, page boundary crossing)
 - PPU VBlank/NMI timing functional, sprite 0 hit working
@@ -18,14 +27,6 @@ RustyNES is a next-generation Nintendo Entertainment System (NES) emulator writt
 - Hardware-accurate non-linear audio mixer (NESdev TND formula)
 - OAM DMA 513/514 cycle precision based on CPU cycle parity
 - CPU cycle tracking added to bus for DMA alignment
-
-**Previous Version:** v0.5.0 (December 19, 2025)
-- Desktop GUI complete (Iced + wgpu)
-- Audio playback integrated (cpal)
-- Critical PPU rendering bug fixes
-- 5 mappers implemented (0, 1, 2, 3, 4)
-- CLI ROM loading
-- Configuration persistence
 
 ## Repository
 
@@ -192,8 +193,10 @@ Cloned emulators for study and pattern reference:
 
 ## Key Dependencies
 
-- **Graphics**: `wgpu` (cross-platform GPU), `iced` (GUI framework)
+- **Graphics**: `pixels` (framebuffer via wgpu), `egui` (immediate mode GUI)
+- **Window**: `winit` (cross-platform window management)
 - **Audio**: `cpal` (cross-platform audio I/O)
+- **Input**: `gilrs` (gamepad support)
 - **Netplay**: `backroll` (GGPO rollback) - planned for Phase 2
 - **Scripting**: `mlua` (Lua 5.4) - planned for Phase 2
 - **Achievements**: `rcheevos-sys` (FFI bindings) - planned for Phase 2
@@ -202,19 +205,23 @@ Cloned emulators for study and pattern reference:
 
 ## Architectural Decisions
 
-### GUI Framework: Iced (v0.13+)
-- **Chosen over**: egui, druid
-- **Rationale**: Type-safe Elm architecture, excellent wgpu integration, clean API
-- **Implementation**: Model-Update-View pattern with async Task system
+### GUI Framework: egui + pixels (v0.7.0+)
+- **Changed from**: Iced (v0.5.0-v0.6.0)
+- **Rationale**: Immediate mode GUI ideal for debug windows, simpler event loop, better game loop integration
+- **Implementation**: egui for menus/debug windows, pixels for NES framebuffer
+
+### Window Management: winit
+- **Rationale**: Industry standard, cross-platform, full control over event loop
+- **Implementation**: Custom event loop with frame timing control
+
+### Framebuffer Rendering: pixels
+- **Rationale**: Purpose-built for retro game rendering, efficient texture updates, wgpu backend
+- **Implementation**: 256x240 RGBA buffer with nearest-neighbor scaling
 
 ### Audio Backend: cpal
 - **Chosen over**: SDL2, rodio
 - **Rationale**: Cross-platform, low-latency, direct device access, no runtime dependencies
 - **Implementation**: Ring buffer (8192 samples) + output queue (2048 samples)
-
-### Graphics: wgpu + WGSL Shaders
-- **Rationale**: Cross-platform, modern API, WebAssembly compatible
-- **Implementation**: Fullscreen triangle with nearest-neighbor filtering
 
 ### Configuration: RON Format
 - **Chosen over**: TOML, JSON
@@ -249,10 +256,45 @@ Cloned emulators for study and pattern reference:
 | **M5: Input** | ✅ v0.4.0 | Controller support |
 | **M6: Desktop GUI** | ✅ v0.5.0 | Iced + wgpu + audio integration |
 | **M7: Accuracy** | ✅ v0.6.0 | CPU/PPU/APU timing, OAM DMA precision, hardware mixer |
-| **M8-10: Phase 1.5** | 🔄 PLANNED | Test ROM validation, polish, documentation |
+| **M8: GUI Rewrite** | ✅ v0.7.0 | egui + pixels + winit desktop reimplementation |
+| **M9-10: Phase 1.5** | 🔄 PLANNED | Test ROM validation, polish, documentation |
 | **Phase 2+** | 📋 TBD | Advanced features |
 
-## Recent Accomplishments (v0.6.0 - Dec 20, 2025)
+## Recent Accomplishments (v0.7.0 - Dec 27, 2025)
+
+### Desktop GUI Reimplementation (Milestone 8)
+
+Complete rewrite of the desktop frontend from Iced+wgpu to egui+pixels+winit:
+
+#### New Architecture
+- **pixels** crate for efficient NES framebuffer rendering
+- **egui** immediate mode GUI for menus and debug windows
+- **winit** for cross-platform window management
+- **cpal** for low-latency audio output
+- **gilrs** for gamepad support
+
+#### Core Features
+- Menu bar with File, Emulation, Video, Audio, Debug, Help menus
+- ROM loading via native file dialogs (rfd)
+- Multiple scaling modes: PixelPerfect (8:7 PAR), FitWindow, Integer
+- Keyboard and gamepad input with configurable mappings
+- Configuration persistence (RON format)
+
+#### Debug Windows (egui)
+- CPU debugger: registers, flags, disassembly
+- PPU viewer: pattern tables, nametables, OAM, palette
+- Memory viewer: hex display with navigation
+- APU state: channel visualization
+
+#### Technical Improvements
+- Simpler event loop with full control over frame timing
+- Efficient zero-copy framebuffer updates
+- Better separation of emulation and rendering threads
+- Reduced dependencies and faster compile times
+
+---
+
+## Previous Accomplishments (v0.6.0 - Dec 20, 2025)
 
 ### Milestone 7: Accuracy Improvements (4 Sprints)
 
@@ -286,35 +328,6 @@ Cloned emulators for study and pattern reference:
 - **TND Mixer Formula:** `159.79 / (100 + 1 / (triangle/8227 + noise/12241 + dmc/22638))`
 - **OAM DMA Timing:** `513 + if (cpu_cycles % 2) == 1 { 1 } else { 0 }`
 - **Test Results:** 429 tests passing, 0 failures, 6 ignored
-
----
-
-## Previous Accomplishments (v0.5.0 - Dec 19, 2025)
-
-### Desktop GUI (Milestone 6)
-- Iced 0.13+ framework with Elm architecture (Model-Update-View)
-- wgpu rendering backend with WGSL shaders
-- NES framebuffer texture (256x240 RGBA) with zero-allocation updates
-- Multiple scaling modes: PixelPerfect (8:7 PAR), FitWindow, Integer
-- Configuration persistence (RON format)
-- Menu system and keyboard shortcuts
-
-### Audio System
-- cpal-based audio playback integrated
-- Two-tier buffer management strategy (8192 sample ring buffer + 2048 sample output queue)
-- Real-time sample generation synchronized with frame timing
-- Handles buffer underruns gracefully
-
-### Critical Bug Fixes
-- PPU attribute shift register timing fix (eliminated rendering artifacts)
-- Sprite pattern fetch timing simplified for accuracy
-- Security lints resolved in audio.rs (proper unsafe documentation)
-
-### Test Infrastructure
-- Enhanced ROM validator tools created
-- Comprehensive test ROM analysis framework
-- Test suite expanded to 392+ tests
-- Test framework tools archived in `tests/framework/`
 
 ## Known Issues & Limitations
 
@@ -440,14 +453,14 @@ pub enum EmulatorError {
 4. **Bus**: Memory mapping, DMA, mapper integration ✅
 5. **Mappers**: NROM (0), MMC1 (1), UxROM (2), CNROM (3), MMC3 (4) ✅
 6. **ROM Loading**: iNES format support ✅
-7. **Desktop GUI**: Iced + wgpu with audio integration ✅
+7. **Desktop GUI**: egui + pixels + winit with audio integration ✅
 
 ### Phase 1.5: Stabilization 🔄 CURRENT
 
 See `/to-dos/phase-1.5-stabilization/` for detailed milestone plans:
 - **M7**: Accuracy Improvements ✅ **COMPLETE** (v0.6.0)
-- **M8**: Test ROM Validation (95%+ pass rate target)
-- **M9**: Performance & Polish
+- **M8**: GUI Rewrite ✅ **COMPLETE** (v0.7.0) - egui + pixels + winit
+- **M9**: Test ROM Validation (95%+ pass rate target)
 - **M10**: Documentation and v1.0-alpha preparation
 
 ### Test-Driven Development
