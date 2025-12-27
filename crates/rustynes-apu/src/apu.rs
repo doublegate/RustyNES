@@ -157,14 +157,32 @@ impl Apu {
             // Status
             0x4015 => self.write_status(value),
 
-            // Frame counter
+            // Frame counter - use internal cycle count if no external count provided
+            // For accurate timing, use write_frame_counter() with external CPU cycle count
             0x4017 => {
-                let action = self.frame_counter.write_control(value);
+                // Determine if CPU is on an odd cycle (for $4017 write delay)
+                let cpu_cycle_odd = (self.cycles % 2) == 1;
+                let action = self.frame_counter.write_control(value, cpu_cycle_odd);
                 self.process_frame_action(action);
             }
 
             _ => {}
         }
+    }
+
+    /// Write to frame counter register ($4017) with external CPU cycle count
+    ///
+    /// This method should be called by the bus when writing to $4017 to ensure
+    /// correct CPU cycle parity detection for the write delay.
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - Value to write to $4017
+    /// * `cpu_cycles` - Current CPU cycle count from the bus
+    pub fn write_frame_counter(&mut self, value: u8, cpu_cycles: u64) {
+        let cpu_cycle_odd = (cpu_cycles % 2) == 1;
+        let action = self.frame_counter.write_control(value, cpu_cycle_odd);
+        self.process_frame_action(action);
     }
 
     /// Process a frame counter action
@@ -499,20 +517,29 @@ mod tests {
         let mut apu = Apu::new();
 
         // Write $00 to $4017: 4-step mode, IRQ enabled
+        // This triggers a delayed write (3 cycles since APU cycles = 0, even)
         apu.write_register(0x4017, 0x00);
 
         // Initially no IRQ pending
         assert!(!apu.irq_pending());
 
-        // Clock for 29829 cycles - no IRQ yet (delayed by 1 cycle in fix)
-        for _ in 0..29829 {
+        // The $4017 write has a 3-cycle delay before taking effect.
+        // After the delay, the frame counter resets and counts from 0.
+        // IRQ fires at frame counter cycle 29828 (first of three).
+        // Total steps needed: 3 (delay) + 29828 (to reach IRQ) = 29831
+
+        // Clock for 29830 cycles - no IRQ yet
+        for _ in 0..29830 {
             apu.step();
         }
-        assert!(!apu.irq_pending());
+        assert!(
+            !apu.irq_pending(),
+            "IRQ should not be pending before cycle 29831"
+        );
 
-        // Clock one more time to cycle 29830 - IRQ should fire
+        // Clock one more time - IRQ should fire
         apu.step();
-        assert!(apu.irq_pending(), "IRQ should be pending at cycle 29830");
+        assert!(apu.irq_pending(), "IRQ should be pending at step 29831");
 
         // Verify $4015 shows bit 6 set
         let status = apu.read_register(0x4015);
