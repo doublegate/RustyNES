@@ -62,6 +62,11 @@ pub struct Console {
 
     /// Current frame count
     frame_count: u64,
+
+    /// Pending PPU dots to step (accumulated during instruction execution)
+    /// This allows PPU to be advanced at instruction boundaries like `step()` mode,
+    /// ensuring consistent PPUSTATUS polling behavior across execution modes.
+    pending_ppu_dots: u32,
 }
 
 impl Console {
@@ -124,6 +129,7 @@ impl Console {
             bus,
             master_cycles: 0,
             frame_count: 0,
+            pending_ppu_dots: 0,
         }
     }
 
@@ -132,6 +138,7 @@ impl Console {
         self.cpu.reset(&mut self.bus);
         self.bus.reset();
         self.master_cycles = 0;
+        self.pending_ppu_dots = 0;
         // Note: Don't reset frame_count (preserve for debugging)
     }
 
@@ -188,25 +195,24 @@ impl Console {
         while self.bus.dma_active() {
             let dma_done = self.bus.tick_dma();
 
-            if !dma_done {
-                // DMA cycle - advance PPU and APU to maintain synchronization
-                for _ in 0..3 {
-                    let (frame_complete, nmi) = self.bus.step_ppu();
+            // Advance PPU and APU for EVERY DMA cycle (including the final one)
+            // Each DMA cycle consumes one CPU cycle worth of time
+            for _ in 0..3 {
+                let (frame_complete, nmi) = self.bus.step_ppu();
 
-                    if nmi {
-                        self.cpu.trigger_nmi();
-                    }
-
-                    if frame_complete {
-                        self.frame_count += 1;
-                    }
+                if nmi {
+                    self.cpu.trigger_nmi();
                 }
 
-                self.bus.apu.step();
-                self.bus.clock_mapper(1);
-                self.master_cycles += 1;
-                total_cycles = total_cycles.saturating_add(1);
+                if frame_complete {
+                    self.frame_count += 1;
+                }
             }
+
+            self.bus.apu.step();
+            self.bus.clock_mapper(1);
+            self.master_cycles += 1;
+            total_cycles = total_cycles.saturating_add(1);
 
             if dma_done {
                 break;
@@ -259,9 +265,17 @@ impl Console {
         // Handle DMA if active (DMA steals CPU cycles)
         if self.bus.dma_active() {
             let dma_done = self.bus.tick_dma();
-            if !dma_done {
-                // DMA cycle - still advance PPU and APU
-                for _ in 0..3 {
+
+            // Count EVERY DMA cycle (including the final one)
+            // Each DMA cycle consumes one CPU cycle worth of time
+            self.pending_ppu_dots += 3;
+            self.bus.apu.step();
+            self.bus.clock_mapper(1);
+            self.master_cycles += 1;
+
+            // Process accumulated PPU dots when DMA completes (instruction boundary equivalent)
+            if dma_done {
+                while self.pending_ppu_dots > 0 {
                     let (fc, nmi) = self.bus.step_ppu();
                     if nmi {
                         self.cpu.trigger_nmi();
@@ -270,30 +284,23 @@ impl Console {
                         frame_complete = true;
                         self.frame_count += 1;
                     }
+                    self.pending_ppu_dots -= 1;
                 }
-                self.bus.apu.step();
-                self.master_cycles += 1;
-                return (false, frame_complete);
+
+                // Update IRQ line after DMA completion
+                let irq = self.bus.mapper_irq_pending() || self.bus.apu.irq_pending();
+                self.cpu.set_irq(irq);
             }
+
+            // DMA cycle never completes a CPU instruction
+            return (false, frame_complete);
         }
 
         // Execute one CPU cycle
         let instruction_complete = self.cpu.tick(&mut self.bus);
 
-        // Track CPU cycles for DMA timing
-        self.bus.add_cpu_cycles(1);
-
-        // Step PPU (3 dots per CPU cycle)
-        for _ in 0..3 {
-            let (fc, nmi) = self.bus.step_ppu();
-            if nmi {
-                self.cpu.trigger_nmi();
-            }
-            if fc {
-                frame_complete = true;
-                self.frame_count += 1;
-            }
-        }
+        // Accumulate PPU dots (3 per CPU cycle)
+        self.pending_ppu_dots += 3;
 
         // Step APU (1 step per CPU cycle)
         self.bus.apu.step();
@@ -301,12 +308,37 @@ impl Console {
         // Clock mapper (once per CPU cycle for cycle-based timing)
         self.bus.clock_mapper(1);
 
-        // Update IRQ line (level-triggered: high when any source is active)
-        let irq = self.bus.mapper_irq_pending() || self.bus.apu.irq_pending();
-        self.cpu.set_irq(irq);
-
         // Update master cycle count
         self.master_cycles += 1;
+
+        // At instruction boundaries, catch up PPU (like step() mode does)
+        // This ensures PPUSTATUS reads see consistent state across execution modes.
+        // Games that poll PPUSTATUS in tight loops rely on this timing behavior.
+        if instruction_complete {
+            // Track CPU cycles for DMA timing at instruction boundary
+            // This matches `step()` mode where `add_cpu_cycles` is called after `cpu.step()`
+            // The number of cycles for the instruction is stored in pending_ppu_dots / 3
+            // Note: max cycles per instruction is ~7, so max dots is ~21 (fits in u8)
+            #[allow(clippy::cast_possible_truncation)]
+            let instruction_cycles = self.pending_ppu_dots as u8 / 3;
+            self.bus.add_cpu_cycles(instruction_cycles);
+
+            while self.pending_ppu_dots > 0 {
+                let (fc, nmi) = self.bus.step_ppu();
+                if nmi {
+                    self.cpu.trigger_nmi();
+                }
+                if fc {
+                    frame_complete = true;
+                    self.frame_count += 1;
+                }
+                self.pending_ppu_dots -= 1;
+            }
+
+            // Update IRQ line at instruction boundaries
+            let irq = self.bus.mapper_irq_pending() || self.bus.apu.irq_pending();
+            self.cpu.set_irq(irq);
+        }
 
         (instruction_complete, frame_complete)
     }

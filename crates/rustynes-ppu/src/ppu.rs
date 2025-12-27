@@ -607,6 +607,16 @@ impl Ppu {
     pub fn mask(&self) -> PpuMask {
         self.mask
     }
+
+    /// Get PPUCTRL register bits (for debugging)
+    pub fn ctrl_bits(&self) -> u8 {
+        self.ctrl.bits()
+    }
+
+    /// Check if NMI is enabled in PPUCTRL (for debugging)
+    pub fn nmi_enabled(&self) -> bool {
+        self.ctrl.nmi_enabled()
+    }
 }
 
 #[cfg(test)]
