@@ -16,7 +16,7 @@ Coding conventions and best practices for contributing to RustyNES.
 ```toml
 [package]
 edition = "2021"
-rust-version = "1.75"  # Minimum Supported Rust Version
+rust-version = "1.86"  # Minimum Supported Rust Version
 ```
 
 ### Formatting

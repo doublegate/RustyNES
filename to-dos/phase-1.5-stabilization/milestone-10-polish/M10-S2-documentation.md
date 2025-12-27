@@ -88,7 +88,7 @@ Create comprehensive documentation including user guide, API documentation, deve
 ## Building from Source
 
 ### Prerequisites
-- Rust 1.75+ (install via [rustup](https://rustup.rs/))
+- Rust 1.86+ (install via [rustup](https://rustup.rs/))
 - Linux: `libsdl2-dev` or `libasound2-dev`
 - macOS: Xcode Command Line Tools
 - Windows: Visual Studio 2019+ or MinGW
