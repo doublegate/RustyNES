@@ -97,7 +97,9 @@ impl Bus for TestBus {
             // PPU registers (mirrored every 8 bytes)
             0x2000..=0x3FFF => {
                 let ppu_addr = 0x2000 + (addr & 0x07);
-                self.ppu.read_register(ppu_addr)
+                let chr_rom = &self.chr_rom;
+                self.ppu
+                    .read_register(ppu_addr, |addr| chr_rom[addr as usize])
             }
 
             // APU and I/O registers
@@ -147,7 +149,12 @@ impl Bus for TestBus {
             // PPU registers (mirrored every 8 bytes)
             0x2000..=0x3FFF => {
                 let ppu_addr = 0x2000 + (addr & 0x07);
-                self.ppu.write_register(ppu_addr, value);
+                let chr_rom = &mut self.chr_rom;
+                self.ppu.write_register(ppu_addr, value, |addr, val| {
+                    if (addr as usize) < chr_rom.len() {
+                        chr_rom[addr as usize] = val;
+                    }
+                });
             }
 
             // APU and I/O registers

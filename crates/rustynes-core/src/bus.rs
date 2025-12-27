@@ -67,13 +67,27 @@ impl Bus {
     /// # Arguments
     ///
     /// * `mapper` - Cartridge mapper implementation
-    /// * `mirroring` - Initial nametable mirroring mode
+    ///
+    /// # Returns
+    ///
+    /// New Bus instance with all components initialized (APU defaults to 48000 Hz)
+    #[must_use]
+    pub fn new(mapper: Box<dyn Mapper>) -> Self {
+        Self::with_sample_rate(mapper, 48000)
+    }
+
+    /// Create a new bus with the given mapper and custom audio sample rate
+    ///
+    /// # Arguments
+    ///
+    /// * `mapper` - Cartridge mapper implementation
+    /// * `sample_rate` - Audio output sample rate (e.g., 44100 or 48000 Hz)
     ///
     /// # Returns
     ///
     /// New Bus instance with all components initialized
     #[must_use]
-    pub fn new(mapper: Box<dyn Mapper>) -> Self {
+    pub fn with_sample_rate(mapper: Box<dyn Mapper>, sample_rate: u32) -> Self {
         let mirroring = mapper.mirroring();
 
         // Convert mapper Mirroring to PPU Mirroring
@@ -87,9 +101,9 @@ impl Bus {
 
         Self {
             ram: [0; 0x800],
-            prg_ram: [0xFF; 0x2000], // Initialize PRG-RAM to 0xFF (test ROMs expect this)
+            prg_ram: [0; 0x2000], // Initialize PRG-RAM to 0 (matches internal RAM)
             ppu: Ppu::new(ppu_mirroring),
-            apu: Apu::new(),
+            apu: Apu::with_sample_rate(sample_rate),
             mapper,
             controller1: Controller::new(),
             controller2: Controller::new(),
@@ -139,7 +153,7 @@ impl Bus {
 
         if self.dma_write {
             // Write cycle
-            self.ppu.write_register(0x2004, self.dma_data);
+            self.ppu.write_register(0x2004, self.dma_data, |_, _| {});
             self.dma_write = false;
             self.cpu_cycles += 1;
 
@@ -170,6 +184,7 @@ impl Bus {
     fn read_for_dma(&self, addr: u16) -> u8 {
         match addr {
             0x0000..=0x1FFF => self.ram[(addr & 0x07FF) as usize],
+            0x6000..=0x7FFF => self.prg_ram[(addr - 0x6000) as usize],
             0x4020..=0xFFFF => self.mapper.read_prg(addr),
             _ => 0, // DMA from PPU/APU registers returns open bus
         }
@@ -214,7 +229,7 @@ impl Bus {
     /// Reset the bus and all components
     pub fn reset(&mut self) {
         self.ram = [0; 0x800];
-        self.prg_ram.fill(0xFF); // Initialize PRG-RAM to 0xFF (many test ROMs expect this)
+        self.prg_ram.fill(0); // Initialize PRG-RAM to 0
         self.ppu.reset();
         self.apu.reset();
         self.controller1.reset();
@@ -279,7 +294,10 @@ impl CpuBus for Bus {
             // PPU registers, mirrored every 8 bytes
             0x2000..=0x3FFF => {
                 let ppu_addr = 0x2000 + (addr & 0x0007);
-                self.ppu.read_register(ppu_addr)
+                // Pass closure to read CHR from mapper
+                let mapper = &*self.mapper;
+                self.ppu
+                    .read_register(ppu_addr, |chr_addr| mapper.read_chr(chr_addr))
             }
 
             // APU and I/O registers
@@ -310,7 +328,11 @@ impl CpuBus for Bus {
             // PPU registers, mirrored every 8 bytes
             0x2000..=0x3FFF => {
                 let ppu_addr = 0x2000 + (addr & 0x0007);
-                self.ppu.write_register(ppu_addr, value);
+                // Pass closure to write CHR to mapper
+                let mapper = &mut *self.mapper;
+                self.ppu.write_register(ppu_addr, value, |chr_addr, val| {
+                    mapper.write_chr(chr_addr, val);
+                });
             }
 
             // APU registers
