@@ -177,17 +177,18 @@ impl DmcChannel {
     {
         let mut dma_cycles = 0;
 
+        // Refill buffer if empty and bytes remaining (happens immediately, not tied to timer)
+        if self.sample_buffer_empty && self.bytes_remaining > 0 {
+            dma_cycles = self.fetch_sample(&mut read_memory);
+        }
+
         if self.timer_counter == 0 {
-            self.timer_counter = self.timer;
+            // Reload timer (off-by-one fix: rate cycles = N-1 down to 0)
+            self.timer_counter = self.timer.saturating_sub(1);
 
             // Clock output shifter if bits remain
             if self.bits_remaining > 0 {
                 self.clock_output_shifter();
-            }
-
-            // Refill buffer if empty and bytes remaining
-            if self.sample_buffer_empty && self.bytes_remaining > 0 {
-                dma_cycles = self.fetch_sample(&mut read_memory);
             }
         } else {
             self.timer_counter -= 1;
@@ -596,7 +597,8 @@ mod tests {
 
         // Next clock reloads timer
         assert_eq!(dmc.clock_timer(|addr| memory[addr as usize]), 0);
-        assert_eq!(dmc.timer_counter, 54);
+        // Reloads with N-1 (53)
+        assert_eq!(dmc.timer_counter, 53);
     }
 
     #[test]

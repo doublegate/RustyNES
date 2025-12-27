@@ -62,6 +62,11 @@ pub struct Console {
 
     /// Current frame count
     frame_count: u64,
+
+    /// Pending PPU dots to step (accumulated during instruction execution)
+    /// This allows PPU to be advanced at instruction boundaries like `step()` mode,
+    /// ensuring consistent PPUSTATUS polling behavior across execution modes.
+    pending_ppu_dots: u32,
 }
 
 impl Console {
@@ -95,11 +100,26 @@ impl Console {
     ///
     /// # Returns
     ///
-    /// New Console instance
+    /// New Console instance (APU defaults to 48000 Hz sample rate)
     #[must_use]
     pub fn new(mapper: Box<dyn Mapper>) -> Self {
+        Self::with_sample_rate(mapper, 48000)
+    }
+
+    /// Create a new console with a custom mapper and audio sample rate
+    ///
+    /// # Arguments
+    ///
+    /// * `mapper` - Cartridge mapper implementation
+    /// * `sample_rate` - Audio output sample rate (e.g., 44100 or 48000 Hz)
+    ///
+    /// # Returns
+    ///
+    /// New Console instance with APU configured for the specified sample rate
+    #[must_use]
+    pub fn with_sample_rate(mapper: Box<dyn Mapper>, sample_rate: u32) -> Self {
         let mut cpu = Cpu::new();
-        let mut bus = SystemBus::new(mapper);
+        let mut bus = SystemBus::with_sample_rate(mapper, sample_rate);
 
         // Reset CPU (loads PC from $FFFC-$FFFD)
         cpu.reset(&mut bus);
@@ -109,6 +129,7 @@ impl Console {
             bus,
             master_cycles: 0,
             frame_count: 0,
+            pending_ppu_dots: 0,
         }
     }
 
@@ -117,6 +138,7 @@ impl Console {
         self.cpu.reset(&mut self.bus);
         self.bus.reset();
         self.master_cycles = 0;
+        self.pending_ppu_dots = 0;
         // Note: Don't reset frame_count (preserve for debugging)
     }
 
@@ -127,7 +149,7 @@ impl Console {
     ///
     /// # Returns
     ///
-    /// Number of cycles consumed
+    /// Number of cycles consumed (including any DMA cycles)
     pub fn step(&mut self) -> u8 {
         // Step CPU (this will handle DMA internally via stall cycles)
         let cpu_cycles = self.cpu.step(&mut self.bus);
@@ -163,17 +185,45 @@ impl Console {
         let irq = self.bus.mapper_irq_pending() || self.bus.apu.irq_pending();
         self.cpu.set_irq(irq);
 
-        // Handle DMA if active
+        // Update master cycle count for instruction
+        self.master_cycles += u64::from(cpu_cycles);
+
+        // Track total cycles including DMA
+        let mut total_cycles = cpu_cycles;
+
+        // Handle DMA if active - properly advance PPU/APU during DMA cycles
         while self.bus.dma_active() {
-            if self.bus.tick_dma() {
+            let dma_done = self.bus.tick_dma();
+
+            // Advance PPU and APU for EVERY DMA cycle (including the final one)
+            // Each DMA cycle consumes one CPU cycle worth of time
+            for _ in 0..3 {
+                let (frame_complete, nmi) = self.bus.step_ppu();
+
+                if nmi {
+                    self.cpu.trigger_nmi();
+                }
+
+                if frame_complete {
+                    self.frame_count += 1;
+                }
+            }
+
+            self.bus.apu.step();
+            self.bus.clock_mapper(1);
+            self.master_cycles += 1;
+            total_cycles = total_cycles.saturating_add(1);
+
+            if dma_done {
                 break;
             }
         }
 
-        // Update master cycle count
-        self.master_cycles += u64::from(cpu_cycles);
+        // Update IRQ after DMA (in case mapper IRQ fired during DMA)
+        let irq = self.bus.mapper_irq_pending() || self.bus.apu.irq_pending();
+        self.cpu.set_irq(irq);
 
-        cpu_cycles
+        total_cycles
     }
 
     /// Execute exactly one CPU cycle with perfect PPU/APU synchronization.
@@ -215,9 +265,17 @@ impl Console {
         // Handle DMA if active (DMA steals CPU cycles)
         if self.bus.dma_active() {
             let dma_done = self.bus.tick_dma();
-            if !dma_done {
-                // DMA cycle - still advance PPU and APU
-                for _ in 0..3 {
+
+            // Count EVERY DMA cycle (including the final one)
+            // Each DMA cycle consumes one CPU cycle worth of time
+            self.pending_ppu_dots += 3;
+            self.bus.apu.step();
+            self.bus.clock_mapper(1);
+            self.master_cycles += 1;
+
+            // Process accumulated PPU dots when DMA completes (instruction boundary equivalent)
+            if dma_done {
+                while self.pending_ppu_dots > 0 {
                     let (fc, nmi) = self.bus.step_ppu();
                     if nmi {
                         self.cpu.trigger_nmi();
@@ -226,30 +284,23 @@ impl Console {
                         frame_complete = true;
                         self.frame_count += 1;
                     }
+                    self.pending_ppu_dots -= 1;
                 }
-                self.bus.apu.step();
-                self.master_cycles += 1;
-                return (false, frame_complete);
+
+                // Update IRQ line after DMA completion
+                let irq = self.bus.mapper_irq_pending() || self.bus.apu.irq_pending();
+                self.cpu.set_irq(irq);
             }
+
+            // DMA cycle never completes a CPU instruction
+            return (false, frame_complete);
         }
 
         // Execute one CPU cycle
         let instruction_complete = self.cpu.tick(&mut self.bus);
 
-        // Track CPU cycles for DMA timing
-        self.bus.add_cpu_cycles(1);
-
-        // Step PPU (3 dots per CPU cycle)
-        for _ in 0..3 {
-            let (fc, nmi) = self.bus.step_ppu();
-            if nmi {
-                self.cpu.trigger_nmi();
-            }
-            if fc {
-                frame_complete = true;
-                self.frame_count += 1;
-            }
-        }
+        // Accumulate PPU dots (3 per CPU cycle)
+        self.pending_ppu_dots += 3;
 
         // Step APU (1 step per CPU cycle)
         self.bus.apu.step();
@@ -257,12 +308,37 @@ impl Console {
         // Clock mapper (once per CPU cycle for cycle-based timing)
         self.bus.clock_mapper(1);
 
-        // Update IRQ line (level-triggered: high when any source is active)
-        let irq = self.bus.mapper_irq_pending() || self.bus.apu.irq_pending();
-        self.cpu.set_irq(irq);
-
         // Update master cycle count
         self.master_cycles += 1;
+
+        // At instruction boundaries, catch up PPU (like step() mode does)
+        // This ensures PPUSTATUS reads see consistent state across execution modes.
+        // Games that poll PPUSTATUS in tight loops rely on this timing behavior.
+        if instruction_complete {
+            // Track CPU cycles for DMA timing at instruction boundary
+            // This matches `step()` mode where `add_cpu_cycles` is called after `cpu.step()`
+            // The number of cycles for the instruction is stored in pending_ppu_dots / 3
+            // Note: max cycles per instruction is ~7, so max dots is ~21 (fits in u8)
+            #[allow(clippy::cast_possible_truncation)]
+            let instruction_cycles = self.pending_ppu_dots as u8 / 3;
+            self.bus.add_cpu_cycles(instruction_cycles);
+
+            while self.pending_ppu_dots > 0 {
+                let (fc, nmi) = self.bus.step_ppu();
+                if nmi {
+                    self.cpu.trigger_nmi();
+                }
+                if fc {
+                    frame_complete = true;
+                    self.frame_count += 1;
+                }
+                self.pending_ppu_dots -= 1;
+            }
+
+            // Update IRQ line at instruction boundaries
+            let irq = self.bus.mapper_irq_pending() || self.bus.apu.irq_pending();
+            self.cpu.set_irq(irq);
+        }
 
         (instruction_complete, frame_complete)
     }
@@ -718,5 +794,352 @@ mod tests {
         }
 
         assert!(in_handler, "CPU did not enter IRQ handler");
+    }
+
+    #[test]
+    #[allow(clippy::cast_precision_loss)]
+    fn test_framebuffer_populated_after_step_frame_accurate() {
+        // Load nestest.nes which writes to screen
+        let rom_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("test-roms")
+            .join("cpu")
+            .join("nestest.nes");
+
+        if !rom_path.exists() {
+            eprintln!("Skipping test: nestest.nes not found");
+            return;
+        }
+
+        let rom_data = std::fs::read(&rom_path).expect("Failed to read ROM");
+        let mut console = Console::from_rom_bytes(&rom_data).expect("Failed to create console");
+
+        // Run several frames using step_frame_accurate
+        for frame in 0..60 {
+            console.step_frame_accurate();
+
+            // Check framebuffer after each frame
+            let fb = console.framebuffer();
+            let non_zero: usize = fb.iter().filter(|&&x| x != 0).count();
+
+            if frame % 10 == 0 {
+                println!(
+                    "Frame {}: {}/{} non-zero pixels ({:.1}%)",
+                    frame,
+                    non_zero,
+                    fb.len(),
+                    (non_zero as f64 / fb.len() as f64) * 100.0
+                );
+            }
+        }
+
+        // Verify framebuffer has content
+        let fb = console.framebuffer();
+        let non_zero: usize = fb.iter().filter(|&&x| x != 0).count();
+
+        assert!(
+            non_zero > 0,
+            "Framebuffer is all zeros after 60 frames with step_frame_accurate()"
+        );
+    }
+
+    #[test]
+    #[allow(clippy::cast_precision_loss)]
+    fn test_framebuffer_populated_after_step_frame() {
+        // Load nestest.nes which writes to screen
+        let rom_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("test-roms")
+            .join("cpu")
+            .join("nestest.nes");
+
+        if !rom_path.exists() {
+            eprintln!("Skipping test: nestest.nes not found");
+            return;
+        }
+
+        let rom_data = std::fs::read(&rom_path).expect("Failed to read ROM");
+        let mut console = Console::from_rom_bytes(&rom_data).expect("Failed to create console");
+
+        // Run several frames using step_frame (the old method)
+        for frame in 0..60 {
+            console.step_frame();
+
+            // Check framebuffer after each frame
+            let fb = console.framebuffer();
+            let non_zero: usize = fb.iter().filter(|&&x| x != 0).count();
+
+            if frame % 10 == 0 {
+                println!(
+                    "Frame {}: {}/{} non-zero pixels ({:.1}%)",
+                    frame,
+                    non_zero,
+                    fb.len(),
+                    (non_zero as f64 / fb.len() as f64) * 100.0
+                );
+            }
+        }
+
+        // Verify framebuffer has content
+        let fb = console.framebuffer();
+        let non_zero: usize = fb.iter().filter(|&&x| x != 0).count();
+
+        assert!(
+            non_zero > 0,
+            "Framebuffer is all zeros after 60 frames with step_frame()"
+        );
+    }
+
+    #[test]
+    fn test_frame_count_increments_accurate() {
+        // Load nestest.nes
+        let rom_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("test-roms")
+            .join("cpu")
+            .join("nestest.nes");
+
+        if !rom_path.exists() {
+            eprintln!("Skipping test: nestest.nes not found");
+            return;
+        }
+
+        let rom_data = std::fs::read(&rom_path).expect("Failed to read ROM");
+        let mut console = Console::from_rom_bytes(&rom_data).expect("Failed to create console");
+
+        // Check initial state
+        assert_eq!(console.frame_count(), 0, "Frame count should start at 0");
+
+        // Run one frame
+        console.step_frame_accurate();
+        assert_eq!(
+            console.frame_count(),
+            1,
+            "Frame count should be 1 after one step_frame_accurate()"
+        );
+
+        // Run another frame
+        console.step_frame_accurate();
+        assert_eq!(
+            console.frame_count(),
+            2,
+            "Frame count should be 2 after two step_frame_accurate() calls"
+        );
+
+        println!("Frame count increments correctly with step_frame_accurate()");
+    }
+
+    #[test]
+    #[allow(clippy::uninlined_format_args)]
+    fn test_ppumask_value() {
+        // Load nestest.nes
+        let rom_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("test-roms")
+            .join("cpu")
+            .join("nestest.nes");
+
+        if !rom_path.exists() {
+            eprintln!("Skipping test: nestest.nes not found");
+            return;
+        }
+
+        let rom_data = std::fs::read(&rom_path).expect("Failed to read ROM");
+        let mut console = Console::from_rom_bytes(&rom_data).expect("Failed to create console");
+
+        // Run for 50 frames and check PPUMASK status
+        for frame in 0..50 {
+            console.step_frame_accurate();
+
+            // Check if PPU rendering is enabled by looking at framebuffer content
+            let fb = console.framebuffer();
+            let non_zero: usize = fb.iter().filter(|&&x| x != 0).count();
+            let rendering_active = non_zero > 0;
+
+            println!(
+                "Frame {}: {} non-zero pixels, rendering {}",
+                frame,
+                non_zero,
+                if rendering_active {
+                    "ACTIVE"
+                } else {
+                    "INACTIVE"
+                }
+            );
+
+            if rendering_active {
+                println!("First frame with rendering: {}", frame);
+                break;
+            }
+        }
+    }
+
+    /// Trace PPUMASK changes to understand timing difference.
+    /// Diagnostic test for debugging `step()` vs `tick()` timing discrepancies.
+    #[test]
+    #[ignore = "diagnostic test - run manually with --ignored flag"]
+    #[allow(clippy::uninlined_format_args)]
+    fn test_ppumask_trace() {
+        let rom_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("test-roms")
+            .join("cpu")
+            .join("nestest.nes");
+
+        if !rom_path.exists() {
+            eprintln!("Skipping test: nestest.nes not found");
+            return;
+        }
+
+        let rom_data = std::fs::read(&rom_path).expect("Failed to read ROM");
+
+        // Test step() mode - run until rendering starts
+        println!("\n=== STEP MODE ===");
+        let mut console1 = Console::from_rom_bytes(&rom_data).expect("Failed to create console");
+        let mut step_first_render_cycle = None;
+
+        for _cycle in 0..5_000_000 {
+            console1.step();
+
+            // Check if rendering enabled (look at PPU mask)
+            if console1.bus.ppu.mask().rendering_enabled() && step_first_render_cycle.is_none() {
+                step_first_render_cycle = Some(console1.cycles());
+                println!(
+                    "step() - PPUMASK enabled at cycle {}, frame {}",
+                    console1.cycles(),
+                    console1.frame_count()
+                );
+            }
+
+            // Check framebuffer
+            let fb = console1.framebuffer();
+            let non_zero: usize = fb.iter().filter(|&&x| x != 0).count();
+            if non_zero > 0 {
+                println!(
+                    "step() - First non-zero pixel at cycle {}, frame {}",
+                    console1.cycles(),
+                    console1.frame_count()
+                );
+                break;
+            }
+        }
+
+        // Test tick() mode - run until rendering starts
+        println!("\n=== TICK MODE ===");
+        let mut console2 = Console::from_rom_bytes(&rom_data).expect("Failed to create console");
+        let mut tick_first_render_cycle = None;
+
+        for _cycle in 0..5_000_000 {
+            console2.tick();
+
+            // Check if rendering enabled
+            if console2.bus.ppu.mask().rendering_enabled() && tick_first_render_cycle.is_none() {
+                tick_first_render_cycle = Some(console2.cycles());
+                println!(
+                    "tick() - PPUMASK enabled at cycle {}, frame {}",
+                    console2.cycles(),
+                    console2.frame_count()
+                );
+            }
+
+            // Check framebuffer
+            let fb = console2.framebuffer();
+            let non_zero: usize = fb.iter().filter(|&&x| x != 0).count();
+            if non_zero > 0 {
+                println!(
+                    "tick() - First non-zero pixel at cycle {}, frame {}",
+                    console2.cycles(),
+                    console2.frame_count()
+                );
+                break;
+            }
+        }
+
+        println!("\n=== COMPARISON ===");
+        println!("step() PPUMASK enabled at: {:?}", step_first_render_cycle);
+        println!("tick() PPUMASK enabled at: {:?}", tick_first_render_cycle);
+    }
+
+    /// Compare cycle counts between step and tick modes.
+    /// Diagnostic test for verifying timing synchronization between execution modes.
+    #[test]
+    #[ignore = "diagnostic test - run manually with --ignored flag"]
+    #[allow(clippy::uninlined_format_args, clippy::cast_possible_wrap)]
+    fn test_cycles_per_frame_comparison() {
+        let rom_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("test-roms")
+            .join("cpu")
+            .join("nestest.nes");
+
+        if !rom_path.exists() {
+            eprintln!("Skipping test: nestest.nes not found");
+            return;
+        }
+
+        let rom_data = std::fs::read(&rom_path).expect("Failed to read ROM");
+
+        // Test step() mode
+        let mut console1 = Console::from_rom_bytes(&rom_data).expect("Failed to create console");
+        let mut step_cycles = Vec::new();
+        let mut step_first_render = None;
+
+        for frame in 0..50 {
+            let start_cycles = console1.cycles();
+            console1.step_frame();
+            let frame_cycles = console1.cycles() - start_cycles;
+            step_cycles.push(frame_cycles);
+
+            let fb = console1.framebuffer();
+            let non_zero: usize = fb.iter().filter(|&&x| x != 0).count();
+            if non_zero > 0 && step_first_render.is_none() {
+                step_first_render = Some(frame);
+            }
+        }
+
+        // Test tick() mode
+        let mut console2 = Console::from_rom_bytes(&rom_data).expect("Failed to create console");
+        let mut tick_cycles = Vec::new();
+        let mut tick_first_render = None;
+
+        for frame in 0..50 {
+            let start_cycles = console2.cycles();
+            console2.step_frame_accurate();
+            let frame_cycles = console2.cycles() - start_cycles;
+            tick_cycles.push(frame_cycles);
+
+            let fb = console2.framebuffer();
+            let non_zero: usize = fb.iter().filter(|&&x| x != 0).count();
+            if non_zero > 0 && tick_first_render.is_none() {
+                tick_first_render = Some(frame);
+            }
+        }
+
+        println!("\n=== CYCLE COMPARISON ===");
+        println!("step() first render at frame: {:?}", step_first_render);
+        println!("tick() first render at frame: {:?}", tick_first_render);
+        println!("\nCycles per frame (first 10):");
+        for i in 0..10 {
+            println!(
+                "Frame {}: step={}, tick={}, diff={}",
+                i,
+                step_cycles[i],
+                tick_cycles[i],
+                tick_cycles[i] as i64 - step_cycles[i] as i64
+            );
+        }
+
+        let step_total: u64 = step_cycles.iter().sum();
+        let tick_total: u64 = tick_cycles.iter().sum();
+        println!("\nTotal cycles (50 frames):");
+        println!("step(): {}", step_total);
+        println!("tick(): {}", tick_total);
+        println!("Difference: {}", tick_total as i64 - step_total as i64);
     }
 }
