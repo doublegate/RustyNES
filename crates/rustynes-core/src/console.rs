@@ -296,11 +296,25 @@ impl Console {
             return (false, frame_complete);
         }
 
-        // Execute one CPU cycle
-        let instruction_complete = self.cpu.tick(&mut self.bus);
+        // Step PPU: 3 dots BEFORE CPU cycle
+        // NMI set during these dots affects the NEXT CPU cycle, not this one.
+        // This models the NES timing where PPU signals are latched and visible
+        // to the CPU on the following cycle.
+        for _ in 0..3 {
+            let (fc, nmi) = self.bus.step_ppu();
+            if nmi {
+                self.cpu.trigger_nmi();
+            }
+            if fc {
+                frame_complete = true;
+                self.frame_count += 1;
+            }
+        }
 
-        // Accumulate PPU dots (3 per CPU cycle)
-        self.pending_ppu_dots += 3;
+        // Execute one CPU cycle
+        // The CPU checks NMI at instruction boundaries. NMI set in the PPU dots
+        // above is already visible (latched) for this check.
+        let instruction_complete = self.cpu.tick(&mut self.bus);
 
         // Step APU (1 step per CPU cycle)
         self.bus.apu.step();
@@ -311,33 +325,22 @@ impl Console {
         // Update master cycle count
         self.master_cycles += 1;
 
-        // At instruction boundaries, catch up PPU (like step() mode does)
-        // This ensures PPUSTATUS reads see consistent state across execution modes.
-        // Games that poll PPUSTATUS in tight loops rely on this timing behavior.
+        // At instruction boundaries, update DMA timing and IRQ state
         if instruction_complete {
             // Track CPU cycles for DMA timing at instruction boundary
             // This matches `step()` mode where `add_cpu_cycles` is called after `cpu.step()`
-            // The number of cycles for the instruction is stored in pending_ppu_dots / 3
-            // Note: max cycles per instruction is ~7, so max dots is ~21 (fits in u8)
+            self.pending_ppu_dots += 1; // Use as instruction cycle counter
             #[allow(clippy::cast_possible_truncation)]
-            let instruction_cycles = self.pending_ppu_dots as u8 / 3;
+            let instruction_cycles = self.pending_ppu_dots as u8;
             self.bus.add_cpu_cycles(instruction_cycles);
-
-            while self.pending_ppu_dots > 0 {
-                let (fc, nmi) = self.bus.step_ppu();
-                if nmi {
-                    self.cpu.trigger_nmi();
-                }
-                if fc {
-                    frame_complete = true;
-                    self.frame_count += 1;
-                }
-                self.pending_ppu_dots -= 1;
-            }
+            self.pending_ppu_dots = 0;
 
             // Update IRQ line at instruction boundaries
             let irq = self.bus.mapper_irq_pending() || self.bus.apu.irq_pending();
             self.cpu.set_irq(irq);
+        } else {
+            // Track cycles within instruction for DMA timing
+            self.pending_ppu_dots += 1;
         }
 
         (instruction_complete, frame_complete)
