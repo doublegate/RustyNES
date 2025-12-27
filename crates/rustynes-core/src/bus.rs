@@ -335,8 +335,11 @@ impl CpuBus for Bus {
                 });
             }
 
-            // APU registers
-            0x4000..=0x4013 | 0x4015 | 0x4017 => self.apu.write_register(addr, value),
+            // APU registers (not including $4017)
+            0x4000..=0x4013 | 0x4015 => self.apu.write_register(addr, value),
+
+            // Frame counter ($4017) - uses CPU cycle count for accurate write delay
+            0x4017 => self.apu.write_frame_counter(value, self.cpu_cycles),
 
             // OAM DMA
             0x4014 => self.start_oam_dma(value),
