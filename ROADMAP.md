@@ -1,8 +1,8 @@
 # RustyNES Development Roadmap
 
-**Document Version:** 2.7.0
-**Last Updated:** 2025-12-20
-**Project Status:** Phase 1.5 Stabilization In Progress (M1-M7 Complete, M8-M10 Planned)
+**Document Version:** 2.8.0
+**Last Updated:** 2025-12-27
+**Project Status:** Phase 1.5 Stabilization In Progress (M1-M8 Complete, M9-M10 Planned)
 
 ---
 
@@ -21,9 +21,22 @@
 
 ---
 
-## Recent Updates (v2.7.0 - December 2025)
+## Recent Updates (v2.8.0 - December 2025)
 
-**v0.7.0 Released - February 2026** - Milestone 8 Complete (100% Test Accuracy)!
+**v0.7.1 Released - December 27, 2025** - Desktop GUI Framework Migration Complete!
+
+**GUI Framework Migration Achievements:**
+
+- **Framework Stack:** Complete migration from Iced+wgpu to eframe+egui
+- **Rendering:** OpenGL backend via glow (replacing wgpu shader pipeline)
+- **Audio:** cpal 0.15 with lock-free ring buffer (8192 samples)
+- **Input:** gilrs 0.11 for gamepad support with hotplug detection
+- **File Dialogs:** rfd 0.15 for native cross-platform file dialogs
+- **Configuration:** ron 0.8 format with directories 5.0 for platform paths
+- **Frame Timing:** Accumulator-based timing at 60.0988 Hz NTSC
+- **Debug Windows:** CPU, PPU, APU, and Memory viewers (egui immediate mode)
+
+**v0.7.0 Released - December 21, 2025** - Milestone 8 Complete (100% Test Accuracy)!
 
 **Milestone 8 Achievements (COMPLETE):**
 
@@ -71,6 +84,8 @@
 - v0.4.0 (December 19, 2025): Integration Complete - Complete rustynes-core layer with 18 tests
 - v0.5.0 (December 19, 2025): Phase 1 MVP Complete - Desktop GUI with Iced/wgpu, audio playback (cpal), ROM loading, rendering, input
 - v0.6.0 (December 20, 2025): M7 Accuracy - Frame counter precision, hardware-accurate mixer, OAM DMA 513/514 cycles
+- v0.7.0 (December 21, 2025): M8 Test ROM Validation - 100% Blargg pass rate (90/90 tests)
+- v0.7.1 (December 27, 2025): GUI Framework Migration - Complete rewrite from Iced+wgpu to eframe+egui
 
 **Project Status Change:**
 
@@ -378,25 +393,30 @@ gantt
 
 ### Month 3-4: Desktop GUI (M6) - COMPLETED
 
-**Status:** COMPLETED December 19, 2025
+**Status:** COMPLETED December 19, 2025 (v0.5.0), Migrated December 27, 2025 (v0.7.1)
 
-**Deliverables:**
+**Original Implementation (v0.5.0):**
 
-- [x] egui-based interface
-- [x] wgpu rendering backend
-- [x] cpal audio output
-- [x] Keyboard + gamepad input (gilrs)
-- [x] Configuration system with persistence
-- [x] File browser for ROM loading
+- [x] Iced-based interface with wgpu rendering
+
+**Current Implementation (v0.7.1 - eframe/egui):**
+
+- [x] eframe 0.29 + egui 0.29 immediate mode GUI
+- [x] OpenGL rendering via glow backend
+- [x] cpal 0.15 audio with lock-free ring buffer
+- [x] Keyboard + gamepad input (gilrs 0.11)
+- [x] Configuration persistence (ron 0.8 format)
+- [x] Native file dialogs (rfd 0.15)
+- [x] Debug windows (CPU, PPU, APU, Memory viewers)
 
 **Features:**
 
-- [x] Menu bar (File, Emulation, Settings)
-- [x] Video settings (scale)
-- [x] Audio settings (volume)
+- [x] Menu bar (File, Emulation, Video, Audio, Debug, Help)
+- [x] Video settings (scaling modes: PixelPerfect, FitWindow, Integer)
+- [x] Audio settings (volume control)
 - [x] Controller configuration
 - [x] Playback controls (pause, resume, reset)
-- [x] ROM file browser
+- [x] Native ROM file browser
 
 **Acceptance Criteria:**
 
@@ -1029,7 +1049,7 @@ Phase 1.5 establishes a production-ready foundation for Phase 2 advanced feature
 | **APU (M3)** | **COMPLETE** | **100%** | **150/150 passing (100%)** |
 | **Mappers (M4)** | **COMPLETE** | **100%** | **167/167 passing (100%)** |
 | **Integration (M5)** | **COMPLETE** | **100%** | **23/23 passing (100%)** |
-| **GUI (M6)** | **COMPLETE** | **100%** | **Cross-platform egui/wgpu** |
+| **GUI (M6)** | **COMPLETE** | **100%** | **Cross-platform eframe/egui (v0.7.1)** |
 | **Blargg Tests (M8)** | **COMPLETE** | **100%** | **90/90 passing (100% - CPU 22, PPU 25, APU 15, Mappers 28)** |
 
 ### Detailed Component Status
@@ -1099,23 +1119,29 @@ Phase 1.5 establishes a production-ready foundation for Phase 2 advanced feature
 - All subsystems integrated (CPU, PPU, APU, Mappers)
 - Ready for M6 (Desktop GUI)
 
-#### M6: Desktop GUI - COMPLETED December 19, 2025
+#### M6: Desktop GUI - COMPLETED December 19, 2025 (Migrated v0.7.1)
 
 **Status:** All acceptance criteria met, cross-platform desktop application
 
-- egui-based graphical interface with wgpu rendering
-- ROM loading with file browser
-- Real-time 60 FPS rendering with wgpu backend
-- cpal audio output with ring buffer
-- Keyboard and gamepad input (gilrs)
-- Configuration persistence
-- Playback controls (pause, resume, reset)
-- **Total: Cross-platform MVP release achieved**
+**Original (v0.5.0):** Iced + wgpu rendering
+
+**Current (v0.7.1):** Complete GUI framework migration to eframe + egui
+
+- eframe 0.29 + egui 0.29 immediate mode GUI
+- OpenGL rendering via glow backend (replaced wgpu shader pipeline)
+- ROM loading with native file dialogs (rfd 0.15)
+- Accumulator-based frame timing at 60.0988 Hz NTSC
+- cpal 0.15 audio with lock-free ring buffer (8192 samples)
+- Keyboard and gamepad input (gilrs 0.11)
+- Configuration persistence (ron 0.8 format)
+- Debug windows: CPU, PPU, APU, Memory viewers
+- **Total: Cross-platform MVP release with improved architecture**
 
 **Achievements:**
 
 - Zero unsafe code maintained across 6 crates
 - Complete Phase 1 MVP achieved
+- GUI framework migrated for better immediate mode support
 - 6+ months ahead of original schedule
 
 ### Key Milestones
@@ -1384,34 +1410,36 @@ This roadmap balances **ambition** with **realism**, targeting v1.0 in 24 months
 
 ### Current Progress Summary
 
-RustyNES development has achieved a **major milestone** with Phase 1 MVP complete - all six milestones (M1-M6) finished in December 2025:
+RustyNES development has achieved a **major milestone** with Phase 1 MVP complete and GUI framework migration in v0.7.1:
 
 **Achievements to Date:**
 
 - World-class CPU implementation: 100% test pass rate (47/47 tests)
-- Excellent PPU implementation: 97.7% test pass rate (85/87 tests, 2 ignored)
-- Comprehensive APU implementation: 100% test pass rate (136/136 tests)
-- Complete Mapper subsystem: 100% test pass rate (78/78 tests)
-- Production-ready Integration layer: 100% test pass rate (18/18 tests)
-- Cross-platform Desktop GUI with egui/wgpu rendering
+- Excellent PPU implementation: 100% test pass rate (90/90 tests)
+- Comprehensive APU implementation: 100% test pass rate (150/150 tests)
+- Complete Mapper subsystem: 100% test pass rate (167/167 tests)
+- Production-ready Integration layer: 100% test pass rate (23/23 tests)
+- Cross-platform Desktop GUI with eframe/egui (v0.7.1)
 - 5 mappers covering 77.7% of licensed NES games (500+ titles)
-- 400+ total tests passing across 6 crates
+- 500+ total tests passing across 6 crates
+- 100% Blargg test pass rate (90/90 tests)
 - Zero unsafe code across all 6 crates
-- Complete playable MVP released (v0.5.0)
+- Complete playable MVP with GUI framework migration (v0.7.1)
 
 **Current Status:**
 
 - Phase 1 is **100% complete (all 6 milestones done)**
+- Phase 1.5 Milestones M7-M8 **complete** (100% Blargg pass rate)
 - MVP achieved **6+ months ahead of original June 2026 target**
-- Phase 1.5 planning **complete** with comprehensive sprint documentation
-- Development transitioning to Phase 1.5 stabilization
+- GUI framework migration complete (Iced+wgpu to eframe+egui)
+- v0.7.1 released December 27, 2025
 
 **Phase 1.5 Priorities:**
 
-With Phase 1 MVP complete, development focuses on stability and accuracy:
+With M7-M8 complete, development focuses on remaining stabilization:
 
-- **M7:** Accuracy improvements (CPU/PPU/APU timing refinements)
-- **M8:** Test ROM validation (95%+ pass rate, 202+/212 tests)
+- **M7:** Accuracy improvements (CPU/PPU/APU timing refinements) - COMPLETE
+- **M8:** Test ROM validation (100% Blargg pass rate achieved) - COMPLETE
 - **M9:** Known issues resolution (audio quality, PPU edge cases, performance)
 - **M10:** Final polish (UI/UX, documentation, multi-platform release)
 - **Target:** v0.9.0 or v1.0.0-alpha.1 by April 2026
@@ -1421,11 +1449,12 @@ With Phase 1 MVP complete, development focuses on stability and accuracy:
 **What Makes This Significant:**
 
 - 6+ months ahead of original schedule
-- 400+ comprehensive tests passing across 6 crates
+- 500+ comprehensive tests passing across 6 crates
+- 100% Blargg test pass rate (90/90 tests)
 - Zero unsafe code across all crates
 - Cycle-accurate CPU, PPU, APU, Mapper, and Integration implementations
 - 77.7% game compatibility with cross-platform desktop application
-- Phase 1 MVP complete with full playable release
+- Phase 1 MVP complete with GUI framework migration (eframe+egui)
 
 Success continues to depend on:
 
@@ -1434,7 +1463,7 @@ Success continues to depend on:
 - **Clear documentation** (lowering contribution barriers)
 - **Community involvement** (testing, feedback, contributions)
 
-**Next Steps:** Begin Phase 1.5 stabilization (M7-M10) before advanced features in Phase 2!
+**Next Steps:** Continue Phase 1.5 stabilization (M9-M10) with v0.7.1 foundation before advanced features in Phase 2!
 
 ---
 

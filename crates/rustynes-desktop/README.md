@@ -2,7 +2,7 @@
 
 Desktop frontend for the RustyNES NES emulator using egui and eframe.
 
-**Version:** 0.7.0
+**Version:** 0.7.1
 **Part of:** [RustyNES](https://github.com/doublegate/RustyNES) workspace
 **License:** MIT OR Apache-2.0
 
@@ -107,7 +107,7 @@ Desktop frontend for the RustyNES NES emulator using egui and eframe.
 
 ### Why eframe over pixels+egui-wgpu+winit
 
-The initial v0.5.0-v0.6.0 implementation used Iced with wgpu. Version 0.7.0 switched to eframe+egui for the following reasons:
+The initial v0.5.0-v0.6.0 implementation used Iced with wgpu. Version 0.7.0-0.7.1 switched to eframe+egui for the following reasons:
 
 1. **Version Compatibility**: wgpu ecosystem had significant version conflicts between Iced 0.13, egui-wgpu, and winit. eframe bundles compatible versions internally.
 

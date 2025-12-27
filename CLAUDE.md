@@ -6,18 +6,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 RustyNES is a next-generation Nintendo Entertainment System (NES) emulator written in Rust. Target: 100% TASVideos accuracy test pass rate, 300+ mappers, RetroAchievements, GGPO netplay, TAS tools, Lua scripting.
 
-**Status:** v0.7.0 - Phase 1.5 Stabilization In Progress (M7-M8 Complete). All Phase 1 milestones (M1-M6) done.
+**Status:** v0.7.1 - Phase 1.5 Stabilization In Progress (M7-M8 Complete). All Phase 1 milestones (M1-M6) done.
 
-**Test Status:** 429 tests passing (0 failures, 6 ignored for valid architectural reasons)
+**Test Status:** 500+ tests passing (0 failures, 0 ignored). 100% Blargg pass rate (90/90 tests)
 
-**Current Version:** v0.7.0 (December 27, 2025)
-- Desktop GUI reimplemented with egui + pixels + winit
-- Immediate mode GUI for debug windows and overlays
-- pixels crate for efficient NES framebuffer rendering
-- winit for cross-platform window management
-- cpal for low-latency audio output
-- Native file dialogs with rfd
-- Gamepad support with gilrs
+**Current Version:** v0.7.1 (December 27, 2025)
+- Desktop GUI framework migration: Iced+wgpu to eframe+egui
+- eframe 0.29 + egui 0.29 immediate mode GUI
+- OpenGL rendering via glow backend (replacing wgpu shader pipeline)
+- cpal 0.15 for low-latency audio with lock-free ring buffer (8192 samples)
+- Native file dialogs with rfd 0.15
+- Gamepad support with gilrs 0.11 (hotplug detection)
+- Configuration persistence with ron 0.8 format
+- Debug windows: CPU, PPU, APU, Memory viewers
 
 **Previous Version:** v0.6.0 (December 20, 2025)
 - M7: Accuracy Improvements complete (all 4 sprints)
@@ -65,7 +66,7 @@ rustynes/
 │   ├── rustynes-ppu/src/          # 2C02 PPU
 │   ├── rustynes-apu/src/          # 2A03 APU with expansion audio
 │   ├── rustynes-mappers/src/      # All mapper implementations
-│   ├── rustynes-desktop/src/      # egui/wgpu GUI frontend
+│   ├── rustynes-desktop/src/      # eframe/egui GUI frontend
 │   ├── rustynes-web/src/          # WebAssembly frontend
 │   ├── rustynes-tas/src/          # TAS recording/playback (FM2 format)
 │   ├── rustynes-netplay/src/      # GGPO rollback netcode (backroll-rs)
@@ -193,10 +194,13 @@ Cloned emulators for study and pattern reference:
 
 ## Key Dependencies
 
-- **Graphics**: `pixels` (framebuffer via wgpu), `egui` (immediate mode GUI)
-- **Window**: `winit` (cross-platform window management)
-- **Audio**: `cpal` (cross-platform audio I/O)
-- **Input**: `gilrs` (gamepad support)
+- **Graphics**: `eframe` 0.29 (egui + window + OpenGL via glow)
+- **GUI**: `egui` 0.29 (immediate mode GUI)
+- **Audio**: `cpal` 0.15 (cross-platform audio I/O with lock-free ring buffer)
+- **Input**: `gilrs` 0.11 (gamepad support with hotplug detection)
+- **File Dialogs**: `rfd` 0.15 (native cross-platform file dialogs)
+- **Configuration**: `ron` 0.8 (Rust Object Notation), `directories` 5.0 (platform paths)
+- **CLI**: `clap` 4.5 (argument parsing)
 - **Netplay**: `backroll` (GGPO rollback) - planned for Phase 2
 - **Scripting**: `mlua` (Lua 5.4) - planned for Phase 2
 - **Achievements**: `rcheevos-sys` (FFI bindings) - planned for Phase 2
@@ -205,23 +209,23 @@ Cloned emulators for study and pattern reference:
 
 ## Architectural Decisions
 
-### GUI Framework: egui + pixels (v0.7.0+)
-- **Changed from**: Iced (v0.5.0-v0.6.0)
-- **Rationale**: Immediate mode GUI ideal for debug windows, simpler event loop, better game loop integration
-- **Implementation**: egui for menus/debug windows, pixels for NES framebuffer
+### GUI Framework: eframe + egui (v0.7.1+)
+- **Changed from**: Iced+wgpu (v0.5.0-v0.6.0)
+- **Rationale**: Immediate mode GUI ideal for debug windows, simpler event loop, better game loop integration, integrated window management
+- **Implementation**: eframe provides window + egui + OpenGL rendering; egui for menus/debug windows
 
-### Window Management: winit
-- **Rationale**: Industry standard, cross-platform, full control over event loop
-- **Implementation**: Custom event loop with frame timing control
+### Window Management: eframe (glow backend)
+- **Rationale**: Integrated with egui, cross-platform, OpenGL backend simpler than wgpu
+- **Implementation**: eframe handles window creation and event loop with accumulator-based frame timing
 
-### Framebuffer Rendering: pixels
-- **Rationale**: Purpose-built for retro game rendering, efficient texture updates, wgpu backend
-- **Implementation**: 256x240 RGBA buffer with nearest-neighbor scaling
+### Framebuffer Rendering: egui textures
+- **Rationale**: Direct integration with egui, efficient texture updates via OpenGL
+- **Implementation**: 256x240 RGBA buffer with nearest-neighbor scaling via egui::Image
 
-### Audio Backend: cpal
+### Audio Backend: cpal 0.15
 - **Chosen over**: SDL2, rodio
 - **Rationale**: Cross-platform, low-latency, direct device access, no runtime dependencies
-- **Implementation**: Ring buffer (8192 samples) + output queue (2048 samples)
+- **Implementation**: Lock-free ring buffer (8192 samples) with atomic operations
 
 ### Configuration: RON Format
 - **Chosen over**: TOML, JSON
@@ -239,7 +243,7 @@ Cloned emulators for study and pattern reference:
 | Phase | Status | Deliverable |
 |-------|--------|-------------|
 | **1: MVP** | ✅ **COMPLETE** | 80% game compatibility, desktop GUI, 5 mappers, audio |
-| **1.5: Stabilization** | 🔄 **IN PROGRESS** | M7 Accuracy complete, M8-M10 planned |
+| **1.5: Stabilization** | 🔄 **IN PROGRESS** | M7-M8 complete (100% Blargg), M9-M10 planned |
 | **2: Features** | 📋 PLANNED | RetroAchievements, netplay, TAS, Lua, debugger |
 | **3: Expansion** | 📋 PLANNED | Expansion audio, 98% mappers, WebAssembly |
 | **4: Polish** | 📋 PLANNED | Video filters, TAS editor, v1.0 release |
@@ -256,22 +260,24 @@ Cloned emulators for study and pattern reference:
 | **M5: Input** | ✅ v0.4.0 | Controller support |
 | **M6: Desktop GUI** | ✅ v0.5.0 | Iced + wgpu + audio integration |
 | **M7: Accuracy** | ✅ v0.6.0 | CPU/PPU/APU timing, OAM DMA precision, hardware mixer |
-| **M8: GUI Rewrite** | ✅ v0.7.0 | egui + pixels + winit desktop reimplementation |
-| **M9-10: Phase 1.5** | 🔄 PLANNED | Test ROM validation, polish, documentation |
+| **M8: Test ROMs** | ✅ v0.7.0 | 100% Blargg pass rate (90/90 tests) |
+| **GUI Migration** | ✅ v0.7.1 | eframe + egui desktop reimplementation |
+| **M9-10: Phase 1.5** | 🔄 PLANNED | Known issues resolution, polish, documentation |
 | **Phase 2+** | 📋 TBD | Advanced features |
 
-## Recent Accomplishments (v0.7.0 - Dec 27, 2025)
+## Recent Accomplishments (v0.7.1 - Dec 27, 2025)
 
-### Desktop GUI Reimplementation (Milestone 8)
+### Desktop GUI Framework Migration
 
-Complete rewrite of the desktop frontend from Iced+wgpu to egui+pixels+winit:
+Complete rewrite of the desktop frontend from Iced+wgpu to eframe+egui:
 
 #### New Architecture
-- **pixels** crate for efficient NES framebuffer rendering
-- **egui** immediate mode GUI for menus and debug windows
-- **winit** for cross-platform window management
-- **cpal** for low-latency audio output
-- **gilrs** for gamepad support
+- **eframe** 0.29 for window management + OpenGL rendering via glow
+- **egui** 0.29 immediate mode GUI for menus and debug windows
+- **cpal** 0.15 for low-latency audio with lock-free ring buffer
+- **gilrs** 0.11 for gamepad support with hotplug detection
+- **rfd** 0.15 for native file dialogs
+- **ron** 0.8 for configuration persistence
 
 #### Core Features
 - Menu bar with File, Emulation, Video, Audio, Debug, Help menus
@@ -279,6 +285,7 @@ Complete rewrite of the desktop frontend from Iced+wgpu to egui+pixels+winit:
 - Multiple scaling modes: PixelPerfect (8:7 PAR), FitWindow, Integer
 - Keyboard and gamepad input with configurable mappings
 - Configuration persistence (RON format)
+- Accumulator-based frame timing at 60.0988 Hz NTSC
 
 #### Debug Windows (egui)
 - CPU debugger: registers, flags, disassembly
@@ -288,7 +295,8 @@ Complete rewrite of the desktop frontend from Iced+wgpu to egui+pixels+winit:
 
 #### Technical Improvements
 - Simpler event loop with full control over frame timing
-- Efficient zero-copy framebuffer updates
+- OpenGL backend (glow) replaces wgpu shader pipeline
+- Lock-free ring buffer with atomic operations for audio
 - Better separation of emulation and rendering threads
 - Reduced dependencies and faster compile times
 
@@ -453,14 +461,15 @@ pub enum EmulatorError {
 4. **Bus**: Memory mapping, DMA, mapper integration ✅
 5. **Mappers**: NROM (0), MMC1 (1), UxROM (2), CNROM (3), MMC3 (4) ✅
 6. **ROM Loading**: iNES format support ✅
-7. **Desktop GUI**: egui + pixels + winit with audio integration ✅
+7. **Desktop GUI**: eframe + egui with audio integration ✅ (v0.7.1)
 
 ### Phase 1.5: Stabilization 🔄 CURRENT
 
 See `/to-dos/phase-1.5-stabilization/` for detailed milestone plans:
 - **M7**: Accuracy Improvements ✅ **COMPLETE** (v0.6.0)
-- **M8**: GUI Rewrite ✅ **COMPLETE** (v0.7.0) - egui + pixels + winit
-- **M9**: Test ROM Validation (95%+ pass rate target)
+- **M8**: Test ROM Validation ✅ **COMPLETE** (v0.7.0) - 100% Blargg pass rate
+- **GUI Migration**: ✅ **COMPLETE** (v0.7.1) - eframe + egui
+- **M9**: Known Issues Resolution (audio quality, PPU edge cases)
 - **M10**: Documentation and v1.0-alpha preparation
 
 ### Test-Driven Development

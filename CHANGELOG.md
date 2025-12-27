@@ -11,6 +11,69 @@ No unreleased changes.
 
 ---
 
+## [0.7.1] - 2025-12-27 - Desktop GUI Framework Migration
+
+**Status**: Phase 1.5 Stabilization - GUI Reimplementation Complete
+
+This release documents the complete migration of the desktop frontend from Iced+wgpu to eframe+egui, providing a more maintainable and simpler architecture for the GUI layer.
+
+### Changed
+
+- **Desktop Frontend**: Complete GUI framework migration from Iced+wgpu to eframe+egui
+  - Replaced Iced 0.13 with eframe 0.29/egui 0.29 for immediate mode GUI
+  - Simplified audio pipeline using cpal ring buffer (8192 samples)
+  - Added gilrs gamepad support with hotplug detection
+  - RON-based configuration with platform-specific paths via `directories` crate
+  - Native file dialogs via `rfd` crate
+
+### Added
+
+- **Debug Windows**: CPU, PPU, APU, and Memory viewer debug windows using egui
+  - CPU debug: Register display, status flags, cycle counter
+  - PPU debug: Frame info, PPU state overview
+  - APU debug: Audio info, sample buffer status, channel overview
+  - Memory viewer: Hex editor with navigation and ASCII display
+- **Menu System**: File, Emulation, Options, Debug, Help menus
+- **Settings Dialog**: Video, audio, input, and debug configuration
+- **Frame Timing**: Accumulator-based 60.0988 Hz NTSC timing
+- **Documentation**: Updated desktop README with architecture details
+
+### Removed
+
+- Custom wgpu shader pipeline (viewport/, shaders.wgsl)
+- Iced view components (views/)
+- ROM library scanner (to be reimplemented in Phase 2)
+- Unused modules: runahead.rs, metrics.rs, theme.rs, palette.rs
+
+### Technical Details
+
+- **Frame Timing**: Accumulator-based system maintaining 60.0988 Hz NTSC refresh
+- **Audio**: Lock-free ring buffer (8192 samples) with atomic read/write positions
+- **Input**: Keyboard mapping + gamepad support via gilrs with 0.5 threshold for analog
+- **Config**: RON format with directories crate for platform-specific paths
+- **Threading**: Single-threaded model (emulation on UI thread, audio callback separate)
+
+### Fixed
+
+- Resolved wgpu version conflicts (pixels 0.17 vs egui-wgpu 22) by using eframe's bundled solution
+- Clippy warnings for struct_excessive_bools, too_many_lines, etc.
+- Simplified event loop with full control over frame timing
+
+### Dependencies
+
+| Component | Crate | Version | Purpose |
+|-----------|-------|---------|---------|
+| GUI Framework | eframe | 0.29 | Window management, event loop, rendering |
+| Immediate Mode UI | egui | 0.29 | Menus, debug windows, overlays |
+| Audio Output | cpal | 0.15 | Cross-platform low-latency audio |
+| Gamepad Support | gilrs | 0.11 | Cross-platform gamepad input |
+| File Dialogs | rfd | 0.15 | Native open/save dialogs |
+| Configuration | ron | 0.8 | Rusty Object Notation for config |
+| Platform Paths | directories | 5.0 | Platform-specific config directories |
+| CLI Parsing | clap | 4.5 | Command-line argument parsing |
+
+---
+
 ## [0.7.0] - 2025-12-21 - "Perfect Accuracy" (Milestone 8: Test ROM Validation Complete)
 
 **Status**: Phase 1.5 Stabilization - Milestone 8 COMPLETE (100% Blargg Pass Rate)

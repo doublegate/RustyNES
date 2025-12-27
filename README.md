@@ -28,7 +28,7 @@ A next-generation NES emulator written in pure Rust — targeting 100% accuracy,
 
 ---
 
-> **Status:** v0.7.0 Released - Phase 1.5 Stabilization Complete
+> **Status:** v0.7.1 Released - Desktop GUI Framework Migration Complete
 >
 > **Milestones Completed:**
 >
@@ -37,7 +37,7 @@ A next-generation NES emulator written in pure Rust — targeting 100% accuracy,
 > - ✅ **M3: APU** - Hardware-accurate 2A03 APU with 5 audio channels, 48 kHz output, non-linear mixing
 > - ✅ **M4: Mappers** - NROM, MMC1, UxROM, CNROM, MMC3 enabling 77.7% game library compatibility
 > - ✅ **M5: Integration** - Complete rustynes-core layer with Bus, Console, Input, and Save State framework
-> - ✅ **M6: Desktop GUI** - Cross-platform Iced/wgpu application with ROM loading, audio playback, and full input support
+> - ✅ **M6: Desktop GUI** - Cross-platform eframe/egui application with ROM loading, audio playback, and full input support
 > - ✅ **M7: Accuracy** - CPU/PPU/APU timing refinements, OAM DMA 513/514 cycle precision, hardware-accurate mixer
 > - ✅ **M8: Test ROMs** - 100% Pass Rate on all integrated test suites (CPU, PPU, APU, Mappers)
 >
@@ -75,8 +75,8 @@ RustyNES combines **accuracy-first emulation** with **modern features** and the 
 | **GGPO Netplay**      | Frame-perfect rollback netcode via backroll-rs                                            |
 | **TAS Tools**         | FM2 format support with rewind, frame advance, and movie recording                        |
 | **Lua Scripting**     | Modern Lua 5.4 scripting via mlua for automation and bots                                 |
-| **GPU Accelerated**   | Cross-platform wgpu rendering with WGSL shader support                                    |
-| **Modern GUI**        | Iced framework with Elm architecture for type-safe, responsive UI                         |
+| **GPU Accelerated**   | Cross-platform OpenGL rendering via eframe/glow backend                                   |
+| **Modern GUI**        | egui immediate mode GUI for responsive, cross-platform interface                          |
 | **Pure Rust**         | Minimal unsafe code (only in FFI boundaries), leveraging Rust's safety guarantees         |
 
 <p align="center">
@@ -87,22 +87,23 @@ RustyNES combines **accuracy-first emulation** with **modern features** and the 
 
 ## Quick Start
 
-### Recent Release: v0.7.0 (December 21, 2025)
+### Recent Release: v0.7.1 (December 27, 2025)
 
-RustyNES v0.7.0 achieves **100% pass rate** across all Blargg test suites, marking the completion of Milestone 8 (Test ROM Validation):
+RustyNES v0.7.1 completes the desktop GUI framework migration from Iced+wgpu to eframe+egui:
 
-**What's New in v0.7.0:**
+**What's New in v0.7.1:**
 
-- **100% Blargg Test Pass Rate:** All CPU (22/22), PPU (25/25), APU (15/15), and Mapper (28/28) tests passing
-- **Cycle-Accurate CPU State Machine:** Complete `tick()` implementation with dummy read timing for implied addressing modes
-- **CPU Interrupt Handling:** Fixed NMI hijacking during BRK instruction execution (all 5 cpu_interrupts sub-tests pass)
-- **PPU Open Bus Emulation:** Data latch with 1-second decay behavior, correct read-only register handling
-- **CHR-RAM Routing:** Fixed critical design flaw enabling CHR-RAM support for pattern table writes ($0000-$1FFF)
-- **APU Frame Counter:** Immediate clocking behavior when writing to $4017, fixed DMC IRQ/DMA logic
-- **Test Suite:** 500 tests passing with 0 failures, 0 ignored
-- **Documentation:** Comprehensive M8 technical analysis (800+ lines) in MILESTONE_8_TEST_ROM_FIXES.md
+- **GUI Framework Migration:** Complete rewrite from Iced 0.13 to eframe 0.29/egui 0.29
+- **Immediate Mode GUI:** egui provides simpler, more maintainable UI code
+- **Debug Windows:** CPU, PPU, APU, and Memory viewer windows using egui
+- **Simplified Audio:** Lock-free ring buffer (8192 samples) with cpal
+- **Gamepad Support:** gilrs integration with hotplug detection
+- **Configuration:** RON format with platform-specific paths
+- **Native Dialogs:** rfd for cross-platform file dialogs
 
 **Previous Releases:**
+
+- **v0.7.0** - Milestone 8: 100% Blargg test pass rate, cycle-accurate CPU tick(), PPU open bus, CHR-RAM routing
 
 - **v0.6.0** - Milestone 7: APU frame counter precision, hardware-accurate mixer, OAM DMA 513/514 cycles
 - **v0.5.0** - Phase 1 MVP: Desktop GUI (Iced + wgpu), audio playback, ROM loading
@@ -300,7 +301,7 @@ Controls will be fully configurable through the configuration system.
 
 ## Features
 
-### Current Status (v0.6.0 - December 2025)
+### Current Status (v0.7.1 - December 2025)
 
 - [x] **Architecture Design** - Complete modular crate structure with 10 component crates
 - [x] **Documentation** - 40+ comprehensive specification and implementation guides covering CPU, PPU, APU, mappers, testing, and development
@@ -311,7 +312,7 @@ Controls will be fully configurable through the configuration system.
 - [x] **Milestone 3: APU** - Hardware-accurate 2A03 APU complete (136 tests passing)
 - [x] **Milestone 4: Mappers** - Essential mapper implementations (NROM, MMC1, UxROM, CNROM, MMC3) complete (78 tests passing)
 - [x] **Milestone 5: Integration** - rustynes-core layer (CPU + PPU + APU + Bus + Mappers) complete (18 tests passing)
-- [x] **Milestone 6: Desktop GUI** - Cross-platform egui/wgpu application complete
+- [x] **Milestone 6: Desktop GUI** - Cross-platform eframe/egui application complete
 
 ### MVP (Phase 1) - Complete (100%)
 
@@ -349,12 +350,13 @@ Controls will be fully configurable through the configuration system.
   - Cycle-accurate OAM DMA (513-514 cycles)
   - Input system with shift register protocol
   - Save state framework with format specification
-- [x] **Cross-platform GUI** (egui + wgpu) - ✅ M6 Complete (100%)
+- [x] **Cross-platform GUI** (eframe + egui) - ✅ M6 Complete (100%)
   - Desktop application with menu bar and status bar
-  - ROM loading via file dialog and drag-and-drop
-  - Real-time 60 FPS rendering with GPU acceleration
-  - Keyboard input for NES controller
+  - ROM loading via native file dialogs (rfd)
+  - Real-time 60 FPS rendering with OpenGL (glow) backend
+  - Keyboard and gamepad input (gilrs) for NES controller
   - Pause/Resume and Reset controls
+  - Debug windows for CPU, PPU, APU, and Memory
 - [x] **Gamepad support** (keyboard mapping) - ✅ M6 Complete
 - [ ] **85% TASVideos test suite pass rate** - 🔄 In Progress (baseline established)
 
@@ -493,8 +495,8 @@ See [ROADMAP.md](ROADMAP.md) for the complete 24-month development plan and [to-
        │                 │                │
 ┌──────┴──────┐   ┌──────┴──────┐   ┌─────┴─────┐
 │  Desktop ✅  │   │   Web 🔄     │   │ Headless 🔄│
-│  (egui/wgpu)│   │   (WASM)    │   │   (API)    │
-│  • M6 Done  │   │   • Phase 3 │   │  • Phase 2 │
+│ (eframe/egui)│   │   (WASM)    │   │   (API)    │
+│  • M8 Done  │   │   • Phase 3 │   │  • Phase 2 │
 └─────────────┘   └─────────────┘   └────────────┘
 
 Legend: ✅ Complete | 🔄 Planned | Phase 1 MVP: M1-M6 COMPLETE
@@ -850,9 +852,9 @@ If you use RustyNES in academic research, please cite:
   author = {RustyNES Contributors},
   title = {RustyNES: A Next-Generation NES Emulator in Rust},
   year = {2025},
-  version = {0.6.0},
+  version = {0.7.1},
   url = {https://github.com/doublegate/RustyNES},
-  note = {Cycle-accurate Nintendo Entertainment System emulator with CPU/PPU/APU timing refinements, OAM DMA precision, and hardware-accurate audio mixer}
+  note = {Cycle-accurate NES emulator with 100\% Blargg test pass rate, eframe/egui desktop GUI, and hardware-accurate emulation}
 }
 ```
 
