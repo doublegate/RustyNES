@@ -1,0 +1,41 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Run-ahead system stub for latency reduction."><title>rustynes_desktop::runahead - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-ca0dd0c4.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="rustynes_desktop" data-themes="" data-resource-suffix="" data-rustdoc-version="1.92.0 (ded5c06cf 2025-12-08)" data-channel="1.92.0" data-search-js="search-d69d8955.js" data-stringdex-js="stringdex-c3e638e9.js" data-settings-js="settings-c38705f0.js" ><script src="../../static.files/storage-e2aeef58.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../static.files/main-ce535bd0.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-263c88ec.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Module runahead</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../rustynes_desktop/index.html">rustynes_<wbr>desktop</a><span class="version">0.6.0</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module runahead</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#what-is-run-ahead" title="What is Run-Ahead?">What is Run-Ahead?</a></li><li><a href="#how-run-ahead-works-ra1" title="How Run-Ahead Works (RA=1)">How Run-Ahead Works (RA=1)</a></li><li><a href="#mvp-vs-advanced-run-ahead" title="MVP vs Advanced Run-Ahead">MVP vs Advanced Run-Ahead</a></li><li><a href="#phase-2-implementation-tasks" title="Phase 2 Implementation Tasks">Phase 2 Implementation Tasks</a></li></ul><h3><a href="#structs">Module Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li></ul></section><div id="rustdoc-modnav"><h2 class="in-crate"><a href="../index.html">In crate rustynes_<wbr>desktop</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="../index.html">rustynes_desktop</a></div><h1>Module <span>runahead</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/rustynes_desktop/runahead.rs.html#1-128">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Run-ahead system stub for latency reduction.</p>
+<p><strong>IMPLEMENTATION STATUS:</strong> Stub/Placeholder for Phase 2</p>
+<p>This module provides a stub implementation of the run-ahead system.
+Full implementation is deferred to Phase 2 (Milestone 7) when the
+core emulator (rustynes-core) is complete and stable.</p>
+<h3 id="what-is-run-ahead"><a class="doc-anchor" href="#what-is-run-ahead">§</a>What is Run-Ahead?</h3>
+<p>Run-ahead is a latency reduction technique that speculatively executes
+emulation ahead of the current frame using predicted input. This eliminates
+the inherent 1-frame input latency of NES games (16.67ms at 60 FPS).</p>
+<h3 id="how-run-ahead-works-ra1"><a class="doc-anchor" href="#how-run-ahead-works-ra1">§</a>How Run-Ahead Works (RA=1)</h3>
+<ol>
+<li>Save emulator state (savestate)</li>
+<li>Read user input at frame boundary</li>
+<li>Emulate frame N with real input → Display</li>
+<li>Continue to frame N+1 with SAME input (speculative)</li>
+<li>Save output of frame N+1</li>
+<li>Restore state from step 1</li>
+<li>Emulate frame N again with REAL input from frame N+1</li>
+</ol>
+<p>Result: Frame N displays with input from frame N+1
+Latency reduction: 16.67ms (1 frame)</p>
+<h3 id="mvp-vs-advanced-run-ahead"><a class="doc-anchor" href="#mvp-vs-advanced-run-ahead">§</a>MVP vs Advanced Run-Ahead</h3><div><table><thead><tr><th>Feature</th><th>MVP (Stub)</th><th>Phase 2 (Full)</th></tr></thead><tbody>
+<tr><td>Run-Ahead Frames</td><td>N/A (disabled)</td><td>RA=0-4, auto-detect</td></tr>
+<tr><td>CPU Overhead</td><td>0%</td><td>2-5x emulation speed</td></tr>
+<tr><td>Latency Reduction</td><td>0ms</td><td>16-66ms (1-4 frames)</td></tr>
+<tr><td>Dual-Instance Mode</td><td>No</td><td>Yes (separate audio)</td></tr>
+<tr><td>Save State</td><td>N/A</td><td>Fast bincode serialization</td></tr>
+<tr><td>Per-Game Profiles</td><td>No</td><td>Yes (optimal settings DB)</td></tr>
+</tbody></table>
+</div><h3 id="phase-2-implementation-tasks"><a class="doc-anchor" href="#phase-2-implementation-tasks">§</a>Phase 2 Implementation Tasks</h3>
+<ul>
+<li>Fast save state serialization (bincode, &lt;1ms)</li>
+<li>Save state restore (in-memory, no disk I/O)</li>
+<li>Configurable RA frames (0-4)</li>
+<li>Auto-detection of optimal RA per game</li>
+<li>Dual-instance mode for pristine audio</li>
+<li>Frame delay compensation</li>
+<li>JIT input polling</li>
+<li>Per-game profile database</li>
+</ul>
+</div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.RunAheadManager.html" title="struct rustynes_desktop::runahead::RunAheadManager">RunAhead<wbr>Manager</a></dt><dd>Run-ahead manager (stub implementation)</dd></dl></section></div></main></body></html>

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["gamepad","keyboard"],"struct":["ControllerState","InputState"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ConfigError","CrtPreset","Region"],"struct":["AppConfig","ApplicationConfig","AudioConfig","EmulationConfig","InputConfig","KeyboardMapping","OverscanConfig","VideoConfig"]};

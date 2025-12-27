@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["audio_settings","emulation_settings","input_settings","key_mapping_grid","key_mapping_row","tab_button","video_settings","view"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["NES_PALETTE"],"fn":["framebuffer_to_rgb","palette_to_rgb"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ScalingMode"],"fn":["calculate_viewport"]};

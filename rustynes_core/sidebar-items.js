@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["FRAME_HEIGHT","FRAME_WIDTH"],"enum":["MapperError","Mirroring","RomError"],"fn":["create_mapper"],"mod":["bus","console","input","save_state"],"struct":["Rom"],"trait":["Mapper"]};

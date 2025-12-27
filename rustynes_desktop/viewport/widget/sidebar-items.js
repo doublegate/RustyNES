@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["create_image_handle"],"struct":["GameViewport"]};

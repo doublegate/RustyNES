@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["main"],"mod":["app","audio","config","input","library","loading","message","metrics","palette","runahead","theme","view","viewport","views"]};
