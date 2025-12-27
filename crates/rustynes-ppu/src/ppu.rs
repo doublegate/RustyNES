@@ -395,7 +395,15 @@ impl Ppu {
                 }
             }
 
-            // Sprite rendering
+            // Render pixel FIRST, before sprite tick (visible scanlines only)
+            // This ensures we read the current pixel from shift registers before shifting
+            if self.timing.is_visible_scanline() && self.timing.is_visible_dot() {
+                let x = dot - 1;
+                let y = scanline;
+                self.render_pixel(x as usize, y as usize);
+            }
+
+            // Sprite rendering tick AFTER render (shifts registers for next pixel)
             if self.timing.is_visible_dot() {
                 self.sprite_renderer.tick();
             }
@@ -444,28 +452,53 @@ impl Ppu {
                 // (simplified from hardware timing which fetches in steps 4 and 6)
                 if fetch_step == 7 {
                     if let Some(sprite) = self.secondary_oam.get_sprite(sprite_index as u8) {
-                        let sprite_base = self.ctrl.sprite_table_addr();
                         let tile_index = sprite.tile_index;
+                        let sprite_height = self.ctrl.sprite_height();
 
                         // Calculate which row of the sprite to fetch
                         // Note: We're fetching for scanline+1 (next scanline) since
                         // sprite evaluation fills secondary OAM with sprites for next scanline
+                        // OAM Y value is sprite position minus 1 (sprite appears at Y+1)
                         let next_scanline = scanline + 1;
-                        let sprite_y = next_scanline.saturating_sub(sprite.y as u16);
+                        let sprite_top = (sprite.y as u16).wrapping_add(1);
+                        let sprite_y = next_scanline.saturating_sub(sprite_top);
 
-                        // Clamp sprite_y to valid range (0-7 for 8x8 sprites)
-                        // This prevents overflow when calculating flipped row
-                        let sprite_y = sprite_y.min(7);
+                        // Clamp sprite_y to valid range based on sprite height
+                        let sprite_y = sprite_y.min((sprite_height - 1) as u16);
 
-                        // Handle vertical flip
+                        // Handle vertical flip (across full sprite height)
                         let row = if sprite.attributes.flip_vertical() {
-                            7 - sprite_y
+                            (sprite_height as u16 - 1) - sprite_y
                         } else {
                             sprite_y
                         };
 
-                        // Fetch pattern table low byte
-                        let pattern_addr_low = sprite_base + u16::from(tile_index) * 16 + row;
+                        // Calculate pattern address based on sprite size
+                        let pattern_addr_low = if sprite_height == 16 {
+                            // 8x16 sprite mode: tile index format is TTTTTTTN
+                            // N (bit 0): pattern table select (0=$0000, 1=$1000)
+                            // T (bits 1-7): top tile number (always even)
+                            let pattern_table = if tile_index & 0x01 != 0 {
+                                0x1000
+                            } else {
+                                0x0000
+                            };
+                            let top_tile = tile_index & 0xFE; // Clear bit 0 to get top tile
+
+                            // Determine which tile (top or bottom) based on row
+                            let (tile, tile_row) = if row < 8 {
+                                (top_tile, row)
+                            } else {
+                                (top_tile + 1, row - 8)
+                            };
+
+                            pattern_table + u16::from(tile) * 16 + tile_row
+                        } else {
+                            // 8x8 sprite mode: use sprite pattern table from PPUCTRL
+                            let sprite_base = self.ctrl.sprite_table_addr();
+                            sprite_base + u16::from(tile_index) * 16 + row
+                        };
+
                         let mut pattern_low = read_chr(pattern_addr_low);
 
                         // Fetch pattern table high byte
@@ -486,13 +519,6 @@ impl Ppu {
                         );
                     }
                 }
-            }
-
-            // Render pixel (visible scanlines only)
-            if self.timing.is_visible_scanline() && self.timing.is_visible_dot() {
-                let x = dot - 1;
-                let y = scanline;
-                self.render_pixel(x as usize, y as usize);
             }
         }
 
@@ -534,8 +560,14 @@ impl Ppu {
             }
         }
 
-        // Sprite 0 hit detection
-        if sprite_zero && bg_pixel != 0 && sprite_pixel != 0 {
+        // Sprite 0 hit detection with hardware edge cases:
+        // 1. Both sprite and background pixels must be opaque
+        // 2. Hit cannot occur at x=255 (rightmost pixel)
+        // 3. Hit cannot occur at x<8 if left-edge clipping is enabled for EITHER bg or sprites
+        let left_clip_enabled = !self.mask.show_bg_left() || !self.mask.show_sprites_left();
+        let in_left_clip_zone = x < 8 && left_clip_enabled;
+
+        if sprite_zero && bg_pixel != 0 && sprite_pixel != 0 && x != 255 && !in_left_clip_zone {
             self.status.set_sprite_zero_hit();
         }
 
