@@ -149,13 +149,13 @@ cargo build --release
 
 **Q: What are the prerequisites?**
 
-A: Rust 1.75+ and SDL2 development libraries. See [docs/dev/BUILD.md](docs/dev/BUILD.md) for platform-specific instructions.
+A: Rust 1.86+ and SDL2 development libraries. See [docs/dev/BUILD.md](docs/dev/BUILD.md) for platform-specific instructions.
 
 **Q: Build is failing, what do I do?**
 
 A:
 
-1. Ensure you have Rust 1.75 or newer: `rustc --version`
+1. Ensure you have Rust 1.86 or newer: `rustc --version`
 2. Install SDL2 development libraries (see [BUILD.md](docs/dev/BUILD.md))
 3. Try a clean build: `cargo clean && cargo build`
 4. Check [GitHub Issues](https://github.com/doublegate/RustyNES/issues) for known build problems

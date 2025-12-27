@@ -1536,7 +1536,7 @@ This release provides the core CPU and PPU crates as libraries. No desktop GUI i
 - **Zero unsafe code** throughout CPU and PPU implementations
 - Comprehensive rustdoc documentation for all public APIs
 - 100% `clippy::pedantic` compliance
-- Rust 2021 edition with MSRV 1.75+
+- Rust 2021 edition with MSRV 1.86+
 - Extensive use of type safety (newtype pattern for registers and addresses)
 
 ### Installation

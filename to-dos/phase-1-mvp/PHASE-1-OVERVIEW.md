@@ -224,7 +224,7 @@ M1: CPU (DONE) → M2: PPU → M5: Integration → M6: GUI → MVP Release
 
 ### External Dependencies
 
-- **Rust Toolchain:** 1.75+ (async traits in std)
+- **Rust Toolchain:** 1.86+ (required by criterion 0.8)
 - **Libraries:**
   - bitflags 2.x (CPU status flags)
   - egui 0.24+ (GUI framework)
