@@ -10,28 +10,28 @@ Systematically pass the Blargg PPU test suite (49 tests) to validate VBlank/NMI 
 - [ ] Validate VBlank/NMI timing precision
 - [ ] Handle sprite 0 hit edge cases
 - [ ] Verify palette RAM mirroring
-- [ ] Test PPU open bus behavior
+- [x] Test PPU open bus behavior (Passed)
 - [ ] Ensure scrolling edge cases work
 
 ## Tasks
 
 ### Task 1: VBlank/NMI Tests (10 tests)
 - [ ] Run ppu_vbl_nmi/ppu_vbl_nmi.nes (comprehensive VBL/NMI test)
-- [ ] Test 01-vbl_basics.nes (VBlank flag basics) - **Already passing**
+- [x] Test 01-vbl_basics.nes (VBlank flag basics)
 - [ ] Test 02-vbl_set_time.nes (VBlank flag set timing ±2 cycle)
-- [ ] Test 03-vbl_clear_time.nes (VBlank flag clear timing exact)
+- [x] Test 03-vbl_clear_time.nes (VBlank flag clear timing exact)
 - [ ] Test 04-nmi_control.nes (NMI enable/disable control)
 - [ ] Test 05-nmi_timing.nes (NMI timing precision)
 - [ ] Test 06-suppression.nes (NMI suppression edge cases)
-- [ ] Test 07-nmi_on_timing.nes (NMI enable timing)
+- [x] Test 07-nmi_on_timing.nes (NMI enable timing)
 - [ ] Test 08-nmi_off_timing.nes (NMI disable timing)
-- [ ] Test 09-even_odd_frames.nes (Frame timing odd/even)
+- [x] Test 09-even_odd_frames.nes (Frame timing odd/even)
 - [ ] Test 10-even_odd_timing.nes (Odd frame skip timing)
 
 ### Task 2: Sprite 0 Hit Tests (11 tests)
 - [ ] Run ppu_sprite_hit/ppu_sprite_hit.nes (comprehensive sprite 0 test)
-- [ ] Test 01-basics.nes (Sprite 0 hit basics) - **Already passing**
-- [ ] Test 02-alignment.nes (Sprite 0 hit alignment) - **Already passing**
+- [x] Test 01-basics.nes (Sprite 0 hit basics)
+- [ ] Test 02-alignment.nes (Sprite 0 hit alignment)
 - [ ] Test 03-corners.nes (Sprite 0 hit corners)
 - [ ] Test 04-flip.nes (Sprite 0 hit flip behavior)
 - [ ] Test 05-left_clip.nes (Sprite 0 hit left clipping)
@@ -50,11 +50,11 @@ Systematically pass the Blargg PPU test suite (49 tests) to validate VBlank/NMI 
 - [ ] Test palette read edge cases
 
 ### Task 4: Open Bus Tests (3 tests)
-- [ ] Run ppu_open_bus/ppu_open_bus.nes (PPU open bus behavior)
-- [ ] Test $2000-$2007 open bus behavior
-- [ ] Test $2002 VBlank flag read (clear after read)
-- [ ] Verify $2004 OAM read behavior
-- [ ] Test $2007 VRAM read buffer behavior
+- [x] Run ppu_open_bus/ppu_open_bus.nes (PPU open bus behavior) - **Passed**
+- [x] Test $2000-$2007 open bus behavior
+- [x] Test $2002 VBlank flag read (clear after read)
+- [x] Verify $2004 OAM read behavior
+- [x] Test $2007 VRAM read buffer behavior
 
 ### Task 5: Rendering Edge Cases (20 tests)
 - [ ] Test sprite overflow flag behavior
@@ -70,29 +70,29 @@ Systematically pass the Blargg PPU test suite (49 tests) to validate VBlank/NMI 
 
 | ROM | Status | Notes |
 |-----|--------|-------|
-| ppu_vbl_nmi/01-vbl_basics.nes | ✅ Pass | Already passing |
-| ppu_vbl_nmi/02-vbl_set_time.nes | [ ] Pending | ±2 cycle timing |
-| ppu_vbl_nmi/03-vbl_clear_time.nes | [ ] Pending | Exact timing |
-| ppu_vbl_nmi/04-nmi_control.nes | [ ] Pending | NMI control |
-| ppu_vbl_nmi/05-nmi_timing.nes | [ ] Pending | NMI timing |
-| ppu_vbl_nmi/06-suppression.nes | [ ] Pending | NMI suppression |
-| ppu_vbl_nmi/07-nmi_on_timing.nes | [ ] Pending | NMI enable timing |
-| ppu_vbl_nmi/08-nmi_off_timing.nes | [ ] Pending | NMI disable timing |
-| ppu_vbl_nmi/09-even_odd_frames.nes | [ ] Pending | Frame timing |
-| ppu_vbl_nmi/10-even_odd_timing.nes | [ ] Pending | Odd frame skip |
-| ppu_sprite_hit/01-basics.nes | ✅ Pass | Already passing |
-| ppu_sprite_hit/02-alignment.nes | ✅ Pass | Already passing |
-| ppu_sprite_hit/03-corners.nes | [ ] Pending | Corner cases |
-| ppu_sprite_hit/04-flip.nes | [ ] Pending | Flip behavior |
-| ppu_sprite_hit/05-left_clip.nes | [ ] Pending | Left clipping |
-| ppu_sprite_hit/06-right_edge.nes | [ ] Pending | Right edge |
-| ppu_sprite_hit/07-screen_bottom.nes | [ ] Pending | Screen bottom |
-| ppu_sprite_hit/08-double_height.nes | [ ] Pending | 8x16 sprites |
-| ppu_sprite_hit/09-timing.nes | [ ] Pending | Timing precision |
-| ppu_sprite_hit/10-timing_order.nes | [ ] Pending | Timing order |
-| ppu_sprite_hit/11-edge_timing.nes | [ ] Pending | Edge timing |
-| ppu_palette_ram/ppu_palette_ram.nes | [ ] Pending | Palette mirroring |
-| ppu_open_bus/ppu_open_bus.nes | [ ] Pending | Open bus behavior |
+| ppu_vbl_nmi/01-vbl_basics.nes | ✅ Pass | |
+| ppu_vbl_nmi/02-vbl_set_time.nes | ❌ Fail | T+ 1 200 ... V-4103C34002-vbl_set_timeFailed |
+| ppu_vbl_nmi/03-vbl_clear_time.nes | ✅ Pass | |
+| ppu_vbl_nmi/04-nmi_control.nes | ❌ Fail | Shouldn't occur again if writing $80 |
+| ppu_vbl_nmi/05-nmi_timing.nes | ❌ Fail | 00 201 ... 0D688789E05-nmi_timingFailed |
+| ppu_vbl_nmi/06-suppression.nes | ❌ Fail | NMI suppression edge cases |
+| ppu_vbl_nmi/07-nmi_on_timing.nes | ✅ Pass | |
+| ppu_vbl_nmi/08-nmi_off_timing.nes | ❌ Fail | NMI disable timing |
+| ppu_vbl_nmi/09-even_odd_frames.nes | ✅ Pass | |
+| ppu_vbl_nmi/10-even_odd_timing.nes | ❌ Fail | Odd frame skip timing |
+| ppu_sprite_hit/01-basics.nes | ✅ Pass | |
+| ppu_sprite_hit/02-alignment.nes | ❌ Fail | Sprite should hit top of bg tile |
+| ppu_sprite_hit/03-corners.nes | ❌ Fail | Corners edge cases |
+| ppu_sprite_hit/04-flip.nes | ❌ Fail | Flip behavior |
+| ppu_sprite_hit/05-left_clip.nes | ❌ Fail | Left clipping |
+| ppu_sprite_hit/06-right_edge.nes | ❌ Fail | Right edge |
+| ppu_sprite_hit/07-screen_bottom.nes | ❌ Fail | Screen bottom |
+| ppu_sprite_hit/08-double_height.nes | ❌ Fail | 8x16 sprites |
+| ppu_sprite_hit/09-timing.nes | ❌ Fail | 0xFF |
+| ppu_sprite_hit/10-timing_order.nes | ❌ Fail | 0xFF |
+| ppu_sprite_hit/11-edge_timing.nes | ❌ Fail | 0xFF |
+| ppu_palette_ram/ppu_palette_ram.nes | ❌ Fail | 0xFF |
+| ppu_open_bus/ppu_open_bus.nes | ✅ Pass | Open bus decay & latch fully implemented |
 
 **Additional PPU Tests (20+ ROMs):**
 - ppu_sprite_overflow/ (sprite overflow flag)
@@ -107,7 +107,7 @@ Systematically pass the Blargg PPU test suite (49 tests) to validate VBlank/NMI 
 - [ ] NMI timing precise (exact cycle)
 - [ ] Sprite 0 hit edge cases handled (9/11 passing)
 - [ ] Palette RAM mirroring correct
-- [ ] Open bus behavior verified
+- [x] Open bus behavior verified (Passed)
 - [ ] Zero regressions from v0.6.0 baseline
 - [ ] Scrolling edge cases working
 
