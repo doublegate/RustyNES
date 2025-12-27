@@ -106,37 +106,31 @@ impl FrameCounter {
     /// ```text
     /// Step   Cycles  Action
     /// ----   ------  ------
-    /// 1      7457    Quarter frame (envelopes + linear counter)
-    /// 2      14913   Half frame (envelopes, linear, length, sweep)
-    /// 3      22372   Quarter frame (was 22371, corrected per NESdev research)
-    /// 4      29829   Half frame + set IRQ flag (if enabled)
-    ///        29830   Set IRQ flag
-    ///        29831   Set IRQ flag, reset to 0
+    /// 1      7458    Quarter frame (envelopes + linear counter)
+    /// 2      14914   Half frame (envelopes, linear, length, sweep)
+    /// 3      22373   Quarter frame
+    /// 4      29830   Half frame + set IRQ flag (if enabled)
+    ///        29831   Set IRQ flag
+    ///        29832   Set IRQ flag, reset to 0
     /// ```
-    ///
-    /// # Timing Note
-    ///
-    /// APU frame counter ticks at 7456.5, 14912.5, 22371.5, 29829.5 APU cycles
-    /// (which are half CPU cycles), so CPU sees them at 7457, 14913, 22372, 29830.
-    /// The sequence was refined based on hardware testing documented on `NESdev`.
     fn clock_4step(&mut self) -> FrameAction {
         match self.cycle_count {
-            // Quarter frames at 7457 and 22372 (corrected from 22371)
-            7457 | 22372 => FrameAction::QuarterFrame,
-            14913 => FrameAction::HalfFrame,
-            29829 => {
+            // Quarter frames at 7458 and 22373
+            7458 | 22373 => FrameAction::QuarterFrame,
+            14914 => FrameAction::HalfFrame,
+            29830 => {
                 if !self.irq_inhibit {
                     self.irq_flag = true;
                 }
                 FrameAction::HalfFrame
             }
-            29830 => {
+            29831 => {
                 if !self.irq_inhibit {
                     self.irq_flag = true;
                 }
                 FrameAction::None
             }
-            29831 => {
+            29832 => {
                 if !self.irq_inhibit {
                     self.irq_flag = true;
                 }
@@ -154,17 +148,17 @@ impl FrameCounter {
     /// ```text
     /// Step   Cycles  Action
     /// ----   ------  ------
-    /// 1      7457    Quarter frame
-    /// 2      14913   Half frame
-    /// 3      22371   Quarter frame
-    /// 4      29829   (nothing)
-    /// 5      37281   Half frame, reset to 0
+    /// 1      7458    Quarter frame
+    /// 2      14914   Half frame
+    /// 3      22372   Quarter frame
+    /// 4      29830   (nothing)
+    /// 5      37282   Half frame, reset to 0
     /// ```
     fn clock_5step(&mut self) -> FrameAction {
         match self.cycle_count {
-            7457 | 22371 => FrameAction::QuarterFrame,
-            14913 => FrameAction::HalfFrame,
-            37281 => {
+            7458 | 22372 => FrameAction::QuarterFrame,
+            14914 => FrameAction::HalfFrame,
+            37282 => {
                 self.cycle_count = 0;
                 FrameAction::HalfFrame
             }
@@ -199,25 +193,25 @@ mod tests {
         let mut fc = FrameCounter::new();
         assert_eq!(fc.mode, 0);
 
-        // Clock to first quarter frame (cycle 7457)
-        for _ in 0..7456 {
+        // Clock to first quarter frame (cycle 7458)
+        for _ in 0..7457 {
             assert_eq!(fc.clock(), FrameAction::None);
         }
         assert_eq!(fc.clock(), FrameAction::QuarterFrame);
 
-        // Clock to first half frame (cycle 14913)
+        // Clock to first half frame (cycle 14914)
         for _ in 0..7455 {
             assert_eq!(fc.clock(), FrameAction::None);
         }
         assert_eq!(fc.clock(), FrameAction::HalfFrame);
 
-        // Clock to second quarter frame (cycle 22372, corrected from 22371)
+        // Clock to second quarter frame (cycle 22373)
         for _ in 0..7458 {
             assert_eq!(fc.clock(), FrameAction::None);
         }
         assert_eq!(fc.clock(), FrameAction::QuarterFrame);
 
-        // Clock to second half frame with IRQ (cycle 29829)
+        // Clock to second half frame with IRQ (cycle 29830)
         for _ in 0..7456 {
             assert_eq!(fc.clock(), FrameAction::None);
         }
@@ -225,7 +219,7 @@ mod tests {
         assert_eq!(fc.clock(), FrameAction::HalfFrame);
         assert!(fc.irq_flag);
 
-        // Additional IRQ flag sets (cycles 29830, 29831)
+        // Additional IRQ flag sets (cycles 29831, 29832)
         assert_eq!(fc.clock(), FrameAction::None);
         assert!(fc.irq_flag);
         assert_eq!(fc.clock(), FrameAction::None);
@@ -243,31 +237,31 @@ mod tests {
         assert_eq!(fc.mode, 1);
         assert_eq!(fc.cycle_count, 0);
 
-        // Clock to first quarter frame
-        for _ in 0..7456 {
+        // Clock to first quarter frame (7458)
+        for _ in 0..7457 {
             assert_eq!(fc.clock(), FrameAction::None);
         }
         assert_eq!(fc.clock(), FrameAction::QuarterFrame);
 
-        // Clock to first half frame
+        // Clock to first half frame (14914)
         for _ in 0..7455 {
             assert_eq!(fc.clock(), FrameAction::None);
         }
         assert_eq!(fc.clock(), FrameAction::HalfFrame);
 
-        // Clock to second quarter frame
+        // Clock to second quarter frame (22372)
         for _ in 0..7457 {
             assert_eq!(fc.clock(), FrameAction::None);
         }
         assert_eq!(fc.clock(), FrameAction::QuarterFrame);
 
-        // Clock to cycle 29829 (no action in 5-step mode)
+        // Clock to cycle 29830 (no action in 5-step mode)
         for _ in 0..7457 {
             assert_eq!(fc.clock(), FrameAction::None);
         }
         assert_eq!(fc.clock(), FrameAction::None);
 
-        // Clock to final half frame
+        // Clock to final half frame (37282)
         for _ in 0..7451 {
             assert_eq!(fc.clock(), FrameAction::None);
         }
