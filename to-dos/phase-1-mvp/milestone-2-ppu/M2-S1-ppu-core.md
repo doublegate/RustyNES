@@ -308,7 +308,7 @@ Create unit tests for register behavior and timing.
 
 **Required:**
 
-- Rust 1.75+ toolchain
+- Rust 1.86+ toolchain
 - bitflags = "2.4" crate
 - log = "0.4" crate (optional, for debugging)
 

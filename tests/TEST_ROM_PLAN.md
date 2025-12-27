@@ -712,7 +712,7 @@ For each test ROM, document:
 
 ### Software Requirements
 
-- **Rust**: 1.75+ (MSRV)
+- **Rust**: 1.86+ (MSRV)
 - **Cargo**: Latest stable
 - **Test Framework**: Built-in Rust test harness
 - **CI/CD**: GitHub Actions (Linux, macOS, Windows)

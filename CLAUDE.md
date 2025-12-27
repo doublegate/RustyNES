@@ -385,7 +385,7 @@ pub trait Mapper: Send {
 ### Rust Conventions
 
 - **Edition**: Rust 2021
-- **MSRV**: 1.75+ (for async traits in std)
+- **MSRV**: 1.86+ (required by criterion 0.8)
 - **Format**: `rustfmt` with default settings
 - **Lints**: `clippy::pedantic` + `-D warnings`
 - **Unsafe**: Only permitted in FFI (rcheevos) and platform-specific audio; must be documented

@@ -17,7 +17,7 @@
 
 ### Required
 
-- **Rust** 1.70+ (stable)
+- **Rust** 1.86+ (stable)
 - **Cargo** (included with Rust)
 
 ### Optional (Platform-Dependent)
@@ -41,7 +41,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ### Verify Installation
 
 ```bash
-rustc --version  # Should be 1.70.0 or higher
+rustc --version  # Should be 1.86.0 or higher
 cargo --version
 ```
 

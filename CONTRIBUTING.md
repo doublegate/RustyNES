@@ -67,7 +67,7 @@ Areas where we especially need help:
 
 ### Prerequisites
 
-- **Rust 1.75 or newer** ([install via rustup](https://rustup.rs))
+- **Rust 1.86 or newer** ([install via rustup](https://rustup.rs))
 - **SDL2 development libraries**
 - **Git**
 
@@ -143,7 +143,7 @@ cargo doc --workspace --no-deps --open
 - **Format**: Use `cargo fmt` (rustfmt default settings)
 - **Lint**: Pass `cargo clippy -- -D warnings` without warnings
 - **Edition**: Rust 2021
-- **MSRV**: Minimum Supported Rust Version is 1.75
+- **MSRV**: Minimum Supported Rust Version is 1.86
 
 ### Code Organization
 
