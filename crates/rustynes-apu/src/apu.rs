@@ -159,10 +159,40 @@ impl Apu {
 
             // Frame counter
             0x4017 => {
-                self.frame_counter.write_control(value);
+                let action = self.frame_counter.write_control(value);
+                self.process_frame_action(action);
             }
 
             _ => {}
+        }
+    }
+
+    /// Process a frame counter action
+    fn process_frame_action(&mut self, action: FrameAction) {
+        match action {
+            FrameAction::QuarterFrame => {
+                // Clock envelopes and linear counter
+                self.pulse1.clock_envelope();
+                self.pulse2.clock_envelope();
+                self.triangle.clock_linear_counter();
+                self.noise.clock_envelope();
+            }
+            FrameAction::HalfFrame => {
+                // Clock envelopes, linear counter, length counters, and sweep units
+                self.pulse1.clock_envelope();
+                self.pulse2.clock_envelope();
+                self.triangle.clock_linear_counter();
+                self.noise.clock_envelope();
+
+                self.pulse1.clock_length_counter();
+                self.pulse2.clock_length_counter();
+                self.triangle.clock_length_counter();
+                self.noise.clock_length_counter();
+
+                self.pulse1.clock_sweep();
+                self.pulse2.clock_sweep();
+            }
+            FrameAction::None => {}
         }
     }
 
@@ -217,9 +247,9 @@ impl Apu {
             status |= 0x80;
         }
 
-        // Reading $4015 clears the frame IRQ flag and DMC IRQ flag
+        // Reading $4015 clears the frame IRQ flag
+        // Note: It does NOT clear the DMC IRQ flag
         self.frame_counter.clear_irq();
-        self.dmc.clear_irq();
 
         status
     }
@@ -244,12 +274,16 @@ impl Apu {
     /// - Enables/disables channels
     /// - If a channel is disabled, its length counter is set to 0
     /// - If DMC is enabled with 0 bytes remaining, restarts the sample
+    /// - Clears the DMC IRQ flag
     fn write_status(&mut self, value: u8) {
         self.pulse1.set_enabled((value & 0x01) != 0);
         self.pulse2.set_enabled((value & 0x02) != 0);
         self.triangle.set_enabled((value & 0x04) != 0);
         self.noise.set_enabled((value & 0x08) != 0);
         self.dmc.set_enabled((value & 0x10) != 0);
+
+        // Writing to $4015 clears the DMC IRQ flag
+        self.dmc.clear_irq();
     }
 
     /// Steps the APU by one CPU cycle
@@ -267,11 +301,16 @@ impl Apu {
     pub fn step(&mut self) -> FrameAction {
         self.cycles += 1;
 
-        // Clock channel timers every cycle
-        self.pulse1.clock_timer();
-        self.pulse2.clock_timer();
+        // Clock channel timers
+        // Pulse and Noise timers are clocked every other CPU cycle
+        if self.cycles % 2 == 0 {
+            self.pulse1.clock_timer();
+            self.pulse2.clock_timer();
+            self.noise.clock_timer();
+        }
+
+        // Triangle and DMC timers are clocked every CPU cycle
         self.triangle.clock_timer();
-        self.noise.clock_timer();
 
         // Clock DMC timer (may perform DMA)
         // For now, provide a dummy memory reader if none is set
@@ -288,32 +327,7 @@ impl Apu {
 
         // Clock frame counter and handle frame actions
         let action = self.frame_counter.clock();
-
-        match action {
-            FrameAction::QuarterFrame => {
-                // Clock envelopes and linear counter
-                self.pulse1.clock_envelope();
-                self.pulse2.clock_envelope();
-                self.triangle.clock_linear_counter();
-                self.noise.clock_envelope();
-            }
-            FrameAction::HalfFrame => {
-                // Clock envelopes, linear counter, length counters, and sweep units
-                self.pulse1.clock_envelope();
-                self.pulse2.clock_envelope();
-                self.triangle.clock_linear_counter();
-                self.noise.clock_envelope();
-
-                self.pulse1.clock_length_counter();
-                self.pulse2.clock_length_counter();
-                self.triangle.clock_length_counter();
-                self.noise.clock_length_counter();
-
-                self.pulse1.clock_sweep();
-                self.pulse2.clock_sweep();
-            }
-            FrameAction::None => {}
-        }
+        self.process_frame_action(action);
 
         // Mix channel outputs and resample
         let mixed = self.mixer.mix(
@@ -490,15 +504,15 @@ mod tests {
         // Initially no IRQ pending
         assert!(!apu.irq_pending());
 
-        // Clock for 29828 cycles - no IRQ yet
-        for _ in 0..29828 {
+        // Clock for 29829 cycles - no IRQ yet (delayed by 1 cycle in fix)
+        for _ in 0..29829 {
             apu.step();
         }
         assert!(!apu.irq_pending());
 
-        // Clock one more time to cycle 29829 - IRQ should fire
+        // Clock one more time to cycle 29830 - IRQ should fire
         apu.step();
-        assert!(apu.irq_pending(), "IRQ should be pending at cycle 29829");
+        assert!(apu.irq_pending(), "IRQ should be pending at cycle 29830");
 
         // Verify $4015 shows bit 6 set
         let status = apu.read_register(0x4015);
