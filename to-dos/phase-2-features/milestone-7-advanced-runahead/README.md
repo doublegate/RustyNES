@@ -4,7 +4,8 @@
 **Duration:** Months 7-8 (2 months)
 **Status:** Planned
 **Target:** August 2026
-**Prerequisites:** M6 MVP Complete (Basic RA=1 implemented)
+**Prerequisites:** Phase 1.5 Complete (eframe 0.33 + egui 0.33 frontend)
+**Last Updated:** 2025-12-28
 
 ---
 
@@ -66,7 +67,7 @@ Milestone 7 implements the **Advanced Run-Ahead System** building on the basic R
 
 ```
 ┌─────────────────────────────────────────────┐
-│         Main Application (Iced)             │
+│    Main Application (eframe + egui)         │
 │  ┌─────────────────┐    ┌─────────────────┐ │
 │  │ Display Instance│◄───│ Audio Instance  │ │
 │  │                 │    │                 │ │
@@ -239,7 +240,7 @@ fn calculate_optimal_frame_delay(monitor_latency_ms: f32) -> u8 {
 
 ### Prerequisites
 
-- **M6 MVP Complete:** Basic RA=1 implemented
+- **Phase 1.5 Complete:** eframe 0.33 + egui 0.33 desktop frontend
 - **Save State System:** Fast serialization (<1ms)
 - **Performance Baseline:** NES achieves 300+ FPS
 
@@ -258,8 +259,8 @@ parking_lot = "0.12"       # Fast locks for dual-instance sync
 
 ## Related Documentation
 
-- [M6-S5-polish-runahead.md](../../phase-1-mvp/milestone-6-gui/M6-S5-polish-runahead.md) - Basic RA=1 implementation
-- [M6-REORGANIZATION-SUMMARY.md](../../phase-1-mvp/milestone-6-gui/M6-REORGANIZATION-SUMMARY.md) - Feature rephasing details
+- [DESKTOP-FRONTEND-PHASE2.md](../DESKTOP-FRONTEND-PHASE2.md) - Phase 2 desktop frontend enhancements
+- [PHASE-2-OVERVIEW.md](../PHASE-2-OVERVIEW.md) - Phase 2 overview with egui 0.33 technology stack
 - M17 Optimization (Phase 4) - Full run-ahead optimization with multi-threading
 
 ---
@@ -298,8 +299,9 @@ Advanced optimizations deferred to M17:
 
 ---
 
-**Milestone Status:** ⏳ PLANNED
-**Blocked By:** M6 MVP Complete
+**Last Updated:** 2025-12-28
+**Milestone Status:** PLANNED
+**Prerequisites:** Phase 1.5 Complete (eframe 0.33 + egui 0.33 frontend)
 **Next Milestone:** M8 (GGPO Netplay)
 
 ---

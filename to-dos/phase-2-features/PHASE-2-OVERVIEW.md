@@ -4,12 +4,14 @@
 **Duration:** Months 7-12 (July 2026 - December 2026)
 **Status:** Planned
 **Goal:** Feature parity with modern emulators
+**Last Updated:** 2025-12-28
 
 ---
 
 ## Table of Contents
 
 - [Overview](#overview)
+- [Technology Foundation](#technology-foundation-v071)
 - [Success Criteria](#success-criteria)
 - [Milestones](#milestones)
 - [Dependencies](#dependencies)
@@ -21,6 +23,26 @@
 
 Phase 2 transforms RustyNES from a functional emulator into a feature-rich platform. This phase adds advanced capabilities that distinguish modern emulators: online multiplayer, achievement tracking, scripting support, and comprehensive debugging tools.
 
+### Technology Foundation (v0.7.1+)
+
+Phase 2 builds upon the **eframe 0.33 + egui 0.33** desktop frontend established in v0.7.1:
+
+| Component | Library | Version | Purpose |
+|-----------|---------|---------|---------|
+| GUI Framework | eframe/egui | 0.33 | Immediate mode GUI |
+| Window/Render | eframe (glow) | 0.33 | OpenGL rendering backend |
+| Audio | cpal | 0.16 | Low-latency audio with buffer underrun reporting |
+| Input | gilrs | 0.11 | Gamepad support with hotplug |
+| File Dialogs | rfd | 0.15 | Native file picker |
+| Configuration | ron + serde | 0.12 | Settings persistence |
+| Rust Edition | 2024 | MSRV 1.88 | Latest Rust features |
+
+**Key Architectural Notes:**
+- **Immediate Mode GUI**: egui's immediate mode paradigm simplifies debug windows and real-time displays
+- **OpenGL Rendering**: glow backend via eframe (not wgpu) - simpler than shader pipeline
+- **Lock-Free Audio**: cpal 0.16 with ring buffer and underrun detection
+- **Native Dialogs**: Platform-native file dialogs via rfd integration
+
 ### Core Objectives
 
 1. **RetroAchievements Integration**
@@ -28,24 +50,28 @@ Phase 2 transforms RustyNES from a functional emulator into a feature-rich platf
    - Achievement detection and unlock system
    - Leaderboard support
    - Rich presence
+   - **egui UI**: Achievement toasts via `egui::Window`, list panels, progress indicators
 
 2. **GGPO Rollback Netplay**
    - backroll-rs (Rust GGPO port)
    - Minimal input lag
    - Robust synchronization
    - NAT traversal
+   - **egui UI**: Lobby dialogs, connection status panels, spectator UI
 
 3. **Lua 5.4 Scripting**
    - Runtime scripting API
    - Memory manipulation
    - Frame callbacks
    - GUI overlays
+   - **egui Integration**: Script console, output log, overlay drawing layer
 
 4. **Integrated Debugger**
    - CPU debugging (breakpoints, stepping)
    - PPU/APU visualization
    - Memory editing
    - Trace logging
+   - **egui Native**: All debug windows use native egui (not overlay on separate framework)
 
 ---
 
@@ -210,11 +236,26 @@ Phase 1 Complete → M7 (Achievements) → Phase 2 Complete
 
 ### External Dependencies
 
-- **Libraries:**
+- **Core Libraries (v0.7.1 baseline):**
+  - eframe 0.33 + egui 0.33 (immediate mode GUI framework)
+  - cpal 0.16 (audio with buffer underrun reporting)
+  - gilrs 0.11 (gamepad with hotplug detection)
+  - ron 0.12 + serde (configuration persistence)
+  - rfd 0.15 (native file dialogs)
+
+- **Phase 2 Libraries:**
   - rcheevos (FFI bindings for RetroAchievements)
   - backroll-rs (GGPO rollback implementation)
-  - mlua (Lua 5.4 bindings)
-  - Additional egui panels for debugging
+  - mlua 0.10+ (Lua 5.4 bindings)
+
+- **egui 0.33 Features for Phase 2:**
+  - `egui::Window` for debug/dialog windows
+  - `egui::Grid` for memory hex viewer
+  - `egui::ScrollArea` for disassembly/trace logs
+  - `egui::plot` for APU waveform visualization
+  - `egui::TextEdit` for Lua console input
+  - `egui::Modal` (0.33+) for confirmation dialogs
+  - `egui_extras::TableBuilder` for structured data display
 
 ---
 
@@ -339,6 +380,36 @@ Jul 2026  Aug 2026  Sep 2026  Oct 2026  Nov 2026  Dec 2026
 
 ---
 
-**Last Updated:** 2025-12-19
+## Technology Migration Notes
+
+### GUI Framework Migration (v0.7.1)
+
+Phase 2 documentation has been updated to reflect the GUI framework migration completed in v0.7.1:
+
+| Previous (v0.5.0-v0.6.0) | Current (v0.7.1+) |
+|--------------------------|-------------------|
+| Iced 0.13 (Elm architecture) | eframe 0.33 + egui 0.33 (immediate mode) |
+| wgpu shader pipeline | OpenGL via glow backend |
+| pixels crate framebuffer | egui textures for framebuffer |
+| Retained-mode widgets | Immediate-mode widgets |
+
+**Implications for Phase 2:**
+- Debug windows use native egui (simpler, no overlay complexity)
+- Achievement toasts use `egui::Window` with custom positioning
+- Netplay lobby uses `egui::Modal` for dialogs
+- Lua drawing renders to egui overlay layer
+- All UI code benefits from immediate mode simplicity
+
+### Rust 2024 Edition
+
+Phase 2 uses Rust 2024 edition with MSRV 1.88, enabling:
+- Gen blocks (iterators)
+- Enhanced pattern matching
+- Improved async support
+- Better diagnostics
+
+---
+
+**Last Updated:** 2025-12-28
 **Maintained By:** Claude Code / Development Team
-**Next Review:** Upon Phase 1 completion
+**Next Review:** Upon Phase 1.5 completion (M9-M10)

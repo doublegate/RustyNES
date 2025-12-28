@@ -1,8 +1,8 @@
 # Phase 2: Desktop Frontend Feature Enhancement TODO
 
-**Version:** 1.0.0
+**Version:** 2.0.0
 **Created:** 2025-12-27
-**Last Updated:** 2025-12-27
+**Last Updated:** 2025-12-28
 **Status:** Planning
 **Target Completion:** December 2026
 
@@ -11,6 +11,8 @@
 ## Table of Contents
 
 - [Overview](#overview)
+- [Technology Stack](#technology-stack)
+- [egui 0.33 Features for Phase 2](#egui-033-features-for-phase-2)
 - [Prerequisites](#prerequisites)
 - [Current Implementation Status](#current-implementation-status)
 - [Feature Roadmap](#feature-roadmap)
@@ -47,17 +49,142 @@ This document tracks all Phase 2 feature enhancement tasks for the RustyNES desk
 4. **Modularity**: Features implemented as optional components where possible
 5. **Cross-Platform**: All features must work on Linux, macOS, and Windows
 
-### Technology Stack (v0.7.0)
+---
+
+## Technology Stack
+
+### Current Stack (v0.7.1+)
 
 | Component | Library | Version | Purpose |
 |-----------|---------|---------|---------|
-| GUI Framework | eframe/egui | 0.29 | Immediate mode GUI |
-| Window | winit | (via eframe) | Cross-platform windowing |
-| Framebuffer | pixels | - | NES display rendering |
-| Audio | cpal | 0.15 | Low-latency audio output |
-| Input | gilrs | 0.11 | Gamepad support |
+| GUI Framework | eframe + egui | 0.33 | Immediate mode GUI with window management |
+| Rendering | glow (via eframe) | 0.16 | OpenGL backend |
+| Framebuffer | egui textures | - | NES display via `egui::Image` |
+| Audio | cpal | 0.16 | Low-latency audio with buffer underrun reporting |
+| Input | gilrs | 0.11 | Gamepad support with hotplug detection |
 | File Dialogs | rfd | 0.15 | Native file picker |
-| Configuration | ron + serde | 0.8 | Settings persistence |
+| Configuration | ron + serde | 0.12 | Settings persistence |
+| Platform Paths | directories | 5.0 | Cross-platform config/data directories |
+| CLI | clap | 4.5 | Command-line argument parsing |
+| Rust Edition | 2024 | MSRV 1.88 | Latest Rust language features |
+
+### Rendering Architecture
+
+```text
+egui 0.33 Immediate Mode Rendering
+==================================
+
+   User Input → egui::Context::begin_frame()
+                        ↓
+   UI Code → egui::Window, egui::CentralPanel, etc.
+                        ↓
+   egui::Context::end_frame() → egui::FullOutput
+                        ↓
+   eframe/glow → OpenGL rendering
+                        ↓
+   Frame displayed on screen
+```
+
+**Key Points:**
+- **No wgpu**: Using glow (OpenGL) backend for simplicity
+- **No pixels crate**: Framebuffer rendered directly as egui texture
+- **Immediate Mode**: UI rebuilt every frame (no retained state complexity)
+
+---
+
+## egui 0.33 Features for Phase 2
+
+egui 0.33 provides several features essential for Phase 2 development:
+
+### Core Widgets
+
+| Widget | Phase 2 Usage |
+|--------|---------------|
+| `egui::Window` | Debug windows, achievement toasts, dialogs |
+| `egui::CentralPanel` | Game viewport container |
+| `egui::SidePanel` | Debugger panels, script console |
+| `egui::TopBottomPanel` | Menu bar, status bar |
+| `egui::ScrollArea` | Disassembly, trace logs, memory hex view |
+| `egui::Grid` | Memory editor hex dump |
+| `egui::TextEdit` | Lua console, search boxes |
+| `egui::plot::Plot` | APU waveforms, CPU timing graphs |
+
+### New in egui 0.33
+
+| Feature | Phase 2 Application |
+|---------|---------------------|
+| **Atoms** | Status indicators, debug labels, frame counters |
+| **Plugin trait** | Organize debug windows as plugins |
+| **Modal dialogs** | Confirmation dialogs, netplay connection |
+| **kittest** | Automated UI testing for debug windows |
+| **Improved text editing** | Lua console, memory editor |
+| **Better tables** | `egui_extras::TableBuilder` for structured data |
+
+### egui Patterns for Phase 2
+
+```rust
+// Achievement toast notification (egui 0.33)
+fn show_achievement_toast(ctx: &egui::Context, achievement: &Achievement) {
+    egui::Window::new("Achievement Unlocked!")
+        .anchor(egui::Align2::RIGHT_TOP, [-10.0, 10.0])
+        .collapsible(false)
+        .resizable(false)
+        .show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.image(&achievement.icon);
+                ui.vertical(|ui| {
+                    ui.strong(&achievement.title);
+                    ui.label(&achievement.description);
+                });
+            });
+        });
+}
+
+// Memory hex editor using egui::Grid
+fn memory_editor(ctx: &egui::Context, memory: &mut [u8]) {
+    egui::Window::new("Memory Editor").show(ctx, |ui| {
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            egui::Grid::new("hex_grid")
+                .num_columns(17) // address + 16 bytes
+                .striped(true)
+                .show(ui, |ui| {
+                    for (addr, chunk) in memory.chunks_mut(16).enumerate() {
+                        ui.monospace(format!("{:04X}:", addr * 16));
+                        for byte in chunk.iter_mut() {
+                            let mut text = format!("{:02X}", *byte);
+                            if ui.text_edit_singleline(&mut text).changed() {
+                                if let Ok(val) = u8::from_str_radix(&text, 16) {
+                                    *byte = val;
+                                }
+                            }
+                        }
+                        ui.end_row();
+                    }
+                });
+        });
+    });
+}
+
+// Debug window organization using Plugin pattern (egui 0.33)
+trait DebugWindow {
+    fn name(&self) -> &'static str;
+    fn show(&mut self, ctx: &egui::Context, console: &Console);
+}
+
+struct CpuDebugger { /* ... */ }
+struct PpuViewer { /* ... */ }
+struct ApuViewer { /* ... */ }
+struct MemoryEditor { /* ... */ }
+
+impl DebugWindow for CpuDebugger {
+    fn name(&self) -> &'static str { "CPU Debugger" }
+    fn show(&mut self, ctx: &egui::Context, console: &Console) {
+        egui::Window::new(self.name()).show(ctx, |ui| {
+            // CPU debugger UI...
+        });
+    }
+}
+```
 
 ---
 
@@ -68,8 +195,9 @@ Before beginning Phase 2 development, the following must be complete:
 ### Phase 1.5 Stabilization (Required)
 
 - [x] M7: Accuracy Improvements (v0.6.0) - Complete
-- [x] M8: GUI Rewrite to eframe/egui (v0.7.0) - Complete
-- [ ] M9: Test ROM Validation (95%+ pass rate)
+- [x] M8: Test ROM Validation (v0.7.0) - 100% Blargg pass rate (90/90 tests)
+- [x] GUI Migration: eframe/egui rewrite (v0.7.1) - Complete
+- [ ] M9: Known Issues Resolution (audio quality, PPU edge cases)
 - [ ] M10: Documentation and v1.0-alpha preparation
 
 ### Core Requirements
@@ -79,13 +207,15 @@ Before beginning Phase 2 development, the following must be complete:
 - [x] Frame-accurate APU timing
 - [x] 5 core mappers (0-4) working
 - [x] 100% Blargg test pass rate (90/90 tests)
+- [x] eframe 0.33 + egui 0.33 desktop frontend
+- [x] cpal 0.16 audio with buffer underrun detection
 - [ ] Save state serialization framework
 - [ ] Deterministic emulation validation
 
 ### Technical Prerequisites
 
-- [ ] Rust 1.75+ stable toolchain
-- [ ] Cross-platform build verification
+- [x] Rust 2024 Edition stable toolchain (MSRV 1.88)
+- [ ] Cross-platform build verification (Linux, macOS, Windows)
 - [ ] CI/CD pipeline for automated testing
 - [ ] Performance baseline established (target: 120+ FPS)
 
@@ -642,23 +772,25 @@ Before beginning Phase 2 development, the following must be complete:
 
 **Priority:** Medium
 **Estimated Effort:** 2-3 weeks
-**Dependencies:** pixels/wgpu shader support
+**Dependencies:** OpenGL shader support via glow
 
 #### 7.1 Shader Effects
 
-- [ ] Shader pipeline setup (wgpu)
+- [ ] Shader pipeline setup (glow/OpenGL)
 - [ ] Built-in shaders:
   - [ ] CRT curvature
   - [ ] Scanlines
   - [ ] Phosphor glow
   - [ ] NTSC artifact simulation
   - [ ] Color correction (warm/cool)
-- [ ] Shader parameter UI
-- [ ] Custom shader loading (.wgsl)
+- [ ] Shader parameter UI (egui sliders)
+- [ ] Custom shader loading (.glsl)
 
 **Technical Notes:**
-- pixels crate supports custom shaders via wgpu
-- Reference: RetroArch shader specs for compatibility ideas
+- eframe uses glow (OpenGL) backend, not wgpu
+- Shaders written in GLSL, not WGSL
+- egui texture rendering with post-processing pipeline
+- Reference: RetroArch shader specs for algorithm ideas
 
 #### 7.2 Integer Scaling
 
@@ -704,7 +836,13 @@ Before beginning Phase 2 development, the following must be complete:
 
 **Priority:** Medium
 **Estimated Effort:** 2 weeks
-**Dependencies:** cpal audio backend
+**Dependencies:** cpal 0.16 audio backend
+
+**cpal 0.16 Features Available:**
+- Buffer underrun detection and reporting
+- Improved device enumeration
+- Better error handling for audio device changes
+- Enhanced callback timing precision
 
 #### 8.1 Channel Mixer
 
@@ -977,50 +1115,83 @@ Before beginning Phase 2 development, the following must be complete:
 
 ## Technical Architecture
 
+### eframe/egui Application Model
+
+```text
+eframe Application Lifecycle (egui 0.33)
+========================================
+
+┌─────────────────────────────────────────────────────────────────┐
+│                    eframe::App trait                            │
+│                                                                 │
+│  fn update(&mut self, ctx: &egui::Context, _frame: &mut Frame) │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │  1. Handle input (keyboard, gamepad, mouse)             │    │
+│  │  2. Update emulation state (run frame if playing)       │    │
+│  │  3. Render egui UI:                                     │    │
+│  │     - Menu bar (egui::TopBottomPanel)                   │    │
+│  │     - Game viewport (egui::CentralPanel + Image)        │    │
+│  │     - Debug windows (egui::Window)                      │    │
+│  │     - Overlays (input display, achievements)            │    │
+│  │  4. Request repaint for next frame                      │    │
+│  └─────────────────────────────────────────────────────────┘    │
+│                                                                 │
+│  Frame timing: eframe handles vsync/60Hz, no manual loop needed│
+└─────────────────────────────────────────────────────────────────┘
+```
+
 ### Proposed Crate Structure
 
 ```text
 crates/
 ├── rustynes-core/          # Core emulation (existing)
 │   └── save_state.rs       # NEW: serialization framework
-├── rustynes-desktop/       # Desktop frontend (existing)
+├── rustynes-desktop/       # Desktop frontend (eframe 0.33)
 │   ├── src/
-│   │   ├── app.rs          # Main application
+│   │   ├── main.rs         # Entry point, eframe::run_native()
+│   │   ├── app.rs          # eframe::App implementation
+│   │   ├── emulator.rs     # Emulator wrapper, frame timing
 │   │   ├── gui/            # egui UI components
-│   │   │   ├── menu.rs
-│   │   │   ├── debug/      # Debug windows
+│   │   │   ├── mod.rs
+│   │   │   ├── menu.rs     # egui::menu::bar()
+│   │   │   ├── viewport.rs # Game display (egui::Image)
+│   │   │   ├── debug/      # Debug windows (egui::Window)
+│   │   │   │   ├── mod.rs
 │   │   │   │   ├── cpu.rs
 │   │   │   │   ├── ppu.rs
 │   │   │   │   ├── apu.rs
 │   │   │   │   └── memory.rs
-│   │   │   ├── dialogs/    # NEW: Modal dialogs
+│   │   │   ├── dialogs/    # Modal dialogs (egui::Modal)
+│   │   │   │   ├── mod.rs
 │   │   │   │   ├── achievements.rs
 │   │   │   │   ├── netplay.rs
 │   │   │   │   └── settings.rs
-│   │   │   └── overlays/   # NEW: In-game overlays
+│   │   │   └── overlays/   # In-game overlays
+│   │   │       ├── mod.rs
 │   │   │       ├── input_display.rs
 │   │   │       ├── lua_drawing.rs
 │   │   │       └── notifications.rs
-│   │   ├── audio.rs
-│   │   ├── input.rs
-│   │   ├── config.rs
-│   │   └── video/          # NEW: Shader/rendering
-│   │       ├── shaders.rs
-│   │       └── capture.rs
+│   │   ├── audio.rs        # cpal 0.16 audio system
+│   │   ├── input.rs        # gilrs 0.11 gamepad + keyboard
+│   │   ├── config.rs       # ron 0.12 configuration
+│   │   └── video/          # Shader/rendering (glow/OpenGL)
+│   │       ├── mod.rs
+│   │       ├── shaders.rs  # GLSL shader loading
+│   │       └── capture.rs  # Screenshot/recording
 │   └── Cargo.toml
 ├── rustynes-achievements/  # NEW: RetroAchievements
 │   ├── src/
 │   │   ├── lib.rs
 │   │   ├── rcheevos.rs     # FFI bindings
 │   │   ├── client.rs       # HTTP client
-│   │   └── ui.rs           # UI integration
+│   │   └── ui.rs           # egui integration (toasts, panels)
 │   └── Cargo.toml
 ├── rustynes-netplay/       # NEW: GGPO netplay
 │   ├── src/
 │   │   ├── lib.rs
 │   │   ├── session.rs      # Game session
 │   │   ├── transport.rs    # UDP networking
-│   │   └── lobby.rs        # Lobby system
+│   │   └── lobby.rs        # egui lobby dialogs
 │   └── Cargo.toml
 ├── rustynes-tas/           # NEW: TAS tools
 │   ├── src/
@@ -1033,7 +1204,7 @@ crates/
     ├── src/
     │   ├── lib.rs
     │   ├── api.rs          # Lua API
-    │   └── drawing.rs      # GUI drawing
+    │   └── drawing.rs      # egui overlay drawing
     └── Cargo.toml
 ```
 
@@ -1041,15 +1212,15 @@ crates/
 
 ```text
 ┌────────────────────────────────────────────────────────────────┐
-│                      rustynes-desktop                          │
+│                 rustynes-desktop (eframe 0.33)                 │
 │  ┌─────────┐  ┌──────────┐  ┌────────────┐  ┌───────────────┐  │
 │  │  Input  │  │  Audio   │  │   Video    │  │     GUI       │  │
-│  │ Handler │  │  Output  │  │  Renderer  │  │   (egui)      │  │
+│  │ (gilrs) │  │  (cpal)  │  │   (glow)   │  │   (egui)      │  │
 │  └────┬────┘  └────▲─────┘  └─────▲──────┘  └───────┬───────┘  │
 │       │            │              │                 │          │
 │       ▼            │              │                 ▼          │
 │  ┌─────────────────┴──────────────┴─────────────────────────┐  │
-│  │                     App State Machine                    │  │
+│  │              eframe::App::update() loop                  │  │
 │  └─────────────────────────────┬────────────────────────────┘  │
 └────────────────────────────────┼───────────────────────────────┘
                                  │
@@ -1073,12 +1244,12 @@ crates/
 │ ┌─────────────┐ │             │             │                 │
 │ │ Lua Engine  │◄├─────────────┼─────────────┤ ┌─────────────┐ │
 │ │ Memory API  │ │             │             │ │  backroll   │ │
-│ │ Callbacks   │ │             │             │ │  Session    │ │
+│ │ egui Draw   │ │             │             │ │  Session    │ │
 │ └─────────────┘ │             ▼             │ │  Rollback   │ │
 └─────────────────┘    ┌─────────────────┐    │ └─────────────┘ │
                        │   State Export  │    └─────────────────┘
-                       │   (for netplay  │
-                       │    & TAS)       │
+                       │   (bincode for  │
+                       │   netplay/TAS)  │
                        └─────────────────┘
 ```
 
@@ -1086,17 +1257,32 @@ crates/
 
 ## Dependencies
 
-### New Crate Dependencies
+### Current Dependencies (v0.7.1)
+
+| Crate | Version | Purpose |
+|-------|---------|---------|
+| `eframe` | 0.33 | GUI framework + window + OpenGL |
+| `egui` | 0.33 | Immediate mode UI |
+| `egui_extras` | 0.33 | Tables, images, utilities |
+| `cpal` | 0.16 | Audio with underrun detection |
+| `gilrs` | 0.11 | Gamepad with hotplug |
+| `rfd` | 0.15 | Native file dialogs |
+| `ron` | 0.12 | Configuration format |
+| `directories` | 5.0 | Platform paths |
+| `clap` | 4.5 | CLI parsing |
+| `image` | 0.25 | PNG screenshot/thumbnails |
+
+### Phase 2 Dependencies (Planned)
 
 | Crate | Feature | Version | Purpose |
 |-------|---------|---------|---------|
 | `backroll` | Netplay | latest | GGPO rollback implementation |
-| `mlua` | Scripting | 0.9+ | Lua 5.4 bindings |
+| `mlua` | Scripting | 0.10+ | Lua 5.4 bindings |
 | `rcheevos-sys` | Achievements | latest | RetroAchievements FFI |
-| `zstd` | Save States | 0.12+ | State compression |
-| `rubato` | Audio | 0.14+ | High-quality resampling |
-| `image` | Video | 0.24+ | Screenshot/thumbnail |
-| `sqlite` | Library | 0.31+ | Game database (optional) |
+| `bincode` | Save States | 2.0+ | Fast binary serialization |
+| `zstd` | Save States | 0.13+ | State compression |
+| `rubato` | Audio | 0.15+ | High-quality resampling |
+| `rusqlite` | Library | 0.32+ | Game database (optional) |
 
 ### Critical Path
 
@@ -1108,9 +1294,10 @@ Save States ──┬──► GGPO Netplay
 Deterministic ──┬──► GGPO Netplay
 Emulation       └──► TAS Playback
 
-egui Integration ──┬──► All Debug Windows
-                   ├──► Lua Drawing Overlay
-                   └──► Achievement Toasts
+egui 0.33 ──┬──► All Debug Windows (native egui::Window)
+            ├──► Lua Drawing Overlay (egui painter)
+            ├──► Achievement Toasts (egui::Window anchored)
+            └──► Netplay Lobby (egui::Modal dialogs)
 ```
 
 ---
@@ -1222,6 +1409,25 @@ egui Integration ──┬──► All Debug Windows
 
 ## Changelog
 
+### v2.0.0 (2025-12-28)
+
+- **MAJOR**: Updated for eframe 0.33 + egui 0.33 framework
+- Updated technology stack to reflect current dependencies:
+  - eframe/egui 0.33 (was 0.29)
+  - cpal 0.16 with buffer underrun detection (was 0.15)
+  - ron 0.12 (was 0.8)
+  - Rust 2024 Edition, MSRV 1.88
+- Added egui 0.33 features section with new capabilities:
+  - Atoms for status displays
+  - Plugin trait for debug window organization
+  - Modal dialogs for netplay/confirmation
+  - kittest for UI testing
+- Updated rendering architecture (glow/OpenGL, not wgpu)
+- Updated shader section (GLSL, not WGSL)
+- Added eframe application model documentation
+- Updated crate structure to reflect current layout
+- Revised dependency table with correct versions
+
 ### v1.0.0 (2025-12-27)
 
 - Initial document creation
@@ -1232,5 +1438,5 @@ egui Integration ──┬──► All Debug Windows
 ---
 
 **Document Maintainer:** Claude Code / Development Team
-**Last Review:** 2025-12-27
-**Next Review:** Upon Sprint 1 completion
+**Last Review:** 2025-12-28
+**Next Review:** Upon Phase 1.5 completion (M9-M10)
