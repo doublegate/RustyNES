@@ -89,6 +89,7 @@ impl FrameCounter {
     /// Clocks the frame counter by one CPU cycle
     ///
     /// Returns the frame action to be taken (if any).
+    #[inline]
     pub fn clock(&mut self) -> FrameAction {
         self.cycle_count += 1;
 

@@ -97,6 +97,7 @@ impl Ppu {
     }
 
     /// Refresh open bus decay counter (approx 1 second ~ 5.3M dots)
+    #[inline]
     fn refresh_open_bus(&mut self) {
         self.decay_counter = 5_300_000;
     }
@@ -110,6 +111,7 @@ impl Ppu {
     ///
     /// This is used to detect mid-scanline scroll/address writes which
     /// are used by games for split-screen effects.
+    #[inline]
     fn is_visible_rendering_position(&self) -> bool {
         self.mask.rendering_enabled() && self.timing.is_visible_scanline() && self.timing.dot() > 0
     }
@@ -529,6 +531,7 @@ impl Ppu {
     }
 
     /// Render a single pixel
+    #[inline]
     fn render_pixel(&mut self, x: usize, y: usize) {
         let mut bg_pixel = 0;
         let mut bg_palette = 0;

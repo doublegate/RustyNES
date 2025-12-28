@@ -171,6 +171,7 @@ impl DmcChannel {
     ///
     /// Returns the number of CPU cycles stolen by DMA (0 if no DMA occurred).
     /// Typical DMA stall is 3 cycles, but can be 1-4 depending on CPU state.
+    #[inline]
     pub fn clock_timer<F>(&mut self, mut read_memory: F) -> u8
     where
         F: FnMut(u16) -> u8,
@@ -290,6 +291,7 @@ impl DmcChannel {
     /// Get current output value (0-127)
     ///
     /// Returns 0 if channel is disabled.
+    #[inline]
     #[must_use]
     pub fn output(&self) -> u8 {
         if self.enabled {

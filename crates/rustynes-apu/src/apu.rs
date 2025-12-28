@@ -298,6 +298,7 @@ impl Apu {
     /// # Panics
     ///
     /// Panics if `memory_read_fn` is not set when DMC attempts DMA
+    #[inline]
     pub fn step(&mut self) -> FrameAction {
         self.cycles += 1;
 
@@ -352,6 +353,7 @@ impl Apu {
     /// # Returns
     ///
     /// Mixed audio sample (approximately 0.0-2.0 range)
+    #[inline]
     #[must_use]
     pub fn output(&self) -> f32 {
         self.mixer.mix(

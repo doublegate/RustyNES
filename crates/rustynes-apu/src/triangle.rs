@@ -138,6 +138,7 @@ impl TriangleChannel {
     /// The timer is clocked every CPU cycle. When it reaches 0:
     /// - Reload from timer period
     /// - Advance sequencer position if channel is active
+    #[inline]
     pub fn clock_timer(&mut self) {
         if self.timer_counter == 0 {
             self.timer_counter = self.timer;
@@ -166,6 +167,7 @@ impl TriangleChannel {
     ///
     /// Returns the current value from the triangle sequence (0-15).
     /// Returns 0 if channel is inactive or frequency is ultrasonic.
+    #[inline]
     #[must_use]
     pub fn output(&self) -> u8 {
         if !self.is_active() {

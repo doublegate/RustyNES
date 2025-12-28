@@ -94,6 +94,7 @@ impl PulseChannel {
     /// Clocks the timer (called every APU cycle)
     ///
     /// When the timer reaches 0, it reloads and advances the duty cycle.
+    #[inline]
     pub fn clock_timer(&mut self) {
         if self.timer_counter == 0 {
             self.timer_counter = self.timer;
@@ -208,6 +209,7 @@ impl PulseChannel {
     /// 1. Check if channel is silenced (returns 0 if true)
     /// 2. Check duty cycle output (returns 0 if duty is low)
     /// 3. Return envelope volume (0-15)
+    #[inline]
     #[must_use]
     pub fn output(&self) -> u8 {
         if self.is_silenced() {

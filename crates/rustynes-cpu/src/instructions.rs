@@ -14,6 +14,7 @@ impl Cpu {
     //
 
     /// LDA - Load Accumulator
+    #[inline]
     pub(crate) fn lda(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
         let (value, page_crossed) = self.read_operand(bus, mode);
         self.a = value;
@@ -22,6 +23,7 @@ impl Cpu {
     }
 
     /// LDX - Load X Register
+    #[inline]
     pub(crate) fn ldx(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
         let (value, page_crossed) = self.read_operand(bus, mode);
         self.x = value;
@@ -30,6 +32,7 @@ impl Cpu {
     }
 
     /// LDY - Load Y Register
+    #[inline]
     pub(crate) fn ldy(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
         let (value, page_crossed) = self.read_operand(bus, mode);
         self.y = value;
@@ -38,18 +41,21 @@ impl Cpu {
     }
 
     /// STA - Store Accumulator
+    #[inline]
     pub(crate) fn sta(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
         self.write_operand(bus, mode, self.a);
         0
     }
 
     /// STX - Store X Register
+    #[inline]
     pub(crate) fn stx(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
         self.write_operand(bus, mode, self.x);
         0
     }
 
     /// STY - Store Y Register
+    #[inline]
     pub(crate) fn sty(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
         self.write_operand(bus, mode, self.y);
         0
@@ -60,6 +66,7 @@ impl Cpu {
     //
 
     /// TAX - Transfer A to X
+    #[inline]
     pub(crate) fn tax(&mut self, bus: &mut impl Bus) -> u8 {
         let _ = bus.read(self.pc); // Dummy read
         self.x = self.a;
@@ -68,6 +75,7 @@ impl Cpu {
     }
 
     /// TAY - Transfer A to Y
+    #[inline]
     pub(crate) fn tay(&mut self, bus: &mut impl Bus) -> u8 {
         let _ = bus.read(self.pc); // Dummy read
         self.y = self.a;
@@ -76,6 +84,7 @@ impl Cpu {
     }
 
     /// TXA - Transfer X to A
+    #[inline]
     pub(crate) fn txa(&mut self, bus: &mut impl Bus) -> u8 {
         let _ = bus.read(self.pc); // Dummy read
         self.a = self.x;
@@ -84,6 +93,7 @@ impl Cpu {
     }
 
     /// TYA - Transfer Y to A
+    #[inline]
     pub(crate) fn tya(&mut self, bus: &mut impl Bus) -> u8 {
         let _ = bus.read(self.pc); // Dummy read
         self.a = self.y;
@@ -92,6 +102,7 @@ impl Cpu {
     }
 
     /// TSX - Transfer SP to X
+    #[inline]
     pub(crate) fn tsx(&mut self, bus: &mut impl Bus) -> u8 {
         let _ = bus.read(self.pc); // Dummy read
         self.x = self.sp;
@@ -100,6 +111,7 @@ impl Cpu {
     }
 
     /// TXS - Transfer X to SP
+    #[inline]
     pub(crate) fn txs(&mut self, bus: &mut impl Bus) -> u8 {
         let _ = bus.read(self.pc); // Dummy read
         self.sp = self.x;
@@ -111,18 +123,21 @@ impl Cpu {
     //
 
     /// PHA - Push Accumulator
+    #[inline]
     pub(crate) fn pha(&mut self, bus: &mut impl Bus) -> u8 {
         self.push(bus, self.a);
         0
     }
 
     /// PHP - Push Processor Status
+    #[inline]
     pub(crate) fn php(&mut self, bus: &mut impl Bus) -> u8 {
         self.push(bus, self.status.to_stack_byte(true)); // B=1, U=1
         0
     }
 
     /// PLA - Pull Accumulator
+    #[inline]
     pub(crate) fn pla(&mut self, bus: &mut impl Bus) -> u8 {
         self.a = self.pop(bus);
         self.set_zn(self.a);
@@ -130,6 +145,7 @@ impl Cpu {
     }
 
     /// PLP - Pull Processor Status
+    #[inline]
     pub(crate) fn plp(&mut self, bus: &mut impl Bus) -> u8 {
         let value = self.pop(bus);
         self.status = StatusFlags::from_stack_byte(value);
@@ -147,6 +163,7 @@ impl Cpu {
     //
 
     /// ADC - Add with Carry
+    #[inline]
     pub(crate) fn adc(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
         let (value, page_crossed) = self.read_operand(bus, mode);
         self.adc_impl(value);
@@ -154,6 +171,7 @@ impl Cpu {
     }
 
     /// SBC - Subtract with Carry
+    #[inline]
     pub(crate) fn sbc(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
         let (value, page_crossed) = self.read_operand(bus, mode);
         self.sbc_impl(value);
@@ -161,6 +179,7 @@ impl Cpu {
     }
 
     /// ADC implementation (shared with unofficial opcodes)
+    #[inline]
     pub(crate) fn adc_impl(&mut self, value: u8) {
         let carry = u16::from(self.status.contains(StatusFlags::CARRY));
         let a = u16::from(self.a);
@@ -179,6 +198,7 @@ impl Cpu {
     }
 
     /// SBC implementation (shared with unofficial opcodes)
+    #[inline]
     pub(crate) fn sbc_impl(&mut self, value: u8) {
         // SBC is equivalent to ADC with inverted value
         self.adc_impl(!value);
@@ -237,6 +257,7 @@ impl Cpu {
     }
 
     /// INX - Increment X
+    #[inline]
     pub(crate) fn inx(&mut self, bus: &mut impl Bus) -> u8 {
         let _ = bus.read(self.pc);
         self.x = self.x.wrapping_add(1);
@@ -245,6 +266,7 @@ impl Cpu {
     }
 
     /// INY - Increment Y
+    #[inline]
     pub(crate) fn iny(&mut self, bus: &mut impl Bus) -> u8 {
         let _ = bus.read(self.pc);
         self.y = self.y.wrapping_add(1);
@@ -253,6 +275,7 @@ impl Cpu {
     }
 
     /// DEX - Decrement X
+    #[inline]
     pub(crate) fn dex(&mut self, bus: &mut impl Bus) -> u8 {
         let _ = bus.read(self.pc);
         self.x = self.x.wrapping_sub(1);
@@ -261,6 +284,7 @@ impl Cpu {
     }
 
     /// DEY - Decrement Y
+    #[inline]
     pub(crate) fn dey(&mut self, bus: &mut impl Bus) -> u8 {
         let _ = bus.read(self.pc);
         self.y = self.y.wrapping_sub(1);
@@ -273,6 +297,7 @@ impl Cpu {
     //
 
     /// AND - Logical AND
+    #[inline]
     pub(crate) fn and(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
         let (value, page_crossed) = self.read_operand(bus, mode);
         self.a &= value;
@@ -281,6 +306,7 @@ impl Cpu {
     }
 
     /// ORA - Logical OR
+    #[inline]
     pub(crate) fn ora(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
         let (value, page_crossed) = self.read_operand(bus, mode);
         self.a |= value;
@@ -289,6 +315,7 @@ impl Cpu {
     }
 
     /// EOR - Exclusive OR
+    #[inline]
     pub(crate) fn eor(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
         let (value, page_crossed) = self.read_operand(bus, mode);
         self.a ^= value;
@@ -428,6 +455,7 @@ impl Cpu {
     //
 
     /// CMP - Compare Accumulator
+    #[inline]
     pub(crate) fn cmp(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
         let (value, page_crossed) = self.read_operand(bus, mode);
         self.compare(self.a, value);
@@ -435,6 +463,7 @@ impl Cpu {
     }
 
     /// CPX - Compare X Register
+    #[inline]
     pub(crate) fn cpx(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
         let (value, _) = self.read_operand(bus, mode);
         self.compare(self.x, value);
@@ -442,6 +471,7 @@ impl Cpu {
     }
 
     /// CPY - Compare Y Register
+    #[inline]
     pub(crate) fn cpy(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
         let (value, _) = self.read_operand(bus, mode);
         self.compare(self.y, value);
@@ -449,6 +479,7 @@ impl Cpu {
     }
 
     /// Compare helper function
+    #[inline]
     fn compare(&mut self, register: u8, value: u8) {
         let result = register.wrapping_sub(value);
         self.status.set(StatusFlags::CARRY, register >= value);
@@ -460,46 +491,55 @@ impl Cpu {
     //
 
     /// BPL - Branch if Positive
+    #[inline]
     pub(crate) fn bpl(&mut self, bus: &mut impl Bus) -> u8 {
         self.branch(bus, !self.status.contains(StatusFlags::NEGATIVE))
     }
 
     /// BMI - Branch if Minus
+    #[inline]
     pub(crate) fn bmi(&mut self, bus: &mut impl Bus) -> u8 {
         self.branch(bus, self.status.contains(StatusFlags::NEGATIVE))
     }
 
     /// BVC - Branch if Overflow Clear
+    #[inline]
     pub(crate) fn bvc(&mut self, bus: &mut impl Bus) -> u8 {
         self.branch(bus, !self.status.contains(StatusFlags::OVERFLOW))
     }
 
     /// BVS - Branch if Overflow Set
+    #[inline]
     pub(crate) fn bvs(&mut self, bus: &mut impl Bus) -> u8 {
         self.branch(bus, self.status.contains(StatusFlags::OVERFLOW))
     }
 
     /// BCC - Branch if Carry Clear
+    #[inline]
     pub(crate) fn bcc(&mut self, bus: &mut impl Bus) -> u8 {
         self.branch(bus, !self.status.contains(StatusFlags::CARRY))
     }
 
     /// BCS - Branch if Carry Set
+    #[inline]
     pub(crate) fn bcs(&mut self, bus: &mut impl Bus) -> u8 {
         self.branch(bus, self.status.contains(StatusFlags::CARRY))
     }
 
     /// BNE - Branch if Not Equal
+    #[inline]
     pub(crate) fn bne(&mut self, bus: &mut impl Bus) -> u8 {
         self.branch(bus, !self.status.contains(StatusFlags::ZERO))
     }
 
     /// BEQ - Branch if Equal
+    #[inline]
     pub(crate) fn beq(&mut self, bus: &mut impl Bus) -> u8 {
         self.branch(bus, self.status.contains(StatusFlags::ZERO))
     }
 
     /// Branch helper function
+    #[inline]
     fn branch(&mut self, bus: &mut impl Bus, condition: bool) -> u8 {
         let offset = bus.read(self.pc) as i8;
         self.pc = self.pc.wrapping_add(1);
@@ -614,6 +654,7 @@ impl Cpu {
     //
 
     /// CLC - Clear Carry
+    #[inline]
     pub(crate) fn clc(&mut self, bus: &mut impl Bus) -> u8 {
         let _ = bus.read(self.pc);
         self.status.remove(StatusFlags::CARRY);
@@ -621,6 +662,7 @@ impl Cpu {
     }
 
     /// SEC - Set Carry
+    #[inline]
     pub(crate) fn sec(&mut self, bus: &mut impl Bus) -> u8 {
         let _ = bus.read(self.pc);
         self.status.insert(StatusFlags::CARRY);
@@ -628,6 +670,7 @@ impl Cpu {
     }
 
     /// CLI - Clear Interrupt Disable
+    #[inline]
     pub(crate) fn cli(&mut self, bus: &mut impl Bus) -> u8 {
         let _ = bus.read(self.pc);
         self.status.remove(StatusFlags::INTERRUPT_DISABLE);
@@ -635,6 +678,7 @@ impl Cpu {
     }
 
     /// SEI - Set Interrupt Disable
+    #[inline]
     pub(crate) fn sei(&mut self, bus: &mut impl Bus) -> u8 {
         let _ = bus.read(self.pc);
         self.status.insert(StatusFlags::INTERRUPT_DISABLE);
@@ -642,6 +686,7 @@ impl Cpu {
     }
 
     /// CLV - Clear Overflow
+    #[inline]
     pub(crate) fn clv(&mut self, bus: &mut impl Bus) -> u8 {
         let _ = bus.read(self.pc);
         self.status.remove(StatusFlags::OVERFLOW);
@@ -649,6 +694,7 @@ impl Cpu {
     }
 
     /// CLD - Clear Decimal (no effect on NES)
+    #[inline]
     pub(crate) fn cld(&mut self, bus: &mut impl Bus) -> u8 {
         let _ = bus.read(self.pc);
         self.status.remove(StatusFlags::DECIMAL);
@@ -656,6 +702,7 @@ impl Cpu {
     }
 
     /// SED - Set Decimal (no effect on NES)
+    #[inline]
     pub(crate) fn sed(&mut self, bus: &mut impl Bus) -> u8 {
         let _ = bus.read(self.pc);
         self.status.insert(StatusFlags::DECIMAL);
@@ -663,6 +710,7 @@ impl Cpu {
     }
 
     /// NOP - No Operation
+    #[inline]
     pub(crate) fn nop(&mut self, bus: &mut impl Bus) -> u8 {
         let _ = bus.read(self.pc);
         0

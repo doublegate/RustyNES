@@ -101,6 +101,18 @@ pub struct HighQualityResampler {
 
     /// Chunk size for rubato processing
     chunk_size: usize,
+
+    /// Preallocated stage 1 input work buffer
+    stage1_input_work: Vec<f32>,
+
+    /// Preallocated stage 1 output work buffer
+    stage1_output_work: Vec<f32>,
+
+    /// Preallocated stage 2 input work buffer
+    stage2_input_work: Vec<f32>,
+
+    /// Preallocated stage 2 output work buffer
+    stage2_output_work: Vec<f32>,
 }
 
 impl HighQualityResampler {
@@ -133,6 +145,14 @@ impl HighQualityResampler {
         let (decimator, final_resampler, chunk_size, using_fallback) =
             Self::create_resamplers(input_rate, intermediate_rate, output_rate);
 
+        // Preallocate work buffers for rubato processing
+        // Stage 1: APU rate (1.79MHz) -> intermediate (192kHz), ~9.3:1 ratio
+        // Stage 2: intermediate (192kHz) -> output (48kHz), 4:1 ratio
+        let stage1_input_cap = chunk_size;
+        let stage1_output_cap = chunk_size / 4; // Conservative estimate
+        let stage2_input_cap = stage1_output_cap;
+        let stage2_output_cap = stage2_input_cap;
+
         Self {
             output_rate,
             input_rate,
@@ -146,6 +166,10 @@ impl HighQualityResampler {
             fallback_resampler,
             using_fallback,
             chunk_size,
+            stage1_input_work: Vec::with_capacity(stage1_input_cap),
+            stage1_output_work: Vec::with_capacity(stage1_output_cap),
+            stage2_input_work: Vec::with_capacity(stage2_input_cap),
+            stage2_output_work: Vec::with_capacity(stage2_output_cap),
         }
     }
 
@@ -213,6 +237,7 @@ impl HighQualityResampler {
     /// Add a sample from the APU
     ///
     /// This should be called every APU cycle (~1.79 MHz).
+    #[inline]
     pub fn add_sample(&mut self, sample: f32) {
         if self.using_fallback {
             // Use linear interpolation fallback
@@ -239,16 +264,31 @@ impl HighQualityResampler {
         if let Some(ref mut decimator) = self.decimator {
             let input_frames = decimator.input_frames_next();
             if self.decimator_input.len() >= input_frames {
-                let input_chunk: Vec<f32> = self.decimator_input.drain(..input_frames).collect();
-                let input_slice = vec![input_chunk];
+                // Reuse preallocated work buffer instead of allocating new Vec each call
+                self.stage1_input_work.clear();
+                self.stage1_input_work
+                    .extend(self.decimator_input.drain(..input_frames));
 
                 let output_frames = decimator.output_frames_next();
-                let mut output_slice = vec![vec![0.0f32; output_frames]];
+                self.stage1_output_work.clear();
+                self.stage1_output_work.resize(output_frames, 0.0);
+
+                // rubato needs Vec<Vec<f32>> format - create temporary wrapper slices
+                let input_wrapper = vec![std::mem::take(&mut self.stage1_input_work)];
+                let mut output_wrapper = vec![std::mem::take(&mut self.stage1_output_work)];
 
                 if let Ok((_, _)) =
-                    decimator.process_into_buffer(&input_slice, &mut output_slice, None)
+                    decimator.process_into_buffer(&input_wrapper, &mut output_wrapper, None)
                 {
-                    self.intermediate_buffer.extend(&output_slice[0]);
+                    self.intermediate_buffer.extend(&output_wrapper[0]);
+                }
+
+                // Restore buffers for reuse (take back ownership)
+                if let Some(buf) = input_wrapper.into_iter().next() {
+                    self.stage1_input_work = buf;
+                }
+                if let Some(buf) = output_wrapper.into_iter().next() {
+                    self.stage1_output_work = buf;
                 }
             }
         }
@@ -257,21 +297,35 @@ impl HighQualityResampler {
         if let Some(ref mut final_resampler) = self.final_resampler {
             let input_frames = final_resampler.input_frames_next();
             while self.intermediate_buffer.len() >= input_frames {
-                let input_chunk: Vec<f32> =
-                    self.intermediate_buffer.drain(..input_frames).collect();
-                let input_slice = vec![input_chunk];
+                // Reuse preallocated work buffer instead of allocating new Vec each call
+                self.stage2_input_work.clear();
+                self.stage2_input_work
+                    .extend(self.intermediate_buffer.drain(..input_frames));
 
                 let output_frames = final_resampler.output_frames_next();
-                let mut output_slice = vec![vec![0.0f32; output_frames]];
+                self.stage2_output_work.clear();
+                self.stage2_output_work.resize(output_frames, 0.0);
+
+                // rubato needs Vec<Vec<f32>> format - create temporary wrapper slices
+                let input_wrapper = vec![std::mem::take(&mut self.stage2_input_work)];
+                let mut output_wrapper = vec![std::mem::take(&mut self.stage2_output_work)];
 
                 if let Ok((_, _)) =
-                    final_resampler.process_into_buffer(&input_slice, &mut output_slice, None)
+                    final_resampler.process_into_buffer(&input_wrapper, &mut output_wrapper, None)
                 {
                     // Apply filter chain to output samples
-                    for sample in &output_slice[0] {
+                    for sample in &output_wrapper[0] {
                         let filtered = self.filter_chain.process(*sample);
                         self.output_buffer.push(filtered);
                     }
+                }
+
+                // Restore buffers for reuse (take back ownership)
+                if let Some(buf) = input_wrapper.into_iter().next() {
+                    self.stage2_input_work = buf;
+                }
+                if let Some(buf) = output_wrapper.into_iter().next() {
+                    self.stage2_output_work = buf;
                 }
             }
         }
@@ -392,6 +446,7 @@ impl FilterChain {
     }
 
     /// Process a sample through all filter stages
+    #[inline]
     pub fn process(&mut self, sample: f32) -> f32 {
         let hp1 = self.highpass_1.process(sample);
         let hp2 = self.highpass_2.process(hp1);
@@ -446,6 +501,7 @@ impl HighPassFilter {
     }
 
     /// Process a sample through the filter
+    #[inline]
     pub fn process(&mut self, input: f32) -> f32 {
         let output = self.alpha * (self.prev_output + input - self.prev_input);
         self.prev_input = input;
@@ -491,6 +547,7 @@ impl LowPassFilter {
     }
 
     /// Process a sample through the filter
+    #[inline]
     pub fn process(&mut self, sample: f32) -> f32 {
         let output = self.prev_sample + self.alpha * (sample - self.prev_sample);
         self.prev_sample = output;

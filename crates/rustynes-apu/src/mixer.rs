@@ -170,6 +170,7 @@ impl Mixer {
     /// let silence = mixer.mix(0, 0, 0, 0, 0);
     /// assert_eq!(silence, 0.0);
     /// ```
+    #[inline]
     #[must_use]
     pub fn mix(&self, pulse1: u8, pulse2: u8, triangle: u8, noise: u8, dmc: u8) -> f32 {
         // Validate inputs (debug only, optimized out in release)

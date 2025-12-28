@@ -128,6 +128,7 @@ impl NoiseChannel {
     /// When the timer reaches 0:
     /// - Reload from timer period
     /// - Clock the LFSR to generate the next pseudo-random bit
+    #[inline]
     pub fn clock_timer(&mut self) {
         if self.timer_counter == 0 {
             self.timer_counter = self.timer_period;
@@ -166,6 +167,7 @@ impl NoiseChannel {
     /// - Bit 0 = 1: Output 0 (silence)
     ///
     /// Returns 0 if channel is disabled or length counter is 0.
+    #[inline]
     #[must_use]
     pub fn output(&self) -> u8 {
         if !self.enabled || !self.length_counter.is_active() {

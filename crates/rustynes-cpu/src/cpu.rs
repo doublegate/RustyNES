@@ -1627,6 +1627,7 @@ impl Cpu {
     }
 
     /// Set Zero and Negative flags based on value.
+    #[inline]
     pub(crate) fn set_zn(&mut self, value: u8) {
         self.status.set_zn(value);
     }

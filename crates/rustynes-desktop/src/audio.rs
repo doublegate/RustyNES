@@ -38,6 +38,10 @@ const MAX_BUFFER_FILL_PERCENT: f32 = 0.75;
 #[allow(dead_code)]
 const LATENCY_HISTORY_SIZE: usize = 60;
 
+/// Size of the preallocated mono buffer for audio callback (avoids per-callback allocation).
+/// Based on typical audio callback sizes (256-4096 samples per channel).
+const PREALLOCATED_MONO_BUFFER_SIZE: usize = 4096;
+
 /// Thread-safe ring buffer for audio samples with dynamic sizing.
 struct RingBuffer {
     buffer: Vec<f32>,
@@ -216,6 +220,10 @@ impl AudioOutput {
 
         let channels = config.channels as usize;
 
+        // Preallocate a reusable buffer for the audio callback to avoid per-callback allocations.
+        // If the callback needs more than PREALLOCATED_MONO_BUFFER_SIZE, it will resize gracefully.
+        let mut preallocated_buffer = vec![0.0f32; PREALLOCATED_MONO_BUFFER_SIZE];
+
         let stream = device
             .build_output_stream(
                 &config,
@@ -231,10 +239,22 @@ impl AudioOutput {
 
                     // Read mono samples and duplicate to all channels
                     let mono_samples_needed = data.len() / channels;
-                    let mut mono_buffer = vec![0.0f32; mono_samples_needed];
+
+                    // Use preallocated buffer when possible to avoid heap allocation in hot path.
+                    // Only allocate if callback requests more than our preallocated size (rare).
+                    let mono_buffer: &mut [f32] =
+                        if mono_samples_needed <= preallocated_buffer.len() {
+                            // Zero the portion we'll use
+                            preallocated_buffer[..mono_samples_needed].fill(0.0);
+                            &mut preallocated_buffer[..mono_samples_needed]
+                        } else {
+                            // Fallback: allocate if needed (should be rare with 4096 sample buffer)
+                            preallocated_buffer.resize(mono_samples_needed, 0.0);
+                            &mut preallocated_buffer[..mono_samples_needed]
+                        };
 
                     let samples_read = if let Ok(buf) = buffer_clone.lock() {
-                        buf.read(&mut mono_buffer)
+                        buf.read(mono_buffer)
                     } else {
                         // Lock failed, fill with silence
                         0
