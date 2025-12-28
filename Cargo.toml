@@ -16,8 +16,8 @@ members = [
 
 [workspace.package]
 version = "0.7.1"
-edition = "2021"
-rust-version = "1.75"
+edition = "2024"
+rust-version = "1.88"
 authors = ["doublegate"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/doublegate/RustyNES"
@@ -28,13 +28,13 @@ categories = ["emulators", "games"]
 
 [workspace.dependencies]
 # Core dependencies
-thiserror = "1.0"
-bitflags = "2.4"
+thiserror = "2.0"
+bitflags = "2.10"
 log = "0.4"
 
 # Testing dependencies
 criterion = "0.5"
-proptest = "1.4"
+proptest = "1.9"
 
 [workspace.lints.rust]
 unsafe_code = "deny"

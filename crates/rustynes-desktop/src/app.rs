@@ -85,7 +85,7 @@ impl NesApp {
         let gui_state = gui::GuiState::new(&config);
 
         // Load console if ROM was provided
-        let console = if let Some(ref rom_path) = rom_path {
+        let console = if let Some(rom_path) = &rom_path {
             match Self::load_rom(rom_path) {
                 Ok(console) => {
                     info!("Loaded ROM: {}", rom_path.display());
@@ -126,7 +126,7 @@ impl NesApp {
     /// Update the NES texture from the console framebuffer.
     fn update_texture(&mut self, ctx: &egui::Context) {
         // Get pixel data from console or use placeholder
-        if let Some(ref console) = self.console {
+        if let Some(console) = &self.console {
             let fb = console.framebuffer();
             let len = self.framebuffer.len().min(fb.len());
             self.framebuffer[..len].copy_from_slice(&fb[..len]);
@@ -143,7 +143,7 @@ impl NesApp {
         // Create or update the texture
         let image = ColorImage::from_rgba_unmultiplied([NES_WIDTH, NES_HEIGHT], &self.framebuffer);
 
-        if let Some(ref mut texture) = self.nes_texture {
+        if let Some(texture) = &mut self.nes_texture {
             texture.set(image, TextureOptions::NEAREST);
         } else {
             self.nes_texture =
@@ -153,7 +153,7 @@ impl NesApp {
 
     /// Run emulation for one frame.
     fn run_frame(&mut self) {
-        if let Some(ref mut console) = self.console {
+        if let Some(console) = &mut self.console {
             // Update controller input
             console.set_controller_1(self.input.player1_buttons());
             console.set_controller_2(self.input.player2_buttons());
@@ -162,7 +162,7 @@ impl NesApp {
             console.step_frame();
 
             // Get audio samples and queue them
-            if let Some(ref mut audio) = self.audio {
+            if let Some(audio) = &mut self.audio {
                 let samples = console.audio_samples();
                 if !samples.is_empty() {
                     audio.queue_samples(samples);
@@ -182,11 +182,11 @@ impl NesApp {
             }
 
             // Reset with F2
-            if i.key_pressed(egui::Key::F2) {
-                if let Some(ref mut console) = self.console {
-                    console.reset();
-                    info!("Console reset");
-                }
+            if i.key_pressed(egui::Key::F2)
+                && let Some(console) = &mut self.console
+            {
+                console.reset();
+                info!("Console reset");
             }
 
             // Toggle debug mode with F1
@@ -200,10 +200,10 @@ impl NesApp {
             }
 
             // Toggle mute with M
-            if i.key_pressed(egui::Key::M) {
-                if let Some(ref audio) = self.audio {
-                    audio.toggle_mute();
-                }
+            if i.key_pressed(egui::Key::M)
+                && let Some(audio) = &self.audio
+            {
+                audio.toggle_mute();
             }
         });
     }
@@ -246,7 +246,7 @@ impl NesApp {
     fn handle_dropped_files(&mut self, ctx: &egui::Context) {
         ctx.input(|i| {
             for file in &i.raw.dropped_files {
-                if let Some(ref path) = file.path {
+                if let Some(path) = &file.path {
                     info!("File dropped: {}", path.display());
                     match Self::load_rom(path) {
                         Ok(console) => {
@@ -331,7 +331,7 @@ impl eframe::App for NesApp {
             // Center the display using vertical and horizontal centering
             ui.vertical_centered(|ui| {
                 ui.add_space((available_size.y - display_height) / 2.0);
-                if let Some(ref texture) = self.nes_texture {
+                if let Some(texture) = &self.nes_texture {
                     ui.image(egui::load::SizedTexture::new(
                         texture.id(),
                         egui::vec2(display_width, display_height),

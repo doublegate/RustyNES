@@ -266,11 +266,7 @@ impl RomHeader {
 
     /// Parse RAM size from 4-bit field (NES 2.0 format).
     fn parse_ram_size(field: u8) -> usize {
-        if field == 0 {
-            0
-        } else {
-            64 << field
-        }
+        if field == 0 { 0 } else { 64 << field }
     }
 }
 

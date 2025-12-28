@@ -468,49 +468,49 @@ impl Ppu {
 
                 // On step 7, fetch both pattern bytes and load into sprite renderer
                 // (simplified from hardware timing which fetches in steps 4 and 6)
-                if fetch_step == 7 {
-                    if let Some(sprite) = self.secondary_oam.get_sprite(sprite_index as u8) {
-                        let sprite_base = self.ctrl.sprite_table_addr();
-                        let tile_index = sprite.tile_index;
+                if fetch_step == 7
+                    && let Some(sprite) = self.secondary_oam.get_sprite(sprite_index as u8)
+                {
+                    let sprite_base = self.ctrl.sprite_table_addr();
+                    let tile_index = sprite.tile_index;
 
-                        // Calculate which row of the sprite to fetch
-                        // Note: We're fetching for scanline+1 (next scanline) since
-                        // sprite evaluation fills secondary OAM with sprites for next scanline
-                        let next_scanline = scanline + 1;
-                        let sprite_y = next_scanline.saturating_sub(sprite.y as u16);
+                    // Calculate which row of the sprite to fetch
+                    // Note: We're fetching for scanline+1 (next scanline) since
+                    // sprite evaluation fills secondary OAM with sprites for next scanline
+                    let next_scanline = scanline + 1;
+                    let sprite_y = next_scanline.saturating_sub(sprite.y as u16);
 
-                        // Clamp sprite_y to valid range (0-7 for 8x8 sprites)
-                        // This prevents overflow when calculating flipped row
-                        let sprite_y = sprite_y.min(7);
+                    // Clamp sprite_y to valid range (0-7 for 8x8 sprites)
+                    // This prevents overflow when calculating flipped row
+                    let sprite_y = sprite_y.min(7);
 
-                        // Handle vertical flip
-                        let row = if sprite.attributes.flip_vertical() {
-                            7 - sprite_y
-                        } else {
-                            sprite_y
-                        };
+                    // Handle vertical flip
+                    let row = if sprite.attributes.flip_vertical() {
+                        7 - sprite_y
+                    } else {
+                        sprite_y
+                    };
 
-                        // Fetch pattern table low byte
-                        let pattern_addr_low = sprite_base + u16::from(tile_index) * 16 + row;
-                        let mut pattern_low = read_chr(pattern_addr_low);
+                    // Fetch pattern table low byte
+                    let pattern_addr_low = sprite_base + u16::from(tile_index) * 16 + row;
+                    let mut pattern_low = read_chr(pattern_addr_low);
 
-                        // Fetch pattern table high byte
-                        let pattern_addr_high = pattern_addr_low + 8;
-                        let mut pattern_high = read_chr(pattern_addr_high);
+                    // Fetch pattern table high byte
+                    let pattern_addr_high = pattern_addr_low + 8;
+                    let mut pattern_high = read_chr(pattern_addr_high);
 
-                        // Handle horizontal flip
-                        if sprite.attributes.flip_horizontal() {
-                            pattern_low = pattern_low.reverse_bits();
-                            pattern_high = pattern_high.reverse_bits();
-                        }
-
-                        // Load pattern data into sprite renderer
-                        self.sprite_renderer.load_sprite_pattern(
-                            sprite_index as u8,
-                            pattern_low,
-                            pattern_high,
-                        );
+                    // Handle horizontal flip
+                    if sprite.attributes.flip_horizontal() {
+                        pattern_low = pattern_low.reverse_bits();
+                        pattern_high = pattern_high.reverse_bits();
                     }
+
+                    // Load pattern data into sprite renderer
+                    self.sprite_renderer.load_sprite_pattern(
+                        sprite_index as u8,
+                        pattern_low,
+                        pattern_high,
+                    );
                 }
             }
 
@@ -550,15 +550,14 @@ impl Ppu {
         let mut sprite_zero = false;
 
         // Get sprite pixel
-        if self.mask.show_sprites() {
-            if let Some((pixel, palette, priority, is_sprite_zero)) =
+        if self.mask.show_sprites()
+            && let Some((pixel, palette, priority, is_sprite_zero)) =
                 self.sprite_renderer.get_pixel()
-            {
-                sprite_pixel = pixel;
-                sprite_palette = palette;
-                sprite_priority = priority;
-                sprite_zero = is_sprite_zero;
-            }
+        {
+            sprite_pixel = pixel;
+            sprite_palette = palette;
+            sprite_priority = priority;
+            sprite_zero = is_sprite_zero;
         }
 
         // Sprite 0 hit detection

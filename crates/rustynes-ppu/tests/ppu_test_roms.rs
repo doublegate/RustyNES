@@ -222,7 +222,7 @@ fn run_test_rom(rom_path: &PathBuf) -> Result<u8, String> {
         let _nmi = bus.step_ppu(cycles);
 
         // Check for test completion every N cycles
-        if cpu.cycles % 10_000 == 0 {
+        if cpu.cycles.is_multiple_of(10_000) {
             let result = bus.read(0x6000);
 
             // Check if test has started writing results
@@ -268,7 +268,9 @@ fn test_ppu_vbl_basics() {
     // Skip if ROM doesn't exist
     if !rom_path.exists() {
         eprintln!("Skipping PPU VBL basics test: ROM not found");
-        eprintln!("Download from: https://github.com/christopherpow/nes-test-roms/tree/master/ppu_vbl_nmi");
+        eprintln!(
+            "Download from: https://github.com/christopherpow/nes-test-roms/tree/master/ppu_vbl_nmi"
+        );
         eprintln!("Place in: test-roms/ppu/01-vbl_basics.nes");
         return;
     }
@@ -385,7 +387,9 @@ fn test_sprite_hit_basics() {
 
     if !rom_path.exists() {
         eprintln!("Skipping sprite hit basics test: ROM not found");
-        eprintln!("Download from: https://github.com/christopherpow/nes-test-roms/tree/master/sprite_hit_tests_2005.10.05");
+        eprintln!(
+            "Download from: https://github.com/christopherpow/nes-test-roms/tree/master/sprite_hit_tests_2005.10.05"
+        );
         return;
     }
 
@@ -446,7 +450,9 @@ fn test_ppu_vbl_nmi_suite() {
 
     if !rom_path.exists() {
         eprintln!("Skipping PPU VBL/NMI suite: ROM not found");
-        eprintln!("Download from: https://github.com/christopherpow/nes-test-roms/tree/master/ppu_vbl_nmi");
+        eprintln!(
+            "Download from: https://github.com/christopherpow/nes-test-roms/tree/master/ppu_vbl_nmi"
+        );
         return;
     }
 

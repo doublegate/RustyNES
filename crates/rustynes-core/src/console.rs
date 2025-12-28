@@ -32,7 +32,7 @@
 use crate::bus::Bus as SystemBus;
 use crate::input::Button;
 use rustynes_cpu::{Bus as CpuBus, Cpu};
-use rustynes_mappers::{create_mapper, Mapper, Rom, RomError};
+use rustynes_mappers::{Mapper, Rom, RomError, create_mapper};
 use thiserror::Error;
 
 /// Console creation error

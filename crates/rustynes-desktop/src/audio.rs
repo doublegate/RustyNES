@@ -12,8 +12,8 @@ use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, SampleRate, Stream, StreamConfig};
 use log::{debug, error, info, warn};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
 /// Default size of the ring buffer in samples (mono).
 const DEFAULT_RING_BUFFER_SIZE: usize = 8192;

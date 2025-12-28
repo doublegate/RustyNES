@@ -8,7 +8,7 @@ use log::{error, info};
 use rustynes_core::Console;
 
 /// Render the main menu bar.
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, deprecated)]
 pub fn render_menu_bar(
     ctx: &Context,
     state: &mut GuiState,
@@ -24,7 +24,7 @@ pub fn render_menu_bar(
                 if ui.button("Open ROM...").clicked() {
                     state.file_dialog_pending = true;
                     open_file_dialog(console, config);
-                    ui.close_menu();
+                    ui.close();
                 }
 
                 ui.separator();
@@ -42,7 +42,7 @@ pub fn render_menu_bar(
                                 if let Err(e) = load_rom(path, console) {
                                     error!("Failed to load ROM: {e}");
                                 }
-                                ui.close_menu();
+                                ui.close();
                             }
                         }
                     }
@@ -67,18 +67,18 @@ pub fn render_menu_bar(
                     .clicked()
                 {
                     *paused = !*paused;
-                    ui.close_menu();
+                    ui.close();
                 }
 
                 if ui
                     .add_enabled(has_rom, egui::Button::new("Reset"))
                     .clicked()
                 {
-                    if let Some(ref mut cons) = console {
+                    if let Some(cons) = console {
                         cons.reset();
                         info!("Console reset");
                     }
-                    ui.close_menu();
+                    ui.close();
                 }
             });
 
@@ -102,7 +102,7 @@ pub fn render_menu_bar(
                             .radio_value(&mut config.video.scale, scale, format!("{scale}x"))
                             .clicked()
                         {
-                            ui.close_menu();
+                            ui.close();
                         }
                     }
                 });
@@ -115,7 +115,7 @@ pub fn render_menu_bar(
                     );
                     let mut muted = is_muted;
                     if ui.checkbox(&mut muted, "Mute").changed() {
-                        if let Some(ref audio) = audio {
+                        if let Some(audio) = audio {
                             audio.set_muted(muted);
                         }
                         config.audio.muted = muted;
@@ -132,7 +132,7 @@ pub fn render_menu_bar(
                         .add(egui::Slider::new(&mut volume, 0.0..=1.0).show_value(true))
                         .changed()
                     {
-                        if let Some(ref audio) = audio {
+                        if let Some(audio) = audio {
                             audio.set_volume(volume);
                         }
                         config.audio.volume = volume;
@@ -143,7 +143,7 @@ pub fn render_menu_bar(
 
                 if ui.button("Settings...").clicked() {
                     state.settings_open = true;
-                    ui.close_menu();
+                    ui.close();
                 }
             });
 
@@ -175,14 +175,14 @@ pub fn render_menu_bar(
             ui.menu_button("Help", |ui| {
                 if ui.button("Keyboard Shortcuts").clicked() {
                     // TODO: Show keyboard shortcuts window
-                    ui.close_menu();
+                    ui.close();
                 }
 
                 ui.separator();
 
                 if ui.button("About").clicked() {
                     state.about_open = true;
-                    ui.close_menu();
+                    ui.close();
                 }
             });
         });

@@ -98,8 +98,8 @@ pub use mixer::Mixer;
 pub use noise::NoiseChannel;
 pub use pulse::PulseChannel;
 pub use resampler::{
-    FilterChain, HighPassFilter, HighQualityResampler, LinearResampler, LowPassFilter, Resampler,
-    APU_RATE_NTSC, APU_RATE_PAL, SAMPLE_RATE_44100, SAMPLE_RATE_48000,
+    APU_RATE_NTSC, APU_RATE_PAL, FilterChain, HighPassFilter, HighQualityResampler,
+    LinearResampler, LowPassFilter, Resampler, SAMPLE_RATE_44100, SAMPLE_RATE_48000,
 };
 pub use triangle::TriangleChannel;
 

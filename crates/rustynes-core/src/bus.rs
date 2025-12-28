@@ -362,7 +362,7 @@ mod tests {
     fn create_test_bus() -> Bus {
         // Create a minimal ROM for testing
         let mut rom_data = vec![0; 16 + 16384]; // Header + 16KB PRG
-                                                // iNES header
+        // iNES header
         rom_data[0..4].copy_from_slice(b"NES\x1A");
         rom_data[4] = 1; // 1 PRG bank
         rom_data[5] = 0; // 0 CHR banks (use CHR-RAM)

@@ -53,7 +53,7 @@ pub fn render_settings(
                         super::super::audio::AudioOutput::is_muted,
                     );
                     if ui.checkbox(&mut muted, "Mute").changed() {
-                        if let Some(ref audio) = audio {
+                        if let Some(audio) = audio {
                             audio.set_muted(muted);
                         }
                         config.audio.muted = muted;
@@ -69,7 +69,7 @@ pub fn render_settings(
                             .add(egui::Slider::new(&mut volume, 0.0..=1.0).show_value(true))
                             .changed()
                         {
-                            if let Some(ref audio) = audio {
+                            if let Some(audio) = audio {
                                 audio.set_volume(volume);
                             }
                             config.audio.volume = volume;
@@ -156,10 +156,10 @@ pub fn render_settings(
 
                 // Buttons
                 ui.horizontal(|ui| {
-                    if ui.button("Save").clicked() {
-                        if let Err(e) = config.save() {
-                            log::error!("Failed to save config: {e}");
-                        }
+                    if ui.button("Save").clicked()
+                        && let Err(e) = config.save()
+                    {
+                        log::error!("Failed to save config: {e}");
                     }
 
                     if ui.button("Reset to Defaults").clicked() {

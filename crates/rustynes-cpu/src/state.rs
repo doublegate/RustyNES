@@ -505,12 +505,12 @@ mod tests {
         // Transfers
         assert_eq!(InstructionType::from_opcode(0xAA), InstructionType::Implied); // TAX
         assert_eq!(InstructionType::from_opcode(0xA8), InstructionType::Implied); // TAY
-                                                                                  // Inc/Dec registers
+        // Inc/Dec registers
         assert_eq!(InstructionType::from_opcode(0xE8), InstructionType::Implied); // INX
         assert_eq!(InstructionType::from_opcode(0xC8), InstructionType::Implied); // INY
-                                                                                  // Flags
+        // Flags
         assert_eq!(InstructionType::from_opcode(0x18), InstructionType::Implied); // CLC
-                                                                                  // NOP
+        // NOP
         assert_eq!(InstructionType::from_opcode(0xEA), InstructionType::Implied);
     }
 
@@ -519,7 +519,7 @@ mod tests {
         // STA
         assert_eq!(InstructionType::from_opcode(0x85), InstructionType::Write); // zp
         assert_eq!(InstructionType::from_opcode(0x8D), InstructionType::Write); // abs
-                                                                                // STX
+        // STX
         assert_eq!(InstructionType::from_opcode(0x86), InstructionType::Write);
         // STY
         assert_eq!(InstructionType::from_opcode(0x84), InstructionType::Write);
@@ -558,7 +558,7 @@ mod tests {
         // LDA
         assert_eq!(InstructionType::from_opcode(0xA9), InstructionType::Read); // imm
         assert_eq!(InstructionType::from_opcode(0xA5), InstructionType::Read); // zp
-                                                                               // LDX
+        // LDX
         assert_eq!(InstructionType::from_opcode(0xA2), InstructionType::Read);
         // LDY
         assert_eq!(InstructionType::from_opcode(0xA0), InstructionType::Read);

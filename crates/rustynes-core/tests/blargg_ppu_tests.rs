@@ -226,9 +226,9 @@ fn ppu_spr_hit_08_double_height() {
 #[test]
 fn ppu_spr_hit_09_timing() {
     run_blargg_test("ppu_spr_hit_timing_basics.nes").unwrap(); // Check name: timing_basics? Or timing?
-                                                               // File list has: ppu_spr_hit_timing_basics.nes, ppu_spr_hit_timing_order.nes, ppu_spr_hit_edge_timing.nes
-                                                               // M8-S3 says 09-timing.nes.
-                                                               // I'll assume timing_basics is 09.
+    // File list has: ppu_spr_hit_timing_basics.nes, ppu_spr_hit_timing_order.nes, ppu_spr_hit_edge_timing.nes
+    // M8-S3 says 09-timing.nes.
+    // I'll assume timing_basics is 09.
 }
 
 #[test]

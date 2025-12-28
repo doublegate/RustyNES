@@ -294,11 +294,7 @@ impl DmcChannel {
     #[inline]
     #[must_use]
     pub fn output(&self) -> u8 {
-        if self.enabled {
-            self.output_level
-        } else {
-            0
-        }
+        if self.enabled { self.output_level } else { 0 }
     }
 
     /// Check if DMC IRQ flag is set

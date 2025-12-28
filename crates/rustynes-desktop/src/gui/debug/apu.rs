@@ -13,7 +13,7 @@ pub fn render(ctx: &Context, open: &mut bool, console: &Option<Console>) {
         .resizable(true)
         .default_width(350.0)
         .show(ctx, |ui| {
-            if let Some(ref cons) = console {
+            if let Some(cons) = console {
                 ui.heading("Audio Info");
                 egui::Grid::new("apu_info")
                     .num_columns(2)

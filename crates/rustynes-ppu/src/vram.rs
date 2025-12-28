@@ -199,7 +199,7 @@ impl Vram {
         let mut addr = (addr & 0x1F) as usize; // Mirror to 32 bytes
 
         // Mirror sprite palette background colors to background palette
-        if addr >= 0x10 && addr % 4 == 0 {
+        if addr >= 0x10 && addr.is_multiple_of(4) {
             addr -= 0x10;
         }
 

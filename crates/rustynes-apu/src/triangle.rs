@@ -288,8 +288,8 @@ mod tests {
         // Set timer period = 256 (0x100)
         triangle.write_register(2, 0x00); // Low = 0
         triangle.write_register(3, 0x08); // Bits 0-2 of 0x08 = 0, length index = 1
-                                          // Actually 0x08 = 0000 1000, so bits 0-2 = 000 = 0
-                                          // Let's set it correctly: we want high 3 bits = 1
+        // Actually 0x08 = 0000 1000, so bits 0-2 = 000 = 0
+        // Let's set it correctly: we want high 3 bits = 1
         triangle.write_register(2, 0x00); // Low = 0
         triangle.write_register(3, 0x09); // 0000 1001, bits 0-2 = 001 = 1
         assert_eq!(triangle.timer, 0x100);

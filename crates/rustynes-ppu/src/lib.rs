@@ -110,7 +110,7 @@ mod vram;
 
 // Public exports
 pub use oam::{Oam, SecondaryOam, Sprite, SpriteAttributes};
-pub use ppu::{Ppu, FRAME_HEIGHT, FRAME_SIZE, FRAME_WIDTH};
+pub use ppu::{FRAME_HEIGHT, FRAME_SIZE, FRAME_WIDTH, Ppu};
 pub use registers::{PpuCtrl, PpuMask, PpuStatus};
 pub use scroll::ScrollRegisters;
 pub use vram::{Mirroring, Vram};

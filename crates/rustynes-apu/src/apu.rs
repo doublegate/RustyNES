@@ -304,7 +304,7 @@ impl Apu {
 
         // Clock channel timers
         // Pulse and Noise timers are clocked every other CPU cycle
-        if self.cycles % 2 == 0 {
+        if self.cycles.is_multiple_of(2) {
             self.pulse1.clock_timer();
             self.pulse2.clock_timer();
             self.noise.clock_timer();

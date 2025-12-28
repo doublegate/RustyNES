@@ -44,7 +44,7 @@ pub fn render(ctx: &Context, open: &mut bool, console: &Option<Console>) {
         .resizable(true)
         .default_width(550.0)
         .show(ctx, |ui| {
-            if let Some(ref cons) = console {
+            if let Some(cons) = console {
                 // Controls
                 ui.horizontal(|ui| {
                     ui.label("CPU Memory");
@@ -57,16 +57,17 @@ pub fn render(ctx: &Context, open: &mut bool, console: &Option<Console>) {
                             .desired_width(60.0)
                             .font(egui::TextStyle::Monospace),
                     );
-                    if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                        if let Ok(addr) = u16::from_str_radix(&state.address_input, 16) {
-                            state.address = addr;
-                        }
+                    if response.lost_focus()
+                        && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                        && let Ok(addr) = u16::from_str_radix(&state.address_input, 16)
+                    {
+                        state.address = addr;
                     }
 
-                    if ui.button("Go").clicked() {
-                        if let Ok(addr) = u16::from_str_radix(&state.address_input, 16) {
-                            state.address = addr;
-                        }
+                    if ui.button("Go").clicked()
+                        && let Ok(addr) = u16::from_str_radix(&state.address_input, 16)
+                    {
+                        state.address = addr;
                     }
                 });
 
