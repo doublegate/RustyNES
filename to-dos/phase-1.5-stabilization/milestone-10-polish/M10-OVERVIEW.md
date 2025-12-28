@@ -77,6 +77,25 @@ The following foundational work was completed in v0.7.1, providing a stable base
 
 ## Sprint Breakdown
 
+### Sprint 0: Dependency Upgrades ⏳ PENDING
+
+**Duration:** Days 0-2 (Pre-Sprint)
+**Focus:** Upgrade all dependencies to latest stable versions
+
+**Objectives:**
+- [ ] Upgrade egui/eframe 0.29 -> 0.33.x (major features: Atoms, kittest, Plugin system)
+- [ ] Upgrade cpal 0.15 -> 0.16 (buffer underrun reporting)
+- [ ] Upgrade thiserror 1.0 -> 2.0 (no_std support)
+- [ ] Upgrade ron 0.8 -> 0.12 (improved serialization)
+- [ ] Upgrade gilrs 0.11 -> 0.13 (improved platform support)
+- [ ] Update MSRV to Rust 1.88+ (required by egui 0.33)
+
+**Deliverable:** All dependencies at latest stable versions
+
+[M10-S0 Details](M10-S0-dependency-upgrade.md)
+
+---
+
 ### Sprint 1: UI/UX Improvements ⏳ PENDING
 
 **Duration:** Days 1-2

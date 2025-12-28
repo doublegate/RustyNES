@@ -197,9 +197,10 @@ Phase 1.5 delivers a **comprehensive stabilization and accuracy improvement phas
 
 **Sprints:**
 
-1. [M10-S1: Game Compatibility Testing](milestone-10-polish/M10-S1-game-compatibility.md)
+0. [M10-S0: Dependency Upgrades](milestone-10-polish/M10-S0-dependency-upgrade.md) - egui 0.33, cpal 0.16, thiserror 2.0
+1. [M10-S1: UI/UX Improvements](milestone-10-polish/M10-S1-ui-ux-improvements.md)
 2. [M10-S2: Documentation](milestone-10-polish/M10-S2-documentation.md)
-3. [M10-S3: Release Preparation](milestone-10-polish/M10-S3-release-prep.md)
+3. [M10-S3: Release Preparation](milestone-10-polish/M10-S3-release.md)
 
 **Deliverable:** v0.9.0 or v1.0.0-alpha.1 - Phase 1.5 complete, ready for Phase 2
 
