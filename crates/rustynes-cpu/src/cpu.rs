@@ -143,6 +143,7 @@ impl Cpu {
     ///
     /// Handles interrupt polling and instruction execution.
     /// Returns the number of CPU cycles consumed.
+    #[inline]
     pub fn step(&mut self, bus: &mut impl Bus) -> u8 {
         // Handle DMA stalls
         if self.stall > 0 {
@@ -1400,6 +1401,7 @@ impl Cpu {
     }
 
     /// Handle NMI interrupt (7 cycles).
+    #[inline]
     fn handle_nmi(&mut self, bus: &mut impl Bus) -> u8 {
         self.push_u16(bus, self.pc);
         self.push(bus, self.status.to_stack_byte(false)); // B=0 for interrupts
@@ -1409,6 +1411,7 @@ impl Cpu {
     }
 
     /// Handle IRQ interrupt (7 cycles).
+    #[inline]
     fn handle_irq(&mut self, bus: &mut impl Bus) -> u8 {
         self.push_u16(bus, self.pc);
         self.push(bus, self.status.to_stack_byte(false)); // B=0 for interrupts
@@ -1420,6 +1423,7 @@ impl Cpu {
     /// Execute a single opcode.
     ///
     /// Returns extra cycles taken (for page crossing, branches, etc.).
+    #[inline]
     fn execute_opcode(&mut self, opcode: u8, addr_mode: AddressingMode, bus: &mut impl Bus) -> u8 {
         match opcode {
             // Load/Store

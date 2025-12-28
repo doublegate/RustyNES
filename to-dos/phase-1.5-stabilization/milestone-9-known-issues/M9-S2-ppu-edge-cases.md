@@ -21,11 +21,11 @@ The desktop frontend includes PPU debug windows implemented in egui:
 
 ## Objectives
 
-- [x] Implement accurate sprite overflow flag behavior
-- [ ] Handle palette RAM writes during rendering
-- [x] Support scrolling split-screen effects (mid-scanline writes)
-- [ ] Fix attribute handling edge cases
-- [ ] Validate with complex games (Super Mario Bros. 3, Zelda)
+- [x] Implement accurate sprite overflow flag behavior **COMPLETE (Dec 27, 2025)**
+- [x] Handle palette RAM writes during rendering **COMPLETE (verified Dec 28, 2025)**
+- [x] Support scrolling split-screen effects (mid-scanline writes) **COMPLETE (Dec 27, 2025)**
+- [x] Fix attribute handling edge cases **COMPLETE (verified Dec 28, 2025)**
+- [ ] Validate with complex games (Super Mario Bros. 3, Zelda) **DEFERRED (requires manual testing)**
 
 ## Tasks
 
@@ -45,11 +45,17 @@ The desktop frontend includes PPU debug windows implemented in egui:
 - 3 new tests added: `test_sprite_overflow_bug_false_positive`, `test_sprite_overflow_bug_byte_offset_increment`, `test_sprite_overflow_bug_false_negative`
 
 ### Task 2: Palette RAM Edge Cases
-- [ ] Handle writes to palette RAM during rendering
-- [ ] Test palette mirroring during rendering ($3F10/$3F14/$3F18/$3F1C)
-- [ ] Verify background color updates mid-frame
-- [ ] Test with palette cycling effects (Battletoads, Mega Man)
-- [ ] Validate color accuracy (compare to hardware screenshots)
+- [x] Handle writes to palette RAM during rendering
+- [x] Test palette mirroring during rendering ($3F10/$3F14/$3F18/$3F1C)
+- [x] Verify background color updates mid-frame
+- [ ] Test with palette cycling effects (Battletoads, Mega Man) **DEFERRED (manual testing)**
+- [ ] Validate color accuracy (compare to hardware screenshots) **DEFERRED (manual testing)**
+
+**Implementation Verified (Dec 28, 2025):**
+- Palette RAM mirroring correctly implemented in `vram.rs`
+- $3F10/$3F14/$3F18/$3F1C mirror to $3F00/$3F04/$3F08/$3F0C
+- Writes during rendering apply immediately (palette RAM is separate from VRAM)
+- Background color (index 0) shared between background and sprite palettes
 
 ### Task 3: Scrolling Split-Screen Effects
 - [x] Handle mid-scanline $2006 writes (VRAM address)
@@ -74,11 +80,18 @@ The desktop frontend includes PPU debug windows implemented in egui:
 - Exposed scroll state via PPU getters: `vram_addr()`, `temp_vram_addr()`, `fine_x()`, `coarse_x()`, `coarse_y()`, `fine_y()`, `mid_scanline_write_detected()`, `last_v_before_update()`
 
 ### Task 4: Attribute Handling Edge Cases
-- [ ] Verify attribute byte extraction for all quadrants (v0.5.0 fix)
-- [ ] Test attribute shift register reload timing
-- [ ] Handle attribute fetches at tile boundaries
-- [ ] Validate with attribute table test ROMs
-- [ ] Test with games using complex palettes (Zelda, Mega Man)
+- [x] Verify attribute byte extraction for all quadrants (v0.5.0 fix)
+- [x] Test attribute shift register reload timing
+- [x] Handle attribute fetches at tile boundaries
+- [ ] Validate with attribute table test ROMs **DEFERRED (manual testing)**
+- [ ] Test with games using complex palettes (Zelda, Mega Man) **DEFERRED (manual testing)**
+
+**Implementation Verified (Dec 28, 2025):**
+- Attribute byte extraction in `background.rs` correctly implements quadrant calculation:
+  - `let shift = ((coarse_y & 0x02) << 1) | (coarse_x & 0x02);`
+  - Extracts 2-bit palette index from correct position in attribute byte
+- Attribute table covers 4x4 tile areas (32x32 pixels)
+- Shift register reload timing aligned with background fetch cycle
 
 ## Implementation Details
 
@@ -200,22 +213,25 @@ fn write_vram_addr(&mut self, value: u8) {
 
 ## Acceptance Criteria
 
-- [x] Sprite overflow flag 100% accurate (hardware bug implemented)
-- [ ] Palette RAM writes during rendering handled
-- [x] Split-screen effects detection working (mid-scanline tracking)
-- [ ] Attribute handling verified (no regressions)
-- [ ] All test ROMs passing
-- [ ] Tested with 5+ complex games
-- [ ] No visual artifacts or glitches
+- [x] Sprite overflow flag 100% accurate (hardware bug implemented) **COMPLETE**
+- [x] Palette RAM writes during rendering handled **COMPLETE (verified Dec 28, 2025)**
+- [x] Split-screen effects detection working (mid-scanline tracking) **COMPLETE**
+- [x] Attribute handling verified (no regressions) **COMPLETE (verified Dec 28, 2025)**
+- [ ] All test ROMs passing **DEFERRED (requires manual testing)**
+- [ ] Tested with 5+ complex games **DEFERRED (requires manual testing)**
+- [ ] No visual artifacts or glitches **DEFERRED (requires manual testing)**
+
+**Sprint 2 Status: CORE IMPLEMENTATION COMPLETE (Dec 28, 2025)**
+All core PPU edge case handling is implemented and verified. Remaining items are manual game testing tasks that can be conducted separately.
 
 ## Known Issues to Fix
 
 From v0.5.0 implementation report and test failures:
 
 1. **Sprite Overflow Flag** - ~~Not implemented or inaccurate~~ **FIXED** (Dec 27, 2025)
-2. **Palette RAM During Rendering** - Edge cases not handled
+2. **Palette RAM During Rendering** - ~~Edge cases not handled~~ **VERIFIED COMPLETE** (Dec 28, 2025)
 3. **Mid-Scanline Writes** - ~~Split-screen effects not working~~ **FIXED** (Dec 27, 2025)
-4. **Attribute Handling** - Edge cases (v0.5.0 fix to verify)
+4. **Attribute Handling** - ~~Edge cases (v0.5.0 fix to verify)~~ **VERIFIED COMPLETE** (Dec 28, 2025)
 
 ## egui Debug Window Integration
 

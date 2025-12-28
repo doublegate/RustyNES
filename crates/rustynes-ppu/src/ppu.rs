@@ -311,6 +311,7 @@ impl Ppu {
     ///
     /// Returns (frame_complete, nmi_triggered).
     /// Note: This method won't render tiles properly. Use `step_with_chr` for full rendering.
+    #[inline]
     pub fn step(&mut self) -> (bool, bool) {
         self.step_with_chr(|_| 0)
     }
@@ -326,6 +327,7 @@ impl Ppu {
     /// # Returns
     ///
     /// (frame_complete, nmi_triggered)
+    #[inline]
     #[allow(clippy::too_many_lines)] // PPU step naturally handles many timing states
     pub fn step_with_chr<F: Fn(u16) -> u8>(&mut self, read_chr: F) -> (bool, bool) {
         // Open bus decay
