@@ -1,10 +1,19 @@
 # M10 Sprint 2: Documentation
 
+**Sprint:** M10-S2 (Documentation)
+**Phase:** 1.5 (Stabilization & Accuracy)
+**Duration:** ~2-3 days
+**Status:** Pending
+**Prerequisites:** M10-S0 Complete, M10-S1 Complete
+**Updated:** 2025-12-28
+
+---
+
 ## Overview
 
-Create comprehensive documentation including user guide, API documentation, developer guide, and FAQ to ensure users and contributors have all necessary information.
+Create comprehensive documentation including user guide, API documentation, developer guide, and FAQ to ensure users and contributors have all necessary information. Update all documentation to reflect the current eframe 0.33 + egui 0.33 stack and Rust 2024 edition.
 
-## Current Implementation (v0.7.1)
+## Current Implementation (Post M10-S0)
 
 The following documentation infrastructure exists:
 
@@ -15,6 +24,14 @@ The following documentation infrastructure exists:
 - [x] `ROADMAP.md` development timeline
 - [x] `README.md` project landing page
 - [x] `crates/rustynes-desktop/README.md` GUI architecture documentation
+
+**Needs Update for Current Stack:**
+- [ ] Update all docs to reference eframe/egui 0.33 (was 0.29)
+- [ ] Update MSRV documentation: 1.75 -> 1.88
+- [ ] Update Rust edition: 2021 -> 2024
+- [ ] Update cpal version: 0.15 -> 0.16
+- [ ] Update ron version: 0.8 -> 0.12
+- [ ] Update thiserror version: 1.0 -> 2.0
 
 **Locations:**
 - Main docs: `/docs/`
@@ -105,16 +122,26 @@ The following documentation infrastructure exists:
 ## Building from Source
 
 ### Prerequisites
-- Rust 1.75+ (install via [rustup](https://rustup.rs/))
-- Linux: `libsdl2-dev` or `libasound2-dev`
+- Rust 1.88+ (install via [rustup](https://rustup.rs/))
+- Linux: `libasound2-dev`, `libudev-dev`, `libxkbcommon-dev`, `libwayland-dev`
 - macOS: Xcode Command Line Tools
-- Windows: Visual Studio 2019+ or MinGW
+- Windows: Visual Studio 2019+ with MSVC toolchain
+
+### Toolchain Requirements
+- **Rust Edition:** 2024
+- **MSRV:** 1.88 (required by egui 0.33)
 
 ### Build Steps
 1. Clone repository: `git clone https://github.com/doublegate/RustyNES.git`
 2. Change directory: `cd RustyNES`
 3. Build: `cargo build --release -p rustynes-desktop`
 4. Run: `./target/release/rustynes-desktop`
+
+### Verify Rust Version
+```bash
+rustc --version  # Should be 1.88.0 or higher
+rustup update    # Update to latest if needed
+```
 ```
 
 ### 2. Quick Start
@@ -294,13 +321,18 @@ RustyNES uses a modular crate structure:
 - **rustynes-mappers**: Mapper implementations (NROM, MMC1, UxROM, CNROM, MMC3)
 - **rustynes-desktop**: Desktop GUI (eframe + egui)
 
-### Desktop Frontend (v0.7.1+)
-- **eframe 0.29**: Window management, OpenGL context (glow backend)
-- **egui 0.29**: Immediate mode GUI for menus, settings, debug windows
-- **cpal 0.15**: Cross-platform audio I/O with lock-free ring buffer
+### Desktop Frontend (Post M10-S0)
+- **eframe 0.33**: Window management, OpenGL context (glow backend)
+- **egui 0.33**: Immediate mode GUI with Modal dialogs, Atoms, Plugin trait
+- **cpal 0.16**: Cross-platform audio I/O with buffer underrun reporting
 - **gilrs 0.11**: Gamepad support with hotplug detection
 - **rfd 0.15**: Native file dialogs
-- **ron 0.8**: Configuration persistence
+- **ron 0.12**: Configuration persistence (improved parsing)
+- **thiserror 2.0**: Error handling (no_std support)
+
+### Toolchain
+- **Rust Edition**: 2024
+- **MSRV**: 1.88
 
 ### Emulation Loop
 1. CPU executes one instruction (N cycles)
@@ -396,16 +428,45 @@ Yes! See CONTRIBUTING.md for guidelines.
 
 ## Acceptance Criteria
 
+- [ ] All docs updated to reflect current stack (eframe/egui 0.33, cpal 0.16, ron 0.12)
+- [ ] MSRV updated to 1.88 in all documentation
+- [ ] Rust 2024 edition mentioned where relevant
 - [ ] User guide written (installation, quick start, features, troubleshooting)
 - [ ] API documentation complete (rustdoc for all public APIs)
 - [ ] Developer guide updated (architecture, testing, contributing)
 - [ ] FAQ created (10+ common questions)
 - [ ] Known limitations documented
-- [ ] README.md updated (current status, screenshots)
+- [ ] README.md updated (current status, screenshots, correct versions)
 - [ ] ROADMAP.md updated (Phase 1.5 complete)
 - [ ] CHANGELOG.md updated (v0.9.0/v1.0.0-alpha.1 entry)
+- [ ] CLAUDE.md updated with current stack
 - [ ] Documentation reviewed for clarity and accuracy
 
 ## Version Target
 
 v0.9.0 / v1.0.0-alpha.1
+
+---
+
+## Technology Stack Reference
+
+Update all documentation to reflect these versions:
+
+| Component | Version | Notes |
+|-----------|---------|-------|
+| **Rust Edition** | 2024 | Required for latest patterns |
+| **MSRV** | 1.88 | Required by egui 0.33 |
+| **eframe** | 0.33 | Window + OpenGL via glow |
+| **egui** | 0.33 | Modal, Atoms, Plugin trait |
+| **cpal** | 0.16 | Buffer underrun reporting |
+| **gilrs** | 0.11 | Gamepad support |
+| **ron** | 0.12 | Configuration format |
+| **thiserror** | 2.0 | no_std support |
+| **bitflags** | 2.10 | Utility |
+| **proptest** | 1.9 | Property testing |
+
+---
+
+**Status:** Pending
+**Blocks:** M10-S3 (Release)
+**Last Updated:** 2025-12-28

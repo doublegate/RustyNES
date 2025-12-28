@@ -1,38 +1,61 @@
 # M10 Sprint 1: UI/UX Improvements
 
+**Sprint:** M10-S1 (UI/UX Improvements)
+**Phase:** 1.5 (Stabilization & Accuracy)
+**Duration:** ~2-3 days
+**Status:** Pending
+**Prerequisites:** M10-S0 Complete
+**Updated:** 2025-12-28
+
+---
+
 ## Overview
 
-Polish the desktop GUI with responsive design, theme support, improved settings organization, and visual feedback to create an intuitive and professional user experience.
+Polish the desktop GUI with responsive design, theme support, improved settings organization, and visual feedback to create an intuitive and professional user experience. Leverage new egui 0.33 features (Atoms, Modal dialogs, Plugin trait) for enhanced UI components.
 
-## Current Implementation (v0.7.1)
+## Current Implementation (Post M10-S0)
 
-The desktop frontend uses eframe+egui with the following existing features:
+The desktop frontend uses eframe 0.33 + egui 0.33 with the following existing features:
 
-**Completed:**
-- [x] eframe 0.29 window management with OpenGL (glow) backend
-- [x] egui 0.29 immediate mode GUI
+**Completed (v0.7.1 + M10-S0):**
+- [x] eframe 0.33 window management with OpenGL (glow) backend
+- [x] egui 0.33 immediate mode GUI
 - [x] Menu bar (File, Emulation, Video, Audio, Debug, Help)
 - [x] Native file dialogs via rfd 0.15
-- [x] Configuration persistence with RON format
+- [x] Configuration persistence with ron 0.12 format
 - [x] Basic scaling modes: PixelPerfect, FitWindow, Integer
 - [x] Keyboard input handling via egui
 - [x] Gamepad support via gilrs 0.11
+- [x] Rust 2024 Edition with modern patterns
+- [x] MSRV 1.88
+
+**New egui 0.33 Features Available:**
+- **Atoms:** Indivisible UI building blocks for status displays
+- **Modal Dialogs:** Native `egui::Modal` for alerts, confirmations, first-run
+- **Plugin Trait:** Cleaner debug window organization
+- **Popup Rewrite:** Improved menu close-on-click behavior
+- **egui_kittest:** UI automation testing framework
+- **Crisper Text:** Enhanced font rendering (default 13.0pt)
+- **`viewport_rect`/`content_rect`:** Replaces deprecated `screen_rect`
 
 **Location:** `crates/rustynes-desktop/src/`
 
 ## Objectives
 
-- [ ] Implement responsive layout (adapt to window size)
-- [ ] Add theme support (light/dark mode)
+- [ ] Implement responsive layout using `viewport_rect`/`content_rect` (adapt to window size)
+- [ ] Add theme support (light/dark mode via egui Visuals)
 - [ ] Improve settings UI (organized tabs, intuitive controls)
-- [ ] Add visual feedback (loading states, progress bars)
+- [ ] Add visual feedback using Atoms and Spinner (loading states, status displays)
+- [ ] Implement Modal dialogs for error handling and first-run experience
 - [ ] Polish animations and transitions
 - [ ] Improve accessibility (keyboard navigation, screen reader support)
+- [ ] Evaluate egui_kittest for UI automation testing
 
 ## Tasks
 
-### Task 1: Responsive Layout
+### Task 1: Responsive Layout (egui 0.33)
 - [ ] Implement window size constraints (min 800x600, max 4K)
+- [ ] Use `ctx.viewport_rect()` and `ctx.content_rect()` for layout calculations (replaces deprecated `screen_rect`)
 - [ ] Adapt UI elements to window size (scale fonts, spacing)
 - [ ] Test with different aspect ratios (4:3, 16:9, 21:9)
 - [ ] Handle window resize events (smooth transitions)
@@ -54,13 +77,21 @@ The desktop frontend uses eframe+egui with the following existing features:
 - [ ] Advanced tab: Debug options, logging, performance metrics
 - [ ] Add tooltips for complex settings
 
-### Task 4: Visual Feedback
-- [ ] Add loading spinner (ROM loading, save state loading)
+### Task 4: Visual Feedback (egui 0.33 Atoms)
+- [ ] Use Atoms for status bar displays (FPS, audio state, ROM info)
+- [ ] Add loading spinner via `egui::Spinner` (ROM loading, save state loading)
 - [ ] Add progress bar (long operations, ROM scanning)
-- [ ] Add status messages (bottom status bar: "ROM loaded", "Save state created")
-- [ ] Add error indicators (red text, error icons)
-- [ ] Add success indicators (green text, checkmarks)
+- [ ] Add status messages with Atoms (bottom status bar: "ROM loaded", "Save state created")
+- [ ] Add error indicators (red text, error icons via Atoms)
+- [ ] Add success indicators (green text, checkmarks via Atoms)
 - [ ] Add hover effects (buttons, tabs, menu items)
+
+### Task 4b: Modal Dialogs (egui 0.33)
+- [ ] Implement first-run welcome modal using `egui::Modal`
+- [ ] Add error modal for ROM loading failures
+- [ ] Add confirmation modal for destructive actions (reset, close without save)
+- [ ] Add about/help modal with version info
+- [ ] Test modal interactions (Esc to close, click outside behavior)
 
 ### Task 5: Animations & Transitions
 - [ ] Smooth fade in/out transitions (dialogs, modals)
@@ -77,6 +108,13 @@ The desktop frontend uses eframe+egui with the following existing features:
 - [ ] Add high contrast mode (for low vision users)
 - [ ] Test with assistive technologies
 - [ ] Document keyboard shortcuts (in-app help, user guide)
+
+### Task 7: UI Testing (egui_kittest)
+- [ ] Evaluate egui_kittest for automated UI testing
+- [ ] Create snapshot tests for main UI states
+- [ ] Test menu navigation programmatically
+- [ ] Test settings dialog interactions
+- [ ] Add UI regression tests to CI pipeline
 
 ## Design Mockups
 
@@ -137,7 +175,7 @@ The desktop frontend uses eframe+egui with the following existing features:
 
 ## Implementation Details
 
-### Responsive Layout (egui)
+### Responsive Layout (egui 0.33)
 
 ```rust
 // crates/rustynes-desktop/src/app.rs
@@ -151,7 +189,7 @@ impl eframe::App for NesApp {
             });
         });
 
-        // Bottom status bar
+        // Bottom status bar with Atoms for status displays
         egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label(&self.status_message);
@@ -168,7 +206,7 @@ impl eframe::App for NesApp {
             // Calculate scaled size maintaining aspect ratio
             let (width, height) = self.calculate_scaled_size(available_size);
 
-            if let Some(ref texture) = self.nes_texture {
+            if let Some(texture) = &self.nes_texture {
                 let image = egui::Image::new(texture)
                     .fit_to_exact_size(egui::vec2(width, height));
                 ui.centered_and_justified(|ui| {
@@ -179,7 +217,7 @@ impl eframe::App for NesApp {
     }
 }
 
-// Window size constraints
+// Window size constraints (egui 0.33)
 fn main() {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -187,7 +225,17 @@ fn main() {
             .with_inner_size([1024.0, 768.0]),
         ..Default::default()
     };
-    eframe::run_native("RustyNES", options, Box::new(|cc| Ok(Box::new(NesApp::new(cc)))));
+    // Note: eframe 0.33 returns Result
+    eframe::run_native("RustyNES", options, Box::new(|cc| Ok(Box::new(NesApp::new(cc)))))
+        .expect("Failed to run eframe");
+}
+
+// Get viewport dimensions (egui 0.33 - replaces deprecated screen_rect)
+fn get_viewport_size(ctx: &egui::Context) -> egui::Vec2 {
+    // Use viewport_rect instead of deprecated screen_rect
+    ctx.input(|i| i.viewport().outer_rect_pixels)
+        .map(|r| egui::vec2(r.width() as f32, r.height() as f32))
+        .unwrap_or(egui::vec2(800.0, 600.0))
 }
 ```
 
@@ -240,7 +288,7 @@ impl NesApp {
 }
 ```
 
-### Loading Spinner (egui)
+### Loading Spinner (egui 0.33)
 
 ```rust
 fn render_loading_overlay(&self, ctx: &egui::Context) {
@@ -248,11 +296,12 @@ fn render_loading_overlay(&self, ctx: &egui::Context) {
         egui::Area::new(egui::Id::new("loading_overlay"))
             .fixed_pos(egui::Pos2::ZERO)
             .show(ctx, |ui| {
-                let screen_rect = ctx.screen_rect();
+                // Use content_rect (egui 0.33) instead of deprecated screen_rect
+                let content_rect = ui.ctx().available_rect();
 
                 // Semi-transparent background
                 ui.painter().rect_filled(
-                    screen_rect,
+                    content_rect,
                     0.0,
                     egui::Color32::from_rgba_unmultiplied(0, 0, 0, 180),
                 );
@@ -272,6 +321,73 @@ fn render_loading_overlay(&self, ctx: &egui::Context) {
                         });
                     });
             });
+    }
+}
+```
+
+### Modal Dialogs (egui 0.33)
+
+```rust
+// First-run welcome modal using egui::Modal (new in 0.30+)
+fn render_welcome_modal(&mut self, ctx: &egui::Context) {
+    if self.show_welcome {
+        egui::Modal::new("welcome_modal".into()).show(ctx, |ui| {
+            ui.set_width(400.0);
+            ui.heading("Welcome to RustyNES!");
+            ui.add_space(8.0);
+            ui.label("A high-accuracy NES emulator written in Rust.");
+            ui.add_space(16.0);
+
+            ui.label("Quick Start:");
+            ui.label("1. Press Ctrl+O to open a ROM file");
+            ui.label("2. Use Arrow keys + Z/X for controls");
+            ui.label("3. Press F11 for fullscreen");
+
+            ui.add_space(16.0);
+            if ui.button("Get Started").clicked() {
+                self.show_welcome = false;
+                self.config.first_run = false;
+                self.save_config();
+            }
+        });
+    }
+}
+
+// Error modal for ROM loading failures
+fn render_error_modal(&mut self, ctx: &egui::Context) {
+    if let Some(error_msg) = &self.error_message {
+        let error_msg = error_msg.clone();
+        egui::Modal::new("error_modal".into()).show(ctx, |ui| {
+            ui.set_width(350.0);
+            ui.heading(egui::RichText::new("Error").color(egui::Color32::RED));
+            ui.add_space(8.0);
+            ui.label(&error_msg);
+            ui.add_space(16.0);
+            if ui.button("OK").clicked() {
+                self.error_message = None;
+            }
+        });
+    }
+}
+
+// Confirmation modal for destructive actions
+fn render_confirm_modal(&mut self, ctx: &egui::Context) {
+    if self.confirm_action.is_some() {
+        egui::Modal::new("confirm_modal".into()).show(ctx, |ui| {
+            ui.set_width(300.0);
+            ui.heading("Confirm Action");
+            ui.add_space(8.0);
+            ui.label("Are you sure you want to proceed?");
+            ui.add_space(16.0);
+            ui.horizontal(|ui| {
+                if ui.button("Yes").clicked() {
+                    self.execute_confirm_action();
+                }
+                if ui.button("Cancel").clicked() {
+                    self.confirm_action = None;
+                }
+            });
+        });
     }
 }
 ```
@@ -487,16 +603,45 @@ fn show_notification(&mut self, message: &str, is_error: bool) {
 
 ## Acceptance Criteria
 
-- [ ] Responsive layout implemented (800x600 to 4K)
-- [ ] Theme support working (light/dark mode)
+- [ ] Responsive layout implemented using `viewport_rect`/`content_rect` (800x600 to 4K)
+- [ ] Theme support working (light/dark mode via egui Visuals)
 - [ ] Settings organized into tabs
-- [ ] Visual feedback for all user actions
+- [ ] Visual feedback using Atoms and Spinner for status displays
+- [ ] Modal dialogs for errors, confirmations, first-run experience
 - [ ] Smooth animations and transitions
 - [ ] Keyboard navigation and shortcuts working
 - [ ] Accessibility features implemented
 - [ ] Tested on Linux, macOS, Windows
 - [ ] User testing feedback incorporated
+- [ ] Optional: egui_kittest UI automation tests
 
 ## Version Target
 
 v0.9.0 / v1.0.0-alpha.1
+
+---
+
+## References
+
+### egui 0.33 Documentation
+
+- [egui::Modal](https://docs.rs/egui/0.33/egui/containers/modal/index.html) - Modal dialog support
+- [egui_kittest](https://docs.rs/egui_kittest/) - UI automation testing
+- [egui Visuals](https://docs.rs/egui/0.33/egui/style/struct.Visuals.html) - Theme customization
+- [egui Migration Guide](https://github.com/emilk/egui/releases) - API changes
+
+### Key API Changes (egui 0.29 -> 0.33)
+
+| Old API | New API | Notes |
+|---------|---------|-------|
+| `ctx.screen_rect()` | `ctx.available_rect()` or `viewport_rect` | Deprecated |
+| Manual modals | `egui::Modal::new().show()` | New in 0.30 |
+| `on_begin_pass/on_end_pass` | Plugin trait | New in 0.33 |
+| Default text 12.5pt | Default text 13.0pt | Visual change |
+| Menu stays open | Menu closes on click | Behavioral change |
+
+---
+
+**Status:** Pending
+**Blocks:** M10-S2 (Documentation)
+**Last Updated:** 2025-12-28

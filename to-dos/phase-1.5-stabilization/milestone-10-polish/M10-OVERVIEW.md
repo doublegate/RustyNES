@@ -3,10 +3,11 @@
 **Milestone:** M10 (Final Polish)
 **Phase:** 1.5 (Stabilization & Accuracy)
 **Duration:** ~1 week (March-April 2026)
-**Status:** Not Started
+**Status:** In Progress
 **Version Target:** v0.9.0 / v1.0.0-alpha.1
-**Progress:** 0%
-**Baseline:** v0.7.1 (GUI Framework Migration Complete)
+**Progress:** 25% (S0 Complete)
+**Baseline:** v0.7.1+ (Post-Dependency Upgrade)
+**Updated:** 2025-12-28
 
 ---
 
@@ -34,19 +35,37 @@ Milestone 10 focuses on **final polish and release preparation** for the Phase 1
    - Release notes and changelog
    - GitHub release with binaries
 
-### Prerequisites (Completed in v0.7.1)
+### Prerequisites (Completed in v0.7.1 + M10-S0)
 
-The following foundational work was completed in v0.7.1, providing a stable base for M10:
+The following foundational work was completed in v0.7.1 and M10-S0, providing a stable base for M10:
 
+**GUI Framework (v0.7.1):**
 - [x] **GUI Framework Migration**: Desktop frontend migrated from Iced+wgpu to eframe+egui
-- [x] **Window Management**: eframe 0.29 with OpenGL rendering via glow backend
 - [x] **Menu System**: egui menu bar with File, Emulation, Video, Audio, Debug, Help
 - [x] **Debug Windows**: CPU, PPU, APU, Memory viewers implemented in egui
 - [x] **Configuration System**: RON format with VideoConfig, AudioConfig, InputConfig, DebugConfig
-- [x] **Input System**: Keyboard and gamepad support via gilrs 0.11
-- [x] **Audio Backend**: cpal 0.15 with lock-free ring buffer (8192 samples)
 - [x] **Frame Timing**: Accumulator-based timing at 60.0988 Hz NTSC
 - [x] **Scaling Modes**: PixelPerfect (8:7 PAR), FitWindow, Integer scaling
+
+**Dependency Upgrades (M10-S0 - COMPLETE):**
+- [x] **eframe/egui**: 0.29 -> 0.33 (Atoms, Plugin trait, Modal dialogs, kittest)
+- [x] **cpal**: 0.15 -> 0.16 (Buffer underrun/overrun reporting)
+- [x] **thiserror**: 1.0 -> 2.0 (no_std support)
+- [x] **ron**: 0.8 -> 0.12 (improved parsing)
+- [x] **bitflags**: 2.4 -> 2.10 (minor improvements)
+- [x] **proptest**: 1.4 -> 1.9 (new strategies)
+- [x] **Rust Edition**: 2021 -> 2024 (implicit borrowing, new lints)
+- [x] **MSRV**: 1.75 -> 1.88 (required by egui 0.33)
+- [x] **Test Suite**: 508 tests passing (0 failures, 8 ignored)
+
+**Current Technology Stack (Post M10-S0):**
+- **Window/GUI**: eframe 0.33 + egui 0.33 (OpenGL via glow backend)
+- **Audio**: cpal 0.16 (cross-platform with buffer underrun reporting)
+- **Input**: gilrs 0.11 (gamepad support with hotplug)
+- **File Dialogs**: rfd 0.15 (native dialogs)
+- **Configuration**: ron 0.12 (Rust Object Notation)
+- **Error Handling**: thiserror 2.0 (no_std compatible)
+- **Toolchain**: Rust 2024 Edition, MSRV 1.88
 
 **Location:** `crates/rustynes-desktop/src/`
 
@@ -56,9 +75,10 @@ The following foundational work was completed in v0.7.1, providing a stable base
 
 ### Quality Gates
 
+- [x] Dependency upgrade complete (M10-S0)
 - [ ] Desktop GUI polished and user-friendly
 - [ ] Comprehensive documentation (user guide, API docs, dev guide)
-- [ ] Full regression test suite passing (202/212 tests, 95%+)
+- [ ] Full regression test suite passing (508+ tests, 100% Blargg)
 - [ ] Performance benchmarks passing (120+ FPS)
 - [ ] Zero critical bugs
 - [ ] Release binaries built for Linux, macOS, Windows
@@ -77,18 +97,24 @@ The following foundational work was completed in v0.7.1, providing a stable base
 
 ## Sprint Breakdown
 
-### Sprint 0: Dependency Upgrades ⏳ PENDING
+### Sprint 0: Dependency Upgrades - COMPLETE
 
 **Duration:** Days 0-2 (Pre-Sprint)
 **Focus:** Upgrade all dependencies to latest stable versions
+**Status:** COMPLETE (2025-12-28)
+**Progress:** 100%
 
-**Objectives:**
-- [ ] Upgrade egui/eframe 0.29 -> 0.33.x (major features: Atoms, kittest, Plugin system)
-- [ ] Upgrade cpal 0.15 -> 0.16 (buffer underrun reporting)
-- [ ] Upgrade thiserror 1.0 -> 2.0 (no_std support)
-- [ ] Upgrade ron 0.8 -> 0.12 (improved serialization)
-- [ ] Upgrade gilrs 0.11 -> 0.13 (improved platform support)
-- [ ] Update MSRV to Rust 1.88+ (required by egui 0.33)
+**Completed Objectives:**
+- [x] Upgrade egui/eframe 0.29 -> 0.33 (Atoms, kittest, Plugin system, Modal dialogs)
+- [x] Upgrade cpal 0.15 -> 0.16 (buffer underrun/overrun reporting)
+- [x] Upgrade thiserror 1.0 -> 2.0 (no_std support)
+- [x] Upgrade ron 0.8 -> 0.12 (improved parsing)
+- [x] Upgrade bitflags 2.4 -> 2.10, proptest 1.4 -> 1.9
+- [x] Update to Rust 2024 Edition
+- [x] Update MSRV to Rust 1.88 (required by egui 0.33)
+- [x] All 508 tests passing, 100% Blargg pass rate maintained
+
+**Note:** gilrs 0.11 is already the latest stable version (0.13 does not exist)
 
 **Deliverable:** All dependencies at latest stable versions
 
@@ -154,24 +180,34 @@ The following foundational work was completed in v0.7.1, providing a stable base
 
 ### UI/UX Polish (M10-S1)
 
-**Current State (v0.7.1):**
-- egui immediate mode GUI with menu bar and debug windows
+**Current State (Post M10-S0):**
+- egui 0.33 immediate mode GUI with menu bar and debug windows
 - Basic scaling modes: PixelPerfect, FitWindow, Integer
-- Configuration persistence via RON format
+- Configuration persistence via ron 0.12 format
 - Keyboard shortcuts partially implemented
+- Rust 2024 Edition with modern patterns
 
-**Desktop GUI Improvements (egui):**
-- **Responsive Layout:** Adapt to window size (min 800x600, max 4K)
+**New egui 0.33 Features Available:**
+- **Atoms:** Indivisible UI building blocks for status displays, labels
+- **Modal Dialogs:** Native modal support via `egui::Modal` for alerts, confirmations
+- **Plugin Trait:** Cleaner debug window integration via `egui::Plugin`
+- **egui_kittest:** UI automation testing framework for screenshot testing
+- **Popup Rewrite:** Improved menu, tooltip, and popup behavior
+- **Crisper Text:** Enhanced font rendering quality
+
+**Desktop GUI Improvements (egui 0.33):**
+- **Responsive Layout:** Adapt to window size using `viewport_rect`/`content_rect` (min 800x600, max 4K)
 - **Theme Support:** egui Visuals API (light/dark mode, customizable colors)
 - **Settings Organization:** egui::Window with tabs for video, audio, input, advanced
-- **Visual Feedback:** egui::Spinner for loading, progress bars, status messages
+- **Visual Feedback:** egui::Spinner for loading, Atoms for status displays
+- **Modal Dialogs:** Use `egui::Modal` for error dialogs and confirmations
 - **Animations:** egui built-in animations, smooth transitions
 
 **User Experience:**
-- **First-Run Experience:** Welcome screen via egui::Window, quick start guide
-- **Error Handling:** Modal error dialogs (egui::Window anchored center)
+- **First-Run Experience:** Welcome screen via egui::Modal, quick start guide
+- **Error Handling:** Modal error dialogs using `egui::Modal`
 - **Keyboard Shortcuts:** Document and implement common shortcuts (Ctrl+O, Ctrl+R, etc.)
-- **Controller Support:** Visual controller mapping via gilrs, auto-detect
+- **Controller Support:** Visual controller mapping via gilrs 0.11, auto-detect
 
 ### Documentation (M10-S2)
 
@@ -299,11 +335,14 @@ The following foundational work was completed in v0.7.1, providing a stable base
 
 ### Framework Documentation
 
-- [eframe Documentation](https://docs.rs/eframe/) - Application framework reference
-- [egui Documentation](https://docs.rs/egui/) - Immediate mode GUI reference
-- [egui Visuals](https://docs.rs/egui/latest/egui/style/struct.Visuals.html) - Theme customization
-- [cpal Documentation](https://docs.rs/cpal/) - Audio I/O reference
+- [eframe 0.33 Documentation](https://docs.rs/eframe/0.33) - Application framework reference
+- [egui 0.33 Documentation](https://docs.rs/egui/0.33) - Immediate mode GUI reference
+- [egui Visuals](https://docs.rs/egui/0.33/egui/style/struct.Visuals.html) - Theme customization
+- [egui::Modal](https://docs.rs/egui/0.33/egui/containers/modal/index.html) - Modal dialog support
+- [egui_kittest](https://docs.rs/egui_kittest/) - UI automation testing
+- [cpal 0.16 Documentation](https://docs.rs/cpal/0.16) - Audio I/O with underrun reporting
 - [gilrs Documentation](https://docs.rs/gilrs/) - Gamepad support reference
+- [ron 0.12 Documentation](https://docs.rs/ron/0.12) - Configuration format
 
 ### Reference Projects
 
@@ -373,6 +412,7 @@ The following foundational work was completed in v0.7.1, providing a stable base
 
 ---
 
-**Status:** ⏳ PENDING
+**Status:** IN PROGRESS (S0 Complete, S1-S3 Pending)
 **Blocks:** Phase 2 (Advanced Features)
 **Next Phase:** Phase 2 - Advanced Features (M11-M22)
+**Last Updated:** 2025-12-28

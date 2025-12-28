@@ -1,10 +1,19 @@
 # M10 Sprint 3: Release Preparation
 
+**Sprint:** M10-S3 (Release Preparation)
+**Phase:** 1.5 (Stabilization & Accuracy)
+**Duration:** ~2-3 days
+**Status:** Pending
+**Prerequisites:** M10-S0 Complete, M10-S1 Complete, M10-S2 Complete
+**Updated:** 2025-12-28
+
+---
+
 ## Overview
 
 Final testing, binary builds, version decision, release notes, and GitHub release to complete Phase 1.5 and transition to Phase 2.
 
-## Current Implementation (v0.7.1)
+## Current Implementation (Post M10-S0)
 
 The following release infrastructure exists:
 
@@ -13,18 +22,24 @@ The following release infrastructure exists:
 - [x] Cargo workspace with 6+ crates
 - [x] Desktop binary: `rustynes-desktop`
 - [x] Cross-platform dependencies: eframe+egui (OpenGL), cpal (audio), gilrs (gamepads)
-- [x] Test suite: 500+ unit tests, Blargg ROM validation
+- [x] Test suite: 508 unit tests passing, 100% Blargg ROM validation (90/90)
+- [x] Dependency upgrade to latest stable versions (M10-S0)
 
-**Build Dependencies (v0.7.1):**
-- eframe 0.29 (cross-platform window + rendering)
-- egui 0.29 (immediate mode GUI)
-- cpal 0.15 (cross-platform audio)
+**Build Dependencies (Post M10-S0):**
+- eframe 0.33 (cross-platform window + rendering)
+- egui 0.33 (immediate mode GUI with Modal, Atoms, Plugin)
+- cpal 0.16 (cross-platform audio with buffer underrun reporting)
 - gilrs 0.11 (gamepad support)
 - rfd 0.15 (native file dialogs)
-- ron 0.8 (configuration)
+- ron 0.12 (configuration)
+- thiserror 2.0 (error handling)
+
+**Toolchain Requirements:**
+- Rust Edition: 2024
+- MSRV: 1.88 (required by egui 0.33)
 
 **Platform Considerations:**
-- Linux: Requires ALSA dev libraries for cpal
+- Linux: Requires `libasound2-dev`, `libudev-dev`, `libxkbcommon-dev`, `libwayland-dev`
 - macOS: Universal binary support (x86_64 + arm64)
 - Windows: MSVC toolchain recommended
 
@@ -41,12 +56,14 @@ The following release infrastructure exists:
 ## Tasks
 
 ### Task 1: Regression Testing
-- [ ] Run full test ROM suite (202/212 tests, 95%+)
+- [ ] Run full test suite (508+ unit tests passing)
+- [ ] Verify 100% Blargg pass rate maintained (90/90 tests)
 - [ ] Test with 10+ different games (Super Mario Bros., Zelda, Mega Man, etc.)
 - [ ] Verify save states (create, load, verify correctness)
 - [ ] Test on all platforms (Linux, macOS, Windows)
 - [ ] Performance benchmarking (verify 120+ FPS)
 - [ ] Test edge cases (malformed ROMs, invalid save states)
+- [ ] Verify no clippy warnings: `cargo clippy --workspace -- -D warnings`
 
 ### Task 2: Binary Builds
 - [ ] Setup GitHub Actions for automated builds
@@ -132,12 +149,21 @@ on:
     tags:
       - 'v*'
 
+env:
+  CARGO_TERM_COLOR: always
+  # MSRV for egui 0.33
+  RUST_VERSION: "1.88"
+
 jobs:
   build-linux:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+
+      # Use specific Rust version for MSRV 1.88
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
 
       # Install dependencies for eframe/egui (OpenGL) and cpal (ALSA)
       - name: Install Linux dependencies
@@ -147,10 +173,14 @@ jobs:
             libasound2-dev \
             libudev-dev \
             libxkbcommon-dev \
-            libwayland-dev
+            libwayland-dev \
+            libgtk-3-dev
 
       - name: Build
         run: cargo build --release -p rustynes-desktop
+
+      - name: Run Tests
+        run: cargo test --workspace
 
       - name: Package
         run: |
@@ -168,8 +198,11 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+
+      # Use specific Rust version for MSRV 1.88
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_VERSION }}
           targets: x86_64-apple-darwin,aarch64-apple-darwin
 
       - name: Build (x86_64)
@@ -217,7 +250,11 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+
+      # Use specific Rust version for MSRV 1.88
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
 
       - name: Build
         run: cargo build --release -p rustynes-desktop
@@ -437,3 +474,10 @@ Thank you to all contributors who helped make v1.0.0-alpha.1 possible!
 ## Version Target
 
 v0.9.0 or v1.0.0-alpha.1 (Final Decision)
+
+---
+
+**Status:** Pending
+**Depends On:** M10-S0 (Complete), M10-S1, M10-S2
+**Blocks:** Phase 2 (Advanced Features)
+**Last Updated:** 2025-12-28
