@@ -28,7 +28,7 @@ A next-generation NES emulator written in pure Rust — targeting 100% accuracy,
 
 ---
 
-> **Status:** v0.8.0 Released - Rust 2024 Edition & Dependency Modernization Complete
+> **Status:** v0.8.1 Released - M9 Known Issues Resolution 85% Complete
 >
 > **Milestones Completed:**
 >
@@ -41,6 +41,7 @@ A next-generation NES emulator written in pure Rust — targeting 100% accuracy,
 > - ✅ **M7: Accuracy** - CPU/PPU/APU timing refinements, OAM DMA 513/514 cycle precision, hardware-accurate mixer
 > - ✅ **M8: Test ROMs** - 100% Pass Rate on all integrated test suites (CPU, PPU, APU, Mappers)
 > - ✅ **M9-S0: Dependencies** - Rust 2024 Edition, eframe 0.33, egui 0.33, cpal 0.16, ron 0.12
+> - 🔄 **M9: Known Issues** (85%) - Audio S1, PPU S2, Performance S3 complete; Bug fixes S4 pending
 >
 > **Test Suite:** 508+ tests passing (0 failures, 0 ignored)
 >
@@ -88,22 +89,20 @@ RustyNES combines **accuracy-first emulation** with **modern features** and the 
 
 ## Quick Start
 
-### Recent Release: v0.8.0 (December 28, 2025)
+### Recent Release: v0.8.1 (December 28, 2025)
 
-RustyNES v0.8.0 completes comprehensive dependency modernization and adopts Rust 2024 Edition:
+RustyNES v0.8.1 advances M9 Known Issues Resolution to 85% complete with core implementation work:
 
-**What's New in v0.8.0:**
+**What's New in v0.8.1:**
 
-- **Rust 2024 Edition:** Latest Rust language features and improvements (MSRV 1.88)
-- **eframe 0.33 + egui 0.33:** Latest immediate mode GUI with improved widget system
-- **cpal 0.16:** Audio device improvements and better cross-platform support
-- **rubato 0.16:** High-quality audio resampling for flexible sample rate support
-- **ron 0.12:** Configuration format improvements
-- **thiserror 2.0:** Error handling modernization
-- **Performance:** Inline hints on critical paths, buffer reuse patterns
+- **Audio Improvements (S1):** Two-stage decimation via rubato, A/V sync with adaptive speed adjustment
+- **PPU Edge Cases (S2):** Sprite overflow, palette RAM mirroring, mid-scanline write detection
+- **Performance Optimization (S3):** `#[inline]` hints on CPU/PPU hot paths (step, execute_opcode, handle_nmi/irq)
+- **Zero Regressions:** 508+ tests passing, 100% Blargg pass rate maintained
 
 **Previous Releases:**
 
+- **v0.8.0** - Dependency Modernization: Rust 2024 Edition, eframe 0.33, egui 0.33, cpal 0.16, ron 0.12
 - **v0.7.1** - GUI Framework Migration: eframe 0.29/egui 0.29, immediate mode GUI, debug windows
 - **v0.7.0** - Milestone 8: 100% Blargg test pass rate, cycle-accurate CPU tick(), PPU open bus, CHR-RAM routing
 - **v0.6.0** - Milestone 7: APU frame counter precision, hardware-accurate mixer, OAM DMA 513/514 cycles
@@ -302,7 +301,7 @@ Controls will be fully configurable through the configuration system.
 
 ## Features
 
-### Current Status (v0.8.0 - December 2025)
+### Current Status (v0.8.1 - December 2025)
 
 - [x] **Architecture Design** - Complete modular crate structure with 10 component crates
 - [x] **Documentation** - 40+ comprehensive specification and implementation guides covering CPU, PPU, APU, mappers, testing, and development
@@ -853,9 +852,9 @@ If you use RustyNES in academic research, please cite:
   author = {RustyNES Contributors},
   title = {RustyNES: A Next-Generation NES Emulator in Rust},
   year = {2025},
-  version = {0.8.0},
+  version = {0.8.1},
   url = {https://github.com/doublegate/RustyNES},
-  note = {Cycle-accurate NES emulator with 100\% Blargg test pass rate, Rust 2024 Edition, eframe/egui desktop GUI, and hardware-accurate emulation}
+  note = {Cycle-accurate NES emulator with 100\% Blargg test pass rate, M9 Known Issues Resolution 85\% complete, Rust 2024 Edition, eframe/egui desktop GUI}
 }
 ```
 

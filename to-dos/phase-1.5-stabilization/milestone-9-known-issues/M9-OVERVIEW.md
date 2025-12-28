@@ -6,6 +6,7 @@
 **Status:** CORE IMPLEMENTATION COMPLETE
 **Version Target:** v0.9.0
 **Progress:** 85%
+**Current Version:** v0.8.1 (Interim release with S1-S3 core work complete)
 **Baseline:** v0.8.0 (Rust 2024 Edition, Dependency Modernization Complete)
 **Last Updated:** December 28, 2025
 

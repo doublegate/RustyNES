@@ -21,7 +21,17 @@
 
 ---
 
-## Recent Updates (v2.9.0 - December 2025)
+## Recent Updates (v2.10.0 - December 2025)
+
+**v0.8.1 Released - December 28, 2025** - M9 Known Issues Resolution 85% Complete!
+
+**M9 Sprint Achievements:**
+
+- **Audio Improvements (S1):** Two-stage decimation via rubato, A/V sync with adaptive speed adjustment
+- **PPU Edge Cases (S2):** Sprite overflow, palette RAM mirroring, mid-scanline write detection
+- **Performance Optimization (S3):** `#[inline]` hints on CPU/PPU hot paths (step, execute_opcode, handle_nmi/irq)
+- **Zero Regressions:** 508+ tests passing, 100% Blargg pass rate maintained
+- **Documentation:** Updated all project files with v0.8.1 version references
 
 **v0.8.0 Released - December 28, 2025** - Rust 2024 Edition & Dependency Modernization!
 
@@ -31,8 +41,6 @@
 - **Dependency Upgrades:** eframe 0.33, egui 0.33, cpal 0.16, ron 0.12, rfd 0.15
 - **Audio Resampling:** rubato 0.16 integration for high-quality sample rate conversion
 - **Performance:** Inline hints and buffer reuse optimizations across APU subsystem
-- **Test Suite:** 508+ tests passing (0 failures, 0 ignored)
-- **Documentation:** Complete version reference updates across all project files
 
 **v0.7.1 Released - December 27, 2025** - Desktop GUI Framework Migration Complete!
 
@@ -98,6 +106,7 @@
 - v0.7.0 (December 21, 2025): M8 Test ROM Validation - 100% Blargg pass rate (90/90 tests)
 - v0.7.1 (December 27, 2025): GUI Framework Migration - Complete rewrite from Iced+wgpu to eframe+egui
 - v0.8.0 (December 28, 2025): Rust 2024 Edition - MSRV 1.88+, dependency modernization, audio resampling
+- v0.8.1 (December 28, 2025): M9 Known Issues (85%) - Audio S1, PPU S2, Performance S3 complete
 
 **Project Status Change:**
 

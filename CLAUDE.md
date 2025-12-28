@@ -6,11 +6,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 RustyNES is a next-generation Nintendo Entertainment System (NES) emulator written in Rust. Target: 100% TASVideos accuracy test pass rate, 300+ mappers, RetroAchievements, GGPO netplay, TAS tools, Lua scripting.
 
-**Status:** v0.8.0 - Phase 1.5 Stabilization In Progress (M7-M8 Complete, M9-M10 Planned). All Phase 1 milestones (M1-M6) done.
+**Status:** v0.8.1 - Phase 1.5 Stabilization In Progress (M7-M8 Complete, M9 85% Complete). All Phase 1 milestones (M1-M6) done.
 
 **Test Status:** 508+ tests passing (0 failures, 0 ignored). 100% Blargg pass rate (90/90 tests)
 
-**Current Version:** v0.8.0 (December 28, 2025)
+**Current Version:** v0.8.1 (December 28, 2025)
+- M9 Known Issues Resolution: Core implementation 85% complete
+- CPU performance: #[inline] hints on step(), execute_opcode(), handle_nmi(), handle_irq()
+- PPU performance: #[inline] hints on step(), step_with_chr()
+- Audio improvements: Dynamic resampling, A/V sync, buffer management (S1 complete)
+- PPU edge cases: Sprite overflow, palette RAM, mid-scanline writes (S2 complete)
+- Performance optimization: Hot path inline hints (S3 core complete)
+- Zero accuracy regressions (508+ tests passing)
+
+**Previous Version:** v0.8.0 (December 28, 2025)
 - Rust 2024 Edition adoption (MSRV 1.88)
 - Comprehensive dependency modernization
 - eframe 0.33 + egui 0.33 immediate mode GUI
@@ -275,10 +284,41 @@ Cloned emulators for study and pattern reference:
 | **M8: Test ROMs** | ✅ v0.7.0 | 100% Blargg pass rate (90/90 tests) |
 | **GUI Migration** | ✅ v0.7.1 | eframe + egui desktop reimplementation |
 | **Dependency Upgrade** | ✅ v0.8.0 | Rust 2024, eframe 0.33, egui 0.33, cpal 0.16, ron 0.12 |
-| **M9-10: Phase 1.5** | 🔄 PLANNED | Known issues resolution, polish, documentation |
+| **M9: Known Issues** | 🔄 v0.8.1 (85%) | Audio S1, PPU S2, Performance S3 complete; S4 pending |
+| **M10: Final Polish** | 📋 PLANNED | UI/UX improvements, documentation, v1.0.0-alpha.1 |
 | **Phase 2+** | 📋 TBD | Advanced features |
 
-## Recent Accomplishments (v0.8.0 - Dec 28, 2025)
+## Recent Accomplishments (v0.8.1 - Dec 28, 2025)
+
+### M9 Known Issues Resolution (85% Complete)
+
+Systematic resolution of known issues identified during Phase 1.5 development:
+
+#### Sprint 1: Audio Improvements (Complete)
+- Two-stage decimation via rubato: 1.79MHz -> 192kHz -> 48kHz
+- A/V sync with adaptive speed adjustment (0.99x-1.01x)
+- Dynamic buffer sizing (2048-16384 samples)
+- Hardware-accurate mixer with NES filter chain
+
+#### Sprint 2: PPU Edge Cases (Complete)
+- Sprite overflow bug with false positive/negative matching hardware
+- Palette RAM mirroring at $3F10/$3F14/$3F18/$3F1C
+- Mid-scanline write detection for split-screen effects
+- Attribute byte extraction verified for all quadrants
+
+#### Sprint 3: Performance Optimization (Core Complete)
+- Added `#[inline]` to CPU hot paths: step(), execute_opcode(), handle_nmi(), handle_irq()
+- Added `#[inline]` to PPU hot paths: step(), step_with_chr()
+- Verified 68+ existing inline annotations in CPU/PPU crates
+- Zero accuracy regressions (508+ tests passing)
+
+#### Sprint 4: Bug Fixes & Polish (Pending)
+- GitHub issue triage and resolution
+- Release preparation for v0.9.0
+
+---
+
+## Previous Accomplishments (v0.8.0 - Dec 28, 2025)
 
 ### Comprehensive Dependency Modernization
 

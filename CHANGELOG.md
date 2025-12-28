@@ -11,6 +11,74 @@ No unreleased changes.
 
 ---
 
+## [0.8.1] - 2025-12-28 - M9 Known Issues Resolution (85% Complete)
+
+**Status**: Phase 1.5 Stabilization - M9 Sprints 1-3 Core Implementation Complete
+
+This release advances M9 Known Issues Resolution to 85% complete, implementing core improvements for audio quality, PPU edge cases, and performance optimization while maintaining zero test regressions.
+
+### Highlights
+
+- **Audio Improvements (S1 Complete):** Two-stage decimation via rubato, A/V sync with adaptive speed adjustment
+- **PPU Edge Cases (S2 Complete):** Sprite overflow bug emulation, palette RAM mirroring, mid-scanline writes
+- **Performance Optimization (S3 Core Complete):** `#[inline]` hints on CPU/PPU hot paths
+- **Zero Regressions:** 508+ tests passing, 100% Blargg pass rate maintained
+
+### Added
+
+- **CPU Inline Hints:** `#[inline]` attributes on step(), execute_opcode(), handle_nmi(), handle_irq()
+- **PPU Inline Hints:** `#[inline]` attributes on step(), step_with_chr()
+- **M9 Progress Tracking:** Current version field in M9-OVERVIEW.md
+
+### Changed
+
+#### Audio Improvements (Sprint 1)
+
+- Two-stage decimation via rubato: 1.79MHz -> 192kHz -> 48kHz
+- A/V sync with adaptive speed adjustment (0.99x-1.01x)
+- Dynamic buffer sizing (2048-16384 samples)
+- Hardware-accurate mixer with NES filter chain
+
+#### PPU Edge Cases (Sprint 2)
+
+- Sprite overflow bug with false positive/negative matching hardware behavior
+- Palette RAM mirroring at $3F10/$3F14/$3F18/$3F1C verified
+- Mid-scanline write detection for split-screen effects
+- Attribute byte extraction verified for all quadrants
+
+#### Performance Optimization (Sprint 3)
+
+- Added `#[inline]` to CPU hot paths: step(), execute_opcode(), handle_nmi(), handle_irq()
+- Added `#[inline]` to PPU hot paths: step(), step_with_chr()
+- Verified 68+ existing inline annotations in CPU/PPU crates
+- Zero accuracy regressions confirmed
+
+### Technical Specifications
+
+**M9 Sprint Status:**
+
+| Sprint | Status | Core Tasks |
+|--------|--------|------------|
+| S1: Audio | COMPLETE | Dynamic resampling, A/V sync, buffer management |
+| S2: PPU | COMPLETE | Sprite overflow, palette RAM, mid-scanline, attributes |
+| S3: Performance | CORE COMPLETE | Inline hints, hot path optimization |
+| S4: Bug Fixes | PENDING | GitHub issues, release prep |
+
+**Test Results:**
+
+- Total tests: 508+ passing
+- Failures: 0
+- Ignored: 0
+- Blargg pass rate: 100% (90/90 tests)
+
+### What's Next
+
+- **Sprint 4:** GitHub issue triage and resolution
+- **v0.9.0:** Full M9 completion with all bug fixes
+- **M10:** Final polish and v1.0.0-alpha.1 preparation
+
+---
+
 ## [0.8.0] - 2025-12-28 - Rust 2024 Edition & Dependency Modernization
 
 **Status**: Phase 1.5 Stabilization - M9 Sprint 0 Complete (Dependency Upgrade)
