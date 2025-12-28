@@ -11,6 +11,30 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+/// Application theme options.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum AppTheme {
+    /// Light theme with light backgrounds.
+    Light,
+    /// Dark theme (default).
+    #[default]
+    Dark,
+    /// Follow system theme preference.
+    System,
+}
+
+impl AppTheme {
+    /// Get the display name for the theme.
+    #[must_use]
+    pub const fn display_name(&self) -> &'static str {
+        match self {
+            Self::Light => "Light",
+            Self::Dark => "Dark",
+            Self::System => "System",
+        }
+    }
+}
+
 /// Video configuration options.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(clippy::struct_excessive_bools)]
@@ -25,6 +49,8 @@ pub struct VideoConfig {
     pub pixel_aspect_correction: bool,
     /// Show FPS counter.
     pub show_fps: bool,
+    /// Application theme (light/dark/system).
+    pub theme: AppTheme,
 }
 
 impl Default for VideoConfig {
@@ -35,6 +61,7 @@ impl Default for VideoConfig {
             vsync: true,
             pixel_aspect_correction: true,
             show_fps: false,
+            theme: AppTheme::Dark,
         }
     }
 }
@@ -187,6 +214,14 @@ pub struct Config {
     pub debug: DebugConfig,
     /// Recent ROM paths.
     pub recent_roms: RecentRoms,
+    /// Whether this is the first run (show welcome dialog).
+    #[serde(default = "default_first_run")]
+    pub first_run: bool,
+}
+
+/// Default value for `first_run` (true for new configs).
+const fn default_first_run() -> bool {
+    true
 }
 
 impl Default for Config {
@@ -200,6 +235,7 @@ impl Default for Config {
                 paths: Vec::new(),
                 max_entries: 10,
             },
+            first_run: true,
         }
     }
 }

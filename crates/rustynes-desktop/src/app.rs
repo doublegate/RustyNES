@@ -4,10 +4,11 @@
 //! - Implements the `eframe::App` trait for the main loop
 //! - Coordinates emulator, audio, and input
 //! - Renders the NES framebuffer as an egui texture
+//! - Handles keyboard shortcuts
 
 use crate::audio::AudioOutput;
 use crate::config::Config;
-use crate::gui;
+use crate::gui::{self, StatusMessage};
 use crate::input::InputHandler;
 
 use egui::{ColorImage, TextureHandle, TextureOptions};
@@ -48,6 +49,8 @@ pub struct NesApp {
     nes_texture: Option<TextureHandle>,
     /// Framebuffer pixel data for the texture.
     framebuffer: Vec<u8>,
+    /// Last applied theme (for detecting changes).
+    last_theme: crate::config::AppTheme,
 }
 
 impl NesApp {
@@ -58,9 +61,9 @@ impl NesApp {
         config: Config,
         rom_path: Option<PathBuf>,
     ) -> Self {
-        // Set up custom fonts and visuals if needed
+        // Apply theme based on config
         let ctx = &cc.egui_ctx;
-        ctx.set_visuals(egui::Visuals::dark());
+        gui::apply_theme(ctx, &config);
 
         // Create audio output
         let audio = match AudioOutput::new(
@@ -82,17 +85,24 @@ impl NesApp {
         );
 
         // Create GUI state
-        let gui_state = gui::GuiState::new(&config);
+        let mut gui_state = gui::GuiState::new(&config);
 
         // Load console if ROM was provided
         let console = if let Some(rom_path) = &rom_path {
             match Self::load_rom(rom_path) {
                 Ok(console) => {
                     info!("Loaded ROM: {}", rom_path.display());
+                    // Set ROM name in GUI state
+                    gui_state.rom_name = rom_path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .map(String::from);
+                    gui_state.set_status(StatusMessage::success("ROM loaded"));
                     Some(console)
                 }
                 Err(e) => {
                     error!("Failed to load ROM: {e}");
+                    gui_state.set_error(format!("Failed to load ROM: {e}"));
                     None
                 }
             }
@@ -102,6 +112,9 @@ impl NesApp {
 
         // Initialize framebuffer (RGBA, 256x240)
         let framebuffer = vec![0u8; NES_WIDTH * NES_HEIGHT * 4];
+
+        // Store initial theme
+        let last_theme = config.video.theme;
 
         Self {
             config,
@@ -114,6 +127,7 @@ impl NesApp {
             accumulator: Duration::ZERO,
             nes_texture: None,
             framebuffer,
+            last_theme,
         }
     }
 
@@ -172,40 +186,146 @@ impl NesApp {
         }
     }
 
-    /// Handle keyboard input for special keys.
+    /// Handle keyboard input for special keys and shortcuts.
     fn handle_special_keys(&mut self, ctx: &egui::Context) {
         ctx.input(|i| {
-            // Toggle pause with F3
-            if i.key_pressed(egui::Key::F3) {
+            let ctrl = i.modifiers.ctrl;
+
+            // Ctrl+O: Open ROM
+            if ctrl && i.key_pressed(egui::Key::O) {
+                self.open_file_dialog();
+            }
+
+            // Ctrl+P: Toggle Pause
+            if ctrl && i.key_pressed(egui::Key::P) && self.console.is_some() {
                 self.paused = !self.paused;
+                self.gui_state
+                    .set_status(StatusMessage::info(if self.paused {
+                        "Emulation paused"
+                    } else {
+                        "Emulation resumed"
+                    }));
                 info!("Console {}", if self.paused { "paused" } else { "resumed" });
             }
 
-            // Reset with F2
+            // Ctrl+R: Reset
+            if ctrl
+                && i.key_pressed(egui::Key::R)
+                && let Some(console) = &mut self.console
+            {
+                console.reset();
+                self.gui_state
+                    .set_status(StatusMessage::info("Console reset"));
+                info!("Console reset");
+            }
+
+            // Ctrl+Q: Quit
+            if ctrl && i.key_pressed(egui::Key::Q) {
+                std::process::exit(0);
+            }
+
+            // Ctrl+,: Settings (comma key)
+            if ctrl && i.key_pressed(egui::Key::Comma) {
+                self.gui_state.settings_open = true;
+            }
+
+            // F3: Toggle pause (legacy)
+            if i.key_pressed(egui::Key::F3) && self.console.is_some() {
+                self.paused = !self.paused;
+                self.gui_state
+                    .set_status(StatusMessage::info(if self.paused {
+                        "Emulation paused"
+                    } else {
+                        "Emulation resumed"
+                    }));
+                info!("Console {}", if self.paused { "paused" } else { "resumed" });
+            }
+
+            // F2: Reset (legacy)
             if i.key_pressed(egui::Key::F2)
                 && let Some(console) = &mut self.console
             {
                 console.reset();
+                self.gui_state
+                    .set_status(StatusMessage::info("Console reset"));
                 info!("Console reset");
             }
 
-            // Toggle debug mode with F1
+            // F1: Toggle debug mode
             if i.key_pressed(egui::Key::F1) {
                 self.config.debug.enabled = !self.config.debug.enabled;
+                self.gui_state
+                    .set_status(StatusMessage::info(if self.config.debug.enabled {
+                        "Debug mode enabled"
+                    } else {
+                        "Debug mode disabled"
+                    }));
             }
 
-            // Toggle menu with Escape
+            // Escape: Toggle menu or close dialogs
             if i.key_pressed(egui::Key::Escape) {
-                self.gui_state.toggle_menu();
+                if self.gui_state.show_welcome {
+                    self.gui_state.show_welcome = false;
+                    self.config.first_run = false;
+                } else if self.gui_state.error_message.is_some() {
+                    self.gui_state.error_message = None;
+                } else if self.gui_state.confirm_action.is_some() {
+                    self.gui_state.confirm_action = None;
+                } else if self.gui_state.settings_open {
+                    self.gui_state.settings_open = false;
+                } else if self.gui_state.show_shortcuts {
+                    self.gui_state.show_shortcuts = false;
+                } else {
+                    self.gui_state.toggle_menu();
+                }
             }
 
-            // Toggle mute with M
+            // M: Toggle mute
             if i.key_pressed(egui::Key::M)
+                && !i.modifiers.ctrl
                 && let Some(audio) = &self.audio
             {
                 audio.toggle_mute();
+                let muted = audio.is_muted();
+                self.gui_state.set_status(StatusMessage::info(if muted {
+                    "Audio muted"
+                } else {
+                    "Audio unmuted"
+                }));
             }
         });
+    }
+
+    /// Open file dialog to select a ROM.
+    fn open_file_dialog(&mut self) {
+        let file = rfd::FileDialog::new()
+            .add_filter("NES ROMs", &["nes", "NES"])
+            .add_filter("All Files", &["*"])
+            .pick_file();
+
+        if let Some(path) = file {
+            let rom_name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("Unknown")
+                .to_string();
+
+            match Self::load_rom(&path) {
+                Ok(console) => {
+                    self.console = Some(console);
+                    self.paused = false;
+                    self.config.recent_roms.add(path);
+                    self.gui_state.rom_name = Some(rom_name.clone());
+                    self.gui_state
+                        .set_status(StatusMessage::success(format!("Loaded: {rom_name}")));
+                    info!("Loaded ROM: {rom_name}");
+                }
+                Err(e) => {
+                    self.gui_state.set_error(format!("Failed to load ROM: {e}"));
+                    error!("Failed to load ROM: {e}");
+                }
+            }
+        }
     }
 
     /// Handle keyboard input for NES controller.
@@ -247,14 +367,24 @@ impl NesApp {
         ctx.input(|i| {
             for file in &i.raw.dropped_files {
                 if let Some(path) = &file.path {
+                    let rom_name = path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("Unknown")
+                        .to_string();
+
                     info!("File dropped: {}", path.display());
                     match Self::load_rom(path) {
                         Ok(console) => {
                             self.console = Some(console);
                             self.paused = false;
                             self.config.recent_roms.add(path.clone());
+                            self.gui_state.rom_name = Some(rom_name.clone());
+                            self.gui_state
+                                .set_status(StatusMessage::success(format!("Loaded: {rom_name}")));
                         }
                         Err(e) => {
+                            self.gui_state.set_error(format!("Failed to load ROM: {e}"));
                             error!("Failed to load dropped file: {e}");
                         }
                     }
@@ -268,6 +398,12 @@ impl eframe::App for NesApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Request continuous repaint for smooth emulation
         ctx.request_repaint();
+
+        // Apply theme changes if config changed
+        if self.config.video.theme != self.last_theme {
+            gui::apply_theme(ctx, &self.config);
+            self.last_theme = self.config.video.theme;
+        }
 
         // Handle input
         self.handle_special_keys(ctx);

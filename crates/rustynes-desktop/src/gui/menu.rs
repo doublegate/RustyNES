@@ -1,6 +1,6 @@
-//! Menu bar implementation.
+//! Menu bar implementation with keyboard shortcuts.
 
-use super::GuiState;
+use super::{GuiState, StatusMessage};
 use crate::audio::AudioOutput;
 use crate::config::Config;
 use egui::Context;
@@ -8,7 +8,7 @@ use log::{error, info};
 use rustynes_core::Console;
 
 /// Render the main menu bar.
-#[allow(clippy::too_many_lines, deprecated)]
+#[allow(clippy::too_many_lines)]
 pub fn render_menu_bar(
     ctx: &Context,
     state: &mut GuiState,
@@ -18,12 +18,16 @@ pub fn render_menu_bar(
     paused: &mut bool,
 ) {
     egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
-        egui::menu::bar(ui, |ui| {
+        egui::MenuBar::new().ui(ui, |ui| {
             // File menu
             ui.menu_button("File", |ui| {
-                if ui.button("Open ROM...").clicked() {
+                if ui
+                    .add(egui::Button::new("Open ROM...").shortcut_text("Ctrl+O"))
+                    .on_hover_text("Open a NES ROM file")
+                    .clicked()
+                {
                     state.file_dialog_pending = true;
-                    open_file_dialog(console, config);
+                    open_file_dialog(console, config, state);
                     ui.close();
                 }
 
@@ -40,17 +44,35 @@ pub fn render_menu_bar(
                                 .unwrap_or("Unknown");
                             if ui.button(name).clicked() {
                                 if let Err(e) = load_rom(path, console) {
-                                    error!("Failed to load ROM: {e}");
+                                    state.set_error(format!("Failed to load ROM: {e}"));
+                                } else {
+                                    state.rom_name = Some(name.to_string());
+                                    state.set_status(StatusMessage::success(format!(
+                                        "Loaded: {name}"
+                                    )));
                                 }
                                 ui.close();
                             }
+                        }
+                        ui.separator();
+                        if ui
+                            .button("Clear Recent")
+                            .on_hover_text("Clear the recent ROMs list")
+                            .clicked()
+                        {
+                            config.recent_roms.paths.clear();
+                            ui.close();
                         }
                     }
                 });
 
                 ui.separator();
 
-                if ui.button("Exit").clicked() {
+                if ui
+                    .add(egui::Button::new("Exit").shortcut_text("Ctrl+Q"))
+                    .on_hover_text("Exit RustyNES")
+                    .clicked()
+                {
                     std::process::exit(0);
                 }
             });
@@ -62,20 +84,33 @@ pub fn render_menu_bar(
                 if ui
                     .add_enabled(
                         has_rom,
-                        egui::Button::new(if *paused { "Resume" } else { "Pause" }),
+                        egui::Button::new(if *paused { "Resume" } else { "Pause" })
+                            .shortcut_text("Ctrl+P"),
                     )
+                    .on_hover_text(if *paused {
+                        "Resume emulation"
+                    } else {
+                        "Pause emulation"
+                    })
                     .clicked()
                 {
                     *paused = !*paused;
+                    state.set_status(StatusMessage::info(if *paused {
+                        "Emulation paused"
+                    } else {
+                        "Emulation resumed"
+                    }));
                     ui.close();
                 }
 
                 if ui
-                    .add_enabled(has_rom, egui::Button::new("Reset"))
+                    .add_enabled(has_rom, egui::Button::new("Reset").shortcut_text("Ctrl+R"))
+                    .on_hover_text("Reset the console (soft reset)")
                     .clicked()
                 {
                     if let Some(cons) = console {
                         cons.reset();
+                        state.set_status(StatusMessage::info("Console reset"));
                         info!("Console reset");
                     }
                     ui.close();
@@ -86,13 +121,17 @@ pub fn render_menu_bar(
             ui.menu_button("Options", |ui| {
                 // Video submenu
                 ui.menu_button("Video", |ui| {
-                    ui.checkbox(&mut config.video.fullscreen, "Fullscreen");
-                    ui.checkbox(&mut config.video.vsync, "VSync");
+                    ui.checkbox(&mut config.video.fullscreen, "Fullscreen")
+                        .on_hover_text("Toggle fullscreen mode");
+                    ui.checkbox(&mut config.video.vsync, "VSync")
+                        .on_hover_text("Enable vertical sync");
                     ui.checkbox(
                         &mut config.video.pixel_aspect_correction,
                         "8:7 Aspect Ratio",
-                    );
-                    ui.checkbox(&mut config.video.show_fps, "Show FPS");
+                    )
+                    .on_hover_text("Apply NES native pixel aspect ratio");
+                    ui.checkbox(&mut config.video.show_fps, "Show FPS")
+                        .on_hover_text("Show FPS overlay");
 
                     ui.separator();
 
@@ -109,12 +148,15 @@ pub fn render_menu_bar(
 
                 // Audio submenu
                 ui.menu_button("Audio", |ui| {
-                    let is_muted = audio.as_ref().map_or(
-                        config.audio.muted,
-                        super::super::audio::AudioOutput::is_muted,
-                    );
+                    let is_muted = audio
+                        .as_ref()
+                        .map_or(config.audio.muted, crate::audio::AudioOutput::is_muted);
                     let mut muted = is_muted;
-                    if ui.checkbox(&mut muted, "Mute").changed() {
+                    if ui
+                        .checkbox(&mut muted, "Mute")
+                        .on_hover_text("Toggle audio mute")
+                        .changed()
+                    {
                         if let Some(audio) = audio {
                             audio.set_muted(muted);
                         }
@@ -124,12 +166,12 @@ pub fn render_menu_bar(
                     ui.separator();
 
                     ui.label("Volume:");
-                    let mut volume = audio.as_ref().map_or(
-                        config.audio.volume,
-                        super::super::audio::AudioOutput::volume,
-                    );
+                    let mut volume = audio
+                        .as_ref()
+                        .map_or(config.audio.volume, crate::audio::AudioOutput::volume);
                     if ui
                         .add(egui::Slider::new(&mut volume, 0.0..=1.0).show_value(true))
+                        .on_hover_text("Adjust volume")
                         .changed()
                     {
                         if let Some(audio) = audio {
@@ -141,7 +183,11 @@ pub fn render_menu_bar(
 
                 ui.separator();
 
-                if ui.button("Settings...").clicked() {
+                if ui
+                    .add(egui::Button::new("Settings...").shortcut_text("Ctrl+,"))
+                    .on_hover_text("Open settings dialog")
+                    .clicked()
+                {
                     state.settings_open = true;
                     ui.close();
                 }
@@ -149,38 +195,47 @@ pub fn render_menu_bar(
 
             // Debug menu
             ui.menu_button("Debug", |ui| {
-                ui.checkbox(&mut config.debug.enabled, "Enable Debug Mode");
+                ui.checkbox(&mut config.debug.enabled, "Enable Debug Mode")
+                    .on_hover_text("Toggle debug mode (F1)");
 
                 ui.separator();
 
                 ui.add_enabled(
                     config.debug.enabled,
                     egui::Checkbox::new(&mut state.debug.cpu, "CPU Window"),
-                );
+                )
+                .on_hover_text("Show CPU debug window");
                 ui.add_enabled(
                     config.debug.enabled,
                     egui::Checkbox::new(&mut state.debug.ppu, "PPU Window"),
-                );
+                )
+                .on_hover_text("Show PPU debug window");
                 ui.add_enabled(
                     config.debug.enabled,
                     egui::Checkbox::new(&mut state.debug.apu, "APU Window"),
-                );
+                )
+                .on_hover_text("Show APU debug window");
                 ui.add_enabled(
                     config.debug.enabled,
                     egui::Checkbox::new(&mut state.debug.memory, "Memory Viewer"),
-                );
+                )
+                .on_hover_text("Show memory viewer");
             });
 
             // Help menu
             ui.menu_button("Help", |ui| {
-                if ui.button("Keyboard Shortcuts").clicked() {
-                    // TODO: Show keyboard shortcuts window
+                if ui
+                    .button("Keyboard Shortcuts")
+                    .on_hover_text("View keyboard shortcuts")
+                    .clicked()
+                {
+                    state.show_shortcuts = true;
                     ui.close();
                 }
 
                 ui.separator();
 
-                if ui.button("About").clicked() {
+                if ui.button("About").on_hover_text("About RustyNES").clicked() {
                     state.about_open = true;
                     ui.close();
                 }
@@ -190,17 +245,26 @@ pub fn render_menu_bar(
 }
 
 /// Open a file dialog to select a ROM.
-fn open_file_dialog(console: &mut Option<Console>, config: &mut Config) {
+fn open_file_dialog(console: &mut Option<Console>, config: &mut Config, state: &mut GuiState) {
     let file = rfd::FileDialog::new()
         .add_filter("NES ROMs", &["nes", "NES"])
         .add_filter("All Files", &["*"])
         .pick_file();
 
     if let Some(path) = file {
+        let rom_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("Unknown")
+            .to_string();
+
         if let Err(e) = load_rom(&path, console) {
+            state.set_error(format!("Failed to load ROM: {e}"));
             error!("Failed to load ROM: {e}");
         } else {
             config.recent_roms.add(path);
+            state.rom_name = Some(rom_name.clone());
+            state.set_status(StatusMessage::success(format!("Loaded: {rom_name}")));
         }
     }
 }
