@@ -4,8 +4,8 @@
 **Duration:** ~12 weeks / 3 months (January 2026 - April 2026)
 **Status:** In Progress (M7-M8 Complete, M10-S0 Complete)
 **Goal:** Bridge MVP to production-quality emulator with 95%+ test ROM pass rate
-**Current Version:** v0.7.1 (December 2025)
-**Test Status:** 508 unit tests passing, 100% Blargg pass rate (90/90 ROMs)
+**Current Version:** v0.8.0 (December 2025)
+**Test Status:** 508+ unit tests passing, 100% Blargg pass rate (90/90 ROMs)
 
 ---
 

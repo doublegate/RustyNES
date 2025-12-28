@@ -11,6 +11,118 @@ No unreleased changes.
 
 ---
 
+## [0.8.0] - 2025-12-28 - Rust 2024 Edition & Dependency Modernization
+
+**Status**: Phase 1.5 Stabilization - M9 Sprint 0 Complete (Dependency Upgrade)
+
+This release completes comprehensive dependency modernization for RustyNES, adopting Rust 2024 Edition and upgrading all major dependencies to their latest stable versions for improved performance, maintainability, and long-term support.
+
+### Highlights
+
+- **Rust 2024 Edition:** Adopted latest Rust language features with MSRV 1.88
+- **eframe 0.33 + egui 0.33:** Latest immediate mode GUI framework
+- **cpal 0.16:** Audio device improvements and better cross-platform support
+- **rubato 0.16:** High-quality audio resampling for flexible sample rate support
+- **ron 0.12:** Configuration format improvements
+- **thiserror 2.0:** Error handling modernization
+- **Performance:** Inline hints on critical paths, buffer reuse patterns
+- **Test Suite:** 508+ tests passing (0 failures, 0 ignored)
+
+### Added
+
+- **Audio Resampling:** rubato 0.16 integration for high-quality sample rate conversion
+  - Flexible output sample rate support
+  - Improved audio quality on non-standard hardware
+  - Better cross-platform audio compatibility
+
+### Changed
+
+#### Rust 2024 Edition
+
+- Upgraded from Rust 2021 to Rust 2024 Edition across all crates
+- MSRV updated from 1.75 to 1.88
+- Updated all Cargo.toml files with new edition and rust-version
+
+#### Dependency Upgrades
+
+| Component | Previous | New | Notes |
+|-----------|----------|-----|-------|
+| eframe | 0.29 | 0.33 | Latest egui integration, improved rendering |
+| egui | 0.29 | 0.33 | Better widget system, performance improvements |
+| cpal | 0.15 | 0.16 | Audio device improvements |
+| ron | 0.8 | 0.12 | Configuration format improvements |
+| thiserror | 1.x | 2.0 | Error handling modernization |
+| bitflags | 2.4 | 2.10 | Latest bitflags features |
+| rubato | - | 0.16 | NEW: High-quality audio resampling |
+
+#### Performance Optimizations
+
+- Added `#[inline]` hints on critical audio and rendering paths
+- Implemented buffer reuse patterns for reduced allocations
+- PPU edge case handling improvements
+- Optimized frame timing accumulator logic
+
+### Technical Specifications
+
+**Build Environment:**
+
+- Rust Edition: 2024
+- MSRV: 1.88
+- Workspace Crates: 6 (core, cpu, ppu, apu, mappers, desktop)
+- Zero unsafe code policy maintained
+
+**Test Results:**
+
+- Total tests: 508+ passing
+- Failures: 0
+- Ignored: 0
+- Blargg pass rate: 100% (90/90 tests)
+
+**Dependencies Updated:**
+
+| Crate | Version | Category |
+|-------|---------|----------|
+| eframe | 0.33 | GUI Framework |
+| egui | 0.33 | Immediate Mode UI |
+| cpal | 0.16 | Audio Output |
+| rubato | 0.16 | Audio Resampling |
+| ron | 0.12 | Configuration |
+| thiserror | 2.0 | Error Handling |
+| bitflags | 2.10 | Bit Manipulation |
+| clap | 4.5 | CLI Parsing |
+| directories | 5.0 | Platform Paths |
+
+### Quality Metrics
+
+- cargo clippy: PASSING (zero warnings)
+- cargo fmt: PASSING
+- cargo test: 508+ tests passing
+- cargo build --release: SUCCESS
+- Zero unsafe code maintained
+
+### Documentation Updates
+
+- Updated CLAUDE.md with v0.8.0 version references and dependency versions
+- Updated README.md with Rust 1.88 MSRV and v0.8.0 release information
+- Updated GUI About dialog version string to 0.8.0
+- Updated ROADMAP.md with M9-S0 completion status
+
+### Migration Notes
+
+**For Users:**
+
+- No breaking changes to user-facing functionality
+- Configuration files remain compatible
+- All existing ROMs and save states continue to work
+
+**For Developers:**
+
+- Rust 1.88+ required for building
+- Update rustup: `rustup update`
+- Clean rebuild recommended: `cargo clean && cargo build --release`
+
+---
+
 ## [0.7.1] - 2025-12-27 - Desktop GUI Framework Migration
 
 **Status**: Phase 1.5 Stabilization - GUI Reimplementation Complete

@@ -6,19 +6,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 RustyNES is a next-generation Nintendo Entertainment System (NES) emulator written in Rust. Target: 100% TASVideos accuracy test pass rate, 300+ mappers, RetroAchievements, GGPO netplay, TAS tools, Lua scripting.
 
-**Status:** v0.7.1 - Phase 1.5 Stabilization In Progress (M7-M8 Complete). All Phase 1 milestones (M1-M6) done.
+**Status:** v0.8.0 - Phase 1.5 Stabilization In Progress (M7-M8 Complete, M9-M10 Planned). All Phase 1 milestones (M1-M6) done.
 
-**Test Status:** 500+ tests passing (0 failures, 0 ignored). 100% Blargg pass rate (90/90 tests)
+**Test Status:** 508+ tests passing (0 failures, 0 ignored). 100% Blargg pass rate (90/90 tests)
 
-**Current Version:** v0.7.1 (December 27, 2025)
-- Desktop GUI framework migration: Iced+wgpu to eframe+egui
-- eframe 0.29 + egui 0.29 immediate mode GUI
+**Current Version:** v0.8.0 (December 28, 2025)
+- Rust 2024 Edition adoption (MSRV 1.88)
+- Comprehensive dependency modernization
+- eframe 0.33 + egui 0.33 immediate mode GUI
 - OpenGL rendering via glow backend (replacing wgpu shader pipeline)
-- cpal 0.15 for low-latency audio with lock-free ring buffer (8192 samples)
+- cpal 0.16 for low-latency audio with lock-free ring buffer (8192 samples)
+- Audio resampling via rubato 0.16 for flexible sample rate support
 - Native file dialogs with rfd 0.15
 - Gamepad support with gilrs 0.11 (hotplug detection)
-- Configuration persistence with ron 0.8 format
+- Configuration persistence with ron 0.12 format
 - Debug windows: CPU, PPU, APU, Memory viewers
+- Performance optimizations: inline hints, buffer reuse patterns
+
+**Previous Version:** v0.7.1 (December 27, 2025)
+- Desktop GUI framework migration: Iced+wgpu to eframe+egui
+- eframe 0.29 + egui 0.29 immediate mode GUI
+- cpal 0.15 for low-latency audio
+- Configuration persistence with ron 0.8 format
 
 **Previous Version:** v0.6.0 (December 20, 2025)
 - M7: Accuracy Improvements complete (all 4 sprints)
@@ -194,12 +203,13 @@ Cloned emulators for study and pattern reference:
 
 ## Key Dependencies
 
-- **Graphics**: `eframe` 0.29 (egui + window + OpenGL via glow)
-- **GUI**: `egui` 0.29 (immediate mode GUI)
-- **Audio**: `cpal` 0.15 (cross-platform audio I/O with lock-free ring buffer)
+- **Graphics**: `eframe` 0.33 (egui + window + OpenGL via glow)
+- **GUI**: `egui` 0.33 (immediate mode GUI)
+- **Audio**: `cpal` 0.16 (cross-platform audio I/O with lock-free ring buffer)
+- **Resampling**: `rubato` 0.16 (high-quality audio resampling)
 - **Input**: `gilrs` 0.11 (gamepad support with hotplug detection)
 - **File Dialogs**: `rfd` 0.15 (native cross-platform file dialogs)
-- **Configuration**: `ron` 0.8 (Rust Object Notation), `directories` 5.0 (platform paths)
+- **Configuration**: `ron` 0.12 (Rust Object Notation), `directories` 5.0 (platform paths)
 - **CLI**: `clap` 4.5 (argument parsing)
 - **Netplay**: `backroll` (GGPO rollback) - planned for Phase 2
 - **Scripting**: `mlua` (Lua 5.4) - planned for Phase 2
@@ -209,8 +219,9 @@ Cloned emulators for study and pattern reference:
 
 ## Architectural Decisions
 
-### GUI Framework: eframe + egui (v0.7.1+)
+### GUI Framework: eframe + egui (v0.7.1+, upgraded v0.8.0)
 - **Changed from**: Iced+wgpu (v0.5.0-v0.6.0)
+- **Current**: eframe 0.33 + egui 0.33 (as of v0.8.0)
 - **Rationale**: Immediate mode GUI ideal for debug windows, simpler event loop, better game loop integration, integrated window management
 - **Implementation**: eframe provides window + egui + OpenGL rendering; egui for menus/debug windows
 
@@ -222,10 +233,11 @@ Cloned emulators for study and pattern reference:
 - **Rationale**: Direct integration with egui, efficient texture updates via OpenGL
 - **Implementation**: 256x240 RGBA buffer with nearest-neighbor scaling via egui::Image
 
-### Audio Backend: cpal 0.15
+### Audio Backend: cpal 0.16 (upgraded v0.8.0)
 - **Chosen over**: SDL2, rodio
 - **Rationale**: Cross-platform, low-latency, direct device access, no runtime dependencies
 - **Implementation**: Lock-free ring buffer (8192 samples) with atomic operations
+- **Resampling**: rubato 0.16 for high-quality sample rate conversion
 
 ### Configuration: RON Format
 - **Chosen over**: TOML, JSON
@@ -262,16 +274,43 @@ Cloned emulators for study and pattern reference:
 | **M7: Accuracy** | ✅ v0.6.0 | CPU/PPU/APU timing, OAM DMA precision, hardware mixer |
 | **M8: Test ROMs** | ✅ v0.7.0 | 100% Blargg pass rate (90/90 tests) |
 | **GUI Migration** | ✅ v0.7.1 | eframe + egui desktop reimplementation |
+| **Dependency Upgrade** | ✅ v0.8.0 | Rust 2024, eframe 0.33, egui 0.33, cpal 0.16, ron 0.12 |
 | **M9-10: Phase 1.5** | 🔄 PLANNED | Known issues resolution, polish, documentation |
 | **Phase 2+** | 📋 TBD | Advanced features |
 
-## Recent Accomplishments (v0.7.1 - Dec 27, 2025)
+## Recent Accomplishments (v0.8.0 - Dec 28, 2025)
+
+### Comprehensive Dependency Modernization
+
+Complete modernization of the technology stack for long-term maintainability:
+
+#### Rust 2024 Edition & MSRV 1.88
+- Adopted Rust 2024 Edition with latest language features
+- MSRV set to Rust 1.88 for latest stable compiler support
+- Updated all workspace and crate configurations
+
+#### Dependency Upgrades
+- **eframe** 0.33 (from 0.29): Latest egui integration
+- **egui** 0.33 (from 0.29): Improved widget system
+- **cpal** 0.16 (from 0.15): Audio device improvements
+- **rubato** 0.16: High-quality audio resampling
+- **ron** 0.12 (from 0.8): Configuration format improvements
+- **thiserror** 2.0: Error handling modernization
+
+#### Performance Optimizations
+- Added `#[inline]` hints on critical audio/rendering paths
+- Buffer reuse patterns for reduced allocations
+- PPU edge case handling improvements
+
+---
+
+## Previous Accomplishments (v0.7.1 - Dec 27, 2025)
 
 ### Desktop GUI Framework Migration
 
 Complete rewrite of the desktop frontend from Iced+wgpu to eframe+egui:
 
-#### New Architecture
+#### Architecture
 - **eframe** 0.29 for window management + OpenGL rendering via glow
 - **egui** 0.29 immediate mode GUI for menus and debug windows
 - **cpal** 0.15 for low-latency audio with lock-free ring buffer
@@ -405,8 +444,8 @@ pub trait Mapper: Send {
 
 ### Rust Conventions
 
-- **Edition**: Rust 2021
-- **MSRV**: 1.75+ (for async traits in std)
+- **Edition**: Rust 2024
+- **MSRV**: 1.88 (for Rust 2024 Edition support)
 - **Format**: `rustfmt` with default settings
 - **Lints**: `clippy::pedantic` + `-D warnings`
 - **Unsafe**: Only permitted in FFI (rcheevos) and platform-specific audio; must be documented

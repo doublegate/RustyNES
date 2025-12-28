@@ -3,10 +3,10 @@
 **Milestone:** M9 (Known Issues Resolution)
 **Phase:** 1.5 (Stabilization & Accuracy)
 **Duration:** ~2 weeks (March 2026)
-**Status:** Not Started
-**Version Target:** v0.8.0
+**Status:** Ready to Start
+**Version Target:** v0.9.0
 **Progress:** 0%
-**Baseline:** v0.7.1 (GUI Framework Migration Complete)
+**Baseline:** v0.8.0 (Rust 2024 Edition, Dependency Modernization Complete)
 
 ---
 
@@ -14,16 +14,18 @@
 
 Milestone 9 focuses on **resolving all known issues** identified during Phase 1.5 development, including audio quality improvements, PPU edge cases, performance optimization, and bug fixes. This milestone ensures a polished, production-ready emulator before the final Phase 1.5 polish sprint.
 
-### Prerequisites (Completed in v0.7.1)
+### Prerequisites (Completed in v0.7.1-v0.8.0)
 
-The following foundational work was completed in v0.7.1, providing a stable base for M9:
+The following foundational work was completed in v0.7.1-v0.8.0, providing a stable base for M9:
 
-- [x] **GUI Framework Migration**: Desktop frontend migrated from Iced+wgpu to eframe+egui
-- [x] **Audio Backend**: cpal 0.15 with lock-free ring buffer (8192 samples)
-- [x] **Configuration System**: RON format with VideoConfig, AudioConfig, InputConfig, DebugConfig
-- [x] **Debug Windows**: CPU, PPU, APU, Memory viewers implemented in egui
+- [x] **GUI Framework Migration** (v0.7.1): Desktop frontend migrated from Iced+wgpu to eframe+egui
+- [x] **Rust 2024 Edition** (v0.8.0): MSRV 1.88+, modern Rust idioms
+- [x] **Audio Backend** (v0.8.0): cpal 0.16 with lock-free ring buffer, rubato 0.16 for resampling
+- [x] **Configuration System**: RON 0.12 format with VideoConfig, AudioConfig, InputConfig, DebugConfig
+- [x] **Debug Windows**: CPU, PPU, APU, Memory viewers implemented in egui 0.33
 - [x] **Input System**: Keyboard and gamepad support via gilrs 0.11
 - [x] **Frame Timing**: Accumulator-based timing at 60.0988 Hz NTSC
+- [x] **Dependency Modernization** (v0.8.0): eframe/egui 0.33, cpal 0.16, ron 0.12, thiserror 2.0
 
 ### Goals
 
@@ -67,9 +69,9 @@ The following foundational work was completed in v0.7.1, providing a stable base
 
 ### Metrics
 
-| Category | v0.7.0 Baseline | v0.8.0 Target | Improvement |
+| Category | v0.8.0 Baseline | v0.9.0 Target | Improvement |
 |----------|-----------------|---------------|-------------|
-| Audio Quality | Basic | High | Dynamic resampling, A/V sync |
+| Audio Quality | Foundation Ready | High | Dynamic resampling, A/V sync |
 | Performance | ~100 FPS | 120+ FPS | +20% optimization |
 | Bugs (Critical) | 5 | 0 | All resolved |
 | Bugs (Minor) | 15 | 5 | 66% reduction |
@@ -140,7 +142,7 @@ The following foundational work was completed in v0.7.1, providing a stable base
 - [ ] Improve error handling
 - [ ] Validate save state robustness
 
-**Deliverable:** Zero critical bugs, v0.8.0 release
+**Deliverable:** Zero critical bugs, v0.9.0 release
 
 [M9-S4 Details](M9-S4-bug-fixes.md)
 
@@ -150,8 +152,9 @@ The following foundational work was completed in v0.7.1, providing a stable base
 
 ### Audio Quality (M9-S1)
 
-**Current Implementation (v0.7.1):**
-- cpal 0.15 for cross-platform audio I/O
+**Current Implementation (v0.8.0):**
+- cpal 0.16 for cross-platform audio I/O
+- rubato 0.16 for high-quality audio resampling
 - Custom lock-free ring buffer (8192 samples) with atomic operations
 - Mono samples converted to stereo in audio callback
 - Volume/mute controls via atomic variables
@@ -183,8 +186,8 @@ The following foundational work was completed in v0.7.1, providing a stable base
 
 ### PPU Edge Cases (M9-S2)
 
-**Current Implementation (v0.7.1):**
-- PPU debug window implemented in egui (pattern tables, nametables, OAM, palette)
+**Current Implementation (v0.8.0):**
+- PPU debug window implemented in egui 0.33 (pattern tables, nametables, OAM, palette)
 - Basic sprite rendering with 8-sprite-per-scanline limit
 - Palette RAM mirroring implemented
 - VBlank/NMI timing functional with flag read handling
@@ -213,11 +216,12 @@ The following foundational work was completed in v0.7.1, providing a stable base
 
 ### Performance (M9-S3)
 
-**Current State (v0.7.1):**
-- eframe+egui rendering via OpenGL (glow backend)
+**Current State (v0.8.0):**
+- eframe 0.33 + egui 0.33 rendering via OpenGL (glow backend)
 - Accumulator-based frame timing (TARGET_FPS = 60.0988)
 - Framebuffer: 256x240 RGBA with egui::TextureOptions::NEAREST
-- Audio: Lock-free ring buffer with atomic operations
+- Audio: Lock-free ring buffer with atomic operations, rubato resampling
+- Inline hints and buffer reuse optimizations applied
 - Performance not fully profiled (eframe overhead unknown)
 
 **Potential Bottlenecks:**
@@ -247,11 +251,11 @@ The following foundational work was completed in v0.7.1, providing a stable base
 
 ### Bug Fixes (M9-S4)
 
-**Current State (v0.7.1):**
-- Configuration persistence via RON format
-- Error handling with anyhow in desktop crate
+**Current State (v0.8.0):**
+- Configuration persistence via RON 0.12 format
+- Error handling with anyhow + thiserror 2.0 in desktop crate
 - Logging via log crate
-- File dialog errors handled with rfd
+- File dialog errors handled with rfd 0.15
 
 **Known Issues:**
 - Edge case crashes (malformed ROMs, invalid states)
@@ -303,7 +307,7 @@ The following foundational work was completed in v0.7.1, providing a stable base
 
 - FPS: 120+ (1.67x → 2.0x real-time)
 - Memory: Reduced allocations (heap profiling)
-- Optimization: 20%+ improvement over v0.7.0
+- Optimization: 20%+ improvement over v0.8.0
 - Zero performance regressions
 
 ### Bug Fixes
@@ -323,14 +327,14 @@ The following foundational work was completed in v0.7.1, providing a stable base
 
 ### Inputs
 
-- v0.7.0 test pass rate (202/212, 95%+)
-- v0.5.0 implementation report (known issues list)
+- v0.8.0 baseline (508+ tests, 100% Blargg pass rate)
+- v0.7.1 implementation report (known issues list)
 - GitHub issue tracker (open bugs)
 - User feedback (audio quality, performance)
 
 ### Outputs
 
-- v0.8.0 release (known issues resolved)
+- v0.9.0 release (known issues resolved)
 - Performance benchmarks (before/after)
 - Audio quality comparison (Mesen2)
 - Updated documentation (CHANGELOG, known limitations)
@@ -404,13 +408,13 @@ The following foundational work was completed in v0.7.1, providing a stable base
    - Save state robustness
 
 5. **Release**
-   - v0.8.0 git tag
+   - v0.9.0 git tag
    - Release notes
    - CHANGELOG entry
    - Updated documentation
 
 ---
 
-**Status:** ⏳ PENDING
+**Status:** Ready to Start (v0.8.0 Baseline Complete)
 **Blocks:** M10 (Final Polish)
-**Next Milestone:** M10 (Polish) - UI/UX improvements, documentation, v0.9.0/v1.0.0-alpha.1 release
+**Next Milestone:** M10 (Polish) - UI/UX improvements, documentation, v1.0.0-alpha.1 release

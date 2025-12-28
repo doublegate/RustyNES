@@ -8,7 +8,7 @@
 
 [![Build Status](https://github.com/doublegate/RustyNES/workflows/CI/badge.svg)](https://github.com/doublegate/RustyNES/actions)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE-MIT)
-[![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org/)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](#platform-support)
 [![Documentation](https://img.shields.io/badge/docs-latest-blue.svg)](https://doublegate.github.io/RustyNES/)
 [![codecov](https://codecov.io/gh/doublegate/RustyNES/branch/main/graph/badge.svg)](https://codecov.io/gh/doublegate/RustyNES)
@@ -28,7 +28,7 @@ A next-generation NES emulator written in pure Rust — targeting 100% accuracy,
 
 ---
 
-> **Status:** v0.7.1 Released - Desktop GUI Framework Migration Complete
+> **Status:** v0.8.0 Released - Rust 2024 Edition & Dependency Modernization Complete
 >
 > **Milestones Completed:**
 >
@@ -40,12 +40,13 @@ A next-generation NES emulator written in pure Rust — targeting 100% accuracy,
 > - ✅ **M6: Desktop GUI** - Cross-platform eframe/egui application with ROM loading, audio playback, and full input support
 > - ✅ **M7: Accuracy** - CPU/PPU/APU timing refinements, OAM DMA 513/514 cycle precision, hardware-accurate mixer
 > - ✅ **M8: Test ROMs** - 100% Pass Rate on all integrated test suites (CPU, PPU, APU, Mappers)
+> - ✅ **M9-S0: Dependencies** - Rust 2024 Edition, eframe 0.33, egui 0.33, cpal 0.16, ron 0.12
 >
-> **Test Suite:** 500+ tests passing (0 failures, 0 ignored)
+> **Test Suite:** 508+ tests passing (0 failures, 0 ignored)
 >
-> **Current:** Phase 2 (Features) - Beginning development of RetroAchievements, Netplay, and TAS Tools
+> **Current:** Phase 1.5 (Stabilization) - M9-M10: Known Issues & Final Polish
 >
-> **Next:** M11: RetroAchievements
+> **Next:** M9-S1: UI/UX Improvements, M9-S2: Documentation Updates
 >
 > See [ROADMAP.md](ROADMAP.md) and [to-dos/](to-dos/) for development timeline.
 
@@ -87,24 +88,24 @@ RustyNES combines **accuracy-first emulation** with **modern features** and the 
 
 ## Quick Start
 
-### Recent Release: v0.7.1 (December 27, 2025)
+### Recent Release: v0.8.0 (December 28, 2025)
 
-RustyNES v0.7.1 completes the desktop GUI framework migration from Iced+wgpu to eframe+egui:
+RustyNES v0.8.0 completes comprehensive dependency modernization and adopts Rust 2024 Edition:
 
-**What's New in v0.7.1:**
+**What's New in v0.8.0:**
 
-- **GUI Framework Migration:** Complete rewrite from Iced 0.13 to eframe 0.29/egui 0.29
-- **Immediate Mode GUI:** egui provides simpler, more maintainable UI code
-- **Debug Windows:** CPU, PPU, APU, and Memory viewer windows using egui
-- **Simplified Audio:** Lock-free ring buffer (8192 samples) with cpal
-- **Gamepad Support:** gilrs integration with hotplug detection
-- **Configuration:** RON format with platform-specific paths
-- **Native Dialogs:** rfd for cross-platform file dialogs
+- **Rust 2024 Edition:** Latest Rust language features and improvements (MSRV 1.88)
+- **eframe 0.33 + egui 0.33:** Latest immediate mode GUI with improved widget system
+- **cpal 0.16:** Audio device improvements and better cross-platform support
+- **rubato 0.16:** High-quality audio resampling for flexible sample rate support
+- **ron 0.12:** Configuration format improvements
+- **thiserror 2.0:** Error handling modernization
+- **Performance:** Inline hints on critical paths, buffer reuse patterns
 
 **Previous Releases:**
 
+- **v0.7.1** - GUI Framework Migration: eframe 0.29/egui 0.29, immediate mode GUI, debug windows
 - **v0.7.0** - Milestone 8: 100% Blargg test pass rate, cycle-accurate CPU tick(), PPU open bus, CHR-RAM routing
-
 - **v0.6.0** - Milestone 7: APU frame counter precision, hardware-accurate mixer, OAM DMA 513/514 cycles
 - **v0.5.0** - Phase 1 MVP: Desktop GUI (Iced + wgpu), audio playback, ROM loading
 - **v0.4.0** - Complete rustynes-core integration layer (Bus, Console, Input, Save States)
@@ -122,7 +123,7 @@ Pre-built binaries are available on the [Releases page](https://github.com/doubl
 
 **Prerequisites:**
 
-- **Rust 1.75 or newer** — Install via [rustup.rs](https://rustup.rs)
+- **Rust 1.88 or newer** — Install via [rustup.rs](https://rustup.rs)
 - **SDL2 development libraries** — Platform-specific installation below
 - **Git**
 
@@ -143,7 +144,7 @@ cargo build --workspace --release
 
 cargo test --workspace
 
-# Results: 500 tests passing, 0 failures, 0 ignored
+# Results: 508+ tests passing, 0 failures, 0 ignored
 
 # Run the desktop GUI (requires ROM file)
 cargo run -p rustynes-desktop --release -- path/to/game.nes
@@ -187,7 +188,7 @@ RustyNES demonstrates world-class emulation accuracy:
 
 cargo test --workspace
 
-# Total: 500 tests passing, 0 ignored - 267 CPU + 90 PPU + 150 APU + 167 Mappers + 23 Core + Blargg integration tests
+# Total: 508+ tests passing, 0 ignored - 267 CPU + 90 PPU + 150 APU + 167 Mappers + 23 Core + Blargg integration tests
 
 # Run specific crate tests
 
@@ -301,7 +302,7 @@ Controls will be fully configurable through the configuration system.
 
 ## Features
 
-### Current Status (v0.7.1 - December 2025)
+### Current Status (v0.8.0 - December 2025)
 
 - [x] **Architecture Design** - Complete modular crate structure with 10 component crates
 - [x] **Documentation** - 40+ comprehensive specification and implementation guides covering CPU, PPU, APU, mappers, testing, and development
@@ -419,7 +420,7 @@ Frame Timing:
 
 **Current Progress:** 100% Phase 1 MVP Complete (M1-M6)
 
-**Test Results (v0.6.0):**
+**Test Results (v0.8.0):**
 
 - **CPU**: All 256 opcodes verified with ±1 cycle accuracy
   - nestest.nes golden log match (5003+ instructions verified)
@@ -852,9 +853,9 @@ If you use RustyNES in academic research, please cite:
   author = {RustyNES Contributors},
   title = {RustyNES: A Next-Generation NES Emulator in Rust},
   year = {2025},
-  version = {0.7.1},
+  version = {0.8.0},
   url = {https://github.com/doublegate/RustyNES},
-  note = {Cycle-accurate NES emulator with 100\% Blargg test pass rate, eframe/egui desktop GUI, and hardware-accurate emulation}
+  note = {Cycle-accurate NES emulator with 100\% Blargg test pass rate, Rust 2024 Edition, eframe/egui desktop GUI, and hardware-accurate emulation}
 }
 ```
 

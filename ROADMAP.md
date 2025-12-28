@@ -1,8 +1,8 @@
 # RustyNES Development Roadmap
 
-**Document Version:** 2.8.0
-**Last Updated:** 2025-12-27
-**Project Status:** Phase 1.5 Stabilization In Progress (M1-M8 Complete, M9-M10 Planned)
+**Document Version:** 2.9.0
+**Last Updated:** 2025-12-28
+**Project Status:** Phase 1.5 Stabilization In Progress (M1-M8 Complete, M9-S0 Complete, M9-M10 Planned)
 
 ---
 
@@ -21,7 +21,18 @@
 
 ---
 
-## Recent Updates (v2.8.0 - December 2025)
+## Recent Updates (v2.9.0 - December 2025)
+
+**v0.8.0 Released - December 28, 2025** - Rust 2024 Edition & Dependency Modernization!
+
+**Major Modernization Achievements:**
+
+- **Rust 2024 Edition:** Full migration to Rust 2024 with MSRV 1.88+
+- **Dependency Upgrades:** eframe 0.33, egui 0.33, cpal 0.16, ron 0.12, rfd 0.15
+- **Audio Resampling:** rubato 0.16 integration for high-quality sample rate conversion
+- **Performance:** Inline hints and buffer reuse optimizations across APU subsystem
+- **Test Suite:** 508+ tests passing (0 failures, 0 ignored)
+- **Documentation:** Complete version reference updates across all project files
 
 **v0.7.1 Released - December 27, 2025** - Desktop GUI Framework Migration Complete!
 
@@ -62,7 +73,7 @@
 - Blargg APU Tests: 15/15 passing (100%) ✅
 - Mapper Tests: 28/28 passing (100%) ✅
 - All previously known limitations RESOLVED (cpu_dummy_reads, cpu_interrupts) ✅
-- Tests: 500 tests passing (0 failures, 0 ignored) ✅
+- Tests: 508+ tests passing (0 failures, 0 ignored) ✅
 
 **v0.5.0 Released - December 19, 2025** - Phase 1 MVP Complete!
 
@@ -86,6 +97,7 @@
 - v0.6.0 (December 20, 2025): M7 Accuracy - Frame counter precision, hardware-accurate mixer, OAM DMA 513/514 cycles
 - v0.7.0 (December 21, 2025): M8 Test ROM Validation - 100% Blargg pass rate (90/90 tests)
 - v0.7.1 (December 27, 2025): GUI Framework Migration - Complete rewrite from Iced+wgpu to eframe+egui
+- v0.8.0 (December 28, 2025): Rust 2024 Edition - MSRV 1.88+, dependency modernization, audio resampling
 
 **Project Status Change:**
 
@@ -97,7 +109,7 @@
 
 ```text
 Phase 1 (MVP):         ████████████████████ 100% (M1-M6 COMPLETE)
-Phase 1.5 (Accuracy):  ████████████████░░░░  80% (M7-M8 COMPLETE, M9-M10 PENDING)
+Phase 1.5 (Accuracy):  █████████████████░░░  85% (M7-M8 COMPLETE, M9-S0 COMPLETE, M9-M10 PENDING)
 
 - M1: CPU         [████████████████████] 100% ✅ COMPLETED December 19, 2025
 - M2: PPU         [████████████████████] 100% ✅ COMPLETED December 19, 2025
@@ -114,8 +126,9 @@ Phase 1.5 (Accuracy):  ████████████████░░░
 
 - M7 (Accuracy) COMPLETE: CPU/PPU/APU timing improvements, OAM DMA precision ✅
 - M8 (Test ROM Validation) COMPLETE: 100% Blargg pass rate (CPU 22/22, PPU 25/25, APU 15/15, Mappers 28/28) ✅
+- M9-S0 (Dependency Upgrade) COMPLETE: Rust 2024 Edition, MSRV 1.88+, dependency modernization ✅
 - All known limitations resolved (cpu_dummy_reads, cpu_interrupts now passing) ✅
-- 500 tests passing, 0 failures, 0 ignored ✅
+- 508+ tests passing, 0 failures, 0 ignored ✅
 - Next: M9 (Known Issues Resolution) - Performance optimization, audio quality
 
 **Timeline Updates:**
@@ -578,12 +591,22 @@ Phase 1.5 bridges Phase 1 MVP (v0.5.0) to Phase 2 Advanced Features, focusing on
 
 ### Milestone 9: Known Issues Resolution (v0.8.0)
 
-**Duration:** 1 month (March 2026)
+**Duration:** 1 month (December 2025 - January 2026)
 **Focus:** Audio quality, PPU edge cases, performance optimization, bug fixes
+**Status:** Sprint 0 Complete (v0.8.0), Sprints 1-4 In Progress
 
-**Objectives:**
+**Sprint 0 - Dependency Upgrade (v0.8.0) - COMPLETE December 28, 2025:**
 
-- [ ] Dynamic audio resampling (rubato)
+- [x] Rust 2024 Edition migration (MSRV 1.88+)
+- [x] eframe 0.29 → 0.33, egui 0.29 → 0.33
+- [x] cpal 0.15 → 0.16, ron 0.8 → 0.12, rfd 0.14 → 0.15
+- [x] rubato 0.16 integration for audio resampling
+- [x] Inline hints and buffer reuse optimizations
+- [x] 508+ tests passing (0 failures, 0 ignored)
+
+**Objectives (Sprints 1-4):**
+
+- [ ] Dynamic audio resampling (rubato) - PARTIALLY COMPLETE
 - [ ] Audio/video synchronization
 - [ ] PPU edge case fixes (sprite overflow, palette RAM)
 - [ ] 20%+ performance improvement (100 FPS → 120+ FPS)
@@ -613,6 +636,12 @@ Phase 1.5 bridges Phase 1 MVP (v0.5.0) to Phase 2 Advanced Features, focusing on
 **Deliverable:** v0.8.0 with high-quality audio, PPU fixes, and optimized performance
 
 **Sprint Breakdown:**
+
+0. **Sprint 0:** Dependency Upgrade (v0.8.0) ✅ COMPLETE
+   - Rust 2024 Edition migration (MSRV 1.88+)
+   - Framework upgrades (eframe 0.33, egui 0.33, cpal 0.16)
+   - Audio resampling foundation (rubato 0.16)
+   - Performance optimizations (inline hints, buffer reuse)
 
 1. **Sprint 1:** Audio Improvements (1 week)
    - Dynamic resampling implementation
@@ -1203,7 +1232,7 @@ All Phase 1 milestones completed ahead of schedule:
 - M5: Integration Layer - DONE (December 19, 2025)
 - M6: Desktop GUI - DONE (December 19, 2025)
 
-**Achievement:** Complete MVP emulator with 6 crates, 400+ tests, zero unsafe code
+**Achievement:** Complete MVP emulator with 6 crates, 508+ tests (as of v0.8.0), zero unsafe code
 
 #### Phase 1.5 Planning
 
@@ -1329,7 +1358,7 @@ All Phase 1 milestones completed ahead of schedule:
 
 **Target:** 95% code coverage
 
-**Current Status:** 400+ tests passing across all 6 crates
+**Current Status:** 508+ tests passing across all 6 crates (as of v0.8.0)
 
 - rustynes-cpu: 47 tests (46 unit + 1 integration) - 100% passing
 - rustynes-ppu: 85 tests (83 unit + 4 integration, 2 ignored) - 97.7% pass rate
@@ -1419,20 +1448,21 @@ RustyNES development has achieved a **major milestone** with Phase 1 MVP complet
 - Comprehensive APU implementation: 100% test pass rate (150/150 tests)
 - Complete Mapper subsystem: 100% test pass rate (167/167 tests)
 - Production-ready Integration layer: 100% test pass rate (23/23 tests)
-- Cross-platform Desktop GUI with eframe/egui (v0.7.1)
+- Cross-platform Desktop GUI with eframe/egui (v0.8.0)
 - 5 mappers covering 77.7% of licensed NES games (500+ titles)
-- 500+ total tests passing across 6 crates
+- 508+ total tests passing across 6 crates
 - 100% Blargg test pass rate (90/90 tests)
 - Zero unsafe code across all 6 crates
-- Complete playable MVP with GUI framework migration (v0.7.1)
+- Complete playable MVP with GUI framework migration and Rust 2024 modernization (v0.8.0)
 
 **Current Status:**
 
 - Phase 1 is **100% complete (all 6 milestones done)**
 - Phase 1.5 Milestones M7-M8 **complete** (100% Blargg pass rate)
+- Phase 1.5 Milestone M9-S0 **complete** (Rust 2024 Edition, dependency modernization)
 - MVP achieved **6+ months ahead of original June 2026 target**
 - GUI framework migration complete (Iced+wgpu to eframe+egui)
-- v0.7.1 released December 27, 2025
+- v0.8.0 released December 28, 2025 (Rust 2024 Edition)
 
 **Phase 1.5 Priorities:**
 
@@ -1449,12 +1479,13 @@ With M7-M8 complete, development focuses on remaining stabilization:
 **What Makes This Significant:**
 
 - 6+ months ahead of original schedule
-- 500+ comprehensive tests passing across 6 crates
+- 508+ comprehensive tests passing across 6 crates
 - 100% Blargg test pass rate (90/90 tests)
 - Zero unsafe code across all crates
 - Cycle-accurate CPU, PPU, APU, Mapper, and Integration implementations
 - 77.7% game compatibility with cross-platform desktop application
 - Phase 1 MVP complete with GUI framework migration (eframe+egui)
+- Rust 2024 Edition with MSRV 1.88+ and modernized dependencies (v0.8.0)
 
 Success continues to depend on:
 
@@ -1463,7 +1494,7 @@ Success continues to depend on:
 - **Clear documentation** (lowering contribution barriers)
 - **Community involvement** (testing, feedback, contributions)
 
-**Next Steps:** Continue Phase 1.5 stabilization (M9-M10) with v0.7.1 foundation before advanced features in Phase 2!
+**Next Steps:** Continue Phase 1.5 stabilization (M9-M10) with v0.8.0 foundation before advanced features in Phase 2!
 
 ---
 
