@@ -4,6 +4,28 @@
 
 Systematically resolve all known bugs, close GitHub issues, improve error handling, and validate save state robustness to prepare for v0.8.0 release.
 
+## Current Implementation (v0.7.1)
+
+The desktop frontend uses eframe+egui with the following error handling and input systems:
+
+**Error Handling:**
+- anyhow crate for application-level errors
+- log crate for logging (info, warn, error, debug)
+- Error messages currently output to console (not GUI dialogs)
+- ROM loading errors handled gracefully with fallback
+
+**Input System:**
+- gilrs 0.11 for gamepad support with hotplug detection
+- Keyboard input via egui event handling
+- Input handler in `crates/rustynes-desktop/src/input.rs`
+
+**Configuration:**
+- RON format with persistence to platform-specific config directory
+- VideoConfig, AudioConfig, InputConfig, DebugConfig structs
+- Located in `crates/rustynes-desktop/src/config.rs`
+
+**Location:** `crates/rustynes-desktop/src/`
+
 ## Objectives
 
 - [ ] Close all critical GitHub issues (5 critical bugs)
@@ -128,6 +150,82 @@ match load_rom("game.nes") {
     Err(e) => {
         eprintln!("Error loading ROM: {}", e);
     }
+}
+```
+
+### egui Error Dialog Pattern (v0.7.1+)
+
+```rust
+// crates/rustynes-desktop/src/gui/mod.rs
+pub struct GuiState {
+    // ... other fields
+    error_message: Option<String>,
+    show_error_dialog: bool,
+}
+
+impl GuiState {
+    pub fn show_error(&mut self, message: impl Into<String>) {
+        self.error_message = Some(message.into());
+        self.show_error_dialog = true;
+    }
+}
+
+// In render function
+fn render_error_dialog(ctx: &egui::Context, gui_state: &mut GuiState) {
+    if gui_state.show_error_dialog {
+        egui::Window::new("Error")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.colored_label(egui::Color32::RED, "An error occurred:");
+                    ui.add_space(8.0);
+                    if let Some(ref msg) = gui_state.error_message {
+                        ui.label(msg);
+                    }
+                    ui.add_space(16.0);
+                    if ui.button("OK").clicked() {
+                        gui_state.show_error_dialog = false;
+                        gui_state.error_message = None;
+                    }
+                });
+            });
+    }
+}
+
+// Usage in app.rs
+match Self::load_rom(path) {
+    Ok(console) => {
+        self.console = Some(console);
+        self.paused = false;
+    }
+    Err(e) => {
+        self.gui_state.show_error(format!("Failed to load ROM: {}", e));
+    }
+}
+```
+
+### egui Status Bar Notifications
+
+```rust
+fn render_status_bar(ui: &mut egui::Ui, status: &str, is_error: bool) {
+    let color = if is_error {
+        egui::Color32::from_rgb(255, 100, 100)
+    } else {
+        egui::Color32::from_rgb(100, 200, 100)
+    };
+
+    egui::Frame::none()
+        .fill(egui::Color32::from_gray(40))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.colored_label(color, status);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(format!("FPS: {:.1}", fps));
+                });
+            });
+        });
 }
 ```
 

@@ -6,6 +6,7 @@
 **Status:** Not Started
 **Version Target:** v0.9.0 / v1.0.0-alpha.1
 **Progress:** 0%
+**Baseline:** v0.7.1 (GUI Framework Migration Complete)
 
 ---
 
@@ -32,6 +33,22 @@ Milestone 10 focuses on **final polish and release preparation** for the Phase 1
    - Version decision (v0.9.0 or v1.0.0-alpha.1)
    - Release notes and changelog
    - GitHub release with binaries
+
+### Prerequisites (Completed in v0.7.1)
+
+The following foundational work was completed in v0.7.1, providing a stable base for M10:
+
+- [x] **GUI Framework Migration**: Desktop frontend migrated from Iced+wgpu to eframe+egui
+- [x] **Window Management**: eframe 0.29 with OpenGL rendering via glow backend
+- [x] **Menu System**: egui menu bar with File, Emulation, Video, Audio, Debug, Help
+- [x] **Debug Windows**: CPU, PPU, APU, Memory viewers implemented in egui
+- [x] **Configuration System**: RON format with VideoConfig, AudioConfig, InputConfig, DebugConfig
+- [x] **Input System**: Keyboard and gamepad support via gilrs 0.11
+- [x] **Audio Backend**: cpal 0.15 with lock-free ring buffer (8192 samples)
+- [x] **Frame Timing**: Accumulator-based timing at 60.0988 Hz NTSC
+- [x] **Scaling Modes**: PixelPerfect (8:7 PAR), FitWindow, Integer scaling
+
+**Location:** `crates/rustynes-desktop/src/`
 
 ---
 
@@ -118,18 +135,24 @@ Milestone 10 focuses on **final polish and release preparation** for the Phase 1
 
 ### UI/UX Polish (M10-S1)
 
-**Desktop GUI Improvements:**
+**Current State (v0.7.1):**
+- egui immediate mode GUI with menu bar and debug windows
+- Basic scaling modes: PixelPerfect, FitWindow, Integer
+- Configuration persistence via RON format
+- Keyboard shortcuts partially implemented
+
+**Desktop GUI Improvements (egui):**
 - **Responsive Layout:** Adapt to window size (min 800x600, max 4K)
-- **Theme Support:** Light/dark mode, customizable colors
-- **Settings Organization:** Tabs for video, audio, input, advanced
-- **Visual Feedback:** Loading spinners, progress bars, status messages
-- **Animations:** Smooth transitions, fades, hover effects
+- **Theme Support:** egui Visuals API (light/dark mode, customizable colors)
+- **Settings Organization:** egui::Window with tabs for video, audio, input, advanced
+- **Visual Feedback:** egui::Spinner for loading, progress bars, status messages
+- **Animations:** egui built-in animations, smooth transitions
 
 **User Experience:**
-- **First-Run Experience:** Welcome screen, quick start guide
-- **Error Handling:** User-friendly error messages with recovery options
+- **First-Run Experience:** Welcome screen via egui::Window, quick start guide
+- **Error Handling:** Modal error dialogs (egui::Window anchored center)
 - **Keyboard Shortcuts:** Document and implement common shortcuts (Ctrl+O, Ctrl+R, etc.)
-- **Controller Support:** Visual controller mapping, auto-detect
+- **Controller Support:** Visual controller mapping via gilrs, auto-detect
 
 ### Documentation (M10-S2)
 
@@ -254,6 +277,21 @@ Milestone 10 focuses on **final polish and release preparation** for the Phase 1
 - **GitHub Actions** - CI/CD for multi-platform binaries
 - **cross** - Cross-compilation for Linux (musl, glibc)
 - **cargo-bundle** - Package binaries with assets
+
+### Framework Documentation
+
+- [eframe Documentation](https://docs.rs/eframe/) - Application framework reference
+- [egui Documentation](https://docs.rs/egui/) - Immediate mode GUI reference
+- [egui Visuals](https://docs.rs/egui/latest/egui/style/struct.Visuals.html) - Theme customization
+- [cpal Documentation](https://docs.rs/cpal/) - Audio I/O reference
+- [gilrs Documentation](https://docs.rs/gilrs/) - Gamepad support reference
+
+### Reference Projects
+
+- **tetanes** - Rust NES emulator using egui (primary reference)
+  - Comprehensive egui GUI implementation
+  - Advanced theming and settings UI
+  - Location: `ref-proj/tetanes/`
 
 ---
 

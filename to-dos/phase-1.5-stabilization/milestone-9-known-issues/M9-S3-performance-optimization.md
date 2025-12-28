@@ -4,6 +4,26 @@
 
 Profile and optimize critical hot paths in CPU, PPU, and APU to achieve 20%+ performance improvement (100 FPS → 120+ FPS).
 
+## Current Implementation (v0.7.1)
+
+The desktop frontend uses eframe+egui with the glow (OpenGL) backend:
+
+**Rendering Pipeline:**
+- eframe 0.29 for window management and OpenGL context
+- egui 0.29 for immediate mode GUI rendering
+- glow backend for OpenGL rendering (simpler than wgpu)
+- Framebuffer: 256x240 RGBA with `TextureOptions::NEAREST`
+- Texture updates via `egui::TextureHandle::set()`
+- Accumulator-based frame timing at 60.0988 Hz
+
+**Current Overhead Points:**
+- `ColorImage::from_rgba_unmultiplied()` - framebuffer conversion every frame
+- egui layout calculations for debug windows
+- Mono-to-stereo audio conversion in callback
+- Potential Vec allocations in hot paths
+
+**Location:** `crates/rustynes-desktop/src/app.rs`
+
 ## Objectives
 
 - [ ] Profile CPU, PPU, APU hot paths
@@ -201,6 +221,107 @@ fn render_scanline(&mut self) {
         self.framebuffer[offset + x] = self.mix_pixels(bg_line[x], spr_line[x]);
     }
 }
+```
+
+### 5. eframe/egui Texture Update Optimization
+
+**Current Pattern (v0.7.1):**
+```rust
+// crates/rustynes-desktop/src/app.rs
+fn update_texture(&mut self, ctx: &egui::Context) {
+    // Get pixel data from console
+    if let Some(ref console) = self.console {
+        let fb = console.framebuffer();
+        self.framebuffer[..].copy_from_slice(&fb[..]);
+    }
+
+    // Create ColorImage (allocation every frame)
+    let image = ColorImage::from_rgba_unmultiplied(
+        [NES_WIDTH, NES_HEIGHT],
+        &self.framebuffer
+    );
+
+    // Update texture
+    if let Some(ref mut texture) = self.nes_texture {
+        texture.set(image, TextureOptions::NEAREST);
+    }
+}
+```
+
+**Optimized Pattern:**
+```rust
+fn update_texture(&mut self, ctx: &egui::Context) {
+    // Reuse preallocated framebuffer (already done in v0.7.1)
+    if let Some(ref console) = self.console {
+        let fb = console.framebuffer();
+        let len = self.framebuffer.len().min(fb.len());
+        self.framebuffer[..len].copy_from_slice(&fb[..len]);
+    }
+
+    // Use from_rgba_unmultiplied which takes slice reference
+    // ColorImage internally clones, but this is still efficient
+    let image = ColorImage::from_rgba_unmultiplied(
+        [NES_WIDTH, NES_HEIGHT],
+        &self.framebuffer
+    );
+
+    // Update existing texture (avoids reallocation)
+    if let Some(ref mut texture) = self.nes_texture {
+        texture.set(image, TextureOptions::NEAREST);
+    } else {
+        // Only create new texture on first frame
+        self.nes_texture = Some(ctx.load_texture(
+            "nes_framebuffer",
+            image,
+            TextureOptions::NEAREST
+        ));
+    }
+}
+```
+
+### 6. Audio Callback Optimization
+
+**Current Pattern (v0.7.1):**
+```rust
+// Allocates Vec every callback
+let mono_samples_needed = data.len() / channels;
+let mut mono_buffer = vec![0.0f32; mono_samples_needed];
+```
+
+**Optimized Pattern:**
+```rust
+// Use thread-local or pre-allocated buffer
+thread_local! {
+    static MONO_BUFFER: RefCell<Vec<f32>> = RefCell::new(Vec::with_capacity(4096));
+}
+
+MONO_BUFFER.with(|buf| {
+    let mut mono_buffer = buf.borrow_mut();
+    mono_buffer.resize(mono_samples_needed, 0.0);
+    // ... use buffer
+});
+```
+
+### 7. egui Debug Window Optimization
+
+**Avoid layout recalculation when hidden:**
+```rust
+// Only render debug windows when visible
+if self.config.debug.show_ppu {
+    egui::Window::new("PPU Debug")
+        .open(&mut self.config.debug.show_ppu)
+        .show(ctx, |ui| {
+            // Expensive rendering only when visible
+            self.render_ppu_debug(ui);
+        });
+}
+
+// Consider using egui's collapsing headers for sections
+egui::CollapsingHeader::new("Pattern Tables")
+    .default_open(false) // Don't render by default
+    .show(ui, |ui| {
+        // Expensive pattern table rendering
+    });
 ```
 
 ### 5. Memory Allocation Reduction

@@ -4,6 +4,21 @@
 
 Resolve PPU edge cases including sprite overflow, palette RAM writes during rendering, scrolling split-screen effects, and mid-scanline register access.
 
+## Current Implementation (v0.7.1)
+
+The desktop frontend includes PPU debug windows implemented in egui:
+
+**Completed:**
+- [x] PPU debug window with pattern table viewer
+- [x] Nametable viewer (4 nametables with scroll indicator)
+- [x] OAM viewer (64 sprites with attributes)
+- [x] Palette viewer (background + sprite palettes)
+- [x] Basic sprite rendering with 8-sprite-per-scanline limit
+- [x] Palette RAM mirroring implemented
+- [x] VBlank/NMI timing functional
+
+**Location:** `crates/rustynes-desktop/src/gui/debug.rs`
+
 ## Objectives
 
 - [ ] Implement accurate sprite overflow flag behavior
@@ -179,24 +194,166 @@ From v0.5.0 implementation report and test failures:
 3. **Mid-Scanline Writes** - Split-screen effects not working
 4. **Attribute Handling** - Edge cases (v0.5.0 fix to verify)
 
+## egui Debug Window Integration
+
+### PPU Debug Window Enhancement
+
+The existing egui PPU debug window can be extended for edge case debugging:
+
+```rust
+// crates/rustynes-desktop/src/gui/debug.rs
+pub fn ppu_debug_window(
+    ctx: &egui::Context,
+    open: &mut bool,
+    console: &Console,
+) {
+    egui::Window::new("PPU Debug")
+        .open(open)
+        .default_size([800.0, 600.0])
+        .show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut tab, PpuTab::PatternTables, "Pattern Tables");
+                ui.selectable_value(&mut tab, PpuTab::Nametables, "Nametables");
+                ui.selectable_value(&mut tab, PpuTab::Sprites, "Sprites");
+                ui.selectable_value(&mut tab, PpuTab::Palette, "Palette");
+                ui.selectable_value(&mut tab, PpuTab::Scanline, "Scanline"); // New tab
+            });
+
+            match tab {
+                PpuTab::Sprites => render_sprite_debug(ui, console),
+                PpuTab::Scanline => render_scanline_debug(ui, console),
+                // ...
+            }
+        });
+}
+
+fn render_sprite_debug(ui: &mut egui::Ui, console: &Console) {
+    let ppu = console.ppu();
+
+    // Sprite overflow indicator
+    ui.horizontal(|ui| {
+        ui.label("Sprite Overflow:");
+        let overflow = ppu.status() & 0x20 != 0;
+        ui.colored_label(
+            if overflow { egui::Color32::RED } else { egui::Color32::GREEN },
+            if overflow { "SET" } else { "CLEAR" }
+        );
+    });
+
+    // Current scanline sprite count
+    ui.label(format!("Sprites on scanline {}: {}",
+        ppu.scanline(), ppu.sprites_on_current_scanline()));
+
+    // OAM table with visual highlighting for sprites on current scanline
+    egui::ScrollArea::vertical().show(ui, |ui| {
+        egui::Grid::new("oam_grid").show(ui, |ui| {
+            for i in 0..64 {
+                let sprite = ppu.oam_sprite(i);
+                let on_scanline = sprite.is_on_scanline(ppu.scanline());
+                ui.colored_label(
+                    if on_scanline { egui::Color32::YELLOW } else { egui::Color32::WHITE },
+                    format!("{}: Y={} X={} Tile={:02X}",
+                        i, sprite.y, sprite.x, sprite.tile)
+                );
+                if (i + 1) % 4 == 0 { ui.end_row(); }
+            }
+        });
+    });
+}
+
+fn render_scanline_debug(ui: &mut egui::Ui, console: &Console) {
+    let ppu = console.ppu();
+
+    // Current rendering state
+    ui.label(format!("Scanline: {} / Dot: {}", ppu.scanline(), ppu.dot()));
+
+    // VRAM address visualization
+    ui.label(format!("VRAM Addr: ${:04X} (t=${:04X})",
+        ppu.vram_addr(), ppu.temp_vram_addr()));
+
+    // Scroll position visualization
+    ui.label(format!("Fine X: {} | Coarse X: {} | Coarse Y: {}",
+        ppu.fine_x(), ppu.coarse_x(), ppu.coarse_y()));
+
+    // Split-screen detection
+    if ppu.mid_scanline_write_detected() {
+        ui.colored_label(egui::Color32::YELLOW, "Mid-scanline write detected!");
+    }
+}
+```
+
+### Palette RAM Debug Visualization
+
+```rust
+fn render_palette_debug(ui: &mut egui::Ui, console: &Console) {
+    let ppu = console.ppu();
+
+    ui.heading("Palette RAM");
+
+    // Background palettes
+    ui.label("Background:");
+    ui.horizontal(|ui| {
+        for i in 0..16 {
+            let color = ppu.palette_ram(i);
+            let rgb = NES_PALETTE[color as usize];
+            let rect = ui.allocate_space(egui::vec2(24.0, 24.0));
+            ui.painter().rect_filled(rect.1, 0.0, rgb_to_color32(rgb));
+
+            // Highlight mirrored addresses
+            if i == 0 || i == 4 || i == 8 || i == 12 {
+                ui.painter().rect_stroke(rect.1, 0.0,
+                    egui::Stroke::new(2.0, egui::Color32::WHITE));
+            }
+        }
+    });
+
+    // Sprite palettes
+    ui.label("Sprites:");
+    ui.horizontal(|ui| {
+        for i in 16..32 {
+            let color = ppu.palette_ram(i);
+            let rgb = NES_PALETTE[color as usize];
+            let rect = ui.allocate_space(egui::vec2(24.0, 24.0));
+            ui.painter().rect_filled(rect.1, 0.0, rgb_to_color32(rgb));
+
+            // Highlight mirrored addresses ($3F10, $3F14, $3F18, $3F1C)
+            if i == 16 || i == 20 || i == 24 || i == 28 {
+                ui.painter().rect_stroke(rect.1, 0.0,
+                    egui::Stroke::new(2.0, egui::Color32::YELLOW));
+            }
+        }
+    });
+
+    // Live palette write monitoring
+    if let Some(write) = ppu.last_palette_write() {
+        ui.colored_label(egui::Color32::YELLOW,
+            format!("Last write: ${:04X} = ${:02X}", write.addr, write.value));
+    }
+}
+```
+
 ## Debugging Strategy
 
 1. **Identify Visual Glitch:**
    - Take screenshot, compare to reference emulator
    - Note scanline/dot where glitch occurs
+   - Use egui PPU debug window to inspect state
 
 2. **Isolate Issue:**
    - Determine if sprite, background, or palette issue
    - Check relevant PPU state at failure point
+   - Use Scanline tab to monitor mid-scanline writes
 
 3. **Trace Execution:**
    - Enable PPU trace logging
    - Log scanline, dot, register writes
+   - Monitor sprite overflow flag in debug window
 
 4. **Fix & Verify:**
    - Implement fix
    - Test with affected game
    - Run full PPU test suite
+   - Verify fix in egui debug window
 
 ## Version Target
 

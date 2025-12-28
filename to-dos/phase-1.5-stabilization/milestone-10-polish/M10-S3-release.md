@@ -4,6 +4,30 @@
 
 Final testing, binary builds, version decision, release notes, and GitHub release to complete Phase 1.5 and transition to Phase 2.
 
+## Current Implementation (v0.7.1)
+
+The following release infrastructure exists:
+
+**Completed:**
+- [x] GitHub repository with CI/CD basics
+- [x] Cargo workspace with 6+ crates
+- [x] Desktop binary: `rustynes-desktop`
+- [x] Cross-platform dependencies: eframe+egui (OpenGL), cpal (audio), gilrs (gamepads)
+- [x] Test suite: 500+ unit tests, Blargg ROM validation
+
+**Build Dependencies (v0.7.1):**
+- eframe 0.29 (cross-platform window + rendering)
+- egui 0.29 (immediate mode GUI)
+- cpal 0.15 (cross-platform audio)
+- gilrs 0.11 (gamepad support)
+- rfd 0.15 (native file dialogs)
+- ron 0.8 (configuration)
+
+**Platform Considerations:**
+- Linux: Requires ALSA dev libraries for cpal
+- macOS: Universal binary support (x86_64 + arm64)
+- Windows: MSVC toolchain recommended
+
 ## Objectives
 
 - [ ] Full regression testing (all test ROMs, games)
@@ -112,19 +136,30 @@ jobs:
   build-linux:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Install dependencies for eframe/egui (OpenGL) and cpal (ALSA)
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev \
+            libudev-dev \
+            libxkbcommon-dev \
+            libwayland-dev
+
       - name: Build
         run: cargo build --release -p rustynes-desktop
+
       - name: Package
         run: |
           mkdir rustynes-linux-x64
           cp target/release/rustynes-desktop rustynes-linux-x64/
           cp README.md LICENSE rustynes-linux-x64/
           tar -czf rustynes-linux-x64.tar.gz rustynes-linux-x64/
-      - uses: actions/upload-artifact@v3
+
+      - uses: actions/upload-artifact@v4
         with:
           name: linux-binary
           path: rustynes-linux-x64.tar.gz
@@ -132,27 +167,48 @@ jobs:
   build-macos:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
+          targets: x86_64-apple-darwin,aarch64-apple-darwin
+
       - name: Build (x86_64)
         run: cargo build --release -p rustynes-desktop --target x86_64-apple-darwin
+
       - name: Build (arm64)
         run: cargo build --release -p rustynes-desktop --target aarch64-apple-darwin
+
       - name: Create Universal Binary
         run: |
           lipo -create \
             target/x86_64-apple-darwin/release/rustynes-desktop \
             target/aarch64-apple-darwin/release/rustynes-desktop \
             -output rustynes-desktop
+
       - name: Package
         run: |
-          mkdir RustyNES.app/Contents/MacOS -p
+          mkdir -p RustyNES.app/Contents/MacOS
+          mkdir -p RustyNES.app/Contents/Resources
           cp rustynes-desktop RustyNES.app/Contents/MacOS/
-          # ... create Info.plist, etc.
+          cat > RustyNES.app/Contents/Info.plist << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleExecutable</key>
+            <string>rustynes-desktop</string>
+            <key>CFBundleIdentifier</key>
+            <string>com.doublegate.rustynes</string>
+            <key>CFBundleName</key>
+            <string>RustyNES</string>
+            <key>CFBundleVersion</key>
+            <string>${{ github.ref_name }}</string>
+          </dict>
+          </plist>
+          EOF
           hdiutil create -volname RustyNES -srcfolder RustyNES.app -ov -format UDZO rustynes-macos-universal.dmg
-      - uses: actions/upload-artifact@v3
+
+      - uses: actions/upload-artifact@v4
         with:
           name: macos-binary
           path: rustynes-macos-universal.dmg
@@ -160,19 +216,22 @@ jobs:
   build-windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
       - name: Build
         run: cargo build --release -p rustynes-desktop
+
       - name: Package
+        shell: pwsh
         run: |
-          mkdir rustynes-windows-x64
-          cp target/release/rustynes-desktop.exe rustynes-windows-x64/
-          cp README.md LICENSE rustynes-windows-x64/
+          New-Item -ItemType Directory -Force -Path rustynes-windows-x64
+          Copy-Item target/release/rustynes-desktop.exe rustynes-windows-x64/
+          Copy-Item README.md rustynes-windows-x64/
+          Copy-Item LICENSE rustynes-windows-x64/
           Compress-Archive -Path rustynes-windows-x64 -DestinationPath rustynes-windows-x64.zip
-      - uses: actions/upload-artifact@v3
+
+      - uses: actions/upload-artifact@v4
         with:
           name: windows-binary
           path: rustynes-windows-x64.zip
@@ -180,17 +239,19 @@ jobs:
   create-release:
     needs: [build-linux, build-macos, build-windows]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
+
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: |
             linux-binary/rustynes-linux-x64.tar.gz
             macos-binary/rustynes-macos-universal.dmg
             windows-binary/rustynes-windows-x64.zip
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          generate_release_notes: true
 ```
 
 ## Version Decision Matrix

@@ -4,6 +4,23 @@
 
 Create comprehensive documentation including user guide, API documentation, developer guide, and FAQ to ensure users and contributors have all necessary information.
 
+## Current Implementation (v0.7.1)
+
+The following documentation infrastructure exists:
+
+**Completed:**
+- [x] `docs/` directory with 40+ specification files
+- [x] `CLAUDE.md` project memory file
+- [x] `ARCHITECTURE.md` comprehensive design document
+- [x] `ROADMAP.md` development timeline
+- [x] `README.md` project landing page
+- [x] `crates/rustynes-desktop/README.md` GUI architecture documentation
+
+**Locations:**
+- Main docs: `/docs/`
+- Project root: `/README.md`, `/ARCHITECTURE.md`, `/ROADMAP.md`
+- Desktop crate: `/crates/rustynes-desktop/README.md`
+
 ## Objectives
 
 - [ ] Write user guide (installation, usage, troubleshooting)
@@ -275,7 +292,15 @@ RustyNES uses a modular crate structure:
 - **rustynes-ppu**: 2C02 PPU (dot-accurate rendering)
 - **rustynes-apu**: 2A03 APU (5 audio channels)
 - **rustynes-mappers**: Mapper implementations (NROM, MMC1, UxROM, CNROM, MMC3)
-- **rustynes-desktop**: Desktop GUI (iced + wgpu)
+- **rustynes-desktop**: Desktop GUI (eframe + egui)
+
+### Desktop Frontend (v0.7.1+)
+- **eframe 0.29**: Window management, OpenGL context (glow backend)
+- **egui 0.29**: Immediate mode GUI for menus, settings, debug windows
+- **cpal 0.15**: Cross-platform audio I/O with lock-free ring buffer
+- **gilrs 0.11**: Gamepad support with hotplug detection
+- **rfd 0.15**: Native file dialogs
+- **ron 0.8**: Configuration persistence
 
 ### Emulation Loop
 1. CPU executes one instruction (N cycles)

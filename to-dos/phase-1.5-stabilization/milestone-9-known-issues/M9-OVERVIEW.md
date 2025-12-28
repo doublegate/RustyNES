@@ -6,12 +6,24 @@
 **Status:** Not Started
 **Version Target:** v0.8.0
 **Progress:** 0%
+**Baseline:** v0.7.1 (GUI Framework Migration Complete)
 
 ---
 
 ## Overview
 
-Milestone 9 focuses on **resolving all known issues** identified in the v0.5.0 implementation report, including audio quality improvements, PPU edge cases, performance optimization, and bug fixes. This milestone ensures a polished, production-ready emulator before the final Phase 1.5 polish sprint.
+Milestone 9 focuses on **resolving all known issues** identified during Phase 1.5 development, including audio quality improvements, PPU edge cases, performance optimization, and bug fixes. This milestone ensures a polished, production-ready emulator before the final Phase 1.5 polish sprint.
+
+### Prerequisites (Completed in v0.7.1)
+
+The following foundational work was completed in v0.7.1, providing a stable base for M9:
+
+- [x] **GUI Framework Migration**: Desktop frontend migrated from Iced+wgpu to eframe+egui
+- [x] **Audio Backend**: cpal 0.15 with lock-free ring buffer (8192 samples)
+- [x] **Configuration System**: RON format with VideoConfig, AudioConfig, InputConfig, DebugConfig
+- [x] **Debug Windows**: CPU, PPU, APU, Memory viewers implemented in egui
+- [x] **Input System**: Keyboard and gamepad support via gilrs 0.11
+- [x] **Frame Timing**: Accumulator-based timing at 60.0988 Hz NTSC
 
 ### Goals
 
@@ -138,96 +150,136 @@ Milestone 9 focuses on **resolving all known issues** identified in the v0.5.0 i
 
 ### Audio Quality (M9-S1)
 
-**Current Issues (v0.5.0):**
-- No dynamic resampling (NES ~1.79MHz → output 48kHz)
-- No audio/video synchronization (audio drift)
-- Basic buffer management (fixed-size ring buffer)
-- Occasional pops/glitches (buffer underrun/overflow)
+**Current Implementation (v0.7.1):**
+- cpal 0.15 for cross-platform audio I/O
+- Custom lock-free ring buffer (8192 samples) with atomic operations
+- Mono samples converted to stereo in audio callback
+- Volume/mute controls via atomic variables
+- Sample rate: 44.1kHz (configurable in AudioConfig)
+
+**Remaining Issues:**
+- No dynamic resampling (NES ~1.79MHz APU output → device sample rate)
+- No audio/video synchronization (potential audio drift over time)
+- Fixed buffer size (no adaptive sizing based on system latency)
+- Occasional pops/glitches under high system load
 
 **Improvements Needed:**
 1. **Dynamic Resampling:**
-   - Use sinc interpolation or linear interpolation
-   - Handle variable input rate (NTSC vs PAL)
-   - Target output rate: 48kHz (standard)
+   - Use rubato crate for high-quality sinc interpolation
+   - Handle variable input rate (NTSC 1.789773 MHz, PAL 1.662607 MHz)
+   - Target output rate: 44.1kHz or 48kHz (device-dependent)
+   - Consider replacing custom ring buffer with ringbuf crate (CachingProd/CachingCons)
 
 2. **Audio/Video Sync:**
-   - Track audio buffer fill level
-   - Adjust emulation speed to maintain sync
-   - Handle buffer underrun/overflow gracefully
+   - Track audio buffer fill level in real-time
+   - Adjust emulation speed slightly to maintain sync (1.01x/0.99x)
+   - Handle buffer underrun/overflow gracefully (insert silence, drop samples)
+   - Reference: tetanes uses ringbuf crate with sophisticated sync logic
 
 3. **Buffer Management:**
-   - Adaptive buffer sizing
-   - Reduce latency (target <100ms)
-   - Prevent pops/glitches
+   - Adaptive buffer sizing based on system latency detection
+   - Reduce latency (target <100ms, ideally ~50ms)
+   - Consider dynamic latency adjustment (tetanes pattern)
 
 ### PPU Edge Cases (M9-S2)
 
-**Current Issues (v0.5.0):**
-- Sprite overflow flag not always accurate
-- Palette RAM edge cases (writes during rendering)
-- Scrolling split-screen effects (mid-scanline writes)
-- Attribute handling edge cases
+**Current Implementation (v0.7.1):**
+- PPU debug window implemented in egui (pattern tables, nametables, OAM, palette)
+- Basic sprite rendering with 8-sprite-per-scanline limit
+- Palette RAM mirroring implemented
+- VBlank/NMI timing functional with flag read handling
+
+**Remaining Issues:**
+- Sprite overflow flag not fully cycle-accurate (hardware quirks not emulated)
+- Palette RAM writes during rendering not handled correctly
+- Scrolling split-screen effects may have edge cases (mid-scanline writes)
+- Some attribute handling edge cases remain
 
 **Improvements Needed:**
 1. **Sprite Overflow:**
-   - Implement accurate sprite evaluation (8 sprite limit per scanline)
-   - Set overflow flag correctly (hardware quirks)
+   - Implement accurate sprite evaluation with hardware bug emulation
+   - Set overflow flag correctly (including false positive/negative cases)
+   - Use egui PPU debug window for visualization during development
 
 2. **Palette RAM:**
-   - Handle writes during rendering
-   - Validate mirroring edge cases
+   - Handle writes during rendering (immediate effect on output)
+   - Validate mirroring edge cases ($3F10/$3F14/$3F18/$3F1C)
+   - Add palette visualization to debug window
 
 3. **Scrolling:**
-   - Handle mid-scanline $2006 writes (split-screen)
+   - Handle mid-scanline $2006 writes (split-screen effects)
    - Test with games using scrolling tricks (Super Mario Bros. 3)
+   - Add scanline visualization to debug window
 
 ### Performance (M9-S3)
 
-**Current State (v0.5.0):**
-- Performance not profiled
-- Likely bottlenecks in PPU rendering loop
+**Current State (v0.7.1):**
+- eframe+egui rendering via OpenGL (glow backend)
+- Accumulator-based frame timing (TARGET_FPS = 60.0988)
+- Framebuffer: 256x240 RGBA with egui::TextureOptions::NEAREST
+- Audio: Lock-free ring buffer with atomic operations
+- Performance not fully profiled (eframe overhead unknown)
+
+**Potential Bottlenecks:**
+- PPU rendering loop (pixel-by-pixel processing)
+- egui texture updates every frame (ColorImage::from_rgba_unmultiplied)
+- Audio callback overhead (mono-to-stereo conversion)
 - Memory allocations in hot paths
-- No SIMD optimization
 
 **Improvements Needed:**
 1. **Profiling:**
-   - Use `cargo flamegraph` or `perf`
-   - Identify hot paths (CPU, PPU, APU)
+   - Use `cargo flamegraph` or `perf` with eframe workload
+   - Profile egui rendering overhead (texture updates, layout)
+   - Identify hot paths (CPU step, PPU scanline, APU sample)
 
 2. **Optimization:**
-   - Inline critical functions
-   - Reduce memory allocations (use stack/reuse buffers)
-   - Consider SIMD for pixel processing
-   - Optimize lookup tables (CPU opcode dispatch)
+   - Inline critical functions (#[inline(always)] on hot paths)
+   - Reduce memory allocations (reuse buffers, avoid Vec::new in loops)
+   - Consider SIMD for pixel processing (palette lookup, pixel mixing)
+   - Optimize CPU opcode dispatch (compile-time lookup tables)
+   - Batch PPU rendering (render full scanline instead of dot-by-dot)
 
 3. **Benchmarking:**
-   - Measure FPS (target 120+ FPS on mid-range hardware)
+   - Measure FPS with various game complexity levels
+   - Target 120+ FPS on mid-range hardware (headroom for vsync)
    - Compare before/after optimization
-   - Ensure no regressions
+   - Ensure no accuracy regressions (test ROM pass rate)
 
 ### Bug Fixes (M9-S4)
 
+**Current State (v0.7.1):**
+- Configuration persistence via RON format
+- Error handling with anyhow in desktop crate
+- Logging via log crate
+- File dialog errors handled with rfd
+
 **Known Issues:**
 - Edge case crashes (malformed ROMs, invalid states)
-- Save state edge cases (corruption, version compatibility)
-- Input handling edge cases (rapid key presses)
-- Error messages not user-friendly
+- Save states not yet implemented
+- Input handling edge cases (rapid key presses, gilrs edge cases)
+- Error messages shown in console, not in GUI dialogs
 
 **Improvements Needed:**
 1. **Crash Prevention:**
-   - Add bounds checking
-   - Validate ROM headers
-   - Handle invalid save states gracefully
+   - Add bounds checking in core emulation
+   - Validate ROM headers (iNES, NES 2.0 format checking)
+   - Handle malformed ROM files gracefully (user-friendly errors)
 
 2. **Error Handling:**
-   - Improve error messages (actionable guidance)
-   - Add logging for debugging
-   - Validate user input
+   - Show error dialogs in egui instead of console
+   - Improve error messages (actionable guidance for users)
+   - Add structured logging (consider tracing crate)
 
 3. **Save States:**
-   - Test edge cases (mid-frame, mid-instruction)
-   - Version compatibility (v0.5.0 → v0.8.0)
-   - Corruption detection (checksums)
+   - Implement save state system (serialize CPU, PPU, APU, mapper state)
+   - Add versioning for forward compatibility
+   - Add checksum validation (detect corruption)
+   - Handle mid-frame/mid-instruction saves correctly
+
+4. **Input Handling:**
+   - Test gilrs edge cases (controller hotplug, disconnect)
+   - Add input debouncing if needed
+   - Validate keyboard bindings on load
 
 ---
 
@@ -300,17 +352,28 @@ Milestone 9 focuses on **resolving all known issues** identified in the v0.5.0 i
 
 ### Documentation
 
-- [v0.5.0 Implementation Report](/tmp/RustyNES/v0.5.0-implementation-report.md)
+- [Desktop README](../../../crates/rustynes-desktop/README.md) - GUI architecture documentation
 - [Audio Resampling Guide](../../../docs/apu/AUDIO_RESAMPLING.md)
 - [Performance Profiling Guide](../../../docs/dev/PERFORMANCE_PROFILING.md)
 - [Save State Format](../../../docs/api/SAVE_STATES.md)
 
+### Reference Projects
+
+- **tetanes** - Rust NES emulator using egui (primary reference)
+  - Audio: ringbuf crate with sophisticated sync
+  - GUI: Comprehensive egui implementation with PPU viewer
+  - Location: `ref-proj/tetanes/`
+
 ### External References
 
-- [rubato Resampling Library](https://github.com/HEnquist/rubato)
-- [dasp Digital Signal Processing](https://github.com/RustAudio/dasp)
-- [cargo-flamegraph Profiling](https://github.com/flamegraph-rs/flamegraph)
-- [Mesen2 Audio Implementation](https://github.com/SourMesen/Mesen2)
+- [rubato Resampling Library](https://github.com/HEnquist/rubato) - High-quality Rust resampling
+- [ringbuf Lock-Free Ring Buffer](https://crates.io/crates/ringbuf) - CachingProd/CachingCons for audio
+- [dasp Digital Signal Processing](https://github.com/RustAudio/dasp) - DSP primitives
+- [cargo-flamegraph Profiling](https://github.com/flamegraph-rs/flamegraph) - CPU/memory profiling
+- [Mesen2 Audio Implementation](https://github.com/SourMesen/Mesen2) - Reference for accuracy
+- [egui Documentation](https://docs.rs/egui/) - GUI framework reference
+- [eframe Documentation](https://docs.rs/eframe/) - Application framework reference
+- [cpal Documentation](https://docs.rs/cpal/) - Audio I/O reference
 
 ---
 

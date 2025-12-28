@@ -4,6 +4,22 @@
 
 Polish the desktop GUI with responsive design, theme support, improved settings organization, and visual feedback to create an intuitive and professional user experience.
 
+## Current Implementation (v0.7.1)
+
+The desktop frontend uses eframe+egui with the following existing features:
+
+**Completed:**
+- [x] eframe 0.29 window management with OpenGL (glow) backend
+- [x] egui 0.29 immediate mode GUI
+- [x] Menu bar (File, Emulation, Video, Audio, Debug, Help)
+- [x] Native file dialogs via rfd 0.15
+- [x] Configuration persistence with RON format
+- [x] Basic scaling modes: PixelPerfect, FitWindow, Integer
+- [x] Keyboard input handling via egui
+- [x] Gamepad support via gilrs 0.11
+
+**Location:** `crates/rustynes-desktop/src/`
+
 ## Objectives
 
 - [ ] Implement responsive layout (adapt to window size)
@@ -121,81 +137,323 @@ Polish the desktop GUI with responsive design, theme support, improved settings 
 
 ## Implementation Details
 
-### Responsive Layout (iced)
+### Responsive Layout (egui)
 
 ```rust
-use iced::{window, Element, Length, Alignment};
+// crates/rustynes-desktop/src/app.rs
+impl eframe::App for NesApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Top menu bar
+        egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
+            egui::menu::bar(ui, |ui| {
+                ui.menu_button("File", |ui| { /* ... */ });
+                ui.menu_button("Emulation", |ui| { /* ... */ });
+            });
+        });
 
-fn view(&self) -> Element<Message> {
-    let content = column![
-        // Menu bar
-        menu_bar(),
+        // Bottom status bar
+        egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(&self.status_message);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(format!("FPS: {:.1}", self.fps));
+                });
+            });
+        });
 
-        // Emulator screen (responsive sizing)
-        container(emulator_screen())
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center_x()
-            .center_y(),
+        // Central panel (emulator screen) - responsive sizing
+        egui::CentralPanel::default().show(ctx, |ui| {
+            let available_size = ui.available_size();
 
-        // Status bar
-        status_bar(self.status.clone()),
-    ]
-    .align_items(Alignment::Center);
+            // Calculate scaled size maintaining aspect ratio
+            let (width, height) = self.calculate_scaled_size(available_size);
 
-    container(content)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+            if let Some(ref texture) = self.nes_texture {
+                let image = egui::Image::new(texture)
+                    .fit_to_exact_size(egui::vec2(width, height));
+                ui.centered_and_justified(|ui| {
+                    ui.add(image);
+                });
+            }
+        });
+    }
+}
+
+// Window size constraints
+fn main() {
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_min_inner_size([800.0, 600.0])
+            .with_inner_size([1024.0, 768.0]),
+        ..Default::default()
+    };
+    eframe::run_native("RustyNES", options, Box::new(|cc| Ok(Box::new(NesApp::new(cc)))));
 }
 ```
 
-### Theme Support (iced)
+### Theme Support (egui)
 
 ```rust
-use iced::{Theme, theme};
-
-#[derive(Debug, Clone)]
-enum AppTheme {
+// crates/rustynes-desktop/src/config.rs
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum AppTheme {
     Light,
     Dark,
+    System, // Follow OS preference
 }
 
-impl AppTheme {
-    fn to_iced_theme(&self) -> Theme {
-        match self {
-            AppTheme::Light => Theme::Light,
-            AppTheme::Dark => Theme::Dark,
+impl Default for AppTheme {
+    fn default() -> Self {
+        AppTheme::Dark
+    }
+}
+
+// crates/rustynes-desktop/src/app.rs
+impl NesApp {
+    fn apply_theme(&self, ctx: &egui::Context) {
+        match self.config.video.theme {
+            AppTheme::Light => {
+                ctx.set_visuals(egui::Visuals::light());
+            }
+            AppTheme::Dark => {
+                ctx.set_visuals(egui::Visuals::dark());
+            }
+            AppTheme::System => {
+                // Follow system theme (eframe detects automatically)
+                // Or check manually via dark_mode detection
+            }
+        }
+    }
+
+    fn render_theme_selector(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.label("Theme:");
+            egui::ComboBox::from_id_salt("theme_selector")
+                .selected_text(format!("{:?}", self.config.video.theme))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.config.video.theme, AppTheme::Light, "Light");
+                    ui.selectable_value(&mut self.config.video.theme, AppTheme::Dark, "Dark");
+                    ui.selectable_value(&mut self.config.video.theme, AppTheme::System, "System");
+                });
+        });
+    }
+}
+```
+
+### Loading Spinner (egui)
+
+```rust
+fn render_loading_overlay(&self, ctx: &egui::Context) {
+    if self.loading {
+        egui::Area::new(egui::Id::new("loading_overlay"))
+            .fixed_pos(egui::Pos2::ZERO)
+            .show(ctx, |ui| {
+                let screen_rect = ctx.screen_rect();
+
+                // Semi-transparent background
+                ui.painter().rect_filled(
+                    screen_rect,
+                    0.0,
+                    egui::Color32::from_rgba_unmultiplied(0, 0, 0, 180),
+                );
+
+                // Centered loading indicator
+                egui::Area::new(egui::Id::new("loading_content"))
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .show(ctx, |ui| {
+                        ui.vertical_centered(|ui| {
+                            ui.add(egui::Spinner::new().size(50.0));
+                            ui.add_space(16.0);
+                            ui.label(
+                                egui::RichText::new("Loading ROM...")
+                                    .size(18.0)
+                                    .color(egui::Color32::WHITE)
+                            );
+                        });
+                    });
+            });
+    }
+}
+```
+
+### Settings Window with Tabs (egui)
+
+```rust
+fn render_settings_window(&mut self, ctx: &egui::Context) {
+    if self.show_settings {
+        egui::Window::new("Settings")
+            .open(&mut self.show_settings)
+            .resizable(true)
+            .default_size([500.0, 400.0])
+            .show(ctx, |ui| {
+                // Tab bar
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut self.settings_tab, SettingsTab::Video, "Video");
+                    ui.selectable_value(&mut self.settings_tab, SettingsTab::Audio, "Audio");
+                    ui.selectable_value(&mut self.settings_tab, SettingsTab::Input, "Input");
+                    ui.selectable_value(&mut self.settings_tab, SettingsTab::Advanced, "Advanced");
+                });
+
+                ui.separator();
+
+                // Tab content
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    match self.settings_tab {
+                        SettingsTab::Video => self.render_video_settings(ui),
+                        SettingsTab::Audio => self.render_audio_settings(ui),
+                        SettingsTab::Input => self.render_input_settings(ui),
+                        SettingsTab::Advanced => self.render_advanced_settings(ui),
+                    }
+                });
+
+                ui.separator();
+
+                // Action buttons
+                ui.horizontal(|ui| {
+                    if ui.button("Apply").clicked() {
+                        self.apply_settings();
+                    }
+                    if ui.button("Reset to Defaults").clicked() {
+                        self.config = Config::default();
+                    }
+                });
+            });
+    }
+}
+
+fn render_video_settings(&mut self, ui: &mut egui::Ui) {
+    ui.heading("Video Settings");
+    ui.add_space(8.0);
+
+    // Scale factor
+    ui.horizontal(|ui| {
+        ui.label("Scale:");
+        egui::ComboBox::from_id_salt("scale")
+            .selected_text(format!("{}x", self.config.video.scale))
+            .show_ui(ui, |ui| {
+                for scale in 1..=4 {
+                    ui.selectable_value(&mut self.config.video.scale, scale, format!("{}x", scale));
+                }
+            });
+    });
+
+    // Scaling mode
+    ui.horizontal(|ui| {
+        ui.label("Scaling Mode:");
+        egui::ComboBox::from_id_salt("scaling_mode")
+            .selected_text(format!("{:?}", self.config.video.scaling_mode))
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut self.config.video.scaling_mode, ScalingMode::PixelPerfect, "Pixel Perfect (8:7 PAR)");
+                ui.selectable_value(&mut self.config.video.scaling_mode, ScalingMode::FitWindow, "Fit Window");
+                ui.selectable_value(&mut self.config.video.scaling_mode, ScalingMode::Integer, "Integer Scaling");
+            });
+    });
+
+    // VSync
+    ui.checkbox(&mut self.config.video.vsync, "Enable VSync");
+
+    // Theme
+    self.render_theme_selector(ui);
+}
+
+fn render_audio_settings(&mut self, ui: &mut egui::Ui) {
+    ui.heading("Audio Settings");
+    ui.add_space(8.0);
+
+    // Volume slider
+    ui.horizontal(|ui| {
+        ui.label("Volume:");
+        ui.add(egui::Slider::new(&mut self.config.audio.volume, 0.0..=1.0)
+            .show_value(true)
+            .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)));
+    });
+
+    // Mute checkbox
+    ui.checkbox(&mut self.config.audio.muted, "Mute Audio");
+
+    // Sample rate
+    ui.horizontal(|ui| {
+        ui.label("Sample Rate:");
+        egui::ComboBox::from_id_salt("sample_rate")
+            .selected_text(format!("{} Hz", self.config.audio.sample_rate))
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut self.config.audio.sample_rate, 44100, "44100 Hz");
+                ui.selectable_value(&mut self.config.audio.sample_rate, 48000, "48000 Hz");
+            });
+    });
+
+    // Buffer size
+    ui.horizontal(|ui| {
+        ui.label("Buffer Size:");
+        egui::ComboBox::from_id_salt("buffer_size")
+            .selected_text(format!("{} samples", self.config.audio.buffer_size))
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut self.config.audio.buffer_size, 1024, "1024 (Low latency)");
+                ui.selectable_value(&mut self.config.audio.buffer_size, 2048, "2048 (Balanced)");
+                ui.selectable_value(&mut self.config.audio.buffer_size, 4096, "4096 (High stability)");
+            });
+    });
+}
+```
+
+### Visual Feedback Patterns (egui)
+
+```rust
+// Progress bar for long operations
+fn render_progress(&self, ui: &mut egui::Ui, progress: f32, label: &str) {
+    ui.horizontal(|ui| {
+        ui.label(label);
+        ui.add(egui::ProgressBar::new(progress).show_percentage());
+    });
+}
+
+// Status message with auto-fade
+struct StatusMessage {
+    text: String,
+    color: egui::Color32,
+    created_at: std::time::Instant,
+    duration: std::time::Duration,
+}
+
+fn render_status_bar(&mut self, ui: &mut egui::Ui) {
+    if let Some(ref status) = self.status_message {
+        let elapsed = status.created_at.elapsed();
+        if elapsed < status.duration {
+            // Fade out effect
+            let alpha = 1.0 - (elapsed.as_secs_f32() / status.duration.as_secs_f32());
+            let color = egui::Color32::from_rgba_unmultiplied(
+                status.color.r(),
+                status.color.g(),
+                status.color.b(),
+                (alpha * 255.0) as u8,
+            );
+            ui.colored_label(color, &status.text);
+        } else {
+            self.status_message = None;
         }
     }
 }
 
-// In Application trait
-fn theme(&self) -> Theme {
-    self.theme.to_iced_theme()
+// Hover tooltips
+fn render_setting_with_tooltip(&mut self, ui: &mut egui::Ui) {
+    ui.horizontal(|ui| {
+        ui.checkbox(&mut self.config.video.vsync, "VSync")
+            .on_hover_text("Synchronize frame rate with monitor refresh rate to prevent screen tearing");
+    });
 }
-```
 
-### Loading Spinner
-
-```rust
-use iced::widget::ProgressIndicator;
-
-fn loading_view(&self) -> Element<Message> {
-    container(
-        column![
-            ProgressIndicator::new()
-                .circle_radius(50.0),
-            text("Loading ROM..."),
-        ]
-        .spacing(20)
-        .align_items(Alignment::Center)
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .center_x()
-    .center_y()
-    .into()
+// Success/Error indicators
+fn show_notification(&mut self, message: &str, is_error: bool) {
+    self.status_message = Some(StatusMessage {
+        text: message.to_string(),
+        color: if is_error {
+            egui::Color32::from_rgb(255, 100, 100)
+        } else {
+            egui::Color32::from_rgb(100, 200, 100)
+        },
+        created_at: std::time::Instant::now(),
+        duration: std::time::Duration::from_secs(3),
+    });
 }
 ```
 
