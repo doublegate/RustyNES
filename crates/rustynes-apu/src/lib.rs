@@ -97,7 +97,10 @@ pub use frame_counter::{FrameAction, FrameCounter};
 pub use mixer::Mixer;
 pub use noise::NoiseChannel;
 pub use pulse::PulseChannel;
-pub use resampler::{LowPassFilter, Resampler};
+pub use resampler::{
+    FilterChain, HighPassFilter, HighQualityResampler, LinearResampler, LowPassFilter, Resampler,
+    APU_RATE_NTSC, APU_RATE_PAL, SAMPLE_RATE_44100, SAMPLE_RATE_48000,
+};
 pub use triangle::TriangleChannel;
 
 // Keep internal components private for now

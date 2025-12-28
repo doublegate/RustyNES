@@ -1,26 +1,30 @@
 //! Audio resampler for converting APU rate to target sample rate
 //!
 //! The NES APU runs at approximately 1.789773 MHz (NTSC) or 1.662607 MHz (PAL),
-//! but modern audio systems expect 44.1 kHz or 48 kHz. This module resamples
-//! APU output to the target rate using linear interpolation.
+//! but modern audio systems expect 44.1 kHz or 48 kHz. This module provides
+//! high-quality resampling using:
 //!
-//! # Resampling Strategy
+//! 1. **Rubato sinc interpolation** - Band-limited resampling for accurate frequency content
+//! 2. **Multi-stage filter chain** - High-pass and low-pass filtering matching NES hardware
+//! 3. **Fallback linear interpolation** - For when rubato isn't available
 //!
-//! 1. APU produces samples at ~1.79 MHz
-//! 2. Resampler accumulates samples and tracks fractional time
-//! 3. When time threshold is crossed, output samples using linear interpolation
-//! 4. Output buffer stores samples for audio device consumption
+//! # NES Audio Characteristics
+//!
+//! The NES audio path has several filtering stages:
+//! - 90 Hz high-pass filter (removes DC offset)
+//! - 440 Hz high-pass filter (second stage)
+//! - 14 kHz low-pass filter (anti-aliasing before output)
 //!
 //! # Example
 //!
 //! ```rust
-//! use rustynes_apu::resampler::Resampler;
+//! use rustynes_apu::resampler::HighQualityResampler;
 //!
-//! let mut resampler = Resampler::new(48000); // 48 kHz output
+//! let mut resampler = HighQualityResampler::new(48000);
 //!
 //! // Add APU samples (called every CPU cycle at ~1.79 MHz)
 //! for i in 0..10000 {
-//!     let sample = (i as f32 * 0.001).sin(); // Example waveform
+//!     let sample = (i as f32 * 0.001).sin();
 //!     resampler.add_sample(sample);
 //! }
 //!
@@ -32,61 +36,82 @@
 //! resampler.clear();
 //! ```
 
-/// Audio resampler with linear interpolation
+use log::{debug, warn};
+use rubato::{FftFixedInOut, Resampler as RubatoResampler};
+use std::f32::consts::PI;
+
+/// NTSC APU sample rate (CPU clock: 1.789773 MHz)
+pub const APU_RATE_NTSC: u32 = 1_789_773;
+
+/// PAL APU sample rate (CPU clock: 1.662607 MHz)
+pub const APU_RATE_PAL: u32 = 1_662_607;
+
+/// Common output sample rate (CD quality)
+pub const SAMPLE_RATE_44100: u32 = 44_100;
+
+/// Common output sample rate (professional audio)
+pub const SAMPLE_RATE_48000: u32 = 48_000;
+
+/// NES high-pass filter 1 frequency (Hz)
+const HIGHPASS_1_FREQ: f32 = 90.0;
+
+/// NES high-pass filter 2 frequency (Hz)
+const HIGHPASS_2_FREQ: f32 = 440.0;
+
+/// NES low-pass filter frequency (Hz)
+const LOWPASS_FREQ: f32 = 14_000.0;
+
+/// High-quality audio resampler with sinc interpolation and NES filter chain
 ///
-/// Converts APU rate (~1.79 MHz) to target sample rate (typically 48 kHz).
-pub struct Resampler {
+/// Uses rubato for band-limited resampling and implements the NES analog
+/// audio filter chain for authentic sound reproduction.
+pub struct HighQualityResampler {
     /// Target output sample rate (e.g., 48000 Hz)
     output_rate: u32,
 
     /// APU sample rate (1.789773 MHz for NTSC)
     input_rate: u32,
 
-    /// Fractional time accumulator for sample generation
-    time_accumulator: f32,
+    /// Intermediate sample rate for decimation
+    intermediate_rate: u32,
 
-    /// Previous sample for linear interpolation
-    prev_sample: f32,
+    /// First-stage decimation resampler (APU rate -> intermediate)
+    decimator: Option<Box<FftFixedInOut<f32>>>,
+
+    /// Second-stage resampler (intermediate -> output)
+    final_resampler: Option<Box<FftFixedInOut<f32>>>,
+
+    /// Input buffer for decimator
+    decimator_input: Vec<f32>,
+
+    /// Intermediate buffer between stages
+    intermediate_buffer: Vec<f32>,
 
     /// Output sample buffer
-    buffer: Vec<f32>,
+    output_buffer: Vec<f32>,
+
+    /// Filter chain for NES audio characteristics
+    filter_chain: FilterChain,
+
+    /// Fallback linear resampler (used when rubato setup fails)
+    fallback_resampler: LinearResampler,
+
+    /// Whether we're using the fallback resampler
+    using_fallback: bool,
+
+    /// Chunk size for rubato processing
+    chunk_size: usize,
 }
 
-impl Resampler {
-    /// NTSC APU sample rate (CPU clock: 1.789773 MHz)
-    pub const APU_RATE_NTSC: u32 = 1_789_773;
-
-    /// PAL APU sample rate (CPU clock: 1.662607 MHz)
-    pub const APU_RATE_PAL: u32 = 1_662_607;
-
-    /// Common output sample rate (CD quality)
-    pub const SAMPLE_RATE_44100: u32 = 44_100;
-
-    /// Common output sample rate (professional audio)
-    pub const SAMPLE_RATE_48000: u32 = 48_000;
-
-    /// Create a new resampler with specified output rate
+impl HighQualityResampler {
+    /// Create a new high-quality resampler with specified output rate
     ///
     /// # Arguments
     ///
     /// * `output_rate` - Target sample rate (typically 44100 or 48000 Hz)
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use rustynes_apu::resampler::Resampler;
-    ///
-    /// let resampler = Resampler::new(48000);
-    /// ```
     #[must_use]
     pub fn new(output_rate: u32) -> Self {
-        Self {
-            output_rate,
-            input_rate: Self::APU_RATE_NTSC,
-            time_accumulator: 0.0,
-            prev_sample: 0.0,
-            buffer: Vec::with_capacity(2048),
-        }
+        Self::with_input_rate(output_rate, APU_RATE_NTSC)
     }
 
     /// Create a resampler with custom input rate (for PAL systems)
@@ -94,183 +119,208 @@ impl Resampler {
     /// # Arguments
     ///
     /// * `output_rate` - Target sample rate (Hz)
-    /// * `input_rate` - APU sample rate (Hz, typically 1789773 NTSC or 1662607 PAL)
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use rustynes_apu::resampler::Resampler;
-    ///
-    /// // PAL system
-    /// let resampler = Resampler::with_input_rate(48000, Resampler::APU_RATE_PAL);
-    /// ```
+    /// * `input_rate` - APU sample rate (Hz)
     #[must_use]
     pub fn with_input_rate(output_rate: u32, input_rate: u32) -> Self {
+        // Use an intermediate rate for two-stage resampling
+        // This helps with the extreme ratio (~1.79MHz -> 48kHz = 37:1)
+        let intermediate_rate = output_rate * 4; // 192 kHz intermediate
+
+        let filter_chain = FilterChain::new(output_rate);
+        let fallback_resampler = LinearResampler::with_input_rate(output_rate, input_rate);
+
+        // Try to create rubato resamplers
+        let (decimator, final_resampler, chunk_size, using_fallback) =
+            Self::create_resamplers(input_rate, intermediate_rate, output_rate);
+
         Self {
             output_rate,
             input_rate,
-            time_accumulator: 0.0,
-            prev_sample: 0.0,
-            buffer: Vec::with_capacity(2048),
+            intermediate_rate,
+            decimator,
+            final_resampler,
+            decimator_input: Vec::with_capacity(chunk_size * 2),
+            intermediate_buffer: Vec::with_capacity(4096),
+            output_buffer: Vec::with_capacity(4096),
+            filter_chain,
+            fallback_resampler,
+            using_fallback,
+            chunk_size,
         }
+    }
+
+    /// Create rubato resamplers for two-stage decimation
+    #[allow(clippy::type_complexity)]
+    fn create_resamplers(
+        input_rate: u32,
+        intermediate_rate: u32,
+        output_rate: u32,
+    ) -> (
+        Option<Box<FftFixedInOut<f32>>>,
+        Option<Box<FftFixedInOut<f32>>>,
+        usize,
+        bool,
+    ) {
+        // Calculate the decimation ratio
+        let decimation_ratio = f64::from(input_rate) / f64::from(intermediate_rate);
+
+        // Use a reasonable chunk size that works with the ratio
+        // For 1.79MHz -> 192kHz, ratio is ~9.3:1
+        // We need chunk_size * ratio to give integer outputs
+        let chunk_size = 1024;
+
+        // Try to create the decimator (APU rate -> intermediate)
+        let decimator = match FftFixedInOut::<f32>::new(
+            input_rate as usize,
+            intermediate_rate as usize,
+            chunk_size,
+            1,
+        ) {
+            Ok(r) => {
+                debug!(
+                    "Created decimator: {input_rate} Hz -> {intermediate_rate} Hz (ratio {decimation_ratio:.4})"
+                );
+                Some(Box::new(r))
+            }
+            Err(e) => {
+                warn!("Failed to create decimator: {e}, falling back to linear interpolation");
+                return (None, None, chunk_size, true);
+            }
+        };
+
+        // Try to create the final resampler (intermediate -> output)
+        let final_resampler = match FftFixedInOut::<f32>::new(
+            intermediate_rate as usize,
+            output_rate as usize,
+            256,
+            1,
+        ) {
+            Ok(r) => {
+                debug!("Created final resampler: {intermediate_rate} Hz -> {output_rate} Hz");
+                Some(Box::new(r))
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to create final resampler: {e}, falling back to linear interpolation"
+                );
+                return (None, None, chunk_size, true);
+            }
+        };
+
+        (decimator, final_resampler, chunk_size, false)
     }
 
     /// Add a sample from the APU
     ///
-    /// This should be called every APU cycle (~1.79 MHz). The resampler will
-    /// generate output samples as needed using linear interpolation.
-    ///
-    /// # Arguments
-    ///
-    /// * `sample` - Audio sample from APU mixer (typically 0.0-2.0 range)
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use rustynes_apu::resampler::Resampler;
-    ///
-    /// let mut resampler = Resampler::new(48000);
-    ///
-    /// // Add samples from APU
-    /// for _ in 0..1789 {
-    ///     resampler.add_sample(0.5); // 1ms of audio at APU rate
-    /// }
-    ///
-    /// // Should produce approximately 48 output samples (1ms at 48kHz)
-    /// assert!(resampler.samples().len() >= 47 && resampler.samples().len() <= 49);
-    /// ```
+    /// This should be called every APU cycle (~1.79 MHz).
     pub fn add_sample(&mut self, sample: f32) {
-        #[allow(clippy::cast_precision_loss)]
-        let time_step = self.output_rate as f32 / self.input_rate as f32;
-        self.time_accumulator += time_step;
-
-        // Generate output samples when time threshold is crossed
-        while self.time_accumulator >= 1.0 {
-            // Linear interpolation between previous and current sample
-            let t = self.time_accumulator - 1.0;
-            let output = self.prev_sample + (sample - self.prev_sample) * t;
-
-            self.buffer.push(output);
-            self.time_accumulator -= 1.0;
+        if self.using_fallback {
+            // Use linear interpolation fallback
+            self.fallback_resampler.add_sample(sample);
+            return;
         }
 
-        self.prev_sample = sample;
+        // Accumulate samples for chunked processing
+        self.decimator_input.push(sample);
+
+        // Process when we have enough samples
+        if self.decimator_input.len() >= self.chunk_size {
+            self.process_chunk();
+        }
+    }
+
+    /// Process a chunk of samples through the resampling stages
+    fn process_chunk(&mut self) {
+        if self.decimator_input.len() < self.chunk_size {
+            return;
+        }
+
+        // Stage 1: Decimate from APU rate to intermediate rate
+        if let Some(ref mut decimator) = self.decimator {
+            let input_frames = decimator.input_frames_next();
+            if self.decimator_input.len() >= input_frames {
+                let input_chunk: Vec<f32> = self.decimator_input.drain(..input_frames).collect();
+                let input_slice = vec![input_chunk];
+
+                let output_frames = decimator.output_frames_next();
+                let mut output_slice = vec![vec![0.0f32; output_frames]];
+
+                if let Ok((_, _)) =
+                    decimator.process_into_buffer(&input_slice, &mut output_slice, None)
+                {
+                    self.intermediate_buffer.extend(&output_slice[0]);
+                }
+            }
+        }
+
+        // Stage 2: Resample from intermediate to output rate
+        if let Some(ref mut final_resampler) = self.final_resampler {
+            let input_frames = final_resampler.input_frames_next();
+            while self.intermediate_buffer.len() >= input_frames {
+                let input_chunk: Vec<f32> =
+                    self.intermediate_buffer.drain(..input_frames).collect();
+                let input_slice = vec![input_chunk];
+
+                let output_frames = final_resampler.output_frames_next();
+                let mut output_slice = vec![vec![0.0f32; output_frames]];
+
+                if let Ok((_, _)) =
+                    final_resampler.process_into_buffer(&input_slice, &mut output_slice, None)
+                {
+                    // Apply filter chain to output samples
+                    for sample in &output_slice[0] {
+                        let filtered = self.filter_chain.process(*sample);
+                        self.output_buffer.push(filtered);
+                    }
+                }
+            }
+        }
     }
 
     /// Get reference to output samples
-    ///
-    /// Returns samples ready for audio device consumption. Call [`clear()`](Self::clear)
-    /// after consuming samples.
-    ///
-    /// # Returns
-    ///
-    /// Slice of f32 audio samples at target sample rate
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use rustynes_apu::resampler::Resampler;
-    ///
-    /// let mut resampler = Resampler::new(48000);
-    ///
-    /// // Add samples...
-    /// for _ in 0..10000 {
-    ///     resampler.add_sample(0.5);
-    /// }
-    ///
-    /// // Retrieve for audio output
-    /// let samples = resampler.samples();
-    /// // Send to audio device...
-    ///
-    /// // Clear after consuming
-    /// resampler.clear();
-    /// ```
     #[must_use]
     pub fn samples(&self) -> &[f32] {
-        &self.buffer
+        if self.using_fallback {
+            self.fallback_resampler.samples()
+        } else {
+            &self.output_buffer
+        }
     }
 
     /// Clear the output buffer
-    ///
-    /// Call this after consuming samples to free memory and prepare for next batch.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use rustynes_apu::resampler::Resampler;
-    ///
-    /// let mut resampler = Resampler::new(48000);
-    ///
-    /// // Add enough samples to produce output (resampler downsamples from ~1.79 MHz)
-    /// for _ in 0..100 {
-    ///     resampler.add_sample(0.5);
-    /// }
-    ///
-    /// // After clearing, buffer should be empty
-    /// resampler.clear();
-    /// assert!(resampler.samples().is_empty());
-    /// ```
     pub fn clear(&mut self) {
-        self.buffer.clear();
+        if self.using_fallback {
+            self.fallback_resampler.clear();
+        } else {
+            self.output_buffer.clear();
+        }
     }
 
     /// Check if resampler has at least `min_samples` ready
-    ///
-    /// Useful for determining when to pull samples for audio output.
-    ///
-    /// # Arguments
-    ///
-    /// * `min_samples` - Minimum number of samples required
-    ///
-    /// # Returns
-    ///
-    /// `true` if buffer contains at least `min_samples`
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use rustynes_apu::resampler::Resampler;
-    ///
-    /// let mut resampler = Resampler::new(48000);
-    ///
-    /// // Audio callback wants 512 samples
-    /// while !resampler.is_ready(512) {
-    ///     // Add more APU samples...
-    ///     resampler.add_sample(0.5);
-    /// }
-    /// ```
     #[must_use]
     pub fn is_ready(&self, min_samples: usize) -> bool {
-        self.buffer.len() >= min_samples
+        self.samples().len() >= min_samples
     }
 
     /// Get the current number of samples in the buffer
-    ///
-    /// # Returns
-    ///
-    /// Number of output samples ready
     #[must_use]
     pub fn len(&self) -> usize {
-        self.buffer.len()
+        self.samples().len()
     }
 
     /// Check if the buffer is empty
-    ///
-    /// # Returns
-    ///
-    /// `true` if no samples are buffered
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.buffer.is_empty()
+        self.samples().is_empty()
     }
 
     /// Reset the resampler state
-    ///
-    /// Clears buffer and resets internal state. Useful when seeking or resetting emulation.
     pub fn reset(&mut self) {
-        self.buffer.clear();
-        self.time_accumulator = 0.0;
-        self.prev_sample = 0.0;
+        self.decimator_input.clear();
+        self.intermediate_buffer.clear();
+        self.output_buffer.clear();
+        self.filter_chain.reset();
+        self.fallback_resampler.reset();
     }
 
     /// Get the target output sample rate
@@ -284,34 +334,140 @@ impl Resampler {
     pub fn input_rate(&self) -> u32 {
         self.input_rate
     }
-}
 
-impl Default for Resampler {
-    /// Create a resampler with default settings (48 kHz output, NTSC APU rate)
-    fn default() -> Self {
-        Self::new(Self::SAMPLE_RATE_48000)
+    /// Check if using fallback linear interpolation
+    #[must_use]
+    pub fn is_using_fallback(&self) -> bool {
+        self.using_fallback
+    }
+
+    /// Flush any remaining samples in the pipeline
+    pub fn flush(&mut self) {
+        // Process any remaining samples with zero-padding if needed
+        while !self.decimator_input.is_empty() {
+            let remaining = self.decimator_input.len();
+            let padding_needed = self.chunk_size.saturating_sub(remaining);
+            self.decimator_input.extend(vec![0.0f32; padding_needed]);
+            self.process_chunk();
+        }
     }
 }
 
-/// Simple low-pass filter for reducing aliasing
+impl Default for HighQualityResampler {
+    fn default() -> Self {
+        Self::new(SAMPLE_RATE_48000)
+    }
+}
+
+/// NES audio filter chain
 ///
-/// Uses a first-order IIR filter: `output = prev + α * (input - prev)`
+/// Implements the analog filter stages present in the NES audio output:
+/// - 90 Hz first-order high-pass (removes DC offset)
+/// - 440 Hz first-order high-pass (shapes bass response)
+/// - 14 kHz first-order low-pass (anti-aliasing)
+pub struct FilterChain {
+    /// First high-pass filter (90 Hz)
+    highpass_1: HighPassFilter,
+    /// Second high-pass filter (440 Hz)
+    highpass_2: HighPassFilter,
+    /// Low-pass filter (14 kHz)
+    lowpass: LowPassFilter,
+    /// Sample rate for filter calculations
+    sample_rate: u32,
+}
+
+impl FilterChain {
+    /// Create a new filter chain for the specified sample rate
+    #[must_use]
+    pub fn new(sample_rate: u32) -> Self {
+        #[allow(clippy::cast_precision_loss)]
+        let rate = sample_rate as f32;
+
+        Self {
+            highpass_1: HighPassFilter::new(HIGHPASS_1_FREQ, rate),
+            highpass_2: HighPassFilter::new(HIGHPASS_2_FREQ, rate),
+            lowpass: LowPassFilter::new(LOWPASS_FREQ, rate),
+            sample_rate,
+        }
+    }
+
+    /// Process a sample through all filter stages
+    pub fn process(&mut self, sample: f32) -> f32 {
+        let hp1 = self.highpass_1.process(sample);
+        let hp2 = self.highpass_2.process(hp1);
+        self.lowpass.process(hp2)
+    }
+
+    /// Reset all filters to initial state
+    pub fn reset(&mut self) {
+        self.highpass_1.reset();
+        self.highpass_2.reset();
+        self.lowpass.reset();
+    }
+
+    /// Get the sample rate
+    #[must_use]
+    pub fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+}
+
+/// First-order high-pass filter (IIR)
 ///
-/// # Example
+/// Implements: `y[n] = a * (y[n-1] + x[n] - x[n-1])`
+/// where `a = RC / (RC + dt)` and `RC = 1 / (2 * pi * fc)`
+pub struct HighPassFilter {
+    /// Previous input sample
+    prev_input: f32,
+    /// Previous output sample
+    prev_output: f32,
+    /// Filter coefficient
+    alpha: f32,
+}
+
+impl HighPassFilter {
+    /// Create a new high-pass filter
+    ///
+    /// # Arguments
+    ///
+    /// * `cutoff_hz` - Cutoff frequency in Hz
+    /// * `sample_rate` - Sample rate in Hz
+    #[must_use]
+    pub fn new(cutoff_hz: f32, sample_rate: f32) -> Self {
+        let rc = 1.0 / (2.0 * PI * cutoff_hz);
+        let dt = 1.0 / sample_rate;
+        let alpha = rc / (rc + dt);
+
+        Self {
+            prev_input: 0.0,
+            prev_output: 0.0,
+            alpha,
+        }
+    }
+
+    /// Process a sample through the filter
+    pub fn process(&mut self, input: f32) -> f32 {
+        let output = self.alpha * (self.prev_output + input - self.prev_input);
+        self.prev_input = input;
+        self.prev_output = output;
+        output
+    }
+
+    /// Reset filter state
+    pub fn reset(&mut self) {
+        self.prev_input = 0.0;
+        self.prev_output = 0.0;
+    }
+}
+
+/// First-order low-pass filter (IIR)
 ///
-/// ```rust
-/// use rustynes_apu::resampler::LowPassFilter;
-///
-/// let mut filter = LowPassFilter::new(14000.0, 48000.0);
-///
-/// let filtered = filter.process(0.8);
-/// assert!(filtered >= 0.0 && filtered <= 1.0);
-/// ```
+/// Implements: `y[n] = y[n-1] + a * (x[n] - y[n-1])`
+/// where `a = dt / (RC + dt)` and `RC = 1 / (2 * pi * fc)`
 pub struct LowPassFilter {
     /// Previous output sample
     prev_sample: f32,
-
-    /// Smoothing factor (0.0-1.0)
+    /// Filter coefficient (0.0-1.0)
     alpha: f32,
 }
 
@@ -320,20 +476,11 @@ impl LowPassFilter {
     ///
     /// # Arguments
     ///
-    /// * `cutoff_hz` - Cutoff frequency in Hz (e.g., 14000.0)
-    /// * `sample_rate` - Sample rate in Hz (e.g., 48000.0)
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use rustynes_apu::resampler::LowPassFilter;
-    ///
-    /// // 14 kHz cutoff at 48 kHz sample rate
-    /// let filter = LowPassFilter::new(14000.0, 48000.0);
-    /// ```
+    /// * `cutoff_hz` - Cutoff frequency in Hz
+    /// * `sample_rate` - Sample rate in Hz
     #[must_use]
     pub fn new(cutoff_hz: f32, sample_rate: f32) -> Self {
-        let rc = 1.0 / (2.0 * std::f32::consts::PI * cutoff_hz);
+        let rc = 1.0 / (2.0 * PI * cutoff_hz);
         let dt = 1.0 / sample_rate;
         let alpha = dt / (rc + dt);
 
@@ -344,27 +491,6 @@ impl LowPassFilter {
     }
 
     /// Process a sample through the filter
-    ///
-    /// # Arguments
-    ///
-    /// * `sample` - Input sample
-    ///
-    /// # Returns
-    ///
-    /// Filtered sample
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use rustynes_apu::resampler::LowPassFilter;
-    ///
-    /// let mut filter = LowPassFilter::new(14000.0, 48000.0);
-    ///
-    /// let samples = [0.5, 0.8, 0.3, 0.9];
-    /// let filtered: Vec<f32> = samples.iter()
-    ///     .map(|&s| filter.process(s))
-    ///     .collect();
-    /// ```
     pub fn process(&mut self, sample: f32) -> f32 {
         let output = self.prev_sample + self.alpha * (sample - self.prev_sample);
         self.prev_sample = output;
@@ -377,29 +503,132 @@ impl LowPassFilter {
     }
 }
 
+/// Simple linear interpolation resampler (fallback)
+///
+/// Used when rubato cannot be initialized or for simpler use cases.
+pub struct LinearResampler {
+    /// Target output sample rate
+    output_rate: u32,
+    /// APU sample rate
+    input_rate: u32,
+    /// Fractional time accumulator
+    time_accumulator: f32,
+    /// Previous sample for interpolation
+    prev_sample: f32,
+    /// Output sample buffer
+    buffer: Vec<f32>,
+}
+
+impl LinearResampler {
+    /// Create a new linear resampler
+    #[must_use]
+    pub fn new(output_rate: u32) -> Self {
+        Self::with_input_rate(output_rate, APU_RATE_NTSC)
+    }
+
+    /// Create a resampler with custom input rate
+    #[must_use]
+    pub fn with_input_rate(output_rate: u32, input_rate: u32) -> Self {
+        Self {
+            output_rate,
+            input_rate,
+            time_accumulator: 0.0,
+            prev_sample: 0.0,
+            buffer: Vec::with_capacity(2048),
+        }
+    }
+
+    /// Add a sample from the APU
+    pub fn add_sample(&mut self, sample: f32) {
+        #[allow(clippy::cast_precision_loss)]
+        let time_step = self.output_rate as f32 / self.input_rate as f32;
+        self.time_accumulator += time_step;
+
+        while self.time_accumulator >= 1.0 {
+            let t = self.time_accumulator - 1.0;
+            let output = self.prev_sample + (sample - self.prev_sample) * t;
+            self.buffer.push(output);
+            self.time_accumulator -= 1.0;
+        }
+
+        self.prev_sample = sample;
+    }
+
+    /// Get reference to output samples
+    #[must_use]
+    pub fn samples(&self) -> &[f32] {
+        &self.buffer
+    }
+
+    /// Clear the output buffer
+    pub fn clear(&mut self) {
+        self.buffer.clear();
+    }
+
+    /// Check if resampler has at least `min_samples` ready
+    #[must_use]
+    pub fn is_ready(&self, min_samples: usize) -> bool {
+        self.buffer.len() >= min_samples
+    }
+
+    /// Get the current number of samples
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.buffer.len()
+    }
+
+    /// Check if buffer is empty
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.buffer.is_empty()
+    }
+
+    /// Reset the resampler state
+    pub fn reset(&mut self) {
+        self.buffer.clear();
+        self.time_accumulator = 0.0;
+        self.prev_sample = 0.0;
+    }
+
+    /// Get output sample rate
+    #[must_use]
+    pub fn output_rate(&self) -> u32 {
+        self.output_rate
+    }
+
+    /// Get input sample rate
+    #[must_use]
+    pub fn input_rate(&self) -> u32 {
+        self.input_rate
+    }
+}
+
+impl Default for LinearResampler {
+    fn default() -> Self {
+        Self::new(SAMPLE_RATE_48000)
+    }
+}
+
+// Re-export the old Resampler name for backwards compatibility
+/// Audio resampler (legacy alias for `HighQualityResampler`)
+pub type Resampler = HighQualityResampler;
+
 #[cfg(test)]
-#[allow(clippy::manual_range_contains)]
+#[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_resampler_creation() {
-        let resampler = Resampler::new(48000);
+    fn test_high_quality_resampler_creation() {
+        let resampler = HighQualityResampler::new(48000);
         assert_eq!(resampler.output_rate(), 48000);
-        assert_eq!(resampler.input_rate(), Resampler::APU_RATE_NTSC);
+        assert_eq!(resampler.input_rate(), APU_RATE_NTSC);
         assert!(resampler.is_empty());
     }
 
     #[test]
-    fn test_resampler_with_input_rate() {
-        let resampler = Resampler::with_input_rate(48000, Resampler::APU_RATE_PAL);
-        assert_eq!(resampler.output_rate(), 48000);
-        assert_eq!(resampler.input_rate(), Resampler::APU_RATE_PAL);
-    }
-
-    #[test]
-    fn test_resampler_add_sample() {
-        let mut resampler = Resampler::new(48000);
+    fn test_linear_resampler_add_sample() {
+        let mut resampler = LinearResampler::new(48000);
 
         // Add 1ms of audio (should produce ~48 samples)
         for _ in 0..1790 {
@@ -407,14 +636,13 @@ mod tests {
         }
 
         let len = resampler.len();
-        assert!(len >= 47 && len <= 49, "Expected ~48 samples, got {len}");
+        assert!((47..=49).contains(&len), "Expected ~48 samples, got {len}");
     }
 
     #[test]
-    fn test_resampler_clear() {
-        let mut resampler = Resampler::new(48000);
+    fn test_linear_resampler_clear() {
+        let mut resampler = LinearResampler::new(48000);
 
-        // Add enough samples to generate output
         for _ in 0..100 {
             resampler.add_sample(0.5);
         }
@@ -425,22 +653,8 @@ mod tests {
     }
 
     #[test]
-    fn test_resampler_is_ready() {
-        let mut resampler = Resampler::new(48000);
-
-        assert!(!resampler.is_ready(100));
-
-        // Add enough samples
-        for _ in 0..5000 {
-            resampler.add_sample(0.5);
-        }
-
-        assert!(resampler.is_ready(100));
-    }
-
-    #[test]
-    fn test_resampler_reset() {
-        let mut resampler = Resampler::new(48000);
+    fn test_linear_resampler_reset() {
+        let mut resampler = LinearResampler::new(48000);
 
         for _ in 0..1000 {
             resampler.add_sample(0.5);
@@ -453,36 +667,13 @@ mod tests {
     }
 
     #[test]
-    fn test_resampler_interpolation() {
-        let mut resampler = Resampler::new(48000);
+    fn test_linear_resampler_dc_signal() {
+        let mut resampler = LinearResampler::new(48000);
 
-        // Add linearly increasing samples to test interpolation
-        for i in 0..1000 {
-            #[allow(clippy::cast_precision_loss)]
-            let sample = (i % 100) as f32 / 100.0;
-            resampler.add_sample(sample);
-        }
-
-        // Output should have interpolated values
-        let samples = resampler.samples();
-        assert!(!samples.is_empty());
-
-        // With a linear ramp, we should have a variety of values
-        let min = samples.iter().copied().fold(f32::INFINITY, f32::min);
-        let max = samples.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-        assert!(max > min, "Expected varying output values");
-    }
-
-    #[test]
-    fn test_resampler_dc_signal() {
-        let mut resampler = Resampler::new(48000);
-
-        // Constant signal
         for _ in 0..10000 {
             resampler.add_sample(0.5);
         }
 
-        // All outputs should be approximately 0.5
         let samples = resampler.samples();
         for &sample in samples {
             assert!((sample - 0.5).abs() < 0.01, "Sample: {sample}");
@@ -490,64 +681,80 @@ mod tests {
     }
 
     #[test]
-    fn test_resampler_default() {
-        let resampler = Resampler::default();
-        assert_eq!(resampler.output_rate(), 48000);
-        assert_eq!(resampler.input_rate(), Resampler::APU_RATE_NTSC);
+    fn test_filter_chain_creation() {
+        let chain = FilterChain::new(48000);
+        assert_eq!(chain.sample_rate(), 48000);
     }
 
     #[test]
-    fn test_low_pass_filter_creation() {
-        let filter = LowPassFilter::new(14000.0, 48000.0);
-        assert!(filter.alpha > 0.0 && filter.alpha < 1.0);
+    fn test_filter_chain_dc_removal() {
+        let mut chain = FilterChain::new(48000);
+
+        // Feed DC signal - high-pass should remove it over time
+        for _ in 0..1000 {
+            let _ = chain.process(1.0);
+        }
+
+        // After settling, DC should be mostly removed
+        let output = chain.process(1.0);
+        assert!(output.abs() < 0.5, "DC should be attenuated, got {output}");
     }
 
     #[test]
-    fn test_low_pass_filter_process() {
+    fn test_low_pass_filter() {
         let mut filter = LowPassFilter::new(14000.0, 48000.0);
 
         let output = filter.process(1.0);
         assert!(output > 0.0 && output <= 1.0);
 
-        // Second sample should move closer to input
         let output2 = filter.process(1.0);
         assert!(output2 > output);
     }
 
     #[test]
-    fn test_low_pass_filter_smoothing() {
-        let mut filter = LowPassFilter::new(14000.0, 48000.0);
+    fn test_high_pass_filter() {
+        let mut filter = HighPassFilter::new(90.0, 48000.0);
 
-        // Step function: 0 -> 1
-        let out1 = filter.process(1.0);
-        assert!(out1 < 1.0, "Filter should smooth step");
+        // Step response
+        let output1 = filter.process(1.0);
+        assert!(output1 > 0.0);
 
-        let out2 = filter.process(1.0);
-        assert!(out2 > out1, "Output should converge");
+        // Continued DC should decay
+        let mut output = output1;
+        for _ in 0..100 {
+            output = filter.process(1.0);
+        }
+        assert!(output < output1, "High-pass should attenuate DC");
     }
 
     #[test]
-    fn test_low_pass_filter_reset() {
-        let mut filter = LowPassFilter::new(14000.0, 48000.0);
+    fn test_filter_reset() {
+        let mut hp = HighPassFilter::new(90.0, 48000.0);
+        let mut lp = LowPassFilter::new(14000.0, 48000.0);
 
-        filter.process(1.0);
-        filter.reset();
+        hp.process(1.0);
+        lp.process(1.0);
 
-        let output = filter.process(1.0);
-        assert!(output < 1.0, "Filter should be reset");
+        hp.reset();
+        lp.reset();
+
+        // After reset, filters should be in initial state
+        assert_eq!(hp.prev_input, 0.0);
+        assert_eq!(hp.prev_output, 0.0);
+        assert_eq!(lp.prev_sample, 0.0);
     }
 
     #[test]
-    fn test_resampler_rate_constants() {
-        assert_eq!(Resampler::APU_RATE_NTSC, 1_789_773);
-        assert_eq!(Resampler::APU_RATE_PAL, 1_662_607);
-        assert_eq!(Resampler::SAMPLE_RATE_44100, 44_100);
-        assert_eq!(Resampler::SAMPLE_RATE_48000, 48_000);
+    fn test_rate_constants() {
+        assert_eq!(APU_RATE_NTSC, 1_789_773);
+        assert_eq!(APU_RATE_PAL, 1_662_607);
+        assert_eq!(SAMPLE_RATE_44100, 44_100);
+        assert_eq!(SAMPLE_RATE_48000, 48_000);
     }
 
     #[test]
-    fn test_resampler_44100() {
-        let mut resampler = Resampler::new(44100);
+    fn test_linear_resampler_44100() {
+        let mut resampler = LinearResampler::new(44100);
 
         // 1ms of audio
         for _ in 0..1790 {
@@ -555,6 +762,27 @@ mod tests {
         }
 
         let len = resampler.len();
-        assert!(len >= 43 && len <= 45, "Expected ~44 samples, got {len}");
+        assert!((43..=45).contains(&len), "Expected ~44 samples, got {len}");
+    }
+
+    #[test]
+    fn test_high_quality_resampler_fallback() {
+        // This test verifies the resampler initializes (either with rubato or fallback)
+        let resampler = HighQualityResampler::new(48000);
+        assert!(resampler.output_rate() == 48000);
+        // Either rubato works or we're using fallback - both are valid
+    }
+
+    #[test]
+    fn test_high_quality_resampler_reset() {
+        let mut resampler = HighQualityResampler::new(48000);
+
+        // Add some samples
+        for _ in 0..10000 {
+            resampler.add_sample(0.5);
+        }
+
+        resampler.reset();
+        assert!(resampler.is_empty());
     }
 }

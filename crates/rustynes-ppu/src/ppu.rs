@@ -101,6 +101,19 @@ impl Ppu {
         self.decay_counter = 5_300_000;
     }
 
+    /// Check if we're currently in a visible rendering position
+    ///
+    /// Returns true if:
+    /// - We're on a visible scanline (0-239)
+    /// - We're past dot 0 (rendering has started for this scanline)
+    /// - Rendering is enabled
+    ///
+    /// This is used to detect mid-scanline scroll/address writes which
+    /// are used by games for split-screen effects.
+    fn is_visible_rendering_position(&self) -> bool {
+        self.mask.rendering_enabled() && self.timing.is_visible_scanline() && self.timing.dot() > 0
+    }
+
     /// Read from PPU register (CPU memory map $2000-$2007)
     ///
     /// # Arguments
@@ -250,11 +263,20 @@ impl Ppu {
 
             // $2005: PPUSCROLL
             5 => {
+                // Detect mid-scanline write for split-screen effects
+                if self.is_visible_rendering_position() {
+                    self.scroll.record_mid_scanline_write();
+                }
                 self.scroll.write_ppuscroll(value);
             }
 
             // $2006: PPUADDR
             6 => {
+                // Detect mid-scanline write for split-screen effects
+                // The second write to $2006 copies t to v, which affects rendering
+                if self.is_visible_rendering_position() {
+                    self.scroll.record_mid_scanline_write();
+                }
                 self.scroll.write_ppuaddr(value);
             }
 
@@ -332,6 +354,8 @@ impl Ppu {
             self.status.clear_vblank();
             self.status.clear_sprite_flags();
             self.nmi_pending = false;
+            // Reset frame-specific scroll tracking for mid-scanline detection
+            self.scroll.start_frame();
         }
 
         // Rendering logic (visible and pre-render scanlines)
@@ -601,6 +625,49 @@ impl Ppu {
     /// Get current dot within scanline (0-340)
     pub fn dot(&self) -> u16 {
         self.timing.dot()
+    }
+
+    /// Get current VRAM address (v register)
+    pub fn vram_addr(&self) -> u16 {
+        self.scroll.vram_addr()
+    }
+
+    /// Get temporary VRAM address (t register)
+    pub fn temp_vram_addr(&self) -> u16 {
+        self.scroll.temp_vram_addr()
+    }
+
+    /// Get fine X scroll (0-7)
+    pub fn fine_x(&self) -> u8 {
+        self.scroll.fine_x()
+    }
+
+    /// Get coarse X scroll (tile column 0-31)
+    pub fn coarse_x(&self) -> u8 {
+        self.scroll.coarse_x()
+    }
+
+    /// Get coarse Y scroll (tile row 0-31)
+    pub fn coarse_y(&self) -> u8 {
+        self.scroll.coarse_y()
+    }
+
+    /// Get fine Y scroll (pixel row 0-7)
+    pub fn fine_y(&self) -> u8 {
+        self.scroll.fine_y()
+    }
+
+    /// Check if a mid-scanline write was detected this frame
+    ///
+    /// Games use mid-scanline writes to $2005/$2006 for split-screen effects
+    /// like Super Mario Bros. 3's status bar.
+    pub fn mid_scanline_write_detected(&self) -> bool {
+        self.scroll.mid_scanline_write_detected()
+    }
+
+    /// Get the last v value before a mid-scanline update (for debugging)
+    pub fn last_v_before_update(&self) -> u16 {
+        self.scroll.last_v_before_update()
     }
 }
 

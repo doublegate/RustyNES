@@ -18,6 +18,16 @@
 /// PPU scrolling registers
 ///
 /// Implements Loopy's scrolling model with v, t, x, and w registers.
+///
+/// # Mid-Scanline Updates
+///
+/// Games use mid-scanline writes to $2005/$2006 for split-screen effects:
+/// - Super Mario Bros. 3: Status bar at top, scrolling gameplay below
+/// - Kirby's Adventure: Complex multi-layer scrolling
+///
+/// The second write to $2006 immediately copies t to v, which is used
+/// for the next tile fetch. Games time this write during HBlank (after dot 256)
+/// to achieve clean screen splits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScrollRegisters {
     /// Current VRAM address (15 bits)
@@ -28,6 +38,10 @@ pub struct ScrollRegisters {
     x: u8,
     /// Write toggle (first/second write to $2005/$2006)
     w: bool,
+    /// Last v value before mid-scanline update (for debugging)
+    last_v_before_update: u16,
+    /// Flag indicating a mid-scanline write occurred this frame
+    mid_scanline_write_detected: bool,
 }
 
 impl ScrollRegisters {
@@ -38,7 +52,49 @@ impl ScrollRegisters {
             t: 0,
             x: 0,
             w: false,
+            last_v_before_update: 0,
+            mid_scanline_write_detected: false,
         }
+    }
+
+    /// Reset frame-specific state (call at start of each frame)
+    ///
+    /// Clears mid-scanline detection flag for the new frame.
+    pub fn start_frame(&mut self) {
+        self.mid_scanline_write_detected = false;
+    }
+
+    /// Check if a mid-scanline write was detected this frame
+    #[inline]
+    pub fn mid_scanline_write_detected(&self) -> bool {
+        self.mid_scanline_write_detected
+    }
+
+    /// Get the last v value before a mid-scanline update (for debugging)
+    #[inline]
+    pub fn last_v_before_update(&self) -> u16 {
+        self.last_v_before_update
+    }
+
+    /// Get temporary VRAM address (t register)
+    #[inline]
+    pub fn temp_vram_addr(&self) -> u16 {
+        self.t
+    }
+
+    /// Get write toggle state
+    #[inline]
+    pub fn write_toggle(&self) -> bool {
+        self.w
+    }
+
+    /// Record a mid-scanline write occurred
+    ///
+    /// Should be called by PPU when a write to $2005/$2006 happens during
+    /// visible rendering (scanline 0-239, after dot 0).
+    pub fn record_mid_scanline_write(&mut self) {
+        self.last_v_before_update = self.v;
+        self.mid_scanline_write_detected = true;
     }
 
     /// Get current VRAM address (v register)
@@ -353,5 +409,93 @@ mod tests {
 
         scroll.read_ppustatus();
         assert!(!scroll.w);
+    }
+
+    #[test]
+    fn test_mid_scanline_detection_initial_state() {
+        let scroll = ScrollRegisters::new();
+
+        // Initially no mid-scanline write detected
+        assert!(!scroll.mid_scanline_write_detected());
+        assert_eq!(scroll.last_v_before_update(), 0);
+    }
+
+    #[test]
+    fn test_mid_scanline_write_recording() {
+        let mut scroll = ScrollRegisters::new();
+
+        // Set up v to some value
+        scroll.write_ppuaddr(0x21);
+        scroll.write_ppuaddr(0x00); // v = $2100
+
+        // Record a mid-scanline write
+        scroll.record_mid_scanline_write();
+
+        assert!(scroll.mid_scanline_write_detected());
+        assert_eq!(scroll.last_v_before_update(), 0x2100);
+    }
+
+    #[test]
+    fn test_start_frame_clears_mid_scanline_flag() {
+        let mut scroll = ScrollRegisters::new();
+
+        // Record a mid-scanline write
+        scroll.record_mid_scanline_write();
+        assert!(scroll.mid_scanline_write_detected());
+
+        // Start new frame should clear the flag
+        scroll.start_frame();
+        assert!(!scroll.mid_scanline_write_detected());
+    }
+
+    #[test]
+    fn test_temp_vram_addr_getter() {
+        let mut scroll = ScrollRegisters::new();
+
+        // First write to PPUADDR sets high byte of t
+        scroll.write_ppuaddr(0x21);
+        assert_eq!(scroll.temp_vram_addr() >> 8, 0x21);
+
+        // Second write completes t and copies to v
+        scroll.write_ppuaddr(0xAB);
+        assert_eq!(scroll.temp_vram_addr(), 0x21AB);
+        assert_eq!(scroll.vram_addr(), 0x21AB);
+    }
+
+    #[test]
+    fn test_write_toggle_getter() {
+        let mut scroll = ScrollRegisters::new();
+
+        // Initially false
+        assert!(!scroll.write_toggle());
+
+        // After first write, should be true
+        scroll.write_ppuscroll(0x00);
+        assert!(scroll.write_toggle());
+
+        // After second write, should be false again
+        scroll.write_ppuscroll(0x00);
+        assert!(!scroll.write_toggle());
+    }
+
+    #[test]
+    fn test_mid_scanline_preserves_v_before_update() {
+        let mut scroll = ScrollRegisters::new();
+
+        // Set initial v value
+        scroll.write_ppuaddr(0x23);
+        scroll.write_ppuaddr(0x45); // v = $2345
+
+        // Record first mid-scanline write
+        scroll.record_mid_scanline_write();
+        assert_eq!(scroll.last_v_before_update(), 0x2345);
+
+        // Change v
+        scroll.write_ppuaddr(0x20);
+        scroll.write_ppuaddr(0x00); // v = $2000
+
+        // Record second mid-scanline write
+        scroll.record_mid_scanline_write();
+        assert_eq!(scroll.last_v_before_update(), 0x2000);
     }
 }
