@@ -22,7 +22,7 @@ use crate::Mirroring;
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```no_run
 /// use rustynes_mappers::{Mapper, Mirroring};
 ///
 /// // Simple passthrough mapper (NROM)
@@ -56,6 +56,14 @@ use crate::Mirroring;
 ///
 ///     fn mapper_number(&self) -> u16 {
 ///         0
+///     }
+///
+///     fn clone_mapper(&self) -> Box<dyn Mapper> {
+///         Box::new(Nrom {
+///             prg_rom: self.prg_rom.clone(),
+///             chr_rom: self.chr_rom.clone(),
+///             mirroring: self.mirroring,
+///         })
 ///     }
 /// }
 /// ```
