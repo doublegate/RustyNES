@@ -87,6 +87,32 @@ impl Console {
         Ok(Self::new(mapper))
     }
 
+    /// Create a new console from ROM data with custom sample rate
+    ///
+    /// # Arguments
+    ///
+    /// * `rom_data` - Raw ROM file bytes (iNES or NES 2.0 format)
+    /// * `sample_rate` - Audio output sample rate (e.g., 44100 or 48000 Hz)
+    ///
+    /// # Returns
+    ///
+    /// New Console instance with APU configured for the specified sample rate
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - ROM format is invalid
+    /// - Mapper is not supported
+    /// - ROM configuration is invalid
+    pub fn from_rom_bytes_with_sample_rate(
+        rom_data: &[u8],
+        sample_rate: u32,
+    ) -> Result<Self, ConsoleError> {
+        let rom = Rom::load(rom_data)?;
+        let mapper = create_mapper(&rom)?;
+        Ok(Self::with_sample_rate(mapper, sample_rate))
+    }
+
     /// Create a new console with a custom mapper
     ///
     /// # Arguments
@@ -95,11 +121,26 @@ impl Console {
     ///
     /// # Returns
     ///
-    /// New Console instance
+    /// New Console instance (APU defaults to 48000 Hz sample rate)
     #[must_use]
     pub fn new(mapper: Box<dyn Mapper>) -> Self {
+        Self::with_sample_rate(mapper, 48000)
+    }
+
+    /// Create a new console with a custom mapper and audio sample rate
+    ///
+    /// # Arguments
+    ///
+    /// * `mapper` - Cartridge mapper implementation
+    /// * `sample_rate` - Audio output sample rate (e.g., 44100 or 48000 Hz)
+    ///
+    /// # Returns
+    ///
+    /// New Console instance with APU configured for the specified sample rate
+    #[must_use]
+    pub fn with_sample_rate(mapper: Box<dyn Mapper>, sample_rate: u32) -> Self {
         let mut cpu = Cpu::new();
-        let mut bus = SystemBus::new(mapper);
+        let mut bus = SystemBus::with_sample_rate(mapper, sample_rate);
 
         // Reset CPU (loads PC from $FFFC-$FFFD)
         cpu.reset(&mut bus);

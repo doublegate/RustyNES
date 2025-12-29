@@ -136,9 +136,12 @@ impl NesApp {
         // Create GUI state
         let mut gui_state = gui::GuiState::new(&config);
 
+        // Get audio sample rate for APU configuration
+        let sample_rate = audio.as_ref().map_or(48000, AudioOutput::sample_rate);
+
         // Load console if ROM was provided
         let console = if let Some(rom_path) = &rom_path {
-            match Self::load_rom(rom_path) {
+            match Self::load_rom_with_prewarm(rom_path, sample_rate) {
                 Ok(console) => {
                     info!("Loaded ROM: {}", rom_path.display());
                     // Set ROM name in GUI state
@@ -181,10 +184,35 @@ impl NesApp {
         }
     }
 
-    /// Load a ROM file into a new console instance.
-    fn load_rom(path: &PathBuf) -> anyhow::Result<Console> {
+    /// Number of frames to pre-warm the emulator after ROM load.
+    /// The PPU needs ~40 frames before rendering visible content.
+    /// Pre-warming eliminates the grey screen on startup.
+    const PREWARM_FRAMES: u32 = 50;
+
+    /// Load a ROM file into a new console instance with pre-warming.
+    ///
+    /// Pre-warming runs the emulator for `PREWARM_FRAMES` before returning,
+    /// eliminating the grey screen that occurs during PPU initialization.
+    /// Audio samples generated during pre-warming are cleared.
+    fn load_rom_with_prewarm(path: &PathBuf, sample_rate: u32) -> anyhow::Result<Console> {
         let rom_data = std::fs::read(path)?;
-        Console::from_rom_bytes(&rom_data).map_err(|e| anyhow::anyhow!("{e}"))
+        let mut console = Console::from_rom_bytes_with_sample_rate(&rom_data, sample_rate)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+        // Pre-warm the emulator to eliminate grey screen on startup.
+        // The first ~40 frames have garbage PPU data during initialization.
+        info!(
+            "Pre-warming emulator for {} frames to eliminate grey screen...",
+            Self::PREWARM_FRAMES
+        );
+        for _ in 0..Self::PREWARM_FRAMES {
+            console.step_frame();
+        }
+
+        // Clear audio samples generated during pre-warm to avoid audio burst
+        console.clear_audio_samples();
+
+        Ok(console)
     }
 
     /// Update the NES texture from the console framebuffer.
@@ -375,6 +403,11 @@ impl NesApp {
         });
     }
 
+    /// Get the audio sample rate for APU configuration.
+    fn audio_sample_rate(&self) -> u32 {
+        self.audio.as_ref().map_or(48000, AudioOutput::sample_rate)
+    }
+
     /// Open file dialog to select a ROM.
     fn open_file_dialog(&mut self) {
         let file = rfd::FileDialog::new()
@@ -389,7 +422,8 @@ impl NesApp {
                 .unwrap_or("Unknown")
                 .to_string();
 
-            match Self::load_rom(&path) {
+            let sample_rate = self.audio_sample_rate();
+            match Self::load_rom_with_prewarm(&path, sample_rate) {
                 Ok(console) => {
                     self.console = Some(console);
                     self.paused = false;
@@ -462,6 +496,9 @@ impl NesApp {
 
     /// Handle file drops.
     fn handle_dropped_files(&mut self, ctx: &egui::Context) {
+        // Get sample rate before the closure to avoid borrowing issues
+        let sample_rate = self.audio_sample_rate();
+
         ctx.input(|i| {
             for file in &i.raw.dropped_files {
                 if let Some(path) = &file.path {
@@ -472,7 +509,7 @@ impl NesApp {
                         .to_string();
 
                     info!("File dropped: {}", path.display());
-                    match Self::load_rom(path) {
+                    match Self::load_rom_with_prewarm(path, sample_rate) {
                         Ok(console) => {
                             self.console = Some(console);
                             self.paused = false;
