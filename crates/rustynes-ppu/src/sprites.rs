@@ -431,7 +431,7 @@ mod tests {
 
         renderer.pattern_shift_low[0] = 0b1000_0000;
         renderer.pattern_shift_high[0] = 0b1000_0000;
-        renderer.attributes[0] = SpriteAttributes::from_bits_truncate(0x01); // Palette 5
+        renderer.attributes[0] = SpriteAttributes::from_bits_truncate(0x01); // Palette 1 (raw bits)
         renderer.sprite_zero_on_scanline = true;
 
         let result = renderer.get_pixel();
@@ -439,7 +439,7 @@ mod tests {
 
         let (pixel, palette, priority, sprite_zero) = result.unwrap();
         assert_eq!(pixel, 0b11); // Both bits set
-        assert_eq!(palette, 5); // Palette 4 + 1
+        assert_eq!(palette, 1); // Raw palette bits (0-3), render_pixel adds +16 for sprite base
         assert!(!priority); // Front of background
         assert!(sprite_zero); // Sprite 0
     }

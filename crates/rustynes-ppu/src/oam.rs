@@ -45,10 +45,14 @@ bitflags! {
 }
 
 impl SpriteAttributes {
-    /// Get palette index (0-3, maps to palettes 4-7)
+    /// Get palette index (0-3) from attribute bits
+    ///
+    /// Returns raw palette selection bits (0-3). The caller is responsible
+    /// for adding the sprite palette base offset (16) when calculating
+    /// the final palette RAM address.
     #[inline]
     pub fn palette(self) -> u8 {
-        (self.bits() & 0x03) + 4
+        self.bits() & 0x03
     }
 
     /// Check if sprite is behind background
@@ -315,7 +319,7 @@ mod tests {
     fn test_sprite_attributes() {
         let attrs = SpriteAttributes::from_bits_truncate(0b1110_0011);
 
-        assert_eq!(attrs.palette(), 7); // Palette 3 -> 7
+        assert_eq!(attrs.palette(), 3); // Raw palette bits (0-3)
         assert!(attrs.behind_background());
         assert!(attrs.flip_horizontal());
         assert!(attrs.flip_vertical());
