@@ -460,6 +460,30 @@ impl InputHandler {
         self.player2_keys = Self::parse_bindings(bindings);
     }
 
+    /// Handle a keyboard key event for player 1 using configured bindings.
+    ///
+    /// Returns true if the key was bound to a button.
+    pub fn handle_key_1(&mut self, key: KeyCode, pressed: bool) -> bool {
+        if let Some(&button) = self.player1_keys.get(&key) {
+            self.player1.set_button(button, pressed);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Handle a keyboard key event for player 2 using configured bindings.
+    ///
+    /// Returns true if the key was bound to a button.
+    pub fn handle_key_2(&mut self, key: KeyCode, pressed: bool) -> bool {
+        if let Some(&button) = self.player2_keys.get(&key) {
+            self.player2.set_button(button, pressed);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Set a button state for a specific player.
     ///
     /// # Arguments
@@ -472,6 +496,79 @@ impl InputHandler {
             2 => self.player2.set_button(button, pressed),
             _ => {}
         }
+    }
+}
+
+/// Convert an `egui::Key` to a `KeyCode`.
+///
+/// Returns `None` if the key is not mappable to a NES controller binding.
+#[must_use]
+pub fn egui_key_to_keycode(key: egui::Key) -> Option<KeyCode> {
+    use egui::Key;
+    match key {
+        // Letters
+        Key::A => Some(KeyCode::KeyA),
+        Key::B => Some(KeyCode::KeyB),
+        Key::C => Some(KeyCode::KeyC),
+        Key::D => Some(KeyCode::KeyD),
+        Key::E => Some(KeyCode::KeyE),
+        Key::F => Some(KeyCode::KeyF),
+        Key::G => Some(KeyCode::KeyG),
+        Key::H => Some(KeyCode::KeyH),
+        Key::I => Some(KeyCode::KeyI),
+        Key::J => Some(KeyCode::KeyJ),
+        Key::K => Some(KeyCode::KeyK),
+        Key::L => Some(KeyCode::KeyL),
+        Key::M => Some(KeyCode::KeyM),
+        Key::N => Some(KeyCode::KeyN),
+        Key::O => Some(KeyCode::KeyO),
+        Key::P => Some(KeyCode::KeyP),
+        Key::Q => Some(KeyCode::KeyQ),
+        Key::R => Some(KeyCode::KeyR),
+        Key::S => Some(KeyCode::KeyS),
+        Key::T => Some(KeyCode::KeyT),
+        Key::U => Some(KeyCode::KeyU),
+        Key::V => Some(KeyCode::KeyV),
+        Key::W => Some(KeyCode::KeyW),
+        Key::X => Some(KeyCode::KeyX),
+        Key::Y => Some(KeyCode::KeyY),
+        Key::Z => Some(KeyCode::KeyZ),
+        // Numbers
+        Key::Num0 => Some(KeyCode::Digit0),
+        Key::Num1 => Some(KeyCode::Digit1),
+        Key::Num2 => Some(KeyCode::Digit2),
+        Key::Num3 => Some(KeyCode::Digit3),
+        Key::Num4 => Some(KeyCode::Digit4),
+        Key::Num5 => Some(KeyCode::Digit5),
+        Key::Num6 => Some(KeyCode::Digit6),
+        Key::Num7 => Some(KeyCode::Digit7),
+        Key::Num8 => Some(KeyCode::Digit8),
+        Key::Num9 => Some(KeyCode::Digit9),
+        // Arrow keys
+        Key::ArrowUp => Some(KeyCode::ArrowUp),
+        Key::ArrowDown => Some(KeyCode::ArrowDown),
+        Key::ArrowLeft => Some(KeyCode::ArrowLeft),
+        Key::ArrowRight => Some(KeyCode::ArrowRight),
+        // Special keys
+        Key::Enter => Some(KeyCode::Enter),
+        Key::Space => Some(KeyCode::Space),
+        Key::Escape => Some(KeyCode::Escape),
+        Key::Tab => Some(KeyCode::Tab),
+        Key::Backspace => Some(KeyCode::Backspace),
+        // Function keys
+        Key::F1 => Some(KeyCode::F1),
+        Key::F2 => Some(KeyCode::F2),
+        Key::F3 => Some(KeyCode::F3),
+        Key::F4 => Some(KeyCode::F4),
+        Key::F5 => Some(KeyCode::F5),
+        Key::F6 => Some(KeyCode::F6),
+        Key::F7 => Some(KeyCode::F7),
+        Key::F8 => Some(KeyCode::F8),
+        Key::F9 => Some(KeyCode::F9),
+        Key::F10 => Some(KeyCode::F10),
+        Key::F11 => Some(KeyCode::F11),
+        Key::F12 => Some(KeyCode::F12),
+        _ => None,
     }
 }
 

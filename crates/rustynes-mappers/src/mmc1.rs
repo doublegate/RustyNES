@@ -341,11 +341,14 @@ impl Mapper for Mmc1 {
     fn read_chr(&self, addr: u16) -> u8 {
         debug_assert!(addr <= 0x1FFF, "Invalid CHR address: ${addr:04X}");
 
+        // Apply CHR banking to both CHR-ROM and CHR-RAM
+        // This is critical for games like Kid Icarus that use CHR-RAM with banking
+        let bank = self.get_chr_bank(addr);
+        let offset = (addr & 0x0FFF) as usize;
+
         if self.has_chr_ram {
-            self.chr_ram[addr as usize]
+            self.chr_ram[bank * 4096 + offset]
         } else {
-            let bank = self.get_chr_bank(addr);
-            let offset = (addr & 0x0FFF) as usize;
             self.chr_rom[bank * 4096 + offset]
         }
     }
@@ -354,7 +357,10 @@ impl Mapper for Mmc1 {
         debug_assert!(addr <= 0x1FFF, "Invalid CHR address: ${addr:04X}");
 
         if self.has_chr_ram {
-            self.chr_ram[addr as usize] = value;
+            // Apply CHR banking to CHR-RAM writes
+            let bank = self.get_chr_bank(addr);
+            let offset = (addr & 0x0FFF) as usize;
+            self.chr_ram[bank * 4096 + offset] = value;
         }
         // CHR-ROM writes are ignored
     }

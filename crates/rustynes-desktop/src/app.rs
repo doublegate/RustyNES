@@ -407,7 +407,7 @@ impl NesApp {
         }
     }
 
-    /// Handle keyboard input for NES controller.
+    /// Handle keyboard input for NES controller using configured bindings.
     fn handle_controller_keys(&mut self, ctx: &egui::Context) {
         // Only process input if egui doesn't want it
         if ctx.wants_keyboard_input() {
@@ -415,29 +415,37 @@ impl NesApp {
         }
 
         ctx.input(|i| {
-            use crate::input::NesButton;
-            use egui::Key;
+            use crate::input::{KeyCode, egui_key_to_keycode};
 
-            // Map egui keys to controller buttons
-            let key_mappings = [
-                (Key::Z, NesButton::A),
-                (Key::X, NesButton::B),
-                (Key::Backspace, NesButton::Select),
-                (Key::Enter, NesButton::Start),
-                (Key::ArrowUp, NesButton::Up),
-                (Key::ArrowDown, NesButton::Down),
-                (Key::ArrowLeft, NesButton::Left),
-                (Key::ArrowRight, NesButton::Right),
-            ];
-
-            for (key, button) in key_mappings {
-                if i.key_pressed(key) {
-                    self.input.set_button(1, button, true);
-                }
-                if i.key_released(key) {
-                    self.input.set_button(1, button, false);
+            // Process all key events through the configured bindings
+            for event in &i.events {
+                if let egui::Event::Key {
+                    key,
+                    pressed,
+                    repeat: false,
+                    ..
+                } = event
+                {
+                    // Convert egui key to our KeyCode and handle via config bindings
+                    if let Some(keycode) = egui_key_to_keycode(*key) {
+                        // Try player 1 first, then player 2
+                        self.input.handle_key_1(keycode, *pressed);
+                        self.input.handle_key_2(keycode, *pressed);
+                    }
                 }
             }
+
+            // Handle shift keys for Select button (not exposed as regular Key events)
+            // Check modifiers for shift state changes
+            let shift_pressed = i.modifiers.shift;
+
+            // Track shift state for player 1 (ShiftRight is default Select)
+            self.input.handle_key_1(KeyCode::ShiftRight, shift_pressed);
+            self.input.handle_key_1(KeyCode::ShiftLeft, shift_pressed);
+
+            // Track shift state for player 2
+            self.input.handle_key_2(KeyCode::ShiftRight, shift_pressed);
+            self.input.handle_key_2(KeyCode::ShiftLeft, shift_pressed);
         });
     }
 
