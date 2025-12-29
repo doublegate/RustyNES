@@ -445,17 +445,27 @@ impl Ppu {
                 self.scroll.copy_vertical();
             }
 
-            // Sprite evaluation (visible scanlines only)
-            if self.timing.is_visible_scanline() {
+            // Sprite evaluation (visible and pre-render scanlines)
+            // Pre-render scanline (261) evaluates sprites for scanline 0
+            if self.timing.is_visible_scanline() || self.timing.is_prerender_scanline() {
                 if self.timing.is_sprite_eval_start() {
                     self.sprite_evaluator.start_evaluation();
                     self.secondary_oam.clear();
                 }
 
                 if self.timing.is_sprite_eval_range() {
+                    // Calculate target scanline for evaluation
+                    // For pre-render (261), target is scanline 0
+                    // For visible scanlines (0-239), target is scanline+1
+                    let target_scanline = if self.timing.is_prerender_scanline() {
+                        0
+                    } else {
+                        scanline + 1
+                    };
+
                     self.sprite_evaluator.evaluate_step(
                         self.oam.data(),
-                        scanline + 1, // Evaluate for next scanline
+                        target_scanline,
                         self.ctrl.sprite_height(),
                         &mut self.secondary_oam,
                     );
@@ -481,28 +491,49 @@ impl Ppu {
                 if fetch_step == 7
                     && let Some(sprite) = self.secondary_oam.get_sprite(sprite_index as u8)
                 {
-                    let sprite_base = self.ctrl.sprite_table_addr();
+                    let sprite_height = self.ctrl.sprite_height();
                     let tile_index = sprite.tile_index;
 
                     // Calculate which row of the sprite to fetch
-                    // Note: We're fetching for scanline+1 (next scanline) since
-                    // sprite evaluation fills secondary OAM with sprites for next scanline
-                    let next_scanline = scanline + 1;
-                    let sprite_y = next_scanline.saturating_sub(sprite.y as u16);
+                    // We're fetching for the next scanline (scanline+1 for visible, 0 for pre-render)
+                    // Sprite Y in OAM is "top of sprite minus 1", so for target scanline T:
+                    //   displayed_row = T - (sprite.y + 1) = (T - 1) - sprite.y
+                    // For visible scanlines: displayed_row = scanline - sprite.y
+                    // For pre-render (261): displayed_row = (0 - 1) - sprite.y (wrapping handled)
+                    let target_scanline = if self.timing.is_prerender_scanline() {
+                        0u16
+                    } else {
+                        scanline
+                    };
+                    let sprite_y = target_scanline.saturating_sub(sprite.y as u16);
 
-                    // Clamp sprite_y to valid range (0-7 for 8x8 sprites)
-                    // This prevents overflow when calculating flipped row
-                    let sprite_y = sprite_y.min(7);
+                    // Clamp sprite_y to valid range based on sprite height
+                    let max_row = (sprite_height - 1) as u16;
+                    let sprite_y = sprite_y.min(max_row);
 
                     // Handle vertical flip
-                    let row = if sprite.attributes.flip_vertical() {
-                        7 - sprite_y
+                    let mut row = if sprite.attributes.flip_vertical() {
+                        max_row - sprite_y
                     } else {
                         sprite_y
                     };
 
-                    // Fetch pattern table low byte
-                    let pattern_addr_low = sprite_base + u16::from(tile_index) * 16 + row;
+                    // Calculate tile address based on sprite mode
+                    let pattern_addr_low = if sprite_height == 16 {
+                        // 8x16 sprites: bit 0 of tile index selects pattern table
+                        let sprite_table = (u16::from(tile_index) & 0x01) * 0x1000;
+                        // For rows 8-15, we need to access the next tile (add 16 bytes)
+                        if row >= 8 {
+                            row += 8; // Skip to next tile's data
+                        }
+                        // Use bits 7-1 of tile index as the tile pair base
+                        sprite_table | ((u16::from(tile_index) & 0xFE) << 4) | row
+                    } else {
+                        // 8x8 sprites: use PPUCTRL to select pattern table
+                        let sprite_base = self.ctrl.sprite_table_addr();
+                        sprite_base + u16::from(tile_index) * 16 + row
+                    };
+
                     let mut pattern_low = read_chr(pattern_addr_low);
 
                     // Fetch pattern table high byte
