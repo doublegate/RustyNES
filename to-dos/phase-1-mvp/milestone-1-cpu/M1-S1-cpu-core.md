@@ -268,7 +268,7 @@ Create unit tests for power-on state and RESET behavior.
 
 **Required:**
 
-- Rust 1.75+ toolchain
+- Rust 1.86+ toolchain
 - bitflags = "2.4" crate
 - thiserror = "1.0" crate
 - log = "0.4" crate

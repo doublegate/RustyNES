@@ -158,6 +158,7 @@ impl Cpu {
         }
 
         // Sample I flag at start of this instruction (for next instruction's IRQ check)
+        // This creates the proper 1-instruction latency for CLI/SEI/PLP
         let current_irq_inhibit = self.status.contains(StatusFlags::INTERRUPT_DISABLE);
 
         // Check for NMI (Non-Maskable Interrupt) - Edge triggered
@@ -185,6 +186,7 @@ impl Cpu {
         }
 
         // Update prev_irq_inhibit for next instruction
+        // Uses the I flag sampled at the START of this instruction
         self.prev_irq_inhibit = current_irq_inhibit;
 
         // Fetch opcode
@@ -283,12 +285,15 @@ impl Cpu {
             CpuState::PushHi => self.tick_push_hi(bus),
             CpuState::PushLo => self.tick_push_lo(bus),
             CpuState::PushStatus => self.tick_push_status(bus),
+            CpuState::PushAccumulator => self.tick_push_accumulator(bus),
             CpuState::PopLo => self.tick_pop_lo(bus),
+            CpuState::ReadStackLo => self.tick_read_stack_lo(bus),
             CpuState::PopHi => self.tick_pop_hi(bus),
             CpuState::PopStatus => self.tick_pop_status(bus),
             CpuState::InternalCycle => self.tick_internal_cycle(bus),
             CpuState::BranchTaken => self.tick_branch_taken(bus),
             CpuState::BranchPageCross => self.tick_branch_page_cross(bus),
+            CpuState::InterruptDummyRead => self.tick_interrupt_dummy_read(bus),
             CpuState::InterruptPushPcHi => self.tick_interrupt_push_pc_hi(bus),
             CpuState::InterruptPushPcLo => self.tick_interrupt_push_pc_lo(bus),
             CpuState::InterruptPushStatus => self.tick_interrupt_push_status(bus),
@@ -299,17 +304,15 @@ impl Cpu {
 
     /// Fetch opcode cycle (cycle 1 of every instruction).
     fn tick_fetch_opcode(&mut self, bus: &mut impl Bus) -> bool {
-        // Sample I flag at start of this instruction (will be used for NEXT instruction's IRQ check)
-        let current_irq_inhibit = self.status.contains(StatusFlags::INTERRUPT_DISABLE);
-
         // Check for pending interrupts (polled on last cycle of previous instruction)
         // NMI is not affected by I flag, but can be suppressed for one instruction after BRK
         if self.nmi_pending && !self.suppress_nmi_next {
             self.nmi_pending = false;
-            self.prev_irq_inhibit = current_irq_inhibit;
-            // Start interrupt sequence - dummy read of current PC
+            // NMI sets I flag, so next instruction sees prev_irq_inhibit = true
+            self.prev_irq_inhibit = true;
+            // Start interrupt sequence - dummy read of current PC (cycle 1 of 7)
             let _ = bus.read(self.pc);
-            self.state = CpuState::InterruptPushPcHi;
+            self.state = CpuState::InterruptDummyRead;
             // Store NMI vector address for later
             self.effective_addr = 0xFFFA;
             return false;
@@ -323,17 +326,20 @@ impl Cpu {
         // IRQ uses the I flag from the PREVIOUS instruction (prev_irq_inhibit)
         // This implements the one-instruction delay after CLI/PLP/RTI
         if self.irq_pending && !self.prev_irq_inhibit {
-            self.prev_irq_inhibit = current_irq_inhibit;
-            // Start interrupt sequence - dummy read of current PC
+            // IRQ sets I flag, so next instruction sees prev_irq_inhibit = true
+            self.prev_irq_inhibit = true;
+            // Start interrupt sequence - dummy read of current PC (cycle 1 of 7)
             let _ = bus.read(self.pc);
-            self.state = CpuState::InterruptPushPcHi;
+            self.state = CpuState::InterruptDummyRead;
             // Store IRQ vector address for later
             self.effective_addr = 0xFFFE;
             return false;
         }
 
-        // Update prev_irq_inhibit for next instruction
-        self.prev_irq_inhibit = current_irq_inhibit;
+        // Sample I flag at instruction START (before execution modifies it)
+        // This creates proper 1-instruction latency for CLI/SEI/PLP
+        // The sampled value will be used for the NEXT instruction's IRQ check
+        self.prev_irq_inhibit = self.status.contains(StatusFlags::INTERRUPT_DISABLE);
 
         // Fetch opcode from PC
         self.current_opcode = bus.read(self.pc);
@@ -356,17 +362,18 @@ impl Cpu {
         // Determine next state based on addressing mode and instruction type
         self.state = self.next_state_after_fetch();
 
-        // Check if this is a 2-cycle implied/accumulator instruction
-        matches!(
-            self.instr_type,
-            InstructionType::Implied | InstructionType::Accumulator
-        ) && self.state == CpuState::Execute
+        // FetchOpcode is never the final cycle of an instruction.
+        // Even for 2-cycle implied/accumulator instructions, we need to
+        // go through the Execute state which performs the dummy read.
+        false
     }
 
     /// Determine next state after opcode fetch based on addressing mode.
     fn next_state_after_fetch(&self) -> CpuState {
         match self.current_addr_mode {
-            // Implied and Accumulator: just need Execute cycle
+            // Implied and Accumulator: go to Execute for cycle 2 (dummy read).
+            // Execute will then route special instructions (RTS, RTI, Push, Pull, BRK)
+            // to their multi-cycle state machines.
             AddressingMode::Implied | AddressingMode::Accumulator => CpuState::Execute,
 
             // Immediate: fetch single byte operand
@@ -405,10 +412,19 @@ impl Cpu {
         self.pc = self.pc.wrapping_add(1);
 
         match self.current_addr_mode {
-            // Immediate mode: operand is the value itself
+            // Immediate mode: operand is the value itself.
+            // For Read instructions, the operand fetch IS the data read,
+            // so we execute immediately. This is the final cycle.
             AddressingMode::Immediate => {
                 self.effective_addr = self.pc.wrapping_sub(1);
                 self.temp_value = self.operand_lo;
+                if matches!(self.instr_type, InstructionType::Read) {
+                    // Execute the read instruction immediately - this is cycle 2 of 2
+                    self.execute_read_instruction();
+                    self.state = CpuState::FetchOpcode;
+                    return true; // Instruction complete
+                }
+                // For other instruction types (shouldn't happen for immediate mode)
                 self.state = self.next_state_for_instruction_type();
             }
 
@@ -554,15 +570,30 @@ impl Cpu {
     }
 
     fn tick_read_data(&mut self, bus: &mut impl Bus) -> bool {
+        // Read the data from effective address
         self.temp_value = bus.read(self.effective_addr);
-        self.state = CpuState::Execute;
-        false
+
+        // For Read instructions, execute immediately - this is the final cycle.
+        // The 6502 reads and updates registers in the same cycle.
+        self.execute_read_instruction();
+        self.state = CpuState::FetchOpcode;
+        true
     }
 
     fn tick_write_data(&mut self, bus: &mut impl Bus) -> bool {
         // Execute the write instruction
         let value = self.execute_write_instruction();
-        bus.write(self.effective_addr, value);
+
+        // PB512 glitch: For SHY, SHX, SHA, TAS when page boundary is crossed,
+        // the address high byte is replaced by the value being written
+        let write_addr = match self.current_opcode {
+            0x9C | 0x9E | 0x93 | 0x9F | 0x9B if self.page_crossed => {
+                (u16::from(value) << 8) | (self.effective_addr & 0x00FF)
+            }
+            _ => self.effective_addr,
+        };
+
+        bus.write(write_addr, value);
         self.state = CpuState::FetchOpcode;
         true
     }
@@ -595,18 +626,71 @@ impl Cpu {
                 // Dummy read of next byte
                 let _ = bus.read(self.pc);
                 self.execute_implied_instruction();
+                self.state = CpuState::FetchOpcode;
+                true
             }
             InstructionType::Accumulator => {
                 let _ = bus.read(self.pc);
                 self.execute_accumulator_instruction();
+                self.state = CpuState::FetchOpcode;
+                true
             }
             InstructionType::Read => {
                 self.execute_read_instruction();
+                self.state = CpuState::FetchOpcode;
+                true
             }
-            _ => {}
+            // Special multi-cycle instructions that need their state machines:
+            // These go through Execute for the cycle 2 dummy read, then continue
+            InstructionType::ReturnSubroutine | InstructionType::ReturnInterrupt => {
+                // Cycle 2: dummy read at PC
+                let _ = bus.read(self.pc);
+                // Continue to PopLo for cycle 3 (increment SP)
+                self.state = CpuState::PopLo;
+                false
+            }
+            InstructionType::Push => {
+                // Cycle 2: dummy read at PC
+                let _ = bus.read(self.pc);
+                // PHA/PHP: transition to push state for cycle 3
+                match self.current_opcode {
+                    0x48 => {
+                        // PHA: transition to push accumulator (cycle 3)
+                        self.state = CpuState::PushAccumulator;
+                        false
+                    }
+                    0x08 => {
+                        // PHP: push status with B flag set (cycle 3)
+                        self.state = CpuState::PushStatus;
+                        false
+                    }
+                    _ => {
+                        self.state = CpuState::FetchOpcode;
+                        true
+                    }
+                }
+            }
+            InstructionType::Pull => {
+                // Cycle 2: dummy read at PC
+                let _ = bus.read(self.pc);
+                // Cycle 3: increment SP (PopLo handles this)
+                self.state = CpuState::PopLo;
+                false
+            }
+            InstructionType::Break => {
+                // Cycle 2: read next byte (dummy, but PC was already incremented)
+                // Note: BRK is a 2-byte instruction, PC points to byte after BRK
+                let _ = bus.read(self.pc);
+                self.pc = self.pc.wrapping_add(1); // Skip the padding byte
+                                                   // Continue to push PC high byte
+                self.state = CpuState::PushHi;
+                false
+            }
+            _ => {
+                self.state = CpuState::FetchOpcode;
+                true
+            }
         }
-        self.state = CpuState::FetchOpcode;
-        true
     }
 
     fn tick_fetch_indirect_lo(&mut self, bus: &mut impl Bus) -> bool {
@@ -711,7 +795,14 @@ impl Cpu {
     }
 
     fn tick_push_hi(&mut self, bus: &mut impl Bus) -> bool {
-        let value = (self.pc >> 8) as u8;
+        // JSR pushes (PC - 1) because the high byte is fetched AFTER push in hardware,
+        // but our tick() implementation fetches both bytes before push. Compensate here.
+        let push_addr = if self.instr_type == InstructionType::JumpSubroutine {
+            self.pc.wrapping_sub(1)
+        } else {
+            self.pc
+        };
+        let value = (push_addr >> 8) as u8;
         bus.write(0x0100 | u16::from(self.sp), value);
         self.sp = self.sp.wrapping_sub(1);
         self.state = CpuState::PushLo;
@@ -719,7 +810,13 @@ impl Cpu {
     }
 
     fn tick_push_lo(&mut self, bus: &mut impl Bus) -> bool {
-        let value = (self.pc & 0xFF) as u8;
+        // JSR pushes (PC - 1) - see comment in tick_push_hi
+        let push_addr = if self.instr_type == InstructionType::JumpSubroutine {
+            self.pc.wrapping_sub(1)
+        } else {
+            self.pc
+        };
+        let value = (push_addr & 0xFF) as u8;
         bus.write(0x0100 | u16::from(self.sp), value);
         self.sp = self.sp.wrapping_sub(1);
 
@@ -759,6 +856,9 @@ impl Cpu {
                 let nmi_hijack = self.nmi_pending;
                 if nmi_hijack {
                     self.nmi_pending = false;
+                    // NMI hijack during BRK: update prev_irq_inhibit so first handler instruction
+                    // blocks IRQ (since the handler sets I=1 and should be treated as interrupt context)
+                    self.prev_irq_inhibit = true;
                 }
 
                 // Push status with B flag ALWAYS set (even when NMI hijacks)
@@ -766,6 +866,10 @@ impl Cpu {
                 bus.write(0x0100 | u16::from(self.sp), value);
                 self.sp = self.sp.wrapping_sub(1);
                 self.status.insert(StatusFlags::INTERRUPT_DISABLE);
+
+                // Update prev_irq_inhibit since we're entering interrupt context
+                // This ensures the handler correctly blocks IRQ
+                self.prev_irq_inhibit = true;
 
                 // Suppress NMI check for one instruction after BRK completes
                 // This ensures the first instruction of the handler executes before checking for NMI
@@ -783,21 +887,30 @@ impl Cpu {
         false
     }
 
+    fn tick_push_accumulator(&mut self, bus: &mut impl Bus) -> bool {
+        // Cycle 3: Push accumulator to stack (PHA)
+        bus.write(0x0100 | u16::from(self.sp), self.a);
+        self.sp = self.sp.wrapping_sub(1);
+        self.state = CpuState::FetchOpcode;
+        true
+    }
+
     fn tick_pop_lo(&mut self, bus: &mut impl Bus) -> bool {
-        // Internal cycle: increment SP
+        // Cycle 3: Internal cycle - increment SP, dummy read from stack
         self.sp = self.sp.wrapping_add(1);
         let _ = bus.read(0x0100 | u16::from(self.sp));
 
         match self.instr_type {
             InstructionType::Pull => {
-                self.state = CpuState::Execute;
+                // PLA/PLP: next cycle reads the value
+                self.state = CpuState::ReadStackLo;
             }
             InstructionType::ReturnSubroutine => {
-                self.operand_lo = bus.read(0x0100 | u16::from(self.sp));
-                self.state = CpuState::PopHi;
+                // RTS: next cycle reads PCL from stack
+                self.state = CpuState::ReadStackLo;
             }
             InstructionType::ReturnInterrupt => {
-                // First pop is status
+                // RTI: next cycle reads status from stack
                 self.state = CpuState::PopStatus;
             }
             _ => {
@@ -807,19 +920,37 @@ impl Cpu {
         false
     }
 
-    fn tick_pop_hi(&mut self, bus: &mut impl Bus) -> bool {
-        self.sp = self.sp.wrapping_add(1);
-        self.operand_hi = bus.read(0x0100 | u16::from(self.sp));
+    fn tick_read_stack_lo(&mut self, bus: &mut impl Bus) -> bool {
+        // Read low byte from stack (PCL for RTS/RTI)
+        self.operand_lo = bus.read(0x0100 | u16::from(self.sp));
 
         match self.instr_type {
-            InstructionType::ReturnSubroutine => {
-                self.pc = u16::from_le_bytes([self.operand_lo, self.operand_hi]);
-                self.state = CpuState::InternalCycle;
-            }
-            InstructionType::ReturnInterrupt => {
-                self.pc = u16::from_le_bytes([self.operand_lo, self.operand_hi]);
+            InstructionType::Pull => {
+                // PLA/PLP: this is the final data read, go to Execute to apply
+                self.temp_value = self.operand_lo;
+                match self.current_opcode {
+                    0x68 => {
+                        // PLA
+                        self.a = self.temp_value;
+                        self.set_zn(self.a);
+                    }
+                    0x28 => {
+                        // PLP
+                        self.status = StatusFlags::from_stack_byte(self.temp_value);
+                    }
+                    _ => {}
+                }
                 self.state = CpuState::FetchOpcode;
                 return true;
+            }
+            InstructionType::ReturnSubroutine => {
+                // RTS: continue to PopHi to get PCH
+                self.state = CpuState::PopHi;
+            }
+            InstructionType::ReturnInterrupt => {
+                // RTI: cycle 5 - read PCL from stack, increment SP for PCH read
+                self.sp = self.sp.wrapping_add(1);
+                self.state = CpuState::PopHi;
             }
             _ => {
                 self.state = CpuState::FetchOpcode;
@@ -828,19 +959,44 @@ impl Cpu {
         false
     }
 
+    fn tick_pop_hi(&mut self, bus: &mut impl Bus) -> bool {
+        match self.instr_type {
+            InstructionType::ReturnSubroutine => {
+                // RTS: SP++ then read PCH
+                self.sp = self.sp.wrapping_add(1);
+                self.operand_hi = bus.read(0x0100 | u16::from(self.sp));
+                self.pc = u16::from_le_bytes([self.operand_lo, self.operand_hi]);
+                self.state = CpuState::InternalCycle;
+            }
+            InstructionType::ReturnInterrupt => {
+                // RTI: cycle 6 - read PCH from stack (SP already points to PCH)
+                self.operand_hi = bus.read(0x0100 | u16::from(self.sp));
+                self.pc = u16::from_le_bytes([self.operand_lo, self.operand_hi]);
+                self.state = CpuState::FetchOpcode;
+                return true;
+            }
+            _ => {
+                self.sp = self.sp.wrapping_add(1);
+                self.operand_hi = bus.read(0x0100 | u16::from(self.sp));
+                self.state = CpuState::FetchOpcode;
+            }
+        }
+        false
+    }
+
     fn tick_pop_status(&mut self, bus: &mut impl Bus) -> bool {
+        // Cycle 4 of RTI: Read P (status) from stack, then increment SP
         let value = bus.read(0x0100 | u16::from(self.sp));
         self.status = StatusFlags::from_stack_byte(value);
 
-        // Match RTI behavior from instructions.rs:
-        // If RTI restores I=1 (Disabled), interrupts must be blocked immediately for the NEXT instruction.
-        if self.status.contains(StatusFlags::INTERRUPT_DISABLE) {
-            self.prev_irq_inhibit = true;
-        }
+        // RTI/PLP restore I flag from stack - update prev_irq_inhibit immediately
+        // Unlike CLI/SEI which have 1-instruction latency, RTI/PLP have NO latency
+        // The restored I flag takes effect for the very next instruction's IRQ check
+        self.prev_irq_inhibit = self.status.contains(StatusFlags::INTERRUPT_DISABLE);
 
         self.sp = self.sp.wrapping_add(1);
-        self.operand_lo = bus.read(0x0100 | u16::from(self.sp));
-        self.state = CpuState::PopHi;
+        // Cycle 5 will read PCL - transition to ReadStackLo for that
+        self.state = CpuState::ReadStackLo;
         false
     }
 
@@ -860,15 +1016,15 @@ impl Cpu {
                 return true;
             }
             InstructionType::Push => {
-                // PHA: after reading, push value
+                // PHA/PHP: route to appropriate push state
                 match self.current_opcode {
                     0x48 => {
-                        // PHA
-                        bus.write(0x0100 | u16::from(self.sp), self.a);
-                        self.sp = self.sp.wrapping_sub(1);
+                        // PHA: push accumulator
+                        self.state = CpuState::PushAccumulator;
+                        return false;
                     }
                     0x08 => {
-                        // PHP is handled in PushStatus
+                        // PHP: push status
                         self.state = CpuState::PushStatus;
                         return false;
                     }
@@ -929,6 +1085,15 @@ impl Cpu {
         true
     }
 
+    /// Interrupt: Dummy read cycle (cycle 2 of 7)
+    /// This is the "read next instruction byte and discard" cycle.
+    fn tick_interrupt_dummy_read(&mut self, bus: &mut impl Bus) -> bool {
+        // Dummy read at PC+1 (the would-be operand)
+        let _ = bus.read(self.pc);
+        self.state = CpuState::InterruptPushPcHi;
+        false
+    }
+
     fn tick_interrupt_push_pc_hi(&mut self, bus: &mut impl Bus) -> bool {
         let value = (self.pc >> 8) as u8;
         bus.write(0x0100 | u16::from(self.sp), value);
@@ -956,12 +1121,30 @@ impl Cpu {
     }
 
     fn tick_interrupt_fetch_vector_lo(&mut self, bus: &mut impl Bus) -> bool {
+        // Check for NMI hijacking during vector fetch (cycle 6)
+        // If we're handling BRK/IRQ and NMI arrives during vector fetch, switch to NMI vector
+        // Reference: NESdev wiki - NMI is sampled during cycles 4-7 of interrupt sequence
+        if self.nmi_pending && self.effective_addr == 0xFFFE {
+            self.nmi_pending = false;
+            self.effective_addr = 0xFFFA;
+            self.suppress_nmi_next = true;
+        }
         self.operand_lo = bus.read(self.effective_addr);
         self.state = CpuState::InterruptFetchVectorHi;
         false
     }
 
     fn tick_interrupt_fetch_vector_hi(&mut self, bus: &mut impl Bus) -> bool {
+        // Check for NMI hijacking during vector fetch (cycle 7)
+        // Even at this late point, NMI can still hijack the vector
+        // Note: We need to re-read vector_lo if NMI hijacks here
+        if self.nmi_pending && self.effective_addr == 0xFFFE {
+            self.nmi_pending = false;
+            self.effective_addr = 0xFFFA;
+            self.suppress_nmi_next = true;
+            // Re-read vector_lo from NMI vector since we switched vectors
+            self.operand_lo = bus.read(self.effective_addr);
+        }
         self.operand_hi = bus.read(self.effective_addr.wrapping_add(1));
         self.pc = u16::from_le_bytes([self.operand_lo, self.operand_hi]);
         self.state = CpuState::FetchOpcode;
@@ -1021,8 +1204,8 @@ impl Cpu {
                 self.set_zn(self.a);
             } // TYA
             0xBA => {
-                self.a = self.sp;
-                self.set_zn(self.a);
+                self.x = self.sp;
+                self.set_zn(self.x);
             } // TSX
             0x9A => {
                 self.sp = self.x;
@@ -1219,10 +1402,11 @@ impl Cpu {
                 self.a = (self.a | 0xEE) & self.x & value;
                 self.set_zn(self.a);
             }
-            // LXA (unofficial)
+            // LXA/ATX (unofficial) - Load A and X with immediate value
+            // Real hardware behavior is unstable, but Blargg tests expect this
             0xAB => {
-                self.a = (self.a | 0xEE) & value;
-                self.x = self.a;
+                self.a = value;
+                self.x = value;
                 self.set_zn(self.a);
             }
             // AXS (unofficial)

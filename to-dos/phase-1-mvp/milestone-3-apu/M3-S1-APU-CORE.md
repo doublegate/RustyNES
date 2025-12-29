@@ -62,7 +62,7 @@ Set up the rustynes-apu crate with initial file structure and dependencies.
 name = "rustynes-apu"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.75"
+rust-version = "1.86"
 
 [dependencies]
 bitflags = "2.4"
@@ -725,7 +725,7 @@ mod tests {
 
 **Required:**
 
-- Rust 1.75+ toolchain
+- Rust 1.86+ toolchain
 - bitflags = "2.4"
 - log = "0.4"
 

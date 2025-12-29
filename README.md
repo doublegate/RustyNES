@@ -8,7 +8,7 @@
 
 [![Build Status](https://github.com/doublegate/RustyNES/workflows/CI/badge.svg)](https://github.com/doublegate/RustyNES/actions)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE-MIT)
-[![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/rust-1.86%2B-orange.svg)](https://www.rust-lang.org/)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](#platform-support)
 [![Documentation](https://img.shields.io/badge/docs-latest-blue.svg)](https://doublegate.github.io/RustyNES/)
 [![codecov](https://codecov.io/gh/doublegate/RustyNES/branch/main/graph/badge.svg)](https://codecov.io/gh/doublegate/RustyNES)
@@ -99,6 +99,8 @@ RustyNES v0.7.0 achieves **100% pass rate** across all Blargg test suites, marki
 - **PPU Open Bus Emulation:** Data latch with 1-second decay behavior, correct read-only register handling
 - **CHR-RAM Routing:** Fixed critical design flaw enabling CHR-RAM support for pattern table writes ($0000-$1FFF)
 - **APU Frame Counter:** Immediate clocking behavior when writing to $4017, fixed DMC IRQ/DMA logic
+- **Desktop Cycle-Accurate Execution:** Desktop GUI now uses `step_frame_accurate()` for cycle-perfect CPU/PPU/APU synchronization
+- **Sample Rate Configuration:** Added `Bus::with_sample_rate()` and `Console::with_sample_rate()` APIs for precise audio generation
 - **Test Suite:** 500 tests passing with 0 failures, 0 ignored
 - **Documentation:** Comprehensive M8 technical analysis (800+ lines) in MILESTONE_8_TEST_ROM_FIXES.md
 
@@ -121,7 +123,7 @@ Pre-built binaries are available on the [Releases page](https://github.com/doubl
 
 **Prerequisites:**
 
-- **Rust 1.75 or newer** — Install via [rustup.rs](https://rustup.rs)
+- **Rust 1.86 or newer** — Install via [rustup.rs](https://rustup.rs)
 - **SDL2 development libraries** — Platform-specific installation below
 - **Git**
 

@@ -6,7 +6,7 @@ Complete instructions for building the RustyNES desktop application on Windows, 
 
 ### All Platforms
 
-- **Rust toolchain** 1.75.0 or later
+- **Rust toolchain** 1.86.0 or later
 - **Git** for source control
 - **CMake** 3.15+ (for some native dependencies)
 

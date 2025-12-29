@@ -60,8 +60,14 @@ pub enum CpuState {
     /// Push status to stack
     PushStatus,
 
+    /// Push accumulator to stack (PHA)
+    PushAccumulator,
+
     /// Pop low byte from stack (with internal cycle)
     PopLo,
+
+    /// Read low byte from stack (after PopLo's internal cycle)
+    ReadStackLo,
 
     /// Pop high byte from stack
     PopHi,
@@ -77,6 +83,9 @@ pub enum CpuState {
 
     /// Branch page cross - extra cycle for crossing page
     BranchPageCross,
+
+    /// Interrupt: Dummy read (internal cycle before pushing)
+    InterruptDummyRead,
 
     /// Interrupt: Push PC high
     InterruptPushPcHi,
@@ -178,6 +187,7 @@ impl CpuState {
                 | Self::PopLo
                 | Self::PopHi
                 | Self::PopStatus
+                | Self::InterruptDummyRead
                 | Self::InterruptFetchVectorLo
                 | Self::InterruptFetchVectorHi
         )
@@ -194,6 +204,7 @@ impl CpuState {
                 | Self::PushHi
                 | Self::PushLo
                 | Self::PushStatus
+                | Self::PushAccumulator
                 | Self::InterruptPushPcHi
                 | Self::InterruptPushPcLo
                 | Self::InterruptPushStatus
