@@ -11,6 +11,96 @@ No unreleased changes.
 
 ---
 
+## [0.8.5] - 2025-12-29 - Cycle-Accurate CPU/PPU Synchronization
+
+**Status**: Phase 1.5 Stabilization - M11 Sub-Cycle Accuracy (Sprints 1 & 2 Complete)
+
+This release implements true cycle-accurate CPU/PPU synchronization, enabling VBlank timing tests to pass with zero-cycle accuracy.
+
+### Highlights
+
+- **Cycle-Accurate Synchronization:** CpuBus trait with on_cpu_cycle() callback for PPU stepping
+- **VBlank Timing Tests:** Now pass with ±0 cycle accuracy (previously failed with ±51 and ±10 cycles)
+- **cpu.tick() Method:** Cycle-by-cycle CPU execution for sub-instruction timing precision
+- **Test Suite:** 520+ tests passing (0 failures, 1 ignored doctest)
+- **100% Blargg Pass Rate:** All 90/90 Blargg tests continue to pass
+
+### Added
+
+#### CpuBus Trait for Cycle-Accurate Callbacks
+
+- **New Trait:** `CpuBus` extends `Bus` with `on_cpu_cycle()` callback
+- **Purpose:** Allows PPU to be stepped before each CPU memory access
+- **Implementation:** PPU stepped 3 dots per CPU cycle (NTSC 3:1 ratio)
+- **NMI Handling:** Captured during callback, delivered via `cpu.trigger_nmi()`
+
+#### cpu.tick() Cycle-by-Cycle Execution
+
+- **New Method:** `cpu.tick(&mut bus)` executes one CPU cycle
+- **State Machine:** CPU now exposes internal cycle state for precise timing
+- **Use Case:** Enables VBlank timing tests that require sub-instruction accuracy
+
+### Fixed
+
+#### VBlank Timing Tests
+
+- **ppu_02-vbl_set_time:** Was ±51 cycles off, now exact (0 cycles)
+- **ppu_03-vbl_clear_time:** Was ±10 cycles off, now exact (0 cycles)
+- **Root Cause:** PPU was only stepped after full CPU instructions completed
+- **Solution:** Step PPU 3 dots BEFORE each CPU memory access via callback
+
+### Changed
+
+#### Test Harness Architecture
+
+- **Updated:** Test harness uses CpuBus for cycle-accurate validation
+- **Benefit:** Tests can now verify timing at individual CPU cycle granularity
+- **Compatibility:** Existing tests continue to work with Bus trait
+
+### Technical Specifications
+
+**CpuBus Callback Model:**
+
+```rust
+pub trait CpuBus: Bus {
+    /// Called before each CPU cycle.
+    /// PPU should be stepped 3 dots per call.
+    fn on_cpu_cycle(&mut self) {
+        // Default: no-op for backwards compatibility
+    }
+}
+```
+
+**Test Results:**
+
+- Total tests: 520+ passing
+- Failures: 0
+- Ignored: 1 (CpuBus doctest for specialized implementation)
+- Blargg pass rate: 100% (90/90 tests)
+
+**Timing Model:**
+
+- PPU runs 3 dots per CPU cycle (5.369318 MHz / 1.789773 MHz)
+- on_cpu_cycle() called before CPU executes memory access
+- NMI signal captured during callback and queued for delivery
+
+### Quality Metrics
+
+- cargo clippy: PASSING (zero warnings)
+- cargo fmt: PASSING
+- cargo test: 520+ tests passing
+- cargo build --release: SUCCESS
+- Zero unsafe code maintained
+
+### What's Next
+
+- M11 Sprint 3: Validate timing with additional test ROMs
+- M11 Sprint 4: Performance optimization for cycle-accurate mode
+- M10 Sprint 2: Documentation updates
+- M10 Sprint 3: Release preparation
+
+---
+
 ## [0.8.4] - 2025-12-28 - CPU/PPU Timing & Version Consistency
 
 **Status**: Phase 1.5 Stabilization - Timing Improvements & Bug Fixes

@@ -1,8 +1,8 @@
 # RustyNES Development Roadmap
 
-**Document Version:** 2.9.0
-**Last Updated:** 2025-12-28
-**Project Status:** Phase 1.5 Stabilization In Progress (M1-M8 Complete, M9-S0 Complete, M9-M10 Planned)
+**Document Version:** 2.10.0
+**Last Updated:** 2025-12-29
+**Project Status:** Phase 1.5 Stabilization In Progress (M1-M8 Complete, M9 85%, M10 50%, M11 50%)
 
 ---
 
@@ -21,7 +21,18 @@
 
 ---
 
-## Recent Updates (v2.13.0 - December 2025)
+## Recent Updates (v2.14.0 - December 2025)
+
+**v0.8.5 Released - December 29, 2025** - Cycle-Accurate CPU/PPU Synchronization!
+
+**M11 Sub-Cycle Accuracy Achievements (Sprints 1 & 2):**
+
+- **CpuBus Trait:** New trait extends Bus with on_cpu_cycle() callback for PPU stepping
+- **cpu.tick() Method:** Cycle-by-cycle CPU execution for sub-instruction timing precision
+- **VBlank Timing Tests:** Now pass with ±0 cycle accuracy (ppu_02 was ±51, ppu_03 was ±10)
+- **Test Harness:** Updated to use CpuBus for cycle-accurate validation
+- **Test Suite:** 520+ tests passing (0 failures, 1 ignored doctest)
+- **100% Blargg Pass Rate:** All 90/90 Blargg tests continue to pass
 
 **v0.8.4 Released - December 28, 2025** - CPU/PPU Timing & Version Consistency!
 
@@ -140,6 +151,8 @@
 - v0.8.1 (December 28, 2025): M9 Known Issues (85%) - Audio S1, PPU S2, Performance S3 complete
 - v0.8.2 (December 28, 2025): M10 Final Polish (50%) - UI/UX improvements, theme support, tabbed settings
 - v0.8.3 (December 28, 2025): Critical Rendering Fix - Palette index to RGB conversion, doctest improvements
+- v0.8.4 (December 28, 2025): CPU/PPU Timing - PPU stepped before CPU cycle, version consistency fixes
+- v0.8.5 (December 29, 2025): M11 Sub-Cycle Accuracy (50%) - CpuBus trait, cpu.tick(), VBlank timing tests pass
 
 **Project Status Change:**
 
@@ -151,16 +164,17 @@
 
 ```text
 Phase 1 (MVP):         ████████████████████ 100% (M1-M6 COMPLETE)
-Phase 1.5 (Accuracy):  ██████████████████░░  90% (M7-M8 COMPLETE, M9 85% COMPLETE, M10 50% COMPLETE)
+Phase 1.5 (Accuracy):  ██████████████████░░  95% (M7-M8 COMPLETE, M9 85%, M10 50%, M11 50%)
 
-- M1: CPU         [████████████████████] 100% ✅ COMPLETED December 19, 2025
-- M2: PPU         [████████████████████] 100% ✅ COMPLETED December 19, 2025
-- M3: APU         [████████████████████] 100% ✅ COMPLETED December 19, 2025
-- M4: Mappers     [████████████████████] 100% ✅ COMPLETED December 19, 2025
-- M5: Integration [████████████████████] 100% ✅ COMPLETED December 19, 2025
-- M6: GUI         [████████████████████] 100% ✅ COMPLETED December 19, 2025
-- M7: Accuracy    [████████████████████] 100% ✅ COMPLETED December 20, 2025
-- M8: Test ROMs   [████████████████████] 100% ✅ COMPLETED December 21, 2025
+- M1: CPU           [████████████████████] 100% ✅ COMPLETED December 19, 2025
+- M2: PPU           [████████████████████] 100% ✅ COMPLETED December 19, 2025
+- M3: APU           [████████████████████] 100% ✅ COMPLETED December 19, 2025
+- M4: Mappers       [████████████████████] 100% ✅ COMPLETED December 19, 2025
+- M5: Integration   [████████████████████] 100% ✅ COMPLETED December 19, 2025
+- M6: GUI           [████████████████████] 100% ✅ COMPLETED December 19, 2025
+- M7: Accuracy      [████████████████████] 100% ✅ COMPLETED December 20, 2025
+- M8: Test ROMs     [████████████████████] 100% ✅ COMPLETED December 21, 2025
+- M11: Sub-Cycle    [██████████░░░░░░░░░░]  50% 🔄 IN PROGRESS (S1 & S2 Complete)
 
 ```
 
@@ -170,9 +184,11 @@ Phase 1.5 (Accuracy):  ██████████████████░
 - M8 (Test ROM Validation) COMPLETE: 100% Blargg pass rate (CPU 22/22, PPU 25/25, APU 15/15, Mappers 28/28) ✅
 - M9 (Known Issues) 85% COMPLETE: Audio S1, PPU S2, Performance S3 complete ✅
 - M10-S1 (UI/UX Improvements) COMPLETE: Theme support, tabbed settings, status bar, keyboard shortcuts ✅
+- M11-S1 & S2 (Sub-Cycle Accuracy) COMPLETE: CpuBus trait, cpu.tick(), VBlank timing tests pass ✅
 - All known limitations resolved (cpu_dummy_reads, cpu_interrupts now passing) ✅
-- 508+ tests passing, 0 failures, 0 ignored ✅
-- Next: M10-S2 (Documentation), M10-S3 (Release Preparation)
+- VBlank timing tests now pass with ±0 cycle accuracy ✅
+- 520+ tests passing, 0 failures, 1 ignored ✅
+- Next: M11-S3 (Additional Test ROM Validation), M11-S4 (Performance Optimization)
 
 **Timeline Updates:**
 

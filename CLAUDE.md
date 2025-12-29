@@ -6,11 +6,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 RustyNES is a next-generation Nintendo Entertainment System (NES) emulator written in Rust. Target: 100% TASVideos accuracy test pass rate, 300+ mappers, RetroAchievements, GGPO netplay, TAS tools, Lua scripting.
 
-**Status:** v0.8.4 - Phase 1.5 Stabilization In Progress (M7-M8 Complete, M9 85% Complete, M10 50% Complete). All Phase 1 milestones (M1-M6) done.
+**Status:** v0.8.5 - Phase 1.5 Stabilization In Progress (M7-M8 Complete, M9 85%, M10 50%, M11 50%). All Phase 1 milestones (M1-M6) done.
 
-**Test Status:** 517+ tests passing (0 failures, 2 ignored). 100% Blargg pass rate (90/90 tests)
+**Test Status:** 520+ tests passing (0 failures, 1 ignored). 100% Blargg pass rate (90/90 tests)
 
-**Current Version:** v0.8.4 (December 28, 2025)
+**Current Version:** v0.8.5 (December 29, 2025)
+- Cycle-Accurate CPU/PPU Synchronization: M11 Sprints 1 & 2 complete
+- CpuBus Trait: on_cpu_cycle() callback for PPU stepping before each CPU memory access
+- cpu.tick() Method: Cycle-by-cycle CPU execution for sub-instruction timing precision
+- VBlank Timing Tests: Now pass with ±0 cycle accuracy (ppu_02 was ±51, ppu_03 was ±10 cycles)
+- Test Harness: Updated to use CpuBus for cycle-accurate validation
+- Test Suite: 520+ tests passing (0 failures, 1 ignored doctest)
+- 100% Blargg Pass Rate: All 90/90 Blargg tests continue to pass
+
+**Previous Version:** v0.8.4 (December 28, 2025)
 - CPU/PPU Timing: PPU now stepped BEFORE CPU cycle in tick() for accurate $2002 reads at VBlank
 - Version Consistency: Fixed About window (0.8.1) and Settings (0.8.2) showing outdated versions
 - Documentation: Fixed clone_mapper doctest by implementing full Clone for mapper Box types
@@ -308,9 +317,45 @@ Cloned emulators for study and pattern reference:
 | **Dependency Upgrade** | ✅ v0.8.0 | Rust 2024, eframe 0.33, egui 0.33, cpal 0.16, ron 0.12 |
 | **M9: Known Issues** | 🔄 v0.8.1 (85%) | Audio S1, PPU S2, Performance S3 complete; S4 pending |
 | **M10: Final Polish** | 🔄 v0.8.3 (50%) | Critical rendering fix, UI/UX improvements, Documentation pending |
+| **M11: Sub-Cycle Accuracy** | 🔄 v0.8.5 (50%) | CpuBus trait, cpu.tick(), VBlank timing tests pass with ±0 cycles |
 | **Phase 2+** | 📋 TBD | Advanced features |
 
-## Recent Accomplishments (v0.8.3 - Dec 28, 2025)
+## Recent Accomplishments (v0.8.5 - Dec 29, 2025)
+
+### Cycle-Accurate CPU/PPU Synchronization (M11 S1 & S2)
+
+Implemented true cycle-accurate CPU/PPU synchronization enabling VBlank timing tests to pass with zero-cycle accuracy:
+
+#### CpuBus Trait
+- **New Trait:** `CpuBus` extends `Bus` with `on_cpu_cycle()` callback
+- **Purpose:** Allows PPU to be stepped before each CPU memory access
+- **Implementation:** PPU stepped 3 dots per CPU cycle (NTSC 3:1 ratio)
+- **NMI Handling:** Captured during callback, delivered via `cpu.trigger_nmi()`
+
+#### cpu.tick() Method
+- **New Method:** `cpu.tick(&mut bus)` executes one CPU cycle
+- **State Machine:** CPU now exposes internal cycle state for precise timing
+- **Use Case:** Enables VBlank timing tests that require sub-instruction accuracy
+
+#### VBlank Timing Tests Fixed
+- **ppu_02-vbl_set_time:** Was ±51 cycles off, now exact (0 cycles)
+- **ppu_03-vbl_clear_time:** Was ±10 cycles off, now exact (0 cycles)
+- **Root Cause:** PPU was only stepped after full CPU instructions completed
+- **Solution:** Step PPU 3 dots BEFORE each CPU memory access via callback
+
+---
+
+## Previous Accomplishments (v0.8.4 - Dec 28, 2025)
+
+### CPU/PPU Timing & Version Consistency
+
+- CPU/PPU Timing: PPU now stepped BEFORE CPU cycle in tick() for accurate $2002 reads at VBlank
+- Version Consistency: Fixed About window (0.8.1) and Settings (0.8.2) showing outdated versions
+- Documentation: Fixed clone_mapper doctest by implementing full Clone for mapper Box types
+
+---
+
+## Previous Accomplishments (v0.8.3 - Dec 28, 2025)
 
 ### Critical Rendering Bug Fix
 
@@ -491,15 +536,14 @@ Complete rewrite of the desktop frontend from Iced+wgpu to eframe+egui:
 - Some attribute table edge cases may have minor glitches
 - Sprite overflow flag not fully cycle-accurate
 - Mid-scanline updates not yet supported for all registers
-- VBlank timing tests (ppu_02, ppu_03) require cycle-by-cycle CPU execution (see CPU/PPU Timing below)
+- VBlank timing tests (ppu_02, ppu_03) now PASS with ±0 cycle accuracy (v0.8.5)
 
-### CPU/PPU Timing (Architectural)
-- Two timing tests are ignored: `ppu_02-vbl_set_time` and `ppu_03-vbl_clear_time`
-- These tests require ±2 cycle accuracy when reading $2002 (PPUSTATUS) during VBlank transitions
-- **Root cause**: CPU executes instructions atomically; PPU steps after instruction completes
-- **Required fix**: Cycle-level CPU execution with PPU stepped before each memory access (like Pinky's `on_cpu_cycle()`)
-- **Workaround implemented**: Console now pre-steps PPU before CPU cycle (helps but not sufficient for tests)
-- **Deferred to**: Phase 2+ (requires major rustynes-cpu refactor, 100+ hours)
+### CPU/PPU Timing (RESOLVED in v0.8.5)
+- **Previously ignored:** `ppu_02-vbl_set_time` and `ppu_03-vbl_clear_time` timing tests
+- **Now passing:** VBlank timing tests pass with ±0 cycle accuracy
+- **Solution implemented:** CpuBus trait with `on_cpu_cycle()` callback for PPU stepping
+- **Architecture:** PPU stepped 3 dots before each CPU memory access (NTSC 3:1 ratio)
+- **cpu.tick():** Cycle-by-cycle CPU execution for sub-instruction timing precision
 
 ### General
 - WebAssembly frontend not yet implemented
@@ -510,8 +554,9 @@ Complete rewrite of the desktop frontend from Iced+wgpu to eframe+egui:
 ## Accuracy Targets
 
 - CPU: 100% nestest.nes golden log ✅ **ACHIEVED**
-- PPU: 100% blargg PPU tests, sprite_hit, ppu_vbl_nmi 🔄 **IN PROGRESS**
-- APU: 95%+ blargg APU tests 🔄 **IN PROGRESS**
+- PPU: 100% blargg PPU tests (25/25) ✅ **ACHIEVED** (v0.8.5)
+- APU: 100% blargg APU tests (15/15) ✅ **ACHIEVED**
+- Mappers: 100% Mapper tests (28/28) ✅ **ACHIEVED**
 - Overall: 100% TASVideos accuracy suite (156 tests) 📋 **PLANNED**
 
 ## Code Patterns
