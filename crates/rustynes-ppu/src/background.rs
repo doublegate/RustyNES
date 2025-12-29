@@ -41,10 +41,10 @@ pub struct Background {
     pattern_shift_low: u16,
     /// Pattern shift register (high bitplane, 16-bit)
     pattern_shift_high: u16,
-    /// Attribute latch low (extended to 8 bits)
-    attribute_latch_low: u8,
-    /// Attribute latch high (extended to 8 bits)
-    attribute_latch_high: u8,
+    /// Attribute shift register low (16-bit, same indexing as pattern registers)
+    attribute_shift_low: u16,
+    /// Attribute shift register high (16-bit, same indexing as pattern registers)
+    attribute_shift_high: u16,
 }
 
 impl Background {
@@ -57,8 +57,8 @@ impl Background {
             pattern_high: 0,
             pattern_shift_low: 0,
             pattern_shift_high: 0,
-            attribute_latch_low: 0,
-            attribute_latch_high: 0,
+            attribute_shift_low: 0,
+            attribute_shift_high: 0,
         }
     }
 
@@ -109,41 +109,41 @@ impl Background {
     /// Load shift registers with fetched tile data
     ///
     /// Called every 8 dots after all 4 bytes are fetched.
+    /// Pattern and attribute data loads into the low 8 bits while
+    /// the high 8 bits continue to be shifted out for rendering.
     #[allow(dead_code)] // Used in full rendering implementation
     pub fn load_shift_registers(&mut self) {
         // Load pattern data into low 8 bits of shift registers
         self.pattern_shift_low = (self.pattern_shift_low & 0xFF00) | (self.pattern_low as u16);
         self.pattern_shift_high = (self.pattern_shift_high & 0xFF00) | (self.pattern_high as u16);
 
-        // Extend attribute bits to 8 bits (all same value)
-        self.attribute_latch_low = if self.attribute_byte & 0x01 != 0 {
-            0xFF
-        } else {
-            0x00
-        };
-        self.attribute_latch_high = if self.attribute_byte & 0x02 != 0 {
-            0xFF
-        } else {
-            0x00
-        };
+        // Load attribute data into low 8 bits of shift registers
+        // Each bit is extended to fill all 8 bits (0x00 or 0xFF)
+        // This allows fine_x-based bit selection to work correctly
+        self.attribute_shift_low = (self.attribute_shift_low & 0xFF00)
+            | if self.attribute_byte & 0x01 != 0 {
+                0x00FF
+            } else {
+                0x0000
+            };
+        self.attribute_shift_high = (self.attribute_shift_high & 0xFF00)
+            | if self.attribute_byte & 0x02 != 0 {
+                0x00FF
+            } else {
+                0x0000
+            };
     }
 
     /// Shift all registers by 1 bit
     ///
     /// Called every dot during rendering.
+    /// All four 16-bit shift registers shift left together.
     #[inline]
     pub fn shift_registers(&mut self) {
         self.pattern_shift_low <<= 1;
         self.pattern_shift_high <<= 1;
-
-        // Shift attribute registers and reload bit 0 from attribute byte latch
-        // This matches NES PPU hardware behavior where attribute shift registers
-        // shift left every cycle with bit 0 constantly reloaded
-        let attr_bit_0 = u8::from(self.attribute_byte & 0x01 != 0);
-        let attr_bit_1 = u8::from(self.attribute_byte & 0x02 != 0);
-
-        self.attribute_latch_low = (self.attribute_latch_low << 1) | attr_bit_0;
-        self.attribute_latch_high = (self.attribute_latch_high << 1) | attr_bit_1;
+        self.attribute_shift_low <<= 1;
+        self.attribute_shift_high <<= 1;
     }
 
     /// Get background pixel and palette
@@ -153,20 +153,21 @@ impl Background {
     /// - palette: 2-bit palette select (0-3)
     ///
     /// If pixel is 0, the background is transparent.
+    #[inline]
     pub fn get_pixel(&self, fine_x: u8) -> (u8, u8) {
         // Select bit based on fine X scroll (0-7)
+        // All four 16-bit shift registers use the same bit position
         let bit_select = 0x8000 >> fine_x;
 
-        // Get pattern bits
+        // Get pattern bits (2-bit pixel value)
         let pattern_low_bit = u8::from(self.pattern_shift_low & bit_select != 0);
         let pattern_high_bit = u8::from(self.pattern_shift_high & bit_select != 0);
-
         let pixel = pattern_low_bit | (pattern_high_bit << 1);
 
-        // Get attribute bits (extended to match shift register)
-        let attr_low_bit = u8::from(self.attribute_latch_low & 0x80 != 0);
-        let attr_high_bit = u8::from(self.attribute_latch_high & 0x80 != 0);
-
+        // Get attribute bits (2-bit palette select)
+        // Uses same bit_select as pattern - this is the critical fix!
+        let attr_low_bit = u8::from(self.attribute_shift_low & bit_select != 0);
+        let attr_high_bit = u8::from(self.attribute_shift_high & bit_select != 0);
         let palette = attr_low_bit | (attr_high_bit << 1);
 
         (pixel, palette)
@@ -180,8 +181,8 @@ impl Background {
         self.pattern_high = 0;
         self.pattern_shift_low = 0;
         self.pattern_shift_high = 0;
-        self.attribute_latch_low = 0;
-        self.attribute_latch_high = 0;
+        self.attribute_shift_low = 0;
+        self.attribute_shift_high = 0;
     }
 }
 
@@ -233,9 +234,9 @@ mod tests {
         assert_eq!(bg.pattern_shift_low & 0xFF, 0b1010_1010);
         assert_eq!(bg.pattern_shift_high & 0xFF, 0b1100_1100);
 
-        // Attribute latches should be extended
-        assert_eq!(bg.attribute_latch_low, 0xFF);
-        assert_eq!(bg.attribute_latch_high, 0xFF);
+        // Attribute shift registers should be extended (0xFF in low byte)
+        assert_eq!(bg.attribute_shift_low & 0xFF, 0xFF);
+        assert_eq!(bg.attribute_shift_high & 0xFF, 0xFF);
     }
 
     #[test]
@@ -255,26 +256,27 @@ mod tests {
     fn test_get_pixel() {
         let mut bg = Background::new();
 
-        // Set up pattern: 0b10101010, 0b11001100
+        // Set up pattern: 0b10101010, 0b11001100 in high byte (for fine_x=0..7 selection)
         bg.pattern_shift_low = 0b1010_1010_0000_0000;
         bg.pattern_shift_high = 0b1100_1100_0000_0000;
-        bg.attribute_latch_low = 0xFF; // Palette bit 0 = 1
-        bg.attribute_latch_high = 0x00; // Palette bit 1 = 0
+        // Attribute shift registers: all 1s in high byte = palette bit set
+        bg.attribute_shift_low = 0xFF00; // Palette bit 0 = 1 for all positions
+        bg.attribute_shift_high = 0x0000; // Palette bit 1 = 0 for all positions
 
-        // Fine X = 0 (leftmost pixel)
+        // Fine X = 0 (leftmost pixel, bit 15)
         let (pixel, palette) = bg.get_pixel(0);
         // Pattern bits: low=1, high=1 -> pixel=3
         assert_eq!(pixel, 0b11);
         // Palette bits: low=1, high=0 -> palette=1
         assert_eq!(palette, 0b01);
 
-        // Fine X = 1
+        // Fine X = 1 (bit 14)
         let (pixel, palette) = bg.get_pixel(1);
         // Pattern bits: low=0, high=1 -> pixel=2
         assert_eq!(pixel, 0b10);
         assert_eq!(palette, 0b01);
 
-        // Fine X = 2
+        // Fine X = 2 (bit 13)
         let (pixel, palette) = bg.get_pixel(2);
         // Pattern bits: low=1, high=0 -> pixel=1
         assert_eq!(pixel, 0b01);
