@@ -1,11 +1,11 @@
-# M11-S6: Testing and Validation
+# M11-S7: Testing and Validation
 
-**Sprint:** S6 (Testing)
+**Sprint:** S7 (Testing)
 **Milestone:** M11 (Sub-Cycle Accuracy)
 **Duration:** 1-2 weeks (8-12 hours)
 **Status:** PLANNED
 **Priority:** HIGH - Validation of all changes
-**Depends On:** S1-S5 (All previous sprints)
+**Depends On:** S1-S6 (All previous sprints)
 
 ---
 
@@ -23,6 +23,7 @@ Comprehensive testing and validation of sub-cycle accuracy implementation, inclu
 - **S3 (APU)** - APU integration must be complete
 - **S4 (Bus/DMA)** - DMA timing must be accurate
 - **S5 (Mappers)** - Mapper IRQ timing must be accurate
+- **S6 (Desktop)** - Desktop integration must be complete
 
 ### Blocks
 - **v1.0.0 Release** - Cannot release until all tests pass
@@ -52,7 +53,7 @@ Comprehensive testing and validation of sub-cycle accuracy implementation, inclu
 
 ## Required Testing
 
-### Task S6.1: VBlank Timing Test Validation
+### Task S7.1: VBlank Timing Test Validation
 
 **Priority:** P0 (Critical)
 **Effort:** 3 hours
@@ -103,7 +104,7 @@ fn test_ppu_03_vbl_clear_time() {
 
 ---
 
-### Task S6.2: Full Blargg Test Suite Regression
+### Task S7.2: Full Blargg Test Suite Regression
 
 **Priority:** P0 (Critical)
 **Effort:** 2 hours
@@ -133,7 +134,7 @@ fn test_ppu_03_vbl_clear_time() {
 
 ---
 
-### Task S6.3: nestest.nes Golden Log Validation
+### Task S7.3: nestest.nes Golden Log Validation
 
 **Priority:** P0 (Critical)
 **Effort:** 1 hour
@@ -160,7 +161,7 @@ nestest.nes Validation:
 
 ---
 
-### Task S6.4: TASVideos Accuracy Suite
+### Task S7.4: TASVideos Accuracy Suite
 
 **Priority:** P1
 **Effort:** 3 hours
@@ -188,7 +189,7 @@ nestest.nes Validation:
 
 ---
 
-### Task S6.5: Performance Benchmarking
+### Task S7.5: Performance Benchmarking
 
 **Priority:** P1
 **Effort:** 2 hours
@@ -244,7 +245,7 @@ criterion_main!(benches);
 
 ---
 
-### Task S6.6: Game Compatibility Testing
+### Task S7.6: Game Compatibility Testing
 
 **Priority:** P1
 **Effort:** 2 hours
@@ -276,7 +277,7 @@ criterion_main!(benches);
 
 ---
 
-### Task S6.7: Unit Test Updates
+### Task S7.7: Unit Test Updates
 
 **Priority:** P0
 **Effort:** 2 hours
@@ -331,7 +332,7 @@ fn test_vblank_read_at_exact_cycle() {
 
 ---
 
-### Task S6.8: Regression Test Suite
+### Task S7.8: Regression Test Suite
 
 **Priority:** P0
 **Effort:** 1 hour
@@ -445,15 +446,16 @@ jobs:
 ### Milestone 11 Complete When
 
 1. [x] CPU refactored to cycle-by-cycle execution (S1)
-2. [ ] PPU stepped before each CPU memory access (S2)
-3. [ ] APU stepped before each CPU memory access (S3)
-4. [ ] `ppu_02-vbl_set_time` test PASSES (S2/S6)
-5. [ ] `ppu_03-vbl_clear_time` test PASSES (S2/S6)
-6. [ ] All 90 Blargg tests pass (0 regressions) (S6)
-7. [ ] All 517+ unit tests pass (0 regressions) (S6)
-8. [ ] Performance within 20% of v0.8.4 (S6)
-9. [ ] OAM DMA timing verified (S4)
-10. [ ] DMC DMA cycle stealing implemented (S3/S4)
+2. [x] PPU stepped before each CPU memory access (S2)
+3. [x] APU stepped before each CPU memory access (S3)
+4. [ ] `ppu_02-vbl_set_time` test PASSES (S2/S7)
+5. [ ] `ppu_03-vbl_clear_time` test PASSES (S2/S7)
+6. [ ] All 90 Blargg tests pass (0 regressions) (S7)
+7. [ ] All 517+ unit tests pass (0 regressions) (S7)
+8. [ ] Performance within 20% of v0.8.4 (S7)
+9. [x] OAM DMA timing verified (S4)
+10. [x] DMC DMA cycle stealing implemented (S3/S4)
+11. [ ] Desktop integration with sub-cycle accuracy (S6)
 
 ---
 

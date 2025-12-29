@@ -2,11 +2,11 @@
 
 **Milestone:** M11 (Sub-Cycle Accuracy)
 **Phase:** 1.5 (Stabilization & Accuracy) -> Phase 2 Bridge
-**Duration:** ~8-12 weeks (Estimated 100-150 hours)
-**Status:** PLANNED
+**Duration:** ~10-14 weeks (Estimated 110-165 hours)
+**Status:** IN PROGRESS
 **Version Target:** v1.0.0
 **Priority:** Critical - Architectural Foundation
-**Progress:** 0%
+**Progress:** 71% (5/7 sprints complete)
 
 ---
 
@@ -62,14 +62,15 @@ Implement Pinky's `on_cpu_cycle()` callback pattern:
 
 ### Component Status Overview
 
-| Component | Current State | Sub-Cycle Ready | Effort |
-|-----------|---------------|-----------------|--------|
-| **CPU** | Atomic instruction execution | NO | High (40-60h) |
-| **PPU** | Dot-level stepping | YES | Low (5-10h) |
-| **APU** | Frame counter accurate | PARTIAL | Medium (10-15h) |
-| **Bus** | DMA cycle tracking | PARTIAL | Medium (15-20h) |
-| **Console** | Pre-steps PPU before CPU | PARTIAL | Medium (10-15h) |
-| **Mappers** | Clocked after instruction | NO | Medium (15-20h) |
+| Component | Current State | Sub-Cycle Ready | Sprint | Status |
+|-----------|---------------|-----------------|--------|--------|
+| **CPU** | Cycle-by-cycle execution | YES | S1 | COMPLETE |
+| **PPU** | Dot-level stepping, synced | YES | S2 | COMPLETE |
+| **APU** | Frame counter synced | YES | S3 | COMPLETE |
+| **Bus** | DMA cycle-accurate | YES | S4 | COMPLETE |
+| **Console** | on_cpu_cycle() integrated | YES | S4 | COMPLETE |
+| **Mappers** | Clocked per CPU cycle | YES | S5 | COMPLETE |
+| **Desktop** | Needs integration | NO | S6 | PLANNED |
 
 ---
 
@@ -588,21 +589,46 @@ This is more elegant but requires nightly Rust. Recommend explicit cycle callbac
 
 ---
 
-### Sprint 6: Testing and Validation (8-12 hours)
+### Sprint 6: Desktop Integration (10-15 hours)
+
+**Duration:** 1-2 weeks
+**Priority:** HIGH - Frontend integration with sub-cycle accuracy
+
+#### Tasks
+
+- [ ] **S6.1** Validate frame timing precision (29780.5 CPU cycles average)
+- [ ] **S6.2** Implement audio/video synchronization with cycle-accurate emulation
+- [ ] **S6.3** Optimize input latency for sub-frame accuracy
+- [ ] **S6.4** Update debug windows for cycle-level state display
+- [ ] **S6.5** Profile and optimize tick() loop with cycle callbacks
+- [ ] **S6.6** Resolve technical debt in rustynes-desktop
+
+#### Acceptance Criteria
+
+- Frame timing within 0.1% of hardware
+- No audio crackling during gameplay
+- Input latency < 1 frame (16.67ms)
+- Debug windows show cycle-level state
+- Performance regression < 20% vs v0.8.4
+- Zero clippy warnings
+
+---
+
+### Sprint 7: Testing and Validation (8-12 hours)
 
 **Duration:** 1-2 weeks
 **Priority:** HIGH - Validation of all changes
 
 #### Tasks
 
-- [ ] **S6.1** Enable and validate VBlank timing tests
-- [ ] **S6.2** Full Blargg test suite regression testing
-- [ ] **S6.3** nestest.nes golden log validation
-- [ ] **S6.4** TASVideos accuracy suite testing
-- [ ] **S6.5** Performance benchmarking
-- [ ] **S6.6** Game compatibility testing
-- [ ] **S6.7** Unit test updates for new interface
-- [ ] **S6.8** Regression test suite setup
+- [ ] **S7.1** Enable and validate VBlank timing tests
+- [ ] **S7.2** Full Blargg test suite regression testing
+- [ ] **S7.3** nestest.nes golden log validation
+- [ ] **S7.4** TASVideos accuracy suite testing
+- [ ] **S7.5** Performance benchmarking
+- [ ] **S7.6** Game compatibility testing
+- [ ] **S7.7** Unit test updates for new interface
+- [ ] **S7.8** Regression test suite setup
 
 #### Acceptance Criteria
 
@@ -621,30 +647,32 @@ Detailed sprint planning documents with comprehensive task breakdowns, implement
 
 | Sprint | Document | Status | Focus |
 |--------|----------|--------|-------|
-| **S1** | [M11-S1-cpu-refactor.md](./M11-S1-cpu-refactor.md) | PLANNED | CPU cycle-by-cycle refactor (all 256 opcodes) |
-| **S2** | [M11-S2-ppu-sync.md](./M11-S2-ppu-sync.md) | PLANNED | PPU synchronization integration |
-| **S3** | [M11-S3-apu-precision.md](./M11-S3-apu-precision.md) | PLANNED | APU precision integration |
-| **S4** | [M11-S4-bus-dma.md](./M11-S4-bus-dma.md) | PLANNED | Bus and DMA integration |
-| **S5** | [M11-S5-mapper-accuracy.md](./M11-S5-mapper-accuracy.md) | PLANNED | Mapper timing accuracy |
-| **S6** | [M11-S6-testing.md](./M11-S6-testing.md) | PLANNED | Testing and validation |
+| **S1** | [M11-S1-cpu-refactor.md](./M11-S1-cpu-refactor.md) | COMPLETE | CPU cycle-by-cycle refactor (all 256 opcodes) |
+| **S2** | [M11-S2-ppu-sync.md](./M11-S2-ppu-sync.md) | COMPLETE | PPU synchronization integration |
+| **S3** | [M11-S3-apu-precision.md](./M11-S3-apu-precision.md) | COMPLETE | APU precision integration |
+| **S4** | [M11-S4-bus-dma.md](./M11-S4-bus-dma.md) | COMPLETE | Bus and DMA integration |
+| **S5** | [M11-S5-mapper-accuracy.md](./M11-S5-mapper-accuracy.md) | COMPLETE | Mapper timing accuracy |
+| **S6** | [M11-S6-desktop-integration.md](./M11-S6-desktop-integration.md) | PLANNED | Desktop frontend integration |
+| **S7** | [M11-S7-testing.md](./M11-S7-testing.md) | PLANNED | Testing and validation |
 
 ### Sprint Dependency Chain
 
 ```text
-S1 (CPU Refactor) ──┬──> S2 (PPU Sync) ──┬──> S4 (Bus/DMA) ──> S6 (Testing)
-                    │                     │
-                    └──> S3 (APU Precision)┘
-                    │
-                    └──> S5 (Mapper Accuracy) ─────────────────> S6 (Testing)
+S1 (CPU Refactor) ──┬──> S2 (PPU Sync) ──┬──> S4 (Bus/DMA) ──┬──> S6 (Desktop) ──> S7 (Testing)
+                    │                     │                   │
+                    └──> S3 (APU Precision)┘                   │
+                    │                                          │
+                    └──> S5 (Mapper Accuracy) ─────────────────┘
 ```
 
 ### Sprint Execution Order
 
-1. **S1** must complete first (foundation for all other sprints)
-2. **S2, S3** can run in parallel after S1
-3. **S4** requires S1, S2 complete
-4. **S5** requires S1, S2 complete (can run parallel with S4)
-5. **S6** validates all prior sprints
+1. **S1** must complete first (foundation for all other sprints) - COMPLETE
+2. **S2, S3** can run in parallel after S1 - COMPLETE
+3. **S4** requires S1, S2 complete - COMPLETE
+4. **S5** requires S1, S2 complete (can run parallel with S4) - COMPLETE
+5. **S6** integrates sub-cycle accuracy into desktop frontend - PLANNED
+6. **S7** validates all prior sprints - PLANNED
 
 ---
 
@@ -682,26 +710,33 @@ S1 (CPU Refactor) ──┬──> S2 (PPU Sync) ──┬──> S4 (Bus/DMA) �
 
 ### Summary
 
-| Sprint | Hours | Risk | Dependencies |
-|--------|-------|------|--------------|
-| S1: CPU Refactor | 40-60h | HIGH | None |
-| S2: PPU Sync | 5-10h | LOW | S1 |
-| S3: APU Precision | 10-15h | MEDIUM | S1 |
-| S4: Bus/DMA | 15-20h | MEDIUM | S1, S2 |
-| S5: Mappers | 15-20h | MEDIUM | S1, S2 |
-| S6: Testing | 8-12h | LOW | S1-S5 |
-| **Total** | **93-137h** | | |
+| Sprint | Hours | Risk | Dependencies | Status |
+|--------|-------|------|--------------|--------|
+| S1: CPU Refactor | 40-60h | HIGH | None | COMPLETE |
+| S2: PPU Sync | 5-10h | LOW | S1 | COMPLETE |
+| S3: APU Precision | 10-15h | MEDIUM | S1 | COMPLETE |
+| S4: Bus/DMA | 15-20h | MEDIUM | S1, S2 | COMPLETE |
+| S5: Mappers | 15-20h | MEDIUM | S1, S2 | COMPLETE |
+| S6: Desktop | 10-15h | MEDIUM | S1-S5 | PLANNED |
+| S7: Testing | 8-12h | LOW | S1-S6 | PLANNED |
+| **Total** | **103-152h** | | | **71%** |
+
+### Progress Summary
+
+- **Completed:** S1-S5 (85-125 hours)
+- **Remaining:** S6-S7 (18-27 hours)
+- **Estimated completion:** 2-3 weeks
 
 ### Confidence Level
 
-- **Conservative estimate:** 137 hours (worst case)
-- **Expected estimate:** 115 hours (likely)
-- **Optimistic estimate:** 93 hours (best case)
+- **Conservative estimate:** 152 hours (worst case)
+- **Expected estimate:** 127 hours (likely)
+- **Optimistic estimate:** 103 hours (best case)
 
 ### Resource Requirements
 
-- 1 developer, 8-12 weeks at 10h/week
-- OR 2 developers, 4-6 weeks at 10h/week each
+- 1 developer, 10-14 weeks at 10h/week
+- OR 2 developers, 5-7 weeks at 10h/week each
 - Reference materials: Pinky source, NESdev wiki, Mesen2 source
 
 ---
@@ -819,20 +854,23 @@ impl<C: Context> mos6502::Context for Orphan<C> {
 
 ### Milestone Complete When
 
-1. [x] CPU refactored to cycle-by-cycle execution
-2. [ ] PPU stepped before each CPU memory access
-3. [ ] APU stepped before each CPU memory access
-4. [ ] `ppu_02-vbl_set_time` test PASSES
-5. [ ] `ppu_03-vbl_clear_time` test PASSES
-6. [ ] All 90 Blargg tests still pass (0 regressions)
-7. [ ] All 517+ unit tests still pass (0 regressions)
-8. [ ] Performance within 20% of current (acceptable tradeoff for accuracy)
-9. [ ] OAM DMA timing verified
-10. [ ] DMC DMA cycle stealing implemented
+1. [x] CPU refactored to cycle-by-cycle execution (S1)
+2. [x] PPU stepped before each CPU memory access (S2)
+3. [x] APU stepped before each CPU memory access (S3)
+4. [x] OAM DMA timing verified (S4)
+5. [x] DMC DMA cycle stealing implemented (S4)
+6. [x] Mapper IRQ timing accurate (S5)
+7. [ ] Desktop integration with sub-cycle accuracy (S6)
+8. [ ] `ppu_02-vbl_set_time` test PASSES (S7)
+9. [ ] `ppu_03-vbl_clear_time` test PASSES (S7)
+10. [ ] All 90 Blargg tests still pass (0 regressions) (S7)
+11. [ ] All 517+ unit tests still pass (0 regressions) (S7)
+12. [ ] Performance within 20% of v0.8.4 (S6/S7)
 
 ### Version Targets
 
 - **Start:** v0.8.4
+- **Current:** v0.8.6
 - **Complete:** v1.0.0
 
 ---
@@ -889,7 +927,8 @@ impl<C: Context> mos6502::Context for Orphan<C> {
 
 ---
 
-**Status:** PLANNED
+**Status:** IN PROGRESS (71% Complete)
 **Created:** 2025-12-28
-**Author:** Claude Code Audit
-**Next Review:** Upon Sprint 1 kickoff
+**Updated:** 2025-12-29
+**Author:** Claude Code
+**Next Review:** Upon Sprint 6 completion
