@@ -222,12 +222,56 @@ Phase 1.5 delivers a **comprehensive stabilization and accuracy improvement phas
 
 ---
 
+### Milestone 11: Sub-Cycle Accuracy (v1.0.0) [OPTIONAL/BRIDGE]
+
+**Duration:** ~8-12 weeks (100-150 hours)
+**Status:** PLANNED
+**Priority:** Critical - Architectural Foundation for Phase 2
+
+**Goals:**
+
+- [ ] Cycle-by-cycle CPU execution with per-memory-access callbacks
+- [ ] PPU stepped 3x per CPU cycle via `on_cpu_cycle()` callback
+- [ ] APU stepped 1x per CPU cycle via `on_cpu_cycle()` callback
+- [ ] Pass `ppu_02-vbl_set_time` test (+/-2 cycle accuracy)
+- [ ] Pass `ppu_03-vbl_clear_time` test (+/-2 cycle accuracy)
+- [ ] DMA cycle stealing integration
+- [ ] Mapper IRQ timing precision
+
+**Sprints:**
+
+1. [M11-S1: CPU Cycle-by-Cycle Refactor](milestone-11-sub-cycle-accuracy/M11-S1-cpu-refactor.md) - 40-60h
+2. [M11-S2: PPU Synchronization](milestone-11-sub-cycle-accuracy/M11-S2-ppu-sync.md) - 5-10h
+3. M11-S3: APU Precision Integration - 10-15h
+4. M11-S4: Bus and DMA Integration - 15-20h
+5. M11-S5: Mapper Accuracy - 15-20h
+
+**Architecture Pattern (from Pinky):**
+
+```rust
+// on_cpu_cycle() called BEFORE each CPU memory access
+fn on_cpu_cycle(&mut self) {
+    // Step APU once
+    self.apu.clock();
+    // Step PPU three times (3:1 ratio)
+    for _ in 0..3 {
+        self.ppu.step();
+    }
+}
+```
+
+**Deliverable:** v1.0.0 with sub-cycle accuracy, surpassing Mesen2
+
+[Full M11 Documentation](milestone-11-sub-cycle-accuracy/M11-SUB-CYCLE-ACCURACY.md)
+
+---
+
 ## Dependencies
 
 ### Critical Path
 
 ```text
-M7: Accuracy → M8: Test ROMs → M9: Known Issues → M10: Polish → Phase 2 (M11+)
+M7: Accuracy → M8: Test ROMs → M9: Known Issues → M10: Polish → M11: Sub-Cycle → Phase 2
 ```
 
 ### Milestone Dependencies
@@ -237,7 +281,8 @@ M7: Accuracy → M8: Test ROMs → M9: Known Issues → M10: Polish → Phase 2 
 | M7: Accuracy | Phase 1 complete (v0.5.0) | M8 |
 | M8: Test ROMs | M7 (accuracy improvements needed for pass rate) | M9 |
 | M9: Known Issues | M8 (test results identify edge cases) | M10 |
-| M10: Polish | M7, M8, M9 (stabilization complete) | Phase 2 (M11) |
+| M10: Polish | M7, M8, M9 (stabilization complete) | M11 |
+| M11: Sub-Cycle | M10 (architecture foundation) | Phase 2 (TAS, netplay, achievements) |
 
 ### External Dependencies
 
