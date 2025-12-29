@@ -179,9 +179,16 @@ impl Console {
     /// Execute exactly one CPU cycle with perfect PPU/APU synchronization.
     ///
     /// This is the cycle-accurate execution mode. Each call:
+    /// - Advances the PPU by exactly 3 dots BEFORE CPU cycle (critical for $2002 timing)
     /// - Advances the CPU by exactly one cycle
-    /// - Advances the PPU by exactly 3 dots (3:1 PPU:CPU ratio)
     /// - Advances the APU by one step
+    ///
+    /// # Timing Model
+    ///
+    /// PPU is stepped BEFORE the CPU cycle to ensure accurate `VBlank` flag detection.
+    /// When CPU reads $2002 (PPUSTATUS) at cycle N, PPU state reflects dot 3N.
+    /// This is critical for passing ppu_02-vbl_set_time and ppu_03-vbl_clear_time tests
+    /// which require ±2 cycle accuracy.
     ///
     /// # Returns
     ///
@@ -212,34 +219,9 @@ impl Console {
     pub fn tick(&mut self) -> (bool, bool) {
         let mut frame_complete = false;
 
-        // Handle DMA if active (DMA steals CPU cycles)
-        if self.bus.dma_active() {
-            let dma_done = self.bus.tick_dma();
-            if !dma_done {
-                // DMA cycle - still advance PPU and APU
-                for _ in 0..3 {
-                    let (fc, nmi) = self.bus.step_ppu();
-                    if nmi {
-                        self.cpu.trigger_nmi();
-                    }
-                    if fc {
-                        frame_complete = true;
-                        self.frame_count += 1;
-                    }
-                }
-                self.bus.apu.step();
-                self.master_cycles += 1;
-                return (false, frame_complete);
-            }
-        }
-
-        // Execute one CPU cycle
-        let instruction_complete = self.cpu.tick(&mut self.bus);
-
-        // Track CPU cycles for DMA timing
-        self.bus.add_cpu_cycles(1);
-
-        // Step PPU (3 dots per CPU cycle)
+        // Step PPU BEFORE CPU cycle (3 dots per CPU cycle)
+        // This ensures PPU state is current when CPU reads $2002 (PPUSTATUS)
+        // Critical for VBlank timing accuracy (±2 cycles)
         for _ in 0..3 {
             let (fc, nmi) = self.bus.step_ppu();
             if nmi {
@@ -250,6 +232,23 @@ impl Console {
                 self.frame_count += 1;
             }
         }
+
+        // Handle DMA if active (DMA steals CPU cycles)
+        if self.bus.dma_active() {
+            let dma_done = self.bus.tick_dma();
+            if !dma_done {
+                // DMA cycle - PPU already stepped above, just step APU
+                self.bus.apu.step();
+                self.master_cycles += 1;
+                return (false, frame_complete);
+            }
+        }
+
+        // Execute one CPU cycle (PPU is now synced to current cycle)
+        let instruction_complete = self.cpu.tick(&mut self.bus);
+
+        // Track CPU cycles for DMA timing
+        self.bus.add_cpu_cycles(1);
 
         // Step APU (1 step per CPU cycle)
         self.bus.apu.step();

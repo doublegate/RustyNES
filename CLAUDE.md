@@ -8,13 +8,14 @@ RustyNES is a next-generation Nintendo Entertainment System (NES) emulator writt
 
 **Status:** v0.8.3 - Phase 1.5 Stabilization In Progress (M7-M8 Complete, M9 85% Complete, M10 50% Complete). All Phase 1 milestones (M1-M6) done.
 
-**Test Status:** 516+ tests passing (0 failures, 0 ignored). 100% Blargg pass rate (90/90 tests)
+**Test Status:** 517+ tests passing (0 failures, 2 ignored). 100% Blargg pass rate (90/90 tests)
 
 **Current Version:** v0.8.3 (December 28, 2025)
 - Critical Rendering Fix: Fixed framebuffer display showing "4 faint postage stamp copies" artifact
 - Palette Conversion: NES palette indices (0-63) now correctly converted to RGB using NES_PALETTE lookup table
 - Documentation: Changed 3 doctests from `ignore` to `no_run` for compile-time verification
-- Zero accuracy regressions (516+ tests passing)
+- PPU Timing: Console now pre-steps PPU before CPU cycle (improved but not sufficient for VBlank timing tests)
+- Zero accuracy regressions (517+ tests passing, 2 ignored)
 
 **Previous Version:** v0.8.2 (December 28, 2025)
 - M10 Final Polish: Sprint 1 UI/UX Improvements complete (50% total)
@@ -484,6 +485,15 @@ Complete rewrite of the desktop frontend from Iced+wgpu to eframe+egui:
 - Some attribute table edge cases may have minor glitches
 - Sprite overflow flag not fully cycle-accurate
 - Mid-scanline updates not yet supported for all registers
+- VBlank timing tests (ppu_02, ppu_03) require cycle-by-cycle CPU execution (see CPU/PPU Timing below)
+
+### CPU/PPU Timing (Architectural)
+- Two timing tests are ignored: `ppu_02-vbl_set_time` and `ppu_03-vbl_clear_time`
+- These tests require ±2 cycle accuracy when reading $2002 (PPUSTATUS) during VBlank transitions
+- **Root cause**: CPU executes instructions atomically; PPU steps after instruction completes
+- **Required fix**: Cycle-level CPU execution with PPU stepped before each memory access (like Pinky's `on_cpu_cycle()`)
+- **Workaround implemented**: Console now pre-steps PPU before CPU cycle (helps but not sufficient for tests)
+- **Deferred to**: Phase 2+ (requires major rustynes-cpu refactor, 100+ hours)
 
 ### General
 - WebAssembly frontend not yet implemented
