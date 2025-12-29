@@ -28,7 +28,7 @@ A next-generation NES emulator written in pure Rust — targeting 100% accuracy,
 
 ---
 
-> **Status:** v0.8.1 Released - M9 Known Issues Resolution 85% Complete
+> **Status:** v0.8.2 Released - M10-S1 UI/UX Improvements Complete
 >
 > **Milestones Completed:**
 >
@@ -40,14 +40,15 @@ A next-generation NES emulator written in pure Rust — targeting 100% accuracy,
 > - ✅ **M6: Desktop GUI** - Cross-platform eframe/egui application with ROM loading, audio playback, and full input support
 > - ✅ **M7: Accuracy** - CPU/PPU/APU timing refinements, OAM DMA 513/514 cycle precision, hardware-accurate mixer
 > - ✅ **M8: Test ROMs** - 100% Pass Rate on all integrated test suites (CPU, PPU, APU, Mappers)
-> - ✅ **M9-S0: Dependencies** - Rust 2024 Edition, eframe 0.33, egui 0.33, cpal 0.16, ron 0.12
-> - 🔄 **M9: Known Issues** (85%) - Audio S1, PPU S2, Performance S3 complete; Bug fixes S4 pending
+> - ✅ **M9: Known Issues** (85%) - Audio S1, PPU S2, Performance S3 complete; Bug fixes S4 pending
+> - ✅ **M10-S0: Dependencies** - Rust 2024 Edition, eframe 0.33, egui 0.33, cpal 0.16, ron 0.12
+> - ✅ **M10-S1: UI/UX** - Theme support, status bar, tabbed settings, keyboard shortcuts, modal dialogs
 >
 > **Test Suite:** 508+ tests passing (0 failures, 0 ignored)
 >
-> **Current:** Phase 1.5 (Stabilization) - M9-M10: Known Issues & Final Polish
+> **Current:** Phase 1.5 (Stabilization) - M10: Final Polish (50% Complete)
 >
-> **Next:** M9-S1: UI/UX Improvements, M9-S2: Documentation Updates
+> **Next:** M10-S2: Documentation, M10-S3: Release Preparation
 >
 > See [ROADMAP.md](ROADMAP.md) and [to-dos/](to-dos/) for development timeline.
 
@@ -852,9 +853,9 @@ If you use RustyNES in academic research, please cite:
   author = {RustyNES Contributors},
   title = {RustyNES: A Next-Generation NES Emulator in Rust},
   year = {2025},
-  version = {0.8.1},
+  version = {0.8.2},
   url = {https://github.com/doublegate/RustyNES},
-  note = {Cycle-accurate NES emulator with 100\% Blargg test pass rate, M9 Known Issues Resolution 85\% complete, Rust 2024 Edition, eframe/egui desktop GUI}
+  note = {Cycle-accurate NES emulator with 100\% Blargg test pass rate, M10 Final Polish 50\% complete (UI/UX improvements), Rust 2024 Edition, eframe/egui desktop GUI}
 }
 ```
 

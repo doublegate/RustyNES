@@ -5,8 +5,8 @@
 **Duration:** ~1 week (March-April 2026)
 **Status:** In Progress
 **Version Target:** v0.9.0 / v1.0.0-alpha.1
-**Progress:** 25% (S0 Complete)
-**Baseline:** v0.7.1+ (Post-Dependency Upgrade)
+**Progress:** 50% (S0 Complete, S1 Complete)
+**Baseline:** v0.8.2 (Post-UI/UX Improvements)
 **Updated:** 2025-12-28
 
 ---
@@ -122,19 +122,23 @@ The following foundational work was completed in v0.7.1 and M10-S0, providing a 
 
 ---
 
-### Sprint 1: UI/UX Improvements ⏳ PENDING
+### Sprint 1: UI/UX Improvements ✅ COMPLETE
 
 **Duration:** Days 1-2
 **Focus:** Desktop GUI polish and user experience
+**Status:** COMPLETE (2025-12-28)
+**Progress:** 100%
 
-**Objectives:**
-- [ ] Refine desktop GUI layout (responsive design)
-- [ ] Add theme support (light/dark mode)
-- [ ] Improve settings UI (intuitive, organized)
-- [ ] Add visual feedback (loading states, progress bars)
-- [ ] Polish animations and transitions
+**Completed Objectives:**
+- [x] Refine desktop GUI layout (responsive design)
+- [x] Add theme support (Light/Dark/System modes)
+- [x] Improve settings UI (tabbed layout with Video/Audio/Input/Advanced)
+- [x] Add visual feedback (status bar, FPS counter, color-coded messages)
+- [x] Polish animations and transitions
+- [x] Implement keyboard shortcuts (Ctrl+O/P/R/Q, F1-F3, M)
+- [x] Add modal dialogs (welcome, error, confirmation, help)
 
-**Deliverable:** Polished desktop GUI
+**Deliverable:** v0.8.2 released with polished desktop GUI
 
 [M10-S1 Details](M10-S1-ui-ux-improvements.md)
 
@@ -412,7 +416,8 @@ The following foundational work was completed in v0.7.1 and M10-S0, providing a 
 
 ---
 
-**Status:** IN PROGRESS (S0 Complete, S1-S3 Pending)
+**Status:** IN PROGRESS (S0 Complete, S1 Complete, S2-S3 Pending)
 **Blocks:** Phase 2 (Advanced Features)
 **Next Phase:** Phase 2 - Advanced Features (M11-M22)
 **Last Updated:** 2025-12-28
+**Current Version:** v0.8.2

@@ -21,7 +21,19 @@
 
 ---
 
-## Recent Updates (v2.10.0 - December 2025)
+## Recent Updates (v2.11.0 - December 2025)
+
+**v0.8.2 Released - December 28, 2025** - M10 Final Polish 50% Complete (UI/UX Improvements)!
+
+**M10 Sprint 1 Achievements:**
+
+- **Theme Support:** Light/Dark/System themes with persistence and real-time switching
+- **Status Bar:** FPS counter (500ms updates), ROM name display, color-coded status messages (auto-expiry)
+- **Tabbed Settings:** Video/Audio/Input/Advanced tabs with comprehensive tooltips
+- **Keyboard Shortcuts:** Ctrl+O/P/R/Q, F1-F3, M for common operations
+- **Modal Dialogs:** Welcome screen, error dialogs, confirmation prompts, help window
+- **Visual Feedback:** Contextual tooltips, organized menus with separators
+- **Zero Regressions:** 508+ tests passing, 100% Blargg pass rate maintained
 
 **v0.8.1 Released - December 28, 2025** - M9 Known Issues Resolution 85% Complete!
 
@@ -107,6 +119,7 @@
 - v0.7.1 (December 27, 2025): GUI Framework Migration - Complete rewrite from Iced+wgpu to eframe+egui
 - v0.8.0 (December 28, 2025): Rust 2024 Edition - MSRV 1.88+, dependency modernization, audio resampling
 - v0.8.1 (December 28, 2025): M9 Known Issues (85%) - Audio S1, PPU S2, Performance S3 complete
+- v0.8.2 (December 28, 2025): M10 Final Polish (50%) - UI/UX improvements, theme support, tabbed settings
 
 **Project Status Change:**
 
@@ -118,7 +131,7 @@
 
 ```text
 Phase 1 (MVP):         ████████████████████ 100% (M1-M6 COMPLETE)
-Phase 1.5 (Accuracy):  █████████████████░░░  85% (M7-M8 COMPLETE, M9-S0 COMPLETE, M9-M10 PENDING)
+Phase 1.5 (Accuracy):  ██████████████████░░  90% (M7-M8 COMPLETE, M9 85% COMPLETE, M10 50% COMPLETE)
 
 - M1: CPU         [████████████████████] 100% ✅ COMPLETED December 19, 2025
 - M2: PPU         [████████████████████] 100% ✅ COMPLETED December 19, 2025
@@ -135,10 +148,11 @@ Phase 1.5 (Accuracy):  █████████████████░░
 
 - M7 (Accuracy) COMPLETE: CPU/PPU/APU timing improvements, OAM DMA precision ✅
 - M8 (Test ROM Validation) COMPLETE: 100% Blargg pass rate (CPU 22/22, PPU 25/25, APU 15/15, Mappers 28/28) ✅
-- M9-S0 (Dependency Upgrade) COMPLETE: Rust 2024 Edition, MSRV 1.88+, dependency modernization ✅
+- M9 (Known Issues) 85% COMPLETE: Audio S1, PPU S2, Performance S3 complete ✅
+- M10-S1 (UI/UX Improvements) COMPLETE: Theme support, tabbed settings, status bar, keyboard shortcuts ✅
 - All known limitations resolved (cpu_dummy_reads, cpu_interrupts now passing) ✅
 - 508+ tests passing, 0 failures, 0 ignored ✅
-- Next: M9 (Known Issues Resolution) - Performance optimization, audio quality
+- Next: M10-S2 (Documentation), M10-S3 (Release Preparation)
 
 **Timeline Updates:**
 

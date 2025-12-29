@@ -6,18 +6,27 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 RustyNES is a next-generation Nintendo Entertainment System (NES) emulator written in Rust. Target: 100% TASVideos accuracy test pass rate, 300+ mappers, RetroAchievements, GGPO netplay, TAS tools, Lua scripting.
 
-**Status:** v0.8.1 - Phase 1.5 Stabilization In Progress (M7-M8 Complete, M9 85% Complete). All Phase 1 milestones (M1-M6) done.
+**Status:** v0.8.2 - Phase 1.5 Stabilization In Progress (M7-M8 Complete, M9 85% Complete, M10 50% Complete). All Phase 1 milestones (M1-M6) done.
 
 **Test Status:** 508+ tests passing (0 failures, 0 ignored). 100% Blargg pass rate (90/90 tests)
 
-**Current Version:** v0.8.1 (December 28, 2025)
+**Current Version:** v0.8.2 (December 28, 2025)
+- M10 Final Polish: Sprint 1 UI/UX Improvements complete (50% total)
+- Theme Support: Light/Dark/System themes with persistence and real-time switching
+- Status Bar: FPS counter (500ms updates), ROM name display, color-coded status messages
+- Tabbed Settings: Video/Audio/Input/Advanced tabs with comprehensive tooltips
+- Keyboard Shortcuts: Ctrl+O/P/R/Q, F1-F3, M for common operations
+- Modal Dialogs: Welcome screen, error dialogs, confirmation prompts, help window
+- Visual Feedback: Contextual tooltips, organized menus with separators
+- Zero accuracy regressions (508+ tests passing)
+
+**Previous Version:** v0.8.1 (December 28, 2025)
 - M9 Known Issues Resolution: Core implementation 85% complete
 - CPU performance: #[inline] hints on step(), execute_opcode(), handle_nmi(), handle_irq()
 - PPU performance: #[inline] hints on step(), step_with_chr()
 - Audio improvements: Dynamic resampling, A/V sync, buffer management (S1 complete)
 - PPU edge cases: Sprite overflow, palette RAM, mid-scanline writes (S2 complete)
 - Performance optimization: Hot path inline hints (S3 core complete)
-- Zero accuracy regressions (508+ tests passing)
 
 **Previous Version:** v0.8.0 (December 28, 2025)
 - Rust 2024 Edition adoption (MSRV 1.88)
@@ -285,10 +294,32 @@ Cloned emulators for study and pattern reference:
 | **GUI Migration** | ✅ v0.7.1 | eframe + egui desktop reimplementation |
 | **Dependency Upgrade** | ✅ v0.8.0 | Rust 2024, eframe 0.33, egui 0.33, cpal 0.16, ron 0.12 |
 | **M9: Known Issues** | 🔄 v0.8.1 (85%) | Audio S1, PPU S2, Performance S3 complete; S4 pending |
-| **M10: Final Polish** | 📋 PLANNED | UI/UX improvements, documentation, v1.0.0-alpha.1 |
+| **M10: Final Polish** | 🔄 v0.8.2 (50%) | UI/UX Improvements (S1 complete), Documentation and Release pending |
 | **Phase 2+** | 📋 TBD | Advanced features |
 
-## Recent Accomplishments (v0.8.1 - Dec 28, 2025)
+## Recent Accomplishments (v0.8.2 - Dec 28, 2025)
+
+### M10 Final Polish (50% Complete)
+
+Sprint 1 UI/UX Improvements completed with comprehensive desktop GUI polish:
+
+#### Sprint 1: UI/UX Improvements (Complete)
+- **Theme Support:** Light/Dark/System themes with persistence via RON configuration
+- **Status Bar:** FPS counter (500ms updates), ROM name display, color-coded status messages with 3s auto-expiry
+- **Tabbed Settings:** Video/Audio/Input/Advanced tabs with comprehensive tooltips
+- **Keyboard Shortcuts:** Ctrl+O (Open), Ctrl+P (Pause), Ctrl+R (Reset), Ctrl+Q (Quit), F1-F3 (Debug), M (Mute)
+- **Modal Dialogs:** Welcome screen, error dialogs, confirmation prompts, help window
+- **Visual Feedback:** Contextual tooltips throughout UI, organized menus with separators
+
+#### Sprint 2: Documentation (Pending)
+- User guide, API documentation, developer guide
+
+#### Sprint 3: Release Preparation (Pending)
+- Full regression testing, release binaries, version decision
+
+---
+
+## Previous Accomplishments (v0.8.1 - Dec 28, 2025)
 
 ### M9 Known Issues Resolution (85% Complete)
 

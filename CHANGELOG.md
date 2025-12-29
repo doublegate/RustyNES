@@ -11,6 +11,127 @@ No unreleased changes.
 
 ---
 
+## [0.8.2] - 2025-12-28 - M10-S1 UI/UX Improvements
+
+**Status**: Phase 1.5 Stabilization - M10 Sprint 1 Complete (UI/UX Polish)
+
+This release completes M10-S1 (UI/UX Improvements), delivering comprehensive desktop GUI polish including theme support, status bar, tabbed settings dialog, keyboard shortcuts, modal dialogs, and visual feedback enhancements.
+
+### Highlights
+
+- **Theme Support:** Light/Dark/System themes with persistence and real-time switching
+- **Status Bar:** FPS counter, ROM name display, color-coded status messages with auto-expiry
+- **Tabbed Settings Dialog:** Video/Audio/Input/Advanced tabs with comprehensive tooltips
+- **Keyboard Shortcuts:** Ctrl+O/P/R/Q, F1-F3, M, Escape with consistent behavior
+- **Modal Dialogs:** Welcome screen, error dialogs, confirmation prompts, help window
+- **Visual Feedback:** Tooltips throughout UI, organized menus with separators
+- **Zero Regressions:** 508+ tests passing, 100% Blargg pass rate maintained
+
+### Added
+
+#### Theme Support (M10-S1 Task 2)
+
+- **Light/Dark/System Themes:** Three theme options with egui Visuals API integration
+- **Theme Persistence:** Theme preference saved to RON configuration
+- **Real-time Switching:** Theme changes apply immediately via `ctx.set_visuals()`
+- **System Theme Detection:** Follows OS dark mode preference when set to "System"
+
+#### Status Bar (M10-S1 Task 1)
+
+- **FPS Counter:** Real-time frame rate display updated every 500ms
+- **ROM Name Display:** Shows loaded ROM filename in status bar
+- **Status Messages:** Color-coded messages (green=success, yellow=warning, red=error)
+- **Auto-expiry:** Status messages automatically clear after 3 seconds
+- **Responsive Layout:** Status bar adapts to window width
+
+#### Tabbed Settings Dialog (M10-S1 Task 3)
+
+- **Video Tab:** Theme selection, window scale (1-8x), fullscreen, VSync, 8:7 PAR, FPS counter
+- **Audio Tab:** Mute toggle, volume slider (0-100%), sample rate, buffer size selection
+- **Input Tab:** Player 1/2 keyboard bindings in collapsible sections with reset buttons
+- **Advanced Tab:** Debug options, recent ROMs management, application info
+- **Save/Reset Buttons:** Save to disk and reset to defaults functionality
+- **Comprehensive Tooltips:** Every setting has contextual help text
+
+#### Keyboard Shortcuts (M10-S1 Task 5)
+
+- **File Operations:** Ctrl+O (Open ROM), Ctrl+Q (Quit)
+- **Emulation Control:** Ctrl+P (Pause/Resume), Ctrl+R (Reset), F2 (Reset alternate)
+- **Debug Windows:** F1 (CPU), F2 (PPU), F3 (APU) debug window toggles
+- **Audio:** M (Mute toggle)
+- **Navigation:** Escape (Close dialogs/menus)
+
+#### Modal Dialogs (M10-S1 Task 4b)
+
+- **Welcome Screen:** First-run experience with quick start guide (tracks `first_run` in config)
+- **Error Dialogs:** User-friendly error messages via `egui::Modal`
+- **Confirmation Prompts:** Destructive action confirmations
+- **Help Window:** Keyboard shortcut reference accessible via Help menu
+
+#### Visual Feedback (M10-S1 Task 4a)
+
+- **Tooltips:** Contextual help on all interactive elements
+- **Menu Organization:** Logical grouping with separators in File/Emulation/Options menus
+- **Loading States:** Visual feedback during ROM loading operations
+- **Hover Effects:** Clear indication of interactive elements
+
+### Changed
+
+#### Code Quality Improvements
+
+- **Guard Pattern Refactoring:** Simplified input handlers using early returns
+- **Function Signatures:** Improved borrowing patterns for settings renderers
+- **Removed Unused Code:** Cleaned up Power Cycle menu item, unused imports
+
+#### Configuration Updates
+
+- **AppTheme Enum:** New theme configuration type with Light/Dark/System variants
+- **first_run Field:** Tracks first launch for welcome screen display
+- **Theme Persistence:** Theme preference saved and loaded with configuration
+
+### Technical Specifications
+
+**M10 Sprint Status:**
+
+| Sprint | Status | Core Tasks |
+|--------|--------|------------|
+| S0: Dependency Upgrade | COMPLETE | Rust 2024, eframe 0.33, cpal 0.16 |
+| S1: UI/UX Improvements | COMPLETE | Themes, status bar, settings, shortcuts |
+| S2: Documentation | PENDING | User guide, API docs, developer guide |
+| S3: Release Preparation | PENDING | Testing, binaries, release notes |
+
+**Test Results:**
+
+- Total tests: 508+ passing
+- Failures: 0
+- Ignored: 0
+- Blargg pass rate: 100% (90/90 tests)
+
+**UI Components Added:**
+
+- Theme switcher in Video settings tab
+- Status bar with FPS, ROM name, and status messages
+- Tabbed settings dialog (4 tabs)
+- 8+ keyboard shortcuts
+- Welcome screen modal
+- Help window with shortcut reference
+
+### Quality Metrics
+
+- cargo clippy: PASSING (zero warnings)
+- cargo fmt: PASSING
+- cargo test: 508+ tests passing
+- cargo build --release: SUCCESS
+- Zero unsafe code maintained
+
+### What's Next
+
+- **Sprint 2:** Documentation (user guide, API docs, developer guide)
+- **Sprint 3:** Release preparation (testing, binaries, v0.9.0/v1.0.0-alpha.1)
+- **M10 Completion:** Final polish and Phase 1.5 completion
+
+---
+
 ## [0.8.1] - 2025-12-28 - M9 Known Issues Resolution (85% Complete)
 
 **Status**: Phase 1.5 Stabilization - M9 Sprints 1-3 Core Implementation Complete

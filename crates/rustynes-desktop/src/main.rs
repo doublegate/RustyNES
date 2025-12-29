@@ -34,7 +34,7 @@ use rustynes_desktop::{Config, NesApp};
 #[derive(Parser, Debug)]
 #[command(name = "rustynes")]
 #[command(author = "doublegate")]
-#[command(version = "0.7.0")]
+#[command(version = "0.8.2")]
 #[command(about = "A cycle-accurate NES emulator written in Rust")]
 #[command(long_about = None)]
 struct Args {
@@ -65,7 +65,7 @@ fn main() -> Result<()> {
         .format_timestamp_millis()
         .init();
 
-    info!("RustyNES v0.7.0 starting...");
+    info!("RustyNES v0.8.2 starting...");
 
     // Parse command-line arguments
     let args = Args::parse();
