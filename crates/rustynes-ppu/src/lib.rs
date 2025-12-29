@@ -228,11 +228,17 @@ mod tests {
         // Write to nametable
         ppu.write_register(0x2006, 0x20, |_, _| {}); // High byte
         ppu.write_register(0x2006, 0x00, |_, _| {}); // Low byte
+        // Step PPU to apply delayed PPUADDR update (2 PPU cycles)
+        ppu.step();
+        ppu.step();
         ppu.write_register(0x2007, 0x55, |_, _| {}); // Data
 
         // Read back (with buffered read)
         ppu.write_register(0x2006, 0x20, |_, _| {});
         ppu.write_register(0x2006, 0x00, |_, _| {});
+        // Step PPU to apply delayed PPUADDR update
+        ppu.step();
+        ppu.step();
         let _ = ppu.read_register(0x2007, |_| 0); // Dummy read
         let value = ppu.read_register(0x2007, |_| 0); // Actual data
         assert_eq!(value, 0x55);

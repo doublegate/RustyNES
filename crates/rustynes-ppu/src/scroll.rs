@@ -42,6 +42,10 @@ pub struct ScrollRegisters {
     last_v_before_update: u16,
     /// Flag indicating a mid-scanline write occurred this frame
     mid_scanline_write_detected: bool,
+    /// Countdown timer for delayed v register update (2-3 PPU cycles)
+    delay_v_cycles: u8,
+    /// Value to apply to v when delay expires
+    delay_v: u16,
 }
 
 impl ScrollRegisters {
@@ -54,6 +58,8 @@ impl ScrollRegisters {
             w: false,
             last_v_before_update: 0,
             mid_scanline_write_detected: false,
+            delay_v_cycles: 0,
+            delay_v: 0,
         }
     }
 
@@ -172,14 +178,18 @@ impl ScrollRegisters {
     /// Write to PPUADDR ($2006)
     ///
     /// First write: High byte (sets t[13:8])
-    /// Second write: Low byte (sets t[7:0] and copies t to v)
+    /// Second write: Low byte (sets t[7:0] and schedules delayed copy of t to v)
+    ///
+    /// The NES hardware delays the t->v copy by approximately 2-3 PPU cycles.
+    /// This is required for accurate timing of VRAM address updates.
     pub fn write_ppuaddr(&mut self, value: u8) {
         if self.w {
             // Second write: low byte
             // t: ........ AAAAAAAA = d[7:0]
-            // v = t
+            // Schedule delayed v = t (2 PPU cycles delay per Visual NES findings)
             self.t = (self.t & 0xFF00) | (value as u16);
-            self.v = self.t;
+            self.delay_v_cycles = 2;
+            self.delay_v = self.t;
         } else {
             // First write: high byte
             // t: ..AAAAAA ........ = d[5:0]
@@ -189,6 +199,24 @@ impl ScrollRegisters {
         }
 
         self.w = !self.w;
+    }
+
+    /// Process delayed v register update
+    ///
+    /// Called every PPU cycle to decrement the delay counter and apply
+    /// the scheduled v update when the delay expires.
+    ///
+    /// Returns `true` if the v register was updated this cycle.
+    #[inline]
+    pub fn delayed_update(&mut self) -> bool {
+        if self.delay_v_cycles > 0 {
+            self.delay_v_cycles -= 1;
+            if self.delay_v_cycles == 0 {
+                self.v = self.delay_v;
+                return true;
+            }
+        }
+        false
     }
 
     /// Read from PPUSTATUS ($2002)
@@ -324,7 +352,12 @@ mod tests {
 
         scroll.write_ppuaddr(0x00);
         assert!(!scroll.w);
-        assert_eq!(scroll.v, 0x3F00);
+        // v is now delayed by 2 PPU cycles
+        assert_eq!(scroll.v, 0x0000); // Not yet updated
+        scroll.delayed_update();
+        assert_eq!(scroll.v, 0x0000); // Still waiting (1 cycle remaining)
+        scroll.delayed_update();
+        assert_eq!(scroll.v, 0x3F00); // Now updated after 2 cycles
     }
 
     #[test]
@@ -426,7 +459,10 @@ mod tests {
 
         // Set up v to some value
         scroll.write_ppuaddr(0x21);
-        scroll.write_ppuaddr(0x00); // v = $2100
+        scroll.write_ppuaddr(0x00);
+        // Apply delayed update (2 PPU cycles)
+        scroll.delayed_update();
+        scroll.delayed_update(); // v = $2100 now
 
         // Record a mid-scanline write
         scroll.record_mid_scanline_write();
@@ -456,9 +492,13 @@ mod tests {
         scroll.write_ppuaddr(0x21);
         assert_eq!(scroll.temp_vram_addr() >> 8, 0x21);
 
-        // Second write completes t and copies to v
+        // Second write completes t and schedules delayed copy to v
         scroll.write_ppuaddr(0xAB);
         assert_eq!(scroll.temp_vram_addr(), 0x21AB);
+        // v is delayed by 2 PPU cycles
+        assert_eq!(scroll.vram_addr(), 0x0000);
+        scroll.delayed_update();
+        scroll.delayed_update();
         assert_eq!(scroll.vram_addr(), 0x21AB);
     }
 
@@ -484,7 +524,10 @@ mod tests {
 
         // Set initial v value
         scroll.write_ppuaddr(0x23);
-        scroll.write_ppuaddr(0x45); // v = $2345
+        scroll.write_ppuaddr(0x45);
+        // Apply delayed update (2 PPU cycles)
+        scroll.delayed_update();
+        scroll.delayed_update(); // v = $2345 now
 
         // Record first mid-scanline write
         scroll.record_mid_scanline_write();
@@ -492,10 +535,29 @@ mod tests {
 
         // Change v
         scroll.write_ppuaddr(0x20);
-        scroll.write_ppuaddr(0x00); // v = $2000
+        scroll.write_ppuaddr(0x00);
+        // Apply delayed update (2 PPU cycles)
+        scroll.delayed_update();
+        scroll.delayed_update(); // v = $2000 now
 
         // Record second mid-scanline write
         scroll.record_mid_scanline_write();
         assert_eq!(scroll.last_v_before_update(), 0x2000);
+    }
+
+    #[test]
+    fn test_delayed_update_returns_true_when_applied() {
+        let mut scroll = ScrollRegisters::new();
+
+        // Write address to trigger delayed update
+        scroll.write_ppuaddr(0x21);
+        scroll.write_ppuaddr(0x00);
+
+        // First delayed_update should return false (still waiting)
+        assert!(!scroll.delayed_update());
+        // Second delayed_update should return true (applied)
+        assert!(scroll.delayed_update());
+        // Third should return false (nothing pending)
+        assert!(!scroll.delayed_update());
     }
 }

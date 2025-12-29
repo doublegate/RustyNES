@@ -343,6 +343,9 @@ impl Ppu {
         // Tick timing FIRST to advance to the next position
         let frame_complete = self.timing.tick(rendering_enabled);
 
+        // Process delayed PPUADDR updates (hardware delays t->v copy by ~2 PPU cycles)
+        self.scroll.delayed_update();
+
         let scanline = self.timing.scanline();
         let dot = self.timing.dot();
 
@@ -763,6 +766,9 @@ mod tests {
         // Write address $2000
         ppu.write_register(0x2006, 0x20, |_, _| {});
         ppu.write_register(0x2006, 0x00, |_, _| {});
+        // Step PPU to apply delayed PPUADDR update (2 PPU cycles)
+        ppu.step();
+        ppu.step();
 
         // Write data
         ppu.write_register(0x2007, 0x55, |_, _| {});
@@ -770,6 +776,9 @@ mod tests {
         // Read address $2000
         ppu.write_register(0x2006, 0x20, |_, _| {});
         ppu.write_register(0x2006, 0x00, |_, _| {});
+        // Step PPU to apply delayed PPUADDR update
+        ppu.step();
+        ppu.step();
 
         // First read is buffered (returns garbage)
         let _ = ppu.read_register(0x2007, |_| 0);
@@ -785,11 +794,17 @@ mod tests {
         // Write to palette
         ppu.write_register(0x2006, 0x3F, |_, _| {});
         ppu.write_register(0x2006, 0x00, |_, _| {});
+        // Step PPU to apply delayed PPUADDR update (2 PPU cycles)
+        ppu.step();
+        ppu.step();
         ppu.write_register(0x2007, 0x0F, |_, _| {});
 
         // Read from palette (immediate, no buffer)
         ppu.write_register(0x2006, 0x3F, |_, _| {});
         ppu.write_register(0x2006, 0x00, |_, _| {});
+        // Step PPU to apply delayed PPUADDR update
+        ppu.step();
+        ppu.step();
         let value = ppu.read_register(0x2007, |_| 0);
         assert_eq!(value, 0x0F);
     }
