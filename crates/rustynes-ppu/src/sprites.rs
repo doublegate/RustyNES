@@ -239,10 +239,20 @@ impl SpriteEvaluator {
                 let y = oam_data[sprite_index * 4];
 
                 // Check if sprite is on next scanline
-                let y_u16 = y as u16;
+                // OAM Y value specifies the top scanline of the sprite (minus 1 for display)
+                // Sprites with Y >= 239 effectively appear at scanline 240+ (off-screen)
+                // Y = 255 is a special case that hides the sprite completely
+                let sprite_top = (y as u16).wrapping_add(1); // Actual top scanline of sprite
                 let height = sprite_height as u16;
 
-                if scanline >= y_u16 && scanline < y_u16.wrapping_add(height) {
+                // Skip sprites that would be entirely off-screen
+                // sprite_top >= 240 means the sprite doesn't appear on any visible scanline
+                if sprite_top >= 240 {
+                    self.current_sprite += 1;
+                    return true;
+                }
+
+                if scanline >= sprite_top && scanline < sprite_top.wrapping_add(height) {
                     // Sprite is in range
                     let sprite_data = [
                         oam_data[sprite_index * 4],
@@ -384,17 +394,17 @@ mod tests {
         let mut evaluator = SpriteEvaluator::new();
         let mut secondary_oam = SecondaryOam::new();
 
-        // Create OAM with sprite at Y=50
+        // Create OAM with sprite at Y=50 (appears at scanline 51 due to Y+1 offset)
         let mut oam_data = vec![0xFF; 256];
-        oam_data[0] = 50; // Sprite 0 Y position
+        oam_data[0] = 50; // Sprite 0 Y position (minus 1 in OAM format)
         oam_data[1] = 0x42; // Tile
         oam_data[2] = 0x00; // Attributes
         oam_data[3] = 100; // X position
 
         evaluator.start_evaluation();
 
-        // Evaluate at scanline 50 (sprite should be found)
-        let step = evaluator.evaluate_step(&oam_data, 50, 8, &mut secondary_oam);
+        // Evaluate at scanline 51 (sprite with OAM Y=50 appears at scanline 51)
+        let step = evaluator.evaluate_step(&oam_data, 51, 8, &mut secondary_oam);
         assert!(step);
         assert_eq!(secondary_oam.count(), 1);
         assert!(evaluator.sprite_zero_in_range());
@@ -422,7 +432,7 @@ mod tests {
         let mut evaluator = SpriteEvaluator::new();
         let mut secondary_oam = SecondaryOam::new();
 
-        // Create OAM with 10 sprites all at Y=50
+        // Create OAM with 10 sprites all at Y=50 (appear at scanline 51)
         let mut oam_data = vec![0xFF; 256];
         for i in 0..10 {
             oam_data[i * 4] = 50;
@@ -430,14 +440,71 @@ mod tests {
 
         evaluator.start_evaluation();
 
-        // Evaluate all sprites
+        // Evaluate all sprites at scanline 51 (OAM Y=50 + 1 offset)
         for _ in 0..10 {
-            evaluator.evaluate_step(&oam_data, 50, 8, &mut secondary_oam);
+            evaluator.evaluate_step(&oam_data, 51, 8, &mut secondary_oam);
         }
 
         // Secondary OAM should be full (8 sprites)
         assert_eq!(secondary_oam.count(), 8);
         // Overflow should be set
         assert!(evaluator.overflow());
+    }
+
+    #[test]
+    fn test_sprite_evaluator_y_255_always_skipped() {
+        let mut evaluator = SpriteEvaluator::new();
+        let mut secondary_oam = SecondaryOam::new();
+
+        // Create OAM with sprite 0 at Y=255 (should always be off-screen)
+        // Y=255 means sprite_top = 256, which is >= 240, so it should be skipped
+        let mut oam_data = vec![0xFF; 256];
+        oam_data[0] = 255; // Sprite 0 at Y=255
+        oam_data[1] = 0x42; // Tile
+        oam_data[2] = 0x00; // Attributes
+        oam_data[3] = 100; // X position
+
+        // Test on multiple scanlines - sprite should never be in range
+        for scanline in 0..240 {
+            evaluator.start_evaluation();
+            secondary_oam.clear();
+
+            evaluator.evaluate_step(&oam_data, scanline, 8, &mut secondary_oam);
+
+            assert_eq!(
+                secondary_oam.count(),
+                0,
+                "Sprite at Y=255 should not be in secondary OAM on scanline {scanline}"
+            );
+            assert!(
+                !evaluator.sprite_zero_in_range(),
+                "Sprite 0 at Y=255 should not be in range on scanline {scanline}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_sprite_evaluator_y_239_skipped() {
+        let mut evaluator = SpriteEvaluator::new();
+        let mut secondary_oam = SecondaryOam::new();
+
+        // Y=239 means sprite_top = 240, which is >= 240, so it should be skipped
+        let mut oam_data = vec![0xFF; 256];
+        oam_data[0] = 239; // Sprite 0 at Y=239
+
+        evaluator.start_evaluation();
+
+        // Evaluate for any visible scanline - sprite should be skipped
+        evaluator.evaluate_step(&oam_data, 100, 8, &mut secondary_oam);
+
+        assert_eq!(
+            secondary_oam.count(),
+            0,
+            "Sprite at Y=239 should not be in secondary OAM"
+        );
+        assert!(
+            !evaluator.sprite_zero_in_range(),
+            "Sprite 0 at Y=239 should not be in range"
+        );
     }
 }
