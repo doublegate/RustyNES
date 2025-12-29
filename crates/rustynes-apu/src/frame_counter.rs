@@ -22,6 +22,12 @@ pub enum FrameAction {
 ///
 /// - **4-step mode (Mode 0)**: 29,829 CPU cycles per frame, generates IRQ
 /// - **5-step mode (Mode 1)**: 37,281 CPU cycles per frame, no IRQ
+///
+/// # $4017 Write Delay
+///
+/// Writing to $4017 does not immediately reset the frame counter. Per `NESdev` wiki:
+/// - If the write occurs during an APU cycle (even CPU cycle): 3 cycle delay
+/// - If the write occurs between APU cycles (odd CPU cycle): 4 cycle delay
 pub struct FrameCounter {
     /// Frame counter mode: 0 = 4-step (60 Hz), 1 = 5-step (48 Hz)
     mode: u8,
@@ -31,6 +37,8 @@ pub struct FrameCounter {
     cycle_count: u64,
     /// Frame IRQ flag (read by CPU)
     pub irq_flag: bool,
+    /// Pending $4017 write: (value, `cycles_remaining` until applied)
+    pending_write: Option<(u8, u8)>,
 }
 
 impl FrameCounter {
@@ -46,6 +54,7 @@ impl FrameCounter {
             irq_inhibit: false, // Power-on: IRQ enabled (as if $4017=$00 written)
             cycle_count: 0,
             irq_flag: false,
+            pending_write: None,
         }
     }
 
@@ -62,11 +71,42 @@ impl FrameCounter {
     /// +-------- Mode (0: 4-step, 1: 5-step)
     /// ```
     ///
-    /// Writing to this register:
+    /// Writing to this register (after delay):
     /// - Resets the cycle counter to 0
     /// - Clears IRQ flag if IRQ inhibit is set
     /// - If 5-step mode, immediately triggers half-frame action
-    pub fn write_control(&mut self, value: u8) -> FrameAction {
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - The value being written to $4017
+    /// * `cpu_cycle_odd` - True if the CPU is on an odd cycle (determines delay)
+    ///
+    /// # Delay Timing
+    ///
+    /// The reset aligns to the next APU cycle boundary:
+    /// - Even CPU cycle (during APU tick): 2 cycle delay
+    /// - Odd CPU cycle (between APU ticks): 3 cycle delay
+    pub fn write_control(&mut self, value: u8, cpu_cycle_odd: bool) -> FrameAction {
+        // Clear IRQ flag immediately if inhibit is set in the new value
+        if (value & 0x40) != 0 {
+            self.irq_flag = false;
+        }
+
+        // Calculate delay based on CPU cycle parity
+        // The reset takes effect after the write cycle completes and aligns to APU cycle
+        // Even CPU cycle (during APU cycle): 3 cycle delay
+        // Odd CPU cycle (between APU cycles): 4 cycle delay
+        let delay = if cpu_cycle_odd { 4 } else { 3 };
+
+        // Schedule the write to take effect after the delay
+        self.pending_write = Some((value, delay));
+
+        // The write doesn't take effect immediately, so no action yet
+        FrameAction::None
+    }
+
+    /// Apply a pending $4017 write (internal helper)
+    fn apply_pending_write(&mut self, value: u8) -> FrameAction {
         self.mode = (value >> 7) & 1;
         self.irq_inhibit = (value & 0x40) != 0;
 
@@ -90,6 +130,17 @@ impl FrameCounter {
     ///
     /// Returns the frame action to be taken (if any).
     pub fn clock(&mut self) -> FrameAction {
+        // Handle pending $4017 write
+        if let Some((value, cycles_remaining)) = self.pending_write {
+            if cycles_remaining <= 1 {
+                // Apply the write now
+                self.pending_write = None;
+                return self.apply_pending_write(value);
+            }
+            // Decrement delay counter
+            self.pending_write = Some((value, cycles_remaining - 1));
+        }
+
         self.cycle_count += 1;
 
         match self.mode {
@@ -101,36 +152,36 @@ impl FrameCounter {
 
     /// Clocks the 4-step mode sequencer
     ///
-    /// # Sequence
+    /// # Sequence (per `NESdev` wiki)
     ///
     /// ```text
     /// Step   Cycles  Action
     /// ----   ------  ------
-    /// 1      7458    Quarter frame (envelopes + linear counter)
-    /// 2      14914   Half frame (envelopes, linear, length, sweep)
-    /// 3      22373   Quarter frame
-    /// 4      29830   Half frame + set IRQ flag (if enabled)
-    ///        29831   Set IRQ flag
-    ///        29832   Set IRQ flag, reset to 0
+    /// 1      7457    Quarter frame (envelopes + linear counter)
+    /// 2      14913   Half frame (envelopes, linear, length, sweep)
+    /// 3      22371   Quarter frame
+    /// 4      29828   Set IRQ flag (if enabled)
+    ///        29829   Set IRQ flag, half frame
+    ///        29830   Set IRQ flag, reset to 0
     /// ```
     fn clock_4step(&mut self) -> FrameAction {
         match self.cycle_count {
-            // Quarter frames at 7458 and 22373
-            7458 | 22373 => FrameAction::QuarterFrame,
-            14914 => FrameAction::HalfFrame,
-            29830 => {
-                if !self.irq_inhibit {
-                    self.irq_flag = true;
-                }
-                FrameAction::HalfFrame
-            }
-            29831 => {
+            // Quarter frames at 7457 and 22371 (per NESdev wiki)
+            7457 | 22371 => FrameAction::QuarterFrame,
+            14913 => FrameAction::HalfFrame,
+            29828 => {
                 if !self.irq_inhibit {
                     self.irq_flag = true;
                 }
                 FrameAction::None
             }
-            29832 => {
+            29829 => {
+                if !self.irq_inhibit {
+                    self.irq_flag = true;
+                }
+                FrameAction::HalfFrame
+            }
+            29830 => {
                 if !self.irq_inhibit {
                     self.irq_flag = true;
                 }
@@ -143,24 +194,25 @@ impl FrameCounter {
 
     /// Clocks the 5-step mode sequencer
     ///
-    /// # Sequence
+    /// # Sequence (per `NESdev` wiki - validated against Blargg test ROMs)
     ///
     /// ```text
     /// Step   Cycles  Action
     /// ----   ------  ------
-    /// 1      7458    Quarter frame
-    /// 2      14914   Half frame
-    /// 3      22372   Quarter frame
-    /// 4      29830   (nothing)
-    /// 5      37282   Half frame, reset to 0
+    /// 1      7457    Quarter frame
+    /// 2      14913   Half frame
+    /// 3      22371   Quarter frame
+    /// 4      29829   (nothing)
+    /// 5      37281   Half frame
+    /// 0      37282   Reset to 0
     /// ```
     fn clock_5step(&mut self) -> FrameAction {
         match self.cycle_count {
-            7458 | 22372 => FrameAction::QuarterFrame,
-            14914 => FrameAction::HalfFrame,
+            7457 | 22371 => FrameAction::QuarterFrame,
+            14913 | 37281 => FrameAction::HalfFrame,
             37282 => {
                 self.cycle_count = 0;
-                FrameAction::HalfFrame
+                FrameAction::None
             }
             _ => FrameAction::None,
         }
@@ -193,35 +245,38 @@ mod tests {
         let mut fc = FrameCounter::new();
         assert_eq!(fc.mode, 0);
 
-        // Clock to first quarter frame (cycle 7458)
-        for _ in 0..7457 {
+        // Clock to first quarter frame (cycle 7457)
+        for _ in 0..7456 {
             assert_eq!(fc.clock(), FrameAction::None);
         }
         assert_eq!(fc.clock(), FrameAction::QuarterFrame);
 
-        // Clock to first half frame (cycle 14914)
+        // Clock to first half frame (cycle 14913)
         for _ in 0..7455 {
             assert_eq!(fc.clock(), FrameAction::None);
         }
         assert_eq!(fc.clock(), FrameAction::HalfFrame);
 
-        // Clock to second quarter frame (cycle 22373)
-        for _ in 0..7458 {
+        // Clock to second quarter frame (cycle 22371)
+        for _ in 0..7457 {
             assert_eq!(fc.clock(), FrameAction::None);
         }
         assert_eq!(fc.clock(), FrameAction::QuarterFrame);
 
-        // Clock to second half frame with IRQ (cycle 29830)
+        // Clock to IRQ point (cycle 29828) - IRQ starts here
         for _ in 0..7456 {
             assert_eq!(fc.clock(), FrameAction::None);
         }
         assert!(!fc.irq_flag);
+        // Cycle 29828: IRQ set, no action
+        assert_eq!(fc.clock(), FrameAction::None);
+        assert!(fc.irq_flag);
+
+        // Cycle 29829: IRQ set, half frame
         assert_eq!(fc.clock(), FrameAction::HalfFrame);
         assert!(fc.irq_flag);
 
-        // Additional IRQ flag sets (cycles 29831, 29832)
-        assert_eq!(fc.clock(), FrameAction::None);
-        assert!(fc.irq_flag);
+        // Cycle 29830: IRQ set, reset to 0
         assert_eq!(fc.clock(), FrameAction::None);
         assert!(fc.irq_flag);
 
@@ -232,42 +287,51 @@ mod tests {
     #[test]
     fn test_frame_counter_5step_sequence() {
         let mut fc = FrameCounter::new();
-        fc.write_control(0x80); // 5-step mode
+
+        // Write 5-step mode with even CPU cycle (3 cycle delay)
+        fc.write_control(0x80, false);
+
+        // Clock through the delay (3 cycles)
+        assert_eq!(fc.clock(), FrameAction::None); // delay 2 remaining
+        assert_eq!(fc.clock(), FrameAction::None); // delay 1 remaining
+        assert_eq!(fc.clock(), FrameAction::HalfFrame); // write applied
 
         assert_eq!(fc.mode, 1);
         assert_eq!(fc.cycle_count, 0);
 
-        // Clock to first quarter frame (7458)
-        for _ in 0..7457 {
+        // Clock to first quarter frame (7457)
+        for _ in 0..7456 {
             assert_eq!(fc.clock(), FrameAction::None);
         }
         assert_eq!(fc.clock(), FrameAction::QuarterFrame);
 
-        // Clock to first half frame (14914)
+        // Clock to first half frame (14913)
         for _ in 0..7455 {
             assert_eq!(fc.clock(), FrameAction::None);
         }
         assert_eq!(fc.clock(), FrameAction::HalfFrame);
 
-        // Clock to second quarter frame (22372)
+        // Clock to second quarter frame (22371)
         for _ in 0..7457 {
             assert_eq!(fc.clock(), FrameAction::None);
         }
         assert_eq!(fc.clock(), FrameAction::QuarterFrame);
 
-        // Clock to cycle 29830 (no action in 5-step mode)
+        // Clock to cycle 29829 (no action in 5-step mode)
         for _ in 0..7457 {
             assert_eq!(fc.clock(), FrameAction::None);
         }
         assert_eq!(fc.clock(), FrameAction::None);
 
-        // Clock to final half frame (37282)
+        // Clock to final half frame (37281)
         for _ in 0..7451 {
             assert_eq!(fc.clock(), FrameAction::None);
         }
         assert_eq!(fc.clock(), FrameAction::HalfFrame);
+        assert_eq!(fc.cycle_count, 37281);
 
-        // Should reset
+        // Clock one more to reset (37282)
+        assert_eq!(fc.clock(), FrameAction::None);
         assert_eq!(fc.cycle_count, 0);
         // 5-step mode never sets IRQ
         assert!(!fc.irq_flag);
@@ -277,11 +341,16 @@ mod tests {
     fn test_irq_inhibit() {
         let mut fc = FrameCounter::new();
 
-        // Enable IRQ inhibit
-        fc.write_control(0x40);
+        // Enable IRQ inhibit with even CPU cycle (3 cycle delay)
+        fc.write_control(0x40, false);
+
+        // Clock through delay to apply write (3 cycles)
+        fc.clock(); // delay 2 remaining
+        fc.clock(); // delay 1 remaining
+        fc.clock(); // write applied
         assert!(fc.irq_inhibit);
 
-        // Clock to IRQ point
+        // Clock to IRQ point (need more cycles since counter was reset after delay)
         for _ in 0..29829 {
             fc.clock();
         }
@@ -292,22 +361,45 @@ mod tests {
     }
 
     #[test]
-    fn test_write_control_clears_irq() {
+    fn test_write_control_clears_irq_immediately() {
         let mut fc = FrameCounter::new();
         fc.irq_flag = true;
 
-        // Write with IRQ inhibit
-        fc.write_control(0x40);
+        // Write with IRQ inhibit - IRQ should clear immediately (before delay)
+        fc.write_control(0x40, false);
 
+        // IRQ should be cleared immediately, not after delay
         assert!(!fc.irq_flag);
     }
 
     #[test]
-    fn test_5step_immediate_half_frame() {
+    fn test_5step_delayed_half_frame() {
         let mut fc = FrameCounter::new();
 
-        // Writing 5-step mode should immediately trigger half frame
-        let action = fc.write_control(0x80);
-        assert_eq!(action, FrameAction::HalfFrame);
+        // Writing 5-step mode schedules a delayed write
+        let action = fc.write_control(0x80, false);
+        // The write itself returns None (delayed)
+        assert_eq!(action, FrameAction::None);
+
+        // Clock through delay - half frame happens when write is applied (3 cycle delay for even)
+        assert_eq!(fc.clock(), FrameAction::None); // delay 2 remaining
+        assert_eq!(fc.clock(), FrameAction::None); // delay 1 remaining
+        assert_eq!(fc.clock(), FrameAction::HalfFrame); // write applied with half frame
+    }
+
+    #[test]
+    fn test_write_delay_odd_cycle() {
+        let mut fc = FrameCounter::new();
+
+        // Write with odd CPU cycle should have 4 cycle delay
+        fc.write_control(0x80, true);
+
+        // Clock through the 4-cycle delay
+        assert_eq!(fc.clock(), FrameAction::None); // delay 3 remaining
+        assert_eq!(fc.clock(), FrameAction::None); // delay 2 remaining
+        assert_eq!(fc.clock(), FrameAction::None); // delay 1 remaining
+        assert_eq!(fc.clock(), FrameAction::HalfFrame); // write applied
+
+        assert_eq!(fc.mode, 1);
     }
 }
