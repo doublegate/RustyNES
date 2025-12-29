@@ -16,6 +16,7 @@
 - [Audit Report](#audit-report)
 - [Architecture Recommendations](#architecture-recommendations)
 - [Sprint Breakdown](#sprint-breakdown)
+- [Sprint Documentation](#sprint-documentation)
 - [Test Validation Targets](#test-validation-targets)
 - [Effort Estimates](#effort-estimates)
 - [Risk Assessment](#risk-assessment)
@@ -587,6 +588,66 @@ This is more elegant but requires nightly Rust. Recommend explicit cycle callbac
 
 ---
 
+### Sprint 6: Testing and Validation (8-12 hours)
+
+**Duration:** 1-2 weeks
+**Priority:** HIGH - Validation of all changes
+
+#### Tasks
+
+- [ ] **S6.1** Enable and validate VBlank timing tests
+- [ ] **S6.2** Full Blargg test suite regression testing
+- [ ] **S6.3** nestest.nes golden log validation
+- [ ] **S6.4** TASVideos accuracy suite testing
+- [ ] **S6.5** Performance benchmarking
+- [ ] **S6.6** Game compatibility testing
+- [ ] **S6.7** Unit test updates for new interface
+- [ ] **S6.8** Regression test suite setup
+
+#### Acceptance Criteria
+
+- `ppu_02-vbl_set_time` test PASSES
+- `ppu_03-vbl_clear_time` test PASSES
+- All 90 Blargg tests pass (0 regressions)
+- All 517+ unit tests pass (0 regressions)
+- Performance within 20% of v0.8.4
+- Top 10 games fully playable
+
+---
+
+## Sprint Documentation
+
+Detailed sprint planning documents with comprehensive task breakdowns, implementation notes, and validation criteria:
+
+| Sprint | Document | Status | Focus |
+|--------|----------|--------|-------|
+| **S1** | [M11-S1-cpu-refactor.md](./M11-S1-cpu-refactor.md) | PLANNED | CPU cycle-by-cycle refactor (all 256 opcodes) |
+| **S2** | [M11-S2-ppu-sync.md](./M11-S2-ppu-sync.md) | PLANNED | PPU synchronization integration |
+| **S3** | [M11-S3-apu-precision.md](./M11-S3-apu-precision.md) | PLANNED | APU precision integration |
+| **S4** | [M11-S4-bus-dma.md](./M11-S4-bus-dma.md) | PLANNED | Bus and DMA integration |
+| **S5** | [M11-S5-mapper-accuracy.md](./M11-S5-mapper-accuracy.md) | PLANNED | Mapper timing accuracy |
+| **S6** | [M11-S6-testing.md](./M11-S6-testing.md) | PLANNED | Testing and validation |
+
+### Sprint Dependency Chain
+
+```text
+S1 (CPU Refactor) ──┬──> S2 (PPU Sync) ──┬──> S4 (Bus/DMA) ──> S6 (Testing)
+                    │                     │
+                    └──> S3 (APU Precision)┘
+                    │
+                    └──> S5 (Mapper Accuracy) ─────────────────> S6 (Testing)
+```
+
+### Sprint Execution Order
+
+1. **S1** must complete first (foundation for all other sprints)
+2. **S2, S3** can run in parallel after S1
+3. **S4** requires S1, S2 complete
+4. **S5** requires S1, S2 complete (can run parallel with S4)
+5. **S6** validates all prior sprints
+
+---
+
 ## Test Validation Targets
 
 ### Critical Tests (Currently Failing/Ignored)
@@ -628,13 +689,14 @@ This is more elegant but requires nightly Rust. Recommend explicit cycle callbac
 | S3: APU Precision | 10-15h | MEDIUM | S1 |
 | S4: Bus/DMA | 15-20h | MEDIUM | S1, S2 |
 | S5: Mappers | 15-20h | MEDIUM | S1, S2 |
-| **Total** | **85-125h** | | |
+| S6: Testing | 8-12h | LOW | S1-S5 |
+| **Total** | **93-137h** | | |
 
 ### Confidence Level
 
-- **Conservative estimate:** 125 hours (worst case)
-- **Expected estimate:** 100 hours (likely)
-- **Optimistic estimate:** 85 hours (best case)
+- **Conservative estimate:** 137 hours (worst case)
+- **Expected estimate:** 115 hours (likely)
+- **Optimistic estimate:** 93 hours (best case)
 
 ### Resource Requirements
 
