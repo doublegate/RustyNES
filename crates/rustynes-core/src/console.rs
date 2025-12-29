@@ -181,6 +181,7 @@ impl Console {
     /// This is the cycle-accurate execution mode. Each call:
     /// - Advances the CPU by exactly one cycle
     /// - PPU and APU are stepped via `on_cpu_cycle()` BEFORE each CPU memory access
+    /// - Handles DMC DMA stalls (CPU halted while PPU/APU continue)
     ///
     /// # Timing Model
     ///
@@ -188,6 +189,15 @@ impl Console {
     /// accurate `VBlank` flag detection. When CPU reads $2002 (PPUSTATUS), PPU state
     /// has already been updated. This is critical for passing ppu_02-vbl_set_time
     /// and ppu_03-vbl_clear_time tests which require ±2 cycle accuracy.
+    ///
+    /// # DMC DMA Stalls
+    ///
+    /// When DMC performs DMA to fetch sample bytes, it steals CPU cycles (typically 3-4).
+    /// During these stalls:
+    /// - CPU is halted (no instruction progress)
+    /// - PPU continues (3 dots per stall cycle)
+    /// - APU continues (1 cycle per stall cycle)
+    /// - Mapper is clocked (1 cycle per stall cycle)
     ///
     /// # Architecture Note
     ///
@@ -224,7 +234,7 @@ impl Console {
     /// # }
     /// ```
     pub fn tick(&mut self) -> (bool, bool) {
-        // Handle DMA if active (DMA steals CPU cycles)
+        // Handle OAM DMA if active (DMA steals CPU cycles)
         // During DMA, CPU doesn't execute so we must manually step PPU/APU
         if self.bus.dma_active() {
             // Manually step PPU (3 dots per CPU cycle) during DMA
@@ -239,8 +249,11 @@ impl Console {
                 }
             }
 
-            // Manually step APU during DMA
-            self.bus.apu.step();
+            // Manually step APU during DMA (ignore DMC stalls during OAM DMA)
+            let _ = self.bus.apu.step();
+
+            // Clock mapper during DMA
+            self.bus.clock_mapper(1);
 
             let dma_done = self.bus.tick_dma();
             if !dma_done {
@@ -251,7 +264,8 @@ impl Console {
 
         // Execute one CPU cycle
         // This calls on_cpu_cycle() internally BEFORE each memory access,
-        // which steps PPU (3 dots) and APU (1 cycle) and captures NMI/frame_complete
+        // which steps PPU (3 dots), APU (1 cycle), mapper (1 cycle), and
+        // captures NMI/frame_complete/dmc_stalls
         let instruction_complete = self.cpu.tick(&mut self.bus);
 
         // Handle NMI from PPU (set during on_cpu_cycle via step_ppu)
@@ -260,13 +274,39 @@ impl Console {
         }
 
         // Check for frame completion
-        let frame_complete = self.bus.take_frame_complete();
+        let mut frame_complete = self.bus.take_frame_complete();
         if frame_complete {
             self.frame_count += 1;
         }
 
-        // Clock mapper (once per CPU cycle for cycle-based timing)
-        self.bus.clock_mapper(1);
+        // Handle DMC DMA stall cycles
+        // During DMC stalls, CPU is halted but PPU/APU/mapper continue
+        let dmc_stalls = self.bus.take_dmc_stall_cycles();
+        for _ in 0..dmc_stalls {
+            // Step PPU 3 dots per stall cycle
+            for _ in 0..3 {
+                let (fc, nmi) = self.bus.step_ppu();
+                if nmi {
+                    self.cpu.trigger_nmi();
+                }
+                if fc {
+                    self.frame_count += 1;
+                    frame_complete = true;
+                }
+            }
+
+            // Step APU once per stall cycle (ignore nested DMC stalls)
+            let _ = self.bus.apu.step();
+
+            // Clock mapper once per stall cycle
+            self.bus.clock_mapper(1);
+
+            // Count the stall cycle
+            self.master_cycles += 1;
+        }
+
+        // Note: Mapper is already clocked in on_cpu_cycle() which is called
+        // during cpu.tick() for each memory access. No need to clock again here.
 
         // Update IRQ line (level-triggered: high when any source is active)
         let irq = self.bus.mapper_irq_pending() || self.bus.apu.irq_pending();

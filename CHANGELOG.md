@@ -11,6 +11,132 @@ No unreleased changes.
 
 ---
 
+## [0.8.6] - 2025-12-29 - Sub-Cycle Accuracy Improvements
+
+**Status**: Phase 1.5 Stabilization - M11 Sub-Cycle Accuracy (Sprints 3-5 Complete, 83%)
+
+This release implements critical sub-cycle accuracy features including DMC DMA cycle stealing, NES open bus behavior, and per-CPU-cycle mapper clocking.
+
+### Highlights
+
+- **DMC DMA Cycle Stealing:** Proper CPU stall handling during DMC sample fetches
+- **NES Open Bus Behavior:** `last_bus_value` tracking for hardware-accurate unmapped reads
+- **Controller Open Bus:** Bits 5-7 correctly mixed from open bus in controller reads
+- **Per-Cycle Mapper Clocking:** `mapper.clock(1)` in `on_cpu_cycle()` for IRQ accuracy
+- **Test Suite:** 522+ tests passing (0 failures, 1 ignored doctest, 2 new tests)
+- **100% Blargg Pass Rate:** All 90/90 Blargg tests continue to pass
+
+### Added
+
+#### DMC DMA Cycle Stealing (Sprint 3)
+
+- **New Field:** `dmc_stall_cycles` in Bus struct tracks pending CPU stalls
+- **Purpose:** DMC sample fetches steal 4 CPU cycles per sample
+- **Implementation:** CPU halted during stalls while PPU/APU/mapper continue running
+- **Method:** `take_dmc_stall_cycles()` for Console integration
+- **Console Integration:** tick() handles stalls with proper component stepping
+
+#### NES Open Bus Behavior (Sprint 4)
+
+- **New Field:** `last_bus_value` in Bus struct tracks last value on data bus
+- **Purpose:** NES hardware returns last bus value for unmapped reads (not 0)
+- **Unmapped Regions:** $4018-$401F and $4020-$5FFF return open bus value
+- **Controller Reads:** $4016/$4017 mix bits 5-7 from open bus with controller data bits 0-4
+- **Writes:** Also update bus value (hardware-accurate behavior)
+- **New Tests:** `test_open_bus_behavior()`, `test_controller_open_bus_bits()`
+
+#### Per-Cycle Mapper Clocking (Sprint 5)
+
+- **New Call:** `self.mapper.clock(1)` in `on_cpu_cycle()` callback
+- **Purpose:** Mappers clocked once per CPU cycle for cycle-accurate timing
+- **Critical For:** VRC cycle-based IRQs, MMC3 A12 detection
+- **Effect:** Maintains sub-cycle accuracy for all mapper types
+
+### Fixed
+
+- Controller reads now correctly mix bits 5-7 from open bus with controller data
+- Unmapped regions return last bus value instead of 0 (hardware-accurate)
+- DMC sample fetches now properly stall CPU while other components continue
+
+### Changed
+
+- Bus struct tracks `last_bus_value` for open bus emulation
+- Bus struct tracks `dmc_stall_cycles` for DMC DMA handling
+- Console tick() handles DMC stalls with proper PPU/APU/mapper stepping
+- Mappers clocked via `on_cpu_cycle()` callback for sub-cycle accuracy
+- Consolidated unmapped read ranges for cleaner match arm
+
+### Technical Specifications
+
+**DMC DMA Stall Handling:**
+
+```rust
+// Bus provides stall cycle count
+pub fn take_dmc_stall_cycles(&mut self) -> u8;
+
+// Console handles stalls
+if stall_cycles > 0 {
+    for _ in 0..stall_cycles {
+        self.bus.step_ppu_apu_mapper();
+    }
+}
+```
+
+**Open Bus Implementation:**
+
+```rust
+// Track last bus value
+self.last_bus_value = value;
+
+// Unmapped reads return open bus
+0x4018..=0x5FFF => self.last_bus_value,
+
+// Controller reads mix bits
+0x4016 => self.controller1.read() | (self.last_bus_value & 0xE0),
+```
+
+**Mapper Clocking:**
+
+```rust
+fn on_cpu_cycle(&mut self) {
+    self.mapper.clock(1);
+    // PPU stepping...
+}
+```
+
+**Test Results:**
+
+- Total tests: 522+ passing
+- Failures: 0
+- Ignored: 1 (CpuBus doctest for specialized implementation)
+- New tests: 2 (open bus behavior validation)
+- Blargg pass rate: 100% (90/90 tests)
+
+**M11 Progress:**
+
+- Sprint 1: CPU Cycle-by-Cycle Refactor - COMPLETE
+- Sprint 2: PPU Synchronization Integration - COMPLETE
+- Sprint 3: APU Precision (DMC DMA) - COMPLETE
+- Sprint 4: Bus/DMA Integration - COMPLETE
+- Sprint 5: Mapper Accuracy - COMPLETE
+- Sprint 6: Testing & Validation - PENDING
+
+### Quality Metrics
+
+- cargo clippy: PASSING (zero warnings)
+- cargo fmt: PASSING
+- cargo test: 522+ tests passing
+- cargo build --release: SUCCESS
+- Zero unsafe code maintained
+
+### What's Next
+
+- M11 Sprint 6: Testing & Validation with additional test ROMs
+- M10 Sprint 2: Documentation updates
+- M10 Sprint 3: Release preparation
+
+---
+
 ## [0.8.5] - 2025-12-29 - Cycle-Accurate CPU/PPU Synchronization
 
 **Status**: Phase 1.5 Stabilization - M11 Sub-Cycle Accuracy (Sprints 1 & 2 Complete)

@@ -6,11 +6,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 RustyNES is a next-generation Nintendo Entertainment System (NES) emulator written in Rust. Target: 100% TASVideos accuracy test pass rate, 300+ mappers, RetroAchievements, GGPO netplay, TAS tools, Lua scripting.
 
-**Status:** v0.8.5 - Phase 1.5 Stabilization In Progress (M7-M8 Complete, M9 85%, M10 50%, M11 50%). All Phase 1 milestones (M1-M6) done.
+**Status:** v0.8.6 - Phase 1.5 Stabilization In Progress (M7-M8 Complete, M9 85%, M10 50%, M11 83%). All Phase 1 milestones (M1-M6) done.
 
-**Test Status:** 520+ tests passing (0 failures, 1 ignored). 100% Blargg pass rate (90/90 tests)
+**Test Status:** 522+ tests passing (0 failures, 1 ignored). 100% Blargg pass rate (90/90 tests)
 
-**Current Version:** v0.8.5 (December 29, 2025)
+**Current Version:** v0.8.6 (December 29, 2025)
+- M11 Sub-Cycle Accuracy: Sprints 3-5 complete (83% total milestone progress)
+- DMC DMA Cycle Stealing: CPU stalls 4 cycles per DMC sample fetch via `dmc_stall_cycles` field
+- Open Bus Behavior: `last_bus_value` tracks data bus state; unmapped reads return last bus value
+- Controller Open Bus: Bits 5-7 mixed from open bus with controller data bits 0-4
+- Per-Cycle Mapper Clocking: `mapper.clock(1)` called in `on_cpu_cycle()` for cycle-accurate mapper timing
+- Test Suite: 522+ tests passing (0 failures, 1 ignored doctest), 2 new open bus tests added
+- 100% Blargg Pass Rate: All 90/90 Blargg tests continue to pass
+
+**Previous Version:** v0.8.5 (December 29, 2025)
 - Cycle-Accurate CPU/PPU Synchronization: M11 Sprints 1 & 2 complete
 - CpuBus Trait: on_cpu_cycle() callback for PPU stepping before each CPU memory access
 - cpu.tick() Method: Cycle-by-cycle CPU execution for sub-instruction timing precision
@@ -317,10 +326,50 @@ Cloned emulators for study and pattern reference:
 | **Dependency Upgrade** | ✅ v0.8.0 | Rust 2024, eframe 0.33, egui 0.33, cpal 0.16, ron 0.12 |
 | **M9: Known Issues** | 🔄 v0.8.1 (85%) | Audio S1, PPU S2, Performance S3 complete; S4 pending |
 | **M10: Final Polish** | 🔄 v0.8.3 (50%) | Critical rendering fix, UI/UX improvements, Documentation pending |
-| **M11: Sub-Cycle Accuracy** | 🔄 v0.8.5 (50%) | CpuBus trait, cpu.tick(), VBlank timing tests pass with ±0 cycles |
+| **M11: Sub-Cycle Accuracy** | 🔄 v0.8.6 (83%) | DMC DMA cycle stealing, open bus behavior, per-cycle mapper clocking |
 | **Phase 2+** | 📋 TBD | Advanced features |
 
-## Recent Accomplishments (v0.8.5 - Dec 29, 2025)
+## Recent Accomplishments (v0.8.6 - Dec 29, 2025)
+
+### M11 Sub-Cycle Accuracy (Sprints 3-5 Complete)
+
+Implemented critical sub-cycle accuracy improvements for NES hardware emulation precision:
+
+#### Sprint 3: DMC DMA Cycle Stealing
+- **CPU Stall Handling:** `dmc_stall_cycles` field tracks pending CPU stalls
+- **4-Cycle Penalty:** CPU halts 4 cycles when DMC needs sample fetch
+- **PPU/APU Continue:** Other components keep running during CPU stall
+- **Alignment Check:** Stall timing based on CPU cycle parity
+
+#### Sprint 4: Open Bus Behavior
+- **Data Bus Tracking:** `last_bus_value` stores last value on data bus
+- **Unmapped Reads:** Return `last_bus_value` instead of 0x00
+- **Controller Integration:** Bits 5-7 mixed from open bus with controller data
+- **Write Tracking:** Both read and write operations update bus value
+
+#### Sprint 5: Per-Cycle Mapper Clocking
+- **Cycle-Accurate Clocking:** `mapper.clock(1)` called in `on_cpu_cycle()`
+- **IRQ Precision:** MMC3 and VRC mappers now receive proper cycle notifications
+- **A12 Detection:** PPU address changes trigger mapper on correct cycles
+
+#### Technical Implementation
+```rust
+// DMC DMA stall handling
+if self.dmc_stall_cycles > 0 {
+    self.dmc_stall_cycles -= 1;
+    return; // CPU halted, PPU/APU continue
+}
+
+// Open bus behavior
+self.last_bus_value = value; // Track on all bus operations
+
+// Per-cycle mapper clocking
+self.mapper.clock(1); // In on_cpu_cycle() callback
+```
+
+---
+
+## Previous Accomplishments (v0.8.5 - Dec 29, 2025)
 
 ### Cycle-Accurate CPU/PPU Synchronization (M11 S1 & S2)
 

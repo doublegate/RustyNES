@@ -66,6 +66,14 @@ pub struct Bus {
 
     /// Frame complete flag (set during `on_cpu_cycle`, cleared by Console)
     frame_complete: bool,
+
+    /// DMC DMA stall cycles pending (set during `on_cpu_cycle`, cleared by Console)
+    /// When DMC performs DMA, it steals CPU cycles (typically 3-4 cycles)
+    dmc_stall_cycles: u8,
+
+    /// Last value on data bus (for open bus behavior)
+    /// Unmapped addresses return this value; controllers mix it with their data
+    last_bus_value: u8,
 }
 
 impl Bus {
@@ -109,6 +117,8 @@ impl Bus {
             cpu_cycles: 0,
             nmi_pending: false,
             frame_complete: false,
+            dmc_stall_cycles: 0,
+            last_bus_value: 0,
         }
     }
 
@@ -233,6 +243,8 @@ impl Bus {
         self.cpu_cycles = 0;
         self.nmi_pending = false;
         self.frame_complete = false;
+        self.dmc_stall_cycles = 0;
+        self.last_bus_value = 0;
     }
 
     /// Clock the mapper (for IRQ timing)
@@ -308,11 +320,31 @@ impl Bus {
         self.frame_complete = false;
         complete
     }
+
+    /// Take and clear pending DMC DMA stall cycles.
+    ///
+    /// This is set by `on_cpu_cycle()` when DMC performs DMA.
+    /// Console should call this after `cpu.tick()` to check if CPU needs to stall.
+    ///
+    /// During DMC DMA stalls:
+    /// - CPU is halted (no instruction execution)
+    /// - PPU continues running (3 dots per stall cycle)
+    /// - APU continues running (1 cycle per stall cycle)
+    /// - Mapper is clocked (1 cycle per stall cycle)
+    ///
+    /// # Returns
+    ///
+    /// Number of stall cycles (0-4, typically 3 when DMA occurs)
+    pub fn take_dmc_stall_cycles(&mut self) -> u8 {
+        let stalls = self.dmc_stall_cycles;
+        self.dmc_stall_cycles = 0;
+        stalls
+    }
 }
 
 impl CpuBus for Bus {
     fn read(&mut self, addr: u16) -> u8 {
-        match addr {
+        let value = match addr {
             // 2KB internal RAM, mirrored 4 times
             0x0000..=0x1FFF => self.ram[(addr & 0x07FF) as usize],
 
@@ -328,24 +360,34 @@ impl CpuBus for Bus {
             // APU and I/O registers
             0x4000..=0x4015 => self.apu.read_register(addr),
 
-            // Controller 1
-            0x4016 => self.controller1.read(),
+            // Controller 1 - bits 0-4 from controller, bits 5-7 from open bus
+            0x4016 => self.controller1.read() | (self.last_bus_value & 0xE0),
 
             // Controller 2 (note: $4017 write goes to APU, read goes to controller)
-            0x4017 => self.controller2.read(),
+            // bits 0-4 from controller, bits 5-7 from open bus
+            0x4017 => self.controller2.read() | (self.last_bus_value & 0xE0),
+
+            // Unmapped APU/IO test registers ($4018-$401F) and expansion ROM area ($4020-$5FFF)
+            // Both return open bus value
+            0x4018..=0x5FFF => self.last_bus_value,
 
             // PRG-RAM / battery-backed SRAM ($6000-$7FFF)
             0x6000..=0x7FFF => self.prg_ram[(addr - 0x6000) as usize],
 
             // Cartridge PRG-ROM (mapper-controlled)
             0x8000..=0xFFFF => self.mapper.read_prg(addr),
+        };
 
-            // Unmapped regions ($4018-$401F, $4020-$5FFF)
-            _ => 0, // Open bus
-        }
+        // Track last bus value for open bus behavior
+        self.last_bus_value = value;
+        value
     }
 
     fn write(&mut self, addr: u16, value: u8) {
+        // Track last bus value for open bus behavior
+        // Writes also put a value on the data bus
+        self.last_bus_value = value;
+
         match addr {
             // 2KB internal RAM, mirrored 4 times
             0x0000..=0x1FFF => self.ram[(addr & 0x07FF) as usize] = value,
@@ -383,18 +425,19 @@ impl CpuBus for Bus {
         }
     }
 
-    /// Step PPU and APU before each CPU memory access.
+    /// Step PPU, APU, and mapper before each CPU memory access.
     ///
     /// This is the core of cycle-accurate emulation. For NTSC:
     /// - PPU runs at 3x CPU clock (3 PPU dots per CPU cycle)
     /// - APU runs at CPU clock
+    /// - Mapper is clocked once per CPU cycle (for IRQ timing)
     ///
-    /// Called BEFORE each CPU read/write to ensure PPU and APU are in
+    /// Called BEFORE each CPU read/write to ensure PPU, APU, and mapper are in
     /// the correct state when the CPU observes memory. This is critical
-    /// for accurate `VBlank` flag ($2002) timing.
+    /// for accurate `VBlank` flag ($2002) timing and mapper IRQ precision.
     ///
-    /// NMI and `frame_complete` signals are captured and can be retrieved
-    /// via `take_nmi()` and `take_frame_complete()`.
+    /// NMI, `frame_complete`, and DMC stall signals are captured and can be
+    /// retrieved via `take_nmi()`, `take_frame_complete()`, and `take_dmc_stall_cycles()`.
     fn on_cpu_cycle(&mut self) {
         // Step PPU 3 times (3 PPU dots per CPU cycle for NTSC)
         for _ in 0..3 {
@@ -409,7 +452,16 @@ impl CpuBus for Bus {
 
         // Step APU once (1 APU cycle per CPU cycle)
         // APU internally divides this further for its frame sequencer
-        self.apu.step();
+        // APU returns DMC DMA stall cycles if DMC performed a DMA fetch
+        let dmc_stalls = self.apu.step();
+        if dmc_stalls > 0 {
+            // Accumulate stall cycles (can happen multiple times if CPU stalls span instructions)
+            self.dmc_stall_cycles = self.dmc_stall_cycles.saturating_add(dmc_stalls);
+        }
+
+        // Clock mapper once per CPU cycle (for cycle-based IRQ timing)
+        // This is critical for VRC mappers and other cycle-counting mappers
+        self.mapper.clock(1);
 
         // Track CPU cycles for DMA alignment
         self.cpu_cycles += 1;
@@ -529,5 +581,50 @@ mod tests {
 
         // Controllers should be reset
         assert!(!bus.controller1.get_button(crate::input::Button::A));
+    }
+
+    #[test]
+    fn test_open_bus_behavior() {
+        let mut bus = create_test_bus();
+
+        // Initially, open bus should be 0
+        assert_eq!(bus.read(0x4018), 0);
+        assert_eq!(bus.read(0x5000), 0);
+
+        // After reading RAM, open bus should reflect that value
+        bus.write(0x0000, 0x42);
+        let _ = bus.read(0x0000);
+        assert_eq!(bus.read(0x4018), 0x42); // Open bus now has 0x42
+        assert_eq!(bus.read(0x5000), 0x42); // Still 0x42
+
+        // After writing, open bus should reflect the written value
+        bus.write(0x0001, 0xAB);
+        assert_eq!(bus.read(0x4018), 0xAB); // Open bus updated by write
+    }
+
+    #[test]
+    fn test_controller_open_bus_bits() {
+        let mut bus = create_test_bus();
+
+        // Strobe controllers first
+        bus.write(0x4016, 0x01);
+        bus.write(0x4016, 0x00);
+
+        // Now set up open bus with value 0xE0 (bits 5-7 set)
+        // Note: writes update open bus too, so we must read to set it after strobe
+        bus.write(0x0000, 0xE0);
+        let _ = bus.read(0x0000); // Open bus now 0xE0
+
+        // Controller read should mix open bus bits 5-7 with controller data bits 0-4
+        // With no buttons pressed, controller returns 0x00 for bit 0
+        // Result bits 5-7 should come from open bus (0xE0)
+        let value = bus.read(0x4016);
+        assert_eq!(value & 0xE0, 0xE0); // Upper 3 bits from open bus
+
+        // Set open bus again before reading controller 2
+        // (the previous controller read updated open bus to the read value)
+        let _ = bus.read(0x0000); // Open bus now 0xE0 again
+        let value2 = bus.read(0x4017);
+        assert_eq!(value2 & 0xE0, 0xE0);
     }
 }

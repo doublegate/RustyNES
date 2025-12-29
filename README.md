@@ -28,7 +28,7 @@ A next-generation NES emulator written in pure Rust — targeting 100% accuracy,
 
 ---
 
-> **Status:** v0.8.5 Released - Cycle-Accurate CPU/PPU Synchronization (M11 S1 & S2 Complete)
+> **Status:** v0.8.6 Released - Sub-Cycle Accuracy Improvements (M11 Sprints 3-5 Complete)
 >
 > **Milestones Completed:**
 >
@@ -44,12 +44,15 @@ A next-generation NES emulator written in pure Rust — targeting 100% accuracy,
 > - ✅ **M10-S0: Dependencies** - Rust 2024 Edition, eframe 0.33, egui 0.33, cpal 0.16, ron 0.12
 > - ✅ **M10-S1: UI/UX** - Theme support, status bar, tabbed settings, keyboard shortcuts, modal dialogs
 > - ✅ **M11-S1 & S2** - CpuBus trait, cpu.tick(), VBlank timing tests pass with ±0 cycle accuracy
+> - ✅ **M11-S3: DMC DMA** - DMC DMA cycle stealing with proper CPU stall handling
+> - ✅ **M11-S4: Open Bus** - NES open bus behavior emulation with last_bus_value tracking
+> - ✅ **M11-S5: Mapper Timing** - Per-CPU-cycle mapper clocking for cycle-accurate IRQ timing
 >
-> **Test Suite:** 520+ tests passing (0 failures, 1 ignored)
+> **Test Suite:** 522+ tests passing (0 failures, 1 ignored)
 >
-> **Current:** Phase 1.5 (Stabilization) - M11: Sub-Cycle Accuracy (50% Complete)
+> **Current:** Phase 1.5 (Stabilization) - M11: Sub-Cycle Accuracy (83% Complete - 5/6 Sprints)
 >
-> **Next:** M11-S3: Additional Test ROM Validation, M11-S4: Performance Optimization
+> **Next:** M11-S6: Testing & Validation
 >
 > See [ROADMAP.md](ROADMAP.md) and [to-dos/](to-dos/) for development timeline.
 
@@ -91,20 +94,22 @@ RustyNES combines **accuracy-first emulation** with **modern features** and the 
 
 ## Quick Start
 
-### Recent Release: v0.8.5 (December 29, 2025)
+### Recent Release: v0.8.6 (December 29, 2025)
 
-RustyNES v0.8.5 implements true cycle-accurate CPU/PPU synchronization (M11 Sprints 1 & 2):
+RustyNES v0.8.6 implements sub-cycle accuracy improvements (M11 Sprints 3-5):
 
-**What's New in v0.8.5:**
+**What's New in v0.8.6:**
 
-- **Cycle-Accurate Synchronization:** CpuBus trait with on_cpu_cycle() callback for PPU stepping
-- **VBlank Timing Tests:** Now pass with ±0 cycle accuracy (ppu_02 was ±51, ppu_03 was ±10 cycles)
-- **cpu.tick() Method:** Cycle-by-cycle CPU execution for sub-instruction timing precision
-- **Test Suite:** 520+ tests passing (0 failures, 1 ignored doctest)
+- **DMC DMA Cycle Stealing:** Proper CPU stall handling during DMC sample fetches
+- **NES Open Bus Behavior:** `last_bus_value` tracking for hardware-accurate unmapped reads
+- **Controller Open Bus:** Bits 5-7 correctly mixed from open bus in controller reads
+- **Per-Cycle Mapper Clocking:** `mapper.clock(1)` in `on_cpu_cycle()` for IRQ accuracy
+- **Test Suite:** 522+ tests passing (0 failures, 1 ignored doctest, 2 new tests)
 - **100% Blargg Pass Rate:** All 90/90 Blargg tests continue to pass
 
 **Previous Releases:**
 
+- **v0.8.5** - Cycle-Accurate Sync: CpuBus trait, cpu.tick(), VBlank timing tests pass with ±0 cycles
 - **v0.8.4** - CPU/PPU Timing: PPU stepped before CPU cycle, version consistency fixes
 - **v0.8.3** - Critical Rendering Fix: Fixed framebuffer display, palette conversion, doctest improvements
 - **v0.8.2** - UI/UX Improvements: Theme support, status bar, tabbed settings, keyboard shortcuts, modal dialogs
@@ -150,7 +155,7 @@ cargo build --workspace --release
 
 cargo test --workspace
 
-# Results: 520+ tests passing, 0 failures, 1 ignored
+# Results: 522+ tests passing, 0 failures, 1 ignored
 
 # Run the desktop GUI (requires ROM file)
 cargo run -p rustynes-desktop --release -- path/to/game.nes
@@ -194,7 +199,7 @@ RustyNES demonstrates world-class emulation accuracy:
 
 cargo test --workspace
 
-# Total: 520+ tests passing, 1 ignored - 267 CPU + 92 PPU + 150 APU + 167 Mappers + 23 Core + Blargg integration tests
+# Total: 522+ tests passing, 1 ignored - 267 CPU + 92 PPU + 150 APU + 167 Mappers + 24 Core + Blargg integration tests
 
 # Run specific crate tests
 
@@ -202,7 +207,7 @@ cargo test -p rustynes-cpu      # 267 tests (all passing)
 cargo test -p rustynes-ppu      # 90 tests (all passing)
 cargo test -p rustynes-apu      # 150 tests (all passing)
 cargo test -p rustynes-mappers  # 167 tests (all passing)
-cargo test -p rustynes-core     # 23 tests (all passing)
+cargo test -p rustynes-core     # 24 tests (all passing)
 
 # Run with debug logging
 
@@ -308,7 +313,7 @@ Controls will be fully configurable through the configuration system.
 
 ## Features
 
-### Current Status (v0.8.4 - December 2025)
+### Current Status (v0.8.6 - December 2025)
 
 - [x] **Architecture Design** - Complete modular crate structure with 10 component crates
 - [x] **Documentation** - 40+ comprehensive specification and implementation guides covering CPU, PPU, APU, mappers, testing, and development
@@ -859,9 +864,9 @@ If you use RustyNES in academic research, please cite:
   author = {RustyNES Contributors},
   title = {RustyNES: A Next-Generation NES Emulator in Rust},
   year = {2025},
-  version = {0.8.4},
+  version = {0.8.6},
   url = {https://github.com/doublegate/RustyNES},
-  note = {Cycle-accurate NES emulator with 100\% Blargg test pass rate, CPU/PPU timing improvements, 517+ tests passing, Rust 2024 Edition, eframe/egui desktop GUI}
+  note = {Cycle-accurate NES emulator with 100\% Blargg test pass rate, DMC DMA cycle stealing, NES open bus behavior, per-cycle mapper clocking, 522+ tests passing, Rust 2024 Edition, eframe/egui desktop GUI}
 }
 ```
 

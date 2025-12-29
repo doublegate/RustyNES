@@ -1,8 +1,8 @@
 # RustyNES Development Roadmap
 
-**Document Version:** 2.10.0
+**Document Version:** 2.11.0
 **Last Updated:** 2025-12-29
-**Project Status:** Phase 1.5 Stabilization In Progress (M1-M8 Complete, M9 85%, M10 50%, M11 50%)
+**Project Status:** Phase 1.5 Stabilization In Progress (M1-M8 Complete, M9 85%, M10 50%, M11 83%)
 
 ---
 
@@ -21,7 +21,19 @@
 
 ---
 
-## Recent Updates (v2.14.0 - December 2025)
+## Recent Updates (v2.15.0 - December 2025)
+
+**v0.8.6 Released - December 29, 2025** - Sub-Cycle Accuracy Improvements (M11 S3-S5)!
+
+**M11 Sub-Cycle Accuracy Achievements (Sprints 3-5):**
+
+- **DMC DMA Cycle Stealing:** Proper CPU stall handling during DMC sample fetches
+- **NES Open Bus Behavior:** `last_bus_value` tracking for hardware-accurate unmapped reads
+- **Controller Open Bus:** Bits 5-7 correctly mixed from open bus in controller reads
+- **Per-Cycle Mapper Clocking:** `mapper.clock(1)` in `on_cpu_cycle()` for IRQ accuracy
+- **Test Suite:** 522+ tests passing (0 failures, 1 ignored doctest, 2 new tests)
+- **100% Blargg Pass Rate:** All 90/90 Blargg tests continue to pass
+- **M11 Progress:** 5/6 sprints complete (83%)
 
 **v0.8.5 Released - December 29, 2025** - Cycle-Accurate CPU/PPU Synchronization!
 
@@ -153,6 +165,7 @@
 - v0.8.3 (December 28, 2025): Critical Rendering Fix - Palette index to RGB conversion, doctest improvements
 - v0.8.4 (December 28, 2025): CPU/PPU Timing - PPU stepped before CPU cycle, version consistency fixes
 - v0.8.5 (December 29, 2025): M11 Sub-Cycle Accuracy (50%) - CpuBus trait, cpu.tick(), VBlank timing tests pass
+- v0.8.6 (December 29, 2025): M11 Sub-Cycle Accuracy (83%) - DMC DMA cycle stealing, open bus behavior, per-cycle mapper clocking
 
 **Project Status Change:**
 
@@ -164,7 +177,7 @@
 
 ```text
 Phase 1 (MVP):         ████████████████████ 100% (M1-M6 COMPLETE)
-Phase 1.5 (Accuracy):  ██████████████████░░  95% (M7-M8 COMPLETE, M9 85%, M10 50%, M11 50%)
+Phase 1.5 (Accuracy):  ██████████████████░░  96% (M7-M8 COMPLETE, M9 85%, M10 50%, M11 83%)
 
 - M1: CPU           [████████████████████] 100% ✅ COMPLETED December 19, 2025
 - M2: PPU           [████████████████████] 100% ✅ COMPLETED December 19, 2025
@@ -174,7 +187,7 @@ Phase 1.5 (Accuracy):  ██████████████████░
 - M6: GUI           [████████████████████] 100% ✅ COMPLETED December 19, 2025
 - M7: Accuracy      [████████████████████] 100% ✅ COMPLETED December 20, 2025
 - M8: Test ROMs     [████████████████████] 100% ✅ COMPLETED December 21, 2025
-- M11: Sub-Cycle    [██████████░░░░░░░░░░]  50% 🔄 IN PROGRESS (S1 & S2 Complete)
+- M11: Sub-Cycle    [████████████████░░░░]  83% 🔄 IN PROGRESS (S1-S5 Complete, S6 Pending)
 
 ```
 

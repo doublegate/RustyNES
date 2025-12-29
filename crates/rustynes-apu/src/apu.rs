@@ -293,13 +293,13 @@ impl Apu {
     ///
     /// # Returns
     ///
-    /// Frame action to be processed (if any)
+    /// Number of DMC DMA stall cycles (0 if no DMA occurred, typically 3 when DMA happens)
     ///
     /// # Panics
     ///
     /// Panics if `memory_read_fn` is not set when DMC attempts DMA
     #[inline]
-    pub fn step(&mut self) -> FrameAction {
+    pub fn step(&mut self) -> u8 {
         self.cycles += 1;
 
         // Clock channel timers
@@ -314,17 +314,14 @@ impl Apu {
         self.triangle.clock_timer();
 
         // Clock DMC timer (may perform DMA)
-        // For now, provide a dummy memory reader if none is set
-        if let Some(ref mut memory_fn) = self.memory_read_fn {
+        // Returns the number of CPU cycles stolen by DMA (0 if no DMA)
+        let dma_stall_cycles = if let Some(ref mut memory_fn) = self.memory_read_fn {
             // Clock with actual memory reader
-            let dma_cycles = self.dmc.clock_timer(memory_fn);
-            // DMA cycles would need to be communicated back to the CPU
-            // For now, we just track that DMA occurred
-            let _ = dma_cycles;
+            self.dmc.clock_timer(memory_fn)
         } else {
             // No memory callback set, clock with dummy reader
-            self.dmc.clock_timer(|_| 0);
-        }
+            self.dmc.clock_timer(|_| 0)
+        };
 
         // Clock frame counter and handle frame actions
         let action = self.frame_counter.clock();
@@ -342,7 +339,21 @@ impl Apu {
         // Add to resampler
         self.resampler.add_sample(mixed);
 
-        action
+        dma_stall_cycles
+    }
+
+    /// Steps the APU by one CPU cycle and returns frame action
+    ///
+    /// This is a convenience method that returns the frame action instead of DMA stall cycles.
+    /// Use [`step()`](Self::step) when you need to handle DMC DMA stalls.
+    ///
+    /// # Returns
+    ///
+    /// Frame action to be processed (if any)
+    #[inline]
+    pub fn step_with_action(&mut self) -> FrameAction {
+        let _ = self.step(); // Ignore DMA stall cycles
+        self.frame_counter.clock()
     }
 
     /// Get the current mixed audio output from all channels
