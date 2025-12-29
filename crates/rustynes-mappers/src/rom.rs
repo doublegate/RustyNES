@@ -306,12 +306,12 @@ impl Rom {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
     /// use std::fs;
     /// use rustynes_mappers::Rom;
     ///
-    /// let data = fs::read("game.nes")?;
-    /// let rom = Rom::load(&data)?;
+    /// let data = fs::read("game.nes").unwrap();
+    /// let rom = Rom::load(&data).unwrap();
     /// println!("Mapper: {}", rom.header.mapper_number);
     /// ```
     pub fn load(data: &[u8]) -> Result<Self, RomError> {

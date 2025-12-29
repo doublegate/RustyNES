@@ -24,16 +24,16 @@
 //!
 //! # Usage
 //!
-//! ```ignore
+//! ```no_run
 //! use rustynes_mappers::{Rom, create_mapper};
 //! use std::fs;
 //!
 //! // Load ROM file
-//! let rom_data = fs::read("game.nes")?;
-//! let rom = Rom::load(&rom_data)?;
+//! let rom_data = fs::read("game.nes").unwrap();
+//! let rom = Rom::load(&rom_data).unwrap();
 //!
 //! // Create appropriate mapper
-//! let mut mapper = create_mapper(&rom)?;
+//! let mut mapper = create_mapper(&rom).unwrap();
 //!
 //! // Use mapper for CPU/PPU memory access
 //! let byte = mapper.read_prg(0x8000);
@@ -132,11 +132,13 @@ pub enum MapperError {
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```no_run
 /// use rustynes_mappers::{Rom, create_mapper};
+/// use std::fs;
 ///
-/// let rom = Rom::load(&rom_data)?;
-/// let mapper = create_mapper(&rom)?;
+/// let rom_data = fs::read("game.nes").unwrap();
+/// let rom = Rom::load(&rom_data).unwrap();
+/// let mapper = create_mapper(&rom).unwrap();
 ///
 /// println!("Created mapper {}", mapper.mapper_number());
 /// ```
