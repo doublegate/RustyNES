@@ -611,26 +611,30 @@ impl Ppu {
         }
 
         // Multiplexing (determine final pixel)
-        let (final_pixel, final_palette) = if bg_pixel == 0 && sprite_pixel == 0 {
-            // Both transparent - use backdrop color
-            (0, 0)
+        // Returns (pixel, palette, is_sprite) to correctly select sprite vs background palette
+        let (final_pixel, final_palette, is_sprite) = if bg_pixel == 0 && sprite_pixel == 0 {
+            // Both transparent - use backdrop color (background palette 0)
+            (0, 0, false)
         } else if bg_pixel == 0 {
             // Background transparent - show sprite
-            (sprite_pixel, sprite_palette)
+            (sprite_pixel, sprite_palette, true)
         } else if sprite_pixel == 0 {
             // Sprite transparent - show background
-            (bg_pixel, bg_palette)
+            (bg_pixel, bg_palette, false)
         } else {
             // Both opaque - check priority
             if sprite_priority {
-                (bg_pixel, bg_palette)
+                (bg_pixel, bg_palette, false)
             } else {
-                (sprite_pixel, sprite_palette)
+                (sprite_pixel, sprite_palette, true)
             }
         };
 
         // Read palette and write to frame buffer
-        let palette_addr = (final_palette << 2) | final_pixel;
+        // Background palettes: $3F00-$3F0F (addresses 0-15)
+        // Sprite palettes: $3F10-$3F1F (addresses 16-31)
+        let palette_base: u8 = if is_sprite { 16 } else { 0 };
+        let palette_addr = palette_base + (final_palette << 2) + final_pixel;
         let color_index = self.vram.read_palette(palette_addr);
 
         let offset = y * FRAME_WIDTH + x;

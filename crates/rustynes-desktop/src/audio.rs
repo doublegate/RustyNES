@@ -1,17 +1,26 @@
 //! Audio output using cpal for low-latency playback.
 //!
 //! This module provides a thread-safe audio output system that:
-//! - Uses a lock-free ring buffer for sample transfer
+//! - Uses a truly lock-free SPSC ring buffer for sample transfer
 //! - Implements adaptive latency adjustment
 //! - Handles buffer underruns gracefully with silence
 //! - Supports dynamic volume control
 //! - Provides mute functionality
 //! - Monitors buffer health for A/V synchronization
+//!
+//! # Safety
+//!
+//! This module uses unsafe code for the SPSC ring buffer implementation.
+//! This is permitted per project guidelines for platform-specific audio code.
+
+// Allow unsafe code for lock-free SPSC ring buffer (per project guidelines)
+#![allow(unsafe_code)]
 
 use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, SampleRate, Stream, StreamConfig};
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
+use std::cell::UnsafeCell;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
@@ -42,85 +51,127 @@ const LATENCY_HISTORY_SIZE: usize = 60;
 /// Based on typical audio callback sizes (256-4096 samples per channel).
 const PREALLOCATED_MONO_BUFFER_SIZE: usize = 4096;
 
-/// Thread-safe ring buffer for audio samples with dynamic sizing.
-struct RingBuffer {
-    buffer: Vec<f32>,
+/// Lock-free SPSC (Single-Producer Single-Consumer) ring buffer for audio samples.
+///
+/// This implementation is designed for the specific use case where:
+/// - One thread (main/emulation) produces samples via `write()`
+/// - One thread (audio callback) consumes samples via `read()`
+///
+/// The lock-free design eliminates mutex contention that can cause audio stuttering.
+struct SpscRingBuffer {
+    /// Sample data wrapped in `UnsafeCell` for interior mutability.
+    ///
+    /// SAFETY: Only the producer writes (after `write_pos`), only the consumer reads (before `write_pos`).
+    buffer: UnsafeCell<Vec<f32>>,
     capacity: usize,
-    read_pos: AtomicU32,
-    write_pos: AtomicU32,
+    /// Read position - only modified by consumer, read by producer for `available()` check.
+    read_pos: AtomicUsize,
+    /// Write position - only modified by producer, read by consumer for `available()` check.
+    write_pos: AtomicUsize,
 }
 
-impl RingBuffer {
+// SAFETY: SpscRingBuffer is Send+Sync because:
+// - The buffer is accessed through atomic coordination of read_pos and write_pos
+// - Producer only writes to positions [write_pos..write_pos+n) then advances write_pos
+// - Consumer only reads from positions [read_pos..read_pos+n) then advances read_pos
+// - The atomic operations with Acquire/Release ordering ensure proper synchronization
+unsafe impl Send for SpscRingBuffer {}
+unsafe impl Sync for SpscRingBuffer {}
+
+impl SpscRingBuffer {
     fn new(capacity: usize) -> Self {
         Self {
-            buffer: vec![0.0; capacity],
+            buffer: UnsafeCell::new(vec![0.0; capacity]),
             capacity,
-            read_pos: AtomicU32::new(0),
-            write_pos: AtomicU32::new(0),
+            read_pos: AtomicUsize::new(0),
+            write_pos: AtomicUsize::new(0),
         }
     }
 
     /// Returns the number of samples available for reading.
+    #[inline]
     fn available(&self) -> usize {
         let write = self.write_pos.load(Ordering::Acquire);
         let read = self.read_pos.load(Ordering::Acquire);
-        ((write.wrapping_sub(read)) as usize) % self.capacity
+        write.wrapping_sub(read) % self.capacity
     }
 
     /// Returns the number of free slots for writing.
+    #[inline]
     fn free(&self) -> usize {
+        // Leave one slot empty to distinguish full from empty
         self.capacity - self.available() - 1
     }
 
     /// Get the buffer fill percentage (0.0 - 1.0)
+    #[inline]
     #[allow(clippy::cast_precision_loss)]
     fn fill_percent(&self) -> f32 {
         self.available() as f32 / self.capacity as f32
     }
 
-    /// Write samples to the buffer. Returns number of samples written.
-    fn write(&mut self, samples: &[f32]) -> usize {
+    /// Write samples to the buffer (producer side). Returns number of samples written.
+    ///
+    /// # Safety
+    /// Must only be called from the producer thread.
+    fn write(&self, samples: &[f32]) -> usize {
         let free = self.free();
         let to_write = samples.len().min(free);
+        if to_write == 0 {
+            return 0;
+        }
 
-        let write_pos = self.write_pos.load(Ordering::Acquire) as usize;
+        let write_pos = self.write_pos.load(Ordering::Relaxed);
+
+        // SAFETY: We only write to positions that the consumer has already read past
+        // (between current write_pos and read_pos). The consumer won't access these
+        // positions until we advance write_pos with Release ordering.
+        let buffer = unsafe { &mut *self.buffer.get() };
 
         for (i, &sample) in samples.iter().take(to_write).enumerate() {
             let pos = (write_pos + i) % self.capacity;
-            self.buffer[pos] = sample;
+            buffer[pos] = sample;
         }
 
-        self.write_pos.store(
-            ((write_pos + to_write) % self.capacity) as u32,
-            Ordering::Release,
-        );
+        // Release ordering ensures writes to buffer are visible before write_pos update
+        self.write_pos
+            .store((write_pos + to_write) % self.capacity, Ordering::Release);
 
         to_write
     }
 
-    /// Read samples from the buffer. Returns number of samples read.
+    /// Read samples from the buffer (consumer side). Returns number of samples read.
+    ///
+    /// # Safety
+    /// Must only be called from the consumer thread.
     fn read(&self, output: &mut [f32]) -> usize {
         let available = self.available();
         let to_read = output.len().min(available);
+        if to_read == 0 {
+            return 0;
+        }
 
-        let read_pos = self.read_pos.load(Ordering::Acquire) as usize;
+        let read_pos = self.read_pos.load(Ordering::Relaxed);
+
+        // SAFETY: We only read from positions that the producer has written to
+        // (between read_pos and write_pos). The producer won't overwrite these
+        // positions until we advance read_pos with Release ordering.
+        let buffer = unsafe { &*self.buffer.get() };
 
         for (i, sample) in output.iter_mut().take(to_read).enumerate() {
             let pos = (read_pos + i) % self.capacity;
-            // SAFETY: We're reading from a fixed-size array with modulo indexing
-            *sample = self.buffer[pos];
+            *sample = buffer[pos];
         }
 
-        self.read_pos.store(
-            ((read_pos + to_read) % self.capacity) as u32,
-            Ordering::Release,
-        );
+        // Release ordering ensures we've read all data before advancing read_pos
+        self.read_pos
+            .store((read_pos + to_read) % self.capacity, Ordering::Release);
 
         to_read
     }
 
-    /// Clear the buffer
-    fn clear(&mut self) {
+    /// Clear the buffer (must be called when neither producer nor consumer is active)
+    fn clear(&self) {
         self.read_pos.store(0, Ordering::Release);
         self.write_pos.store(0, Ordering::Release);
     }
@@ -143,8 +194,8 @@ pub struct AudioLatencyStats {
 pub struct AudioOutput {
     /// The cpal audio stream (must be kept alive).
     _stream: Stream,
-    /// Shared ring buffer for sample transfer.
-    buffer: Arc<std::sync::Mutex<RingBuffer>>,
+    /// Lock-free SPSC ring buffer for sample transfer.
+    buffer: Arc<SpscRingBuffer>,
     /// Volume level (0.0 - 1.0).
     volume: Arc<AtomicU32>,
     /// Mute state.
@@ -206,7 +257,8 @@ impl AudioOutput {
             actual_sample_rate, config.channels, buffer_size
         );
 
-        let buffer = Arc::new(std::sync::Mutex::new(RingBuffer::new(buffer_size)));
+        // Create lock-free SPSC buffer - no mutex needed!
+        let buffer = Arc::new(SpscRingBuffer::new(buffer_size));
         let buffer_clone = Arc::clone(&buffer);
 
         let volume_atomic = Arc::new(AtomicU32::new(volume.to_bits()));
@@ -253,12 +305,8 @@ impl AudioOutput {
                             &mut preallocated_buffer[..mono_samples_needed]
                         };
 
-                    let samples_read = if let Ok(buf) = buffer_clone.lock() {
-                        buf.read(mono_buffer)
-                    } else {
-                        // Lock failed, fill with silence
-                        0
-                    };
+                    // Lock-free read from SPSC buffer - no mutex contention!
+                    let samples_read = buffer_clone.read(mono_buffer);
 
                     // Check for underrun
                     if samples_read < mono_samples_needed {
@@ -343,20 +391,20 @@ impl AudioOutput {
     ///
     /// Samples should be mono f32 values in the range -1.0 to 1.0.
     /// Returns the number of samples actually queued.
-    pub fn queue_samples(&mut self, samples: &[f32]) -> usize {
-        if let Ok(mut buf) = self.buffer.lock() {
-            buf.write(samples)
-        } else {
-            warn!("Failed to lock audio buffer for writing");
-            0
-        }
+    ///
+    /// This method is lock-free and safe to call from the main/emulation thread.
+    pub fn queue_samples(&self, samples: &[f32]) -> usize {
+        // Lock-free write to SPSC buffer
+        self.buffer.write(samples)
     }
 
     /// Queue samples with dynamic rate adjustment hint
     ///
     /// Returns a speed adjustment factor that can be used to slightly
     /// speed up or slow down emulation to maintain audio sync.
-    pub fn queue_samples_with_sync(&mut self, samples: &[f32]) -> (usize, f32) {
+    ///
+    /// This method is lock-free and safe to call from the main/emulation thread.
+    pub fn queue_samples_with_sync(&self, samples: &[f32]) -> (usize, f32) {
         let queued = self.queue_samples(samples);
 
         // Calculate speed adjustment based on buffer fill
@@ -413,19 +461,19 @@ impl AudioOutput {
     /// Get the number of samples available in the buffer.
     #[must_use]
     pub fn buffer_available(&self) -> usize {
-        self.buffer.lock().map(|b| b.available()).unwrap_or(0)
+        self.buffer.available()
     }
 
     /// Get the number of free slots in the buffer.
     #[must_use]
     pub fn buffer_free(&self) -> usize {
-        self.buffer.lock().map(|b| b.free()).unwrap_or(0)
+        self.buffer.free()
     }
 
     /// Get the buffer fill percentage (0.0 - 1.0)
     #[must_use]
     pub fn buffer_fill_percent(&self) -> f32 {
-        self.buffer.lock().map(|b| b.fill_percent()).unwrap_or(0.0)
+        self.buffer.fill_percent()
     }
 
     /// Get the total buffer size in samples
@@ -464,10 +512,11 @@ impl AudioOutput {
     }
 
     /// Clear the audio buffer (for seeking, reset, etc.)
-    pub fn clear_buffer(&mut self) {
-        if let Ok(mut buf) = self.buffer.lock() {
-            buf.clear();
-        }
+    ///
+    /// Note: This should only be called when playback is paused to avoid
+    /// race conditions with the audio callback.
+    pub fn clear_buffer(&self) {
+        self.buffer.clear();
     }
 
     /// Check if audio output is likely experiencing issues
@@ -497,16 +546,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_ring_buffer_new() {
-        let buffer = RingBuffer::new(1024);
+    fn test_spsc_buffer_new() {
+        let buffer = SpscRingBuffer::new(1024);
         assert_eq!(buffer.capacity, 1024);
         assert_eq!(buffer.available(), 0);
         assert_eq!(buffer.free(), 1023);
     }
 
     #[test]
-    fn test_ring_buffer_write_read() {
-        let mut buffer = RingBuffer::new(1024);
+    fn test_spsc_buffer_write_read() {
+        let buffer = SpscRingBuffer::new(1024);
 
         let samples = vec![0.5f32; 100];
         let written = buffer.write(&samples);
@@ -524,8 +573,8 @@ mod tests {
     }
 
     #[test]
-    fn test_ring_buffer_wrap() {
-        let mut buffer = RingBuffer::new(100);
+    fn test_spsc_buffer_wrap() {
+        let buffer = SpscRingBuffer::new(100);
 
         // Fill most of the buffer
         let samples = vec![0.5f32; 80];
@@ -542,8 +591,8 @@ mod tests {
     }
 
     #[test]
-    fn test_ring_buffer_fill_percent() {
-        let mut buffer = RingBuffer::new(100);
+    fn test_spsc_buffer_fill_percent() {
+        let buffer = SpscRingBuffer::new(100);
         assert!((buffer.fill_percent() - 0.0).abs() < 0.01);
 
         let samples = vec![0.5f32; 50];

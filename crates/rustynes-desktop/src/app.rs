@@ -408,30 +408,41 @@ impl NesApp {
     }
 
     /// Handle keyboard input for NES controller using configured bindings.
+    ///
+    /// Uses direct key state polling to ensure game controller input always works,
+    /// even when egui widgets have keyboard focus (e.g., modal dialogs).
     fn handle_controller_keys(&mut self, ctx: &egui::Context) {
-        // Only process input if egui doesn't want it
-        if ctx.wants_keyboard_input() {
-            return;
-        }
+        use crate::input::{KeyCode, egui_key_to_keycode};
 
         ctx.input(|i| {
-            use crate::input::{KeyCode, egui_key_to_keycode};
+            // Poll all controller-relevant keys directly using key_down()
+            // This ensures input works regardless of egui focus state
+            let controller_keys = [
+                // D-pad
+                egui::Key::ArrowUp,
+                egui::Key::ArrowDown,
+                egui::Key::ArrowLeft,
+                egui::Key::ArrowRight,
+                // Action buttons (common bindings)
+                egui::Key::X, // A
+                egui::Key::Z, // B
+                // Start/Select
+                egui::Key::Enter, // Start
+                // WASD alternative for player 2
+                egui::Key::W,
+                egui::Key::A,
+                egui::Key::S,
+                egui::Key::D,
+                // Number keys for player 2 buttons
+                egui::Key::Num1,
+                egui::Key::Num2,
+            ];
 
-            // Process all key events through the configured bindings
-            for event in &i.events {
-                if let egui::Event::Key {
-                    key,
-                    pressed,
-                    repeat: false,
-                    ..
-                } = event
-                {
-                    // Convert egui key to our KeyCode and handle via config bindings
-                    if let Some(keycode) = egui_key_to_keycode(*key) {
-                        // Try player 1 first, then player 2
-                        self.input.handle_key_1(keycode, *pressed);
-                        self.input.handle_key_2(keycode, *pressed);
-                    }
+            for &key in &controller_keys {
+                let pressed = i.key_down(key);
+                if let Some(keycode) = egui_key_to_keycode(key) {
+                    self.input.handle_key_1(keycode, pressed);
+                    self.input.handle_key_2(keycode, pressed);
                 }
             }
 
