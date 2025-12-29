@@ -28,7 +28,7 @@ A next-generation NES emulator written in pure Rust — targeting 100% accuracy,
 
 ---
 
-> **Status:** v0.8.3 Released - Critical Rendering Bug Fix
+> **Status:** v0.8.4 Released - CPU/PPU Timing & Version Consistency
 >
 > **Milestones Completed:**
 >
@@ -90,19 +90,21 @@ RustyNES combines **accuracy-first emulation** with **modern features** and the 
 
 ## Quick Start
 
-### Recent Release: v0.8.3 (December 28, 2025)
+### Recent Release: v0.8.4 (December 28, 2025)
 
-RustyNES v0.8.3 fixes a critical framebuffer rendering bug and improves documentation:
+RustyNES v0.8.4 improves CPU/PPU timing and fixes version consistency across the application:
 
-**What's New in v0.8.3:**
+**What's New in v0.8.4:**
 
-- **Critical Rendering Fix:** Fixed "4 faint postage stamp copies" display artifact
-- **Palette Conversion:** NES palette indices (0-63) now correctly converted to RGB using NES_PALETTE lookup table
-- **Documentation:** Changed 3 doctests from `ignore` to `no_run` for compile-time verification
-- **Zero Regressions:** 516+ tests passing, 100% Blargg pass rate maintained
+- **CPU/PPU Timing:** PPU now stepped BEFORE CPU cycle in tick() for accurate $2002 reads at VBlank
+- **Version Consistency:** Fixed About window showing outdated v0.8.1 (now shows v0.8.4)
+- **Documentation:** Fixed clone_mapper doctest by implementing full Clone for mapper Box types
+- **Test Suite:** 517+ tests passing (0 failures, 2 ignored for known architectural limitations)
+- **100% Blargg Pass Rate:** All 90/90 Blargg tests continue to pass
 
 **Previous Releases:**
 
+- **v0.8.3** - Critical Rendering Fix: Fixed framebuffer display, palette conversion, doctest improvements
 - **v0.8.2** - UI/UX Improvements: Theme support, status bar, tabbed settings, keyboard shortcuts, modal dialogs
 - **v0.8.1** - M9 Known Issues (85%): Audio S1, PPU S2, Performance S3 complete
 - **v0.8.0** - Dependency Modernization: Rust 2024 Edition, eframe 0.33, egui 0.33, cpal 0.16, ron 0.12
@@ -304,7 +306,7 @@ Controls will be fully configurable through the configuration system.
 
 ## Features
 
-### Current Status (v0.8.3 - December 2025)
+### Current Status (v0.8.4 - December 2025)
 
 - [x] **Architecture Design** - Complete modular crate structure with 10 component crates
 - [x] **Documentation** - 40+ comprehensive specification and implementation guides covering CPU, PPU, APU, mappers, testing, and development
@@ -855,9 +857,9 @@ If you use RustyNES in academic research, please cite:
   author = {RustyNES Contributors},
   title = {RustyNES: A Next-Generation NES Emulator in Rust},
   year = {2025},
-  version = {0.8.3},
+  version = {0.8.4},
   url = {https://github.com/doublegate/RustyNES},
-  note = {Cycle-accurate NES emulator with 100\% Blargg test pass rate, critical rendering fix, 516+ tests passing, Rust 2024 Edition, eframe/egui desktop GUI}
+  note = {Cycle-accurate NES emulator with 100\% Blargg test pass rate, CPU/PPU timing improvements, 517+ tests passing, Rust 2024 Edition, eframe/egui desktop GUI}
 }
 ```
 

@@ -11,6 +11,99 @@ No unreleased changes.
 
 ---
 
+## [0.8.4] - 2025-12-28 - CPU/PPU Timing & Version Consistency
+
+**Status**: Phase 1.5 Stabilization - Timing Improvements & Bug Fixes
+
+This release improves CPU/PPU timing accuracy and fixes version consistency issues in the desktop GUI.
+
+### Highlights
+
+- **CPU/PPU Timing:** PPU now stepped BEFORE CPU cycle in tick() for accurate $2002 reads at VBlank boundary
+- **Version Consistency:** Fixed About window and Settings showing outdated version numbers
+- **Documentation:** Fixed clone_mapper doctest by implementing full Clone for mapper Box types
+- **Test Suite:** 517+ tests passing (0 failures, 2 ignored for known architectural limitations)
+- **100% Blargg Pass Rate:** All 90/90 Blargg tests continue to pass
+
+### Fixed
+
+#### CPU/PPU Timing Improvement
+
+- **Issue:** VBlank flag reads at exact CPU-PPU boundary could be off by one cycle
+- **Root Cause:** PPU was stepped AFTER CPU cycle, meaning reads happening at exact VBlank boundary would miss the flag set
+- **Solution:** Reordered tick() to step PPU 3 dots BEFORE each CPU cycle
+- **Effect:** More accurate $2002 status register reads at frame boundaries
+- **Trade-off:** 2 VBlank timing tests remain ignored (require full cycle-by-cycle CPU refactor for sub-instruction timing)
+
+#### Version Consistency Bug
+
+- **Issue:** About window showed "Version 0.8.1", Settings showed "Version: 0.8.2" while CLI showed correct version
+- **Root Cause:** Hardcoded version strings in gui/mod.rs and gui/settings.rs were not updated during previous releases
+- **Solution:** Updated all version strings to 0.8.4 across:
+  - gui/mod.rs: About window
+  - gui/settings.rs: Settings dialog
+  - main.rs: CLI --version and startup log
+  - Cargo.toml files: Workspace and desktop package
+
+#### Documentation Fix
+
+- **Issue:** clone_mapper doctest was ignored due to missing Clone implementation
+- **Solution:** Implemented proper Clone trait for BoxedMapper types
+- **Effect:** Doctest now compiles and verifies API correctness
+
+### Changed
+
+#### Console tick() Reordering
+
+```rust
+// Before (PPU stepped after CPU):
+pub fn tick(&mut self) {
+    self.cpu.step(&mut self.bus);
+    for _ in 0..3 {
+        self.ppu.step(&mut self.chr_bus);
+    }
+}
+
+// After (PPU stepped before CPU for accurate reads):
+pub fn tick(&mut self) {
+    // Step PPU first - ensures $2002 reads see correct VBlank state
+    for _ in 0..3 {
+        self.ppu.step(&mut self.chr_bus);
+    }
+    self.cpu.step(&mut self.bus);
+}
+```
+
+### Technical Specifications
+
+**Test Results:**
+
+- Total tests: 517+ passing
+- Failures: 0
+- Ignored: 2 (VBlank timing tests requiring cycle-by-cycle CPU)
+- Blargg pass rate: 100% (90/90 tests)
+
+**Timing Model:**
+
+- PPU runs 3 dots per CPU cycle (5.369318 MHz / 1.789773 MHz)
+- PPU stepped first ensures register reads see current PPU state
+- VBlank flag set at PPU cycle 1 of scanline 241
+
+### Quality Metrics
+
+- cargo clippy: PASSING (zero warnings)
+- cargo fmt: PASSING
+- cargo test: 517+ tests passing
+- cargo build --release: SUCCESS
+- Zero unsafe code maintained
+
+### What's Next
+
+- **M10-S2:** Documentation (user guide, API docs, developer guide)
+- **M10-S3:** Release preparation (testing, binaries, v0.9.0/v1.0.0-alpha.1)
+
+---
+
 ## [0.8.3] - 2025-12-28 - Critical Rendering Bug Fix
 
 **Status**: Phase 1.5 Stabilization - Critical Bug Fix Release

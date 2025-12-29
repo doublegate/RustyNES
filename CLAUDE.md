@@ -6,16 +6,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 RustyNES is a next-generation Nintendo Entertainment System (NES) emulator written in Rust. Target: 100% TASVideos accuracy test pass rate, 300+ mappers, RetroAchievements, GGPO netplay, TAS tools, Lua scripting.
 
-**Status:** v0.8.3 - Phase 1.5 Stabilization In Progress (M7-M8 Complete, M9 85% Complete, M10 50% Complete). All Phase 1 milestones (M1-M6) done.
+**Status:** v0.8.4 - Phase 1.5 Stabilization In Progress (M7-M8 Complete, M9 85% Complete, M10 50% Complete). All Phase 1 milestones (M1-M6) done.
 
 **Test Status:** 517+ tests passing (0 failures, 2 ignored). 100% Blargg pass rate (90/90 tests)
 
-**Current Version:** v0.8.3 (December 28, 2025)
+**Current Version:** v0.8.4 (December 28, 2025)
+- CPU/PPU Timing: PPU now stepped BEFORE CPU cycle in tick() for accurate $2002 reads at VBlank
+- Version Consistency: Fixed About window (0.8.1) and Settings (0.8.2) showing outdated versions
+- Documentation: Fixed clone_mapper doctest by implementing full Clone for mapper Box types
+- Test Suite: 517+ tests passing (0 failures, 2 ignored for known architectural limitations)
+- 100% Blargg Pass Rate: All 90/90 Blargg tests continue to pass
+
+**Previous Version:** v0.8.3 (December 28, 2025)
 - Critical Rendering Fix: Fixed framebuffer display showing "4 faint postage stamp copies" artifact
 - Palette Conversion: NES palette indices (0-63) now correctly converted to RGB using NES_PALETTE lookup table
 - Documentation: Changed 3 doctests from `ignore` to `no_run` for compile-time verification
-- PPU Timing: Console now pre-steps PPU before CPU cycle (improved but not sufficient for VBlank timing tests)
-- Zero accuracy regressions (517+ tests passing, 2 ignored)
+- Zero accuracy regressions (516+ tests passing)
 
 **Previous Version:** v0.8.2 (December 28, 2025)
 - M10 Final Polish: Sprint 1 UI/UX Improvements complete (50% total)

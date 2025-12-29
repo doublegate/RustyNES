@@ -359,7 +359,7 @@ fn render_advanced_settings(ui: &mut egui::Ui, config: &mut Config) {
     // Version info
     ui.label(egui::RichText::new("Application Info").strong());
     ui.add_space(4.0);
-    ui.label("Version: 0.8.2");
+    ui.label("Version: 0.8.4");
     ui.label("Rust Edition: 2024");
     ui.hyperlink_to(
         "GitHub Repository",

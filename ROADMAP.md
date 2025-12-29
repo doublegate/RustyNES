@@ -21,7 +21,17 @@
 
 ---
 
-## Recent Updates (v2.12.0 - December 2025)
+## Recent Updates (v2.13.0 - December 2025)
+
+**v0.8.4 Released - December 28, 2025** - CPU/PPU Timing & Version Consistency!
+
+**Timing & Bug Fix Achievements:**
+
+- **CPU/PPU Timing:** PPU now stepped BEFORE CPU cycle in tick() for accurate $2002 reads at VBlank
+- **Version Consistency:** Fixed About window (0.8.1) and Settings (0.8.2) showing outdated versions
+- **Documentation:** Fixed clone_mapper doctest by implementing full Clone for mapper Box types
+- **Test Suite:** 517+ tests passing (0 failures, 2 ignored for known architectural limitations)
+- **100% Blargg Pass Rate:** All 90/90 Blargg tests continue to pass
 
 **v0.8.3 Released - December 28, 2025** - Critical Rendering Bug Fix!
 

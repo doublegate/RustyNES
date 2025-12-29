@@ -635,7 +635,7 @@ fn render_about_window(ctx: &Context, open: &mut bool) {
         .show(ctx, |ui| {
             ui.vertical_centered(|ui| {
                 ui.heading("RustyNES");
-                ui.label("Version 0.8.1");
+                ui.label("Version 0.8.4");
                 ui.add_space(10.0);
                 ui.label("A cycle-accurate NES emulator written in Rust");
                 ui.add_space(10.0);
