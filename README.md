@@ -99,6 +99,8 @@ RustyNES v0.7.0 achieves **100% pass rate** across all Blargg test suites, marki
 - **PPU Open Bus Emulation:** Data latch with 1-second decay behavior, correct read-only register handling
 - **CHR-RAM Routing:** Fixed critical design flaw enabling CHR-RAM support for pattern table writes ($0000-$1FFF)
 - **APU Frame Counter:** Immediate clocking behavior when writing to $4017, fixed DMC IRQ/DMA logic
+- **Desktop Cycle-Accurate Execution:** Desktop GUI now uses `step_frame_accurate()` for cycle-perfect CPU/PPU/APU synchronization
+- **Sample Rate Configuration:** Added `Bus::with_sample_rate()` and `Console::with_sample_rate()` APIs for precise audio generation
 - **Test Suite:** 500 tests passing with 0 failures, 0 ignored
 - **Documentation:** Comprehensive M8 technical analysis (800+ lines) in MILESTONE_8_TEST_ROM_FIXES.md
 
