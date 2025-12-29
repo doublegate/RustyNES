@@ -61,7 +61,11 @@ struct Args {
 
 fn main() -> Result<()> {
     // Initialize logging
+    // Filter calloop warnings: these are benign race conditions from the Wayland
+    // backend where key repeat events arrive after the event source is deregistered.
+    // See: https://github.com/bevyengine/bevy/issues/14904
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .filter_module("calloop", log::LevelFilter::Error)
         .format_timestamp_millis()
         .init();
 
