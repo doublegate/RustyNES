@@ -21,7 +21,16 @@
 
 ---
 
-## Recent Updates (v2.11.0 - December 2025)
+## Recent Updates (v2.12.0 - December 2025)
+
+**v0.8.3 Released - December 28, 2025** - Critical Rendering Bug Fix!
+
+**Critical Bug Fix Achievements:**
+
+- **Rendering Fix:** Fixed framebuffer display showing "4 faint postage stamp copies" artifact
+- **Palette Conversion:** NES palette indices (0-63) now correctly converted to RGB using NES_PALETTE lookup table (64-entry)
+- **Documentation:** Changed 3 doctests from `ignore` to `no_run` for compile-time verification
+- **Zero Regressions:** 516+ tests passing, 100% Blargg pass rate maintained
 
 **v0.8.2 Released - December 28, 2025** - M10 Final Polish 50% Complete (UI/UX Improvements)!
 
@@ -120,6 +129,7 @@
 - v0.8.0 (December 28, 2025): Rust 2024 Edition - MSRV 1.88+, dependency modernization, audio resampling
 - v0.8.1 (December 28, 2025): M9 Known Issues (85%) - Audio S1, PPU S2, Performance S3 complete
 - v0.8.2 (December 28, 2025): M10 Final Polish (50%) - UI/UX improvements, theme support, tabbed settings
+- v0.8.3 (December 28, 2025): Critical Rendering Fix - Palette index to RGB conversion, doctest improvements
 
 **Project Status Change:**
 

@@ -11,6 +11,88 @@ No unreleased changes.
 
 ---
 
+## [0.8.3] - 2025-12-28 - Critical Rendering Bug Fix
+
+**Status**: Phase 1.5 Stabilization - Critical Bug Fix Release
+
+This release fixes a critical framebuffer rendering bug and improves documentation quality.
+
+### Highlights
+
+- **Critical Rendering Fix:** Fixed framebuffer display that was showing "4 faint postage stamp copies" artifact
+- **Palette Index to RGB Conversion:** NES palette indices (0-63) now correctly converted to RGB colors
+- **Documentation Improvements:** Changed 3 doctests from `ignore` to `no_run` for compile-time verification
+- **Zero Regressions:** 516+ tests passing, 100% Blargg pass rate maintained
+
+### Fixed
+
+#### Critical Rendering Bug (dcb0185)
+
+- **Root Cause:** Framebuffer was passing raw NES palette indices (0-63) directly as RGBA values instead of converting them to proper RGB colors using the NES_PALETTE constant
+- **Solution:** Added palette index to RGB conversion in `update_framebuffer()` function using 64-entry NES_PALETTE lookup table
+- **Effect:** Game display now renders correctly with proper colors, filling the window as expected
+- **Before:** Display showed 4 faint, darkened, postage-stamp sized copies horizontally
+- **After:** Proper full-window NES rendering with correct color palette
+
+#### Code Details
+
+```rust
+// Before (incorrect - passing raw palette index as RGB):
+let color = self.emulator.framebuffer()[i];
+frame[i * 4] = color;     // Palette index 0-63 misused as R
+frame[i * 4 + 1] = color; // Palette index 0-63 misused as G
+frame[i * 4 + 2] = color; // Palette index 0-63 misused as B
+
+// After (correct - convert palette index to RGB):
+let palette_index = self.emulator.framebuffer()[i] as usize;
+let (r, g, b) = NES_PALETTE[palette_index & 0x3F]; // 64-entry lookup
+frame[i * 4] = r;
+frame[i * 4 + 1] = g;
+frame[i * 4 + 2] = b;
+```
+
+### Changed
+
+#### Documentation Improvements (eac16cf)
+
+- **lib.rs (rustynes-mappers):** Changed doctest from `ignore` to `no_run` with complete example including error handling
+- **rom.rs (rustynes-mappers):** Changed `Rom::load` doctest from `ignore` to `no_run` with proper error handling pattern
+- **Effect:** Doctests now compile-checked during `cargo test` while still not requiring actual ROM files at runtime
+
+### Technical Specifications
+
+**NES Palette Constant:**
+
+```rust
+pub const NES_PALETTE: [(u8, u8, u8); 64] = [
+    (0x62, 0x62, 0x62), // $00: Gray
+    (0x00, 0x1F, 0xB2), // $01: Blue
+    // ... 64 total RGB entries for NES color palette
+];
+```
+
+**Test Results:**
+
+- Total tests: 516+ passing
+- Failures: 0
+- Ignored: 0
+- Blargg pass rate: 100% (90/90 tests)
+
+### Quality Metrics
+
+- cargo clippy: PASSING (zero warnings)
+- cargo fmt: PASSING
+- cargo test: 516+ tests passing
+- cargo build --release: SUCCESS
+- Zero unsafe code maintained
+
+### What's Next
+
+- **M10-S2:** Documentation (user guide, API docs, developer guide)
+- **M10-S3:** Release preparation (testing, binaries, v0.9.0/v1.0.0-alpha.1)
+
+---
+
 ## [0.8.2] - 2025-12-28 - M10-S1 UI/UX Improvements
 
 **Status**: Phase 1.5 Stabilization - M10 Sprint 1 Complete (UI/UX Polish)

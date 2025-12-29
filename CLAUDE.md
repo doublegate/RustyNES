@@ -6,11 +6,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 RustyNES is a next-generation Nintendo Entertainment System (NES) emulator written in Rust. Target: 100% TASVideos accuracy test pass rate, 300+ mappers, RetroAchievements, GGPO netplay, TAS tools, Lua scripting.
 
-**Status:** v0.8.2 - Phase 1.5 Stabilization In Progress (M7-M8 Complete, M9 85% Complete, M10 50% Complete). All Phase 1 milestones (M1-M6) done.
+**Status:** v0.8.3 - Phase 1.5 Stabilization In Progress (M7-M8 Complete, M9 85% Complete, M10 50% Complete). All Phase 1 milestones (M1-M6) done.
 
-**Test Status:** 508+ tests passing (0 failures, 0 ignored). 100% Blargg pass rate (90/90 tests)
+**Test Status:** 516+ tests passing (0 failures, 0 ignored). 100% Blargg pass rate (90/90 tests)
 
-**Current Version:** v0.8.2 (December 28, 2025)
+**Current Version:** v0.8.3 (December 28, 2025)
+- Critical Rendering Fix: Fixed framebuffer display showing "4 faint postage stamp copies" artifact
+- Palette Conversion: NES palette indices (0-63) now correctly converted to RGB using NES_PALETTE lookup table
+- Documentation: Changed 3 doctests from `ignore` to `no_run` for compile-time verification
+- Zero accuracy regressions (516+ tests passing)
+
+**Previous Version:** v0.8.2 (December 28, 2025)
 - M10 Final Polish: Sprint 1 UI/UX Improvements complete (50% total)
 - Theme Support: Light/Dark/System themes with persistence and real-time switching
 - Status Bar: FPS counter (500ms updates), ROM name display, color-coded status messages
@@ -294,10 +300,30 @@ Cloned emulators for study and pattern reference:
 | **GUI Migration** | ✅ v0.7.1 | eframe + egui desktop reimplementation |
 | **Dependency Upgrade** | ✅ v0.8.0 | Rust 2024, eframe 0.33, egui 0.33, cpal 0.16, ron 0.12 |
 | **M9: Known Issues** | 🔄 v0.8.1 (85%) | Audio S1, PPU S2, Performance S3 complete; S4 pending |
-| **M10: Final Polish** | 🔄 v0.8.2 (50%) | UI/UX Improvements (S1 complete), Documentation and Release pending |
+| **M10: Final Polish** | 🔄 v0.8.3 (50%) | Critical rendering fix, UI/UX improvements, Documentation pending |
 | **Phase 2+** | 📋 TBD | Advanced features |
 
-## Recent Accomplishments (v0.8.2 - Dec 28, 2025)
+## Recent Accomplishments (v0.8.3 - Dec 28, 2025)
+
+### Critical Rendering Bug Fix
+
+Fixed critical framebuffer rendering issue with comprehensive documentation improvements:
+
+#### Rendering Fix
+- **Root Cause:** Framebuffer was passing raw NES palette indices (0-63) directly as RGBA values
+- **Solution:** Added palette index to RGB conversion using 64-entry NES_PALETTE lookup table
+- **Effect:** Game display now renders correctly with proper colors, filling the window as expected
+- **Before:** Display showed 4 faint, darkened, postage-stamp sized copies horizontally
+- **After:** Proper full-window NES rendering with correct color palette
+
+#### Documentation Improvements
+- Changed 3 doctests from `ignore` to `no_run` for compile-time verification
+- lib.rs (rustynes-mappers): Complete example with error handling
+- rom.rs (rustynes-mappers): Rom::load with proper error handling pattern
+
+---
+
+## Previous Accomplishments (v0.8.2 - Dec 28, 2025)
 
 ### M10 Final Polish (50% Complete)
 
