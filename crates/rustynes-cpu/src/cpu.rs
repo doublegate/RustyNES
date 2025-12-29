@@ -4,7 +4,7 @@
 //! the instruction execution loop, interrupt handling, and stack operations.
 
 use crate::addressing::AddressingMode;
-use crate::bus::Bus;
+use crate::bus::{Bus, CpuBus};
 use crate::opcodes::OPCODE_TABLE;
 use crate::state::{CpuState, InstructionType};
 use crate::status::StatusFlags;
@@ -244,13 +244,21 @@ impl Cpu {
     // CYCLE-ACCURATE EXECUTION
     // =========================================================================
 
-    /// Execute exactly one CPU cycle.
+    /// Execute exactly one CPU cycle with cycle-accurate bus synchronization.
     ///
     /// This is the core of cycle-accurate emulation. Each call advances the CPU
-    /// by exactly one cycle, enabling perfect PPU/APU synchronization.
+    /// by exactly one cycle, calling `on_cpu_cycle()` before each memory access
+    /// to keep PPU and APU perfectly synchronized.
     ///
     /// Returns `true` when an instruction boundary is reached (ready for next instruction).
-    pub fn tick(&mut self, bus: &mut impl Bus) -> bool {
+    ///
+    /// # Cycle-Accurate Timing
+    ///
+    /// Each memory access calls `on_cpu_cycle()` BEFORE reading/writing, ensuring
+    /// that PPU has advanced 3 dots and APU has advanced 1 cycle before the CPU
+    /// observes the memory state. This is critical for accurate $2002 VBlank
+    /// flag timing.
+    pub fn tick(&mut self, bus: &mut impl CpuBus) -> bool {
         // Handle DMA stalls (OAM DMA, DMC DMA)
         if self.stall > 0 {
             self.stall -= 1;
@@ -299,7 +307,7 @@ impl Cpu {
     }
 
     /// Fetch opcode cycle (cycle 1 of every instruction).
-    fn tick_fetch_opcode(&mut self, bus: &mut impl Bus) -> bool {
+    fn tick_fetch_opcode(&mut self, bus: &mut impl CpuBus) -> bool {
         // Sample I flag at start of this instruction (will be used for NEXT instruction's IRQ check)
         let current_irq_inhibit = self.status.contains(StatusFlags::INTERRUPT_DISABLE);
 
@@ -309,7 +317,7 @@ impl Cpu {
             self.nmi_pending = false;
             self.prev_irq_inhibit = current_irq_inhibit;
             // Start interrupt sequence - dummy read of current PC
-            let _ = bus.read(self.pc);
+            self.dummy_cycle(bus, self.pc);
             self.state = CpuState::InterruptPushPcHi;
             // Store NMI vector address for later
             self.effective_addr = 0xFFFA;
@@ -326,7 +334,7 @@ impl Cpu {
         if self.irq_pending && !self.prev_irq_inhibit {
             self.prev_irq_inhibit = current_irq_inhibit;
             // Start interrupt sequence - dummy read of current PC
-            let _ = bus.read(self.pc);
+            self.dummy_cycle(bus, self.pc);
             self.state = CpuState::InterruptPushPcHi;
             // Store IRQ vector address for later
             self.effective_addr = 0xFFFE;
@@ -337,7 +345,7 @@ impl Cpu {
         self.prev_irq_inhibit = current_irq_inhibit;
 
         // Fetch opcode from PC
-        self.current_opcode = bus.read(self.pc);
+        self.current_opcode = self.read_cycle(bus, self.pc);
         self.pc = self.pc.wrapping_add(1);
 
         // Look up opcode info
@@ -401,8 +409,8 @@ impl Cpu {
     // STATE HANDLERS - These will be implemented progressively
     // =========================================================================
 
-    fn tick_fetch_operand_lo(&mut self, bus: &mut impl Bus) -> bool {
-        self.operand_lo = bus.read(self.pc);
+    fn tick_fetch_operand_lo(&mut self, bus: &mut impl CpuBus) -> bool {
+        self.operand_lo = self.read_cycle(bus, self.pc);
         self.pc = self.pc.wrapping_add(1);
 
         match self.current_addr_mode {
@@ -467,8 +475,8 @@ impl Cpu {
         false
     }
 
-    fn tick_fetch_operand_hi(&mut self, bus: &mut impl Bus) -> bool {
-        self.operand_hi = bus.read(self.pc);
+    fn tick_fetch_operand_hi(&mut self, bus: &mut impl CpuBus) -> bool {
+        self.operand_hi = self.read_cycle(bus, self.pc);
         self.pc = self.pc.wrapping_add(1);
 
         let addr = u16::from_le_bytes([self.operand_lo, self.operand_hi]);
@@ -544,61 +552,61 @@ impl Cpu {
         false
     }
 
-    fn tick_resolve_address(&mut self, bus: &mut impl Bus) -> bool {
+    fn tick_resolve_address(&mut self, bus: &mut impl CpuBus) -> bool {
         // Dummy read from incorrect address (before page fix)
         // This is the hardware behavior for indexed addressing
         let incorrect_addr = (self.base_addr & 0xFF00) | (self.effective_addr & 0x00FF);
-        let _ = bus.read(incorrect_addr);
+        self.dummy_cycle(bus, incorrect_addr);
 
         self.state = self.next_state_for_instruction_type();
         false
     }
 
-    fn tick_read_data(&mut self, bus: &mut impl Bus) -> bool {
-        self.temp_value = bus.read(self.effective_addr);
+    fn tick_read_data(&mut self, bus: &mut impl CpuBus) -> bool {
+        self.temp_value = self.read_cycle(bus, self.effective_addr);
         self.state = CpuState::Execute;
         false
     }
 
-    fn tick_write_data(&mut self, bus: &mut impl Bus) -> bool {
+    fn tick_write_data(&mut self, bus: &mut impl CpuBus) -> bool {
         // Execute the write instruction
         let value = self.execute_write_instruction();
-        bus.write(self.effective_addr, value);
+        self.write_cycle(bus, self.effective_addr, value);
         self.state = CpuState::FetchOpcode;
         true
     }
 
-    fn tick_rmw_read(&mut self, bus: &mut impl Bus) -> bool {
-        self.temp_value = bus.read(self.effective_addr);
+    fn tick_rmw_read(&mut self, bus: &mut impl CpuBus) -> bool {
+        self.temp_value = self.read_cycle(bus, self.effective_addr);
         self.state = CpuState::RmwDummyWrite;
         false
     }
 
-    fn tick_rmw_dummy_write(&mut self, bus: &mut impl Bus) -> bool {
+    fn tick_rmw_dummy_write(&mut self, bus: &mut impl CpuBus) -> bool {
         // Write back the original value (hardware behavior)
-        bus.write(self.effective_addr, self.temp_value);
+        self.write_cycle(bus, self.effective_addr, self.temp_value);
         self.state = CpuState::RmwWrite;
         false
     }
 
-    fn tick_rmw_write(&mut self, bus: &mut impl Bus) -> bool {
+    fn tick_rmw_write(&mut self, bus: &mut impl CpuBus) -> bool {
         // Execute the RMW operation and write result
         let result = self.execute_rmw_instruction();
-        bus.write(self.effective_addr, result);
+        self.write_cycle(bus, self.effective_addr, result);
         self.state = CpuState::FetchOpcode;
         true
     }
 
-    fn tick_execute(&mut self, bus: &mut impl Bus) -> bool {
+    fn tick_execute(&mut self, bus: &mut impl CpuBus) -> bool {
         // Execute the instruction logic (for implied/accumulator or after read)
         match self.instr_type {
             InstructionType::Implied => {
                 // Dummy read of next byte
-                let _ = bus.read(self.pc);
+                self.dummy_cycle(bus, self.pc);
                 self.execute_implied_instruction();
             }
             InstructionType::Accumulator => {
-                let _ = bus.read(self.pc);
+                self.dummy_cycle(bus, self.pc);
                 self.execute_accumulator_instruction();
             }
             InstructionType::Read => {
@@ -610,22 +618,22 @@ impl Cpu {
         true
     }
 
-    fn tick_fetch_indirect_lo(&mut self, bus: &mut impl Bus) -> bool {
+    fn tick_fetch_indirect_lo(&mut self, bus: &mut impl CpuBus) -> bool {
         match self.current_addr_mode {
             AddressingMode::IndirectIndexedY => {
                 // Read low byte of pointer from zero page
-                self.operand_lo = bus.read(self.base_addr);
+                self.operand_lo = self.read_cycle(bus, self.base_addr);
                 self.state = CpuState::FetchIndirectHi;
             }
             AddressingMode::Indirect => {
                 // JMP indirect: read low byte of target
-                self.operand_lo = bus.read(self.base_addr);
+                self.operand_lo = self.read_cycle(bus, self.base_addr);
                 self.state = CpuState::FetchIndirectHi;
             }
             AddressingMode::IndexedIndirectX => {
                 // Read low byte from (base + X) in zero page
                 let ptr = self.effective_addr as u8;
-                self.operand_lo = bus.read(u16::from(ptr));
+                self.operand_lo = self.read_cycle(bus, u16::from(ptr));
                 self.state = CpuState::FetchIndirectHi;
             }
             _ => {
@@ -635,12 +643,12 @@ impl Cpu {
         false
     }
 
-    fn tick_fetch_indirect_hi(&mut self, bus: &mut impl Bus) -> bool {
+    fn tick_fetch_indirect_hi(&mut self, bus: &mut impl CpuBus) -> bool {
         match self.current_addr_mode {
             AddressingMode::IndirectIndexedY => {
                 // Read high byte from (base + 1) with zero page wrap
                 let ptr_hi = self.base_addr.wrapping_add(1) as u8;
-                self.operand_hi = bus.read(u16::from(ptr_hi));
+                self.operand_hi = self.read_cycle(bus, u16::from(ptr_hi));
 
                 let ptr_addr = u16::from_le_bytes([self.operand_lo, self.operand_hi]);
                 let indexed = ptr_addr.wrapping_add(u16::from(self.y));
@@ -665,7 +673,7 @@ impl Cpu {
                 // JMP indirect: read high byte with page wrap bug
                 let ptr_lo = self.base_addr as u8;
                 let ptr_hi_addr = (self.base_addr & 0xFF00) | u16::from(ptr_lo.wrapping_add(1));
-                self.operand_hi = bus.read(ptr_hi_addr);
+                self.operand_hi = self.read_cycle(bus, ptr_hi_addr);
 
                 self.effective_addr = u16::from_le_bytes([self.operand_lo, self.operand_hi]);
                 self.pc = self.effective_addr;
@@ -675,7 +683,7 @@ impl Cpu {
             AddressingMode::IndexedIndirectX => {
                 // Read high byte from (base + X + 1) with zero page wrap
                 let ptr = (self.effective_addr as u8).wrapping_add(1);
-                self.operand_hi = bus.read(u16::from(ptr));
+                self.operand_hi = self.read_cycle(bus, u16::from(ptr));
                 self.effective_addr = u16::from_le_bytes([self.operand_lo, self.operand_hi]);
                 self.state = self.next_state_for_instruction_type();
             }
@@ -686,9 +694,9 @@ impl Cpu {
         false
     }
 
-    fn tick_add_index(&mut self, bus: &mut impl Bus) -> bool {
+    fn tick_add_index(&mut self, bus: &mut impl CpuBus) -> bool {
         // Dummy read from base address
-        let _ = bus.read(self.base_addr);
+        self.dummy_cycle(bus, self.base_addr);
 
         match self.current_addr_mode {
             AddressingMode::ZeroPageX => {
@@ -711,17 +719,17 @@ impl Cpu {
         false
     }
 
-    fn tick_push_hi(&mut self, bus: &mut impl Bus) -> bool {
+    fn tick_push_hi(&mut self, bus: &mut impl CpuBus) -> bool {
         let value = (self.pc >> 8) as u8;
-        bus.write(0x0100 | u16::from(self.sp), value);
+        self.write_cycle(bus, 0x0100 | u16::from(self.sp), value);
         self.sp = self.sp.wrapping_sub(1);
         self.state = CpuState::PushLo;
         false
     }
 
-    fn tick_push_lo(&mut self, bus: &mut impl Bus) -> bool {
+    fn tick_push_lo(&mut self, bus: &mut impl CpuBus) -> bool {
         let value = (self.pc & 0xFF) as u8;
-        bus.write(0x0100 | u16::from(self.sp), value);
+        self.write_cycle(bus, 0x0100 | u16::from(self.sp), value);
         self.sp = self.sp.wrapping_sub(1);
 
         match self.instr_type {
@@ -741,12 +749,12 @@ impl Cpu {
         false
     }
 
-    fn tick_push_status(&mut self, bus: &mut impl Bus) -> bool {
+    fn tick_push_status(&mut self, bus: &mut impl CpuBus) -> bool {
         match self.instr_type {
             InstructionType::Push => {
                 // PHP: push status with B flag set
                 let value = self.status.to_stack_byte(true);
-                bus.write(0x0100 | u16::from(self.sp), value);
+                self.write_cycle(bus, 0x0100 | u16::from(self.sp), value);
                 self.sp = self.sp.wrapping_sub(1);
                 self.state = CpuState::FetchOpcode;
                 return true;
@@ -764,7 +772,7 @@ impl Cpu {
 
                 // Push status with B flag ALWAYS set (even when NMI hijacks)
                 let value = self.status.to_stack_byte(true);
-                bus.write(0x0100 | u16::from(self.sp), value);
+                self.write_cycle(bus, 0x0100 | u16::from(self.sp), value);
                 self.sp = self.sp.wrapping_sub(1);
                 self.status.insert(StatusFlags::INTERRUPT_DISABLE);
 
@@ -784,17 +792,17 @@ impl Cpu {
         false
     }
 
-    fn tick_pop_lo(&mut self, bus: &mut impl Bus) -> bool {
+    fn tick_pop_lo(&mut self, bus: &mut impl CpuBus) -> bool {
         // Internal cycle: increment SP
         self.sp = self.sp.wrapping_add(1);
-        let _ = bus.read(0x0100 | u16::from(self.sp));
+        self.dummy_cycle(bus, 0x0100 | u16::from(self.sp));
 
         match self.instr_type {
             InstructionType::Pull => {
                 self.state = CpuState::Execute;
             }
             InstructionType::ReturnSubroutine => {
-                self.operand_lo = bus.read(0x0100 | u16::from(self.sp));
+                self.operand_lo = self.read_cycle(bus, 0x0100 | u16::from(self.sp));
                 self.state = CpuState::PopHi;
             }
             InstructionType::ReturnInterrupt => {
@@ -808,9 +816,9 @@ impl Cpu {
         false
     }
 
-    fn tick_pop_hi(&mut self, bus: &mut impl Bus) -> bool {
+    fn tick_pop_hi(&mut self, bus: &mut impl CpuBus) -> bool {
         self.sp = self.sp.wrapping_add(1);
-        self.operand_hi = bus.read(0x0100 | u16::from(self.sp));
+        self.operand_hi = self.read_cycle(bus, 0x0100 | u16::from(self.sp));
 
         match self.instr_type {
             InstructionType::ReturnSubroutine => {
@@ -829,8 +837,8 @@ impl Cpu {
         false
     }
 
-    fn tick_pop_status(&mut self, bus: &mut impl Bus) -> bool {
-        let value = bus.read(0x0100 | u16::from(self.sp));
+    fn tick_pop_status(&mut self, bus: &mut impl CpuBus) -> bool {
+        let value = self.read_cycle(bus, 0x0100 | u16::from(self.sp));
         self.status = StatusFlags::from_stack_byte(value);
 
         // Match RTI behavior from instructions.rs:
@@ -840,14 +848,14 @@ impl Cpu {
         }
 
         self.sp = self.sp.wrapping_add(1);
-        self.operand_lo = bus.read(0x0100 | u16::from(self.sp));
+        self.operand_lo = self.read_cycle(bus, 0x0100 | u16::from(self.sp));
         self.state = CpuState::PopHi;
         false
     }
 
-    fn tick_internal_cycle(&mut self, bus: &mut impl Bus) -> bool {
+    fn tick_internal_cycle(&mut self, bus: &mut impl CpuBus) -> bool {
         // Dummy read
-        let _ = bus.read(0x0100 | u16::from(self.sp));
+        self.dummy_cycle(bus, 0x0100 | u16::from(self.sp));
 
         match self.instr_type {
             InstructionType::JumpSubroutine => {
@@ -865,7 +873,7 @@ impl Cpu {
                 match self.current_opcode {
                     0x48 => {
                         // PHA
-                        bus.write(0x0100 | u16::from(self.sp), self.a);
+                        self.write_cycle(bus, 0x0100 | u16::from(self.sp), self.a);
                         self.sp = self.sp.wrapping_sub(1);
                     }
                     0x08 => {
@@ -881,7 +889,7 @@ impl Cpu {
             InstructionType::Pull => {
                 // After internal cycle, read from stack
                 self.sp = self.sp.wrapping_add(1);
-                self.temp_value = bus.read(0x0100 | u16::from(self.sp));
+                self.temp_value = self.read_cycle(bus, 0x0100 | u16::from(self.sp));
                 match self.current_opcode {
                     0x68 => {
                         // PLA
@@ -904,9 +912,9 @@ impl Cpu {
         false
     }
 
-    fn tick_branch_taken(&mut self, bus: &mut impl Bus) -> bool {
+    fn tick_branch_taken(&mut self, bus: &mut impl CpuBus) -> bool {
         // Dummy read during branch taken
-        let _ = bus.read(self.pc);
+        self.dummy_cycle(bus, self.pc);
 
         let old_pc = self.pc;
         self.pc = self.pc.wrapping_add(self.branch_offset as u16);
@@ -921,52 +929,251 @@ impl Cpu {
         }
     }
 
-    fn tick_branch_page_cross(&mut self, bus: &mut impl Bus) -> bool {
+    fn tick_branch_page_cross(&mut self, bus: &mut impl CpuBus) -> bool {
         // Dummy read during page crossing fix
-        let _ = bus.read(
+        self.dummy_cycle(
+            bus,
             (self.pc & 0x00FF) | ((self.pc.wrapping_sub(self.branch_offset as u16)) & 0xFF00),
         );
         self.state = CpuState::FetchOpcode;
         true
     }
 
-    fn tick_interrupt_push_pc_hi(&mut self, bus: &mut impl Bus) -> bool {
+    fn tick_interrupt_push_pc_hi(&mut self, bus: &mut impl CpuBus) -> bool {
         let value = (self.pc >> 8) as u8;
-        bus.write(0x0100 | u16::from(self.sp), value);
+        self.write_cycle(bus, 0x0100 | u16::from(self.sp), value);
         self.sp = self.sp.wrapping_sub(1);
         self.state = CpuState::InterruptPushPcLo;
         false
     }
 
-    fn tick_interrupt_push_pc_lo(&mut self, bus: &mut impl Bus) -> bool {
+    fn tick_interrupt_push_pc_lo(&mut self, bus: &mut impl CpuBus) -> bool {
         let value = (self.pc & 0xFF) as u8;
-        bus.write(0x0100 | u16::from(self.sp), value);
+        self.write_cycle(bus, 0x0100 | u16::from(self.sp), value);
         self.sp = self.sp.wrapping_sub(1);
         self.state = CpuState::InterruptPushStatus;
         false
     }
 
-    fn tick_interrupt_push_status(&mut self, bus: &mut impl Bus) -> bool {
+    fn tick_interrupt_push_status(&mut self, bus: &mut impl CpuBus) -> bool {
         // Interrupts push status with B=0
         let value = self.status.to_stack_byte(false);
-        bus.write(0x0100 | u16::from(self.sp), value);
+        self.write_cycle(bus, 0x0100 | u16::from(self.sp), value);
         self.sp = self.sp.wrapping_sub(1);
         self.status.insert(StatusFlags::INTERRUPT_DISABLE);
         self.state = CpuState::InterruptFetchVectorLo;
         false
     }
 
-    fn tick_interrupt_fetch_vector_lo(&mut self, bus: &mut impl Bus) -> bool {
-        self.operand_lo = bus.read(self.effective_addr);
+    fn tick_interrupt_fetch_vector_lo(&mut self, bus: &mut impl CpuBus) -> bool {
+        self.operand_lo = self.read_cycle(bus, self.effective_addr);
         self.state = CpuState::InterruptFetchVectorHi;
         false
     }
 
-    fn tick_interrupt_fetch_vector_hi(&mut self, bus: &mut impl Bus) -> bool {
-        self.operand_hi = bus.read(self.effective_addr.wrapping_add(1));
+    fn tick_interrupt_fetch_vector_hi(&mut self, bus: &mut impl CpuBus) -> bool {
+        self.operand_hi = self.read_cycle(bus, self.effective_addr.wrapping_add(1));
         self.pc = u16::from_le_bytes([self.operand_lo, self.operand_hi]);
         self.state = CpuState::FetchOpcode;
         true
+    }
+
+    // =========================================================================
+    // CYCLE-ACCURATE MEMORY ACCESS METHODS
+    // =========================================================================
+    //
+    // These methods implement the sub-cycle accurate memory access pattern
+    // where on_cpu_cycle() is called BEFORE each memory access. This ensures
+    // PPU and APU are stepped to the correct state before the CPU observes
+    // memory (critical for accurate $2002 VBlank flag timing).
+
+    /// Read a byte from memory with cycle callback.
+    ///
+    /// Calls `on_cpu_cycle()` BEFORE the read, then performs the actual read.
+    /// This is the cycle-accurate version of memory read.
+    ///
+    /// # Arguments
+    ///
+    /// * `bus` - The cycle-aware bus implementing `CpuBus`
+    /// * `addr` - 16-bit memory address to read from
+    ///
+    /// # Returns
+    ///
+    /// The 8-bit value at the specified address
+    ///
+    /// # Timing
+    ///
+    /// ```text
+    /// CPU Cycle:  |-------- read --------|
+    /// PPU Cycles: |--1--|--2--|--3--|
+    ///              ^ on_cpu_cycle() called here
+    /// ```
+    #[inline]
+    pub fn read_cycle(&mut self, bus: &mut impl CpuBus, addr: u16) -> u8 {
+        bus.on_cpu_cycle();
+        bus.read(addr)
+    }
+
+    /// Write a byte to memory with cycle callback.
+    ///
+    /// Calls `on_cpu_cycle()` BEFORE the write, then performs the actual write.
+    /// This is the cycle-accurate version of memory write.
+    ///
+    /// # Arguments
+    ///
+    /// * `bus` - The cycle-aware bus implementing `CpuBus`
+    /// * `addr` - 16-bit memory address to write to
+    /// * `value` - 8-bit value to write
+    ///
+    /// # Timing
+    ///
+    /// ```text
+    /// CPU Cycle:  |------- write --------|
+    /// PPU Cycles: |--1--|--2--|--3--|
+    ///              ^ on_cpu_cycle() called here
+    /// ```
+    #[inline]
+    pub fn write_cycle(&mut self, bus: &mut impl CpuBus, addr: u16, value: u8) {
+        bus.on_cpu_cycle();
+        bus.write(addr, value);
+    }
+
+    /// Perform a dummy read cycle (for timing purposes).
+    ///
+    /// Some instructions require timing cycles where a read is performed
+    /// but the value is discarded. This method handles those cases while
+    /// still calling `on_cpu_cycle()` for proper PPU/APU synchronization.
+    ///
+    /// # Use Cases
+    ///
+    /// - Page boundary crossing in indexed addressing
+    /// - Implied/Accumulator mode dummy reads
+    /// - Branch taken cycles
+    /// - RMW dummy write-back cycles
+    ///
+    /// # Arguments
+    ///
+    /// * `bus` - The cycle-aware bus implementing `CpuBus`
+    /// * `addr` - Address to read from (value is discarded)
+    #[inline]
+    pub fn dummy_cycle(&mut self, bus: &mut impl CpuBus, addr: u16) {
+        bus.on_cpu_cycle();
+        let _ = bus.read(addr);
+    }
+
+    /// Push a byte to the stack with cycle callback.
+    ///
+    /// Calls `on_cpu_cycle()` BEFORE the write, then pushes to stack.
+    ///
+    /// # Arguments
+    ///
+    /// * `bus` - The cycle-aware bus implementing `CpuBus`
+    /// * `value` - 8-bit value to push
+    #[inline]
+    pub fn push_cycle(&mut self, bus: &mut impl CpuBus, value: u8) {
+        bus.on_cpu_cycle();
+        bus.write(0x0100 | u16::from(self.sp), value);
+        self.sp = self.sp.wrapping_sub(1);
+    }
+
+    /// Pop a byte from the stack with cycle callback.
+    ///
+    /// Calls `on_cpu_cycle()` BEFORE the read, then pops from stack.
+    ///
+    /// # Arguments
+    ///
+    /// * `bus` - The cycle-aware bus implementing `CpuBus`
+    ///
+    /// # Returns
+    ///
+    /// The 8-bit value popped from the stack
+    #[inline]
+    pub fn pop_cycle(&mut self, bus: &mut impl CpuBus) -> u8 {
+        self.sp = self.sp.wrapping_add(1);
+        bus.on_cpu_cycle();
+        bus.read(0x0100 | u16::from(self.sp))
+    }
+
+    /// Read a 16-bit value from memory with cycle callbacks.
+    ///
+    /// Performs two sequential reads with proper cycle callbacks.
+    /// Each read triggers `on_cpu_cycle()`.
+    ///
+    /// # Arguments
+    ///
+    /// * `bus` - The cycle-aware bus implementing `CpuBus`
+    /// * `addr` - Address of the low byte
+    ///
+    /// # Returns
+    ///
+    /// 16-bit value: `(high << 8) | low`
+    #[inline]
+    pub fn read_u16_cycle(&mut self, bus: &mut impl CpuBus, addr: u16) -> u16 {
+        let lo = self.read_cycle(bus, addr) as u16;
+        let hi = self.read_cycle(bus, addr.wrapping_add(1)) as u16;
+        (hi << 8) | lo
+    }
+
+    /// Read a 16-bit value with page wrap and cycle callbacks.
+    ///
+    /// Implements the JMP indirect bug where the high byte wraps within
+    /// the same page if the low byte is at $xxFF.
+    ///
+    /// # Arguments
+    ///
+    /// * `bus` - The cycle-aware bus implementing `CpuBus`
+    /// * `addr` - Address of the low byte
+    ///
+    /// # Returns
+    ///
+    /// 16-bit value with page-wrap bug behavior
+    #[inline]
+    pub fn read_u16_wrap_cycle(&mut self, bus: &mut impl CpuBus, addr: u16) -> u16 {
+        let lo = self.read_cycle(bus, addr) as u16;
+
+        // If low byte is at $xxFF, high byte wraps to $xx00 (6502 bug)
+        let hi_addr = if addr & 0xFF == 0xFF {
+            addr & 0xFF00
+        } else {
+            addr.wrapping_add(1)
+        };
+
+        let hi = self.read_cycle(bus, hi_addr) as u16;
+        (hi << 8) | lo
+    }
+
+    /// Push a 16-bit value to the stack with cycle callbacks.
+    ///
+    /// Pushes high byte first, then low byte (6502 convention).
+    /// Each push triggers `on_cpu_cycle()`.
+    ///
+    /// # Arguments
+    ///
+    /// * `bus` - The cycle-aware bus implementing `CpuBus`
+    /// * `value` - 16-bit value to push
+    #[inline]
+    pub fn push_u16_cycle(&mut self, bus: &mut impl CpuBus, value: u16) {
+        self.push_cycle(bus, (value >> 8) as u8);
+        self.push_cycle(bus, (value & 0xFF) as u8);
+    }
+
+    /// Pop a 16-bit value from the stack with cycle callbacks.
+    ///
+    /// Pops low byte first, then high byte (6502 convention).
+    /// Each pop triggers `on_cpu_cycle()`.
+    ///
+    /// # Arguments
+    ///
+    /// * `bus` - The cycle-aware bus implementing `CpuBus`
+    ///
+    /// # Returns
+    ///
+    /// 16-bit value popped from the stack
+    #[inline]
+    pub fn pop_u16_cycle(&mut self, bus: &mut impl CpuBus) -> u16 {
+        let lo = self.pop_cycle(bus);
+        let hi = self.pop_cycle(bus);
+        u16::from_le_bytes([lo, hi])
     }
 
     // =========================================================================

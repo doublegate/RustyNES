@@ -31,7 +31,7 @@
 
 use crate::bus::Bus as SystemBus;
 use crate::input::Button;
-use rustynes_cpu::{Bus as CpuBus, Cpu};
+use rustynes_cpu::{Cpu, CpuBus};
 use rustynes_mappers::{Mapper, Rom, RomError, create_mapper};
 use thiserror::Error;
 
@@ -179,16 +179,23 @@ impl Console {
     /// Execute exactly one CPU cycle with perfect PPU/APU synchronization.
     ///
     /// This is the cycle-accurate execution mode. Each call:
-    /// - Advances the PPU by exactly 3 dots BEFORE CPU cycle (critical for $2002 timing)
     /// - Advances the CPU by exactly one cycle
-    /// - Advances the APU by one step
+    /// - PPU and APU are stepped via `on_cpu_cycle()` BEFORE each CPU memory access
     ///
     /// # Timing Model
     ///
-    /// PPU is stepped BEFORE the CPU cycle to ensure accurate `VBlank` flag detection.
-    /// When CPU reads $2002 (PPUSTATUS) at cycle N, PPU state reflects dot 3N.
-    /// This is critical for passing ppu_02-vbl_set_time and ppu_03-vbl_clear_time tests
-    /// which require ±2 cycle accuracy.
+    /// PPU is stepped BEFORE each CPU memory access (inside `cpu.tick()`) to ensure
+    /// accurate `VBlank` flag detection. When CPU reads $2002 (PPUSTATUS), PPU state
+    /// has already been updated. This is critical for passing ppu_02-vbl_set_time
+    /// and ppu_03-vbl_clear_time tests which require ±2 cycle accuracy.
+    ///
+    /// # Architecture Note
+    ///
+    /// Unlike the old architecture where Console manually stepped PPU before CPU,
+    /// the new cycle-accurate architecture uses the `CpuBus::on_cpu_cycle()` callback.
+    /// When CPU calls `read_cycle()` or `write_cycle()`, it first calls `on_cpu_cycle()`
+    /// which steps PPU 3 dots and APU 1 cycle. This ensures PPU state is current when
+    /// CPU observes memory.
     ///
     /// # Returns
     ///
@@ -217,41 +224,46 @@ impl Console {
     /// # }
     /// ```
     pub fn tick(&mut self) -> (bool, bool) {
-        let mut frame_complete = false;
-
-        // Step PPU BEFORE CPU cycle (3 dots per CPU cycle)
-        // This ensures PPU state is current when CPU reads $2002 (PPUSTATUS)
-        // Critical for VBlank timing accuracy (±2 cycles)
-        for _ in 0..3 {
-            let (fc, nmi) = self.bus.step_ppu();
-            if nmi {
-                self.cpu.trigger_nmi();
-            }
-            if fc {
-                frame_complete = true;
-                self.frame_count += 1;
-            }
-        }
-
         // Handle DMA if active (DMA steals CPU cycles)
+        // During DMA, CPU doesn't execute so we must manually step PPU/APU
         if self.bus.dma_active() {
+            // Manually step PPU (3 dots per CPU cycle) during DMA
+            for _ in 0..3 {
+                let (fc, nmi) = self.bus.step_ppu();
+                if nmi {
+                    self.cpu.trigger_nmi();
+                }
+                if fc {
+                    self.frame_count += 1;
+                    // Note: frame_complete captured below from bus
+                }
+            }
+
+            // Manually step APU during DMA
+            self.bus.apu.step();
+
             let dma_done = self.bus.tick_dma();
             if !dma_done {
-                // DMA cycle - PPU already stepped above, just step APU
-                self.bus.apu.step();
                 self.master_cycles += 1;
-                return (false, frame_complete);
+                return (false, self.bus.take_frame_complete());
             }
         }
 
-        // Execute one CPU cycle (PPU is now synced to current cycle)
+        // Execute one CPU cycle
+        // This calls on_cpu_cycle() internally BEFORE each memory access,
+        // which steps PPU (3 dots) and APU (1 cycle) and captures NMI/frame_complete
         let instruction_complete = self.cpu.tick(&mut self.bus);
 
-        // Track CPU cycles for DMA timing
-        self.bus.add_cpu_cycles(1);
+        // Handle NMI from PPU (set during on_cpu_cycle via step_ppu)
+        if self.bus.take_nmi() {
+            self.cpu.trigger_nmi();
+        }
 
-        // Step APU (1 step per CPU cycle)
-        self.bus.apu.step();
+        // Check for frame completion
+        let frame_complete = self.bus.take_frame_complete();
+        if frame_complete {
+            self.frame_count += 1;
+        }
 
         // Clock mapper (once per CPU cycle for cycle-based timing)
         self.bus.clock_mapper(1);

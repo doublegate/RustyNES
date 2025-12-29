@@ -21,11 +21,12 @@
 
 use crate::input::Controller;
 use rustynes_apu::Apu;
-use rustynes_cpu::Bus as CpuBus;
+use rustynes_cpu::CpuBus;
 use rustynes_mappers::Mapper;
 use rustynes_ppu::{Mirroring as PpuMirroring, Ppu};
 
 /// NES memory bus connecting CPU to all components
+#[allow(clippy::struct_excessive_bools)]
 pub struct Bus {
     /// 2KB internal RAM
     ram: [u8; 0x800],
@@ -59,6 +60,12 @@ pub struct Bus {
 
     /// CPU cycle counter for odd/even tracking (for DMA timing)
     cpu_cycles: u64,
+
+    /// NMI pending from PPU (set during `on_cpu_cycle`, cleared by Console)
+    nmi_pending: bool,
+
+    /// Frame complete flag (set during `on_cpu_cycle`, cleared by Console)
+    frame_complete: bool,
 }
 
 impl Bus {
@@ -100,6 +107,8 @@ impl Bus {
             dma_transfer: false,
             dma_write: false,
             cpu_cycles: 0,
+            nmi_pending: false,
+            frame_complete: false,
         }
     }
 
@@ -222,6 +231,8 @@ impl Bus {
         self.controller2.reset();
         self.dma_transfer = false;
         self.cpu_cycles = 0;
+        self.nmi_pending = false;
+        self.frame_complete = false;
     }
 
     /// Clock the mapper (for IRQ timing)
@@ -268,6 +279,34 @@ impl Bus {
         // This works because they are separate fields of the struct
         let mapper = &*self.mapper;
         self.ppu.step_with_chr(|addr| mapper.read_chr(addr))
+    }
+
+    /// Take and clear the pending NMI flag.
+    ///
+    /// This is set by `on_cpu_cycle()` when PPU asserts NMI.
+    /// Console should call this after `cpu.tick()` to check if NMI needs handling.
+    ///
+    /// # Returns
+    ///
+    /// true if NMI was pending, false otherwise
+    pub fn take_nmi(&mut self) -> bool {
+        let pending = self.nmi_pending;
+        self.nmi_pending = false;
+        pending
+    }
+
+    /// Take and clear the frame complete flag.
+    ///
+    /// This is set by `on_cpu_cycle()` when PPU completes a frame.
+    /// Console should call this to detect when a new frame is ready.
+    ///
+    /// # Returns
+    ///
+    /// true if a frame was completed, false otherwise
+    pub fn take_frame_complete(&mut self) -> bool {
+        let complete = self.frame_complete;
+        self.frame_complete = false;
+        complete
     }
 }
 
@@ -342,6 +381,38 @@ impl CpuBus for Bus {
             // Unmapped regions ($4018-$401F, $4020-$5FFF)
             _ => {}
         }
+    }
+
+    /// Step PPU and APU before each CPU memory access.
+    ///
+    /// This is the core of cycle-accurate emulation. For NTSC:
+    /// - PPU runs at 3x CPU clock (3 PPU dots per CPU cycle)
+    /// - APU runs at CPU clock
+    ///
+    /// Called BEFORE each CPU read/write to ensure PPU and APU are in
+    /// the correct state when the CPU observes memory. This is critical
+    /// for accurate `VBlank` flag ($2002) timing.
+    ///
+    /// NMI and `frame_complete` signals are captured and can be retrieved
+    /// via `take_nmi()` and `take_frame_complete()`.
+    fn on_cpu_cycle(&mut self) {
+        // Step PPU 3 times (3 PPU dots per CPU cycle for NTSC)
+        for _ in 0..3 {
+            let (frame_complete, nmi) = self.step_ppu();
+            if nmi {
+                self.nmi_pending = true;
+            }
+            if frame_complete {
+                self.frame_complete = true;
+            }
+        }
+
+        // Step APU once (1 APU cycle per CPU cycle)
+        // APU internally divides this further for its frame sequencer
+        self.apu.step();
+
+        // Track CPU cycles for DMA alignment
+        self.cpu_cycles += 1;
     }
 
     fn peek(&self, addr: u16) -> u8 {

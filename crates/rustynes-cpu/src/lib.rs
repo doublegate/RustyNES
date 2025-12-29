@@ -81,7 +81,7 @@ pub mod trace;
 
 // Public exports
 pub use addressing::AddressingMode;
-pub use bus::Bus;
+pub use bus::{Bus, CpuBus};
 pub use cpu::Cpu;
 pub use ines::{INesHeader, INesRom};
 pub use status::StatusFlags;
