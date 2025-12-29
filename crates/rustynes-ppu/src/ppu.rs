@@ -364,7 +364,15 @@ impl Ppu {
 
         // Rendering logic (visible and pre-render scanlines)
         if rendering_enabled && self.timing.is_rendering_scanline() {
-            // Background rendering
+            // Render pixel FIRST using current shift register state (visible scanlines only)
+            // This must happen BEFORE shifting registers for correct pixel alignment
+            if self.timing.is_visible_scanline() && self.timing.is_visible_dot() {
+                let x = dot - 1;
+                let y = scanline;
+                self.render_pixel(x as usize, y as usize);
+            }
+
+            // Background rendering - shift AFTER rendering
             if self.timing.is_visible_dot() || self.timing.is_prefetch_dot() {
                 self.background.shift_registers();
 
@@ -515,13 +523,6 @@ impl Ppu {
                     );
                 }
             }
-
-            // Render pixel (visible scanlines only)
-            if self.timing.is_visible_scanline() && self.timing.is_visible_dot() {
-                let x = dot - 1;
-                let y = scanline;
-                self.render_pixel(x as usize, y as usize);
-            }
         }
 
         let nmi = self.nmi_pending;
@@ -538,8 +539,12 @@ impl Ppu {
         let mut bg_pixel = 0;
         let mut bg_palette = 0;
 
-        // Get background pixel
-        if self.mask.show_background() {
+        // Left 8 pixel clipping flags
+        let clip_bg_left = x < 8 && !self.mask.show_bg_left();
+        let clip_sprites_left = x < 8 && !self.mask.show_sprites_left();
+
+        // Get background pixel (respecting left clipping)
+        if self.mask.show_background() && !clip_bg_left {
             let fine_x = self.scroll.fine_x();
             let (pixel, palette) = self.background.get_pixel(fine_x);
             bg_pixel = pixel;
@@ -551,8 +556,9 @@ impl Ppu {
         let mut sprite_priority = false;
         let mut sprite_zero = false;
 
-        // Get sprite pixel
+        // Get sprite pixel (respecting left clipping)
         if self.mask.show_sprites()
+            && !clip_sprites_left
             && let Some((pixel, palette, priority, is_sprite_zero)) =
                 self.sprite_renderer.get_pixel()
         {
@@ -563,7 +569,10 @@ impl Ppu {
         }
 
         // Sprite 0 hit detection
-        if sprite_zero && bg_pixel != 0 && sprite_pixel != 0 {
+        // Note: Sprite 0 hit does NOT occur at x=255 (hardware quirk)
+        // and requires both background and sprite to be non-transparent
+        // Left clipping affects hit detection - if either is clipped, no hit
+        if sprite_zero && bg_pixel != 0 && sprite_pixel != 0 && x != 255 {
             self.status.set_sprite_zero_hit();
         }
 

@@ -143,6 +143,11 @@ pub struct Mmc1 {
 
     /// True if using CHR-RAM instead of CHR-ROM.
     has_chr_ram: bool,
+
+    /// Consecutive write protection counter.
+    /// MMC1 ignores writes that occur within 2 CPU cycles of each other.
+    /// This prevents glitches from games that have back-to-back writes.
+    write_just_occurred: u8,
 }
 
 impl Mmc1 {
@@ -188,11 +193,21 @@ impl Mmc1 {
             prg_banks,
             chr_banks,
             has_chr_ram,
+            write_just_occurred: 0,
         }
     }
 
     /// Write to shift register.
     fn write_register(&mut self, addr: u16, value: u8) {
+        // Consecutive write protection: ignore writes that occur within 2 CPU cycles
+        // This is a hardware quirk that some games rely on
+        if self.write_just_occurred > 0 {
+            return;
+        }
+
+        // Mark that a write just occurred (will be decremented by clock())
+        self.write_just_occurred = 2;
+
         // Bit 7 set = reset shift register
         if (value & 0x80) != 0 {
             self.shift_register = 0;
@@ -363,6 +378,14 @@ impl Mapper for Mmc1 {
     fn clone_mapper(&self) -> Box<dyn Mapper> {
         Box::new(self.clone())
     }
+
+    fn clock(&mut self, cycles: u8) {
+        // Decrement consecutive write protection counter by the number of cycles
+        // This prevents back-to-back writes from corrupting the shift register
+        if self.write_just_occurred > 0 {
+            self.write_just_occurred = self.write_just_occurred.saturating_sub(cycles);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -401,6 +424,8 @@ mod tests {
     fn write_mmc1_register(mapper: &mut Mmc1, addr: u16, value: u8) {
         for i in 0..5 {
             mapper.write_prg(addr, (value >> i) & 0x01);
+            // Simulate time passing between writes (each write takes ~3+ cycles)
+            mapper.clock(3);
         }
     }
 
@@ -419,11 +444,15 @@ mod tests {
         let rom = create_test_rom(2, 2);
         let mut mapper = Mmc1::new(&rom);
 
-        // Write 5 bits: 0b10101
+        // Write 5 bits: 0b10101 (with proper timing between writes)
         mapper.write_prg(0xE000, 1); // Bit 0
+        mapper.clock(3);
         mapper.write_prg(0xE000, 0); // Bit 1
+        mapper.clock(3);
         mapper.write_prg(0xE000, 1); // Bit 2
+        mapper.clock(3);
         mapper.write_prg(0xE000, 0); // Bit 3
+        mapper.clock(3);
         mapper.write_prg(0xE000, 1); // Bit 4
 
         // Value should be 0b10101 = 21
@@ -435,10 +464,13 @@ mod tests {
         let rom = create_test_rom(2, 2);
         let mut mapper = Mmc1::new(&rom);
 
-        // Write 3 bits then reset
+        // Write 3 bits then reset (with proper timing between writes)
         mapper.write_prg(0xE000, 1);
+        mapper.clock(3);
         mapper.write_prg(0xE000, 1);
+        mapper.clock(3);
         mapper.write_prg(0xE000, 1);
+        mapper.clock(3);
         mapper.write_prg(0xE000, 0x80); // Reset
 
         assert_eq!(mapper.shift_count, 0);
