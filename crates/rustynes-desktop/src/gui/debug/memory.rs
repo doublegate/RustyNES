@@ -26,9 +26,8 @@ impl Default for MemoryViewerState {
 
 /// Render the memory viewer debug window.
 ///
-/// # Panics
-///
-/// Panics if the internal mutex is poisoned (should not happen in single-threaded egui context).
+/// If the internal mutex is poisoned (should not happen in single-threaded egui context),
+/// the function returns early without rendering.
 #[allow(clippy::too_many_lines)]
 pub fn render(ctx: &Context, open: &mut bool, console: &Option<Console>) {
     // Use a static for state since we don't have access to the full state structure
@@ -37,7 +36,10 @@ pub fn render(ctx: &Context, open: &mut bool, console: &Option<Console>) {
         std::sync::OnceLock::new();
 
     let state_mutex = STATE.get_or_init(|| std::sync::Mutex::new(MemoryViewerState::default()));
-    let mut state = state_mutex.lock().unwrap();
+    // Use let-else to handle poisoned mutex gracefully (should never happen in single-threaded egui)
+    let Ok(mut state) = state_mutex.lock() else {
+        return;
+    };
 
     egui::Window::new("Memory Viewer")
         .open(open)
