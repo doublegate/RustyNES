@@ -9,7 +9,7 @@
 //!
 //! Place test ROMs in: test-roms/ppu/
 
-use rustynes_cpu::{Bus, Cpu, INesRom};
+use rustynes_cpu::{Bus, Cpu, CpuBus, INesRom};
 use rustynes_ppu::{Mirroring, Ppu};
 use std::path::PathBuf;
 
@@ -17,6 +17,8 @@ use std::path::PathBuf;
 ///
 /// This is a minimal implementation sufficient for running PPU test ROMs.
 /// The full emulator will have a more comprehensive bus implementation.
+///
+/// Implements `CpuBus` for cycle-accurate PPU synchronization via `on_cpu_cycle()`.
 struct TestBus {
     ram: [u8; 0x0800], // 2KB RAM
     ppu: Ppu,          // PPU instance
@@ -25,6 +27,7 @@ struct TestBus {
     chr_rom: Vec<u8>, // CHR-ROM data
     apu_io: [u8; 0x20], // APU and I/O registers
     ppu_cycles: u32,   // Track PPU cycles for synchronization
+    nmi_pending: bool, // NMI pending from PPU (captured during `on_cpu_cycle`)
 }
 
 impl TestBus {
@@ -43,6 +46,7 @@ impl TestBus {
             chr_rom: rom.chr_rom.clone(),
             apu_io: [0xFF; 0x20],
             ppu_cycles: 0,
+            nmi_pending: false,
         }
     }
 
@@ -50,32 +54,14 @@ impl TestBus {
     fn reset(&mut self) {
         self.ppu.reset();
         self.ppu_cycles = 0;
+        self.nmi_pending = false;
     }
 
-    /// Step PPU by appropriate number of cycles (3 PPU cycles per CPU cycle)
-    ///
-    /// This implementation steps the PPU 1 dot at a time for cycle-accurate
-    /// synchronization with the CPU. This is critical for passing VBlank timing
-    /// tests (ppu_02-vbl_set_time.nes and ppu_03-vbl_clear_time.nes) which
-    /// require ±2 cycle accuracy.
-    ///
-    /// The race condition where reading $2002 on scanline 241, dot 1 suppresses
-    /// NMI is handled in the PPU's read_register method.
-    fn step_ppu(&mut self, cpu_cycles: u8) -> bool {
-        let mut nmi_triggered = false;
-
-        // PPU runs at 3× CPU clock
-        let ppu_steps = (cpu_cycles as u32) * 3;
-
-        // Step PPU 1 dot at a time for maximum timing accuracy
-        for _ in 0..ppu_steps {
-            let (_frame_complete, nmi) = self.ppu.step();
-            if nmi {
-                nmi_triggered = true;
-            }
-        }
-
-        nmi_triggered
+    /// Take and clear the pending NMI flag.
+    fn take_nmi(&mut self) -> bool {
+        let pending = self.nmi_pending;
+        self.nmi_pending = false;
+        pending
     }
 
     /// Get PPU frame buffer for rendering verification (if needed)
@@ -85,7 +71,21 @@ impl TestBus {
     }
 }
 
-impl Bus for TestBus {
+impl CpuBus for TestBus {
+    /// Step PPU 3 dots per CPU cycle for cycle-accurate synchronization.
+    ///
+    /// This is called BEFORE each CPU memory access, ensuring PPU state
+    /// is correct when CPU reads/writes memory (critical for $2002 timing).
+    fn on_cpu_cycle(&mut self) {
+        // PPU runs at 3x CPU clock (3 PPU dots per CPU cycle for NTSC)
+        for _ in 0..3 {
+            let (_frame_complete, nmi) = self.ppu.step();
+            if nmi {
+                self.nmi_pending = true;
+            }
+        }
+    }
+
     fn read(&mut self, addr: u16) -> u8 {
         match addr {
             // 2KB RAM, mirrored 4 times
@@ -185,9 +185,30 @@ impl Bus for TestBus {
             _ => {}
         }
     }
+
+    fn peek(&self, addr: u16) -> u8 {
+        // Non-destructive read for debugging
+        match addr {
+            0x0000..=0x1FFF => self.ram[(addr & 0x07FF) as usize],
+            0x8000..=0xFFFF => {
+                let rom_addr = (addr - 0x8000) as usize;
+                if self.prg_rom.len() == 16384 {
+                    self.prg_rom[rom_addr % 16384]
+                } else if rom_addr < self.prg_rom.len() {
+                    self.prg_rom[rom_addr]
+                } else {
+                    0
+                }
+            }
+            _ => 0,
+        }
+    }
 }
 
 /// Run a test ROM and check for success/failure.
+///
+/// Uses cycle-accurate execution with `cpu.tick()` which calls `on_cpu_cycle()`
+/// before each memory access, stepping PPU 3 dots per CPU cycle.
 ///
 /// Returns the test result code from address $6000:
 /// - 0x00: Success
@@ -213,24 +234,29 @@ fn run_test_rom(rom_path: &PathBuf) -> Result<u8, String> {
     // Execute until test completes or timeout
     let max_frames = 600; // 10 seconds at 60fps
     let mut frames = 0;
+    let mut last_check_cycle = 0u64;
 
     loop {
-        // Execute one CPU instruction
-        let cycles = cpu.step(&mut bus);
+        // Execute one CPU cycle using cycle-accurate tick()
+        // PPU is stepped via on_cpu_cycle() callback BEFORE each memory access
+        let instruction_complete = cpu.tick(&mut bus);
 
-        // Step PPU (3 PPU dots per CPU cycle)
-        let _nmi = bus.step_ppu(cycles);
+        // Handle NMI from PPU (captured during on_cpu_cycle)
+        if bus.take_nmi() {
+            cpu.trigger_nmi();
+        }
 
-        // Check for test completion every N cycles
-        if cpu.cycles.is_multiple_of(10_000) {
-            let result = bus.read(0x6000);
+        // Check for test completion every ~10000 cycles (after instruction completes)
+        if instruction_complete && cpu.cycles >= last_check_cycle + 10_000 {
+            last_check_cycle = cpu.cycles;
+            let result = Bus::read(&mut bus, 0x6000);
 
             // Check if test has started writing results
             // Some tests write 0x80 while running, then final result
             if result != 0x80 && result != 0xFF && cpu.cycles > 100_000 {
                 // Test likely complete
                 println!(
-                    "  Test result at ${:04X} after {} cycles",
+                    "  Test result at ${:02X} after {} cycles",
                     result, cpu.cycles
                 );
                 return Ok(result);
@@ -247,7 +273,7 @@ fn run_test_rom(rom_path: &PathBuf) -> Result<u8, String> {
 
         // Check for CPU jam
         if cpu.jammed {
-            let result = bus.read(0x6000);
+            let result = Bus::read(&mut bus, 0x6000);
             println!(
                 "  CPU jammed after {} cycles, result=${:02X}",
                 cpu.cycles, result
@@ -292,21 +318,16 @@ fn test_ppu_vbl_basics() {
     }
 }
 
-/// VBlank Set Time Test - IGNORED (Architectural Limitation)
+/// VBlank Set Time Test
 ///
-/// This test requires ±2 cycle timing accuracy which necessitates cycle-by-cycle
-/// CPU execution (stepping PPU after each CPU cycle, not after each instruction).
+/// This test requires ±2 cycle timing accuracy for VBlank flag detection.
 ///
-/// Current result: $33 (±51 cycles) vs target $00 (±2 cycles)
+/// Now uses cycle-accurate execution via `cpu.tick()` with `CpuBus::on_cpu_cycle()`
+/// which steps PPU 3 dots BEFORE each CPU memory access, enabling precise
+/// detection of VBlank flag state when CPU reads $2002 (PPUSTATUS).
 ///
-/// Root cause: CPU executes instructions atomically; PPU steps after instruction
-/// completes, not interleaved during execution. This prevents detecting the exact
-/// cycle when $2002 is read relative to VBlank flag set (scanline 241, dot 1).
-///
-/// See: /temp/m7-vblank-timing-test-results.md for detailed analysis
-/// Defer to: Phase 2+ (requires major CPU refactor, 100+ hours)
+/// Expected: $00 (VBlank set timing within ±2 cycles)
 #[test]
-#[ignore = "Requires cycle-by-cycle CPU execution (architectural limitation)"]
 fn test_ppu_vbl_set_time() {
     let rom_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
@@ -335,21 +356,16 @@ fn test_ppu_vbl_set_time() {
     }
 }
 
-/// VBlank Clear Time Test - IGNORED (Architectural Limitation)
+/// VBlank Clear Time Test
 ///
-/// This test requires exact cycle timing accuracy which necessitates cycle-by-cycle
-/// CPU execution (stepping PPU after each CPU cycle, not after each instruction).
+/// This test requires exact cycle timing accuracy for VBlank flag clear detection.
 ///
-/// Current result: $0A (±10 cycles) vs target $00 (exact timing)
+/// Now uses cycle-accurate execution via `cpu.tick()` with `CpuBus::on_cpu_cycle()`
+/// which steps PPU 3 dots BEFORE each CPU memory access, enabling precise
+/// detection of VBlank flag clear when CPU reads $2002 (PPUSTATUS) during pre-render.
 ///
-/// Root cause: CPU executes instructions atomically; PPU steps after instruction
-/// completes, not interleaved during execution. This prevents detecting the exact
-/// cycle when $2002 is read relative to VBlank flag clear (scanline 261, dot 1).
-///
-/// See: /temp/m7-vblank-timing-test-results.md for detailed analysis
-/// Defer to: Phase 2+ (requires major CPU refactor, 100+ hours)
+/// Expected: $00 (VBlank clear timing exact)
 #[test]
-#[ignore = "Requires cycle-by-cycle CPU execution (architectural limitation)"]
 fn test_ppu_vbl_clear_time() {
     let rom_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
