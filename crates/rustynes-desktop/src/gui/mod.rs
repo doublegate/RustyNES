@@ -257,7 +257,7 @@ pub fn render(
             debug::ppu::render(ctx, &mut state.debug.ppu, console);
         }
         if state.debug.apu {
-            debug::apu::render(ctx, &mut state.debug.apu, console);
+            debug::apu::render(ctx, &mut state.debug.apu, console, audio);
         }
         if state.debug.memory {
             debug::memory::render(ctx, &mut state.debug.memory, console);

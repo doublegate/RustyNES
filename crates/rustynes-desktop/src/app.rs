@@ -49,9 +49,29 @@ const NES_PALETTE: [(u8, u8, u8); 64] = [
     (0xA0, 0xD6, 0xE4), (0xA0, 0xA2, 0xA0), (0x00, 0x00, 0x00), (0x00, 0x00, 0x00),
 ];
 
-/// Target frame rate (NTSC).
-const TARGET_FPS: f64 = 60.0988;
-/// Frame duration in nanoseconds.
+// === NES Timing Constants (NTSC) ===
+// Master clock: 21.477272 MHz
+// CPU: 1.789773 MHz (master / 12)
+// PPU: 5.369318 MHz (master / 4) = 3x CPU clock
+
+/// CPU frequency in Hz (NTSC).
+const CPU_FREQUENCY_NTSC: f64 = 1_789_773.0;
+
+/// Average CPU cycles per frame (odd frames: 29781, even frames: 29780).
+const CPU_CYCLES_PER_FRAME: f64 = 29780.5;
+
+/// CPU cycles for even frames.
+#[allow(dead_code)]
+const CPU_CYCLES_EVEN_FRAME: u32 = 29780;
+
+/// CPU cycles for odd frames.
+#[allow(dead_code)]
+const CPU_CYCLES_ODD_FRAME: u32 = 29781;
+
+/// Target frame rate (NTSC): `CPU_FREQUENCY_NTSC` / `CPU_CYCLES_PER_FRAME` = ~60.0988 Hz.
+const TARGET_FPS: f64 = CPU_FREQUENCY_NTSC / CPU_CYCLES_PER_FRAME;
+
+/// Frame duration in nanoseconds (~16,639,265 ns).
 const FRAME_DURATION: Duration = Duration::from_nanos((1_000_000_000.0 / TARGET_FPS) as u64);
 
 /// Main NES emulator application.
@@ -78,6 +98,8 @@ pub struct NesApp {
     framebuffer: Vec<u8>,
     /// Last applied theme (for detecting changes).
     last_theme: crate::config::AppTheme,
+    /// Audio/video sync speed adjustment (0.99x - 1.01x).
+    speed_adjustment: f32,
 }
 
 impl NesApp {
@@ -155,6 +177,7 @@ impl NesApp {
             nes_texture: None,
             framebuffer,
             last_theme,
+            speed_adjustment: 1.0,
         }
     }
 
@@ -211,24 +234,35 @@ impl NesApp {
     }
 
     /// Run emulation for one frame.
-    fn run_frame(&mut self) {
+    ///
+    /// Returns a speed adjustment factor for A/V synchronization.
+    /// - 0.99: Buffer low, slow down slightly
+    /// - 1.00: Buffer healthy, no adjustment
+    /// - 1.01: Buffer high, speed up slightly
+    fn run_frame(&mut self) -> f32 {
+        let mut speed_adjustment = 1.0;
+
         if let Some(console) = &mut self.console {
-            // Update controller input
+            // Update controller input BEFORE emulation (minimizes input latency)
             console.set_controller_1(self.input.player1_buttons());
             console.set_controller_2(self.input.player2_buttons());
 
             // Run one frame
             console.step_frame();
 
-            // Get audio samples and queue them
+            // Get audio samples and queue them with adaptive sync
             if let Some(audio) = &mut self.audio {
                 let samples = console.audio_samples();
                 if !samples.is_empty() {
-                    audio.queue_samples(samples);
+                    // Use adaptive sync to maintain audio/video synchronization
+                    let (_, adjustment) = audio.queue_samples_with_sync(samples);
+                    speed_adjustment = adjustment;
                 }
                 console.clear_audio_samples();
             }
         }
+
+        speed_adjustment
     }
 
     /// Handle keyboard input for special keys and shortcuts.
@@ -458,7 +492,7 @@ impl eframe::App for NesApp {
         // Poll gamepads
         self.input.poll_gamepads();
 
-        // Frame timing and emulation
+        // Frame timing and emulation with A/V sync
         let now = Instant::now();
         let delta = now - self.last_frame;
         self.last_frame = now;
@@ -466,10 +500,21 @@ impl eframe::App for NesApp {
         if !self.paused {
             self.accumulator += delta;
 
+            // Apply speed adjustment for A/V sync (0.99x - 1.01x)
+            // This slightly adjusts the effective frame duration to maintain audio sync
+            #[allow(
+                clippy::cast_sign_loss,
+                clippy::cast_possible_truncation,
+                clippy::cast_precision_loss
+            )]
+            let adjusted_duration = Duration::from_nanos(
+                (FRAME_DURATION.as_nanos() as f64 / f64::from(self.speed_adjustment)) as u64,
+            );
+
             // Run emulation to catch up
-            while self.accumulator >= FRAME_DURATION {
-                self.accumulator -= FRAME_DURATION;
-                self.run_frame();
+            while self.accumulator >= adjusted_duration {
+                self.accumulator -= adjusted_duration;
+                self.speed_adjustment = self.run_frame();
             }
         }
 

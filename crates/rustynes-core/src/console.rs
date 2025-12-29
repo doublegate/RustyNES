@@ -128,6 +128,7 @@ impl Console {
     /// # Returns
     ///
     /// Number of cycles consumed
+    #[inline]
     pub fn step(&mut self) -> u8 {
         // Step CPU (this will handle DMA internally via stall cycles)
         let cpu_cycles = self.cpu.step(&mut self.bus);
@@ -233,6 +234,7 @@ impl Console {
     /// }
     /// # }
     /// ```
+    #[inline]
     pub fn tick(&mut self) -> (bool, bool) {
         // Handle OAM DMA if active (DMA steals CPU cycles)
         // During DMA, CPU doesn't execute so we must manually step PPU/APU

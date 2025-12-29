@@ -286,6 +286,7 @@ impl Bus {
     /// Tuple of (`frame_complete`, `nmi`):
     /// - `frame_complete`: true if a complete frame was just rendered
     /// - `nmi`: true if NMI should be triggered (`VBlank` start with NMI enabled)
+    #[inline]
     pub fn step_ppu(&mut self) -> (bool, bool) {
         // Borrow mapper immutably for CHR reads while PPU is borrowed mutably
         // This works because they are separate fields of the struct
@@ -301,6 +302,7 @@ impl Bus {
     /// # Returns
     ///
     /// true if NMI was pending, false otherwise
+    #[inline]
     pub fn take_nmi(&mut self) -> bool {
         let pending = self.nmi_pending;
         self.nmi_pending = false;
@@ -315,6 +317,7 @@ impl Bus {
     /// # Returns
     ///
     /// true if a frame was completed, false otherwise
+    #[inline]
     pub fn take_frame_complete(&mut self) -> bool {
         let complete = self.frame_complete;
         self.frame_complete = false;
@@ -335,6 +338,7 @@ impl Bus {
     /// # Returns
     ///
     /// Number of stall cycles (0-4, typically 3 when DMA occurs)
+    #[inline]
     pub fn take_dmc_stall_cycles(&mut self) -> u8 {
         let stalls = self.dmc_stall_cycles;
         self.dmc_stall_cycles = 0;
@@ -438,6 +442,7 @@ impl CpuBus for Bus {
     ///
     /// NMI, `frame_complete`, and DMC stall signals are captured and can be
     /// retrieved via `take_nmi()`, `take_frame_complete()`, and `take_dmc_stall_cycles()`.
+    #[inline]
     fn on_cpu_cycle(&mut self) {
         // Step PPU 3 times (3 PPU dots per CPU cycle for NTSC)
         for _ in 0..3 {
