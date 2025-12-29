@@ -67,13 +67,27 @@ impl Bus {
     /// # Arguments
     ///
     /// * `mapper` - Cartridge mapper implementation
-    /// * `mirroring` - Initial nametable mirroring mode
+    ///
+    /// # Returns
+    ///
+    /// New Bus instance with all components initialized (APU defaults to 48000 Hz)
+    #[must_use]
+    pub fn new(mapper: Box<dyn Mapper>) -> Self {
+        Self::with_sample_rate(mapper, 48000)
+    }
+
+    /// Create a new bus with the given mapper and custom audio sample rate
+    ///
+    /// # Arguments
+    ///
+    /// * `mapper` - Cartridge mapper implementation
+    /// * `sample_rate` - Audio output sample rate (e.g., 44100 or 48000 Hz)
     ///
     /// # Returns
     ///
     /// New Bus instance with all components initialized
     #[must_use]
-    pub fn new(mapper: Box<dyn Mapper>) -> Self {
+    pub fn with_sample_rate(mapper: Box<dyn Mapper>, sample_rate: u32) -> Self {
         let mirroring = mapper.mirroring();
 
         // Convert mapper Mirroring to PPU Mirroring
@@ -89,7 +103,7 @@ impl Bus {
             ram: [0; 0x800],
             prg_ram: [0; 0x2000], // Initialize PRG-RAM to 0 (matches internal RAM)
             ppu: Ppu::new(ppu_mirroring),
-            apu: Apu::new(),
+            apu: Apu::with_sample_rate(sample_rate),
             mapper,
             controller1: Controller::new(),
             controller2: Controller::new(),
@@ -321,8 +335,11 @@ impl CpuBus for Bus {
                 });
             }
 
-            // APU registers
-            0x4000..=0x4013 | 0x4015 | 0x4017 => self.apu.write_register(addr, value),
+            // APU registers (not including $4017)
+            0x4000..=0x4013 | 0x4015 => self.apu.write_register(addr, value),
+
+            // Frame counter ($4017) - uses CPU cycle count for accurate write delay
+            0x4017 => self.apu.write_frame_counter(value, self.cpu_cycles),
 
             // OAM DMA
             0x4014 => self.start_oam_dma(value),
