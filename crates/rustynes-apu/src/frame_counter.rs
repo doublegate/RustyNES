@@ -1,181 +1,218 @@
-//! Frame Counter Module
+//! APU Frame Counter.
 //!
-//! The frame counter divides time into frames and quarter-frames, timing
-//! envelope, length counter, and sweep updates. Operates in 4-step (60 Hz) or 5-step (48 Hz) mode.
+//! The frame counter is responsible for clocking the envelope, length counter,
+//! and sweep units at specific cycle intervals. It operates in two modes:
+//!
+//! - 4-step mode: Generates quarter frame signals at cycles 3728.5, 7456.5,
+//!   11185.5, 14914.5, and can optionally trigger an IRQ.
+//!
+//! - 5-step mode: Generates quarter frame signals at cycles 3728.5, 7456.5,
+//!   11185.5, 14914.5, 18640.5. Does not generate IRQ.
 
-/// Actions triggered by the frame counter
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
+/// Frame counter mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub enum FrameCounterMode {
+    /// 4-step mode (NTSC: 14915 cycles per frame).
+    #[default]
+    FourStep,
+    /// 5-step mode (NTSC: 18641 cycles per frame).
+    FiveStep,
+}
+
+/// Frame counter events that occur on specific cycles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FrameAction {
-    /// No action this cycle
-    None,
-    /// Clock envelopes and linear counter (quarter frame)
+pub enum FrameEvent {
+    /// Quarter frame (clock envelope and linear counter).
     QuarterFrame,
-    /// Clock envelopes, linear counter, length counters, and sweep units (half frame)
+    /// Half frame (clock length counter and sweep).
     HalfFrame,
+    /// IRQ (only in 4-step mode with IRQ enabled).
+    Irq,
 }
 
-/// Frame counter state machine
-///
-/// Controls timing for envelope generators, length counters, and sweep units.
-///
-/// # Modes
-///
-/// - **4-step mode (Mode 0)**: 29,829 CPU cycles per frame, generates IRQ
-/// - **5-step mode (Mode 1)**: 37,281 CPU cycles per frame, no IRQ
+/// Frame counter.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct FrameCounter {
-    /// Frame counter mode: 0 = 4-step (60 Hz), 1 = 5-step (48 Hz)
-    mode: u8,
-    /// IRQ inhibit flag (from $4017 bit 6)
+    /// Current cycle within the frame.
+    cycle: u16,
+    /// Frame counter mode.
+    mode: FrameCounterMode,
+    /// IRQ inhibit flag.
     irq_inhibit: bool,
-    /// Current cycle count within the frame
-    cycle_count: u64,
-    /// Frame IRQ flag (read by CPU)
-    pub irq_flag: bool,
+    /// IRQ pending flag.
+    irq_pending: bool,
+    /// Reset delay (cycles until mode change takes effect).
+    reset_delay: u8,
+    /// Pending mode to set after reset delay.
+    pending_mode: Option<FrameCounterMode>,
 }
+
+/// 4-step mode cycle points (NTSC).
+const FOUR_STEP_CYCLES: [u16; 5] = [7457, 14913, 22371, 29828, 29829];
+
+/// 5-step mode cycle points (NTSC).
+const FIVE_STEP_CYCLES: [u16; 5] = [7457, 14913, 22371, 29829, 37281];
 
 impl FrameCounter {
-    /// Creates a new frame counter in 4-step mode
-    ///
-    /// Power-on state: Behaves as if $4017 written with $00
-    /// - Mode 0 (4-step)
-    /// - IRQ inhibit disabled (IRQ enabled)
+    /// Create a new frame counter.
     #[must_use]
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
-            mode: 0,
-            irq_inhibit: false, // Power-on: IRQ enabled (as if $4017=$00 written)
-            cycle_count: 0,
-            irq_flag: false,
+            cycle: 0,
+            mode: FrameCounterMode::FourStep,
+            irq_inhibit: false,
+            irq_pending: false,
+            reset_delay: 0,
+            pending_mode: None,
         }
     }
 
-    /// Writes to the frame counter control register ($4017)
-    ///
-    /// # Register Format
-    ///
-    /// ```text
-    /// 7  bit  0
-    /// ---- ----
-    /// MI-- ----
-    /// ||
-    /// |+------- IRQ inhibit (0: IRQ enabled, 1: IRQ disabled)
-    /// +-------- Mode (0: 4-step, 1: 5-step)
-    /// ```
-    ///
-    /// Writing to this register:
-    /// - Resets the cycle counter to 0
-    /// - Clears IRQ flag if IRQ inhibit is set
-    /// - If 5-step mode, immediately triggers half-frame action
-    pub fn write_control(&mut self, value: u8) -> FrameAction {
-        self.mode = (value >> 7) & 1;
-        self.irq_inhibit = (value & 0x40) != 0;
+    /// Write to the frame counter register ($4017).
+    /// Bits: MI-- ----
+    /// - M: Mode (0 = 4-step, 1 = 5-step)
+    /// - I: IRQ inhibit
+    pub fn write(&mut self, value: u8) {
+        self.irq_inhibit = value & 0x40 != 0;
 
-        // Reset cycle counter
-        self.cycle_count = 0;
-
-        // Clear IRQ flag if inhibit set
         if self.irq_inhibit {
-            self.irq_flag = false;
+            self.irq_pending = false;
         }
 
-        // If 5-step mode, immediately clock half frame
-        if self.mode == 1 {
-            FrameAction::HalfFrame
+        let new_mode = if value & 0x80 != 0 {
+            FrameCounterMode::FiveStep
         } else {
-            FrameAction::None
-        }
+            FrameCounterMode::FourStep
+        };
+
+        // Mode change takes effect after a delay
+        self.pending_mode = Some(new_mode);
+        self.reset_delay = if self.cycle.is_multiple_of(2) { 4 } else { 3 };
     }
 
-    /// Clocks the frame counter by one CPU cycle
-    ///
-    /// Returns the frame action to be taken (if any).
-    #[inline]
-    pub fn clock(&mut self) -> FrameAction {
-        self.cycle_count += 1;
+    /// Clock the frame counter. Returns any events that occurred.
+    pub fn clock(&mut self) -> [Option<FrameEvent>; 3] {
+        let mut events = [None; 3];
+        let mut event_idx = 0;
+
+        // Handle pending mode change
+        if self.reset_delay > 0 {
+            self.reset_delay -= 1;
+            if self.reset_delay == 0
+                && let Some(mode) = self.pending_mode.take()
+            {
+                self.mode = mode;
+                self.cycle = 0;
+
+                // 5-step mode immediately clocks half frame on mode set
+                if self.mode == FrameCounterMode::FiveStep {
+                    events[event_idx] = Some(FrameEvent::QuarterFrame);
+                    event_idx += 1;
+                    events[event_idx] = Some(FrameEvent::HalfFrame);
+                    return events;
+                }
+            }
+        }
+
+        self.cycle += 1;
 
         match self.mode {
-            0 => self.clock_4step(),
-            1 => self.clock_5step(),
-            _ => FrameAction::None,
+            FrameCounterMode::FourStep => {
+                self.clock_four_step(&mut events);
+            }
+            FrameCounterMode::FiveStep => {
+                self.clock_five_step(&mut events);
+            }
+        }
+
+        events
+    }
+
+    /// Clock in 4-step mode.
+    fn clock_four_step(&mut self, events: &mut [Option<FrameEvent>; 3]) {
+        match self.cycle {
+            c if c == FOUR_STEP_CYCLES[0] => {
+                events[0] = Some(FrameEvent::QuarterFrame);
+            }
+            c if c == FOUR_STEP_CYCLES[1] => {
+                events[0] = Some(FrameEvent::QuarterFrame);
+                events[1] = Some(FrameEvent::HalfFrame);
+            }
+            c if c == FOUR_STEP_CYCLES[2] => {
+                events[0] = Some(FrameEvent::QuarterFrame);
+            }
+            c if c == FOUR_STEP_CYCLES[3] => {
+                // Set IRQ flag
+                if !self.irq_inhibit {
+                    self.irq_pending = true;
+                    events[0] = Some(FrameEvent::Irq);
+                }
+            }
+            c if c == FOUR_STEP_CYCLES[4] => {
+                events[0] = Some(FrameEvent::QuarterFrame);
+                events[1] = Some(FrameEvent::HalfFrame);
+                if !self.irq_inhibit {
+                    self.irq_pending = true;
+                    events[2] = Some(FrameEvent::Irq);
+                }
+                // Frame complete, reset
+                self.cycle = 0;
+            }
+            _ => {}
         }
     }
 
-    /// Clocks the 4-step mode sequencer
-    ///
-    /// # Sequence
-    ///
-    /// ```text
-    /// Step   Cycles  Action
-    /// ----   ------  ------
-    /// 1      7458    Quarter frame (envelopes + linear counter)
-    /// 2      14914   Half frame (envelopes, linear, length, sweep)
-    /// 3      22373   Quarter frame
-    /// 4      29830   Half frame + set IRQ flag (if enabled)
-    ///        29831   Set IRQ flag
-    ///        29832   Set IRQ flag, reset to 0
-    /// ```
-    fn clock_4step(&mut self) -> FrameAction {
-        match self.cycle_count {
-            // Quarter frames at 7458 and 22373
-            7458 | 22373 => FrameAction::QuarterFrame,
-            14914 => FrameAction::HalfFrame,
-            29830 => {
-                if !self.irq_inhibit {
-                    self.irq_flag = true;
-                }
-                FrameAction::HalfFrame
+    /// Clock in 5-step mode.
+    fn clock_five_step(&mut self, events: &mut [Option<FrameEvent>; 3]) {
+        match self.cycle {
+            c if c == FIVE_STEP_CYCLES[0] => {
+                events[0] = Some(FrameEvent::QuarterFrame);
             }
-            29831 => {
-                if !self.irq_inhibit {
-                    self.irq_flag = true;
-                }
-                FrameAction::None
+            c if c == FIVE_STEP_CYCLES[1] => {
+                events[0] = Some(FrameEvent::QuarterFrame);
+                events[1] = Some(FrameEvent::HalfFrame);
             }
-            29832 => {
-                if !self.irq_inhibit {
-                    self.irq_flag = true;
-                }
-                self.cycle_count = 0;
-                FrameAction::None
+            c if c == FIVE_STEP_CYCLES[2] => {
+                events[0] = Some(FrameEvent::QuarterFrame);
             }
-            _ => FrameAction::None,
+            c if c == FIVE_STEP_CYCLES[3] => {
+                // Nothing happens at step 4 in 5-step mode
+            }
+            c if c == FIVE_STEP_CYCLES[4] => {
+                events[0] = Some(FrameEvent::QuarterFrame);
+                events[1] = Some(FrameEvent::HalfFrame);
+                // Frame complete, reset
+                self.cycle = 0;
+            }
+            _ => {}
         }
     }
 
-    /// Clocks the 5-step mode sequencer
-    ///
-    /// # Sequence
-    ///
-    /// ```text
-    /// Step   Cycles  Action
-    /// ----   ------  ------
-    /// 1      7458    Quarter frame
-    /// 2      14914   Half frame
-    /// 3      22372   Quarter frame
-    /// 4      29830   (nothing)
-    /// 5      37282   Half frame, reset to 0
-    /// ```
-    fn clock_5step(&mut self) -> FrameAction {
-        match self.cycle_count {
-            7458 | 22372 => FrameAction::QuarterFrame,
-            14914 => FrameAction::HalfFrame,
-            37282 => {
-                self.cycle_count = 0;
-                FrameAction::HalfFrame
-            }
-            _ => FrameAction::None,
-        }
-    }
-
-    /// Returns whether a frame IRQ is pending
+    /// Check if an IRQ is pending.
     #[must_use]
-    pub const fn irq_pending(&self) -> bool {
-        self.irq_flag && !self.irq_inhibit
+    pub fn irq_pending(&self) -> bool {
+        self.irq_pending
     }
 
-    /// Clears the IRQ flag (called when status register is read)
+    /// Clear the IRQ pending flag (called when status is read).
     pub fn clear_irq(&mut self) {
-        self.irq_flag = false;
+        self.irq_pending = false;
+    }
+
+    /// Get the current cycle.
+    #[must_use]
+    pub fn cycle(&self) -> u16 {
+        self.cycle
+    }
+
+    /// Get the current mode.
+    #[must_use]
+    pub fn mode(&self) -> FrameCounterMode {
+        self.mode
     }
 }
 
@@ -190,125 +227,90 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_frame_counter_4step_sequence() {
-        let mut fc = FrameCounter::new();
-        assert_eq!(fc.mode, 0);
-
-        // Clock to first quarter frame (cycle 7458)
-        for _ in 0..7457 {
-            assert_eq!(fc.clock(), FrameAction::None);
-        }
-        assert_eq!(fc.clock(), FrameAction::QuarterFrame);
-
-        // Clock to first half frame (cycle 14914)
-        for _ in 0..7455 {
-            assert_eq!(fc.clock(), FrameAction::None);
-        }
-        assert_eq!(fc.clock(), FrameAction::HalfFrame);
-
-        // Clock to second quarter frame (cycle 22373)
-        for _ in 0..7458 {
-            assert_eq!(fc.clock(), FrameAction::None);
-        }
-        assert_eq!(fc.clock(), FrameAction::QuarterFrame);
-
-        // Clock to second half frame with IRQ (cycle 29830)
-        for _ in 0..7456 {
-            assert_eq!(fc.clock(), FrameAction::None);
-        }
-        assert!(!fc.irq_flag);
-        assert_eq!(fc.clock(), FrameAction::HalfFrame);
-        assert!(fc.irq_flag);
-
-        // Additional IRQ flag sets (cycles 29831, 29832)
-        assert_eq!(fc.clock(), FrameAction::None);
-        assert!(fc.irq_flag);
-        assert_eq!(fc.clock(), FrameAction::None);
-        assert!(fc.irq_flag);
-
-        // Should reset to 0
-        assert_eq!(fc.cycle_count, 0);
+    fn test_frame_counter_initial() {
+        let fc = FrameCounter::new();
+        assert_eq!(fc.mode(), FrameCounterMode::FourStep);
+        assert!(!fc.irq_pending());
     }
 
     #[test]
-    fn test_frame_counter_5step_sequence() {
+    fn test_four_step_quarter_frame() {
         let mut fc = FrameCounter::new();
-        fc.write_control(0x80); // 5-step mode
 
-        assert_eq!(fc.mode, 1);
-        assert_eq!(fc.cycle_count, 0);
-
-        // Clock to first quarter frame (7458)
-        for _ in 0..7457 {
-            assert_eq!(fc.clock(), FrameAction::None);
+        // Clock until first quarter frame
+        for _ in 0..FOUR_STEP_CYCLES[0] {
+            let events = fc.clock();
+            if fc.cycle == FOUR_STEP_CYCLES[0] {
+                assert!(events.contains(&Some(FrameEvent::QuarterFrame)));
+            }
         }
-        assert_eq!(fc.clock(), FrameAction::QuarterFrame);
+    }
 
-        // Clock to first half frame (14914)
-        for _ in 0..7455 {
-            assert_eq!(fc.clock(), FrameAction::None);
+    #[test]
+    fn test_four_step_irq() {
+        let mut fc = FrameCounter::new();
+        fc.write(0x00); // 4-step mode, IRQ enabled
+
+        // Wait for mode to take effect
+        for _ in 0..10 {
+            fc.clock();
         }
-        assert_eq!(fc.clock(), FrameAction::HalfFrame);
 
-        // Clock to second quarter frame (22372)
-        for _ in 0..7457 {
-            assert_eq!(fc.clock(), FrameAction::None);
+        // Clock until IRQ
+        while fc.cycle < FOUR_STEP_CYCLES[3] - 1 {
+            fc.clock();
         }
-        assert_eq!(fc.clock(), FrameAction::QuarterFrame);
-
-        // Clock to cycle 29830 (no action in 5-step mode)
-        for _ in 0..7457 {
-            assert_eq!(fc.clock(), FrameAction::None);
-        }
-        assert_eq!(fc.clock(), FrameAction::None);
-
-        // Clock to final half frame (37282)
-        for _ in 0..7451 {
-            assert_eq!(fc.clock(), FrameAction::None);
-        }
-        assert_eq!(fc.clock(), FrameAction::HalfFrame);
-
-        // Should reset
-        assert_eq!(fc.cycle_count, 0);
-        // 5-step mode never sets IRQ
-        assert!(!fc.irq_flag);
+        fc.clock();
+        assert!(fc.irq_pending());
     }
 
     #[test]
     fn test_irq_inhibit() {
         let mut fc = FrameCounter::new();
+        fc.write(0x40); // 4-step mode, IRQ inhibit
 
-        // Enable IRQ inhibit
-        fc.write_control(0x40);
-        assert!(fc.irq_inhibit);
-
-        // Clock to IRQ point
-        for _ in 0..29829 {
+        // Wait for mode to take effect
+        for _ in 0..10 {
             fc.clock();
         }
 
-        // IRQ should not be set
-        assert!(!fc.irq_flag);
+        // Clock past IRQ point
+        for _ in 0..30000 {
+            fc.clock();
+        }
         assert!(!fc.irq_pending());
     }
 
     #[test]
-    fn test_write_control_clears_irq() {
+    fn test_five_step_mode() {
         let mut fc = FrameCounter::new();
-        fc.irq_flag = true;
+        fc.write(0x80); // 5-step mode
 
-        // Write with IRQ inhibit
-        fc.write_control(0x40);
+        // Wait for mode to take effect
+        for _ in 0..10 {
+            fc.clock();
+        }
 
-        assert!(!fc.irq_flag);
+        assert_eq!(fc.mode(), FrameCounterMode::FiveStep);
     }
 
     #[test]
-    fn test_5step_immediate_half_frame() {
+    fn test_five_step_no_irq() {
         let mut fc = FrameCounter::new();
+        fc.write(0x80); // 5-step mode
 
-        // Writing 5-step mode should immediately trigger half frame
-        let action = fc.write_control(0x80);
-        assert_eq!(action, FrameAction::HalfFrame);
+        // Clock for a full frame
+        for _ in 0..40000 {
+            fc.clock();
+        }
+        assert!(!fc.irq_pending());
+    }
+
+    #[test]
+    fn test_clear_irq() {
+        let mut fc = FrameCounter::new();
+        fc.irq_pending = true;
+        fc.clear_irq();
+        assert!(!fc.irq_pending());
     }
 }

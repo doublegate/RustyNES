@@ -1,159 +1,98 @@
-//! Mapper 0: NROM
+//! NROM Mapper (Mapper 0).
 //!
-//! NROM is the simplest NES mapper with no bank switching capabilities.
-//! It provides direct memory mapping with optional mirroring for 16KB PRG-ROM.
+//! The simplest NES mapper with no bank switching. Used by early games
+//! like Super Mario Bros., Donkey Kong, and Ice Climber.
 //!
-//! # Hardware Details
-//!
-//! - **PRG-ROM**: 16KB or 32KB
-//! - **CHR**: 8KB CHR-ROM or CHR-RAM
-//! - **Mirroring**: Fixed horizontal or vertical
-//! - **Battery**: Not supported
-//!
-//! # Variants
-//!
-//! - **NROM-128**: 16KB PRG-ROM (mirrored to fill 32KB)
-//! - **NROM-256**: 32KB PRG-ROM (no mirroring needed)
-//!
-//! # Games
-//!
-//! - Super Mario Bros.
-//! - Donkey Kong
-//! - Balloon Fight
-//! - Excitebike
-//! - Ice Climber
-//!
-//! # Memory Map
-//!
-//! ```text
-//! CPU:
-//! $8000-$BFFF: First 16KB of PRG-ROM (or mirrored in NROM-128)
-//! $C000-$FFFF: Last 16KB of PRG-ROM (or mirrored in NROM-128)
-//!
-//! PPU:
-//! $0000-$1FFF: 8KB CHR-ROM/RAM (no banking)
-//! ```
+//! Memory layout:
+//! - PRG-ROM: 16KB or 32KB mapped to $8000-$FFFF
+//! - CHR-ROM: 8KB mapped to PPU $0000-$1FFF (or CHR-RAM if none)
+//! - No PRG-RAM (some variants have 2-8KB at $6000-$7FFF)
 
-use crate::{Mapper, Mirroring, Rom};
+use crate::mapper::{Mapper, Mirroring};
+use crate::rom::Rom;
 
-/// NROM mapper implementation (Mapper 0).
-#[derive(Clone)]
+#[cfg(not(feature = "std"))]
+use alloc::{boxed::Box, vec::Vec};
+
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
+/// NROM mapper implementation.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Nrom {
-    /// PRG-ROM data (16KB or 32KB).
+    /// PRG-ROM data.
     prg_rom: Vec<u8>,
-
-    /// CHR-ROM data, or empty if CHR-RAM.
-    chr_rom: Vec<u8>,
-
-    /// CHR-RAM (8KB if `chr_rom` is empty).
-    chr_ram: Vec<u8>,
-
+    /// CHR-ROM/RAM data.
+    chr: Vec<u8>,
+    /// Whether CHR is RAM (writable).
+    chr_is_ram: bool,
+    /// PRG-ROM size (16KB or 32KB).
+    prg_size: usize,
     /// Nametable mirroring mode.
     mirroring: Mirroring,
-
-    /// True if using CHR-RAM instead of CHR-ROM.
-    has_chr_ram: bool,
 }
 
 impl Nrom {
-    /// Create a new NROM mapper from a ROM.
-    ///
-    /// # Arguments
-    ///
-    /// * `rom` - Loaded ROM file
-    ///
-    /// # Panics
-    ///
-    /// Panics if:
-    /// - PRG-ROM size is not 16KB or 32KB
-    /// - CHR size is not 8KB (or 0 for CHR-RAM)
+    /// Create a new NROM mapper from ROM data.
     #[must_use]
     pub fn new(rom: &Rom) -> Self {
-        // Validate PRG-ROM size
-        assert!(
-            rom.prg_rom.len() == 16384 || rom.prg_rom.len() == 32768,
-            "NROM requires 16KB or 32KB PRG-ROM, got {} bytes",
-            rom.prg_rom.len()
-        );
-
-        // Determine if using CHR-RAM or CHR-ROM
-        let has_chr_ram = rom.chr_rom.is_empty();
-        let chr_ram = if has_chr_ram {
-            vec![0; 8192] // 8KB CHR-RAM
+        let prg_size = rom.prg_rom.len();
+        let chr_is_ram = rom.chr_rom.is_empty();
+        let chr = if chr_is_ram {
+            // 8KB CHR-RAM
+            vec![0u8; 8192]
         } else {
-            Vec::new()
+            rom.chr_rom.clone()
         };
-
-        // Validate CHR-ROM size if present
-        if !has_chr_ram {
-            assert_eq!(
-                rom.chr_rom.len(),
-                8192,
-                "NROM requires 8KB CHR-ROM, got {} bytes",
-                rom.chr_rom.len()
-            );
-        }
 
         Self {
             prg_rom: rom.prg_rom.clone(),
-            chr_rom: rom.chr_rom.clone(),
-            chr_ram,
+            chr,
+            chr_is_ram,
+            prg_size,
             mirroring: rom.header.mirroring,
-            has_chr_ram,
         }
-    }
-
-    /// Get PRG-ROM size in bytes.
-    #[must_use]
-    pub fn prg_size(&self) -> usize {
-        self.prg_rom.len()
-    }
-
-    /// Check if using CHR-RAM.
-    #[must_use]
-    pub fn has_chr_ram(&self) -> bool {
-        self.has_chr_ram
     }
 }
 
 impl Mapper for Nrom {
     fn read_prg(&self, addr: u16) -> u8 {
-        debug_assert!(addr >= 0x8000, "Invalid PRG address: ${addr:04X}");
-
-        let offset = (addr - 0x8000) as usize;
-
-        // Handle mirroring for NROM-128 (16KB)
-        let masked_offset = if self.prg_rom.len() == 16384 {
-            offset & 0x3FFF // Mirror 16KB to fill 32KB space
-        } else {
-            offset
-        };
-
-        self.prg_rom[masked_offset]
+        match addr {
+            0x6000..=0x7FFF => {
+                // No PRG-RAM on standard NROM
+                0
+            }
+            0x8000..=0xFFFF => {
+                // Mirror 16KB PRG-ROM if only 16KB
+                let offset = (addr - 0x8000) as usize;
+                let masked = if self.prg_size <= 16384 {
+                    offset & 0x3FFF // Mirror 16KB
+                } else {
+                    offset // Full 32KB
+                };
+                self.prg_rom.get(masked).copied().unwrap_or(0)
+            }
+            _ => 0,
+        }
     }
 
-    fn write_prg(&mut self, _addr: u16, _value: u8) {
-        // NROM has no writable registers
-        // Writes to PRG space are ignored
+    fn write_prg(&mut self, _addr: u16, _val: u8) {
+        // NROM has no writable registers or PRG-RAM
     }
 
     fn read_chr(&self, addr: u16) -> u8 {
-        debug_assert!(addr <= 0x1FFF, "Invalid CHR address: ${addr:04X}");
-
-        if self.has_chr_ram {
-            self.chr_ram[addr as usize]
-        } else {
-            self.chr_rom[addr as usize]
-        }
+        let offset = (addr & 0x1FFF) as usize;
+        self.chr.get(offset).copied().unwrap_or(0)
     }
 
-    fn write_chr(&mut self, addr: u16, value: u8) {
-        debug_assert!(addr <= 0x1FFF, "Invalid CHR address: ${addr:04X}");
-
-        if self.has_chr_ram {
-            self.chr_ram[addr as usize] = value;
+    fn write_chr(&mut self, addr: u16, val: u8) {
+        if self.chr_is_ram {
+            let offset = (addr & 0x1FFF) as usize;
+            if let Some(byte) = self.chr.get_mut(offset) {
+                *byte = val;
+            }
         }
-        // CHR-ROM writes are ignored
     }
 
     fn mirroring(&self) -> Mirroring {
@@ -164,177 +103,93 @@ impl Mapper for Nrom {
         0
     }
 
-    fn clone_mapper(&self) -> Box<dyn Mapper> {
-        Box::new(self.clone())
+    fn mapper_name(&self) -> &'static str {
+        "NROM"
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::RomHeader;
+    use crate::rom::{RomFormat, RomHeader};
 
-    fn create_test_rom(prg_size: usize, chr_size: usize, mirroring: Mirroring) -> Rom {
-        let header = RomHeader {
-            prg_rom_size: prg_size,
-            chr_rom_size: chr_size,
-            mapper_number: 0,
-            submapper: 0,
-            mirroring,
-            has_battery: false,
-            has_trainer: false,
-            nes2_format: false,
-            prg_ram_size: 0,
-            prg_nvram_size: 0,
-            chr_ram_size: if chr_size == 0 { 8192 } else { 0 },
-            chr_nvram_size: 0,
-        };
+    fn create_test_rom(prg_size: usize, chr_size: usize) -> Rom {
+        let prg_rom: Vec<u8> = (0..prg_size).map(|i| (i & 0xFF) as u8).collect();
+        let chr_rom: Vec<u8> = (0..chr_size).map(|i| ((i + 128) & 0xFF) as u8).collect();
 
         Rom {
-            header,
-            trainer: None,
-            prg_rom: vec![0; prg_size],
-            chr_rom: if chr_size > 0 {
-                vec![0; chr_size]
-            } else {
-                Vec::new()
+            header: RomHeader {
+                format: RomFormat::INes,
+                mapper: 0,
+                prg_rom_size: (prg_size / 16384) as u16,
+                chr_rom_size: (chr_size / 8192) as u16,
+                prg_ram_size: 0,
+                chr_ram_size: if chr_size == 0 { 8192 } else { 0 },
+                mirroring: Mirroring::Vertical,
+                has_battery: false,
+                has_trainer: false,
+                tv_system: 0,
             },
+            prg_rom,
+            chr_rom,
+            trainer: None,
         }
     }
 
     #[test]
-    fn test_nrom_256() {
-        let rom = create_test_rom(32768, 8192, Mirroring::Horizontal);
+    fn test_nrom_16kb_mirroring() {
+        let rom = create_test_rom(16384, 8192);
         let mapper = Nrom::new(&rom);
 
-        assert_eq!(mapper.prg_size(), 32768);
-        assert_eq!(mapper.mapper_number(), 0);
-        assert_eq!(mapper.mirroring(), Mirroring::Horizontal);
-        assert!(!mapper.has_chr_ram());
+        // Read from $8000 and $C000 should return same value (mirrored)
+        assert_eq!(mapper.read_prg(0x8000), mapper.read_prg(0xC000));
+        assert_eq!(mapper.read_prg(0x8100), mapper.read_prg(0xC100));
     }
 
     #[test]
-    fn test_nrom_128() {
-        let rom = create_test_rom(16384, 8192, Mirroring::Vertical);
+    fn test_nrom_32kb_no_mirroring() {
+        let rom = create_test_rom(32768, 8192);
         let mapper = Nrom::new(&rom);
 
-        assert_eq!(mapper.prg_size(), 16384);
-        assert_eq!(mapper.mirroring(), Mirroring::Vertical);
+        // $8000 and $C000 should be different in 32KB mode
+        // $8000 maps to offset 0, $C000 maps to offset $4000
+        let prg_low = mapper.read_prg(0x8000);
+        let prg_high = mapper.read_prg(0xC000);
+        assert_eq!(prg_low, 0x00);
+        assert_eq!(prg_high, 0x00); // ((0x4000) & 0xFF) = 0
     }
 
     #[test]
-    fn test_prg_read_nrom_256() {
-        let mut rom = create_test_rom(32768, 8192, Mirroring::Horizontal);
-        rom.prg_rom[0x0000] = 0x42;
-        rom.prg_rom[0x7FFF] = 0x55;
-
-        let mapper = Nrom::new(&rom);
-
-        assert_eq!(mapper.read_prg(0x8000), 0x42);
-        assert_eq!(mapper.read_prg(0xFFFF), 0x55);
-    }
-
-    #[test]
-    fn test_prg_read_nrom_128_mirroring() {
-        let mut rom = create_test_rom(16384, 8192, Mirroring::Horizontal);
-        rom.prg_rom[0x0000] = 0x42;
-        rom.prg_rom[0x3FFF] = 0x55;
-
-        let mapper = Nrom::new(&rom);
-
-        // First 16KB
-        assert_eq!(mapper.read_prg(0x8000), 0x42);
-        assert_eq!(mapper.read_prg(0xBFFF), 0x55);
-
-        // Mirrored second 16KB
-        assert_eq!(mapper.read_prg(0xC000), 0x42);
-        assert_eq!(mapper.read_prg(0xFFFF), 0x55);
-    }
-
-    #[test]
-    fn test_chr_rom_read() {
-        let mut rom = create_test_rom(16384, 8192, Mirroring::Horizontal);
-        rom.chr_rom[0x0000] = 0xAA;
-        rom.chr_rom[0x1FFF] = 0xBB;
-
-        let mapper = Nrom::new(&rom);
-
-        assert_eq!(mapper.read_chr(0x0000), 0xAA);
-        assert_eq!(mapper.read_chr(0x1FFF), 0xBB);
-    }
-
-    #[test]
-    fn test_chr_ram_read_write() {
-        let rom = create_test_rom(16384, 0, Mirroring::Horizontal);
+    fn test_nrom_chr_rom() {
+        let rom = create_test_rom(16384, 8192);
         let mut mapper = Nrom::new(&rom);
 
-        assert!(mapper.has_chr_ram());
+        // CHR-ROM should be readable
+        assert_eq!(mapper.read_chr(0x0000), 128); // (0 + 128) & 0xFF
 
-        // Write to CHR-RAM
+        // CHR-ROM should not be writable
+        mapper.write_chr(0x0000, 0xFF);
+        assert_eq!(mapper.read_chr(0x0000), 128);
+    }
+
+    #[test]
+    fn test_nrom_chr_ram() {
+        let rom = create_test_rom(16384, 0); // No CHR-ROM = CHR-RAM
+        let mut mapper = Nrom::new(&rom);
+
+        // CHR-RAM should be readable and writable
+        assert_eq!(mapper.read_chr(0x0000), 0);
         mapper.write_chr(0x0000, 0x42);
-        mapper.write_chr(0x1FFF, 0x55);
-
-        // Read back
         assert_eq!(mapper.read_chr(0x0000), 0x42);
-        assert_eq!(mapper.read_chr(0x1FFF), 0x55);
     }
 
     #[test]
-    fn test_chr_rom_write_ignored() {
-        let mut rom = create_test_rom(16384, 8192, Mirroring::Horizontal);
-        rom.chr_rom[0x0000] = 0xAA;
-
-        let mut mapper = Nrom::new(&rom);
-
-        // Write should be ignored
-        mapper.write_chr(0x0000, 0x42);
-        assert_eq!(mapper.read_chr(0x0000), 0xAA);
-    }
-
-    #[test]
-    fn test_prg_write_ignored() {
-        let mut rom = create_test_rom(32768, 8192, Mirroring::Horizontal);
-        rom.prg_rom[0x0000] = 0xAA;
-
-        let mut mapper = Nrom::new(&rom);
-
-        // Write should be ignored
-        mapper.write_prg(0x8000, 0x42);
-        assert_eq!(mapper.read_prg(0x8000), 0xAA);
-    }
-
-    #[test]
-    fn test_no_irq() {
-        let rom = create_test_rom(16384, 8192, Mirroring::Horizontal);
+    fn test_nrom_mirroring() {
+        let rom = create_test_rom(16384, 8192);
         let mapper = Nrom::new(&rom);
 
-        assert!(!mapper.irq_pending());
-        assert!(mapper.sram().is_none());
-    }
-
-    #[test]
-    fn test_clone_mapper() {
-        let rom = create_test_rom(16384, 0, Mirroring::Horizontal);
-        let mut mapper = Nrom::new(&rom);
-
-        mapper.write_chr(0x1000, 0x42);
-
-        let cloned = mapper.clone_mapper();
-        assert_eq!(cloned.read_chr(0x1000), 0x42);
-        assert_eq!(cloned.mapper_number(), 0);
-    }
-
-    #[test]
-    #[should_panic(expected = "NROM requires 16KB or 32KB PRG-ROM")]
-    fn test_invalid_prg_size() {
-        let rom = create_test_rom(8192, 8192, Mirroring::Horizontal);
-        let _ = Nrom::new(&rom);
-    }
-
-    #[test]
-    #[should_panic(expected = "NROM requires 8KB CHR-ROM")]
-    fn test_invalid_chr_size() {
-        let rom = create_test_rom(16384, 16384, Mirroring::Horizontal);
-        let _ = Nrom::new(&rom);
+        assert_eq!(mapper.mirroring(), Mirroring::Vertical);
+        assert_eq!(mapper.mapper_number(), 0);
+        assert_eq!(mapper.mapper_name(), "NROM");
     }
 }

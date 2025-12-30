@@ -1,26 +1,31 @@
 [package]
 name = "rustynes-apu"
-version = "0.8.6"
-edition = "2024"
-rust-version = "1.88"
-authors = ["RustyNES Contributors"]
-license = "MIT OR Apache-2.0"
-description = "2A03 APU (Audio Processing Unit) emulation for RustyNES"
-repository = "https://github.com/doublegate/RustyNES"
-keywords = ["nes", "emulator", "apu", "audio", "sound"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "NES 2A03 APU (Audio Processing Unit) emulation"
+keywords = ["nes", "apu", "2A03", "emulator", "audio"]
 categories = ["emulators", "multimedia::audio"]
 
 [dependencies]
-bitflags = "2.10"
-log = "0.4"
-rubato = "0.16"
+bitflags.workspace = true
+log.workspace = true
 
 [dev-dependencies]
-env_logger = "0.11"
+proptest.workspace = true
 
-[lints.rust]
-unsafe_code = "forbid"
-missing_docs = "warn"
+[features]
+default = ["std"]
+std = []
+serde = ["dep:serde"]
 
-[lints.clippy]
-pedantic = "warn"
+[dependencies.serde]
+version = "1.0"
+optional = true
+features = ["derive"]
+
+[lints]
+workspace = true

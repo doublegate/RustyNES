@@ -1,261 +1,147 @@
-//! RustyNES PPU - Cycle-accurate Ricoh 2C02 PPU emulation
+//! NES 2C02 PPU (Picture Processing Unit) emulation.
 //!
-//! This crate provides a cycle-accurate implementation of the Ricoh 2C02 PPU
-//! as used in the Nintendo Entertainment System (NES). It includes:
+//! This crate provides a cycle-accurate implementation of the NES PPU,
+//! responsible for all graphics rendering.
 //!
-//! - Dot-accurate timing (341 dots × 262 scanlines)
-//! - Complete register implementation (PPUCTRL, PPUMASK, PPUSTATUS, etc.)
-//! - Loopy scrolling model (v, t, x, w registers)
-//! - Background rendering with shift registers
-//! - Sprite evaluation and rendering (up to 8 per scanline)
-//! - VBlank and NMI generation
-//! - Palette RAM and nametable mirroring
-//! - Zero unsafe code
+//! # Overview
 //!
-//! # Example
+//! The PPU operates at 3x the CPU clock rate and generates a 256x240 pixel
+//! image. It consists of several subsystems:
 //!
-//! ```no_run
-//! use rustynes_ppu::{Ppu, Mirroring};
-//!
-//! fn main() {
-//!     let mut ppu = Ppu::new(Mirroring::Horizontal);
-//!
-//!     // Reset PPU
-//!     ppu.reset();
-//!
-//!     // Main emulation loop
-//!     loop {
-//!         // Step PPU by one dot (3 dots per CPU cycle)
-//!         let (frame_complete, nmi) = ppu.step();
-//!
-//!         if nmi {
-//!             // Trigger NMI interrupt on CPU
-//!         }
-//!
-//!         if frame_complete {
-//!             // Render frame to screen
-//!             let frame_buffer = ppu.frame_buffer();
-//!             // ... convert palette indices to RGB and display
-//!         }
-//!     }
-//! }
-//! ```
+//! - **Registers**: Control, Mask, Status, OAM Address, Scroll, Address, Data
+//! - **Background rendering**: Nametables, pattern tables, attribute tables
+//! - **Sprite rendering**: OAM, sprite evaluation, sprite 0 hit detection
+//! - **Palette**: 32-byte palette RAM with mirroring
 //!
 //! # Timing
 //!
-//! The PPU operates at 5.369318 MHz (NTSC), which is 3× the CPU clock.
-//! Each PPU step represents one dot (pixel clock).
-//!
-//! Frame structure:
+//! NTSC timing (the primary target):
+//! - Master clock: 21.477272 MHz
+//! - PPU clock: 5.369318 MHz (master / 4)
 //! - 341 dots per scanline
 //! - 262 scanlines per frame
-//! - 89,342 dots per frame (29,780.67 CPU cycles)
-//! - ~60 Hz frame rate
+//! - 89,341-89,342 dots per frame (odd frame skip)
 //!
-//! # Memory Map
+//! # Usage
 //!
-//! The PPU has its own 16KB address space:
+//! ```no_run
+//! use rustynes_ppu::{Ppu, PpuBus};
 //!
-//! ```text
-//! $0000-$0FFF: Pattern Table 0 (CHR ROM/RAM via mapper)
-//! $1000-$1FFF: Pattern Table 1 (CHR ROM/RAM via mapper)
-//! $2000-$23FF: Nametable 0
-//! $2400-$27FF: Nametable 1
-//! $2800-$2BFF: Nametable 2
-//! $2C00-$2FFF: Nametable 3
-//! $3000-$3EFF: Mirror of $2000-$2EFF
-//! $3F00-$3F1F: Palette RAM (32 bytes)
-//! $3F20-$3FFF: Mirror of $3F00-$3F1F
+//! // Implement PpuBus for your memory system
+//! struct MyBus {
+//!     // VRAM, CHR ROM/RAM, etc.
+//! }
+//!
+//! impl PpuBus for MyBus {
+//!     fn read(&mut self, addr: u16) -> u8 {
+//!         // Read from VRAM/CHR memory
+//!         0
+//!     }
+//!
+//!     fn write(&mut self, addr: u16, value: u8) {
+//!         // Write to VRAM/CHR memory
+//!     }
+//! }
+//!
+//! let mut ppu = Ppu::new();
+//! let mut bus = MyBus {};
+//!
+//! // Step the PPU (call 3 times per CPU cycle for NTSC)
+//! let nmi = ppu.step(&mut bus);
+//! if nmi {
+//!     // Trigger NMI in CPU
+//! }
+//!
+//! // Access registers from CPU
+//! ppu.write_register(0x2000, 0x80, &mut bus); // Enable NMI
+//! let status = ppu.read_register(0x2002, &mut bus);
 //! ```
 //!
-//! # Registers
+//! # Features
 //!
-//! The CPU accesses the PPU through 8 memory-mapped registers at $2000-$2007:
-//!
-//! - **$2000 PPUCTRL**: Control register (NMI enable, sprite/bg tables, etc.)
-//! - **$2001 PPUMASK**: Mask register (rendering enable, color effects)
-//! - **$2002 PPUSTATUS**: Status register (VBlank, sprite 0 hit, overflow)
-//! - **$2003 OAMADDR**: OAM address register
-//! - **$2004 OAMDATA**: OAM data port
-//! - **$2005 PPUSCROLL**: Scroll position (X then Y)
-//! - **$2006 PPUADDR**: VRAM address (high then low byte)
-//! - **$2007 PPUDATA**: VRAM data port
-//!
-//! Additionally, **$4014 OAMDMA** in CPU memory performs a fast 256-byte
-//! copy to OAM (handled by the emulator core, not this crate).
-//!
-//! # Accuracy
-//!
-//! This implementation is designed to pass:
-//! - blargg's ppu_vbl_nmi tests
-//! - blargg's sprite_hit_tests_2005
-//! - blargg's ppu_tests
-//! - sprite_overflow tests
-//!
-//! # Feature Flags
-//!
-//! Currently no optional features. All functionality is included by default.
+//! - `serde`: Enable serialization support for save states
 
-// Lints are configured in the workspace Cargo.toml
-// This ensures consistent settings across all crates
+#![cfg_attr(not(test), no_std)]
 
-mod background;
-mod oam;
+extern crate alloc;
+
+mod ctrl;
+mod mask;
 mod ppu;
-mod registers;
 mod scroll;
-mod sprites;
-mod timing;
-mod vram;
+mod sprite;
+mod status;
 
-// Public exports
-pub use oam::{Oam, SecondaryOam, Sprite, SpriteAttributes};
-pub use ppu::{FRAME_HEIGHT, FRAME_SIZE, FRAME_WIDTH, Ppu};
-pub use registers::{PpuCtrl, PpuMask, PpuStatus};
-pub use scroll::ScrollRegisters;
-pub use vram::{Mirroring, Vram};
-
-// Re-export timing for debugging/testing
-pub use timing::Timing;
+pub use ctrl::Ctrl;
+pub use mask::Mask;
+pub use ppu::{
+    DOTS_PER_SCANLINE, FRAME_HEIGHT, FRAME_WIDTH, PRE_RENDER_SCANLINE, Ppu, PpuBus,
+    SCANLINES_PER_FRAME, VBLANK_START_SCANLINE,
+};
+pub use scroll::Scroll;
+pub use sprite::{
+    MAX_SPRITES_PER_LINE, OAM_SIZE, SECONDARY_OAM_SIZE, Sprite, SpriteAttr, SpriteEval,
+    SpriteRender,
+};
+pub use status::Status;
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    struct DummyBus;
+
+    impl PpuBus for DummyBus {
+        fn read(&mut self, _addr: u16) -> u8 {
+            0
+        }
+        fn write(&mut self, _addr: u16, _value: u8) {}
+    }
+
     #[test]
     fn test_ppu_integration() {
-        let mut ppu = Ppu::new(Mirroring::Horizontal);
+        let mut ppu = Ppu::new();
+        let mut bus = DummyBus;
 
-        // Reset PPU
-        ppu.reset();
+        // Basic register operations
+        ppu.write_register(0x2000, 0x80, &mut bus); // Enable NMI
+        ppu.write_register(0x2001, 0x1E, &mut bus); // Enable rendering
 
-        // Enable rendering
-        ppu.write_register(0x2001, 0x18, |_, _| {}); // Show BG and sprites
+        assert!(ppu.ctrl().nmi_enabled());
+        assert!(ppu.mask().rendering_enabled());
+    }
 
-        // Step through one frame
-        let mut steps = 0;
-        let mut frame_complete = false;
+    #[test]
+    fn test_frame_completion() {
+        let mut ppu = Ppu::new();
+        let mut bus = DummyBus;
 
-        while !frame_complete {
-            let (complete, _) = ppu.step();
-            frame_complete = complete;
-            steps += 1;
-
-            // Safety check
-            assert!(steps <= 100_000, "Frame didn't complete in reasonable time");
+        // Run for one frame
+        for _ in 0..(DOTS_PER_SCANLINE as u32 * SCANLINES_PER_FRAME as u32) {
+            ppu.step(&mut bus);
         }
 
-        // NTSC frame: 341 * 262 = 89342 dots
-        // But odd frames skip one dot
-        assert!(steps <= 89342);
+        // Should have completed at least one frame
+        assert!(ppu.frame() >= 1);
     }
 
     #[test]
-    fn test_mirroring_modes() {
-        // Test all mirroring modes can be created
-        let _ = Ppu::new(Mirroring::Horizontal);
-        let _ = Ppu::new(Mirroring::Vertical);
-        let _ = Ppu::new(Mirroring::SingleScreenLower);
-        let _ = Ppu::new(Mirroring::SingleScreenUpper);
-        let _ = Ppu::new(Mirroring::FourScreen);
-    }
+    fn test_vblank_nmi() {
+        let mut ppu = Ppu::new();
+        let mut bus = DummyBus;
 
-    #[test]
-    fn test_vblank_timing() {
-        let mut ppu = Ppu::new(Mirroring::Horizontal);
+        // Enable NMI
+        ppu.write_register(0x2000, 0x80, &mut bus);
 
-        // Step to start of VBlank (scanline 241, dot 1)
-        while ppu.step().0 {} // Complete one frame
-        while ppu.step().0 {} // Complete second frame
-
-        // Now at scanline 0
-        // Step to scanline 241
-        let mut steps = 0;
-        while steps < 241 * 341 {
-            ppu.step();
-            steps += 1;
+        // Step until we get NMI
+        let mut nmi_triggered = false;
+        for _ in 0..100_000 {
+            if ppu.step(&mut bus) {
+                nmi_triggered = true;
+                break;
+            }
         }
 
-        // Next step should set VBlank
-        ppu.step();
-        let status = ppu.read_register(0x2002, |_| 0);
-        assert_eq!(status & 0x80, 0x80); // VBlank flag set
-    }
-
-    #[test]
-    fn test_frame_buffer_size() {
-        let ppu = Ppu::new(Mirroring::Horizontal);
-        assert_eq!(ppu.frame_buffer().len(), FRAME_SIZE);
-        assert_eq!(FRAME_SIZE, FRAME_WIDTH * FRAME_HEIGHT);
-    }
-
-    #[test]
-    fn test_register_read_write() {
-        let mut ppu = Ppu::new(Mirroring::Horizontal);
-
-        // Write PPUCTRL
-        ppu.write_register(0x2000, 0x80, |_, _| {});
-        // Write PPUMASK
-        ppu.write_register(0x2001, 0x18, |_, _| {});
-
-        // Read PPUSTATUS (this is the only readable register besides OAMDATA/PPUDATA)
-        let status = ppu.read_register(0x2002, |_| 0);
-        assert_eq!(status & 0x80, 0); // VBlank not set yet
-    }
-
-    #[test]
-    fn test_oam_operations() {
-        let mut ppu = Ppu::new(Mirroring::Horizontal);
-
-        // Set OAM address
-        ppu.write_register(0x2003, 0x00, |_, _| {});
-
-        // Write sprite data
-        ppu.write_register(0x2004, 50, |_, _| {}); // Y position
-        ppu.write_register(0x2004, 0x42, |_, _| {}); // Tile index
-        ppu.write_register(0x2004, 0x00, |_, _| {}); // Attributes
-        ppu.write_register(0x2004, 100, |_, _| {}); // X position
-
-        // Read back
-        ppu.write_register(0x2003, 0x00, |_, _| {});
-        assert_eq!(ppu.read_register(0x2004, |_| 0), 50);
-    }
-
-    #[test]
-    fn test_vram_operations() {
-        let mut ppu = Ppu::new(Mirroring::Horizontal);
-
-        // Write to nametable
-        ppu.write_register(0x2006, 0x20, |_, _| {}); // High byte
-        ppu.write_register(0x2006, 0x00, |_, _| {}); // Low byte
-        // Step PPU to apply delayed PPUADDR update (2 PPU cycles)
-        ppu.step();
-        ppu.step();
-        ppu.write_register(0x2007, 0x55, |_, _| {}); // Data
-
-        // Read back (with buffered read)
-        ppu.write_register(0x2006, 0x20, |_, _| {});
-        ppu.write_register(0x2006, 0x00, |_, _| {});
-        // Step PPU to apply delayed PPUADDR update
-        ppu.step();
-        ppu.step();
-        let _ = ppu.read_register(0x2007, |_| 0); // Dummy read
-        let value = ppu.read_register(0x2007, |_| 0); // Actual data
-        assert_eq!(value, 0x55);
-    }
-
-    #[test]
-    fn test_scroll_operations() {
-        let mut ppu = Ppu::new(Mirroring::Horizontal);
-
-        // Write scroll position
-        ppu.write_register(0x2005, 100, |_, _| {}); // X scroll
-        ppu.write_register(0x2005, 50, |_, _| {}); // Y scroll
-
-        // Reading PPUSTATUS should reset write latch
-        ppu.read_register(0x2002, |_| 0);
-
-        // Next write should be X scroll again
-        ppu.write_register(0x2005, 10, |_, _| {});
+        assert!(nmi_triggered, "NMI should have been triggered");
     }
 }

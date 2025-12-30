@@ -1,1070 +1,783 @@
-//! 6502 instruction implementations.
+//! 6502 Instruction implementations.
 //!
-//! This module contains the actual execution logic for all 256 opcodes,
-//! including both official (151) and unofficial (105) instructions.
-
-use crate::addressing::AddressingMode;
-use crate::bus::Bus;
-use crate::cpu::Cpu;
-use crate::status::StatusFlags;
-
-impl Cpu {
-    //
-    // ========== LOAD/STORE INSTRUCTIONS ==========
-    //
-
-    /// LDA - Load Accumulator
-    #[inline]
-    pub(crate) fn lda(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
-        let (value, page_crossed) = self.read_operand(bus, mode);
-        self.a = value;
-        self.set_zn(value);
-        u8::from(page_crossed)
-    }
-
-    /// LDX - Load X Register
-    #[inline]
-    pub(crate) fn ldx(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
-        let (value, page_crossed) = self.read_operand(bus, mode);
-        self.x = value;
-        self.set_zn(value);
-        u8::from(page_crossed)
-    }
-
-    /// LDY - Load Y Register
-    #[inline]
-    pub(crate) fn ldy(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
-        let (value, page_crossed) = self.read_operand(bus, mode);
-        self.y = value;
-        self.set_zn(value);
-        u8::from(page_crossed)
-    }
-
-    /// STA - Store Accumulator
-    #[inline]
-    pub(crate) fn sta(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
-        self.write_operand(bus, mode, self.a);
-        0
-    }
-
-    /// STX - Store X Register
-    #[inline]
-    pub(crate) fn stx(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
-        self.write_operand(bus, mode, self.x);
-        0
-    }
-
-    /// STY - Store Y Register
-    #[inline]
-    pub(crate) fn sty(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
-        self.write_operand(bus, mode, self.y);
-        0
-    }
-
-    //
-    // ========== TRANSFER INSTRUCTIONS ==========
-    //
-
-    /// TAX - Transfer A to X
-    #[inline]
-    pub(crate) fn tax(&mut self, bus: &mut impl Bus) -> u8 {
-        let _ = bus.read(self.pc); // Dummy read
-        self.x = self.a;
-        self.set_zn(self.x);
-        0
-    }
-
-    /// TAY - Transfer A to Y
-    #[inline]
-    pub(crate) fn tay(&mut self, bus: &mut impl Bus) -> u8 {
-        let _ = bus.read(self.pc); // Dummy read
-        self.y = self.a;
-        self.set_zn(self.y);
-        0
-    }
-
-    /// TXA - Transfer X to A
-    #[inline]
-    pub(crate) fn txa(&mut self, bus: &mut impl Bus) -> u8 {
-        let _ = bus.read(self.pc); // Dummy read
-        self.a = self.x;
-        self.set_zn(self.a);
-        0
-    }
-
-    /// TYA - Transfer Y to A
-    #[inline]
-    pub(crate) fn tya(&mut self, bus: &mut impl Bus) -> u8 {
-        let _ = bus.read(self.pc); // Dummy read
-        self.a = self.y;
-        self.set_zn(self.a);
-        0
-    }
-
-    /// TSX - Transfer SP to X
-    #[inline]
-    pub(crate) fn tsx(&mut self, bus: &mut impl Bus) -> u8 {
-        let _ = bus.read(self.pc); // Dummy read
-        self.x = self.sp;
-        self.set_zn(self.x);
-        0
-    }
-
-    /// TXS - Transfer X to SP
-    #[inline]
-    pub(crate) fn txs(&mut self, bus: &mut impl Bus) -> u8 {
-        let _ = bus.read(self.pc); // Dummy read
-        self.sp = self.x;
-        0
-    }
-
-    //
-    // ========== STACK INSTRUCTIONS ==========
-    //
-
-    /// PHA - Push Accumulator
-    #[inline]
-    pub(crate) fn pha(&mut self, bus: &mut impl Bus) -> u8 {
-        self.push(bus, self.a);
-        0
-    }
-
-    /// PHP - Push Processor Status
-    #[inline]
-    pub(crate) fn php(&mut self, bus: &mut impl Bus) -> u8 {
-        self.push(bus, self.status.to_stack_byte(true)); // B=1, U=1
-        0
-    }
-
-    /// PLA - Pull Accumulator
-    #[inline]
-    pub(crate) fn pla(&mut self, bus: &mut impl Bus) -> u8 {
-        self.a = self.pop(bus);
-        self.set_zn(self.a);
-        0
-    }
-
-    /// PLP - Pull Processor Status
-    #[inline]
-    pub(crate) fn plp(&mut self, bus: &mut impl Bus) -> u8 {
-        let value = self.pop(bus);
-        self.status = StatusFlags::from_stack_byte(value);
-
-        // PLP restores the I flag from the stack but does NOT update prev_irq_inhibit.
-        // The step() function handles the delay mechanism via sampling, which works
-        // correctly for PLP. Only RTI needs special handling because it's always
-        // executed from within an ISR where timing is different.
-
-        0
-    }
-
-    //
-    // ========== ARITHMETIC INSTRUCTIONS ==========
-    //
-
-    /// ADC - Add with Carry
-    #[inline]
-    pub(crate) fn adc(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
-        let (value, page_crossed) = self.read_operand(bus, mode);
-        self.adc_impl(value);
-        u8::from(page_crossed)
-    }
-
-    /// SBC - Subtract with Carry
-    #[inline]
-    pub(crate) fn sbc(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
-        let (value, page_crossed) = self.read_operand(bus, mode);
-        self.sbc_impl(value);
-        u8::from(page_crossed)
-    }
-
-    /// ADC implementation (shared with unofficial opcodes)
-    #[inline]
-    pub(crate) fn adc_impl(&mut self, value: u8) {
-        let carry = u16::from(self.status.contains(StatusFlags::CARRY));
-        let a = u16::from(self.a);
-        let m = u16::from(value);
-        let sum = a + m + carry;
-
-        let result = (sum & 0xFF) as u8;
-
-        // Set flags
-        self.status.set(StatusFlags::CARRY, sum > 0xFF);
-        self.status
-            .set(StatusFlags::OVERFLOW, (a ^ sum) & (m ^ sum) & 0x80 != 0);
-        self.set_zn(result);
-
-        self.a = result;
-    }
-
-    /// SBC implementation (shared with unofficial opcodes)
-    #[inline]
-    pub(crate) fn sbc_impl(&mut self, value: u8) {
-        // SBC is equivalent to ADC with inverted value
-        self.adc_impl(!value);
-    }
-
-    /// Helper for RMW instructions: perform dummy read for indexed modes
-    fn handle_rmw_dummy_cycle(
-        &mut self,
-        bus: &mut impl Bus,
-        mode: AddressingMode,
-        result: crate::addressing::AddressResult,
-    ) {
-        match mode {
-            AddressingMode::AbsoluteX
-            | AddressingMode::AbsoluteY
-            | AddressingMode::IndirectIndexedY => {
-                let incorrect_addr = (result.base_addr & 0xFF00) | (result.addr & 0x00FF);
-                let _ = bus.read(incorrect_addr);
-            }
-            _ => {}
-        }
-    }
-
-    //
-    // ========== INCREMENT/DECREMENT INSTRUCTIONS ==========
-    //
-
-    /// INC - Increment Memory
-    pub(crate) fn inc(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
-        let result = mode.resolve(self.pc, self.x, self.y, bus);
-        self.pc = self.pc.wrapping_add(u16::from(mode.operand_bytes()));
-        self.handle_rmw_dummy_cycle(bus, mode, result);
-
-        let addr = result.addr;
-        let value = bus.read(addr);
-        bus.write(addr, value); // Dummy write
-        let new_value = value.wrapping_add(1);
-        bus.write(addr, new_value);
-        self.set_zn(new_value);
-        0
-    }
-
-    /// DEC - Decrement Memory
-    pub(crate) fn dec(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
-        let result = mode.resolve(self.pc, self.x, self.y, bus);
-        self.pc = self.pc.wrapping_add(u16::from(mode.operand_bytes()));
-        self.handle_rmw_dummy_cycle(bus, mode, result);
-
-        let addr = result.addr;
-        let value = bus.read(addr);
-        bus.write(addr, value); // Dummy write
-        let new_value = value.wrapping_sub(1);
-        bus.write(addr, new_value);
-        self.set_zn(new_value);
-        0
-    }
-
-    /// INX - Increment X
-    #[inline]
-    pub(crate) fn inx(&mut self, bus: &mut impl Bus) -> u8 {
-        let _ = bus.read(self.pc);
-        self.x = self.x.wrapping_add(1);
-        self.set_zn(self.x);
-        0
-    }
-
-    /// INY - Increment Y
-    #[inline]
-    pub(crate) fn iny(&mut self, bus: &mut impl Bus) -> u8 {
-        let _ = bus.read(self.pc);
-        self.y = self.y.wrapping_add(1);
-        self.set_zn(self.y);
-        0
-    }
-
-    /// DEX - Decrement X
-    #[inline]
-    pub(crate) fn dex(&mut self, bus: &mut impl Bus) -> u8 {
-        let _ = bus.read(self.pc);
-        self.x = self.x.wrapping_sub(1);
-        self.set_zn(self.x);
-        0
-    }
-
-    /// DEY - Decrement Y
-    #[inline]
-    pub(crate) fn dey(&mut self, bus: &mut impl Bus) -> u8 {
-        let _ = bus.read(self.pc);
-        self.y = self.y.wrapping_sub(1);
-        self.set_zn(self.y);
-        0
-    }
-
-    //
-    // ========== LOGICAL INSTRUCTIONS ==========
-    //
-
-    /// AND - Logical AND
-    #[inline]
-    pub(crate) fn and(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
-        let (value, page_crossed) = self.read_operand(bus, mode);
-        self.a &= value;
-        self.set_zn(self.a);
-        u8::from(page_crossed)
-    }
-
-    /// ORA - Logical OR
-    #[inline]
-    pub(crate) fn ora(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
-        let (value, page_crossed) = self.read_operand(bus, mode);
-        self.a |= value;
-        self.set_zn(self.a);
-        u8::from(page_crossed)
-    }
-
-    /// EOR - Exclusive OR
-    #[inline]
-    pub(crate) fn eor(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
-        let (value, page_crossed) = self.read_operand(bus, mode);
-        self.a ^= value;
-        self.set_zn(self.a);
-        u8::from(page_crossed)
-    }
-
-    /// BIT - Bit Test
-    pub(crate) fn bit(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
-        let (value, _) = self.read_operand(bus, mode);
-        let result = self.a & value;
-
-        self.status.set(StatusFlags::ZERO, result == 0);
-        self.status.set(StatusFlags::NEGATIVE, value & 0x80 != 0);
-        self.status.set(StatusFlags::OVERFLOW, value & 0x40 != 0);
-        0
-    }
-
-    //
-    // ========== SHIFT/ROTATE INSTRUCTIONS ==========
-    //
-
-    /// ASL - Arithmetic Shift Left (Accumulator)
-    pub(crate) fn asl_acc(&mut self, bus: &mut impl Bus) -> u8 {
-        let _ = bus.read(self.pc);
-        self.status.set(StatusFlags::CARRY, self.a & 0x80 != 0);
-        self.a <<= 1;
-        self.set_zn(self.a);
-        0
-    }
-
-    /// ASL - Arithmetic Shift Left (Memory)
-    pub(crate) fn asl(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
-        let result = mode.resolve(self.pc, self.x, self.y, bus);
-        self.pc = self.pc.wrapping_add(u16::from(mode.operand_bytes()));
-        self.handle_rmw_dummy_cycle(bus, mode, result);
-
-        let addr = result.addr;
-        let value = bus.read(addr);
-        bus.write(addr, value); // Dummy write
-        self.status.set(StatusFlags::CARRY, value & 0x80 != 0);
-        let new_value = value << 1;
-        bus.write(addr, new_value);
-        self.set_zn(new_value);
-        0
-    }
-
-    /// LSR - Logical Shift Right (Accumulator)
-    pub(crate) fn lsr_acc(&mut self, bus: &mut impl Bus) -> u8 {
-        let _ = bus.read(self.pc);
-        self.status.set(StatusFlags::CARRY, self.a & 0x01 != 0);
-        self.a >>= 1;
-        self.set_zn(self.a);
-        0
-    }
-
-    /// LSR - Logical Shift Right (Memory)
-    pub(crate) fn lsr(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
-        let result = mode.resolve(self.pc, self.x, self.y, bus);
-        self.pc = self.pc.wrapping_add(u16::from(mode.operand_bytes()));
-        self.handle_rmw_dummy_cycle(bus, mode, result);
-
-        let addr = result.addr;
-        let value = bus.read(addr);
-        bus.write(addr, value); // Dummy write
-        self.status.set(StatusFlags::CARRY, value & 0x01 != 0);
-        let new_value = value >> 1;
-        bus.write(addr, new_value);
-        self.set_zn(new_value);
-        0
-    }
-
-    /// ROL - Rotate Left (Accumulator)
-    pub(crate) fn rol_acc(&mut self, bus: &mut impl Bus) -> u8 {
-        let _ = bus.read(self.pc);
-        let carry_in = u8::from(self.status.contains(StatusFlags::CARRY));
-        self.status.set(StatusFlags::CARRY, self.a & 0x80 != 0);
-        self.a = (self.a << 1) | carry_in;
-        self.set_zn(self.a);
-        0
-    }
-
-    /// ROL - Rotate Left (Memory)
-    pub(crate) fn rol(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
-        let result = mode.resolve(self.pc, self.x, self.y, bus);
-        self.pc = self.pc.wrapping_add(u16::from(mode.operand_bytes()));
-        self.handle_rmw_dummy_cycle(bus, mode, result);
-
-        let addr = result.addr;
-        let value = bus.read(addr);
-        bus.write(addr, value); // Dummy write
-        let carry_in = u8::from(self.status.contains(StatusFlags::CARRY));
-        self.status.set(StatusFlags::CARRY, value & 0x80 != 0);
-        let new_value = (value << 1) | carry_in;
-        bus.write(addr, new_value);
-        self.set_zn(new_value);
-        0
-    }
-
-    /// ROR - Rotate Right (Accumulator)
-    pub(crate) fn ror_acc(&mut self, bus: &mut impl Bus) -> u8 {
-        let _ = bus.read(self.pc);
-        let carry_in = if self.status.contains(StatusFlags::CARRY) {
-            0x80
-        } else {
-            0x00
-        };
-        self.status.set(StatusFlags::CARRY, self.a & 0x01 != 0);
-        self.a = (self.a >> 1) | carry_in;
-        self.set_zn(self.a);
-        0
-    }
-
-    /// ROR - Rotate Right (Memory)
-    pub(crate) fn ror(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
-        let result = mode.resolve(self.pc, self.x, self.y, bus);
-        self.pc = self.pc.wrapping_add(u16::from(mode.operand_bytes()));
-        self.handle_rmw_dummy_cycle(bus, mode, result);
-
-        let addr = result.addr;
-        let value = bus.read(addr);
-        bus.write(addr, value); // Dummy write
-        let carry_in = if self.status.contains(StatusFlags::CARRY) {
-            0x80
-        } else {
-            0x00
-        };
-        self.status.set(StatusFlags::CARRY, value & 0x01 != 0);
-        let new_value = (value >> 1) | carry_in;
-        bus.write(addr, new_value);
-        self.set_zn(new_value);
-        0
-    }
-
-    //
-    // ========== COMPARE INSTRUCTIONS ==========
-    //
-
-    /// CMP - Compare Accumulator
-    #[inline]
-    pub(crate) fn cmp(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
-        let (value, page_crossed) = self.read_operand(bus, mode);
-        self.compare(self.a, value);
-        u8::from(page_crossed)
-    }
-
-    /// CPX - Compare X Register
-    #[inline]
-    pub(crate) fn cpx(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
-        let (value, _) = self.read_operand(bus, mode);
-        self.compare(self.x, value);
-        0
-    }
-
-    /// CPY - Compare Y Register
-    #[inline]
-    pub(crate) fn cpy(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
-        let (value, _) = self.read_operand(bus, mode);
-        self.compare(self.y, value);
-        0
-    }
-
-    /// Compare helper function
-    #[inline]
-    fn compare(&mut self, register: u8, value: u8) {
-        let result = register.wrapping_sub(value);
-        self.status.set(StatusFlags::CARRY, register >= value);
-        self.set_zn(result);
-    }
-
-    //
-    // ========== BRANCH INSTRUCTIONS ==========
-    //
-
-    /// BPL - Branch if Positive
-    #[inline]
-    pub(crate) fn bpl(&mut self, bus: &mut impl Bus) -> u8 {
-        self.branch(bus, !self.status.contains(StatusFlags::NEGATIVE))
-    }
-
-    /// BMI - Branch if Minus
-    #[inline]
-    pub(crate) fn bmi(&mut self, bus: &mut impl Bus) -> u8 {
-        self.branch(bus, self.status.contains(StatusFlags::NEGATIVE))
-    }
-
-    /// BVC - Branch if Overflow Clear
-    #[inline]
-    pub(crate) fn bvc(&mut self, bus: &mut impl Bus) -> u8 {
-        self.branch(bus, !self.status.contains(StatusFlags::OVERFLOW))
-    }
-
-    /// BVS - Branch if Overflow Set
-    #[inline]
-    pub(crate) fn bvs(&mut self, bus: &mut impl Bus) -> u8 {
-        self.branch(bus, self.status.contains(StatusFlags::OVERFLOW))
-    }
-
-    /// BCC - Branch if Carry Clear
-    #[inline]
-    pub(crate) fn bcc(&mut self, bus: &mut impl Bus) -> u8 {
-        self.branch(bus, !self.status.contains(StatusFlags::CARRY))
-    }
-
-    /// BCS - Branch if Carry Set
-    #[inline]
-    pub(crate) fn bcs(&mut self, bus: &mut impl Bus) -> u8 {
-        self.branch(bus, self.status.contains(StatusFlags::CARRY))
-    }
-
-    /// BNE - Branch if Not Equal
-    #[inline]
-    pub(crate) fn bne(&mut self, bus: &mut impl Bus) -> u8 {
-        self.branch(bus, !self.status.contains(StatusFlags::ZERO))
-    }
-
-    /// BEQ - Branch if Equal
-    #[inline]
-    pub(crate) fn beq(&mut self, bus: &mut impl Bus) -> u8 {
-        self.branch(bus, self.status.contains(StatusFlags::ZERO))
-    }
-
-    /// Branch helper function
-    #[inline]
-    fn branch(&mut self, bus: &mut impl Bus, condition: bool) -> u8 {
-        let offset = bus.read(self.pc) as i8;
-        self.pc = self.pc.wrapping_add(1);
-
-        if !condition {
-            return 0; // Not taken: 0 extra cycles
+//! This module contains the implementations of all 256 opcodes,
+//! including official and unofficial (undocumented) instructions.
+
+use crate::cpu::{Bus, Cpu};
+use crate::status::Status;
+use crate::vectors;
+
+/// Instruction function type.
+pub type InstrFn = fn(&mut Cpu, &mut dyn Bus);
+
+// ============================================================================
+// Official Instructions
+// ============================================================================
+
+/// ADC - Add with Carry
+fn adc(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    let value = cpu.read_byte(bus, cpu.operand_addr());
+    add(cpu, value);
+}
+
+/// Common add operation used by ADC and SBC
+fn add(cpu: &mut Cpu, value: u8) {
+    let a = u16::from(cpu.a());
+    let v = u16::from(value);
+    let c = u16::from(cpu.status().contains(Status::C) as u8);
+
+    let result = a.wrapping_add(v).wrapping_add(c);
+    let result8 = result as u8;
+
+    // Set carry if overflow occurred
+    cpu.status.set_flag(Status::C, result > 0xFF);
+
+    // Set overflow if sign bit is incorrect
+    // Overflow occurs when both inputs have the same sign but the result has a different sign
+    cpu.status
+        .set_flag(Status::V, (!(a ^ v) & (a ^ result)) & 0x80 != 0);
+
+    cpu.a = result8;
+    cpu.set_zn(result8);
+}
+
+/// AND - Logical AND
+fn and(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    let value = cpu.read_byte(bus, cpu.operand_addr());
+    cpu.a &= value;
+    cpu.set_zn(cpu.a);
+}
+
+/// ASL - Arithmetic Shift Left (Accumulator)
+fn asl_acc(cpu: &mut Cpu, _bus: &mut dyn Bus) {
+    let value = cpu.a;
+    cpu.status.set_flag(Status::C, value & 0x80 != 0);
+    cpu.a = value << 1;
+    cpu.set_zn(cpu.a);
+}
+
+/// ASL - Arithmetic Shift Left (Memory)
+fn asl_mem(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    let addr = cpu.operand_addr();
+    let value = cpu.read_byte(bus, addr);
+    // Dummy write (RMW instruction)
+    cpu.write_byte(bus, addr, value);
+
+    cpu.status.set_flag(Status::C, value & 0x80 != 0);
+    let result = value << 1;
+    cpu.write_byte(bus, addr, result);
+    cpu.set_zn(result);
+}
+
+/// BCC - Branch if Carry Clear
+fn bcc(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    branch(cpu, bus, !cpu.status().contains(Status::C));
+}
+
+/// BCS - Branch if Carry Set
+fn bcs(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    branch(cpu, bus, cpu.status().contains(Status::C));
+}
+
+/// BEQ - Branch if Equal (Zero flag set)
+fn beq(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    branch(cpu, bus, cpu.status().contains(Status::Z));
+}
+
+/// BIT - Bit Test
+fn bit(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    let value = cpu.read_byte(bus, cpu.operand_addr());
+    cpu.status.set_flag(Status::Z, cpu.a & value == 0);
+    cpu.status.set_flag(Status::V, value & 0x40 != 0);
+    cpu.status.set_flag(Status::N, value & 0x80 != 0);
+}
+
+/// BMI - Branch if Minus (Negative flag set)
+fn bmi(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    branch(cpu, bus, cpu.status().contains(Status::N));
+}
+
+/// BNE - Branch if Not Equal (Zero flag clear)
+fn bne(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    branch(cpu, bus, !cpu.status().contains(Status::Z));
+}
+
+/// BPL - Branch if Plus (Negative flag clear)
+fn bpl(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    branch(cpu, bus, !cpu.status().contains(Status::N));
+}
+
+/// BRK - Force Interrupt
+fn brk(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    // PC has already been incremented past opcode
+    cpu.pc = cpu.pc.wrapping_add(1); // Skip padding byte
+
+    // Push PC and status
+    cpu.push_word(bus, cpu.pc);
+
+    // Check for NMI hijacking (if NMI occurs between cycles 4-5)
+    let vector = if cpu.nmi_pending {
+        cpu.nmi_pending = false;
+        cpu.nmi_triggered = false;
+        vectors::NMI
+    } else {
+        vectors::IRQ
+    };
+
+    // Push status with B flag set
+    let status_byte = cpu.status.to_stack_byte(true);
+    cpu.push_byte(bus, status_byte);
+
+    // Set I flag
+    cpu.status.set_flag(Status::I, true);
+
+    // Load vector
+    let lo = cpu.read_byte(bus, vector);
+    let hi = cpu.read_byte(bus, vector + 1);
+    cpu.pc = u16::from_le_bytes([lo, hi]);
+}
+
+/// BVC - Branch if Overflow Clear
+fn bvc(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    branch(cpu, bus, !cpu.status().contains(Status::V));
+}
+
+/// BVS - Branch if Overflow Set
+fn bvs(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    branch(cpu, bus, cpu.status().contains(Status::V));
+}
+
+/// CLC - Clear Carry Flag
+fn clc(cpu: &mut Cpu, _bus: &mut dyn Bus) {
+    cpu.status.set_flag(Status::C, false);
+}
+
+/// CLD - Clear Decimal Mode
+fn cld(cpu: &mut Cpu, _bus: &mut dyn Bus) {
+    cpu.status.set_flag(Status::D, false);
+}
+
+/// CLI - Clear Interrupt Disable
+fn cli(cpu: &mut Cpu, _bus: &mut dyn Bus) {
+    cpu.status.set_flag(Status::I, false);
+}
+
+/// CLV - Clear Overflow Flag
+fn clv(cpu: &mut Cpu, _bus: &mut dyn Bus) {
+    cpu.status.set_flag(Status::V, false);
+}
+
+/// CMP - Compare Accumulator
+fn cmp(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    let value = cpu.read_byte(bus, cpu.operand_addr());
+    compare(cpu, cpu.a, value);
+}
+
+/// CPX - Compare X Register
+fn cpx(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    let value = cpu.read_byte(bus, cpu.operand_addr());
+    compare(cpu, cpu.x, value);
+}
+
+/// CPY - Compare Y Register
+fn cpy(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    let value = cpu.read_byte(bus, cpu.operand_addr());
+    compare(cpu, cpu.y, value);
+}
+
+/// Common compare operation
+fn compare(cpu: &mut Cpu, reg: u8, value: u8) {
+    cpu.status.set_flag(Status::C, reg >= value);
+    cpu.status.set_flag(Status::Z, reg == value);
+    cpu.status
+        .set_flag(Status::N, reg.wrapping_sub(value) & 0x80 != 0);
+}
+
+/// DEC - Decrement Memory
+fn dec(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    let addr = cpu.operand_addr();
+    let value = cpu.read_byte(bus, addr);
+    // Dummy write (RMW instruction)
+    cpu.write_byte(bus, addr, value);
+
+    let result = value.wrapping_sub(1);
+    cpu.write_byte(bus, addr, result);
+    cpu.set_zn(result);
+}
+
+/// DEX - Decrement X Register
+fn dex(cpu: &mut Cpu, _bus: &mut dyn Bus) {
+    cpu.x = cpu.x.wrapping_sub(1);
+    cpu.set_zn(cpu.x);
+}
+
+/// DEY - Decrement Y Register
+fn dey(cpu: &mut Cpu, _bus: &mut dyn Bus) {
+    cpu.y = cpu.y.wrapping_sub(1);
+    cpu.set_zn(cpu.y);
+}
+
+/// EOR - Exclusive OR
+fn eor(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    let value = cpu.read_byte(bus, cpu.operand_addr());
+    cpu.a ^= value;
+    cpu.set_zn(cpu.a);
+}
+
+/// INC - Increment Memory
+fn inc(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    let addr = cpu.operand_addr();
+    let value = cpu.read_byte(bus, addr);
+    // Dummy write (RMW instruction)
+    cpu.write_byte(bus, addr, value);
+
+    let result = value.wrapping_add(1);
+    cpu.write_byte(bus, addr, result);
+    cpu.set_zn(result);
+}
+
+/// INX - Increment X Register
+fn inx(cpu: &mut Cpu, _bus: &mut dyn Bus) {
+    cpu.x = cpu.x.wrapping_add(1);
+    cpu.set_zn(cpu.x);
+}
+
+/// INY - Increment Y Register
+fn iny(cpu: &mut Cpu, _bus: &mut dyn Bus) {
+    cpu.y = cpu.y.wrapping_add(1);
+    cpu.set_zn(cpu.y);
+}
+
+/// JMP - Jump (Absolute)
+fn jmp_abs(cpu: &mut Cpu, _bus: &mut dyn Bus) {
+    cpu.pc = cpu.operand_addr();
+}
+
+/// JMP - Jump (Indirect)
+fn jmp_ind(cpu: &mut Cpu, _bus: &mut dyn Bus) {
+    cpu.pc = cpu.operand_addr();
+}
+
+/// JSR - Jump to Subroutine
+fn jsr(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    // Note: fetch_operand for Abs mode already read the target address
+    // and advanced PC past the operand bytes
+
+    // Internal operation (dummy cycle)
+    cpu.tick(bus);
+
+    // Push return address (PC - 1, pointing to last byte of JSR instruction)
+    // PC is now past the operand, so PC - 1 points to the high byte of target address
+    cpu.push_word(bus, cpu.pc.wrapping_sub(1));
+
+    // Jump to target address (already fetched into operand_addr)
+    cpu.pc = cpu.operand_addr;
+}
+
+/// LDA - Load Accumulator
+fn lda(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    cpu.a = cpu.read_byte(bus, cpu.operand_addr());
+    cpu.set_zn(cpu.a);
+}
+
+/// LDX - Load X Register
+fn ldx(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    cpu.x = cpu.read_byte(bus, cpu.operand_addr());
+    cpu.set_zn(cpu.x);
+}
+
+/// LDY - Load Y Register
+fn ldy(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    cpu.y = cpu.read_byte(bus, cpu.operand_addr());
+    cpu.set_zn(cpu.y);
+}
+
+/// LSR - Logical Shift Right (Accumulator)
+fn lsr_acc(cpu: &mut Cpu, _bus: &mut dyn Bus) {
+    let value = cpu.a;
+    cpu.status.set_flag(Status::C, value & 0x01 != 0);
+    cpu.a = value >> 1;
+    cpu.set_zn(cpu.a);
+}
+
+/// LSR - Logical Shift Right (Memory)
+fn lsr_mem(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    let addr = cpu.operand_addr();
+    let value = cpu.read_byte(bus, addr);
+    // Dummy write (RMW instruction)
+    cpu.write_byte(bus, addr, value);
+
+    cpu.status.set_flag(Status::C, value & 0x01 != 0);
+    let result = value >> 1;
+    cpu.write_byte(bus, addr, result);
+    cpu.set_zn(result);
+}
+
+/// NOP - No Operation
+fn nop(cpu: &mut Cpu, _bus: &mut dyn Bus) {
+    // Do nothing
+    let _ = cpu;
+}
+
+/// NOP with read (unofficial NOPs that read memory)
+fn nop_read(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    // Read and discard
+    let _ = cpu.read_byte(bus, cpu.operand_addr());
+}
+
+/// ORA - Logical Inclusive OR
+fn ora(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    let value = cpu.read_byte(bus, cpu.operand_addr());
+    cpu.a |= value;
+    cpu.set_zn(cpu.a);
+}
+
+/// PHA - Push Accumulator
+fn pha(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    cpu.push_byte(bus, cpu.a);
+}
+
+/// PHP - Push Processor Status
+fn php(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    // B and U flags are set when pushing
+    let status_byte = cpu.status.to_stack_byte(true);
+    cpu.push_byte(bus, status_byte);
+}
+
+/// PLA - Pull Accumulator
+fn pla(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    // Dummy read
+    cpu.tick(bus);
+    cpu.a = cpu.pop_byte(bus);
+    cpu.set_zn(cpu.a);
+}
+
+/// PLP - Pull Processor Status
+fn plp(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    // Dummy read
+    cpu.tick(bus);
+    let value = cpu.pop_byte(bus);
+    cpu.status = Status::from_stack_byte(value);
+}
+
+/// ROL - Rotate Left (Accumulator)
+fn rol_acc(cpu: &mut Cpu, _bus: &mut dyn Bus) {
+    let value = cpu.a;
+    let carry = cpu.status.contains(Status::C) as u8;
+    cpu.status.set_flag(Status::C, value & 0x80 != 0);
+    cpu.a = (value << 1) | carry;
+    cpu.set_zn(cpu.a);
+}
+
+/// ROL - Rotate Left (Memory)
+fn rol_mem(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    let addr = cpu.operand_addr();
+    let value = cpu.read_byte(bus, addr);
+    // Dummy write (RMW instruction)
+    cpu.write_byte(bus, addr, value);
+
+    let carry = cpu.status.contains(Status::C) as u8;
+    cpu.status.set_flag(Status::C, value & 0x80 != 0);
+    let result = (value << 1) | carry;
+    cpu.write_byte(bus, addr, result);
+    cpu.set_zn(result);
+}
+
+/// ROR - Rotate Right (Accumulator)
+fn ror_acc(cpu: &mut Cpu, _bus: &mut dyn Bus) {
+    let value = cpu.a;
+    let carry = (cpu.status.contains(Status::C) as u8) << 7;
+    cpu.status.set_flag(Status::C, value & 0x01 != 0);
+    cpu.a = (value >> 1) | carry;
+    cpu.set_zn(cpu.a);
+}
+
+/// ROR - Rotate Right (Memory)
+fn ror_mem(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    let addr = cpu.operand_addr();
+    let value = cpu.read_byte(bus, addr);
+    // Dummy write (RMW instruction)
+    cpu.write_byte(bus, addr, value);
+
+    let carry = (cpu.status.contains(Status::C) as u8) << 7;
+    cpu.status.set_flag(Status::C, value & 0x01 != 0);
+    let result = (value >> 1) | carry;
+    cpu.write_byte(bus, addr, result);
+    cpu.set_zn(result);
+}
+
+/// RTI - Return from Interrupt
+fn rti(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    // Dummy read
+    cpu.tick(bus);
+
+    // Pull status
+    let status = cpu.pop_byte(bus);
+    cpu.status = Status::from_stack_byte(status);
+
+    // Pull PC
+    cpu.pc = cpu.pop_word(bus);
+}
+
+/// RTS - Return from Subroutine
+fn rts(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    // Dummy read
+    cpu.tick(bus);
+
+    // Pull PC
+    cpu.pc = cpu.pop_word(bus);
+
+    // Increment PC
+    cpu.tick(bus);
+    cpu.pc = cpu.pc.wrapping_add(1);
+}
+
+/// SBC - Subtract with Carry
+fn sbc(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    let value = cpu.read_byte(bus, cpu.operand_addr());
+    // SBC is ADC with inverted operand
+    add(cpu, !value);
+}
+
+/// SEC - Set Carry Flag
+fn sec(cpu: &mut Cpu, _bus: &mut dyn Bus) {
+    cpu.status.set_flag(Status::C, true);
+}
+
+/// SED - Set Decimal Flag
+fn sed(cpu: &mut Cpu, _bus: &mut dyn Bus) {
+    cpu.status.set_flag(Status::D, true);
+}
+
+/// SEI - Set Interrupt Disable
+fn sei(cpu: &mut Cpu, _bus: &mut dyn Bus) {
+    cpu.status.set_flag(Status::I, true);
+}
+
+/// STA - Store Accumulator
+fn sta(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    cpu.write_byte(bus, cpu.operand_addr(), cpu.a);
+}
+
+/// STX - Store X Register
+fn stx(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    cpu.write_byte(bus, cpu.operand_addr(), cpu.x);
+}
+
+/// STY - Store Y Register
+fn sty(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    cpu.write_byte(bus, cpu.operand_addr(), cpu.y);
+}
+
+/// TAX - Transfer Accumulator to X
+fn tax(cpu: &mut Cpu, _bus: &mut dyn Bus) {
+    cpu.x = cpu.a;
+    cpu.set_zn(cpu.x);
+}
+
+/// TAY - Transfer Accumulator to Y
+fn tay(cpu: &mut Cpu, _bus: &mut dyn Bus) {
+    cpu.y = cpu.a;
+    cpu.set_zn(cpu.y);
+}
+
+/// TSX - Transfer Stack Pointer to X
+fn tsx(cpu: &mut Cpu, _bus: &mut dyn Bus) {
+    cpu.x = cpu.sp;
+    cpu.set_zn(cpu.x);
+}
+
+/// TXA - Transfer X to Accumulator
+fn txa(cpu: &mut Cpu, _bus: &mut dyn Bus) {
+    cpu.a = cpu.x;
+    cpu.set_zn(cpu.a);
+}
+
+/// TXS - Transfer X to Stack Pointer
+fn txs(cpu: &mut Cpu, _bus: &mut dyn Bus) {
+    cpu.sp = cpu.x;
+    // TXS does not affect flags
+}
+
+/// TYA - Transfer Y to Accumulator
+fn tya(cpu: &mut Cpu, _bus: &mut dyn Bus) {
+    cpu.a = cpu.y;
+    cpu.set_zn(cpu.a);
+}
+
+/// Common branch operation
+fn branch(cpu: &mut Cpu, bus: &mut dyn Bus, condition: bool) {
+    if condition {
+        // Branch delays IRQ during its last clock
+        if cpu.run_irq && !cpu.prev_run_irq {
+            cpu.run_irq = false;
         }
 
-        let old_pc = self.pc;
-        let new_pc = self.pc.wrapping_add_signed(i16::from(offset));
-        self.pc = new_pc;
+        // Dummy read (cycle for branch taken)
+        cpu.tick(bus);
 
-        // +1 cycle for branch taken
-        // +1 more cycle if page crossed
-        let page_crossed = (old_pc & 0xFF00) != (new_pc & 0xFF00);
-        1 + u8::from(page_crossed)
-    }
+        let offset = cpu.operand_value as i8;
+        let new_pc = cpu.pc.wrapping_add(offset as u16);
 
-    //
-    // ========== JUMP/SUBROUTINE INSTRUCTIONS ==========
-    //
-
-    /// JMP - Jump Absolute
-    pub(crate) fn jmp_abs(&mut self, bus: &mut impl Bus) -> u8 {
-        self.pc = bus.read_u16(self.pc);
-        0
-    }
-
-    /// JMP - Jump Indirect (with page boundary bug)
-    pub(crate) fn jmp_ind(&mut self, bus: &mut impl Bus) -> u8 {
-        let ptr = bus.read_u16(self.pc);
-
-        // 6502 bug: JMP ($xxFF) reads high byte from $xx00 instead of $xx+1 00
-        let lo = bus.read(ptr);
-        let hi_addr = if ptr & 0xFF == 0xFF {
-            ptr & 0xFF00 // Wrap to start of same page
-        } else {
-            ptr + 1
-        };
-        let hi = bus.read(hi_addr);
-
-        self.pc = u16::from_le_bytes([lo, hi]);
-        0
-    }
-
-    /// JSR - Jump to Subroutine
-    pub(crate) fn jsr(&mut self, bus: &mut impl Bus) -> u8 {
-        let target = bus.read_u16(self.pc);
-        self.pc = self.pc.wrapping_add(1); // JSR pushes PC-1
-        self.push_u16(bus, self.pc);
-        self.pc = target;
-        0
-    }
-
-    /// RTS - Return from Subroutine
-    pub(crate) fn rts(&mut self, bus: &mut impl Bus) -> u8 {
-        self.pc = self.pop_u16(bus);
-        self.pc = self.pc.wrapping_add(1);
-        0
-    }
-
-    /// RTI - Return from Interrupt
-    pub(crate) fn rti(&mut self, bus: &mut impl Bus) -> u8 {
-        let p = self.pop(bus);
-        self.status = StatusFlags::from_stack_byte(p);
-
-        // RTI restores the I flag from the stack. Update prev_irq_inhibit to the NEW value
-        // so IRQ polling uses the restored I flag value (no delay).
-        // This is different from CLI/SEI which have a 1-instruction delay.
-        self.prev_irq_inhibit = self.status.contains(StatusFlags::INTERRUPT_DISABLE);
-
-        self.pc = self.pop_u16(bus);
-        0
-    }
-
-    /// BRK - Force Interrupt
-    pub(crate) fn brk(&mut self, bus: &mut impl Bus) -> u8 {
-        self.pc = self.pc.wrapping_add(1); // BRK increments PC by 2 total
-
-        // Push PC to stack
-        self.push_u16(bus, self.pc);
-
-        // CRITICAL TIMING: Check for NMI AFTER pushing PC but BEFORE pushing status
-        // This matches hardware timing - NMI that arrives during PC push can still hijack BRK
-        // Reference: Mesen2 NesCpu.cpp BRK() checks _needNmi after Push(PC) but before Push(flags)
-        // Reference: nmi_and_brk test ROM validates this exact timing
-        let nmi_hijack = self.nmi_pending;
-        if nmi_hijack {
-            self.nmi_pending = false;
+        // Extra cycle if page boundary crossed
+        if (cpu.pc & 0xFF00) != (new_pc & 0xFF00) {
+            cpu.tick(bus);
         }
 
-        // Push status with B flag ALWAYS set (even when NMI hijacks)
-        // IMPORTANT: B flag is ALWAYS set to 1 when pushed from BRK, even when NMI hijacks!
-        // This allows software to detect NMI hijacking by checking B=1 in the NMI handler.
-        // Reference: NESdev wiki "6502 BRK and B bit"
-        self.push(bus, self.status.to_stack_byte(true));
-        self.status.insert(StatusFlags::INTERRUPT_DISABLE);
-
-        // Suppress NMI check for one instruction after BRK completes
-        // This ensures the first instruction of the handler executes before checking for NMI
-        // Reference: Mesen2 NesCpu.cpp BRK() "_prevNeedNmi = false"
-        self.suppress_nmi_next = true;
-
-        // Use NMI vector if hijacked, IRQ/BRK vector otherwise
-        let vector = if nmi_hijack { 0xFFFA } else { 0xFFFE };
-        self.pc = bus.read_u16(vector);
-        0
+        cpu.pc = new_pc;
     }
+}
 
-    //
-    // ========== FLAG INSTRUCTIONS ==========
-    //
+// ============================================================================
+// Unofficial/Undocumented Instructions
+// ============================================================================
 
-    /// CLC - Clear Carry
-    #[inline]
-    pub(crate) fn clc(&mut self, bus: &mut impl Bus) -> u8 {
-        let _ = bus.read(self.pc);
-        self.status.remove(StatusFlags::CARRY);
-        0
-    }
+/// AAC (ANC) - AND byte with accumulator, then copy N to C
+fn aac(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    cpu.a &= cpu.read_byte(bus, cpu.operand_addr());
+    cpu.set_zn(cpu.a);
+    cpu.status
+        .set_flag(Status::C, cpu.status.contains(Status::N));
+}
 
-    /// SEC - Set Carry
-    #[inline]
-    pub(crate) fn sec(&mut self, bus: &mut impl Bus) -> u8 {
-        let _ = bus.read(self.pc);
-        self.status.insert(StatusFlags::CARRY);
-        0
-    }
+/// AAX (SAX) - AND X register with accumulator, store result
+fn aax(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    let value = cpu.a & cpu.x;
+    cpu.write_byte(bus, cpu.operand_addr(), value);
+}
 
-    /// CLI - Clear Interrupt Disable
-    #[inline]
-    pub(crate) fn cli(&mut self, bus: &mut impl Bus) -> u8 {
-        let _ = bus.read(self.pc);
-        self.status.remove(StatusFlags::INTERRUPT_DISABLE);
-        0
-    }
+/// ARR - AND byte with accumulator, then rotate one bit right
+fn arr(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    cpu.a &= cpu.read_byte(bus, cpu.operand_addr());
+    let carry = cpu.status.contains(Status::C) as u8;
+    cpu.a = (cpu.a >> 1) | (carry << 7);
+    cpu.set_zn(cpu.a);
 
-    /// SEI - Set Interrupt Disable
-    #[inline]
-    pub(crate) fn sei(&mut self, bus: &mut impl Bus) -> u8 {
-        let _ = bus.read(self.pc);
-        self.status.insert(StatusFlags::INTERRUPT_DISABLE);
-        0
-    }
+    cpu.status.set_flag(Status::C, cpu.a & 0x40 != 0);
+    cpu.status
+        .set_flag(Status::V, ((cpu.a & 0x40) ^ ((cpu.a & 0x20) << 1)) != 0);
+}
 
-    /// CLV - Clear Overflow
-    #[inline]
-    pub(crate) fn clv(&mut self, bus: &mut impl Bus) -> u8 {
-        let _ = bus.read(self.pc);
-        self.status.remove(StatusFlags::OVERFLOW);
-        0
-    }
+/// ASR (ALR) - AND byte with accumulator, then shift right one bit
+fn asr(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    cpu.a &= cpu.read_byte(bus, cpu.operand_addr());
+    cpu.status.set_flag(Status::C, cpu.a & 0x01 != 0);
+    cpu.a >>= 1;
+    cpu.set_zn(cpu.a);
+}
 
-    /// CLD - Clear Decimal (no effect on NES)
-    #[inline]
-    pub(crate) fn cld(&mut self, bus: &mut impl Bus) -> u8 {
-        let _ = bus.read(self.pc);
-        self.status.remove(StatusFlags::DECIMAL);
-        0
-    }
+/// ATX (LXA) - AND byte with accumulator, then transfer to X
+fn atx(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    let value = cpu.read_byte(bus, cpu.operand_addr());
+    cpu.a = value;
+    cpu.x = cpu.a;
+    cpu.set_zn(cpu.a);
+}
 
-    /// SED - Set Decimal (no effect on NES)
-    #[inline]
-    pub(crate) fn sed(&mut self, bus: &mut impl Bus) -> u8 {
-        let _ = bus.read(self.pc);
-        self.status.insert(StatusFlags::DECIMAL);
-        0
-    }
+/// AXS (SBX) - AND X register with accumulator and store result in X, minus value
+fn axs(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    let value = cpu.read_byte(bus, cpu.operand_addr());
+    let and_result = cpu.a & cpu.x;
+    cpu.status.set_flag(Status::C, and_result >= value);
+    cpu.x = and_result.wrapping_sub(value);
+    cpu.set_zn(cpu.x);
+}
 
-    /// NOP - No Operation
-    #[inline]
-    pub(crate) fn nop(&mut self, bus: &mut impl Bus) -> u8 {
-        let _ = bus.read(self.pc);
-        0
-    }
+/// DCP - Decrement memory, then compare with accumulator
+fn dcp(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    let addr = cpu.operand_addr();
+    let value = cpu.read_byte(bus, addr);
+    cpu.write_byte(bus, addr, value); // Dummy write
 
-    //
-    // ========== UNOFFICIAL INSTRUCTIONS ==========
-    //
+    let result = value.wrapping_sub(1);
+    cpu.write_byte(bus, addr, result);
+    compare(cpu, cpu.a, result);
+}
 
-    /// LAX - Load A and X
-    pub(crate) fn lax(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
-        let (value, page_crossed) = self.read_operand(bus, mode);
-        self.a = value;
-        self.x = value;
-        self.set_zn(value);
-        u8::from(page_crossed)
-    }
+/// ISB (ISC) - Increment memory, then subtract from accumulator
+fn isb(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    let addr = cpu.operand_addr();
+    let value = cpu.read_byte(bus, addr);
+    cpu.write_byte(bus, addr, value); // Dummy write
 
-    /// SAX - Store A AND X
-    pub(crate) fn sax(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
-        let value = self.a & self.x;
-        self.write_operand(bus, mode, value);
-        0
-    }
+    let result = value.wrapping_add(1);
+    cpu.write_byte(bus, addr, result);
+    add(cpu, !result);
+}
 
-    /// DCP - Decrement and Compare
-    pub(crate) fn dcp(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
-        let result = mode.resolve(self.pc, self.x, self.y, bus);
-        self.pc = self.pc.wrapping_add(u16::from(mode.operand_bytes()));
-        self.handle_rmw_dummy_cycle(bus, mode, result);
+/// HLT (KIL/JAM) - Halt the processor
+fn hlt(cpu: &mut Cpu, _bus: &mut dyn Bus) {
+    // Decrement PC to keep re-executing this instruction
+    cpu.pc = cpu.pc.wrapping_sub(1);
+    log::warn!("CPU halted at 0x{:04X}", cpu.pc);
+}
 
-        let addr = result.addr;
-        let value = bus.read(addr);
-        bus.write(addr, value); // Dummy write
-        let new_value = value.wrapping_sub(1);
-        bus.write(addr, new_value);
-        self.compare(self.a, new_value);
-        0
-    }
+/// LAR (LAS) - AND memory with stack pointer, transfer to A, X, and SP
+fn lar(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    let value = cpu.read_byte(bus, cpu.operand_addr());
+    let result = value & cpu.sp;
+    cpu.a = result;
+    cpu.x = result;
+    cpu.sp = result;
+    cpu.set_zn(result);
+}
 
-    /// ISC - Increment and Subtract with Carry
-    pub(crate) fn isc(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
-        let result = mode.resolve(self.pc, self.x, self.y, bus);
-        self.pc = self.pc.wrapping_add(u16::from(mode.operand_bytes()));
-        self.handle_rmw_dummy_cycle(bus, mode, result);
+/// LAX - Load A and X with memory
+fn lax(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    let value = cpu.read_byte(bus, cpu.operand_addr());
+    cpu.a = value;
+    cpu.x = value;
+    cpu.set_zn(value);
+}
 
-        let addr = result.addr;
-        let value = bus.read(addr);
-        bus.write(addr, value); // Dummy write
-        let new_value = value.wrapping_add(1);
-        bus.write(addr, new_value);
-        self.sbc_impl(new_value);
-        0
-    }
+/// RLA - ROL memory, then AND with accumulator
+fn rla(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    let addr = cpu.operand_addr();
+    let value = cpu.read_byte(bus, addr);
+    cpu.write_byte(bus, addr, value); // Dummy write
 
-    /// SLO - Shift Left and OR
-    pub(crate) fn slo(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
-        let result = mode.resolve(self.pc, self.x, self.y, bus);
-        self.pc = self.pc.wrapping_add(u16::from(mode.operand_bytes()));
-        self.handle_rmw_dummy_cycle(bus, mode, result);
+    let carry = cpu.status.contains(Status::C) as u8;
+    cpu.status.set_flag(Status::C, value & 0x80 != 0);
+    let result = (value << 1) | carry;
+    cpu.write_byte(bus, addr, result);
 
-        let addr = result.addr;
-        let value = bus.read(addr);
-        bus.write(addr, value); // Dummy write
-        self.status.set(StatusFlags::CARRY, value & 0x80 != 0);
-        let shifted = value << 1;
-        bus.write(addr, shifted);
-        self.a |= shifted;
-        self.set_zn(self.a);
-        0
-    }
+    cpu.a &= result;
+    cpu.set_zn(cpu.a);
+}
 
-    /// RLA - Rotate Left and AND
-    pub(crate) fn rla(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
-        let result = mode.resolve(self.pc, self.x, self.y, bus);
-        self.pc = self.pc.wrapping_add(u16::from(mode.operand_bytes()));
-        self.handle_rmw_dummy_cycle(bus, mode, result);
+/// RRA - ROR memory, then ADC with accumulator
+fn rra(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    let addr = cpu.operand_addr();
+    let value = cpu.read_byte(bus, addr);
+    cpu.write_byte(bus, addr, value); // Dummy write
 
-        let addr = result.addr;
-        let value = bus.read(addr);
-        bus.write(addr, value); // Dummy write
-        let carry_in = u8::from(self.status.contains(StatusFlags::CARRY));
-        self.status.set(StatusFlags::CARRY, value & 0x80 != 0);
-        let rotated = (value << 1) | carry_in;
-        bus.write(addr, rotated);
-        self.a &= rotated;
-        self.set_zn(self.a);
-        0
-    }
+    let carry = (cpu.status.contains(Status::C) as u8) << 7;
+    cpu.status.set_flag(Status::C, value & 0x01 != 0);
+    let result = (value >> 1) | carry;
+    cpu.write_byte(bus, addr, result);
 
-    /// SRE - Shift Right and XOR
-    pub(crate) fn sre(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
-        let result = mode.resolve(self.pc, self.x, self.y, bus);
-        self.pc = self.pc.wrapping_add(u16::from(mode.operand_bytes()));
-        self.handle_rmw_dummy_cycle(bus, mode, result);
+    add(cpu, result);
+}
 
-        let addr = result.addr;
-        let value = bus.read(addr);
-        bus.write(addr, value); // Dummy write
-        self.status.set(StatusFlags::CARRY, value & 0x01 != 0);
-        let shifted = value >> 1;
-        bus.write(addr, shifted);
-        self.a ^= shifted;
-        self.set_zn(self.a);
-        0
-    }
+/// SLO (ASO) - ASL memory, then ORA with accumulator
+fn slo(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    let addr = cpu.operand_addr();
+    let value = cpu.read_byte(bus, addr);
+    cpu.write_byte(bus, addr, value); // Dummy write
 
-    /// RRA - Rotate Right and Add with Carry
-    pub(crate) fn rra(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
-        let result = mode.resolve(self.pc, self.x, self.y, bus);
-        self.pc = self.pc.wrapping_add(u16::from(mode.operand_bytes()));
-        self.handle_rmw_dummy_cycle(bus, mode, result);
+    cpu.status.set_flag(Status::C, value & 0x80 != 0);
+    let result = value << 1;
+    cpu.write_byte(bus, addr, result);
 
-        let addr = result.addr;
-        let value = bus.read(addr);
-        bus.write(addr, value); // Dummy write
-        let carry_in = if self.status.contains(StatusFlags::CARRY) {
-            0x80
-        } else {
-            0x00
-        };
-        self.status.set(StatusFlags::CARRY, value & 0x01 != 0);
-        let rotated = (value >> 1) | carry_in;
-        bus.write(addr, rotated);
-        self.adc_impl(rotated);
-        0
-    }
+    cpu.a |= result;
+    cpu.set_zn(cpu.a);
+}
 
-    /// ANC - AND with Carry
-    pub(crate) fn anc(&mut self, bus: &mut impl Bus) -> u8 {
-        let value = bus.read(self.pc);
-        self.pc = self.pc.wrapping_add(1);
-        self.a &= value;
-        self.set_zn(self.a);
-        self.status.set(
-            StatusFlags::CARRY,
-            self.status.contains(StatusFlags::NEGATIVE),
-        );
-        0
-    }
+/// SRE (LSE) - LSR memory, then EOR with accumulator
+fn sre(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    let addr = cpu.operand_addr();
+    let value = cpu.read_byte(bus, addr);
+    cpu.write_byte(bus, addr, value); // Dummy write
 
-    /// ALR - AND then Logical Shift Right
-    pub(crate) fn alr(&mut self, bus: &mut impl Bus) -> u8 {
-        let value = bus.read(self.pc);
-        self.pc = self.pc.wrapping_add(1);
-        self.a &= value;
-        self.status.set(StatusFlags::CARRY, self.a & 0x01 != 0);
-        self.a >>= 1;
-        self.set_zn(self.a);
-        0
-    }
+    cpu.status.set_flag(Status::C, value & 0x01 != 0);
+    let result = value >> 1;
+    cpu.write_byte(bus, addr, result);
 
-    /// ARR - AND then Rotate Right
-    pub(crate) fn arr(&mut self, bus: &mut impl Bus) -> u8 {
-        let value = bus.read(self.pc);
-        self.pc = self.pc.wrapping_add(1);
-        self.a &= value;
-        let carry_in = if self.status.contains(StatusFlags::CARRY) {
-            0x80
-        } else {
-            0x00
-        };
-        self.a = (self.a >> 1) | carry_in;
-        self.set_zn(self.a);
+    cpu.a ^= result;
+    cpu.set_zn(cpu.a);
+}
 
-        // Complex flag behavior
-        self.status.set(StatusFlags::CARRY, self.a & 0x40 != 0);
-        self.status.set(
-            StatusFlags::OVERFLOW,
-            ((self.a >> 6) ^ (self.a >> 5)) & 1 != 0,
-        );
-        0
-    }
+/// SXA (SHX/XAS) - Store X & (high byte of address + 1) at address
+fn sxa(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    let addr = cpu.operand_addr();
+    let hi = ((addr >> 8) as u8).wrapping_add(1);
+    let value = cpu.x & hi;
+    cpu.write_byte(bus, addr, value);
+}
 
-    /// XAA - Unstable AND X with immediate
-    pub(crate) fn xaa(&mut self, bus: &mut impl Bus) -> u8 {
-        let value = bus.read(self.pc);
-        self.pc = self.pc.wrapping_add(1);
-        // Magic constant: 0xEE is most common
-        self.a = (self.a | 0xEE) & self.x & value;
-        self.set_zn(self.a);
-        0
-    }
+/// SYA (SHY/SAY) - Store Y & (high byte of address + 1) at address
+fn sya(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    let addr = cpu.operand_addr();
+    let hi = ((addr >> 8) as u8).wrapping_add(1);
+    let value = cpu.y & hi;
+    cpu.write_byte(bus, addr, value);
+}
 
-    /// LXA/ATX - Load A and X with immediate (unstable on real hardware)
-    ///
-    /// On real hardware, this opcode has unstable behavior due to analog bus effects.
-    /// However, for emulation purposes (and to pass test ROMs like Blargg's), we
-    /// implement the stable behavior: A = X = immediate value.
-    ///
-    /// Reference: Nestopia implementation, validated by Blargg test ROMs.
-    pub(crate) fn lxa(&mut self, bus: &mut impl Bus) -> u8 {
-        let value = bus.read(self.pc);
-        self.pc = self.pc.wrapping_add(1);
-        // Load both A and X with the immediate value
-        // (Real hardware behavior is unstable and varies with temperature/RF)
-        self.a = value;
-        self.x = value;
-        self.set_zn(self.a);
-        0
-    }
+/// XAA (ANE) - Unstable: (A | const) & X & M
+fn xaa(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    // The constant varies by CPU, typically 0xEE
+    let value = cpu.read_byte(bus, cpu.operand_addr());
+    cpu.a = (cpu.a | 0xEE) & cpu.x & value;
+    cpu.set_zn(cpu.a);
+}
 
-    /// AXS - AND X with A, then subtract
-    pub(crate) fn axs(&mut self, bus: &mut impl Bus) -> u8 {
-        let value = bus.read(self.pc);
-        self.pc = self.pc.wrapping_add(1);
-        let temp = self.a & self.x;
-        let result = temp.wrapping_sub(value);
-        self.status.set(StatusFlags::CARRY, temp >= value);
-        self.x = result;
-        self.set_zn(result);
-        0
-    }
+/// XAS (TAS/SHS) - Store A & X in SP, store A & X & (high byte + 1) in memory
+fn xas(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    cpu.sp = cpu.a & cpu.x;
+    let addr = cpu.operand_addr();
+    let hi = ((addr >> 8) as u8).wrapping_add(1);
+    let value = cpu.a & cpu.x & hi;
+    cpu.write_byte(bus, addr, value);
+}
 
-    /// Helper for Store instructions: perform dummy write for indexed modes
-    fn handle_store_dummy_cycle(
-        &mut self,
-        bus: &mut impl Bus,
-        mode: AddressingMode,
-        result: crate::addressing::AddressResult,
-        value: u8,
-    ) {
-        match mode {
-            AddressingMode::AbsoluteX
-            | AddressingMode::AbsoluteY
-            | AddressingMode::IndirectIndexedY => {
-                let incorrect_addr = (result.base_addr & 0xFF00) | (result.addr & 0x00FF);
-                bus.write(incorrect_addr, value);
-            }
-            _ => {}
-        }
-    }
+/// AXA (SHA/AHX) - Store A & X & (high byte + 1) at address
+fn axa(cpu: &mut Cpu, bus: &mut dyn Bus) {
+    let addr = cpu.operand_addr();
+    let hi = ((addr >> 8) as u8).wrapping_add(1);
+    let value = cpu.a & cpu.x & hi;
+    cpu.write_byte(bus, addr, value);
+}
 
-    /// SHA - Store A AND X AND (H+1) [unstable]
-    pub(crate) fn sha(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
-        let result = mode.resolve(self.pc, self.x, self.y, bus);
-        self.pc = self.pc.wrapping_add(u16::from(mode.operand_bytes()));
+// ============================================================================
+// Opcode Table
+// ============================================================================
 
-        // Perform dummy write (like STA)
-        self.handle_store_dummy_cycle(bus, mode, result, self.a);
+/// Opcode lookup table.
+/// Indexed by opcode byte (0x00-0xFF).
+#[rustfmt::skip]
+pub static OPCODE_TABLE: [InstrFn; 256] = [
+    //       0          1          2          3          4          5          6          7          8          9          A          B          C          D          E          F
+    /* 0 */ brk,       ora,       hlt,       slo,       nop_read,  ora,       asl_mem,   slo,       php,       ora,       asl_acc,   aac,       nop_read,  ora,       asl_mem,   slo,
+    /* 1 */ bpl,       ora,       hlt,       slo,       nop_read,  ora,       asl_mem,   slo,       clc,       ora,       nop,       slo,       nop_read,  ora,       asl_mem,   slo,
+    /* 2 */ jsr,       and,       hlt,       rla,       bit,       and,       rol_mem,   rla,       plp,       and,       rol_acc,   aac,       bit,       and,       rol_mem,   rla,
+    /* 3 */ bmi,       and,       hlt,       rla,       nop_read,  and,       rol_mem,   rla,       sec,       and,       nop,       rla,       nop_read,  and,       rol_mem,   rla,
+    /* 4 */ rti,       eor,       hlt,       sre,       nop_read,  eor,       lsr_mem,   sre,       pha,       eor,       lsr_acc,   asr,       jmp_abs,   eor,       lsr_mem,   sre,
+    /* 5 */ bvc,       eor,       hlt,       sre,       nop_read,  eor,       lsr_mem,   sre,       cli,       eor,       nop,       sre,       nop_read,  eor,       lsr_mem,   sre,
+    /* 6 */ rts,       adc,       hlt,       rra,       nop_read,  adc,       ror_mem,   rra,       pla,       adc,       ror_acc,   arr,       jmp_ind,   adc,       ror_mem,   rra,
+    /* 7 */ bvs,       adc,       hlt,       rra,       nop_read,  adc,       ror_mem,   rra,       sei,       adc,       nop,       rra,       nop_read,  adc,       ror_mem,   rra,
+    /* 8 */ nop_read,  sta,       nop_read,  aax,       sty,       sta,       stx,       aax,       dey,       nop_read,  txa,       xaa,       sty,       sta,       stx,       aax,
+    /* 9 */ bcc,       sta,       hlt,       axa,       sty,       sta,       stx,       aax,       tya,       sta,       txs,       xas,       sya,       sta,       sxa,       axa,
+    /* A */ ldy,       lda,       ldx,       lax,       ldy,       lda,       ldx,       lax,       tay,       lda,       tax,       atx,       ldy,       lda,       ldx,       lax,
+    /* B */ bcs,       lda,       hlt,       lax,       ldy,       lda,       ldx,       lax,       clv,       lda,       tsx,       lar,       ldy,       lda,       ldx,       lax,
+    /* C */ cpy,       cmp,       nop_read,  dcp,       cpy,       cmp,       dec,       dcp,       iny,       cmp,       dex,       axs,       cpy,       cmp,       dec,       dcp,
+    /* D */ bne,       cmp,       hlt,       dcp,       nop_read,  cmp,       dec,       dcp,       cld,       cmp,       nop,       dcp,       nop_read,  cmp,       dec,       dcp,
+    /* E */ cpx,       sbc,       nop_read,  isb,       cpx,       sbc,       inc,       isb,       inx,       sbc,       nop,       sbc,       cpx,       sbc,       inc,       isb,
+    /* F */ beq,       sbc,       hlt,       isb,       nop_read,  sbc,       inc,       isb,       sed,       sbc,       nop,       isb,       nop_read,  sbc,       inc,       isb,
+];
 
-        let mut addr = result.addr;
-        let addr_hi = ((addr >> 8) as u8).wrapping_add(1);
-        let value = self.a & self.x & addr_hi;
-
-        // PB512 / Glitch: If page boundary crossed, high byte of address is replaced by value
-        if result.page_crossed {
-            addr = (u16::from(value) << 8) | (addr & 0x00FF);
-        }
-
-        bus.write(addr, value);
-        0
-    }
-
-    /// SHY - Store Y AND (H+1) [unstable]
-    pub(crate) fn shy(&mut self, bus: &mut impl Bus) -> u8 {
-        let lo = bus.read(self.pc);
-        self.pc = self.pc.wrapping_add(1);
-        let hi = bus.read(self.pc);
-        self.pc = self.pc.wrapping_add(1);
-
-        let base = u16::from_le_bytes([lo, hi]);
-        let mut addr = base.wrapping_add(u16::from(self.x));
-
-        // Perform dummy write (Absolute, X)
-        let incorrect_addr = (base & 0xFF00) | (addr & 0x00FF);
-        bus.write(incorrect_addr, self.y);
-
-        let addr_hi = ((addr >> 8) as u8).wrapping_add(1);
-        let value = self.y & addr_hi;
-
-        // PB512 / Glitch
-        if (base & 0xFF00) != (addr & 0xFF00) {
-            addr = (u16::from(value) << 8) | (addr & 0x00FF);
-        }
-
-        bus.write(addr, value);
-        0
-    }
-
-    /// SHX - Store X AND (H+1) [unstable]
-    pub(crate) fn shx(&mut self, bus: &mut impl Bus) -> u8 {
-        let lo = bus.read(self.pc);
-        self.pc = self.pc.wrapping_add(1);
-        let hi = bus.read(self.pc);
-        self.pc = self.pc.wrapping_add(1);
-
-        let base = u16::from_le_bytes([lo, hi]);
-        let mut addr = base.wrapping_add(u16::from(self.y));
-
-        // Perform dummy write (Absolute, Y)
-        let incorrect_addr = (base & 0xFF00) | (addr & 0x00FF);
-        bus.write(incorrect_addr, self.x);
-
-        let addr_hi = ((addr >> 8) as u8).wrapping_add(1);
-        let value = self.x & addr_hi;
-
-        // PB512 / Glitch
-        if (base & 0xFF00) != (addr & 0xFF00) {
-            addr = (u16::from(value) << 8) | (addr & 0x00FF);
-        }
-
-        bus.write(addr, value);
-        0
-    }
-
-    /// TAS - Transfer A AND X to SP, store A AND X AND (H+1) [unstable]
-    pub(crate) fn tas(&mut self, bus: &mut impl Bus) -> u8 {
-        let lo = bus.read(self.pc);
-        self.pc = self.pc.wrapping_add(1);
-        let hi = bus.read(self.pc);
-        self.pc = self.pc.wrapping_add(1);
-
-        self.sp = self.a & self.x;
-        let base = u16::from_le_bytes([lo, hi]);
-        let mut addr = base.wrapping_add(u16::from(self.y));
-
-        // Perform dummy write (Absolute, Y)
-        let incorrect_addr = (base & 0xFF00) | (addr & 0x00FF);
-        bus.write(incorrect_addr, self.a);
-
-        let addr_hi = ((addr >> 8) as u8).wrapping_add(1);
-        let value = self.a & self.x & addr_hi;
-
-        // PB512 / Glitch
-        if (base & 0xFF00) != (addr & 0xFF00) {
-            addr = (u16::from(value) << 8) | (addr & 0x00FF);
-        }
-
-        bus.write(addr, value);
-        0
-    }
-
-    /// LAS - Load A, X, and SP [unstable]
-    pub(crate) fn las(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
-        let (value, page_crossed) = self.read_operand(bus, mode);
-        let result = value & self.sp;
-        self.a = result;
-        self.x = result;
-        self.sp = result;
-        self.set_zn(result);
-        u8::from(page_crossed)
-    }
-
-    /// NOP with read (for addressing modes that read memory)
-    pub(crate) fn nop_read(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
-        let (_, page_crossed) = self.read_operand(bus, mode);
-        u8::from(page_crossed)
-    }
-
-    /// JAM - Halt CPU
-    pub(crate) fn jam(&mut self) -> u8 {
-        self.jammed = true;
-        self.pc = self.pc.wrapping_sub(1); // Stay on JAM instruction
-        0
-    }
+/// Get the instruction name for an opcode.
+#[must_use]
+#[allow(dead_code)]
+pub fn opcode_name(opcode: u8) -> &'static str {
+    #[rustfmt::skip]
+    const NAMES: [&str; 256] = [
+        //       0       1       2       3       4       5       6       7       8       9       A       B       C       D       E       F
+        /* 0 */ "BRK", "ORA", "HLT", "SLO", "NOP", "ORA", "ASL", "SLO", "PHP", "ORA", "ASL", "AAC", "NOP", "ORA", "ASL", "SLO",
+        /* 1 */ "BPL", "ORA", "HLT", "SLO", "NOP", "ORA", "ASL", "SLO", "CLC", "ORA", "NOP", "SLO", "NOP", "ORA", "ASL", "SLO",
+        /* 2 */ "JSR", "AND", "HLT", "RLA", "BIT", "AND", "ROL", "RLA", "PLP", "AND", "ROL", "AAC", "BIT", "AND", "ROL", "RLA",
+        /* 3 */ "BMI", "AND", "HLT", "RLA", "NOP", "AND", "ROL", "RLA", "SEC", "AND", "NOP", "RLA", "NOP", "AND", "ROL", "RLA",
+        /* 4 */ "RTI", "EOR", "HLT", "SRE", "NOP", "EOR", "LSR", "SRE", "PHA", "EOR", "LSR", "ASR", "JMP", "EOR", "LSR", "SRE",
+        /* 5 */ "BVC", "EOR", "HLT", "SRE", "NOP", "EOR", "LSR", "SRE", "CLI", "EOR", "NOP", "SRE", "NOP", "EOR", "LSR", "SRE",
+        /* 6 */ "RTS", "ADC", "HLT", "RRA", "NOP", "ADC", "ROR", "RRA", "PLA", "ADC", "ROR", "ARR", "JMP", "ADC", "ROR", "RRA",
+        /* 7 */ "BVS", "ADC", "HLT", "RRA", "NOP", "ADC", "ROR", "RRA", "SEI", "ADC", "NOP", "RRA", "NOP", "ADC", "ROR", "RRA",
+        /* 8 */ "NOP", "STA", "NOP", "SAX", "STY", "STA", "STX", "SAX", "DEY", "NOP", "TXA", "XAA", "STY", "STA", "STX", "SAX",
+        /* 9 */ "BCC", "STA", "HLT", "AXA", "STY", "STA", "STX", "SAX", "TYA", "STA", "TXS", "XAS", "SYA", "STA", "SXA", "AXA",
+        /* A */ "LDY", "LDA", "LDX", "LAX", "LDY", "LDA", "LDX", "LAX", "TAY", "LDA", "TAX", "ATX", "LDY", "LDA", "LDX", "LAX",
+        /* B */ "BCS", "LDA", "HLT", "LAX", "LDY", "LDA", "LDX", "LAX", "CLV", "LDA", "TSX", "LAS", "LDY", "LDA", "LDX", "LAX",
+        /* C */ "CPY", "CMP", "NOP", "DCP", "CPY", "CMP", "DEC", "DCP", "INY", "CMP", "DEX", "AXS", "CPY", "CMP", "DEC", "DCP",
+        /* D */ "BNE", "CMP", "HLT", "DCP", "NOP", "CMP", "DEC", "DCP", "CLD", "CMP", "NOP", "DCP", "NOP", "CMP", "DEC", "DCP",
+        /* E */ "CPX", "SBC", "NOP", "ISB", "CPX", "SBC", "INC", "ISB", "INX", "SBC", "NOP", "SBC", "CPX", "SBC", "INC", "ISB",
+        /* F */ "BEQ", "SBC", "HLT", "ISB", "NOP", "SBC", "INC", "ISB", "SED", "SBC", "NOP", "ISB", "NOP", "SBC", "INC", "ISB",
+    ];
+    NAMES[opcode as usize]
 }

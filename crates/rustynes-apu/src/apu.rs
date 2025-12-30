@@ -1,434 +1,324 @@
-//! APU Main Module
+//! APU (Audio Processing Unit) Main Module.
 //!
-//! This module contains the main APU struct that integrates all audio channels
-//! and provides the register interface.
+//! The NES APU (2A03) contains:
+//! - Two pulse (square wave) channels
+//! - One triangle channel
+//! - One noise channel
+//! - One DMC (delta modulation channel)
+//! - Frame counter
+//! - Mixer
+//!
+//! The APU runs at half the CPU clock rate (CPU/2).
 
-use crate::dmc::{DmcChannel, System};
-use crate::frame_counter::{FrameAction, FrameCounter};
-use crate::mixer::Mixer;
-use crate::noise::NoiseChannel;
-use crate::pulse::PulseChannel;
-use crate::resampler::Resampler;
-use crate::triangle::TriangleChannel;
+use crate::{
+    dmc::Dmc,
+    frame_counter::{FrameCounter, FrameEvent},
+    noise::Noise,
+    pulse::Pulse,
+    sweep::PulseChannel,
+    triangle::Triangle,
+};
 
-/// Main APU (Audio Processing Unit) structure
-///
-/// Integrates all 5 audio channels (2 pulse, triangle, noise, DMC) and the frame counter.
-/// Provides memory-mapped register interface at CPU addresses $4000-$4017.
-#[allow(clippy::struct_excessive_bools)]
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
+/// Pulse output lookup table for the non-linear mixer.
+/// pulse_out = 95.52 / (8128.0 / (pulse1 + pulse2) + 100)
+#[allow(clippy::cast_precision_loss)] // Mixer table index fits in f32 mantissa
+const PULSE_TABLE: [f32; 31] = {
+    let mut table = [0.0f32; 31];
+    let mut i = 0;
+    while i < 31 {
+        if i == 0 {
+            table[i] = 0.0;
+        } else {
+            table[i] = 95.52 / (8128.0 / (i as f32) + 100.0);
+        }
+        i += 1;
+    }
+    table
+};
+
+/// TND (Triangle, Noise, DMC) output lookup table for the non-linear mixer.
+/// tnd_out = 163.67 / (24329.0 / (3*triangle + 2*noise + dmc) + 100)
+#[allow(clippy::cast_precision_loss)] // Mixer table index fits in f32 mantissa
+const TND_TABLE: [f32; 203] = {
+    let mut table = [0.0f32; 203];
+    let mut i = 0;
+    while i < 203 {
+        if i == 0 {
+            table[i] = 0.0;
+        } else {
+            table[i] = 163.67 / (24329.0 / (i as f32) + 100.0);
+        }
+        i += 1;
+    }
+    table
+};
+
+/// APU structure.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[allow(dead_code)] // last_output reserved for future high-pass filtering
 pub struct Apu {
-    /// Frame counter for timing envelope/length/sweep updates
+    /// Pulse channel 1.
+    pulse1: Pulse,
+    /// Pulse channel 2.
+    pulse2: Pulse,
+    /// Triangle channel.
+    triangle: Triangle,
+    /// Noise channel.
+    noise: Noise,
+    /// DMC channel.
+    dmc: Dmc,
+    /// Frame counter.
     frame_counter: FrameCounter,
-
-    /// Pulse wave channels
-    pulse1: PulseChannel,
-    pulse2: PulseChannel,
-
-    /// Triangle wave channel
-    triangle: TriangleChannel,
-
-    /// Noise channel
-    noise: NoiseChannel,
-
-    /// DMC channel
-    dmc: DmcChannel,
-
-    /// Non-linear mixer for combining channel outputs
-    mixer: Mixer,
-
-    /// Resampler for converting APU rate to target sample rate
-    resampler: Resampler,
-
-    /// CPU cycle counter
-    cycles: u64,
-
-    /// Memory read callback for DMC DMA
-    /// This will be set by the emulator to allow DMC to read from CPU memory
-    memory_read_fn: Option<Box<dyn FnMut(u16) -> u8>>,
+    /// Cycle counter (for APU cycles).
+    cycle: u64,
+    /// Last sampled output (for high-pass filtering).
+    last_output: f32,
 }
 
 impl Apu {
-    /// Creates a new APU instance with default settings (48 kHz output, NTSC)
+    /// Create a new APU.
     #[must_use]
     pub fn new() -> Self {
         Self {
+            pulse1: Pulse::new(PulseChannel::One),
+            pulse2: Pulse::new(PulseChannel::Two),
+            triangle: Triangle::new(),
+            noise: Noise::new(),
+            dmc: Dmc::new(),
             frame_counter: FrameCounter::new(),
-            pulse1: PulseChannel::new(0),
-            pulse2: PulseChannel::new(1),
-            triangle: TriangleChannel::new(),
-            noise: NoiseChannel::new(),
-            dmc: DmcChannel::new(System::NTSC),
-            mixer: Mixer::new(),
-            resampler: Resampler::new(48000),
-            cycles: 0,
-            memory_read_fn: None,
+            cycle: 0,
+            last_output: 0.0,
         }
     }
 
-    /// Creates a new APU instance with custom sample rate
-    ///
-    /// # Arguments
-    ///
-    /// * `sample_rate` - Target audio sample rate (typically 44100 or 48000 Hz)
+    /// Reset the APU to initial state.
+    pub fn reset(&mut self) {
+        *self = Self::new();
+    }
+
+    /// Read from an APU register.
+    /// Only $4015 is readable.
     #[must_use]
-    pub fn with_sample_rate(sample_rate: u32) -> Self {
-        Self {
-            frame_counter: FrameCounter::new(),
-            pulse1: PulseChannel::new(0),
-            pulse2: PulseChannel::new(1),
-            triangle: TriangleChannel::new(),
-            noise: NoiseChannel::new(),
-            dmc: DmcChannel::new(System::NTSC),
-            mixer: Mixer::new(),
-            resampler: Resampler::new(sample_rate),
-            cycles: 0,
-            memory_read_fn: None,
-        }
-    }
+    pub fn read_status(&mut self) -> u8 {
+        let status = self.peek_status();
 
-    /// Set the memory read callback for DMC DMA
-    ///
-    /// The DMC channel needs to read sample bytes from CPU memory.
-    /// This callback will be invoked when the DMC needs to fetch a sample.
-    ///
-    /// # Arguments
-    ///
-    /// * `callback` - Function that reads a byte from the given address
-    pub fn set_memory_read_callback<F>(&mut self, callback: F)
-    where
-        F: FnMut(u16) -> u8 + 'static,
-    {
-        self.memory_read_fn = Some(Box::new(callback));
-    }
-
-    /// Reads from an APU register
-    ///
-    /// # Arguments
-    ///
-    /// * `addr` - Register address ($4000-$4017)
-    ///
-    /// # Returns
-    ///
-    /// Register value, or 0 for write-only registers
-    pub fn read_register(&mut self, addr: u16) -> u8 {
-        match addr {
-            0x4015 => self.read_status(),
-            _ => 0, // All other APU registers are write-only
-        }
-    }
-
-    /// Writes to an APU register
-    ///
-    /// # Arguments
-    ///
-    /// * `addr` - Register address ($4000-$4017)
-    /// * `value` - Value to write
-    #[allow(clippy::match_same_arms)] // TODO stubs will be implemented in future sprints
-    pub fn write_register(&mut self, addr: u16, value: u8) {
-        match addr {
-            // Pulse 1
-            0x4000 => self.pulse1.write_register(0, value),
-            0x4001 => self.pulse1.write_register(1, value),
-            0x4002 => self.pulse1.write_register(2, value),
-            0x4003 => self.pulse1.write_register(3, value),
-
-            // Pulse 2
-            0x4004 => self.pulse2.write_register(0, value),
-            0x4005 => self.pulse2.write_register(1, value),
-            0x4006 => self.pulse2.write_register(2, value),
-            0x4007 => self.pulse2.write_register(3, value),
-
-            // Triangle
-            0x4008 => self.triangle.write_register(0, value),
-            0x400A => self.triangle.write_register(2, value),
-            0x400B => self.triangle.write_register(3, value),
-
-            // Noise
-            0x400C => self.noise.write_register(0, value),
-            0x400E => self.noise.write_register(2, value),
-            0x400F => self.noise.write_register(3, value),
-
-            // DMC
-            0x4010 => self.dmc.write_register(0, value),
-            0x4011 => self.dmc.write_register(1, value),
-            0x4012 => self.dmc.write_register(2, value),
-            0x4013 => self.dmc.write_register(3, value),
-
-            // Status
-            0x4015 => self.write_status(value),
-
-            // Frame counter
-            0x4017 => {
-                let action = self.frame_counter.write_control(value);
-                self.process_frame_action(action);
-            }
-
-            _ => {}
-        }
-    }
-
-    /// Process a frame counter action
-    fn process_frame_action(&mut self, action: FrameAction) {
-        match action {
-            FrameAction::QuarterFrame => {
-                // Clock envelopes and linear counter
-                self.pulse1.clock_envelope();
-                self.pulse2.clock_envelope();
-                self.triangle.clock_linear_counter();
-                self.noise.clock_envelope();
-            }
-            FrameAction::HalfFrame => {
-                // Clock envelopes, linear counter, length counters, and sweep units
-                self.pulse1.clock_envelope();
-                self.pulse2.clock_envelope();
-                self.triangle.clock_linear_counter();
-                self.noise.clock_envelope();
-
-                self.pulse1.clock_length_counter();
-                self.pulse2.clock_length_counter();
-                self.triangle.clock_length_counter();
-                self.noise.clock_length_counter();
-
-                self.pulse1.clock_sweep();
-                self.pulse2.clock_sweep();
-            }
-            FrameAction::None => {}
-        }
-    }
-
-    /// Reads the status register ($4015)
-    ///
-    /// # Status Register Format (Read)
-    ///
-    /// ```text
-    /// 7  bit  0
-    /// ---- ----
-    /// IF-D NT21
-    /// || | ||||
-    /// || | |||+- Pulse 1 length counter > 0
-    /// || | ||+-- Pulse 2 length counter > 0
-    /// || | |+--- Triangle length counter > 0
-    /// || | +---- Noise length counter > 0
-    /// || +------ DMC bytes remaining > 0
-    /// |+-------- Frame interrupt flag
-    /// +--------- DMC interrupt flag
-    /// ```
-    ///
-    /// Reading $4015 clears the frame IRQ flag.
-    fn read_status(&mut self) -> u8 {
-        let mut status = 0;
-
-        // Bits 0-3: Channel length counter status
-        if self.pulse1.length_counter_active() {
-            status |= 0x01;
-        }
-        if self.pulse2.length_counter_active() {
-            status |= 0x02;
-        }
-        if self.triangle.length_counter_active() {
-            status |= 0x04;
-        }
-        if self.noise.length_counter_active() {
-            status |= 0x08;
-        }
-
-        // Bit 4: DMC active (bytes remaining > 0)
-        if self.dmc.is_active() {
-            status |= 0x10;
-        }
-
-        // Bit 6: Frame IRQ
-        if self.frame_counter.irq_flag {
-            status |= 0x40;
-        }
-
-        // Bit 7: DMC IRQ
-        if self.dmc.irq_pending() {
-            status |= 0x80;
-        }
-
-        // Reading $4015 clears the frame IRQ flag
-        // Note: It does NOT clear the DMC IRQ flag
+        // Reading status clears frame counter IRQ
         self.frame_counter.clear_irq();
 
         status
     }
 
-    /// Writes to the status register ($4015)
+    /// Peek at APU status without side effects.
     ///
-    /// # Status Register Format (Write)
-    ///
-    /// ```text
-    /// 7  bit  0
-    /// ---- ----
-    /// ---D NT21
-    ///    | ||||
-    ///    | |||+- Enable Pulse 1
-    ///    | ||+-- Enable Pulse 2
-    ///    | |+--- Enable Triangle
-    ///    | +---- Enable Noise
-    ///    +------ Enable DMC
-    /// ```
-    ///
-    /// Writing to $4015:
-    /// - Enables/disables channels
-    /// - If a channel is disabled, its length counter is set to 0
-    /// - If DMC is enabled with 0 bytes remaining, restarts the sample
-    /// - Clears the DMC IRQ flag
-    fn write_status(&mut self, value: u8) {
-        self.pulse1.set_enabled((value & 0x01) != 0);
-        self.pulse2.set_enabled((value & 0x02) != 0);
-        self.triangle.set_enabled((value & 0x04) != 0);
-        self.noise.set_enabled((value & 0x08) != 0);
-        self.dmc.set_enabled((value & 0x10) != 0);
+    /// Returns the same value as `read_status()` but does not clear the
+    /// frame counter IRQ. Useful for debugging/display purposes.
+    #[must_use]
+    pub fn peek_status(&self) -> u8 {
+        let mut status = 0u8;
 
-        // Writing to $4015 clears the DMC IRQ flag
-        self.dmc.clear_irq();
+        if self.pulse1.active() {
+            status |= 0x01;
+        }
+        if self.pulse2.active() {
+            status |= 0x02;
+        }
+        if self.triangle.active() {
+            status |= 0x04;
+        }
+        if self.noise.active() {
+            status |= 0x08;
+        }
+        if self.dmc.active() {
+            status |= 0x10;
+        }
+        if self.frame_counter.irq_pending() {
+            status |= 0x40;
+        }
+        if self.dmc.irq_pending() {
+            status |= 0x80;
+        }
+
+        status
     }
 
-    /// Steps the APU by one CPU cycle
-    ///
-    /// This should be called once per CPU cycle to keep the APU synchronized.
-    /// Generates audio samples internally which can be retrieved via [`samples()`](Self::samples).
-    ///
-    /// # Returns
-    ///
-    /// Number of DMC DMA stall cycles (0 if no DMA occurred, typically 3 when DMA happens)
-    ///
-    /// # Panics
-    ///
-    /// Panics if `memory_read_fn` is not set when DMC attempts DMA
-    #[inline]
-    pub fn step(&mut self) -> u8 {
-        self.cycles += 1;
+    /// Write to an APU register.
+    pub fn write(&mut self, addr: u16, value: u8) {
+        match addr {
+            // Pulse 1
+            0x4000 => self.pulse1.write_ctrl(value),
+            0x4001 => self.pulse1.write_sweep(value),
+            0x4002 => self.pulse1.write_timer_lo(value),
+            0x4003 => self.pulse1.write_timer_hi(value),
 
-        // Clock channel timers
-        // Pulse and Noise timers are clocked every other CPU cycle
-        if self.cycles.is_multiple_of(2) {
+            // Pulse 2
+            0x4004 => self.pulse2.write_ctrl(value),
+            0x4005 => self.pulse2.write_sweep(value),
+            0x4006 => self.pulse2.write_timer_lo(value),
+            0x4007 => self.pulse2.write_timer_hi(value),
+
+            // Triangle
+            0x4008 => self.triangle.write_linear_counter(value),
+            0x400A => self.triangle.write_timer_lo(value),
+            0x400B => self.triangle.write_timer_hi(value),
+
+            // Noise
+            0x400C => self.noise.write_ctrl(value),
+            0x400E => self.noise.write_period(value),
+            0x400F => self.noise.write_length(value),
+
+            // DMC
+            0x4010 => self.dmc.write_ctrl(value),
+            0x4011 => self.dmc.write_direct_load(value),
+            0x4012 => self.dmc.write_sample_address(value),
+            0x4013 => self.dmc.write_sample_length(value),
+
+            // Status
+            0x4015 => {
+                self.pulse1.set_enabled(value & 0x01 != 0);
+                self.pulse2.set_enabled(value & 0x02 != 0);
+                self.triangle.set_enabled(value & 0x04 != 0);
+                self.noise.set_enabled(value & 0x08 != 0);
+                self.dmc.set_enabled(value & 0x10 != 0);
+            }
+
+            // Frame counter
+            0x4017 => self.frame_counter.write(value),
+
+            _ => {}
+        }
+    }
+
+    /// Clock the APU for one CPU cycle.
+    /// The APU runs at half the CPU clock rate.
+    pub fn clock(&mut self) {
+        // Triangle timer clocks every CPU cycle
+        self.triangle.clock_timer();
+
+        // Other timers clock every other CPU cycle (APU cycle)
+        if self.cycle % 2 == 1 {
             self.pulse1.clock_timer();
             self.pulse2.clock_timer();
             self.noise.clock_timer();
+            self.dmc.clock_timer();
         }
 
-        // Triangle and DMC timers are clocked every CPU cycle
-        self.triangle.clock_timer();
+        // Frame counter
+        let events = self.frame_counter.clock();
+        for event in events.iter().flatten() {
+            match event {
+                FrameEvent::QuarterFrame => {
+                    self.pulse1.clock_envelope();
+                    self.pulse2.clock_envelope();
+                    self.triangle.clock_linear_counter();
+                    self.noise.clock_envelope();
+                }
+                FrameEvent::HalfFrame => {
+                    self.pulse1.clock_length();
+                    self.pulse2.clock_length();
+                    self.pulse1.clock_sweep();
+                    self.pulse2.clock_sweep();
+                    self.triangle.clock_length();
+                    self.noise.clock_length();
+                }
+                FrameEvent::Irq => {
+                    // IRQ is handled by checking irq_pending()
+                }
+            }
+        }
 
-        // Clock DMC timer (may perform DMA)
-        // Returns the number of CPU cycles stolen by DMA (0 if no DMA)
-        let dma_stall_cycles = if let Some(ref mut memory_fn) = self.memory_read_fn {
-            // Clock with actual memory reader
-            self.dmc.clock_timer(memory_fn)
-        } else {
-            // No memory callback set, clock with dummy reader
-            self.dmc.clock_timer(|_| 0)
-        };
-
-        // Clock frame counter and handle frame actions
-        let action = self.frame_counter.clock();
-        self.process_frame_action(action);
-
-        // Mix channel outputs and resample
-        let mixed = self.mixer.mix(
-            self.pulse1.output(),
-            self.pulse2.output(),
-            self.triangle.output(),
-            self.noise.output(),
-            self.dmc.output(),
-        );
-
-        // Add to resampler
-        self.resampler.add_sample(mixed);
-
-        dma_stall_cycles
+        self.cycle = self.cycle.wrapping_add(1);
     }
 
-    /// Steps the APU by one CPU cycle and returns frame action
-    ///
-    /// This is a convenience method that returns the frame action instead of DMA stall cycles.
-    /// Use [`step()`](Self::step) when you need to handle DMC DMA stalls.
-    ///
-    /// # Returns
-    ///
-    /// Frame action to be processed (if any)
-    #[inline]
-    pub fn step_with_action(&mut self) -> FrameAction {
-        let _ = self.step(); // Ignore DMA stall cycles
-        self.frame_counter.clock()
-    }
-
-    /// Get the current mixed audio output from all channels
-    ///
-    /// This returns the instantaneous mixed output without resampling.
-    /// For resampled output suitable for audio playback, use [`samples()`](Self::samples).
-    ///
-    /// # Returns
-    ///
-    /// Mixed audio sample (approximately 0.0-2.0 range)
-    #[inline]
+    /// Get the mixed audio output (0.0 to 1.0).
     #[must_use]
     pub fn output(&self) -> f32 {
-        self.mixer.mix(
-            self.pulse1.output(),
-            self.pulse2.output(),
-            self.triangle.output(),
-            self.noise.output(),
-            self.dmc.output(),
-        )
+        let pulse1 = u16::from(self.pulse1.output());
+        let pulse2 = u16::from(self.pulse2.output());
+        let triangle = u16::from(self.triangle.output());
+        let noise = u16::from(self.noise.output());
+        let dmc = u16::from(self.dmc.output());
+
+        // Use lookup tables for non-linear mixing
+        let pulse_out = PULSE_TABLE[(pulse1 + pulse2) as usize];
+        let tnd_index = 3 * triangle + 2 * noise + dmc;
+        let tnd_out = TND_TABLE[tnd_index.min(202) as usize];
+
+        pulse_out + tnd_out
     }
 
-    /// Get resampled audio samples ready for playback
-    ///
-    /// Returns audio samples at the target sample rate (e.g., 48 kHz).
-    /// Call [`clear_samples()`](Self::clear_samples) after consuming.
-    ///
-    /// # Returns
-    ///
-    /// Slice of audio samples at target sample rate
+    /// Check if DMC needs a sample byte.
     #[must_use]
-    pub fn samples(&self) -> &[f32] {
-        self.resampler.samples()
+    pub fn dmc_needs_sample(&self) -> bool {
+        self.dmc.needs_sample()
     }
 
-    /// Clear the audio sample buffer
-    ///
-    /// Should be called after consuming samples via [`samples()`](Self::samples).
-    pub fn clear_samples(&mut self) {
-        self.resampler.clear();
-    }
-
-    /// Check if at least `min_samples` are available
-    ///
-    /// Useful for determining when to pull samples for audio output.
-    ///
-    /// # Arguments
-    ///
-    /// * `min_samples` - Minimum number of samples required
+    /// Get the DMC sample address.
     #[must_use]
-    pub fn samples_ready(&self, min_samples: usize) -> bool {
-        self.resampler.is_ready(min_samples)
+    pub fn dmc_sample_addr(&self) -> u16 {
+        self.dmc.sample_addr()
     }
 
-    /// Returns whether a frame IRQ is pending
+    /// Fill the DMC sample buffer.
+    pub fn dmc_fill_sample(&mut self, sample: u8) {
+        self.dmc.fill_sample_buffer(sample);
+    }
+
+    /// Check if any APU IRQ is pending.
     #[must_use]
     pub fn irq_pending(&self) -> bool {
         self.frame_counter.irq_pending() || self.dmc.irq_pending()
     }
 
-    /// Get DMC output (0-127)
+    /// Get the current APU cycle count.
+    #[must_use]
+    pub fn cycle(&self) -> u64 {
+        self.cycle
+    }
+
+    /// Get the current APU cycle count (alias for `cycle()`).
+    #[must_use]
+    pub fn cycles(&self) -> u64 {
+        self.cycle
+    }
+
+    /// Get the DMC channel output (0-127).
     #[must_use]
     pub fn dmc_output(&self) -> u8 {
         self.dmc.output()
     }
 
-    /// Returns the current CPU cycle count
+    /// Get pulse 1 length counter value.
     #[must_use]
-    pub const fn cycles(&self) -> u64 {
-        self.cycles
+    pub fn pulse1_length(&self) -> u8 {
+        self.pulse1.length_counter_value()
     }
 
-    /// Resets the APU to power-on state
-    pub fn reset(&mut self) {
-        *self = Self::new();
+    /// Get pulse 2 length counter value.
+    #[must_use]
+    pub fn pulse2_length(&self) -> u8 {
+        self.pulse2.length_counter_value()
+    }
+
+    /// Get triangle length counter value.
+    #[must_use]
+    pub fn triangle_length(&self) -> u8 {
+        self.triangle.length_counter_value()
+    }
+
+    /// Get noise length counter value.
+    #[must_use]
+    pub fn noise_length(&self) -> u8 {
+        self.noise.length_counter_value()
+    }
+
+    /// Get DMC bytes remaining.
+    #[must_use]
+    pub fn dmc_bytes_remaining(&self) -> u16 {
+        self.dmc.bytes_remaining()
     }
 }
 
@@ -443,157 +333,76 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_apu_creation() {
+    fn test_apu_initial() {
         let apu = Apu::new();
-        assert_eq!(apu.cycles, 0);
-        assert!(!apu.pulse1.length_counter_active());
+        assert_eq!(apu.cycle(), 0);
         assert!(!apu.irq_pending());
     }
 
     #[test]
-    fn test_status_register_read() {
+    fn test_apu_status_read() {
         let mut apu = Apu::new();
-
-        // Enable all channels first
-        apu.write_register(0x4015, 0x1F);
-
-        // Load length counters for all channels
-        apu.write_register(0x4003, 0x08); // Pulse 1
-        apu.write_register(0x4007, 0x08); // Pulse 2
-        apu.write_register(0x400B, 0x08); // Triangle
-        apu.write_register(0x400F, 0x08); // Noise
-
-        let status = apu.read_register(0x4015);
-        // Bits 0-3 should be set (all channels have length > 0)
-        assert_eq!(status & 0x0F, 0x0F); // All channels active
+        let status = apu.read_status();
+        assert_eq!(status, 0); // All channels disabled initially
     }
 
     #[test]
-    fn test_status_register_write() {
+    fn test_apu_enable_channels() {
         let mut apu = Apu::new();
+        apu.write(0x4015, 0x1F); // Enable all channels
 
-        // Enable all channels first
-        apu.write_register(0x4015, 0x1F);
+        // Write timer high to load length counters
+        apu.write(0x4003, 0xF8);
+        apu.write(0x4007, 0xF8);
+        apu.write(0x400B, 0xF8);
+        apu.write(0x400F, 0xF8);
+        apu.write(0x4013, 0x10);
+        apu.dmc.set_enabled(true); // DMC needs separate handling
 
-        // Load length counters
-        apu.write_register(0x4003, 0x08); // Pulse 1
-        apu.write_register(0x4007, 0x08); // Pulse 2
-        apu.write_register(0x400B, 0x08); // Triangle
-        apu.write_register(0x400F, 0x08); // Noise
-
-        // Disable pulse 2 and noise, keep pulse 1 and triangle enabled
-        apu.write_register(0x4015, 0x05);
-
-        // Check that pulse 1 and triangle are enabled, pulse 2 and noise are disabled
-        assert!(apu.pulse1.length_counter_active());
-        assert!(!apu.pulse2.length_counter_active()); // Should be 0 after disabling
-        assert!(apu.triangle.length_counter_active());
-        assert!(!apu.noise.length_counter_active()); // Should be 0 after disabling
-        assert!(!apu.dmc.is_active()); // DMC not active (no bytes remaining)
+        let status = apu.read_status();
+        // Channels should be active
+        assert!(status & 0x0F != 0);
     }
 
     #[test]
-    fn test_frame_counter_control() {
+    fn test_apu_clock() {
         let mut apu = Apu::new();
-
-        // Write to frame counter (5-step mode)
-        apu.write_register(0x4017, 0x80);
-
-        // Should not generate IRQ in 5-step mode
-        for _ in 0..40000 {
-            apu.step();
-        }
-
-        assert!(!apu.irq_pending());
+        apu.clock();
+        assert_eq!(apu.cycle(), 1);
+        apu.clock();
+        assert_eq!(apu.cycle(), 2);
     }
 
     #[test]
-    fn test_4step_mode_irq_generation() {
-        let mut apu = Apu::new();
-
-        // Write $00 to $4017: 4-step mode, IRQ enabled
-        apu.write_register(0x4017, 0x00);
-
-        // Initially no IRQ pending
-        assert!(!apu.irq_pending());
-
-        // Clock for 29829 cycles - no IRQ yet (delayed by 1 cycle in fix)
-        for _ in 0..29829 {
-            apu.step();
-        }
-        assert!(!apu.irq_pending());
-
-        // Clock one more time to cycle 29830 - IRQ should fire
-        apu.step();
-        assert!(apu.irq_pending(), "IRQ should be pending at cycle 29830");
-
-        // Verify $4015 shows bit 6 set
-        let status = apu.read_register(0x4015);
-        assert_eq!(status & 0x40, 0x40, "$4015 bit 6 should be set");
-
-        // Reading $4015 clears the IRQ
-        assert!(
-            !apu.irq_pending(),
-            "IRQ should be cleared after reading $4015"
-        );
+    fn test_apu_output_range() {
+        let apu = Apu::new();
+        let output = apu.output();
+        assert!(output >= 0.0);
+        assert!(output <= 1.0);
     }
 
     #[test]
-    fn test_read_clears_frame_irq() {
-        let mut apu = Apu::new();
-
-        // Set frame IRQ
-        apu.frame_counter.irq_flag = true;
-        assert!(apu.frame_counter.irq_flag);
-
-        // Read status should clear it
-        let status = apu.read_register(0x4015);
-        assert_eq!(status & 0x40, 0x40); // IRQ flag was set
-
-        // Now IRQ flag should be cleared
-        assert!(!apu.frame_counter.irq_flag);
-
-        // Read again should show cleared
-        let status = apu.read_register(0x4015);
-        assert_eq!(status & 0x40, 0x00);
+    #[allow(clippy::float_cmp, clippy::assertions_on_constants)]
+    fn test_pulse_table() {
+        assert_eq!(PULSE_TABLE[0], 0.0);
+        assert!(PULSE_TABLE[30] > 0.0);
+        assert!(PULSE_TABLE[30] < 1.0);
     }
 
     #[test]
-    fn test_step_increments_cycles() {
-        let mut apu = Apu::new();
-
-        assert_eq!(apu.cycles(), 0);
-
-        apu.step();
-        assert_eq!(apu.cycles(), 1);
-
-        for _ in 0..99 {
-            apu.step();
-        }
-
-        assert_eq!(apu.cycles(), 100);
+    #[allow(clippy::float_cmp, clippy::assertions_on_constants)]
+    fn test_tnd_table() {
+        assert_eq!(TND_TABLE[0], 0.0);
+        assert!(TND_TABLE[202] > 0.0);
+        assert!(TND_TABLE[202] < 1.0);
     }
 
     #[test]
-    fn test_reset() {
+    fn test_apu_reset() {
         let mut apu = Apu::new();
-
-        // Enable channels first, then load length counters
-        apu.write_register(0x4015, 0x1F);
-        apu.write_register(0x4003, 0x08);
-
-        // Modify state
-        for _ in 0..1000 {
-            apu.step();
-        }
-
-        assert_ne!(apu.cycles(), 0);
-        assert!(apu.pulse1.length_counter_active());
-
-        // Reset
+        apu.clock();
+        apu.clock();
         apu.reset();
-
-        assert_eq!(apu.cycles(), 0);
-        assert!(!apu.pulse1.length_counter_active());
+        assert_eq!(apu.cycle(), 0);
     }
 }

@@ -1,310 +1,250 @@
-//! PPU scrolling implementation (Loopy's model)
+//! PPU Scroll and Address Registers.
 //!
-//! Implements the internal VRAM address registers (v and t) and fine X scroll
-//! for hardware scrolling. Based on Brad Taylor (Loopy)'s PPU scrolling document.
-//!
-//! # Register Layout
-//!
-//! Both v and t are 15-bit registers:
+//! The PPU has an internal 15-bit VRAM address register (v) and a temporary
+//! address register (t). The address latch (w) toggles between high/low bytes.
 //!
 //! ```text
-//!  yyy NN YYYYY XXXXX
-//!  ||| || ||||| +++++- Coarse X scroll (0-31)
-//!  ||| || +++++------- Coarse Y scroll (0-31)
-//!  ||| ++------------- Nametable select (0-3)
-//!  +++---------------- Fine Y scroll (0-7)
+//! v/t register layout:
+//! yyy NN YYYYY XXXXX
+//! ||| || ||||| +++++-- coarse X scroll (5 bits)
+//! ||| || +++++-------- coarse Y scroll (5 bits)
+//! ||| ++-------------- nametable select (2 bits)
+//! +++----------------- fine Y scroll (3 bits)
 //! ```
+//!
+//! The fine X scroll is stored separately in a 3-bit register (x).
 
-/// PPU scrolling registers
-///
-/// Implements Loopy's scrolling model with v, t, x, and w registers.
-///
-/// # Mid-Scanline Updates
-///
-/// Games use mid-scanline writes to $2005/$2006 for split-screen effects:
-/// - Super Mario Bros. 3: Status bar at top, scrolling gameplay below
-/// - Kirby's Adventure: Complex multi-layer scrolling
-///
-/// The second write to $2006 immediately copies t to v, which is used
-/// for the next tile fetch. Games time this write during HBlank (after dot 256)
-/// to achieve clean screen splits.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ScrollRegisters {
-    /// Current VRAM address (15 bits)
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
+/// PPU scroll/address registers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct Scroll {
+    /// Current VRAM address (15 bits, but stored as u16).
     v: u16,
-    /// Temporary VRAM address (15 bits)
+    /// Temporary VRAM address (15 bits).
     t: u16,
-    /// Fine X scroll (3 bits, 0-7)
+    /// Fine X scroll (3 bits).
     x: u8,
-    /// Write toggle (first/second write to $2005/$2006)
+    /// Address latch (write toggle): false = first write, true = second write.
     w: bool,
-    /// Last v value before mid-scanline update (for debugging)
-    last_v_before_update: u16,
-    /// Flag indicating a mid-scanline write occurred this frame
-    mid_scanline_write_detected: bool,
-    /// Countdown timer for delayed v register update (2-3 PPU cycles)
-    delay_v_cycles: u8,
-    /// Value to apply to v when delay expires
-    delay_v: u16,
 }
 
-impl ScrollRegisters {
-    /// Create new scroll registers (power-up state)
-    pub fn new() -> Self {
+impl Scroll {
+    /// Mask for the 15-bit VRAM address.
+    const VRAM_MASK: u16 = 0x7FFF;
+    /// Mask for coarse X (bits 0-4).
+    const COARSE_X_MASK: u16 = 0x001F;
+    /// Mask for coarse Y (bits 5-9).
+    const COARSE_Y_MASK: u16 = 0x03E0;
+    /// Mask for nametable select (bits 10-11).
+    const NAMETABLE_MASK: u16 = 0x0C00;
+    /// Mask for fine Y (bits 12-14).
+    const FINE_Y_MASK: u16 = 0x7000;
+
+    /// Create a new scroll register set.
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             v: 0,
             t: 0,
             x: 0,
             w: false,
-            last_v_before_update: 0,
-            mid_scanline_write_detected: false,
-            delay_v_cycles: 0,
-            delay_v: 0,
         }
     }
 
-    /// Reset frame-specific state (call at start of each frame)
-    ///
-    /// Clears mid-scanline detection flag for the new frame.
-    pub fn start_frame(&mut self) {
-        self.mid_scanline_write_detected = false;
+    /// Get the current VRAM address.
+    #[must_use]
+    #[inline]
+    pub const fn vram_addr(self) -> u16 {
+        self.v & Self::VRAM_MASK
     }
 
-    /// Check if a mid-scanline write was detected this frame
+    /// Get the coarse X scroll (0-31).
+    #[must_use]
     #[inline]
-    pub fn mid_scanline_write_detected(&self) -> bool {
-        self.mid_scanline_write_detected
+    pub const fn coarse_x(self) -> u8 {
+        (self.v & Self::COARSE_X_MASK) as u8
     }
 
-    /// Get the last v value before a mid-scanline update (for debugging)
+    /// Get the coarse Y scroll (0-31, but 30-31 are attribute table).
+    #[must_use]
     #[inline]
-    pub fn last_v_before_update(&self) -> u16 {
-        self.last_v_before_update
+    pub const fn coarse_y(self) -> u8 {
+        ((self.v & Self::COARSE_Y_MASK) >> 5) as u8
     }
 
-    /// Get temporary VRAM address (t register)
+    /// Get the fine X scroll (0-7).
+    #[must_use]
     #[inline]
-    pub fn temp_vram_addr(&self) -> u16 {
-        self.t
+    pub const fn fine_x(self) -> u8 {
+        self.x & 0x07
     }
 
-    /// Get write toggle state
+    /// Get the fine Y scroll (0-7).
+    #[must_use]
     #[inline]
-    pub fn write_toggle(&self) -> bool {
+    pub const fn fine_y(self) -> u8 {
+        ((self.v & Self::FINE_Y_MASK) >> 12) as u8
+    }
+
+    /// Get the nametable select bits (0-3).
+    #[must_use]
+    #[inline]
+    pub const fn nametable(self) -> u8 {
+        ((self.v & Self::NAMETABLE_MASK) >> 10) as u8
+    }
+
+    /// Get the address latch state.
+    #[must_use]
+    #[inline]
+    pub const fn write_latch(self) -> bool {
         self.w
     }
 
-    /// Record a mid-scanline write occurred
-    ///
-    /// Should be called by PPU when a write to $2005/$2006 happens during
-    /// visible rendering (scanline 0-239, after dot 0).
-    pub fn record_mid_scanline_write(&mut self) {
-        self.last_v_before_update = self.v;
-        self.mid_scanline_write_detected = true;
-    }
-
-    /// Get current VRAM address (v register)
+    /// Reset the address latch (called when reading $2002).
     #[inline]
-    pub fn vram_addr(&self) -> u16 {
-        self.v
-    }
-
-    /// Get fine X scroll (0-7)
-    #[inline]
-    pub fn fine_x(&self) -> u8 {
-        self.x
-    }
-
-    /// Get coarse X scroll (tile column 0-31)
-    #[inline]
-    pub fn coarse_x(&self) -> u8 {
-        (self.v & 0x001F) as u8
-    }
-
-    /// Get coarse Y scroll (tile row 0-31)
-    #[inline]
-    pub fn coarse_y(&self) -> u8 {
-        ((self.v & 0x03E0) >> 5) as u8
-    }
-
-    /// Get fine Y scroll (pixel row 0-7)
-    #[inline]
-    pub fn fine_y(&self) -> u8 {
-        ((self.v & 0x7000) >> 12) as u8
-    }
-
-    /// Get nametable X bit
-    #[inline]
-    pub fn nametable_x(&self) -> u8 {
-        ((self.v & 0x0400) >> 10) as u8
-    }
-
-    /// Get nametable Y bit
-    #[inline]
-    pub fn nametable_y(&self) -> u8 {
-        ((self.v & 0x0800) >> 11) as u8
-    }
-
-    /// Write to PPUCTRL ($2000)
-    ///
-    /// Updates nametable select bits in t register.
-    pub fn write_ppuctrl(&mut self, value: u8) {
-        // t: ....BA.. ........ = d: ......BA
-        self.t = (self.t & 0xF3FF) | (((value & 0x03) as u16) << 10);
-    }
-
-    /// Write to PPUSCROLL ($2005)
-    ///
-    /// First write: X scroll (coarse X and fine X)
-    /// Second write: Y scroll (coarse Y and fine Y)
-    pub fn write_ppuscroll(&mut self, value: u8) {
-        if self.w {
-            // Second write: Y scroll
-            // t: .YYY.... ........ = d[2:0]
-            // t: ........ YYYYY... = d[7:3]
-            self.t = (self.t & 0x8FFF) | (((value & 0x07) as u16) << 12);
-            self.t = (self.t & 0xFC1F) | (((value & 0xF8) as u16) << 2);
-        } else {
-            // First write: X scroll
-            // t: ........ ...XXXXX = d[7:3]
-            // x:       XXX         = d[2:0]
-            self.t = (self.t & 0xFFE0) | ((value >> 3) as u16);
-            self.x = value & 0x07;
-        }
-
-        self.w = !self.w;
-    }
-
-    /// Write to PPUADDR ($2006)
-    ///
-    /// First write: High byte (sets t[13:8])
-    /// Second write: Low byte (sets t[7:0] and schedules delayed copy of t to v)
-    ///
-    /// The NES hardware delays the t->v copy by approximately 2-3 PPU cycles.
-    /// This is required for accurate timing of VRAM address updates.
-    pub fn write_ppuaddr(&mut self, value: u8) {
-        if self.w {
-            // Second write: low byte
-            // t: ........ AAAAAAAA = d[7:0]
-            // Schedule delayed v = t (2 PPU cycles delay per Visual NES findings)
-            self.t = (self.t & 0xFF00) | (value as u16);
-            self.delay_v_cycles = 2;
-            self.delay_v = self.t;
-        } else {
-            // First write: high byte
-            // t: ..AAAAAA ........ = d[5:0]
-            // t: .0...... ........ (clear bit 14)
-            self.t = (self.t & 0x00FF) | (((value & 0x3F) as u16) << 8);
-            self.t &= 0x7FFF;
-        }
-
-        self.w = !self.w;
-    }
-
-    /// Process delayed v register update
-    ///
-    /// Called every PPU cycle to decrement the delay counter and apply
-    /// the scheduled v update when the delay expires.
-    ///
-    /// Returns `true` if the v register was updated this cycle.
-    #[inline]
-    pub fn delayed_update(&mut self) -> bool {
-        if self.delay_v_cycles > 0 {
-            self.delay_v_cycles -= 1;
-            if self.delay_v_cycles == 0 {
-                self.v = self.delay_v;
-                return true;
-            }
-        }
-        false
-    }
-
-    /// Read from PPUSTATUS ($2002)
-    ///
-    /// Resets the write toggle.
-    pub fn read_ppustatus(&mut self) {
+    pub fn reset_latch(&mut self) {
         self.w = false;
     }
 
-    /// Increment horizontal position (coarse X)
-    ///
-    /// Called every 8 dots during rendering.
-    /// Wraps at nametable boundaries.
-    pub fn increment_x(&mut self) {
-        if (self.v & 0x001F) == 31 {
-            // Coarse X = 31, wrap to 0 and switch horizontal nametable
-            self.v &= !0x001F;
-            self.v ^= 0x0400;
+    /// Write to PPUCTRL ($2000) - updates nametable select in t.
+    #[inline]
+    pub fn write_ctrl(&mut self, value: u8) {
+        // t: ...GH.. ........ <- d: ......GH
+        // Bits 0-1 of value go to bits 10-11 of t
+        self.t = (self.t & !Self::NAMETABLE_MASK) | ((u16::from(value) & 0x03) << 10);
+    }
+
+    /// Write to PPUSCROLL ($2005).
+    #[inline]
+    pub fn write_scroll(&mut self, value: u8) {
+        if self.w {
+            // Second write: Y scroll
+            // t: FGH..AB CDE..... <- d: ABCDEFGH
+            self.t = (self.t & !(Self::COARSE_Y_MASK | Self::FINE_Y_MASK))
+                | ((u16::from(value) & 0xF8) << 2)
+                | ((u16::from(value) & 0x07) << 12);
         } else {
-            // Increment coarse X
+            // First write: X scroll
+            // t: ....... ...ABCDE <- d: ABCDE...
+            // x:              FGH <- d: .....FGH
+            self.t = (self.t & !Self::COARSE_X_MASK) | (u16::from(value) >> 3);
+            self.x = value & 0x07;
+        }
+        self.w = !self.w;
+    }
+
+    /// Write to PPUADDR ($2006).
+    #[inline]
+    pub fn write_addr(&mut self, value: u8) {
+        if self.w {
+            // Second write: low byte
+            // t: ....... ABCDEFGH <- d: ABCDEFGH
+            // v: <...all bits...> <- t
+            self.t = (self.t & 0xFF00) | u16::from(value);
+            self.v = self.t;
+        } else {
+            // First write: high byte
+            // t: .CDEFGH ........ <- d: ..CDEFGH
+            // t: Z...... ........ <- 0 (bit 15 is always cleared)
+            self.t = (self.t & 0x00FF) | ((u16::from(value) & 0x3F) << 8);
+        }
+        self.w = !self.w;
+    }
+
+    /// Increment the VRAM address by the specified amount.
+    #[inline]
+    pub fn increment_vram(&mut self, amount: u16) {
+        self.v = self.v.wrapping_add(amount) & Self::VRAM_MASK;
+    }
+
+    /// Copy horizontal position from t to v.
+    /// Called at dot 257 of each visible scanline.
+    #[inline]
+    pub fn copy_horizontal(&mut self) {
+        // v: ....A.. ...BCDEF <- t: ....A.. ...BCDEF
+        self.v = (self.v & !0x041F) | (self.t & 0x041F);
+    }
+
+    /// Copy vertical position from t to v.
+    /// Called at dots 280-304 of the pre-render scanline.
+    #[inline]
+    pub fn copy_vertical(&mut self) {
+        // v: GHIA.BC DEF..... <- t: GHIA.BC DEF.....
+        self.v = (self.v & !0x7BE0) | (self.t & 0x7BE0);
+    }
+
+    /// Increment coarse X (horizontal scroll).
+    /// Called at the end of each tile fetch.
+    #[inline]
+    pub fn increment_x(&mut self) {
+        if (self.v & Self::COARSE_X_MASK) == 31 {
+            // Wrap around and switch horizontal nametable
+            self.v = (self.v & !Self::COARSE_X_MASK) ^ 0x0400;
+        } else {
             self.v += 1;
         }
     }
 
-    /// Increment vertical position (fine Y and coarse Y)
-    ///
+    /// Increment fine Y (vertical scroll).
     /// Called at dot 256 of each visible scanline.
-    /// Handles fine Y overflow and nametable switching.
+    #[inline]
     pub fn increment_y(&mut self) {
-        if (self.v & 0x7000) == 0x7000 {
-            // Fine Y = 7, wrap and increment coarse Y
-            self.v &= !0x7000;
-            let mut y = (self.v & 0x03E0) >> 5;
-
-            if y == 29 {
-                // Coarse Y = 29 (last visible row), wrap and switch vertical nametable
-                y = 0;
+        if (self.v & Self::FINE_Y_MASK) == Self::FINE_Y_MASK {
+            // Fine Y = 7, reset to 0 and increment coarse Y
+            self.v &= !Self::FINE_Y_MASK;
+            let mut coarse_y = self.coarse_y();
+            if coarse_y == 29 {
+                // Row 29 is the last row of tiles, wrap to 0 and switch nametable
+                coarse_y = 0;
                 self.v ^= 0x0800;
-            } else if y == 31 {
-                // Coarse Y = 31 (out of bounds), wrap without switching nametable
-                y = 0;
+            } else if coarse_y == 31 {
+                // Row 31 wraps to 0 without switching nametable (attribute area)
+                coarse_y = 0;
             } else {
-                // Increment coarse Y
-                y += 1;
+                coarse_y += 1;
             }
-
-            self.v = (self.v & !0x03E0) | (y << 5);
+            self.v = (self.v & !Self::COARSE_Y_MASK) | (u16::from(coarse_y) << 5);
         } else {
-            // Increment fine Y
+            // Fine Y < 7, increment it
             self.v += 0x1000;
         }
     }
 
-    /// Copy horizontal bits from t to v
-    ///
-    /// Called at dot 257 of each visible scanline.
-    /// Resets horizontal scroll position.
-    pub fn copy_horizontal(&mut self) {
-        // v: ....F.. ...EDCBA = t: ....F.. ...EDCBA
-        self.v = (self.v & 0xFBE0) | (self.t & 0x041F);
+    /// Get the nametable byte address for the current tile.
+    #[must_use]
+    #[inline]
+    pub const fn nametable_addr(self) -> u16 {
+        0x2000 | (self.v & 0x0FFF)
     }
 
-    /// Copy vertical bits from t to v
-    ///
-    /// Called during dots 280-304 of pre-render scanline.
-    /// Resets vertical scroll position for next frame.
-    pub fn copy_vertical(&mut self) {
-        // v: IHGF.ED CBA..... = t: IHGF.ED CBA.....
-        self.v = (self.v & 0x041F) | (self.t & 0x7BE0);
+    /// Get the attribute table address for the current tile.
+    #[must_use]
+    #[inline]
+    pub const fn attribute_addr(self) -> u16 {
+        0x23C0 | (self.v & Self::NAMETABLE_MASK) | ((self.v >> 4) & 0x38) | ((self.v >> 2) & 0x07)
     }
 
-    /// Increment VRAM address after $2007 access
-    ///
-    /// Increments by 1 (across) or 32 (down) based on PPUCTRL.
-    pub fn increment_vram(&mut self, increment: u16) {
-        self.v = self.v.wrapping_add(increment) & 0x7FFF;
+    /// Get the pattern table address for a tile.
+    #[must_use]
+    #[inline]
+    pub fn pattern_addr(self, tile: u8, base: u16) -> u16 {
+        base + (u16::from(tile) << 4) + u16::from(self.fine_y())
     }
 
-    /// Set VRAM address directly (for testing)
-    #[cfg(test)]
+    /// Get the temporary register value.
+    #[must_use]
+    #[inline]
+    pub const fn temp_addr(self) -> u16 {
+        self.t
+    }
+
+    /// Set the VRAM address directly (for debugging/testing).
+    #[inline]
     pub fn set_vram_addr(&mut self, addr: u16) {
-        self.v = addr & 0x7FFF;
-    }
-}
-
-impl Default for ScrollRegisters {
-    fn default() -> Self {
-        Self::new()
+        self.v = addr & Self::VRAM_MASK;
     }
 }
 
@@ -313,251 +253,107 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_ppuscroll_x_write() {
-        let mut scroll = ScrollRegisters::new();
-
-        // Write X scroll = 125 ($7D)
-        scroll.write_ppuscroll(0x7D);
-
-        // Coarse X = 125 / 8 = 15
-        // Fine X = 125 % 8 = 5
-        assert_eq!((scroll.t & 0x001F) as u8, 15);
-        assert_eq!(scroll.x, 5);
-        assert!(scroll.w);
+    fn test_new() {
+        let scroll = Scroll::new();
+        assert_eq!(scroll.vram_addr(), 0);
+        assert_eq!(scroll.fine_x(), 0);
+        assert!(!scroll.write_latch());
     }
 
     #[test]
-    fn test_ppuscroll_y_write() {
-        let mut scroll = ScrollRegisters::new();
+    fn test_write_scroll() {
+        let mut scroll = Scroll::new();
 
-        // First write: X
-        scroll.write_ppuscroll(0x00);
-        // Second write: Y scroll = 94 ($5E)
-        scroll.write_ppuscroll(0x5E);
+        // First write: X scroll = 0x7D (coarse 15, fine 5)
+        scroll.write_scroll(0x7D);
+        assert!(scroll.write_latch());
+        assert_eq!(scroll.temp_addr() & 0x001F, 15); // coarse X
+        assert_eq!(scroll.fine_x(), 5);
 
-        // Coarse Y = 94 / 8 = 11
-        // Fine Y = 94 % 8 = 6
-        assert_eq!(((scroll.t & 0x03E0) >> 5) as u8, 11);
-        assert_eq!(((scroll.t & 0x7000) >> 12) as u8, 6);
-        assert!(!scroll.w);
+        // Second write: Y scroll = 0x5E (coarse 11, fine 6)
+        scroll.write_scroll(0x5E);
+        assert!(!scroll.write_latch());
+        assert_eq!((scroll.temp_addr() >> 5) & 0x1F, 11); // coarse Y
+        assert_eq!((scroll.temp_addr() >> 12) & 0x07, 6); // fine Y
     }
 
     #[test]
-    fn test_ppuaddr_write() {
-        let mut scroll = ScrollRegisters::new();
+    fn test_write_addr() {
+        let mut scroll = Scroll::new();
 
-        // Write $3F00
-        scroll.write_ppuaddr(0x3F);
-        assert!(scroll.w);
+        // Write address $2108
+        scroll.write_addr(0x21);
+        assert!(scroll.write_latch());
+        assert_eq!(scroll.vram_addr(), 0); // v not updated yet
 
-        scroll.write_ppuaddr(0x00);
-        assert!(!scroll.w);
-        // v is now delayed by 2 PPU cycles
-        assert_eq!(scroll.v, 0x0000); // Not yet updated
-        scroll.delayed_update();
-        assert_eq!(scroll.v, 0x0000); // Still waiting (1 cycle remaining)
-        scroll.delayed_update();
-        assert_eq!(scroll.v, 0x3F00); // Now updated after 2 cycles
+        scroll.write_addr(0x08);
+        assert!(!scroll.write_latch());
+        assert_eq!(scroll.vram_addr(), 0x2108);
     }
 
     #[test]
-    fn test_increment_x_no_wrap() {
-        let mut scroll = ScrollRegisters::new();
-        scroll.set_vram_addr(0x2000);
+    fn test_increment_x() {
+        let mut scroll = Scroll::new();
+        scroll.set_vram_addr(0x001F); // coarse X = 31
 
         scroll.increment_x();
-        assert_eq!(scroll.v & 0x001F, 1);
+        assert_eq!(scroll.coarse_x(), 0);
+        // Nametable bit should toggle
+        assert_eq!(scroll.vram_addr() & 0x0400, 0x0400);
     }
 
     #[test]
-    fn test_increment_x_wrap_nametable() {
-        let mut scroll = ScrollRegisters::new();
-        scroll.set_vram_addr(0x201F); // Coarse X = 31
+    fn test_increment_y() {
+        let mut scroll = Scroll::new();
 
-        scroll.increment_x();
-        // Coarse X wraps to 0, nametable switches
-        assert_eq!(scroll.v & 0x001F, 0);
-        assert_eq!(scroll.v & 0x0400, 0x0400);
-    }
-
-    #[test]
-    fn test_increment_y_fine() {
-        let mut scroll = ScrollRegisters::new();
-        scroll.set_vram_addr(0x0000); // Fine Y = 0
-
+        // Test fine Y increment
+        scroll.set_vram_addr(0x0000);
         scroll.increment_y();
-        // Fine Y increments
-        assert_eq!((scroll.v & 0x7000) >> 12, 1);
+        assert_eq!(scroll.fine_y(), 1);
+
+        // Test fine Y overflow to coarse Y
+        scroll.set_vram_addr(0x7000); // fine Y = 7
+        scroll.increment_y();
+        assert_eq!(scroll.fine_y(), 0);
+        assert_eq!(scroll.coarse_y(), 1);
     }
 
     #[test]
-    fn test_increment_y_wrap_coarse() {
-        let mut scroll = ScrollRegisters::new();
-        scroll.set_vram_addr(0x7000); // Fine Y = 7
+    fn test_nametable_addr() {
+        let mut scroll = Scroll::new();
+        scroll.set_vram_addr(0x0000);
+        assert_eq!(scroll.nametable_addr(), 0x2000);
 
-        scroll.increment_y();
-        // Fine Y wraps, coarse Y increments
-        assert_eq!(scroll.v & 0x7000, 0);
-        assert_eq!((scroll.v & 0x03E0) >> 5, 1);
+        scroll.set_vram_addr(0x0400);
+        assert_eq!(scroll.nametable_addr(), 0x2400);
     }
 
     #[test]
-    fn test_increment_y_wrap_nametable() {
-        let mut scroll = ScrollRegisters::new();
-        scroll.set_vram_addr(0x73A0); // Fine Y = 7, Coarse Y = 29
-
-        scroll.increment_y();
-        // Fine Y wraps, coarse Y wraps, nametable switches
-        assert_eq!(scroll.v & 0x7000, 0);
-        assert_eq!((scroll.v & 0x03E0) >> 5, 0);
-        assert_eq!(scroll.v & 0x0800, 0x0800);
+    fn test_attribute_addr() {
+        let mut scroll = Scroll::new();
+        scroll.set_vram_addr(0x0000);
+        assert_eq!(scroll.attribute_addr(), 0x23C0);
     }
 
     #[test]
     fn test_copy_horizontal() {
-        let mut scroll = ScrollRegisters::new();
-        scroll.t = 0x041F; // Set horizontal bits in t
-        scroll.v = 0x0000;
+        let mut scroll = Scroll::new();
+        scroll.set_vram_addr(0x7FFF);
+        scroll.write_addr(0x00);
+        scroll.write_addr(0x00);
+        scroll.t = 0x041F;
 
         scroll.copy_horizontal();
-        assert_eq!(scroll.v & 0x041F, 0x041F);
+        assert_eq!(scroll.vram_addr() & 0x041F, 0x041F);
     }
 
     #[test]
     fn test_copy_vertical() {
-        let mut scroll = ScrollRegisters::new();
-        scroll.t = 0x7BE0; // Set vertical bits in t
-        scroll.v = 0x0000;
+        let mut scroll = Scroll::new();
+        scroll.set_vram_addr(0x0000);
+        scroll.t = 0x7BE0;
 
         scroll.copy_vertical();
-        assert_eq!(scroll.v & 0x7BE0, 0x7BE0);
-    }
-
-    #[test]
-    fn test_read_ppustatus_resets_latch() {
-        let mut scroll = ScrollRegisters::new();
-
-        scroll.write_ppuscroll(0x00);
-        assert!(scroll.w);
-
-        scroll.read_ppustatus();
-        assert!(!scroll.w);
-    }
-
-    #[test]
-    fn test_mid_scanline_detection_initial_state() {
-        let scroll = ScrollRegisters::new();
-
-        // Initially no mid-scanline write detected
-        assert!(!scroll.mid_scanline_write_detected());
-        assert_eq!(scroll.last_v_before_update(), 0);
-    }
-
-    #[test]
-    fn test_mid_scanline_write_recording() {
-        let mut scroll = ScrollRegisters::new();
-
-        // Set up v to some value
-        scroll.write_ppuaddr(0x21);
-        scroll.write_ppuaddr(0x00);
-        // Apply delayed update (2 PPU cycles)
-        scroll.delayed_update();
-        scroll.delayed_update(); // v = $2100 now
-
-        // Record a mid-scanline write
-        scroll.record_mid_scanline_write();
-
-        assert!(scroll.mid_scanline_write_detected());
-        assert_eq!(scroll.last_v_before_update(), 0x2100);
-    }
-
-    #[test]
-    fn test_start_frame_clears_mid_scanline_flag() {
-        let mut scroll = ScrollRegisters::new();
-
-        // Record a mid-scanline write
-        scroll.record_mid_scanline_write();
-        assert!(scroll.mid_scanline_write_detected());
-
-        // Start new frame should clear the flag
-        scroll.start_frame();
-        assert!(!scroll.mid_scanline_write_detected());
-    }
-
-    #[test]
-    fn test_temp_vram_addr_getter() {
-        let mut scroll = ScrollRegisters::new();
-
-        // First write to PPUADDR sets high byte of t
-        scroll.write_ppuaddr(0x21);
-        assert_eq!(scroll.temp_vram_addr() >> 8, 0x21);
-
-        // Second write completes t and schedules delayed copy to v
-        scroll.write_ppuaddr(0xAB);
-        assert_eq!(scroll.temp_vram_addr(), 0x21AB);
-        // v is delayed by 2 PPU cycles
-        assert_eq!(scroll.vram_addr(), 0x0000);
-        scroll.delayed_update();
-        scroll.delayed_update();
-        assert_eq!(scroll.vram_addr(), 0x21AB);
-    }
-
-    #[test]
-    fn test_write_toggle_getter() {
-        let mut scroll = ScrollRegisters::new();
-
-        // Initially false
-        assert!(!scroll.write_toggle());
-
-        // After first write, should be true
-        scroll.write_ppuscroll(0x00);
-        assert!(scroll.write_toggle());
-
-        // After second write, should be false again
-        scroll.write_ppuscroll(0x00);
-        assert!(!scroll.write_toggle());
-    }
-
-    #[test]
-    fn test_mid_scanline_preserves_v_before_update() {
-        let mut scroll = ScrollRegisters::new();
-
-        // Set initial v value
-        scroll.write_ppuaddr(0x23);
-        scroll.write_ppuaddr(0x45);
-        // Apply delayed update (2 PPU cycles)
-        scroll.delayed_update();
-        scroll.delayed_update(); // v = $2345 now
-
-        // Record first mid-scanline write
-        scroll.record_mid_scanline_write();
-        assert_eq!(scroll.last_v_before_update(), 0x2345);
-
-        // Change v
-        scroll.write_ppuaddr(0x20);
-        scroll.write_ppuaddr(0x00);
-        // Apply delayed update (2 PPU cycles)
-        scroll.delayed_update();
-        scroll.delayed_update(); // v = $2000 now
-
-        // Record second mid-scanline write
-        scroll.record_mid_scanline_write();
-        assert_eq!(scroll.last_v_before_update(), 0x2000);
-    }
-
-    #[test]
-    fn test_delayed_update_returns_true_when_applied() {
-        let mut scroll = ScrollRegisters::new();
-
-        // Write address to trigger delayed update
-        scroll.write_ppuaddr(0x21);
-        scroll.write_ppuaddr(0x00);
-
-        // First delayed_update should return false (still waiting)
-        assert!(!scroll.delayed_update());
-        // Second delayed_update should return true (applied)
-        assert!(scroll.delayed_update());
-        // Third should return false (nothing pending)
-        assert!(!scroll.delayed_update());
+        assert_eq!(scroll.vram_addr() & 0x7BE0, 0x7BE0);
     }
 }

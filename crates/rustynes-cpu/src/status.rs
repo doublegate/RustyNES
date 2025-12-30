@@ -1,180 +1,117 @@
-//! CPU Status Register (P) implementation.
+//! CPU Status Register (P register) flags.
 //!
-//! The 6502 status register contains 8 flags that track the processor state.
-//! Bit layout: NV-BDIZC (where - is the unused bit, always set to 1)
+//! The 6502 status register is an 8-bit register that contains various flags
+//! reflecting the state of the processor:
+//!
+//! ```text
+//! 7  6  5  4  3  2  1  0
+//! N  V  U  B  D  I  Z  C
+//! │  │  │  │  │  │  │  └─ Carry
+//! │  │  │  │  │  │  └──── Zero
+//! │  │  │  │  │  └─────── Interrupt Disable
+//! │  │  │  │  └────────── Decimal Mode (not used in NES but still functional)
+//! │  │  │  └───────────── Break (1 when pushed from PHP/BRK, 0 from IRQ/NMI)
+//! │  │  └──────────────── Unused (always 1 when pushed to stack)
+//! │  └─────────────────── Overflow
+//! └────────────────────── Negative
+//! ```
 
 use bitflags::bitflags;
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 bitflags! {
-    /// CPU Status Register Flags (P register)
-    ///
-    /// The status register contains flags that reflect the state of the CPU
-    /// and control certain behaviors like interrupt handling.
-    ///
-    /// # Flag Bits (NV-BDIZC)
-    ///
-    /// - **N (Negative)**: Set if result is negative (bit 7 = 1)
-    /// - **V (Overflow)**: Set if signed overflow occurred
-    /// - **U (Unused)**: Always 1 when pushed to stack
-    /// - **B (Break)**: Distinguishes BRK from IRQ (stack only)
-    /// - **D (Decimal)**: Decimal mode flag (ignored on NES)
-    /// - **I (Interrupt Disable)**: When set, IRQ interrupts are masked
-    /// - **Z (Zero)**: Set if result is zero
-    /// - **C (Carry)**: Set if carry/borrow occurred
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use rustynes_cpu::StatusFlags;
-    ///
-    /// let mut flags = StatusFlags::default();
-    /// flags.insert(StatusFlags::CARRY);
-    /// assert!(flags.contains(StatusFlags::CARRY));
-    ///
-    /// // Set N and Z based on a value
-    /// let value = 0x00;
-    /// flags.set_zn(value);
-    /// assert!(flags.contains(StatusFlags::ZERO));
-    /// assert!(!flags.contains(StatusFlags::NEGATIVE));
-    /// ```
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-    pub struct StatusFlags: u8 {
-        /// Carry flag (bit 0)
-        const CARRY             = 0b0000_0001;
-        /// Zero flag (bit 1)
-        const ZERO              = 0b0000_0010;
-        /// Interrupt Disable flag (bit 2)
-        const INTERRUPT_DISABLE = 0b0000_0100;
-        /// Decimal Mode flag (bit 3) - ignored on NES but still functional
-        const DECIMAL           = 0b0000_1000;
-        /// Break flag (bit 4) - only set when pushed to stack from PHP/BRK
-        const BREAK             = 0b0001_0000;
-        /// Unused flag (bit 5) - always 1 when pushed to stack
-        const UNUSED            = 0b0010_0000;
-        /// Overflow flag (bit 6)
-        const OVERFLOW          = 0b0100_0000;
-        /// Negative flag (bit 7)
-        const NEGATIVE          = 0b1000_0000;
+    /// CPU Status Register flags.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+    #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+    pub struct Status: u8 {
+        /// Carry flag - Set if the last operation caused an overflow from bit 7
+        /// or an underflow from bit 0.
+        const C = 1 << 0;
+
+        /// Zero flag - Set if the result of the last operation was zero.
+        const Z = 1 << 1;
+
+        /// Interrupt Disable flag - When set, IRQ interrupts are disabled.
+        /// NMI interrupts are not affected.
+        const I = 1 << 2;
+
+        /// Decimal Mode flag - When set, arithmetic operations use BCD.
+        /// Note: The NES CPU lacks BCD support, but this flag still functions.
+        const D = 1 << 3;
+
+        /// Break flag - Distinguishes hardware interrupts from BRK instructions.
+        /// Set to 1 when pushed by PHP or BRK, 0 when pushed by IRQ or NMI.
+        const B = 1 << 4;
+
+        /// Unused flag - Always set to 1 when status is pushed to the stack.
+        const U = 1 << 5;
+
+        /// Overflow flag - Set if the last operation caused a signed overflow.
+        const V = 1 << 6;
+
+        /// Negative flag - Set if bit 7 of the result is set.
+        const N = 1 << 7;
     }
 }
 
-impl Default for StatusFlags {
-    /// Creates status register with default power-on state
-    ///
-    /// Default state: Interrupt Disable = 1, Unused = 1
-    fn default() -> Self {
-        Self::INTERRUPT_DISABLE | Self::UNUSED
-    }
-}
+impl Status {
+    /// Initial status after power-on.
+    /// I flag is set, U flag is always 1.
+    pub const POWER_ON: Self = Self::I.union(Self::U);
 
-impl StatusFlags {
-    /// Update Zero and Negative flags based on a value
-    ///
-    /// # Arguments
-    ///
-    /// * `value` - The 8-bit value to test
-    ///
-    /// # Flag Behavior
-    ///
-    /// - Z is set if `value == 0`
-    /// - N is set if `value & 0x80 != 0` (bit 7 set)
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use rustynes_cpu::StatusFlags;
-    ///
-    /// let mut flags = StatusFlags::default();
-    ///
-    /// flags.set_zn(0x00);
-    /// assert!(flags.contains(StatusFlags::ZERO));
-    /// assert!(!flags.contains(StatusFlags::NEGATIVE));
-    ///
-    /// flags.set_zn(0x80);
-    /// assert!(!flags.contains(StatusFlags::ZERO));
-    /// assert!(flags.contains(StatusFlags::NEGATIVE));
-    /// ```
+    /// Mask for flags that can be set by PLP instruction.
+    /// The B and U flags are not affected by PLP.
+    pub const PLP_MASK: Self = Self::C
+        .union(Self::Z)
+        .union(Self::I)
+        .union(Self::D)
+        .union(Self::V)
+        .union(Self::N);
+
+    /// Creates a new Status register with default flags (I and U set).
+    #[must_use]
+    pub const fn new() -> Self {
+        Self::POWER_ON
+    }
+
+    /// Sets or clears the Zero and Negative flags based on a value.
     #[inline]
     pub fn set_zn(&mut self, value: u8) {
-        self.set(Self::ZERO, value == 0);
-        self.set(Self::NEGATIVE, value & 0x80 != 0);
+        self.set_flag(Self::Z, value == 0);
+        self.set_flag(Self::N, value & 0x80 != 0);
     }
 
-    /// Convert status to byte for pushing to stack
-    ///
-    /// When status is pushed to stack (PHP, BRK, interrupts), the U bit
-    /// is always set and the B bit depends on the source.
-    ///
-    /// # Arguments
-    ///
-    /// * `brk` - If true, set B flag (from BRK/PHP). If false, clear B flag (from IRQ/NMI)
-    ///
-    /// # Returns
-    ///
-    /// 8-bit value with U=1 and B set according to `brk`
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use rustynes_cpu::StatusFlags;
-    ///
-    /// let flags = StatusFlags::CARRY | StatusFlags::ZERO;
-    ///
-    /// // From BRK/PHP: B=1, U=1
-    /// let stack_byte_brk = flags.to_stack_byte(true);
-    /// assert_eq!(stack_byte_brk & 0b0011_0000, 0b0011_0000);
-    ///
-    /// // From IRQ/NMI: B=0, U=1
-    /// let stack_byte_int = flags.to_stack_byte(false);
-    /// assert_eq!(stack_byte_int & 0b0011_0000, 0b0010_0000);
-    /// ```
+    /// Sets or clears a flag.
     #[inline]
-    #[must_use]
-    pub fn to_stack_byte(&self, brk: bool) -> u8 {
-        let mut byte = self.bits();
-        byte |= Self::UNUSED.bits();
-        if brk {
-            byte |= Self::BREAK.bits();
+    pub fn set_flag(&mut self, flag: Self, value: bool) {
+        if value {
+            *self |= flag;
         } else {
-            byte &= !Self::BREAK.bits();
+            *self &= !flag;
         }
-        byte
     }
 
-    /// Convert byte from stack to status flags
-    ///
-    /// When pulling status from stack (PLP, RTI), the B flag is ignored
-    /// and U is always set.
-    ///
-    /// # Arguments
-    ///
-    /// * `byte` - The 8-bit value pulled from stack
-    ///
-    /// # Returns
-    ///
-    /// StatusFlags with U=1 and other flags set from `byte`
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use rustynes_cpu::StatusFlags;
-    ///
-    /// // Stack byte with B=1 (from BRK)
-    /// let stack_byte = 0b0011_0011; // B=1, U=1, C=1, Z=1
-    /// let flags = StatusFlags::from_stack_byte(stack_byte);
-    ///
-    /// // B flag is ignored when pulling from stack
-    /// assert!(!flags.contains(StatusFlags::BREAK));
-    /// // U is always set
-    /// assert!(flags.contains(StatusFlags::UNUSED));
-    /// // Other flags preserved
-    /// assert!(flags.contains(StatusFlags::CARRY));
-    /// assert!(flags.contains(StatusFlags::ZERO));
-    /// ```
+    /// Converts the status register to a byte for pushing to stack.
+    /// The U flag is always set when pushing.
     #[inline]
     #[must_use]
-    pub fn from_stack_byte(byte: u8) -> Self {
-        (Self::from_bits_truncate(byte) & !Self::BREAK) | Self::UNUSED
+    pub const fn to_stack_byte(self, brk: bool) -> u8 {
+        let mut value = self.bits() | Self::U.bits();
+        if brk {
+            value |= Self::B.bits();
+        }
+        value
+    }
+
+    /// Creates a status register from a byte pulled from the stack.
+    /// The B flag is ignored and U is always set.
+    #[inline]
+    #[must_use]
+    pub fn from_stack_byte(value: u8) -> Self {
+        // Clear B, set U
+        Self::from_bits_truncate((value & !Self::B.bits()) | Self::U.bits())
     }
 }
 
@@ -183,86 +120,67 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_default_status() {
-        let status = StatusFlags::default();
-        assert!(status.contains(StatusFlags::INTERRUPT_DISABLE));
-        assert!(status.contains(StatusFlags::UNUSED));
-        assert!(!status.contains(StatusFlags::CARRY));
-        assert!(!status.contains(StatusFlags::ZERO));
+    fn test_power_on_status() {
+        let status = Status::new();
+        assert!(status.contains(Status::I));
+        assert!(status.contains(Status::U));
+        assert!(!status.contains(Status::C));
+        assert!(!status.contains(Status::Z));
+        assert!(!status.contains(Status::N));
+        assert!(!status.contains(Status::V));
     }
 
     #[test]
     fn test_set_zn_zero() {
-        let mut status = StatusFlags::default();
-        status.set_zn(0x00);
-        assert!(status.contains(StatusFlags::ZERO));
-        assert!(!status.contains(StatusFlags::NEGATIVE));
+        let mut status = Status::empty();
+        status.set_zn(0);
+        assert!(status.contains(Status::Z));
+        assert!(!status.contains(Status::N));
     }
 
     #[test]
     fn test_set_zn_negative() {
-        let mut status = StatusFlags::default();
+        let mut status = Status::empty();
         status.set_zn(0x80);
-        assert!(!status.contains(StatusFlags::ZERO));
-        assert!(status.contains(StatusFlags::NEGATIVE));
+        assert!(!status.contains(Status::Z));
+        assert!(status.contains(Status::N));
     }
 
     #[test]
-    fn test_set_zn_positive_nonzero() {
-        let mut status = StatusFlags::default();
+    fn test_set_zn_positive() {
+        let mut status = Status::empty();
         status.set_zn(0x42);
-        assert!(!status.contains(StatusFlags::ZERO));
-        assert!(!status.contains(StatusFlags::NEGATIVE));
+        assert!(!status.contains(Status::Z));
+        assert!(!status.contains(Status::N));
     }
 
     #[test]
-    fn test_to_stack_byte_brk() {
-        let status = StatusFlags::CARRY | StatusFlags::ZERO;
+    fn test_to_stack_byte_with_brk() {
+        let status = Status::C | Status::Z;
         let byte = status.to_stack_byte(true);
-
-        // B and U should be set
-        assert_eq!(byte & 0b0011_0000, 0b0011_0000);
-        // C and Z should be preserved
-        assert_eq!(byte & 0b0000_0011, 0b0000_0011);
+        assert_eq!(byte & Status::B.bits(), Status::B.bits());
+        assert_eq!(byte & Status::U.bits(), Status::U.bits());
     }
 
     #[test]
-    fn test_to_stack_byte_interrupt() {
-        let status = StatusFlags::CARRY | StatusFlags::ZERO;
+    fn test_to_stack_byte_without_brk() {
+        let status = Status::C | Status::Z;
         let byte = status.to_stack_byte(false);
-
-        // Only U should be set, not B
-        assert_eq!(byte & 0b0011_0000, 0b0010_0000);
-        // C and Z should be preserved
-        assert_eq!(byte & 0b0000_0011, 0b0000_0011);
+        assert_eq!(byte & Status::B.bits(), 0);
+        assert_eq!(byte & Status::U.bits(), Status::U.bits());
     }
 
     #[test]
     fn test_from_stack_byte() {
-        // Byte with B=1, U=1, C=1, Z=1
-        let byte = 0b0011_0011;
-        let status = StatusFlags::from_stack_byte(byte);
-
-        // B should be ignored (cleared)
-        assert!(!status.contains(StatusFlags::BREAK));
-        // U should always be set
-        assert!(status.contains(StatusFlags::UNUSED));
-        // Other flags preserved
-        assert!(status.contains(StatusFlags::CARRY));
-        assert!(status.contains(StatusFlags::ZERO));
-    }
-
-    #[test]
-    fn test_all_flags() {
-        let all = StatusFlags::CARRY
-            | StatusFlags::ZERO
-            | StatusFlags::INTERRUPT_DISABLE
-            | StatusFlags::DECIMAL
-            | StatusFlags::BREAK
-            | StatusFlags::UNUSED
-            | StatusFlags::OVERFLOW
-            | StatusFlags::NEGATIVE;
-
-        assert_eq!(all.bits(), 0xFF);
+        // B flag should be cleared, U should be set
+        let status = Status::from_stack_byte(0xFF);
+        assert!(!status.contains(Status::B));
+        assert!(status.contains(Status::U));
+        assert!(status.contains(Status::C));
+        assert!(status.contains(Status::Z));
+        assert!(status.contains(Status::I));
+        assert!(status.contains(Status::D));
+        assert!(status.contains(Status::V));
+        assert!(status.contains(Status::N));
     }
 }

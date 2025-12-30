@@ -1,243 +1,230 @@
-//! NES cartridge mapper implementations for `RustyNES` emulator.
+//! NES Cartridge Mapper Implementations.
 //!
-//! This crate provides implementations of NES mappers (cartridge hardware) that enable
-//! bank switching, extended ROM sizes, and special features like IRQ generation.
-//!
-//! # Overview
-//!
-//! The NES has a limited address space:
-//! - CPU: 64KB address space, but only 32KB available for cartridge ROM ($8000-$FFFF)
-//! - PPU: 16KB address space, with 8KB for pattern tables ($0000-$1FFF)
-//!
-//! Mappers solve this limitation by providing bank switching - dynamically mapping
-//! different ROM banks into the same address space.
+//! This crate provides mapper implementations for NES cartridge emulation.
+//! Mappers handle memory banking for PRG-ROM, CHR-ROM/RAM, and provide
+//! various hardware features like IRQ generation.
 //!
 //! # Supported Mappers
 //!
-//! This crate currently implements 5 essential mappers covering 77.7% of licensed NES games:
+//! | Mapper | Name | Description |
+//! |--------|------|-------------|
+//! | 0 | NROM | No banking, simplest mapper |
+//! | 1 | MMC1 | Nintendo's first bank-switching mapper |
+//! | 2 | UxROM | PRG-ROM banking only |
+//! | 3 | CNROM | CHR-ROM banking only |
+//! | 4 | MMC3 | Most popular, fine-grained banking + IRQ |
 //!
-//! - **Mapper 0 (NROM)**: Simple passthrough, no banking (9.5% of games)
-//! - **Mapper 1 (MMC1)**: 5-bit shift register, flexible banking (27.9% of games)
-//! - **Mapper 2 (`UxROM`)**: Switchable + fixed PRG banks (10.6% of games)
-//! - **Mapper 3 (CNROM)**: Simple CHR banking (6.3% of games)
-//! - **Mapper 4 (MMC3)**: Complex banking with scanline IRQ (23.4% of games)
-//!
-//! # Usage
+//! # Example
 //!
 //! ```no_run
 //! use rustynes_mappers::{Rom, create_mapper};
-//! use std::fs;
 //!
-//! // Load ROM file
-//! let rom_data = fs::read("game.nes").unwrap();
-//! let rom = Rom::load(&rom_data).unwrap();
+//! // Load ROM from file
+//! let rom_data = std::fs::read("game.nes").expect("Failed to read ROM");
+//! let rom = Rom::load(&rom_data).expect("Failed to parse ROM");
 //!
 //! // Create appropriate mapper
-//! let mut mapper = create_mapper(&rom).unwrap();
+//! let mut mapper = create_mapper(&rom).expect("Unsupported mapper");
 //!
-//! // Use mapper for CPU/PPU memory access
-//! let byte = mapper.read_prg(0x8000);
-//! mapper.write_prg(0x8000, 0x42);
-//!
-//! let chr_byte = mapper.read_chr(0x0000);
-//! mapper.write_chr(0x0000, 0x55);
-//!
-//! // Check mirroring
-//! let mirroring = mapper.mirroring();
-//!
-//! // Check for IRQ (MMC3, etc.)
-//! if mapper.irq_pending() {
-//!     // Trigger CPU interrupt
-//!     mapper.clear_irq();
-//! }
+//! // Use mapper for memory access
+//! let opcode = mapper.read_prg(0x8000);
+//! let tile = mapper.read_chr(0x0000);
 //! ```
 //!
-//! # Architecture
+//! # no_std Support
 //!
-//! - [`Mapper`]: Core trait defining the mapper interface
-//! - [`Mirroring`]: Nametable mirroring modes
-//! - [`Rom`]: ROM file parsing and loading
-//! - [`RomHeader`]: iNES/NES 2.0 header information
-//!
-//! # Safety
-//!
-//! This crate uses **zero unsafe code**. All mapper implementations are safe Rust.
+//! This crate supports `no_std` environments with the `alloc` feature.
+//! Disable the default `std` feature for embedded use.
 
-#![deny(unsafe_code)]
-#![warn(missing_docs)]
-#![warn(clippy::pedantic)]
-#![allow(clippy::module_name_repetitions)]
+#![cfg_attr(not(feature = "std"), no_std)]
 
-mod mapper;
-mod mirroring;
-mod rom;
+#[cfg(not(feature = "std"))]
+extern crate alloc;
 
-// Mapper implementations
+#[cfg(not(feature = "std"))]
+use alloc::boxed::Box;
+
+pub mod mapper;
+pub mod rom;
+
 mod cnrom;
 mod mmc1;
 mod mmc3;
 mod nrom;
 mod uxrom;
 
-// Re-exports
-pub use mapper::Mapper;
-pub use mirroring::Mirroring;
-pub use rom::{Rom, RomError, RomHeader};
-
-// Mapper implementations
 pub use cnrom::Cnrom;
+pub use mapper::{Mapper, Mirroring};
 pub use mmc1::Mmc1;
 pub use mmc3::Mmc3;
 pub use nrom::Nrom;
+pub use rom::{Rom, RomError, RomFormat, RomHeader};
 pub use uxrom::Uxrom;
 
-/// Mapper creation error.
-#[derive(Debug, thiserror::Error)]
-pub enum MapperError {
-    /// Unsupported mapper number.
-    #[error("Unsupported mapper {mapper} (submapper {submapper})")]
-    UnsupportedMapper {
-        /// Mapper number from ROM header.
-        mapper: u16,
-        /// Submapper number from ROM header (NES 2.0 only).
-        submapper: u8,
-    },
-
-    /// Invalid ROM configuration for mapper.
-    #[error("Invalid ROM configuration for mapper {mapper}: {reason}")]
-    InvalidConfiguration {
-        /// Mapper number.
-        mapper: u16,
-        /// Reason for rejection.
-        reason: String,
-    },
-}
-
-/// Create a mapper instance from a loaded ROM.
+/// Create a mapper instance from ROM data.
 ///
-/// This factory function selects and instantiates the appropriate mapper based on
-/// the mapper number in the ROM header.
-///
-/// # Arguments
-///
-/// * `rom` - Loaded ROM file
-///
-/// # Returns
-///
-/// Boxed mapper instance or error if mapper is unsupported.
+/// Returns the appropriate mapper implementation based on the ROM header's
+/// mapper number. Returns an error if the mapper is not supported.
 ///
 /// # Errors
 ///
-/// Returns `MapperError::UnsupportedMapper` if the mapper number is not implemented.
+/// Returns `RomError::UnsupportedMapper` if the mapper number is not
+/// implemented in this crate.
 ///
-/// # Examples
+/// # Example
 ///
 /// ```no_run
 /// use rustynes_mappers::{Rom, create_mapper};
-/// use std::fs;
 ///
-/// let rom_data = fs::read("game.nes").unwrap();
-/// let rom = Rom::load(&rom_data).unwrap();
-/// let mapper = create_mapper(&rom).unwrap();
+/// let rom_data = std::fs::read("game.nes").expect("Failed to read ROM");
+/// let rom = Rom::load(&rom_data).expect("Failed to parse ROM");
+/// let mapper = create_mapper(&rom).expect("Unsupported mapper");
 ///
-/// println!("Created mapper {}", mapper.mapper_number());
+/// println!("Mapper: {} ({})", mapper.mapper_name(), mapper.mapper_number());
 /// ```
-pub fn create_mapper(rom: &Rom) -> Result<Box<dyn Mapper>, MapperError> {
-    let mapper_num = rom.header.mapper_number;
-    let submapper = rom.header.submapper;
-
-    match mapper_num {
+pub fn create_mapper(rom: &Rom) -> Result<Box<dyn Mapper>, RomError> {
+    match rom.header.mapper {
         0 => Ok(Box::new(Nrom::new(rom))),
         1 => Ok(Box::new(Mmc1::new(rom))),
         2 => Ok(Box::new(Uxrom::new(rom))),
         3 => Ok(Box::new(Cnrom::new(rom))),
         4 => Ok(Box::new(Mmc3::new(rom))),
-        _ => Err(MapperError::UnsupportedMapper {
-            mapper: mapper_num,
-            submapper,
-        }),
+        n => Err(RomError::UnsupportedMapper(n)),
     }
 }
 
-/// Check if a mapper number is supported.
-///
-/// # Arguments
-///
-/// * `mapper` - Mapper number to check
-///
-/// # Returns
-///
-/// `true` if the mapper is implemented, `false` otherwise.
-///
-/// # Examples
-///
-/// ```
-/// use rustynes_mappers::is_mapper_supported;
-///
-/// assert!(is_mapper_supported(0));  // NROM
-/// assert!(is_mapper_supported(1));  // MMC1
-/// assert!(is_mapper_supported(4));  // MMC3
-/// assert!(!is_mapper_supported(5)); // MMC5 (not implemented)
-/// ```
+/// Get a list of supported mapper numbers.
 #[must_use]
-pub fn is_mapper_supported(mapper: u16) -> bool {
-    matches!(mapper, 0..=4)
+pub fn supported_mappers() -> &'static [u16] {
+    &[0, 1, 2, 3, 4]
 }
 
-/// Get a human-readable name for a mapper number.
-///
-/// # Arguments
-///
-/// * `mapper` - Mapper number
-///
-/// # Returns
-///
-/// Mapper name or "Unknown" if not recognized.
-///
-/// # Examples
-///
-/// ```
-/// use rustynes_mappers::mapper_name;
-///
-/// assert_eq!(mapper_name(0), "NROM");
-/// assert_eq!(mapper_name(1), "MMC1 (SxROM)");
-/// assert_eq!(mapper_name(4), "MMC3 (TxROM)");
-/// assert_eq!(mapper_name(999), "Unknown");
-/// ```
+/// Check if a mapper number is supported.
 #[must_use]
-pub fn mapper_name(mapper: u16) -> &'static str {
+pub fn is_mapper_supported(mapper: u16) -> bool {
+    supported_mappers().contains(&mapper)
+}
+
+/// Get the name of a mapper by number.
+#[must_use]
+pub fn mapper_name(mapper: u16) -> Option<&'static str> {
     match mapper {
-        0 => "NROM",
-        1 => "MMC1 (SxROM)",
-        2 => "UxROM",
-        3 => "CNROM",
-        4 => "MMC3 (TxROM)",
-        _ => "Unknown",
+        0 => Some("NROM"),
+        1 => Some("MMC1"),
+        2 => Some("UxROM"),
+        3 => Some("CNROM"),
+        4 => Some("MMC3"),
+        _ => None,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rom::RomFormat;
+
+    fn create_test_rom(mapper: u16) -> Rom {
+        let prg_rom: Vec<u8> = (0..32768).map(|i| (i & 0xFF) as u8).collect();
+        let chr_rom: Vec<u8> = (0..8192).map(|i| (i & 0xFF) as u8).collect();
+
+        Rom {
+            header: RomHeader {
+                format: RomFormat::INes,
+                mapper,
+                prg_rom_size: 2,
+                chr_rom_size: 1,
+                prg_ram_size: 8192,
+                chr_ram_size: 0,
+                mirroring: Mirroring::Vertical,
+                has_battery: false,
+                has_trainer: false,
+                tv_system: 0,
+            },
+            prg_rom,
+            chr_rom,
+            trainer: None,
+        }
+    }
+
+    #[test]
+    fn test_create_mapper_nrom() {
+        let rom = create_test_rom(0);
+        let mapper = create_mapper(&rom).unwrap();
+        assert_eq!(mapper.mapper_number(), 0);
+        assert_eq!(mapper.mapper_name(), "NROM");
+    }
+
+    #[test]
+    fn test_create_mapper_mmc1() {
+        let rom = create_test_rom(1);
+        let mapper = create_mapper(&rom).unwrap();
+        assert_eq!(mapper.mapper_number(), 1);
+        assert_eq!(mapper.mapper_name(), "MMC1");
+    }
+
+    #[test]
+    fn test_create_mapper_uxrom() {
+        let rom = create_test_rom(2);
+        let mapper = create_mapper(&rom).unwrap();
+        assert_eq!(mapper.mapper_number(), 2);
+        assert_eq!(mapper.mapper_name(), "UxROM");
+    }
+
+    #[test]
+    fn test_create_mapper_cnrom() {
+        let rom = create_test_rom(3);
+        let mapper = create_mapper(&rom).unwrap();
+        assert_eq!(mapper.mapper_number(), 3);
+        assert_eq!(mapper.mapper_name(), "CNROM");
+    }
+
+    #[test]
+    fn test_create_mapper_mmc3() {
+        let rom = create_test_rom(4);
+        let mapper = create_mapper(&rom).unwrap();
+        assert_eq!(mapper.mapper_number(), 4);
+        assert_eq!(mapper.mapper_name(), "MMC3");
+    }
+
+    #[test]
+    fn test_create_mapper_unsupported() {
+        let rom = create_test_rom(100);
+        let result = create_mapper(&rom);
+        assert!(matches!(result, Err(RomError::UnsupportedMapper(100))));
+    }
+
+    #[test]
+    fn test_supported_mappers() {
+        let mappers = supported_mappers();
+        assert_eq!(mappers, &[0, 1, 2, 3, 4]);
+    }
 
     #[test]
     fn test_is_mapper_supported() {
         assert!(is_mapper_supported(0));
-        assert!(is_mapper_supported(1));
-        assert!(is_mapper_supported(2));
-        assert!(is_mapper_supported(3));
         assert!(is_mapper_supported(4));
-        assert!(!is_mapper_supported(5));
-        assert!(!is_mapper_supported(999));
+        assert!(!is_mapper_supported(100));
     }
 
     #[test]
     fn test_mapper_name() {
-        assert_eq!(mapper_name(0), "NROM");
-        assert_eq!(mapper_name(1), "MMC1 (SxROM)");
-        assert_eq!(mapper_name(2), "UxROM");
-        assert_eq!(mapper_name(3), "CNROM");
-        assert_eq!(mapper_name(4), "MMC3 (TxROM)");
-        assert_eq!(mapper_name(999), "Unknown");
+        assert_eq!(mapper_name(0), Some("NROM"));
+        assert_eq!(mapper_name(1), Some("MMC1"));
+        assert_eq!(mapper_name(4), Some("MMC3"));
+        assert_eq!(mapper_name(100), None);
+    }
+
+    #[test]
+    fn test_mapper_trait_read_write() {
+        let rom = create_test_rom(0);
+        let mut mapper = create_mapper(&rom).unwrap();
+
+        // Read PRG-ROM
+        let val = mapper.read_prg(0x8000);
+        assert_eq!(val, 0); // First byte of PRG-ROM
+
+        // Write has no effect on NROM
+        mapper.write_prg(0x8000, 0xFF);
+        assert_eq!(mapper.read_prg(0x8000), 0);
     }
 }

@@ -6,21 +6,26 @@ rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-homepage.workspace = true
-documentation.workspace = true
-description = "NES mapper implementations for RustyNES emulator"
-keywords.workspace = true
-categories.workspace = true
+description = "NES cartridge mapper implementations"
+keywords = ["nes", "mapper", "mmc1", "mmc3", "emulator"]
+categories = ["emulators", "games"]
 
 [dependencies]
-thiserror.workspace = true
+bitflags.workspace = true
+log.workspace = true
 
 [dev-dependencies]
-criterion.workspace = true
+proptest.workspace = true
+
+[features]
+default = ["std"]
+std = []
+serde = ["dep:serde"]
+
+[dependencies.serde]
+version = "1.0"
+optional = true
+features = ["derive"]
 
 [lints]
 workspace = true
-
-[lib]
-name = "rustynes_mappers"
-path = "src/lib.rs"

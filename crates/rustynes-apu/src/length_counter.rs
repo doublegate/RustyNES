@@ -1,111 +1,91 @@
-//! Length Counter Module
+//! APU Length Counter.
 //!
-//! The length counter automatically silences a channel after a specific duration.
-//! Used by all channels except DMC.
+//! The length counter is used by the pulse, triangle, and noise channels to
+//! automatically silence a channel after a specified time. It decrements on
+//! each half-frame clock and silences the channel when it reaches 0.
+//!
+//! The counter can be halted, which prevents it from decrementing.
 
-/// Length counter lookup table (32 entries)
-///
-/// Indexed by the 5-bit length index from channel registers.
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
+/// Length counter lookup table.
+/// Index is the 5-bit value written to the length counter load register.
 const LENGTH_TABLE: [u8; 32] = [
-    10, 254, 20, 2, 40, 4, 80, 6, // 0-7
-    160, 8, 60, 10, 14, 12, 26, 14, // 8-15
-    12, 16, 24, 18, 48, 20, 96, 22, // 16-23
-    192, 24, 72, 26, 16, 28, 32, 30, // 24-31
+    10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14, 12, 16, 24, 18, 48, 20, 96, 22,
+    192, 24, 72, 26, 16, 28, 32, 30,
 ];
 
-/// Length counter for audio channel duration
-///
-/// The length counter decrements at ~120 Hz (every half frame) and silences
-/// the channel when it reaches 0.
-///
-/// # Halt Behavior
-///
-/// If the halt flag is set, the length counter will not decrement.
-/// For pulse and noise channels, the halt flag is the same as the envelope loop flag.
-#[derive(Debug, Clone, Copy)]
+/// Length counter unit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct LengthCounter {
-    /// Current counter value (0-254)
+    /// Current counter value.
     counter: u8,
-    /// Halt flag: prevents counter from decrementing
+    /// Halt flag (when true, counter doesn't decrement).
     halt: bool,
+    /// Enabled flag (when false, counter stays at 0).
+    enabled: bool,
 }
 
 impl LengthCounter {
-    /// Creates a new length counter (starts at 0, disabled)
+    /// Create a new length counter.
     #[must_use]
     pub const fn new() -> Self {
         Self {
             counter: 0,
             halt: false,
+            enabled: false,
         }
     }
 
-    /// Loads a new value into the length counter from the lookup table
-    ///
-    /// # Arguments
-    ///
-    /// * `index` - 5-bit index (0-31) into the length table
-    ///
-    /// # Panics
-    ///
-    /// Panics if index >= 32 (should never happen with properly masked input)
+    /// Load a new length value using the lookup table.
     pub fn load(&mut self, index: u8) {
-        self.counter = LENGTH_TABLE[index as usize];
+        if self.enabled {
+            self.counter = LENGTH_TABLE[(index & 0x1F) as usize];
+        }
     }
 
-    /// Sets the halt flag
-    ///
-    /// When halt is true, the counter will not decrement.
+    /// Set the halt flag.
     pub fn set_halt(&mut self, halt: bool) {
         self.halt = halt;
     }
 
-    /// Returns the halt flag state
-    #[must_use]
-    pub const fn halt(self) -> bool {
-        self.halt
+    /// Set the enabled flag.
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+        if !enabled {
+            self.counter = 0;
+        }
     }
 
-    /// Clocks the length counter (called on half frame)
-    ///
-    /// Decrements the counter if not halted and greater than 0.
+    /// Clock the length counter.
+    /// Should be called on half frames.
     pub fn clock(&mut self) {
         if !self.halt && self.counter > 0 {
             self.counter -= 1;
         }
     }
 
-    /// Returns whether the length counter is active (greater than 0)
+    /// Check if the counter is non-zero (channel should output).
     #[must_use]
-    pub const fn is_active(self) -> bool {
+    #[inline]
+    pub const fn active(&self) -> bool {
         self.counter > 0
     }
 
-    /// Returns the current counter value
+    /// Get the current counter value.
     #[must_use]
-    pub const fn value(self) -> u8 {
+    #[inline]
+    pub const fn value(&self) -> u8 {
         self.counter
     }
 
-    /// Sets the enabled state (called from $4015)
-    ///
-    /// When disabled, the counter is immediately set to 0.
-    pub fn set_enabled(&mut self, enabled: bool) {
-        if !enabled {
-            self.counter = 0;
-        }
-    }
-
-    /// Returns whether the halt flag is set
+    /// Check if the counter is enabled.
     #[must_use]
-    pub const fn is_halted(self) -> bool {
-        self.halt
-    }
-}
-
-impl Default for LengthCounter {
-    fn default() -> Self {
-        Self::new()
+    #[inline]
+    pub const fn enabled(&self) -> bool {
+        self.enabled
     }
 }
 
@@ -115,112 +95,79 @@ mod tests {
 
     #[test]
     fn test_length_table() {
-        // Verify known length table values
+        // Verify some known values from the table
         assert_eq!(LENGTH_TABLE[0], 10);
         assert_eq!(LENGTH_TABLE[1], 254);
+        assert_eq!(LENGTH_TABLE[30], 32);
         assert_eq!(LENGTH_TABLE[31], 30);
     }
 
     #[test]
-    fn test_length_counter_load() {
+    fn test_load() {
         let mut lc = LengthCounter::new();
-
-        // Load value at index 0 (should be 10)
-        lc.load(0);
-        assert_eq!(lc.counter, 10);
-        assert!(lc.is_active());
-
-        // Load value at index 1 (should be 254)
-        lc.load(1);
-        assert_eq!(lc.counter, 254);
-    }
-
-    #[test]
-    fn test_length_counter_clock() {
-        let mut lc = LengthCounter::new();
-        lc.load(0); // Load 10
-
-        // Clock once
-        lc.clock();
-        assert_eq!(lc.counter, 9);
-        assert!(lc.is_active());
-
-        // Clock 8 more times to reach 1
-        for _ in 0..8 {
-            lc.clock();
-        }
-        assert_eq!(lc.counter, 1);
-        assert!(lc.is_active());
-
-        // Clock once more to reach 0
-        lc.clock();
-        assert_eq!(lc.counter, 0);
-        assert!(!lc.is_active());
-
-        // Clock again (should stay at 0)
-        lc.clock();
-        assert_eq!(lc.counter, 0);
-    }
-
-    #[test]
-    fn test_length_counter_halt() {
-        let mut lc = LengthCounter::new();
-        lc.load(0); // Load 10
-
-        // Set halt flag
-        lc.set_halt(true);
-        assert!(lc.halt());
-
-        // Clock (should not decrement)
-        lc.clock();
-        assert_eq!(lc.counter, 10);
-
-        lc.clock();
-        assert_eq!(lc.counter, 10);
-
-        // Clear halt flag
-        lc.set_halt(false);
-        assert!(!lc.halt());
-
-        // Clock (should now decrement)
-        lc.clock();
-        assert_eq!(lc.counter, 9);
-    }
-
-    #[test]
-    fn test_set_enabled() {
-        let mut lc = LengthCounter::new();
-        lc.load(0); // Load 10
-        assert_eq!(lc.counter, 10);
-
-        // Disable channel
-        lc.set_enabled(false);
-        assert_eq!(lc.counter, 0);
-        assert!(!lc.is_active());
-
-        // Re-enable (should not affect counter)
         lc.set_enabled(true);
-        assert_eq!(lc.counter, 0);
+        lc.load(0);
+        assert_eq!(lc.value(), 10);
 
-        // Load new value
-        lc.load(1); // Load 254
-        assert_eq!(lc.counter, 254);
-        assert!(lc.is_active());
+        lc.load(1);
+        assert_eq!(lc.value(), 254);
     }
 
     #[test]
-    fn test_length_counter_full_decay() {
+    fn test_load_disabled() {
         let mut lc = LengthCounter::new();
-        lc.load(3); // Load value 2
+        lc.set_enabled(false);
+        lc.load(1);
+        assert_eq!(lc.value(), 0);
+    }
 
-        assert_eq!(lc.counter, 2);
+    #[test]
+    fn test_clock() {
+        let mut lc = LengthCounter::new();
+        lc.set_enabled(true);
+        lc.load(0); // Load 10
 
-        // Decrement to 0
+        for i in (0..10).rev() {
+            lc.clock();
+            assert_eq!(lc.value(), i);
+        }
+
+        // Should stay at 0
         lc.clock();
-        assert_eq!(lc.counter, 1);
+        assert_eq!(lc.value(), 0);
+    }
+
+    #[test]
+    fn test_halt() {
+        let mut lc = LengthCounter::new();
+        lc.set_enabled(true);
+        lc.load(0); // Load 10
+        lc.set_halt(true);
 
         lc.clock();
-        assert_eq!(lc.counter, 0);
-        assert!(!lc.is_active());
+        lc.clock();
+        assert_eq!(lc.value(), 10); // Should not decrement
+    }
+
+    #[test]
+    fn test_active() {
+        let mut lc = LengthCounter::new();
+        assert!(!lc.active());
+
+        lc.set_enabled(true);
+        lc.load(0);
+        assert!(lc.active());
+    }
+
+    #[test]
+    fn test_disable_clears_counter() {
+        let mut lc = LengthCounter::new();
+        lc.set_enabled(true);
+        lc.load(0);
+        assert!(lc.active());
+
+        lc.set_enabled(false);
+        assert!(!lc.active());
+        assert_eq!(lc.value(), 0);
     }
 }

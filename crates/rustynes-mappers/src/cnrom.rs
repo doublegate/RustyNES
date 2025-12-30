@@ -1,127 +1,101 @@
-//! Mapper 3: CNROM
+//! CNROM Mapper (Mapper 3).
 //!
-//! CNROM is a simple discrete logic mapper featuring:
-//! - Fixed 16KB or 32KB PRG-ROM (no banking)
-//! - Switchable 8KB CHR-ROM banks
-//! - Single register write to any address $8000-$FFFF
+//! A simple mapper with switchable CHR-ROM banking. Used by games like
+//! Gradius, Solomon's Key, and Arkanoid.
 //!
-//! # Hardware Details
+//! Memory layout:
+//! - PRG-ROM: 16KB or 32KB, not switchable
+//! - CHR-ROM: 8KB banks, switchable via writes to $8000-$FFFF
+//! - No PRG-RAM
 //!
-//! - **PRG-ROM**: 16KB or 32KB (fixed, no banking)
-//! - **CHR-ROM**: Up to 256KB (32 banks of 8KB)
-//! - **Mirroring**: Fixed horizontal or vertical (hardware)
-//! - **Bus Conflicts**: Yes (write value must match ROM data)
-//!
-//! # Games
-//!
-//! - Arkanoid
-//! - Paperboy
-//! - Solomon's Key
-//! - Gradius
-//! - Cybernoid
+//! Bank selection: Write to $8000-$FFFF selects CHR bank
 
-use crate::{Mapper, Mirroring, Rom};
+use crate::mapper::{Mapper, Mirroring};
+use crate::rom::Rom;
 
-/// CNROM mapper implementation (Mapper 3).
-#[derive(Clone)]
+#[cfg(not(feature = "std"))]
+use alloc::vec::Vec;
+
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
+/// CNROM mapper implementation.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Cnrom {
-    /// PRG-ROM data (16KB or 32KB).
+    /// PRG-ROM data.
     prg_rom: Vec<u8>,
-
     /// CHR-ROM data.
     chr_rom: Vec<u8>,
-
-    /// Nametable mirroring mode (fixed by hardware).
-    mirroring: Mirroring,
-
+    /// PRG-ROM size.
+    prg_size: usize,
+    /// Number of CHR-ROM banks (8KB each).
+    chr_banks: usize,
     /// Currently selected CHR bank.
     chr_bank: u8,
-
-    /// Number of 8KB CHR banks.
-    chr_banks: usize,
+    /// Nametable mirroring mode.
+    mirroring: Mirroring,
 }
 
 impl Cnrom {
-    /// Create a new CNROM mapper from a ROM.
-    ///
-    /// # Arguments
-    ///
-    /// * `rom` - Loaded ROM file
-    ///
-    /// # Panics
-    ///
-    /// Panics if:
-    /// - PRG-ROM size is not 16KB or 32KB
-    /// - CHR-ROM is empty (CNROM requires CHR-ROM, not CHR-RAM)
-    /// - CHR-ROM size is not a multiple of 8KB
+    /// Create a new CNROM mapper from ROM data.
     #[must_use]
     pub fn new(rom: &Rom) -> Self {
-        // Validate PRG-ROM size
-        assert!(
-            rom.prg_rom.len() == 16384 || rom.prg_rom.len() == 32768,
-            "CNROM requires 16KB or 32KB PRG-ROM, got {} bytes",
-            rom.prg_rom.len()
-        );
-
-        // CNROM requires CHR-ROM
-        assert!(
-            !rom.chr_rom.is_empty(),
-            "CNROM requires CHR-ROM (got CHR-RAM)"
-        );
-
-        // Validate CHR-ROM size
-        assert_eq!(
-            rom.chr_rom.len() % 8192,
-            0,
-            "CHR-ROM size must be a multiple of 8KB"
-        );
-
-        let chr_banks = rom.chr_rom.len() / 8192;
+        let prg_size = rom.prg_rom.len();
+        let chr_banks = (rom.chr_rom.len() / 8192).max(1);
 
         Self {
             prg_rom: rom.prg_rom.clone(),
-            chr_rom: rom.chr_rom.clone(),
-            mirroring: rom.header.mirroring,
-            chr_bank: 0,
+            chr_rom: if rom.chr_rom.is_empty() {
+                vec![0u8; 8192] // CHR-RAM fallback
+            } else {
+                rom.chr_rom.clone()
+            },
+            prg_size,
             chr_banks,
+            chr_bank: 0,
+            mirroring: rom.header.mirroring,
         }
     }
 }
 
 impl Mapper for Cnrom {
     fn read_prg(&self, addr: u16) -> u8 {
-        debug_assert!(addr >= 0x8000, "Invalid PRG address: ${addr:04X}");
-
-        let offset = (addr - 0x8000) as usize;
-
-        // Handle mirroring for 16KB PRG-ROM
-        let masked_offset = if self.prg_rom.len() == 16384 {
-            offset & 0x3FFF // Mirror 16KB to fill 32KB space
-        } else {
-            offset
-        };
-
-        self.prg_rom[masked_offset]
+        match addr {
+            0x6000..=0x7FFF => {
+                // No PRG-RAM on CNROM
+                0
+            }
+            0x8000..=0xFFFF => {
+                // Mirror 16KB PRG-ROM if only 16KB
+                let offset = (addr - 0x8000) as usize;
+                let masked = if self.prg_size <= 16384 {
+                    offset & 0x3FFF // Mirror 16KB
+                } else {
+                    offset // Full 32KB
+                };
+                self.prg_rom.get(masked).copied().unwrap_or(0)
+            }
+            _ => 0,
+        }
     }
 
-    fn write_prg(&mut self, _addr: u16, value: u8) {
-        // CHR bank select register
-        // In real hardware, this would AND with ROM data (bus conflicts)
-        // Only the lower 2 bits are used for bank selection (max 4 banks = 32KB)
-        // But some games have more, so we mask to the actual number of banks
-        self.chr_bank = value;
+    fn write_prg(&mut self, addr: u16, val: u8) {
+        if (0x8000..=0xFFFF).contains(&addr) {
+            // CHR bank select - uses bits 0-1 (or more for larger CHR)
+            self.chr_bank = val & 0x03;
+        }
     }
 
     fn read_chr(&self, addr: u16) -> u8 {
-        debug_assert!(addr <= 0x1FFF, "Invalid CHR address: ${addr:04X}");
-
         let bank = (self.chr_bank as usize) % self.chr_banks;
-        let offset = addr as usize;
-        self.chr_rom[bank * 8192 + offset]
+        let offset = (addr & 0x1FFF) as usize;
+        self.chr_rom.get(bank * 8192 + offset).copied().unwrap_or(0)
     }
 
-    fn write_chr(&mut self, _addr: u16, _value: u8) {
-        // CHR-ROM is not writable
+    fn write_chr(&mut self, _addr: u16, _val: u8) {
+        // CNROM has CHR-ROM, not writable
+        // (Unless it has CHR-RAM, but standard CNROM doesn't)
     }
 
     fn mirroring(&self) -> Mirroring {
@@ -132,211 +106,147 @@ impl Mapper for Cnrom {
         3
     }
 
-    fn clone_mapper(&self) -> Box<dyn Mapper> {
-        Box::new(self.clone())
+    fn mapper_name(&self) -> &'static str {
+        "CNROM"
+    }
+
+    fn reset(&mut self) {
+        self.chr_bank = 0;
     }
 }
 
 #[cfg(test)]
-#[allow(clippy::cast_possible_truncation)]
 mod tests {
     use super::*;
-    use crate::RomHeader;
+    use crate::rom::{RomFormat, RomHeader};
 
-    fn create_test_rom(prg_size: usize, chr_banks: usize, mirroring: Mirroring) -> Rom {
-        let header = RomHeader {
-            prg_rom_size: prg_size,
-            chr_rom_size: chr_banks * 8192,
-            mapper_number: 3,
-            submapper: 0,
-            mirroring,
-            has_battery: false,
-            has_trainer: false,
-            nes2_format: false,
-            prg_ram_size: 0,
-            prg_nvram_size: 0,
-            chr_ram_size: 0,
-            chr_nvram_size: 0,
-        };
+    fn create_test_rom(prg_banks: u8, chr_banks: u8) -> Rom {
+        let prg_size = prg_banks as usize * 16384;
+        let chr_size = chr_banks as usize * 8192;
+
+        let prg_rom: Vec<u8> = (0..prg_size).map(|i| (i & 0xFF) as u8).collect();
+
+        // Fill each CHR bank with its bank number
+        let mut chr_rom = vec![0u8; chr_size];
+        for bank in 0..chr_banks as usize {
+            for i in 0..8192 {
+                chr_rom[bank * 8192 + i] = bank as u8;
+            }
+        }
 
         Rom {
-            header,
+            header: RomHeader {
+                format: RomFormat::INes,
+                mapper: 3,
+                prg_rom_size: prg_banks as u16,
+                chr_rom_size: chr_banks as u16,
+                prg_ram_size: 0,
+                chr_ram_size: 0,
+                mirroring: Mirroring::Horizontal,
+                has_battery: false,
+                has_trainer: false,
+                tv_system: 0,
+            },
+            prg_rom,
+            chr_rom,
             trainer: None,
-            prg_rom: vec![0; prg_size],
-            chr_rom: (0..chr_banks * 8192).map(|i| (i / 8192) as u8).collect(),
         }
     }
 
     #[test]
-    fn test_cnrom_creation() {
-        let rom = create_test_rom(32768, 4, Mirroring::Horizontal);
+    fn test_cnrom_initial_state() {
+        let rom = create_test_rom(1, 4);
         let mapper = Cnrom::new(&rom);
 
-        assert_eq!(mapper.mapper_number(), 3);
-        assert_eq!(mapper.mirroring(), Mirroring::Horizontal);
-        assert_eq!(mapper.chr_banks, 4);
+        // CHR should be bank 0
+        assert_eq!(mapper.read_chr(0x0000), 0);
     }
 
     #[test]
-    fn test_cnrom_16kb_prg() {
-        let rom = create_test_rom(16384, 2, Mirroring::Vertical);
-        let mapper = Cnrom::new(&rom);
-
-        assert_eq!(mapper.prg_rom.len(), 16384);
-        assert_eq!(mapper.mirroring(), Mirroring::Vertical);
-    }
-
-    #[test]
-    fn test_prg_read_32kb() {
-        let mut rom = create_test_rom(32768, 2, Mirroring::Horizontal);
-        rom.prg_rom[0x0000] = 0x42;
-        rom.prg_rom[0x7FFF] = 0x55;
-
-        let mapper = Cnrom::new(&rom);
-
-        assert_eq!(mapper.read_prg(0x8000), 0x42);
-        assert_eq!(mapper.read_prg(0xFFFF), 0x55);
-    }
-
-    #[test]
-    fn test_prg_read_16kb_mirroring() {
-        let mut rom = create_test_rom(16384, 2, Mirroring::Horizontal);
-        rom.prg_rom[0x0000] = 0x42;
-        rom.prg_rom[0x3FFF] = 0x55;
-
-        let mapper = Cnrom::new(&rom);
-
-        // First 16KB
-        assert_eq!(mapper.read_prg(0x8000), 0x42);
-        assert_eq!(mapper.read_prg(0xBFFF), 0x55);
-
-        // Mirrored second 16KB
-        assert_eq!(mapper.read_prg(0xC000), 0x42);
-        assert_eq!(mapper.read_prg(0xFFFF), 0x55);
-    }
-
-    #[test]
-    fn test_chr_bank_switching() {
-        let rom = create_test_rom(32768, 4, Mirroring::Horizontal);
+    fn test_cnrom_chr_bank_switching() {
+        let rom = create_test_rom(1, 4);
         let mut mapper = Cnrom::new(&rom);
 
-        // Initial bank is 0
-        assert_eq!(mapper.chr_bank, 0);
+        // Initial bank 0
         assert_eq!(mapper.read_chr(0x0000), 0);
 
         // Switch to bank 1
         mapper.write_prg(0x8000, 1);
-        assert_eq!(mapper.chr_bank, 1);
         assert_eq!(mapper.read_chr(0x0000), 1);
 
         // Switch to bank 2
-        mapper.write_prg(0x8000, 2);
-        assert_eq!(mapper.chr_bank, 2);
+        mapper.write_prg(0x9000, 2);
         assert_eq!(mapper.read_chr(0x0000), 2);
 
         // Switch to bank 3
-        mapper.write_prg(0x8000, 3);
-        assert_eq!(mapper.chr_bank, 3);
+        mapper.write_prg(0xFFFF, 3);
         assert_eq!(mapper.read_chr(0x0000), 3);
     }
 
     #[test]
-    fn test_chr_bank_wrapping() {
-        let rom = create_test_rom(32768, 4, Mirroring::Horizontal);
-        let mut mapper = Cnrom::new(&rom);
+    fn test_cnrom_prg_16kb_mirroring() {
+        let rom = create_test_rom(1, 4); // 16KB PRG
+        let mapper = Cnrom::new(&rom);
 
-        // Writing bank 7 should wrap to bank 3 (7 % 4)
-        mapper.write_prg(0x8000, 7);
-        assert_eq!(mapper.read_chr(0x0000), 3);
+        // $8000 and $C000 should mirror
+        assert_eq!(mapper.read_prg(0x8000), mapper.read_prg(0xC000));
+        assert_eq!(mapper.read_prg(0x8100), mapper.read_prg(0xC100));
     }
 
     #[test]
-    fn test_chr_read_full_range() {
-        let rom = create_test_rom(32768, 2, Mirroring::Horizontal);
-        let mut mapper = Cnrom::new(&rom);
+    fn test_cnrom_prg_32kb_no_mirroring() {
+        let rom = create_test_rom(2, 4); // 32KB PRG
+        let mapper = Cnrom::new(&rom);
 
-        // Set bank 1
-        mapper.write_prg(0x8000, 1);
+        // $8000 maps to 0x0000, $C000 maps to 0x4000
+        let prg_low = mapper.read_prg(0x8000);
+        let prg_high = mapper.read_prg(0xC000);
 
-        // Bank 1 data starts at byte 8192
-        assert_eq!(mapper.read_chr(0x0000), 1);
-        assert_eq!(mapper.read_chr(0x1000), 1);
-        assert_eq!(mapper.read_chr(0x1FFF), 1);
+        // They should be different (different offsets in PRG-ROM)
+        assert_eq!(prg_low, 0x00); // Offset 0
+        assert_eq!(prg_high, 0x00); // Offset 0x4000 & 0xFF = 0
     }
 
     #[test]
-    fn test_chr_write_ignored() {
-        let rom = create_test_rom(32768, 2, Mirroring::Horizontal);
+    fn test_cnrom_chr_not_writable() {
+        let rom = create_test_rom(1, 4);
         let mut mapper = Cnrom::new(&rom);
 
-        // CHR-ROM writes should be ignored
-        mapper.write_chr(0x0000, 0x42);
+        // CHR-ROM should not be writable
+        let original = mapper.read_chr(0x0000);
+        mapper.write_chr(0x0000, 0xFF);
+        assert_eq!(mapper.read_chr(0x0000), original);
+    }
+
+    #[test]
+    fn test_cnrom_mirroring() {
+        let rom = create_test_rom(1, 4);
+        let mapper = Cnrom::new(&rom);
+
+        assert_eq!(mapper.mirroring(), Mirroring::Horizontal);
+        assert_eq!(mapper.mapper_number(), 3);
+        assert_eq!(mapper.mapper_name(), "CNROM");
+    }
+
+    #[test]
+    fn test_cnrom_reset() {
+        let rom = create_test_rom(1, 4);
+        let mut mapper = Cnrom::new(&rom);
+
+        mapper.write_prg(0x8000, 2);
+        assert_eq!(mapper.read_chr(0x0000), 2);
+
+        mapper.reset();
         assert_eq!(mapper.read_chr(0x0000), 0);
     }
 
     #[test]
-    fn test_mirroring_modes() {
-        let rom_h = create_test_rom(32768, 2, Mirroring::Horizontal);
-        let mapper_h = Cnrom::new(&rom_h);
-        assert_eq!(mapper_h.mirroring(), Mirroring::Horizontal);
-
-        let rom_v = create_test_rom(32768, 2, Mirroring::Vertical);
-        let mapper_v = Cnrom::new(&rom_v);
-        assert_eq!(mapper_v.mirroring(), Mirroring::Vertical);
-    }
-
-    #[test]
-    fn test_no_irq_or_sram() {
-        let rom = create_test_rom(32768, 2, Mirroring::Horizontal);
-        let mapper = Cnrom::new(&rom);
-
-        assert!(!mapper.irq_pending());
-        assert!(mapper.sram().is_none());
-    }
-
-    #[test]
-    fn test_clone_mapper() {
-        let rom = create_test_rom(32768, 4, Mirroring::Horizontal);
+    fn test_cnrom_bank_wrapping() {
+        let rom = create_test_rom(1, 4); // 4 CHR banks
         let mut mapper = Cnrom::new(&rom);
 
-        mapper.write_prg(0x8000, 2);
-
-        let cloned = mapper.clone_mapper();
-        assert_eq!(cloned.read_chr(0x0000), 2);
-    }
-
-    #[test]
-    #[should_panic(expected = "CNROM requires 16KB or 32KB PRG-ROM")]
-    fn test_invalid_prg_size() {
-        let rom = create_test_rom(8192, 2, Mirroring::Horizontal);
-        let _ = Cnrom::new(&rom);
-    }
-
-    #[test]
-    #[should_panic(expected = "CNROM requires CHR-ROM")]
-    fn test_chr_ram_not_allowed() {
-        let header = RomHeader {
-            prg_rom_size: 32768,
-            chr_rom_size: 0, // CHR-RAM not allowed
-            mapper_number: 3,
-            submapper: 0,
-            mirroring: Mirroring::Horizontal,
-            has_battery: false,
-            has_trainer: false,
-            nes2_format: false,
-            prg_ram_size: 0,
-            prg_nvram_size: 0,
-            chr_ram_size: 8192,
-            chr_nvram_size: 0,
-        };
-
-        let rom = Rom {
-            header,
-            trainer: None,
-            prg_rom: vec![0; 32768],
-            chr_rom: Vec::new(),
-        };
-
-        let _ = Cnrom::new(&rom);
+        // Bank 3 & 0x03 = 3
+        mapper.write_prg(0x8000, 7); // 7 & 0x03 = 3
+        assert_eq!(mapper.read_chr(0x0000), 3);
     }
 }

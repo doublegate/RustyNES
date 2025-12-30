@@ -1,330 +1,118 @@
-//! Mapper trait definition.
+//! Mapper Trait Definition.
 //!
-//! The Mapper trait defines the interface for all NES cartridge mapper implementations.
-//! Mappers handle bank switching, mirroring control, and special features like IRQ generation.
+//! This module defines the core `Mapper` trait that all NES cartridge mappers
+//! must implement. Mappers handle memory banking for PRG-ROM, CHR-ROM/RAM,
+//! and provide mirroring control.
 
-use crate::Mirroring;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
-/// NES cartridge mapper interface.
+/// Nametable mirroring mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub enum Mirroring {
+    /// Horizontal mirroring (vertical arrangement).
+    #[default]
+    Horizontal,
+    /// Vertical mirroring (horizontal arrangement).
+    Vertical,
+    /// Single-screen, lower bank.
+    SingleScreenLower,
+    /// Single-screen, upper bank.
+    SingleScreenUpper,
+    /// Four-screen (uses extra VRAM).
+    FourScreen,
+}
+
+/// Mapper trait.
 ///
-/// This trait defines the contract for all mapper implementations. Mappers are responsible for:
-///
-/// - **PRG-ROM Banking**: Mapping CPU address space ($8000-$FFFF) to PRG-ROM banks
-/// - **CHR Banking**: Mapping PPU address space ($0000-$1FFF) to CHR-ROM/RAM banks
-/// - **Mirroring Control**: Determining nametable mirroring mode
-/// - **IRQ Generation**: Triggering interrupts for scanline effects (MMC3, MMC5, etc.)
-/// - **Battery-Backed RAM**: Providing save game storage (SRAM)
-///
-/// # Safety
-///
-/// All mapper implementations must be `Send` to allow safe transfer between threads.
-/// Mappers should avoid internal mutability beyond what's necessary for register writes.
-///
-/// # Examples
-///
-/// ```no_run
-/// use rustynes_mappers::{Mapper, Mirroring};
-///
-/// // Simple passthrough mapper (NROM)
-/// struct Nrom {
-///     prg_rom: Vec<u8>,
-///     chr_rom: Vec<u8>,
-///     mirroring: Mirroring,
-/// }
-///
-/// impl Mapper for Nrom {
-///     fn read_prg(&self, addr: u16) -> u8 {
-///         let offset = (addr - 0x8000) as usize % self.prg_rom.len();
-///         self.prg_rom[offset]
-///     }
-///
-///     fn write_prg(&mut self, _addr: u16, _value: u8) {
-///         // NROM has no writable registers
-///     }
-///
-///     fn read_chr(&self, addr: u16) -> u8 {
-///         self.chr_rom[addr as usize]
-///     }
-///
-///     fn write_chr(&mut self, _addr: u16, _value: u8) {
-///         // NROM has CHR-ROM (not writable)
-///     }
-///
-///     fn mirroring(&self) -> Mirroring {
-///         self.mirroring
-///     }
-///
-///     fn mapper_number(&self) -> u16 {
-///         0
-///     }
-///
-///     fn clone_mapper(&self) -> Box<dyn Mapper> {
-///         Box::new(Nrom {
-///             prg_rom: self.prg_rom.clone(),
-///             chr_rom: self.chr_rom.clone(),
-///             mirroring: self.mirroring,
-///         })
-///     }
-/// }
-/// ```
-pub trait Mapper: Send {
-    /// Read from PRG-ROM address space ($8000-$FFFF).
+/// All NES cartridge mappers must implement this trait. The mapper handles:
+/// - PRG-ROM/RAM memory access (CPU $8000-$FFFF, optionally $6000-$7FFF)
+/// - CHR-ROM/RAM memory access (PPU $0000-$1FFF)
+/// - Nametable mirroring control
+/// - Optional IRQ generation
+/// - Optional scanline counting
+pub trait Mapper: Send + Sync {
+    /// Read a byte from PRG memory (CPU address space).
     ///
-    /// # Arguments
-    ///
-    /// * `addr` - CPU address in range $8000-$FFFF
-    ///
-    /// # Returns
-    ///
-    /// Byte value at the given address after bank mapping
-    ///
-    /// # Panics
-    ///
-    /// Implementations may panic if `addr < 0x8000` (invalid PRG address).
+    /// Address range: $6000-$FFFF
+    /// - $6000-$7FFF: PRG-RAM (battery-backed or work RAM)
+    /// - $8000-$FFFF: PRG-ROM (banked)
     fn read_prg(&self, addr: u16) -> u8;
 
-    /// Write to PRG address space ($8000-$FFFF).
+    /// Write a byte to PRG memory (CPU address space).
     ///
-    /// This is primarily used for writing to mapper registers. Writes may:
-    /// - Change PRG/CHR banking
-    /// - Update mirroring mode
-    /// - Configure IRQ settings
-    /// - Write to PRG-RAM (if present and not write-protected)
-    ///
-    /// # Arguments
-    ///
-    /// * `addr` - CPU address in range $8000-$FFFF
-    /// * `value` - Byte value to write
-    ///
-    /// # Panics
-    ///
-    /// Implementations may panic if `addr < 0x8000` (invalid PRG address).
-    fn write_prg(&mut self, addr: u16, value: u8);
+    /// Address range: $6000-$FFFF
+    /// - $6000-$7FFF: PRG-RAM writes (if present)
+    /// - $8000-$FFFF: Mapper register writes
+    fn write_prg(&mut self, addr: u16, val: u8);
 
-    /// Read from CHR address space ($0000-$1FFF).
+    /// Read a byte from CHR memory (PPU address space).
     ///
-    /// # Arguments
-    ///
-    /// * `addr` - PPU address in range $0000-$1FFF
-    ///
-    /// # Returns
-    ///
-    /// Byte value at the given address after bank mapping
-    ///
-    /// # Panics
-    ///
-    /// Implementations may panic if `addr > 0x1FFF` (invalid CHR address).
+    /// Address range: $0000-$1FFF
     fn read_chr(&self, addr: u16) -> u8;
 
-    /// Write to CHR address space ($0000-$1FFF).
+    /// Write a byte to CHR memory (PPU address space).
     ///
-    /// Only functional for CHR-RAM. CHR-ROM cartridges typically ignore writes.
-    ///
-    /// # Arguments
-    ///
-    /// * `addr` - PPU address in range $0000-$1FFF
-    /// * `value` - Byte value to write
-    ///
-    /// # Panics
-    ///
-    /// Implementations may panic if `addr > 0x1FFF` (invalid CHR address).
-    fn write_chr(&mut self, addr: u16, value: u8);
+    /// Only works if the cartridge has CHR-RAM instead of CHR-ROM.
+    fn write_chr(&mut self, addr: u16, val: u8);
 
-    /// Get current nametable mirroring mode.
-    ///
-    /// # Returns
-    ///
-    /// Current mirroring mode. May change dynamically for mappers with mirroring control.
+    /// Get the current nametable mirroring mode.
     fn mirroring(&self) -> Mirroring;
 
-    /// Check if an IRQ is pending.
-    ///
-    /// Used by mappers with IRQ support (MMC3, MMC5, VRC, etc.) to signal the CPU.
-    ///
-    /// # Returns
-    ///
-    /// `true` if the mapper is asserting IRQ, `false` otherwise.
-    ///
-    /// # Default Implementation
-    ///
-    /// Returns `false` for mappers without IRQ support.
+    /// Check if the mapper has a pending IRQ.
     fn irq_pending(&self) -> bool {
         false
     }
 
-    /// Clear the IRQ flag.
-    ///
-    /// Called when the CPU acknowledges the IRQ (typically after reading $FFFC/FFFD).
-    ///
-    /// # Default Implementation
-    ///
-    /// No-op for mappers without IRQ support.
-    fn clear_irq(&mut self) {}
+    /// Acknowledge/clear the IRQ.
+    fn irq_acknowledge(&mut self) {}
 
-    /// Clock the mapper for a number of CPU cycles.
+    /// Clock the mapper (called every CPU cycle).
     ///
-    /// Used by mappers with cycle-based timers (MMC3 alternate IRQ mode, FDS, etc.).
-    ///
-    /// # Arguments
-    ///
-    /// * `cycles` - Number of CPU cycles elapsed
-    ///
-    /// # Default Implementation
-    ///
-    /// No-op for mappers without cycle-based features.
+    /// Some mappers (like MMC3) count CPU cycles for IRQ timing.
     fn clock(&mut self, _cycles: u8) {}
 
-    /// Notify mapper of PPU A12 rising edge.
+    /// Notify the mapper of a scanline (called every PPU scanline).
     ///
-    /// Used by MMC3 and compatible mappers for scanline IRQ counting.
-    /// Called when PPU address bit 12 transitions from 0 to 1.
-    ///
-    /// # Default Implementation
-    ///
-    /// No-op for mappers without A12-based IRQ.
-    fn ppu_a12_edge(&mut self) {}
+    /// Some mappers (like MMC3) count scanlines for IRQ timing.
+    fn scanline(&mut self) {}
 
-    /// Get reference to battery-backed SRAM.
+    /// Notify the mapper of PPU A12 rising edge.
     ///
-    /// # Returns
-    ///
-    /// `Some(&[u8])` if the mapper has battery-backed SRAM, `None` otherwise.
-    ///
-    /// # Default Implementation
-    ///
-    /// Returns `None` for mappers without SRAM.
-    fn sram(&self) -> Option<&[u8]> {
-        None
-    }
+    /// MMC3 uses A12 for IRQ timing.
+    fn ppu_a12_rising(&mut self) {}
 
-    /// Get mutable reference to battery-backed SRAM.
-    ///
-    /// # Returns
-    ///
-    /// `Some(&mut [u8])` if the mapper has battery-backed SRAM, `None` otherwise.
-    ///
-    /// # Default Implementation
-    ///
-    /// Returns `None` for mappers without SRAM.
-    fn sram_mut(&mut self) -> Option<&mut [u8]> {
-        None
-    }
-
-    /// Get the mapper number (iNES/NES 2.0 format).
-    ///
-    /// # Returns
-    ///
-    /// iNES mapper number (0-4095 for NES 2.0, 0-255 for iNES 1.0)
+    /// Get the mapper number (iNES mapper ID).
     fn mapper_number(&self) -> u16;
 
-    /// Get the submapper number (NES 2.0 format only).
-    ///
-    /// # Returns
-    ///
-    /// Submapper number (0-15), or 0 if not applicable.
-    ///
-    /// # Default Implementation
-    ///
-    /// Returns 0 (no submapper).
-    fn submapper(&self) -> u8 {
-        0
+    /// Get the mapper name.
+    fn mapper_name(&self) -> &'static str;
+
+    /// Check if the mapper has battery-backed RAM.
+    fn has_battery(&self) -> bool {
+        false
     }
 
-    /// Clone the mapper state.
-    ///
-    /// This is used for save states and debugging. Implementations should return
-    /// a boxed clone of the current mapper state.
-    ///
-    /// # Returns
-    ///
-    /// Boxed clone of the mapper
-    fn clone_mapper(&self) -> Box<dyn Mapper>;
+    /// Get a reference to the battery-backed RAM for saving.
+    fn battery_ram(&self) -> Option<&[u8]> {
+        None
+    }
+
+    /// Set the battery-backed RAM content (for loading saves).
+    fn set_battery_ram(&mut self, _data: &[u8]) {}
+
+    /// Reset the mapper to its initial state.
+    fn reset(&mut self) {}
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // Simple test mapper to verify trait implementation
-    struct TestMapper {
-        prg_rom: Vec<u8>,
-        chr_ram: Vec<u8>,
-        mirroring: Mirroring,
-    }
-
-    impl Mapper for TestMapper {
-        fn read_prg(&self, addr: u16) -> u8 {
-            assert!(addr >= 0x8000, "Invalid PRG address");
-            let offset = (addr - 0x8000) as usize;
-            self.prg_rom[offset % self.prg_rom.len()]
-        }
-
-        fn write_prg(&mut self, addr: u16, _value: u8) {
-            assert!(addr >= 0x8000, "Invalid PRG address");
-        }
-
-        fn read_chr(&self, addr: u16) -> u8 {
-            assert!(addr <= 0x1FFF, "Invalid CHR address");
-            self.chr_ram[addr as usize]
-        }
-
-        fn write_chr(&mut self, addr: u16, value: u8) {
-            assert!(addr <= 0x1FFF, "Invalid CHR address");
-            self.chr_ram[addr as usize] = value;
-        }
-
-        fn mirroring(&self) -> Mirroring {
-            self.mirroring
-        }
-
-        fn mapper_number(&self) -> u16 {
-            0
-        }
-
-        fn clone_mapper(&self) -> Box<dyn Mapper> {
-            Box::new(TestMapper {
-                prg_rom: self.prg_rom.clone(),
-                chr_ram: self.chr_ram.clone(),
-                mirroring: self.mirroring,
-            })
-        }
-    }
-
     #[test]
-    fn test_mapper_trait_implementation() {
-        let mut mapper = TestMapper {
-            prg_rom: vec![0x42; 0x8000],
-            chr_ram: vec![0; 0x2000],
-            mirroring: Mirroring::Horizontal,
-        };
-
-        // Test PRG read
-        assert_eq!(mapper.read_prg(0x8000), 0x42);
-        assert_eq!(mapper.read_prg(0xFFFF), 0x42);
-
-        // Test PRG write (should not panic)
-        mapper.write_prg(0x8000, 0xFF);
-
-        // Test CHR read/write
-        mapper.write_chr(0x1000, 0x55);
-        assert_eq!(mapper.read_chr(0x1000), 0x55);
-
-        // Test mirroring
-        assert_eq!(mapper.mirroring(), Mirroring::Horizontal);
-
-        // Test default implementations
-        assert!(!mapper.irq_pending());
-        mapper.clear_irq();
-        mapper.clock(1);
-        mapper.ppu_a12_edge();
-        assert!(mapper.sram().is_none());
-        assert!(mapper.sram_mut().is_none());
-        assert_eq!(mapper.submapper(), 0);
-    }
-
-    #[test]
-    fn test_mapper_is_send() {
-        fn assert_send<T: Send>() {}
-        assert_send::<Box<dyn Mapper>>();
+    fn test_mirroring_default() {
+        let mirroring = Mirroring::default();
+        assert_eq!(mirroring, Mirroring::Horizontal);
     }
 }

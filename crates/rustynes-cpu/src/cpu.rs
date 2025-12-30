@@ -1,1858 +1,138 @@
-//! 6502 CPU core implementation.
+//! Core CPU implementation.
 //!
-//! This module contains the main CPU structure with all registers,
-//! the instruction execution loop, interrupt handling, and stack operations.
+//! This module contains the main CPU struct and its implementation,
+//! including cycle-accurate execution and interrupt handling.
 
-use crate::addressing::AddressingMode;
-use crate::bus::{Bus, CpuBus};
-use crate::opcodes::OPCODE_TABLE;
-use crate::state::{CpuState, InstructionType};
-use crate::status::StatusFlags;
+use crate::addressing::{ADDR_MODE_TABLE, AddrMode};
+use crate::instructions::OPCODE_TABLE;
+use crate::status::Status;
+use crate::vectors;
 
-/// NES 6502 CPU
+/// Memory bus trait for CPU memory access.
 ///
-/// Cycle-accurate implementation of the MOS 6502 as used in the NES.
-/// All timing follows the NESdev Wiki specifications.
-#[derive(Debug)]
-#[allow(clippy::struct_excessive_bools)] // Bools are appropriate for CPU flags
-pub struct Cpu {
-    /// Accumulator register
-    pub a: u8,
-    /// X index register
-    pub x: u8,
-    /// Y index register
-    pub y: u8,
-    /// Program counter
-    pub pc: u16,
-    /// Stack pointer (points to $0100-$01FF)
-    pub sp: u8,
-    /// Status flags
-    pub status: StatusFlags,
-    /// Total cycles executed
-    pub cycles: u64,
-    /// Stall cycles (for DMA)
-    pub stall: u8,
-    /// NMI pending flag
-    pub(crate) nmi_pending: bool,
-    /// IRQ line state
-    pub(crate) irq_pending: bool,
-    /// I flag value sampled at start of instruction (for interrupt polling)
-    /// IRQ check uses this instead of current I flag to implement proper timing
-    pub(crate) prev_irq_inhibit: bool,
-    /// Suppress NMI check for one instruction (set after BRK completes)
-    /// This ensures the first instruction of the interrupt handler executes
-    /// before checking for another NMI (required for nmi_and_brk test)
-    pub(crate) suppress_nmi_next: bool,
-    /// CPU jammed (halt opcodes)
-    pub jammed: bool,
+/// Implement this trait to connect the CPU to a memory subsystem.
+/// All memory operations go through this trait, allowing for
+/// memory-mapped I/O and proper bus timing.
+pub trait Bus {
+    /// Read a byte from the given address.
+    fn read(&mut self, addr: u16) -> u8;
 
-    // ===== Cycle-by-cycle state machine fields =====
-    /// Current execution state in the state machine
-    state: CpuState,
-    /// Current opcode being executed
-    current_opcode: u8,
-    /// Current instruction type (for dispatch)
-    instr_type: InstructionType,
-    /// Current addressing mode
-    current_addr_mode: AddressingMode,
-    /// Low byte of operand (fetched during FetchOperandLo)
-    operand_lo: u8,
-    /// High byte of operand (fetched during FetchOperandHi)
-    operand_hi: u8,
-    /// Calculated effective address
-    effective_addr: u16,
-    /// Base address before indexing (for page cross detection)
-    base_addr: u16,
-    /// Temporary value for RMW operations
-    temp_value: u8,
-    /// Branch offset (signed, for branch instructions)
-    branch_offset: i8,
-    /// Indicates if current instruction crosses a page boundary
-    page_crossed: bool,
+    /// Write a byte to the given address.
+    fn write(&mut self, addr: u16, value: u8);
+
+    /// Called when a CPU cycle occurs.
+    /// Override this for cycle-accurate PPU/APU synchronization.
+    #[inline]
+    fn on_cpu_cycle(&mut self) {}
+
+    /// Read without side effects (for debugging).
+    /// Default implementation calls `read`.
+    fn peek(&self, addr: u16) -> u8
+    where
+        Self: Sized,
+    {
+        // Default: we can't peek without mutable access
+        let _ = addr;
+        0
+    }
 }
 
-impl Cpu {
-    /// Create a new CPU in power-on state.
-    ///
-    /// # Power-on State
-    /// - A, X, Y: undefined (set to 0)
-    /// - SP: $FD (after RESET pulls 3 bytes)
-    /// - P: $34 (IRQ disabled)
-    /// - PC: Read from RESET vector $FFFC-$FFFD
-    pub fn new() -> Self {
-        Self {
-            a: 0,
-            x: 0,
-            y: 0,
-            pc: 0,
-            sp: 0xFD,
-            status: StatusFlags::from_bits_truncate(0x24), // I flag set, U flag set
-            cycles: 0,
-            stall: 0,
-            nmi_pending: false,
-            irq_pending: false,
-            prev_irq_inhibit: true,
-            suppress_nmi_next: false,
-            jammed: false,
-            // Cycle-by-cycle state machine fields
-            state: CpuState::default(),
-            current_opcode: 0,
-            instr_type: InstructionType::default(),
-            current_addr_mode: AddressingMode::Implied,
-            operand_lo: 0,
-            operand_hi: 0,
-            effective_addr: 0,
-            base_addr: 0,
-            temp_value: 0,
-            branch_offset: 0,
-            page_crossed: false,
-        }
-    }
-
-    /// Reset the CPU.
-    ///
-    /// Simulates the RESET interrupt sequence:
-    /// - SP decremented by 3 (no writes)
-    /// - I flag set
-    /// - PC loaded from RESET vector ($FFFC-$FFFD)
-    /// - Takes 7 cycles
-    pub fn reset(&mut self, bus: &mut impl Bus) {
-        self.sp = self.sp.wrapping_sub(3);
-        self.status.insert(StatusFlags::INTERRUPT_DISABLE);
-        self.pc = bus.read_u16(0xFFFC);
-        self.cycles += 7;
-        self.nmi_pending = false;
-        self.irq_pending = false;
-        self.prev_irq_inhibit = true;
-        self.jammed = false;
-        // Reset state machine to ready for next instruction
-        self.state = CpuState::FetchOpcode;
-        self.current_opcode = 0;
-        self.instr_type = InstructionType::default();
-        self.current_addr_mode = AddressingMode::Implied;
-        self.operand_lo = 0;
-        self.operand_hi = 0;
-        self.effective_addr = 0;
-        self.base_addr = 0;
-        self.temp_value = 0;
-        self.branch_offset = 0;
-        self.page_crossed = false;
-    }
-
-    /// Execute one instruction and return cycles taken.
-    ///
-    /// Handles interrupt polling and instruction execution.
-    /// Returns the number of CPU cycles consumed.
-    #[inline]
-    pub fn step(&mut self, bus: &mut impl Bus) -> u8 {
-        // Handle DMA stalls
-        if self.stall > 0 {
-            self.stall -= 1;
-            self.cycles += 1;
-            return 1;
-        }
-
-        // Check if CPU is jammed
-        if self.jammed {
-            self.cycles += 1;
-            return 1;
-        }
-
-        // Sample I flag at start of this instruction (for next instruction's IRQ check)
-        let current_irq_inhibit = self.status.contains(StatusFlags::INTERRUPT_DISABLE);
-
-        // Check for NMI (Non-Maskable Interrupt) - Edge triggered
-        // NMI can be suppressed for one instruction after BRK completes
-        if self.nmi_pending && !self.suppress_nmi_next {
-            self.nmi_pending = false;
-            // NMI sets I flag, so we must treat previous as inhibited to prevent immediate IRQ
-            self.prev_irq_inhibit = true;
-            return self.handle_nmi(bus);
-        }
-
-        // Clear NMI suppression flag (applies for one instruction only)
-        if self.suppress_nmi_next {
-            self.suppress_nmi_next = false;
-        }
-
-        // Check for IRQ (Maskable Interrupt) - Level triggered
-        // IRQ is ignored if I flag is set (Interrupt Disable).
-        // The check uses `prev_irq_inhibit` to model the 1-instruction latency
-        // of instructions that change the I flag (CLI, SEI, PLP, RTI).
-        if self.irq_pending && !self.prev_irq_inhibit {
-            // Entering ISR sets I flag, so we must treat previous as inhibited
-            self.prev_irq_inhibit = true;
-            return self.handle_irq(bus);
-        }
-
-        // Update prev_irq_inhibit for next instruction
-        self.prev_irq_inhibit = current_irq_inhibit;
-
-        // Fetch opcode
-        let opcode = bus.read(self.pc);
-        self.pc = self.pc.wrapping_add(1);
-
-        // Look up opcode info
-        let info = &OPCODE_TABLE[opcode as usize];
-
-        // Execute instruction
-        let extra_cycles = self.execute_opcode(opcode, info.addr_mode, bus);
-
-        // Calculate total cycles
-        let total_cycles = info.cycles + extra_cycles;
-        self.cycles += u64::from(total_cycles);
-
-        total_cycles
-    }
-
-    /// Trigger NMI (Non-Maskable Interrupt).
-    ///
-    /// NMI is edge-triggered - call this when NMI line transitions from high to low.
-    pub fn trigger_nmi(&mut self) {
-        self.nmi_pending = true;
-    }
-
-    /// Set IRQ line state.
-    ///
-    /// IRQ is level-triggered - will fire every instruction while line is low and I=0.
-    pub fn set_irq(&mut self, active: bool) {
-        self.irq_pending = active;
-    }
-
-    /// Check if IRQ is pending.
-    #[must_use]
-    pub fn irq_pending(&self) -> bool {
-        self.irq_pending
-    }
-
-    /// Get total cycles executed.
-    pub fn get_cycles(&self) -> u64 {
-        self.cycles
-    }
-
-    /// Check if CPU is jammed (halted).
-    pub fn is_jammed(&self) -> bool {
-        self.jammed
-    }
-
-    /// Get current CPU state (for debugging/testing).
-    pub fn get_state(&self) -> CpuState {
-        self.state
-    }
-
-    // =========================================================================
-    // CYCLE-ACCURATE EXECUTION
-    // =========================================================================
-
-    /// Execute exactly one CPU cycle with cycle-accurate bus synchronization.
-    ///
-    /// This is the core of cycle-accurate emulation. Each call advances the CPU
-    /// by exactly one cycle, calling `on_cpu_cycle()` before each memory access
-    /// to keep PPU and APU perfectly synchronized.
-    ///
-    /// Returns `true` when an instruction boundary is reached (ready for next instruction).
-    ///
-    /// # Cycle-Accurate Timing
-    ///
-    /// Each memory access calls `on_cpu_cycle()` BEFORE reading/writing, ensuring
-    /// that PPU has advanced 3 dots and APU has advanced 1 cycle before the CPU
-    /// observes the memory state. This is critical for accurate $2002 VBlank
-    /// flag timing.
-    pub fn tick(&mut self, bus: &mut impl CpuBus) -> bool {
-        // Handle DMA stalls (OAM DMA, DMC DMA)
-        if self.stall > 0 {
-            self.stall -= 1;
-            self.cycles += 1;
-            return false;
-        }
-
-        // Handle jammed CPU
-        if self.jammed {
-            self.cycles += 1;
-            return false;
-        }
-
-        self.cycles += 1;
-
-        // Dispatch based on current state
-        match self.state {
-            CpuState::FetchOpcode => self.tick_fetch_opcode(bus),
-            CpuState::FetchOperandLo => self.tick_fetch_operand_lo(bus),
-            CpuState::FetchOperandHi => self.tick_fetch_operand_hi(bus),
-            CpuState::ResolveAddress => self.tick_resolve_address(bus),
-            CpuState::ReadData => self.tick_read_data(bus),
-            CpuState::WriteData => self.tick_write_data(bus),
-            CpuState::RmwRead => self.tick_rmw_read(bus),
-            CpuState::RmwDummyWrite => self.tick_rmw_dummy_write(bus),
-            CpuState::RmwWrite => self.tick_rmw_write(bus),
-            CpuState::Execute => self.tick_execute(bus),
-            CpuState::FetchIndirectLo => self.tick_fetch_indirect_lo(bus),
-            CpuState::FetchIndirectHi => self.tick_fetch_indirect_hi(bus),
-            CpuState::AddIndex => self.tick_add_index(bus),
-            CpuState::PushHi => self.tick_push_hi(bus),
-            CpuState::PushLo => self.tick_push_lo(bus),
-            CpuState::PushStatus => self.tick_push_status(bus),
-            CpuState::PopLo => self.tick_pop_lo(bus),
-            CpuState::PopHi => self.tick_pop_hi(bus),
-            CpuState::PopStatus => self.tick_pop_status(bus),
-            CpuState::InternalCycle => self.tick_internal_cycle(bus),
-            CpuState::BranchTaken => self.tick_branch_taken(bus),
-            CpuState::BranchPageCross => self.tick_branch_page_cross(bus),
-            CpuState::InterruptPushPcHi => self.tick_interrupt_push_pc_hi(bus),
-            CpuState::InterruptPushPcLo => self.tick_interrupt_push_pc_lo(bus),
-            CpuState::InterruptPushStatus => self.tick_interrupt_push_status(bus),
-            CpuState::InterruptFetchVectorLo => self.tick_interrupt_fetch_vector_lo(bus),
-            CpuState::InterruptFetchVectorHi => self.tick_interrupt_fetch_vector_hi(bus),
-        }
-    }
-
-    /// Fetch opcode cycle (cycle 1 of every instruction).
-    fn tick_fetch_opcode(&mut self, bus: &mut impl CpuBus) -> bool {
-        // Sample I flag at start of this instruction (will be used for NEXT instruction's IRQ check)
-        let current_irq_inhibit = self.status.contains(StatusFlags::INTERRUPT_DISABLE);
-
-        // Check for pending interrupts (polled on last cycle of previous instruction)
-        // NMI is not affected by I flag, but can be suppressed for one instruction after BRK
-        if self.nmi_pending && !self.suppress_nmi_next {
-            self.nmi_pending = false;
-            self.prev_irq_inhibit = current_irq_inhibit;
-            // Start interrupt sequence - dummy read of current PC
-            self.dummy_cycle(bus, self.pc);
-            self.state = CpuState::InterruptPushPcHi;
-            // Store NMI vector address for later
-            self.effective_addr = 0xFFFA;
-            return false;
-        }
-
-        // Clear NMI suppression flag (applies for one instruction only)
-        if self.suppress_nmi_next {
-            self.suppress_nmi_next = false;
-        }
-
-        // IRQ uses the I flag from the PREVIOUS instruction (prev_irq_inhibit)
-        // This implements the one-instruction delay after CLI/PLP/RTI
-        if self.irq_pending && !self.prev_irq_inhibit {
-            self.prev_irq_inhibit = current_irq_inhibit;
-            // Start interrupt sequence - dummy read of current PC
-            self.dummy_cycle(bus, self.pc);
-            self.state = CpuState::InterruptPushPcHi;
-            // Store IRQ vector address for later
-            self.effective_addr = 0xFFFE;
-            return false;
-        }
-
-        // Update prev_irq_inhibit for next instruction
-        self.prev_irq_inhibit = current_irq_inhibit;
-
-        // Fetch opcode from PC
-        self.current_opcode = self.read_cycle(bus, self.pc);
-        self.pc = self.pc.wrapping_add(1);
-
-        // Look up opcode info
-        let info = &OPCODE_TABLE[self.current_opcode as usize];
-        self.current_addr_mode = info.addr_mode;
-        self.instr_type = InstructionType::from_opcode(self.current_opcode);
-
-        // Reset state for new instruction
-        self.operand_lo = 0;
-        self.operand_hi = 0;
-        self.effective_addr = 0;
-        self.base_addr = 0;
-        self.temp_value = 0;
-        self.branch_offset = 0;
-        self.page_crossed = false;
-
-        // Determine next state based on addressing mode and instruction type
-        self.state = self.next_state_after_fetch();
-
-        // Check if this is a 2-cycle implied/accumulator instruction
-        matches!(
-            self.instr_type,
-            InstructionType::Implied | InstructionType::Accumulator
-        ) && self.state == CpuState::Execute
-    }
-
-    /// Determine next state after opcode fetch based on addressing mode.
-    fn next_state_after_fetch(&self) -> CpuState {
-        match self.current_addr_mode {
-            // Implied and Accumulator: just need Execute cycle
-            AddressingMode::Implied | AddressingMode::Accumulator => CpuState::Execute,
-
-            // Immediate: fetch single byte operand
-            AddressingMode::Immediate => CpuState::FetchOperandLo,
-
-            // Zero Page: fetch single byte address
-            AddressingMode::ZeroPage | AddressingMode::ZeroPageX | AddressingMode::ZeroPageY => {
-                CpuState::FetchOperandLo
-            }
-
-            // Absolute: fetch two byte address
-            AddressingMode::Absolute | AddressingMode::AbsoluteX | AddressingMode::AbsoluteY => {
-                CpuState::FetchOperandLo
-            }
-
-            // Indirect (JMP only): fetch two byte pointer
-            AddressingMode::Indirect => CpuState::FetchOperandLo,
-
-            // Indexed Indirect (X): fetch zero page base
-            AddressingMode::IndexedIndirectX => CpuState::FetchOperandLo,
-
-            // Indirect Indexed (Y): fetch zero page pointer
-            AddressingMode::IndirectIndexedY => CpuState::FetchOperandLo,
-
-            // Relative (branches): fetch offset
-            AddressingMode::Relative => CpuState::FetchOperandLo,
-        }
-    }
-
-    // =========================================================================
-    // STATE HANDLERS - These will be implemented progressively
-    // =========================================================================
-
-    fn tick_fetch_operand_lo(&mut self, bus: &mut impl CpuBus) -> bool {
-        self.operand_lo = self.read_cycle(bus, self.pc);
-        self.pc = self.pc.wrapping_add(1);
-
-        match self.current_addr_mode {
-            // Immediate mode: operand is the value itself
-            AddressingMode::Immediate => {
-                self.effective_addr = self.pc.wrapping_sub(1);
-                self.temp_value = self.operand_lo;
-                // For Read instructions with Immediate mode, execute now and complete (2 cycles total)
-                // The operand byte IS the value, no additional read needed
-                if matches!(self.instr_type, InstructionType::Read) {
-                    self.execute_read_instruction();
-                    self.state = CpuState::FetchOpcode;
-                    return true;
-                }
-                self.state = self.next_state_for_instruction_type();
-            }
-
-            // Zero Page modes
-            AddressingMode::ZeroPage => {
-                self.effective_addr = u16::from(self.operand_lo);
-                self.state = self.next_state_for_instruction_type();
-            }
-            AddressingMode::ZeroPageX => {
-                self.base_addr = u16::from(self.operand_lo);
-                self.state = CpuState::AddIndex;
-            }
-            AddressingMode::ZeroPageY => {
-                self.base_addr = u16::from(self.operand_lo);
-                self.state = CpuState::AddIndex;
-            }
-
-            // Absolute modes: need high byte
-            AddressingMode::Absolute
-            | AddressingMode::AbsoluteX
-            | AddressingMode::AbsoluteY
-            | AddressingMode::Indirect => {
-                self.state = CpuState::FetchOperandHi;
-            }
-
-            // Indexed Indirect (X): fetch from zero page
-            AddressingMode::IndexedIndirectX => {
-                self.base_addr = u16::from(self.operand_lo);
-                self.state = CpuState::AddIndex;
-            }
-
-            // Indirect Indexed (Y): fetch low byte of pointer
-            AddressingMode::IndirectIndexedY => {
-                self.base_addr = u16::from(self.operand_lo);
-                self.state = CpuState::FetchIndirectLo;
-            }
-
-            // Relative (branches): operand is signed offset
-            AddressingMode::Relative => {
-                self.branch_offset = self.operand_lo as i8;
-                // Check branch condition
-                if self.check_branch_condition() {
-                    self.state = CpuState::BranchTaken;
-                } else {
-                    // Branch not taken - instruction complete
-                    self.state = CpuState::FetchOpcode;
-                    return true;
-                }
-            }
-
-            _ => {
-                self.state = CpuState::FetchOpcode;
-            }
-        }
-        false
-    }
-
-    fn tick_fetch_operand_hi(&mut self, bus: &mut impl CpuBus) -> bool {
-        self.operand_hi = self.read_cycle(bus, self.pc);
-        self.pc = self.pc.wrapping_add(1);
-
-        let addr = u16::from_le_bytes([self.operand_lo, self.operand_hi]);
-
-        match self.current_addr_mode {
-            AddressingMode::Absolute => {
-                self.effective_addr = addr;
-                match self.instr_type {
-                    InstructionType::JumpAbsolute => {
-                        // JMP absolute: set PC and done
-                        self.pc = self.effective_addr;
-                        self.state = CpuState::FetchOpcode;
-                        return true;
-                    }
-                    InstructionType::JumpSubroutine => {
-                        // JSR: internal cycle, then push return address
-                        self.state = CpuState::InternalCycle;
-                    }
-                    _ => {
-                        self.state = self.next_state_for_instruction_type();
-                    }
-                }
-            }
-            AddressingMode::AbsoluteX => {
-                self.base_addr = addr;
-                let indexed = addr.wrapping_add(u16::from(self.x));
-                self.effective_addr = indexed;
-                self.page_crossed = (addr & 0xFF00) != (indexed & 0xFF00);
-
-                // For writes and RMW: always do dummy read (ResolveAddress)
-                // For reads: only if page crossed
-                match self.instr_type {
-                    InstructionType::Write | InstructionType::ReadModifyWrite => {
-                        self.state = CpuState::ResolveAddress;
-                    }
-                    _ => {
-                        if self.page_crossed {
-                            self.state = CpuState::ResolveAddress;
-                        } else {
-                            self.state = self.next_state_for_instruction_type();
-                        }
-                    }
-                }
-            }
-            AddressingMode::AbsoluteY => {
-                self.base_addr = addr;
-                let indexed = addr.wrapping_add(u16::from(self.y));
-                self.effective_addr = indexed;
-                self.page_crossed = (addr & 0xFF00) != (indexed & 0xFF00);
-
-                match self.instr_type {
-                    InstructionType::Write | InstructionType::ReadModifyWrite => {
-                        self.state = CpuState::ResolveAddress;
-                    }
-                    _ => {
-                        if self.page_crossed {
-                            self.state = CpuState::ResolveAddress;
-                        } else {
-                            self.state = self.next_state_for_instruction_type();
-                        }
-                    }
-                }
-            }
-            AddressingMode::Indirect => {
-                // JMP indirect: fetch low byte of target address
-                self.base_addr = addr;
-                self.state = CpuState::FetchIndirectLo;
-            }
-            _ => {
-                self.state = CpuState::FetchOpcode;
-            }
-        }
-        false
-    }
-
-    fn tick_resolve_address(&mut self, bus: &mut impl CpuBus) -> bool {
-        // Dummy read from incorrect address (before page fix)
-        // This is the hardware behavior for indexed addressing
-        let incorrect_addr = (self.base_addr & 0xFF00) | (self.effective_addr & 0x00FF);
-        self.dummy_cycle(bus, incorrect_addr);
-
-        self.state = self.next_state_for_instruction_type();
-        false
-    }
-
-    fn tick_read_data(&mut self, bus: &mut impl CpuBus) -> bool {
-        // Read the data from memory - this is the final cycle for Read instructions
-        self.temp_value = self.read_cycle(bus, self.effective_addr);
-        // Execute the read instruction immediately (same cycle as data read)
-        // This matches 6502 hardware where read and execute happen together
-        self.execute_read_instruction();
-        self.state = CpuState::FetchOpcode;
-        true // Instruction complete
-    }
-
-    fn tick_write_data(&mut self, bus: &mut impl CpuBus) -> bool {
-        // Execute the write instruction
-        let value = self.execute_write_instruction();
-        self.write_cycle(bus, self.effective_addr, value);
-        self.state = CpuState::FetchOpcode;
-        true
-    }
-
-    fn tick_rmw_read(&mut self, bus: &mut impl CpuBus) -> bool {
-        self.temp_value = self.read_cycle(bus, self.effective_addr);
-        self.state = CpuState::RmwDummyWrite;
-        false
-    }
-
-    fn tick_rmw_dummy_write(&mut self, bus: &mut impl CpuBus) -> bool {
-        // Write back the original value (hardware behavior)
-        self.write_cycle(bus, self.effective_addr, self.temp_value);
-        self.state = CpuState::RmwWrite;
-        false
-    }
-
-    fn tick_rmw_write(&mut self, bus: &mut impl CpuBus) -> bool {
-        // Execute the RMW operation and write result
-        let result = self.execute_rmw_instruction();
-        self.write_cycle(bus, self.effective_addr, result);
-        self.state = CpuState::FetchOpcode;
-        true
-    }
-
-    fn tick_execute(&mut self, bus: &mut impl CpuBus) -> bool {
-        // Execute the instruction logic (for implied/accumulator or after read)
-        match self.instr_type {
-            InstructionType::Implied => {
-                // Dummy read of next byte
-                self.dummy_cycle(bus, self.pc);
-                self.execute_implied_instruction();
-            }
-            InstructionType::Accumulator => {
-                self.dummy_cycle(bus, self.pc);
-                self.execute_accumulator_instruction();
-            }
-            InstructionType::Read => {
-                self.execute_read_instruction();
-            }
-            _ => {}
-        }
-        self.state = CpuState::FetchOpcode;
-        true
-    }
-
-    fn tick_fetch_indirect_lo(&mut self, bus: &mut impl CpuBus) -> bool {
-        match self.current_addr_mode {
-            AddressingMode::IndirectIndexedY => {
-                // Read low byte of pointer from zero page
-                self.operand_lo = self.read_cycle(bus, self.base_addr);
-                self.state = CpuState::FetchIndirectHi;
-            }
-            AddressingMode::Indirect => {
-                // JMP indirect: read low byte of target
-                self.operand_lo = self.read_cycle(bus, self.base_addr);
-                self.state = CpuState::FetchIndirectHi;
-            }
-            AddressingMode::IndexedIndirectX => {
-                // Read low byte from (base + X) in zero page
-                let ptr = self.effective_addr as u8;
-                self.operand_lo = self.read_cycle(bus, u16::from(ptr));
-                self.state = CpuState::FetchIndirectHi;
-            }
-            _ => {
-                self.state = CpuState::FetchOpcode;
-            }
-        }
-        false
-    }
-
-    fn tick_fetch_indirect_hi(&mut self, bus: &mut impl CpuBus) -> bool {
-        match self.current_addr_mode {
-            AddressingMode::IndirectIndexedY => {
-                // Read high byte from (base + 1) with zero page wrap
-                let ptr_hi = self.base_addr.wrapping_add(1) as u8;
-                self.operand_hi = self.read_cycle(bus, u16::from(ptr_hi));
-
-                let ptr_addr = u16::from_le_bytes([self.operand_lo, self.operand_hi]);
-                let indexed = ptr_addr.wrapping_add(u16::from(self.y));
-                self.base_addr = ptr_addr;
-                self.effective_addr = indexed;
-                self.page_crossed = (ptr_addr & 0xFF00) != (indexed & 0xFF00);
-
-                match self.instr_type {
-                    InstructionType::Write | InstructionType::ReadModifyWrite => {
-                        self.state = CpuState::ResolveAddress;
-                    }
-                    _ => {
-                        if self.page_crossed {
-                            self.state = CpuState::ResolveAddress;
-                        } else {
-                            self.state = self.next_state_for_instruction_type();
-                        }
-                    }
-                }
-            }
-            AddressingMode::Indirect => {
-                // JMP indirect: read high byte with page wrap bug
-                let ptr_lo = self.base_addr as u8;
-                let ptr_hi_addr = (self.base_addr & 0xFF00) | u16::from(ptr_lo.wrapping_add(1));
-                self.operand_hi = self.read_cycle(bus, ptr_hi_addr);
-
-                self.effective_addr = u16::from_le_bytes([self.operand_lo, self.operand_hi]);
-                self.pc = self.effective_addr;
-                self.state = CpuState::FetchOpcode;
-                return true;
-            }
-            AddressingMode::IndexedIndirectX => {
-                // Read high byte from (base + X + 1) with zero page wrap
-                let ptr = (self.effective_addr as u8).wrapping_add(1);
-                self.operand_hi = self.read_cycle(bus, u16::from(ptr));
-                self.effective_addr = u16::from_le_bytes([self.operand_lo, self.operand_hi]);
-                self.state = self.next_state_for_instruction_type();
-            }
-            _ => {
-                self.state = CpuState::FetchOpcode;
-            }
-        }
-        false
-    }
-
-    fn tick_add_index(&mut self, bus: &mut impl CpuBus) -> bool {
-        // Dummy read from base address
-        self.dummy_cycle(bus, self.base_addr);
-
-        match self.current_addr_mode {
-            AddressingMode::ZeroPageX => {
-                self.effective_addr = u16::from((self.base_addr as u8).wrapping_add(self.x));
-                self.state = self.next_state_for_instruction_type();
-            }
-            AddressingMode::ZeroPageY => {
-                self.effective_addr = u16::from((self.base_addr as u8).wrapping_add(self.y));
-                self.state = self.next_state_for_instruction_type();
-            }
-            AddressingMode::IndexedIndirectX => {
-                // Calculate pointer address with wrap
-                self.effective_addr = u16::from((self.base_addr as u8).wrapping_add(self.x));
-                self.state = CpuState::FetchIndirectLo;
-            }
-            _ => {
-                self.state = CpuState::FetchOpcode;
-            }
-        }
-        false
-    }
-
-    fn tick_push_hi(&mut self, bus: &mut impl CpuBus) -> bool {
-        let value = (self.pc >> 8) as u8;
-        self.write_cycle(bus, 0x0100 | u16::from(self.sp), value);
-        self.sp = self.sp.wrapping_sub(1);
-        self.state = CpuState::PushLo;
-        false
-    }
-
-    fn tick_push_lo(&mut self, bus: &mut impl CpuBus) -> bool {
-        let value = (self.pc & 0xFF) as u8;
-        self.write_cycle(bus, 0x0100 | u16::from(self.sp), value);
-        self.sp = self.sp.wrapping_sub(1);
-
-        match self.instr_type {
-            InstructionType::JumpSubroutine => {
-                // JSR: set PC to target address
-                self.pc = self.effective_addr;
-                self.state = CpuState::FetchOpcode;
-                return true;
-            }
-            InstructionType::Break => {
-                self.state = CpuState::PushStatus;
-            }
-            _ => {
-                self.state = CpuState::FetchOpcode;
-            }
-        }
-        false
-    }
-
-    fn tick_push_status(&mut self, bus: &mut impl CpuBus) -> bool {
-        match self.instr_type {
-            InstructionType::Push => {
-                // PHP: push status with B flag set
-                let value = self.status.to_stack_byte(true);
-                self.write_cycle(bus, 0x0100 | u16::from(self.sp), value);
-                self.sp = self.sp.wrapping_sub(1);
-                self.state = CpuState::FetchOpcode;
-                return true;
-            }
-            InstructionType::Break => {
-                // BRK: check for NMI hijacking
-                // If NMI is pending, it hijacks BRK by using the NMI vector instead of IRQ/BRK vector
-                // IMPORTANT: B flag is ALWAYS set to 1 when pushed from BRK, even when NMI hijacks!
-                // This allows software to detect NMI hijacking by checking B=1 in the NMI handler.
-                // Reference: Mesen2 NesCpu.cpp BRK(), NESdev wiki "6502 BRK and B bit"
-                let nmi_hijack = self.nmi_pending;
-                if nmi_hijack {
-                    self.nmi_pending = false;
-                }
-
-                // Push status with B flag ALWAYS set (even when NMI hijacks)
-                let value = self.status.to_stack_byte(true);
-                self.write_cycle(bus, 0x0100 | u16::from(self.sp), value);
-                self.sp = self.sp.wrapping_sub(1);
-                self.status.insert(StatusFlags::INTERRUPT_DISABLE);
-
-                // Suppress NMI check for one instruction after BRK completes
-                // This ensures the first instruction of the handler executes before checking for NMI
-                // Reference: Mesen2 NesCpu.cpp BRK() "_prevNeedNmi = false"
-                self.suppress_nmi_next = true;
-
-                // Use NMI vector if hijacked, IRQ/BRK vector otherwise
-                self.effective_addr = if nmi_hijack { 0xFFFA } else { 0xFFFE };
-                self.state = CpuState::InterruptFetchVectorLo;
-            }
-            _ => {
-                self.state = CpuState::FetchOpcode;
-            }
-        }
-        false
-    }
-
-    fn tick_pop_lo(&mut self, bus: &mut impl CpuBus) -> bool {
-        // Internal cycle: increment SP
-        self.sp = self.sp.wrapping_add(1);
-        self.dummy_cycle(bus, 0x0100 | u16::from(self.sp));
-
-        match self.instr_type {
-            InstructionType::Pull => {
-                self.state = CpuState::Execute;
-            }
-            InstructionType::ReturnSubroutine => {
-                self.operand_lo = self.read_cycle(bus, 0x0100 | u16::from(self.sp));
-                self.state = CpuState::PopHi;
-            }
-            InstructionType::ReturnInterrupt => {
-                // First pop is status
-                self.state = CpuState::PopStatus;
-            }
-            _ => {
-                self.state = CpuState::FetchOpcode;
-            }
-        }
-        false
-    }
-
-    fn tick_pop_hi(&mut self, bus: &mut impl CpuBus) -> bool {
-        self.sp = self.sp.wrapping_add(1);
-        self.operand_hi = self.read_cycle(bus, 0x0100 | u16::from(self.sp));
-
-        match self.instr_type {
-            InstructionType::ReturnSubroutine => {
-                self.pc = u16::from_le_bytes([self.operand_lo, self.operand_hi]);
-                self.state = CpuState::InternalCycle;
-            }
-            InstructionType::ReturnInterrupt => {
-                self.pc = u16::from_le_bytes([self.operand_lo, self.operand_hi]);
-                self.state = CpuState::FetchOpcode;
-                return true;
-            }
-            _ => {
-                self.state = CpuState::FetchOpcode;
-            }
-        }
-        false
-    }
-
-    fn tick_pop_status(&mut self, bus: &mut impl CpuBus) -> bool {
-        let value = self.read_cycle(bus, 0x0100 | u16::from(self.sp));
-        self.status = StatusFlags::from_stack_byte(value);
-
-        // Match RTI behavior from instructions.rs:
-        // If RTI restores I=1 (Disabled), interrupts must be blocked immediately for the NEXT instruction.
-        if self.status.contains(StatusFlags::INTERRUPT_DISABLE) {
-            self.prev_irq_inhibit = true;
-        }
-
-        self.sp = self.sp.wrapping_add(1);
-        self.operand_lo = self.read_cycle(bus, 0x0100 | u16::from(self.sp));
-        self.state = CpuState::PopHi;
-        false
-    }
-
-    fn tick_internal_cycle(&mut self, bus: &mut impl CpuBus) -> bool {
-        // Dummy read
-        self.dummy_cycle(bus, 0x0100 | u16::from(self.sp));
-
-        match self.instr_type {
-            InstructionType::JumpSubroutine => {
-                // After internal cycle, push return address
-                self.state = CpuState::PushHi;
-            }
-            InstructionType::ReturnSubroutine => {
-                // Increment PC (RTS returns to addr+1)
-                self.pc = self.pc.wrapping_add(1);
-                self.state = CpuState::FetchOpcode;
-                return true;
-            }
-            InstructionType::Push => {
-                // PHA: after reading, push value
-                match self.current_opcode {
-                    0x48 => {
-                        // PHA
-                        self.write_cycle(bus, 0x0100 | u16::from(self.sp), self.a);
-                        self.sp = self.sp.wrapping_sub(1);
-                    }
-                    0x08 => {
-                        // PHP is handled in PushStatus
-                        self.state = CpuState::PushStatus;
-                        return false;
-                    }
-                    _ => {}
-                }
-                self.state = CpuState::FetchOpcode;
-                return true;
-            }
-            InstructionType::Pull => {
-                // After internal cycle, read from stack
-                self.sp = self.sp.wrapping_add(1);
-                self.temp_value = self.read_cycle(bus, 0x0100 | u16::from(self.sp));
-                match self.current_opcode {
-                    0x68 => {
-                        // PLA
-                        self.a = self.temp_value;
-                        self.set_zn(self.a);
-                    }
-                    0x28 => {
-                        // PLP
-                        self.status = StatusFlags::from_stack_byte(self.temp_value);
-                    }
-                    _ => {}
-                }
-                self.state = CpuState::FetchOpcode;
-                return true;
-            }
-            _ => {
-                self.state = CpuState::FetchOpcode;
-            }
-        }
-        false
-    }
-
-    fn tick_branch_taken(&mut self, bus: &mut impl CpuBus) -> bool {
-        // Dummy read during branch taken
-        self.dummy_cycle(bus, self.pc);
-
-        let old_pc = self.pc;
-        self.pc = self.pc.wrapping_add(self.branch_offset as u16);
-
-        // Check for page crossing
-        if (old_pc & 0xFF00) == (self.pc & 0xFF00) {
-            self.state = CpuState::FetchOpcode;
-            true
-        } else {
-            self.state = CpuState::BranchPageCross;
-            false
-        }
-    }
-
-    fn tick_branch_page_cross(&mut self, bus: &mut impl CpuBus) -> bool {
-        // Dummy read during page crossing fix
-        self.dummy_cycle(
-            bus,
-            (self.pc & 0x00FF) | ((self.pc.wrapping_sub(self.branch_offset as u16)) & 0xFF00),
-        );
-        self.state = CpuState::FetchOpcode;
-        true
-    }
-
-    fn tick_interrupt_push_pc_hi(&mut self, bus: &mut impl CpuBus) -> bool {
-        let value = (self.pc >> 8) as u8;
-        self.write_cycle(bus, 0x0100 | u16::from(self.sp), value);
-        self.sp = self.sp.wrapping_sub(1);
-        self.state = CpuState::InterruptPushPcLo;
-        false
-    }
-
-    fn tick_interrupt_push_pc_lo(&mut self, bus: &mut impl CpuBus) -> bool {
-        let value = (self.pc & 0xFF) as u8;
-        self.write_cycle(bus, 0x0100 | u16::from(self.sp), value);
-        self.sp = self.sp.wrapping_sub(1);
-        self.state = CpuState::InterruptPushStatus;
-        false
-    }
-
-    fn tick_interrupt_push_status(&mut self, bus: &mut impl CpuBus) -> bool {
-        // Interrupts push status with B=0
-        let value = self.status.to_stack_byte(false);
-        self.write_cycle(bus, 0x0100 | u16::from(self.sp), value);
-        self.sp = self.sp.wrapping_sub(1);
-        self.status.insert(StatusFlags::INTERRUPT_DISABLE);
-        self.state = CpuState::InterruptFetchVectorLo;
-        false
-    }
-
-    fn tick_interrupt_fetch_vector_lo(&mut self, bus: &mut impl CpuBus) -> bool {
-        self.operand_lo = self.read_cycle(bus, self.effective_addr);
-        self.state = CpuState::InterruptFetchVectorHi;
-        false
-    }
-
-    fn tick_interrupt_fetch_vector_hi(&mut self, bus: &mut impl CpuBus) -> bool {
-        self.operand_hi = self.read_cycle(bus, self.effective_addr.wrapping_add(1));
-        self.pc = u16::from_le_bytes([self.operand_lo, self.operand_hi]);
-        self.state = CpuState::FetchOpcode;
-        true
-    }
-
-    // =========================================================================
-    // CYCLE-ACCURATE MEMORY ACCESS METHODS
-    // =========================================================================
-    //
-    // These methods implement the sub-cycle accurate memory access pattern
-    // where on_cpu_cycle() is called BEFORE each memory access. This ensures
-    // PPU and APU are stepped to the correct state before the CPU observes
-    // memory (critical for accurate $2002 VBlank flag timing).
-
-    /// Read a byte from memory with cycle callback.
-    ///
-    /// Calls `on_cpu_cycle()` BEFORE the read, then performs the actual read.
-    /// This is the cycle-accurate version of memory read.
-    ///
-    /// # Arguments
-    ///
-    /// * `bus` - The cycle-aware bus implementing `CpuBus`
-    /// * `addr` - 16-bit memory address to read from
-    ///
-    /// # Returns
-    ///
-    /// The 8-bit value at the specified address
-    ///
-    /// # Timing
-    ///
-    /// ```text
-    /// CPU Cycle:  |-------- read --------|
-    /// PPU Cycles: |--1--|--2--|--3--|
-    ///              ^ on_cpu_cycle() called here
-    /// ```
-    #[inline]
-    pub fn read_cycle(&mut self, bus: &mut impl CpuBus, addr: u16) -> u8 {
-        bus.on_cpu_cycle();
-        bus.read(addr)
-    }
-
-    /// Write a byte to memory with cycle callback.
-    ///
-    /// Calls `on_cpu_cycle()` BEFORE the write, then performs the actual write.
-    /// This is the cycle-accurate version of memory write.
-    ///
-    /// # Arguments
-    ///
-    /// * `bus` - The cycle-aware bus implementing `CpuBus`
-    /// * `addr` - 16-bit memory address to write to
-    /// * `value` - 8-bit value to write
-    ///
-    /// # Timing
-    ///
-    /// ```text
-    /// CPU Cycle:  |------- write --------|
-    /// PPU Cycles: |--1--|--2--|--3--|
-    ///              ^ on_cpu_cycle() called here
-    /// ```
-    #[inline]
-    pub fn write_cycle(&mut self, bus: &mut impl CpuBus, addr: u16, value: u8) {
-        bus.on_cpu_cycle();
-        bus.write(addr, value);
-    }
-
-    /// Perform a dummy read cycle (for timing purposes).
-    ///
-    /// Some instructions require timing cycles where a read is performed
-    /// but the value is discarded. This method handles those cases while
-    /// still calling `on_cpu_cycle()` for proper PPU/APU synchronization.
-    ///
-    /// # Use Cases
-    ///
-    /// - Page boundary crossing in indexed addressing
-    /// - Implied/Accumulator mode dummy reads
-    /// - Branch taken cycles
-    /// - RMW dummy write-back cycles
-    ///
-    /// # Arguments
-    ///
-    /// * `bus` - The cycle-aware bus implementing `CpuBus`
-    /// * `addr` - Address to read from (value is discarded)
-    #[inline]
-    pub fn dummy_cycle(&mut self, bus: &mut impl CpuBus, addr: u16) {
-        bus.on_cpu_cycle();
-        let _ = bus.read(addr);
-    }
-
-    /// Push a byte to the stack with cycle callback.
-    ///
-    /// Calls `on_cpu_cycle()` BEFORE the write, then pushes to stack.
-    ///
-    /// # Arguments
-    ///
-    /// * `bus` - The cycle-aware bus implementing `CpuBus`
-    /// * `value` - 8-bit value to push
-    #[inline]
-    pub fn push_cycle(&mut self, bus: &mut impl CpuBus, value: u8) {
-        bus.on_cpu_cycle();
-        bus.write(0x0100 | u16::from(self.sp), value);
-        self.sp = self.sp.wrapping_sub(1);
-    }
-
-    /// Pop a byte from the stack with cycle callback.
-    ///
-    /// Calls `on_cpu_cycle()` BEFORE the read, then pops from stack.
-    ///
-    /// # Arguments
-    ///
-    /// * `bus` - The cycle-aware bus implementing `CpuBus`
-    ///
-    /// # Returns
-    ///
-    /// The 8-bit value popped from the stack
-    #[inline]
-    pub fn pop_cycle(&mut self, bus: &mut impl CpuBus) -> u8 {
-        self.sp = self.sp.wrapping_add(1);
-        bus.on_cpu_cycle();
-        bus.read(0x0100 | u16::from(self.sp))
-    }
-
-    /// Read a 16-bit value from memory with cycle callbacks.
-    ///
-    /// Performs two sequential reads with proper cycle callbacks.
-    /// Each read triggers `on_cpu_cycle()`.
-    ///
-    /// # Arguments
-    ///
-    /// * `bus` - The cycle-aware bus implementing `CpuBus`
-    /// * `addr` - Address of the low byte
-    ///
-    /// # Returns
-    ///
-    /// 16-bit value: `(high << 8) | low`
-    #[inline]
-    pub fn read_u16_cycle(&mut self, bus: &mut impl CpuBus, addr: u16) -> u16 {
-        let lo = self.read_cycle(bus, addr) as u16;
-        let hi = self.read_cycle(bus, addr.wrapping_add(1)) as u16;
-        (hi << 8) | lo
-    }
-
-    /// Read a 16-bit value with page wrap and cycle callbacks.
-    ///
-    /// Implements the JMP indirect bug where the high byte wraps within
-    /// the same page if the low byte is at $xxFF.
-    ///
-    /// # Arguments
-    ///
-    /// * `bus` - The cycle-aware bus implementing `CpuBus`
-    /// * `addr` - Address of the low byte
-    ///
-    /// # Returns
-    ///
-    /// 16-bit value with page-wrap bug behavior
-    #[inline]
-    pub fn read_u16_wrap_cycle(&mut self, bus: &mut impl CpuBus, addr: u16) -> u16 {
-        let lo = self.read_cycle(bus, addr) as u16;
-
-        // If low byte is at $xxFF, high byte wraps to $xx00 (6502 bug)
-        let hi_addr = if addr & 0xFF == 0xFF {
-            addr & 0xFF00
-        } else {
-            addr.wrapping_add(1)
-        };
-
-        let hi = self.read_cycle(bus, hi_addr) as u16;
-        (hi << 8) | lo
-    }
-
-    /// Push a 16-bit value to the stack with cycle callbacks.
-    ///
-    /// Pushes high byte first, then low byte (6502 convention).
-    /// Each push triggers `on_cpu_cycle()`.
-    ///
-    /// # Arguments
-    ///
-    /// * `bus` - The cycle-aware bus implementing `CpuBus`
-    /// * `value` - 16-bit value to push
-    #[inline]
-    pub fn push_u16_cycle(&mut self, bus: &mut impl CpuBus, value: u16) {
-        self.push_cycle(bus, (value >> 8) as u8);
-        self.push_cycle(bus, (value & 0xFF) as u8);
-    }
-
-    /// Pop a 16-bit value from the stack with cycle callbacks.
-    ///
-    /// Pops low byte first, then high byte (6502 convention).
-    /// Each pop triggers `on_cpu_cycle()`.
-    ///
-    /// # Arguments
-    ///
-    /// * `bus` - The cycle-aware bus implementing `CpuBus`
-    ///
-    /// # Returns
-    ///
-    /// 16-bit value popped from the stack
-    #[inline]
-    pub fn pop_u16_cycle(&mut self, bus: &mut impl CpuBus) -> u16 {
-        let lo = self.pop_cycle(bus);
-        let hi = self.pop_cycle(bus);
-        u16::from_le_bytes([lo, hi])
-    }
-
-    // =========================================================================
-    // HELPER METHODS
-    // =========================================================================
-
-    /// Determine next state based on instruction type.
-    fn next_state_for_instruction_type(&self) -> CpuState {
-        match self.instr_type {
-            InstructionType::Read => CpuState::ReadData,
-            InstructionType::Write => CpuState::WriteData,
-            InstructionType::ReadModifyWrite => CpuState::RmwRead,
-            InstructionType::Implied | InstructionType::Accumulator => CpuState::Execute,
-            InstructionType::Push => CpuState::InternalCycle,
-            InstructionType::Pull => CpuState::InternalCycle,
-            _ => CpuState::Execute,
-        }
-    }
-
-    /// Check if branch condition is met for current opcode.
-    fn check_branch_condition(&self) -> bool {
-        match self.current_opcode {
-            0x10 => !self.status.contains(StatusFlags::NEGATIVE), // BPL
-            0x30 => self.status.contains(StatusFlags::NEGATIVE),  // BMI
-            0x50 => !self.status.contains(StatusFlags::OVERFLOW), // BVC
-            0x70 => self.status.contains(StatusFlags::OVERFLOW),  // BVS
-            0x90 => !self.status.contains(StatusFlags::CARRY),    // BCC
-            0xB0 => self.status.contains(StatusFlags::CARRY),     // BCS
-            0xD0 => !self.status.contains(StatusFlags::ZERO),     // BNE
-            0xF0 => self.status.contains(StatusFlags::ZERO),      // BEQ
-            _ => false,
-        }
-    }
-
-    /// Execute an implied instruction (register-only operations).
-    fn execute_implied_instruction(&mut self) {
-        match self.current_opcode {
-            // Transfers
-            0xAA => {
-                self.x = self.a;
-                self.set_zn(self.x);
-            } // TAX
-            0xA8 => {
-                self.y = self.a;
-                self.set_zn(self.y);
-            } // TAY
-            0x8A => {
-                self.a = self.x;
-                self.set_zn(self.a);
-            } // TXA
-            0x98 => {
-                self.a = self.y;
-                self.set_zn(self.a);
-            } // TYA
-            0xBA => {
-                self.a = self.sp;
-                self.set_zn(self.a);
-            } // TSX
-            0x9A => {
-                self.sp = self.x;
-            } // TXS
-
-            // Increment/Decrement
-            0xE8 => {
-                self.x = self.x.wrapping_add(1);
-                self.set_zn(self.x);
-            } // INX
-            0xC8 => {
-                self.y = self.y.wrapping_add(1);
-                self.set_zn(self.y);
-            } // INY
-            0xCA => {
-                self.x = self.x.wrapping_sub(1);
-                self.set_zn(self.x);
-            } // DEX
-            0x88 => {
-                self.y = self.y.wrapping_sub(1);
-                self.set_zn(self.y);
-            } // DEY
-
-            // Flags
-            0x18 => {
-                self.status.remove(StatusFlags::CARRY);
-            } // CLC
-            0x38 => {
-                self.status.insert(StatusFlags::CARRY);
-            } // SEC
-            0x58 => {
-                self.status.remove(StatusFlags::INTERRUPT_DISABLE);
-            } // CLI
-            0x78 => {
-                self.status.insert(StatusFlags::INTERRUPT_DISABLE);
-            } // SEI
-            0xB8 => {
-                self.status.remove(StatusFlags::OVERFLOW);
-            } // CLV
-            0xD8 => {
-                self.status.remove(StatusFlags::DECIMAL);
-            } // CLD
-            0xF8 => {
-                self.status.insert(StatusFlags::DECIMAL);
-            } // SED
-
-            // NOP (official and unofficial)
-            0xEA | 0x1A | 0x3A | 0x5A | 0x7A | 0xDA | 0xFA => {}
-
-            _ => {}
-        }
-    }
-
-    /// Execute an accumulator instruction (ASL A, LSR A, ROL A, ROR A).
-    fn execute_accumulator_instruction(&mut self) {
-        match self.current_opcode {
-            0x0A => {
-                // ASL A
-                let carry = (self.a & 0x80) != 0;
-                self.a <<= 1;
-                self.status.set(StatusFlags::CARRY, carry);
-                self.set_zn(self.a);
-            }
-            0x4A => {
-                // LSR A
-                let carry = (self.a & 0x01) != 0;
-                self.a >>= 1;
-                self.status.set(StatusFlags::CARRY, carry);
-                self.set_zn(self.a);
-            }
-            0x2A => {
-                // ROL A
-                let old_carry = self.status.contains(StatusFlags::CARRY);
-                let new_carry = (self.a & 0x80) != 0;
-                self.a = (self.a << 1) | u8::from(old_carry);
-                self.status.set(StatusFlags::CARRY, new_carry);
-                self.set_zn(self.a);
-            }
-            0x6A => {
-                // ROR A
-                let old_carry = self.status.contains(StatusFlags::CARRY);
-                let new_carry = (self.a & 0x01) != 0;
-                self.a = (self.a >> 1) | (u8::from(old_carry) << 7);
-                self.status.set(StatusFlags::CARRY, new_carry);
-                self.set_zn(self.a);
-            }
-            _ => {}
-        }
-    }
-
-    /// Execute a read instruction using self.temp_value.
-    #[allow(clippy::too_many_lines)]
-    fn execute_read_instruction(&mut self) {
-        let value = self.temp_value;
-        match self.current_opcode {
-            // LDA
-            0xA9 | 0xA5 | 0xB5 | 0xAD | 0xBD | 0xB9 | 0xA1 | 0xB1 => {
-                self.a = value;
-                self.set_zn(self.a);
-            }
-            // LDX
-            0xA2 | 0xA6 | 0xB6 | 0xAE | 0xBE => {
-                self.x = value;
-                self.set_zn(self.x);
-            }
-            // LDY
-            0xA0 | 0xA4 | 0xB4 | 0xAC | 0xBC => {
-                self.y = value;
-                self.set_zn(self.y);
-            }
-            // ADC
-            0x69 | 0x65 | 0x75 | 0x6D | 0x7D | 0x79 | 0x61 | 0x71 => {
-                self.do_adc(value);
-            }
-            // SBC (including unofficial 0xEB)
-            0xE9 | 0xE5 | 0xF5 | 0xED | 0xFD | 0xF9 | 0xE1 | 0xF1 | 0xEB => {
-                self.do_sbc(value);
-            }
-            // AND
-            0x29 | 0x25 | 0x35 | 0x2D | 0x3D | 0x39 | 0x21 | 0x31 => {
-                self.a &= value;
-                self.set_zn(self.a);
-            }
-            // ORA
-            0x09 | 0x05 | 0x15 | 0x0D | 0x1D | 0x19 | 0x01 | 0x11 => {
-                self.a |= value;
-                self.set_zn(self.a);
-            }
-            // EOR
-            0x49 | 0x45 | 0x55 | 0x4D | 0x5D | 0x59 | 0x41 | 0x51 => {
-                self.a ^= value;
-                self.set_zn(self.a);
-            }
-            // CMP
-            0xC9 | 0xC5 | 0xD5 | 0xCD | 0xDD | 0xD9 | 0xC1 | 0xD1 => {
-                self.do_compare(self.a, value);
-            }
-            // CPX
-            0xE0 | 0xE4 | 0xEC => {
-                self.do_compare(self.x, value);
-            }
-            // CPY
-            0xC0 | 0xC4 | 0xCC => {
-                self.do_compare(self.y, value);
-            }
-            // BIT
-            0x24 | 0x2C => {
-                self.status.set(StatusFlags::ZERO, (self.a & value) == 0);
-                self.status.set(StatusFlags::OVERFLOW, (value & 0x40) != 0);
-                self.status.set(StatusFlags::NEGATIVE, (value & 0x80) != 0);
-            }
-            // LAX (unofficial)
-            0xA7 | 0xB7 | 0xAF | 0xBF | 0xA3 | 0xB3 => {
-                self.a = value;
-                self.x = value;
-                self.set_zn(self.a);
-            }
-            // LAS (unofficial)
-            0xBB => {
-                let result = value & self.sp;
-                self.a = result;
-                self.x = result;
-                self.sp = result;
-                self.set_zn(result);
-            }
-            // ANC (unofficial)
-            0x0B | 0x2B => {
-                self.a &= value;
-                self.set_zn(self.a);
-                self.status.set(StatusFlags::CARRY, (self.a & 0x80) != 0);
-            }
-            // ALR (unofficial)
-            0x4B => {
-                self.a &= value;
-                let carry = (self.a & 0x01) != 0;
-                self.a >>= 1;
-                self.status.set(StatusFlags::CARRY, carry);
-                self.set_zn(self.a);
-            }
-            // ARR (unofficial)
-            0x6B => {
-                self.a &= value;
-                let old_carry = self.status.contains(StatusFlags::CARRY);
-                self.a = (self.a >> 1) | (u8::from(old_carry) << 7);
-                self.set_zn(self.a);
-                self.status.set(StatusFlags::CARRY, (self.a & 0x40) != 0);
-                self.status.set(
-                    StatusFlags::OVERFLOW,
-                    ((self.a & 0x40) ^ ((self.a & 0x20) << 1)) != 0,
-                );
-            }
-            // XAA (unofficial, unstable)
-            0x8B => {
-                self.a = (self.a | 0xEE) & self.x & value;
-                self.set_zn(self.a);
-            }
-            // LXA (unofficial)
-            0xAB => {
-                self.a = (self.a | 0xEE) & value;
-                self.x = self.a;
-                self.set_zn(self.a);
-            }
-            // AXS (unofficial)
-            0xCB => {
-                let temp = (self.a & self.x).wrapping_sub(value);
-                self.status
-                    .set(StatusFlags::CARRY, (self.a & self.x) >= value);
-                self.x = temp;
-                self.set_zn(self.x);
-            }
-            // NOPs with read (unofficial)
-            0x80 | 0x82 | 0x89 | 0xC2 | 0xE2 | 0x04 | 0x44 | 0x64 | 0x14 | 0x34 | 0x54 | 0x74
-            | 0xD4 | 0xF4 | 0x0C | 0x1C | 0x3C | 0x5C | 0x7C | 0xDC | 0xFC => {
-                // Do nothing - just read
-            }
-            _ => {}
-        }
-    }
-
-    /// Execute a write instruction, returning value to write.
-    fn execute_write_instruction(&self) -> u8 {
-        match self.current_opcode {
-            // STA
-            0x85 | 0x95 | 0x8D | 0x9D | 0x99 | 0x81 | 0x91 => self.a,
-            // STX
-            0x86 | 0x96 | 0x8E => self.x,
-            // STY
-            0x84 | 0x94 | 0x8C => self.y,
-            // SAX (unofficial)
-            0x87 | 0x97 | 0x8F | 0x83 => self.a & self.x,
-            // SHA (unofficial) - highly unstable
-            0x93 | 0x9F => self.a & self.x & ((self.effective_addr >> 8) as u8).wrapping_add(1),
-            // SHX (unofficial)
-            0x9E => self.x & ((self.effective_addr >> 8) as u8).wrapping_add(1),
-            // SHY (unofficial)
-            0x9C => self.y & ((self.effective_addr >> 8) as u8).wrapping_add(1),
-            // TAS (unofficial)
-            0x9B => {
-                // This also affects SP, but we handle value here
-                self.a & self.x & ((self.effective_addr >> 8) as u8).wrapping_add(1)
-            }
-            _ => 0,
-        }
-    }
-
-    /// Execute an RMW instruction, returning the new value.
-    fn execute_rmw_instruction(&mut self) -> u8 {
-        let value = self.temp_value;
-        match self.current_opcode {
-            // ASL
-            0x06 | 0x16 | 0x0E | 0x1E => {
-                let carry = (value & 0x80) != 0;
-                let result = value << 1;
-                self.status.set(StatusFlags::CARRY, carry);
-                self.set_zn(result);
-                result
-            }
-            // LSR
-            0x46 | 0x56 | 0x4E | 0x5E => {
-                let carry = (value & 0x01) != 0;
-                let result = value >> 1;
-                self.status.set(StatusFlags::CARRY, carry);
-                self.set_zn(result);
-                result
-            }
-            // ROL
-            0x26 | 0x36 | 0x2E | 0x3E => {
-                let old_carry = self.status.contains(StatusFlags::CARRY);
-                let new_carry = (value & 0x80) != 0;
-                let result = (value << 1) | u8::from(old_carry);
-                self.status.set(StatusFlags::CARRY, new_carry);
-                self.set_zn(result);
-                result
-            }
-            // ROR
-            0x66 | 0x76 | 0x6E | 0x7E => {
-                let old_carry = self.status.contains(StatusFlags::CARRY);
-                let new_carry = (value & 0x01) != 0;
-                let result = (value >> 1) | (u8::from(old_carry) << 7);
-                self.status.set(StatusFlags::CARRY, new_carry);
-                self.set_zn(result);
-                result
-            }
-            // INC
-            0xE6 | 0xF6 | 0xEE | 0xFE => {
-                let result = value.wrapping_add(1);
-                self.set_zn(result);
-                result
-            }
-            // DEC
-            0xC6 | 0xD6 | 0xCE | 0xDE => {
-                let result = value.wrapping_sub(1);
-                self.set_zn(result);
-                result
-            }
-            // SLO (unofficial: ASL + ORA)
-            0x07 | 0x17 | 0x0F | 0x1F | 0x1B | 0x03 | 0x13 => {
-                let carry = (value & 0x80) != 0;
-                let result = value << 1;
-                self.status.set(StatusFlags::CARRY, carry);
-                self.a |= result;
-                self.set_zn(self.a);
-                result
-            }
-            // RLA (unofficial: ROL + AND)
-            0x27 | 0x37 | 0x2F | 0x3F | 0x3B | 0x23 | 0x33 => {
-                let old_carry = self.status.contains(StatusFlags::CARRY);
-                let new_carry = (value & 0x80) != 0;
-                let result = (value << 1) | u8::from(old_carry);
-                self.status.set(StatusFlags::CARRY, new_carry);
-                self.a &= result;
-                self.set_zn(self.a);
-                result
-            }
-            // SRE (unofficial: LSR + EOR)
-            0x47 | 0x57 | 0x4F | 0x5F | 0x5B | 0x43 | 0x53 => {
-                let carry = (value & 0x01) != 0;
-                let result = value >> 1;
-                self.status.set(StatusFlags::CARRY, carry);
-                self.a ^= result;
-                self.set_zn(self.a);
-                result
-            }
-            // RRA (unofficial: ROR + ADC)
-            0x67 | 0x77 | 0x6F | 0x7F | 0x7B | 0x63 | 0x73 => {
-                let old_carry = self.status.contains(StatusFlags::CARRY);
-                let new_carry = (value & 0x01) != 0;
-                let result = (value >> 1) | (u8::from(old_carry) << 7);
-                self.status.set(StatusFlags::CARRY, new_carry);
-                self.do_adc(result);
-                result
-            }
-            // DCP (unofficial: DEC + CMP)
-            0xC7 | 0xD7 | 0xCF | 0xDF | 0xDB | 0xC3 | 0xD3 => {
-                let result = value.wrapping_sub(1);
-                self.do_compare(self.a, result);
-                result
-            }
-            // ISC (unofficial: INC + SBC)
-            0xE7 | 0xF7 | 0xEF | 0xFF | 0xFB | 0xE3 | 0xF3 => {
-                let result = value.wrapping_add(1);
-                self.do_sbc(result);
-                result
-            }
-            _ => value,
-        }
-    }
-
-    /// Perform ADC operation.
-    fn do_adc(&mut self, value: u8) {
-        let carry = u16::from(self.status.contains(StatusFlags::CARRY));
-        let sum = u16::from(self.a) + u16::from(value) + carry;
-        let result = sum as u8;
-
-        self.status.set(StatusFlags::CARRY, sum > 0xFF);
-        self.status.set(
-            StatusFlags::OVERFLOW,
-            (!(self.a ^ value) & (self.a ^ result) & 0x80) != 0,
-        );
-        self.a = result;
-        self.set_zn(self.a);
-    }
-
-    /// Perform SBC operation.
-    fn do_sbc(&mut self, value: u8) {
-        // SBC is equivalent to ADC with the value inverted
-        self.do_adc(!value);
-    }
-
-    /// Perform compare operation.
-    fn do_compare(&mut self, register: u8, value: u8) {
-        let result = register.wrapping_sub(value);
-        self.status.set(StatusFlags::CARRY, register >= value);
-        self.set_zn(result);
-    }
-
-    /// Handle NMI interrupt (7 cycles).
-    #[inline]
-    fn handle_nmi(&mut self, bus: &mut impl Bus) -> u8 {
-        self.push_u16(bus, self.pc);
-        self.push(bus, self.status.to_stack_byte(false)); // B=0 for interrupts
-        self.status.insert(StatusFlags::INTERRUPT_DISABLE);
-        self.pc = bus.read_u16(0xFFFA); // NMI vector
-        7
-    }
-
-    /// Handle IRQ interrupt (7 cycles).
-    #[inline]
-    fn handle_irq(&mut self, bus: &mut impl Bus) -> u8 {
-        self.push_u16(bus, self.pc);
-        self.push(bus, self.status.to_stack_byte(false)); // B=0 for interrupts
-        self.status.insert(StatusFlags::INTERRUPT_DISABLE);
-        self.pc = bus.read_u16(0xFFFE); // IRQ vector
-        7
-    }
-
-    /// Execute a single opcode.
-    ///
-    /// Returns extra cycles taken (for page crossing, branches, etc.).
-    #[inline]
-    fn execute_opcode(&mut self, opcode: u8, addr_mode: AddressingMode, bus: &mut impl Bus) -> u8 {
-        match opcode {
-            // Load/Store
-            0xA9 => self.lda(bus, addr_mode),
-            0xA5 | 0xB5 | 0xAD | 0xBD | 0xB9 | 0xA1 | 0xB1 => self.lda(bus, addr_mode),
-            0xA2 => self.ldx(bus, addr_mode),
-            0xA6 | 0xB6 | 0xAE | 0xBE => self.ldx(bus, addr_mode),
-            0xA0 => self.ldy(bus, addr_mode),
-            0xA4 | 0xB4 | 0xAC | 0xBC => self.ldy(bus, addr_mode),
-            0x85 | 0x95 | 0x8D | 0x9D | 0x99 | 0x81 | 0x91 => self.sta(bus, addr_mode),
-            0x86 | 0x96 | 0x8E => self.stx(bus, addr_mode),
-            0x84 | 0x94 | 0x8C => self.sty(bus, addr_mode),
-
-            // Transfer
-            0xAA => self.tax(bus),
-            0xA8 => self.tay(bus),
-            0x8A => self.txa(bus),
-            0x98 => self.tya(bus),
-            0xBA => self.tsx(bus),
-            0x9A => self.txs(bus),
-
-            // Stack
-            0x48 => self.pha(bus),
-            0x08 => self.php(bus),
-            0x68 => self.pla(bus),
-            0x28 => self.plp(bus),
-
-            // Arithmetic
-            0x69 | 0x65 | 0x75 | 0x6D | 0x7D | 0x79 | 0x61 | 0x71 => self.adc(bus, addr_mode),
-            0xE9 | 0xE5 | 0xF5 | 0xED | 0xFD | 0xF9 | 0xE1 | 0xF1 | 0xEB => {
-                self.sbc(bus, addr_mode)
-            }
-
-            // Increment/Decrement
-            0xE6 | 0xF6 | 0xEE | 0xFE => self.inc(bus, addr_mode),
-            0xC6 | 0xD6 | 0xCE | 0xDE => self.dec(bus, addr_mode),
-            0xE8 => self.inx(bus),
-            0xC8 => self.iny(bus),
-            0xCA => self.dex(bus),
-            0x88 => self.dey(bus),
-
-            // Logic
-            0x29 | 0x25 | 0x35 | 0x2D | 0x3D | 0x39 | 0x21 | 0x31 => self.and(bus, addr_mode),
-            0x09 | 0x05 | 0x15 | 0x0D | 0x1D | 0x19 | 0x01 | 0x11 => self.ora(bus, addr_mode),
-            0x49 | 0x45 | 0x55 | 0x4D | 0x5D | 0x59 | 0x41 | 0x51 => self.eor(bus, addr_mode),
-            0x24 | 0x2C => self.bit(bus, addr_mode),
-
-            // Shift/Rotate
-            0x0A => self.asl_acc(bus),
-            0x06 | 0x16 | 0x0E | 0x1E => self.asl(bus, addr_mode),
-            0x4A => self.lsr_acc(bus),
-            0x46 | 0x56 | 0x4E | 0x5E => self.lsr(bus, addr_mode),
-            0x2A => self.rol_acc(bus),
-            0x26 | 0x36 | 0x2E | 0x3E => self.rol(bus, addr_mode),
-            0x6A => self.ror_acc(bus),
-            0x66 | 0x76 | 0x6E | 0x7E => self.ror(bus, addr_mode),
-
-            // Compare
-            0xC9 | 0xC5 | 0xD5 | 0xCD | 0xDD | 0xD9 | 0xC1 | 0xD1 => self.cmp(bus, addr_mode),
-            0xE0 | 0xE4 | 0xEC => self.cpx(bus, addr_mode),
-            0xC0 | 0xC4 | 0xCC => self.cpy(bus, addr_mode),
-
-            // Branch
-            0x10 => self.bpl(bus),
-            0x30 => self.bmi(bus),
-            0x50 => self.bvc(bus),
-            0x70 => self.bvs(bus),
-            0x90 => self.bcc(bus),
-            0xB0 => self.bcs(bus),
-            0xD0 => self.bne(bus),
-            0xF0 => self.beq(bus),
-
-            // Jump/Subroutine
-            0x4C => self.jmp_abs(bus),
-            0x6C => self.jmp_ind(bus),
-            0x20 => self.jsr(bus),
-            0x60 => self.rts(bus),
-            0x40 => self.rti(bus),
-            0x00 => self.brk(bus),
-
-            // Flags
-            0x18 => self.clc(bus),
-            0x38 => self.sec(bus),
-            0x58 => self.cli(bus),
-            0x78 => self.sei(bus),
-            0xB8 => self.clv(bus),
-            0xD8 => self.cld(bus),
-            0xF8 => self.sed(bus),
-            0xEA => self.nop(bus),
-
-            // Unofficial opcodes
-            0xA7 | 0xB7 | 0xAF | 0xBF | 0xA3 | 0xB3 => self.lax(bus, addr_mode),
-            0x87 | 0x97 | 0x8F | 0x83 => self.sax(bus, addr_mode),
-            0xC7 | 0xD7 | 0xCF | 0xDF | 0xDB | 0xC3 | 0xD3 => self.dcp(bus, addr_mode),
-            0xE7 | 0xF7 | 0xEF | 0xFF | 0xFB | 0xE3 | 0xF3 => self.isc(bus, addr_mode),
-            0x07 | 0x17 | 0x0F | 0x1F | 0x1B | 0x03 | 0x13 => self.slo(bus, addr_mode),
-            0x27 | 0x37 | 0x2F | 0x3F | 0x3B | 0x23 | 0x33 => self.rla(bus, addr_mode),
-            0x47 | 0x57 | 0x4F | 0x5F | 0x5B | 0x43 | 0x53 => self.sre(bus, addr_mode),
-            0x67 | 0x77 | 0x6F | 0x7F | 0x7B | 0x63 | 0x73 => self.rra(bus, addr_mode),
-            0x0B | 0x2B => self.anc(bus),
-            0x4B => self.alr(bus),
-            0x6B => self.arr(bus),
-            0x8B => self.xaa(bus),
-            0xAB => self.lxa(bus),
-            0xCB => self.axs(bus),
-            0x93 | 0x9F => self.sha(bus, addr_mode),
-            0x9C => self.shy(bus),
-            0x9E => self.shx(bus),
-            0x9B => self.tas(bus),
-            0xBB => self.las(bus, addr_mode),
-
-            // Unofficial NOPs
-            0x1A | 0x3A | 0x5A | 0x7A | 0xDA | 0xFA => self.nop(bus),
-            0x80 | 0x82 | 0x89 | 0xC2 | 0xE2 => self.nop_read(bus, addr_mode),
-            0x04 | 0x44 | 0x64 | 0x14 | 0x34 | 0x54 | 0x74 | 0xD4 | 0xF4 => {
-                self.nop_read(bus, addr_mode)
-            }
-            0x0C | 0x1C | 0x3C | 0x5C | 0x7C | 0xDC | 0xFC => self.nop_read(bus, addr_mode),
-
-            // JAM/KIL opcodes - halt CPU
-            0x02 | 0x12 | 0x22 | 0x32 | 0x42 | 0x52 | 0x62 | 0x72 | 0x92 | 0xB2 | 0xD2 | 0xF2 => {
-                self.jam()
-            }
-        }
-    }
-
-    /// Push byte to stack.
-    pub(crate) fn push(&mut self, bus: &mut impl Bus, value: u8) {
-        bus.write(0x0100 | u16::from(self.sp), value);
-        self.sp = self.sp.wrapping_sub(1);
-    }
-
-    /// Pop byte from stack.
-    pub(crate) fn pop(&mut self, bus: &mut impl Bus) -> u8 {
-        self.sp = self.sp.wrapping_add(1);
-        bus.read(0x0100 | u16::from(self.sp))
-    }
-
-    /// Push 16-bit value to stack (high byte first).
-    pub(crate) fn push_u16(&mut self, bus: &mut impl Bus, value: u16) {
-        self.push(bus, (value >> 8) as u8);
-        self.push(bus, (value & 0xFF) as u8);
-    }
-
-    /// Pop 16-bit value from stack (low byte first).
-    pub(crate) fn pop_u16(&mut self, bus: &mut impl Bus) -> u16 {
-        let lo = self.pop(bus);
-        let hi = self.pop(bus);
-        u16::from_le_bytes([lo, hi])
-    }
-
-    /// Read operand based on addressing mode.
-    pub(crate) fn read_operand(&mut self, bus: &mut impl Bus, mode: AddressingMode) -> (u8, bool) {
-        let result = mode.resolve(self.pc, self.x, self.y, bus);
-        self.pc = self.pc.wrapping_add(u16::from(mode.operand_bytes()));
-
-        // Perform dummy read for indexed addressing modes with page crossing
-        // This matches hardware behavior where CPU reads from incorrect address
-        // before applying the page boundary correction
-        if result.page_crossed {
-            match mode {
-                AddressingMode::AbsoluteX
-                | AddressingMode::AbsoluteY
-                | AddressingMode::IndirectIndexedY => {
-                    // Calculate the incorrect address (before page fix)
-                    // Take high byte from base, low byte from final address
-                    let incorrect_addr = (result.base_addr & 0xFF00) | (result.addr & 0x00FF);
-                    let _ = bus.read(incorrect_addr);
-                }
-                _ => {}
-            }
-        }
-
-        let value = match mode {
-            AddressingMode::Accumulator => self.a,
-            _ => bus.read(result.addr),
-        };
-
-        (value, result.page_crossed)
-    }
-
-    /// Write to address from addressing mode.
-    pub(crate) fn write_operand(&mut self, bus: &mut impl Bus, mode: AddressingMode, value: u8) {
-        let result = mode.resolve(self.pc, self.x, self.y, bus);
-        self.pc = self.pc.wrapping_add(u16::from(mode.operand_bytes()));
-
-        // Perform dummy write for indexed addressing modes
-        // Write operations ALWAYS perform a dummy write (unconditional, not just on page crossing)
-        match mode {
-            AddressingMode::AbsoluteX
-            | AddressingMode::AbsoluteY
-            | AddressingMode::IndirectIndexedY => {
-                // Calculate the incorrect address (before page fix)
-                let incorrect_addr = (result.base_addr & 0xFF00) | (result.addr & 0x00FF);
-                // Dummy write to incorrect address (this is what hardware does)
-                bus.write(incorrect_addr, value);
-            }
-            _ => {}
-        }
-
-        match mode {
-            AddressingMode::Accumulator => self.a = value,
-            _ => bus.write(result.addr, value),
-        }
-    }
-
-    /// Set Zero and Negative flags based on value.
-    #[inline]
-    pub(crate) fn set_zn(&mut self, value: u8) {
-        self.status.set_zn(value);
-    }
+/// Interrupt types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Interrupt {
+    /// Non-Maskable Interrupt.
+    Nmi,
+    /// Interrupt Request (maskable).
+    Irq,
+    /// Software interrupt (BRK instruction).
+    Brk,
+    /// Reset signal.
+    Reset,
+}
+
+/// CPU state for save states and debugging.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct CpuState {
+    /// Program counter.
+    pub pc: u16,
+    /// Stack pointer.
+    pub sp: u8,
+    /// Accumulator.
+    pub a: u8,
+    /// X register.
+    pub x: u8,
+    /// Y register.
+    pub y: u8,
+    /// Status register.
+    pub status: Status,
+    /// Total CPU cycles executed.
+    pub cycles: u64,
+    /// Current opcode being executed.
+    pub opcode: u8,
+    /// NMI pending flag.
+    pub nmi_pending: bool,
+    /// IRQ pending flag.
+    pub irq_pending: bool,
+}
+
+/// MOS 6502 CPU.
+///
+/// This is a cycle-accurate implementation of the 6502 CPU as used
+/// in the Nintendo Entertainment System. It supports all 256 opcodes
+/// including unofficial/undocumented instructions.
+#[derive(Debug, Clone)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct Cpu {
+    /// Program counter.
+    pub pc: u16,
+    /// Stack pointer (offset from $0100).
+    pub sp: u8,
+    /// Accumulator register.
+    pub a: u8,
+    /// X index register.
+    pub x: u8,
+    /// Y index register.
+    pub y: u8,
+    /// Processor status register.
+    pub status: Status,
+    /// Total CPU cycles executed.
+    pub cycles: u64,
+
+    // Instruction execution state
+    /// Current opcode being executed.
+    pub(crate) opcode: u8,
+    /// Addressing mode for current instruction.
+    pub(crate) addr_mode: AddrMode,
+    /// Operand address (for memory-addressing modes).
+    pub(crate) operand_addr: u16,
+    /// Fetched operand value.
+    pub(crate) operand_value: u8,
+
+    // Interrupt state
+    /// NMI line state (active low on real hardware).
+    pub(crate) nmi_pending: bool,
+    /// Previous NMI state for edge detection.
+    pub(crate) prev_nmi: bool,
+    /// IRQ line state.
+    pub(crate) irq_pending: bool,
+    /// Whether to run IRQ at end of instruction.
+    pub(crate) run_irq: bool,
+    /// Previous run_irq state (for edge detection).
+    pub(crate) prev_run_irq: bool,
+    /// NMI should be triggered.
+    pub(crate) nmi_triggered: bool,
+
+    // DMA state
+    /// OAM DMA in progress.
+    pub(crate) oam_dma_pending: bool,
+    /// OAM DMA page address.
+    pub(crate) oam_dma_page: u8,
+    /// DMC DMA stall cycles.
+    pub(crate) dmc_stall_cycles: u8,
+
+    /// Last value on the data bus (for open bus behavior).
+    pub(crate) last_bus_value: u8,
 }
 
 impl Default for Cpu {
@@ -1861,80 +141,591 @@ impl Default for Cpu {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+impl Cpu {
+    /// Stack base address ($0100).
+    const STACK_BASE: u16 = 0x0100;
 
-    struct TestBus {
-        memory: [u8; 0x10000],
+    /// Create a new CPU in its initial power-on state.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            pc: 0,
+            sp: 0xFD,
+            a: 0,
+            x: 0,
+            y: 0,
+            status: Status::POWER_ON,
+            cycles: 0,
+            opcode: 0,
+            addr_mode: AddrMode::Imp,
+            operand_addr: 0,
+            operand_value: 0,
+            nmi_pending: false,
+            prev_nmi: false,
+            irq_pending: false,
+            run_irq: false,
+            prev_run_irq: false,
+            nmi_triggered: false,
+            oam_dma_pending: false,
+            oam_dma_page: 0,
+            dmc_stall_cycles: 0,
+            last_bus_value: 0,
+        }
     }
 
-    impl TestBus {
-        fn new() -> Self {
-            Self {
-                memory: [0; 0x10000],
+    /// Reset the CPU.
+    ///
+    /// This simulates the reset signal, loading the PC from the reset vector
+    /// and initializing registers to their reset state.
+    pub fn reset(&mut self, bus: &mut impl Bus) {
+        // Reset takes 7 cycles
+        for _ in 0..7 {
+            self.tick(bus);
+        }
+
+        // Load PC from reset vector
+        let lo = bus.read(vectors::RESET);
+        let hi = bus.read(vectors::RESET + 1);
+        self.pc = u16::from_le_bytes([lo, hi]);
+
+        // Reset state
+        self.sp = 0xFD;
+        self.a = 0;
+        self.x = 0;
+        self.y = 0;
+        self.status = Status::POWER_ON;
+
+        // Clear interrupt state
+        self.nmi_pending = false;
+        self.prev_nmi = false;
+        self.irq_pending = false;
+        self.run_irq = false;
+        self.prev_run_irq = false;
+        self.nmi_triggered = false;
+
+        // Clear DMA state
+        self.oam_dma_pending = false;
+        self.dmc_stall_cycles = 0;
+    }
+
+    /// Execute one CPU cycle (tick).
+    ///
+    /// This is the lowest-level execution method, advancing the CPU
+    /// by exactly one cycle. Used for cycle-accurate synchronization.
+    #[inline]
+    pub fn tick(&mut self, bus: &mut (impl Bus + ?Sized)) {
+        self.cycles = self.cycles.wrapping_add(1);
+        bus.on_cpu_cycle();
+    }
+
+    /// Execute one complete instruction.
+    ///
+    /// Returns the number of cycles consumed by the instruction.
+    pub fn step(&mut self, bus: &mut impl Bus) -> u8 {
+        let start_cycles = self.cycles;
+
+        // Handle DMA if pending
+        if self.oam_dma_pending {
+            self.execute_oam_dma(bus);
+        }
+
+        // Handle DMC DMA stalls
+        while self.dmc_stall_cycles > 0 {
+            self.dmc_stall_cycles -= 1;
+            self.tick(bus);
+        }
+
+        // Check for pending interrupts
+        if self.prev_run_irq || self.nmi_triggered {
+            self.handle_interrupt(bus);
+        } else {
+            // Fetch and execute instruction
+            self.fetch_and_execute(bus);
+        }
+
+        // Handle interrupt detection at end of instruction
+        self.detect_interrupts();
+
+        (self.cycles - start_cycles) as u8
+    }
+
+    /// Fetch and execute a single instruction.
+    fn fetch_and_execute(&mut self, bus: &mut impl Bus) {
+        // Fetch opcode
+        self.opcode = self.read_byte(bus, self.pc);
+        self.pc = self.pc.wrapping_add(1);
+
+        // Get addressing mode
+        self.addr_mode = ADDR_MODE_TABLE[self.opcode as usize];
+
+        // Fetch operand based on addressing mode
+        self.fetch_operand(bus);
+
+        // Execute instruction
+        let instruction = OPCODE_TABLE[self.opcode as usize];
+        instruction(self, bus);
+    }
+
+    /// Fetch operand based on current addressing mode.
+    #[allow(clippy::too_many_lines)]
+    fn fetch_operand(&mut self, bus: &mut impl Bus) {
+        match self.addr_mode {
+            AddrMode::Imp => {
+                // Dummy read
+                self.read_byte(bus, self.pc);
+            }
+            AddrMode::Acc => {
+                // Dummy read
+                self.read_byte(bus, self.pc);
+                self.operand_value = self.a;
+            }
+            AddrMode::Imm => {
+                // Just set the address - instruction will do the read
+                self.operand_addr = self.pc;
+                self.pc = self.pc.wrapping_add(1);
+            }
+            AddrMode::Zp0 => {
+                self.operand_addr = u16::from(self.read_byte(bus, self.pc));
+                self.pc = self.pc.wrapping_add(1);
+            }
+            AddrMode::Zpx => {
+                let base = self.read_byte(bus, self.pc);
+                self.pc = self.pc.wrapping_add(1);
+                // Dummy read during index calculation
+                self.read_byte(bus, u16::from(base));
+                self.operand_addr = u16::from(base.wrapping_add(self.x));
+            }
+            AddrMode::Zpy => {
+                let base = self.read_byte(bus, self.pc);
+                self.pc = self.pc.wrapping_add(1);
+                // Dummy read during index calculation
+                self.read_byte(bus, u16::from(base));
+                self.operand_addr = u16::from(base.wrapping_add(self.y));
+            }
+            AddrMode::Rel => {
+                self.operand_value = self.read_byte(bus, self.pc);
+                self.pc = self.pc.wrapping_add(1);
+            }
+            AddrMode::Abs => {
+                let lo = self.read_byte(bus, self.pc);
+                self.pc = self.pc.wrapping_add(1);
+                let hi = self.read_byte(bus, self.pc);
+                self.pc = self.pc.wrapping_add(1);
+                self.operand_addr = u16::from_le_bytes([lo, hi]);
+            }
+            AddrMode::Abx => {
+                let lo = self.read_byte(bus, self.pc);
+                self.pc = self.pc.wrapping_add(1);
+                let hi = self.read_byte(bus, self.pc);
+                self.pc = self.pc.wrapping_add(1);
+                let base = u16::from_le_bytes([lo, hi]);
+                self.operand_addr = base.wrapping_add(u16::from(self.x));
+
+                // Page crossing check - only adds cycle for read instructions
+                if Cpu::page_crossed(base, self.operand_addr) {
+                    // Dummy read at wrong address
+                    self.read_byte(bus, (base & 0xFF00) | (self.operand_addr & 0x00FF));
+                }
+            }
+            AddrMode::AbxW => {
+                let lo = self.read_byte(bus, self.pc);
+                self.pc = self.pc.wrapping_add(1);
+                let hi = self.read_byte(bus, self.pc);
+                self.pc = self.pc.wrapping_add(1);
+                let base = u16::from_le_bytes([lo, hi]);
+                self.operand_addr = base.wrapping_add(u16::from(self.x));
+
+                // Always do dummy read for write instructions
+                self.read_byte(bus, (base & 0xFF00) | (self.operand_addr & 0x00FF));
+            }
+            AddrMode::Aby => {
+                let lo = self.read_byte(bus, self.pc);
+                self.pc = self.pc.wrapping_add(1);
+                let hi = self.read_byte(bus, self.pc);
+                self.pc = self.pc.wrapping_add(1);
+                let base = u16::from_le_bytes([lo, hi]);
+                self.operand_addr = base.wrapping_add(u16::from(self.y));
+
+                // Page crossing check
+                if Cpu::page_crossed(base, self.operand_addr) {
+                    self.read_byte(bus, (base & 0xFF00) | (self.operand_addr & 0x00FF));
+                }
+            }
+            AddrMode::AbyW => {
+                let lo = self.read_byte(bus, self.pc);
+                self.pc = self.pc.wrapping_add(1);
+                let hi = self.read_byte(bus, self.pc);
+                self.pc = self.pc.wrapping_add(1);
+                let base = u16::from_le_bytes([lo, hi]);
+                self.operand_addr = base.wrapping_add(u16::from(self.y));
+
+                // Always do dummy read for write instructions
+                self.read_byte(bus, (base & 0xFF00) | (self.operand_addr & 0x00FF));
+            }
+            AddrMode::Ind => {
+                let lo = self.read_byte(bus, self.pc);
+                self.pc = self.pc.wrapping_add(1);
+                let hi = self.read_byte(bus, self.pc);
+                self.pc = self.pc.wrapping_add(1);
+                let ptr = u16::from_le_bytes([lo, hi]);
+
+                // JMP indirect bug: wraps within page
+                let lo = self.read_byte(bus, ptr);
+                let hi_addr = if ptr & 0x00FF == 0x00FF {
+                    ptr & 0xFF00 // Wrap within page
+                } else {
+                    ptr + 1
+                };
+                let hi = self.read_byte(bus, hi_addr);
+                self.operand_addr = u16::from_le_bytes([lo, hi]);
+            }
+            AddrMode::Idx => {
+                let base = self.read_byte(bus, self.pc);
+                self.pc = self.pc.wrapping_add(1);
+                // Dummy read
+                self.read_byte(bus, u16::from(base));
+                let ptr = base.wrapping_add(self.x);
+
+                // Read pointer (wraps within zero page)
+                let lo = self.read_byte(bus, u16::from(ptr));
+                let hi = self.read_byte(bus, u16::from(ptr.wrapping_add(1)));
+                self.operand_addr = u16::from_le_bytes([lo, hi]);
+            }
+            AddrMode::Idy => {
+                let ptr = self.read_byte(bus, self.pc);
+                self.pc = self.pc.wrapping_add(1);
+
+                // Read pointer (wraps within zero page)
+                let lo = self.read_byte(bus, u16::from(ptr));
+                let hi = self.read_byte(bus, u16::from(ptr.wrapping_add(1)));
+                let base = u16::from_le_bytes([lo, hi]);
+                self.operand_addr = base.wrapping_add(u16::from(self.y));
+
+                // Page crossing check
+                if Cpu::page_crossed(base, self.operand_addr) {
+                    self.read_byte(bus, (base & 0xFF00) | (self.operand_addr & 0x00FF));
+                }
+            }
+            AddrMode::IdyW => {
+                let ptr = self.read_byte(bus, self.pc);
+                self.pc = self.pc.wrapping_add(1);
+
+                let lo = self.read_byte(bus, u16::from(ptr));
+                let hi = self.read_byte(bus, u16::from(ptr.wrapping_add(1)));
+                let base = u16::from_le_bytes([lo, hi]);
+                self.operand_addr = base.wrapping_add(u16::from(self.y));
+
+                // Always do dummy read for write instructions
+                self.read_byte(bus, (base & 0xFF00) | (self.operand_addr & 0x00FF));
             }
         }
     }
 
-    impl Bus for TestBus {
-        fn read(&mut self, addr: u16) -> u8 {
-            self.memory[addr as usize]
+    /// Handle interrupt (NMI or IRQ).
+    fn handle_interrupt(&mut self, bus: &mut impl Bus) {
+        // Dummy reads (same as BRK without incrementing PC)
+        self.read_byte(bus, self.pc);
+        self.read_byte(bus, self.pc);
+
+        // Push PC and status to stack
+        self.push_word(bus, self.pc);
+
+        // Determine vector based on interrupt type
+        let (vector, is_nmi) = if self.nmi_triggered {
+            self.nmi_triggered = false;
+            (vectors::NMI, true)
+        } else {
+            (vectors::IRQ, false)
+        };
+
+        // Push status (B flag clear for hardware interrupts)
+        let status_byte = self.status.to_stack_byte(false);
+        self.push_byte(bus, status_byte);
+
+        // Set I flag
+        self.status.set_flag(Status::I, true);
+
+        // Load vector
+        let lo = self.read_byte(bus, vector);
+        let hi = self.read_byte(bus, vector + 1);
+        self.pc = u16::from_le_bytes([lo, hi]);
+
+        // Clear NMI if it was an NMI
+        if is_nmi {
+            self.nmi_pending = false;
         }
 
-        fn write(&mut self, addr: u16, value: u8) {
-            self.memory[addr as usize] = value;
+        self.prev_run_irq = false;
+        self.run_irq = false;
+    }
+
+    /// Detect pending interrupts at end of instruction.
+    fn detect_interrupts(&mut self) {
+        // NMI edge detection
+        if self.nmi_pending && !self.prev_nmi {
+            self.nmi_triggered = true;
+        }
+        self.prev_nmi = self.nmi_pending;
+
+        // IRQ level detection
+        self.prev_run_irq = self.run_irq;
+        self.run_irq = self.irq_pending && !self.status.contains(Status::I);
+    }
+
+    /// Execute OAM DMA transfer.
+    fn execute_oam_dma(&mut self, bus: &mut impl Bus) {
+        self.oam_dma_pending = false;
+
+        // Dummy cycle (get on correct cycle alignment)
+        self.tick(bus);
+
+        // Additional dummy cycle if on odd cycle
+        if self.cycles & 1 == 1 {
+            self.tick(bus);
+        }
+
+        let base = u16::from(self.oam_dma_page) << 8;
+
+        // 256 read/write pairs
+        for i in 0..256u16 {
+            let value = self.read_byte(bus, base.wrapping_add(i));
+            self.write_byte(bus, 0x2004, value);
         }
     }
 
-    #[test]
-    fn test_cpu_new() {
-        let cpu = Cpu::new();
-        assert_eq!(cpu.a, 0);
-        assert_eq!(cpu.x, 0);
-        assert_eq!(cpu.y, 0);
-        assert_eq!(cpu.sp, 0xFD);
-        assert!(cpu.status.contains(StatusFlags::INTERRUPT_DISABLE));
+    // Memory access helpers
+
+    /// Read a byte from memory with cycle counting.
+    #[inline]
+    pub(crate) fn read_byte(&mut self, bus: &mut (impl Bus + ?Sized), addr: u16) -> u8 {
+        self.tick(bus);
+        let value = bus.read(addr);
+        self.last_bus_value = value;
+        value
     }
 
-    #[test]
-    fn test_cpu_reset() {
-        let mut cpu = Cpu::new();
-        let mut bus = TestBus::new();
-
-        // Set RESET vector
-        bus.write(0xFFFC, 0x00);
-        bus.write(0xFFFD, 0x80);
-
-        cpu.reset(&mut bus);
-
-        assert_eq!(cpu.pc, 0x8000);
-        assert!(cpu.status.contains(StatusFlags::INTERRUPT_DISABLE));
-        assert_eq!(cpu.cycles, 7);
+    /// Write a byte to memory with cycle counting.
+    #[inline]
+    pub(crate) fn write_byte(&mut self, bus: &mut (impl Bus + ?Sized), addr: u16, value: u8) {
+        self.tick(bus);
+        self.last_bus_value = value;
+        bus.write(addr, value);
     }
 
-    #[test]
-    fn test_stack_operations() {
-        let mut cpu = Cpu::new();
-        let mut bus = TestBus::new();
+    /// Push a byte to the stack.
+    #[inline]
+    pub(crate) fn push_byte(&mut self, bus: &mut (impl Bus + ?Sized), value: u8) {
+        self.write_byte(bus, Self::STACK_BASE | u16::from(self.sp), value);
+        self.sp = self.sp.wrapping_sub(1);
+    }
 
-        cpu.sp = 0xFF;
+    /// Pop a byte from the stack.
+    #[inline]
+    pub(crate) fn pop_byte(&mut self, bus: &mut (impl Bus + ?Sized)) -> u8 {
+        self.sp = self.sp.wrapping_add(1);
+        self.read_byte(bus, Self::STACK_BASE | u16::from(self.sp))
+    }
 
-        // Push byte
-        cpu.push(&mut bus, 0x42);
-        assert_eq!(cpu.sp, 0xFE);
-        assert_eq!(bus.read(0x01FF), 0x42);
+    /// Push a 16-bit word to the stack (high byte first).
+    #[inline]
+    pub(crate) fn push_word(&mut self, bus: &mut (impl Bus + ?Sized), value: u16) {
+        let [lo, hi] = value.to_le_bytes();
+        self.push_byte(bus, hi);
+        self.push_byte(bus, lo);
+    }
 
-        // Pop byte
-        let value = cpu.pop(&mut bus);
-        assert_eq!(value, 0x42);
-        assert_eq!(cpu.sp, 0xFF);
+    /// Pop a 16-bit word from the stack (low byte first).
+    #[inline]
+    pub(crate) fn pop_word(&mut self, bus: &mut (impl Bus + ?Sized)) -> u16 {
+        let lo = self.pop_byte(bus);
+        let hi = self.pop_byte(bus);
+        u16::from_le_bytes([lo, hi])
+    }
 
-        // Push/pop u16
-        cpu.push_u16(&mut bus, 0x1234);
-        assert_eq!(cpu.sp, 0xFD);
-        let value = cpu.pop_u16(&mut bus);
-        assert_eq!(value, 0x1234);
-        assert_eq!(cpu.sp, 0xFF);
+    /// Check if two addresses are on different pages.
+    #[inline]
+    const fn page_crossed(addr1: u16, addr2: u16) -> bool {
+        (addr1 & 0xFF00) != (addr2 & 0xFF00)
+    }
+
+    // Flag helpers
+
+    /// Set the Zero and Negative flags based on a value.
+    #[inline]
+    pub(crate) fn set_zn(&mut self, value: u8) {
+        self.status.set_zn(value);
+    }
+
+    // Public accessors
+
+    /// Get the program counter.
+    #[inline]
+    #[must_use]
+    pub const fn pc(&self) -> u16 {
+        self.pc
+    }
+
+    /// Set the program counter.
+    #[inline]
+    pub fn set_pc(&mut self, value: u16) {
+        self.pc = value;
+    }
+
+    /// Get the stack pointer.
+    #[inline]
+    #[must_use]
+    pub const fn sp(&self) -> u8 {
+        self.sp
+    }
+
+    /// Set the stack pointer.
+    #[inline]
+    pub fn set_sp(&mut self, value: u8) {
+        self.sp = value;
+    }
+
+    /// Get the accumulator.
+    #[inline]
+    #[must_use]
+    pub const fn a(&self) -> u8 {
+        self.a
+    }
+
+    /// Set the accumulator (updates Z/N flags).
+    #[inline]
+    pub fn set_a(&mut self, value: u8) {
+        self.a = value;
+        self.set_zn(value);
+    }
+
+    /// Get the X register.
+    #[inline]
+    #[must_use]
+    pub const fn x(&self) -> u8 {
+        self.x
+    }
+
+    /// Set the X register (updates Z/N flags).
+    #[inline]
+    pub fn set_x(&mut self, value: u8) {
+        self.x = value;
+        self.set_zn(value);
+    }
+
+    /// Get the Y register.
+    #[inline]
+    #[must_use]
+    pub const fn y(&self) -> u8 {
+        self.y
+    }
+
+    /// Set the Y register (updates Z/N flags).
+    #[inline]
+    pub fn set_y(&mut self, value: u8) {
+        self.y = value;
+        self.set_zn(value);
+    }
+
+    /// Get the status register.
+    #[inline]
+    #[must_use]
+    pub const fn status(&self) -> Status {
+        self.status
+    }
+
+    /// Set the status register.
+    #[inline]
+    pub fn set_status(&mut self, value: Status) {
+        self.status = value;
+    }
+
+    /// Get the total number of cycles executed.
+    #[inline]
+    #[must_use]
+    pub const fn cycles(&self) -> u64 {
+        self.cycles
+    }
+
+    /// Get the operand address for the current instruction.
+    #[inline]
+    #[must_use]
+    pub const fn operand_addr(&self) -> u16 {
+        self.operand_addr
+    }
+
+    /// Get the last value on the data bus.
+    #[inline]
+    #[must_use]
+    pub const fn last_bus_value(&self) -> u8 {
+        self.last_bus_value
+    }
+
+    /// Trigger an NMI.
+    #[inline]
+    pub fn trigger_nmi(&mut self) {
+        self.nmi_pending = true;
+    }
+
+    /// Clear NMI.
+    #[inline]
+    pub fn clear_nmi(&mut self) {
+        self.nmi_pending = false;
+    }
+
+    /// Set IRQ pending state.
+    #[inline]
+    pub fn set_irq(&mut self, pending: bool) {
+        self.irq_pending = pending;
+    }
+
+    /// Check if IRQ is pending.
+    #[inline]
+    #[must_use]
+    pub const fn irq_pending(&self) -> bool {
+        self.irq_pending
+    }
+
+    /// Start an OAM DMA transfer.
+    #[inline]
+    pub fn start_oam_dma(&mut self, page: u8) {
+        self.oam_dma_pending = true;
+        self.oam_dma_page = page;
+    }
+
+    /// Add DMC DMA stall cycles.
+    #[inline]
+    pub fn add_dmc_stall(&mut self, cycles: u8) {
+        self.dmc_stall_cycles = self.dmc_stall_cycles.saturating_add(cycles);
+    }
+
+    /// Get the current CPU state.
+    #[must_use]
+    pub const fn state(&self) -> CpuState {
+        CpuState {
+            pc: self.pc,
+            sp: self.sp,
+            a: self.a,
+            x: self.x,
+            y: self.y,
+            status: self.status,
+            cycles: self.cycles,
+            opcode: self.opcode,
+            nmi_pending: self.nmi_pending,
+            irq_pending: self.irq_pending,
+        }
+    }
+
+    /// Load CPU state.
+    pub fn load_state(&mut self, state: CpuState) {
+        self.pc = state.pc;
+        self.sp = state.sp;
+        self.a = state.a;
+        self.x = state.x;
+        self.y = state.y;
+        self.status = state.status;
+        self.cycles = state.cycles;
+        self.opcode = state.opcode;
+        self.nmi_pending = state.nmi_pending;
+        self.irq_pending = state.irq_pending;
     }
 }

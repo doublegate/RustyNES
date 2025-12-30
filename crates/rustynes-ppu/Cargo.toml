@@ -6,26 +6,26 @@ rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-homepage.workspace = true
-documentation.workspace = true
-keywords.workspace = true
-categories.workspace = true
-description = "Cycle-accurate Ricoh 2C02 PPU emulator for NES"
+description = "NES 2C02 PPU (Picture Processing Unit) emulation"
+keywords = ["nes", "ppu", "2C02", "emulator", "graphics"]
+categories = ["emulators", "graphics"]
 
 [dependencies]
 bitflags.workspace = true
-thiserror.workspace = true
 log.workspace = true
 
 [dev-dependencies]
-criterion.workspace = true
 proptest.workspace = true
-rustynes-cpu = { path = "../rustynes-cpu" }
 
-# Benchmarks will be added in a future milestone
-# [[bench]]
-# name = "ppu_bench"
-# harness = false
+[features]
+default = ["std"]
+std = []
+serde = ["dep:serde"]
+
+[dependencies.serde]
+version = "1.0"
+optional = true
+features = ["derive"]
 
 [lints]
 workspace = true
