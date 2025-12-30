@@ -8,7 +8,7 @@
 
 use rustynes_apu::Apu;
 use rustynes_cpu::Bus;
-use rustynes_mappers::Mapper;
+use rustynes_mappers::{Mapper, Mirroring};
 use rustynes_ppu::Ppu;
 
 #[cfg(not(feature = "std"))]
@@ -40,21 +40,101 @@ impl ControllerState {
     pub const RIGHT: u8 = 0x80;
 }
 
-/// PPU memory bus adapter for CHR access.
+/// PPU memory bus adapter for CHR and CIRAM access.
 ///
 /// This wrapper allows the PPU to access CHR memory through the mapper
-/// without requiring a mutable borrow of the entire NesBus.
+/// and nametable memory (CIRAM) with proper mirroring.
+///
+/// NES PPU memory map:
+/// - $0000-$1FFF: Pattern tables (CHR ROM/RAM, handled by mapper)
+/// - $2000-$3EFF: Nametables (2KB CIRAM with mirroring)
+/// - $3F00-$3FFF: Palette RAM (handled internally by PPU)
 pub struct PpuMemory<'a> {
     mapper: &'a mut dyn Mapper,
+    ciram: &'a mut [u8; 2048],
+    mirroring: Mirroring,
+}
+
+impl PpuMemory<'_> {
+    /// Calculate the CIRAM address with nametable mirroring applied.
+    ///
+    /// The NES has 2KB of internal VRAM (CIRAM) for nametables, but the
+    /// nametable address space is 4KB ($2000-$2FFF). The mirroring mode
+    /// determines how the 4 logical nametables map to the 2 physical ones.
+    fn ciram_addr(&self, addr: u16) -> usize {
+        // Mask to get offset within nametable region ($0000-$0FFF)
+        let addr = addr & 0x0FFF;
+
+        match self.mirroring {
+            Mirroring::Horizontal => {
+                // Horizontal mirroring: $2000/$2400 share, $2800/$2C00 share
+                // Use bit 11 to select nametable (0 or 1)
+                let nametable = (addr >> 11) & 1;
+                let offset = addr & 0x03FF;
+                (nametable * 0x400 + offset) as usize
+            }
+            Mirroring::Vertical => {
+                // Vertical mirroring: $2000/$2800 share, $2400/$2C00 share
+                // Use bit 10 to select nametable (0 or 1)
+                let nametable = (addr >> 10) & 1;
+                let offset = addr & 0x03FF;
+                (nametable * 0x400 + offset) as usize
+            }
+            Mirroring::SingleScreenLower => {
+                // All nametables map to first 1KB
+                (addr & 0x03FF) as usize
+            }
+            Mirroring::SingleScreenUpper => {
+                // All nametables map to second 1KB
+                ((addr & 0x03FF) + 0x400) as usize
+            }
+            Mirroring::FourScreen => {
+                // Four-screen uses mapper-provided extra VRAM
+                // For now, treat as vertical mirroring (TODO: proper 4-screen support)
+                let nametable = (addr >> 10) & 1;
+                let offset = addr & 0x03FF;
+                (nametable * 0x400 + offset) as usize
+            }
+        }
+    }
 }
 
 impl rustynes_ppu::PpuBus for PpuMemory<'_> {
     fn read(&mut self, addr: u16) -> u8 {
-        self.mapper.read_chr(addr)
+        match addr {
+            // Pattern tables: CHR ROM/RAM handled by mapper
+            0x0000..=0x1FFF => self.mapper.read_chr(addr),
+            // Nametables: internal CIRAM with mirroring
+            0x2000..=0x3EFF => {
+                let ciram_addr = self.ciram_addr(addr);
+                self.ciram[ciram_addr]
+            }
+            // Palette RAM is handled internally by PPU, but we may get
+            // reads here for the VRAM buffer behavior at $3F00-$3FFF
+            // Return underlying nametable data (mirrors $2F00-$2FFF)
+            0x3F00..=0x3FFF => {
+                let ciram_addr = self.ciram_addr(addr - 0x1000);
+                self.ciram[ciram_addr]
+            }
+            _ => 0,
+        }
     }
 
     fn write(&mut self, addr: u16, value: u8) {
-        self.mapper.write_chr(addr, value);
+        match addr {
+            // Pattern tables: CHR RAM writes (if mapper supports it)
+            0x0000..=0x1FFF => self.mapper.write_chr(addr, value),
+            // Nametables: internal CIRAM with mirroring
+            0x2000..=0x3EFF => {
+                let ciram_addr = self.ciram_addr(addr);
+                self.ciram[ciram_addr] = value;
+            }
+            // Palette writes go to PPU's internal palette RAM, not CIRAM
+            0x3F00..=0x3FFF => {
+                // This shouldn't normally happen as PPU handles palette writes internally
+            }
+            _ => {}
+        }
     }
 }
 
@@ -62,6 +142,8 @@ impl rustynes_ppu::PpuBus for PpuMemory<'_> {
 pub struct NesBus {
     /// Internal RAM (2KB, mirrored 4 times).
     pub ram: [u8; 2048],
+    /// PPU internal VRAM (CIRAM, 2KB) for nametables.
+    pub ciram: [u8; 2048],
     /// PPU (Picture Processing Unit).
     pub ppu: Ppu,
     /// APU (Audio Processing Unit).
@@ -104,6 +186,7 @@ impl NesBus {
     pub fn new(mapper: Box<dyn Mapper>) -> Self {
         Self {
             ram: [0; 2048],
+            ciram: [0; 2048],
             ppu: Ppu::new(),
             apu: Apu::new(),
             mapper,
@@ -126,6 +209,7 @@ impl NesBus {
     /// Reset the bus and all components.
     pub fn reset(&mut self) {
         self.ram.fill(0);
+        self.ciram.fill(0);
         self.ppu.reset();
         self.apu.reset();
         self.mapper.reset();
@@ -187,9 +271,12 @@ impl NesBus {
         let mut nmi = false;
 
         for _ in 0..3 {
-            // Create a temporary PPU memory bus for CHR access
+            // Create a temporary PPU memory bus for CHR and CIRAM access
+            let mirroring = self.mapper.mirroring();
             let mut ppu_mem = PpuMemory {
                 mapper: &mut *self.mapper,
+                ciram: &mut self.ciram,
+                mirroring,
             };
             if self.ppu.step(&mut ppu_mem) {
                 nmi = true;
@@ -358,8 +445,11 @@ impl Bus for NesBus {
 
             // PPU registers (mirrored every 8 bytes)
             0x2000..=0x3FFF => {
+                let mirroring = self.mapper.mirroring();
                 let mut ppu_mem = PpuMemory {
                     mapper: &mut *self.mapper,
+                    ciram: &mut self.ciram,
+                    mirroring,
                 };
                 self.ppu.read_register(addr, &mut ppu_mem)
             }
@@ -394,8 +484,11 @@ impl Bus for NesBus {
 
             // PPU registers (mirrored every 8 bytes)
             0x2000..=0x3FFF => {
+                let mirroring = self.mapper.mirroring();
                 let mut ppu_mem = PpuMemory {
                     mapper: &mut *self.mapper,
+                    ciram: &mut self.ciram,
+                    mirroring,
                 };
                 self.ppu.write_register(addr, val, &mut ppu_mem);
             }
