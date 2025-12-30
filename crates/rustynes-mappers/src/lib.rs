@@ -13,6 +13,11 @@
 //! | 2 | UxROM | PRG-ROM banking only |
 //! | 3 | CNROM | CHR-ROM banking only |
 //! | 4 | MMC3 | Most popular, fine-grained banking + IRQ |
+//! | 7 | AxROM | Single-screen mirroring, 32KB PRG banking |
+//! | 11 | Color Dreams | 32KB PRG + 8KB CHR banking |
+//! | 34 | BNROM | 32KB PRG banking, CHR-RAM |
+//! | 66 | GxROM | 32KB PRG + 8KB CHR banking |
+//! | 71 | Camerica | Codemasters games, mirroring control |
 //!
 //! # Example
 //!
@@ -47,13 +52,23 @@ use alloc::boxed::Box;
 pub mod mapper;
 pub mod rom;
 
+mod axrom;
+mod bnrom;
+mod camerica;
 mod cnrom;
+mod color_dreams;
+mod gxrom;
 mod mmc1;
 mod mmc3;
 mod nrom;
 mod uxrom;
 
+pub use axrom::Axrom;
+pub use bnrom::Bnrom;
+pub use camerica::Camerica;
 pub use cnrom::Cnrom;
+pub use color_dreams::ColorDreams;
+pub use gxrom::Gxrom;
 pub use mapper::{Mapper, Mirroring};
 pub use mmc1::Mmc1;
 pub use mmc3::Mmc3;
@@ -89,6 +104,11 @@ pub fn create_mapper(rom: &Rom) -> Result<Box<dyn Mapper>, RomError> {
         2 => Ok(Box::new(Uxrom::new(rom))),
         3 => Ok(Box::new(Cnrom::new(rom))),
         4 => Ok(Box::new(Mmc3::new(rom))),
+        7 => Ok(Box::new(Axrom::new(rom))),
+        11 => Ok(Box::new(ColorDreams::new(rom))),
+        34 => Ok(Box::new(Bnrom::new(rom))),
+        66 => Ok(Box::new(Gxrom::new(rom))),
+        71 => Ok(Box::new(Camerica::new(rom))),
         n => Err(RomError::UnsupportedMapper(n)),
     }
 }
@@ -96,7 +116,7 @@ pub fn create_mapper(rom: &Rom) -> Result<Box<dyn Mapper>, RomError> {
 /// Get a list of supported mapper numbers.
 #[must_use]
 pub fn supported_mappers() -> &'static [u16] {
-    &[0, 1, 2, 3, 4]
+    &[0, 1, 2, 3, 4, 7, 11, 34, 66, 71]
 }
 
 /// Check if a mapper number is supported.
@@ -114,6 +134,11 @@ pub fn mapper_name(mapper: u16) -> Option<&'static str> {
         2 => Some("UxROM"),
         3 => Some("CNROM"),
         4 => Some("MMC3"),
+        7 => Some("AxROM"),
+        11 => Some("Color Dreams"),
+        34 => Some("BNROM"),
+        66 => Some("GxROM"),
+        71 => Some("Camerica"),
         _ => None,
     }
 }
@@ -187,6 +212,46 @@ mod tests {
     }
 
     #[test]
+    fn test_create_mapper_axrom() {
+        let rom = create_test_rom(7);
+        let mapper = create_mapper(&rom).unwrap();
+        assert_eq!(mapper.mapper_number(), 7);
+        assert_eq!(mapper.mapper_name(), "AxROM");
+    }
+
+    #[test]
+    fn test_create_mapper_color_dreams() {
+        let rom = create_test_rom(11);
+        let mapper = create_mapper(&rom).unwrap();
+        assert_eq!(mapper.mapper_number(), 11);
+        assert_eq!(mapper.mapper_name(), "Color Dreams");
+    }
+
+    #[test]
+    fn test_create_mapper_bnrom() {
+        let rom = create_test_rom(34);
+        let mapper = create_mapper(&rom).unwrap();
+        assert_eq!(mapper.mapper_number(), 34);
+        assert_eq!(mapper.mapper_name(), "BNROM");
+    }
+
+    #[test]
+    fn test_create_mapper_gxrom() {
+        let rom = create_test_rom(66);
+        let mapper = create_mapper(&rom).unwrap();
+        assert_eq!(mapper.mapper_number(), 66);
+        assert_eq!(mapper.mapper_name(), "GxROM");
+    }
+
+    #[test]
+    fn test_create_mapper_camerica() {
+        let rom = create_test_rom(71);
+        let mapper = create_mapper(&rom).unwrap();
+        assert_eq!(mapper.mapper_number(), 71);
+        assert_eq!(mapper.mapper_name(), "Camerica");
+    }
+
+    #[test]
     fn test_create_mapper_unsupported() {
         let rom = create_test_rom(100);
         let result = create_mapper(&rom);
@@ -196,13 +261,18 @@ mod tests {
     #[test]
     fn test_supported_mappers() {
         let mappers = supported_mappers();
-        assert_eq!(mappers, &[0, 1, 2, 3, 4]);
+        assert_eq!(mappers, &[0, 1, 2, 3, 4, 7, 11, 34, 66, 71]);
     }
 
     #[test]
     fn test_is_mapper_supported() {
         assert!(is_mapper_supported(0));
         assert!(is_mapper_supported(4));
+        assert!(is_mapper_supported(7));
+        assert!(is_mapper_supported(11));
+        assert!(is_mapper_supported(34));
+        assert!(is_mapper_supported(66));
+        assert!(is_mapper_supported(71));
         assert!(!is_mapper_supported(100));
     }
 
@@ -211,6 +281,11 @@ mod tests {
         assert_eq!(mapper_name(0), Some("NROM"));
         assert_eq!(mapper_name(1), Some("MMC1"));
         assert_eq!(mapper_name(4), Some("MMC3"));
+        assert_eq!(mapper_name(7), Some("AxROM"));
+        assert_eq!(mapper_name(11), Some("Color Dreams"));
+        assert_eq!(mapper_name(34), Some("BNROM"));
+        assert_eq!(mapper_name(66), Some("GxROM"));
+        assert_eq!(mapper_name(71), Some("Camerica"));
         assert_eq!(mapper_name(100), None);
     }
 

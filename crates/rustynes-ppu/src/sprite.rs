@@ -122,12 +122,24 @@ impl Sprite {
     }
 
     /// Get the row within the sprite for a given scanline.
+    ///
+    /// # Safety
+    /// Caller should ensure `is_on_scanline()` returns true before calling.
+    /// This function uses saturating arithmetic to prevent panics on edge cases.
     #[must_use]
     #[inline]
     pub const fn sprite_row(self, scanline: u16, sprite_height: u8) -> u8 {
-        let row = (scanline - self.y as u16) as u8;
+        let y = self.y as u16;
+        // Saturating subtraction to handle edge cases
+        let diff = scanline.saturating_sub(y);
+        let row = if diff > 255 { 255 } else { diff as u8 };
         if self.attr.flip_vertical() {
-            sprite_height - 1 - row
+            // Protect against underflow if row >= sprite_height
+            if row >= sprite_height {
+                0
+            } else {
+                sprite_height - 1 - row
+            }
         } else {
             row
         }
