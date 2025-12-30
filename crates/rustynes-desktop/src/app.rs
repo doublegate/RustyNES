@@ -275,8 +275,8 @@ impl NesApp {
             console.set_controller_1(self.input.player1_buttons());
             console.set_controller_2(self.input.player2_buttons());
 
-            // Run one frame
-            console.step_frame();
+            // Run one frame using cycle-accurate mode
+            console.step_frame_accurate();
 
             // Get audio samples and queue them with adaptive sync
             if let Some(audio) = &mut self.audio {

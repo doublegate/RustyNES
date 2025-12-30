@@ -418,6 +418,13 @@ impl Cpu {
             AddressingMode::Immediate => {
                 self.effective_addr = self.pc.wrapping_sub(1);
                 self.temp_value = self.operand_lo;
+                // For Read instructions with Immediate mode, execute now and complete (2 cycles total)
+                // The operand byte IS the value, no additional read needed
+                if matches!(self.instr_type, InstructionType::Read) {
+                    self.execute_read_instruction();
+                    self.state = CpuState::FetchOpcode;
+                    return true;
+                }
                 self.state = self.next_state_for_instruction_type();
             }
 
@@ -563,9 +570,13 @@ impl Cpu {
     }
 
     fn tick_read_data(&mut self, bus: &mut impl CpuBus) -> bool {
+        // Read the data from memory - this is the final cycle for Read instructions
         self.temp_value = self.read_cycle(bus, self.effective_addr);
-        self.state = CpuState::Execute;
-        false
+        // Execute the read instruction immediately (same cycle as data read)
+        // This matches 6502 hardware where read and execute happen together
+        self.execute_read_instruction();
+        self.state = CpuState::FetchOpcode;
+        true // Instruction complete
     }
 
     fn tick_write_data(&mut self, bus: &mut impl CpuBus) -> bool {
