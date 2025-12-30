@@ -1,0 +1,82 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="RustyNES PPU - Cycle-accurate Ricoh 2C02 PPU emulation"><title>rustynes_ppu - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../static.files/rustdoc-ca0dd0c4.css"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="rustynes_ppu" data-themes="" data-resource-suffix="" data-rustdoc-version="1.92.0 (ded5c06cf 2025-12-08)" data-channel="1.92.0" data-search-js="search-d69d8955.js" data-stringdex-js="stringdex-c3e638e9.js" data-settings-js="settings-c38705f0.js" ><script src="../static.files/storage-e2aeef58.js"></script><script defer src="../crates.js"></script><script defer src="../static.files/main-ce535bd0.js"></script><noscript><link rel="stylesheet" href="../static.files/noscript-263c88ec.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-044be391.svg"></head><body class="rustdoc mod crate"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Crate rustynes_ppu</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../rustynes_ppu/index.html">rustynes_<wbr>ppu</a><span class="version">0.8.6</span></h2></div><div class="sidebar-elems"><ul class="block"><li><a id="all-types" href="all.html">All Items</a></li></ul><section id="rustdoc-toc"><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#example" title="Example">Example</a></li><li><a href="#timing" title="Timing">Timing</a></li><li><a href="#memory-map" title="Memory Map">Memory Map</a></li><li><a href="#registers" title="Registers">Registers</a></li><li><a href="#accuracy" title="Accuracy">Accuracy</a></li><li><a href="#feature-flags" title="Feature Flags">Feature Flags</a></li></ul><h3><a href="#structs">Crate Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#enums" title="Enums">Enums</a></li><li><a href="#constants" title="Constants">Constants</a></li></ul></section><div id="rustdoc-modnav"></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content"><div class="main-heading"><h1>Crate <span>rustynes_<wbr>ppu</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../src/rustynes_ppu/lib.rs.html#1-261">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>RustyNES PPU - Cycle-accurate Ricoh 2C02 PPU emulation</p>
+<p>This crate provides a cycle-accurate implementation of the Ricoh 2C02 PPU
+as used in the Nintendo Entertainment System (NES). It includes:</p>
+<ul>
+<li>Dot-accurate timing (341 dots × 262 scanlines)</li>
+<li>Complete register implementation (PPUCTRL, PPUMASK, PPUSTATUS, etc.)</li>
+<li>Loopy scrolling model (v, t, x, w registers)</li>
+<li>Background rendering with shift registers</li>
+<li>Sprite evaluation and rendering (up to 8 per scanline)</li>
+<li>VBlank and NMI generation</li>
+<li>Palette RAM and nametable mirroring</li>
+<li>Zero unsafe code</li>
+</ul>
+<h2 id="example"><a class="doc-anchor" href="#example">§</a>Example</h2>
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>rustynes_ppu::{Ppu, Mirroring};
+
+<span class="kw">fn </span>main() {
+    <span class="kw">let </span><span class="kw-2">mut </span>ppu = Ppu::new(Mirroring::Horizontal);
+
+    <span class="comment">// Reset PPU
+    </span>ppu.reset();
+
+    <span class="comment">// Main emulation loop
+    </span><span class="kw">loop </span>{
+        <span class="comment">// Step PPU by one dot (3 dots per CPU cycle)
+        </span><span class="kw">let </span>(frame_complete, nmi) = ppu.step();
+
+        <span class="kw">if </span>nmi {
+            <span class="comment">// Trigger NMI interrupt on CPU
+        </span>}
+
+        <span class="kw">if </span>frame_complete {
+            <span class="comment">// Render frame to screen
+            </span><span class="kw">let </span>frame_buffer = ppu.frame_buffer();
+            <span class="comment">// ... convert palette indices to RGB and display
+        </span>}
+    }
+}</code></pre></div><h2 id="timing"><a class="doc-anchor" href="#timing">§</a>Timing</h2>
+<p>The PPU operates at 5.369318 MHz (NTSC), which is 3× the CPU clock.
+Each PPU step represents one dot (pixel clock).</p>
+<p>Frame structure:</p>
+<ul>
+<li>341 dots per scanline</li>
+<li>262 scanlines per frame</li>
+<li>89,342 dots per frame (29,780.67 CPU cycles)</li>
+<li>~60 Hz frame rate</li>
+</ul>
+<h2 id="memory-map"><a class="doc-anchor" href="#memory-map">§</a>Memory Map</h2>
+<p>The PPU has its own 16KB address space:</p>
+<div class="example-wrap"><pre class="language-text"><code>$0000-$0FFF: Pattern Table 0 (CHR ROM/RAM via mapper)
+$1000-$1FFF: Pattern Table 1 (CHR ROM/RAM via mapper)
+$2000-$23FF: Nametable 0
+$2400-$27FF: Nametable 1
+$2800-$2BFF: Nametable 2
+$2C00-$2FFF: Nametable 3
+$3000-$3EFF: Mirror of $2000-$2EFF
+$3F00-$3F1F: Palette RAM (32 bytes)
+$3F20-$3FFF: Mirror of $3F00-$3F1F</code></pre></div><h2 id="registers"><a class="doc-anchor" href="#registers">§</a>Registers</h2>
+<p>The CPU accesses the PPU through 8 memory-mapped registers at $2000-$2007:</p>
+<ul>
+<li><strong>$2000 PPUCTRL</strong>: Control register (NMI enable, sprite/bg tables, etc.)</li>
+<li><strong>$2001 PPUMASK</strong>: Mask register (rendering enable, color effects)</li>
+<li><strong>$2002 PPUSTATUS</strong>: Status register (VBlank, sprite 0 hit, overflow)</li>
+<li><strong>$2003 OAMADDR</strong>: OAM address register</li>
+<li><strong>$2004 OAMDATA</strong>: OAM data port</li>
+<li><strong>$2005 PPUSCROLL</strong>: Scroll position (X then Y)</li>
+<li><strong>$2006 PPUADDR</strong>: VRAM address (high then low byte)</li>
+<li><strong>$2007 PPUDATA</strong>: VRAM data port</li>
+</ul>
+<p>Additionally, <strong>$4014 OAMDMA</strong> in CPU memory performs a fast 256-byte
+copy to OAM (handled by the emulator core, not this crate).</p>
+<h2 id="accuracy"><a class="doc-anchor" href="#accuracy">§</a>Accuracy</h2>
+<p>This implementation is designed to pass:</p>
+<ul>
+<li>blargg’s ppu_vbl_nmi tests</li>
+<li>blargg’s sprite_hit_tests_2005</li>
+<li>blargg’s ppu_tests</li>
+<li>sprite_overflow tests</li>
+</ul>
+<h2 id="feature-flags"><a class="doc-anchor" href="#feature-flags">§</a>Feature Flags</h2>
+<p>Currently no optional features. All functionality is included by default.</p>
+</div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.Oam.html" title="struct rustynes_ppu::Oam">Oam</a></dt><dd>OAM (Object Attribute Memory)</dd><dt><a class="struct" href="struct.Ppu.html" title="struct rustynes_ppu::Ppu">Ppu</a></dt><dd>PPU (Picture Processing Unit)</dd><dt><a class="struct" href="struct.PpuCtrl.html" title="struct rustynes_ppu::PpuCtrl">PpuCtrl</a></dt><dd>PPUCTRL ($2000) - Write Only</dd><dt><a class="struct" href="struct.PpuMask.html" title="struct rustynes_ppu::PpuMask">PpuMask</a></dt><dd>PPUMASK ($2001) - Write Only</dd><dt><a class="struct" href="struct.PpuStatus.html" title="struct rustynes_ppu::PpuStatus">PpuStatus</a></dt><dd>PPUSTATUS ($2002) - Read Only</dd><dt><a class="struct" href="struct.ScrollRegisters.html" title="struct rustynes_ppu::ScrollRegisters">Scroll<wbr>Registers</a></dt><dd>PPU scrolling registers</dd><dt><a class="struct" href="struct.SecondaryOam.html" title="struct rustynes_ppu::SecondaryOam">Secondary<wbr>Oam</a></dt><dd>Secondary OAM</dd><dt><a class="struct" href="struct.Sprite.html" title="struct rustynes_ppu::Sprite">Sprite</a></dt><dd>Single sprite entry (4 bytes)</dd><dt><a class="struct" href="struct.SpriteAttributes.html" title="struct rustynes_ppu::SpriteAttributes">Sprite<wbr>Attributes</a></dt><dd>Sprite attributes (byte 2 of sprite data)</dd><dt><a class="struct" href="struct.Timing.html" title="struct rustynes_ppu::Timing">Timing</a></dt><dd>PPU timing state</dd><dt><a class="struct" href="struct.Vram.html" title="struct rustynes_ppu::Vram">Vram</a></dt><dd>PPU VRAM manager</dd></dl><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><dl class="item-table"><dt><a class="enum" href="enum.Mirroring.html" title="enum rustynes_ppu::Mirroring">Mirroring</a></dt><dd>Nametable mirroring mode</dd></dl><h2 id="constants" class="section-header">Constants<a href="#constants" class="anchor">§</a></h2><dl class="item-table"><dt><a class="constant" href="constant.FRAME_HEIGHT.html" title="constant rustynes_ppu::FRAME_HEIGHT">FRAME_<wbr>HEIGHT</a></dt><dd>Frame buffer height (240 pixels)</dd><dt><a class="constant" href="constant.FRAME_SIZE.html" title="constant rustynes_ppu::FRAME_SIZE">FRAME_<wbr>SIZE</a></dt><dd>Frame buffer total size (256×240 = 61440 pixels)</dd><dt><a class="constant" href="constant.FRAME_WIDTH.html" title="constant rustynes_ppu::FRAME_WIDTH">FRAME_<wbr>WIDTH</a></dt><dd>Frame buffer width (256 pixels)</dd></dl></section></div></main></body></html>

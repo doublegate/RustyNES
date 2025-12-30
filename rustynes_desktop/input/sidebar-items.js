@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["KeyCode","NesButton"],"fn":["egui_key_to_keycode"],"struct":["ControllerState","InputHandler"]};

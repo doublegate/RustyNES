@@ -1,0 +1,48 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="`RustyNES` Core - NES emulator core integration layer"><title>rustynes_core - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../static.files/rustdoc-ca0dd0c4.css"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="rustynes_core" data-themes="" data-resource-suffix="" data-rustdoc-version="1.92.0 (ded5c06cf 2025-12-08)" data-channel="1.92.0" data-search-js="search-d69d8955.js" data-stringdex-js="stringdex-c3e638e9.js" data-settings-js="settings-c38705f0.js" ><script src="../static.files/storage-e2aeef58.js"></script><script defer src="../crates.js"></script><script defer src="../static.files/main-ce535bd0.js"></script><noscript><link rel="stylesheet" href="../static.files/noscript-263c88ec.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-044be391.svg"></head><body class="rustdoc mod crate"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Crate rustynes_core</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../rustynes_core/index.html">rustynes_<wbr>core</a><span class="version">0.8.6</span></h2></div><div class="sidebar-elems"><ul class="block"><li><a id="all-types" href="all.html">All Items</a></li></ul><section id="rustdoc-toc"><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#features" title="Features">Features</a></li><li><a href="#example" title="Example">Example</a></li><li><a href="#architecture" title="Architecture">Architecture</a></li><li><a href="#timing-model" title="Timing Model">Timing Model</a></li></ul><h3><a href="#reexports">Crate Items</a></h3><ul class="block"><li><a href="#reexports" title="Re-exports">Re-exports</a></li><li><a href="#modules" title="Modules">Modules</a></li><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#enums" title="Enums">Enums</a></li><li><a href="#constants" title="Constants">Constants</a></li><li><a href="#traits" title="Traits">Traits</a></li><li><a href="#functions" title="Functions">Functions</a></li></ul></section><div id="rustdoc-modnav"></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content"><div class="main-heading"><h1>Crate <span>rustynes_<wbr>core</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../src/rustynes_core/lib.rs.html#1-75">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p><code>RustyNES</code> Core - NES emulator core integration layer</p>
+<p>This crate provides the main emulator integration, connecting the CPU, PPU, APU,
+and mappers into a cohesive NES system.</p>
+<h2 id="features"><a class="doc-anchor" href="#features">§</a>Features</h2>
+<ul>
+<li><strong>Bus System</strong>: Memory routing between CPU and all components</li>
+<li><strong>Console Coordinator</strong>: Main emulation loop with accurate timing</li>
+<li><strong>Input Handling</strong>: Controller shift register protocol</li>
+<li><strong>ROM Loading</strong>: iNES/NES 2.0 format support</li>
+<li><strong>Save States</strong>: Deterministic serialization and compression</li>
+<li><strong>Zero Unsafe Code</strong>: All implementations use safe Rust</li>
+</ul>
+<h2 id="example"><a class="doc-anchor" href="#example">§</a>Example</h2>
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>rustynes_core::Console;
+<span class="kw">use </span>std::fs;
+
+<span class="comment">// Load ROM file
+</span><span class="kw">let </span>rom_data = fs::read(<span class="string">"game.nes"</span>)<span class="question-mark">?</span>;
+<span class="kw">let </span><span class="kw-2">mut </span>console = Console::from_rom_bytes(<span class="kw-2">&amp;</span>rom_data)<span class="question-mark">?</span>;
+
+<span class="comment">// Main emulation loop
+</span><span class="kw">loop </span>{
+    <span class="comment">// Step one frame (60 FPS)
+    </span>console.step_frame();
+
+    <span class="comment">// Get framebuffer for rendering
+    </span><span class="kw">let </span>framebuffer = console.framebuffer();
+    <span class="comment">// ... render to screen ...
+
+    // Handle input
+    </span>console.set_button_1(rustynes_core::Button::A, <span class="bool-val">true</span>);
+}</code></pre></div><h2 id="architecture"><a class="doc-anchor" href="#architecture">§</a>Architecture</h2>
+<p>The core consists of several key components:</p>
+<ul>
+<li><strong>Bus</strong>: Routes CPU memory access to RAM, PPU, APU, and cartridge</li>
+<li><strong>Console</strong>: Orchestrates all components with cycle-accurate timing</li>
+<li><strong>Input</strong>: Emulates NES controller shift register protocol</li>
+<li><strong>Save State</strong>: Serializes/deserializes complete system state</li>
+</ul>
+<h2 id="timing-model"><a class="doc-anchor" href="#timing-model">§</a>Timing Model</h2>
+<ul>
+<li>Master clock: 21.477272 MHz (NTSC)</li>
+<li>CPU: 1.789773 MHz (master ÷ 12)</li>
+<li>PPU: 5.369318 MHz (master ÷ 4), 3 dots per CPU cycle</li>
+<li>APU: Clocked every CPU cycle</li>
+<li>Frame: 29,780 CPU cycles, 89,341 PPU dots</li>
+</ul>
+</div></details><h2 id="reexports" class="section-header">Re-exports<a href="#reexports" class="anchor">§</a></h2><dl class="item-table reexports"><dt id="reexport.Bus"><code>pub use bus::<a class="struct" href="bus/struct.Bus.html" title="struct rustynes_core::bus::Bus">Bus</a>;</code></dt><dt id="reexport.Console"><code>pub use console::<a class="struct" href="console/struct.Console.html" title="struct rustynes_core::console::Console">Console</a>;</code></dt><dt id="reexport.Button"><code>pub use input::<a class="enum" href="input/enum.Button.html" title="enum rustynes_core::input::Button">Button</a>;</code></dt><dt id="reexport.Controller"><code>pub use input::<a class="struct" href="input/struct.Controller.html" title="struct rustynes_core::input::Controller">Controller</a>;</code></dt></dl><h2 id="modules" class="section-header">Modules<a href="#modules" class="anchor">§</a></h2><dl class="item-table"><dt><a class="mod" href="bus/index.html" title="mod rustynes_core::bus">bus</a></dt><dd>NES memory bus implementation.</dd><dt><a class="mod" href="console/index.html" title="mod rustynes_core::console">console</a></dt><dd>NES console emulation coordinator.</dd><dt><a class="mod" href="input/index.html" title="mod rustynes_core::input">input</a></dt><dd>NES controller input handling.</dd><dt><a class="mod" href="save_state/index.html" title="mod rustynes_core::save_state">save_<wbr>state</a></dt><dd>Save state system for <code>RustyNES</code> emulator.</dd></dl><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.Rom.html" title="struct rustynes_core::Rom">Rom</a></dt><dd>Parsed NES ROM file.</dd></dl><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><dl class="item-table"><dt><a class="enum" href="enum.MapperError.html" title="enum rustynes_core::MapperError">Mapper<wbr>Error</a></dt><dd>Mapper creation error.</dd><dt><a class="enum" href="enum.Mirroring.html" title="enum rustynes_core::Mirroring">Mirroring</a></dt><dd>Nametable mirroring mode.</dd><dt><a class="enum" href="enum.RomError.html" title="enum rustynes_core::RomError">RomError</a></dt><dd>Errors that can occur when parsing NES ROM files.</dd></dl><h2 id="constants" class="section-header">Constants<a href="#constants" class="anchor">§</a></h2><dl class="item-table"><dt><a class="constant" href="constant.FRAME_HEIGHT.html" title="constant rustynes_core::FRAME_HEIGHT">FRAME_<wbr>HEIGHT</a></dt><dd>Frame buffer height (240 pixels)</dd><dt><a class="constant" href="constant.FRAME_WIDTH.html" title="constant rustynes_core::FRAME_WIDTH">FRAME_<wbr>WIDTH</a></dt><dd>Frame buffer width (256 pixels)</dd></dl><h2 id="traits" class="section-header">Traits<a href="#traits" class="anchor">§</a></h2><dl class="item-table"><dt><a class="trait" href="trait.Mapper.html" title="trait rustynes_core::Mapper">Mapper</a></dt><dd>NES cartridge mapper interface.</dd></dl><h2 id="functions" class="section-header">Functions<a href="#functions" class="anchor">§</a></h2><dl class="item-table"><dt><a class="fn" href="fn.create_mapper.html" title="fn rustynes_core::create_mapper">create_<wbr>mapper</a></dt><dd>Create a mapper instance from a loaded ROM.</dd></dl></section></div></main></body></html>

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["FRAME_HEIGHT","FRAME_SIZE","FRAME_WIDTH"],"enum":["Mirroring"],"struct":["Oam","Ppu","PpuCtrl","PpuMask","PpuStatus","ScrollRegisters","SecondaryOam","Sprite","SpriteAttributes","Timing","Vram"]};

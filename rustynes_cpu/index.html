@@ -1,0 +1,61 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="RustyNES CPU - Cycle-accurate 6502 emulation"><title>rustynes_cpu - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../static.files/rustdoc-ca0dd0c4.css"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="rustynes_cpu" data-themes="" data-resource-suffix="" data-rustdoc-version="1.92.0 (ded5c06cf 2025-12-08)" data-channel="1.92.0" data-search-js="search-d69d8955.js" data-stringdex-js="stringdex-c3e638e9.js" data-settings-js="settings-c38705f0.js" ><script src="../static.files/storage-e2aeef58.js"></script><script defer src="../crates.js"></script><script defer src="../static.files/main-ce535bd0.js"></script><noscript><link rel="stylesheet" href="../static.files/noscript-263c88ec.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-044be391.svg"></head><body class="rustdoc mod crate"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Crate rustynes_cpu</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../rustynes_cpu/index.html">rustynes_<wbr>cpu</a><span class="version">0.8.6</span></h2></div><div class="sidebar-elems"><ul class="block"><li><a id="all-types" href="all.html">All Items</a></li></ul><section id="rustdoc-toc"><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#example" title="Example">Example</a></li><li><a href="#accuracy" title="Accuracy">Accuracy</a></li><li><a href="#architecture" title="Architecture">Architecture</a></li><li><a href="#feature-flags" title="Feature Flags">Feature Flags</a></li></ul><h3><a href="#reexports">Crate Items</a></h3><ul class="block"><li><a href="#reexports" title="Re-exports">Re-exports</a></li><li><a href="#modules" title="Modules">Modules</a></li><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#enums" title="Enums">Enums</a></li><li><a href="#constants" title="Constants">Constants</a></li><li><a href="#traits" title="Traits">Traits</a></li></ul></section><div id="rustdoc-modnav"></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content"><div class="main-heading"><h1>Crate <span>rustynes_<wbr>cpu</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../src/rustynes_cpu/lib.rs.html#1-287">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>RustyNES CPU - Cycle-accurate 6502 emulation</p>
+<p>This crate provides a cycle-accurate implementation of the MOS 6502 CPU
+as used in the Nintendo Entertainment System (NES). It includes:</p>
+<ul>
+<li>All 256 opcodes (151 official + 105 unofficial)</li>
+<li>Cycle-accurate timing</li>
+<li>Complete interrupt handling (NMI, IRQ, BRK, RESET)</li>
+<li>All addressing modes</li>
+<li>Zero unsafe code</li>
+</ul>
+<h2 id="example"><a class="doc-anchor" href="#example">§</a>Example</h2>
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>rustynes_cpu::{Cpu, Bus};
+
+<span class="comment">// Implement the Bus trait for your system
+</span><span class="kw">struct </span>MyBus {
+    memory: [u8; <span class="number">0x10000</span>],
+}
+
+<span class="kw">impl </span>Bus <span class="kw">for </span>MyBus {
+    <span class="kw">fn </span>read(<span class="kw-2">&amp;mut </span><span class="self">self</span>, addr: u16) -&gt; u8 {
+        <span class="self">self</span>.memory[addr <span class="kw">as </span>usize]
+    }
+
+    <span class="kw">fn </span>write(<span class="kw-2">&amp;mut </span><span class="self">self</span>, addr: u16, value: u8) {
+        <span class="self">self</span>.memory[addr <span class="kw">as </span>usize] = value;
+    }
+}
+
+<span class="kw">fn </span>main() {
+    <span class="kw">let </span><span class="kw-2">mut </span>cpu = Cpu::new();
+    <span class="kw">let </span><span class="kw-2">mut </span>bus = MyBus { memory: [<span class="number">0</span>; <span class="number">0x10000</span>] };
+
+    <span class="comment">// Set RESET vector to 0x8000
+    </span>bus.memory[<span class="number">0xFFFC</span>] = <span class="number">0x00</span>;
+    bus.memory[<span class="number">0xFFFD</span>] = <span class="number">0x80</span>;
+
+    <span class="comment">// Reset CPU
+    </span>cpu.reset(<span class="kw-2">&amp;mut </span>bus);
+
+    <span class="comment">// Execute instructions
+    </span><span class="kw">loop </span>{
+        <span class="kw">let </span>cycles = cpu.step(<span class="kw-2">&amp;mut </span>bus);
+        <span class="comment">// Execute cycles CPU cycles worth of other system components
+    </span>}
+}</code></pre></div><h2 id="accuracy"><a class="doc-anchor" href="#accuracy">§</a>Accuracy</h2>
+<p>This implementation is designed to pass:</p>
+<ul>
+<li>nestest.nes golden log</li>
+<li>blargg’s cpu_timing_test6</li>
+<li>All TASVideos accuracy tests</li>
+</ul>
+<h2 id="architecture"><a class="doc-anchor" href="#architecture">§</a>Architecture</h2>
+<ul>
+<li><strong>Modular Design</strong>: CPU, PPU, APU, and mappers are separate crates</li>
+<li><strong>Strong Typing</strong>: Newtype pattern for addresses and flags</li>
+<li><strong>Safe Code</strong>: Zero unsafe blocks (except for FFI in other crates)</li>
+<li><strong>Trait-Based</strong>: <code>Bus</code> trait allows flexible memory systems</li>
+</ul>
+<h2 id="feature-flags"><a class="doc-anchor" href="#feature-flags">§</a>Feature Flags</h2>
+<p>Currently no optional features. All functionality is included by default.</p>
+</div></details><h2 id="reexports" class="section-header">Re-exports<a href="#reexports" class="anchor">§</a></h2><dl class="item-table reexports"><dt id="reexport.INesHeader"><code>pub use ines::<a class="struct" href="ines/struct.INesHeader.html" title="struct rustynes_cpu::ines::INesHeader">INesHeader</a>;</code></dt><dt id="reexport.INesRom"><code>pub use ines::<a class="struct" href="ines/struct.INesRom.html" title="struct rustynes_cpu::ines::INesRom">INesRom</a>;</code></dt><dt id="reexport.CpuTracer"><code>pub use trace::<a class="struct" href="trace/struct.CpuTracer.html" title="struct rustynes_cpu::trace::CpuTracer">CpuTracer</a>;</code></dt></dl><h2 id="modules" class="section-header">Modules<a href="#modules" class="anchor">§</a></h2><dl class="item-table"><dt><a class="mod" href="ines/index.html" title="mod rustynes_cpu::ines">ines</a></dt><dd>iNES ROM format loader.</dd><dt><a class="mod" href="state/index.html" title="mod rustynes_cpu::state">state</a></dt><dd>CPU execution state machine for cycle-accurate emulation.</dd><dt><a class="mod" href="trace/index.html" title="mod rustynes_cpu::trace">trace</a></dt><dd>CPU trace logging for nestest.log-compatible output.</dd></dl><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.Cpu.html" title="struct rustynes_cpu::Cpu">Cpu</a></dt><dd>NES 6502 CPU</dd><dt><a class="struct" href="struct.StatusFlags.html" title="struct rustynes_cpu::StatusFlags">Status<wbr>Flags</a></dt><dd>CPU Status Register Flags (P register)</dd></dl><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><dl class="item-table"><dt><a class="enum" href="enum.AddressingMode.html" title="enum rustynes_cpu::AddressingMode">Addressing<wbr>Mode</a></dt><dd>CPU Addressing Modes</dd></dl><h2 id="constants" class="section-header">Constants<a href="#constants" class="anchor">§</a></h2><dl class="item-table"><dt><a class="constant" href="constant.OPCODE_TABLE.html" title="constant rustynes_cpu::OPCODE_TABLE">OPCODE_<wbr>TABLE</a></dt><dd>Complete 256-entry opcode lookup table.</dd></dl><h2 id="traits" class="section-header">Traits<a href="#traits" class="anchor">§</a></h2><dl class="item-table"><dt><a class="trait" href="trait.Bus.html" title="trait rustynes_cpu::Bus">Bus</a></dt><dd>Memory bus interface</dd><dt><a class="trait" href="trait.CpuBus.html" title="trait rustynes_cpu::CpuBus">CpuBus</a></dt><dd>Cycle-accurate bus interface for sub-cycle PPU/APU synchronization</dd></dl></section></div></main></body></html>

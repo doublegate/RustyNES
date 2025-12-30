@@ -1,0 +1,140 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Memory bus interface"><title>Bus in rustynes_cpu - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../static.files/rustdoc-ca0dd0c4.css"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="rustynes_cpu" data-themes="" data-resource-suffix="" data-rustdoc-version="1.92.0 (ded5c06cf 2025-12-08)" data-channel="1.92.0" data-search-js="search-d69d8955.js" data-stringdex-js="stringdex-c3e638e9.js" data-settings-js="settings-c38705f0.js" ><script src="../static.files/storage-e2aeef58.js"></script><script defer src="sidebar-items.js"></script><script defer src="../static.files/main-ce535bd0.js"></script><noscript><link rel="stylesheet" href="../static.files/noscript-263c88ec.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-044be391.svg"></head><body class="rustdoc trait"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Bus</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../rustynes_cpu/index.html">rustynes_<wbr>cpu</a><span class="version">0.8.6</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Bus</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#examples" title="Examples">Examples</a><ul><li><a href="#simple-ram-only-bus" title="Simple RAM-only bus">Simple RAM-only bus</a></li><li><a href="#nes-bus-with-memory-mapped-io" title="NES bus with memory-mapped I/O">NES bus with memory-mapped I/O</a></li></ul></li></ul><h3><a href="#required-methods">Required Methods</a></h3><ul class="block"><li><a href="#tymethod.read" title="read">read</a></li><li><a href="#tymethod.write" title="write">write</a></li></ul><h3><a href="#provided-methods">Provided Methods</a></h3><ul class="block"><li><a href="#method.peek" title="peek">peek</a></li><li><a href="#method.read_u16" title="read_u16">read_u16</a></li><li><a href="#method.read_u16_wrap" title="read_u16_wrap">read_u16_wrap</a></li></ul><h3><a href="#implementors">Implementors</a></h3></section><div id="rustdoc-modnav"><h2 class="in-crate"><a href="index.html">In crate rustynes_<wbr>cpu</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="index.html">rustynes_cpu</a></div><h1>Trait <span class="trait">Bus</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../src/rustynes_cpu/bus.rs.html#80-219">Source</a> </span></div><pre class="rust item-decl"><code>pub trait Bus {
+    // Required methods
+    fn <a href="#tymethod.read" class="fn">read</a>(&amp;mut self, addr: <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u16.html">u16</a>) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u8.html">u8</a>;
+<span class="item-spacer"></span>    fn <a href="#tymethod.write" class="fn">write</a>(&amp;mut self, addr: <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u16.html">u16</a>, value: <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u8.html">u8</a>);
+
+    // Provided methods
+    fn <a href="#method.peek" class="fn">peek</a>(&amp;self, addr: <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u16.html">u16</a>) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u8.html">u8</a> { ... }
+<span class="item-spacer"></span>    fn <a href="#method.read_u16" class="fn">read_u16</a>(&amp;mut self, addr: <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u16.html">u16</a>) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u16.html">u16</a> { ... }
+<span class="item-spacer"></span>    fn <a href="#method.read_u16_wrap" class="fn">read_u16_wrap</a>(&amp;mut self, addr: <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u16.html">u16</a>) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u16.html">u16</a> { ... }
+}</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Memory bus interface</p>
+<p>Implementors of this trait provide memory access to the CPU.
+The CPU calls <code>read()</code> and <code>write()</code> for all memory operations.</p>
+<h2 id="examples"><a class="doc-anchor" href="#examples">§</a>Examples</h2><h3 id="simple-ram-only-bus"><a class="doc-anchor" href="#simple-ram-only-bus">§</a>Simple RAM-only bus</h3>
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>rustynes_cpu::Bus;
+
+<span class="kw">struct </span>SimpleBus {
+    ram: [u8; <span class="number">0x10000</span>],
+}
+
+<span class="kw">impl </span>Bus <span class="kw">for </span>SimpleBus {
+    <span class="kw">fn </span>read(<span class="kw-2">&amp;mut </span><span class="self">self</span>, addr: u16) -&gt; u8 {
+        <span class="self">self</span>.ram[addr <span class="kw">as </span>usize]
+    }
+
+    <span class="kw">fn </span>write(<span class="kw-2">&amp;mut </span><span class="self">self</span>, addr: u16, value: u8) {
+        <span class="self">self</span>.ram[addr <span class="kw">as </span>usize] = value;
+    }
+}</code></pre></div><h3 id="nes-bus-with-memory-mapped-io"><a class="doc-anchor" href="#nes-bus-with-memory-mapped-io">§</a>NES bus with memory-mapped I/O</h3>
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>rustynes_cpu::Bus;
+
+<span class="kw">struct </span>NesBus {
+    ram: [u8; <span class="number">0x800</span>],
+    ppu: Ppu,
+    <span class="comment">// ... other components
+</span>}
+
+<span class="kw">impl </span>Bus <span class="kw">for </span>NesBus {
+    <span class="kw">fn </span>read(<span class="kw-2">&amp;mut </span><span class="self">self</span>, addr: u16) -&gt; u8 {
+        <span class="kw">match </span>addr {
+            <span class="number">0x0000</span>..=<span class="number">0x1FFF </span>=&gt; {
+                <span class="comment">// 2KB internal RAM, mirrored 4 times
+                </span><span class="self">self</span>.ram[(addr &amp; <span class="number">0x07FF</span>) <span class="kw">as </span>usize]
+            }
+            <span class="number">0x2000</span>..=<span class="number">0x3FFF </span>=&gt; {
+                <span class="comment">// PPU registers, mirrored every 8 bytes
+                </span><span class="self">self</span>.ppu.read_register(addr &amp; <span class="number">0x0007</span>)
+            }
+            <span class="comment">// ... other address ranges
+            </span><span class="kw">_ </span>=&gt; <span class="number">0</span>,
+        }
+    }
+
+    <span class="kw">fn </span>write(<span class="kw-2">&amp;mut </span><span class="self">self</span>, addr: u16, value: u8) {
+        <span class="kw">match </span>addr {
+            <span class="number">0x0000</span>..=<span class="number">0x1FFF </span>=&gt; {
+                <span class="self">self</span>.ram[(addr &amp; <span class="number">0x07FF</span>) <span class="kw">as </span>usize] = value;
+            }
+            <span class="number">0x2000</span>..=<span class="number">0x3FFF </span>=&gt; {
+                <span class="self">self</span>.ppu.write_register(addr &amp; <span class="number">0x0007</span>, value);
+            }
+            <span class="comment">// ... other address ranges
+            </span><span class="kw">_ </span>=&gt; {}
+        }
+    }
+}</code></pre></div></div></details><h2 id="required-methods" class="section-header">Required Methods<a href="#required-methods" class="anchor">§</a></h2><div class="methods"><details class="toggle method-toggle" open><summary><section id="tymethod.read" class="method"><a class="src rightside" href="../src/rustynes_cpu/bus.rs.html#96">Source</a><h4 class="code-header">fn <a href="#tymethod.read" class="fn">read</a>(&amp;mut self, addr: <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u16.html">u16</a>) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u8.html">u8</a></h4></section></summary><div class="docblock"><p>Read a byte from memory</p>
+<h5 id="arguments"><a class="doc-anchor" href="#arguments">§</a>Arguments</h5>
+<ul>
+<li><code>addr</code> - 16-bit memory address to read from</li>
+</ul>
+<h5 id="returns"><a class="doc-anchor" href="#returns">§</a>Returns</h5>
+<p>The 8-bit value at the specified address</p>
+<h5 id="notes"><a class="doc-anchor" href="#notes">§</a>Notes</h5>
+<ul>
+<li>This function may have side effects (e.g., reading from a hardware register)</li>
+<li>Open bus behavior: return last value on the bus for unmapped addresses</li>
+<li>For debugging, implement <code>peek()</code> instead</li>
+</ul>
+</div></details><details class="toggle method-toggle" open><summary><section id="tymethod.write" class="method"><a class="src rightside" href="../src/rustynes_cpu/bus.rs.html#109">Source</a><h4 class="code-header">fn <a href="#tymethod.write" class="fn">write</a>(&amp;mut self, addr: <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u16.html">u16</a>, value: <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u8.html">u8</a>)</h4></section></summary><div class="docblock"><p>Write a byte to memory</p>
+<h5 id="arguments-1"><a class="doc-anchor" href="#arguments-1">§</a>Arguments</h5>
+<ul>
+<li><code>addr</code> - 16-bit memory address to write to</li>
+<li><code>value</code> - 8-bit value to write</li>
+</ul>
+<h5 id="notes-1"><a class="doc-anchor" href="#notes-1">§</a>Notes</h5>
+<ul>
+<li>This function may have side effects (e.g., triggering DMA)</li>
+<li>Writes to ROM or unmapped areas should be ignored (or logged)</li>
+</ul>
+</div></details></div><h2 id="provided-methods" class="section-header">Provided Methods<a href="#provided-methods" class="anchor">§</a></h2><div class="methods"><details class="toggle method-toggle" open><summary><section id="method.peek" class="method"><a class="src rightside" href="../src/rustynes_cpu/bus.rs.html#129-132">Source</a><h4 class="code-header">fn <a href="#method.peek" class="fn">peek</a>(&amp;self, addr: <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u16.html">u16</a>) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u8.html">u8</a></h4></section></summary><div class="docblock"><p>Read a byte without side effects (for debugging/disassembly)</p>
+<p>Default implementation returns 0. Override for proper debugging support.</p>
+<h5 id="arguments-2"><a class="doc-anchor" href="#arguments-2">§</a>Arguments</h5>
+<ul>
+<li><code>addr</code> - 16-bit memory address to peek at</li>
+</ul>
+<h5 id="returns-1"><a class="doc-anchor" href="#returns-1">§</a>Returns</h5>
+<p>The 8-bit value at the specified address, without triggering side effects</p>
+<h5 id="notes-2"><a class="doc-anchor" href="#notes-2">§</a>Notes</h5>
+<ul>
+<li>This should NOT modify any state (e.g., don’t clear IRQ flags)</li>
+<li>Used by debuggers and disassemblers</li>
+<li>Default implementation returns 0 for simplicity</li>
+</ul>
+</div></details><details class="toggle method-toggle" open><summary><section id="method.read_u16" class="method"><a class="src rightside" href="../src/rustynes_cpu/bus.rs.html#166-170">Source</a><h4 class="code-header">fn <a href="#method.read_u16" class="fn">read_u16</a>(&amp;mut self, addr: <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u16.html">u16</a>) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u16.html">u16</a></h4></section></summary><div class="docblock"><p>Read a 16-bit value in little-endian format</p>
+<p>Reads two consecutive bytes and combines them into a 16-bit value.</p>
+<h5 id="arguments-3"><a class="doc-anchor" href="#arguments-3">§</a>Arguments</h5>
+<ul>
+<li><code>addr</code> - Address of the low byte</li>
+</ul>
+<h5 id="returns-2"><a class="doc-anchor" href="#returns-2">§</a>Returns</h5>
+<p>16-bit value: <code>(high &lt;&lt; 8) | low</code></p>
+<h5 id="notes-3"><a class="doc-anchor" href="#notes-3">§</a>Notes</h5>
+<ul>
+<li>Reads from <code>addr</code> (low byte) and <code>addr + 1</code> (high byte)</li>
+<li>Addition wraps: <code>0xFFFF + 1 = 0x0000</code></li>
+</ul>
+<h5 id="example"><a class="doc-anchor" href="#example">§</a>Example</h5>
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code>bus.write(<span class="number">0x1000</span>, <span class="number">0x34</span>); <span class="comment">// Low byte
+</span>bus.write(<span class="number">0x1001</span>, <span class="number">0x12</span>); <span class="comment">// High byte
+</span><span class="macro">assert_eq!</span>(bus.read_u16(<span class="number">0x1000</span>), <span class="number">0x1234</span>);</code></pre></div></div></details><details class="toggle method-toggle" open><summary><section id="method.read_u16_wrap" class="method"><a class="src rightside" href="../src/rustynes_cpu/bus.rs.html#206-218">Source</a><h4 class="code-header">fn <a href="#method.read_u16_wrap" class="fn">read_u16_wrap</a>(&amp;mut self, addr: <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u16.html">u16</a>) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u16.html">u16</a></h4></section></summary><div class="docblock"><p>Read a 16-bit value with page wrap (for JMP indirect bug)</p>
+<p>The 6502 has a bug in JMP indirect where if the low byte is $FF,
+the high byte is read from $xx00 instead of $(xx+1)00.</p>
+<h5 id="arguments-4"><a class="doc-anchor" href="#arguments-4">§</a>Arguments</h5>
+<ul>
+<li><code>addr</code> - Address of the low byte</li>
+</ul>
+<h5 id="returns-3"><a class="doc-anchor" href="#returns-3">§</a>Returns</h5>
+<p>16-bit value with page-wrap behavior</p>
+<h5 id="example-jmp-10ff-bug"><a class="doc-anchor" href="#example-jmp-10ff-bug">§</a>Example: JMP ($10FF) Bug</h5>
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code>bus.write(<span class="number">0x10FF</span>, <span class="number">0x34</span>); <span class="comment">// Low byte at $10FF
+</span>bus.write(<span class="number">0x1100</span>, <span class="number">0x56</span>); <span class="comment">// Should be high byte (correct)
+</span>bus.write(<span class="number">0x1000</span>, <span class="number">0x12</span>); <span class="comment">// Actually read as high byte (bug!)
+
+// Normal read would give 0x5634
+</span><span class="macro">assert_eq!</span>(bus.read_u16(<span class="number">0x10FF</span>), <span class="number">0x5634</span>);
+
+<span class="comment">// Page-wrap read gives 0x1234 (bug behavior)
+</span><span class="macro">assert_eq!</span>(bus.read_u16_wrap(<span class="number">0x10FF</span>), <span class="number">0x1234</span>);</code></pre></div></div></details></div><h2 id="implementors" class="section-header">Implementors<a href="#implementors" class="anchor">§</a></h2><div id="implementors-list"><section id="impl-Bus-for-T" class="impl"><a class="src rightside" href="../src/rustynes_cpu/bus.rs.html#415-440">Source</a><a href="#impl-Bus-for-T" class="anchor">§</a><h3 class="code-header">impl&lt;T: <a class="trait" href="trait.CpuBus.html" title="trait rustynes_cpu::CpuBus">CpuBus</a>&gt; <a class="trait" href="trait.Bus.html" title="trait rustynes_cpu::Bus">Bus</a> for T</h3><div class="docblock"><p>Blanket implementation: any CpuBus also implements Bus</p>
+</div></section><div class="docblock"><p>This provides backward compatibility - code using the simpler Bus trait
+will continue to work. The CpuBus trait just adds the on_cpu_cycle() method.</p>
+</div></div><script src="../trait.impl/rustynes_cpu/bus/trait.Bus.js" async></script></section></div></main></body></html>

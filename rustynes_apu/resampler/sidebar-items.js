@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["APU_RATE_NTSC","APU_RATE_PAL","SAMPLE_RATE_44100","SAMPLE_RATE_48000"],"struct":["FilterChain","HighPassFilter","HighQualityResampler","LinearResampler","LowPassFilter"],"type":["Resampler"]};
