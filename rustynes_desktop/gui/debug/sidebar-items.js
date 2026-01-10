@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["apu","cpu","memory","ppu"]};

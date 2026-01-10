@@ -1,0 +1,71 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="`RustyNES` APU - Nintendo Entertainment System Audio Processing Unit Emulation"><title>rustynes_apu - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../static.files/rustdoc-ca0dd0c4.css"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="rustynes_apu" data-themes="" data-resource-suffix="" data-rustdoc-version="1.92.0 (ded5c06cf 2025-12-08)" data-channel="1.92.0" data-search-js="search-d69d8955.js" data-stringdex-js="stringdex-c3e638e9.js" data-settings-js="settings-c38705f0.js" ><script src="../static.files/storage-e2aeef58.js"></script><script defer src="../crates.js"></script><script defer src="../static.files/main-ce535bd0.js"></script><noscript><link rel="stylesheet" href="../static.files/noscript-263c88ec.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-044be391.svg"></head><body class="rustdoc mod crate"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Crate rustynes_apu</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../rustynes_apu/index.html">rustynes_<wbr>apu</a><span class="version">0.8.6</span></h2></div><div class="sidebar-elems"><ul class="block"><li><a id="all-types" href="all.html">All Items</a></li></ul><section id="rustdoc-toc"><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#features" title="Features">Features</a></li><li><a href="#example-usage" title="Example Usage">Example Usage</a></li><li><a href="#architecture" title="Architecture">Architecture</a></li><li><a href="#register-map" title="Register Map">Register Map</a></li></ul><h3><a href="#reexports">Crate Items</a></h3><ul class="block"><li><a href="#reexports" title="Re-exports">Re-exports</a></li><li><a href="#modules" title="Modules">Modules</a></li><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#enums" title="Enums">Enums</a></li></ul></section><div id="rustdoc-modnav"></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content"><div class="main-heading"><h1>Crate <span>rustynes_<wbr>apu</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../src/rustynes_apu/lib.rs.html#1-104">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p><code>RustyNES</code> APU - Nintendo Entertainment System Audio Processing Unit Emulation</p>
+<p>This crate provides a cycle-accurate emulation of the NES 2A03 APU (Audio Processing Unit).</p>
+<h2 id="features"><a class="doc-anchor" href="#features">§</a>Features</h2>
+<ul>
+<li>
+<p><strong>5 Audio Channels</strong>:</p>
+<ul>
+<li>2× Pulse channels (square waves with sweep)</li>
+<li>1× Triangle channel (triangle wave)</li>
+<li>1× Noise channel (pseudo-random noise)</li>
+<li>1× DMC channel (Delta Modulation Channel for sample playback)</li>
+</ul>
+</li>
+<li>
+<p><strong>Hardware-Accurate Components</strong>:</p>
+<ul>
+<li>Frame counter with 4-step and 5-step modes</li>
+<li>Envelope generators</li>
+<li>Length counters</li>
+<li>Sweep units</li>
+<li>Non-linear mixing</li>
+</ul>
+</li>
+<li>
+<p><strong>Zero Unsafe Code</strong>: No <code>unsafe</code> blocks (enforced by <code>#![forbid(unsafe_code)]</code>)</p>
+</li>
+</ul>
+<h2 id="example-usage"><a class="doc-anchor" href="#example-usage">§</a>Example Usage</h2>
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>rustynes_apu::Apu;
+
+<span class="kw">let </span><span class="kw-2">mut </span>apu = Apu::new();
+
+<span class="comment">// Enable pulse 1
+</span>apu.write_register(<span class="number">0x4015</span>, <span class="number">0x01</span>);
+
+<span class="comment">// Configure pulse 1: 50% duty, constant volume 15
+</span>apu.write_register(<span class="number">0x4000</span>, <span class="number">0xBF</span>);
+
+<span class="comment">// Set frequency (A4 = 440 Hz)
+// Timer = CPU_CLOCK / (16 * frequency) - 1
+// Timer = 1789773 / (16 * 440) - 1 = 253
+</span><span class="kw">let </span>timer: u16 = <span class="number">253</span>;
+apu.write_register(<span class="number">0x4002</span>, (timer &amp; <span class="number">0xFF</span>) <span class="kw">as </span>u8);
+apu.write_register(<span class="number">0x4003</span>, ((timer &gt;&gt; <span class="number">8</span>) &amp; <span class="number">0x07</span>) <span class="kw">as </span>u8);
+
+<span class="comment">// Step the APU each CPU cycle
+</span><span class="kw">for _ in </span><span class="number">0</span>..<span class="number">1000 </span>{
+    apu.step();
+}</code></pre></div><h2 id="architecture"><a class="doc-anchor" href="#architecture">§</a>Architecture</h2>
+<p>The APU consists of several interconnected components:</p>
+<ul>
+<li><strong>Frame Counter</strong> (<code>frame_counter</code>): Times envelope, length counter, and sweep updates</li>
+<li><strong>Envelope Generator</strong> (<code>envelope</code>): Controls volume fade-in/fade-out</li>
+<li><strong>Length Counter</strong> (<code>length_counter</code>): Automatically silences channels after a duration</li>
+<li><strong>Sweep Unit</strong> (<code>sweep</code>): Modulates pulse channel frequencies</li>
+<li><strong>Channels</strong> (<code>pulse</code>, <code>triangle</code>, <code>noise</code>, <code>dmc</code>): Individual audio generators</li>
+<li><strong>Mixer</strong> (<code>mixer</code>): Combines channel outputs with non-linear mixing</li>
+<li><strong>Resampler</strong> (<code>resampler</code>): Converts APU rate to target audio sample rate</li>
+</ul>
+<h2 id="register-map"><a class="doc-anchor" href="#register-map">§</a>Register Map</h2>
+<p>The APU is controlled via memory-mapped registers at CPU addresses <code>$4000-$4017</code>:</p>
+<div><table><thead><tr><th>Address</th><th>Channel</th><th>Register</th></tr></thead><tbody>
+<tr><td><code>$4000-$4003</code></td><td>Pulse 1</td><td>Duty, sweep, timer, length</td></tr>
+<tr><td><code>$4004-$4007</code></td><td>Pulse 2</td><td>Duty, sweep, timer, length</td></tr>
+<tr><td><code>$4008-$400B</code></td><td>Triangle</td><td>Control, timer, length</td></tr>
+<tr><td><code>$400C-$400F</code></td><td>Noise</td><td>Envelope, period, length</td></tr>
+<tr><td><code>$4010-$4013</code></td><td>DMC</td><td>Flags, load, address, length</td></tr>
+<tr><td><code>$4015</code></td><td>Status</td><td>Enable/status</td></tr>
+<tr><td><code>$4017</code></td><td>Frame Counter</td><td>Mode, IRQ inhibit</td></tr>
+</tbody></table>
+</div></div></details><h2 id="reexports" class="section-header">Re-exports<a href="#reexports" class="anchor">§</a></h2><dl class="item-table reexports"><dt id="reexport.Mixer"><code>pub use mixer::<a class="struct" href="mixer/struct.Mixer.html" title="struct rustynes_apu::mixer::Mixer">Mixer</a>;</code></dt><dt id="reexport.APU_RATE_NTSC"><code>pub use resampler::<a class="constant" href="resampler/constant.APU_RATE_NTSC.html" title="constant rustynes_apu::resampler::APU_RATE_NTSC">APU_RATE_NTSC</a>;</code></dt><dt id="reexport.APU_RATE_PAL"><code>pub use resampler::<a class="constant" href="resampler/constant.APU_RATE_PAL.html" title="constant rustynes_apu::resampler::APU_RATE_PAL">APU_RATE_PAL</a>;</code></dt><dt id="reexport.FilterChain"><code>pub use resampler::<a class="struct" href="resampler/struct.FilterChain.html" title="struct rustynes_apu::resampler::FilterChain">FilterChain</a>;</code></dt><dt id="reexport.HighPassFilter"><code>pub use resampler::<a class="struct" href="resampler/struct.HighPassFilter.html" title="struct rustynes_apu::resampler::HighPassFilter">HighPassFilter</a>;</code></dt><dt id="reexport.HighQualityResampler"><code>pub use resampler::<a class="struct" href="resampler/struct.HighQualityResampler.html" title="struct rustynes_apu::resampler::HighQualityResampler">HighQualityResampler</a>;</code></dt><dt id="reexport.LinearResampler"><code>pub use resampler::<a class="struct" href="resampler/struct.LinearResampler.html" title="struct rustynes_apu::resampler::LinearResampler">LinearResampler</a>;</code></dt><dt id="reexport.LowPassFilter"><code>pub use resampler::<a class="struct" href="resampler/struct.LowPassFilter.html" title="struct rustynes_apu::resampler::LowPassFilter">LowPassFilter</a>;</code></dt><dt id="reexport.Resampler"><code>pub use resampler::<a class="type" href="resampler/type.Resampler.html" title="type rustynes_apu::resampler::Resampler">Resampler</a>;</code></dt><dt id="reexport.SAMPLE_RATE_44100"><code>pub use resampler::<a class="constant" href="resampler/constant.SAMPLE_RATE_44100.html" title="constant rustynes_apu::resampler::SAMPLE_RATE_44100">SAMPLE_RATE_44100</a>;</code></dt><dt id="reexport.SAMPLE_RATE_48000"><code>pub use resampler::<a class="constant" href="resampler/constant.SAMPLE_RATE_48000.html" title="constant rustynes_apu::resampler::SAMPLE_RATE_48000">SAMPLE_RATE_48000</a>;</code></dt></dl><h2 id="modules" class="section-header">Modules<a href="#modules" class="anchor">§</a></h2><dl class="item-table"><dt><a class="mod" href="mixer/index.html" title="mod rustynes_apu::mixer">mixer</a></dt><dd>Non-linear audio mixer for NES APU channels</dd><dt><a class="mod" href="resampler/index.html" title="mod rustynes_apu::resampler">resampler</a></dt><dd>Audio resampler for converting APU rate to target sample rate</dd></dl><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.Apu.html" title="struct rustynes_apu::Apu">Apu</a></dt><dd>Main APU (Audio Processing Unit) structure</dd><dt><a class="struct" href="struct.DmcChannel.html" title="struct rustynes_apu::DmcChannel">DmcChannel</a></dt><dd>DMC channel implementation</dd><dt><a class="struct" href="struct.FrameCounter.html" title="struct rustynes_apu::FrameCounter">Frame<wbr>Counter</a></dt><dd>Frame counter state machine</dd><dt><a class="struct" href="struct.NoiseChannel.html" title="struct rustynes_apu::NoiseChannel">Noise<wbr>Channel</a></dt><dd>Noise channel implementation</dd><dt><a class="struct" href="struct.PulseChannel.html" title="struct rustynes_apu::PulseChannel">Pulse<wbr>Channel</a></dt><dd>Pulse channel for square wave audio generation</dd><dt><a class="struct" href="struct.TriangleChannel.html" title="struct rustynes_apu::TriangleChannel">Triangle<wbr>Channel</a></dt><dd>Triangle channel implementation</dd></dl><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><dl class="item-table"><dt><a class="enum" href="enum.FrameAction.html" title="enum rustynes_apu::FrameAction">Frame<wbr>Action</a></dt><dd>Actions triggered by the frame counter</dd><dt><a class="enum" href="enum.System.html" title="enum rustynes_apu::System">System</a></dt><dd>System type for rate table selection</dd></dl></section></div></main></body></html>

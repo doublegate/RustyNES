@@ -1,0 +1,165 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="NES cartridge mapper interface."><title>Mapper in rustynes_core - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../static.files/rustdoc-ca0dd0c4.css"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="rustynes_core" data-themes="" data-resource-suffix="" data-rustdoc-version="1.92.0 (ded5c06cf 2025-12-08)" data-channel="1.92.0" data-search-js="search-d69d8955.js" data-stringdex-js="stringdex-c3e638e9.js" data-settings-js="settings-c38705f0.js" ><script src="../static.files/storage-e2aeef58.js"></script><script defer src="sidebar-items.js"></script><script defer src="../static.files/main-ce535bd0.js"></script><noscript><link rel="stylesheet" href="../static.files/noscript-263c88ec.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-044be391.svg"></head><body class="rustdoc trait"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Mapper</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../rustynes_core/index.html">rustynes_<wbr>core</a><span class="version">0.8.6</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Mapper</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#safety" title="Safety">Safety</a></li><li><a href="#examples" title="Examples">Examples</a></li></ul><h3><a href="#required-methods">Required Methods</a></h3><ul class="block"><li><a href="#tymethod.clone_mapper" title="clone_mapper">clone_mapper</a></li><li><a href="#tymethod.mapper_number" title="mapper_number">mapper_number</a></li><li><a href="#tymethod.mirroring" title="mirroring">mirroring</a></li><li><a href="#tymethod.read_chr" title="read_chr">read_chr</a></li><li><a href="#tymethod.read_prg" title="read_prg">read_prg</a></li><li><a href="#tymethod.write_chr" title="write_chr">write_chr</a></li><li><a href="#tymethod.write_prg" title="write_prg">write_prg</a></li></ul><h3><a href="#provided-methods">Provided Methods</a></h3><ul class="block"><li><a href="#method.clear_irq" title="clear_irq">clear_irq</a></li><li><a href="#method.clock" title="clock">clock</a></li><li><a href="#method.irq_pending" title="irq_pending">irq_pending</a></li><li><a href="#method.ppu_a12_edge" title="ppu_a12_edge">ppu_a12_edge</a></li><li><a href="#method.sram" title="sram">sram</a></li><li><a href="#method.sram_mut" title="sram_mut">sram_mut</a></li><li><a href="#method.submapper" title="submapper">submapper</a></li></ul><h3><a href="#implementors">Implementors</a></h3></section><div id="rustdoc-modnav"><h2 class="in-crate"><a href="index.html">In crate rustynes_<wbr>core</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="index.html">rustynes_core</a></div><h1>Trait <span class="trait">Mapper</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"></span></div><pre class="rust item-decl"><code>pub trait Mapper: <a class="trait" href="https://doc.rust-lang.org/1.92.0/core/marker/trait.Send.html" title="trait core::marker::Send">Send</a> {
+<details class="toggle type-contents-toggle"><summary class="hideme"><span>Show 14 methods</span></summary>    // Required methods
+    fn <a href="#tymethod.read_prg" class="fn">read_prg</a>(&amp;self, addr: <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u16.html">u16</a>) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u8.html">u8</a>;
+<span class="item-spacer"></span>    fn <a href="#tymethod.write_prg" class="fn">write_prg</a>(&amp;mut self, addr: <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u16.html">u16</a>, value: <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u8.html">u8</a>);
+<span class="item-spacer"></span>    fn <a href="#tymethod.read_chr" class="fn">read_chr</a>(&amp;self, addr: <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u16.html">u16</a>) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u8.html">u8</a>;
+<span class="item-spacer"></span>    fn <a href="#tymethod.write_chr" class="fn">write_chr</a>(&amp;mut self, addr: <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u16.html">u16</a>, value: <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u8.html">u8</a>);
+<span class="item-spacer"></span>    fn <a href="#tymethod.mirroring" class="fn">mirroring</a>(&amp;self) -&gt; <a class="enum" href="enum.Mirroring.html" title="enum rustynes_core::Mirroring">Mirroring</a>;
+<span class="item-spacer"></span>    fn <a href="#tymethod.mapper_number" class="fn">mapper_number</a>(&amp;self) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u16.html">u16</a>;
+<span class="item-spacer"></span>    fn <a href="#tymethod.clone_mapper" class="fn">clone_mapper</a>(&amp;self) -&gt; <a class="struct" href="https://doc.rust-lang.org/1.92.0/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;dyn <a class="trait" href="trait.Mapper.html" title="trait rustynes_core::Mapper">Mapper</a>&gt;;
+
+    // Provided methods
+    fn <a href="#method.irq_pending" class="fn">irq_pending</a>(&amp;self) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.bool.html">bool</a> { ... }
+<span class="item-spacer"></span>    fn <a href="#method.clear_irq" class="fn">clear_irq</a>(&amp;mut self) { ... }
+<span class="item-spacer"></span>    fn <a href="#method.clock" class="fn">clock</a>(&amp;mut self, _cycles: <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u8.html">u8</a>) { ... }
+<span class="item-spacer"></span>    fn <a href="#method.ppu_a12_edge" class="fn">ppu_a12_edge</a>(&amp;mut self) { ... }
+<span class="item-spacer"></span>    fn <a href="#method.sram" class="fn">sram</a>(&amp;self) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.92.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;&amp;[<a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u8.html">u8</a>]&gt; { ... }
+<span class="item-spacer"></span>    fn <a href="#method.sram_mut" class="fn">sram_mut</a>(&amp;mut self) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.92.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;&amp;mut [<a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u8.html">u8</a>]&gt; { ... }
+<span class="item-spacer"></span>    fn <a href="#method.submapper" class="fn">submapper</a>(&amp;self) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u8.html">u8</a> { ... }
+</details>}</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>NES cartridge mapper interface.</p>
+<p>This trait defines the contract for all mapper implementations. Mappers are responsible for:</p>
+<ul>
+<li><strong>PRG-ROM Banking</strong>: Mapping CPU address space ($8000-$FFFF) to PRG-ROM banks</li>
+<li><strong>CHR Banking</strong>: Mapping PPU address space ($0000-$1FFF) to CHR-ROM/RAM banks</li>
+<li><strong>Mirroring Control</strong>: Determining nametable mirroring mode</li>
+<li><strong>IRQ Generation</strong>: Triggering interrupts for scanline effects (MMC3, MMC5, etc.)</li>
+<li><strong>Battery-Backed RAM</strong>: Providing save game storage (SRAM)</li>
+</ul>
+<h2 id="safety"><a class="doc-anchor" href="#safety">§</a>Safety</h2>
+<p>All mapper implementations must be <code>Send</code> to allow safe transfer between threads.
+Mappers should avoid internal mutability beyond what’s necessary for register writes.</p>
+<h2 id="examples"><a class="doc-anchor" href="#examples">§</a>Examples</h2>
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>rustynes_mappers::{Mapper, Mirroring};
+
+<span class="comment">// Simple passthrough mapper (NROM)
+</span><span class="kw">struct </span>Nrom {
+    prg_rom: Vec&lt;u8&gt;,
+    chr_rom: Vec&lt;u8&gt;,
+    mirroring: Mirroring,
+}
+
+<span class="kw">impl </span>Mapper <span class="kw">for </span>Nrom {
+    <span class="kw">fn </span>read_prg(<span class="kw-2">&amp;</span><span class="self">self</span>, addr: u16) -&gt; u8 {
+        <span class="kw">let </span>offset = (addr - <span class="number">0x8000</span>) <span class="kw">as </span>usize % <span class="self">self</span>.prg_rom.len();
+        <span class="self">self</span>.prg_rom[offset]
+    }
+
+    <span class="kw">fn </span>write_prg(<span class="kw-2">&amp;mut </span><span class="self">self</span>, _addr: u16, _value: u8) {
+        <span class="comment">// NROM has no writable registers
+    </span>}
+
+    <span class="kw">fn </span>read_chr(<span class="kw-2">&amp;</span><span class="self">self</span>, addr: u16) -&gt; u8 {
+        <span class="self">self</span>.chr_rom[addr <span class="kw">as </span>usize]
+    }
+
+    <span class="kw">fn </span>write_chr(<span class="kw-2">&amp;mut </span><span class="self">self</span>, _addr: u16, _value: u8) {
+        <span class="comment">// NROM has CHR-ROM (not writable)
+    </span>}
+
+    <span class="kw">fn </span>mirroring(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Mirroring {
+        <span class="self">self</span>.mirroring
+    }
+
+    <span class="kw">fn </span>mapper_number(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u16 {
+        <span class="number">0
+    </span>}
+
+    <span class="kw">fn </span>clone_mapper(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Box&lt;<span class="kw">dyn </span>Mapper&gt; {
+        Box::new(Nrom {
+            prg_rom: <span class="self">self</span>.prg_rom.clone(),
+            chr_rom: <span class="self">self</span>.chr_rom.clone(),
+            mirroring: <span class="self">self</span>.mirroring,
+        })
+    }
+}</code></pre></div></div></details><h2 id="required-methods" class="section-header">Required Methods<a href="#required-methods" class="anchor">§</a></h2><div class="methods"><details class="toggle method-toggle" open><summary><section id="tymethod.read_prg" class="method"><h4 class="code-header">fn <a href="#tymethod.read_prg" class="fn">read_prg</a>(&amp;self, addr: <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u16.html">u16</a>) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u8.html">u8</a></h4></section></summary><div class="docblock"><p>Read from PRG-ROM address space ($8000-$FFFF).</p>
+<h5 id="arguments"><a class="doc-anchor" href="#arguments">§</a>Arguments</h5>
+<ul>
+<li><code>addr</code> - CPU address in range $8000-$FFFF</li>
+</ul>
+<h5 id="returns"><a class="doc-anchor" href="#returns">§</a>Returns</h5>
+<p>Byte value at the given address after bank mapping</p>
+<h5 id="panics"><a class="doc-anchor" href="#panics">§</a>Panics</h5>
+<p>Implementations may panic if <code>addr &lt; 0x8000</code> (invalid PRG address).</p>
+</div></details><details class="toggle method-toggle" open><summary><section id="tymethod.write_prg" class="method"><h4 class="code-header">fn <a href="#tymethod.write_prg" class="fn">write_prg</a>(&amp;mut self, addr: <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u16.html">u16</a>, value: <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u8.html">u8</a>)</h4></section></summary><div class="docblock"><p>Write to PRG address space ($8000-$FFFF).</p>
+<p>This is primarily used for writing to mapper registers. Writes may:</p>
+<ul>
+<li>Change PRG/CHR banking</li>
+<li>Update mirroring mode</li>
+<li>Configure IRQ settings</li>
+<li>Write to PRG-RAM (if present and not write-protected)</li>
+</ul>
+<h5 id="arguments-1"><a class="doc-anchor" href="#arguments-1">§</a>Arguments</h5>
+<ul>
+<li><code>addr</code> - CPU address in range $8000-$FFFF</li>
+<li><code>value</code> - Byte value to write</li>
+</ul>
+<h5 id="panics-1"><a class="doc-anchor" href="#panics-1">§</a>Panics</h5>
+<p>Implementations may panic if <code>addr &lt; 0x8000</code> (invalid PRG address).</p>
+</div></details><details class="toggle method-toggle" open><summary><section id="tymethod.read_chr" class="method"><h4 class="code-header">fn <a href="#tymethod.read_chr" class="fn">read_chr</a>(&amp;self, addr: <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u16.html">u16</a>) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u8.html">u8</a></h4></section></summary><div class="docblock"><p>Read from CHR address space ($0000-$1FFF).</p>
+<h5 id="arguments-2"><a class="doc-anchor" href="#arguments-2">§</a>Arguments</h5>
+<ul>
+<li><code>addr</code> - PPU address in range $0000-$1FFF</li>
+</ul>
+<h5 id="returns-1"><a class="doc-anchor" href="#returns-1">§</a>Returns</h5>
+<p>Byte value at the given address after bank mapping</p>
+<h5 id="panics-2"><a class="doc-anchor" href="#panics-2">§</a>Panics</h5>
+<p>Implementations may panic if <code>addr &gt; 0x1FFF</code> (invalid CHR address).</p>
+</div></details><details class="toggle method-toggle" open><summary><section id="tymethod.write_chr" class="method"><h4 class="code-header">fn <a href="#tymethod.write_chr" class="fn">write_chr</a>(&amp;mut self, addr: <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u16.html">u16</a>, value: <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u8.html">u8</a>)</h4></section></summary><div class="docblock"><p>Write to CHR address space ($0000-$1FFF).</p>
+<p>Only functional for CHR-RAM. CHR-ROM cartridges typically ignore writes.</p>
+<h5 id="arguments-3"><a class="doc-anchor" href="#arguments-3">§</a>Arguments</h5>
+<ul>
+<li><code>addr</code> - PPU address in range $0000-$1FFF</li>
+<li><code>value</code> - Byte value to write</li>
+</ul>
+<h5 id="panics-3"><a class="doc-anchor" href="#panics-3">§</a>Panics</h5>
+<p>Implementations may panic if <code>addr &gt; 0x1FFF</code> (invalid CHR address).</p>
+</div></details><details class="toggle method-toggle" open><summary><section id="tymethod.mirroring" class="method"><h4 class="code-header">fn <a href="#tymethod.mirroring" class="fn">mirroring</a>(&amp;self) -&gt; <a class="enum" href="enum.Mirroring.html" title="enum rustynes_core::Mirroring">Mirroring</a></h4></section></summary><div class="docblock"><p>Get current nametable mirroring mode.</p>
+<h5 id="returns-2"><a class="doc-anchor" href="#returns-2">§</a>Returns</h5>
+<p>Current mirroring mode. May change dynamically for mappers with mirroring control.</p>
+</div></details><details class="toggle method-toggle" open><summary><section id="tymethod.mapper_number" class="method"><h4 class="code-header">fn <a href="#tymethod.mapper_number" class="fn">mapper_number</a>(&amp;self) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u16.html">u16</a></h4></section></summary><div class="docblock"><p>Get the mapper number (iNES/NES 2.0 format).</p>
+<h5 id="returns-3"><a class="doc-anchor" href="#returns-3">§</a>Returns</h5>
+<p>iNES mapper number (0-4095 for NES 2.0, 0-255 for iNES 1.0)</p>
+</div></details><details class="toggle method-toggle" open><summary><section id="tymethod.clone_mapper" class="method"><h4 class="code-header">fn <a href="#tymethod.clone_mapper" class="fn">clone_mapper</a>(&amp;self) -&gt; <a class="struct" href="https://doc.rust-lang.org/1.92.0/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;dyn <a class="trait" href="trait.Mapper.html" title="trait rustynes_core::Mapper">Mapper</a>&gt;</h4></section></summary><div class="docblock"><p>Clone the mapper state.</p>
+<p>This is used for save states and debugging. Implementations should return
+a boxed clone of the current mapper state.</p>
+<h5 id="returns-4"><a class="doc-anchor" href="#returns-4">§</a>Returns</h5>
+<p>Boxed clone of the mapper</p>
+</div></details></div><h2 id="provided-methods" class="section-header">Provided Methods<a href="#provided-methods" class="anchor">§</a></h2><div class="methods"><details class="toggle method-toggle" open><summary><section id="method.irq_pending" class="method"><h4 class="code-header">fn <a href="#method.irq_pending" class="fn">irq_pending</a>(&amp;self) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.bool.html">bool</a></h4></section></summary><div class="docblock"><p>Check if an IRQ is pending.</p>
+<p>Used by mappers with IRQ support (MMC3, MMC5, VRC, etc.) to signal the CPU.</p>
+<h5 id="returns-5"><a class="doc-anchor" href="#returns-5">§</a>Returns</h5>
+<p><code>true</code> if the mapper is asserting IRQ, <code>false</code> otherwise.</p>
+<h5 id="default-implementation"><a class="doc-anchor" href="#default-implementation">§</a>Default Implementation</h5>
+<p>Returns <code>false</code> for mappers without IRQ support.</p>
+</div></details><details class="toggle method-toggle" open><summary><section id="method.clear_irq" class="method"><h4 class="code-header">fn <a href="#method.clear_irq" class="fn">clear_irq</a>(&amp;mut self)</h4></section></summary><div class="docblock"><p>Clear the IRQ flag.</p>
+<p>Called when the CPU acknowledges the IRQ (typically after reading $FFFC/FFFD).</p>
+<h5 id="default-implementation-1"><a class="doc-anchor" href="#default-implementation-1">§</a>Default Implementation</h5>
+<p>No-op for mappers without IRQ support.</p>
+</div></details><details class="toggle method-toggle" open><summary><section id="method.clock" class="method"><h4 class="code-header">fn <a href="#method.clock" class="fn">clock</a>(&amp;mut self, _cycles: <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u8.html">u8</a>)</h4></section></summary><div class="docblock"><p>Clock the mapper for a number of CPU cycles.</p>
+<p>Used by mappers with cycle-based timers (MMC3 alternate IRQ mode, FDS, etc.).</p>
+<h5 id="arguments-4"><a class="doc-anchor" href="#arguments-4">§</a>Arguments</h5>
+<ul>
+<li><code>cycles</code> - Number of CPU cycles elapsed</li>
+</ul>
+<h5 id="default-implementation-2"><a class="doc-anchor" href="#default-implementation-2">§</a>Default Implementation</h5>
+<p>No-op for mappers without cycle-based features.</p>
+</div></details><details class="toggle method-toggle" open><summary><section id="method.ppu_a12_edge" class="method"><h4 class="code-header">fn <a href="#method.ppu_a12_edge" class="fn">ppu_a12_edge</a>(&amp;mut self)</h4></section></summary><div class="docblock"><p>Notify mapper of PPU A12 rising edge.</p>
+<p>Used by MMC3 and compatible mappers for scanline IRQ counting.
+Called when PPU address bit 12 transitions from 0 to 1.</p>
+<h5 id="default-implementation-3"><a class="doc-anchor" href="#default-implementation-3">§</a>Default Implementation</h5>
+<p>No-op for mappers without A12-based IRQ.</p>
+</div></details><details class="toggle method-toggle" open><summary><section id="method.sram" class="method"><h4 class="code-header">fn <a href="#method.sram" class="fn">sram</a>(&amp;self) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.92.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;&amp;[<a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u8.html">u8</a>]&gt;</h4></section></summary><div class="docblock"><p>Get reference to battery-backed SRAM.</p>
+<h5 id="returns-6"><a class="doc-anchor" href="#returns-6">§</a>Returns</h5>
+<p><code>Some(&amp;[u8])</code> if the mapper has battery-backed SRAM, <code>None</code> otherwise.</p>
+<h5 id="default-implementation-4"><a class="doc-anchor" href="#default-implementation-4">§</a>Default Implementation</h5>
+<p>Returns <code>None</code> for mappers without SRAM.</p>
+</div></details><details class="toggle method-toggle" open><summary><section id="method.sram_mut" class="method"><h4 class="code-header">fn <a href="#method.sram_mut" class="fn">sram_mut</a>(&amp;mut self) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.92.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;&amp;mut [<a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u8.html">u8</a>]&gt;</h4></section></summary><div class="docblock"><p>Get mutable reference to battery-backed SRAM.</p>
+<h5 id="returns-7"><a class="doc-anchor" href="#returns-7">§</a>Returns</h5>
+<p><code>Some(&amp;mut [u8])</code> if the mapper has battery-backed SRAM, <code>None</code> otherwise.</p>
+<h5 id="default-implementation-5"><a class="doc-anchor" href="#default-implementation-5">§</a>Default Implementation</h5>
+<p>Returns <code>None</code> for mappers without SRAM.</p>
+</div></details><details class="toggle method-toggle" open><summary><section id="method.submapper" class="method"><h4 class="code-header">fn <a href="#method.submapper" class="fn">submapper</a>(&amp;self) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u8.html">u8</a></h4></section></summary><div class="docblock"><p>Get the submapper number (NES 2.0 format only).</p>
+<h5 id="returns-8"><a class="doc-anchor" href="#returns-8">§</a>Returns</h5>
+<p>Submapper number (0-15), or 0 if not applicable.</p>
+<h5 id="default-implementation-6"><a class="doc-anchor" href="#default-implementation-6">§</a>Default Implementation</h5>
+<p>Returns 0 (no submapper).</p>
+</div></details></div><h2 id="implementors" class="section-header">Implementors<a href="#implementors" class="anchor">§</a></h2><div id="implementors-list"><section id="impl-Mapper-for-Cnrom" class="impl"><a href="#impl-Mapper-for-Cnrom" class="anchor">§</a><h3 class="code-header">impl <a class="trait" href="trait.Mapper.html" title="trait rustynes_core::Mapper">Mapper</a> for Cnrom</h3></section><section id="impl-Mapper-for-Mmc1" class="impl"><a href="#impl-Mapper-for-Mmc1" class="anchor">§</a><h3 class="code-header">impl <a class="trait" href="trait.Mapper.html" title="trait rustynes_core::Mapper">Mapper</a> for Mmc1</h3></section><section id="impl-Mapper-for-Mmc3" class="impl"><a href="#impl-Mapper-for-Mmc3" class="anchor">§</a><h3 class="code-header">impl <a class="trait" href="trait.Mapper.html" title="trait rustynes_core::Mapper">Mapper</a> for Mmc3</h3></section><section id="impl-Mapper-for-Nrom" class="impl"><a href="#impl-Mapper-for-Nrom" class="anchor">§</a><h3 class="code-header">impl <a class="trait" href="trait.Mapper.html" title="trait rustynes_core::Mapper">Mapper</a> for Nrom</h3></section><section id="impl-Mapper-for-Uxrom" class="impl"><a href="#impl-Mapper-for-Uxrom" class="anchor">§</a><h3 class="code-header">impl <a class="trait" href="trait.Mapper.html" title="trait rustynes_core::Mapper">Mapper</a> for Uxrom</h3></section></div><script src="../trait.impl/rustynes_mappers/mapper/trait.Mapper.js" data-ignore-extern-crates="rustynes_mappers" async></script></section></div></main></body></html>

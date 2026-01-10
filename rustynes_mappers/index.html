@@ -1,0 +1,55 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="NES cartridge mapper implementations for `RustyNES` emulator."><title>rustynes_mappers - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../static.files/rustdoc-ca0dd0c4.css"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="rustynes_mappers" data-themes="" data-resource-suffix="" data-rustdoc-version="1.92.0 (ded5c06cf 2025-12-08)" data-channel="1.92.0" data-search-js="search-d69d8955.js" data-stringdex-js="stringdex-c3e638e9.js" data-settings-js="settings-c38705f0.js" ><script src="../static.files/storage-e2aeef58.js"></script><script defer src="../crates.js"></script><script defer src="../static.files/main-ce535bd0.js"></script><noscript><link rel="stylesheet" href="../static.files/noscript-263c88ec.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-044be391.svg"></head><body class="rustdoc mod crate"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Crate rustynes_mappers</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../rustynes_mappers/index.html">rustynes_<wbr>mappers</a><span class="version">0.8.6</span></h2></div><div class="sidebar-elems"><ul class="block"><li><a id="all-types" href="all.html">All Items</a></li></ul><section id="rustdoc-toc"><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#overview" title="Overview">Overview</a></li><li><a href="#supported-mappers" title="Supported Mappers">Supported Mappers</a></li><li><a href="#usage" title="Usage">Usage</a></li><li><a href="#architecture" title="Architecture">Architecture</a></li><li><a href="#safety" title="Safety">Safety</a></li></ul><h3><a href="#structs">Crate Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#enums" title="Enums">Enums</a></li><li><a href="#traits" title="Traits">Traits</a></li><li><a href="#functions" title="Functions">Functions</a></li></ul></section><div id="rustdoc-modnav"></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content"><div class="main-heading"><h1>Crate <span>rustynes_<wbr>mappers</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../src/rustynes_mappers/lib.rs.html#1-243">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>NES cartridge mapper implementations for <code>RustyNES</code> emulator.</p>
+<p>This crate provides implementations of NES mappers (cartridge hardware) that enable
+bank switching, extended ROM sizes, and special features like IRQ generation.</p>
+<h2 id="overview"><a class="doc-anchor" href="#overview">§</a>Overview</h2>
+<p>The NES has a limited address space:</p>
+<ul>
+<li>CPU: 64KB address space, but only 32KB available for cartridge ROM ($8000-$FFFF)</li>
+<li>PPU: 16KB address space, with 8KB for pattern tables ($0000-$1FFF)</li>
+</ul>
+<p>Mappers solve this limitation by providing bank switching - dynamically mapping
+different ROM banks into the same address space.</p>
+<h2 id="supported-mappers"><a class="doc-anchor" href="#supported-mappers">§</a>Supported Mappers</h2>
+<p>This crate currently implements 5 essential mappers covering 77.7% of licensed NES games:</p>
+<ul>
+<li><strong>Mapper 0 (NROM)</strong>: Simple passthrough, no banking (9.5% of games)</li>
+<li><strong>Mapper 1 (MMC1)</strong>: 5-bit shift register, flexible banking (27.9% of games)</li>
+<li><strong>Mapper 2 (<code>UxROM</code>)</strong>: Switchable + fixed PRG banks (10.6% of games)</li>
+<li><strong>Mapper 3 (CNROM)</strong>: Simple CHR banking (6.3% of games)</li>
+<li><strong>Mapper 4 (MMC3)</strong>: Complex banking with scanline IRQ (23.4% of games)</li>
+</ul>
+<h2 id="usage"><a class="doc-anchor" href="#usage">§</a>Usage</h2>
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>rustynes_mappers::{Rom, create_mapper};
+<span class="kw">use </span>std::fs;
+
+<span class="comment">// Load ROM file
+</span><span class="kw">let </span>rom_data = fs::read(<span class="string">"game.nes"</span>).unwrap();
+<span class="kw">let </span>rom = Rom::load(<span class="kw-2">&amp;</span>rom_data).unwrap();
+
+<span class="comment">// Create appropriate mapper
+</span><span class="kw">let </span><span class="kw-2">mut </span>mapper = create_mapper(<span class="kw-2">&amp;</span>rom).unwrap();
+
+<span class="comment">// Use mapper for CPU/PPU memory access
+</span><span class="kw">let </span>byte = mapper.read_prg(<span class="number">0x8000</span>);
+mapper.write_prg(<span class="number">0x8000</span>, <span class="number">0x42</span>);
+
+<span class="kw">let </span>chr_byte = mapper.read_chr(<span class="number">0x0000</span>);
+mapper.write_chr(<span class="number">0x0000</span>, <span class="number">0x55</span>);
+
+<span class="comment">// Check mirroring
+</span><span class="kw">let </span>mirroring = mapper.mirroring();
+
+<span class="comment">// Check for IRQ (MMC3, etc.)
+</span><span class="kw">if </span>mapper.irq_pending() {
+    <span class="comment">// Trigger CPU interrupt
+    </span>mapper.clear_irq();
+}</code></pre></div><h2 id="architecture"><a class="doc-anchor" href="#architecture">§</a>Architecture</h2>
+<ul>
+<li><a href="trait.Mapper.html" title="trait rustynes_mappers::Mapper"><code>Mapper</code></a>: Core trait defining the mapper interface</li>
+<li><a href="enum.Mirroring.html" title="enum rustynes_mappers::Mirroring"><code>Mirroring</code></a>: Nametable mirroring modes</li>
+<li><a href="struct.Rom.html" title="struct rustynes_mappers::Rom"><code>Rom</code></a>: ROM file parsing and loading</li>
+<li><a href="struct.RomHeader.html" title="struct rustynes_mappers::RomHeader"><code>RomHeader</code></a>: iNES/NES 2.0 header information</li>
+</ul>
+<h2 id="safety"><a class="doc-anchor" href="#safety">§</a>Safety</h2>
+<p>This crate uses <strong>zero unsafe code</strong>. All mapper implementations are safe Rust.</p>
+</div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.Cnrom.html" title="struct rustynes_mappers::Cnrom">Cnrom</a></dt><dd>CNROM mapper implementation (Mapper 3).</dd><dt><a class="struct" href="struct.Mmc1.html" title="struct rustynes_mappers::Mmc1">Mmc1</a></dt><dd>MMC1 mapper implementation (Mapper 1).</dd><dt><a class="struct" href="struct.Mmc3.html" title="struct rustynes_mappers::Mmc3">Mmc3</a></dt><dd>MMC3 mapper implementation (Mapper 4).</dd><dt><a class="struct" href="struct.Nrom.html" title="struct rustynes_mappers::Nrom">Nrom</a></dt><dd>NROM mapper implementation (Mapper 0).</dd><dt><a class="struct" href="struct.Rom.html" title="struct rustynes_mappers::Rom">Rom</a></dt><dd>Parsed NES ROM file.</dd><dt><a class="struct" href="struct.RomHeader.html" title="struct rustynes_mappers::RomHeader">RomHeader</a></dt><dd>iNES/NES 2.0 ROM header.</dd><dt><a class="struct" href="struct.Uxrom.html" title="struct rustynes_mappers::Uxrom">Uxrom</a></dt><dd><code>UxROM</code> mapper implementation (Mapper 2).</dd></dl><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><dl class="item-table"><dt><a class="enum" href="enum.MapperError.html" title="enum rustynes_mappers::MapperError">Mapper<wbr>Error</a></dt><dd>Mapper creation error.</dd><dt><a class="enum" href="enum.Mirroring.html" title="enum rustynes_mappers::Mirroring">Mirroring</a></dt><dd>Nametable mirroring mode.</dd><dt><a class="enum" href="enum.RomError.html" title="enum rustynes_mappers::RomError">RomError</a></dt><dd>Errors that can occur when parsing NES ROM files.</dd></dl><h2 id="traits" class="section-header">Traits<a href="#traits" class="anchor">§</a></h2><dl class="item-table"><dt><a class="trait" href="trait.Mapper.html" title="trait rustynes_mappers::Mapper">Mapper</a></dt><dd>NES cartridge mapper interface.</dd></dl><h2 id="functions" class="section-header">Functions<a href="#functions" class="anchor">§</a></h2><dl class="item-table"><dt><a class="fn" href="fn.create_mapper.html" title="fn rustynes_mappers::create_mapper">create_<wbr>mapper</a></dt><dd>Create a mapper instance from a loaded ROM.</dd><dt><a class="fn" href="fn.is_mapper_supported.html" title="fn rustynes_mappers::is_mapper_supported">is_<wbr>mapper_<wbr>supported</a></dt><dd>Check if a mapper number is supported.</dd><dt><a class="fn" href="fn.mapper_name.html" title="fn rustynes_mappers::mapper_name">mapper_<wbr>name</a></dt><dd>Get a human-readable name for a mapper number.</dd></dl></section></div></main></body></html>

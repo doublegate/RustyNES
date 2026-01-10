@@ -1,0 +1,48 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="NES controller input handling."><title>rustynes_core::input - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-ca0dd0c4.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="rustynes_core" data-themes="" data-resource-suffix="" data-rustdoc-version="1.92.0 (ded5c06cf 2025-12-08)" data-channel="1.92.0" data-search-js="search-d69d8955.js" data-stringdex-js="stringdex-c3e638e9.js" data-settings-js="settings-c38705f0.js" ><script src="../../static.files/storage-e2aeef58.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../static.files/main-ce535bd0.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-263c88ec.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Module input</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../rustynes_core/index.html">rustynes_<wbr>core</a><span class="version">0.8.6</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module input</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#hardware-protocol" title="Hardware Protocol">Hardware Protocol</a></li><li><a href="#registers" title="Registers">Registers</a></li><li><a href="#usage-example" title="Usage Example">Usage Example</a></li></ul><h3><a href="#structs">Module Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#enums" title="Enums">Enums</a></li></ul></section><div id="rustdoc-modnav"><h2 class="in-crate"><a href="../index.html">In crate rustynes_<wbr>core</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="../index.html">rustynes_core</a></div><h1>Module <span>input</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/rustynes_core/input/mod.rs.html#1-55">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>NES controller input handling.</p>
+<p>This module emulates the NES standard controller protocol, which uses a
+<strong>strobe-based parallel-to-serial shift register</strong> (4021 IC) to read
+8 button states sequentially.</p>
+<h2 id="hardware-protocol"><a class="doc-anchor" href="#hardware-protocol">§</a>Hardware Protocol</h2>
+<p>The NES controller protocol works as follows:</p>
+<ol>
+<li>
+<p><strong>Strobe</strong> ($4016 write, bit 0):</p>
+<ul>
+<li>Write 1: Continuously reload shift register (parallel mode)</li>
+<li>Write 0: Enable serial reads (shift mode)</li>
+<li>Falling edge (1 → 0) latches current button states</li>
+</ul>
+</li>
+<li>
+<p><strong>Serial Read</strong> ($4016/$4017 read):</p>
+<ul>
+<li>Returns one button bit per read</li>
+<li>Order: A, B, Select, Start, Up, Down, Left, Right</li>
+<li>Reads 9+ always return 1</li>
+</ul>
+</li>
+</ol>
+<h2 id="registers"><a class="doc-anchor" href="#registers">§</a>Registers</h2>
+<ul>
+<li><strong>$4016</strong>: Controller 1 data (read) / Strobe (write)</li>
+<li><strong>$4017</strong>: Controller 2 data (read) / APU Frame Counter (write)</li>
+</ul>
+<p><strong>Note</strong>: $4016 writes strobe BOTH controllers simultaneously.</p>
+<h2 id="usage-example"><a class="doc-anchor" href="#usage-example">§</a>Usage Example</h2>
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>rustynes_core::{Console, Button};
+
+<span class="kw">let </span>rom = std::fs::read(<span class="string">"game.nes"</span>)<span class="question-mark">?</span>;
+<span class="kw">let </span><span class="kw-2">mut </span>console = Console::from_rom_bytes(<span class="kw-2">&amp;</span>rom)<span class="question-mark">?</span>;
+
+<span class="comment">// Set controller 1 button state
+</span>console.set_button_1(Button::A, <span class="bool-val">true</span>);       <span class="comment">// Press A
+</span>console.set_button_1(Button::Start, <span class="bool-val">true</span>);   <span class="comment">// Press Start
+
+// Step frames
+</span><span class="kw">for _ in </span><span class="number">0</span>..<span class="number">60 </span>{
+    console.step_frame();
+}
+
+<span class="comment">// Release buttons
+</span>console.set_button_1(Button::A, <span class="bool-val">false</span>);
+console.set_button_1(Button::Start, <span class="bool-val">false</span>);</code></pre></div></div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.Controller.html" title="struct rustynes_core::input::Controller">Controller</a></dt><dd>NES standard controller (8 buttons)</dd></dl><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><dl class="item-table"><dt><a class="enum" href="enum.Button.html" title="enum rustynes_core::input::Button">Button</a></dt><dd>NES controller buttons</dd></dl></section></div></main></body></html>

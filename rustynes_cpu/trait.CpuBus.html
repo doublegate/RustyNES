@@ -1,0 +1,126 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Cycle-accurate bus interface for sub-cycle PPU/APU synchronization"><title>CpuBus in rustynes_cpu - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../static.files/rustdoc-ca0dd0c4.css"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="rustynes_cpu" data-themes="" data-resource-suffix="" data-rustdoc-version="1.92.0 (ded5c06cf 2025-12-08)" data-channel="1.92.0" data-search-js="search-d69d8955.js" data-stringdex-js="stringdex-c3e638e9.js" data-settings-js="settings-c38705f0.js" ><script src="../static.files/storage-e2aeef58.js"></script><script defer src="sidebar-items.js"></script><script defer src="../static.files/main-ce535bd0.js"></script><noscript><link rel="stylesheet" href="../static.files/noscript-263c88ec.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-044be391.svg"></head><body class="rustdoc trait"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">CpuBus</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../rustynes_cpu/index.html">rustynes_<wbr>cpu</a><span class="version">0.8.6</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">CpuBus</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#architecture" title="Architecture">Architecture</a></li><li><a href="#timing-model" title="Timing Model">Timing Model</a></li><li><a href="#examples" title="Examples">Examples</a><ul><li><a href="#implementing-cycle-accurate-bus-for-nes" title="Implementing cycle-accurate bus for NES">Implementing cycle-accurate bus for NES</a></li></ul></li><li><a href="#implementation-notes" title="Implementation Notes">Implementation Notes</a></li></ul><h3><a href="#required-methods">Required Methods</a></h3><ul class="block"><li><a href="#tymethod.on_cpu_cycle" title="on_cpu_cycle">on_cpu_cycle</a></li><li><a href="#tymethod.read" title="read">read</a></li><li><a href="#tymethod.write" title="write">write</a></li></ul><h3><a href="#provided-methods">Provided Methods</a></h3><ul class="block"><li><a href="#method.peek" title="peek">peek</a></li><li><a href="#method.read_u16" title="read_u16">read_u16</a></li><li><a href="#method.read_u16_wrap" title="read_u16_wrap">read_u16_wrap</a></li></ul><h3><a href="#implementors">Implementors</a></h3></section><div id="rustdoc-modnav"><h2 class="in-crate"><a href="index.html">In crate rustynes_<wbr>cpu</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="index.html">rustynes_cpu</a></div><h1>Trait <span class="trait">CpuBus</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../src/rustynes_cpu/bus.rs.html#299-409">Source</a> </span></div><pre class="rust item-decl"><code>pub trait CpuBus {
+    // Required methods
+    fn <a href="#tymethod.read" class="fn">read</a>(&amp;mut self, addr: <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u16.html">u16</a>) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u8.html">u8</a>;
+<span class="item-spacer"></span>    fn <a href="#tymethod.write" class="fn">write</a>(&amp;mut self, addr: <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u16.html">u16</a>, value: <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u8.html">u8</a>);
+<span class="item-spacer"></span>    fn <a href="#tymethod.on_cpu_cycle" class="fn">on_cpu_cycle</a>(&amp;mut self);
+
+    // Provided methods
+    fn <a href="#method.peek" class="fn">peek</a>(&amp;self, addr: <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u16.html">u16</a>) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u8.html">u8</a> { ... }
+<span class="item-spacer"></span>    fn <a href="#method.read_u16" class="fn">read_u16</a>(&amp;mut self, addr: <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u16.html">u16</a>) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u16.html">u16</a> { ... }
+<span class="item-spacer"></span>    fn <a href="#method.read_u16_wrap" class="fn">read_u16_wrap</a>(&amp;mut self, addr: <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u16.html">u16</a>) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u16.html">u16</a> { ... }
+}</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Cycle-accurate bus interface for sub-cycle PPU/APU synchronization</p>
+<p>This trait extends the basic Bus functionality with cycle callbacks that are
+invoked BEFORE each memory access. This enables accurate emulation of the
+NES timing where PPU advances 3 dots per CPU cycle and APU advances 1 cycle.</p>
+<h2 id="architecture"><a class="doc-anchor" href="#architecture">§</a>Architecture</h2>
+<p>The key insight from accurate emulators (like Pinky) is that <code>on_cpu_cycle()</code>
+must be called at the START of each memory access, BEFORE the actual read/write.
+This ensures that when the CPU reads $2002 (PPUSTATUS), the PPU has already
+advanced to the correct state for that exact CPU cycle.</p>
+<h2 id="timing-model"><a class="doc-anchor" href="#timing-model">§</a>Timing Model</h2><div class="example-wrap"><pre class="language-text"><code>CPU Cycle:  |-------- read --------|
+PPU Cycles: |--1--|--2--|--3--|
+             ^ on_cpu_cycle() called here (before read)</code></pre></div><h2 id="examples"><a class="doc-anchor" href="#examples">§</a>Examples</h2><h3 id="implementing-cycle-accurate-bus-for-nes"><a class="doc-anchor" href="#implementing-cycle-accurate-bus-for-nes">§</a>Implementing cycle-accurate bus for NES</h3>
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>rustynes_cpu::CpuBus;
+
+<span class="kw">struct </span>CycleAccurateBus {
+    ram: [u8; <span class="number">0x800</span>],
+    ppu: Ppu,
+    apu: Apu,
+}
+
+<span class="kw">impl </span>CpuBus <span class="kw">for </span>CycleAccurateBus {
+    <span class="kw">fn </span>read(<span class="kw-2">&amp;mut </span><span class="self">self</span>, addr: u16) -&gt; u8 {
+        <span class="kw">match </span>addr {
+            <span class="number">0x0000</span>..=<span class="number">0x1FFF </span>=&gt; <span class="self">self</span>.ram[(addr &amp; <span class="number">0x07FF</span>) <span class="kw">as </span>usize],
+            <span class="number">0x2000</span>..=<span class="number">0x3FFF </span>=&gt; <span class="self">self</span>.ppu.read_register(addr &amp; <span class="number">0x0007</span>),
+            <span class="kw">_ </span>=&gt; <span class="number">0</span>,
+        }
+    }
+
+    <span class="kw">fn </span>write(<span class="kw-2">&amp;mut </span><span class="self">self</span>, addr: u16, value: u8) {
+        <span class="kw">match </span>addr {
+            <span class="number">0x0000</span>..=<span class="number">0x1FFF </span>=&gt; <span class="self">self</span>.ram[(addr &amp; <span class="number">0x07FF</span>) <span class="kw">as </span>usize] = value,
+            <span class="number">0x2000</span>..=<span class="number">0x3FFF </span>=&gt; <span class="self">self</span>.ppu.write_register(addr &amp; <span class="number">0x0007</span>, value),
+            <span class="kw">_ </span>=&gt; {}
+        }
+    }
+
+    <span class="kw">fn </span>on_cpu_cycle(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+        <span class="comment">// Step APU once per CPU cycle
+        </span><span class="self">self</span>.apu.step();
+
+        <span class="comment">// Step PPU 3 times per CPU cycle (3:1 ratio)
+        </span><span class="kw">for _ in </span><span class="number">0</span>..<span class="number">3 </span>{
+            <span class="self">self</span>.ppu.step();
+        }
+    }
+}</code></pre></div><h2 id="implementation-notes"><a class="doc-anchor" href="#implementation-notes">§</a>Implementation Notes</h2>
+<ul>
+<li>The CPU’s <code>read_cycle()</code> and <code>write_cycle()</code> methods call <code>on_cpu_cycle()</code>
+before performing the actual memory access</li>
+<li>This trait is essential for passing VBlank timing tests that require
++/- 2 cycle accuracy when reading $2002 during VBlank transitions</li>
+<li>Dummy reads for page boundary crossings also trigger <code>on_cpu_cycle()</code></li>
+</ul>
+</div></details><h2 id="required-methods" class="section-header">Required Methods<a href="#required-methods" class="anchor">§</a></h2><div class="methods"><details class="toggle method-toggle" open><summary><section id="tymethod.read" class="method"><a class="src rightside" href="../src/rustynes_cpu/bus.rs.html#313">Source</a><h4 class="code-header">fn <a href="#tymethod.read" class="fn">read</a>(&amp;mut self, addr: <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u16.html">u16</a>) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u8.html">u8</a></h4></section></summary><div class="docblock"><p>Read a byte from memory</p>
+<p>This is the raw memory read without cycle callback. For cycle-accurate
+emulation, use CPU’s <code>read_cycle()</code> method instead which calls
+<code>on_cpu_cycle()</code> before this method.</p>
+<h5 id="arguments"><a class="doc-anchor" href="#arguments">§</a>Arguments</h5>
+<ul>
+<li><code>addr</code> - 16-bit memory address to read from</li>
+</ul>
+<h5 id="returns"><a class="doc-anchor" href="#returns">§</a>Returns</h5>
+<p>The 8-bit value at the specified address</p>
+</div></details><details class="toggle method-toggle" open><summary><section id="tymethod.write" class="method"><a class="src rightside" href="../src/rustynes_cpu/bus.rs.html#325">Source</a><h4 class="code-header">fn <a href="#tymethod.write" class="fn">write</a>(&amp;mut self, addr: <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u16.html">u16</a>, value: <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u8.html">u8</a>)</h4></section></summary><div class="docblock"><p>Write a byte to memory</p>
+<p>This is the raw memory write without cycle callback. For cycle-accurate
+emulation, use CPU’s <code>write_cycle()</code> method instead which calls
+<code>on_cpu_cycle()</code> before this method.</p>
+<h5 id="arguments-1"><a class="doc-anchor" href="#arguments-1">§</a>Arguments</h5>
+<ul>
+<li><code>addr</code> - 16-bit memory address to write to</li>
+<li><code>value</code> - 8-bit value to write</li>
+</ul>
+</div></details><details class="toggle method-toggle" open><summary><section id="tymethod.on_cpu_cycle" class="method"><a class="src rightside" href="../src/rustynes_cpu/bus.rs.html#353">Source</a><h4 class="code-header">fn <a href="#tymethod.on_cpu_cycle" class="fn">on_cpu_cycle</a>(&amp;mut self)</h4></section></summary><div class="docblock"><p>Called BEFORE each memory access to synchronize PPU/APU</p>
+<p>This callback is the heart of cycle-accurate emulation. It must:</p>
+<ol>
+<li>Step the APU once (1:1 ratio with CPU)</li>
+<li>Step the PPU three times (3:1 ratio with CPU)</li>
+<li>Handle any cycle-based events (IRQ timing, etc.)</li>
+</ol>
+<h5 id="critical-timing"><a class="doc-anchor" href="#critical-timing">§</a>Critical Timing</h5>
+<p>This method is called BEFORE the memory access occurs. This is essential
+for accurate $2002 reads during VBlank, where the PPU state must be
+updated to the exact cycle before the CPU observes the flags.</p>
+<h5 id="example"><a class="doc-anchor" href="#example">§</a>Example</h5>
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code><span class="kw">fn </span>on_cpu_cycle(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+    <span class="comment">// Step APU
+    </span><span class="self">self</span>.apu.step();
+
+    <span class="comment">// Step PPU 3 times
+    </span><span class="kw">for _ in </span><span class="number">0</span>..<span class="number">3 </span>{
+        <span class="self">self</span>.ppu.step();
+    }
+}</code></pre></div></div></details></div><h2 id="provided-methods" class="section-header">Provided Methods<a href="#provided-methods" class="anchor">§</a></h2><div class="methods"><details class="toggle method-toggle" open><summary><section id="method.peek" class="method"><a class="src rightside" href="../src/rustynes_cpu/bus.rs.html#366-369">Source</a><h4 class="code-header">fn <a href="#method.peek" class="fn">peek</a>(&amp;self, addr: <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u16.html">u16</a>) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u8.html">u8</a></h4></section></summary><div class="docblock"><p>Read a byte without side effects (for debugging/disassembly)</p>
+<p>Default implementation calls read(). Override for proper debugging support
+where hardware register reads have side effects.</p>
+<h5 id="notes"><a class="doc-anchor" href="#notes">§</a>Notes</h5>
+<ul>
+<li>This should NOT call <code>on_cpu_cycle()</code></li>
+<li>This should NOT modify any state (e.g., don’t clear IRQ flags)</li>
+<li>Used by debuggers and disassemblers</li>
+</ul>
+</div></details><details class="toggle method-toggle" open><summary><section id="method.read_u16" class="method"><a class="src rightside" href="../src/rustynes_cpu/bus.rs.html#384-388">Source</a><h4 class="code-header">fn <a href="#method.read_u16" class="fn">read_u16</a>(&amp;mut self, addr: <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u16.html">u16</a>) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u16.html">u16</a></h4></section></summary><div class="docblock"><p>Read a 16-bit value in little-endian format</p>
+<p>Reads two consecutive bytes and combines them into a 16-bit value.
+Note: This does NOT call on_cpu_cycle() - use CPU’s cycle-aware methods.</p>
+<h5 id="arguments-2"><a class="doc-anchor" href="#arguments-2">§</a>Arguments</h5>
+<ul>
+<li><code>addr</code> - Address of the low byte</li>
+</ul>
+<h5 id="returns-1"><a class="doc-anchor" href="#returns-1">§</a>Returns</h5>
+<p>16-bit value: <code>(high &lt;&lt; 8) | low</code></p>
+</div></details><details class="toggle method-toggle" open><summary><section id="method.read_u16_wrap" class="method"><a class="src rightside" href="../src/rustynes_cpu/bus.rs.html#396-408">Source</a><h4 class="code-header">fn <a href="#method.read_u16_wrap" class="fn">read_u16_wrap</a>(&amp;mut self, addr: <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u16.html">u16</a>) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.92.0/std/primitive.u16.html">u16</a></h4></section></summary><div class="docblock"><p>Read a 16-bit value with page wrap (for JMP indirect bug)</p>
+<p>The 6502 has a bug in JMP indirect where if the low byte is $FF,
+the high byte is read from $xx00 instead of $(xx+1)00.
+Note: This does NOT call on_cpu_cycle() - use CPU’s cycle-aware methods.</p>
+</div></details></div><h2 id="implementors" class="section-header">Implementors<a href="#implementors" class="anchor">§</a></h2><div id="implementors-list"></div><script src="../trait.impl/rustynes_cpu/bus/trait.CpuBus.js" async></script></section></div></main></body></html>

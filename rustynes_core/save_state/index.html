@@ -1,0 +1,48 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Save state system for `RustyNES` emulator."><title>rustynes_core::save_state - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-ca0dd0c4.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="rustynes_core" data-themes="" data-resource-suffix="" data-rustdoc-version="1.92.0 (ded5c06cf 2025-12-08)" data-channel="1.92.0" data-search-js="search-d69d8955.js" data-stringdex-js="stringdex-c3e638e9.js" data-settings-js="settings-c38705f0.js" ><script src="../../static.files/storage-e2aeef58.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../static.files/main-ce535bd0.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-263c88ec.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Module save_state</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../rustynes_core/index.html">rustynes_<wbr>core</a><span class="version">0.8.6</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module save_<wbr>state</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#format" title="Format">Format</a></li><li><a href="#usage" title="Usage">Usage</a></li><li><a href="#performance" title="Performance">Performance</a></li><li><a href="#note" title="Note">Note</a></li></ul><h3><a href="#reexports">Module Items</a></h3><ul class="block"><li><a href="#reexports" title="Re-exports">Re-exports</a></li><li><a href="#modules" title="Modules">Modules</a></li><li><a href="#constants" title="Constants">Constants</a></li></ul></section><div id="rustdoc-modnav"><h2 class="in-crate"><a href="../index.html">In crate rustynes_<wbr>core</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="../index.html">rustynes_core</a></div><h1>Module <span>save_<wbr>state</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/rustynes_core/save_state/mod.rs.html#1-74">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Save state system for <code>RustyNES</code> emulator.</p>
+<p>This module provides instant save/load functionality for complete emulator state,
+enabling features like rewind, TAS recording, and quick save/load.</p>
+<h2 id="format"><a class="doc-anchor" href="#format">§</a>Format</h2>
+<p>Save states use a custom binary format with the following structure:</p>
+<div class="example-wrap"><pre class="language-text"><code>┌─────────────────────────────────────┐
+│ Header (64 bytes)                   │
+│  - Magic: &quot;RNES&quot;                    │
+│  - Version: u32                     │
+│  - Checksum: CRC32                  │
+│  - Flags: u32                       │
+│  - ROM Hash: SHA-256 (32 bytes)     │
+│  - Timestamp: u64                   │
+│  - Frame Count: u64                 │
+│  - Reserved: 8 bytes                │
+├─────────────────────────────────────┤
+│ State Data (variable)               │
+└─────────────────────────────────────┘</code></pre></div><h2 id="usage"><a class="doc-anchor" href="#usage">§</a>Usage</h2>
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>rustynes_core::Console;
+<span class="kw">use </span>std::path::Path;
+
+<span class="kw">let </span>rom = std::fs::read(<span class="string">"game.nes"</span>)<span class="question-mark">?</span>;
+<span class="kw">let </span><span class="kw-2">mut </span>console = Console::from_rom_bytes(<span class="kw-2">&amp;</span>rom)<span class="question-mark">?</span>;
+
+<span class="comment">// Execute some frames
+</span><span class="kw">for _ in </span><span class="number">0</span>..<span class="number">1000 </span>{
+    console.step_frame();
+}
+
+<span class="comment">// Save state (not yet implemented - Phase 2)
+// console.save_state_to_file(Path::new("save1.state"))?;
+
+// Continue playing...
+</span><span class="kw">for _ in </span><span class="number">0</span>..<span class="number">500 </span>{
+    console.step_frame();
+}
+
+<span class="comment">// Load previous state (not yet implemented - Phase 2)
+// console.load_state_from_file(Path::new("save1.state"))?;</span></code></pre></div><h2 id="performance"><a class="doc-anchor" href="#performance">§</a>Performance</h2>
+<ul>
+<li>Uncompressed save: ~50KB, &lt;0.1ms</li>
+<li>Compressed save: ~10-20KB, ~2-5ms</li>
+<li>Load (either): &lt;0.5ms</li>
+</ul>
+<h2 id="note"><a class="doc-anchor" href="#note">§</a>Note</h2>
+<p>Full save state functionality will be implemented in Phase 2.
+This module currently defines the format and error types.</p>
+</div></details><h2 id="reexports" class="section-header">Re-exports<a href="#reexports" class="anchor">§</a></h2><dl class="item-table reexports"><dt id="reexport.SaveStateError"><code>pub use error::<a class="enum" href="error/enum.SaveStateError.html" title="enum rustynes_core::save_state::error::SaveStateError">SaveStateError</a>;</code></dt></dl><h2 id="modules" class="section-header">Modules<a href="#modules" class="anchor">§</a></h2><dl class="item-table"><dt><a class="mod" href="error/index.html" title="mod rustynes_core::save_state::error">error</a></dt><dd>Save state error types.</dd></dl><h2 id="constants" class="section-header">Constants<a href="#constants" class="anchor">§</a></h2><dl class="item-table"><dt><a class="constant" href="constant.SAVE_STATE_MAGIC.html" title="constant rustynes_core::save_state::SAVE_STATE_MAGIC">SAVE_<wbr>STATE_<wbr>MAGIC</a></dt><dd>Magic bytes for save state files</dd><dt><a class="constant" href="constant.SAVE_STATE_VERSION.html" title="constant rustynes_core::save_state::SAVE_STATE_VERSION">SAVE_<wbr>STATE_<wbr>VERSION</a></dt><dd>Save state format version</dd></dl></section></div></main></body></html>

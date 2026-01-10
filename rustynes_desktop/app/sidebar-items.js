@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["NES_HEIGHT","NES_WIDTH"],"struct":["NesApp"]};
