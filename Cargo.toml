@@ -33,7 +33,7 @@ bitflags = "2.10"
 log = "0.4"
 
 # Testing dependencies
-criterion = "0.5"
+criterion = "0.8"
 proptest = "1.9"
 
 [workspace.lints.rust]

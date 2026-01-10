@@ -18,7 +18,7 @@
 
 use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Device, SampleRate, Stream, StreamConfig};
+use cpal::{Device, Stream, StreamConfig};
 use log::{debug, error, info};
 use std::cell::UnsafeCell;
 use std::sync::Arc;
@@ -246,11 +246,13 @@ impl AudioOutput {
 
         info!(
             "Using audio device: {}",
-            device.name().unwrap_or_else(|_| "Unknown".to_string())
+            device
+                .description()
+                .map_or_else(|_| "Unknown".to_string(), |d| d.name().to_string())
         );
 
         let config = Self::find_config(&device, sample_rate)?;
-        let actual_sample_rate = config.sample_rate.0;
+        let actual_sample_rate = config.sample_rate;
 
         info!(
             "Audio config: {} Hz, {} channels, buffer size: {} samples",
@@ -373,10 +375,10 @@ impl AudioOutput {
 
         // Try to find a config with the preferred sample rate
         for config in supported_configs {
-            if config.min_sample_rate().0 <= preferred_rate
-                && config.max_sample_rate().0 >= preferred_rate
+            if config.min_sample_rate() <= preferred_rate
+                && config.max_sample_rate() >= preferred_rate
             {
-                return Ok(config.with_sample_rate(SampleRate(preferred_rate)).into());
+                return Ok(config.with_sample_rate(preferred_rate).into());
             }
         }
 
