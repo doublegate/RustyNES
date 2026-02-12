@@ -49,7 +49,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, windows-latest]  # DISABLED: macOS builds removed
     steps:
       - uses: actions/checkout@v6
       - name: Install SDL2 (Ubuntu)
@@ -76,7 +76,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, windows-latest]  # DISABLED: macOS builds removed
     steps:
       - uses: actions/checkout@v6
       - name: Install SDL2 (Ubuntu)

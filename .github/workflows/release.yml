@@ -59,48 +59,49 @@ jobs:
           path: artifacts/*
           retention-days: 7
 
-  build-macos:
-    name: Build (macOS)
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Install SDL2
-        run: brew install sdl2
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-apple-darwin
-
-      - uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: release-macos-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Build
-        run: cargo build --release --workspace
-
-      - name: Package artifacts
-        run: |
-          mkdir -p artifacts
-          # Package desktop binary if it exists
-          if [ -f target/release/rustynes-desktop ]; then
-            cp target/release/rustynes-desktop artifacts/
-            cd artifacts
-            tar czf rustynes-desktop-macos-x86_64.tar.gz rustynes-desktop
-            rm rustynes-desktop
-            cd ..
-          fi
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v6
-        with:
-          name: macos-x86_64
-          path: artifacts/*
-          retention-days: 7
+  # DISABLED: macOS builds removed
+  # build-macos:
+  #   name: Build (macOS)
+  #   runs-on: macos-latest
+  #   steps:
+  #     - uses: actions/checkout@v6
+  #
+  #     - name: Install SDL2
+  #       run: brew install sdl2
+  #
+  #     - uses: dtolnay/rust-toolchain@stable
+  #       with:
+  #         targets: x86_64-apple-darwin
+  #
+  #     - uses: actions/cache@v5
+  #       with:
+  #         path: |
+  #           ~/.cargo/registry
+  #           ~/.cargo/git
+  #           target
+  #         key: release-macos-${{ hashFiles('**/Cargo.lock') }}
+  #
+  #     - name: Build
+  #       run: cargo build --release --workspace
+  #
+  #     - name: Package artifacts
+  #       run: |
+  #         mkdir -p artifacts
+  #         # Package desktop binary if it exists
+  #         if [ -f target/release/rustynes-desktop ]; then
+  #           cp target/release/rustynes-desktop artifacts/
+  #           cd artifacts
+  #           tar czf rustynes-desktop-macos-x86_64.tar.gz rustynes-desktop
+  #           rm rustynes-desktop
+  #           cd ..
+  #         fi
+  #
+  #     - name: Upload artifacts
+  #       uses: actions/upload-artifact@v6
+  #       with:
+  #         name: macos-x86_64
+  #         path: artifacts/*
+  #         retention-days: 7
 
   build-windows:
     name: Build (Windows)
@@ -145,7 +146,7 @@ jobs:
 
   create-release:
     name: Create Release
-    needs: [build-linux, build-macos, build-windows]
+    needs: [build-linux, build-windows]  # DISABLED: macOS builds removed
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
