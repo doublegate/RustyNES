@@ -85,6 +85,12 @@ pub enum SysAction {
     /// cleared automatically after a few frames (the real ~40-70 ms window). A
     /// no-op for non-Vs. games.
     InsertCoin,
+    /// v1.0.0 (BUG-2) — toggle borderless fullscreen (default `F11`).
+    ToggleFullscreen,
+    /// v1.0.0 — toggle the always-on menu bar (default `Ctrl+M` — but bound by
+    /// keycode here, so the default is `KeyM`). Provides a keyboard path back
+    /// to the menu bar after hiding it from the View menu.
+    ToggleMenuBar,
 }
 
 /// Keyboard layout resolved from the loaded [`InputConfig`].
@@ -148,6 +154,16 @@ impl KeyBindings {
         );
         try_bind(&mut system, &cfg.system.disk_swap, SysAction::DiskSwap);
         try_bind(&mut system, &cfg.system.insert_coin, SysAction::InsertCoin);
+        try_bind(
+            &mut system,
+            &cfg.system.fullscreen,
+            SysAction::ToggleFullscreen,
+        );
+        try_bind(
+            &mut system,
+            &cfg.system.toggle_menu_bar,
+            SysAction::ToggleMenuBar,
+        );
         Self {
             player1,
             player2,

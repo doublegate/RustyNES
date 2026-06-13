@@ -433,6 +433,15 @@ pub struct SystemBindings {
     /// game is loaded. `#[serde(default)]` so older configs keep loading.
     #[serde(default = "default_insert_coin")]
     pub insert_coin: String,
+    /// v1.0.0 (BUG-2) — toggle borderless fullscreen (default `F11`).
+    /// `#[serde(default)]` so older configs keep loading.
+    #[serde(default = "default_fullscreen")]
+    pub fullscreen: String,
+    /// v1.0.0 — toggle the always-on menu bar (default `KeyM`). The keyboard
+    /// path back to the menu bar after hiding it from the View menu.
+    /// `#[serde(default)]` so older configs keep loading.
+    #[serde(default = "default_toggle_menu_bar")]
+    pub toggle_menu_bar: String,
 }
 
 fn default_debug_overlay() -> String {
@@ -463,6 +472,14 @@ fn default_insert_coin() -> String {
     "F10".into()
 }
 
+fn default_fullscreen() -> String {
+    "F11".into()
+}
+
+fn default_toggle_menu_bar() -> String {
+    "KeyM".into()
+}
+
 impl Default for SystemBindings {
     fn default() -> Self {
         Self {
@@ -479,6 +496,8 @@ impl Default for SystemBindings {
             movie_branch: default_movie_branch(),
             disk_swap: default_disk_swap(),
             insert_coin: default_insert_coin(),
+            fullscreen: default_fullscreen(),
+            toggle_menu_bar: default_toggle_menu_bar(),
         }
     }
 }

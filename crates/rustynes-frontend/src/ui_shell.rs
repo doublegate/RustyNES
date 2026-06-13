@@ -3,7 +3,7 @@
 //! This module owns the persistent egui chrome that frames the NES image
 //! independently of the (separately toggled) debugger overlay:
 //!
-//! - a top **menu bar** (File / Emulation / Options / Debug / Help),
+//! - a top **menu bar** (File / Emulation / Tools / View / Debug / Help),
 //! - a bottom **status bar** (ROM name, running/paused, status toasts, FPS),
 //! - a tabbed **settings window** (Video / Audio / Input / Advanced),
 //! - the first-run **welcome** modal plus **about** and **keyboard-shortcuts**
@@ -132,6 +132,30 @@ pub enum MenuAction {
     ToggleDebugger,
     /// Toggle borderless fullscreen.
     ToggleFullscreen,
+    /// v1.0.0 — toggle the menu bar (from the View menu).
+    ToggleMenuBar,
+    /// v1.0.0 — cycle the inserted FDS disk side.
+    CycleDiskSide,
+    /// v1.0.0 — capture a screenshot of the current framebuffer (native).
+    Screenshot,
+    /// v1.0.0 — set the active save-state slot (0-7).
+    SetSaveSlot(u8),
+    /// v1.0.0 — save state to a specific slot.
+    SaveStateSlot(u8),
+    /// v1.0.0 — load state from a specific slot.
+    LoadStateSlot(u8),
+    /// v1.0.0 — toggle TAS movie recording.
+    MovieRecordToggle,
+    /// v1.0.0 — toggle TAS movie playback.
+    MoviePlayToggle,
+    /// v1.0.0 — branch the current movie playback into a new recording.
+    MovieBranch,
+    /// v1.0.0 — insert a Vs. System coin (acceptor #1).
+    InsertCoin,
+    /// v1.0.0 — open a tool panel (Cheats / Settings / Netplay / ...).
+    OpenPanel(crate::debugger::ToolPanel),
+    /// v1.0.0 — open a chip-inspection panel + force the deep overlay visible.
+    OpenChipPanel(crate::debugger::ChipPanel),
 }
 
 /// Per-frame outputs from [`UiShell::build`].
@@ -169,6 +193,9 @@ pub struct UiShell {
     pub paused: bool,
     /// Whether the window is in borderless fullscreen (mirror of the gfx flag).
     pub fullscreen: bool,
+    /// v1.0.0 — the active save-state slot (0-7), mirrored from the app so the
+    /// File -> Save Slot radio shows the current selection.
+    pub active_slot: u8,
 }
 
 impl UiShell {
@@ -186,6 +213,7 @@ impl UiShell {
             status_message: None,
             paused: false,
             fullscreen: false,
+            active_slot: 0,
         }
     }
 
@@ -209,6 +237,9 @@ impl UiShell {
 /// Context the app threads into [`UiShell::build`] each frame so the shell can
 /// render the status bar + welcome shortcuts without locking the emu inside the
 /// egui closure.
+// These are independent per-frame status flags captured from the core, not a
+// state machine — a bitfield would be less clear than named bools.
+#[allow(clippy::struct_excessive_bools)]
 pub struct ShellFrame<'a> {
     /// The current ROM label (or a placeholder when none is loaded).
     pub rom_label: &'a str,
@@ -220,6 +251,29 @@ pub struct ShellFrame<'a> {
     /// Whether the debugger overlay is currently visible (drives the Debug menu
     /// checkmark).
     pub debugger_visible: bool,
+    /// v1.0.0 (BUG-4) — whether a netplay session is active. The Pause menu item
+    /// is disabled while this is set (pausing would stall the rollback session).
+    pub netplay_active: bool,
+    /// v1.0.0 — number of FDS disk sides (0 = not an FDS game). Enables the
+    /// File-menu disk items.
+    pub disk_sides: usize,
+    /// v1.0.0 — whether the loaded game is a Vs. System title (enables the
+    /// "Insert Coin" item).
+    pub vs_system: bool,
+    /// v1.0.0 — the human-readable mapper name (empty when unavailable).
+    pub mapper_label: &'a str,
+    /// v1.0.0 — the region label (`"NTSC"` / `"PAL"` / `"Dendy"`).
+    pub region_label: &'a str,
+    /// v1.0.0 — the configured run-ahead depth (frames).
+    pub run_ahead: u32,
+    /// v1.0.0 — whether emulation is paused (mirror; drives the paused overlay).
+    pub paused: bool,
+    /// v1.0.0 — whether a TAS movie is currently recording (drives the Tools
+    /// menu Record/Stop label).
+    pub movie_recording: bool,
+    /// v1.0.0 — whether a TAS movie is currently playing back (drives the Tools
+    /// menu Play/Stop label).
+    pub movie_playing: bool,
 }
 
 impl UiShell {
@@ -227,17 +281,18 @@ impl UiShell {
     /// carrying the menu action (if any) for the app to dispatch afterwards.
     ///
     /// `config` is edited in place (theme combo, 8:7 toggle, recent list);
-    /// `settings_body` and `input_body` render the Settings window's Video /
-    /// Audio / Advanced and Input tab bodies respectively, reusing the existing
-    /// debugger settings + input-rebind widgets so their live-apply plumbing is
-    /// untouched.
+    /// `settings_body` renders the Settings window's Video / Audio / Advanced
+    /// tab body for the [`SettingsTab`] passed to it (so each tab shows only its
+    /// own section), and `input_body` renders the Input tab — both reusing the
+    /// existing debugger settings + input-rebind widgets so their live-apply
+    /// plumbing is untouched.
     #[allow(clippy::too_many_lines)]
     pub fn build(
         &mut self,
         ctx: &egui::Context,
         config: &mut Config,
         frame: &ShellFrame<'_>,
-        mut settings_body: impl FnMut(&mut egui::Ui, &mut Config),
+        mut settings_body: impl FnMut(&mut egui::Ui, &mut Config, SettingsTab),
         mut input_body: impl FnMut(&mut egui::Ui, &mut Config),
     ) -> ShellOutput {
         self.clear_expired_status();
@@ -255,7 +310,11 @@ impl UiShell {
         out
     }
 
-    /// Render the top menu bar.
+    /// Render the top menu bar (v1.0.0 IA — surfaces Netplay / RA / Cheats /
+    /// Movies / Perf / save-slots / disk / screenshot directly instead of
+    /// burying them in the debugger overlay). Every ROM-dependent item is
+    /// disabled when no ROM is loaded; platform-only items (Open ROM, Netplay,
+    /// Screenshot, RA) are `#[cfg]`-gated out on wasm.
     #[allow(clippy::too_many_lines)]
     fn menu_bar(
         &mut self,
@@ -264,18 +323,24 @@ impl UiShell {
         frame: &ShellFrame<'_>,
         out: &mut ShellOutput,
     ) {
+        use crate::debugger::{ChipPanel, ToolPanel};
+        // Clone the system bindings up front so the accelerator hints can read
+        // them without holding a `&config` borrow across the `&mut config` edits
+        // (theme / aspect / fps / run-ahead) the closure also makes. The clone
+        // is a handful of small `String`s, built once per frame — negligible.
+        let keys = config.input.system.clone();
         egui::TopBottomPanel::top("shell_menu_bar").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
-                // File
+                // ----- File -----
                 ui.menu_button("File", |ui| {
                     #[cfg(not(target_arch = "wasm32"))]
-                    if ui.button("Open ROM...").clicked() {
+                    if accel_item(ui, "Open ROM...", &keys.open_rom).clicked() {
                         out.action = Some(MenuAction::OpenRom);
                         ui.close_menu();
                     }
 
                     #[cfg(not(target_arch = "wasm32"))]
-                    ui.menu_button("Recent ROMs", |ui| {
+                    ui.menu_button("Open Recent", |ui| {
                         if config.recent_roms.paths.is_empty() {
                             ui.label("No recent ROMs");
                         } else {
@@ -285,7 +350,9 @@ impl UiShell {
                                     .and_then(|n| n.to_str())
                                     .unwrap_or("Unknown")
                                     .to_string();
-                                if ui.button(name).clicked() {
+                                // (audit m3) gray out entries whose file is gone.
+                                let exists = path.exists();
+                                if ui.add_enabled(exists, egui::Button::new(name)).clicked() {
                                     out.action = Some(MenuAction::LoadRom(path));
                                     ui.close_menu();
                                 }
@@ -298,59 +365,179 @@ impl UiShell {
                         }
                     });
 
+                    // FDS disk controls (only meaningful for FDS games).
+                    if frame.disk_sides > 0 {
+                        ui.separator();
+                        if accel_item(ui, "Swap Disk Side", &keys.disk_swap).clicked() {
+                            out.action = Some(MenuAction::CycleDiskSide);
+                            ui.close_menu();
+                        }
+                    }
+
                     ui.separator();
 
-                    if ui
-                        .add_enabled(frame.rom_loaded, egui::Button::new("Save State"))
-                        .clicked()
+                    if accel_enabled(ui, frame.rom_loaded, "Save State", &keys.save_state).clicked()
                     {
                         out.action = Some(MenuAction::SaveState);
                         ui.close_menu();
                     }
-                    if ui
-                        .add_enabled(frame.rom_loaded, egui::Button::new("Load State"))
-                        .clicked()
+                    if accel_enabled(ui, frame.rom_loaded, "Load State", &keys.load_state).clicked()
                     {
                         out.action = Some(MenuAction::LoadState);
                         ui.close_menu();
                     }
+                    ui.menu_button("Save Slot", |ui| {
+                        for slot in 0u8..8 {
+                            if ui
+                                .radio(self.active_slot == slot, format!("Slot {}", slot + 1))
+                                .clicked()
+                            {
+                                self.active_slot = slot;
+                                out.action = Some(MenuAction::SetSaveSlot(slot));
+                                ui.close_menu();
+                            }
+                        }
+                    });
+                    ui.add_enabled_ui(frame.rom_loaded, |ui| {
+                        ui.menu_button("Save to Slot", |ui| {
+                            for slot in 0u8..8 {
+                                if ui.button(format!("Slot {}", slot + 1)).clicked() {
+                                    out.action = Some(MenuAction::SaveStateSlot(slot));
+                                    ui.close_menu();
+                                }
+                            }
+                        });
+                        ui.menu_button("Load from Slot", |ui| {
+                            for slot in 0u8..8 {
+                                if ui.button(format!("Slot {}", slot + 1)).clicked() {
+                                    out.action = Some(MenuAction::LoadStateSlot(slot));
+                                    ui.close_menu();
+                                }
+                            }
+                        });
+                    });
+
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        ui.separator();
+                        if ui
+                            .add_enabled(frame.rom_loaded, egui::Button::new("Take Screenshot"))
+                            .clicked()
+                        {
+                            out.action = Some(MenuAction::Screenshot);
+                            ui.close_menu();
+                        }
+                    }
 
                     ui.separator();
 
-                    if ui.button("Quit").clicked() {
+                    if accel_item(ui, "Quit", &keys.quit).clicked() {
                         out.action = Some(MenuAction::Quit);
                         ui.close_menu();
                     }
                 });
 
-                // Emulation
+                // ----- Emulation -----
                 ui.menu_button("Emulation", |ui| {
                     let pause_label = if self.paused { "Resume" } else { "Pause" };
+                    // (BUG-4) disabled during netplay.
                     if ui
-                        .add_enabled(frame.rom_loaded, egui::Button::new(pause_label))
+                        .add_enabled(
+                            frame.rom_loaded && !frame.netplay_active,
+                            egui::Button::new(pause_label),
+                        )
                         .clicked()
                     {
                         out.action = Some(MenuAction::TogglePause);
                         ui.close_menu();
                     }
-                    if ui
-                        .add_enabled(frame.rom_loaded, egui::Button::new("Reset"))
-                        .clicked()
-                    {
+                    if accel_enabled(ui, frame.rom_loaded, "Reset", &keys.reset).clicked() {
                         out.action = Some(MenuAction::Reset);
                         ui.close_menu();
                     }
-                    if ui
-                        .add_enabled(frame.rom_loaded, egui::Button::new("Power Cycle"))
+                    if accel_enabled(ui, frame.rom_loaded, "Power Cycle", &keys.power_cycle)
                         .clicked()
                     {
                         out.action = Some(MenuAction::PowerCycle);
                         ui.close_menu();
                     }
+                    ui.separator();
+                    ui.menu_button(format!("Run-Ahead: {}", config.input.run_ahead), |ui| {
+                        for n in 0u32..=3 {
+                            if ui
+                                .radio(config.input.run_ahead == n, format!("{n}"))
+                                .clicked()
+                            {
+                                config.input.run_ahead = n;
+                                save_config(config);
+                                ui.close_menu();
+                            }
+                        }
+                    });
+                    // Region is read-only (no core setter): display only.
+                    ui.add_enabled(
+                        false,
+                        egui::Button::new(format!("Region: {}", frame.region_label)),
+                    );
+                    if frame.vs_system
+                        && accel_enabled(ui, frame.rom_loaded, "Vs. Insert Coin", &keys.insert_coin)
+                            .clicked()
+                    {
+                        out.action = Some(MenuAction::InsertCoin);
+                        ui.close_menu();
+                    }
                 });
 
-                // Options
-                ui.menu_button("Options", |ui| {
+                // ----- Tools -----
+                ui.menu_button("Tools", |ui| {
+                    if ui.button("Cheats...").clicked() {
+                        out.action = Some(MenuAction::OpenPanel(ToolPanel::Cheats));
+                        ui.close_menu();
+                    }
+                    ui.add_enabled_ui(frame.rom_loaded, |ui| {
+                        ui.menu_button("Movies (TAS)", |ui| {
+                            let rec_label = if frame.movie_recording {
+                                "Stop Recording"
+                            } else {
+                                "Record"
+                            };
+                            if accel_item(ui, rec_label, &keys.movie_record).clicked() {
+                                out.action = Some(MenuAction::MovieRecordToggle);
+                                ui.close_menu();
+                            }
+                            let play_label = if frame.movie_playing {
+                                "Stop Playback"
+                            } else {
+                                "Play"
+                            };
+                            if accel_item(ui, play_label, &keys.movie_play).clicked() {
+                                out.action = Some(MenuAction::MoviePlayToggle);
+                                ui.close_menu();
+                            }
+                            if accel_item(ui, "Branch", &keys.movie_branch).clicked() {
+                                out.action = Some(MenuAction::MovieBranch);
+                                ui.close_menu();
+                            }
+                        });
+                    });
+                    #[cfg(not(target_arch = "wasm32"))]
+                    if ui.button("Netplay...").clicked() {
+                        out.action = Some(MenuAction::OpenPanel(ToolPanel::Netplay));
+                        ui.close_menu();
+                    }
+                    #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
+                    if ui.button("RetroAchievements...").clicked() {
+                        out.action = Some(MenuAction::OpenPanel(ToolPanel::Cheevos));
+                        ui.close_menu();
+                    }
+                    if ui.button("Performance Monitor").clicked() {
+                        out.action = Some(MenuAction::OpenPanel(ToolPanel::Perf));
+                        ui.close_menu();
+                    }
+                });
+
+                // ----- View -----
+                ui.menu_button("View", |ui| {
                     if ui.button("Settings...").clicked() {
                         self.show_settings_window = true;
                         ui.close_menu();
@@ -367,30 +554,55 @@ impl UiShell {
                         }
                     });
                     if ui
-                        .checkbox(
-                            &mut config.ui.pixel_aspect_correction,
-                            "8:7 Pixel Aspect Ratio",
-                        )
+                        .checkbox(&mut config.ui.pixel_aspect_correction, "8:7 Pixel Aspect")
                         .changed()
                     {
                         save_config(config);
                     }
-                    if ui.checkbox(&mut self.fullscreen, "Fullscreen").changed() {
-                        out.action = Some(MenuAction::ToggleFullscreen);
+                    // (audit m4) Fullscreen is a native-only window mode.
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        // (BUG-2) read-only mirror — never flip here.
+                        let mut fs = self.fullscreen;
+                        if accel_changed(ui, &mut fs, "Fullscreen", &keys.fullscreen) {
+                            out.action = Some(MenuAction::ToggleFullscreen);
+                            ui.close_menu();
+                        }
+                    }
+                    if ui.checkbox(&mut config.ui.show_fps, "Show FPS").changed() {
+                        save_config(config);
+                    }
+                    let mut menu_bar = self.menu_visible;
+                    if accel_changed(ui, &mut menu_bar, "Show Menu Bar", &keys.toggle_menu_bar) {
+                        out.action = Some(MenuAction::ToggleMenuBar);
                         ui.close_menu();
                     }
                 });
 
-                // Debug
+                // ----- Debug -----
                 ui.menu_button("Debug", |ui| {
                     let mut dbg = frame.debugger_visible;
-                    if ui.checkbox(&mut dbg, "Show Debugger").changed() {
+                    if accel_changed(ui, &mut dbg, "Show Debugger", &keys.debug_overlay) {
                         out.action = Some(MenuAction::ToggleDebugger);
                         ui.close_menu();
                     }
+                    ui.separator();
+                    for (label, panel) in [
+                        ("CPU", ChipPanel::Cpu),
+                        ("PPU", ChipPanel::Ppu),
+                        ("APU", ChipPanel::Apu),
+                        ("Memory", ChipPanel::Memory),
+                        ("OAM", ChipPanel::Oam),
+                        ("Mapper", ChipPanel::Mapper),
+                    ] {
+                        if ui.button(label).clicked() {
+                            out.action = Some(MenuAction::OpenChipPanel(panel));
+                            ui.close_menu();
+                        }
+                    }
                 });
 
-                // Help
+                // ----- Help -----
                 ui.menu_button("Help", |ui| {
                     if ui.button("Keyboard Shortcuts").clicked() {
                         self.show_shortcuts = true;
@@ -417,9 +629,24 @@ impl UiShell {
                 ui.horizontal(|ui| {
                     if frame.rom_loaded {
                         ui.label(format!("ROM: {}", frame.rom_label));
+                        // v1.0.0 polish — richer status: region, mapper, run-ahead.
+                        if !frame.region_label.is_empty() {
+                            ui.separator();
+                            ui.label(frame.region_label);
+                        }
+                        if !frame.mapper_label.is_empty() {
+                            ui.separator();
+                            ui.label(frame.mapper_label);
+                        }
+                        if frame.run_ahead > 0 {
+                            ui.separator();
+                            ui.label(format!("Run-Ahead {}", frame.run_ahead));
+                        }
                         ui.separator();
                         if self.paused {
                             ui.colored_label(egui::Color32::YELLOW, "Paused");
+                        } else if frame.netplay_active {
+                            ui.colored_label(egui::Color32::from_rgb(80, 180, 240), "Netplay");
                         } else {
                             ui.colored_label(egui::Color32::from_rgb(100, 200, 100), "Running");
                         }
@@ -443,8 +670,12 @@ impl UiShell {
                     }
 
                     if config.ui.show_fps {
+                        // v1.0.0 (BUG-8) — `current_fps()` returns the last
+                        // rolling mean (e.g. 60.0) even while paused; show 0.0
+                        // so the readout reflects that emulation has stopped.
+                        let fps = if self.paused { 0.0 } else { frame.fps };
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(format!("FPS: {:.1}", frame.fps));
+                            ui.label(format!("FPS: {fps:.1}"));
                         });
                     }
                 });
@@ -456,7 +687,7 @@ impl UiShell {
         &mut self,
         ctx: &egui::Context,
         config: &mut Config,
-        settings_body: &mut impl FnMut(&mut egui::Ui, &mut Config),
+        settings_body: &mut impl FnMut(&mut egui::Ui, &mut Config, SettingsTab),
         input_body: &mut impl FnMut(&mut egui::Ui, &mut Config),
     ) {
         if !self.show_settings_window {
@@ -481,6 +712,9 @@ impl UiShell {
                     .auto_shrink([false, false])
                     .show(ui, |ui| match *tab {
                         SettingsTab::Video => {
+                            // Display chrome (theme / aspect / fps) is shell-only,
+                            // so it lives here; the rest of the Video tab is the
+                            // settings panel's `video_section`.
                             ui.heading("Display");
                             ui.horizontal(|ui| {
                                 ui.label("Theme:");
@@ -518,9 +752,13 @@ impl UiShell {
                                 save_config(config);
                             }
                             ui.separator();
-                            settings_body(ui, config);
+                            settings_body(ui, config, SettingsTab::Video);
                         }
-                        SettingsTab::Audio | SettingsTab::Advanced => settings_body(ui, config),
+                        // v1.0.0 settings split — each tab renders ONLY its own
+                        // section (the prior catch-all rendered the whole body on
+                        // every tab, duplicating every control).
+                        SettingsTab::Audio => settings_body(ui, config, SettingsTab::Audio),
+                        SettingsTab::Advanced => settings_body(ui, config, SettingsTab::Advanced),
                         SettingsTab::Input => input_body(ui, config),
                     });
             });
@@ -528,11 +766,23 @@ impl UiShell {
     }
 
     /// Render the first-run welcome modal.
+    ///
+    /// (audit m2) — the modal is dismissible (the window's close `X`, the "Get
+    /// Started" button, or clicking away), AND `welcome_shown` is persisted the
+    /// FIRST time it is shown (not only on "Get Started") so it never re-nags
+    /// even if the user closes it some other way.
     fn welcome_modal(&mut self, ctx: &egui::Context, config: &mut Config) {
         if !self.show_welcome {
             return;
         }
+        // Persist on first display so a quit-without-clicking doesn't re-show it.
+        if !config.welcome_shown {
+            config.welcome_shown = true;
+            save_config(config);
+        }
+        let mut open = true;
         egui::Window::new("Welcome to RustyNES")
+            .open(&mut open)
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
@@ -548,14 +798,65 @@ impl UiShell {
                 ui.horizontal(|ui| {
                     if ui.button("Get Started").clicked() {
                         self.show_welcome = false;
-                        config.welcome_shown = true;
-                        save_config(config);
                     }
                     if ui.button("Keyboard Shortcuts").clicked() {
                         self.show_shortcuts = true;
                     }
                 });
             });
+        if !open {
+            self.show_welcome = false;
+        }
+    }
+}
+
+/// v1.0.0 — render a friendly accelerator hint for a keycode-name binding
+/// (`config.input.system.*`), e.g. `"Backquote"` -> `` "`" ``, `"ShiftRight"`
+/// -> `"R-Shift"`. Best-effort; unknown names pass through unchanged so a rebind
+/// still shows something sensible.
+fn accel_hint(key: &str) -> String {
+    match key {
+        "Backquote" => "`".to_string(),
+        "Escape" => "Esc".to_string(),
+        "Enter" => "Enter".to_string(),
+        "ShiftRight" => "R-Shift".to_string(),
+        "ShiftLeft" => "L-Shift".to_string(),
+        k if k.starts_with("Key") => k.trim_start_matches("Key").to_string(),
+        k if k.starts_with("Digit") => k.trim_start_matches("Digit").to_string(),
+        k if k.starts_with("Arrow") => k.trim_start_matches("Arrow").to_string(),
+        k => k.to_string(),
+    }
+}
+
+/// v1.0.0 — a menu button with the accelerator hint right-aligned (tracks the
+/// live rebind via `config.input.system.*`). Returns the click response.
+fn accel_item(ui: &mut egui::Ui, label: &str, key: &str) -> egui::Response {
+    ui.add(egui::Button::new(label).shortcut_text(accel_hint(key)))
+}
+
+/// v1.0.0 — [`accel_item`] gated by an `enabled` flag (ROM-dependent items).
+fn accel_enabled(ui: &mut egui::Ui, enabled: bool, label: &str, key: &str) -> egui::Response {
+    ui.add_enabled(
+        enabled,
+        egui::Button::new(label).shortcut_text(accel_hint(key)),
+    )
+}
+
+/// v1.0.0 — a checkbox-style menu item with an accelerator hint. Returns `true`
+/// when toggled this frame. The `value` mirror is shown but the caller drives
+/// the real toggle through a dispatched action (read-only-mirror pattern).
+fn accel_changed(ui: &mut egui::Ui, value: &mut bool, label: &str, key: &str) -> bool {
+    let hint = accel_hint(key);
+    let resp = ui.add(
+        egui::Button::new(label)
+            .shortcut_text(hint)
+            .selected(*value),
+    );
+    if resp.clicked() {
+        *value = !*value;
+        true
+    } else {
+        false
     }
 }
 
@@ -645,8 +946,15 @@ fn shortcuts_grid(ui: &mut egui::Ui, id: &str) {
                 ("Rewind (hold)", "F5"),
                 ("Reset", "F2"),
                 ("Power cycle", "F3"),
+                ("Movie record", "F6"),
+                ("Movie play", "F7"),
+                ("Movie branch", "F8"),
+                ("Swap disk side (FDS)", "F9"),
+                ("Insert coin (Vs.)", "F10"),
+                ("Fullscreen", "F11"),
+                ("Toggle menu bar", "M"),
                 ("Toggle debugger", "`"),
-                ("Quit", "Esc"),
+                ("Quit / exit fullscreen", "Esc"),
                 ("D-pad", "Arrow keys"),
                 ("A button", "Z"),
                 ("B button", "X"),

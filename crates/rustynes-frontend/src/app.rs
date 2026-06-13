@@ -180,6 +180,99 @@ fn is_fds_image(bytes: &[u8]) -> bool {
     bytes.starts_with(b"FDS\x1A") || bytes.starts_with(b"\x01*NINTENDO-HVC*")
 }
 
+/// CRC-32 (IEEE) over a byte slice (PNG chunk CRC). Used by [`encode_png_rgba`].
+#[cfg(not(target_arch = "wasm32"))]
+fn png_crc32(bytes: &[u8]) -> u32 {
+    let mut crc: u32 = 0xFFFF_FFFF;
+    for &b in bytes {
+        crc ^= u32::from(b);
+        for _ in 0..8 {
+            let mask = (crc & 1).wrapping_neg();
+            crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
+        }
+    }
+    !crc
+}
+
+/// Adler-32 (zlib stream check) over a byte slice. Used by [`encode_png_rgba`].
+#[cfg(not(target_arch = "wasm32"))]
+fn png_adler32(bytes: &[u8]) -> u32 {
+    let (mut a, mut b): (u32, u32) = (1, 0);
+    for &byte in bytes {
+        a = (a + u32::from(byte)) % 65521;
+        b = (b + a) % 65521;
+    }
+    (b << 16) | a
+}
+
+/// Append a length-prefixed, CRC'd PNG chunk to `out`.
+#[cfg(not(target_arch = "wasm32"))]
+fn png_write_chunk(out: &mut Vec<u8>, kind: [u8; 4], data: &[u8]) {
+    let len = u32::try_from(data.len()).unwrap_or(u32::MAX);
+    out.extend_from_slice(&len.to_be_bytes());
+    let start = out.len();
+    out.extend_from_slice(&kind);
+    out.extend_from_slice(data);
+    let crc = png_crc32(&out[start..]);
+    out.extend_from_slice(&crc.to_be_bytes());
+}
+
+/// v1.0.0 — minimal self-contained PNG encoder for an RGBA8 framebuffer (used
+/// by the Take Screenshot menu action). Emits a valid 8-bit truecolor-alpha PNG
+/// using zlib STORED (uncompressed) blocks, so it needs no compression crate —
+/// the 256x240 NES frame is ~245 KiB, a fine size for a screenshot. Native-only
+/// (wasm has no filesystem to write to).
+#[cfg(not(target_arch = "wasm32"))]
+fn encode_png_rgba(rgba: &[u8], width: u32, height: u32) -> std::io::Result<Vec<u8>> {
+    use std::io::{Error, ErrorKind};
+
+    let (w, h) = (width as usize, height as usize);
+    if rgba.len() < w * h * 4 {
+        return Err(Error::new(ErrorKind::InvalidInput, "framebuffer too small"));
+    }
+
+    // Raw image data: one filter byte (0 = None) per scanline + the RGBA row.
+    let mut raw = Vec::with_capacity(h * (1 + w * 4));
+    for y in 0..h {
+        raw.push(0u8);
+        let row = &rgba[y * w * 4..(y + 1) * w * 4];
+        raw.extend_from_slice(row);
+    }
+
+    // zlib wrapper around STORED deflate blocks.
+    let mut zlib = Vec::with_capacity(raw.len() + raw.len() / 65535 + 16);
+    zlib.extend_from_slice(&[0x78, 0x01]); // zlib header (CM=8, no preset dict).
+    let mut idx = 0usize;
+    while idx < raw.len() {
+        let chunk = (raw.len() - idx).min(0xFFFF);
+        let last = idx + chunk >= raw.len();
+        zlib.push(u8::from(last)); // BFINAL bit, BTYPE=00 (stored).
+        let len = u16::try_from(chunk).unwrap_or(u16::MAX);
+        zlib.extend_from_slice(&len.to_le_bytes());
+        zlib.extend_from_slice(&(!len).to_le_bytes());
+        zlib.extend_from_slice(&raw[idx..idx + chunk]);
+        idx += chunk;
+    }
+    if raw.is_empty() {
+        // Degenerate: emit a single empty final stored block.
+        zlib.extend_from_slice(&[0x01, 0x00, 0x00, 0xFF, 0xFF]);
+    }
+    zlib.extend_from_slice(&png_adler32(&raw).to_be_bytes());
+
+    let mut out = Vec::with_capacity(zlib.len() + 64);
+    out.extend_from_slice(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+
+    // IHDR: width, height, bit depth 8, color type 6 (RGBA), no interlace.
+    let mut ihdr = Vec::with_capacity(13);
+    ihdr.extend_from_slice(&width.to_be_bytes());
+    ihdr.extend_from_slice(&height.to_be_bytes());
+    ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
+    png_write_chunk(&mut out, *b"IHDR", &ihdr);
+    png_write_chunk(&mut out, *b"IDAT", &zlib);
+    png_write_chunk(&mut out, *b"IEND", &[]);
+    Ok(out)
+}
+
 /// Native-only precise-pacing spin margin. When the next frame is within
 /// this window we busy-spin (`std::hint::spin_loop`) to the exact target
 /// `Instant` instead of sleeping. Sleeping covers everything before the
@@ -286,6 +379,10 @@ pub struct App {
     /// flags). The shell UI itself is built inside the debugger overlay's
     /// single egui pass each frame; this holds its persistent state.
     ui: crate::ui_shell::UiShell,
+    /// v1.0.0 — the active save-state slot (0-7) selected from the File menu.
+    /// `Save State` / `Load State` use this slot; the per-slot menu items
+    /// (`Save to Slot` / `Load from Slot`) target an explicit slot instead.
+    active_save_slot: u8,
     /// v1.0.0 — cached previous value of `config.ui.pixel_aspect_correction`,
     /// so a change made in the menu / settings window is detected after the
     /// egui pass and pushed into the gfx letterbox (mirrors the NTSC live-apply
@@ -453,6 +550,7 @@ impl App {
             data_dir,
             debugger: None,
             ui,
+            active_save_slot: 0,
             prev_par_correction,
             gamepad: gilrs::Gilrs::new()
                 .map_err(|e| {
@@ -522,6 +620,7 @@ impl App {
             config,
             debugger: None,
             ui,
+            active_save_slot: 0,
             prev_par_correction,
             proxy: Some(proxy),
             should_exit: false,
@@ -624,6 +723,13 @@ impl App {
             Ok(b) => b,
             Err(e) => {
                 eprintln!("rustynes: failed to read {}: {e}", path.display());
+                // (audit m3) surface the failure in the status bar (a Recent-ROM
+                // whose file vanished is the common case).
+                self.ui.set_status(crate::ui_shell::StatusMessage::new(
+                    format!("Failed to open ROM: {e}"),
+                    egui::Color32::from_rgb(230, 90, 90),
+                    std::time::Duration::from_secs(4),
+                ));
                 return;
             }
         };
@@ -646,6 +752,11 @@ impl App {
                 Ok(n) => n,
                 Err(e) => {
                     eprintln!("rustynes: failed to load ROM {}: {e}", path.display());
+                    self.ui.set_status(crate::ui_shell::StatusMessage::new(
+                        format!("Failed to load ROM: {e}"),
+                        egui::Color32::from_rgb(230, 90, 90),
+                        std::time::Duration::from_secs(4),
+                    ));
                     return;
                 }
             }
@@ -939,7 +1050,7 @@ impl App {
     /// Save state to a filesystem slot. Native-only; wasm32 uses the
     /// `localStorage` path in `wasm.rs` (F1).
     #[cfg(not(target_arch = "wasm32"))]
-    fn handle_save_state(&self) {
+    fn handle_save_state(&self, slot: u8) {
         // Snapshot under a short lock; the file write runs with it dropped.
         let snapshot = {
             let guard = self.emu.lock();
@@ -955,7 +1066,7 @@ impl App {
             eprintln!("rustynes: no data directory available; save state skipped");
             return;
         };
-        match save_state::save_to_slot(dir, &rom_sha256, 0, &blob) {
+        match save_state::save_to_slot(dir, &rom_sha256, slot, &blob) {
             Ok(path) => eprintln!("rustynes: saved state -> {}", path.display()),
             Err(e) => eprintln!("rustynes: save state failed: {e}"),
         }
@@ -964,7 +1075,7 @@ impl App {
     /// Load state from a filesystem slot. Native-only (see
     /// [`Self::handle_save_state`]).
     #[cfg(not(target_arch = "wasm32"))]
-    fn handle_load_state(&self) {
+    fn handle_load_state(&self, slot: u8) {
         // Read the ROM key under a short lock; the file read runs with it
         // dropped; the restore takes a second short lock.
         let Some(rom_sha256) = self.emu.lock().nes.as_ref().map(|n| *n.rom_sha256()) else {
@@ -974,18 +1085,81 @@ impl App {
             eprintln!("rustynes: no data directory available; load state skipped");
             return;
         };
-        match save_state::load_from_slot(dir, &rom_sha256, 0) {
+        match save_state::load_from_slot(dir, &rom_sha256, slot) {
             Ok(blob) => {
                 let mut guard = self.emu.lock();
                 let Some(nes) = guard.nes.as_mut() else {
                     return;
                 };
                 match nes.restore(&blob) {
-                    Ok(()) => eprintln!("rustynes: loaded state from slot 0"),
+                    Ok(()) => eprintln!("rustynes: loaded state from slot {slot}"),
                     Err(e) => eprintln!("rustynes: restore failed: {e}"),
                 }
             }
             Err(e) => eprintln!("rustynes: load state failed: {e}"),
+        }
+    }
+
+    /// v1.0.0 — capture the current framebuffer to a PNG under
+    /// `<data_dir>/screenshots/<rom>-<utc>.png` and toast the path. Native-only
+    /// (the wasm build has no filesystem; the menu item is gated out there).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn take_screenshot(&mut self) {
+        use crate::ui_shell::StatusMessage;
+        // Copy the framebuffer under a brief lock; the encode + write run with
+        // the guard dropped.
+        let frame = {
+            let guard = self.emu.lock();
+            guard.nes.as_ref().map(|nes| nes.framebuffer().to_vec())
+        };
+        let Some(frame) = frame else {
+            self.ui
+                .set_status(StatusMessage::info("Screenshot: no ROM loaded"));
+            return;
+        };
+        let Some(dir) = self.data_dir.as_ref() else {
+            self.ui
+                .set_status(StatusMessage::info("Screenshot: no data directory"));
+            return;
+        };
+        let shots = dir.join("screenshots");
+        if let Err(e) = std::fs::create_dir_all(&shots) {
+            eprintln!("rustynes: screenshot dir create failed: {e}");
+            self.ui
+                .set_status(StatusMessage::info("Screenshot failed (mkdir)"));
+            return;
+        }
+        // Build a filesystem-safe stem from the ROM label + a UTC timestamp.
+        let stem: String = self
+            .rom_label
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .collect();
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let path = shots.join(format!("{stem}-{secs}.png"));
+        match encode_png_rgba(&frame, NES_W, NES_H) {
+            Ok(png) => match std::fs::write(&path, png) {
+                Ok(()) => {
+                    eprintln!("rustynes: screenshot -> {}", path.display());
+                    self.ui.set_status(StatusMessage::success(format!(
+                        "Screenshot saved: {}",
+                        path.display()
+                    )));
+                }
+                Err(e) => {
+                    eprintln!("rustynes: screenshot write failed: {e}");
+                    self.ui
+                        .set_status(StatusMessage::info("Screenshot failed (write)"));
+                }
+            },
+            Err(e) => {
+                eprintln!("rustynes: screenshot encode failed: {e}");
+                self.ui
+                    .set_status(StatusMessage::info("Screenshot failed (encode)"));
+            }
         }
     }
 
@@ -1357,6 +1531,26 @@ impl App {
     /// browser WebRTC) is routed here — an active session OWNS frame
     /// advancement; otherwise the single-player produce lives in
     /// [`crate::emu::EmuCore::produce_one_frame`].
+    /// v1.0.0 — whether a netplay session is active, in a cfg-uniform way (the
+    /// native `netplay` field and the wasm `browser_netplay` field are mutually
+    /// exclusive). Used by the shell-frame capture + the Pause gate.
+    // Const on native (where `is_active` is const) but not on wasm (`is_some_and`
+    // is not const-stable), so it can't be uniformly `const fn`.
+    #[allow(clippy::missing_const_for_fn)]
+    #[must_use]
+    fn netplay_is_active(&self) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.netplay.is_active()
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.browser_netplay
+                .as_ref()
+                .is_some_and(crate::wasm_netplay::BrowserNetplay::is_active)
+        }
+    }
+
     fn produce_one_frame(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
         if self.netplay.is_active() {
@@ -1770,6 +1964,7 @@ impl App {
 
     /// v1.0.0 — dispatch a UX-shell [`crate::ui_shell::MenuAction`]. Run AFTER
     /// the egui pass (the build closure cannot hold `&mut self`).
+    #[allow(clippy::too_many_lines)]
     fn dispatch_menu_action(
         &mut self,
         action: crate::ui_shell::MenuAction,
@@ -1799,7 +1994,7 @@ impl App {
             }
             MenuAction::SaveState => {
                 #[cfg(not(target_arch = "wasm32"))]
-                self.handle_save_state();
+                self.handle_save_state(self.active_save_slot);
                 #[cfg(target_arch = "wasm32")]
                 self.handle_save_state_wasm();
                 self.ui.set_status(StatusMessage::success("State saved"));
@@ -1810,7 +2005,7 @@ impl App {
                         .set_status(StatusMessage::info("Load state disabled (hardcore)"));
                 } else {
                     #[cfg(not(target_arch = "wasm32"))]
-                    self.handle_load_state();
+                    self.handle_load_state(self.active_save_slot);
                     #[cfg(target_arch = "wasm32")]
                     self.handle_load_state_wasm();
                     self.ui.set_status(StatusMessage::success("State loaded"));
@@ -1839,6 +2034,88 @@ impl App {
             MenuAction::ToggleFullscreen => {
                 self.toggle_fullscreen();
             }
+            MenuAction::ToggleMenuBar => {
+                self.ui.menu_visible = !self.ui.menu_visible;
+            }
+            MenuAction::CycleDiskSide => {
+                self.cycle_disk_side();
+            }
+            MenuAction::Screenshot => {
+                #[cfg(not(target_arch = "wasm32"))]
+                self.take_screenshot();
+            }
+            MenuAction::SetSaveSlot(slot) => {
+                self.active_save_slot = slot;
+                self.ui
+                    .set_status(StatusMessage::info(format!("Save slot {}", slot + 1)));
+            }
+            MenuAction::SaveStateSlot(slot) => {
+                #[cfg(not(target_arch = "wasm32"))]
+                self.handle_save_state(slot);
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let _ = slot;
+                    self.handle_save_state_wasm();
+                }
+                self.ui.set_status(StatusMessage::success(format!(
+                    "Saved to slot {}",
+                    slot + 1
+                )));
+            }
+            MenuAction::LoadStateSlot(slot) => {
+                if self.ra_hardcore_blocks() {
+                    self.ui
+                        .set_status(StatusMessage::info("Load state disabled (hardcore)"));
+                } else {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    self.handle_load_state(slot);
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        let _ = slot;
+                        self.handle_load_state_wasm();
+                    }
+                    self.ui.set_status(StatusMessage::success(format!(
+                        "Loaded from slot {}",
+                        slot + 1
+                    )));
+                }
+            }
+            MenuAction::MovieRecordToggle => {
+                #[cfg(not(target_arch = "wasm32"))]
+                self.handle_movie_record_toggle();
+                #[cfg(target_arch = "wasm32")]
+                self.handle_movie_record_toggle_wasm();
+            }
+            MenuAction::MoviePlayToggle => {
+                #[cfg(not(target_arch = "wasm32"))]
+                self.handle_movie_play_toggle();
+                #[cfg(target_arch = "wasm32")]
+                self.handle_movie_play_toggle_wasm();
+            }
+            MenuAction::MovieBranch => {
+                #[cfg(not(target_arch = "wasm32"))]
+                self.handle_movie_branch();
+                #[cfg(target_arch = "wasm32")]
+                self.handle_movie_branch_wasm();
+            }
+            MenuAction::InsertCoin => {
+                let mut guard = self.emu.lock();
+                let emu = &mut *guard;
+                if let Some(nes) = emu.nes.as_mut() {
+                    nes.insert_coin(0);
+                    emu.vs_coin_frames = VS_COIN_HOLD_FRAMES;
+                }
+            }
+            MenuAction::OpenPanel(panel) => {
+                if let Some(d) = self.debugger.as_mut() {
+                    d.open_panel(panel);
+                }
+            }
+            MenuAction::OpenChipPanel(panel) => {
+                if let Some(d) = self.debugger.as_mut() {
+                    d.open_chip_panel(panel);
+                }
+            }
         }
     }
 
@@ -1847,10 +2124,29 @@ impl App {
     /// wasm paths the produce loop checks `self.ui.paused` directly.
     fn set_paused(&mut self, paused: bool) {
         use crate::ui_shell::StatusMessage;
+        // v1.0.0 (BUG-4) — refuse to pause during a netplay session (it would
+        // stall the rollback loop and desync the peer). Resume is always honored.
+        if paused && self.netplay_is_active() {
+            self.ui
+                .set_status(StatusMessage::info("Cannot pause during netplay"));
+            return;
+        }
         self.ui.paused = paused;
         #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
         if let Some(thread) = self.emu_thread.as_ref() {
             thread.control().set_user_paused(paused);
+            // v1.0.0 (BUG-1) — on resume, wake the parked emu thread so it
+            // observes the cleared flag immediately (instead of after its idle
+            // park timeout).
+            if !paused {
+                thread.unpark();
+            }
+        }
+        // v1.0.0 (BUG-1) — on resume, rebase the pacer to "now" so the producer
+        // does not burst-catch-up the frames that elapsed while paused (mirrors
+        // the netplay-leave rebase).
+        if !paused {
+            self.emu.lock().next_frame_time = Some(Instant::now());
         }
         self.ui.set_status(StatusMessage::info(if paused {
             "Paused"
@@ -1886,6 +2182,13 @@ impl App {
             if let Some(nes) = guard.nes.as_mut() {
                 nes.power_cycle();
             }
+        }
+        // v1.0.0 (BUG-7) — a cold boot should RUN: clear any prior pause so the
+        // status bar doesn't read "Paused" with a freshly-booted, running core.
+        // (Reset / warm boot leaves the pause state alone — it's a softer action
+        // and a paused user likely wants to stay paused across a reset.)
+        if self.ui.paused {
+            self.set_paused(false);
         }
         #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
         self.reset_ra();
@@ -2249,7 +2552,10 @@ impl App {
             // v1.0.0 — user-paused (Emulation -> Pause) on the synchronous
             // native path: stop producing frames but keep the UI responsive.
             // (The emu-thread path pauses via `EmuControl::set_user_paused`.)
-            if self.ui.paused {
+            // v1.0.0 (BUG-4) — but NEVER pause while a netplay session is
+            // active: stalling the rollback session desyncs the peer. The Pause
+            // menu item is also disabled during netplay, but guard here too.
+            if self.ui.paused && !self.netplay.is_active() {
                 event_loop.set_control_flow(ControlFlow::Wait);
                 if let Some(gfx) = self.gfx.as_ref() {
                     gfx.window.request_redraw();
@@ -2742,14 +3048,16 @@ impl App {
         // on the `nes.is_none()` pre-ROM path) so the rAF loop never dies.
         // If any tick failed to re-arm, winit's web backend would stop
         // calling `requestAnimationFrame` and the canvas would freeze.
-        if self.emu.lock().nes.is_some() && !self.ui.paused {
+        // v1.0.0 (BUG-4) — never honor pause while a browser netplay session is
+        // active (it would stall the rollback session and desync the peer).
+        let netplay_active = self
+            .browser_netplay
+            .as_ref()
+            .is_some_and(crate::wasm_netplay::BrowserNetplay::is_active);
+        if self.emu.lock().nes.is_some() && (!self.ui.paused || netplay_active) {
             // Latch the browser-sourced input just before producing.
             self.latch_input();
             let now = Instant::now();
-            let netplay_active = self
-                .browser_netplay
-                .as_ref()
-                .is_some_and(crate::wasm_netplay::BrowserNetplay::is_active);
             // v2.8.0 Phase 6 — rAF display-sync: when the measured rAF cadence
             // matches the console rate (a ~60 Hz panel), produce exactly one
             // frame per rAF and let the audio DRC absorb the sub-percent rate
@@ -3210,6 +3518,21 @@ impl ApplicationHandler<AppEvent> for App {
                 false
             };
 
+        // v1.0.0 (BUG-1) — native redraw pump. The frame loop is a
+        // self-sustaining produce -> `EmuFrame` -> `request_redraw` ping-pong;
+        // when paused (or pre-ROM idle) the emu thread parks and stops sending
+        // `EmuFrame`, so no redraw is ever re-armed. egui only repaints inside
+        // `RedrawRequested`, so without this an input event (e.g. clicking
+        // "Resume") would never reach the shell. Pump a redraw whenever egui
+        // wants to repaint after processing this event. wasm self-arms its rAF
+        // loop, so this is native-only.
+        #[cfg(not(target_arch = "wasm32"))]
+        if let (Some(debugger), Some(gfx)) = (self.debugger.as_ref(), self.gfx.as_ref()) {
+            if debugger.egui_wants_repaint() {
+                gfx.window.request_redraw();
+            }
+        }
+
         match event {
             WindowEvent::CloseRequested => {
                 self.should_exit = true;
@@ -3275,30 +3598,54 @@ impl ApplicationHandler<AppEvent> for App {
                 if dbg_capturing {
                     return;
                 }
-                // v1.0.0 — when egui wants keyboard input (a menu is open or a
-                // settings text field is focused), do NOT also drive the NES
-                // controller / system hotkeys from this key. The always-on shell
-                // is interactive even with the debugger overlay hidden.
-                if self
-                    .debugger
-                    .as_ref()
-                    .is_some_and(DebuggerOverlay::wants_egui_input)
-                {
+                // v1.0.0 — when the shell is interacting with this key, do NOT
+                // also drive the NES controller / system hotkeys from it. The
+                // always-on shell is interactive even with the debugger overlay
+                // hidden. Three independent gates:
+                //   - `wants_egui_input`: a settings text field is focused (the
+                //     PREVIOUS-frame state — kept for the focused-field steady
+                //     state).
+                //   - (BUG-5) `shell_is_capturing`: an egui MENU / popup / modal
+                //     is open. A dropped menu has no focused text widget, so the
+                //     gate above misses it — arrows/Z/X/Enter would otherwise
+                //     drive the NES while the menu is down.
+                //   - (BUG-6) `egui_consumed`: THIS event was claimed by egui
+                //     this frame. `wants_egui_input` reflects the previous
+                //     `ctx.run`, so the first keystroke into a freshly-focused
+                //     field is still false there; the current-event flag closes
+                //     that one-frame leak.
+                let shell_window_open = self.ui.show_settings_window
+                    || self.ui.show_about
+                    || self.ui.show_shortcuts
+                    || self.ui.show_welcome;
+                let shell_capturing = shell_window_open
+                    || self
+                        .debugger
+                        .as_ref()
+                        .is_some_and(|d| d.wants_egui_input() || d.shell_is_capturing());
+                if shell_capturing || egui_consumed {
                     return;
                 }
                 let action = self.input.handle_key(event.physical_key, event.state);
                 if let Some(act) = action {
                     match act {
                         SysAction::Quit => {
-                            self.should_exit = true;
-                            event_loop.exit();
+                            // v1.0.0 (BUG-3) — Esc (the Quit bind) must not
+                            // hard-quit while fullscreen: exit fullscreen first,
+                            // only quit from the windowed state.
+                            if self.ui.fullscreen {
+                                self.toggle_fullscreen();
+                            } else {
+                                self.should_exit = true;
+                                event_loop.exit();
+                            }
                         }
                         SysAction::SaveState => {
                             // Native: filesystem slot. wasm32 (v1.6.0
                             // Sprint 4): per-ROM `localStorage` slot keyed
                             // by ROM SHA-256 (synchronous; no IndexedDB).
                             #[cfg(not(target_arch = "wasm32"))]
-                            self.handle_save_state();
+                            self.handle_save_state(self.active_save_slot);
                             #[cfg(target_arch = "wasm32")]
                             self.handle_save_state_wasm();
                         }
@@ -3310,7 +3657,7 @@ impl ApplicationHandler<AppEvent> for App {
                                 self.toast_hardcore("Load state disabled (hardcore)");
                             } else {
                                 #[cfg(not(target_arch = "wasm32"))]
-                                self.handle_load_state();
+                                self.handle_load_state(self.active_save_slot);
                                 #[cfg(target_arch = "wasm32")]
                                 self.handle_load_state_wasm();
                             }
@@ -3380,18 +3727,26 @@ impl ApplicationHandler<AppEvent> for App {
                                 emu.vs_coin_frames = VS_COIN_HOLD_FRAMES;
                             }
                         }
+                        SysAction::ToggleFullscreen => {
+                            self.toggle_fullscreen();
+                        }
+                        SysAction::ToggleMenuBar => {
+                            self.ui.menu_visible = !self.ui.menu_visible;
+                            if let Some(gfx) = self.gfx.as_ref() {
+                                gfx.window.request_redraw();
+                            }
+                        }
                     }
                 }
-                if !egui_consumed {
-                    // v2.8.0 Phase 5 increment 3 — when the emu thread drives,
-                    // publish the new input into its SharedInput immediately so
-                    // a key press doesn't wait a full frame for the next
-                    // `EmuFrame` republish; the direct latch is the
-                    // synchronous-path write.
-                    #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
-                    self.publish_shared_input();
-                    self.latch_input();
-                }
+                // BUG-6 — we already returned above when `egui_consumed` (or the
+                // shell was capturing), so reaching here means this key is the
+                // NES's. v2.8.0 Phase 5 increment 3 — when the emu thread drives,
+                // publish the new input into its SharedInput immediately so a key
+                // press doesn't wait a full frame for the next `EmuFrame`
+                // republish; the direct latch is the synchronous-path write.
+                #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
+                self.publish_shared_input();
+                self.latch_input();
             }
             WindowEvent::RedrawRequested => {
                 // Native: rendering is decoupled from emulation — this
@@ -3448,25 +3803,93 @@ impl ApplicationHandler<AppEvent> for App {
                     .as_ref()
                     .is_some_and(DebuggerOverlay::is_visible);
 
-                // The shell's status bar needs `nes.is_some()` + fps; capture
-                // them under a brief lock BEFORE the egui pass so the build
-                // closure never re-locks.
-                let (rom_loaded, fps) = {
-                    let emu = self.emu.lock();
-                    (emu.nes.is_some(), emu.current_fps())
+                // The shell's status bar + menu IA need a snapshot of core
+                // facts (rom loaded, fps, disk sides, Vs flag, mapper / region
+                // labels). Capture them under a brief lock BEFORE the egui pass
+                // so the build closure never re-locks. The owned `String`s live
+                // in locals that outlive `shell_frame` (which borrows them).
+                let (
+                    rom_loaded,
+                    fps,
+                    disk_sides,
+                    vs_system,
+                    mapper_label,
+                    region_label,
+                    movie_recording,
+                    movie_playing,
+                ) = {
+                    let mut emu = self.emu.lock();
+                    let f = emu.current_fps();
+                    let rec = emu.movie.is_recording();
+                    let play = emu.movie.is_playing();
+                    emu.nes.as_mut().map_or_else(
+                        || {
+                            (
+                                false,
+                                f,
+                                0usize,
+                                false,
+                                String::new(),
+                                String::new(),
+                                rec,
+                                play,
+                            )
+                        },
+                        |nes| {
+                            let region = match nes.region() {
+                                rustynes_core::Region::Pal => "PAL",
+                                rustynes_core::Region::Dendy => "Dendy",
+                                rustynes_core::Region::Ntsc => "NTSC",
+                            };
+                            (
+                                true,
+                                f,
+                                nes.disk_side_count(),
+                                nes.is_vs_system(),
+                                nes.mapper_info().name,
+                                region.to_string(),
+                                rec,
+                                play,
+                            )
+                        },
+                    )
                 };
+                let netplay_active = self.netplay_is_active();
+                let run_ahead = self.config.input.run_ahead;
+                // Keep the shell's save-slot mirror in sync with the app's.
+                self.ui.active_slot = self.active_save_slot;
                 let shell_frame = crate::ui_shell::ShellFrame {
                     rom_label: &self.rom_label,
                     rom_loaded,
                     fps,
                     debugger_visible: dbg_visible,
+                    netplay_active,
+                    disk_sides,
+                    vs_system,
+                    mapper_label: &mapper_label,
+                    region_label: &region_label,
+                    run_ahead,
+                    paused: self.ui.paused,
+                    movie_recording,
+                    movie_playing,
                 };
 
                 let mut shell_out = crate::ui_shell::ShellOutput::default();
+                // v1.0.0 — render-branch selection: take the LOCKED branch (which
+                // passes a live `&mut Nes` to the egui pass) when EITHER the deep
+                // overlay is visible OR a tool panel that reads `nes` (Cheats) is
+                // open. Otherwise take the staging branch (no `nes`). This keeps
+                // the Cheats panel functional with the overlay off without ever
+                // taking a SECOND emu lock inside the egui closure.
+                let needs_nes = dbg_visible
+                    || self
+                        .debugger
+                        .as_ref()
+                        .is_some_and(DebuggerOverlay::any_nes_tool_open);
                 let render_result = if self.debugger.is_none() || self.gfx.is_none() {
                     // No overlay yet (pre-`resumed`): nothing to render.
                     return;
-                } else if dbg_visible {
+                } else if needs_nes {
                     let mut guard = self.emu.lock();
                     let emu = &mut *guard;
                     // Backfill the presented framebuffer into staging under the

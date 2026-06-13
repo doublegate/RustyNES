@@ -150,13 +150,25 @@ pub fn show(
         });
 }
 
-/// The window body: graphics / audio / rewind sections. Mutates `config`
-/// directly and accumulates live-apply flags on `state.apply`.
+/// The full settings body: graphics / audio / rewind sections, rendered one
+/// after another. Used by the debugger's standalone Settings window (`show`),
+/// which is a single scrolling panel.
 ///
-/// `pub(crate)` so the always-on UX shell's Settings window can render the same
-/// body for its Video / Audio / Advanced tabs, keeping the live-apply plumbing
-/// (`state.apply`, drained by `take_settings_apply`) unchanged.
+/// The always-on UX shell instead calls the three `*_section` functions
+/// directly, one per Settings-window tab, so each tab shows only its own
+/// controls (v1.0.0 settings split — the prior `body`-for-every-tab wiring
+/// duplicated every control on every tab).
 pub fn body(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &mut Config) {
+    video_section(ui, state, config);
+    ui.add_space(8.0);
+    audio_section(ui, state, config);
+    ui.add_space(8.0);
+    advanced_section(ui, state, config);
+}
+
+/// The Graphics section: present mode, pacing, swapchain depth, NTSC filter.
+/// Mutates `config` directly and accumulates live-apply flags on `state.apply`.
+pub fn video_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &mut Config) {
     ui.heading("Graphics");
 
     // Present mode: persisted only — a live change needs a surface rebuild.
@@ -226,8 +238,10 @@ pub fn body(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &mut Conf
             state.apply.ntsc_filter = true;
         }
     });
+}
 
-    ui.add_space(8.0);
+/// The Audio section: sample rate, DRC latency target, dynamic rate control.
+pub fn audio_section(ui: &mut egui::Ui, _state: &mut SettingsPanelState, config: &mut Config) {
     ui.heading("Audio");
 
     // Sample rate: persisted only — a live change needs an audio-stream
@@ -267,8 +281,10 @@ pub fn body(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &mut Conf
         ui.checkbox(&mut config.audio.drc, "Dynamic rate control");
         ui.weak("(±0.5% drift compensation; restart to apply)");
     });
+}
 
-    ui.add_space(8.0);
+/// The Advanced section: run-ahead depth + rewind enable / window / keyframe.
+pub fn advanced_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &mut Config) {
     ui.heading("Latency");
 
     // v2.8.0 Phase 3 — run-ahead depth. Applied live (the produce path

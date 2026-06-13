@@ -297,6 +297,16 @@ impl EmuThread {
         let _ = self.tick_tx.try_send(());
     }
 
+    /// v1.0.0 (BUG-1) — wake the emulation thread out of its idle park. Called
+    /// on resume so the just-cleared `user_paused` flag is observed
+    /// immediately rather than after the (up to `IDLE_PARK`) park timeout.
+    /// `park_timeout` consumes the unpark token, so a stray unpark is harmless.
+    pub fn unpark(&self) {
+        if let Some(h) = self.handle.as_ref() {
+            h.thread().unpark();
+        }
+    }
+
     /// Signal stop and join the thread (called on exit).
     pub fn shutdown(&mut self) {
         self.control.stop.store(true, Ordering::Release);
@@ -404,7 +414,10 @@ fn drive_one(
     // Re-check UNDER the lock: the winit thread sets `netplay_paused` then
     // fences on this same lock, so once it holds the lock we observe the
     // flag and never advance the core out from under the rollback session.
-    if control.netplay_paused.load(Ordering::Acquire) {
+    // v1.0.0 (BUG-9) — also honor a just-issued user pause under the lock so
+    // the thread cannot produce one extra frame after `set_user_paused(true)`.
+    if control.netplay_paused.load(Ordering::Acquire) || control.user_paused.load(Ordering::Acquire)
+    {
         return false;
     }
     let core = &mut *guard;
@@ -432,7 +445,10 @@ fn drive_wallclock(
     let mut sinks = sinks_for(audio);
     let now = Instant::now();
     let mut guard = emu.lock();
-    if control.netplay_paused.load(Ordering::Acquire) {
+    // v1.0.0 (BUG-9) — see `drive_one`: honor netplay + user pause under the
+    // lock so a just-issued pause stops the next produce.
+    if control.netplay_paused.load(Ordering::Acquire) || control.user_paused.load(Ordering::Acquire)
+    {
         return false;
     }
     let core = &mut *guard;

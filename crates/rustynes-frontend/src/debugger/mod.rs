@@ -72,6 +72,47 @@ pub use cheevos_panel::{CheevosRequest, CheevosStatusView};
 pub use netplay_panel::{NetplayPhaseView, NetplayRequest, NetplayStatusView};
 pub use settings_panel::SettingsApply;
 
+/// A non-chip tool panel surfaced directly from the menu bar (v1.0.0).
+///
+/// These render as floating windows regardless of whether the deep debugger
+/// overlay is toggled on (see [`DebuggerOverlay::open_panel`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolPanel {
+    /// Game Genie / raw cheats panel.
+    Cheats,
+    /// Graphics / audio / rewind settings panel.
+    Settings,
+    /// Netplay host/join panel (native).
+    Netplay,
+    /// `RetroAchievements` login/list panel.
+    Cheevos,
+    /// Performance instrumentation panel.
+    Perf,
+    /// Input rebinding panel.
+    Input,
+}
+
+/// A chip-inspection panel surfaced from the Debug menu (v1.0.0).
+///
+/// These only render while the deep overlay is visible (they need `&mut Nes`);
+/// opening one forces the overlay visible (see
+/// [`DebuggerOverlay::open_chip_panel`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChipPanel {
+    /// CPU registers + disassembly.
+    Cpu,
+    /// PPU nametable / pattern / palette viewer.
+    Ppu,
+    /// OAM sprite list + grid.
+    Oam,
+    /// APU per-channel scope.
+    Apu,
+    /// CPU/PPU bus hex viewer.
+    Memory,
+    /// Mapper bank registers + IRQ state.
+    Mapper,
+}
+
 /// State of the debugger overlay.
 pub struct DebuggerOverlay {
     /// egui frontend state (window-event integration).
@@ -142,6 +183,10 @@ pub struct DebuggerOverlay {
     /// Native-only + feature-gated; absent on the default / wasm builds.
     #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
     badge_cache: Option<badge_cache::BadgeCache>,
+    /// v1.0.0 (audit m6) — the last theme applied to the egui context, so
+    /// [`crate::ui_shell::apply_theme`] only calls `ctx.set_visuals` on a change
+    /// instead of rebuilding the whole `Visuals` every frame.
+    last_theme: Option<crate::config::AppTheme>,
 }
 
 impl DebuggerOverlay {
@@ -195,6 +240,7 @@ impl DebuggerOverlay {
             movie: MovieStatus::default(),
             #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
             badge_cache: None,
+            last_theme: None,
         }
     }
 
@@ -274,6 +320,28 @@ impl DebuggerOverlay {
     pub fn wants_egui_input(&self) -> bool {
         let ctx = self.state.egui_ctx();
         ctx.wants_keyboard_input() || ctx.wants_pointer_input()
+    }
+
+    /// v1.0.0 (BUG-1) — whether egui has requested a repaint (an animation, a
+    /// hover, a click that mutated widget state, ...). The native window-event
+    /// pump uses this to issue a `request_redraw` while the emulator is idle or
+    /// paused, so the always-on shell keeps repainting on input even when the
+    /// self-sustaining produce -> `EmuFrame` -> redraw heartbeat has stopped
+    /// (the emu thread parks while paused and never sends `EmuFrame`). Without
+    /// this, a "Resume" click in the menu would never be received.
+    #[must_use]
+    pub fn egui_wants_repaint(&self) -> bool {
+        self.state.egui_ctx().has_requested_repaint()
+    }
+
+    /// v1.0.0 (BUG-5/6) — whether the shell is currently capturing interaction
+    /// (an open menu / popup, or any modal window). The app folds this into its
+    /// NES-key gate so dropping a menu and pressing arrows / Z / X / Enter does
+    /// not also drive the controller (an open menu has no focused text widget,
+    /// so [`Self::wants_egui_input`] alone misses it).
+    #[must_use]
+    pub fn shell_is_capturing(&self) -> bool {
+        self.state.egui_ctx().memory(egui::Memory::any_popup_open)
     }
 
     /// Forward a winit window event into egui. Returns `true` if egui
@@ -384,8 +452,63 @@ impl DebuggerOverlay {
         self.cheevos_ui.take_request()
     }
 
-    /// Build the egui UI for this frame.
+    /// v1.0.0 — open a tool panel (Cheats / Settings / Netplay / Cheevos /
+    /// Perf / Input) by setting its `show_*` flag. The tool panels render as
+    /// floating windows whether or not the deep debugger overlay is toggled on
+    /// (the menu bar surfaces them directly).
+    pub fn open_panel(&mut self, panel: ToolPanel) {
+        match panel {
+            ToolPanel::Cheats => self.show_cheat = true,
+            ToolPanel::Settings => self.show_settings = true,
+            ToolPanel::Netplay => self.show_netplay = true,
+            ToolPanel::Cheevos => self.show_cheevos = true,
+            ToolPanel::Perf => self.show_perf = true,
+            ToolPanel::Input => self.show_input = true,
+        }
+    }
+
+    /// v1.0.0 — open a chip-inspection panel (CPU / PPU / OAM / APU / Memory /
+    /// Mapper) AND make the deep overlay visible (the chip panels only render
+    /// when the overlay is visible, since they need `&mut Nes`).
+    pub fn open_chip_panel(&mut self, panel: ChipPanel) {
+        self.visible = true;
+        match panel {
+            ChipPanel::Cpu => self.show_cpu = true,
+            ChipPanel::Ppu => self.show_ppu = true,
+            ChipPanel::Oam => self.show_oam = true,
+            ChipPanel::Apu => self.show_apu = true,
+            ChipPanel::Memory => self.show_memory = true,
+            ChipPanel::Mapper => self.show_mapper = true,
+        }
+    }
+
+    /// v1.0.0 — force the deep overlay visible (used when opening a chip panel
+    /// from the menu so its window actually renders).
+    pub const fn force_visible(&mut self) {
+        self.visible = true;
+    }
+
+    /// v1.0.0 — whether any tool panel that needs `&mut Nes` is currently open.
+    /// Today only the Cheats panel reads `nes`; the render path uses this to
+    /// take the locked branch (which passes a real `nes`) even when the deep
+    /// overlay is off.
+    #[must_use]
+    pub const fn any_nes_tool_open(&self) -> bool {
+        self.show_cheat
+    }
+
+    /// Build the egui UI for this frame (the deep-overlay path: toolbar HUD +
+    /// chip panels + tool panels, all with a live `nes`). Used by [`Self::render`]
+    /// and by [`Self::render_shell`] when the overlay is visible.
     fn ui(&mut self, ctx: &egui::Context, nes: &mut Nes, config: &mut Config) {
+        self.chip_panels(ctx, nes);
+        self.tool_panels(ctx, Some(nes), config);
+    }
+
+    /// v1.0.0 — the chip-inspection UI: the debugger toolbar HUD + the
+    /// CPU / PPU / OAM / APU / Memory / Mapper windows. These all read `&mut Nes`
+    /// and only render when the deep overlay is visible.
+    fn chip_panels(&mut self, ctx: &egui::Context, nes: &mut Nes) {
         egui::TopBottomPanel::top("debugger_top").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new("RustyNES debugger").strong());
@@ -521,6 +644,53 @@ impl DebuggerOverlay {
             });
         });
 
+        if self.show_cpu {
+            cpu_panel::show(ctx, &mut self.show_cpu, &mut self.cpu_ui, nes);
+        }
+        if self.show_ppu {
+            ppu_panel::show(ctx, &mut self.show_ppu, &mut self.ppu_ui, nes);
+        }
+        if self.show_oam {
+            oam_panel::show(ctx, &mut self.show_oam, &mut self.oam_ui, nes);
+        }
+        if self.show_apu {
+            apu_panel::show(ctx, &mut self.show_apu, &mut self.apu_ui, nes);
+        }
+        if self.show_memory {
+            // v2.7.0 — the Memory panel is a RAM hex viewer (a potential
+            // RAM-watch cheat surface), so it is disabled in hardcore mode.
+            if self.hardcore_active {
+                egui::Window::new("Memory")
+                    .open(&mut self.show_memory)
+                    .resizable(false)
+                    .show(ctx, |ui| {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(0xF0, 0xC0, 0x40),
+                            "Disabled in hardcore mode.",
+                        );
+                        ui.label(
+                            egui::RichText::new(
+                                "The memory viewer is unavailable while \
+                                 RetroAchievements hardcore mode is active.",
+                            )
+                            .weak(),
+                        );
+                    });
+            } else {
+                memory_panel::show(ctx, &mut self.show_memory, &mut self.memory_ui, nes);
+            }
+        }
+        if self.show_mapper {
+            mapper_panel::show(ctx, &mut self.show_mapper, &mut self.mapper_ui, nes);
+        }
+    }
+
+    /// v1.0.0 — the tool panels (Cheats / Settings / Netplay / Cheevos / Perf /
+    /// Input) plus the RA unlock-toast stack. These render as floating windows
+    /// whenever their `show_*` flag is set, REGARDLESS of whether the deep
+    /// overlay is visible, so the menu bar can surface them directly. Panels
+    /// that read `nes` (Cheats) no-op when `nes` is `None`.
+    fn tool_panels(&mut self, ctx: &egui::Context, nes: Option<&mut Nes>, config: &mut Config) {
         // v2.7.0 — transient RetroAchievements unlock / event toasts, drawn as
         // a floating top-right stack so they're visible without the toolbar
         // open. The app expires them after a few seconds. v2.7.1 — an
@@ -589,59 +759,24 @@ impl DebuggerOverlay {
             }
         }
 
-        if self.show_cpu {
-            cpu_panel::show(ctx, &mut self.show_cpu, &mut self.cpu_ui, nes);
-        }
-        if self.show_ppu {
-            ppu_panel::show(ctx, &mut self.show_ppu, &mut self.ppu_ui, nes);
-        }
-        if self.show_oam {
-            oam_panel::show(ctx, &mut self.show_oam, &mut self.oam_ui, nes);
-        }
-        if self.show_apu {
-            apu_panel::show(ctx, &mut self.show_apu, &mut self.apu_ui, nes);
-        }
-        if self.show_memory {
-            // v2.7.0 — the Memory panel is a RAM hex viewer (a potential
-            // RAM-watch cheat surface), so it is disabled in hardcore mode.
-            if self.hardcore_active {
-                egui::Window::new("Memory")
-                    .open(&mut self.show_memory)
-                    .resizable(false)
-                    .show(ctx, |ui| {
-                        ui.colored_label(
-                            egui::Color32::from_rgb(0xF0, 0xC0, 0x40),
-                            "Disabled in hardcore mode.",
-                        );
-                        ui.label(
-                            egui::RichText::new(
-                                "The memory viewer is unavailable while \
-                                 RetroAchievements hardcore mode is active.",
-                            )
-                            .weak(),
-                        );
-                    });
-            } else {
-                memory_panel::show(ctx, &mut self.show_memory, &mut self.memory_ui, nes);
-            }
-        }
-        if self.show_mapper {
-            mapper_panel::show(ctx, &mut self.show_mapper, &mut self.mapper_ui, nes);
-        }
         if self.show_input {
             input_rebind_panel::show(ctx, &mut self.show_input, &mut self.input_ui, config);
         }
         if self.show_cheat {
-            #[cfg(not(target_arch = "wasm32"))]
-            cheat_panel::show(
-                ctx,
-                &mut self.show_cheat,
-                &mut self.cheat_ui,
-                nes,
-                self.cheat_persist.as_ref(),
-            );
-            #[cfg(target_arch = "wasm32")]
-            cheat_panel::show(ctx, &mut self.show_cheat, &mut self.cheat_ui, nes);
+            // The Cheats panel reads `nes`; with no ROM loaded there is nothing
+            // to edit, so no-op (the window simply doesn't open).
+            if let Some(nes) = nes {
+                #[cfg(not(target_arch = "wasm32"))]
+                cheat_panel::show(
+                    ctx,
+                    &mut self.show_cheat,
+                    &mut self.cheat_ui,
+                    nes,
+                    self.cheat_persist.as_ref(),
+                );
+                #[cfg(target_arch = "wasm32")]
+                cheat_panel::show(ctx, &mut self.show_cheat, &mut self.cheat_ui, nes);
+            }
         }
         if self.show_settings {
             settings_panel::show(ctx, &mut self.show_settings, &mut self.settings_ui, config);
@@ -781,9 +916,18 @@ impl DebuggerOverlay {
         let mut nes = nes;
         let mut extra_ui = Some(extra_ui);
         let mut shell_out = ShellOutput::default();
+        // (audit m6) Decide whether the theme changed BEFORE the closure (which
+        // mutably borrows `self` via the panels), then write the cache back
+        // after. `apply_theme` runs inside the closure only when needed.
+        let theme_changed = self.last_theme != Some(config.ui.theme);
+        let theme_now = config.ui.theme;
         let output = ctx.run(raw_input, |ctx| {
             // (1) Theme first so the whole frame (shell + debugger) is themed.
-            crate::ui_shell::apply_theme(ctx, config.ui.theme);
+            // Only rebuild + apply `Visuals` when the theme actually changed (or
+            // on the first frame), not every frame.
+            if theme_changed {
+                crate::ui_shell::apply_theme(ctx, theme_now);
+            }
             // (2) The always-on shell. Its settings/input tab bodies reuse the
             // existing debugger widgets so their live-apply plumbing is intact.
             let settings_ui = &mut self.settings_ui;
@@ -792,20 +936,69 @@ impl DebuggerOverlay {
                 ctx,
                 config,
                 shell_frame,
-                |ui, cfg| settings_panel::body(ui, settings_ui, cfg),
+                |ui, cfg, tab| {
+                    // v1.0.0 settings split — route each Settings tab to its own
+                    // section so a tab shows only its controls (the live-apply
+                    // plumbing on `settings_ui` is shared across all three).
+                    use crate::ui_shell::SettingsTab;
+                    match tab {
+                        SettingsTab::Video => settings_panel::video_section(ui, settings_ui, cfg),
+                        SettingsTab::Audio => settings_panel::audio_section(ui, settings_ui, cfg),
+                        // The Input tab is handled by `input_body`; treat any
+                        // other tab as Advanced for exhaustiveness.
+                        SettingsTab::Advanced | SettingsTab::Input => {
+                            settings_panel::advanced_section(ui, settings_ui, cfg);
+                        }
+                    }
+                },
                 |ui, cfg| input_rebind_panel::body(ui, input_ui, cfg),
             );
             // (3) The wasm-netplay lobby (native passes a no-op closure).
             if let Some(extra_ui) = extra_ui.take() {
                 extra_ui(ctx, config);
             }
-            // (4) The debugger panels, only when toggled on AND a ROM exists.
+            // (4) v1.0.0 — the tool panels (Cheats / Settings / Netplay /
+            // Cheevos / Perf / Input) + RA toasts ALWAYS render when their
+            // `show_*` flag is set, so the menu bar can surface them with the
+            // deep overlay off. The chip panels (CPU / PPU / ...) + the debugger
+            // toolbar HUD render only when the overlay is visible (they need a
+            // live `&mut Nes`).
+            self.tool_panels(ctx, nes.as_deref_mut(), config);
             if visible {
                 if let Some(nes) = nes.as_deref_mut() {
-                    self.ui(ctx, nes, config);
+                    self.chip_panels(ctx, nes);
                 }
             }
+            // (5) v1.0.0 polish — a translucent "PAUSED" overlay centred over the
+            // NES image whenever emulation is paused, so the paused state is
+            // visually obvious (not just a status-bar word).
+            if shell_frame.paused {
+                let screen = ctx.screen_rect();
+                egui::Area::new(egui::Id::new("paused_overlay"))
+                    .fixed_pos(screen.center() - egui::vec2(64.0, 24.0))
+                    .order(egui::Order::Foreground)
+                    .interactable(false)
+                    .show(ctx, |ui| {
+                        egui::Frame::none()
+                            .fill(egui::Color32::from_black_alpha(160))
+                            .inner_margin(egui::Margin::symmetric(20.0, 12.0))
+                            .rounding(6.0)
+                            .show(ui, |ui| {
+                                ui.label(
+                                    egui::RichText::new("PAUSED")
+                                        .heading()
+                                        .strong()
+                                        .color(egui::Color32::WHITE),
+                                );
+                            });
+                    });
+            }
         });
+        // (audit m6) record the theme we applied so the next frame skips the
+        // `set_visuals` rebuild unless it changes again.
+        if theme_changed {
+            self.last_theme = Some(theme_now);
+        }
         self.state
             .handle_platform_output(window, output.platform_output);
 
