@@ -1,5 +1,19 @@
 # Rust GUI and rendering frameworks for NES emulator development
 
+> **Status (v1.0.0 — decision superseded; what shipped).** This document is the
+> design-history framework-evaluation memo (Iced + WGPU vs egui/pixels/SDL2/
+> Slint/Dioxus). Its leaning recommendation (egui + the `pixels` crate + winit +
+> cpal, with SDL2 as a fallback) was only partly followed: RustyNES v1.0.0 ships
+> **winit 0.30 + wgpu (direct, not the `pixels` crate) + egui 0.29 + cpal**. SDL2
+> and eframe/glow were NOT adopted. The frontend wires its own wgpu blit pipeline
+> (with an 8:7 pixel-aspect correction toggle and a simplified NTSC WGSL post-
+> pass) rather than going through `pixels`, runs the emulator on a dedicated
+> emulation thread (default `emu-thread` feature) with a synchronous fallback
+> (`--no-default-features`), and targets WebAssembly through the same winit/wgpu
+> `App` (`wasm-winit`) plus a lightweight canvas embed (`wasm-canvas`). Read the
+> body below as the rationale that led toward the egui family of choices, not as
+> a description of the shipped dependency set.
+
 **The ideal replacement for Iced + WGPU depends on your priority: use egui for emulator-centric development, pixels crate for rendering, and consider SDL2 for simplicity.** The Rust emulator ecosystem has matured significantly, with clear patterns emerging from successful projects like TetaNES (wgpu + egui), Pinky (SDL2 + libretro), and RustBoyAdvance-NG (SDL2). For a cycle-accurate NES emulator requiring modern UI, excellent performance, and broad platform reach, the **recommended stack is egui + pixels crate + winit + cpal** for a pure-Rust solution, or **SDL2** for a proven, batteries-included alternative.
 
 ## GUI frameworks: egui leads for emulator-specific needs

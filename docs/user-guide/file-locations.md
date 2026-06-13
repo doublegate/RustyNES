@@ -1,6 +1,6 @@
 # File locations
 
-RustyNES v2 writes to two places: a **config directory** (one
+RustyNES writes to two places: a **config directory** (one
 `config.toml`) and a **data directory** (per-ROM save state slots). The
 exact paths come from the `directories` crate, which follows each OS's
 standard conventions.
@@ -61,9 +61,12 @@ A single file:
   rate, NTSC filter setting. See [Configuration](./configuration.md)
   for the full schema.
 
-The file is read once at startup. It's written when you click
-"Save to disk" in the in-app rebind modal — see
-[Controls](./controls.md).
+The file is read once at startup. It's written back whenever you change a
+persisted setting from inside the emulator — "Save to disk" in the rebind
+modal, the `[ui]` toggles (theme, 8:7 aspect, FPS), the run-ahead picker,
+opening a ROM (updating the recent list), or dismissing the first-run
+Welcome modal — see [Controls](./controls.md) and
+[Configuration](./configuration.md).
 
 The directory and file are created on demand. A pristine install has no
 config files; the emulator runs from compiled-in defaults until you
@@ -90,6 +93,12 @@ behavior.
 
 Per-ROM directories are created on demand, so a pristine data directory
 is empty.
+
+Alongside `saves/`, the data directory also gains sibling folders as you
+use the corresponding features: `cheats/<rom_sha256>.toml` (Game Genie +
+raw RAM cheats), `movies/` (`.rnm` TAS recordings), `fds-saves/`
+(writable `.fds.sav` disk images), and — with the RetroAchievements
+feature built — `ra-progress/`. Each is created on demand.
 
 ## Inspecting on your system
 

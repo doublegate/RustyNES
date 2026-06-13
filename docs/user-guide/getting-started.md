@@ -104,7 +104,7 @@ without speeding up.
 
 From here you can:
 
-- open **View → Settings…** for the tabbed Video / Audio / Input / Advanced
+- open **View → Settings…** for the tabbed Display / Audio / Input / Advanced
   dialog (theme, 8:7 pixel aspect, NTSC filter, sample rate, rebinding),
 - press `F11` (or **View → Fullscreen**) to go borderless fullscreen, and
   `Esc` to leave it,

@@ -62,6 +62,7 @@ modal, and a third/fourth USB gamepad auto-binds to Players 3/4 — most
 
 | Action | Default key | Notes |
 |--------|-------------|-------|
+| Pause / Resume | `Space` | Toggle emulation; disabled while a netplay session is active |
 | Quit / exit fullscreen | `Esc` | Closes the window cleanly (or leaves fullscreen first) |
 | Save state | `F1` | Writes to the active slot for the current ROM |
 | Load state | `F4` | Reads from the active slot |
@@ -149,8 +150,8 @@ and the binding is silently dropped — the rest of the file still loads.
 
 - **D-pad and A/B/Select/Start** are held: held keys produce held NES
   buttons; releasing the key clears the bit.
-- **Save / Load state, Reset, Power cycle, Debugger toggle** fire on
-  key-down only.
+- **Pause / Resume, Save / Load state, Reset, Power cycle, Debugger
+  toggle** fire on key-down only.
 - **Rewind** is held: while `F5` is held, the emulator walks backwards
   through the rewind ring one frame per redraw. Releasing resumes
   forward play.

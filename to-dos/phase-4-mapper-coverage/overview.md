@@ -1,5 +1,13 @@
 # Phase 4 — Mapper Coverage
 
+> **Status (v1.0.0): delivered (and far exceeded).** The original target was the
+> top-25 mappers; the v1.0.0 engine ships **51 mapper families** — MMC1-5, the
+> full VRC line, FME-7, Namco 163, the expansion-audio mappers (VRC6, VRC7 OPLL
+> FM, Sunsoft 5B, Namco 163, MMC5), plus the Vs./PlayChoice-10 RGB boards — with
+> MMC3 IRQ accuracy validated. This overview is retained as development history —
+> see [`ROADMAP.md`](../ROADMAP.md) for current status. (The ~300-mapper long
+> tail is a post-1.0.0 forward item.)
+
 ## Goal
 
 Implement MMC3 (with cycle-accurate IRQ counter), then sweep through the rest of the top-25 mapper list including the audio-extension mappers (VRC6, Sunsoft 5B, Namco 163) and MMC5. By the end of this phase the emulator can run > 95% of the licensed library.

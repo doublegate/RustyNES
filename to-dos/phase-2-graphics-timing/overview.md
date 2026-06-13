@@ -1,5 +1,11 @@
 # Phase 2 — Graphics + Timing
 
+> **Status (v1.0.0): delivered.** The v1.0.0 engine ships the dot-resolution
+> lockstep PPU (the master clock), background + sprite pipelines, sprite-zero /
+> overflow accuracy, the loopy v/t/x/w scroll model, and the simple no-IRQ
+> mappers — passing the blargg PPU suites. This overview is retained as
+> development history — see [`ROADMAP.md`](../ROADMAP.md) for current status.
+
 ## Goal
 
 Bring the 2C02 PPU online: register interface, background rendering, sprite evaluation and rendering, sprite-zero hit, the loopy v/t/x/w scroll model, and the lockstep scheduler. Implement the simple no-IRQ mappers so the PPU can be exercised by real homebrew. By the end of this phase the emulator can render correct video for NROM, UxROM, AxROM, CNROM, GxROM, and MMC1 titles, with all blargg PPU test ROMs passing.

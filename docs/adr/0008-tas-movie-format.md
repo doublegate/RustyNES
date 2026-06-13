@@ -2,7 +2,7 @@
 
 **Status:** Accepted (v1.4.0 Sprint 4.1).
 **Date:** 2026-05-24
-**Author:** RustyNES v2 maintainers
+**Author:** RustyNES maintainers
 **Supersedes:** None.
 **Relates to:** ADR 0003 (save-state migration policy) — the movie format
 embeds the `.rns` save-state blob as one of its two "start point" variants,
@@ -25,14 +25,14 @@ deltas, no frame hashes, no random-seed capture beyond what the start point
 already pins down — replaying the recorded inputs from the recorded start
 point re-derives every pixel and sample bit-for-bit.
 
-This sprint lands the *core* infrastructure in `nes-core` only (a versioned
+This sprint lands the *core* infrastructure in `rustynes-core` only (a versioned
 container, a `MovieRecorder` + `MoviePlayer`, and the per-frame input hook).
 The frontend UI (record/stop hotkeys, on-screen frame counter, the input
 display, branch tree visualisation) is Sprint 4.2.
 
 ### Constraints
 
-- `nes-core` is `#![no_std] + alloc`. The movie module MUST compile on the
+- `rustynes-core` is `#![no_std] + alloc`. The movie module MUST compile on the
   `thumbv7em-none-eabihf` CI target. No `std`, no system time, no RNG, no
   threads, no float nondeterminism anywhere in the movie path.
 - The container must be self-describing and versioned so a future
@@ -60,7 +60,7 @@ Sources consulted:
 
 A compact, versioned **binary** container, `.rnm` ("RustyNES Movie"), built
 on the same `BinWriter` / `BinReader` primitives and section discipline as
-the `.rns` save-state container (`crates/nes-core/src/save_state.rs`).
+the `.rns` save-state container (`crates/rustynes-core/src/save_state.rs`).
 
 ### On-wire layout
 
@@ -136,8 +136,8 @@ this sprint; only the UI/tree visualisation is deferred.
 
 ### no_std / SHA-256 decision
 
-**Chosen: `nes-core` computes and stores the full 32-byte hash itself.**
-`nes-core` already depends on `sha2` and already computes `rom_sha256` at
+**Chosen: `rustynes-core` computes and stores the full 32-byte hash itself.**
+`rustynes-core` already depends on `sha2` and already computes `rom_sha256` at
 `Nes::from_rom` time (`nes.rs:76`); the `std` cargo feature forwards to
 `sha2/std` while the default-features-off build uses `sha2`'s no_std mode
 (proven by the existing `thumbv7em-none-eabihf` gate). The movie format
@@ -217,7 +217,7 @@ local slot file.
 
 ## Test plan
 
-Implemented in `crates/nes-core/src/movie.rs` (`#[cfg(test)]`) and the
+Implemented in `crates/rustynes-core/src/movie.rs` (`#[cfg(test)]`) and the
 workspace integration suite:
 
 1. **Determinism round-trip**: record a fixed synthetic input sequence on a

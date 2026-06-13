@@ -127,9 +127,9 @@ Sorted by number of commercial titles using each mapper.
 | 69 | — | Sunsoft FME-7 | 4 | yes (5B, landed) | CPU | banking+IRQ+audio landed (Phase 4 / S3 + Track C2 / Phase 2.1) | Gimmick!  Sunsoft 5B = YM2149F clone: 3 squares + 32-step envelope generator + 17-bit LFSR noise.  Two-write protocol via `$C000-$DFFF` (address latch) and `$E000-$FFFF` (data); audio gated behind the `mapper-audio` cargo feature. |
 | 71 | — | Camerica BF9093 | 4 | — | — | landed (Phase 4 / S2) | Codemasters titles. |
 | 75 | — | VRC1 | 4 | — | — | landed (Phase 4 / S2) | Konami. |
-| 85 | — | VRC7 | 5 | yes (FM, landed) | CPU | banking+IRQ+**OPLL FM audio landed (v1.1.0)** | Lagrange Point (JP). Banking + CPU-cycle IRQ identical to VRC6's. OPLL FM via the clean-room `emu2413` port (`crates/rustynes-apu/src/opll.rs`, MIT; ADR-0006 supersedes ADR-0004). |
+| 85 | — | VRC7 | 5 | yes (FM, landed) | CPU | banking+IRQ+**OPLL FM audio landed** | Lagrange Point (JP). Banking + CPU-cycle IRQ identical to VRC6's. OPLL FM via the clean-room `emu2413` port (`crates/rustynes-apu/src/opll.rs`, MIT; ADR-0006 supersedes ADR-0004). |
 
-### v2.1.0 additions + v2.4.0 long-tail (14 families, 25 → 39)
+### First long-tail batch (14 families, 25 → 39)
 
 Spec-implemented from the nesdev wiki with register/IRQ/nametable unit tests +
 boot-smoke (no redistributable behavioral fixtures exist for these boards).
@@ -150,13 +150,13 @@ boot-smoke (no redistributable behavioral fixtures exist for these boards).
 | 119 | — | TQROM | — | A12 | Pin\*Bot, High Speed. MMC3 + mixed CHR (64K CHR-ROM + 8K CHR-RAM; bank bit 6 = RAM select). |
 | 210 | 1,2 | Namco 175 / 340 | — | — | Famista variants. Submapper-split banking/mirroring; no IRQ. |
 
-### v2.6.0 additions (4 families, 39 → 43)
+### Second long-tail batch (4 families, 39 → 43)
 
 Spec-implemented from the nesdev wiki with register/bank unit tests. Mapper 99
 is the headline: it is the robust, mapper-driven Vs. System signal (no licensed
 home game uses it), so detecting it forces `ConsoleType::VsSystem` + the 2C03
 RGB PPU at parse time — finally enabling in-game RGB-PPU verification of the
-v2.5.0 RGB device.
+RGB device.
 
 | iNES | Submapper | Name | Audio | IRQ | Notes |
 |------|-----------|------|-------|-----|-------|
@@ -165,7 +165,7 @@ v2.5.0 RGB device.
 | 99 | — | **Nintendo Vs. System** | — | — | **Vs. Excitebike, Vs. Clu Clu Land.** Fixed PRG (8/16/32K) + 8K CHR bank from `$4016` bit 2. Forces Vs. System + 2C03 RGB PPU (mapper-driven, immune to the byte-7 trap). |
 | 152 | — | Bandai 74161/161 (1-screen) | — | — | Arkanoid II, Pocket Zaurus. UxROM-like (PRG bits 4-6, CHR bits 0-3) + bit-7 software 1-screen select. |
 
-### v2.6.0 long-tail batch 2 (5 families, 43 → 48)
+### Third long-tail batch (5 families, 43 → 48)
 
 Five more spec-implemented licensed boards (nesdev wiki), each with register/bank
 unit tests and a commercial-ROM visual survey via `coverage_smoke`. Mapper 48 is
@@ -177,10 +177,10 @@ TC0190 banking shape.
 | 32 | 1 = Major League | Irem G-101 | — | — | Image Fight, Major League, Kaiketsu Yancha Maru 2, Magical Pop's. 2x8K PRG with a `$9000` swap-mode bit + 8x1K CHR + software H/V mirroring. Submapper 1 (Major League) hard-wires single-screen A and ignores the `$9000` mirroring bit. |
 | 48 | — | Taito TC0690 | — | **A12 scanline** | Don Doko Don 2, Flintstones 2, Jetsons, Bakushou!! Jinsei Gekijou 3. TC0190 banking + an MMC3-style A12 IRQ (`$C000` latch = `value ^ 0xFF`, `$C001` reload, `$C002`/`$C003` enable/disable) + `$E000` bit-6 mirroring. The TC0690 has a 1-CPU-cycle IRQ-assert delay vs MMC3 that is **not** modelled exactly (the MMC3 A12 counter is used as-is — close enough for every licensed game). |
 | 87 | — | Jaleco/Konami CNROM-style | — | — | Argus, Choplifter, The Goonies, City Connection. Fixed PRG + one bit-swapped 8K CHR-bank register in the `$6000-$7FFF` window: `bank = ((v >> 1) & 1) \| ((v << 1) & 2)`. |
-| 89 | — | Sunsoft-2 (Sunsoft-3 board) | — | — | Tenka no Goikenban: Mito Koumon. One `$8000-$FFFF` register: PRG bits 4-6, CHR `((v>>3)&1)<<3 \| (v&7)` (bit 3 = A16), bit 7 = one-screen A/B select; last 16K PRG fixed. ⚠️ **Mito Koumon (the only iNES mapper-89 dump on hand) renders blank** — see `docs/compatibility.md`. |
+| 89 | — | Sunsoft-2 (Sunsoft-3 board) | — | — | Tenka no Goikenban: Mito Koumon. One `$8000-$FFFF` register: PRG bits 4-6, CHR `((v>>3)&1)<<3 \| (v&7)` (bit 3 = A16), bit 7 = one-screen A/B select; last 16K PRG fixed. Note: **Mito Koumon (the only iNES mapper-89 dump on hand) renders blank** — see `docs/compatibility.md`. |
 | 184 | — | Sunsoft-1 | — | — | Atlantis no Nazo, The Wing of Madoola, Kid Niki. Fixed PRG + two 4K CHR banks from one `$6000-$7FFF` register: bits 0-2 @ `$0000`, bits 4-6 @ `$1000`. |
 
-### v2.6.0 long-tail batch 3 — Taito X1 + arcade RGB (3 families, 48 → 51)
+### Fourth long-tail batch — Taito X1 + arcade RGB (3 families, 48 → 51)
 
 Three more spec-implemented licensed boards (nesdev wiki), each with register/bank
 unit tests and a commercial-ROM visual survey via `coverage_smoke`. This batch
@@ -191,13 +191,14 @@ mapper 151 joins mapper 99 as a mapper-driven Vs. signal.
 
 | iNES | Submapper | Name | Audio | IRQ | Notes |
 |------|-----------|------|-------|-----|-------|
-| 80 | — | Taito X1-005 | — | — | Kyonshiizu 2, Kyoto Ryuu no Tera Satsujin Jiken. A `$7EF0-$7EFF` register window: two 2K CHR banks (`value & 0xFE`, each driving a pair of adjacent 1K slots) + four 1K CHR banks, two switchable 8K PRG banks (last two fixed), `$7EF6` bit-0 H/V mirroring, plus an on-cart 128-byte battery RAM at `$7F00-$7FFF` enabled only after writing `$A3` to **both** `$7EF8` and `$7EF9`. No IRQ. ⚠️ Kyonshiizu 2 boots blank on this dump; Kyoto Ryuu renders its full title (visually verified). |
+| 80 | — | Taito X1-005 | — | — | Kyonshiizu 2, Kyoto Ryuu no Tera Satsujin Jiken. A `$7EF0-$7EFF` register window: two 2K CHR banks (`value & 0xFE`, each driving a pair of adjacent 1K slots) + four 1K CHR banks, two switchable 8K PRG banks (last two fixed), `$7EF6` bit-0 H/V mirroring, plus an on-cart 128-byte battery RAM at `$7F00-$7FFF` enabled only after writing `$A3` to **both** `$7EF8` and `$7EF9`. No IRQ. Note: Kyonshiizu 2 boots blank on this dump; Kyoto Ryuu renders its full title (visually verified). |
 | 82 | — | Taito X1-017 | — | (decoded, unused) | Kyuukyoku Harikiri Koushien / Stadium III. Like the X1-005 plus a **CHR A12-inversion mode bit** (`$7EF6` bit 1 swaps the 2K/1K CHR halves between `$0000-$0FFF` and `$1000-$1FFF` — the non-linear X1-017 quirk), **value-shifted** registers (2K CHR banks `value >> 1`; PRG banks `$7EFA-$7EFC` `value >> 2`, ≤128K addressable), and three independently-protected 8K PRG-RAM sub-regions (`$7EF7`=`$CA`, `$7EF8`=`$69`, `$7EF9`=`$84`). The IRQ surface (`$7EFD-$7EFF`) is decoded but never clocked (the licensed games do not use it). `$7EF6` bit 0: 0 = Horizontal, 1 = Vertical. |
 | 151 | — | **Konami VS (VRC1 on Vs.)** | — | — | **Vs. Gradius, GVS VS. TKO Boxing.** Konami VRC1 silicon (banking byte-identical to mapper 75: three 8K PRG banks `$8000`/`$A000`/`$C000` + fixed last; two 4K CHR windows with `$9000`-driven MSB bits; `$9000` bit 0 = H/V) on a Vs. board. Like mapper 99 it forces `ConsoleType::VsSystem` + the 2C03 RGB PPU (mapper-driven, immune to the byte-7 trap). Verified in-game via Vs. Gradius / Vs. The Goonies (both mapper 151). |
 
-Mapper coverage was staged across Phases 1-4 (the matrix above) and extended in
-v2.1.0 / v2.4.0 / v2.6.0; see `to-dos/ROADMAP.md`. FDS audio is the only remaining
-expansion-audio integration (with FDS, v2.2.0).
+Mapper coverage was staged across Phases 1-4 (the matrix above) and extended
+across the engine lineage in the long-tail batches above (all shipping in
+RustyNES v1.0.0); see `to-dos/ROADMAP.md`. FDS audio shipped as the last
+expansion-audio integration.
 
 ## Edge cases and gotchas
 
@@ -235,5 +236,5 @@ expansion-audio integration (with FDS, v2.2.0).
 
 - **MMC3 default revision** when iNES (no submapper) is detected. Plan: default Sharp (MMC3A) since Star Trek requires it; expose a config override.
 - **Mapper #5 (MMC5) audio scope.** Implementing the 2 extra pulse + raw PCM channels is non-trivial; defer behind a `mmc5-audio` cargo feature.
-- **VRC7 FM audio.** YM2413-derived; only Lagrange Point uses it commercially. Banking + IRQ landed in Track C2 / Phase 2.4 (mapper 85; same `mapper-audio` feature flag as VRC6 / Sunsoft 5B / Namco 163 / MMC5). **The FM synthesizer landed in v1.1.0** via a clean-room pure-Rust port of `emu2413 v1.5.9` (MIT) at `crates/rustynes-apu/src/opll.rs`; ADR 0006 (`docs/adr/0006-vrc7-audio-landed.md`) supersedes the ADR 0004 deferral. *Lagrange Point* plays with in-game audio (mixed via the `mapper-audio` slot).
+- **VRC7 FM audio.** YM2413-derived; only Lagrange Point uses it commercially. Banking + IRQ landed in Track C2 / Phase 2.4 (mapper 85; same `mapper-audio` feature flag as VRC6 / Sunsoft 5B / Namco 163 / MMC5). **The FM synthesizer landed** via a clean-room pure-Rust port of `emu2413 v1.5.9` (MIT) at `crates/rustynes-apu/src/opll.rs`; ADR 0006 (`docs/adr/0006-vrc7-audio-landed.md`) supersedes the ADR 0004 deferral. *Lagrange Point* plays with in-game audio (mixed via the `mapper-audio` slot).
 - **Pirate / multicart mappers.** 60+ exist; none in initial scope. Architecture supports adding them but no commitment.

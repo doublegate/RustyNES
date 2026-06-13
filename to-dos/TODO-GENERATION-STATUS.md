@@ -1,5 +1,11 @@
 # TODO File Generation Status
 
+> **Historical (2025-12-19) — SUPERSEDED by the v1.0.0 synthesis.** This tracked
+> TODO-file generation for the parent emulator's "Phase 1 (MVP)" six-milestone
+> plan (now under `archive/legacy-v0.8-todos/`). The current phase/sprint tree is
+> indexed by [`README.md`](./README.md) and [`ROADMAP.md`](./ROADMAP.md);
+> RustyNES ships at v1.0.0. Body retained verbatim as history.
+
 **Generated:** 2025-12-19
 **Phase:** Phase 1 (MVP)
 **Status:** Overview Files Complete, Sprint Files Partially Complete

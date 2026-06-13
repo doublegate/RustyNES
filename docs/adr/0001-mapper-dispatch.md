@@ -2,7 +2,7 @@
 
 **Status:** Accepted (v0.9.0).
 **Date:** 2026-05-10
-**Author:** RustyNES v2 maintainers
+**Author:** RustyNES maintainers
 **Numbering note:** This ADR is numbered 0001 because mapper dispatch
 came up first historically (in the Phase 4 sprint planning, before the
 IRQ-timing rework was scoped). ADR 0002 (`irq-timing-coordination.md`)
@@ -14,10 +14,10 @@ numbers.
 
 ## Context
 
-`crates/nes-mappers` ships 14 distinct mappers (NROM, MMC1, MMC2-5,
+`crates/rustynes-mappers` ships 14 distinct mappers (NROM, MMC1, MMC2-5,
 UxROM, CNROM, AxROM, GxROM, Color Dreams, CPROM, M34, Camerica, VRC1,
 VRC2/4, VRC6, FME-7, Namco 163) per `docs/STATUS.md` §"Mapper coverage".
-Every mapper implements the `Mapper` trait (`crates/nes-mappers/src/mapper.rs`):
+Every mapper implements the `Mapper` trait (`crates/rustynes-mappers/src/mapper.rs`):
 
 ```rust
 pub trait Mapper: Send {
@@ -32,7 +32,7 @@ pub trait Mapper: Send {
 }
 ```
 
-`LockstepBus` (`crates/nes-core/src/bus.rs`) owns the active mapper as
+`LockstepBus` (`crates/rustynes-core/src/bus.rs`) owns the active mapper as
 a `Box<dyn Mapper>` and dispatches every memory access through it.
 
 There are two reasonable shapes for this dispatch:
@@ -79,7 +79,7 @@ after Phase 4 profiling."*
 
 **Stay with `Box<dyn Mapper>`** as of v0.9.0.
 
-The Track B6 bench (`crates/nes-mappers/benches/mapper_dispatch.rs`)
+The Track B6 bench (`crates/rustynes-mappers/benches/mapper_dispatch.rs`)
 produced the following baseline on the development host:
 
 | Mapper | Per 1024 `cpu_read` calls | Notes |
@@ -114,7 +114,7 @@ new mappers, and require a non-trivial refactor of the bus's
 ### Positive
 
 - Adding a new mapper is a 2-file change: implement the trait in a new
-  module under `crates/nes-mappers/src/`, then add a `match` arm in
+  module under `crates/rustynes-mappers/src/`, then add a `match` arm in
   `parse()`. Both are localized.
 - The `Mapper` trait is documented + stable; downstream extensions can
   implement their own mappers without forking.
@@ -163,9 +163,9 @@ Until then: `Box<dyn Mapper>` stands.
 
 ## References
 
-- B6 bench evidence: `crates/nes-mappers/benches/mapper_dispatch.rs`.
+- B6 bench evidence: `crates/rustynes-mappers/benches/mapper_dispatch.rs`.
 - Performance baselines: `docs/performance.md` §"Measured baselines
   (v0.9.0, Track B6)".
-- Mapper trait: `crates/nes-mappers/src/mapper.rs`.
-- Bus mapper field: `crates/nes-core/src/bus.rs`.
+- Mapper trait: `crates/rustynes-mappers/src/mapper.rs`.
+- Bus mapper field: `crates/rustynes-core/src/bus.rs`.
 - CLAUDE.md open question that this ADR resolves.

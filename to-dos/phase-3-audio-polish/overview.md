@@ -1,5 +1,11 @@
 # Phase 3 — Audio + Polish
 
+> **Status (v1.0.0): delivered.** The v1.0.0 engine ships the full 2A03 APU —
+> all five channels, the frame counter, the lookup-table non-linear mixer, the
+> analog-style filter chain, band-limited polyphase-BLEP synthesis, and DMC DMA.
+> This overview is retained as development history — see
+> [`ROADMAP.md`](../ROADMAP.md) for current status.
+
 ## Goal
 
 Implement the 2A03 APU: all five channels, the frame counter, the lookup-table nonlinear mixer, the analog-style filter chain, and band-limited sample emission. Add DMC DMA and the documented register-readout bug. By the end of this phase the emulator produces correct audio for any title using only the on-board APU.

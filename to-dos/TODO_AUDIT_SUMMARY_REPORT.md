@@ -1,5 +1,12 @@
 # RustyNES TODO Audit and Test ROM Plan Summary Report
 
+> **Historical (2025-12-19) — SUPERSEDED by the v1.0.0 synthesis.** This audit
+> describes the parent emulator's M4/M5-milestone TODO tree and test-ROM
+> inventory as they stood in December 2025; that structure has since been
+> replaced by the cycle-accurate v1.0.0 engine and its `rustynes-*` crates +
+> `tests/roms/` layout. For current status see [`ROADMAP.md`](./ROADMAP.md) and
+> `docs/STATUS.md`. Body retained verbatim as history.
+
 **Date**: December 19, 2025
 **Session**: Multi-Phase Comprehensive Audit and Planning
 **Status**: All Phases Complete

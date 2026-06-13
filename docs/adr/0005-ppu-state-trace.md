@@ -2,7 +2,7 @@
 
 **Status:** Accepted (Session-10 observability tooling, 2026-05-20).
 **Date:** 2026-05-20
-**Author:** RustyNES v2 maintainers
+**Author:** RustyNES maintainers
 **Pairs with:** ADR 0002 §"Test fixture" (per-CPU-cycle IRQ trace
 infrastructure pattern this ADR mirrors at the PPU level).
 
@@ -34,7 +34,7 @@ the next step:
 
 The same pattern (per-CPU-cycle bus snapshot, gated on a cargo
 feature, linear capacity-bounded buffer, integration-test consumer)
-unblocked Phase B4 of Track C1 (`crates/nes-core/src/irq_trace.rs`)
+unblocked Phase B4 of Track C1 (`crates/rustynes-core/src/irq_trace.rs`)
 and produced the empirical evidence ADR 0002 §"Empirical refinement
 (2026-05-14, post-Phase-A + Phase-B4-attempt)" rests on. Recreating
 that pattern at the PPU level is the infrastructure deliverable.
@@ -47,12 +47,12 @@ from the same input.
 ## Decision
 
 Add a **new cargo feature `ppu-state-trace`** (off by default) in
-`crates/nes-ppu/Cargo.toml` and `crates/nes-core/Cargo.toml`. When
+`crates/rustynes-ppu/Cargo.toml` and `crates/rustynes-core/Cargo.toml`. When
 the feature is OFF (the default for CI, commercial-ROM oracle, and
 every standard workspace test run), the recording code is entirely
 dead via `#[cfg(feature = "ppu-state-trace")]` gates inside
 `Ppu::tick` and around the storage field on the `Ppu` struct.
-Verified: the default `cargo check -p nes-ppu` build is unchanged.
+Verified: the default `cargo check -p rustynes-ppu` build is unchanged.
 
 When the feature is ON:
 
@@ -77,7 +77,7 @@ When the feature is ON:
      `PPU_TRACE_SCHEMA_VERSION` for any incompatible change.
    * **CSV**: human-readable, one row per record, header line first.
      Same column order as the binary layout.
-5. A companion CLI `ppu_trace_diff` (under `crates/nes-test-harness/src/bin/`,
+5. A companion CLI `ppu_trace_diff` (under `crates/rustynes-test-harness/src/bin/`,
    feature-gated) reads two binary traces, aligns by record index,
    reports first or all per-field divergences, optionally skips
    fields by name. Designed to compare a RustyNES capture against
@@ -234,10 +234,10 @@ out of scope. The infrastructure is considered done when:
 
 1. `cargo test --workspace --features test-roms` is byte-identical
    to pre-Session-10 (537 strict + 5 ignored).
-2. `cargo test -p nes-test-harness --features
+2. `cargo test -p rustynes-test-harness --features
    test-roms,ppu-state-trace --test ppu_state_trace_fixture`
    produces a parsable binary trace and a CSV preview.
-3. `cargo build -p nes-test-harness --features ppu-state-trace
+3. `cargo build -p rustynes-test-harness --features ppu-state-trace
    --bin ppu_trace_diff` produces a working CLI that diffs two
    binary traces.
 4. `scripts/mesen2_ppu_trace.lua` is documented + parseable but
@@ -267,12 +267,12 @@ first such addition lands.
 
 ## References
 
-* `crates/nes-ppu/src/state_trace.rs` — recorder + schema.
-* `crates/nes-ppu/src/ppu.rs` — `enable_state_trace` /
+* `crates/rustynes-ppu/src/state_trace.rs` — recorder + schema.
+* `crates/rustynes-ppu/src/ppu.rs` — `enable_state_trace` /
   `take_state_trace` / `build_state_record` API + per-tick hook.
-* `crates/nes-test-harness/tests/ppu_state_trace_fixture.rs` —
+* `crates/rustynes-test-harness/tests/ppu_state_trace_fixture.rs` —
   integration test fixture.
-* `crates/nes-test-harness/src/bin/ppu_trace_diff.rs` — diff CLI.
+* `crates/rustynes-test-harness/src/bin/ppu_trace_diff.rs` — diff CLI.
 * `scripts/mesen2_ppu_trace.lua` — Mesen2 Lua reference-trace
   emitter.
 * `docs/ppu-trace-tooling.md` — usage guide.

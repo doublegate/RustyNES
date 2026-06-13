@@ -3,7 +3,40 @@
 **Version:** 1.0.0
 **Project:** RustyNES - Next-Generation NES Emulator in Rust
 **Document Generated:** 2025-12-18
-**Status:** Comprehensive Design Specification
+**Status:** Comprehensive Design Specification (design history)
+
+---
+
+> **Status (v1.0.0 — what shipped).** This is the original aspirational design
+> specification, retained as design history. RustyNES v1.0.0 was ultimately
+> realized by transplanting the cycle-accurate engine developed across the
+> upstream engine lineage (its v2.0–v2.8 line) and porting the polished UX shell
+> onto it. Reconcile this document against the shipped reality:
+>
+> - **Frontend stack as shipped:** winit 0.30 + wgpu + egui 0.29 + cpal, with a
+>   dedicated emulation thread (default `emu-thread` feature), a synchronous path
+>   (`--no-default-features`), and WebAssembly (`wasm-winit` / `wasm-canvas`).
+>   This is NOT SDL2 and NOT eframe/glow — see `RustyNES-GUI_Framework-Change.md`
+>   for the superseded framework decision.
+> - **Workspace crates as shipped:** `rustynes-cpu`, `rustynes-ppu`,
+>   `rustynes-apu`, `rustynes-mappers`, `rustynes-core`, `rustynes-frontend`,
+>   plus `rustynes-netplay`, `rustynes-cheevos`, `rustynes-test-harness`. Binary:
+>   `rustynes`. Edition 2021, Rust 1.86 pinned, dual-licensed MIT OR Apache-2.0.
+> - **Accuracy as shipped:** AccuracyCoin 100% (139/139), the 60-ROM + 52-entry
+>   commercial oracles byte-identical, nestest 0-diff. The PPU is the master
+>   clock (lockstep, PPU-dot resolution); determinism is a hard contract.
+> - **Features as shipped:** 51 mapper families, Famicom Disk System (real BIOS),
+>   Vs. System + PlayChoice-10 (RGB PPU), netplay (GGPO-style rollback over UDP +
+>   browser WebRTC, 2-4 players), RetroAchievements (opt-in, native-only), TAS
+>   movie record/playback, save-states, rewind, run-ahead (default 1),
+>   display-sync pacing matrix + audio dynamic-rate-control, an egui debugger
+>   (CPU/PPU/APU/memory/OAM/mapper panels), and a WebAssembly / GitHub-Pages
+>   playable demo. Lua scripting is the one design feature that shipped unbuilt
+>   (post-1.0).
+>
+> The body below is preserved verbatim as the original design rationale; treat
+> its forward-looking claims (300+ mappers, 156-test target, framework choices,
+> Lua, etc.) as design intent, not shipped state.
 
 ---
 

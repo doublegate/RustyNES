@@ -7,7 +7,7 @@ lands the actual FM synthesizer via a clean-room Rust port of
 `emu2413 v1.5.9` (MIT). The historical content below is preserved
 for the v1.0.0-tag audit trail.
 **Date:** 2026-05-13
-**Author:** RustyNES v2 maintainers
+**Author:** RustyNES maintainers
 **Supersedes:** None.
 **Superseded by:** ADR 0006 (2026-05-25).
 **Relates to:** ADR 0003 (Save-state Cross-version Migration Policy) for
@@ -110,7 +110,7 @@ silent on load).
 - No GPL contamination of the workspace. The repository keeps its
   permissive (MIT-or-Apache-2.0) license shape.
 - No C build dependency added. The `no_std + alloc` migration (Track
-  C5) stays clean — `cargo build -p nes-core --target
+  C5) stays clean — `cargo build -p rustynes-core --target
   thumbv7em-none-eabihf --no-default-features` continues to work.
 - The audit table above documents the rationale so a future
   contributor does not re-evaluate the same six crates and reach the

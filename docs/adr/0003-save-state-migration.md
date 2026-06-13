@@ -2,7 +2,7 @@
 
 **Status:** Accepted (in force since save-states shipped; ADR 0008 `.rnm` builds on it).
 **Date:** 2026-05-11
-**Author:** RustyNES v2 maintainers
+**Author:** RustyNES maintainers
 **Supersedes:** None.
 **Numbering note:** Third in the docs/adr/ sequence (after 0001 mapper
 dispatch, 0002 IRQ timing coordination). This ADR formalizes a policy that
@@ -12,7 +12,7 @@ was implicit in the codebase since Phase 5 Sprint 2 but never written down.
 
 ## Context
 
-The `.rns` save-state container (`crates/nes-core/src/save_state.rs`) is a
+The `.rns` save-state container (`crates/rustynes-core/src/save_state.rs`) is a
 tagged-section format. The 16-byte header (`MAGIC` + `FORMAT_VERSION` +
 truncated ROM SHA-256) is followed by an ordered list of sections; each
 section is `tag(4) || version(1) || length(u32 le) || body`. Tags currently
@@ -27,7 +27,7 @@ documented anywhere. Concrete versioning bumps so far:
 | `PPU ` | 1 | Stable since Sprint 2. |
 | `APU ` | 1 | Stable since Sprint 2. |
 | `BUS ` | 1 | Stable since Sprint 2. |
-| `MAP ` | 1 → **3** | MMC5 bumped 2→3 in v0.9.0 (vertical split-screen + ExGrafix + dual sprite/BG CHR state). Other mappers still 1. The `MAP ` body itself is opaque to `nes-core`; per-mapper version bytes live inside it. |
+| `MAP ` | 1 → **3** | MMC5 bumped 2→3 in v0.9.0 (vertical split-screen + ExGrafix + dual sprite/BG CHR state). Other mappers still 1. The `MAP ` body itself is opaque to `rustynes-core`; per-mapper version bytes live inside it. |
 
 `CLAUDE.md` says: "cross-version compatibility is best-effort, not
 guaranteed." That's the current state -- but it leaves callers (frontend
@@ -149,7 +149,7 @@ preview thumbnails. Per this policy, it is:
 
 ## Compatibility test plan
 
-A unit test in `crates/nes-core/src/nes.rs` (`thumbnail_section_optional` or
+A unit test in `crates/rustynes-core/src/nes.rs` (`thumbnail_section_optional` or
 similar) confirms a v0.9.0-shaped blob (no `THM ` section) round-trips
 through the v1.x-shaped reader. The reader walks the section list, finds the
 THM section absent, and gives the caller `None` for the thumbnail.

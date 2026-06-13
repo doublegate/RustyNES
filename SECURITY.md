@@ -2,14 +2,13 @@
 
 ## Supported Versions
 
-RustyNES is currently in pre-release development. Security updates will be provided for the following versions:
+RustyNES is at its first stable release, **v1.0.0**. Security updates are provided for the following versions:
 
 | Version | Supported          |
 | ------- | ------------------ |
 | main    | :white_check_mark: |
+| 1.0.x   | :white_check_mark: |
 | < 1.0   | :x:                |
-
-Once v1.0.0 is released, this policy will be updated to reflect long-term support commitments.
 
 ## Security Considerations for Emulators
 
@@ -33,7 +32,7 @@ Save states contain serialized emulator state that could be crafted maliciously:
 
 ### Network Features (Netplay)
 
-When netplay is implemented (Phase 2), additional attack vectors exist:
+RustyNES ships rollback netplay (UDP native + WebRTC browser), which introduces additional attack vectors:
 
 - **Denial of service**: Rate limiting and connection validation required
 - **State manipulation**: All netplay state must be validated and checksummed
@@ -41,7 +40,7 @@ When netplay is implemented (Phase 2), additional attack vectors exist:
 
 ### Scripting (Lua)
 
-The Lua scripting interface (Phase 2) provides powerful automation but requires sandboxing:
+A Lua scripting interface is a candidate post-1.0 feature; if added it would provide powerful automation but require sandboxing:
 
 - **Filesystem access**: Restrict or audit all file operations
 - **Network access**: Block or require explicit permission for network calls
@@ -210,19 +209,17 @@ RustyNES has not yet undergone a formal security audit. Community security revie
 
 ### Planned Security Measures
 
-- **Fuzzing**: Implement fuzz testing for ROM parsers (Phase 2)
 - **Static Analysis**: Integrate cargo-audit and cargo-deny in CI
 - **WASM Sandboxing**: Ensure WASM builds have no local filesystem access
 - **Dependency Scanning**: Automated dependency vulnerability scanning
-- **Memory Safety**: Minimize unsafe code, audit all FFI boundaries
 
 ### Current Security Posture
 
-- **Language**: Rust provides memory safety by default
-- **Unsafe Code**: Minimized to FFI boundaries (rcheevos, platform APIs)
-- **Fuzzing**: Not yet implemented
-- **Dependency Scanning**: Planned for CI integration
-- **Security Testing**: Ad-hoc, not formalized
+- **Language**: Rust provides memory safety by default; the chip stack is `#![no_std]` + `alloc`.
+- **Unsafe Code**: Minimized to FFI boundaries (rcheevos in `rustynes-cheevos`) and one native priority hook, each guarded by a `// SAFETY:` comment.
+- **Fuzzing**: cargo-fuzz harnesses exist for cartridge / CPU / mapper-write parsing.
+- **Dependency Scanning**: Planned for CI integration.
+- **Security Testing**: Ad-hoc, not formalized.
 
 ---
 

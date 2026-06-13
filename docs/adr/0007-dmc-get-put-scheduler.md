@@ -5,7 +5,7 @@ engine** (`unified_dma_cycle`) replaced this model; the `dmc-get-put-scheduler`
 feature flag and its `dmc_get_put_equivalence.rs` test were removed in v2.0.1
 along with the rest of the legacy scheduler. Retained as a historical record.
 **Date:** 2026-05-26
-**Author:** RustyNES v2 maintainers
+**Author:** RustyNES maintainers
 **Relates to:**
 - [ADR 0002 — IRQ Timing Coordination](0002-irq-timing-coordination.md) (the
   `cpu-implied-dummy-reads` companion feature that motivated this work)
@@ -106,19 +106,19 @@ default-off path while making the new model available for iteration.
 `dmc-get-put-scheduler` cargo feature flag (default-off).**
 
 The flag propagates through three crates:
-- `nes-apu/dmc-get-put-scheduler` — APU-side state for the new flags
+- `rustynes-apu/dmc-get-put-scheduler` — APU-side state for the new flags
   (`Apu::dmc_need_halt`, `Apu::dmc_need_dummy_read`); always-present
   fields (not `#[cfg]`-gated) so the snapshot wire format is forward-
   compatible with a future default-on flip.
-- `nes-core/dmc-get-put-scheduler = ["nes-apu/dmc-get-put-scheduler"]`
+- `rustynes-core/dmc-get-put-scheduler = ["rustynes-apu/dmc-get-put-scheduler"]`
   — bus-side scheduler implementation (`#[cfg]`-gated; the OLD
   scheduler lives in the `#[cfg(not(feature = ...))]` branch).
-- `nes-test-harness/dmc-get-put-scheduler = ["nes-core/..."]` — for the
+- `rustynes-test-harness/dmc-get-put-scheduler = ["rustynes-core/..."]` — for the
   parallel-implementation equivalence harness.
 
 ### Get/put scheduler shape
 
-The new `nes-core::bus::service_dmc_dma` (under the feature):
+The new `rustynes-core::bus::service_dmc_dma` (under the feature):
 
 ```rust
 loop {
@@ -160,7 +160,7 @@ feature-gated; the OLD compensating-delay loops are preserved as the
 
 Two artifacts in Sprint 3.3:
 
-- **`crates/nes-test-harness/tests/dmc_get_put_equivalence.rs`** —
+- **`crates/rustynes-test-harness/tests/dmc_get_put_equivalence.rs`** —
   Rust CI gate, gated on
   `#![cfg(all(feature = "test-roms", feature = "dmc-get-put-scheduler"))]`.
   Two tests:
@@ -255,7 +255,7 @@ into v2.0 Sprint A's master-clock refactor.
 The equivalence harness is the iteration vehicle:
 
 ```text
-edit crates/nes-core/src/bus.rs::service_dmc_dma{,_during_oam}
+edit crates/rustynes-core/src/bus.rs::service_dmc_dma{,_during_oam}
 cargo test --features test-roms,dmc-get-put-scheduler \
     --test dmc_get_put_equivalence -- --ignored
 # watch matching count climb 6 → 10
@@ -331,13 +331,13 @@ mis-calibrated.
   - `Core/NES/NesCpu.cpp::StartDmcTransfer` (line 527) — flag arming
   - `Core/NES/NesCpu.h:41` — `_needHalt`/`_needDummyRead` field declaration
 * **Source files (this repo)**:
-  - `crates/nes-apu/src/apu.rs` — `Apu::dmc_need_halt`,
+  - `crates/rustynes-apu/src/apu.rs` — `Apu::dmc_need_halt`,
     `Apu::dmc_need_dummy_read` + flag arming/clearing wiring
-  - `crates/nes-core/src/bus.rs::service_dmc_dma` (base path,
+  - `crates/rustynes-core/src/bus.rs::service_dmc_dma` (base path,
     `#[cfg]`-gated)
-  - `crates/nes-core/src/bus.rs::service_dmc_dma_during_oam`
+  - `crates/rustynes-core/src/bus.rs::service_dmc_dma_during_oam`
     (OAM-conflict path, `#[cfg]`-gated)
-  - `crates/nes-test-harness/tests/dmc_get_put_equivalence.rs`
+  - `crates/rustynes-test-harness/tests/dmc_get_put_equivalence.rs`
   - `scripts/dmc_equivalence_harness.sh`
 * **External reference**:
   - nesdev wiki §DMA — get/put cycle terminology and alignment rules

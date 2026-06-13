@@ -21,6 +21,10 @@ also edit it by hand.
 The complete `config.toml`, with every key set to its default:
 
 ```toml
+[input]
+run_ahead = 1     # speculative frames to hide input lag (0..=3)
+four_score = false  # enable the Four Score 4-player adapter
+
 [input.player1]
 up = "ArrowUp"
 down = "ArrowDown"
@@ -64,6 +68,7 @@ start = "Start"
 axis_deadzone = 0.5
 
 [input.system]
+pause = "Space"
 quit = "Escape"
 save_state = "F1"
 load_state = "F4"
@@ -93,6 +98,8 @@ ntsc_filter = "off"
 
 [audio]
 sample_rate = 44100
+latency_ms = 60
+drc = true
 
 [ui]
 theme = "dark"                    # "light" | "dark" | "system"
@@ -132,26 +139,36 @@ analog stick must deflect before it counts as a D-pad press. The default
 is the Xbox-style layout in [Controls](./controls.md#gamepads). The first
 physical pad your OS reports drives Player 1; a second distinct pad drives
 Player 2. Gamepads are native-only (no `gilrs` on the web build). Both
-sections are `#[serde(default)]`, so a pre-v1.6.0 config without them loads
-unchanged with the default layout.
+sections are `#[serde(default)]`, so a config without them loads unchanged
+with the default layout.
 
-### Players 3 & 4 + Four Score (v1.7.0)
+### Players 3 & 4 + Four Score
 
 `[input.player3]` / `[input.player4]` (keyboard) and `[input.gamepad3]` /
 `[input.gamepad4]` (gamepad) mirror the Players 1/2 sections above, and a
 top-level `four_score` key in the `[input]` table (default `false`) enables the
-Four Score 4-player adapter. All are `#[serde(default)]`, so a pre-v1.7.0
-config loads unchanged. Defaults + the in-app toggle are described under
+Four Score 4-player adapter. All are `#[serde(default)]`, so a config without
+them loads unchanged. Defaults + the in-app toggle are described under
 [Controls → Players 3 & 4](./controls.md#players-3--4-four-score).
+
+### `[input] run_ahead`
+
+A top-level `run_ahead` key in the `[input]` table (default `1`, range
+`0..=3`) sets the run-ahead depth — how many frames the emulator
+speculatively runs and discards each frame to hide a game's own internal
+input lag. Pick it live from **Emulation → Run-Ahead ▸** (the value
+persists). `0` disables run-ahead; higher values cost more CPU. Run-ahead
+is automatically suspended during netplay, movie playback, and rewind.
 
 ### `[input.system]`
 
-String-typed fields, each a single key bound to one system action. All
-fields beyond the original seven are `#[serde(default)]`, so a pre-v1.0.0
-config loads unchanged and fills the new binds in:
+String-typed fields, each a single key bound to one system action. Every
+field is `#[serde(default)]`, so an older config missing some binds loads
+unchanged and fills the new ones in:
 
 | Field | Default | Action |
 |-------|---------|--------|
+| `pause` | `Space` | Pause / resume emulation (disabled during a netplay session) |
 | `quit` | `Escape` | Close the window (or leave fullscreen first) |
 | `save_state` | `F1` | Save to the active slot of the current ROM |
 | `load_state` | `F4` | Load the active slot |
@@ -193,14 +210,14 @@ are independent of the rewind ring.
 
 ```toml
 [graphics]
-present_mode = "Fifo"   # default
-ntsc_filter = "off"     # default
+present_mode = "Mailbox"  # default
+ntsc_filter = "off"       # default
 ```
 
 | Field | Type | Default | Accepted values | Notes |
 |-------|------|---------|-----------------|-------|
-| `present_mode` | string | `"Mailbox"` | `"Fifo"`, `"Mailbox"` | Wired since v1.3.1. `"Mailbox"` lets the wall-clock frame pacer own timing (avoids the vsync double-pacing beat); falls back to `"Fifo"` automatically when the backend doesn't advertise Mailbox |
-| `ntsc_filter` | string | `"off"` | `"off"`, `"composite"`, `"rgb"` | `"off"` and `"composite"` are the meaningful settings in v1.0 (see below) |
+| `present_mode` | string | `"Mailbox"` | `"Fifo"`, `"Mailbox"` | `"Mailbox"` lets the wall-clock frame pacer own timing (avoids the vsync double-pacing beat); falls back to `"Fifo"` automatically when the backend doesn't advertise Mailbox |
+| `ntsc_filter` | string | `"off"` | `"off"`, `"composite"`, `"rgb"` | `"off"` and `"composite"` are the meaningful settings (see below) |
 
 The NTSC filter (when set to anything other than `"off"`) runs a
 simplified Blargg-style wgsl post-pass between the PPU framebuffer and
@@ -219,19 +236,23 @@ planned for a later release.
 ```toml
 [audio]
 sample_rate = 44100  # default
+latency_ms = 60      # default
+drc = true           # default
 ```
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
-| `sample_rate` | u32 | `44100` | Preferred sample rate in Hz. The negotiated rate may differ if the audio device refuses 44.1 kHz; the APU is rebuilt at whatever rate the device opens at, so audio still sounds correct |
+| `sample_rate` | u32 | `44100` | Preferred sample rate in Hz. The negotiated rate may differ if the audio device refuses 44.1 kHz; the audio engine is rebuilt at whatever rate the device opens at, so audio still sounds correct |
+| `latency_ms` | u32 | `60` | Target audio-buffer latency in milliseconds. The dynamic-rate-control loop holds the output queue centred on this depth — lower it for tighter latency, raise it if you hear underruns on a loaded system |
+| `drc` | bool | `true` | Dynamic rate control: a 4-tap Hermite resampler micro-bends the playback ratio to keep the queue centred on `latency_ms` without drift. Set `false` for a bit-exact passthrough (the APU's native output, no resampling) |
 
-The APU emits at the negotiated rate directly via band-limited synthesis
-(blip_buf-style), so there is no software resampler in the pipeline — no
-quality loss from rate conversion.
+The APU emits via band-limited synthesis (blip_buf-style); a frontend
+resampler stage then runs dynamic rate control against the live queue
+occupancy. With `drc = false` that stage is a bit-exact passthrough.
 
 ### `[ui]`
 
-The desktop UX shell settings, surfaced under **View → Settings… → Video**
+The desktop UX shell settings, surfaced under **View → Settings… → Display**
 (and the View menu). All three apply live.
 
 ```toml
@@ -269,6 +290,18 @@ max_entries = 10
 A top-level boolean (default `false`). Set to `true` and saved the first
 time the Welcome modal is shown, so it never re-appears. Set it back to
 `false` to see the first-run modal again.
+
+### Feature sections (native-only)
+
+A few additional sections appear only on native builds and only when you
+use the corresponding feature; each is `#[serde(default)]`, so they are
+absent until first written:
+
+| Section / key | Purpose |
+|---------------|---------|
+| `[fds] bios_path` | Path to your user-supplied `disksys.rom` Famicom Disk System BIOS. Set once via the in-app prompt the first time you open a `.fds` image. RustyNES never ships a BIOS |
+| `[netplay]` | Defaults for the netplay lobby — listen port, signaling URL, STUN servers. See [Compatibility](./compatibility.md) for the netplay overview |
+| `[retroachievements]` | Login state for the opt-in, native-only RetroAchievements integration (built only with the `retroachievements` feature). The issued token is persisted here after you log in once |
 
 ## Reload behavior
 

@@ -35,6 +35,7 @@ instead. This subdirectory only covers running the emulator.
 | Z / X           | A / B |
 | Enter           | Start |
 | Right Shift     | Select |
+| Space           | Pause / Resume |
 | F1 / F4         | Save state / Load state (active slot) |
 | F2 / F3         | Reset / Power cycle |
 | F5 (hold)       | Rewind |

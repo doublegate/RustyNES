@@ -1,5 +1,12 @@
 # Phase 1 — Foundation
 
+> **Status (v1.0.0): delivered.** The cycle-accurate engine folded in at v1.0.0
+> supplies the workspace, the iNES + NES 2.0 cartridge parser, and a CPU core
+> that passes nestest with zero diff (all official + unofficial opcodes, exact
+> cycle counts). This overview is retained as development history — see
+> [`ROADMAP.md`](../ROADMAP.md) for current status. (Crates are `rustynes-*`;
+> the binary is `rustynes`.)
+
 ## Goal
 
 Stand up the Cargo workspace with CI on green, implement the iNES + NES 2.0 cartridge parser, and bring the CPU core to nestest-passing parity. By the end of this phase the repository compiles, lints clean, and a `cargo test` invocation runs the nestest golden-log comparison successfully — even though no picture renders and no sound plays yet.

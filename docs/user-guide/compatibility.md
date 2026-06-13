@@ -86,32 +86,31 @@ get correct gameplay speed, correct audio pitch, and the right scanline
 count for any of the three. See [Display and audio](./display-and-audio.md)
 for how the region is determined.
 
-## Known accuracy gaps
+## Accuracy
 
-RustyNES v2 passes the entire blargg `instr_test_v5`, `instr_misc`,
-`instr_timing`, `cpu_timing_test6`, `ppu_open_bus`, `ppu_vbl_nmi`,
-`apu_test`, `apu_mixer`, and `dmc_dma_during_read4` corpora, plus
-nestest with zero golden-log diff over 8,991 instructions, plus
-mmc3_irq_tests in full, plus the kevtris `mmc3_test_2/1`, `/2`, `/3`,
-and `/5` sub-ROMs.
+RustyNES clears the headline accuracy bar in full: the kevtris
+**AccuracyCoin** suite at **100% (139/139)**, **nestest** with zero
+golden-log diff over 8,991 instructions, and the entire blargg
+`instr_test_v5`, `instr_misc`, `instr_timing`, `cpu_timing_test6`,
+`cpu_interrupts_v2`, `ppu_open_bus`, `ppu_vbl_nmi`, `apu_test`,
+`apu_mixer`, and `dmc_dma_during_read4` corpora, plus `mmc3_irq_tests`
+and the kevtris `mmc3_test_2` sub-ROMs. A 60-ROM commercial-ROM oracle
+and a 52-entry extended oracle are tracked byte-identically as
+regression gates (the ROMs themselves are user-supplied, never shipped).
 
-There are four documented sub-tests that still fail. None of them is
-known to break a commercial game, but they are real and worth listing
-honestly:
+This accuracy was developed across the upstream emulation engine's
+v2.0–v2.8 lineage — the cycle-accurate master-clock scheduler, the
+unified DMA engine, and the cpu_interrupts_v2 / MMC3-IRQ closures — and
+ships here at v1.0.0.
 
-| Test | Failure | What it actually means |
-|------|---------|------------------------|
-| `cpu_interrupts_v2/2-nmi_and_brk` ... `/5-branch_delays_irq` | Fail on the first sub-test (`test_jmp`) | The CPU's per-cycle interrupt-sample point is one M2 cycle away from the test's tolerance window. Hardware behavior was investigated; the residual gap is a 1-2 cycle PPU-dot alignment issue inside the bus interleaving, not a fundamental CPU bug |
-| `mmc3_test_2/4-scanline_timing` (sub-test #2) | "Scanline 0 IRQ should occur later when $2000=$08" | MMC3 IRQ-pending visibility likely needs an M2-phase-dependent delay between the A12 rising edge and CPU IRQ poll. Tested constant-cycle pipelines (1 and 2 M2 cycles); both regress other sub-tests in opposite directions |
-| `ppu_vbl_nmi/10-even_odd_timing` (residual sub-tests) | Cycle-precise odd-frame skip semantics | Most sub-tests of this ROM pass; one residual edge case remains around precise PPUMASK pipeline timing |
-| Various dot-precise sprite-zero hit fixtures | Sub-cycle alignment | Edge cases at the start/end of the visible scanline; documented in the implementation notes |
+### Remaining edge cases
 
-These edge cases are tracked in `CHANGELOG.md` under
-"Investigated and rolled back" with full diagnoses. The takeaway: the
-common path (every commercial game we've checked + the headline blargg
-suite + nestest + mmc3_irq_tests + mmc3_test_2 most-sub-tests) is solid.
-The gaps that remain are at sub-CPU-cycle alignment levels and aren't
-known to cause visible bugs in any commercial title.
+One kevtris sub-test, `mmc3_test_2/4-scanline_timing` sub-test #3
+("Scanline 0 IRQ should occur sooner when $2000=$08"), is a known
+1-PPU-clock bracket on the MMC3 A12-to-IRQ discriminator. It is not
+known to affect any commercial game, and the AccuracyCoin battery (which
+exercises the same surface) passes. The full diagnosis lives in the
+project's developer documentation.
 
 If you find a game that misbehaves, please file an issue with the
 exact ROM (sha256), the symptom, and ideally a save state at the
@@ -120,23 +119,30 @@ tracker](https://github.com/doublegate/RustyNES/issues).
 
 ## Other features and limitations
 
-- **USB gamepads supported** — `gilrs` auto-binds an Xbox-style layout to
-  player 1 (South=A, West=B, Start, Back=Select, D-Pad), with an in-app
-  gamepad rebinding UI.
-- **No recent-files menu** — open a ROM via the file dialog or command line.
-- **No fullscreen toggle** — your window manager's keyboard shortcut
-  (`F11` on most Linux desktops, double-click title bar on macOS,
-  `Win+Up` on Windows) usually works.
+- **USB gamepads supported** — `gilrs` auto-binds an Xbox-style layout
+  (South=A, West=B, Start, Back=Select, D-Pad); a second/third/fourth pad
+  auto-binds to Players 2/3/4. Fully rebindable in the in-app input UI.
+- **Recent-files menu** — **File → Open Recent** keeps an MRU list (up to
+  10, persisted); you can also open a ROM via the file dialog (`F12`),
+  drag-and-drop, or the command line.
+- **Fullscreen** — `F11` (or **View → Fullscreen**) toggles borderless
+  fullscreen; `Esc` leaves it. **View → Window Size** scales the game to
+  1x–4x.
 - **Up to four players** — Players 1 & 2 are standard; Players 3 & 4 are
   supported via the **Four Score** adapter (toggle it in the input modal;
   off by default). All four are keyboard- and gamepad-rebindable.
-- **Rollback netplay supported** — 2-4 player GGPO-style rollback over UDP
-  (native) and WebRTC (browser).
-- **Movie recording (TAS) supported** — `.rnm` record/playback with
-  save-state branching (`F6`/`F7`/`F8`).
+- **Vs. System + PlayChoice-10** — supported with RGB-PPU palettes;
+  insert a Vs. coin with `F10`.
+- **Rollback netplay** — 2–4 player GGPO-style rollback over UDP (native)
+  and WebRTC (browser).
+- **Movie recording (TAS)** — `.rnm` record/playback with save-state
+  branching (`F6`/`F7`/`F8`).
+- **RetroAchievements** — opt-in and native-only (built with the
+  `retroachievements` feature).
 - **Cheat support** — Game Genie codes and GameShark-style raw RAM cheats,
-  both in the debugger cheat panel, persisted per-ROM.
-- **No mid-game ROM swap** — quit and relaunch with the new ROM.
+  both in the **Tools → Cheats…** panel, persisted per-ROM.
+- **Mid-game ROM swap** — open a different ROM at any time via
+  **File → Open ROM…** (`F12`), Open Recent, or drag-and-drop.
 
 ## See also
 

@@ -43,7 +43,7 @@ The full blargg + kevtris + community test ROM suite, vendored in `tests/roms/` 
 | CPU reset/power | `cpu_reset` (2) | **Closed (Phase 7 T-71-002):** power-on register dump asserted strictly; full interactive reset protocol `#[ignore]`'d (not headlessly driveable); semantics covered by `Cpu::power_on`/`Nes::reset` unit tests |
 | CPU timing | `cpu_timing_test6`, `instr_timing` (2) | **`instr_timing` closed (Phase 7 T-71-003):** both sub-ROMs strict-pass on the full `Nes` |
 | CPU branches | `branch_timing_tests/*` (3) | All |
-| CPU interrupts | `cpu_interrupts_v2/*` (5) | All except the 3 C1-axis residuals (`#[ignore]`'d, deferred to v2.0) |
+| CPU interrupts | `cpu_interrupts_v2/*` (5) | All except the 3 C1-axis residuals (`#[ignore]`'d, deferred under the ADR-0002 axis) |
 | CPU dummy reads/writes | `cpu_dummy_reads`, `cpu_dummy_writes_*`, `instr_misc` (5) | **`instr_misc` closed (Phase 7 T-71-003):** all 5 strict-pass on the full `Nes` (incl. `04-dummy_reads_apu`) |
 | PPU VBL/NMI | `ppu_vbl_nmi/*` (10) | All |
 | PPU open bus | `ppu_open_bus` | Pass |

@@ -1,5 +1,12 @@
 # Test ROM Acquisition and Validation Workflow - Summary
 
+> **Historical (2025-12-19) — SUPERSEDED by the v1.0.0 synthesis.** A
+> point-in-time summary from the parent emulator's early development; its
+> milestone/sprint framing and `test-roms/` layout predate the current
+> structure. The v1.0.0 engine now passes AccuracyCoin 100% (139/139), nestest
+> 0-diff, and the committed CC0 ROM suite; `docs/STATUS.md` is authoritative.
+> Body retained verbatim as history.
+
 **Date**: 2025-12-19
 **Status**: COMPLETED
 **Execution Time**: ~5 minutes

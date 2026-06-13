@@ -177,7 +177,7 @@ determinism contract guarantees the re-sim matches). New `crates/rustynes-netpla
 seeded RNG, `#![forbid(unsafe_code)]`) + a native frontend (`NetplayUi` + a
 "Netplay" debugger panel; host/join). 22 rustynes-netplay tests (incl. a 600-frame
 two-peer harness proving both peers == a no-rollback reference + a real-UDP
-loopback) + 7 frontend tests. ⚠️ **Native-only** (UDP); 2-player; the single-player
+loopback) + 7 frontend tests. Note: **Native-only** (UDP); 2-player; the single-player
 path is byte-for-byte unchanged. **No accuracy/behaviour change** — AccuracyCoin
 **100.00% (139/139)**, oracle 60/60 byte-identical (netplay is a new crate + a
 native frontend path; no core/chip change). See `CHANGELOG.md` `[2.3.0]` +
@@ -190,7 +190,7 @@ timer IRQ, the disk **read + write** drive, multi-side **eject/insert**, writabl
 `.fds.sav` persistence, and the **2C33 wavetable audio** (behind `mapper-audio`).
 API `Nes::from_disk` (+ frontend `.fds` loading, BIOS prompt, F9 side-swap).
 Workspace `--features test-roms`: 876 → **937 strict + 16 ignored** (56 FDS unit
-tests). ⚠️ **The BIOS is never committed (Nintendo copyright); real-BIOS FDS boot
+tests). Note: **The BIOS is never committed (Nintendo copyright); real-BIOS FDS boot
 is unverified in CI by design** — the device + audio are unit-tested, but in-game
 boot needs a user `disksys.rom`. **No accuracy regression** — AccuracyCoin
 100.00% (139/139), 60-ROM oracle 60/60 byte-identical (FDS is a separate
@@ -451,21 +451,28 @@ ROM dumps under `tests/roms/external/`, not committed):
 | 75 | VRC1 | landed (Phase 4 S2) | — | — | |
 | 85 | VRC7 | landed (Track C2 / Phase 2.4; banking + IRQ) | **landed** (FM synthesis; v1.1.0; ADR-0006 supersedes 0004) | CPU cycle | Lagrange Point (JP). YM2413 OPLL-derived 6-channel FM audio **landed in v1.1.0** via a clean-room pure-Rust port of `emu2413 v1.5.9` (MIT) at `crates/rustynes-apu/src/opll.rs`; *Lagrange Point* plays with in-game audio. Banking + IRQ are identical in shape to VRC6's (mapper 24/26). |
 
-**Mapper count:** 15 distinct mappers covering >95% of the licensed
-library by title count. The remaining ~5% includes FDS, MMC6 audio
-quirks, and a long tail of unlicensed mappers — all explicitly out
-of v1.0.0 scope per `docs/compatibility.md`.
+> **Engine-lineage note.** The table above is the **original 15-mapper**
+> coverage from the early engine line (the top-25-by-title-count tranche).
+> RustyNES **v1.0.0 ships 51 mapper families** — see
+> `docs/mappers.md` §Mapper coverage matrix for the full current list. The
+> "out of scope" notes below were the early-engine scoping; they are retained
+> as history and annotated with what has since shipped in v1.0.0.
 
-**Not supported (explicitly out of scope for v1.0.0):**
+**Mapper count (early engine line):** 15 distinct mappers covering >95% of the
+licensed library by title count. **As of v1.0.0 the count is 51 families** —
+the remaining tail (MMC6 audio quirks, unlicensed pirate carts) is documented
+in `docs/compatibility.md`.
 
-- ~~VRC7 (mapper 85) FM audio~~ — **landed in v1.1.0** (no longer out of
-  scope); clean-room `emu2413` OPLL port per `docs/adr/0006-vrc7-audio-landed.md`
-  (supersedes ADR 0004).
-- FDS (Famicom Disk System) — its own initiative; not part of the
-  standard cartridge surface.
-- Unlicensed pirate cart mappers (113, 116, etc.) — tracked
+**Early-engine "not supported" list (all since resolved in v1.0.0 unless noted):**
+
+- ~~VRC7 (mapper 85) FM audio~~ — **shipped** (clean-room `emu2413` OPLL port
+  per `docs/adr/0006-vrc7-audio-landed.md`, supersedes ADR 0004).
+- ~~FDS (Famicom Disk System)~~ — **shipped** (real-BIOS `.fds` boot; see
+  `docs/compatibility.md`).
+- ~~VS. System, PlayChoice-10 arcade variants~~ — **shipped** (game-verified
+  2C03/2C04/2C05 RGB PPU).
+- Unlicensed pirate cart mappers (113, 116, etc.) — still tracked
   case-by-case if user demand surfaces.
-- VS. System, Playchoice-10 arcade variants — different PPU revisions.
 
 ---
 

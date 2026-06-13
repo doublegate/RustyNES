@@ -90,19 +90,19 @@ For bug reports and concrete feature requests:
 
 **Q: What is RustyNES?**
 
-A: RustyNES is a next-generation NES emulator written in Rust, targeting 100% accuracy with advanced features like netplay, TAS tools, and RetroAchievements.
+A: RustyNES is a cycle-accurate NES emulator written in pure Rust, clearing the Mesen2 / higan / ares accuracy bar, with advanced features like netplay, TAS tools, and RetroAchievements.
 
 **Q: Can I use RustyNES now?**
 
-A: RustyNES is currently in pre-implementation status. Architecture and documentation are complete, but the core emulation is not yet implemented. See [ROADMAP.md](ROADMAP.md) for the development timeline.
+A: Yes. RustyNES is at its first stable release, **v1.0.0** — a complete, playable desktop application plus a browser build. See [ROADMAP.md](ROADMAP.md) for what shipped and the post-1.0 directions.
 
-**Q: When will RustyNES be ready?**
+**Q: How accurate is RustyNES?**
 
-A: The MVP (basic playable emulator) is targeted for June 2026. Full feature completion is planned for December 2027. See the [development roadmap](ROADMAP.md) for detailed milestones.
+A: AccuracyCoin 100.00% (139/139), `nestest` 0-diff, and the blargg / kevtris suites green, validated by a byte-identical commercial-ROM regression oracle. See [docs/STATUS.md](docs/STATUS.md) for the authoritative pass-count matrix.
 
 **Q: How can I contribute?**
 
-A: See [CONTRIBUTING.md](docs/dev/CONTRIBUTING.md) for contribution guidelines. We welcome code, documentation, testing, and design contributions.
+A: See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines. We welcome code, documentation, testing, and design contributions.
 
 **Q: Is RustyNES open source?**
 
@@ -112,24 +112,15 @@ A: Yes! RustyNES is dual-licensed under MIT/Apache-2.0. You're free to use, modi
 
 **Q: What platforms are supported?**
 
-A: Primary support for Windows (x64), Linux (x64), and macOS (x64/ARM64). WebAssembly and Linux ARM64 support planned for later phases.
+A: Native Windows, Linux, and macOS, plus a WebAssembly / GitHub Pages browser build — all from one `winit` + `wgpu` + `cpal` + `egui` frontend.
 
 **Q: What ROMs are supported?**
 
-A: RustyNES will support iNES and NES 2.0 ROM formats. Mappers 0-4 in Phase 1 (80% of games), expanding to 300+ mappers by Phase 4.
-
-**Q: How accurate is RustyNES?**
-
-A: The goal is 100% accuracy against the TASVideos test suite. Implementation targets cycle-accurate CPU, dot-level PPU, and hardware-accurate APU.
+A: iNES and NES 2.0 ROM formats across **51 mapper families** (including expansion audio), the Famicom Disk System (real-BIOS boot), and Vs. System / PlayChoice-10 arcade hardware. Additional mapper families are added demand-driven; see [ROADMAP.md](ROADMAP.md).
 
 **Q: Does RustyNES support [feature]?**
 
-A: Check the [ROADMAP.md](ROADMAP.md) to see planned features and their implementation phases:
-
-- **Phase 1** (MVP): Basic emulation, mappers 0-4, save states
-- **Phase 2** (Features): RetroAchievements, netplay, TAS tools, Lua scripting
-- **Phase 3** (Expansion): WebAssembly, expansion audio, more mappers
-- **Phase 4** (Polish): CRT filters, enhanced debugger
+A: The v1.0.0 feature set includes rollback netplay (2–4 players), RetroAchievements (opt-in), TAS movie record/playback, save-states, rewind, run-ahead, Game Genie + raw-RAM cheats, an egui debugger, and an optional NTSC filter. Check the [ROADMAP.md](ROADMAP.md) for delivered milestones and post-1.0 directions (mobile, Lua scripting, a TAS editor, additional video filters).
 
 **Q: Can I embed RustyNES in my project?**
 
@@ -149,14 +140,14 @@ cargo build --release
 
 **Q: What are the prerequisites?**
 
-A: Rust 1.75+ and SDL2 development libraries. See [docs/dev/BUILD.md](docs/dev/BUILD.md) for platform-specific instructions.
+A: Rust 1.86 (pinned in `rust-toolchain.toml`; `rustup` auto-installs it) and the `winit` + `wgpu` + `cpal` system libraries (libxkbcommon / wayland / alsa / udev on Linux; nothing extra on macOS/Windows). See [docs/dev/BUILD.md](docs/dev/BUILD.md) for platform-specific instructions.
 
 **Q: Build is failing, what do I do?**
 
 A:
 
-1. Ensure you have Rust 1.75 or newer: `rustc --version`
-2. Install SDL2 development libraries (see [BUILD.md](docs/dev/BUILD.md))
+1. Ensure you have Rust 1.86 or newer: `rustc --version`
+2. Install the frontend system libraries (see [BUILD.md](docs/dev/BUILD.md))
 3. Try a clean build: `cargo clean && cargo build`
 4. Check [GitHub Issues](https://github.com/doublegate/RustyNES/issues) for known build problems
 5. Ask for help in [Discussions](https://github.com/doublegate/RustyNES/discussions)
@@ -169,7 +160,7 @@ A: Check the [Platform Support](README.md#platform-support) section in the READM
 
 **Q: How do I load a ROM?**
 
-A: (Once implemented) `cargo run --release -p rustynes-desktop -- path/to/rom.nes`
+A: `cargo run --release -p rustynes-frontend -- path/to/rom.nes` (binary: `rustynes`), or launch with no ROM and use the File menu / F12 / drag-and-drop.
 
 **Q: What are the default controls?**
 
@@ -181,19 +172,19 @@ A: Save files are stored in platform-specific directories following OS conventio
 
 **Q: Can I use a gamepad?**
 
-A: Yes, SDL2 gamepad support is planned for Phase 1. Most standard controllers (Xbox, PlayStation, Switch Pro, etc.) will work.
+A: Yes. USB gamepads auto-bind to player 1 (Xbox-style: South = A, West = B, Start, Back = Select, D-Pad) and are rebindable. Most standard controllers (Xbox, PlayStation, Switch Pro, etc.) work.
 
 ### Development Questions
 
 **Q: How is the codebase structured?**
 
-A: RustyNES uses a workspace with 10 crates. See [ARCHITECTURE.md](ARCHITECTURE.md) for the complete architecture overview.
+A: RustyNES is a Cargo workspace of `rustynes-*` crates (cpu / ppu / apu / mappers / core / frontend, plus netplay / cheevos / test-harness). See [ARCHITECTURE.md](ARCHITECTURE.md) for the complete architecture overview.
 
 **Q: Where do I start if I want to contribute?**
 
 A:
 
-1. Read [CONTRIBUTING.md](docs/dev/CONTRIBUTING.md)
+1. Read [CONTRIBUTING.md](CONTRIBUTING.md)
 2. Check [good first issue](https://github.com/doublegate/RustyNES/labels/good%20first%20issue) labels
 3. Ask in [Discussions](https://github.com/doublegate/RustyNES/discussions) what needs help
 
@@ -207,7 +198,7 @@ A: See [docs/dev/TESTING.md](docs/dev/TESTING.md) for the complete testing guide
 
 **Q: Where can I find reference documentation?**
 
-A: The `docs/` folder contains 73 comprehensive documentation files covering CPU, PPU, APU, mappers, testing, and more. Start with [docs/DOCUMENTATION_INDEX.md](docs/DOCUMENTATION_INDEX.md).
+A: The `docs/` folder contains comprehensive documentation covering CPU, PPU, APU, mappers, testing, and more. Start with [docs/DOCUMENTATION_INDEX.md](docs/DOCUMENTATION_INDEX.md).
 
 ---
 

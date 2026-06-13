@@ -74,10 +74,10 @@ shell, docs, and web work.
   View / Debug / Help) and status bar frame the NES image independently of the
   `` ` `` debugger overlay:
   - **File** — Open ROM (`F12`), Open Recent (missing files greyed out, with
-    Clear Recent), save / load state, an eight-slot Save Slot picker (set active
-    slot + save/load to a specific slot), Take Screenshot, and the FDS Swap Disk
-    Side (`F9`) item when an FDS game is loaded.
-  - **Emulation** — Pause/Resume (disabled during netplay), Reset (`F2`),
+    Clear Recent), save / load state, a ten-slot (0–9) Save Slot picker (set
+    active slot + save/load to a specific slot), Take Screenshot, and the FDS Swap
+    Disk Side (`F9`) item when an FDS game is loaded.
+  - **Emulation** — Pause/Resume (`Space`, disabled during netplay), Reset (`F2`),
     Power Cycle (`F3`), Frame Advance (`\`, steps one frame while paused), a
     hold-`Tab` Fast Forward hint, Run-Ahead 0–3, a read-only region label, and
     Vs. System Insert Coin (`F10`) for Vs. titles.
@@ -118,6 +118,16 @@ shell, docs, and web work.
   behaviour.
 - **About window** credits "Created by DoubleGate" and its **GitHub** link opens
   the project page in a browser.
+- **Pause is reachable and reversible** — a `Space` keybind toggles pause/resume,
+  and the menu bar keeps repainting (~30 Hz) while paused so Resume is always
+  clickable (previously the parked emulator left the menu frozen).
+- **View -> Window Size keeps the chrome readable** — the size presets scale only
+  the emulated picture (which letterboxes), with the menu / status bars held at a
+  fixed width, so the menu no longer clips and the mouse stays aligned with its
+  hit-areas.
+- **Game Genie cheats apply reliably** — enabled codes are re-synced to the live
+  core every frame the Cheats panel is open and re-applied after Reset / Power
+  Cycle, so they keep working across a soft reset and a cold boot.
 
 ### Changed
 

@@ -22,17 +22,17 @@ RustyNES provides comprehensive debugging tools for both developers and users tr
 
 ### Activating the Debugger
 
-**Compile with debugger feature**:
+The egui debugger ships in the default frontend build (no separate feature
+flag). Launch the app and toggle the debugger overlay in-app:
 
 ```bash
-cargo build --features debugger
+cargo run --release -p rustynes-frontend -- rom.nes
 ```
 
-**Launch with debugger**:
-
-```bash
-rustynes --debug rom.nes
-```
+Press `` ` `` (backtick) to toggle the debugger overlay, or open individual
+chip panels from the **Debug** menu. The panels are read-only and never
+advance emulator-visible state. See
+[`../frontend.md`](../frontend.md) §"Debugger panels" for the full panel list.
 
 ### Debugger Features
 

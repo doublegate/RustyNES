@@ -70,7 +70,7 @@ vsync. See [Configuration](./configuration.md#graphics).
 By default the displayed image is square-pixel (each NES pixel maps to N
 host pixels). The real PPU pixel was non-square (~8:7 on NTSC), so the
 truly-correct aspect stretches slightly horizontally. Enable **8:7 Pixel
-Aspect** in **View → Settings… → Video** (or the View menu, or
+Aspect** in **View → Settings… → Display** (or the View menu, or
 `[ui] pixel_aspect_correction = true`) for the NES-native shape. It is off
 by default so the shipped output stays pixel-exact unless you opt in.
 
@@ -121,12 +121,12 @@ opens (typically stereo).
 
 ### Sample rate
 
-The APU emits at the negotiated host rate **directly** via band-limited
-synthesis. There is no software resampler in the pipeline.
+The APU emits via band-limited synthesis; a frontend resampler stage
+then delivers samples to CPAL at the negotiated host rate.
 
 The preferred rate is 44.1 kHz (`[audio] sample_rate = 44100` in
-`config.toml`). If the device refuses 44.1 kHz, the APU is rebuilt at
-whatever rate the device opens at. Set the config key to your
+`config.toml`). If the device refuses 44.1 kHz, the audio engine is
+rebuilt at whatever rate the device opens at. Set the config key to your
 device's native rate if you want to bypass the negotiation:
 
 ```toml
@@ -139,17 +139,24 @@ works.
 
 ### Buffering and latency
 
-Between the emulator and CPAL sits a bounded sample queue with a soft
-cap of 16,384 samples (~370 ms at 44.1 kHz, ~340 ms at 48 kHz). Most of
-the time the queue stays small — at 44.1 kHz the emulator pushes ~735
-samples 60 times a second and CPAL drains in chunks of 256-1024
-samples, so steady-state occupancy is well under 2000.
+The emulator hands samples to the CPAL callback through a lock-free
+single-producer/single-consumer ring, and an allocation-free callback
+drains it. A **dynamic-rate-control** stage — a 4-tap Hermite resampler
+that micro-bends the playback ratio — holds the ring centred on the
+configured `[audio] latency_ms` (default 60 ms), so the queue neither
+drifts to an underrun nor builds unbounded latency over time.
 
-The queue's drop-oldest policy bounds latency during long stalls
-(debugger pause, save-state load, system hibernation). If the emulator
-briefly out-produces the device, the oldest samples drop instead of the
-queue growing unbounded — you'll hear a brief click in the rare case
-this triggers.
+```toml
+[audio]
+latency_ms = 60   # target buffer depth in ms
+drc = true        # dynamic rate control; false = bit-exact passthrough
+```
+
+Lower `latency_ms` for tighter latency; raise it if a loaded system
+causes underruns. Set `drc = false` for a bit-exact passthrough of the
+APU's native output (no resampling). During a long stall (debugger
+pause, save-state load, hibernation) a hard resync trims the buffer so
+latency snaps back instead of accumulating.
 
 ### When audio doesn't start
 

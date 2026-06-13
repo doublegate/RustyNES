@@ -7,6 +7,17 @@ internal engine line (v0.9.x → v2.x markers) whose increments produced the
 RustyNES v1.0.0 technology. Those version markers are historical anchors, not
 RustyNES releases of their own; RustyNES ships at **v1.0.0**.
 
+**RustyNES release line:** `v0.1.0…v0.8.6` (the parent emulator) →
+`v0.9.0…v0.9.7` (engine-lineage integration stages — the inbound cycle-accurate
+engine being folded in, stage by stage) → **`v1.0.0`** (this synthesis: the
+engine + the ported desktop-UX shell + production polish). The single shipped tag
+is **v1.0.0**. Where the detailed sections below carry the inbound engine's own
+`v1.x`/`v2.x` tags, read them as upstream engine history (its v2.0–v2.8 line),
+which maps onto the integration stages roughly as: engine v1.0.0 → RustyNES
+v0.9.0; v1.1.0–v1.4.0 → v0.9.1; v1.5.0–v1.7.0 → v0.9.2; v2.0.0–v2.0.1 → v0.9.3;
+v2.1.0–v2.2.0 → v0.9.4; v2.3.0–v2.5.0 → v0.9.5; v2.6.0–v2.7.1 → v0.9.6;
+v2.8.0 → v0.9.7; the synthesis itself = **v1.0.0**.
+
 ## Status
 
 - **Current release:** **RustyNES v1.0.0 — the production cut.** A cycle-accurate NES/Famicom emulator at the Mesen2 / higan / ares accuracy bar, shipped as a polished desktop application (AccuracyCoin **100.00% / 139**, 60-ROM + 52-entry oracles byte-identical, nestest 0-diff). v1.0.0 delivers: the master-clock cycle-accurate core; 51 mapper families (incl. VRC6/VRC7-OPLL/Sunsoft-5B/Namco-163/MMC5 expansion audio + Vs./PC10 RGB boards); real-BIOS FDS; 2-4-player rollback netplay (native UDP + browser WebRTC); RetroAchievements (opt-in/native); TAS movie record/replay + save states/rewind; the performance + desktop-UX shell (display-sync pacing matrix + late input latch, lock-free audio ring + dynamic rate control, run-ahead, dedicated emulation thread, plus an always-on egui shell — menu bar / status bar, tabbed Settings window, light/dark/system themes, 8:7 pixel-aspect correction, fullscreen, save-state slots, recent-ROMs, and the surfaced Cheats/Movies/Netplay/RA/Performance tool panels); and a WebAssembly build with an AudioWorklet audio path + rAF display-sync. The determinism contract holds (DRC is a frontend resampler stage; run-ahead is frontend snapshot/restore orchestration; the core per-frame output is untouched). See `CHANGELOG.md` `[1.0.0]`. The milestones below are the engine-lineage history that produced this release.
@@ -19,11 +30,11 @@ RustyNES releases of their own; RustyNES ships at **v1.0.0**.
 - **Previous phase:** Phase 8 — **v1.2.0 RELEASED (2026-05-24).** DMC DMA scheduler refactor landed under default-off cargo feature `dmc-get-put-scheduler` introducing Mesen2's canonical get/put cycle alternation model alongside the v1.1.0 phase-agnostic scheduler via the parallel-implementation pattern (ADR 0007). AccuracyCoin DMA cluster under flag-on: **6/10 match baseline** (closing 4 → 0 deferred to v1.2.x patches or v2.0 master-clock absorption). Default build bit-identical to v1.1.0.
 - **Earlier work:** **v1.1.0 RELEASED (2026-05-25)** — VRC7 OPLL FM audio via clean-room pure-Rust port of `emu2413 v1.5.9` (MIT); ADR 0006 supersedes ADR 0004; *Lagrange Point* plays with audio. (v1.1.0 was a v2.0.0-release-plan milestone slotted between Phase 6 and Phase 8, **not** the ROADMAP's Phase 7 — see the numbering note below.) Phase 6 — **v1.0.0 RELEASED (2026-05-23)**: AccuracyCoin gate CLEARED at 90.65% (126/139); T-60-001 C1 IRQ-timing residuals (3 `cpu_interrupts_v2` sub-ROMs + `mmc3_test_2/4` #3) deferred to **v2.0** master-clock-precise scheduling refactor (Session-29 empirically falsified Option A global PPU-position shift; 17 documented rollbacks).
 - **Phase-numbering note:** the shipped releases v1.1.0 → v1.4.0 were sequenced from the v2.0.0 release plan and back-labelled in the detailed sections as v1.1.0 (VRC7) → Phase 8 (v1.2.0 DMC) → Phase 9 (v1.3.0 wasm) → Phase 10 (v1.4.0 TAS). **Phase 7 — Nesdev Accuracy Hardening (below) was authored but never executed**; it is now being executed as **v1.5.0**. See `docs/audit/phase-7-assessment-2026-05-24.md` for the full intent-vs-accomplished-vs-completable disposition.
-- **Current sprint:** **COMPLETE.** v1.7.0 (niceties) landed 2026-05-25 across 3 sprints (Four Score 4-player core + input UI; raw RAM cheats; in-app settings panel). All gauntlet gates green (fmt / clippy `--all-targets` / rustdoc `-D warnings` / no_std `thumbv7em` / wasm32 clippy ×2 / full suite + the `bench` frame-time gate); 702 strict + 10 ignored; AccuracyCoin 90.65%; oracle 60/60. (The prior v1.6.0 + Phase 7 / v1.5.0 sprint sets are in the version history above.)
+- **Current state:** **RustyNES v1.0.0 — production cut, delivered.** Every accuracy, compatibility, platform, netplay, RetroAchievements, FDS, Vs/PC10, and performance milestone in the engine-lineage history above is folded into the v1.0.0 release, and the parent emulator's polished desktop-UX shell is ported on top. The remaining work is the post-v1.0.0 forward roadmap below (mobile, the externally-blocked RA allowlist, the Vs. DualSystem games, a few game-specific gaps, Lua scripting). The engine-lineage version markers (v0.9.x → v2.x) in the bullets above and the phase bodies are upstream history, not RustyNES releases.
 - **Forward roadmap (post-v1.0.0)** — everything in the v1.0.0 production cut is complete: the accuracy program (AccuracyCoin 100%), netplay (live-verified native + browser), the compatibility rounds, FDS, Vs/PC10, RetroAchievements + the Vs-DB + deployable browser netplay, the netplay-hardening work, AND the "optimized performance" pass (display-sync pacing matrix + late latch, lock-free audio ring + DRC, run-ahead, −26% core, dedicated emulation thread + Linux priority elevation, browser AudioWorklet + rAF display-sync). What remains for future releases is mobile + the externally-blocked RA-allowlisting + a couple of game-specific gaps + collapsing the synchronous A/B path.
   - **DONE — ...v2.6.0 (Vs/PC10 RGB game-verified, +11 mappers→51, N-peer netplay, real-BIOS FDS)** + **v2.7.0 (RetroAchievements via the vendored rcheevos FFI — achievements/leaderboards/rich-presence/hardcore, opt-in native-only `crates/rustynes-cheevos`; the Vs.-System per-game DIP/2C04-palette DB; deployable browser WebRTC netplay — `deploy/` Docker/compose + a wired wasm lobby; the regenerated/re-sorted screenshot corpus + montage)** + **v2.7.1 (netplay-hardening + live verification — the `power_cycle` true-cold-boot root-cause desync fix incl. a mapper rebuild so all cartridge mappers are netplay-correct; input resend + cumulative `InputAck`; one-frame-per-pace driving on native AND wasm; the >2-player browser WebRTC mesh (2-4 players); RA login/badge-image/badge-lock-state/User-Agent fixes; the MMC6 byte-10 PRG-RAM fix; the NTSC-filter WGSL crash fix + shader-validation tests; Vs. DualSystem detection groundwork)**. RA is opt-in/native-only/frontend-side; stock NES byte-identical; AccuracyCoin 100%.
   - **Next (verify + finish the externally-blocked):** a **live RA-account allowlisting pass with the RA team** (the `RustyNES/<ver>` User-Agent is now sent — the allowlisting itself is a request, not a code change — to clear the "unknown emulator" warning + enable hardcore unlocks); the **Vs. DualSystem** games (two-CPU/two-PPU support — a real feature, now detection-flagged but not yet emulated; design `docs/audit/vs-dualsystem-design-2026-06-11.md`); the **FDS side-B / Kid Icarus** post-registration path (needs interactive testing) + **Mito Koumon (m89)** PPU rendering-enable axis; the two un-reproduced reports (GxROM-66, SMB3 "Mario flashing"). (>2-player browser netplay + the deployable signaling/STUN stack are DONE in v2.7.0/v2.7.1; a live N-browser session just needs the stack hosted.)
-  - **Later / v3 (separate initiative):** Mobile (iOS/Android) frontend; browser RetroAchievements (needs an emscripten or pure-Rust rcheevos path). Deferred hard-tier accuracy: `mmc3_test_2/4` #3 + the 2 `apu_reset` residuals (the cycle-accurate reset/IRQ-sample axis — document, don't grind).
+  - **Later (post-v1.0.0, separate initiatives):** **Lua scripting** (the one advertised-but-unbuilt v1.0.0 feature — deferred to a post-1.0 release); the **long-tail mapper coverage** toward the ~300-mapper full set + **100% TASVideos** compatibility; **Mobile (iOS/Android)** frontend; **browser RetroAchievements** (needs an emscripten or pure-Rust rcheevos path). Deferred hard-tier accuracy: `mmc3_test_2/4` #3 + the 2 `apu_reset` residuals (the cycle-accurate reset/IRQ-sample axis — document, don't grind).
 - **Done:** Phases 1-4 complete; Phase 5 Sprints 1-3 shipped — Frontend MVP, save state + rewind + TOML rebinding, egui debugger overlay (CPU/PPU/OAM/APU/memory/mapper panels + in-app rebind modal closing T-52-007), simplified Blargg-style NTSC wgsl post-pass, release workflow + README badges. **Regression-prevention buildout closed (2026-05-17):** 21-ROM permissive baselines + 60-ROM commercial-ROM oracle (54 strict + 6 ignored across 15 mappers) + 81-PNG visual corpus + permanent `scripts/regression-bisect/` tooling + `docs/audit/` decision-rationale tier. Real-game regression on SMB / Excitebike / Kid Icarus closed by the FSM dot-64 reset fix on `accuracy-stabilization` (`834be9e`). Residual accuracy gaps tracked in `CHANGELOG.md` `[Unreleased]` → "Investigated and rolled back". (Historical note: when this bullet was written, v1.0.0 was still gated on the C1 IRQ-timing rework + AccuracyCoin ≥ 90% (then 69.78%) + multi-OS smoke + the 6 ignored commercial ROMs. All of those resolved: **v1.0.0 released 2026-05-23 at 90.65%**, the 6 ROMs are strict-passing, and the C1 + sub-cycle residuals are deferred to the v2.0 master-clock refactor — see `docs/audit/gap-analysis-remediation-plan-2026-05-25.md`.)
 - **Status matrix (single source of truth):** see [`docs/STATUS.md`](../docs/STATUS.md) for the per-test-ROM-suite pass count, mapper coverage matrix, feature flag state, and version policy. This roadmap intentionally keeps a short summary only.
 
@@ -114,16 +125,23 @@ Sprints:
 
 ---
 
-### Phase 6 — v1.0.0 Closeout (in progress)
+### Phase 6 — v1.0.0 Closeout (SUPERSEDED — accuracy closed by the engine-lineage master-clock work)
 
-**Goal:** close all open v1.0.0 gates and ship the v1.0.0 tag.
+> **Superseded.** The engine-lineage continued past this closeout plan: the
+> master-clock refactor took AccuracyCoin to **100.00% (139/139)** and the C1
+> IRQ-timing + sub-cycle residuals these sprints chased were closed (or
+> documented-deferred) along the way. The sprint backlog below was **not**
+> executed as written; it is retained as the historical gate plan. RustyNES
+> ships at **v1.0.0** with the accuracy bar fully cleared.
 
-**Exit criterion:** `cargo test --features test-roms` shows 513
-strict pass (510 + the 3 remaining `cpu_interrupts_v2/{2,3,5}` flipped)
-+ `mmc3_test_2/4-scanline_timing` sub-test #3 flipped + AccuracyCoin
-≥ 90% + multi-OS release-artifact smoke test green + the 6 `#[ignore]`'d
-commercial ROMs investigated (fix flipped or moved to "known-defer-to-
-v1.x" with public-facing rationale).
+**Original goal (historical):** close all open v1.0.0 gates and ship the v1.0.0
+tag.
+
+**Original exit criterion (historical):** `cargo test --features test-roms`
+shows the C1 `cpu_interrupts_v2/{2,3,5}` + `mmc3_test_2/4-scanline_timing`
+sub-test #3 flipped + AccuracyCoin ≥ 90% + multi-OS release-artifact smoke test
+green + the 6 `#[ignore]`'d commercial ROMs investigated. (All resolved by the
+engine-lineage work; AccuracyCoin is now 100%.)
 
 [Phase 6 overview](phase-6-v1-closeout/overview.md)
 [Phase 6 v1.0.0-final sprint backlog](phase-6-v1.0.0-final/overview.md)

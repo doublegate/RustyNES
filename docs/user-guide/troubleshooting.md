@@ -7,8 +7,8 @@ diagnoses about half of the issues on this page.
 ## "The ROM won't load — `UnsupportedMapper(N)`"
 
 The cartridge uses an iNES mapper number that v1.0 doesn't implement.
-See [Compatibility](./compatibility.md) for the list of 14 supported
-mapper numbers.
+See [Compatibility](./compatibility.md) for the supported mappers (51
+families covering well over 90% of the licensed library).
 
 If your ROM is a homebrew title that uses a less common mapper, please
 file an issue with the mapper number, the ROM's SHA-256, and (if
@@ -67,14 +67,17 @@ that's not connected to anything.
 
 ## "Audio crackles or stutters"
 
-The bounded sample queue drops oldest samples when the emulator
-out-produces the device — this is audible as crackles.
+The audio ring underruns (or hard-resyncs) when the emulator can't keep
+the buffer fed — this is audible as crackles or a brief gap.
 
 Common causes:
 
 - **The emulator is briefly slow** — usually because the host system is
   under load. Check the debugger overlay's `fps:` readout: drops below
   the target (60.1 NTSC / 50.0 PAL) cause crackles.
+- **Audio latency set too low for the system.** Raise `[audio] latency_ms`
+  (default 60) to give the dynamic-rate-control loop more headroom on a
+  loaded machine.
 - **The device's sample rate doesn't match the configured rate.** Try
   setting `[audio] sample_rate` to match your device's native rate
   (often 48000 on Linux/PipeWire, 44100 or 48000 on Windows).
@@ -103,13 +106,13 @@ emulation is paced by wall-clock time, so any monitor refresh rate works.
 
 ## "Save state load did nothing / corrupted state"
 
-`F4` loads slot 0 for the current ROM. Failures log to stderr; the
-running emulator state is unchanged.
+`F4` loads the active slot (default slot 0) for the current ROM. Failures
+log to stderr; the running emulator state is unchanged.
 
 | stderr says | Meaning | Fix |
 |-------------|---------|-----|
 | `load state failed: save-state I/O at <path>: No such file` | You haven't saved into this slot yet for this ROM (or the SHA-256 changed) | Save first (`F1`), then load |
-| `restore failed: ...` (any other variant) | The slot file is corrupt or from an incompatible version | Delete the slot file from `<data_dir>/saves/<rom_sha256>/slot0.rns` and re-save |
+| `restore failed: ...` (any other variant) | The slot file is corrupt or from an incompatible version | Delete the slot file from `<data_dir>/saves/<rom_sha256>/slot{N}.rns` and re-save |
 
 Each ROM has its own save directory keyed by SHA-256 — if you re-dumped
 the ROM (or downloaded a different copy), the new SHA-256 means a fresh
@@ -148,11 +151,10 @@ You can resize the window freely — drag the edges or maximize. The
 emulator preserves the NES aspect ratio with letterboxing or
 pillarboxing as needed.
 
-There is no fullscreen toggle yet. Use your window manager's shortcut:
-
-- Linux: `F11` on GNOME / KDE / most desktops
-- macOS: green traffic-light button, or `Ctrl+Cmd+F`
-- Windows: `Win+Up` to maximize; `F11` works in some configurations
+For preset sizes, use **View → Window Size** to scale the game to 1x–4x
+the NES resolution (the chrome stays a fixed readable size and the game
+letterboxes inside it). Press `F11` (or **View → Fullscreen**) for
+borderless fullscreen and `Esc` to leave it.
 
 ## "I lost my settings"
 

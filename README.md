@@ -255,8 +255,8 @@ The desktop frontend frames the NES image with an always-on **menu bar** (top) a
 **status bar** (bottom); the egui debugger is a separate overlay toggled with `` ` ``.
 Everything has a keyboard shortcut, but nothing requires one.
 
-- **Menu bar** — File (Open ROM, Open Recent, save / load state, an eight-slot Save
-  Slot picker, Take Screenshot), Emulation (Pause, Reset, Power Cycle, Run-Ahead 0–3,
+- **Menu bar** — File (Open ROM, Open Recent, save / load state, a ten-slot
+  (0–9) Save Slot picker, Take Screenshot), Emulation (Pause, Reset, Power Cycle, Run-Ahead 0–3,
   the region label, Vs. Insert Coin / FDS Swap Disk Side when relevant), Tools
   (Cheats, TAS Movies, Netplay, RetroAchievements, Performance Monitor — opened as
   floating windows without the debugger), View (Settings, Theme, 8:7 Pixel Aspect,
@@ -281,6 +281,7 @@ All keys are TOML-rebindable; see the user guide for the full schema.
 | A / B           | Z / X           | Q / E         |     | Rewind (hold)           | F5                 |
 | Start / Select  | Enter / R-Shift | P / L         |     | Fast-forward (hold)     | Tab                |
 |                 |                 |               |     | Frame-advance (paused)  | \ (backslash)      |
+|                 |                 |               |     | Pause / Resume          | Space              |
 |                 |                 |               |     | Reset / Power-cycle     | F2 / F3            |
 |                 |                 |               |     | TAS movie record / play | F6 / F7            |
 |                 |                 |               |     | TAS movie branch        | F8                 |

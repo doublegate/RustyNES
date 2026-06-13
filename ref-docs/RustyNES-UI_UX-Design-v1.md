@@ -2,8 +2,28 @@
 
 **Document Version:** 1.0.0  
 **Last Updated:** December 19, 2025  
-**Status:** Design Specification  
+**Status:** Design Specification (design history)  
 **Target:** Phase 1 MVP + Advanced Features
+
+---
+
+> **Status (v1.0.0 — what shipped).** This is the original aspirational UI/UX
+> spec, retained as design history. The shipped RustyNES v1.0.0 frontend is built
+> on **winit 0.30 + wgpu + egui 0.29 + cpal** (NOT eframe/glow, NOT SDL2; the
+> framework decision in `RustyNES-GUI_Framework-Change.md` was superseded). What
+> actually shipped from this UX vision: an always-on egui menu bar
+> (File / Emulation / Tools / View / Debug / Help) plus a status bar (ROM name,
+> run state, fading messages, FPS), toggled with `M`; Open Recent (MRU, max 10,
+> persisted) + Clear Recent; a tabbed **Settings** window (Display / Audio /
+> Input / Advanced); **themes** (Light / Dark / System); an **8:7 pixel-aspect**
+> correction toggle; Window Size 1x-4x that scales only the game (chrome stays a
+> fixed readable size, the game letterboxes); Fullscreen; a first-run **Welcome**
+> modal ("Get Started" / "Keyboard Shortcuts"); an **About** window; an opt-in
+> **Pause When Unfocused**; and the egui debugger overlay (CPU/PPU/APU/memory/
+> OAM/mapper panels). Many of the more elaborate visions below (Cover Flow / 10-
+> foot HTPC shelf, animated cartridge-insert motion design, full game-library
+> manager) are design intent, not shipped state. See v2 of this spec for the
+> expanded vision; read both as design history.
 
 ---
 

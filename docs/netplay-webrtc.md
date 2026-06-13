@@ -1,17 +1,17 @@
 # Netplay: NAT traversal (STUN) + WebRTC / browser transport
 
-**Status:** v2.7.0 — **deploy bundle + wasm lobby landed**. On top of the v2.6.0
-signaling/transport skeleton, v2.7.0 makes the browser path **deployable + usable**:
+**Status:** shipped in v1.0.0 — **deploy bundle + wasm lobby landed**. On top of
+the signaling/transport skeleton, the browser path is **deployable + usable**:
 a `deploy/` Docker bundle (signaling server + Caddy TLS proxy + coturn STUN/TURN),
 a configurable signaling URL + ICE/STUN list (`[netplay] signaling_url` /
 `stun_servers`, plumbed into `BrowserNetplay::connect`), and a wired wasm **lobby
 UI** that drives the `RollbackSession` over WebRTC per rAF frame. The remaining
 gap is a live end-to-end browser session, which needs the deployed signaling
 server **running** + two real browsers and cannot be verified headlessly. This
-file is the spec for those pieces plus the v2.5.0 STUN/hole-punch scaffold they
+file is the spec for those pieces plus the STUN/hole-punch scaffold they
 build on.
 
-Earlier (v2.6.0): the N-peer UDP roster handshake (3-4 player native UDP mesh,
+Also landed: the N-peer UDP roster handshake (3-4 player native UDP mesh,
 loopback-verified); the reference signaling server (a deployable WebSocket relay
 behind a non-default feature); and the wasm-frontend WebRTC wiring
 (compile-verified).
@@ -25,21 +25,20 @@ session core in `crates/rustynes-netplay` (`docs/`-adjacent — see the crate ru
 ## 1. Where this fits
 
 The rollback session (`RollbackSession<T: Transport>`) is **transport-agnostic**:
-it only ever `send`s and `poll`s `NetMessage`s. v2.3.0 shipped one `Transport`
-(native UDP, `UdpTransport`); v2.5.0 Phase C adds the two pieces a real internet
-deployment needs:
+it only ever `send`s and `poll`s `NetMessage`s. The base `Transport` is native UDP
+(`UdpTransport`); the two pieces a real internet deployment needs are also present:
 
 | Piece | Crate location | State |
 |---|---|---|
 | STUN client (public-addr discovery) | `rustynes-netplay::stun` | Implemented + unit-tested; live round-trip `#[ignore]`d |
 | UDP hole-punch state machine | `rustynes-netplay::stun::HolePunch` | Implemented + unit-tested |
-| N-peer UDP roster handshake (3-4 players) | `rustynes-netplay::mesh_net` | Implemented + loopback-verified (v2.6.0) |
-| WebRTC data-channel transport (browser) | `rustynes-netplay::webrtc::{WebRtcTransport, WebRtcMeshTransport}` (wasm-only) | Compile-verified; 2-player + N-peer mesh transports (v2.7.1) |
+| N-peer UDP roster handshake (3-4 players) | `rustynes-netplay::mesh_net` | Implemented + loopback-verified |
+| WebRTC data-channel transport (browser) | `rustynes-netplay::webrtc::{WebRtcTransport, WebRtcMeshTransport}` (wasm-only) | Compile-verified; 2-player + N-peer mesh transports |
 | Signaling server + offer/answer/ICE | `crates/rustynes-netplay/examples/signaling_server.rs` | Implemented (reference WS relay, `--features signaling-server`) |
-| N-peer browser mesh signaling (2-4 players) | `rustynes-netplay::signaling` (slot-routed offer/answer/candidate) | Implemented + unit-tested for 2/3/4-peer rooms (v2.7.1) |
-| Wasm-frontend netplay wiring + lobby UI | `rustynes-frontend` (`wasm_netplay.rs`, `wasm_lobby.rs`) | Wired + compile-verified for 2-4 player mesh (v2.7.0/v2.7.1); browser session pending a live deploy |
-| Deploy bundle (signaling + TLS + STUN/TURN) | `deploy/` (Dockerfile + compose + Caddy + coturn) | Shipped (builds); live session pending hosting (v2.7.0) |
-| Configurable signaling URL + ICE/STUN list | `[netplay] signaling_url` / `stun_servers` | Shipped (v2.7.0) |
+| N-peer browser mesh signaling (2-4 players) | `rustynes-netplay::signaling` (slot-routed offer/answer/candidate) | Implemented + unit-tested for 2/3/4-peer rooms |
+| Wasm-frontend netplay wiring + lobby UI | `rustynes-frontend` (`wasm_netplay.rs`, `wasm_lobby.rs`) | Wired + compile-verified for 2-4 player mesh; browser session pending a live deploy |
+| Deploy bundle (signaling + TLS + STUN/TURN) | `deploy/` (Dockerfile + compose + Caddy + coturn) | Shipped (builds); live session pending hosting |
+| Configurable signaling URL + ICE/STUN list | `[netplay] signaling_url` / `stun_servers` | Shipped |
 
 Nothing here touches the emulator core, so the determinism contract and the
 single-player path are unaffected. AccuracyCoin stays 100.00% and the commercial
@@ -122,13 +121,13 @@ The caller then points the live `UdpTransport`'s remote at `peer_public()` (via
   exchange → punch → handshake as one flow) is a small follow-up; the pieces are
   all present and tested in isolation.
 
-### 2.4 N-peer UDP roster handshake (v2.6.0)
+### 2.4 N-peer UDP roster handshake
 
 The 2-player UDP path is **point-to-point**: the host adopts a single joiner and
 the two exchange input directly. For **3-4 players** every peer must reach every
 *other* peer — a **fully-connected mesh** — and a joiner cannot learn the *other*
 joiners' addresses by itself (it only ever talks to the host during its
-handshake). v2.6.0 closes that gap with a host-distributed **roster**.
+handshake). A host-distributed **roster** closes that gap.
 
 `rustynes-netplay::mesh_net` adds three pieces:
 
@@ -236,7 +235,7 @@ room-affinity load balancer. Pair it with a **STUN/TURN** server (`coturn`) for
 the actual NAT traversal; the signaling server only brokers the handshake and
 carries no gameplay traffic.
 
-**Wire format** (JSON over WebSocket text frames). v2.7.1 generalized this from
+**Wire format** (JSON over WebSocket text frames). This is generalized from
 2 peers to an **N-peer mesh** (2..=4): `join` carries the room's `max_players`,
 and `offer` / `answer` / `candidate` carry `{ from, to }` slots so the relay
 routes each to a specific peer:
@@ -262,7 +261,7 @@ announced the **same `rom_hash`** (`rom-mismatch` otherwise; `room-full` past
 `max_players`). The pure relay logic is unit-tested for 2-, 3-, and 4-peer rooms
 in `rustynes_netplay::signaling`.
 
-### 3.3 Wasm-frontend wiring + lobby (v2.7.0 — wired)
+### 3.3 Wasm-frontend wiring + lobby (wired)
 
 `rustynes-frontend` has a **wasm-only netplay path** (`wasm_netplay.rs`) that:
 
@@ -303,7 +302,7 @@ The build gate is `cargo build -p rustynes-netplay --target wasm32-unknown-unkno
 plus the frontend's two wasm flavours compiling with the netplay + lobby
 present.
 
-### 3.4 Deploying the signaling + STUN/TURN stack (v2.7.0)
+### 3.4 Deploying the signaling + STUN/TURN stack
 
 The `deploy/` directory is a turn-key bundle for the server side:
 

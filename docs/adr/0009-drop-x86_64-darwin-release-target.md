@@ -2,14 +2,14 @@
 
 **Status:** Accepted.
 **Date:** 2026-05-25
-**Author:** RustyNES v2 maintainers
+**Author:** RustyNES maintainers
 **Supersedes:** None. Resolves the "macOS x86_64 runner sunset" forward
 reminder tracked in `to-dos/ROADMAP.md` → "Release engineering (v1.x)".
 
 ## Context
 
 The release workflow (`.github/workflows/release.yml`) builds the
-`rustynes-v2` binary for four targets: `x86_64-unknown-linux-gnu`,
+`rustynes` binary for four targets: `x86_64-unknown-linux-gnu`,
 `x86_64-apple-darwin`, `aarch64-apple-darwin`, and
 `x86_64-pc-windows-msvc`. The Intel macOS binary is built **natively** on a
 GitHub-hosted Intel macOS runner.
@@ -44,7 +44,7 @@ removes it.
 
 3. **Drop `x86_64-apple-darwin` from the release matrix (CHOSEN).** Ship
    Linux x86_64, macOS aarch64, and Windows x86_64 prebuilt binaries; Intel
-   Mac users build from source (`cargo build --release -p nes-frontend`).
+   Mac users build from source (`cargo build --release -p rustynes-frontend`).
    Apple Silicon shipped in 2020 and is the overwhelming majority of active
    macOS hardware; the binary is a convenience, not the only install path
    (the project is `cargo`-buildable on any host).

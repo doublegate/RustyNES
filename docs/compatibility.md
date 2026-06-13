@@ -22,15 +22,15 @@ Region detection per NES 2.0 byte 12; iNES 1.0 fallback uses heuristics (file ex
 | NES (NES-001) | Yes | Functionally identical CPU+PPU |
 | NES (NES-101 / "top loader") | Yes | Same internals |
 | AV Famicom (HVC-101) | Yes | RGB output ignored; we emit composite-style anyway |
-| Famicom Disk System (FDS) | **Yes (v2.2.0)** | RAM adaptor (mapper 20) + user-supplied `disksys.rom` BIOS; see the FDS bullet below |
-| Vs. System (arcade) | **Game-verified (v2.6.0)** | RGB PPU (2C03/2C04/2C05) + 2C05 quirks + DIP/coin inputs (v2.5.0); **mappers 99 + 151 game-verify in-game RGB** — Vs. Excitebike / Vs. Clu Clu Land + Vs. Castlevania / Vs. Pinball (clean-byte detection) boot through the 2C03 palette. See the Vs./PC10 bullet below |
-| PlayChoice-10 (arcade) | **Game-verified (v2.6.0)** | NES-game part renders through the 2C03 RGB palette — Power Blade / Rad Racer 2 / Captain Skyhawk / Mario Open Golf etc. (clean-byte-7 `0x02` detection); second-screen menu + Z80 out of scope |
+| Famicom Disk System (FDS) | **Yes** | RAM adaptor (mapper 20) + user-supplied `disksys.rom` BIOS; see the FDS bullet below |
+| Vs. System (arcade) | **Game-verified** | RGB PPU (2C03/2C04/2C05) + 2C05 quirks + DIP/coin inputs; **mappers 99 + 151 game-verify in-game RGB** — Vs. Excitebike / Vs. Clu Clu Land + Vs. Castlevania / Vs. Pinball (clean-byte detection) boot through the 2C03 palette. See the Vs./PC10 bullet below |
+| PlayChoice-10 (arcade) | **Game-verified** | NES-game part renders through the 2C03 RGB palette — Power Blade / Rad Racer 2 / Captain Skyhawk / Mario Open Golf etc. (clean-byte-7 `0x02` detection); second-screen menu + Z80 out of scope |
 
-### PPU variant scoping (Phase 7 / T-73-007; revised v2.5.0)
+### PPU variant scoping (Phase 7 / T-73-007)
 
 The RGB PPUs — **2C03 / 2C04 / 2C05** (Vs. System, PlayChoice-10) — replace the
 2C02 with a hardware RGB palette (not the composite palette this emulator
-generates for stock NES). **As of v2.5.0 Phase A** the emulator implements:
+generates for stock NES). The emulator implements:
 
 - **The RGB palette tables.** All five distinct hardware palettes are baked in
   (`crates/rustynes-ppu/src/palette.rs`): the 2C03 (= 2C05) master palette and the
@@ -49,7 +49,7 @@ generates for stock NES). **As of v2.5.0 Phase A** the emulator implements:
   upper bits of `$4016`/`$4017` per the Vs. protocol (`Nes::set_vs_dip` /
   `insert_coin` / `set_vs_service`). Gated on the cart's console type.
 
-**In-game RGB is now game-verified for BOTH arcade platforms (v2.6.0).** Two
+**In-game RGB is game-verified for BOTH arcade platforms.** Two
 detection signals route a cart through the 2C03 RGB PPU at parse time:
 
 1. **Mapper-driven** (the most robust): mappers **99 (Nintendo Vs. System)** and
@@ -76,12 +76,12 @@ detection signals route a cart through the 2C03 RGB PPU at parse time:
 `crates/rustynes-test-harness/tests/vs_system_rgb.rs` asserts every rendered colour is
 a 2C03-palette colour and at least one is impossible under the composite 2C02
 (proving genuine RGB routing). The Vs./PC10 dumps are iNES **1.0** (no byte-13),
-so the parser defaults the palette to 2C03; the **per-game database (v2.7.0)**
+so the parser defaults the palette to 2C03; the **per-game database**
 supplies the correct 2C04-000x / RC2C03 permutation for games that used one (see
 below). Vs. games sit on an insert-coin attract loop until
 a coin is latched (`Nes::insert_coin`); PC10 games render directly.
 
-### Vs. System per-game database (v2.7.0)
+### Vs. System per-game database
 
 `crates/rustynes-core/src/vs_db.rs` is an embedded, SHA-256-keyed, binary-searched
 table (`no_std`-safe const data; `rustynes_core::vs_db::lookup`) that closes two gaps
@@ -135,28 +135,27 @@ is gated on `ConsoleType::VsSystem`/`Playchoice10`; a stock `Nes` cart is byte-f
 byte unchanged (AccuracyCoin 100.00% (139/139) + both ROM oracles byte-identical).
 Region timing (PAL/Dendy)
 is validated by automated gates (`ppu_region_constants_match_hardware` in
-`rustynes-ppu`; `region_timing.rs` in `rustynes-test-harness`). As of **v2.0.0** the R1
-master-clock default scheduler runs the **region-exact CPU:PPU clock ratio** —
+`rustynes-ppu`; `region_timing.rs` in `rustynes-test-harness`). The R1
+master-clock scheduler runs the **region-exact CPU:PPU clock ratio** —
 3:1 NTSC/Dendy and the hardware-true **3.2:1 PAL** (the `region_timing` PAL gate
-now asserts 33,247 CPU cyc/frame, not the legacy 3:1 approximation's 35,464).
-The legacy integer-lockstep path (`--no-default-features`) keeps the 3:1 PAL
-approximation.
+asserts 33,247 CPU cyc/frame, not the legacy 3:1 approximation's 35,464).
 
 ## Mapper scope (v1.0)
 
-See `docs/mappers.md` §Mapper coverage matrix. **51 mapper families as of v2.6.0**
-(v1.0 shipped the top-25 by ROM count; v2.1.0 added 16/159, 18, 64, 65, 67, 68,
-70, 73, 78, 88/206, 118, 210 — see `CHANGELOG.md` `[2.1.0]`; v2.4.0 added 119
-TQROM — Pin\*Bot, High Speed; v2.6.0 added 33 TC0190, 93 Sunsoft-3R, 99 Vs.
-System, 152 Bandai-74161, then a second batch of 32 Irem G-101, 48 Taito TC0690
-(A12 IRQ), 87 Jaleco CNROM-style, 89 Sunsoft-2, 184 Sunsoft-1, then a third batch
-of 80 Taito X1-005, 82 Taito X1-017, 151 Konami VS / VRC1-on-Vs.), covering the
-bulk of the licensed library. These additions are spec-implemented from the nesdev
+See `docs/mappers.md` §Mapper coverage matrix. **51 mapper families**
+(developed across the engine's v2.0–v2.6 lineage and all shipping in RustyNES
+v1.0.0: the top-25 by ROM count first; then 16/159, 18, 64, 65, 67, 68,
+70, 73, 78, 88/206, 118, 210; then 119 TQROM — Pin\*Bot, High Speed; then 33
+TC0190, 93 Sunsoft-3R, 99 Vs. System, 152 Bandai-74161, then a second batch of
+32 Irem G-101, 48 Taito TC0690 (A12 IRQ), 87 Jaleco CNROM-style, 89 Sunsoft-2,
+184 Sunsoft-1, then a third batch of 80 Taito X1-005, 82 Taito X1-017, 151 Konami
+VS / VRC1-on-Vs.), covering the bulk of the licensed library. These are
+spec-implemented from the nesdev
 wiki + unit-tested + boot-smoked (commercial-ROM visual survey via the
 `coverage_smoke` bin). Pirate, multicart, and ultra-niche mappers remain gated by
 the long-tail policy below.
 
-**Known v2.6.0 long-tail render gap — mapper 89 (Sunsoft-2).** *Tenka no
+**Known long-tail render gap — mapper 89 (Sunsoft-2).** *Tenka no
 Goikenban: Mito Koumon* (the only iNES mapper-89 dump on hand) boots and executes
 (CPU/RAM live; sprites briefly render) but its background nametable stays empty
 and the picture degrades to the backdrop colour after ~400 frames. The banking is
@@ -172,10 +171,10 @@ locked into the `external_extended` oracle.
 |--------------|--------|-------|
 | MMC5 (2 pulse + raw PCM) | **Landed** (`mapper-audio`, Track C2 / Phase 2.3) | Castlevania III JP, Just Breed, Laser Invasion |
 | VRC6 (3 channels) | Phase 4 | Akumajou Densetsu, Madara, Esper Dream 2 |
-| VRC7 (FM, 6 channels) | **Landed (v1.1.0)** — clean-room `emu2413` port (`crates/rustynes-apu/src/opll.rs`, MIT); ADR 0006 supersedes ADR 0004 | Lagrange Point (JP) plays with in-game audio. |
+| VRC7 (FM, 6 channels) | **Landed** — clean-room `emu2413` port (`crates/rustynes-apu/src/opll.rs`, MIT); ADR 0006 supersedes ADR 0004 | Lagrange Point (JP) plays with in-game audio. |
 | Sunsoft 5B (3 channels) | Phase 4 | Gimmick! |
 | Namco 163 (1-8 channels) | Phase 4 | Several Japanese RPGs |
-| FDS (wavetable + envelope) | **Landed (v2.2.0)** | 2C33 — 64-entry wavetable + 32-step modulation + envelopes + master volume; behind `mapper-audio` |
+| FDS (wavetable + envelope) | **Landed** | 2C33 — 64-entry wavetable + 32-step modulation + envelopes + master volume; behind `mapper-audio` |
 
 ## Game compatibility goals (v1.0)
 
@@ -187,13 +186,14 @@ locked into the `external_extended` oracle.
 
 ## Out-of-scope (v1.0) — HISTORICAL
 
-> Several items below have since shipped (WebAssembly v1.3.0, TAS v1.4.0,
-> VRC7 FM v1.1.0). See "Platform scope (Phase 7 / v1.5.0)" immediately below
-> for the authoritative current list; it supersedes this one where they disagree.
+> Several items below have since shipped (WebAssembly, TAS, VRC7 FM). See
+> "Platform scope" immediately below for the authoritative current list; it
+> supersedes this one where they disagree. All listed capabilities ship in
+> RustyNES v1.0.0.
 
 - Famicom Disk System (FDS).
 - Vs. System and PlayChoice-10 arcade variants.
-- Network play. **(Shipped v2.3.0 — GGPO-style rollback netcode over UDP, native; see `docs/release-notes/v2.3.0.md`.)**
+- Network play. **(Shipped — GGPO-style rollback netcode over UDP, native; see `docs/release-notes/v2.3.0.md`.)**
 - WebAssembly target.
 - Mobile (iOS/Android).
 - TAS (tool-assisted speedrun) movie recording / playback. Architecture supports it (deterministic core); UI is post-v1.0.
@@ -202,14 +202,14 @@ locked into the `external_extended` oracle.
   release notes. NES 2.0 default-device metadata is parsed but not yet a full
   device-selection system.
 
-## Platform scope (Phase 7 / v1.5.0)
+## Platform scope (Phase 7)
 
-This section supersedes the v1.0 "Out-of-scope" list above where they disagree
-(several items have since shipped). Decisions from Phase 7 Sprint 4:
+This section supersedes the early "Out-of-scope" list above where they disagree
+(several items ship in v1.0.0). Decisions from Phase 7 Sprint 4:
 
-- **Shipped since v1.0:** WebAssembly target (v1.3.0), TAS movie recording /
-  playback (v1.4.0), VRC7 FM audio (v1.1.0). These are no longer out of scope.
-- **FDS (Famicom Disk System) — SUPPORTED (v2.2.0).** `.fds` images play. The
+- **Shipped in v1.0.0:** WebAssembly target, TAS movie recording /
+  playback, VRC7 FM audio. These are no longer out of scope.
+- **FDS (Famicom Disk System) — SUPPORTED.** `.fds` images play. The
   `.fds`/fwNES parser (`rustynes_mappers::parse_fds`); the FDS RAM-adapter device
   (`rustynes_mappers::Fds`, iNES mapper 20, a `Box<dyn Mapper>`) owning 32 KiB PRG-RAM
   (`$6000-$DFFF`), 8 KiB CHR-RAM, and the user-supplied 8 KiB BIOS
@@ -228,17 +228,17 @@ This section supersedes the v1.0 "Out-of-scope" list above where they disagree
   (`RUSTYNES_FDS_BIOS`) `fdsirqtests.fds` path. Simplified: no CRC/gaps-on-write,
   no analog seek timing. nesdev `FDS*` is the primary source; Mesen2
   `Core/NES/Mappers/FDS/` is a structural-only (GPL-3.0) reference.
-- **Input devices — standard pad + Four Score + Zapper + Vaus (v2.1.0).** The
-  **Four Score** 4-player adapter is supported (v1.7.0). **v2.1.0** adds the
+- **Input devices — standard pad + Four Score + Zapper + Vaus.** The
+  **Four Score** 4-player adapter is supported. Also supported: the
   **Arkanoid Vaus paddle** (`Nes::set_paddle`, game-ROM-verified against
   `vaus-test`) and the **Zapper** light gun (`Nes::set_zapper`, framebuffer-luma
   light-detect, unit-verified only) as an opt-in per-port `InputDevice` overlay —
   when no device is attached the standard-controller + Four Score read paths are
   byte-identical. Famicom expansion-port devices, the microphone, and DMC-DMA
   controller-bit corruption remain deferred.
-- **Vs. System / PlayChoice-10 (2C03/04/05 RGB PPUs) — game-verified (v2.6.0).**
+- **Vs. System / PlayChoice-10 (2C03/04/05 RGB PPUs) — game-verified.**
   RGB palette tables + 2C05 register quirks + NES 2.0 byte-13 parsing + Vs.
-  DIP/coin inputs (v2.5.0); **mappers 99 + 151 game-verify in-game RGB** (Vs.
+  DIP/coin inputs; **mappers 99 + 151 game-verify in-game RGB** (Vs.
   Excitebike / Vs. Clu Clu Land / Vs. Gradius / Vs. The Goonies), and the
   **clean-byte-7 arcade flag** (exact `0x01`/`0x02` on a non-NES-2.0 header)
   game-verifies **PlayChoice-10** (Power Blade / Rad Racer 2 / Captain Skyhawk /

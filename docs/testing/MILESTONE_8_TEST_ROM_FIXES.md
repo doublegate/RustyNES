@@ -1,9 +1,15 @@
 # Milestone 8: Test ROM Validation - Technical Analysis
 
+> **Historical document (legacy engine line, v0.7.0).** This is a dated
+> milestone report from an early stage of the engine line that produced
+> RustyNES v1.0.0. Its counts (500 workspace tests, 5 mappers) are point-in-time
+> and superseded — the authoritative current test matrix is
+> [`../STATUS.md`](../STATUS.md). Retained for historical provenance.
+
 **Version:** 0.7.0 (gem-ph1.5 branch)
 **Date:** December 21, 2025
 **Phase:** 1.5 Stabilization
-**Status:** ✅ **COMPLETE** - 100% Pass Rate Achieved
+**Status:** **COMPLETE** - 100% Pass Rate Achieved (at the time)
 
 ---
 
@@ -23,7 +29,7 @@ Milestone 8 represents a systematic validation and refinement effort across all 
 ## Test Results Summary
 
 ### Before Milestone 8 (v0.6.0)
-- **nestest.nes:** ✅ Pass (baseline)
+- **nestest.nes:** Pass (baseline)
 - **Blargg CPU tests:** 13/20 (65%)
 - **Blargg PPU tests:** Not integrated
 - **Blargg APU tests:** Not integrated
@@ -31,12 +37,12 @@ Milestone 8 represents a systematic validation and refinement effort across all 
 - **Total workspace tests:** 429 passing
 
 ### After Milestone 8 (v0.7.0)
-- **nestest.nes:** ✅ Pass (no regressions)
-- **Blargg CPU tests:** 22/22 (100%) ⬆️ +35%
-- **Blargg PPU tests:** 25/25 (100%) 🆕
-- **Blargg APU tests:** 15/15 (100%) 🆕
-- **Mapper tests:** 28/28 (100%) 🆕
-- **Comprehensive ROM validation:** 1/1 (100%) 🆕
+- **nestest.nes:** Pass (no regressions)
+- **Blargg CPU tests:** 22/22 (100%) (+35%)
+- **Blargg PPU tests:** 25/25 (100%) (new)
+- **Blargg APU tests:** 15/15 (100%) (new)
+- **Mapper tests:** 28/28 (100%) (new)
+- **Comprehensive ROM validation:** 1/1 (100%) (new)
 - **Total workspace tests:** 500 passing (+71 tests)
 
 ---
@@ -57,11 +63,11 @@ Milestone 8 represents a systematic validation and refinement effort across all 
 **Test Results:**
 | Test ROM | Status | Notes |
 |----------|--------|-------|
-| cpu_nestest.nes | ✅ Pass | Baseline validation (no regressions) |
-| cpu_branch_timing_2.nes | ✅ Pass | Branch timing edge cases |
-| cpu_dummy_writes_ppumem.nes | ✅ Pass | RMW dummy write cycles (PPU) |
-| cpu_dummy_writes_oam.nes | ✅ Pass | RMW dummy write cycles (OAM) |
-| cpu_dummy_reads.nes | ✅ Pass | Fixed: Cycle-accurate dummy read timing implemented |
+| cpu_nestest.nes | Pass | Baseline validation (no regressions) |
+| cpu_branch_timing_2.nes | Pass | Branch timing edge cases |
+| cpu_dummy_writes_ppumem.nes | Pass | RMW dummy write cycles (PPU) |
+| cpu_dummy_writes_oam.nes | Pass | RMW dummy write cycles (OAM) |
+| cpu_dummy_reads.nes | Pass | Fixed: Cycle-accurate dummy read timing implemented |
 
 **Key Fix:**
 - `cpu_dummy_reads.nes`: Fixed by implementing proper dummy read cycles in implied addressing mode instructions and RMW indexed addressing
@@ -99,7 +105,7 @@ CpuState::Fetch => {
 
 **Hardware Behavior:** On real 6502, NMI is edge-triggered. If an NMI occurs during BRK execution (specifically cycle 1, the opcode fetch for the next instruction), the CPU hijacks the BRK and uses the NMI vector ($FFFA) instead of the IRQ/BRK vector ($FFFE).
 
-**Result:** ✅ Passed `cpu_interrupts.nes` test #2
+**Result:** Passed `cpu_interrupts.nes` test #2
 
 ---
 
@@ -127,7 +133,7 @@ fn tick_pop_status(&mut self, bus: &mut impl Bus) -> bool {
 
 **Hardware Behavior:** The 6502 samples IRQ on the last cycle of each instruction. When RTI sets I=1, the very next instruction must see interrupts blocked. This is implemented via the `prev_irq_inhibit` flag which delays IRQ acknowledgment by one instruction.
 
-**Result:** ✅ Passed timing-sensitive interrupt tests
+**Result:** Passed timing-sensitive interrupt tests
 
 ---
 
@@ -140,13 +146,13 @@ fn tick_pop_status(&mut self, bus: &mut impl Bus) -> bool {
 **Test Results:**
 | Category | Tests | Status |
 |----------|-------|--------|
-| Instruction Singles (11 tests) | cpu_instr_01-11 | ✅ 11/11 |
-| Timing Tests (2 tests) | cpu_instr_timing_1, cpu_branch_timing_2 | ✅ 2/2 |
-| Dummy Cycles (3 tests) | cpu_dummy_writes_ppumem, cpu_dummy_writes_oam, cpu_dummy_reads | ✅ 3/3 (100%) |
-| Interrupt Tests (1 test) | cpu_interrupts | ✅ 1/1 |
-| Comprehensive (2 tests) | cpu_all_instrs, cpu_official_only | ✅ 2/2 |
-| Debug (1 test) | debug_cpu_interrupts_apu | ✅ 1/1 |
-| **Total** | **22 tests** | **✅ 22/22 (100%)** |
+| Instruction Singles (11 tests) | cpu_instr_01-11 | PASS: 11/11 |
+| Timing Tests (2 tests) | cpu_instr_timing_1, cpu_branch_timing_2 | PASS: 2/2 |
+| Dummy Cycles (3 tests) | cpu_dummy_writes_ppumem, cpu_dummy_writes_oam, cpu_dummy_reads | PASS: 3/3 (100%) |
+| Interrupt Tests (1 test) | cpu_interrupts | PASS: 1/1 |
+| Comprehensive (2 tests) | cpu_all_instrs, cpu_official_only | PASS: 2/2 |
+| Debug (1 test) | debug_cpu_interrupts_apu | PASS: 1/1 |
+| **Total** | **22 tests** | **PASS: 22/22 (100%)** |
 
 ---
 
@@ -225,7 +231,7 @@ impl Ppu {
 - Reading $2002 only drives bits 7-5 (VBlank, sprite 0, overflow), bits 4-0 are open bus
 - Any write to any PPU register refreshes the latch
 
-**Result:** ✅ Passed `ppu_open_bus.nes`
+**Result:** Passed `ppu_open_bus.nes`
 
 ---
 
@@ -277,7 +283,7 @@ pub fn write_register<F: FnMut(u16, u8)>(&mut self, addr: u16, value: u8, mut wr
   - Mapper can bank-switch CHR during writes
   - Consistent with real NES hardware architecture
 
-**Result:** ✅ Fixed `ppu_palette_ram.nes`, `apu_len_ctr.nes` (both use CHR-RAM)
+**Result:** PASS: Fixed `ppu_palette_ram.nes`, `apu_len_ctr.nes` (both use CHR-RAM)
 
 ---
 
@@ -304,7 +310,7 @@ pub fn read(&self) -> u8 {
 
 **Hardware Behavior:** NES OAM stores only 5 bits for sprite attributes. The unused bits (4-2) are not connected to storage latches and always read as 0.
 
-**Result:** ✅ Improved OAM read accuracy
+**Result:** PASS: Improved OAM read accuracy
 
 ---
 
@@ -318,7 +324,7 @@ pub fn read(&self) -> u8 {
 - Confirmed NMI triggers on the same dot (if enabled)
 - No code changes needed - timing was already correct
 
-**Result:** ✅ Passed `ppu_vbl_02_set_time.nes` (±2 cycle precision)
+**Result:** Passed `ppu_vbl_02_set_time.nes` (±2 cycle precision)
 
 ---
 
@@ -332,12 +338,12 @@ pub fn read(&self) -> u8 {
 **Test Results:**
 | Category | Tests | Status |
 |----------|-------|--------|
-| VBlank/NMI (10 tests) | ppu_vbl_01-10 | ✅ 10/10 |
-| Sprite 0 Hit (11 tests) | ppu_spr_hit_01-11 | ✅ 11/11 |
-| Palette RAM (1 test) | ppu_palette_ram | ✅ 1/1 |
-| Open Bus (1 test) | ppu_open_bus | ✅ 1/1 |
-| VRAM Access (1 test) | ppu_vram_access | ✅ 1/1 |
-| **Total** | **25 tests** | **✅ 25/25 (100%)** |
+| VBlank/NMI (10 tests) | ppu_vbl_01-10 | PASS: 10/10 |
+| Sprite 0 Hit (11 tests) | ppu_spr_hit_01-11 | PASS: 11/11 |
+| Palette RAM (1 test) | ppu_palette_ram | PASS: 1/1 |
+| Open Bus (1 test) | ppu_open_bus | PASS: 1/1 |
+| VRAM Access (1 test) | ppu_vram_access | PASS: 1/1 |
+| **Total** | **25 tests** | **PASS: 25/25 (100%)** |
 
 ---
 
@@ -385,7 +391,7 @@ pub fn write_register(&mut self, addr: u16, value: u8) {
 - **Mode 0 (4-step):** Writing $4017 resets cycle counter, no immediate action
 - **Mode 1 (5-step):** Writing $4017 resets cycle counter AND immediately clocks quarter + half frame
 
-**Result:** ✅ Fixed `apu_test/04-jitter.nes` timing
+**Result:** PASS: Fixed `apu_test/04-jitter.nes` timing
 
 ---
 
@@ -423,7 +429,7 @@ fn clock_4step(&mut self) -> FrameAction {
 
 **Hardware Behavior:** Frame counter operates at CPU clock rate. The original implementation tried to use half-cycle (APU) timing, but the CPU-level frame counter must use whole CPU cycles. The ±0.5 cycle error accumulated across the frame.
 
-**Result:** ✅ Frame counter now cycle-accurate
+**Result:** PASS: Frame counter now cycle-accurate
 
 ---
 
@@ -466,7 +472,7 @@ pub fn clock_timer(&mut self) {
 
 When the shift register empties, it immediately loads from the sample buffer. If the sample buffer is empty, it tries to refill from memory. The original implementation delayed refill until the next timer tick.
 
-**Result:** ✅ Passed `apu_dmc_basics.nes`
+**Result:** Passed `apu_dmc_basics.nes`
 
 ---
 
@@ -523,7 +529,7 @@ pub fn write_register(&mut self, addr: u16, value: u8) {
 - **Frame Counter IRQ:** Cleared by reading $4015 or writing $4017
 - **DMC IRQ:** Cleared only by writing to $4015 or disabling DMC
 
-**Result:** ✅ Passed `apu_dmc_rates.nes` and IRQ timing tests
+**Result:** Passed `apu_dmc_rates.nes` and IRQ timing tests
 
 ---
 
@@ -557,7 +563,7 @@ pub fn step(&mut self) -> FrameAction {
 - **Triangle/DMC:** Clocked at CPU rate (1.789 MHz)
 - **Pulse/Noise:** Clocked at APU rate (894 kHz)
 
-**Result:** ✅ Correct audio pitch for all channels
+**Result:** PASS: Correct audio pitch for all channels
 
 ---
 
@@ -571,13 +577,13 @@ pub fn step(&mut self) -> FrameAction {
 **Test Results:**
 | Category | Tests | Status |
 |----------|-------|--------|
-| Comprehensive (8 tests) | apu_test/01-08 | ✅ 8/8 |
-| Linear Counter (1 test) | apu_lin_ctr | ✅ 1/1 |
-| Sweep Unit (1 test) | apu_sweep | ✅ 1/1 |
-| Envelope (1 test) | apu_envelope | ✅ 1/1 |
-| Mixer (1 test) | apu_mixer | ✅ 1/1 |
-| Volumes (1 test) | apu_volumes | ✅ 1/1 |
-| **Total** | **15 tests** | **✅ 15/15 (100%)** |
+| Comprehensive (8 tests) | apu_test/01-08 | PASS: 8/8 |
+| Linear Counter (1 test) | apu_lin_ctr | PASS: 1/1 |
+| Sweep Unit (1 test) | apu_sweep | PASS: 1/1 |
+| Envelope (1 test) | apu_envelope | PASS: 1/1 |
+| Mixer (1 test) | apu_mixer | PASS: 1/1 |
+| Volumes (1 test) | apu_volumes | PASS: 1/1 |
+| **Total** | **15 tests** | **PASS: 15/15 (100%)** |
 
 ---
 
@@ -592,12 +598,12 @@ pub fn step(&mut self) -> FrameAction {
 **Test Results:**
 | Mapper | Tests | Status |
 |--------|-------|--------|
-| NROM (0) | 3 tests | ✅ 3/3 |
-| MMC1 (1) | 10 tests | ✅ 10/10 |
-| UxROM (2) | 3 tests | ✅ 3/3 |
-| CNROM (3) | 1 test | ✅ 1/1 |
-| MMC3 (4) | 11 tests | ✅ 11/11 |
-| **Total** | **28 tests** | **✅ 28/28 (100%)** |
+| NROM (0) | 3 tests | PASS: 3/3 |
+| MMC1 (1) | 10 tests | PASS: 10/10 |
+| UxROM (2) | 3 tests | PASS: 3/3 |
+| CNROM (3) | 1 test | PASS: 1/1 |
+| MMC3 (4) | 11 tests | PASS: 11/11 |
+| **Total** | **28 tests** | **PASS: 28/28 (100%)** |
 
 ---
 
@@ -612,7 +618,7 @@ pub fn step(&mut self) -> FrameAction {
 - Implied addressing mode instructions (TAX, TAY, TXA, TYA, INX, INY, DEX, DEY, etc.)
 - RMW indexed addressing modes (read old value before write)
 
-**Verification:** ✅ Test `cpu_dummy_reads.nes` now passes.
+**Verification:** PASS: Test `cpu_dummy_reads.nes` now passes.
 
 **Code Location:** `crates/rustynes-cpu/src/cpu.rs` - State machine handles dummy read cycles properly.
 
@@ -621,7 +627,7 @@ pub fn step(&mut self) -> FrameAction {
 #### 1.2 RMW Dummy Write Cycles
 **Implementation:** Read-Modify-Write instructions (INC, DEC, ASL, LSR, ROL, ROR) perform a dummy write during the modify cycle.
 
-**Verification:** ✅ Passed `cpu_dummy_writes_ppumem.nes` and `cpu_dummy_writes_oam.nes`
+**Verification:** Passed `cpu_dummy_writes_ppumem.nes` and `cpu_dummy_writes_oam.nes`
 
 **Code Location:** `crates/rustynes-cpu/src/instructions.rs` - RMW instruction handlers
 
@@ -637,7 +643,7 @@ fn page_crossed(base: u16, offset: u8) -> bool {
 }
 ```
 
-**Verification:** ✅ Passed `cpu_branch_timing_2.nes` (branch page crossing tests)
+**Verification:** Passed `cpu_branch_timing_2.nes` (branch page crossing tests)
 
 ---
 
@@ -673,7 +679,7 @@ impl Cpu {
 2. **CLI instruction:** Clears I=0. Next instruction CAN be interrupted.
 3. **RTI instruction:** Restores I from stack. Restored value applies to next instruction.
 
-**Verification:** ✅ Passed `cpu_interrupts.nes` (all 5 interrupt tests)
+**Verification:** Passed `cpu_interrupts.nes` (all 5 interrupt tests)
 
 ---
 
@@ -705,7 +711,7 @@ CpuState::Fetch => {
 }
 ```
 
-**Verification:** ✅ Passed `cpu_interrupts.nes` test #2 (NMI during BRK)
+**Verification:** Passed `cpu_interrupts.nes` test #2 (NMI during BRK)
 
 ---
 
@@ -714,7 +720,7 @@ CpuState::Fetch => {
 
 **Implementation:** When `tick_pop_status()` sets `StatusFlags::INTERRUPT_DISABLE`, it immediately sets `prev_irq_inhibit = true` to block IRQ sampling for the next instruction.
 
-**Verification:** ✅ Passed `cpu_interrupts.nes` test #5 (RTI with I=1)
+**Verification:** Passed `cpu_interrupts.nes` test #5 (RTI with I=1)
 
 ---
 
@@ -736,7 +742,7 @@ CpuState::Fetch => {
 | IRQ Flag Set #2 | 29830 | 29831 | +1 |
 | IRQ Flag Set #3 + Reset | 29831 | 29832 | +1 |
 
-**Verification:** ✅ Passed `apu_test/03-irq_flag.nes` and `06-irq_flag_timing.nes`
+**Verification:** Passed `apu_test/03-irq_flag.nes` and `06-irq_flag_timing.nes`
 
 ---
 
@@ -749,7 +755,7 @@ CpuState::Fetch => {
 
 **Key Fix:** Reading $4015 does NOT clear DMC IRQ flag (only frame counter IRQ).
 
-**Verification:** ✅ Passed `apu_test/03-irq_flag.nes`
+**Verification:** Passed `apu_test/03-irq_flag.nes`
 
 ---
 
@@ -777,7 +783,7 @@ pub fn atx(cpu: &mut Cpu, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
 }
 ```
 
-**Verification:** ✅ Passed `cpu_instr_11_special.nes` (illegal opcode edge cases)
+**Verification:** Passed `cpu_instr_11_special.nes` (illegal opcode edge cases)
 
 ---
 
@@ -787,7 +793,7 @@ pub fn atx(cpu: &mut Cpu, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
 
 All 22 Blargg CPU tests now pass, including the previously challenging:
 
-#### 1. cpu_dummy_reads.nes - ✅ FIXED
+#### 1. cpu_dummy_reads.nes - FIXED
 **Previous Issue:** Implied addressing mode instructions (e.g., `CLC`, `DEX`, `TAX`) should perform a dummy read of the PC+1 byte during their execution cycle.
 
 **Solution:** Implemented cycle-accurate dummy reads in the CPU state machine. The `tick()` method now properly executes one bus operation per cycle for implied addressing modes.
@@ -796,7 +802,7 @@ All 22 Blargg CPU tests now pass, including the previously challenging:
 
 ---
 
-#### 2. cpu_interrupts.nes - ✅ FIXED (All 5 sub-tests)
+#### 2. cpu_interrupts.nes - FIXED (All 5 sub-tests)
 **Previous Issue:** BRK/NMI interaction edge cases were failing.
 
 **Solution:** Implemented NMI hijacking detection during BRK execution cycle 1. When NMI edge is detected during BRK opcode fetch, the CPU uses the NMI vector ($FFFA) instead of IRQ/BRK vector ($FFFE).
@@ -808,7 +814,7 @@ All 22 Blargg CPU tests now pass, including the previously challenging:
 ### PPU Unit Test Failures (Not Blargg Tests)
 
 #### 1. ppu::tests::test_oam_dma (Unit Test)
-**Status:** ❌ **FAILING** (not a Blargg test)
+**Status:** **FAILING** (not a Blargg test)
 
 **Error:**
 ```
@@ -826,7 +832,7 @@ assertion `left == right` failed
 ---
 
 #### 2. timing::tests::test_odd_frame_skip (Unit Test)
-**Status:** ❌ **FAILING** (not a Blargg test)
+**Status:** **FAILING** (not a Blargg test)
 
 **Error:**
 ```
@@ -928,12 +934,12 @@ assertion `left == right` failed
 - **Total Blargg:** 91/91 (100%)
 
 ### Accuracy Achievements
-- ✅ CPU instruction timing: ±1 cycle
-- ✅ PPU VBlank timing: ±2 cycle
-- ✅ APU frame counter: ±1 cycle
-- ✅ Interrupt handling: Cycle-accurate
-- ✅ Open bus behavior: Hardware-accurate
-- ✅ Mapper logic: 100% verified
+- PASS: CPU instruction timing: ±1 cycle
+- PASS: PPU VBlank timing: ±2 cycle
+- PASS: APU frame counter: ±1 cycle
+- PASS: Interrupt handling: Cycle-accurate
+- PASS: Open bus behavior: Hardware-accurate
+- PASS: Mapper logic: 100% verified
 
 ---
 

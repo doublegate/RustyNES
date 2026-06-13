@@ -19,9 +19,9 @@ the hotkey and the menu item do exactly the same thing.
 | Swap Disk Side | `F9` | FDS only — cycle the inserted disk side |
 | Save State | `F1` | Save to the active slot |
 | Load State | `F4` | Load from the active slot |
-| Save Slot ▸ | | Pick the active slot (1–8) used by `F1` / `F4` |
-| Save to Slot ▸ | | Save directly to a chosen slot (1–8) |
-| Load from Slot ▸ | | Load directly from a chosen slot (1–8) |
+| Save Slot ▸ | | Pick the active slot (0–9) used by `F1` / `F4` |
+| Save to Slot ▸ | | Save directly to a chosen slot (0–9) |
+| Load from Slot ▸ | | Load directly from a chosen slot (0–9) |
 | Take Screenshot | | Write a PNG of the current frame (native only) |
 | Quit | `Esc` | Close the window cleanly |
 
@@ -29,7 +29,7 @@ the hotkey and the menu item do exactly the same thing.
 
 | Item | Key | Notes |
 |------|-----|-------|
-| Pause / Resume | | Toggle emulation; disabled while a netplay session is active |
+| Pause / Resume | `Space` | Toggle emulation; disabled while a netplay session is active |
 | Reset | `F2` | Warm reset |
 | Power Cycle | `F3` | Cold boot |
 | Frame Advance | `\` | Step exactly one frame — meant for use while paused |
@@ -55,7 +55,7 @@ overlay for them.
 
 | Item | Key | Notes |
 |------|-----|-------|
-| Settings… | | Open the tabbed Settings window (Video / Audio / Input / Advanced) |
+| Settings… | | Open the tabbed Settings window (Display / Audio / Input / Advanced) |
 | Theme ▸ | | Light / Dark / System |
 | 8:7 Pixel Aspect | | Toggle NES-native pixel-aspect correction (default off) |
 | Fullscreen | `F11` | Toggle borderless fullscreen (native only) |
@@ -96,11 +96,13 @@ image.
 
 **View → Settings…** opens a tabbed dialog:
 
-- **Video** — theme, 8:7 pixel-aspect, FPS readout, present mode, and the NTSC
-  filter.
-- **Audio** — sample rate and audio-latency / dynamic-rate-control options.
+- **Display** — theme, 8:7 pixel-aspect, FPS readout, present mode, and the
+  NTSC filter.
+- **Audio** — sample rate, audio latency (`latency_ms`), and the
+  dynamic-rate-control toggle.
 - **Input** — the full rebind panel (the same one the debugger surfaces).
-- **Advanced** — rewind and other developer-facing toggles.
+- **Advanced** — run-ahead depth, rewind sizing, and other developer-facing
+  toggles.
 
 Changes to the theme, pixel-aspect, and FPS toggles apply live; the rest note
 where a restart is needed.

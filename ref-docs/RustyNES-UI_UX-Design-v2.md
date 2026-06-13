@@ -2,8 +2,27 @@
 
 **Document Version:** 2.0.0  
 **Last Updated:** December 19, 2025  
-**Status:** Enhanced Design Specification  
+**Status:** Enhanced Design Specification (design history)  
 **Target:** World-Class Production-Ready Interface
+
+---
+
+> **Status (v1.0.0 — what shipped).** This is the expanded, aspirational UI/UX
+> spec (run-ahead latency reduction, a 12+-preset CRT pipeline, HTPC / 10-foot
+> mode, HD packs, metadata scraping, etc.), retained as design history. Note
+> that "Version 2.0.0" here is the DOCUMENT revision, not a RustyNES release —
+> RustyNES shipped as **v1.0.0**. The realized frontend runs on **winit 0.30 +
+> wgpu + egui 0.29 + cpal** (NOT eframe/glow, NOT SDL2). Realized from this
+> spec's wish list: **run-ahead** (default 1, 0-3) for input-latency reduction,
+> a display-sync pacing matrix with audio dynamic-rate-control (VRR/G-Sync/
+> FreeSync aware), a simplified NTSC WGSL post-pass, the always-on menu bar +
+> status bar shell, the tabbed Settings window, themes (light/dark/system), the
+> 8:7 pixel-aspect toggle, the Welcome and About modals, and the egui debugger.
+> Deliberately NOT shipped at v1.0.0 (design intent only): the multi-preset
+> CRT-Royale/Lottes/Guest shader bank, phosphor-mask/BFI/rolling-scan effects,
+> the HTPC 10-foot / Cover Flow library UI, voice navigation, online metadata
+> scraping, HD packs, and Lua scripting (post-1.0). Read the body as the design
+> ceiling RustyNES aimed at, not a feature manifest of v1.0.0.
 
 ---
 

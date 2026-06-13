@@ -3,22 +3,22 @@
 **Derived from:** `ref-docs/nesdev-wiki-technical-report.md`
 **Primary upstream:** [Nesdev Wiki](https://www.nesdev.org/wiki/Nesdev_Wiki)
 **Purpose:** convert the Nesdev-derived reference report into an actionable
-accuracy checklist for RustyNES v2 subsystem docs, tests, and v1.x TODOs.
+accuracy checklist for RustyNES subsystem docs, tests, and TODOs.
 
 This document is intentionally not a wiki mirror. It is the project-facing
 control list: if a hardware behavior is relevant to this emulator, it should
 either be implemented, explicitly deferred, or covered by a TODO.
 
-> **Status refresh (v2.1.0, 2026-06-10).** The "Project status" cells below were
-> updated to reflect that the **R1 master-clock accuracy program is complete**
+> **Status refresh (2026-06-10).** The "Project status" cells below reflect that
+> the **R1 master-clock accuracy program is complete**
 > (AccuracyCoin **100.00% / 139**): the C1 IRQ trio, `$2007`/sprite-eval sub-cycle,
 > SH\*, and region (3.2:1 PAL) clusters are all closed; MMC5/VRC7 expansion audio,
-> Four Score + Vaus + Zapper input, and **FDS (v2.2.0: drive + IRQs + writable
+> Four Score + Vaus + Zapper input, and **FDS (drive + IRQs + writable
 > disks + 2C33 audio)** have landed. **What remains on this checklist:** the
 > DMC-controller-conflict model, the two `apu_reset` residuals, `mmc3_test_2/4` #3
-> (deferred), and the Vs./PlayChoice-10 RGB PPUs (a separate platform initiative);
-> the next major feature is netplay. The authoritative forward roadmap is the
-> post-v2.1.0 gap analysis (`~/.claude/plans/toasty-noodling-scroll.md`).
+> (deferred), and the Vs./PlayChoice-10 RGB PPUs (a separate platform initiative).
+> The authoritative forward roadmap is the gap analysis
+> (`~/.claude/plans/toasty-noodling-scroll.md`).
 
 ## Source Priority
 
@@ -65,7 +65,7 @@ Primary source clusters:
 | Reset sequence | Suppress reset stack writes but decrement S by 3 and fetch $FFFC/$FFFD | Implemented; cold-boot SP regression tests exist |
 | Power-up register state | A/X/Y normally 0 on tested hardware; RAM is unreliable; reset preserves most state | Deterministic test mode (default) + seeded randomized developer mode (`Nes::from_rom_with_power_on_seed`) both landed v1.5.0 (T-72-002) |
 | Unofficial opcodes | Implement all NMOS 6502 unofficial opcodes including unstable store family | Implemented; **SH\* pass 6/6 in AccuracyCoin under R1** — the deeper internal/external data-bus split is coarse but no test demands more |
-| Interrupt polling | NMI edge-sensitive, IRQ level-sensitive, BRK/IRQ/NMI vector hijacking | **Closed under the R1 master clock (v2.0.0):** `cpu_interrupts_v2` 5/5 strict; the only residual is `mmc3_test_2/4` #3 (ADR-0002 axis, deferred) |
+| Interrupt polling | NMI edge-sensitive, IRQ level-sensitive, BRK/IRQ/NMI vector hijacking | **Closed under the R1 master clock:** `cpu_interrupts_v2` 5/5 strict; the only residual is `mmc3_test_2/4` #3 (ADR-0002 axis, deferred) |
 | Dummy reads/writes | Preserve all documented dummy bus accesses and RMW double writes | Implemented for major suites; internal-vs-external bus modeling remains a v1.x TODO |
 | DMA halt eligibility | DMA can halt only on CPU read cycles | Implemented; continue to guard with DMC/OAM DMA tests |
 
@@ -81,7 +81,7 @@ Primary source clusters:
 | Sprite evaluation | Per-dot secondary-OAM clear, copy, overflow bug, and OAMADDR walk | Implemented; the sub-cycle flag-timing residuals **closed under R1** (AccuracyCoin sprite-eval 9/9) |
 | Sprite 0 hit | Set during rendering with left-edge, dot, and pre-render restrictions | Implemented; residual stale-shifter cases tracked |
 | NTSC odd-frame skip | Skip dot on odd frames only when rendering is enabled | Implemented and tested by `ppu_vbl_nmi` |
-| Region variants | PAL and Dendy timing must not be inferred from NTSC constants | **Region-exact under the R1 master clock (v2.0.0):** 3:1 NTSC/Dendy, hardware-true **3.2:1 PAL**; `region_timing` 4/4 |
+| Region variants | PAL and Dendy timing must not be inferred from NTSC constants | **Region-exact under the R1 master clock:** 3:1 NTSC/Dendy, hardware-true **3.2:1 PAL**; `region_timing` 4/4 |
 | PPU variants | 2C03/2C04/2C05/Vs. palettes and behavior are separate from stock 2C02 | Out of scope — a separate platform initiative (Vs. System / PlayChoice-10); load-time diagnostics only |
 
 ## APU, DMA, And Input Checklist
@@ -94,7 +94,7 @@ Primary source clusters:
 | Nonlinear mixer | Use nonlinear pulse and TND paths before console filtering | Implemented |
 | DMC load vs reload DMA | Model different scheduling phase, dummy cycle, and alignment cycle | Implemented; residual $4015/$4016 bracket cases remain |
 | DMA register-read bugs | Repeated halted reads must affect $2007/$4015/$4016/$4017 side-effect registers | Implemented enough for blargg; AccuracyCoin residuals remain |
-| Controller strobe/read | $4016 low 3 bits latch OUT lines; $4016/$4017 reads clock device and return D0-D4 plus open bus | Standard pads + **Four Score (v1.7.0)** + **Arkanoid Vaus paddle + Zapper (v2.1.0)** via the opt-in per-port `InputDevice` overlay; microphone / other expansion devices remain deferred |
+| Controller strobe/read | $4016 low 3 bits latch OUT lines; $4016/$4017 reads clock device and return D0-D4 plus open bus | Standard pads + **Four Score** + **Arkanoid Vaus paddle + Zapper** via the opt-in per-port `InputDevice` overlay; microphone / other expansion devices remain deferred |
 | DMC controller conflict | Reads can lose or duplicate joypad bits during DMC DMA | Known; **still untested/undiagnosed** (`read_joy3/count_errors`, `sprdma_and_dmc_dma`) — an ongoing accuracy-polish item |
 
 ## Cartridge And Mapper Checklist
@@ -108,8 +108,8 @@ Primary source clusters:
 | MMC1 | Serial 5-write protocol, reset write, and consecutive-cycle write ignore behavior | Implemented |
 | MMC3 | Filtered PPU A12 rising edge after sufficient low time; revision-sensitive IRQ behavior | Implemented with one scanline-timing residual |
 | MMC5 | PRG/CHR modes, ExRAM, fill, split, multiplier, scanline IRQ, audio | Feature-complete incl. audio (v1.x); only the >8 KiB multi-chip PRG-RAM configs remain (long-tail policy, no fixture) |
-| Expansion audio | VRC6, Sunsoft 5B, Namco 163, MMC5, VRC7, FDS require mapper/APU integration | **All landed** via `mix_audio`→`tick_with_external`: VRC6 / 5B / N163 / MMC5 / VRC7 OPLL FM (v1.1.0) / **FDS 2C33 wavetable (v2.2.0)** |
-| FDS | BIOS, disk timing, IRQs, writable media, and FDS audio are a separate platform surface | **Supported (v2.2.0):** parser + RAM adaptor (mapper 20) + user-supplied `disksys.rom` BIOS + read/write drive + timer/transfer IRQs + writable `.fds.sav` + 2C33 wavetable audio. Real-BIOS boot unverified in CI (BIOS non-distributable); device + audio unit-tested |
+| Expansion audio | VRC6, Sunsoft 5B, Namco 163, MMC5, VRC7, FDS require mapper/APU integration | **All landed** via `mix_audio`→`tick_with_external`: VRC6 / 5B / N163 / MMC5 / VRC7 OPLL FM / **FDS 2C33 wavetable** |
+| FDS | BIOS, disk timing, IRQs, writable media, and FDS audio are a separate platform surface | **Supported:** parser + RAM adaptor (mapper 20) + user-supplied `disksys.rom` BIOS + read/write drive + timer/transfer IRQs + writable `.fds.sav` + 2C33 wavetable audio. Real-BIOS boot unverified in CI (BIOS non-distributable); device + audio unit-tested |
 
 ## Validation Coverage Checklist
 

@@ -4,7 +4,7 @@
 closure deferred there after 17 documented rollbacks — see
 `docs/audit/gap-analysis-remediation-plan-2026-05-25.md` §3).
 **Date:** 2026-05-10
-**Author:** RustyNES v2 maintainers
+**Author:** RustyNES maintainers
 **Numbering:** 0002. ADR 0001 (mapper dispatch) will be written after
 Track B6 benches land — they share authorship.
 
@@ -13,7 +13,7 @@ Track B6 benches land — they share authorship.
 ## Context
 
 As of the v0.9.0 release candidate, six integration tests in
-`crates/nes-test-harness/tests/` are `#[ignore]`'d as expected-fail:
+`crates/rustynes-test-harness/tests/` are `#[ignore]`'d as expected-fail:
 
 - `cpu_interrupts_v2/2-nmi_and_brk`
 - `cpu_interrupts_v2/3-nmi_and_irq`
@@ -283,7 +283,7 @@ The M2-phase tracing fixture (landed pre-work; see commit
 records `(cpu_cycle, ppu_scanline, ppu_dot, m2_phase, a12_level,
 irq_pending_mapper, irq_pending_apu, irq_sampled_by_cpu)` per CPU
 cycle. The fixture's baseline trace (pre-change) is committed at
-`crates/nes-test-harness/golden/irq_trace_baseline_*.csv`. Each
+`crates/rustynes-test-harness/golden/irq_trace_baseline_*.csv`. Each
 coordinated-change commit must produce a trace that differs from
 the baseline ONLY at the cycles where IRQ-line visibility changed
 between them — never at cycles where the trace is identical to the
@@ -329,7 +329,7 @@ Per the plan:
      poll location relative to the per-cycle tick isn't currently
      defined; this step *defines* it.
 3. **Verify against the M2-phase test fixture.** Add a probe in
-   `nes-core` that records, for every CPU cycle, the `(ppu_dot,
+   `rustynes-core` that records, for every CPU cycle, the `(ppu_dot,
    m2_phase, a12_level, irq_pending, irq_sampled)` tuple. Run it
    against `mmc3_test_2/4-scanline_timing` and `cpu_interrupts_v2/*`
    and produce a side-by-side trace that the rolled-back attempts
@@ -363,7 +363,7 @@ When the coordinated change lands correctly:
   5 `sprite_overflow_tests/*`, 11 `sprite_hit_tests/*`.
 - The PPU-internal A12 invariant
   `a12_rising_edges_match_241_per_ntsc_frame_standard_layout` in
-  `crates/nes-ppu/`.
+  `crates/rustynes-ppu/`.
 
 ### Success criteria
 
@@ -399,8 +399,8 @@ to non-ignored and delete this probe" message). At that point:
 
 ### Negative
 
-- This is a large, designed change touching three crates (`nes-cpu`,
-  `nes-mappers`, `nes-core`'s `LockstepBus`). Expected effort: 1-3
+- This is a large, designed change touching three crates (`rustynes-cpu`,
+  `rustynes-mappers`, `rustynes-core`'s `LockstepBus`). Expected effort: 1-3
   weeks of work plus 1 week of regression hunting.
 - The "I-flag delay snapshot" mentioned in step 2 is itself a 6502
   subtle behavior; getting it right under the new IRQ-sample point
@@ -466,7 +466,7 @@ single `M2Phase::High`-hardcoded IRQ snapshot into a two-phase
 `(_at_low, _at_high)` pair. `LockstepBus::tick_one_cpu_cycle` samples
 `(mapper.irq_pending, apu.irq_line)` after PPU sub_dot 0 (M2-low
 convention) and again after PPU sub_dot 2 (M2-high convention). All
-6 baseline trace CSVs at `crates/nes-test-harness/golden/irq_trace/`
+6 baseline trace CSVs at `crates/rustynes-test-harness/golden/irq_trace/`
 were regenerated with the new 4-column schema.
 
 **Across all 6 regenerated baselines, every single row shows
@@ -515,7 +515,7 @@ diagnosis (lines 213-224 above):
 Neither iteration flipped `mmc3_test_2/4` sub-test #2.
 
 **Trace-derived evidence** (from the v0.9.0 baseline at
-`crates/nes-test-harness/golden/irq_trace/mmc3_test_2-4-scanline_timing.csv`):
+`crates/rustynes-test-harness/golden/irq_trace/mmc3_test_2-4-scanline_timing.csv`):
 the MMC3 IRQ line first asserts at **cycle 1,369,997, frame 46,
 scanline 261, dot 259, sub_dot 0** (pre-render sprite fetch). The
 prior A12 transition in the trace is at cycle 474,850 — roughly
@@ -665,7 +665,7 @@ each `$C001` write and consuming it on the next filtered A12 rise.
   bracket residual. The trace shows our second A12 rise (on scanline
   0) at cycle 1,370,110 sub_dot 2; the test's calibrated expectation
   brackets the IRQ assertion to 1 CPU cycle of fine grain. We pass
-  sub-test #2 (expects $22 "LATER", we now give $22 ✓) but fail
+  sub-test #2 (expects $22 "LATER", we now give $22 — correct) but fail
   sub-test #3 (expects $21 "SOONER" with 1 more delay cycle, we still
   give $22). This means we fire ≤ 1 CPU cycle later than real silicon
   at the same A12 rise. The next axis to explore is the CPU IRQ
@@ -760,7 +760,7 @@ current C1 plan's commit boundary.
 A new optional `Mapper::notify_a12_at_sub_dot(level, sub_dot)` trait
 method is now available, with a default impl that forwards to the
 existing `notify_a12(level)` so no mapper compiles differently. The
-`PpuBusAdapter` in `crates/nes-core/src/bus.rs` tracks the current
+`PpuBusAdapter` in `crates/rustynes-core/src/bus.rs` tracks the current
 sub-dot (0 / 1 / 2) and calls the new method instead of plain
 `notify_a12`, threading the M2-phase reference through to the
 mapper at the point of every A12 transition. **No behavior change
@@ -832,7 +832,7 @@ that work without committing to a specific direction.
 
 After Phase B4 (MMC3 reload-pending Sharp discriminator) and the
 Phase D3 NOP / open-bus fixes landed, the six baseline IRQ traces
-at `crates/nes-test-harness/golden/irq_trace/*.csv` were regenerated
+at `crates/rustynes-test-harness/golden/irq_trace/*.csv` were regenerated
 via `cargo test --features test-roms,irq-timing-trace --test irq_trace_fixture`.
 The diff shape is the key diagnostic:
 
@@ -858,8 +858,8 @@ The diff shape is the key diagnostic:
 
 The two Phase D3 fixes that landed concurrently with the trace
 regeneration above:
-- `crates/nes-cpu/src/cpu.rs` unofficial NOP `$04/$44/$64/$14/$34/$54/$74/$D4/$F4/$0C` dummy reads.
-- `crates/nes-mappers/src/mapper.rs` + `crates/nes-core/src/bus.rs` `$4020-$5FFF` open-bus latch.
+- `crates/rustynes-cpu/src/cpu.rs` unofficial NOP `$04/$44/$64/$14/$34/$54/$74/$D4/$F4/$0C` dummy reads.
+- `crates/rustynes-mappers/src/mapper.rs` + `crates/rustynes-core/src/bus.rs` `$4020-$5FFF` open-bus latch.
 
 Neither fix changed any baseline trace. Both are CPU-bus-side
 behavior changes that don't touch the per-cycle IRQ snapshot
@@ -874,7 +874,7 @@ the canonical timing assumptions our PPU + MMC3 use:
 > "When using 8x8 sprites, if the BG uses $0000, and the sprites use
 >  $1000, the IRQ counter should decrement on PPU cycle 260."
 
-Our `crates/nes-ppu/src/ppu.rs:867` uses `if (260..=316).contains(&self.dot)`
+Our `crates/rustynes-ppu/src/ppu.rs:867` uses `if (260..=316).contains(&self.dot)`
 to drive sprite tile fetches (and the A12 rise inside them), so our
 PPU emits A12 at PPU dot 260 — canonically correct.
 
@@ -882,7 +882,7 @@ PPU emits A12 at PPU dot 260 — canonically correct.
 >  a rising edge after the line has remained low for three falling
 >  edges of M2."
 
-Our `crates/nes-mappers/src/mmc3.rs::notify_a12_at_sub_dot` enforces
+Our `crates/rustynes-mappers/src/mmc3.rs::notify_a12_at_sub_dot` enforces
 `gap >= 3` against `cpu_cycle - a12_low_cycle` (equivalent to the
 three-falling-edges-of-M2 rule because each CPU cycle has exactly
 one M2 falling edge). Canonical.
@@ -930,7 +930,7 @@ AccuracyCoin `LDA $2002 / BPL VblLoop` poll at cycle 27,389.
 
 Session-14 (this subsection, 2026-05-22) is the first trace-regen
 opportunity after the Session-13 alignment lands on `main`. The 6
-golden IRQ traces at `crates/nes-test-harness/golden/irq_trace/*.csv`
+golden IRQ traces at `crates/rustynes-test-harness/golden/irq_trace/*.csv`
 were regenerated unconditionally.
 
 #### Empirical finding — all 6 traces shifted
@@ -1046,7 +1046,7 @@ into a per-CPU-cycle trace") is now landed. New infrastructure:
   of `irq_svc` / `nmi_svc` / `apu_set` / `apu_clr` / `init` events. Capability
   matrix in `docs/audit/session-15-c1-attempt13-mesen2-irq-oracle-2026-05-22.md`
   §"Phase 1A".
-- `crates/nes-test-harness/golden/irq_trace/mesen2/*.csv` — 6 reference
+- `crates/rustynes-test-harness/golden/irq_trace/mesen2/*.csv` — 6 reference
   baselines for the 5 target ROMs + 1 control.
 - `scripts/irq_trace_cross_diff.py` — cross-diff tool emitting per-event
   delta histograms + first-event-cycle comparison.
@@ -1244,7 +1244,7 @@ A clean Phase 3 requires:
 1. Per-PPU-dot precision oracle on the cpu_interrupts_v2/2 BIT $2002
    divergence point (Session-10's `mesen2_ppu_trace.lua` infrastructure
    re-run on a tight cycle window).
-2. A `$2002`-race-window unit test in `crates/nes-ppu/tests/` that
+2. A `$2002`-race-window unit test in `crates/rustynes-ppu/tests/` that
    exercises the race deterministically — bisect RustyNES's actual
    behavior against Mesen2's and the wiki's documented semantics.
 3. ONLY after those two yield a falsifiable 1-line code change with a
@@ -1277,7 +1277,7 @@ flip, both = 4 flips (all `#[ignore]`'d tests cleared).
    `scripts/mesen2_ppu_trace.lua` (Session-10 infra) + the RustyNES
    `ppu-state-trace` feature gate. Cross-diff dot-by-dot.
 2. Per-PPU-cycle unit test for $2002 race window in
-   `crates/nes-ppu/tests/`. Sweep the read timing N cycles before /
+   `crates/rustynes-ppu/tests/`. Sweep the read timing N cycles before /
    after scanline 241 dot 1; tabulate RustyNES's actual returned
    value at each N; compare against the wiki spec.
 3. Visual6502 / PPU netlist consult (if available in `ref-docs/`).
@@ -1294,7 +1294,7 @@ Session-18 executed Recommended #2 from Session-17 (the `$2002`
 race-window unit test) AND Recommended #4 (the feature-flagged
 predicate-narrowing fix). The Phase 2 unit test landed as permanent
 regression-guard infrastructure
-(`crates/nes-ppu/src/ppu.rs::tests::vbl_race_window_2002_read_sweep`);
+(`crates/rustynes-ppu/src/ppu.rs::tests::vbl_race_window_2002_read_sweep`);
 the Phase 5 implementation was reverted because target test
 failure-shape was byte-identical between flag states.
 
@@ -1342,7 +1342,7 @@ is **structural**: it comes from the per-cycle CPU-vs-PPU access
 interleaving order, not from the suppression predicate's literal dot
 range.
 
-RustyNES `crates/nes-cpu/src/cpu.rs::read1`:
+RustyNES `crates/rustynes-cpu/src/cpu.rs::read1`:
 
 ```rust
 fn read1<B: Bus>(&mut self, bus: &mut B, addr: u16) -> u8 {

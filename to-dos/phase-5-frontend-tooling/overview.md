@@ -1,5 +1,16 @@
 # Phase 5 — Frontend + Tooling
 
+> **Status (v1.0.0): delivered (and extended by the ported UX shell).** The
+> v1.0.0 `rustynes` binary (winit 0.30 + wgpu + cpal + egui 0.29) ships save
+> state + rewind + run-ahead, the egui debugger (CPU/PPU/APU/memory/OAM/mapper),
+> the NTSC filter, the multi-OS release pipeline, AND the parent emulator's
+> ported desktop-UX shell — an always-on menu bar + status bar, a first-run
+> Welcome modal, a tabbed Settings window, light/dark/system themes, 8:7
+> pixel-aspect correction, fullscreen + 1x-4x window scaling, recent-ROMs MRU,
+> save-state slots, and surfaced Cheats/Movies/Netplay/RA/Performance panels.
+> This overview is retained as development history — see
+> [`ROADMAP.md`](../ROADMAP.md) for current status.
+
 ## Goal
 
 Build the user-facing `rustynes` binary: winit + wgpu + cpal + egui. Implement save state, rewind, input bindings, debugger overlays, NTSC filter, and the release pipeline. By the end of this phase the project ships signed binaries on tag.

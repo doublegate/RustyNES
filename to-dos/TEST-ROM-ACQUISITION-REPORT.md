@@ -1,5 +1,13 @@
 # Test ROM Acquisition and Validation Report
 
+> **Historical (2025-12-19) — SUPERSEDED by the v1.0.0 synthesis.** This is a
+> point-in-time report from the parent emulator's early development (its
+> `test-roms/` layout and "Milestone 5 / rustynes-core" references predate the
+> current `tests/roms/` + `rustynes-*` crate structure). The cycle-accurate
+> v1.0.0 engine now passes AccuracyCoin 100% (139/139), nestest 0-diff, and the
+> committed CC0 ROM suite; `docs/STATUS.md` is the authoritative test-status
+> source. Body retained verbatim as history.
+
 **Date**: 2025-12-19
 **Task**: Complete test ROM download and validation workflow
 **Status**: COMPLETED

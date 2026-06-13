@@ -2,7 +2,7 @@
 
 **Status:** Accepted.
 **Date:** 2026-05-25
-**Author:** RustyNES v2 maintainers
+**Author:** RustyNES maintainers
 **Supersedes:** [ADR 0004 — VRC7 FM Audio Deferred to v1.x](0004-vrc7-audio-deferred.md).
 **Relates to:** [ADR 0001 — Mapper Dispatch](0001-mapper-dispatch.md) (the
 `Mapper::mix_audio` trait method we now implement for VRC7); the v2.0.0
@@ -39,7 +39,7 @@ budgets 2-3 weeks for a clean-room Rust port of `emu2413`, landing as
 **Land VRC7 OPLL FM audio as a clean-room Rust port of
 `emu2413 v1.5.9` (MIT).**
 
-The port lives in `crates/nes-apu/src/opll.rs` (~1,170 LoC of pure
+The port lives in `crates/rustynes-apu/src/opll.rs` (~1,170 LoC of pure
 Rust) and exposes a minimal public API to consumers:
 
 ```rust
@@ -58,8 +58,8 @@ impl Opll {
 }
 ```
 
-`nes-mappers` consumes this via a single new acyclic workspace
-dependency edge (`nes-mappers -> nes-apu`). The `Vrc7` mapper holds an
+`rustynes-mappers` consumes this via a single new acyclic workspace
+dependency edge (`rustynes-mappers -> rustynes-apu`). The `Vrc7` mapper holds an
 `Opll` instance, forwards `$9030` data writes to `opll.write_reg(addr,
 val)`, ticks `opll.calc()` every 36 CPU cycles
 (≈ 1,789,773 Hz CPU / 49,716 Hz OPLL native rate, 0.008% error), and
@@ -97,7 +97,7 @@ is preserved in repo-root `NOTICE`; the port itself is dual-licensed
 under MIT-or-Apache-2.0 matching the rest of the workspace.
 
 No GPL contamination. No C build dependency. The `no_std + alloc`
-invariant (Track C5) holds — `cargo build -p nes-core --target
+invariant (Track C5) holds — `cargo build -p rustynes-core --target
 thumbv7em-none-eabihf --no-default-features` stays green; the OPLL
 uses `libm` for `f32` table buildout where `f32::*` would normally
 require `std`.
@@ -149,7 +149,7 @@ maintenance entanglement with C build tooling.
   `audio_clip_vrc7`, `audio_noise_vrc7`) capture the canonical v1.1.0
   audio output for regression-sentinel use.
 - **Spectral correctness verified.** An OPLL FFT regression test at
-  `crates/nes-apu/tests/opll_spectral.rs` drives a pure-sine carrier
+  `crates/rustynes-apu/tests/opll_spectral.rs` drives a pure-sine carrier
   configuration and asserts the dominant frequency bin matches the
   expected value within tolerance, with SFDR above an acceptance gate.
 - **Existing residual fallout absorbed cleanly.** The 5 VRC7 insta
@@ -161,8 +161,8 @@ maintenance entanglement with C build tooling.
 
 ### Negative / Costs
 
-- **~2,275 lines of new code** in `crates/nes-apu/src/opll.rs`
-  (1,170) + `crates/nes-mappers/src/sprint3.rs` deltas (+193) +
+- **~2,275 lines of new code** in `crates/rustynes-apu/src/opll.rs`
+  (1,170) + `crates/rustynes-mappers/src/sprint3.rs` deltas (+193) +
   associated tests. Maintenance burden if `emu2413` upstream lands
   a behavior fix we want to mirror — the port is structurally close
   enough to the C source that line-by-line re-comparison is
@@ -172,9 +172,9 @@ maintenance entanglement with C build tooling.
   allocation per emulator instance; not a concern for desktop or
   embedded targets with hundreds of KiB free, but worth flagging.
   An `OnceLock`-shared static table is a future refactor candidate.
-- **New workspace dep edge.** `nes-mappers -> nes-apu` is a new edge
-  in the chip-stack DAG. It is acyclic (nes-apu has no chip deps),
-  but it does mean `nes-mappers` now pulls in the full APU mixer
+- **New workspace dep edge.** `rustynes-mappers -> rustynes-apu` is a new edge
+  in the chip-stack DAG. It is acyclic (rustynes-apu has no chip deps),
+  but it does mean `rustynes-mappers` now pulls in the full APU mixer
   + BLEP synthesis as transitive deps. The cross-compile budget
   absorbed this without measurable impact.
 

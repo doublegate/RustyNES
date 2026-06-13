@@ -1,6 +1,6 @@
 # Save states and rewind
 
-RustyNES v2 has two complementary "go back in time" features:
+RustyNES has two complementary "go back in time" features:
 
 - **Save states** (`F1` / `F4`) write a full emulator snapshot to disk.
   Use these when you want a checkpoint that survives quitting the
@@ -27,18 +27,18 @@ Both are rebindable. See [Controls](./controls.md).
 ### Slots
 
 There are **10 slots per ROM** on disk, numbered 0 through 9. The `F1` /
-`F4` hotkeys target the **active slot**, which defaults to slot 1.
+`F4` hotkeys target the **active slot**, which defaults to slot 0.
 Saving overwrites without confirmation.
 
 Pick the active slot, or save/load a specific slot directly, from the
 menu bar:
 
-- **File → Save Slot ▸** — choose the active slot (1–8) used by `F1` / `F4`.
+- **File → Save Slot ▸** — choose the active slot (0–9) used by `F1` / `F4`.
 - **File → Save to Slot ▸ / Load from Slot ▸** — write or read a chosen
-  slot (1–8) without changing the active slot.
+  slot (0–9) without changing the active slot.
 
-(The menu surfaces slots 1–8; the slots are numbered from 1 in the UI and
-from 0 on disk, so menu "Slot 1" is `slot0.rns`.)
+The slot numbers in the menu match the on-disk file names, so menu "Slot 0"
+is `slot0.rns`.
 
 The on-disk layout is one file per slot, per ROM:
 
@@ -147,8 +147,8 @@ covers all emulator-observable state:
 - Both controller shift registers and strobe state
 - Cycle counter
 
-What is **not** captured: the host audio queue (its drop-oldest policy
-absorbs the brief discontinuity), the wgpu surface (next redraw
+What is **not** captured: the host audio ring (its dynamic-rate-control
+resync absorbs the brief discontinuity), the wgpu surface (next redraw
 recreates the texture from the framebuffer), or any debugger overlay
 state.
 
