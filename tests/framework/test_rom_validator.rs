@@ -357,11 +357,11 @@ fn generate_report(results_by_category: &HashMap<String, Vec<TestResult>>) -> St
 fn main() {
     println!("\n=== RustyNES Test ROM Validator ===\n");
 
-    let test_rom_dir = PathBuf::from("/home/parobek/Code/RustyNES/test-roms");
+    let test_rom_dir = PathBuf::from("tests/roms");
 
     if !test_rom_dir.exists() {
         eprintln!("Error: Test ROM directory not found: {:?}", test_rom_dir);
-        eprintln!("Please ensure test ROMs are placed in the test-roms/ directory.");
+        eprintln!("Please ensure test ROMs are placed in the tests/roms/ directory.");
         std::process::exit(1);
     }
 

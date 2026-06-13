@@ -38,6 +38,7 @@ notes; when it cites pass/fail numbers they should be read against
 | **Expansion audio** | Delivered — VRC6, VRC7 OPLL FM, Sunsoft 5B, Namco 163, MMC5 |
 | **FDS** | Delivered — real-BIOS boot, read/write drive, multi-side, 2C33 audio |
 | **Frontend** | Delivered — winit + wgpu + cpal + egui desktop shell, debugger, NTSC filter |
+| **Desktop UX shell** | Delivered — always-on egui menu bar + status bar, tabbed Settings window, light/dark/system themes, 8:7 pixel-aspect, fullscreen, save-state slots, recent-ROMs, surfaced tool panels |
 | **Performance / UX** | Delivered — display-sync pacing, lock-free audio ring + DRC, run-ahead, dedicated emulation thread |
 | **Save states / rewind / TAS** | Delivered — `.rns` save states, rewind ring, `.rnm` movie record/replay |
 | **Netplay** | Delivered — 2-4 player rollback over UDP (native) + WebRTC (browser) |

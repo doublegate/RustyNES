@@ -22,7 +22,7 @@ This document provides a comprehensive test execution plan for all test ROMs in 
 
 **Notes**:
 
-- Total Files: Raw count of all .nes files in test-roms/
+- Total Files: Raw count of all .nes files in tests/roms/
 - Unique ROMs: Deduplicated count (172 unique test ROMs per CHECKSUMS.md)
 - Integrated: Test ROMs with automated test harnesses in place
 - Passing: Test ROMs currently passing all validation
@@ -33,7 +33,7 @@ This document provides a comprehensive test execution plan for all test ROMs in 
 #### CPU Tests (1/36 integrated)
 
 1. **cpu_nestest.nes** - PASSING
-   - Location: `/home/parobek/Code/RustyNES/test-roms/cpu/cpu_nestest.nes`
+   - Location: `tests/roms/cpu/cpu_nestest.nes`
    - Test: `rustynes-cpu/tests/nestest_validation.rs`
    - Status: 100% passing (5003+ instructions validated against golden log)
    - Coverage: All 256 opcodes (151 official + 105 unofficial)

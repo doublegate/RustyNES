@@ -303,7 +303,7 @@ RustyNES has a comprehensive test ROM collection with 212 test files:
 - **APU**: 70 test ROMs (all pending integration)
 - **Mappers**: 57 test ROMs (all pending integration)
 
-See [tests/TEST_ROM_PLAN.md](tests/TEST_ROM_PLAN.md) for the complete test execution plan.
+See [tests/TEST_ROM_PLAN.md](../tests/TEST_ROM_PLAN.md) for the complete test execution plan.
 
 **Coming Soon (M6):**
 

@@ -42,7 +42,7 @@ cargo test --workspace
 ```
 
 For test ROM specifics, see:
-- `/test-roms/` - Test ROM files
+- `tests/roms/` - Test ROM files
 - `/tests/` - Integration test suite
 - `/docs/testing/` - Testing documentation
 

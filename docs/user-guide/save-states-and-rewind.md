@@ -19,18 +19,26 @@ same APU phase, same mapper bank registers.
 
 | Key | Action |
 |-----|--------|
-| `F1` | Save state to slot 0 |
-| `F4` | Load state from slot 0 |
+| `F1` | Save state to the active slot |
+| `F4` | Load state from the active slot |
 
 Both are rebindable. See [Controls](./controls.md).
 
 ### Slots
 
-There are **10 slots per ROM**, numbered 0 through 9. The `F1` / `F4`
-hotkeys always target slot 0 — the "quick save" slot. Saving overwrites
-without confirmation. A future release will add a per-slot UI (planned
-in the debugger panel work); for now, only slot 0 is reachable from the
-keyboard.
+There are **10 slots per ROM** on disk, numbered 0 through 9. The `F1` /
+`F4` hotkeys target the **active slot**, which defaults to slot 1.
+Saving overwrites without confirmation.
+
+Pick the active slot, or save/load a specific slot directly, from the
+menu bar:
+
+- **File → Save Slot ▸** — choose the active slot (1–8) used by `F1` / `F4`.
+- **File → Save to Slot ▸ / Load from Slot ▸** — write or read a chosen
+  slot (1–8) without changing the active slot.
+
+(The menu surfaces slots 1–8; the slots are numbered from 1 in the UI and
+from 0 on disk, so menu "Slot 1" is `slot0.rns`.)
 
 The on-disk layout is one file per slot, per ROM:
 

@@ -70,13 +70,29 @@ shell, docs, and web work.
 
 ### Added — v1.0.0 synthesis (the desktop shell + web + docs ported onto the new core)
 
-- **Desktop UX shell ported onto the new engine.** The original RustyNES desktop
-  experience — the egui menu bar (File / Emulation / Options / Debug / Help),
-  recent-ROMs list, first-run welcome screen, the tabbed Settings window
-  (Video / Audio / Input / Advanced) with per-control tooltips, Light / Dark /
-  System themes, the FPS + ROM-name + status-message status bar, 8:7 pixel-aspect
-  output, and the keyboard-shortcut scheme — now drives the cycle-accurate core
-  instead of the legacy one.
+- **Desktop UX shell.** An always-on egui menu bar (File / Emulation / Tools /
+  View / Debug / Help) and status bar frame the NES image independently of the
+  `` ` `` debugger overlay:
+  - **File** — Open ROM (`F12`), Open Recent (missing files greyed out, with
+    Clear Recent), save / load state, an eight-slot Save Slot picker (set active
+    slot + save/load to a specific slot), Take Screenshot, and the FDS Swap Disk
+    Side (`F9`) item when an FDS game is loaded.
+  - **Emulation** — Pause/Resume (disabled during netplay), Reset (`F2`),
+    Power Cycle (`F3`), Run-Ahead 0–3, a read-only region label, and Vs. System
+    Insert Coin (`F10`) for Vs. titles.
+  - **Tools** — Cheats, TAS Movies (record `F6` / play `F7` / branch `F8`),
+    Netplay, RetroAchievements, and the Performance Monitor, each opened as a
+    floating window without needing the debugger overlay.
+  - **View** — the tabbed Settings window (Video / Audio / Input / Advanced),
+    Light / Dark / System themes, an 8:7 pixel-aspect toggle, Fullscreen (`F11`),
+    a Show FPS toggle, and Show Menu Bar (`M`).
+  - **Debug / Help** — the debugger overlay and per-chip panels; Keyboard
+    Shortcuts and About.
+- **Status bar** showing the ROM name, region, mapper, run-ahead depth, the
+  Running / Paused / Netplay state, and the FPS readout, plus a translucent
+  "PAUSED" overlay over the picture when paused.
+- **First-run Welcome modal** with a quick-start shortcut list, shown once on a
+  fresh install.
 - **Live WebAssembly / GitHub Pages demo.** A playable in-browser build hosted on
   GitHub Pages, with the egui debugger overlay, AudioWorklet audio, and rAF
   display-sync.

@@ -1,6 +1,6 @@
 # Configuration
 
-RustyNES v2 reads a single TOML file on startup. Missing keys fall back
+RustyNES reads a single TOML file on startup. Missing keys fall back
 to documented defaults; a missing file is treated as "all defaults". A
 parse error logs a warning to stderr and the in-process config falls
 back to defaults — your save data is unaffected.
@@ -10,9 +10,11 @@ back to defaults — your save data is unaffected.
 See [File locations](./file-locations.md) for the per-OS path. On Linux
 it's typically `~/.config/RustyNES/config.toml`.
 
-The file is only **read** at startup. It's **written** when you click
-"Save to disk" in the in-app rebind modal (see [Controls](./controls.md))
-or when you edit it manually.
+The file is **read** at startup and **written** whenever you change a UI
+setting (theme, 8:7 pixel aspect, FPS readout, run-ahead), open a ROM
+(updating the recent list), dismiss the first-run Welcome modal, or click
+"Save to disk" in the rebind panel (see [Controls](./controls.md)). You can
+also edit it by hand.
 
 ## Full schema with defaults
 
@@ -69,6 +71,14 @@ rewind = "F5"
 reset = "F2"
 power_cycle = "F3"
 debug_overlay = "Backquote"
+open_rom = "F12"
+movie_record = "F6"
+movie_play = "F7"
+movie_branch = "F8"
+disk_swap = "F9"
+insert_coin = "F10"
+fullscreen = "F11"
+toggle_menu_bar = "KeyM"
 
 [rewind]
 enabled = true
@@ -81,6 +91,17 @@ ntsc_filter = "off"
 
 [audio]
 sample_rate = 44100
+
+[ui]
+theme = "dark"                    # "light" | "dark" | "system"
+pixel_aspect_correction = false   # 8:7 NES-native pixel aspect
+show_fps = true                   # FPS readout in the status bar
+
+[recent_roms]
+paths = []        # most-recently-opened ROM paths, newest first
+max_entries = 10  # how many entries the File -> Recent list keeps
+
+welcome_shown = false  # set to true after the first-run Welcome modal is dismissed
 ```
 
 Every section is independently `#[serde(default)]`-d, so a file
@@ -122,17 +143,27 @@ config loads unchanged. Defaults + the in-app toggle are described under
 
 ### `[input.system]`
 
-Seven string-typed fields, each a single key bound to one system action:
+String-typed fields, each a single key bound to one system action. All
+fields beyond the original seven are `#[serde(default)]`, so a pre-v1.0.0
+config loads unchanged and fills the new binds in:
 
 | Field | Default | Action |
 |-------|---------|--------|
-| `quit` | `Escape` | Close the window |
-| `save_state` | `F1` | Save to slot 0 of the current ROM |
-| `load_state` | `F4` | Load slot 0 |
+| `quit` | `Escape` | Close the window (or leave fullscreen first) |
+| `save_state` | `F1` | Save to the active slot of the current ROM |
+| `load_state` | `F4` | Load the active slot |
 | `rewind` | `F5` | Hold to walk backwards through the rewind ring |
 | `reset` | `F2` | Warm reset |
 | `power_cycle` | `F3` | Cold boot |
 | `debug_overlay` | `Backquote` | Toggle the debugger overlay |
+| `open_rom` | `F12` | Open the ROM file picker |
+| `movie_record` | `F6` | Toggle TAS movie recording |
+| `movie_play` | `F7` | Toggle TAS movie playback |
+| `movie_branch` | `F8` | Branch the current run into a new recording |
+| `disk_swap` | `F9` | Cycle the FDS disk side (FDS games only) |
+| `insert_coin` | `F10` | Insert a Vs. System coin (Vs. games only) |
+| `fullscreen` | `F11` | Toggle borderless fullscreen (native only) |
+| `toggle_menu_bar` | `KeyM` | Show / hide the menu bar |
 
 ### `[rewind]`
 
@@ -193,13 +224,52 @@ The APU emits at the negotiated rate directly via band-limited synthesis
 (blip_buf-style), so there is no software resampler in the pipeline — no
 quality loss from rate conversion.
 
+### `[ui]`
+
+The desktop UX shell settings, surfaced under **View → Settings… → Video**
+(and the View menu). All three apply live.
+
+```toml
+[ui]
+theme = "dark"
+pixel_aspect_correction = false
+show_fps = true
+```
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `theme` | string | `"dark"` | `"light"`, `"dark"`, or `"system"` (follow the OS theme, falling back to dark) |
+| `pixel_aspect_correction` | bool | `false` | Apply 8:7 NES-native pixel-aspect correction. Off by default so the shipped image stays pixel-exact |
+| `show_fps` | bool | `true` | Show the FPS readout in the status bar |
+
+### `[recent_roms]`
+
+The File → Open Recent MRU list. Managed by the emulator; rarely hand-edited.
+
+```toml
+[recent_roms]
+paths = []
+max_entries = 10
+```
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `paths` | array of strings | `[]` | Most-recently-opened ROM paths, newest first. Missing files are greyed out in the menu |
+| `max_entries` | usize | `10` | How many entries the list retains |
+
+### `welcome_shown`
+
+A top-level boolean (default `false`). Set to `true` and saved the first
+time the Welcome modal is shown, so it never re-appears. Set it back to
+`false` to see the first-run modal again.
+
 ## Reload behavior
 
-The config file is read **once** at startup. Edits during a session take
-effect on the next launch. The exception is the in-app rebind modal,
-which writes back to disk on demand and updates the in-memory bindings
-immediately — no restart needed for input changes you make from inside
-the running emulator.
+The config file is read **once** at startup, so hand-edits during a session
+take effect on the next launch. Changes you make from inside the running
+emulator are written back immediately and applied without a restart: the
+rebind panel ("Save to disk"), the `[ui]` toggles (theme, 8:7, FPS), the
+run-ahead picker, and the recent-ROMs list all persist as you change them.
 
 ## Backing up your config
 
@@ -215,5 +285,6 @@ writes.
 ## See also
 
 - [Controls](./controls.md) — full key-name table + the in-app rebind flow
+- [Menu reference](./menus.md) — the menus and Settings window behind these keys
 - [File locations](./file-locations.md) — paths per OS
 - [Save states and rewind](./save-states-and-rewind.md) — how `[rewind]` is consumed

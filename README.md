@@ -249,18 +249,44 @@ trunk build --release --no-default-features --features wasm-canvas
 
 ---
 
+## Desktop UX
+
+The desktop frontend frames the NES image with an always-on **menu bar** (top) and
+**status bar** (bottom); the egui debugger is a separate overlay toggled with `` ` ``.
+Everything has a keyboard shortcut, but nothing requires one.
+
+- **Menu bar** — File (Open ROM, Open Recent, save / load state, an eight-slot Save
+  Slot picker, Take Screenshot), Emulation (Pause, Reset, Power Cycle, Run-Ahead 0–3,
+  the region label, Vs. Insert Coin / FDS Swap Disk Side when relevant), Tools
+  (Cheats, TAS Movies, Netplay, RetroAchievements, Performance Monitor — opened as
+  floating windows without the debugger), View (Settings, Theme, 8:7 Pixel Aspect,
+  Fullscreen, Show FPS, Show Menu Bar), Debug (the debugger overlay + per-chip panels),
+  and Help (Keyboard Shortcuts, About).
+- **Status bar** — ROM name, region, mapper, run-ahead depth, Running / Paused /
+  Netplay state, and the FPS readout.
+- **Settings window** — a tabbed Video / Audio / Input / Advanced dialog (View →
+  Settings…) with live-applied theme, pixel-aspect, and FPS toggles.
+- **Quality-of-life** — light / dark / system themes, a translucent "PAUSED" overlay,
+  a recent-ROMs list (missing files greyed out), and a first-run Welcome modal.
+
 ## Default Controls
 
 All keys are TOML-rebindable; see the user guide for the full schema.
 
-| Action          | Player 1        | Player 2      |     | System              | Key          |
-| --------------- | --------------- | ------------- | --- | ------------------- | ------------ |
-| D-Pad           | Arrow keys      | W / A / S / D |     | Save / Load state   | F1 / F4      |
-| A / B           | Z / X           | Q / E         |     | Rewind (hold)       | F5           |
-| Start / Select  | Enter / R-Shift | P / L         |     | Reset / Power-cycle | F2 / F3      |
-|                 |                 |               |     | Open ROM            | F12          |
-|                 |                 |               |     | Debugger            | `` ` `` (backtick) |
-|                 |                 |               |     | Quit                | Esc          |
+| Action          | Player 1        | Player 2      |     | System                  | Key                |
+| --------------- | --------------- | ------------- | --- | ----------------------- | ------------------ |
+| D-Pad           | Arrow keys      | W / A / S / D |     | Save / Load state       | F1 / F4            |
+| A / B           | Z / X           | Q / E         |     | Rewind (hold)           | F5                 |
+| Start / Select  | Enter / R-Shift | P / L         |     | Reset / Power-cycle     | F2 / F3            |
+|                 |                 |               |     | TAS movie record / play | F6 / F7            |
+|                 |                 |               |     | TAS movie branch        | F8                 |
+|                 |                 |               |     | Swap disk side (FDS)     | F9                 |
+|                 |                 |               |     | Insert coin (Vs.)       | F10                |
+|                 |                 |               |     | Fullscreen              | F11                |
+|                 |                 |               |     | Open ROM                | F12                |
+|                 |                 |               |     | Toggle menu bar         | M                  |
+|                 |                 |               |     | Debugger                | `` ` `` (backtick) |
+|                 |                 |               |     | Quit / exit fullscreen  | Esc                |
 
 USB gamepads auto-bind to player 1 (Xbox-style: South = A, West = B, Start,
 Back / Select, D-Pad). Drag and drop a `.nes` file onto the window to load it at any
@@ -416,8 +442,8 @@ The reproducible record (methodology, all benches, and the historical A/B) is in
 | Testing    | [docs/testing-strategy.md](docs/testing-strategy.md) |
 | Netplay    | [docs/netplay-webrtc.md](docs/netplay-webrtc.md) |
 
-Architecture Decision Records live in [`docs/adr/`](docs/adr/), and detailed audit
-reports in [`docs/audit/`](docs/audit/).
+Architecture Decision Records live in [`docs/adr/`](docs/adr/). (The deeper
+engine-development audit logs are kept locally, outside the public repo.)
 
 ---
 

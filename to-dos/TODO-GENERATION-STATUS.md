@@ -234,7 +234,7 @@ When creating remaining sprint files, follow this structure:
 
 ## Related Documentation
 
-- [Doc Name](../../docs/path.md)
+- a standard Markdown link to the relevant doc (template placeholder)
 
 ---
 

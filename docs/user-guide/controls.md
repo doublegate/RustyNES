@@ -62,33 +62,42 @@ modal, and a third/fourth USB gamepad auto-binds to Players 3/4 — most
 
 | Action | Default key | Notes |
 |--------|-------------|-------|
-| Quit | `Esc` | Closes the window cleanly |
-| Save state | `F1` | Writes to slot 0 for the current ROM |
-| Load state | `F4` | Reads from slot 0 |
+| Quit / exit fullscreen | `Esc` | Closes the window cleanly (or leaves fullscreen first) |
+| Save state | `F1` | Writes to the active slot for the current ROM |
+| Load state | `F4` | Reads from the active slot |
 | Rewind | `F5` | Held — step back one frame per held tick |
 | Reset | `F2` | Warm reset (same as the cartridge's RESET button) |
 | Power cycle | `F3` | Cold boot (clears RAM, re-runs init) |
 | Movie record | `F6` | Toggle TAS movie recording (start = power-on; stop = save `.rnm`) |
 | Movie play | `F7` | Toggle TAS movie playback (start = open `.rnm`; stop = live input) |
 | Movie branch | `F8` | Branch the current run into a new recording at this frame |
+| Swap disk side | `F9` | Cycle the inserted FDS disk side (FDS games only) |
+| Insert coin | `F10` | Insert a Vs. System coin into acceptor #1 (Vs. games only) |
+| Fullscreen | `F11` | Toggle borderless fullscreen (native only) |
 | Open ROM | `F12` | Open the file picker to load a different `.nes` ROM |
+| Toggle menu bar | `M` | Show / hide the always-on menu bar |
 | Debugger overlay | `` ` `` (Backquote, the `~` key) | Toggles the egui overlay |
 
 Esc cancels the in-app rebind capture too — if you click "rebind" in the
 debugger and want to back out, press Esc instead of any other key.
 
+Every system action above also has a menu entry (with its accelerator hint shown
+in the menu), so you never *need* the hotkeys. See the [Menu reference](./menus.md)
+for the full menu tour.
+
 ## Two ways to rebind
 
 ### 1. In the running emulator (recommended)
 
-1. Press `~` to open the debugger overlay.
-2. Tick the **Input** checkbox in the top toolbar.
-3. The "Input bindings" window lists every action — Player 1, Player 2,
+1. Open **View → Settings…** from the menu bar and select the **Input**
+   tab (or press `~` for the debugger overlay and tick its **Input**
+   checkbox — both surface the same rebind panel).
+2. The panel lists every action — Player 1, Player 2, Players 3 & 4,
    gamepad (per player), and system keys — with its current binding.
-4. Click **rebind** next to the action you want to change.
-5. The next key (or, for a gamepad row, the next pad button) you press
+3. Click **rebind** next to the action you want to change.
+4. The next key (or, for a gamepad row, the next pad button) you press
    becomes the new binding. Press `Esc` to cancel.
-6. Click **Save to disk** to persist the change.
+5. Click **Save to disk** to persist the change.
 
 "Reset to defaults" reverts every binding to the table above. The change
 is in-memory only until you also click "Save to disk".
@@ -206,6 +215,7 @@ browser build is keyboard-only.
 
 ## See also
 
+- [Menu reference](./menus.md) — what every menu-bar entry does
 - [Configuration](./configuration.md) — the full `config.toml` reference
 - [Save states and rewind](./save-states-and-rewind.md) — what F1 / F4 / F5 do
 - [Debugger](./debugger.md) — the `~` overlay and the rebind panel

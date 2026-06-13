@@ -15,9 +15,9 @@ with **nearest-neighbour** filtering — no soft / bilinear blurring,
 pixels stay pixels.
 
 You can resize the window freely. The renderer letterboxes (or
-pillarboxes) the NES image so the 8:7-pixel-shape NES output keeps the
-correct aspect ratio at any window size. The bars on the sides or top
-are black.
+pillarboxes) the NES image to keep the correct aspect ratio at any window
+size; the bars on the sides or top are black. Press `F11` (or **View →
+Fullscreen**) for borderless fullscreen, and `Esc` to leave it.
 
 ### NTSC filter
 
@@ -52,10 +52,6 @@ planned.
 
 ### Vsync and present mode
 
-The wgpu surface is configured with `PresentMode::Fifo` (vsync). This
-means presented frames are synchronized to your monitor's refresh rate
-to avoid tearing.
-
 The frame **production** rate is decoupled from the present rate: the
 emulator is paced by wall-clock time at the cartridge's nominal rate
 (NTSC: 60.0988 Hz, PAL: 50.0070 Hz, Dendy: 50.0070 Hz), and the wgpu
@@ -63,18 +59,20 @@ surface re-presents the most recent frame at the monitor's refresh. So
 on a 144 Hz monitor you'll see each NES frame ~2.4 times, but the
 emulator still runs at real-hardware speed.
 
-The `[graphics] present_mode` key in `config.toml` is currently parsed
-but not consumed — the surface always uses `Fifo`. Switching to
-`Mailbox` (lower latency, possible tearing) is reserved for a future
-release.
+The `[graphics] present_mode` key in `config.toml` selects the swapchain
+present mode: `"Mailbox"` (the default) lets the wall-clock pacer own
+timing and avoids the vsync double-pacing beat, falling back to `"Fifo"`
+automatically when the backend doesn't advertise Mailbox. `"Fifo"` forces
+vsync. See [Configuration](./configuration.md#graphics).
 
 ### Aspect ratio
 
-The displayed image preserves the NES's 256x240 logical aspect. The
-real PPU pixel was non-square (~8:7 on NTSC, ~16:15 on PAL), so the
-truly-correct aspect would stretch slightly horizontally. v1.0 ships
-the simpler square-pixel view; a per-region aspect-ratio toggle is on
-the roadmap.
+By default the displayed image is square-pixel (each NES pixel maps to N
+host pixels). The real PPU pixel was non-square (~8:7 on NTSC), so the
+truly-correct aspect stretches slightly horizontally. Enable **8:7 Pixel
+Aspect** in **View → Settings… → Video** (or the View menu, or
+`[ui] pixel_aspect_correction = true`) for the NES-native shape. It is off
+by default so the shipped output stays pixel-exact unless you opt in.
 
 ### Region detection
 
@@ -99,10 +97,10 @@ The fix is to re-dump or re-header the ROM with an NES 2.0 header that
 sets the region byte to 1 (PAL). A user-visible "force PAL" toggle is
 on the post-v1.0 roadmap.
 
-The egui debugger overlay (open it with `~`) displays the live fps in
-the top toolbar, which makes region misdetection obvious — you'll see
-~50 fps on a PAL ROM identified correctly, ~60 fps on an NTSC ROM, and
-about 60 on a mis-identified PAL ROM (running too fast).
+The status bar shows the detected region and the live FPS (toggle the FPS
+readout under **View → Show FPS**), which makes region misdetection
+obvious — you'll see ~50 fps on a PAL ROM identified correctly, ~60 fps on
+an NTSC ROM, and about 60 on a mis-identified PAL ROM (running too fast).
 
 ## Audio
 

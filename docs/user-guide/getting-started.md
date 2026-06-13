@@ -66,14 +66,19 @@ cargo build --release -p rustynes-frontend
 
 ## First launch
 
-The binary takes one positional argument: the path to a `.nes` ROM file.
+You can pass a ROM on the command line, or launch the binary bare and
+load one from the menu:
 
 ```bash
-rustynes path/to/game.nes
+rustynes path/to/game.nes   # open a ROM directly
+rustynes                    # launch empty, then use File -> Open ROM (F12)
 ```
 
-There is no menu or file picker yet — the ROM is opened on the command
-line. A native file dialog is planned for a future release.
+Once running, load a ROM any of three ways: **File → Open ROM…** (`F12`)
+for a native file picker, **File → Open Recent** for a previously-opened
+ROM, or simply **drag and drop** a `.nes` / `.fds` file onto the window.
+On a brand-new install a one-time Welcome modal greets you with a
+quick-start shortcut list.
 
 On first launch the emulator:
 
@@ -91,10 +96,21 @@ On first launch the emulator:
 
 ## What you should see
 
-A window titled `RustyNES - <filename>.nes` opens, the game boots, and
-sound starts immediately. The emulator is paced by wall-clock time, so
-the game runs at the correct speed even on high-refresh monitors (e.g.
-144 Hz / 240 Hz) without speeding up.
+A window opens with a **menu bar** along the top and a **status bar**
+along the bottom framing the NES image; the game boots and sound starts
+immediately. The emulator is paced by wall-clock time, so the game runs at
+the correct speed even on high-refresh monitors (e.g. 144 Hz / 240 Hz)
+without speeding up.
+
+From here you can:
+
+- open **View → Settings…** for the tabbed Video / Audio / Input / Advanced
+  dialog (theme, 8:7 pixel aspect, NTSC filter, sample rate, rebinding),
+- press `F11` (or **View → Fullscreen**) to go borderless fullscreen, and
+  `Esc` to leave it,
+- pick a theme under **View → Theme** (Light / Dark / System), and
+- hide the menu bar with `M` if you want a clean view (press `M` again to
+  bring it back).
 
 If something doesn't work — silent audio, a black screen, wrong colors —
 jump to [Troubleshooting](./troubleshooting.md).
@@ -102,6 +118,7 @@ jump to [Troubleshooting](./troubleshooting.md).
 ## What's next
 
 - [Controls](./controls.md) — change keys, set up two-player
+- [Menu reference](./menus.md) — what every menu does
 - [Save states and rewind](./save-states-and-rewind.md) — F1 / F4 / F5
 - [Debugger](./debugger.md) — press `~` once a game is running
 - [Configuration](./configuration.md) — full `config.toml` reference

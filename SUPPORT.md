@@ -133,7 +133,7 @@ A: Check the [ROADMAP.md](ROADMAP.md) to see planned features and their implemen
 
 **Q: Can I embed RustyNES in my project?**
 
-A: Yes! The `rustynes-core` crate is designed to be embeddable. See [docs/api/CORE_API.md](docs/api/CORE_API.md) for the library API (once implemented).
+A: Yes! The `rustynes-core` crate is designed to be embeddable. See the `rustynes-core` rustdoc (`cargo doc -p rustynes-core --open`) for the library API.
 
 ### Build and Installation
 
@@ -177,7 +177,7 @@ A: See the [Controls Table](README.md#default-controls) in the README. Controls 
 
 **Q: Where are save files stored?**
 
-A: (Once implemented) Save files are stored in platform-specific directories following OS conventions. See [docs/api/SAVE_STATES.md](docs/api/SAVE_STATES.md) for details.
+A: Save files are stored in platform-specific directories following OS conventions. See [the save-states guide](docs/user-guide/save-states-and-rewind.md) for details.
 
 **Q: Can I use a gamepad?**
 

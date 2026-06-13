@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> **New here since v0.8.x?** The emulation core was replaced with the cycle-accurate engine and the repo was re-cut as v1.0.0. Read `docs/audit/v1.0.0-synthesis-handoff-2026-06-13.md` first — it explains what changed, the `rustynes-*` architecture, where everything moved, and the hard constraints. Then update this file + your memory as you work.
+> **New here since v0.8.x?** The emulation core was replaced with the cycle-accurate engine and the repo was re-cut as v1.0.0. Read `docs/v1.0.0-synthesis-handoff-2026-06-13.md` first — it explains what changed, the `rustynes-*` architecture, where everything moved, and the hard constraints. Then update this file + your memory as you work.
 
 ## What this is
 
@@ -93,6 +93,8 @@ These cross-cutting decisions span multiple files. Reading individual chip docs 
 **Mapper IRQ logic lives in the mapper, not the PPU.** The PPU calls `Mapper::notify_a12(level)` on every A12 transition; the mapper internally filters (MMC3's "3 falling edges of M2" lives in the MMC3 impl). MMC5 uses different scanline detection via `notify_scanline_start` / `notify_vblank`. VRC2/4/6, Sunsoft FME-7, and Namco 163 tick on `notify_cpu_cycle()`. All such hooks are default-no-op on `Mapper`. See `docs/mappers.md` for the per-mapper IRQ family table.
 
 **Determinism is a hard contract.** Same seed + ROM + input sequence ⇒ bit-identical framebuffer and audio. CPU/PPU initial phase alignment is randomized at power-on from a seeded PRNG; reset preserves alignment. This is required for save-state round-trip, regression tests, TAS replay, and netplay rollback. Don't introduce hidden non-determinism (system time, thread scheduling, OS RNG) into the core. Netplay's dynamic rate control and run-ahead live in the **frontend** (a resampler stage / snapshot-restore orchestration), never in the core's synthesis — that is what keeps the contract intact.
+
+**The frontend is an always-on egui shell, not a bare window.** `rustynes-frontend` is winit + wgpu + cpal + egui, and egui runs **every frame**: `DebuggerOverlay::render_shell` draws a persistent menu bar (File / Emulation / Tools / View / Debug / Help) + status bar + tabbed Settings window, with the toggleable (`` ` ``) CPU/PPU/APU/memory debugger panels layered on top. The shell never holds the emu lock inside the egui closure — menu interactions return a `MenuAction` that `App::dispatch_menu_action` runs *after* the egui pass, and the hidden render branch copies the framebuffer under a brief lock, drops it, and renders/presents with `nes = None` (the locked branch is taken only when the overlay is visible or a `nes`-reading tool panel like Cheats is open). On native the emulator runs on a dedicated thread (`emu-thread`, default-on) communicating via the `Arc<Mutex<EmuCore>>` handle + lock-free `SharedInput`; the winit thread only does UI + present. Full spec in `docs/frontend.md` (this is just the primer).
 
 **Test ROMs are the spec.** When the docs and a passing test ROM disagree, the ROM wins — the docs get updated. The blargg / kevtris / mmc3_test_2 / AccuracyCoin suites in `tests/roms/` are the closed-form definition of "cycle-accurate." See `docs/testing-strategy.md` for the testing layers.
 

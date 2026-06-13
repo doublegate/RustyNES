@@ -50,7 +50,7 @@ The core "spec" docs — kept in sync with the code in the same PR as a change.
 | [release-notes/](release-notes/) | Per-version release notes for the engine-lineage line that produced v1.0.0 (`v2.0.0` … `v2.8.0`). Kept as lineage history; the current RustyNES release is **v1.0.0** (see the root `CHANGELOG.md`). |
 | [tooling/](tooling/) | Oracle / cross-emulator tooling setup (Mesen2 trace, AccuracyCoin extraction). |
 | [user-guide/](user-guide/) | End-user docs — getting started, controls, configuration, debugger, save states/rewind, display/audio, file locations, compatibility, troubleshooting. |
-| [features/](features/) | Deep design docs per feature — debugger, expansion audio, RetroAchievements, rewind, TAS movies, video filters, WASM integration. |
+| [archive/legacy-v0.8-docs/features/](archive/legacy-v0.8-docs/features/) | Legacy v0.8 design docs per feature (debugger, expansion audio, RetroAchievements, rewind, TAS, video filters, WASM) — historical; the shipped features are documented in the v1.0.0 docs above. |
 | [dev/](dev/) | Developer guides — build, contributing, debugging, testing, style guide, architecture decisions, glossary. |
 | [testing/](testing/) | Test-ROM catalogs, nestest golden-log methodology, PPU/game-ROM testing strategy, baselines audit. |
 | [archive/legacy-v0.8-docs/](archive/legacy-v0.8-docs/) | The pre-synthesis documentation set (historical; superseded by the docs above). |

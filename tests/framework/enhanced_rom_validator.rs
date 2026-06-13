@@ -436,11 +436,11 @@ fn main() {
     println!("\n=== RustyNES Enhanced Test ROM Validator ===\n");
     println!("Validation method: iNES header + Console::from_rom_bytes()\n");
 
-    let test_rom_dir = PathBuf::from("/home/parobek/Code/RustyNES/test-roms");
+    let test_rom_dir = PathBuf::from("tests/roms");
 
     if !test_rom_dir.exists() {
         eprintln!("Error: Test ROM directory not found: {:?}", test_rom_dir);
-        eprintln!("Please ensure test ROMs are placed in the test-roms/ directory.");
+        eprintln!("Please ensure test ROMs are placed in the tests/roms/ directory.");
         std::process::exit(1);
     }
 

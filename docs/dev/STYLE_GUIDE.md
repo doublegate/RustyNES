@@ -440,7 +440,7 @@ use std::fs;
 
 #[test]
 fn test_nestest_rom() {
-    let rom_data = fs::read("test-roms/cpu/nestest.nes").unwrap();
+    let rom_data = fs::read("tests/roms/nestest/nestest.nes").unwrap();
     let mut emu = Emulator::from_rom_data(&rom_data).unwrap();
 
     // Run in automated mode

@@ -31,7 +31,6 @@ Thumbs.db
 # Test ROMs (copyrighted)
 *.nes
 *.fds
-!test-roms/**/*.nes
 
 # Game ROMs (user-specific, not tracked)
 /game-roms/
@@ -81,7 +80,6 @@ Thumbs.db
 # Debug
 *.log
 *.pdb
-!test-roms/**/*.log
 
 # Test output
 test-output/
@@ -186,3 +184,7 @@ __pycache__/
 # tests/snapshots/. Re-include those (the ROM test suites compare against them).
 !**/snapshots/**/*.snap
 !**/snapshots/*.snap
+# Engine-development audit history (the C1 IRQ saga, DMA investigations, the
+# v2.0 promotion logs, ...) — kept locally, NOT in the public repo. The v1.0.0
+# synthesis handoff lives at docs/v1.0.0-synthesis-handoff-*.md instead.
+/docs/audit/
