@@ -12,7 +12,7 @@
 target = "index.html"
 # Local dev mounts at root. The GitHub Pages deploy
 # (`.github/workflows/web.yml`) overrides this with
-# `trunk build --release --public-url /RustyNES_v2/` so the asset
+# `trunk build --release --public-url /RustyNES/` so the asset
 # URLs are prefixed for repository ("project") Pages — this file
 # stays root-mounted so `trunk serve` works locally with no flags.
 public_url = "/"
@@ -34,4 +34,4 @@ port = 8081
 # LIBRARY version resolved in Cargo.lock exactly — the CLI and the
 # library are released in lockstep and version-check each other.
 # Check with `grep -A1 'name = "wasm-bindgen"' Cargo.lock`.
-wasm_bindgen = "0.2.121"
+wasm_bindgen = "0.2.125"
