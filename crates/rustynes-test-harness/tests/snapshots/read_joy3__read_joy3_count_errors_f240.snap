@@ -1,0 +1,5 @@
+---
+source: crates/rustynes-test-harness/tests/read_joy3.rs
+expression: snap
+---
+rom=nes-test-roms/read_joy3/count_errors.nes frames=240 fb_bytes=245760 fnv1a64=926f44f894794fec

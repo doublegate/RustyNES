@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_real_games.rs
+expression: text
+---
+rom=mapper-004-MMC3/Super Mario Bros. 2.nes
+rom_sha256=e0a4d3a445c23c64ffb9c7e3a910070002c8f22af24a3735a3ce708999babf6c
+frames=600
+fb_bytes=245760
+cycles=17838522
+audio_samples=439524
+audio_fnv1a64=7dea9e94ef9b0c0d
+checkpoint f600 fb_fnv1a64=b2682bf8436ab47a

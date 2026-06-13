@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-004-MMC3/StarTropics.nes
+rom_sha256=3a00215234cd40deacfe9caf49af4048282b384c30687f01b108bd11006aabd2
+frames=1200
+fb_bytes=245760
+cycles=35706822
+audio_samples=879798
+audio_fnv1a64=feaf90bf8c10fe99
+checkpoint f1200 fb_fnv1a64=dd624cf52b2c26dd

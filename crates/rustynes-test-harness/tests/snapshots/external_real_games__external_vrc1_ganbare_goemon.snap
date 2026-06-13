@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_real_games.rs
+expression: text
+---
+rom=mapper-075-VRC1/Ganbare Goemon! Karakuri Douchuu (Japan) (En) (1.01).nes
+rom_sha256=6343c8c35e21ce4ca4e44a601c58360e4f5e8406df65f8b541c40be4f2863f82
+frames=600
+fb_bytes=245760
+cycles=17838528
+audio_samples=439524
+audio_fnv1a64=e6cb14087740912d
+checkpoint f600 fb_fnv1a64=ed6ee69221fb3760

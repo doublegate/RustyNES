@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-001-MMC1/Bubble Bobble.nes
+rom_sha256=79117dc9ddf8d5e61cb74b633fc859ea272cd6d120dfcb93ff7cd7af2c22090e
+frames=600
+fb_bytes=245760
+cycles=17838520
+audio_samples=439524
+audio_fnv1a64=bb7f7fe7cc0c28b3
+checkpoint f600 fb_fnv1a64=1b5dc1e078d21da2

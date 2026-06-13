@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_real_games.rs
+expression: text
+---
+rom=mapper-001-MMC1/Ninja Gaiden.nes
+rom_sha256=b3095c0a3d3f1f2a73008e2a509cf2f0d567f7e4440d4edc0684135a0e9f405f
+frames=600
+fb_bytes=245760
+cycles=17838522
+audio_samples=439524
+audio_fnv1a64=647afbf5759a45c6
+checkpoint f600 fb_fnv1a64=a63416563715e13d

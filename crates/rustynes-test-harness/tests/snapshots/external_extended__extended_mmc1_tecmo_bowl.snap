@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-001-MMC1/Tecmo Bowl.nes
+rom_sha256=52249bb6caca8015d2d0c87997c6e36507f1c2f716038df57a30fc5f0b7a16ac
+frames=600
+fb_bytes=245760
+cycles=17838522
+audio_samples=439524
+audio_fnv1a64=8101d859b99ca008
+checkpoint f600 fb_fnv1a64=1e62d254984a917d

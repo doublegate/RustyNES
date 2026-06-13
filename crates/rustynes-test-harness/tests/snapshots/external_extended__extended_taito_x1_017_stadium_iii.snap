@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-082-TaitoX1-017/Kyuukyoku Harikiri Stadium III (Japan).nes
+rom_sha256=85b16b31524236eaddcc5c844cd2bec6f0a74c3bdf3bca9ebaa3bdf2379b7eb4
+frames=600
+fb_bytes=245760
+cycles=17838520
+audio_samples=439524
+audio_fnv1a64=09c5b394acfdfa23
+checkpoint f600 fb_fnv1a64=b2eff3a82c0da82c

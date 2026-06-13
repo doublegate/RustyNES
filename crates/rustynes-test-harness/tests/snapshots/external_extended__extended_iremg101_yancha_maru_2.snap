@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-032-IremG101/Kaiketsu Yancha Maru 2 - Karakuri Land (Japan).nes
+rom_sha256=19e5e8610b458979026d7e731de8597d02ab3036c927c9ea98504581a33aa452
+frames=600
+fb_bytes=245760
+cycles=17838522
+audio_samples=439524
+audio_fnv1a64=3c4b35272679c3c0
+checkpoint f600 fb_fnv1a64=6e5daaed09d32a56

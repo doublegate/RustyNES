@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-093-Sunsoft3R/Shanghai.nes
+rom_sha256=838587e75f061ea0d886b379f377592b01672e0022bb79261a086fa008d02335
+frames=600
+fb_bytes=245760
+cycles=17838521
+audio_samples=439524
+audio_fnv1a64=cd432802b43224a6
+checkpoint f600 fb_fnv1a64=866f458470b5c4ec

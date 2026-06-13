@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_real_games.rs
+expression: text
+---
+rom=mapper-009-MMC2/Punch-Out!!.nes
+rom_sha256=520f679147090b7af54f632fa136c005c9647ec83d2a4c282206426d6ecd5e81
+frames=600
+fb_bytes=245760
+cycles=17838557
+audio_samples=439524
+audio_fnv1a64=afa68934c1dd6650
+checkpoint f600 fb_fnv1a64=8289d5cfe820096e

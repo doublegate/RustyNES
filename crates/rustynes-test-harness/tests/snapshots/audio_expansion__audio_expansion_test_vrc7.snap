@@ -1,0 +1,5 @@
+---
+source: crates/rustynes-test-harness/tests/audio_expansion.rs
+expression: snap
+---
+rom=audio-tests/test_vrc7.nes frames=120 fb_bytes=245760 fb_fnv1a64=89ee4c476c97a325 cycles=3543901 audio_samples=87304 audio_fnv1a64=ec9b8eb2d1b38372

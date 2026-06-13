@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_real_games.rs
+expression: text
+---
+rom=mapper-024-VRC6/Castlevania III - Dracula's Curse - Retranslation and Improved Controls (Castlevania III - Dracula's Curse modification) (7.1 & 1.4).nes
+rom_sha256=262dab4773e4a69a6b4913af394d3627e1806ed69f724b9fd7b0e5469604303d
+frames=600
+fb_bytes=245760
+cycles=17838526
+audio_samples=439524
+audio_fnv1a64=2b3aa49f4427f177
+checkpoint f600 fb_fnv1a64=ebe5fac7207eec37

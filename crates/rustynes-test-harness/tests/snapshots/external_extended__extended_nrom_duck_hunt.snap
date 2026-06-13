@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-000-NROM/Duck Hunt.nes
+rom_sha256=0dea3e89b2c65339a84f7b148d9e4e425dc74216093bdfc4895a59c20189de42
+frames=600
+fb_bytes=245760
+cycles=17838521
+audio_samples=439524
+audio_fnv1a64=e7e4c4ad41c59723
+checkpoint f600 fb_fnv1a64=4bd8899908427e1d

@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_real_games.rs
+expression: text
+---
+rom=mapper-026-VRC6/Mouryou Senki Madara (Japan) (En) (1.0).nes
+rom_sha256=e1257a952a89ad5becef157ae3cf978b28cc2abbf5a2211c8705197f4f42c31b
+frames=600
+fb_bytes=245760
+cycles=17838524
+audio_samples=439524
+audio_fnv1a64=a7f7b1046199178a
+checkpoint f600 fb_fnv1a64=205390ed28f7eb3f

@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-002-UxROM/Gun.Smoke.nes
+rom_sha256=a94d43df6dcb3ea9ccab5b8d0f46e721f8bd4942d489e2ac51286279b1c5527c
+frames=600
+fb_bytes=245760
+cycles=17838524
+audio_samples=439524
+audio_fnv1a64=1c76c336e83b6f18
+checkpoint f600 fb_fnv1a64=5b0fe80f132d2082

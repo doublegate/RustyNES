@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_real_games.rs
+expression: text
+---
+rom=mapper-001-MMC1/Metroid.nes
+rom_sha256=851a759e81d89f37d7040b88412cf76495453c56c825eaf14212e6a4e33ff81b
+frames=600
+fb_bytes=245760
+cycles=17838522
+audio_samples=439524
+audio_fnv1a64=404948dc8fd24e7a
+checkpoint f600 fb_fnv1a64=158d73c60866b9bc

@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_real_games.rs
+expression: text
+---
+rom=mapper-004-MMC3/Ninja Gaiden II - The Dark Sword of Chaos.nes
+rom_sha256=5dde0082a8a5c95639fbf4e020fba8fa0bce8f841f9a4c55a42b1a6c7e739e73
+frames=600
+fb_bytes=245760
+cycles=17838522
+audio_samples=439524
+audio_fnv1a64=dda9e74ae2696052
+checkpoint f600 fb_fnv1a64=4bc3d7349420401a

@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-001-MMC1/Bionic Commando.nes
+rom_sha256=c1a6a62a162f5e7e7187ef452fa28dd39fb8a3abe34a3646ce00b448b3d9ac46
+frames=600
+fb_bytes=245760
+cycles=17838530
+audio_samples=439524
+audio_fnv1a64=dda9e74ae2696052
+checkpoint f600 fb_fnv1a64=7a2ea58f189d274f

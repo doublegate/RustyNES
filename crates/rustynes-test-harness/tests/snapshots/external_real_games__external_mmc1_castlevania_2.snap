@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_real_games.rs
+expression: text
+---
+rom=mapper-001-MMC1/Castlevania II - Simon's Quest.nes
+rom_sha256=b01d29315eb4a89188ca7c5a68931168f628785d1af69bf782340648c8d331d4
+frames=600
+fb_bytes=245760
+cycles=17838522
+audio_samples=439524
+audio_fnv1a64=dda9e74ae2696052
+checkpoint f600 fb_fnv1a64=e955e653d9811357

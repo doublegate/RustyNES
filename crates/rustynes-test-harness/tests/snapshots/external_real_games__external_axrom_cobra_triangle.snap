@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_real_games.rs
+expression: text
+---
+rom=mapper-007-AxROM/Cobra Triangle.nes
+rom_sha256=a1a4405a432a8c3dc7361df7a60ac45d561f9588e7b37ed04fc60bc87bb70101
+frames=600
+fb_bytes=245760
+cycles=17838527
+audio_samples=439524
+audio_fnv1a64=4ff4a3cc2c5c6551
+checkpoint f600 fb_fnv1a64=61ec1824ff812afa

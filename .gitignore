@@ -181,3 +181,8 @@ WARP.md
 # Python bytecode cache (helper scripts under scripts/).
 __pycache__/
 *.pyc
+# insta reference snapshots — the `*.snap` rule above is for Snapcraft
+# packages, but it also matches insta's committed snapshot fixtures under
+# tests/snapshots/. Re-include those (the ROM test suites compare against them).
+!**/snapshots/**/*.snap
+!**/snapshots/*.snap

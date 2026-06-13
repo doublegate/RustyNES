@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_real_games.rs
+expression: text
+---
+rom=mapper-003-CNROM/Paperboy.nes
+rom_sha256=8fead8c7b0194b36f896a9dfc5607c94cae98bc2f03b0567cdef1f4375e60128
+frames=600
+fb_bytes=245760
+cycles=17838527
+audio_samples=439524
+audio_fnv1a64=862f332588aefc6c
+checkpoint f600 fb_fnv1a64=0af4765a8a256acc

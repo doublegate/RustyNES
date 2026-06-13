@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-004-MMC3/Crystalis.nes
+rom_sha256=5e2c730b3aa180d00f13c45ee3ba96f9ec9a65038bbbbad0a13393184add5d30
+frames=1200
+fb_bytes=245760
+cycles=35706823
+audio_samples=879798
+audio_fnv1a64=2665ecf347679b2d
+checkpoint f1200 fb_fnv1a64=ede128ea1d2f4721

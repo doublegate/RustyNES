@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_real_games.rs
+expression: text
+---
+rom=mapper-025-VRC2-VRC4/Ganbare Goemon Gaiden - Kieta Ougon Kiseru (Japan) (En) (0.99c).nes
+rom_sha256=a9015ea245b0326d4153bad43331a5ec067f74a313b11a78e961541eb46fbb06
+frames=600
+fb_bytes=245760
+cycles=17838522
+audio_samples=439524
+audio_fnv1a64=9e35d209bcbbb494
+checkpoint f600 fb_fnv1a64=1920b2c00c3667fe

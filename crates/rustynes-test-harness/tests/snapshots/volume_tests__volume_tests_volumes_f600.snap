@@ -1,0 +1,5 @@
+---
+source: crates/rustynes-test-harness/tests/volume_tests.rs
+expression: snap
+---
+rom=nes-test-roms/volume_tests/volumes.nes frames=600 fb_bytes=245760 fb_fnv1a64=1719dca5cef7a325 audio_samples=439526 audio_fnv1a64=7f2d3a68e80a2efe

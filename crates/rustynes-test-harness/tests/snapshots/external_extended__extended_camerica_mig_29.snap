@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-071-Camerica/MiG 29 - Soviet Fighter.nes
+rom_sha256=1183d90e58b2895e0c6ae1e571e914ee275270cd63c52ed34d06dc319a4ab61b
+frames=600
+fb_bytes=245760
+cycles=17838535
+audio_samples=439524
+audio_fnv1a64=c3c3ce8c91237774
+checkpoint f600 fb_fnv1a64=320514043a570322

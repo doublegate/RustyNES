@@ -1,0 +1,5 @@
+---
+source: crates/rustynes-test-harness/tests/input_devices.rs
+expression: "format!(\"rom={VAUS_ROM} pos=0xF0 fire=true frames={FRAMES} fnv1a64={right:016x}\")"
+---
+rom=nes-test-roms/vaus-test/vaus-test.nes pos=0xF0 fire=true frames=120 fnv1a64=427b0692bd7e69d9

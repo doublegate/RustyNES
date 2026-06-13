@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_real_games.rs
+expression: text
+---
+rom=mapper-009-MMC2/Mike Tyson's Punch-Out!!.nes
+rom_sha256=8ddfc0adf7d4f59964d5cbbd0e46e4ee102d2074c0f505f0d09ec88ea4f7d419
+frames=600
+fb_bytes=245760
+cycles=17838554
+audio_samples=439524
+audio_fnv1a64=eee26b93b262466b
+checkpoint f600 fb_fnv1a64=616737e63a1d19ea

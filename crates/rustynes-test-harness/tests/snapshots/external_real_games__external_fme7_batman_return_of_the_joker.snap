@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_real_games.rs
+expression: text
+---
+rom=mapper-069-FME7-Sunsoft5B/Batman - Return of the Joker.nes
+rom_sha256=d51484ccad7607cc8a8405ae66b7bf11938a22715c221ce6efe83241b8ed12d6
+frames=600
+fb_bytes=245760
+cycles=17838528
+audio_samples=439524
+audio_fnv1a64=f6fe13988926de77
+checkpoint f600 fb_fnv1a64=bf3c56c706f7e430

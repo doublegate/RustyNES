@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=pc10/PC10 Power Blade.nes
+rom_sha256=647d7f13f8b8c6533c3ac0374641380a9c5a9f824a7d74499c571dca9aae05d1
+frames=321
+fb_bytes=245760
+cycles=9529764
+audio_samples=234796
+audio_fnv1a64=e83b23484deb8ae2
+checkpoint f320 fb_fnv1a64=ab91e9fe6eee4d2c

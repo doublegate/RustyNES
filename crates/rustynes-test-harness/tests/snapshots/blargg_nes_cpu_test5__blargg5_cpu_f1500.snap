@@ -1,0 +1,5 @@
+---
+source: crates/rustynes-test-harness/tests/blargg_nes_cpu_test5.rs
+expression: snap
+---
+rom=nes-test-roms/blargg_nes_cpu_test5/cpu.nes frames=1500 fb_bytes=245760 fnv1a64=b205c47669f12844

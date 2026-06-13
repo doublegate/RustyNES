@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_real_games.rs
+expression: text
+---
+rom=mapper-005-MMC5/Bandit Kings of Ancient China.nes
+rom_sha256=0f91e58f56315db5cba8f7bd189e5bc71d70eb89969a92ba6cc6dd39136668e3
+frames=2091
+fb_bytes=245760
+cycles=62241248
+audio_samples=1533607
+audio_fnv1a64=88dfbfb105633914
+checkpoint f2000 fb_fnv1a64=a29fa04a51345514

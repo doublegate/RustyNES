@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_real_games.rs
+expression: text
+---
+rom=mapper-002-UxROM/Mega Man.nes
+rom_sha256=e9358f01e4a50e344b82da88437cad011833f705a2acbd00c0d9857ec5ce0a11
+frames=600
+fb_bytes=245760
+cycles=17838523
+audio_samples=439524
+audio_fnv1a64=dda9e74ae2696052
+checkpoint f600 fb_fnv1a64=09b194d23eaa16e3

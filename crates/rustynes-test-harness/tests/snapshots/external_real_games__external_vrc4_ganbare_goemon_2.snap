@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_real_games.rs
+expression: text
+---
+rom=mapper-023-VRC2-VRC4/Ganbare Goemon 2 (Japan) (En) (1.02).nes
+rom_sha256=7b970a3513d7e48290102c8490fbeb21fa8010410ef273b33b7aea182beaf467
+frames=600
+fb_bytes=245760
+cycles=17838524
+audio_samples=439524
+audio_fnv1a64=3d50c2c01a45d947
+checkpoint f600 fb_fnv1a64=cb8649fd08af443b

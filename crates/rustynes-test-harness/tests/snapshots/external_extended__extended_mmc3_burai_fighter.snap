@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-004-MMC3/Burai Fighter.nes
+rom_sha256=077fa5e5d07e6b65dd164d6a6605180fcddfd3cdfaf1c8b8dbe7dd00d96d2a60
+frames=300
+fb_bytes=245760
+cycles=8904370
+audio_samples=219386
+audio_fnv1a64=ddad346d24cff3f0
+checkpoint f300 fb_fnv1a64=7e396111949a054d

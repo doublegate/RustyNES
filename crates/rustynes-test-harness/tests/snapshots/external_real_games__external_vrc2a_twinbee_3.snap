@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_real_games.rs
+expression: text
+---
+rom=mapper-022-VRC2/TwinBee 3 - Poko Poko Daimaou (Japan) (En) (1.01).nes
+rom_sha256=b3d1faad6b9574a846d7c33a7c7acc6b07ea0620b99d707bf2e7648ca82de71e
+frames=600
+fb_bytes=245760
+cycles=17838525
+audio_samples=439524
+audio_fnv1a64=8149b0499118ea64
+checkpoint f600 fb_fnv1a64=7fe467f8703e2252

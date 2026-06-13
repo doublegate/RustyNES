@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_real_games.rs
+expression: text
+---
+rom=mapper-005-MMC5/Uchuu Keibitai SDF (Japan).nes
+rom_sha256=7ca1cfd76c6c42e40c1997294abbbb89a13a7b1f4d363c6be14cfee49f59e484
+frames=600
+fb_bytes=245760
+cycles=17838521
+audio_samples=439524
+audio_fnv1a64=226d30a98953bb27
+checkpoint f600 fb_fnv1a64=89ffacc72e912957

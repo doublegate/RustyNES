@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-001-MMC1/Rad Racer.nes
+rom_sha256=d6356c49aa49d42cd6a6473046f3e9427feffb2d91a2d76c7c3f47f1166398f5
+frames=600
+fb_bytes=245760
+cycles=17838520
+audio_samples=439524
+audio_fnv1a64=dda9e74ae2696052
+checkpoint f600 fb_fnv1a64=0b2d6a712a6be053

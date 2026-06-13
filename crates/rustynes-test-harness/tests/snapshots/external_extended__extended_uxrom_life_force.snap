@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-002-UxROM/Life Force.nes
+rom_sha256=2e7a00ea72c65a4a5c86c52714cd6cc4839fb2c01528fb9583c10ff2ad75e083
+frames=600
+fb_bytes=245760
+cycles=17838531
+audio_samples=439524
+audio_fnv1a64=523580694fe0d540
+checkpoint f600 fb_fnv1a64=bc35e9b191ab923f

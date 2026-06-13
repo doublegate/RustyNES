@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-001-MMC1/Double Dragon.nes
+rom_sha256=d812307c0803a6f78464019704cfb2735321ebd7fcad6c5616a5b4281848238a
+frames=600
+fb_bytes=245760
+cycles=17838521
+audio_samples=439524
+audio_fnv1a64=7853f5e0acb25d8e
+checkpoint f600 fb_fnv1a64=b8e55188f09694c1

@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-033-TaitoTC0190/Don Doko Don.nes
+rom_sha256=33d7e4aa827c82d7268b34181cbf0855bb3ccac6cdb479edb11c520d43ae6b01
+frames=600
+fb_bytes=245760
+cycles=17838520
+audio_samples=439524
+audio_fnv1a64=19ae50c7b9c17106
+checkpoint f600 fb_fnv1a64=a4546942850eb008

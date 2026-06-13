@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-001-MMC1/Tetris.nes
+rom_sha256=10a1b393a9f2663b5aaea5275969910c0fd5689b8946cafbf638f5b791a08248
+frames=600
+fb_bytes=245760
+cycles=17838526
+audio_samples=439524
+audio_fnv1a64=dda9e74ae2696052
+checkpoint f600 fb_fnv1a64=706593b78b006d1e

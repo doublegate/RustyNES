@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_real_games.rs
+expression: text
+---
+rom=mapper-021-VRC2-VRC4/Wai Wai World 2 - SOS!! Parsley Jou (Japan) (En) (1.01) (2018 update).nes
+rom_sha256=93346118d36c6ea048e9a649d02595549620ee7cdaf8e92caaefcc7700b3336d
+frames=600
+fb_bytes=245760
+cycles=17838521
+audio_samples=439524
+audio_fnv1a64=dda9e74ae2696052
+checkpoint f600 fb_fnv1a64=3a65e3822acbe7d6

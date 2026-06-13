@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_real_games.rs
+expression: text
+---
+rom=mapper-001-MMC1/Mega Man 2.nes
+rom_sha256=940f29d0b44127c79b060f20d46e6b0fe244fd3935f4e499c9a6843e24bfce11
+frames=600
+fb_bytes=245760
+cycles=17838521
+audio_samples=439524
+audio_fnv1a64=a44cc29f6dfba6ca
+checkpoint f600 fb_fnv1a64=be43c101377567ee

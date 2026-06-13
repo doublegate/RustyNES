@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_real_games.rs
+expression: text
+---
+rom=mapper-004-MMC3/Mega Man 3.nes
+rom_sha256=bc6356fdae87625dca760bd1436ae7634e3cf73362eb072e144690885fd4e3b0
+frames=600
+fb_bytes=245760
+cycles=17838531
+audio_samples=439524
+audio_fnv1a64=38d5e55ac3f6c60f
+checkpoint f600 fb_fnv1a64=5ce2a3cf8edbb690

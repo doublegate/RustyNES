@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_real_games.rs
+expression: text
+---
+rom=mapper-023-VRC2-VRC4/Crisis Force (Japan) (En) (1.0).nes
+rom_sha256=75541672847f565a06a4ea8bf9e658141ed65e4445a2832a74fabd44951032c8
+frames=600
+fb_bytes=245760
+cycles=17838522
+audio_samples=439524
+audio_fnv1a64=dda9e74ae2696052
+checkpoint f600 fb_fnv1a64=67ac379c102911a5

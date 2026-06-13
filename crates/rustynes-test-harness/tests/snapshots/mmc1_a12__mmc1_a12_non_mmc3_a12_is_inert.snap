@@ -1,0 +1,5 @@
+---
+source: crates/rustynes-test-harness/tests/mmc1_a12.rs
+expression: line
+---
+rom=mmc1_a12/mmc1_a12.nes frames=240 fb_bytes=245760 fnv1a64=863336557fb1cbbd

@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_real_games.rs
+expression: text
+---
+rom=mapper-010-MMC4/Fire Emblem Gaiden (Japan) (En) (1.01).nes
+rom_sha256=c712bdef8daebf72546cd2eaef764f380ed540cfe99e14b2b8d1cde828c9befc
+frames=600
+fb_bytes=245760
+cycles=17838521
+audio_samples=439524
+audio_fnv1a64=aebcc64e5585db5d
+checkpoint f600 fb_fnv1a64=a311a0111f41be8a

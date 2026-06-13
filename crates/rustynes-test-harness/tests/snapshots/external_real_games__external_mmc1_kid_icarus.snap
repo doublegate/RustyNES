@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/external_real_games.rs
+expression: text
+---
+rom=mapper-001-MMC1/Kid Icarus.nes
+rom_sha256=335d09f48e5ebb1d7123d1599c5867b9e52b5b4393b7ad92c39cf6a064424233
+frames=600
+fb_bytes=245760
+cycles=17838525
+audio_samples=439524
+audio_fnv1a64=2448cae31c3625c1
+checkpoint f120 fb_fnv1a64=2fb2eea909beab6d
+checkpoint f240 fb_fnv1a64=22fad82cff96e88d
+checkpoint f600 fb_fnv1a64=b7c5c519b5c4328f

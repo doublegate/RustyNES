@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-004-MMC3/Mega Man 6.nes
+rom_sha256=f8a92b74a81a4d66fa7d7cfeddfbe4f4b0de9b150c44373b3e14f3b04f874db6
+frames=2091
+fb_bytes=245760
+cycles=62241252
+audio_samples=1533607
+audio_fnv1a64=bbbe8df214dc90b8
+checkpoint f2000 fb_fnv1a64=1cfcaa3c9bd3239b

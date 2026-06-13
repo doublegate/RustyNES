@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_real_games.rs
+expression: text
+---
+rom=mapper-003-CNROM/Gradius.nes
+rom_sha256=b87a848262f2cb887267b357068356af1824b8e80ac0cffc59f214b41e51892b
+frames=600
+fb_bytes=245760
+cycles=17838528
+audio_samples=439524
+audio_fnv1a64=959a9b9bbb154b86
+checkpoint f600 fb_fnv1a64=a5b7955402c3fcf5

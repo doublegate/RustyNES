@@ -1,0 +1,5 @@
+---
+source: crates/rustynes-test-harness/tests/input_devices.rs
+expression: "format!(\"rom={PADDLE_ROM} port=0 pos=0x20 fire=true frames={FRAMES} fnv1a64={lo:016x}\")"
+---
+rom=nes-test-roms/PaddleTest3/PaddleTest.nes port=0 pos=0x20 fire=true frames=180 fnv1a64=9ef38a1179a81ef5

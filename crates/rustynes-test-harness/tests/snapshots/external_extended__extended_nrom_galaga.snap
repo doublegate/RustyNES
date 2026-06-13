@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-000-NROM/Galaga - Demons of Death.nes
+rom_sha256=c3c2eb250edd800a61295f5b601fd5071f710c7b358595c87fca177e2529f3fd
+frames=600
+fb_bytes=245760
+cycles=17838520
+audio_samples=439524
+audio_fnv1a64=dda9e74ae2696052
+checkpoint f600 fb_fnv1a64=6980231ef4fc0ec3

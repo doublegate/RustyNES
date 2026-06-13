@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-048-TaitoTC0690/Don Doko Don 2 (Japan).nes
+rom_sha256=6ec8cc2e601f018d643ec17980125c5f18ef0af0e67ca536daff5b1d81a9ec9c
+frames=600
+fb_bytes=245760
+cycles=17838528
+audio_samples=439524
+audio_fnv1a64=ee2577b4e516128b
+checkpoint f600 fb_fnv1a64=cec600a95e997651

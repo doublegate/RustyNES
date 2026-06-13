@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_real_games.rs
+expression: text
+---
+rom=mapper-000-NROM/Ice Climber.nes
+rom_sha256=484279dde788c684a771952e7f4ae6c43fc0b7c2ebee3e300ddefc3ba3e06051
+frames=600
+fb_bytes=245760
+cycles=17838522
+audio_samples=439524
+audio_fnv1a64=2a7feca49571daf8
+checkpoint f600 fb_fnv1a64=1bb0f8ef2b643d3d

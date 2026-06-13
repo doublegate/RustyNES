@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_real_games.rs
+expression: text
+---
+rom=mapper-002-UxROM/Contra.nes
+rom_sha256=46c5f3db5dee38d186abe1897e6d18f7ec81f5ed583d527f855edc740e96b559
+frames=600
+fb_bytes=245760
+cycles=17838522
+audio_samples=439524
+audio_fnv1a64=3e997a3bd360d9b7
+checkpoint f600 fb_fnv1a64=a9dfd293abb1eee0

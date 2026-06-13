@@ -1,0 +1,5 @@
+---
+source: crates/rustynes-test-harness/tests/visual_regression.rs
+expression: snap
+---
+rom=blargg/instr_test_v5/01-basics.nes frames=120 fb_bytes=245760 fnv1a64=a38c9445efee1014

@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_real_games.rs
+expression: text
+---
+rom=mapper-005-MMC5/Castlevania III - Dracula's Curse.nes
+rom_sha256=1135a7f23fc765304e990b10b30e872ac8697ea8d3c3e32e340e55841e5b0e01
+frames=600
+fb_bytes=245760
+cycles=17838523
+audio_samples=439524
+audio_fnv1a64=ad9a3382c0228406
+checkpoint f600 fb_fnv1a64=c02e28b08d40694f

@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-071-Camerica/Firehawk.nes
+rom_sha256=230497b5e2af1abea467ef71f9b15c8d3b837cd035ce74507e36a67e8ab1f7e3
+frames=600
+fb_bytes=245760
+cycles=17838531
+audio_samples=439524
+audio_fnv1a64=eb306811a6519ad8
+checkpoint f600 fb_fnv1a64=ab467641558c5d04

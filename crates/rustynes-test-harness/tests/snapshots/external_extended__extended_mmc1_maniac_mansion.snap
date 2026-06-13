@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-001-MMC1/Maniac Mansion.nes
+rom_sha256=b6a23dba7bc18c15ca69f075d6b3990f06e9e071463480c2cb66a66ea162222e
+frames=600
+fb_bytes=245760
+cycles=17838527
+audio_samples=439524
+audio_fnv1a64=de76108923c26b7b
+checkpoint f600 fb_fnv1a64=52bf5346d62a0f64

@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-032-IremG101/Major League (Japan).nes
+rom_sha256=ffe905a65cc8d128518722524caf79cd76ab58b07cdb266f366db7d46ac985dc
+frames=600
+fb_bytes=245760
+cycles=17838522
+audio_samples=439524
+audio_fnv1a64=daf7851f24c515e0
+checkpoint f600 fb_fnv1a64=fa88db00aca0bc3c

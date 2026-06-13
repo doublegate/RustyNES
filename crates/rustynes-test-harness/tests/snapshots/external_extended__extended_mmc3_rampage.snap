@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-004-MMC3/Rampage.nes
+rom_sha256=dea064bd6630f69ce02e8c89823a559b4c03c130d329124146853c0e56441379
+frames=600
+fb_bytes=245760
+cycles=17838521
+audio_samples=439524
+audio_fnv1a64=dda9e74ae2696052
+checkpoint f600 fb_fnv1a64=78ab305f7a24f944

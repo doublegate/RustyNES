@@ -1,0 +1,5 @@
+---
+source: crates/rustynes-test-harness/tests/dmc_dma.rs
+expression: snap
+---
+rom=dmc_tests/status.nes frames=240 audio_samples=175360 audio_fnv1a64=1e0c4b23b2db6453

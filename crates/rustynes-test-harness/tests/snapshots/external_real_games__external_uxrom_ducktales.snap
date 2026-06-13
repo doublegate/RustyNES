@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_real_games.rs
+expression: text
+---
+rom=mapper-002-UxROM/Disney's DuckTales.nes
+rom_sha256=3ea80ae6b65e75f8703534daee5d6743f0932ee5731add2e4dc766b619dab74b
+frames=600
+fb_bytes=245760
+cycles=17838527
+audio_samples=439524
+audio_fnv1a64=5aa99f75a9a8d278
+checkpoint f600 fb_fnv1a64=f4b2dbf5d00f8a9c

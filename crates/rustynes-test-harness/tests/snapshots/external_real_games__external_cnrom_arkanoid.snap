@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_real_games.rs
+expression: text
+---
+rom=mapper-003-CNROM/Arkanoid.nes
+rom_sha256=bc145feffb9859762c33724b292794a34f7c5fb2bf3ea6a886976fd795fba85c
+frames=600
+fb_bytes=245760
+cycles=17838522
+audio_samples=439524
+audio_fnv1a64=c2a65d63857bf9af
+checkpoint f600 fb_fnv1a64=690df2a1d11a1e1b

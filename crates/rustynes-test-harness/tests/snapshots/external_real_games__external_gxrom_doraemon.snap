@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_real_games.rs
+expression: text
+---
+rom=mapper-066-GxROM/Doraemon (Japan) (En) (1.0).nes
+rom_sha256=3d87cffb1fa4f9604582669e8d64e8bd92d0e8708cf0afc69773c8cb8569eb9f
+frames=600
+fb_bytes=245760
+cycles=17838525
+audio_samples=439524
+audio_fnv1a64=ad4b0839d88b2b34
+checkpoint f600 fb_fnv1a64=1a4f804f944579c1

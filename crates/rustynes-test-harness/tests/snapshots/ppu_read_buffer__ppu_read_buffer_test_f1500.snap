@@ -1,0 +1,5 @@
+---
+source: crates/rustynes-test-harness/tests/ppu_read_buffer.rs
+expression: snap
+---
+rom=nes-test-roms/ppu_read_buffer/test_ppu_read_buffer.nes frames=1500 fb_bytes=245760 fnv1a64=59cc20f731ed49a5

@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-004-MMC3/Bad Dudes.nes
+rom_sha256=4285c4e0115ca383128017058cbf7fc1ea9a1394413a6cb78f58a56eb78d12ec
+frames=600
+fb_bytes=245760
+cycles=17838524
+audio_samples=439524
+audio_fnv1a64=dda9e74ae2696052
+checkpoint f600 fb_fnv1a64=469a374343d8a44e

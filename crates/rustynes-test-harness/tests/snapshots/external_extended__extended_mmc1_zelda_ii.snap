@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-001-MMC1/Zelda II - The Adventure of Link.nes
+rom_sha256=b7cd7442cd54414100b2b3696fd14f40463c2f47408efee2afa72fe5f6ac0969
+frames=600
+fb_bytes=245760
+cycles=17838522
+audio_samples=439524
+audio_fnv1a64=41284b3eba0281db
+checkpoint f600 fb_fnv1a64=0e40190efa2451b4

@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-087-Jaleco87/Argus (Japan).nes
+rom_sha256=c4174587a4598e0216d83e702e75ef82703018c6c6c24729169c77c88ed081ae
+frames=600
+fb_bytes=245760
+cycles=17838522
+audio_samples=439524
+audio_fnv1a64=8263093c9e0d3eb5
+checkpoint f600 fb_fnv1a64=5316ad2e8ccbf9a1

@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_real_games.rs
+expression: text
+---
+rom=mapper-007-AxROM/Solstice - The Quest for the Staff of Demnos.nes
+rom_sha256=91f37e19c001371b010b78a5bfd3673ef0d18f1646f1a45bed2c8dec9e37a6ab
+frames=600
+fb_bytes=245760
+cycles=17838525
+audio_samples=439524
+audio_fnv1a64=0c342ae95704d2c0
+checkpoint f600 fb_fnv1a64=3699b6337dcfbda9
