@@ -78,14 +78,20 @@ shell, docs, and web work.
     slot + save/load to a specific slot), Take Screenshot, and the FDS Swap Disk
     Side (`F9`) item when an FDS game is loaded.
   - **Emulation** — Pause/Resume (disabled during netplay), Reset (`F2`),
-    Power Cycle (`F3`), Run-Ahead 0–3, a read-only region label, and Vs. System
-    Insert Coin (`F10`) for Vs. titles.
+    Power Cycle (`F3`), Frame Advance (`\`, steps one frame while paused), a
+    hold-`Tab` Fast Forward hint, Run-Ahead 0–3, a read-only region label, and
+    Vs. System Insert Coin (`F10`) for Vs. titles.
   - **Tools** — Cheats, TAS Movies (record `F6` / play `F7` / branch `F8`),
     Netplay, RetroAchievements, and the Performance Monitor, each opened as a
     floating window without needing the debugger overlay.
   - **View** — the tabbed Settings window (Video / Audio / Input / Advanced),
     Light / Dark / System themes, an 8:7 pixel-aspect toggle, Fullscreen (`F11`),
-    a Show FPS toggle, and Show Menu Bar (`M`).
+    Window Size presets (1x / 2x / 3x / 4x of the NES resolution), a Show FPS
+    toggle, a Pause When Unfocused toggle (auto-pause on focus loss), and Show
+    Menu Bar (`M`).
+- **Frontend quality-of-life keys.** Hold-`Tab` fast-forward (runs the emulator
+  unthrottled with audio muted) and `\` frame-advance (steps exactly one frame
+  while paused), both default-bound in `[input.system]` and rebindable.
   - **Debug / Help** — the debugger overlay and per-chip panels; Keyboard
     Shortcuts and About.
 - **Status bar** showing the ROM name, region, mapper, run-ahead depth, the
@@ -103,6 +109,15 @@ shell, docs, and web work.
   on the new core.
 - **Branding and imagery** refreshed for the 1.0.0 release (logo, screenshots,
   showcase montage).
+
+### Fixed
+
+- **8:7 pixel-aspect and fullscreen now letterbox correctly** — the NES image is
+  framed with clean black bars instead of garbage / smeared edges around it.
+- **File / Tools submenus auto-close on hover-away**, matching standard menu-bar
+  behaviour.
+- **About window** credits "Created by DoubleGate" and its **GitHub** link opens
+  the project page in a browser.
 
 ### Changed
 

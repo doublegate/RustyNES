@@ -284,12 +284,14 @@ The menu bar is **File / Emulation / Tools / View / Debug / Help**:
   out), FDS Swap Disk Side (`F9`, FDS games only), Save/Load State, Save Slot
   (0-7 radio), Save-to-Slot / Load-from-Slot, Take Screenshot (native), Quit.
 - **Emulation** — Pause/Resume (disabled during netplay), Reset, Power Cycle,
-  Run-Ahead selector (0-3), Region (read-only display), Vs. Insert Coin
-  (`F10`, Vs. games only).
+  Frame Advance (`\`, single-steps one frame while paused), a hold-`Tab` Fast
+  Forward hint, Run-Ahead selector (0-3), Region (read-only display), Vs. Insert
+  Coin (`F10`, Vs. games only).
 - **Tools** — Cheats, Movies (TAS: Record/Play/Branch), Netplay (native),
   RetroAchievements (native + feature), Performance Monitor.
 - **View** — Settings, Theme (Light/Dark/System), 8:7 Pixel Aspect,
-  Fullscreen (`F11`, native), Show FPS, Show Menu Bar (`M`).
+  Fullscreen (`F11`, native), Window Size (1x-4x of the NES resolution, native),
+  Show FPS, Pause When Unfocused (auto-pause on focus loss), Show Menu Bar (`M`).
 - **Debug** — Show Debugger (`` ` ``), then CPU / PPU / APU / Memory / OAM /
   Mapper.
 - **Help** — Keyboard Shortcuts, About.
@@ -317,6 +319,17 @@ Pausing parks the emu thread (no `EmuFrame` pings), so the shell keeps
 repainting on input via `egui_wants_repaint` and draws a translucent
 centred **PAUSED** overlay. Fullscreen is a native borderless window mode
 (`F11`); the menu item is a read-only mirror that emits `ToggleFullscreen`.
+Optional **pause-on-focus-loss** (`[ui] pause_on_focus_loss`, default off)
+auto-pauses on a `WindowEvent::Focused(false)` and auto-resumes on regaining
+focus, leaving a manual pause and netplay sessions untouched.
+
+### Fast-forward and frame-advance
+
+Two playback quality-of-life keys ride alongside rewind: **fast-forward**
+(hold `Tab`) runs the emulator unthrottled in a bounded back-to-back burst
+with audio muted (a `None` audio sink) so the producer never overruns the
+ring; **frame-advance** (press `\`) single-steps exactly one frame, meant for
+use while paused. Both are default-bound in `[input.system]` and rebindable.
 
 ## Input
 

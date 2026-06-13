@@ -66,6 +66,8 @@ modal, and a third/fourth USB gamepad auto-binds to Players 3/4 — most
 | Save state | `F1` | Writes to the active slot for the current ROM |
 | Load state | `F4` | Reads from the active slot |
 | Rewind | `F5` | Held — step back one frame per held tick |
+| Fast-forward | `Tab` | Held — runs the emulator unthrottled with audio muted; releasing resumes normal speed |
+| Frame-advance | `\` (Backslash) | Press — steps exactly one frame (for use while paused) |
 | Reset | `F2` | Warm reset (same as the cartridge's RESET button) |
 | Power cycle | `F3` | Cold boot (clears RAM, re-runs init) |
 | Movie record | `F6` | Toggle TAS movie recording (start = power-on; stop = save `.rnm`) |
@@ -152,6 +154,11 @@ and the binding is silently dropped — the rest of the file still loads.
 - **Rewind** is held: while `F5` is held, the emulator walks backwards
   through the rewind ring one frame per redraw. Releasing resumes
   forward play.
+- **Fast-forward** is held: while `Tab` is held, the emulator runs
+  unthrottled (audio is muted to avoid pops); releasing resumes normal
+  speed.
+- **Frame-advance** (`\`) fires on key-down and steps exactly one frame —
+  meant for use while emulation is paused.
 - **Quit (Esc)** fires on key-down.
 
 ## TAS movies (record / playback)

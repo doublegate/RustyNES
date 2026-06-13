@@ -32,6 +32,8 @@ the hotkey and the menu item do exactly the same thing.
 | Pause / Resume | | Toggle emulation; disabled while a netplay session is active |
 | Reset | `F2` | Warm reset |
 | Power Cycle | `F3` | Cold boot |
+| Frame Advance | `\` | Step exactly one frame — meant for use while paused |
+| Fast Forward (hold Tab) | `Tab` | Hint only — hold `Tab` to run unthrottled (audio muted); there is no toggle |
 | Run-Ahead ▸ | | Choose the run-ahead depth, 0–3 frames |
 | Region | | Read-only NTSC / PAL / Dendy label |
 | Vs. Insert Coin | `F10` | Vs. System games only — insert a coin into acceptor #1 |
@@ -57,7 +59,9 @@ overlay for them.
 | Theme ▸ | | Light / Dark / System |
 | 8:7 Pixel Aspect | | Toggle NES-native pixel-aspect correction (default off) |
 | Fullscreen | `F11` | Toggle borderless fullscreen (native only) |
+| Window Size ▸ | | Resize the window to an integer multiple of the NES resolution — 1x (100%) / 2x (200%) / 3x (300%) / 4x (400%) (native only) |
 | Show FPS | | Toggle the FPS readout in the status bar |
+| Pause When Unfocused | | Auto-pause emulation when the window loses focus, auto-resume when it regains focus (default off; never overrides a manual pause or a netplay session) |
 | Show Menu Bar | `M` | Hide / show the menu bar itself |
 
 ### Debug

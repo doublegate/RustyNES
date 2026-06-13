@@ -79,6 +79,8 @@ disk_swap = "F9"
 insert_coin = "F10"
 fullscreen = "F11"
 toggle_menu_bar = "KeyM"
+fast_forward = "Tab"
+frame_advance = "Backslash"
 
 [rewind]
 enabled = true
@@ -96,6 +98,7 @@ sample_rate = 44100
 theme = "dark"                    # "light" | "dark" | "system"
 pixel_aspect_correction = false   # 8:7 NES-native pixel aspect
 show_fps = true                   # FPS readout in the status bar
+pause_on_focus_loss = false       # auto-pause when the window loses focus
 
 [recent_roms]
 paths = []        # most-recently-opened ROM paths, newest first
@@ -164,6 +167,8 @@ config loads unchanged and fills the new binds in:
 | `insert_coin` | `F10` | Insert a Vs. System coin (Vs. games only) |
 | `fullscreen` | `F11` | Toggle borderless fullscreen (native only) |
 | `toggle_menu_bar` | `KeyM` | Show / hide the menu bar |
+| `fast_forward` | `Tab` | Hold to run the emulator unthrottled (audio muted) |
+| `frame_advance` | `Backslash` | Press to step one frame (for use while paused) |
 
 ### `[rewind]`
 
@@ -234,6 +239,7 @@ The desktop UX shell settings, surfaced under **View → Settings… → Video**
 theme = "dark"
 pixel_aspect_correction = false
 show_fps = true
+pause_on_focus_loss = false
 ```
 
 | Field | Type | Default | Notes |
@@ -241,6 +247,7 @@ show_fps = true
 | `theme` | string | `"dark"` | `"light"`, `"dark"`, or `"system"` (follow the OS theme, falling back to dark) |
 | `pixel_aspect_correction` | bool | `false` | Apply 8:7 NES-native pixel-aspect correction. Off by default so the shipped image stays pixel-exact |
 | `show_fps` | bool | `true` | Show the FPS readout in the status bar |
+| `pause_on_focus_loss` | bool | `false` | Auto-pause emulation when the window loses focus, auto-resume on regaining it. Never overrides a manual pause and never auto-pauses during a netplay session |
 
 ### `[recent_roms]`
 

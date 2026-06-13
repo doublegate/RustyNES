@@ -260,13 +260,15 @@ Everything has a keyboard shortcut, but nothing requires one.
   the region label, Vs. Insert Coin / FDS Swap Disk Side when relevant), Tools
   (Cheats, TAS Movies, Netplay, RetroAchievements, Performance Monitor — opened as
   floating windows without the debugger), View (Settings, Theme, 8:7 Pixel Aspect,
-  Fullscreen, Show FPS, Show Menu Bar), Debug (the debugger overlay + per-chip panels),
-  and Help (Keyboard Shortcuts, About).
+  Fullscreen, Window Size 1x–4x, Show FPS, Pause When Unfocused, Show Menu Bar), Debug
+  (the debugger overlay + per-chip panels), and Help (Keyboard Shortcuts, About).
 - **Status bar** — ROM name, region, mapper, run-ahead depth, Running / Paused /
   Netplay state, and the FPS readout.
 - **Settings window** — a tabbed Video / Audio / Input / Advanced dialog (View →
   Settings…) with live-applied theme, pixel-aspect, and FPS toggles.
-- **Quality-of-life** — light / dark / system themes, a translucent "PAUSED" overlay,
+- **Quality-of-life** — hold-to-fast-forward (audio muted) and single-frame advance
+  while paused, integer window-size presets (1x–4x of the NES resolution), optional
+  pause-when-unfocused, light / dark / system themes, a translucent "PAUSED" overlay,
   a recent-ROMs list (missing files greyed out), and a first-run Welcome modal.
 
 ## Default Controls
@@ -277,7 +279,9 @@ All keys are TOML-rebindable; see the user guide for the full schema.
 | --------------- | --------------- | ------------- | --- | ----------------------- | ------------------ |
 | D-Pad           | Arrow keys      | W / A / S / D |     | Save / Load state       | F1 / F4            |
 | A / B           | Z / X           | Q / E         |     | Rewind (hold)           | F5                 |
-| Start / Select  | Enter / R-Shift | P / L         |     | Reset / Power-cycle     | F2 / F3            |
+| Start / Select  | Enter / R-Shift | P / L         |     | Fast-forward (hold)     | Tab                |
+|                 |                 |               |     | Frame-advance (paused)  | \ (backslash)      |
+|                 |                 |               |     | Reset / Power-cycle     | F2 / F3            |
 |                 |                 |               |     | TAS movie record / play | F6 / F7            |
 |                 |                 |               |     | TAS movie branch        | F8                 |
 |                 |                 |               |     | Swap disk side (FDS)     | F9                 |
