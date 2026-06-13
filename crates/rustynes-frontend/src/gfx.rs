@@ -265,6 +265,11 @@ pub struct Gfx {
     /// when the adapter lacks `TIMESTAMP_QUERY`.
     #[cfg(all(not(target_arch = "wasm32"), feature = "gpu-timing"))]
     gpu_timer: Option<GpuTimer>,
+    /// v1.0.0 — apply the NES's native 8:7 pixel aspect ratio when `true`
+    /// (so the 256x240 framebuffer is stretched to a 4:3-ish display shape);
+    /// `false` keeps the 1:1 (square-pixel) 256:240 aspect. Drives the
+    /// letterbox transform.
+    par_correction: bool,
 }
 
 impl Gfx {
@@ -283,6 +288,7 @@ impl Gfx {
         window: Arc<Window>,
         present_mode_pref: &str,
         max_frame_latency: u32,
+        par_correction: bool,
     ) -> Result<Self, GfxError> {
         let size = window.inner_size();
 
@@ -461,7 +467,7 @@ impl Gfx {
         });
 
         // Uniforms (letterbox transform).
-        let initial = letterbox(size.width, size.height);
+        let initial = letterbox(size.width, size.height, par_correction);
         let uniforms = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("nes-letterbox"),
             contents: bytemuck::cast_slice(&initial),
@@ -580,6 +586,7 @@ impl Gfx {
             supported_present_modes: surface_caps.present_modes,
             #[cfg(all(not(target_arch = "wasm32"), feature = "gpu-timing"))]
             gpu_timer,
+            par_correction,
         })
     }
 
@@ -653,8 +660,26 @@ impl Gfx {
         self.config.width = w;
         self.config.height = h;
         self.surface.configure(&self.device, &self.config);
-        self.queue
-            .write_buffer(&self.uniforms, 0, bytemuck::cast_slice(&letterbox(w, h)));
+        self.queue.write_buffer(
+            &self.uniforms,
+            0,
+            bytemuck::cast_slice(&letterbox(w, h, self.par_correction)),
+        );
+    }
+
+    /// v1.0.0 — enable / disable the NES native 8:7 pixel-aspect-ratio
+    /// correction and rewrite the letterbox uniform so the change takes effect
+    /// on the next present. A no-op when the value is unchanged.
+    pub fn set_pixel_aspect(&mut self, on: bool) {
+        if self.par_correction == on {
+            return;
+        }
+        self.par_correction = on;
+        self.queue.write_buffer(
+            &self.uniforms,
+            0,
+            bytemuck::cast_slice(&letterbox(self.config.width, self.config.height, on)),
+        );
     }
 
     /// Upload the NES framebuffer (RGBA8, 256*240*4 bytes) to the texture
@@ -798,12 +823,19 @@ impl Gfx {
 }
 
 /// Compute a letterbox transform mapping the NES 256x240 framebuffer into
-/// a window of (`width` x `height`), preserving aspect (no PAR correction
-/// in v0). Returns `[scale_x, scale_y, offset_x, offset_y]` in NDC.
+/// a window of (`width` x `height`), preserving the chosen display aspect.
+/// When `par_8_7` is `true` the NES's native 8:7 pixel-aspect correction is
+/// applied (target aspect `(256 * 8 / 7) / 240`); otherwise the square-pixel
+/// 256:240 aspect is used. Returns `[scale_x, scale_y, offset_x, offset_y]`
+/// in NDC.
 #[allow(clippy::cast_precision_loss)] // window dims fit comfortably in f32 mantissa.
-fn letterbox(width: u32, height: u32) -> [f32; 4] {
+fn letterbox(width: u32, height: u32, par_8_7: bool) -> [f32; 4] {
     let win_aspect = width as f32 / height.max(1) as f32;
-    let nes_aspect = NES_W as f32 / NES_H as f32;
+    let nes_aspect = if par_8_7 {
+        (NES_W as f32 * 8.0 / 7.0) / NES_H as f32
+    } else {
+        NES_W as f32 / NES_H as f32
+    };
     let (sx, sy) = if win_aspect > nes_aspect {
         // Window wider than NES: letterbox vertically (full height, narrowed width).
         (nes_aspect / win_aspect, 1.0)
@@ -820,7 +852,7 @@ mod tests {
     #[test]
     fn letterbox_identity_when_window_matches_nes_aspect() {
         // 256x240 -> aspect 1.0666...
-        let t = letterbox(NES_W, NES_H);
+        let t = letterbox(NES_W, NES_H, false);
         assert!((t[0] - 1.0).abs() < 1e-5);
         assert!((t[1] - 1.0).abs() < 1e-5);
     }
@@ -828,14 +860,24 @@ mod tests {
     #[test]
     fn letterbox_wide_window_has_horizontal_bars() {
         // Very wide -> width should be scaled down; height kept at 1.
-        let t = letterbox(NES_W * 4, NES_H);
+        let t = letterbox(NES_W * 4, NES_H, false);
         assert!(t[0] < 1.0);
         assert!((t[1] - 1.0).abs() < 1e-5);
     }
 
     #[test]
+    fn letterbox_par_8_7_widens_the_image() {
+        // At a square-pixel (256:240) window, enabling 8:7 correction makes the
+        // target aspect wider than the window, so the image is letterboxed
+        // VERTICALLY (full width, reduced height) rather than rendered 1:1.
+        let t = letterbox(NES_W, NES_H, true);
+        assert!((t[0] - 1.0).abs() < 1e-5, "full width: {}", t[0]);
+        assert!(t[1] < 1.0, "height scaled down for 8:7: {}", t[1]);
+    }
+
+    #[test]
     fn letterbox_tall_window_has_vertical_bars() {
-        let t = letterbox(NES_W, NES_H * 4);
+        let t = letterbox(NES_W, NES_H * 4, false);
         assert!((t[0] - 1.0).abs() < 1e-5);
         assert!(t[1] < 1.0);
     }

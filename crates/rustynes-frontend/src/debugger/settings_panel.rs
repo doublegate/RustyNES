@@ -152,7 +152,11 @@ pub fn show(
 
 /// The window body: graphics / audio / rewind sections. Mutates `config`
 /// directly and accumulates live-apply flags on `state.apply`.
-fn body(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &mut Config) {
+///
+/// `pub(crate)` so the always-on UX shell's Settings window can render the same
+/// body for its Video / Audio / Advanced tabs, keeping the live-apply plumbing
+/// (`state.apply`, drained by `take_settings_apply`) unchanged.
+pub fn body(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &mut Config) {
     ui.heading("Graphics");
 
     // Present mode: persisted only — a live change needs a surface rebuild.

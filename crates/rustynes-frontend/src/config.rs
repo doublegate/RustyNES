@@ -617,6 +617,98 @@ impl Default for AudioConfig {
     }
 }
 
+/// egui visual theme for the desktop UX shell (menu bar, status bar, windows).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum AppTheme {
+    /// Light visuals.
+    Light,
+    /// Dark visuals (default).
+    #[default]
+    Dark,
+    /// Follow the OS theme when the windowing system reports one (falls back
+    /// to [`AppTheme::Dark`] when unknown).
+    System,
+}
+
+impl AppTheme {
+    /// Human-readable label for the settings combo box.
+    #[must_use]
+    pub const fn display_name(self) -> &'static str {
+        match self {
+            Self::Light => "Light",
+            Self::Dark => "Dark",
+            Self::System => "System",
+        }
+    }
+}
+
+/// `[recent_roms]` section — the File -> Recent MRU list (v1.0.0).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RecentRoms {
+    /// Most-recently-opened ROM paths, newest first.
+    #[serde(default)]
+    pub paths: Vec<PathBuf>,
+    /// Maximum number of entries retained. Default 10.
+    #[serde(default = "default_recent_max")]
+    pub max_entries: usize,
+}
+
+/// Serde default for [`RecentRoms::max_entries`].
+const fn default_recent_max() -> usize {
+    10
+}
+
+impl Default for RecentRoms {
+    fn default() -> Self {
+        Self {
+            paths: Vec::new(),
+            max_entries: default_recent_max(),
+        }
+    }
+}
+
+impl RecentRoms {
+    /// Insert `path` as the newest entry: de-duplicate, push to front, and
+    /// truncate to `max_entries`.
+    pub fn add(&mut self, path: PathBuf) {
+        self.paths.retain(|p| p != &path);
+        self.paths.insert(0, path);
+        self.paths.truncate(self.max_entries.max(1));
+    }
+}
+
+/// `[ui]` section — the desktop UX shell (theme, pixel aspect, FPS readout)
+/// (v1.0.0).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UiConfig {
+    /// egui visual theme. Default [`AppTheme::Dark`].
+    #[serde(default)]
+    pub theme: AppTheme,
+    /// Apply 8:7 pixel-aspect-ratio correction to the NES image. Default
+    /// `false`, so the shipped output stays pixel-exact unless opted in.
+    #[serde(default)]
+    pub pixel_aspect_correction: bool,
+    /// Show the FPS readout in the status bar. Default `true`.
+    #[serde(default = "default_ui_show_fps")]
+    pub show_fps: bool,
+}
+
+/// Serde default for [`UiConfig::show_fps`].
+const fn default_ui_show_fps() -> bool {
+    true
+}
+
+impl Default for UiConfig {
+    fn default() -> Self {
+        Self {
+            theme: AppTheme::default(),
+            pixel_aspect_correction: false,
+            show_fps: default_ui_show_fps(),
+        }
+    }
+}
+
 /// Top-level config struct.
 //
 // Not `Eq`: `InputConfig` carries the `f32` gamepad `axis_deadzone`, so
@@ -647,6 +739,18 @@ pub struct Config {
     /// `RetroAchievements` defaults (login token + hardcore) (v2.7.0).
     #[serde(default)]
     pub retroachievements: RetroAchievementsConfig,
+    /// Desktop UX shell settings — theme, 8:7 pixel aspect, FPS readout (v1.0.0).
+    #[serde(default)]
+    pub ui: UiConfig,
+    /// Recently-opened ROMs for the File -> Recent menu (v1.0.0).
+    #[serde(default)]
+    pub recent_roms: RecentRoms,
+    /// `true` once the first-run Welcome modal has been dismissed. Defaults to
+    /// `false` (so a brand-new install — which has no config file and thus gets
+    /// `Config::default()` — shows the welcome), and is set to `true` + saved
+    /// when the user dismisses it (v1.0.0).
+    #[serde(default)]
+    pub welcome_shown: bool,
 }
 
 /// `[retroachievements]` section (v2.7.0).

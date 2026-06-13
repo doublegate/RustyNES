@@ -175,6 +175,11 @@ pub struct EmuControl {
     /// Set while a netplay session is active: the emu thread parks so the
     /// winit thread can drive the rollback session unopposed.
     netplay_paused: AtomicBool,
+    /// v1.0.0 — set while the user paused emulation from the UX shell (the
+    /// Emulation -> Pause menu). Distinct from [`netplay_paused`] so the two
+    /// pause sources don't collide: a user pause must not clear a netplay pause
+    /// (or vice-versa). The thread idles while either is set.
+    user_paused: AtomicBool,
     /// `true` once a ROM is loaded (the thread idles until then).
     has_rom: AtomicBool,
     /// The active pacing regime (see [`regime`]).
@@ -190,6 +195,7 @@ impl EmuControl {
         Self {
             stop: AtomicBool::new(false),
             netplay_paused: AtomicBool::new(false),
+            user_paused: AtomicBool::new(false),
             has_rom: AtomicBool::new(false),
             regime: AtomicU8::new(regime::WALLCLOCK),
             frame_nanos: AtomicU64::new(dur_nanos(rustynes_core::FRAME_DURATION_NTSC)),
@@ -217,6 +223,12 @@ impl EmuControl {
     #[must_use]
     pub fn is_netplay_paused(&self) -> bool {
         self.netplay_paused.load(Ordering::Acquire)
+    }
+
+    /// v1.0.0 — pause (or resume) emulation from the UX shell. Independent of
+    /// [`Self::set_netplay_paused`]; the thread idles while either is set.
+    pub fn set_user_paused(&self, on: bool) {
+        self.user_paused.store(on, Ordering::Release);
     }
 }
 
@@ -315,9 +327,11 @@ fn run_loop(
         if control.stop.load(Ordering::Acquire) {
             return;
         }
-        // Idle: no ROM yet, or netplay owns the core on the winit thread.
+        // Idle: no ROM yet, netplay owns the core on the winit thread, or the
+        // user paused emulation from the UX shell.
         if !control.has_rom.load(Ordering::Acquire)
             || control.netplay_paused.load(Ordering::Acquire)
+            || control.user_paused.load(Ordering::Acquire)
         {
             std::thread::park_timeout(IDLE_PARK);
             continue;

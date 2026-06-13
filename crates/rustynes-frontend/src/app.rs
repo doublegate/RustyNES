@@ -281,6 +281,16 @@ pub struct App {
     data_dir: Option<PathBuf>,
     /// Sprint 5-3 debugger overlay (lazily constructed alongside `Gfx`).
     debugger: Option<DebuggerOverlay>,
+    /// v1.0.0 — the always-on desktop UX shell state (menu/status-bar
+    /// visibility, settings tab, status toast, mirrored pause/fullscreen
+    /// flags). The shell UI itself is built inside the debugger overlay's
+    /// single egui pass each frame; this holds its persistent state.
+    ui: crate::ui_shell::UiShell,
+    /// v1.0.0 — cached previous value of `config.ui.pixel_aspect_correction`,
+    /// so a change made in the menu / settings window is detected after the
+    /// egui pass and pushed into the gfx letterbox (mirrors the NTSC live-apply
+    /// pattern).
+    prev_par_correction: bool,
     /// gilrs runtime for gamepad polling. `None` if gilrs fails to
     /// initialize (e.g. no input subsystem available); the emulator
     /// falls back to keyboard-only. Native-only — wasm32 uses
@@ -429,6 +439,8 @@ impl App {
         let config = Config::load_or_default();
         let input = InputState::from_config(&config.input);
         let data_dir = Config::default_data_dir();
+        let ui = crate::ui_shell::UiShell::new(&config);
+        let prev_par_correction = config.ui.pixel_aspect_correction;
         Ok(Self {
             rom_bytes,
             rom_label,
@@ -440,6 +452,8 @@ impl App {
             config,
             data_dir,
             debugger: None,
+            ui,
+            prev_par_correction,
             gamepad: gilrs::Gilrs::new()
                 .map_err(|e| {
                     eprintln!("rustynes: gamepad subsystem disabled: {e}");
@@ -496,6 +510,8 @@ impl App {
     pub fn new_empty(proxy: winit::event_loop::EventLoopProxy<AppEvent>) -> Self {
         let config = Config::default();
         let input = InputState::from_config(&config.input);
+        let ui = crate::ui_shell::UiShell::new(&config);
+        let prev_par_correction = config.ui.pixel_aspect_correction;
         Self {
             rom_bytes: Vec::new(),
             rom_label: "(no ROM)".to_string(),
@@ -505,6 +521,8 @@ impl App {
             input,
             config,
             debugger: None,
+            ui,
+            prev_par_correction,
             proxy: Some(proxy),
             should_exit: false,
             browser_netplay: None,
@@ -688,6 +706,19 @@ impl App {
             gfx.window
                 .set_title(&format!("RustyNES v2 - {}", self.rom_label));
         }
+        // v1.0.0 — record the ROM in the File -> Recent MRU list and surface a
+        // status toast. Resuming from a user pause is intentional: loading a ROM
+        // is an explicit "start playing this" gesture.
+        self.config.recent_roms.add(path.to_path_buf());
+        let _ = self.config.save();
+        if self.ui.paused {
+            self.set_paused(false);
+        }
+        self.ui
+            .set_status(crate::ui_shell::StatusMessage::success(format!(
+                "Loaded: {}",
+                self.rom_label
+            )));
         eprintln!("rustynes: loaded {}", path.display());
     }
 
@@ -841,7 +872,9 @@ impl App {
                     return Some(n);
                 }
                 Err(e) => {
-                    eprintln!("rustynes: FDS save corrupt ({e}); falling back to the pristine disk");
+                    eprintln!(
+                        "rustynes: FDS save corrupt ({e}); falling back to the pristine disk"
+                    );
                 }
             }
         }
@@ -1735,6 +1768,115 @@ impl App {
         self.reset_ra();
     }
 
+    /// v1.0.0 — dispatch a UX-shell [`crate::ui_shell::MenuAction`]. Run AFTER
+    /// the egui pass (the build closure cannot hold `&mut self`).
+    fn dispatch_menu_action(
+        &mut self,
+        action: crate::ui_shell::MenuAction,
+        event_loop: &ActiveEventLoop,
+    ) {
+        use crate::ui_shell::{MenuAction, StatusMessage};
+        match action {
+            MenuAction::OpenRom => {
+                #[cfg(not(target_arch = "wasm32"))]
+                self.open_rom_dialog();
+            }
+            MenuAction::LoadRom(path) => {
+                // The Recent-ROMs menu is native-only (filesystem paths), so on
+                // wasm this arm is unreachable — drop the payload to keep the
+                // match exhaustive without an unused binding.
+                #[cfg(not(target_arch = "wasm32"))]
+                self.load_rom_from_path(&path);
+                #[cfg(target_arch = "wasm32")]
+                let _ = path;
+            }
+            MenuAction::ClearRecent => {
+                self.config.recent_roms.paths.clear();
+                #[cfg(not(target_arch = "wasm32"))]
+                let _ = self.config.save();
+                self.ui
+                    .set_status(StatusMessage::info("Recent ROMs cleared"));
+            }
+            MenuAction::SaveState => {
+                #[cfg(not(target_arch = "wasm32"))]
+                self.handle_save_state();
+                #[cfg(target_arch = "wasm32")]
+                self.handle_save_state_wasm();
+                self.ui.set_status(StatusMessage::success("State saved"));
+            }
+            MenuAction::LoadState => {
+                if self.ra_hardcore_blocks() {
+                    self.ui
+                        .set_status(StatusMessage::info("Load state disabled (hardcore)"));
+                } else {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    self.handle_load_state();
+                    #[cfg(target_arch = "wasm32")]
+                    self.handle_load_state_wasm();
+                    self.ui.set_status(StatusMessage::success("State loaded"));
+                }
+            }
+            MenuAction::Quit => {
+                self.should_exit = true;
+                event_loop.exit();
+            }
+            MenuAction::TogglePause => {
+                self.set_paused(!self.ui.paused);
+            }
+            MenuAction::Reset => {
+                self.do_reset();
+                self.ui.set_status(StatusMessage::info("Reset"));
+            }
+            MenuAction::PowerCycle => {
+                self.do_power_cycle();
+                self.ui.set_status(StatusMessage::info("Power cycled"));
+            }
+            MenuAction::ToggleDebugger => {
+                if let Some(d) = self.debugger.as_mut() {
+                    d.toggle();
+                }
+            }
+            MenuAction::ToggleFullscreen => {
+                self.toggle_fullscreen();
+            }
+        }
+    }
+
+    /// v1.0.0 — pause or resume emulation from the UX shell. On the emu-thread
+    /// path this flips the thread's atomic gate; on the synchronous native +
+    /// wasm paths the produce loop checks `self.ui.paused` directly.
+    fn set_paused(&mut self, paused: bool) {
+        use crate::ui_shell::StatusMessage;
+        self.ui.paused = paused;
+        #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
+        if let Some(thread) = self.emu_thread.as_ref() {
+            thread.control().set_user_paused(paused);
+        }
+        self.ui.set_status(StatusMessage::info(if paused {
+            "Paused"
+        } else {
+            "Resumed"
+        }));
+        // Keep the render loop alive so the status bar / overlay stay
+        // responsive while paused.
+        if let Some(gfx) = self.gfx.as_ref() {
+            gfx.window.request_redraw();
+        }
+    }
+
+    /// v1.0.0 — toggle borderless fullscreen, tracking the state on the shell.
+    fn toggle_fullscreen(&mut self) {
+        self.ui.fullscreen = !self.ui.fullscreen;
+        if let Some(gfx) = self.gfx.as_ref() {
+            let mode = if self.ui.fullscreen {
+                Some(winit::window::Fullscreen::Borderless(None))
+            } else {
+                None
+            };
+            gfx.window.set_fullscreen(mode);
+        }
+    }
+
     /// Power-cycle the running emulator (and keep `RetroAchievements` in sync).
     // Same cfg artifact as `do_reset`.
     #[allow(clippy::needless_pass_by_ref_mut)]
@@ -2056,6 +2198,20 @@ impl App {
     #[cfg_attr(target_arch = "wasm32", allow(clippy::needless_pass_by_ref_mut))]
     fn pace_frames(&mut self, event_loop: &ActiveEventLoop) {
         if self.emu.lock().nes.is_none() {
+            // v1.0.0 — no ROM yet: keep the always-on UX shell (menu/status
+            // bar/welcome modal) drawing + interactive. Re-render at ~30 Hz via
+            // `WaitUntil` (so status toasts fade smoothly) rather than an
+            // immediate `request_redraw` busy-loop. Native only; the wasm rAF
+            // loop re-arms itself unconditionally in `pace_and_produce_wasm`.
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                event_loop.set_control_flow(ControlFlow::WaitUntil(
+                    Instant::now() + Duration::from_millis(33),
+                ));
+                if let Some(gfx) = self.gfx.as_ref() {
+                    gfx.window.request_redraw();
+                }
+            }
             return;
         }
 
@@ -2087,6 +2243,17 @@ impl App {
             // contends with the producing thread.
             if self.emu_thread_drives() {
                 event_loop.set_control_flow(ControlFlow::Wait);
+                return;
+            }
+
+            // v1.0.0 — user-paused (Emulation -> Pause) on the synchronous
+            // native path: stop producing frames but keep the UI responsive.
+            // (The emu-thread path pauses via `EmuControl::set_user_paused`.)
+            if self.ui.paused {
+                event_loop.set_control_flow(ControlFlow::Wait);
+                if let Some(gfx) = self.gfx.as_ref() {
+                    gfx.window.request_redraw();
+                }
                 return;
             }
 
@@ -2424,6 +2591,7 @@ impl App {
         }
         if self.active_pacing != ActivePacing::Display
             || self.netplay.is_active()
+            || self.ui.paused
             || self.emu.lock().nes.is_none()
         {
             return;
@@ -2574,7 +2742,7 @@ impl App {
         // on the `nes.is_none()` pre-ROM path) so the rAF loop never dies.
         // If any tick failed to re-arm, winit's web backend would stop
         // calling `requestAnimationFrame` and the canvas would freeze.
-        if self.emu.lock().nes.is_some() {
+        if self.emu.lock().nes.is_some() && !self.ui.paused {
             // Latch the browser-sourced input just before producing.
             self.latch_input();
             let now = Instant::now();
@@ -2943,6 +3111,7 @@ impl ApplicationHandler<AppEvent> for App {
             window,
             &self.config.graphics.present_mode,
             self.config.graphics.max_frame_latency,
+            self.config.ui.pixel_aspect_correction,
         )) {
             Ok(gfx) => self.on_gfx_ready(gfx, event_loop),
             Err(e) => {
@@ -2954,8 +3123,9 @@ impl ApplicationHandler<AppEvent> for App {
         if let Some(proxy) = self.proxy.clone() {
             let present_mode = self.config.graphics.present_mode.clone();
             let max_frame_latency = self.config.graphics.max_frame_latency;
+            let par_correction = self.config.ui.pixel_aspect_correction;
             wasm_bindgen_futures::spawn_local(async move {
-                match Gfx::new(window, &present_mode, max_frame_latency).await {
+                match Gfx::new(window, &present_mode, max_frame_latency, par_correction).await {
                     Ok(gfx) => {
                         let _ = proxy.send_event(AppEvent::GfxReady(Box::new(gfx)));
                     }
@@ -3061,7 +3231,14 @@ impl ApplicationHandler<AppEvent> for App {
             }
             #[cfg(not(target_arch = "wasm32"))]
             WindowEvent::MouseInput { state, button, .. } => {
-                if button == winit::event::MouseButton::Left {
+                // v1.0.0 — a click on the always-on shell (a menu / window /
+                // status bar) must not also fire the Zapper / Vaus. Skip the NES
+                // mouse-press when egui claimed the pointer.
+                let egui_pointer = self
+                    .debugger
+                    .as_ref()
+                    .is_some_and(DebuggerOverlay::wants_egui_input);
+                if button == winit::event::MouseButton::Left && !egui_pointer {
                     self.mouse_pressed = state == winit::event::ElementState::Pressed;
                 }
             }
@@ -3096,6 +3273,17 @@ impl ApplicationHandler<AppEvent> for App {
                     .as_ref()
                     .is_some_and(DebuggerOverlay::wants_keyboard);
                 if dbg_capturing {
+                    return;
+                }
+                // v1.0.0 — when egui wants keyboard input (a menu is open or a
+                // settings text field is focused), do NOT also drive the NES
+                // controller / system hotkeys from this key. The always-on shell
+                // is interactive even with the debugger overlay hidden.
+                if self
+                    .debugger
+                    .as_ref()
+                    .is_some_and(DebuggerOverlay::wants_egui_input)
+                {
                     return;
                 }
                 let action = self.input.handle_key(event.physical_key, event.state);
@@ -3243,58 +3431,143 @@ impl ApplicationHandler<AppEvent> for App {
                 // brief lock that is DROPPED before the GPU encode +
                 // present, so Fifo vsync backpressure can never block the
                 // emulation side of the lock.
+                // v1.0.0 — the egui pass now runs EVERY frame so the always-on
+                // UX shell (menu bar / status bar / settings / modals) draws
+                // whether or not the debugger overlay is toggled on. The shell
+                // build closure never touches the emu lock; the conditional
+                // debugger panels (which DO read `nes`) only build when the
+                // overlay is visible.
+                //
+                // Lock policy is unchanged from v2.8.0 Phase 5: a VISIBLE
+                // overlay holds the lock across the render (its panels need
+                // `&mut Nes`); the common HIDDEN path copies the framebuffer
+                // into the App staging buffer under a brief lock that is DROPPED
+                // before the GPU encode + present.
                 let dbg_visible = self
                     .debugger
                     .as_ref()
                     .is_some_and(DebuggerOverlay::is_visible);
-                let render_result = if dbg_visible {
+
+                // The shell's status bar needs `nes.is_some()` + fps; capture
+                // them under a brief lock BEFORE the egui pass so the build
+                // closure never re-locks.
+                let (rom_loaded, fps) = {
+                    let emu = self.emu.lock();
+                    (emu.nes.is_some(), emu.current_fps())
+                };
+                let shell_frame = crate::ui_shell::ShellFrame {
+                    rom_label: &self.rom_label,
+                    rom_loaded,
+                    fps,
+                    debugger_visible: dbg_visible,
+                };
+
+                let mut shell_out = crate::ui_shell::ShellOutput::default();
+                let render_result = if self.debugger.is_none() || self.gfx.is_none() {
+                    // No overlay yet (pre-`resumed`): nothing to render.
+                    return;
+                } else if dbg_visible {
                     let mut guard = self.emu.lock();
                     let emu = &mut *guard;
-                    let Some(nes) = emu.nes.as_mut() else {
-                        return;
-                    };
-                    Self::backfill_present_fb(&mut emu.present_fb, nes);
-                    let Some(gfx) = self.gfx.as_mut() else {
-                        return;
-                    };
-                    let present_fb = &emu.present_fb;
+                    // Backfill the presented framebuffer into staging under the
+                    // held lock (a ROM may or may not be loaded). The debugger
+                    // panels read `nes` directly below.
+                    if let Some(nes) = emu.nes.as_ref() {
+                        Self::backfill_present_fb(&mut emu.present_fb, nes);
+                        self.present_staging.clear();
+                        self.present_staging.extend_from_slice(&emu.present_fb);
+                    } else {
+                        self.present_staging.clear();
+                        self.present_staging.resize((NES_W * NES_H * 4) as usize, 0);
+                    }
+                    let nes_for_render = emu.nes.as_mut();
+                    let gfx = self.gfx.as_mut().expect("checked above");
                     let debugger = self
                         .debugger
                         .as_mut()
                         .expect("dbg_visible implies a debugger");
                     let window = gfx.window.clone();
                     let config = &mut self.config;
+                    let ui_shell = &mut self.ui;
                     // wasm-only: draw the browser-netplay lobby into the same
                     // egui frame (the `App` owns the lobby state). Native passes
-                    // a no-op closure, so the signature churn is wasm-free.
+                    // a no-op closure.
                     #[cfg(target_arch = "wasm32")]
                     let wasm_lobby = &mut self.wasm_lobby;
-                    gfx.render_with_overlay(present_fb, |device, queue, encoder, view, size| {
-                        #[cfg(target_arch = "wasm32")]
-                        let extra = |ctx: &egui::Context, cfg: &mut crate::config::Config| {
-                            crate::wasm_lobby::show(ctx, wasm_lobby, cfg);
-                        };
-                        #[cfg(not(target_arch = "wasm32"))]
-                        let extra = |_ctx: &egui::Context, _cfg: &mut crate::config::Config| {};
-                        debugger.render(
-                            device, queue, encoder, &window, view, size, nes, config, extra,
-                        );
-                    })
+                    gfx.render_with_overlay(
+                        &self.present_staging,
+                        |device, queue, encoder, view, size| {
+                            #[cfg(target_arch = "wasm32")]
+                            let extra = |ctx: &egui::Context, cfg: &mut crate::config::Config| {
+                                crate::wasm_lobby::show(ctx, wasm_lobby, cfg);
+                            };
+                            #[cfg(not(target_arch = "wasm32"))]
+                            let extra = |_ctx: &egui::Context, _cfg: &mut crate::config::Config| {};
+                            shell_out = debugger.render_shell(
+                                device,
+                                queue,
+                                encoder,
+                                &window,
+                                view,
+                                size,
+                                nes_for_render,
+                                config,
+                                ui_shell,
+                                &shell_frame,
+                                extra,
+                            );
+                        },
+                    )
                 } else {
+                    // Common path: copy the presented framebuffer under a brief
+                    // lock, DROP the guard, then encode + present from staging.
                     {
                         let mut guard = self.emu.lock();
                         let emu = &mut *guard;
-                        let Some(nes) = emu.nes.as_ref() else {
-                            return;
-                        };
-                        Self::backfill_present_fb(&mut emu.present_fb, nes);
-                        self.present_staging.clear();
-                        self.present_staging.extend_from_slice(&emu.present_fb);
+                        if let Some(nes) = emu.nes.as_ref() {
+                            Self::backfill_present_fb(&mut emu.present_fb, nes);
+                            self.present_staging.clear();
+                            self.present_staging.extend_from_slice(&emu.present_fb);
+                        } else {
+                            // No ROM: present a black NES image (the shell still
+                            // draws on top).
+                            self.present_staging.clear();
+                            self.present_staging.resize((NES_W * NES_H * 4) as usize, 0);
+                        }
                     }
-                    let Some(gfx) = self.gfx.as_mut() else {
-                        return;
-                    };
-                    gfx.render(&self.present_staging)
+                    let gfx = self.gfx.as_mut().expect("checked above");
+                    let debugger = self.debugger.as_mut().expect("checked above");
+                    let window = gfx.window.clone();
+                    let config = &mut self.config;
+                    let ui_shell = &mut self.ui;
+                    #[cfg(target_arch = "wasm32")]
+                    let wasm_lobby = &mut self.wasm_lobby;
+                    gfx.render_with_overlay(
+                        &self.present_staging,
+                        |device, queue, encoder, view, size| {
+                            #[cfg(target_arch = "wasm32")]
+                            let extra = |ctx: &egui::Context, cfg: &mut crate::config::Config| {
+                                crate::wasm_lobby::show(ctx, wasm_lobby, cfg);
+                            };
+                            #[cfg(not(target_arch = "wasm32"))]
+                            let extra = |_ctx: &egui::Context, _cfg: &mut crate::config::Config| {};
+                            // Debugger panels are skipped (overlay hidden) so
+                            // `nes = None` is correct even though a ROM may exist.
+                            shell_out = debugger.render_shell(
+                                device,
+                                queue,
+                                encoder,
+                                &window,
+                                view,
+                                size,
+                                None,
+                                config,
+                                ui_shell,
+                                &shell_frame,
+                                extra,
+                            );
+                        },
+                    )
                 };
                 match render_result {
                     Ok(()) => {
@@ -3313,6 +3586,25 @@ impl ApplicationHandler<AppEvent> for App {
                         }
                     }
                     Err(e) => eprintln!("rustynes: render error: {e}"),
+                }
+
+                // v1.0.0 — dispatch the UX-shell menu action chosen this frame.
+                // Deferred to here (after the egui pass) because the action
+                // handlers need `&mut self`, which the build closure cannot hold
+                // (it borrows `&mut self.config` / `&mut self.ui`).
+                if let Some(action) = shell_out.action.take() {
+                    self.dispatch_menu_action(action, event_loop);
+                }
+
+                // v1.0.0 — push a pixel-aspect-correction change (made in the
+                // menu / settings window) into the gfx letterbox. Mirrors the
+                // NTSC live-apply pattern: cache the previous value and act on a
+                // transition.
+                if self.config.ui.pixel_aspect_correction != self.prev_par_correction {
+                    self.prev_par_correction = self.config.ui.pixel_aspect_correction;
+                    if let Some(gfx) = self.gfx.as_mut() {
+                        gfx.set_pixel_aspect(self.config.ui.pixel_aspect_correction);
+                    }
                 }
 
                 // If the rebind modal changed a binding (or reset to

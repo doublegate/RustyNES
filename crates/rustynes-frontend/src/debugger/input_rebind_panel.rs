@@ -343,6 +343,23 @@ pub fn show(
     state: &mut InputPanelState,
     config: &mut Config,
 ) {
+    egui::Window::new("Input bindings")
+        .open(open)
+        .default_pos([560.0, 64.0])
+        .default_size([460.0, 520.0])
+        .resizable(true)
+        .show(ctx, |ui| {
+            body(ui, state, config);
+        });
+}
+
+/// The input-rebind window body, reusable from the always-on UX shell's
+/// Settings -> Input tab. Applies any captured rebind from the previous input
+/// event, then renders the Four Score / port-2 device controls and the
+/// keyboard + gamepad binding grids. `state` is the SAME [`InputPanelState`]
+/// the debugger owns, so the rebind-capture flow + `bindings_dirty` polling are
+/// shared between the two surfaces.
+pub fn body(ui: &mut egui::Ui, state: &mut InputPanelState, config: &mut Config) {
     // Apply any captured rebind from the previous input event.
     if let Some((slot, name)) = state.captured.take() {
         apply_slot(config, slot, &name);
@@ -350,99 +367,86 @@ pub fn show(
         state.bindings_dirty = true;
     }
 
-    egui::Window::new("Input bindings")
-        .open(open)
-        .default_pos([560.0, 64.0])
-        .default_size([460.0, 520.0])
-        .resizable(true)
-        .show(ctx, |ui| {
-            if state.pending.is_some() {
-                let prompt = if state.pending.is_some_and(Slot::is_gamepad) {
-                    "Press any gamepad button (rebind again to cancel)"
-                } else {
-                    "Press any key (Esc to cancel)"
-                };
-                egui::Frame::default()
-                    .fill(egui::Color32::from_black_alpha(220))
-                    .show(ui, |ui| {
-                        ui.label(egui::RichText::new(prompt).strong());
-                    });
-            } else if !state.status.is_empty() {
-                ui.label(state.status.clone());
+    {
+        if state.pending.is_some() {
+            let prompt = if state.pending.is_some_and(Slot::is_gamepad) {
+                "Press any gamepad button (rebind again to cancel)"
+            } else {
+                "Press any key (Esc to cancel)"
+            };
+            egui::Frame::default()
+                .fill(egui::Color32::from_black_alpha(220))
+                .show(ui, |ui| {
+                    ui.label(egui::RichText::new(prompt).strong());
+                });
+        } else if !state.status.is_empty() {
+            ui.label(state.status.clone());
+        }
+
+        ui.horizontal(|ui| {
+            if ui.button("Save to disk").clicked() {
+                match config.save() {
+                    Ok(()) => state.status = "Saved.".into(),
+                    Err(e) => state.status = format!("save error: {e}"),
+                }
             }
-
-            ui.horizontal(|ui| {
-                if ui.button("Save to disk").clicked() {
-                    match config.save() {
-                        Ok(()) => state.status = "Saved.".into(),
-                        Err(e) => state.status = format!("save error: {e}"),
-                    }
-                }
-                if ui.button("Reset to defaults").clicked() {
-                    *config = Config::default();
-                    state.status = "Defaults restored (unsaved).".into();
-                    state.bindings_dirty = true;
-                }
-            });
-
-            // Four Score (v1.7.0): a checkbox toggling the 4-player adapter.
-            // Flagging the bindings dirty routes the new value to
-            // `nes.set_four_score` via the app's reload path.
-            if ui
-                .checkbox(&mut config.input.four_score, "Four Score (4-player)")
-                .changed()
-            {
+            if ui.button("Reset to defaults").clicked() {
+                *config = Config::default();
+                state.status = "Defaults restored (unsaved).".into();
                 state.bindings_dirty = true;
             }
-
-            // v2.1.0 — non-standard device on the player-2 port ($4017).
-            // Selecting one routes through the app's reload path
-            // (`sync_expansion_device`). Mouse drives aim/position; left
-            // mouse button = Zapper trigger / Vaus fire.
-            {
-                use crate::config::ExpansionDevice;
-                let mut dev = config.input.expansion_device;
-                egui::ComboBox::from_label("Port 2 device ($4017)")
-                    .selected_text(match dev {
-                        ExpansionDevice::None => "Standard controller",
-                        ExpansionDevice::Zapper => "Zapper (light gun)",
-                        ExpansionDevice::Vaus => "Vaus (Arkanoid paddle)",
-                    })
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut dev, ExpansionDevice::None, "Standard controller");
-                        ui.selectable_value(
-                            &mut dev,
-                            ExpansionDevice::Zapper,
-                            "Zapper (light gun)",
-                        );
-                        ui.selectable_value(
-                            &mut dev,
-                            ExpansionDevice::Vaus,
-                            "Vaus (Arkanoid paddle)",
-                        );
-                    });
-                if dev != config.input.expansion_device {
-                    config.input.expansion_device = dev;
-                    state.bindings_dirty = true;
-                }
-            }
-
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                ui.separator();
-                ui.label(egui::RichText::new("Keyboard").strong());
-                binding_grid(ui, "kb-grid", "Key", KB_ROWS, state, config);
-
-                // Gamepad rows: native only (no gilrs on wasm32).
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    ui.separator();
-                    ui.label(egui::RichText::new("Gamepad").strong());
-                    binding_grid(ui, "pad-grid", "Button", PAD_ROWS, state, config);
-                }
-                #[cfg(target_arch = "wasm32")]
-                let _ = PAD_ROWS;
-            });
         });
+
+        // Four Score (v1.7.0): a checkbox toggling the 4-player adapter.
+        // Flagging the bindings dirty routes the new value to
+        // `nes.set_four_score` via the app's reload path.
+        if ui
+            .checkbox(&mut config.input.four_score, "Four Score (4-player)")
+            .changed()
+        {
+            state.bindings_dirty = true;
+        }
+
+        // v2.1.0 — non-standard device on the player-2 port ($4017).
+        // Selecting one routes through the app's reload path
+        // (`sync_expansion_device`). Mouse drives aim/position; left
+        // mouse button = Zapper trigger / Vaus fire.
+        {
+            use crate::config::ExpansionDevice;
+            let mut dev = config.input.expansion_device;
+            egui::ComboBox::from_label("Port 2 device ($4017)")
+                .selected_text(match dev {
+                    ExpansionDevice::None => "Standard controller",
+                    ExpansionDevice::Zapper => "Zapper (light gun)",
+                    ExpansionDevice::Vaus => "Vaus (Arkanoid paddle)",
+                })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut dev, ExpansionDevice::None, "Standard controller");
+                    ui.selectable_value(&mut dev, ExpansionDevice::Zapper, "Zapper (light gun)");
+                    ui.selectable_value(&mut dev, ExpansionDevice::Vaus, "Vaus (Arkanoid paddle)");
+                });
+            if dev != config.input.expansion_device {
+                config.input.expansion_device = dev;
+                state.bindings_dirty = true;
+            }
+        }
+
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            ui.separator();
+            ui.label(egui::RichText::new("Keyboard").strong());
+            binding_grid(ui, "kb-grid", "Key", KB_ROWS, state, config);
+
+            // Gamepad rows: native only (no gilrs on wasm32).
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                ui.separator();
+                ui.label(egui::RichText::new("Gamepad").strong());
+                binding_grid(ui, "pad-grid", "Button", PAD_ROWS, state, config);
+            }
+            #[cfg(target_arch = "wasm32")]
+            let _ = PAD_ROWS;
+        });
+    }
 }
 
 /// Render one labelled grid of binding rows, wiring each "rebind" button

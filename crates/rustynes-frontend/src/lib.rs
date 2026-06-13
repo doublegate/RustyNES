@@ -60,6 +60,10 @@ pub mod ntsc;
 #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
 pub mod ra_session;
 pub mod save_state;
+// v1.0.0 — the always-on desktop UX shell (menu bar, status bar, settings
+// window, welcome/about/shortcuts modals). Runs on native + `wasm-winit`; only
+// the filesystem-backed actions are native-gated at the dispatch site.
+pub mod ui_shell;
 
 // v1.3.0 Sprint 1.4 — two wasm32 frontends, selected by cargo
 // feature (each provides a unique `#[wasm_bindgen(start)]`):

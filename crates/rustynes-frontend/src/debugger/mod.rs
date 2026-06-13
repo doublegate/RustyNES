@@ -48,6 +48,7 @@ use winit::window::Window;
 
 use crate::config::Config;
 use crate::movie_ui::{MovieMode, MovieStatus};
+use crate::ui_shell::{ShellFrame, ShellOutput, UiShell};
 
 mod apu_panel;
 // v2.7.1 — RetroAchievements badge-image cache (native-only, feature-gated).
@@ -263,18 +264,33 @@ impl DebuggerOverlay {
         self.visible && self.input_ui.is_capturing_keyboard()
     }
 
+    /// v1.0.0 — whether egui currently wants keyboard or pointer input (a menu
+    /// is open, a settings text field is focused, ...). The app uses this to
+    /// gate emulator key input so clicking a menu / typing in a settings field
+    /// does NOT also drive the NES controller. Unlike [`Self::wants_keyboard`]
+    /// this is NOT gated on overlay visibility (the always-on shell is
+    /// interactive even with the debugger closed).
+    #[must_use]
+    pub fn wants_egui_input(&self) -> bool {
+        let ctx = self.state.egui_ctx();
+        ctx.wants_keyboard_input() || ctx.wants_pointer_input()
+    }
+
     /// Forward a winit window event into egui. Returns `true` if egui
     /// consumed the event (the main app should still pass keyboard input
     /// to the emulator for keys egui didn't claim).
     pub fn on_window_event(&mut self, window: &Window, event: &WindowEvent) -> bool {
-        if !self.visible {
-            return false;
-        }
+        // v1.0.0 — ALWAYS feed the event into egui so the always-on shell (menu
+        // bar / status bar / settings) stays interactive when the debugger
+        // overlay is closed. The rebind-capture intercept stays gated on
+        // visibility (the rebind modal only lives in the debugger panels).
         let response = self.state.on_window_event(window, event);
-        // Intercept the next key press for the rebind modal if it's
-        // listening — this captures keys that egui would have routed to
-        // its own text widgets first.
-        self.input_ui.maybe_capture(event);
+        if self.visible {
+            // Intercept the next key press for the rebind modal if it's
+            // listening — this captures keys that egui would have routed to
+            // its own text widgets first.
+            self.input_ui.maybe_capture(event);
+        }
         response.consumed
     }
 
@@ -727,5 +743,105 @@ impl DebuggerOverlay {
         for id in output.textures_delta.free {
             self.renderer.free_texture(&id);
         }
+    }
+
+    /// v1.0.0 — render the ALWAYS-ON desktop UX shell (menu bar, status bar,
+    /// settings window, welcome/about/shortcuts modals) every frame, and — only
+    /// when the debugger overlay is visible AND a ROM is loaded — the existing
+    /// debugger panels on top.
+    ///
+    /// This runs a single `ctx.run` closure that (1) applies the configured
+    /// theme, (2) builds the shell UI (which never touches `nes`), (3) draws the
+    /// optional wasm-netplay lobby (`extra_ui`), and (4) conditionally builds
+    /// the debugger panels. The shell's chosen [`MenuAction`](crate::ui_shell::MenuAction)
+    /// (if any) is returned via [`ShellOutput`] for
+    /// the `App` to dispatch AFTER the egui
+    /// pass — none of the menu callbacks need `&mut App` inside the closure.
+    ///
+    /// `nes` is `Option` so the shell renders even before a ROM is loaded; the
+    /// debugger panels are skipped while it is `None`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_shell<F: FnOnce(&egui::Context, &mut Config)>(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        window: &Arc<Window>,
+        view: &wgpu::TextureView,
+        surface_size: (u32, u32),
+        nes: Option<&mut Nes>,
+        config: &mut Config,
+        shell: &mut UiShell,
+        shell_frame: &ShellFrame<'_>,
+        extra_ui: F,
+    ) -> ShellOutput {
+        let raw_input = self.state.take_egui_input(window);
+        let ctx = self.state.egui_ctx().clone();
+        let visible = self.visible;
+        let mut nes = nes;
+        let mut extra_ui = Some(extra_ui);
+        let mut shell_out = ShellOutput::default();
+        let output = ctx.run(raw_input, |ctx| {
+            // (1) Theme first so the whole frame (shell + debugger) is themed.
+            crate::ui_shell::apply_theme(ctx, config.ui.theme);
+            // (2) The always-on shell. Its settings/input tab bodies reuse the
+            // existing debugger widgets so their live-apply plumbing is intact.
+            let settings_ui = &mut self.settings_ui;
+            let input_ui = &mut self.input_ui;
+            shell_out = shell.build(
+                ctx,
+                config,
+                shell_frame,
+                |ui, cfg| settings_panel::body(ui, settings_ui, cfg),
+                |ui, cfg| input_rebind_panel::body(ui, input_ui, cfg),
+            );
+            // (3) The wasm-netplay lobby (native passes a no-op closure).
+            if let Some(extra_ui) = extra_ui.take() {
+                extra_ui(ctx, config);
+            }
+            // (4) The debugger panels, only when toggled on AND a ROM exists.
+            if visible {
+                if let Some(nes) = nes.as_deref_mut() {
+                    self.ui(ctx, nes, config);
+                }
+            }
+        });
+        self.state
+            .handle_platform_output(window, output.platform_output);
+
+        let pixels_per_point = ctx.pixels_per_point();
+        let clipped = ctx.tessellate(output.shapes, pixels_per_point);
+        let screen_desc = egui_wgpu::ScreenDescriptor {
+            size_in_pixels: [surface_size.0.max(1), surface_size.1.max(1)],
+            pixels_per_point,
+        };
+        for (id, image) in output.textures_delta.set {
+            self.renderer.update_texture(device, queue, id, &image);
+        }
+        self.renderer
+            .update_buffers(device, queue, encoder, &clipped, &screen_desc);
+        {
+            let mut rp = encoder
+                .begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("egui-shell-pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                })
+                .forget_lifetime();
+            self.renderer.render(&mut rp, &clipped, &screen_desc);
+        }
+        for id in output.textures_delta.free {
+            self.renderer.free_texture(&id);
+        }
+        shell_out
     }
 }
