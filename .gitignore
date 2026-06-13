@@ -154,3 +154,25 @@ WARP.md
 
 # Pre-commit
 .pre-commit-cache/
+
+# === v1.0.0 synthesis — harvested from the RustyNES engine project ===
+# Large local NESdev wiki mirror (~208M, reference only) + Perf-panel CSV logs.
+/nesdev_wiki/
+/perf-logs/
+# cargo-fuzz: commit the harnesses; ignore the build/corpus (overrides `fuzz/` above).
+!/fuzz/
+/fuzz/target/
+/fuzz/corpus/
+/fuzz/artifacts/
+/fuzz/coverage/
+# Test ROMs: the broad `*.nes`/`*.fds` rules above ignore ALL ROMs. Re-include the
+# committable CC0/public-domain suites under tests/roms/, then HARD-exclude the
+# commercial dumps + the large fetched clone (NEVER committed — Nintendo copyright).
+!/tests/roms/**/*.nes
+/tests/roms/external/
+/tests/roms/nes-test-roms/
+/tests/captures/
+# Keep the kevtris nestest golden trace despite the broad *.log ignore.
+!/tests/roms/nestest/nestest.log
+# The synthesized workspace is a binary app — commit Cargo.lock (overrides line 4).
+!/Cargo.lock
