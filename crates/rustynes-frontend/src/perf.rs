@@ -31,6 +31,10 @@ use web_time::Instant;
 /// quickly.
 const WINDOW: usize = 600;
 
+/// Sparkline window (feature K): the number of most-recent frame-time samples
+/// the Performance panel plots as a rolling line graph (~4 s of NTSC frames).
+pub const SPARK_WINDOW: usize = 240;
+
 /// Summary statistics over one interval/sample ring, in milliseconds.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct IntervalStats {
@@ -93,6 +97,15 @@ impl SampleRing {
 
     fn clear(&mut self) {
         self.samples_ms.clear();
+    }
+
+    /// Copy the most-recent `n` samples (oldest-first) into a `Vec`, for the
+    /// Performance-panel frame-time sparkline (feature K). Bounded by `n`, so
+    /// it never copies the whole `WINDOW` ring.
+    fn recent(&self, n: usize) -> Vec<f32> {
+        let len = self.samples_ms.len();
+        let start = len.saturating_sub(n);
+        self.samples_ms.iter().skip(start).copied().collect()
     }
 }
 
@@ -221,6 +234,10 @@ impl PerfStats {
             catchup_bursts: self.catchup_bursts,
             snap_forwards: self.snap_forwards,
             audio: self.audio,
+            // feature K — the last ~4 s of frame-time samples for the panel
+            // sparkline (bounded copies; the percentile tables stay primary).
+            recent_presented_ms: self.presented.ring.recent(SPARK_WINDOW),
+            recent_produced_ms: self.produced.ring.recent(SPARK_WINDOW),
             ..PerfView::default()
         }
     }
@@ -255,6 +272,13 @@ pub struct PerfView {
     /// "display-sync" / "vrr" / "raf" on wasm), with a fallback note when
     /// display-sync disengaged.
     pub pacing: String,
+    /// feature K — the most-recent presented-frame interval samples (ms,
+    /// oldest-first, up to [`SPARK_WINDOW`]) plotted as the panel's frame-time
+    /// sparkline. The presented series is where visible judder lives.
+    pub recent_presented_ms: Vec<f32>,
+    /// feature K — the most-recent produced-frame interval samples (ms,
+    /// oldest-first) plotted as a secondary, fainter line.
+    pub recent_produced_ms: Vec<f32>,
 }
 
 #[cfg(test)]
@@ -282,6 +306,21 @@ mod tests {
         assert!((s.p99_ms - 99.0).abs() < f32::EPSILON);
         assert!((s.max_ms - 100.0).abs() < f32::EPSILON);
         assert!((s.mean_ms - 50.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn recent_returns_last_n_oldest_first() {
+        let mut r = SampleRing::default();
+        for i in 0..10 {
+            #[allow(clippy::cast_precision_loss)]
+            r.push(i as f32);
+        }
+        // Fewer than available -> the last `n`, oldest-first.
+        assert_eq!(r.recent(3), vec![7.0, 8.0, 9.0]);
+        // More than available -> the whole ring.
+        assert_eq!(r.recent(100).len(), 10);
+        // Empty ring -> empty vec.
+        assert!(SampleRing::default().recent(5).is_empty());
     }
 
     #[test]

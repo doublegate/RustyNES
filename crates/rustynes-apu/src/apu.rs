@@ -452,7 +452,22 @@ pub struct Apu {
     /// (MMC5 audio). Reset to `FrameEvents::default()` at the *start* of every
     /// `tick`, so observers must read it AFTER the tick.
     pub(crate) last_frame_events: FrameEvents,
+    /// Per-channel enable mask (UI playback overlay, NOT NES hardware state).
+    /// Bit 0 = pulse 1, bit 1 = pulse 2, bit 2 = triangle, bit 3 = noise,
+    /// bit 4 = DMC, bit 5 = external/mapper audio. A cleared bit forces that
+    /// channel's contribution to the mixed sample to 0 (a studio/debug mute).
+    ///
+    /// Defaults to [`CHANNEL_MASK_ALL`] (every bit set), which is byte-identical
+    /// to passing the raw channel outputs straight into the mixer — i.e. the
+    /// deterministic core output is unchanged unless the frontend explicitly
+    /// mutes a channel. NEVER serialized into the save state (a UI preference,
+    /// like volume), so restored states are unaffected.
+    pub(crate) channel_mask: u8,
 }
+
+/// All [`Apu::channel_mask`] bits set — every channel audible (the default and
+/// the determinism-safe value the oracle / test ROMs always run with).
+pub const CHANNEL_MASK_ALL: u8 = 0x3F;
 
 impl Apu {
     const fn dmc_abort_delay_for(cycles_until_output: u16) -> Option<u8> {
@@ -510,6 +525,7 @@ impl Apu {
             dmc_edge_arm_suppress: false,
             sample_rate,
             last_frame_events: FrameEvents::default(),
+            channel_mask: CHANNEL_MASK_ALL,
         }
     }
 
@@ -544,6 +560,20 @@ impl Apu {
             self.dmc.bytes_remaining = 0;
         }
         self.blip.reset();
+    }
+
+    /// Set the per-channel enable mask (a UI playback overlay; see
+    /// [`Apu::channel_mask`]). Bit 0 = pulse 1, 1 = pulse 2, 2 = triangle,
+    /// 3 = noise, 4 = DMC, 5 = external/mapper audio. [`CHANNEL_MASK_ALL`] is
+    /// the determinism-safe default (byte-identical mixer output).
+    pub const fn set_channel_mask(&mut self, mask: u8) {
+        self.channel_mask = mask & CHANNEL_MASK_ALL;
+    }
+
+    /// Current per-channel enable mask.
+    #[must_use]
+    pub const fn channel_mask(&self) -> u8 {
+        self.channel_mask
     }
 
     /// Pulse 1 raw output volume (0..=15) — for tests.
@@ -1037,13 +1067,20 @@ impl Apu {
         // Emit one mixed sample to the band-limited buffer. The external
         // (cartridge) audio is summed AFTER the internal non-linear mixer
         // since it's already a linear value.
+        // Per-channel mute overlay. With the default `CHANNEL_MASK_ALL` every
+        // `gate(..)` returns the raw output unchanged, so this is byte-identical
+        // to the un-masked mix (the determinism contract — the oracle / test
+        // ROMs never clear a bit). A cleared bit forces that channel's raw
+        // output to 0 BEFORE the non-linear mixer, so it contributes nothing.
+        let mask = self.channel_mask;
+        let gate = |bit: u8, v: u8| if mask & (1 << bit) != 0 { v } else { 0 };
         let mixed = self.mixer.mix(
-            self.pulse1.output(),
-            self.pulse2.output(),
-            self.triangle.output(),
-            self.noise.output(),
-            self.dmc.output(),
-        ) + external;
+            gate(0, self.pulse1.output()),
+            gate(1, self.pulse2.output()),
+            gate(2, self.triangle.output()),
+            gate(3, self.noise.output()),
+            gate(4, self.dmc.output()),
+        ) + if mask & (1 << 5) != 0 { external } else { 0.0 };
         self.blip.add_sample(mixed);
 
         // v2.0 interleaved-DMA Phase A: toggle the global get/put flip-flop once
@@ -1953,6 +1990,63 @@ mod tests {
             a.tick();
         }
         assert_eq!(a.cpu_cycle, 100);
+    }
+
+    #[test]
+    fn channel_mask_defaults_to_all_on() {
+        let a = Apu::new(Region::Ntsc, 44_100);
+        assert_eq!(a.channel_mask(), CHANNEL_MASK_ALL);
+    }
+
+    #[test]
+    fn channel_mask_set_clamps_to_known_bits() {
+        let mut a = Apu::new(Region::Ntsc, 44_100);
+        // Upper bits beyond the 6 defined channels are masked off.
+        a.set_channel_mask(0xFF);
+        assert_eq!(a.channel_mask(), CHANNEL_MASK_ALL);
+        a.set_channel_mask(0x00);
+        assert_eq!(a.channel_mask(), 0x00);
+        a.set_channel_mask(0b0010_1010);
+        assert_eq!(a.channel_mask(), 0b0010_1010);
+    }
+
+    #[test]
+    fn default_mask_mix_is_byte_identical_to_unmasked() {
+        // The determinism contract: with the default all-on mask, the gating in
+        // `tick_with_external` must reproduce the raw mixer output exactly.
+        let m = Mixer::new();
+        let mask = CHANNEL_MASK_ALL;
+        let gate = |bit: u8, v: u8| if mask & (1 << bit) != 0 { v } else { 0 };
+        for &(p1, p2, tri, n, dmc) in &[
+            (0u8, 0u8, 0u8, 0u8, 0u8),
+            (15, 15, 15, 15, 127),
+            (7, 3, 11, 4, 60),
+            (1, 14, 8, 15, 1),
+        ] {
+            let raw = m.mix(p1, p2, tri, n, dmc);
+            let gated = m.mix(
+                gate(0, p1),
+                gate(1, p2),
+                gate(2, tri),
+                gate(3, n),
+                gate(4, dmc),
+            );
+            assert_eq!(raw, gated, "default mask must be byte-identical");
+        }
+    }
+
+    #[test]
+    fn cleared_channel_bit_zeroes_its_contribution() {
+        let m = Mixer::new();
+        // Mute pulse 1 only (bit 0 cleared).
+        let mask = CHANNEL_MASK_ALL & !0x01;
+        let gate = |bit: u8, v: u8| if mask & (1 << bit) != 0 { v } else { 0 };
+        let muted = m.mix(gate(0, 15), gate(1, 0), gate(2, 0), gate(3, 0), gate(4, 0));
+        // Pulse 1 = 15 muted to 0 => identical to an all-silent mix.
+        assert_eq!(muted, m.mix(0, 0, 0, 0, 0));
+        // Pulse 2 (bit 1 still set) still contributes.
+        let p2_on = m.mix(gate(0, 15), gate(1, 15), gate(2, 0), gate(3, 0), gate(4, 0));
+        assert!(p2_on > 0.0);
     }
 
     #[test]

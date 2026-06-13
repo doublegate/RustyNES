@@ -77,6 +77,10 @@ pub struct SettingsApply {
     /// v1.0.0 — the overscan-crop toggle changed; the app pushes the new
     /// `[graphics] hide_overscan` into the gfx letterbox UV rect.
     pub overscan: bool,
+    /// v1.0.0 — a per-APU-channel mute checkbox changed; the app pushes the new
+    /// `[audio] channel_mask` into the core under the emu lock. The default
+    /// mask (all on) is byte-identical to today's mixer output.
+    pub apu_channels: bool,
 }
 
 impl SettingsApply {
@@ -88,6 +92,7 @@ impl SettingsApply {
             || self.pacing_mode
             || self.audio_gain
             || self.overscan
+            || self.apu_channels
     }
 }
 
@@ -346,6 +351,41 @@ pub fn audio_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
             state.apply.audio_gain = true;
         }
     });
+    // v1.0.0 — per-APU-channel mute toggles (a studio/debug audio overlay).
+    // Each checkbox flips one bit of `[audio] channel_mask`; the app pushes the
+    // mask into the core under the emu lock on `apu_channels`. The default mask
+    // (all six on) is byte-identical to today's mixer output (the determinism
+    // contract — the oracle / test ROMs never set a mask).
+    ui.add_space(4.0);
+    ui.label("Channels");
+    {
+        // Bit layout matches `rustynes_apu::Apu::channel_mask`:
+        // 0 = pulse 1, 1 = pulse 2, 2 = triangle, 3 = noise, 4 = DMC,
+        // 5 = external/mapper audio.
+        const CHANNELS: [(u8, &str); 6] = [
+            (0, "Pulse 1"),
+            (1, "Pulse 2"),
+            (2, "Triangle"),
+            (3, "Noise"),
+            (4, "DMC"),
+            (5, "Mapper Audio"),
+        ];
+        ui.horizontal_wrapped(|ui| {
+            for (bit, label) in CHANNELS {
+                let mut on = config.audio.channel_mask & (1 << bit) != 0;
+                if ui.checkbox(&mut on, label).changed() {
+                    if on {
+                        config.audio.channel_mask |= 1 << bit;
+                    } else {
+                        config.audio.channel_mask &= !(1 << bit);
+                    }
+                    state.apply.apu_channels = true;
+                    save_config(config);
+                }
+            }
+        });
+    }
+
     // Persist on release so a drag doesn't thrash the disk; the live gain is
     // already applied above.
     if ui.button("Save audio settings").clicked() {
@@ -395,6 +435,7 @@ pub fn audio_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
     if reset_to_defaults_button(ui, &mut state.reset_audio_armed, "audio") {
         config.audio = crate::config::AudioConfig::default();
         state.apply.audio_gain = true;
+        state.apply.apu_channels = true;
         save_config(config);
     }
 }
@@ -469,6 +510,7 @@ mod tests {
                 pacing_mode: false,
                 audio_gain: false,
                 overscan: false,
+                apu_channels: false,
             },
             ..Default::default()
         };

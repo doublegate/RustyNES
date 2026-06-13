@@ -141,6 +141,10 @@ pub enum MenuAction {
     CycleDiskSide,
     /// v1.0.0 — capture a screenshot of the current framebuffer (native).
     Screenshot,
+    /// v1.0.0 — copy the current framebuffer to the system clipboard (native;
+    /// the dispatch body is `#[cfg(not(wasm32))]`, the variant stays un-gated
+    /// so the match remains exhaustive on every target).
+    ScreenshotToClipboard,
     /// v1.0.0 — set the active save-state slot (0-7).
     SetSaveSlot(u8),
     /// v1.0.0 — save state to a specific slot.
@@ -454,6 +458,18 @@ impl UiShell {
                             .clicked()
                         {
                             out.action = Some(MenuAction::Screenshot);
+                            ui.close_menu();
+                        }
+                        // v1.0.0 — copy the current frame to the system clipboard
+                        // (in addition to the save-to-PNG above). Native-only.
+                        if ui
+                            .add_enabled(
+                                frame.rom_loaded,
+                                egui::Button::new("Copy Screenshot to Clipboard"),
+                            )
+                            .clicked()
+                        {
+                            out.action = Some(MenuAction::ScreenshotToClipboard);
                             ui.close_menu();
                         }
                     }

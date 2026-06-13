@@ -1034,6 +1034,24 @@ impl Nes {
         }
     }
 
+    /// Set the APU per-channel enable mask (a UI playback overlay, NOT NES
+    /// hardware state). Bit 0 = pulse 1, 1 = pulse 2, 2 = triangle, 3 = noise,
+    /// 4 = DMC, 5 = external/mapper audio. A cleared bit mutes that channel.
+    ///
+    /// The default ([`rustynes_apu::CHANNEL_MASK_ALL`]) is byte-identical to
+    /// the un-masked mixer — the deterministic per-frame audio is unchanged
+    /// unless the frontend explicitly mutes a channel. This is never written
+    /// into the save state, so it never affects determinism or round-trips.
+    pub const fn set_apu_channel_mask(&mut self, mask: u8) {
+        self.bus.apu_mut().set_channel_mask(mask);
+    }
+
+    /// Current APU per-channel enable mask. See [`Self::set_apu_channel_mask`].
+    #[must_use]
+    pub const fn apu_channel_mask(&self) -> u8 {
+        self.bus.apu().channel_mask()
+    }
+
     /// Borrow OAM (256 bytes = 64 sprites x 4 bytes).
     ///
     /// Returns a cloned `[u8; 256]` so the caller doesn't have to manage

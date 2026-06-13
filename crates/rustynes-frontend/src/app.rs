@@ -839,6 +839,9 @@ impl App {
             }
         }
         self.apply_cheats_for_current_rom();
+        // v1.0.0 — re-push the per-APU-channel mute mask (the fresh `Nes` booted
+        // with the all-on default). Default mask 0x3F = byte-identical audio.
+        self.apply_apu_channel_mask();
         // v2.7.0 — (re)identify the ROM with RetroAchievements + load its saved
         // progress sidecar. No-op when no RA session is active.
         #[cfg(feature = "retroachievements")]
@@ -1206,6 +1209,56 @@ impl App {
                 eprintln!("rustynes: screenshot encode failed: {e}");
                 self.ui
                     .set_status(StatusMessage::info("Screenshot failed (encode)"));
+            }
+        }
+    }
+
+    /// v1.0.0 — copy the current framebuffer to the system clipboard as a raw
+    /// RGBA8 image (256x240, the NES native resolution), in addition to the
+    /// save-to-PNG path. Native-only (the wasm build has no `arboard` / system
+    /// clipboard for images; the menu item is gated out there). Reuses the same
+    /// brief-lock framebuffer grab as [`Self::take_screenshot`]. The `arboard`
+    /// error path is handled with a toast — it never panics.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn screenshot_to_clipboard(&mut self) {
+        use crate::ui_shell::StatusMessage;
+        // Copy the framebuffer under a brief lock; the clipboard set runs with
+        // the guard dropped.
+        let frame = {
+            let guard = self.emu.lock();
+            guard.nes.as_ref().map(|nes| nes.framebuffer().to_vec())
+        };
+        let Some(frame) = frame else {
+            self.ui
+                .set_status(StatusMessage::info("Clipboard: no ROM loaded"));
+            return;
+        };
+        // `arboard` wants the bytes as `Cow<[u8]>`; the framebuffer is already
+        // tightly-packed RGBA8 (256 * 240 * 4 = NES_W * NES_H * 4).
+        let expected = NES_W as usize * NES_H as usize * 4;
+        if frame.len() != expected {
+            eprintln!(
+                "rustynes: clipboard screenshot: unexpected framebuffer size {} (want {expected})",
+                frame.len()
+            );
+            self.ui
+                .set_status(StatusMessage::info("Clipboard failed (bad frame)"));
+            return;
+        }
+        let image = arboard::ImageData {
+            width: NES_W as usize,
+            height: NES_H as usize,
+            bytes: std::borrow::Cow::Owned(frame),
+        };
+        match arboard::Clipboard::new().and_then(|mut cb| cb.set_image(image)) {
+            Ok(()) => {
+                self.ui
+                    .set_status(StatusMessage::success("Screenshot copied to clipboard"));
+            }
+            Err(e) => {
+                eprintln!("rustynes: clipboard screenshot failed: {e}");
+                self.ui
+                    .set_status(StatusMessage::info("Clipboard copy failed"));
             }
         }
     }
@@ -2108,6 +2161,10 @@ impl App {
                 #[cfg(not(target_arch = "wasm32"))]
                 self.take_screenshot();
             }
+            MenuAction::ScreenshotToClipboard => {
+                #[cfg(not(target_arch = "wasm32"))]
+                self.screenshot_to_clipboard();
+            }
             MenuAction::SetSaveSlot(slot) => {
                 self.active_save_slot = slot;
                 self.ui
@@ -2219,6 +2276,21 @@ impl App {
     fn apply_audio_gain(&self) {
         if let Some(audio) = self.audio.as_ref() {
             audio.queue.set_gain(self.config.audio.effective_gain());
+        }
+    }
+
+    /// v1.0.0 — push the configured per-APU-channel enable mask into the core
+    /// under the emu lock (respecting the lock discipline). A UI playback
+    /// overlay: the default `0x3F` (all six channels on) is byte-identical to
+    /// today's mixer output, so the deterministic per-frame audio is unchanged
+    /// unless a channel is explicitly muted. Cheap; called at startup, on every
+    /// channel-checkbox edit, and after each fresh ROM load (a new `Nes` boots
+    /// with the all-on default, so the mask must be re-pushed).
+    fn apply_apu_channel_mask(&self) {
+        let mask = self.config.audio.channel_mask;
+        let mut guard = self.emu.lock();
+        if let Some(nes) = guard.nes.as_mut() {
+            nes.set_apu_channel_mask(mask);
         }
     }
 
@@ -2450,6 +2522,9 @@ impl App {
                 if let Some(debugger) = self.debugger.as_mut() {
                     debugger.reapply_genie_codes(nes);
                 }
+                // v1.0.0 — `power_cycle` rebuilds the APU (all-on default), so
+                // re-push the per-channel mute mask. Default 0x3F = byte-identical.
+                nes.set_apu_channel_mask(self.config.audio.channel_mask);
             }
         }
         // v1.0.0 (BUG-7) — a cold boot should RUN: clear any prior pause so the
@@ -3567,6 +3642,10 @@ impl App {
             // gain now that the queue exists. Default (1.0, not muted) is a
             // no-op so the default sound is byte-identical.
             self.apply_audio_gain();
+            // v1.0.0 — push the persisted per-APU-channel mute mask to the core
+            // (no-op if no ROM is loaded yet; re-applied on each ROM load).
+            // Default 0x3F (all on) leaves the deterministic audio unchanged.
+            self.apply_apu_channel_mask();
             // v2.8.0 Phase 5 increment 3 — spawn the emulation thread (it
             // idles until `start_nes` flips its `has_rom`). The `Send` audio
             // producer is made from `self.audio` here, so it must precede
@@ -3706,6 +3785,9 @@ impl App {
         // v1.6.0 — apply this ROM's persisted Game Genie cheats (native).
         #[cfg(not(target_arch = "wasm32"))]
         self.apply_cheats_for_current_rom();
+        // v1.0.0 — re-push the per-APU-channel mute mask onto the fresh `Nes`
+        // (booted all-on); default 0x3F = byte-identical audio.
+        self.apply_apu_channel_mask();
         // v2.7.0 — identify the ROM with RetroAchievements + load its progress
         // sidecar. No-op when no RA session is active.
         #[cfg(feature = "retroachievements")]
@@ -4545,6 +4627,11 @@ impl ApplicationHandler<AppEvent> for App {
                     if let Some(gfx) = self.gfx.as_mut() {
                         gfx.set_hide_overscan(self.config.graphics.hide_overscan);
                     }
+                }
+                // v1.0.0 — per-APU-channel mute live-apply: push the mask into
+                // the core under the emu lock. Default mask = byte-identical.
+                if settings.apu_channels {
+                    self.apply_apu_channel_mask();
                 }
                 // v1.0.0 — act on a Save-States manager Save / Load click this
                 // frame, routing through the existing slot handlers; a Save

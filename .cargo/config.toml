@@ -12,3 +12,13 @@
 
 [target.wasm32-unknown-unknown]
 rustflags = ["--cfg=web_sys_unstable_apis"]
+
+# v1.0.0 — MSRV-aware dependency resolution. The workspace pins
+# rust-version = "1.86"; `fallback` makes `cargo update` prefer dependency
+# versions compatible with that MSRV over the newest available. Without it, a
+# future `cargo update` could pull a past-MSRV crate (e.g. `image` >= 0.26, a
+# transitive dep of `arboard`'s clipboard image support, which needs a newer
+# rustc) and break the pinned-toolchain build. The committed Cargo.lock already
+# holds MSRV-safe versions; this guards future resolves.
+[resolver]
+incompatible-rust-versions = "fallback"

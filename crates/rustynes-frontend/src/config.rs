@@ -691,6 +691,18 @@ pub struct AudioConfig {
     /// (independent of [`Self::volume`]). Default `false`.
     #[serde(default)]
     pub muted: bool,
+    /// v1.0.0 — per-APU-channel enable mask (a UI playback overlay, NOT NES
+    /// hardware state). Bit 0 = pulse 1, 1 = pulse 2, 2 = triangle, 3 = noise,
+    /// 4 = DMC, 5 = external/mapper audio. A cleared bit mutes that channel.
+    /// Default `0x3F` (all six on) is byte-identical to today's mixer output —
+    /// the deterministic core audio is unchanged unless a channel is muted.
+    #[serde(default = "default_audio_channel_mask")]
+    pub channel_mask: u8,
+}
+
+/// Serde default for [`AudioConfig::channel_mask`] — all six channels enabled.
+const fn default_audio_channel_mask() -> u8 {
+    0x3F
 }
 
 /// Serde default for [`AudioConfig::latency_ms`].
@@ -716,6 +728,7 @@ impl Default for AudioConfig {
             drc: default_audio_drc(),
             volume: default_audio_volume(),
             muted: false,
+            channel_mask: default_audio_channel_mask(),
         }
     }
 }

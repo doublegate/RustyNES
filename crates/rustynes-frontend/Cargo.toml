@@ -106,6 +106,15 @@ web-time.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rustynes-netplay.workspace = true
 
+# v1.0.0 — screenshot-to-clipboard (feature J). `arboard` provides the
+# cross-platform system clipboard, including image (`set_image`) support, which
+# the File -> Copy Screenshot to Clipboard action uses. Native-only: it is in
+# this `cfg(not(target_arch = "wasm32"))` table (like rfd/cpal/gilrs) so it
+# NEVER enters either wasm build (the browser has no equivalent image-clipboard
+# path here; the menu item is `#[cfg]`-gated out on wasm). Default features are
+# fine on the desktop hosts we target.
+arboard = "3"
+
 # v2.7.0 — RetroAchievements (native-only, behind the default-OFF
 # `retroachievements` feature). `rustynes-cheevos` links the vendored rcheevos C
 # library, which only builds for the native host; `optional = true` + the
