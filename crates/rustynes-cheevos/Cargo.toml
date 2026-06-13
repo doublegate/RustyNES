@@ -5,8 +5,8 @@ edition = "2021"
 rust-version = "1.86"
 license = "MIT OR Apache-2.0"
 authors = ["Parobek <parobek@gmail.com>"]
-repository = "https://github.com/doublegate/RustyNES_v2"
-description = "Native-only RetroAchievements (rcheevos) FFI wrapper for RustyNES v2"
+repository.workspace = true
+description = "Native-only RetroAchievements (rcheevos) FFI wrapper for RustyNES"
 publish = false
 
 # This crate vendors and links the rcheevos C library, so unsafe is required.

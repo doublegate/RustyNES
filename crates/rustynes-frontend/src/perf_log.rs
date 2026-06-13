@@ -183,7 +183,7 @@ fn open_log_file(dir: &Path, ctx: &PerfLogContext) -> std::io::Result<(BufWriter
         utc_stamp(SystemTime::now())
     ));
     let mut w = BufWriter::new(File::create(&path)?);
-    writeln!(w, "# RustyNES v2 performance log")?;
+    writeln!(w, "# RustyNES performance log")?;
     writeln!(w, "# rom = {}", ctx.rom_label)?;
     if let Some(sha) = &ctx.rom_sha256 {
         writeln!(w, "# rom_sha256 = {sha}")?;

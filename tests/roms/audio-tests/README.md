@@ -51,7 +51,7 @@ These exercise behaviour the blargg / kevtris suites do **not** cover:
   cart, and listen for whether the expansion chip is louder, quieter,
   or equal to the APU square. For an emulator the same comparison is
   performed by waveform inspection of the output buffer.
-- **VRC7 OPLL register surface**. RustyNES v2 implements the VRC7
+- **VRC7 OPLL register surface**. RustyNES implements the VRC7
   banking / IRQ / register-shadow path; the OPLL FM synthesizer itself
   is deferred per ADR-0004 (`docs/adr/0004-vrc7-audio-deferred.md`).
   The `test_vrc7` / `patch_vrc7` / `clip_vrc7` / `noise_vrc7` ROMs

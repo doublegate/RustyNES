@@ -42,7 +42,7 @@ use crate::app::{run_wasm, AppEvent};
 #[wasm_bindgen(start)]
 pub fn start() -> Result<(), JsValue> {
     console_error_panic_hook::set_once();
-    log("RustyNES v2 wasm32 — v1.3.0 Sprint 1.4 unified winit/wgpu boot");
+    log("RustyNES wasm32 — v1.3.0 Sprint 1.4 unified winit/wgpu boot");
 
     // Build + spawn the winit App; keep the proxy to feed it ROM bytes.
     let proxy = run_wasm();
@@ -113,7 +113,7 @@ pub fn start() -> Result<(), JsValue> {
     // present.
     install_fds_bios_loader(&document, proxy_for_movie);
 
-    log("RustyNES v2 wasm32 — armed. Load a .nes / .fds image to begin.");
+    log("RustyNES wasm32 — armed. Load a .nes / .fds image to begin.");
     Ok(())
 }
 

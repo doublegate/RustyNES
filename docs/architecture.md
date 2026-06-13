@@ -6,7 +6,7 @@
 
 ## Purpose
 
-This document fixes the high-level architectural decisions for RustyNES v2. Subsystem docs (`cpu-6502.md`, `ppu-2c02.md`, `apu-2a03.md`, `mappers.md`) take these as given and elaborate one chip each. The reader should leave this doc knowing the workspace shape, the scheduling model, the public boundaries, and the rejected alternatives.
+This document fixes the high-level architectural decisions for RustyNES. Subsystem docs (`cpu-6502.md`, `ppu-2c02.md`, `apu-2a03.md`, `mappers.md`) take these as given and elaborate one chip each. The reader should leave this doc knowing the workspace shape, the scheduling model, the public boundaries, and the rejected alternatives.
 
 The local Nesdev-derived report is the broad hardware source map; this document
 only records architecture decisions that follow from it. When a behavior is

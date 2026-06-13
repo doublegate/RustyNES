@@ -1,6 +1,6 @@
 # `tests/roms/` — Test ROM Corpora
 
-This directory holds all the test ROMs that ship with RustyNES v2.
+This directory holds all the test ROMs that ship with RustyNES.
 Everything here is **committed** to git (the directory and its
 subdirectories — `external/` is the exception, see below). Every file
 under a committed corpus is under a public-domain / CC0 / MIT / BSD /
@@ -30,7 +30,7 @@ on this corpus.
 
 ## Mapper coverage matrix (committed ROMs)
 
-This table shows, for each of the 15 mappers RustyNES v2 supports, the
+This table shows, for each of the 15 mappers RustyNES supports, the
 ROMs in this directory that exercise it, the major mapper feature(s)
 they cover, and a pointer to the corresponding `external/` mapper
 subdirectory for end-user smoke testing against commercial games.

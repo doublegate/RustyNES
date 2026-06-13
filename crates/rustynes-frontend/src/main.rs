@@ -57,7 +57,7 @@ fn main() -> ExitCode {
 #[cfg(not(target_arch = "wasm32"))]
 fn print_usage() {
     eprintln!(
-        "RustyNES v2 — version {}\n\nUsage:\n    rustynes <ROM.nes>\n\nKeyboard:\n    Arrow keys -> D-pad\n    Z          -> A\n    X          -> B\n    Enter      -> Start\n    Right Shift -> Select\n    Esc        -> Quit",
+        "RustyNES — version {}\n\nUsage:\n    rustynes <ROM.nes>\n\nKeyboard:\n    Arrow keys -> D-pad\n    Z          -> A\n    X          -> B\n    Enter      -> Start\n    Right Shift -> Select\n    Esc        -> Quit",
         rustynes_core::version()
     );
 }

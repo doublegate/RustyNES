@@ -1,6 +1,6 @@
 [package]
 name = "rustynes-netplay"
-description = "GGPO-style rollback netcode session core for RustyNES v2 (transport-agnostic)"
+description = "GGPO-style rollback netcode session core for RustyNES (transport-agnostic)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

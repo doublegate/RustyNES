@@ -1,6 +1,6 @@
 # `screenshots/` — commercial-game visual corpus + showcase
 
-Committed PNG snapshots of the commercial games RustyNES v2 runs, used as a
+Committed PNG snapshots of the commercial games RustyNES runs, used as a
 human-readable compatibility reference and as the README showcase imagery. The
 machine-readable regression baselines are the `fnv1a64` hashes in
 `crates/nes-test-harness/tests/snapshots/*.snap` — these PNGs are the visual

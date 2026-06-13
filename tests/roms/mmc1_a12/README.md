@@ -34,9 +34,9 @@ renders a static pattern and idles. The integration test harness
 treats it as a boot-without-crash smoke gate. A pixel-decode regression
 check is a future addition (see `to-dos/ROADMAP.md`).
 
-## Why this matters for RustyNES v2
+## Why this matters for RustyNES
 
-RustyNES v2's `Mapper::notify_a12(level)` default impl is a no-op; only
+RustyNES's `Mapper::notify_a12(level)` default impl is a no-op; only
 MMC3-family mappers override it. This ROM is a regression guard
 against accidentally moving any A12-filtering logic up to the
 generic PPU code path.

@@ -666,7 +666,7 @@ impl App {
 
     fn create_window(&self, event_loop: &ActiveEventLoop) -> Result<Arc<Window>, String> {
         let attrs = Window::default_attributes()
-            .with_title(format!("RustyNES v2 - {}", self.rom_label))
+            .with_title(format!("RustyNES - {}", self.rom_label))
             .with_inner_size(LogicalSize::new(
                 NES_W * INITIAL_SCALE,
                 NES_H * INITIAL_SCALE,
@@ -852,7 +852,7 @@ impl App {
         self.sync_expansion_device();
         if let Some(gfx) = self.gfx.as_ref() {
             gfx.window
-                .set_title(&format!("RustyNES v2 - {}", self.rom_label));
+                .set_title(&format!("RustyNES - {}", self.rom_label));
         }
         // v1.0.0 — record the ROM in the File -> Recent MRU list and surface a
         // status toast. Resuming from a user pause is intentional: loading a ROM

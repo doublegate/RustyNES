@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>RustyNES v2 — cycle-accurate NES emulator in your browser</title>
+    <title>RustyNES — cycle-accurate NES emulator in your browser</title>
 
     <!--
         v1.3.0 Sprint 2 — GitHub Pages host for the wasm32 frontend.
@@ -13,7 +13,7 @@
         id="nes-canvas">` below is adopted by winit via
         `with_canvas`; the `<input id="rom-input">` feeds ROM bytes
         into the event loop. Live at
-        https://doublegate.github.io/RustyNES_v2/
+        https://doublegate.github.io/RustyNES/
     -->
 
     <!--
@@ -67,7 +67,7 @@
     </style>
 </head>
 <body>
-    <h1>RustyNES v2 <span style="opacity:0.5">— wasm32 (wgpu + egui)</span></h1>
+    <h1>RustyNES <span style="opacity:0.5">— wasm32 (wgpu + egui)</span></h1>
 
     <div id="controls">
         <label>Load ROM: <input id="rom-input" type="file" accept=".nes,.fds" /></label>
@@ -92,7 +92,9 @@
         side when a game asks you to "insert disk side B".
     </p>
     <p class="hint">
-        <a href="https://github.com/doublegate/RustyNES_v2">github.com/doublegate/RustyNES_v2</a>
+        <a href="https://github.com/doublegate/RustyNES">github.com/doublegate/RustyNES</a>
+        &nbsp;·&nbsp;
+        <a href="api/">API documentation</a>
     </p>
 </body>
 </html>

@@ -91,7 +91,7 @@ fn keycode_to_button(code: &str) -> Option<Buttons> {
 #[wasm_bindgen(start)]
 pub fn start() -> Result<(), JsValue> {
     console_error_panic_hook::set_once();
-    log("RustyNES v2 wasm32 — v1.3.0 Sprint 1.3 canvas-2D MVP boot");
+    log("RustyNES wasm32 — v1.3.0 Sprint 1.3 canvas-2D MVP boot");
 
     let window = web_sys::window().ok_or("no window")?;
     let document = window.document().ok_or("no document")?;
@@ -114,7 +114,7 @@ pub fn start() -> Result<(), JsValue> {
     install_keyboard_handlers(&document);
     start_raf_loop(&canvas)?;
 
-    log("RustyNES v2 wasm32 — armed. Load a .nes ROM to begin.");
+    log("RustyNES wasm32 — armed. Load a .nes ROM to begin.");
     Ok(())
 }
 

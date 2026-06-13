@@ -1,6 +1,6 @@
 [package]
 name = "rustynes-frontend"
-description = "RustyNES v2: cross-platform NES emulator binary (winit + wgpu + cpal + egui)"
+description = "RustyNES: cross-platform NES emulator binary (winit + wgpu + cpal + egui)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
