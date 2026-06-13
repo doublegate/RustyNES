@@ -2,10 +2,10 @@
 """cpu_boot_trace_pc_align.py — PC-aligned cross-diff for binary CPU
 boot traces emitted by `scripts/mesen2_cpu_boot_trace.lua` and the
 RustyNES `cpu-boot-trace`-gated fixture
-(`crates/nes-test-harness/tests/cpu_boot_trace_fixture.rs`).
+(`crates/rustynes-test-harness/tests/cpu_boot_trace_fixture.rs`).
 
 Companion to the `cpu_boot_trace_diff` Rust binary
-(`crates/nes-test-harness/src/bin/cpu_boot_trace_diff.rs`).  Where
+(`crates/rustynes-test-harness/src/bin/cpu_boot_trace_diff.rs`).  Where
 `cpu_boot_trace_diff` aligns by absolute CPU cycle, this script aligns
 by PC-subsequence so a small per-emulator phase offset (RustyNES vs
 Mesen2 sitting at the same PC but ±1-2 CPU cycles apart) does not
@@ -36,7 +36,7 @@ ROMs.
 
 The default schema is the v1 layout (12-byte ASCII magic
 `RUSTYNES_CPU`, 16-byte header, 32 bytes per record).  See
-`crates/nes-core/src/cpu_boot_trace.rs` for the canonical decoder.
+`crates/rustynes-core/src/cpu_boot_trace.rs` for the canonical decoder.
 """
 
 import struct

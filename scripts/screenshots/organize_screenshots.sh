@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Organize generated screenshots into screenshots/external/ mirror layout.
 set -euo pipefail
-ROOT=/home/parobek/Code/Commercial_Private-Projects/RustyNES_v2
+ROOT=/home/parobek/Code/Commercial_Private-Projects/RustyNES
 DEST="$ROOT/screenshots/external"
 P600=/tmp/ss-gen-600
 P2000=/tmp/ss-gen-2000

@@ -1,96 +1,163 @@
----
 name: CI
 
+# Triggers only when something that affects the BUILD changes. Pure
+# documentation pushes (markdown, the docs/ + to-dos/ + ref-docs/ trees,
+# screenshots, licences) skip CI entirely — they compile nothing, and rustdoc
+# covers doc-comments IN code (`.rs` files, which are NOT ignored), not the
+# markdown files. `paths-ignore` is safe here because `main` has no required
+# status checks (a skipped run can't leave a PR's merge gate hanging); if
+# branch protection is ever added, switch to a `dorny/paths-filter` gate job.
 on:
   push:
-    branches: [main, develop]
+    branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - "**/*.txt"
+      - "screenshots/**"
+      - "LICENSE*"
+      - "NOTICE"
+      - ".gitignore"
+      - ".codegraph/**"
   pull_request:
-    branches: [main, develop]
+    branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - "**/*.txt"
+      - "screenshots/**"
+      - "LICENSE*"
+      - "NOTICE"
+      - ".gitignore"
+      - ".codegraph/**"
+  workflow_dispatch:
+
+# Cancel superseded runs on a PR branch (rapid pushes), but let every `main`
+# commit finish its run so the default branch's history stays fully checked.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
 jobs:
-  format:
-    name: Format Check
+  # fmt + clippy + rustdoc share one runner + one compile of the workspace's
+  # dependency graph (clippy and rustdoc differ only in the final pass), so
+  # merging them removes two redundant dependency compiles and two runner
+  # spin-ups vs three separate jobs. fmt runs first (it compiles nothing), so
+  # a formatting slip still fails in seconds.
+  #
+  # Pinned to the project toolchain (rust-toolchain.toml = 1.86.0), NOT a
+  # floating `stable`: clippy adds lints every release, so `stable` makes the
+  # lint gate drift and break on a toolchain bump. Pinning ALSO makes the
+  # rustdoc gate match local `cargo doc` exactly (rust-toolchain.toml pins the
+  # local compiler to 1.86 too) — the stable-vs-1.86 mismatch previously let a
+  # broken-intra-doc-link slip past local and only fail in CI.
+  lint:
+    name: fmt + clippy + rustdoc
     runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: -D warnings
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/rust-setup
         with:
-          components: rustfmt
-      - run: cargo fmt --all -- --check
+          toolchain: 1.86.0
+          components: rustfmt,clippy
+      - name: rustfmt
+        run: cargo fmt --all -- --check
+      - name: clippy (-D warnings)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: rustdoc (-D warnings)
+        run: cargo doc --workspace --no-deps
 
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - name: Install SDL2
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libsdl2-dev
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: clippy-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
-      - run: cargo clippy --workspace --all-features -- -D warnings
-
+  # Cross-platform behaviour: full `cargo test` on stable across the three
+  # shipped OSes. The previous ubuntu / 1.86 MSRV *test* entry is dropped — the
+  # `lint` job above already compiles the whole workspace (`clippy
+  # --all-targets`) on 1.86, which IS the MSRV compile gate, and the core's
+  # determinism makes "tests pass on 1.86" equivalent to "tests pass on stable".
   test:
-    name: Test
+    name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]  # DISABLED: macOS builds removed
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v6
-      - name: Install SDL2 (Ubuntu)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libsdl2-dev
-      - name: Install SDL2 (macOS)
-        if: matrix.os == 'macos-latest'
-        run: brew install sdl2
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/cache@v5
+      - uses: ./.github/actions/rust-setup
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: test-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
-      - run: cargo build --workspace --verbose
-      - run: cargo test --workspace --verbose
+          cache-key: test
+      - run: cargo test --workspace
 
-  build:
-    name: Build
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest]  # DISABLED: macOS builds removed
+  test-roms:
+    name: test (test-roms feature)
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Install SDL2 (Ubuntu)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libsdl2-dev
-      - name: Install SDL2 (macOS)
-        if: matrix.os == 'macos-latest'
-        run: brew install sdl2
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --release --workspace
-      - uses: actions/upload-artifact@v6
+      - uses: ./.github/actions/rust-setup
         with:
-          name: rustynes-${{ matrix.os }}
-          path: target/release/rustynes-desktop*
-          retention-days: 7
+          cache-key: test-roms
+      # Built in `--release`: the heavy CPU test ROMs (instr_test-v3,
+      # blargg_nes_cpu_test5, the nes_instr_test singles) + the AccuracyCoin
+      # 7200-frame battery are ~10x slower in debug. The emulation core is
+      # deterministic, so release vs debug produce byte-identical
+      # framebuffer/audio/cycle hashes — the ROM suites (AccuracyCoin 100%,
+      # the 60-ROM oracle) assert the same values either way. Debug-assertion
+      # coverage of the core is NOT lost: the OS-matrix `test` job runs the
+      # workspace tests in debug.
+      - run: cargo test --workspace --release --features test-roms
+
+  no_std:
+    name: no_std build (thumbv7em-none-eabihf)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/rust-setup
+        with:
+          targets: thumbv7em-none-eabihf
+          apt: "false"
+          cache-key: no_std
+      # Proves the chip stack (rustynes-cpu / rustynes-ppu / rustynes-apu / rustynes-mappers /
+      # rustynes-core) is genuinely no_std-capable. `rustynes-frontend` uses wgpu /
+      # winit / cpal and stays std-only; we deliberately don't build the
+      # whole workspace here.
+      - run: cargo build -p rustynes-core --target thumbv7em-none-eabihf --no-default-features
+
+  wasm:
+    name: wasm32 build + clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/rust-setup
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+          apt: "false"
+          cache-key: wasm32
+      # The wasm32 frontend modules (wasm.rs / wasm_winit.rs / wasm_audio.rs)
+      # only compile on `cfg(target_arch = "wasm32")`, so the native `lint`
+      # job never sees them — this job is the only PR-time signal for that
+      # code. Both `#[wasm_bindgen(start)]` flavours are checked (exactly one
+      # is compiled per build).
+      - name: clippy (wasm-winit — default, unified winit/wgpu/egui)
+        run: cargo clippy -p rustynes-frontend --target wasm32-unknown-unknown --lib --bins -- -D warnings
+      - name: clippy (wasm-canvas — lightweight embed mode)
+        run: cargo clippy -p rustynes-frontend --target wasm32-unknown-unknown --no-default-features --features wasm-canvas --lib --bins -- -D warnings
+
+  bench:
+    name: frame-time regression gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/rust-setup
+        with:
+          apt: "false"
+          cache-key: bench
+      # The `rustynes-core` full_frame bench is chip-stack-only (no wgpu/winit),
+      # so no apt deps are needed. The gate asserts headless frame production
+      # stays well under the 16.67 ms NTSC real-time deadline — a deliberately
+      # non-flaky absolute ceiling (a tight %-regression gate would flake on
+      # shared runners; that's a local criterion-baseline workflow instead).
+      # See scripts/bench_regression_check.sh + docs/performance.md.
+      - run: ./scripts/bench_regression_check.sh

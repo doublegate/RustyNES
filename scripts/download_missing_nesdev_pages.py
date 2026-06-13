@@ -90,7 +90,7 @@ MEDIAWIKI_NAMESPACES = {"Help", "Template", "Category", "MediaWiki", "Project"}
 NESDEV_BASE = "https://www.nesdev.org"
 USER_AGENT = (
     "RustyNES-v2 nesdev-mirror-restorer/1.0 "
-    "(github.com/doublegate/RustyNES_v2 - repairing local archive)"
+    "(github.com/doublegate/RustyNES - repairing local archive)"
 )
 
 

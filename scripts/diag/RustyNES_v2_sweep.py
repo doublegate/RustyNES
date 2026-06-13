@@ -1,6 +1,6 @@
 import sys,collections
 rows=[]
-with open('/tmp/RustyNES_v2_sweepdma.csv') as f:
+with open('/tmp/RustyNES_sweepdma.csv') as f:
     f.readline()
     for l in f:
         p=l.strip().split(',')

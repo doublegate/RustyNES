@@ -7,7 +7,7 @@ import collections
 # scanline is in {-1,0,1} (pre-render/early) — those are the flag-timing/sprite-eval
 # tests. Then within each such pc, list the value sequence.
 rows=[]
-with open('/tmp/RustyNES_v2/mesen_2002.csv') as f:
+with open('/tmp/RustyNES/mesen_2002.csv') as f:
     f.readline()
     for line in f:
         x=line.strip().split(',')
@@ -27,5 +27,5 @@ for pc,_ in pcc.most_common(8):
     for r in rs[:12]:
         out.append("  cyc=%d sl=%d dot=%d val=0x%02X E0=0x%02X (V%d S%d O%d)"%(
             r[0],r[2],r[3],r[5],r[5]&0xE0,r[6],r[7],r[8]))
-open('/tmp/RustyNES_v2/mesen_ftest_out.txt','w').write("\n".join(out)+"\n")
+open('/tmp/RustyNES/mesen_ftest_out.txt','w').write("\n".join(out)+"\n")
 print("done; near=%d"%len(near))

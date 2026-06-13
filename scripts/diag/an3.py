@@ -1,5 +1,5 @@
 rows=[]
-with open('/tmp/RustyNES_v2/s2002.csv') as f:
+with open('/tmp/RustyNES/s2002.csv') as f:
     next(f)
     for line in f:
         p=line.strip().split(',')
@@ -25,5 +25,5 @@ any5=[r for r in rows if r[4]&0x20]
 out.append("TOTAL reads with bit5(overflow) set: %d"%len(any5))
 import collections
 out.append("  overflow-set reads by scanline: "+str(dict(collections.Counter(r[2] for r in any5))))
-open('/tmp/RustyNES_v2/an3_out.txt','w').write("\n".join(out)+"\n")
+open('/tmp/RustyNES/an3_out.txt','w').write("\n".join(out)+"\n")
 print("OK")

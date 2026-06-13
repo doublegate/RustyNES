@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-cd /home/parobek/Code/Commercial_Private-Projects/RustyNES_v2
+cd /home/parobek/Code/Commercial_Private-Projects/RustyNES
 /usr/bin/git commit -q -F - <<'MSG'
 fix(ci): commit the used nes-test-roms ROMs + finish accuracy-polish wiring
 

@@ -1,197 +1,144 @@
----
 name: Release
+
+# Triggered on push of a version tag (e.g. v1.0.0, v1.0.1-rc1). Also exposed
+# via workflow_dispatch for manual debugging from the Actions tab.
+#
+# Each matrix entry builds the `rustynes` binary in release mode, strips it
+# (where applicable), bundles it with the README and both LICENSE files, and
+# uploads the resulting archive to the GitHub Release matching the pushed tag.
+#
+# softprops/action-gh-release@v3 is used; v1 was deprecated mid-2025 and v2
+# (Node 20) joined the Node-20-deprecated set in 2026 — v3 moves the action
+# runtime to Node 24 with no input-surface changes. Permissions are
+# minimum-necessary (contents: write only).
+#
+# Linux musl + cross-compiled aarch64 Linux are intentionally NOT in the matrix
+# for the v1.0 cut: Sprint 5-3's exit criterion is "binary builds and runs on
+# Linux/macOS/Windows", not "all libc variants". Adding musl would pull in
+# cross-rs + vendored OpenSSL plumbing that is out of scope for this sprint.
 
 on:
   push:
     tags:
-      - 'v*.*.*'
+      - "v*"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (e.g. v1.0.0). Used only on workflow_dispatch."
+        required: true
+        type: string
+
+# Don't kill a release mid-build if a second tag lands on the same ref.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
 
 jobs:
-  build-linux:
-    name: Build (Linux)
-    runs-on: ubuntu-latest
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    # 30 minutes is ~6x the historical aarch64-apple-darwin build wall-clock
+    # (~2.5 min) and ~4x the cold-cache Linux/Windows time. The Intel macOS
+    # job in particular was hanging indefinitely in the runner queue (24h+
+    # before manual cancel) when targeting the deprecated `macos-13` label;
+    # an explicit timeout ensures any future runner-allocation regression
+    # fails fast instead of squatting the release queue.
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive_ext: tar.gz
+            bin_name: rustynes
+          # x86_64-apple-darwin was DROPPED in v1.6.0 (ADR 0009). The only
+          # remaining Intel macOS runner label (`macos-15-intel`) is GitHub's
+          # last x86_64 macOS image and is scheduled for removal in August 2027
+          # (actions/runner-images#13045). Rather than carry a time-bomb or take
+          # on cargo-zigbuild cross-compile + macOS-SDK-vendoring complexity for
+          # a shrinking cohort, the release matrix ships aarch64 macOS only;
+          # Intel-Mac users build from source (`cargo build --release -p
+          # rustynes-frontend`). See docs/adr/0009-drop-x86_64-darwin-release-target.md.
+          - os: macos-14
+            target: aarch64-apple-darwin
+            archive_ext: tar.gz
+            bin_name: rustynes
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive_ext: zip
+            bin_name: rustynes.exe
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install SDL2
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libsdl2-dev
-
-      - uses: dtolnay/rust-toolchain@stable
+      # Shared toolchain + Linux deps (no-op on macOS/Windows) + cargo cache.
+      # The per-target cache key keeps each platform's artifacts separate.
+      - uses: ./.github/actions/rust-setup
         with:
-          targets: x86_64-unknown-linux-gnu
+          targets: ${{ matrix.target }}
+          cache-key: release-${{ matrix.target }}
 
-      - uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: release-linux-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Build
-        run: cargo build --release --workspace
-
-      - name: Package artifacts
-        run: |
-          mkdir -p artifacts
-          # Package desktop binary if it exists
-          if [ -f target/release/rustynes-desktop ]; then
-            cp target/release/rustynes-desktop artifacts/
-            cd artifacts
-            tar czf rustynes-desktop-linux-x86_64.tar.gz rustynes-desktop
-            rm rustynes-desktop
-            cd ..
-          fi
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v6
-        with:
-          name: linux-x86_64
-          path: artifacts/*
-          retention-days: 7
-
-  # DISABLED: macOS builds removed
-  # build-macos:
-  #   name: Build (macOS)
-  #   runs-on: macos-latest
-  #   steps:
-  #     - uses: actions/checkout@v6
-  #
-  #     - name: Install SDL2
-  #       run: brew install sdl2
-  #
-  #     - uses: dtolnay/rust-toolchain@stable
-  #       with:
-  #         targets: x86_64-apple-darwin
-  #
-  #     - uses: actions/cache@v5
-  #       with:
-  #         path: |
-  #           ~/.cargo/registry
-  #           ~/.cargo/git
-  #           target
-  #         key: release-macos-${{ hashFiles('**/Cargo.lock') }}
-  #
-  #     - name: Build
-  #       run: cargo build --release --workspace
-  #
-  #     - name: Package artifacts
-  #       run: |
-  #         mkdir -p artifacts
-  #         # Package desktop binary if it exists
-  #         if [ -f target/release/rustynes-desktop ]; then
-  #           cp target/release/rustynes-desktop artifacts/
-  #           cd artifacts
-  #           tar czf rustynes-desktop-macos-x86_64.tar.gz rustynes-desktop
-  #           rm rustynes-desktop
-  #           cd ..
-  #         fi
-  #
-  #     - name: Upload artifacts
-  #       uses: actions/upload-artifact@v6
-  #       with:
-  #         name: macos-x86_64
-  #         path: artifacts/*
-  #         retention-days: 7
-
-  build-windows:
-    name: Build (Windows)
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-pc-windows-msvc
-
-      - uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: release-windows-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Build
-        run: cargo build --release --workspace
-
-      - name: Package artifacts
+      - name: Resolve release tag
+        id: tag
         shell: bash
         run: |
-          mkdir -p artifacts
-          # Package desktop binary if it exists
-          if [ -f target/release/rustynes-desktop.exe ]; then
-            cp target/release/rustynes-desktop.exe artifacts/
-            cd artifacts
-            7z a rustynes-desktop-windows-x86_64.zip rustynes-desktop.exe
-            rm rustynes-desktop.exe
-            cd ..
-          fi
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v6
-        with:
-          name: windows-x86_64
-          path: artifacts/*
-          retention-days: 7
-
-  create-release:
-    name: Create Release
-    needs: [build-linux, build-windows]  # DISABLED: macOS builds removed
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v6
-        with:
-          path: artifacts
-          merge-multiple: true
-
-      - name: Check if release exists
-        id: check_release
-        run: |
-          if gh release view ${{ github.ref_name }} &>/dev/null; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-            echo "Release ${{ github.ref_name }} already exists"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag="${{ inputs.tag }}"
           else
-            echo "exists=false" >> $GITHUB_OUTPUT
-            echo "Release ${{ github.ref_name }} does not exist"
+            tag="${GITHUB_REF#refs/tags/}"
           fi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "Resolved tag: ${tag}"
 
-      - name: Create release (if not exists)
-        if: steps.check_release.outputs.exists == 'false'
+      - name: Build release binary
+        run: cargo build --release -p rustynes-frontend --target ${{ matrix.target }}
+
+      - name: Strip binary (Unix)
+        if: runner.os != 'Windows'
+        run: strip "target/${{ matrix.target }}/release/${{ matrix.bin_name }}"
+
+      - name: Stage archive contents
+        shell: bash
         run: |
-          gh release create ${{ github.ref_name }} \
-            --title "RustyNES ${{ github.ref_name }}" \
-            --notes-file CHANGELOG.md \
-            --draft=false
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          stage="rustynes-${{ steps.tag.outputs.tag }}-${{ matrix.target }}"
+          mkdir -p "$stage"
+          cp "target/${{ matrix.target }}/release/${{ matrix.bin_name }}" "$stage/"
+          cp README.md LICENSE-MIT LICENSE-APACHE NOTICE CHANGELOG.md "$stage/"
+          echo "stage=${stage}" >> "$GITHUB_ENV"
 
-      - name: Upload artifacts to release
+      - name: Create archive (tar.gz)
+        if: matrix.archive_ext == 'tar.gz'
+        shell: bash
         run: |
-          # List artifacts for debugging
-          echo "Artifacts to upload:"
-          ls -lah artifacts/ || echo "No artifacts directory found"
+          tar -czf "${stage}.tar.gz" "${stage}"
+          echo "asset=${stage}.tar.gz" >> "$GITHUB_ENV"
 
-          # Upload all artifacts if they exist
-          if [ -d artifacts ] && [ "$(ls -A artifacts)" ]; then
-            gh release upload ${{ github.ref_name }} artifacts/* --clobber
-            echo "Artifacts uploaded successfully"
-          else
-            echo "No artifacts to upload (desktop binary may not exist yet)"
-          fi
+      - name: Create archive (zip)
+        if: matrix.archive_ext == 'zip'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "$env:stage" -DestinationPath "$env:stage.zip"
+          "asset=$env:stage.zip" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      # NOTE: do NOT set `body:` or `generate_release_notes: true` here.
+      # softprops/action-gh-release runs once per matrix target and each
+      # invocation OVERWRITES the release body, which clobbers the
+      # comprehensive notes the maintainer authored manually via
+      # `gh release edit --notes-file …` (v1.0.0 + v1.1.0 both hit this).
+      # The release body is owned by the maintainer; CI only attaches
+      # build artifacts.
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          files: ${{ env.asset }}
+          fail_on_unmatched_files: true
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

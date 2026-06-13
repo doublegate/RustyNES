@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-cd /home/parobek/Code/Commercial_Private-Projects/RustyNES_v2
+cd /home/parobek/Code/Commercial_Private-Projects/RustyNES
 G=/usr/bin/git
 echo "main=$($G rev-parse --short main) branch=$($G rev-parse --short HEAD)"
 $G merge-base --is-ancestor main HEAD && echo "FF-clean" || { echo "NOT FF"; exit 1; }

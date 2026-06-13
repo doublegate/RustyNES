@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-cd /home/parobek/Code/Commercial_Private-Projects/RustyNES_v2
+cd /home/parobek/Code/Commercial_Private-Projects/RustyNES
 G=/usr/bin/git
 # 1. De-nest the vendored nes-test-roms clone so the parent repo can track files
 #    inside it. Only removes the nested git metadata; the ROM files remain.

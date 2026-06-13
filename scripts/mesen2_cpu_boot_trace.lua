@@ -1,11 +1,11 @@
 -- mesen2_cpu_boot_trace.lua
 --
--- Mesen2 Lua reference-trace script for RustyNES_v2's Session-12
+-- Mesen2 Lua reference-trace script for RustyNES's Session-12
 -- per-CPU-instruction boot-trace observability tooling.
 --
 -- Emits a binary trace file compatible with the
--- `nes_core::cpu_boot_trace::CpuBootTrace` binary format
--- (`crates/nes-core/src/cpu_boot_trace.rs` schema v1, RECORD_SIZE = 32).
+-- `rustynes_core::cpu_boot_trace::CpuBootTrace` binary format
+-- (`crates/rustynes-core/src/cpu_boot_trace.rs` schema v1, RECORD_SIZE = 32).
 -- The companion `cpu_boot_trace_diff` CLI consumes both this script's
 -- output and the in-tree fixture's output and reports per-field
 -- divergences.

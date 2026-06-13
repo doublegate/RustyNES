@@ -4,7 +4,7 @@
 Sprint 2.3 Step 3 oracle alignment (Path β trace tooling). Pairs the
 focused per-cycle CSVs emitted by
 
-    crates/nes-test-harness/src/bin/trace_dmc_dma.rs   (RustyNES)
+    crates/rustynes-test-harness/src/bin/trace_dmc_dma.rs   (RustyNES)
     scripts/mesen2_dmc_dma_trace.lua                    (Mesen2)
 
 The cross-diff identifies per-cycle divergence on the four
@@ -46,8 +46,8 @@ USAGE
 =====
 
     python3 scripts/dmc_dma_trace_cross_diff.py \\
-        /tmp/RustyNES_v2/dmc_rusty.csv \\
-        /tmp/RustyNES_v2/dmc_mesen2.csv
+        /tmp/RustyNES/dmc_rusty.csv \\
+        /tmp/RustyNES/dmc_mesen2.csv
 
     python3 scripts/dmc_dma_trace_cross_diff.py \\
         --max-events 50 --tolerance 4 \\

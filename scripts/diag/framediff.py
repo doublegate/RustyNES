@@ -6,8 +6,8 @@ def load(p):
             fr,cy=line.strip().split(',')
             d[int(fr)]=int(cy)
     return d
-leg=load('/tmp/RustyNES_v2/leg_frames.csv')
-r4=load('/tmp/RustyNES_v2/r4_frames.csv')
+leg=load('/tmp/RustyNES/leg_frames.csv')
+r4=load('/tmp/RustyNES/r4_frames.csv')
 out=[]
 frames=sorted(set(leg)&set(r4))
 out.append("frames compared: %d"%len(frames))
@@ -34,5 +34,5 @@ out.append("cumulative delta at frame %d: %d cycles"%(lastf, r4[lastf]-leg[lastf
 longer=sum(1 for f in frames if (f-1) in leg and (f-1) in r4 and (r4[f]-r4[f-1])>(leg[f]-leg[f-1]))
 shorter=sum(1 for f in frames if (f-1) in leg and (f-1) in r4 and (r4[f]-r4[f-1])<(leg[f]-leg[f-1]))
 out.append("frames r4-longer: %d  r4-shorter: %d"%(longer,shorter))
-open('/tmp/RustyNES_v2/framediff_out.txt','w').write("\n".join(out)+"\n")
+open('/tmp/RustyNES/framediff_out.txt','w').write("\n".join(out)+"\n")
 print("done; div frames:", sum(1 for f in frames if (f-1) in leg and (f-1) in r4 and (r4[f]-r4[f-1])!=(leg[f]-leg[f-1])))

@@ -16,19 +16,19 @@
 # Usage:
 #   scripts/wasm_size_budget.sh [DIST_DIR] [BUDGET_BYTES]
 #
-# Defaults: DIST_DIR=crates/nes-frontend/web/dist, BUDGET=5 MiB.
+# Defaults: DIST_DIR=crates/rustynes-frontend/web/dist, BUDGET=5 MiB.
 #
 # Exit status: 0 if total gzip size <= budget, 1 otherwise (or on a
 # missing/empty dist directory).
 
 set -euo pipefail
 
-DIST_DIR="${1:-crates/nes-frontend/web/dist}"
+DIST_DIR="${1:-crates/rustynes-frontend/web/dist}"
 BUDGET_BYTES="${2:-5242880}" # 5 * 1024 * 1024
 
 if [[ ! -d "$DIST_DIR" ]]; then
     echo "error: dist directory not found: $DIST_DIR" >&2
-    echo "  (run \`trunk build --release\` in crates/nes-frontend/web first)" >&2
+    echo "  (run \`trunk build --release\` in crates/rustynes-frontend/web first)" >&2
     exit 1
 fi
 

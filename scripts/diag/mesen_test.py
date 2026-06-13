@@ -1,7 +1,7 @@
 import collections
 # Mesen schema: cpu_cycle,mc,scanline,cycle(dot),pc,value,vbl,sprite0,overflow
 rows=[]
-with open('/tmp/RustyNES_v2/mesen_2002.csv') as f:
+with open('/tmp/RustyNES/mesen_2002.csv') as f:
     h=f.readline()
     for line in f:
         x=line.strip().split(',')
@@ -22,5 +22,5 @@ out.append("reads with sprite0 set: %d"%len(spr))
 # their scanline distribution
 slc=collections.Counter(r[2] for r in spr)
 out.append("sprite0-set reads by scanline (top): %s"%slc.most_common(10))
-open('/tmp/RustyNES_v2/mesen_test_out.txt','w').write("\n".join(out)+"\n")
+open('/tmp/RustyNES/mesen_test_out.txt','w').write("\n".join(out)+"\n")
 print("done")

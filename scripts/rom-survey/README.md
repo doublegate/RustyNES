@@ -25,13 +25,13 @@ python3 scripts/rom-survey/rom_discover.py
 python3 scripts/rom-survey/rom_extract.py
 
 # 3. boot-and-screenshot survey (the committed diagnostic bin) + visually review
-cargo run -p nes-test-harness --features commercial-roms --release \
+cargo run -p rustynes-test-harness --features commercial-roms --release \
     --bin coverage_smoke -- tests/roms/external 280 /tmp/rustynes-coverage
 # montage /tmp/rustynes-coverage/*.png and inspect — the oracle is a regression
 # gate, not a correctness check, so VISUAL review is what catches rendering bugs.
 
 # 4. lock verified games as regression tests in
-#    crates/nes-test-harness/tests/external_extended.rs (+ commit the .snap hashes)
+#    crates/rustynes-test-harness/tests/external_extended.rs (+ commit the .snap hashes)
 ```
 
 See `docs/release-notes/v2.4.0.md` for the survey that found the VRC7/VRC2

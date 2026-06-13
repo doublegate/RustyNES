@@ -1,0 +1,22 @@
+RustyNES v2
+Copyright 2026 Parobek
+
+This product includes software developed by Parobek.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+This project draws on the Nintendo Entertainment System hardware reverse-
+engineering work documented at the NESdev community wiki
+(https://www.nesdev.org/wiki/) and the Visual 6502 / Visual 2C02 projects
+(http://www.visual6502.org/). No code from those projects is incorporated;
+the documentation is referenced for hardware behavior specification.

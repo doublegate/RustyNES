@@ -225,7 +225,7 @@ emu.addEventCallback(on_script_ended, emu.eventType.scriptEnded)
 
 -- AccuracyCoin Start-press driver: when AUTOSTART_FRAME > 0, press Start
 -- on player 1 for AUTOSTART_PRESS_FRAMES frames starting at AUTOSTART_FRAME.
--- Matches `nes_test_harness::accuracy_coin::run_battery_capturing_ram`.
+-- Matches `rustynes_test_harness::accuracy_coin::run_battery_capturing_ram`.
 if CONFIG.AUTOSTART_FRAME > 0 then
     local logged_open = false
     local logged_close = false

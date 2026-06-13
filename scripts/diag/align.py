@@ -7,8 +7,8 @@ def load(p):
             if len(x)<5: continue
             rows.append((int(x[0]),int(x[1]),int(x[2]),int(x[3]),int(x[4])))
     return rows
-leg=load('/tmp/RustyNES_v2/leg_win.csv')
-r4=load('/tmp/RustyNES_v2/r4_win.csv')
+leg=load('/tmp/RustyNES/leg_win.csv')
+r4=load('/tmp/RustyNES/r4_win.csv')
 out=[]
 out.append("legacy reads=%d  r4 reads=%d"%(len(leg),len(r4)))
 
@@ -41,5 +41,5 @@ for r in pr_reads(leg,105778724):
 out.append("=== r4 sl-261 reads within 20k cyc before transition ===")
 for r in pr_reads(r4,104530002):
     out.append("  cyc=%d dot=%d val=0x%02X (V%d S%d O%d)"%(r[0],r[3],r[4],(r[4]>>7)&1,(r[4]>>6)&1,(r[4]>>5)&1))
-open('/tmp/RustyNES_v2/align_out.txt','w').write("\n".join(out)+"\n")
+open('/tmp/RustyNES/align_out.txt','w').write("\n".join(out)+"\n")
 print("done leg=%d r4=%d"%(len(leg),len(r4)))

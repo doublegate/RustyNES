@@ -1,7 +1,7 @@
 import re
 import sys
 
-filepath = 'crates/nes-core/src/bus.rs'
+filepath = 'crates/rustynes-core/src/bus.rs'
 
 with open(filepath, 'r') as f:
     content = f.read()

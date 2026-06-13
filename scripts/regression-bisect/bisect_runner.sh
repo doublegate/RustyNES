@@ -16,7 +16,7 @@
 #   git bisect start
 #   git bisect bad   <bad-commit>
 #   git bisect good  <good-commit>
-#   git bisect run /home/parobek/Code/RustyNES_v2/scripts/regression-bisect/bisect_runner.sh
+#   git bisect run /home/parobek/Code/RustyNES/scripts/regression-bisect/bisect_runner.sh
 #
 # Usage (parametric — bisect a different harness):
 #
@@ -30,12 +30,12 @@
 #                       `cargo test --test <HARNESS_TEST>`. Set to
 #                       `audio_tests`, `m22`, `mmc1_a12`,
 #                       `visual_regression`, etc. for the corresponding
-#                       harness file under `crates/nes-test-harness/tests/`.
+#                       harness file under `crates/rustynes-test-harness/tests/`.
 #   HARNESS_FEATURE    (commercial-roms) Cargo feature to enable. Pass
 #                       `test-roms` for the committed test-ROM corpora
 #                       (audio_tests / m22 / mmc1_a12 / blargg_cpu
 #                       / visual_regression / mmc5 / holy_mapperel).
-#   HARNESS_PACKAGE    (nes-test-harness) `-p` target. Unlikely to need
+#   HARNESS_PACKAGE    (rustynes-test-harness) `-p` target. Unlikely to need
 #                       changing unless the harness moves crates.
 #   HARNESS_FILTER     ("") Optional test-name substring passed after
 #                       the `--` separator (e.g. `super_mario_bros`).
@@ -60,7 +60,7 @@ cd "$(git rev-parse --show-toplevel)" || exit 125
 
 HARNESS_TEST="${HARNESS_TEST:-external_real_games}"
 HARNESS_FEATURE="${HARNESS_FEATURE:-commercial-roms}"
-HARNESS_PACKAGE="${HARNESS_PACKAGE:-nes-test-harness}"
+HARNESS_PACKAGE="${HARNESS_PACKAGE:-rustynes-test-harness}"
 HARNESS_FILTER="${HARNESS_FILTER:-}"
 HARNESS_RELEASE="${HARNESS_RELEASE:-0}"
 BUILD_ONLY="${BUILD_ONLY:-0}"

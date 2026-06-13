@@ -9,7 +9,7 @@ if m not in txt:
 """ + m + """
 
 Root-cause progress on the last r4 §151 regression ($2002 flag timing, $048D).
-Added `crates/nes-test-harness/src/bin/trace_2002_window.rs` (drives full battery,
+Added `crates/rustynes-test-harness/src/bin/trace_2002_window.rs` (drives full battery,
 finds the $048D result-byte transition cycle, windows the ppu2002 $2002 trace).
 
 SOLID MEASURED FACT (transcribed from the bin output, not invented): the $048D

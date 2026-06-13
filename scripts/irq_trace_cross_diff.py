@@ -3,7 +3,7 @@
 
 The two emulators emit different schemas:
 
-* RustyNES (`crates/nes-test-harness/golden/irq_trace/<rom>.csv`) -- emits
+* RustyNES (`crates/rustynes-test-harness/golden/irq_trace/<rom>.csv`) -- emits
   rows ONLY at IRQ-line / NMI / A12 / DMC-scheduler / bus-access
   state transitions.  Session-21 schema:
     cpu_cycle, ppu_frame, ppu_scanline, ppu_dot,
@@ -18,7 +18,7 @@ The two emulators emit different schemas:
   Pre-Session-21 (10-column) traces are still loadable; the DMC and
   bus-access columns default to absent / zero for those rows.
 
-* Mesen2 (`crates/nes-test-harness/golden/irq_trace/mesen2/<rom>.csv`,
+* Mesen2 (`crates/rustynes-test-harness/golden/irq_trace/mesen2/<rom>.csv`,
   produced by `scripts/mesen2_irq_trace.lua`) -- emits rows at
   per-instruction-boundary edge detection AND at irq_svc / nmi_svc
   callback fires.  Session-21 schema:

@@ -50,6 +50,6 @@ r4 is opt-in so default stays safe, but re-confirm 60-ROM oracle + sacred trio i
 touching shared start_cycle/end_cycle.
 """
     open(mem,"w").write(txt+addition)
-    open("/tmp/RustyNES_v2/fix_mem_result.txt","w").write("APPENDED ok, new len="+str(len(txt+addition)))
+    open("/tmp/RustyNES/fix_mem_result.txt","w").write("APPENDED ok, new len="+str(len(txt+addition)))
 else:
-    open("/tmp/RustyNES_v2/fix_mem_result.txt","w").write("ALREADY PRESENT, no change")
+    open("/tmp/RustyNES/fix_mem_result.txt","w").write("ALREADY PRESENT, no change")

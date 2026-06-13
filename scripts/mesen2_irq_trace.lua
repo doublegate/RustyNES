@@ -1,11 +1,11 @@
 -- mesen2_irq_trace.lua
 --
--- Mesen2 Lua reference-trace script for RustyNES_v2's Track C1 IRQ-timing
+-- Mesen2 Lua reference-trace script for RustyNES's Track C1 IRQ-timing
 -- investigation (Session-15 / C1 attempt 13).
 --
 -- Emits a CSV trace of IRQ-related events from Mesen2 that can be
 -- cross-diffed against RustyNES's per-CPU-cycle IRQ trace fixture
--- (`crates/nes-core/src/irq_trace.rs` + `irq_trace_fixture.rs`).
+-- (`crates/rustynes-core/src/irq_trace.rs` + `irq_trace_fixture.rs`).
 --
 -- =================================================================
 -- INSTALLING + RUNNING

@@ -1,11 +1,11 @@
 -- mesen2_ppu_trace.lua
 --
--- Mesen2 Lua reference-trace script for RustyNES_v2's Session-10
+-- Mesen2 Lua reference-trace script for RustyNES's Session-10
 -- per-PPU-dot observability tooling.
 --
 -- Emits a binary trace file compatible with the
--- `nes_ppu::state_trace::PpuStateTrace` binary format
--- (`crates/nes-ppu/src/state_trace.rs` schema v1, RECORD_SIZE = 113).
+-- `rustynes_ppu::state_trace::PpuStateTrace` binary format
+-- (`crates/rustynes-ppu/src/state_trace.rs` schema v1, RECORD_SIZE = 113).
 -- The companion `ppu_trace_diff` CLI consumes both this script's
 -- output and the in-tree fixture's output and reports per-field
 -- divergences.
@@ -117,7 +117,7 @@ local CONFIG = {
 -- HELPERS
 -- =================================================================
 
--- FNV-1a 64-bit hash, matching `nes_ppu::state_trace::fnv1a64`.
+-- FNV-1a 64-bit hash, matching `rustynes_ppu::state_trace::fnv1a64`.
 -- The Rust offset basis / prime are the canonical FNV-1a constants
 -- (http://www.isthe.com/chongo/tech/comp/fnv/).
 --
@@ -144,7 +144,7 @@ end
 
 -- Build a 113-byte record from the current `emu.getState()` plus
 -- OAM + secondary OAM reads. The field order is the SAME order
--- as the Rust packer in `crates/nes-ppu/src/state_trace.rs`:
+-- as the Rust packer in `crates/rustynes-ppu/src/state_trace.rs`:
 -- to_bytes; if either side drifts the `ppu_trace_diff` tool's
 -- anchor check will catch it on the first record.
 local function build_record(state, secondary_oam_bytes, oam_hash)

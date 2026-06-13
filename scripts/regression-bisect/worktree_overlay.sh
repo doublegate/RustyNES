@@ -20,7 +20,7 @@
 # Usage:
 #
 #   ./worktree_overlay.sh <commit> \
-#       --harness crates/nes-test-harness/tests/audio_tests.rs \
+#       --harness crates/rustynes-test-harness/tests/audio_tests.rs \
 #       --feature 'test-roms = []' \
 #       --shell    # optional; default `bash`
 #
@@ -30,7 +30,7 @@
 #
 # Then in the sub-shell:
 #
-#   cargo test -p nes-test-harness --features test-roms --test audio_tests
+#   cargo test -p rustynes-test-harness --features test-roms --test audio_tests
 #
 # Shell-redirection gotcha (see bisect_runner.sh): `> file 2>&1`, NOT
 # `2>&1 > file`.
@@ -47,10 +47,10 @@ Required:
 Optional, repeatable:
   --harness <path>     path (relative to repo root) of a harness file to
                        overlay as untracked. Example:
-                       --harness crates/nes-test-harness/tests/audio_tests.rs
+                       --harness crates/rustynes-test-harness/tests/audio_tests.rs
                        (the file must exist in the CURRENT HEAD)
   --feature <line>     Cargo.toml line to insert into
-                       `crates/nes-test-harness/Cargo.toml`'s
+                       `crates/rustynes-test-harness/Cargo.toml`'s
                        `[features]` table. Example:
                        --feature 'test-roms = []'
   --no-rom-symlink     skip the `tests/roms/external/` symlink
@@ -112,10 +112,10 @@ for h in "${HARNESSES[@]+"${HARNESSES[@]}"}"; do
 done
 
 # Patch Cargo.toml features. We append to the [features] table of
-# `crates/nes-test-harness/Cargo.toml` since that's where the new
+# `crates/rustynes-test-harness/Cargo.toml` since that's where the new
 # harnesses' feature flags live. The simple `awk` insert avoids
 # pulling in toml-rs.
-CARGO_TOML="$WT_DIR/crates/nes-test-harness/Cargo.toml"
+CARGO_TOML="$WT_DIR/crates/rustynes-test-harness/Cargo.toml"
 for line in "${FEATURE_LINES[@]+"${FEATURE_LINES[@]}"}"; do
     if [ -f "$CARGO_TOML" ]; then
         # Insert AFTER the `[features]` heading. If the feature already

@@ -1,6 +1,6 @@
 import sys, collections
 rows=[]
-with open('/tmp/RustyNES_v2_dmaloop_seed1.csv') as f:
+with open('/tmp/RustyNES_dmaloop_seed1.csv') as f:
     hdr=f.readline()
     for l in f:
         p=l.strip().split(',')

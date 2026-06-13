@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # bench_regression_check.sh — headless frame-time regression gate (v1.6.0).
 #
-# Runs the `nes-core` `full_frame` criterion benches and asserts each stays
+# Runs the `rustynes-core` `full_frame` criterion benches and asserts each stays
 # under an ABSOLUTE wall-clock ceiling. This is a deliberately non-flaky gate:
 # shared CI runners vary by tens of percent run-to-run, so a tight
 # percentage-regression gate would flake. The ceiling instead protects the
@@ -9,9 +9,9 @@
 # under the 16.67 ms NTSC real-time deadline — and trips only on a gross (≈3x+)
 # regression. For the tighter ~5% comparison, use criterion baselines locally:
 #
-#     cargo bench -p nes-core --bench full_frame -- --save-baseline main
+#     cargo bench -p rustynes-core --bench full_frame -- --save-baseline main
 #     # ... make changes ...
-#     cargo bench -p nes-core --bench full_frame -- --baseline main
+#     cargo bench -p rustynes-core --bench full_frame -- --baseline main
 #
 # Ceilings are in nanoseconds and overridable via env (CI can loosen them for a
 # slow runner without editing this file). Defaults give ~3x margin over the
@@ -26,7 +26,7 @@ NESTEST_CEILING_NS="${NESTEST_CEILING_NS:-10000000}"
 FLOWING_CEILING_NS="${FLOWING_CEILING_NS:-10000000}"
 
 echo "==> Running full_frame benches (measurement-time=${MEASUREMENT_TIME}s)"
-cargo bench -p nes-core --bench full_frame -- \
+cargo bench -p rustynes-core --bench full_frame -- \
     --warm-up-time 1 --measurement-time "${MEASUREMENT_TIME}"
 
 check() {

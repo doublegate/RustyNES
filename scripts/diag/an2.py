@@ -1,5 +1,5 @@
 rows=[]
-with open('/tmp/RustyNES_v2/s2002.csv') as f:
+with open('/tmp/RustyNES/s2002.csv') as f:
     next(f)
     for line in f:
         p=line.strip().split(',')
@@ -40,5 +40,5 @@ out.append("scanlines where sprite0(0x40) set:")
 s0=[r for r in rows if r[4]&0x40]
 c2=collections.Counter(r[2] for r in s0)
 out.append("  "+str(dict(c2)))
-open('/tmp/RustyNES_v2/an2_out.txt','w').write("\n".join(out)+"\n")
+open('/tmp/RustyNES/an2_out.txt','w').write("\n".join(out)+"\n")
 print("done",len(out))

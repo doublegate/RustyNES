@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the showcase montage from the staged screenshots.
 set -euo pipefail
-ROOT=/home/parobek/Code/Commercial_Private-Projects/RustyNES_v2
+ROOT=/home/parobek/Code/Commercial_Private-Projects/RustyNES
 EXT="$ROOT/screenshots/external"
 OUT="$ROOT/screenshots/montage.png"
 TMP=/tmp/montage-work

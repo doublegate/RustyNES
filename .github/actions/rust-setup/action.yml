@@ -1,0 +1,53 @@
+name: Rust setup
+description: >-
+  Shared toolchain + Linux system-deps + cargo cache setup, factored out of
+  ci.yml / release.yml / web.yml so the install steps (and the wgpu/winit/cpal
+  apt package list) live in exactly one place. Caller must `actions/checkout`
+  first (a composite action needs the repo present to be resolved).
+
+inputs:
+  toolchain:
+    description: "Rust toolchain (e.g. stable, 1.86.0)."
+    default: stable
+  targets:
+    description: "Comma-separated extra rustup targets (e.g. wasm32-unknown-unknown)."
+    default: ""
+  components:
+    description: "Comma-separated rustup components (e.g. clippy,rustfmt)."
+    default: ""
+  apt:
+    description: >-
+      Install the Linux system libraries wgpu/winit/cpal need. Set "false" for
+      jobs that only touch the no_std chip stack or the wasm32 / web-sys build
+      (those route through web-sys, not the native X11/Wayland/ALSA libs).
+    default: "true"
+  cache:
+    description: 'Set "false" to skip the cargo cache (e.g. a fmt-only job).'
+    default: "true"
+  cache-key:
+    description: "Extra Swatinem/rust-cache key suffix (distinguishes target matrices)."
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ inputs.toolchain }}
+        targets: ${{ inputs.targets }}
+        components: ${{ inputs.components }}
+
+    - name: Install Linux deps for wgpu/winit/cpal
+      if: inputs.apt == 'true' && runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          libxkbcommon-dev libwayland-dev libxkbcommon-x11-dev libasound2-dev libudev-dev
+
+    - name: Cargo cache
+      if: inputs.cache == 'true'
+      uses: Swatinem/rust-cache@v2
+      with:
+        key: ${{ inputs.cache-key }}

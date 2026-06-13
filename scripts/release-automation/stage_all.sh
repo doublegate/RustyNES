@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-cd /home/parobek/Code/Commercial_Private-Projects/RustyNES_v2
+cd /home/parobek/Code/Commercial_Private-Projects/RustyNES
 G=/usr/bin/git
 # Stage all non-ignored changes (test files, .gitignore, snapshots, the clippy
 # fix) — the 73 force-added ROMs are already in the index and stay there.

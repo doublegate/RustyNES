@@ -20,7 +20,7 @@ that cost for the next regression.
   when the bisect range pre-dates the harness file's existence: it
   creates a `/tmp/rustynes-bisect-$$/` worktree at a target commit,
   copies a harness file from the CURRENT HEAD as untracked, patches
-  `crates/nes-test-harness/Cargo.toml` to add the feature flag, and
+  `crates/rustynes-test-harness/Cargo.toml` to add the feature flag, and
   symlinks `tests/roms/external/` (if present) so the harness can find
   its ROMs. Exits the temp worktree cleanly via a `trap` on EXIT.
 
@@ -119,12 +119,12 @@ Use the worktree-overlay pattern:
 # Interactive: spawn a sub-shell in a temp worktree with the NEW
 # harness file overlaid.
 ./scripts/regression-bisect/worktree_overlay.sh <commit> \
-    --harness crates/nes-test-harness/tests/audio_tests.rs \
-    --harness crates/nes-test-harness/tests/common/mod.rs \
+    --harness crates/rustynes-test-harness/tests/audio_tests.rs \
+    --harness crates/rustynes-test-harness/tests/common/mod.rs \
     --feature 'test-roms = []'
 
 # In the sub-shell:
-cargo test -p nes-test-harness --features test-roms --test audio_tests
+cargo test -p rustynes-test-harness --features test-roms --test audio_tests
 ```
 
 To AUTOMATE this inside `git bisect run`, write a small wrapper:
@@ -135,12 +135,12 @@ To AUTOMATE this inside `git bisect run`, write a small wrapper:
 set -u
 COMMIT=$(git rev-parse HEAD)
 ./scripts/regression-bisect/worktree_overlay.sh "$COMMIT" \
-    --harness crates/nes-test-harness/tests/audio_tests.rs \
-    --harness crates/nes-test-harness/tests/common/mod.rs \
+    --harness crates/rustynes-test-harness/tests/audio_tests.rs \
+    --harness crates/rustynes-test-harness/tests/common/mod.rs \
     --feature 'test-roms = []' <<'OVERLAY_CMDS'
 cd /tmp/rustynes-bisect-$$
 HARNESS_TEST=audio_tests HARNESS_FEATURE=test-roms \
-    /home/parobek/Code/RustyNES_v2/scripts/regression-bisect/bisect_runner.sh
+    /home/parobek/Code/RustyNES/scripts/regression-bisect/bisect_runner.sh
 exit $?
 OVERLAY_CMDS
 ```
@@ -162,7 +162,7 @@ commit (e.g. after a deliberate accuracy change moves the hash):
 
 # 2. In the sub-shell:
 RUSTYNES_DUMP_FRAMES=1 INSTA_UPDATE=auto INSTA_FORCE_PASS=1 \
-    cargo test -p nes-test-harness --features test-roms \
+    cargo test -p rustynes-test-harness --features test-roms \
     --test audio_tests --test m22 --test mmc1_a12 \
     -- --test-threads=1 --nocapture
 
@@ -182,13 +182,13 @@ RUSTYNES_DUMP_FRAMES=1 INSTA_UPDATE=auto INSTA_FORCE_PASS=1 \
 #    keeps insta diff order deterministic and the PNG output filesystem
 #    order readable.
 INSTA_UPDATE=auto RUSTYNES_DUMP_FRAMES=1 \
-    cargo test -p nes-test-harness --features commercial-roms,test-roms \
+    cargo test -p rustynes-test-harness --features commercial-roms,test-roms \
     --test external_real_games -- --test-threads=1
 
 # 3. Promote .snap.new -> .snap (insta default workflow):
 cargo insta accept
 #  OR manually:
-#  cd crates/nes-test-harness/tests/snapshots
+#  cd crates/rustynes-test-harness/tests/snapshots
 #  for f in external_real_games__*.snap.new; do mv "$f" "${f%.new}"; done
 
 # 4. Visually verify the PNGs at /tmp/rustynes-baseline-screenshots/external/

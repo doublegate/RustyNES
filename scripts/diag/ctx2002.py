@@ -7,8 +7,8 @@ def load(p):
             if len(x)<5: continue
             rows.append((int(x[0]),int(x[1]),int(x[2]),int(x[3]),int(x[4])))
     return rows
-leg=load('/tmp/RustyNES_v2/leg_2002win.csv')
-r4=load('/tmp/RustyNES_v2/r4_2002win.csv')
+leg=load('/tmp/RustyNES/leg_2002win.csv')
+r4=load('/tmp/RustyNES/r4_2002win.csv')
 lm={r[0]:r for r in leg}
 rm={r[0]:r for r in r4}
 out=[]
@@ -39,5 +39,5 @@ for i in range(len(leg)-1):
         c=leg[i][0]; l=leg[i]; r=rm.get(c)
         rs="sl%d d%d 0x%02X"%(r[2],r[3],r[4]) if r else "MISS"
         out.append("cyc=%d L sl%d d%d 0x%02X | R %s%s"%(c,l[2],l[3],l[4],rs," <<<DIFF" if r and (l[2],l[3],l[4])!=(r[2],r[3],r[4]) else ""))
-open('/tmp/RustyNES_v2/ctx2002_out.txt','w').write("\n".join(out)+"\n")
+open('/tmp/RustyNES/ctx2002_out.txt','w').write("\n".join(out)+"\n")
 print("done")

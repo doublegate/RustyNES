@@ -1,0 +1,128 @@
+name: Deploy Web Demo
+
+# v1.3.0 Sprint 2 — builds the wasm32 frontend with trunk and deploys
+# the static bundle to GitHub Pages (https://doublegate.github.io/RustyNES/).
+#
+# Two jobs: `build` produces + size-gates the `dist/` bundle and uploads
+# it as a Pages artifact; `deploy` publishes it. The build also runs on
+# pull requests (deploy does NOT) so the size budget gates PRs without
+# publishing a preview.
+#
+# The deployed default is the `wasm-winit` feature: the full winit +
+# wgpu + egui experience (debugger overlay + NTSC filter), identical to
+# the native binary. trunk auto-downloads the wasm-bindgen CLI + wasm-opt
+# versions pinned in crates/rustynes-frontend/web/Trunk.toml, so this workflow
+# only installs trunk itself + the wasm32 rust target.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".cargo/config.toml"
+      - "rust-toolchain.toml"
+      - "scripts/wasm_size_budget.sh"
+      - ".github/workflows/web.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".cargo/config.toml"
+      - "rust-toolchain.toml"
+      - "scripts/wasm_size_budget.sh"
+      - ".github/workflows/web.yml"
+  workflow_dispatch:
+
+# Pages deploy needs these; everything else is read-only.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one Pages deploy at a time; let an in-flight one finish rather
+# than cancelling (a half-applied Pages deploy is worse than a slow one).
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  # Pin trunk for reproducible builds. Bump deliberately; keep in sync
+  # with the local toolchain note in Trunk.toml.
+  TRUNK_VERSION: "0.21.14"
+  # Repository ("project") Pages serve under /<repo>/, so every asset
+  # URL trunk emits must be prefixed. Overrides Trunk.toml's local "/"
+  # without editing it (local `trunk serve` stays root-mounted).
+  PUBLIC_URL: "/RustyNES/"
+
+jobs:
+  build:
+    name: build + size budget
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # Shared toolchain + cargo cache. `apt: false` — the wasm32 build of
+      # winit/wgpu/cpal routes through web-sys, not the native X11/Wayland/ALSA
+      # system libraries.
+      - uses: ./.github/actions/rust-setup
+        with:
+          targets: wasm32-unknown-unknown
+          apt: "false"
+          cache-key: web-wasm32
+
+      - name: Install trunk (prebuilt release binary)
+        run: |
+          curl -fsSL \
+            "https://github.com/trunk-rs/trunk/releases/download/v${TRUNK_VERSION}/trunk-x86_64-unknown-linux-gnu.tar.gz" \
+            | tar -xz -C /usr/local/bin trunk
+          trunk --version
+
+      # No apt X11/wayland/ALSA deps here: the wasm32 build of
+      # winit/wgpu/cpal routes through web-sys, not the native system
+      # libraries.
+      - name: Build (release) for GitHub Pages
+        working-directory: crates/rustynes-frontend/web
+        run: trunk build --release --public-url "${PUBLIC_URL}"
+
+      - name: Enforce wasm size budget (< 5 MiB gzip)
+        run: ./scripts/wasm_size_budget.sh crates/rustynes-frontend/web/dist 5242880
+
+      # No `.nojekyll`: the GitHub Actions Pages flow serves the
+      # uploaded artifact verbatim (Jekyll only runs in the legacy
+      # branch-deploy mode), and none of the trunk output filenames
+      # start with `_`, so there is nothing for Jekyll to strip even if
+      # it ran. (Also, upload-pages-artifact >= v4 excludes dotfiles by
+      # default, so a `.nojekyll` would be dropped from the artifact
+      # anyway.)
+      - name: Configure Pages
+        # `enablement: true` self-heals if Pages is ever disabled; the
+        # site is already enabled (build_type: workflow), so this reads
+        # the existing config and does not hit the create path.
+        uses: actions/configure-pages@v6
+        with:
+          enablement: true
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: crates/rustynes-frontend/web/dist
+
+  deploy:
+    name: deploy to GitHub Pages
+    # Only publish from main / manual dispatch — PRs build + size-gate
+    # but never deploy.
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v5

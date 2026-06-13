@@ -12,8 +12,8 @@ def load(p):
             order.append(cyc)
     return rows,order
 
-leg,lo=load('/tmp/RustyNES_v2/leg_2002win.csv')
-r4,ro=load('/tmp/RustyNES_v2/r4_2002win.csv')
+leg,lo=load('/tmp/RustyNES/leg_2002win.csv')
+r4,ro=load('/tmp/RustyNES/r4_2002win.csv')
 
 out=[]
 out.append("legacy reads=%d  r4 reads=%d"%(len(leg),len(r4)))
@@ -42,5 +42,5 @@ out.append("--- VALUE diffs (val differs): %d ---"%len(valdiffs))
 for c,l,r in valdiffs[:60]:
     out.append("  cyc=%d sl(L=%d,R=%d) dot(L=%d,R=%d) val L=0x%02X R=0x%02X"%(
         c,l[1],r[1],l[2],r[2],l[3],r[3]))
-open('/tmp/RustyNES_v2/diff2002_out.txt','w').write("\n".join(out)+"\n")
+open('/tmp/RustyNES/diff2002_out.txt','w').write("\n".join(out)+"\n")
 print("done diffs=%d valdiffs=%d"%(len(diffs),len(valdiffs)))

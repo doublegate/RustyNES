@@ -5,7 +5,7 @@ import os, zipfile, glob, re
 
 DB = os.path.expanduser("~/Dropbox/ROMs/Nintendo Entertainment System - Famicom (2020)")
 DIRS = [DB, os.path.join(DB, "Homebrew & Unlicensed"), os.path.join(DB, "Japan")]
-PROJ = "/home/parobek/Code/Commercial_Private-Projects/RustyNES_v2"
+PROJ = "/home/parobek/Code/Commercial_Private-Projects/RustyNES"
 EXT = os.path.join(PROJ, "tests/roms/external")
 FAMILY = {0:"NROM",1:"MMC1",2:"UxROM",3:"CNROM",4:"MMC3",5:"MMC5",7:"AxROM",
           9:"MMC2",10:"MMC4",11:"ColorDreams",13:"CPROM",66:"GxROM",

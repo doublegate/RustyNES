@@ -15,11 +15,11 @@ uses ONLY PCs that occur exactly once in BOTH dumps.
 
 Build a dump with the `cpu-instr-cycle-trace` feature (the R1 master clock is
 the only scheduler now):
-  cargo run -p nes-test-harness --release \
+  cargo run -p rustynes-test-harness --release \
     --features cpu-instr-cycle-trace,test-roms --bin trace_instr_cycles -- \
-    tests/roms/accuracycoin/AccuracyCoin.nes 0477 2000 /tmp/RustyNES_v2/ic.csv
+    tests/roms/accuracycoin/AccuracyCoin.nes 0477 2000 /tmp/RustyNES/ic.csv
 
-  python3 scripts/instr_cycle_diff.py /tmp/RustyNES_v2/ic.csv <reference.csv>
+  python3 scripts/instr_cycle_diff.py /tmp/RustyNES/ic.csv <reference.csv>
 """
 import csv
 import sys
