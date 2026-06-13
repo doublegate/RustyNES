@@ -6,8 +6,15 @@ version = 2
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "deny"
-# No advisories need to be ignored currently - all dependencies are up to date
-ignore = []
+ignore = [
+    # `paste` is unmaintained/archived (RUSTSEC-2024-0436) — an informational
+    # advisory, NOT a security vulnerability. It is a transitive, build-time
+    # proc-macro reached only through wgpu's Metal backend
+    # (paste <- metal <- wgpu-hal <- wgpu <- egui-wgpu). "No safe upgrade is
+    # available"; there is no first-party use, so the only real fix is upstream
+    # wgpu dropping it. Re-evaluate whenever wgpu/egui-wgpu is bumped.
+    "RUSTSEC-2024-0436",
+]
 
 [licenses]
 version = 2
@@ -23,11 +30,14 @@ allow = [
     "BSL-1.0",       # Boost Software License - used by clipboard-win, error-code
     "ISC",           # ISC License (similar to MIT) - used by inotify, libloading
     "Zlib",          # zlib License (permissive) - used by slotmap
+    # Public-domain-equivalent (OSI/FSF, permissive)
+    "CC0-1.0",       # Creative Commons Zero - used by hexf-parse (<- naga <- wgpu)
+    "CDLA-Permissive-2.0",  # Community Data License Permissive 2.0 - used by webpki-roots (<- ureq <- rustynes-cheevos)
     # Weak copyleft licenses (OSI approved, FSF Free/Libre, file-level copyleft)
     "MPL-2.0",       # Mozilla Public License 2.0 - used by option-ext, resvg, usvg
     # Font licenses (OSI approved, FSF Free/Libre) - used by egui/epaint default fonts
     "OFL-1.1",       # SIL Open Font License 1.1 - used by epaint_default_fonts
-    "Ubuntu-font-1.0",  # Ubuntu Font Licence - used by epaint_default_fonts
+    "LicenseRef-UFL-1.0",  # Ubuntu Font Licence 1.0 - epaint_default_fonts declares the non-SPDX LicenseRef, not the SPDX `Ubuntu-font-1.0`
 ]
 confidence-threshold = 0.8
 exceptions = []

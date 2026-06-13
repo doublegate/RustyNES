@@ -1,14 +1,44 @@
----
 name: Security
 
+# Dependency-vulnerability scan (cargo-audit) + licence / advisory / source
+# policy (cargo-deny) + an extended clippy gate.
+#
+# Pure-documentation pushes are skipped: they cannot change Cargo.lock or any
+# `.rs` code, so there is nothing for these jobs to find. The weekly `schedule`
+# cron still re-runs the full suite, so a NEW advisory published against an
+# unchanged dependency is caught even when no code is pushed.
 on:
   push:
-    branches: [main, develop]
+    branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - "**/*.txt"
+      - "screenshots/**"
+      - "LICENSE*"
+      - "NOTICE"
+      - ".gitignore"
+      - ".codegraph/**"
   pull_request:
-    branches: [main, develop]
+    branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - "**/*.txt"
+      - "screenshots/**"
+      - "LICENSE*"
+      - "NOTICE"
+      - ".gitignore"
+      - ".codegraph/**"
   schedule:
-    - cron: '0 0 * * 1'
+    - cron: "0 0 * * 1"
   workflow_dispatch:
+
+# Cancel superseded PR runs; let every `main` commit finish.
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
   audit:
@@ -16,50 +46,54 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install cargo-audit
-        run: cargo install cargo-audit
-
-      - name: Run cargo audit
-        run: cargo audit
+      # Install the PREBUILT binary, never `cargo install` (build-from-source):
+      # the repo pins rustc 1.86 (rust-toolchain.toml), but the current
+      # cargo-audit release needs >= 1.88 to COMPILE. The prebuilt binary RUNS
+      # fine under any toolchain — it only parses Cargo.lock, it never compiles
+      # the project — so the toolchain pin is irrelevant to it.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - run: cargo audit
 
   deny:
     name: Cargo Deny Check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install cargo-deny
-        run: cargo install cargo-deny
-
-      - name: Run cargo deny
-        run: cargo deny check
+      # Prebuilt binary for the same reason as the audit job: the latest
+      # cargo-deny needs rustc >= 1.88 to build from source, while the repo is
+      # pinned to 1.86. Policy lives in `deny.toml`.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+      - run: cargo deny check
 
   clippy-security:
     name: Clippy Security Lints
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libsdl2-dev
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/rust-setup
         with:
+          toolchain: 1.86.0
           components: clippy
-
-      - name: Run clippy with security lints
+          cache-key: security-clippy
+      # The main CI `lint` job already runs `clippy -D warnings` on the DEFAULT
+      # feature set. This job extends that exact gate to the two non-default,
+      # security- / FFI-relevant frontend features the default build never
+      # compiles (and which therefore rot silently):
+      #   * retroachievements - the RA HTTP client + the vendored rcheevos C FFI
+      #   * gpu-timing         - the wgpu TIMESTAMP_QUERY readback path
+      # so a clippy regression in either feature-gated path fails here.
+      #
+      # NOTE: the previous `-W clippy::unwrap_used -W clippy::expect_used`
+      # restriction lints were removed. Under `-D warnings` they promote EVERY
+      # legitimate `.unwrap()`/`.expect()` (hot paths, tests, build scripts) to
+      # a hard error, which is what kept this job permanently red. `-D warnings`
+      # alone is the meaningful, reliable security / quality gate.
+      - name: Run clippy (-D warnings) incl. RA + GPU-timing features
         run: |
-          cargo clippy --workspace --all-features -- \
-            -W clippy::unwrap_used \
-            -W clippy::expect_used \
-            -D warnings
+          cargo clippy --workspace --all-targets \
+            --features rustynes-frontend/retroachievements,rustynes-frontend/gpu-timing \
+            -- -D warnings

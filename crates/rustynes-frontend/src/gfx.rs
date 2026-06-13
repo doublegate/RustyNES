@@ -144,7 +144,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 struct GpuTimer {
     query_set: wgpu::QuerySet,
     resolve_buf: wgpu::Buffer,
-    read_bufs: Vec<wgpu::Buffer>,
+    // `Arc` because each readback buffer is moved into a `'static` `map_async`
+    // callback that outlives the frame; wgpu's `Buffer` is not `Clone`.
+    read_bufs: Vec<Arc<wgpu::Buffer>>,
     /// Which `read_bufs` slot this frame copies into.
     cursor: usize,
     /// Slots with an outstanding `map_async` (cleared by the map callback,
@@ -175,12 +177,12 @@ impl GpuTimer {
         });
         let read_bufs = (0..Self::RING)
             .map(|i| {
-                device.create_buffer(&wgpu::BufferDescriptor {
+                Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some(&format!("nes-gpu-timer-read-{i}")),
                     size: 16,
                     usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
-                })
+                }))
             })
             .collect();
         Self {
@@ -204,7 +206,7 @@ impl GpuTimer {
     /// Bracket-end: write timestamp 1, resolve both into the resolve buffer
     /// and copy into this frame's readback slot (skipped while that slot's
     /// previous map is still in flight).
-    fn end(&mut self, encoder: &mut wgpu::CommandEncoder) {
+    fn end(&self, encoder: &mut wgpu::CommandEncoder) {
         encoder.write_timestamp(&self.query_set, 1);
         if self.in_flight[self.cursor].load(std::sync::atomic::Ordering::Acquire) {
             return;
@@ -868,7 +870,7 @@ impl Gfx {
     pub fn last_gpu_pass_ms(&self) -> Option<f32> {
         #[cfg(all(not(target_arch = "wasm32"), feature = "gpu-timing"))]
         {
-            return self.gpu_timer.as_ref().and_then(GpuTimer::last_ms);
+            self.gpu_timer.as_ref().and_then(GpuTimer::last_ms)
         }
         #[cfg(not(all(not(target_arch = "wasm32"), feature = "gpu-timing")))]
         {

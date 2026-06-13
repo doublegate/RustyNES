@@ -18,6 +18,16 @@
 //! Always prints per-frame `run_frame` wall-time stats (min/median/p99/max
 //! + the 10 slowest frames) so the stutter spike is visible.
 
+// Diagnostic dev tool only: every cast here is on an NES-bounded dimension
+// (W=256, H=240, small crop/frame counts) or a wall-clock timing stat, where
+// the pedantic cast lints cannot represent a real truncation/precision bug.
+// Allow them file-wide rather than annotating each diagnostic line.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss
+)]
+
 use std::path::Path;
 use std::time::Instant;
 
