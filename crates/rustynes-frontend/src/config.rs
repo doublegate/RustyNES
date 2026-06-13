@@ -450,6 +450,10 @@ pub struct SystemBindings {
     /// `#[serde(default)]` so older configs keep loading.
     #[serde(default = "default_frame_advance")]
     pub frame_advance: String,
+    /// v1.0.0 (UX3 BUG-1) — toggle pause/resume (default `Space`).
+    /// `#[serde(default)]` so older configs keep loading.
+    #[serde(default = "default_pause")]
+    pub pause: String,
 }
 
 fn default_debug_overlay() -> String {
@@ -496,6 +500,10 @@ fn default_frame_advance() -> String {
     "Backslash".into()
 }
 
+fn default_pause() -> String {
+    "Space".into()
+}
+
 impl Default for SystemBindings {
     fn default() -> Self {
         Self {
@@ -516,6 +524,7 @@ impl Default for SystemBindings {
             toggle_menu_bar: default_toggle_menu_bar(),
             fast_forward: default_fast_forward(),
             frame_advance: default_frame_advance(),
+            pause: default_pause(),
         }
     }
 }

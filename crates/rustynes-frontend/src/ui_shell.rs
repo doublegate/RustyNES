@@ -452,11 +452,12 @@ impl UiShell {
                 // ----- Emulation -----
                 ui.menu_button("Emulation", |ui| {
                     let pause_label = if self.paused { "Resume" } else { "Pause" };
-                    // (BUG-4) disabled during netplay.
+                    // (BUG-4) disabled during netplay. (UX3 BUG-1) show the
+                    // pause/resume accelerator key alongside the label.
                     if ui
                         .add_enabled(
                             frame.rom_loaded && !frame.netplay_active,
-                            egui::Button::new(pause_label),
+                            egui::Button::new(pause_label).shortcut_text(accel_hint(&keys.pause)),
                         )
                         .clicked()
                     {

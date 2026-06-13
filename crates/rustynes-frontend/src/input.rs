@@ -99,6 +99,11 @@ pub enum SysAction {
     /// Step exactly one frame while paused (default `Backslash`). Emitted on
     /// press only.
     FrameAdvance,
+    /// v1.0.0 (UX3 BUG-1) — toggle pause/resume (default `Space`). The
+    /// keyboard path to pause/resume that also guarantees an escape from a
+    /// paused state if the menu-bar redraw edge is ever missed. Emitted on
+    /// press only.
+    TogglePause,
 }
 
 /// Keyboard layout resolved from the loaded [`InputConfig`].
@@ -182,6 +187,7 @@ impl KeyBindings {
             &cfg.system.frame_advance,
             SysAction::FrameAdvance,
         );
+        try_bind(&mut system, &cfg.system.pause, SysAction::TogglePause);
         Self {
             player1,
             player2,

@@ -97,6 +97,16 @@ impl CheatPanelState {
     pub fn enabled_raw_cheats(&self) -> Vec<RawCheat> {
         self.raw.iter().filter(|c| c.enabled).cloned().collect()
     }
+
+    /// v1.0.0 (UX3 BUG-3) — push the panel's enabled Game Genie codes into
+    /// `nes`, clearing any stale ones first. Called by the app after a Reset /
+    /// Power-Cycle (and on ROM load) so the live core reflects the configured
+    /// codes even while the panel is closed (the every-frame resync in [`show`]
+    /// only runs while the panel is open). An empty enabled set is just a
+    /// `clear_genie_codes` on an already-empty map — byte-identical no-cheat path.
+    pub fn reapply_to_nes(&mut self, nes: &mut Nes) {
+        resync_nes(self, nes);
+    }
 }
 
 /// Render the cheat panel. Re-syncs `nes` and persists (via `persist`, native
@@ -118,8 +128,18 @@ pub fn show(
         .show(ctx, |ui| {
             changed = body(ui, state);
         });
+    // v1.0.0 (UX3 BUG-3) — re-sync the live core to the panel's enabled set on
+    // EVERY frame the panel is open, not just when the list `changed`. The core
+    // could have silently lost the codes between edits (a Reset / Power-Cycle, a
+    // fresh ROM load that built a new `Nes`, or any future state swap), in which
+    // case the `changed`-only resync never re-applied them and the codes "did
+    // nothing". An every-frame resync is cheap (a `clear` + a few `BTreeMap`
+    // inserts over the typically tiny enabled set) and makes the live core always
+    // reflect what the panel shows. With no enabled codes this is just a
+    // `clear_genie_codes` on an already-empty map, so the no-cheat PRG-read path
+    // stays byte-identical. Persistence still only fires on an actual change.
+    resync_nes(state, nes);
     if changed {
-        resync_nes(state, nes);
         persist_cheats(state, persist);
     }
 }
@@ -128,18 +148,16 @@ pub fn show(
 /// persistence (the `persist` argument is absent).
 #[cfg(target_arch = "wasm32")]
 pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut CheatPanelState, nes: &mut Nes) {
-    let mut changed = false;
     egui::Window::new("Cheats (Game Genie)")
         .open(open)
         .default_pos([560.0, 64.0])
         .default_size([420.0, 380.0])
         .resizable(true)
         .show(ctx, |ui| {
-            changed = body(ui, state);
+            let _ = body(ui, state);
         });
-    if changed {
-        resync_nes(state, nes);
-    }
+    // v1.0.0 (UX3 BUG-3) — every-frame resync (see the native variant above).
+    resync_nes(state, nes);
 }
 
 /// The window body. Returns `true` if the cheat set changed this frame.

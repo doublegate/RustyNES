@@ -161,6 +161,21 @@ pub enum AppEvent {
 /// Default window scale (each NES pixel becomes Nx host pixels at startup).
 const INITIAL_SCALE: u32 = 3;
 
+/// v1.0.0 (UX3 BUG-2) — minimum window WIDTH (logical px) that keeps the
+/// always-on chrome readable. The menu bar (File / Emulation / Tools / View /
+/// Debug / Help) plus the status bar need a comfortable width; at 1x the NES is
+/// only 256 px wide, far too narrow, so View -> Window Size clamps the width up
+/// to this floor and the game letterboxes within (exactly like a drag-resize).
+#[cfg(not(target_arch = "wasm32"))]
+const MIN_CHROME_WIDTH: f64 = 560.0;
+
+/// v1.0.0 (UX3 BUG-2) — the chrome HEIGHT (logical px) reserved above/below the
+/// emulated image for the menu bar + status bar. The game area is
+/// `NES_H * scale`; the total window height is that plus this allowance so the
+/// emulated picture lands near the requested multiple with room for the chrome.
+#[cfg(not(target_arch = "wasm32"))]
+const CHROME_HEIGHT: f64 = 56.0;
+
 /// The required size of the Famicom Disk System BIOS (`disksys.rom`): 8 KiB.
 const FDS_BIOS_SIZE: usize = 8192;
 
@@ -1959,14 +1974,19 @@ impl App {
 
     /// Reset the running emulator (and keep `RetroAchievements` in sync when the
     /// feature is active — Reset is always allowed, even in hardcore).
-    // `&mut self` is only exercised by the RA build (`reset_ra`); the default
-    // build mutates through the emu lock alone — a cfg artifact.
-    #[allow(clippy::needless_pass_by_ref_mut)]
     fn do_reset(&mut self) {
         {
             let mut guard = self.emu.lock();
             if let Some(nes) = guard.nes.as_mut() {
                 nes.reset();
+                // v1.0.0 (UX3 BUG-3) — re-apply the configured Game Genie codes
+                // to the post-reset core (disjoint borrow: `guard.nes` + the
+                // separate `debugger` field), so cheats keep working across a
+                // Reset even with the Cheats panel closed. A no-op when no codes
+                // are enabled (the no-cheat path stays byte-identical).
+                if let Some(debugger) = self.debugger.as_mut() {
+                    debugger.reapply_genie_codes(nes);
+                }
             }
         }
         #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
@@ -2257,15 +2277,36 @@ impl App {
         if self.ui.fullscreen {
             self.toggle_fullscreen();
         }
-        if let Some(gfx) = self.gfx.as_ref() {
-            let scale = scale.clamp(1, 8);
-            // The menu + status bars take ~48 logical px of height; add that so
-            // the NES image (NES_W x NES_H) lands near `scale`x after the chrome.
-            let w = f64::from(NES_W * scale);
-            let h = f64::from(NES_H * scale) + 48.0;
-            let _ = gfx
-                .window
-                .request_inner_size(winit::dpi::LogicalSize::new(w, h));
+        let scale = scale.clamp(1, 8);
+        // v1.0.0 (UX3 BUG-2) — the chrome (menu + status bars) is drawn as an
+        // egui overlay at a FIXED readable size on top of the window; the game
+        // letterboxes into whatever space is left (the drag-resize path already
+        // does this correctly). So the requested size only needs to (a) be wide
+        // enough that the menu bar isn't clipped — clamp the width up to
+        // `MIN_CHROME_WIDTH` (at 1x the raw `NES_W * scale` of 256 px is far too
+        // narrow, which clipped the menu and offset its hit-areas, the "mouse
+        // desync") — and (b) leave `CHROME_HEIGHT` for the bars above the
+        // `NES_H * scale` game area.
+        let w = f64::from(NES_W * scale).max(MIN_CHROME_WIDTH);
+        let h = f64::from(NES_H * scale) + CHROME_HEIGHT;
+        let requested = winit::dpi::LogicalSize::new(w, h);
+        // winit MAY return the granted physical size synchronously (in which
+        // case no `Resized` event follows); otherwise the request triggers a
+        // `Resized` that `window_event` feeds to egui + `gfx.resize`. Handle the
+        // synchronous case here so egui's pointer hit-test stays aligned with the
+        // render in both cases.
+        let granted = self
+            .gfx
+            .as_ref()
+            .and_then(|gfx| gfx.window.request_inner_size(requested));
+        if let Some(granted) = granted {
+            self.window_size = (granted.width.max(1), granted.height.max(1));
+            if let Some(gfx) = self.gfx.as_mut() {
+                gfx.resize(granted.width, granted.height);
+            }
+            if let Some(gfx) = self.gfx.as_ref() {
+                gfx.window.request_redraw();
+            }
         }
     }
 
@@ -2275,13 +2316,19 @@ impl App {
     const fn set_window_scale(&self, _scale: u32) {}
 
     /// Power-cycle the running emulator (and keep `RetroAchievements` in sync).
-    // Same cfg artifact as `do_reset`.
-    #[allow(clippy::needless_pass_by_ref_mut)]
     fn do_power_cycle(&mut self) {
         {
             let mut guard = self.emu.lock();
             if let Some(nes) = guard.nes.as_mut() {
                 nes.power_cycle();
+                // v1.0.0 (UX3 BUG-3) — re-apply the configured Game Genie codes
+                // to the freshly cold-booted core (disjoint borrow: `guard.nes` +
+                // the `debugger` field) so cheats keep working across a Power-
+                // Cycle even with the Cheats panel closed. A no-op when no codes
+                // are enabled (the no-cheat path stays byte-identical).
+                if let Some(debugger) = self.debugger.as_mut() {
+                    debugger.reapply_genie_codes(nes);
+                }
             }
         }
         // v1.0.0 (BUG-7) — a cold boot should RUN: clear any prior pause so the
@@ -2639,6 +2686,29 @@ impl App {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
+            // v1.0.0 (UX3 BUG-1) — user-paused (Emulation -> Pause) with a ROM
+            // loaded and netplay inactive: the producer (emu thread OR the
+            // synchronous pacer) is stopped, so it sends no `EmuFrame` pings and
+            // re-arms no redraws. Without an independent heartbeat the menu bar
+            // never repaints, so the "Resume" click (or a hover) is never
+            // serviced and pause looks frozen. Drive the shell at ~30 Hz here
+            // with `WaitUntil` + `request_redraw` so the menu stays fully
+            // interactive while paused; the producer stays idle (no frames). This
+            // MUST run before the `emu_thread_drives()` stand-down below — when
+            // the thread drives, the parked thread is exactly what stops the
+            // pings, so the winit thread has to own the paused redraw cadence.
+            // (BUG-4) NEVER pause while netplay is active (stalling the rollback
+            // session desyncs the peer); the Pause menu item is disabled then too.
+            if self.ui.paused && !self.netplay.is_active() {
+                event_loop.set_control_flow(ControlFlow::WaitUntil(
+                    Instant::now() + Duration::from_millis(33),
+                ));
+                if let Some(gfx) = self.gfx.as_ref() {
+                    gfx.window.request_redraw();
+                }
+                return;
+            }
+
             // v2.8.0 Phase 5 increment 3 — when the dedicated emulation
             // thread owns single-player production, the winit thread does NOT
             // produce here: it idles until the next event (an input, a
@@ -2647,20 +2717,6 @@ impl App {
             // contends with the producing thread.
             if self.emu_thread_drives() {
                 event_loop.set_control_flow(ControlFlow::Wait);
-                return;
-            }
-
-            // v1.0.0 — user-paused (Emulation -> Pause) on the synchronous
-            // native path: stop producing frames but keep the UI responsive.
-            // (The emu-thread path pauses via `EmuControl::set_user_paused`.)
-            // v1.0.0 (BUG-4) — but NEVER pause while a netplay session is
-            // active: stalling the rollback session desyncs the peer. The Pause
-            // menu item is also disabled during netplay, but guard here too.
-            if self.ui.paused && !self.netplay.is_active() {
-                event_loop.set_control_flow(ControlFlow::Wait);
-                if let Some(gfx) = self.gfx.as_ref() {
-                    gfx.window.request_redraw();
-                }
                 return;
             }
 
@@ -3910,6 +3966,13 @@ impl ApplicationHandler<AppEvent> for App {
                         }
                         SysAction::FrameAdvance => {
                             self.request_frame_advance();
+                        }
+                        SysAction::TogglePause => {
+                            // UX3 BUG-1 — the keyboard path to pause/resume
+                            // (same as the Emulation -> Pause menu item). Also a
+                            // guaranteed escape from a paused state if a menu
+                            // redraw edge is ever missed.
+                            self.set_paused(!self.ui.paused);
                         }
                     }
                 }

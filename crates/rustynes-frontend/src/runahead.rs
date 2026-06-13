@@ -182,6 +182,35 @@ mod tests {
         }
     }
 
+    /// v1.0.0 (UX3 BUG-3) — Game Genie codes are a runtime PRG-read overlay
+    /// that lives OUTSIDE the save-state, so the run-ahead snapshot/restore
+    /// (`snapshot_core_into` + `restore_quiet`, run every visible frame) must
+    /// NOT drop them. Verify the code survives a full run-ahead cycle (it would
+    /// be wiped every frame if restore cleared the overlay), so BUG-3 is not a
+    /// run-ahead interaction.
+    #[test]
+    fn runahead_preserves_genie_codes() {
+        let bytes = rom("sprint-2/flowing_palette.nes");
+        let mut nes = Nes::from_rom(&bytes).expect("rom parses");
+        nes.enable_rewind();
+        nes.add_genie_code("SXIOPO").expect("valid 6-char code");
+        assert_eq!(nes.genie_codes().count(), 1, "code added");
+
+        let mut ra = RunAhead::default();
+        let mut discard = vec![0.0f32; 8192];
+        for _ in 0..5u32 {
+            ra.run_frame_ahead(&mut nes, 1);
+            let _ = nes.drain_audio_into(&mut discard);
+            ra.finish(&mut nes);
+            // The overlay must survive every snapshot/restore cycle.
+            assert_eq!(
+                nes.genie_codes().count(),
+                1,
+                "genie code dropped by a run-ahead snapshot/restore cycle"
+            );
+        }
+    }
+
     /// Rewind-ring contents: run-ahead must push exactly one (persistent)
     /// frame per cycle — the hidden + visible frames never land in the
     /// ring, and the rollback must not clear it.

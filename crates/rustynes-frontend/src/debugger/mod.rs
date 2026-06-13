@@ -302,6 +302,16 @@ impl DebuggerOverlay {
         self.cheat_ui.enabled_raw_cheats()
     }
 
+    /// v1.0.0 (UX3 BUG-3) — re-apply the cheat panel's enabled Game Genie codes
+    /// to `nes`. The app calls this after a Reset / Power-Cycle so the live core
+    /// reflects the configured codes even when the Cheats panel is closed (the
+    /// panel's own every-frame resync only runs while it is open). An empty
+    /// enabled set clears the (already-empty) map — the no-cheat path stays
+    /// byte-identical.
+    pub fn reapply_genie_codes(&mut self, nes: &mut Nes) {
+        self.cheat_ui.reapply_to_nes(nes);
+    }
+
     /// Returns `true` if the overlay currently wants the keyboard (i.e.
     /// the user is typing into a text input). The main app uses this to
     /// gate emulator input.
