@@ -61,7 +61,15 @@ cargo run --release -p rustynes-frontend                 # opens with no ROM; me
 #   trunk serve                                          # dev server
 #   trunk build --release                                # wasm-winit (default)
 #   trunk build --release --no-default-features --features wasm-canvas  # lightweight embed
-# CI deploy: .github/workflows/web.yml -> https://doublegate.github.io/RustyNES/
+# wasm clippy gates (CI): cargo clippy -p rustynes-frontend --target wasm32-unknown-unknown
+#   --lib --bins -- -D warnings   (and again with --no-default-features --features wasm-canvas)
+# GOTCHA: web/Trunk.toml pins the wasm-bindgen CLI version, which MUST exactly match the
+#   wasm-bindgen LIBRARY in Cargo.lock (grep -A1 'name = "wasm-bindgen"' Cargo.lock). A
+#   mismatch fails `trunk build` (and the Pages deploy) at the wasm-bindgen step, but wasm
+#   clippy still passes — so bump the pin whenever a resolve moves the library version.
+# CI deploy: .github/workflows/web.yml ("Deploy Pages (demo + docs)") publishes BOTH the
+#   playable demo (root) and the workspace rustdoc (/api/) to GitHub Pages from the
+#   "GitHub Actions" source: https://doublegate.github.io/RustyNES/ + /api/.
 
 # Benchmarks (criterion)
 cargo bench -p rustynes-cpu
@@ -127,3 +135,5 @@ These cross-cutting decisions span multiple files. Reading individual chip docs 
 - ADRs go in `docs/adr/` (Michael Nygard format).
 - `rustynes-core` re-exports the public types from the chip crates; downstream consumers (`rustynes-frontend`, `rustynes-test-harness`) should depend on `rustynes-core` rather than the chip crates directly.
 - When relabeling old engine "v2.x" narrative for users, present it as upstream lineage/history — **never as a current RustyNES release version.** The current release is **v1.0.0**.
+- **v1.0.0 is shipped + live** (tag `v1.0.0`, GitHub release + Linux/macOS-aarch64/Windows binaries, the Pages demo + `/api/` docs). The full release + post-release record (the Dependabot `-s ours` integration, the "RustyNES v2" leftover scrub, the combined-Pages + wasm-bindgen fixes, the Actions cleanup) is in `docs/v1.0.0-synthesis-handoff-2026-06-13.md` — read it before touching CI, Pages, or release tooling.
+- **RetroAchievements client identity:** the RA HTTP User-Agent (how RA authenticates/identifies/allowlists the client) is `RustyNES/<crate version> rcheevos/<rcheevos version>` — the `RA_USER_AGENT` const in `crates/rustynes-cheevos/src/http.rs`; the rcheevos version auto-syncs from the vendored `rc_version.h` via `build.rs` (`RCHEEVOS_VERSION`). Keep the leading `RustyNES/` token (a regression test guards it).
