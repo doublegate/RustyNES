@@ -46,6 +46,12 @@ fn main() {
     println!("cargo:rerun-if-changed=static_asserts.c");
     println!("cargo:rerun-if-changed={}", vendor.display());
 
+    // Expose the vendored rcheevos version (parsed from `src/rc_version.h`) as
+    // `RCHEEVOS_VERSION` so the RetroAchievements HTTP User-Agent can append the
+    // canonical `rcheevos/<version>` clause (`src/http.rs`) and stay in sync with
+    // the vendored library across a re-vendor — no hardcoded version to drift.
+    emit_rcheevos_version(&src);
+
     // Collect every vendored .c file, then drop the disc/zip/encrypted handlers
     // that the NO_* defines turn off (defensive: they should not be in vendor/,
     // but exclude by name so a stray copy can't break the link).
@@ -86,6 +92,30 @@ fn main() {
     build.file(manifest_dir.join("static_asserts.c"));
 
     build.compile("rcheevos");
+}
+
+/// Parse `RCHEEVOS_VERSION_{MAJOR,MINOR,PATCH}` from the vendored
+/// `src/rc_version.h` and emit `cargo:rustc-env=RCHEEVOS_VERSION=<maj>.<min>.<patch>`.
+fn emit_rcheevos_version(src: &Path) {
+    let header = src.join("rc_version.h");
+    let text = std::fs::read_to_string(&header)
+        .unwrap_or_else(|e| panic!("read {}: {e}", header.display()));
+    let field = |name: &str| -> String {
+        text.lines()
+            .find_map(|line| {
+                line.trim()
+                    .strip_prefix("#define ")?
+                    .strip_prefix(name)?
+                    .split_whitespace()
+                    .next()
+                    .map(str::to_owned)
+            })
+            .unwrap_or_else(|| panic!("{name} not found in {}", header.display()))
+    };
+    let major = field("RCHEEVOS_VERSION_MAJOR");
+    let minor = field("RCHEEVOS_VERSION_MINOR");
+    let patch = field("RCHEEVOS_VERSION_PATCH");
+    println!("cargo:rustc-env=RCHEEVOS_VERSION={major}.{minor}.{patch}");
 }
 
 fn collect_c_files(dir: &Path, excluded: &[&str], out: &mut Vec<PathBuf>) {

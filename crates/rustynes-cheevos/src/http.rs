@@ -127,16 +127,28 @@ impl Drop for HttpTransport {
     }
 }
 
+/// The RetroAchievements client identification string (HTTP `User-Agent`).
+///
+/// RA recognizes an emulator by the leading `<Client>/<Version>` token —
+/// here `RustyNES/<crate version>`; an unrecognized client gets the "unknown
+/// emulator" warning and cannot earn hardcore unlocks. Setting this is the
+/// prerequisite for RA to allowlist RustyNES server-side (see docs / the
+/// integration request). The canonical `rcheevos/<version>` clause is appended
+/// per RA convention (RA logs it); the rcheevos version comes from the vendored
+/// library via `RCHEEVOS_VERSION` (emitted by `build.rs` from `rc_version.h`),
+/// so it stays correct across a re-vendor. Result, e.g.:
+/// `RustyNES/1.0.0 rcheevos/12.3.0`.
+pub(crate) const RA_USER_AGENT: &str = concat!(
+    "RustyNES/",
+    env!("CARGO_PKG_VERSION"),
+    " rcheevos/",
+    env!("RCHEEVOS_VERSION")
+);
+
 fn worker_loop(job_rx: &Receiver<HttpJob>, completion_tx: &Sender<HttpCompletion>) {
-    // Identify this client to the RetroAchievements server. RA recognizes an
-    // emulator by the leading `<Client>/<Version>` token of the User-Agent; an
-    // unrecognized client gets the "unknown emulator" warning and cannot earn
-    // hardcore unlocks. Setting this is the prerequisite for RA to allowlist
-    // RustyNES server-side (see docs / the integration request). The rcheevos
-    // version is appended for completeness (RA logs it).
     let agent = ureq::AgentBuilder::new()
         .timeout(std::time::Duration::from_secs(30))
-        .user_agent(concat!("RustyNES/", env!("CARGO_PKG_VERSION"), " rcheevos"))
+        .user_agent(RA_USER_AGENT)
         .build();
 
     // Exits when the job sender is dropped (transport Drop).
@@ -234,4 +246,44 @@ pub(crate) extern "C" fn server_call_trampoline(
             });
         });
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RA_USER_AGENT;
+
+    /// The RetroAchievements User-Agent must identify the client as `RustyNES`
+    /// (the token RA allowlists by) with a version, and carry a non-empty
+    /// canonical `rcheevos/<version>` clause. Guards against a name/version
+    /// regression (e.g. a stray "RustyNES v2" or a dropped rcheevos version).
+    #[test]
+    fn ra_user_agent_identifies_rustynes_with_versions() {
+        // Leading client token: `RustyNES/<version>`, version present (not bare).
+        let client = RA_USER_AGENT
+            .split(' ')
+            .next()
+            .expect("user-agent has a leading token");
+        let (name, version) = client
+            .split_once('/')
+            .expect("client token is name/version");
+        assert_eq!(name, "RustyNES", "RA identifies the client by this name");
+        assert!(!version.is_empty(), "client version must be present");
+        assert!(
+            !RA_USER_AGENT.contains("RustyNES v2") && !RA_USER_AGENT.contains("RustyNES_v2"),
+            "no stale v2 identifier"
+        );
+
+        // Canonical rcheevos clause with a non-empty version.
+        let clause = RA_USER_AGENT
+            .split(' ')
+            .find_map(|t| t.strip_prefix("rcheevos/"))
+            .expect("user-agent carries an rcheevos/<version> clause");
+        assert!(!clause.is_empty(), "rcheevos version must be present");
+        assert!(
+            clause
+                .split('.')
+                .all(|p| p.chars().all(|c| c.is_ascii_digit()) && !p.is_empty()),
+            "rcheevos version is dotted digits, got {clause:?}"
+        );
+    }
 }
