@@ -8,7 +8,9 @@ Thank you for your interest in contributing to RustyNES! We welcome contribution
 - [How Can I Contribute?](#how-can-i-contribute)
 - [Development Setup](#development-setup)
 - [Coding Standards](#coding-standards)
+- [The Quality Gate](#the-quality-gate)
 - [Pull Request Process](#pull-request-process)
+- [Test ROM Legalities](#test-rom-legalities)
 - [Getting Help](#getting-help)
 
 ## Code of Conduct
@@ -19,57 +21,38 @@ This project adheres to the [Contributor Covenant Code of Conduct](CODE_OF_CONDU
 
 ### Reporting Bugs
 
-- Use the [Bug Report template](.github/ISSUE_TEMPLATE/bug_report.md)
-- Search existing issues first to avoid duplicates
-- Include system information, ROM details, and reproduction steps
-- Provide logs when possible (`RUST_LOG=debug`)
+- Use the [Bug Report template](.github/ISSUE_TEMPLATE/bug_report.md).
+- Search existing issues first to avoid duplicates.
+- Include the ROM name + iNES mapper number, expected vs. actual behavior, reproduction steps (frame number if possible), a save state (`.rns`) if applicable, the `rustynes --version` output, and your OS.
+- Provide logs when possible (`RUST_LOG=debug`).
 
 ### Suggesting Features
 
-- Use the [Feature Request template](.github/ISSUE_TEMPLATE/feature_request.md)
-- Clearly describe the problem and proposed solution
-- Explain use cases and benefits
-- Check the [ROADMAP](ROADMAP.md) for alignment with project goals
+- Use the [Feature Request template](.github/ISSUE_TEMPLATE/feature_request.md).
+- Clearly describe the problem and proposed solution, and explain use cases.
+- Check the [ROADMAP](ROADMAP.md) for alignment with project goals.
 
 ### Requesting Mappers
 
-- Use the [Mapper Request template](.github/ISSUE_TEMPLATE/mapper_request.md)
-- Provide mapper number, games that use it, and technical references
-- Include NESdev wiki links and test ROM information
+- Use the [Mapper Request template](.github/ISSUE_TEMPLATE/mapper_request.md).
+- Provide the mapper number, games that use it, NESdev wiki links, and test ROM information.
 
 ### Contributing Code
 
-Areas where we especially need help:
+Areas where help is especially valued:
 
-- **Core Emulation** (Phase 1 focus):
-  - CPU: 6502 instruction implementation
-  - PPU: Rendering pipeline and timing
-  - APU: Audio channel synthesis
-  - Mappers: NROM, MMC1, MMC3 implementation
-
-- **Testing**:
-  - Test ROM integration
-  - Property-based tests
-  - Game compatibility testing
-  - Benchmarking
-
-- **Documentation**:
-  - Code documentation (rustdoc comments)
-  - Examples and tutorials
-  - Technical specification clarifications
-
-- **Tooling**:
-  - CI/CD improvements
-  - Build scripts
-  - Development utilities
+- **Accuracy** — closing residual test-ROM cases, region (PAL/Dendy) edge cases, new mapper families.
+- **Testing** — test ROM integration, property-based tests, game compatibility, benchmarking.
+- **Documentation** — rustdoc comments, examples, subsystem-spec clarifications.
+- **Tooling** — CI/CD, build scripts, debugging utilities.
 
 ## Development Setup
 
 ### Prerequisites
 
-- **Rust 1.75 or newer** ([install via rustup](https://rustup.rs))
-- **SDL2 development libraries**
-- **Git**
+- **Rust 1.86** (pinned in `rust-toolchain.toml`; `rustup` auto-installs it, including the `wasm32-unknown-unknown` and `thumbv7em-none-eabihf` targets).
+- **Git**.
+- **System libraries** for the `winit` + `wgpu` + `cpal` frontend.
 
 ### Platform-Specific Setup
 
@@ -77,26 +60,29 @@ Areas where we especially need help:
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y build-essential git libsdl2-dev
+sudo apt-get install -y build-essential git \
+  libxkbcommon-dev libwayland-dev libxkbcommon-x11-dev libasound2-dev libudev-dev
+```
+
+**CachyOS / Arch:**
+
+```bash
+sudo pacman -S --needed base-devel git libxkbcommon wayland alsa-lib systemd-libs
 ```
 
 **Fedora:**
 
 ```bash
-sudo dnf install gcc git SDL2-devel
+sudo dnf install gcc git wayland-devel libxkbcommon-devel alsa-lib-devel systemd-devel
 ```
 
 **macOS:**
 
 ```bash
-brew install git sdl2
+brew install git   # the wgpu/Metal + CoreAudio stack ships with the OS
 ```
 
-**Windows:**
-
-- Install [Visual Studio 2019+](https://visualstudio.microsoft.com/) with C++ tools
-- Download SDL2 development libraries from [libsdl.org](https://libsdl.org)
-- Set `SDL2_PATH` environment variable
+**Windows:** install Visual Studio 2019+ with the C++ build tools. The frontend uses DX12/Vulkan via `wgpu`; no extra audio/windowing libraries are required.
 
 ### Fork and Clone
 
@@ -110,86 +96,37 @@ git remote add upstream https://github.com/doublegate/RustyNES.git
 ### Build and Test
 
 ```bash
-# Build the project
-cargo build --workspace
-
-# Run tests
-cargo test --workspace
-
-# Run a specific crate's tests
-cargo test -p rustynes-cpu
-
-# Run with optimizations
-cargo build --release --workspace
-```
-
-### Verify Your Setup
-
-```bash
-# Check formatting
-cargo fmt --all -- --check
-
-# Run linter
-cargo clippy --workspace -- -D warnings
-
-# Generate documentation
-cargo doc --workspace --no-deps --open
+cargo build --workspace                              # build everything
+cargo test --workspace                               # unit + integration tests
+cargo test --workspace --features test-roms          # + AccuracyCoin / blargg / kevtris ROM suites
+cargo test -p rustynes-cpu                           # a single crate
+cargo build --release --workspace                    # optimized build
+cargo run --release -p rustynes-frontend -- rom.nes  # run the emulator (binary: rustynes)
 ```
 
 ## Coding Standards
 
 ### Rust Style
 
-- **Format**: Use `cargo fmt` (rustfmt default settings)
-- **Lint**: Pass `cargo clippy -- -D warnings` without warnings
-- **Edition**: Rust 2021
-- **MSRV**: Minimum Supported Rust Version is 1.75
-
-### Code Organization
-
-- Follow Rust naming conventions (snake_case, PascalCase)
-- Use meaningful variable and function names
-- Keep functions focused and concise
-- Organize imports: std → external crates → internal modules
+- **Format:** `cargo fmt` (rustfmt defaults).
+- **Lint:** pass `cargo clippy --workspace --all-targets -- -D warnings` with no warnings.
+- **Edition:** Rust 2021. **MSRV:** 1.86.
+- The chip stack (`rustynes-{cpu,ppu,apu,mappers,core}`) is `#![no_std]` + `extern crate alloc;`. `unsafe` is only permitted at FFI boundaries (`rustynes-cheevos`) and the one native priority hook in `rustynes-frontend`, and **must** carry a `// SAFETY:` comment explaining the invariant.
+- No emojis in code, comments, or commits (project policy).
 
 ### Documentation
 
-All public APIs must have documentation comments:
+All public APIs must have rustdoc comments. Modules get `//!`, items get `///`. Document the *why*, not just the *what*. The `doc` job runs with `RUSTDOCFLAGS="-D warnings"`, so broken intra-doc links fail CI.
 
-```rust
-/// Executes one CPU instruction
-///
-/// This function reads the opcode at the program counter, decodes it,
-/// executes the corresponding instruction, and returns the number of
-/// cycles consumed.
-///
-/// # Arguments
-///
-/// * `bus` - The memory bus for reading/writing
-///
-/// # Returns
-///
-/// Number of CPU cycles consumed by the instruction
-///
-/// # Examples
-///
-/// ```
-/// let mut cpu = Cpu::new();
-/// let mut bus = Bus::new();
-/// let cycles = cpu.step(&mut bus);
-/// assert!(cycles >= 2);
-/// ```
-pub fn step(&mut self, bus: &mut Bus) -> u8 {
-    // Implementation
-}
-```
+### Determinism (hard contract)
+
+Same seed + ROM + input sequence ⇒ bit-identical framebuffer and audio. Do not introduce hidden non-determinism (system time, thread scheduling, OS RNG) into the core. This is what makes save-states, TAS movies, regression oracles, and netplay rollback correct. Frontend-only concerns (dynamic rate control, run-ahead, pacing) must stay in the frontend, never in core synthesis.
 
 ### Testing Requirements
 
-- **Unit tests** for new functions and modules
-- **Integration tests** for component interactions
-- **Test ROMs** for emulation accuracy
-- **Minimum 80% code coverage** for new code
+- **Unit tests** for new functions and modules.
+- **Integration / test-ROM tests** for emulation-accuracy changes. For accuracy work, pin the failing test-ROM expectation first, then implement until it passes.
+- Cover new public behavior; favor concrete asserted values over smoke checks.
 
 ### Commit Messages
 
@@ -198,219 +135,76 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/):
 ```
 <type>(<scope>): <subject>
 
-<body>
+<body — optional, explains *why*>
 
-<footer>
+<footer — optional, e.g. "Closes #42">
 ```
 
-**Types:**
+**Types:** `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`, `perf`, `build`, `ci`. Subject is imperative, ≤ 72 chars, no trailing period.
 
-- `feat`: New feature
-- `fix`: Bug fix
-- `docs`: Documentation changes
-- `style`: Code style changes (formatting)
-- `refactor`: Code refactoring
-- `test`: Adding/updating tests
-- `chore`: Build/tooling changes
-
-**Examples:**
-
-```
-feat(cpu): implement ADC instruction with decimal mode
-
-Adds the ADC (Add with Carry) instruction including proper
-handling of the decimal flag for BCD arithmetic.
-
-Closes #42
-```
+**Example:**
 
 ```
 fix(ppu): correct sprite 0 hit timing
 
-Sprite 0 hit was occurring one cycle too late. Adjusted
-detection to occur at cycle 257 of the scanline.
+Sprite 0 hit fired one dot too late; detection now occurs at the
+correct dot. Validated against the kevtris sprite-hit timing ROM.
 
 Fixes #85
 ```
 
+## The Quality Gate
+
+Before opening a PR, verify all of the following pass:
+
+- [ ] `cargo fmt --all --check`
+- [ ] `cargo clippy --workspace --all-targets -- -D warnings`
+- [ ] `cargo test --workspace`
+- [ ] If you touched the ROM harness: `cargo test --workspace --features test-roms` still green
+- [ ] If you touched the chip stack: `cargo build -p rustynes-core --target thumbv7em-none-eabihf --no-default-features` still compiles
+- [ ] New public items have rustdoc comments
+- [ ] **`CHANGELOG.md` `[Unreleased]` updated for any user-visible change**
+- [ ] Affected `docs/` files updated if architecture or chip behavior changed
+- [ ] Ticket marked complete in the relevant `to-dos/` sprint file (if you picked one)
+
 ## Pull Request Process
 
-### Before Submitting
-
-1. **Update from upstream:**
+1. **Sync with upstream:**
 
    ```bash
-   git fetch upstream
-   git rebase upstream/main
+   git fetch upstream && git rebase upstream/main
    ```
 
-2. **Run all checks:**
+2. **Run the quality gate** (above).
+
+3. **Branch + push:** branch names are `<type>/<short-desc>` (e.g. `feat/cpu-immediate-addressing`).
 
    ```bash
-   cargo fmt --all
-   cargo clippy --workspace -- -D warnings
-   cargo test --workspace
+   git push origin feat/my-feature
    ```
 
-3. **Update documentation:**
-   - Add/update rustdoc comments
-   - Update relevant markdown files in `docs/`
-   - Add changelog entry if significant change
+4. **Open the PR**, fill out the template, reference the ticket(s) and any relevant `docs/` files, and ensure CI passes.
 
-### Creating a Pull Request
+5. **Respond to review feedback** promptly and keep the PR scope focused.
 
-1. **Push your branch:**
+Maintainers aim to review within 3–14 days; at least one approval and green CI are required to merge. After merge your contribution is credited in `CHANGELOG.md` and the release notes.
 
-   ```bash
-   git push origin feature/my-feature
-   ```
+## Test ROM Legalities
 
-2. **Open a Pull Request** on GitHub
-
-3. **Fill out the PR template** completely
-
-4. **Ensure CI passes** (automated checks must succeed)
-
-5. **Respond to review feedback** promptly
-
-### Review Process
-
-- Maintainers will review your PR within 3-14 days
-- Automated checks (CI) must pass
-- At least one maintainer approval required
-- Address all review comments
-- Keep the PR scope focused
-
-### After Merge
-
-Your contribution will be:
-
-- Included in the next release
-- Documented in CHANGELOG.md
-- Credited in release notes
+The repository ships test ROMs (`tests/roms/`) that are individually CC0 or public-domain; do not add ROMs unless their license is explicitly documented in `tests/roms/LICENSES.md`. **Never commit commercial Nintendo ROMs.** Place them in `tests/roms/external/` (gitignored) for local oracle testing.
 
 ## Getting Help
 
-### Resources
-
-- **Documentation**: [docs/](docs/) folder
-- **Detailed Contributing Guide**: [docs/dev/CONTRIBUTING.md](docs/dev/CONTRIBUTING.md)
-- **Build Instructions**: [docs/dev/BUILD.md](docs/dev/BUILD.md)
-- **Testing Guide**: [docs/dev/TESTING.md](docs/dev/TESTING.md)
-- **Style Guide**: [docs/dev/STYLE_GUIDE.md](docs/dev/STYLE_GUIDE.md)
-
-### Ask Questions
-
-- **GitHub Discussions**: [General questions and ideas](https://github.com/doublegate/RustyNES/discussions)
-- **GitHub Issues**: [Bug reports and feature requests](https://github.com/doublegate/RustyNES/issues)
-- **NESdev Forums**: [NES hardware questions](https://forums.nesdev.org/)
-
-### Finding Work
-
-- Check issues labeled [`good first issue`](https://github.com/doublegate/RustyNES/labels/good%20first%20issue)
-- Check issues labeled [`help wanted`](https://github.com/doublegate/RustyNES/labels/help%20wanted)
-- Review the [ROADMAP](ROADMAP.md) for upcoming features
-- Ask in [Discussions](https://github.com/doublegate/RustyNES/discussions) what needs help
-
-## Development Workflow
-
-### Feature Development
-
-```bash
-# 1. Create a feature branch
-git checkout -b feature/my-feature
-
-# 2. Make changes
-# ... edit files ...
-
-# 3. Write tests (TDD approach recommended)
-# ... add tests in src/ or tests/ ...
-
-# 4. Run tests
-cargo test
-
-# 5. Format and lint
-cargo fmt
-cargo clippy -- -D warnings
-
-# 6. Commit changes
-git add .
-git commit -m "feat(component): add my feature"
-
-# 7. Push and create PR
-git push origin feature/my-feature
-```
-
-### Test-Driven Development
-
-We strongly encourage TDD:
-
-1. Write a failing test
-2. Implement the feature
-3. Make the test pass
-4. Refactor if needed
-5. Repeat
-
-**Example:**
-
-```rust
-#[test]
-fn test_lda_immediate() {
-    let mut cpu = Cpu::new();
-    let mut bus = Bus::new();
-
-    // LDA #$42
-    bus.write(0x0000, 0xA9);
-    bus.write(0x0001, 0x42);
-
-    let cycles = cpu.step(&mut bus);
-
-    assert_eq!(cpu.a, 0x42);
-    assert_eq!(cycles, 2);
-    assert!(!cpu.p.zero);
-    assert!(!cpu.p.negative);
-}
-```
-
-## Project Structure
-
-```
-rustynes/
-├── crates/
-│   ├── rustynes-core/     # Core emulation engine
-│   ├── rustynes-cpu/      # 6502 CPU
-│   ├── rustynes-ppu/      # 2C02 PPU
-│   ├── rustynes-apu/      # 2A03 APU
-│   ├── rustynes-mappers/  # Mapper implementations
-│   ├── rustynes-desktop/  # Desktop GUI
-│   └── ...
-├── docs/                  # Documentation
-├── tests/                 # Integration tests
-├── benches/               # Benchmarks
-└── examples/              # Usage examples
-```
-
-See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed system design.
-
-## Recognition
-
-Contributors will be recognized in:
-
-- Release notes for each version
-- CHANGELOG.md for significant contributions
-- Project README (for substantial contributions)
+- **Documentation:** the [docs/](docs/) folder (subsystem specs + `docs/STATUS.md` + `docs/adr/`).
+- **GitHub Discussions:** [general questions and design discussion](https://github.com/doublegate/RustyNES/discussions). Use Discussions (not Issues) for design questions.
+- **GitHub Issues:** [bug reports and concrete feature requests](https://github.com/doublegate/RustyNES/issues).
+- **NESdev Forums:** [NES hardware questions](https://forums.nesdev.org/).
+- Check issues labeled [`good first issue`](https://github.com/doublegate/RustyNES/labels/good%20first%20issue) and [`help wanted`](https://github.com/doublegate/RustyNES/labels/help%20wanted), or the [ROADMAP](ROADMAP.md) for upcoming work.
 
 ## License
 
-By contributing to RustyNES, you agree that your contributions will be licensed under both:
-
-- MIT License
-- Apache License 2.0
-
-See [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE) for details.
+By contributing to RustyNES, you agree that your contributions will be dual-licensed under both the [MIT License](LICENSE-MIT) and the [Apache License 2.0](LICENSE-APACHE).
 
 ---
 
-**Thank you for contributing to RustyNES! Your efforts help preserve video game history and create an amazing emulation platform.**
-
-For more detailed guidelines, see [docs/dev/CONTRIBUTING.md](docs/dev/CONTRIBUTING.md).
+**Thank you for contributing to RustyNES!** Your efforts help preserve video game history and grow an accurate, modern emulation platform.

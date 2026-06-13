@@ -2,785 +2,124 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project Overview
+## What this is
 
-RustyNES is a next-generation Nintendo Entertainment System (NES) emulator written in Rust. Target: 100% TASVideos accuracy test pass rate, 300+ mappers, RetroAchievements, GGPO netplay, TAS tools, Lua scripting.
+RustyNES is a cycle-accurate Nintendo Entertainment System emulator written in pure Rust. The accuracy bar is Mesen2 / higan / ares: tight lockstep scheduling at PPU-dot resolution on a master-clock-precise timebase, sub-instruction PPU events visible to subsequent CPU code, and a lookup-table non-linear audio mixer with band-limited synthesis. The frontend is pure Rust (`winit` + `wgpu` + `cpal` + `egui`).
 
-**Status:** v0.8.6 - Phase 1.5 Stabilization In Progress (M7-M8 Complete, M9 85%, M10 50%, M11 83%). All Phase 1 milestones (M1-M6) done.
+**Current release: v1.0.0** — the first stable, production cut. It integrates the cycle-accurate emulation engine (the `rustynes-*` crates) with a complete desktop UX shell and a full documentation synthesis. Headline facts:
 
-**Test Status:** 522+ tests passing (0 failures, 1 ignored). 100% Blargg pass rate (90/90 tests)
+- **AccuracyCoin 100.00% (139/139)**, `nestest` 0-diff against the Nintendulator golden log, blargg / kevtris suites green. The PPU-dot lockstep scheduler is the only path (no legacy integer-lockstep fallback).
+- **51 mapper families**, Famicom Disk System (FDS), Vs. System / PlayChoice-10 RGB PPU, region timing (NTSC / PAL / Dendy) as data, not a build fork.
+- **Rollback netplay** (GGPO-style, UDP native + WebRTC browser, 2–4 players), **RetroAchievements** (opt-in, native-only, vendored rcheevos FFI), **TAS movies** (`.rnm`), save-states, rewind, run-ahead, Game Genie + raw-RAM cheats, Four Score.
+- **Frontend polish:** display-sync pacing matrix, a dedicated emulation thread, late-latched input, a lock-free audio ring with dynamic rate control, an egui debugger overlay, and a desktop UX shell (native menu bar, recent-ROMs list, tabbed Settings window, light/dark/system themes, 8:7 pixel-aspect correction, status bar).
+- **WebAssembly / GitHub Pages** build (winit+wgpu and a lightweight canvas embed), live at <https://doublegate.github.io/RustyNES/>.
+- Workspace: edition 2021, toolchain pinned **1.86**, license **MIT OR Apache-2.0**, author **DoubleGate**.
 
-**Current Version:** v0.8.6 (December 29, 2025)
-- M11 Sub-Cycle Accuracy: Sprints 3-5 complete (83% total milestone progress)
-- DMC DMA Cycle Stealing: CPU stalls 4 cycles per DMC sample fetch via `dmc_stall_cycles` field
-- Open Bus Behavior: `last_bus_value` tracks data bus state; unmapped reads return last bus value
-- Controller Open Bus: Bits 5-7 mixed from open bus with controller data bits 0-4
-- Per-Cycle Mapper Clocking: `mapper.clock(1)` called in `on_cpu_cycle()` for cycle-accurate mapper timing
-- Test Suite: 522+ tests passing (0 failures, 1 ignored doctest), 2 new open bus tests added
-- 100% Blargg Pass Rate: All 90/90 Blargg tests continue to pass
+**Engine lineage (history, not release numbers).** The emulation core descends from an extensively-documented accuracy program (the "RustyNES" engine line) whose internal milestones — the cycle-accurate core, the master-clock scheduler reaching 100%, FDS, netplay, the RetroAchievements + arcade-platform pass, and the performance pass — are folded into RustyNES documentary stages v0.9.0–v0.9.7 and culminate in this v1.0.0 production cut. Where deep technical narrative references old "v1.x"/"v2.x" anchors (e.g. the `v2.0` master-clock refactor, ADRs, audit logs under `docs/`), read those as **upstream engine lineage** — historical engineering context, not RustyNES release versions. `docs/STATUS.md` is the authoritative per-suite pass-count + mapper-coverage matrix.
 
-**Previous Version:** v0.8.5 (December 29, 2025)
-- Cycle-Accurate CPU/PPU Synchronization: M11 Sprints 1 & 2 complete
-- CpuBus Trait: on_cpu_cycle() callback for PPU stepping before each CPU memory access
-- cpu.tick() Method: Cycle-by-cycle CPU execution for sub-instruction timing precision
-- VBlank Timing Tests: Now pass with ±0 cycle accuracy (ppu_02 was ±51, ppu_03 was ±10 cycles)
-- Test Harness: Updated to use CpuBus for cycle-accurate validation
-- Test Suite: 520+ tests passing (0 failures, 1 ignored doctest)
-- 100% Blargg Pass Rate: All 90/90 Blargg tests continue to pass
-
-**Previous Version:** v0.8.4 (December 28, 2025)
-- CPU/PPU Timing: PPU now stepped BEFORE CPU cycle in tick() for accurate $2002 reads at VBlank
-- Version Consistency: Fixed About window (0.8.1) and Settings (0.8.2) showing outdated versions
-- Documentation: Fixed clone_mapper doctest by implementing full Clone for mapper Box types
-- Test Suite: 517+ tests passing (0 failures, 2 ignored for known architectural limitations)
-- 100% Blargg Pass Rate: All 90/90 Blargg tests continue to pass
-
-**Previous Version:** v0.8.3 (December 28, 2025)
-- Critical Rendering Fix: Fixed framebuffer display showing "4 faint postage stamp copies" artifact
-- Palette Conversion: NES palette indices (0-63) now correctly converted to RGB using NES_PALETTE lookup table
-- Documentation: Changed 3 doctests from `ignore` to `no_run` for compile-time verification
-- Zero accuracy regressions (516+ tests passing)
-
-**Previous Version:** v0.8.2 (December 28, 2025)
-- M10 Final Polish: Sprint 1 UI/UX Improvements complete (50% total)
-- Theme Support: Light/Dark/System themes with persistence and real-time switching
-- Status Bar: FPS counter (500ms updates), ROM name display, color-coded status messages
-- Tabbed Settings: Video/Audio/Input/Advanced tabs with comprehensive tooltips
-- Keyboard Shortcuts: Ctrl+O/P/R/Q, F1-F3, M for common operations
-- Modal Dialogs: Welcome screen, error dialogs, confirmation prompts, help window
-- Visual Feedback: Contextual tooltips, organized menus with separators
-- Zero accuracy regressions (508+ tests passing)
-
-**Previous Version:** v0.8.1 (December 28, 2025)
-- M9 Known Issues Resolution: Core implementation 85% complete
-- CPU performance: #[inline] hints on step(), execute_opcode(), handle_nmi(), handle_irq()
-- PPU performance: #[inline] hints on step(), step_with_chr()
-- Audio improvements: Dynamic resampling, A/V sync, buffer management (S1 complete)
-- PPU edge cases: Sprite overflow, palette RAM, mid-scanline writes (S2 complete)
-- Performance optimization: Hot path inline hints (S3 core complete)
-
-**Previous Version:** v0.8.0 (December 28, 2025)
-- Rust 2024 Edition adoption (MSRV 1.88)
-- Comprehensive dependency modernization
-- eframe 0.33 + egui 0.33 immediate mode GUI
-- OpenGL rendering via glow backend (replacing wgpu shader pipeline)
-- cpal 0.16 for low-latency audio with lock-free ring buffer (8192 samples)
-- Audio resampling via rubato 0.16 for flexible sample rate support
-- Native file dialogs with rfd 0.15
-- Gamepad support with gilrs 0.11 (hotplug detection)
-- Configuration persistence with ron 0.12 format
-- Debug windows: CPU, PPU, APU, Memory viewers
-- Performance optimizations: inline hints, buffer reuse patterns
-
-**Previous Version:** v0.7.1 (December 27, 2025)
-- Desktop GUI framework migration: Iced+wgpu to eframe+egui
-- eframe 0.29 + egui 0.29 immediate mode GUI
-- cpal 0.15 for low-latency audio
-- Configuration persistence with ron 0.8 format
-
-**Previous Version:** v0.6.0 (December 20, 2025)
-- M7: Accuracy Improvements complete (all 4 sprints)
-- CPU cycle timing verified (all 256 opcodes, page boundary crossing)
-- PPU VBlank/NMI timing functional, sprite 0 hit working
-- APU frame counter precision fixed (22371 to 22372 cycles)
-- Hardware-accurate non-linear audio mixer (NESdev TND formula)
-- OAM DMA 513/514 cycle precision based on CPU cycle parity
-- CPU cycle tracking added to bus for DMA alignment
-
-## Repository
-
-- **GitHub**: <https://github.com/doublegate/RustyNES>
-- **License**: MIT / Apache-2.0 (dual-licensed)
-- **Started**: December 2025
-
-## Quick Start
-
-```bash
-# Build (once Cargo.toml files are created)
-cargo build --workspace
-cargo build --release
-
-# Test
-cargo test --workspace
-cargo test -p rustynes-cpu
-
-# Run desktop GUI
-cargo run -p rustynes-desktop -- rom.nes
-
-# Lint and format
-cargo clippy --workspace -- -D warnings
-cargo fmt --check
-```
-
-## Architecture
-
-### Workspace Structure (Created)
-
-```text
-rustynes/
-├── crates/
-│   ├── rustynes-core/src/         # Core emulation engine (no_std compatible)
-│   ├── rustynes-cpu/src/          # 6502 CPU (reusable for C64, Apple II)
-│   ├── rustynes-ppu/src/          # 2C02 PPU
-│   ├── rustynes-apu/src/          # 2A03 APU with expansion audio
-│   ├── rustynes-mappers/src/      # All mapper implementations
-│   ├── rustynes-desktop/src/      # eframe/egui GUI frontend
-│   ├── rustynes-web/src/          # WebAssembly frontend
-│   ├── rustynes-tas/src/          # TAS recording/playback (FM2 format)
-│   ├── rustynes-netplay/src/      # GGPO rollback netcode (backroll-rs)
-│   └── rustynes-achievements/src/ # RetroAchievements (rcheevos FFI)
-├── docs/                          # 40+ documentation files
-│   ├── cpu/                       # 6502 CPU specification, timing, opcodes
-│   ├── ppu/                       # 2C02 PPU rendering, timing, scrolling
-│   ├── apu/                       # Audio channels, timing
-│   ├── bus/                       # Memory map, bus conflicts
-│   ├── mappers/                   # Mapper implementations (NROM, MMC1, MMC3, etc.)
-│   ├── api/                       # Core API, save states, configuration
-│   ├── testing/                   # Test ROM guide, nestest golden log
-│   ├── input/                     # Controller handling
-│   ├── dev/                       # Build, testing, contributing, debugging
-│   ├── formats/                   # File format specifications
-│   ├── features/                  # Advanced features documentation
-│   └── platform/                  # Platform-specific build info
-├── tests/                         # Integration tests
-│   └── framework/                 # Test ROM validators and harness tools
-├── benches/                       # Performance benchmarks
-├── examples/                      # Usage examples
-├── test-roms/                     # NES test ROM files (excluded from git)
-├── assets/                        # Static resources
-├── images/                        # Screenshots and visual documentation
-├── temp/                          # Project-specific temporary files (gitignored)
-├── ref-docs/                      # Reference documentation (architecture spec)
-└── ref-proj/                      # Reference emulator projects (excluded from git)
-```
-
-### Core Design Principles
-
-1. **Accuracy First**: Cycle-accurate CPU, dot-level PPU, pass all test ROMs before optimization
-2. **Safe Rust**: Zero unsafe code except for FFI (rcheevos, platform APIs)
-3. **Trait-Based Abstraction**: Strong typing with newtype patterns for registers/addresses
-4. **Modular Crates**: Independent use of CPU/PPU/APU modules
-
-### NES Timing Model
-
-- Master clock: 21.477272 MHz (NTSC)
-- CPU: 1.789773 MHz (master ÷ 12)
-- PPU: 5.369318 MHz (master ÷ 4), 3 dots per CPU cycle
-- Frame: 29,780 CPU cycles, 89,341 PPU dots
-
-## Commands
-
-### Build & Run
+## Build / test / lint
 
 ```bash
 # Build
+cargo check --workspace
 cargo build --workspace
 cargo build --release --workspace
 
-# Test (once implemented)
-cargo test --workspace                    # All tests
-cargo test -p rustynes-cpu                # Single crate
-cargo test cpu_lda_immediate              # Single test
+# Tests
+cargo test --workspace                              # unit + integration
+cargo test --workspace --features test-roms         # + AccuracyCoin / blargg / kevtris ROM suites
+cargo test --workspace --features test-roms,commercial-roms  # + 60-ROM commercial oracle (needs local dumps)
+cargo test -p rustynes-cpu                          # single crate
+cargo test -p rustynes-cpu nestest                  # single test by name substring
+cargo test --workspace -- --test-threads=1          # serial (for flake debugging)
 
-# Run
-cargo run -p rustynes-desktop             # Desktop GUI
-cargo run -p rustynes-desktop -- rom.nes  # With ROM
+# Run only the #[ignore]'d expected-fail probes
+cargo test --workspace --features test-roms --no-fail-fast -- --ignored
 
-# Lint & Format
-cargo clippy --workspace -- -D warnings
-cargo fmt --check
-cargo fmt                                 # Auto-format
+# Quality gates (all run in CI; all must be green)
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 
-# Benchmarks
+# no_std cross-compile (the chip stack must compile against core + alloc only)
+cargo build -p rustynes-core --target thumbv7em-none-eabihf --no-default-features
+
+# Frontend (winit + wgpu + cpal + egui). Binary name is `rustynes`.
+cargo run --release -p rustynes-frontend -- path/to/rom.nes
+cargo run --release -p rustynes-frontend                 # opens with no ROM; menu / F12 to load
+# Default keys P1: arrows = D-pad, Z = A, X = B, Enter = Start, RShift = Select.
+# Default keys P2: WASD = D-pad, Q = A, E = B, P = Start, L = Select.
+# System: Esc = quit, F1 = save state, F4 = load state, F5 (held) = rewind,
+# F2 = reset, F3 = power-cycle, F12 = open ROM, F9 = FDS disk-swap, ~ = toggle debugger.
+# F6/F7/F8 = TAS movie record/play/branch. Drag-and-drop a .nes/.fds to load.
+# USB gamepads auto-bind to P1 (Xbox-style: South=A, West=B, Start, Back/Select, DPad).
+
+# WebAssembly frontend — needs `trunk` + the wasm32 target (auto-installed from
+# rust-toolchain.toml). Run from crates/rustynes-frontend/web:
+#   trunk serve                                          # dev server
+#   trunk build --release                                # wasm-winit (default)
+#   trunk build --release --no-default-features --features wasm-canvas  # lightweight embed
+# CI deploy: .github/workflows/web.yml -> https://doublegate.github.io/RustyNES/
+
+# Benchmarks (criterion)
+cargo bench -p rustynes-cpu
+cargo bench -p rustynes-ppu
+cargo bench -p rustynes-mappers
 cargo bench -p rustynes-core
-
-# WebAssembly
-wasm-pack build crates/rustynes-web --target web
 ```
 
-### Test ROM Validation
+Toolchain is **Rust 1.86** pinned in `rust-toolchain.toml` (required by `edition2024` transitive deps in the frontend stack). CI runs the test job on stable across Linux/macOS/Windows plus an MSRV pin at 1.86 on Linux.
+
+On Linux, anything that pulls in `rustynes-frontend` (which `cargo test --workspace` does) needs the wgpu/winit/cpal system deps:
 
 ```bash
-# Run nestest automated mode (CPU validation)
-cargo test nestest_rom
-
-# Run blargg test suite
-cargo test blargg_
-
-# Full TASVideos accuracy suite
-cargo test tasvideos_
+sudo apt-get install -y libxkbcommon-dev libwayland-dev libxkbcommon-x11-dev libasound2-dev libudev-dev
+# CachyOS / Arch:
+sudo pacman -S --needed libxkbcommon wayland alsa-lib systemd-libs
 ```
 
-### Development Workflow
+## Architecture — load-bearing facts
 
-```bash
-# Pre-commit checks (recommended)
-cargo fmt --check && cargo clippy --workspace -- -D warnings && cargo test --workspace
+These cross-cutting decisions span multiple files. Reading individual chip docs without them in mind will mislead.
 
-# Generate documentation
-cargo doc --workspace --no-deps --open
+**The PPU is the master clock.** The scheduler advances one PPU dot per `tick_one_dot()`; the CPU advances on every third dot (NTSC / Dendy; 3.2nd dot PAL); the APU advances every other CPU cycle. This is **lockstep**, not catch-up. It is the central architectural choice and the reason mid-instruction PPU events (sprite-zero hit at a precise dot, MMC3 IRQ at PPU dot 260, mid-scanline scroll writes) work without per-quirk patches. See `docs/scheduler.md`.
 
-# Check for unused dependencies
-cargo +nightly udeps --workspace
+**The Bus owns everything mutable.** `rustynes-core::Bus` holds the PPU, APU, mapper-via-cart, WRAM, controllers, and open-bus latch. The CPU borrows `&mut Bus` during `tick()`. Per the TetaNES postmortem, this single choice avoids the borrow-checker fight that the alternative ("CPU holds PPU, but PPU also needs CPU bus") creates. The PPU and APU each see a smaller trait (`PpuBus`, `ApuBus`) for what they actually need — mapper-mediated CHR/nametable reads and DMC sample fetches respectively.
 
-# Security audit
-cargo audit
-```
+**Workspace dependency graph is one-directional.** `rustynes-cpu` has no PPU or APU dep. `rustynes-ppu` depends on `rustynes-mappers` only (CHR/nametable bus). `rustynes-apu` is independent. `rustynes-core` ties them together. Result: each chip is fuzzable and benchmarkable in isolation. Adding a cross-chip dependency breaks this invariant — don't.
 
-## Reference Materials
+**Mapper IRQ logic lives in the mapper, not the PPU.** The PPU calls `Mapper::notify_a12(level)` on every A12 transition; the mapper internally filters (MMC3's "3 falling edges of M2" lives in the MMC3 impl). MMC5 uses different scanline detection via `notify_scanline_start` / `notify_vblank`. VRC2/4/6, Sunsoft FME-7, and Namco 163 tick on `notify_cpu_cycle()`. All such hooks are default-no-op on `Mapper`. See `docs/mappers.md` for the per-mapper IRQ family table.
 
-### Documentation (`ref-docs/`)
+**Determinism is a hard contract.** Same seed + ROM + input sequence ⇒ bit-identical framebuffer and audio. CPU/PPU initial phase alignment is randomized at power-on from a seeded PRNG; reset preserves alignment. This is required for save-state round-trip, regression tests, TAS replay, and netplay rollback. Don't introduce hidden non-determinism (system time, thread scheduling, OS RNG) into the core. Netplay's dynamic rate control and run-ahead live in the **frontend** (a resampler stage / snapshot-restore orchestration), never in the core's synthesis — that is what keeps the contract intact.
 
-- `RustyNES-Architecture-Design.md` - **Primary reference**: 3,400+ line comprehensive design spec
-- `Claude-NES_Emulator_Compare-Opus4.5.md` - Comparison of reference emulators
-- `Emulator_TechReports/` - 12 individual emulator technical reports
+**Test ROMs are the spec.** When the docs and a passing test ROM disagree, the ROM wins — the docs get updated. The blargg / kevtris / mmc3_test_2 / AccuracyCoin suites in `tests/roms/` are the closed-form definition of "cycle-accurate." See `docs/testing-strategy.md` for the testing layers.
 
-### Reference Projects (`ref-proj/`)
+## Where things live
 
-Cloned emulators for study and pattern reference:
+- `crates/rustynes-{cpu,ppu,apu,mappers,core,netplay,cheevos,frontend,test-harness}/` — crate name = dir name. The binary is `rustynes` (in `rustynes-frontend`).
+- `docs/` — implementation specs. These are the **spec**, not history: update them in the same PR as the code change. Per-subsystem files (`cpu-6502.md`, `ppu-2c02.md`, `apu-2a03.md`, `mappers.md`, `cartridge-format.md`, `scheduler.md`) + cross-cutting (`architecture.md`, `testing-strategy.md`, `performance.md`, `frontend.md`, `compatibility.md`). `docs/STATUS.md` is the **single source of truth** for per-suite pass counts, the mapper matrix, and version policy. `docs/adr/` holds Michael-Nygard-format ADRs.
+- `ref-docs/` — immutable hardware + emulation reference (60+ source research report). Updates go in dated supplemental files.
+- `to-dos/ROADMAP.md` → phase/sprint files — tickets with stable IDs `T-PS-NNN`. Reference in commits.
+- `tests/roms/` — CC0 / public-domain test ROMs (committed). `tests/roms/external/` — your own commercial dumps (gitignored).
+- `tests/golden/` / `screenshots/` — reference framebuffers, audio, and the visual baseline corpus (committed). `tests/captures/` — current-run output (gitignored).
 
-| Project | Language | Key Reference For |
-|---------|----------|-------------------|
-| **Mesen2** | C++ | Gold standard accuracy, debugger |
-| **FCEUX** | C++ | TAS tools, FM2 format |
-| **puNES** | C++ | 461+ mapper implementations |
-| **TetaNES** | Rust | Rust patterns, wgpu, egui |
-| **Pinky** | Rust | PPU rendering, Visual2C02 tests |
-| **Rustico** | Rust | Expansion audio |
-| **DaveTCode/nes-emulator-rust** | Rust | Zero unsafe patterns |
-| **RetroAchievements/** | C | rcheevos integration |
+**Never commit commercial Nintendo ROMs.**
 
-## Key Dependencies
+## Workflow conventions
 
-- **Graphics**: `eframe` 0.33 (egui + window + OpenGL via glow)
-- **GUI**: `egui` 0.33 (immediate mode GUI)
-- **Audio**: `cpal` 0.16 (cross-platform audio I/O with lock-free ring buffer)
-- **Resampling**: `rubato` 0.16 (high-quality audio resampling)
-- **Input**: `gilrs` 0.11 (gamepad support with hotplug detection)
-- **File Dialogs**: `rfd` 0.15 (native cross-platform file dialogs)
-- **Configuration**: `ron` 0.12 (Rust Object Notation), `directories` 5.0 (platform paths)
-- **CLI**: `clap` 4.5 (argument parsing)
-- **Netplay**: `backroll` (GGPO rollback) - planned for Phase 2
-- **Scripting**: `mlua` (Lua 5.4) - planned for Phase 2
-- **Achievements**: `rcheevos-sys` (FFI bindings) - planned for Phase 2
-- **Testing**: `criterion` (benchmarks), `proptest` (property-based)
-- **Serialization**: `serde`, `ron` (configuration format)
+- Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`, `perf:`, `build:`, `ci:`); imperative subject ≤ 72 chars.
+- Branch names: `<type>/<short-desc>`.
+- A chip-behavior change touches both the chip code and the chip's `docs/<subsystem>.md`. They drift apart easily; don't let them.
+- For accuracy work: pin the failing test ROM expectation first, then implement until it passes.
+- User-visible changes go in `CHANGELOG.md` under `[Unreleased]` in the same PR — `CONTRIBUTING.md`'s quality gate enforces it.
+- Hot paths (`Cpu::tick`, `Ppu::tick`, mapper register access): no allocations, prefer fixed arrays, profile (`cargo bench` + `perf record`) before adding abstractions. Target ≤ 2 ms/frame headless.
+- `unsafe` requires a `// SAFETY:` comment explaining the invariant. The chip stack is `#![no_std]` + `extern crate alloc;`; only `rustynes-frontend` and `rustynes-cheevos` (FFI) carry `unsafe`.
+- No emojis in code, comments, or commits (project policy).
 
-## Architectural Decisions
+## Operating notes for Claude Code
 
-### GUI Framework: eframe + egui (v0.7.1+, upgraded v0.8.0)
-- **Changed from**: Iced+wgpu (v0.5.0-v0.6.0)
-- **Current**: eframe 0.33 + egui 0.33 (as of v0.8.0)
-- **Rationale**: Immediate mode GUI ideal for debug windows, simpler event loop, better game loop integration, integrated window management
-- **Implementation**: eframe provides window + egui + OpenGL rendering; egui for menus/debug windows
-
-### Window Management: eframe (glow backend)
-- **Rationale**: Integrated with egui, cross-platform, OpenGL backend simpler than wgpu
-- **Implementation**: eframe handles window creation and event loop with accumulator-based frame timing
-
-### Framebuffer Rendering: egui textures
-- **Rationale**: Direct integration with egui, efficient texture updates via OpenGL
-- **Implementation**: 256x240 RGBA buffer with nearest-neighbor scaling via egui::Image
-
-### Audio Backend: cpal 0.16 (upgraded v0.8.0)
-- **Chosen over**: SDL2, rodio
-- **Rationale**: Cross-platform, low-latency, direct device access, no runtime dependencies
-- **Implementation**: Lock-free ring buffer (8192 samples) with atomic operations
-- **Resampling**: rubato 0.16 for high-quality sample rate conversion
-
-### Configuration: RON Format
-- **Chosen over**: TOML, JSON
-- **Rationale**: Rust native, type-safe, supports complex structures
-- **Location**: Platform-specific config directory
-
-### Test Framework
-- Standalone validators in `tests/framework/`
-- Enhanced ROM validator for detailed diagnostics
-- Test ROM runner for automated validation
-- Preserved for reference but not actively maintained
-
-## Implementation Phases
-
-| Phase | Status | Deliverable |
-|-------|--------|-------------|
-| **1: MVP** | ✅ **COMPLETE** | 80% game compatibility, desktop GUI, 5 mappers, audio |
-| **1.5: Stabilization** | 🔄 **IN PROGRESS** | M7-M8 complete (100% Blargg), M9-M10 planned |
-| **2: Features** | 📋 PLANNED | RetroAchievements, netplay, TAS, Lua, debugger |
-| **3: Expansion** | 📋 PLANNED | Expansion audio, 98% mappers, WebAssembly |
-| **4: Polish** | 📋 PLANNED | Video filters, TAS editor, v1.0 release |
-
-## Development Timeline
-
-| Milestone | Status | Description |
-|-----------|--------|-------------|
-| **Project Start** | ✅ December 2025 | Architecture & docs complete |
-| **M1: CPU Complete** | ✅ v0.1.0 | nestest.nes passes (all 256 opcodes) |
-| **M2: PPU Rendering** | ✅ v0.2.0 | Background & sprite rendering |
-| **M3: APU Audio** | ✅ v0.3.0 | All 5 audio channels |
-| **M4: Mappers** | ✅ v0.4.0 | 5 core mappers (0-4) |
-| **M5: Input** | ✅ v0.4.0 | Controller support |
-| **M6: Desktop GUI** | ✅ v0.5.0 | Iced + wgpu + audio integration |
-| **M7: Accuracy** | ✅ v0.6.0 | CPU/PPU/APU timing, OAM DMA precision, hardware mixer |
-| **M8: Test ROMs** | ✅ v0.7.0 | 100% Blargg pass rate (90/90 tests) |
-| **GUI Migration** | ✅ v0.7.1 | eframe + egui desktop reimplementation |
-| **Dependency Upgrade** | ✅ v0.8.0 | Rust 2024, eframe 0.33, egui 0.33, cpal 0.16, ron 0.12 |
-| **M9: Known Issues** | 🔄 v0.8.1 (85%) | Audio S1, PPU S2, Performance S3 complete; S4 pending |
-| **M10: Final Polish** | 🔄 v0.8.3 (50%) | Critical rendering fix, UI/UX improvements, Documentation pending |
-| **M11: Sub-Cycle Accuracy** | 🔄 v0.8.6 (83%) | DMC DMA cycle stealing, open bus behavior, per-cycle mapper clocking |
-| **Phase 2+** | 📋 TBD | Advanced features |
-
-## Recent Accomplishments (v0.8.6 - Dec 29, 2025)
-
-### M11 Sub-Cycle Accuracy (Sprints 3-5 Complete)
-
-Implemented critical sub-cycle accuracy improvements for NES hardware emulation precision:
-
-#### Sprint 3: DMC DMA Cycle Stealing
-- **CPU Stall Handling:** `dmc_stall_cycles` field tracks pending CPU stalls
-- **4-Cycle Penalty:** CPU halts 4 cycles when DMC needs sample fetch
-- **PPU/APU Continue:** Other components keep running during CPU stall
-- **Alignment Check:** Stall timing based on CPU cycle parity
-
-#### Sprint 4: Open Bus Behavior
-- **Data Bus Tracking:** `last_bus_value` stores last value on data bus
-- **Unmapped Reads:** Return `last_bus_value` instead of 0x00
-- **Controller Integration:** Bits 5-7 mixed from open bus with controller data
-- **Write Tracking:** Both read and write operations update bus value
-
-#### Sprint 5: Per-Cycle Mapper Clocking
-- **Cycle-Accurate Clocking:** `mapper.clock(1)` called in `on_cpu_cycle()`
-- **IRQ Precision:** MMC3 and VRC mappers now receive proper cycle notifications
-- **A12 Detection:** PPU address changes trigger mapper on correct cycles
-
-#### Technical Implementation
-```rust
-// DMC DMA stall handling
-if self.dmc_stall_cycles > 0 {
-    self.dmc_stall_cycles -= 1;
-    return; // CPU halted, PPU/APU continue
-}
-
-// Open bus behavior
-self.last_bus_value = value; // Track on all bus operations
-
-// Per-cycle mapper clocking
-self.mapper.clock(1); // In on_cpu_cycle() callback
-```
-
----
-
-## Previous Accomplishments (v0.8.5 - Dec 29, 2025)
-
-### Cycle-Accurate CPU/PPU Synchronization (M11 S1 & S2)
-
-Implemented true cycle-accurate CPU/PPU synchronization enabling VBlank timing tests to pass with zero-cycle accuracy:
-
-#### CpuBus Trait
-- **New Trait:** `CpuBus` extends `Bus` with `on_cpu_cycle()` callback
-- **Purpose:** Allows PPU to be stepped before each CPU memory access
-- **Implementation:** PPU stepped 3 dots per CPU cycle (NTSC 3:1 ratio)
-- **NMI Handling:** Captured during callback, delivered via `cpu.trigger_nmi()`
-
-#### cpu.tick() Method
-- **New Method:** `cpu.tick(&mut bus)` executes one CPU cycle
-- **State Machine:** CPU now exposes internal cycle state for precise timing
-- **Use Case:** Enables VBlank timing tests that require sub-instruction accuracy
-
-#### VBlank Timing Tests Fixed
-- **ppu_02-vbl_set_time:** Was ±51 cycles off, now exact (0 cycles)
-- **ppu_03-vbl_clear_time:** Was ±10 cycles off, now exact (0 cycles)
-- **Root Cause:** PPU was only stepped after full CPU instructions completed
-- **Solution:** Step PPU 3 dots BEFORE each CPU memory access via callback
-
----
-
-## Previous Accomplishments (v0.8.4 - Dec 28, 2025)
-
-### CPU/PPU Timing & Version Consistency
-
-- CPU/PPU Timing: PPU now stepped BEFORE CPU cycle in tick() for accurate $2002 reads at VBlank
-- Version Consistency: Fixed About window (0.8.1) and Settings (0.8.2) showing outdated versions
-- Documentation: Fixed clone_mapper doctest by implementing full Clone for mapper Box types
-
----
-
-## Previous Accomplishments (v0.8.3 - Dec 28, 2025)
-
-### Critical Rendering Bug Fix
-
-Fixed critical framebuffer rendering issue with comprehensive documentation improvements:
-
-#### Rendering Fix
-- **Root Cause:** Framebuffer was passing raw NES palette indices (0-63) directly as RGBA values
-- **Solution:** Added palette index to RGB conversion using 64-entry NES_PALETTE lookup table
-- **Effect:** Game display now renders correctly with proper colors, filling the window as expected
-- **Before:** Display showed 4 faint, darkened, postage-stamp sized copies horizontally
-- **After:** Proper full-window NES rendering with correct color palette
-
-#### Documentation Improvements
-- Changed 3 doctests from `ignore` to `no_run` for compile-time verification
-- lib.rs (rustynes-mappers): Complete example with error handling
-- rom.rs (rustynes-mappers): Rom::load with proper error handling pattern
-
----
-
-## Previous Accomplishments (v0.8.2 - Dec 28, 2025)
-
-### M10 Final Polish (50% Complete)
-
-Sprint 1 UI/UX Improvements completed with comprehensive desktop GUI polish:
-
-#### Sprint 1: UI/UX Improvements (Complete)
-- **Theme Support:** Light/Dark/System themes with persistence via RON configuration
-- **Status Bar:** FPS counter (500ms updates), ROM name display, color-coded status messages with 3s auto-expiry
-- **Tabbed Settings:** Video/Audio/Input/Advanced tabs with comprehensive tooltips
-- **Keyboard Shortcuts:** Ctrl+O (Open), Ctrl+P (Pause), Ctrl+R (Reset), Ctrl+Q (Quit), F1-F3 (Debug), M (Mute)
-- **Modal Dialogs:** Welcome screen, error dialogs, confirmation prompts, help window
-- **Visual Feedback:** Contextual tooltips throughout UI, organized menus with separators
-
-#### Sprint 2: Documentation (Pending)
-- User guide, API documentation, developer guide
-
-#### Sprint 3: Release Preparation (Pending)
-- Full regression testing, release binaries, version decision
-
----
-
-## Previous Accomplishments (v0.8.1 - Dec 28, 2025)
-
-### M9 Known Issues Resolution (85% Complete)
-
-Systematic resolution of known issues identified during Phase 1.5 development:
-
-#### Sprint 1: Audio Improvements (Complete)
-- Two-stage decimation via rubato: 1.79MHz -> 192kHz -> 48kHz
-- A/V sync with adaptive speed adjustment (0.99x-1.01x)
-- Dynamic buffer sizing (2048-16384 samples)
-- Hardware-accurate mixer with NES filter chain
-
-#### Sprint 2: PPU Edge Cases (Complete)
-- Sprite overflow bug with false positive/negative matching hardware
-- Palette RAM mirroring at $3F10/$3F14/$3F18/$3F1C
-- Mid-scanline write detection for split-screen effects
-- Attribute byte extraction verified for all quadrants
-
-#### Sprint 3: Performance Optimization (Core Complete)
-- Added `#[inline]` to CPU hot paths: step(), execute_opcode(), handle_nmi(), handle_irq()
-- Added `#[inline]` to PPU hot paths: step(), step_with_chr()
-- Verified 68+ existing inline annotations in CPU/PPU crates
-- Zero accuracy regressions (508+ tests passing)
-
-#### Sprint 4: Bug Fixes & Polish (Pending)
-- GitHub issue triage and resolution
-- Release preparation for v0.9.0
-
----
-
-## Previous Accomplishments (v0.8.0 - Dec 28, 2025)
-
-### Comprehensive Dependency Modernization
-
-Complete modernization of the technology stack for long-term maintainability:
-
-#### Rust 2024 Edition & MSRV 1.88
-- Adopted Rust 2024 Edition with latest language features
-- MSRV set to Rust 1.88 for latest stable compiler support
-- Updated all workspace and crate configurations
-
-#### Dependency Upgrades
-- **eframe** 0.33 (from 0.29): Latest egui integration
-- **egui** 0.33 (from 0.29): Improved widget system
-- **cpal** 0.16 (from 0.15): Audio device improvements
-- **rubato** 0.16: High-quality audio resampling
-- **ron** 0.12 (from 0.8): Configuration format improvements
-- **thiserror** 2.0: Error handling modernization
-
-#### Performance Optimizations
-- Added `#[inline]` hints on critical audio/rendering paths
-- Buffer reuse patterns for reduced allocations
-- PPU edge case handling improvements
-
----
-
-## Previous Accomplishments (v0.7.1 - Dec 27, 2025)
-
-### Desktop GUI Framework Migration
-
-Complete rewrite of the desktop frontend from Iced+wgpu to eframe+egui:
-
-#### Architecture
-- **eframe** 0.29 for window management + OpenGL rendering via glow
-- **egui** 0.29 immediate mode GUI for menus and debug windows
-- **cpal** 0.15 for low-latency audio with lock-free ring buffer
-- **gilrs** 0.11 for gamepad support with hotplug detection
-- **rfd** 0.15 for native file dialogs
-- **ron** 0.8 for configuration persistence
-
-#### Core Features
-- Menu bar with File, Emulation, Video, Audio, Debug, Help menus
-- ROM loading via native file dialogs (rfd)
-- Multiple scaling modes: PixelPerfect (8:7 PAR), FitWindow, Integer
-- Keyboard and gamepad input with configurable mappings
-- Configuration persistence (RON format)
-- Accumulator-based frame timing at 60.0988 Hz NTSC
-
-#### Debug Windows (egui)
-- CPU debugger: registers, flags, disassembly
-- PPU viewer: pattern tables, nametables, OAM, palette
-- Memory viewer: hex display with navigation
-- APU state: channel visualization
-
-#### Technical Improvements
-- Simpler event loop with full control over frame timing
-- OpenGL backend (glow) replaces wgpu shader pipeline
-- Lock-free ring buffer with atomic operations for audio
-- Better separation of emulation and rendering threads
-- Reduced dependencies and faster compile times
-
----
-
-## Previous Accomplishments (v0.6.0 - Dec 20, 2025)
-
-### Milestone 7: Accuracy Improvements (4 Sprints)
-
-#### Sprint 1: CPU Accuracy
-- All 256 opcodes verified against nestest.nes golden log
-- Page boundary crossing timing accuracy confirmed
-- Unofficial opcode cycle counts validated
-- Interrupt timing precision verified
-
-#### Sprint 2: PPU Accuracy
-- VBlank/NMI timing functional with flag read/race condition handling
-- Sprite 0 hit detection working (2/2 basic tests passing)
-- Attribute shift register verification complete
-- Palette RAM mirroring edge cases handled
-
-#### Sprint 3: APU Accuracy
-- Frame counter precision fixed: 4-step mode quarter frame at cycle 22372 (was 22371)
-- Hardware-accurate non-linear mixer: NESdev TND formula implemented
-- Triangle linear counter timing verified
-- Mixer output validated against reference implementation
-
-#### Sprint 4: Timing & Synchronization
-- OAM DMA cycle precision: 513 cycles (even CPU start) vs 514 cycles (odd CPU start)
-- CPU cycle parity tracking: `(cpu_cycles % 2) == 1` check for alignment
-- CPU/PPU synchronization verified
-- Bus timing accuracy confirmed
-
-### Technical Specifications (v0.6.0)
-
-- **APU Frame Counter (4-step):** Cycles 7457, 14913, 22372, 29830 (corrected)
-- **TND Mixer Formula:** `159.79 / (100 + 1 / (triangle/8227 + noise/12241 + dmc/22638))`
-- **OAM DMA Timing:** `513 + if (cpu_cycles % 2) == 1 { 1 } else { 0 }`
-- **Test Results:** 429 tests passing, 0 failures, 6 ignored
-
-## Known Issues & Limitations
-
-### Audio
-- Occasional audio crackling under high system load (buffer underrun)
-- No resampling for non-44.1kHz output devices
-- Fixed latency (no dynamic adjustment)
-
-### PPU
-- Some attribute table edge cases may have minor glitches
-- Sprite overflow flag not fully cycle-accurate
-- Mid-scanline updates not yet supported for all registers
-- VBlank timing tests (ppu_02, ppu_03) now PASS with ±0 cycle accuracy (v0.8.5)
-
-### CPU/PPU Timing (RESOLVED in v0.8.5)
-- **Previously ignored:** `ppu_02-vbl_set_time` and `ppu_03-vbl_clear_time` timing tests
-- **Now passing:** VBlank timing tests pass with ±0 cycle accuracy
-- **Solution implemented:** CpuBus trait with `on_cpu_cycle()` callback for PPU stepping
-- **Architecture:** PPU stepped 3 dots before each CPU memory access (NTSC 3:1 ratio)
-- **cpu.tick():** Cycle-by-cycle CPU execution for sub-instruction timing precision
-
-### General
-- WebAssembly frontend not yet implemented
-- Save states not yet implemented
-- Debugger interface planned for Phase 2
-- Limited to NTSC timing (PAL support planned)
-
-## Accuracy Targets
-
-- CPU: 100% nestest.nes golden log ✅ **ACHIEVED**
-- PPU: 100% blargg PPU tests (25/25) ✅ **ACHIEVED** (v0.8.5)
-- APU: 100% blargg APU tests (15/15) ✅ **ACHIEVED**
-- Mappers: 100% Mapper tests (28/28) ✅ **ACHIEVED**
-- Overall: 100% TASVideos accuracy suite (156 tests) 📋 **PLANNED**
-
-## Code Patterns
-
-### CPU Instruction (Table-Driven)
-
-```rust
-pub fn step(&mut self, bus: &mut Bus) -> u8 {
-    let opcode = self.read(bus, self.pc);
-    let addr_mode = self.addressing_mode_table[opcode as usize];
-    let instruction = self.instruction_table[opcode as usize];
-    instruction(self, bus, addr_mode)
-}
-```
-
-### Strong Typing (Newtype Pattern)
-
-```rust
-#[derive(Copy, Clone, Debug)]
-struct VramAddress(u16);
-
-impl VramAddress {
-    fn coarse_x(&self) -> u8 { (self.0 & 0x1F) as u8 }
-    fn coarse_y(&self) -> u8 { ((self.0 >> 5) & 0x1F) as u8 }
-}
-```
-
-### Mapper Trait
-
-```rust
-pub trait Mapper: Send {
-    fn read_prg(&self, addr: u16) -> u8;
-    fn write_prg(&mut self, addr: u16, val: u8);
-    fn read_chr(&self, addr: u16) -> u8;
-    fn write_chr(&mut self, addr: u16, val: u8);
-    fn mirroring(&self) -> Mirroring;
-    fn irq_pending(&self) -> bool { false }
-    fn clock(&mut self, _cycles: u8) {}
-}
-```
-
-## Code Style Guidelines
-
-### Rust Conventions
-
-- **Edition**: Rust 2024
-- **MSRV**: 1.88 (for Rust 2024 Edition support)
-- **Format**: `rustfmt` with default settings
-- **Lints**: `clippy::pedantic` + `-D warnings`
-- **Unsafe**: Only permitted in FFI (rcheevos) and platform-specific audio; must be documented
-
-### Naming Conventions
-
-```rust
-// Types: PascalCase
-pub struct StatusRegister(u8);
-pub enum AddressingMode { ... }
-
-// Functions/methods: snake_case
-fn execute_instruction(&mut self) { ... }
-
-// Constants: SCREAMING_SNAKE_CASE
-const MASTER_CLOCK_NTSC: u32 = 21_477_272;
-
-// Module files: snake_case
-// cpu.rs, ppu.rs, memory_map.rs
-```
-
-### Error Handling
-
-```rust
-// Use thiserror for library errors
-#[derive(Debug, thiserror::Error)]
-pub enum EmulatorError {
-    #[error("Invalid ROM format: {0}")]
-    InvalidRom(String),
-    #[error("Unsupported mapper: {0}")]
-    UnsupportedMapper(u16),
-}
-
-// Return Result<T, EmulatorError> from fallible operations
-// Use anyhow for application-level errors in desktop/web crates
-```
-
-### Documentation
-
-- All public APIs must have doc comments
-- Include examples for non-trivial functions
-- Document panic conditions with `# Panics` section
-- Cross-reference related documentation files
-
-## Implementation Priorities
-
-### Phase 1: MVP ✅ COMPLETE
-
-1. **CPU**: Complete 6502 implementation with all 256 opcodes ✅
-2. **PPU**: Background & sprite rendering with scrolling ✅
-3. **APU**: All 5 channels (square1, square2, triangle, noise, DMC) ✅
-4. **Bus**: Memory mapping, DMA, mapper integration ✅
-5. **Mappers**: NROM (0), MMC1 (1), UxROM (2), CNROM (3), MMC3 (4) ✅
-6. **ROM Loading**: iNES format support ✅
-7. **Desktop GUI**: eframe + egui with audio integration ✅ (v0.7.1)
-
-### Phase 1.5: Stabilization 🔄 CURRENT
-
-See `/to-dos/phase-1.5-stabilization/` for detailed milestone plans:
-- **M7**: Accuracy Improvements ✅ **COMPLETE** (v0.6.0)
-- **M8**: Test ROM Validation ✅ **COMPLETE** (v0.7.0) - 100% Blargg pass rate
-- **GUI Migration**: ✅ **COMPLETE** (v0.7.1) - eframe + egui
-- **M9**: Known Issues Resolution (audio quality, PPU edge cases)
-- **M10**: Documentation and v1.0-alpha preparation
-
-### Test-Driven Development
-
-```bash
-# Validation order
-1. nestest.nes - CPU instruction accuracy
-2. blargg_instr_test - CPU timing
-3. blargg_ppu_tests - PPU behavior
-4. blargg_apu_tests - APU timing
-```
-
-## Documentation Index
-
-### Core Specifications
-
-- `docs/cpu/CPU_6502_SPECIFICATION.md` - Complete 6502 reference
-- `docs/cpu/CPU_TIMING_REFERENCE.md` - Cycle-accurate timing
-- `docs/ppu/PPU_2C02_SPECIFICATION.md` - Complete PPU reference
-- `docs/ppu/PPU_TIMING_DIAGRAM.md` - Dot-accurate timing
-- `docs/apu/APU_OVERVIEW.md` - Audio system overview
-
-### Implementation Guides
-
-- `docs/mappers/MAPPER_OVERVIEW.md` - Mapper architecture
-- `docs/testing/TEST_ROM_GUIDE.md` - Test ROM usage
-- `docs/testing/NESTEST_GOLDEN_LOG.md` - CPU validation reference
-- `docs/dev/BUILD.md` - Build instructions
-- `docs/dev/CONTRIBUTING.md` - Contribution guidelines
-
-### API Reference
-
-- `docs/api/CORE_API.md` - Emulator core API
-- `docs/api/SAVE_STATES.md` - Save state format
-- `docs/api/CONFIGURATION.md` - Configuration options
-
-### File Formats
-
-- `docs/formats/INES_FORMAT.md` - iNES header parsing
-- `docs/formats/NES20_FORMAT.md` - NES 2.0 extended format
-- `docs/formats/NSF_FORMAT.md` - NES Sound Format
-- `docs/formats/FM2_FORMAT.md` - TAS movie format
-
-### APU Deep-Dive
-
-- `docs/apu/APU_2A03_SPECIFICATION.md` - Complete APU reference
-- `docs/apu/APU_CHANNEL_*.md` - Individual channel specs
-
-## Related Files
-
-- `ARCHITECTURE.md` - Detailed system architecture (20K+ lines)
-- `OVERVIEW.md` - High-level project overview
-- `ROADMAP.md` - Development roadmap with milestones
-- `README.md` - GitHub landing page
-
-## Quick Links
-
-- [README](README.md) - Project landing page
-- [ROADMAP](ROADMAP.md) - Development timeline
-- [ARCHITECTURE](ARCHITECTURE.md) - System design
-- [OVERVIEW](OVERVIEW.md) - Project philosophy
-- [Documentation Index](docs/DOCUMENTATION_INDEX.md) - All docs
-
-### External Resources
-
-- [NESdev Wiki](https://www.nesdev.org/wiki/) - Hardware reference
-- [TASVideos](https://tasvideos.org/) - Accuracy tests
-- [NesDev Forums](https://forums.nesdev.org/) - Community
+- `docs/STATUS.md` and the "Current release" summary above are the current-state source of truth; `CHANGELOG.md` and the `docs/audit/` logs carry the deep engine-lineage history.
+- `ref-docs/` is immutable. Research updates go in dated supplemental files.
+- ADRs go in `docs/adr/` (Michael Nygard format).
+- `rustynes-core` re-exports the public types from the chip crates; downstream consumers (`rustynes-frontend`, `rustynes-test-harness`) should depend on `rustynes-core` rather than the chip crates directly.
+- When relabeling old engine "v2.x" narrative for users, present it as upstream lineage/history — **never as a current RustyNES release version.** The current release is **v1.0.0**.

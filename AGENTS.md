@@ -3,10 +3,10 @@
 ## Project Structure & Module Organization
 
 This is a Rust 2021 workspace pinned to Rust 1.86 in `rust-toolchain.toml`.
-Workspace crates live under `crates/`: `nes-core` contains the emulator facade,
-scheduler, save states, and shared integration logic; `nes-cpu`, `nes-ppu`,
-`nes-apu`, and `nes-mappers` model the hardware subsystems; `nes-frontend`
-contains the `rustynes-v2` desktop binary; `nes-test-harness` runs ROM-based
+Workspace crates live under `crates/`: `rustynes-core` contains the emulator facade,
+scheduler, save states, and shared integration logic; `rustynes-cpu`, `rustynes-ppu`,
+`rustynes-apu`, and `rustynes-mappers` model the hardware subsystems; `rustynes-frontend`
+contains the `rustynes` desktop binary; `rustynes-test-harness` runs ROM-based
 regression tests. Project documentation is in `docs/`, planning tickets are in
 `to-dos/`, benchmark targets sit beside crate code in `benches/`, and licensed
 test ROM fixtures are under `tests/roms/`.
@@ -14,7 +14,7 @@ test ROM fixtures are under `tests/roms/`.
 ## Build, Test, and Development Commands
 
 - `cargo build --workspace`: build all crates.
-- `cargo run --release -p nes-frontend -- path/to/rom.nes`: run the emulator
+- `cargo run --release -p rustynes-frontend -- path/to/rom.nes`: run the emulator
   frontend against a local ROM.
 - `cargo test --workspace`: run unit and integration tests.
 - `cargo test --workspace --features test-roms`: include ROM harness tests.
@@ -35,7 +35,7 @@ allocation-light code in CPU, PPU, APU, mapper, and scheduler hot paths.
 ## Testing Guidelines
 
 Place crate-specific integration tests in `crates/<crate>/tests/`. ROM-driven
-coverage belongs in `crates/nes-test-harness/tests/` with fixtures documented in
+coverage belongs in `crates/rustynes-test-harness/tests/` with fixtures documented in
 `tests/roms/README.md` and `tests/roms/LICENSES.md`. Never commit commercial
 ROMs; use `tests/roms/external/` for local-only material. Add focused tests for
 mapper, timing, save-state, and audio changes, and run the `test-roms` feature

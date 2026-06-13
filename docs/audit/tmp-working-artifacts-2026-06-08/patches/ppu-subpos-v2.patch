@@ -1,0 +1,181 @@
+crates/nes-ppu/src/lib.rs                    |   4 +-
+ crates/nes-ppu/src/ppu.rs                    | 101 ++++++++++++++++++++++++++-
+ crates/nes-test-harness/src/accuracy_coin.rs |  22 ++++++
+ 3 files changed, 124 insertions(+), 3 deletions(-)
+
+--- Changes ---
+
+crates/nes-ppu/src/lib.rs
+  @@ -36,10 +36,12 @@ pub mod state_trace;
+  -pub use ppu::{Ppu, PpuRegion, FRAMEBUFFER_LEN};
+   /// `$2007 Stress` diagnostic: runtime-tunable per-phase read-buffer collision offsets.
+   #[cfg(feature = "ppu-2007-fetch-buffer")]
+   pub use ppu::FETCH_OFFSETS;
+  +#[cfg(feature = "mc-ppu-subpos")]
+  +pub use ppu::MASK_WRITE_DELAY;
+  +pub use ppu::{Ppu, PpuRegion, FRAMEBUFFER_LEN};
+   pub use snapshot::{PpuSnapshotError, PPU_SNAPSHOT_VERSION};
+   
+   #[cfg(feature = "ppu-state-trace")]
+  +3 -1
+
+crates/nes-ppu/src/ppu.rs
+  @@ -347,6 +347,24 @@ pub struct Ppu {
+  +    /// v2.0 Phase 6 (`mc-ppu-subpos`): the analog `$2001` BG-shift-register
+  +    /// RELOAD delay. The shifter reload gates on `bg_reload_render`, which tracks
+  +    /// the live `self.mask` rendering-enable bit EXCEPT during the
+  +    /// `MASK_WRITE_DELAY`-dot window after a `$2001` write, where it stays frozen
+  +    /// at its prior value (`TriCNES` gates the fetch/reload on
+  +    /// `PPU_Mask_Show*_Delayed` while the per-half-dot SHIFT runs on the
+  +    /// IMMEDIATE mask). So on a render re-enable the shifter advances for
+  +    /// `MASK_WRITE_DELAY` dots (injecting the serial-in '1') BEFORE the reload
+  +    /// resumes -> one reload is SKIPPED and the accumulated '1's reach the output
+  +    /// (BG Serial In), without perturbing the sprite/pixel/shift path. Because it
+  +    /// re-syncs to the live mask whenever settled, a direct mask set (unit tests,
+  +    /// save-state restore) leaves it consistent. `mask_write_delay` is the
+  +    /// remaining freeze countdown (0 = settled). Transient; NOT serialized.
+  +    #[cfg(feature = "mc-ppu-subpos")]
+  +    pub(crate) bg_reload_render: bool,
+  +    #[cfg(feature = "mc-ppu-subpos")]
+  +    pub(crate) mask_write_delay: u8,
+  +
+       /// Framebuffer (RGBA8). Filled by Sprint 2-2/2-3 rendering.
+       pub(crate) framebuffer: Box<[u8]>,
+   
+  @@ -377,6 +395,17 @@ pub static FETCH_OFFSETS: [core::sync::atomic::AtomicI16; 8] = [
+  +/// v2.0 Phase 6 (`mc-ppu-subpos`): the analog `$2001` PPUMASK write delay.
+  +///
+  +/// In PPU dots. `TriCNES` applies a `$2001` write 2-3 dots after the CPU write
+  +/// (`PPU_Update2001Delay`, sub-dot alignment dependent); this emulator's reload
+  +/// sits one dot later than that plus the existing 1-dot render gate, so the
+  +/// effective default is 4. Runtime-tunable (an atomic) so the exact phase can be
+  +/// swept against the `BG Serial In` / `Stale BG Shift` keys without rebuilding.
+  +/// Only consulted under `mc-ppu-subpos`.
+  +#[cfg(feature = "mc-ppu-subpos")]
+  +pub static MASK_WRITE_DELAY: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(4);
+  +
+   impl Ppu {
+       /// New PPU in power-on state.
+       #[must_use]
+  @@ -492,6 +521,10 @@ impl Ppu {
+  +            #[cfg(feature = "mc-ppu-subpos")]
+  +            bg_reload_render: false,
+  +            #[cfg(feature = "mc-ppu-subpos")]
+  +            mask_write_delay: 0,
+               framebuffer: vec![0u8; FRAMEBUFFER_LEN].into_boxed_slice(),
+               #[cfg(feature = "ppu-state-trace")]
+               state_trace: None,
+  @@ -1082,6 +1115,27 @@ impl Ppu {
+  +                // v2.0 Phase 6 (mc-ppu-subpos): arm the analog `$2001` BG-reload
+  +                // delay. `self.mask` (and so the sprite-eval / shift / pixel
+  +                // path) updates IMMEDIATELY — only the BG shift-register RELOAD
+  +                // is gated on a value delayed `MASK_WRITE_DELAY` dots behind the
+  +                // mask (TriCNES gates `PPU_Render_ShiftRegistersAndBitPlanes` ->
+  +                // the reload on `PPU_Mask_Show*_Delayed`, while the per-half-dot
+  +                // SHIFT runs on the IMMEDIATE mask). On a render re-enable edge
+  +                // the shifter therefore advances for several dots (injecting the
+  +                // serial-in '1') BEFORE the reload resumes — so one reload is
+  +                // SKIPPED and the accumulated '1's reach the output (BG Serial
+  +                // In) WITHOUT perturbing the sprite path (Stale Sprite Shift
+  +                // Regs) or normal rendering (the reload value latched between
+  +                // toggles equals the live mask -> byte-identical).
+  +                // Freeze the BG-reload gate at its prior value for the analog
+  +                // write-delay window; `tick` re-syncs it to the live mask once
+  +                // the countdown settles.
+  +                #[cfg(feature = "mc-ppu-subpos")]
+  +                {
+  +                    self.mask_write_delay =
+  +                        MASK_WRITE_DELAY.load(core::sync::atomic::Ordering::Relaxed);
+  +                }
+               }
+               2 => {
+                   // $2002 is read-only; writes only update the open-bus latch
+  @@ -1294,6 +1348,20 @@ impl Ppu {
+  +        // v2.0 Phase 6 (mc-ppu-subpos): track the BG-reload gate. It follows the
+  +        // live `self.mask` rendering bit EXCEPT during the analog `$2001`
+  +        // write-delay window, where it stays frozen at the prior value (TriCNES
+  +        // `PPU_Update2001Delay` -> `PPU_Mask_Show*_Delayed`). Re-syncing to the
+  +        // live mask when settled keeps it consistent under a direct mask set
+  +        // (unit tests / save-state restore). Done at the top of the dot, before
+  +        // the reload runs; the live `self.mask` is unaffected.
+  +        #[cfg(feature = "mc-ppu-subpos")]
+  +        if self.mask_write_delay > 0 {
+  +            self.mask_write_delay -= 1;
+  +        } else {
+  +            self.bg_reload_render = self.mask.rendering_enabled();
+  +        }
+  +
+           let visible = self.scanline >= 0 && self.scanline <= self.region.last_visible_line();
+           let pre_render = self.scanline == self.region.prerender_line();
+           let render_line = visible || pre_render;
+  @@ -1517,7 +1585,20 @@ impl Ppu {
+  -                    self.reload_bg_shift_regs();
+  +                    // v2.0 Phase 6 (mc-ppu-subpos): the reload is additionally
+  +                    // gated on the analog-delayed `$2001` value, so a render
+  +                    // re-enable lands the reload `MASK_WRITE_DELAY` dots after
+  +                    // the shifter has already resumed advancing -> one reload is
+  +                    // SKIPPED and the serial-in '1's survive (BG Serial In).
+  +                    // When stable, `bg_reload_render` == the live rendering gate,
+  +                    // so this is byte-identical.
+  +                    #[cfg(feature = "mc-ppu-subpos")]
+  +                    let reload_gate = self.bg_reload_render;
+  +                    #[cfg(not(feature = "mc-ppu-subpos"))]
+  +                    let reload_gate = true;
+  +                    if reload_gate {
+  +                        self.reload_bg_shift_regs();
+  +                    }
+                   }
+   
+                   // 8-cycle fetch group: dot phase = (dot - 1) & 7
+  @@ -1592,7 +1673,23 @@ impl Ppu {
+  -            if render_line && rendering_gate {
+  +            //
+  +            // v2.0 Phase 6 (mc-ppu-subpos): TriCNES drives the SHIFT off the
+  +            // IMMEDIATE PPUMASK (`_EmulateHalfPPU` -> `PPU_UpdateBackground
+  +            // ShiftRegisters`, gated on `PPU_Mask_Show*` not `*_Delayed`) while
+  +            // the fetch+RELOAD ride the 1-dot-DELAYED mask
+  +            // (`PPU_Render_ShiftRegistersAndBitPlanes`, gated on `*_Delayed`).
+  +            // So on a render re-enable edge there is a 1-dot window where the
+  +            // shifter advances (injecting the serial-in '1') but the reload is
+  +            // still gated off -> a single reload is SKIPPED while shifting
+  +            // continues, surfacing the accumulated serial-in '1's at the output
+  +            // (AccuracyCoin "BG Serial In"). When no mid-scanline toggle is in
+  +            // flight immediate == delayed, so normal rendering is byte-identical.
+  +            #[cfg(feature = "mc-ppu-subpos")]
+  +            let shift_gate = render_line && rendering;
+  +            #[cfg(not(feature = "mc-ppu-subpos"))]
+  +            let shift_gate = render_line && rendering_gate;
+  +            if shift_gate {
+                   self.shift_bg();
+               }
+           }
+  +99 -2
+
+crates/nes-test-harness/src/accuracy_coin.rs
+  @@ -270,6 +270,28 @@ pub fn run_battery_with_budget(max_frames: u64) -> BatteryResult {
+  +    // v2.0 Phase 6 (mc-ppu-subpos): allow sweeping the analog `$2001` write
+  +    // delay + the `$2007` fetch-buffer per-phase offsets at runtime (no
+  +    // rebuild). `RUSTYNES_MASK_DELAY` sets the PPUMASK write delay (dots);
+  +    // `RUSTYNES_FETCH_OFF` sets the 8 comma-separated `$2007` fetch offsets.
+  +    #[cfg(feature = "mc-ppu-subpos")]
+  +    if let Ok(v) = std::env::var("RUSTYNES_MASK_DELAY") {
+  +        if let Ok(d) = v.trim().parse::<u8>() {
+  +            nes_core::nes_ppu::MASK_WRITE_DELAY.store(d, std::sync::atomic::Ordering::Relaxed);
+  +        }
+  +    }
+  +    #[cfg(feature = "ppu-2007-fetch-buffer")]
+  +    if let Ok(s) = std::env::var("RUSTYNES_2007_OFFSET") {
+  +        let vals: Vec<i16> = s.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+  +        for (i, slot) in nes_core::nes_ppu::FETCH_OFFSETS.iter().enumerate() {
+  +            let v = if vals.len() == 1 {
+  +                vals[0]
+  +            } else {
+  +                *vals.get(i).unwrap_or(&6)
+  +            };
+  +            slot.store(v, std::sync::atomic::Ordering::Relaxed);
+  +        }
+  +    }
+       let bytes = fs::read(rom_path())
+           .unwrap_or_else(|e| panic!("read AccuracyCoin.nes: {e} (path={:?})", rom_path()));
+       let mut nes = Nes::from_rom(&bytes).expect("parse AccuracyCoin.nes (NROM)");
+  +22 -0

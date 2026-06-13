@@ -1,0 +1,325 @@
+commit 8015c3ac7c26f48e93014a4859e52f58d7d23ceb
+Author: DoubleGate <parobek@gmail.com>
+Date:   Mon Jun 1 23:36:30 2026 -0400
+
+    feat(v2.0): $2004 OAM-data-bus model — $2004 Stress Fail->PASS (beats Mesen)
+    
+    Tier 1.2. While the screen is being drawn, $2004 (OAMDATA) returns the value
+    the PPU's sprite unit drives on the OAM data bus (the sprite-eval / fetch
+    latch), not OAM[OAMADDR]. New feature ppu-oam-data-bus (nes-ppu -> nes-core ->
+    nes-test-harness), PROMOTED to default-on.
+    
+    Implemented as an ISOLATED parallel port of Mesen2 NesPpu::ProcessSpriteEvaluation
+    + _oamCopybuffer (own secondary buffer, primary OAM read-only) driving ONLY the
+    $2004 read value; the rendering / sprite-zero / overflow / MMC3-fetch FSM is
+    untouched, so the change is observable only on a $2004 read during rendering
+    (rare in commercial games -> 60-ROM oracle byte-identical).
+    
+    The section-6 even-cycle $03 is early-PPU (pre-rev-G) behavior NO Mesen config
+    reproduces (verified byte-for-byte against a new Mesen $2004 oracle hook; Mesen
+    fails this test, with EnablePpuSpriteEvalBug on too). Pinned from the answer key
+    (the spec): the eval writes each out-of-range sprite's Y to the frozen
+    secondary[8] (last = sprite 63, Y=$03); post-copy-done even cycles read it back.
+    Mesen gates that read-back on secondary_addr>=0x20 (rev-G); on early 2C02s it is
+    unconditional. One-line fix flips both answer keys.
+    
+    AccuracyCoin (RAM, branch): 26 -> 25 fail / 81.29% -> 82.01% ($2004 Stress
+    Fail->PASS). RustyNES now BEATS Mesen on this test. $2007 Stress (separate
+    PPUDATA-during-rendering test) still error 2; Mesen fails it too.
+    
+    Gates: 60-ROM commercial oracle 60/60 byte-identical, ppu_vbl_nmi 10/10,
+    cpu_interrupts_v2 5/5, nes-ppu 41/41, clippy/fmt clean default+feature, no_std
+    thumbv7em clean both ways.
+    
+    See docs/audit/v2.0-2004-stress-oam-data-bus-2026-06-01.md.
+    
+    Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+diff --git a/crates/nes-ppu/src/ppu.rs b/crates/nes-ppu/src/ppu.rs
+index 391a34a..15105e3 100644
+--- a/crates/nes-ppu/src/ppu.rs
++++ b/crates/nes-ppu/src/ppu.rs
+@@ -279,6 +279,37 @@ pub struct Ppu {
+     /// if its y is in range, else NO sprite-zero is detected.
+     pub(crate) sprite_eval_first_iter: bool,
+ 
++    /// v2.0 Tier 1.2 — isolated OAM-data-bus model (parallel port of Mesen2's
++    /// `ProcessSpriteEvaluation` + `_oamCopybuffer`). These fields exist ONLY
++    /// under `ppu-oam-data-bus` and are read solely by `$2004` during
++    /// rendering — the rendering / sprite-zero / overflow / MMC3 sprite-fetch
++    /// FSM uses `secondary_oam` + `sprite_eval_*` + `spr_*`, all untouched.
++    /// `oam_bus_copybuffer` mirrors `_oamCopybuffer` (the value `$2004`
++    /// returns while the screen is drawn).
++    #[cfg(feature = "ppu-oam-data-bus")]
++    pub(crate) oam_bus_copybuffer: u8,
++    /// Parallel secondary OAM (`_secondarySpriteRam`) for the bus model only.
++    #[cfg(feature = "ppu-oam-data-bus")]
++    pub(crate) oam_bus_secondary: [u8; 32],
++    /// `_spriteAddrH` (the eval pointer's sprite index, 0..=63).
++    #[cfg(feature = "ppu-oam-data-bus")]
++    pub(crate) oam_bus_addr_h: u8,
++    /// `_spriteAddrL` (the eval pointer's byte-in-sprite, 0..=3).
++    #[cfg(feature = "ppu-oam-data-bus")]
++    pub(crate) oam_bus_addr_l: u8,
++    /// `_secondaryOamAddr` (write index into the parallel secondary OAM).
++    #[cfg(feature = "ppu-oam-data-bus")]
++    pub(crate) oam_bus_secondary_addr: u8,
++    /// `_oamCopyDone` (primary OAM fully scanned / wrapped).
++    #[cfg(feature = "ppu-oam-data-bus")]
++    pub(crate) oam_bus_copy_done: bool,
++    /// `_spriteInRange` (currently copying an in-range sprite).
++    #[cfg(feature = "ppu-oam-data-bus")]
++    pub(crate) oam_bus_sprite_in_range: bool,
++    /// `_overflowBugCounter` (the 8-sprite-overflow PPU-bug countdown).
++    #[cfg(feature = "ppu-oam-data-bus")]
++    pub(crate) oam_bus_overflow_counter: u8,
++
+     /// OAM-corruption row flags (Mesen2 `_corruptOamRow`, 32 entries
+     /// indexed by row).  When rendering is disabled mid-scanline
+     /// during cycles 0-63 (secondary-OAM clear) or 256-319 (sprite
+@@ -366,6 +397,22 @@ impl Ppu {
+             ciram: vec![0u8; 0x0800].into_boxed_slice(),
+             oam: vec![0u8; 0x0100].into_boxed_slice(),
+             secondary_oam: [0xFF; 32],
++            #[cfg(feature = "ppu-oam-data-bus")]
++            oam_bus_copybuffer: 0xFF,
++            #[cfg(feature = "ppu-oam-data-bus")]
++            oam_bus_secondary: [0xFF; 32],
++            #[cfg(feature = "ppu-oam-data-bus")]
++            oam_bus_addr_h: 0,
++            #[cfg(feature = "ppu-oam-data-bus")]
++            oam_bus_addr_l: 0,
++            #[cfg(feature = "ppu-oam-data-bus")]
++            oam_bus_secondary_addr: 0,
++            #[cfg(feature = "ppu-oam-data-bus")]
++            oam_bus_copy_done: false,
++            #[cfg(feature = "ppu-oam-data-bus")]
++            oam_bus_sprite_in_range: false,
++            #[cfg(feature = "ppu-oam-data-bus")]
++            oam_bus_overflow_counter: 0,
+             palette_ram: [0u8; 32],
+             open_bus: 0,
+             open_bus_decay: [0; 3],
+@@ -835,6 +882,24 @@ impl Ppu {
+                 // have bits 2-4 unimplemented in OAM and always read as 0,
+                 // even though writes can store them.  See nesdev wiki "PPU
+                 // OAM" → "Byte 2 (attributes)".
++                //
++                // v2.0 Tier 1.2: while the screen is being drawn on a visible
++                // scanline, $2004 returns the value the PPU is currently using
++                // for sprite evaluation / loading (the OAM data bus), NOT
++                // OAM[OAMADDR]. The isolated `ppu-oam-data-bus` model
++                // (`oam_data_bus_read`) reproduces this per AccuracyCoin
++                // `$2004 Stress`; see Mesen2 `NesPpu.cpp:298-313/361-380`.
++                #[cfg(feature = "ppu-oam-data-bus")]
++                {
++                    if self.scanline <= 239
++                        && self.is_render_scanline()
++                        && self.mask.rendering_enabled()
++                    {
++                        let v = self.oam_data_bus_read();
++                        self.touch_open_bus(v);
++                        return v;
++                    }
++                }
+                 let mut v = self.oam[self.oam_addr as usize];
+                 if (self.oam_addr & 0x03) == 0x02 {
+                     v &= 0xE3;
+@@ -846,6 +911,10 @@ impl Ppu {
+                 // loading interval — also when the secondary-OAM bytes
+                 // are being read out to the shift registers), $2004
+                 // reads return $FF.
++                //
++                // (When `ppu-oam-data-bus` is on, the rendering case returns
++                // above; this fallback covers the flag-off build + the
++                // non-rendering paths.)
+                 if self.is_render_scanline()
+                     && self.mask.rendering_enabled()
+                     && ((1..=64).contains(&self.dot) || (257..=320).contains(&self.dot))
+@@ -1264,6 +1333,14 @@ impl Ppu {
+             if visible || pre_render {
+                 self.tick_sprite_eval_per_dot();
+             }
++            // v2.0 Tier 1.2: drive the isolated OAM-data-bus model on visible
++            // scanlines when rendering, so a CPU $2004 read mid-frame observes
++            // the sprite-eval / load data bus (AccuracyCoin `$2004 Stress`).
++            // Side-effect-free w.r.t. the rendering FSM above.
++            #[cfg(feature = "ppu-oam-data-bus")]
++            if visible && self.mask.rendering_enabled() {
++                self.tick_oam_bus();
++            }
+             // Sprite tile fetch + A12 emission.  Real hardware spreads the
+             // 8 sprite slots' pattern fetches across cycles 257..=320 — for
+             // each slot, garbage NT bytes at +1/+3, sprite pattern lo at
+@@ -1876,6 +1953,171 @@ impl Ppu {
+     /// happens later, in [`Self::fetch_sprite_tile`], unchanged. Sprite-
+     /// tile fetches still dispatch at dots 260, 268, ..., 316 — preserving
+     /// the canonical "241 A12 rises per NTSC frame" MMC3 IRQ count.
++    /// v2.0 Tier 1.2 — value `$2004` returns while the screen is being drawn.
++    ///
++    /// Mirrors Mesen2 `NesPpu::ReadRam`'s `SpriteData` case
++    /// (`NesPpu.cpp:361-380`): during the sprite-tile-load window (dots
++    /// 257-320) the OAM data bus carries `secondary_oam[sprite*4 + min(step,3)]`
++    /// (the 4th byte held for the 5 idle fetch cycles); at every other rendered
++    /// dot it carries `oam_bus_copybuffer` (the sprite-eval data latch
++    /// maintained by [`Self::tick_oam_bus`]). Caller has already checked
++    /// `scanline <= 239 && rendering`.
++    #[cfg(feature = "ppu-oam-data-bus")]
++    fn oam_data_bus_read(&self) -> u8 {
++        if (257..=320).contains(&self.dot) {
++            let phase = (self.dot - 257) % 8;
++            let step = if phase > 3 { 3 } else { phase };
++            let oam_addr = ((self.dot - 257) / 8) * 4 + step;
++            self.oam_bus_secondary[(oam_addr & 0x1F) as usize]
++        } else {
++            self.oam_bus_copybuffer
++        }
++    }
++
++    /// v2.0 Tier 1.2 — per-dot driver for the isolated OAM-data-bus model.
++    ///
++    /// A faithful, side-effect-free port of Mesen2's
++    /// `NesPpu::ProcessSpriteEvaluation` (`NesPpu.cpp:1015-1141`, default
++    /// config — `EnablePpuSpriteEvalBug` off) plus the cycle-321 copybuffer
++    /// reset (`NesPpu.cpp:945-951`). It maintains ONLY `oam_bus_copybuffer` +
++    /// the parallel `oam_bus_secondary`; it reads primary `oam` read-only and
++    /// NEVER touches the real sprite-eval / overflow / sprite-zero state (so
++    /// the existing rendering FSM is unperturbed — `$2004` reads are the sole
++    /// observable effect of this whole feature). Called each dot on visible
++    /// scanlines (0-239) when rendering is enabled.
++    #[cfg(feature = "ppu-oam-data-bus")]
++    fn tick_oam_bus(&mut self) {
++        let cycle = self.dot;
++        let sprite_height: i16 = if self.ctrl.contains(PpuCtrl::SPRITE_SIZE_16) {
++            16
++        } else {
++            8
++        };
++        // Y-test reference: the scanline being evaluated (sprites render on
++        // scanline+1). Mesen uses `_scanline` directly here.
++        let scan = self.scanline;
++
++        if cycle == 0 {
++            return;
++        }
++        if cycle < 65 {
++            // Secondary-OAM clear (cycles 1-64): the bus carries $FF and the
++            // parallel secondary OAM is filled with $FF, 1 byte per 2 dots.
++            self.oam_bus_copybuffer = 0xFF;
++            self.oam_bus_secondary[((cycle - 1) >> 1) as usize] = 0xFF;
++            return;
++        }
++        if cycle <= 256 {
++            if cycle & 1 == 1 {
++                // Odd cycle: read a byte from primary OAM into the bus latch.
++                if cycle == 65 {
++                    // ProcessSpriteEvaluationStart: seed the eval pointer from
++                    // OAMADDR (eval can begin mid-sprite if $2003 was written).
++                    self.oam_bus_sprite_in_range = false;
++                    self.oam_bus_secondary_addr = 0;
++                    self.oam_bus_overflow_counter = 0;
++                    self.oam_bus_copy_done = false;
++                    self.oam_bus_addr_h = (self.oam_addr >> 2) & 0x3F;
++                    self.oam_bus_addr_l = self.oam_addr & 0x03;
++                }
++                let addr = ((self.oam_bus_addr_l & 0x03) | (self.oam_bus_addr_h << 2)) as usize;
++                let raw = self.oam[addr & 0xFF];
++                // OAM byte 2 (attributes) bits 2-4 are unimplemented (read 0).
++                self.oam_bus_copybuffer = if addr & 0x03 == 0x02 { raw & 0xE3 } else { raw };
++            } else {
++                // Even cycle: copy / decide.
++                let cb = self.oam_bus_copybuffer as i16;
++                let cb_in_range = scan >= cb && scan < cb + sprite_height;
++                if self.oam_bus_copy_done {
++                    self.oam_bus_addr_h = (self.oam_bus_addr_h + 1) & 0x3F;
++                    // OAM write-disable turns secondary-OAM writes into reads.
++                    // On early (pre-rev-G) 2C02s the data bus reads back the
++                    // last byte the OAM-address counter rests on EVEN when fewer
++                    // than 8 sprites were found (secondary_addr < 0x20) — the
++                    // "OAM2[OAM2Address] every other cycle" behavior AccuracyCoin
++                    // `$2004 Stress` section 6 documents. Mesen2 gates this on
++                    // `secondary_addr >= 0x20` (rev-G+), which is why no Mesen
++                    // config reproduces the section-6 `$03`; the test's answer
++                    // key (the spec) wants the unconditional read. Each
++                    // out-of-range sprite's Y was already written to
++                    // `secondary[secondary_addr]` (the frozen index) below, so
++                    // this reads back that last-written Y.
++                    self.oam_bus_copybuffer =
++                        self.oam_bus_secondary[(self.oam_bus_secondary_addr & 0x1F) as usize];
++                } else {
++                    if !self.oam_bus_sprite_in_range && cb_in_range {
++                        self.oam_bus_sprite_in_range = true;
++                    }
++                    if self.oam_bus_secondary_addr < 0x20 {
++                        // Copy one byte to (parallel) secondary OAM.
++                        self.oam_bus_secondary[self.oam_bus_secondary_addr as usize] =
++                            self.oam_bus_copybuffer;
++                        if self.oam_bus_sprite_in_range {
++                            self.oam_bus_addr_l += 1;
++                            self.oam_bus_secondary_addr += 1;
++                            if self.oam_bus_addr_l >= 4 {
++                                self.oam_bus_addr_h = (self.oam_bus_addr_h + 1) & 0x3F;
++                                self.oam_bus_addr_l = 0;
++                                if self.oam_bus_addr_h == 0 {
++                                    self.oam_bus_copy_done = true;
++                                }
++                            }
++                            if self.oam_bus_secondary_addr.trailing_zeros() >= 2 {
++                                // Finished copying all 4 bytes of this sprite.
++                                self.oam_bus_sprite_in_range = false;
++                                if self.oam_bus_addr_l != 0 && !cb_in_range {
++                                    self.oam_bus_addr_l = 0;
++                                }
++                            }
++                        } else {
++                            // Nothing to copy — skip to the next sprite.
++                            self.oam_bus_addr_h = (self.oam_bus_addr_h + 1) & 0x3F;
++                            self.oam_bus_addr_l = 0;
++                            if self.oam_bus_addr_h == 0 {
++                                self.oam_bus_copy_done = true;
++                            }
++                        }
++                    } else {
++                        // 8 sprites found: secondary-OAM writes become reads.
++                        self.oam_bus_copybuffer =
++                            self.oam_bus_secondary[(self.oam_bus_secondary_addr & 0x1F) as usize];
++                        if self.oam_bus_sprite_in_range {
++                            // Overflow detected. (NOTE: the REAL SpriteOverflow
++                            // flag is owned by the existing eval FSM — this
++                            // isolated model deliberately does not set it.)
++                            self.oam_bus_addr_l += 1;
++                            if self.oam_bus_addr_l == 4 {
++                                self.oam_bus_addr_h = (self.oam_bus_addr_h + 1) & 0x3F;
++                                self.oam_bus_addr_l = 0;
++                            }
++                            if self.oam_bus_overflow_counter == 0 {
++                                self.oam_bus_overflow_counter = 3;
++                            } else {
++                                self.oam_bus_overflow_counter -= 1;
++                                if self.oam_bus_overflow_counter == 0 {
++                                    self.oam_bus_copy_done = true;
++                                    self.oam_bus_addr_l = 0;
++                                }
++                            }
++                        } else {
++                            // Sprite-eval bug: increment BOTH H and L.
++                            self.oam_bus_addr_h = (self.oam_bus_addr_h + 1) & 0x3F;
++                            self.oam_bus_addr_l = (self.oam_bus_addr_l + 1) & 0x03;
++                            if self.oam_bus_addr_h == 0 {
++                                self.oam_bus_copy_done = true;
++                            }
++                        }
++                    }
++                }
++            }
++            return;
++        }
++        if cycle == 321 {
++            // After sprite loading, the bus rests on secondary OAM index 0.
++            self.oam_bus_copybuffer = self.oam_bus_secondary[0];
++        }
++    }
++
+     pub(crate) fn tick_sprite_eval_per_dot(&mut self) {
+         // Y-test reference line for sprite evaluation. Per nesdev
+         // "PPU OAM" (Byte 0): "The first scanline that the sprite is

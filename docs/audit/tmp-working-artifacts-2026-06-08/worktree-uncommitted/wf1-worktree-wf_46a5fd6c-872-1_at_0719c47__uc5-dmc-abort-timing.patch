@@ -1,0 +1,319 @@
+crates/nes-apu/src/apu.rs                          | 171 +++++++++++++++++----
+ crates/nes-core/Cargo.toml                         |   2 +-
+ crates/nes-core/src/bus.rs                         |  11 +-
+ crates/nes-cpu/Cargo.toml                          |   3 +
+ crates/nes-cpu/src/cpu.rs                          |  10 +-
+ docs/audit/v2.0-unified-clock-design-2026-06-06.md |  25 +++
+ 6 files changed, 184 insertions(+), 38 deletions(-)
+
+--- Changes ---
+
+crates/nes-apu/src/apu.rs
+  @@ -15,6 +15,16 @@ use crate::triangle::Triangle;
+  +/// UC-5 (mc-r1-dmc-abort-timing) tunable window for the implicit DMA abort.
+  +/// TriCNES arms `APU_SetImplicitAbortDMC4015` on a `$4015` ENABLE when
+  +/// `APU_ChannelTimer_DMC == 10` on a get cycle or `== 8` on a put cycle
+  +/// (Emulator.cs 9542). `dmc_cycles_until_output` reproduces that timer in CPU
+  +/// cycles. Calibrated empirically against the `$500`/`$520` sweep keys.
+  +#[cfg(feature = "mc-r1-dmc-abort-timing")]
+  +const ABORT_IMPLICIT_CUO_GET: u16 = 10;
+  +#[cfg(feature = "mc-r1-dmc-abort-timing")]
+  +const ABORT_IMPLICIT_CUO_PUT: u16 = 8;
+  +
+   /// v2.0 R-1 core C-1 DIAGNOSTIC (gated `mc-r1-dmc-abort-probe`).
+   ///
+   /// Pub-static atomic counters that pin WHERE the explicit-DMC-abort scheduling
+  @@ -189,7 +199,12 @@ pub struct Apu {
+  +    /// Foundation field for the TriCNES `APU_ImplicitAbortDMC4015` live-abort
+  +    /// flag. The current UC-5 arming routes the matured abort through the
+  +    /// existing `dmc_abort_delay`/`pending_dmc_abort` machinery, so this is
+  +    /// retained as scaffold for a future direct-port (see the design doc).
+       #[cfg(feature = "mc-r1-dmc-abort-timing")]
+  +    #[allow(dead_code)]
+       pub(crate) implicit_abort: bool,
+       /// CPU cycles during which a newly emptied DMC sample buffer must not
+       /// raise another DMA request. The DMC DMA unit cannot issue a second
+  @@ -529,10 +544,30 @@ impl Apu {
+  -            let first_apu_clock = if self.apu_phase { 2 } else { 1 };
+  -            let cycles_until_output = first_apu_clock + self.dmc.timer.saturating_mul(2);
+  -            if let Some(delay) = Self::dmc_abort_delay_for(cycles_until_output) {
+  -                self.dmc_abort_delay = delay;
+  +            // UC-5 (mc-r1-dmc-abort-timing): TriCNES raises the implicit 1-cycle
+  +            // abort ONLY when the `$4015` enable latched `set_implicit_abort` at
+  +            // the precise timer phase (Emulator.cs 1163-1174); otherwise the
+  +            // 1-byte load completes silently. The floor arms unconditionally =>
+  +            // the uniform `01x16` over-fire. Gate on the latch + consume it.
+  +            #[cfg(feature = "mc-r1-dmc-abort-timing")]
+  +            {
+  +                if self.set_implicit_abort {
+  +                    let first_apu_clock = if self.apu_phase { 2 } else { 1 };
+  +                    let cuo = first_apu_clock + self.dmc.timer.saturating_mul(2);
+  +                    if let Some(delay) = Self::dmc_abort_delay_for(cuo) {
+  +                        self.dmc_abort_delay = delay;
+  +                    }
+  +                    self.set_implicit_abort = false;
+  +                }
+  +            }
+  +            #[cfg(not(feature = "mc-r1-dmc-abort-timing"))]
+  +            {
+  +                let first_apu_clock = if self.apu_phase { 2 } else { 1 };
+  +                let cycles_until_output =
+  +                    first_apu_clock + self.dmc.timer.saturating_mul(2);
+  +                if let Some(delay) = Self::dmc_abort_delay_for(cycles_until_output) {
+  +                    self.dmc_abort_delay = delay;
+  +                }
+               }
+           }
+           self.pending_dmc_dma = false;
+  @@ -570,7 +605,19 @@ impl Apu {
+  -            self.dmc_abort_delay = 3;
+  +            // UC-5 (mc-r1-dmc-abort-timing): only raise the implicit abort when
+  +            // the enable latched the race (see `complete_dmc_dma`).
+  +            #[cfg(feature = "mc-r1-dmc-abort-timing")]
+  +            {
+  +                if self.set_implicit_abort {
+  +                    self.dmc_abort_delay = 3;
+  +                    self.set_implicit_abort = false;
+  +                }
+  +            }
+  +            #[cfg(not(feature = "mc-r1-dmc-abort-timing"))]
+  +            {
+  +                self.dmc_abort_delay = 3;
+  +            }
+           }
+           if was_load && self.dmc.loop_flag && self.dmc.sample_length == 1 {
+               self.defer_dmc_reload_once = true;
+  @@ -679,13 +726,13 @@ impl Apu {
+  +        // UC-5: the `delayed_4015` countdown is retained as foundation state but
+  +        // must NOT consume `set_implicit_abort` — that latch is now consumed at
+  +        // the (much later) 1-byte load completion (`complete_dmc_dma`), so it has
+  +        // to survive the 8-9 cycles between the `$4015` enable and the load.
+           #[cfg(feature = "mc-r1-dmc-abort-timing")]
+           if self.delayed_4015_delay > 0 {
+               self.delayed_4015_delay -= 1;
+  -            if self.delayed_4015_delay == 0 && self.set_implicit_abort {
+  -                self.implicit_abort = true;
+  -                self.set_implicit_abort = false;
+  -            }
+           }
+           if self.dmc_dma_cooldown > 0 {
+               self.dmc_dma_cooldown -= 1;
+  @@ -1008,6 +1055,7 @@ impl Apu {
+  +    #[allow(clippy::too_many_lines)]
+       fn write_status(&mut self, value: u8) {
+           self.pulse1.length.set_enabled((value & 0x01) != 0);
+           self.pulse2.length.set_enabled((value & 0x02) != 0);
+  @@ -1030,10 +1078,12 @@ impl Apu {
+  -            // A disable racing an in-flight/just-emptied DMC load is the implicit
+  -            // abort condition (TriCNES `APU_SetImplicitAbortDMC4015`).
+  -            if !enable_dmc && (self.dmc_dma_delay > 0 || self.pending_dmc_dma) {
+  -                self.set_implicit_abort = true;
+  +            // The implicit-abort race is latched by `arm_dmc_implicit_abort_on_
+  +            // enable` (on the ENABLE write at the precise timer phase), NOT here.
+  +            // A DISABLE write clears any stale latch so a race armed by a prior
+  +            // (e.g. looping) enable cannot leak into the next sample's load.
+  +            if !enable_dmc {
+  +                self.set_implicit_abort = false;
+               }
+           }
+           #[cfg(feature = "mc-r1-dmc-abort-probe")]
+  @@ -1145,6 +1195,15 @@ impl Apu {
+  +        // UC-5 (mc-r1-dmc-abort-timing): TriCNES arms the implicit 1-cycle DMA
+  +        // abort on a `$4015` ENABLE landing at the precise pre-reload timer
+  +        // phase (Emulator.cs 9542). This is the swept-`$4015`-enable race the
+  +        // `$500`/`$520` keys measure; the floor instead arms (too eagerly) on
+  +        // the loop-top DISABLE, producing the uniform `01x16` over-fire.
+  +        #[cfg(feature = "mc-r1-dmc-abort-timing")]
+  +        if enable_dmc {
+  +            self.arm_dmc_implicit_abort_on_enable();
+  +        }
+       }
+   
+       fn schedule_explicit_dmc_abort_if_needed(&mut self) {
+  @@ -1204,31 +1263,77 @@ impl Apu {
+  -        if cycles_until_output == 1 {
+  -            self.pending_dmc_dma = true;
+  -            self.dmc_dma_is_load = false;
+  -            self.dmc_dma_short = false;
+  -            self.dmc_dma_addr = self.dmc.dma_addr();
+  -            self.dmc_need_halt = true;
+  -            self.dmc_need_dummy_read = true;
+  -            self.pending_dmc_abort = true;
+  -            #[cfg(feature = "mc-r1-dmc-abort-probe")]
+  -            {
+  -                use core::sync::atomic::Ordering::Relaxed;
+  -                abort_probe::ARMED.fetch_add(1, Relaxed);
+  -            }
+  -            return;
+  +        // UC-5 (mc-r1-dmc-abort-timing): the DISABLE-triggered abort is the
+  +        // EXPLICIT abort. TriCNES arms it only at the exact "DMA about to fire"
+  +        // timer phase (`timer==2 && !put`, Emulator.cs 9533); the floor's wider
+  +        // `cuo in {1,2,3}` window over-fires at the implicit loop's loop-top
+  +        // disable (the `01x16`). Narrow it to TriCNES's `cuo==2` on a get.
+  +        #[cfg(feature = "mc-r1-dmc-abort-timing")]
+  +        if cycles_until_output == 2 && !self.put_cycle {
+  +            self.dmc_abort_delay = 2;
+           }
+  -        if let Some(delay) = Self::dmc_abort_delay_for(cycles_until_output) {
+  -            self.dmc_abort_delay = delay;
+  -            #[cfg(feature = "mc-r1-dmc-abort-probe")]
+  -            {
+  -                use core::sync::atomic::Ordering::Relaxed;
+  -                abort_probe::ARMED.fetch_add(1, Relaxed);
+  +        #[cfg(not(feature = "mc-r1-dmc-abort-timing"))]
+  +        {
+  +            if cycles_until_output == 1 {
+  +                self.pending_dmc_dma = true;
+  +                self.dmc_dma_is_load = false;
+  +                self.dmc_dma_short = false;
+  +                self.dmc_dma_addr = self.dmc.dma_addr();
+  +                self.dmc_need_halt = true;
+  +                self.dmc_need_dummy_read = true;
+  +                self.pending_dmc_abort = true;
+  +                #[cfg(feature = "mc-r1-dmc-abort-probe")]
+  +                {
+  +                    use core::sync::atomic::Ordering::Relaxed;
+  +                    abort_probe::ARMED.fetch_add(1, Relaxed);
+  +                }
+  +                return;
+  +            }
+  +            if let Some(delay) = Self::dmc_abort_delay_for(cycles_until_output) {
+  +                self.dmc_abort_delay = delay;
+  +                #[cfg(feature = "mc-r1-dmc-abort-probe")]
+  +                {
+  +                    use core::sync::atomic::Ordering::Relaxed;
+  +                    abort_probe::ARMED.fetch_add(1, Relaxed);
+  +                }
+               }
+           }
+       }
+   
+  +    /// UC-5 (mc-r1-dmc-abort-timing): "CPU cycles until the next DMC output
+  +    /// clock", in TriCNES `APU_ChannelTimer_DMC` units (CPU cycles). RustyNES's
+  +    /// `dmc.timer` is APU-rate (half CPU rate), so multiply by 2 and add the
+  +    /// half-cycle phase offset (`apu_phase ? 2 : 1`). This is the same formula
+  +    /// `schedule_explicit_dmc_abort_if_needed` uses; factored so the enable path
+  +    /// can re-use it for the implicit-abort race window.
+  +    #[cfg(feature = "mc-r1-dmc-abort-timing")]
+  +    fn dmc_cycles_until_output(&self) -> u16 {
+  +        let first_apu_clock: u16 = if self.apu_phase { 2 } else { 1 };
+  +        first_apu_clock + self.dmc.timer.saturating_mul(2)
+  +    }
+  +
+  +    /// UC-5: TriCNES implicit-DMA-abort arming (Emulator.cs 9542-9545). On a
+  +    /// `$4015` bit-4 ENABLE that lands at the precise DMC-timer phase right
+  +    /// before a reload DMA would fire (`(timer==10 && !put) || (timer==8 &&
+  +    /// put)`), a 1-cycle DMA will be raised and aborted ~2 cycles after the
+  +    /// load DMA ends. `APU_ChannelTimer_DMC` maps to `dmc_cycles_until_output`.
+  +    /// We mature it through the existing `dmc_abort_delay` countdown so the
+  +    /// `read1`/`write1` get-cycle-only abort-cancel path (TriCNES `_6502`
+  +    /// 4218 / 9000-9002) services it as Y=1 on a get, Y=0 on a put/write.
+  +    #[cfg(feature = "mc-r1-dmc-abort-timing")]
+  +    fn arm_dmc_implicit_abort_on_enable(&mut self) {
+  +        let cuo = self.dmc_cycles_until_output();
+  +        let get = !self.put_cycle;
+  +        let in_window = (get && cuo == ABORT_IMPLICIT_CUO_GET)
+  +            || (!get && cuo == ABORT_IMPLICIT_CUO_PUT);
+  +        // TriCNES only LATCHES the race here; the 1-cycle abort is actually
+  +        // raised when the (1-byte non-loop) load DMA completes — see
+  +        // `complete_dmc_dma{,_before_get_tick}`, which consume this latch.
+  +        if in_window {
+  +            self.set_implicit_abort = true;
+  +        }
+  +    }
+  +
+       /// CPU register read (only `$4015` is meaningful).  Reading clears the
+       /// frame IRQ flag.
+       pub fn read_status(&mut self) -> u8 {
+  +138 -33
+
+crates/nes-core/Cargo.toml
+  @@ -121,7 +121,7 @@ mc-r1-one-clock = ["nes-apu/mc-r1-one-clock"]
+  -mc-r1-dmc-abort-timing = ["nes-apu/mc-r1-dmc-abort-timing", "mc-r1-apu-unified-clock", "mc-r1-one-clock"]
+  +mc-r1-dmc-abort-timing = ["nes-apu/mc-r1-dmc-abort-timing", "nes-cpu/mc-r1-dmc-abort-timing", "mc-r1-apu-unified-clock", "mc-r1-one-clock"]
+   # v2.0 UC (unified-clock refactor): TriCNES-faithful unified OAM+DMC per-cycle
+   # DMA loop + phase-gated arm. Forward to nes-apu + pull in the one-clock parity.
+   mc-r1-unified-dma = ["nes-apu/mc-r1-unified-dma", "mc-r1-apu-unified-clock", "mc-r1-one-clock", "mc-r1-load-getentry"]
+  +1 -1
+
+crates/nes-core/src/bus.rs
+  @@ -1596,7 +1596,8 @@ impl LockstepBus {
+  -            not(feature = "mc-r1-dmc-abort-cancel")
+  +            not(feature = "mc-r1-dmc-abort-cancel"),
+  +            not(feature = "mc-r1-dmc-abort-timing")
+           ))]
+           if self.apu.dmc_abort_pending() {
+               if let Some(addr) = read_addr {
+  @@ -1971,7 +1972,13 @@ impl LockstepBus {
+  -    #[cfg_attr(feature = "mc-r1-dmc-abort-cancel", allow(dead_code))]
+  +    #[cfg_attr(
+  +        any(
+  +            feature = "mc-r1-dmc-abort-cancel",
+  +            feature = "mc-r1-dmc-abort-timing"
+  +        ),
+  +        allow(dead_code)
+  +    )]
+       fn service_dmc_abort(&mut self, halted_addr: u16) {
+           if !self.apu.dmc_abort_pending() || self.in_dmc_dma {
+               return;
+  +9 -2
+
+crates/nes-cpu/Cargo.toml
+  @@ -99,6 +99,9 @@ mc-r1-dma-cycle-budget = []
+  +# UC-5: the implicit/explicit DMA abort timing port reuses the same get-cycle-
+  +# only `read1`/`write1` abort-cancel access path as `mc-r1-dmc-abort-cancel`.
+  +mc-r1-dmc-abort-timing = ["mc-r1-substrate"]
+   
+   [dependencies]
+   bitflags.workspace = true
+  +3 -0
+
+crates/nes-cpu/src/cpu.rs
+  @@ -781,7 +781,10 @@ impl Cpu {
+  -            #[cfg(feature = "mc-r1-dmc-abort-cancel")]
+  +            #[cfg(any(
+  +                feature = "mc-r1-dmc-abort-cancel",
+  +                feature = "mc-r1-dmc-abort-timing"
+  +            ))]
+               if bus.dmc_abort_pending() {
+                   if bus.dmc_abort_is_get_cycle() {
+                       #[cfg(not(feature = "mc-r1-dma-cycle-budget"))]
+  @@ -879,7 +882,10 @@ impl Cpu {
+  -            #[cfg(feature = "mc-r1-dmc-abort-cancel")]
+  +            #[cfg(any(
+  +                feature = "mc-r1-dmc-abort-cancel",
+  +                feature = "mc-r1-dmc-abort-timing"
+  +            ))]
+               if bus.dmc_abort_pending() {
+                   bus.dmc_abort_cancel();
+               }
+  +8 -2
+
+docs/audit/v2.0-unified-clock-design-2026-06-06.md
+  @@ -352,3 +352,28 @@ phase floor. On an ADR-0002 stop condition: report + decide (don't auto-revert-t
+  +
+  +### UC-5 IMPLEMENTATION RESULT (mc-r1-dmc-abort-timing) — KEY FINDING: the `01x16` is NOT an abort
+  +Ported the TriCNES implicit-DMA-abort ARMING model faithfully under `mc-r1-dmc-abort-timing`
+  +(default-off; floor + flag-on both 9 fails / 93.53%, nestest 0-diff, fmt/clippy clean):
+  +- `arm_dmc_implicit_abort_on_enable` latches `set_implicit_abort` only on a `$4015` ENABLE landing at
+  +  the TriCNES timer phase (`dmc_cycles_until_output == 10` on get / `== 8` on put; Emulator.cs 9542),
+  +  with a DISABLE-write clear so a looping-enable latch cannot leak into the next sample's load.
+  +- `complete_dmc_dma{,_before_get_tick}` raise the 1-cycle abort ONLY when that latch is set (consuming
+  +  it), instead of the floor's unconditional "any 1-byte non-loop load completed" arm.
+  +- The disable-triggered EXPLICIT abort is narrowed to TriCNES `cuo==2 && get` (vs the floor `cuo in
+  +  {1,2,3}`); the get-only-1-halt / put-cancel access path (`read1`/`write1`) is reused from
+  +  `mc-r1-dmc-abort-cancel`.
+  +
+  +**DECISIVE EXPERIMENT (refutes the UC-5 "abort behavior is the make-or-break" premise).** A diagnostic
+  +that NUKES every abort source every CPU cycle (`pending_dmc_abort = dmc_abort_delay = set_implicit_abort
+  += 0`) leaves the implicit `$500` sweep **byte-identical at `01x16`**. Independently, suppressing the
+  +1-byte load DMA also leaves it `01x16`. Therefore the implicit `01x16` over-fire is **a real DMC LOAD/
+  +RELOAD DMA landing inside CalculateDMADuration's measurement window at every sweep offset — the DMC-DMA
+  +ABSOLUTE-LANDING-CYCLE incoherence (the R-1 / master-clock axis) — NOT abort servicing.** Key1 wants
+  +`00` at idx 0-9,12-15 because at those offsets TriCNES's DMA lands OUTSIDE the window; RustyNES's lands
+  +inside at every offset. This matches the prior R-1 memo ("01x16 vs Key1 ... = the DMC-DMA absolute-
+  +landing-cycle incoherence (NOT abort servicing)") and means no flag-gated abort change can move these
+  +three tests; the lever is the absolute landing-cycle coherence (multi-week master-clock work). The
+  +abort-arming infrastructure above is the correct TriCNES occurrence model and is retained behind the
+  +flag (non-regressing) for when the landing axis is fixed.
+  +25 -0

@@ -1,0 +1,195 @@
+diff --git a/crates/nes-apu/Cargo.toml b/crates/nes-apu/Cargo.toml
+index 3017808..cd10c4f 100644
+--- a/crates/nes-apu/Cargo.toml
++++ b/crates/nes-apu/Cargo.toml
+@@ -91,6 +91,20 @@ mc-r1-dmc-abort-timing = ["mc-r1-apu-unified-clock", "mc-r1-one-clock"]
+ # v2.0 UC-6: defer the $4015 DMC apply (TriCNES APU_DelayedDMC4015) so the
+ # load DMA lands at a cycle-count-deterministic phase. Default-off.
+ mc-r1-dmc-defer-4015 = ["mc-r1-dmc-abort-timing", "mc-r1-load-getentry"]
++# v2.0 UC-7 (wf-dma-port): faithful TriCNES deferred-DISABLE. A $4015 bit-4
++# clear does NOT zero APU_DMC_BytesRemaining immediately; it is deferred to the
++# put?5:6 APU_DelayedDMC4015 expiry (Emulator.cs 1219-1223), while the gating
++# status (APU_Status_DelayedDMC) clears at once (the bit-4 read uses
++# bytes!=0 && status, 9260).
++# REFUTED (default-off; kept as a documented negative result). Measured on the
++# R1 floor + mc-r1-dmc-defer-4015 config: the implicit/explicit abort sweeps stay
++# `01x16` / `00x16` (UNCHANGED) AND it REGRESSES `DMA + $2002 Read` (9->10 fails),
++# because holding bytes_remaining alive perturbs the DMA-drives-bus / $2002
++# interaction. This empirically confirms the design-doc conclusion: the `01x16`
++# is the DMC GET's ABSOLUTE LANDING PHASE (the master-clock CPU-rate continuous
++# DMC timer axis), NOT the $4015 disable timing. Do NOT promote. Do NOT re-try
++# the deferred-disable as a bounded lever. See docs/audit/v2.0-unified-clock-design-2026-06-06.md UC-7.
++mc-r1-dmc-defer-disable = ["mc-r1-dmc-defer-4015"]
+ mc-r1-unified-dma = ["mc-r1-apu-unified-clock", "mc-r1-one-clock", "mc-r1-load-getentry"]
+ # v2.0 DC-2: clock the DMC byte-timer 1 cycle earlier than apu_phase (decoupled
+ # from the IRQ-line apu_phase) so the DMC GET lands at Mesen offset 47 (Y 3->4).
+diff --git a/crates/nes-apu/src/apu.rs b/crates/nes-apu/src/apu.rs
+index 00f9382..eef988d 100644
+--- a/crates/nes-apu/src/apu.rs
++++ b/crates/nes-apu/src/apu.rs
+@@ -206,6 +206,18 @@ pub struct Apu {
+     pub(crate) deferred_load_pending: bool,
+     #[cfg(feature = "mc-r1-dmc-defer-4015")]
+     pub(crate) deferred_load_ise: bool,
++    /// UC-7 (mc-r1-dmc-defer-disable): a `$4015` bit-4 CLEAR whose
++    /// `APU_DMC_BytesRemaining` zero is deferred to the put?5:6 expiry (TriCNES
++    /// Emulator.cs 1219-1223) instead of clearing immediately. `true` while the
++    /// deferred clear is pending.
++    #[cfg(feature = "mc-r1-dmc-defer-disable")]
++    pub(crate) deferred_disable_pending: bool,
++    /// UC-7 (mc-r1-dmc-defer-disable): TriCNES `APU_Status_DelayedDMC` — the bit-4
++    /// gating status, which clears IMMEDIATELY on a disable write (unlike
++    /// `bytes_remaining`). The `$4015` bit-4 read returns `bytes!=0 && status`
++    /// (Emulator.cs 9260).
++    #[cfg(feature = "mc-r1-dmc-defer-disable")]
++    pub(crate) dmc_status_delayed: bool,
+     /// Foundation field for the TriCNES `APU_ImplicitAbortDMC4015` live-abort
+     /// flag. The current UC-5 arming routes the matured abort through the
+     /// existing `dmc_abort_delay`/`pending_dmc_abort` machinery, so this is
+@@ -305,6 +317,10 @@ impl Apu {
+             deferred_load_pending: false,
+             #[cfg(feature = "mc-r1-dmc-defer-4015")]
+             deferred_load_ise: false,
++            #[cfg(feature = "mc-r1-dmc-defer-disable")]
++            deferred_disable_pending: false,
++            #[cfg(feature = "mc-r1-dmc-defer-disable")]
++            dmc_status_delayed: false,
+             #[cfg(feature = "mc-r1-dmc-abort-timing")]
+             implicit_abort: false,
+             dmc_abort_delay: 0,
+@@ -755,6 +771,19 @@ impl Apu {
+                 self.deferred_load_pending = false;
+                 self.arm_dmc_load(ise);
+             }
++            // UC-7 (mc-r1-dmc-defer-disable): the deferred `bytes_remaining`
++            // clear matures here (TriCNES `APU_Status_DMC = APU_Status_DelayedDMC;
++            // if(!APU_Status_DMC) BytesRemaining = 0`, Emulator.cs 1219-1223).
++            // Only clear if the LATEST `$4015` write was still a disable — a
++            // re-enable inside the window overwrote `delayed_4015_enable` (and
++            // the timer), so the sample keeps playing (the in-window `01`).
++            #[cfg(feature = "mc-r1-dmc-defer-disable")]
++            if self.delayed_4015_delay == 0 && self.deferred_disable_pending {
++                self.deferred_disable_pending = false;
++                if !self.delayed_4015_enable {
++                    self.dmc.bytes_remaining = 0;
++                }
++            }
+         }
+         if self.dmc_dma_cooldown > 0 {
+             self.dmc_dma_cooldown -= 1;
+@@ -1111,6 +1140,13 @@ impl Apu {
+                 self.set_implicit_abort = false;
+             }
+         }
++        // UC-7 (mc-r1-dmc-defer-disable): the gating status (TriCNES
++        // `APU_Status_DelayedDMC`) tracks bit-4 immediately, even though the
++        // `bytes_remaining` clear on a disable is deferred below.
++        #[cfg(feature = "mc-r1-dmc-defer-disable")]
++        {
++            self.dmc_status_delayed = enable_dmc;
++        }
+         #[cfg(feature = "mc-r1-dmc-abort-probe")]
+         {
+             use core::sync::atomic::Ordering::Relaxed;
+@@ -1159,7 +1195,21 @@ impl Apu {
+             && self.dmc.rate_index == 0x0E
+             && self.dmc.bits_remaining == 1
+             && self.dmc.sample_buffer.is_none();
++        // UC-7 (mc-r1-dmc-defer-disable): TriCNES does NOT clear
++        // `APU_DMC_BytesRemaining` on the disable write — the clear is deferred
++        // to the put?5:6 `APU_DelayedDMC4015` expiry (Emulator.cs 1219-1223).
++        // Restore the pre-write count and schedule the deferred clear, so a
++        // re-enable within the window sees `bytes_remaining > 0` and
++        // `StartDMCSample`'s `if BytesRemaining==0` gate suppresses a fresh load
++        // DMA (the implicit-abort sweep's `00` at most offsets = Key1).
++        #[cfg(feature = "mc-r1-dmc-defer-disable")]
++        let bytes_before_disable = self.dmc.bytes_remaining;
+         self.dmc.set_enabled(enable_dmc);
++        #[cfg(feature = "mc-r1-dmc-defer-disable")]
++        if !enable_dmc && bytes_before_disable != 0 {
++            self.dmc.bytes_remaining = bytes_before_disable;
++            self.deferred_disable_pending = true;
++        }
+         if enable_dmc && !was_active && self.dmc.needs_dma() {
+             // UC-6: defer ONLY the load arm under `mc-r1-dmc-defer-4015` (the
+             // status/sample setup above stays immediate); the deferred arm runs
+@@ -1409,6 +1459,15 @@ impl Apu {
+         if self.noise.length.active() {
+             v |= 0x08;
+         }
++        // UC-7 (mc-r1-dmc-defer-disable): bit 4 = `bytes_remaining != 0 &&
++        // APU_Status_DelayedDMC` (Emulator.cs 9260). The status clears at once on
++        // a disable write, so bit 4 reads 0 immediately even though the deferred
++        // `bytes_remaining` clear is still pending.
++        #[cfg(feature = "mc-r1-dmc-defer-disable")]
++        if self.dmc.active() && self.dmc_status_delayed {
++            v |= 0x10;
++        }
++        #[cfg(not(feature = "mc-r1-dmc-defer-disable"))]
+         if self.dmc.active() {
+             v |= 0x10;
+         }
+diff --git a/crates/nes-core/Cargo.toml b/crates/nes-core/Cargo.toml
+index 00d9b1e..b1cc933 100644
+--- a/crates/nes-core/Cargo.toml
++++ b/crates/nes-core/Cargo.toml
+@@ -127,6 +127,8 @@ mc-r1-load-getentry = ["nes-apu/mc-r1-load-getentry", "mc-r1-apu-unified-clock",
+ mc-r1-dmc-abort-timing = ["nes-apu/mc-r1-dmc-abort-timing", "nes-cpu/mc-r1-dmc-abort-timing", "mc-r1-apu-unified-clock", "mc-r1-one-clock"]
+ # v2.0 UC-6: deferred $4015 DMC apply. Forward to nes-apu.
+ mc-r1-dmc-defer-4015 = ["nes-apu/mc-r1-dmc-defer-4015", "mc-r1-dmc-abort-timing", "mc-r1-load-getentry"]
++# v2.0 UC-7 (wf-dma-port): TriCNES deferred-DISABLE. Forward to nes-apu.
++mc-r1-dmc-defer-disable = ["nes-apu/mc-r1-dmc-defer-disable", "mc-r1-dmc-defer-4015"]
+ # v2.0 UC (unified-clock refactor): TriCNES-faithful unified OAM+DMC per-cycle
+ # DMA loop + phase-gated arm. Forward to nes-apu + pull in the one-clock parity.
+ mc-r1-unified-dma = ["nes-apu/mc-r1-unified-dma", "mc-r1-apu-unified-clock", "mc-r1-one-clock", "mc-r1-load-getentry"]
+diff --git a/crates/nes-test-harness/Cargo.toml b/crates/nes-test-harness/Cargo.toml
+index 55cfb76..1e2a627 100644
+--- a/crates/nes-test-harness/Cargo.toml
++++ b/crates/nes-test-harness/Cargo.toml
+@@ -66,6 +66,8 @@ mc-r1-load-getentry = ["nes-core/mc-r1-load-getentry"]
+ mc-r1-dmc-abort-timing = ["nes-core/mc-r1-dmc-abort-timing"]
+ # v2.0 UC-6: deferred $4015 DMC apply.
+ mc-r1-dmc-defer-4015 = ["nes-core/mc-r1-dmc-defer-4015"]
++# v2.0 UC-7 (wf-dma-port): TriCNES deferred-DISABLE.
++mc-r1-dmc-defer-disable = ["nes-core/mc-r1-dmc-defer-disable"]
+ # v2.0 UC: TriCNES-faithful unified OAM+DMC DMA loop + phase-gated arm.
+ mc-r1-unified-dma = ["nes-core/mc-r1-unified-dma"]
+ # v2.0 DC-2: decoupled DMC-timer -1 phase. Forward to nes-core.
+diff --git a/docs/audit/v2.0-unified-clock-design-2026-06-06.md b/docs/audit/v2.0-unified-clock-design-2026-06-06.md
+index 6578fa1..d1c203c 100644
+--- a/docs/audit/v2.0-unified-clock-design-2026-06-06.md
++++ b/docs/audit/v2.0-unified-clock-design-2026-06-06.md
+@@ -454,3 +454,33 @@ landing-cycle incoherence (NOT abort servicing)") and means no flag-gated abort
+ three tests; the lever is the absolute landing-cycle coherence (multi-week master-clock work). The
+ abort-arming infrastructure above is the correct TriCNES occurrence model and is retained behind the
+ flag (non-regressing) for when the landing axis is fixed.
++
++### UC-7 — TriCNES deferred-DISABLE ported + REFUTED (`mc-r1-dmc-defer-disable`)
++The wf-dma-port mandate (faithful coupled bus+DMA+DMC port) re-examined the ONE `$4015` mechanism the
++committed step-1 (`mc-r1-dmc-defer-4015`) explicitly SKIPPED: the deferred **disable**. Step-1 kept the
++disable's `bytes_remaining = 0` IMMEDIATE; TriCNES (Emulator.cs 1219-1223) defers it to the put?5:6
++`APU_DelayedDMC4015` expiry while the gating status `APU_Status_DelayedDMC` clears at once (bit-4 read =
++`bytes != 0 && status`, 9260). Hypothesis (mechanically plausible): the implicit-abort sweep's
++`STA $4015`(disable)→re-enable loop re-arms a fresh load DMA at EVERY offset because the immediate
++disable makes the re-enable see `bytes_remaining == 0` (passing `StartDMCSample`'s `if BytesRemaining==0`
++gate); deferring the clear makes the re-enable see `bytes_remaining > 0` → no re-load → `$4000` reads 00.
++
++Ported faithfully behind `mc-r1-dmc-defer-disable` (default-off; new fields `deferred_disable_pending` +
++`dmc_status_delayed`; defer the clear in `apply_dmc_4015`, mature it at the `delayed_4015_delay` expiry,
++gate bit-4 on the status). **Floor (flag-off) byte-identical; nes-cpu unit canary 33/33.**
++
++**RESULT — REFUTED.** Measured on R1 floor + `mc-r1-dmc-defer-4015`:
++- Implicit `$500` sweep: `01x16` (UNCHANGED — still over-fires at every offset, vs Key1 `00x10 01 01 00x4`).
++- Explicit `$520` sweep: `00x16` (UNCHANGED, vs Key2 `00x10 01 00x5`).
++- AccuracyCoin: **9 → 10 fails** — it REGRESSES `DMA + $2002 Read` (was passing on the floor), because
++  holding `bytes_remaining` alive 5-6 extra cycles perturbs the DMA-drives-bus interaction with the
++  `$2002` read (the same simultaneous-constraint wall as the internal-bus save/restore: anything that
++  changes how long the DMC drives/holds the bus breaks a passing DMA+register test).
++
++**Conclusion (reinforces UC-4/UC-5/UC-6):** the `01x16` is NOT the re-enable load and NOT the disable
++timing — it is the DMC GET's **absolute landing phase** relative to `CalculateDMADuration`'s sliding
++`$4000` probe. The disable race only selects WHICH in-flight GET is caught; with RustyNES's APU-rate
++(period/2-1) DMC timer the GET lands inside the measurement window at every offset, while TriCNES's
++continuous CPU-rate period-minus-1 timer lands it outside except at idx 10,11. The genuine fix is the
++single unified CPU-rate continuous DMC byte-timer (UC-1, the master-clock axis), not any `$4015`-side
++lever. The deferred-disable flag is kept default-off as a documented negative result (DO-NOT-RETRY).

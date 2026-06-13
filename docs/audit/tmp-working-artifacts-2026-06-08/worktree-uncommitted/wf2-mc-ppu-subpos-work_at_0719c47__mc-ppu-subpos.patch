@@ -1,0 +1,97 @@
+diff --git a/crates/nes-core/Cargo.toml b/crates/nes-core/Cargo.toml
+index c4f1af8..b47abd8 100644
+--- a/crates/nes-core/Cargo.toml
++++ b/crates/nes-core/Cargo.toml
+@@ -91,6 +91,9 @@ ppu-sprite-shifter-counter = ["nes-ppu/ppu-sprite-shifter-counter"]
+ # read-end ~1.875 dots later); closes AccuracyCoin `$2002 flag timing`. PPU-only,
+ # DMA-free. Default-off on the pivot until oracle-validated.
+ ppu-2002-read-end-flags = ["nes-ppu/ppu-2002-read-end-flags"]
++# v2.0 Phase 6 — forward to `nes-ppu/mc-ppu-subpos` (sub-dot PPU position:
++# BG-shifter serial-in for BG Serial In). Default-off; oracle byte-identical.
++mc-ppu-subpos = ["nes-ppu/mc-ppu-subpos"]
+ # v2.0 master-clock R1 substrate port (Phase 1+). Forwards to the CPU + PPU
+ # sides. Phase 1 adds the clean Bus contract (default-off, byte-identical); later
+ # phases add the CPU master_clock loop + R2 predicates to close the C1 IRQ trio
+diff --git a/crates/nes-ppu/Cargo.toml b/crates/nes-ppu/Cargo.toml
+index 036d898..1ddbc84 100644
+--- a/crates/nes-ppu/Cargo.toml
++++ b/crates/nes-ppu/Cargo.toml
+@@ -83,6 +83,18 @@ ppu-2002-read-end-flags = []
+ # predicate changes (NMI raise dot 3->1, $2002 drops /NMI, race dot==0) here.
+ # Default-off. See `docs/audit/v2.0-master-clock-r1-port-plan-2026-06-03.md`.
+ mc-r1-substrate = []
++# v2.0 Phase 6 — sub-dot PPU position model for the two bleeding-edge PPU-Misc
++# tests (BG Serial In + $2007 Stress). Adds the BG-shifter SERIAL-IN semantics
++# (the high pattern plane shifts in a '1', the low plane a '0', per nesdev
++# "PPU signals") so a precisely-timed `$2001` render-toggle that SKIPS a shift-
++# register reload while shifting continues surfaces opaque BG pixels on an all-
++# translucent nametable (BG Serial In). The serial-in is oracle-safe: in normal
++# rendering the dot%8==1 reload overwrites bits 0-7 every 8 shifts before the
++# injected bit reaches the output bits 8-15, so the framebuffer is byte-identical
++# (only a render-disable straddling the reload exposes it). Default-off.
++# See `docs/audit/v2.0-unified-clock-design-2026-06-06.md` (Phase 6) +
++# `plans/toasty-noodling-scroll.md` (Phase 6).
++mc-ppu-subpos = []
+ 
+ [dependencies]
+ bitflags.workspace = true
+diff --git a/crates/nes-ppu/src/ppu.rs b/crates/nes-ppu/src/ppu.rs
+index 326744e..c81912a 100644
+--- a/crates/nes-ppu/src/ppu.rs
++++ b/crates/nes-ppu/src/ppu.rs
+@@ -1732,6 +1732,21 @@ impl Ppu {
+         self.bg_shift_hi <<= 1;
+         self.at_shift_lo <<= 1;
+         self.at_shift_hi <<= 1;
++        // v2.0 Phase 6 (mc-ppu-subpos): BG-shifter SERIAL-IN. Per nesdev "PPU
++        // signals", the bit shifted into the pattern shifters from the right is
++        // a constant 0 for the LOW plane and a constant 1 for the HIGH plane.
++        // It is normally invisible: the dot%8==1 reload overwrites bits 0-7
++        // every 8 shifts, so the injected '1' never reaches the output bits
++        // 8-15 before being washed (=> framebuffer byte-identical for normal
++        // rendering, oracle-safe). It surfaces ONLY when a precisely-timed
++        // `$2001` render-toggle SKIPS a reload while shifting continues, drawing
++        // opaque BG pixels on an all-translucent nametable (AccuracyCoin "BG
++        // Serial In"). The attribute shifters have no serial-in (the test only
++        // needs a non-transparent pattern bit, not a specific palette).
++        #[cfg(feature = "mc-ppu-subpos")]
++        {
++            self.bg_shift_hi |= 1;
++        }
+     }
+ 
+     /// Pre-fetch (dots 328 / 336) byte shift: advance all four BG shift
+@@ -4416,6 +4431,20 @@ mod tests {
+         // Now shift one pixel (post-emit `shift_bg`) and re-check lockstep.
+         p.shift_bg();
+         assert_eq!(p.at_shift_lo, p.bg_shift_lo, "lockstep after shift_bg");
++        // Under `mc-ppu-subpos` the HIGH pattern plane gets a serial-in '1' in
++        // bit 0 (the attribute shifters have no serial-in), so bg_shift_hi
++        // differs from at_shift_hi by exactly bit 0. Mask it for the lockstep
++        // comparison; the default build has no serial-in (bit 0 already equal).
++        #[cfg(feature = "mc-ppu-subpos")]
++        {
++            assert_eq!(p.bg_shift_hi & 1, 1, "high-plane serial-in sets bit 0");
++            assert_eq!(
++                p.at_shift_hi,
++                p.bg_shift_hi & !1,
++                "lockstep after shift_bg (masking the high-plane serial-in bit)"
++            );
++        }
++        #[cfg(not(feature = "mc-ppu-subpos"))]
+         assert_eq!(p.at_shift_hi, p.bg_shift_hi, "lockstep after shift_bg");
+     }
+ }
+diff --git a/crates/nes-test-harness/Cargo.toml b/crates/nes-test-harness/Cargo.toml
+index ffe8479..12432f9 100644
+--- a/crates/nes-test-harness/Cargo.toml
++++ b/crates/nes-test-harness/Cargo.toml
+@@ -37,6 +37,8 @@ ppu-sprite-shifter-counter = ["nes-core/ppu-sprite-shifter-counter"]
+ # v2.0 Tier 1.1 — forward to `nes-core/ppu-2002-read-end-flags` ($2002 two-point
+ # intra-read flag sample). Closes AccuracyCoin `$2002 flag timing`.
+ ppu-2002-read-end-flags = ["nes-core/ppu-2002-read-end-flags"]
++# v2.0 Phase 6 — forward to `nes-core/mc-ppu-subpos` (BG-shifter serial-in).
++mc-ppu-subpos = ["nes-core/mc-ppu-subpos"]
+ # v2.0 master-clock R1 substrate port — forward to nes-core. Closes the C1 IRQ
+ # trio DMA-safely (multi-phase). See the R1 port plan.
+ mc-r1-substrate = ["nes-core/mc-r1-substrate"]

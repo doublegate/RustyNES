@@ -1,0 +1,27 @@
+diff --git a/crates/nes-apu/src/apu.rs b/crates/nes-apu/src/apu.rs
+index be3244c..65b12e1 100644
+--- a/crates/nes-apu/src/apu.rs
++++ b/crates/nes-apu/src/apu.rs
+@@ -1003,7 +1003,7 @@ impl Apu {
+             }
+             #[cfg(not(feature = "mc-r1-dmc-phase-coherence"))]
+             {
+-                self.dmc_dma_delay = if self.apu_phase { 4 } else { 3 };
++                self.dmc_dma_delay = if self.apu_phase { 3 } else { 2 };
+             }
+             // v2.0 Phase 2: under R1's interleaved DMA a LOAD DMA arms 1 cycle early
+             // — it halts on a put cycle (leading halt, span 4) where the legacy/
+diff --git a/crates/nes-core/src/bus.rs b/crates/nes-core/src/bus.rs
+index bcbb1ed..0f3cbeb 100644
+--- a/crates/nes-core/src/bus.rs
++++ b/crates/nes-core/src/bus.rs
+@@ -2303,6 +2303,9 @@ impl LockstepBus {
+                 self.in_dmc_dma = true;
+                 self.dmc_halt = true;
+                 self.capture_deferred_dma_replay();
++                if !self.apu.dmc_dma_short() {
++                    self.dmc_trailing = true;
++                }
+             }
+             // get = read cycle (TriCNES `!APU_PutCycle`); put = write cycle.
+             let get_cycle = !self.apu.put_cycle();
