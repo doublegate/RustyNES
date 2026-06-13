@@ -17,10 +17,10 @@
 [![APU Tests](https://img.shields.io/badge/APU%20tests-150%20passing-brightgreen.svg)](#test-validation-status)
 [![Mapper Tests](https://img.shields.io/badge/Mapper%20tests-167%20passing-brightgreen.svg)](#test-validation-status)
 [![Core Tests](https://img.shields.io/badge/Core%20tests-23%20passing-brightgreen.svg)](#test-validation-status)
-[![Blargg CPU](https://img.shields.io/badge/Blargg%20CPU-22%2F22%20passing%20(100%25)-brightgreen.svg)](#test-validation-status)
-[![Blargg PPU](https://img.shields.io/badge/Blargg%20PPU-25%2F25%20passing%20(100%25)-brightgreen.svg)](#test-validation-status)
-[![Blargg APU](https://img.shields.io/badge/Blargg%20APU-15%2F15%20passing%20(100%25)-brightgreen.svg)](#test-validation-status)
-[![Mapper Tests](https://img.shields.io/badge/Mapper%20Tests-28%2F28%20passing%20(100%25)-brightgreen.svg)](#test-validation-status)
+[![Blargg CPU](<https://img.shields.io/badge/Blargg%20CPU-22%2F22%20passing%20(100%25)-brightgreen.svg>)](#test-validation-status)
+[![Blargg PPU](<https://img.shields.io/badge/Blargg%20PPU-25%2F25%20passing%20(100%25)-brightgreen.svg>)](#test-validation-status)
+[![Blargg APU](<https://img.shields.io/badge/Blargg%20APU-15%2F15%20passing%20(100%25)-brightgreen.svg>)](#test-validation-status)
+[![Mapper Tests](<https://img.shields.io/badge/Mapper%20Tests-28%2F28%20passing%20(100%25)-brightgreen.svg>)](#test-validation-status)
 
 ## Overview
 
@@ -420,14 +420,14 @@ Frame Timing:
 
 ### Accuracy Targets and Progress
 
-| Component | Target | Status | Validation |
-|-----------|--------|--------|------------|
-| **CPU (6502)** | 100% instruction-level | ✅ **Complete** | nestest.nes golden log match (100%) |
-| **PPU (2C02)** | 100% cycle-accurate | ✅ **Complete** | Background + sprite rendering, VBlank/NMI, sprite 0 hit |
-| **APU (2A03)** | 99%+ hardware match | ✅ **Complete** | All 5 channels, non-linear mixing, 48 kHz output |
-| **Mappers** | 100% for licensed | ✅ **Complete** | 5 essential mappers (0, 1, 2, 3, 4) - 77.7% coverage |
-| **Integration** | Component coordination | ✅ **Complete** | Bus, Console, Input, Save State framework |
-| **Overall** | 100% TASVideos suite | 🔄 **In Progress** | Target: 85% by June 2026 |
+| Component       | Target                 | Status             | Validation                                              |
+| --------------- | ---------------------- | ------------------ | ------------------------------------------------------- |
+| **CPU (6502)**  | 100% instruction-level | ✅ **Complete**    | nestest.nes golden log match (100%)                     |
+| **PPU (2C02)**  | 100% cycle-accurate    | ✅ **Complete**    | Background + sprite rendering, VBlank/NMI, sprite 0 hit |
+| **APU (2A03)**  | 99%+ hardware match    | ✅ **Complete**    | All 5 channels, non-linear mixing, 48 kHz output        |
+| **Mappers**     | 100% for licensed      | ✅ **Complete**    | 5 essential mappers (0, 1, 2, 3, 4) - 77.7% coverage    |
+| **Integration** | Component coordination | ✅ **Complete**    | Bus, Console, Input, Save State framework               |
+| **Overall**     | 100% TASVideos suite   | 🔄 **In Progress** | Target: 85% by June 2026                                |
 
 **Current Progress:** 100% Phase 1 MVP Complete (M1-M6)
 
@@ -460,14 +460,14 @@ Frame Timing:
 
 **Phase 1 Progress:** 100% Complete (6 of 6 milestones)
 
-| Milestone | Status | Completion | Target Date |
-|-----------|--------|------------|-------------|
-| **M1: CPU** | ✅ Complete | 100% | ~~January 2026~~ December 19, 2025 |
-| **M2: PPU** | ✅ Complete | 100% | ~~March 2026~~ December 19, 2025 |
-| **M3: APU** | ✅ Complete | 100% | ~~February 2026~~ December 19, 2025 |
-| **M4: Mappers** | ✅ Complete | 100% | ~~January 2026~~ December 19, 2025 |
-| **M5: Integration** | ✅ Complete | 100% | ~~February 2026~~ December 19, 2025 |
-| **M6: Desktop GUI** | ✅ Complete | 100% | ~~June 2026~~ December 19, 2025 |
+| Milestone           | Status      | Completion | Target Date                         |
+| ------------------- | ----------- | ---------- | ----------------------------------- |
+| **M1: CPU**         | ✅ Complete | 100%       | ~~January 2026~~ December 19, 2025  |
+| **M2: PPU**         | ✅ Complete | 100%       | ~~March 2026~~ December 19, 2025    |
+| **M3: APU**         | ✅ Complete | 100%       | ~~February 2026~~ December 19, 2025 |
+| **M4: Mappers**     | ✅ Complete | 100%       | ~~January 2026~~ December 19, 2025  |
+| **M5: Integration** | ✅ Complete | 100%       | ~~February 2026~~ December 19, 2025 |
+| **M6: Desktop GUI** | ✅ Complete | 100%       | ~~June 2026~~ December 19, 2025     |
 
 **Next Priority:** Phase 2 (Features) - RetroAchievements, netplay, TAS tools, Lua scripting, debugger.
 
@@ -479,7 +479,7 @@ See [ROADMAP.md](ROADMAP.md) for the complete 24-month development plan and [to-
 ┌─────────────────────────────────────────────────────────────┐
 │                    RustyNES Components                      │
 ├─────────────┬─────────────┬─────────────┬───────────────────┤
-│   CPU ✅    │    PPU ✅   │  APU ✅     │    Mappers ✅      │
+│   CPU ✅    │    PPU ✅   │  APU ✅     │    Mappers ✅     │
 │  (6502)     │  (2C02)     │  (2A03)     │  (0, 1, 2, 3, 4)  │
 │             │             │             │                   │
 │ • 100%      │ • 100%      │ • 100%      │ • 100%            │
@@ -501,15 +501,15 @@ See [ROADMAP.md](ROADMAP.md) for the complete 24-month development plan and [to-
               │  • Input/DMA        │
               │  • Save States      │
               │  • 41 tests         │
-              └──────────┬──────────┘
-                         │
-       ┌─────────────────┼────────────────┐
-       │                 │                │
-┌──────┴──────┐   ┌──────┴──────┐   ┌─────┴─────┐
-│  Desktop ✅  │   │   Web 🔄     │   │ Headless 🔄│
+              └───────────┬─────────┘
+                          │
+       ┌──────────────────┼────────────────┐
+       │                  │                │
+┌──────┴───────┐   ┌──────┴──────┐   ┌─────┴──────┐
+│  Desktop ✅  │   │   Web 🔄    │   │ Headless 🔄│
 │ (eframe/egui)│   │   (WASM)    │   │   (API)    │
-│  • M8 Done  │   │   • Phase 3 │   │  • Phase 2 │
-└─────────────┘   └─────────────┘   └────────────┘
+│  • M8 Done   │   │   • Phase 3 │   │  • Phase 2 │
+└──────────────┘   └─────────────┘   └────────────┘
 
 Legend: ✅ Complete | 🔄 Planned | Phase 1 MVP: M1-M6 COMPLETE
 ```
@@ -691,15 +691,15 @@ WebAssembly support is planned for Phase 3 (Expansion). The rustynes-web crate w
 
 Feature flags will be introduced as advanced functionality is implemented:
 
-| Feature | Description | Phase | Status |
-|---------|-------------|-------|--------|
-| `default` | Core emulation (CPU, PPU, APU) | 1 | 🔄 In Progress |
-| `netplay` | GGPO rollback netcode | 2 | ⏳ Planned |
-| `achievements` | RetroAchievements integration | 2 | ⏳ Planned |
-| `tas` | TAS recording/playback | 2 | ⏳ Planned |
-| `lua` | Lua 5.4 scripting | 2 | ⏳ Planned |
-| `debugger` | Advanced debugging tools | 2 | ⏳ Planned |
-| `expansion-audio` | VRC6/VRC7/N163/etc. audio | 3 | ⏳ Planned |
+| Feature           | Description                    | Phase | Status         |
+| ----------------- | ------------------------------ | ----- | -------------- |
+| `default`         | Core emulation (CPU, PPU, APU) | 1     | 🔄 In Progress |
+| `netplay`         | GGPO rollback netcode          | 2     | ⏳ Planned     |
+| `achievements`    | RetroAchievements integration  | 2     | ⏳ Planned     |
+| `tas`             | TAS recording/playback         | 2     | ⏳ Planned     |
+| `lua`             | Lua 5.4 scripting              | 2     | ⏳ Planned     |
+| `debugger`        | Advanced debugging tools       | 2     | ⏳ Planned     |
+| `expansion-audio` | VRC6/VRC7/N163/etc. audio      | 3     | ⏳ Planned     |
 
 **Current Focus:** Phase 1 MVP (core emulation without feature flags)
 
@@ -752,14 +752,14 @@ git push origin feature/my-feature
 
 ### Development Resources
 
-| Resource | Purpose |
-|----------|---------|
-| [CONTRIBUTING.md](CONTRIBUTING.md) | Contribution guidelines |
-| [docs/dev/BUILD.md](docs/dev/BUILD.md) | Build instructions |
-| [docs/dev/TESTING.md](docs/dev/TESTING.md) | Testing guide |
-| [docs/dev/STYLE_GUIDE.md](docs/dev/STYLE_GUIDE.md) | Code style standards |
-| [docs/dev/DEBUGGING.md](docs/dev/DEBUGGING.md) | Debugging techniques |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | System architecture |
+| Resource                                           | Purpose                 |
+| -------------------------------------------------- | ----------------------- |
+| [CONTRIBUTING.md](CONTRIBUTING.md)                 | Contribution guidelines |
+| [docs/dev/BUILD.md](docs/dev/BUILD.md)             | Build instructions      |
+| [docs/dev/TESTING.md](docs/dev/TESTING.md)         | Testing guide           |
+| [docs/dev/STYLE_GUIDE.md](docs/dev/STYLE_GUIDE.md) | Code style standards    |
+| [docs/dev/DEBUGGING.md](docs/dev/DEBUGGING.md)     | Debugging techniques    |
+| [ARCHITECTURE.md](ARCHITECTURE.md)                 | System architecture     |
 
 ---
 

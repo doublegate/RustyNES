@@ -272,7 +272,10 @@ fn open_file_dialog(console: &mut Option<Console>, config: &mut Config, state: &
 /// Load a ROM file into the console.
 fn load_rom(path: &std::path::Path, console: &mut Option<Console>) -> anyhow::Result<()> {
     let rom_data = std::fs::read(path)?;
-    let cons = Console::from_rom_bytes(&rom_data)?;
+    let mut cons = Console::from_rom_bytes(&rom_data)?;
+    // Initialize CPU by loading reset vector ($FFFC-$FFFD).
+    // Without this, CPU starts at PC=0 (RAM) instead of game code.
+    cons.reset();
     *console = Some(cons);
     info!("Loaded ROM: {}", path.display());
     Ok(())

@@ -53,9 +53,28 @@ pub struct PpuMemory<'a> {
     mapper: &'a mut dyn Mapper,
     ciram: &'a mut [u8; 2048],
     mirroring: Mirroring,
+    /// Last A12 state for rising edge detection (for MMC3 IRQ clocking).
+    last_a12: &'a mut bool,
 }
 
 impl PpuMemory<'_> {
+    /// Check for A12 rising edge and clock the mapper if detected.
+    ///
+    /// MMC3 and similar mappers use A12 rising edge detection for IRQ clocking.
+    /// A12 is bit 12 of the PPU address, which is high ($1xxx) for pattern table
+    /// accesses to $1000-$1FFF and low ($0xxx) for $0000-$0FFF.
+    #[inline]
+    fn clock_a12(&mut self, addr: u16) {
+        if addr < 0x2000 {
+            let curr_a12 = (addr & 0x1000) != 0;
+            if curr_a12 && !*self.last_a12 {
+                // A12 rising edge detected - clock the mapper IRQ counter
+                self.mapper.ppu_a12_rising();
+            }
+            *self.last_a12 = curr_a12;
+        }
+    }
+
     /// Calculate the CIRAM address with nametable mirroring applied.
     ///
     /// The NES has 2KB of internal VRAM (CIRAM) for nametables, but the
@@ -101,6 +120,9 @@ impl PpuMemory<'_> {
 
 impl rustynes_ppu::PpuBus for PpuMemory<'_> {
     fn read(&mut self, addr: u16) -> u8 {
+        // Check for A12 rising edge on all PPU reads (for MMC3 IRQ)
+        self.clock_a12(addr);
+
         match addr {
             // Pattern tables: CHR ROM/RAM handled by mapper
             0x0000..=0x1FFF => self.mapper.read_chr(addr),
@@ -121,6 +143,9 @@ impl rustynes_ppu::PpuBus for PpuMemory<'_> {
     }
 
     fn write(&mut self, addr: u16, value: u8) {
+        // Check for A12 rising edge on PPU writes too (for MMC3 IRQ)
+        self.clock_a12(addr);
+
         match addr {
             // Pattern tables: CHR RAM writes (if mapper supports it)
             0x0000..=0x1FFF => self.mapper.write_chr(addr, value),
@@ -139,6 +164,7 @@ impl rustynes_ppu::PpuBus for PpuMemory<'_> {
 }
 
 /// NES system bus connecting all components.
+#[allow(clippy::struct_excessive_bools)] // Hardware state requires multiple boolean flags
 pub struct NesBus {
     /// Internal RAM (2KB, mirrored 4 times).
     pub ram: [u8; 2048],
@@ -168,6 +194,8 @@ pub struct NesBus {
     dmc_stall_cycles: u8,
     /// Last value on the data bus (for open bus behavior).
     last_bus_value: u8,
+    /// Last PPU A12 state for rising edge detection (MMC3 IRQ).
+    last_a12: bool,
     /// NMI pending from PPU.
     nmi_pending: bool,
     /// IRQ pending from mapper/APU.
@@ -199,6 +227,7 @@ impl NesBus {
             cpu_cycles: 0,
             dmc_stall_cycles: 0,
             last_bus_value: 0,
+            last_a12: false,
             nmi_pending: false,
             irq_pending: false,
             sample_count: 0,
@@ -220,6 +249,7 @@ impl NesBus {
         self.cpu_cycles = 0;
         self.dmc_stall_cycles = 0;
         self.last_bus_value = 0;
+        self.last_a12 = false;
         self.nmi_pending = false;
         self.irq_pending = false;
         self.sample_count = 0;
@@ -272,19 +302,27 @@ impl NesBus {
 
         for _ in 0..3 {
             // Create a temporary PPU memory bus for CHR and CIRAM access
+            // PpuMemory tracks A12 rising edge and calls mapper.ppu_a12_rising()
+            // for accurate MMC3 IRQ clocking
             let mirroring = self.mapper.mirroring();
             let mut ppu_mem = PpuMemory {
                 mapper: &mut *self.mapper,
                 ciram: &mut self.ciram,
                 mirroring,
+                last_a12: &mut self.last_a12,
             };
             if self.ppu.step(&mut ppu_mem) {
                 nmi = true;
             }
         }
 
-        // Clock the mapper for each CPU cycle
+        // Clock the mapper for each CPU cycle (some mappers use CPU cycle counting)
         self.mapper.clock(1);
+
+        // Note: MMC3 IRQ clocking is now handled by A12 rising edge detection
+        // in PpuMemory::read(), called during PPU CHR fetches. This provides
+        // accurate timing based on actual PPU address transitions rather than
+        // scanline counting, which is required for games like SMB3.
 
         if nmi {
             self.nmi_pending = true;
@@ -450,6 +488,7 @@ impl Bus for NesBus {
                     mapper: &mut *self.mapper,
                     ciram: &mut self.ciram,
                     mirroring,
+                    last_a12: &mut self.last_a12,
                 };
                 self.ppu.read_register(addr, &mut ppu_mem)
             }
@@ -489,6 +528,7 @@ impl Bus for NesBus {
                     mapper: &mut *self.mapper,
                     ciram: &mut self.ciram,
                     mirroring,
+                    last_a12: &mut self.last_a12,
                 };
                 self.ppu.write_register(addr, val, &mut ppu_mem);
             }

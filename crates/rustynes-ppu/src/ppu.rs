@@ -80,14 +80,20 @@ pub struct Ppu {
     bg_next_pattern_hi: u8,
     bg_pattern_shift_lo: u16,
     bg_pattern_shift_hi: u16,
-    bg_attr_shift_lo: u16,
-    bg_attr_shift_hi: u16,
-    bg_attr_latch_lo: bool,
-    bg_attr_latch_hi: bool,
+    // Three-stage palette pipeline (TetaNES approach)
+    // prev_palette: for pixels when (fine_x + pixel_offset) < 8
+    // curr_palette: for pixels when (fine_x + pixel_offset) >= 8
+    // next_palette: loaded during attribute fetch, becomes curr at tile boundary
+    prev_palette: u8,
+    curr_palette: u8,
+    next_palette: u8,
 
     // Sprite rendering state
     sprite_eval: SpriteEval,
     sprite_render: [SpriteRender; MAX_SPRITES_PER_LINE],
+    /// Number of sprites loaded in sprite_render for current scanline rendering.
+    /// This is set at dot 257 and used during dots 1-256 of the NEXT scanline.
+    sprite_render_count: u8,
     sprite_zero_hit_possible: bool,
 
     // NMI output
@@ -145,13 +151,13 @@ impl Ppu {
             bg_next_pattern_hi: 0,
             bg_pattern_shift_lo: 0,
             bg_pattern_shift_hi: 0,
-            bg_attr_shift_lo: 0,
-            bg_attr_shift_hi: 0,
-            bg_attr_latch_lo: false,
-            bg_attr_latch_hi: false,
+            prev_palette: 0,
+            curr_palette: 0,
+            next_palette: 0,
 
             sprite_eval: SpriteEval::new(),
             sprite_render: [SpriteRender::default(); MAX_SPRITES_PER_LINE],
+            sprite_render_count: 0,
             sprite_zero_hit_possible: false,
 
             nmi_output: false,
@@ -170,11 +176,34 @@ impl Ppu {
         self.oam_addr = 0;
         self.scanline = 0;
         self.dot = 0;
+        self.frame = 0;
         self.odd_frame = false;
         self.nmi_output = false;
         self.nmi_occurred = false;
         self.open_bus = 0;
         self.read_buffer = 0;
+
+        // Clear OAM (initialize to 0xFF like hardware)
+        self.oam.fill(0xFF);
+        // Clear palette RAM (initialize to 0)
+        self.palette.fill(0);
+
+        // Clear background rendering state
+        self.bg_next_tile = 0;
+        self.bg_next_attr = 0;
+        self.bg_next_pattern_lo = 0;
+        self.bg_next_pattern_hi = 0;
+        self.bg_pattern_shift_lo = 0;
+        self.bg_pattern_shift_hi = 0;
+        self.prev_palette = 0;
+        self.curr_palette = 0;
+        self.next_palette = 0;
+
+        // Clear sprite rendering state
+        self.sprite_render = [SpriteRender::default(); MAX_SPRITES_PER_LINE];
+        self.sprite_render_count = 0;
+        self.sprite_zero_hit_possible = false;
+        self.sprite_eval.reset();
     }
 
     /// Step the PPU by one dot.
@@ -204,6 +233,9 @@ impl Ppu {
                 self.status.set_sprite_overflow(false);
                 self.nmi_occurred = false;
                 self.nmi_output = false;
+                // Clear sprite render count for scanline 0 (sprites at Y=0 appear on scanline 1)
+                // This matches hardware behavior where pre-render loads dummy $FF tiles
+                self.sprite_render_count = 0;
             }
 
             // Do background fetches
@@ -243,15 +275,31 @@ impl Ppu {
             return;
         }
 
-        // Background tile fetching (dots 1-256 and 321-336)
-        let fetching = (self.dot >= 1 && self.dot <= 256) || (self.dot >= 321 && self.dot <= 336);
+        // Background tile fetching and shift register updates
+        // Per TetaNES reference: load THEN shift within each cycle
+        // Shift registers: dots 1-256 and 321-336 (NOT 337)
+        // Fetching: dots 1-256 and 321-337 (337 loads without shifting)
+        let fetching = (self.dot >= 1 && self.dot <= 256) || (self.dot >= 321 && self.dot <= 337);
+        let shifting = (self.dot >= 1 && self.dot <= 256) || (self.dot >= 321 && self.dot <= 336);
+
+        // Load new tile data BEFORE shifting (TetaNES order)
         if fetching {
-            self.update_shift_registers();
             self.fetch_bg_tile(bus);
         }
 
-        // Sprite evaluation (dots 65-256)
-        if self.dot >= 65 && self.dot <= 256 {
+        // Shift AFTER loading
+        if shifting {
+            self.update_shift_registers();
+        }
+
+        // Secondary OAM clear (dots 1-64) and sprite evaluation (dots 65-256)
+        if self.dot >= 1 && self.dot <= 64 {
+            // During cycles 1-64, secondary OAM is cleared to 0xFF
+            // We do a single reset at dot 1 for efficiency
+            if self.dot == 1 {
+                self.sprite_eval.reset();
+            }
+        } else if self.dot >= 65 && self.dot <= 256 {
             self.sprite_eval.tick(
                 self.dot,
                 &self.oam,
@@ -281,11 +329,21 @@ impl Ppu {
             return;
         }
 
-        // Background tile fetching (dots 1-256 and 321-336)
-        let fetching = (self.dot >= 1 && self.dot <= 256) || (self.dot >= 321 && self.dot <= 336);
+        // Background tile fetching and shift register updates
+        // Per TetaNES reference: load THEN shift within each cycle
+        // Shift registers: dots 1-256 and 321-336 (NOT 337)
+        // Fetching: dots 1-256 and 321-337 (337 loads without shifting)
+        let fetching = (self.dot >= 1 && self.dot <= 256) || (self.dot >= 321 && self.dot <= 337);
+        let shifting = (self.dot >= 1 && self.dot <= 256) || (self.dot >= 321 && self.dot <= 336);
+
+        // Load new tile data BEFORE shifting (TetaNES order)
         if fetching {
-            self.update_shift_registers();
             self.fetch_bg_tile(bus);
+        }
+
+        // Shift AFTER loading
+        if shifting {
+            self.update_shift_registers();
         }
 
         // Vertical scroll bits copied during dots 280-304
@@ -307,23 +365,23 @@ impl Ppu {
         // Shift pattern data
         self.bg_pattern_shift_lo <<= 1;
         self.bg_pattern_shift_hi <<= 1;
-
-        // Shift attribute data
-        self.bg_attr_shift_lo = (self.bg_attr_shift_lo << 1) | u16::from(self.bg_attr_latch_lo);
-        self.bg_attr_shift_hi = (self.bg_attr_shift_hi << 1) | u16::from(self.bg_attr_latch_hi);
+        // Note: Palette latches are cycled in fetch_bg_tile at cycle 1, not shifted
     }
 
     /// Fetch background tile data based on current dot.
     fn fetch_bg_tile(&mut self, bus: &mut impl PpuBus) {
         match self.dot % 8 {
             1 => {
+                // Cycle palette pipeline at tile boundary (TetaNES approach)
+                // prev_palette receives curr_palette, curr_palette receives next_palette
+                self.prev_palette = self.curr_palette;
+                self.curr_palette = self.next_palette;
+
                 // Load shift registers with fetched data every 8 cycles
                 self.bg_pattern_shift_lo =
                     (self.bg_pattern_shift_lo & 0xFF00) | u16::from(self.bg_next_pattern_lo);
                 self.bg_pattern_shift_hi =
                     (self.bg_pattern_shift_hi & 0xFF00) | u16::from(self.bg_next_pattern_hi);
-                self.bg_attr_latch_lo = self.bg_next_attr & 0x01 != 0;
-                self.bg_attr_latch_hi = self.bg_next_attr & 0x02 != 0;
 
                 // Fetch nametable byte
                 let addr = self.scroll.nametable_addr();
@@ -335,9 +393,10 @@ impl Ppu {
                 let attr = bus.read(addr);
 
                 // Select the correct 2 bits based on coarse scroll position
+                // Pre-shift by 2 to form palette base address (palette * 4)
                 let shift =
                     ((self.scroll.coarse_y() & 0x02) << 1) | (self.scroll.coarse_x() & 0x02);
-                self.bg_next_attr = (attr >> shift) & 0x03;
+                self.next_palette = ((attr >> shift) & 0x03) << 2;
             }
             5 => {
                 // Fetch pattern table low byte
@@ -363,12 +422,17 @@ impl Ppu {
     }
 
     /// Load sprite rendering data for the current scanline.
+    ///
+    /// This is called at dot 257 of each visible scanline. The loaded sprites
+    /// will be rendered during dots 1-256 of the NEXT scanline.
     fn load_sprite_data(&mut self, bus: &mut impl PpuBus) {
+        let count = self.sprite_eval.sprite_count();
+        self.sprite_render_count = count;
         self.sprite_zero_hit_possible = self.sprite_eval.sprite_zero_on_line()
             && self.mask.bg_enabled()
             && self.mask.sprites_enabled();
 
-        for i in 0..self.sprite_eval.sprite_count() as usize {
+        for i in 0..count as usize {
             let sprite = self.sprite_eval.get_sprite(i);
             let row = sprite.sprite_row(self.scanline, self.ctrl.sprite_height());
 
@@ -414,9 +478,16 @@ impl Ppu {
                 let hi = ((self.bg_pattern_shift_hi >> shift) & 1) as u8;
                 let pixel = lo | (hi << 1);
 
-                let attr_lo = ((self.bg_attr_shift_lo >> shift) & 1) as u8;
-                let attr_hi = ((self.bg_attr_shift_hi >> shift) & 1) as u8;
-                let palette = attr_lo | (attr_hi << 1);
+                // Three-stage palette pipeline (TetaNES approach)
+                // Use prev_palette when fine_x + pixel_offset spans into previous tile
+                // Use curr_palette otherwise
+                let fine_x = self.scroll.fine_x() as usize;
+                let pixel_offset = x & 0x07;
+                let palette = if fine_x + pixel_offset < 8 {
+                    self.prev_palette
+                } else {
+                    self.curr_palette
+                };
 
                 (pixel, palette)
             } else {
@@ -448,12 +519,14 @@ impl Ppu {
         };
 
         // Look up color in palette RAM
+        // Note: bg_palette is pre-shifted (already * 4) from fetch_bg_tile
+        // sprite_palette is 0-3, needs * 4 multiplier
         let palette_addr = if final_pixel == 0 {
             0 // Backdrop color
         } else if is_sprite {
             0x10 + (final_palette * 4) + final_pixel
         } else {
-            (final_palette * 4) + final_pixel
+            final_palette + final_pixel // bg_palette already pre-shifted
         } as usize;
 
         let color_index = self.palette[palette_addr & 0x1F] & 0x3F;
@@ -463,12 +536,15 @@ impl Ppu {
     }
 
     /// Evaluate sprites to find the highest priority opaque pixel at the given X.
+    ///
+    /// Uses `sprite_render_count` which was set at dot 257 of the previous scanline,
+    /// not `sprite_eval.sprite_count()` which is for the current scanline's evaluation.
     fn evaluate_sprite_pixel(&self, x: u8) -> (u8, u8, bool, bool) {
         if !self.mask.sprites_enabled() || (x < 8 && !self.mask.sprites_left_enabled()) {
             return (0, 0, false, false);
         }
 
-        for i in 0..self.sprite_eval.sprite_count() as usize {
+        for i in 0..self.sprite_render_count as usize {
             let sprite = &self.sprite_render[i];
 
             // Check if sprite covers this X position
@@ -479,7 +555,7 @@ impl Ppu {
                 if pixel != 0 {
                     return (
                         pixel,
-                        sprite.attr.palette_addr(),
+                        sprite.attr.palette(),
                         sprite.attr.behind_background(),
                         sprite.is_sprite_zero,
                     );

@@ -88,10 +88,8 @@ pub struct Mmc3 {
     /// IRQ pending flag.
     irq_pending: bool,
 
-    /// Previous A12 state for edge detection.
+    /// Previous A12 state for edge detection (reserved for future use).
     last_a12: bool,
-    /// A12 filter counter (for ignoring short pulses).
-    a12_filter: u8,
 
     /// Has battery-backed RAM.
     has_battery: bool,
@@ -137,7 +135,6 @@ impl Mmc3 {
             irq_enabled: false,
             irq_pending: false,
             last_a12: false,
-            a12_filter: 0,
             has_battery: rom.header.has_battery,
         }
     }
@@ -306,7 +303,8 @@ impl Mapper for Mmc3 {
                     self.irq_latch = val;
                 } else {
                     // IRQ reload ($C001)
-                    self.irq_counter = 0;
+                    // Only set reload flag - counter will be reloaded on next A12 clock.
+                    // Do NOT clear counter here (was causing SMB3 status bar timing issues).
                     self.irq_reload = true;
                 }
             }
@@ -357,14 +355,11 @@ impl Mapper for Mmc3 {
     }
 
     fn ppu_a12_rising(&mut self) {
-        // More accurate A12-based clocking
-        // Filter rapid toggling (must be low for ~2 M2 cycles)
-        if self.a12_filter > 0 {
-            self.a12_filter -= 1;
-        } else {
-            self.clock_irq();
-            self.a12_filter = 2;
-        }
+        // A12-based clocking for accurate MMC3 IRQ timing.
+        // The bus layer already handles proper edge detection (0->1 transitions),
+        // so we clock the IRQ counter directly on each rising edge.
+        // Previous filter was broken - it skipped 2/3 of valid IRQ clocks.
+        self.clock_irq();
     }
 
     fn mapper_number(&self) -> u16 {
