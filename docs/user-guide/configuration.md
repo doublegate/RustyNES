@@ -86,6 +86,9 @@ fullscreen = "F11"
 toggle_menu_bar = "KeyM"
 fast_forward = "Tab"
 frame_advance = "Backslash"
+speed_up = "Equal"
+speed_down = "Minus"
+speed_reset = "Digit0"
 
 [rewind]
 enabled = true
@@ -95,11 +98,15 @@ keyframe_period = 60
 [graphics]
 present_mode = "Mailbox"
 ntsc_filter = "off"
+hide_overscan = false
 
 [audio]
 sample_rate = 44100
 latency_ms = 60
 drc = true
+volume = 1.0
+muted = false
+channel_mask = 63
 
 [ui]
 theme = "dark"                    # "light" | "dark" | "system"
@@ -186,6 +193,12 @@ unchanged and fills the new ones in:
 | `toggle_menu_bar` | `KeyM` | Show / hide the menu bar |
 | `fast_forward` | `Tab` | Hold to run the emulator unthrottled (audio muted) |
 | `frame_advance` | `Backslash` | Press to step one frame (for use while paused) |
+| `speed_up` | `Equal` | Step up to the next emulation-speed preset |
+| `speed_down` | `Minus` | Step down to the previous emulation-speed preset |
+| `speed_reset` | `Digit0` | Reset the emulation speed to 100% |
+
+The emulation speed these keys step through is **transient** — it always
+launches at 100% and is not persisted to `config.toml`.
 
 ### `[rewind]`
 
@@ -212,12 +225,14 @@ are independent of the rewind ring.
 [graphics]
 present_mode = "Mailbox"  # default
 ntsc_filter = "off"       # default
+hide_overscan = false     # default
 ```
 
 | Field | Type | Default | Accepted values | Notes |
 |-------|------|---------|-----------------|-------|
 | `present_mode` | string | `"Mailbox"` | `"Fifo"`, `"Mailbox"` | `"Mailbox"` lets the wall-clock frame pacer own timing (avoids the vsync double-pacing beat); falls back to `"Fifo"` automatically when the backend doesn't advertise Mailbox |
 | `ntsc_filter` | string | `"off"` | `"off"`, `"composite"`, `"rgb"` | `"off"` and `"composite"` are the meaningful settings (see below) |
+| `hide_overscan` | bool | `false` | `true`, `false` | Crop the top and bottom 8 NES scanlines (the overscan area a CRT hid). Off by default = the full 256x240 image. Toggle live with **View → Hide Overscan** or the Display settings tab |
 
 The NTSC filter (when set to anything other than `"off"`) runs a
 simplified Blargg-style wgsl post-pass between the PPU framebuffer and
@@ -238,6 +253,9 @@ planned for a later release.
 sample_rate = 44100  # default
 latency_ms = 60      # default
 drc = true           # default
+volume = 1.0         # default
+muted = false        # default
+channel_mask = 63    # default — bitmask, all six channels on (0x3F)
 ```
 
 | Field | Type | Default | Notes |
@@ -245,6 +263,9 @@ drc = true           # default
 | `sample_rate` | u32 | `44100` | Preferred sample rate in Hz. The negotiated rate may differ if the audio device refuses 44.1 kHz; the audio engine is rebuilt at whatever rate the device opens at, so audio still sounds correct |
 | `latency_ms` | u32 | `60` | Target audio-buffer latency in milliseconds. The dynamic-rate-control loop holds the output queue centred on this depth — lower it for tighter latency, raise it if you hear underruns on a loaded system |
 | `drc` | bool | `true` | Dynamic rate control: a 4-tap Hermite resampler micro-bends the playback ratio to keep the queue centred on `latency_ms` without drift. Set `false` for a bit-exact passthrough (the APU's native output, no resampling) |
+| `volume` | float | `1.0` | Master output volume, `0.0`–`1.0`. Adjust live with the Volume slider in **View → Settings… → Audio** |
+| `muted` | bool | `false` | Mute all audio output. Toggle live with the Mute checkbox in the Audio settings tab |
+| `channel_mask` | integer (bitmask) | `63` (`0x3F`, all on) | Per-APU-channel enable bitmask: bit 0 Pulse 1, 1 Pulse 2, 2 Triangle, 3 Noise, 4 DMC, 5 Mapper Audio (a set bit = audible). A studio/debug overlay applied at playback — it does not affect emulation accuracy. Easiest set via the six checkboxes in the Audio settings tab |
 
 The APU emits via band-limited synthesis (blip_buf-style); a frontend
 resampler stage then runs dynamic rate control against the live queue

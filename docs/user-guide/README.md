@@ -38,6 +38,7 @@ instead. This subdirectory only covers running the emulator.
 | Space           | Pause / Resume |
 | F1 / F4         | Save state / Load state (active slot) |
 | F2 / F3         | Reset / Power cycle |
+| = / - / 0       | Speed up / down / reset (emulation-speed presets) |
 | F5 (hold)       | Rewind |
 | F6 / F7 / F8    | TAS movie record / play / branch |
 | F9 / F10        | Swap FDS disk side / Insert Vs. coin |

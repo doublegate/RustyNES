@@ -156,17 +156,22 @@ The full per-mapper visual corpus lives in
 - **TAS movie recording and playback** — frame-perfect deterministic record / replay
   with save-state branching, in a versioned `.rnm` format.
 - **Save state + rewind** — a 600-frame rewind ring, instant save / load, and a
-  snapshot fast path used by run-ahead.
+  snapshot fast path used by run-ahead, plus a thumbnail save-state manager.
 - **Run-ahead** — hides a game's internal input lag for snappier controls, built on
   the existing deterministic snapshot / restore.
+- **Emulation-speed control** — 25 %–300 % speed presets (slow-motion to fast),
+  hold-to-fast-forward, and single-frame advance while paused.
 - **Display-sync pacing + lock-free audio** — an `auto` / `display` / `vrr` /
   `wallclock` pacing matrix ends display-beat judder; a lock-free SPSC audio ring with
-  dynamic rate control keeps audio clean and underrun-free.
+  dynamic rate control keeps audio clean and underrun-free; master volume and
+  per-APU-channel mutes round out the audio mixer.
 - **Cheats and input devices** — Game Genie and raw RAM cheats, four input devices
-  (standard pad, Four Score, Arkanoid Vaus, Zapper), and USB gamepads (`gilrs`).
+  (standard pad, Four Score, Arkanoid Vaus, Zapper), and USB gamepads (`gilrs`) with a
+  deadzone control and hot-plug detection.
 - **Desktop UX** — a native menu bar, recent-ROMs list, a tabbed Settings window,
-  light / dark / system themes, 8:7 pixel-aspect correction, a status bar, and
-  drag-and-drop ROM loading.
+  light / dark / system themes, 8:7 pixel-aspect correction, optional overscan
+  cropping, integer window-size presets, a pause-dim overlay, a status bar,
+  screenshot-to-file/clipboard, and drag-and-drop ROM loading.
 - **Read-only egui debugger** — CPU, PPU, APU, memory, OAM, and mapper panels, plus an
   optional NTSC `wgsl` post-pass — all preserving the strict determinism contract.
 
@@ -255,21 +260,26 @@ The desktop frontend frames the NES image with an always-on **menu bar** (top) a
 **status bar** (bottom); the egui debugger is a separate overlay toggled with `` ` ``.
 Everything has a keyboard shortcut, but nothing requires one.
 
-- **Menu bar** — File (Open ROM, Open Recent, save / load state, a ten-slot
-  (0–9) Save Slot picker, Take Screenshot), Emulation (Pause, Reset, Power Cycle, Run-Ahead 0–3,
+- **Menu bar** — File (Open ROM, Open Recent, save / load state, a ten-slot (0–9) Save
+  Slot picker, a thumbnail **Save States…** manager, Take Screenshot, Copy Screenshot to
+  Clipboard), Emulation (Pause, Reset, Power Cycle, **Speed 25–300 %**, Run-Ahead 0–3,
   the region label, Vs. Insert Coin / FDS Swap Disk Side when relevant), Tools
   (Cheats, TAS Movies, Netplay, RetroAchievements, Performance Monitor — opened as
   floating windows without the debugger), View (Settings, Theme, 8:7 Pixel Aspect,
-  Fullscreen, Window Size 1x–4x, Show FPS, Pause When Unfocused, Show Menu Bar), Debug
-  (the debugger overlay + per-chip panels), and Help (Keyboard Shortcuts, About).
+  Hide Overscan, Fullscreen, Window Size 1x–4x, Show FPS, Pause When Unfocused, Show
+  Menu Bar), Debug (the debugger overlay + per-chip panels), and Help (Keyboard
+  Shortcuts, About).
 - **Status bar** — ROM name, region, mapper, run-ahead depth, Running / Paused /
-  Netplay state, and the FPS readout.
-- **Settings window** — a tabbed Video / Audio / Input / Advanced dialog (View →
-  Settings…) with live-applied theme, pixel-aspect, and FPS toggles.
-- **Quality-of-life** — hold-to-fast-forward (audio muted) and single-frame advance
-  while paused, integer window-size presets (1x–4x of the NES resolution), optional
-  pause-when-unfocused, light / dark / system themes, a translucent "PAUSED" overlay,
-  a recent-ROMs list (missing files greyed out), and a first-run Welcome modal.
+  Netplay state, the current speed when not 100 %, and the FPS readout.
+- **Settings window** — a tabbed Display / Audio / Input / Advanced dialog (View →
+  Settings…) with a live master-volume slider + mute, per-APU-channel mutes, a gamepad
+  deadzone slider, live theme / pixel-aspect / overscan / FPS toggles, and a
+  Reset-to-Defaults button per section.
+- **Quality-of-life** — 25 %–300 % emulation-speed presets, hold-to-fast-forward (audio
+  muted) and single-frame advance while paused, a thumbnail save-state browser, integer
+  window-size presets (1x–4x), optional overscan cropping, optional pause-when-unfocused,
+  light / dark / system themes, a pause-dim "PAUSED" overlay, a recent-ROMs list (missing
+  files greyed out), controller hot-plug toasts, and a first-run Welcome modal.
 
 ## Default Controls
 
@@ -282,6 +292,7 @@ All keys are TOML-rebindable; see the user guide for the full schema.
 | Start / Select  | Enter / R-Shift | P / L         |     | Fast-forward (hold)     | Tab                |
 |                 |                 |               |     | Frame-advance (paused)  | \ (backslash)      |
 |                 |                 |               |     | Pause / Resume          | Space              |
+|                 |                 |               |     | Speed up / down / reset | = / - / 0          |
 |                 |                 |               |     | Reset / Power-cycle     | F2 / F3            |
 |                 |                 |               |     | TAS movie record / play | F6 / F7            |
 |                 |                 |               |     | TAS movie branch        | F8                 |

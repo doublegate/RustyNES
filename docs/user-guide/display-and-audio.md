@@ -74,6 +74,15 @@ Aspect** in **View → Settings… → Display** (or the View menu, or
 `[ui] pixel_aspect_correction = true`) for the NES-native shape. It is off
 by default so the shipped output stays pixel-exact unless you opt in.
 
+### Overscan crop
+
+On a real CRT the top and bottom 8 scanlines fell behind the bezel, so many
+games leave junk or a status-bar seam there. Enable **View → Hide Overscan**
+(or the Display settings tab, or `[graphics] hide_overscan = true`) to crop
+those 8 top and 8 bottom scanlines; the remaining 256x224 image is rescaled
+to fill the viewport. It is off by default, so the shipped output is the full
+256x240 frame.
+
 ### Region detection
 
 The cartridge region drives the frame rate:
@@ -119,6 +128,33 @@ The device's preferred sample format and channel count are honoured.
 Mono NES audio is replicated across however many channels the device
 opens (typically stereo).
 
+### Volume and mute
+
+**View → Settings… → Audio** has a master **Volume** slider (0–100%) and a
+**Mute** checkbox, both applied live:
+
+```toml
+[audio]
+volume = 1.0    # master output level, 0.0–1.0
+muted = false   # mute all output
+```
+
+### Per-channel mute
+
+The same Audio tab has six checkboxes — Pulse 1, Pulse 2, Triangle, Noise,
+DMC, and Mapper Audio — all on by default. Unchecking one silences just that
+APU channel:
+
+```toml
+[audio]
+# order: Pulse 1, Pulse 2, Triangle, Noise, DMC, Mapper Audio
+channel_mask = [true, true, true, true, true, true]
+```
+
+This is a studio/debug overlay applied at playback only — it does **not**
+affect emulation accuracy, so muting a channel leaves save-state and movie
+determinism untouched.
+
 ### Sample rate
 
 The APU emits via band-limited synthesis; a frontend resampler stage
@@ -157,6 +193,19 @@ causes underruns. Set `drc = false` for a bit-exact passthrough of the
 APU's native output (no resampling). During a long stall (debugger
 pause, save-state load, hibernation) a hard resync trims the buffer so
 latency snaps back instead of accumulating.
+
+### Emulation-speed presets
+
+**Emulation → Speed** picks an emulation-speed preset — 25%, 50%, 75%, 100%,
+150%, 200%, or 300% — and the `=` / `-` / `0` keys step up / step down / reset
+to 100%. The speed is transient: the emulator always launches at 100% and the
+choice is not persisted. The status bar shows the speed whenever it is not
+100%.
+
+Because the whole machine (including the APU) runs faster or slower, audio
+**pitch-shifts** naturally — slow-mo and lower-pitched at 50%, faster and
+higher at 200%. This is distinct from the hold-`Tab` fast-forward, which runs
+unthrottled with audio muted.
 
 ### When audio doesn't start
 

@@ -75,20 +75,35 @@ shell, docs, and web work.
   `` ` `` debugger overlay:
   - **File** — Open ROM (`F12`), Open Recent (missing files greyed out, with
     Clear Recent), save / load state, a ten-slot (0–9) Save Slot picker (set
-    active slot + save/load to a specific slot), Take Screenshot, and the FDS Swap
-    Disk Side (`F9`) item when an FDS game is loaded.
+    active slot + save/load to a specific slot), a thumbnail **Save States…**
+    manager, Take Screenshot, Copy Screenshot to Clipboard (native), and the FDS
+    Swap Disk Side (`F9`) item when an FDS game is loaded.
   - **Emulation** — Pause/Resume (`Space`, disabled during netplay), Reset (`F2`),
     Power Cycle (`F3`), Frame Advance (`\`, steps one frame while paused), a
-    hold-`Tab` Fast Forward hint, Run-Ahead 0–3, a read-only region label, and
-    Vs. System Insert Coin (`F10`) for Vs. titles.
+    hold-`Tab` Fast Forward hint, **Speed presets** (25 / 50 / 75 / 100 / 150 /
+    200 / 300 %, keys `=` / `-` / `0`), Run-Ahead 0–3, a read-only region label,
+    and Vs. System Insert Coin (`F10`) for Vs. titles.
   - **Tools** — Cheats, TAS Movies (record `F6` / play `F7` / branch `F8`),
     Netplay, RetroAchievements, and the Performance Monitor, each opened as a
     floating window without needing the debugger overlay.
-  - **View** — the tabbed Settings window (Video / Audio / Input / Advanced),
-    Light / Dark / System themes, an 8:7 pixel-aspect toggle, Fullscreen (`F11`),
-    Window Size presets (1x / 2x / 3x / 4x of the NES resolution), a Show FPS
-    toggle, a Pause When Unfocused toggle (auto-pause on focus loss), and Show
-    Menu Bar (`M`).
+  - **View** — the tabbed Settings window (Display / Audio / Input / Advanced),
+    Light / Dark / System themes, an 8:7 pixel-aspect toggle, a Hide Overscan
+    toggle, Fullscreen (`F11`), Window Size presets (1x / 2x / 3x / 4x of the NES
+    resolution), a Show FPS toggle, a Pause When Unfocused toggle (auto-pause on
+    focus loss), and Show Menu Bar (`M`).
+- **Audio, speed, and presentation controls.**
+  - **Master volume** slider + mute, and **per-APU-channel mutes** (Pulse 1 /
+    Pulse 2 / Triangle / Noise / DMC / Mapper Audio) in the Settings Audio tab —
+    all-on by default (a playback overlay; the deterministic core output is
+    byte-identical).
+  - **Emulation-speed presets** (25 %–300 %) with pitch-shifted, glitch-free audio
+    at non-100 % speeds; the status bar shows the speed when it is not 100 %.
+  - A **thumbnail save-state manager** (File → Save States…) showing each slot's
+    frame thumbnail + timestamp with per-slot save / load.
+  - **Optional overscan cropping** (`[graphics] hide_overscan`), a **pause-dim**
+    overlay, a **gamepad deadzone slider**, **controller hot-plug** toasts,
+    **screenshot-to-clipboard**, a **Reset-to-Defaults** button per Settings
+    section, and a frame-time **sparkline** in the Performance panel.
 - **Frontend quality-of-life keys.** Hold-`Tab` fast-forward (runs the emulator
   unthrottled with audio muted) and `\` frame-advance (steps exactly one frame
   while paused), both default-bound in `[input.system]` and rebindable.

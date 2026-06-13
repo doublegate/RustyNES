@@ -71,6 +71,9 @@ modal, and a third/fourth USB gamepad auto-binds to Players 3/4 — most
 | Frame-advance | `\` (Backslash) | Press — steps exactly one frame (for use while paused) |
 | Reset | `F2` | Warm reset (same as the cartridge's RESET button) |
 | Power cycle | `F3` | Cold boot (clears RAM, re-runs init) |
+| Speed up | `=` (Equal) | Step up to the next emulation-speed preset |
+| Speed down | `-` (Minus) | Step down to the previous emulation-speed preset |
+| Speed reset | `0` (Digit0) | Reset the emulation speed back to 100% |
 | Movie record | `F6` | Toggle TAS movie recording (start = power-on; stop = save `.rnm`) |
 | Movie play | `F7` | Toggle TAS movie playback (start = open `.rnm`; stop = live input) |
 | Movie branch | `F8` | Branch the current run into a new recording at this frame |

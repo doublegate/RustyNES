@@ -63,7 +63,10 @@ Common causes by OS:
 
 If audio init succeeded but you still hear nothing, the device may be
 muted at the OS level, or your default output may be a virtual sink
-that's not connected to anything.
+that's not connected to anything. Also check the in-app controls in
+**View → Settings… → Audio**: the master **Volume** slider, the **Mute**
+checkbox, and the six per-channel mute checkboxes (a muted channel is
+silenced even when everything else is fine).
 
 ## "Audio crackles or stutters"
 
