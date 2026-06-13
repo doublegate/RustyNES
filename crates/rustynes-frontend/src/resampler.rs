@@ -34,6 +34,14 @@ pub struct HermiteResampler {
     frac: f64,
     /// Input-per-output step.
     ratio: f64,
+    /// v1.0.0 — the rate the DRC band CENTERS on (default 1.0). The
+    /// emulation-speed presets set this to the speed factor: at 200% the emu
+    /// produces ~2x samples/sec, so the resampler must consume ~2x input per
+    /// output (`base_ratio == 2.0`) to keep the queue from overrunning — the
+    /// natural pitch shift users expect. The DRC servo still nudges ±0.5%
+    /// around this center. At speed 1.0 (`base_ratio == 1.0`) the behavior is
+    /// byte-identical to the pre-v1.0.0 DRC.
+    base_ratio: f64,
 }
 
 impl Default for HermiteResampler {
@@ -50,13 +58,34 @@ impl HermiteResampler {
             hist: [0.0; 4],
             frac: 0.0,
             ratio: 1.0,
+            base_ratio: 1.0,
         }
     }
 
-    /// Set the input-per-output ratio, clamped to the DRC band
-    /// `[1 - MAX_DRC_DELTA, 1 + MAX_DRC_DELTA]`.
+    /// Set the input-per-output ratio, clamped to the DRC band centered on
+    /// the current [`Self::base_ratio`] (`[base*(1 - MAX_DRC_DELTA),
+    /// base*(1 + MAX_DRC_DELTA)]`). With the default `base_ratio == 1.0`
+    /// this is the classic `[1 - delta, 1 + delta]` band.
     pub fn set_ratio(&mut self, ratio: f64) {
-        self.ratio = ratio.clamp(1.0 - MAX_DRC_DELTA, 1.0 + MAX_DRC_DELTA);
+        let lo = self.base_ratio * (1.0 - MAX_DRC_DELTA);
+        let hi = self.base_ratio * (1.0 + MAX_DRC_DELTA);
+        self.ratio = ratio.clamp(lo, hi);
+    }
+
+    /// v1.0.0 — set the rate the DRC band centers on (the emulation-speed
+    /// factor: 1.0 = normal, 2.0 = 2x / chipmunk, 0.5 = half / slow-mo).
+    /// Clamped to a sane positive range so a stray value can't stall the
+    /// resampler. Re-clamps the current ratio into the new band.
+    pub fn set_base_ratio(&mut self, base: f64) {
+        self.base_ratio = base.clamp(0.05, 20.0);
+        let ratio = self.ratio;
+        self.set_ratio(ratio);
+    }
+
+    /// The rate the DRC band currently centers on.
+    #[must_use]
+    pub const fn base_ratio(&self) -> f64 {
+        self.base_ratio
     }
 
     /// Current ratio (for the Performance panel readout).
@@ -178,6 +207,43 @@ mod tests {
         assert_eq!(r.ratio(), 1.0 + MAX_DRC_DELTA);
         r.set_ratio(0.1);
         assert_eq!(r.ratio(), 1.0 - MAX_DRC_DELTA);
+    }
+
+    #[test]
+    fn base_ratio_recenters_the_drc_band() {
+        // v1.0.0 emulation-speed: a 2x base centers the band on 2.0, so the
+        // resampler consumes ~2x input per output (no overrun at 200% speed,
+        // natural pitch shift). The DRC servo still nudges ±0.5% AROUND 2.0.
+        let mut r = HermiteResampler::new();
+        r.set_base_ratio(2.0);
+        assert_eq!(r.base_ratio(), 2.0);
+        // The DRC-law output (in [1-d, 1+d]) scaled by the base lands in the
+        // 2.0-centered band.
+        r.set_ratio(drc_ratio(0.5) * r.base_ratio());
+        assert_eq!(r.ratio(), 2.0);
+        // A request far above the band clamps to base*(1+delta).
+        r.set_ratio(10.0);
+        assert_eq!(r.ratio(), 2.0 * (1.0 + MAX_DRC_DELTA));
+        // A request far below clamps to base*(1-delta).
+        r.set_ratio(0.0);
+        assert_eq!(r.ratio(), 2.0 * (1.0 - MAX_DRC_DELTA));
+    }
+
+    #[test]
+    fn base_ratio_default_is_unity_and_byte_identical() {
+        // The default base 1.0 leaves the band exactly where it was, so the
+        // speed-1.0 path is unchanged from the pre-v1.0.0 DRC.
+        let r = HermiteResampler::new();
+        assert_eq!(r.base_ratio(), 1.0);
+    }
+
+    #[test]
+    fn base_ratio_clamps_to_sane_range() {
+        let mut r = HermiteResampler::new();
+        r.set_base_ratio(1000.0);
+        assert_eq!(r.base_ratio(), 20.0);
+        r.set_base_ratio(0.0);
+        assert_eq!(r.base_ratio(), 0.05);
     }
 
     #[test]

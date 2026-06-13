@@ -40,6 +40,19 @@
 
 use crate::config::Config;
 
+/// Persist `config` to disk (native) or no-op (wasm: no filesystem).
+#[cfg(not(target_arch = "wasm32"))]
+fn save_config(config: &Config) {
+    if let Err(e) = config.save() {
+        eprintln!("rustynes: failed to save config: {e}");
+    }
+}
+
+/// wasm: config lives in memory only (no filesystem on the web).
+#[cfg(target_arch = "wasm32")]
+#[allow(clippy::missing_const_for_fn)]
+fn save_config(_config: &Config) {}
+
 /// Live-apply request drained by the app's produce path each frame.
 ///
 /// Produced by edits in the settings panel and polled like the input rebind
@@ -58,13 +71,23 @@ pub struct SettingsApply {
     /// v2.8.0 Phase 2 — the pacing mode changed; the app re-resolves the
     /// pacing regime (and the surface present mode) live.
     pub pacing_mode: bool,
+    /// v1.0.0 — the master volume / mute changed; the app applies the new
+    /// `[audio] volume`/`muted` to the output gain (the cpal consume point).
+    pub audio_gain: bool,
+    /// v1.0.0 — the overscan-crop toggle changed; the app pushes the new
+    /// `[graphics] hide_overscan` into the gfx letterbox UV rect.
+    pub overscan: bool,
 }
 
 impl SettingsApply {
     /// `true` if any live-applicable change is pending.
     #[must_use]
     pub const fn any(self) -> bool {
-        self.ntsc_filter || self.rewind_enabled || self.pacing_mode
+        self.ntsc_filter
+            || self.rewind_enabled
+            || self.pacing_mode
+            || self.audio_gain
+            || self.overscan
     }
 }
 
@@ -83,6 +106,37 @@ pub struct SettingsPanelState {
     /// (v2.8.0 Phase 0 — the fallback used to be silent, leaving the
     /// resulting pacer-vs-vsync beat judder unattributable).
     present_mode_warning: Option<String>,
+    /// v1.0.0 — "Reset to Defaults" two-click confirm armed-state, per
+    /// section (the first click arms + relabels "Confirm?"; the second
+    /// click within the same open window performs the reset).
+    reset_video_armed: bool,
+    reset_audio_armed: bool,
+    reset_advanced_armed: bool,
+}
+
+/// v1.0.0 — a two-click "Reset to Defaults" button: the first click arms it
+/// (relabelling to a red "Confirm reset?"); the second click returns `true`
+/// (and disarms). `armed` persists in the panel state across frames.
+fn reset_to_defaults_button(ui: &mut egui::Ui, armed: &mut bool, section: &str) -> bool {
+    if *armed {
+        let confirm = ui
+            .button(
+                egui::RichText::new(format!("Confirm reset {section}?"))
+                    .color(egui::Color32::from_rgb(240, 120, 120)),
+            )
+            .clicked();
+        // Offer an inline Cancel so the user can back out of an arm.
+        if ui.button("Cancel").clicked() {
+            *armed = false;
+        }
+        if confirm {
+            *armed = false;
+            return true;
+        }
+    } else if ui.button("Reset to Defaults").clicked() {
+        *armed = true;
+    }
+    false
 }
 
 impl SettingsPanelState {
@@ -238,11 +292,65 @@ pub fn video_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
             state.apply.ntsc_filter = true;
         }
     });
+
+    // v1.0.0 — overscan crop. Applied live (the gfx letterbox samples the
+    // inner source rect); default off = the full 256x240 framebuffer (today's
+    // presentation, byte-identical).
+    if ui
+        .checkbox(
+            &mut config.graphics.hide_overscan,
+            "Hide overscan (crop top/bottom 8 scanlines)",
+        )
+        .changed()
+    {
+        state.apply.overscan = true;
+        save_config(config);
+    }
+
+    ui.add_space(4.0);
+    // v1.0.0 — reset the Graphics section to its defaults (guarded by a
+    // two-click confirm so it isn't a foot-gun), then re-apply live.
+    if reset_to_defaults_button(ui, &mut state.reset_video_armed, "graphics") {
+        let def = crate::config::GraphicsConfig::default();
+        // Cross any off<->on filter / overscan boundary so the app re-applies.
+        let ntsc_changed = (config.graphics.ntsc_filter == "off") != (def.ntsc_filter == "off");
+        let overscan_changed = config.graphics.hide_overscan != def.hide_overscan;
+        let pacing_changed = config.graphics.pacing_mode != def.pacing_mode;
+        config.graphics = def;
+        state.apply.ntsc_filter |= ntsc_changed;
+        state.apply.overscan |= overscan_changed;
+        state.apply.pacing_mode |= pacing_changed;
+        save_config(config);
+    }
 }
 
-/// The Audio section: sample rate, DRC latency target, dynamic rate control.
-pub fn audio_section(ui: &mut egui::Ui, _state: &mut SettingsPanelState, config: &mut Config) {
+/// The Audio section: master volume, sample rate, DRC latency target,
+/// dynamic rate control.
+pub fn audio_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &mut Config) {
     ui.heading("Audio");
+
+    // v1.0.0 — master volume + mute. Applied LIVE at the cpal consume point
+    // (the gain is lock-free); flag `audio_gain` so the app pushes the new
+    // value into the queue this frame. Default 1.0 / un-muted = today's sound.
+    ui.horizontal(|ui| {
+        ui.label("Volume");
+        let mut pct = (config.audio.volume.clamp(0.0, 1.0) * 100.0).round();
+        if ui
+            .add(egui::Slider::new(&mut pct, 0.0..=100.0).suffix("%"))
+            .changed()
+        {
+            config.audio.volume = (pct / 100.0).clamp(0.0, 1.0);
+            state.apply.audio_gain = true;
+        }
+        if ui.checkbox(&mut config.audio.muted, "Mute").changed() {
+            state.apply.audio_gain = true;
+        }
+    });
+    // Persist on release so a drag doesn't thrash the disk; the live gain is
+    // already applied above.
+    if ui.button("Save audio settings").clicked() {
+        save_config(config);
+    }
 
     // Sample rate: persisted only — a live change needs an audio-stream
     // (and APU) rebuild. Offer the two common presets plus a numeric edit.
@@ -281,6 +389,14 @@ pub fn audio_section(ui: &mut egui::Ui, _state: &mut SettingsPanelState, config:
         ui.checkbox(&mut config.audio.drc, "Dynamic rate control");
         ui.weak("(±0.5% drift compensation; restart to apply)");
     });
+
+    ui.add_space(4.0);
+    // v1.0.0 — reset the Audio section to defaults; re-apply the live gain.
+    if reset_to_defaults_button(ui, &mut state.reset_audio_armed, "audio") {
+        config.audio = crate::config::AudioConfig::default();
+        state.apply.audio_gain = true;
+        save_config(config);
+    }
 }
 
 /// The Advanced section: run-ahead depth + rewind enable / window / keyframe.
@@ -329,6 +445,15 @@ pub fn advanced_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, confi
         );
         ui.weak("(restart to apply)");
     });
+
+    ui.add_space(4.0);
+    // v1.0.0 — reset run-ahead + rewind to defaults; re-arm the rewind ring.
+    if reset_to_defaults_button(ui, &mut state.reset_advanced_armed, "latency/rewind") {
+        config.input.run_ahead = crate::config::InputConfig::default().run_ahead;
+        config.rewind = crate::config::RewindConfig::default();
+        state.apply.rewind_enabled = true;
+        save_config(config);
+    }
 }
 
 #[cfg(test)]
@@ -342,9 +467,10 @@ mod tests {
                 ntsc_filter: true,
                 rewind_enabled: true,
                 pacing_mode: false,
+                audio_gain: false,
+                overscan: false,
             },
-            status: String::new(),
-            present_mode_warning: None,
+            ..Default::default()
         };
         let first = state.take_apply();
         assert!(first.ntsc_filter);

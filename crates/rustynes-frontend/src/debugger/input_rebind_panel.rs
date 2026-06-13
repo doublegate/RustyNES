@@ -407,6 +407,30 @@ pub fn body(ui: &mut egui::Ui, state: &mut InputPanelState, config: &mut Config)
             state.bindings_dirty = true;
         }
 
+        // v1.0.0 — analog-stick D-pad deadzone (0.05..=0.95). Drives every
+        // gamepad's `axis_deadzone` (it is read per player at map rebuild and
+        // clamped by `input.rs`); flagging `bindings_dirty` rebuilds the live
+        // `InputState` so the change applies without a relaunch. Edits all four
+        // pad sections so a single slider covers the common single-pad case.
+        ui.horizontal(|ui| {
+            ui.label("Gamepad stick deadzone");
+            let mut dz = config.input.gamepad1.axis_deadzone.clamp(0.05, 0.95);
+            if ui
+                .add(egui::Slider::new(&mut dz, 0.05..=0.95).fixed_decimals(2))
+                .changed()
+            {
+                for pad in [
+                    &mut config.input.gamepad1,
+                    &mut config.input.gamepad2,
+                    &mut config.input.gamepad3,
+                    &mut config.input.gamepad4,
+                ] {
+                    pad.axis_deadzone = dz;
+                }
+                state.bindings_dirty = true;
+            }
+        });
+
         // v2.1.0 — non-standard device on the player-2 port ($4017).
         // Selecting one routes through the app's reload path
         // (`sync_expansion_device`). Mouse drives aim/position; left

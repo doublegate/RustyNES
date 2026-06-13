@@ -60,6 +60,11 @@ pub mod ntsc;
 #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
 pub mod ra_session;
 pub mod save_state;
+// v1.0.0 — the Save-States manager window (thumbnail grid). Native-only: the
+// slot files live on the filesystem; on wasm the slots are in `localStorage`
+// and the window is not built (the existing F1/F4 path is untouched).
+#[cfg(not(target_arch = "wasm32"))]
+pub mod save_states_ui;
 // v1.0.0 — the always-on desktop UX shell (menu bar, status bar, settings
 // window, welcome/about/shortcuts modals). Runs on native + `wasm-winit`; only
 // the filesystem-backed actions are native-gated at the dispatch site.

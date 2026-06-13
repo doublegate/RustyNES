@@ -104,6 +104,15 @@ pub enum SysAction {
     /// paused state if the menu-bar redraw edge is ever missed. Emitted on
     /// press only.
     TogglePause,
+    /// v1.0.0 — step the emulation speed up one preset (default `Equal`, the
+    /// `+`/`=` key). Emitted on press only.
+    SpeedUp,
+    /// v1.0.0 — step the emulation speed down one preset (default `Minus`).
+    /// Emitted on press only.
+    SpeedDown,
+    /// v1.0.0 — reset the emulation speed to 100% (default `Digit0`). Emitted
+    /// on press only.
+    SpeedReset,
 }
 
 /// Keyboard layout resolved from the loaded [`InputConfig`].
@@ -188,6 +197,9 @@ impl KeyBindings {
             SysAction::FrameAdvance,
         );
         try_bind(&mut system, &cfg.system.pause, SysAction::TogglePause);
+        try_bind(&mut system, &cfg.system.speed_up, SysAction::SpeedUp);
+        try_bind(&mut system, &cfg.system.speed_down, SysAction::SpeedDown);
+        try_bind(&mut system, &cfg.system.speed_reset, SysAction::SpeedReset);
         Self {
             player1,
             player2,

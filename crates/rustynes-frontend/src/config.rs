@@ -454,6 +454,18 @@ pub struct SystemBindings {
     /// `#[serde(default)]` so older configs keep loading.
     #[serde(default = "default_pause")]
     pub pause: String,
+    /// v1.0.0 — step the emulation speed up one preset (default `Equal`).
+    /// `#[serde(default)]` so older configs keep loading.
+    #[serde(default = "default_speed_up")]
+    pub speed_up: String,
+    /// v1.0.0 — step the emulation speed down one preset (default `Minus`).
+    /// `#[serde(default)]` so older configs keep loading.
+    #[serde(default = "default_speed_down")]
+    pub speed_down: String,
+    /// v1.0.0 — reset the emulation speed to 100% (default `Digit0`).
+    /// `#[serde(default)]` so older configs keep loading.
+    #[serde(default = "default_speed_reset")]
+    pub speed_reset: String,
 }
 
 fn default_debug_overlay() -> String {
@@ -504,6 +516,18 @@ fn default_pause() -> String {
     "Space".into()
 }
 
+fn default_speed_up() -> String {
+    "Equal".into()
+}
+
+fn default_speed_down() -> String {
+    "Minus".into()
+}
+
+fn default_speed_reset() -> String {
+    "Digit0".into()
+}
+
 impl Default for SystemBindings {
     fn default() -> Self {
         Self {
@@ -525,6 +549,9 @@ impl Default for SystemBindings {
             fast_forward: default_fast_forward(),
             frame_advance: default_frame_advance(),
             pause: default_pause(),
+            speed_up: default_speed_up(),
+            speed_down: default_speed_down(),
+            speed_reset: default_speed_reset(),
         }
     }
 }
@@ -590,6 +617,14 @@ pub struct GraphicsConfig {
     /// 1 = lowest display latency, 2 (default) = more scheduling slack.
     #[serde(default = "default_max_frame_latency")]
     pub max_frame_latency: u32,
+    /// v1.0.0 — crop the top + bottom 8 NES scanlines (the CRT-overscan
+    /// region many games leave noisy / scrolling-garbage in). Default
+    /// `false` so the default presentation is byte-identical (the full
+    /// 256x240 framebuffer is blitted). When on, the letterbox blit samples
+    /// only the inner 256x224 source rect — a presentation-layer UV change,
+    /// no core / framebuffer change.
+    #[serde(default)]
+    pub hide_overscan: bool,
 }
 
 fn default_ntsc_filter() -> String {
@@ -618,12 +653,17 @@ impl Default for GraphicsConfig {
             ntsc_filter: default_ntsc_filter(),
             pacing_mode: default_pacing_mode(),
             max_frame_latency: default_max_frame_latency(),
+            hide_overscan: false,
         }
     }
 }
 
 /// Audio configuration.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+//
+// Not `Eq`: the v1.0.0 `volume` field is an `f32`, so the section is
+// `PartialEq` only (matching `Config`, which already drops `Eq` for the
+// gamepad deadzone).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub struct AudioConfig {
     /// Preferred host sample rate (Hz). The actual rate may differ if
     /// CPAL refuses; the emulator and APU rebuild themselves at the
@@ -641,6 +681,16 @@ pub struct AudioConfig {
     /// off is a bit-exact passthrough of the core's samples.
     #[serde(default = "default_audio_drc")]
     pub drc: bool,
+    /// v1.0.0 — master output volume (0.0..=1.0, default 1.0). Applied at the
+    /// single cpal consume point (post-resampler, lock-free); the core's
+    /// produced samples are byte-identical regardless. Clamped on load.
+    /// Default 1.0 = today's sound exactly.
+    #[serde(default = "default_audio_volume")]
+    pub volume: f32,
+    /// v1.0.0 — master mute. When `true` the output gain is forced to 0
+    /// (independent of [`Self::volume`]). Default `false`.
+    #[serde(default)]
+    pub muted: bool,
 }
 
 /// Serde default for [`AudioConfig::latency_ms`].
@@ -653,12 +703,33 @@ const fn default_audio_drc() -> bool {
     true
 }
 
+/// Serde default for [`AudioConfig::volume`].
+const fn default_audio_volume() -> f32 {
+    1.0
+}
+
 impl Default for AudioConfig {
     fn default() -> Self {
         Self {
             sample_rate: 44_100,
             latency_ms: default_audio_latency_ms(),
             drc: default_audio_drc(),
+            volume: default_audio_volume(),
+            muted: false,
+        }
+    }
+}
+
+impl AudioConfig {
+    /// v1.0.0 — the master output gain to apply at the cpal consume point:
+    /// the clamped [`Self::volume`], or 0.0 when [`Self::muted`]. Default
+    /// (volume 1.0, not muted) returns 1.0 = today's sound exactly.
+    #[must_use]
+    pub const fn effective_gain(&self) -> f32 {
+        if self.muted {
+            0.0
+        } else {
+            self.volume.clamp(0.0, 1.0)
         }
     }
 }

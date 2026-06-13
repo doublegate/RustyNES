@@ -979,24 +979,39 @@ impl DebuggerOverlay {
                     self.chip_panels(ctx, nes);
                 }
             }
-            // (5) v1.0.0 polish — a translucent "PAUSED" overlay centred over the
-            // NES image whenever emulation is paused, so the paused state is
-            // visually obvious (not just a status-bar word).
-            if shell_frame.paused {
-                let screen = ctx.screen_rect();
+            // (5) v1.0.0 polish — a pause-screen dimming overlay: a
+            // semi-transparent dark rect (~40% black) over the emulated
+            // viewport plus a large centred "PAUSED" label, whenever emulation
+            // is paused AND a ROM is loaded. `available_rect` excludes the
+            // already-added menu + status bars, so the dim never covers them;
+            // it is painted at `Background` order so modal windows (Settings /
+            // About / a tool panel) stay on top and fully readable.
+            if shell_frame.paused && shell_frame.rom_loaded {
+                let viewport = ctx.available_rect();
+                egui::Area::new(egui::Id::new("paused_dim"))
+                    .order(egui::Order::Background)
+                    .interactable(false)
+                    .fixed_pos(viewport.min)
+                    .show(ctx, |ui| {
+                        ui.painter().rect_filled(
+                            viewport,
+                            0.0,
+                            egui::Color32::from_black_alpha(102), // ~40% black.
+                        );
+                    });
                 egui::Area::new(egui::Id::new("paused_overlay"))
-                    .fixed_pos(screen.center() - egui::vec2(64.0, 24.0))
+                    .fixed_pos(viewport.center() - egui::vec2(72.0, 28.0))
                     .order(egui::Order::Foreground)
                     .interactable(false)
                     .show(ctx, |ui| {
                         egui::Frame::none()
                             .fill(egui::Color32::from_black_alpha(160))
-                            .inner_margin(egui::Margin::symmetric(20.0, 12.0))
+                            .inner_margin(egui::Margin::symmetric(24.0, 14.0))
                             .rounding(6.0)
                             .show(ui, |ui| {
                                 ui.label(
                                     egui::RichText::new("PAUSED")
-                                        .heading()
+                                        .size(40.0)
                                         .strong()
                                         .color(egui::Color32::WHITE),
                                 );

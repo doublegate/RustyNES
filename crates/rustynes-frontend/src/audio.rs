@@ -113,6 +113,19 @@ struct QueueInner {
     /// Samples required before playback (un)gates. 0 disables the gate
     /// (bare `SampleQueue::new()`, unit tests).
     start_threshold: AtomicUsize,
+    /// v1.0.0 — master output gain (f32 bits, like the slot encoding).
+    /// Applied at the single cpal consume point in [`Self::pop_or_silence`]
+    /// (post-resampler, lock-free, affecting the buffered tail too). Default
+    /// 1.0 = today's sound exactly; 0.0 = muted. The core still produces
+    /// byte-identical samples — gain is an output-only multiply.
+    gain: AtomicU64,
+    /// v1.0.0 — the emulation-speed factor the audio DRC band centers on
+    /// (f32 bits). 1.0 (default) is the classic band; the speed presets set
+    /// it to the speed so the resampler consumes `speed`x input per output
+    /// (no overrun at alt speed, natural pitch shift). Read by the producer's
+    /// `push_samples` each call so the shared queue carries the setting across
+    /// the winit/emu-thread boundary.
+    base_ratio: AtomicU64,
 }
 
 /// Thread-safe sample queue between the emulator and the CPAL callback.
@@ -147,6 +160,8 @@ impl SampleQueue {
                 started: AtomicBool::new(false),
                 playing: AtomicBool::new(false),
                 start_threshold: AtomicUsize::new(0),
+                gain: AtomicU64::new(u64::from(1.0f32.to_bits())),
+                base_ratio: AtomicU64::new(u64::from(1.0f32.to_bits())),
             }),
         }
     }
@@ -158,6 +173,41 @@ impl SampleQueue {
         self.inner
             .start_threshold
             .store(samples.min(cap / 2), Ordering::Relaxed);
+    }
+
+    /// v1.0.0 — set the master output gain (clamped to `0.0..=1.0`). Applied
+    /// once per cpal callback in [`Self::pop_or_silence`]. Lock-free and live:
+    /// the Settings slider calls this from the winit thread.
+    pub fn set_gain(&self, gain: f32) {
+        self.inner
+            .gain
+            .store(u64::from(gain.clamp(0.0, 1.0).to_bits()), Ordering::Relaxed);
+    }
+
+    /// v1.0.0 — the current master output gain.
+    #[must_use]
+    #[allow(dead_code)] // read in tests + as a UI mirror.
+    pub fn gain(&self) -> f32 {
+        #[allow(clippy::cast_possible_truncation)] // low 32 bits hold the f32.
+        f32::from_bits(self.inner.gain.load(Ordering::Relaxed) as u32)
+    }
+
+    /// v1.0.0 — set the emulation-speed factor the DRC band centers on. Read
+    /// by the producer's `push_samples`. Lock-free + live across the
+    /// winit/emu-thread boundary (the producer owns the resampler).
+    pub fn set_base_ratio(&self, base: f32) {
+        self.inner
+            .base_ratio
+            .store(u64::from(base.to_bits()), Ordering::Relaxed);
+    }
+
+    /// v1.0.0 — the current DRC base-ratio (emulation-speed) factor.
+    #[must_use]
+    fn base_ratio(&self) -> f64 {
+        #[allow(clippy::cast_possible_truncation)] // low 32 bits hold the f32.
+        f64::from(f32::from_bits(
+            self.inner.base_ratio.load(Ordering::Relaxed) as u32,
+        ))
     }
 
     /// Push samples produced by the emulator. Samples that don't fit in the
@@ -206,12 +256,16 @@ impl SampleQueue {
             }
         }
 
+        // v1.0.0 — read the master gain ONCE per callback (a per-sample
+        // reload would be a needless atomic load in the real-time path).
+        #[allow(clippy::cast_possible_truncation)] // low 32 bits hold the f32.
+        let gain = f32::from_bits(self.inner.gain.load(Ordering::Relaxed) as u32);
         let n = out.len().min(avail);
         for (i, o) in out[..n].iter_mut().enumerate() {
             #[allow(clippy::cast_possible_truncation)] // low 32 bits hold the f32.
             let bits = self.inner.ring.slots[head.wrapping_add(i) & self.inner.ring.mask]
                 .load(Ordering::Relaxed) as u32;
-            *o = f32::from_bits(bits);
+            *o = f32::from_bits(bits) * gain;
         }
         self.inner
             .head
@@ -425,9 +479,11 @@ impl AudioOutput {
         }
         match &mut self.resampler {
             Some(rs) => {
+                // v1.0.0 — center the DRC band on the emulation-speed factor.
+                rs.set_base_ratio(self.queue.base_ratio());
                 #[allow(clippy::cast_precision_loss)] // sample counts << 2^52.
                 let fill = self.queue.len() as f64 / (2.0 * self.latency_samples as f64);
-                rs.set_ratio(drc_ratio(fill));
+                rs.set_ratio(drc_ratio(fill) * rs.base_ratio());
                 self.resample_buf.clear();
                 rs.process(samples, &mut self.resample_buf);
                 self.queue.push(&self.resample_buf);
@@ -479,9 +535,11 @@ impl AudioProducer {
         }
         match &mut self.resampler {
             Some(rs) => {
+                // v1.0.0 — center the DRC band on the emulation-speed factor.
+                rs.set_base_ratio(self.queue.base_ratio());
                 #[allow(clippy::cast_precision_loss)] // sample counts << 2^52.
                 let fill = self.queue.len() as f64 / (2.0 * self.latency_samples as f64);
-                rs.set_ratio(drc_ratio(fill));
+                rs.set_ratio(drc_ratio(fill) * rs.base_ratio());
                 self.resample_buf.clear();
                 rs.process(samples, &mut self.resample_buf);
                 self.queue.push(&self.resample_buf);
@@ -689,6 +747,41 @@ mod tests {
         q.push(&[3.0; 4]);
         assert_eq!(q.pop_or_silence(&mut small), 2);
         assert_eq!(small[0], 3.0);
+    }
+
+    #[test]
+    fn gain_scales_output_and_defaults_to_unity() {
+        let q = SampleQueue::new();
+        // Default gain is 1.0 — output is byte-identical to the input.
+        assert_eq!(q.gain(), 1.0);
+        q.push(&[0.5, -0.25, 1.0]);
+        let mut out = [0.0f32; 3];
+        assert_eq!(q.pop_or_silence(&mut out), 3);
+        assert_eq!(out, [0.5, -0.25, 1.0]);
+        // Half gain halves every sample.
+        q.set_gain(0.5);
+        q.push(&[0.5, -0.25, 1.0]);
+        assert_eq!(q.pop_or_silence(&mut out), 3);
+        assert_eq!(out, [0.25, -0.125, 0.5]);
+        // Muted = 0.0 (and clamps above 1.0 / below 0.0).
+        q.set_gain(0.0);
+        q.push(&[0.5, -0.25, 1.0]);
+        assert_eq!(q.pop_or_silence(&mut out), 3);
+        assert_eq!(out, [0.0, 0.0, 0.0]);
+        q.set_gain(5.0);
+        assert_eq!(q.gain(), 1.0);
+        q.set_gain(-3.0);
+        assert_eq!(q.gain(), 0.0);
+    }
+
+    #[test]
+    fn base_ratio_defaults_to_unity_and_round_trips() {
+        let q = SampleQueue::new();
+        assert_eq!(q.base_ratio(), 1.0);
+        q.set_base_ratio(2.0);
+        assert_eq!(q.base_ratio(), 2.0);
+        q.set_base_ratio(0.5);
+        assert_eq!(q.base_ratio(), 0.5);
     }
 
     #[test]

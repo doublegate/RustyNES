@@ -193,7 +193,17 @@ pub struct EmuCore {
     /// Vs. System coin-hold countdown (frames until `clear_coin`).
     pub vs_coin_frames: u8,
     /// Per-region frame duration (NTSC ~16.639 ms, PAL/Dendy ~19.997 ms).
+    /// This is the *console rate base* and never changes with the speed
+    /// preset (region / display-sync / perf logic read it); the speed factor
+    /// scales the PACING only, via [`Self::effective_frame_duration`].
     pub frame_duration: Duration,
+    /// v1.0.0 — emulation-speed factor (transient, NOT persisted; always
+    /// launches at 1.0). 200% (`2.0`) halves the effective frame period so
+    /// the pacer produces twice the frames/sec; 50% (`0.5`) doubles it.
+    /// Applied only at the pacing sites through
+    /// [`Self::effective_frame_duration`] — `frame_duration` (the console
+    /// rate) is left intact for region / display-sync / perf math.
+    pub speed: f32,
     /// Wall-clock target for the next emulator frame.
     pub next_frame_time: Option<Instant>,
     /// Scratch buffer for draining APU samples toward the audio sink.
@@ -221,6 +231,7 @@ impl EmuCore {
             raw_cheats: Vec::new(),
             vs_coin_frames: 0,
             frame_duration: rustynes_core::FRAME_DURATION_NTSC,
+            speed: 1.0,
             next_frame_time: None,
             audio_buf: Vec::new(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -441,6 +452,23 @@ impl EmuCore {
         fx
     }
 
+    /// v1.0.0 — the pacing period after applying the emulation-speed factor:
+    /// `frame_duration / speed`. 200% → half the period (2x frames/sec); 50%
+    /// → double the period. The speed is clamped to a sane positive range so
+    /// a degenerate value can't produce a zero / infinite period. At speed
+    /// 1.0 this returns the console-rate `frame_duration` exactly.
+    #[must_use]
+    pub fn effective_frame_duration(&self) -> Duration {
+        // Speed 1.0 returns the console-rate base EXACTLY (no float round-trip),
+        // so the default pacing is bit-identical to the pre-v1.0.0 pacer.
+        #[allow(clippy::float_cmp)] // 1.0 is the exact preset value.
+        if self.speed == 1.0 {
+            return self.frame_duration;
+        }
+        let speed = self.speed.clamp(0.05, 16.0);
+        self.frame_duration.div_f32(speed)
+    }
+
     /// Produce however many `frame_duration` slots have elapsed since
     /// `next` up to `now`, capped at [`MAX_CATCHUP_FRAMES`], and advance
     /// `next_frame_time`. Records perf samples per produced frame.
@@ -454,6 +482,8 @@ impl EmuCore {
         // `mut` is only exercised on the RA-feature build.
         #[allow(unused_mut)]
         let mut fx = ProduceFx::default();
+        // v1.0.0 — pace against the speed-scaled period (1.0 = console rate).
+        let period = self.effective_frame_duration();
         let mut target = next;
         let mut produced = 0u32;
         while target <= now && produced < MAX_CATCHUP_FRAMES {
@@ -461,7 +491,7 @@ impl EmuCore {
             fx.merge(self.produce_one_frame(inputs, sinks));
             self.perf.record_produce_cost(t0.elapsed());
             self.perf.record_produced(Instant::now());
-            target += self.frame_duration;
+            target += period;
             produced += 1;
         }
         // v2.8.0 Phase 0 — pacer anomaly counters.
@@ -472,7 +502,7 @@ impl EmuCore {
             // Far behind — snap forward so we don't replay the catch-up
             // window indefinitely.
             self.perf.snap_forwards += 1;
-            target = now + self.frame_duration;
+            target = now + period;
         }
         self.next_frame_time = Some(target);
         fx
@@ -563,4 +593,47 @@ pub(crate) fn drive_ra(
     ra.refresh_views();
     ra.expire_toasts();
     crate::debugger::CheevosStatusView::from_session(ra)
+}
+
+#[cfg(test)]
+#[allow(clippy::suboptimal_flops)] // readability over FMA in assertions.
+mod tests {
+    use super::*;
+
+    #[test]
+    fn effective_frame_duration_scales_inversely_with_speed() {
+        let mut core = EmuCore::new();
+        let base = core.frame_duration;
+        // Speed 1.0 is the console rate exactly (the determinism-safe default).
+        core.speed = 1.0;
+        assert_eq!(core.effective_frame_duration(), base);
+        // 200% halves the period (twice the frames/sec). The `div_f32` runs in
+        // f32, so allow ~1 us of rounding (far below any pacing concern).
+        core.speed = 2.0;
+        let half = core.effective_frame_duration();
+        assert!(
+            (half.as_secs_f64() - base.as_secs_f64() / 2.0).abs() < 1e-6,
+            "200% should halve the period"
+        );
+        // 50% doubles it.
+        core.speed = 0.5;
+        let twice = core.effective_frame_duration();
+        assert!(
+            (twice.as_secs_f64() - base.as_secs_f64() * 2.0).abs() < 1e-6,
+            "50% should double the period"
+        );
+    }
+
+    #[test]
+    fn effective_frame_duration_clamps_degenerate_speed() {
+        let mut core = EmuCore::new();
+        // A zero / negative speed cannot produce a zero / infinite period.
+        core.speed = 0.0;
+        assert!(core.effective_frame_duration() > Duration::ZERO);
+        core.speed = -1.0;
+        assert!(core.effective_frame_duration() > Duration::ZERO);
+        // An absurdly high speed is capped (period stays non-trivial).
+        core.speed = 1_000.0;
+        assert!(core.effective_frame_duration() > Duration::ZERO);
+    }
 }

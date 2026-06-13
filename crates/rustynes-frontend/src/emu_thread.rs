@@ -509,7 +509,8 @@ fn drive_one(
     let _ = core.produce_one_frame(&inputs, &mut sinks);
     core.perf.record_produce_cost(t0.elapsed());
     core.perf.record_produced(Instant::now());
-    core.next_frame_time = Some(Instant::now() + core.frame_duration);
+    // v1.0.0 — display regime advances by the speed-scaled period.
+    core.next_frame_time = Some(Instant::now() + core.effective_frame_duration());
     true
 }
 

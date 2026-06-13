@@ -147,6 +147,8 @@ pub enum MenuAction {
     SaveStateSlot(u8),
     /// v1.0.0 — load state from a specific slot.
     LoadStateSlot(u8),
+    /// v1.0.0 — open the Save-States manager window (thumbnail grid; native).
+    OpenSaveStates,
     /// v1.0.0 — toggle TAS movie recording.
     MovieRecordToggle,
     /// v1.0.0 — toggle TAS movie playback.
@@ -157,6 +159,10 @@ pub enum MenuAction {
     InsertCoin,
     /// Step the emulator exactly one frame (meaningful while paused).
     FrameAdvance,
+    /// v1.0.0 — set the emulation-speed factor (25%..300% presets).
+    SetSpeed(f32),
+    /// v1.0.0 — set the overscan-crop toggle (`[graphics] hide_overscan`).
+    SetOverscan(bool),
     /// v1.0.0 — open a tool panel (Cheats / Settings / Netplay / ...).
     OpenPanel(crate::debugger::ToolPanel),
     /// v1.0.0 — open a chip-inspection panel + force the deep overlay visible.
@@ -271,6 +277,9 @@ pub struct ShellFrame<'a> {
     pub region_label: &'a str,
     /// v1.0.0 — the configured run-ahead depth (frames).
     pub run_ahead: u32,
+    /// v1.0.0 — the emulation-speed factor (1.0 = 100%); drives the Speed
+    /// submenu checkmark + the status-bar speed readout (shown when != 1.0).
+    pub speed: f32,
     /// v1.0.0 — whether emulation is paused (mirror; drives the paused overlay).
     pub paused: bool,
     /// v1.0.0 — whether a TAS movie is currently recording (drives the Tools
@@ -429,6 +438,14 @@ impl UiShell {
                         ui.add_enabled(false, egui::Button::new("Load from Slot"));
                     }
 
+                    // v1.0.0 — the Save-States manager window (thumbnail grid).
+                    // Native-only (the slots live on the filesystem).
+                    #[cfg(not(target_arch = "wasm32"))]
+                    if ui.button("Save States...").clicked() {
+                        out.action = Some(MenuAction::OpenSaveStates);
+                        ui.close_menu();
+                    }
+
                     #[cfg(not(target_arch = "wasm32"))]
                     {
                         ui.separator();
@@ -498,6 +515,24 @@ impl UiShell {
                             {
                                 config.input.run_ahead = n;
                                 save_config(config);
+                                ui.close_menu();
+                            }
+                        }
+                    });
+                    // v1.0.0 — emulation-speed presets (transient; not
+                    // persisted, so the menu always opens at 100% on launch).
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                    let speed_pct = (frame.speed * 100.0).round() as u32;
+                    ui.menu_button(format!("Speed: {speed_pct}%"), |ui| {
+                        for &preset in &[0.25_f32, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0] {
+                            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                            let pct = (preset * 100.0).round() as u32;
+                            // Float-equality is fine: the menu sets these exact
+                            // preset values, and the keys step through the same.
+                            #[allow(clippy::float_cmp)]
+                            let selected = frame.speed == preset;
+                            if ui.radio(selected, format!("{pct}%")).clicked() {
+                                out.action = Some(MenuAction::SetSpeed(preset));
                                 ui.close_menu();
                             }
                         }
@@ -589,6 +624,15 @@ impl UiShell {
                         .changed()
                     {
                         save_config(config);
+                    }
+                    // v1.0.0 — overscan crop (top/bottom 8 scanlines). Applied
+                    // live via the menu action so the gfx letterbox updates.
+                    if ui
+                        .checkbox(&mut config.graphics.hide_overscan, "Hide Overscan")
+                        .changed()
+                    {
+                        save_config(config);
+                        out.action = Some(MenuAction::SetOverscan(config.graphics.hide_overscan));
                     }
                     // (audit m4) Fullscreen is a native-only window mode.
                     #[cfg(not(target_arch = "wasm32"))]
@@ -692,6 +736,17 @@ impl UiShell {
                         if frame.run_ahead > 0 {
                             ui.separator();
                             ui.label(format!("Run-Ahead {}", frame.run_ahead));
+                        }
+                        // v1.0.0 — show the emulation speed only when off 100%.
+                        #[allow(clippy::float_cmp)] // 1.0 is the exact preset.
+                        if frame.speed != 1.0 {
+                            ui.separator();
+                            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                            let pct = (frame.speed * 100.0).round() as u32;
+                            ui.colored_label(
+                                egui::Color32::from_rgb(240, 200, 100),
+                                format!("{pct}%"),
+                            );
                         }
                         ui.separator();
                         if self.paused {

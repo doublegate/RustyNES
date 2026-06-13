@@ -124,6 +124,50 @@ pub fn slot_exists(data_dir: &Path, rom_sha256: &[u8; 32], slot: u8) -> bool {
     slot_path(data_dir, rom_sha256, slot).is_ok_and(|p| p.is_file())
 }
 
+/// v1.0.0 — metadata for one save-state slot, surfaced in the Save-States
+/// manager window without restoring the full state into the running `Nes`.
+#[derive(Debug, Clone)]
+pub struct SlotMeta {
+    /// Decoded 128x120 RGBA8 thumbnail, or `None` for an empty slot / a
+    /// thumbnail-less (pre-v0.9.0) blob.
+    pub thumbnail: Option<Vec<u8>>,
+    /// File modification time, for the "saved at" display. `None` if the
+    /// platform can't report it.
+    pub modified: Option<std::time::SystemTime>,
+}
+
+/// v1.0.0 — read a slot's thumbnail + modification time WITHOUT restoring it.
+///
+/// Returns `Ok(None)` when the slot file does not exist (an empty slot).
+/// Returns `Ok(Some(meta))` (with `meta.thumbnail == None`) when the file
+/// exists but carries no thumbnail / fails to parse — the manager shows it as
+/// occupied with a placeholder rather than hiding it.
+///
+/// # Errors
+///
+/// Returns [`SaveError`] for an invalid slot index.
+#[allow(dead_code)] // used by the native Save-States window only.
+pub fn slot_meta(
+    data_dir: &Path,
+    rom_sha256: &[u8; 32],
+    slot: u8,
+) -> Result<Option<SlotMeta>, SaveError> {
+    let path = slot_path(data_dir, rom_sha256, slot)?;
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let modified = fs::metadata(&path).ok().and_then(|m| m.modified().ok());
+    // A read / parse failure is non-fatal: report the slot as occupied with
+    // no thumbnail rather than erroring out the whole grid.
+    let thumbnail = fs::read(&path)
+        .ok()
+        .and_then(|blob| rustynes_core::Nes::extract_thumbnail(&blob).ok().flatten());
+    Ok(Some(SlotMeta {
+        thumbnail,
+        modified,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

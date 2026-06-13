@@ -398,6 +398,16 @@ pub struct App {
     /// `Save State` / `Load State` use this slot; the per-slot menu items
     /// (`Save to Slot` / `Load from Slot`) target an explicit slot instead.
     active_save_slot: u8,
+    /// v1.0.0 — emulation-speed factor (transient, NOT persisted; always
+    /// launches at 1.0). Mirrors `EmuCore::speed` (written through
+    /// [`Self::set_speed`], which also centers the audio DRC band on the
+    /// factor and re-resolves pacing). Read by the status bar / Speed menu.
+    speed: f32,
+    /// v1.0.0 — the Save-States manager window (thumbnail grid). Native-only
+    /// (the slot files live on the filesystem). Surfaces the core's existing
+    /// per-slot thumbnails; routes Save / Load through the existing handlers.
+    #[cfg(not(target_arch = "wasm32"))]
+    save_states_ui: crate::save_states_ui::SaveStatesUi,
     /// v1.0.0 — cached previous value of `config.ui.pixel_aspect_correction`,
     /// so a change made in the menu / settings window is detected after the
     /// egui pass and pushed into the gfx letterbox (mirrors the NTSC live-apply
@@ -570,6 +580,8 @@ impl App {
             debugger: None,
             ui,
             active_save_slot: 0,
+            speed: 1.0,
+            save_states_ui: crate::save_states_ui::SaveStatesUi::default(),
             prev_par_correction,
             gamepad: gilrs::Gilrs::new()
                 .map_err(|e| {
@@ -641,6 +653,7 @@ impl App {
             debugger: None,
             ui,
             active_save_slot: 0,
+            speed: 1.0,
             prev_par_correction,
             proxy: Some(proxy),
             should_exit: false,
@@ -1058,13 +1071,26 @@ impl App {
         let Some(gilrs) = self.gamepad.as_mut() else {
             return;
         };
+        // v1.0.0 — surface controller hot-plug as a status toast. The events
+        // were previously consumed silently; collect any to report after the
+        // drain so the toast set can borrow `self.ui` without the gilrs borrow.
+        let mut hotplug: Option<&'static str> = None;
         while let Some(ev) = gilrs.next_event() {
+            match ev.event {
+                gilrs::EventType::Connected => hotplug = Some("Controller connected"),
+                gilrs::EventType::Disconnected => hotplug = Some("Controller disconnected"),
+                _ => {}
+            }
             self.input.handle_gamepad_event(ev.id, &ev.event);
             // If the input rebind modal is listening for a pad button,
             // feed the event there so it can capture the binding.
             if let Some(debugger) = self.debugger.as_mut() {
                 debugger.maybe_capture_gamepad(&ev.event);
             }
+        }
+        if let Some(msg) = hotplug {
+            self.ui
+                .set_status(crate::ui_shell::StatusMessage::info(msg));
         }
     }
 
@@ -2139,6 +2165,27 @@ impl App {
             MenuAction::FrameAdvance => {
                 self.request_frame_advance();
             }
+            MenuAction::OpenSaveStates => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    // Force a fresh rebuild on the next egui pass (which has the
+                    // `ctx` needed to upload thumbnail textures).
+                    self.save_states_ui.invalidate_all();
+                    self.save_states_ui.open = true;
+                    if let Some(gfx) = self.gfx.as_ref() {
+                        gfx.window.request_redraw();
+                    }
+                }
+            }
+            MenuAction::SetSpeed(speed) => {
+                self.set_speed(speed);
+            }
+            MenuAction::SetOverscan(on) => {
+                if let Some(gfx) = self.gfx.as_mut() {
+                    gfx.set_hide_overscan(on);
+                    gfx.window.request_redraw();
+                }
+            }
             MenuAction::InsertCoin => {
                 let mut guard = self.emu.lock();
                 let emu = &mut *guard;
@@ -2158,6 +2205,80 @@ impl App {
                 }
             }
         }
+    }
+
+    /// v1.0.0 — the emulation-speed presets surfaced in the Emulation -> Speed
+    /// submenu and stepped through by the Speed Up / Down keys. 100% (`1.0`)
+    /// is the determinism-safe default the app always launches at.
+    const SPEED_PRESETS: [f32; 7] = [0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0];
+
+    /// v1.0.0 — apply the configured master volume / mute to the live audio
+    /// output gain (the single cpal consume point). Native-only; cheap, called
+    /// at startup + on every volume / mute edit. No-op when audio is disabled.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn apply_audio_gain(&self) {
+        if let Some(audio) = self.audio.as_ref() {
+            audio.queue.set_gain(self.config.audio.effective_gain());
+        }
+    }
+
+    /// v1.0.0 — set the emulation-speed factor (one of [`Self::SPEED_PRESETS`],
+    /// but any positive value is accepted + clamped by the core). Writes
+    /// through to `EmuCore::speed`, centers the audio DRC band on the factor
+    /// (so the resampler consumes `speed`x input — natural pitch shift, no
+    /// overrun), re-resolves pacing (display-sync can't represent a fractional
+    /// rate, so a non-1.0 speed forces wall-clock), and rebases the pacer so
+    /// the change takes effect without a catch-up burst.
+    fn set_speed(&mut self, speed: f32) {
+        use crate::ui_shell::StatusMessage;
+        let speed = speed.clamp(0.05, 16.0);
+        self.speed = speed;
+        {
+            let mut guard = self.emu.lock();
+            guard.speed = speed;
+            // Rebase so the new period applies from "now" (no burst / no stall).
+            guard.next_frame_time = Some(Instant::now());
+        }
+        // Center the audio DRC band on the speed factor so alt-speed audio is
+        // pitch-shifted + glitch-free (the shared queue carries this across to
+        // the emu thread's producer). Native-only; wasm uses its own ring.
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(audio) = self.audio.as_ref() {
+            audio.queue.set_base_ratio(speed);
+        }
+        // Display-sync ⇄ wallclock depends on whether speed == 1.0.
+        #[cfg(not(target_arch = "wasm32"))]
+        self.resolve_pacing();
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let pct = (speed * 100.0).round() as u32;
+        self.ui
+            .set_status(StatusMessage::info(format!("Speed {pct}%")));
+        if let Some(gfx) = self.gfx.as_ref() {
+            gfx.window.request_redraw();
+        }
+    }
+
+    /// v1.0.0 — step the speed up (`+1`) or down (`-1`) through
+    /// [`Self::SPEED_PRESETS`]. Snaps to the nearest preset first so a custom
+    /// value still steps sensibly; clamps at the ends.
+    fn step_speed(&mut self, up: bool) {
+        // Find the current preset index (nearest preset to the live speed).
+        let mut idx = 0usize;
+        let mut best = f32::INFINITY;
+        for (i, &p) in Self::SPEED_PRESETS.iter().enumerate() {
+            let d = (p - self.speed).abs();
+            if d < best {
+                best = d;
+                idx = i;
+            }
+        }
+        let last = Self::SPEED_PRESETS.len() - 1;
+        let next = if up {
+            (idx + 1).min(last)
+        } else {
+            idx.saturating_sub(1)
+        };
+        self.set_speed(Self::SPEED_PRESETS[next]);
     }
 
     /// v1.0.0 — pause or resume emulation from the UX shell. On the emu-thread
@@ -2994,32 +3115,46 @@ impl App {
         let within_skew = monitor_hz
             .is_some_and(|hz| ((hz - nominal_hz) / nominal_hz).abs() <= DISPLAY_SYNC_MAX_SKEW);
 
-        let want = match mode.as_str() {
-            "display" => {
-                if within_skew && !self.display_fallback {
-                    ActivePacing::Display
-                } else {
-                    if !within_skew {
-                        eprintln!(
-                            "rustynes: pacing_mode=display requested but the monitor \
+        // v1.0.0 — at a non-100% emulation speed the target rate is no longer
+        // an integer multiple of the display refresh, so display-sync (one
+        // emulated frame per refresh) cannot represent it. Force the
+        // wall-clock pacer for the duration; speed 1.0 restores the configured
+        // regime. (Same idea as the sustained-miss display-sync fallback.)
+        #[allow(clippy::float_cmp)] // 1.0 is the exact preset value.
+        let speed_locks_wallclock = self.emu.lock().speed != 1.0;
+
+        let want = if speed_locks_wallclock {
+            ActivePacing::Wallclock
+        } else {
+            match mode.as_str() {
+                "display" => {
+                    if within_skew && !self.display_fallback {
+                        ActivePacing::Display
+                    } else {
+                        if !within_skew {
+                            eprintln!(
+                                "rustynes: pacing_mode=display requested but the monitor \
                              refresh ({}) is not within 0.5% of the console rate \
                              ({nominal_hz:.4} Hz) — using wallclock pacing.",
-                            monitor_hz
-                                .map_or_else(|| "unknown".to_string(), |hz| format!("{hz:.3} Hz"))
-                        );
+                                monitor_hz.map_or_else(
+                                    || "unknown".to_string(),
+                                    |hz| format!("{hz:.3} Hz")
+                                )
+                            );
+                        }
+                        ActivePacing::Wallclock
                     }
-                    ActivePacing::Wallclock
                 }
-            }
-            "vrr" => ActivePacing::Vrr,
-            "wallclock" => ActivePacing::Wallclock,
-            // "auto" (and anything unrecognized): display-sync when the
-            // panel matches the console rate, else the wall-clock pacer.
-            _ => {
-                if within_skew && !self.display_fallback {
-                    ActivePacing::Display
-                } else {
-                    ActivePacing::Wallclock
+                "vrr" => ActivePacing::Vrr,
+                "wallclock" => ActivePacing::Wallclock,
+                // "auto" (and anything unrecognized): display-sync when the
+                // panel matches the console rate, else the wall-clock pacer.
+                _ => {
+                    if within_skew && !self.display_fallback {
+                        ActivePacing::Display
+                    } else {
+                        ActivePacing::Wallclock
+                    }
                 }
             }
         };
@@ -3323,7 +3458,8 @@ impl App {
                 let emu = &mut *guard;
                 emu.perf.record_produce_cost(t0.elapsed());
                 emu.perf.record_produced(now);
-                emu.next_frame_time = Some(now + emu.frame_duration);
+                // v1.0.0 — speed-scaled period (1.0 = console rate).
+                emu.next_frame_time = Some(now + emu.effective_frame_duration());
                 true
             } else {
                 let next = self.emu.lock().next_frame_time.unwrap_or(now);
@@ -3427,6 +3563,10 @@ impl App {
             };
             let sample_rate = audio.as_ref().map_or(44_100, |a| a.sample_rate);
             self.audio = audio;
+            // v1.0.0 — apply the persisted master volume / mute to the output
+            // gain now that the queue exists. Default (1.0, not muted) is a
+            // no-op so the default sound is byte-identical.
+            self.apply_audio_gain();
             // v2.8.0 Phase 5 increment 3 — spawn the emulation thread (it
             // idles until `start_nes` flips its `has_rom`). The `Send` audio
             // producer is made from `self.audio` here, so it must precede
@@ -3558,6 +3698,11 @@ impl App {
         if let Some(thread) = self.emu_thread.as_ref() {
             thread.control().set_has_rom(true);
         }
+        // v1.0.0 — a new ROM was loaded: drop the Save-States manager's cached
+        // thumbnail textures so the next open rebuilds for the new game (and
+        // the old game's GPU textures are freed).
+        #[cfg(not(target_arch = "wasm32"))]
+        self.save_states_ui.invalidate_all();
         // v1.6.0 — apply this ROM's persisted Game Genie cheats (native).
         #[cfg(not(target_arch = "wasm32"))]
         self.apply_cheats_for_current_rom();
@@ -3645,6 +3790,7 @@ impl ApplicationHandler<AppEvent> for App {
             &self.config.graphics.present_mode,
             self.config.graphics.max_frame_latency,
             self.config.ui.pixel_aspect_correction,
+            self.config.graphics.hide_overscan,
         )) {
             Ok(gfx) => self.on_gfx_ready(gfx, event_loop),
             Err(e) => {
@@ -3657,8 +3803,17 @@ impl ApplicationHandler<AppEvent> for App {
             let present_mode = self.config.graphics.present_mode.clone();
             let max_frame_latency = self.config.graphics.max_frame_latency;
             let par_correction = self.config.ui.pixel_aspect_correction;
+            let hide_overscan = self.config.graphics.hide_overscan;
             wasm_bindgen_futures::spawn_local(async move {
-                match Gfx::new(window, &present_mode, max_frame_latency, par_correction).await {
+                match Gfx::new(
+                    window,
+                    &present_mode,
+                    max_frame_latency,
+                    par_correction,
+                    hide_overscan,
+                )
+                .await
+                {
                     Ok(gfx) => {
                         let _ = proxy.send_event(AppEvent::GfxReady(Box::new(gfx)));
                     }
@@ -3974,6 +4129,15 @@ impl ApplicationHandler<AppEvent> for App {
                             // redraw edge is ever missed.
                             self.set_paused(!self.ui.paused);
                         }
+                        SysAction::SpeedUp => {
+                            self.step_speed(true);
+                        }
+                        SysAction::SpeedDown => {
+                            self.step_speed(false);
+                        }
+                        SysAction::SpeedReset => {
+                            self.set_speed(1.0);
+                        }
                     }
                 }
                 // BUG-6 — we already returned above when `egui_consumed` (or the
@@ -4127,12 +4291,24 @@ impl ApplicationHandler<AppEvent> for App {
                     mapper_label: &mapper_label,
                     region_label: &region_label,
                     run_ahead,
+                    speed: self.speed,
                     paused: self.ui.paused,
                     movie_recording,
                     movie_playing,
                 };
 
                 let mut shell_out = crate::ui_shell::ShellOutput::default();
+                // v1.0.0 — Save-States manager inputs, captured BEFORE the
+                // render branches so the `extra` egui closure can render it
+                // without re-locking the emu (the locked branch holds the
+                // guard across the pass). Native-only.
+                #[cfg(not(target_arch = "wasm32"))]
+                let ss_sha: Option<[u8; 32]> =
+                    self.emu.lock().nes.as_ref().map(|n| *n.rom_sha256());
+                #[cfg(not(target_arch = "wasm32"))]
+                let ss_dir: Option<PathBuf> = self.data_dir.clone();
+                #[cfg(not(target_arch = "wasm32"))]
+                let ss_slot = self.active_save_slot;
                 // v1.0.0 — render-branch selection: take the LOCKED branch (which
                 // passes a live `&mut Nes` to the egui pass) when EITHER the deep
                 // overlay is visible OR a tool panel that reads `nes` (Cheats) is
@@ -4172,9 +4348,11 @@ impl ApplicationHandler<AppEvent> for App {
                     let ui_shell = &mut self.ui;
                     // wasm-only: draw the browser-netplay lobby into the same
                     // egui frame (the `App` owns the lobby state). Native passes
-                    // a no-op closure.
+                    // the Save-States manager window instead.
                     #[cfg(target_arch = "wasm32")]
                     let wasm_lobby = &mut self.wasm_lobby;
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let save_states_ui = &mut self.save_states_ui;
                     gfx.render_with_overlay(
                         &self.present_staging,
                         |device, queue, encoder, view, size| {
@@ -4183,7 +4361,15 @@ impl ApplicationHandler<AppEvent> for App {
                                 crate::wasm_lobby::show(ctx, wasm_lobby, cfg);
                             };
                             #[cfg(not(target_arch = "wasm32"))]
-                            let extra = |_ctx: &egui::Context, _cfg: &mut crate::config::Config| {};
+                            let extra = |ctx: &egui::Context, _cfg: &mut crate::config::Config| {
+                                save_states_ui.show(
+                                    ctx,
+                                    ss_dir.as_deref(),
+                                    ss_sha,
+                                    ss_slot,
+                                    rom_loaded,
+                                );
+                            };
                             shell_out = debugger.render_shell(
                                 device,
                                 queue,
@@ -4223,6 +4409,8 @@ impl ApplicationHandler<AppEvent> for App {
                     let ui_shell = &mut self.ui;
                     #[cfg(target_arch = "wasm32")]
                     let wasm_lobby = &mut self.wasm_lobby;
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let save_states_ui = &mut self.save_states_ui;
                     gfx.render_with_overlay(
                         &self.present_staging,
                         |device, queue, encoder, view, size| {
@@ -4231,7 +4419,15 @@ impl ApplicationHandler<AppEvent> for App {
                                 crate::wasm_lobby::show(ctx, wasm_lobby, cfg);
                             };
                             #[cfg(not(target_arch = "wasm32"))]
-                            let extra = |_ctx: &egui::Context, _cfg: &mut crate::config::Config| {};
+                            let extra = |ctx: &egui::Context, _cfg: &mut crate::config::Config| {
+                                save_states_ui.show(
+                                    ctx,
+                                    ss_dir.as_deref(),
+                                    ss_sha,
+                                    ss_slot,
+                                    rom_loaded,
+                                );
+                            };
                             // Debugger panels are skipped (overlay hidden) so
                             // `nes = None` is correct even though a ROM may exist.
                             shell_out = debugger.render_shell(
@@ -4335,6 +4531,49 @@ impl ApplicationHandler<AppEvent> for App {
                             gfx.disable_ntsc();
                         } else {
                             gfx.enable_ntsc();
+                        }
+                    }
+                }
+                // v1.0.0 — master volume / mute live-apply (the cpal consume
+                // gain). Native-only; wasm has no app-resident audio queue.
+                #[cfg(not(target_arch = "wasm32"))]
+                if settings.audio_gain {
+                    self.apply_audio_gain();
+                }
+                // v1.0.0 — overscan crop live-apply (the gfx letterbox UV rect).
+                if settings.overscan {
+                    if let Some(gfx) = self.gfx.as_mut() {
+                        gfx.set_hide_overscan(self.config.graphics.hide_overscan);
+                    }
+                }
+                // v1.0.0 — act on a Save-States manager Save / Load click this
+                // frame, routing through the existing slot handlers; a Save
+                // invalidates that slot's cached thumbnail so the grid refreshes.
+                #[cfg(not(target_arch = "wasm32"))]
+                if let Some(req) = self.save_states_ui.take_request() {
+                    use crate::save_states_ui::SaveStateRequest;
+                    use crate::ui_shell::StatusMessage;
+                    match req {
+                        SaveStateRequest::Save(slot) => {
+                            self.handle_save_state(slot);
+                            self.save_states_ui.invalidate_slot(slot);
+                            self.ui.set_status(StatusMessage::success(format!(
+                                "Saved to slot {}",
+                                slot + 1
+                            )));
+                        }
+                        SaveStateRequest::Load(slot) => {
+                            if self.ra_hardcore_blocks() {
+                                self.ui.set_status(StatusMessage::info(
+                                    "Load state disabled (hardcore)",
+                                ));
+                            } else {
+                                self.handle_load_state(slot);
+                                self.ui.set_status(StatusMessage::success(format!(
+                                    "Loaded from slot {}",
+                                    slot + 1
+                                )));
+                            }
                         }
                     }
                 }
