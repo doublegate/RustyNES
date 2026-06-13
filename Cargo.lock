@@ -3131,7 +3131,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-apu"
-version = "2.8.0"
+version = "1.0.0"
 dependencies = [
  "bitflags 2.13.0",
  "criterion",
@@ -3144,7 +3144,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-cheevos"
-version = "2.8.0"
+version = "1.0.0"
 dependencies = [
  "cc",
  "ureq",
@@ -3152,7 +3152,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-core"
-version = "2.8.0"
+version = "1.0.0"
 dependencies = [
  "bitflags 2.13.0",
  "criterion",
@@ -3169,7 +3169,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-cpu"
-version = "2.8.0"
+version = "1.0.0"
 dependencies = [
  "bitflags 2.13.0",
  "criterion",
@@ -3180,7 +3180,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-frontend"
-version = "2.8.0"
+version = "1.0.0"
 dependencies = [
  "bytemuck",
  "console_error_panic_hook",
@@ -3215,7 +3215,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-mappers"
-version = "2.8.0"
+version = "1.0.0"
 dependencies = [
  "bitflags 2.13.0",
  "criterion",
@@ -3227,7 +3227,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-netplay"
-version = "2.8.0"
+version = "1.0.0"
 dependencies = [
  "futures-util",
  "js-sys",
@@ -3242,7 +3242,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-ppu"
-version = "2.8.0"
+version = "1.0.0"
 dependencies = [
  "bitflags 2.13.0",
  "criterion",
@@ -3253,7 +3253,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-test-harness"
-version = "2.8.0"
+version = "1.0.0"
 dependencies = [
  "insta",
  "png",

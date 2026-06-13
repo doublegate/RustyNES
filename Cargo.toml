@@ -13,7 +13,7 @@ members = [
 ]
 
 [workspace.package]
-version = "2.8.0"
+version = "1.0.0"
 edition = "2021"
 rust-version = "1.86"
 license = "MIT OR Apache-2.0"
@@ -24,13 +24,13 @@ keywords = ["nes", "emulator", "famicom", "6502", "retro"]
 categories = ["emulators", "games"]
 
 [workspace.dependencies]
-rustynes-core = { path = "crates/rustynes-core", version = "2.8.0" }
-rustynes-cpu = { path = "crates/rustynes-cpu", version = "2.8.0" }
-rustynes-ppu = { path = "crates/rustynes-ppu", version = "2.8.0" }
-rustynes-apu = { path = "crates/rustynes-apu", version = "2.8.0", default-features = false }
-rustynes-mappers = { path = "crates/rustynes-mappers", version = "2.8.0" }
-rustynes-netplay = { path = "crates/rustynes-netplay", version = "2.8.0" }
-rustynes-test-harness = { path = "crates/rustynes-test-harness", version = "2.8.0" }
+rustynes-core = { path = "crates/rustynes-core", version = "1.0.0" }
+rustynes-cpu = { path = "crates/rustynes-cpu", version = "1.0.0" }
+rustynes-ppu = { path = "crates/rustynes-ppu", version = "1.0.0" }
+rustynes-apu = { path = "crates/rustynes-apu", version = "1.0.0", default-features = false }
+rustynes-mappers = { path = "crates/rustynes-mappers", version = "1.0.0" }
+rustynes-netplay = { path = "crates/rustynes-netplay", version = "1.0.0" }
+rustynes-test-harness = { path = "crates/rustynes-test-harness", version = "1.0.0" }
 
 bitflags = "2.6"
 thiserror = { version = "2.0", default-features = false }
@@ -114,7 +114,7 @@ overflow-checks = false
 inherits = "release"
 debug = true
 
-# v2.8.0 Phase 4 — opt-in host-tuned build:
+# v1.0.0 Phase 4 — opt-in host-tuned build:
 #   RUSTFLAGS="-C target-cpu=native" cargo build --profile release-native -p rustynes-frontend
 # (cargo profiles cannot carry rustflags; the separate profile keeps the
 # host-tuned artifacts out of the portable release cache). NEVER used for

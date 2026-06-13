@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+> **New here since v0.8.x?** The emulation core was replaced with the cycle-accurate engine and the repo was re-cut as v1.0.0. Read `docs/audit/v1.0.0-synthesis-handoff-2026-06-13.md` first — it explains what changed, the `rustynes-*` architecture, where everything moved, and the hard constraints. Then update this file + your memory as you work.
+
 ## What this is
 
 RustyNES is a cycle-accurate Nintendo Entertainment System emulator written in pure Rust. The accuracy bar is Mesen2 / higan / ares: tight lockstep scheduling at PPU-dot resolution on a master-clock-precise timebase, sub-instruction PPU events visible to subsequent CPU code, and a lookup-table non-linear audio mixer with band-limited synthesis. The frontend is pure Rust (`winit` + `wgpu` + `cpal` + `egui`).
