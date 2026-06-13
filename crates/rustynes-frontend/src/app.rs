@@ -400,6 +400,10 @@ pub struct App {
     proxy: Option<winit::event_loop::EventLoopProxy<AppEvent>>,
     /// Raised when the user asks to quit (Esc, window close).
     should_exit: bool,
+    /// `true` when emulation was auto-paused because the window lost focus
+    /// (the `[ui] pause_on_focus_loss` `QoL`). Only an auto-pause is
+    /// auto-resumed on regaining focus — a manual user pause is left alone.
+    auto_paused: bool,
     /// v2.8.0 Phase 2 — the resolved pacing regime (config `pacing_mode` ×
     /// measured/declared display refresh × ROM region). Native-only.
     #[cfg(not(target_arch = "wasm32"))]
@@ -558,6 +562,7 @@ impl App {
                 })
                 .ok(),
             should_exit: false,
+            auto_paused: false,
             // Placeholder until `resumed()` reads the cartridge region;
             // any reasonable default (NTSC) keeps `WaitUntil` math sane
             // before the ROM is loaded.
@@ -624,6 +629,7 @@ impl App {
             prev_par_correction,
             proxy: Some(proxy),
             should_exit: false,
+            auto_paused: false,
             browser_netplay: None,
             wasm_lobby: crate::wasm_lobby::WasmLobbyState::default(),
             fds_bios_bytes: None,
@@ -1675,6 +1681,11 @@ impl App {
     fn publish_shared_input(&self) {
         if let Some(thread) = self.emu_thread.as_ref() {
             thread.shared_input().publish(&self.frame_inputs());
+            // Fast-forward is a control-block flag (not part of the per-frame
+            // input snapshot), so push the live held state alongside.
+            thread
+                .control()
+                .set_fast_forward(self.input.fast_forward_held());
         }
     }
 
@@ -2016,6 +2027,10 @@ impl App {
                 event_loop.exit();
             }
             MenuAction::TogglePause => {
+                // A manual pause/resume takes ownership of the pause state, so
+                // a subsequent focus-regain must not auto-resume it (and a
+                // manual resume clears any pending auto-pause flag).
+                self.auto_paused = false;
                 self.set_paused(!self.ui.paused);
             }
             MenuAction::Reset => {
@@ -2036,6 +2051,9 @@ impl App {
             }
             MenuAction::ToggleMenuBar => {
                 self.ui.menu_visible = !self.ui.menu_visible;
+            }
+            MenuAction::SetWindowScale(scale) => {
+                self.set_window_scale(scale);
             }
             MenuAction::CycleDiskSide => {
                 self.cycle_disk_side();
@@ -2097,6 +2115,9 @@ impl App {
                 self.handle_movie_branch();
                 #[cfg(target_arch = "wasm32")]
                 self.handle_movie_branch_wasm();
+            }
+            MenuAction::FrameAdvance => {
+                self.request_frame_advance();
             }
             MenuAction::InsertCoin => {
                 let mut guard = self.emu.lock();
@@ -2160,6 +2181,60 @@ impl App {
         }
     }
 
+    /// Step the emulator exactly one frame. Only meaningful while paused
+    /// (a single-step while running is a no-op so a stray press can't perturb
+    /// live cadence) and never during a netplay session (it would desync the
+    /// peer). Works on all three produce paths:
+    /// - emu-thread: bump the control-block counter + `unpark` the thread so
+    ///   its idle gate produces one unthrottled frame and re-parks;
+    /// - synchronous native: produce one frame inline here;
+    /// - wasm: produce one frame inline + re-arm the rAF loop.
+    fn request_frame_advance(&mut self) {
+        if !self.ui.paused || self.netplay_is_active() {
+            return;
+        }
+        // Make sure the core has the latest input for this stepped frame.
+        #[cfg(not(target_arch = "wasm32"))]
+        self.pump_gamepad();
+        self.latch_input();
+
+        #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
+        {
+            if let Some(thread) = self.emu_thread.as_ref() {
+                // Publish the freshly-latched input into the SharedInput too,
+                // so the stepped frame sees the current buttons.
+                self.publish_shared_input();
+                thread.control().request_frame_advance();
+                thread.unpark();
+                return;
+            }
+            self.frame_advance_inline();
+        }
+        #[cfg(not(all(not(target_arch = "wasm32"), feature = "emu-thread")))]
+        self.frame_advance_inline();
+    }
+
+    /// Produce exactly one frame synchronously (the synchronous-native + wasm
+    /// frame-advance step). Shared by the non-emu-thread paths.
+    fn frame_advance_inline(&mut self) {
+        let now = Instant::now();
+        self.produce_one_frame();
+        {
+            let mut guard = self.emu.lock();
+            let emu = &mut *guard;
+            emu.perf.record_produce_cost(now.elapsed());
+            emu.perf.record_produced(Instant::now());
+            // Stay paused: rebase the pacer to "now" so resuming play later
+            // doesn't burst-catch-up the stepped frame's interval.
+            emu.next_frame_time = Some(Instant::now());
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        self.post_produce_housekeeping();
+        if let Some(gfx) = self.gfx.as_ref() {
+            gfx.window.request_redraw();
+        }
+    }
+
     /// v1.0.0 — toggle borderless fullscreen, tracking the state on the shell.
     fn toggle_fullscreen(&mut self) {
         self.ui.fullscreen = !self.ui.fullscreen;
@@ -2172,6 +2247,32 @@ impl App {
             gfx.window.set_fullscreen(mode);
         }
     }
+
+    /// v1.0.0 — resize the window to `scale`x the NES resolution (View > Window
+    /// Size). Exits fullscreen first (a fixed size while fullscreen is moot) and
+    /// adds a small allowance for the menu + status bars so the emulated image
+    /// area lands near the requested multiple. Native only.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn set_window_scale(&mut self, scale: u32) {
+        if self.ui.fullscreen {
+            self.toggle_fullscreen();
+        }
+        if let Some(gfx) = self.gfx.as_ref() {
+            let scale = scale.clamp(1, 8);
+            // The menu + status bars take ~48 logical px of height; add that so
+            // the NES image (NES_W x NES_H) lands near `scale`x after the chrome.
+            let w = f64::from(NES_W * scale);
+            let h = f64::from(NES_H * scale) + 48.0;
+            let _ = gfx
+                .window
+                .request_inner_size(winit::dpi::LogicalSize::new(w, h));
+        }
+    }
+
+    /// wasm: the canvas size is controlled by the page, not the app.
+    #[cfg(target_arch = "wasm32")]
+    #[allow(clippy::unused_self)]
+    const fn set_window_scale(&self, _scale: u32) {}
 
     /// Power-cycle the running emulator (and keep `RetroAchievements` in sync).
     // Same cfg artifact as `do_reset`.
@@ -2560,6 +2661,23 @@ impl App {
                 if let Some(gfx) = self.gfx.as_ref() {
                     gfx.window.request_redraw();
                 }
+                return;
+            }
+
+            // Fast-forward (synchronous-native path): skip the pacer block and
+            // produce a capped burst of frames UNTHROTTLED with audio muted.
+            // Applies in every (non-netplay) regime; netplay always takes the
+            // exact-rate one-frame-per-pace path below. Stay on `Poll` so the
+            // burst repeats immediately next `about_to_wait`.
+            if self.input.fast_forward_held() && !self.netplay.is_active() {
+                self.pump_gamepad();
+                self.latch_input();
+                self.produce_fast_forward_frames();
+                self.post_produce_housekeeping();
+                if let Some(gfx) = self.gfx.as_ref() {
+                    gfx.window.request_redraw();
+                }
+                event_loop.set_control_flow(ControlFlow::Poll);
                 return;
             }
 
@@ -3012,6 +3130,48 @@ impl App {
         self.apply_produce_fx(fx);
     }
 
+    /// Maximum frames to produce per pace iteration while fast-forwarding, so
+    /// a held fast-forward key can never wedge the UI (the event loop still
+    /// services input/resize/redraw between iterations).
+    const FAST_FORWARD_MAX_FRAMES: u32 = 8;
+
+    /// Produce up to [`Self::FAST_FORWARD_MAX_FRAMES`] frames back-to-back,
+    /// UNTHROTTLED, with audio MUTED on the native lock-free ring (a `None`
+    /// audio sink), so the producer can run ahead without overrunning the ring
+    /// (the cpal callback plays its underrun-silence). Rebases the pacer to
+    /// `now` after the burst so releasing fast-forward doesn't catch-up burst.
+    /// The synchronous-native + wasm fast-forward drive. (On wasm the audio
+    /// ring is a thread-local `AudioWorklet` ring that drops overruns, so the
+    /// produced samples are simply discarded by the ring under fast-forward.)
+    fn produce_fast_forward_frames(&mut self) {
+        let inputs = self.frame_inputs();
+        for _ in 0..Self::FAST_FORWARD_MAX_FRAMES {
+            let t0 = Instant::now();
+            let fx = {
+                // Mute audio: pass `None` so the produce path pushes no
+                // samples into the ring (native). RA still drives.
+                #[cfg(not(target_arch = "wasm32"))]
+                let mut sinks = crate::emu::FrameSinks {
+                    audio: None,
+                    #[cfg(feature = "retroachievements")]
+                    ra: self.ra.as_mut(),
+                };
+                #[cfg(target_arch = "wasm32")]
+                let mut sinks = crate::emu::FrameSinks {
+                    _marker: core::marker::PhantomData,
+                };
+                self.emu.lock().produce_one_frame(&inputs, &mut sinks)
+            };
+            self.apply_produce_fx(fx);
+            let mut guard = self.emu.lock();
+            let emu = &mut *guard;
+            emu.perf.record_produce_cost(t0.elapsed());
+            emu.perf.record_produced(Instant::now());
+        }
+        // Rebase so leaving fast-forward resumes paced play from "now".
+        self.emu.lock().next_frame_time = Some(Instant::now());
+    }
+
     /// v2.8.0 Phase 6 — whether the wasm rAF cadence matches the console rate
     /// closely enough to engage one-frame-per-rAF display-sync. `true` when
     /// the measured presented (rAF) interval is within 3% of the console
@@ -3065,6 +3225,8 @@ impl App {
             // drops a frame every ~9 s. Off during netplay (one-frame-per-tick
             // is driven below) and on non-60 Hz panels (wall-clock catch-up).
             let display_sync = !netplay_active && self.wasm_display_sync();
+            // Fast-forward: outside netplay, run a capped burst unthrottled.
+            let fast_forward = !netplay_active && self.input.fast_forward_held();
 
             let produced = if netplay_active {
                 // Browser netplay must advance the rollback session by AT MOST
@@ -3089,6 +3251,13 @@ impl App {
                 } else {
                     false
                 }
+            } else if fast_forward {
+                // Fast-forward: produce a capped burst back-to-back this rAF
+                // tick (the cap stops a held key from wedging the page). The
+                // AudioWorklet ring drops overruns, so the extra frames'
+                // samples are simply discarded under fast-forward.
+                self.produce_fast_forward_frames();
+                true
             } else if display_sync {
                 // One frame per rAF — the present is the clock (winit delivers
                 // RedrawRequested on requestAnimationFrame).
@@ -3662,11 +3831,14 @@ impl ApplicationHandler<AppEvent> for App {
                                 self.handle_load_state_wasm();
                             }
                         }
-                        SysAction::Rewind => {
+                        SysAction::Rewind | SysAction::FastForward => {
                             // No-op here. `InputState::handle_key` already
-                            // toggled `rewind_held`; the actual per-frame
-                            // rewind step runs in `about_to_wait` based on
-                            // that flag.
+                            // toggled `rewind_held` / `fast_forward_held`; the
+                            // per-frame rewind step runs in `about_to_wait`
+                            // based on that flag, and the fast-forward state is
+                            // picked up by the emu-thread path via the
+                            // `publish_shared_input` call below (and read
+                            // directly on the sync/wasm produce paths).
                         }
                         SysAction::Reset => {
                             self.do_reset();
@@ -3736,6 +3908,9 @@ impl ApplicationHandler<AppEvent> for App {
                                 gfx.window.request_redraw();
                             }
                         }
+                        SysAction::FrameAdvance => {
+                            self.request_frame_advance();
+                        }
                     }
                 }
                 // BUG-6 — we already returned above when `egui_consumed` (or the
@@ -3747,6 +3922,26 @@ impl ApplicationHandler<AppEvent> for App {
                 #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
                 self.publish_shared_input();
                 self.latch_input();
+            }
+            WindowEvent::Focused(focused) => {
+                // Pause-on-focus-loss (opt-in): auto-pause when the window
+                // loses focus and auto-resume when it regains focus. Never
+                // fights a manual user pause (only auto-resume what auto-pause
+                // paused), and never auto-pauses during a netplay session
+                // (stalling the rollback loop would desync the peer).
+                if self.config.ui.pause_on_focus_loss && !self.netplay_is_active() {
+                    if focused {
+                        if self.auto_paused {
+                            self.auto_paused = false;
+                            self.set_paused(false);
+                        }
+                    } else if !self.ui.paused {
+                        self.set_paused(true);
+                        // `set_paused` refuses during netplay (guarded above)
+                        // — only mark the auto-pause if it actually took.
+                        self.auto_paused = self.ui.paused;
+                    }
+                }
             }
             WindowEvent::RedrawRequested => {
                 // Native: rendering is decoupled from emulation — this

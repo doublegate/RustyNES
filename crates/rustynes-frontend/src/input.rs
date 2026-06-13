@@ -91,6 +91,14 @@ pub enum SysAction {
     /// keycode here, so the default is `KeyM`). Provides a keyboard path back
     /// to the menu bar after hiding it from the View menu.
     ToggleMenuBar,
+    /// Hold to fast-forward (run unthrottled, audio muted) (default `Tab`).
+    /// Like [`Rewind`](Self::Rewind), this emits on BOTH press and release so
+    /// the run loop can transition between normal play and fast-forward; the
+    /// caller reads the live state via [`InputState::fast_forward_held`].
+    FastForward,
+    /// Step exactly one frame while paused (default `Backslash`). Emitted on
+    /// press only.
+    FrameAdvance,
 }
 
 /// Keyboard layout resolved from the loaded [`InputConfig`].
@@ -163,6 +171,16 @@ impl KeyBindings {
             &mut system,
             &cfg.system.toggle_menu_bar,
             SysAction::ToggleMenuBar,
+        );
+        try_bind(
+            &mut system,
+            &cfg.system.fast_forward,
+            SysAction::FastForward,
+        );
+        try_bind(
+            &mut system,
+            &cfg.system.frame_advance,
+            SysAction::FrameAdvance,
         );
         Self {
             player1,
@@ -612,6 +630,8 @@ pub struct InputState {
     pad_assignment: PadAssignment,
     /// `true` while the rewind key is held.
     rewind_held: bool,
+    /// `true` while the fast-forward key is held.
+    fast_forward_held: bool,
 }
 
 impl InputState {
@@ -626,6 +646,7 @@ impl InputState {
             gamepad_maps,
             pad_assignment: PadAssignment::default(),
             rewind_held: false,
+            fast_forward_held: false,
         }
     }
 
@@ -750,6 +771,12 @@ impl InputState {
         self.rewind_held
     }
 
+    /// `true` while the fast-forward key is held.
+    #[must_use]
+    pub const fn fast_forward_held(&self) -> bool {
+        self.fast_forward_held
+    }
+
     /// Apply a winit keyboard event. Returns `Some(action)` for system
     /// keys (`Quit`, `SaveState`, `LoadState`, `Reset`, `PowerCycle`) on
     /// press, and always returns `Some(SysAction::Rewind)` for the rewind
@@ -784,6 +811,12 @@ impl InputState {
             if action == SysAction::Rewind {
                 self.rewind_held = pressed;
                 return Some(SysAction::Rewind);
+            }
+            // Fast-forward is a held key like rewind: track the live state and
+            // emit on both edges so the caller can publish the change at once.
+            if action == SysAction::FastForward {
+                self.fast_forward_held = pressed;
+                return Some(SysAction::FastForward);
             }
             if pressed {
                 return Some(action);

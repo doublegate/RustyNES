@@ -97,17 +97,28 @@ fn vs_main(@builtin(vertex_index) vid: u32) -> VsOut {
         vec2<f32>( 0.0,  0.0),
         vec2<f32>( 2.0,  0.0),
     );
-    let p = pos[vid];
-    // Apply letterbox: scale + center.
-    let scaled = vec2<f32>(p.x * u.rect.x, p.y * u.rect.y) + vec2<f32>(u.rect.z, u.rect.w);
     var out: VsOut;
-    out.pos = vec4<f32>(scaled, 0.0, 1.0);
-    out.uv = uv[vid];
+    // The triangle always covers the WHOLE surface (NO position scaling); the
+    // letterbox is applied in UV space and the out-of-image bars are clipped to
+    // black in the fragment shader. Scaling the oversized triangle's POSITION
+    // instead (the previous approach) leaves its far vertex covering the bottom
+    // (and, in fullscreen, the right) bar, which then samples clamped edge
+    // texels -> the garbage-at-the-bottom / fullscreen edge-smear.
+    // rect.xy = the image's fraction of the surface (<=1); rect.zw = offset.
+    out.pos = vec4<f32>(pos[vid], 0.0, 1.0);
+    out.uv = (uv[vid] - vec2<f32>(0.5, 0.5) - vec2<f32>(u.rect.z, u.rect.w))
+        / vec2<f32>(u.rect.x, u.rect.y) + vec2<f32>(0.5, 0.5);
     return out;
 }
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    // Outside the letterboxed image is a black bar (the pass clears to black,
+    // but the fullscreen triangle also rasterizes the bars, so clip here so a
+    // ClampToEdge sampler can't smear the edge texels across them).
+    if (in.uv.x < 0.0 || in.uv.x > 1.0 || in.uv.y < 0.0 || in.uv.y > 1.0) {
+        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    }
     return textureSample(nes_tex, nes_smp, in.uv);
 }
 ";

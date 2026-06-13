@@ -186,6 +186,14 @@ pub struct EmuControl {
     regime: AtomicU8,
     /// Per-region frame duration in nanoseconds.
     frame_nanos: AtomicU64,
+    /// Set while the fast-forward key is held: the thread produces frames
+    /// back-to-back (unthrottled) and mutes audio so the lock-free ring does
+    /// not overrun.
+    fast_forward: AtomicBool,
+    /// Pending frame-advance steps (incremented when the user presses the
+    /// frame-advance key while paused). The thread consumes one per loop and
+    /// produces exactly one unthrottled frame for each.
+    frame_advance: AtomicU32,
 }
 
 impl EmuControl {
@@ -199,6 +207,8 @@ impl EmuControl {
             has_rom: AtomicBool::new(false),
             regime: AtomicU8::new(regime::WALLCLOCK),
             frame_nanos: AtomicU64::new(dur_nanos(rustynes_core::FRAME_DURATION_NTSC)),
+            fast_forward: AtomicBool::new(false),
+            frame_advance: AtomicU32::new(0),
         }
     }
 
@@ -229,6 +239,46 @@ impl EmuControl {
     /// [`Self::set_netplay_paused`]; the thread idles while either is set.
     pub fn set_user_paused(&self, on: bool) {
         self.user_paused.store(on, Ordering::Release);
+    }
+
+    /// Set (or clear) fast-forward. While set the emu thread produces frames
+    /// unthrottled (no pacer block / no tick wait) and mutes audio.
+    pub fn set_fast_forward(&self, on: bool) {
+        self.fast_forward.store(on, Ordering::Release);
+    }
+
+    /// Whether fast-forward is currently engaged.
+    #[must_use]
+    pub fn is_fast_forward(&self) -> bool {
+        self.fast_forward.load(Ordering::Acquire)
+    }
+
+    /// Request one frame-advance step (consumed by the idle gate to produce
+    /// exactly one frame while paused). Increments a pending counter so two
+    /// quick presses step two frames.
+    pub fn request_frame_advance(&self) {
+        self.frame_advance.fetch_add(1, Ordering::AcqRel);
+    }
+
+    /// Consume one pending frame-advance step. Returns `true` (and decrements)
+    /// if one was pending, else `false`. A compare-and-swap loop keeps the
+    /// decrement race-free against concurrent `request_frame_advance`.
+    pub fn take_frame_advance(&self) -> bool {
+        let mut current = self.frame_advance.load(Ordering::Acquire);
+        loop {
+            if current == 0 {
+                return false;
+            }
+            match self.frame_advance.compare_exchange_weak(
+                current,
+                current - 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return true,
+                Err(actual) => current = actual,
+            }
+        }
     }
 }
 
@@ -339,16 +389,49 @@ fn run_loop(
         }
         // Idle: no ROM yet, netplay owns the core on the winit thread, or the
         // user paused emulation from the UX shell.
-        if !control.has_rom.load(Ordering::Acquire)
+        let idle = !control.has_rom.load(Ordering::Acquire)
             || control.netplay_paused.load(Ordering::Acquire)
-            || control.user_paused.load(Ordering::Acquire)
-        {
+            || control.user_paused.load(Ordering::Acquire);
+        if idle {
+            // Frame-advance: while user-paused (but with a ROM and not in
+            // netplay), a pending step produces EXACTLY ONE unthrottled frame
+            // then re-parks. The netplay/no-ROM idle never single-steps.
+            if control.has_rom.load(Ordering::Acquire)
+                && !control.netplay_paused.load(Ordering::Acquire)
+                && control.take_frame_advance()
+            {
+                // `drive_one` would bail under the user-pause re-check (the
+                // step happens precisely WHILE user-paused), so use the
+                // frame-advance drive, which honors the netplay bail but
+                // deliberately steps through the user pause.
+                if drive_frame_advance(emu, audio.as_mut(), shared_input, control)
+                    && proxy.send_event(AppEvent::EmuFrame).is_err()
+                {
+                    return;
+                }
+                continue;
+            }
             std::thread::park_timeout(IDLE_PARK);
             continue;
         }
 
+        // Fast-forward: run unthrottled and mute audio (a `None` sink) so the
+        // producer doesn't outpace the cpal consumer and overrun the ring.
+        let fast_forward = control.fast_forward.load(Ordering::Acquire);
         let regime = control.regime.load(Ordering::Acquire);
-        let produced = if regime == regime::DISPLAY {
+        let produced = if fast_forward {
+            // Produce back-to-back regardless of regime: no pacer block, and
+            // in the DISPLAY regime drain any pending present tick without
+            // waiting on it. `drive_fast_forward` rebases `next_frame_time` to
+            // `now` after the frame, so when FF is released the wall-clock /
+            // display path resumes at the current instant with no catch-up
+            // burst. Audio is muted (a `None` sink) so the ring never overruns.
+            if regime == regime::DISPLAY {
+                // Consume one pending tick if present, but never block on it.
+                let _ = tick_rx.try_recv();
+            }
+            drive_fast_forward(emu, shared_input, control)
+        } else if regime == regime::DISPLAY {
             // Fifo vsync is the clock: one frame per present tick, with a
             // watchdog that keeps producing if presents stop arriving.
             match tick_rx.recv_timeout(DISPLAY_TICK_TIMEOUT) {
@@ -427,6 +510,60 @@ fn drive_one(
     core.perf.record_produce_cost(t0.elapsed());
     core.perf.record_produced(Instant::now());
     core.next_frame_time = Some(Instant::now() + core.frame_duration);
+    true
+}
+
+/// Frame-advance: latch + produce exactly one frame UNTHROTTLED while
+/// user-paused. Unlike [`drive_one`] it does NOT bail on the user-pause flag
+/// (the step happens precisely while paused) — but it DOES honor the netplay
+/// pause under the lock (the TOCTOU close), since a netplay session must never
+/// be single-stepped from here (the idle gate already excludes netplay, so
+/// this is belt-and-braces). Audio passes through (a single stepped frame
+/// cannot overrun the ring). Rebases `next_frame_time` to `now`.
+fn drive_frame_advance(
+    emu: &EmuHandle,
+    audio: Option<&mut AudioProducer>,
+    shared_input: &SharedInput,
+    control: &EmuControl,
+) -> bool {
+    let inputs = shared_input.load();
+    let mut sinks = sinks_for(audio);
+    let t0 = Instant::now();
+    let mut guard = emu.lock();
+    if control.netplay_paused.load(Ordering::Acquire) {
+        return false;
+    }
+    let core = &mut *guard;
+    core.latch(&inputs);
+    let _ = core.produce_one_frame(&inputs, &mut sinks);
+    core.perf.record_produce_cost(t0.elapsed());
+    core.perf.record_produced(Instant::now());
+    core.next_frame_time = Some(Instant::now());
+    true
+}
+
+/// Fast-forward: latch + produce exactly one frame UNTHROTTLED with audio
+/// MUTED (a `None` sink, so the lock-free ring never overruns while the
+/// producer outpaces the cpal consumer), then rebase `next_frame_time` to
+/// `now` so releasing fast-forward resumes paced production without a
+/// catch-up burst. Returns `false` on the same netplay/user-pause-claimed
+/// bail as [`drive_one`].
+fn drive_fast_forward(emu: &EmuHandle, shared_input: &SharedInput, control: &EmuControl) -> bool {
+    let inputs = shared_input.load();
+    let mut sinks = sinks_for(None);
+    let t0 = Instant::now();
+    let mut guard = emu.lock();
+    if control.netplay_paused.load(Ordering::Acquire) || control.user_paused.load(Ordering::Acquire)
+    {
+        return false;
+    }
+    let core = &mut *guard;
+    core.latch(&inputs);
+    let _ = core.produce_one_frame(&inputs, &mut sinks);
+    core.perf.record_produce_cost(t0.elapsed());
+    core.perf.record_produced(Instant::now());
+    // Rebase so leaving FF doesn't burst-catch-up the elapsed (fast) frames.
+    core.next_frame_time = Some(Instant::now());
     true
 }
 
@@ -614,5 +751,28 @@ mod tests {
         assert_eq!(c.frame_nanos.load(Ordering::Acquire), 16_639_000);
         c.set_has_rom(true);
         assert!(c.has_rom.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn fast_forward_flag_round_trips() {
+        let c = EmuControl::new();
+        assert!(!c.is_fast_forward());
+        c.set_fast_forward(true);
+        assert!(c.is_fast_forward());
+        c.set_fast_forward(false);
+        assert!(!c.is_fast_forward());
+    }
+
+    #[test]
+    fn frame_advance_take_is_compare_and_decrement() {
+        let c = EmuControl::new();
+        // Nothing pending yet.
+        assert!(!c.take_frame_advance());
+        // Two requests => two steps consumed, then empty.
+        c.request_frame_advance();
+        c.request_frame_advance();
+        assert!(c.take_frame_advance());
+        assert!(c.take_frame_advance());
+        assert!(!c.take_frame_advance());
     }
 }

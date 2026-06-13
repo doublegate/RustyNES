@@ -442,6 +442,14 @@ pub struct SystemBindings {
     /// `#[serde(default)]` so older configs keep loading.
     #[serde(default = "default_toggle_menu_bar")]
     pub toggle_menu_bar: String,
+    /// Hold to fast-forward (run unthrottled, audio muted) (default `Tab`).
+    /// `#[serde(default)]` so older configs keep loading.
+    #[serde(default = "default_fast_forward")]
+    pub fast_forward: String,
+    /// Step one frame while paused (default `Backslash`).
+    /// `#[serde(default)]` so older configs keep loading.
+    #[serde(default = "default_frame_advance")]
+    pub frame_advance: String,
 }
 
 fn default_debug_overlay() -> String {
@@ -480,6 +488,14 @@ fn default_toggle_menu_bar() -> String {
     "KeyM".into()
 }
 
+fn default_fast_forward() -> String {
+    "Tab".into()
+}
+
+fn default_frame_advance() -> String {
+    "Backslash".into()
+}
+
 impl Default for SystemBindings {
     fn default() -> Self {
         Self {
@@ -498,6 +514,8 @@ impl Default for SystemBindings {
             insert_coin: default_insert_coin(),
             fullscreen: default_fullscreen(),
             toggle_menu_bar: default_toggle_menu_bar(),
+            fast_forward: default_fast_forward(),
+            frame_advance: default_frame_advance(),
         }
     }
 }
@@ -711,6 +729,12 @@ pub struct UiConfig {
     /// Show the FPS readout in the status bar. Default `true`.
     #[serde(default = "default_ui_show_fps")]
     pub show_fps: bool,
+    /// Auto-pause emulation when the window loses focus, auto-resume when it
+    /// regains focus. Default `false` (no behavior change unless enabled). A
+    /// manual user pause is never overridden, and this never auto-pauses
+    /// during a netplay session.
+    #[serde(default)]
+    pub pause_on_focus_loss: bool,
 }
 
 /// Serde default for [`UiConfig::show_fps`].
@@ -724,6 +748,7 @@ impl Default for UiConfig {
             theme: AppTheme::default(),
             pixel_aspect_correction: false,
             show_fps: default_ui_show_fps(),
+            pause_on_focus_loss: false,
         }
     }
 }

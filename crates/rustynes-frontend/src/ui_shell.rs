@@ -134,6 +134,9 @@ pub enum MenuAction {
     ToggleFullscreen,
     /// v1.0.0 — toggle the menu bar (from the View menu).
     ToggleMenuBar,
+    /// v1.0.0 — resize the window to an integer multiple of the NES resolution
+    /// (1x..4x), from the View > Window Size menu.
+    SetWindowScale(u32),
     /// v1.0.0 — cycle the inserted FDS disk side.
     CycleDiskSide,
     /// v1.0.0 — capture a screenshot of the current framebuffer (native).
@@ -152,6 +155,8 @@ pub enum MenuAction {
     MovieBranch,
     /// v1.0.0 — insert a Vs. System coin (acceptor #1).
     InsertCoin,
+    /// Step the emulator exactly one frame (meaningful while paused).
+    FrameAdvance,
     /// v1.0.0 — open a tool panel (Cheats / Settings / Netplay / ...).
     OpenPanel(crate::debugger::ToolPanel),
     /// v1.0.0 — open a chip-inspection panel + force the deep overlay visible.
@@ -398,7 +403,11 @@ impl UiShell {
                             }
                         }
                     });
-                    ui.add_enabled_ui(frame.rom_loaded, |ui| {
+                    // BUG-1: build the submenus as DIRECT children of the File
+                    // menu (not inside `add_enabled_ui`, whose nested UI scope
+                    // breaks egui's sibling-hover auto-close), with disabled
+                    // placeholders when no ROM is loaded.
+                    if frame.rom_loaded {
                         ui.menu_button("Save to Slot", |ui| {
                             for slot in 0u8..8 {
                                 if ui.button(format!("Slot {}", slot + 1)).clicked() {
@@ -415,7 +424,10 @@ impl UiShell {
                                 }
                             }
                         });
-                    });
+                    } else {
+                        ui.add_enabled(false, egui::Button::new("Save to Slot"));
+                        ui.add_enabled(false, egui::Button::new("Load from Slot"));
+                    }
 
                     #[cfg(not(target_arch = "wasm32"))]
                     {
@@ -462,6 +474,21 @@ impl UiShell {
                         ui.close_menu();
                     }
                     ui.separator();
+                    // Frame advance is meaningful while paused; enabled with a
+                    // ROM loaded (a press while running is a no-op).
+                    if accel_enabled(ui, frame.rom_loaded, "Frame Advance", &keys.frame_advance)
+                        .clicked()
+                    {
+                        out.action = Some(MenuAction::FrameAdvance);
+                        ui.close_menu();
+                    }
+                    // Fast-forward is a held key — surface it as a disabled hint
+                    // (there is no toggle action; hold the key to engage it).
+                    ui.add_enabled(
+                        false,
+                        egui::Button::new(format!("Fast Forward (hold {})", keys.fast_forward)),
+                    );
+                    ui.separator();
                     ui.menu_button(format!("Run-Ahead: {}", config.input.run_ahead), |ui| {
                         for n in 0u32..=3 {
                             if ui
@@ -494,7 +521,8 @@ impl UiShell {
                         out.action = Some(MenuAction::OpenPanel(ToolPanel::Cheats));
                         ui.close_menu();
                     }
-                    ui.add_enabled_ui(frame.rom_loaded, |ui| {
+                    // BUG-1: direct child (not inside add_enabled_ui — see File).
+                    if frame.rom_loaded {
                         ui.menu_button("Movies (TAS)", |ui| {
                             let rec_label = if frame.movie_recording {
                                 "Stop Recording"
@@ -519,7 +547,9 @@ impl UiShell {
                                 ui.close_menu();
                             }
                         });
-                    });
+                    } else {
+                        ui.add_enabled(false, egui::Button::new("Movies (TAS)"));
+                    }
                     #[cfg(not(target_arch = "wasm32"))]
                     if ui.button("Netplay...").clicked() {
                         out.action = Some(MenuAction::OpenPanel(ToolPanel::Netplay));
@@ -569,7 +599,27 @@ impl UiShell {
                             ui.close_menu();
                         }
                     }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    ui.menu_button("Window Size", |ui| {
+                        for (label, scale) in [
+                            ("1x (100%)", 1u32),
+                            ("2x (200%)", 2),
+                            ("3x (300%)", 3),
+                            ("4x (400%)", 4),
+                        ] {
+                            if ui.button(label).clicked() {
+                                out.action = Some(MenuAction::SetWindowScale(scale));
+                                ui.close_menu();
+                            }
+                        }
+                    });
                     if ui.checkbox(&mut config.ui.show_fps, "Show FPS").changed() {
+                        save_config(config);
+                    }
+                    if ui
+                        .checkbox(&mut config.ui.pause_on_focus_loss, "Pause When Unfocused")
+                        .changed()
+                    {
                         save_config(config);
                     }
                     let mut menu_bar = self.menu_visible;
@@ -906,6 +956,8 @@ fn about_window(ctx: &egui::Context, open: &mut bool) {
                 ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
                 ui.add_space(8.0);
                 ui.label("A cycle-accurate NES emulator written in Rust");
+                ui.add_space(8.0);
+                ui.label("Created by DoubleGate");
                 ui.add_space(8.0);
                 ui.hyperlink_to("GitHub", "https://github.com/doublegate/RustyNES");
                 ui.add_space(8.0);
