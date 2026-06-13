@@ -1,18 +1,24 @@
-name: Deploy Web Demo
+name: Deploy Pages (demo + docs)
 
-# v1.3.0 Sprint 2 — builds the wasm32 frontend with trunk and deploys
-# the static bundle to GitHub Pages (https://doublegate.github.io/RustyNES/).
+# Builds the wasm32 frontend with trunk AND the workspace rustdoc, then
+# publishes BOTH to GitHub Pages in a single deployment
+# (https://doublegate.github.io/RustyNES/):
 #
-# Two jobs: `build` produces + size-gates the `dist/` bundle and uploads
-# it as a Pages artifact; `deploy` publishes it. The build also runs on
-# pull requests (deploy does NOT) so the size budget gates PRs without
-# publishing a preview.
+#   /        the playable wasm demo (the full winit + wgpu + egui build)
+#   /api/    the workspace API documentation (rustdoc)
 #
-# The deployed default is the `wasm-winit` feature: the full winit +
-# wgpu + egui experience (debugger overlay + NTSC filter), identical to
-# the native binary. trunk auto-downloads the wasm-bindgen CLI + wasm-opt
-# versions pinned in crates/rustynes-frontend/web/Trunk.toml, so this workflow
-# only installs trunk itself + the wasm32 rust target.
+# GitHub Pages allows only one deployment source per repo, so the demo and
+# the docs are assembled into one artifact and deployed together (the Pages
+# source must be "GitHub Actions", build_type: workflow — NOT a branch). This
+# replaces the legacy gh-pages-branch docs deploy.
+#
+# Two jobs: `build` produces + size-gates the demo, builds the docs, assembles
+# the combined `_site/`, and uploads it as a Pages artifact; `deploy` publishes
+# it. The build also runs on pull requests (deploy does NOT) so the size budget
+# gates PRs without publishing a preview.
+#
+# trunk auto-downloads the wasm-bindgen CLI + wasm-opt versions pinned in
+# crates/rustynes-frontend/web/Trunk.toml.
 
 on:
   push:
@@ -61,19 +67,21 @@ env:
 
 jobs:
   build:
-    name: build + size budget
+    name: build demo + docs
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
 
-      # Shared toolchain + cargo cache. `apt: false` — the wasm32 build of
-      # winit/wgpu/cpal routes through web-sys, not the native X11/Wayland/ALSA
-      # system libraries.
+      # Shared toolchain + cargo cache. `apt: true` because the rustdoc build
+      # compiles the whole workspace (incl. rustynes-frontend) for the host,
+      # which needs the native winit/wgpu/cpal system libraries. The wasm build
+      # itself routes through web-sys and would not need them, but the doc build
+      # in the same job does.
       - uses: ./.github/actions/rust-setup
         with:
           targets: wasm32-unknown-unknown
-          apt: "false"
-          cache-key: web-wasm32
+          apt: "true"
+          cache-key: web-pages
 
       - name: Install trunk (prebuilt release binary)
         run: |
@@ -82,35 +90,47 @@ jobs:
             | tar -xz -C /usr/local/bin trunk
           trunk --version
 
-      # No apt X11/wayland/ALSA deps here: the wasm32 build of
-      # winit/wgpu/cpal routes through web-sys, not the native system
-      # libraries.
-      - name: Build (release) for GitHub Pages
+      - name: Build the wasm demo (release) for GitHub Pages
         working-directory: crates/rustynes-frontend/web
         run: trunk build --release --public-url "${PUBLIC_URL}"
 
       - name: Enforce wasm size budget (< 5 MiB gzip)
         run: ./scripts/wasm_size_budget.sh crates/rustynes-frontend/web/dist 5242880
 
-      # No `.nojekyll`: the GitHub Actions Pages flow serves the
-      # uploaded artifact verbatim (Jekyll only runs in the legacy
-      # branch-deploy mode), and none of the trunk output filenames
-      # start with `_`, so there is nothing for Jekyll to strip even if
-      # it ran. (Also, upload-pages-artifact >= v4 excludes dotfiles by
-      # default, so a `.nojekyll` would be dropped from the artifact
-      # anyway.)
+      - name: Build the workspace API docs (rustdoc)
+        # --no-deps keeps it to our own crates. No -D warnings here: the lint
+        # job in ci.yml already gates rustdoc, so the Pages build only needs the
+        # HTML and must not fail the deploy on a doc nit.
+        run: cargo doc --workspace --no-deps
+
+      - name: Assemble the Pages site (demo at /, rustdoc at /api/)
+        run: |
+          set -euo pipefail
+          rm -rf _site
+          mkdir -p _site/api
+          cp -r crates/rustynes-frontend/web/dist/. _site/
+          cp -r target/doc/. _site/api/
+          # rustdoc emits no root index for a multi-crate workspace; add a
+          # redirect to the main library facade so /api/ lands somewhere useful.
+          cat > _site/api/index.html <<'HTML'
+          <!doctype html>
+          <meta charset="utf-8">
+          <meta http-equiv="refresh" content="0; url=rustynes_core/index.html">
+          <title>RustyNES API documentation</title>
+          <a href="rustynes_core/index.html">RustyNES API documentation</a>
+          HTML
+
       - name: Configure Pages
-        # `enablement: true` self-heals if Pages is ever disabled; the
-        # site is already enabled (build_type: workflow), so this reads
-        # the existing config and does not hit the create path.
+        # build_type is set to "workflow" (GitHub Actions source); enablement
+        # self-heals if Pages is ever disabled.
         uses: actions/configure-pages@v6
         with:
           enablement: true
 
-      - name: Upload Pages artifact
+      - name: Upload Pages artifact (demo + docs)
         uses: actions/upload-pages-artifact@v5
         with:
-          path: crates/rustynes-frontend/web/dist
+          path: _site
 
   deploy:
     name: deploy to GitHub Pages
