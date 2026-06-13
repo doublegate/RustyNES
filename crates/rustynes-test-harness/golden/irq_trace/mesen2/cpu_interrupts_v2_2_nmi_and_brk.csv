@@ -1,0 +1,7 @@
+cpu_cycle,ppu_frame,ppu_scanline,ppu_dot,event_type,pc,apu_irq_flag,nmi_flag
+327474,12,-1,6,init,58504,1,0
+563453,20,241,27,nmi_svc,58120,1,0
+920822,32,241,30,nmi_svc,58120,1,0
+1188847,41,241,27,nmi_svc,58120,1,0
+2797006,95,241,36,nmi_svc,58120,1,0
+2975689,101,241,33,nmi_svc,58120,1,0

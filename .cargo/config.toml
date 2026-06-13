@@ -1,0 +1,14 @@
+# v1.3.0 Sprint 1.1 — wasm32 frontend support.
+#
+# `--cfg=web_sys_unstable_apis` is required by wgpu's WebGPU backend
+# on wasm32 because the WebGPU JS API is still gated behind web-sys's
+# `unstable_apis` cfg (the API itself is Baseline-stable as of Jan
+# 2026, but the Rust bindings haven't been moved out of the unstable
+# tier yet). Without this rustflag, `cargo build --target
+# wasm32-unknown-unknown -p rustynes-frontend` fails at link time with
+# missing `GpuAdapter` / `GpuCanvasContext` types.
+#
+# See `docs/audit/v1.3-sprint-1.1-wasm32-research-2026-05-24.md`.
+
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg=web_sys_unstable_apis"]

@@ -1,31 +1,47 @@
 [package]
 name = "rustynes-apu"
+description = "Cycle-accurate Ricoh 2A03 APU (Audio Processing Unit) for the NES"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-authors.workspace = true
 license.workspace = true
+authors.workspace = true
 repository.workspace = true
-description = "NES 2A03 APU (Audio Processing Unit) emulation"
-keywords = ["nes", "apu", "2A03", "emulator", "audio"]
+keywords = ["nes", "2a03", "apu", "audio", "emulator"]
 categories = ["emulators", "multimedia::audio"]
-
-[dependencies]
-bitflags.workspace = true
-log.workspace = true
-
-[dev-dependencies]
-proptest.workspace = true
-
-[features]
-default = ["std"]
-std = []
-serde = ["dep:serde"]
-
-[dependencies.serde]
-version = "1.0"
-optional = true
-features = ["derive"]
 
 [lints]
 workspace = true
+
+[features]
+# Opt-in `std` for the APU mixer's `f32::exp` (filter coefficient init).
+# When OFF, the same call routes through `libm::expf` so the crate compiles
+# on no_std targets like `thumbv7em-none-eabihf`. The numeric output matches
+# `f32::exp` to the precision we use. `rustynes-core` activates this via its own
+# `std` default. See `docs/architecture.md` §no_std boundary. We do NOT
+# `default = ["std"]` here because cargo's workspace feature unification
+# would then quietly opt every consumer in to `std`, masking no_std regressions
+# from cross-target CI gates that build with `--no-default-features`.
+std = []
+# v2.0 R-1 core C-1 DIAGNOSTIC: gated pub-static atomic counters that pin
+# where the explicit-DMC-abort scheduling diverges under R1. Default-off.
+mc-r1-dmc-abort-probe = []
+
+[dependencies]
+bitflags.workspace = true
+thiserror.workspace = true
+libm = { version = "0.2", default-features = false }
+
+[dev-dependencies]
+proptest.workspace = true
+pretty_assertions.workspace = true
+criterion.workspace = true
+# Real-to-complex FFT for the BLEP spectral regression test
+# (`tests/spectral.rs` + `benches/spectral.rs`). Pure-Rust, dev-only —
+# does NOT propagate to consumer builds.
+realfft = "3.4"
+
+[[bench]]
+name = "spectral"
+path = "benches/spectral.rs"
+harness = false

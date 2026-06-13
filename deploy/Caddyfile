@@ -1,0 +1,32 @@
+# RustyNES v2 — Caddy reverse proxy for the netplay signaling server (v2.7.0).
+#
+# Terminates TLS and proxies WebSocket upgrades to the plain-ws signaling relay
+# so browsers can connect at wss://<DOMAIN>/. The {$DOMAIN} placeholder is
+# substituted from the compose `DOMAIN` env var (defaults to localhost, which
+# uses Caddy's internal self-signed CA for a local test; a real hostname gets an
+# automatic Let's Encrypt cert).
+
+{$DOMAIN} {
+	# The signaling relay (signaling_server.rs) speaks ONLY WebSocket: it runs
+	# `accept_async` on every connection and rejects anything without an
+	# `Upgrade: websocket` header. So proxy *only* real WebSocket upgrades to it;
+	# a plain browser page-visit (e.g. opening https://<DOMAIN>/ to accept the
+	# self-signed cert) would otherwise be forwarded, rejected, and surface as a
+	# confusing 502. Everything that is NOT a WebSocket upgrade gets a friendly
+	# health response instead.
+	@websocket {
+		header Connection *Upgrade*
+		header Upgrade websocket
+	}
+	handle @websocket {
+		# Caddy passes the Upgrade/Connection headers through transparently.
+		reverse_proxy signaling:9000
+	}
+	handle {
+		respond "RustyNES v2 signaling server is up. Use this URL (as wss://) as the signaling server in the emulator's browser-netplay lobby. This page is only the health endpoint." 200
+	}
+
+	# Local/self-signed CA when DOMAIN=localhost (skip ACME). For a real domain,
+	# remove this line so Caddy provisions a Let's Encrypt certificate.
+	tls internal
+}

@@ -1,195 +1,366 @@
-//! NROM Mapper (Mapper 0).
+//! NROM (iNES mapper 0) implementation.
 //!
-//! The simplest NES mapper with no bank switching. Used by early games
-//! like Super Mario Bros., Donkey Kong, and Ice Climber.
+//! NROM is the trivial mapper: no bank registers, no banking, no IRQ. PRG-ROM
+//! is either 16 KiB (mirrored across `$8000-$BFFF` and `$C000-$FFFF`) or
+//! 32 KiB (filling `$8000-$FFFF`). CHR-ROM is a fixed 8 KiB window at
+//! `$0000-$1FFF`; CHR-RAM variants substitute 8 KiB of writable RAM.
 //!
-//! Memory layout:
-//! - PRG-ROM: 16KB or 32KB mapped to $8000-$FFFF
-//! - CHR-ROM: 8KB mapped to PPU $0000-$1FFF (or CHR-RAM if none)
-//! - No PRG-RAM (some variants have 2-8KB at $6000-$7FFF)
+//! Per `docs/mappers.md` §Mapper coverage matrix, NROM covers ~247 commercial
+//! titles and is the baseline against which the rest of the mapper suite is
+//! validated.
 
-use crate::mapper::{Mapper, Mirroring};
-use crate::rom::Rom;
-
-#[cfg(not(feature = "std"))]
+use crate::cartridge::Mirroring;
+use crate::mapper::{Mapper, MapperCaps, MapperError};
 use alloc::{boxed::Box, vec::Vec};
+use alloc::{format, vec};
 
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
+/// PRG-RAM size for cartridges that include it (Family Basic and a few
+/// homebrews). Standard NROM has no PRG-RAM, but we always allocate the
+/// 8 KiB window so reads/writes to `$6000-$7FFF` don't fall off the edge.
+pub const NROM_PRG_RAM_SIZE: usize = 0x2000;
 
-/// NROM mapper implementation.
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+/// CHR-RAM size for the CHR-RAM variant of NROM. Always 8 KiB.
+pub const NROM_CHR_RAM_SIZE: usize = 0x2000;
+
+const PRG_BANK_16K: usize = 0x4000;
+const PRG_BANK_32K: usize = 0x8000;
+const NAMETABLE_SIZE: usize = 0x0400;
+const NAMETABLE_SIZE_U16: u16 = 0x0400;
+
+const SAVE_STATE_VERSION: u8 = 1;
+
+/// NROM mapper state.
+///
+/// `prg_rom` and `chr_rom` are owned by the mapper rather than borrowed from
+/// `Cartridge`. The cart-owned ROM bytes are passed in by value (boxed slice)
+/// at construction; `Cartridge` retains its own copy as well so the rest of
+/// the system can introspect ROM contents without going through the mapper.
 pub struct Nrom {
-    /// PRG-ROM data.
-    prg_rom: Vec<u8>,
-    /// CHR-ROM/RAM data.
-    chr: Vec<u8>,
-    /// Whether CHR is RAM (writable).
+    prg_rom: Box<[u8]>,
+    chr: Box<[u8]>,
+    prg_ram: Box<[u8]>,
+    /// Internal nametable VRAM (2 KiB). The console actually owns this in real
+    /// hardware and the cartridge selects mirroring; we hold it here for now
+    /// so the mapper can self-contain its PPU read/write surface until the
+    /// PPU lands.
+    vram: Box<[u8]>,
     chr_is_ram: bool,
-    /// PRG-ROM size (16KB or 32KB).
-    prg_size: usize,
-    /// Nametable mirroring mode.
     mirroring: Mirroring,
 }
 
 impl Nrom {
-    /// Create a new NROM mapper from ROM data.
-    #[must_use]
-    pub fn new(rom: &Rom) -> Self {
-        let prg_size = rom.prg_rom.len();
-        let chr_is_ram = rom.chr_rom.is_empty();
-        let chr = if chr_is_ram {
-            // 8KB CHR-RAM
-            vec![0u8; 8192]
+    /// Construct a new NROM mapper.
+    ///
+    /// `prg_rom` must be 16 KiB or 32 KiB. CHR-RAM is selected when `chr_rom`
+    /// is empty; otherwise CHR-ROM must be exactly 8 KiB.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MapperError::Invalid`] when sizes don't match the NROM
+    /// constraints, since NROM has no banking to compensate.
+    pub fn new(
+        prg_rom: Box<[u8]>,
+        chr_rom: Box<[u8]>,
+        mirroring: Mirroring,
+    ) -> Result<Self, MapperError> {
+        if prg_rom.len() != PRG_BANK_16K && prg_rom.len() != PRG_BANK_32K {
+            return Err(MapperError::Invalid(format!(
+                "NROM expects 16 KiB or 32 KiB PRG-ROM, got {} bytes",
+                prg_rom.len()
+            )));
+        }
+
+        let chr_is_ram = chr_rom.is_empty();
+        let chr: Box<[u8]> = if chr_is_ram {
+            vec![0u8; NROM_CHR_RAM_SIZE].into_boxed_slice()
+        } else if chr_rom.len() == NROM_CHR_RAM_SIZE {
+            chr_rom
         } else {
-            rom.chr_rom.clone()
+            return Err(MapperError::Invalid(format!(
+                "NROM expects 8 KiB CHR-ROM, got {} bytes",
+                chr_rom.len()
+            )));
         };
 
-        Self {
-            prg_rom: rom.prg_rom.clone(),
+        Ok(Self {
+            prg_rom,
             chr,
+            prg_ram: vec![0u8; NROM_PRG_RAM_SIZE].into_boxed_slice(),
+            vram: vec![0u8; 2 * NAMETABLE_SIZE].into_boxed_slice(),
             chr_is_ram,
-            prg_size,
-            mirroring: rom.header.mirroring,
-        }
+            mirroring,
+        })
+    }
+
+    /// Map a PPU address in `$2000-$3EFF` to an offset in the 2 KiB internal
+    /// VRAM, applying the configured mirroring.
+    const fn nametable_offset(&self, addr: u16) -> usize {
+        // $2000-$3EFF mirrors. Internal VRAM is 2 KiB (two physical pages).
+        let table = ((addr - 0x2000) / NAMETABLE_SIZE_U16) & 0x03;
+        let local = (addr as usize) & (NAMETABLE_SIZE - 1);
+        let physical = match self.mirroring {
+            Mirroring::Horizontal => match table {
+                0 | 1 => 0,
+                _ => 1,
+            },
+            Mirroring::Vertical => match table {
+                0 | 2 => 0,
+                _ => 1,
+            },
+            Mirroring::SingleScreenA => 0,
+            Mirroring::SingleScreenB => 1,
+            // Four-screen and mapper-controlled fall back to vertical layout
+            // here. NROM doesn't legally use either; this avoids panics on
+            // misconfigured headers.
+            Mirroring::FourScreen | Mirroring::MapperControlled => match table {
+                0 | 2 => 0,
+                _ => 1,
+            },
+        };
+        physical * NAMETABLE_SIZE + local
     }
 }
 
 impl Mapper for Nrom {
-    fn read_prg(&self, addr: u16) -> u8 {
+    // v2.8.0 Phase 4 — no per-cycle hooks (no IRQ, no audio): the bus
+    // skips all four per-CPU-cycle dispatches for this board.
+    fn caps(&self) -> MapperCaps {
+        MapperCaps::NONE
+    }
+
+    fn cpu_read(&mut self, addr: u16) -> u8 {
         match addr {
-            0x6000..=0x7FFF => {
-                // No PRG-RAM on standard NROM
-                0
-            }
+            0x6000..=0x7FFF => self.prg_ram[(addr - 0x6000) as usize],
             0x8000..=0xFFFF => {
-                // Mirror 16KB PRG-ROM if only 16KB
-                let offset = (addr - 0x8000) as usize;
-                let masked = if self.prg_size <= 16384 {
-                    offset & 0x3FFF // Mirror 16KB
+                let idx = (addr - 0x8000) as usize;
+                if self.prg_rom.len() == PRG_BANK_16K {
+                    // Mirror 16 KiB across the full $8000-$FFFF window.
+                    self.prg_rom[idx & (PRG_BANK_16K - 1)]
                 } else {
-                    offset // Full 32KB
-                };
-                self.prg_rom.get(masked).copied().unwrap_or(0)
+                    self.prg_rom[idx]
+                }
             }
+            // $4020-$5FFF on stock NROM is open bus; report 0 here. The bus
+            // layer will overlay open-bus once it owns the latch.
             _ => 0,
         }
     }
 
-    fn write_prg(&mut self, _addr: u16, _val: u8) {
-        // NROM has no writable registers or PRG-RAM
+    fn cpu_write(&mut self, addr: u16, value: u8) {
+        if let 0x6000..=0x7FFF = addr {
+            self.prg_ram[(addr - 0x6000) as usize] = value;
+        }
+        // Writes to PRG-ROM ($8000-$FFFF) are silently ignored on NROM.
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
-        let offset = (addr & 0x1FFF) as usize;
-        self.chr.get(offset).copied().unwrap_or(0)
-    }
-
-    fn write_chr(&mut self, addr: u16, val: u8) {
-        if self.chr_is_ram {
-            let offset = (addr & 0x1FFF) as usize;
-            if let Some(byte) = self.chr.get_mut(offset) {
-                *byte = val;
+    fn ppu_read(&mut self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.chr[addr as usize],
+            0x2000..=0x3EFF => {
+                let off = self.nametable_offset(addr);
+                self.vram[off]
             }
+            // $3F00-$3FFF is palette RAM; owned by the PPU, not the mapper.
+            // Returning 0 here matches the behavior expected of mappers that
+            // never see palette accesses (PPU short-circuits).
+            _ => 0,
         }
     }
 
-    fn mirroring(&self) -> Mirroring {
+    fn ppu_write(&mut self, addr: u16, value: u8) {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                if self.chr_is_ram {
+                    self.chr[addr as usize] = value;
+                }
+                // CHR-ROM writes are ignored.
+            }
+            0x2000..=0x3EFF => {
+                let off = self.nametable_offset(addr);
+                self.vram[off] = value;
+            }
+            _ => {}
+        }
+    }
+
+    fn current_mirroring(&self) -> Mirroring {
         self.mirroring
     }
 
-    fn mapper_number(&self) -> u16 {
-        0
+    fn save_state(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(1 + self.prg_ram.len() + self.vram.len() + self.chr.len());
+        out.push(SAVE_STATE_VERSION);
+        out.extend_from_slice(&self.prg_ram);
+        out.extend_from_slice(&self.vram);
+        if self.chr_is_ram {
+            out.extend_from_slice(&self.chr);
+        }
+        out
     }
 
-    fn mapper_name(&self) -> &'static str {
-        "NROM"
+    fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
+        let need_chr = if self.chr_is_ram { self.chr.len() } else { 0 };
+        let expected = 1 + self.prg_ram.len() + self.vram.len() + need_chr;
+        if data.len() != expected {
+            return Err(MapperError::Truncated {
+                expected,
+                got: data.len(),
+            });
+        }
+        if data[0] != SAVE_STATE_VERSION {
+            return Err(MapperError::UnsupportedVersion(data[0]));
+        }
+        let mut cursor = 1;
+        self.prg_ram
+            .copy_from_slice(&data[cursor..cursor + self.prg_ram.len()]);
+        cursor += self.prg_ram.len();
+        self.vram
+            .copy_from_slice(&data[cursor..cursor + self.vram.len()]);
+        cursor += self.vram.len();
+        if self.chr_is_ram {
+            self.chr
+                .copy_from_slice(&data[cursor..cursor + self.chr.len()]);
+        }
+        Ok(())
     }
 }
 
 #[cfg(test)]
+#[allow(clippy::cast_possible_truncation)]
 mod tests {
     use super::*;
-    use crate::rom::{RomFormat, RomHeader};
 
-    fn create_test_rom(prg_size: usize, chr_size: usize) -> Rom {
-        let prg_rom: Vec<u8> = (0..prg_size).map(|i| (i & 0xFF) as u8).collect();
-        let chr_rom: Vec<u8> = (0..chr_size).map(|i| ((i + 128) & 0xFF) as u8).collect();
+    fn synth_prg_16k() -> Box<[u8]> {
+        // Fill with i % 256 so we can verify the addressing across mirrors.
+        (0..PRG_BANK_16K)
+            .map(|i| (i & 0xFF) as u8)
+            .collect::<Vec<_>>()
+            .into_boxed_slice()
+    }
 
-        Rom {
-            header: RomHeader {
-                format: RomFormat::INes,
-                mapper: 0,
-                prg_rom_size: (prg_size / 16384) as u16,
-                chr_rom_size: (chr_size / 8192) as u16,
-                prg_ram_size: 0,
-                chr_ram_size: if chr_size == 0 { 8192 } else { 0 },
-                mirroring: Mirroring::Vertical,
-                has_battery: false,
-                has_trainer: false,
-                tv_system: 0,
-            },
-            prg_rom,
-            chr_rom,
-            trainer: None,
+    fn synth_prg_32k() -> Box<[u8]> {
+        (0..PRG_BANK_32K)
+            .map(|i| ((i >> 4) & 0xFF) as u8)
+            .collect::<Vec<_>>()
+            .into_boxed_slice()
+    }
+
+    fn synth_chr_8k() -> Box<[u8]> {
+        (0..NROM_CHR_RAM_SIZE)
+            .map(|i| ((i ^ 0xA5) & 0xFF) as u8)
+            .collect::<Vec<_>>()
+            .into_boxed_slice()
+    }
+
+    #[test]
+    fn nrom_16k_prg_mirrors_across_full_window() {
+        let mut m = Nrom::new(synth_prg_16k(), synth_chr_8k(), Mirroring::Horizontal).unwrap();
+        // $8000 mirrors $C000.
+        for off in [0u16, 1, 0xFF, 0x1234, 0x3FFF] {
+            let lo = m.cpu_read(0x8000 + off);
+            let hi = m.cpu_read(0xC000 + off);
+            assert_eq!(lo, hi, "mirror differs at offset {off:#06x}");
+            assert_eq!(lo, (off & 0xFF) as u8);
         }
     }
 
     #[test]
-    fn test_nrom_16kb_mirroring() {
-        let rom = create_test_rom(16384, 8192);
-        let mapper = Nrom::new(&rom);
-
-        // Read from $8000 and $C000 should return same value (mirrored)
-        assert_eq!(mapper.read_prg(0x8000), mapper.read_prg(0xC000));
-        assert_eq!(mapper.read_prg(0x8100), mapper.read_prg(0xC100));
+    fn nrom_32k_prg_does_not_mirror() {
+        let mut m = Nrom::new(synth_prg_32k(), synth_chr_8k(), Mirroring::Vertical).unwrap();
+        for off in 0u16..0x8000u16 {
+            let want = ((off as usize >> 4) & 0xFF) as u8;
+            assert_eq!(m.cpu_read(0x8000 + off), want);
+        }
     }
 
     #[test]
-    fn test_nrom_32kb_no_mirroring() {
-        let rom = create_test_rom(32768, 8192);
-        let mapper = Nrom::new(&rom);
-
-        // $8000 and $C000 should be different in 32KB mode
-        // $8000 maps to offset 0, $C000 maps to offset $4000
-        let prg_low = mapper.read_prg(0x8000);
-        let prg_high = mapper.read_prg(0xC000);
-        assert_eq!(prg_low, 0x00);
-        assert_eq!(prg_high, 0x00); // ((0x4000) & 0xFF) = 0
+    fn nrom_chr_rom_writes_ignored() {
+        let mut m = Nrom::new(synth_prg_16k(), synth_chr_8k(), Mirroring::Horizontal).unwrap();
+        let before = m.ppu_read(0x0123);
+        m.ppu_write(0x0123, before.wrapping_add(1));
+        assert_eq!(m.ppu_read(0x0123), before);
     }
 
     #[test]
-    fn test_nrom_chr_rom() {
-        let rom = create_test_rom(16384, 8192);
-        let mut mapper = Nrom::new(&rom);
-
-        // CHR-ROM should be readable
-        assert_eq!(mapper.read_chr(0x0000), 128); // (0 + 128) & 0xFF
-
-        // CHR-ROM should not be writable
-        mapper.write_chr(0x0000, 0xFF);
-        assert_eq!(mapper.read_chr(0x0000), 128);
+    fn nrom_chr_ram_writes_round_trip() {
+        let mut m = Nrom::new(
+            synth_prg_16k(),
+            Vec::new().into_boxed_slice(),
+            Mirroring::Horizontal,
+        )
+        .unwrap();
+        for addr in [0x0000u16, 0x07FF, 0x1234, 0x1FFF] {
+            m.ppu_write(addr, addr as u8);
+        }
+        for addr in [0x0000u16, 0x07FF, 0x1234, 0x1FFF] {
+            assert_eq!(m.ppu_read(addr), addr as u8);
+        }
     }
 
     #[test]
-    fn test_nrom_chr_ram() {
-        let rom = create_test_rom(16384, 0); // No CHR-ROM = CHR-RAM
-        let mut mapper = Nrom::new(&rom);
-
-        // CHR-RAM should be readable and writable
-        assert_eq!(mapper.read_chr(0x0000), 0);
-        mapper.write_chr(0x0000, 0x42);
-        assert_eq!(mapper.read_chr(0x0000), 0x42);
+    fn nrom_prg_ram_round_trip() {
+        let mut m = Nrom::new(synth_prg_16k(), synth_chr_8k(), Mirroring::Horizontal).unwrap();
+        m.cpu_write(0x6000, 0xAB);
+        m.cpu_write(0x6FFF, 0xCD);
+        m.cpu_write(0x7FFF, 0xEF);
+        assert_eq!(m.cpu_read(0x6000), 0xAB);
+        assert_eq!(m.cpu_read(0x6FFF), 0xCD);
+        assert_eq!(m.cpu_read(0x7FFF), 0xEF);
     }
 
     #[test]
-    fn test_nrom_mirroring() {
-        let rom = create_test_rom(16384, 8192);
-        let mapper = Nrom::new(&rom);
+    fn nrom_horizontal_mirroring() {
+        let mut m = Nrom::new(synth_prg_16k(), synth_chr_8k(), Mirroring::Horizontal).unwrap();
+        // Top row: $2000-$23FF and $2400-$27FF -> physical bank 0.
+        m.ppu_write(0x2000, 0x11);
+        assert_eq!(m.ppu_read(0x2400), 0x11);
+        // Bottom row: $2800-$2BFF and $2C00-$2FFF -> physical bank 1.
+        m.ppu_write(0x2800, 0x22);
+        assert_eq!(m.ppu_read(0x2C00), 0x22);
+        // Top vs bottom must not alias.
+        assert_ne!(m.ppu_read(0x2000), m.ppu_read(0x2800));
+    }
 
-        assert_eq!(mapper.mirroring(), Mirroring::Vertical);
-        assert_eq!(mapper.mapper_number(), 0);
-        assert_eq!(mapper.mapper_name(), "NROM");
+    #[test]
+    fn nrom_vertical_mirroring() {
+        let mut m = Nrom::new(synth_prg_16k(), synth_chr_8k(), Mirroring::Vertical).unwrap();
+        m.ppu_write(0x2000, 0x33);
+        assert_eq!(m.ppu_read(0x2800), 0x33);
+        m.ppu_write(0x2400, 0x44);
+        assert_eq!(m.ppu_read(0x2C00), 0x44);
+        assert_ne!(m.ppu_read(0x2000), m.ppu_read(0x2400));
+    }
+
+    #[test]
+    fn nrom_save_state_round_trip_chr_ram() {
+        let mut m = Nrom::new(
+            synth_prg_16k(),
+            Vec::new().into_boxed_slice(),
+            Mirroring::Horizontal,
+        )
+        .unwrap();
+        m.cpu_write(0x6010, 0xBE);
+        m.ppu_write(0x0010, 0xEF);
+        m.ppu_write(0x2010, 0xCA);
+        let blob = m.save_state();
+
+        let mut m2 = Nrom::new(
+            synth_prg_16k(),
+            Vec::new().into_boxed_slice(),
+            Mirroring::Horizontal,
+        )
+        .unwrap();
+        m2.load_state(&blob).unwrap();
+        assert_eq!(m2.cpu_read(0x6010), 0xBE);
+        assert_eq!(m2.ppu_read(0x0010), 0xEF);
+        assert_eq!(m2.ppu_read(0x2010), 0xCA);
+    }
+
+    #[test]
+    fn nrom_rejects_bad_prg_size() {
+        let prg = vec![0u8; 0x2000].into_boxed_slice();
+        assert!(Nrom::new(prg, synth_chr_8k(), Mirroring::Horizontal).is_err());
     }
 }

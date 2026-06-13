@@ -1,0 +1,24 @@
+[package]
+name = "rustynes-cheevos"
+version = "2.8.0"
+edition = "2021"
+rust-version = "1.86"
+license = "MIT OR Apache-2.0"
+authors = ["Parobek <parobek@gmail.com>"]
+repository = "https://github.com/doublegate/RustyNES_v2"
+description = "Native-only RetroAchievements (rcheevos) FFI wrapper for RustyNES v2"
+publish = false
+
+# This crate vendors and links the rcheevos C library, so unsafe is required.
+# Override the workspace-wide `unsafe_code = "warn"` lint.
+[lints.rust]
+unsafe_code = "allow"
+
+[build-dependencies]
+cc = "1"
+
+# HTTP transport is native-only. The whole crate body is gated on
+# `cfg(not(target_arch = "wasm32"))`, so a wasm workspace build sees an
+# empty crate and never pulls these in.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ureq = { version = "2", default-features = false, features = ["tls"] }

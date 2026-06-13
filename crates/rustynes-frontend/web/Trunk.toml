@@ -1,0 +1,37 @@
+# v1.3.0 Sprint 1.2 — trunk build config for the wasm32 frontend.
+#
+# Usage from this directory:
+#     trunk build           # builds to ../dist/ in dev mode
+#     trunk build --release # release mode, wasm-opt -Oz
+#     trunk serve           # dev server with hot reload at :8080
+#
+# CI deployment (Sprint 2) wraps `trunk build --release` and uploads
+# the `dist/` output to GitHub Pages.
+
+[build]
+target = "index.html"
+# Local dev mounts at root. The GitHub Pages deploy
+# (`.github/workflows/web.yml`) overrides this with
+# `trunk build --release --public-url /RustyNES_v2/` so the asset
+# URLs are prefixed for repository ("project") Pages — this file
+# stays root-mounted so `trunk serve` works locally with no flags.
+public_url = "/"
+release = false
+
+# `addresses` (plural) replaces the deprecated `address` field in
+# trunk 0.21+ — it accepts a list so the dev server can bind more
+# than one interface.
+[serve]
+addresses = ["127.0.0.1"]
+port = 8081
+
+# Sprint 1.2 scope keeps the trunk dep tree small. Sprint 1.3 will
+# add `wasm-opt` settings + size-budget checks once the actual
+# render/audio paths are wired.
+
+[tools]
+# Pinned for reproducible builds. MUST match the `wasm-bindgen`
+# LIBRARY version resolved in Cargo.lock exactly — the CLI and the
+# library are released in lockstep and version-check each other.
+# Check with `grep -A1 'name = "wasm-bindgen"' Cargo.lock`.
+wasm_bindgen = "0.2.121"

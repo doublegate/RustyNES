@@ -1,0 +1,214 @@
+TriCNES <-> RustyNES per-cycle cross-diff: Implicit DMA Abort, Loop3 X=10
+Generated 2026-06-07. Branch refactor/v2.0-master-clock-dmasync-exact (floor f9e4ef7).
+ROM AccuracyCoin.nes sha256 939418b5... (byte-identical in both emulators).
+
+==========================================================================
+LOCATED 4-CYCLE SOURCE
+==========================================================================
+Shared ROM landmark = CalculateDMADuration entry ($DA03). Re-anchored there,
+the two per-cycle bus streams are BYTE-IDENTICAL for 46 cycles, then diverge
+EXACTLY at the periodic DMC reload DMA:
+  * TriCNES halts the CPU for the reload DMA at the instruction boundary
+    (right after the Clockslide_45 RTS), GET $FFC0 completes BEFORE the
+    measuring LDA $4000 runs -> open bus settles to $40 -> Y=4 (PASS).
+  * RustyNES arms dmc_pending 4 CPU cycles LATER (after executing the LDA
+    $4000 instruction fetch DA07-DA0A), so the GET lands DURING the LDA's
+    $4000 read -> open bus = $00 -> premature catch -> Y=0 (FAIL).
+RustyNES neither adds nor drops instruction cycles; it places the (correct
+4-cycle-long) reload DMA block 4 cycles late because the reload request
+becomes pending 4 cycles late.
+
+Reload-GET history (entry-relative), showing WHERE the +4 enters:
+  GET A entry-rel -1103 in BOTH  -> skew 0 (aligned)
+  GET B RustyNES -523 vs TriCNES -527 -> skew +4   (A->B period: Rusty 580, Tri 576)
+  GET C RustyNES  +53 vs TriCNES  +49 -> skew +4 (preserved; this is the catch)
+Re-anchored on the aligned GET A, the streams are byte-identical for 573
+cycles, then the +4 opens up at GET B via the SAME late-pending mechanism.
+=> The 4 cycles enter in the DMC reload interval A->B: RustyNES's byte-timer
+   fires the next reload ~4 CPU cycles late in the abort/reload context
+   (cumulative byte-timer-fire phase; the period itself is 576 = exact).
+
+==========================================================================
+EVIDENCE 1: entry($DA03)-anchored divergence (e = cycles past entry)
+==========================================================================
+# RustyNES rows=2981 TriCNES rows=3001
+# RE-ANCHOR on CalculateDMADuration entry $DA03: RustyNES cyc=48950931  TriCNES cyc=49336496  (boot offset at entry = 385565)
+#   e | RustyNES  cyc acc addr dt dp   | TriCNES   cyc acc addr dt dp   | flag
+#------------------------------------------------------------------------------
+   40 |  48950971 R  00EA 00 d0p1      |  49336536 R  00EA EA d0p1      |  
+   41 |  48950972 R  FF25 60 d0p0      |  49336537 R  FF25 00 d0p0      |  
+   42 |  48950973 R  FF26 A5 d0p1      |  49336538 R  FF26 60 d0p1      |  
+   43 |  48950974 R  01E0 FB d0p0      |  49336539 R  01E0 A5 d0p0      |  
+   44 |  48950975 R  01E1 07 d0p1      |  49336540 R  01E1 FB d0p1      |  
+   45 |  48950976 R  01E2 DA d0p0      |  49336541 R  01E2 07 d0p0      |  
+   46 |  48950977 R  DA07 FF d0p1      |  49336542 R  01E2 DA d1p1      | <<DIFF 
+   47 |  48950978 R  DA08 AD d0p0      |  49336543 R  01E2 DA d1p0      | <<DIFF 
+   48 |  48950979 R  DA09 00 d0p1      |  49336544 R  01E2 DA d1p1      | <<DIFF 
+   49 |  48950980 R  DA0A 40 d0p0      |  49336545 R  FFC0 DA d1p0      | <<DIFF T:GET_FFC0
+   50 |  48950981 R  4000 40 d1p1      |  49336546 R  DA07 00 d0p1      | <<DIFF R:$4000=40
+   51 |  48950982 R  4000 40 d1p0      |  49336547 R  DA08 FF d0p0      | <<DIFF R:$4000=40
+   52 |  48950983 R  4000 40 d1p1      |  49336548 R  DA09 AD d0p1      | <<DIFF R:$4000=40
+   53 |  48950984 R  FFC0 00 d0p0      |  49336549 R  DA0A 00 d0p0      | <<DIFF 
+   54 |  48950985 R  4000 00 d0p1      |  49336550 R  4000 40 d0p1      |  R:$4000=00=CATCH T:$4000=40
+   55 |  48950986 R  DA0B F0 d0p0      |  49336551 R  DA0B 40 d0p0      |  
+   56 |  48950987 R  DA0C 09 d0p1      |  49336552 R  DA0C F0 d0p1      |  
+   57 |  48950988 R  DA0D 20 d0p0      |  49336553 R  DA0D 09 d0p0      |  
+   58 |  48950989 R  DA16 60 d0p1      |  49336554 R  DA0E 20 d0p1      | <<DIFF 
+#------------------------------------------------------------------------------
+# FIRST (acc,addr) divergence at entry-rel e = 46; 9 differing cycles in [40,58]
+# DMC GET (R $FFxx) entry-rel: RustyNES=[] TriCNES=[49]
+# LDA $4000 reads  entry-rel: RustyNES=[50, 51, 52, 54] TriCNES=[54]
+# $4000==$00 catch entry-rel: RustyNES=[54] TriCNES=[]
+
+==========================================================================
+REPRODUCTION
+==========================================================================
+RustyNES side (all instrumentation gated; floor byte-identical when off):
+  cargo build -q -p rustynes-test-harness --release \
+    --features irq-timing-trace,cpu-instr-cycle-trace,mc-r1-full-cpu,\
+mc-r1-dmc-load-get-entry,mc-r1-dmc-abort-probe --bin trace_dma_4015
+  RUSTYNES_ANCHOR="054A,2900,80,last" RUSTYNES_ANCHOR_PC=DC52 \
+    RUSTYNES_TRACE_MARGIN=40 ./target/release/trace_dma_4015 \
+    tests/roms/accuracycoin/AccuracyCoin.nes 0478 1700 2000000 /tmp/rusty_xc.csv
+    (-> RustyNES X=10 STA $054A store: cyc=48951001 pc=DC52 data=00 [Y=0, BUG])
+
+TriCNES side (instrumentation patch below; rebuild: dotnet build -c Release):
+  # pass 1 (find anchor): suppress per-cycle spam with a null window
+  XDIFF_LO=0 XDIFF_HI=0 dotnet bin/Release/net10.0/tricnes-harness.dll 1700 2>p1.txt
+    (grep W54A -> the data=04 store is pc=DC55 cyc=49338866 [Y=4, correct])
+  # pass 2 (window dump around the store):
+  XDIFF_LO=49335966 XDIFF_HI=49338966 \
+    dotnet bin/Release/net10.0/tricnes-harness.dll 1700 2>/tmp/tri_xc_raw.txt
+
+Cross-diff (re-anchors both on the CalculateDMADuration entry $DA03):
+  python3 scripts/tricnes_xdiff.py /tmp/rusty_xc.csv /tmp/tri_xc_raw.txt 49338866 DA03 -5 70
+
+Anchor PCs differ by representation: RustyNES latches the opcode-fetch PC
+(STA $540,X opcode = $DC52); TriCNES reports the mid-instruction PC at the
+write cycle ($DC55 = DC52+3). Both identify the SAME Loop3 X=10 store.
+
+==========================================================================
+TriCNES INSTRUMENTATION PATCH (apply to /tmp/tricnes-harness, then rebuild)
+==========================================================================
+Setup of /tmp/TriCNES + /tmp/tricnes-harness: docs/tooling/oracle-tooling-setup.md.
+The xdiff additions (Emulator.cs + Program.cs):
+
+@@ -1,22 +1,28 @@
+-﻿using System;
+-using System.Collections.Generic;
+-using System.Linq;
+-using System.Threading.Tasks;
+-using System.Windows.Forms;
+-
+-namespace TriCNES
+-{
+-    internal static class Program
+-    {
+-        /// <summary>
+-        /// The main entry point for the application.
+-        /// </summary>
+-        [STAThread]
+-        static void Main()
++using TriCNES;
++class Program {
++    static void Main(string[] args) {
++        var emu = new Emulator();
++        var cart = new Cartridge("/home/parobek/Code/Commercial_Private-Projects/RustyNES_v2-from-main/tests/roms/accuracycoin/AccuracyCoin.nes");
++        emu.Cart = cart;
++        cart.Emu = emu;
++        // xdiff cross-diff window (per-cycle bus log). Set XDIFF_LO/XDIFF_HI to
++        // a HarnessCycle range to emit "XC ..." rows there; leave unset (pass 1)
++        // to only emit the "W54A ..." anchor markers. XDIFF_ANCHOR (hex)
++        // overrides the anchor addr (default 054A = Implicit Loop3 X=10 store).
+         {
+-            Application.EnableVisualStyles();
+-            Application.SetCompatibleTextRenderingDefault(false);
+-            Application.Run(new TriCNESGUI());
++            var lo = System.Environment.GetEnvironmentVariable("XDIFF_LO");
++            var hi = System.Environment.GetEnvironmentVariable("XDIFF_HI");
++            var an = System.Environment.GetEnvironmentVariable("XDIFF_ANCHOR");
++            if (lo != null) emu.XdiffLo = long.Parse(lo);
++            if (hi != null) emu.XdiffHi = long.Parse(hi);
++            if (an != null) emu.XdiffAnchorAddr = System.Convert.ToUInt16(an, 16);
+         }
++        int frames = args.Length > 0 ? int.Parse(args[0]) : 2000;
++        for (int i = 0; i < 300; i++) emu._CoreFrameAdvance();   // boot/menu
++        emu.ControllerPort1 = 0x10;                               // press START
++        for (int i = 0; i < 6; i++) emu._CoreFrameAdvance();
++        emu.ControllerPort1 = 0x00;                               // release
++        for (int i = 0; i < frames; i++) emu._CoreFrameAdvance(); // run battery
++        System.Console.Error.WriteLine($"# done {frames+306} frames, HarnessCycle={emu.HarnessCycle}");
+     }
+ }
+--- Emulator.cs additions (XdiffLog field/method, GET gate, Fetch/Store log): ---
++        // xdiff cross-diff: per-cycle bus-access window [XdiffLo, XdiffHi].
++        // When XdiffLo < 0 the window is disabled. Set from env (Program.cs).
++        public long XdiffLo = -1;
++        public long XdiffHi = -1;
++        // xdiff cross-diff: anchor address. Every CPU Store to this address is
++        // marked "W54A" (regardless of window) so the harness can locate the
++        public ushort XdiffAnchorAddr = 0x054A;
++        void XdiffLog(string acc, ushort addr, byte data)
++            if (XdiffLo >= 0 && HarnessCycle >= XdiffLo && HarnessCycle <= XdiffHi)
++            if (XdiffLo < 0 || (HarnessCycle >= XdiffLo && HarnessCycle <= XdiffHi))
++                System.Console.Error.WriteLine($"GET cyc={HarnessCycle} addr={APU_DMC_AddressCounter:X4}");
++            HarnessCycle++;
++            // xdiff: one log row per read cycle. `dataBus` here is the data bus
++            XdiffLog("R", Address, dataBus);
++            if (Address==0x4000 && HarnessCycle>=48808000 && HarnessCycle<=48822000) System.Console.Error.WriteLine($"R4000 cyc={HarnessCycle} bus={dataBus:X2} pc={programCounter:X4}");
++            // xdiff: one log row per write cycle. `Input` is the exact write
++            // datum. The W54A marker fires for EVERY store to the anchor addr
++            XdiffLog("W", Address, Input);
++            if (Address == XdiffAnchorAddr)
++                    $"W54A cyc={HarnessCycle} pc={programCounter:X4} data={Input:X2}");
+
+==========================================================================
+FIX (2026-06-07): mc-r1-dmc-abort-timer-phase — the A->B +4 is CLOSED
+==========================================================================
+ROOT DEFECT (per-cycle DMC-state trace, both emulators; recipe above + the
+new `dtimer,dbits,dsil,dbuf,cooldown` cols on the RustyNES anchor dump and
+`dtimer=/dbits=/dsil=/dbytes=` on the TriCNES XdiffLog):
+  In the Loop3 disable($4015=00)->re-enable($4015=10) context the re-enable
+  fires a LOOPING-sample LOAD DMA. TriCNES's LOAD GET completes 3 cyc BEFORE
+  the byte-timer boundary (load fetch entry-rel -1109, boundary -1106), so the
+  boundary's clock_output consumes the load byte into the shifter AND arms a
+  RELOAD (TriCNES does TWO GETs: LOAD -1109 + RELOAD -1103, then 576-spaced).
+  RustyNES's LOAD `deliver_sample` lands ON the boundary cycle (-1103), where
+  clock_output already ran at cycle-START and took the still-EMPTY buffer
+  (silence) — so the boundary misses the load byte, no reload arms there, and
+  the reload chain anchors at the NEXT boundary. Net: the LOAD arms off-boundary
+  (dtimer=1, 4 cyc before the boundary) while every normal reload arms AT the
+  boundary (dtimer=35) => A->B = (4) + 576 = 580. RustyNES did only ONE GET
+  (the LOAD), skipping the 4-cyc RELOAD DMA TriCNES inserts (the +4 in the
+  $DA03-entry boot offset: 385561 at re-enable -> 385565 at entry).
+
+FIX: on the LOAD `complete_dmc_dma`, when the byte-timer JUST reset this cycle
+(timer == timer_period, i.e. clock_output wrapped + reloaded bits to 8 + took
+the empty buffer = silence) and the LOAD has now filled the buffer with bytes
+still remaining, retroactively load the delivered byte into the shifter
+(un-silence) + clear the post-LOAD cooldown so the per-cycle reload-arm fires
+promptly — reproducing TriCNES's boundary-coupled reload. The `timer ==
+timer_period` gate keeps it OUT of the Loop1/Loop2 mid-byte 1-byte-abort loads
+(a looser gate corrupted Key1/$500 -> error 4 regressed to error 2).
+
+RESULT (--features test-roms,mc-r1-full-cpu,mc-r1-dmc-load-get-entry,
+mc-r1-dmc-abort-timer-phase):
+  * Cross-diff: abort-context reload-arm intervals 576,576,576,576 (was
+    580,576,576,576). The +4 is GONE; the reload chain is boundary-locked at
+    dtimer=35 / 576-spaced, matching TriCNES. CONFIRMED via the per-cycle trace.
+  * Implicit-DMA-Abort $540 Loop3 X=10 store: $00 (premature-$00 BUG) -> $03.
+  * AccuracyCoin RAM: 93.53% / 9 fail — BYTE-IDENTICAL to the floor (no
+    regression; Loop1/Loop2 preserved, Implicit holds at error 4).
+  * nestest 0-diff; floor (flag-off) byte-identical (all behavior gated).
+
+RESIDUAL (Y 3 -> 4, NOT closed): the reload GET now lands correctly on its
+get-cycle (rel -17, the $FFC0 fetch drives open-bus $00) but the measuring
+`LDA $4000` reads that $00 at rel -16 -> CalculateDMADuration Y=3 (Key3 wants
+$04 => Y=4). The GET cannot move (pinned to the get-cycle; moving it breaks the
+now-correct 576 A->B). The last cycle is the open-bus-$00 *visibility* (φ2)
+axis: the GET's $00 must be visible one CPU cycle later. The mc-phi-subpos
+deferral (global) and a $4000-conflict-narrowed deferral BOTH regress
+(Interrupt-flag-latency error 10 + Delta-Modulation-Channel error 18) AND do
+not flip Implicit -> this final cycle requires the full M-2 / master-clock
+C1-safe collapse (consistent with the 18-rollback DC-2 history), NOT a surgical
+open-bus shift. The A->B reload-arm fix is the correct, isolated sub-fix.

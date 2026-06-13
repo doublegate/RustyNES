@@ -1,320 +1,489 @@
-//! MMC3 Mapper (Mapper 4).
+//! MMC3 (iNES mapper 4) implementation.
 //!
-//! The most popular NES mapper, used by hundreds of games including
-//! Super Mario Bros. 3, Mega Man 3-6, and Kirby's Adventure.
+//! See `docs/mappers.md` §MMC3 and `ref-docs/research-report.md` §MMC3.
 //!
-//! Features:
-//! - 8KB PRG-RAM at $6000-$7FFF (optionally battery-backed)
-//! - Fine-grained PRG-ROM banking: 8KB banks
-//! - Fine-grained CHR-ROM banking: 1KB and 2KB banks
-//! - Mirroring control (H/V)
-//! - Scanline counter IRQ for split-screen effects
+//! # Banking
 //!
-//! Bank Configuration:
-//! - 8 bank registers (R0-R7) selected via bank select register
-//! - PRG mode bit swaps $8000/$C000 banks
-//! - CHR A12 inversion swaps pattern table banks
+//! Eight internal registers `R0`-`R7` selected by the low 3 bits of the
+//! value written to `$8000` (bank-select).  Subsequent writes to `$8001`
+//! (bank-data) commit a value into the selected register:
+//!
+//! | Register | Purpose                                          |
+//! |----------|--------------------------------------------------|
+//! | R0       | 2 KiB CHR bank @ `$0000-$07FF` (CHR mode 0)      |
+//! | R1       | 2 KiB CHR bank @ `$0800-$0FFF` (CHR mode 0)      |
+//! | R2       | 1 KiB CHR bank @ `$1000-$13FF` (CHR mode 0)      |
+//! | R3       | 1 KiB CHR bank @ `$1400-$17FF` (CHR mode 0)      |
+//! | R4       | 1 KiB CHR bank @ `$1800-$1BFF` (CHR mode 0)      |
+//! | R5       | 1 KiB CHR bank @ `$1C00-$1FFF` (CHR mode 0)      |
+//! | R6       | 8 KiB PRG bank @ `$8000-$9FFF` (PRG mode 0)      |
+//! | R7       | 8 KiB PRG bank @ `$A000-$BFFF`                   |
+//!
+//! `$8000` bit 6 swaps the PRG window: in mode 1, R6 maps to `$C000-$DFFF`
+//! and the second-to-last bank is fixed at `$8000-$9FFF`.  Bit 7 swaps the
+//! CHR layout: in mode 1, the 2 KiB R0/R1 banks occupy `$1000-$1FFF` and
+//! the four 1 KiB banks occupy `$0000-$0FFF`.
+//!
+//! `$E000-$FFFF` is hardwired to the LAST 8 KiB PRG bank.
+//!
+//! `$A000` even (`$A000-$BFFE` even addresses): mirroring (bit 0).
+//! `$A001` odd: PRG-RAM enable + protect (bit 7 enable, bit 6 write-protect).
+//! `$C000` even: IRQ counter reload value.
+//! `$C001` odd: latches `irq_reload_pending` and forces counter to 0.
+//! `$E000` even: disable IRQ + acknowledge any pending IRQ line.
+//! `$E001` odd: enable IRQ.
+//!
+//! # IRQ counter
+//!
+//! Clocked by PPU A12 rising edges, filtered to ignore rising edges within
+//! 3 M2 (CPU) cycles of the previous A12 fall.  Standard pattern-table
+//! layout (BG @ `$0000`, sprites @ `$1000`) yields exactly one filtered
+//! edge per scanline, at PPU dot 260.  Reversed layout (BG @ `$1000`,
+//! sprites @ `$0000`) places the edge at the END of the previous
+//! scanline's sprite fetches (Wario's Woods relies on this).
+//!
+//! On each filtered rising edge:
+//! - if `counter == 0` OR `irq_reload_pending`: counter = `irq_reload_value`;
+//!   pending cleared; **Sharp** revision additionally asserts IRQ if the
+//!   reload value was 0 (from a non-zero counter); **NEC** does not.
+//! - else: counter -= 1; if post-decrement counter == 0 AND IRQ enabled,
+//!   assert IRQ line.
+//!
+//! Default revision is **Sharp** per project policy (Star Trek: 25th
+//! Anniversary requires it); NES 2.0 submapper 1 selects MMC3B (NEC),
+//! submapper 2 selects MMC3C (Sharp behavior + minor differences not
+//! distinguished here).
 
-use crate::mapper::{Mapper, Mirroring};
-use crate::rom::Rom;
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_lossless,
+    clippy::missing_const_for_fn,
+    clippy::struct_excessive_bools,
+    clippy::match_same_arms,
+    clippy::manual_range_patterns,
+    clippy::too_many_arguments,
+    clippy::useless_let_if_seq,
+    clippy::doc_markdown,
+    clippy::if_not_else,
+    clippy::nonminimal_bool
+)]
 
-#[cfg(not(feature = "std"))]
-use alloc::vec::Vec;
+use crate::cartridge::Mirroring;
+use crate::mapper::{Mapper, MapperCaps, MapperError};
+use alloc::{boxed::Box, vec::Vec};
+use alloc::{format, vec};
 
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
+const PRG_BANK_8K: usize = 0x2000;
+const CHR_BANK_1K: usize = 0x0400;
+const PRG_RAM_DEFAULT: usize = 0x2000;
+const NAMETABLE_SIZE: usize = 0x0400;
+const NAMETABLE_SIZE_U16: u16 = 0x0400;
 
-/// MMC3 mapper implementation.
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[allow(dead_code)] // last_a12 reserved for accurate A12 edge detection
-#[allow(clippy::struct_excessive_bools)] // Hardware state requires multiple flags
+const SAVE_STATE_VERSION: u8 = 2;
+
+/// MMC3 hardware revision.  Default is Sharp (MMC3A); the alternative
+/// NEC (MMC3B) suppresses the "reload to 0 asserts IRQ" behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Mmc3Revision {
+    /// Sharp MMC3A (and MMC3C): reloading the IRQ counter to 0 asserts
+    /// IRQ if IRQs are enabled.  Default.
+    #[default]
+    Sharp,
+    /// NEC MMC3B: a counter that reloads to 0 from a non-zero state
+    /// does NOT assert IRQ.  Selected via NES 2.0 submapper byte = 1.
+    Nec,
+}
+
+/// MMC3 mapper (iNES mapper 4).
 pub struct Mmc3 {
-    /// PRG-ROM data.
-    prg_rom: Vec<u8>,
-    /// CHR-ROM/RAM data.
-    chr: Vec<u8>,
-    /// PRG-RAM data (8KB).
-    prg_ram: Vec<u8>,
-    /// Whether CHR is RAM (writable).
+    prg_rom: Box<[u8]>,
+    chr: Box<[u8]>,
+    prg_ram: Box<[u8]>,
+    vram: Box<[u8]>,
     chr_is_ram: bool,
-    /// Number of PRG-ROM banks (8KB each).
-    prg_banks: usize,
-    /// Number of CHR banks (1KB each).
-    chr_banks: usize,
 
-    // Bank select register ($8000)
-    /// Bank register index to update (0-7).
+    // R0..R7 bank registers (8 internal regs selected via $8000).
+    regs: [u8; 8],
+    // Selected register index (low 3 bits of $8000).
     bank_select: u8,
-    /// PRG-ROM bank mode (0 = $8000 swappable, 1 = $C000 swappable).
+    // PRG mode (bit 6 of $8000): 0 = R6 @ $8000, last-1 fixed @ $C000;
+    //                             1 = R6 @ $C000, last-1 fixed @ $8000.
     prg_mode: bool,
-    /// CHR A12 inversion (0 = normal, 1 = inverted).
-    chr_inversion: bool,
+    // CHR mode (bit 7 of $8000): 0 = 2K@$0000 + 1K@$1000;
+    //                             1 = 1K@$0000 + 2K@$1000.
+    chr_mode: bool,
 
-    // Bank registers
-    /// R0: 2KB CHR bank at PPU $0000 (or $1000 if inverted).
-    chr_bank_2k_0: u8,
-    /// R1: 2KB CHR bank at PPU $0800 (or $1800 if inverted).
-    chr_bank_2k_1: u8,
-    /// R2: 1KB CHR bank at PPU $1000 (or $0000 if inverted).
-    chr_bank_1k_0: u8,
-    /// R3: 1KB CHR bank at PPU $1400 (or $0400 if inverted).
-    chr_bank_1k_1: u8,
-    /// R4: 1KB CHR bank at PPU $1800 (or $0800 if inverted).
-    chr_bank_1k_2: u8,
-    /// R5: 1KB CHR bank at PPU $1C00 (or $0C00 if inverted).
-    chr_bank_1k_3: u8,
-    /// R6: 8KB PRG bank at $8000 (or $C000 if prg_mode).
-    prg_bank_0: u8,
-    /// R7: 8KB PRG bank at $A000.
-    prg_bank_1: u8,
-
-    /// Nametable mirroring mode.
+    // Mirroring (set via $A000 even).  Ignored on 4-screen carts.
     mirroring: Mirroring,
-    /// PRG-RAM write protection.
-    prg_ram_protect: bool,
-    /// PRG-RAM chip enable.
+    fixed_4screen: bool,
+
+    // PRG-RAM enable + protect ($A001 odd).
     prg_ram_enabled: bool,
+    prg_ram_protect: bool,
 
-    // IRQ counter
-    /// IRQ counter reload value.
-    irq_latch: u8,
-    /// Current IRQ counter value.
+    // IRQ counter state.
     irq_counter: u8,
-    /// IRQ counter reload flag.
-    irq_reload: bool,
-    /// IRQ enabled flag.
+    irq_reload_value: u8,
+    irq_reload_pending: bool,
     irq_enabled: bool,
-    /// IRQ pending flag.
-    irq_pending: bool,
+    irq_pending_line: bool,
+    // Latched at every `$C001` write: whether the counter was non-zero
+    // at the time of the write.  Consumed by `clock_irq` on the next
+    // filtered A12 rise: a non-zero-to-zero $C001 clear ALLOWS Sharp's
+    // reload-to-zero assertion (see `mmc3_test_2/2-details` sub-test #7
+    // "IRQ should be set when non-zero and reloading to 0 after clear"),
+    // while a zero-to-zero $C001 SUPPRESSES it (see
+    // `mmc3_test_2/4-scanline_timing` sub-test #2 "Scanline 0 IRQ should
+    // occur later when $2000=$08").  This is the cycle-precise
+    // discriminator that makes both blargg sub-tests pass together —
+    // collapsing the two into a single "reload_pending implies assert"
+    // path (the v0.8.x implementation) forces one or the other to fail.
+    irq_reload_pending_with_nonzero_clear: bool,
 
-    /// Previous A12 state for edge detection (reserved for future use).
+    // A12 filter state.
     last_a12: bool,
+    // CPU cycle at which A12 last went low; used to filter rising edges
+    // closer than 3 M2 cycles.
+    a12_low_cycle: u64,
+    cpu_cycle: u64,
 
-    /// Has battery-backed RAM.
-    has_battery: bool,
+    revision: Mmc3Revision,
 }
 
 impl Mmc3 {
-    /// Create a new MMC3 mapper from ROM data.
-    #[must_use]
-    pub fn new(rom: &Rom) -> Self {
-        let prg_banks = rom.prg_rom.len() / 8192;
-        let chr_is_ram = rom.chr_rom.is_empty();
-        let chr = if chr_is_ram {
-            vec![0u8; 8192]
+    /// Construct a new MMC3 mapper.
+    ///
+    /// `prg_rom` must be a non-zero multiple of 8 KiB (typical 32-512 KiB).
+    /// CHR-RAM is selected when `chr_rom` is empty; otherwise CHR-ROM
+    /// length must be a multiple of 1 KiB.  `prg_ram_bytes == 0` selects
+    /// the default 8 KiB.  Set `revision` from the iNES NES 2.0 submapper
+    /// (default Sharp).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MapperError::Invalid`] on size mismatch.
+    pub fn new(
+        prg_rom: Box<[u8]>,
+        chr_rom: Box<[u8]>,
+        initial_mirroring: Mirroring,
+        prg_ram_bytes: usize,
+        revision: Mmc3Revision,
+    ) -> Result<Self, MapperError> {
+        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_8K != 0 {
+            return Err(MapperError::Invalid(format!(
+                "MMC3 PRG-ROM size {} is not a non-zero multiple of 8 KiB",
+                prg_rom.len()
+            )));
+        }
+        let chr_is_ram = chr_rom.is_empty();
+        let chr: Box<[u8]> = if chr_is_ram {
+            vec![0u8; 8 * CHR_BANK_1K].into_boxed_slice()
+        } else if chr_rom.len() % CHR_BANK_1K == 0 {
+            chr_rom
         } else {
-            rom.chr_rom.clone()
+            return Err(MapperError::Invalid(format!(
+                "MMC3 CHR-ROM size {} is not a multiple of 1 KiB",
+                chr_rom.len()
+            )));
         };
-        let chr_banks = (chr.len() / 1024).max(1);
-
-        Self {
-            prg_rom: rom.prg_rom.clone(),
+        let prg_ram_size = if prg_ram_bytes == 0 {
+            PRG_RAM_DEFAULT
+        } else {
+            prg_ram_bytes
+        };
+        let fixed_4screen = matches!(initial_mirroring, Mirroring::FourScreen);
+        // For four-screen, allocate the full 4 KiB nametable VRAM region.
+        let vram_size = if fixed_4screen {
+            4 * NAMETABLE_SIZE
+        } else {
+            2 * NAMETABLE_SIZE
+        };
+        Ok(Self {
+            prg_rom,
             chr,
-            prg_ram: vec![0u8; 8192],
+            prg_ram: vec![0u8; prg_ram_size].into_boxed_slice(),
+            vram: vec![0u8; vram_size].into_boxed_slice(),
             chr_is_ram,
-            prg_banks,
-            chr_banks,
+            regs: [0; 8],
             bank_select: 0,
             prg_mode: false,
-            chr_inversion: false,
-            chr_bank_2k_0: 0,
-            chr_bank_2k_1: 2,
-            chr_bank_1k_0: 4,
-            chr_bank_1k_1: 5,
-            chr_bank_1k_2: 6,
-            chr_bank_1k_3: 7,
-            prg_bank_0: 0,
-            prg_bank_1: 1,
-            mirroring: rom.header.mirroring,
-            prg_ram_protect: false,
+            chr_mode: false,
+            mirroring: initial_mirroring,
+            fixed_4screen,
             prg_ram_enabled: true,
-            irq_latch: 0,
+            prg_ram_protect: false,
             irq_counter: 0,
-            irq_reload: false,
+            irq_reload_value: 0,
+            irq_reload_pending: false,
+            irq_reload_pending_with_nonzero_clear: false,
             irq_enabled: false,
-            irq_pending: false,
+            irq_pending_line: false,
             last_a12: false,
-            has_battery: rom.header.has_battery,
-        }
+            a12_low_cycle: 0,
+            cpu_cycle: 0,
+            revision,
+        })
     }
 
-    /// Get PRG-ROM address for a CPU address.
-    fn prg_addr(&self, addr: u16) -> usize {
-        let bank = match addr {
-            0x8000..=0x9FFF => {
-                if self.prg_mode {
-                    self.prg_banks.saturating_sub(2) // Fixed second-to-last
-                } else {
-                    self.prg_bank_0 as usize
-                }
-            }
-            0xA000..=0xBFFF => self.prg_bank_1 as usize,
-            0xC000..=0xDFFF => {
-                if self.prg_mode {
-                    self.prg_bank_0 as usize
-                } else {
-                    self.prg_banks.saturating_sub(2) // Fixed second-to-last
-                }
-            }
-            0xE000..=0xFFFF => self.prg_banks.saturating_sub(1), // Fixed last
+    /// Resolve a CPU PRG address (`$8000-$FFFF`) to a byte offset in
+    /// `prg_rom`.  Implements PRG modes 0 and 1.
+    fn prg_offset(&self, addr: u16) -> usize {
+        let total_banks = self.prg_rom.len() / PRG_BANK_8K;
+        let last = total_banks.saturating_sub(1);
+        let second_last = total_banks.saturating_sub(2);
+        // R6/R7 are masked to total_banks (typical sizes <= 64 banks => 6 bits).
+        let r6 = (self.regs[6] as usize) & last;
+        let r7 = (self.regs[7] as usize) & last;
+        let bank = match (addr & 0xE000, self.prg_mode) {
+            (0x8000, false) => r6,
+            (0x8000, true) => second_last,
+            (0xA000, _) => r7,
+            (0xC000, false) => second_last,
+            (0xC000, true) => r6,
+            (0xE000, _) => last,
             _ => 0,
         };
-
-        let bank = bank % self.prg_banks.max(1);
-        let offset = (addr & 0x1FFF) as usize;
-        bank * 8192 + offset
+        bank * PRG_BANK_8K + ((addr as usize) & 0x1FFF)
     }
 
-    /// Get CHR address for a PPU address.
-    fn chr_addr(&self, addr: u16) -> usize {
-        let addr = addr & 0x1FFF;
+    /// Resolve a PPU CHR address (`$0000-$1FFF`) to the **raw** 1 KiB CHR
+    /// bank number selected by the active CHR bank registers, *before* any
+    /// masking against the installed CHR size.
+    ///
+    /// This is the value a TQROM-style board (mapper 119) inspects: bit 6
+    /// of the bank number selects CHR-RAM vs CHR-ROM, and the low bits
+    /// index within the selected memory. The MMC3 itself never exposes this
+    /// distinction (it masks the bank straight into a single CHR slice), so
+    /// the helper is provided for variant boards that embed an [`Mmc3`].
+    #[must_use]
+    pub fn chr_bank_1k(&self, addr: u16) -> usize {
+        let addr = (addr & 0x1FFF) as usize;
+        let slot = addr / CHR_BANK_1K;
+        self.chr_bank_1k_for_slot(slot)
+    }
 
-        // Determine which bank register to use based on A12 inversion
-        let bank = if self.chr_inversion {
-            match addr {
-                0x0000..=0x03FF => self.chr_bank_1k_0,
-                0x0400..=0x07FF => self.chr_bank_1k_1,
-                0x0800..=0x0BFF => self.chr_bank_1k_2,
-                0x0C00..=0x0FFF => self.chr_bank_1k_3,
-                0x1000..=0x17FF => self.chr_bank_2k_0 & 0xFE, // 2KB aligned
-                0x1800..=0x1FFF => self.chr_bank_2k_1 & 0xFE, // 2KB aligned
+    /// The raw (unmasked) 1 KiB CHR bank number selected for `slot` (0..8),
+    /// honoring the current CHR-A12-inversion mode. Shared by [`Self::chr_offset`]
+    /// and [`Self::chr_bank_1k`].
+    fn chr_bank_1k_for_slot(&self, slot: usize) -> usize {
+        if !self.chr_mode {
+            match slot {
+                0 => (self.regs[0] as usize) & !1, // 2K @ $0000
+                1 => ((self.regs[0] as usize) & !1) | 1,
+                2 => (self.regs[1] as usize) & !1, // 2K @ $0800
+                3 => ((self.regs[1] as usize) & !1) | 1,
+                4 => self.regs[2] as usize, // 1K @ $1000
+                5 => self.regs[3] as usize,
+                6 => self.regs[4] as usize,
+                7 => self.regs[5] as usize,
                 _ => 0,
             }
         } else {
-            match addr {
-                0x0000..=0x07FF => self.chr_bank_2k_0 & 0xFE, // 2KB aligned
-                0x0800..=0x0FFF => self.chr_bank_2k_1 & 0xFE, // 2KB aligned
-                0x1000..=0x13FF => self.chr_bank_1k_0,
-                0x1400..=0x17FF => self.chr_bank_1k_1,
-                0x1800..=0x1BFF => self.chr_bank_1k_2,
-                0x1C00..=0x1FFF => self.chr_bank_1k_3,
+            match slot {
+                0 => self.regs[2] as usize, // 1K @ $0000
+                1 => self.regs[3] as usize,
+                2 => self.regs[4] as usize,
+                3 => self.regs[5] as usize,
+                4 => (self.regs[0] as usize) & !1, // 2K @ $1000
+                5 => ((self.regs[0] as usize) & !1) | 1,
+                6 => (self.regs[1] as usize) & !1, // 2K @ $1800
+                7 => ((self.regs[1] as usize) & !1) | 1,
                 _ => 0,
             }
-        };
-
-        // Adjust bank based on whether it's 1KB or 2KB
-        let (bank_size, offset_mask) = if self.chr_inversion {
-            match addr {
-                0x0000..=0x0FFF => (1024, 0x03FF),
-                _ => (2048, 0x07FF),
-            }
-        } else {
-            match addr {
-                0x0000..=0x0FFF => (2048, 0x07FF),
-                _ => (1024, 0x03FF),
-            }
-        };
-
-        let bank = (bank as usize) % self.chr_banks;
-        let offset = (addr & offset_mask) as usize;
-
-        if bank_size == 2048 {
-            // 2KB bank
-            (bank / 2 * 2) * 1024 + offset
-        } else {
-            // 1KB bank
-            bank * 1024 + offset
         }
     }
 
-    /// Clock the IRQ counter (called on A12 rising edge).
-    fn clock_irq(&mut self) {
-        if self.irq_counter == 0 || self.irq_reload {
-            self.irq_counter = self.irq_latch;
-            self.irq_reload = false;
-        } else {
-            self.irq_counter = self.irq_counter.saturating_sub(1);
-        }
+    /// Resolve a PPU CHR address (`$0000-$1FFF`) to an offset in `chr`.
+    fn chr_offset(&self, addr: u16) -> usize {
+        let addr = (addr & 0x1FFF) as usize;
+        let total_banks_1k = self.chr.len() / CHR_BANK_1K;
+        let mask = total_banks_1k.saturating_sub(1);
+        // Slot index in 1K units (0..8).
+        let slot = addr / CHR_BANK_1K;
+        // chr_mode false (0): 2K + 2K + 1K + 1K + 1K + 1K
+        //                     R0/R0+1   R1/R1+1   R2 R3 R4 R5
+        // chr_mode true  (1): 1K + 1K + 1K + 1K + 2K + 2K
+        //                     R2 R3 R4 R5  R0/R0+1 R1/R1+1
+        let bank_1k = self.chr_bank_1k_for_slot(slot);
+        let bank = bank_1k & mask;
+        bank * CHR_BANK_1K + (addr & (CHR_BANK_1K - 1))
+    }
 
-        if self.irq_counter == 0 && self.irq_enabled {
-            self.irq_pending = true;
+    /// Compute the CIRAM byte offset for a PPU address in
+    /// `$2000-$3EFF`.  Honors per-mapper mirroring; supports four-screen
+    /// (the extra 2 KiB lives in our `vram`).
+    fn nametable_offset(&self, addr: u16) -> usize {
+        let table = (((addr - 0x2000) / NAMETABLE_SIZE_U16) & 0x03) as u8;
+        let local = (addr as usize) & (NAMETABLE_SIZE - 1);
+        if self.fixed_4screen {
+            (table as usize) * NAMETABLE_SIZE + local
+        } else {
+            let physical = self.mirroring.physical_bank(table);
+            physical * NAMETABLE_SIZE + local
         }
+    }
+
+    /// Clock the IRQ counter on a filtered A12 rising edge.  Implements
+    /// the Sharp/NEC distinction at cycle-precise resolution.
+    ///
+    /// Three-way branch (C1 step B4):
+    /// 1. `irq_reload_pending` (set by a `$C001` write): reload the
+    ///    counter from `irq_reload_value` and clear the pending flag.
+    ///    Sharp asserts the IRQ line if and only if the `$C001` write
+    ///    cleared a non-zero counter AND `irq_reload_value == 0`
+    ///    (`irq_reload_pending_with_nonzero_clear` was latched true).
+    ///    A `$C001` written while the counter was already zero is a
+    ///    "no-op clear" — the next A12 rise reloads silently. This
+    ///    distinguishes `mmc3_test_2/2-details` sub-test #7 ("IRQ should
+    ///    be set when non-zero and reloading to 0 after clear", expects
+    ///    assertion) from `mmc3_test_2/4-scanline_timing` sub-test #2
+    ///    ("Scanline 0 IRQ should occur later when `$2000=$08`",
+    ///    expects no assertion on the first pre-render A12 rise after
+    ///    `$C001`).
+    /// 2. `was_zero` (counter naturally at 0 from a prior decrement-to-0
+    ///    or a prior reload, with no pending `$C001`): reload from
+    ///    `irq_reload_value`.  Sharp (rev A) asserts here if the new
+    ///    counter value is 0 (i.e. `irq_reload_value == 0`); NEC (rev B)
+    ///    does not.  This is the path `mmc3_test_2/5-MMC3.nes` ("set IRQ
+    ///    every clock when reload is 0") exercises.
+    /// 3. Otherwise (counter > 0, no pending reload): decrement.  Assert
+    ///    IRQ on transition to 0 (both Sharp and NEC).
+    ///
+    /// This separation is the C1 step B4 structural fix: collapsing
+    /// `irq_reload_pending` into the `was_zero` branch (the v0.8.x
+    /// implementation) made every first A12 rise after `$C001` assert
+    /// IRQ when `irq_reload_value == 0` and the revision was Sharp.
+    /// That over-eager assertion produced the residual
+    /// `mmc3_test_2/4-scanline_timing` sub-test #2 failure because the
+    /// FIRST sprite-fetch A12 rise on the pre-render scanline (PPU dot
+    /// 260) clocked an unwanted IRQ assertion, instead of the
+    /// test-expected assertion on scanline 0's first sprite fetch.
+    /// The cycle-precise discriminator is "did `$C001` clear a non-zero
+    /// counter" — only then does Sharp's reload-to-zero rule apply.
+    /// See `docs/adr/0002-irq-timing-coordination.md` → "Empirical
+    /// refinement (2026-05-14)" for the four rolled-back attempts that
+    /// did not separate these paths.
+    fn clock_irq(&mut self) -> bool {
+        // Returns `true` if this clock event would assert the IRQ line
+        // (so the caller can apply M2-phase-aware deferral if needed).
+        // Currently the caller asserts immediately on `true`; a future
+        // iteration of C1 may defer the assertion for M2-high rises.
+        let mut would_assert = false;
+        if self.irq_reload_pending {
+            // Path 1: explicit $C001 reload.
+            let assert_on_reload = self.irq_reload_pending_with_nonzero_clear;
+            self.irq_counter = self.irq_reload_value;
+            self.irq_reload_pending = false;
+            self.irq_reload_pending_with_nonzero_clear = false;
+            if assert_on_reload
+                && self.irq_enabled
+                && self.irq_counter == 0
+                && matches!(self.revision, Mmc3Revision::Sharp)
+            {
+                would_assert = true;
+            }
+        } else if self.irq_counter == 0 {
+            // Path 2: natural counter-at-zero reload.  Sharp asserts when
+            // the new value is 0; NEC does not.
+            self.irq_counter = self.irq_reload_value;
+            if self.irq_enabled
+                && self.irq_counter == 0
+                && matches!(self.revision, Mmc3Revision::Sharp)
+            {
+                would_assert = true;
+            }
+        } else {
+            // Path 3: decrement.  Assert on transition to 0.
+            self.irq_counter = self.irq_counter.wrapping_sub(1);
+            if self.irq_counter == 0 && self.irq_enabled {
+                would_assert = true;
+            }
+        }
+        would_assert
     }
 }
 
 impl Mapper for Mmc3 {
-    fn read_prg(&self, addr: u16) -> u8 {
+    // v2.8.0 Phase 4 — CPU-cycle hook + IRQ source; no on-cart audio.
+    fn caps(&self) -> MapperCaps {
+        MapperCaps::CYCLE_IRQ
+    }
+
+    fn cpu_read(&mut self, addr: u16) -> u8 {
         match addr {
             0x6000..=0x7FFF => {
-                if self.prg_ram_enabled {
-                    let offset = (addr - 0x6000) as usize;
-                    self.prg_ram.get(offset).copied().unwrap_or(0)
-                } else {
-                    0 // Open bus
+                if self.prg_ram_enabled && !self.prg_ram.is_empty() {
+                    let off = (addr - 0x6000) as usize;
+                    if off < self.prg_ram.len() {
+                        return self.prg_ram[off];
+                    }
                 }
+                0
             }
             0x8000..=0xFFFF => {
-                let offset = self.prg_addr(addr);
-                self.prg_rom.get(offset).copied().unwrap_or(0)
+                let off = self.prg_offset(addr);
+                self.prg_rom[off % self.prg_rom.len()]
             }
             _ => 0,
         }
     }
 
-    fn write_prg(&mut self, addr: u16, val: u8) {
+    fn cpu_write(&mut self, addr: u16, value: u8) {
         match addr {
             0x6000..=0x7FFF => {
-                if self.prg_ram_enabled && !self.prg_ram_protect {
-                    let offset = (addr - 0x6000) as usize;
-                    if let Some(byte) = self.prg_ram.get_mut(offset) {
-                        *byte = val;
+                if self.prg_ram_enabled && !self.prg_ram_protect && !self.prg_ram.is_empty() {
+                    let off = (addr - 0x6000) as usize;
+                    if off < self.prg_ram.len() {
+                        self.prg_ram[off] = value;
                     }
                 }
             }
             0x8000..=0x9FFF => {
                 if addr & 1 == 0 {
-                    // Bank select ($8000)
-                    self.bank_select = val & 0x07;
-                    self.prg_mode = val & 0x40 != 0;
-                    self.chr_inversion = val & 0x80 != 0;
+                    // $8000 even: bank-select.
+                    self.bank_select = value & 0x07;
+                    self.prg_mode = (value & 0x40) != 0;
+                    self.chr_mode = (value & 0x80) != 0;
                 } else {
-                    // Bank data ($8001)
-                    match self.bank_select {
-                        0 => self.chr_bank_2k_0 = val,
-                        1 => self.chr_bank_2k_1 = val,
-                        2 => self.chr_bank_1k_0 = val,
-                        3 => self.chr_bank_1k_1 = val,
-                        4 => self.chr_bank_1k_2 = val,
-                        5 => self.chr_bank_1k_3 = val,
-                        6 => self.prg_bank_0 = val & 0x3F,
-                        7 => self.prg_bank_1 = val & 0x3F,
-                        _ => {}
-                    }
+                    // $8001 odd: bank-data.
+                    self.regs[(self.bank_select & 0x07) as usize] = value;
                 }
             }
             0xA000..=0xBFFF => {
                 if addr & 1 == 0 {
-                    // Mirroring ($A000)
-                    self.mirroring = if val & 1 != 0 {
-                        Mirroring::Horizontal
-                    } else {
-                        Mirroring::Vertical
-                    };
+                    // Mirroring (ignored on 4-screen carts).
+                    if !self.fixed_4screen {
+                        self.mirroring = if value & 1 == 0 {
+                            Mirroring::Vertical
+                        } else {
+                            Mirroring::Horizontal
+                        };
+                    }
                 } else {
-                    // PRG-RAM protect ($A001)
-                    self.prg_ram_enabled = val & 0x80 != 0;
-                    self.prg_ram_protect = val & 0x40 != 0;
+                    // PRG-RAM protect / enable.
+                    self.prg_ram_enabled = (value & 0x80) != 0;
+                    self.prg_ram_protect = (value & 0x40) != 0;
                 }
             }
             0xC000..=0xDFFF => {
                 if addr & 1 == 0 {
-                    // IRQ latch ($C000)
-                    self.irq_latch = val;
+                    self.irq_reload_value = value;
                 } else {
-                    // IRQ reload ($C001)
-                    // Only set reload flag - counter will be reloaded on next A12 clock.
-                    // Do NOT clear counter here (was causing SMB3 status bar timing issues).
-                    self.irq_reload = true;
+                    // $C001: latch "was the counter non-zero at the moment
+                    // of this clear?" — consumed by `clock_irq` on the
+                    // next filtered A12 rise to decide whether the
+                    // reload-pending path asserts (Sharp).  See the field
+                    // doc on `irq_reload_pending_with_nonzero_clear`.
+                    self.irq_reload_pending_with_nonzero_clear = self.irq_counter != 0;
+                    self.irq_counter = 0;
+                    self.irq_reload_pending = true;
                 }
             }
             0xE000..=0xFFFF => {
                 if addr & 1 == 0 {
-                    // IRQ disable ($E000)
                     self.irq_enabled = false;
-                    self.irq_pending = false;
+                    self.irq_pending_line = false;
                 } else {
-                    // IRQ enable ($E001)
                     self.irq_enabled = true;
                 }
             }
@@ -322,281 +491,759 @@ impl Mapper for Mmc3 {
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
-        let offset = self.chr_addr(addr);
-        self.chr.get(offset).copied().unwrap_or(0)
-    }
-
-    fn write_chr(&mut self, addr: u16, val: u8) {
-        if self.chr_is_ram {
-            let offset = self.chr_addr(addr);
-            if let Some(byte) = self.chr.get_mut(offset) {
-                *byte = val;
+    fn ppu_read(&mut self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                let off = self.chr_offset(addr);
+                self.chr[off % self.chr.len()]
             }
+            0x2000..=0x3EFF => self.vram[self.nametable_offset(addr) % self.vram.len()],
+            _ => 0,
         }
     }
 
-    fn mirroring(&self) -> Mirroring {
+    fn ppu_write(&mut self, addr: u16, value: u8) {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                if self.chr_is_ram {
+                    let off = self.chr_offset(addr);
+                    let len = self.chr.len();
+                    self.chr[off % len] = value;
+                }
+            }
+            0x2000..=0x3EFF => {
+                let off = self.nametable_offset(addr) % self.vram.len();
+                self.vram[off] = value;
+            }
+            _ => {}
+        }
+    }
+
+    fn nametable_address(&self, addr: u16) -> u16 {
+        // For 2 KiB CIRAM (the bus's PPU vram) the offset must fit in 0..0x800.
+        // For 4-screen we keep the full 4 KiB on-cart and serve via ppu_read/write,
+        // so the bus's CIRAM index does not matter — just return a canonical 0.
+        let off = self.nametable_offset(addr);
+        u16::try_from(off & 0x07FF).unwrap_or(0)
+    }
+
+    fn current_mirroring(&self) -> Mirroring {
         self.mirroring
     }
 
+    fn notify_a12(&mut self, level: bool) {
+        // Plumbing is in place to receive the sub-dot via
+        // `notify_a12_at_sub_dot`, but the MMC3 implementation does not
+        // yet differentiate behavior by M2 phase — see ADR-0002 →
+        // "Sub-dot plumbing landed (2026-05-14)" for the open
+        // implementation choice.  This legacy entry point treats the
+        // unknown sub-dot as M2-low (immediate assertion), matching
+        // the pre-M2-phase-pipeline behavior.
+        self.notify_a12_at_sub_dot(level, 1);
+    }
+
+    fn notify_a12_at_sub_dot(&mut self, level: bool, _sub_dot: u8) {
+        // Track the M2-cycles-since-last-fall filter.  A rising edge that
+        // arrives < 3 CPU cycles after the prior fall is filtered.
+        // The sub-dot parameter is currently unused: the M2-phase-aware
+        // deferral pipeline is documented in ADR-0002 but not yet
+        // implemented in MMC3 (the open work item for the next
+        // iteration of C1).
+        if !self.last_a12 && level {
+            // Rising edge.
+            let gap = self.cpu_cycle.saturating_sub(self.a12_low_cycle);
+            if gap >= 3 && self.clock_irq() {
+                self.irq_pending_line = true;
+            }
+        } else if self.last_a12 && !level {
+            // Falling edge.
+            self.a12_low_cycle = self.cpu_cycle;
+        }
+        self.last_a12 = level;
+    }
+
+    fn notify_cpu_cycle(&mut self) {
+        self.cpu_cycle = self.cpu_cycle.wrapping_add(1);
+    }
+
     fn irq_pending(&self) -> bool {
-        self.irq_pending
+        self.irq_pending_line
     }
 
     fn irq_acknowledge(&mut self) {
-        self.irq_pending = false;
+        // Hardware: the IRQ line stays asserted until $E000 disables / acks.
+        // The CPU's interrupt service does not clear it; the program does.
+        // We expose ack as a no-op to satisfy the trait but $E000 is the
+        // real path.
     }
 
-    fn scanline(&mut self) {
-        // Called by PPU at end of visible scanline
-        // This is a simplified version; accurate MMC3 uses A12 detection
-        self.clock_irq();
-    }
-
-    fn ppu_a12_rising(&mut self) {
-        // A12-based clocking for accurate MMC3 IRQ timing.
-        // The bus layer already handles proper edge detection (0->1 transitions),
-        // so we clock the IRQ counter directly on each rising edge.
-        // Previous filter was broken - it skipped 2/3 of valid IRQ clocks.
-        self.clock_irq();
-    }
-
-    fn mapper_number(&self) -> u16 {
-        4
-    }
-
-    fn mapper_name(&self) -> &'static str {
-        "MMC3"
-    }
-
-    fn has_battery(&self) -> bool {
-        self.has_battery
-    }
-
-    fn battery_ram(&self) -> Option<&[u8]> {
-        if self.has_battery {
-            Some(&self.prg_ram)
-        } else {
-            None
+    fn debug_info(&self) -> crate::mapper::MapperDebugInfo {
+        let mut info = crate::mapper::MapperDebugInfo {
+            mapper_id: 4,
+            name: format!("MMC3 ({:?})", self.revision),
+            mirroring: crate::mapper::mirroring_name(self.mirroring),
+            ..Default::default()
+        };
+        info.prg_banks
+            .push(("mode".into(), format!("{}", u8::from(self.prg_mode))));
+        info.prg_banks
+            .push(("R6".into(), format!("{:#04x}", self.regs[6])));
+        info.prg_banks
+            .push(("R7".into(), format!("{:#04x}", self.regs[7])));
+        info.chr_banks
+            .push(("mode".into(), format!("{}", u8::from(self.chr_mode))));
+        for i in 0..6 {
+            info.chr_banks
+                .push((format!("R{i}"), format!("{:#04x}", self.regs[i])));
         }
+        info.irq_state
+            .push(("counter".into(), format!("{:#04x}", self.irq_counter)));
+        info.irq_state
+            .push(("reload".into(), format!("{:#04x}", self.irq_reload_value)));
+        info.irq_state
+            .push(("enabled".into(), format!("{}", self.irq_enabled)));
+        info.irq_state
+            .push(("pending".into(), format!("{}", self.irq_pending_line)));
+        info.extra
+            .push(("bank_select".into(), format!("{:#04x}", self.bank_select)));
+        info.extra.push((
+            "prg_ram".into(),
+            format!("en={} prot={}", self.prg_ram_enabled, self.prg_ram_protect),
+        ));
+        info
     }
 
-    fn set_battery_ram(&mut self, data: &[u8]) {
-        let len = data.len().min(self.prg_ram.len());
-        self.prg_ram[..len].copy_from_slice(&data[..len]);
+    fn save_state(&self) -> Vec<u8> {
+        // Tagged blob: version + scalar regs + RAM blocks.
+        let mut out =
+            Vec::with_capacity(64 + self.prg_ram.len() + self.vram.len() + self.chr.len());
+        out.push(SAVE_STATE_VERSION);
+        out.extend_from_slice(&self.regs);
+        out.push(self.bank_select);
+        out.push(u8::from(self.prg_mode));
+        out.push(u8::from(self.chr_mode));
+        out.push(self.mirroring as u8);
+        out.push(u8::from(self.fixed_4screen));
+        out.push(u8::from(self.prg_ram_enabled));
+        out.push(u8::from(self.prg_ram_protect));
+        out.push(self.irq_counter);
+        out.push(self.irq_reload_value);
+        out.push(u8::from(self.irq_reload_pending));
+        out.push(u8::from(self.irq_reload_pending_with_nonzero_clear));
+        out.push(u8::from(self.irq_enabled));
+        out.push(u8::from(self.irq_pending_line));
+        out.push(u8::from(self.last_a12));
+        out.extend_from_slice(&self.a12_low_cycle.to_le_bytes());
+        out.extend_from_slice(&self.cpu_cycle.to_le_bytes());
+        out.push(match self.revision {
+            Mmc3Revision::Sharp => 0,
+            Mmc3Revision::Nec => 1,
+        });
+        out.extend_from_slice(&self.prg_ram);
+        out.extend_from_slice(&self.vram);
+        if self.chr_is_ram {
+            out.extend_from_slice(&self.chr);
+        }
+        out
     }
 
-    fn reset(&mut self) {
-        self.bank_select = 0;
-        self.prg_mode = false;
-        self.chr_inversion = false;
-        self.chr_bank_2k_0 = 0;
-        self.chr_bank_2k_1 = 2;
-        self.chr_bank_1k_0 = 4;
-        self.chr_bank_1k_1 = 5;
-        self.chr_bank_1k_2 = 6;
-        self.chr_bank_1k_3 = 7;
-        self.prg_bank_0 = 0;
-        self.prg_bank_1 = 1;
-        self.irq_latch = 0;
-        self.irq_counter = 0;
-        self.irq_reload = false;
-        self.irq_enabled = false;
-        self.irq_pending = false;
+    #[allow(clippy::too_many_lines)] // tagged-blob deserializer + v1/v2 fork
+    fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
+        let chr_part = if self.chr_is_ram { self.chr.len() } else { 0 };
+        // Tagged scalars laid out below.  v1 omitted
+        // `irq_reload_pending_with_nonzero_clear`; v2 added it as a one-byte
+        // flag immediately after `irq_reload_pending`, expanding the scalar
+        // section by 1 byte.  Cross-version files load with the field
+        // defaulted to `false` (safe — the silicon initial state).
+        if data.is_empty() {
+            return Err(MapperError::Truncated {
+                expected: 1,
+                got: 0,
+            });
+        }
+        let version = data[0];
+        if version != 1 && version != SAVE_STATE_VERSION {
+            return Err(MapperError::UnsupportedVersion(version));
+        }
+        let nonzero_clear_present = version >= 2;
+        let scalar_len = 1
+            + 8
+            + 1
+            + 1
+            + 1
+            + 1
+            + 1
+            + 1
+            + 1
+            + 1
+            + 1
+            + 1
+            + 1
+            + 1
+            + 1
+            + 8
+            + 8
+            + 1
+            + usize::from(nonzero_clear_present);
+        let expected = scalar_len + self.prg_ram.len() + self.vram.len() + chr_part;
+        if data.len() != expected {
+            return Err(MapperError::Truncated {
+                expected,
+                got: data.len(),
+            });
+        }
+        self.regs.copy_from_slice(&data[1..9]);
+        self.bank_select = data[9];
+        self.prg_mode = data[10] != 0;
+        self.chr_mode = data[11] != 0;
+        self.mirroring = match data[12] {
+            0 => Mirroring::Horizontal,
+            1 => Mirroring::Vertical,
+            2 => Mirroring::SingleScreenA,
+            3 => Mirroring::SingleScreenB,
+            4 => Mirroring::FourScreen,
+            5 => Mirroring::MapperControlled,
+            other => {
+                return Err(MapperError::Invalid(format!(
+                    "unknown mirroring tag {other}"
+                )))
+            }
+        };
+        self.fixed_4screen = data[13] != 0;
+        self.prg_ram_enabled = data[14] != 0;
+        self.prg_ram_protect = data[15] != 0;
+        self.irq_counter = data[16];
+        self.irq_reload_value = data[17];
+        self.irq_reload_pending = data[18] != 0;
+        let mut cur = 19usize;
+        self.irq_reload_pending_with_nonzero_clear = if nonzero_clear_present {
+            let v = data[cur] != 0;
+            cur += 1;
+            v
+        } else {
+            // v1 fallback: pre-fix state was equivalent to "always assert
+            // on reload-pending", but the flag's semantic absence is best
+            // represented as `false` (silent reload on next A12), which
+            // matches the post-fix steady state when nothing has been
+            // written to $C001 since the snapshot.
+            false
+        };
+        self.irq_enabled = data[cur] != 0;
+        cur += 1;
+        self.irq_pending_line = data[cur] != 0;
+        cur += 1;
+        self.last_a12 = data[cur] != 0;
+        cur += 1;
+        self.a12_low_cycle = u64::from_le_bytes(
+            data[cur..cur + 8]
+                .try_into()
+                .map_err(|_| MapperError::Invalid("a12_low_cycle truncated".into()))?,
+        );
+        cur += 8;
+        self.cpu_cycle = u64::from_le_bytes(
+            data[cur..cur + 8]
+                .try_into()
+                .map_err(|_| MapperError::Invalid("cpu_cycle truncated".into()))?,
+        );
+        cur += 8;
+        self.revision = match data[cur] {
+            0 => Mmc3Revision::Sharp,
+            1 => Mmc3Revision::Nec,
+            other => {
+                return Err(MapperError::Invalid(format!(
+                    "unknown MMC3 revision tag {other}"
+                )))
+            }
+        };
+        cur += 1;
+        self.prg_ram
+            .copy_from_slice(&data[cur..cur + self.prg_ram.len()]);
+        cur += self.prg_ram.len();
+        self.vram.copy_from_slice(&data[cur..cur + self.vram.len()]);
+        cur += self.vram.len();
+        if self.chr_is_ram {
+            self.chr.copy_from_slice(&data[cur..cur + self.chr.len()]);
+        }
+        Ok(())
     }
 }
 
 #[cfg(test)]
+#[allow(clippy::cast_possible_truncation)]
 mod tests {
     use super::*;
-    use crate::rom::{RomFormat, RomHeader};
 
-    fn create_test_rom(prg_banks: u8, chr_banks: u8) -> Rom {
-        let prg_size = prg_banks as usize * 8192;
-        let chr_size = chr_banks as usize * 1024;
+    fn synth_prg(banks_8k: usize) -> Box<[u8]> {
+        let mut v = vec![0u8; banks_8k * PRG_BANK_8K];
+        for b in 0..banks_8k {
+            v[b * PRG_BANK_8K] = b as u8;
+        }
+        v.into_boxed_slice()
+    }
 
-        // Fill each PRG bank with its bank number
-        let mut prg_rom = vec![0u8; prg_size];
-        for bank in 0..prg_banks as usize {
-            for i in 0..8192 {
-                prg_rom[bank * 8192 + i] = bank as u8;
+    fn synth_chr(banks_1k: usize) -> Box<[u8]> {
+        let mut v = vec![0u8; banks_1k * CHR_BANK_1K];
+        for b in 0..banks_1k {
+            v[b * CHR_BANK_1K] = b as u8;
+        }
+        v.into_boxed_slice()
+    }
+
+    fn fresh(prg_banks: usize, chr_banks: usize) -> Mmc3 {
+        Mmc3::new(
+            synth_prg(prg_banks),
+            synth_chr(chr_banks),
+            Mirroring::Horizontal,
+            0,
+            Mmc3Revision::Sharp,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn last_8k_bank_fixed_at_e000() {
+        let mut m = fresh(8, 8);
+        // Default state: PRG mode 0, R6=R7=0.  $E000 should map to last bank.
+        assert_eq!(m.cpu_read(0xE000), 7);
+    }
+
+    #[test]
+    fn second_to_last_bank_fixed_at_c000_in_mode0() {
+        let mut m = fresh(8, 8);
+        m.cpu_write(0x8000, 0); // mode 0
+        assert_eq!(m.cpu_read(0xC000), 6);
+    }
+
+    #[test]
+    fn r6_swaps_8000_in_mode0_and_c000_in_mode1() {
+        let mut m = fresh(8, 8);
+        m.cpu_write(0x8000, 6); // select R6
+        m.cpu_write(0x8001, 3); // R6 = 3
+                                // Mode 0: $8000 -> R6 = bank 3
+        assert_eq!(m.cpu_read(0x8000), 3);
+        // Mode 1: $8000 -> second-to-last (bank 6); $C000 -> R6 = bank 3.
+        m.cpu_write(0x8000, 0x40 | 6); // PRG mode bit
+        assert_eq!(m.cpu_read(0x8000), 6);
+        assert_eq!(m.cpu_read(0xC000), 3);
+    }
+
+    #[test]
+    fn chr_mode0_layout_2k_2k_1k_1k_1k_1k() {
+        let mut m = fresh(8, 8);
+        m.cpu_write(0x8000, 0); // R0
+        m.cpu_write(0x8001, 4); // R0 = 4 (LSB ignored, so bank 4)
+        m.cpu_write(0x8000, 1); // R1
+        m.cpu_write(0x8001, 6); // R1 = 6
+        m.cpu_write(0x8000, 2); // R2
+        m.cpu_write(0x8001, 1); // R2 = bank 1
+                                // $0000-$03FF (slot 0) -> R0 & ~1 = 4.
+        assert_eq!(m.ppu_read(0x0000), 4);
+        // $0400 (slot 1) -> R0 | 1 = 5.
+        assert_eq!(m.ppu_read(0x0400), 5);
+        // $0800 (slot 2) -> R1 & ~1 = 6.
+        assert_eq!(m.ppu_read(0x0800), 6);
+        // $1000 (slot 4) -> R2 = 1.
+        assert_eq!(m.ppu_read(0x1000), 1);
+    }
+
+    #[test]
+    fn chr_mode1_swaps_2k_and_1k_regions() {
+        let mut m = fresh(8, 8);
+        m.cpu_write(0x8000, 0x80); // CHR mode 1
+        m.cpu_write(0x8000, 0x80); // R0
+        m.cpu_write(0x8001, 4);
+        m.cpu_write(0x8000, 0x80 | 2);
+        m.cpu_write(0x8001, 1); // R2
+                                // Mode 1: $0000 (slot 0) -> R2 = 1; $1000 (slot 4) -> R0 & ~1 = 4.
+        assert_eq!(m.ppu_read(0x0000), 1);
+        assert_eq!(m.ppu_read(0x1000), 4);
+    }
+
+    #[test]
+    fn mirroring_register_toggles_h_v() {
+        let mut m = fresh(8, 8);
+        m.cpu_write(0xA000, 0);
+        assert_eq!(m.mirroring, Mirroring::Vertical);
+        m.cpu_write(0xA000, 1);
+        assert_eq!(m.mirroring, Mirroring::Horizontal);
+    }
+
+    #[test]
+    fn prg_ram_enable_protect_via_a001() {
+        let mut m = fresh(8, 8);
+        // PRG-RAM defaults to enabled, not protected.
+        m.cpu_write(0x6000, 0xAB);
+        assert_eq!(m.cpu_read(0x6000), 0xAB);
+        // Disable.
+        m.cpu_write(0xA001, 0x00);
+        m.cpu_write(0x6000, 0xCD); // ignored
+        assert_eq!(m.cpu_read(0x6000), 0); // returns 0 (open bus stub)
+                                           // Re-enable + write-protect.
+        m.cpu_write(0xA001, 0x80 | 0x40);
+        m.cpu_write(0x6000, 0x12); // ignored (protected)
+        assert_eq!(m.cpu_read(0x6000), 0xAB); // original value preserved
+    }
+
+    #[test]
+    fn irq_counter_decrements_and_asserts() {
+        let mut m = fresh(8, 8);
+        m.cpu_write(0xC000, 3); // reload = 3
+        m.cpu_write(0xC001, 0); // pending reload
+        m.cpu_write(0xE001, 0); // enable IRQ
+                                // Simulate four filtered A12 rising edges, advancing CPU cycles
+                                // between each so the M2 filter accepts.
+        for _ in 0..4 {
+            // Fall A12 low, advance >= 3 CPU cycles, then raise.
+            m.notify_a12(false);
+            for _ in 0..4 {
+                m.notify_cpu_cycle();
             }
+            m.notify_a12(true);
         }
+        // First edge: reload to 3.  Edges 2,3,4: decrement to 2,1,0 (assert).
+        assert!(m.irq_pending());
+    }
 
-        // Fill each CHR bank with its bank number
-        let mut chr_rom = vec![0u8; chr_size];
-        for bank in 0..chr_banks as usize {
-            for i in 0..1024 {
-                chr_rom[bank * 1024 + i] = bank as u8;
+    #[test]
+    fn irq_disabled_no_assert() {
+        let mut m = fresh(8, 8);
+        m.cpu_write(0xC000, 1);
+        m.cpu_write(0xC001, 0);
+        // No $E001 enable.
+        for _ in 0..3 {
+            m.notify_a12(false);
+            for _ in 0..4 {
+                m.notify_cpu_cycle();
             }
+            m.notify_a12(true);
+        }
+        assert!(!m.irq_pending());
+    }
+
+    #[test]
+    fn e000_acks_pending_irq() {
+        let mut m = fresh(8, 8);
+        m.irq_pending_line = true;
+        m.cpu_write(0xE000, 0);
+        assert!(!m.irq_pending());
+    }
+
+    #[test]
+    fn a12_filter_rejects_close_rising_edges() {
+        let mut m = fresh(8, 8);
+        m.cpu_write(0xC000, 1);
+        m.cpu_write(0xC001, 0);
+        m.cpu_write(0xE001, 0);
+        // First edge: filter accepts (reload to 1).
+        m.notify_a12(false);
+        for _ in 0..4 {
+            m.notify_cpu_cycle();
+        }
+        m.notify_a12(true);
+        // Now toggle low->high again with only 1 cycle gap: filter REJECTS.
+        m.notify_a12(false);
+        m.notify_cpu_cycle();
+        m.notify_a12(true);
+        // Counter should still be 1 (only first edge was accepted).
+        assert_eq!(m.irq_counter, 1);
+        assert!(!m.irq_pending());
+    }
+
+    /// Helper: emit one filter-accepted A12 toggle (low ≥ 3 M2 cycles
+    /// then high).  Used by the Sharp/NEC reload-to-zero unit tests
+    /// below to drive the counter through deterministic transitions.
+    fn a12_rise<F: Mapper>(m: &mut F) {
+        m.notify_a12(false);
+        for _ in 0..4 {
+            m.notify_cpu_cycle();
+        }
+        m.notify_a12(true);
+    }
+
+    /// Sharp asserts IRQ when the counter is decremented to 0 via a
+    /// natural A12 clock (decrement-to-0 path).  This is the primary
+    /// Sharp/NEC commonality — both revisions assert here.  See
+    /// `clock_irq` path 3 (decrement).
+    #[test]
+    fn sharp_asserts_on_decrement_to_zero() {
+        let mut m = fresh(8, 8);
+        // Reload value = 1.  Pre-condition: counter at 0, reload_pending
+        // set (from $C001 after start-up).
+        m.cpu_write(0xC000, 1);
+        m.cpu_write(0xC001, 0);
+        m.cpu_write(0xE001, 0);
+        // First A12 rise: silent reload to 1 (was_nonzero_at_clear = false
+        // — counter was already 0 at the $C001 write).
+        a12_rise(&mut m);
+        assert_eq!(m.irq_counter, 1, "first rise reloaded silently");
+        assert!(
+            !m.irq_pending(),
+            "first $C001-induced reload (counter was 0) must not assert"
+        );
+        // Second A12 rise: counter decrements from 1 to 0 → asserts (both
+        // Sharp and NEC).
+        a12_rise(&mut m);
+        assert_eq!(m.irq_counter, 0);
+        assert!(
+            m.irq_pending(),
+            "decrement-to-0 asserts on both Sharp and NEC"
+        );
+    }
+
+    /// Sharp's Rev-A-specific "reload-to-0 asserts" rule.  Distinct from
+    /// NEC (Rev B) in `nec_does_not_assert_on_reload_to_zero` below.
+    /// This is the path `mmc3_test_2/5-MMC3.nes` ("set IRQ every clock
+    /// when reload is 0") exercises in the steady state.
+    ///
+    /// Setup: $C001 clears a **non-zero** counter — that's the
+    /// discriminator (see `irq_reload_pending_with_nonzero_clear`).  Real
+    /// silicon: after a non-zero-to-zero clear, the next A12 rise
+    /// reloads the counter, and if the reload landed at 0, Sharp
+    /// asserts.  The follow-up A12 rise (after IRQ is acked) also
+    /// asserts on Sharp because the natural was_zero path keeps
+    /// reloading to 0.
+    #[test]
+    fn sharp_asserts_on_reload_to_zero_after_nonzero_clear() {
+        let mut m = fresh(8, 8);
+        // Prime the counter to a non-zero value: write reload_value=1,
+        // $C001 (counter was 0 — silent), one A12 (silent reload to 1).
+        m.cpu_write(0xC000, 1);
+        m.cpu_write(0xC001, 0);
+        m.cpu_write(0xE001, 0);
+        a12_rise(&mut m);
+        assert_eq!(m.irq_counter, 1);
+        assert!(!m.irq_pending(), "silent reload, no assertion");
+        // Now write reload_value=0 and $C001 again (counter WAS non-zero
+        // at this write, so the next A12 rise asserts on Sharp).
+        m.cpu_write(0xC000, 0);
+        m.cpu_write(0xC001, 0);
+        // Filter accepts after ≥ 3 M2 cycles; the prior `a12_rise` already
+        // re-armed the filter low.
+        a12_rise(&mut m);
+        assert_eq!(m.irq_counter, 0);
+        assert!(
+            m.irq_pending(),
+            "Sharp asserts on reload-to-0 after non-zero-to-zero $C001 clear"
+        );
+    }
+
+    /// `$C001` written while the counter was already 0 is a "no-op
+    /// clear" — the next A12 rise reloads silently regardless of
+    /// `reload_value`.  This is the cycle-precise discriminator that
+    /// makes `mmc3_test_2/4-scanline_timing` sub-test #2 pass without
+    /// regressing `mmc3_test_2/2-details` sub-test #7.
+    #[test]
+    fn sharp_silent_on_reload_after_zero_to_zero_clear() {
+        let mut m = fresh(8, 8);
+        // Counter is 0 from start-up (`fresh`).  $C001 writes here are
+        // zero-to-zero clears.
+        m.cpu_write(0xC000, 0);
+        m.cpu_write(0xC001, 0);
+        m.cpu_write(0xE001, 0);
+        a12_rise(&mut m);
+        assert_eq!(m.irq_counter, 0);
+        assert!(
+            !m.irq_pending(),
+            "zero-to-zero $C001 clear must reload silently on the first A12 rise"
+        );
+        // The follow-up A12 rise (now via the natural was_zero path with
+        // no pending reload) DOES assert on Sharp — this is the same path
+        // that fires the IRQ on scanline 0 in the failing-mode of
+        // `mmc3_test_2/4-scanline_timing` sub-test #2.
+        a12_rise(&mut m);
+        assert!(
+            m.irq_pending(),
+            "natural reload-to-0 (no pending reload) asserts on Sharp"
+        );
+    }
+
+    /// NEC (Rev B) does NOT assert on reload-to-0 even on the natural
+    /// was_zero path.  Mutually exclusive with the Sharp behavior tested
+    /// above.
+    #[test]
+    fn nec_does_not_assert_on_reload_to_zero() {
+        let mut m = Mmc3::new(
+            synth_prg(8),
+            synth_chr(8),
+            Mirroring::Horizontal,
+            0,
+            Mmc3Revision::Nec,
+        )
+        .unwrap();
+        // Same "non-zero clear" setup as the Sharp test, but on NEC the
+        // reload-to-0 should NOT assert.
+        m.cpu_write(0xC000, 1);
+        m.cpu_write(0xC001, 0);
+        m.cpu_write(0xE001, 0);
+        a12_rise(&mut m);
+        m.cpu_write(0xC000, 0);
+        m.cpu_write(0xC001, 0);
+        a12_rise(&mut m);
+        assert_eq!(m.irq_counter, 0);
+        assert!(
+            !m.irq_pending(),
+            "NEC suppresses Sharp's reload-to-0 assertion"
+        );
+        // Even the natural was_zero path doesn't assert on NEC.
+        a12_rise(&mut m);
+        assert!(!m.irq_pending(), "NEC: was_zero reload-to-0 also silent");
+    }
+
+    /// T-41-005 — reversed pattern-table layout (`PPUCTRL` bit 4 set,
+    /// bit 3 clear: BG=`$1000`, sprites=`$0000`). Canary: Wario's Woods.
+    ///
+    /// In the standard layout (BG=`$0000`, sprites=`$1000`) the per-scanline
+    /// A12 rising edge happens during the sprite tile fetch group at PPU
+    /// dot 260, after the BG fetches at dots 1-256 (all of which used the
+    /// `$0000` pattern table). In the reversed layout the per-scanline A12
+    /// rising edge happens during the next scanline's BG fetch group at
+    /// dot 1, after the sprite tile fetches at dots 260-320 (which used the
+    /// `$0000` pattern table).
+    ///
+    /// From MMC3's perspective the two layouts produce **the same sequence
+    /// of A12 transitions per scanline** — one fall after the prior
+    /// scanline's BG fetches (or this scanline's sprite fetches), followed
+    /// by a rise after enough M2 cycles for the filter to accept. The IRQ
+    /// counter should clock identically. This test exercises both layouts
+    /// in the same `Mmc3` and asserts the per-rising-edge counter behavior
+    /// matches.
+    #[test]
+    fn reversed_pattern_table_layout_clocks_irq_identically() {
+        // Helper: emit one filter-accepted A12 rise (low for ≥ 3 M2 cycles,
+        // then high). Returns the IRQ-pending flag immediately after.
+        fn pulse_a12(m: &mut Mmc3) -> bool {
+            m.notify_a12(false);
+            for _ in 0..4 {
+                m.notify_cpu_cycle();
+            }
+            m.notify_a12(true);
+            m.irq_pending()
         }
 
-        Rom {
-            header: RomHeader {
-                format: RomFormat::INes,
-                mapper: 4,
-                prg_rom_size: (prg_banks / 2) as u16,
-                chr_rom_size: (chr_banks / 8) as u16,
-                prg_ram_size: 8192,
-                chr_ram_size: 0,
-                mirroring: Mirroring::Vertical,
-                has_battery: true,
-                has_trainer: false,
-                tv_system: 0,
-            },
-            prg_rom,
-            chr_rom,
-            trainer: None,
+        // Standard layout simulation (BG=$0000, sprites=$1000). Per-scanline:
+        // 1. BG fetches at dots 1-256 read patterns from $0000-$0FFF (A12 low).
+        // 2. Sprite tile fetches at dots 260-320 read from $1000-$1FFF (A12
+        //    rises around dot 260).
+        // 3. After dot 320 the BG fetches for the *next* scanline run at
+        //    dots 321-336 from $0000-$0FFF (A12 falls again).
+        // We model this as: A12=false (during BG fetches) -> A12=true (sprite
+        //    fetches) per scanline. Filter sees one rise per scanline.
+        let mut std_layout = fresh(8, 8);
+        std_layout.cpu_write(0xC000, 4); // reload = 4
+        std_layout.cpu_write(0xC001, 0); // pending reload
+        std_layout.cpu_write(0xE001, 0); // enable IRQ
+                                         // 5 scanlines: edges 1 (reload 4), 2 (3), 3 (2), 4 (1), 5 (0 + assert).
+        for n in 0..5 {
+            let pending = pulse_a12(&mut std_layout);
+            // Only the 5th edge should assert (counter went 4→reload, then
+            // 4→3→2→1→0).
+            assert_eq!(
+                pending,
+                n == 4,
+                "standard layout edge #{n} pending should be {} (counter={})",
+                n == 4,
+                std_layout.irq_counter
+            );
         }
+        std_layout.cpu_write(0xE000, 0); // ack
+
+        // Reversed layout simulation (BG=$1000, sprites=$0000). Per-scanline:
+        // 1. BG fetches at dots 1-256 read patterns from $1000-$1FFF (A12
+        //    high — but the rising edge happened at the start of the BG fetch
+        //    group, not at dot 260).
+        // 2. Sprite tile fetches at dots 260-320 read from $0000-$0FFF (A12
+        //    falls).
+        // 3. Next scanline's BG fetches at dots 321-336 read from $1000 again
+        //    (A12 rises).
+        // From the mapper's perspective: one fall + one rise per scanline,
+        // just shifted relative to where the rise happens within the
+        // scanline. The filter behavior is identical.
+        let mut rev_layout = fresh(8, 8);
+        rev_layout.cpu_write(0xC000, 4);
+        rev_layout.cpu_write(0xC001, 0);
+        rev_layout.cpu_write(0xE001, 0);
+        for n in 0..5 {
+            let pending = pulse_a12(&mut rev_layout);
+            assert_eq!(
+                pending,
+                n == 4,
+                "reversed layout edge #{n} pending should be {} (counter={})",
+                n == 4,
+                rev_layout.irq_counter
+            );
+        }
+
+        // Both layouts must reach the same internal state at the same edge.
+        assert_eq!(
+            std_layout.irq_counter, rev_layout.irq_counter,
+            "standard and reversed layouts must produce identical IRQ counter \
+             values after the same number of filter-accepted A12 rises"
+        );
+    }
+
+    /// T-41-005 follow-up — the A12 filter must remain stable against
+    /// the **fast-low-high** pulse pattern that the reversed layout
+    /// produces at the boundary between sprite fetches (dot 320, A12
+    /// low) and the next scanline's BG fetches (dot 321 onward, A12
+    /// high). Real silicon's 3-M2-cycle filter rejects rises that come
+    /// less than ~3 CPU cycles after the previous fall. We assert the
+    /// filter rejects the rise if too few cycles have elapsed AND
+    /// accepts it when enough have.
+    #[test]
+    fn reversed_layout_a12_filter_3_m2_boundary() {
+        let mut m = fresh(8, 8);
+        m.cpu_write(0xC000, 2);
+        m.cpu_write(0xC001, 0);
+        m.cpu_write(0xE001, 0);
+
+        // First rise — filter primes from low state.
+        m.notify_a12(false);
+        for _ in 0..4 {
+            m.notify_cpu_cycle();
+        }
+        m.notify_a12(true);
+        let counter_after_first = m.irq_counter;
+        assert_eq!(counter_after_first, 2, "first rise reloads to 2");
+
+        // Rapid fall+rise with only 1 CPU cycle gap: filter REJECTS.
+        m.notify_a12(false);
+        m.notify_cpu_cycle();
+        m.notify_a12(true);
+        assert_eq!(
+            m.irq_counter, counter_after_first,
+            "rapid rise within < 3 M2 cycles must be filtered out"
+        );
+
+        // Same pulse but with 3 cycles between fall and rise: ACCEPTED.
+        m.notify_a12(false);
+        for _ in 0..4 {
+            m.notify_cpu_cycle();
+        }
+        m.notify_a12(true);
+        assert!(
+            m.irq_counter < counter_after_first,
+            "rise after >= 3 M2 cycles must clock the counter; counter={}",
+            m.irq_counter
+        );
     }
 
     #[test]
-    fn test_mmc3_initial_prg_banks() {
-        let rom = create_test_rom(32, 32); // 256KB PRG, 32KB CHR
-        let mapper = Mmc3::new(&rom);
-
-        // $8000 = bank 0, $A000 = bank 1, $C000 = bank 30, $E000 = bank 31
-        assert_eq!(mapper.read_prg(0x8000), 0);
-        assert_eq!(mapper.read_prg(0xA000), 1);
-        assert_eq!(mapper.read_prg(0xC000), 30);
-        assert_eq!(mapper.read_prg(0xE000), 31);
-    }
-
-    #[test]
-    fn test_mmc3_prg_bank_switching() {
-        let rom = create_test_rom(32, 32);
-        let mut mapper = Mmc3::new(&rom);
-
-        // Select bank register 6 (PRG bank 0)
-        mapper.write_prg(0x8000, 6);
-        // Write bank number 5
-        mapper.write_prg(0x8001, 5);
-
-        // $8000 should now be bank 5
-        assert_eq!(mapper.read_prg(0x8000), 5);
-    }
-
-    #[test]
-    fn test_mmc3_prg_mode_swap() {
-        let rom = create_test_rom(32, 32);
-        let mut mapper = Mmc3::new(&rom);
-
-        // Set PRG bank 0 to 5
-        mapper.write_prg(0x8000, 6);
-        mapper.write_prg(0x8001, 5);
-
-        // Verify normal mode: $8000 = bank 5
-        assert_eq!(mapper.read_prg(0x8000), 5);
-        assert_eq!(mapper.read_prg(0xC000), 30);
-
-        // Switch to mode 1 (swap $8000 and $C000)
-        mapper.write_prg(0x8000, 0x46); // bit 6 set = mode 1
-
-        // Now $8000 = fixed second-to-last, $C000 = bank 5
-        assert_eq!(mapper.read_prg(0x8000), 30);
-        assert_eq!(mapper.read_prg(0xC000), 5);
-    }
-
-    #[test]
-    fn test_mmc3_mirroring_control() {
-        let rom = create_test_rom(32, 32);
-        let mut mapper = Mmc3::new(&rom);
-
-        // Initial should be vertical (from ROM header)
-        assert_eq!(mapper.mirroring(), Mirroring::Vertical);
-
-        // Set horizontal
-        mapper.write_prg(0xA000, 0x01);
-        assert_eq!(mapper.mirroring(), Mirroring::Horizontal);
-
-        // Set vertical
-        mapper.write_prg(0xA000, 0x00);
-        assert_eq!(mapper.mirroring(), Mirroring::Vertical);
-    }
-
-    #[test]
-    fn test_mmc3_irq() {
-        let rom = create_test_rom(32, 32);
-        let mut mapper = Mmc3::new(&rom);
-
-        // Set IRQ latch to 3
-        mapper.write_prg(0xC000, 3);
-        // Reload counter
-        mapper.write_prg(0xC001, 0);
-        // Enable IRQ
-        mapper.write_prg(0xE001, 0);
-
-        assert!(!mapper.irq_pending());
-
-        // Clock 3 times - should trigger on 4th
-        mapper.scanline();
-        assert!(!mapper.irq_pending());
-        mapper.scanline();
-        assert!(!mapper.irq_pending());
-        mapper.scanline();
-        assert!(!mapper.irq_pending());
-        mapper.scanline();
-        assert!(mapper.irq_pending());
-
-        // Acknowledge
-        mapper.irq_acknowledge();
-        assert!(!mapper.irq_pending());
-    }
-
-    #[test]
-    fn test_mmc3_irq_disable() {
-        let rom = create_test_rom(32, 32);
-        let mut mapper = Mmc3::new(&rom);
-
-        // Set IRQ latch to 1
-        mapper.write_prg(0xC000, 1);
-        mapper.write_prg(0xC001, 0);
-        mapper.write_prg(0xE001, 0); // Enable
-
-        mapper.scanline();
-        mapper.scanline();
-        assert!(mapper.irq_pending());
-
-        // Disable clears pending
-        mapper.write_prg(0xE000, 0);
-        assert!(!mapper.irq_pending());
-    }
-
-    #[test]
-    fn test_mmc3_prg_ram() {
-        let rom = create_test_rom(32, 32);
-        let mut mapper = Mmc3::new(&rom);
-
-        // PRG-RAM should be enabled by default
-        mapper.write_prg(0x6000, 0x42);
-        assert_eq!(mapper.read_prg(0x6000), 0x42);
-
-        // Disable PRG-RAM
-        mapper.write_prg(0xA001, 0x00); // Disable bit 7
-        assert_eq!(mapper.read_prg(0x6000), 0); // Open bus
-
-        // Re-enable with write protect
-        mapper.write_prg(0xA001, 0xC0); // Enable + protect
-        assert_eq!(mapper.read_prg(0x6000), 0x42); // Can still read
-
-        // Write should be ignored
-        mapper.write_prg(0x6000, 0xFF);
-        assert_eq!(mapper.read_prg(0x6000), 0x42); // Unchanged
-    }
-
-    #[test]
-    fn test_mmc3_battery_ram() {
-        let rom = create_test_rom(32, 32);
-        let mut mapper = Mmc3::new(&rom);
-
-        assert!(mapper.has_battery());
-
-        mapper.write_prg(0x6000, 0xAB);
-        mapper.write_prg(0x6001, 0xCD);
-
-        let save = mapper.battery_ram().unwrap();
-        assert_eq!(save[0], 0xAB);
-        assert_eq!(save[1], 0xCD);
+    fn save_load_round_trip() {
+        let mut m = fresh(8, 8);
+        m.cpu_write(0x8000, 6);
+        m.cpu_write(0x8001, 3);
+        m.cpu_write(0x8000, 7);
+        m.cpu_write(0x8001, 5);
+        m.cpu_write(0xC000, 0x42);
+        m.cpu_write(0xE001, 0);
+        let blob = m.save_state();
+        let mut other = fresh(8, 8);
+        other.load_state(&blob).unwrap();
+        assert_eq!(other.regs, m.regs);
+        assert_eq!(other.bank_select, m.bank_select);
+        assert_eq!(other.irq_reload_value, m.irq_reload_value);
+        assert_eq!(other.irq_enabled, m.irq_enabled);
     }
 }

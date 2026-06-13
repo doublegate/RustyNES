@@ -1,0 +1,732 @@
+//! NES color palette.
+//!
+//! 64-entry palette used by the 2C02 to convert 6-bit NES indices into
+//! visible colors. Source: the FBX "Smooth (FBX)" / Mesen-default palette,
+//! widely cited as the closest practical match to a calibrated Sony PVM
+//! NTSC reference. Stored as `[R, G, B]` triples to avoid any byte-grouping
+//! ambiguity in 24-bit hex literals.
+//!
+//! See also: <https://www.firebrandx.com/nespalette.html> and
+//! `ref-docs/research-report.md` §NTSC composite filter.
+
+/// 64-entry RGB888 NES palette (FBX Smooth). Each entry is `[R, G, B]`.
+pub const NES_PALETTE: [[u8; 3]; 64] = [
+    [0x6A, 0x6D, 0x6A],
+    [0x00, 0x13, 0x80],
+    [0x1E, 0x00, 0x8A],
+    [0x39, 0x00, 0x7A],
+    [0x55, 0x00, 0x56],
+    [0x5A, 0x00, 0x18],
+    [0x4F, 0x10, 0x00],
+    [0x3D, 0x1C, 0x00],
+    [0x25, 0x3A, 0x00],
+    [0x00, 0x4E, 0x00],
+    [0x00, 0x46, 0x00],
+    [0x00, 0x4A, 0x18],
+    [0x00, 0x40, 0x5A],
+    [0x00, 0x00, 0x00],
+    [0x00, 0x00, 0x00],
+    [0x00, 0x00, 0x00],
+    [0xB9, 0xBC, 0xB9],
+    [0x18, 0x4B, 0xCF],
+    [0x4B, 0x24, 0xE8],
+    [0x7C, 0x12, 0xE0],
+    [0xAB, 0x13, 0xB5],
+    [0xB7, 0x21, 0x64],
+    [0xAB, 0x37, 0x18],
+    [0x8B, 0x5A, 0x00],
+    [0x5C, 0x7A, 0x00],
+    [0x20, 0x90, 0x00],
+    [0x00, 0x8F, 0x00],
+    [0x00, 0x8C, 0x42],
+    [0x00, 0x7D, 0x8A],
+    [0x00, 0x00, 0x00],
+    [0x00, 0x00, 0x00],
+    [0x00, 0x00, 0x00],
+    [0xFF, 0xFF, 0xFF],
+    [0x64, 0xA0, 0xFF],
+    [0x84, 0x79, 0xFF],
+    [0xAC, 0x68, 0xFF],
+    [0xDA, 0x60, 0xFF],
+    [0xE2, 0x6B, 0xC5],
+    [0xDC, 0x83, 0x4C],
+    [0xC3, 0x9A, 0x18],
+    [0x9C, 0xB0, 0x00],
+    [0x60, 0xC0, 0x00],
+    [0x30, 0xC8, 0x3C],
+    [0x28, 0xC5, 0x8C],
+    [0x3C, 0xB7, 0xC9],
+    [0x4C, 0x4C, 0x4C],
+    [0x00, 0x00, 0x00],
+    [0x00, 0x00, 0x00],
+    [0xFF, 0xFF, 0xFF],
+    [0xC8, 0xDD, 0xFF],
+    [0xD5, 0xCC, 0xFF],
+    [0xE5, 0xC7, 0xFF],
+    [0xF5, 0xC5, 0xFF],
+    [0xFA, 0xC9, 0xE6],
+    [0xF8, 0xD2, 0xBD],
+    [0xEF, 0xDA, 0x99],
+    [0xE1, 0xE1, 0x88],
+    [0xC8, 0xE7, 0x88],
+    [0xB0, 0xEA, 0x9C],
+    [0xA4, 0xEB, 0xBD],
+    [0xAA, 0xE5, 0xE2],
+    [0xB0, 0xB0, 0xB0],
+    [0x00, 0x00, 0x00],
+    [0x00, 0x00, 0x00],
+];
+
+/// Convert a 6-bit NES color index to an RGBA8 quad.
+#[must_use]
+pub const fn nes_color_to_rgba(idx: u8) -> [u8; 4] {
+    let rgb = NES_PALETTE[(idx & 0x3F) as usize];
+    [rgb[0], rgb[1], rgb[2], 0xFF]
+}
+
+/// Which PPU palette is active for the running console.
+///
+/// The default 2C02 ([`Self::Composite2C02`]) is the standard NES/Famicom
+/// composite palette ([`NES_PALETTE`] + `apply_emphasis`). The other variants
+/// are the hardware RGB palettes baked into the Vs. System / PlayChoice-10
+/// arcade PPUs (the 2C03 / 2C04-xxxx / 2C05), which output digital RGB rather
+/// than composite video. Selected from the NES 2.0 header byte 13 Vs. PPU type
+/// when the console type is Vs. System.
+///
+/// Source: nesdev "PPU palettes" (`https://www.nesdev.org/wiki/PPU_palettes`)
+/// — the per-PPU 9-bit DAC tables converted with `C = 255 * DAC / 7` (integer
+/// truncation, matching the wiki's rendered hex).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Default)]
+pub enum PpuPalette {
+    /// Standard 2C02 NES/Famicom composite palette (default).
+    #[default]
+    Composite2C02,
+    /// 2C03 RGB PPU (PlayChoice-10, Vs. Duck Hunt / Tennis, Sharp C1). Shared
+    /// with the 2C05.
+    Rgb2C03,
+    /// RP2C04-0001 RGB PPU (Vs. System).
+    Rgb2C04_0001,
+    /// RP2C04-0002 RGB PPU (Vs. System).
+    Rgb2C04_0002,
+    /// RP2C04-0003 RGB PPU (Vs. System).
+    Rgb2C04_0003,
+    /// RP2C04-0004 RGB PPU (Vs. System).
+    Rgb2C04_0004,
+    /// 2C05 RGB PPU — uses the 2C03 master palette (the 2C05's quirks are the
+    /// `$2000`/`$2001` swap and the `$2002` identifier, not the colors).
+    Rgb2C05,
+}
+
+impl PpuPalette {
+    /// Returns the backing 64-entry RGB table, or `None` for the composite
+    /// 2C02 (which is handled by [`nes_color_to_rgba`] + `apply_emphasis`).
+    const fn rgb_table(self) -> Option<&'static [[u8; 3]; 64]> {
+        match self {
+            Self::Composite2C02 => None,
+            // The 2C05 shares the 2C03 master palette.
+            Self::Rgb2C03 | Self::Rgb2C05 => Some(&RGB_2C03),
+            Self::Rgb2C04_0001 => Some(&RGB_2C04_0001),
+            Self::Rgb2C04_0002 => Some(&RGB_2C04_0002),
+            Self::Rgb2C04_0003 => Some(&RGB_2C04_0003),
+            Self::Rgb2C04_0004 => Some(&RGB_2C04_0004),
+        }
+    }
+
+    /// True for the composite 2C02 (the default NES/Famicom path).
+    #[must_use]
+    pub const fn is_composite(self) -> bool {
+        matches!(self, Self::Composite2C02)
+    }
+}
+
+/// Convert a 6-bit color index to RGBA8 under the active PPU palette,
+/// applying the palette's emphasis model.
+///
+/// The default [`PpuPalette::Composite2C02`] path is byte-for-byte identical to
+/// `apply_emphasis(nes_color_to_rgba(idx), ...)` so normal NES/Famicom rendering
+/// is unchanged.
+///
+/// On the RGB PPUs (2C03 / 2C04 / 2C05) emphasis works the *opposite* way from
+/// the 2C02: rather than darkening the non-emphasized channels, each set
+/// emphasis bit forces its own channel to full brightness (`0xFF`). Per nesdev
+/// "PPU palettes": "emphasis on the RGB chips works differently; rather than
+/// 'darkening' the specific color chosen, it sets the corresponding channel to
+/// full brightness instead."
+#[must_use]
+pub const fn palette_color_to_rgba(
+    palette: PpuPalette,
+    idx: u8,
+    emph_red: bool,
+    emph_green: bool,
+    emph_blue: bool,
+) -> [u8; 4] {
+    match palette.rgb_table() {
+        None => {
+            // Default composite 2C02: byte-identical to the legacy path.
+            let rgba = nes_color_to_rgba(idx);
+            apply_emphasis(rgba, emph_red, emph_green, emph_blue)
+        }
+        Some(table) => {
+            let rgb = table[(idx & 0x3F) as usize];
+            let mut out = [rgb[0], rgb[1], rgb[2], 0xFF];
+            // RGB-PPU emphasis: force the emphasized channel to full brightness.
+            if emph_red {
+                out[0] = 0xFF;
+            }
+            if emph_green {
+                out[1] = 0xFF;
+            }
+            if emph_blue {
+                out[2] = 0xFF;
+            }
+            out
+        }
+    }
+}
+
+/// v2.8.0 Phase 4 — build the 512-entry `(emphasis << 6) | color` → RGBA8
+/// lookup the PPU's pixel-emit path uses.
+///
+/// Emphasis bit layout matches PPUMASK bits 7-5 shifted down: bit 0 = red,
+/// bit 1 = green, bit 2 = blue. Built from [`palette_color_to_rgba`] (the
+/// exact function the per-pixel path used to call), so the table is
+/// byte-identical to the direct computation by construction.
+#[must_use]
+pub const fn build_rgba_lut(palette: PpuPalette) -> [[u8; 4]; 512] {
+    let mut lut = [[0u8; 4]; 512];
+    let mut e = 0usize;
+    while e < 8 {
+        let mut c = 0usize;
+        while c < 64 {
+            #[allow(clippy::cast_possible_truncation)] // c < 64.
+            let idx = c as u8;
+            lut[(e << 6) | c] =
+                palette_color_to_rgba(palette, idx, e & 1 != 0, e & 2 != 0, e & 4 != 0);
+            c += 1;
+        }
+        e += 1;
+    }
+    lut
+}
+
+/// Apply BGR emphasis (PPUMASK bits 7-5) to an RGBA8 pixel.
+///
+/// Per nesdev: emphasis dims the *non-emphasized* channels by ~25%. We
+/// apply 13/16 (~ 0.81) per non-active channel — close enough for visual
+/// regression without floating point.
+#[must_use]
+pub const fn apply_emphasis(
+    mut rgba: [u8; 4],
+    emph_red: bool,
+    emph_green: bool,
+    emph_blue: bool,
+) -> [u8; 4] {
+    if emph_red {
+        rgba[1] = ((rgba[1] as u16 * 13) >> 4) as u8;
+        rgba[2] = ((rgba[2] as u16 * 13) >> 4) as u8;
+    }
+    if emph_green {
+        rgba[0] = ((rgba[0] as u16 * 13) >> 4) as u8;
+        rgba[2] = ((rgba[2] as u16 * 13) >> 4) as u8;
+    }
+    if emph_blue {
+        rgba[0] = ((rgba[0] as u16 * 13) >> 4) as u8;
+        rgba[1] = ((rgba[1] as u16 * 13) >> 4) as u8;
+    }
+    rgba
+}
+
+/// 2C03 / 2C05 RGB PPU palette (PlayChoice-10, Vs. Duck Hunt/Tennis, Sharp C1).
+/// nesdev "PPU palettes" DAC table, `C = 255 * DAC / 7` (integer truncation).
+/// The trailing decimal comment on each row is the raw 9-bit DAC triple.
+const RGB_2C03: [[u8; 3]; 64] = [
+    [0x6D, 0x6D, 0x6D], // 333
+    [0x00, 0x24, 0x91], // 014
+    [0x00, 0x00, 0xDA], // 006
+    [0x6D, 0x48, 0xDA], // 326
+    [0x91, 0x00, 0x6D], // 403
+    [0xB6, 0x00, 0x6D], // 503
+    [0xB6, 0x24, 0x00], // 510
+    [0x91, 0x48, 0x00], // 420
+    [0x6D, 0x48, 0x00], // 320
+    [0x24, 0x48, 0x00], // 120
+    [0x00, 0x6D, 0x24], // 031
+    [0x00, 0x91, 0x00], // 040
+    [0x00, 0x48, 0x48], // 022
+    [0x00, 0x00, 0x00], // 000
+    [0x00, 0x00, 0x00], // 000
+    [0x00, 0x00, 0x00], // 000
+    [0xB6, 0xB6, 0xB6], // 555
+    [0x00, 0x6D, 0xDA], // 036
+    [0x00, 0x48, 0xFF], // 027
+    [0x91, 0x00, 0xFF], // 407
+    [0xB6, 0x00, 0xFF], // 507
+    [0xFF, 0x00, 0x91], // 704
+    [0xFF, 0x00, 0x00], // 700
+    [0xDA, 0x6D, 0x00], // 630
+    [0x91, 0x6D, 0x00], // 430
+    [0x24, 0x91, 0x00], // 140
+    [0x00, 0x91, 0x00], // 040
+    [0x00, 0xB6, 0x6D], // 053
+    [0x00, 0x91, 0x91], // 044
+    [0x00, 0x00, 0x00], // 000
+    [0x00, 0x00, 0x00], // 000
+    [0x00, 0x00, 0x00], // 000
+    [0xFF, 0xFF, 0xFF], // 777
+    [0x6D, 0xB6, 0xFF], // 357
+    [0x91, 0x91, 0xFF], // 447
+    [0xDA, 0x6D, 0xFF], // 637
+    [0xFF, 0x00, 0xFF], // 707
+    [0xFF, 0x6D, 0xFF], // 737
+    [0xFF, 0x91, 0x00], // 740
+    [0xFF, 0xB6, 0x00], // 750
+    [0xDA, 0xDA, 0x00], // 660
+    [0x6D, 0xDA, 0x00], // 360
+    [0x00, 0xFF, 0x00], // 070
+    [0x48, 0xFF, 0xDA], // 276
+    [0x00, 0xFF, 0xFF], // 077
+    [0x00, 0x00, 0x00], // 000
+    [0x00, 0x00, 0x00], // 000
+    [0x00, 0x00, 0x00], // 000
+    [0xFF, 0xFF, 0xFF], // 777
+    [0xB6, 0xDA, 0xFF], // 567
+    [0xDA, 0xB6, 0xFF], // 657
+    [0xFF, 0xB6, 0xFF], // 757
+    [0xFF, 0x91, 0xFF], // 747
+    [0xFF, 0xB6, 0xB6], // 755
+    [0xFF, 0xDA, 0x91], // 764
+    [0xFF, 0xFF, 0x48], // 772
+    [0xFF, 0xFF, 0x6D], // 773
+    [0xB6, 0xFF, 0x48], // 572
+    [0x91, 0xFF, 0x6D], // 473
+    [0x48, 0xFF, 0xDA], // 276
+    [0x91, 0xDA, 0xFF], // 467
+    [0x00, 0x00, 0x00], // 000
+    [0x00, 0x00, 0x00], // 000
+    [0x00, 0x00, 0x00], // 000
+];
+
+/// RP2C04-0001 RGB PPU palette (Vs. System). See [`RGB_2C03`] for the source.
+const RGB_2C04_0001: [[u8; 3]; 64] = [
+    [0xFF, 0xB6, 0xB6], // 755
+    [0xDA, 0x6D, 0xFF], // 637
+    [0xFF, 0x00, 0x00], // 700
+    [0x91, 0x91, 0xFF], // 447
+    [0x00, 0x91, 0x91], // 044
+    [0x24, 0x48, 0x00], // 120
+    [0x48, 0x48, 0x48], // 222
+    [0xFF, 0x00, 0x91], // 704
+    [0xFF, 0xFF, 0xFF], // 777
+    [0x6D, 0x6D, 0x6D], // 333
+    [0xFF, 0xB6, 0x00], // 750
+    [0xB6, 0x00, 0x6D], // 503
+    [0x91, 0x00, 0x6D], // 403
+    [0xDA, 0xDA, 0x00], // 660
+    [0x6D, 0x48, 0x00], // 320
+    [0xFF, 0xFF, 0xFF], // 777
+    [0x6D, 0xB6, 0xFF], // 357
+    [0xDA, 0xB6, 0x6D], // 653
+    [0x6D, 0x24, 0x00], // 310
+    [0x6D, 0xDA, 0x00], // 360
+    [0x91, 0xDA, 0xFF], // 467
+    [0xDA, 0xB6, 0xFF], // 657
+    [0xFF, 0xDA, 0x91], // 764
+    [0x00, 0x48, 0xFF], // 027
+    [0xFF, 0xDA, 0x00], // 760
+    [0x48, 0xFF, 0xDA], // 276
+    [0x00, 0x00, 0x00], // 000
+    [0x48, 0x00, 0x00], // 200
+    [0xDA, 0xDA, 0xDA], // 666
+    [0x91, 0x91, 0x91], // 444
+    [0xFF, 0x00, 0xFF], // 707
+    [0x00, 0x24, 0x91], // 014
+    [0x00, 0x00, 0x6D], // 003
+    [0xB6, 0xDA, 0xFF], // 567
+    [0xFF, 0xB6, 0xFF], // 757
+    [0x00, 0xFF, 0x00], // 070
+    [0x00, 0xFF, 0xFF], // 077
+    [0x00, 0x48, 0x48], // 022
+    [0x00, 0xB6, 0x6D], // 053
+    [0xB6, 0x00, 0xFF], // 507
+    [0x00, 0x00, 0x00], // 000
+    [0x91, 0x48, 0x00], // 420
+    [0xFF, 0x91, 0xFF], // 747
+    [0xB6, 0x24, 0x00], // 510
+    [0x91, 0x00, 0xFF], // 407
+    [0x00, 0x00, 0xDA], // 006
+    [0xFF, 0x91, 0x00], // 740
+    [0x00, 0x00, 0x00], // 000
+    [0x00, 0x00, 0x00], // 000
+    [0x24, 0x91, 0x00], // 140
+    [0xB6, 0xB6, 0xB6], // 555
+    [0x00, 0x6D, 0x24], // 031
+    [0xB6, 0xFF, 0x48], // 572
+    [0x6D, 0x48, 0xDA], // 326
+    [0xFF, 0xFF, 0x00], // 770
+    [0xDA, 0x6D, 0x00], // 630
+    [0x00, 0x48, 0x00], // 020
+    [0x00, 0x6D, 0xDA], // 036
+    [0x00, 0x91, 0x00], // 040
+    [0x24, 0x24, 0x24], // 111
+    [0xFF, 0xFF, 0x6D], // 773
+    [0xFF, 0x6D, 0xFF], // 737
+    [0x91, 0x6D, 0x00], // 430
+    [0x91, 0xFF, 0x6D], // 473
+];
+
+/// RP2C04-0002 RGB PPU palette (Vs. System). See [`RGB_2C03`] for the source.
+const RGB_2C04_0002: [[u8; 3]; 64] = [
+    [0x00, 0x00, 0x00], // 000
+    [0xFF, 0xB6, 0x00], // 750
+    [0x91, 0x6D, 0x00], // 430
+    [0xB6, 0xFF, 0x48], // 572
+    [0x91, 0xFF, 0x6D], // 473
+    [0xFF, 0x6D, 0xFF], // 737
+    [0x00, 0x91, 0x91], // 044
+    [0xB6, 0xDA, 0xFF], // 567
+    [0xFF, 0x00, 0x00], // 700
+    [0x91, 0x00, 0xFF], // 407
+    [0xFF, 0xFF, 0x6D], // 773
+    [0xFF, 0x91, 0xFF], // 747
+    [0xFF, 0xFF, 0xFF], // 777
+    [0xDA, 0x6D, 0xFF], // 637
+    [0x91, 0xDA, 0xFF], // 467
+    [0x00, 0x91, 0x00], // 040
+    [0x00, 0x48, 0x00], // 020
+    [0x6D, 0xB6, 0xFF], // 357
+    [0xB6, 0x24, 0x00], // 510
+    [0xDA, 0xDA, 0xDA], // 666
+    [0x00, 0xB6, 0x6D], // 053
+    [0x6D, 0xDA, 0x00], // 360
+    [0x48, 0x00, 0x00], // 200
+    [0x91, 0x91, 0xFF], // 447
+    [0x48, 0x48, 0x48], // 222
+    [0xFF, 0x00, 0xFF], // 707
+    [0x00, 0x00, 0x6D], // 003
+    [0x48, 0xFF, 0xDA], // 276
+    [0xDA, 0xB6, 0xFF], // 657
+    [0x6D, 0x48, 0x00], // 320
+    [0x00, 0x00, 0x00], // 000
+    [0x6D, 0x48, 0xDA], // 326
+    [0x91, 0x00, 0x6D], // 403
+    [0xFF, 0xDA, 0x91], // 764
+    [0xFF, 0x91, 0x00], // 740
+    [0xFF, 0xB6, 0xFF], // 757
+    [0x00, 0x6D, 0xDA], // 036
+    [0x6D, 0x24, 0x00], // 310
+    [0xB6, 0xB6, 0xB6], // 555
+    [0x00, 0x00, 0xDA], // 006
+    [0xB6, 0x00, 0xFF], // 507
+    [0xFF, 0xDA, 0x00], // 760
+    [0x6D, 0x6D, 0x6D], // 333
+    [0x24, 0x48, 0x00], // 120
+    [0x00, 0x48, 0xFF], // 027
+    [0x00, 0x00, 0x00], // 000
+    [0xDA, 0xDA, 0x00], // 660
+    [0xFF, 0xFF, 0xFF], // 777
+    [0xDA, 0xB6, 0x6D], // 653
+    [0x24, 0x24, 0x24], // 111
+    [0x00, 0xFF, 0x00], // 070
+    [0xDA, 0x6D, 0x00], // 630
+    [0x00, 0x48, 0x48], // 022
+    [0x00, 0x24, 0x91], // 014
+    [0xFF, 0x00, 0x91], // 704
+    [0x24, 0x91, 0x00], // 140
+    [0x00, 0x00, 0x00], // 000
+    [0x00, 0xFF, 0xFF], // 077
+    [0x91, 0x48, 0x00], // 420
+    [0xFF, 0xFF, 0x00], // 770
+    [0xFF, 0xB6, 0xB6], // 755
+    [0xB6, 0x00, 0x6D], // 503
+    [0x00, 0x6D, 0x24], // 031
+    [0x91, 0x91, 0x91], // 444
+];
+
+/// RP2C04-0003 RGB PPU palette (Vs. System). See [`RGB_2C03`] for the source.
+const RGB_2C04_0003: [[u8; 3]; 64] = [
+    [0xB6, 0x00, 0xFF], // 507
+    [0xFF, 0x6D, 0xFF], // 737
+    [0x91, 0xFF, 0x6D], // 473
+    [0xB6, 0xB6, 0xB6], // 555
+    [0x00, 0x91, 0x00], // 040
+    [0xFF, 0xFF, 0xFF], // 777
+    [0xB6, 0xDA, 0xFF], // 567
+    [0x24, 0x48, 0x00], // 120
+    [0x00, 0x24, 0x91], // 014
+    [0x00, 0x00, 0x00], // 000
+    [0xFF, 0xDA, 0x91], // 764
+    [0x6D, 0x48, 0x00], // 320
+    [0xFF, 0x00, 0x91], // 704
+    [0xDA, 0xDA, 0xDA], // 666
+    [0xDA, 0xB6, 0x6D], // 653
+    [0x91, 0xDA, 0xFF], // 467
+    [0x91, 0x91, 0xFF], // 447
+    [0x00, 0x91, 0x91], // 044
+    [0xB6, 0x00, 0x6D], // 503
+    [0x00, 0x48, 0xFF], // 027
+    [0x24, 0x91, 0x00], // 140
+    [0x91, 0x6D, 0x00], // 430
+    [0xDA, 0x6D, 0x00], // 630
+    [0x00, 0xB6, 0x6D], // 053
+    [0x6D, 0x6D, 0x6D], // 333
+    [0x6D, 0x48, 0xDA], // 326
+    [0x00, 0x00, 0x00], // 000
+    [0x00, 0x00, 0xDA], // 006
+    [0xFF, 0x00, 0x00], // 700
+    [0xB6, 0x24, 0x00], // 510
+    [0xFF, 0x91, 0xFF], // 747
+    [0xFF, 0xB6, 0xB6], // 755
+    [0xDA, 0x6D, 0xFF], // 637
+    [0x00, 0x48, 0x00], // 020
+    [0x00, 0x00, 0x6D], // 003
+    [0xFF, 0xFF, 0x00], // 770
+    [0x24, 0x24, 0x24], // 111
+    [0xFF, 0xB6, 0x00], // 750
+    [0xFF, 0x91, 0x00], // 740
+    [0xFF, 0xFF, 0xFF], // 777
+    [0x6D, 0xDA, 0x00], // 360
+    [0x91, 0x00, 0x6D], // 403
+    [0x6D, 0xB6, 0xFF], // 357
+    [0xFF, 0x00, 0xFF], // 707
+    [0x00, 0x6D, 0xDA], // 036
+    [0x91, 0x91, 0x91], // 444
+    [0x00, 0x00, 0x00], // 000
+    [0x6D, 0x24, 0x00], // 310
+    [0x00, 0xFF, 0xFF], // 077
+    [0x48, 0x00, 0x00], // 200
+    [0xB6, 0xFF, 0x48], // 572
+    [0xFF, 0xB6, 0xFF], // 757
+    [0x91, 0x48, 0x00], // 420
+    [0x00, 0xFF, 0x00], // 070
+    [0xDA, 0xDA, 0x00], // 660
+    [0x48, 0x48, 0x48], // 222
+    [0x00, 0x6D, 0x24], // 031
+    [0x00, 0x00, 0x00], // 000
+    [0xDA, 0xB6, 0xFF], // 657
+    [0xFF, 0xFF, 0x6D], // 773
+    [0x91, 0x00, 0xFF], // 407
+    [0x48, 0xFF, 0xDA], // 276
+    [0xFF, 0xDA, 0x00], // 760
+    [0x00, 0x48, 0x48], // 022
+];
+
+/// RP2C04-0004 RGB PPU palette (Vs. System). See [`RGB_2C03`] for the source.
+const RGB_2C04_0004: [[u8; 3]; 64] = [
+    [0x91, 0x6D, 0x00], // 430
+    [0x6D, 0x48, 0xDA], // 326
+    [0x00, 0x91, 0x91], // 044
+    [0xDA, 0xDA, 0x00], // 660
+    [0x00, 0x00, 0x00], // 000
+    [0xFF, 0xB6, 0xB6], // 755
+    [0x00, 0x24, 0x91], // 014
+    [0xDA, 0x6D, 0x00], // 630
+    [0xB6, 0xB6, 0xB6], // 555
+    [0x6D, 0x24, 0x00], // 310
+    [0x00, 0xFF, 0x00], // 070
+    [0x00, 0x00, 0x6D], // 003
+    [0xFF, 0xDA, 0x91], // 764
+    [0xFF, 0xFF, 0x00], // 770
+    [0x00, 0x91, 0x00], // 040
+    [0xB6, 0xFF, 0x48], // 572
+    [0xFF, 0x6D, 0xFF], // 737
+    [0x48, 0x00, 0x00], // 200
+    [0x00, 0x48, 0xFF], // 027
+    [0xFF, 0x91, 0xFF], // 747
+    [0x00, 0x00, 0x00], // 000
+    [0x48, 0x48, 0x48], // 222
+    [0xB6, 0x24, 0x00], // 510
+    [0xFF, 0x91, 0x00], // 740
+    [0xDA, 0xB6, 0x6D], // 653
+    [0x00, 0xB6, 0x6D], // 053
+    [0x91, 0x91, 0xFF], // 447
+    [0x24, 0x91, 0x00], // 140
+    [0x91, 0x00, 0x6D], // 403
+    [0x00, 0x00, 0x00], // 000
+    [0x91, 0xFF, 0x6D], // 473
+    [0x6D, 0xB6, 0xFF], // 357
+    [0xB6, 0x00, 0x6D], // 503
+    [0x00, 0x6D, 0x24], // 031
+    [0x91, 0x48, 0x00], // 420
+    [0x00, 0x00, 0xDA], // 006
+    [0x91, 0x00, 0xFF], // 407
+    [0xB6, 0x00, 0xFF], // 507
+    [0x6D, 0x6D, 0x6D], // 333
+    [0xFF, 0x00, 0x91], // 704
+    [0x00, 0x48, 0x48], // 022
+    [0xDA, 0xDA, 0xDA], // 666
+    [0x00, 0x6D, 0xDA], // 036
+    [0x00, 0x48, 0x00], // 020
+    [0x24, 0x24, 0x24], // 111
+    [0xFF, 0xFF, 0x6D], // 773
+    [0x91, 0x91, 0x91], // 444
+    [0xFF, 0x00, 0xFF], // 707
+    [0xFF, 0xB6, 0xFF], // 757
+    [0xFF, 0xFF, 0xFF], // 777
+    [0x6D, 0x48, 0x00], // 320
+    [0xFF, 0x00, 0x00], // 700
+    [0xFF, 0xDA, 0x00], // 760
+    [0x48, 0xFF, 0xDA], // 276
+    [0xFF, 0xFF, 0xFF], // 777
+    [0x91, 0xDA, 0xFF], // 467
+    [0x00, 0x00, 0x00], // 000
+    [0xFF, 0xB6, 0x00], // 750
+    [0xDA, 0x6D, 0xFF], // 637
+    [0xB6, 0xDA, 0xFF], // 567
+    [0x6D, 0xDA, 0x00], // 360
+    [0xDA, 0xB6, 0xFF], // 657
+    [0x00, 0xFF, 0xFF], // 077
+    [0x24, 0x48, 0x00], // 120
+];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nes_color_indices_round_trip() {
+        // Index 0x0F = $0F = black.
+        let [r, g, b, a] = nes_color_to_rgba(0x0F);
+        assert_eq!(a, 0xFF);
+        assert_eq!((r, g, b), (0, 0, 0));
+    }
+
+    #[test]
+    fn nes_color_index_30_is_white() {
+        let [r, g, b, _] = nes_color_to_rgba(0x30);
+        assert_eq!((r, g, b), (0xFF, 0xFF, 0xFF));
+    }
+
+    #[test]
+    fn emphasis_dims_other_channels() {
+        let base = nes_color_to_rgba(0x30);
+        let red = apply_emphasis(base, true, false, false);
+        assert_eq!(red[0], base[0]);
+        assert!(red[1] <= base[1]);
+        assert!(red[2] <= base[2]);
+    }
+
+    #[test]
+    fn composite_palette_is_byte_identical_to_legacy_path() {
+        // The default PpuPalette path MUST equal apply_emphasis(nes_color_to_rgba)
+        // for every index and every emphasis combination.
+        for idx in 0u8..64 {
+            for emask in 0u8..8 {
+                let (r, g, b) = (emask & 1 != 0, emask & 2 != 0, emask & 4 != 0);
+                let legacy = apply_emphasis(nes_color_to_rgba(idx), r, g, b);
+                let routed = palette_color_to_rgba(PpuPalette::Composite2C02, idx, r, g, b);
+                assert_eq!(legacy, routed, "idx={idx} emask={emask}");
+            }
+        }
+    }
+
+    #[test]
+    fn rgb_2c03_documented_entries() {
+        // nesdev "PPU palettes" 2C03/2C05 table, C = 255*DAC/7 truncation.
+        // $00 = 333 = #6D6D6D, $01 = 014 = #002491, $0F = 000 = #000000,
+        // $20 = 777 = #FFFFFF, $16 = 700 = #FF0000.
+        let none = (false, false, false);
+        assert_eq!(
+            palette_color_to_rgba(PpuPalette::Rgb2C03, 0x00, none.0, none.1, none.2),
+            [0x6D, 0x6D, 0x6D, 0xFF]
+        );
+        assert_eq!(
+            palette_color_to_rgba(PpuPalette::Rgb2C03, 0x01, none.0, none.1, none.2),
+            [0x00, 0x24, 0x91, 0xFF]
+        );
+        assert_eq!(
+            palette_color_to_rgba(PpuPalette::Rgb2C03, 0x0F, none.0, none.1, none.2),
+            [0x00, 0x00, 0x00, 0xFF]
+        );
+        assert_eq!(
+            palette_color_to_rgba(PpuPalette::Rgb2C03, 0x20, none.0, none.1, none.2),
+            [0xFF, 0xFF, 0xFF, 0xFF]
+        );
+        assert_eq!(
+            palette_color_to_rgba(PpuPalette::Rgb2C03, 0x16, none.0, none.1, none.2),
+            [0xFF, 0x00, 0x00, 0xFF]
+        );
+    }
+
+    #[test]
+    fn rgb_2c05_shares_2c03_table() {
+        for idx in 0u8..64 {
+            assert_eq!(
+                palette_color_to_rgba(PpuPalette::Rgb2C05, idx, false, false, false),
+                palette_color_to_rgba(PpuPalette::Rgb2C03, idx, false, false, false),
+                "idx={idx}"
+            );
+        }
+    }
+
+    #[test]
+    fn rgb_2c04_first_entries_match_wiki() {
+        let none = (false, false, false);
+        // First entry of each 2C04 permutation (index $00).
+        assert_eq!(
+            palette_color_to_rgba(PpuPalette::Rgb2C04_0001, 0x00, none.0, none.1, none.2),
+            [0xFF, 0xB6, 0xB6, 0xFF] // 755
+        );
+        assert_eq!(
+            palette_color_to_rgba(PpuPalette::Rgb2C04_0002, 0x00, none.0, none.1, none.2),
+            [0x00, 0x00, 0x00, 0xFF] // 000
+        );
+        assert_eq!(
+            palette_color_to_rgba(PpuPalette::Rgb2C04_0003, 0x00, none.0, none.1, none.2),
+            [0xB6, 0x00, 0xFF, 0xFF] // 507
+        );
+        assert_eq!(
+            palette_color_to_rgba(PpuPalette::Rgb2C04_0004, 0x00, none.0, none.1, none.2),
+            [0x91, 0x6D, 0x00, 0xFF] // 430
+        );
+    }
+
+    #[test]
+    fn rgb_emphasis_forces_channel_full_brightness() {
+        // RGB PPUs: an emphasis bit forces ITS channel to 0xFF (opposite of
+        // the 2C02's darkening). Start from index $00 = #6D6D6D on the 2C03.
+        let base = palette_color_to_rgba(PpuPalette::Rgb2C03, 0x00, false, false, false);
+        assert_eq!(base, [0x6D, 0x6D, 0x6D, 0xFF]);
+        let red = palette_color_to_rgba(PpuPalette::Rgb2C03, 0x00, true, false, false);
+        assert_eq!(red, [0xFF, 0x6D, 0x6D, 0xFF]);
+        let green = palette_color_to_rgba(PpuPalette::Rgb2C03, 0x00, false, true, false);
+        assert_eq!(green, [0x6D, 0xFF, 0x6D, 0xFF]);
+        let blue = palette_color_to_rgba(PpuPalette::Rgb2C03, 0x00, false, false, true);
+        assert_eq!(blue, [0x6D, 0x6D, 0xFF, 0xFF]);
+        let all = palette_color_to_rgba(PpuPalette::Rgb2C03, 0x00, true, true, true);
+        assert_eq!(all, [0xFF, 0xFF, 0xFF, 0xFF]);
+    }
+
+    #[test]
+    fn composite_default_and_is_composite() {
+        assert_eq!(PpuPalette::default(), PpuPalette::Composite2C02);
+        assert!(PpuPalette::Composite2C02.is_composite());
+        assert!(!PpuPalette::Rgb2C03.is_composite());
+        assert!(!PpuPalette::Rgb2C05.is_composite());
+    }
+
+    /// v2.8.0 Phase 4 — the pixel-emit LUT must equal the direct
+    /// computation for EVERY (palette, emphasis, color) combination; the
+    /// PPU's per-pixel path depends on this byte-for-byte.
+    #[test]
+    fn rgba_lut_matches_direct_computation_exhaustively() {
+        for palette in [
+            PpuPalette::Composite2C02,
+            PpuPalette::Rgb2C03,
+            PpuPalette::Rgb2C04_0001,
+            PpuPalette::Rgb2C04_0002,
+            PpuPalette::Rgb2C04_0003,
+            PpuPalette::Rgb2C04_0004,
+            PpuPalette::Rgb2C05,
+        ] {
+            let lut = build_rgba_lut(palette);
+            for e in 0..8usize {
+                for c in 0..64usize {
+                    #[allow(clippy::cast_possible_truncation)]
+                    let direct =
+                        palette_color_to_rgba(palette, c as u8, e & 1 != 0, e & 2 != 0, e & 4 != 0);
+                    assert_eq!(lut[(e << 6) | c], direct, "{palette:?} e={e} c={c}");
+                }
+            }
+        }
+    }
+}

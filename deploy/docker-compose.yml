@@ -1,0 +1,60 @@
+# RustyNES v2 — browser-netplay deployment bundle (v2.7.0)
+#
+# Three services wired together:
+#   - signaling : the WebRTC signaling relay (ws://signaling:9000), built from
+#                 the nes-netplay `signaling_server` example.
+#   - caddy     : a TLS-terminating reverse proxy that exposes the relay as
+#                 wss://<DOMAIN>/  (an https page cannot open a plain ws://).
+#   - coturn    : a STUN + TURN server for NAT traversal (browsers point their
+#                 RtcConfiguration iceServers at it via [netplay] stun_servers).
+#
+# Quick start (local, self-signed TLS via Caddy's internal CA):
+#   cd deploy && DOMAIN=localhost docker compose up --build
+# Public deploy: set DOMAIN to a real hostname with an A/AAAA record; Caddy then
+# provisions a Let's Encrypt cert automatically. See deploy/README.md.
+
+services:
+  signaling:
+    build:
+      # Build context is the workspace root so the Dockerfile can copy the whole
+      # cargo workspace (the example depends on the nes-netplay crate).
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: rustynes-signaling:latest
+    restart: unless-stopped
+    # Not published directly — only Caddy reaches it, on the internal network.
+    expose:
+      - "9000"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - signaling
+    environment:
+      # The public hostname Caddy serves wss:// on. `localhost` uses Caddy's
+      # internal self-signed CA (good for a local two-tab test); a real domain
+      # triggers automatic Let's Encrypt issuance.
+      DOMAIN: ${DOMAIN:-localhost}
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+  coturn:
+    image: coturn/coturn:latest
+    restart: unless-stopped
+    # STUN/TURN needs host networking for the relay port range to work without
+    # per-port mapping; on Linux this is simplest. (On Docker Desktop, map the
+    # ports explicitly instead — see deploy/README.md.)
+    network_mode: host
+    volumes:
+      - ./turnserver.conf:/etc/coturn/turnserver.conf:ro
+    command: ["-c", "/etc/coturn/turnserver.conf"]
+
+volumes:
+  caddy_data:
+  caddy_config:

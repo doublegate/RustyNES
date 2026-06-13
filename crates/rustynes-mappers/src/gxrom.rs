@@ -1,249 +1,196 @@
-//! GxROM Mapper (Mapper 66).
+//! `GxROM` (iNES mapper 66) implementation.
 //!
-//! A simple mapper with PRG-ROM and CHR-ROM banking.
-//! Used by games like Super Mario Bros. + Duck Hunt, Gumshoe, and Dragon Power.
-//!
-//! Memory layout:
-//! - PRG-ROM: 32KB switchable bank at $8000-$FFFF
-//! - CHR-ROM: 8KB switchable bank at PPU $0000-$1FFF
-//! - No PRG-RAM
-//!
-//! Bank selection: Write to $8000-$FFFF
-//! - Bits 0-1: Select 8KB CHR bank
-//! - Bits 4-5: Select 32KB PRG bank
+//! `GxROM` (`GNROM`, `MHROM`) selects a 32 KiB PRG bank from bits 5-4 of
+//! the bank-select write and an 8 KiB CHR-ROM bank from bits 1-0. Bus
+//! conflicts are present (per `docs/mappers.md` §Bus conflicts).
+//! Mirroring is fixed by the iNES header; no IRQ.
 
-use crate::mapper::{Mapper, Mirroring};
-use crate::rom::Rom;
+use crate::cartridge::Mirroring;
+use crate::mapper::{Mapper, MapperCaps, MapperError};
+use alloc::{boxed::Box, vec::Vec};
+use alloc::{format, vec};
 
-#[cfg(not(feature = "std"))]
-use alloc::vec::Vec;
+const PRG_BANK_32K: usize = 0x8000;
+const CHR_BANK_8K: usize = 0x2000;
+const NAMETABLE_SIZE: usize = 0x0400;
+const NAMETABLE_SIZE_U16: u16 = 0x0400;
 
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
+const SAVE_STATE_VERSION: u8 = 1;
 
-/// GxROM mapper implementation.
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct Gxrom {
-    /// PRG-ROM data.
-    prg_rom: Vec<u8>,
-    /// CHR-ROM/RAM data.
-    chr: Vec<u8>,
-    /// Whether CHR is RAM (writable).
-    chr_is_ram: bool,
-    /// Number of PRG-ROM banks (32KB each).
-    prg_banks: usize,
-    /// Number of CHR banks (8KB each).
-    chr_banks: usize,
-    /// Currently selected PRG bank.
+/// `GxROM` mapper.
+pub struct GxRom {
+    prg_rom: Box<[u8]>,
+    chr_rom: Box<[u8]>,
+    vram: Box<[u8]>,
     prg_bank: u8,
-    /// Currently selected CHR bank.
     chr_bank: u8,
-    /// Nametable mirroring mode.
     mirroring: Mirroring,
 }
 
-impl Gxrom {
-    /// Create a new GxROM mapper from ROM data.
-    #[must_use]
-    pub fn new(rom: &Rom) -> Self {
-        let prg_banks = rom.prg_rom.len() / 32768;
-        let chr_is_ram = rom.chr_rom.is_empty();
-        let chr = if chr_is_ram {
-            vec![0u8; 8192]
-        } else {
-            rom.chr_rom.clone()
-        };
-        let chr_banks = if chr_is_ram { 1 } else { chr.len() / 8192 };
-
-        Self {
-            prg_rom: rom.prg_rom.clone(),
-            chr,
-            chr_is_ram,
-            prg_banks: prg_banks.max(1),
-            chr_banks: chr_banks.max(1),
+impl GxRom {
+    /// Construct a new `GxROM` mapper.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MapperError::Invalid`] when sizes don't match.
+    pub fn new(
+        prg_rom: Box<[u8]>,
+        chr_rom: Box<[u8]>,
+        mirroring: Mirroring,
+    ) -> Result<Self, MapperError> {
+        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_32K != 0 {
+            return Err(MapperError::Invalid(format!(
+                "GxROM PRG-ROM size {} is not a non-zero multiple of 32 KiB",
+                prg_rom.len()
+            )));
+        }
+        if chr_rom.is_empty() || chr_rom.len() % CHR_BANK_8K != 0 {
+            return Err(MapperError::Invalid(format!(
+                "GxROM CHR-ROM size {} is not a non-zero multiple of 8 KiB",
+                chr_rom.len()
+            )));
+        }
+        Ok(Self {
+            prg_rom,
+            chr_rom,
+            vram: vec![0u8; 2 * NAMETABLE_SIZE].into_boxed_slice(),
             prg_bank: 0,
             chr_bank: 0,
-            mirroring: rom.header.mirroring,
-        }
+            mirroring,
+        })
+    }
+
+    const fn nametable_offset(&self, addr: u16) -> usize {
+        let table = (((addr - 0x2000) / NAMETABLE_SIZE_U16) & 0x03) as u8;
+        let local = (addr as usize) & (NAMETABLE_SIZE - 1);
+        let physical = self.mirroring.physical_bank(table);
+        physical * NAMETABLE_SIZE + local
+    }
+
+    fn read_prg(&self, addr: u16) -> u8 {
+        let bank_count = (self.prg_rom.len() / PRG_BANK_32K).max(1);
+        let bank = (self.prg_bank as usize) % bank_count;
+        let off = (addr - 0x8000) as usize;
+        self.prg_rom[bank * PRG_BANK_32K + off]
     }
 }
 
-impl Mapper for Gxrom {
-    fn read_prg(&self, addr: u16) -> u8 {
+impl Mapper for GxRom {
+    // v2.8.0 Phase 4 — no per-cycle hooks (no IRQ, no audio): the bus
+    // skips all four per-CPU-cycle dispatches for this board.
+    fn caps(&self) -> MapperCaps {
+        MapperCaps::NONE
+    }
+
+    fn cpu_read(&mut self, addr: u16) -> u8 {
+        if (0x8000..=0xFFFF).contains(&addr) {
+            self.read_prg(addr)
+        } else {
+            0
+        }
+    }
+
+    fn cpu_write(&mut self, addr: u16, value: u8) {
+        if (0x8000..=0xFFFF).contains(&addr) {
+            // Bus conflict.
+            let prg_byte = self.read_prg(addr);
+            let effective = value & prg_byte;
+            self.prg_bank = (effective >> 4) & 0x03;
+            self.chr_bank = effective & 0x03;
+        }
+    }
+
+    fn ppu_read(&mut self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
         match addr {
-            0x6000..=0x7FFF => {
-                // No PRG-RAM
-                0
+            0x0000..=0x1FFF => {
+                let bank_count = (self.chr_rom.len() / CHR_BANK_8K).max(1);
+                let bank = (self.chr_bank as usize) % bank_count;
+                self.chr_rom[bank * CHR_BANK_8K + (addr as usize)]
             }
-            0x8000..=0xFFFF => {
-                // 32KB switchable bank
-                let bank = (self.prg_bank as usize) % self.prg_banks;
-                let offset = (addr - 0x8000) as usize;
-                self.prg_rom
-                    .get(bank * 32768 + offset)
-                    .copied()
-                    .unwrap_or(0)
-            }
+            0x2000..=0x3EFF => self.vram[self.nametable_offset(addr)],
             _ => 0,
         }
     }
 
-    fn write_prg(&mut self, addr: u16, val: u8) {
-        if (0x8000..=0xFFFF).contains(&addr) {
-            // Bits 0-1: CHR bank select
-            self.chr_bank = val & 0x03;
-            // Bits 4-5: PRG bank select
-            self.prg_bank = (val >> 4) & 0x03;
+    fn ppu_write(&mut self, addr: u16, value: u8) {
+        let addr = addr & 0x3FFF;
+        if let 0x2000..=0x3EFF = addr {
+            let off = self.nametable_offset(addr);
+            self.vram[off] = value;
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
-        let bank = (self.chr_bank as usize) % self.chr_banks;
-        let offset = (addr & 0x1FFF) as usize;
-        self.chr.get(bank * 8192 + offset).copied().unwrap_or(0)
-    }
-
-    fn write_chr(&mut self, addr: u16, val: u8) {
-        if self.chr_is_ram {
-            let offset = (addr & 0x1FFF) as usize;
-            if let Some(byte) = self.chr.get_mut(offset) {
-                *byte = val;
-            }
-        }
-    }
-
-    fn mirroring(&self) -> Mirroring {
+    fn current_mirroring(&self) -> Mirroring {
         self.mirroring
     }
 
-    fn mapper_number(&self) -> u16 {
-        66
+    fn save_state(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(3 + self.vram.len());
+        out.push(SAVE_STATE_VERSION);
+        out.push(self.prg_bank);
+        out.push(self.chr_bank);
+        out.extend_from_slice(&self.vram);
+        out
     }
 
-    fn mapper_name(&self) -> &'static str {
-        "GxROM"
-    }
-
-    fn reset(&mut self) {
-        self.prg_bank = 0;
-        self.chr_bank = 0;
+    fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
+        let expected = 3 + self.vram.len();
+        if data.len() != expected {
+            return Err(MapperError::Truncated {
+                expected,
+                got: data.len(),
+            });
+        }
+        if data[0] != SAVE_STATE_VERSION {
+            return Err(MapperError::UnsupportedVersion(data[0]));
+        }
+        self.prg_bank = data[1];
+        self.chr_bank = data[2];
+        self.vram.copy_from_slice(&data[3..3 + self.vram.len()]);
+        Ok(())
     }
 }
 
 #[cfg(test)]
+#[allow(clippy::cast_possible_truncation)]
 mod tests {
     use super::*;
-    use crate::rom::{RomFormat, RomHeader};
 
-    fn create_test_rom(prg_banks: u8, chr_banks: u8) -> Rom {
-        let prg_size = prg_banks as usize * 32768;
-        let chr_size = chr_banks as usize * 8192;
-
-        // Fill each bank with its bank number
-        let mut prg_rom = vec![0u8; prg_size];
-        for bank in 0..prg_banks as usize {
-            for i in 0..32768 {
-                prg_rom[bank * 32768 + i] = bank as u8;
+    fn synth_prg(banks: usize) -> Box<[u8]> {
+        let mut v = vec![0u8; banks * PRG_BANK_32K];
+        for b in 0..banks {
+            for o in 0..PRG_BANK_32K {
+                v[b * PRG_BANK_32K + o] = if o == 0 { b as u8 } else { 0xFF };
             }
         }
+        v.into_boxed_slice()
+    }
 
-        let mut chr_rom = vec![0u8; chr_size];
-        for bank in 0..chr_banks as usize {
-            for i in 0..8192 {
-                chr_rom[bank * 8192 + i] = (bank + 0x80) as u8;
-            }
+    fn synth_chr(banks: usize) -> Box<[u8]> {
+        let mut v = vec![0u8; banks * CHR_BANK_8K];
+        for b in 0..banks {
+            v[b * CHR_BANK_8K] = b as u8;
         }
-
-        Rom {
-            header: RomHeader {
-                format: RomFormat::INes,
-                mapper: 66,
-                prg_rom_size: prg_banks as u16 * 2,
-                chr_rom_size: chr_banks as u16,
-                prg_ram_size: 0,
-                chr_ram_size: if chr_banks == 0 { 8192 } else { 0 },
-                mirroring: Mirroring::Vertical,
-                has_battery: false,
-                has_trainer: false,
-                tv_system: 0,
-            },
-            prg_rom,
-            chr_rom,
-            trainer: None,
-        }
+        v.into_boxed_slice()
     }
 
     #[test]
-    fn test_gxrom_initial_state() {
-        let rom = create_test_rom(4, 4);
-        let mapper = Gxrom::new(&rom);
-
-        // Should start at bank 0
-        assert_eq!(mapper.read_prg(0x8000), 0);
-        assert_eq!(mapper.read_chr(0x0000), 0x80);
+    fn gxrom_bank_select_no_conflict() {
+        // PRG byte 0xFF, AND with 0x33 = 0x33 -> prg_bank=3, chr_bank=3.
+        let mut m = GxRom::new(synth_prg(4), synth_chr(4), Mirroring::Vertical).unwrap();
+        // First write goes to a $8001+ address whose PRG byte is 0xFF (we
+        // initialize all but the first byte of each bank to 0xFF).
+        m.cpu_write(0x8001, 0x33);
+        assert_eq!(m.cpu_read(0x8000), 3); // bank 3 marker
+        assert_eq!(m.ppu_read(0x0000), 3);
     }
 
     #[test]
-    fn test_gxrom_prg_banking() {
-        let rom = create_test_rom(4, 4);
-        let mut mapper = Gxrom::new(&rom);
-
-        // Switch to PRG bank 2 (bits 4-5 = 0x20)
-        mapper.write_prg(0x8000, 0x20);
-        assert_eq!(mapper.read_prg(0x8000), 2);
-        assert_eq!(mapper.read_prg(0xFFFF), 2);
-    }
-
-    #[test]
-    fn test_gxrom_chr_banking() {
-        let rom = create_test_rom(4, 4);
-        let mut mapper = Gxrom::new(&rom);
-
-        // Switch to CHR bank 3 (bits 0-1 = 0x03)
-        mapper.write_prg(0x8000, 0x03);
-        assert_eq!(mapper.read_chr(0x0000), 0x83);
-    }
-
-    #[test]
-    fn test_gxrom_combined_banking() {
-        let rom = create_test_rom(4, 4);
-        let mut mapper = Gxrom::new(&rom);
-
-        // PRG bank 1, CHR bank 2 (0x12)
-        mapper.write_prg(0x8000, 0x12);
-        assert_eq!(mapper.read_prg(0x8000), 1);
-        assert_eq!(mapper.read_chr(0x0000), 0x82);
-    }
-
-    #[test]
-    fn test_gxrom_chr_ram() {
-        let rom = create_test_rom(2, 0);
-        let mut mapper = Gxrom::new(&rom);
-
-        assert_eq!(mapper.read_chr(0x0000), 0);
-        mapper.write_chr(0x0000, 0xAB);
-        assert_eq!(mapper.read_chr(0x0000), 0xAB);
-    }
-
-    #[test]
-    fn test_gxrom_reset() {
-        let rom = create_test_rom(4, 4);
-        let mut mapper = Gxrom::new(&rom);
-
-        mapper.write_prg(0x8000, 0x33);
-        mapper.reset();
-
-        assert_eq!(mapper.read_prg(0x8000), 0);
-        assert_eq!(mapper.read_chr(0x0000), 0x80);
-    }
-
-    #[test]
-    fn test_gxrom_info() {
-        let rom = create_test_rom(2, 2);
-        let mapper = Gxrom::new(&rom);
-
-        assert_eq!(mapper.mapper_number(), 66);
-        assert_eq!(mapper.mapper_name(), "GxROM");
+    fn gxrom_bus_conflict_at_offset_zero() {
+        // At offset 0 of bank 0, byte = 0x00. ANDing kills the write.
+        let mut m = GxRom::new(synth_prg(4), synth_chr(4), Mirroring::Vertical).unwrap();
+        m.cpu_write(0x8000, 0xFF);
+        assert_eq!(m.cpu_read(0x8000), 0); // unchanged
     }
 }

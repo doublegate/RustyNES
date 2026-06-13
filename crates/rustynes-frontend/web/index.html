@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RustyNES v2 — cycle-accurate NES emulator in your browser</title>
+
+    <!--
+        v1.3.0 Sprint 2 — GitHub Pages host for the wasm32 frontend.
+        The deployed default is the `wasm-winit` feature: the full
+        winit + wgpu + egui experience (debugger overlay + NTSC
+        filter), identical to the native binary. The `<canvas
+        id="nes-canvas">` below is adopted by winit via
+        `with_canvas`; the `<input id="rom-input">` feeds ROM bytes
+        into the event loop. Live at
+        https://doublegate.github.io/RustyNES_v2/
+    -->
+
+    <!--
+        The `data-trunk` link below is read by `trunk build` to find
+        the Rust source. `lib.rs` exports a `start()` function with
+        `#[wasm_bindgen(start)]`, so trunk generates the JS glue that
+        invokes it after the `.wasm` instance is constructed.
+    -->
+    <link data-trunk rel="rust" href="../Cargo.toml"
+          data-target-name="rustynes_frontend" data-cargo-features="" />
+
+    <!-- Optional favicon copy via trunk asset pipeline. -->
+    <!-- <link data-trunk rel="copy-file" href="../../docs/favicon.png" /> -->
+
+    <style>
+        :root {
+            color-scheme: dark;
+            --bg: #1a1a1a;
+            --fg: #e0e0e0;
+            --accent: #ff8800;
+        }
+        html, body {
+            margin: 0;
+            padding: 0;
+            min-height: 100%;
+            background: var(--bg);
+            color: var(--fg);
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        }
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 16px;
+            padding: 24px;
+            text-align: center;
+        }
+        h1 { font-size: 20px; margin: 0; }
+        #controls { display: flex; gap: 12px; align-items: center; }
+        /* The NES PPU is 256x240; render at 2x with nearest-neighbour
+           so the pixels stay crisp. */
+        #nes-canvas {
+            width: 512px;
+            height: 480px;
+            image-rendering: pixelated;
+            background: #000;
+            border: 2px solid #333;
+        }
+        .hint { opacity: 0.6; font-size: 13px; max-width: 540px; }
+        a { color: var(--accent); }
+    </style>
+</head>
+<body>
+    <h1>RustyNES v2 <span style="opacity:0.5">— wasm32 (wgpu + egui)</span></h1>
+
+    <div id="controls">
+        <label>Load ROM: <input id="rom-input" type="file" accept=".nes,.fds" /></label>
+        <label>FDS BIOS: <input id="fds-bios-input" type="file" accept=".rom,.bin" /></label>
+    </div>
+
+    <!-- The wasm `start()` fn blits the PPU framebuffer here each frame. -->
+    <canvas id="nes-canvas" width="256" height="240"></canvas>
+
+    <p class="hint">
+        Keyboard: arrows = D-pad, Z = A, X = B, Enter = Start,
+        Right Shift = Select. <strong>~</strong> toggles the egui
+        debugger overlay. Select a <code>.nes</code> ROM above to
+        begin — audio starts on the same click (browser autoplay
+        policy). Check the devtools console for the boot log.
+    </p>
+    <p class="hint">
+        <strong>Famicom Disk System:</strong> upload the 8&nbsp;KiB
+        <code>disksys.rom</code> BIOS via the "FDS BIOS" button (it is
+        Nintendo IP and is never bundled), then load a <code>.fds</code>
+        disk image. Press <strong>F9</strong> to cycle the inserted disk
+        side when a game asks you to "insert disk side B".
+    </p>
+    <p class="hint">
+        <a href="https://github.com/doublegate/RustyNES_v2">github.com/doublegate/RustyNES_v2</a>
+    </p>
+</body>
+</html>

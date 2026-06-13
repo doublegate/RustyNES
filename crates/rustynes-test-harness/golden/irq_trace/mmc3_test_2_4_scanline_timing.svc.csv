@@ -1,0 +1,3 @@
+cpu_cycle,ppu_frame,ppu_scanline,ppu_dot,event_type,vector
+1370004,47,0,281,irq_svc,0xFFFE
+2203863,75,0,282,irq_svc,0xFFFE

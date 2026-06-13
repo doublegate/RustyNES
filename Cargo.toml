@@ -1,74 +1,125 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/rustynes-core",
     "crates/rustynes-cpu",
     "crates/rustynes-ppu",
     "crates/rustynes-apu",
     "crates/rustynes-mappers",
-    "crates/rustynes-core",
-    "crates/rustynes-desktop",
-    # Future crates:
-    # "crates/rustynes-web",
-    # "crates/rustynes-tas",
-    # "crates/rustynes-netplay",
-    # "crates/rustynes-achievements",
+    "crates/rustynes-netplay",
+    "crates/rustynes-cheevos",
+    "crates/rustynes-frontend",
+    "crates/rustynes-test-harness",
 ]
 
 [workspace.package]
-version = "0.8.6"
-edition = "2024"
-rust-version = "1.88"
-authors = ["doublegate"]
+version = "2.8.0"
+edition = "2021"
+rust-version = "1.86"
 license = "MIT OR Apache-2.0"
+authors = ["DoubleGate <parobek@gmail.com>"]
 repository = "https://github.com/doublegate/RustyNES"
-homepage = "https://github.com/doublegate/RustyNES"
-documentation = "https://docs.rs/rustynes"
-keywords = ["nes", "emulator", "6502", "gaming", "retro"]
+readme = "README.md"
+keywords = ["nes", "emulator", "famicom", "6502", "retro"]
 categories = ["emulators", "games"]
 
 [workspace.dependencies]
-# Core dependencies
-thiserror = "2.0"
-bitflags = "2.10"
-log = "0.4"
+rustynes-core = { path = "crates/rustynes-core", version = "2.8.0" }
+rustynes-cpu = { path = "crates/rustynes-cpu", version = "2.8.0" }
+rustynes-ppu = { path = "crates/rustynes-ppu", version = "2.8.0" }
+rustynes-apu = { path = "crates/rustynes-apu", version = "2.8.0", default-features = false }
+rustynes-mappers = { path = "crates/rustynes-mappers", version = "2.8.0" }
+rustynes-netplay = { path = "crates/rustynes-netplay", version = "2.8.0" }
+rustynes-test-harness = { path = "crates/rustynes-test-harness", version = "2.8.0" }
 
-# Testing dependencies
+bitflags = "2.6"
+thiserror = { version = "2.0", default-features = false }
+serde = { version = "1.0", features = ["derive"] }
+bincode = "1.3"
+sha2 = { version = "0.10", default-features = false }
+toml = "0.8"
+# `lz4_flex` is a pure-Rust LZ4 implementation; the `safe-encode` /
+# `safe-decode` features avoid all `unsafe` in the hot path. Used by the
+# rewind ring buffer to compress per-frame snapshots. `std` is opted in
+# by `rustynes-core`'s `std` feature (default on for desktop builds; off when
+# cross-compiling to a no_std target like `thumbv7em-none-eabihf`).
+lz4_flex = { version = "0.11", default-features = false, features = ["safe-encode", "safe-decode"] }
+
+# Frontend deps
+winit = "0.30"
+# v1.3.0 Sprint 1.4 — `webgl` feature enables the WebGL2 fallback on
+# wasm32 (for browsers without WebGPU: Linux Firefox, pre-A12 iOS).
+# No effect on native builds. WebGPU-primary is on by default.
+wgpu = { version = "22", features = ["webgl"] }
+cpal = "0.15"
+egui = "0.29"
+egui-wgpu = "0.29"
+egui-winit = { version = "0.29", default-features = false, features = ["wayland", "x11"] }
+gilrs = "0.10"
+rfd = "0.14"
+directories = "5"
+
+# v1.3.0 Sprint 1.1 — wasm32 frontend support. The chip stack is
+# already `no_std + alloc`-compatible (verified by the
+# `thumbv7em-none-eabihf` cross-compile CI gate); the frontend
+# needs wasm-bindgen + JS glue to host on the browser. cpal 0.15's
+# wasm32 backend is incomplete, so the wasm32 build also bumps
+# cpal via target-specific override in the frontend crate. See
+# `docs/audit/v1.3-sprint-1.1-wasm32-research-2026-05-24.md` for
+# the full ecosystem-state-2026 research that informed the
+# version pins.
+wasm-bindgen = "0.2.100"
+wasm-bindgen-futures = "0.4.50"
+console_error_panic_hook = "0.1.7"
+js-sys = "0.3.77"
+web-sys = "0.3.77"
+# `web_time::Instant` is a drop-in for `std::time::Instant` that
+# routes to `Performance.now()` on wasm32 (where `std::time::Instant`
+# panics) and to the std impl on native. winit itself depends on
+# this crate transitively; using it here lets us share Instant
+# semantics between native and wasm32 without `cfg` guards.
+web-time = "1.1"
+
+# Dev deps
 criterion = "0.5"
-proptest = "1.9"
+proptest = "1"
+insta = "1"
+pretty_assertions = "1"
 
 [workspace.lints.rust]
-unsafe_code = "deny"
+unsafe_code = "warn"
 missing_docs = "warn"
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
-cargo = { level = "warn", priority = -1 }
-# Allowed pedantic lints
+nursery  = { level = "warn", priority = -1 }
 module_name_repetitions = "allow"
-cast_possible_truncation = "allow"
-cast_sign_loss = "allow"
-cast_lossless = "allow"
-cast_possible_wrap = "allow"
-match_same_arms = "allow"
-doc_markdown = "allow"
-needless_doctest_main = "allow"
-unused_self = "allow"
-cargo_common_metadata = "allow"
+similar_names = "allow"
 must_use_candidate = "allow"
-wildcard_enum_match_arm = "allow"
-large_stack_arrays = "allow"  # Tests use 64KB arrays for NES memory
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
 
 [profile.dev]
-opt-level = 1  # Faster debug builds
+opt-level = 1
+overflow-checks = true
 
 [profile.release]
-lto = true
+opt-level = 3
+lto = "fat"
 codegen-units = 1
 panic = "abort"
-strip = true
+overflow-checks = false
 
 [profile.bench]
 inherits = "release"
+debug = true
 
-[profile.test]
-opt-level = 1
+# v2.8.0 Phase 4 — opt-in host-tuned build:
+#   RUSTFLAGS="-C target-cpu=native" cargo build --profile release-native -p rustynes-frontend
+# (cargo profiles cannot carry rustflags; the separate profile keeps the
+# host-tuned artifacts out of the portable release cache). NEVER used for
+# shipped binaries (not portable). Rust enables no fast-math / FP
+# contraction under target-cpu, so emitted bytes stay identical — verify
+# with the oracle suite anyway when benchmarking with it.
+[profile.release-native]
+inherits = "release"

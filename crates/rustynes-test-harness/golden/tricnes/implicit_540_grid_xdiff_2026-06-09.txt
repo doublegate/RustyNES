@@ -1,0 +1,86 @@
+Implicit DMA Abort $540[8,9] grid pin — TriCNES <-> RustyNES, 2026-06-09
+Branch refactor/v2.0-master-clock (worktree off facdd79). Stack: mc-r1-full-cpu,
+mc-r1-branch-poll-points,mc-ppu-2007-render-buffer,mc-r1-dmc-delayed-4015.
+Full mechanism + landmark table: docs/audit/v2.0-implicit-540-grid-close-2026-06-09.md
+
+=== TriCNES Loop3 X=8 landmark lines (pass 1, unconditional 4010w/4015w log) ===
+4010w cyc=49325718 data=0F
+4015w cyc=49326093 data=00 dmctimer=46 put=0
+4010w cyc=49326099 data=4E
+4015w cyc=49326708 data=10 dmctimer=6 put=1
+4010w cyc=49327300 data=4E
+4015w cyc=49327306 data=10 dmctimer=56 put=1
+4010w cyc=49327924 data=4F
+4015w cyc=49327948 data=10 dmctimer=44 put=1
+store: W548 cyc=49327886 pc=DC55 data=00 (KEY3[8]=00)
+
+=== TriCNES Loop3 X=8 GETs ===
+tri_x8_raw.txt:4586:GET cyc=49326713 addr=FFC0
+tri_x8_raw.txt:5167:GET cyc=49327293 addr=FFC0
+tri_x8_raw.txt:5746:GET cyc=49327869 addr=FFC0
+
+=== TriCNES Loop3 X=10 GETs (both emulators double-GET here) ===
+tri_x10_raw.txt:2757:GET cyc=49335387 addr=FFC0
+tri_x10_raw.txt:2764:GET cyc=49335393 addr=FFC0
+tri_x10_raw.txt:3341:GET cyc=49335969 addr=FFC0
+tri_x10_raw.txt:3920:GET cyc=49336545 addr=FFC0
+tri_x10_raw.txt:4497:GET cyc=49337121 addr=FFC0
+tri_x10_raw.txt:5074:GET cyc=49337697 addr=FFC0
+tri_x10_raw.txt:5651:GET cyc=49338273 addr=FFC0
+tri_x10_raw.txt:6228:GET cyc=49338849 addr=FFC0
+
+=== TriCNES X=8 enable1 per-cycle window (THE blocked same-cycle edge) ===
+XC cyc=49326700 pc=DC29 acc=R addr=DC29 data=DC dmc=0 oam=0 put=1 dtimer=14 dbits=1 dsil=1 dbytes=0 d4015d=0 ddmadelay=0
+XC cyc=49326701 pc=DC2A acc=R addr=DC2A data=FB dmc=0 oam=0 put=0 dtimer=14 dbits=1 dsil=1 dbytes=0 d4015d=0 ddmadelay=0
+XC cyc=49326702 pc=DC2B acc=R addr=DC2B data=EA dmc=0 oam=0 put=1 dtimer=12 dbits=1 dsil=1 dbytes=0 d4015d=0 ddmadelay=0
+XC cyc=49326703 pc=DC2B acc=R addr=DC2B data=A9 dmc=0 oam=0 put=0 dtimer=12 dbits=1 dsil=1 dbytes=0 d4015d=0 ddmadelay=0
+XC cyc=49326704 pc=DC2C acc=R addr=DC2C data=A9 dmc=0 oam=0 put=1 dtimer=10 dbits=1 dsil=1 dbytes=0 d4015d=0 ddmadelay=0
+XC cyc=49326705 pc=DC2D acc=R addr=DC2D data=10 dmc=0 oam=0 put=0 dtimer=10 dbits=1 dsil=1 dbytes=0 d4015d=0 ddmadelay=0
+XC cyc=49326706 pc=DC2E acc=R addr=DC2E data=8D dmc=0 oam=0 put=1 dtimer=8 dbits=1 dsil=1 dbytes=0 d4015d=0 ddmadelay=0
+XC cyc=49326707 pc=DC2F acc=R addr=DC2F data=15 dmc=0 oam=0 put=0 dtimer=8 dbits=1 dsil=1 dbytes=0 d4015d=0 ddmadelay=0
+XC cyc=49326708 pc=DC30 acc=W addr=4015 data=10 dmc=0 oam=0 put=1 dtimer=6 dbits=1 dsil=1 dbytes=0 d4015d=0 ddmadelay=0
+XC cyc=49326709 pc=DC30 acc=R addr=DC30 data=10 dmc=0 oam=0 put=0 dtimer=6 dbits=1 dsil=1 dbytes=1 d4015d=2 ddmadelay=1
+XC cyc=49326710 pc=DC31 acc=R addr=DC31 data=EA dmc=0 oam=0 put=1 dtimer=4 dbits=1 dsil=1 dbytes=1 d4015d=1 ddmadelay=1
+XC cyc=49326711 pc=DC31 acc=R addr=DC31 data=EA dmc=1 oam=0 put=0 dtimer=4 dbits=1 dsil=0 dbytes=1 d4015d=0 ddmadelay=0
+XC cyc=49326712 pc=DC31 acc=R addr=DC31 data=EA dmc=1 oam=0 put=1 dtimer=2 dbits=1 dsil=0 dbytes=1 d4015d=0 ddmadelay=0
+XC cyc=49326713 pc=DC31 acc=R addr=FFC0 data=EA dmc=1 oam=0 put=0 dtimer=2 dbits=1 dsil=0 dbytes=1 d4015d=0 ddmadelay=0
+XC cyc=49326714 pc=DC31 acc=R addr=DC31 data=00 dmc=0 oam=0 put=1 dtimer=72 dbits=8 dsil=0 dbytes=1 d4015d=0 ddmadelay=0
+XC cyc=49326715 pc=DC32 acc=R addr=DC32 data=EA dmc=0 oam=0 put=0 dtimer=72 dbits=8 dsil=0 dbytes=1 d4015d=0 ddmadelay=0
+XC cyc=49326716 pc=DC32 acc=R addr=DC32 data=EA dmc=0 oam=0 put=1 dtimer=70 dbits=8 dsil=0 dbytes=1 d4015d=0 ddmadelay=0
+XC cyc=49326717 pc=DC33 acc=R addr=DC33 data=EA dmc=0 oam=0 put=0 dtimer=70 dbits=8 dsil=0 dbytes=1 d4015d=0 ddmadelay=0
+XC cyc=49326718 pc=DC33 acc=R addr=DC33 data=8A dmc=0 oam=0 put=1 dtimer=68 dbits=8 dsil=0 dbytes=1 d4015d=0 ddmadelay=0
+XC cyc=49326719 pc=DC34 acc=R addr=DC34 data=8A dmc=0 oam=0 put=0 dtimer=68 dbits=8 dsil=0 dbytes=1 d4015d=0 ddmadelay=0
+XC cyc=49326720 pc=DC34 acc=R addr=DC34 data=20 dmc=0 oam=0 put=1 dtimer=66 dbits=8 dsil=0 dbytes=1 d4015d=0 ddmadelay=0
+XC cyc=49326721 pc=DC35 acc=R addr=DC35 data=20 dmc=0 oam=0 put=0 dtimer=66 dbits=8 dsil=0 dbytes=1 d4015d=0 ddmadelay=0
+XC cyc=49326722 pc=DC36 acc=R addr=01E4 data=A2 dmc=0 oam=0 put=1 dtimer=64 dbits=8 dsil=0 dbytes=1 d4015d=0 ddmadelay=0
+XC cyc=49326723 pc=DC36 acc=W addr=01E4 data=DC dmc=0 oam=0 put=0 dtimer=64 dbits=8 dsil=0 dbytes=1 d4015d=0 ddmadelay=0
+XC cyc=49326724 pc=DC36 acc=W addr=01E3 data=36 dmc=0 oam=0 put=1 dtimer=62 dbits=8 dsil=0 dbytes=1 d4015d=0 ddmadelay=0
+XC cyc=49326725 pc=DC36 acc=R addr=DC36 data=36 dmc=0 oam=0 put=0 dtimer=62 dbits=8 dsil=0 dbytes=1 d4015d=0 ddmadelay=0
+XC cyc=49326726 pc=FBA2 acc=R addr=FBA2 data=FB dmc=0 oam=0 put=1 dtimer=60 dbits=8 dsil=0 dbytes=1 d4015d=0 ddmadelay=0
+XC cyc=49326727 pc=FBA3 acc=R addr=FBA3 data=20 dmc=0 oam=0 put=0 dtimer=60 dbits=8 dsil=0 dbytes=1 d4015d=0 ddmadelay=0
+XC cyc=49326728 pc=FBA4 acc=R addr=01E2 data=AE dmc=0 oam=0 put=1 dtimer=58 dbits=8 dsil=0 dbytes=1 d4015d=0 ddmadelay=0
+XC cyc=49326729 pc=FBA4 acc=W addr=01E2 data=FB dmc=0 oam=0 put=0 dtimer=58 dbits=8 dsil=0 dbytes=1 d4015d=0 ddmadelay=0
+XC cyc=49326730 pc=FBA4 acc=W addr=01E1 data=A4 dmc=0 oam=0 put=1 dtimer=56 dbits=8 dsil=0 dbytes=1 d4015d=0 ddmadelay=0
+XC cyc=49326731 pc=FBA4 acc=R addr=FBA4 data=A4 dmc=0 oam=0 put=0 dtimer=56 dbits=8 dsil=0 dbytes=1 d4015d=0 ddmadelay=0
+XC cyc=49326732 pc=FBAE acc=R addr=FBAE data=FB dmc=0 oam=0 put=1 dtimer=54 dbits=8 dsil=0 dbytes=1 d4015d=0 ddmadelay=0
+
+=== RustyNES X=8 PRE-FIX GETs (rel to $548 store 49182664, data=04 BUG) ===
+-3477,49179187
+-3469,49179195
+-2897,49179767
+-2321,49180343
+-1745,49180919
+-1169,49181495
+-593,49182071
+-17,49182647
+
+=== RustyNES X=8 POST-FIX GETs (rel to $548 store 49180360, data=00 == KEY) ===
+-4355,49176005
+-3905,49176455
+-3473,49176887
+-3041,49177319
+-2609,49177751
+-2177,49178183
+-1173,49179187
+-593,49179767
+-17,49180343

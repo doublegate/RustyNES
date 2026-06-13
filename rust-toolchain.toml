@@ -1,0 +1,16 @@
+[toolchain]
+channel = "1.86.0"
+components = ["rustfmt", "clippy"]
+# Declare cross-compile targets here so rustup auto-installs them
+# whenever any cargo invocation reads this file. Both CI jobs that
+# cross-compile (`no_std_check` -> thumbv7em, `wasm` + the web deploy
+# -> wasm32) were/would-be failing because `dtolnay/rust-toolchain`
+# installs the target for the channel it pins (stable), but cargo's
+# `rust-toolchain.toml`-driven switch to 1.86.0 left the target
+# uninstalled — `cargo build --target X` then fails with
+# `E0463: can't find crate for core` while compiling transitive deps
+# (typenum for thumbv7em; cfg-if for wasm32). Declaring them here adds
+# the target to the 1.86.0 channel that cargo actually uses, and also
+# means `trunk build` + local dev get the wasm32 target for free.
+targets = ["thumbv7em-none-eabihf", "wasm32-unknown-unknown"]
+profile = "default"

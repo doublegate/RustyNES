@@ -1,0 +1,45 @@
+[package]
+name = "rustynes-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+rust-version = "1.86"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Standalone manifest -- cargo-fuzz convention. Keeps the fuzz crate out of
+# the workspace dependency graph so it doesn't pollute `cargo test --workspace`
+# (libFuzzer needs a nightly toolchain to actually run).
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+rustynes-mappers = { path = "../crates/rustynes-mappers" }
+rustynes-cpu = { path = "../crates/rustynes-cpu" }
+
+# Match workspace profile choices but with reasonable fuzz defaults.
+[profile.release]
+debug = 1
+
+# Each target must be declared individually so cargo-fuzz can build/run them.
+[[bin]]
+name = "cartridge_parser"
+path = "fuzz_targets/cartridge_parser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cpu_step"
+path = "fuzz_targets/cpu_step.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mapper_writes"
+path = "fuzz_targets/mapper_writes.rs"
+test = false
+doc = false
+bench = false

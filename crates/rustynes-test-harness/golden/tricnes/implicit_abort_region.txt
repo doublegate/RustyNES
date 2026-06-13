@@ -1,0 +1,122 @@
+# TriCNES reference — Implicit Abort region (cyc ~48.8-48.9M), captured 2026-06-07
+# format: 4015w/4010w/GET events with dmctimer+put at enables. Oracle for M-2 cross-diff.
+4010w cyc=48808113 data=4F
+4015w cyc=48808137 data=10 dmctimer=34 put=0
+GET cyc=48808143 addr=FFC0
+GET cyc=48808443 addr=FFC0
+GET cyc=48808875 addr=FFC0
+GET cyc=48809307 addr=FFC0
+4010w cyc=48809316 data=0F
+4010w cyc=48809691 data=4E
+GET cyc=48809739 addr=FFC0
+GET cyc=48810315 addr=FFC0
+GET cyc=48810891 addr=FFC0
+GET cyc=48811467 addr=FFC0
+GET cyc=48812043 addr=FFC0
+GET cyc=48812619 addr=FFC0
+GET cyc=48813195 addr=FFC0
+4010w cyc=48813262 data=4F
+4015w cyc=48813286 data=10 dmctimer=32 put=1
+GET cyc=48813645 addr=FFC0
+GET cyc=48814077 addr=FFC0
+GET cyc=48814509 addr=FFC0
+4010w cyc=48814518 data=0F
+4010w cyc=48814893 data=4E
+GET cyc=48814941 addr=FFC0
+GET cyc=48815517 addr=FFC0
+GET cyc=48816093 addr=FFC0
+GET cyc=48816669 addr=FFC0
+GET cyc=48817245 addr=FFC0
+GET cyc=48817821 addr=FFC0
+GET cyc=48818397 addr=FFC0
+GET cyc=48818973 addr=FFC0
+4010w cyc=48819025 data=4F
+4015w cyc=48819049 data=10 dmctimer=48 put=0
+GET cyc=48819423 addr=FFC0
+GET cyc=48819855 addr=FFC0
+4010w cyc=48819864 data=0F
+4010w cyc=48820239 data=4E
+GET cyc=48820287 addr=FFC0
+GET cyc=48820863 addr=FFC0
+GET cyc=48821439 addr=FFC0
+GET cyc=48822015 addr=FFC0
+GET cyc=48822591 addr=FFC0
+GET cyc=48823167 addr=FFC0
+GET cyc=48823743 addr=FFC0
+4010w cyc=48823795 data=4F
+4015w cyc=48823819 data=10 dmctimer=48 put=0
+GET cyc=48824193 addr=FFC0
+GET cyc=48824625 addr=FFC0
+4010w cyc=48824634 data=0F
+4010w cyc=48825009 data=4E
+GET cyc=48825057 addr=FFC0
+GET cyc=48825633 addr=FFC0
+GET cyc=48826209 addr=FFC0
+GET cyc=48826785 addr=FFC0
+GET cyc=48827361 addr=FFC0
+GET cyc=48827937 addr=FFC0
+GET cyc=48828513 addr=FFC0
+GET cyc=48829089 addr=FFC0
+4010w cyc=48829141 data=4F
+4015w cyc=48829165 data=10 dmctimer=48 put=0
+GET cyc=48829539 addr=FFC0
+GET cyc=48829971 addr=FFC0
+4010w cyc=48829980 data=0F
+4010w cyc=48830355 data=4E
+GET cyc=48830403 addr=FFC0
+GET cyc=48830979 addr=FFC0
+GET cyc=48831555 addr=FFC0
+GET cyc=48832131 addr=FFC0
+GET cyc=48832707 addr=FFC0
+GET cyc=48833283 addr=FFC0
+GET cyc=48833859 addr=FFC0
+4010w cyc=48833911 data=4F
+4015w cyc=48833935 data=10 dmctimer=48 put=0
+GET cyc=48834309 addr=FFC0
+GET cyc=48834741 addr=FFC0
+4010w cyc=48834750 data=0F
+4010w cyc=48835125 data=4E
+GET cyc=48835173 addr=FFC0
+GET cyc=48835749 addr=FFC0
+GET cyc=48836325 addr=FFC0
+GET cyc=48836901 addr=FFC0
+GET cyc=48837477 addr=FFC0
+GET cyc=48838053 addr=FFC0
+GET cyc=48838629 addr=FFC0
+GET cyc=48839205 addr=FFC0
+4010w cyc=48839257 data=4F
+4015w cyc=48839281 data=10 dmctimer=48 put=0
+GET cyc=48839655 addr=FFC0
+GET cyc=48840087 addr=FFC0
+4010w cyc=48840096 data=0F
+4010w cyc=48840471 data=4E
+GET cyc=48840519 addr=FFC0
+GET cyc=48841095 addr=FFC0
+GET cyc=48841671 addr=FFC0
+GET cyc=48842247 addr=FFC0
+GET cyc=48842823 addr=FFC0
+GET cyc=48843399 addr=FFC0
+GET cyc=48843975 addr=FFC0
+4010w cyc=48844027 data=4F
+4015w cyc=48844051 data=10 dmctimer=48 put=0
+GET cyc=48844425 addr=FFC0
+GET cyc=48844857 addr=FFC0
+4010w cyc=48844866 data=0F
+4010w cyc=48845241 data=4E
+GET cyc=48845289 addr=FFC0
+GET cyc=48845865 addr=FFC0
+GET cyc=48846441 addr=FFC0
+GET cyc=48847017 addr=FFC0
+GET cyc=48847593 addr=FFC0
+GET cyc=48848169 addr=FFC0
+4010w cyc=48848221 data=4F
+4015w cyc=48848245 data=10 dmctimer=48 put=0
+GET cyc=48848619 addr=FFC0
+GET cyc=48849051 addr=FFC0
+4010w cyc=48849060 data=0F
+4010w cyc=48849435 data=4E
+GET cyc=48849483 addr=FFC0
+GET cyc=48850059 addr=FFC0
+GET cyc=48850637 addr=FFC0
+GET cyc=48851211 addr=FFC0
+GET cyc=48851787 addr=FFC0

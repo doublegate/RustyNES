@@ -1,229 +1,208 @@
-//! AxROM Mapper (Mapper 7).
+//! `AxROM` (iNES mapper 7) implementation.
 //!
-//! A simple mapper with 32KB PRG-ROM banking and single-screen mirroring control.
-//! Used by games like Battletoads, Wizards & Warriors, and Marble Madness.
-//!
-//! Memory layout:
-//! - PRG-ROM: 32KB switchable bank at $8000-$FFFF
-//! - CHR-RAM: 8KB (no CHR-ROM banking)
-//! - No PRG-RAM
-//!
-//! Bank selection: Write to $8000-$FFFF
-//! - Bits 0-2: Select 32KB PRG bank
-//! - Bit 4: Select single-screen mirroring (0 = lower, 1 = upper)
+//! `AxROM` (`AMROM`, `ANROM`, `AOROM`, ...) switches a single 32 KiB PRG bank
+//! across `$8000-$FFFF`. Bit 4 of the bank-select write toggles between
+//! single-screen-A and single-screen-B mirroring. CHR is always RAM (8 KiB)
+//! on stock `AxROM`. No IRQ, no bus conflicts on most variants (`AOROM`
+//! technically has them; `AMROM` / `ANROM` do not — we omit conflicts
+//! since cleanly-written titles don't depend on them and modeling-them-
+//! without-cause makes the much more common `AMROM` / `ANROM` ROMs
+//! misbehave on certain edges).
 
-use crate::mapper::{Mapper, Mirroring};
-use crate::rom::Rom;
+use crate::cartridge::Mirroring;
+use crate::mapper::{Mapper, MapperCaps, MapperError};
+use alloc::{boxed::Box, vec::Vec};
+use alloc::{format, vec};
 
-#[cfg(not(feature = "std"))]
-use alloc::vec::Vec;
+const PRG_BANK_32K: usize = 0x8000;
+const CHR_BANK_8K: usize = 0x2000;
+const NAMETABLE_SIZE: usize = 0x0400;
 
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
+const SAVE_STATE_VERSION: u8 = 1;
 
-/// AxROM mapper implementation.
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct Axrom {
-    /// PRG-ROM data.
-    prg_rom: Vec<u8>,
-    /// CHR-RAM data (8KB).
-    chr_ram: Vec<u8>,
-    /// Number of PRG-ROM banks (32KB each).
-    prg_banks: usize,
-    /// Currently selected PRG bank.
-    prg_bank: u8,
-    /// Current mirroring mode.
-    mirroring: Mirroring,
+/// `AxROM` mapper.
+pub struct AxRom {
+    prg_rom: Box<[u8]>,
+    chr: Box<[u8]>,
+    vram: Box<[u8]>,
+    chr_is_ram: bool,
+    bank: u8,
+    mirroring_b: bool,
 }
 
-impl Axrom {
-    /// Create a new AxROM mapper from ROM data.
-    #[must_use]
-    pub fn new(rom: &Rom) -> Self {
-        let prg_banks = rom.prg_rom.len() / 32768;
-        let chr_ram = if rom.chr_rom.is_empty() {
-            vec![0u8; 8192]
-        } else {
-            rom.chr_rom.clone()
-        };
-
-        Self {
-            prg_rom: rom.prg_rom.clone(),
-            chr_ram,
-            prg_banks: prg_banks.max(1),
-            prg_bank: 0,
-            mirroring: Mirroring::SingleScreenLower,
+impl AxRom {
+    /// Construct a new `AxROM` mapper.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MapperError::Invalid`] when sizes don't match.
+    pub fn new(prg_rom: Box<[u8]>, chr_rom: Box<[u8]>) -> Result<Self, MapperError> {
+        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_32K != 0 {
+            return Err(MapperError::Invalid(format!(
+                "AxROM PRG-ROM size {} is not a non-zero multiple of 32 KiB",
+                prg_rom.len()
+            )));
         }
+        let chr_is_ram = chr_rom.is_empty();
+        let chr: Box<[u8]> = if chr_is_ram {
+            vec![0u8; CHR_BANK_8K].into_boxed_slice()
+        } else if chr_rom.len() == CHR_BANK_8K {
+            chr_rom
+        } else {
+            return Err(MapperError::Invalid(format!(
+                "AxROM expects 8 KiB CHR (RAM or ROM); got {} bytes",
+                chr_rom.len()
+            )));
+        };
+        Ok(Self {
+            prg_rom,
+            chr,
+            vram: vec![0u8; 2 * NAMETABLE_SIZE].into_boxed_slice(),
+            chr_is_ram,
+            bank: 0,
+            mirroring_b: false,
+        })
+    }
+
+    fn nametable_offset(&self, addr: u16) -> usize {
+        let local = (addr as usize) & (NAMETABLE_SIZE - 1);
+        let physical = usize::from(self.mirroring_b);
+        physical * NAMETABLE_SIZE + local
     }
 }
 
-impl Mapper for Axrom {
-    fn read_prg(&self, addr: u16) -> u8 {
+impl Mapper for AxRom {
+    // v2.8.0 Phase 4 — no per-cycle hooks (no IRQ, no audio): the bus
+    // skips all four per-CPU-cycle dispatches for this board.
+    fn caps(&self) -> MapperCaps {
+        MapperCaps::NONE
+    }
+
+    fn cpu_read(&mut self, addr: u16) -> u8 {
+        if (0x8000..=0xFFFF).contains(&addr) {
+            let bank_count = (self.prg_rom.len() / PRG_BANK_32K).max(1);
+            let bank = (self.bank as usize) % bank_count;
+            let off = (addr - 0x8000) as usize;
+            self.prg_rom[bank * PRG_BANK_32K + off]
+        } else {
+            0
+        }
+    }
+
+    fn cpu_write(&mut self, addr: u16, value: u8) {
+        if (0x8000..=0xFFFF).contains(&addr) {
+            self.bank = value & 0x07;
+            self.mirroring_b = (value & 0x10) != 0;
+        }
+    }
+
+    fn ppu_read(&mut self, addr: u16) -> u8 {
+        let addr = addr & 0x3FFF;
         match addr {
-            0x6000..=0x7FFF => {
-                // No PRG-RAM on AxROM
-                0
-            }
-            0x8000..=0xFFFF => {
-                // 32KB switchable bank
-                let bank = (self.prg_bank as usize) % self.prg_banks;
-                let offset = (addr - 0x8000) as usize;
-                self.prg_rom
-                    .get(bank * 32768 + offset)
-                    .copied()
-                    .unwrap_or(0)
-            }
+            0x0000..=0x1FFF => self.chr[addr as usize],
+            0x2000..=0x3EFF => self.vram[self.nametable_offset(addr)],
             _ => 0,
         }
     }
 
-    fn write_prg(&mut self, addr: u16, val: u8) {
-        if (0x8000..=0xFFFF).contains(&addr) {
-            // Bits 0-2: PRG bank select
-            self.prg_bank = val & 0x07;
-            // Bit 4: Mirroring select
-            self.mirroring = if val & 0x10 != 0 {
-                Mirroring::SingleScreenUpper
-            } else {
-                Mirroring::SingleScreenLower
-            };
+    fn ppu_write(&mut self, addr: u16, value: u8) {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => {
+                if self.chr_is_ram {
+                    self.chr[addr as usize] = value;
+                }
+            }
+            0x2000..=0x3EFF => {
+                let off = self.nametable_offset(addr);
+                self.vram[off] = value;
+            }
+            _ => {}
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
-        let offset = (addr & 0x1FFF) as usize;
-        self.chr_ram.get(offset).copied().unwrap_or(0)
-    }
-
-    fn write_chr(&mut self, addr: u16, val: u8) {
-        let offset = (addr & 0x1FFF) as usize;
-        if let Some(byte) = self.chr_ram.get_mut(offset) {
-            *byte = val;
+    fn current_mirroring(&self) -> Mirroring {
+        if self.mirroring_b {
+            Mirroring::SingleScreenB
+        } else {
+            Mirroring::SingleScreenA
         }
     }
 
-    fn mirroring(&self) -> Mirroring {
-        self.mirroring
+    fn save_state(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(
+            3 + self.vram.len() + if self.chr_is_ram { self.chr.len() } else { 0 },
+        );
+        out.push(SAVE_STATE_VERSION);
+        out.push(self.bank);
+        out.push(u8::from(self.mirroring_b));
+        out.extend_from_slice(&self.vram);
+        if self.chr_is_ram {
+            out.extend_from_slice(&self.chr);
+        }
+        out
     }
 
-    fn mapper_number(&self) -> u16 {
-        7
-    }
-
-    fn mapper_name(&self) -> &'static str {
-        "AxROM"
-    }
-
-    fn reset(&mut self) {
-        self.prg_bank = 0;
-        self.mirroring = Mirroring::SingleScreenLower;
+    fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
+        let need_chr = if self.chr_is_ram { self.chr.len() } else { 0 };
+        let expected = 3 + self.vram.len() + need_chr;
+        if data.len() != expected {
+            return Err(MapperError::Truncated {
+                expected,
+                got: data.len(),
+            });
+        }
+        if data[0] != SAVE_STATE_VERSION {
+            return Err(MapperError::UnsupportedVersion(data[0]));
+        }
+        self.bank = data[1];
+        self.mirroring_b = data[2] != 0;
+        let mut cursor = 3;
+        self.vram
+            .copy_from_slice(&data[cursor..cursor + self.vram.len()]);
+        cursor += self.vram.len();
+        if self.chr_is_ram {
+            self.chr
+                .copy_from_slice(&data[cursor..cursor + self.chr.len()]);
+        }
+        Ok(())
     }
 }
 
 #[cfg(test)]
+#[allow(clippy::cast_possible_truncation)]
 mod tests {
     use super::*;
-    use crate::rom::{RomFormat, RomHeader};
 
-    fn create_test_rom(prg_banks: u8) -> Rom {
-        let prg_size = prg_banks as usize * 32768;
-
-        // Fill each bank with its bank number for easy identification
-        let mut prg_rom = vec![0u8; prg_size];
-        for bank in 0..prg_banks as usize {
-            for i in 0..32768 {
-                prg_rom[bank * 32768 + i] = bank as u8;
-            }
+    fn synth_prg(banks: usize) -> Box<[u8]> {
+        let mut v = vec![0u8; banks * PRG_BANK_32K];
+        for b in 0..banks {
+            v[b * PRG_BANK_32K] = b as u8;
         }
-
-        Rom {
-            header: RomHeader {
-                format: RomFormat::INes,
-                mapper: 7,
-                prg_rom_size: prg_banks as u16 * 2, // 16KB units
-                chr_rom_size: 0,
-                prg_ram_size: 0,
-                chr_ram_size: 8192,
-                mirroring: Mirroring::SingleScreenLower,
-                has_battery: false,
-                has_trainer: false,
-                tv_system: 0,
-            },
-            prg_rom,
-            chr_rom: Vec::new(),
-            trainer: None,
-        }
+        v.into_boxed_slice()
     }
 
     #[test]
-    fn test_axrom_initial_state() {
-        let rom = create_test_rom(4);
-        let mapper = Axrom::new(&rom);
-
-        // Should start at bank 0
-        assert_eq!(mapper.read_prg(0x8000), 0);
-        assert_eq!(mapper.mirroring(), Mirroring::SingleScreenLower);
+    fn axrom_default_bank_zero() {
+        let mut m = AxRom::new(synth_prg(4), Box::new([])).unwrap();
+        assert_eq!(m.cpu_read(0x8000), 0);
     }
 
     #[test]
-    fn test_axrom_bank_switching() {
-        let rom = create_test_rom(4);
-        let mut mapper = Axrom::new(&rom);
-
-        // Switch to bank 2
-        mapper.write_prg(0x8000, 2);
-        assert_eq!(mapper.read_prg(0x8000), 2);
-        assert_eq!(mapper.read_prg(0xFFFF), 2);
-
-        // Switch to bank 3
-        mapper.write_prg(0xC000, 3);
-        assert_eq!(mapper.read_prg(0x8000), 3);
+    fn axrom_bank_select_and_mirroring() {
+        let mut m = AxRom::new(synth_prg(4), Box::new([])).unwrap();
+        m.cpu_write(0x8000, 0b0001_0010); // bank 2, mirror B
+        assert_eq!(m.cpu_read(0x8000), 2);
+        assert_eq!(m.current_mirroring(), Mirroring::SingleScreenB);
+        m.cpu_write(0x8000, 0b0000_0001); // bank 1, mirror A
+        assert_eq!(m.cpu_read(0x8000), 1);
+        assert_eq!(m.current_mirroring(), Mirroring::SingleScreenA);
     }
 
     #[test]
-    fn test_axrom_mirroring_control() {
-        let rom = create_test_rom(4);
-        let mut mapper = Axrom::new(&rom);
-
-        // Set upper screen
-        mapper.write_prg(0x8000, 0x10);
-        assert_eq!(mapper.mirroring(), Mirroring::SingleScreenUpper);
-
-        // Set lower screen
-        mapper.write_prg(0x8000, 0x00);
-        assert_eq!(mapper.mirroring(), Mirroring::SingleScreenLower);
-    }
-
-    #[test]
-    fn test_axrom_chr_ram() {
-        let rom = create_test_rom(2);
-        let mut mapper = Axrom::new(&rom);
-
-        // CHR-RAM should be readable and writable
-        assert_eq!(mapper.read_chr(0x0000), 0);
-        mapper.write_chr(0x0000, 0xAB);
-        assert_eq!(mapper.read_chr(0x0000), 0xAB);
-    }
-
-    #[test]
-    fn test_axrom_reset() {
-        let rom = create_test_rom(4);
-        let mut mapper = Axrom::new(&rom);
-
-        mapper.write_prg(0x8000, 0x13); // Bank 3, upper screen
-        mapper.reset();
-
-        assert_eq!(mapper.read_prg(0x8000), 0);
-        assert_eq!(mapper.mirroring(), Mirroring::SingleScreenLower);
-    }
-
-    #[test]
-    fn test_axrom_info() {
-        let rom = create_test_rom(2);
-        let mapper = Axrom::new(&rom);
-
-        assert_eq!(mapper.mapper_number(), 7);
-        assert_eq!(mapper.mapper_name(), "AxROM");
+    fn axrom_chr_ram_round_trip() {
+        let mut m = AxRom::new(synth_prg(2), Box::new([])).unwrap();
+        m.ppu_write(0x0123, 0xAB);
+        assert_eq!(m.ppu_read(0x0123), 0xAB);
     }
 }

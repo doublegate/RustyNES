@@ -1,0 +1,2 @@
+cpu_cycle,ppu_frame,ppu_scanline,ppu_dot,irq_pending_mapper_at_low,irq_pending_apu_at_low,irq_pending_mapper_at_high,irq_pending_apu_at_high,nmi_line,a12_events,dmc_dma_pending_pre,dmc_dma_pending_post,dmc_dma_short_post,dmc_abort_pending_post,dmc_abort_delay_post,dmc_dma_cooldown_post,dmc_dma_delay_post,apu_phase_post,in_dmc_dma,dma_cycles_owed,bus_access,bus_addr,bus_data
+268028,10,0,6,0,1,0,1,0,,0,0,0,0,0,0,0,1,0,0,R,0xE968,0x2C

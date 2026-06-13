@@ -1,0 +1,16 @@
+cpu_cycle,ppu_frame,ppu_scanline,ppu_dot,event_type,vector
+444331,15,241,23,nmi_svc,0xFFFA
+444369,15,241,137,irq_svc,0xFFFE
+801700,27,241,26,nmi_svc,0xFFFA
+801736,27,241,134,irq_svc,0xFFFE
+1069725,36,241,23,nmi_svc,0xFFFA
+1069761,36,241,131,irq_svc,0xFFFE
+1337750,45,241,20,irq_svc,0xFFFE
+1337757,45,241,41,nmi_svc,0xFFFA
+1695117,57,241,17,irq_svc,0xFFFE
+1963142,66,241,14,irq_svc,0xFFFA
+2141825,72,241,11,irq_svc,0xFFFA
+2409850,81,241,8,irq_svc,0xFFFA
+2767217,93,241,5,irq_svc,0xFFFA
+2945900,99,241,2,irq_svc,0xFFFE
+2945909,99,241,29,nmi_svc,0xFFFA

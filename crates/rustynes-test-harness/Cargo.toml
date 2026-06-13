@@ -1,0 +1,118 @@
+[package]
+name = "rustynes-test-harness"
+description = "Test ROM runner and golden-master comparator for RustyNES"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[features]
+default = []
+test-roms = []
+# Forward to `rustynes-core/irq-timing-trace`. Off by default; enabled only by
+# the Track C1 IRQ-timing fixture (`cargo test --features
+# irq-timing-trace --test irq_trace_fixture`). See ADR-0002.
+irq-timing-trace = ["rustynes-core/irq-timing-trace"]
+# Real-game regression bisect harness. Requires commercial ROM dumps at
+# `tests/roms/external/` (gitignored). Default off so CI never depends on
+# non-distributable assets. See `tests/external_real_games.rs`.
+commercial-roms = ["dep:png"]
+# Forward to `rustynes-core/ppu-state-trace`. Off by default; enabled only by
+# the Session-10 PPU-state-tracing fixture
+# (`cargo test --features test-roms,ppu-state-trace
+# --test ppu_state_trace_fixture`). See ADR-0005 and
+# `docs/ppu-trace-tooling.md`.
+ppu-state-trace = ["rustynes-core/ppu-state-trace"]
+# v2.0 R-1 core C-1 diagnostic — forward to rustynes-core. Default-off.
+mc-r1-dmc-abort-probe = ["rustynes-core/mc-r1-dmc-abort-probe"]
+# v2.0 R1c-1 diagnostic — per-instruction (PC, cpu_cycle) trace. Forward to rustynes-core.
+cpu-instr-cycle-trace = ["rustynes-core/cpu-instr-cycle-trace"]
+# Forward to `rustynes-core/cpu-boot-trace`. Off by default; enabled only by
+# the Session-12 cold-boot divergence fixture
+# (`cargo test --features test-roms,cpu-boot-trace
+# --test cpu_boot_trace_fixture`).
+cpu-boot-trace = ["rustynes-core/cpu-boot-trace"]
+
+[dependencies]
+rustynes-core.workspace = true
+thiserror.workspace = true
+# PNG encoding for the v1.3.x left-edge capture bin (`capture_left_edge`),
+# which is a regular bin target and so cannot use the dev-dependency `png`.
+# Optional + only enabled by the `commercial-roms` feature the bin requires.
+png = { version = "0.17", optional = true }
+
+[dev-dependencies]
+insta.workspace = true
+pretty_assertions.workspace = true
+# PNG dump for the real-game regression harness. Only pulled in when
+# `commercial-roms` is on (the harness gates all PNG-writing code on
+# that feature).
+png = "0.17"
+# SHA-256 for ROM dump pinning in the commercial-roms harness. The
+# snapshot files record the SHA-256 of each ROM's bytes so a user with
+# a different dump gets a clear "ROM mismatch" error instead of a
+# cryptic framebuffer-hash mismatch. `default-features = false` keeps
+# the no_std-compat constraint of the workspace `sha2` setup, but the
+# `std` feature is fine here because this is dev-only test code.
+sha2 = { workspace = true, features = ["std"] }
+
+# Session-10 PPU-state-trace diff tool. Feature-gated so the
+# binary doesn't compile (and its dependencies don't link) under
+# the default build. See `docs/ppu-trace-tooling.md`.
+[[bin]]
+name = "ppu_trace_diff"
+path = "src/bin/ppu_trace_diff.rs"
+required-features = ["ppu-state-trace"]
+
+# Session-12 CPU-boot-trace diff tool. Feature-gated so the binary
+# doesn't compile under the default build. See
+# `scripts/mesen2_cpu_boot_trace.lua` for the Mesen2 reference
+# generator.
+[[bin]]
+name = "cpu_boot_trace_diff"
+path = "src/bin/cpu_boot_trace_diff.rs"
+required-features = ["cpu-boot-trace"]
+
+# v1.2 Sprint 3 DMA-test frame scanner (needs `accuracy_coin::run_battery_capturing_ram`).
+[[bin]]
+name = "dump_battery_ram"
+path = "src/bin/dump_battery_ram.rs"
+required-features = ["test-roms"]
+
+# v1.3.x left-edge sprite-tint / stutter regression capture + timing tool.
+# Diagnostic only; reuses gitignored external ROM dumps. See
+# `docs/audit/v1.3.x-video-stutter-regression-*.md`.
+[[bin]]
+name = "capture_left_edge"
+path = "src/bin/capture_left_edge.rs"
+required-features = ["commercial-roms"]
+
+[[bin]]
+name = "coverage_smoke"
+path = "src/bin/coverage_smoke.rs"
+required-features = ["commercial-roms"]
+
+[[bin]]
+name = "fds_smoke"
+path = "src/bin/fds_smoke.rs"
+required-features = ["commercial-roms"]
+
+# v2.0 R1c-1 diagnostic: per-instruction (PC, cpu_cycle) trace dumper.
+[[bin]]
+name = "trace_instr_cycles"
+path = "src/bin/trace_instr_cycles.rs"
+required-features = ["cpu-instr-cycle-trace"]
+
+# v2.2.0 Famicom Disk System Stage 1 harness. Synthetic-BIOS tests run under
+# `test-roms`; the real-BIOS fdsirqtests path is env-gated (RUSTYNES_FDS_BIOS)
+# and skips cleanly when unset. No BIOS is ever committed.
+[[test]]
+name = "fds"
+path = "tests/fds.rs"
+required-features = ["test-roms"]

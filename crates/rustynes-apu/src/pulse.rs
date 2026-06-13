@@ -1,153 +1,185 @@
-//! APU Pulse (Square Wave) Channel.
+//! Pulse channel (1 of 2). 4-step duty sequencer + envelope + sweep + length.
 //!
-//! The NES has two pulse channels that generate square waves with variable
-//! duty cycles (12.5%, 25%, 50%, 75%). Each pulse channel has:
-//! - An envelope generator for volume control
-//! - A sweep unit for pitch bending
-//! - A length counter for automatic silencing
-//! - A timer for frequency control
+//! Per `docs/apu-2a03.md` §Behavior and NESdev wiki "APU Pulse" page.
+//!
+//! Two pulse channels share the same architecture but differ in sweep
+//! negation: pulse 1 uses one's-complement (`!t`), pulse 2 uses two's-
+//! complement (`-t`).  This produces an audible difference at low periods.
 
-use crate::{
-    envelope::Envelope,
-    length_counter::LengthCounter,
-    sweep::{PulseChannel, Sweep},
-    timer::Timer,
-};
+use crate::envelope::Envelope;
+use crate::length::LengthCounter;
 
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
-
-/// Duty cycle waveforms.
-/// Each entry is an 8-bit pattern where 1 = high, 0 = low.
+/// Duty waveforms for the pulse channels.  Each entry is the 8-step output
+/// pattern for one of the four duty values.  Index = duty selection
+/// (`$4000` bits 6-7).  Step index runs 0..8 with 0 being the "current"
+/// position; the LSB is the output bit at the current step.
 const DUTY_TABLE: [[u8; 8]; 4] = [
     [0, 1, 0, 0, 0, 0, 0, 0], // 12.5%
-    [0, 1, 1, 0, 0, 0, 0, 0], // 25%
-    [0, 1, 1, 1, 1, 0, 0, 0], // 50%
-    [1, 0, 0, 1, 1, 1, 1, 1], // 75% (25% inverted)
+    [0, 1, 1, 0, 0, 0, 0, 0], // 25.0%
+    [0, 1, 1, 1, 1, 0, 0, 0], // 50.0%
+    [1, 0, 0, 1, 1, 1, 1, 1], // 25.0% negated
 ];
 
-/// Pulse channel.
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[allow(dead_code)] // channel field reserved for debugging
+/// Pulse channel state.
+#[derive(Debug, Clone, Copy)]
 pub struct Pulse {
-    /// Channel identifier.
-    channel: PulseChannel,
+    /// Duty selection (0..=3).
+    pub(crate) duty: u8,
+    /// Step index into the duty table (0..=7). Decremented on each timer underflow.
+    pub(crate) step: u8,
+    /// 11-bit timer reload (from `$4002`/`$4003` low+high writes).
+    pub(crate) timer_period: u16,
+    /// Internal countdown timer.
+    pub(crate) timer: u16,
     /// Envelope generator.
-    envelope: Envelope,
-    /// Sweep unit.
-    sweep: Sweep,
+    pub envelope: Envelope,
     /// Length counter.
-    length_counter: LengthCounter,
-    /// Timer.
-    timer: Timer,
-    /// Duty cycle select (0-3).
-    duty: u8,
-    /// Current sequencer position (0-7).
-    sequencer: u8,
+    pub length: LengthCounter,
+    /// Sweep enabled (`$4001` bit 7).
+    pub(crate) sweep_enabled: bool,
+    /// Sweep divider period (3 bits, +1 -> 1..=8).
+    pub(crate) sweep_period: u8,
+    /// Sweep negate flag.
+    pub(crate) sweep_negate: bool,
+    /// Sweep shift count (3 bits).
+    pub(crate) sweep_shift: u8,
+    /// Sweep reload flag — set by `$4001` write; consumed at next half-frame.
+    pub(crate) sweep_reload: bool,
+    /// Internal sweep divider.
+    pub(crate) sweep_divider: u8,
+    /// Pulse 1 vs pulse 2 (controls one's-complement vs two's-complement).
+    pub(crate) is_pulse1: bool,
 }
 
 impl Pulse {
-    /// Create a new pulse channel.
+    /// Construct a new pulse channel. `is_pulse1=true` for the pulse-1 sweep
+    /// negation flavor (one's complement).
     #[must_use]
-    pub fn new(channel: PulseChannel) -> Self {
+    pub const fn new(is_pulse1: bool) -> Self {
         Self {
-            channel,
-            envelope: Envelope::new(),
-            sweep: Sweep::new(channel),
-            length_counter: LengthCounter::new(),
-            timer: Timer::new(),
             duty: 0,
-            sequencer: 0,
+            step: 0,
+            timer_period: 0,
+            timer: 0,
+            envelope: Envelope {
+                start: false,
+                loop_flag: false,
+                constant: false,
+                volume_or_period: 0,
+                divider: 0,
+                decay: 0,
+            },
+            length: LengthCounter {
+                count: 0,
+                halt: false,
+                enabled: false,
+            },
+            sweep_enabled: false,
+            sweep_period: 0,
+            sweep_negate: false,
+            sweep_shift: 0,
+            sweep_reload: false,
+            sweep_divider: 0,
+            is_pulse1,
         }
     }
 
-    /// Write to register $4000/$4004 (duty, envelope).
+    /// `$4000` / `$4004` write: duty + length-halt + envelope.
     pub fn write_ctrl(&mut self, value: u8) {
         self.duty = (value >> 6) & 0x03;
-        self.envelope.write(value);
-        self.length_counter.set_halt(self.envelope.loop_flag());
+        let halt = (value & 0x20) != 0;
+        self.length.halt = halt;
+        self.envelope.loop_flag = halt;
+        self.envelope.constant = (value & 0x10) != 0;
+        self.envelope.volume_or_period = value & 0x0F;
     }
 
-    /// Write to register $4001/$4005 (sweep).
+    /// `$4001` / `$4005` write: sweep config.
     pub fn write_sweep(&mut self, value: u8) {
-        self.sweep.write(value);
+        self.sweep_enabled = (value & 0x80) != 0;
+        self.sweep_period = (value >> 4) & 0x07;
+        self.sweep_negate = (value & 0x08) != 0;
+        self.sweep_shift = value & 0x07;
+        self.sweep_reload = true;
     }
 
-    /// Write to register $4002/$4006 (timer low).
+    /// `$4002` / `$4006` write: timer low.
     pub fn write_timer_lo(&mut self, value: u8) {
-        self.timer.set_period_lo(value);
+        self.timer_period = (self.timer_period & 0xFF00) | u16::from(value);
     }
 
-    /// Write to register $4003/$4007 (length counter, timer high).
+    /// `$4003` / `$4007` write: length load + timer high.
     pub fn write_timer_hi(&mut self, value: u8) {
-        self.timer.set_period_hi(value);
-        self.length_counter.load(value >> 3);
-        self.envelope.start();
-        self.sequencer = 0;
+        self.timer_period = (self.timer_period & 0x00FF) | (u16::from(value & 0x07) << 8);
+        self.length.load(value);
+        self.step = 0;
+        self.envelope.start = true;
     }
 
-    /// Set the enabled state.
-    pub fn set_enabled(&mut self, enabled: bool) {
-        self.length_counter.set_enabled(enabled);
-    }
-
-    /// Check if the channel is active (length counter > 0).
-    #[must_use]
-    pub fn active(&self) -> bool {
-        self.length_counter.active()
-    }
-
-    /// Clock the timer. Should be called every APU cycle (CPU/2).
+    /// One APU clock (half CPU clock).
     pub fn clock_timer(&mut self) {
-        if self.timer.clock() {
-            self.sequencer = (self.sequencer + 1) & 0x07;
+        if self.timer == 0 {
+            self.timer = self.timer_period;
+            // 8-step duty sequencer, decremented (NESdev wiki).
+            self.step = (self.step + 1) & 0x07;
+        } else {
+            self.timer -= 1;
         }
     }
 
-    /// Clock the envelope. Should be called on quarter frames.
-    pub fn clock_envelope(&mut self) {
+    /// Half-frame clock: sweep + length.
+    pub fn clock_half_frame(&mut self) {
+        // Sweep first (because length might mute the channel).
+        let target = self.sweep_target();
+        if self.sweep_divider == 0 && self.sweep_enabled && self.sweep_shift > 0 && !self.muted() {
+            // Apply sweep: write the new period.
+            self.timer_period = target;
+        }
+        if self.sweep_divider == 0 || self.sweep_reload {
+            self.sweep_divider = self.sweep_period;
+            self.sweep_reload = false;
+        } else {
+            self.sweep_divider -= 1;
+        }
+        self.length.clock();
+    }
+
+    /// Quarter-frame clock: envelope.
+    pub fn clock_quarter_frame(&mut self) {
         self.envelope.clock();
     }
 
-    /// Clock the length counter. Should be called on half frames.
-    pub fn clock_length(&mut self) {
-        self.length_counter.clock();
-    }
-
-    /// Clock the sweep unit. Should be called on half frames.
-    pub fn clock_sweep(&mut self) {
-        if let Some(new_period) = self.sweep.clock(self.timer.period()) {
-            self.timer.set_period(new_period);
+    /// Compute the sweep target period (one's vs two's complement per channel).
+    fn sweep_target(&self) -> u16 {
+        let shifted = self.timer_period >> self.sweep_shift;
+        if self.sweep_negate {
+            if self.is_pulse1 {
+                self.timer_period.wrapping_sub(shifted).wrapping_sub(1)
+            } else {
+                self.timer_period.wrapping_sub(shifted)
+            }
+        } else {
+            self.timer_period.wrapping_add(shifted)
         }
     }
 
-    /// Get the current output value (0-15).
+    /// Sweep mute: timer < 8 OR target > $7FF.
+    #[must_use]
+    pub fn muted(&self) -> bool {
+        self.timer_period < 8 || self.sweep_target() > 0x7FF
+    }
+
+    /// Per-cycle output volume (0..=15).
     #[must_use]
     pub fn output(&self) -> u8 {
-        // Channel is silenced if:
-        // - Length counter is 0
-        // - Sweep unit is muting
-        // - Current duty output is 0
-        if !self.length_counter.active() {
-            return 0;
+        if self.length.count == 0
+            || self.muted()
+            || DUTY_TABLE[self.duty as usize][self.step as usize] == 0
+        {
+            0
+        } else {
+            self.envelope.output()
         }
-
-        if self.sweep.muted(self.timer.period()) {
-            return 0;
-        }
-
-        if DUTY_TABLE[self.duty as usize][self.sequencer as usize] == 0 {
-            return 0;
-        }
-
-        self.envelope.output()
-    }
-
-    /// Get the length counter value.
-    #[must_use]
-    pub fn length_counter_value(&self) -> u8 {
-        self.length_counter.value()
     }
 }
 
@@ -156,58 +188,80 @@ mod tests {
     use super::*;
 
     #[test]
-    #[allow(clippy::naive_bytecount)]
-    fn test_duty_table() {
-        // 12.5% duty: only position 1 is high
-        assert_eq!(DUTY_TABLE[0].iter().filter(|&&x| x == 1).count(), 1);
-        // 25% duty: positions 1,2 are high
-        assert_eq!(DUTY_TABLE[1].iter().filter(|&&x| x == 1).count(), 2);
-        // 50% duty: positions 1,2,3,4 are high
-        assert_eq!(DUTY_TABLE[2].iter().filter(|&&x| x == 1).count(), 4);
-        // 75% duty: 6 positions high
-        assert_eq!(DUTY_TABLE[3].iter().filter(|&&x| x == 1).count(), 6);
+    fn write_ctrl_sets_duty_and_envelope_period() {
+        let mut p = Pulse::new(true);
+        p.write_ctrl(0b1011_0101); // duty=2, halt=1, const=1, period=5
+        assert_eq!(p.duty, 2);
+        assert!(p.length.halt);
+        assert!(p.envelope.loop_flag);
+        assert!(p.envelope.constant);
+        assert_eq!(p.envelope.volume_or_period, 5);
     }
 
     #[test]
-    fn test_pulse_output() {
-        let mut pulse = Pulse::new(PulseChannel::One);
-        pulse.set_enabled(true);
-        pulse.write_ctrl(0x3F); // Duty 0, constant volume 15
-        pulse.write_timer_lo(0x10); // Period >= 8 to avoid sweep muting
-        pulse.write_timer_hi(0xF8); // Load length counter
-
-        // At sequencer position 1, duty 0 should output
-        pulse.sequencer = 1;
-        assert_eq!(pulse.output(), 15);
-
-        // At sequencer position 0, duty 0 should be silent
-        pulse.sequencer = 0;
-        assert_eq!(pulse.output(), 0);
+    fn timer_underflow_advances_duty_step() {
+        let mut p = Pulse::new(true);
+        p.timer_period = 1;
+        p.timer = 0;
+        p.clock_timer();
+        assert_eq!(p.step, 1);
     }
 
     #[test]
-    fn test_pulse_muted_when_disabled() {
-        let mut pulse = Pulse::new(PulseChannel::One);
-        pulse.set_enabled(false);
-        pulse.write_ctrl(0x3F);
-        pulse.write_timer_lo(0x00);
-        pulse.write_timer_hi(0xF8);
-
-        // Should be silent when disabled
-        pulse.sequencer = 1;
-        assert_eq!(pulse.output(), 0);
+    fn pulse1_sweep_negation_is_ones_complement() {
+        let mut p = Pulse::new(true);
+        p.timer_period = 0x100;
+        p.sweep_negate = true;
+        p.sweep_shift = 1;
+        // shifted = 0x80; 0x100 - 0x80 - 1 = 0x7F.
+        assert_eq!(p.sweep_target(), 0x7F);
     }
 
     #[test]
-    fn test_pulse_sweep_mute() {
-        let mut pulse = Pulse::new(PulseChannel::One);
-        pulse.set_enabled(true);
-        pulse.write_ctrl(0x3F);
-        pulse.write_timer_lo(0x01); // Very low period
-        pulse.write_timer_hi(0xF8);
-        pulse.sequencer = 1;
+    fn pulse2_sweep_negation_is_twos_complement() {
+        let mut p = Pulse::new(false);
+        p.timer_period = 0x100;
+        p.sweep_negate = true;
+        p.sweep_shift = 1;
+        // 0x100 - 0x80 = 0x80.
+        assert_eq!(p.sweep_target(), 0x80);
+    }
 
-        // Period < 8 should mute
-        assert_eq!(pulse.output(), 0);
+    #[test]
+    fn sweep_mutes_when_period_too_low() {
+        let mut p = Pulse::new(true);
+        p.timer_period = 7;
+        assert!(p.muted());
+        p.timer_period = 8;
+        assert!(!p.muted());
+    }
+
+    #[test]
+    fn sweep_mutes_when_target_above_7ff() {
+        let mut p = Pulse::new(true);
+        p.timer_period = 0x780;
+        p.sweep_negate = false;
+        p.sweep_shift = 1; // target = 0x780 + 0x3C0 = 0xB40 > $7FF
+        assert!(p.muted());
+    }
+
+    #[test]
+    fn output_zero_when_length_zero() {
+        let mut p = Pulse::new(true);
+        p.length.count = 0;
+        p.envelope.constant = true;
+        p.envelope.volume_or_period = 15;
+        assert_eq!(p.output(), 0);
+    }
+
+    #[test]
+    fn length_load_only_when_enabled() {
+        let mut p = Pulse::new(true);
+        p.length.enabled = false;
+        p.write_timer_hi(0x08);
+        assert_eq!(p.length.count, 0);
+        p.length.enabled = true;
+        p.write_timer_hi(0x08);
+        assert_ne!(p.length.count, 0);
     }
 }

@@ -1,27 +1,33 @@
 [package]
 name = "rustynes-cpu"
-description = "Cycle-accurate MOS 6502 CPU emulator for NES"
+description = "Cycle-accurate Ricoh 2A03 (6502 derivative) CPU core for the NES"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-authors.workspace = true
 license.workspace = true
+authors.workspace = true
 repository.workspace = true
+keywords = ["nes", "6502", "cpu", "emulator"]
+categories = ["emulators"]
+
+[lints]
+workspace = true
+
+[features]
+# v2.0 R1c-1 diagnostic: per-instruction (PC, cumulative cpu_cycle) trace hook.
+cpu-instr-cycle-trace = []
+default = []
 
 [dependencies]
 bitflags.workspace = true
 thiserror.workspace = true
-log.workspace = true
-serde = { version = "1.0", features = ["derive"], optional = true }
 
 [dev-dependencies]
 criterion.workspace = true
 proptest.workspace = true
+pretty_assertions.workspace = true
 
-[features]
-default = ["std"]
-std = []
-serde = ["dep:serde"]
-
-[lints]
-workspace = true
+[[bench]]
+name = "cpu_throughput"
+path = "benches/cpu_throughput.rs"
+harness = false

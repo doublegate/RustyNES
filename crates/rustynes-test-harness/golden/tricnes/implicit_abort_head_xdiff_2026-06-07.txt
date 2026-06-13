@@ -1,0 +1,117 @@
+TriCNES <-> RustyNES per-cycle cross-diff at HEAD 98ad5c0 (breakthrough config)
+Implicit DMA Abort, CalculateDMADuration first iteration (Y=0). 2026-06-07.
+
+This SUPERSEDES implicit_abort_xdiff_2026-06-07.txt (which was on the stale
+floor f9e4ef7 with A->B=580). Here A->B=576 (mc-r1-dmc-abort-timer-phase ON) and
+the residual is the 1-CPU-cycle DMC byte-timer PHASE: RustyNES's reload byte-
+timer wraps at e=46 (apu_phase=1, the DA07 read cycle) so the GET preempts the
+DA08 fetch slot; TriCNES's fires at e=45's APU so the GET preempts the DA07 slot.
+See docs/audit/v2.0-implicit-abort-bytetimer-phase-pinned-2026-06-07.md.
+
+==========================================================================
+REPRODUCTION
+==========================================================================
+RustyNES side (all instrumentation gated; floor byte-identical when off):
+  cargo build -q -p rustynes-test-harness --release \
+    --features irq-timing-trace,cpu-instr-cycle-trace,mc-r1-full-cpu,\
+mc-r1-one-clock,mc-r1-apu-unified-clock,cpu-stack-dummy-reads,\
+mc-r1-dmc-load-get-entry,mc-r1-dmc-abort-timer-phase --bin trace_dma_4015
+  RUSTYNES_ANCHOR="054A,2900,80,last" RUSTYNES_ANCHOR_PC=DC52 \
+    RUSTYNES_TRACE_MARGIN=40 ./target/release/trace_dma_4015 \
+    tests/roms/accuracycoin/AccuracyCoin.nes 0478 1700 2000000 /tmp/rusty_xc.csv
+    (-> X=10 STA $054A store cyc=48952729 data=03 [Y=3, BUG]; X=12 $054C data=04)
+
+TriCNES side (patched harness per oracle-tooling-setup.md; dotnet build -c Release):
+  XDIFF_LO=0 XDIFF_HI=0 dotnet bin/Release/net10.0/tricnes-harness.dll 1700 2>p1.txt
+    (grep W54A pc=DC55 -> the data=04 store cyc=49338866 [Y=4, correct])
+  XDIFF_LO=49335900 XDIFF_HI=49339000 \
+    dotnet bin/Release/net10.0/tricnes-harness.dll 1700 2>/tmp/tri_xc_raw.txt
+
+Cross-diff (re-anchors both on CalculateDMADuration entry $DA03):
+  python3 scripts/tricnes_xdiff.py /tmp/rusty_xc.csv /tmp/tri_xc_raw.txt 49338866 DA03 -8 64
+
+==========================================================================
+THE DIFF (e = cycles past CalculateDMADuration entry $DA03)
+==========================================================================
+# RustyNES rows=2981 TriCNES rows=3101
+# RE-ANCHOR on CalculateDMADuration entry $DA03: RustyNES cyc=48950934  TriCNES cyc=49336496  (boot offset at entry = 385562)
+#   e | RustyNES  cyc acc addr dt dp   | TriCNES   cyc acc addr dt dp   | flag
+#------------------------------------------------------------------------------
+   -8 |  48950926 R  DC4D 00 d0p0      |  49336488 R  DC4D A5 d0p1      |  
+   -7 |  48950927 R  0000 1A d0p1      |  49336489 R  0000 00 d0p0      |  
+   -6 |  48950928 R  DC4E 20 d0p0      |  49336490 R  DC4E 1A d0p1      |  
+   -5 |  48950929 R  DC4F 03 d0p1      |  49336491 R  DC4F 20 d0p0      |  
+   -4 |  48950930 R  01E4 DC d0p0      |  49336492 R  01E4 03 d0p1      |  
+   -3 |  48950931 W  01E4 DC d0p1      |  49336493 W  01E4 DC d0p0      |  
+   -2 |  48950932 W  01E3 50 d0p0      |  49336494 W  01E3 50 d0p1      |  
+   -1 |  48950933 R  DC50 DA d0p1      |  49336495 R  DC50 50 d0p0      |  
+    0 |  48950934 R  DA03 A0 d0p0      |  49336496 R  DA03 DA d0p1      |  
+    1 |  48950935 R  DA04 00 d0p1      |  49336497 R  DA04 A0 d0p0      |  
+    2 |  48950936 R  DA05 20 d0p0      |  49336498 R  DA05 00 d0p1      |  
+    3 |  48950937 R  DA06 05 d0p1      |  49336499 R  DA06 20 d0p0      |  
+    4 |  48950938 R  01E2 FB d0p0      |  49336500 R  01E2 05 d0p1      |  
+    5 |  48950939 W  01E2 DA d0p1      |  49336501 W  01E2 DA d0p0      |  
+    6 |  48950940 W  01E1 07 d0p0      |  49336502 W  01E1 07 d0p1      |  
+    7 |  48950941 R  DA07 FF d0p1      |  49336503 R  DA07 07 d0p0      |  
+    8 |  48950942 R  FF05 C9 d0p0      |  49336504 R  FF05 FF d0p1      |  
+    9 |  48950943 R  FF06 C9 d0p1      |  49336505 R  FF06 C9 d0p0      |  
+   10 |  48950944 R  FF07 C9 d0p0      |  49336506 R  FF07 C9 d0p1      |  
+   11 |  48950945 R  FF08 C9 d0p1      |  49336507 R  FF08 C9 d0p0      |  
+   12 |  48950946 R  FF09 C9 d0p0      |  49336508 R  FF09 C9 d0p1      |  
+   13 |  48950947 R  FF0A C9 d0p1      |  49336509 R  FF0A C9 d0p0      |  
+   14 |  48950948 R  FF0B C9 d0p0      |  49336510 R  FF0B C9 d0p1      |  
+   15 |  48950949 R  FF0C C9 d0p1      |  49336511 R  FF0C C9 d0p0      |  
+   16 |  48950950 R  FF0D C9 d0p0      |  49336512 R  FF0D C9 d0p1      |  
+   17 |  48950951 R  FF0E C9 d0p1      |  49336513 R  FF0E C9 d0p0      |  
+   18 |  48950952 R  FF0F C9 d0p0      |  49336514 R  FF0F C9 d0p1      |  
+   19 |  48950953 R  FF10 C9 d0p1      |  49336515 R  FF10 C9 d0p0      |  
+   20 |  48950954 R  FF11 C9 d0p0      |  49336516 R  FF11 C9 d0p1      |  
+   21 |  48950955 R  FF12 C9 d0p1      |  49336517 R  FF12 C9 d0p0      |  
+   22 |  48950956 R  FF13 C9 d0p0      |  49336518 R  FF13 C9 d0p1      |  
+   23 |  48950957 R  FF14 C9 d0p1      |  49336519 R  FF14 C9 d0p0      |  
+   24 |  48950958 R  FF15 C9 d0p0      |  49336520 R  FF15 C9 d0p1      |  
+   25 |  48950959 R  FF16 C9 d0p1      |  49336521 R  FF16 C9 d0p0      |  
+   26 |  48950960 R  FF17 C9 d0p0      |  49336522 R  FF17 C9 d0p1      |  
+   27 |  48950961 R  FF18 C9 d0p1      |  49336523 R  FF18 C9 d0p0      |  
+   28 |  48950962 R  FF19 C9 d0p0      |  49336524 R  FF19 C9 d0p1      |  
+   29 |  48950963 R  FF1A C9 d0p1      |  49336525 R  FF1A C9 d0p0      |  
+   30 |  48950964 R  FF1B C9 d0p0      |  49336526 R  FF1B C9 d0p1      |  
+   31 |  48950965 R  FF1C C9 d0p1      |  49336527 R  FF1C C9 d0p0      |  
+   32 |  48950966 R  FF1D C9 d0p0      |  49336528 R  FF1D C9 d0p1      |  
+   33 |  48950967 R  FF1E C9 d0p1      |  49336529 R  FF1E C9 d0p0      |  
+   34 |  48950968 R  FF1F C9 d0p0      |  49336530 R  FF1F C9 d0p1      |  
+   35 |  48950969 R  FF20 C9 d0p1      |  49336531 R  FF20 C9 d0p0      |  
+   36 |  48950970 R  FF21 C9 d0p0      |  49336532 R  FF21 C9 d0p1      |  
+   37 |  48950971 R  FF22 C9 d0p1      |  49336533 R  FF22 C9 d0p0      |  
+   38 |  48950972 R  FF23 C5 d0p0      |  49336534 R  FF23 C9 d0p1      |  
+   39 |  48950973 R  FF24 EA d0p1      |  49336535 R  FF24 C5 d0p0      |  
+   40 |  48950974 R  00EA 00 d0p0      |  49336536 R  00EA EA d0p1      |  
+   41 |  48950975 R  FF25 60 d0p1      |  49336537 R  FF25 00 d0p0      |  
+   42 |  48950976 R  FF26 A5 d0p0      |  49336538 R  FF26 60 d0p1      |  
+   43 |  48950977 R  01E0 FB d0p1      |  49336539 R  01E0 A5 d0p0      |  
+   44 |  48950978 R  01E1 07 d0p0      |  49336540 R  01E1 FB d0p1      |  
+   45 |  48950979 R  01E2 DA d0p1      |  49336541 R  01E2 07 d0p0      |  
+   46 |  48950980 R  DA07 FF d0p0      |  49336542 R  01E2 DA d1p1      | <<DIFF 
+   47 |  48950981 R  DA08 FF d1p1      |  49336543 R  01E2 DA d1p0      | <<DIFF 
+   48 |  48950982 R  DA08 FF d1p0      |  49336544 R  01E2 DA d1p1      | <<DIFF 
+   49 |  48950983 R  DA08 FF d1p1      |  49336545 R  FFC0 DA d1p0      | <<DIFF T:GET_FFC0
+   50 |  48950984 R  FFC0 00 d0p0      |  49336546 R  DA07 00 d0p1      | <<DIFF 
+   51 |  48950985 R  DA08 AD d0p1      |  49336547 R  DA08 FF d0p0      |  
+   52 |  48950986 R  DA09 00 d0p0      |  49336548 R  DA09 AD d0p1      |  
+   53 |  48950987 R  DA0A 40 d0p1      |  49336549 R  DA0A 00 d0p0      |  
+   54 |  48950988 R  4000 40 d0p0      |  49336550 R  4000 40 d0p1      |  R:$4000=40 T:$4000=40
+   55 |  48950989 R  DA0B F0 d0p1      |  49336551 R  DA0B 40 d0p0      |  
+   56 |  48950990 R  DA0C 09 d0p0      |  49336552 R  DA0C F0 d0p1      |  
+   57 |  48950991 R  DA0D 20 d0p1      |  49336553 R  DA0D 09 d0p0      |  
+   58 |  48950992 R  DA0E 13 d0p0      |  49336554 R  DA0E 20 d0p1      |  
+   59 |  48950993 R  01E2 DA d0p1      |  49336555 R  01E2 13 d0p0      |  
+   60 |  48950994 W  01E2 DA d0p0      |  49336556 W  01E2 DA d0p1      |  
+   61 |  48950995 W  01E1 0F d0p1      |  49336557 W  01E1 0F d0p0      |  
+   62 |  48950996 R  DA0F FD d0p0      |  49336558 R  DA0F 0F d0p1      |  
+   63 |  48950997 R  FD13 85 d0p1      |  49336559 R  FD13 FD d0p0      |  
+   64 |  48950998 R  FD14 FF d0p0      |  49336560 R  FD14 85 d0p1      |  
+#------------------------------------------------------------------------------
+# FIRST (acc,addr) divergence at entry-rel e = 46; 5 differing cycles in [-8,64]
+# DMC GET (R $FFxx) entry-rel: RustyNES=[] TriCNES=[49]
+# LDA $4000 reads  entry-rel: RustyNES=[54] TriCNES=[54]
+# $4000==$00 catch entry-rel: RustyNES=[] TriCNES=[]

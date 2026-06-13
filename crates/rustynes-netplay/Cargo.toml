@@ -1,0 +1,55 @@
+[package]
+name = "rustynes-netplay"
+description = "GGPO-style rollback netcode session core for RustyNES v2 (transport-agnostic)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords = ["nes", "emulator", "netplay", "rollback", "ggpo"]
+categories = ["emulators", "game-development"]
+
+[lints]
+workspace = true
+
+[features]
+# v2.6.0 — the reference WebRTC signaling server (a standalone WebSocket relay
+# broker, `examples/signaling_server.rs`). NON-default + native-only so it never
+# bloats the core library, the wasm build, or downstream consumers. Enable with
+# `cargo run -p rustynes-netplay --features signaling-server --example signaling_server`.
+# See `docs/netplay-webrtc.md`.
+default = []
+signaling-server = ["dep:tokio", "dep:tokio-tungstenite", "dep:futures-util", "dep:serde_json"]
+
+[dependencies]
+rustynes-core.workspace = true
+thiserror = { workspace = true, features = ["std"] }
+
+# v2.6.0 — signaling-server-only async + JSON deps (native, opt-in). The pure
+# room/relay protocol (the `signaling` module) needs none of these; they back
+# only the async WebSocket plumbing in `examples/signaling_server.rs`.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "sync", "time", "io-util"], optional = true }
+tokio-tungstenite = { version = "0.24", optional = true }
+futures-util = { version = "0.3", optional = true }
+serde_json = { version = "1.0", optional = true }
+
+# v2.5.0 Phase C — WebRTC transport scaffold for the browser (wasm32 only).
+# The native build (UDP/std::net) needs none of these; on wasm they back the
+# `WebRtcTransport` skeleton over an RtcDataChannel. See `src/webrtc.rs` and
+# `docs/netplay-webrtc.md`.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen.workspace = true
+js-sys.workspace = true
+web-sys = { workspace = true, features = [
+    "RtcPeerConnection", "RtcDataChannel", "RtcDataChannelInit",
+    "RtcDataChannelType", "RtcConfiguration", "RtcSessionDescriptionInit",
+    "MessageEvent",
+] }
+
+# The signaling server is an opt-in example so it is built only with its
+# feature, never by `cargo build --workspace`.
+[[example]]
+name = "signaling_server"
+required-features = ["signaling-server"]

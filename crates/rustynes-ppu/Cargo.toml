@@ -1,31 +1,39 @@
 [package]
 name = "rustynes-ppu"
+description = "Cycle-accurate Ricoh 2C02 PPU (Picture Processing Unit) for the NES"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-authors.workspace = true
 license.workspace = true
+authors.workspace = true
 repository.workspace = true
-description = "NES 2C02 PPU (Picture Processing Unit) emulation"
-keywords = ["nes", "ppu", "2C02", "emulator", "graphics"]
-categories = ["emulators", "graphics"]
-
-[dependencies]
-bitflags.workspace = true
-log.workspace = true
-
-[dev-dependencies]
-proptest.workspace = true
-
-[features]
-default = ["std"]
-std = []
-serde = ["dep:serde"]
-
-[dependencies.serde]
-version = "1.0"
-optional = true
-features = ["derive"]
+keywords = ["nes", "2c02", "ppu", "emulator"]
+categories = ["emulators"]
 
 [lints]
 workspace = true
+
+[features]
+default = []
+# Per-PPU-dot state-tracing fixture (Session-10 observability tooling).
+# Off by default — when disabled, the recording code is entirely dead via
+# `#[cfg(feature = "ppu-state-trace")]` gates so the hot tick path has
+# zero performance impact, zero memory overhead, and zero behavioral
+# change. See `docs/adr/0005-ppu-state-trace.md` for design and
+# `docs/ppu-trace-tooling.md` for usage. Enable with
+# `cargo test --features ppu-state-trace ...`.
+ppu-state-trace = []
+
+[dependencies]
+bitflags.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+proptest.workspace = true
+pretty_assertions.workspace = true
+
+[[bench]]
+name = "ppu_throughput"
+path = "benches/ppu_throughput.rs"
+harness = false

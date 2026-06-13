@@ -1,31 +1,49 @@
 [package]
 name = "rustynes-mappers"
+description = "Cartridge file format parsing and mapper implementations for the NES"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-authors.workspace = true
 license.workspace = true
+authors.workspace = true
 repository.workspace = true
-description = "NES cartridge mapper implementations"
-keywords = ["nes", "mapper", "mmc1", "mmc3", "emulator"]
-categories = ["emulators", "games"]
-
-[dependencies]
-bitflags.workspace = true
-log.workspace = true
-
-[dev-dependencies]
-proptest.workspace = true
-
-[features]
-default = ["std"]
-std = []
-serde = ["dep:serde"]
-
-[dependencies.serde]
-version = "1.0"
-optional = true
-features = ["derive"]
+keywords = ["nes", "ines", "mapper", "cartridge", "emulator"]
+categories = ["emulators"]
 
 [lints]
 workspace = true
+
+[features]
+default = ["mapper-audio"]
+# Enables tests that read CC0 / public-domain ROMs from `tests/roms/`. Off by
+# default so `cargo test --workspace` stays fast on machines without the
+# corpus checked out.
+test-roms = []
+# Enables on-cart audio extension for mappers that ship dedicated audio
+# circuitry: VRC6, VRC7, MMC5, Sunsoft 5B, Namco 163, FDS. VRC6, Sunsoft 5B
+# (FME-7), and Namco 163 wavetable audio are implemented as of v0.9.x;
+# the rest are tracked under Track C2 and remain silent (`mix_audio`
+# returns 0) even with this feature on. When the feature is OFF, the
+# register decoders are still active (so save states from audio-enabled
+# builds still load cleanly) but the channel oscillators are not advanced.
+mapper-audio = []
+
+[dependencies]
+bitflags.workspace = true
+thiserror.workspace = true
+# rustynes-apu provides the OPLL/YM2413 FM synthesizer used by VRC7
+# (mapper 85) audio. The dep is acyclic with the rest of the chip
+# stack — rustynes-apu has no chip deps, so adding `rustynes-mappers -> rustynes-apu`
+# introduces one new edge without creating a cycle. Default features
+# disabled so no_std cross-compile stays green.
+rustynes-apu = { workspace = true }
+
+[dev-dependencies]
+criterion.workspace = true
+proptest.workspace = true
+pretty_assertions.workspace = true
+
+[[bench]]
+name = "mapper_dispatch"
+path = "benches/mapper_dispatch.rs"
+harness = false

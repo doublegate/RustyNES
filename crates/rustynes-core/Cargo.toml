@@ -1,40 +1,73 @@
 [package]
 name = "rustynes-core"
+description = "Cycle-accurate NES emulator core: scheduler, bus, save state, public Nes facade"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-authors.workspace = true
 license.workspace = true
+authors.workspace = true
 repository.workspace = true
-description = "NES emulation core - integrates CPU, PPU, APU, and mappers"
-keywords = ["nes", "emulator", "6502", "gaming", "retro"]
-categories = ["emulators", "games"]
-
-[dependencies]
-rustynes-cpu.path = "../rustynes-cpu"
-rustynes-ppu.path = "../rustynes-ppu"
-rustynes-apu.path = "../rustynes-apu"
-rustynes-mappers.path = "../rustynes-mappers"
-log.workspace = true
-thiserror.workspace = true
-
-[dev-dependencies]
-proptest.workspace = true
-criterion.workspace = true
-
-[[bench]]
-name = "emulation_benchmarks"
-harness = false
-
-[features]
-default = ["std"]
-std = ["rustynes-cpu/std", "rustynes-ppu/std", "rustynes-apu/std", "rustynes-mappers/std"]
-serde = ["dep:serde", "rustynes-cpu/serde", "rustynes-ppu/serde", "rustynes-apu/serde", "rustynes-mappers/serde"]
-
-[dependencies.serde]
-version = "1.0"
-optional = true
-features = ["derive"]
+keywords = ["nes", "emulator", "famicom", "cycle-accurate"]
+categories = ["emulators"]
 
 [lints]
 workspace = true
+
+[features]
+default = ["std"]
+serde = ["dep:serde"]
+# `std` is the default for desktop / hosted builds. Disabling it
+# (`cargo build --no-default-features`) builds the chip stack against
+# `core + alloc` only — proven by the `thumbv7em-none-eabihf` CI gate.
+# `lz4_flex` and `sha2` both fall back to a no_std mode in that case.
+std = ["lz4_flex/std", "sha2/std", "thiserror/std", "rustynes-apu/std"]
+# `irq-timing-trace` enables the per-CPU-cycle IRQ tracing fixture used
+# by the Track C1 coordinated IRQ-timing rework. See ADR-0002 "Decision"
+# section and `crates/rustynes-core/src/irq_trace.rs`. Off by default (CI gate
+# stays fast); enabled by `cargo test --features irq-timing-trace ...`.
+irq-timing-trace = ["std"]
+# `ppu-state-trace` enables the per-PPU-dot state-tracing fixture used
+# by the Session-10 sprite-eval cascade investigation. See ADR-0005 and
+# `docs/ppu-trace-tooling.md`. Off by default; forwards to the
+# `rustynes-ppu/ppu-state-trace` feature which gates the recording hook
+# inside `Ppu::tick`. Enable with
+# `cargo test --features ppu-state-trace ...`.
+ppu-state-trace = ["std", "rustynes-ppu/ppu-state-trace"]
+# `cpu-boot-trace` enables the per-CPU-instruction boot-trace fixture
+# used by the Session-12 cold-boot divergence investigation. Off by
+# default (CI gate stays fast); enabled by
+# `cargo test --features cpu-boot-trace ...`. See
+# `crates/rustynes-core/src/cpu_boot_trace.rs` for the schema and
+# `scripts/mesen2_cpu_boot_trace.lua` for the Mesen2 reference
+# generator.
+cpu-boot-trace = ["std"]
+# v2.0 R-1 core C-1 diagnostic — forward to rustynes-apu. Default-off.
+mc-r1-dmc-abort-probe = ["rustynes-apu/mc-r1-dmc-abort-probe"]
+# v2.0 R1c-1 diagnostic — per-instruction (PC, cpu_cycle) trace. Forward to rustynes-cpu.
+cpu-instr-cycle-trace = ["rustynes-cpu/cpu-instr-cycle-trace"]
+
+[dependencies]
+rustynes-cpu.workspace = true
+rustynes-ppu.workspace = true
+rustynes-apu = { workspace = true, default-features = false }
+rustynes-mappers.workspace = true
+
+bitflags.workspace = true
+thiserror.workspace = true
+serde = { workspace = true, optional = true }
+sha2.workspace = true
+lz4_flex.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+pretty_assertions.workspace = true
+
+[[bench]]
+name = "full_frame"
+path = "benches/full_frame.rs"
+harness = false
+
+[[bench]]
+name = "snapshot_restore"
+path = "benches/snapshot_restore.rs"
+harness = false

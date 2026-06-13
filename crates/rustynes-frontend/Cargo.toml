@@ -1,0 +1,208 @@
+[package]
+name = "rustynes-frontend"
+description = "RustyNES v2: cross-platform NES emulator binary (winit + wgpu + cpal + egui)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords = ["nes", "emulator", "famicom", "wgpu", "cpal"]
+categories = ["emulators", "games"]
+
+[lib]
+name = "rustynes_frontend"
+path = "src/lib.rs"
+# `cdylib` produces the `.wasm` artifact that wasm-bindgen + trunk
+# consume to ship the browser frontend. `rlib` keeps the regular
+# Rust crate-graph integration so the `[[bin]]` below can depend on
+# the lib without duplicating sources.
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# v1.3.0 Sprint 1.4 — two wasm32 frontends. Exactly one is compiled
+# (each provides a `#[wasm_bindgen(start)]`, which must be unique).
+# `wasm-winit` (default) is the full experience: the same winit +
+# wgpu + egui App as native, with the debugger overlay + NTSC filter.
+# `wasm-canvas` is the lightweight ~316 KB embed mode: a direct
+# canvas-2D blit with Web Audio + localStorage save state, no
+# debugger. Build the embed mode with
+# `trunk build --no-default-features --features wasm-canvas`.
+#
+default = ["wasm-winit", "emu-thread"]
+wasm-winit = []
+wasm-canvas = []
+
+# v2.8.0 Phase 5 increment 3 — dedicated emulation thread (default ON,
+# native-only; a no-op on wasm32, which is single-threaded). Single-player
+# frame production runs off the winit event-loop thread so UI/render stalls
+# never disturb emulation cadence. Disable (`--no-default-features` + the
+# wasm/RA features you want) to A/B against the synchronous Phases 0-4 drive;
+# the synchronous path is retained until the threaded path is proven, then
+# collapsed (the v2.0.0 -> v2.0.1 pattern). Pulls in `libc` (native-only) for
+# the best-effort per-thread priority elevation on Linux.
+emu-thread = ["dep:libc"]
+
+# v2.7.0 — RetroAchievements integration (default OFF, native-only).
+#
+# Pulls in `rustynes-cheevos` (the safe `RaClient` over vendored rcheevos). Gated
+# off by default so the standard build links no extra C and the wasm builds
+# never see it (`rustynes-cheevos` is only a dependency of the
+# `cfg(not(target_arch = "wasm32"))` target table below). Enable with
+# `cargo build -p rustynes-frontend --features retroachievements`.
+#
+# Also pulls in `ureq` (off-thread badge-PNG fetch) + `png` (decode the badge
+# bytes to an `egui::ColorImage`). Both are native-only optional deps below;
+# the badge-image cache lives in `src/debugger/badge_cache.rs`, gated the same
+# way as the rest of the RA integration.
+retroachievements = ["dep:rustynes-cheevos", "dep:ureq", "dep:png"]
+
+# v2.8.0 Phase 0 — opt-in GPU pass timing (default OFF, native-only).
+#
+# Requests wgpu `TIMESTAMP_QUERY` (when the adapter offers it) and brackets
+# the per-frame command encoder with timestamps; the resolved GPU pass time
+# shows in the debugger Performance panel. Off by default so the standard
+# build's device request is byte-for-byte unchanged.
+gpu-timing = []
+
+[[bin]]
+name = "rustynes"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+rustynes-core.workspace = true
+
+# Phase 5 Sprint 1 frontend stack.
+winit.workspace = true
+wgpu.workspace = true
+cpal.workspace = true
+egui.workspace = true
+egui-wgpu.workspace = true
+egui-winit.workspace = true
+gilrs.workspace = true
+rfd.workspace = true
+directories.workspace = true
+thiserror.workspace = true
+
+# Phase 5 Sprint 2: TOML config + serde for input rebinding + rom hashing.
+serde.workspace = true
+toml.workspace = true
+sha2.workspace = true
+
+# Frontend-only utilities. Both already in the dependency tree as
+# transitive deps of wgpu; adding them as direct deps is free.
+pollster = "0.3"
+bytemuck = "1"
+web-time.workspace = true
+
+# v2.3.0 — netplay (rollback netcode + UDP transport). Native-only: it
+# drives a `std::net::UdpSocket`, which does not exist on
+# `wasm32-unknown-unknown`. All frontend netplay code is gated on
+# `cfg(not(target_arch = "wasm32"))` (mirroring rfd/cpal/gilrs), so the two
+# wasm builds compile with netplay absent (the panel shows a native-only note).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rustynes-netplay.workspace = true
+
+# v2.7.0 — RetroAchievements (native-only, behind the default-OFF
+# `retroachievements` feature). `rustynes-cheevos` links the vendored rcheevos C
+# library, which only builds for the native host; `optional = true` + the
+# `retroachievements = ["dep:rustynes-cheevos"]` feature above keep it out of the
+# default build, and placing it in this `cfg(not(target_arch = "wasm32"))`
+# table guarantees the two wasm builds never attempt to compile it.
+rustynes-cheevos = { path = "../rustynes-cheevos", optional = true }
+
+# v2.7.1 — RetroAchievements badge images (native-only, gated by the
+# `retroachievements` feature via `dep:ureq` / `dep:png`). `ureq` fetches the
+# badge PNGs off the UI thread (same agent style as `rustynes-cheevos`); `png`
+# decodes them to RGBA8 for upload as an `egui` texture. Both are kept in this
+# `cfg(not(target_arch = "wasm32"))` table so the wasm builds never see them,
+# and `optional = true` keeps them out of the default (feature-off) build.
+ureq = { version = "2", default-features = false, features = ["tls"], optional = true }
+png = { version = "0.17", optional = true }
+
+# v2.8.0 Phase 5 increment 3 — best-effort emulation-thread priority
+# elevation (Linux only). `elevate_thread_priority()` in `emu_thread.rs`
+# tries `SCHED_RR` at a low real-time priority and falls back to a small
+# negative nice, plus tightens `PR_SET_TIMERSLACK` — all per-THREAD (not the
+# process) and degrading SILENTLY to today's behavior when the user lacks
+# the `rtprio`/`nice` rlimit (join the `realtime` group / install
+# `realtime-privileges`). `libc` is already in the native dep tree
+# (transitively via cpal/alsa); this just makes it a direct dep. Behind the
+# `emu-thread` feature so a feature-off build doesn't pull it.
+libc = { version = "0.2", optional = true }
+
+# v1.3.0 Sprint 1.1 — wasm32 target dependencies.
+#
+# The native dep stack above (`winit`/`wgpu`/`cpal`/`egui`/`gilrs`/
+# `rfd`/`directories`) is gated behind `cfg(not(target_arch = "wasm32"))`
+# in `src/main.rs` for the parts that don't compile to wasm; the
+# wasm32 entry point lives in `src/wasm.rs` (Sprint 1.2+).
+#
+# The chip stack (`rustynes-core` and its dependencies) is already
+# `no_std + alloc`-compatible (verified by the
+# `thumbv7em-none-eabihf` CI gate), so this scaffolding doesn't
+# require any chip-stack changes. The wasm-bindgen + web-sys deps
+# bridge to the browser host. `gilrs` / `rfd` / `directories` are
+# native-only and excluded from the wasm32 build (replaced by
+# browser-native input + file-picker + storage APIs in Sprint 1.3).
+#
+# Note: cpal 0.15's wasm32 backend is incomplete. v1.3.0 Sprint 1.x
+# uses a target-gated cpal 0.17 override here. See ADR 0008
+# (pending) and `docs/audit/v1.3-sprint-1.1-wasm32-research-2026-05-24.md`.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# v2.6.0 — netplay over WebRTC in the browser. `rustynes-netplay` compiles on
+# wasm32 (the v2.5.0 Phase C gate): the portable rollback session core + the
+# `WebRtcTransport` over an `RtcDataChannel`. The native frontend keeps its
+# own `rustynes-netplay` dep (UDP, above); this wasm one drives the WebRTC path.
+rustynes-netplay.workspace = true
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+console_error_panic_hook.workspace = true
+js-sys.workspace = true
+web-sys = { workspace = true, features = [
+    "Document", "Window", "Element", "HtmlElement", "HtmlCanvasElement",
+    "HtmlInputElement", "Event", "EventTarget", "DragEvent", "DataTransfer",
+    "File", "FileList", "FileReader", "Blob",
+    # v1.3.0 Sprint 1.3 — canvas-2D rendering + keyboard input.
+    # (The `console` namespace needs no feature flag — it's a core binding.)
+    "CanvasRenderingContext2d", "ImageData", "KeyboardEvent",
+    # v1.3.0 Sprint 1.4 — Web Audio output + localStorage save state.
+    # ScriptProcessorNode is deprecated but universally supported and
+    # needs no COOP/COEP headers (unlike AudioWorklet) — the pragmatic
+    # MVP choice. See `docs/audit/v1.3-sprint-1.4-audio-savestate-2026-05-24.md`.
+    "AudioContext", "AudioContextState", "AudioDestinationNode", "AudioNode",
+    "AudioBuffer", "ScriptProcessorNode", "AudioProcessingEvent", "Storage",
+    # v2.8.0 Phase 6 — AudioWorklet output (replaces ScriptProcessorNode).
+    # The worklet `process()` runs on the audio rendering thread, decoupling
+    # audio from the main-thread emulator/rAF loop (the wasm analog of the
+    # native dedicated audio callback). No SharedArrayBuffer (GitHub Pages
+    # can't set COOP/COEP) — samples cross via `port.postMessage`, occupancy
+    # comes back the same way to drive the DRC servo. SPN stays as a fallback.
+    "BaseAudioContext", "AudioWorklet", "AudioWorkletNode",
+    "AudioWorkletNodeOptions", "MessagePort", "BlobPropertyBag",
+    # v1.6.0 Sprint 4 — movie `.rnm` Blob download + save-state I/O.
+    # `Url`/`HtmlAnchorElement` drive the synthetic-anchor download; `Blob`
+    # (already enabled above) + these mint + click the object URL. `Node`
+    # is needed to `append_child` the programmatically-created hidden
+    # `<input id="rnm-input">` movie loader to the document body.
+    "Url", "HtmlAnchorElement", "Node",
+    # v2.6.0 — browser netplay: a WebSocket signaling client + the WebRTC
+    # peer-connection + data-channel offer/answer/ICE handshake that yields
+    # the `RtcDataChannel` wrapped by `rustynes_netplay::WebRtcTransport`.
+    "WebSocket", "MessageEvent", "BinaryType", "CloseEvent",
+    "RtcPeerConnection", "RtcConfiguration", "RtcDataChannel", "RtcDataChannelInit",
+    "RtcDataChannelType", "RtcSessionDescription", "RtcSessionDescriptionInit",
+    "RtcSdpType", "RtcIceServer", "RtcPeerConnectionIceEvent", "RtcIceCandidate",
+    "RtcIceCandidateInit", "RtcDataChannelEvent",
+] }
+
+[dev-dependencies]
+tempfile = "3"
+# Validate the embedded WGSL shaders at test time (the same WGSL front-end +
+# validator wgpu uses at runtime), so a shader error (e.g. dynamically indexing
+# a `let` array) fails CI instead of aborting the app when the user toggles the
+# NTSC filter. Pinned to wgpu 22's naga so the validation matches what ships.
+naga = { version = "22", features = ["wgsl-in"] }
