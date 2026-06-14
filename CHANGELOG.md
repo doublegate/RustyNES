@@ -20,6 +20,21 @@ content below, plus the first **v1.1.0** feature work (beta.1).
 
 ### Added
 
+- **Lua scripting engine** (v1.1.0 beta.3, Workstream E flagship, T-110-E1..E4 — foundation).
+  A new `rustynes-script` crate embeds sandboxed **Lua 5.4** (vendored `mlua`) and exposes a
+  Mesen2 / FCEUX-style `emu` API: `emu.read` / `readRange` / `write`, `emu.cpu()` (A/X/Y/S/P/PC),
+  `emu.frame` / `cycle`, `emu.log`, and `emu.onFrame(fn)` per-frame callbacks. The engine is
+  **host-driven** — the frontend calls it once per frame and binds live-`Nes` accessors via
+  `mlua::Lua::scope` (see ADR 0010). **Sandboxed** (only `table`/`string`/`math`/`coroutine`;
+  no `io`/`os`/`package`/`require`/`debug`/`load`/`dofile`) with a per-frame VM-instruction
+  budget against runaway scripts. **Determinism-safe:** the crate is pulled in only behind the
+  frontend's (off-by-default) `scripting` feature — so the shipped build, the wasm build, and
+  the `no_std` cross-compile never compile it and stay byte-identical — and `emu.write` pokes
+  only system RAM after `run_frame` (cheat-path mechanism) and is gated off via
+  `set_writes_locked` (netplay / TAS / RA-hardcore). Headless API + sandbox-escape + budget
+  tests. (The frontend script console, `onExec`/`onRead`/`onWrite` event callbacks, the overlay
+  draw API, save-state/input control, `examples/scripts/`, and `docs/scripting.md` land in the
+  next beta.3 PR.)
 - **Graphic equalizer** (v1.1.0 beta.2, Workstream D, T-110-D2). An optional 5-band graphic
   EQ (60 / 240 / 1k / 3.8k / 12k Hz, ±12 dB each) in Settings → Audio. It runs as a
   **frontend output stage** — cascaded RBJ peaking biquads applied on the producer side after
