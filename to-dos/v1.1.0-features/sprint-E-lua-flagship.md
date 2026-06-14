@@ -2,11 +2,17 @@
 
 The headline v1.1.0 feature: a full Mesen2/FCEUX-style Lua scripting API.
 
-## T-110-E1 — `rustynes-script` crate + sandbox
+## T-110-E1 — `rustynes-script` crate + sandbox  ✅ DONE (2026-06-14)
 
 - New crate `crates/rustynes-script` (native-first; feature-gated `scripting`)
   embedding **`mlua`** (Lua 5.4), sandboxed — no `io`/`os`/`require`/`package` by
   default; CPU/instruction budget guard against runaway scripts.
+- **DONE:** `crates/rustynes-script` embeds `mlua` (lua54 + vendored). `ScriptEngine::new`
+  loads only `table`/`string`/`math`/`coroutine` and nils out `load`/`loadfile`/`dofile`/
+  `loadstring`/`collectgarbage`/`require`/`package`/`io`/`os`/`debug`; a per-frame
+  VM-instruction hook (`DEFAULT_INSTRUCTION_BUDGET` = 5M) aborts runaways. Pulled in only
+  behind the frontend's optional `scripting` feature → default/wasm/no_std builds never
+  compile it (byte-identical). Sandbox-escape + budget tests included. See **ADR 0010**.
 
 ## T-110-E2 — API surface (model on Mesen2 `LuaApi.cpp` + fceux `lua-engine.cpp`)
 
@@ -16,6 +22,11 @@ The headline v1.1.0 feature: a full Mesen2/FCEUX-style Lua scripting API.
 - **callbacks:** `onFrame`, `onExec(addr)`, `onRead/onWrite(addr)`, `onNmi/onIrq`.
 - **control:** savestate save/load, input override, pause/step.
 - **overlay:** drawing API (text/rect/pixel) rendered through the egui pass; `log`.
+- **PARTIAL (E-PR1):** `emu.read`/`readRange`/`write` (system-RAM writes), `emu.cpu()`
+  (A/X/Y/S/P/PC), `emu.frame`/`cycle`, `emu.log`, and `emu.onFrame` are **done**.
+  **Remaining (E-PR2):** `onExec`/`onRead`/`onWrite` (replay the `debug-hooks` trace/event
+  logs after the frame), PPU/APU state tables, control (savestate/input/pause), and the
+  overlay drawing API. `onNmi`/`onIrq` wait on the non-`const` interrupt tap (see T-110-C3).
 
 ## T-110-E3 — Core hook points
 

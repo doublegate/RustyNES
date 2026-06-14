@@ -935,6 +935,15 @@ impl Nes {
         self.bus.poke_ram(addr, value);
     }
 
+    /// Read a byte from the CPU address space (`$0000-$FFFF`) for inspection,
+    /// without the open-bus / controller-strobe side effects of a real CPU
+    /// read. Used by the debugger and the Lua scripting API (`emu.read`). This
+    /// observes state; it does not advance the emulator.
+    #[must_use]
+    pub fn peek(&mut self, addr: u16) -> u8 {
+        self.bus.peek_cpu(addr)
+    }
+
     /// Add a Game Genie code (6 or 8 characters, case-insensitive) that
     /// substitutes a byte the CPU reads from PRG-ROM (`$8000-$FFFF`).
     ///

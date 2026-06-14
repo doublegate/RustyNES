@@ -1,0 +1,19 @@
+[package]
+name = "rustynes-script"
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.86"
+description = "Sandboxed Lua 5.4 scripting engine for the RustyNES emulator (memory/state access, per-frame callbacks)."
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+rustynes-core = { workspace = true }
+mlua = { workspace = true }
+thiserror = { workspace = true }
