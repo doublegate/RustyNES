@@ -222,7 +222,7 @@ fn signal_sample(t: i32, row: i32, video_phase: i32) -> i32 {{
 
     let ppu = i32(textureLoad(idx_tex, vec2<i32>(x, row), 0).r);
     let pixel_color = ppu & 0x3F;
-    let emphasis = ppu >> 6;
+    let emphasis = (ppu >> 6) & 7;
     let hue = ppu & 0x0F;
 
     // Per-pixel entering phase: videoPhase*4 + row*341*8 + x*8.
@@ -492,7 +492,13 @@ mod tests {
         // $0D: q forced to m (no luma swing) -> low == high.
         assert_eq!(low[0x0D], high[0x0D]);
         // Attenuated table populated (index >= 0x40).
-        assert_eq!(high[0x40 | 0x20], high[0x40 | 0x20]); // exists, no panic
+        // Attenuated white ($20 in the h=1 / emphasised half) is dimmer than
+        // unattenuated white but still a positive high level.
+        let att_white = high[0x40 | 0x20];
+        assert!(
+            att_white > 0 && att_white < high[0x20],
+            "attenuated < full white"
+        );
     }
 
     /// The sine table is `8*sin`, so its extremes are ±8 and it has the

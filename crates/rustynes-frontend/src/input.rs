@@ -657,23 +657,28 @@ pub struct InputState {
 }
 
 /// v1.1.0 beta.1 (T-110-B1) — default keyboard mapping for the 12 Power Pad mat
-/// buttons (mat button `i+1` ⇒ index `i`): the number row `1..=9 0 - =`.
+/// buttons (mat button `i+1` ⇒ index `i`): a left-hand 3×4 grid `1 2 3 4` /
+/// `Q W E R` / `A S D F`.
 ///
-/// Fixed for now (rebindable mat keys are a follow-up); chosen to avoid the `P1`
-/// (arrows / `Z` `X` / Enter / `RShift`) and `P2` (`WASD` / `Q` `E`) keys.
+/// Fixed for now (rebindable mat keys are a follow-up). Deliberately avoids the
+/// `P1` keys (arrows / `Z` `X` / Enter / `RShift`) and the system bindings — in
+/// particular `0` `-` `=`, which are the default speed controls. The overlap
+/// with the `P2` controller keys (`WASD` / `Q` `E`) is harmless: a Power Pad
+/// replaces the `P2` controller, so those `P2` bits are ignored while it is the
+/// active port-2 device.
 pub const POWER_PAD_KEYS: [KeyCode; 12] = [
     KeyCode::Digit1,
     KeyCode::Digit2,
     KeyCode::Digit3,
     KeyCode::Digit4,
-    KeyCode::Digit5,
-    KeyCode::Digit6,
-    KeyCode::Digit7,
-    KeyCode::Digit8,
-    KeyCode::Digit9,
-    KeyCode::Digit0,
-    KeyCode::Minus,
-    KeyCode::Equal,
+    KeyCode::KeyQ,
+    KeyCode::KeyW,
+    KeyCode::KeyE,
+    KeyCode::KeyR,
+    KeyCode::KeyA,
+    KeyCode::KeyS,
+    KeyCode::KeyD,
+    KeyCode::KeyF,
 ];
 
 impl InputState {
@@ -1229,6 +1234,38 @@ mod tests {
         let s = InputState::with_defaults();
         assert!(s.player(4).is_empty());
         assert!(s.player(usize::MAX).is_empty());
+    }
+
+    #[test]
+    fn power_pad_keys_map_to_bits_and_clear_on_release() {
+        let mut s = InputState::with_defaults();
+        assert_eq!(s.power_pad(), 0, "no mat buttons at rest");
+        // Each default key sets exactly its bit on press, clears it on release.
+        for (i, &key) in POWER_PAD_KEYS.iter().enumerate() {
+            let (k, e) = down(key);
+            s.handle_key(k, e);
+            assert_eq!(s.power_pad() & (1 << i), 1 << i, "key {key:?} -> bit {i}");
+            let (k, e) = up(key);
+            s.handle_key(k, e);
+            assert_eq!(
+                s.power_pad() & (1 << i),
+                0,
+                "release {key:?} clears bit {i}"
+            );
+        }
+        // Holding two keys sets both bits simultaneously.
+        let (k, e) = down(POWER_PAD_KEYS[0]);
+        s.handle_key(k, e);
+        let (k, e) = down(POWER_PAD_KEYS[11]);
+        s.handle_key(k, e);
+        assert_eq!(s.power_pad(), (1 << 0) | (1 << 11));
+        // The default keys avoid the speed-control system bindings (0 / - / =).
+        for sys in [KeyCode::Digit0, KeyCode::Minus, KeyCode::Equal] {
+            assert!(
+                !POWER_PAD_KEYS.contains(&sys),
+                "{sys:?} must not be a mat key"
+            );
+        }
     }
 
     #[test]

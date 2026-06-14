@@ -39,6 +39,8 @@ fn db() -> &'static [(u32, Mirroring)] {
         let mut rows: Vec<(u32, Mirroring)> = DB_TEXT.lines().filter_map(parse_row).collect();
         rows.sort_unstable_by_key(|&(crc, _)| crc);
         rows.dedup_by_key(|&mut (crc, _)| crc);
+        // This Vec lives for the whole process; release the parse over-capacity.
+        rows.shrink_to_fit();
         rows
     })
 }

@@ -53,7 +53,9 @@ fn main() {
 
     // The known-correct expected disk-info block for the swapped-in side, straight
     // from the raw .fds (header-less form; each side is FDS_SIDE_LEN bytes).
-    let body = if disk.len() >= 4 && &disk[..3] == b"FDS" {
+    // A headered `.fds` starts with "FDS\x1a" + a 16-byte header; require the
+    // full header before slicing it off so a short/corrupt file can't panic.
+    let body = if disk.len() >= 16 && &disk[..3] == b"FDS" {
         &disk[16..]
     } else {
         &disk[..]
@@ -198,7 +200,16 @@ fn main() {
                     diverged = true;
                 }
             }
-            if !diverged {
+            if expected.is_empty() || got.is_empty() {
+                // No reference bytes for this side (e.g. an invalid side index):
+                // the byte-compare loop ran zero times, so don't claim a MATCH.
+                println!(
+                    "  side {swap_to} has no reference disk-info block in the raw .fds \
+                     (expected={} got={} bytes); cannot compare.",
+                    expected.len(),
+                    got.len()
+                );
+            } else if !diverged {
                 println!(
                     "  side {swap_to} disk-info block read MATCHES the raw .fds exactly \
                      (side#=0x{:02x}); the ERR.07 side# check is satisfied here — the \

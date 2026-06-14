@@ -139,8 +139,9 @@ pub struct FrameInputs {
 /// — the gate is applied where input meets the NES, and the gated bits are what
 /// get latched / recorded / sent over netplay.
 #[must_use]
-pub fn apply_turbo(buttons: Buttons, frame: u64, mask: Buttons, period: u32) -> Buttons {
-    if mask.is_empty() {
+pub(crate) fn apply_turbo(buttons: Buttons, frame: u64, mask: Buttons, period: u32) -> Buttons {
+    // Nothing to strobe if no turbo button is configured OR none is held.
+    if mask.is_empty() || (buttons & mask).is_empty() {
         return buttons;
     }
     let period = u64::from(period.max(1));

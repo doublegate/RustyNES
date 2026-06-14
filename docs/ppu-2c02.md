@@ -40,7 +40,7 @@ impl Ppu {
     pub fn frame_complete(&self) -> bool;
     pub fn framebuffer(&self) -> &[u8; 256 * 240 * 4];        // RGBA8 sRGB
     pub fn index_framebuffer(&self) -> &[u16; 256 * 240];     // (emph<<6)|colour, 0..=511
-    pub fn ntsc_phase(&self) -> u8;                           // per-frame videoPhase, 0..=2
+    pub fn ntsc_phase(&self) -> u8;                           // videoPhase: 0..=2 NTSC, 0..=1 PAL/Dendy
 }
 ```
 
@@ -227,10 +227,12 @@ PAL/Dendy), snapshotted at each frame boundary from a free-running master-cycle
 counter. This is the source of the NTSC dot-crawl; the filter derives the per-scanline
 (`videoPhase*4 + y*341*8`) and per-pixel (`x*8`) phase from it.
 
-Both are **output-only / cosmetic**: they carry no logical state, feed no emulation
-path, and are excluded from the save-state (derived data, like the framebuffer), so the
-determinism and AccuracyCoin contracts are unaffected and the `no_std` chip stack is
-untouched.
+Both are **output-only / cosmetic**: they carry no logical state and feed no emulation
+path, so the determinism and AccuracyCoin contracts are unaffected and the `no_std` chip
+stack is untouched. Unlike the RGBA `framebuffer` (which IS serialized in the PPU
+snapshot), the index framebuffer + phase are NOT saved — they regenerate on the next
+emitted frame, so a state loaded while paused shows correct NTSC from the first frame
+after resume.
 
 ## Edge cases and gotchas
 

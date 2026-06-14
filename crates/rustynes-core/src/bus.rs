@@ -774,8 +774,9 @@ impl LockstepBus {
         self.ppu.index_framebuffer()
     }
 
-    /// The per-frame NTSC composite colour phase (0..=2) for the `NES_NTSC`
-    /// filter. See [`rustynes_ppu::Ppu::ntsc_phase`].
+    /// The per-frame NTSC composite colour phase for the `NES_NTSC` filter
+    /// (`0..=2` on NTSC; frame parity `0..=1` on PAL/Dendy). See
+    /// [`rustynes_ppu::Ppu::ntsc_phase`].
     #[must_use]
     pub const fn ntsc_phase(&self) -> u8 {
         self.ppu.ntsc_phase()
@@ -3906,5 +3907,22 @@ mod four_score_tests {
         assert!(restored.expansion_device(0).is_none());
         assert!(restored.expansion_device(1).is_none());
         assert_eq!(restored.mirroring_override(), None);
+    }
+
+    #[test]
+    fn power_pad_state_round_trips_through_save_state() {
+        use crate::input_device::{InputDevice, PowerPadState};
+        let mut bus = test_bus();
+        bus.set_expansion_device(1, Some(InputDevice::PowerPad(PowerPadState::new())));
+        bus.set_power_pad(1, 0b1010_0101_0011);
+        let blob = crate::bus_snapshot::encode_bus(&bus);
+        let mut restored = test_bus();
+        crate::bus_snapshot::decode_bus(&mut restored, &blob).unwrap();
+        match restored.expansion_device(1) {
+            Some(InputDevice::PowerPad(p)) => {
+                assert_eq!(p.buttons_raw(), 0b1010_0101_0011);
+            }
+            other => panic!("expected a Power Pad on port 1, got {other:?}"),
+        }
     }
 }
