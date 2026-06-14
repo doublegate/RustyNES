@@ -4,12 +4,27 @@ Extension points: `crates/rustynes-core/src/input_device.rs` (the `InputDevice` 
 currently `Zapper`, `Vaus`), `crates/rustynes-frontend/src/input.rs`, `config.rs`,
 the mapper parse path in `crates/rustynes-mappers/src/lib.rs`, and the cheat panel.
 
-## T-110-B1 — New controllers (Power Pad, Family BASIC keyboard)
+## T-110-B1 — New controllers (Power Pad, Family BASIC keyboard)  (Power Pad core DONE)
 
 - Add `InputDevice` variants implementing `write_strobe`/`read`/`peek`; opt-in per
   port so the default controller path stays byte-identical.
 - **Refs:** `ref-proj/Mesen2/.../Input/PowerPad.h`, `FamilyBasicKeyboard.h`.
 - **Done when:** selectable per port in settings; determinism preserved when unset.
+- **Power Pad core ✅ DONE (2026-06-14):** `input_device::PowerPadState` +
+  `InputDevice::PowerPad` — the 12-button dual-shift-register serial protocol
+  (`NESdev`/Mesen bit layout: buttons LSb-first on `$4017` D3/D4, `$4016` strobe).
+  `Nes::set_power_pad(port, buttons)` + `Bus::set_power_pad` attach/update; save-state
+  tag 3 (`bus_snapshot.rs`); exported as `rustynes_core::PowerPadState`. Opt-in =
+  byte-identical default path; `no_std` clean. Unit tests: no-button serial pattern,
+  button→serial-position mapping (Mesen-matched), strobe-high reload, save-state
+  round-trip, 12-bit mask. **Remaining:** frontend wiring — `ExpansionDevice::PowerPad`
+  + a 12-key default mapping (mat is a P2-port device) + `InputState`/`FrameInputs`/
+  `SharedInput` plumbing + the `latch` feed + a Settings selector. (The mat is fed
+  digital buttons, not the mouse the Zapper/Vaus use, so it needs new input-mapping
+  infra — hence the core/frontend split.)
+- **Family BASIC keyboard — DEFERRED:** a 72-key row/column matrix on the Famicom
+  expansion port ($4016 col-select/row-step + $4017 4-bit reads), much larger and
+  hard to verify without the copyrighted Family BASIC software. Separate follow-up.
 
 ## T-110-B2 — Turbo / autofire  ✅ DONE (2026-06-14)
 

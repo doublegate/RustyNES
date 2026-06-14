@@ -1058,6 +1058,21 @@ impl LockstepBus {
         }
     }
 
+    /// Update an attached Power Pad's live button mask (bit `i` = mat button
+    /// `i+1`) on `port`. No-op if the attached device is not a Power Pad.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `port` is not in `0..=1`.
+    pub const fn set_power_pad(&mut self, port: usize, buttons: u16) {
+        assert!(port < 2, "power pad port must be 0..=1");
+        if let Some(crate::input_device::InputDevice::PowerPad(p)) =
+            &mut self.expansion_device[port]
+        {
+            p.set(buttons);
+        }
+    }
+
     /// Sample the framebuffer luminance at each attached Zapper's aim point.
     /// Called once per frame (only does work when a Zapper is attached, so the
     /// no-device path is byte-identical).

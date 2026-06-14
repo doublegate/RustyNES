@@ -106,6 +106,13 @@ fn encode_expansion_device(w: &mut BinWriter, device: Option<&InputDevice>) {
             w.u8(v.shift_raw());
             w.bool(v.strobe_raw());
         }
+        Some(InputDevice::PowerPad(p)) => {
+            w.u8(3);
+            w.u16(p.buttons_raw());
+            w.u8(p.shift_l_raw());
+            w.u8(p.shift_h_raw());
+            w.bool(p.strobe_raw());
+        }
     }
 }
 
@@ -132,6 +139,15 @@ fn decode_expansion_device(r: &mut BinReader<'_>) -> Result<Option<InputDevice>,
             Some(InputDevice::Vaus(VausState::from_parts(
                 position, fire, shift, strobe,
             )))
+        }
+        3 => {
+            let buttons = r.u16()?;
+            let shift_l = r.u8()?;
+            let shift_h = r.u8()?;
+            let strobe = r.bool()?;
+            Some(InputDevice::PowerPad(
+                crate::input_device::PowerPadState::from_parts(buttons, shift_l, shift_h, strobe),
+            ))
         }
         // 0 (None) or any unknown tag => no device.
         _ => None,
