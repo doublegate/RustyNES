@@ -14,12 +14,22 @@ letterbox/overscan passes), `ntsc.rs` (current filter), `config.rs` `[video]`,
   `ref-proj/nestopia/source/core/NstVideoFilterNtsc.cpp`.
 - **Done when:** toggle in settings; screenshot-corpus regression added; perf within budget.
 
-## T-110-A2 — CRT / scanline WGSL shader post-pass
+## T-110-A2 — CRT / scanline WGSL shader post-pass  ✅ DONE (2026-06-14)
 
 - Add a post-process pass (scanlines, aperture/slot mask, optional curvature,
   bloom). Slots after the existing letterbox/overscan passes in `gfx.rs`.
 - **Ref:** `ref-proj/tetanes` CRT Easymode shader.
 - **Done when:** selectable + tunable in settings; off by default; no perf regression.
+- **DONE:** new `crates/rustynes-frontend/src/crt.rs` (`CrtFilter`, mirroring
+  `ntsc.rs`): source-row-space parabolic scanlines + a subtle RGB aperture-grille
+  mask + brightness compensation, driven by a `params` uniform. Wired into
+  `Gfx` (field + `enable_crt`/`disable_crt`/`set_crt_scanline` + a render branch
+  that takes priority over NTSC), `[graphics] crt_filter`/`crt_scanline` config,
+  the Settings → Display toggle + intensity slider + graphics-reset path, the
+  `app.rs` live-apply + `on_gfx_ready` startup init. Off by default (byte-identical
+  presentation), frontend-only (no accuracy/determinism impact). WGSL parse+validate
+  test in CI; native + wasm-winit + wasm-canvas clippy clean. Remaining for a later
+  pass: optional curvature/bloom + a configurable mask intensity (fixed-subtle now).
 
 ## T-110-A3 — `.pal` palette-file loading
 

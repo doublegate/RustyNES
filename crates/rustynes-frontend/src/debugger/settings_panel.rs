@@ -77,6 +77,12 @@ pub struct SettingsApply {
     /// v1.0.0 — the overscan-crop toggle changed; the app pushes the new
     /// `[graphics] hide_overscan` into the gfx letterbox UV rect.
     pub overscan: bool,
+    /// v1.1.0 beta.1 — the CRT-filter on/off toggle changed; the app enables /
+    /// disables the gfx CRT post-pass to match `[graphics] crt_filter`.
+    pub crt_filter: bool,
+    /// v1.1.0 beta.1 — the CRT scanline-intensity slider changed; the app pushes
+    /// the new `[graphics] crt_scanline` into the live CRT filter.
+    pub crt_scanline: bool,
     /// v1.0.0 — a per-APU-channel mute checkbox changed; the app pushes the new
     /// `[audio] channel_mask` into the core under the emu lock. The default
     /// mask (all on) is byte-identical to today's mixer output.
@@ -312,6 +318,27 @@ pub fn video_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
         save_config(config);
     }
 
+    // v1.1.0 beta.1 — CRT / scanline post-pass. Applied live; mutually exclusive
+    // with the NTSC filter (CRT wins). Default off = byte-identical presentation.
+    if ui
+        .checkbox(&mut config.graphics.crt_filter, "CRT / scanlines")
+        .changed()
+    {
+        state.apply.crt_filter = true;
+        save_config(config);
+    }
+    if config.graphics.crt_filter
+        && ui
+            .add(
+                egui::Slider::new(&mut config.graphics.crt_scanline, 0.0..=1.0)
+                    .text("Scanline intensity"),
+            )
+            .changed()
+    {
+        state.apply.crt_scanline = true;
+        save_config(config);
+    }
+
     ui.add_space(4.0);
     // v1.0.0 — reset the Graphics section to its defaults (guarded by a
     // two-click confirm so it isn't a foot-gun), then re-apply live.
@@ -321,10 +348,12 @@ pub fn video_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
         let ntsc_changed = (config.graphics.ntsc_filter == "off") != (def.ntsc_filter == "off");
         let overscan_changed = config.graphics.hide_overscan != def.hide_overscan;
         let pacing_changed = config.graphics.pacing_mode != def.pacing_mode;
+        let crt_changed = config.graphics.crt_filter != def.crt_filter;
         config.graphics = def;
         state.apply.ntsc_filter |= ntsc_changed;
         state.apply.overscan |= overscan_changed;
         state.apply.pacing_mode |= pacing_changed;
+        state.apply.crt_filter |= crt_changed;
         save_config(config);
     }
 }
@@ -511,6 +540,8 @@ mod tests {
                 audio_gain: false,
                 overscan: false,
                 apu_channels: false,
+                crt_filter: false,
+                crt_scanline: false,
             },
             ..Default::default()
         };

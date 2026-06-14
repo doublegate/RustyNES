@@ -275,6 +275,9 @@ pub struct Gfx {
     /// is first composited through this filter, then the letterbox blit
     /// samples the filter's output texture.
     ntsc: Option<crate::ntsc::NtscFilter>,
+    /// v1.1.0 beta.1 — optional CRT / scanline post-pass. Mutually exclusive with
+    /// `ntsc` at render time (CRT takes priority when both are set).
+    crt: Option<crate::crt::CrtFilter>,
     /// Whether the configured present mode was unsupported and the surface
     /// silently runs `Fifo` instead (surfaced in the settings panel so the
     /// resulting pacer-vs-vsync beat is attributable).
@@ -610,6 +613,7 @@ impl Gfx {
             uniforms,
             pipeline,
             ntsc: None,
+            crt: None,
             present_mode_fell_back,
             supported_present_modes: surface_caps.present_modes,
             #[cfg(all(not(target_arch = "wasm32"), feature = "gpu-timing"))]
@@ -680,6 +684,35 @@ impl Gfx {
     #[allow(dead_code)]
     pub fn disable_ntsc(&mut self) {
         self.ntsc = None;
+    }
+
+    /// Enable the CRT / scanline post-pass with the given scanline intensity
+    /// (`0.0..=1.0`). No-op if already enabled (use [`Self::set_crt_scanline`] to
+    /// retune). CRT and NTSC are mutually exclusive at render time.
+    pub fn enable_crt(&mut self, scanline: f32) {
+        if self.crt.is_none() {
+            self.crt = Some(crate::crt::CrtFilter::new(
+                &self.device,
+                self.config.format,
+                &self.nes_texture,
+                scanline,
+            ));
+        } else if let Some(crt) = self.crt.as_mut() {
+            crt.set_scanline(scanline);
+        }
+    }
+
+    /// Disable the CRT filter (skip the post-pass).
+    #[allow(dead_code)]
+    pub fn disable_crt(&mut self) {
+        self.crt = None;
+    }
+
+    /// Update the CRT scanline intensity live (no-op when CRT is disabled).
+    pub const fn set_crt_scanline(&mut self, scanline: f32) {
+        if let Some(crt) = self.crt.as_mut() {
+            crt.set_scanline(scanline);
+        }
     }
 
     /// Resize the surface (triggered on `WindowEvent::Resized`).
@@ -810,7 +843,15 @@ impl Gfx {
         // sample-time effect (the wgsl applies horizontal blur + scanline
         // darkening to the input texel; the result goes straight to the
         // surface).
-        if let Some(filter) = &self.ntsc {
+        if let Some(filter) = &self.crt {
+            filter.render(
+                &self.queue,
+                &mut encoder,
+                &view,
+                self.config.width,
+                self.config.height,
+            );
+        } else if let Some(filter) = &self.ntsc {
             filter.render(
                 &self.queue,
                 &mut encoder,
