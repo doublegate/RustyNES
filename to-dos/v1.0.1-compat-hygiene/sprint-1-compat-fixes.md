@@ -156,6 +156,31 @@ Follow-up: regenerate the visual reference `screenshots/external/mapper-089-Suns
   "loaded vs expected" count never converges. The read engine / CRC / side-switch /
   gap-skip are all verified correct, so the fix is in the block-2 / file-header
   **content-length** path of `fds.rs`, not the timing model.
+- **RESOLUTION — NO CONFIRMED BUG; SIDE A WORKS (2026-06-13).** Ran side A long
+  enough and captured a late frame: **at ~frame 3500 Kid Icarus is at its
+  interactive `ナマエトウロク` (NAME REGISTRATION) screen and fully playable** —
+  the katakana/hiragana entry grid responds to input (characters get entered).
+  The disk-read stats also plateau (identical at 2000/4000/8000 frames: max head
+  52669, 148617 bytes, then no more reads), i.e. **side A's load COMPLETES and the
+  game runs.** The earlier "side-A stall / file-load-completion" reading was wrong
+  — I was looking at the boot phase before the game appeared (~f60–540).
+  - **The side-B ERR.07 was a REPRODUCTION ARTIFACT, not a RustyNES bug.** My
+    headless swaps fired at frames 300–950 — during the BIOS boot — long before the
+    game requests side B (the request is literally *post-**registration***, i.e.
+    after the interactive name-entry screen + gameplay). Swapping during boot makes
+    the BIOS run its reset disk-check, which **requires side# = 0**; inserting side
+    B (side# = 1) then correctly yields ERR.07 ("wrong side number"). That is
+    *expected* behaviour for a mis-timed swap.
+  - Reaching the genuine side-B request needs **interactive play**: complete name
+    registration (navigate to `トウロク オワル` / END), start the game, and reach the
+    in-game "set disk side B" prompt — which random scripted input can't reliably
+    drive blind. This **matches `docs/compatibility.md`'s original note that this
+    item "needs interactive testing."**
+  - **Disposition:** T-101-002 is reclassified from "bug to fix" to **UNCONFIRMED —
+    side A verified working; side-B swap needs interactive verification by a human
+    playing to the real post-registration prompt.** No FDS code change was made (no
+    reproduced defect to fix). The trace facility + `fds_swap_repro` / `fds_trace`
+    harnesses remain as permanent tooling for that interactive verification.
 
 ## T-101-003 — GxROM-66 + SMB3 "Mario flashing" (un-reproduced reports)
 
