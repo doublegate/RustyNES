@@ -110,6 +110,32 @@ Follow-up: regenerate the visual reference `screenshots/external/mapper-089-Suns
   transfer-reset writes) and diff it against Mesen2/fceux on the same ROM to find
   the exact block/byte where the read diverges. (fds.rs is `#![no_std]`, so use a
   trace buffer + a feature-gated dump, not `eprintln`.)
+- **TRACE HARNESS BUILT + DIVERGENCE PINPOINTED (2026-06-13).** Added a runtime
+  opt-in FDS read-stream trace (`Nes::enable_fds_trace` / `take_fds_trace` →
+  `FdsTraceRec`; default-off, observation-only, not serialized → determinism
+  intact) + the `fds_trace` diagnostic bin, which drains the `$4031` byte stream +
+  `$4025` control writes + side changes and diffs the side-N disk-info block as the
+  BIOS read it against the raw `.fds`. Result on Kid Icarus:
+  - The BIOS reads side B's disk-info block **correctly through byte 0x15 —
+    INCLUDING side#=1 (it matches!).** So the side-B *data read is correct*; ERR.07
+    is NOT a corrupted read.
+  - At block byte 0x16 the stream shows a SECOND `01 *NINTENDO-HVC*` — the BIOS
+    **re-read block 1 from the start**. The `$4025` trace shows the head going
+    `0 → 223 → 0`: RustyNES **rewinds the head to 0 on motor-off** (`fds.rs:1384`),
+    whereas Mesen2 (`Fds.cpp:279-288`) defers the rewind to `_endOfHead` with a long
+    `_delay` and idles on `_resetTransfer && !_scanningDisk` — a real divergence.
+  - **Because the side# reads correctly as 1, ERR.07 ("wrong side number") means the
+    BIOS is comparing against a DIFFERENT expected side — the boot reset-check's
+    expected side 0** (nesdev: at boot the BIOS sets the DiskID side#/disk# to 0).
+    That implies **side A's game program never takes control** (the side-A "cycling"
+    is the BIOS still in its boot/disk loop), so the swap lands on the boot check,
+    not the game's own `LoadFiles(side 1)`. The real defect is therefore in the
+    **side-A multi-file load / game handoff** (and/or the motor-off rewind loop),
+    not side B per se. NEXT: trace side A's full boot load with `fds_trace` (no
+    swap) to find where the side-A load stalls / loops, and A/B the motor-off-rewind
+    change (Mesen2-style deferred `_endOfHead` reset + `_delay`) — verifying the 56
+    FDS unit tests + the 6 working FDS games stay green. (Still NOT fixed; a
+    speculative motor-rewind change was avoided pending that A/B.)
 
 ## T-101-003 — GxROM-66 + SMB3 "Mario flashing" (un-reproduced reports)
 

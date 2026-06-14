@@ -1288,6 +1288,18 @@ impl LockstepBus {
         self.mapper.set_disk_side(side);
     }
 
+    /// Start recording the diagnostic FDS read-stream trace (off by default;
+    /// observation-only). No-op on cartridge builds.
+    pub fn enable_fds_trace(&mut self) {
+        self.mapper.enable_fds_trace();
+    }
+
+    /// Drain the accumulated FDS read-stream trace records (empty for cartridge
+    /// builds / when tracing was never enabled).
+    pub fn take_fds_trace(&mut self) -> Vec<rustynes_mappers::FdsTraceRec> {
+        self.mapper.take_fds_trace()
+    }
+
     /// Re-serialize the (possibly-modified) FDS disk image to its byte layout
     /// for host persistence. Empty for cartridge builds.
     #[must_use]

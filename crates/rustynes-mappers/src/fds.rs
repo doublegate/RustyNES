@@ -946,6 +946,29 @@ enum TransferState {
     Writing,
 }
 
+/// One record in the optional FDS read-stream trace.
+///
+/// A diagnostic for the disk-read / side-swap path — e.g. the Kid Icarus side-B
+/// ERR.07 stall. Recorded only after [`Fds::enable_trace`]; default builds never
+/// allocate or record, so the determinism contract is untouched. `kind`: 0 =
+/// `$4031` read (the disk byte the BIOS consumed), 1 = `$4025` control write, 2 =
+/// side change. `value` is the byte (or the new side index / `0xFF` for eject).
+/// `head` is the wire head; `side` is the inserted side (or `-1` ejected);
+/// `status` is the live `$4030` bits.
+#[derive(Clone, Copy, Debug)]
+pub struct FdsTraceRec {
+    /// Event kind: 0 = `$4031` read, 1 = `$4025` control write, 2 = side change.
+    pub kind: u8,
+    /// The byte read/written, or (for a side change) the new side index / `0xFF`.
+    pub value: u8,
+    /// Wire head position at the time of the event.
+    pub head: u32,
+    /// Inserted side index, or `-1` when ejected.
+    pub side: i8,
+    /// Live `$4030` status bits at the time of the event.
+    pub status: u8,
+}
+
 /// FDS RAM-adapter device, modelled as a [`Mapper`].
 ///
 /// Owns the PRG-RAM, CHR-RAM, BIOS, the inserted disk image, all register
@@ -1054,6 +1077,14 @@ pub struct Fds {
     /// FDS 2C33 sound channel. Always present (register decode + save-state are
     /// build-independent); its synthesis is driven only under `mapper-audio`.
     audio: FdsAudio,
+
+    // --- Diagnostic read-stream trace (runtime opt-in; off by default) ---
+    /// When set (via [`Fds::enable_trace`]), disk-read / control / side-change
+    /// events are appended to `trace`. Pure observation — never affects emulation,
+    /// is not serialized, and defaults off, so the determinism contract holds.
+    trace_on: bool,
+    /// Accumulated trace records, drained by [`Fds::take_trace`].
+    trace: Vec<FdsTraceRec>,
 }
 
 impl Fds {
@@ -1118,6 +1149,8 @@ impl Fds {
             // ready transition it waits for.
             insert_not_ready: 0,
             audio: FdsAudio::default(),
+            trace_on: false,
+            trace: Vec::new(),
         })
     }
 
@@ -1312,6 +1345,7 @@ impl Fds {
 
     /// Decode a `$4025` control write into the individual control bits.
     fn write_control(&mut self, value: u8) {
+        self.trace_event(1, value);
         self.control = value;
         // $4025 bit layout (per nesdev / Takuika die-scan):
         //   bit0 = transfer reset (1: reset transfer timing to the initial state)
@@ -1417,9 +1451,56 @@ impl Fds {
     /// clears the byte-transfer flag, acknowledges disk IRQs).
     fn read_data_4031(&mut self) -> u8 {
         let v = self.read_data;
+        self.trace_event(0, v);
         self.byte_transfer_flag = false;
         self.recompute_irq_line();
         v
+    }
+
+    /// Append one [`FdsTraceRec`] when tracing is enabled (a no-op otherwise, so
+    /// default builds carry zero overhead beyond a single bool check on the cold
+    /// register paths). See [`Fds::enable_trace`].
+    fn trace_event(&mut self, kind: u8, value: u8) {
+        if self.trace_on {
+            let status = self.read_status_4030_peek();
+            self.trace.push(FdsTraceRec {
+                kind,
+                value,
+                head: self.head as u32,
+                side: self.inserted_side.map_or(-1, |s| s as i8),
+                status,
+            });
+        }
+    }
+
+    /// Non-mutating snapshot of the `$4030` status bits (for the trace record;
+    /// unlike [`Self::read_status_4030`] it does not acknowledge the timer IRQ).
+    fn read_status_4030_peek(&self) -> u8 {
+        let mut v = 0u8;
+        if self.timer_irq_flag {
+            v |= 0x01;
+        }
+        if self.byte_transfer_flag {
+            v |= 0x80;
+        }
+        if self.crc_error {
+            v |= 0x10;
+        }
+        if self.end_of_head {
+            v |= 0x40;
+        }
+        v
+    }
+
+    /// Start recording the diagnostic FDS read-stream trace (see [`FdsTraceRec`]).
+    /// Off by default; recording is pure observation and never affects emulation.
+    pub fn enable_trace(&mut self) {
+        self.trace_on = true;
+    }
+
+    /// Drain the accumulated FDS trace records.
+    pub fn take_trace(&mut self) -> Vec<FdsTraceRec> {
+        core::mem::take(&mut self.trace)
     }
 
     /// Read of the drive status register `$4032`.
@@ -1463,6 +1544,7 @@ impl Fds {
     /// caller bounds via [`Mapper::disk_side_count`]). Shared helper behind the
     /// [`Mapper::set_disk_side`] trait override.
     fn do_set_disk_side(&mut self, side: Option<usize>) {
+        self.trace_event(2, side.map_or(0xFF, |s| s as u8));
         match side {
             Some(i) if i < self.disk.side_count() => {
                 self.inserted_side = Some(i);
@@ -1776,6 +1858,14 @@ impl Mapper for Fds {
 
     fn set_disk_side(&mut self, side: Option<usize>) {
         self.do_set_disk_side(side);
+    }
+
+    fn enable_fds_trace(&mut self) {
+        self.enable_trace();
+    }
+
+    fn take_fds_trace(&mut self) -> Vec<FdsTraceRec> {
+        self.take_trace()
     }
 
     fn disk_image_bytes(&self) -> Vec<u8> {
