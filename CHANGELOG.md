@@ -20,6 +20,16 @@ content below, plus the first **v1.1.0** feature work (beta.1).
 
 ### Added
 
+- **NES Power Pad device — core** (v1.1.0 beta.1, Workstream B, T-110-B1, core of 2).
+  The 12-button Power Pad / Family Fun Fitness mat as an opt-in per-port `InputDevice`
+  overlay: `PowerPadState` implements the dual-8-bit-shift-register serial protocol
+  (the `NESdev` / Mesen bit layout — buttons read out LSb-first on `$4017` bits 3 and
+  4, with the standard `$4016` strobe), exposed via `Nes::set_power_pad(port, buttons)`
+  and round-tripped in the save-state. Opt-in: with no device attached the
+  standard-controller + Four Score read paths stay **byte-identical**, so determinism /
+  AccuracyCoin / the oracle are unaffected and the `no_std` core is unchanged. Protocol
+  unit-verified (button→serial-position mapping, strobe-reload, save-state round-trip).
+  The frontend key mapping that drives the mat is a follow-up.
 - **Turbo / autofire** (v1.1.0 beta.1, Workstream B, T-110-B2). The A and/or B button
   can rapid-fire while held, configurable via `[input] turbo_a` / `turbo_b` and a
   `turbo_period` (frames per on/off half-cycle; Settings → Input "Turbo / autofire").

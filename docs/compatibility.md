@@ -228,14 +228,18 @@ This section supersedes the early "Out-of-scope" list above where they disagree
   (`RUSTYNES_FDS_BIOS`) `fdsirqtests.fds` path. Simplified: no CRC/gaps-on-write,
   no analog seek timing. nesdev `FDS*` is the primary source; Mesen2
   `Core/NES/Mappers/FDS/` is a structural-only (GPL-3.0) reference.
-- **Input devices — standard pad + Four Score + Zapper + Vaus.** The
+- **Input devices — standard pad + Four Score + Zapper + Vaus + Power Pad.** The
   **Four Score** 4-player adapter is supported. Also supported: the
   **Arkanoid Vaus paddle** (`Nes::set_paddle`, game-ROM-verified against
-  `vaus-test`) and the **Zapper** light gun (`Nes::set_zapper`, framebuffer-luma
-  light-detect, unit-verified only) as an opt-in per-port `InputDevice` overlay —
-  when no device is attached the standard-controller + Four Score read paths are
-  byte-identical. Famicom expansion-port devices, the microphone, and DMC-DMA
-  controller-bit corruption remain deferred.
+  `vaus-test`), the **Zapper** light gun (`Nes::set_zapper`, framebuffer-luma
+  light-detect, unit-verified only), and the **Power Pad / Family Fun Fitness mat**
+  (`Nes::set_power_pad`, the 12-button dual-shift-register serial protocol,
+  unit-verified against the `NESdev` / Mesen bit layout) as opt-in per-port
+  `InputDevice` overlays — when no device is attached the standard-controller +
+  Four Score read paths are byte-identical. (v1.1.0 beta.1: the Power Pad core
+  device + `Nes::set_power_pad` API ship first; the frontend key mapping is a
+  follow-up.) Famicom expansion-port devices (the Family BASIC keyboard), the
+  microphone, and DMC-DMA controller-bit corruption remain deferred.
 - **Vs. System / PlayChoice-10 (2C03/04/05 RGB PPUs) — game-verified.**
   RGB palette tables + 2C05 register quirks + NES 2.0 byte-13 parsing + Vs.
   DIP/coin inputs; **mappers 99 + 151 game-verify in-game RGB** (Vs.

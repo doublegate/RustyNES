@@ -577,6 +577,29 @@ impl Nes {
         self.bus.set_zapper(port, x, y, trigger);
     }
 
+    /// Attach an NES Power Pad / Family Fun Fitness mat on `port` (typically
+    /// port 1 / `$4017`) and set its live button mask (bit `i` = mat button
+    /// `i+1`, 0..=11). Convenience wrapper that attaches the device if absent
+    /// then updates it. Opt-in: the no-device path stays byte-identical.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `port` is not in `0..=1`.
+    pub fn set_power_pad(&mut self, port: usize, buttons: u16) {
+        if !matches!(
+            self.bus.expansion_device(port),
+            Some(InputDevice::PowerPad(_))
+        ) {
+            self.bus.set_expansion_device(
+                port,
+                Some(InputDevice::PowerPad(
+                    crate::input_device::PowerPadState::new(),
+                )),
+            );
+        }
+        self.bus.set_power_pad(port, buttons);
+    }
+
     /// Write a byte directly into CPU work RAM (`$0000-$1FFF`). Used by the
     /// frontend's raw RAM cheats (GameShark-style); applied *after*
     /// [`Self::run_frame`], so the deterministic core run loop is unchanged

@@ -291,6 +291,144 @@ impl ZapperState {
     }
 }
 
+/// The NES Power Pad (a.k.a. Family Fun Fitness / Family Trainer mat) overlay.
+///
+/// A 12-button mat read on the player-2 port (`$4017`) through two 8-bit
+/// parallel-in/serial-out shift registers (a pair of 4021s), strobed by the
+/// standard `$4016` controller strobe. The 12 buttons are indexed 0..=11
+/// (matching the mat's "1".."12" labels); the frontend decides which physical
+/// keys map to which mat button (and any Side-A/Side-B row inversion).
+///
+/// Per the `NESdev` "Power Pad" page (and Mesen's implementation), the button
+/// bits load into two registers and shift out LSb-first on bits 3 and 4 of each
+/// `$4017` read:
+///
+/// - register L (bit 3 of the read): buttons 2, 1, 5, 9, 6, 10, 11, 7;
+/// - register H (bit 4 of the read): buttons 4, 3, 12, 8, then four `1` bits.
+///
+/// (Button numbers are 1-based here, matching the mat labels; the code uses
+/// 0-based indices.) Each read shifts both registers right and feeds `1`s in
+/// from the top, so post-shift reads settle to "no button".
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PowerPadState {
+    /// Live pressed-button mask: bit `i` (0..=11) set = mat button `i+1` held.
+    pub(crate) buttons: u16,
+    /// Low shift register (read out on bit 3).
+    pub(crate) shift_l: u8,
+    /// High shift register (read out on bit 4).
+    pub(crate) shift_h: u8,
+    /// Last strobe level written (bit 0 of `$4016`).
+    pub(crate) strobe: bool,
+}
+
+impl PowerPadState {
+    /// New mat with no buttons pressed.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            buttons: 0,
+            shift_l: 0,
+            shift_h: 0,
+            strobe: false,
+        }
+    }
+
+    /// Reload both shift registers from the live button mask (the parallel
+    /// latch). The bit order matches the `NESdev` / Mesen serial layout.
+    const fn reload(&mut self) {
+        // bit(i) = (buttons >> i) & 1, as u8. Inlined (no closures in const fn).
+        let p = self.buttons;
+        // L: buttons 2,1,5,9,6,10,11,7 (0-based 1,0,4,8,5,9,10,6).
+        self.shift_l = (((p >> 1) & 1) as u8)
+            | (((p & 1) as u8) << 1)
+            | ((((p >> 4) & 1) as u8) << 2)
+            | ((((p >> 8) & 1) as u8) << 3)
+            | ((((p >> 5) & 1) as u8) << 4)
+            | ((((p >> 9) & 1) as u8) << 5)
+            | ((((p >> 10) & 1) as u8) << 6)
+            | ((((p >> 6) & 1) as u8) << 7);
+        // H: buttons 4,3,12,8 (0-based 3,2,11,7), then four 1 bits (read as H=1).
+        self.shift_h = (((p >> 3) & 1) as u8)
+            | ((((p >> 2) & 1) as u8) << 1)
+            | ((((p >> 11) & 1) as u8) << 2)
+            | ((((p >> 7) & 1) as u8) << 3)
+            | 0xF0;
+    }
+
+    /// Update the live pressed-button mask (bit `i` = mat button `i+1`). While
+    /// the strobe is held high the registers track the live mask (parallel
+    /// load), matching the standard controller's latch-while-strobed semantics.
+    pub const fn set(&mut self, buttons: u16) {
+        self.buttons = buttons & 0x0FFF;
+        if self.strobe {
+            self.reload();
+        }
+    }
+
+    /// Handle a `$4016` strobe write. While bit 0 is high the registers are
+    /// (re)loaded from the live buttons; the falling edge leaves the latched
+    /// snapshot to shift out.
+    pub const fn write_strobe(&mut self, value: u8) {
+        let new_strobe = value & 1 != 0;
+        if new_strobe {
+            self.reload();
+        }
+        self.strobe = new_strobe;
+    }
+
+    /// Read the device byte for a `$4017` access, shifting both registers.
+    /// Bit 4 = current `MSb`-end of register H, bit 3 = register L; the caller
+    /// ORs in the open-bus upper bits. While the strobe is high the registers
+    /// are continuously reloaded (reads return the first button repeatedly).
+    pub const fn read(&mut self) -> u8 {
+        if self.strobe {
+            self.reload();
+        }
+        let out = ((self.shift_h & 1) << 4) | ((self.shift_l & 1) << 3);
+        self.shift_l = (self.shift_l >> 1) | 0x80;
+        self.shift_h = (self.shift_h >> 1) | 0x80;
+        out
+    }
+
+    /// Side-effect-free sample of the next device byte (debugger peek).
+    #[must_use]
+    pub const fn peek(&self) -> u8 {
+        ((self.shift_h & 1) << 4) | ((self.shift_l & 1) << 3)
+    }
+
+    /// Reconstruct from save-state parts.
+    #[must_use]
+    pub const fn from_parts(buttons: u16, shift_l: u8, shift_h: u8, strobe: bool) -> Self {
+        Self {
+            buttons,
+            shift_l,
+            shift_h,
+            strobe,
+        }
+    }
+
+    /// Raw live button mask (save-state).
+    #[must_use]
+    pub const fn buttons_raw(&self) -> u16 {
+        self.buttons
+    }
+    /// Raw low shift register (save-state).
+    #[must_use]
+    pub const fn shift_l_raw(&self) -> u8 {
+        self.shift_l
+    }
+    /// Raw high shift register (save-state).
+    #[must_use]
+    pub const fn shift_h_raw(&self) -> u8 {
+        self.shift_h
+    }
+    /// Raw strobe state (save-state).
+    #[must_use]
+    pub const fn strobe_raw(&self) -> bool {
+        self.strobe
+    }
+}
+
 /// An optional non-standard device overlaid on a controller port. When set,
 /// the bus's `$4016`/`$4017` read path returns this device's byte instead of
 /// the standard controller / Four Score serial byte.
@@ -300,6 +438,8 @@ pub enum InputDevice {
     Zapper(ZapperState),
     /// Arkanoid "Vaus" paddle.
     Vaus(VausState),
+    /// NES Power Pad / Family Fun Fitness mat (12 buttons).
+    PowerPad(PowerPadState),
 }
 
 impl InputDevice {
@@ -308,6 +448,7 @@ impl InputDevice {
     pub const fn write_strobe(&mut self, value: u8) {
         match self {
             Self::Vaus(v) => v.write_strobe(value),
+            Self::PowerPad(p) => p.write_strobe(value),
             Self::Zapper(_) => {}
         }
     }
@@ -318,6 +459,7 @@ impl InputDevice {
         match self {
             Self::Vaus(v) => v.read(),
             Self::Zapper(z) => z.read(),
+            Self::PowerPad(p) => p.read(),
         }
     }
 
@@ -327,6 +469,7 @@ impl InputDevice {
         match self {
             Self::Vaus(v) => v.peek(),
             Self::Zapper(z) => z.read(),
+            Self::PowerPad(p) => p.peek(),
         }
     }
 }
@@ -426,6 +569,89 @@ mod tests {
         assert_eq!(z.read() & (1 << 4), 1 << 4, "trigger pulled -> bit4 set");
         z.set(10, 10, false);
         assert_eq!(z.read() & (1 << 4), 0, "trigger released -> bit4 clear");
+    }
+
+    /// Read 8 device bytes after a strobe, returning the bit-3 (L) and bit-4 (H)
+    /// streams as bool arrays.
+    fn powerpad_read8(p: &mut PowerPadState) -> ([bool; 8], [bool; 8]) {
+        p.write_strobe(1);
+        p.write_strobe(0);
+        let mut l = [false; 8];
+        let mut h = [false; 8];
+        for i in 0..8 {
+            let b = p.read();
+            l[i] = b & (1 << 3) != 0;
+            h[i] = b & (1 << 4) != 0;
+        }
+        (l, h)
+    }
+
+    #[test]
+    fn powerpad_no_buttons_reads_clear_then_h_ones() {
+        // No buttons: L is all 0; H reads 0 for the first 4 (buttons 4,3,12,8),
+        // then 1 for the trailing "read as H=1" bits.
+        let mut p = PowerPadState::new();
+        let (l, h) = powerpad_read8(&mut p);
+        assert_eq!(l, [false; 8], "no L bits with nothing pressed");
+        assert_eq!(h, [false, false, false, false, true, true, true, true]);
+    }
+
+    #[test]
+    fn powerpad_button_maps_to_expected_serial_position() {
+        // Mat button "1" (index 0) is bit 1 of L -> appears on the 2nd read.
+        let mut p = PowerPadState::new();
+        p.set(1 << 0);
+        let (l, _h) = powerpad_read8(&mut p);
+        assert_eq!(l, [false, true, false, false, false, false, false, false]);
+
+        // Mat button "2" (index 1) is bit 0 of L -> appears on the 1st read.
+        let mut p = PowerPadState::new();
+        p.set(1 << 1);
+        let (l, _h) = powerpad_read8(&mut p);
+        assert_eq!(l, [true, false, false, false, false, false, false, false]);
+
+        // Mat button "4" (index 3) is bit 0 of H -> 1st read on bit 4.
+        let mut p = PowerPadState::new();
+        p.set(1 << 3);
+        let (_l, h) = powerpad_read8(&mut p);
+        assert_eq!(h, [true, false, false, false, true, true, true, true]);
+    }
+
+    #[test]
+    fn powerpad_strobe_high_reloads_each_read() {
+        // While strobe is high, every read re-latches, so the first serial bit
+        // is returned repeatedly (standard controller strobe semantics).
+        let mut p = PowerPadState::new();
+        p.set(1 << 1); // button "2" -> L bit 0 (1st-read position).
+        p.write_strobe(1); // strobe held high
+        for _ in 0..5 {
+            assert_eq!(p.read() & (1 << 3), 1 << 3, "strobe-high repeats bit 0");
+        }
+    }
+
+    #[test]
+    fn powerpad_save_state_round_trip() {
+        let mut p = PowerPadState::new();
+        p.set(0b1010_0101_0011);
+        p.write_strobe(1);
+        p.write_strobe(0);
+        let _ = p.read(); // advance the registers
+        let restored = PowerPadState::from_parts(
+            p.buttons_raw(),
+            p.shift_l_raw(),
+            p.shift_h_raw(),
+            p.strobe_raw(),
+        );
+        assert_eq!(restored.peek(), p.peek());
+        assert_eq!(restored.buttons_raw(), 0b1010_0101_0011);
+    }
+
+    #[test]
+    fn powerpad_masks_to_12_bits() {
+        // Bits above 11 are ignored (the mat has 12 buttons).
+        let mut p = PowerPadState::new();
+        p.set(0xFFFF);
+        assert_eq!(p.buttons_raw(), 0x0FFF);
     }
 
     #[test]
