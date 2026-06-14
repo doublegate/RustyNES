@@ -15,6 +15,10 @@ use alloc::vec;
 /// RGBA8 framebuffer length in bytes (256 × 240 × 4).
 pub const FRAMEBUFFER_LEN: usize = 256 * 240 * 4;
 
+/// Visible pixel count (256 × 240) — length of the parallel
+/// [`Ppu::index_framebuffer`] (one `u16` per pixel).
+pub const FRAMEBUFFER_PIXELS: usize = 256 * 240;
+
 /// Diagnostic: capture the (frame, scanline, dot, mask) of `$2007` reads to
 /// pin where the `$2007 Stress` test's per-dot reads land vs the visible
 /// scanline they target. Gated; default build unaffected.
@@ -440,6 +444,29 @@ pub struct Ppu {
     /// Framebuffer (RGBA8). Filled by Sprint 2-2/2-3 rendering.
     pub(crate) framebuffer: Box<[u8]>,
 
+    /// v1.1.0 beta.1 (T-110-A1) — parallel per-pixel **palette-index**
+    /// framebuffer for the true composite `NES_NTSC` filter. Each entry is the
+    /// 9-bit `(emphasis << 6) | colour_index` value (0..=511) written in the
+    /// same emit path as [`Self::framebuffer`], so it is a faithful index-space
+    /// mirror of the RGBA output. The frontend uploads it as an `R16Uint`
+    /// texture and reconstructs the composite signal in a shader. Purely an
+    /// output buffer: it changes no logical state and is NOT part of the
+    /// save-state (derived data, like `framebuffer`), so the determinism /
+    /// `AccuracyCoin` contract is unaffected.
+    pub(crate) index_framebuffer: Box<[u16]>,
+
+    /// Free-running PPU master-cycle counter (one increment per [`Self::tick`]),
+    /// the basis for the per-frame NTSC colour phase. Output-only / cosmetic
+    /// (drives only the optional NTSC filter's dot-crawl); not part of the
+    /// save-state. Wraps harmlessly.
+    pub(crate) dot_counter: u64,
+
+    /// NTSC composite colour phase (0..=2) snapshotted at each frame boundary,
+    /// the per-frame `videoPhase` consumed by the `NES_NTSC` filter (the shader
+    /// derives the per-scanline / per-pixel phase from this base). Cosmetic;
+    /// not part of the save-state.
+    pub(crate) frame_ntsc_phase: u8,
+
     /// Optional per-PPU-dot state trace (Session-10 observability
     /// tooling). Gated on the `ppu-state-trace` cargo feature so
     /// the default build pays no memory or codegen cost. See
@@ -570,6 +597,9 @@ impl Ppu {
             is_2c05: false,
             id_2c05: 0,
             framebuffer: vec![0u8; FRAMEBUFFER_LEN].into_boxed_slice(),
+            index_framebuffer: vec![0u16; FRAMEBUFFER_PIXELS].into_boxed_slice(),
+            dot_counter: 0,
+            frame_ntsc_phase: 0,
             #[cfg(feature = "ppu-state-trace")]
             state_trace: None,
         };
@@ -766,6 +796,35 @@ impl Ppu {
     #[must_use]
     pub fn framebuffer(&self) -> &[u8] {
         &self.framebuffer
+    }
+
+    /// Borrow the parallel per-pixel **palette-index** framebuffer
+    /// (256 × 240 `u16`s, each `(emphasis << 6) | colour`, 0..=511) used by the
+    /// true composite `NES_NTSC` filter (T-110-A1). A faithful index-space mirror
+    /// of [`Self::framebuffer`]; output-only, so the determinism contract holds.
+    #[must_use]
+    pub fn index_framebuffer(&self) -> &[u16] {
+        &self.index_framebuffer
+    }
+
+    /// The per-frame NTSC composite colour phase (0..=2), the `videoPhase` the
+    /// `NES_NTSC` filter feeds its signal generator. Snapshotted at the last
+    /// frame boundary. Cosmetic (drives only the optional filter's dot-crawl).
+    #[must_use]
+    pub const fn ntsc_phase(&self) -> u8 {
+        self.frame_ntsc_phase
+    }
+
+    /// Snapshot the per-frame NTSC colour phase from the master-cycle counter.
+    /// NES NTSC steps the colour phase through 3 frame states (the source of the
+    /// dot-crawl); PAL/Dendy have no equivalent 3-phase crawl, so the frame
+    /// parity is exposed instead. Called at each frame boundary.
+    const fn snapshot_ntsc_phase(&mut self) {
+        self.frame_ntsc_phase = if matches!(self.region, PpuRegion::Ntsc) {
+            (self.dot_counter % 3) as u8
+        } else {
+            (self.frame & 1) as u8
+        };
     }
 
     /// Current dot (0..=340).
@@ -2224,8 +2283,12 @@ impl Ppu {
         // palettes) and store all four bytes with one bounds-checked slice
         // copy instead of four indexed stores.
         let emph = usize::from((self.mask.bits() >> 5) & 0x07);
-        let rgba = self.rgba_lut[(emph << 6) | usize::from(final_idx)];
+        let lut_idx = (emph << 6) | usize::from(final_idx);
+        let rgba = self.rgba_lut[lut_idx];
         self.framebuffer[off..off + 4].copy_from_slice(&rgba);
+        // Parallel palette-index output for the `NES_NTSC` composite filter
+        // (T-110-A1). Same `(emphasis << 6) | colour` value, in index space.
+        self.index_framebuffer[(pixel_y as usize) * 256 + pixel_x as usize] = lut_idx as u16;
 
         // Decrement sprite X-counters / shift sprite shift regs.
         //
@@ -2910,6 +2973,10 @@ impl Ppu {
     }
 
     fn advance_dot(&mut self) {
+        // Count every PPU master cycle (one per dot processed) for the NES_NTSC
+        // colour phase. Output-only / cosmetic; never gates emulation.
+        self.dot_counter = self.dot_counter.wrapping_add(1);
+
         // Odd-frame skip: when the frame is odd and rendering is enabled,
         // the pre-render scanline 261 dot 339 transitions to (0, 0)
         // immediately, skipping dot 340.
@@ -2934,6 +3001,7 @@ impl Ppu {
             self.scanline = 0;
             self.frame = self.frame.wrapping_add(1);
             self.frame_complete = true;
+            self.snapshot_ntsc_phase();
             self.mask_for_skip_check = self.mask_skip_pipe1;
             self.mask_skip_pipe1 = self.mask;
             return;
@@ -2947,6 +3015,7 @@ impl Ppu {
                 self.scanline = 0;
                 self.frame = self.frame.wrapping_add(1);
                 self.frame_complete = true;
+                self.snapshot_ntsc_phase();
             } else {
                 self.scanline += 1;
             }
@@ -3323,6 +3392,56 @@ mod tests {
             }
         }
         assert!(frames_seen >= 2);
+    }
+
+    #[test]
+    fn index_framebuffer_mirrors_rgba_output() {
+        // T-110-A1: the parallel palette-index framebuffer must be a faithful
+        // index-space mirror of the RGBA framebuffer — for every emitted pixel,
+        // `rgba_lut[index] == framebuffer[pixel]`. This is the contract that
+        // makes the index buffer a safe, determinism-neutral output: it carries
+        // exactly the LUT index used to produce the displayed RGBA.
+        let (mut p, mut b) = fresh_ppu();
+        // Enable background rendering so the full visible area is emitted.
+        p.cpu_write_register(1, 0x08, &mut b); // PPUMASK: show background
+                                               // Run two full frames so every visible pixel has been written.
+        for _ in 0..(341 * 262 * 2) {
+            p.tick(&mut b);
+        }
+        let fb = p.framebuffer();
+        let idx = p.index_framebuffer();
+        assert_eq!(idx.len(), FRAMEBUFFER_PIXELS);
+        for (i, &lut_idx) in idx.iter().enumerate() {
+            assert!((lut_idx as usize) < 512, "index in range at pixel {i}");
+            let expected = p.rgba_lut[lut_idx as usize];
+            assert_eq!(
+                &fb[i * 4..i * 4 + 4],
+                &expected,
+                "pixel {i}: index {lut_idx} must reproduce the RGBA output"
+            );
+        }
+    }
+
+    #[test]
+    fn ntsc_phase_in_range_and_crawls() {
+        // The per-frame NTSC phase must stay in 0..=2 (NTSC) and visit more than
+        // one value across frames (the dot-crawl the filter reproduces).
+        let (mut p, mut b) = fresh_ppu();
+        p.cpu_write_register(1, 0x08, &mut b); // rendering on (odd-frame skip active)
+        let mut seen = [false; 3];
+        for _ in 0..(341 * 262 * 8) {
+            p.tick(&mut b);
+            if p.take_frame_complete() {
+                let ph = p.ntsc_phase();
+                assert!(ph <= 2, "NTSC phase {ph} must be 0..=2");
+                seen[ph as usize] = true;
+            }
+        }
+        let distinct = seen.iter().filter(|&&s| s).count();
+        assert!(
+            distinct >= 2,
+            "phase must crawl across frames (saw {distinct})"
+        );
     }
 
     #[test]

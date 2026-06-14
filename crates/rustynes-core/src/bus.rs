@@ -756,6 +756,20 @@ impl LockstepBus {
         self.ppu.framebuffer()
     }
 
+    /// Borrow the parallel palette-index framebuffer (256x240 `u16`s) for the
+    /// `NES_NTSC` composite filter. See [`rustynes_ppu::Ppu::index_framebuffer`].
+    #[must_use]
+    pub fn index_framebuffer(&self) -> &[u16] {
+        self.ppu.index_framebuffer()
+    }
+
+    /// The per-frame NTSC composite colour phase (0..=2) for the `NES_NTSC`
+    /// filter. See [`rustynes_ppu::Ppu::ntsc_phase`].
+    #[must_use]
+    pub const fn ntsc_phase(&self) -> u8 {
+        self.ppu.ntsc_phase()
+    }
+
     /// v1.1.0 beta.1 — install (`Some`) or clear (`None`) a custom 64-entry base
     /// palette from a loaded `.pal` file. A presentation override; `None` (default)
     /// is byte-identical to the built-in palette.
