@@ -441,6 +441,23 @@ impl Nes {
         self.bus.set_disk_side(side);
     }
 
+    /// Start recording the diagnostic FDS read-stream trace (the `$4031` disk-byte
+    /// stream + `$4025` control writes + side changes). Off by default and
+    /// observation-only — it never affects emulation, so the determinism contract
+    /// holds. Drain it with [`Self::take_fds_trace`]. No-op on cartridge builds.
+    /// Used by the `fds_trace` diagnostic harness to debug disk-read / side-swap
+    /// failures (e.g. the Kid Icarus side-B `ERR.07` stall).
+    pub fn enable_fds_trace(&mut self) {
+        self.bus.enable_fds_trace();
+    }
+
+    /// Drain the accumulated FDS read-stream trace records. Empty for cartridge
+    /// builds or when [`Self::enable_fds_trace`] was never called.
+    #[must_use]
+    pub fn take_fds_trace(&mut self) -> Vec<rustynes_mappers::FdsTraceRec> {
+        self.bus.take_fds_trace()
+    }
+
     /// Re-serialize the (possibly-modified) FDS disk image to the headerless
     /// `.fds` byte layout so the host can write it to a side-car `.fds.sav`
     /// (keyed by [`Self::rom_sha256`]). Empty for cartridge builds.

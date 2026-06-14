@@ -1,31 +1,18 @@
 //! blargg `cpu_interrupts_v2/rom_singles/*.nes` corpus.  Validates CPU
 //! interrupt timing including NMI / IRQ / BRK and cycle-precise effects.
 //!
-//! As of v0.9.0:
+//! As of v1.0.0 — the master-clock-precise scheduler is the default and ONLY
+//! core — the ENTIRE suite passes strictly on the default build:
+//! `1-cli_latency`, `2-nmi_and_brk`, `3-nmi_and_irq`, `4-irq_and_dma`, and
+//! `5-branch_delays_irq` are all plain strict `#[test]`s (no `#[ignore]`).
 //!
-//! - `1-cli_latency` passes strictly.
-//! - `2-nmi_and_brk`, `3-nmi_and_irq`, `4-irq_and_dma`, `5-branch_delays_irq`
-//!   all fail at the same architectural surface: the CPU's per-cycle IRQ
-//!   sample point, the bus's IRQ poll point, and the PPU's A12 emission
-//!   dot need to be re-aligned together. See CHANGELOG `[Unreleased]` →
-//!   "Investigated and rolled back" for the diagnosis. v1.0.0 milestone.
-//!
-//! W3-Stage-4 promotion (2026-06-10): under the opt-in `mc-r1-full-cpu`
-//! master-clock umbrella the WHOLE suite passes strictly — the R-phase
-//! substrate (R1 `end_cycle` `T_last - 1` + R2 on-time VBL/NMI + R3
-//! cold-boot alignment) closed #2/#3/#4, and `mc-r1-branch-poll-points`
-//! (folded into the umbrella at Stage 4) closed #5. The default lockstep
-//! build keeps the documented expected-fail set, so the #2/#3/#5 strict
-//! tests are `#[ignore]`'d ONLY on the default build via
-//! `#[cfg_attr(not(feature = "mc-r1-full-cpu"), ignore = ...)]`, and the
-//! `*_currently_fails` companion probes (which assert the DEFAULT build's
-//! failure shape and trip loudly on a surprise pass) are compiled out
-//! under the umbrella via `#[cfg(not(feature = "mc-r1-full-cpu"))]`.
-//!
-//! NOTE: the harness's `mc-r1-full-cpu` feature is a forward to
-//! `rustynes-core/mc-r1-full-cpu`; always enable the pair together
-//! (`--features test-roms,mc-r1-full-cpu`) so the cfg expectations here
-//! match the core actually under test.
+//! History: through the engine lineage these sub-ROMs failed on the legacy
+//! integer-lockstep build and passed only under the opt-in `mc-r1-full-cpu`
+//! master-clock umbrella (R1 `end_cycle` `T_last - 1` + R2 on-time VBL/NMI + R3
+//! cold-boot alignment closed #2/#3/#4; `mc-r1-branch-poll-points` closed #5).
+//! That umbrella was promoted to the default core and the feature flag removed,
+//! so the former default-build expected-fail set and its `*_currently_fails`
+//! companion probes no longer exist.
 
 #![cfg(feature = "test-roms")]
 
@@ -63,8 +50,8 @@ fn cpu_interrupts_v2_1_cli_latency() {
 }
 
 // ============================================================================
-// 2-nmi_and_brk — PASSES strictly under `mc-r1-full-cpu` (W3-Stage-4
-// promotion); known fail on the default lockstep build (NMI/BRK timing).
+// 2-nmi_and_brk — PASSES strictly on the default master-clock build
+// (closed by the R-phase substrate, now unconditional in the v1.0.0 core).
 // ============================================================================
 
 #[test]
@@ -74,8 +61,8 @@ fn cpu_interrupts_v2_2_nmi_and_brk_strict() {
 }
 
 // ============================================================================
-// 3-nmi_and_irq — PASSES strictly under `mc-r1-full-cpu` (W3-Stage-4
-// promotion); known fail on the default lockstep build (NMI/IRQ interleave).
+// 3-nmi_and_irq — PASSES strictly on the default master-clock build
+// (closed by the R-phase substrate, now unconditional in the v1.0.0 core).
 // ============================================================================
 
 #[test]
@@ -99,10 +86,9 @@ fn cpu_interrupts_v2_4_irq_and_dma_strict() {
 }
 
 // ============================================================================
-// 5-branch_delays_irq — PASSES strictly under `mc-r1-full-cpu` (the W1
-// `mc-r1-branch-poll-points` taken-branch IRQ poll points, folded into the
-// umbrella at W3-Stage-4); known fail on the default lockstep build
-// (test_branch_taken_pagecross).
+// 5-branch_delays_irq — PASSES strictly on the default master-clock build
+// (closed by the taken-branch IRQ poll points, now unconditional in the
+// v1.0.0 core).
 // ============================================================================
 
 #[test]

@@ -1872,7 +1872,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pins the floor $4015-enable load-delay placement; the W3-Stage-3 delayed-$4015 application (promoted into mc-r1-full-cpu at Stage 4) moves the load arm to the TriCNES put-end countdown -- battery coverage: AccuracyCoin Delta-Mod/Implicit, 100% under the umbrella"]
+    #[ignore = "permanent-by-design: pins the SUPERSEDED pre-master-clock $4015-enable load-delay placement. The default master-clock core (the only scheduler) moves the load arm to the put-end countdown, so this unit assertion is kept as a historical pin and cannot be un-ignored. Battery coverage: AccuracyCoin Delta-Mod/Implicit (100% on the default build)."]
     fn dmc_enable_schedules_load_dma_after_apu_aligned_delay() {
         let mut a = Apu::new(Region::Ntsc, 44_100);
         a.write_register(0x4012, 0x00);
@@ -1894,7 +1894,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pins the floor cycle-start reload-arm position; the M-2 counter-collapse end-flip (promoted into mc-r1-full-cpu at Stage 4) moves the byte-timer/reload-arm to dmc_tick_end -- battery coverage: AccuracyCoin DMC+OAM/Implicit, 100% under the umbrella"]
+    #[ignore = "permanent-by-design: pins the SUPERSEDED pre-master-clock cycle-start reload-arm position. The default master-clock core moves the byte-timer/reload-arm to dmc_tick_end, so this unit assertion is kept as a historical pin and cannot be un-ignored. Battery coverage: AccuracyCoin DMC+OAM/Implicit (100% on the default build)."]
     fn dmc_reload_dma_arms_when_sample_buffer_becomes_empty() {
         let mut a = Apu::new(Region::Ntsc, 44_100);
         a.dmc.bytes_remaining = 1;
@@ -2050,7 +2050,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pins the legacy dual-flip-flop put_cycle toggle; under one-clock + counter-collapse (both inside mc-r1-full-cpu since Stage 4) put_cycle is derived from the unified counter and flipped at end-of-cycle"]
+    #[ignore = "permanent-by-design: pins the SUPERSEDED legacy dual-flip-flop put_cycle toggle. In the default master-clock core, put_cycle is derived from the unified counter and flipped at end-of-cycle, so this unit assertion is kept as a historical pin and cannot be un-ignored."]
     fn put_cycle_toggles_per_cycle_only_when_driven_externally() {
         // Interleaved-DMA Phase A: under external DMC driving the global get/put
         // flip-flop toggles exactly once per CPU cycle (TriCNES `APU_PutCycle`).

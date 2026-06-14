@@ -58,19 +58,24 @@ notes; when it cites pass/fail numbers they should be read against
 
 ## Forward roadmap (post-v1.0.0)
 
-Remaining/optional follow-ups (see `ROADMAP.md` for detail):
+The **live forward plan** lives in two release-named folders (these supersede the
+old `phase-N` numbering; the stale `phase-7`/`phase-8` accuracy plans are archived
+under [`archive/`](./archive/README.md) — their targets are already met by the
+v1.0.0 master-clock core):
 
-- Lua scripting (the one advertised-but-unbuilt v1.0.0 feature; deferred to a
-  post-1.0 release).
-- Mobile (iOS / Android) frontends.
-- The long-tail mapper coverage (toward the ~300-mapper full set) and 100%
-  TASVideos compatibility.
-- A live RetroAchievements account-allowlisting pass with the RA team.
-- Vs. DualSystem (two-CPU/two-PPU) games — currently detection-flagged, not yet
-  emulated.
-- A handful of game-specific compatibility items (FDS side-B / Kid Icarus
-  post-registration path; Mito Koumon m89; the GxROM-66 / SMB3 reports).
-- Browser RetroAchievements (needs an emscripten or pure-Rust `rcheevos` path).
+- [**`v1.0.1-compat-hygiene/`**](./v1.0.1-compat-hygiene/overview.md) — the next
+  **patch**: the game-specific compatibility fixes (FDS side-B / Kid Icarus, Mito
+  Koumon m89, the GxROM-66 / SMB3 reports) + doc/roadmap/test hygiene.
+- [**`v1.1.0-features/`**](./v1.1.0-features/overview.md) — the next **minor
+  release**, staged in betas: the **Lua scripting flagship** + visual filters
+  (full NES_NTSC + CRT shaders + `.pal`) + debugger devtools (breakpoints / trace /
+  event viewer) + peripherals & QoL + an NSF player.
+
+Longer-horizon, separate initiatives (see `ROADMAP.md` for detail): mobile
+(iOS / Android) frontends; the long-tail mapper coverage (~300-mapper set) + 100%
+TASVideos; a live RetroAchievements account-allowlisting pass; Vs. DualSystem
+(two-CPU/two-PPU) games; browser RetroAchievements (emscripten or pure-Rust
+`rcheevos`).
 
 ---
 

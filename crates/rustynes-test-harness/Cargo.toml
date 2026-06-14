@@ -103,6 +103,22 @@ name = "fds_smoke"
 path = "src/bin/fds_smoke.rs"
 required-features = ["commercial-roms"]
 
+# T-101-002 diagnostic: FDS disk-swap reproduction (Kid Icarus side-B stall).
+# Scripts an eject -> insert-side-N and logs framebuffer activity + disk-side
+# state; fds_smoke can't swap sides. Real BIOS + disks never committed.
+[[bin]]
+name = "fds_swap_repro"
+path = "src/bin/fds_swap_repro.rs"
+required-features = ["commercial-roms"]
+
+# T-101-002 diagnostic: FDS read-stream trace. Drains the $4031 disk-byte stream
+# via Nes::enable_fds_trace and diffs the side-N disk-info block as the BIOS read
+# it against the raw .fds, to pinpoint the ERR.07 ("wrong side number") source.
+[[bin]]
+name = "fds_trace"
+path = "src/bin/fds_trace.rs"
+required-features = ["commercial-roms"]
+
 # v2.0 R1c-1 diagnostic: per-instruction (PC, cpu_cycle) trace dumper.
 [[bin]]
 name = "trace_instr_cycles"

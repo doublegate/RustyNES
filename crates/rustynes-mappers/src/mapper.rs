@@ -405,6 +405,16 @@ pub trait Mapper: Send {
     /// non-FDS mappers; an out-of-range index is ignored by the FDS device.
     fn set_disk_side(&mut self, _side: Option<usize>) {}
 
+    /// Start recording the diagnostic FDS read-stream trace (off by default;
+    /// observation-only). No-op for non-FDS mappers. See [`crate::FdsTraceRec`].
+    fn enable_fds_trace(&mut self) {}
+
+    /// Drain the accumulated FDS read-stream trace records (empty for non-FDS
+    /// mappers / when tracing was never enabled).
+    fn take_fds_trace(&mut self) -> Vec<crate::FdsTraceRec> {
+        Vec::new()
+    }
+
     /// Re-serialize the (possibly-modified) disk image to its byte layout for
     /// host persistence. Returns an empty vector for non-FDS mappers.
     fn disk_image_bytes(&self) -> Vec<u8> {

@@ -75,7 +75,7 @@ pub use bandai74::Bandai74;
 pub use bandai_fcg::{BandaiFcg, FcgVariant};
 pub use cartridge::{Cartridge, ConsoleType, Mirroring, Region, RomError, VsPpuPalette, VsPpuType};
 pub use cnrom::CnRom;
-pub use fds::{parse_fds, Fds, FdsDisk, DISK_BYTE_CYCLES, FDS_SIDE_LEN};
+pub use fds::{parse_fds, Fds, FdsDisk, FdsTraceRec, DISK_BYTE_CYCLES, FDS_SIDE_LEN};
 pub use gxrom::GxRom;
 pub use header::{parse_header, serialize_header, Header};
 pub use irem_g101::IremG101;
