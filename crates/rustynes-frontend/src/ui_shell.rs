@@ -616,6 +616,10 @@ impl UiShell {
                         out.action = Some(MenuAction::OpenPanel(ToolPanel::Perf));
                         ui.close_menu();
                     }
+                    if ui.button("Input Display").clicked() {
+                        out.action = Some(MenuAction::OpenPanel(ToolPanel::InputDisplay));
+                        ui.close_menu();
+                    }
                 });
 
                 // ----- View -----

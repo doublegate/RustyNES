@@ -42,7 +42,7 @@
 
 use std::sync::Arc;
 
-use rustynes_core::Nes;
+use rustynes_core::{Buttons, Nes};
 use winit::event::WindowEvent;
 use winit::window::Window;
 
@@ -58,6 +58,7 @@ mod badge_cache;
 mod cheat_panel;
 mod cheevos_panel;
 mod cpu_panel;
+mod input_display_panel;
 mod input_rebind_panel;
 mod mapper_panel;
 mod memory_panel;
@@ -90,6 +91,8 @@ pub enum ToolPanel {
     Perf,
     /// Input rebinding panel.
     Input,
+    /// Live input-display controller HUD (v1.1.0 beta.1, Workstream B).
+    InputDisplay,
 }
 
 /// A chip-inspection panel surfaced from the Debug menu (v1.0.0).
@@ -129,6 +132,7 @@ pub struct DebuggerOverlay {
     show_memory: bool,
     show_mapper: bool,
     show_input: bool,
+    show_input_display: bool,
     show_cheat: bool,
     show_settings: bool,
     show_netplay: bool,
@@ -148,6 +152,14 @@ pub struct DebuggerOverlay {
     mapper_ui: mapper_panel::MapperPanelState,
     /// Input rebind modal state.
     input_ui: input_rebind_panel::InputPanelState,
+    /// Input-display HUD state (v1.1.0 beta.1, Workstream B).
+    input_display_ui: input_display_panel::InputDisplayPanelState,
+    /// Held buttons per player, pushed each frame via
+    /// [`Self::set_input_display`] and drawn by the input-display HUD.
+    input_pads: [Buttons; 4],
+    /// Number of active players to show in the input-display HUD (2, or 4 with
+    /// Four Score).
+    input_players: usize,
     /// Game Genie cheat panel state (v1.6.0).
     cheat_ui: cheat_panel::CheatPanelState,
     /// Graphics / audio / rewind settings panel state (v1.7.0).
@@ -216,6 +228,7 @@ impl DebuggerOverlay {
             show_memory: false,
             show_mapper: false,
             show_input: false,
+            show_input_display: false,
             show_cheat: false,
             show_settings: false,
             show_netplay: false,
@@ -228,6 +241,9 @@ impl DebuggerOverlay {
             memory_ui: memory_panel::MemoryPanelState::default(),
             mapper_ui: mapper_panel::MapperPanelState::default(),
             input_ui: input_rebind_panel::InputPanelState::default(),
+            input_display_ui: input_display_panel::InputDisplayPanelState,
+            input_pads: [Buttons::empty(); 4],
+            input_players: 2,
             cheat_ui: cheat_panel::CheatPanelState::default(),
             settings_ui: settings_panel::SettingsPanelState::default(),
             netplay_ui: netplay_panel::NetplayPanelState::default(),
@@ -253,6 +269,15 @@ impl DebuggerOverlay {
     /// from the frontend's wall-clock pacer on each completed frame.
     pub const fn set_fps(&mut self, fps: f32) {
         self.fps = fps;
+    }
+
+    /// v1.1.0 beta.1 (Workstream B) — push the current held-button snapshot for
+    /// the input-display HUD. `pads` is per-player (P1..P4); `players` is how
+    /// many to show (2, or 4 with Four Score). Mirrors the [`Self::set_fps`]
+    /// pull pattern; a no-op for rendering when the HUD is closed.
+    pub const fn set_input_display(&mut self, pads: [Buttons; 4], players: usize) {
+        self.input_pads = pads;
+        self.input_players = players;
     }
 
     /// Update the TAS movie record/playback status shown in the top
@@ -474,6 +499,7 @@ impl DebuggerOverlay {
             ToolPanel::Cheevos => self.show_cheevos = true,
             ToolPanel::Perf => self.show_perf = true,
             ToolPanel::Input => self.show_input = true,
+            ToolPanel::InputDisplay => self.show_input_display = true,
         }
     }
 
@@ -530,6 +556,7 @@ impl DebuggerOverlay {
                 ui.checkbox(&mut self.show_memory, "Memory");
                 ui.checkbox(&mut self.show_mapper, "Mapper");
                 ui.checkbox(&mut self.show_input, "Input");
+                ui.checkbox(&mut self.show_input_display, "Input HUD");
                 ui.checkbox(&mut self.show_cheat, "Cheats");
                 ui.checkbox(&mut self.show_settings, "Settings");
                 ui.checkbox(&mut self.show_netplay, "Netplay");
@@ -771,6 +798,15 @@ impl DebuggerOverlay {
 
         if self.show_input {
             input_rebind_panel::show(ctx, &mut self.show_input, &mut self.input_ui, config);
+        }
+        if self.show_input_display {
+            input_display_panel::show(
+                ctx,
+                &mut self.show_input_display,
+                &mut self.input_display_ui,
+                &self.input_pads,
+                self.input_players,
+            );
         }
         if self.show_cheat {
             // The Cheats panel reads `nes`; with no ROM loaded there is nothing
