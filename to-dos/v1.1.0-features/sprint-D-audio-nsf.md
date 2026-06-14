@@ -1,6 +1,6 @@
 # v1.1.0 · Sprint D — Audio & NSF player  → beta.2
 
-## T-110-D1 — NSF / NSFe player
+## T-110-D1 — NSF / NSFe player  ✅ DONE (2026-06-14)
 
 - Loader for `.nsf`/`.nsfe` + a synthetic NSF "mapper" that runs the tune's
   init/play routines driven by a frame timer, reusing the existing APU (incl.
@@ -11,6 +11,24 @@
   load path (drag-drop `.nsf`).
 - **Done when:** a CC0/public-domain NSF plays with track switching; never commit
   copyrighted music (use a CC0 test tune only).
+- **DONE:** `crates/rustynes-mappers/src/nsf.rs` — `parse_nsf` (classic `NESM\x1A`
+  header: load/init/play, song count, `$5FF8-$5FFF` 4 KiB bank init, expansion
+  bitfield, NUL-trimmed metadata) + `NsfMapper`. Rather than a bespoke run-loop
+  mode, the mapper serves a synthetic 6502 **driver** at `$5000` and points the
+  reset/NMI/IRQ vectors at it (Mesen2/FCEUX/rustico approach): reset → `JSR init`
+  (song in A, region in X) → enable vblank NMI → spin; NMI → `JSR play` → RTI. So
+  the unchanged `Nes::run_frame` lockstep loop drives playback and the APU fills
+  audio exactly as for a cartridge — determinism untouched, AccuracyCoin/oracles
+  byte-identical (the new `Nes::from_nsf` is a separate construction path; the
+  `Mapper` trait gained three default-no-op `nsf_*` hooks). Frontend:
+  `is_nsf_image` load branch → `Nes::from_nsf_with_sample_rate`, a
+  `debugger/nsf_panel.rs` **NSF Player** chip panel (metadata + Prev/Next/Restart
+  + song slider) auto-opened on load, and a Debug → NSF Player menu entry. Core
+  tests `nsf_constructs_runs_and_selects_tracks` (asserts audio is produced) +
+  `nsf_song_apis_are_inert_on_a_cartridge`; mapper-unit tests for parse, driver
+  vectors, track patching, save-state. **Deferred (documented):** expansion-chip
+  audio (VRC6/7, MMC5, N163, 5B, FDS), the FDS-style `$5FF6/$5FF7` RAM banking,
+  exact non-60 Hz play rates, a wasm NSF loader, and NSFe (`NSFE` chunked) parsing.
 
 ## T-110-D2 — Per-channel audio polish (optional parametric EQ)
 

@@ -20,6 +20,18 @@ content below, plus the first **v1.1.0** feature work (beta.1).
 
 ### Added
 
+- **NSF / NSFe music player** (v1.1.0 beta.2, Workstream D, T-110-D1). RustyNES now plays
+  `.nsf` chiptune files: drop one in (or File → Open) and an **NSF Player** panel opens with
+  the file's title / artist / copyright and a track selector (Prev / Next / Restart + a
+  song-index slider). Mechanism follows Mesen2 / FCEUX — a parsed NSF builds a synthetic
+  `NsfMapper`: the program image is mapped (with `$5FF8-$5FFF` 4 KiB bank-switching), a tiny
+  6502 driver is served at `$5000`, and the reset / NMI vectors point at it. The driver runs
+  `init` for the selected song, enables vblank NMI, then spins; the ordinary 60 Hz NMI calls
+  `play` once per frame. Playback therefore runs through the **unchanged** `Nes::run_frame`
+  lockstep loop (new `Nes::from_nsf` / `nsf_set_song` construction path; cartridge games are
+  untouched and stay byte-identical). Scope: base 2A03 APU, NTSC 60 Hz. Expansion-chip audio
+  (VRC6/7, MMC5, N163, 5B, FDS), exact non-60 Hz play rates, and a wasm NSF loader are
+  documented follow-ups.
 - **Event viewer** (v1.1.0 beta.2, Workstream C, T-110-C3). A new **Events** debugger panel
   (Debug → Event Viewer) plots the frame's CPU writes — PPU (`$2000-$3FFF`), APU
   (`$4000-$4017`), and mapper (`$4020-$FFFF`) — on a scanline×dot grid coloured by kind,

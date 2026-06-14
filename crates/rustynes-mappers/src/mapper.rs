@@ -435,6 +435,29 @@ pub trait Mapper: Send {
     /// for non-FDS mappers.
     fn set_disk_write_protected(&mut self, _protected: bool) {}
 
+    // --- Optional NSF music-player interface ---
+    //
+    // Only the NSF player (`nsf::NsfMapper`) overrides these; every other mapper
+    // uses the default 0 / no-op impls. The bus and `Nes` surface them so a
+    // frontend can drive track selection without downcasting the boxed mapper.
+
+    /// Number of selectable songs (0 for a non-NSF mapper).
+    fn nsf_song_count(&self) -> u8 {
+        0
+    }
+
+    /// The currently-selected 0-based song (0 for a non-NSF mapper).
+    fn nsf_current_song(&self) -> u8 {
+        0
+    }
+
+    /// Select a 0-based song. Returns `true` if this is an NSF mapper (so the
+    /// caller knows to re-run the reset that re-vectors into the driver's
+    /// `init`). Default no-op returning `false`.
+    fn nsf_set_song(&mut self, _song: u8) -> bool {
+        false
+    }
+
     /// Encode the mapper's mutable state into a tagged save-state blob.
     fn save_state(&self) -> Vec<u8>;
 

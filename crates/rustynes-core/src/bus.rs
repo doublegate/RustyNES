@@ -672,6 +672,44 @@ impl LockstepBus {
         Ok(Self::from_cart_and_mapper(cart, Box::new(fds), sample_rate))
     }
 
+    /// Build a bus that plays an NSF music file. Parses the `.nsf`, builds an
+    /// [`rustynes_mappers::NsfMapper`] (a synthetic driver + the program image)
+    /// as the bus's `Box<dyn Mapper>`, and reports synthetic NTSC cartridge
+    /// metadata (the file carries no CHR / PPU program).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RomError::InvalidConfig`] when the NSF header is malformed.
+    pub fn with_nsf(nsf_bytes: &[u8], sample_rate: u32) -> Result<Self, RomError> {
+        let nsf = rustynes_mappers::parse_nsf(nsf_bytes)
+            .map_err(|e| RomError::InvalidConfig(alloc::format!("{e}")))?;
+        let mapper = rustynes_mappers::NsfMapper::new(&nsf);
+        let cart = Cartridge {
+            prg_rom: Box::default(),
+            chr_rom: Box::default(),
+            mapper_id: 31, // NSF banking is conventionally documented as mapper 31-like
+            submapper: 0,
+            mirroring: rustynes_mappers::Mirroring::Horizontal,
+            // Playback is NTSC 60 Hz (vblank-NMI-driven) regardless of the
+            // file's region preference; the PAL flag only feeds the driver's
+            // init X-register. Exact non-60 Hz play rates are a documented
+            // deferral (see `nsf.rs` module docs).
+            region: rustynes_mappers::Region::Ntsc,
+            console_type: rustynes_mappers::ConsoleType::Nes,
+            vs_ppu_type: rustynes_mappers::VsPpuType::None,
+            prg_ram_size: 0x2000,
+            chr_ram_size: 0,
+            has_battery: false,
+            has_trainer: false,
+            is_nes2: false,
+        };
+        Ok(Self::from_cart_and_mapper(
+            cart,
+            Box::new(mapper),
+            sample_rate,
+        ))
+    }
+
     /// Reset (warm). Defers to `Ppu::reset` and clears DMA state. CPU is
     /// reset by the caller.
     pub fn reset(&mut self) {
@@ -1424,6 +1462,24 @@ impl LockstepBus {
     /// Insert FDS side `i` (`Some`) or eject (`None`). No-op on cartridge builds.
     pub fn set_disk_side(&mut self, side: Option<usize>) {
         self.mapper.set_disk_side(side);
+    }
+
+    /// Number of selectable NSF songs (0 for cartridge / disk builds).
+    #[must_use]
+    pub fn nsf_song_count(&self) -> u8 {
+        self.mapper.nsf_song_count()
+    }
+
+    /// The currently-selected 0-based NSF song (0 for cartridge / disk builds).
+    #[must_use]
+    pub fn nsf_current_song(&self) -> u8 {
+        self.mapper.nsf_current_song()
+    }
+
+    /// Select a 0-based NSF song. Returns `true` if this is an NSF build (so the
+    /// caller re-runs the reset that re-enters the driver's `init`).
+    pub fn nsf_set_song(&mut self, song: u8) -> bool {
+        self.mapper.nsf_set_song(song)
     }
 
     /// Start recording the diagnostic FDS read-stream trace (off by default;

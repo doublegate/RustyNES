@@ -51,6 +51,7 @@ mod mmc5;
 mod namco118;
 mod namco175;
 mod nrom;
+mod nsf;
 mod rambo1;
 mod sprint2;
 mod sprint3;
@@ -94,6 +95,7 @@ pub use mmc5::Mmc5;
 pub use namco118::{Namco118, Namco118Board};
 pub use namco175::{Namco175, Namco175Board};
 pub use nrom::Nrom;
+pub use nsf::{is_nsf, parse_nsf, Nsf, NsfMapper};
 pub use rambo1::Rambo1;
 pub use sprint2::{Camerica, ColorDreams, Cprom, M34Variant, Mmc2, Mmc4, Vrc1, M34};
 pub use sprint3::{Fme7, Namco163, Vrc2, Vrc4, Vrc6, Vrc7};
@@ -150,6 +152,17 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
     }
     if bytes.len() >= 15 && bytes[0] == 0x01 && &bytes[1..15] == b"*NINTENDO-HVC*" {
         return Err(RomError::FdsUnsupported);
+    }
+
+    // NSF music files (`"NESM\x1A"`) have no iNES header and no PPU program;
+    // they run through the dedicated `rustynes_core::Nes::from_nsf` path (which
+    // builds an `NsfMapper`), not this cartridge parser. Detect the magic here
+    // and return a clear message so a frontend that hands NSF bytes to `parse`
+    // by mistake gets a routing hint instead of a generic bad-magic error.
+    if nsf::is_nsf(bytes) {
+        return Err(RomError::InvalidConfig(
+            "NSF music file — load via Nes::from_nsf, not parse()".into(),
+        ));
     }
 
     let h = parse_header(bytes)?;
