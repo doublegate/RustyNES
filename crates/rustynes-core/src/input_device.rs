@@ -377,9 +377,10 @@ impl PowerPadState {
     }
 
     /// Read the device byte for a `$4017` access, shifting both registers.
-    /// Bit 4 = current `MSb`-end of register H, bit 3 = register L; the caller
-    /// ORs in the open-bus upper bits. While the strobe is high the registers
-    /// are continuously reloaded (reads return the first button repeatedly).
+    /// Bit 4 = the current serial-out (`LSb`) of register H, bit 3 = register L;
+    /// each read then shifts both right (feeding `1`s in from the top). The
+    /// caller ORs in the open-bus upper bits. While the strobe is high the
+    /// registers are continuously reloaded (reads return the first button).
     pub const fn read(&mut self) -> u8 {
         if self.strobe {
             self.reload();
@@ -396,11 +397,13 @@ impl PowerPadState {
         ((self.shift_h & 1) << 4) | ((self.shift_l & 1) << 3)
     }
 
-    /// Reconstruct from save-state parts.
+    /// Reconstruct from save-state parts. `buttons` is masked to the 12 mat
+    /// bits, matching [`Self::set`], so a malformed save-state cannot inject
+    /// out-of-range bits.
     #[must_use]
     pub const fn from_parts(buttons: u16, shift_l: u8, shift_h: u8, strobe: bool) -> Self {
         Self {
-            buttons,
+            buttons: buttons & 0x0FFF,
             shift_l,
             shift_h,
             strobe,

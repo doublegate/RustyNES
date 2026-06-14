@@ -2350,18 +2350,36 @@ impl App {
     /// filesystem on wasm); a no-op there.
     #[cfg_attr(
         target_arch = "wasm32",
-        allow(clippy::unused_self, clippy::missing_const_for_fn)
+        allow(
+            clippy::unused_self,
+            clippy::missing_const_for_fn,
+            clippy::needless_pass_by_ref_mut
+        )
     )]
-    fn apply_palette_from_config(&self) {
+    fn apply_palette_from_config(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let pal = self
-                .config
-                .graphics
-                .palette_file
-                .as_ref()
-                .and_then(|p| std::fs::read(p).ok())
-                .and_then(|b| crate::config::parse_pal(&b));
+            let pal = match self.config.graphics.palette_file.as_ref() {
+                None => None,
+                Some(path) => {
+                    let loaded = std::fs::read(path)
+                        .ok()
+                        .and_then(|b| crate::config::parse_pal(&b));
+                    if loaded.is_none() {
+                        // Don't fail silently: a missing/corrupt `.pal` would
+                        // otherwise leave a phantom filename in the config + UI.
+                        // Surface it and clear the entry so we fall back to the
+                        // built-in palette cleanly.
+                        eprintln!(
+                            "rustynes: palette file {} could not be loaded; using built-in palette",
+                            path.display()
+                        );
+                        self.config.graphics.palette_file = None;
+                        let _ = self.config.save();
+                    }
+                    loaded
+                }
+            };
             let mut guard = self.emu.lock();
             if let Some(nes) = guard.nes.as_mut() {
                 nes.set_custom_palette(pal);
@@ -4831,12 +4849,21 @@ impl ApplicationHandler<AppEvent> for App {
                 if settings.crt_filter {
                     if let Some(gfx) = self.gfx.as_mut() {
                         if self.config.graphics.crt_filter {
+                            // CRT and NTSC are mutually exclusive; enabling CRT
+                            // turns the NTSC filter off in the config too, so the
+                            // settings stay coherent (and a later CRT-off
+                            // restores "no filter", not a stale NTSC mode).
                             gfx.enable_crt(self.config.graphics.crt_scanline);
                             gfx.disable_ntsc();
                             gfx.disable_ntsc_bisqwit();
+                            self.config.graphics.ntsc_filter = "off".to_string();
                         } else {
+                            // Turning CRT off restores whatever NTSC mode the
+                            // config now holds (normally "off" → no filter).
                             gfx.disable_crt();
+                            Self::apply_ntsc_mode(gfx, &self.config.graphics.ntsc_filter);
                         }
+                        let _ = self.config.save();
                     }
                 }
                 if settings.crt_scanline {

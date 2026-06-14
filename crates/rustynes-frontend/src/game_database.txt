@@ -4,7 +4,7 @@
 # Key = CRC32 of PRG-ROM + CHR-ROM (excluding the iNES header/trainer).
 # RustyNES currently consumes only the CRC + Mirroring columns (the
 # nametable-mirroring override); the rest are retained for future use.
-# CRC, Region, Mapper, Sub-Mapper, ChrBanks, PrgRomBanks, PrgRamBanks, Battery, Mirroring, SubMapper, Title
+# Columns (10): CRC, Region, Mapper, Sub-Mapper, ChrBanks, PrgRomBanks, PrgRamBanks, Battery, Mirroring, Title
     1388B3, PAL, 4, 0, 16, 16, 0, false, Vertical, "Mega Man 3 (Europe) (Rev A).nes"
     21ED29, NTSC, 1, 0, 1, 16, 0, false, Horizontal, "Reigen Doushi (Japan).nes"
     837960, NTSC, 4, 0, 32, 16, 0, true, Horizontal, "King's Quest V (USA).nes"

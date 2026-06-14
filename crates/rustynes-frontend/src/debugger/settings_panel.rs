@@ -366,12 +366,19 @@ pub fn video_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
             },
         );
         ui.weak(current);
-        if ui.button("Load .pal…").clicked() {
-            state.apply.palette_pick = true;
+        // The file dialog + apply are native-only (no filesystem on wasm), so
+        // the buttons would be silent no-ops there — show a note instead.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if ui.button("Load .pal…").clicked() {
+                state.apply.palette_pick = true;
+            }
+            if config.graphics.palette_file.is_some() && ui.button("Built-in").clicked() {
+                state.apply.palette_clear = true;
+            }
         }
-        if config.graphics.palette_file.is_some() && ui.button("Built-in").clicked() {
-            state.apply.palette_clear = true;
-        }
+        #[cfg(target_arch = "wasm32")]
+        ui.weak("(native only)");
     });
 
     ui.add_space(4.0);

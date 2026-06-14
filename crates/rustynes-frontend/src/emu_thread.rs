@@ -99,7 +99,7 @@ pub struct SharedInput {
     rewind_held: AtomicBool,
     hardcore_blocked: AtomicBool,
     run_ahead: AtomicU8,
-    /// `ExpansionDevice` as `u8` (0 None / 1 Zapper / 2 Vaus).
+    /// `ExpansionDevice` as `u8` (0 None / 1 Zapper / 2 Vaus / 3 Power Pad).
     expansion: AtomicU8,
     /// `(x as u16) << 16 | (y as u16)` NES-screen coords (`u16::MAX` = off).
     mouse: AtomicU32,

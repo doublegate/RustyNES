@@ -273,8 +273,9 @@ impl Nes {
         self.bus.index_framebuffer()
     }
 
-    /// The per-frame NTSC composite colour phase (0..=2) consumed by the
-    /// `NES_NTSC` filter. See [`rustynes_ppu::Ppu::ntsc_phase`].
+    /// The per-frame NTSC composite colour phase consumed by the `NES_NTSC`
+    /// filter (`0..=2` on NTSC; frame parity `0..=1` on PAL/Dendy). See
+    /// [`rustynes_ppu::Ppu::ntsc_phase`].
     #[must_use]
     pub const fn ntsc_phase(&self) -> u8 {
         self.bus.ntsc_phase()

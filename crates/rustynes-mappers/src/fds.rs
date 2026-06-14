@@ -1461,7 +1461,11 @@ impl Fds {
     /// default builds carry zero overhead beyond a single bool check on the cold
     /// register paths). See [`Fds::enable_trace`].
     fn trace_event(&mut self, kind: u8, value: u8) {
-        if self.trace_on {
+        // Cap the diagnostic buffer so a long session (or tracing accidentally
+        // left on) can't grow it without bound; the early records are the ones
+        // that matter for the boot/swap investigations this facility serves.
+        const MAX_TRACE_RECORDS: usize = 100_000;
+        if self.trace_on && self.trace.len() < MAX_TRACE_RECORDS {
             let status = self.read_status_4030_peek();
             self.trace.push(FdsTraceRec {
                 kind,

@@ -727,7 +727,6 @@ impl Gfx {
     }
 
     /// Disable the true composite `NES_NTSC` filter.
-    #[allow(dead_code)]
     pub fn disable_ntsc_bisqwit(&mut self) {
         self.ntsc_bisqwit = None;
     }
@@ -740,8 +739,9 @@ impl Gfx {
     }
 
     /// Enable the CRT / scanline post-pass with the given scanline intensity
-    /// (`0.0..=1.0`). No-op if already enabled (use [`Self::set_crt_scanline`] to
-    /// retune). CRT and NTSC are mutually exclusive at render time.
+    /// (`0.0..=1.0`). If the filter is already enabled this retunes its scanline
+    /// intensity to `scanline` (equivalent to [`Self::set_crt_scanline`]). CRT
+    /// and NTSC are mutually exclusive at render time.
     pub fn enable_crt(&mut self, scanline: f32) {
         if self.crt.is_none() {
             self.crt = Some(crate::crt::CrtFilter::new(

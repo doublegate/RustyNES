@@ -450,9 +450,11 @@ pub struct Ppu {
     /// same emit path as [`Self::framebuffer`], so it is a faithful index-space
     /// mirror of the RGBA output. The frontend uploads it as an `R16Uint`
     /// texture and reconstructs the composite signal in a shader. Purely an
-    /// output buffer: it changes no logical state and is NOT part of the
-    /// save-state (derived data, like `framebuffer`), so the determinism /
-    /// `AccuracyCoin` contract is unaffected.
+    /// output buffer: it changes no logical state, so the determinism /
+    /// `AccuracyCoin` contract is unaffected. Unlike `framebuffer` (which IS in
+    /// the save-state), this and `dot_counter` / `frame_ntsc_phase` are NOT
+    /// serialized — they are regenerated on the next emitted frame, so a state
+    /// loaded while paused shows correct NTSC from the first frame after resume.
     pub(crate) index_framebuffer: Box<[u16]>,
 
     /// Free-running PPU master-cycle counter (one increment per [`Self::tick`]),
@@ -461,10 +463,11 @@ pub struct Ppu {
     /// save-state. Wraps harmlessly.
     pub(crate) dot_counter: u64,
 
-    /// NTSC composite colour phase (0..=2) snapshotted at each frame boundary,
-    /// the per-frame `videoPhase` consumed by the `NES_NTSC` filter (the shader
-    /// derives the per-scanline / per-pixel phase from this base). Cosmetic;
-    /// not part of the save-state.
+    /// NTSC composite colour phase snapshotted at each frame boundary, the
+    /// per-frame `videoPhase` consumed by the `NES_NTSC` filter (the shader
+    /// derives the per-scanline / per-pixel phase from this base). `0..=2` on
+    /// NTSC; on PAL/Dendy (no 3-phase crawl) it is the frame parity (`0..=1`).
+    /// Cosmetic; not part of the save-state.
     pub(crate) frame_ntsc_phase: u8,
 
     /// Optional per-PPU-dot state trace (Session-10 observability
@@ -807,9 +810,10 @@ impl Ppu {
         &self.index_framebuffer
     }
 
-    /// The per-frame NTSC composite colour phase (0..=2), the `videoPhase` the
-    /// `NES_NTSC` filter feeds its signal generator. Snapshotted at the last
-    /// frame boundary. Cosmetic (drives only the optional filter's dot-crawl).
+    /// The per-frame NTSC composite colour phase — the `videoPhase` the
+    /// `NES_NTSC` filter feeds its signal generator. `0..=2` on NTSC; on
+    /// PAL/Dendy it is the frame parity (`0..=1`). Snapshotted at the last frame
+    /// boundary. Cosmetic (drives only the optional filter's dot-crawl).
     #[must_use]
     pub const fn ntsc_phase(&self) -> u8 {
         self.frame_ntsc_phase
@@ -2287,8 +2291,9 @@ impl Ppu {
         let rgba = self.rgba_lut[lut_idx];
         self.framebuffer[off..off + 4].copy_from_slice(&rgba);
         // Parallel palette-index output for the `NES_NTSC` composite filter
-        // (T-110-A1). Same `(emphasis << 6) | colour` value, in index space.
-        self.index_framebuffer[(pixel_y as usize) * 256 + pixel_x as usize] = lut_idx as u16;
+        // (T-110-A1). Same `(emphasis << 6) | colour` value, in index space;
+        // `off` is the RGBA byte offset, so `off >> 2` is the pixel index.
+        self.index_framebuffer[off >> 2] = lut_idx as u16;
 
         // Decrement sprite X-counters / shift sprite shift regs.
         //

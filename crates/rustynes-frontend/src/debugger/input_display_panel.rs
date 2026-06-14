@@ -39,7 +39,14 @@ pub fn show(
         .open(open)
         .resizable(false)
         .show(ctx, |ui| {
-            let n = players.clamp(1, pads.len().min(4)).max(1);
+            // Show one diagram per active player, never more than we have pads
+            // for. `clamp(lo, hi)` panics when `lo > hi`, so guard the empty-pad
+            // case (`hi == 0`) explicitly rather than relying on call sites.
+            let cap = pads.len().min(4);
+            if cap == 0 {
+                return;
+            }
+            let n = players.clamp(1, cap);
             for p in 0..n {
                 ui.label(egui::RichText::new(format!("Player {}", p + 1)).strong());
                 draw_pad(ui, pads.get(p).copied().unwrap_or_default());
@@ -107,12 +114,13 @@ fn draw_pad(ui: &mut egui::Ui, held: Buttons) {
         OUTLINE,
     );
 
-    // B / A buttons (right side), round.
+    // B / A buttons (right side), round. Centres 24 pt apart (radius 11) so the
+    // two circles keep a clean 2 pt gap instead of overlapping.
     let r = 11.0;
-    p.circle_filled(at(150.0, cy), r, fill(Buttons::B));
+    p.circle_filled(at(146.0, cy), r, fill(Buttons::B));
     p.circle_filled(at(170.0, cy), r, fill(Buttons::A));
     p.text(
-        at(150.0, cy),
+        at(146.0, cy),
         egui::Align2::CENTER_CENTER,
         "B",
         egui::FontId::proportional(11.0),

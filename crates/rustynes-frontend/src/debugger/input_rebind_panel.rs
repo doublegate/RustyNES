@@ -444,7 +444,11 @@ pub fn body(ui: &mut egui::Ui, state: &mut InputPanelState, config: &mut Config)
         ui.horizontal(|ui| {
             ui.label("Turbo speed");
             // Period in frames per on/off half-cycle: 1 = ~30 Hz, 4 = ~7.5 Hz.
-            let mut period = config.input.turbo_period.clamp(1, 8);
+            // Normalize the persisted value into range up front, so a config
+            // loaded with an out-of-range `turbo_period` (e.g. 0 or 999) is
+            // corrected even if the user never touches the slider.
+            config.input.turbo_period = config.input.turbo_period.clamp(1, 8);
+            let mut period = config.input.turbo_period;
             if ui
                 .add(egui::Slider::new(&mut period, 1..=8).text("frames"))
                 .changed()

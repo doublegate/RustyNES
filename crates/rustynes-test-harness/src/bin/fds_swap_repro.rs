@@ -101,7 +101,7 @@ fn main() {
         swap_at.saturating_sub(1),
         insert_at + 1,
         swap_at + 200,
-        total - 1,
+        total.saturating_sub(1),
     ];
     let mut last_hash = 0u64;
 

@@ -22,8 +22,9 @@ content below, plus the first **v1.1.0** feature work (beta.1).
 
 - **NES Power Pad — playable** (v1.1.0 beta.1, Workstream B, T-110-B1). The Power Pad /
   Family Fun Fitness mat is now selectable as the player-2 expansion device (Settings →
-  Input "Port 2 device"); its 12 mat buttons default to the number row (`1`–`9`, `0`,
-  `-`, `=`). Completes the device shipped in the previous beta entry: the held mat
+  Input "Port 2 device"); its 12 mat buttons default to a left-hand grid (`1`–`4` /
+  `Q W E R` / `A S D F`, chosen to avoid the P1 and system-speed keys). Completes the
+  device shipped in the previous beta entry: the held mat
   buttons flow through `InputState` → `FrameInputs` (+ the emu-thread `SharedInput`) and
   are fed to the device in `EmuCore::latch`. Off by default (standard controller), so
   the default + Four Score paths stay byte-identical. Native path (like Zapper/Vaus);
@@ -50,7 +51,8 @@ content below, plus the first **v1.1.0** feature work (beta.1).
   standard-controller + Four Score read paths stay **byte-identical**, so determinism /
   AccuracyCoin / the oracle are unaffected and the `no_std` core is unchanged. Protocol
   unit-verified (button→serial-position mapping, strobe-reload, save-state round-trip).
-  The frontend key mapping that drives the mat is a follow-up.
+  (The frontend key mapping that drives the mat landed in the same beta — see "NES
+  Power Pad — playable" above.)
 - **Turbo / autofire** (v1.1.0 beta.1, Workstream B, T-110-B2). The A and/or B button
   can rapid-fire while held, configurable via `[input] turbo_a` / `turbo_b` and a
   `turbo_period` (frames per on/off half-cycle; Settings → Input "Turbo / autofire").
