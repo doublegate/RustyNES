@@ -5,7 +5,7 @@ points: `crates/rustynes-frontend/src/gfx.rs` (wgpu pipeline, already has
 letterbox/overscan passes), `ntsc.rs` (current filter), `config.rs` `[video]`,
 `debugger/settings_panel.rs` (toggle infra).
 
-## T-110-A1 — Full NES_NTSC composite / S-video filter  (stage 1/2 DONE)
+## T-110-A1 — Full NES_NTSC composite / S-video filter  ✅ DONE (2026-06-14)
 
 - The current `ntsc.rs` is an explicitly "simplified" 5-tap blur + scanline dim.
   Replace/augment with a proper composite model (phase/chroma/luma artifacts,
@@ -24,12 +24,28 @@ letterbox/overscan passes), `ntsc.rs` (current filter), `config.rs` `[video]`,
   `ntsc_phase()` routed through `Bus` + `Nes`. Output-only (unit test:
   `rgba_lut[index] == framebuffer[pixel]` for every emitted pixel; phase stays 0..=2
   and crawls across frames) → determinism / AccuracyCoin / `no_std` all unaffected.
-- **STAGE 2 — composite shader (TODO):** upload the index buffer as `R16Uint`; port
-  Bisqwit `GenerateNtscSignal` (8 samples/px, 12-phase `_bitmaskLut`, emphasis wave) +
-  `NtscDecodeLine` (windowed Y/I/Q sum, sine table, contrast/saturation matrix) to
-  WGSL at 8× horizontal res; per-row phase = `videoPhase*4 + y*341*8`, decode
-  `phase0 = (startCycle+7)%12`. Settings (composite/S-video), scaling, screenshot
-  regression. Replaces/augments the current `ntsc.rs` blur.
+- **STAGE 2 — composite shader ✅ DONE (2026-06-14):** new
+  `crates/rustynes-frontend/src/ntsc_bisqwit.rs` (`NtscBisqwitFilter`) — a faithful
+  Bisqwit port. The index framebuffer is uploaded as an `R16Uint` texture (read via
+  `textureLoad`, no sampler — WebGL2-safe); the fragment shader reconstructs the
+  composite signal (`GenerateNtscSignal` collapsed to a closed-form per-sample
+  high/low + emphasis-wave test) and demodulates it per output pixel with a 12-tap
+  windowed Y/I/Q sum (`NtscDecodeLine`), per-row phase `videoPhase*4 + y*341*8`,
+  decode `phase0 = (startCycle+7)%12`. All static tables (signalLow/High[128],
+  sine[27], YIQ matrix, emphasisLut) are computed in Rust and **baked into the WGSL**
+  as `var<private>` arrays (no storage buffers → WebGL2-safe; naga can't dynamically
+  index const/let arrays). Wired into `Gfx` (R16Uint `index_texture` + upload gated on
+  the filter being active + an `enable/disable_ntsc_bisqwit` + render branch with
+  priority CRT > Bisqwit > simple blur > plain), a new `[graphics] ntsc_filter =
+  "composite-rt"` mode, the Settings → Display combo, the app live-apply +
+  `on_gfx_ready` startup (via `apply_ntsc_mode`), and a per-frame index+phase snapshot
+  taken under the same brief present lock (zero cost when off). Off by default
+  (byte-identical presentation); frontend-only → AccuracyCoin / determinism / oracles
+  untouched, `no_std` core unchanged. WGSL parse+validate + LUT/sine unit tests in CI;
+  native + both wasm flavours clippy clean. Note: defaults to Bisqwit's neutral params
+  (Hue/Contrast/Saturation/Brightness 0, filter widths 12) — per-knob tuning + the
+  vertical-blend / resolution-divider options can be added later. **In-browser runtime
+  confirmation of the R16Uint integer-texture path is the one remaining manual check.**
 
 ## T-110-A2 — CRT / scanline WGSL shader post-pass  ✅ DONE (2026-06-14)
 

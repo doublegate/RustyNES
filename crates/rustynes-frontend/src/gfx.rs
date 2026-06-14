@@ -268,6 +268,9 @@ pub struct Gfx {
     /// `width`/`height`/`format`.
     pub config: wgpu::SurfaceConfiguration,
     nes_texture: wgpu::Texture,
+    /// v1.1.0 beta.1 (T-110-A1) — `R16Uint` palette-index source for the true
+    /// composite `NES_NTSC` filter; uploaded only while `ntsc_bisqwit` is active.
+    index_texture: wgpu::Texture,
     bind_group: wgpu::BindGroup,
     uniforms: wgpu::Buffer,
     pipeline: wgpu::RenderPipeline,
@@ -275,6 +278,10 @@ pub struct Gfx {
     /// is first composited through this filter, then the letterbox blit
     /// samples the filter's output texture.
     ntsc: Option<crate::ntsc::NtscFilter>,
+    /// v1.1.0 beta.1 (T-110-A1) — optional true composite `NES_NTSC` filter
+    /// (Bisqwit algorithm). Samples `index_texture`. Render priority sits below
+    /// CRT and above the simplified `ntsc` blur.
+    ntsc_bisqwit: Option<crate::ntsc_bisqwit::NtscBisqwitFilter>,
     /// v1.1.0 beta.1 — optional CRT / scanline post-pass. Mutually exclusive with
     /// `ntsc` at render time (CRT takes priority when both are set).
     crt: Option<crate::crt::CrtFilter>,
@@ -484,6 +491,24 @@ impl Gfx {
             view_formats: &[],
         });
         let nes_view = nes_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        // v1.1.0 beta.1 (T-110-A1) — the palette-index source for the true
+        // composite `NES_NTSC` filter. `R16Uint` (one (emph<<6)|colour value per
+        // pixel); read via textureLoad in the Bisqwit shader. Only uploaded when
+        // that filter is active, so it costs nothing otherwise.
+        let index_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("nes-index-fb"),
+            size: wgpu::Extent3d {
+                width: NES_W,
+                height: NES_H,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R16Uint,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("nes-nearest"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -609,10 +634,12 @@ impl Gfx {
             queue,
             config,
             nes_texture,
+            index_texture,
             bind_group,
             uniforms,
             pipeline,
             ntsc: None,
+            ntsc_bisqwit: None,
             crt: None,
             present_mode_fell_back,
             supported_present_modes: surface_caps.present_modes,
@@ -684,6 +711,32 @@ impl Gfx {
     #[allow(dead_code)]
     pub fn disable_ntsc(&mut self) {
         self.ntsc = None;
+    }
+
+    /// Enable the true composite `NES_NTSC` filter (Bisqwit algorithm, T-110-A1).
+    /// Samples the `R16Uint` index texture; the caller must supply the index
+    /// framebuffer + phase to [`Self::render_with_overlay`] while it is active.
+    pub fn enable_ntsc_bisqwit(&mut self) {
+        if self.ntsc_bisqwit.is_none() {
+            self.ntsc_bisqwit = Some(crate::ntsc_bisqwit::NtscBisqwitFilter::new(
+                &self.device,
+                self.config.format,
+                &self.index_texture,
+            ));
+        }
+    }
+
+    /// Disable the true composite `NES_NTSC` filter.
+    #[allow(dead_code)]
+    pub fn disable_ntsc_bisqwit(&mut self) {
+        self.ntsc_bisqwit = None;
+    }
+
+    /// Whether the true composite `NES_NTSC` filter is active (so the caller knows
+    /// to snapshot + supply the index framebuffer this frame).
+    #[must_use]
+    pub const fn ntsc_bisqwit_active(&self) -> bool {
+        self.ntsc_bisqwit.is_some()
     }
 
     /// Enable the CRT / scanline post-pass with the given scanline intensity
@@ -776,16 +829,18 @@ impl Gfx {
     /// and present a frame.
     #[allow(clippy::needless_pass_by_ref_mut)] // matches `render_with_overlay`.
     pub fn render(&mut self, framebuffer: &[u8]) -> Result<(), wgpu::SurfaceError> {
-        self.render_with_overlay(framebuffer, |_, _, _, _, _| {})
+        self.render_with_overlay(framebuffer, None, |_, _, _, _, _| {})
     }
 
     /// Upload the framebuffer and present a frame; between the letterbox
     /// pass and `present`, invoke `overlay` so the debugger can draw into
     /// the same surface view.
     #[allow(clippy::needless_pass_by_ref_mut)] // signature parity with `render`.
+    #[allow(clippy::too_many_lines)] // upload + filter-priority branch + present.
     pub fn render_with_overlay<F>(
         &mut self,
         framebuffer: &[u8],
+        index: Option<(&[u16], u8)>,
         overlay: F,
     ) -> Result<(), wgpu::SurfaceError>
     where
@@ -798,6 +853,34 @@ impl Gfx {
         ),
     {
         debug_assert_eq!(framebuffer.len(), (NES_W * NES_H * 4) as usize);
+        // v1.1.0 beta.1 (T-110-A1) — upload the palette-index framebuffer for
+        // the true composite `NES_NTSC` filter, only when it is active and the
+        // caller supplied a correctly-sized snapshot. `R16Uint` = 2 bytes/texel.
+        let video_phase = match (self.ntsc_bisqwit.is_some(), index) {
+            (true, Some((idx, phase))) if idx.len() == (NES_W * NES_H) as usize => {
+                self.queue.write_texture(
+                    wgpu::ImageCopyTexture {
+                        texture: &self.index_texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    bytemuck::cast_slice(idx),
+                    wgpu::ImageDataLayout {
+                        offset: 0,
+                        bytes_per_row: Some(NES_W * 2),
+                        rows_per_image: Some(NES_H),
+                    },
+                    wgpu::Extent3d {
+                        width: NES_W,
+                        height: NES_H,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                phase
+            }
+            _ => 0,
+        };
         self.queue.write_texture(
             wgpu::ImageCopyTexture {
                 texture: &self.nes_texture,
@@ -850,6 +933,15 @@ impl Gfx {
                 &view,
                 self.config.width,
                 self.config.height,
+            );
+        } else if let Some(filter) = &self.ntsc_bisqwit {
+            filter.render(
+                &self.queue,
+                &mut encoder,
+                &view,
+                self.config.width,
+                self.config.height,
+                video_phase,
             );
         } else if let Some(filter) = &self.ntsc {
             filter.render(

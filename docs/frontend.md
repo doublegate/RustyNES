@@ -440,8 +440,19 @@ All of the original open questions are resolved in v1.0.0:
 - **WebAssembly target** — shipped (`wasm-winit` full winit+wgpu+egui build +
   `wasm-canvas` lightweight embed). The Web Audio user-gesture requirement is
   handled by arming `AudioContext` at the file-picker gesture.
-- **CRT / NTSC shader** — a Blargg-NTSC-style filter ships as a wgpu post-pass
-  (toggleable in Settings). Slang-shader ports remain a future enhancement.
+- **CRT / NTSC shaders** — wgpu post-passes, toggleable in Settings → Display
+  (render priority CRT > true-NTSC > simplified blur > plain blit):
+  - A simplified Blargg-style blur (`ntsc.rs`, `ntsc_filter = "composite"`/`"rgb"`).
+  - A CRT / scanline + aperture-grille pass (`crt.rs`, `crt_filter`).
+  - The **true composite NES_NTSC filter** (`ntsc_bisqwit.rs`,
+    `ntsc_filter = "composite-rt"`, T-110-A1): a faithful Bisqwit `nes_ntsc` port
+    that samples the PPU's `R16Uint` palette-index framebuffer + per-frame phase
+    (the core's `index_framebuffer()` / `ntsc_phase()` outputs), reconstructs the
+    composite signal, and demodulates it per fragment with a windowed Y/I/Q filter
+    for genuine dot-crawl / fringing artifacts. The index buffer is uploaded only
+    while the filter is active; all tables are baked into the WGSL (WebGL2-safe, no
+    storage buffers). Frontend-only — no core / determinism impact.
+  Slang-shader ports remain a future enhancement.
 - **Movie recording (TAS)** — shipped (`.rnm` record/play/branch).
 - **Netplay** — shipped (rollback netcode, 2-4 players, native UDP + browser
   WebRTC), enabled by the deterministic core.
