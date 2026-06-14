@@ -465,11 +465,13 @@ pub fn body(ui: &mut egui::Ui, state: &mut InputPanelState, config: &mut Config)
                     ExpansionDevice::None => "Standard controller",
                     ExpansionDevice::Zapper => "Zapper (light gun)",
                     ExpansionDevice::Vaus => "Vaus (Arkanoid paddle)",
+                    ExpansionDevice::PowerPad => "Power Pad (mat)",
                 })
                 .show_ui(ui, |ui| {
                     ui.selectable_value(&mut dev, ExpansionDevice::None, "Standard controller");
                     ui.selectable_value(&mut dev, ExpansionDevice::Zapper, "Zapper (light gun)");
                     ui.selectable_value(&mut dev, ExpansionDevice::Vaus, "Vaus (Arkanoid paddle)");
+                    ui.selectable_value(&mut dev, ExpansionDevice::PowerPad, "Power Pad (mat)");
                 });
             if dev != config.input.expansion_device {
                 config.input.expansion_device = dev;

@@ -1653,6 +1653,9 @@ impl App {
                 ExpansionDevice::Vaus => {
                     nes.set_paddle(1, 0x80, false);
                 }
+                ExpansionDevice::PowerPad => {
+                    nes.set_power_pad(1, 0);
+                }
             }
         }
     }
@@ -1774,6 +1777,7 @@ impl App {
             mouse_pressed: self.mouse_pressed,
             turbo_mask: self.turbo_mask(),
             turbo_period: self.config.input.turbo_period,
+            power_pad: self.input.power_pad(),
         }
     }
 

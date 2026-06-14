@@ -4,7 +4,7 @@ Extension points: `crates/rustynes-core/src/input_device.rs` (the `InputDevice` 
 currently `Zapper`, `Vaus`), `crates/rustynes-frontend/src/input.rs`, `config.rs`,
 the mapper parse path in `crates/rustynes-mappers/src/lib.rs`, and the cheat panel.
 
-## T-110-B1 — New controllers (Power Pad, Family BASIC keyboard)  (Power Pad core DONE)
+## T-110-B1 — New controllers (Power Pad, Family BASIC keyboard)  (Power Pad DONE end-to-end)
 
 - Add `InputDevice` variants implementing `write_strobe`/`read`/`peek`; opt-in per
   port so the default controller path stays byte-identical.
@@ -17,11 +17,15 @@ the mapper parse path in `crates/rustynes-mappers/src/lib.rs`, and the cheat pan
   tag 3 (`bus_snapshot.rs`); exported as `rustynes_core::PowerPadState`. Opt-in =
   byte-identical default path; `no_std` clean. Unit tests: no-button serial pattern,
   button→serial-position mapping (Mesen-matched), strobe-high reload, save-state
-  round-trip, 12-bit mask. **Remaining:** frontend wiring — `ExpansionDevice::PowerPad`
-  + a 12-key default mapping (mat is a P2-port device) + `InputState`/`FrameInputs`/
-  `SharedInput` plumbing + the `latch` feed + a Settings selector. (The mat is fed
-  digital buttons, not the mouse the Zapper/Vaus use, so it needs new input-mapping
-  infra — hence the core/frontend split.)
+  round-trip, 12-bit mask.
+- **Power Pad frontend feed ✅ DONE (2026-06-14):** `ExpansionDevice::PowerPad` (config +
+  Settings → Input "Port 2 device" selector), `input::POWER_PAD_KEYS` (fixed default
+  12-key map = the number row `1..=9 0 - =`, chosen to avoid P1/P2 controller keys),
+  `InputState::power_pad` tracked in `handle_key`, carried through `FrameInputs.power_pad`
+  + `SharedInput` (AtomicU16, round-trip-tested), fed via `nes.set_power_pad(1, …)` in
+  `EmuCore::latch`'s expansion block + attached in `sync_expansion_device`. Native path
+  (the expansion block is native-gated, like Zapper/Vaus). **Later:** rebindable mat keys
+  (currently the fixed default) + a wasm-canvas feed.
 - **Family BASIC keyboard — DEFERRED:** a 72-key row/column matrix on the Famicom
   expansion port ($4016 col-select/row-step + $4017 4-bit reads), much larger and
   hard to verify without the copyrighted Family BASIC software. Separate follow-up.

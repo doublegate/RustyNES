@@ -20,6 +20,14 @@ content below, plus the first **v1.1.0** feature work (beta.1).
 
 ### Added
 
+- **NES Power Pad — playable** (v1.1.0 beta.1, Workstream B, T-110-B1). The Power Pad /
+  Family Fun Fitness mat is now selectable as the player-2 expansion device (Settings →
+  Input "Port 2 device"); its 12 mat buttons default to the number row (`1`–`9`, `0`,
+  `-`, `=`). Completes the device shipped in the previous beta entry: the held mat
+  buttons flow through `InputState` → `FrameInputs` (+ the emu-thread `SharedInput`) and
+  are fed to the device in `EmuCore::latch`. Off by default (standard controller), so
+  the default + Four Score paths stay byte-identical. Native path (like Zapper/Vaus);
+  rebindable mat keys + a wasm-canvas feed are follow-ups.
 - **Per-game database — nametable mirroring override** (v1.1.0 beta.1, Workstream B,
   T-110-B4). A CRC32-keyed game database (vendored from TetaNES, MIT OR Apache-2.0,
   ~2.6k entries) that auto-corrects ROMs whose iNES header carries the wrong mirroring
