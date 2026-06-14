@@ -27,12 +27,13 @@
 //! single-consumer **by convention**: the app's produce path is the only
 //! pusher and the CPAL callback the only popper.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::SampleFormat;
 
+use crate::eq::{Equalizer, BAND_COUNT};
 use crate::resampler::{drc_ratio, HermiteResampler};
 
 /// Default queue capacity in samples when no latency target is supplied
@@ -126,6 +127,15 @@ struct QueueInner {
     /// `push_samples` each call so the shared queue carries the setting across
     /// the winit/emu-thread boundary.
     base_ratio: AtomicU64,
+    /// v1.1.0 beta.2 (T-110-D2) — graphic-EQ params, shared so the Settings UI
+    /// (winit thread) can live-update them and the producer (which owns the
+    /// stateful biquads) picks the change up. `eq_gen` bumps on every change;
+    /// the producer rebuilds its `Equalizer` when it sees a new generation.
+    eq_gen: AtomicU64,
+    /// EQ enabled flag (when false the producer skips the stage entirely).
+    eq_enabled: AtomicBool,
+    /// Per-band gains in dB (f32 bits), five fixed bands.
+    eq_bands: [AtomicU32; BAND_COUNT],
 }
 
 /// Thread-safe sample queue between the emulator and the CPAL callback.
@@ -162,6 +172,9 @@ impl SampleQueue {
                 start_threshold: AtomicUsize::new(0),
                 gain: AtomicU64::new(u64::from(1.0f32.to_bits())),
                 base_ratio: AtomicU64::new(u64::from(1.0f32.to_bits())),
+                eq_gen: AtomicU64::new(0),
+                eq_enabled: AtomicBool::new(false),
+                eq_bands: core::array::from_fn(|_| AtomicU32::new(0)),
             }),
         }
     }
@@ -199,6 +212,32 @@ impl SampleQueue {
         self.inner
             .base_ratio
             .store(u64::from(base.to_bits()), Ordering::Relaxed);
+    }
+
+    /// v1.1.0 beta.2 — set the graphic-EQ params (enabled + per-band dB gains).
+    /// Lock-free + live: the Settings UI calls this from the winit thread and
+    /// the producer rebuilds its biquads on the next push. Bumps the generation.
+    pub fn set_eq(&self, enabled: bool, bands: [f32; BAND_COUNT]) {
+        for (slot, &g) in self.inner.eq_bands.iter().zip(bands.iter()) {
+            slot.store(g.clamp(-12.0, 12.0).to_bits(), Ordering::Relaxed);
+        }
+        self.inner.eq_enabled.store(enabled, Ordering::Relaxed);
+        self.inner.eq_gen.fetch_add(1, Ordering::Release);
+    }
+
+    /// v1.1.0 beta.2 — current EQ generation counter (the producer compares this
+    /// to the last value it built from to decide whether to rebuild).
+    fn eq_gen(&self) -> u64 {
+        self.inner.eq_gen.load(Ordering::Acquire)
+    }
+
+    /// v1.1.0 beta.2 — snapshot the EQ params: `(enabled, per-band dB gains)`.
+    fn eq_params(&self) -> (bool, [f32; BAND_COUNT]) {
+        let enabled = self.inner.eq_enabled.load(Ordering::Relaxed);
+        let bands = core::array::from_fn(|i| {
+            f32::from_bits(self.inner.eq_bands[i].load(Ordering::Relaxed))
+        });
+        (enabled, bands)
     }
 
     /// v1.0.0 — the current DRC base-ratio (emulation-speed) factor.
@@ -327,6 +366,47 @@ impl Default for SampleQueue {
     }
 }
 
+/// v1.1.0 beta.2 (T-110-D2) — the producer-side graphic-EQ stage. Owns the
+/// stateful biquads; rebuilds them from the shared queue params whenever the
+/// Settings UI bumps the EQ generation. Bypassed (zero overhead) when the EQ is
+/// disabled or flat, so audio is byte-identical to a no-EQ build by default.
+struct EqStage {
+    sample_rate: u32,
+    eq: Option<Equalizer>,
+    seen_gen: u64,
+}
+
+impl EqStage {
+    const fn new(sample_rate: u32) -> Self {
+        Self {
+            sample_rate,
+            eq: None,
+            seen_gen: 0,
+        }
+    }
+
+    /// Re-sync the EQ from the shared `queue` params if they changed, and
+    /// report whether a filter is currently engaged. When this returns `false`
+    /// the caller can skip the (copy +) `run` entirely — keeping the no-DRC
+    /// path zero-copy and byte-identical with the EQ off.
+    fn engaged(&mut self, queue: &SampleQueue) -> bool {
+        let gen = queue.eq_gen();
+        if gen != self.seen_gen {
+            self.seen_gen = gen;
+            let (enabled, bands) = queue.eq_params();
+            self.eq = enabled.then(|| Equalizer::new(bands, self.sample_rate));
+        }
+        self.eq.is_some()
+    }
+
+    /// Filter `buf` in place (call only after [`Self::engaged`] returned `true`).
+    fn run(&mut self, buf: &mut [f32]) {
+        if let Some(eq) = self.eq.as_mut() {
+            eq.process(buf);
+        }
+    }
+}
+
 /// Owns the live CPAL stream (kept around so it isn't dropped), the
 /// producer-side queue handle, and the v2.8.0 DRC resampler stage.
 pub struct AudioOutput {
@@ -348,6 +428,8 @@ pub struct AudioOutput {
     latency_samples: usize,
     /// Occupancy above which the producer hard-resyncs (skips batches).
     resync_samples: usize,
+    /// v1.1.0 beta.2 — the optional graphic-EQ output stage.
+    eq_stage: EqStage,
     /// Live stream handle. Dropping it stops audio.
     _stream: cpal::Stream,
 }
@@ -435,6 +517,7 @@ impl AudioOutput {
             resample_buf: Vec::with_capacity(2048),
             latency_samples,
             resync_samples,
+            eq_stage: EqStage::new(sample_rate),
             _stream: stream,
         })
     }
@@ -454,6 +537,7 @@ impl AudioOutput {
             resample_buf: Vec::with_capacity(2048),
             latency_samples: self.latency_samples,
             resync_samples: self.resync_samples,
+            eq_stage: EqStage::new(self.sample_rate),
         }
     }
 
@@ -486,6 +570,16 @@ impl AudioOutput {
                 rs.set_ratio(drc_ratio(fill) * rs.base_ratio());
                 self.resample_buf.clear();
                 rs.process(samples, &mut self.resample_buf);
+                // v1.1.0 beta.2 — optional EQ output stage (post-resampler).
+                self.eq_stage.engaged(&self.queue);
+                self.eq_stage.run(&mut self.resample_buf);
+                self.queue.push(&self.resample_buf);
+            }
+            // DRC off: stay zero-copy unless the EQ is engaged.
+            None if self.eq_stage.engaged(&self.queue) => {
+                self.resample_buf.clear();
+                self.resample_buf.extend_from_slice(samples);
+                self.eq_stage.run(&mut self.resample_buf);
                 self.queue.push(&self.resample_buf);
             }
             None => self.queue.push(samples),
@@ -520,6 +614,8 @@ pub struct AudioProducer {
     resample_buf: Vec<f32>,
     latency_samples: usize,
     resync_samples: usize,
+    /// v1.1.0 beta.2 — the optional graphic-EQ output stage.
+    eq_stage: EqStage,
 }
 
 impl AudioProducer {
@@ -542,6 +638,16 @@ impl AudioProducer {
                 rs.set_ratio(drc_ratio(fill) * rs.base_ratio());
                 self.resample_buf.clear();
                 rs.process(samples, &mut self.resample_buf);
+                // v1.1.0 beta.2 — optional EQ output stage (post-resampler).
+                self.eq_stage.engaged(&self.queue);
+                self.eq_stage.run(&mut self.resample_buf);
+                self.queue.push(&self.resample_buf);
+            }
+            // DRC off: stay zero-copy unless the EQ is engaged.
+            None if self.eq_stage.engaged(&self.queue) => {
+                self.resample_buf.clear();
+                self.resample_buf.extend_from_slice(samples);
+                self.eq_stage.run(&mut self.resample_buf);
                 self.queue.push(&self.resample_buf);
             }
             None => self.queue.push(samples),

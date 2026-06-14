@@ -20,6 +20,14 @@ content below, plus the first **v1.1.0** feature work (beta.1).
 
 ### Added
 
+- **Graphic equalizer** (v1.1.0 beta.2, Workstream D, T-110-D2). An optional 5-band graphic
+  EQ (60 / 240 / 1k / 3.8k / 12k Hz, ±12 dB each) in Settings → Audio. It runs as a
+  **frontend output stage** — cascaded RBJ peaking biquads applied on the producer side after
+  the dynamic-rate resampler, exactly like the existing master-gain stage — so it never
+  touches the deterministic core synthesis. Off by default and bypassed when flat, so audio
+  is **byte-identical** to before unless you engage it; live-updates while playing (the
+  Settings sliders push params through the shared audio queue and the producer rebuilds its
+  biquads on the next frame). Native-only for now (a wasm feed is a follow-up).
 - **NSF / NSFe music player** (v1.1.0 beta.2, Workstream D, T-110-D1). RustyNES now plays
   `.nsf` chiptune files: drop one in (or File → Open) and an **NSF Player** panel opens with
   the file's title / artist / copyright and a track selector (Prev / Next / Restart + a
