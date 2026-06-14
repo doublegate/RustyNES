@@ -56,6 +56,20 @@ Follow-up: regenerate the visual reference `screenshots/external/mapper-089-Suns
   FDS drive timing.
 - **Done when:** side-B advances; a smoke test (or documented manual verification)
   is recorded; no regression to other FDS titles.
+- **REPRO + ISOLATION (2026-06-13):** `fds_smoke` (boots side A, pulses Start, NO
+  disk swap) over all 8 local FDS games: 6 boot to a visible title (Metroid, both
+  Zeldas, Bio Miracle, Otocky, Doki Doki Panic — incl. multi-side titles), but
+  **Kid Icarus renders a fully black 1-colour screen at frame 1200** (Akumajou
+  Dracula Disk-Writer variant is also suspicious, separate). So the stall is
+  Kid-Icarus-specific and happens EARLY (the game needs side B right after the BIOS
+  registration screen). **Blocker for root-cause: `fds_smoke` never swaps disk
+  sides.** Next step = a small disk-swap reproduction harness using the existing
+  API (`Nes::disk_side_count` / `inserted_disk_side` / `set_disk_side(Some/None)`,
+  `crates/rustynes-core/src/nes.rs:423-440`): boot side A → advance past BIOS
+  registration → eject + insert side B when the game requests it → trace the FDS
+  `$4030-$4033` status + the BIOS disk-read state at the stall and diff against
+  Mesen2/fceux FDS drive timing. (The fix itself is then likely in the FDS device
+  in `crates/rustynes-mappers/src/fds.rs`.)
 
 ## T-101-003 — GxROM-66 + SMB3 "Mario flashing" (un-reproduced reports)
 
