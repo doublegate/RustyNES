@@ -112,7 +112,7 @@ use wasm_bindgen::JsCast;
 // wasm32, so using this consistently fixes the type mismatch.
 use web_time::Instant;
 
-use rustynes_core::Nes;
+use rustynes_core::{Buttons, Nes};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::WindowEvent;
@@ -1758,7 +1758,23 @@ impl App {
             }),
             #[cfg(not(target_arch = "wasm32"))]
             mouse_pressed: self.mouse_pressed,
+            turbo_mask: self.turbo_mask(),
+            turbo_period: self.config.input.turbo_period,
         }
+    }
+
+    /// v1.1.0 beta.1 (T-110-B2) — the configured turbo/autofire button mask
+    /// (empty = off). The gate itself is applied at latch keyed on the emulated
+    /// frame; this just resolves which buttons participate.
+    fn turbo_mask(&self) -> Buttons {
+        let mut m = Buttons::empty();
+        if self.config.input.turbo_a {
+            m |= Buttons::A;
+        }
+        if self.config.input.turbo_b {
+            m |= Buttons::B;
+        }
+        m
     }
 
     /// v2.8.0 Phase 5 increment 3 — `true` when the dedicated emulation
@@ -2666,12 +2682,18 @@ impl App {
     /// error) no frame is produced and no audio is pushed. Native-only.
     #[cfg(not(target_arch = "wasm32"))]
     fn produce_one_frame_netplay(&mut self) {
-        let local = self.input.player1();
+        let raw_local = self.input.player1();
+        let turbo_mask = self.turbo_mask();
+        let turbo_period = self.config.input.turbo_period;
         let mut guard = self.emu.lock();
         let emu = &mut *guard;
         let Some(nes) = emu.nes.as_mut() else {
             return;
         };
+        // v1.1.0 beta.1 (T-110-B2) — expand turbo on the LOCAL input before it
+        // is sent: the gated bits are what cross the wire + are stored in the
+        // rollback ring, so both peers replay them verbatim (deterministic).
+        let local = crate::emu::apply_turbo(raw_local, nes.frame(), turbo_mask, turbo_period);
         let tick = self.netplay.tick(nes, local);
 
         // Push the freshly produced frame's audio, mirroring the single-player
@@ -2709,12 +2731,17 @@ impl App {
     /// message. wasm-only.
     #[cfg(target_arch = "wasm32")]
     fn produce_one_frame_browser_netplay(&mut self) {
-        let local = self.input.player1();
+        let raw_local = self.input.player1();
+        let turbo_mask = self.turbo_mask();
+        let turbo_period = self.config.input.turbo_period;
         let mut guard = self.emu.lock();
         let emu = &mut *guard;
         let (Some(driver), Some(nes)) = (self.browser_netplay.as_mut(), emu.nes.as_mut()) else {
             return;
         };
+        // v1.1.0 beta.1 (T-110-B2) — expand turbo on the local input keyed on
+        // the emulated frame, so the bits sent to the peer replay verbatim.
+        let local = crate::emu::apply_turbo(raw_local, nes.frame(), turbo_mask, turbo_period);
         let consumed = driver.tick(nes, local);
         // On an actual produced frame, push this frame's APU samples into the
         // shared Web Audio ring (mirrors the single-player wasm path). A

@@ -11,10 +11,26 @@ the mapper parse path in `crates/rustynes-mappers/src/lib.rs`, and the cheat pan
 - **Refs:** `ref-proj/Mesen2/.../Input/PowerPad.h`, `FamilyBasicKeyboard.h`.
 - **Done when:** selectable per port in settings; determinism preserved when unset.
 
-## T-110-B2 — Turbo / autofire
+## T-110-B2 — Turbo / autofire  ✅ DONE (2026-06-14)
 
 - Frame-counter gating in `input.rs` + a `[input.turbo]` config block (per-button
   period). **Done when:** configurable; off by default.
+- **DONE:** `[input] turbo_a` / `turbo_b` / `turbo_period` config (off by default =
+  empty mask = byte-identical input). The gate `emu::apply_turbo(buttons, frame, mask,
+  period)` strobes the masked buttons on/off keyed on the **emulated frame number**
+  (`Nes::frame()`, a new pure read-only accessor) — applied in `EmuCore::latch` (covers
+  the native emu-thread + synchronous + wasm-winit paths, which latch per produced
+  frame) and on the local input in both netplay produce paths before `add_local_input`.
+  Because the gate runs where input meets the NES and the **gated bits are what get
+  latched / recorded / sent**, it is deterministic and rollback / TAS / netplay-safe
+  (the remote + replay use the stored bits verbatim; run-ahead speculates with the
+  already-gated buttons; movie playback replays recorded gated bits). `SharedInput`
+  carries the turbo mask/period across the winit→emu thread boundary. UI: Settings →
+  Input "Turbo / autofire" (Turbo A / Turbo B checkboxes + speed slider). Unit tests:
+  strobe-masks-only, period-widening, off-is-identity (+ period-0 clamp). Native + both
+  wasm flavours clippy clean; no_std core unchanged; AccuracyCoin/oracle unaffected.
+  **Limitation:** the lightweight `wasm-canvas` embed (`wasm.rs`, separate minimal
+  path) sets buttons directly and does not apply turbo; the main winit/native paths do.
 
 ## T-110-B3 — Input-display overlay  ✅ DONE (2026-06-14)
 

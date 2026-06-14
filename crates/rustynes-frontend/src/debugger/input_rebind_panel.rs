@@ -431,6 +431,28 @@ pub fn body(ui: &mut egui::Ui, state: &mut InputPanelState, config: &mut Config)
             }
         });
 
+        // v1.1.0 beta.1 (T-110-B2) — turbo / autofire. Takes effect immediately
+        // (frame_inputs reads the live config each frame); off by default. The
+        // strobe is applied where input meets the NES keyed on the emulated
+        // frame, so it is deterministic + rollback / TAS / netplay-safe.
+        ui.separator();
+        ui.label(egui::RichText::new("Turbo / autofire").strong());
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut config.input.turbo_a, "Turbo A");
+            ui.checkbox(&mut config.input.turbo_b, "Turbo B");
+        });
+        ui.horizontal(|ui| {
+            ui.label("Turbo speed");
+            // Period in frames per on/off half-cycle: 1 = ~30 Hz, 4 = ~7.5 Hz.
+            let mut period = config.input.turbo_period.clamp(1, 8);
+            if ui
+                .add(egui::Slider::new(&mut period, 1..=8).text("frames"))
+                .changed()
+            {
+                config.input.turbo_period = period;
+            }
+        });
+
         // v2.1.0 — non-standard device on the player-2 port ($4017).
         // Selecting one routes through the app's reload path
         // (`sync_expansion_device`). Mouse drives aim/position; left

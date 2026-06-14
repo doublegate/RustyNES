@@ -20,6 +20,16 @@ content below, plus the first **v1.1.0** feature work (beta.1).
 
 ### Added
 
+- **Turbo / autofire** (v1.1.0 beta.1, Workstream B, T-110-B2). The A and/or B button
+  can rapid-fire while held, configurable via `[input] turbo_a` / `turbo_b` and a
+  `turbo_period` (frames per on/off half-cycle; Settings → Input "Turbo / autofire").
+  **Off by default** (empty mask = byte-identical input). The strobe is applied where
+  input meets the NES — keyed on the **emulated frame number** (a new pure
+  `Nes::frame()` accessor) — in `EmuCore::latch` and on the local input in both netplay
+  paths, so the **gated bits are what get latched / recorded / sent**: it is
+  deterministic and rollback / TAS / netplay-safe, AccuracyCoin / the oracle are
+  unaffected, and the `no_std` core is unchanged. (The lightweight `wasm-canvas` embed
+  does not apply turbo; the native + wasm-winit paths do.)
 - **Input-display overlay** (v1.1.0 beta.1, Workstream B, T-110-B3). A new
   read-only tool panel (`debugger/input_display_panel.rs`) that draws a stylized NES
   controller per active player — D-pad, Select/Start, B/A — with each currently-held
