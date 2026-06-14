@@ -91,6 +91,45 @@ fn main() {
     let trace = nes.take_fds_trace();
     println!("trace records: {}", trace.len());
 
+    // Head-motion analysis: how the disk position advances + wraps. A monotonic
+    // climb that never wraps = stuck mid-disk; many rewinds-to-0 = motor cycling;
+    // end-of-head sets = the head reached the inner track (disk-loop point).
+    let reads: Vec<&_> = trace.iter().filter(|r| r.kind == 0).collect();
+    let max_head = reads.iter().map(|r| r.head).max().unwrap_or(0);
+    let rewinds = reads.windows(2).filter(|w| w[1].head < w[0].head).count();
+    let rewinds_to_0 = reads
+        .windows(2)
+        .filter(|w| w[1].head == 0 && w[0].head > 100)
+        .count();
+    let eoh = reads.iter().filter(|r| (r.status & 0x40) != 0).count();
+    println!(
+        "head: max={max_head}  rewinds(any backward)={rewinds}  rewinds-to-0={rewinds_to_0}  \
+         end-of-head reads={eoh}",
+    );
+
+    // CRC-error analysis: a wrong synthesized CRC makes the BIOS retry forever
+    // (status bit 4 = $4030.D4). Count them + show the head positions of the first
+    // few — a recurring head position is the block the BIOS keeps rejecting.
+    let crc_errs: Vec<(u32, i8)> = trace
+        .iter()
+        .filter(|r| r.kind == 0 && (r.status & 0x10) != 0)
+        .map(|r| (r.head, r.side))
+        .collect();
+    println!(
+        "$4031 reads with CRC-error ($4030.D4) set: {}",
+        crc_errs.len()
+    );
+    if !crc_errs.is_empty() {
+        let mut heads: Vec<u32> = crc_errs.iter().map(|(h, _)| *h).collect();
+        heads.sort_unstable();
+        heads.dedup();
+        println!(
+            "  distinct head positions flagged CRC-error: {} -> {:?}",
+            heads.len(),
+            &heads[..heads.len().min(12)]
+        );
+    }
+
     // Side changes + control writes, in order (context for the read stream).
     for r in &trace {
         match r.kind {

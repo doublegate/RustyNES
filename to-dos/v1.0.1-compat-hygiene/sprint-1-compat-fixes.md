@@ -136,6 +136,26 @@ Follow-up: regenerate the visual reference `screenshots/external/mapper-089-Suns
     change (Mesen2-style deferred `_endOfHead` reset + `_delay`) — verifying the 56
     FDS unit tests + the 6 working FDS games stay green. (Still NOT fixed; a
     speculative motor-rewind change was avoided pending that A/B.)
+- **SIDE-A TRACE CLOSED OUT (2026-06-13).** Traced side A's full boot load (no
+  swap) and contrasted it against the working multi-side Metroid. Side A's reads
+  are **correct** — disk-info block matches the raw `.fds`, **0 CRC errors**,
+  **0 end-of-head**, side# reads as 0. The divergence is in *completion*:
+  - Kid Icarus reads **138560 `$4031` bytes (≈2.6 disk passes)** and never stops.
+  - Metroid reads **52054 bytes (< 1 pass)**, then motor-off → game runs.
+  Both reach the same disk region and read identical uncorrupted data, but Kid
+  Icarus **never decides "load complete"** — it re-scans the file structure forever
+  (the cycling licence screen). **So the defect is FDS file-load COMPLETION, not the
+  read path / CRC / side# / disk-wrap.** The earlier side-B ERR.07 is a downstream
+  symptom (side A's game never takes control → a swap lands on the BIOS boot
+  reset-check, which expects side 0).
+  **DEFINITIVE NEXT STEP (now narrow):** the BIOS loads boot files whose ID ≤ the
+  "boot read file code" in the disk-info block (`FDS_BIOS.md` `LoadFiles`), counted
+  via the file-amount block (block 2). Diff the per-file load decision (which IDs
+  load + when it stops) vs Mesen2 — most likely RustyNES mis-delivers the
+  **block-2 file-count** or a **file-header size/type field**, so the BIOS's
+  "loaded vs expected" count never converges. The read engine / CRC / side-switch /
+  gap-skip are all verified correct, so the fix is in the block-2 / file-header
+  **content-length** path of `fds.rs`, not the timing model.
 
 ## T-101-003 — GxROM-66 + SMB3 "Mario flashing" (un-reproduced reports)
 
