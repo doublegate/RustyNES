@@ -15,7 +15,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No unreleased changes.
+Toward **v1.0.1** (compatibility + hygiene patch):
+
+### Fixed
+
+- **Mapper 89 (Sunsoft-2) — Mito Koumon background rendering.** The `$8000-$FFFF`
+  register decode had bit 7 and bit 3 swapped: RustyNES used bit 7 for the
+  one-screen mirroring select and bit 3 for the CHR-bank high bit, but the
+  hardware layout (`CPPP MCCC`, per nesdev `INES_Mapper_089` and Mesen2's
+  `Sunsoft89`) is bit 7 = CHR high bit (A16), bit 3 = mirroring. The wrong
+  mirroring displayed the empty single-screen B while the game wrote its
+  background to single-screen A, so the background appeared blank (only sprites
+  rendered). *Tenka no Goikenban: Mito Koumon* now renders its title screen and
+  backgrounds correctly. Isolated to mapper 89; AccuracyCoin 100% and every other
+  game are unaffected.
+
+### Changed (docs / hygiene)
+
+- Reconciled `docs/STATUS.md` to the shipped v1.0.0 reality: the master-clock core
+  is the default and only scheduler (the `mc-r1-full-cpu` umbrella was promoted to
+  default and the flag removed), so the AccuracyCoin row now reads **100.00%**
+  (not the pre-promotion 90.65%), the "Known residuals (deferred to v2.0)" section
+  is re-titled **CLOSED**, and the removed feature-flag rows are marked historical.
+- Archived the stale `to-dos/phase-7-*` + `phase-8-*` accuracy plans under
+  `to-dos/archive/` and stood up release-named `to-dos/v1.0.1-compat-hygiene/` +
+  `to-dos/v1.1.0-features/` (the live forward roadmap); updated `ROADMAP.md` +
+  `to-dos/README.md` pointers.
+- Re-worded the 7 "pin-the-floor" `#[ignore]` unit probes (cpu/apu/ppu) whose
+  reasons cited the removed `mc-r1-full-cpu` flag as opt-in — they now state plainly
+  that they pin superseded pre-master-clock unit behaviour (real coverage is the
+  now-green `cpu_interrupts_v2` 5/5 + AccuracyCoin 100%); scrubbed the stale
+  "known fail on the default lockstep build" comments in `cpu_interrupts_v2.rs`.
 
 ---
 

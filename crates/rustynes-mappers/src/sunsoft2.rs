@@ -9,10 +9,11 @@
 //! Register (nesdev `INES_Mapper_089.xhtml`), `$8000-$FFFF`:
 //!
 //! ```text
-//!   [PPPM CCCC]  P = PRG 16 KiB bank (bits 4-6)
-//!               M = one-screen mirroring select (bit 7: 0 = A, 1 = B)
-//!               C = CHR 8 KiB bank: high bit (A16) is bit 3, low 3 bits 0-2
-//!                   -> bank = ((v >> 3) & 1) << 3 | (v & 7)
+//!   [CPPP MCCC]  C = CHR 8 KiB bank high bit / A16 (bit 7)
+//!               PPP = PRG 16 KiB bank (bits 4-6)
+//!               M = one-screen mirroring select (bit 3: 0 = A, 1 = B)
+//!               CCC = CHR 8 KiB bank low 3 bits (bits 0-2)
+//!                   -> chr bank = ((v >> 7) & 1) << 3 | (v & 7)
 //! ```
 //!
 //! There is **no IRQ**.
@@ -131,9 +132,12 @@ impl Mapper for Sunsoft2 {
 
     fn cpu_write(&mut self, addr: u16, value: u8) {
         if (0x8000..=0xFFFF).contains(&addr) {
+            // Register layout `CPPP MCCC` (nesdev INES_Mapper_089; matches
+            // Mesen2 `Sunsoft89::WriteRegister`): bit 7 is the CHR-bank high
+            // bit (A16), bit 3 is the one-screen mirroring select.
             self.prg_bank = (value >> 4) & 0x07;
-            self.chr_bank = (((value >> 3) & 0x01) << 3) | (value & 0x07);
-            self.mirroring = if (value & 0x80) != 0 {
+            self.chr_bank = (((value >> 7) & 0x01) << 3) | (value & 0x07);
+            self.mirroring = if (value & 0x08) != 0 {
                 Mirroring::SingleScreenB
             } else {
                 Mirroring::SingleScreenA
@@ -270,8 +274,8 @@ mod tests {
     #[test]
     fn chr_bank_combines_a16() {
         let mut m = Sunsoft2::new(synth_prg(2), synth_chr(16), Mirroring::Vertical).unwrap();
-        // value bit 3 (A16) + low 3 bits: 0b0000_1010 -> ((1)<<3)|(2) = 10.
-        m.cpu_write(0x8000, 0b0000_1010);
+        // CHR high bit / A16 is value bit 7: 0b1000_0010 -> ((1)<<3)|(2) = 10.
+        m.cpu_write(0x8000, 0b1000_0010);
         assert_eq!(m.ppu_read(0x0000), 10);
         // Low 3 only: 0b0000_0101 -> 5.
         m.cpu_write(0x8000, 0b0000_0101);
@@ -282,7 +286,7 @@ mod tests {
     fn one_screen_mirroring_select() {
         let mut m = Sunsoft2::new(synth_prg(2), synth_chr(4), Mirroring::Vertical).unwrap();
         assert_eq!(m.current_mirroring(), Mirroring::SingleScreenA);
-        m.cpu_write(0x8000, 0x80); // bit 7 -> SingleScreenB
+        m.cpu_write(0x8000, 0x08); // bit 3 -> SingleScreenB
         assert_eq!(m.current_mirroring(), Mirroring::SingleScreenB);
         m.cpu_write(0x8000, 0x00);
         assert_eq!(m.current_mirroring(), Mirroring::SingleScreenA);
