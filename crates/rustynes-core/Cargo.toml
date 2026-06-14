@@ -45,6 +45,13 @@ cpu-boot-trace = ["std"]
 mc-r1-dmc-abort-probe = ["rustynes-apu/mc-r1-dmc-abort-probe"]
 # v2.0 R1c-1 diagnostic — per-instruction (PC, cpu_cycle) trace. Forward to rustynes-cpu.
 cpu-instr-cycle-trace = ["rustynes-cpu/cpu-instr-cycle-trace"]
+# v1.1.0 beta.2 (Workstream C) — debugger devtools hooks: PC/exec breakpoints (and,
+# later, the trace logger + event viewer) checked in the `run_frame` loop. Off by
+# default so the headless test/bench builds keep a byte-identical hot path + the
+# determinism contract; the frontend enables it. The hooks are output-only (they may
+# stop the frame early or record state) and never mutate emulation, so even with the
+# feature ON the persistent timeline is unchanged.
+debug-hooks = ["std"]
 
 [dependencies]
 rustynes-cpu.workspace = true

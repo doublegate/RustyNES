@@ -73,7 +73,11 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-rustynes-core.workspace = true
+# v1.1.0 beta.2 (Workstream C) — `debug-hooks` enables the core's run-loop
+# breakpoint/trace/event hooks for the debugger. The hooks are determinism-
+# neutral no-ops until armed, so the headless test/bench builds (which depend on
+# rustynes-core WITHOUT this feature) keep a byte-identical hot path.
+rustynes-core = { workspace = true, features = ["debug-hooks"] }
 
 # Phase 5 Sprint 1 frontend stack.
 winit.workspace = true

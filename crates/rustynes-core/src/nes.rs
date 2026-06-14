@@ -65,6 +65,19 @@ pub struct Nes {
     /// `crates/rustynes-core/src/cpu_boot_trace.rs`.
     #[cfg(feature = "cpu-boot-trace")]
     cpu_boot_trace: Option<crate::cpu_boot_trace::CpuBootTrace>,
+    /// v1.1.0 beta.2 (Workstream C) — exec/PC breakpoints checked in
+    /// [`Nes::run_frame`]. Gated on `debug-hooks` so the default build's hot
+    /// path is untouched. Output-only: a hit stops the frame early and records
+    /// the PC; it never mutates emulation, so determinism holds.
+    #[cfg(feature = "debug-hooks")]
+    breakpoints: Vec<u16>,
+    /// Whether breakpoints are armed (lets the UI keep its list but pause
+    /// checking). Default `true`.
+    #[cfg(feature = "debug-hooks")]
+    breakpoints_enabled: bool,
+    /// The PC that last hit a breakpoint, taken by the frontend to pause.
+    #[cfg(feature = "debug-hooks")]
+    break_hit: Option<u16>,
 }
 
 impl Nes {
@@ -89,6 +102,12 @@ impl Nes {
             rewind_snap_buf: Vec::new(),
             #[cfg(feature = "cpu-boot-trace")]
             cpu_boot_trace: None,
+            #[cfg(feature = "debug-hooks")]
+            breakpoints: Vec::new(),
+            #[cfg(feature = "debug-hooks")]
+            breakpoints_enabled: true,
+            #[cfg(feature = "debug-hooks")]
+            break_hit: None,
         })
     }
 
@@ -112,6 +131,12 @@ impl Nes {
             rewind_snap_buf: Vec::new(),
             #[cfg(feature = "cpu-boot-trace")]
             cpu_boot_trace: None,
+            #[cfg(feature = "debug-hooks")]
+            breakpoints: Vec::new(),
+            #[cfg(feature = "debug-hooks")]
+            breakpoints_enabled: true,
+            #[cfg(feature = "debug-hooks")]
+            break_hit: None,
         })
     }
 
@@ -164,6 +189,12 @@ impl Nes {
             rewind_snap_buf: Vec::new(),
             #[cfg(feature = "cpu-boot-trace")]
             cpu_boot_trace: None,
+            #[cfg(feature = "debug-hooks")]
+            breakpoints: Vec::new(),
+            #[cfg(feature = "debug-hooks")]
+            breakpoints_enabled: true,
+            #[cfg(feature = "debug-hooks")]
+            break_hit: None,
         })
     }
 
@@ -219,12 +250,31 @@ impl Nes {
         // VBL detection or DMA-stall heavy frames before declaring "stuck".
         const MAX_CYCLES_PER_FRAME: u64 = 150_000;
         let start = self.bus.cycle();
+        // v1.1.0 beta.2 (Workstream C) — skip the breakpoint check on the first
+        // iteration so resuming with the PC sitting on a breakpoint executes
+        // that instruction before re-checking (otherwise "continue" would
+        // immediately re-break in place).
+        #[cfg(feature = "debug-hooks")]
+        let mut first_iter = true;
         while !self.bus.take_frame_complete() {
             if self.cpu.is_jammed() {
                 break;
             }
             if self.bus.cycle().wrapping_sub(start) > MAX_CYCLES_PER_FRAME {
                 break;
+            }
+            #[cfg(feature = "debug-hooks")]
+            {
+                if !first_iter
+                    && self.breakpoints_enabled
+                    && self.breakpoints.contains(&self.cpu.pc)
+                {
+                    // Hit: stop the (partial) frame and report the PC. No state
+                    // mutated; the frame simply isn't completed this call.
+                    self.break_hit = Some(self.cpu.pc);
+                    return self.bus.framebuffer();
+                }
+                first_iter = false;
             }
             #[cfg(feature = "cpu-boot-trace")]
             self.cpu_boot_trace_record();
@@ -257,6 +307,59 @@ impl Nes {
         #[cfg(feature = "cpu-boot-trace")]
         self.cpu_boot_trace_record();
         self.cpu.step(&mut self.bus)
+    }
+
+    /// v1.1.0 beta.2 (Workstream C) — add an exec/PC breakpoint at `addr`.
+    /// [`Nes::run_frame`] stops the frame the next time the program counter
+    /// reaches `addr` (reportable via [`Nes::take_break_hit`]). Idempotent.
+    /// `debug-hooks` only.
+    #[cfg(feature = "debug-hooks")]
+    pub fn add_breakpoint(&mut self, addr: u16) {
+        if !self.breakpoints.contains(&addr) {
+            self.breakpoints.push(addr);
+        }
+    }
+
+    /// Remove a previously-added exec breakpoint (no-op if absent).
+    #[cfg(feature = "debug-hooks")]
+    pub fn remove_breakpoint(&mut self, addr: u16) {
+        self.breakpoints.retain(|&a| a != addr);
+    }
+
+    /// Remove all breakpoints.
+    #[cfg(feature = "debug-hooks")]
+    pub fn clear_breakpoints(&mut self) {
+        self.breakpoints.clear();
+    }
+
+    /// The current exec breakpoints (insertion order).
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    // `Vec` -> slice deref coercion is not const, so this can't be `const fn`
+    // (clippy's `missing_const_for_fn` is a false positive here).
+    #[allow(clippy::missing_const_for_fn)]
+    pub fn breakpoints(&self) -> &[u16] {
+        &self.breakpoints
+    }
+
+    /// Arm/disarm breakpoint checking without discarding the list. Default on.
+    #[cfg(feature = "debug-hooks")]
+    pub const fn set_breakpoints_enabled(&mut self, enabled: bool) {
+        self.breakpoints_enabled = enabled;
+    }
+
+    /// Whether breakpoint checking is armed.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub const fn breakpoints_enabled(&self) -> bool {
+        self.breakpoints_enabled
+    }
+
+    /// Take the PC that last hit a breakpoint (cleared on read). The frontend
+    /// polls this after [`Nes::run_frame`] to pause when a breakpoint fired.
+    #[cfg(feature = "debug-hooks")]
+    pub const fn take_break_hit(&mut self) -> Option<u16> {
+        self.break_hit.take()
     }
 
     /// Borrow the framebuffer (RGBA8, 256x240).
@@ -1719,6 +1822,44 @@ mod tests {
         nes.run_frame();
         assert!(!nes.rewind_step_back());
         assert_eq!(nes.rewind_len(), 0);
+    }
+
+    #[cfg(feature = "debug-hooks")]
+    #[test]
+    fn breakpoint_stops_run_frame_at_pc() {
+        let rom = synth_nrom(16, 8);
+        // A PC the CPU provably reaches: the PC after the first 3 executed
+        // instructions (a fresh run replays the same deterministic sequence).
+        let mut probe = Nes::from_rom(&rom).expect("parse");
+        for _ in 0..3 {
+            probe.step_instruction();
+        }
+        let target = probe.cpu.pc;
+
+        let mut nes = Nes::from_rom(&rom).expect("parse");
+        // The PPU's frame-complete latch is set at power-on, so the first
+        // `run_frame` returns immediately without iterating; warm past it.
+        let _ = nes.run_frame();
+        nes.add_breakpoint(target);
+        nes.add_breakpoint(target); // idempotent
+        assert_eq!(nes.breakpoints(), &[target]);
+
+        let _ = nes.run_frame();
+        assert_eq!(
+            nes.take_break_hit(),
+            Some(target),
+            "stops at the breakpoint PC"
+        );
+        assert_eq!(nes.take_break_hit(), None, "hit cleared on read");
+
+        // Disarmed breakpoints don't fire (the frame runs to completion).
+        nes.set_breakpoints_enabled(false);
+        let _ = nes.run_frame();
+        assert_eq!(nes.take_break_hit(), None, "disarmed: no break");
+
+        // Removal empties the list.
+        nes.remove_breakpoint(target);
+        assert!(nes.breakpoints().is_empty());
     }
 
     #[test]
