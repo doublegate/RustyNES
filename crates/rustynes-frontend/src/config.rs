@@ -578,7 +578,8 @@ impl Default for RewindConfig {
 }
 
 /// Graphics configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+// `crt_scanline` is an `f32`, so this config is `PartialEq` only (not `Eq`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GraphicsConfig {
     /// wgpu present mode: `"Mailbox"` (default), `"Fifo"`, or
     /// `"Immediate"`. The native frontend paces frames on a wall clock,
@@ -625,10 +626,24 @@ pub struct GraphicsConfig {
     /// no core / framebuffer change.
     #[serde(default)]
     pub hide_overscan: bool,
+    /// v1.1.0 beta.1 — CRT / scanline post-process pass. Default `false` (the
+    /// presentation is byte-identical when off). Mutually exclusive with the NTSC
+    /// filter at render time (CRT wins when both are set). A presentation-layer
+    /// wgsl pass; no core / framebuffer change.
+    #[serde(default)]
+    pub crt_filter: bool,
+    /// v1.1.0 beta.1 — CRT scanline intensity (`0.0` = none .. `1.0` = strong),
+    /// applied live. Default `0.5`.
+    #[serde(default = "default_crt_scanline")]
+    pub crt_scanline: f32,
 }
 
 fn default_ntsc_filter() -> String {
     "off".into()
+}
+
+const fn default_crt_scanline() -> f32 {
+    0.5
 }
 
 fn default_pacing_mode() -> String {
@@ -654,6 +669,8 @@ impl Default for GraphicsConfig {
             pacing_mode: default_pacing_mode(),
             max_frame_latency: default_max_frame_latency(),
             hide_overscan: false,
+            crt_filter: false,
+            crt_scanline: default_crt_scanline(),
         }
     }
 }

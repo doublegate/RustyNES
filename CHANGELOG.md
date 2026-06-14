@@ -15,7 +15,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Toward **v1.0.1** (compatibility + hygiene patch):
+Accumulating toward the next release — the **v1.0.1** compatibility + hygiene
+content below, plus the first **v1.1.0** feature work (beta.1).
+
+### Added
+
+- **CRT / scanline video filter** (v1.1.0 beta.1). A new presentation-layer wgsl
+  post-pass (`crates/rustynes-frontend/src/crt.rs`) that applies source-row-space
+  scanlines (a parabolic per-row brightness profile) + a subtle RGB aperture-grille
+  mask, with a live **scanline-intensity** slider (`[graphics] crt_scanline`,
+  default 0.5) and an on/off toggle (`[graphics] crt_filter`, default off) in the
+  Settings → Display tab. Off by default = byte-identical presentation; mutually
+  exclusive with the NTSC filter (CRT wins). A frontend-only effect — no core /
+  framebuffer change, so AccuracyCoin + determinism are unaffected. The embedded
+  WGSL is parse+validate-tested in CI.
 
 ### Fixed
 

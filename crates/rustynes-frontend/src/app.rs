@@ -3599,8 +3599,11 @@ impl App {
     /// present from `App::new`); on wasm32 the NES is deferred until
     /// an `AppEvent::RomLoaded` arrives (the browser file picker).
     fn on_gfx_ready(&mut self, mut gfx: Gfx, event_loop: &ActiveEventLoop) {
-        // Sprint 5-3 — optional NTSC filter.
-        if self.config.graphics.ntsc_filter != "off" {
+        // Sprint 5-3 — optional NTSC filter. v1.1.0 beta.1 — optional CRT filter
+        // (mutually exclusive with NTSC; CRT wins if both are somehow configured).
+        if self.config.graphics.crt_filter {
+            gfx.enable_crt(self.config.graphics.crt_scanline);
+        } else if self.config.graphics.ntsc_filter != "off" {
             gfx.enable_ntsc();
         }
         // Sprint 5-3 — egui debugger overlay.
@@ -4626,6 +4629,24 @@ impl ApplicationHandler<AppEvent> for App {
                 if settings.overscan {
                     if let Some(gfx) = self.gfx.as_mut() {
                         gfx.set_hide_overscan(self.config.graphics.hide_overscan);
+                    }
+                }
+                // v1.1.0 beta.1 — CRT filter live-apply. CRT and NTSC are
+                // mutually exclusive at render time; turning CRT on drops NTSC so
+                // the settings stay coherent.
+                if settings.crt_filter {
+                    if let Some(gfx) = self.gfx.as_mut() {
+                        if self.config.graphics.crt_filter {
+                            gfx.enable_crt(self.config.graphics.crt_scanline);
+                            gfx.disable_ntsc();
+                        } else {
+                            gfx.disable_crt();
+                        }
+                    }
+                }
+                if settings.crt_scanline {
+                    if let Some(gfx) = self.gfx.as_mut() {
+                        gfx.set_crt_scanline(self.config.graphics.crt_scanline);
                     }
                 }
                 // v1.0.0 — per-APU-channel mute live-apply: push the mask into
