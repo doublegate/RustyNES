@@ -202,6 +202,21 @@ across the engine lineage in the long-tail batches above (all shipping in
 RustyNES v1.0.0); see `to-dos/ROADMAP.md`. FDS audio shipped as the last
 expansion-audio integration.
 
+### NSF player (synthetic mapper, v1.1.0)
+
+NSF chiptune files are not cartridges — they have no iNES header and no PPU
+program. They are played through a synthetic `NsfMapper` (`nsf.rs`), built by the
+dedicated `Nes::from_nsf` path (not `parse`). The mapper serves the program image
+(`$8000-$FFFF`, with `$5FF8-$5FFF` 4 KiB bank-switching), 8 KiB WRAM at `$6000`,
+and a tiny hand-assembled 6502 **driver** at `$5000`; the reset/NMI/IRQ vectors
+(`$FFFA-$FFFF`) are overridden to point at the driver. Reset runs `init` for the
+selected song and enables vblank NMI; the ordinary 60 Hz NMI then calls `play`
+each frame. Because this reuses the normal lockstep `run_frame`, the APU produces
+audio identically to a cartridge and the determinism contract is untouched. The
+`Mapper` trait carries three default-no-op `nsf_*` hooks (song count / current /
+set) so the bus + `Nes` can drive track selection without downcasting. Scope: base
+2A03, NTSC 60 Hz; expansion-chip audio + non-60 Hz rates + NSFe are deferred.
+
 ## Edge cases and gotchas
 
 1. **MMC1 consecutive-write bug.** Writes on adjacent CPU cycles after the first are ignored. *Bill & Ted's Excellent Adventure* depends on this; a clean implementation breaks the game.

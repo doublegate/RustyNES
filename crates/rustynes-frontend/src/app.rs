@@ -195,6 +195,28 @@ fn is_fds_image(bytes: &[u8]) -> bool {
     bytes.starts_with(b"FDS\x1A") || bytes.starts_with(b"\x01*NINTENDO-HVC*")
 }
 
+/// `true` when `bytes` is an NSF music file (classic `NESM\x1A` form).
+#[cfg(not(target_arch = "wasm32"))]
+fn is_nsf_image(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"NESM\x1A")
+}
+
+/// Parse the (title, artist, copyright) strings from an NSF header (32-byte
+/// NUL-terminated fields at `$0E` / `$2E` / `$4E`). Returns empty strings when
+/// the file is too short. Used only for display in the NSF player panel.
+#[cfg(not(target_arch = "wasm32"))]
+fn nsf_header_strings(bytes: &[u8]) -> (String, String, String) {
+    let field = |off: usize| -> String {
+        if bytes.len() < off + 32 {
+            return String::new();
+        }
+        let raw = &bytes[off..off + 32];
+        let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
+        String::from_utf8_lossy(&raw[..end]).into_owned()
+    };
+    (field(0x0E), field(0x2E), field(0x4E))
+}
+
 /// CRC-32 (IEEE) over a byte slice (PNG chunk CRC). Used by [`encode_png_rgba`].
 #[cfg(not(target_arch = "wasm32"))]
 fn png_crc32(bytes: &[u8]) -> u32 {
@@ -778,6 +800,7 @@ impl App {
     /// Native-only (filesystem). On wasm32 the ROM arrives as
     /// [`AppEvent::RomLoaded`] from the browser file picker.
     #[cfg(not(target_arch = "wasm32"))]
+    #[allow(clippy::too_many_lines)] // sequential per-format load + device/cheat/DB setup
     fn load_rom_from_path(&mut self, path: &Path) {
         let bytes = match std::fs::read(path) {
             Ok(b) => b,
@@ -798,7 +821,23 @@ impl App {
         // BIOS + the writable-disk save path; the standard cartridge `.nes`
         // path is unchanged. Detect by the disk-image magic (never matches a
         // `"NES\x1A"` cartridge).
-        let mut nes = if is_fds_image(&bytes) {
+        let mut nes = if is_nsf_image(&bytes) {
+            // v1.1.0 beta.2 — NSF music file: no cartridge, no CHR; a synthetic
+            // driver runs init/play through the standard lockstep loop.
+            self.emu.lock().fds_disk_sha256 = None;
+            match Nes::from_nsf_with_sample_rate(&bytes, sample_rate) {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("rustynes: failed to load NSF {}: {e}", path.display());
+                    self.ui.set_status(crate::ui_shell::StatusMessage::new(
+                        format!("Failed to load NSF: {e}"),
+                        egui::Color32::from_rgb(230, 90, 90),
+                        std::time::Duration::from_secs(4),
+                    ));
+                    return;
+                }
+            }
+        } else if is_fds_image(&bytes) {
             match self.build_fds_nes(&bytes, sample_rate) {
                 Some(n) => n,
                 // BIOS cancelled / wrong size / unparseable disk: keep the
@@ -880,6 +919,16 @@ impl App {
         // the player-2 port. No-op when ExpansionDevice::None.
         #[cfg(not(target_arch = "wasm32"))]
         self.sync_expansion_device();
+        // v1.1.0 beta.2 — for an NSF music file, feed the header metadata to the
+        // NSF player panel and pop it open (the framebuffer is blank, so the
+        // panel is the primary UI).
+        if is_nsf_image(&self.rom_bytes) {
+            let (title, artist, copyright) = nsf_header_strings(&self.rom_bytes);
+            if let Some(d) = self.debugger.as_mut() {
+                d.set_nsf_metadata(title, artist, copyright);
+                d.open_chip_panel(crate::debugger::ChipPanel::Nsf);
+            }
+        }
         if let Some(gfx) = self.gfx.as_ref() {
             gfx.window
                 .set_title(&format!("RustyNES - {}", self.rom_label));

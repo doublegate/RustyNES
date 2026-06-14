@@ -242,6 +242,80 @@ impl Nes {
         })
     }
 
+    /// Build an emulator that plays an NSF / `NSFe` music file.
+    ///
+    /// NSF files carry a ripped NES sound engine plus an `init`/`play` address
+    /// pair, not a PPU program. Construction parses the file, installs a
+    /// [`rustynes_mappers::NsfMapper`] (a synthetic 6502 driver + the program
+    /// image) as the bus's mapper, and runs the standard cold-boot reset — the
+    /// driver's reset vector calls `init` for the starting song, enables vblank
+    /// NMI, and the ordinary 60 Hz NMI then calls `play` once per frame. Audio
+    /// is produced through the unchanged lockstep loop; there is no video.
+    ///
+    /// Uses the default 44.1 kHz sample rate; see
+    /// [`Nes::from_nsf_with_sample_rate`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying [`RomError`] when the NSF header is malformed.
+    pub fn from_nsf(nsf_bytes: &[u8]) -> Result<Self, RomError> {
+        Self::from_nsf_with_sample_rate(nsf_bytes, crate::bus::DEFAULT_SAMPLE_RATE)
+    }
+
+    /// Build an NSF player with an explicit audio sample rate. See
+    /// [`Nes::from_nsf`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying [`RomError`] when the NSF header is malformed.
+    pub fn from_nsf_with_sample_rate(nsf_bytes: &[u8], sample_rate: u32) -> Result<Self, RomError> {
+        let mut bus = LockstepBus::with_nsf(nsf_bytes, sample_rate)?;
+        let mut cpu = Cpu::power_on();
+        cpu.reset(&mut bus);
+        Ok(Self {
+            cpu,
+            bus,
+            rom_sha256: sha256_of(nsf_bytes),
+            rewind: None,
+            rewind_capture_enabled: true,
+            rewind_snap_buf: Vec::new(),
+            #[cfg(feature = "cpu-boot-trace")]
+            cpu_boot_trace: None,
+            #[cfg(feature = "debug-hooks")]
+            breakpoints: Vec::new(),
+            #[cfg(feature = "debug-hooks")]
+            breakpoints_enabled: true,
+            #[cfg(feature = "debug-hooks")]
+            break_hit: None,
+            #[cfg(feature = "debug-hooks")]
+            trace: alloc::collections::VecDeque::new(),
+            #[cfg(feature = "debug-hooks")]
+            trace_enabled: false,
+        })
+    }
+
+    /// Number of selectable songs in the loaded NSF (0 for a cartridge / disk).
+    #[must_use]
+    pub fn nsf_song_count(&self) -> u8 {
+        self.bus.nsf_song_count()
+    }
+
+    /// The currently-selected 0-based NSF song (0 for a cartridge / disk).
+    #[must_use]
+    pub fn nsf_current_song(&self) -> u8 {
+        self.bus.nsf_current_song()
+    }
+
+    /// Select a 0-based NSF song and restart playback on it (re-runs `init` via
+    /// a warm reset). No-op for a cartridge / disk.
+    pub fn nsf_set_song(&mut self, song: u8) {
+        if self.bus.nsf_set_song(song) {
+            // Re-vector through the driver's reset entry so `init` runs for the
+            // new track. Warm reset preserves the freshly-patched driver state.
+            self.reset();
+        }
+    }
+
     /// Build an emulator with a **randomized power-on RAM** state (developer
     /// mode; Phase 7 / T-72-005).
     ///
@@ -2214,5 +2288,66 @@ mod tests {
             .expect("v0.9.0 blob must restore");
         assert_eq!(nes.cycle(), cycle);
         assert_eq!(fnv_hash(nes.framebuffer()), fb_hash);
+    }
+
+    /// Build a minimal NSF (3 songs) whose `init` enables all APU channels and
+    /// programs a steady pulse-1 tone, and whose `play` is a bare `RTS`. Loaded
+    /// at $8000; init=$8000, play=$800C.
+    fn synth_tone_nsf() -> Vec<u8> {
+        let mut f = vec![0u8; 0x80];
+        f[0..5].copy_from_slice(b"NESM\x1A");
+        f[0x05] = 1; // version
+        f[0x06] = 3; // total songs
+        f[0x07] = 1; // starting song
+        f[0x08] = 0x00;
+        f[0x09] = 0x80; // load $8000
+        f[0x0A] = 0x00;
+        f[0x0B] = 0x80; // init $8000
+        f[0x0C] = 0x0C;
+        f[0x0D] = 0x80; // play $800C
+        let program: &[u8] = &[
+            // init ($8000): enable channels + a constant-volume pulse-1 tone.
+            0xA9, 0x0F, 0x8D, 0x15, 0x40, // LDA #$0F; STA $4015
+            0xA9, 0xBF, 0x8D, 0x00, 0x40, // LDA #$BF; STA $4000 (duty/const vol)
+            0x60, // RTS
+            0xA0, // padding so play lands at $800C
+            // play ($800C):
+            0x60, // RTS
+        ];
+        f.extend_from_slice(program);
+        f
+    }
+
+    #[test]
+    fn nsf_constructs_runs_and_selects_tracks() {
+        let mut nes = Nes::from_nsf(&synth_tone_nsf()).expect("valid nsf builds");
+        assert_eq!(nes.nsf_song_count(), 3);
+        assert_eq!(nes.nsf_current_song(), 0);
+
+        // Run several frames: the driver's reset vector runs `init` (enabling
+        // the APU + pulse-1), then vblank NMI calls `play` each frame. Audio
+        // must be produced and the run must not panic.
+        let mut produced = 0usize;
+        for _ in 0..8 {
+            nes.run_frame();
+            produced += nes.drain_audio().len();
+        }
+        assert!(produced > 0, "NSF playback must produce audio samples");
+
+        // Track select clamps + restarts on the new song.
+        nes.nsf_set_song(2);
+        assert_eq!(nes.nsf_current_song(), 2);
+        nes.run_frame();
+        nes.nsf_set_song(99);
+        assert_eq!(nes.nsf_current_song(), 2, "clamped to last song");
+    }
+
+    #[test]
+    fn nsf_song_apis_are_inert_on_a_cartridge() {
+        let mut nes = Nes::from_rom(&synth_nrom(16, 8)).expect("nrom builds");
+        assert_eq!(nes.nsf_song_count(), 0);
+        assert_eq!(nes.nsf_current_song(), 0);
+        nes.nsf_set_song(1); // no-op, must not panic or reset spuriously
+        assert_eq!(nes.nsf_current_song(), 0);
     }
 }

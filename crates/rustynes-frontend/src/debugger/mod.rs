@@ -64,6 +64,7 @@ mod input_rebind_panel;
 mod mapper_panel;
 mod memory_panel;
 mod netplay_panel;
+mod nsf_panel;
 mod oam_panel;
 // v2.8.0 Phase 0 — frame-pacing / audio-health instrumentation panel.
 mod perf_panel;
@@ -120,6 +121,8 @@ pub enum ChipPanel {
     Trace,
     /// Event viewer (T-110-C3): scanline×dot write-event timeline.
     Events,
+    /// NSF music player (T-110-D1): track selector + metadata.
+    Nsf,
 }
 
 /// State of the debugger overlay.
@@ -139,6 +142,7 @@ pub struct DebuggerOverlay {
     show_mapper: bool,
     show_trace: bool,
     show_events: bool,
+    show_nsf: bool,
     show_input: bool,
     show_input_display: bool,
     show_cheat: bool,
@@ -162,6 +166,8 @@ pub struct DebuggerOverlay {
     trace_ui: trace_panel::TracePanelState,
     /// Event viewer panel state (T-110-C3).
     event_ui: event_panel::EventPanelState,
+    /// NSF player panel state (T-110-D1).
+    nsf_ui: nsf_panel::NsfPanelState,
     /// Input rebind modal state.
     input_ui: input_rebind_panel::InputPanelState,
     /// Input-display HUD state (v1.1.0 beta.1, Workstream B).
@@ -241,6 +247,7 @@ impl DebuggerOverlay {
             show_mapper: false,
             show_trace: false,
             show_events: false,
+            show_nsf: false,
             show_input: false,
             show_input_display: false,
             show_cheat: false,
@@ -256,6 +263,7 @@ impl DebuggerOverlay {
             mapper_ui: mapper_panel::MapperPanelState::default(),
             trace_ui: trace_panel::TracePanelState::default(),
             event_ui: event_panel::EventPanelState,
+            nsf_ui: nsf_panel::NsfPanelState::default(),
             input_ui: input_rebind_panel::InputPanelState::default(),
             input_display_ui: input_display_panel::InputDisplayPanelState,
             input_pads: [Buttons::empty(); 4],
@@ -533,7 +541,13 @@ impl DebuggerOverlay {
             ChipPanel::Mapper => self.show_mapper = true,
             ChipPanel::Trace => self.show_trace = true,
             ChipPanel::Events => self.show_events = true,
+            ChipPanel::Nsf => self.show_nsf = true,
         }
+    }
+
+    /// Populate the NSF player panel's metadata (called when an NSF is loaded).
+    pub fn set_nsf_metadata(&mut self, title: String, artist: String, copyright: String) {
+        self.nsf_ui.set_metadata(title, artist, copyright);
     }
 
     /// v1.0.0 — force the deep overlay visible (used when opening a chip panel
@@ -575,6 +589,7 @@ impl DebuggerOverlay {
                 ui.checkbox(&mut self.show_mapper, "Mapper");
                 ui.checkbox(&mut self.show_trace, "Trace");
                 ui.checkbox(&mut self.show_events, "Events");
+                ui.checkbox(&mut self.show_nsf, "NSF");
                 ui.checkbox(&mut self.show_input, "Input");
                 ui.checkbox(&mut self.show_input_display, "Input HUD");
                 ui.checkbox(&mut self.show_cheat, "Cheats");
@@ -742,6 +757,9 @@ impl DebuggerOverlay {
         }
         if self.show_events {
             event_panel::show(ctx, &mut self.show_events, &mut self.event_ui, nes);
+        }
+        if self.show_nsf {
+            nsf_panel::show(ctx, &mut self.show_nsf, &mut self.nsf_ui, nes);
         }
         if self.show_mapper {
             mapper_panel::show(ctx, &mut self.show_mapper, &mut self.mapper_ui, nes);
