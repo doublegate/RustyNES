@@ -50,6 +50,8 @@ pub use movie::{
     FrameInput, Movie, MovieError, MoviePlayer, MovieRecorder, StartPoint, BYTES_PER_FRAME,
     MOVIE_FORMAT_VERSION, MOVIE_MAGIC,
 };
+#[cfg(feature = "debug-hooks")]
+pub use nes::TraceRec;
 pub use nes::{Nes, FRAME_DURATION_DENDY, FRAME_DURATION_NTSC, FRAME_DURATION_PAL};
 pub use rewind::{
     RewindError, RewindRing, REWIND_DEFAULT_KEYFRAME_PERIOD, REWIND_DEFAULT_MAX_BYTES,

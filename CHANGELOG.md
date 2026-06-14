@@ -20,6 +20,12 @@ content below, plus the first **v1.1.0** feature work (beta.1).
 
 ### Added
 
+- **Cycle trace logger** (v1.1.0 beta.2, Workstream C, T-110-C2). A new **Trace** debugger
+  panel (Debug → Trace Logger) records each executed instruction's CPU register file +
+  cycle into a bounded ring (50k), shows a live disassembled tail, and **exports** the
+  full trace to a text file. Built on the `debug-hooks` feature; the ring is output-only
+  (bounded, mutates no emulation state) and off by default, so determinism / AccuracyCoin
+  are unaffected and headless builds keep a byte-identical hot path.
 - **Debugger breakpoints** (v1.1.0 beta.2, Workstream C, T-110-C1). Exec/PC breakpoints:
   add addresses in the CPU debugger panel's new **Breakpoints** section (armed toggle,
   hex add, per-row remove, clear); when the program counter reaches one, emulation
