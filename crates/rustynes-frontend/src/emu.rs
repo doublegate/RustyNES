@@ -184,6 +184,9 @@ pub struct ProduceFx {
     /// (re-)identifies the loaded ROM.
     #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
     pub ra_just_logged_in: bool,
+    /// v1.1.0 beta.2 (Workstream C) — a breakpoint fired this frame at this PC.
+    /// `App` pauses emulation + opens the debugger so the user can inspect.
+    pub breakpoint_hit: Option<u16>,
 }
 
 impl ProduceFx {
@@ -205,6 +208,9 @@ impl ProduceFx {
                 self.ra_status = later.ra_status;
             }
             self.ra_just_logged_in |= later.ra_just_logged_in;
+        }
+        if later.breakpoint_hit.is_some() {
+            self.breakpoint_hit = later.breakpoint_hit;
         }
     }
 }
@@ -445,6 +451,10 @@ impl EmuCore {
 
             if !ran_ahead {
                 nes.run_frame();
+                // v1.1.0 beta.2 (Workstream C) — surface a breakpoint hit so
+                // `App` can pause + open the debugger. (Run-ahead's speculative
+                // frames don't check breakpoints — only this persistent path.)
+                fx.breakpoint_hit = nes.take_break_hit();
                 // v2.8.0 Phase 3 — harvest the presented framebuffer into a
                 // reused buffer.
                 self.present_fb.clear();

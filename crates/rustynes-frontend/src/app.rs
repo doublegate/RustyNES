@@ -1935,6 +1935,18 @@ impl App {
         unused_variables
     )]
     fn apply_produce_fx(&mut self, fx: crate::emu::ProduceFx) {
+        // v1.1.0 beta.2 (Workstream C) — a breakpoint fired: pause emulation and
+        // open the CPU debugger so the user lands on the stopped PC.
+        if let Some(pc) = fx.breakpoint_hit {
+            self.set_paused(true);
+            if let Some(d) = self.debugger.as_mut() {
+                d.open_chip_panel(crate::debugger::ChipPanel::Cpu);
+            }
+            self.ui
+                .set_status(crate::ui_shell::StatusMessage::info(format!(
+                    "Breakpoint hit at ${pc:04X} — paused"
+                )));
+        }
         #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
         {
             if let Some(status) = fx.ra_status {

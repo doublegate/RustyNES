@@ -29,6 +29,9 @@ pub struct CpuPanelState {
     pub rows: usize,
     /// Text box for the "go to" field.
     pub goto_text: String,
+    /// v1.1.0 beta.2 (Workstream C) — text box for adding an exec breakpoint
+    /// (hex address).
+    pub bp_text: String,
 }
 
 impl Default for CpuPanelState {
@@ -38,6 +41,7 @@ impl Default for CpuPanelState {
             origin: 0xC000,
             rows: 32,
             goto_text: String::new(),
+            bp_text: String::new(),
         }
     }
 }
@@ -97,6 +101,47 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut CpuPanelState, nes
                     }
                 }
             });
+
+            // v1.1.0 beta.2 (Workstream C) — exec/PC breakpoints. Adding one
+            // pauses emulation + opens this panel the next time PC reaches it.
+            egui::CollapsingHeader::new("Breakpoints")
+                .default_open(false)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        let mut enabled = nes.breakpoints_enabled();
+                        if ui.checkbox(&mut enabled, "Armed").changed() {
+                            nes.set_breakpoints_enabled(enabled);
+                        }
+                        let add = ui.add(
+                            egui::TextEdit::singleline(&mut state.bp_text)
+                                .desired_width(64.0)
+                                .hint_text("$8000"),
+                        );
+                        let submit = (add.lost_focus()
+                            && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+                            || ui.button("Add").clicked();
+                        if submit {
+                            if let Some(addr) = parse_hex16(&state.bp_text) {
+                                nes.add_breakpoint(addr);
+                                state.bp_text.clear();
+                            }
+                        }
+                        if !nes.breakpoints().is_empty() && ui.button("Clear").clicked() {
+                            nes.clear_breakpoints();
+                        }
+                    });
+                    // Snapshot to a local list so we can mutate `nes` while
+                    // rendering the rows (remove buttons).
+                    let bps: Vec<u16> = nes.breakpoints().to_vec();
+                    for addr in bps {
+                        ui.horizontal(|ui| {
+                            ui.monospace(format!("${addr:04X}"));
+                            if ui.small_button("x").clicked() {
+                                nes.remove_breakpoint(addr);
+                            }
+                        });
+                    }
+                });
 
             if state.follow_pc {
                 state.origin = cpu.pc;

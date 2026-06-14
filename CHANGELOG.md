@@ -20,6 +20,15 @@ content below, plus the first **v1.1.0** feature work (beta.1).
 
 ### Added
 
+- **Debugger breakpoints** (v1.1.0 beta.2, Workstream C, T-110-C1). Exec/PC breakpoints:
+  add addresses in the CPU debugger panel's new **Breakpoints** section (armed toggle,
+  hex add, per-row remove, clear); when the program counter reaches one, emulation
+  **pauses and the CPU panel opens** on the stopped PC. Built on a new off-by-default
+  `debug-hooks` core feature (a break-check at the top of the `run_frame` loop) — the
+  hook is output-only (stops the partial frame + records the PC, mutating nothing), so
+  determinism / AccuracyCoin hold even with it on, and the headless test/bench builds
+  (which omit the feature) keep a byte-identical hot path. Read/write watchpoints +
+  conditions are a follow-up.
 - **NES Power Pad — playable** (v1.1.0 beta.1, Workstream B, T-110-B1). The Power Pad /
   Family Fun Fitness mat is now selectable as the player-2 expansion device (Settings →
   Input "Port 2 device"); its 12 mat buttons default to a left-hand grid (`1`–`4` /
