@@ -22,11 +22,14 @@ The headline v1.1.0 feature: a full Mesen2/FCEUX-style Lua scripting API.
 - **callbacks:** `onFrame`, `onExec(addr)`, `onRead/onWrite(addr)`, `onNmi/onIrq`.
 - **control:** savestate save/load, input override, pause/step.
 - **overlay:** drawing API (text/rect/pixel) rendered through the egui pass; `log`.
-- **PARTIAL (E-PR1):** `emu.read`/`readRange`/`write` (system-RAM writes), `emu.cpu()`
-  (A/X/Y/S/P/PC), `emu.frame`/`cycle`, `emu.log`, and `emu.onFrame` are **done**.
-  **Remaining (E-PR2):** `onExec`/`onRead`/`onWrite` (replay the `debug-hooks` trace/event
-  logs after the frame), PPU/APU state tables, control (savestate/input/pause), and the
-  overlay drawing API. `onNmi`/`onIrq` wait on the non-`const` interrupt tap (see T-110-C3).
+- **DONE (E-PR1 + E-PR2):** `emu.read`/`readRange`/`write` (system-RAM writes), `emu.cpu()`
+  (A/X/Y/S/P/PC), `emu.frame`/`cycle`, `emu.log`, `emu.onFrame` (E-PR1); **E-PR2:**
+  `emu.onExec(addr,fn)` (trace replay), `emu.onRead`/`onWrite(addr,fn)` (a new gated
+  `debug-hooks` bus-access log — reads + writes + values, replayed each frame), control
+  `emu.pause`/`saveState`/`loadState`/`setInput` and overlay `emu.drawText`/`drawRect`/
+  `drawPixel` (collected into host-drained `ControlCmd`/`DrawCmd` queues). **Remaining:** PPU/APU
+  state tables (minor) and `onNmi`/`onIrq` (blocked on the non-`const` interrupt tap, see
+  T-110-C3). The frontend wiring of control/draw + write-gating is **T-110-E5** (next PR).
 
 ## T-110-E3 — Core hook points
 

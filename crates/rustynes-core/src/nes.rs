@@ -373,6 +373,11 @@ impl Nes {
         if self.bus.event_logging() {
             self.bus.clear_events();
         }
+        // T-110-E2 — the Lua onRead/onWrite access log is per-frame too.
+        #[cfg(feature = "debug-hooks")]
+        if self.bus.access_logging() {
+            self.bus.clear_accesses();
+        }
         // v1.1.0 beta.2 (Workstream C) — skip the breakpoint check on the first
         // iteration so resuming with the PC sitting on a breakpoint executes
         // that instruction before re-checking (otherwise "continue" would
@@ -571,6 +576,30 @@ impl Nes {
     #[allow(clippy::missing_const_for_fn)] // slice deref is not const.
     pub fn events(&self) -> &[crate::bus::EventRec] {
         self.bus.events()
+    }
+
+    /// v1.1.0 beta.3 (T-110-E2) — start/stop the Lua bus-access log. While on,
+    /// the bus records this frame's CPU reads + writes (with values); the log is
+    /// reset at each [`Self::run_frame`]. Default off; output-only. Enabled by
+    /// the scripting engine only while `onRead`/`onWrite` callbacks exist.
+    #[cfg(feature = "debug-hooks")]
+    pub const fn set_access_logging(&mut self, enabled: bool) {
+        self.bus.set_access_logging(enabled);
+    }
+
+    /// Whether the bus-access log is recording.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub const fn access_logging(&self) -> bool {
+        self.bus.access_logging()
+    }
+
+    /// The current frame's captured CPU bus accesses (for the Lua engine).
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    #[allow(clippy::missing_const_for_fn)] // slice deref is not const.
+    pub fn accesses(&self) -> &[crate::bus::AccessRec] {
+        self.bus.accesses()
     }
 
     /// Borrow the framebuffer (RGBA8, 256x240).
