@@ -600,6 +600,17 @@ impl Nes {
         self.bus.set_power_pad(port, buttons);
     }
 
+    /// v1.1.0 beta.1 (T-110-B4) — set (`Some`) or clear (`None`) a per-game
+    /// **nametable mirroring override**, a load-time correction for ROMs whose
+    /// iNES header carries the wrong mirroring flag (supplied by the frontend's
+    /// game database). `None` (default) defers to the mapper — byte-identical,
+    /// so the determinism / `AccuracyCoin` contract and the core test suites are
+    /// unaffected (they never set it). Persisted in the save-state. Does not
+    /// affect mappers with on-cart VRAM (4-screen).
+    pub const fn set_mirroring_override(&mut self, m: Option<rustynes_mappers::Mirroring>) {
+        self.bus.set_mirroring_override(m);
+    }
+
     /// Write a byte directly into CPU work RAM (`$0000-$1FFF`). Used by the
     /// frontend's raw RAM cheats (GameShark-style); applied *after*
     /// [`Self::run_frame`], so the deterministic core run loop is unchanged

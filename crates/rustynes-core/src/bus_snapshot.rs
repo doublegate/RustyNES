@@ -85,7 +85,38 @@ pub fn encode_bus(bus: &LockstepBus) -> Vec<u8> {
     for port in 0..2 {
         encode_expansion_device(&mut w, bus.expansion_device(port).as_ref());
     }
+    // v1.1.0 beta.1 (T-110-B4) — per-game nametable mirroring override (trailing
+    // field; pre-v1.1.0 blobs lack it and decode as `None` = no override).
+    w.u8(encode_mirroring_override(bus.mirroring_override()));
     w.into_vec()
+}
+
+/// Encode the optional mirroring override as a tag byte (0 = none).
+const fn encode_mirroring_override(m: Option<rustynes_mappers::Mirroring>) -> u8 {
+    use rustynes_mappers::Mirroring;
+    match m {
+        None => 0,
+        Some(Mirroring::Horizontal) => 1,
+        Some(Mirroring::Vertical) => 2,
+        Some(Mirroring::SingleScreenA) => 3,
+        Some(Mirroring::SingleScreenB) => 4,
+        Some(Mirroring::FourScreen) => 5,
+        Some(Mirroring::MapperControlled) => 6,
+    }
+}
+
+/// Decode a mirroring-override tag byte (inverse of [`encode_mirroring_override`]).
+const fn decode_mirroring_override(tag: u8) -> Option<rustynes_mappers::Mirroring> {
+    use rustynes_mappers::Mirroring;
+    match tag {
+        1 => Some(Mirroring::Horizontal),
+        2 => Some(Mirroring::Vertical),
+        3 => Some(Mirroring::SingleScreenA),
+        4 => Some(Mirroring::SingleScreenB),
+        5 => Some(Mirroring::FourScreen),
+        6 => Some(Mirroring::MapperControlled),
+        _ => None,
+    }
 }
 
 /// Encode one port's optional overlay device (tag byte + fields).
@@ -252,6 +283,14 @@ pub fn decode_bus(bus: &mut LockstepBus, data: &[u8]) -> Result<(), SnapshotErro
     let device1 = decode_expansion_device(&mut r)?;
     bus.set_expansion_device(0, device0);
     bus.set_expansion_device(1, device1);
+    // v1.1.0 beta.1 (T-110-B4) — per-game mirroring override (trailing-default:
+    // pre-v1.1.0 blobs have no byte left and decode as `None`).
+    let mirroring_override = if r.remaining() >= 1 {
+        decode_mirroring_override(r.u8()?)
+    } else {
+        None
+    };
+    bus.set_mirroring_override(mirroring_override);
     bus.set_bus_misc_state(BusMiscState {
         dma_pending,
         dma_cycles_owed,

@@ -164,6 +164,16 @@ pub struct LockstepBus {
     /// the default + Four Score reads and the determinism contract are
     /// unaffected unless a device is explicitly attached.
     expansion_device: [Option<crate::input_device::InputDevice>; 2],
+    /// v1.1.0 beta.1 (T-110-B4) — optional per-game nametable mirroring
+    /// override. `None` (default) defers to the mapper's `nametable_address`
+    /// (byte-identical). When `Some`, the standard `$2000-$3EFF` nametable
+    /// translation uses this mirroring instead — a load-time correction for
+    /// ROMs with a wrong iNES mirroring flag, supplied by the frontend's game
+    /// database. Does NOT affect mapper-supplied VRAM (`nametable_fetch`, e.g.
+    /// 4-screen). Persisted in the save-state so rollback / restore stay
+    /// consistent. The core test suites never set it, so `AccuracyCoin` / the
+    /// oracle are unaffected.
+    nt_mirroring_override: Option<rustynes_mappers::Mirroring>,
     /// Cumulative CPU cycle counter.
     pub(crate) cycle: u64,
 
@@ -500,6 +510,7 @@ impl LockstepBus {
             vs_coin: 0,
             vs_service: false,
             expansion_device: [None, None],
+            nt_mirroring_override: None,
             cycle: 0,
             dma_pending: None,
             dma_cycles_owed: 0,
@@ -947,7 +958,10 @@ impl LockstepBus {
                 if let Some(v) = self.mapper.nametable_fetch(addr) {
                     v
                 } else {
-                    let phys = self.mapper.nametable_address(addr) as usize;
+                    let phys = match self.nt_mirroring_override {
+                        Some(m) => override_nt_addr(m, addr) as usize,
+                        None => self.mapper.nametable_address(addr) as usize,
+                    };
                     let ciram = self.ppu.ciram();
                     ciram[phys % ciram.len()]
                 }
@@ -1071,6 +1085,19 @@ impl LockstepBus {
         {
             p.set(buttons);
         }
+    }
+
+    /// v1.1.0 beta.1 (T-110-B4) — set (`Some`) or clear (`None`) the per-game
+    /// nametable mirroring override. A frontend load-time correction; `None`
+    /// (default) defers to the mapper (byte-identical).
+    pub const fn set_mirroring_override(&mut self, m: Option<rustynes_mappers::Mirroring>) {
+        self.nt_mirroring_override = m;
+    }
+
+    /// The current per-game mirroring override (for the save-state).
+    #[must_use]
+    pub const fn mirroring_override(&self) -> Option<rustynes_mappers::Mirroring> {
+        self.nt_mirroring_override
     }
 
     /// Sample the framebuffer luminance at each attached Zapper's aim point.
@@ -1841,6 +1868,7 @@ impl LockstepBus {
         for sub_dot in 0..3u8 {
             let mut adapter = PpuBusAdapter {
                 mapper: self.mapper.as_mut(),
+                nt_override: self.nt_mirroring_override,
                 sub_dot,
             };
             self.ppu.tick(&mut adapter);
@@ -1858,6 +1886,7 @@ impl LockstepBus {
         for sub_dot in 0..3u8 {
             let mut adapter = PpuBusAdapter {
                 mapper: self.mapper.as_mut(),
+                nt_override: self.nt_mirroring_override,
                 sub_dot,
                 trace_a12_latest: if self.irq_trace.is_some() {
                     Some(&mut self.trace_a12_latest)
@@ -2434,6 +2463,7 @@ impl LockstepBus {
             0x2002 => {
                 let mut adapter = PpuBusAdapter {
                     mapper: self.mapper.as_mut(),
+                    nt_override: self.nt_mirroring_override,
                     sub_dot: 2,
                     #[cfg(feature = "irq-timing-trace")]
                     trace_a12_latest: None,
@@ -2443,6 +2473,7 @@ impl LockstepBus {
             0x2007 => {
                 let mut adapter = PpuBusAdapter {
                     mapper: self.mapper.as_mut(),
+                    nt_override: self.nt_mirroring_override,
                     // CPU register replay (e.g. $2007 read-bug): treated as
                     // M2-high (sub_dot 2) since the 6502 drives its bus
                     // during φ2.
@@ -2851,6 +2882,7 @@ impl LockstepBus {
         let reg = (addr & 7) as u8;
         let mut adapter = PpuBusAdapter {
             mapper: self.mapper.as_mut(),
+            nt_override: self.nt_mirroring_override,
             // CPU bus access happens during φ2 → sub_dot 2 (M2-high).
             sub_dot: 2,
             #[cfg(feature = "irq-timing-trace")]
@@ -2864,6 +2896,7 @@ impl LockstepBus {
         let reg = (addr & 7) as u8;
         let mut adapter = PpuBusAdapter {
             mapper: self.mapper.as_mut(),
+            nt_override: self.nt_mirroring_override,
             // CPU bus access happens during φ2 → sub_dot 2 (M2-high).
             sub_dot: 2,
             #[cfg(feature = "irq-timing-trace")]
@@ -2873,9 +2906,24 @@ impl LockstepBus {
     }
 }
 
+/// v1.1.0 beta.1 (T-110-B4) — translate a `$2000-$3EFF` PPU address to a
+/// CIRAM offset under an explicit mirroring (the per-game override path),
+/// mirroring the `Mapper::nametable_address` default impl.
+#[allow(clippy::cast_possible_truncation)] // physical_bank is always 0 or 1.
+const fn override_nt_addr(m: rustynes_mappers::Mirroring, addr: u16) -> u16 {
+    const NT: u16 = 0x0400;
+    let table = ((addr.wrapping_sub(0x2000)) / NT) & 0x03;
+    let local = addr & (NT - 1);
+    (m.physical_bank(table as u8) as u16) * NT + local
+}
+
 /// Adapter that exposes the [`PpuBus`] interface over a `&mut dyn Mapper`.
 struct PpuBusAdapter<'a> {
     mapper: &'a mut dyn Mapper,
+    /// v1.1.0 beta.1 (T-110-B4) — the bus's per-game mirroring override, copied
+    /// in at construction. When `Some`, `nametable_address` uses it instead of
+    /// the mapper's mirroring.
+    nt_override: Option<rustynes_mappers::Mirroring>,
     /// Current PPU sub-dot of the host CPU cycle (0, 1, or 2).  Set by
     /// the bus's tick loop before each `Ppu::tick` call so that
     /// `notify_a12_at_sub_dot` (C1 step B4-successor M2-phase plumbing)
@@ -2943,7 +2991,10 @@ impl PpuBus for PpuBusAdapter<'_> {
         self.mapper.notify_vblank();
     }
     fn nametable_address(&self, addr: u16) -> u16 {
-        self.mapper.nametable_address(addr)
+        self.nt_override.map_or_else(
+            || self.mapper.nametable_address(addr),
+            |m| override_nt_addr(m, addr),
+        )
     }
 }
 
@@ -3234,6 +3285,7 @@ impl Bus for LockstepBus {
         while self.ppu_clock + ppu_div <= target {
             let mut adapter = PpuBusAdapter {
                 mapper: self.mapper.as_mut(),
+                nt_override: self.nt_mirroring_override,
                 sub_dot,
                 #[cfg(feature = "irq-timing-trace")]
                 trace_a12_latest: None,
@@ -3760,18 +3812,49 @@ mod four_score_tests {
     }
 
     #[test]
+    fn override_nt_addr_maps_per_mirroring() {
+        use rustynes_mappers::Mirroring;
+        // Logical tables $2000/$2400/$2800/$2C00, offset 0.
+        // Horizontal: tables 0/1 -> bank 0, 2/3 -> bank 1.
+        assert_eq!(override_nt_addr(Mirroring::Horizontal, 0x2000), 0x000);
+        assert_eq!(override_nt_addr(Mirroring::Horizontal, 0x2400), 0x000);
+        assert_eq!(override_nt_addr(Mirroring::Horizontal, 0x2800), 0x400);
+        assert_eq!(override_nt_addr(Mirroring::Horizontal, 0x2C00), 0x400);
+        // Vertical: tables 0/2 -> bank 0, 1/3 -> bank 1.
+        assert_eq!(override_nt_addr(Mirroring::Vertical, 0x2000), 0x000);
+        assert_eq!(override_nt_addr(Mirroring::Vertical, 0x2400), 0x400);
+        assert_eq!(override_nt_addr(Mirroring::Vertical, 0x2800), 0x000);
+        assert_eq!(override_nt_addr(Mirroring::Vertical, 0x2C00), 0x400);
+        // Local offset preserved.
+        assert_eq!(override_nt_addr(Mirroring::Vertical, 0x2456), 0x456);
+    }
+
+    #[test]
+    fn mirroring_override_round_trips_through_save_state() {
+        use rustynes_mappers::Mirroring;
+        let mut bus = test_bus();
+        assert_eq!(bus.mirroring_override(), None, "default is no override");
+        bus.set_mirroring_override(Some(Mirroring::Vertical));
+        let blob = crate::bus_snapshot::encode_bus(&bus);
+        let mut restored = test_bus();
+        crate::bus_snapshot::decode_bus(&mut restored, &blob).unwrap();
+        assert_eq!(restored.mirroring_override(), Some(Mirroring::Vertical));
+    }
+
+    #[test]
     fn pre_v1_7_0_save_state_decodes_with_four_score_off() {
         // A v1.7.0 blob carries 11 trailing Four Score bytes (1 flag + 6
         // controllers34 + 2 idx + 2 sig); the W3-Stage-4 tail appends 22
         // more (dmc_halt + 3 uni_oam flags + uni_oam_addr u16 + ppu_clock
         // u64 + dma_mc_consumed u64); the v2.1.0 tail appends 2 more (one
-        // expansion-device tag byte per port, both `None`). Truncating all
-        // 35 simulates a pre-v1.7.0 save, which must still load with the
-        // adapter off (and no expansion device).
+        // expansion-device tag byte per port, both `None`); the v1.1.0 beta.1
+        // tail appends 1 more (the nametable mirroring-override tag, `None`).
+        // Truncating all 36 simulates a pre-v1.7.0 save, which must still load
+        // with the adapter off (and no expansion device / override).
         let mut bus = test_bus();
         bus.set_four_score(true);
         let blob = crate::bus_snapshot::encode_bus(&bus);
-        let old = &blob[..blob.len() - 35];
+        let old = &blob[..blob.len() - 36];
         let mut restored = test_bus();
         restored.set_four_score(true); // prove decode actively turns it off
         crate::bus_snapshot::decode_bus(&mut restored, old).unwrap();
@@ -3811,15 +3894,17 @@ mod four_score_tests {
     #[test]
     fn pre_v2_1_0_save_state_decodes_with_no_expansion_device() {
         // A pre-v2.1.0 blob lacks the 2 trailing device-tag bytes (one None
-        // tag per port). With no device attached the v2.1.0 encoder writes
-        // exactly `[0, 0]`, so truncating those 2 bytes reproduces a
-        // pre-v2.1.0 save — which must still load with both ports unplugged.
+        // tag per port); a pre-v1.1.0 blob also lacks the mirroring-override
+        // tag. With nothing attached the encoder writes `[0, 0]` + `[0]`, so
+        // truncating those 3 trailing bytes reproduces an older save — which
+        // must still load with both ports unplugged and no override.
         let bus = test_bus();
         let blob = crate::bus_snapshot::encode_bus(&bus);
-        let old = &blob[..blob.len() - 2];
+        let old = &blob[..blob.len() - 3];
         let mut restored = test_bus();
         crate::bus_snapshot::decode_bus(&mut restored, old).unwrap();
         assert!(restored.expansion_device(0).is_none());
         assert!(restored.expansion_device(1).is_none());
+        assert_eq!(restored.mirroring_override(), None);
     }
 }

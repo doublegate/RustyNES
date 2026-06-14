@@ -30,6 +30,7 @@ pub mod emu;
 pub mod emu_thread;
 // v1.1.0 beta.1 (T-110-A2) — CRT / scanline post-process wgsl pass.
 pub mod crt;
+pub mod game_db;
 pub mod gfx;
 pub mod input;
 pub mod movie_ui;

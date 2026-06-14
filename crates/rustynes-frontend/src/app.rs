@@ -757,6 +757,19 @@ impl App {
         nes.set_vs_dip(dip);
     }
 
+    /// v1.1.0 beta.1 (T-110-B4) — apply the per-game database's nametable
+    /// mirroring override (a load-time fix for a wrong iNES mirroring flag),
+    /// keyed on the ROM's CRC32. A no-op when the ROM is not listed (or not an
+    /// iNES image — e.g. FDS), so the default path is byte-identical. The core
+    /// test suites never call this, so `AccuracyCoin` / the oracle are unaffected.
+    fn apply_game_db(nes: &mut Nes, bytes: &[u8]) {
+        if let Some(crc) = crate::game_db::rom_crc32(bytes) {
+            if let Some(m) = crate::game_db::mirroring_for_crc(crc) {
+                nes.set_mirroring_override(Some(m));
+            }
+        }
+    }
+
     /// Replace the current ROM with the one at `path`. Reuses the
     /// existing audio queue and rebuilds the `Nes` (and rewind ring if
     /// enabled) against the new cartridge. On any error, the old `Nes`
@@ -824,6 +837,7 @@ impl App {
         // v2.7.0 — the per-game DB supplies the correct PPU palette + a DIP
         // preset (explicit config dip wins over the DB; see `apply_vs_db`).
         self.apply_vs_db(&mut nes);
+        Self::apply_game_db(&mut nes, &bytes);
 
         self.rom_label = path
             .file_name()
@@ -3899,6 +3913,8 @@ impl App {
         // v2.5.0 — apply the Vs. System DIP switches (no-op for non-Vs. games).
         // v2.7.0 — per-game DB palette + DIP preset (explicit config dip wins).
         self.apply_vs_db(&mut nes);
+        // v1.1.0 beta.1 (T-110-B4) — per-game nametable mirroring override.
+        Self::apply_game_db(&mut nes, &self.rom_bytes);
         {
             let mut guard = self.emu.lock();
             let emu = &mut *guard;

@@ -20,6 +20,19 @@ content below, plus the first **v1.1.0** feature work (beta.1).
 
 ### Added
 
+- **Per-game database — nametable mirroring override** (v1.1.0 beta.1, Workstream B,
+  T-110-B4). A CRC32-keyed game database (vendored from TetaNES, MIT OR Apache-2.0,
+  ~2.6k entries) that auto-corrects ROMs whose iNES header carries the wrong mirroring
+  flag: at load the frontend computes the ROM's CRC32 (over PRG-ROM+CHR-ROM) and, if
+  listed, applies a nametable mirroring override via `Nes::set_mirroring_override`. The
+  override is implemented in the bus's nametable translation (uniform across all
+  mappers, no per-mapper edits), does not touch mapper-supplied VRAM (4-screen), and is
+  persisted in the save-state (so rollback / restore stay consistent). It is
+  **frontend-only** and **`None` by default**: the core test suites construct the `Nes`
+  directly and never consult the database, so AccuracyCoin / the commercial oracle stay
+  byte-identical. Deterministic (same CRC ⇒ same mirroring), so netplay peers agree.
+  (Region / mapper overrides and the Game Genie code-name database are tracked
+  follow-ups.)
 - **NES Power Pad device — core** (v1.1.0 beta.1, Workstream B, T-110-B1, core of 2).
   The 12-button Power Pad / Family Fun Fitness mat as an opt-in per-port `InputDevice`
   overlay: `PowerPadState` implements the dual-8-bit-shift-register serial protocol
