@@ -20,6 +20,17 @@ content below, plus the first **v1.1.0** feature work (beta.1).
 
 ### Added
 
+- **Lua scripting API — callbacks, control & overlay** (v1.1.0 beta.3, Workstream E flagship,
+  T-110-E2 — engine surface). Extends the Lua engine with the full callback + control + draw
+  surface: `emu.onExec(addr,fn)` / `onRead(addr,fn)` / `onWrite(addr,fn)` (dispatched by
+  replaying the frame's exec PCs and a new gated bus-access log — reads + writes + values),
+  control commands `emu.pause` / `saveState` / `loadState` / `setInput`, and an overlay draw API
+  `emu.drawText` / `drawRect` / `drawPixel`. Control + draw requests are *collected* (drained by
+  the host) so the host stays the sole owner of emulator control and can gate state-mutating
+  actions. The bus-access log is a new `debug-hooks` tap (output-only, off by default, cleared
+  per frame), so determinism / AccuracyCoin are unaffected (reverified byte-identical). The
+  frontend script console + overlay rendering + write-gating wiring + `examples/scripts/` +
+  `docs/scripting.md` land in the next beta.3 PR.
 - **Lua scripting engine** (v1.1.0 beta.3, Workstream E flagship, T-110-E1..E4 — foundation).
   A new `rustynes-script` crate embeds sandboxed **Lua 5.4** (vendored `mlua`) and exposes a
   Mesen2 / FCEUX-style `emu` API: `emu.read` / `readRange` / `write`, `emu.cpu()` (A/X/Y/S/P/PC),

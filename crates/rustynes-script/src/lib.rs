@@ -46,11 +46,79 @@ pub enum ScriptError {
     Runtime,
 }
 
+/// A control action a script requested (`emu.pause` / `saveState` / ...).
+///
+/// Drained by the host after [`ScriptEngine::on_frame`] and applied to the
+/// emulator. Collected (not applied inline) so the host stays the single owner
+/// of emulator-control + can gate state-mutating actions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ControlCmd {
+    /// `emu.pause()` — request the host pause emulation.
+    Pause,
+    /// `emu.saveState(slot)` — save to a numbered slot.
+    SaveState(u8),
+    /// `emu.loadState(slot)` — load from a numbered slot.
+    LoadState(u8),
+    /// `emu.setInput(port, buttons)` — override a controller's button bitmask
+    /// for the next frame (`port` 0/1; `buttons` is the standard NES bitmask).
+    SetInput {
+        /// Controller port (0 = P1, 1 = P2).
+        port: u8,
+        /// Standard NES button bitmask (A,B,Select,Start,Up,Down,Left,Right).
+        buttons: u8,
+    },
+}
+
+/// One overlay draw command (`emu.drawText` / `drawRect` / `drawPixel`).
+///
+/// Drained by the host each frame and rendered through the egui pass. Pixel
+/// coordinates are in NES framebuffer space (256x240). `color` is `0xRRGGBBAA`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DrawCmd {
+    /// Text at `(x, y)`.
+    Text {
+        /// X (px).
+        x: i32,
+        /// Y (px).
+        y: i32,
+        /// `0xRRGGBBAA`.
+        color: u32,
+        /// The string.
+        text: String,
+    },
+    /// Filled rectangle.
+    Rect {
+        /// X (px).
+        x: i32,
+        /// Y (px).
+        y: i32,
+        /// Width (px).
+        w: i32,
+        /// Height (px).
+        h: i32,
+        /// `0xRRGGBBAA`.
+        color: u32,
+    },
+    /// A single pixel.
+    Pixel {
+        /// X (px).
+        x: i32,
+        /// Y (px).
+        y: i32,
+        /// `0xRRGGBBAA`.
+        color: u32,
+    },
+}
+
 /// A sandboxed Lua scripting engine bound to one emulator session.
 pub struct ScriptEngine {
     lua: Lua,
     /// Captured `print` / `emu.log` output, drained by the host for display.
     log: Rc<RefCell<Vec<String>>>,
+    /// Control actions a script requested this frame (drained by the host).
+    controls: Rc<RefCell<Vec<ControlCmd>>>,
+    /// Overlay draw commands a script issued this frame (drained by the host).
+    draws: Rc<RefCell<Vec<DrawCmd>>>,
     /// Per-frame instruction counter (reset each `on_frame`); the VM hook
     /// trips [`ScriptError::Runtime`] when it crosses `budget`.
     instr_count: Rc<Cell<u64>>,
@@ -74,6 +142,8 @@ impl ScriptEngine {
         )?;
 
         let log: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+        let controls: Rc<RefCell<Vec<ControlCmd>>> = Rc::new(RefCell::new(Vec::new()));
+        let draws: Rc<RefCell<Vec<DrawCmd>>> = Rc::new(RefCell::new(Vec::new()));
         let instr_count = Rc::new(Cell::new(0u64));
         let budget = Rc::new(Cell::new(DEFAULT_INSTRUCTION_BUDGET));
 
@@ -99,6 +169,8 @@ impl ScriptEngine {
         let engine = Self {
             lua,
             log,
+            controls,
+            draws,
             instr_count,
             budget,
             writes_locked: false,
@@ -111,6 +183,7 @@ impl ScriptEngine {
     /// `emu.log`, and a `print` redirect. The live-`Nes` accessors (`read` /
     /// `write` / `cpu` / `frame` / `cycle`) are (re)bound per frame in
     /// [`Self::on_frame`] via a scope.
+    #[allow(clippy::too_many_lines)] // one create_function per API entry.
     fn install_prelude(&self) -> Result<(), ScriptError> {
         let emu = self.lua.create_table()?;
 
@@ -128,20 +201,113 @@ impl ScriptEngine {
             })?;
         emu.set("log", log_fn.clone())?;
 
+        // Control commands (collected; the host applies + gates them).
+        let controls = Rc::clone(&self.controls);
+        emu.set(
+            "pause",
+            self.lua.create_function(move |_, ()| {
+                controls.borrow_mut().push(ControlCmd::Pause);
+                Ok(())
+            })?,
+        )?;
+        let controls = Rc::clone(&self.controls);
+        emu.set(
+            "saveState",
+            self.lua.create_function(move |_, slot: u8| {
+                controls.borrow_mut().push(ControlCmd::SaveState(slot));
+                Ok(())
+            })?,
+        )?;
+        let controls = Rc::clone(&self.controls);
+        emu.set(
+            "loadState",
+            self.lua.create_function(move |_, slot: u8| {
+                controls.borrow_mut().push(ControlCmd::LoadState(slot));
+                Ok(())
+            })?,
+        )?;
+        let controls = Rc::clone(&self.controls);
+        emu.set(
+            "setInput",
+            self.lua
+                .create_function(move |_, (port, buttons): (u8, u8)| {
+                    controls
+                        .borrow_mut()
+                        .push(ControlCmd::SetInput { port, buttons });
+                    Ok(())
+                })?,
+        )?;
+
+        // Overlay draw commands (collected; the host renders them via egui).
+        let draws = Rc::clone(&self.draws);
+        emu.set(
+            "drawText",
+            self.lua.create_function(
+                move |_, (x, y, text, color): (i32, i32, String, Option<u32>)| {
+                    draws.borrow_mut().push(DrawCmd::Text {
+                        x,
+                        y,
+                        color: color.unwrap_or(0xFFFF_FFFF),
+                        text,
+                    });
+                    Ok(())
+                },
+            )?,
+        )?;
+        let draws = Rc::clone(&self.draws);
+        emu.set(
+            "drawRect",
+            self.lua.create_function(
+                move |_, (x, y, w, h, color): (i32, i32, i32, i32, Option<u32>)| {
+                    draws.borrow_mut().push(DrawCmd::Rect {
+                        x,
+                        y,
+                        w,
+                        h,
+                        color: color.unwrap_or(0xFFFF_FFFF),
+                    });
+                    Ok(())
+                },
+            )?,
+        )?;
+        let draws = Rc::clone(&self.draws);
+        emu.set(
+            "drawPixel",
+            self.lua
+                .create_function(move |_, (x, y, color): (i32, i32, Option<u32>)| {
+                    draws.borrow_mut().push(DrawCmd::Pixel {
+                        x,
+                        y,
+                        color: color.unwrap_or(0xFFFF_FFFF),
+                    });
+                    Ok(())
+                })?,
+        )?;
+
         self.lua.globals().set("emu", &emu)?;
         // Redirect base `print` to the same sink.
         self.lua.globals().set("print", log_fn)?;
 
-        // Callback registry + emu.onFrame, written in Lua to keep handles
-        // entirely Lua-side (no Rust-side RegistryKey juggling).
+        // Callback registries + the on* registrars, written in Lua to keep
+        // handles entirely Lua-side (no Rust RegistryKey juggling). The exec /
+        // read / write tables are address-keyed lists of callbacks.
         self.lua
             .load(
                 r"
-                __rustynes = { frame = {} }
+                __rustynes = { frame = {}, exec = {}, read = {}, write = {} }
                 function emu.onFrame(f)
                     assert(type(f) == 'function', 'emu.onFrame expects a function')
                     __rustynes.frame[#__rustynes.frame + 1] = f
                 end
+                local function reg(tbl, addr, f)
+                    assert(type(f) == 'function', 'callback must be a function')
+                    addr = addr & 0xFFFF
+                    tbl[addr] = tbl[addr] or {}
+                    tbl[addr][#tbl[addr] + 1] = f
+                end
+                function emu.onExec(addr, f)  reg(__rustynes.exec,  addr, f) end
+                function emu.onRead(addr, f)  reg(__rustynes.read,  addr, f) end
+                function emu.onWrite(addr, f) reg(__rustynes.write, addr, f) end
                 ",
             )
             .exec()?;
@@ -162,6 +328,45 @@ impl ScriptEngine {
     /// Drain captured log / `print` output (oldest first).
     pub fn drain_log(&self) -> Vec<String> {
         std::mem::take(&mut self.log.borrow_mut())
+    }
+
+    /// Drain the control actions requested since the last call. The host
+    /// applies (and gates) them after [`Self::on_frame`].
+    pub fn drain_controls(&self) -> Vec<ControlCmd> {
+        std::mem::take(&mut self.controls.borrow_mut())
+    }
+
+    /// Drain the overlay draw commands issued this frame (host renders them).
+    pub fn drain_draws(&self) -> Vec<DrawCmd> {
+        std::mem::take(&mut self.draws.borrow_mut())
+    }
+
+    /// `true` if any `onExec` callback is registered — the host should enable
+    /// [`rustynes_core::Nes::set_trace_enabled`] so the next frame's exec PCs
+    /// are captured for replay.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ScriptError::Lua`] if the registry table is malformed.
+    pub fn needs_trace(&self) -> Result<bool, ScriptError> {
+        self.subtable_has_entries("exec")
+    }
+
+    /// `true` if any `onRead`/`onWrite` callback is registered — the host
+    /// should enable [`rustynes_core::Nes::set_access_logging`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ScriptError::Lua`] if a registry table is malformed.
+    pub fn needs_access_log(&self) -> Result<bool, ScriptError> {
+        Ok(self.subtable_has_entries("read")? || self.subtable_has_entries("write")?)
+    }
+
+    /// Whether `__rustynes.<name>` (an address-keyed table) holds any callback.
+    fn subtable_has_entries(&self, name: &str) -> Result<bool, ScriptError> {
+        let registry: Table = self.lua.globals().get("__rustynes")?;
+        let t: Table = registry.get(name)?;
+        Ok(t.pairs::<mlua::Value, mlua::Value>().next().is_some())
     }
 
     /// Load (and execute the top level of) a Lua script. Top-level code
@@ -209,10 +414,30 @@ impl ScriptEngine {
     /// # Errors
     ///
     /// Returns [`ScriptError`] if a callback raises or busts the budget.
+    #[allow(clippy::too_many_lines)] // scoped accessor binding + replay loops.
     pub fn on_frame(&mut self, nes: &mut Nes) -> Result<(), ScriptError> {
         let frame = nes.frame();
         let cycle = nes.cycle();
         let writes_locked = self.writes_locked;
+
+        // Snapshot the just-finished frame's exec PCs + bus accesses (owned, so
+        // they don't tie up the `nes` borrow inside the scope) for the
+        // onExec / onRead / onWrite replay. Empty unless the host enabled the
+        // matching log (which it does per `needs_trace` / `needs_access_log`).
+        let exec_pcs: Vec<u16> = if self.needs_trace()? {
+            nes.trace_records().iter().map(|r| r.pc).collect()
+        } else {
+            Vec::new()
+        };
+        let accesses: Vec<(bool, u16, u8)> = if self.needs_access_log()? {
+            nes.accesses()
+                .iter()
+                .map(|a| (a.write, a.addr, a.value))
+                .collect()
+        } else {
+            Vec::new()
+        };
+
         let nes_cell = RefCell::new(nes);
         let lua = &self.lua;
 
@@ -281,6 +506,34 @@ impl ScriptEngine {
             let frame_cbs: Table = registry.get("frame")?;
             for cb in frame_cbs.sequence_values::<mlua::Function>() {
                 cb?.call::<()>(())?;
+            }
+
+            // Replay this frame's exec PCs through onExec(addr).
+            if !exec_pcs.is_empty() {
+                let exec_t: Table = registry.get("exec")?;
+                for pc in &exec_pcs {
+                    let cbs: Option<Table> = exec_t.get(*pc)?;
+                    if let Some(cbs) = cbs {
+                        for cb in cbs.sequence_values::<mlua::Function>() {
+                            cb?.call::<()>(*pc)?;
+                        }
+                    }
+                }
+            }
+
+            // Replay this frame's bus accesses through onRead/onWrite(addr, value).
+            if !accesses.is_empty() {
+                let read_t: Table = registry.get("read")?;
+                let write_t: Table = registry.get("write")?;
+                for (is_write, addr, value) in &accesses {
+                    let t = if *is_write { &write_t } else { &read_t };
+                    let cbs: Option<Table> = t.get(*addr)?;
+                    if let Some(cbs) = cbs {
+                        for cb in cbs.sequence_values::<mlua::Function>() {
+                            cb?.call::<()>((*addr, *value))?;
+                        }
+                    }
+                }
             }
             Ok(())
         });
@@ -416,5 +669,108 @@ mod tests {
         eng.set_instruction_budget(100_000);
         let err = eng.load("while true do end").unwrap_err();
         assert!(matches!(err, ScriptError::Lua(_)));
+    }
+
+    /// NROM whose boot loop writes `$2000` each iteration:
+    /// `LDA #$80; STA $2000; JMP $C000`.
+    fn synth_writing_rom() -> Vec<u8> {
+        let mut bytes = vec![b'N', b'E', b'S', 0x1A, 1, 1, 0, 0];
+        bytes.resize(16, 0);
+        let mut prg = vec![0u8; 16 * 1024];
+        prg[0..8].copy_from_slice(&[0xA9, 0x80, 0x8D, 0x00, 0x20, 0x4C, 0x00, 0xC0]);
+        let len = prg.len();
+        prg[len - 4] = 0x00; // reset vector -> $C000
+        prg[len - 3] = 0xC0;
+        bytes.extend_from_slice(&prg);
+        bytes.resize(16 + 16 * 1024 + 8 * 1024, 0);
+        bytes
+    }
+
+    #[test]
+    fn on_write_fires_from_the_access_log() {
+        let mut nes = Nes::from_rom(&synth_writing_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            r"
+            hits = 0
+            emu.onWrite(0x2000, function(addr, val) hits = hits + 1 end)
+            emu.onFrame(function() emu.log('hits=' .. hits) end)
+            ",
+        )
+        .expect("load");
+        assert!(eng.needs_access_log().unwrap());
+        assert!(!eng.needs_trace().unwrap());
+        // The host enables the access log per `needs_access_log`.
+        nes.set_access_logging(true);
+        let mut saw = false;
+        for _ in 0..4 {
+            nes.run_frame();
+            eng.on_frame(&mut nes).expect("on_frame");
+            if eng.drain_log().iter().any(|l| l != "hits=0") {
+                saw = true;
+                break;
+            }
+        }
+        assert!(saw, "onWrite($2000) should fire from the bus-access log");
+    }
+
+    #[test]
+    fn on_exec_fires_from_the_trace() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        // The boot loop sits at $C000 (JMP $C000); onExec there must fire.
+        eng.load(
+            r"
+            seen = false
+            emu.onExec(0xC000, function(pc) seen = true end)
+            emu.onFrame(function() if seen then emu.log('exec') end end)
+            ",
+        )
+        .expect("load");
+        assert!(eng.needs_trace().unwrap());
+        nes.set_trace_enabled(true);
+        let mut saw = false;
+        for _ in 0..4 {
+            nes.run_frame();
+            eng.on_frame(&mut nes).expect("on_frame");
+            if eng.drain_log().contains(&"exec".to_owned()) {
+                saw = true;
+                break;
+            }
+        }
+        assert!(saw, "onExec($C000) should fire from the trace log");
+    }
+
+    #[test]
+    fn control_and_draw_commands_are_queued() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            r"
+            emu.onFrame(function()
+                emu.pause()
+                emu.saveState(2)
+                emu.setInput(0, 0x81)
+                emu.drawText(10, 20, 'HP: 3', 0xFF0000FF)
+                emu.drawRect(0, 0, 8, 8)
+            end)
+            ",
+        )
+        .expect("load");
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+
+        let controls = eng.drain_controls();
+        assert!(controls.contains(&ControlCmd::Pause));
+        assert!(controls.contains(&ControlCmd::SaveState(2)));
+        assert!(controls.contains(&ControlCmd::SetInput {
+            port: 0,
+            buttons: 0x81
+        }));
+        let draws = eng.drain_draws();
+        assert_eq!(draws.len(), 2);
+        assert!(matches!(&draws[0], DrawCmd::Text { text, .. } if text == "HP: 3"));
+        // Drained — a second drain is empty.
+        assert!(eng.drain_controls().is_empty());
     }
 }

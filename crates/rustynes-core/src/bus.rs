@@ -123,6 +123,31 @@ pub struct EventRec {
 #[cfg(feature = "debug-hooks")]
 const EVENT_CAP: usize = 20_000;
 
+/// v1.1.0 beta.3 (Workstream E, T-110-E2) — one CPU bus-access record for the
+/// Lua `onRead` / `onWrite` callbacks: direction + full address + the byte.
+///
+/// Distinct from [`EventRec`] (which is the scanline/dot-oriented event-viewer
+/// record): this captures *every* CPU read and write across the whole address
+/// space, with the value, so a script can react to a specific access. Output-
+/// only and gated behind `access_logging`; the host (Lua engine) enables it
+/// only while `onRead`/`onWrite` callbacks are registered.
+#[cfg(feature = "debug-hooks")]
+#[derive(Clone, Copy, Debug)]
+pub struct AccessRec {
+    /// `true` for a CPU write, `false` for a CPU read.
+    pub write: bool,
+    /// The accessed CPU address (`$0000-$FFFF`).
+    pub addr: u16,
+    /// The byte written, or the byte the read returned.
+    pub value: u8,
+}
+
+/// Max bus accesses captured per frame. A frame issues on the order of 30k CPU
+/// cycles; this caps the worst case so a tight loop can't grow the log
+/// unbounded (the Lua engine documents that an overflowed frame is truncated).
+#[cfg(feature = "debug-hooks")]
+const ACCESS_CAP: usize = 60_000;
+
 /// Lockstep bus.
 ///
 /// Owns the entire emulator's mutable state. The CPU borrows `&mut LockstepBus`
@@ -217,6 +242,14 @@ pub struct LockstepBus {
     /// Whether the event viewer is recording. Default `false`.
     #[cfg(feature = "debug-hooks")]
     event_logging: bool,
+    /// v1.1.0 beta.3 (T-110-E2) — full CPU bus-access log (reads + writes +
+    /// values) for the Lua `onRead`/`onWrite` callbacks. Output-only; populated
+    /// only while `access_logging`, cleared per frame.
+    #[cfg(feature = "debug-hooks")]
+    accesses: alloc::vec::Vec<AccessRec>,
+    /// Whether the bus-access log is recording. Default `false`.
+    #[cfg(feature = "debug-hooks")]
+    access_logging: bool,
     /// Cumulative CPU cycle counter.
     pub(crate) cycle: u64,
 
@@ -558,6 +591,10 @@ impl LockstepBus {
             events: alloc::vec::Vec::new(),
             #[cfg(feature = "debug-hooks")]
             event_logging: false,
+            #[cfg(feature = "debug-hooks")]
+            accesses: alloc::vec::Vec::new(),
+            #[cfg(feature = "debug-hooks")]
+            access_logging: false,
             cycle: 0,
             dma_pending: None,
             dma_cycles_owed: 0,
@@ -1205,6 +1242,33 @@ impl LockstepBus {
     #[allow(clippy::missing_const_for_fn)] // Vec->slice deref is not const.
     pub fn events(&self) -> &[EventRec] {
         &self.events
+    }
+
+    /// v1.1.0 beta.3 (T-110-E2) — start/stop the Lua bus-access log.
+    #[cfg(feature = "debug-hooks")]
+    pub const fn set_access_logging(&mut self, enabled: bool) {
+        self.access_logging = enabled;
+    }
+
+    /// Whether the bus-access log is recording.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub const fn access_logging(&self) -> bool {
+        self.access_logging
+    }
+
+    /// The CPU bus accesses captured so far this frame.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    #[allow(clippy::missing_const_for_fn)] // Vec->slice deref is not const.
+    pub fn accesses(&self) -> &[AccessRec] {
+        &self.accesses
+    }
+
+    /// Clear the bus-access log (called per frame by the run loop).
+    #[cfg(feature = "debug-hooks")]
+    pub fn clear_accesses(&mut self) {
+        self.accesses.clear();
     }
 
     /// Clear the event log (called at each frame start while recording).
@@ -3179,6 +3243,15 @@ impl Bus for LockstepBus {
             self.deferred_dma_replay_addr = 0;
         }
         let value = self.raw_cpu_read(addr);
+        // v1.1.0 beta.3 (T-110-E2) — Lua onRead access tap. Output-only, gated.
+        #[cfg(feature = "debug-hooks")]
+        if self.access_logging && self.accesses.len() < ACCESS_CAP {
+            self.accesses.push(AccessRec {
+                write: false,
+                addr,
+                value,
+            });
+        }
         #[cfg(feature = "irq-timing-trace")]
         {
             // Session-21: record the CPU-initiated read at the bus-access
@@ -3204,6 +3277,15 @@ impl Bus for LockstepBus {
         // arises across DMC read halts.  (No `in_dmc_dma` guard
         // here because DMC DMA never invokes `cpu_write`.)
         self.internal_data_bus = value;
+        // v1.1.0 beta.3 (T-110-E2) — Lua onWrite access tap. Output-only, gated.
+        #[cfg(feature = "debug-hooks")]
+        if self.access_logging && self.accesses.len() < ACCESS_CAP {
+            self.accesses.push(AccessRec {
+                write: true,
+                addr,
+                value,
+            });
+        }
         // v1.1.0 beta.2 (T-110-C3) — event-viewer tap: classify the write +
         // record it with the current PPU position. Output-only, gated.
         #[cfg(feature = "debug-hooks")]
