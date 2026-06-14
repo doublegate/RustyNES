@@ -29,6 +29,17 @@ content below, plus the first **v1.1.0** feature work (beta.1).
   exclusive with the NTSC filter (CRT wins). A frontend-only effect — no core /
   framebuffer change, so AccuracyCoin + determinism are unaffected. The embedded
   WGSL is parse+validate-tested in CI.
+- **Custom `.pal` palette loading** (v1.1.0 beta.1). Load a 64-entry `.pal` palette
+  file (192-byte form; longer files use the first 64 colours) to re-tint the
+  display via the PPU's colour LUT. `rustynes-ppu` gains `build_rgba_lut_from_base`
+  + `Ppu::set_custom_palette` (applying the standard 2C02 composite emphasis to a
+  custom base table), routed through `Nes::set_custom_palette`. The frontend adds a
+  `[graphics] palette_file` config, a Settings → Display **Load .pal… / Built-in**
+  picker (native), and re-applies the configured palette on every ROM load. Default
+  (none) is **byte-identical** to the built-in palette — proven by a unit test that
+  `build_rgba_lut_from_base(&NES_PALETTE)` equals the built-in composite LUT — so
+  AccuracyCoin + the commercial oracle are unaffected. Native-only file I/O (a
+  no-op on wasm).
 
 ### Fixed
 

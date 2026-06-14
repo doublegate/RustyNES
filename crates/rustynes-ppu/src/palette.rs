@@ -209,6 +209,36 @@ pub const fn build_rgba_lut(palette: PpuPalette) -> [[u8; 4]; 512] {
     lut
 }
 
+/// Build the 512-entry `(emphasis << 6) | color` → RGBA8 lookup from a custom
+/// 64-entry base palette (e.g. a loaded `.pal` file), applying the standard 2C02
+/// composite emphasis model — the same `apply_emphasis` the default composite path
+/// uses, so a custom palette behaves like a drop-in replacement for `NES_PALETTE`.
+///
+/// v1.1.0 beta.1 (T-110-A3): the frontend feeds the parsed `.pal` here via
+/// `Ppu::set_custom_palette`. With no custom palette the PPU keeps using
+/// [`build_rgba_lut`] over its active [`PpuPalette`], so default rendering (and
+/// `AccuracyCoin` / the commercial oracle) is byte-identical.
+#[must_use]
+pub const fn build_rgba_lut_from_base(base: &[[u8; 3]; 64]) -> [[u8; 4]; 512] {
+    let mut lut = [[0u8; 4]; 512];
+    let mut e = 0usize;
+    while e < 8 {
+        let mut c = 0usize;
+        while c < 64 {
+            let rgb = base[c];
+            lut[(e << 6) | c] = apply_emphasis(
+                [rgb[0], rgb[1], rgb[2], 0xFF],
+                e & 1 != 0,
+                e & 2 != 0,
+                e & 4 != 0,
+            );
+            c += 1;
+        }
+        e += 1;
+    }
+    lut
+}
+
 /// Apply BGR emphasis (PPUMASK bits 7-5) to an RGBA8 pixel.
 ///
 /// Per nesdev: emphasis dims the *non-emphasized* channels by ~25%. We
@@ -581,6 +611,17 @@ const RGB_2C04_0004: [[u8; 3]; 64] = [
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn custom_base_lut_matches_builtin_composite() {
+        // A custom palette equal to the built-in NES_PALETTE must produce the
+        // exact same 512-entry LUT as the default composite path — proving the
+        // `.pal` custom-palette route is a faithful drop-in (so loading the
+        // built-in colours is byte-identical, and AccuracyCoin/oracle-safe).
+        let from_base = build_rgba_lut_from_base(&NES_PALETTE);
+        let builtin = build_rgba_lut(PpuPalette::Composite2C02);
+        assert_eq!(from_base, builtin);
+    }
 
     #[test]
     fn nes_color_indices_round_trip() {

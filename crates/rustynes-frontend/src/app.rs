@@ -842,6 +842,9 @@ impl App {
         // v1.0.0 — re-push the per-APU-channel mute mask (the fresh `Nes` booted
         // with the all-on default). Default mask 0x3F = byte-identical audio.
         self.apply_apu_channel_mask();
+        // v1.1.0 beta.1 — re-apply the configured custom .pal palette onto the
+        // fresh Nes (booted with the built-in palette). None = byte-identical.
+        self.apply_palette_from_config();
         // v2.7.0 — (re)identify the ROM with RetroAchievements + load its saved
         // progress sidecar. No-op when no RA session is active.
         #[cfg(feature = "retroachievements")]
@@ -2294,6 +2297,78 @@ impl App {
         }
     }
 
+    /// v1.1.0 beta.1 (T-110-A3) — load + apply the configured `.pal` palette to the
+    /// running core (or clear it when none / unreadable). Called on startup and on
+    /// ROM load so a configured palette survives a reload. Native-only (no
+    /// filesystem on wasm); a no-op there.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        allow(clippy::unused_self, clippy::missing_const_for_fn)
+    )]
+    fn apply_palette_from_config(&self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let pal = self
+                .config
+                .graphics
+                .palette_file
+                .as_ref()
+                .and_then(|p| std::fs::read(p).ok())
+                .and_then(|b| crate::config::parse_pal(&b));
+            let mut guard = self.emu.lock();
+            if let Some(nes) = guard.nes.as_mut() {
+                nes.set_custom_palette(pal);
+            }
+        }
+    }
+
+    /// v1.1.0 beta.1 — open a `.pal` file dialog; on a valid pick, apply it to the
+    /// core + persist the path. Native-only (rfd's native picker).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn pick_palette_dialog(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("NES palette", &["pal"])
+            .pick_file()
+        else {
+            return;
+        };
+        let Some(pal) = std::fs::read(&path)
+            .ok()
+            .and_then(|b| crate::config::parse_pal(&b))
+        else {
+            eprintln!(
+                "rustynes: {} is not a valid .pal (>= 192 bytes)",
+                path.display()
+            );
+            return;
+        };
+        {
+            let mut guard = self.emu.lock();
+            if let Some(nes) = guard.nes.as_mut() {
+                nes.set_custom_palette(Some(pal));
+            }
+        }
+        self.config.graphics.palette_file = Some(path.clone());
+        if let Err(e) = self.config.save() {
+            eprintln!("rustynes: could not persist palette path: {e}");
+        } else {
+            eprintln!("rustynes: palette loaded -> {}", path.display());
+        }
+    }
+
+    /// v1.1.0 beta.1 — clear the custom palette back to the built-in one + persist.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn clear_palette(&mut self) {
+        {
+            let mut guard = self.emu.lock();
+            if let Some(nes) = guard.nes.as_mut() {
+                nes.set_custom_palette(None);
+            }
+        }
+        self.config.graphics.palette_file = None;
+        let _ = self.config.save();
+    }
+
     /// v1.0.0 — set the emulation-speed factor (one of [`Self::SPEED_PRESETS`],
     /// but any positive value is accepted + clamped by the core). Writes
     /// through to `EmuCore::speed`, centers the audio DRC band on the factor
@@ -3649,6 +3724,8 @@ impl App {
             // (no-op if no ROM is loaded yet; re-applied on each ROM load).
             // Default 0x3F (all on) leaves the deterministic audio unchanged.
             self.apply_apu_channel_mask();
+            // v1.1.0 beta.1 — re-apply the configured custom .pal palette.
+            self.apply_palette_from_config();
             // v2.8.0 Phase 5 increment 3 — spawn the emulation thread (it
             // idles until `start_nes` flips its `has_rom`). The `Send` audio
             // producer is made from `self.audio` here, so it must precede
@@ -3791,6 +3868,8 @@ impl App {
         // v1.0.0 — re-push the per-APU-channel mute mask onto the fresh `Nes`
         // (booted all-on); default 0x3F = byte-identical audio.
         self.apply_apu_channel_mask();
+        // v1.1.0 beta.1 — re-apply the configured custom .pal palette.
+        self.apply_palette_from_config();
         // v2.7.0 — identify the ROM with RetroAchievements + load its progress
         // sidecar. No-op when no RA session is active.
         #[cfg(feature = "retroachievements")]
@@ -4648,6 +4727,17 @@ impl ApplicationHandler<AppEvent> for App {
                     if let Some(gfx) = self.gfx.as_mut() {
                         gfx.set_crt_scanline(self.config.graphics.crt_scanline);
                     }
+                }
+                // v1.1.0 beta.1 — custom .pal palette: the file dialog + apply run
+                // here (after the egui pass), never inside the settings closure.
+                // Native-only (rfd / filesystem).
+                #[cfg(not(target_arch = "wasm32"))]
+                if settings.palette_pick {
+                    self.pick_palette_dialog();
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                if settings.palette_clear {
+                    self.clear_palette();
                 }
                 // v1.0.0 — per-APU-channel mute live-apply: push the mask into
                 // the core under the emu lock. Default mask = byte-identical.

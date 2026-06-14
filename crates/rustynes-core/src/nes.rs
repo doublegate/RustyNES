@@ -1087,6 +1087,16 @@ impl Nes {
         *self.bus.ppu().palette_ram()
     }
 
+    /// v1.1.0 beta.1 — install (`Some`) or clear (`None`) a custom 64-entry base
+    /// palette loaded from a `.pal` file. A frontend presentation override: it
+    /// re-tints the displayed RGBA framebuffer via the PPU's colour LUT but does
+    /// not touch any logical core state. `None` (the default) is byte-identical to
+    /// the built-in palette, so `AccuracyCoin` + the commercial oracle (which never
+    /// set one) are unaffected. Not part of the save-state.
+    pub const fn set_custom_palette(&mut self, base: Option<[[u8; 3]; 64]>) {
+        self.bus.set_custom_palette(base);
+    }
+
     /// Mapper debug info (bank registers, IRQ counters, mirroring, ...).
     #[must_use]
     pub fn mapper_info(&self) -> MapperDebugView {

@@ -636,6 +636,12 @@ pub struct GraphicsConfig {
     /// applied live. Default `0.5`.
     #[serde(default = "default_crt_scanline")]
     pub crt_scanline: f32,
+    /// v1.1.0 beta.1 (T-110-A3) — path to a loaded `.pal` palette file (64-entry,
+    /// 192-byte form; longer files use the first 64 colours). `None` (default) =
+    /// the built-in palette, byte-identical presentation. A custom palette
+    /// re-tints the displayed framebuffer only — no core / accuracy impact.
+    #[serde(default)]
+    pub palette_file: Option<std::path::PathBuf>,
 }
 
 fn default_ntsc_filter() -> String {
@@ -671,8 +677,25 @@ impl Default for GraphicsConfig {
             hide_overscan: false,
             crt_filter: false,
             crt_scanline: default_crt_scanline(),
+            palette_file: None,
         }
     }
+}
+
+/// Parse a `.pal` palette file into a 64-entry RGB base palette.
+///
+/// Accepts the common 192-byte (64 colours × 3) form; longer files (e.g. a 512-entry Mesen
+/// palette) use the first 64 colours. Returns `None` if the file is too short.
+#[must_use]
+pub fn parse_pal(bytes: &[u8]) -> Option<[[u8; 3]; 64]> {
+    if bytes.len() < 192 {
+        return None;
+    }
+    let mut pal = [[0u8; 3]; 64];
+    for (i, chunk) in bytes[..192].chunks_exact(3).enumerate() {
+        pal[i] = [chunk[0], chunk[1], chunk[2]];
+    }
+    Some(pal)
 }
 
 /// Audio configuration.
@@ -1220,6 +1243,23 @@ fn canonicalize_pad(pad: &PadBindings) -> PadBindings {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn parse_pal_reads_64_colours_and_rejects_short() {
+        // A 192-byte file → 64 RGB triples, in order.
+        let mut bytes = Vec::with_capacity(192);
+        for i in 0..64u8 {
+            bytes.extend_from_slice(&[i, i.wrapping_add(1), i.wrapping_add(2)]);
+        }
+        let pal = parse_pal(&bytes).expect("192-byte .pal parses");
+        assert_eq!(pal[0], [0, 1, 2]);
+        assert_eq!(pal[63], [63, 64, 65]);
+        // A longer file (e.g. 512-entry) uses the first 64 colours.
+        bytes.extend_from_slice(&[0xAA; 300]);
+        assert_eq!(parse_pal(&bytes).unwrap()[0], [0, 1, 2]);
+        // Too short → None.
+        assert!(parse_pal(&[0u8; 191]).is_none());
+    }
 
     #[test]
     fn defaults_round_trip_through_toml() {

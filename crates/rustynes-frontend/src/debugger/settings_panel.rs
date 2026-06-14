@@ -83,6 +83,12 @@ pub struct SettingsApply {
     /// v1.1.0 beta.1 — the CRT scanline-intensity slider changed; the app pushes
     /// the new `[graphics] crt_scanline` into the live CRT filter.
     pub crt_scanline: bool,
+    /// v1.1.0 beta.1 — the user clicked "Load .pal…"; the app opens a file dialog,
+    /// parses the palette, applies it to the core, and persists the path.
+    pub palette_pick: bool,
+    /// v1.1.0 beta.1 — the user reset the palette to built-in; the app clears the
+    /// custom palette + `[graphics] palette_file`.
+    pub palette_clear: bool,
     /// v1.0.0 — a per-APU-channel mute checkbox changed; the app pushes the new
     /// `[audio] channel_mask` into the core under the emu lock. The default
     /// mask (all on) is byte-identical to today's mixer output.
@@ -98,6 +104,10 @@ impl SettingsApply {
             || self.pacing_mode
             || self.audio_gain
             || self.overscan
+            || self.crt_filter
+            || self.crt_scanline
+            || self.palette_pick
+            || self.palette_clear
             || self.apu_channels
     }
 }
@@ -339,6 +349,29 @@ pub fn video_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
         save_config(config);
     }
 
+    // v1.1.0 beta.1 — custom .pal palette. The actual file dialog runs in the app
+    // after the egui pass (it must not block the render / hold the emu lock here);
+    // these buttons just request it. Default = the built-in palette.
+    ui.horizontal(|ui| {
+        ui.label("Palette");
+        let current = config.graphics.palette_file.as_ref().map_or_else(
+            || "built-in".to_string(),
+            |p| {
+                p.file_name().map_or_else(
+                    || p.display().to_string(),
+                    |n| n.to_string_lossy().into_owned(),
+                )
+            },
+        );
+        ui.weak(current);
+        if ui.button("Load .pal…").clicked() {
+            state.apply.palette_pick = true;
+        }
+        if config.graphics.palette_file.is_some() && ui.button("Built-in").clicked() {
+            state.apply.palette_clear = true;
+        }
+    });
+
     ui.add_space(4.0);
     // v1.0.0 — reset the Graphics section to its defaults (guarded by a
     // two-click confirm so it isn't a foot-gun), then re-apply live.
@@ -349,11 +382,13 @@ pub fn video_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
         let overscan_changed = config.graphics.hide_overscan != def.hide_overscan;
         let pacing_changed = config.graphics.pacing_mode != def.pacing_mode;
         let crt_changed = config.graphics.crt_filter != def.crt_filter;
+        let palette_changed = config.graphics.palette_file != def.palette_file;
         config.graphics = def;
         state.apply.ntsc_filter |= ntsc_changed;
         state.apply.overscan |= overscan_changed;
         state.apply.pacing_mode |= pacing_changed;
         state.apply.crt_filter |= crt_changed;
+        state.apply.palette_clear |= palette_changed;
         save_config(config);
     }
 }
@@ -542,6 +577,8 @@ mod tests {
                 apu_channels: false,
                 crt_filter: false,
                 crt_scanline: false,
+                palette_pick: false,
+                palette_clear: false,
             },
             ..Default::default()
         };

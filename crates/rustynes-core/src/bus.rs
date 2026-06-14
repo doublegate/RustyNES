@@ -756,6 +756,13 @@ impl LockstepBus {
         self.ppu.framebuffer()
     }
 
+    /// v1.1.0 beta.1 — install (`Some`) or clear (`None`) a custom 64-entry base
+    /// palette from a loaded `.pal` file. A presentation override; `None` (default)
+    /// is byte-identical to the built-in palette.
+    pub const fn set_custom_palette(&mut self, base: Option<[[u8; 3]; 64]>) {
+        self.ppu.set_custom_palette(base);
+    }
+
     /// Cartridge region (NTSC / PAL / Dendy / Multi). Drives wall-clock
     /// frame pacing in the frontend and clock-divider selection inside the
     /// PPU + APU.
