@@ -20,6 +20,18 @@ content below, plus the first **v1.1.0** feature work (beta.1).
 
 ### Added
 
+- **Lua scripting — frontend integration** (v1.1.0 beta.3, Workstream E flagship, T-110-E5 —
+  **completes Workstream E**). The Lua engine is now usable from the app (behind the
+  default-OFF, native-only `scripting` feature): a **Lua Script console** (Debug → Lua Script)
+  loads / reloads / stops a `.lua` file and shows its log + errors + `onFrame` callback count.
+  The engine is pumped once per redraw under the emu lock with the live `Nes`; script overlay
+  draws (`drawText`/`drawRect`/`drawPixel`) render through the egui pass, and control commands
+  apply via the existing pause / save-state path. **Write-gating** is wired: `emu.write` is
+  disabled during netplay, TAS replay/record, and RA-hardcore (the cheat-path policy). Ships
+  with `examples/scripts/` (`hud.lua`, `ram_watch.lua`) and a full `docs/scripting.md` API
+  reference. The feature is off by default, so the shipped/wasm/no_std builds are byte-identical
+  (`setInput` application + pixel-perfect overlay mapping + `onNmi`/`onIrq` are documented
+  follow-ups).
 - **Lua scripting API — callbacks, control & overlay** (v1.1.0 beta.3, Workstream E flagship,
   T-110-E2 — engine surface). Extends the Lua engine with the full callback + control + draw
   surface: `emu.onExec(addr,fn)` / `onRead(addr,fn)` / `onWrite(addr,fn)` (dispatched by

@@ -57,6 +57,12 @@ emu-thread = ["dep:libc"]
 # way as the rest of the RA integration.
 retroachievements = ["dep:rustynes-cheevos", "dep:ureq", "dep:png"]
 
+# v1.1.0 beta.3 (Workstream E flagship) — Lua scripting (default OFF, native-only).
+# Pulls in `rustynes-script` (sandboxed vendored Lua 5.4). Off by default so the
+# shipped build links no Lua/`cc` and the wasm builds never see it. Enable with
+# `cargo build -p rustynes-frontend --features scripting`.
+scripting = ["dep:rustynes-script"]
+
 # v2.8.0 Phase 0 — opt-in GPU pass timing (default OFF, native-only).
 #
 # Requests wgpu `TIMESTAMP_QUERY` (when the adapter offers it) and brackets
@@ -126,6 +132,14 @@ arboard = "3"
 # default build, and placing it in this `cfg(not(target_arch = "wasm32"))`
 # table guarantees the two wasm builds never attempt to compile it.
 rustynes-cheevos = { path = "../rustynes-cheevos", optional = true }
+
+# v1.1.0 beta.3 (Workstream E) — Lua scripting (native-only, behind the
+# default-OFF `scripting` feature). `rustynes-script` embeds vendored Lua 5.4 (C),
+# which only builds for the native host; `optional = true` + the
+# `scripting = ["dep:rustynes-script"]` feature keep it out of the default build,
+# and this `cfg(not(target_arch = "wasm32"))` table guarantees the wasm builds
+# never compile it.
+rustynes-script = { workspace = true, optional = true }
 
 # v2.7.1 — RetroAchievements badge images (native-only, gated by the
 # `retroachievements` feature via `dep:ureq` / `dep:png`). `ureq` fetches the

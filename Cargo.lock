@@ -3411,6 +3411,7 @@ dependencies = [
  "rustynes-cheevos",
  "rustynes-core",
  "rustynes-netplay",
+ "rustynes-script",
  "serde",
  "sha2",
  "tempfile",
