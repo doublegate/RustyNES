@@ -85,8 +85,31 @@ Follow-up: regenerate the visual reference `screenshots/external/mapper-089-Suns
     in `fds.rs` (lead-in/inter-block gaps, the `0x80` start mark, CRC-16/KERMIT, and
     the block structure) for side B specifically — cf. the nesdev "Game Doctor FDS
     Format" note about special BIOS handling "after reading block type 2 of sides B
-    and later". NEXT: decode what ERR.07 means (FDS BIOS error table) and diff the
-    side-B wire image / block-read sequence against Mesen2/fceux at the failing block.
+    and later".
+- **ROOT-CAUSE NARROWED — NOT YET FIXED (2026-06-13).** Decoded the FDS BIOS error
+  table (`nesdev_wiki/output/FDS_BIOS.md`): **`ERR.07` = "a,b side — Wrong side
+  number"** (the `CheckDiskHeader` disk-ID offset-6 side-number compare failed).
+  Ruled out, with evidence, every unit-level FDS path:
+  - The raw `.fds` is correct — side 0 has side#=0, side 1 has side#=1 (direct byte
+    read of the dump).
+  - `parse_sides` splits the 131000-byte image into two correct 65500-byte sides;
+    `do_set_disk_side(Some(1))` + `rebuild_wire` serve side 1's wire image.
+  - Side-1 raw reads work (`insert_side_reads_from_that_side`), AND the **gap-skip
+    re-sync after a swap** works — proven by a NEW regression test
+    `swap_then_gap_skip_delivers_first_block_byte` (delivers side 1's `0x01` block
+    code from head 0, no manual seek; covers a path the suite previously missed).
+  - The failure is **structural, not timing** — swap frame 300/450/600/750/950 all
+    converge to the same ERR.07 screen.
+  So the defect is in a **higher-level real-BIOS side-B read interaction** (a
+  multi-block read / IRQ / motor-restart subtlety during a real swap), NOT the data
+  / parse / side-switch / raw-read / gap-skip. **A speculative FDS change was
+  deliberately avoided** — without a verified root cause it would risk the 56
+  passing FDS unit tests + the 6 working FDS games + the AccuracyCoin/oracle gates.
+  **DEFINITIVE NEXT STEP:** capture a byte-level trace of the real BIOS reading
+  side B (the `$4031` read stream + `$4030`/`$4032` status + the motor /
+  transfer-reset writes) and diff it against Mesen2/fceux on the same ROM to find
+  the exact block/byte where the read diverges. (fds.rs is `#![no_std]`, so use a
+  trace buffer + a feature-gated dump, not `eprintln`.)
 
 ## T-101-003 — GxROM-66 + SMB3 "Mario flashing" (un-reproduced reports)
 

@@ -3000,6 +3000,33 @@ mod tests {
     }
 
     #[test]
+    fn swap_then_gap_skip_delivers_first_block_byte() {
+        // Regression for the Kid Icarus side-B ERR.07 stall (T-101-002): after a
+        // real disk swap the BIOS relies on the controller's gap-skip to re-sync
+        // to the first block — it does NOT manually seek. This mirrors
+        // `insert_side_reads_from_that_side` but WITHOUT the manual `seek_head`,
+        // so the read engine must skip the lead-in gap + $80 mark from head 0 and
+        // deliver side 1's disk-info block code (0x01) as the first byte.
+        let mut fds = make_device(2);
+        enable_disk_io(&mut fds);
+        fds.set_disk_side(Some(1));
+        for _ in 0..INSERT_NOT_READY_CYCLES {
+            fds.notify_cpu_cycle();
+        }
+        fds.cpu_write(0x4025, 0b0110_0100); // motor on, read mode
+        settle_drive(&mut fds); // run out the motor spin-up window
+                                // No seek: the gap-skip must re-sync from head 0 to the first block.
+        for _ in 0..DISK_BYTE_CYCLES {
+            fds.notify_cpu_cycle();
+        }
+        assert_eq!(
+            fds.cpu_read(0x4031),
+            0x01,
+            "gap-skip after swap must deliver side 1's disk-info block code"
+        );
+    }
+
+    #[test]
     fn multi_side_swap_isolates_writes() {
         let mut fds = make_device(2);
         enable_disk_io(&mut fds);
