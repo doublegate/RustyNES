@@ -20,6 +20,14 @@ content below, plus the first **v1.1.0** feature work (beta.1).
 
 ### Added
 
+- **Input-display overlay** (v1.1.0 beta.1, Workstream B, T-110-B3). A new
+  read-only tool panel (`debugger/input_display_panel.rs`) that draws a stylized NES
+  controller per active player — D-pad, Select/Start, B/A — with each currently-held
+  button lit. Open from **Tools → Input Display** or the debugger toolbar's "Input
+  HUD" checkbox; shows P1+P2 (and P3/P4 with Four Score). Useful for TAS authoring and
+  streaming. It reads the same held-button snapshot the emulator is fed (pushed each
+  frame via `DebuggerOverlay::set_input_display`), so it is frontend-only with no core,
+  produce-path, or determinism impact.
 - **True composite NES_NTSC filter** (v1.1.0 beta.1, T-110-A1, stage 2 of 2 — the
   shader). A faithful GPU port of Bisqwit's `nes_ntsc` algorithm
   (`crates/rustynes-frontend/src/ntsc_bisqwit.rs`): it reconstructs the analog

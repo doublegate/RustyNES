@@ -3159,8 +3159,18 @@ impl App {
             .sync(log_enabled, &self.rom_label, || log_ctx.unwrap_or_default());
         self.perf_logger.record(&perf_view);
         let log_note = self.perf_logger.note();
+        // v1.1.0 beta.1 (Workstream B) — push the held-button snapshot for the
+        // input-display HUD (P1..P4; 4 players shown only with Four Score).
+        let input_players = if self.config.input.four_score { 4 } else { 2 };
+        let input_pads = [
+            self.input.player1(),
+            self.input.player2(),
+            self.input.player3(),
+            self.input.player4(),
+        ];
         if let Some(debugger) = self.debugger.as_mut() {
             debugger.set_fps(fps);
+            debugger.set_input_display(input_pads, input_players);
             debugger.set_movie_status(movie_status);
             debugger.set_perf_log_note(log_note);
             debugger.set_perf_view(perf_view);
