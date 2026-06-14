@@ -38,7 +38,7 @@
 // nursery drop-tightening lint would split it without changing behavior.
 #![allow(clippy::significant_drop_tightening)]
 
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, RecvTimeoutError, SyncSender};
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -107,6 +107,8 @@ pub struct SharedInput {
     /// v1.1.0 beta.1 (T-110-B2) — turbo/autofire mask (`Buttons` bits) + period.
     turbo_mask: AtomicU8,
     turbo_period: AtomicU32,
+    /// v1.1.0 beta.1 (T-110-B1) — Power Pad mat button mask.
+    power_pad: AtomicU16,
 }
 
 impl SharedInput {
@@ -132,6 +134,7 @@ impl SharedInput {
                 ExpansionDevice::None => 0,
                 ExpansionDevice::Zapper => 1,
                 ExpansionDevice::Vaus => 2,
+                ExpansionDevice::PowerPad => 3,
             },
             Ordering::Relaxed,
         );
@@ -144,6 +147,7 @@ impl SharedInput {
             .store(inputs.turbo_mask.bits(), Ordering::Relaxed);
         self.turbo_period
             .store(inputs.turbo_period, Ordering::Relaxed);
+        self.power_pad.store(inputs.power_pad, Ordering::Relaxed);
     }
 
     /// Reconstruct the [`FrameInputs`] the emu thread feeds to the produce
@@ -164,6 +168,7 @@ impl SharedInput {
             expansion: match self.expansion.load(Ordering::Relaxed) {
                 1 => ExpansionDevice::Zapper,
                 2 => ExpansionDevice::Vaus,
+                3 => ExpansionDevice::PowerPad,
                 _ => ExpansionDevice::None,
             },
             #[allow(clippy::cast_possible_truncation)]
@@ -171,6 +176,7 @@ impl SharedInput {
             mouse_pressed: self.mouse_pressed.load(Ordering::Relaxed),
             turbo_mask: Buttons::from_bits_truncate(self.turbo_mask.load(Ordering::Relaxed)),
             turbo_period: self.turbo_period.load(Ordering::Relaxed),
+            power_pad: self.power_pad.load(Ordering::Relaxed),
         }
     }
 }
@@ -718,6 +724,7 @@ mod tests {
             mouse_pressed: true,
             turbo_mask: Buttons::A | Buttons::B,
             turbo_period: 3,
+            power_pad: 0b1010_0101_1100,
         };
         si.publish(&inputs);
         let got = si.load();
@@ -732,6 +739,7 @@ mod tests {
         assert!(got.mouse_pressed);
         assert_eq!(got.turbo_mask, Buttons::A | Buttons::B);
         assert_eq!(got.turbo_period, 3);
+        assert_eq!(got.power_pad, 0b1010_0101_1100);
     }
 
     #[test]
@@ -748,6 +756,7 @@ mod tests {
             mouse_pressed: false,
             turbo_mask: Buttons::empty(),
             turbo_period: 2,
+            power_pad: 0,
         };
         si.publish(&inputs);
         assert_eq!(si.load().mouse_nes, (u16::MAX, u16::MAX));

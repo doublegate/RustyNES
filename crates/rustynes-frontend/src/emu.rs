@@ -125,6 +125,10 @@ pub struct FrameInputs {
     pub turbo_mask: Buttons,
     /// Frames the turbo buttons hold each on/off state (clamped to >= 1).
     pub turbo_period: u32,
+    /// v1.1.0 beta.1 (T-110-B1) — Power Pad mat button mask (bit `i` = mat
+    /// button `i+1`). Consumed only when the player-2 expansion device is a
+    /// Power Pad.
+    pub power_pad: u16,
 }
 
 /// v1.1.0 beta.1 (T-110-B2) — apply turbo/autofire to one port's buttons.
@@ -306,6 +310,9 @@ impl EmuCore {
                             nx.min(255) as u8
                         };
                         nes.set_paddle(1, pos, inputs.mouse_pressed);
+                    }
+                    ExpansionDevice::PowerPad => {
+                        nes.set_power_pad(1, inputs.power_pad);
                     }
                 }
             }

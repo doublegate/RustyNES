@@ -238,6 +238,9 @@ pub enum ExpansionDevice {
     Zapper,
     /// Arkanoid "Vaus" paddle.
     Vaus,
+    /// NES Power Pad / Family Fun Fitness mat (12 buttons; keys per
+    /// `input::POWER_PAD_KEYS`).
+    PowerPad,
 }
 
 impl Default for InputConfig {

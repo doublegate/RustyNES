@@ -650,7 +650,31 @@ pub struct InputState {
     rewind_held: bool,
     /// `true` while the fast-forward key is held.
     fast_forward_held: bool,
+    /// v1.1.0 beta.1 (T-110-B1) — Power Pad mat button mask (bit `i` = mat
+    /// button `i+1`, 0..=11), driven by [`POWER_PAD_KEYS`]. Only consumed when a
+    /// Power Pad is the configured player-2 expansion device.
+    power_pad: u16,
 }
+
+/// v1.1.0 beta.1 (T-110-B1) — default keyboard mapping for the 12 Power Pad mat
+/// buttons (mat button `i+1` ⇒ index `i`): the number row `1..=9 0 - =`.
+///
+/// Fixed for now (rebindable mat keys are a follow-up); chosen to avoid the `P1`
+/// (arrows / `Z` `X` / Enter / `RShift`) and `P2` (`WASD` / `Q` `E`) keys.
+pub const POWER_PAD_KEYS: [KeyCode; 12] = [
+    KeyCode::Digit1,
+    KeyCode::Digit2,
+    KeyCode::Digit3,
+    KeyCode::Digit4,
+    KeyCode::Digit5,
+    KeyCode::Digit6,
+    KeyCode::Digit7,
+    KeyCode::Digit8,
+    KeyCode::Digit9,
+    KeyCode::Digit0,
+    KeyCode::Minus,
+    KeyCode::Equal,
+];
 
 impl InputState {
     /// New state with the supplied keyboard + gamepad bindings.
@@ -665,6 +689,7 @@ impl InputState {
             pad_assignment: PadAssignment::default(),
             rewind_held: false,
             fast_forward_held: false,
+            power_pad: 0,
         }
     }
 
@@ -701,6 +726,14 @@ impl InputState {
             return Buttons::empty();
         }
         self.keyboard_buttons[player] | self.gamepad_buttons[player] | self.gamepad_axis[player]
+    }
+
+    /// v1.1.0 beta.1 (T-110-B1) — the current Power Pad mat button mask
+    /// (bit `i` = mat button `i+1`). Fed to the device only when a Power Pad is
+    /// the configured player-2 expansion device.
+    #[must_use]
+    pub const fn power_pad(&self) -> u16 {
+        self.power_pad
     }
 
     /// Currently-held player-1 buttons (keyboard OR gamepad OR stick).
@@ -819,6 +852,17 @@ impl InputState {
         {
             if let Some(btn) = map.get(&code).copied() {
                 self.keyboard_buttons[player].set(btn, pressed);
+            }
+        }
+
+        // v1.1.0 beta.1 (T-110-B1) — Power Pad mat buttons (fixed default keys).
+        // Tracked unconditionally; only consumed when a Power Pad is attached.
+        if let Some(i) = POWER_PAD_KEYS.iter().position(|&k| k == code) {
+            let bit = 1u16 << i;
+            if pressed {
+                self.power_pad |= bit;
+            } else {
+                self.power_pad &= !bit;
             }
         }
 

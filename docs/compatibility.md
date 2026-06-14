@@ -236,9 +236,9 @@ This section supersedes the early "Out-of-scope" list above where they disagree
   (`Nes::set_power_pad`, the 12-button dual-shift-register serial protocol,
   unit-verified against the `NESdev` / Mesen bit layout) as opt-in per-port
   `InputDevice` overlays — when no device is attached the standard-controller +
-  Four Score read paths are byte-identical. (v1.1.0 beta.1: the Power Pad core
-  device + `Nes::set_power_pad` API ship first; the frontend key mapping is a
-  follow-up.) Famicom expansion-port devices (the Family BASIC keyboard), the
+  Four Score read paths are byte-identical. (v1.1.0 beta.1: the Power Pad is playable —
+  selectable as the player-2 device with a 12-key default mapping; rebindable mat keys
+  are a follow-up.) Famicom expansion-port devices (the Family BASIC keyboard), the
   microphone, and DMC-DMA controller-bit corruption remain deferred.
 - **Vs. System / PlayChoice-10 (2C03/04/05 RGB PPUs) — game-verified.**
   RGB palette tables + 2C05 register quirks + NES 2.0 byte-13 parsing + Vs.
