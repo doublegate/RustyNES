@@ -88,6 +88,8 @@ Every mapper resolves a CPU/PPU address into a `(bank_index, offset)` pair on ev
 
 Most mappers expose a register that selects horizontal, vertical, single-screen A, or single-screen B. The PPU's nametable fetch consults `cart.ppu_read(addr)` for `$2000-$3FFF`; the mapper applies mirroring. Four-screen mode requires extra cart-side VRAM (typically 2 KB) on top of the console's 2 KB.
 
+**Per-game mirroring override (v1.1.0 beta.1, T-110-B4).** The bus carries an optional `nt_mirroring_override: Option<Mirroring>` (set via `Nes::set_mirroring_override`). When `Some`, the bus's `$2000-$3EFF` nametable translation uses it instead of the mapper's `nametable_address` — a load-time correction for ROMs with a wrong iNES mirroring flag, supplied by the frontend's CRC32-keyed game database (`rustynes-frontend::game_db`). It does **not** affect mapper-supplied VRAM (`nametable_fetch`, e.g. four-screen), is `None` by default (byte-identical; the core test suites never set it), and is persisted in the save-state. See `docs/compatibility.md` §Input devices for the device side and the CHANGELOG for the rollout.
+
 ### Bus conflicts
 
 Some early mappers (CNROM, AxROM, GxROM, Color Dreams) do not buffer writes to the bank-select range, so the value written collides with the value being *read* from PRG at the same address. Implementations should AND the written value with the PRG byte at that address (per NESdev wiki bus-conflict rules). Affects rare but real test cases.

@@ -63,7 +63,7 @@ the mapper parse path in `crates/rustynes-mappers/src/lib.rs`, and the cheat pan
   Later: show turbo-strobe state once T-110-B2 lands; analog Zapper/Vaus
   visualisation.
 
-## T-110-B4 — ROM / game database + per-game overrides + Game Genie code DB
+## T-110-B4 — ROM / game database + per-game overrides + Game Genie code DB  (mirroring override DONE)
 
 - CRC/SHA-keyed data file applying mirroring/mapper/region/palette fixes at parse
   time (`rustynes-mappers` parse path), plus a Game Genie code-name lookup in the
@@ -71,6 +71,25 @@ the mapper parse path in `crates/rustynes-mappers/src/lib.rs`, and the cheat pan
 - **Refs:** `ref-proj/Mesen2/.../GameDatabase.cpp`, `ref-proj/nestopia/.../NstImageDatabase.cpp`.
 - **Done when:** known problem ROMs auto-corrected; overrides are data, not code;
   the oracle set stays byte-identical (overrides only apply to listed CRCs).
+- **Mirroring override ✅ DONE (2026-06-14):** a CRC32-keyed game DB
+  (`crates/rustynes-frontend/src/game_db.rs` + vendored `game_database.txt`, ~2.6k
+  entries from TetaNES, MIT/Apache, attributed) applies a nametable **mirroring**
+  override at load. Mechanism (core): `LockstepBus` gains an `Option<Mirroring>`
+  applied uniformly at the bus's nametable-translation sites (not per-mapper; does not
+  touch mapper VRAM / 4-screen), `Nes::set_mirroring_override`, save-state tag
+  (trailing-default). Frontend: `rom_crc32` (CRC32 over PRG+CHR excluding header/trainer,
+  TetaNES convention) → `mirroring_for_crc` → applied in `apply_game_db` at both load
+  paths. **Determinism-safe by construction:** `None` by default; the override is
+  frontend-only and the core test suites never call it, so AccuracyCoin / the oracle
+  stay byte-identical; deterministic per CRC so netplay peers agree; save-state-persisted
+  for rollback. Tests: `override_nt_addr` mapping, save-state round-trip, CRC32 vector,
+  DB sorted-invariant + a real entry, `rom_crc32` over a synthetic iNES. Native + both
+  wasm clippy clean; no_std core unchanged.
+- **Deferred follow-ups:** region override (needs load-time divider changes), mapper
+  override (rare/risky), palette override (overlaps `.pal` + Vs. DB), and the
+  **Game Genie code-name database** (a separate content/UI feature in the cheat panel).
+  The DB infra already parses the Region/Mapper/etc. columns — wiring more override
+  types is additive.
 
 ## Verification
 - Determinism: default controller path byte-identical with new devices unset.
