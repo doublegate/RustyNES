@@ -933,6 +933,8 @@ impl Gfx {
                 &view,
                 self.config.width,
                 self.config.height,
+                self.par_correction,
+                self.hide_overscan,
             );
         } else if let Some(filter) = &self.ntsc_bisqwit {
             filter.render(
@@ -942,6 +944,8 @@ impl Gfx {
                 self.config.width,
                 self.config.height,
                 video_phase,
+                self.par_correction,
+                self.hide_overscan,
             );
         } else if let Some(filter) = &self.ntsc {
             filter.render(
@@ -950,6 +954,8 @@ impl Gfx {
                 &view,
                 self.config.width,
                 self.config.height,
+                self.par_correction,
+                self.hide_overscan,
             );
         } else {
             let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1051,7 +1057,12 @@ const OVERSCAN_CROP: u32 = 8;
 /// `(1.0, 0.0)` and the letterbox matches `letterbox(..)` exactly — the
 /// default presentation is byte-identical.
 #[allow(clippy::cast_precision_loss)] // window / NES dims fit in f32.
-fn letterbox_uniform(width: u32, height: u32, par_8_7: bool, hide_overscan: bool) -> [f32; 8] {
+pub(crate) fn letterbox_uniform(
+    width: u32,
+    height: u32,
+    par_8_7: bool,
+    hide_overscan: bool,
+) -> [f32; 8] {
     let visible_h = if hide_overscan {
         NES_H - 2 * OVERSCAN_CROP
     } else {

@@ -22,11 +22,10 @@
 
 use wgpu::util::DeviceExt;
 
-use crate::gfx::{NES_H, NES_W};
-
 const SHADER_SRC: &str = r"
 struct Uniforms {
-    rect: vec4<f32>,   // letterbox transform (same shape as gfx.wgsl)
+    rect: vec4<f32>,   // letterbox transform (same shape + math as gfx.wgsl)
+    crop: vec4<f32>,   // overscan crop: x = vertical scale, y = vertical offset
     params: vec4<f32>, // x = scanline intensity, y = mask intensity, z,w unused
 };
 
@@ -41,6 +40,8 @@ struct VsOut {
 
 @vertex
 fn vs_main(@builtin(vertex_index) vid: u32) -> VsOut {
+    // Fullscreen triangle; letterbox in UV space (not by scaling position), so
+    // the bars clip to black in fs (no ClampToEdge edge-smear).
     var pos = array<vec2<f32>, 3>(
         vec2<f32>(-1.0, -3.0),
         vec2<f32>(-1.0,  1.0),
@@ -51,24 +52,29 @@ fn vs_main(@builtin(vertex_index) vid: u32) -> VsOut {
         vec2<f32>(0.0, 0.0),
         vec2<f32>(2.0, 0.0),
     );
-    let p = pos[vid];
-    let scaled = vec2<f32>(p.x * u.rect.x, p.y * u.rect.y) + vec2<f32>(u.rect.z, u.rect.w);
     var out: VsOut;
-    out.pos = vec4<f32>(scaled, 0.0, 1.0);
-    out.uv = uv[vid];
+    out.pos = vec4<f32>(pos[vid], 0.0, 1.0);
+    out.uv = (uv[vid] - vec2<f32>(0.5, 0.5) - vec2<f32>(u.rect.z, u.rect.w))
+        / vec2<f32>(u.rect.x, u.rect.y) + vec2<f32>(0.5, 0.5);
     return out;
 }
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    var rgb = textureSample(nes_tex, nes_smp, in.uv).rgb;
+    // Letterbox bars -> black.
+    if (in.uv.x < 0.0 || in.uv.x > 1.0 || in.uv.y < 0.0 || in.uv.y > 1.0) {
+        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    }
+    // Overscan crop: remap the visible V range onto the inner rows.
+    let suv = vec2<f32>(in.uv.x, in.uv.y * u.crop.x + u.crop.y);
+    var rgb = textureSample(nes_tex, nes_smp, suv).rgb;
 
     let scan_amt = u.params.x;
     let mask_amt = u.params.y;
 
     // Scanlines in NES source-row space (240 rows). Parabolic profile: 1.0 at the
     // row centre, (1 - scan_amt) at the row boundary.
-    let src_y = in.uv.y * 240.0;
+    let src_y = suv.y * 240.0;
     let d = fract(src_y) - 0.5;
     let scan = (1.0 - scan_amt) + scan_amt * (1.0 - 4.0 * d * d);
     rgb = rgb * scan;
@@ -202,8 +208,12 @@ impl CrtFilter {
         let mask = 0.10; // subtle fixed grille for the MVP.
         let uniforms = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("crt-uniforms"),
-            // rect (identity letterbox) + params (scanline, mask, 0, 0).
-            contents: bytemuck::cast_slice(&[1.0f32, 1.0, 0.0, 0.0, scanline, mask, 0.0, 0.0]),
+            // rect (identity letterbox) + crop (none) + params (scanline, mask).
+            contents: bytemuck::cast_slice(&[
+                1.0f32, 1.0, 0.0, 0.0, // rect
+                1.0, 0.0, 0.0, 0.0, // crop
+                scanline, mask, 0.0, 0.0, // params
+            ]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
         let in_view = nes_texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -241,8 +251,9 @@ impl CrtFilter {
     }
 
     /// Render the CRT filter into `out_view`, sampling the NES texture it was
-    /// constructed over. Letterboxes to (`width`, `height`) like `Gfx::render`.
-    #[allow(clippy::cast_precision_loss)]
+    /// constructed over. Letterboxes + applies 8:7 pixel-aspect / overscan crop
+    /// to (`width`, `height`) exactly like `Gfx::render`'s main blit (shared
+    /// `gfx::letterbox_uniform`).
     pub fn render(
         &self,
         queue: &wgpu::Queue,
@@ -250,19 +261,26 @@ impl CrtFilter {
         out_view: &wgpu::TextureView,
         width: u32,
         height: u32,
+        par_correction: bool,
+        hide_overscan: bool,
     ) {
-        let nes_aspect = (NES_W as f32) / (NES_H as f32);
-        let win_aspect = (width.max(1) as f32) / (height.max(1) as f32);
-        let (sx, sy) = if win_aspect > nes_aspect {
-            (nes_aspect / win_aspect, 1.0)
-        } else {
-            (1.0, win_aspect / nes_aspect)
-        };
-        queue.write_buffer(
-            &self.uniforms,
-            0,
-            bytemuck::cast_slice(&[sx, sy, 0.0, 0.0, self.scanline, self.mask, 0.0, 0.0]),
-        );
+        // rect (4) + crop (4) from the shared helper, then the CRT params (4).
+        let lb = crate::gfx::letterbox_uniform(width, height, par_correction, hide_overscan);
+        let uniform = [
+            lb[0],
+            lb[1],
+            lb[2],
+            lb[3],
+            lb[4],
+            lb[5],
+            lb[6],
+            lb[7],
+            self.scanline,
+            self.mask,
+            0.0,
+            0.0,
+        ];
+        queue.write_buffer(&self.uniforms, 0, bytemuck::cast_slice(&uniform));
 
         let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("crt-pass"),

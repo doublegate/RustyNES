@@ -125,6 +125,15 @@ content below, plus the first **v1.1.0** feature work (beta.1).
 
 ### Fixed
 
+- **CRT / NTSC filters now letterbox + aspect-correct like the main blit**
+  (v1.1.0 beta.1, review feedback on T-110-A1/A2). The CRT, simplified-NTSC, and
+  true-composite-NTSC post-passes scaled the oversized fullscreen triangle's clip-space
+  **position**, which re-introduced the bottom/fullscreen edge-smear the main blit
+  documents (and they ignored 8:7 pixel-aspect correction + overscan crop). All three
+  now use the same proven UV-space letterbox + clip-to-black + overscan-crop as the main
+  blit (the shared `gfx::letterbox_uniform`), so a filtered picture has correct aspect,
+  honours "Hide Overscan" / "8:7 Pixel Aspect", and shows clean black bars instead of
+  smeared edge texels.
 - **Mapper 89 (Sunsoft-2) — Mito Koumon background rendering.** The `$8000-$FFFF`
   register decode had bit 7 and bit 3 swapped: RustyNES used bit 7 for the
   one-screen mirroring select and bit 3 for the CHR-bank high bit, but the

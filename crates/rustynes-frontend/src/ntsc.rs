@@ -21,11 +21,14 @@
 
 use wgpu::util::DeviceExt;
 
-use crate::gfx::{NES_H, NES_W};
-
 const SHADER_SRC: &str = r"
 struct Uniforms {
-    rect: vec4<f32>, // letterbox transform (same shape as gfx.wgsl)
+    // Letterbox transform (same shape + math as gfx.wgsl's blit): rect.xy =
+    // the image's fraction of the surface, rect.zw = offset.
+    rect: vec4<f32>,
+    // Overscan crop: x = vertical scale, y = vertical offset (texture-V space);
+    // (1.0, 0.0) = full frame.
+    crop: vec4<f32>,
 };
 
 @group(0) @binding(0) var nes_tex: texture_2d<f32>;
@@ -39,6 +42,9 @@ struct VsOut {
 
 @vertex
 fn vs_main(@builtin(vertex_index) vid: u32) -> VsOut {
+    // Fullscreen triangle; the letterbox is applied in UV space (NOT by scaling
+    // the position), so the out-of-image bars clip to black in fs and a
+    // ClampToEdge sampler can't smear edge texels across them.
     var pos = array<vec2<f32>, 3>(
         vec2<f32>(-1.0, -3.0),
         vec2<f32>(-1.0,  1.0),
@@ -49,16 +55,21 @@ fn vs_main(@builtin(vertex_index) vid: u32) -> VsOut {
         vec2<f32>(0.0, 0.0),
         vec2<f32>(2.0, 0.0),
     );
-    let p = pos[vid];
-    let scaled = vec2<f32>(p.x * u.rect.x, p.y * u.rect.y) + vec2<f32>(u.rect.z, u.rect.w);
     var out: VsOut;
-    out.pos = vec4<f32>(scaled, 0.0, 1.0);
-    out.uv = uv[vid];
+    out.pos = vec4<f32>(pos[vid], 0.0, 1.0);
+    out.uv = (uv[vid] - vec2<f32>(0.5, 0.5) - vec2<f32>(u.rect.z, u.rect.w))
+        / vec2<f32>(u.rect.x, u.rect.y) + vec2<f32>(0.5, 0.5);
     return out;
 }
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    // Letterbox bars -> black.
+    if (in.uv.x < 0.0 || in.uv.x > 1.0 || in.uv.y < 0.0 || in.uv.y > 1.0) {
+        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    }
+    // Overscan crop: remap the visible V range onto the inner rows.
+    let suv = vec2<f32>(in.uv.x, in.uv.y * u.crop.x + u.crop.y);
     let tx_size = vec2<f32>(256.0, 240.0);
     let texel = 1.0 / tx_size.x;
     // 5-tap horizontal box blur in luma; same blur applied per channel.
@@ -70,18 +81,18 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     var offsets = array<f32, 5>(-2.0, -1.0, 0.0, 1.0, 2.0);
     var acc = vec3<f32>(0.0);
     for (var i = 0; i < 5; i = i + 1) {
-        let uv = vec2<f32>(in.uv.x + offsets[i] * texel, in.uv.y);
+        let uv = vec2<f32>(suv.x + offsets[i] * texel, suv.y);
         let s = textureSample(nes_tex, nes_smp, uv).rgb;
         acc = acc + s * weights[i];
     }
-    // Scanline: dim every other line by 15%.
-    let scanline_y = floor(in.uv.y * tx_size.y);
+    // Scanline: dim every other line by 15% (in source-row space).
+    let scanline_y = floor(suv.y * tx_size.y);
     let dim = select(1.0, 0.85, fract(scanline_y * 0.5) > 0.49);
     acc = acc * dim;
     // Subtle chroma fringe: nudge red high / blue low along strong
     // horizontal gradients (cheap proxy for composite artifacting).
-    let left = textureSample(nes_tex, nes_smp, vec2<f32>(in.uv.x - texel, in.uv.y)).rgb;
-    let right = textureSample(nes_tex, nes_smp, vec2<f32>(in.uv.x + texel, in.uv.y)).rgb;
+    let left = textureSample(nes_tex, nes_smp, vec2<f32>(suv.x - texel, suv.y)).rgb;
+    let right = textureSample(nes_tex, nes_smp, vec2<f32>(suv.x + texel, suv.y)).rgb;
     let dluma = dot(right - left, vec3<f32>(0.299, 0.587, 0.114));
     let fringe = clamp(dluma * 0.20, -0.10, 0.10);
     acc.r = acc.r + fringe;
@@ -138,7 +149,7 @@ impl NtscFilter {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
-                    visibility: wgpu::ShaderStages::VERTEX,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -193,7 +204,7 @@ impl NtscFilter {
         });
         let uniforms = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("ntsc-uniforms"),
-            contents: bytemuck::cast_slice(&[1.0f32, 1.0, 0.0, 0.0]),
+            contents: bytemuck::cast_slice(&[1.0f32, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
         // v2.8.0 Phase 4 — build the bind group once (the NES texture is
@@ -228,8 +239,10 @@ impl NtscFilter {
     /// Render the filter into `out_view`, sampling from the NES texture the
     /// filter was constructed over.
     ///
-    /// Letterboxes to (`width`, `height`) the same way `Gfx::render` does.
-    #[allow(clippy::cast_precision_loss)]
+    /// Letterboxes + applies 8:7 pixel-aspect / overscan crop to (`width`,
+    /// `height`) exactly like `Gfx::render`'s main blit (shared
+    /// `gfx::letterbox_uniform`), so the filtered output keeps the same
+    /// aspect + black bars instead of the old position-scaled edge-smear.
     pub fn render(
         &self,
         queue: &wgpu::Queue,
@@ -237,16 +250,11 @@ impl NtscFilter {
         out_view: &wgpu::TextureView,
         width: u32,
         height: u32,
+        par_correction: bool,
+        hide_overscan: bool,
     ) {
-        // Recompute letterbox uniform (same math as `gfx::letterbox`).
-        let nes_aspect = (NES_W as f32) / (NES_H as f32);
-        let win_aspect = (width.max(1) as f32) / (height.max(1) as f32);
-        let (sx, sy) = if win_aspect > nes_aspect {
-            (nes_aspect / win_aspect, 1.0)
-        } else {
-            (1.0, win_aspect / nes_aspect)
-        };
-        queue.write_buffer(&self.uniforms, 0, bytemuck::cast_slice(&[sx, sy, 0.0, 0.0]));
+        let uniform = crate::gfx::letterbox_uniform(width, height, par_correction, hide_overscan);
+        queue.write_buffer(&self.uniforms, 0, bytemuck::cast_slice(&uniform));
 
         let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("ntsc-pass"),
