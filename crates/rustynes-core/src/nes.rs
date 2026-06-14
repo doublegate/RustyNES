@@ -37,6 +37,30 @@ pub const FRAME_DURATION_PAL: Duration = Duration::from_nanos(19_997_200);
 /// Nominal Dendy frame duration: 50 Hz Russian famiclone, same as PAL.
 pub const FRAME_DURATION_DENDY: Duration = Duration::from_nanos(19_997_200);
 
+/// v1.1.0 beta.2 (Workstream C, T-110-C2) — one cycle-trace record.
+///
+/// The CPU register file + cycle count captured just before an instruction
+/// executes. Recorded by [`Nes::run_frame`] while tracing is enabled (the
+/// `debug-hooks` feature). The frontend disassembles the instruction at `pc`.
+#[cfg(feature = "debug-hooks")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TraceRec {
+    /// Program counter at instruction fetch.
+    pub pc: u16,
+    /// Accumulator.
+    pub a: u8,
+    /// X index.
+    pub x: u8,
+    /// Y index.
+    pub y: u8,
+    /// Stack pointer.
+    pub s: u8,
+    /// Processor status bits.
+    pub p: u8,
+    /// CPU cycle count at fetch.
+    pub cycle: u64,
+}
+
 /// Top-level NES emulator handle.
 ///
 /// Owns the CPU, PPU, mapper, RAM, and controller stub. Construct via
@@ -78,6 +102,14 @@ pub struct Nes {
     /// The PC that last hit a breakpoint, taken by the frontend to pause.
     #[cfg(feature = "debug-hooks")]
     break_hit: Option<u16>,
+    /// v1.1.0 beta.2 (T-110-C2) — cycle-trace ring buffer (most-recent
+    /// [`Self::TRACE_CAP`] instructions). Recorded in `run_frame` while
+    /// `trace_enabled`. Output-only.
+    #[cfg(feature = "debug-hooks")]
+    trace: alloc::collections::VecDeque<TraceRec>,
+    /// Whether the cycle-trace logger is recording. Default `false`.
+    #[cfg(feature = "debug-hooks")]
+    trace_enabled: bool,
 }
 
 impl Nes {
@@ -108,6 +140,10 @@ impl Nes {
             breakpoints_enabled: true,
             #[cfg(feature = "debug-hooks")]
             break_hit: None,
+            #[cfg(feature = "debug-hooks")]
+            trace: alloc::collections::VecDeque::new(),
+            #[cfg(feature = "debug-hooks")]
+            trace_enabled: false,
         })
     }
 
@@ -137,6 +173,10 @@ impl Nes {
             breakpoints_enabled: true,
             #[cfg(feature = "debug-hooks")]
             break_hit: None,
+            #[cfg(feature = "debug-hooks")]
+            trace: alloc::collections::VecDeque::new(),
+            #[cfg(feature = "debug-hooks")]
+            trace_enabled: false,
         })
     }
 
@@ -195,6 +235,10 @@ impl Nes {
             breakpoints_enabled: true,
             #[cfg(feature = "debug-hooks")]
             break_hit: None,
+            #[cfg(feature = "debug-hooks")]
+            trace: alloc::collections::VecDeque::new(),
+            #[cfg(feature = "debug-hooks")]
+            trace_enabled: false,
         })
     }
 
@@ -275,6 +319,22 @@ impl Nes {
                     return self.bus.framebuffer();
                 }
                 first_iter = false;
+                // T-110-C2 — cycle trace: record the about-to-execute
+                // instruction's CPU state (ring-capped, oldest dropped).
+                if self.trace_enabled {
+                    if self.trace.len() >= Self::TRACE_CAP {
+                        self.trace.pop_front();
+                    }
+                    self.trace.push_back(TraceRec {
+                        pc: self.cpu.pc,
+                        a: self.cpu.a,
+                        x: self.cpu.x,
+                        y: self.cpu.y,
+                        s: self.cpu.s,
+                        p: self.cpu.p.bits(),
+                        cycle: self.cpu.cycles,
+                    });
+                }
             }
             #[cfg(feature = "cpu-boot-trace")]
             self.cpu_boot_trace_record();
@@ -360,6 +420,55 @@ impl Nes {
     #[cfg(feature = "debug-hooks")]
     pub const fn take_break_hit(&mut self) -> Option<u16> {
         self.break_hit.take()
+    }
+
+    /// Maximum cycle-trace ring depth (oldest records drop past this).
+    #[cfg(feature = "debug-hooks")]
+    pub const TRACE_CAP: usize = 50_000;
+
+    /// v1.1.0 beta.2 (T-110-C2) — start/stop the cycle-trace logger. While on,
+    /// each executed instruction's CPU state is pushed to a ring buffer (capped
+    /// at [`Self::TRACE_CAP`]). Default off.
+    #[cfg(feature = "debug-hooks")]
+    pub const fn set_trace_enabled(&mut self, enabled: bool) {
+        self.trace_enabled = enabled;
+    }
+
+    /// Whether the cycle-trace logger is recording.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub const fn trace_enabled(&self) -> bool {
+        self.trace_enabled
+    }
+
+    /// Number of records currently in the trace ring.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub fn trace_len(&self) -> usize {
+        self.trace.len()
+    }
+
+    /// Clear the trace ring.
+    #[cfg(feature = "debug-hooks")]
+    pub fn clear_trace(&mut self) {
+        self.trace.clear();
+    }
+
+    /// Copy the trace ring oldest-first (for the trace panel / file export).
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub fn trace_records(&self) -> alloc::vec::Vec<TraceRec> {
+        self.trace.iter().copied().collect()
+    }
+
+    /// Copy the most recent `n` trace records (oldest-first) — for the live
+    /// trace panel's tail view, cheaper than [`Self::trace_records`] on a full
+    /// ring.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub fn trace_tail_vec(&self, n: usize) -> alloc::vec::Vec<TraceRec> {
+        let skip = self.trace.len().saturating_sub(n);
+        self.trace.iter().skip(skip).copied().collect()
     }
 
     /// Borrow the framebuffer (RGBA8, 256x240).
@@ -1860,6 +1969,30 @@ mod tests {
         // Removal empties the list.
         nes.remove_breakpoint(target);
         assert!(nes.breakpoints().is_empty());
+    }
+
+    #[cfg(feature = "debug-hooks")]
+    #[test]
+    fn trace_logger_records_while_enabled() {
+        let rom = synth_nrom(16, 8);
+        let mut nes = Nes::from_rom(&rom).expect("parse");
+        let _ = nes.run_frame(); // warm past the power-on frame-complete latch.
+        assert_eq!(nes.trace_len(), 0, "off by default");
+        nes.set_trace_enabled(true);
+        let _ = nes.run_frame();
+        assert!(nes.trace_len() > 0, "records while enabled");
+        // Records carry the executed PCs (the synth ROM spins at $C000).
+        let recs = nes.trace_records();
+        assert!(recs.iter().any(|r| r.pc == 0xC000), "captured the loop PC");
+        // The tail copy is bounded.
+        assert!(nes.trace_tail_vec(4).len() <= 4);
+        // Disabling stops growth; clearing empties.
+        nes.set_trace_enabled(false);
+        let n = nes.trace_len();
+        let _ = nes.run_frame();
+        assert_eq!(nes.trace_len(), n, "no new records when disabled");
+        nes.clear_trace();
+        assert_eq!(nes.trace_len(), 0);
     }
 
     #[test]

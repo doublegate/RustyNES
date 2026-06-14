@@ -28,11 +28,22 @@ event taps, `crates/rustynes-frontend/src/debugger/` (panel registry in `mod.rs`
   (no feature) unchanged. **Remaining:** read/write **watchpoints** (need bus access
   taps) + conditional breakpoints — a follow-up.
 
-## T-110-C2 — Cycle trace logger
+## T-110-C2 — Cycle trace logger  ✅ DONE (2026-06-14)
 
 - Ring buffer of CPU state + disassembly; export to file. UI panel + format options.
 - **Ref:** `ref-proj/Mesen2/.../NesTraceLogger.h`, `ref-proj/fceux`.
 - **Done when:** trace can be captured + exported; bounded memory; off by default.
+- **DONE:** core (`debug-hooks`) `TraceRec { pc, a, x, y, s, p, cycle }` + a
+  `VecDeque` ring capped at `Nes::TRACE_CAP` (50k), recorded in `run_frame` while
+  `trace_enabled`. API: `set_trace_enabled` / `trace_enabled` / `trace_len` /
+  `clear_trace` / `trace_records` / `trace_tail_vec`; `TraceRec` re-exported. Output-only
+  (bounded ring, no state mutation) → determinism / AccuracyCoin unaffected; off by
+  default. Frontend: `debugger/trace_panel.rs` (a `ChipPanel::Trace` — Debug → "Trace
+  Logger" + toolbar "Trace" checkbox) with Record toggle / Clear / record count / a
+  live disassembled tail (last 128) / native **Export…** (writes the full ring to
+  `<temp>/rustynes-trace.log`). Core test `trace_logger_records_while_enabled`. Native +
+  both wasm clippy clean. **Later:** format options (e.g. include cycle-precise PPU
+  dot, effective-address column) + a configurable export path/dialog.
 
 ## T-110-C3 — Event viewer
 
