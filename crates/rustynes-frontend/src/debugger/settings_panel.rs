@@ -303,13 +303,15 @@ pub fn video_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
         egui::ComboBox::from_id_salt("settings-ntsc-filter")
             .selected_text(config.graphics.ntsc_filter.clone())
             .show_ui(ui, |ui| {
-                for mode in ["off", "composite", "rgb"] {
+                // "composite-rt" = true composite NES_NTSC (Bisqwit, T-110-A1);
+                // "composite"/"rgb" = the simplified blur.
+                for mode in ["off", "composite", "rgb", "composite-rt"] {
                     ui.selectable_value(&mut config.graphics.ntsc_filter, mode.to_string(), mode);
                 }
             });
-        // The gfx post-pass only distinguishes off vs on, so flag a live
-        // apply only when crossing that boundary (off <-> non-off).
-        if (before == "off") != (config.graphics.ntsc_filter == "off") {
+        // Flag a live apply on any change — switching between the simplified and
+        // true-composite filters (or on/off) all re-select the gfx post-pass.
+        if before != config.graphics.ntsc_filter {
             state.apply.ntsc_filter = true;
         }
     });

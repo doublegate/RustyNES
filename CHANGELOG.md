@@ -20,6 +20,24 @@ content below, plus the first **v1.1.0** feature work (beta.1).
 
 ### Added
 
+- **True composite NES_NTSC filter** (v1.1.0 beta.1, T-110-A1, stage 2 of 2 — the
+  shader). A faithful GPU port of Bisqwit's `nes_ntsc` algorithm
+  (`crates/rustynes-frontend/src/ntsc_bisqwit.rs`): it reconstructs the analog
+  composite signal from the PPU's palette-index framebuffer and demodulates it back to
+  RGB with a windowed Y/I/Q filter, so genuine NTSC artifacts (chroma dot-crawl, colour
+  fringing on vertical edges, the saturated-hue "checkerboard") fall out of the math
+  rather than being faked. Selected via a new `[graphics] ntsc_filter = "composite-rt"`
+  mode (Settings → Display); the existing `"composite"` / `"rgb"` remain the simplified
+  blur. The index framebuffer is uploaded as an `R16Uint` texture (read via
+  `textureLoad`, no sampler — WebGL2-safe) only while the filter is active, snapshotted
+  under the same brief present lock as the framebuffer; all signal/sine/YIQ/emphasis
+  tables are computed in Rust and baked into the WGSL as `var<private>` arrays (no
+  storage buffers → WebGL2-safe). Render priority is CRT > true-NTSC > simplified blur.
+  Off by default = byte-identical presentation; frontend-only (the parallel index
+  buffer is read-only output) → AccuracyCoin / determinism / the commercial oracle are
+  unaffected, and the `no_std` core is unchanged. WGSL parse+validate and LUT/sine unit
+  tests in CI; native + both wasm flavours clippy clean. Uses Bisqwit's neutral
+  defaults (per-knob tuning is a later pass).
 - **NES_NTSC composite filter — core foundation** (v1.1.0 beta.1, T-110-A1, stage 1
   of 2). The cycle-accurate PPU now emits, alongside the RGBA framebuffer, a parallel
   per-pixel **palette-index** framebuffer (256×240 `u16`s, each the 9-bit

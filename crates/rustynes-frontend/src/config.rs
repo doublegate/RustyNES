@@ -588,10 +588,14 @@ pub struct GraphicsConfig {
     /// to `"Fifo"` automatically when the backend lacks the requested
     /// mode.
     pub present_mode: String,
-    /// NTSC filter setting: `"off"`, `"composite"`, or `"rgb"`. Defaults
-    /// to `"off"`. The simplified Blargg-style composite path runs as a
-    /// wgsl post-pass between the PPU framebuffer texture and the
-    /// letterbox blit.
+    /// NTSC filter setting: `"off"`, `"composite"`, `"rgb"`, or
+    /// `"composite-rt"`. Defaults to `"off"`. `"composite"` / `"rgb"` run the
+    /// simplified Blargg-style blur as a wgsl post-pass between the PPU
+    /// framebuffer texture and the letterbox blit. `"composite-rt"` (T-110-A1)
+    /// runs the true composite `NES_NTSC` filter (Bisqwit algorithm): it
+    /// reconstructs the analog signal from the PPU's palette-index framebuffer
+    /// and demodulates it back to RGB, for genuine dot-crawl / fringing
+    /// artifacts. All are presentation-only (no core / accuracy impact).
     #[serde(default = "default_ntsc_filter")]
     pub ntsc_filter: String,
     /// v2.8.0 Phase 2 — frame-pacing regime (the canonical display-sync

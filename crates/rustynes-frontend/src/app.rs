@@ -378,6 +378,15 @@ pub struct App {
     /// emu lock across the GPU encode + present (Fifo vsync would block the
     /// emulation thread). Reused; never shrinks below one frame.
     present_staging: Vec<u8>,
+    /// v1.1.0 beta.1 (T-110-A1) — render-path staging copy of the PPU
+    /// palette-index framebuffer (256x240 u16), snapshotted under the same brief
+    /// lock as `present_staging` but only while the true composite `NES_NTSC`
+    /// filter is active (empty otherwise = zero cost). Paired with
+    /// `present_phase`.
+    present_index_staging: Vec<u16>,
+    /// v1.1.0 beta.1 (T-110-A1) — the per-frame NTSC colour phase (0..=2) that
+    /// goes with `present_index_staging`.
+    present_phase: u8,
     gfx: Option<Gfx>,
     /// Native audio output (cpal). wasm32 uses the Web Audio path in
     /// `wasm.rs` instead, so this field is native-only.
@@ -572,6 +581,8 @@ impl App {
             rom_label,
             emu: crate::emu::EmuHandle::new(crate::emu::EmuCore::new()),
             present_staging: Vec::new(),
+            present_index_staging: Vec::new(),
+            present_phase: 0,
             gfx: None,
             audio: None,
             input,
@@ -647,6 +658,8 @@ impl App {
             rom_label: "(no ROM)".to_string(),
             emu: crate::emu::EmuHandle::new(crate::emu::EmuCore::new()),
             present_staging: Vec::new(),
+            present_index_staging: Vec::new(),
+            present_phase: 0,
             gfx: None,
             input,
             config,
@@ -3431,6 +3444,27 @@ impl App {
         }
     }
 
+    /// v1.1.0 beta.1 (T-110-A1) — select the gfx NTSC post-pass to match the
+    /// `[graphics] ntsc_filter` mode, keeping the two NTSC filters mutually
+    /// exclusive: `"composite-rt"` = the true composite Bisqwit filter,
+    /// `"off"` = neither, any other non-`"off"` value = the simplified blur.
+    fn apply_ntsc_mode(gfx: &mut Gfx, mode: &str) {
+        match mode {
+            "off" => {
+                gfx.disable_ntsc();
+                gfx.disable_ntsc_bisqwit();
+            }
+            "composite-rt" => {
+                gfx.disable_ntsc();
+                gfx.enable_ntsc_bisqwit();
+            }
+            _ => {
+                gfx.disable_ntsc_bisqwit();
+                gfx.enable_ntsc();
+            }
+        }
+    }
+
     /// Human-readable active-pacing label for the Performance panel.
     #[cfg(not(target_arch = "wasm32"))]
     fn pacing_label(&self) -> String {
@@ -3678,8 +3712,8 @@ impl App {
         // (mutually exclusive with NTSC; CRT wins if both are somehow configured).
         if self.config.graphics.crt_filter {
             gfx.enable_crt(self.config.graphics.crt_scanline);
-        } else if self.config.graphics.ntsc_filter != "off" {
-            gfx.enable_ntsc();
+        } else {
+            Self::apply_ntsc_mode(&mut gfx, &self.config.graphics.ntsc_filter);
         }
         // Sprint 5-3 — egui debugger overlay.
         let surface_format = gfx.surface_format();
@@ -4484,6 +4518,10 @@ impl ApplicationHandler<AppEvent> for App {
                         .debugger
                         .as_ref()
                         .is_some_and(DebuggerOverlay::any_nes_tool_open);
+                // v1.1.0 beta.1 (T-110-A1) — snapshot the palette-index
+                // framebuffer + phase only while the true composite `NES_NTSC`
+                // filter is active (zero cost otherwise).
+                let want_index = self.gfx.as_ref().is_some_and(Gfx::ntsc_bisqwit_active);
                 let render_result = if self.debugger.is_none() || self.gfx.is_none() {
                     // No overlay yet (pre-`resumed`): nothing to render.
                     return;
@@ -4497,6 +4535,12 @@ impl ApplicationHandler<AppEvent> for App {
                         Self::backfill_present_fb(&mut emu.present_fb, nes);
                         self.present_staging.clear();
                         self.present_staging.extend_from_slice(&emu.present_fb);
+                        if want_index {
+                            self.present_index_staging.clear();
+                            self.present_index_staging
+                                .extend_from_slice(nes.index_framebuffer());
+                            self.present_phase = nes.ntsc_phase();
+                        }
                     } else {
                         self.present_staging.clear();
                         self.present_staging.resize((NES_W * NES_H * 4) as usize, 0);
@@ -4517,8 +4561,11 @@ impl ApplicationHandler<AppEvent> for App {
                     let wasm_lobby = &mut self.wasm_lobby;
                     #[cfg(not(target_arch = "wasm32"))]
                     let save_states_ui = &mut self.save_states_ui;
+                    let index_arg = want_index
+                        .then_some((self.present_index_staging.as_slice(), self.present_phase));
                     gfx.render_with_overlay(
                         &self.present_staging,
+                        index_arg,
                         |device, queue, encoder, view, size| {
                             #[cfg(target_arch = "wasm32")]
                             let extra = |ctx: &egui::Context, cfg: &mut crate::config::Config| {
@@ -4559,6 +4606,12 @@ impl ApplicationHandler<AppEvent> for App {
                             Self::backfill_present_fb(&mut emu.present_fb, nes);
                             self.present_staging.clear();
                             self.present_staging.extend_from_slice(&emu.present_fb);
+                            if want_index {
+                                self.present_index_staging.clear();
+                                self.present_index_staging
+                                    .extend_from_slice(nes.index_framebuffer());
+                                self.present_phase = nes.ntsc_phase();
+                            }
                         } else {
                             // No ROM: present a black NES image (the shell still
                             // draws on top).
@@ -4575,8 +4628,11 @@ impl ApplicationHandler<AppEvent> for App {
                     let wasm_lobby = &mut self.wasm_lobby;
                     #[cfg(not(target_arch = "wasm32"))]
                     let save_states_ui = &mut self.save_states_ui;
+                    let index_arg = want_index
+                        .then_some((self.present_index_staging.as_slice(), self.present_phase));
                     gfx.render_with_overlay(
                         &self.present_staging,
+                        index_arg,
                         |device, queue, encoder, view, size| {
                             #[cfg(target_arch = "wasm32")]
                             let extra = |ctx: &egui::Context, cfg: &mut crate::config::Config| {
@@ -4691,11 +4747,13 @@ impl ApplicationHandler<AppEvent> for App {
                     .unwrap_or_default();
                 if settings.ntsc_filter {
                     if let Some(gfx) = self.gfx.as_mut() {
-                        if self.config.graphics.ntsc_filter == "off" {
-                            gfx.disable_ntsc();
-                        } else {
-                            gfx.enable_ntsc();
+                        // CRT (if on) takes render priority; selecting any NTSC
+                        // mode turns CRT off so the settings stay coherent.
+                        if self.config.graphics.ntsc_filter != "off" {
+                            gfx.disable_crt();
+                            self.config.graphics.crt_filter = false;
                         }
+                        Self::apply_ntsc_mode(gfx, &self.config.graphics.ntsc_filter);
                     }
                 }
                 // v1.0.0 — master volume / mute live-apply (the cpal consume
@@ -4718,6 +4776,7 @@ impl ApplicationHandler<AppEvent> for App {
                         if self.config.graphics.crt_filter {
                             gfx.enable_crt(self.config.graphics.crt_scanline);
                             gfx.disable_ntsc();
+                            gfx.disable_ntsc_bisqwit();
                         } else {
                             gfx.disable_crt();
                         }

@@ -56,6 +56,7 @@ pub mod runahead;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod netplay_ui;
 pub mod ntsc;
+pub mod ntsc_bisqwit;
 // v2.7.0 — RetroAchievements session state. Native-only and behind the
 // default-OFF `retroachievements` feature (it links the vendored rcheevos C
 // library via `rustynes-cheevos`). The browser builds never see it.
