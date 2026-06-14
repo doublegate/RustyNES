@@ -4636,7 +4636,7 @@ mod tests {
     /// `0xFF` + attribute bit set, run the pre-fetch `<<= 8` boundary,
     /// then assert the AT registers equal the pattern registers exactly.
     #[test]
-    #[ignore = "pins the default BG shifter feed; mc-ppu-subpos (inside mc-r1-full-cpu since Stage 4) injects the BG serial-in '1' source the AccuracyCoin BG Serial In test proves correct -- visual coverage: visual_regression 7/7 under the umbrella"]
+    #[ignore = "permanent-by-design: pins the SUPERSEDED pre-master-clock BG shifter feed. The default master-clock core injects the BG serial-in '1' source the AccuracyCoin 'BG Serial In' test proves correct, so this unit assertion is kept as a historical pin and cannot be un-ignored. Visual coverage: visual_regression 7/7 on the default build."]
     fn bg_attribute_register_lockstep_through_prefetch() {
         let (mut p, _b) = fresh_ppu();
 

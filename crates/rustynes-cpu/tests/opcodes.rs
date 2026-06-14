@@ -311,7 +311,7 @@ impl Bus for IrqGateBus {
 /// cross cycles, so the next instruction's sample window catches it and the
 /// LDA #$AA executes before IRQ is serviced.
 #[test]
-#[ignore = "pins the default lockstep interrupt-dispatch step granularity; the R1 master-clock pipeline (mc-r1-substrate) legitimately shifts when the mock-bus interrupt is recognized -- real-ROM coverage is cpu_interrupts_v2, strict-green under the mc-r1-full-cpu umbrella (W3-Stage-4)"]
+#[ignore = "permanent-by-design: pins the SUPERSEDED pre-master-clock interrupt-dispatch granularity on the mock bus. The master-clock core (now the default and ONLY scheduler) legitimately shifts when the mock-bus interrupt is recognized, so this unit assertion is kept ignored as a historical pin and cannot be un-ignored. Real-ROM coverage is cpu_interrupts_v2 (5/5 strict on the default build) + AccuracyCoin 100%."]
 fn branch_taken_no_cross_delays_irq_one_instruction() {
     // bus.cycles ticks: CLI consumes 2 (cycles=2). BEQ cycle 1 = fetch_pc =
     // tick 3. BEQ cycle 2 = taken-cycle = tick 4. We want IRQ to *first* go
@@ -449,7 +449,7 @@ impl Bus for NmiBus {
 }
 
 #[test]
-#[ignore = "pins the default lockstep interrupt-dispatch step granularity; the R1 master-clock pipeline (mc-r1-substrate) legitimately shifts when the mock-bus interrupt is recognized -- real-ROM coverage is cpu_interrupts_v2, strict-green under the mc-r1-full-cpu umbrella (W3-Stage-4)"]
+#[ignore = "permanent-by-design: pins the SUPERSEDED pre-master-clock interrupt-dispatch granularity on the mock bus. The master-clock core (now the default and ONLY scheduler) legitimately shifts when the mock-bus interrupt is recognized, so this unit assertion is kept ignored as a historical pin and cannot be un-ignored. Real-ROM coverage is cpu_interrupts_v2 (5/5 strict on the default build) + AccuracyCoin 100%."]
 fn nmi_pushes_status_with_b_clear_and_takes_fffa_vector() {
     let mut bus = NmiBus::new();
     bus.load(0x8000, &[0xEA, 0xEA, 0xEA]); // NOP sled
@@ -471,7 +471,7 @@ fn nmi_pushes_status_with_b_clear_and_takes_fffa_vector() {
 }
 
 #[test]
-#[ignore = "pins the default lockstep interrupt-dispatch step granularity; the R1 master-clock pipeline (mc-r1-substrate) legitimately shifts when the mock-bus interrupt is recognized -- real-ROM coverage is cpu_interrupts_v2, strict-green under the mc-r1-full-cpu umbrella (W3-Stage-4)"]
+#[ignore = "permanent-by-design: pins the SUPERSEDED pre-master-clock interrupt-dispatch granularity on the mock bus. The master-clock core (now the default and ONLY scheduler) legitimately shifts when the mock-bus interrupt is recognized, so this unit assertion is kept ignored as a historical pin and cannot be un-ignored. Real-ROM coverage is cpu_interrupts_v2 (5/5 strict on the default build) + AccuracyCoin 100%."]
 fn irq_pushes_status_with_b_clear_and_takes_fffe_vector() {
     let mut bus = IrqGateBus::new(0); // IRQ asserted from the first cycle
     bus.load(0x8000, &[0xEA, 0xEA, 0xEA]);
