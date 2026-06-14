@@ -205,6 +205,7 @@ fn zapper_attach_smoke() {
 enum DeviceKind {
     Zapper,
     Vaus,
+    PowerPad,
 }
 
 trait DeviceKindExt {
@@ -216,6 +217,7 @@ impl DeviceKindExt for Nes {
         match self.expansion_device(port) {
             Some(InputDevice::Zapper(_)) => Some(DeviceKind::Zapper),
             Some(InputDevice::Vaus(_)) => Some(DeviceKind::Vaus),
+            Some(InputDevice::PowerPad(_)) => Some(DeviceKind::PowerPad),
             None => None,
         }
     }
@@ -226,4 +228,5 @@ fn input_device_state_types_constructible() {
     // Light compile/use check that the public state types + enum are reachable.
     let _ = InputDevice::Vaus(VausState::new());
     let _ = InputDevice::Zapper(ZapperState::new());
+    let _ = InputDevice::PowerPad(rustynes_core::PowerPadState::new());
 }
