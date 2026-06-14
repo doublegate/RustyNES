@@ -420,6 +420,15 @@ pub struct App {
     data_dir: Option<PathBuf>,
     /// Sprint 5-3 debugger overlay (lazily constructed alongside `Gfx`).
     debugger: Option<DebuggerOverlay>,
+    /// v1.1.0 beta.3 (Workstream E) — the Lua scripting engine (native, behind
+    /// the `scripting` feature). `None` until a script is loaded. Lives on the
+    /// winit thread (mlua is `!Send`); pumped once per redraw under the emu lock.
+    #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
+    script: Option<rustynes_script::ScriptEngine>,
+    /// Overlay draw commands the script issued this frame, rendered through the
+    /// egui pass and refreshed on each pump.
+    #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
+    script_draws: Vec<rustynes_script::DrawCmd>,
     /// v1.0.0 — the always-on desktop UX shell state (menu/status-bar
     /// visibility, settings tab, status toast, mirrored pause/fullscreen
     /// flags). The shell UI itself is built inside the debugger overlay's
@@ -611,6 +620,10 @@ impl App {
             config,
             data_dir,
             debugger: None,
+            #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
+            script: None,
+            #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
+            script_draws: Vec::new(),
             ui,
             active_save_slot: 0,
             speed: 1.0,
@@ -686,6 +699,10 @@ impl App {
             input,
             config,
             debugger: None,
+            #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
+            script: None,
+            #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
+            script_draws: Vec::new(),
             ui,
             active_save_slot: 0,
             speed: 1.0,
@@ -2387,6 +2404,229 @@ impl App {
     fn apply_audio_gain(&self) {
         if let Some(audio) = self.audio.as_ref() {
             audio.queue.set_gain(self.config.audio.effective_gain());
+        }
+    }
+
+    /// v1.1.0 beta.3 (Workstream E, T-110-E5) — pump the Lua engine once this
+    /// redraw: handle a console action, then (if a script is loaded) run its
+    /// callbacks against the live `Nes` under the emu lock and apply the
+    /// resulting log / control / draw output.
+    ///
+    /// mlua is `!Send`, so the engine lives on this (winit) thread and is
+    /// pumped at display rate; the access/trace logs hold the most-recent
+    /// emulated frame. Script writes are gated off in a locked / deterministic
+    /// session (netplay / TAS replay / RA-hardcore), like the cheat path.
+    #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
+    fn pump_scripts(&mut self) {
+        // Console action (load / reload / stop) — taken without holding the
+        // debugger borrow across the `&mut self` handler.
+        let action = self
+            .debugger
+            .as_mut()
+            .and_then(|d| d.script_panel().take_action());
+        if let Some(action) = action {
+            self.handle_script_action(action);
+        }
+
+        if self.script.is_none() {
+            return;
+        }
+
+        // Determinism gate (same policy as the raw-RAM cheat path).
+        let locked = self.netplay.is_active() || self.ra_hardcore_blocks() || {
+            let g = self.emu.lock();
+            g.movie.is_playing() || g.movie.is_recording()
+        };
+
+        let engine = self.script.as_mut().expect("checked is_some");
+        engine.set_writes_locked(locked);
+
+        // Pump under the emu lock with the live Nes, collecting the outputs.
+        let mut err = None;
+        let (log, controls, draws) = {
+            let mut guard = self.emu.lock();
+            let Some(nes) = guard.nes.as_mut() else {
+                return;
+            };
+            // Match the core logs to the registered callbacks.
+            nes.set_trace_enabled(engine.needs_trace().unwrap_or(false));
+            nes.set_access_logging(engine.needs_access_log().unwrap_or(false));
+            if let Err(e) = engine.on_frame(nes) {
+                err = Some(e.to_string());
+            }
+            (
+                engine.drain_log(),
+                engine.drain_controls(),
+                engine.drain_draws(),
+            )
+        };
+
+        // Feed the console + stash the overlay draws (engine borrow ended).
+        if let Some(dbg) = self.debugger.as_mut() {
+            let p = dbg.script_panel();
+            p.push_log(log);
+            if let Some(e) = err {
+                p.set_error(e);
+            }
+        }
+        self.script_draws = draws;
+
+        // Apply control commands (these `&mut self` methods re-lock the emu).
+        for cmd in &controls {
+            self.apply_script_control(cmd);
+        }
+    }
+
+    /// Handle a console load/reload/stop request.
+    #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
+    fn handle_script_action(&mut self, action: crate::debugger::ScriptAction) {
+        use crate::debugger::ScriptAction;
+        match action {
+            ScriptAction::Load => {
+                if let Some(path) = rfd::FileDialog::new()
+                    .add_filter("Lua script", &["lua"])
+                    .pick_file()
+                {
+                    self.load_script_from_path(&path);
+                }
+            }
+            ScriptAction::Reload => {
+                let label = self
+                    .debugger
+                    .as_mut()
+                    .map(|d| d.script_panel().loaded_label().to_owned())
+                    .unwrap_or_default();
+                if !label.is_empty() {
+                    self.load_script_from_path(&PathBuf::from(label));
+                }
+            }
+            ScriptAction::Stop => {
+                self.script = None;
+                self.script_draws.clear();
+                if let Some(dbg) = self.debugger.as_mut() {
+                    let p = dbg.script_panel();
+                    p.set_unloaded();
+                    p.push_log(["[script stopped]".to_owned()]);
+                }
+            }
+        }
+    }
+
+    /// Read + load a `.lua` file into a fresh engine, reporting to the console.
+    #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
+    fn load_script_from_path(&mut self, path: &Path) {
+        let src = match std::fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(e) => {
+                if let Some(dbg) = self.debugger.as_mut() {
+                    dbg.script_panel().set_error(format!("read failed: {e}"));
+                }
+                return;
+            }
+        };
+        let engine = match rustynes_script::ScriptEngine::new() {
+            Ok(e) => e,
+            Err(e) => {
+                if let Some(dbg) = self.debugger.as_mut() {
+                    dbg.script_panel().set_error(format!("engine init: {e}"));
+                }
+                return;
+            }
+        };
+        match engine.load(&src) {
+            Ok(()) => {
+                let cbs = engine.frame_callback_count().unwrap_or(0);
+                self.script = Some(engine);
+                if let Some(dbg) = self.debugger.as_mut() {
+                    let p = dbg.script_panel();
+                    p.set_loaded(path.display().to_string(), cbs);
+                    p.push_log([format!("[loaded {}]", path.display())]);
+                    dbg.open_chip_panel(crate::debugger::ChipPanel::Script);
+                }
+            }
+            Err(e) => {
+                if let Some(dbg) = self.debugger.as_mut() {
+                    dbg.script_panel().set_error(format!("load error: {e}"));
+                    dbg.open_chip_panel(crate::debugger::ChipPanel::Script);
+                }
+            }
+        }
+    }
+
+    /// Paint the script's overlay draw commands through the egui pass. NES
+    /// framebuffer space (256x240) is mapped onto the full window — approximate
+    /// (it ignores letterbox / overscan; pixel-perfect mapping is a follow-up).
+    #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
+    #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // color byte-extract + px coords.
+    fn paint_script_overlay(ctx: &egui::Context, draws: &[rustynes_script::DrawCmd]) {
+        use rustynes_script::DrawCmd;
+        if draws.is_empty() {
+            return;
+        }
+        let screen = ctx.screen_rect();
+        let sx = screen.width() / 256.0;
+        let sy = screen.height() / 240.0;
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new("lua_script_overlay"),
+        ));
+        let col = |c: u32| {
+            egui::Color32::from_rgba_unmultiplied(
+                (c >> 24) as u8,
+                (c >> 16) as u8,
+                (c >> 8) as u8,
+                c as u8,
+            )
+        };
+        let p = |x: i32, y: i32| egui::pos2(x as f32 * sx, y as f32 * sy);
+        for d in draws {
+            match d {
+                DrawCmd::Text { x, y, color, text } => {
+                    painter.text(
+                        p(*x, *y),
+                        egui::Align2::LEFT_TOP,
+                        text,
+                        egui::FontId::monospace(10.0 * sy.max(1.0)),
+                        col(*color),
+                    );
+                }
+                DrawCmd::Rect { x, y, w, h, color } => {
+                    painter.rect_filled(
+                        egui::Rect::from_min_size(
+                            p(*x, *y),
+                            egui::vec2(*w as f32 * sx, *h as f32 * sy),
+                        ),
+                        0.0,
+                        col(*color),
+                    );
+                }
+                DrawCmd::Pixel { x, y, color } => {
+                    painter.rect_filled(
+                        egui::Rect::from_min_size(p(*x, *y), egui::vec2(sx.max(1.0), sy.max(1.0))),
+                        0.0,
+                        col(*color),
+                    );
+                }
+            }
+        }
+    }
+
+    /// Apply one script-issued control command to the emulator.
+    #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
+    fn apply_script_control(&mut self, cmd: &rustynes_script::ControlCmd) {
+        use rustynes_script::ControlCmd;
+        match cmd {
+            ControlCmd::Pause => self.set_paused(true),
+            ControlCmd::SaveState(slot) => self.handle_save_state(*slot),
+            ControlCmd::LoadState(slot) => {
+                if !self.ra_hardcore_blocks() {
+                    self.handle_load_state(*slot);
+                }
+            }
+            // Input override through the emu-thread input path is a documented
+            // follow-up (see docs/scripting.md); the command is accepted but not
+            // yet wired so it does not silently corrupt the late-latch input.
+            ControlCmd::SetInput { .. } => {}
         }
     }
 
@@ -4543,6 +4783,12 @@ impl ApplicationHandler<AppEvent> for App {
                 #[cfg(not(target_arch = "wasm32"))]
                 self.display_sync_produce();
 
+                // v1.1.0 beta.3 (Workstream E) — pump the Lua engine for this
+                // redraw (after the frame is produced, before present), so its
+                // overlay draws are ready for the egui pass below.
+                #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
+                self.pump_scripts();
+
                 // v2.8.0 Phase 3 — the renderer presents `present_fb` (the
                 // harvested per-frame framebuffer; with run-ahead it is the
                 // VISIBLE future frame while `nes` holds the persistent
@@ -4698,6 +4944,8 @@ impl ApplicationHandler<AppEvent> for App {
                         self.present_staging.resize((NES_W * NES_H * 4) as usize, 0);
                     }
                     let nes_for_render = emu.nes.as_mut();
+                    #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
+                    let script_draws = &self.script_draws;
                     let gfx = self.gfx.as_mut().expect("checked above");
                     let debugger = self
                         .debugger
@@ -4732,6 +4980,8 @@ impl ApplicationHandler<AppEvent> for App {
                                     ss_slot,
                                     rom_loaded,
                                 );
+                                #[cfg(feature = "scripting")]
+                                Self::paint_script_overlay(ctx, script_draws);
                             };
                             shell_out = debugger.render_shell(
                                 device,
@@ -4771,6 +5021,8 @@ impl ApplicationHandler<AppEvent> for App {
                             self.present_staging.resize((NES_W * NES_H * 4) as usize, 0);
                         }
                     }
+                    #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
+                    let script_draws = &self.script_draws;
                     let gfx = self.gfx.as_mut().expect("checked above");
                     let debugger = self.debugger.as_mut().expect("checked above");
                     let window = gfx.window.clone();
@@ -4799,6 +5051,8 @@ impl ApplicationHandler<AppEvent> for App {
                                     ss_slot,
                                     rom_loaded,
                                 );
+                                #[cfg(feature = "scripting")]
+                                Self::paint_script_overlay(ctx, script_draws);
                             };
                             // Debugger panels are skipped (overlay hidden) so
                             // `nes = None` is correct even though a ROM may exist.

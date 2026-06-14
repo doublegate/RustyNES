@@ -43,10 +43,28 @@ The headline v1.1.0 feature: a full Mesen2/FCEUX-style Lua scripting API.
   netplay / TAS replay / RA-hardcore — reuse the cheat-gating mechanism.
 - Sandbox-escape tests required (no fs/process/network access from a script).
 
-## T-110-E5 — Frontend + docs
+## T-110-E5 — Frontend + docs  ✅ DONE (2026-06-14)
 
 - Script console / loader panel in the debugger overlay; `examples/scripts/`
   directory; `docs/scripting.md` API reference; an ADR for the Lua API design.
+- **DONE:** the `scripting` frontend feature (default-OFF, native-only optional
+  `rustynes-script` dep). `debugger/script_panel.rs` — a **Lua Script** console
+  (Debug → Lua Script): Load/Reload/Stop a `.lua`, scrolling log, error display,
+  callback count. `App::pump_scripts` runs the engine once per redraw under the
+  emu lock with the live `Nes`; `App::paint_script_overlay` renders the draw
+  commands through the egui pass; control commands apply via the existing
+  pause / save-state path. **Write-gating** (T-110-E4) wired: writes off during
+  netplay / TAS replay+record / RA-hardcore. Ships `examples/scripts/{hud,
+  ram_watch}.lua` + `docs/scripting.md` + ADR 0010 (from E-PR1). Default build
+  byte-identical (feature off → no script code compiled). **Follow-ups:**
+  `setInput` application through the emu-thread late-latch path, pixel-perfect
+  letterbox overlay mapping, `onNmi`/`onIrq`, a wasm Lua build.
+
+## Status
+
+**Workstream E (Lua scripting flagship) is COMPLETE** across E-PR1 (engine +
+sandbox, #46), E-PR2 (callbacks + control + overlay API + access log, #47), and
+E-PR3 (frontend console + pump + overlay render + gating + examples + docs).
 
 ## Out of scope
 - Browser/wasm Lua (follow-up release).

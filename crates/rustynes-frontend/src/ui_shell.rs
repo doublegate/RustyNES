@@ -712,6 +712,7 @@ impl UiShell {
                         ("Trace Logger", ChipPanel::Trace),
                         ("Event Viewer", ChipPanel::Events),
                         ("NSF Player", ChipPanel::Nsf),
+                        ("Lua Script", ChipPanel::Script),
                     ] {
                         if ui.button(label).clicked() {
                             out.action = Some(MenuAction::OpenChipPanel(panel));
