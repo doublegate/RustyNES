@@ -104,6 +104,9 @@ pub struct SharedInput {
     /// `(x as u16) << 16 | (y as u16)` NES-screen coords (`u16::MAX` = off).
     mouse: AtomicU32,
     mouse_pressed: AtomicBool,
+    /// v1.1.0 beta.1 (T-110-B2) — turbo/autofire mask (`Buttons` bits) + period.
+    turbo_mask: AtomicU8,
+    turbo_period: AtomicU32,
 }
 
 impl SharedInput {
@@ -137,6 +140,10 @@ impl SharedInput {
             .store((u32::from(mx) << 16) | u32::from(my), Ordering::Relaxed);
         self.mouse_pressed
             .store(inputs.mouse_pressed, Ordering::Relaxed);
+        self.turbo_mask
+            .store(inputs.turbo_mask.bits(), Ordering::Relaxed);
+        self.turbo_period
+            .store(inputs.turbo_period, Ordering::Relaxed);
     }
 
     /// Reconstruct the [`FrameInputs`] the emu thread feeds to the produce
@@ -162,6 +169,8 @@ impl SharedInput {
             #[allow(clippy::cast_possible_truncation)]
             mouse_nes: ((mouse >> 16) as u16, mouse as u16),
             mouse_pressed: self.mouse_pressed.load(Ordering::Relaxed),
+            turbo_mask: Buttons::from_bits_truncate(self.turbo_mask.load(Ordering::Relaxed)),
+            turbo_period: self.turbo_period.load(Ordering::Relaxed),
         }
     }
 }
@@ -707,6 +716,8 @@ mod tests {
             expansion: ExpansionDevice::Vaus,
             mouse_nes: (123, 200),
             mouse_pressed: true,
+            turbo_mask: Buttons::A | Buttons::B,
+            turbo_period: 3,
         };
         si.publish(&inputs);
         let got = si.load();
@@ -719,6 +730,8 @@ mod tests {
         assert!(matches!(got.expansion, ExpansionDevice::Vaus));
         assert_eq!(got.mouse_nes, (123, 200));
         assert!(got.mouse_pressed);
+        assert_eq!(got.turbo_mask, Buttons::A | Buttons::B);
+        assert_eq!(got.turbo_period, 3);
     }
 
     #[test]
@@ -733,6 +746,8 @@ mod tests {
             expansion: ExpansionDevice::None,
             mouse_nes: (u16::MAX, u16::MAX),
             mouse_pressed: false,
+            turbo_mask: Buttons::empty(),
+            turbo_period: 2,
         };
         si.publish(&inputs);
         assert_eq!(si.load().mouse_nes, (u16::MAX, u16::MAX));

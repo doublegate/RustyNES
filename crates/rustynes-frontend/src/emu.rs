@@ -119,6 +119,33 @@ pub struct FrameInputs {
     /// Left mouse button held (Zapper trigger / Vaus fire).
     #[cfg(not(target_arch = "wasm32"))]
     pub mouse_pressed: bool,
+    /// v1.1.0 beta.1 (T-110-B2) — turbo/autofire mask: the buttons that
+    /// rapid-fire while held (empty = off, byte-identical input). Applied at
+    /// latch keyed on the emulated frame, to every player port.
+    pub turbo_mask: Buttons,
+    /// Frames the turbo buttons hold each on/off state (clamped to >= 1).
+    pub turbo_period: u32,
+}
+
+/// v1.1.0 beta.1 (T-110-B2) — apply turbo/autofire to one port's buttons.
+///
+/// The `mask` buttons strobe on/off while held; all other buttons pass through.
+/// The phase is a pure function of the emulated `frame` number (and `period`),
+/// so the result is deterministic and reproducible under rollback / TAS replay
+/// — the gate is applied where input meets the NES, and the gated bits are what
+/// get latched / recorded / sent over netplay.
+#[must_use]
+pub fn apply_turbo(buttons: Buttons, frame: u64, mask: Buttons, period: u32) -> Buttons {
+    if mask.is_empty() {
+        return buttons;
+    }
+    let period = u64::from(period.max(1));
+    let on = (frame / period) % 2 == 0;
+    if on {
+        buttons
+    } else {
+        buttons & !mask
+    }
 }
 
 /// Mutable borrows of the caller-resident sinks the produce path feeds.
@@ -250,11 +277,16 @@ impl EmuCore {
     #[cfg_attr(target_arch = "wasm32", allow(clippy::missing_const_for_fn))]
     pub fn latch(&mut self, inputs: &FrameInputs) {
         if let Some(nes) = self.nes.as_mut() {
-            nes.set_buttons(0, inputs.buttons[0]);
-            nes.set_buttons(1, inputs.buttons[1]);
+            // v1.1.0 beta.1 (T-110-B2) — gate turbo/autofire here, keyed on the
+            // emulated frame, so the strobe is reproducible under rollback / TAS
+            // and the latched bits are exactly what a real turbo pad would emit.
+            let frame = nes.frame();
+            let turbo = |b| apply_turbo(b, frame, inputs.turbo_mask, inputs.turbo_period);
+            nes.set_buttons(0, turbo(inputs.buttons[0]));
+            nes.set_buttons(1, turbo(inputs.buttons[1]));
             if inputs.four_score {
-                nes.set_buttons(2, inputs.buttons[2]);
-                nes.set_buttons(3, inputs.buttons[3]);
+                nes.set_buttons(2, turbo(inputs.buttons[2]));
+                nes.set_buttons(3, turbo(inputs.buttons[3]));
             }
             // v2.1.0 — feed the mouse into any attached non-standard device
             // on the player-2 port ($4017). Native-only (mouse input source).
@@ -599,6 +631,45 @@ pub(crate) fn drive_ra(
 #[allow(clippy::suboptimal_flops)] // readability over FMA in assertions.
 mod tests {
     use super::*;
+
+    #[test]
+    fn turbo_strobes_only_masked_buttons() {
+        let mask = Buttons::A | Buttons::B;
+        let held = Buttons::A | Buttons::RIGHT; // A is turbo, RIGHT is not.
+                                                // period 1: on at even frames, off at odd.
+        assert_eq!(apply_turbo(held, 0, mask, 1), Buttons::A | Buttons::RIGHT);
+        assert_eq!(apply_turbo(held, 1, mask, 1), Buttons::RIGHT); // A suppressed
+        assert_eq!(apply_turbo(held, 2, mask, 1), Buttons::A | Buttons::RIGHT);
+        // RIGHT (non-turbo) is never suppressed.
+        for f in 0..8 {
+            assert!(apply_turbo(held, f, mask, 1).contains(Buttons::RIGHT));
+        }
+    }
+
+    #[test]
+    fn turbo_period_widens_the_strobe() {
+        let mask = Buttons::A;
+        let held = Buttons::A;
+        // period 2: on for frames 0,1 then off for 2,3 (a 4-frame cycle).
+        assert!(apply_turbo(held, 0, mask, 2).contains(Buttons::A));
+        assert!(apply_turbo(held, 1, mask, 2).contains(Buttons::A));
+        assert!(!apply_turbo(held, 2, mask, 2).contains(Buttons::A));
+        assert!(!apply_turbo(held, 3, mask, 2).contains(Buttons::A));
+        assert!(apply_turbo(held, 4, mask, 2).contains(Buttons::A));
+    }
+
+    #[test]
+    fn turbo_off_is_identity() {
+        let held = Buttons::A | Buttons::B | Buttons::START;
+        // Empty mask = byte-identical regardless of frame/period.
+        for f in 0..10 {
+            assert_eq!(apply_turbo(held, f, Buttons::empty(), 2), held);
+        }
+        // Period 0 is clamped to 1 (no divide-by-zero), still identity for an
+        // empty mask and a deterministic strobe for a non-empty one.
+        assert_eq!(apply_turbo(held, 0, Buttons::A, 0), held);
+        assert_eq!(apply_turbo(held, 1, Buttons::A, 0), held & !Buttons::A);
+    }
 
     #[test]
     fn effective_frame_duration_scales_inversely_with_speed() {

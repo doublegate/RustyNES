@@ -280,6 +280,14 @@ impl Nes {
         self.bus.ntsc_phase()
     }
 
+    /// The completed-frame counter (PPU frames since power-on). A monotonic,
+    /// deterministic, save-state-restored value — the frontend uses it to phase
+    /// turbo/autofire so the strobe is reproducible under rollback / TAS replay.
+    #[must_use]
+    pub const fn frame(&self) -> u64 {
+        self.bus.ppu().frame()
+    }
+
     /// Borrow the underlying bus (debugger / tests).
     #[must_use]
     pub const fn bus(&self) -> &LockstepBus {

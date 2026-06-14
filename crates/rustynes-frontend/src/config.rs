@@ -115,6 +115,20 @@ pub struct InputConfig {
     /// slow hosts. Native-only.
     #[serde(default = "default_run_ahead")]
     pub run_ahead: u32,
+    /// v1.1.0 beta.1 (T-110-B2) — turbo/autofire on the A button: while held, A
+    /// rapid-fires. Off by default (`false`) = byte-identical input. Applied
+    /// where input meets the NES, keyed on the emulated frame number, so it is
+    /// deterministic and rollback / TAS / netplay-safe.
+    #[serde(default)]
+    pub turbo_a: bool,
+    /// v1.1.0 beta.1 (T-110-B2) — turbo/autofire on the B button (see
+    /// [`Self::turbo_a`]).
+    #[serde(default)]
+    pub turbo_b: bool,
+    /// v1.1.0 beta.1 (T-110-B2) — frames the turbo button holds each on/off
+    /// state (clamped to >= 1; default 2, ≈ 15 Hz at 60 fps). Lower = faster.
+    #[serde(default = "default_turbo_period")]
+    pub turbo_period: u32,
     /// System-level bindings.
     pub system: SystemBindings,
 }
@@ -122,6 +136,11 @@ pub struct InputConfig {
 /// Serde default for [`InputConfig::run_ahead`].
 const fn default_run_ahead() -> u32 {
     1
+}
+
+/// Serde default for [`InputConfig::turbo_period`].
+const fn default_turbo_period() -> u32 {
+    2
 }
 
 /// Famicom Disk System (FDS) configuration (v2.2.0).
@@ -235,6 +254,9 @@ impl Default for InputConfig {
             four_score: false,
             expansion_device: ExpansionDevice::None,
             run_ahead: default_run_ahead(),
+            turbo_a: false,
+            turbo_b: false,
+            turbo_period: default_turbo_period(),
             system: SystemBindings::default(),
         }
     }
