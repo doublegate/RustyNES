@@ -103,6 +103,14 @@ name = "fds_smoke"
 path = "src/bin/fds_smoke.rs"
 required-features = ["commercial-roms"]
 
+# T-101-002 diagnostic: FDS disk-swap reproduction (Kid Icarus side-B stall).
+# Scripts an eject -> insert-side-N and logs framebuffer activity + disk-side
+# state; fds_smoke can't swap sides. Real BIOS + disks never committed.
+[[bin]]
+name = "fds_swap_repro"
+path = "src/bin/fds_swap_repro.rs"
+required-features = ["commercial-roms"]
+
 # v2.0 R1c-1 diagnostic: per-instruction (PC, cpu_cycle) trace dumper.
 [[bin]]
 name = "trace_instr_cycles"

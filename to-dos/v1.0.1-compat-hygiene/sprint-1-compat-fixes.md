@@ -70,6 +70,23 @@ Follow-up: regenerate the visual reference `screenshots/external/mapper-089-Suns
   `$4030-$4033` status + the BIOS disk-read state at the stall and diff against
   Mesen2/fceux FDS drive timing. (The fix itself is then likely in the FDS device
   in `crates/rustynes-mappers/src/fds.rs`.)
+- **HARNESS BUILT + ROOT-CAUSE LEAD (2026-06-13):** added the
+  `fds_swap_repro` diagnostic bin (`crates/rustynes-test-harness/src/bin/fds_swap_repro.rs`,
+  `--features test-roms,commercial-roms`) — it scripts an eject→insert-side-N and
+  logs a framebuffer-activity + disk-side timeline. Findings on Kid Icarus (2 sides):
+  - **No swap (side A only):** the BIOS shows the Nintendo license/registration
+    screen and then cycles 1↔2 colours **forever** — it is waiting for side B and
+    never errors.
+  - **Insert side B:** the BIOS reads side B and displays **`ERR. 07`** (an FDS BIOS
+    disk-read/verify error) — it never reaches the game (working FDS titles hit
+    9-11 colours; Kid Icarus stays at 1-2).
+  - **Conclusion:** Kid Icarus genuinely needs side B, but RustyNES's side-B read
+    fails the BIOS check with ERR.07. Suspect: the per-side **wire-image synthesis**
+    in `fds.rs` (lead-in/inter-block gaps, the `0x80` start mark, CRC-16/KERMIT, and
+    the block structure) for side B specifically — cf. the nesdev "Game Doctor FDS
+    Format" note about special BIOS handling "after reading block type 2 of sides B
+    and later". NEXT: decode what ERR.07 means (FDS BIOS error table) and diff the
+    side-B wire image / block-read sequence against Mesen2/fceux at the failing block.
 
 ## T-101-003 — GxROM-66 + SMB3 "Mario flashing" (un-reproduced reports)
 
