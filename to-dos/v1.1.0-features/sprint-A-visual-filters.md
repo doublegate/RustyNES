@@ -31,12 +31,21 @@ letterbox/overscan passes), `ntsc.rs` (current filter), `config.rs` `[video]`,
   test in CI; native + wasm-winit + wasm-canvas clippy clean. Remaining for a later
   pass: optional curvature/bloom + a configurable mask intensity (fixed-subtle now).
 
-## T-110-A3 — `.pal` palette-file loading
+## T-110-A3 — `.pal` palette-file loading  ✅ DONE (2026-06-14)
 
 - Load 64- or 512-entry `.pal` files into the existing (emphasis,colour)→RGBA LUT.
 - **Ref:** Mesen2 per-game palette; puNES palette editor.
 - **Done when:** a `.pal` can be loaded from settings + persisted in `[video]`; falls
   back to the built-in palette.
+- **DONE:** `rustynes-ppu::build_rgba_lut_from_base` + `Ppu::set_custom_palette`
+  (custom 64-entry base, 2C02 composite emphasis) → `Nes::set_custom_palette` (bus
+  route). Frontend: `config::parse_pal` (192-byte form; first 64 of longer files),
+  `[graphics] palette_file`, a Settings → Display **Load .pal… / Built-in** picker
+  (native rfd, deferred after the egui pass), and re-apply on each ROM load /
+  startup. Off by default = byte-identical (unit test:
+  `build_rgba_lut_from_base(&NES_PALETTE) == built-in composite LUT`); native +
+  both wasm clippy clean, no_std clean, AccuracyCoin/oracle unaffected. Later: a
+  512-entry full-emphasis `.pal` mode (currently uses the first 64 colours).
 
 ## T-110-A4 (stretch) — Pixel-art upscalers (HQ2x / xBR / Scale2x)
 

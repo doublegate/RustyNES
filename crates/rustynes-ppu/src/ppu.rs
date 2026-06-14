@@ -7,7 +7,7 @@
 //! Sprint 2-1 delivers.
 
 use crate::bus::{BgSplitState, ExAttribute, PpuBus};
-use crate::palette::build_rgba_lut;
+use crate::palette::{build_rgba_lut, build_rgba_lut_from_base};
 use crate::registers::{PpuCtrl, PpuMask, PpuStatus};
 use alloc::boxed::Box;
 use alloc::vec;
@@ -421,6 +421,13 @@ pub struct Ppu {
     /// per emitted pixel (61,440/frame). NOT part of the save-state
     /// (derived data).
     pub(crate) rgba_lut: [[u8; 4]; 512],
+    /// v1.1.0 beta.1 (T-110-A3) — optional custom 64-entry base palette from a
+    /// loaded `.pal` file. `None` (default) = use the built-in palette for the
+    /// active [`crate::palette::PpuPalette`], so default rendering is
+    /// byte-identical. When `Some`, [`Self::rgba_lut`] is built from it via the
+    /// composite emphasis model. A frontend presentation override — NOT part of
+    /// the save-state (it persists across save/load like the active palette).
+    pub(crate) custom_palette: Option<[[u8; 3]; 64]>,
     /// True when this is a 2C05 PPU: `$2000`/`$2001` are swapped and `$2002`
     /// returns the 2C05 sub-variant identifier in its low bits. Default false
     /// (a 2C02 / 2C03 / 2C04, none of which swap or report an id).
@@ -559,6 +566,7 @@ impl Ppu {
             mask_write_delay: 0,
             active_palette: crate::palette::PpuPalette::Composite2C02,
             rgba_lut: build_rgba_lut(crate::palette::PpuPalette::Composite2C02),
+            custom_palette: None,
             is_2c05: false,
             id_2c05: 0,
             framebuffer: vec![0u8; FRAMEBUFFER_LEN].into_boxed_slice(),
@@ -588,11 +596,31 @@ impl Ppu {
         id: u8,
     ) {
         self.active_palette = palette;
-        // v2.8.0 Phase 4 — keep the per-pixel RGBA lookup in sync with the
-        // active palette (byte-identical by construction; see `rgba_lut`).
-        self.rgba_lut = build_rgba_lut(palette);
+        // v2.8.0 Phase 4 — keep the per-pixel RGBA lookup in sync with the active
+        // palette (byte-identical by construction; see `rgba_lut`). A loaded `.pal`
+        // (`custom_palette`) overrides the built-in table; `rebuild_rgba_lut`
+        // honours it.
+        self.rebuild_rgba_lut();
         self.is_2c05 = is_2c05;
         self.id_2c05 = id;
+    }
+
+    /// v1.1.0 beta.1 (T-110-A3) — install (or clear with `None`) a custom 64-entry
+    /// base palette from a loaded `.pal` file and rebuild the RGBA lookup. `None`
+    /// restores the built-in palette for the active [`crate::palette::PpuPalette`]
+    /// (byte-identical to default). A frontend presentation override.
+    pub const fn set_custom_palette(&mut self, base: Option<[[u8; 3]; 64]>) {
+        self.custom_palette = base;
+        self.rebuild_rgba_lut();
+    }
+
+    /// Rebuild [`Self::rgba_lut`] from the custom palette when one is loaded,
+    /// otherwise from the active built-in [`crate::palette::PpuPalette`].
+    const fn rebuild_rgba_lut(&mut self) {
+        self.rgba_lut = match &self.custom_palette {
+            Some(base) => build_rgba_lut_from_base(base),
+            None => build_rgba_lut(self.active_palette),
+        };
     }
 
     /// Map a CPU-visible PPU register index (0-7) to the internal register,
