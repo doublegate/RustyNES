@@ -39,6 +39,8 @@ impl Ppu {
     pub fn nmi_pending(&self) -> bool;
     pub fn frame_complete(&self) -> bool;
     pub fn framebuffer(&self) -> &[u8; 256 * 240 * 4];        // RGBA8 sRGB
+    pub fn index_framebuffer(&self) -> &[u16; 256 * 240];     // (emph<<6)|colour, 0..=511
+    pub fn ntsc_phase(&self) -> u8;                           // per-frame videoPhase, 0..=2
 }
 ```
 
@@ -208,6 +210,27 @@ change core rendering tests.
 ### Greyscale + emphasis
 
 PPUMASK bit 0 (greyscale): output color ANDed with `$30`. Bits 7-5 (BGR emphasis): each modulates one color channel down. Both apply per-pixel during emission.
+
+### Index framebuffer + NTSC phase (composite-filter outputs)
+
+Alongside the RGBA framebuffer, the emit path writes a parallel **palette-index
+framebuffer** (`index_framebuffer()`): one `u16` per pixel holding the same 9-bit
+`(emphasis << 6) | colour_index` value (0..=511) used to look up the RGBA in the
+512-entry `rgba_lut`. It is therefore an exact index-space mirror of the displayed
+picture — the invariant `rgba_lut[index[p]] == framebuffer[p]` holds for every emitted
+pixel (unit test `index_framebuffer_mirrors_rgba_output`). The true composite NES_NTSC
+filter (T-110-A1) uploads this as an `R16Uint` texture and reconstructs the analog
+signal in a shader.
+
+`ntsc_phase()` exposes the per-frame **`videoPhase`** (0..=2 on NTSC; frame parity on
+PAL/Dendy), snapshotted at each frame boundary from a free-running master-cycle
+counter. This is the source of the NTSC dot-crawl; the filter derives the per-scanline
+(`videoPhase*4 + y*341*8`) and per-pixel (`x*8`) phase from it.
+
+Both are **output-only / cosmetic**: they carry no logical state, feed no emulation
+path, and are excluded from the save-state (derived data, like the framebuffer), so the
+determinism and AccuracyCoin contracts are unaffected and the `no_std` chip stack is
+untouched.
 
 ## Edge cases and gotchas
 

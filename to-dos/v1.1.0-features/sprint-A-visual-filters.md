@@ -5,7 +5,7 @@ points: `crates/rustynes-frontend/src/gfx.rs` (wgpu pipeline, already has
 letterbox/overscan passes), `ntsc.rs` (current filter), `config.rs` `[video]`,
 `debugger/settings_panel.rs` (toggle infra).
 
-## T-110-A1 — Full NES_NTSC composite / S-video filter
+## T-110-A1 — Full NES_NTSC composite / S-video filter  (stage 1/2 DONE)
 
 - The current `ntsc.rs` is an explicitly "simplified" 5-tap blur + scanline dim.
   Replace/augment with a proper composite model (phase/chroma/luma artifacts,
@@ -13,6 +13,23 @@ letterbox/overscan passes), `ntsc.rs` (current filter), `config.rs` `[video]`,
 - **Refs:** `ref-proj/Mesen2/.../BisqwitNtscFilter.cpp`,
   `ref-proj/nestopia/source/core/NstVideoFilterNtsc.cpp`.
 - **Done when:** toggle in settings; screenshot-corpus regression added; perf within budget.
+- **Approach (maintainer-chosen):** index-based "true" NES_NTSC — the core emits a
+  per-pixel palette-index buffer + per-frame phase; the shader reconstructs a real
+  composite signal (Bisqwit GenerateNtscSignal → NtscDecodeLine) with genuine
+  artifacts. Done in two stages so each is reviewable.
+- **STAGE 1 — core foundation ✅ DONE (2026-06-14):** `rustynes-ppu` now emits a
+  parallel `index_framebuffer` (256×240 `u16`, `(emph<<6)|colour`, 0..=511) in the
+  same emit path as the RGBA, plus a per-frame `ntsc_phase` (0..=2) snapshotted from a
+  free-running master-cycle `dot_counter`. Accessors `Ppu::index_framebuffer()` /
+  `ntsc_phase()` routed through `Bus` + `Nes`. Output-only (unit test:
+  `rgba_lut[index] == framebuffer[pixel]` for every emitted pixel; phase stays 0..=2
+  and crawls across frames) → determinism / AccuracyCoin / `no_std` all unaffected.
+- **STAGE 2 — composite shader (TODO):** upload the index buffer as `R16Uint`; port
+  Bisqwit `GenerateNtscSignal` (8 samples/px, 12-phase `_bitmaskLut`, emphasis wave) +
+  `NtscDecodeLine` (windowed Y/I/Q sum, sine table, contrast/saturation matrix) to
+  WGSL at 8× horizontal res; per-row phase = `videoPhase*4 + y*341*8`, decode
+  `phase0 = (startCycle+7)%12`. Settings (composite/S-video), scaling, screenshot
+  regression. Replaces/augments the current `ntsc.rs` blur.
 
 ## T-110-A2 — CRT / scanline WGSL shader post-pass  ✅ DONE (2026-06-14)
 

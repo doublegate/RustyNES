@@ -20,6 +20,19 @@ content below, plus the first **v1.1.0** feature work (beta.1).
 
 ### Added
 
+- **NES_NTSC composite filter — core foundation** (v1.1.0 beta.1, T-110-A1, stage 1
+  of 2). The cycle-accurate PPU now emits, alongside the RGBA framebuffer, a parallel
+  per-pixel **palette-index** framebuffer (256×240 `u16`s, each the 9-bit
+  `(emphasis << 6) | colour` value) plus a per-frame **NTSC colour phase** (0..=2, the
+  `videoPhase` source of the dot-crawl, derived from a master-cycle counter). Exposed
+  as `Ppu::index_framebuffer()` / `Ppu::ntsc_phase()`, routed through
+  `Bus`/`Nes::index_framebuffer()` + `ntsc_phase()`. These are **output-only**: they
+  carry exactly the LUT index used to produce the displayed RGBA (proven by a unit
+  test that `rgba_lut[index] == framebuffer[pixel]` for every emitted pixel), feed no
+  emulation logic, and are not part of the save-state — so the determinism /
+  AccuracyCoin contract is unaffected, and the `no_std` chip stack still cross-compiles
+  against `core` + `alloc`. The composite encode→decode WGSL shader that consumes this
+  index buffer follows in stage 2.
 - **CRT / scanline video filter** (v1.1.0 beta.1). A new presentation-layer wgsl
   post-pass (`crates/rustynes-frontend/src/crt.rs`) that applies source-row-space
   scanlines (a parabolic per-row brightness profile) + a subtle RGB aperture-grille
