@@ -767,6 +767,21 @@ pub struct AudioConfig {
     /// the deterministic core audio is unchanged unless a channel is muted.
     #[serde(default = "default_audio_channel_mask")]
     pub channel_mask: u8,
+    /// v1.1.0 beta.2 (T-110-D2) — enable the frontend graphic EQ output stage.
+    /// `false` (default) bypasses it entirely, so the audio is byte-identical
+    /// to a build without the EQ.
+    #[serde(default)]
+    pub eq_enabled: bool,
+    /// v1.1.0 beta.2 — per-band EQ gains in dB (−12..=+12) for the five fixed
+    /// bands (60 / 240 / 1k / 3.8k / 12k Hz). All-zero (the default) is a flat,
+    /// identity response. Clamped on use. Only consulted when [`Self::eq_enabled`].
+    #[serde(default = "default_audio_eq_bands")]
+    pub eq_bands: [f32; 5],
+}
+
+/// Serde default for [`AudioConfig::eq_bands`] — flat (0 dB) across all bands.
+const fn default_audio_eq_bands() -> [f32; 5] {
+    [0.0; 5]
 }
 
 /// Serde default for [`AudioConfig::channel_mask`] — all six channels enabled.
@@ -798,6 +813,8 @@ impl Default for AudioConfig {
             volume: default_audio_volume(),
             muted: false,
             channel_mask: default_audio_channel_mask(),
+            eq_enabled: false,
+            eq_bands: default_audio_eq_bands(),
         }
     }
 }

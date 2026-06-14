@@ -93,6 +93,10 @@ pub struct SettingsApply {
     /// `[audio] channel_mask` into the core under the emu lock. The default
     /// mask (all on) is byte-identical to today's mixer output.
     pub apu_channels: bool,
+    /// v1.1.0 beta.2 — the graphic-EQ enable toggle or a band slider changed;
+    /// the app pushes the new `[audio] eq_enabled`/`eq_bands` into the audio
+    /// queue. Off (default) is byte-identical to today's output.
+    pub audio_eq: bool,
 }
 
 impl SettingsApply {
@@ -109,6 +113,7 @@ impl SettingsApply {
             || self.palette_pick
             || self.palette_clear
             || self.apu_channels
+            || self.audio_eq
     }
 }
 
@@ -459,6 +464,46 @@ pub fn audio_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
         });
     }
 
+    // v1.1.0 beta.2 (T-110-D2) — optional graphic EQ output stage. Off by
+    // default → byte-identical output; this is a frontend stage (post-resampler),
+    // never the deterministic core synthesis.
+    ui.add_space(6.0);
+    ui.separator();
+    if ui
+        .checkbox(&mut config.audio.eq_enabled, "Graphic EQ")
+        .changed()
+    {
+        state.apply.audio_eq = true;
+        save_config(config);
+    }
+    ui.add_enabled_ui(config.audio.eq_enabled, |ui| {
+        const BANDS: [(usize, &str); 5] =
+            [(0, "60"), (1, "240"), (2, "1k"), (3, "3.8k"), (4, "12k")];
+        ui.horizontal(|ui| {
+            for (i, label) in BANDS {
+                ui.vertical(|ui| {
+                    if ui
+                        .add(
+                            egui::Slider::new(&mut config.audio.eq_bands[i], -12.0..=12.0)
+                                .vertical()
+                                .suffix(" dB"),
+                        )
+                        .changed()
+                    {
+                        state.apply.audio_eq = true;
+                        save_config(config);
+                    }
+                    ui.label(format!("{label} Hz"));
+                });
+            }
+        });
+        if ui.button("Reset EQ (flat)").clicked() {
+            config.audio.eq_bands = [0.0; 5];
+            state.apply.audio_eq = true;
+            save_config(config);
+        }
+    });
+
     // Persist on release so a drag doesn't thrash the disk; the live gain is
     // already applied above.
     if ui.button("Save audio settings").clicked() {
@@ -588,6 +633,7 @@ mod tests {
                 crt_scanline: false,
                 palette_pick: false,
                 palette_clear: false,
+                audio_eq: false,
             },
             ..Default::default()
         };

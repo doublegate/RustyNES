@@ -30,13 +30,25 @@
   audio (VRC6/7, MMC5, N163, 5B, FDS), the FDS-style `$5FF6/$5FF7` RAM banking,
   exact non-60 Hz play rates, a wasm NSF loader, and NSFe (`NSFE` chunked) parsing.
 
-## T-110-D2 — Per-channel audio polish (optional parametric EQ)
+## T-110-D2 — Per-channel audio polish (optional parametric EQ)  ✅ DONE (2026-06-14)
 
 - Add an optional parametric EQ stage (per-channel mute already exists). Frontend
   audio settings.
 - **Ref:** `ref-proj/Mesen2/Utilities/Audio/Equalizer.h`.
 - **Done when:** EQ is opt-in and does not alter the determinism-critical core
   synthesis (it is a frontend output stage, like the existing DRC resampler).
+- **DONE:** `crates/rustynes-frontend/src/eq.rs` — a 5-band graphic EQ (60 / 240 /
+  1k / 3.8k / 12k Hz, ±12 dB) of cascaded RBJ-cookbook peaking biquads. It runs in
+  the **producer** path *after* the DRC resampler and *before* the lock-free queue
+  (an `EqStage` on both `AudioOutput` + `AudioProducer`), so it touches only the
+  host-rate output — never the deterministic core synthesis. Params live in the
+  shared queue (`set_eq` / gen counter); the Settings → Audio panel pushes changes
+  (`SettingsApply::audio_eq` → `App::apply_audio_eq`) and the producer rebuilds its
+  biquads on the next push (live, lock-free). Off by default + bypassed when flat
+  → byte-identical output (the no-DRC path stays zero-copy when disabled). Tests:
+  `flat_eq_is_bypassed_and_identity` (bit-identical bypass), `nonflat..stable`,
+  `band_boost_amplifies_its_center_frequency`. **Deferred:** a wasm audio feed +
+  configurable band freqs/Q (parametric beyond fixed bands).
 
 ## Verification
 - NSF path is separate from ROM emulation → AccuracyCoin/oracle unaffected.

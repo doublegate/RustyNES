@@ -30,6 +30,8 @@ pub mod emu;
 pub mod emu_thread;
 // v1.1.0 beta.1 (T-110-A2) — CRT / scanline post-process wgsl pass.
 pub mod crt;
+// v1.1.0 beta.2 (T-110-D2) — optional graphic EQ output stage (frontend-only).
+pub mod eq;
 pub mod game_db;
 pub mod gfx;
 pub mod input;

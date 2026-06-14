@@ -2390,6 +2390,19 @@ impl App {
         }
     }
 
+    /// v1.1.0 beta.2 (T-110-D2) — push the configured graphic-EQ params into the
+    /// shared audio queue; the producer rebuilds its biquads on the next push.
+    /// Applied at startup + on every EQ edit. Off (default) = byte-identical
+    /// output. No-op when audio is disabled.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn apply_audio_eq(&self) {
+        if let Some(audio) = self.audio.as_ref() {
+            audio
+                .queue
+                .set_eq(self.config.audio.eq_enabled, self.config.audio.eq_bands);
+        }
+    }
+
     /// v1.0.0 — push the configured per-APU-channel enable mask into the core
     /// under the emu lock (respecting the lock discipline). A UI playback
     /// overlay: the default `0x3F` (all six channels on) is byte-identical to
@@ -3888,6 +3901,9 @@ impl App {
             // gain now that the queue exists. Default (1.0, not muted) is a
             // no-op so the default sound is byte-identical.
             self.apply_audio_gain();
+            // v1.1.0 beta.2 — apply the persisted graphic-EQ params (off by
+            // default → byte-identical).
+            self.apply_audio_eq();
             // v1.0.0 — push the persisted per-APU-channel mute mask to the core
             // (no-op if no ROM is loaded yet; re-applied on each ROM load).
             // Default 0x3F (all on) leaves the deterministic audio unchanged.
@@ -4897,6 +4913,11 @@ impl ApplicationHandler<AppEvent> for App {
                 #[cfg(not(target_arch = "wasm32"))]
                 if settings.audio_gain {
                     self.apply_audio_gain();
+                }
+                // v1.1.0 beta.2 — graphic-EQ live-apply (frontend output stage).
+                #[cfg(not(target_arch = "wasm32"))]
+                if settings.audio_eq {
+                    self.apply_audio_eq();
                 }
                 // v1.0.0 — overscan crop live-apply (the gfx letterbox UV rect).
                 if settings.overscan {
