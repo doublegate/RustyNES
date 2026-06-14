@@ -42,6 +42,8 @@ pub mod scheduler;
 pub mod vs_db;
 
 pub use bus::LockstepBus;
+#[cfg(feature = "debug-hooks")]
+pub use bus::{EventKind, EventRec};
 pub use controller::{Buttons, Controller};
 pub use debug::{ApuDebugView, CpuDebugView, MapperDebugView, PpuDebugView};
 pub use genie::{GenieCode, GenieError};

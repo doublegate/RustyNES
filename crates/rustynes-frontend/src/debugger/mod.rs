@@ -58,6 +58,7 @@ mod badge_cache;
 mod cheat_panel;
 mod cheevos_panel;
 mod cpu_panel;
+mod event_panel;
 mod input_display_panel;
 mod input_rebind_panel;
 mod mapper_panel;
@@ -117,6 +118,8 @@ pub enum ChipPanel {
     Mapper,
     /// Cycle trace logger (T-110-C2).
     Trace,
+    /// Event viewer (T-110-C3): scanline×dot write-event timeline.
+    Events,
 }
 
 /// State of the debugger overlay.
@@ -135,6 +138,7 @@ pub struct DebuggerOverlay {
     show_memory: bool,
     show_mapper: bool,
     show_trace: bool,
+    show_events: bool,
     show_input: bool,
     show_input_display: bool,
     show_cheat: bool,
@@ -156,6 +160,8 @@ pub struct DebuggerOverlay {
     mapper_ui: mapper_panel::MapperPanelState,
     /// Cycle trace logger panel state (T-110-C2).
     trace_ui: trace_panel::TracePanelState,
+    /// Event viewer panel state (T-110-C3).
+    event_ui: event_panel::EventPanelState,
     /// Input rebind modal state.
     input_ui: input_rebind_panel::InputPanelState,
     /// Input-display HUD state (v1.1.0 beta.1, Workstream B).
@@ -234,6 +240,7 @@ impl DebuggerOverlay {
             show_memory: false,
             show_mapper: false,
             show_trace: false,
+            show_events: false,
             show_input: false,
             show_input_display: false,
             show_cheat: false,
@@ -248,6 +255,7 @@ impl DebuggerOverlay {
             memory_ui: memory_panel::MemoryPanelState::default(),
             mapper_ui: mapper_panel::MapperPanelState::default(),
             trace_ui: trace_panel::TracePanelState::default(),
+            event_ui: event_panel::EventPanelState,
             input_ui: input_rebind_panel::InputPanelState::default(),
             input_display_ui: input_display_panel::InputDisplayPanelState,
             input_pads: [Buttons::empty(); 4],
@@ -524,6 +532,7 @@ impl DebuggerOverlay {
             ChipPanel::Memory => self.show_memory = true,
             ChipPanel::Mapper => self.show_mapper = true,
             ChipPanel::Trace => self.show_trace = true,
+            ChipPanel::Events => self.show_events = true,
         }
     }
 
@@ -565,6 +574,7 @@ impl DebuggerOverlay {
                 ui.checkbox(&mut self.show_memory, "Memory");
                 ui.checkbox(&mut self.show_mapper, "Mapper");
                 ui.checkbox(&mut self.show_trace, "Trace");
+                ui.checkbox(&mut self.show_events, "Events");
                 ui.checkbox(&mut self.show_input, "Input");
                 ui.checkbox(&mut self.show_input_display, "Input HUD");
                 ui.checkbox(&mut self.show_cheat, "Cheats");
@@ -729,6 +739,9 @@ impl DebuggerOverlay {
         }
         if self.show_trace {
             trace_panel::show(ctx, &mut self.show_trace, &mut self.trace_ui, nes);
+        }
+        if self.show_events {
+            event_panel::show(ctx, &mut self.show_events, &mut self.event_ui, nes);
         }
         if self.show_mapper {
             mapper_panel::show(ctx, &mut self.show_mapper, &mut self.mapper_ui, nes);

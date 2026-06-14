@@ -710,6 +710,7 @@ impl UiShell {
                         ("OAM", ChipPanel::Oam),
                         ("Mapper", ChipPanel::Mapper),
                         ("Trace Logger", ChipPanel::Trace),
+                        ("Event Viewer", ChipPanel::Events),
                     ] {
                         if ui.button(label).clicked() {
                             out.action = Some(MenuAction::OpenChipPanel(panel));
