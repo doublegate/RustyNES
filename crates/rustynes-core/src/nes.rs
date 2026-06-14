@@ -294,6 +294,11 @@ impl Nes {
         // VBL detection or DMA-stall heavy frames before declaring "stuck".
         const MAX_CYCLES_PER_FRAME: u64 = 150_000;
         let start = self.bus.cycle();
+        // T-110-C3 — the event viewer shows one frame; reset the log per frame.
+        #[cfg(feature = "debug-hooks")]
+        if self.bus.event_logging() {
+            self.bus.clear_events();
+        }
         // v1.1.0 beta.2 (Workstream C) — skip the breakpoint check on the first
         // iteration so resuming with the PC sitting on a breakpoint executes
         // that instruction before re-checking (otherwise "continue" would
@@ -469,6 +474,29 @@ impl Nes {
     pub fn trace_tail_vec(&self, n: usize) -> alloc::vec::Vec<TraceRec> {
         let skip = self.trace.len().saturating_sub(n);
         self.trace.iter().skip(skip).copied().collect()
+    }
+
+    /// v1.1.0 beta.2 (T-110-C3) — start/stop the event viewer. While on, the bus
+    /// records this frame's PPU/APU/mapper writes (with their PPU position); the
+    /// log is reset at each [`Self::run_frame`]. Default off; output-only.
+    #[cfg(feature = "debug-hooks")]
+    pub const fn set_event_logging(&mut self, enabled: bool) {
+        self.bus.set_event_logging(enabled);
+    }
+
+    /// Whether the event viewer is recording.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub const fn event_logging(&self) -> bool {
+        self.bus.event_logging()
+    }
+
+    /// The current frame's captured events (for the event-viewer panel).
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    #[allow(clippy::missing_const_for_fn)] // slice deref is not const.
+    pub fn events(&self) -> &[crate::bus::EventRec] {
+        self.bus.events()
     }
 
     /// Borrow the framebuffer (RGBA8, 256x240).
@@ -1993,6 +2021,44 @@ mod tests {
         assert_eq!(nes.trace_len(), n, "no new records when disabled");
         nes.clear_trace();
         assert_eq!(nes.trace_len(), 0);
+    }
+
+    #[cfg(feature = "debug-hooks")]
+    #[test]
+    fn event_viewer_records_writes_with_ppu_position() {
+        use crate::bus::EventKind;
+        // A tiny NROM that loops `LDA #$00 ; STA $2000 ; JMP $C000`, so it
+        // generates a PPU-register write ($2000) every iteration.
+        let mut bytes = alloc::vec![0u8; 16 + 16 * 1024];
+        bytes[0..4].copy_from_slice(b"NES\x1A");
+        bytes[4] = 1; // 1x16KB PRG
+        bytes[5] = 1; // 1x8KB CHR (unused here)
+        let prg = &mut bytes[16..16 + 16 * 1024];
+        // $C000 maps to PRG offset 0.
+        prg[0..8].copy_from_slice(&[0xA9, 0x00, 0x8D, 0x00, 0x20, 0x4C, 0x00, 0xC0]);
+        let len = 16 * 1024;
+        prg[len - 4] = 0x00; // reset vector lo
+        prg[len - 3] = 0xC0; // reset vector hi -> $C000
+                             // CHR not appended (header says 1 bank but parse tolerates; use 0 banks).
+        bytes[5] = 0;
+
+        let mut nes = Nes::from_rom(&bytes).expect("parse");
+        let _ = nes.run_frame(); // warm past the power-on frame-complete latch.
+        assert!(nes.events().is_empty(), "off by default");
+        nes.set_event_logging(true);
+        let _ = nes.run_frame();
+        let evs = nes.events();
+        assert!(!evs.is_empty(), "the STA $2000 loop produces writes");
+        assert!(
+            evs.iter()
+                .all(|e| e.kind == EventKind::PpuWrite && e.addr == 0x2000 && e.dot <= 340),
+            "all events are $2000 PPU writes with a sane dot"
+        );
+        // Reset per frame: the count stays one-frame-bounded.
+        let _ = nes.run_frame();
+        assert!(nes.events().len() <= Nes::TRACE_CAP, "bounded");
+        nes.set_event_logging(false);
+        assert!(!nes.event_logging());
     }
 
     #[test]

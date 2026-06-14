@@ -20,6 +20,13 @@ content below, plus the first **v1.1.0** feature work (beta.1).
 
 ### Added
 
+- **Event viewer** (v1.1.0 beta.2, Workstream C, T-110-C3). A new **Events** debugger panel
+  (Debug → Event Viewer) plots the frame's CPU writes — PPU (`$2000-$3FFF`), APU
+  (`$4000-$4017`), and mapper (`$4020-$FFFF`) — on a scanline×dot grid coloured by kind,
+  so you can see *when* in the frame a game touches scroll / mapper / APU registers. Built
+  on the `debug-hooks` event log (a single tap in the bus write path, tagged with the live
+  PPU position, reset per frame); output-only and off by default, so determinism /
+  AccuracyCoin are unaffected. (NMI/IRQ markers are a follow-up.)
 - **Cycle trace logger** (v1.1.0 beta.2, Workstream C, T-110-C2). A new **Trace** debugger
   panel (Debug → Trace Logger) records each executed instruction's CPU register file +
   cycle into a bounded ring (50k), shows a live disassembled tail, and **exports** the

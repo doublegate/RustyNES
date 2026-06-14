@@ -88,6 +88,41 @@ fn fresh_ram() -> Box<[u8; RAM_SIZE]> {
     Box::new([0u8; RAM_SIZE])
 }
 
+/// v1.1.0 beta.2 (Workstream C, T-110-C3) — the class of a captured CPU write.
+///
+/// One per event-viewer timeline entry: PPU `$2000-$3FFF`, APU `$4000-$4017`,
+/// or mapper `$4020-$FFFF`, tagged (in [`EventRec`]) with the PPU position at
+/// the moment of the write.
+#[cfg(feature = "debug-hooks")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EventKind {
+    /// A `$2000-$3FFF` PPU-register write.
+    PpuWrite,
+    /// A `$4000-$4017` APU / I/O-register write.
+    ApuWrite,
+    /// A `$4020-$FFFF` mapper-register write.
+    MapperWrite,
+}
+
+/// One event-viewer record: kind + the PPU `(scanline, dot)` + the address.
+#[cfg(feature = "debug-hooks")]
+#[derive(Clone, Copy, Debug)]
+pub struct EventRec {
+    /// What happened.
+    pub kind: EventKind,
+    /// PPU scanline at the event (`-1` = pre-render, `0..=239` visible, ...).
+    pub scanline: i16,
+    /// PPU dot (`0..=340`).
+    pub dot: u16,
+    /// The written address.
+    pub addr: u16,
+}
+
+/// Max events captured per frame (bounded so a write-heavy frame can't grow the
+/// log without limit; a frame has at most a few thousand CPU writes).
+#[cfg(feature = "debug-hooks")]
+const EVENT_CAP: usize = 20_000;
+
 /// Lockstep bus.
 ///
 /// Owns the entire emulator's mutable state. The CPU borrows `&mut LockstepBus`
@@ -174,6 +209,14 @@ pub struct LockstepBus {
     /// consistent. The core test suites never set it, so `AccuracyCoin` / the
     /// oracle are unaffected.
     nt_mirroring_override: Option<rustynes_mappers::Mirroring>,
+    /// v1.1.0 beta.2 (T-110-C3) — event-viewer log (this frame's CPU-write
+    /// events). Output-only; populated only while `event_logging`, cleared per
+    /// frame. Gated on `debug-hooks` so the default hot path is untouched.
+    #[cfg(feature = "debug-hooks")]
+    events: alloc::vec::Vec<EventRec>,
+    /// Whether the event viewer is recording. Default `false`.
+    #[cfg(feature = "debug-hooks")]
+    event_logging: bool,
     /// Cumulative CPU cycle counter.
     pub(crate) cycle: u64,
 
@@ -511,6 +554,10 @@ impl LockstepBus {
             vs_service: false,
             expansion_device: [None, None],
             nt_mirroring_override: None,
+            #[cfg(feature = "debug-hooks")]
+            events: alloc::vec::Vec::new(),
+            #[cfg(feature = "debug-hooks")]
+            event_logging: false,
             cycle: 0,
             dma_pending: None,
             dma_cycles_owed: 0,
@@ -1099,6 +1146,33 @@ impl LockstepBus {
     #[must_use]
     pub const fn mirroring_override(&self) -> Option<rustynes_mappers::Mirroring> {
         self.nt_mirroring_override
+    }
+
+    /// v1.1.0 beta.2 (T-110-C3) — start/stop event-viewer recording.
+    #[cfg(feature = "debug-hooks")]
+    pub const fn set_event_logging(&mut self, enabled: bool) {
+        self.event_logging = enabled;
+    }
+
+    /// Whether event-viewer recording is on.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub const fn event_logging(&self) -> bool {
+        self.event_logging
+    }
+
+    /// The events captured so far this frame.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    #[allow(clippy::missing_const_for_fn)] // Vec->slice deref is not const.
+    pub fn events(&self) -> &[EventRec] {
+        &self.events
+    }
+
+    /// Clear the event log (called at each frame start while recording).
+    #[cfg(feature = "debug-hooks")]
+    pub fn clear_events(&mut self) {
+        self.events.clear();
     }
 
     /// Sample the framebuffer luminance at each attached Zapper's aim point.
@@ -3074,6 +3148,27 @@ impl Bus for LockstepBus {
         // arises across DMC read halts.  (No `in_dmc_dma` guard
         // here because DMC DMA never invokes `cpu_write`.)
         self.internal_data_bus = value;
+        // v1.1.0 beta.2 (T-110-C3) — event-viewer tap: classify the write +
+        // record it with the current PPU position. Output-only, gated.
+        #[cfg(feature = "debug-hooks")]
+        if self.event_logging {
+            let kind = match addr {
+                0x2000..=0x3FFF => Some(EventKind::PpuWrite),
+                0x4000..=0x4013 | 0x4015 | 0x4017 => Some(EventKind::ApuWrite),
+                0x4020..=0xFFFF => Some(EventKind::MapperWrite),
+                _ => None,
+            };
+            if let Some(kind) = kind {
+                if self.events.len() < EVENT_CAP {
+                    self.events.push(EventRec {
+                        kind,
+                        scanline: self.ppu.scanline(),
+                        dot: self.ppu.dot(),
+                        addr,
+                    });
+                }
+            }
+        }
         match addr {
             0x0000..=0x1FFF => self.ram[(addr & 0x07FF) as usize] = value,
             0x2000..=0x3FFF => self.ppu_register_write(addr, value),

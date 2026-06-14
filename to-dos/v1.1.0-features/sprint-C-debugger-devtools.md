@@ -45,13 +45,26 @@ event taps, `crates/rustynes-frontend/src/debugger/` (panel registry in `mod.rs`
   both wasm clippy clean. **Later:** format options (e.g. include cycle-precise PPU
   dot, effective-address column) + a configurable export path/dialog.
 
-## T-110-C3 — Event viewer
+## T-110-C3 — Event viewer  ✅ DONE (2026-06-14)
 
 - Timeline of IRQ / NMI / mapper-write / PPU+APU register-write events on a
   scanline×dot grid. Minimal event taps behind `debug-hooks`.
 - **Ref:** `ref-proj/Mesen2/.../NesEventManager.h`.
 - New panels: `debugger/trace_panel.rs`, `debugger/event_panel.rs` (follow the
   existing panel-registration pattern in `debugger/mod.rs`).
+- **DONE:** core (`debug-hooks`) `EventKind` { `PpuWrite`/`ApuWrite`/`MapperWrite` } +
+  `EventRec { kind, scanline, dot, addr }`; a single tap in `LockstepBus::cpu_write`
+  classifies each `$2000-$FFFF` write + records it with the live PPU `(scanline, dot)`,
+  into a per-frame log (capped at `EVENT_CAP` = 20k, reset at each `run_frame`).
+  `Nes::{set_event_logging, event_logging, events}` delegate to the bus; `EventKind` /
+  `EventRec` re-exported. Output-only → determinism / AccuracyCoin unaffected; off by
+  default. Frontend: `debugger/event_panel.rs` (`ChipPanel::Events` — Debug → "Event
+  Viewer" + toolbar "Events"): a scanline(rows)×dot(cols) grid plotting the frame's
+  writes coloured by kind, with a Record toggle + count + legend. Core test
+  `event_viewer_records_writes_with_ppu_position` (a `STA $2000` loop ROM). Native +
+  both wasm clippy clean. **Later (deferred):** NMI/IRQ markers (the NMI sampler is a
+  `const fn` — needs a non-const tap or a different capture point) + APU/PPU
+  read-event taps + a richer per-event tooltip.
 
 ## Verification
 - Default build (feature off) is byte-identical → AccuracyCoin/oracle unaffected.
