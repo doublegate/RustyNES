@@ -671,10 +671,48 @@ pub struct GraphicsConfig {
     /// re-tints the displayed framebuffer only — no core / accuracy impact.
     #[serde(default)]
     pub palette_file: Option<std::path::PathBuf>,
+    /// v1.2.0 C1 — live contrast knob for the true-composite (`"composite-rt"`,
+    /// Bisqwit) NTSC filter. Picture contrast factor is `(contrast + 1)^2`.
+    /// Default `0.0` ([`crate::ntsc_bisqwit::NtscKnobs::DEFAULT`]) is byte-identical
+    /// to the previous hardcoded value. Output-only; no core / accuracy impact.
+    #[serde(default = "default_ntsc_contrast")]
+    pub ntsc_contrast: f32,
+    /// v1.2.0 C1 — live saturation knob for the Bisqwit NTSC filter. Chroma gain
+    /// factor is `(saturation + 1)^2`. Default `0.0` = byte-identical.
+    #[serde(default = "default_ntsc_saturation")]
+    pub ntsc_saturation: f32,
+    /// v1.2.0 C1 — live brightness knob for the Bisqwit NTSC filter (additive luma
+    /// offset). Default `0.0` = byte-identical.
+    #[serde(default = "default_ntsc_brightness")]
+    pub ntsc_brightness: f32,
+    /// v1.2.0 C1 — live hue knob (degrees) for the Bisqwit NTSC filter, applied as
+    /// a rotation of the demodulated (I, Q) vector. Default `0.0` = byte-identical.
+    #[serde(default = "default_ntsc_hue")]
+    pub ntsc_hue: f32,
 }
 
 fn default_ntsc_filter() -> String {
     "off".into()
+}
+
+/// Serde default for [`GraphicsConfig::ntsc_contrast`] — Bisqwit's neutral value.
+const fn default_ntsc_contrast() -> f32 {
+    crate::ntsc_bisqwit::NtscKnobs::DEFAULT.contrast
+}
+
+/// Serde default for [`GraphicsConfig::ntsc_saturation`].
+const fn default_ntsc_saturation() -> f32 {
+    crate::ntsc_bisqwit::NtscKnobs::DEFAULT.saturation
+}
+
+/// Serde default for [`GraphicsConfig::ntsc_brightness`].
+const fn default_ntsc_brightness() -> f32 {
+    crate::ntsc_bisqwit::NtscKnobs::DEFAULT.brightness
+}
+
+/// Serde default for [`GraphicsConfig::ntsc_hue`].
+const fn default_ntsc_hue() -> f32 {
+    crate::ntsc_bisqwit::NtscKnobs::DEFAULT.hue
 }
 
 const fn default_crt_scanline() -> f32 {
@@ -707,6 +745,10 @@ impl Default for GraphicsConfig {
             crt_filter: false,
             crt_scanline: default_crt_scanline(),
             palette_file: None,
+            ntsc_contrast: default_ntsc_contrast(),
+            ntsc_saturation: default_ntsc_saturation(),
+            ntsc_brightness: default_ntsc_brightness(),
+            ntsc_hue: default_ntsc_hue(),
         }
     }
 }

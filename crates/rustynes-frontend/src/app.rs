@@ -4002,8 +4002,8 @@ impl App {
     /// `[graphics] ntsc_filter` mode, keeping the two NTSC filters mutually
     /// exclusive: `"composite-rt"` = the true composite Bisqwit filter,
     /// `"off"` = neither, any other non-`"off"` value = the simplified blur.
-    fn apply_ntsc_mode(gfx: &mut Gfx, mode: &str) {
-        match mode {
+    fn apply_ntsc_mode(gfx: &mut Gfx, graphics: &crate::config::GraphicsConfig) {
+        match graphics.ntsc_filter.as_str() {
             "off" => {
                 gfx.disable_ntsc();
                 gfx.disable_ntsc_bisqwit();
@@ -4011,11 +4011,27 @@ impl App {
             "composite-rt" => {
                 gfx.disable_ntsc();
                 gfx.enable_ntsc_bisqwit();
+                // v1.2.0 C1 — seed the live picture knobs on enable (default 0 =
+                // byte-identical to the pre-C1 decode).
+                gfx.set_ntsc_bisqwit_knobs(Self::ntsc_knobs_from(graphics));
             }
             _ => {
                 gfx.disable_ntsc_bisqwit();
                 gfx.enable_ntsc();
             }
+        }
+    }
+
+    /// v1.2.0 C1 — build the live Bisqwit NTSC picture knobs from the graphics
+    /// config. Defaults (all 0) decode byte-identically to the pre-C1 filter.
+    const fn ntsc_knobs_from(
+        graphics: &crate::config::GraphicsConfig,
+    ) -> crate::ntsc_bisqwit::NtscKnobs {
+        crate::ntsc_bisqwit::NtscKnobs {
+            contrast: graphics.ntsc_contrast,
+            saturation: graphics.ntsc_saturation,
+            brightness: graphics.ntsc_brightness,
+            hue: graphics.ntsc_hue,
         }
     }
 
@@ -4267,7 +4283,7 @@ impl App {
         if self.config.graphics.crt_filter {
             gfx.enable_crt(self.config.graphics.crt_scanline);
         } else {
-            Self::apply_ntsc_mode(&mut gfx, &self.config.graphics.ntsc_filter);
+            Self::apply_ntsc_mode(&mut gfx, &self.config.graphics);
         }
         // Sprint 5-3 — egui debugger overlay.
         let surface_format = gfx.surface_format();
@@ -5344,7 +5360,7 @@ impl ApplicationHandler<AppEvent> for App {
                             gfx.disable_crt();
                             self.config.graphics.crt_filter = false;
                         }
-                        Self::apply_ntsc_mode(gfx, &self.config.graphics.ntsc_filter);
+                        Self::apply_ntsc_mode(gfx, &self.config.graphics);
                     }
                 }
                 // v1.0.0 — master volume / mute live-apply (the cpal consume
@@ -5382,7 +5398,7 @@ impl ApplicationHandler<AppEvent> for App {
                             // Turning CRT off restores whatever NTSC mode the
                             // config now holds (normally "off" → no filter).
                             gfx.disable_crt();
-                            Self::apply_ntsc_mode(gfx, &self.config.graphics.ntsc_filter);
+                            Self::apply_ntsc_mode(gfx, &self.config.graphics);
                         }
                         let _ = self.config.save();
                     }
@@ -5390,6 +5406,13 @@ impl ApplicationHandler<AppEvent> for App {
                 if settings.crt_scanline {
                     if let Some(gfx) = self.gfx.as_mut() {
                         gfx.set_crt_scanline(self.config.graphics.crt_scanline);
+                    }
+                }
+                // v1.2.0 C1 — Bisqwit-NTSC picture-knob live-apply (output-only;
+                // defaults decode byte-identically to the pre-C1 filter).
+                if settings.ntsc_knobs {
+                    if let Some(gfx) = self.gfx.as_mut() {
+                        gfx.set_ntsc_bisqwit_knobs(Self::ntsc_knobs_from(&self.config.graphics));
                     }
                 }
                 // v1.1.0 beta.1 — custom .pal palette: the file dialog + apply run

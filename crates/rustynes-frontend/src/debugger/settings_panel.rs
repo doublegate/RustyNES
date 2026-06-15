@@ -83,6 +83,11 @@ pub struct SettingsApply {
     /// v1.1.0 beta.1 — the CRT scanline-intensity slider changed; the app pushes
     /// the new `[graphics] crt_scanline` into the live CRT filter.
     pub crt_scanline: bool,
+    /// v1.2.0 C1 — a Bisqwit-NTSC picture knob (contrast / saturation /
+    /// brightness / hue) slider changed; the app pushes the new
+    /// `[graphics] ntsc_*` values into the live Bisqwit filter. The defaults
+    /// (all 0) are byte-identical to the pre-C1 decode.
+    pub ntsc_knobs: bool,
     /// v1.1.0 beta.1 — the user clicked "Load .pal…"; the app opens a file dialog,
     /// parses the palette, applies it to the core, and persists the path.
     pub palette_pick: bool,
@@ -110,6 +115,7 @@ impl SettingsApply {
             || self.overscan
             || self.crt_filter
             || self.crt_scanline
+            || self.ntsc_knobs
             || self.palette_pick
             || self.palette_clear
             || self.apu_channels
@@ -321,6 +327,40 @@ pub fn video_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
         }
     });
 
+    // v1.2.0 C1 — live picture knobs for the true-composite ("composite-rt",
+    // Bisqwit) filter. Only shown when that filter is selected; the defaults
+    // (all 0) are byte-identical to the pre-C1 decode.
+    if config.graphics.ntsc_filter == "composite-rt" {
+        let mut knob_changed = false;
+        ui.indent("ntsc-knobs", |ui| {
+            knob_changed |= ui
+                .add(
+                    egui::Slider::new(&mut config.graphics.ntsc_contrast, -1.0..=1.0)
+                        .text("Contrast"),
+                )
+                .changed();
+            knob_changed |= ui
+                .add(
+                    egui::Slider::new(&mut config.graphics.ntsc_saturation, -1.0..=1.0)
+                        .text("Saturation"),
+                )
+                .changed();
+            knob_changed |= ui
+                .add(
+                    egui::Slider::new(&mut config.graphics.ntsc_brightness, -100.0..=100.0)
+                        .text("Brightness"),
+                )
+                .changed();
+            knob_changed |= ui
+                .add(egui::Slider::new(&mut config.graphics.ntsc_hue, -180.0..=180.0).text("Hue"))
+                .changed();
+        });
+        if knob_changed {
+            state.apply.ntsc_knobs = true;
+            save_config(config);
+        }
+    }
+
     // v1.0.0 — overscan crop. Applied live (the gfx letterbox samples the
     // inner source rect); default off = the full 256x240 framebuffer (today's
     // presentation, byte-identical).
@@ -397,11 +437,20 @@ pub fn video_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
         let pacing_changed = config.graphics.pacing_mode != def.pacing_mode;
         let crt_changed = config.graphics.crt_filter != def.crt_filter;
         let palette_changed = config.graphics.palette_file != def.palette_file;
+        // v1.2.0 C1 — re-push the Bisqwit NTSC knobs if any moved off default.
+        // Exact equality is intentional: the goal is "differs from the default at
+        // all", and the defaults are exact literals.
+        #[allow(clippy::float_cmp)]
+        let knobs_changed = config.graphics.ntsc_contrast != def.ntsc_contrast
+            || config.graphics.ntsc_saturation != def.ntsc_saturation
+            || config.graphics.ntsc_brightness != def.ntsc_brightness
+            || config.graphics.ntsc_hue != def.ntsc_hue;
         config.graphics = def;
         state.apply.ntsc_filter |= ntsc_changed;
         state.apply.overscan |= overscan_changed;
         state.apply.pacing_mode |= pacing_changed;
         state.apply.crt_filter |= crt_changed;
+        state.apply.ntsc_knobs |= knobs_changed;
         state.apply.palette_clear |= palette_changed;
         save_config(config);
     }
@@ -631,6 +680,7 @@ mod tests {
                 apu_channels: false,
                 crt_filter: false,
                 crt_scanline: false,
+                ntsc_knobs: false,
                 palette_pick: false,
                 palette_clear: false,
                 audio_eq: false,

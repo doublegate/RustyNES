@@ -737,6 +737,16 @@ impl Gfx {
         self.ntsc_bisqwit.is_some()
     }
 
+    /// v1.2.0 C1 — push the live Bisqwit NTSC picture knobs (contrast /
+    /// saturation / brightness / hue) into the filter (no-op when it is
+    /// disabled). At [`crate::ntsc_bisqwit::NtscKnobs::DEFAULT`] the decode is
+    /// byte-identical to the pre-C1 filter.
+    pub const fn set_ntsc_bisqwit_knobs(&mut self, knobs: crate::ntsc_bisqwit::NtscKnobs) {
+        if let Some(filter) = self.ntsc_bisqwit.as_mut() {
+            filter.set_knobs(knobs);
+        }
+    }
+
     /// Enable the CRT / scanline post-pass with the given scanline intensity
     /// (`0.0..=1.0`). If the filter is already enabled this retunes its scanline
     /// intensity to `scanline` (equivalent to [`Self::set_crt_scanline`]). CRT

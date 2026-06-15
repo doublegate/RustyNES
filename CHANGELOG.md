@@ -64,6 +64,17 @@ Work toward **v1.2.0 "Curator"** (beta.1, Workstreams A + B). See
   same-stem soft-patch beside the archive still applies). Native-only (`zip`
   crate, `deflate`-only to reuse the existing flate2/miniz_oxide); the wasm
   builds stay byte-identical (the dep is in the `cfg(not(wasm))` table).
+- **NTSC per-knob live tuning** (v1.2.0 Workstream C1): the true-composite
+  (`composite-rt`, Bisqwit) NTSC filter's Contrast / Saturation / Brightness /
+  Hue are now live `[graphics]` settings (`ntsc_contrast`, `ntsc_saturation`,
+  `ntsc_brightness`, `ntsc_hue`), adjustable from sliders in Settings -> Graphics
+  and persisted to `config.toml`. Promoted from baked WGSL constants to a
+  per-frame uniform: the YIQ matrix is rebuilt in-shader from the knobs each
+  frame. Output-only (the deterministic core framebuffer and AccuracyCoin /
+  oracle results are unaffected). All four default to `0.0` (Bisqwit's neutral
+  values), at which the in-shader decode is bit-identical to the previous
+  hardcoded coefficients — existing configs and the default build are
+  byte-for-byte unchanged.
 
 ### Fixed
 
