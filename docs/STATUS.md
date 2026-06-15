@@ -460,15 +460,25 @@ ROM dumps under `tests/roms/external/`, not committed):
 
 > **Engine-lineage note.** The table above is the **original 15-mapper**
 > coverage from the early engine line (the top-25-by-title-count tranche).
-> RustyNES **v1.0.0 ships 51 mapper families** — see
-> `docs/mappers.md` §Mapper coverage matrix for the full current list. The
-> "out of scope" notes below were the early-engine scoping; they are retained
-> as history and annotated with what has since shipped in v1.0.0.
+> RustyNES **v1.0.0 shipped 51 mapper families**; **v1.2.0 (in development)
+> extends this to 87** — see `docs/mappers.md` §Mapper coverage matrix +
+> §Mapper accuracy tiering for the full current list. The "out of scope" notes
+> below were the early-engine scoping; they are retained as history and
+> annotated with what has since shipped.
 
-**Mapper count (early engine line):** 15 distinct mappers covering >95% of the
-licensed library by title count. **As of v1.0.0 the count is 51 families** —
-the remaining tail (MMC6 audio quirks, unlicensed pirate carts) is documented
-in `docs/compatibility.md`.
+**Mapper count.** 15 distinct mappers in the early engine line (>95% of the
+licensed library by title count) → **51 families at v1.0.0** → **87 families at
+v1.2.0** (in development), tiered for accuracy honesty:
+
+| Tier | Families | Accuracy-gated? | Evidence |
+|------|----------|-----------------|----------|
+| **Core** | 51 | Yes (AccuracyCoin + commercial oracle) | spec-implemented, oracle-locked |
+| **Curated** (v1.2.0) | 9 | Yes | notable games + decode spec; register-decode unit tests |
+| **BestEffort** (v1.2.0) | 27 | **No** | reference-ported long-tail; register-decode unit tests only |
+
+A CI-checkable invariant forbids any `BestEffort` mapper from backing an oracle
+ROM (`rustynes-mappers::mapper_tier`; ADR 0011). The remaining tail (unlicensed
+pirate carts, niche boards) is documented in `docs/compatibility.md`.
 
 **Early-engine "not supported" list (all since resolved in v1.0.0 unless noted):**
 
