@@ -574,9 +574,14 @@ impl ScriptEngine {
                     if !exec_addrs.contains(pc) {
                         continue;
                     }
-                    let cbs: Table = exec_t.get(*pc)?;
-                    for cb in cbs.sequence_values::<mlua::Function>() {
-                        cb?.call::<()>(*pc)?;
+                    // `Option<Table>`: a callback an earlier callback unregistered
+                    // *this frame* leaves the snapshot set stale, so the slot may
+                    // now be `Nil` — skip it rather than crash on a `FromLua`
+                    // conversion (gemini #49).
+                    if let Some(cbs) = exec_t.get::<Option<Table>>(*pc)? {
+                        for cb in cbs.sequence_values::<mlua::Function>() {
+                            cb?.call::<()>(*pc)?;
+                        }
                     }
                 }
             }
@@ -595,9 +600,12 @@ impl ScriptEngine {
                     if !set.contains(addr) {
                         continue;
                     }
-                    let cbs: Table = t.get(*addr)?;
-                    for cb in cbs.sequence_values::<mlua::Function>() {
-                        cb?.call::<()>((*addr, *value))?;
+                    // `Option<Table>`: tolerate a callback unregistered mid-frame
+                    // (gemini #49) — the snapshot set may be stale.
+                    if let Some(cbs) = t.get::<Option<Table>>(*addr)? {
+                        for cb in cbs.sequence_values::<mlua::Function>() {
+                            cb?.call::<()>((*addr, *value))?;
+                        }
                     }
                 }
             }
@@ -804,7 +812,33 @@ mod tests {
                 break;
             }
         }
-        assert!(saw, "onExec($C000) should fire from the trace log");
+        assert!(saw, "onExec($C000) should fire from the exec log");
+    }
+
+    #[test]
+    fn unregistering_a_callback_mid_frame_does_not_crash() {
+        // gemini #49: the active-address set is snapshotted before onFrame runs,
+        // so a callback that clears its own registry slot during the frame leaves
+        // the set stale. The replay must skip the now-`Nil` slot, not crash.
+        let mut nes = Nes::from_rom(&synth_writing_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            r"
+            emu.onWrite(0x2000, function(addr, val) end)
+            emu.onFrame(function()
+                -- Drop the write callback registry entry mid-frame.
+                __rustynes.write[0x2000] = nil
+                emu.log('ok')
+            end)
+            ",
+        )
+        .expect("load");
+        nes.set_access_logging(true);
+        nes.run_frame();
+        // Must not return an error (no FromLua crash on the stale Nil slot).
+        eng.on_frame(&mut nes)
+            .expect("replay tolerates mid-frame unregister");
+        assert!(eng.drain_log().contains(&"ok".to_owned()));
     }
 
     #[test]
