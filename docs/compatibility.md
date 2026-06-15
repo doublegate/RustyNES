@@ -174,17 +174,22 @@ is kept — correct for this 128 KiB-CHR title. Verified on the real cartridge:
 the title screen renders and stays rendered past frame 600. A bus-conflict unit
 test guards it.
 
-**Under investigation — SMB3 sprite flashing in World 1-1 (MMC3).** *Super Mario
-Bros. 3* is **mapper 4 (MMC3)** (the legacy "GxROM-66" label in the v2.4.0
-lineage note misattributes the board). The title screen and demo render
-correctly, but the player reports Mario **flashing once Stage 1 of World 1 is
-entered** — only in-game, not on the title/demo, so an earlier title-only
-boot-smoke missed it. This points at an MMC3-specific in-frame interaction
-(SMB3 uses the MMC3 scanline IRQ + mid-frame CHR-bank switch to split the status
-bar; a sprite-CHR bank or IRQ-scanline timing skew would manifest exactly as a
-per-frame sprite flicker). Reproduction requires a scripted-input capture that
-reaches 1-1 plus consecutive-frame analysis of the sprite region. Tracked as a
-genuine open accuracy item, not closed.
+**Resolved — SMB3 sprite flashing in World 1-1 (was *not* an MMC3 issue).**
+*Super Mario Bros. 3* (mapper 4 / MMC3) flickered Mario in/out continuously once
+in-game (the player's report; reproduced by replaying a recorded `.rnm` into
+1-1, ~26% of frames dropping Mario from OAM). The cause was **not** the mapper:
+it was the PPU **OAM-row-corruption model**, which keyed the corrupted OAM row
+off the raw PPU dot (`dot >> 1`). SMB3 disables rendering mid-scanline (`$2001`)
+to split its status bar, and NMI/DMA timing jitter shifted the disable dot so
+the flagged row intermittently landed on Mario's OAM row, wiping his sprite at
+re-enable. Mesen2 ships this corruption model OFF by default (calls it
+unfinished); the fix is a faithful port of TriCNES's eval-pointer model — the
+corrupted index is the live secondary-OAM evaluation pointer (`OAM2Address`),
+captured at the disable edge during dots 1-64 and committed on re-enable. Default
+builds stay byte-identical for games without such a split; AccuracyCoin
+OAM-Corruption (0x047B) + 139/139, nestest 0-diff, and blargg/kevtris remain
+green; `repro_smb3 --movie` idle drop count went 63-80/240 → 0. See `ppu-2c02.md`
+edge-case 2 and `crates/rustynes-test-harness/src/bin/{repro_smb3,smb3_dma_trace}.rs`.
 
 ## Audio expansion scope
 

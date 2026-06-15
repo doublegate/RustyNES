@@ -171,8 +171,11 @@ host-learns-joiner-address, a regenerated/audited 107-frame screenshot corpus + 
 README showcase montage, and CI maintenance (all stable-clippy lints fixed; clean on
 1.86 + current stable; `test-roms` job `--release`; `actions/checkout@v6`).
 **AccuracyCoin 100.00% (139/139)** holds; the ~95 unaffected oracle games stay
-byte-identical. Not reproduced headlessly (under investigation): GxROM-66 + SMB3
-sprite flashing. See `CHANGELOG.md` `[2.4.0]` + `docs/release-notes/v2.4.0.md`.
+byte-identical. SMB3 "sprite flashing" is **resolved** in v1.2.0 (it was the PPU
+OAM-row-corruption model, not MMC3 — see `compatibility.md`). The "GxROM-66"
+report is the same SMB3 title under a misattributed board label and is covered by
+that fix; no separate GxROM defect reproduced. See `CHANGELOG.md` `[2.4.0]` +
+`docs/release-notes/v2.4.0.md`.
 
 **v2.3.0 (2026-06-10) — Netplay (rollback netcode).** Two-player online
 via GGPO-style rollback over UDP: each peer runs the bit-deterministic core,
