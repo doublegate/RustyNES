@@ -1022,6 +1022,27 @@ fn save_config(config: &Config) {
 fn save_config(_config: &Config) {}
 
 /// Render the About window.
+/// The About-dialog app icon as a cached egui texture (native only).
+///
+/// Loaded once on first display and kept alive in a `thread_local` so it isn't
+/// re-uploaded each frame. `None` on wasm or decode failure.
+#[cfg(not(target_arch = "wasm32"))]
+fn about_icon_texture(ctx: &egui::Context) -> Option<egui::TextureHandle> {
+    thread_local! {
+        static ICON: std::cell::RefCell<Option<egui::TextureHandle>> =
+            const { std::cell::RefCell::new(None) };
+    }
+    ICON.with(|cell| {
+        let mut held = cell.borrow_mut();
+        if held.is_none() {
+            let img = crate::icon::about_color_image()?;
+            *held =
+                Some(ctx.load_texture("rustynes_about_icon", img, egui::TextureOptions::LINEAR));
+        }
+        held.clone()
+    })
+}
+
 fn about_window(ctx: &egui::Context, open: &mut bool) {
     if !*open {
         return;
@@ -1032,16 +1053,28 @@ fn about_window(ctx: &egui::Context, open: &mut bool) {
         .collapsible(false)
         .show(ctx, |ui| {
             ui.vertical_centered(|ui| {
+                ui.add_space(6.0);
+                // The app icon (native; the rounded corners stay transparent).
+                #[cfg(not(target_arch = "wasm32"))]
+                if let Some(tex) = about_icon_texture(ctx) {
+                    ui.image((tex.id(), egui::vec2(96.0, 96.0)));
+                    ui.add_space(8.0);
+                }
                 ui.heading("RustyNES");
-                ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
-                ui.add_space(8.0);
-                ui.label("A cycle-accurate NES emulator written in Rust");
-                ui.add_space(8.0);
+                ui.label(egui::RichText::new(format!("v{}", env!("CARGO_PKG_VERSION"))).weak());
+                ui.add_space(2.0);
+                ui.label(egui::RichText::new("Precise. Pure. Powerful.").italics());
+                ui.add_space(10.0);
+                ui.label("A cycle-accurate NES emulator written in pure Rust.");
+                ui.add_space(10.0);
                 ui.label("Created by DoubleGate");
+                ui.hyperlink_to(
+                    "github.com/doublegate/RustyNES",
+                    "https://github.com/doublegate/RustyNES",
+                );
                 ui.add_space(8.0);
-                ui.hyperlink_to("GitHub", "https://github.com/doublegate/RustyNES");
-                ui.add_space(8.0);
-                ui.label("MIT OR Apache-2.0");
+                ui.label(egui::RichText::new("MIT OR Apache-2.0").weak());
+                ui.add_space(4.0);
             });
         });
 }
