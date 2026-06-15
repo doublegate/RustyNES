@@ -107,7 +107,12 @@ async fn handle_connection(
     // Forward queued outbound messages to the socket until the channel closes.
     let forward = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
-            if write.send(Message::Text(msg.to_json())).await.is_err() {
+            // tungstenite 0.29: `Message::Text` wraps `Utf8Bytes`, not `String`.
+            if write
+                .send(Message::Text(msg.to_json().into()))
+                .await
+                .is_err()
+            {
                 break;
             }
         }
@@ -119,7 +124,7 @@ async fn handle_connection(
         let Ok(frame) = frame else { break };
         match frame {
             Message::Text(txt) => {
-                if let Some(msg) = SignalMessage::parse(&txt) {
+                if let Some(msg) = SignalMessage::parse(txt.as_str()) {
                     let actions = server.relay.lock().await.handle(id, msg);
                     dispatch(&server, actions).await;
                 }

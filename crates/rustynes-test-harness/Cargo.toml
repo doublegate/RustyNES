@@ -45,7 +45,7 @@ thiserror.workspace = true
 # PNG encoding for the v1.3.x left-edge capture bin (`capture_left_edge`),
 # which is a regular bin target and so cannot use the dev-dependency `png`.
 # Optional + only enabled by the `commercial-roms` feature the bin requires.
-png = { version = "0.17", optional = true }
+png = { version = "0.18", optional = true }
 
 [dev-dependencies]
 insta.workspace = true
@@ -53,7 +53,7 @@ pretty_assertions.workspace = true
 # PNG dump for the real-game regression harness. Only pulled in when
 # `commercial-roms` is on (the harness gates all PNG-writing code on
 # that feature).
-png = "0.17"
+png = "0.18"
 # SHA-256 for ROM dump pinning in the commercial-roms harness. The
 # snapshot files record the SHA-256 of each ROM's bytes so a user with
 # a different dump gets a clear "ROM mismatch" error instead of a

@@ -143,9 +143,10 @@ impl Drop for BadgeCache {
 /// Decode PNG bytes into an `egui::ColorImage` (RGBA8). Returns `None` on any
 /// decode error or an unsupported/oversized image.
 fn decode_png(bytes: &[u8]) -> Option<egui::ColorImage> {
-    let decoder = png::Decoder::new(bytes);
+    // png 0.18 needs a `Read + Seek` source; `&[u8]` is only `Read`.
+    let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
     let mut reader = decoder.read_info().ok()?;
-    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let mut buf = vec![0u8; reader.output_buffer_size()?];
     let info = reader.next_frame(&mut buf).ok()?;
     let w = info.width as usize;
     let h = info.height as usize;

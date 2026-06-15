@@ -152,7 +152,7 @@ ureq = { version = "2", default-features = false, features = ["tls"], optional =
 # the RA badge PNGs. Non-optional on native (the icon ships in every desktop
 # build); native-only (in this `cfg(not(wasm))` table) so the wasm builds never
 # pull it in.
-png = "0.17"
+png = "0.18"
 
 # v1.2.0 Workstream B — load ROMs directly from `.zip` archives. Native-only (in
 # this `cfg(not(wasm))` table) and `default-features = false` + `deflate` only,
