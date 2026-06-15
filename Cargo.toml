@@ -38,7 +38,7 @@ rustynes-test-harness = { path = "crates/rustynes-test-harness", version = "1.1.
 # from source (no system Lua needed); native-only (the wasm/no_std builds never
 # pull this in, since `rustynes-script` is gated behind the frontend's optional
 # `scripting` feature).
-mlua = { version = "0.10", features = ["lua54", "vendored"] }
+mlua = { version = "0.11", features = ["lua54", "vendored"] }
 
 bitflags = "2.6"
 thiserror = { version = "2.0", default-features = false }
