@@ -126,6 +126,17 @@ def cross_path(cx, cy, arm_len, arm_thk, r):
     return d + "Z"
 
 
+def logo_mark(x, y, w, h, color, sw=None, fill="none"):
+    """The classic 'racetrack' capsule OUTLINE (a rounded rectangle with fully
+    rounded ends) evoking the red logo border on period hardware -- deliberately
+    WITHOUT any wordmark, so no third-party trademark text is rendered. (x, y) is
+    the top-left corner; the ends are semicircles (rx = h/2)."""
+    if sw is None:
+        sw = max(0.4, h * 0.18)
+    return (f'<rect x="{x:.2f}" y="{y:.2f}" width="{w:.2f}" height="{h:.2f}" '
+            f'rx="{h / 2.0:.2f}" fill="{fill}" stroke="{color}" stroke-width="{sw:.2f}"/>')
+
+
 # =============================================================================
 # Text -> vector path (Press Start 2P, baked to absolute SVG coordinates)
 # =============================================================================
@@ -193,7 +204,7 @@ def draw_console():
     front face), from the multi-angle Evan-Amos reference study. Light-grey body on a
     slightly darker base; the iconic recessed dark CARTRIDGE BAY in the center of the
     front (its dark slot carried up onto the top deck) with the top-deck vent louvers
-    to its left; the red 'Nintendo Entertainment System' wordmark at front-left; two
+    to its left; the red racetrack logo capsule (no wordmark) at front-left; two
     LIGHT-grey raised POWER/RESET buttons beside the red LED at lower-left; and two
     recessed dark 7-pin controller ports at lower-right."""
     LIGHT, LIGHT_HI, LIGHT_LO = "#cdccc6", "#deddd7", "#b4b3ad"
@@ -230,8 +241,8 @@ def draw_console():
     s.append(f'<rect x="{bx:.2f}" y="{by:.2f}" width="{bw:.2f}" height="{bh:.2f}" rx="1.5" fill="url(#conBay)" stroke="#101013" stroke-width="0.8"/>')
     s.append(f'<rect x="{bx:.2f}" y="{by:.2f}" width="{bw:.2f}" height="2.2" fill="{BAYHI}" opacity="0.6"/>')
     s.append(f'<rect x="{bx + 1.5:.2f}" y="{by + bh * 0.46:.2f}" width="{bw - 3:.2f}" height="1.3" fill="#0d0d10"/>')   # door seam
-    # red Nintendo wordmark (front-left)
-    s.append(f'<text x="{fx(0.04):.2f}" y="{fy(0.40):.2f}" font-family="Arial,Helvetica,sans-serif" font-size="6.5" font-weight="700" font-style="italic" fill="{NINTENDO_RED}">Nintendo</text>')
+    # red racetrack logo capsule (front-left) -- the Nintendo-style red border, no wordmark
+    s.append(logo_mark(fx(0.04), fy(0.40) - 5.8, 24.0, 6.6, NINTENDO_RED))
     s.append(f'<text x="{fx(0.04):.2f}" y="{fy(0.40) + 4.3:.2f}" font-family="Arial,Helvetica,sans-serif" font-size="2.6" letter-spacing="0.3" fill="#3a3a3c">ENTERTAINMENT SYSTEM</text>')
     # lower-left: red LED + LIGHT-grey raised POWER/RESET buttons
     s.append(f'<circle cx="{fx(0.05):.2f}" cy="{fy(0.66):.2f}" r="1.5" fill="{LED_RED}"/>')
@@ -256,8 +267,8 @@ def draw_cartridge():
     Gyromite reference). Warm-grey shell: a LEFT column of vertical vent ridges
     (stopping at a ledge), a small top-edge notch, bottom corners that step inward to
     a narrower base, and the embossed downward triangle. The right-offset BLACK label
-    has a colored pixel-art scene, a bold title, the red Nintendo pill, an action/robot
-    series box, and the gold 'Seal of Quality'. Generic non-trademarked art."""
+    has a colored pixel-art scene, a bold title, the red logo pill (no wordmark), an
+    action/robot series box, and the gold 'Seal of Quality'. Generic non-trademarked art."""
     G, GH, GL, GE = "#8a8884", "#9c9a96", "#6e6c68", "#5a5854"
     W, H = 52.0, 58.0                         # shell footprint, centered on origin
     L, T = -W / 2.0, -H / 2.0
@@ -312,10 +323,9 @@ def draw_cartridge():
     ty = ay + ah + 1.6
     s.append(f'<rect x="{lx + 1.6:.2f}" y="{ty:.2f}" width="{lw * 0.60:.2f}" height="{lh * 0.085:.2f}" rx="0.4" fill="#d83a2a"/>')      # title
     s.append(f'<rect x="{lx + 1.6:.2f}" y="{ty + lh * 0.095:.2f}" width="{lw * 0.44:.2f}" height="{lh * 0.045:.2f}" rx="0.3" fill="#e8902a"/>')  # subtitle
-    # red Nintendo pill
+    # red logo pill (the cart's red logo block -- the racetrack capsule, no wordmark)
     py = ty + lh * 0.155
     s.append(f'<rect x="{lx + 1.6:.2f}" y="{py:.2f}" width="{lw * 0.36:.2f}" height="{lh * 0.085:.2f}" rx="{lh * 0.042:.2f}" fill="#c0201c" stroke="#fff" stroke-width="0.3"/>')
-    s.append(f'<text x="{lx + 1.6 + lw * 0.18:.2f}" y="{py + lh * 0.064:.2f}" font-family="Arial" font-size="2.0" font-weight="700" fill="#fff" text-anchor="middle">Nintendo</text>')
     # series box (lower-left) + gold seal (lower-right)
     sb = lh * 0.13
     s.append(f'<rect x="{lx + 1.6:.2f}" y="{ly + lh - sb - 1.2:.2f}" width="{sb:.2f}" height="{sb:.2f}" fill="none" stroke="#c8a23a" stroke-width="0.4"/>')
@@ -365,10 +375,10 @@ def draw_zapper():
     for i in range(5):
         cx0 = 4 + i * 2.6
         s.append(f'<path d="M {cx0:.2f},-11.5 L {cx0 + 2:.2f},-16.5" stroke="{DARK_LO}" stroke-width="0.7"/>')
-    # screw dots + red Nintendo Zapper logo on the flank
+    # screw dots + small red racetrack logo capsule on the flank (no wordmark)
     s.append(f'<circle cx="-12" cy="-2" r="1.0" fill="{DARK_LO}"/>')
     s.append(f'<circle cx="14" cy="-6" r="0.9" fill="{DARK_LO}"/>')
-    s.append(f'<text x="-25" y="-4" font-family="Arial,Helvetica,sans-serif" font-size="3" font-weight="700" font-style="italic" fill="{RED}">Nintendo</text>')
+    s.append(logo_mark(-25, -7.4, 13.0, 3.6, RED))
     # prominent red trigger (the lone color accent)
     s.append(f'<path d="M -2,5 Q 4,9 3,16 Q -2,17 -5,12 L -5,5 Z" fill="{RED}" stroke="{RED_HI}" stroke-width="0.5"/>')
     # black cable from the grip butt, curling down-left
@@ -471,8 +481,8 @@ def nes_controller(cx, cy, w, h):
     """NES-001 control pad, plan view (multi-angle reference study): a light-grey
     body dominated by a large dark charcoal FACE PLATE that carries the black cross
     D-pad (left), two medium-grey accent bars + the SELECT/START dark pills in a
-    light-grey housing with red labels above (center), the red Nintendo logo
-    (upper-right), and the two concave bright-red A/B buttons in a light-grey housing
+    light-grey housing with red labels above (center), the red racetrack logo capsule
+    (upper-right, no wordmark), and the two concave bright-red A/B buttons in a light-grey housing
     with red labels below (right)."""
     left, right = cx - w / 2.0, cx + w / 2.0
     top = cy - h / 2.0
@@ -516,8 +526,9 @@ def nes_controller(cx, cy, w, h):
         f.append(f'<rect x="{px-pw/2}" y="{py-ph/2}" width="{pw}" height="{ph/2}" rx="{ph/2}" fill="#474b53"/>')
     for (px, txt) in ((pL[0], "SELECT"), (pR[0], "START")):
         f.append(f'<text x="{px}" y="{ssy-ss_h/2-2}" font-family="Arial,Helvetica,sans-serif" font-size="6" font-weight="700" fill="{NINTENDO_RED}" text-anchor="middle">{txt}</text>')
-    # red Nintendo logo (upper-right of the plate)
-    f.append(f'<text x="{abx}" y="{top+0.34*h}" font-family="Arial,Helvetica,sans-serif" font-size="{0.13*h}" font-weight="700" font-style="italic" fill="{NINTENDO_RED}" text-anchor="middle">Nintendo</text>')
+    # red racetrack logo capsule (upper-right of the plate) -- the Nintendo-style border, no wordmark
+    logo_w, logo_h = 0.22 * w, 0.115 * h
+    f.append(logo_mark(abx - logo_w / 2.0, top + 0.255 * h, logo_w, logo_h, NINTENDO_RED))
     # A / B: light-grey housing + dark rings + CONCAVE bright-red buttons + red labels
     f.append(f'<rect x="{abx-ab_w/2}" y="{aby-ab_h/2}" width="{ab_w}" height="{ab_h}" rx="{0.28*ab_h}" fill="#c6c4bf" stroke="#7d7c77" stroke-width="0.8"/>')
     for (bx, by) in (bB, bA):

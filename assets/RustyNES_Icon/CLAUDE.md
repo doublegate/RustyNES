@@ -39,7 +39,8 @@ Output goes to `out/` by default (`out/rustynes.svg`, `out/png/icon-{16..1024}.p
 - Tweak look via the geometry constants near the top (`GEAR_TEETH`, `R_TOOTH_*`, `WORD_TOP`,
   `WORD_BOT`, color consts) and the per-peripheral `draw_*` functions; raster sizes are
   `PNG_SIZES` / `ICO_SIZES`.
-- The artwork is original geometric stylization (nothing traced from Nintendo's own artwork),
-  but the design does render a stylized "Nintendo" wordmark (a `<text>` element in the SVG) as
-  period styling — that is a third-party trademark, so treat it as a deliberate inclusion, not
-  an "no trademarks present" guarantee.
+- The artwork is original geometric stylization with **no third-party trademark text**. The
+  period "logo" on the console / cartridge / zapper / controller is rendered as an empty red
+  "racetrack" capsule outline (`logo_mark()`) evoking the classic logo border — deliberately
+  WITHOUT the "Nintendo" wordmark. The only remaining `Nintendo` strings in the script are the
+  `NINTENDO_RED` colour constant and descriptive comments; nothing renders as a wordmark.
