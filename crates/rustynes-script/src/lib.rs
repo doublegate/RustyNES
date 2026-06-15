@@ -215,13 +215,23 @@ pub struct ScriptEngine {
     read_cbs: AddrCallbacks,
     /// `onWrite(addr, fn)` callbacks, keyed by CPU address.
     write_cbs: AddrCallbacks,
+    /// `onNmi(fn)` callbacks (Lua registry keys; Rust-side, not script-visible).
+    /// Output-only; replayed once per NMI service entry in the interrupt log.
+    nmi_cbs: Rc<RefCell<Vec<RegistryKey>>>,
+    /// `onIrq(fn)` callbacks (Lua registry keys; Rust-side, not script-visible).
+    /// Output-only; replayed once per IRQ/BRK service entry in the interrupt log.
+    irq_cbs: Rc<RefCell<Vec<RegistryKey>>>,
     /// Per-frame instruction counter (reset each `on_frame`); the VM hook
     /// trips a Lua runtime error when it crosses `budget`.
     instr_count: Rc<Cell<u64>>,
     /// Per-frame instruction budget.
     budget: Rc<Cell<u64>>,
-    /// When `true`, `emu.write` is a no-op (deterministic / locked session).
-    writes_locked: bool,
+    /// When `true`, `emu.write` AND `emu.setInput` are silent no-ops
+    /// (deterministic / locked session). Shared as an `Rc<Cell<_>>` so both the
+    /// per-frame-scoped `write` accessor and the persistent `setInput` prelude
+    /// function read the live value — so `setInput` is gated identically to
+    /// `write` (T-110-E2), not merely at the host.
+    writes_locked: Rc<Cell<bool>>,
 }
 
 impl ScriptEngine {
@@ -271,9 +281,11 @@ impl ScriptEngine {
             exec_cbs: Rc::new(RefCell::new(HashMap::new())),
             read_cbs: Rc::new(RefCell::new(HashMap::new())),
             write_cbs: Rc::new(RefCell::new(HashMap::new())),
+            nmi_cbs: Rc::new(RefCell::new(Vec::new())),
+            irq_cbs: Rc::new(RefCell::new(Vec::new())),
             instr_count,
             budget,
-            writes_locked: false,
+            writes_locked: Rc::new(Cell::new(false)),
         };
         engine.install_prelude()?;
         Ok(engine)
@@ -329,11 +341,18 @@ impl ScriptEngine {
             })?,
         )?;
         let controls = Rc::clone(&self.controls);
+        let setinput_locked = Rc::clone(&self.writes_locked);
         emu.set(
             "setInput",
             self.lua
                 .create_function(move |_, (port, buttons): (u8, u8)| {
-                    push_capped(&controls, ControlCmd::SetInput { port, buttons });
+                    // T-110-E2 — gated IDENTICALLY to `emu.write`: under a locked
+                    // session (netplay / TAS replay / RA-hardcore) the command is
+                    // dropped at the source, so it can never reach the host's
+                    // late-latch and perturb a deterministic / replayed run.
+                    if !setinput_locked.get() {
+                        push_capped(&controls, ControlCmd::SetInput { port, buttons });
+                    }
                     Ok(())
                 })?,
         )?;
@@ -405,6 +424,21 @@ impl ScriptEngine {
                 Ok(())
             })?,
         )?;
+        // T-110-E1 — onNmi / onIrq: per-interrupt-service callbacks, replayed
+        // each frame from the core's committed interrupt-service log (the same
+        // Rust-side registry-key storage as onFrame, so a script can register
+        // but never inspect / clobber the registry). Output-only: the callback
+        // observes the service vector but cannot mutate emulation.
+        for (name, list) in [("onNmi", &self.nmi_cbs), ("onIrq", &self.irq_cbs)] {
+            let list = Rc::clone(list);
+            emu.set(
+                name,
+                self.lua.create_function(move |lua, f: Function| {
+                    list.borrow_mut().push(lua.create_registry_value(f)?);
+                    Ok(())
+                })?,
+            )?;
+        }
         for (name, map) in [
             ("onExec", &self.exec_cbs),
             ("onRead", &self.read_cbs),
@@ -435,10 +469,12 @@ impl ScriptEngine {
         self.budget.set(budget);
     }
 
-    /// Gate `emu.write`: when `true` (netplay / TAS replay / RA-hardcore) writes
-    /// are silently dropped so a script cannot perturb a locked session.
-    pub const fn set_writes_locked(&mut self, locked: bool) {
-        self.writes_locked = locked;
+    /// Gate `emu.write` AND `emu.setInput`: when `true` (netplay / TAS replay /
+    /// RA-hardcore) both are silently dropped so a script cannot perturb a
+    /// locked / replayed session. `&self` (interior-mutable `Cell`) so the
+    /// persistent `setInput` closure can read the live value (T-110-E2).
+    pub fn set_writes_locked(&self, locked: bool) {
+        self.writes_locked.set(locked);
     }
 
     /// Drain captured log / `print` output (oldest first).
@@ -470,6 +506,14 @@ impl ScriptEngine {
     #[must_use]
     pub fn needs_access_log(&self) -> bool {
         !self.read_cbs.borrow().is_empty() || !self.write_cbs.borrow().is_empty()
+    }
+
+    /// `true` if any `onNmi`/`onIrq` callback is registered — the host should
+    /// enable [`rustynes_core::Nes::set_interrupt_logging`] so the next frame's
+    /// committed interrupt services are captured for replay. Infallible.
+    #[must_use]
+    pub fn needs_interrupt_log(&self) -> bool {
+        !self.nmi_cbs.borrow().is_empty() || !self.irq_cbs.borrow().is_empty()
     }
 
     /// Load (and execute the top level of) a Lua script. Top-level code
@@ -525,7 +569,7 @@ impl ScriptEngine {
     pub fn on_frame(&mut self, nes: &mut Nes) -> Result<(), ScriptError> {
         let frame = nes.frame();
         let cycle = nes.cycle();
-        let writes_locked = self.writes_locked;
+        let writes_locked = self.writes_locked.get();
 
         // Snapshot the just-finished frame's exec PCs + bus accesses (owned, so
         // they don't tie up the `nes` borrow inside the scope) for the
@@ -535,6 +579,7 @@ impl ScriptEngine {
         // the matching callbacks are registered (so the gate is free when off).
         let want_exec = self.needs_exec_log();
         let want_access = self.needs_access_log();
+        let want_interrupt = self.needs_interrupt_log();
         let exec_pcs: Vec<u16> = if want_exec {
             nes.exec_log().to_vec()
         } else {
@@ -548,6 +593,17 @@ impl ScriptEngine {
         } else {
             Vec::new()
         };
+        // Snapshot this frame's committed interrupt services (owned, so the
+        // `nes` borrow is free inside the scope). Each is `(is_nmi, vector)`;
+        // replayed through onNmi / onIrq below. Empty unless onNmi/onIrq exist.
+        let interrupts: Vec<(bool, u16)> = if want_interrupt {
+            nes.interrupt_log()
+                .iter()
+                .map(|i| (i.is_nmi, i.vector))
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         let nes_cell = RefCell::new(nes);
         let lua = &self.lua;
@@ -557,6 +613,8 @@ impl ScriptEngine {
         let exec_cbs = Rc::clone(&self.exec_cbs);
         let read_cbs = Rc::clone(&self.read_cbs);
         let write_cbs = Rc::clone(&self.write_cbs);
+        let nmi_cbs = Rc::clone(&self.nmi_cbs);
+        let irq_cbs = Rc::clone(&self.irq_cbs);
 
         self.instr_count.set(0);
         let count = Rc::clone(&self.instr_count);
@@ -633,6 +691,18 @@ impl ScriptEngine {
             // registry — scripts cannot touch or corrupt it).
             for f in fns_for_frame(lua, &frame_cbs)? {
                 f.call::<()>(())?;
+            }
+
+            // Replay this frame's committed interrupt services through
+            // onNmi(vector) / onIrq(vector). Output-only; in service order.
+            // `fns_for_frame` works for these flat Vec<RegistryKey> lists too.
+            if !interrupts.is_empty() {
+                for (is_nmi, vector) in &interrupts {
+                    let list = if *is_nmi { &nmi_cbs } else { &irq_cbs };
+                    for f in fns_for_frame(lua, list)? {
+                        f.call::<()>(*vector)?;
+                    }
+                }
             }
 
             // Gate the hot replay loops on a stack-allocated bitset of the
@@ -909,6 +979,120 @@ mod tests {
                 .expect("script junk can never reach the host pump");
         }
         assert!(eng.drain_log().contains(&"ok".to_owned()));
+    }
+
+    /// NROM whose boot loop re-enables the vblank NMI each iteration then
+    /// re-loops; the NMI handler is a bare `RTI`. Re-writing `$2000` every
+    /// iteration matters: the PPU ignores register writes during the ~30k-cycle
+    /// post-reset warmup, so a single boot-time `STA $2000` would be dropped and
+    /// no NMI would ever fire. Once warmup passes the PPU fires one NMI per
+    /// frame, so the interrupt-service log records an NMI ($FFFA) each frame.
+    /// `loop: LDA #$80; STA $2000; JMP loop` ($C000).
+    fn synth_nmi_rom() -> Vec<u8> {
+        let mut bytes = vec![b'N', b'E', b'S', 0x1A, 1, 1, 0, 0];
+        bytes.resize(16, 0);
+        let mut prg = vec![0u8; 16 * 1024];
+        // $C000: LDA #$80 ; STA $2000 ; JMP $C000.
+        prg[0..8].copy_from_slice(&[0xA9, 0x80, 0x8D, 0x00, 0x20, 0x4C, 0x00, 0xC0]);
+        // $C008: RTI (the NMI handler).
+        prg[8] = 0x40;
+        let len = prg.len();
+        prg[len - 4] = 0x00; // reset vector -> $C000
+        prg[len - 3] = 0xC0;
+        prg[len - 6] = 0x08; // NMI vector ($FFFA) -> $C008
+        prg[len - 5] = 0xC0;
+        bytes.extend_from_slice(&prg);
+        bytes.resize(16 + 16 * 1024 + 8 * 1024, 0);
+        bytes
+    }
+
+    #[test]
+    fn on_nmi_fires_from_the_interrupt_log() {
+        let mut nes = Nes::from_rom(&synth_nmi_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            r"
+            nmis = 0
+            last_vec = 0
+            emu.onNmi(function(vector) nmis = nmis + 1; last_vec = vector end)
+            emu.onFrame(function() emu.log('nmis=' .. nmis .. ' vec=' .. last_vec) end)
+            ",
+        )
+        .expect("load");
+        assert!(eng.needs_interrupt_log());
+        // The host enables the interrupt log per `needs_interrupt_log`.
+        nes.set_interrupt_logging(true);
+        let mut saw = false;
+        for _ in 0..6 {
+            nes.run_frame();
+            eng.on_frame(&mut nes).expect("on_frame");
+            if eng
+                .drain_log()
+                .iter()
+                .any(|l| l.starts_with("nmis=") && !l.contains("nmis=0 "))
+            {
+                saw = true;
+                break;
+            }
+        }
+        assert!(saw, "onNmi should fire from the committed interrupt log");
+    }
+
+    #[test]
+    fn on_irq_does_not_fire_without_an_irq_source() {
+        // The NMI ROM never raises an IRQ, so onIrq must stay silent even with
+        // the interrupt log armed (proving the dispatch keys on `is_nmi`).
+        let mut nes = Nes::from_rom(&synth_nmi_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            r"
+            irqs = 0
+            emu.onIrq(function(vector) irqs = irqs + 1 end)
+            emu.onFrame(function() emu.log('irqs=' .. irqs) end)
+            ",
+        )
+        .expect("load");
+        nes.set_interrupt_logging(true);
+        for _ in 0..6 {
+            nes.run_frame();
+            eng.on_frame(&mut nes).expect("on_frame");
+        }
+        assert!(
+            eng.drain_log().iter().all(|l| l == "irqs=0"),
+            "onIrq must not fire when no IRQ is serviced"
+        );
+    }
+
+    #[test]
+    fn set_input_is_gated_when_locked() {
+        // T-110-E2 determinism guard: under a locked session (netplay / TAS
+        // replay / RA-hardcore — all surfaced via `set_writes_locked`) a script
+        // `emu.setInput` is dropped at the source, so NO `SetInput` control
+        // command ever reaches the host. This is the engine-level half of the
+        // gate; the frontend re-checks the same condition at the late-latch.
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.set_writes_locked(true);
+        eng.load("emu.onFrame(function() emu.setInput(0, 0x81) end)")
+            .expect("load");
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+        assert!(
+            eng.drain_controls().is_empty(),
+            "setInput must be a no-op (no queued ControlCmd) when writes are locked"
+        );
+
+        // And the inverse: unlocked, the same call DOES queue a SetInput.
+        eng.set_writes_locked(false);
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+        assert!(
+            eng.drain_controls().contains(&ControlCmd::SetInput {
+                port: 0,
+                buttons: 0x81
+            }),
+            "setInput must queue a SetInput command when unlocked"
+        );
     }
 
     #[test]

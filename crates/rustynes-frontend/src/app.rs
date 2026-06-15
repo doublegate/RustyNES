@@ -2753,22 +2753,31 @@ impl App {
         // and run after the guard drops, minimizing contention with the
         // emulation thread.
         let mut err = None;
+        // The combined write-gate, assigned once inside the lock so the SetInput
+        // control application below reuses the EXACT same condition as
+        // `emu.write` (T-110-E2). Every path that reaches the later read has run
+        // through the block (the early `return` exits the whole function).
+        let writes_locked;
         {
             let mut guard = self.emu.lock();
             // Read the movie flags before the `nes` borrow — a `MutexGuard`
             // deref borrows the whole guard, so the two can't overlap.
             let movie_locked = guard.movie.is_playing() || guard.movie.is_recording();
+            writes_locked = netplay_locked || movie_locked;
             let Some(nes) = guard.nes.as_mut() else {
                 return;
             };
             // Determinism gate (same policy as the raw-RAM cheat path).
-            engine.set_writes_locked(netplay_locked || movie_locked);
+            engine.set_writes_locked(writes_locked);
             // Enable the per-frame exec / access logs the registered callbacks
             // need. The exec log is independent of the Trace Logger panel's
             // `set_trace_enabled`, so scripting never fights the user's trace
             // setting (Copilot #48).
             nes.set_exec_logging(engine.needs_exec_log());
             nes.set_access_logging(engine.needs_access_log());
+            // T-110-E1 — the interrupt-service log for the Lua onNmi/onIrq
+            // callbacks (independent of the access / exec logs).
+            nes.set_interrupt_logging(engine.needs_interrupt_log());
             if let Err(e) = engine.on_frame(nes) {
                 err = Some(e.to_string());
             }
@@ -2790,8 +2799,9 @@ impl App {
         self.script_draws = draws;
 
         // Apply control commands (these `&mut self` methods re-lock the emu).
+        // `writes_locked` is the same gate `emu.write` uses; SetInput honors it.
         for cmd in &controls {
-            self.apply_script_control(cmd);
+            self.apply_script_control(cmd, writes_locked);
         }
     }
 
@@ -2967,8 +2977,13 @@ impl App {
     }
 
     /// Apply one script-issued control command to the emulator.
+    ///
+    /// `writes_locked` is the SAME determinism gate `emu.write` uses
+    /// (`netplay_locked || movie_locked`, which already folds in
+    /// `ra_hardcore_blocks()` via `netplay_locked`). `SetInput` honors it so a
+    /// script can never perturb a netplay / TAS-replay / RA-hardcore session.
     #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
-    fn apply_script_control(&mut self, cmd: &rustynes_script::ControlCmd) {
+    fn apply_script_control(&mut self, cmd: &rustynes_script::ControlCmd, writes_locked: bool) {
         use rustynes_script::ControlCmd;
         match cmd {
             ControlCmd::Pause => self.set_paused(true),
@@ -2978,13 +2993,18 @@ impl App {
                     self.handle_load_state(*slot);
                 }
             }
-            // Input override through the emu-thread input path is a documented
-            // follow-up (see docs/scripting.md); the command is accepted but not
-            // yet wired so it does not silently corrupt the late-latch input.
-            // Warn the author once so it isn't a silent no-op (L2).
-            ControlCmd::SetInput { .. } => {
-                if let Some(dbg) = self.debugger.as_mut() {
-                    dbg.script_panel().warn_setinput_once();
+            // v1.2.0 (T-110-E2) — stash the per-port override on the core; it is
+            // merged at the next `EmuCore::latch` (the deterministic late-latch
+            // point a real keypress enters at) and consumed there. GATED
+            // identically to `emu.write`: under lock the override is NEVER
+            // stored, so `latch` stays byte-identical and a locked / replayed
+            // session is provably unperturbed.
+            ControlCmd::SetInput { port, buttons } => {
+                if writes_locked {
+                    return;
+                }
+                if *port < 2 {
+                    self.emu.lock().script_input_override[*port as usize] = Some(*buttons);
                 }
             }
         }

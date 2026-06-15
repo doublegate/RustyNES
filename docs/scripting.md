@@ -51,13 +51,22 @@ Two examples live in [`examples/scripts/`](../examples/scripts): `hud.lua`
 | `emu.onExec(addr, fn)` | After a frame, for each time the CPU executed an instruction at `addr` (`fn(addr)`). |
 | `emu.onRead(addr, fn)` | After a frame, for each CPU read of `addr` (`fn(addr, value)`). |
 | `emu.onWrite(addr, fn)` | After a frame, for each CPU write to `addr` (`fn(addr, value)`). |
+| `emu.onNmi(fn)` | After a frame, once per NMI the CPU serviced that frame (`fn(vector)`, `vector == 0xFFFA`). |
+| `emu.onIrq(fn)` | After a frame, once per IRQ / BRK the CPU serviced that frame (`fn(vector)`, `vector == 0xFFFE`). |
 
-`onExec` / `onRead` / `onWrite` are **observational** and are dispatched by
-replaying the frame's trace / bus-access logs *after* the frame completes — they
-report what happened, they do not intercept execution mid-instruction (a
-deliberate limitation that keeps the cycle-accurate core `#![no_std]` and the
-determinism contract intact; see ADR 0010). `onNmi` / `onIrq` are a follow-up
-(blocked on the non-`const` interrupt sampler).
+`onExec` / `onRead` / `onWrite` / `onNmi` / `onIrq` are **observational** and are
+dispatched by replaying the frame's trace / bus-access / interrupt-service logs
+*after* the frame completes — they report what happened, they do not intercept
+execution mid-instruction (a deliberate limitation that keeps the cycle-accurate
+core `#![no_std]` and the determinism contract intact; see ADR 0010).
+
+`onNmi` / `onIrq` tap the CPU's **committed** interrupt-service commit point
+(`Bus::notify_irq_service`, the same point the IRQ trace records) — the cycle the
+CPU fetches its service vector — *not* the speculative `poll_nmi` / `poll_irq`
+sampler that ADR 0010 flagged as unreliable. So a callback sees exactly the
+interrupts the CPU actually serviced, in service order, classified by the vector
+that was fetched (`0xFFFA` ⇒ NMI, `0xFFFE` ⇒ IRQ/BRK — robust even when an NMI
+hijacks an in-progress IRQ/BRK sequence).
 
 ### Control
 
@@ -66,7 +75,7 @@ determinism contract intact; see ADR 0010). `onNmi` / `onIrq` are a follow-up
 | `emu.pause()` | Pause emulation. |
 | `emu.saveState(slot)` | Save to numbered slot. |
 | `emu.loadState(slot)` | Load from numbered slot (ignored under RA-hardcore). |
-| `emu.setInput(port, buttons)` | *Accepted but not yet applied* — input override through the emu-thread late-latch path is a follow-up. |
+| `emu.setInput(port, buttons)` | Override port `port`'s (0 = P1, 1 = P2) controller buttons for the next frame (`buttons` is the standard NES bitmask: bit 0 = A, 1 = B, 2 = Select, 3 = Start, 4-7 = Up/Down/Left/Right). Merged at the deterministic late-latch; **gated identically to `emu.write`** (no-op under netplay / TAS replay / RA-hardcore). |
 
 ### Overlay + logging
 
@@ -90,10 +99,20 @@ crop — so HUD coordinates line up with game pixels.
   process, or the network.
 - **Budget.** A runaway script (e.g. an infinite loop in a callback) is aborted
   by a per-frame VM-instruction budget.
-- **Write gating.** `emu.write` mutates state, so it is **disabled** during
-  netplay, TAS-movie replay/record, and RetroAchievements hardcore mode — the
-  same policy as the Game Genie / raw-RAM cheat path. Reads and the overlay are
-  always allowed.
+- **Write gating.** `emu.write` *and* `emu.setInput` mutate state / input, so
+  both are **disabled** during netplay, TAS-movie replay/record, and
+  RetroAchievements hardcore mode — the same policy as the Game Genie / raw-RAM
+  cheat path. The gate is enforced twice: the engine drops the command at the
+  source (it never queues), and the host re-checks the identical condition
+  (`netplay_locked || movie_locked`, which folds in RA-hardcore) at the
+  late-latch — so a locked / replayed session is provably unperturbed. Reads and
+  the overlay are always allowed.
+- **`emu.setInput` late-latch.** When unlocked, a `setInput(port, buttons)` is
+  applied at the *same* deterministic point a real keypress enters — the
+  per-frame controller latch, just before the frame runs — so a session that
+  records or replays this exact input stream stays bit-identical. The override is
+  one-shot per call (it does not stick across frames); a script that wants a
+  button held re-issues it from `onFrame`.
 - **Pacing.** The engine runs on the UI thread (Lua is not thread-safe to share
   with the emulation thread), so callbacks fire at display rate; the
   exec/read/write logs reflect the most recent emulated frame. Callbacks execute
@@ -107,9 +126,6 @@ crop — so HUD coordinates line up with game pixels.
 - **Overlay coordinates** are mapped onto the actual letterboxed game rect
   (honouring 8:7 pixel-aspect correction + overscan crop), so HUD coordinates
   line up with game pixels.
-- **`emu.setInput`** is accepted but **not yet applied** (input override through
-  the emulation thread's late-latch path is a follow-up); calling it logs a
-  one-time notice to the console.
 
 ## See also
 

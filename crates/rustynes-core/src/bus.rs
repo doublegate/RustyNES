@@ -148,6 +148,35 @@ pub struct AccessRec {
 #[cfg(feature = "debug-hooks")]
 const ACCESS_CAP: usize = 60_000;
 
+/// v1.2.0 (Workstream E, T-110-E1) — one interrupt-service record for the Lua
+/// `onNmi` / `onIrq` callbacks: the service direction + the vector the CPU
+/// fetched its new PC from.
+///
+/// Captured at the commit point — [`Bus::notify_irq_service`], called once per
+/// real interrupt entry right before the CPU reads the service vector. This is
+/// the *committed* service (the same point the IRQ trace records), NOT the
+/// speculative `poll_nmi` / `poll_irq` sampler that ADR 0010 flagged as
+/// unreliable — so a script that watches `onNmi`/`onIrq` sees exactly the
+/// interrupts the CPU actually serviced this frame, in order. Output-only and
+/// gated behind `interrupt_logging`; the host (Lua engine) enables it only
+/// while `onNmi`/`onIrq` callbacks are registered.
+#[cfg(feature = "debug-hooks")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InterruptRec {
+    /// `true` for an NMI service entry (`$FFFA`), `false` for an IRQ/BRK
+    /// service entry (`$FFFE`).
+    pub is_nmi: bool,
+    /// The service vector the CPU fetched its new PC from (`$FFFA` for an NMI,
+    /// `$FFFE` for IRQ/BRK).
+    pub vector: u16,
+}
+
+/// Max interrupt-service records captured per frame. A frame services at most a
+/// few hundred interrupts (NMI once + mapper/APU IRQs); this caps a pathological
+/// case so the log can't grow unbounded. A frame that overflows is truncated.
+#[cfg(feature = "debug-hooks")]
+const INTERRUPT_CAP: usize = 4_096;
+
 /// Lockstep bus.
 ///
 /// Owns the entire emulator's mutable state. The CPU borrows `&mut LockstepBus`
@@ -250,6 +279,15 @@ pub struct LockstepBus {
     /// Whether the bus-access log is recording. Default `false`.
     #[cfg(feature = "debug-hooks")]
     access_logging: bool,
+    /// v1.2.0 (T-110-E1) — per-frame interrupt-service log (this frame's
+    /// committed NMI / IRQ / BRK service entries) for the Lua `onNmi`/`onIrq`
+    /// callbacks. Output-only; populated only while `interrupt_logging`, cleared
+    /// per frame.
+    #[cfg(feature = "debug-hooks")]
+    interrupts: alloc::vec::Vec<InterruptRec>,
+    /// Whether the interrupt-service log is recording. Default `false`.
+    #[cfg(feature = "debug-hooks")]
+    interrupt_logging: bool,
     /// Cumulative CPU cycle counter.
     pub(crate) cycle: u64,
 
@@ -595,6 +633,10 @@ impl LockstepBus {
             accesses: alloc::vec::Vec::new(),
             #[cfg(feature = "debug-hooks")]
             access_logging: false,
+            #[cfg(feature = "debug-hooks")]
+            interrupts: alloc::vec::Vec::new(),
+            #[cfg(feature = "debug-hooks")]
+            interrupt_logging: false,
             cycle: 0,
             dma_pending: None,
             dma_cycles_owed: 0,
@@ -1315,6 +1357,33 @@ impl LockstepBus {
     #[cfg(feature = "debug-hooks")]
     pub fn clear_accesses(&mut self) {
         self.accesses.clear();
+    }
+
+    /// v1.2.0 (T-110-E1) — start/stop the Lua interrupt-service log.
+    #[cfg(feature = "debug-hooks")]
+    pub const fn set_interrupt_logging(&mut self, enabled: bool) {
+        self.interrupt_logging = enabled;
+    }
+
+    /// Whether the interrupt-service log is recording.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub const fn interrupt_logging(&self) -> bool {
+        self.interrupt_logging
+    }
+
+    /// The interrupt-service entries captured so far this frame.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    #[allow(clippy::missing_const_for_fn)] // Vec->slice deref is not const.
+    pub fn interrupts(&self) -> &[InterruptRec] {
+        &self.interrupts
+    }
+
+    /// Clear the interrupt-service log (called per frame by the run loop).
+    #[cfg(feature = "debug-hooks")]
+    pub fn clear_interrupts(&mut self) {
+        self.interrupts.clear();
     }
 
     /// Clear the event log (called at each frame start while recording).
@@ -3495,6 +3564,25 @@ impl Bus for LockstepBus {
     }
 
     fn notify_irq_service(&mut self, vector: u16, is_nmi: bool) {
+        // v1.2.0 (T-110-E1) — Lua onNmi/onIrq interrupt-service tap. This is the
+        // committed-service commit point (same as the IRQ trace below), NOT the
+        // speculative poll_nmi/poll_irq sampler. Output-only, gated; no-op when
+        // `debug-hooks` is off (the log slot only exists feature-gated).
+        //
+        // The reliable NMI/IRQ discriminator here is the COMMITTED `vector`
+        // ($FFFA = NMI, $FFFE = IRQ/BRK), not the `is_nmi` arg: the unified
+        // dispatch always enters `service_interrupt` with the IRQ vector and
+        // resolves the NMI *hijack* internally (so the `is_nmi` arg reads
+        // `false` on a hijacked NMI). Classifying by the vector the CPU actually
+        // fetched reports exactly the service that committed.
+        #[cfg(feature = "debug-hooks")]
+        if self.interrupt_logging && self.interrupts.len() < INTERRUPT_CAP {
+            let _ = is_nmi;
+            self.interrupts.push(InterruptRec {
+                is_nmi: vector == 0xFFFA,
+                vector,
+            });
+        }
         // Phase 1.2 of Track C1 attempt 14: emit a [`ServiceEvent`] into
         // the IRQ trace if the trace is armed.  Production builds with
         // the `irq-timing-trace` feature OFF compile this down to a

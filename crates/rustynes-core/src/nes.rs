@@ -422,6 +422,13 @@ impl Nes {
         if self.bus.access_logging() {
             self.bus.clear_accesses();
         }
+        // T-110-E1 — the Lua onNmi/onIrq interrupt-service log is per-frame too
+        // (cleared here so a replay only ever sees this frame's services, never
+        // a stale carry-over — mirrors the exec_log clear below).
+        #[cfg(feature = "debug-hooks")]
+        if self.bus.interrupt_logging() {
+            self.bus.clear_interrupts();
+        }
         // T-110-E2 — the Lua onExec exec-PC log is per-frame (cleared here so a
         // replay only ever sees this frame's PCs, never a stale carry-over).
         #[cfg(feature = "debug-hooks")]
@@ -682,6 +689,34 @@ impl Nes {
     #[allow(clippy::missing_const_for_fn)] // slice deref is not const.
     pub fn exec_log(&self) -> &[u16] {
         &self.exec_log
+    }
+
+    /// v1.2.0 (T-110-E1) — start/stop the per-frame interrupt-service log for
+    /// the Lua `onNmi` / `onIrq` callbacks. The log records this frame's
+    /// committed NMI / IRQ / BRK service entries (captured at the CPU's
+    /// service-vector commit point, NOT the speculative poll sampler); it is
+    /// cleared at each [`Self::run_frame`]. Default off; output-only. Enabled by
+    /// the scripting engine only while `onNmi`/`onIrq` callbacks exist. Mirrors
+    /// [`Self::set_exec_logging`].
+    #[cfg(feature = "debug-hooks")]
+    pub const fn set_interrupt_logging(&mut self, enabled: bool) {
+        self.bus.set_interrupt_logging(enabled);
+    }
+
+    /// Whether the per-frame interrupt-service log is recording.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub const fn interrupt_logging(&self) -> bool {
+        self.bus.interrupt_logging()
+    }
+
+    /// This frame's committed interrupt-service entries, in service order (for
+    /// the Lua engine). Mirrors [`Self::exec_log`] / [`Self::accesses`].
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    #[allow(clippy::missing_const_for_fn)] // slice deref is not const.
+    pub fn interrupt_log(&self) -> &[crate::bus::InterruptRec] {
+        self.bus.interrupts()
     }
 
     /// Borrow the framebuffer (RGBA8, 256x240).

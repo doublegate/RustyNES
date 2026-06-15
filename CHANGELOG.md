@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Work toward **v1.2.0 "Curator"** (beta.1-2, Workstreams A + B + C). See
+Work toward **v1.2.0 "Curator"** (beta.1-2, Workstreams A + B + C + D + E). See
 `docs/adr/0011-mapper-tiering.md`, `docs/adr/0013-composable-shader-stack.md`,
 and the v1.2.0 plan.
 
@@ -155,6 +155,34 @@ and the v1.2.0 plan.
   deterministic. The shipped build + AccuracyCoin **(139/139)** + `nestest`
   0-diff + blargg / kevtris are byte-identical to before; the no_std chip stack
   still cross-compiles to `thumbv7em-none-eabihf`.
+- **Lua scripting depth — `emu.onNmi` / `emu.onIrq`** (v1.2.0 Workstream E, E1,
+  T-110-E1). Two new observational callbacks fire once per interrupt the CPU
+  serviced that frame (`fn(vector)`). They tap the **committed** service commit
+  point (`Bus::notify_irq_service`, the same point the IRQ trace uses) — not the
+  speculative `poll_nmi` / `poll_irq` sampler ADR 0010 flagged as unreliable — so
+  a script sees exactly the interrupts that committed, in order, classified by the
+  fetched vector (`0xFFFA` ⇒ NMI, `0xFFFE` ⇒ IRQ/BRK, robust under NMI hijack). A
+  new `debug-hooks`-gated per-frame interrupt-service log on `Nes` mirrors
+  `exec_log` (cleared at the top of `run_frame`; `interrupt_log()` /
+  `set_interrupt_logging()` accessors); the engine enables it only while an
+  `onNmi`/`onIrq` callback is registered.
+- **Lua scripting depth — `emu.setInput` wired through the late-latch** (v1.2.0
+  Workstream E, E2, T-110-E2). `emu.setInput(port, buttons)` now applies a per-
+  port controller override at the deterministic late-latch (`EmuCore::latch`,
+  before `produce_one_frame`) — the *same* point a real keypress enters — so a
+  recorded / replayed session stays bit-identical. The override is one-shot per
+  call. It is **gated identically to `emu.write`**: the engine drops the command
+  at the source under a locked session and the host re-checks the identical
+  `netplay_locked || movie_locked` condition (which folds in RA-hardcore) before
+  storing it, so a script can never perturb a netplay / TAS-replay / RA-hardcore
+  run. (Supersedes the v1.1.0 "accepted but not applied" stub + its one-time
+  console warning.)
+- **Determinism contract held for Workstream E (E1 + E2)**: the interrupt log is
+  `debug-hooks`-gated (a zero-cost no-op when off) and the scripting integration
+  is behind the default-OFF `scripting` feature, so the shipped / wasm / no_std
+  builds are byte-identical to today. AccuracyCoin **(139/139)** + `nestest`
+  0-diff + blargg / kevtris stay green; the no_std chip stack still cross-compiles
+  to `thumbv7em-none-eabihf`.
 
 ### Fixed
 
