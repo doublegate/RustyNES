@@ -1,6 +1,6 @@
 # RustyNES
 
-<img src="images/RustyNES_Logo-Icon.jpg" alt="RustyNES Logo Icon" width="150">
+<img src="images/RustyNES_Logo-Icon.png" alt="RustyNES Logo Icon" width="150">
 
 <p align="center">
   <img src="images/RustyNES_Banner-Logo.jpg" alt="RustyNES Banner Logo" width="800">
