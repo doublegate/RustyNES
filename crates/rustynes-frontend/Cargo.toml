@@ -63,6 +63,17 @@ retroachievements = ["dep:rustynes-cheevos", "dep:ureq"]
 # `cargo build -p rustynes-frontend --features scripting`.
 scripting = ["dep:rustynes-script"]
 
+# v1.2.0 Workstream F4 — EXPERIMENTAL wasm Lua scripting (default OFF, wasm-only).
+# Forwards into `rustynes-script`'s pure-Rust piccolo backend (the
+# `rustynes-script-wasm` alias in the wasm32 dep table below, built
+# `--no-default-features --features script-wasm` so it never pulls mlua's C). A
+# SEPARATE feature from native `scripting`; enable with
+# `cargo build -p rustynes-frontend --target wasm32-unknown-unknown --features script-wasm`.
+# piccolo (via ahash) transitively needs `getrandom 0.2`'s `js` backend on
+# wasm32, so this feature also activates the `getrandom` shim below. Explicitly
+# NOT byte-parity with the native mlua engine — see ADR 0012.
+script-wasm = ["dep:rustynes-script-wasm", "dep:getrandom", "dep:getrandom_03"]
+
 # v2.8.0 Phase 0 — opt-in GPU pass timing (default OFF, native-only).
 #
 # Requests wgpu `TIMESTAMP_QUERY` (when the adapter offers it) and brackets
@@ -208,6 +219,27 @@ libc = { version = "0.2", optional = true }
 # `WebRtcTransport` over an `RtcDataChannel`. The native frontend keeps its
 # own `rustynes-netplay` dep (UDP, above); this wasm one drives the WebRTC path.
 rustynes-netplay.workspace = true
+
+# v1.2.0 Workstream F4 — EXPERIMENTAL wasm Lua scripting (behind the default-OFF
+# `script-wasm` feature). Aliased to keep it cleanly distinct from the native
+# `rustynes-script` dep (mlua, in the `cfg(not(wasm32))` table above): this one
+# builds the pure-Rust piccolo backend with `--no-default-features --features
+# script-wasm`, so it never compiles mlua's vendored C. Optional + only in this
+# wasm32 table, so the default wasm builds (and all native builds) never see it.
+rustynes-script-wasm = { package = "rustynes-script", path = "../rustynes-script", version = "1.1.0", default-features = false, features = ["script-wasm"], optional = true }
+
+# v1.2.0 Workstream F4 — getrandom shims for the piccolo dep tree. piccolo
+# pulls TWO getrandom majors on wasm32, each of which must explicitly opt into a
+# browser backend (the `script-wasm` feature activates both `dep:` aliases):
+#   * `rand` -> getrandom 0.2 — selected by the `js` Cargo feature.
+#   * `ahash` -> getrandom 0.3 — selected by the `wasm_js` Cargo feature AND the
+#     `--cfg getrandom_backend="wasm_js"` rustflag (set for wasm32 in the
+#     workspace `.cargo/config.toml`). getrandom 0.3 split the backend selector
+#     out of Cargo features into that cfg, so BOTH are required.
+# Both are optional + activated only by `script-wasm`, so a default wasm build
+# (ahash `no-rng`, no piccolo) never pulls either.
+getrandom = { version = "0.2", features = ["js"], optional = true }
+getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"], optional = true }
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
 console_error_panic_hook.workspace = true

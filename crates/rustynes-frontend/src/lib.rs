@@ -114,6 +114,10 @@ pub mod wasm_io;
 // frontends, so touch is recorded/replayed like a keypress. wasm-only.
 #[cfg(target_arch = "wasm32")]
 pub mod wasm_touch;
+// v1.2.0 Workstream F4 — EXPERIMENTAL wasm Lua engine JS bridge (piccolo). Only
+// when the off-by-default `script-wasm` feature is on. See ADR 0012.
+#[cfg(all(target_arch = "wasm32", feature = "script-wasm"))]
+pub mod wasm_script;
 // v2.6.0 — browser netplay over WebRTC (a WebSocket signaling client + the
 // RtcPeerConnection / RtcDataChannel handshake yielding a `WebRtcTransport`
 // that drives a `RollbackSession`). Compile-verified; a full browser session

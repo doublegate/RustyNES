@@ -480,6 +480,15 @@ pub struct App {
     /// egui pass and refreshed on each pump.
     #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
     script_draws: Vec<rustynes_script::DrawCmd>,
+    /// v1.2.0 Workstream F4 — the EXPERIMENTAL wasm Lua engine (piccolo, behind
+    /// the `script-wasm` feature). Same shape as the native `script` field but
+    /// over the `rustynes_script_wasm` (piccolo) backend; loaded from the
+    /// browser via the `wasm_load_script` bridge. See ADR 0012.
+    #[cfg(all(feature = "script-wasm", target_arch = "wasm32"))]
+    script_wasm: Option<rustynes_script_wasm::ScriptEngine>,
+    /// Overlay draw commands the wasm script issued this frame (egui pass).
+    #[cfg(all(feature = "script-wasm", target_arch = "wasm32"))]
+    script_draws_wasm: Vec<rustynes_script_wasm::DrawCmd>,
     /// v1.0.0 — the always-on desktop UX shell state (menu/status-bar
     /// visibility, settings tab, status toast, mirrored pause/fullscreen
     /// flags). The shell UI itself is built inside the debugger overlay's
@@ -695,6 +704,10 @@ impl App {
             script: None,
             #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
             script_draws: Vec::new(),
+            #[cfg(all(feature = "script-wasm", target_arch = "wasm32"))]
+            script_wasm: None,
+            #[cfg(all(feature = "script-wasm", target_arch = "wasm32"))]
+            script_draws_wasm: Vec::new(),
             ui,
             active_save_slot: 0,
             speed: 1.0,
@@ -786,6 +799,10 @@ impl App {
             script: None,
             #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
             script_draws: Vec::new(),
+            #[cfg(all(feature = "script-wasm", target_arch = "wasm32"))]
+            script_wasm: None,
+            #[cfg(all(feature = "script-wasm", target_arch = "wasm32"))]
+            script_draws_wasm: Vec::new(),
             ui,
             active_save_slot: 0,
             speed: 1.0,
@@ -2861,6 +2878,176 @@ impl App {
         }
     }
 
+    /// v1.2.0 Workstream F4 — load a Lua script into the EXPERIMENTAL wasm
+    /// (piccolo) engine, replacing any running one. Called from the
+    /// `wasm_load_script` JS bridge. Logs to the browser console; piccolo is
+    /// not byte-parity with the native mlua engine (ADR 0012).
+    #[cfg(all(feature = "script-wasm", target_arch = "wasm32"))]
+    pub fn load_script_wasm(&mut self, src: &str) {
+        self.script_wasm = None;
+        self.script_draws_wasm.clear();
+        let mut engine = match rustynes_script_wasm::ScriptEngine::new() {
+            Ok(e) => e,
+            Err(e) => {
+                Self::wasm_console_warn(&format!("[script] engine init failed: {e}"));
+                return;
+            }
+        };
+        match engine.load(src) {
+            Ok(()) => {
+                self.script_wasm = Some(engine);
+                Self::wasm_console_warn("[script] loaded (experimental piccolo backend)");
+            }
+            Err(e) => Self::wasm_console_warn(&format!("[script] load error: {e}")),
+        }
+    }
+
+    /// v1.2.0 Workstream F4 — pump the EXPERIMENTAL wasm (piccolo) engine for
+    /// one produced frame: gate writes under a browser-netplay session, run the
+    /// `onFrame` callbacks under the live `Nes`, then stash the overlay draws +
+    /// surface log/errors to the browser console. Mirrors the native
+    /// [`Self::pump_scripts`] minus the native-only console / file-dialog UI.
+    #[cfg(all(feature = "script-wasm", target_arch = "wasm32"))]
+    fn pump_scripts_wasm(&mut self) {
+        // A JS `rustynes_load_script` / `rustynes_stop_script` arrives via the
+        // `wasm_script` thread-local bridge; apply it before pumping.
+        if let Some(src) = crate::wasm_script::take_pending() {
+            if src.is_empty() {
+                self.script_wasm = None;
+                self.script_draws_wasm.clear();
+                Self::wasm_console_warn("[script] stopped");
+            } else {
+                self.load_script_wasm(&src);
+            }
+        }
+        if self.script_wasm.is_none() {
+            return;
+        }
+        // Browser netplay is the wasm analog of the native lock (TAS / movie
+        // replay is native-only on wasm), so it is the sole write-gate here.
+        let netplay_locked = self
+            .browser_netplay
+            .as_ref()
+            .is_some_and(crate::wasm_netplay::BrowserNetplay::is_active);
+        let engine = self.script_wasm.as_mut().expect("checked is_some");
+        let mut err = None;
+        {
+            let mut guard = self.emu.lock();
+            let movie_locked = guard.movie.is_playing() || guard.movie.is_recording();
+            let writes_locked = netplay_locked || movie_locked;
+            let Some(nes) = guard.nes.as_mut() else {
+                return;
+            };
+            engine.set_writes_locked(writes_locked);
+            if let Err(e) = engine.on_frame(nes) {
+                err = Some(e.to_string());
+            }
+        }
+        let log = engine.drain_log();
+        // Control commands are accepted but applied minimally on wasm (pause /
+        // save / load state route through the existing handlers); setInput is
+        // intentionally NOT wired on wasm in this first cut (documented).
+        let _controls = engine.drain_controls();
+        self.script_draws_wasm = engine.drain_draws();
+        for line in log {
+            Self::wasm_console_warn(&format!("[script] {line}"));
+        }
+        if let Some(e) = err {
+            Self::wasm_console_warn(&format!("[script] runtime error: {e}"));
+        }
+    }
+
+    /// v1.2.0 Workstream F4 — paint the wasm script's overlay draws through the
+    /// egui pass. Mirrors [`Self::paint_script_overlay`] for the
+    /// `rustynes_script_wasm::DrawCmd` type (the two `DrawCmd`s are distinct
+    /// because the wasm engine is a separate crate alias).
+    #[cfg(all(feature = "script-wasm", target_arch = "wasm32"))]
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
+        clippy::suboptimal_flops
+    )]
+    fn paint_script_overlay_wasm(
+        ctx: &egui::Context,
+        draws: &[rustynes_script_wasm::DrawCmd],
+        par_8_7: bool,
+        hide_overscan: bool,
+    ) {
+        use rustynes_script_wasm::DrawCmd;
+        if draws.is_empty() {
+            return;
+        }
+        let screen = ctx.screen_rect();
+        let crop_top = if hide_overscan { 8.0 } else { 0.0 };
+        let visible_h = if hide_overscan { 224.0 } else { 240.0 };
+        let img_w = if par_8_7 { 256.0 * 8.0 / 7.0 } else { 256.0 };
+        let nes_aspect = img_w / visible_h;
+        let win_aspect = screen.width() / screen.height().max(1.0);
+        let (game_w, game_h) = if win_aspect > nes_aspect {
+            (screen.height() * nes_aspect, screen.height())
+        } else {
+            (screen.width(), screen.width() / nes_aspect)
+        };
+        let origin_x = screen.min.x + (screen.width() - game_w) * 0.5;
+        let origin_y = screen.min.y + (screen.height() - game_h) * 0.5;
+        let sx = game_w / 256.0;
+        let sy = game_h / visible_h;
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new("lua_script_overlay_wasm"),
+        ));
+        let col = |c: u32| {
+            egui::Color32::from_rgba_unmultiplied(
+                (c >> 24) as u8,
+                (c >> 16) as u8,
+                (c >> 8) as u8,
+                c as u8,
+            )
+        };
+        let p = |x: i32, y: i32| {
+            egui::pos2(
+                origin_x + x as f32 * sx,
+                origin_y + (y as f32 - crop_top) * sy,
+            )
+        };
+        for d in draws {
+            match d {
+                DrawCmd::Text { x, y, color, text } => {
+                    painter.text(
+                        p(*x, *y),
+                        egui::Align2::LEFT_TOP,
+                        text,
+                        egui::FontId::monospace(10.0 * sy.max(1.0)),
+                        col(*color),
+                    );
+                }
+                DrawCmd::Rect { x, y, w, h, color } => {
+                    painter.rect_filled(
+                        egui::Rect::from_min_size(
+                            p(*x, *y),
+                            egui::vec2(*w as f32 * sx, *h as f32 * sy),
+                        ),
+                        0.0,
+                        col(*color),
+                    );
+                }
+                DrawCmd::Pixel { x, y, color } => {
+                    painter.rect_filled(
+                        egui::Rect::from_min_size(p(*x, *y), egui::vec2(sx.max(1.0), sy.max(1.0))),
+                        0.0,
+                        col(*color),
+                    );
+                }
+            }
+        }
+    }
+
+    /// Best-effort browser-console warn (wasm script logging sink).
+    #[cfg(all(feature = "script-wasm", target_arch = "wasm32"))]
+    fn wasm_console_warn(msg: &str) {
+        web_sys::console::warn_1(&wasm_bindgen::JsValue::from_str(msg));
+    }
+
     /// Handle a console load/reload/stop request.
     #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
     fn handle_script_action(&mut self, action: crate::debugger::ScriptAction) {
@@ -2912,7 +3099,7 @@ impl App {
                 return;
             }
         };
-        let engine = match rustynes_script::ScriptEngine::new() {
+        let mut engine = match rustynes_script::ScriptEngine::new() {
             Ok(e) => e,
             Err(e) => {
                 if let Some(dbg) = self.debugger.as_mut() {
@@ -4497,6 +4684,12 @@ impl App {
             };
 
             if produced {
+                // v1.2.0 Workstream F4 — pump the EXPERIMENTAL wasm Lua engine
+                // for this produced frame (after the frame, before present), so
+                // its overlay draws are ready for the egui pass.
+                #[cfg(feature = "script-wasm")]
+                self.pump_scripts_wasm();
+
                 let (fps, movie_status, mut perf_view) = {
                     let emu = self.emu.lock();
                     let mut view = emu.perf.view();
@@ -5454,6 +5647,12 @@ impl ApplicationHandler<AppEvent> for App {
                     let script_par = self.config.ui.pixel_aspect_correction;
                     #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
                     let script_overscan = self.config.graphics.hide_overscan;
+                    #[cfg(all(feature = "script-wasm", target_arch = "wasm32"))]
+                    let script_draws_wasm = &self.script_draws_wasm;
+                    #[cfg(all(feature = "script-wasm", target_arch = "wasm32"))]
+                    let script_par_wasm = self.config.ui.pixel_aspect_correction;
+                    #[cfg(all(feature = "script-wasm", target_arch = "wasm32"))]
+                    let script_overscan_wasm = self.config.graphics.hide_overscan;
                     let gfx = self.gfx.as_mut().expect("checked above");
                     let debugger = self
                         .debugger
@@ -5478,6 +5677,13 @@ impl ApplicationHandler<AppEvent> for App {
                             #[cfg(target_arch = "wasm32")]
                             let extra = |ctx: &egui::Context, cfg: &mut crate::config::Config| {
                                 crate::wasm_lobby::show(ctx, wasm_lobby, cfg);
+                                #[cfg(feature = "script-wasm")]
+                                Self::paint_script_overlay_wasm(
+                                    ctx,
+                                    script_draws_wasm,
+                                    script_par_wasm,
+                                    script_overscan_wasm,
+                                );
                             };
                             #[cfg(not(target_arch = "wasm32"))]
                             let extra = |ctx: &egui::Context, _cfg: &mut crate::config::Config| {
@@ -5575,6 +5781,12 @@ impl ApplicationHandler<AppEvent> for App {
                     let script_par = self.config.ui.pixel_aspect_correction;
                     #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
                     let script_overscan = self.config.graphics.hide_overscan;
+                    #[cfg(all(feature = "script-wasm", target_arch = "wasm32"))]
+                    let script_draws_wasm = &self.script_draws_wasm;
+                    #[cfg(all(feature = "script-wasm", target_arch = "wasm32"))]
+                    let script_par_wasm = self.config.ui.pixel_aspect_correction;
+                    #[cfg(all(feature = "script-wasm", target_arch = "wasm32"))]
+                    let script_overscan_wasm = self.config.graphics.hide_overscan;
                     // v1.2.0 C3 — borrow the composited HD frame (disjoint field)
                     // before the `gfx` borrow so the HD branch can hand it off.
                     #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
@@ -5600,6 +5812,13 @@ impl ApplicationHandler<AppEvent> for App {
                         #[cfg(target_arch = "wasm32")]
                         let extra = |ctx: &egui::Context, cfg: &mut crate::config::Config| {
                             crate::wasm_lobby::show(ctx, wasm_lobby, cfg);
+                            #[cfg(feature = "script-wasm")]
+                            Self::paint_script_overlay_wasm(
+                                ctx,
+                                script_draws_wasm,
+                                script_par_wasm,
+                                script_overscan_wasm,
+                            );
                         };
                         #[cfg(not(target_arch = "wasm32"))]
                         let extra = |ctx: &egui::Context, _cfg: &mut crate::config::Config| {

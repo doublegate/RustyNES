@@ -5,14 +5,58 @@ flagship, Workstream E). Scripts can read and write emulator memory, inspect
 CPU state, react to per-frame / per-access events, draw an overlay, and drive a
 few control actions.
 
-Scripting is **off by default** and **native-only**. Build it in with:
+Scripting is **off by default**. The reference engine is **native-only** (it
+embeds vendored Lua 5.4 via `mlua`, which needs a C toolchain). Build it in
+with:
 
 ```bash
 cargo run --release -p rustynes-frontend --features scripting -- path/to/rom.nes
 ```
 
 A build without the feature is byte-identical to a plain build (no Lua, no `cc`
-dependency), and the wasm builds never include it.
+dependency), and the default wasm builds never include it.
+
+## Experimental wasm backend (piccolo)
+
+There is also an **experimental, off-by-default wasm Lua backend** built on
+[piccolo](https://crates.io/crates/piccolo) — a pure-Rust Lua VM with no C
+dependency, so it compiles to `wasm32-unknown-unknown` where the native
+`mlua`/`cc` path cannot. Enable it on the browser build with the `script-wasm`
+feature:
+
+```bash
+cargo build -p rustynes-frontend --target wasm32-unknown-unknown --features script-wasm
+```
+
+Load a script from the browser via the JS bridge:
+`window.wasm_bindgen.rustynes_load_script("emu.onFrame(function() ... end)")`
+(and `rustynes_stop_script()` to unload). Output goes to the browser console.
+
+The piccolo backend is **explicitly NOT byte-parity** with the native mlua
+engine — it is a different VM with a different (incomplete) Lua 5.4
+implementation and its own GC + fuel accounting. This is acceptable because
+scripts are observational / overlay + *gated* writes and are **never** part of
+the framebuffer/audio determinism oracle (AccuracyCoin / nestest / TAS /
+netplay). See [ADR 0012](adr/0012-wasm-lua-piccolo-backend.md).
+
+What the piccolo backend supports vs. not:
+
+| Capability | piccolo (wasm) | mlua (native) |
+|---|---|---|
+| `emu.onFrame` | yes | yes |
+| `emu.read` / `peek` / `readRange` | yes (per-frame **snapshot**) | yes (live) |
+| `emu.cpu` / `frame` / `cycle` | yes (snapshot) | yes (live) |
+| `emu.log` / `print` | yes | yes |
+| `emu.drawText` / `drawRect` / `drawPixel` | yes | yes |
+| `emu.write` | yes — gated + **deferred** (applied after the frame's callbacks; the snapshot is updated so a same-frame read sees it) | yes — gated, live |
+| `emu.pause` / `saveState` / `loadState` | queued | applied |
+| `emu.setInput` | queued + gated (not yet applied on wasm) | applied |
+| `emu.onExec` / `onRead` / `onWrite` | **no-op** (native-only) | yes |
+| `emu.onNmi` / `onIrq` | **no-op** (native-only) | yes |
+
+The runaway-loop guard is shared in spirit: piccolo's `Fuel` is fed the same
+per-frame instruction budget (`DEFAULT_INSTRUCTION_BUDGET`, 1,000,000), and
+exhaustion surfaces as a `ScriptError::Budget`.
 
 ## Loading a script
 

@@ -15,12 +15,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Work toward **v1.2.0 "Curator"** (beta.1-2, Workstreams A + B + C + D + E + H).
+Work toward **v1.2.0 "Curator"** (beta.1-3, Workstreams A + B + C + D + E + F + H).
 See `docs/adr/0011-mapper-tiering.md`,
+`docs/adr/0012-wasm-lua-piccolo-backend.md`,
 `docs/adr/0013-composable-shader-stack.md`, and the v1.2.0 plan.
 
 ### Added
 
+- **Experimental wasm Lua scripting via a piccolo backend** (v1.2.0 Workstream
+  F4; default OFF, behind the new `script-wasm` feature; see
+  `docs/adr/0012-wasm-lua-piccolo-backend.md`). `rustynes-script` now sits behind
+  a `VmBackend` trait with two compile-time-selected backends: the native
+  **mlua** Lua 5.4 engine (the crate-default `mlua-backend` feature, what the
+  frontend's `scripting` feature pulls in — **byte-identical to v1.1.0**) and an
+  experimental pure-Rust **piccolo** VM that compiles to
+  `wasm32-unknown-unknown` with no C toolchain. piccolo's `Fuel` maps onto the
+  per-frame instruction budget. On wasm the engine is loadable from the browser
+  (`rustynes_load_script` / `rustynes_stop_script` JS bridge) and supports
+  `emu.onFrame`, `emu.read`/`peek`/`readRange`, `emu.cpu`/`frame`/`cycle`,
+  `emu.log` + `print`, the overlay draws, and gated `emu.write`. It is
+  **explicitly NOT byte-parity** with the native mlua engine (a different VM) —
+  acceptable because scripts are observational/overlay + gated writes and are
+  never part of the framebuffer/audio determinism oracle. The per-access
+  (`onExec`/`onRead`/`onWrite`) and per-interrupt (`onNmi`/`onIrq`) replay
+  callbacks are a documented native-only limitation (registered as no-ops on
+  piccolo). All native builds — shipped, the default wasm flavours, and the
+  `no_std` chip stack — are byte-identical to before (piccolo is never pulled
+  unless `script-wasm` is explicitly enabled). The native 13-test
+  `rustynes-script` suite is unchanged; the piccolo backend adds 4
+  backend-specific tests (deferred-write-lands, deferred-write-gated,
+  fuel-budget, native-only-callbacks-are-no-ops).
 - **Web/wasm input parity — on-screen touch controls + Power Pad** (v1.2.0
   Workstream F1 + F2). The browser build gains a translucent Pointer-Events
   touch overlay (pure DOM/CSS in `web/index.html`, zero Rust binary weight
