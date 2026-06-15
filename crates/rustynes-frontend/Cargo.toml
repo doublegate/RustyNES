@@ -71,6 +71,18 @@ scripting = ["dep:rustynes-script"]
 # build's device request is byte-for-byte unchanged.
 gpu-timing = []
 
+# v1.2.0 beta.2 (Workstream C3) — HD-pack / mod loader (minimal first cut),
+# native-only, default OFF. Forwards to `rustynes-core/hd-pack`, which gates the
+# per-pixel `HdTileSource` telemetry export inside the PPU. The frontend's
+# `hdpack.rs` loads a Mesen-style `hires.txt` (folder or `.zip`), hashes each
+# rendered tile's CHR bytes (Mesen CRC32), and substitutes hi-res replacement
+# images at blit time. Off by default so the shipped / wasm / no_std builds are
+# byte-identical to today; with it ON but NO pack loaded, the presentation is
+# also byte-identical (the substitution path is `Option`-gated). Reuses the
+# already-present native-only `png` (decode replacement images) and `zip`
+# (archive packs) deps. See `docs/ppu-2c02.md` §HD-pack tile-source export.
+hd-pack = ["rustynes-core/hd-pack"]
+
 [[bin]]
 name = "rustynes"
 path = "src/main.rs"

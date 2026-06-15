@@ -35,7 +35,11 @@ pub mod eq;
 // v1.1.0 — embedded app icon (winit window icon + About dialog). Native-only
 // (`png` is in the cfg(not(wasm)) dep table; a browser tab has no window icon).
 pub mod game_db;
+pub mod genie_db;
 pub mod gfx;
+// v1.2.0 beta.2 (Workstream C3) — HD-pack / mod loader (native-only, default OFF).
+#[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+pub mod hdpack;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod icon;
 pub mod input;
@@ -74,6 +78,10 @@ pub mod ntsc_bisqwit;
 #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
 pub mod ra_session;
 pub mod save_state;
+// v1.2.0 C2 — composable post-process shader stack (ping-pong RT executor +
+// `#pragma parameter` model + CRT preset bank). An empty stack falls through to
+// the existing direct blit (byte-identical), so this is purely additive.
+pub mod shader_pass;
 // v1.0.0 — the Save-States manager window (thumbnail grid). Native-only: the
 // slot files live on the filesystem; on wasm the slots are in `localStorage`
 // and the window is not built (the existing F1/F4 path is untouched).

@@ -206,6 +206,8 @@ enum DeviceKind {
     Zapper,
     Vaus,
     PowerPad,
+    SnesMouse,
+    FamilyKeyboard,
 }
 
 trait DeviceKindExt {
@@ -218,6 +220,8 @@ impl DeviceKindExt for Nes {
             Some(InputDevice::Zapper(_)) => Some(DeviceKind::Zapper),
             Some(InputDevice::Vaus(_)) => Some(DeviceKind::Vaus),
             Some(InputDevice::PowerPad(_)) => Some(DeviceKind::PowerPad),
+            Some(InputDevice::SnesMouse(_)) => Some(DeviceKind::SnesMouse),
+            Some(InputDevice::FamilyKeyboard(_)) => Some(DeviceKind::FamilyKeyboard),
             None => None,
         }
     }
@@ -229,4 +233,6 @@ fn input_device_state_types_constructible() {
     let _ = InputDevice::Vaus(VausState::new());
     let _ = InputDevice::Zapper(ZapperState::new());
     let _ = InputDevice::PowerPad(rustynes_core::PowerPadState::new());
+    let _ = InputDevice::SnesMouse(rustynes_core::SnesMouseState::new());
+    let _ = InputDevice::FamilyKeyboard(rustynes_core::FamilyKeyboardState::new());
 }

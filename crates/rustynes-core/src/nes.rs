@@ -422,6 +422,13 @@ impl Nes {
         if self.bus.access_logging() {
             self.bus.clear_accesses();
         }
+        // T-110-E1 — the Lua onNmi/onIrq interrupt-service log is per-frame too
+        // (cleared here so a replay only ever sees this frame's services, never
+        // a stale carry-over — mirrors the exec_log clear below).
+        #[cfg(feature = "debug-hooks")]
+        if self.bus.interrupt_logging() {
+            self.bus.clear_interrupts();
+        }
         // T-110-E2 — the Lua onExec exec-PC log is per-frame (cleared here so a
         // replay only ever sees this frame's PCs, never a stale carry-over).
         #[cfg(feature = "debug-hooks")]
@@ -684,6 +691,34 @@ impl Nes {
         &self.exec_log
     }
 
+    /// v1.2.0 (T-110-E1) — start/stop the per-frame interrupt-service log for
+    /// the Lua `onNmi` / `onIrq` callbacks. The log records this frame's
+    /// committed NMI / IRQ / BRK service entries (captured at the CPU's
+    /// service-vector commit point, NOT the speculative poll sampler); it is
+    /// cleared at each [`Self::run_frame`]. Default off; output-only. Enabled by
+    /// the scripting engine only while `onNmi`/`onIrq` callbacks exist. Mirrors
+    /// [`Self::set_exec_logging`].
+    #[cfg(feature = "debug-hooks")]
+    pub const fn set_interrupt_logging(&mut self, enabled: bool) {
+        self.bus.set_interrupt_logging(enabled);
+    }
+
+    /// Whether the per-frame interrupt-service log is recording.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub const fn interrupt_logging(&self) -> bool {
+        self.bus.interrupt_logging()
+    }
+
+    /// This frame's committed interrupt-service entries, in service order (for
+    /// the Lua engine). Mirrors [`Self::exec_log`] / [`Self::accesses`].
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    #[allow(clippy::missing_const_for_fn)] // slice deref is not const.
+    pub fn interrupt_log(&self) -> &[crate::bus::InterruptRec] {
+        self.bus.interrupts()
+    }
+
     /// Borrow the framebuffer (RGBA8, 256x240).
     #[must_use]
     pub fn framebuffer(&self) -> &[u8] {
@@ -696,6 +731,18 @@ impl Nes {
     #[must_use]
     pub fn index_framebuffer(&self) -> &[u16] {
         self.bus.index_framebuffer()
+    }
+
+    /// v1.2.0 C3 (hd-pack) — borrow the per-pixel HD-pack tile-source buffer
+    /// (256x240 [`rustynes_ppu::HdTileSource`] records). Each entry names the
+    /// CHR tile that produced the pixel; the frontend HD-pack loader groups
+    /// these by 8x8 cell, hashes the CHR bytes, and substitutes hi-res tiles.
+    /// Output-only telemetry; the determinism contract is unaffected. See
+    /// [`rustynes_ppu::Ppu::hd_tile_source`].
+    #[cfg(feature = "hd-pack")]
+    #[must_use]
+    pub fn hd_tile_source(&self) -> &[rustynes_ppu::HdTileSource] {
+        self.bus.hd_tile_source()
     }
 
     /// The per-frame NTSC composite colour phase consumed by the `NES_NTSC`
@@ -1026,6 +1073,65 @@ impl Nes {
         self.bus.set_power_pad(port, buttons);
     }
 
+    /// v1.2.0 Workstream D — attach a SNES-style serial mouse on `port` (0 =
+    /// `$4016`, 1 = `$4017`) and set its movement / buttons / sensitivity.
+    /// `(dx, dy)` are the signed per-frame deltas (clamped to +/-127 on latch);
+    /// `sensitivity` is 0 (low) / 1 (medium) / 2 (high). Convenience wrapper
+    /// that attaches the device if absent then updates it. Opt-in: the no-device
+    /// path stays byte-identical.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `port` is not in `0..=1`.
+    pub fn set_snes_mouse(
+        &mut self,
+        port: usize,
+        dx: i16,
+        dy: i16,
+        left: bool,
+        right: bool,
+        sensitivity: u8,
+    ) {
+        if !matches!(
+            self.bus.expansion_device(port),
+            Some(InputDevice::SnesMouse(_))
+        ) {
+            self.bus.set_expansion_device(
+                port,
+                Some(InputDevice::SnesMouse(
+                    crate::input_device::SnesMouseState::new(),
+                )),
+            );
+        }
+        self.bus
+            .set_snes_mouse(port, dx, dy, left, right, sensitivity);
+    }
+
+    /// v1.2.0 Workstream D — attach a Famicom Family BASIC keyboard on `port`
+    /// (typically port 1 / `$4017`) and set its pressed-key bitmap. `keys` is
+    /// one byte per matrix row (`keys[row]` bits 0..=3 = column-half 0 keys,
+    /// bits 4..=7 = column-half 1 keys); the frontend builds it from host keys.
+    /// Convenience wrapper that attaches the device if absent then updates it.
+    /// Opt-in: the no-device path stays byte-identical.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `port` is not in `0..=1`.
+    pub fn set_family_keyboard(&mut self, port: usize, keys: [u8; 9]) {
+        if !matches!(
+            self.bus.expansion_device(port),
+            Some(InputDevice::FamilyKeyboard(_))
+        ) {
+            self.bus.set_expansion_device(
+                port,
+                Some(InputDevice::FamilyKeyboard(
+                    crate::input_device::FamilyKeyboardState::new(),
+                )),
+            );
+        }
+        self.bus.set_family_keyboard(port, keys);
+    }
+
     /// v1.1.0 beta.1 (T-110-B4) — set (`Some`) or clear (`None`) a per-game
     /// **nametable mirroring override**, a load-time correction for ROMs whose
     /// iNES header carries the wrong mirroring flag (supplied by the frontend's
@@ -1055,6 +1161,16 @@ impl Nes {
     #[must_use]
     pub fn peek(&mut self, addr: u16) -> u8 {
         self.bus.debug_peek_cpu(addr)
+    }
+
+    /// v1.2.0 C3 (hd-pack) — side-effect-free read of the PPU bus
+    /// (`$0000-$3FFF`): CHR pattern data, nametables, palette RAM. Used by the
+    /// HD-pack compositor to hash a tile's 16 CHR bytes. Observes state without
+    /// advancing the emulator, preserving determinism.
+    #[cfg(feature = "hd-pack")]
+    #[must_use]
+    pub fn peek_ppu(&mut self, addr: u16) -> u8 {
+        self.bus.debug_peek_ppu(addr)
     }
 
     /// Add a Game Genie code (6 or 8 characters, case-insensitive) that

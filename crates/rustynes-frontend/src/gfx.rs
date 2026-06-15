@@ -285,6 +285,16 @@ pub struct Gfx {
     /// v1.1.0 beta.1 — optional CRT / scanline post-pass. Mutually exclusive with
     /// `ntsc` at render time (CRT takes priority when both are set).
     crt: Option<crate::crt::CrtFilter>,
+    /// v1.2.0 C2 — optional composable shader stack (ping-pong RT executor). When
+    /// `Some`, it OWNS the post-process path and the legacy single-select
+    /// `crt`/`ntsc`/`ntsc_bisqwit` chain below is bypassed. `None` (the default,
+    /// for an empty config stack) keeps the EXACT pre-C2 chain, so the default
+    /// presented image is byte-identical. Built/cleared via
+    /// [`Self::apply_shader_stack`].
+    shader_stack: Option<crate::shader_pass::ShaderStack>,
+    /// v1.2.0 C2 — the live NTSC knobs forwarded to a leading composite-rt stack
+    /// pass (kept in sync with the legacy `ntsc_bisqwit` path's knobs).
+    stack_ntsc_knobs: crate::ntsc_bisqwit::NtscKnobs,
     /// Whether the configured present mode was unsupported and the surface
     /// silently runs `Fifo` instead (surfaced in the settings panel so the
     /// resulting pacer-vs-vsync beat is attributable).
@@ -305,6 +315,25 @@ pub struct Gfx {
     /// `true`. Drives the overscan `crop` half of the blit uniform; default
     /// `false` = the full 256x240 framebuffer (byte-identical presentation).
     hide_overscan: bool,
+    /// v1.2.0 beta.2 (Workstream C3) — optional HD-pack blit resources. `None`
+    /// (the default, and the only state when no pack is loaded) means the
+    /// presentation path is byte-identical to the stock build. When `Some`, the
+    /// HD compositor's upscaled RGBA buffer is uploaded to `texture` and blitted
+    /// (letterboxed) through the same nearest-sampling pipeline as the NES
+    /// framebuffer. Lazily (re)built when the HD buffer dimensions change.
+    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+    hd: Option<HdBlit>,
+}
+
+/// v1.2.0 C3 — the HD-pack blit texture + its bind group, sized to the
+/// compositor's `scale*256 x scale*240` output.
+#[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+struct HdBlit {
+    texture: wgpu::Texture,
+    bind_group: wgpu::BindGroup,
+    uniforms: wgpu::Buffer,
+    width: u32,
+    height: u32,
 }
 
 impl Gfx {
@@ -640,12 +669,16 @@ impl Gfx {
             ntsc: None,
             ntsc_bisqwit: None,
             crt: None,
+            shader_stack: None,
+            stack_ntsc_knobs: crate::ntsc_bisqwit::NtscKnobs::DEFAULT,
             present_mode_fell_back,
             supported_present_modes: surface_caps.present_modes,
             #[cfg(all(not(target_arch = "wasm32"), feature = "gpu-timing"))]
             gpu_timer,
             par_correction,
             hide_overscan,
+            #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+            hd: None,
         })
     }
 
@@ -737,6 +770,16 @@ impl Gfx {
         self.ntsc_bisqwit.is_some()
     }
 
+    /// v1.2.0 C1 — push the live Bisqwit NTSC picture knobs (contrast /
+    /// saturation / brightness / hue) into the filter (no-op when it is
+    /// disabled). At [`crate::ntsc_bisqwit::NtscKnobs::DEFAULT`] the decode is
+    /// byte-identical to the pre-C1 filter.
+    pub const fn set_ntsc_bisqwit_knobs(&mut self, knobs: crate::ntsc_bisqwit::NtscKnobs) {
+        if let Some(filter) = self.ntsc_bisqwit.as_mut() {
+            filter.set_knobs(knobs);
+        }
+    }
+
     /// Enable the CRT / scanline post-pass with the given scanline intensity
     /// (`0.0..=1.0`). If the filter is already enabled this retunes its scanline
     /// intensity to `scanline` (equivalent to [`Self::set_crt_scanline`]). CRT
@@ -765,6 +808,60 @@ impl Gfx {
         if let Some(crt) = self.crt.as_mut() {
             crt.set_scanline(scanline);
         }
+    }
+
+    /// v1.2.0 C2 — (re)build the composable shader stack from `cfg`.
+    ///
+    /// When `cfg` has at least one enabled, recognized pass, the ping-pong stack
+    /// takes over the post-process path (and the legacy single-select filters
+    /// are turned off so the two systems never both render). When `cfg` is empty
+    /// (or all-disabled / unknown), the stack is cleared and the renderer falls
+    /// back to the EXACT legacy chain — the byte-identical default. Returns
+    /// `true` when the stack is now active.
+    pub fn apply_shader_stack(&mut self, cfg: &crate::shader_pass::ShaderStackConfig) -> bool {
+        if cfg.has_enabled_passes() {
+            self.shader_stack = crate::shader_pass::ShaderStack::new(
+                &self.device,
+                self.config.format,
+                &self.nes_texture,
+                &self.index_texture,
+                cfg,
+            );
+            if self.shader_stack.is_some() {
+                // The stack owns the post-process path; drop the legacy filters
+                // so they cannot also draw.
+                self.ntsc = None;
+                self.ntsc_bisqwit = None;
+                self.crt = None;
+                return true;
+            }
+        }
+        // Empty / all-disabled / failed-compile -> direct-blit fall-through.
+        self.shader_stack = None;
+        false
+    }
+
+    /// Whether the composable shader stack currently owns the post-process path.
+    #[must_use]
+    pub const fn shader_stack_active(&self) -> bool {
+        self.shader_stack.is_some()
+    }
+
+    /// Whether the active stack's FIRST pass samples the palette-index texture
+    /// (i.e. a leading composite-rt pass), so the caller knows to snapshot +
+    /// supply the index framebuffer this frame — same contract as
+    /// [`Self::ntsc_bisqwit_active`].
+    #[must_use]
+    pub fn shader_stack_needs_index(&self) -> bool {
+        self.shader_stack
+            .as_ref()
+            .is_some_and(crate::shader_pass::ShaderStack::needs_index_source)
+    }
+
+    /// v1.2.0 C2 — push the live Bisqwit NTSC knobs forwarded to a leading
+    /// composite-rt stack pass (kept in sync with the legacy filter's knobs).
+    pub const fn set_stack_ntsc_knobs(&mut self, knobs: crate::ntsc_bisqwit::NtscKnobs) {
+        self.stack_ntsc_knobs = knobs;
     }
 
     /// Resize the surface (triggered on `WindowEvent::Resized`).
@@ -855,7 +952,8 @@ impl Gfx {
         // v1.1.0 beta.1 (T-110-A1) — upload the palette-index framebuffer for
         // the true composite `NES_NTSC` filter, only when it is active and the
         // caller supplied a correctly-sized snapshot. `R16Uint` = 2 bytes/texel.
-        let video_phase = match (self.ntsc_bisqwit.is_some(), index) {
+        let wants_index = self.ntsc_bisqwit.is_some() || self.shader_stack_needs_index();
+        let video_phase = match (wants_index, index) {
             (true, Some((idx, phase))) if idx.len() == (NES_W * NES_H) as usize => {
                 self.queue.write_texture(
                     wgpu::TexelCopyTextureInfo {
@@ -925,7 +1023,23 @@ impl Gfx {
         // sample-time effect (the wgsl applies horizontal blur + scanline
         // darkening to the input texel; the result goes straight to the
         // surface).
-        if let Some(filter) = &self.crt {
+        // v1.2.0 C2 — when the composable shader stack is active it OWNS the
+        // post-process path (ping-pong RTs -> final letterboxed blit). When it
+        // is `None` (the empty-config default) the renderer falls through to the
+        // EXACT pre-C2 single-select chain below — byte-identical default image.
+        if let Some(stack) = &self.shader_stack {
+            stack.render(
+                &self.queue,
+                &mut encoder,
+                &view,
+                self.config.width,
+                self.config.height,
+                self.par_correction,
+                self.hide_overscan,
+                video_phase,
+                self.stack_ntsc_knobs,
+            );
+        } else if let Some(filter) = &self.crt {
             filter.render(
                 &self.queue,
                 &mut encoder,
@@ -996,6 +1110,183 @@ impl Gfx {
         }
         frame.present();
         Ok(())
+    }
+
+    /// v1.2.0 beta.2 (Workstream C3) — present a pre-composited HD-pack RGBA
+    /// buffer (`hd_w x hd_h`, RGBA8) with the overlay, letterboxed through the
+    /// same nearest pipeline as the NES framebuffer. The HD path bypasses the
+    /// post-process filter chain (the compositor already produced final RGBA);
+    /// it exists only while a pack is loaded, so the default presentation is
+    /// byte-identical.
+    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+    #[allow(clippy::needless_pass_by_ref_mut)]
+    pub fn render_hd_with_overlay<F>(
+        &mut self,
+        hd_rgba: &[u8],
+        hd_w: u32,
+        hd_h: u32,
+        overlay: F,
+    ) -> Result<(), wgpu::SurfaceError>
+    where
+        F: FnOnce(
+            &wgpu::Device,
+            &wgpu::Queue,
+            &mut wgpu::CommandEncoder,
+            &wgpu::TextureView,
+            (u32, u32),
+        ),
+    {
+        debug_assert_eq!(hd_rgba.len(), (hd_w * hd_h * 4) as usize);
+        self.ensure_hd_blit(hd_w, hd_h);
+        let hd = self.hd.as_ref().expect("ensure_hd_blit built it");
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &hd.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            hd_rgba,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(hd_w * 4),
+                rows_per_image: Some(hd_h),
+            },
+            wgpu::Extent3d {
+                width: hd_w,
+                height: hd_h,
+                depth_or_array_layers: 1,
+            },
+        );
+        // The letterbox transform is in normalized UV space, so it is
+        // resolution-independent; the HD compositor already applied (or skipped)
+        // overscan at NES resolution, so HD blit uses no extra crop.
+        self.queue.write_buffer(
+            &hd.uniforms,
+            0,
+            bytemuck::cast_slice(&letterbox_uniform(
+                self.config.width,
+                self.config.height,
+                self.par_correction,
+                self.hide_overscan,
+            )),
+        );
+
+        let frame = self.surface.get_current_texture()?;
+        let view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("nes-hd-encoder"),
+            });
+        {
+            let hd = self.hd.as_ref().expect("built above");
+            let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("nes-hd-pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            rp.set_pipeline(&self.pipeline);
+            rp.set_bind_group(0, &hd.bind_group, &[]);
+            rp.draw(0..3, 0..1);
+        }
+        overlay(
+            &self.device,
+            &self.queue,
+            &mut encoder,
+            &view,
+            (self.config.width, self.config.height),
+        );
+        self.queue.submit(Some(encoder.finish()));
+        frame.present();
+        Ok(())
+    }
+
+    /// (Re)build the HD blit texture + bind group when absent or resized.
+    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+    fn ensure_hd_blit(&mut self, w: u32, h: u32) {
+        if self
+            .hd
+            .as_ref()
+            .is_some_and(|hd| hd.width == w && hd.height == h)
+        {
+            return;
+        }
+        let format = self.nes_texture.format();
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("nes-hd-texture"),
+            size: wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("nes-hd-nearest"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+        let uniforms = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("nes-hd-letterbox"),
+                contents: bytemuck::cast_slice(&letterbox_uniform(
+                    self.config.width,
+                    self.config.height,
+                    self.par_correction,
+                    self.hide_overscan,
+                )),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+        let bgl = self.pipeline.get_bind_group_layout(0);
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("nes-hd-bg"),
+            layout: &bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: uniforms.as_entire_binding(),
+                },
+            ],
+        });
+        self.hd = Some(HdBlit {
+            texture,
+            bind_group,
+            uniforms,
+            width: w,
+            height: h,
+        });
     }
 
     /// v2.8.0 Phase 0 (`gpu-timing`) — the most recently resolved GPU pass

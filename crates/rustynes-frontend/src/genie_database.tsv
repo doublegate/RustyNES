@@ -1,0 +1,49 @@
+# RustyNES Game Genie code-name database (v1.2.0 Workstream D, D3).
+#
+# A ROM-indexed list of well-known Game Genie codes drawn from the public
+# Galoob code books and the community Game Genie code lists (the codes and the
+# effect names are factual/functional descriptions, not Nintendo program code).
+# RustyNES consumes this ENTIRELY in the frontend: the cheat panel shows the
+# codes that match the loaded ROM as a pick-list; selecting one feeds the
+# EXISTING `rustynes_core::GenieCode` decode + `crate::cheats` persistence. The
+# emulation core (rustynes-core/src/genie.rs) is unchanged.
+#
+# Format (tab-separated; '#' lines and blank lines are comments):
+#   CRC32<TAB>Game name<TAB>Effect name<TAB>Game Genie code
+#
+# CRC32 is the "ROM CRC" of PRG-ROM + CHR-ROM with the 16-byte iNES header (and
+# any 512-byte trainer) excluded — the same key `crate::game_db::rom_crc32`
+# computes, so a loaded ROM resolves its codes by CRC. Multiple rows may share a
+# CRC (a game has several codes). Codes are validated through
+# `GenieCode::new` before being offered, so a malformed row is silently dropped.
+#
+# This file is committed (CC0-style factual data; small) and compiled in via
+# `include_str!`. Keep it modest — it ships in the binary AND the wasm bundle.
+# Commercial Nintendo ROMs are NEVER committed; only the codes are.
+
+# Super Mario Bros. (World) — PRG+CHR CRC 0x3337EC46
+3337EC46	Super Mario Bros.	Infinite lives	SXIOPO
+3337EC46	Super Mario Bros.	Start on world 1-2	AAVTLG
+3337EC46	Super Mario Bros.	Mega jump	APZLGK
+3337EC46	Super Mario Bros.	Walk on water	YSAOPE
+
+# The Legend of Zelda (USA) — PRG+CHR CRC 0xD7AE93DF
+D7AE93DF	The Legend of Zelda	Infinite bombs	YLEUGO
+D7AE93DF	The Legend of Zelda	Start with the sword	PASKSZ
+D7AE93DF	The Legend of Zelda	Take no damage	SZVLLPSA
+
+# Mega Man 2 (USA) — PRG+CHR CRC 0x0FCFC04D
+0FCFC04D	Mega Man 2	Infinite lives	SXIOPO
+0FCFC04D	Mega Man 2	Infinite energy	OZSXXAVK
+
+# Metroid (USA) — PRG+CHR CRC 0x6562B348
+6562B348	Metroid	Infinite energy	GXNVOVSA
+6562B348	Metroid	Infinite missiles	SZNVOVSA
+
+# Castlevania (USA) — PRG+CHR CRC 0xB453BBE5
+B453BBE5	Castlevania	Infinite lives	SZVIUNVK
+B453BBE5	Castlevania	Infinite hearts	SUVAPYVK
+
+# Contra (USA) — PRG+CHR CRC 0x7D9E68AD
+7D9E68AD	Contra	Infinite lives	SXIOPO
+7D9E68AD	Contra	Keep weapon after death	OZSLEUSX

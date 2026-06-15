@@ -148,6 +148,35 @@ pub struct AccessRec {
 #[cfg(feature = "debug-hooks")]
 const ACCESS_CAP: usize = 60_000;
 
+/// v1.2.0 (Workstream E, T-110-E1) — one interrupt-service record for the Lua
+/// `onNmi` / `onIrq` callbacks: the service direction + the vector the CPU
+/// fetched its new PC from.
+///
+/// Captured at the commit point — [`Bus::notify_irq_service`], called once per
+/// real interrupt entry right before the CPU reads the service vector. This is
+/// the *committed* service (the same point the IRQ trace records), NOT the
+/// speculative `poll_nmi` / `poll_irq` sampler that ADR 0010 flagged as
+/// unreliable — so a script that watches `onNmi`/`onIrq` sees exactly the
+/// interrupts the CPU actually serviced this frame, in order. Output-only and
+/// gated behind `interrupt_logging`; the host (Lua engine) enables it only
+/// while `onNmi`/`onIrq` callbacks are registered.
+#[cfg(feature = "debug-hooks")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InterruptRec {
+    /// `true` for an NMI service entry (`$FFFA`), `false` for an IRQ/BRK
+    /// service entry (`$FFFE`).
+    pub is_nmi: bool,
+    /// The service vector the CPU fetched its new PC from (`$FFFA` for an NMI,
+    /// `$FFFE` for IRQ/BRK).
+    pub vector: u16,
+}
+
+/// Max interrupt-service records captured per frame. A frame services at most a
+/// few hundred interrupts (NMI once + mapper/APU IRQs); this caps a pathological
+/// case so the log can't grow unbounded. A frame that overflows is truncated.
+#[cfg(feature = "debug-hooks")]
+const INTERRUPT_CAP: usize = 4_096;
+
 /// Lockstep bus.
 ///
 /// Owns the entire emulator's mutable state. The CPU borrows `&mut LockstepBus`
@@ -250,6 +279,15 @@ pub struct LockstepBus {
     /// Whether the bus-access log is recording. Default `false`.
     #[cfg(feature = "debug-hooks")]
     access_logging: bool,
+    /// v1.2.0 (T-110-E1) — per-frame interrupt-service log (this frame's
+    /// committed NMI / IRQ / BRK service entries) for the Lua `onNmi`/`onIrq`
+    /// callbacks. Output-only; populated only while `interrupt_logging`, cleared
+    /// per frame.
+    #[cfg(feature = "debug-hooks")]
+    interrupts: alloc::vec::Vec<InterruptRec>,
+    /// Whether the interrupt-service log is recording. Default `false`.
+    #[cfg(feature = "debug-hooks")]
+    interrupt_logging: bool,
     /// Cumulative CPU cycle counter.
     pub(crate) cycle: u64,
 
@@ -595,6 +633,10 @@ impl LockstepBus {
             accesses: alloc::vec::Vec::new(),
             #[cfg(feature = "debug-hooks")]
             access_logging: false,
+            #[cfg(feature = "debug-hooks")]
+            interrupts: alloc::vec::Vec::new(),
+            #[cfg(feature = "debug-hooks")]
+            interrupt_logging: false,
             cycle: 0,
             dma_pending: None,
             dma_cycles_owed: 0,
@@ -894,6 +936,14 @@ impl LockstepBus {
     #[must_use]
     pub fn index_framebuffer(&self) -> &[u16] {
         self.ppu.index_framebuffer()
+    }
+
+    /// v1.2.0 C3 (hd-pack) — borrow the per-pixel HD-pack tile-source buffer.
+    /// See [`rustynes_ppu::Ppu::hd_tile_source`]. Output-only telemetry.
+    #[cfg(feature = "hd-pack")]
+    #[must_use]
+    pub fn hd_tile_source(&self) -> &[rustynes_ppu::HdTileSource] {
+        self.ppu.hd_tile_source()
     }
 
     /// The per-frame NTSC composite colour phase for the `NES_NTSC` filter
@@ -1210,6 +1260,44 @@ impl LockstepBus {
         }
     }
 
+    /// Update an attached SNES mouse's movement + buttons + sensitivity on
+    /// `port`. No-op if the attached device is not a mouse.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `port` is not in `0..=1`.
+    pub const fn set_snes_mouse(
+        &mut self,
+        port: usize,
+        dx: i16,
+        dy: i16,
+        left: bool,
+        right: bool,
+        sensitivity: u8,
+    ) {
+        assert!(port < 2, "mouse port must be 0..=1");
+        if let Some(crate::input_device::InputDevice::SnesMouse(m)) =
+            &mut self.expansion_device[port]
+        {
+            m.set(dx, dy, left, right, sensitivity);
+        }
+    }
+
+    /// Update an attached Family BASIC keyboard's pressed-key bitmap on `port`
+    /// (one byte per matrix row). No-op if the attached device is not a keyboard.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `port` is not in `0..=1`.
+    pub const fn set_family_keyboard(&mut self, port: usize, keys: [u8; 9]) {
+        assert!(port < 2, "keyboard port must be 0..=1");
+        if let Some(crate::input_device::InputDevice::FamilyKeyboard(k)) =
+            &mut self.expansion_device[port]
+        {
+            k.set_keys(keys);
+        }
+    }
+
     /// v1.1.0 beta.1 (T-110-B4) — set (`Some`) or clear (`None`) the per-game
     /// nametable mirroring override. A frontend load-time correction; `None`
     /// (default) defers to the mapper (byte-identical).
@@ -1269,6 +1357,33 @@ impl LockstepBus {
     #[cfg(feature = "debug-hooks")]
     pub fn clear_accesses(&mut self) {
         self.accesses.clear();
+    }
+
+    /// v1.2.0 (T-110-E1) — start/stop the Lua interrupt-service log.
+    #[cfg(feature = "debug-hooks")]
+    pub const fn set_interrupt_logging(&mut self, enabled: bool) {
+        self.interrupt_logging = enabled;
+    }
+
+    /// Whether the interrupt-service log is recording.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub const fn interrupt_logging(&self) -> bool {
+        self.interrupt_logging
+    }
+
+    /// The interrupt-service entries captured so far this frame.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    #[allow(clippy::missing_const_for_fn)] // Vec->slice deref is not const.
+    pub fn interrupts(&self) -> &[InterruptRec] {
+        &self.interrupts
+    }
+
+    /// Clear the interrupt-service log (called per frame by the run loop).
+    #[cfg(feature = "debug-hooks")]
+    pub fn clear_interrupts(&mut self) {
+        self.interrupts.clear();
     }
 
     /// Clear the event log (called at each frame start while recording).
@@ -3449,6 +3564,25 @@ impl Bus for LockstepBus {
     }
 
     fn notify_irq_service(&mut self, vector: u16, is_nmi: bool) {
+        // v1.2.0 (T-110-E1) — Lua onNmi/onIrq interrupt-service tap. This is the
+        // committed-service commit point (same as the IRQ trace below), NOT the
+        // speculative poll_nmi/poll_irq sampler. Output-only, gated; no-op when
+        // `debug-hooks` is off (the log slot only exists feature-gated).
+        //
+        // The reliable NMI/IRQ discriminator here is the COMMITTED `vector`
+        // ($FFFA = NMI, $FFFE = IRQ/BRK), not the `is_nmi` arg: the unified
+        // dispatch always enters `service_interrupt` with the IRQ vector and
+        // resolves the NMI *hijack* internally (so the `is_nmi` arg reads
+        // `false` on a hijacked NMI). Classifying by the vector the CPU actually
+        // fetched reports exactly the service that committed.
+        #[cfg(feature = "debug-hooks")]
+        if self.interrupt_logging && self.interrupts.len() < INTERRUPT_CAP {
+            let _ = is_nmi;
+            self.interrupts.push(InterruptRec {
+                is_nmi: vector == 0xFFFA,
+                vector,
+            });
+        }
         // Phase 1.2 of Track C1 attempt 14: emit a [`ServiceEvent`] into
         // the IRQ trace if the trace is armed.  Production builds with
         // the `irq-timing-trace` feature OFF compile this down to a
@@ -4159,6 +4293,48 @@ mod four_score_tests {
                 assert_eq!(p.buttons_raw(), 0b1010_0101_0011);
             }
             other => panic!("expected a Power Pad on port 1, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn snes_mouse_state_round_trips_through_save_state() {
+        use crate::input_device::{InputDevice, SnesMouseState};
+        let mut bus = test_bus();
+        bus.set_expansion_device(0, Some(InputDevice::SnesMouse(SnesMouseState::new())));
+        bus.set_snes_mouse(0, -7, 9, true, false, 2);
+        let blob = crate::bus_snapshot::encode_bus(&bus);
+        let mut restored = test_bus();
+        crate::bus_snapshot::decode_bus(&mut restored, &blob).unwrap();
+        match restored.expansion_device(0) {
+            Some(InputDevice::SnesMouse(m)) => {
+                assert_eq!(m.dx_raw(), -7);
+                assert_eq!(m.dy_raw(), 9);
+                assert!(m.left_raw());
+                assert!(!m.right_raw());
+                assert_eq!(m.sensitivity_raw(), 2);
+            }
+            other => panic!("expected a SNES mouse on port 0, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn family_keyboard_state_round_trips_through_save_state() {
+        use crate::input_device::{FamilyKeyboardState, InputDevice};
+        let mut bus = test_bus();
+        bus.set_expansion_device(
+            1,
+            Some(InputDevice::FamilyKeyboard(FamilyKeyboardState::new())),
+        );
+        let keys = [0x01, 0x10, 0x00, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00];
+        bus.set_family_keyboard(1, keys);
+        let blob = crate::bus_snapshot::encode_bus(&bus);
+        let mut restored = test_bus();
+        crate::bus_snapshot::decode_bus(&mut restored, &blob).unwrap();
+        match restored.expansion_device(1) {
+            Some(InputDevice::FamilyKeyboard(k)) => {
+                assert_eq!(k.keys_raw(), keys);
+            }
+            other => panic!("expected a Family BASIC keyboard on port 1, got {other:?}"),
         }
     }
 }

@@ -171,6 +171,14 @@ pub enum MenuAction {
     OpenPanel(crate::debugger::ToolPanel),
     /// v1.0.0 — open a chip-inspection panel + force the deep overlay visible.
     OpenChipPanel(crate::debugger::ChipPanel),
+    /// v1.2.0 beta.2 (Workstream C3) — open a dialog to pick an HD-pack folder
+    /// or `.zip` for the loaded ROM and enable substitution (native; the
+    /// dispatch body is `#[cfg(all(feature = "hd-pack", not(wasm32)))]`, the
+    /// variant stays un-gated so the match remains exhaustive on every target).
+    LoadHdPack,
+    /// v1.2.0 beta.2 (Workstream C3) — disable + unload the active HD-pack for
+    /// the loaded ROM.
+    UnloadHdPack,
 }
 
 /// Per-frame outputs from [`UiShell::build`].
@@ -347,46 +355,86 @@ impl UiShell {
         // (theme / aspect / fps / run-ahead) the closure also makes. The clone
         // is a handful of small `String`s, built once per frame — negligible.
         let keys = config.input.system.clone();
+
+        // v1.2.0 Workstream H1 — per-item contextual enable predicates derived
+        // from the live frame state, mirroring GeraNES `MenuUI.inl`:
+        //
+        // - `rom_change_restricted`: while a netplay session is active the
+        //   loaded ROM must not change under the rollback session — disables
+        //   Open ROM / Open Recent (GeraNES `netplayRomChangeRestricted`).
+        // - `replay_locked`: while a TAS movie is recording OR playing back, the
+        //   session owns the input/state timeline — disables load-state and the
+        //   reset/power-cycle/disk actions that would desync the replay
+        //   (GeraNES `replayInteractionLocked` / `replayRecordingActive`). The
+        //   per-item Record/Play gating below additionally distinguishes the
+        //   recording-vs-playing case (you can't Record over a Playback, etc.).
+        //
+        // These only gate which items are *clickable*; the dispatched
+        // `MenuAction` set is unchanged.
+        let rom = frame.rom_loaded;
+        let rom_change_restricted = frame.netplay_active;
+        let replay_locked = frame.movie_recording || frame.movie_playing;
+        // A loaded ROM whose state/timeline the user may freely manipulate
+        // (not netplay-locked, not replay-locked). Used to gate the
+        // state-mutating items uniformly.
+        let rom_interactive = rom && !replay_locked;
         egui::TopBottomPanel::top("shell_menu_bar").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 // ----- File -----
                 ui.menu_button("File", |ui| {
+                    // (H1) Open ROM / Open Recent change the loaded ROM — locked
+                    // out while a netplay session is active (a ROM swap would
+                    // desync the rollback peers).
                     #[cfg(not(target_arch = "wasm32"))]
-                    if accel_item(ui, "Open ROM...", &keys.open_rom).clicked() {
+                    if accel_enabled(ui, !rom_change_restricted, "Open ROM...", &keys.open_rom)
+                        .clicked()
+                    {
                         out.action = Some(MenuAction::OpenRom);
                         ui.close();
                     }
 
                     #[cfg(not(target_arch = "wasm32"))]
-                    ui.menu_button("Open Recent", |ui| {
-                        if config.recent_roms.paths.is_empty() {
-                            ui.label("No recent ROMs");
-                        } else {
-                            for path in config.recent_roms.paths.clone() {
-                                let name = path
-                                    .file_name()
-                                    .and_then(|n| n.to_str())
-                                    .unwrap_or("Unknown")
-                                    .to_string();
-                                // (audit m3) gray out entries whose file is gone.
-                                let exists = path.exists();
-                                if ui.add_enabled(exists, egui::Button::new(name)).clicked() {
-                                    out.action = Some(MenuAction::LoadRom(path));
+                    if rom_change_restricted {
+                        // Disabled placeholder (a submenu can't carry an
+                        // `enabled` flag the way a button does, and an
+                        // `add_enabled_ui` wrapper breaks egui's sibling-hover
+                        // auto-close — BUG-1), so surface it as a greyed item.
+                        ui.add_enabled(false, egui::Button::new("Open Recent"));
+                    } else {
+                        ui.menu_button("Open Recent", |ui| {
+                            if config.recent_roms.paths.is_empty() {
+                                ui.label("No recent ROMs");
+                            } else {
+                                for path in config.recent_roms.paths.clone() {
+                                    let name = path
+                                        .file_name()
+                                        .and_then(|n| n.to_str())
+                                        .unwrap_or("Unknown")
+                                        .to_string();
+                                    // (audit m3) gray out entries whose file is gone.
+                                    let exists = path.exists();
+                                    if ui.add_enabled(exists, egui::Button::new(name)).clicked() {
+                                        out.action = Some(MenuAction::LoadRom(path));
+                                        ui.close();
+                                    }
+                                }
+                                ui.separator();
+                                if ui.button("Clear Recent").clicked() {
+                                    out.action = Some(MenuAction::ClearRecent);
                                     ui.close();
                                 }
                             }
-                            ui.separator();
-                            if ui.button("Clear Recent").clicked() {
-                                out.action = Some(MenuAction::ClearRecent);
-                                ui.close();
-                            }
-                        }
-                    });
+                        });
+                    }
 
-                    // FDS disk controls (only meaningful for FDS games).
+                    // FDS disk controls (only meaningful for FDS games). (H1)
+                    // Disk-swap mutates the running session — locked during a
+                    // replay (it would diverge the recorded timeline).
                     if frame.disk_sides > 0 {
                         ui.separator();
-                        if accel_item(ui, "Swap Disk Side", &keys.disk_swap).clicked() {
+                        if accel_enabled(ui, !replay_locked, "Swap Disk Side", &keys.disk_swap)
+                            .clicked()
+                        {
                             out.action = Some(MenuAction::CycleDiskSide);
                             ui.close();
                         }
@@ -394,12 +442,19 @@ impl UiShell {
 
                     ui.separator();
 
-                    if accel_enabled(ui, frame.rom_loaded, "Save State", &keys.save_state).clicked()
-                    {
+                    // (H1) Save-state SAVE is allowed during playback (it just
+                    // snapshots) but not while RECORDING (the GeraNES rule:
+                    // saving mid-record is fine; loading is the dangerous one).
+                    // We keep SAVE enabled whenever a ROM is loaded.
+                    if accel_enabled(ui, rom, "Save State", &keys.save_state).clicked() {
                         out.action = Some(MenuAction::SaveState);
                         ui.close();
                     }
-                    if accel_enabled(ui, frame.rom_loaded, "Load State", &keys.load_state).clicked()
+                    // (H1) Load-state restores the timeline — forbidden while a
+                    // movie is recording (rewrites the recording) OR playing
+                    // back (desyncs playback). Mirrors GeraNES
+                    // `replayRecordingActive` / `replayInteractionLocked`.
+                    if accel_enabled(ui, rom_interactive, "Load State", &keys.load_state).clicked()
                     {
                         out.action = Some(MenuAction::LoadState);
                         ui.close();
@@ -420,7 +475,9 @@ impl UiShell {
                     // menu (not inside `add_enabled_ui`, whose nested UI scope
                     // breaks egui's sibling-hover auto-close), with disabled
                     // placeholders when no ROM is loaded.
-                    if frame.rom_loaded {
+                    // (H1) Save-to-slot needs only a ROM; Load-from-slot is
+                    // additionally replay-locked (same rule as Load State).
+                    if rom {
                         ui.menu_button("Save to Slot", |ui| {
                             for slot in 0u8..8 {
                                 if ui.button(format!("Slot {}", slot + 1)).clicked() {
@@ -429,6 +486,10 @@ impl UiShell {
                                 }
                             }
                         });
+                    } else {
+                        ui.add_enabled(false, egui::Button::new("Save to Slot"));
+                    }
+                    if rom_interactive {
                         ui.menu_button("Load from Slot", |ui| {
                             for slot in 0u8..8 {
                                 if ui.button(format!("Slot {}", slot + 1)).clicked() {
@@ -438,14 +499,17 @@ impl UiShell {
                             }
                         });
                     } else {
-                        ui.add_enabled(false, egui::Button::new("Save to Slot"));
                         ui.add_enabled(false, egui::Button::new("Load from Slot"));
                     }
 
                     // v1.0.0 — the Save-States manager window (thumbnail grid).
-                    // Native-only (the slots live on the filesystem).
+                    // Native-only (the slots live on the filesystem). (H1) The
+                    // grid is keyed on the loaded ROM's hash — needs a ROM.
                     #[cfg(not(target_arch = "wasm32"))]
-                    if ui.button("Save States...").clicked() {
+                    if ui
+                        .add_enabled(rom, egui::Button::new("Save States..."))
+                        .clicked()
+                    {
                         out.action = Some(MenuAction::OpenSaveStates);
                         ui.close();
                     }
@@ -497,21 +561,31 @@ impl UiShell {
                         out.action = Some(MenuAction::TogglePause);
                         ui.close();
                     }
-                    if accel_enabled(ui, frame.rom_loaded, "Reset", &keys.reset).clicked() {
+                    // (H1) Reset / Power-cycle restart the session — locked
+                    // during netplay (desyncs peers) and during a replay
+                    // (diverges the timeline). Mirrors GeraNES Reset gating
+                    // (`!netplayClientRestricted && !isReplayResetRestricted`).
+                    let hw_interactive = rom && !rom_change_restricted && !replay_locked;
+                    if accel_enabled(ui, hw_interactive, "Reset", &keys.reset).clicked() {
                         out.action = Some(MenuAction::Reset);
                         ui.close();
                     }
-                    if accel_enabled(ui, frame.rom_loaded, "Power Cycle", &keys.power_cycle)
-                        .clicked()
+                    if accel_enabled(ui, hw_interactive, "Power Cycle", &keys.power_cycle).clicked()
                     {
                         out.action = Some(MenuAction::PowerCycle);
                         ui.close();
                     }
                     ui.separator();
                     // Frame advance is meaningful while paused; enabled with a
-                    // ROM loaded (a press while running is a no-op).
-                    if accel_enabled(ui, frame.rom_loaded, "Frame Advance", &keys.frame_advance)
-                        .clicked()
+                    // ROM loaded (a press while running is a no-op). (H1) Locked
+                    // during netplay (the peers drive frame stepping).
+                    if accel_enabled(
+                        ui,
+                        rom && !rom_change_restricted,
+                        "Frame Advance",
+                        &keys.frame_advance,
+                    )
+                    .clicked()
                     {
                         out.action = Some(MenuAction::FrameAdvance);
                         ui.close();
@@ -539,28 +613,49 @@ impl UiShell {
                     // persisted, so the menu always opens at 100% on launch).
                     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                     let speed_pct = (frame.speed * 100.0).round() as u32;
-                    ui.menu_button(format!("Speed: {speed_pct}%"), |ui| {
-                        for &preset in &[0.25_f32, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0] {
-                            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                            let pct = (preset * 100.0).round() as u32;
-                            // Float-equality is fine: the menu sets these exact
-                            // preset values, and the keys step through the same.
-                            #[allow(clippy::float_cmp)]
-                            let selected = frame.speed == preset;
-                            if ui.radio(selected, format!("{pct}%")).clicked() {
-                                out.action = Some(MenuAction::SetSpeed(preset));
-                                ui.close();
+                    // (H1) The Speed submenu opens only with a ROM; during a
+                    // netplay session only the 100% preset is selectable (the
+                    // peers run lockstep at the console rate). Mirrors GeraNES
+                    // `isNetplaySpeedRestricted` (only `Normal` enabled).
+                    ui.add_enabled_ui(rom, |ui| {
+                        ui.menu_button(format!("Speed: {speed_pct}%"), |ui| {
+                            for &preset in &[0.25_f32, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0] {
+                                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                                let pct = (preset * 100.0).round() as u32;
+                                // Float-equality is fine: the menu sets these
+                                // exact preset values, and the keys step the same.
+                                #[allow(clippy::float_cmp)]
+                                let selected = frame.speed == preset;
+                                #[allow(clippy::float_cmp)]
+                                let preset_enabled = !rom_change_restricted || preset == 1.0;
+                                if ui
+                                    .add_enabled(
+                                        preset_enabled,
+                                        egui::RadioButton::new(selected, format!("{pct}%")),
+                                    )
+                                    .clicked()
+                                {
+                                    out.action = Some(MenuAction::SetSpeed(preset));
+                                    ui.close();
+                                }
                             }
-                        }
+                        });
                     });
                     // Region is read-only (no core setter): display only.
                     ui.add_enabled(
                         false,
                         egui::Button::new(format!("Region: {}", frame.region_label)),
                     );
+                    // (H1) Inserting a Vs. coin is a hardware action — locked
+                    // during netplay (the host drives arcade hardware).
                     if frame.vs_system
-                        && accel_enabled(ui, frame.rom_loaded, "Vs. Insert Coin", &keys.insert_coin)
-                            .clicked()
+                        && accel_enabled(
+                            ui,
+                            rom && !rom_change_restricted,
+                            "Vs. Insert Coin",
+                            &keys.insert_coin,
+                        )
+                        .clicked()
                     {
                         out.action = Some(MenuAction::InsertCoin);
                         ui.close();
@@ -574,27 +669,45 @@ impl UiShell {
                         ui.close();
                     }
                     // BUG-1: direct child (not inside add_enabled_ui — see File).
-                    if frame.rom_loaded {
+                    // (H1) The Movies submenu is unavailable during a netplay
+                    // session (a rollback session cannot also be a TAS movie).
+                    if rom && !rom_change_restricted {
                         ui.menu_button("Movies (TAS)", |ui| {
+                            // Record toggles record on/off; it must be locked
+                            // while a movie is PLAYING (can't record over a
+                            // playback). The toggle-off case (already recording)
+                            // stays enabled so the user can stop.
                             let rec_label = if frame.movie_recording {
                                 "Stop Recording"
                             } else {
                                 "Record"
                             };
-                            if accel_item(ui, rec_label, &keys.movie_record).clicked() {
+                            let rec_enabled = frame.movie_recording || !frame.movie_playing;
+                            if accel_enabled(ui, rec_enabled, rec_label, &keys.movie_record)
+                                .clicked()
+                            {
                                 out.action = Some(MenuAction::MovieRecordToggle);
                                 ui.close();
                             }
+                            // Play toggles playback; locked while RECORDING. The
+                            // toggle-off (already playing) stays enabled to stop.
                             let play_label = if frame.movie_playing {
                                 "Stop Playback"
                             } else {
                                 "Play"
                             };
-                            if accel_item(ui, play_label, &keys.movie_play).clicked() {
+                            let play_enabled = frame.movie_playing || !frame.movie_recording;
+                            if accel_enabled(ui, play_enabled, play_label, &keys.movie_play)
+                                .clicked()
+                            {
                                 out.action = Some(MenuAction::MoviePlayToggle);
                                 ui.close();
                             }
-                            if accel_item(ui, "Branch", &keys.movie_branch).clicked() {
+                            // Branch forks the CURRENT playback into a new
+                            // recording — only meaningful while playing back.
+                            if accel_enabled(ui, frame.movie_playing, "Branch", &keys.movie_branch)
+                                .clicked()
+                            {
                                 out.action = Some(MenuAction::MovieBranch);
                                 ui.close();
                             }
@@ -602,8 +715,14 @@ impl UiShell {
                     } else {
                         ui.add_enabled(false, egui::Button::new("Movies (TAS)"));
                     }
+                    // (H1) Opening the Netplay panel is locked while a replay
+                    // (TAS movie) owns the session. Mirrors GeraNES Netplay
+                    // gating (`!replayInteractionLocked`).
                     #[cfg(not(target_arch = "wasm32"))]
-                    if ui.button("Netplay...").clicked() {
+                    if ui
+                        .add_enabled(!replay_locked, egui::Button::new("Netplay..."))
+                        .clicked()
+                    {
                         out.action = Some(MenuAction::OpenPanel(ToolPanel::Netplay));
                         ui.close();
                     }
@@ -620,8 +739,35 @@ impl UiShell {
                         out.action = Some(MenuAction::OpenPanel(ToolPanel::InputDisplay));
                         ui.close();
                     }
-                    if ui.button("ROM Database").clicked() {
+                    // (H1) The ROM Database editor needs a loaded ROM to edit.
+                    if ui
+                        .add_enabled(rom, egui::Button::new("ROM Database"))
+                        .clicked()
+                    {
                         out.action = Some(MenuAction::OpenPanel(ToolPanel::GameDb));
+                        ui.close();
+                    }
+                });
+
+                // ----- Mod (v1.2.0 C3, HD-pack; native + feature-gated) -----
+                // (H1) HD-pack load/unload needs a loaded ROM (the pack is keyed
+                // on the ROM hash) and is locked while a netplay/replay session
+                // owns presentation. Mirrors GeraNES Mod gating.
+                #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                ui.menu_button("Mod", |ui| {
+                    let mod_enabled = rom && !rom_change_restricted && !replay_locked;
+                    if ui
+                        .add_enabled(mod_enabled, egui::Button::new("Load HD Pack..."))
+                        .clicked()
+                    {
+                        out.action = Some(MenuAction::LoadHdPack);
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(mod_enabled, egui::Button::new("Unload HD Pack"))
+                        .clicked()
+                    {
+                        out.action = Some(MenuAction::UnloadHdPack);
                         ui.close();
                     }
                 });

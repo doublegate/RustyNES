@@ -118,15 +118,26 @@ fn read_vuint(data: &[u8], pos: &mut usize) -> Option<u64> {
         let byte = *data.get(*pos)?;
         *pos += 1;
         // The low 7 bits are the payload; `value |= (byte & 0x7f) << shift`.
-        value = value.wrapping_add(u64::from(byte & 0x7f).wrapping_shl(shift));
+        // Use CHECKED shift/add: a malformed patch with too many continuation
+        // bytes would otherwise wrap (`wrapping_shl` masks the shift mod 64) and
+        // silently decode a wrong, smaller value — bypassing the size/offset
+        // validation downstream (Copilot review, PR #74). Overflow => reject.
+        let add = u64::from(byte & 0x7f).checked_shl(shift)?;
+        value = value.checked_add(add)?;
         if byte & 0x80 != 0 {
             return Some(value);
         }
-        shift += 7;
+        shift = shift.checked_add(7)?;
         // Add 1 << shift after each non-terminal byte (the +1 bias).
-        value = value.wrapping_add(1u64.wrapping_shl(shift));
+        value = value.checked_add(1u64.checked_shl(shift)?)?;
     }
 }
+
+/// Upper bound on a patch's declared output size (UPS/BPS). NES images are at
+/// most a few MiB; 64 MiB is far above any legitimate target yet rejects a
+/// malformed/hostile patch declaring a huge size that would OOM the allocation
+/// (Gemini security-high + Copilot, PR #74).
+const MAX_PATCH_OUTPUT: usize = 64 * 1024 * 1024;
 
 /// Apply an IPS soft-patch to `rom`, returning the patched ROM.
 ///
@@ -252,9 +263,21 @@ pub fn apply_ups(rom: &[u8], patch: &[u8]) -> Result<Vec<u8>, PatchError> {
     let mut pos = 4usize;
     let in_size = read_vuint(patch, &mut pos).ok_or_else(truncated)?;
     let out_size = read_vuint(patch, &mut pos).ok_or_else(truncated)?;
+    // Validate the declared input size against the actual ROM (a cheap fast-fail
+    // for a mismatched/malformed patch on top of the source-CRC check), and cap
+    // the declared output size so a hostile patch can't drive a huge allocation
+    // (Gemini security-high + Copilot, PR #74).
+    if in_size != rom.len() as u64 {
+        return Err(PatchError::Malformed {
+            format: FMT,
+            detail: "declared input size does not match the source ROM",
+        });
+    }
     let out_size_usize =
         usize::try_from(out_size).map_err(|_| PatchError::OffsetOutOfRange { format: FMT })?;
-    let _ = in_size;
+    if out_size_usize > MAX_PATCH_OUTPUT {
+        return Err(PatchError::OffsetOutOfRange { format: FMT });
+    }
 
     // Start from the source, padded/truncated to the declared output size.
     let mut out = rom.to_vec();
@@ -302,6 +325,7 @@ pub fn apply_ups(rom: &[u8], patch: &[u8]) -> Result<Vec<u8>, PatchError> {
 ///
 /// Returns [`PatchError`] if the patch is missing its `BPS1` magic, is
 /// truncated, encodes an out-of-range action, or fails either CRC32 check.
+#[allow(clippy::too_many_lines)] // a single linear BPS action-stream decoder.
 pub fn apply_bps(rom: &[u8], patch: &[u8]) -> Result<Vec<u8>, PatchError> {
     const FMT: &str = "BPS";
     let truncated = || PatchError::Truncated { format: FMT };
@@ -335,9 +359,22 @@ pub fn apply_bps(rom: &[u8], patch: &[u8]) -> Result<Vec<u8>, PatchError> {
     }
 
     let mut pos = 4usize;
-    let _source_size = read_vuint(patch, &mut pos).ok_or_else(truncated)?;
+    let source_size = read_vuint(patch, &mut pos).ok_or_else(truncated)?;
+    // Validate the declared source size against the ROM (fast-fail on a
+    // mismatched/malformed patch, on top of the source-CRC check) and cap the
+    // declared target size against a huge allocation (Gemini security-high +
+    // Copilot, PR #74).
+    if source_size != rom.len() as u64 {
+        return Err(PatchError::Malformed {
+            format: FMT,
+            detail: "declared source size does not match the ROM",
+        });
+    }
     let target_size = read_vuint(patch, &mut pos).ok_or_else(truncated)?;
     let target_size = usize::try_from(target_size).map_err(|_| oor())?;
+    if target_size > MAX_PATCH_OUTPUT {
+        return Err(oor());
+    }
     let metadata_size = read_vuint(patch, &mut pos).ok_or_else(truncated)?;
     let metadata_size = usize::try_from(metadata_size).map_err(|_| oor())?;
     // Skip metadata (typically an XML blob; we don't consume it).

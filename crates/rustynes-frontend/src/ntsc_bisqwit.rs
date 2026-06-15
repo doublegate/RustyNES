@@ -32,11 +32,55 @@
 //! naga forbids dynamically indexing value (`const`/`let`) arrays, so a private
 //! module-scope `var` array is the portable choice.
 //!
-//! Parameters are fixed at Bisqwit's neutral defaults (Hue/Brightness/Contrast/
-//! Saturation = 0, Y/I/Q filter widths = 12). The artifacts come from the
-//! algorithm, not the tunables; per-knob controls can be added later.
+//! The four picture knobs (Contrast / Saturation / Brightness / Hue) are live
+//! per-frame uniforms (see [`NtscKnobs`]); the Y/I/Q filter widths stay fixed at
+//! 12. They all default to Bisqwit's neutral values ([`NtscKnobs::DEFAULT`] —
+//! contrast / saturation / brightness / hue = 0), at which the in-shader matrix
+//! evaluates bit-identically to the old baked constants, so the default build is
+//! byte-for-byte unchanged. The artifacts come from the algorithm, not the
+//! tunables.
 
 use wgpu::util::DeviceExt;
+
+/// The four live picture knobs for the Bisqwit NTSC decode.
+///
+/// Promoted from baked WGSL constants to a per-frame uniform (v1.2.0 C1). The
+/// YIQ→RGB matrix is linear in `contrast` and in `contrast * saturation`,
+/// `brightness` is an additive luma term, and `hue` rotates the demodulated
+/// (I, Q) vector — so they decode losslessly in the shader each frame. At
+/// [`Self::DEFAULT`] (all four 0) the matrix matches the previous hardcoded
+/// coefficients exactly and `brightness`/`hue` are no-ops, so the output is
+/// byte-identical to before C1.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NtscKnobs {
+    /// Contrast offset. Picture contrast factor is `(contrast + 1)^2`.
+    pub contrast: f32,
+    /// Saturation offset. Chroma gain factor is `(saturation + 1)^2`.
+    pub saturation: f32,
+    /// Additive luma (brightness) offset, in the same integer signal-sum units
+    /// the decoder accumulates (0 = no change).
+    pub brightness: f32,
+    /// Hue rotation in degrees, applied as a rotation of the demodulated
+    /// (I, Q) vector (0 = no change).
+    pub hue: f32,
+}
+
+impl NtscKnobs {
+    /// Bisqwit's neutral defaults (all 0). The decode at these values is
+    /// byte-identical to the pre-C1 baked constants.
+    pub const DEFAULT: Self = Self {
+        contrast: 0.0,
+        saturation: 0.0,
+        brightness: 0.0,
+        hue: 0.0,
+    };
+}
+
+impl Default for NtscKnobs {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
 
 // --- Signal model constants (from Bisqwit / lidnariq's measurements) ---------
 
@@ -93,36 +137,20 @@ fn build_sinetable() -> [i32; 27] {
     t
 }
 
-// --- YIQ matrix (Bisqwit neutral defaults: contrast=sat=bright=0) ------------
+// --- YIQ matrix coefficients (Bisqwit) ---------------------------------------
+//
+// The integer YIQ→RGB matrix is computed in the shader each frame from the live
+// [`NtscKnobs`]: the luma gain is `contrast_factor / FW`, and each chroma term
+// is `contrast_factor * <tiny coeff> * saturation_factor / FW`, where
+// `contrast_factor = (contrast + 1)^2 * 167941` and
+// `saturation_factor = (saturation + 1)^2 * 144044` (matching Mesen's
+// `OnBeforeApplyFilter`). The base scalars 167941 / 144044 and the seven tiny
+// chroma coefficients are baked into the WGSL below; promoting only the knobs to
+// the uniform keeps the default decode (contrast = saturation = 0) bit-identical
+// to the previous hardcoded `Y/IR/QR/...` constants. `FILTER_WIDTH` is the fixed
+// y/i/q window (yWidth = iWidth = qWidth = 12).
 
-const CONTRAST: f64 = 167_941.0; // (0+1)^2 * 167941
-const SATURATION: f64 = 144_044.0; // (0+1)^2 * 144044
-const FILTER_WIDTH: i32 = 12; // yWidth = iWidth = qWidth at default lengths
-const BRIGHTNESS: i32 = 0;
-
-/// The integer YIQ→RGB matrix coefficients, matching `OnBeforeApplyFilter`.
-struct Matrix {
-    y: i32,
-    ir: i32,
-    qr: i32,
-    ig: i32,
-    qg: i32,
-    ib: i32,
-    qb: i32,
-}
-
-fn build_matrix() -> Matrix {
-    let w = f64::from(FILTER_WIDTH);
-    Matrix {
-        y: (CONTRAST / w) as i32,
-        ir: (CONTRAST * 1.994_681e-6 * SATURATION / w) as i32,
-        qr: (CONTRAST * 9.915_742e-7 * SATURATION / w) as i32,
-        ig: (CONTRAST * 9.151_351e-8 * SATURATION / w) as i32,
-        qg: (CONTRAST * -6.334_805e-7 * SATURATION / w) as i32,
-        ib: (CONTRAST * -1.012_984e-6 * SATURATION / w) as i32,
-        qb: (CONTRAST * 1.667_217e-6 * SATURATION / w) as i32,
-    }
-}
+const FILTER_WIDTH: i32 = 12;
 
 /// 12-bit emphasis waveforms, one per emphasis value 0..7 (R/G/B bit patterns).
 const EMPHASIS_LUT: [u32; 8] = [
@@ -150,10 +178,9 @@ fn wgsl_i32_array(values: &[i32]) -> String {
 
 /// Build the full WGSL source with all static tables baked in.
 #[allow(clippy::too_many_lines)] // the embedded WGSL is naturally long.
-fn shader_src() -> String {
+pub(crate) fn shader_src() -> String {
     let (low, high) = build_signal_luts();
     let sine = build_sinetable();
-    let m = build_matrix();
     let emph: Vec<i32> = EMPHASIS_LUT.iter().map(|&v| v as i32).collect();
 
     format!(
@@ -162,6 +189,7 @@ struct Uniforms {{
     rect: vec4<f32>,   // letterbox transform (same shape + math as gfx.wgsl)
     crop: vec4<f32>,   // overscan crop: x = vertical scale, y = vertical offset
     params: vec4<f32>, // x = videoPhase (0..2), rest reserved
+    knobs: vec4<f32>,  // x = contrast, y = saturation, z = brightness, w = hue (degrees)
 }};
 
 @group(0) @binding(0) var idx_tex: texture_2d<u32>;
@@ -175,14 +203,17 @@ var<private> SIGNAL_HIGH: array<i32, 128> = array<i32, 128>({signal_high});
 var<private> SINE: array<i32, 27> = array<i32, 27>({sine});
 var<private> EMPHASIS: array<i32, 8> = array<i32, 8>({emphasis});
 
-const Y: i32 = {y};
-const IR: i32 = {ir};
-const QR: i32 = {qr};
-const IG: i32 = {ig};
-const QG: i32 = {qg};
-const IB: i32 = {ib};
-const QB: i32 = {qb};
-const BRIGHTNESS: i32 = {brightness};
+// Base YIQ matrix scalars (Bisqwit / Mesen). The live contrast / saturation
+// knobs scale these per frame; at knob = 0 the integer matrix below equals the
+// old baked Y/IR/QR/... constants exactly (verified in f32).
+const CONTRAST_BASE: f32 = 167941.0;
+const SATURATION_BASE: f32 = 144044.0;
+const IR_C: f32 = 1.994681e-6;
+const QR_C: f32 = 9.915742e-7;
+const IG_C: f32 = 9.151351e-8;
+const QG_C: f32 = -6.334805e-7;
+const IB_C: f32 = -1.012984e-6;
+const QB_C: f32 = 1.667217e-6;
 const FW: i32 = {fw}; // filter width (y=i=q=12)
 
 struct VsOut {{
@@ -272,7 +303,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {{
     let start_cycle = ((video_phase * 4 + row * 341 * 8) % 12 + 12) % 12;
     let phase0 = (start_cycle + 7) % 12;
 
-    var ysum = BRIGHTNESS;
+    // Live picture knobs (C1): brightness is the additive luma seed, contrast +
+    // saturation scale the YIQ matrix, hue rotates the demodulated (I, Q) vector.
+    // At knobs = 0 this reproduces the pre-C1 constants byte-for-byte.
+    var ysum = i32(u.knobs.z);
     var isum = 0;
     var qsum = 0;
     // Windowed sum over FW samples centred on `center` (yWidth=iWidth=qWidth).
@@ -288,9 +322,31 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {{
         qsum = qsum + s * sn;
     }}
 
-    let r = clamp((ysum * Y + isum * IR + qsum * QR) / 65536, 0, 255);
-    let g = clamp((ysum * Y + isum * IG + qsum * QG) / 65536, 0, 255);
-    let b = clamp((ysum * Y + isum * IB + qsum * QB) / 65536, 0, 255);
+    // Hue rotation of the (I, Q) vector by `hue` degrees (identity at 0). Done in
+    // f32 then truncated back to integer so the matrix multiply below is unchanged.
+    let hue_rad = u.knobs.w * 0.017453292; // pi/180
+    let hc = cos(hue_rad);
+    let hs = sin(hue_rad);
+    let isum_r = i32(f32(isum) * hc - f32(qsum) * hs);
+    let qsum_r = i32(f32(isum) * hs + f32(qsum) * hc);
+    isum = isum_r;
+    qsum = qsum_r;
+
+    // Build the integer YIQ->RGB matrix from the live contrast / saturation.
+    let cf = (u.knobs.x + 1.0) * (u.knobs.x + 1.0) * CONTRAST_BASE;
+    let sf = (u.knobs.y + 1.0) * (u.knobs.y + 1.0) * SATURATION_BASE;
+    let wf = f32(FW);
+    let my = i32(cf / wf);
+    let ir = i32(cf * IR_C * sf / wf);
+    let qr = i32(cf * QR_C * sf / wf);
+    let ig = i32(cf * IG_C * sf / wf);
+    let qg = i32(cf * QG_C * sf / wf);
+    let ib = i32(cf * IB_C * sf / wf);
+    let qb = i32(cf * QB_C * sf / wf);
+
+    let r = clamp((ysum * my + isum * ir + qsum * qr) / 65536, 0, 255);
+    let g = clamp((ysum * my + isum * ig + qsum * qg) / 65536, 0, 255);
+    let b = clamp((ysum * my + isum * ib + qsum * qb) / 65536, 0, 255);
 
     return vec4<f32>(f32(r) / 255.0, f32(g) / 255.0, f32(b) / 255.0, 1.0);
 }}
@@ -299,14 +355,6 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {{
         signal_high = wgsl_i32_array(&high),
         sine = wgsl_i32_array(&sine),
         emphasis = wgsl_i32_array(&emph),
-        y = m.y,
-        ir = m.ir,
-        qr = m.qr,
-        ig = m.ig,
-        qg = m.qg,
-        ib = m.ib,
-        qb = m.qb,
-        brightness = BRIGHTNESS,
         fw = FILTER_WIDTH,
     )
 }
@@ -316,6 +364,9 @@ pub struct NtscBisqwitFilter {
     pipeline: wgpu::RenderPipeline,
     uniforms: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
+    /// Live picture knobs, written into the per-frame uniform on each
+    /// [`Self::render`]. Default = byte-identical to the pre-C1 decode.
+    knobs: NtscKnobs,
 }
 
 impl NtscBisqwitFilter {
@@ -393,11 +444,12 @@ impl NtscBisqwitFilter {
         });
         let uniforms = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("ntsc-bisqwit-uniforms"),
-            // rect (identity) + crop (none) + params (videoPhase=0).
+            // rect (identity) + crop (none) + params (videoPhase=0) + knobs (0).
             contents: bytemuck::cast_slice(&[
                 1.0f32, 1.0, 0.0, 0.0, // rect
                 1.0, 0.0, 0.0, 0.0, // crop
                 0.0, 0.0, 0.0, 0.0, // params
+                0.0, 0.0, 0.0, 0.0, // knobs (contrast, saturation, brightness, hue)
             ]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
@@ -420,7 +472,15 @@ impl NtscBisqwitFilter {
             pipeline,
             uniforms,
             bind_group,
+            knobs: NtscKnobs::DEFAULT,
         }
+    }
+
+    /// Update the live picture knobs (contrast / saturation / brightness / hue).
+    /// Takes effect on the next [`Self::render`]; at [`NtscKnobs::DEFAULT`] the
+    /// decode is byte-identical to the pre-C1 filter.
+    pub const fn set_knobs(&mut self, knobs: NtscKnobs) {
+        self.knobs = knobs;
     }
 
     /// Render the filter into `out_view`, sampling the index texture the filter
@@ -439,7 +499,8 @@ impl NtscBisqwitFilter {
         par_correction: bool,
         hide_overscan: bool,
     ) {
-        // rect (4) + crop (4) from the shared helper, then params (videoPhase).
+        // rect (4) + crop (4) from the shared helper, then params (videoPhase) +
+        // knobs (contrast, saturation, brightness, hue).
         let lb = crate::gfx::letterbox_uniform(width, height, par_correction, hide_overscan);
         let uniform = [
             lb[0],
@@ -454,6 +515,10 @@ impl NtscBisqwitFilter {
             0.0,
             0.0,
             0.0,
+            self.knobs.contrast,
+            self.knobs.saturation,
+            self.knobs.brightness,
+            self.knobs.hue,
         ];
         queue.write_buffer(&self.uniforms, 0, bytemuck::cast_slice(&uniform));
 
@@ -519,6 +584,38 @@ mod tests {
             att_white > 0 && att_white < high[0x20],
             "attenuated < full white"
         );
+    }
+
+    /// C1 byte-identity guard: the integer YIQ matrix the shader computes from
+    /// the live knobs at [`NtscKnobs::DEFAULT`] must equal the pre-C1 baked
+    /// constants exactly (the in-shader math is f32; this mirrors it in f32). If
+    /// this drifts, the default `composite-rt` output is no longer byte-identical.
+    #[test]
+    #[allow(clippy::float_cmp)]
+    fn default_knobs_match_legacy_matrix() {
+        // The contrast / saturation factors at knob = 0 are the legacy bases.
+        let cf: f32 = (0.0_f32 + 1.0) * (0.0_f32 + 1.0) * 167_941.0;
+        let sf: f32 = (0.0_f32 + 1.0) * (0.0_f32 + 1.0) * 144_044.0;
+        let w = FILTER_WIDTH as f32;
+        // Mirror the WGSL matrix build (f32, truncating `i32(...)` casts).
+        let y = (cf / w) as i32;
+        let ir = (cf * 1.994_681e-6 * sf / w) as i32;
+        let qr = (cf * 9.915_742e-7 * sf / w) as i32;
+        let ig = (cf * 9.151_351e-8 * sf / w) as i32;
+        let qg = (cf * -6.334_805e-7 * sf / w) as i32;
+        let ib = (cf * -1.012_984e-6 * sf / w) as i32;
+        let qb = (cf * 1.667_217e-6 * sf / w) as i32;
+        // The exact constants the pre-C1 shader baked in.
+        assert_eq!(y, 13_995);
+        assert_eq!(ir, 4_021);
+        assert_eq!(qr, 1_998);
+        assert_eq!(ig, 184);
+        assert_eq!(qg, -1_277);
+        assert_eq!(ib, -2_042);
+        assert_eq!(qb, 3_360);
+        // Brightness / hue are no-ops at the default.
+        assert_eq!(NtscKnobs::DEFAULT.brightness, 0.0);
+        assert_eq!(NtscKnobs::DEFAULT.hue, 0.0);
     }
 
     /// The sine table is `8*sin`, so its extremes are ±8 and it has the

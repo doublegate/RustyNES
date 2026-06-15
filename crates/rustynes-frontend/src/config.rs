@@ -241,6 +241,13 @@ pub enum ExpansionDevice {
     /// NES Power Pad / Family Fun Fitness mat (12 buttons; keys per
     /// `input::POWER_PAD_KEYS`).
     PowerPad,
+    /// SNES-style serial mouse (v1.2.0 Workstream D). Mouse motion drives the
+    /// per-frame movement deltas; left/right mouse buttons map to the device
+    /// buttons.
+    SnesMouse,
+    /// Famicom Family BASIC keyboard (v1.2.0 Workstream D). Host keys map to the
+    /// 72-key matrix via `input::FAMILY_KEYBOARD_KEYMAP`.
+    FamilyKeyboard,
 }
 
 impl Default for InputConfig {
@@ -671,10 +678,68 @@ pub struct GraphicsConfig {
     /// re-tints the displayed framebuffer only — no core / accuracy impact.
     #[serde(default)]
     pub palette_file: Option<std::path::PathBuf>,
+    /// v1.2.0 C1 — live contrast knob for the true-composite (`"composite-rt"`,
+    /// Bisqwit) NTSC filter. Picture contrast factor is `(contrast + 1)^2`.
+    /// Default `0.0` ([`crate::ntsc_bisqwit::NtscKnobs::DEFAULT`]) is byte-identical
+    /// to the previous hardcoded value. Output-only; no core / accuracy impact.
+    #[serde(default = "default_ntsc_contrast")]
+    pub ntsc_contrast: f32,
+    /// v1.2.0 C1 — live saturation knob for the Bisqwit NTSC filter. Chroma gain
+    /// factor is `(saturation + 1)^2`. Default `0.0` = byte-identical.
+    #[serde(default = "default_ntsc_saturation")]
+    pub ntsc_saturation: f32,
+    /// v1.2.0 C1 — live brightness knob for the Bisqwit NTSC filter (additive luma
+    /// offset). Default `0.0` = byte-identical.
+    #[serde(default = "default_ntsc_brightness")]
+    pub ntsc_brightness: f32,
+    /// v1.2.0 C1 — live hue knob (degrees) for the Bisqwit NTSC filter, applied as
+    /// a rotation of the demodulated (I, Q) vector. Default `0.0` = byte-identical.
+    #[serde(default = "default_ntsc_hue")]
+    pub ntsc_hue: f32,
+    /// v1.2.0 C2 — the composable post-process shader stack. `#[serde(default)]`
+    /// = an EMPTY stack, so a pre-C2 config (with no `[graphics.shader_stack]`
+    /// key) loads byte-identically and the renderer takes the unchanged
+    /// direct-blit / legacy-filter path. A non-empty stack engages the ping-pong
+    /// shader executor. Presentation-only; no core / accuracy impact.
+    #[serde(default)]
+    pub shader_stack: crate::shader_pass::ShaderStackConfig,
+    /// v1.2.0 C2 — saved named shader-stack presets (the CRT preset bank +
+    /// user-saved stacks). `#[serde(default)]` = empty, so a pre-C2 config is
+    /// byte-identical. Persisted under `[graphics.shader_presets]`.
+    #[serde(default)]
+    pub shader_presets: crate::shader_pass::ShaderPresetBank,
+    /// v1.2.0 beta.2 (Workstream C3) — per-game HD-pack paths, keyed on the
+    /// ROM SHA-256 (hex). When the loaded ROM's hash has an entry here AND the
+    /// `hd-pack` feature is built in, the frontend loads the referenced pack
+    /// (folder or `.zip`) and substitutes hi-res tiles at blit time. Empty by
+    /// default and `#[serde(default)]`, so a pre-C3 config is byte-identical
+    /// and the default presentation is unchanged. Presentation-only.
+    #[serde(default)]
+    pub hd_packs: std::collections::BTreeMap<String, std::path::PathBuf>,
 }
 
 fn default_ntsc_filter() -> String {
     "off".into()
+}
+
+/// Serde default for [`GraphicsConfig::ntsc_contrast`] — Bisqwit's neutral value.
+const fn default_ntsc_contrast() -> f32 {
+    crate::ntsc_bisqwit::NtscKnobs::DEFAULT.contrast
+}
+
+/// Serde default for [`GraphicsConfig::ntsc_saturation`].
+const fn default_ntsc_saturation() -> f32 {
+    crate::ntsc_bisqwit::NtscKnobs::DEFAULT.saturation
+}
+
+/// Serde default for [`GraphicsConfig::ntsc_brightness`].
+const fn default_ntsc_brightness() -> f32 {
+    crate::ntsc_bisqwit::NtscKnobs::DEFAULT.brightness
+}
+
+/// Serde default for [`GraphicsConfig::ntsc_hue`].
+const fn default_ntsc_hue() -> f32 {
+    crate::ntsc_bisqwit::NtscKnobs::DEFAULT.hue
 }
 
 const fn default_crt_scanline() -> f32 {
@@ -707,6 +772,13 @@ impl Default for GraphicsConfig {
             crt_filter: false,
             crt_scanline: default_crt_scanline(),
             palette_file: None,
+            ntsc_contrast: default_ntsc_contrast(),
+            ntsc_saturation: default_ntsc_saturation(),
+            ntsc_brightness: default_ntsc_brightness(),
+            ntsc_hue: default_ntsc_hue(),
+            shader_stack: crate::shader_pass::ShaderStackConfig::default(),
+            shader_presets: crate::shader_pass::ShaderPresetBank::default(),
+            hd_packs: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -1320,6 +1392,70 @@ mod tests {
         // Empty TOML -> all defaults.
         let cfg: Config = toml::from_str("").unwrap();
         assert_eq!(cfg, Config::default());
+    }
+
+    #[test]
+    fn shortcut_registry_defaults_are_byte_identical() {
+        // v1.2.0 Workstream H2 — the system-bindings section *is* the
+        // remappable shortcut registry the menu reads. Every field carries a
+        // `#[serde(default)]` returning today's hardcoded hotkey, so a config
+        // with NO `[input.system]` section (and an empty one) must reproduce
+        // the exact bindings the app shipped with — i.e. a pre-H2 / default
+        // build is byte-identical. This guards the H2 promise directly.
+        let expected = SystemBindings::default();
+
+        // (a) a config file with no `[input.system]` at all — the real
+        // pre-H2 / default-build case (`InputConfig::system` is
+        // `#[serde(default)]`). This is the byte-identical guarantee.
+        let no_section: Config = toml::from_str("").unwrap();
+        assert_eq!(no_section.input.system, expected);
+
+        // (b) a `[input.system]` table that supplies ONLY the original
+        // (pre-1.0) required fields and omits every newer hotkey parses to
+        // today's defaults for the omitted keys — i.e. an on-disk config
+        // written before those keys existed upgrades silently. Parsed as a bare
+        // `SystemBindings` because the surrounding `InputConfig::player1/2/system`
+        // are themselves required fields.
+        let legacy_section: SystemBindings = toml::from_str(
+            "quit = \"Escape\"\n\
+             save_state = \"F1\"\n\
+             load_state = \"F4\"\n\
+             rewind = \"F5\"\n\
+             reset = \"F2\"\n\
+             power_cycle = \"F3\"\n",
+        )
+        .unwrap();
+        assert_eq!(legacy_section, expected);
+
+        // (c) pin the literal default key strings so an accidental rebinding of
+        // a default in a future edit is caught here (the registry serialises
+        // these verbatim, which is what the menu accelerator labels show).
+        assert_eq!(expected.quit, "Escape");
+        assert_eq!(expected.save_state, "F1");
+        assert_eq!(expected.load_state, "F4");
+        assert_eq!(expected.rewind, "F5");
+        assert_eq!(expected.reset, "F2");
+        assert_eq!(expected.power_cycle, "F3");
+        assert_eq!(expected.debug_overlay, "Backquote");
+        assert_eq!(expected.open_rom, "F12");
+        assert_eq!(expected.movie_record, "F6");
+        assert_eq!(expected.movie_play, "F7");
+        assert_eq!(expected.movie_branch, "F8");
+        assert_eq!(expected.disk_swap, "F9");
+        assert_eq!(expected.insert_coin, "F10");
+        assert_eq!(expected.fullscreen, "F11");
+        assert_eq!(expected.toggle_menu_bar, "KeyM");
+        assert_eq!(expected.fast_forward, "Tab");
+        assert_eq!(expected.frame_advance, "Backslash");
+        assert_eq!(expected.pause, "Space");
+        assert_eq!(expected.speed_up, "Equal");
+        assert_eq!(expected.speed_down, "Minus");
+        assert_eq!(expected.speed_reset, "Digit0");
+
+        // (d) serialising then re-parsing the registry is a fixed point.
+        let s = toml::to_string_pretty(&expected).unwrap();
+        let back: SystemBindings = toml::from_str(&s).unwrap();
+        assert_eq!(back, expected);
     }
 
     #[test]

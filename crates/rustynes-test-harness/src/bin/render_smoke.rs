@@ -63,7 +63,7 @@ fn write_png(path: &Path, fb: &[u8]) {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
-        eprintln!("usage: capture_m89 <rom-path> [frames] [out.png]");
+        eprintln!("usage: render_smoke <rom-path> [frames] [out.png]");
         std::process::exit(2);
     }
     let rom_path = &args[1];

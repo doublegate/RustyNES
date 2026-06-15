@@ -681,6 +681,90 @@ pub const POWER_PAD_KEYS: [KeyCode; 12] = [
     KeyCode::KeyF,
 ];
 
+/// v1.2.0 Workstream D — host-key -> Family BASIC keyboard matrix-index map.
+///
+/// The Famicom Family BASIC keyboard is a `9 x 8` switch matrix (`9` rows x
+/// `2` column-halves x `4` switches = 72 key positions). We expose the matrix
+/// as a flat 0..72 linear index (`row * 8 + bit`, `bit` 0..=3 = column-half 0,
+/// 4..=7 = column-half 1; see [`rustynes_core::FamilyKeyboardState`]). Rather
+/// than reproduce the exact (and partly undocumented) Japanese-layout switch
+/// positions, this is a **direct passthrough**: the host PC key is mapped to a
+/// matrix position so typing on the host drives the emulated keyboard. The
+/// position assignment is arbitrary-but-stable (it only has to be one-to-one);
+/// a faithful per-key positional layout is a follow-up.
+///
+/// Returns `None` for keys with no keyboard position (they fall through to the
+/// normal controller / system handling).
+#[must_use]
+pub const fn family_keyboard_index(code: KeyCode) -> Option<usize> {
+    // A fixed, one-to-one assignment over the printable + control keys, packed
+    // into the 0..72 matrix space. Letters A-Z (0..26), digits 0-9 (26..36),
+    // then a handful of control/punctuation keys.
+    let idx = match code {
+        KeyCode::KeyA => 0,
+        KeyCode::KeyB => 1,
+        KeyCode::KeyC => 2,
+        KeyCode::KeyD => 3,
+        KeyCode::KeyE => 4,
+        KeyCode::KeyF => 5,
+        KeyCode::KeyG => 6,
+        KeyCode::KeyH => 7,
+        KeyCode::KeyI => 8,
+        KeyCode::KeyJ => 9,
+        KeyCode::KeyK => 10,
+        KeyCode::KeyL => 11,
+        KeyCode::KeyM => 12,
+        KeyCode::KeyN => 13,
+        KeyCode::KeyO => 14,
+        KeyCode::KeyP => 15,
+        KeyCode::KeyQ => 16,
+        KeyCode::KeyR => 17,
+        KeyCode::KeyS => 18,
+        KeyCode::KeyT => 19,
+        KeyCode::KeyU => 20,
+        KeyCode::KeyV => 21,
+        KeyCode::KeyW => 22,
+        KeyCode::KeyX => 23,
+        KeyCode::KeyY => 24,
+        KeyCode::KeyZ => 25,
+        KeyCode::Digit0 => 26,
+        KeyCode::Digit1 => 27,
+        KeyCode::Digit2 => 28,
+        KeyCode::Digit3 => 29,
+        KeyCode::Digit4 => 30,
+        KeyCode::Digit5 => 31,
+        KeyCode::Digit6 => 32,
+        KeyCode::Digit7 => 33,
+        KeyCode::Digit8 => 34,
+        KeyCode::Digit9 => 35,
+        KeyCode::Space => 36,
+        KeyCode::Enter => 37,
+        KeyCode::Backspace => 38,
+        KeyCode::Minus => 39,
+        KeyCode::Equal => 40,
+        KeyCode::BracketLeft => 41,
+        KeyCode::BracketRight => 42,
+        KeyCode::Semicolon => 43,
+        KeyCode::Quote => 44,
+        KeyCode::Comma => 45,
+        KeyCode::Period => 46,
+        KeyCode::Slash => 47,
+        KeyCode::Backslash => 48,
+        KeyCode::ShiftLeft => 49,
+        KeyCode::ShiftRight => 50,
+        KeyCode::ControlLeft => 51,
+        KeyCode::Tab => 52,
+        KeyCode::ArrowUp => 53,
+        KeyCode::ArrowDown => 54,
+        KeyCode::ArrowLeft => 55,
+        KeyCode::ArrowRight => 56,
+        KeyCode::Escape => 57,
+        // 58..72 are matrix positions with no default host-key binding.
+        _ => return None,
+    };
+    Some(idx)
+}
+
 impl InputState {
     /// New state with the supplied keyboard + gamepad bindings.
     #[must_use]
@@ -1266,6 +1350,35 @@ mod tests {
                 "{sys:?} must not be a mat key"
             );
         }
+    }
+
+    #[test]
+    fn family_keyboard_index_is_one_to_one_and_in_range() {
+        use std::collections::HashSet;
+        let keys = [
+            KeyCode::KeyA,
+            KeyCode::KeyZ,
+            KeyCode::Digit0,
+            KeyCode::Digit9,
+            KeyCode::Space,
+            KeyCode::Enter,
+            KeyCode::ShiftLeft,
+            KeyCode::ArrowUp,
+            KeyCode::Escape,
+            KeyCode::Tab,
+        ];
+        let mut seen = HashSet::new();
+        for &k in &keys {
+            let idx = family_keyboard_index(k).expect("mapped key has an index");
+            assert!(idx < 72, "index {idx} for {k:?} must be < 72");
+            assert!(seen.insert(idx), "index {idx} for {k:?} must be unique");
+        }
+        // Known anchors.
+        assert_eq!(family_keyboard_index(KeyCode::KeyA), Some(0));
+        assert_eq!(family_keyboard_index(KeyCode::KeyZ), Some(25));
+        assert_eq!(family_keyboard_index(KeyCode::Digit0), Some(26));
+        // An unmapped key falls through (None).
+        assert_eq!(family_keyboard_index(KeyCode::F12), None);
     }
 
     #[test]

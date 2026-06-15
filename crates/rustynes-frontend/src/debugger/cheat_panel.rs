@@ -118,6 +118,7 @@ pub fn show(
     state: &mut CheatPanelState,
     nes: &mut Nes,
     persist: Option<&CheatPersist>,
+    rom_crc: Option<u32>,
 ) {
     let mut changed = false;
     egui::Window::new("Cheats (Game Genie)")
@@ -126,7 +127,7 @@ pub fn show(
         .default_size([420.0, 380.0])
         .resizable(true)
         .show(ctx, |ui| {
-            changed = body(ui, state);
+            changed = body(ui, state, rom_crc);
         });
     // v1.0.0 (UX3 BUG-3) — re-sync the live core to the panel's enabled set on
     // EVERY frame the panel is open, not just when the list `changed`. The core
@@ -147,21 +148,27 @@ pub fn show(
 /// wasm32 variant: identical UI + `Nes` re-sync, but no filesystem
 /// persistence (the `persist` argument is absent).
 #[cfg(target_arch = "wasm32")]
-pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut CheatPanelState, nes: &mut Nes) {
+pub fn show(
+    ctx: &egui::Context,
+    open: &mut bool,
+    state: &mut CheatPanelState,
+    nes: &mut Nes,
+    rom_crc: Option<u32>,
+) {
     egui::Window::new("Cheats (Game Genie)")
         .open(open)
         .default_pos([560.0, 64.0])
         .default_size([420.0, 380.0])
         .resizable(true)
         .show(ctx, |ui| {
-            let _ = body(ui, state);
+            let _ = body(ui, state, rom_crc);
         });
     // v1.0.0 (UX3 BUG-3) — every-frame resync (see the native variant above).
     resync_nes(state, nes);
 }
 
 /// The window body. Returns `true` if the cheat set changed this frame.
-fn body(ui: &mut egui::Ui, state: &mut CheatPanelState) -> bool {
+fn body(ui: &mut egui::Ui, state: &mut CheatPanelState, rom_crc: Option<u32>) -> bool {
     let mut changed = false;
 
     ui.horizontal(|ui| {
@@ -176,6 +183,14 @@ fn body(ui: &mut egui::Ui, state: &mut CheatPanelState) -> bool {
             changed |= try_add(state);
         }
     });
+
+    // v1.2.0 Workstream D (D3) — Game Genie code-name database pick-list for the
+    // loaded ROM. Pure frontend: a chosen code is appended through the same
+    // validated path as a typed code (`add_code_by_str`), feeding the existing
+    // `GenieCode` decode + persistence. The list only appears when the loaded
+    // ROM's CRC matches a database entry, so it never clutters an unknown ROM.
+    changed |= genie_db_picklist(ui, state, rom_crc);
+
     if !state.error.is_empty() {
         ui.colored_label(
             egui::Color32::from_rgb(0xE0, 0x40, 0x40),
@@ -295,10 +310,22 @@ fn raw_body(ui: &mut egui::Ui, state: &mut CheatPanelState) -> bool {
 /// `true` on success (caller re-syncs + persists). On failure, sets the inline
 /// error text and returns `false`.
 fn try_add(state: &mut CheatPanelState) -> bool {
-    let raw = state.add_text.trim();
+    let raw = state.add_text.trim().to_string();
     if raw.is_empty() {
         return false;
     }
+    let added = add_code_by_str(state, &raw);
+    if added {
+        state.add_text.clear();
+    }
+    added
+}
+
+/// Validate `raw` via [`GenieCode::new`] and append it (canonical form),
+/// deduplicating against the existing list. Returns `true` if added. On failure
+/// (invalid or duplicate) sets the inline error and returns `false`. Shared by
+/// the typed-code add field and the database pick-list.
+fn add_code_by_str(state: &mut CheatPanelState, raw: &str) -> bool {
     match GenieCode::new(raw) {
         Ok(code) => {
             let canonical = code.code().to_string();
@@ -310,7 +337,6 @@ fn try_add(state: &mut CheatPanelState) -> bool {
                 code: canonical,
                 enabled: true,
             });
-            state.add_text.clear();
             state.error.clear();
             true
         }
@@ -319,6 +345,47 @@ fn try_add(state: &mut CheatPanelState) -> bool {
             false
         }
     }
+}
+
+/// v1.2.0 Workstream D (D3) — render the Game Genie code-name database pick-list
+/// for the loaded ROM (by CRC32). Shows nothing when the ROM has no CRC or no DB
+/// match. Selecting a row appends that code through [`add_code_by_str`] (the
+/// same validated path as a typed code). Returns `true` if the cheat set
+/// changed.
+fn genie_db_picklist(ui: &mut egui::Ui, state: &mut CheatPanelState, rom_crc: Option<u32>) -> bool {
+    let Some(crc) = rom_crc else {
+        return false;
+    };
+    let codes = crate::genie_db::codes_for_crc(crc);
+    if codes.is_empty() {
+        return false;
+    }
+    let mut changed = false;
+    let game = crate::genie_db::game_for_crc(crc).unwrap_or_default();
+    ui.horizontal(|ui| {
+        ui.label("Known codes:");
+        egui::ComboBox::from_id_salt("genie-db-picklist")
+            .selected_text(if game.is_empty() {
+                "Pick a code…".to_string()
+            } else {
+                format!("{game} — pick a code…")
+            })
+            .show_ui(ui, |ui| {
+                for entry in &codes {
+                    // Mark already-added codes so the list reads as a checklist.
+                    let already = state.cheats.iter().any(|c| c.code == entry.code);
+                    let label = if already {
+                        format!("\u{2713} {} ({})", entry.name, entry.code)
+                    } else {
+                        format!("{} ({})", entry.name, entry.code)
+                    };
+                    if ui.selectable_label(already, label).clicked() && !already {
+                        changed |= add_code_by_str(state, &entry.code);
+                    }
+                }
+            });
+    });
+    changed
 }
 
 /// Validate the raw-cheat add fields and append the entry. Returns `true` on

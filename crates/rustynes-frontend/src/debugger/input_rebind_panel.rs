@@ -84,6 +84,22 @@ enum Slot {
     Reset,
     PowerCycle,
     DebugOverlay,
+    // System keyboard (v1.2.0 Workstream H2 — the remaining hotkeys, made
+    // rebindable so the inline menu accelerator labels track the registry).
+    OpenRom,
+    MovieRecord,
+    MoviePlay,
+    MovieBranch,
+    DiskSwap,
+    InsertCoin,
+    Fullscreen,
+    ToggleMenuBar,
+    FastForward,
+    FrameAdvance,
+    Pause,
+    SpeedUp,
+    SpeedDown,
+    SpeedReset,
     // Player 1 gamepad.
     G1Up,
     G1Down,
@@ -205,6 +221,20 @@ const KB_ROWS: &[(Slot, &str)] = &[
     (Slot::Reset, "Reset"),
     (Slot::PowerCycle, "Power cycle"),
     (Slot::DebugOverlay, "Debug overlay"),
+    (Slot::OpenRom, "Open ROM"),
+    (Slot::Pause, "Pause / resume"),
+    (Slot::FrameAdvance, "Frame advance"),
+    (Slot::FastForward, "Fast forward (hold)"),
+    (Slot::Fullscreen, "Fullscreen"),
+    (Slot::ToggleMenuBar, "Toggle menu bar"),
+    (Slot::SpeedUp, "Speed up"),
+    (Slot::SpeedDown, "Speed down"),
+    (Slot::SpeedReset, "Speed reset"),
+    (Slot::MovieRecord, "Movie record"),
+    (Slot::MoviePlay, "Movie play"),
+    (Slot::MovieBranch, "Movie branch"),
+    (Slot::DiskSwap, "Swap disk side (FDS)"),
+    (Slot::InsertCoin, "Insert coin (Vs.)"),
 ];
 
 /// Gamepad rows: player 1 and player 2. Rendered (and captured) only on
@@ -470,12 +500,20 @@ pub fn body(ui: &mut egui::Ui, state: &mut InputPanelState, config: &mut Config)
                     ExpansionDevice::Zapper => "Zapper (light gun)",
                     ExpansionDevice::Vaus => "Vaus (Arkanoid paddle)",
                     ExpansionDevice::PowerPad => "Power Pad (mat)",
+                    ExpansionDevice::SnesMouse => "SNES mouse",
+                    ExpansionDevice::FamilyKeyboard => "Family BASIC keyboard",
                 })
                 .show_ui(ui, |ui| {
                     ui.selectable_value(&mut dev, ExpansionDevice::None, "Standard controller");
                     ui.selectable_value(&mut dev, ExpansionDevice::Zapper, "Zapper (light gun)");
                     ui.selectable_value(&mut dev, ExpansionDevice::Vaus, "Vaus (Arkanoid paddle)");
                     ui.selectable_value(&mut dev, ExpansionDevice::PowerPad, "Power Pad (mat)");
+                    ui.selectable_value(&mut dev, ExpansionDevice::SnesMouse, "SNES mouse");
+                    ui.selectable_value(
+                        &mut dev,
+                        ExpansionDevice::FamilyKeyboard,
+                        "Family BASIC keyboard",
+                    );
                 });
             if dev != config.input.expansion_device {
                 config.input.expansion_device = dev;
@@ -581,6 +619,20 @@ fn read_slot(cfg: &Config, slot: Slot) -> String {
         Slot::Reset => i.system.reset.clone(),
         Slot::PowerCycle => i.system.power_cycle.clone(),
         Slot::DebugOverlay => i.system.debug_overlay.clone(),
+        Slot::OpenRom => i.system.open_rom.clone(),
+        Slot::MovieRecord => i.system.movie_record.clone(),
+        Slot::MoviePlay => i.system.movie_play.clone(),
+        Slot::MovieBranch => i.system.movie_branch.clone(),
+        Slot::DiskSwap => i.system.disk_swap.clone(),
+        Slot::InsertCoin => i.system.insert_coin.clone(),
+        Slot::Fullscreen => i.system.fullscreen.clone(),
+        Slot::ToggleMenuBar => i.system.toggle_menu_bar.clone(),
+        Slot::FastForward => i.system.fast_forward.clone(),
+        Slot::FrameAdvance => i.system.frame_advance.clone(),
+        Slot::Pause => i.system.pause.clone(),
+        Slot::SpeedUp => i.system.speed_up.clone(),
+        Slot::SpeedDown => i.system.speed_down.clone(),
+        Slot::SpeedReset => i.system.speed_reset.clone(),
         Slot::G1Up => i.gamepad1.up.clone(),
         Slot::G1Down => i.gamepad1.down.clone(),
         Slot::G1Left => i.gamepad1.left.clone(),
@@ -658,6 +710,20 @@ fn apply_slot(cfg: &mut Config, slot: Slot, name: &str) {
         Slot::Reset => &mut i.system.reset,
         Slot::PowerCycle => &mut i.system.power_cycle,
         Slot::DebugOverlay => &mut i.system.debug_overlay,
+        Slot::OpenRom => &mut i.system.open_rom,
+        Slot::MovieRecord => &mut i.system.movie_record,
+        Slot::MoviePlay => &mut i.system.movie_play,
+        Slot::MovieBranch => &mut i.system.movie_branch,
+        Slot::DiskSwap => &mut i.system.disk_swap,
+        Slot::InsertCoin => &mut i.system.insert_coin,
+        Slot::Fullscreen => &mut i.system.fullscreen,
+        Slot::ToggleMenuBar => &mut i.system.toggle_menu_bar,
+        Slot::FastForward => &mut i.system.fast_forward,
+        Slot::FrameAdvance => &mut i.system.frame_advance,
+        Slot::Pause => &mut i.system.pause,
+        Slot::SpeedUp => &mut i.system.speed_up,
+        Slot::SpeedDown => &mut i.system.speed_down,
+        Slot::SpeedReset => &mut i.system.speed_reset,
         Slot::G1Up => &mut i.gamepad1.up,
         Slot::G1Down => &mut i.gamepad1.down,
         Slot::G1Left => &mut i.gamepad1.left,

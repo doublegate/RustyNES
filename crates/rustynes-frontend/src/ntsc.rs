@@ -21,7 +21,7 @@
 
 use wgpu::util::DeviceExt;
 
-const SHADER_SRC: &str = r"
+pub(crate) const SHADER_SRC: &str = r"
 struct Uniforms {
     // Letterbox transform (same shape + math as gfx.wgsl's blit): rect.xy =
     // the image's fraction of the surface, rect.zw = offset.

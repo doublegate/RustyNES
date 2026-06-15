@@ -129,6 +129,19 @@ pub struct FrameInputs {
     /// button `i+1`). Consumed only when the player-2 expansion device is a
     /// Power Pad.
     pub power_pad: u16,
+    /// v1.2.0 Workstream D — accumulated mouse motion this frame `(dx, dy)`,
+    /// consumed only when the expansion device is a SNES mouse.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub mouse_delta: (i16, i16),
+    /// v1.2.0 Workstream D — right mouse button held (SNES mouse right button;
+    /// the left button reuses `mouse_pressed`).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub mouse_right: bool,
+    /// v1.2.0 Workstream D — Family BASIC keyboard pressed-key matrix bitmap
+    /// (one byte per matrix row). Consumed only when the expansion device is a
+    /// Family BASIC keyboard. All-zero (no keys) by default = byte-identical.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub family_keyboard: [u8; 9],
 }
 
 /// v1.1.0 beta.1 (T-110-B2) — apply turbo/autofire to one port's buttons.
@@ -255,6 +268,14 @@ pub struct EmuCore {
     /// SHA-256 of the loaded FDS disk (keys the `.fds.sav` sidecar).
     #[cfg(not(target_arch = "wasm32"))]
     pub fds_disk_sha256: Option<[u8; 32]>,
+    /// v1.2.0 (T-110-E2) — Lua `emu.setInput` per-port button override, applied
+    /// at the next [`Self::latch`] (the deterministic late-latch point, the same
+    /// place a real keypress enters) then consumed (one-shot per command).
+    /// `None` (default) leaves `latch` byte-identical. Set ONLY by the host's
+    /// `pump_scripts` AFTER the script's write-gate clears (netplay / TAS replay
+    /// / RA-hardcore), so a locked / replayed session is never perturbed.
+    #[cfg(feature = "scripting")]
+    pub script_input_override: [Option<u8>; 2],
 }
 
 impl EmuCore {
@@ -278,6 +299,8 @@ impl EmuCore {
             runahead_throttled: false,
             #[cfg(not(target_arch = "wasm32"))]
             fds_disk_sha256: None,
+            #[cfg(feature = "scripting")]
+            script_input_override: [None, None],
         }
     }
 
@@ -287,6 +310,15 @@ impl EmuCore {
     // const-able only on wasm (the expansion-device block is native-only).
     #[cfg_attr(target_arch = "wasm32", allow(clippy::missing_const_for_fn))]
     pub fn latch(&mut self, inputs: &FrameInputs) {
+        // v1.2.0 (T-110-E2) — consume the Lua setInput override (one-shot per
+        // command) regardless of whether a ROM is loaded, so a stale override
+        // can never carry into a freshly-loaded ROM. Taken here so the override
+        // enters at exactly the same point a real keypress does — the
+        // deterministic late-latch. It is only ever SET (in `pump_scripts`) when
+        // the script write-gate is clear, so under netplay / TAS replay /
+        // RA-hardcore it stays `None` and this whole block is a no-op.
+        #[cfg(feature = "scripting")]
+        let script_override = core::mem::take(&mut self.script_input_override);
         if let Some(nes) = self.nes.as_mut() {
             // v1.1.0 beta.1 (T-110-B2) — gate turbo/autofire here, keyed on the
             // emulated frame, so the strobe is reproducible under rollback / TAS
@@ -298,6 +330,17 @@ impl EmuCore {
             if inputs.four_score {
                 nes.set_buttons(2, turbo(inputs.buttons[2]));
                 nes.set_buttons(3, turbo(inputs.buttons[3]));
+            }
+            // v1.2.0 (T-110-E2) — Lua setInput override: replace ports 0/1 AFTER
+            // the keyboard/turbo latch, so the script's recorded bitmask wins for
+            // this frame. Applied at the late-latch point, so a session that
+            // replays this exact input stream stays bit-identical. Gated to never
+            // set under lock (see the `take` above + `pump_scripts`).
+            #[cfg(feature = "scripting")]
+            for (port, ov) in script_override.iter().enumerate() {
+                if let Some(bits) = ov {
+                    nes.set_buttons(port, Buttons::from_bits_truncate(*bits));
+                }
             }
             // v2.1.0 — feed the mouse into any attached non-standard device
             // on the player-2 port ($4017). Native-only (mouse input source).
@@ -320,6 +363,13 @@ impl EmuCore {
                     }
                     ExpansionDevice::PowerPad => {
                         nes.set_power_pad(1, inputs.power_pad);
+                    }
+                    ExpansionDevice::SnesMouse => {
+                        let (dx, dy) = inputs.mouse_delta;
+                        nes.set_snes_mouse(1, dx, dy, inputs.mouse_pressed, inputs.mouse_right, 0);
+                    }
+                    ExpansionDevice::FamilyKeyboard => {
+                        nes.set_family_keyboard(1, inputs.family_keyboard);
                     }
                 }
             }

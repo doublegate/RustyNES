@@ -83,6 +83,11 @@ pub struct SettingsApply {
     /// v1.1.0 beta.1 — the CRT scanline-intensity slider changed; the app pushes
     /// the new `[graphics] crt_scanline` into the live CRT filter.
     pub crt_scanline: bool,
+    /// v1.2.0 C1 — a Bisqwit-NTSC picture knob (contrast / saturation /
+    /// brightness / hue) slider changed; the app pushes the new
+    /// `[graphics] ntsc_*` values into the live Bisqwit filter. The defaults
+    /// (all 0) are byte-identical to the pre-C1 decode.
+    pub ntsc_knobs: bool,
     /// v1.1.0 beta.1 — the user clicked "Load .pal…"; the app opens a file dialog,
     /// parses the palette, applies it to the core, and persists the path.
     pub palette_pick: bool,
@@ -97,6 +102,11 @@ pub struct SettingsApply {
     /// the app pushes the new `[audio] eq_enabled`/`eq_bands` into the audio
     /// queue. Off (default) is byte-identical to today's output.
     pub audio_eq: bool,
+    /// v1.2.0 C2 — the composable shader stack changed (a pass added / removed /
+    /// reordered / toggled / re-parameterized, or a preset loaded); the app
+    /// rebuilds the live `gfx` shader stack from `[graphics] shader_stack`. An
+    /// empty stack falls back to the byte-identical direct-blit path.
+    pub shader_stack: bool,
 }
 
 impl SettingsApply {
@@ -110,10 +120,12 @@ impl SettingsApply {
             || self.overscan
             || self.crt_filter
             || self.crt_scanline
+            || self.ntsc_knobs
             || self.palette_pick
             || self.palette_clear
             || self.apu_channels
             || self.audio_eq
+            || self.shader_stack
     }
 }
 
@@ -138,6 +150,13 @@ pub struct SettingsPanelState {
     reset_video_armed: bool,
     reset_audio_armed: bool,
     reset_advanced_armed: bool,
+    /// v1.2.0 C2 — index into [`crate::shader_pass::BuiltinPass::all`] for the
+    /// "Add pass" picker.
+    stack_add_index: usize,
+    /// v1.2.0 C2 — the preset-name text input for "Save preset".
+    preset_name_input: String,
+    /// v1.2.0 C2 — the currently-selected preset name (for Load / Delete).
+    selected_preset: String,
 }
 
 /// v1.0.0 — a two-click "Reset to Defaults" button: the first click arms it
@@ -321,6 +340,40 @@ pub fn video_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
         }
     });
 
+    // v1.2.0 C1 — live picture knobs for the true-composite ("composite-rt",
+    // Bisqwit) filter. Only shown when that filter is selected; the defaults
+    // (all 0) are byte-identical to the pre-C1 decode.
+    if config.graphics.ntsc_filter == "composite-rt" {
+        let mut knob_changed = false;
+        ui.indent("ntsc-knobs", |ui| {
+            knob_changed |= ui
+                .add(
+                    egui::Slider::new(&mut config.graphics.ntsc_contrast, -1.0..=1.0)
+                        .text("Contrast"),
+                )
+                .changed();
+            knob_changed |= ui
+                .add(
+                    egui::Slider::new(&mut config.graphics.ntsc_saturation, -1.0..=1.0)
+                        .text("Saturation"),
+                )
+                .changed();
+            knob_changed |= ui
+                .add(
+                    egui::Slider::new(&mut config.graphics.ntsc_brightness, -100.0..=100.0)
+                        .text("Brightness"),
+                )
+                .changed();
+            knob_changed |= ui
+                .add(egui::Slider::new(&mut config.graphics.ntsc_hue, -180.0..=180.0).text("Hue"))
+                .changed();
+        });
+        if knob_changed {
+            state.apply.ntsc_knobs = true;
+            save_config(config);
+        }
+    }
+
     // v1.0.0 — overscan crop. Applied live (the gfx letterbox samples the
     // inner source rect); default off = the full 256x240 framebuffer (today's
     // presentation, byte-identical).
@@ -386,6 +439,10 @@ pub fn video_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
         ui.weak("(native only)");
     });
 
+    // v1.2.0 C2 — the composable shader stack + preset bank.
+    ui.add_space(6.0);
+    shader_stack_section(ui, state, config);
+
     ui.add_space(4.0);
     // v1.0.0 — reset the Graphics section to its defaults (guarded by a
     // two-click confirm so it isn't a foot-gun), then re-apply live.
@@ -397,14 +454,242 @@ pub fn video_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
         let pacing_changed = config.graphics.pacing_mode != def.pacing_mode;
         let crt_changed = config.graphics.crt_filter != def.crt_filter;
         let palette_changed = config.graphics.palette_file != def.palette_file;
+        // v1.2.0 C1 — re-push the Bisqwit NTSC knobs if any moved off default.
+        // Exact equality is intentional: the goal is "differs from the default at
+        // all", and the defaults are exact literals.
+        #[allow(clippy::float_cmp)]
+        let knobs_changed = config.graphics.ntsc_contrast != def.ntsc_contrast
+            || config.graphics.ntsc_saturation != def.ntsc_saturation
+            || config.graphics.ntsc_brightness != def.ntsc_brightness
+            || config.graphics.ntsc_hue != def.ntsc_hue;
+        // v1.2.0 C2 — resetting the Graphics section clears the active shader
+        // stack (back to the byte-identical direct blit), but PRESERVES the
+        // saved preset bank (a reset of live settings should not throw away the
+        // user's named presets).
+        let stack_changed = !config.graphics.shader_stack.passes.is_empty();
+        let saved_presets = std::mem::take(&mut config.graphics.shader_presets);
         config.graphics = def;
+        config.graphics.shader_presets = saved_presets;
         state.apply.ntsc_filter |= ntsc_changed;
         state.apply.overscan |= overscan_changed;
         state.apply.pacing_mode |= pacing_changed;
         state.apply.crt_filter |= crt_changed;
+        state.apply.ntsc_knobs |= knobs_changed;
         state.apply.palette_clear |= palette_changed;
+        state.apply.shader_stack |= stack_changed;
         save_config(config);
     }
+}
+
+/// v1.2.0 C2 — the composable shader-stack editor + preset bank UI (mirrors
+/// `GeraNES`' `ShaderWindowUI.inl`).
+///
+/// Lives inside a collapsing header so it does not clutter the Graphics tab.
+/// Every mutation flags `state.apply.shader_stack` so the app rebuilds the live
+/// `gfx` stack; an empty stack rebuilds to the byte-identical direct-blit path.
+fn shader_stack_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &mut Config) {
+    use crate::shader_pass::{BuiltinPass, ShaderPassDesc};
+
+    egui::CollapsingHeader::new("Shader stack (composable)")
+        .id_salt("settings-shader-stack")
+        .show(ui, |ui| {
+            ui.weak(
+                "Passes run top to bottom. An empty / all-disabled stack uses the \
+                 default direct blit (no change to the image).",
+            );
+
+            let all = BuiltinPass::all();
+            state.stack_add_index = state.stack_add_index.min(all.len() - 1);
+
+            // --- Add-pass picker -------------------------------------------------
+            ui.horizontal(|ui| {
+                egui::ComboBox::from_id_salt("shader-stack-add")
+                    .selected_text(all[state.stack_add_index].label())
+                    .show_ui(ui, |ui| {
+                        for (i, p) in all.iter().enumerate() {
+                            ui.selectable_value(&mut state.stack_add_index, i, p.label());
+                        }
+                    });
+                if ui.button("Add pass").clicked() {
+                    config
+                        .graphics
+                        .shader_stack
+                        .passes
+                        .push(ShaderPassDesc::new(all[state.stack_add_index].id()));
+                    state.apply.shader_stack = true;
+                    save_config(config);
+                }
+                if ui.button("Clear stack").clicked()
+                    && !config.graphics.shader_stack.passes.is_empty()
+                {
+                    config.graphics.shader_stack.passes.clear();
+                    state.apply.shader_stack = true;
+                    save_config(config);
+                }
+            });
+
+            // --- Pass list (toggle / reorder / remove / parameters) --------------
+            let mut mutated = false;
+            let mut move_up: Option<usize> = None;
+            let mut move_down: Option<usize> = None;
+            let mut remove: Option<usize> = None;
+            let count = config.graphics.shader_stack.passes.len();
+            if count == 0 {
+                ui.weak("(no passes — using the default blit)");
+            }
+            for i in 0..count {
+                let pass = &mut config.graphics.shader_stack.passes[i];
+                let label = BuiltinPass::from_id(&pass.id).map_or_else(
+                    || format!("{} (unknown)", pass.id),
+                    |b| b.label().to_string(),
+                );
+                ui.group(|ui| {
+                    ui.horizontal(|ui| {
+                        if ui.checkbox(&mut pass.enabled, "").changed() {
+                            mutated = true;
+                        }
+                        ui.label(format!("{}. {label}", i + 1));
+                        if ui.small_button("^").clicked() && i > 0 {
+                            move_up = Some(i);
+                        }
+                        if ui.small_button("v").clicked() && i + 1 < count {
+                            move_down = Some(i);
+                        }
+                        if ui.small_button("x").clicked() {
+                            remove = Some(i);
+                        }
+                    });
+                    // Per-pass parameter sliders, parsed from the shader's
+                    // `#pragma parameter` headers.
+                    if let Some(builtin) = BuiltinPass::from_id(&pass.id) {
+                        for p in builtin.params() {
+                            let mut val = pass.param_value(&p);
+                            if ui
+                                .add(
+                                    egui::Slider::new(&mut val, p.min..=p.max)
+                                        .text(&p.label)
+                                        .step_by(f64::from(p.step.max(0.0))),
+                                )
+                                .changed()
+                            {
+                                pass.params.insert(p.name.clone(), val);
+                                mutated = true;
+                            }
+                        }
+                    }
+                });
+            }
+            // Apply the deferred structural edits (after the borrow ends).
+            let passes = &mut config.graphics.shader_stack.passes;
+            if let Some(i) = move_up {
+                passes.swap(i, i - 1);
+                mutated = true;
+            }
+            if let Some(i) = move_down {
+                passes.swap(i, i + 1);
+                mutated = true;
+            }
+            if let Some(i) = remove {
+                passes.remove(i);
+                mutated = true;
+            }
+            if mutated {
+                state.apply.shader_stack = true;
+                save_config(config);
+            }
+
+            // --- Preset bank -----------------------------------------------------
+            ui.separator();
+            ui.label("Presets");
+            // Seed the built-in CRT presets (only adds the ones the user doesn't
+            // already have a name collision with — never clobbers a user preset).
+            if config.graphics.shader_presets.presets.is_empty()
+                && ui.button("Add built-in CRT presets").clicked()
+            {
+                for (name, stack) in crate::shader_pass::ShaderPresetBank::builtins() {
+                    config
+                        .graphics
+                        .shader_presets
+                        .presets
+                        .entry(name)
+                        .or_insert(stack);
+                }
+                save_config(config);
+            }
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut state.preset_name_input)
+                        .hint_text("Preset name")
+                        .desired_width(160.0),
+                );
+                if ui.button("Save preset").clicked() {
+                    let name = state.preset_name_input.trim().to_string();
+                    if !name.is_empty() {
+                        config
+                            .graphics
+                            .shader_presets
+                            .presets
+                            .insert(name.clone(), config.graphics.shader_stack.clone());
+                        state.selected_preset = name;
+                        save_config(config);
+                    }
+                }
+            });
+            ui.horizontal(|ui| {
+                let preview = if state.selected_preset.is_empty() {
+                    "Load preset…".to_string()
+                } else {
+                    state.selected_preset.clone()
+                };
+                // Snapshot the names so the combo closure does not borrow
+                // `config` while we also mutate `state.selected_preset`.
+                let names: Vec<String> = config
+                    .graphics
+                    .shader_presets
+                    .presets
+                    .keys()
+                    .cloned()
+                    .collect();
+                egui::ComboBox::from_id_salt("shader-stack-preset-list")
+                    .selected_text(preview)
+                    .show_ui(ui, |ui| {
+                        for name in names {
+                            ui.selectable_value(&mut state.selected_preset, name.clone(), name);
+                        }
+                    });
+                let has_sel = config
+                    .graphics
+                    .shader_presets
+                    .presets
+                    .contains_key(&state.selected_preset);
+                if ui.add_enabled(has_sel, egui::Button::new("Load")).clicked() {
+                    if let Some(stack) = config
+                        .graphics
+                        .shader_presets
+                        .presets
+                        .get(&state.selected_preset)
+                        .cloned()
+                    {
+                        config.graphics.shader_stack = stack;
+                        state.preset_name_input.clone_from(&state.selected_preset);
+                        state.apply.shader_stack = true;
+                        save_config(config);
+                    }
+                }
+                if ui
+                    .add_enabled(has_sel, egui::Button::new("Delete"))
+                    .clicked()
+                {
+                    config
+                        .graphics
+                        .shader_presets
+                        .presets
+                        .remove(&state.selected_preset);
+                    state.selected_preset.clear();
+                    save_config(config);
+                }
+            });
+        });
 }
 
 /// The Audio section: master volume, sample rate, DRC latency target,
@@ -631,9 +916,11 @@ mod tests {
                 apu_channels: false,
                 crt_filter: false,
                 crt_scanline: false,
+                ntsc_knobs: false,
                 palette_pick: false,
                 palette_clear: false,
                 audio_eq: false,
+                shader_stack: false,
             },
             ..Default::default()
         };

@@ -15,10 +15,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Work toward **v1.2.0 "Curator"** (beta.1, Workstreams A + B). See
-`docs/adr/0011-mapper-tiering.md` and the v1.2.0 plan.
+Work toward **v1.2.0 "Curator"** (beta.1-2, Workstreams A + B + C + D + E + H).
+See `docs/adr/0011-mapper-tiering.md`,
+`docs/adr/0013-composable-shader-stack.md`, and the v1.2.0 plan.
 
 ### Added
+
+- **Menu-bar responsiveness — per-item contextual enable/disable** (v1.2.0
+  Workstream H, H1; GeraNES `MenuUI.inl`-inspired). Menu items now grey out
+  when the action would be a no-op or unsafe in the current state, instead of
+  being always-clickable. Predicates threaded from live app state into the
+  shell: with **no ROM loaded** Save/Load State (+ slots + the Save-States
+  manager), Reset, Power-cycle, Frame Advance, Speed, FDS disk-swap, Vs. Insert
+  Coin, ROM Database, and HD-pack load/unload are disabled; during a **netplay
+  session** Open ROM / Open Recent / Reset / Power-cycle / Frame Advance / Vs.
+  coin / Movies (TAS) / HD-pack are locked and the Speed submenu allows only
+  100% (mirrors GeraNES `netplayRomChangeRestricted` / `isNetplaySpeedRestricted`);
+  while a **TAS movie is recording or playing** Load State (+ load-from-slot),
+  Reset, Power-cycle, disk-swap, Netplay, and HD-pack are locked, and the
+  Movies submenu disables the conflicting Record-vs-Play actions (mirrors
+  GeraNES `replayInteractionLocked` / `replayRecordingActive`). Pure UI — the
+  `MenuAction` dispatch set is unchanged.
+- **Remappable system-hotkey registry surfaced in the rebind UI** (v1.2.0
+  Workstream H, H2). The `[input.system]` config section already drives both
+  the global hotkey handler and the menu's inline accelerator labels; the
+  Settings -> Input rebind panel now exposes **all** of those bindings (Open
+  ROM, Pause, Frame Advance, Fast Forward, Fullscreen, Toggle Menu Bar, Speed
+  up/down/reset, Movie record/play/branch, FDS disk-swap, Vs. Insert Coin) for
+  rebinding, not just the original seven — so a rebind takes effect live and
+  the menu accelerator label updates to match. Every field keeps its
+  `#[serde(default)]`, so existing configs and the default build are
+  byte-identical (a new `shortcut_registry_defaults_are_byte_identical` test
+  pins this).
+
+#### Deferred to a follow-up
+
+- **Menu icons** (v1.2.0 Workstream H, H3). FontAwesome-style glyphs next to
+  menu items (GeraNES `withMenuIcon`) were evaluated and **deferred**: the
+  project ships no icon font, and bundling one (FontAwesome `.ttf` /
+  `egui_phosphor`) adds hundreds of KB against the 5 MiB gzip wasm-deploy
+  budget (`scripts/wasm_size_budget.sh`) for a purely cosmetic gain. H1 + H2
+  ship without it.
 
 - **Mapper accuracy tiering** (v1.2.0 Workstream A). Every supported mapper
   family is now classified `Core` / `Curated` / `BestEffort` by a single
@@ -64,6 +101,124 @@ Work toward **v1.2.0 "Curator"** (beta.1, Workstreams A + B). See
   same-stem soft-patch beside the archive still applies). Native-only (`zip`
   crate, `deflate`-only to reuse the existing flate2/miniz_oxide); the wasm
   builds stay byte-identical (the dep is in the `cfg(not(wasm))` table).
+- **NTSC per-knob live tuning** (v1.2.0 Workstream C1): the true-composite
+  (`composite-rt`, Bisqwit) NTSC filter's Contrast / Saturation / Brightness /
+  Hue are now live `[graphics]` settings (`ntsc_contrast`, `ntsc_saturation`,
+  `ntsc_brightness`, `ntsc_hue`), adjustable from sliders in Settings -> Graphics
+  and persisted to `config.toml`. Promoted from baked WGSL constants to a
+  per-frame uniform: the YIQ matrix is rebuilt in-shader from the knobs each
+  frame. Output-only (the deterministic core framebuffer and AccuracyCoin /
+  oracle results are unaffected). All four default to `0.0` (Bisqwit's neutral
+  values), at which the in-shader decode is bit-identical to the previous
+  hardcoded coefficients — existing configs and the default build are
+  byte-for-byte unchanged.
+- **Composable shader stack + CRT preset bank** (v1.2.0 Workstream C2,
+  `GeraNES`-`ShaderPass`-inspired). The single-select CRT / NTSC / composite-rt
+  post-process filter is now an ordered, composable `ShaderStack`: enabled passes
+  render by ping-ponging two NES-resolution intermediate render targets, with the
+  final pass blitting the letterboxed image to the swapchain. A new
+  Settings -> Graphics -> "Shader stack (composable)" section adds / removes /
+  reorders / toggles passes and exposes each pass's tunable knobs as generic
+  sliders, parsed from RetroArch-style `#pragma parameter` shader headers (new
+  `rustynes-frontend::shader_pass` module). A built-in CRT preset bank (Sharp /
+  Classic / Heavy-Aperture, all reusing the existing CRT shader) plus
+  Save / Load / Delete persist named stacks under `[graphics.shader_presets]`.
+  The Bisqwit `composite-rt` pass is special-cased (it consumes the `R16Uint`
+  palette-index texture, so it is only honoured as the first pass). Frontend /
+  presentation-only — the deterministic core framebuffer and AccuracyCoin /
+  oracle results are unaffected. **An empty / all-disabled stack (the default,
+  and what any pre-C2 `config.toml` deserializes to) falls through to the exact
+  pre-C2 direct blit — the default presented image is byte-for-byte unchanged.**
+  Rejected as out of scope: a RetroArch `.slangp` importer / GLSL->WGSL
+  translation. ADR 0013.
+- **HD-pack / mod loader — minimal first cut** (v1.2.0 Workstream C3,
+  Mesen-HD-pack-inspired; native-only, behind the default-OFF `hd-pack` cargo
+  feature). A new per-pixel **tile-source telemetry** export in the PPU
+  (`rustynes_ppu::HdTileSource`, gated on `rustynes-ppu/hd-pack`) records, for
+  each visible pixel, the CHR pattern-table tile base address, the final
+  palette, the sprite flip flags, and whether the pixel came from a sprite or
+  the background — written in `emit_pixel` in lockstep with the existing
+  `index_framebuffer`, observing only already-computed state. It is
+  **output-only**: it reads no new VRAM, issues no new A12 / mapper events,
+  mutates no emulation state, and is not part of the save-state. A new frontend
+  `hdpack` module loads a Mesen-style `hires.txt` (folder or `.zip`), parses the
+  supported subset (`<scale>`, `<patternTable>`, and **unconditional** CHR-hash
+  `<tile>` rules), hashes each rendered tile's 16 CHR bytes with the
+  Mesen-compatible CRC32, and substitutes hi-res replacement images at blit time
+  (a dedicated upscaled-RGBA blit path in `gfx`). A **Mod -> Load HD Pack** menu
+  entry enables a pack per-game (keyed on `rom_sha256`, persisted under
+  `[graphics] hd_packs`). Out of scope (deferred, not v1.2.0): conditions,
+  palette keys, background regions, HD audio, and a `<patternTable>`-bank
+  substitution path. **With the `hd-pack` feature OFF the shipped / wasm /
+  `no_std` builds are byte-identical to today; with it ON but no pack loaded the
+  presentation is also byte-identical** — proven by the full ROM corpus
+  (AccuracyCoin 139/139, `nestest` 0-diff, blargg / kevtris green) passing
+  identically with the feature on and off.
+- **Family BASIC keyboard** (v1.2.0 Workstream D1): a new
+  `InputDevice::FamilyKeyboard` core device implements the Famicom keyboard's
+  9-row x 2-column-half matrix scan — `$4016` write selects the column-half
+  (bit 0), clocks the row counter (bit 1 rising edge advances, low resets), and
+  enables the matrix (bit 2); `$4017` read returns the four selected key
+  switches on bits 4..1, active-low. A new `Nes::set_family_keyboard` setter
+  (mirroring `set_power_pad`) feeds the 72-key bitmap. The frontend maps host
+  keys via `input::family_keyboard_index` (a direct, one-to-one passthrough; a
+  faithful positional layout is a follow-up) and offers it as the player-2
+  device in the input rebind panel. Unit-verified matrix scan; save-state
+  round-trips (snapshot tag 5).
+- **SNES-style serial mouse + Arkanoid on both ports** (v1.2.0 Workstream D2): a
+  new `InputDevice::SnesMouse` core device implements the 32-bit MSb-first D0
+  report (signature nibble `0b0001`, sensitivity, left/right buttons, signed
+  7-bit X/Y movement, idles high after the report), with a `Nes::set_snes_mouse`
+  setter; the frontend derives per-frame movement from the cursor delta and maps
+  the left/right mouse buttons. The Arkanoid **Vaus** paddle is now selectable on
+  **either** port (the core already permits `set_paddle` on port 0). Both are
+  selectable as the player-2 expansion device. Unit-verified serial protocol;
+  save-state round-trips (mouse snapshot tag 4). Konami / Bandai Hyper Shot, the
+  Family Trainer, and the Subor keyboard are noted follow-ups (not implemented).
+- **Game Genie code-name database** (v1.2.0 Workstream D3): a small committed,
+  CRC32-keyed asset (`genie_database.tsv`, public Galoob / community code lists)
+  maps a ROM to named Game Genie codes. The cheat panel shows a pick-list of the
+  loaded ROM's matching codes; selecting one feeds the **existing**
+  `GenieCode` decode + cheat persistence. Pure frontend — the core Game Genie
+  substitution (`rustynes-core/src/genie.rs`) is unchanged; every offered code is
+  validated through `GenieCode::new`, so the no-cheat PRG-read path is
+  byte-identical. The asset is compiled in for both native and wasm (modest size;
+  commercial ROMs are never committed — only the codes).
+- **Determinism contract held for all of Workstream D**: every new input device
+  is additive and OFF by default (`ExpansionDevice::None` stays the default; new
+  `FrameInputs` / `SharedInput` / config fields are `#[serde(default)]` and
+  default to "no device / no keys"), and the core input additions are pure /
+  deterministic. The shipped build + AccuracyCoin **(139/139)** + `nestest`
+  0-diff + blargg / kevtris are byte-identical to before; the no_std chip stack
+  still cross-compiles to `thumbv7em-none-eabihf`.
+- **Lua scripting depth — `emu.onNmi` / `emu.onIrq`** (v1.2.0 Workstream E, E1,
+  T-110-E1). Two new observational callbacks fire once per interrupt the CPU
+  serviced that frame (`fn(vector)`). They tap the **committed** service commit
+  point (`Bus::notify_irq_service`, the same point the IRQ trace uses) — not the
+  speculative `poll_nmi` / `poll_irq` sampler ADR 0010 flagged as unreliable — so
+  a script sees exactly the interrupts that committed, in order, classified by the
+  fetched vector (`0xFFFA` ⇒ NMI, `0xFFFE` ⇒ IRQ/BRK, robust under NMI hijack). A
+  new `debug-hooks`-gated per-frame interrupt-service log on `Nes` mirrors
+  `exec_log` (cleared at the top of `run_frame`; `interrupt_log()` /
+  `set_interrupt_logging()` accessors); the engine enables it only while an
+  `onNmi`/`onIrq` callback is registered.
+- **Lua scripting depth — `emu.setInput` wired through the late-latch** (v1.2.0
+  Workstream E, E2, T-110-E2). `emu.setInput(port, buttons)` now applies a per-
+  port controller override at the deterministic late-latch (`EmuCore::latch`,
+  before `produce_one_frame`) — the *same* point a real keypress enters — so a
+  recorded / replayed session stays bit-identical. The override is one-shot per
+  call. It is **gated identically to `emu.write`**: the engine drops the command
+  at the source under a locked session and the host re-checks the identical
+  `netplay_locked || movie_locked` condition (which folds in RA-hardcore) before
+  storing it, so a script can never perturb a netplay / TAS-replay / RA-hardcore
+  run. (Supersedes the v1.1.0 "accepted but not applied" stub + its one-time
+  console warning.)
+- **Determinism contract held for Workstream E (E1 + E2)**: the interrupt log is
+  `debug-hooks`-gated (a zero-cost no-op when off) and the scripting integration
+  is behind the default-OFF `scripting` feature, so the shipped / wasm / no_std
+  builds are byte-identical to today. AccuracyCoin **(139/139)** + `nestest`
+  0-diff + blargg / kevtris stay green; the no_std chip stack still cross-compiles
+  to `thumbv7em-none-eabihf`.
 
 ### Fixed
 

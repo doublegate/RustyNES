@@ -202,6 +202,11 @@ fn is_fds_image(bytes: &[u8]) -> bool {
 #[cfg(not(target_arch = "wasm32"))]
 fn extract_rom_from_zip(zip_bytes: &[u8]) -> Option<(String, Vec<u8>)> {
     use std::io::Read;
+    // Reject an implausibly large entry (zip bomb / corrupt archive) before
+    // reading it into memory — NES images are at most a few MiB. Both the
+    // declared size AND the actual read are bounded, since the declared size
+    // can lie (Gemini security-high + Copilot, PR #74).
+    const MAX_ENTRY_BYTES: u64 = 64 * 1024 * 1024;
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).ok()?;
     let idx = (0..archive.len()).find(|&i| {
         archive.by_index(i).is_ok_and(|f| {
@@ -212,12 +217,16 @@ fn extract_rom_from_zip(zip_bytes: &[u8]) -> Option<(String, Vec<u8>)> {
             })
         })
     })?;
-    let mut file = archive.by_index(idx).ok()?;
+    let file = archive.by_index(idx).ok()?;
+    if file.size() > MAX_ENTRY_BYTES {
+        return None;
+    }
     let name = std::path::Path::new(file.name())
         .file_name()
         .map_or_else(|| "rom".to_string(), |n| n.to_string_lossy().into_owned());
-    let mut out = Vec::new();
-    file.read_to_end(&mut out).ok()?;
+    let cap = usize::try_from(file.size()).unwrap_or(0);
+    let mut out = Vec::with_capacity(cap);
+    file.take(MAX_ENTRY_BYTES).read_to_end(&mut out).ok()?;
     Some((name, out))
 }
 
@@ -436,6 +445,16 @@ pub struct App {
     /// goes with `present_index_staging`.
     present_phase: u8,
     gfx: Option<Gfx>,
+    /// v1.2.0 beta.2 (Workstream C3) — the active HD-pack compositor, `Some`
+    /// only while a pack is loaded for the current ROM. `None` (the default,
+    /// and the only state when no pack is configured) means the present path is
+    /// byte-identical to the stock build.
+    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+    hd_compositor: Option<crate::hdpack::HdCompositor>,
+    /// v1.2.0 C3 — scratch staging for the PPU per-pixel HD tile-source
+    /// telemetry, copied under the emu lock alongside the framebuffer.
+    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+    present_hd_tiles: Vec<rustynes_core::rustynes_ppu::HdTileSource>,
     /// Native audio output (cpal). wasm32 uses the Web Audio path in
     /// `wasm.rs` instead, so this field is native-only.
     #[cfg(not(target_arch = "wasm32"))]
@@ -560,6 +579,20 @@ pub struct App {
     /// trigger / Vaus fire). Native-only.
     #[cfg(not(target_arch = "wasm32"))]
     mouse_pressed: bool,
+    /// v1.2.0 Workstream D — whether the RIGHT mouse button is held (SNES mouse
+    /// right button). Native-only.
+    #[cfg(not(target_arch = "wasm32"))]
+    mouse_right_pressed: bool,
+    /// v1.2.0 Workstream D — accumulated raw mouse motion since the last frame
+    /// latch (`MouseMotion` deltas), consumed + reset by [`Self::frame_inputs`]
+    /// when the SNES mouse is the active device. Native-only.
+    #[cfg(not(target_arch = "wasm32"))]
+    mouse_motion_accum: (f64, f64),
+    /// v1.2.0 Workstream D — live Family BASIC keyboard matrix bitmap (one byte
+    /// per row), driven by host key events via [`crate::input::family_keyboard_index`].
+    /// Native-only.
+    #[cfg(not(target_arch = "wasm32"))]
+    family_keyboard: [u8; 9],
     /// v2.2.0 — the uploaded Famicom Disk System BIOS (`disksys.rom`) bytes
     /// (wasm32). The browser build has no filesystem prompt, so the user
     /// uploads the BIOS via a `<input type="file">` and it is stashed here for
@@ -641,6 +674,10 @@ impl App {
             present_index_staging: Vec::new(),
             present_phase: 0,
             gfx: None,
+            #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+            hd_compositor: None,
+            #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+            present_hd_tiles: Vec::new(),
             audio: None,
             input,
             config,
@@ -678,6 +715,12 @@ impl App {
             cursor_pos: None,
             window_size: (NES_W * INITIAL_SCALE, NES_H * INITIAL_SCALE),
             mouse_pressed: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            mouse_right_pressed: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            mouse_motion_accum: (0.0, 0.0),
+            #[cfg(not(target_arch = "wasm32"))]
+            family_keyboard: [0; 9],
             #[cfg(feature = "retroachievements")]
             ra: Some(Self::init_ra_session()),
         })
@@ -722,6 +765,10 @@ impl App {
             present_index_staging: Vec::new(),
             present_phase: 0,
             gfx: None,
+            #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+            hd_compositor: None,
+            #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+            present_hd_tiles: Vec::new(),
             input,
             config,
             debugger: None,
@@ -1029,6 +1076,10 @@ impl App {
             }
         }
         self.apply_cheats_for_current_rom();
+        // v1.2.0 C3 — auto-load a configured HD-pack for this ROM (no-op when
+        // none is configured, so the default presentation is byte-identical).
+        #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+        self.maybe_load_hd_pack_for_rom();
         // v1.0.0 — re-push the per-APU-channel mute mask (the fresh `Nes` booted
         // with the all-on default). Default mask 0x3F = byte-identical audio.
         self.apply_apu_channel_mask();
@@ -1105,6 +1156,113 @@ impl App {
         if let Some(debugger) = self.debugger.as_mut() {
             debugger.set_cheat_persist(dir.clone(), rom_sha256, loaded.genie, loaded.raw);
         }
+    }
+
+    /// v1.2.0 beta.2 (Workstream C3) — load the HD-pack configured for the
+    /// current ROM (if any) into a compositor. No-op when no entry is configured
+    /// for the loaded ROM's hash — so the default presentation is byte-identical.
+    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+    fn maybe_load_hd_pack_for_rom(&mut self) {
+        self.hd_compositor = None;
+        let key = {
+            let guard = self.emu.lock();
+            let Some(nes) = guard.nes.as_ref() else {
+                return;
+            };
+            crate::save_state::hex_sha256(nes.rom_sha256())
+        };
+        let Some(path) = self.config.graphics.hd_packs.get(&key).cloned() else {
+            return;
+        };
+        self.load_hd_pack_from_path(&path);
+    }
+
+    /// v1.2.0 C3 — open a folder/zip picker, load the HD-pack, and persist the
+    /// per-ROM mapping. Native + feature-gated.
+    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+    fn load_hd_pack_dialog(&mut self) {
+        let has_rom = self.emu.lock().nes.is_some();
+        if !has_rom {
+            self.ui.set_status(crate::ui_shell::StatusMessage::new(
+                "Load a ROM before loading an HD pack".to_string(),
+                egui::Color32::from_rgb(230, 180, 90),
+                std::time::Duration::from_secs(4),
+            ));
+            return;
+        }
+        // Accept either a pack folder (containing hires.txt) or a .zip archive.
+        let picked = rfd::FileDialog::new()
+            .set_title("Select HD-pack folder or .zip")
+            .add_filter("HD pack archive", &["zip"])
+            .pick_folder()
+            .or_else(|| {
+                rfd::FileDialog::new()
+                    .set_title("Select HD-pack .zip")
+                    .add_filter("HD pack archive", &["zip"])
+                    .pick_file()
+            });
+        let Some(path) = picked else {
+            return;
+        };
+        if self.load_hd_pack_from_path(&path) {
+            // Persist the per-ROM mapping.
+            let key = {
+                let guard = self.emu.lock();
+                guard
+                    .nes
+                    .as_ref()
+                    .map(|n| crate::save_state::hex_sha256(n.rom_sha256()))
+            };
+            if let Some(key) = key {
+                self.config.graphics.hd_packs.insert(key, path);
+                let _ = self.config.save();
+            }
+        }
+    }
+
+    /// v1.2.0 C3 — load a pack from an explicit path into the compositor and
+    /// surface the result. Returns `true` on success.
+    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+    fn load_hd_pack_from_path(&mut self, path: &Path) -> bool {
+        if let Some(pack) = crate::hdpack::HdPack::load(path) {
+            let rules = pack.rule_count();
+            let scale = pack.scale();
+            self.hd_compositor = Some(crate::hdpack::HdCompositor::new(pack));
+            self.ui
+                .set_status(crate::ui_shell::StatusMessage::success(format!(
+                    "HD pack loaded: {rules} tiles, {scale}x"
+                )));
+            true
+        } else {
+            self.hd_compositor = None;
+            self.ui.set_status(crate::ui_shell::StatusMessage::new(
+                "No usable hires.txt rules found in HD pack".to_string(),
+                egui::Color32::from_rgb(230, 90, 90),
+                std::time::Duration::from_secs(4),
+            ));
+            false
+        }
+    }
+
+    /// v1.2.0 C3 — unload the active HD-pack and drop the per-ROM mapping.
+    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+    fn unload_hd_pack(&mut self) {
+        self.hd_compositor = None;
+        let key = {
+            let guard = self.emu.lock();
+            guard
+                .nes
+                .as_ref()
+                .map(|n| crate::save_state::hex_sha256(n.rom_sha256()))
+        };
+        if let Some(key) = key {
+            if self.config.graphics.hd_packs.remove(&key).is_some() {
+                let _ = self.config.save();
+            }
+        }
+        self.ui.set_status(crate::ui_shell::StatusMessage::success(
+            "HD pack unloaded".to_string(),
+        ));
     }
 
     /// Per-ROM FDS writable-disk save directory (`<data_dir>/fds-saves/`).
@@ -1829,6 +1987,12 @@ impl App {
                 ExpansionDevice::PowerPad => {
                     nes.set_power_pad(1, 0);
                 }
+                ExpansionDevice::SnesMouse => {
+                    nes.set_snes_mouse(1, 0, 0, false, false, 0);
+                }
+                ExpansionDevice::FamilyKeyboard => {
+                    nes.set_family_keyboard(1, [0; 9]);
+                }
             }
         }
     }
@@ -1889,6 +2053,9 @@ impl App {
             self.emu.lock().produce_one_frame(&inputs, &mut sinks)
         };
         self.apply_produce_fx(fx);
+        // v1.2.0 Workstream D — the frame consumed this frame's mouse motion.
+        #[cfg(not(target_arch = "wasm32"))]
+        self.drain_mouse_motion();
     }
 
     /// v2.8.0 Phase 5 — build the synchronous (winit-thread) drive's
@@ -1951,7 +2118,31 @@ impl App {
             turbo_mask: self.turbo_mask(),
             turbo_period: self.config.input.turbo_period,
             power_pad: self.input.power_pad(),
+            // v1.2.0 Workstream D — SNES mouse: report the motion accumulated
+            // since the last frame latch (drained by the produce / publish path).
+            #[cfg(not(target_arch = "wasm32"))]
+            #[allow(clippy::cast_possible_truncation)]
+            mouse_delta: {
+                let (ax, ay) = self.mouse_motion_accum;
+                (
+                    ax.clamp(-127.0, 127.0) as i16,
+                    ay.clamp(-127.0, 127.0) as i16,
+                )
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            mouse_right: self.mouse_right_pressed,
+            #[cfg(not(target_arch = "wasm32"))]
+            family_keyboard: self.family_keyboard,
         }
+    }
+
+    /// v1.2.0 Workstream D — drain the SNES-mouse motion accumulator after the
+    /// per-frame latch has consumed it. Called once per produced / published
+    /// frame so each NES poll sees only that frame's motion (a real serial mouse
+    /// reports movement-since-last-strobe). Native-only.
+    #[cfg(not(target_arch = "wasm32"))]
+    const fn drain_mouse_motion(&mut self) {
+        self.mouse_motion_accum = (0.0, 0.0);
     }
 
     /// v1.1.0 beta.1 (T-110-B2) — the configured turbo/autofire button mask
@@ -1995,7 +2186,7 @@ impl App {
     /// so the next produced frame latches it. No-op when the thread isn't
     /// spawned. Native-only + `emu-thread`.
     #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
-    fn publish_shared_input(&self) {
+    fn publish_shared_input(&mut self) {
         if let Some(thread) = self.emu_thread.as_ref() {
             thread.shared_input().publish(&self.frame_inputs());
             // Fast-forward is a control-block flag (not part of the per-frame
@@ -2004,6 +2195,9 @@ impl App {
                 .control()
                 .set_fast_forward(self.input.fast_forward_held());
         }
+        // v1.2.0 Workstream D — the published snapshot carried this frame's
+        // mouse motion; drain so the next publish reports only new movement.
+        self.drain_mouse_motion();
     }
 
     /// v2.8.0 Phase 5 increment 3 — publish the active pacing regime + the
@@ -2496,6 +2690,14 @@ impl App {
                     d.open_chip_panel(panel);
                 }
             }
+            MenuAction::LoadHdPack => {
+                #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                self.load_hd_pack_dialog();
+            }
+            MenuAction::UnloadHdPack => {
+                #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                self.unload_hd_pack();
+            }
         }
     }
 
@@ -2551,22 +2753,31 @@ impl App {
         // and run after the guard drops, minimizing contention with the
         // emulation thread.
         let mut err = None;
+        // The combined write-gate, assigned once inside the lock so the SetInput
+        // control application below reuses the EXACT same condition as
+        // `emu.write` (T-110-E2). Every path that reaches the later read has run
+        // through the block (the early `return` exits the whole function).
+        let writes_locked;
         {
             let mut guard = self.emu.lock();
             // Read the movie flags before the `nes` borrow — a `MutexGuard`
             // deref borrows the whole guard, so the two can't overlap.
             let movie_locked = guard.movie.is_playing() || guard.movie.is_recording();
+            writes_locked = netplay_locked || movie_locked;
             let Some(nes) = guard.nes.as_mut() else {
                 return;
             };
             // Determinism gate (same policy as the raw-RAM cheat path).
-            engine.set_writes_locked(netplay_locked || movie_locked);
+            engine.set_writes_locked(writes_locked);
             // Enable the per-frame exec / access logs the registered callbacks
             // need. The exec log is independent of the Trace Logger panel's
             // `set_trace_enabled`, so scripting never fights the user's trace
             // setting (Copilot #48).
             nes.set_exec_logging(engine.needs_exec_log());
             nes.set_access_logging(engine.needs_access_log());
+            // T-110-E1 — the interrupt-service log for the Lua onNmi/onIrq
+            // callbacks (independent of the access / exec logs).
+            nes.set_interrupt_logging(engine.needs_interrupt_log());
             if let Err(e) = engine.on_frame(nes) {
                 err = Some(e.to_string());
             }
@@ -2588,8 +2799,9 @@ impl App {
         self.script_draws = draws;
 
         // Apply control commands (these `&mut self` methods re-lock the emu).
+        // `writes_locked` is the same gate `emu.write` uses; SetInput honors it.
         for cmd in &controls {
-            self.apply_script_control(cmd);
+            self.apply_script_control(cmd, writes_locked);
         }
     }
 
@@ -2765,8 +2977,13 @@ impl App {
     }
 
     /// Apply one script-issued control command to the emulator.
+    ///
+    /// `writes_locked` is the SAME determinism gate `emu.write` uses
+    /// (`netplay_locked || movie_locked`, which already folds in
+    /// `ra_hardcore_blocks()` via `netplay_locked`). `SetInput` honors it so a
+    /// script can never perturb a netplay / TAS-replay / RA-hardcore session.
     #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
-    fn apply_script_control(&mut self, cmd: &rustynes_script::ControlCmd) {
+    fn apply_script_control(&mut self, cmd: &rustynes_script::ControlCmd, writes_locked: bool) {
         use rustynes_script::ControlCmd;
         match cmd {
             ControlCmd::Pause => self.set_paused(true),
@@ -2776,13 +2993,18 @@ impl App {
                     self.handle_load_state(*slot);
                 }
             }
-            // Input override through the emu-thread input path is a documented
-            // follow-up (see docs/scripting.md); the command is accepted but not
-            // yet wired so it does not silently corrupt the late-latch input.
-            // Warn the author once so it isn't a silent no-op (L2).
-            ControlCmd::SetInput { .. } => {
-                if let Some(dbg) = self.debugger.as_mut() {
-                    dbg.script_panel().warn_setinput_once();
+            // v1.2.0 (T-110-E2) — stash the per-port override on the core; it is
+            // merged at the next `EmuCore::latch` (the deterministic late-latch
+            // point a real keypress enters at) and consumed there. GATED
+            // identically to `emu.write`: under lock the override is NEVER
+            // stored, so `latch` stays byte-identical and a locked / replayed
+            // session is provably unperturbed.
+            ControlCmd::SetInput { port, buttons } => {
+                if writes_locked {
+                    return;
+                }
+                if *port < 2 {
+                    self.emu.lock().script_input_override[*port as usize] = Some(*buttons);
                 }
             }
         }
@@ -3025,12 +3247,14 @@ impl App {
 
         #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
         {
-            if let Some(thread) = self.emu_thread.as_ref() {
+            if self.emu_thread.is_some() {
                 // Publish the freshly-latched input into the SharedInput too,
                 // so the stepped frame sees the current buttons.
                 self.publish_shared_input();
-                thread.control().request_frame_advance();
-                thread.unpark();
+                if let Some(thread) = self.emu_thread.as_ref() {
+                    thread.control().request_frame_advance();
+                    thread.unpark();
+                }
                 return;
             }
             self.frame_advance_inline();
@@ -3993,8 +4217,8 @@ impl App {
     /// `[graphics] ntsc_filter` mode, keeping the two NTSC filters mutually
     /// exclusive: `"composite-rt"` = the true composite Bisqwit filter,
     /// `"off"` = neither, any other non-`"off"` value = the simplified blur.
-    fn apply_ntsc_mode(gfx: &mut Gfx, mode: &str) {
-        match mode {
+    fn apply_ntsc_mode(gfx: &mut Gfx, graphics: &crate::config::GraphicsConfig) {
+        match graphics.ntsc_filter.as_str() {
             "off" => {
                 gfx.disable_ntsc();
                 gfx.disable_ntsc_bisqwit();
@@ -4002,11 +4226,27 @@ impl App {
             "composite-rt" => {
                 gfx.disable_ntsc();
                 gfx.enable_ntsc_bisqwit();
+                // v1.2.0 C1 — seed the live picture knobs on enable (default 0 =
+                // byte-identical to the pre-C1 decode).
+                gfx.set_ntsc_bisqwit_knobs(Self::ntsc_knobs_from(graphics));
             }
             _ => {
                 gfx.disable_ntsc_bisqwit();
                 gfx.enable_ntsc();
             }
+        }
+    }
+
+    /// v1.2.0 C1 — build the live Bisqwit NTSC picture knobs from the graphics
+    /// config. Defaults (all 0) decode byte-identically to the pre-C1 filter.
+    const fn ntsc_knobs_from(
+        graphics: &crate::config::GraphicsConfig,
+    ) -> crate::ntsc_bisqwit::NtscKnobs {
+        crate::ntsc_bisqwit::NtscKnobs {
+            contrast: graphics.ntsc_contrast,
+            saturation: graphics.ntsc_saturation,
+            brightness: graphics.ntsc_brightness,
+            hue: graphics.ntsc_hue,
         }
     }
 
@@ -4255,10 +4495,18 @@ impl App {
     fn on_gfx_ready(&mut self, mut gfx: Gfx, event_loop: &ActiveEventLoop) {
         // Sprint 5-3 — optional NTSC filter. v1.1.0 beta.1 — optional CRT filter
         // (mutually exclusive with NTSC; CRT wins if both are somehow configured).
-        if self.config.graphics.crt_filter {
-            gfx.enable_crt(self.config.graphics.crt_scanline);
-        } else {
-            Self::apply_ntsc_mode(&mut gfx, &self.config.graphics.ntsc_filter);
+        // v1.2.0 C2 — a non-empty composable shader stack takes priority over the
+        // legacy single-select filters and OWNS the post-process path; an empty
+        // stack (the default) leaves the legacy chain in place, byte-identically.
+        if self.config.graphics.shader_stack.has_enabled_passes() {
+            gfx.set_stack_ntsc_knobs(Self::ntsc_knobs_from(&self.config.graphics));
+        }
+        if !gfx.apply_shader_stack(&self.config.graphics.shader_stack) {
+            if self.config.graphics.crt_filter {
+                gfx.enable_crt(self.config.graphics.crt_scanline);
+            } else {
+                Self::apply_ntsc_mode(&mut gfx, &self.config.graphics);
+            }
         }
         // Sprint 5-3 — egui debugger overlay.
         let surface_format = gfx.surface_format();
@@ -4677,6 +4925,16 @@ impl ApplicationHandler<AppEvent> for App {
             }
             #[cfg(not(target_arch = "wasm32"))]
             WindowEvent::CursorMoved { position, .. } => {
+                // v1.2.0 Workstream D — accumulate the SNES-mouse relative motion
+                // from the cursor delta, scaled to NES pixels (the window maps to
+                // the 256x240 screen). Drained per produced/published frame.
+                if let Some((px, py)) = self.cursor_pos {
+                    let (ww, wh) = self.window_size;
+                    let dx = (position.x - px) * 256.0 / f64::from(ww.max(1));
+                    let dy = (position.y - py) * 240.0 / f64::from(wh.max(1));
+                    self.mouse_motion_accum.0 += dx;
+                    self.mouse_motion_accum.1 += dy;
+                }
                 // Track the cursor for the Zapper aim / Vaus paddle position.
                 self.cursor_pos = Some((position.x, position.y));
             }
@@ -4691,6 +4949,10 @@ impl ApplicationHandler<AppEvent> for App {
                     .is_some_and(DebuggerOverlay::wants_egui_input);
                 if button == winit::event::MouseButton::Left && !egui_pointer {
                     self.mouse_pressed = state == winit::event::ElementState::Pressed;
+                }
+                // v1.2.0 Workstream D — the SNES mouse's right button.
+                if button == winit::event::MouseButton::Right && !egui_pointer {
+                    self.mouse_right_pressed = state == winit::event::ElementState::Pressed;
                 }
             }
             WindowEvent::DroppedFile(path) => {
@@ -4753,6 +5015,22 @@ impl ApplicationHandler<AppEvent> for App {
                         .is_some_and(|d| d.wants_egui_input() || d.shell_is_capturing());
                 if shell_capturing || egui_consumed {
                     return;
+                }
+                // v1.2.0 Workstream D — Family BASIC keyboard matrix: map the
+                // host key to a matrix index and set/clear the row bit. Tracked
+                // unconditionally (cheap); consumed only when a Family BASIC
+                // keyboard is the active device. Native-only.
+                #[cfg(not(target_arch = "wasm32"))]
+                if let winit::keyboard::PhysicalKey::Code(code) = event.physical_key {
+                    if let Some(idx) = crate::input::family_keyboard_index(code) {
+                        let row = idx / 8;
+                        let bit = 1u8 << (idx % 8);
+                        if event.state == winit::event::ElementState::Pressed {
+                            self.family_keyboard[row] |= bit;
+                        } else {
+                            self.family_keyboard[row] &= !bit;
+                        }
+                    }
                 }
                 let action = self.input.handle_key(event.physical_key, event.state);
                 if let Some(act) = action {
@@ -5076,8 +5354,12 @@ impl ApplicationHandler<AppEvent> for App {
                         .is_some_and(DebuggerOverlay::any_nes_tool_open);
                 // v1.1.0 beta.1 (T-110-A1) — snapshot the palette-index
                 // framebuffer + phase only while the true composite `NES_NTSC`
-                // filter is active (zero cost otherwise).
-                let want_index = self.gfx.as_ref().is_some_and(Gfx::ntsc_bisqwit_active);
+                // filter is active (zero cost otherwise). v1.2.0 C2 — also when a
+                // leading composite-rt pass is active in the shader stack.
+                let want_index = self
+                    .gfx
+                    .as_ref()
+                    .is_some_and(|g| g.ntsc_bisqwit_active() || g.shader_stack_needs_index());
                 let render_result = if self.debugger.is_none() || self.gfx.is_none() {
                     // No overlay yet (pre-`resumed`): nothing to render.
                     return;
@@ -5168,10 +5450,15 @@ impl ApplicationHandler<AppEvent> for App {
                 } else {
                     // Common path: copy the presented framebuffer under a brief
                     // lock, DROP the guard, then encode + present from staging.
+                    // v1.2.0 C3 — `(width, height)` of a composited HD-pack frame
+                    // when an HD compositor is active for the loaded ROM; `None`
+                    // means the stock NES-resolution present path (byte-identical).
+                    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                    let mut hd_dims: Option<(u32, u32)> = None;
                     {
                         let mut guard = self.emu.lock();
                         let emu = &mut *guard;
-                        if let Some(nes) = emu.nes.as_ref() {
+                        if let Some(nes) = emu.nes.as_mut() {
                             Self::backfill_present_fb(&mut emu.present_fb, nes);
                             self.present_staging.clear();
                             self.present_staging.extend_from_slice(&emu.present_fb);
@@ -5180,6 +5467,23 @@ impl ApplicationHandler<AppEvent> for App {
                                 self.present_index_staging
                                     .extend_from_slice(nes.index_framebuffer());
                                 self.present_phase = nes.ntsc_phase();
+                            }
+                            // v1.2.0 C3 — composite the HD frame under the same
+                            // lock (the PPU tile-source telemetry + CHR peeks need
+                            // the live `Nes`). Output-only; no emulation state is
+                            // touched. Skipped entirely when no pack is loaded.
+                            #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                            if let Some(comp) = self.hd_compositor.as_mut() {
+                                self.present_hd_tiles.clear();
+                                self.present_hd_tiles
+                                    .extend_from_slice(nes.hd_tile_source());
+                                let (w, h) = comp.dimensions();
+                                comp.composite(
+                                    &self.present_staging,
+                                    &self.present_hd_tiles,
+                                    |addr| nes.peek_ppu(addr),
+                                );
+                                hd_dims = Some((w, h));
                             }
                         } else {
                             // No ROM: present a black NES image (the shell still
@@ -5194,6 +5498,12 @@ impl ApplicationHandler<AppEvent> for App {
                     let script_par = self.config.ui.pixel_aspect_correction;
                     #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
                     let script_overscan = self.config.graphics.hide_overscan;
+                    // v1.2.0 C3 — borrow the composited HD frame (disjoint field)
+                    // before the `gfx` borrow so the HD branch can hand it off.
+                    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                    let hd_frame: Option<&[u8]> = hd_dims
+                        .and(self.hd_compositor.as_ref())
+                        .map(crate::hdpack::HdCompositor::frame);
                     let gfx = self.gfx.as_mut().expect("checked above");
                     let debugger = self.debugger.as_mut().expect("checked above");
                     let window = gfx.window.clone();
@@ -5205,48 +5515,63 @@ impl ApplicationHandler<AppEvent> for App {
                     let save_states_ui = &mut self.save_states_ui;
                     let index_arg = want_index
                         .then_some((self.present_index_staging.as_slice(), self.present_phase));
-                    gfx.render_with_overlay(
-                        &self.present_staging,
-                        index_arg,
-                        |device, queue, encoder, view, size| {
-                            #[cfg(target_arch = "wasm32")]
-                            let extra = |ctx: &egui::Context, cfg: &mut crate::config::Config| {
-                                crate::wasm_lobby::show(ctx, wasm_lobby, cfg);
-                            };
-                            #[cfg(not(target_arch = "wasm32"))]
-                            let extra = |ctx: &egui::Context, _cfg: &mut crate::config::Config| {
-                                save_states_ui.show(
-                                    ctx,
-                                    ss_dir.as_deref(),
-                                    ss_sha,
-                                    ss_slot,
-                                    rom_loaded,
-                                );
-                                #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
-                                Self::paint_script_overlay(
-                                    ctx,
-                                    script_draws,
-                                    script_par,
-                                    script_overscan,
-                                );
-                            };
-                            // Debugger panels are skipped (overlay hidden) so
-                            // `nes = None` is correct even though a ROM may exist.
-                            shell_out = debugger.render_shell(
-                                device,
-                                queue,
-                                encoder,
-                                &window,
-                                view,
-                                size,
-                                None,
-                                config,
-                                ui_shell,
-                                &shell_frame,
-                                extra,
+                    let overlay = |device: &wgpu::Device,
+                                   queue: &wgpu::Queue,
+                                   encoder: &mut wgpu::CommandEncoder,
+                                   view: &wgpu::TextureView,
+                                   size: (u32, u32)| {
+                        #[cfg(target_arch = "wasm32")]
+                        let extra = |ctx: &egui::Context, cfg: &mut crate::config::Config| {
+                            crate::wasm_lobby::show(ctx, wasm_lobby, cfg);
+                        };
+                        #[cfg(not(target_arch = "wasm32"))]
+                        let extra = |ctx: &egui::Context, _cfg: &mut crate::config::Config| {
+                            save_states_ui.show(
+                                ctx,
+                                ss_dir.as_deref(),
+                                ss_sha,
+                                ss_slot,
+                                rom_loaded,
                             );
-                        },
-                    )
+                            #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
+                            Self::paint_script_overlay(
+                                ctx,
+                                script_draws,
+                                script_par,
+                                script_overscan,
+                            );
+                        };
+                        // Debugger panels are skipped (overlay hidden) so
+                        // `nes = None` is correct even though a ROM may exist.
+                        shell_out = debugger.render_shell(
+                            device,
+                            queue,
+                            encoder,
+                            &window,
+                            view,
+                            size,
+                            None,
+                            config,
+                            ui_shell,
+                            &shell_frame,
+                            extra,
+                        );
+                    };
+                    // v1.2.0 C3 — when an HD-pack frame was composited this
+                    // redraw, present the upscaled buffer through the dedicated
+                    // HD blit; otherwise the stock NES-resolution present path
+                    // (byte-identical to before).
+                    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                    let render_result = match (hd_dims, hd_frame) {
+                        (Some((w, h)), Some(frame)) => {
+                            gfx.render_hd_with_overlay(frame, w, h, overlay)
+                        }
+                        _ => gfx.render_with_overlay(&self.present_staging, index_arg, overlay),
+                    };
+                    #[cfg(not(all(feature = "hd-pack", not(target_arch = "wasm32"))))]
+                    let render_result =
+                        gfx.render_with_overlay(&self.present_staging, index_arg, overlay);
+                    render_result
                 };
                 match render_result {
                     Ok(()) => {
@@ -5335,7 +5660,7 @@ impl ApplicationHandler<AppEvent> for App {
                             gfx.disable_crt();
                             self.config.graphics.crt_filter = false;
                         }
-                        Self::apply_ntsc_mode(gfx, &self.config.graphics.ntsc_filter);
+                        Self::apply_ntsc_mode(gfx, &self.config.graphics);
                     }
                 }
                 // v1.0.0 — master volume / mute live-apply (the cpal consume
@@ -5373,7 +5698,7 @@ impl ApplicationHandler<AppEvent> for App {
                             // Turning CRT off restores whatever NTSC mode the
                             // config now holds (normally "off" → no filter).
                             gfx.disable_crt();
-                            Self::apply_ntsc_mode(gfx, &self.config.graphics.ntsc_filter);
+                            Self::apply_ntsc_mode(gfx, &self.config.graphics);
                         }
                         let _ = self.config.save();
                     }
@@ -5381,6 +5706,24 @@ impl ApplicationHandler<AppEvent> for App {
                 if settings.crt_scanline {
                     if let Some(gfx) = self.gfx.as_mut() {
                         gfx.set_crt_scanline(self.config.graphics.crt_scanline);
+                    }
+                }
+                // v1.2.0 C1 — Bisqwit-NTSC picture-knob live-apply (output-only;
+                // defaults decode byte-identically to the pre-C1 filter).
+                if settings.ntsc_knobs {
+                    if let Some(gfx) = self.gfx.as_mut() {
+                        gfx.set_ntsc_bisqwit_knobs(Self::ntsc_knobs_from(&self.config.graphics));
+                    }
+                }
+                // v1.2.0 C2 — composable shader-stack live-apply. Rebuild the gfx
+                // ping-pong stack from `[graphics] shader_stack`; an empty /
+                // all-disabled stack rebuilds to the byte-identical direct blit.
+                // When a leading composite-rt pass is present its live picture
+                // knobs are forwarded too.
+                if settings.shader_stack {
+                    if let Some(gfx) = self.gfx.as_mut() {
+                        gfx.set_stack_ntsc_knobs(Self::ntsc_knobs_from(&self.config.graphics));
+                        gfx.apply_shader_stack(&self.config.graphics.shader_stack);
                     }
                 }
                 // v1.1.0 beta.1 — custom .pal palette: the file dialog + apply run

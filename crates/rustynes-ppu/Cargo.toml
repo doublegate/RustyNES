@@ -23,6 +23,20 @@ default = []
 # `docs/ppu-trace-tooling.md` for usage. Enable with
 # `cargo test --features ppu-state-trace ...`.
 ppu-state-trace = []
+# v1.2.0 beta.2 (Workstream C3) — per-frame HD-pack tile-source telemetry.
+# Off by default so the shipped / wasm / no_std builds are byte-identical to
+# today. When enabled, `emit_pixel` writes one `HdTileSource` record per visible
+# pixel into a side buffer (the `hd_tile_source` field) in lockstep with the
+# existing `index_framebuffer` write — observing the already-computed tile
+# identity (CHR pattern-table base address, final palette slot, flip flags, and
+# whether the pixel came from a sprite or the background). It is OUTPUT-ONLY: it
+# reads no new VRAM, issues no new A12 / mapper events, mutates no emulation
+# state, and is not part of the save-state — so the determinism / AccuracyCoin
+# contract is unaffected and the framebuffer is byte-identical with the feature
+# on or off. The frontend's HD-pack loader (`hdpack.rs`) consumes it to
+# substitute Mesen-style hi-res replacement tiles at blit time. See
+# `docs/ppu-2c02.md` §HD-pack tile-source export.
+hd-pack = []
 
 [dependencies]
 bitflags.workspace = true
