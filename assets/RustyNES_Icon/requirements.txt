@@ -1,0 +1,7 @@
+# Dependencies for make_icon.py (parametric RustyNES icon generator).
+#   python3 -m venv .venv && source .venv/bin/activate
+#   pip install -r requirements.txt
+#   python3 make_icon.py            # writes out/rustynes.svg + png set + out/rustynes.ico
+cairosvg
+Pillow
+fonttools
