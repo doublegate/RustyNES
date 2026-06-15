@@ -67,7 +67,7 @@ egui-wgpu = "0.32"
 # (default-features = false drops it) hyperlink_to is inert.
 egui-winit = { version = "0.32", default-features = false, features = ["links", "wayland", "x11"] }
 gilrs = "0.11"
-rfd = "0.14"
+rfd = "0.17"
 directories = "5"
 
 # v1.3.0 Sprint 1.1 — wasm32 frontend support. The chip stack is
