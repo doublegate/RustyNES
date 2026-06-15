@@ -2458,8 +2458,8 @@ impl App {
             // need. The exec log is independent of the Trace Logger panel's
             // `set_trace_enabled`, so scripting never fights the user's trace
             // setting (Copilot #48).
-            nes.set_exec_logging(engine.needs_exec_log().unwrap_or(false));
-            nes.set_access_logging(engine.needs_access_log().unwrap_or(false));
+            nes.set_exec_logging(engine.needs_exec_log());
+            nes.set_access_logging(engine.needs_access_log());
             if let Err(e) = engine.on_frame(nes) {
                 err = Some(e.to_string());
             }

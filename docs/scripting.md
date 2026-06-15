@@ -100,9 +100,10 @@ crop — so HUD coordinates line up with game pixels.
   while the host holds the emulator lock (they need live state), so a heavy
   script costs frame time — the per-frame instruction budget (default 1M, ~10 ms)
   bounds a runaway. Keep per-frame work light.
-- **Registry safety.** The internal callback registry is resilient to a script
-  clobbering it (e.g. `__rustynes = nil`): doing so only disables that script's
-  own callbacks, never the host.
+- **Registry safety.** Registered callbacks are stored **Rust-side** (as Lua
+  registry keys), not in a script-visible global. A script cannot inspect,
+  clobber, or inject junk into the callback registry, so it can never corrupt
+  the host pump — the protection is structural, not best-effort.
 - **Overlay coordinates** are mapped onto the actual letterboxed game rect
   (honouring 8:7 pixel-aspect correction + overscan crop), so HUD coordinates
   line up with game pixels.

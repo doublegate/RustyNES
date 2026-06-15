@@ -205,6 +205,15 @@ content below, plus the first **v1.1.0** feature work (beta.1).
 
 ### Fixed
 
+- **Lua callback registry moved Rust-side — closes the registry-junk class for good.** The
+  `onFrame`/`onExec`/`onRead`/`onWrite` callbacks are now stored Rust-side as `mlua::RegistryKey`s
+  (a `Vec` + per-address `HashMap`) instead of in a script-visible `__rustynes` Lua global. A
+  script can register callbacks but **cannot** inspect, clobber, or inject junk into the registry,
+  so no malformed registry value can ever error the host pump — the protection is *structural*,
+  superseding the per-traversal hardening of #49/#52/#53/#54/#55. As a bonus the per-address
+  callback gate becomes a free `HashMap` lookup (no Lua FFI for non-matching addresses). Test
+  `callback_registry_is_not_script_visible` asserts `__rustynes` is `nil` to scripts. Core
+  untouched (AccuracyCoin byte-identical); ADR 0010 + `docs/scripting.md` updated.
 - **Lua registry traversal fully junk-tolerant (PR #53 review follow-up).** Completing the
   crash-proofing: `active_addrs` now scans keys as generic `Value`s (skipping non-integer keys),
   and all three callback-list invocations go through a `call_fns` helper that iterates as `Value`
