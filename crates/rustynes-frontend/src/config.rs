@@ -1395,6 +1395,70 @@ mod tests {
     }
 
     #[test]
+    fn shortcut_registry_defaults_are_byte_identical() {
+        // v1.2.0 Workstream H2 — the system-bindings section *is* the
+        // remappable shortcut registry the menu reads. Every field carries a
+        // `#[serde(default)]` returning today's hardcoded hotkey, so a config
+        // with NO `[input.system]` section (and an empty one) must reproduce
+        // the exact bindings the app shipped with — i.e. a pre-H2 / default
+        // build is byte-identical. This guards the H2 promise directly.
+        let expected = SystemBindings::default();
+
+        // (a) a config file with no `[input.system]` at all — the real
+        // pre-H2 / default-build case (`InputConfig::system` is
+        // `#[serde(default)]`). This is the byte-identical guarantee.
+        let no_section: Config = toml::from_str("").unwrap();
+        assert_eq!(no_section.input.system, expected);
+
+        // (b) a `[input.system]` table that supplies ONLY the original
+        // (pre-1.0) required fields and omits every newer hotkey parses to
+        // today's defaults for the omitted keys — i.e. an on-disk config
+        // written before those keys existed upgrades silently. Parsed as a bare
+        // `SystemBindings` because the surrounding `InputConfig::player1/2/system`
+        // are themselves required fields.
+        let legacy_section: SystemBindings = toml::from_str(
+            "quit = \"Escape\"\n\
+             save_state = \"F1\"\n\
+             load_state = \"F4\"\n\
+             rewind = \"F5\"\n\
+             reset = \"F2\"\n\
+             power_cycle = \"F3\"\n",
+        )
+        .unwrap();
+        assert_eq!(legacy_section, expected);
+
+        // (c) pin the literal default key strings so an accidental rebinding of
+        // a default in a future edit is caught here (the registry serialises
+        // these verbatim, which is what the menu accelerator labels show).
+        assert_eq!(expected.quit, "Escape");
+        assert_eq!(expected.save_state, "F1");
+        assert_eq!(expected.load_state, "F4");
+        assert_eq!(expected.rewind, "F5");
+        assert_eq!(expected.reset, "F2");
+        assert_eq!(expected.power_cycle, "F3");
+        assert_eq!(expected.debug_overlay, "Backquote");
+        assert_eq!(expected.open_rom, "F12");
+        assert_eq!(expected.movie_record, "F6");
+        assert_eq!(expected.movie_play, "F7");
+        assert_eq!(expected.movie_branch, "F8");
+        assert_eq!(expected.disk_swap, "F9");
+        assert_eq!(expected.insert_coin, "F10");
+        assert_eq!(expected.fullscreen, "F11");
+        assert_eq!(expected.toggle_menu_bar, "KeyM");
+        assert_eq!(expected.fast_forward, "Tab");
+        assert_eq!(expected.frame_advance, "Backslash");
+        assert_eq!(expected.pause, "Space");
+        assert_eq!(expected.speed_up, "Equal");
+        assert_eq!(expected.speed_down, "Minus");
+        assert_eq!(expected.speed_reset, "Digit0");
+
+        // (d) serialising then re-parsing the registry is a fixed point.
+        let s = toml::to_string_pretty(&expected).unwrap();
+        let back: SystemBindings = toml::from_str(&s).unwrap();
+        assert_eq!(back, expected);
+    }
+
+    #[test]
     fn movie_bindings_default_to_f6_f7_f8() {
         // v1.4.0 Sprint 4.2: the TAS movie keys default to F6/F7/F8 and
         // round-trip through TOML.

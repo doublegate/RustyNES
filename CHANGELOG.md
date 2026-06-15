@@ -15,11 +15,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Work toward **v1.2.0 "Curator"** (beta.1-2, Workstreams A + B + C + D + E). See
-`docs/adr/0011-mapper-tiering.md`, `docs/adr/0013-composable-shader-stack.md`,
-and the v1.2.0 plan.
+Work toward **v1.2.0 "Curator"** (beta.1-2, Workstreams A + B + C + D + E + H).
+See `docs/adr/0011-mapper-tiering.md`,
+`docs/adr/0013-composable-shader-stack.md`, and the v1.2.0 plan.
 
 ### Added
+
+- **Menu-bar responsiveness — per-item contextual enable/disable** (v1.2.0
+  Workstream H, H1; GeraNES `MenuUI.inl`-inspired). Menu items now grey out
+  when the action would be a no-op or unsafe in the current state, instead of
+  being always-clickable. Predicates threaded from live app state into the
+  shell: with **no ROM loaded** Save/Load State (+ slots + the Save-States
+  manager), Reset, Power-cycle, Frame Advance, Speed, FDS disk-swap, Vs. Insert
+  Coin, ROM Database, and HD-pack load/unload are disabled; during a **netplay
+  session** Open ROM / Open Recent / Reset / Power-cycle / Frame Advance / Vs.
+  coin / Movies (TAS) / HD-pack are locked and the Speed submenu allows only
+  100% (mirrors GeraNES `netplayRomChangeRestricted` / `isNetplaySpeedRestricted`);
+  while a **TAS movie is recording or playing** Load State (+ load-from-slot),
+  Reset, Power-cycle, disk-swap, Netplay, and HD-pack are locked, and the
+  Movies submenu disables the conflicting Record-vs-Play actions (mirrors
+  GeraNES `replayInteractionLocked` / `replayRecordingActive`). Pure UI — the
+  `MenuAction` dispatch set is unchanged.
+- **Remappable system-hotkey registry surfaced in the rebind UI** (v1.2.0
+  Workstream H, H2). The `[input.system]` config section already drives both
+  the global hotkey handler and the menu's inline accelerator labels; the
+  Settings -> Input rebind panel now exposes **all** of those bindings (Open
+  ROM, Pause, Frame Advance, Fast Forward, Fullscreen, Toggle Menu Bar, Speed
+  up/down/reset, Movie record/play/branch, FDS disk-swap, Vs. Insert Coin) for
+  rebinding, not just the original seven — so a rebind takes effect live and
+  the menu accelerator label updates to match. Every field keeps its
+  `#[serde(default)]`, so existing configs and the default build are
+  byte-identical (a new `shortcut_registry_defaults_are_byte_identical` test
+  pins this).
+
+#### Deferred to a follow-up
+
+- **Menu icons** (v1.2.0 Workstream H, H3). FontAwesome-style glyphs next to
+  menu items (GeraNES `withMenuIcon`) were evaluated and **deferred**: the
+  project ships no icon font, and bundling one (FontAwesome `.ttf` /
+  `egui_phosphor`) adds hundreds of KB against the 5 MiB gzip wasm-deploy
+  budget (`scripts/wasm_size_budget.sh`) for a purely cosmetic gain. H1 + H2
+  ship without it.
 
 - **Mapper accuracy tiering** (v1.2.0 Workstream A). Every supported mapper
   family is now classified `Core` / `Curated` / `BestEffort` by a single
