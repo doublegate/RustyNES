@@ -174,15 +174,17 @@ is kept — correct for this 128 KiB-CHR title. Verified on the real cartridge:
 the title screen renders and stays rendered past frame 600. A bus-conflict unit
 test guards it.
 
-**Triaged not-a-bug — GxROM-66 / SMB3 "sprite flashing"** (the
-"under investigation" item carried from the v2.4.0 lineage). The report
-misattributes the board: *Super Mario Bros. 3* is **mapper 4 (MMC3)**, not
-GxROM/66. MMC3 is among the most heavily oracle-tested families (incl. the
-AccuracyCoin MMC3 IRQ-timing suite), and SMB3 boots and renders its title /
-demo correctly headless (verified via the `render_smoke` harness over 600
-frames). The "flashing" is not reproducible headlessly and is most likely
-intended animation (the demo / world-map / invincibility flash) or a
-display-pacing artifact, not a core emulation bug. Closed.
+**Under investigation — SMB3 sprite flashing in World 1-1 (MMC3).** *Super Mario
+Bros. 3* is **mapper 4 (MMC3)** (the legacy "GxROM-66" label in the v2.4.0
+lineage note misattributes the board). The title screen and demo render
+correctly, but the player reports Mario **flashing once Stage 1 of World 1 is
+entered** — only in-game, not on the title/demo, so an earlier title-only
+boot-smoke missed it. This points at an MMC3-specific in-frame interaction
+(SMB3 uses the MMC3 scanline IRQ + mid-frame CHR-bank switch to split the status
+bar; a sprite-CHR bank or IRQ-scanline timing skew would manifest exactly as a
+per-frame sprite flicker). Reproduction requires a scripted-input capture that
+reaches 1-1 plus consecutive-frame analysis of the sprite region. Tracked as a
+genuine open accuracy item, not closed.
 
 ## Audio expansion scope
 

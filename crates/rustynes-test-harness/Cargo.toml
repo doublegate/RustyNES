@@ -99,6 +99,11 @@ path = "src/bin/render_smoke.rs"
 required-features = ["commercial-roms"]
 
 [[bin]]
+name = "repro_smb3"
+path = "src/bin/repro_smb3.rs"
+required-features = ["commercial-roms"]
+
+[[bin]]
 name = "coverage_smoke"
 path = "src/bin/coverage_smoke.rs"
 required-features = ["commercial-roms"]
