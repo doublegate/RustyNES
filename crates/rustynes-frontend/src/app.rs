@@ -996,6 +996,11 @@ impl App {
         // preset (explicit config dip wins over the DB; see `apply_vs_db`).
         self.apply_vs_db(&mut nes);
         Self::apply_game_db(&mut nes, &bytes);
+        // v1.2.0 (B4) — let the ROM-database editor key its overlay on this ROM.
+        let rom_crc = crate::game_db::rom_crc32(&bytes);
+        if let Some(debugger) = self.debugger.as_mut() {
+            debugger.set_rom_crc(rom_crc);
+        }
 
         self.rom_label = path
             .file_name()

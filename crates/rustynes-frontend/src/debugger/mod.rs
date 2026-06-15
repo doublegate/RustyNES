@@ -59,6 +59,7 @@ mod cheat_panel;
 mod cheevos_panel;
 mod cpu_panel;
 mod event_panel;
+mod game_db_panel;
 mod input_display_panel;
 mod input_rebind_panel;
 mod mapper_panel;
@@ -98,6 +99,8 @@ pub enum ToolPanel {
     Input,
     /// Live input-display controller HUD (v1.1.0 beta.1, Workstream B).
     InputDisplay,
+    /// Per-game ROM-database editor (v1.2.0 Workstream B, B4).
+    GameDb,
 }
 
 /// A chip-inspection panel surfaced from the Debug menu (v1.0.0).
@@ -155,6 +158,7 @@ pub struct DebuggerOverlay {
     show_netplay: bool,
     show_cheevos: bool,
     show_perf: bool,
+    show_game_db: bool,
     /// CPU panel state (auto-follow PC, address jump, ...).
     cpu_ui: cpu_panel::CpuPanelState,
     /// PPU panel state.
@@ -187,6 +191,12 @@ pub struct DebuggerOverlay {
     input_players: usize,
     /// Game Genie cheat panel state (v1.6.0).
     cheat_ui: cheat_panel::CheatPanelState,
+    /// ROM-database editor panel state (v1.2.0 Workstream B, B4).
+    game_db_ui: game_db_panel::GameDbPanelState,
+    /// CRC32 of the currently-loaded ROM (PRG+CHR, header-excluded), pushed by
+    /// [`DebuggerOverlay::set_rom_crc`] at load. `None` for FDS / NSF / no ROM.
+    /// The ROM-database editor keys its overlay edits on this.
+    rom_crc: Option<u32>,
     /// Graphics / audio / rewind settings panel state (v1.7.0).
     settings_ui: settings_panel::SettingsPanelState,
     /// Netplay host/join panel + status HUD state (v2.3.0).
@@ -263,6 +273,7 @@ impl DebuggerOverlay {
             show_netplay: false,
             show_cheevos: false,
             show_perf: false,
+            show_game_db: false,
             cpu_ui: cpu_panel::CpuPanelState::default(),
             ppu_ui: ppu_panel::PpuPanelState::default(),
             oam_ui: oam_panel::OamPanelState::default(),
@@ -278,6 +289,8 @@ impl DebuggerOverlay {
             input_pads: [Buttons::empty(); 4],
             input_players: 2,
             cheat_ui: cheat_panel::CheatPanelState::default(),
+            game_db_ui: game_db_panel::GameDbPanelState::default(),
+            rom_crc: None,
             settings_ui: settings_panel::SettingsPanelState::default(),
             netplay_ui: netplay_panel::NetplayPanelState::default(),
             perf_ui: perf_panel::PerfPanelState::default(),
@@ -368,6 +381,13 @@ impl DebuggerOverlay {
     /// byte-identical.
     pub fn reapply_genie_codes(&mut self, nes: &mut Nes) {
         self.cheat_ui.reapply_to_nes(nes);
+    }
+
+    /// v1.2.0 (Workstream B, B4) — record the loaded ROM's CRC32 (PRG+CHR,
+    /// header-excluded) so the ROM-database editor panel can key its overlay
+    /// edits. `None` for FDS / NSF images (no CRC entry).
+    pub fn set_rom_crc(&mut self, crc: Option<u32>) {
+        self.rom_crc = crc;
     }
 
     /// Returns `true` if the overlay currently wants the keyboard (i.e.
@@ -533,6 +553,7 @@ impl DebuggerOverlay {
             ToolPanel::Perf => self.show_perf = true,
             ToolPanel::Input => self.show_input = true,
             ToolPanel::InputDisplay => self.show_input_display = true,
+            ToolPanel::GameDb => self.show_game_db = true,
         }
     }
 
@@ -614,6 +635,7 @@ impl DebuggerOverlay {
                 ui.checkbox(&mut self.show_netplay, "Netplay");
                 ui.checkbox(&mut self.show_cheevos, "Cheevos");
                 ui.checkbox(&mut self.show_perf, "Perf");
+                ui.checkbox(&mut self.show_game_db, "ROM Database");
                 ui.separator();
                 ui.label(format!(
                     "frame={} cycle={}",
@@ -791,7 +813,7 @@ impl DebuggerOverlay {
     /// whenever their `show_*` flag is set, REGARDLESS of whether the deep
     /// overlay is visible, so the menu bar can surface them directly. Panels
     /// that read `nes` (Cheats) no-op when `nes` is `None`.
-    fn tool_panels(&mut self, ctx: &egui::Context, nes: Option<&mut Nes>, config: &mut Config) {
+    fn tool_panels(&mut self, ctx: &egui::Context, mut nes: Option<&mut Nes>, config: &mut Config) {
         // v2.7.0 — transient RetroAchievements unlock / event toasts, drawn as
         // a floating top-right stack so they're visible without the toolbar
         // open. The app expires them after a few seconds. v2.7.1 — an
@@ -875,7 +897,7 @@ impl DebuggerOverlay {
         if self.show_cheat {
             // The Cheats panel reads `nes`; with no ROM loaded there is nothing
             // to edit, so no-op (the window simply doesn't open).
-            if let Some(nes) = nes {
+            if let Some(nes) = nes.as_deref_mut() {
                 #[cfg(not(target_arch = "wasm32"))]
                 cheat_panel::show(
                     ctx,
@@ -886,6 +908,17 @@ impl DebuggerOverlay {
                 );
                 #[cfg(target_arch = "wasm32")]
                 cheat_panel::show(ctx, &mut self.show_cheat, &mut self.cheat_ui, nes);
+            }
+        }
+        if self.show_game_db {
+            if let Some(nes) = nes {
+                game_db_panel::show(
+                    ctx,
+                    &mut self.show_game_db,
+                    &mut self.game_db_ui,
+                    nes,
+                    self.rom_crc,
+                );
             }
         }
         if self.show_settings {

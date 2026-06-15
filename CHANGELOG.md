@@ -46,6 +46,13 @@ Work toward **v1.2.0 "Curator"** (beta.1, Workstreams A + B). See
   parses it — frontend-only and idempotent, so the determinism firewall holds
   (the core test suites never patch). Mirroring / Vs. corrections continue
   through the existing post-construction setters.
+- **In-app ROM-database editor** (v1.2.0 Workstream B, B4): a new **Tools -> ROM
+  Database** panel shows the loaded ROM's effective per-game entry (user overlay
+  merged over the vendored base, keyed on the ROM CRC32) and lets you edit
+  mirroring / region / mapper / submapper / title. Edits persist to an editable
+  user-overlay file (`<data-dir>/game_db_user.txt`) that overrides the vendored
+  base; the mirroring override applies live, the rest at the next ROM load.
+  "Reset to Default" reverts to the vendored entry. Native; frontend-only.
 - **ROM soft-patching** (v1.2.0 Workstream B): a same-stem `.bps` / `.ups` /
   `.ips` patch sitting beside a ROM is auto-applied at load (in that
   precedence), before format detection, so the patched image flows through the
