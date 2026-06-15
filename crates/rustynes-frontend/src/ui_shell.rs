@@ -620,6 +620,10 @@ impl UiShell {
                         out.action = Some(MenuAction::OpenPanel(ToolPanel::InputDisplay));
                         ui.close();
                     }
+                    if ui.button("ROM Database").clicked() {
+                        out.action = Some(MenuAction::OpenPanel(ToolPanel::GameDb));
+                        ui.close();
+                    }
                 });
 
                 // ----- View -----

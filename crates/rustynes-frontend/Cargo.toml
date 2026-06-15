@@ -154,6 +154,13 @@ ureq = { version = "2", default-features = false, features = ["tls"], optional =
 # pull it in.
 png = "0.18"
 
+# v1.2.0 Workstream B — load ROMs directly from `.zip` archives. Native-only (in
+# this `cfg(not(wasm))` table) and `default-features = false` + `deflate` only,
+# so it reuses the already-present flate2 / miniz_oxide rather than pulling in
+# the AES / zstd / bzip2 extras. The wasm load path receives raw bytes from the
+# browser file picker, so it never needs zip.
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
 # v2.8.0 Phase 5 increment 3 — best-effort emulation-thread priority
 # elevation (Linux only). `elevate_thread_priority()` in `emu_thread.rs`
 # tries `SCHED_RR` at a low real-time priority and falls back to a small

@@ -479,20 +479,21 @@ impl ScriptEngine {
     ///
     /// Returns [`ScriptError::Lua`] on a syntax or top-level runtime error.
     pub fn load(&self, src: &str) -> Result<(), ScriptError> {
-        self.arm_hook();
+        self.arm_hook()?;
         let r = self.lua.load(src).exec().map_err(ScriptError::from);
         self.lua.remove_hook();
         r
     }
 
     /// Install the per-frame instruction-budget hook (and reset the counter).
-    fn arm_hook(&self) {
+    fn arm_hook(&self) -> Result<(), ScriptError> {
         self.instr_count.set(0);
         let count = Rc::clone(&self.instr_count);
         let budget = Rc::clone(&self.budget);
-        // mlua 0.11 makes `set_hook` fallible; the budget guard is advisory, so
-        // a (pathological) install failure just means no instruction cap here.
-        let _ = self.lua.set_hook(
+        // mlua 0.11 makes `set_hook` fallible. The instruction-budget hook is
+        // the sandbox's runaway-script guard, so a failed install is surfaced
+        // as an error rather than silently leaving scripts uncapped.
+        self.lua.set_hook(
             HookTriggers::new().every_nth_instruction(10_000),
             move |_lua, _debug| {
                 let n = count.get() + 10_000;
@@ -505,7 +506,8 @@ impl ScriptEngine {
                     Ok(VmState::Continue)
                 }
             },
-        );
+        )?;
+        Ok(())
     }
 
     /// Run one emulated frame's worth of scripting: bind the live-`Nes`
@@ -559,8 +561,10 @@ impl ScriptEngine {
         self.instr_count.set(0);
         let count = Rc::clone(&self.instr_count);
         let budget = Rc::clone(&self.budget);
-        // mlua 0.11: `set_hook` is fallible; advisory budget guard (see arm_hook).
-        let _ = lua.set_hook(
+        // mlua 0.11: `set_hook` is fallible. Surface a failed install as an
+        // error rather than silently running the frame's callbacks without the
+        // runaway-script budget guard (see arm_hook).
+        lua.set_hook(
             HookTriggers::new().every_nth_instruction(10_000),
             move |_lua, _debug| {
                 let n = count.get() + 10_000;
@@ -573,7 +577,7 @@ impl ScriptEngine {
                     Ok(VmState::Continue)
                 }
             },
-        );
+        )?;
 
         let result = lua.scope(|scope| {
             let emu: Table = lua.globals().get("emu")?;

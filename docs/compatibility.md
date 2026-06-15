@@ -155,15 +155,41 @@ wiki + unit-tested + boot-smoked (commercial-ROM visual survey via the
 `coverage_smoke` bin). Pirate, multicart, and ultra-niche mappers remain gated by
 the long-tail policy below.
 
-**Known long-tail render gap — mapper 89 (Sunsoft-2).** *Tenka no
-Goikenban: Mito Koumon* (the only iNES mapper-89 dump on hand) boots and executes
-(CPU/RAM live; sprites briefly render) but its background nametable stays empty
-and the picture degrades to the backdrop colour after ~400 frames. The banking is
-spec-correct (vectors resolve in the fixed last bank; CHR sprite fetches work), so
-the root cause is a rendering-enable / PPU-setup dependency this title needs that
-is not yet modelled — not a banking error. The 9 other long-tail batch-2 games
-(both m32, both m87, both m184, Don Doko Don 2 on m48) render correctly and 7 are
-locked into the `external_extended` oracle.
+**v1.2.0** extends coverage to **87 families**: a curated (Tier-1) batch of 9
+discrete-logic boards and an aggressive best-effort (Tier-2) sweep of 27
+reference-ported multicart / Sachen / discrete boards. The best-effort tier is
+register-decode unit-tested but **not** accuracy-gated; see `docs/mappers.md`
+§Mapper accuracy tiering and `docs/adr/0011-mapper-tiering.md`.
+
+**Resolved in v1.2.0 — mapper 89 (Sunsoft-2) bus conflict.** *Tenka no
+Goikenban: Mito Koumon* (the only iNES mapper-89 dump on hand) previously left its
+background nametable empty, degrading to the backdrop colour after ~400 frames.
+Root cause: the Sunsoft-2 board has **bus conflicts** (nesdev `INES_Mapper_089`
+documents them; GeraNES models them) — a register write is driven onto the bus
+ANDed with the PRG-ROM byte already at that address. RustyNES applied the raw
+write, so a CHR/PRG/mirroring select that the game expects to be masked resolved
+to the wrong bank. The fix masks the written value with `read_prg(addr)` (the
+existing bus-conflict idiom, e.g. `gxrom.rs`); the 4-bit CHR decode (bit 7 = A16)
+is kept — correct for this 128 KiB-CHR title. Verified on the real cartridge:
+the title screen renders and stays rendered past frame 600. A bus-conflict unit
+test guards it.
+
+**Resolved — SMB3 sprite flashing in World 1-1 (was *not* an MMC3 issue).**
+*Super Mario Bros. 3* (mapper 4 / MMC3) flickered Mario in/out continuously once
+in-game (the player's report; reproduced by replaying a recorded `.rnm` into
+1-1, ~26% of frames dropping Mario from OAM). The cause was **not** the mapper:
+it was the PPU **OAM-row-corruption model**, which keyed the corrupted OAM row
+off the raw PPU dot (`dot >> 1`). SMB3 disables rendering mid-scanline (`$2001`)
+to split its status bar, and NMI/DMA timing jitter shifted the disable dot so
+the flagged row intermittently landed on Mario's OAM row, wiping his sprite at
+re-enable. Mesen2 ships this corruption model OFF by default (calls it
+unfinished); the fix is a faithful port of TriCNES's eval-pointer model — the
+corrupted index is the live secondary-OAM evaluation pointer (`OAM2Address`),
+captured at the disable edge during dots 1-64 and committed on re-enable. Default
+builds stay byte-identical for games without such a split; AccuracyCoin
+OAM-Corruption (0x047B) + 139/139, nestest 0-diff, and blargg/kevtris remain
+green; `repro_smb3 --movie` idle drop count went 63-80/240 → 0. See `ppu-2c02.md`
+edge-case 2 and `crates/rustynes-test-harness/src/bin/{repro_smb3,smb3_dma_trace}.rs`.
 
 ## Audio expansion scope
 

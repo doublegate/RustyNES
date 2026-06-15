@@ -132,9 +132,18 @@ impl Mapper for Sunsoft2 {
 
     fn cpu_write(&mut self, addr: u16, value: u8) {
         if (0x8000..=0xFFFF).contains(&addr) {
-            // Register layout `CPPP MCCC` (nesdev INES_Mapper_089; matches
-            // Mesen2 `Sunsoft89::WriteRegister`): bit 7 is the CHR-bank high
-            // bit (A16), bit 3 is the one-screen mirroring select.
+            // The Sunsoft-2 board has **bus conflicts** (nesdev INES_Mapper_089
+            // marks the register "BUS CONFLICTS"; GeraNES `Mapper089::writePrg`
+            // does `data &= readPrg(addr)`). The register shares the address
+            // space with PRG-ROM, so a store drives the written byte ANDed with
+            // the ROM byte already present at that address. *Tenka no Goikenban:
+            // Mito Koumon* relies on this — without the mask the raw value
+            // selects the wrong CHR/PRG bank and the background nametable never
+            // latches. Decode every field from the masked value.
+            let value = value & self.read_prg(addr);
+            // Register layout `CPPP MCCC` (nesdev INES_Mapper_089): bit 7 is the
+            // CHR-bank high bit (A16), bits 4-6 the 16 KiB PRG bank, bit 3 the
+            // one-screen mirroring select, bits 0-2 the CHR-bank low 3 bits.
             self.prg_bank = (value >> 4) & 0x07;
             self.chr_bank = (((value >> 7) & 0x01) << 3) | (value & 0x07);
             self.mirroring = if (value & 0x08) != 0 {
@@ -243,8 +252,11 @@ impl Mapper for Sunsoft2 {
 mod tests {
     use super::*;
 
+    // PRG is filled with 0xFF (so a register write whose target byte is 0xFF is
+    // unmasked by the bus conflict — used by the decode tests), except offset 0
+    // of each 16 KiB bank holds the bank index as a readable marker.
     fn synth_prg(banks_16k: usize) -> Box<[u8]> {
-        let mut v = vec![0u8; banks_16k * PRG_BANK_16K];
+        let mut v = vec![0xFFu8; banks_16k * PRG_BANK_16K];
         for b in 0..banks_16k {
             v[b * PRG_BANK_16K] = b as u8;
         }
@@ -265,8 +277,9 @@ mod tests {
         // Default PRG bank 0 at $8000, fixed {-1}=7 at $C000.
         assert_eq!(m.cpu_read(0x8000), 0);
         assert_eq!(m.cpu_read(0xC000), 7);
-        // PRG bits 4-6: value 0x30 -> bank 3.
-        m.cpu_write(0x8000, 0x30);
+        // PRG bits 4-6: value 0x30 -> bank 3. Write at offset 1 (ROM byte 0xFF)
+        // so the bus conflict leaves the value unmasked.
+        m.cpu_write(0x8001, 0x30);
         assert_eq!(m.cpu_read(0x8000), 3);
         assert_eq!(m.cpu_read(0xC000), 7);
     }
@@ -275,10 +288,11 @@ mod tests {
     fn chr_bank_combines_a16() {
         let mut m = Sunsoft2::new(synth_prg(2), synth_chr(16), Mirroring::Vertical).unwrap();
         // CHR high bit / A16 is value bit 7: 0b1000_0010 -> ((1)<<3)|(2) = 10.
-        m.cpu_write(0x8000, 0b1000_0010);
+        // Write at offset 1 (ROM byte 0xFF) so the bus conflict is a no-op.
+        m.cpu_write(0x8001, 0b1000_0010);
         assert_eq!(m.ppu_read(0x0000), 10);
         // Low 3 only: 0b0000_0101 -> 5.
-        m.cpu_write(0x8000, 0b0000_0101);
+        m.cpu_write(0x8001, 0b0000_0101);
         assert_eq!(m.ppu_read(0x0000), 5);
     }
 
@@ -286,16 +300,48 @@ mod tests {
     fn one_screen_mirroring_select() {
         let mut m = Sunsoft2::new(synth_prg(2), synth_chr(4), Mirroring::Vertical).unwrap();
         assert_eq!(m.current_mirroring(), Mirroring::SingleScreenA);
-        m.cpu_write(0x8000, 0x08); // bit 3 -> SingleScreenB
+        m.cpu_write(0x8001, 0x08); // bit 3 -> SingleScreenB (ROM byte 0xFF: unmasked)
         assert_eq!(m.current_mirroring(), Mirroring::SingleScreenB);
-        m.cpu_write(0x8000, 0x00);
+        m.cpu_write(0x8001, 0x00);
         assert_eq!(m.current_mirroring(), Mirroring::SingleScreenA);
+    }
+
+    #[test]
+    fn bus_conflict_masks_write_with_prg_byte() {
+        // The Sunsoft-2 board has bus conflicts: a register write is ANDed with
+        // the PRG-ROM byte already present at the written address (the fix for
+        // *Tenka no Goikenban: Mito Koumon*'s empty background). Place a known
+        // mask byte in PRG and confirm the decoded banks reflect value & byte.
+        let mut prg = vec![0xFFu8; 8 * PRG_BANK_16K];
+        for b in 0..8 {
+            prg[b * PRG_BANK_16K] = b as u8;
+        }
+        // Bank 0 is selected at power-on, so $8000 (offset 0) holds 0x00 -> any
+        // write there masks to 0 (bank 0, CHR 0, mirroring A).
+        let mut m =
+            Sunsoft2::new(prg.into_boxed_slice(), synth_chr(16), Mirroring::Vertical).unwrap();
+        m.cpu_write(0x8000, 0xFF); // 0xFF & 0x00 == 0x00
+        assert_eq!(m.prg_bank, 0);
+        assert_eq!(m.chr_bank, 0);
+        assert_eq!(m.current_mirroring(), Mirroring::SingleScreenA);
+
+        // Put a partial mask 0b0011_1000 at $9000 and write 0b1111_1111 there:
+        // masked value 0b0011_1000 -> PRG bits 4-6 = 0b011 = 3, mirroring bit 3
+        // set -> SingleScreenB, CHR = 0.
+        let mut prg = vec![0xFFu8; 8 * PRG_BANK_16K];
+        prg[0x1000] = 0b0011_1000; // $9000 in bank 0
+        let mut m =
+            Sunsoft2::new(prg.into_boxed_slice(), synth_chr(16), Mirroring::Vertical).unwrap();
+        m.cpu_write(0x9000, 0xFF);
+        assert_eq!(m.prg_bank, 3, "PRG bank decoded from masked value");
+        assert_eq!(m.current_mirroring(), Mirroring::SingleScreenB);
+        assert_eq!(m.chr_bank, 0);
     }
 
     #[test]
     fn save_state_round_trip() {
         let mut m = Sunsoft2::new(synth_prg(8), synth_chr(16), Mirroring::Vertical).unwrap();
-        m.cpu_write(0x8000, 0b1011_1010);
+        m.cpu_write(0x8001, 0b1011_1010);
         let blob = m.save_state();
         let mut m2 = Sunsoft2::new(synth_prg(8), synth_chr(16), Mirroring::Vertical).unwrap();
         m2.load_state(&blob).unwrap();

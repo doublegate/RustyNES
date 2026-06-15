@@ -15,6 +15,99 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Work toward **v1.2.0 "Curator"** (beta.1, Workstreams A + B). See
+`docs/adr/0011-mapper-tiering.md` and the v1.2.0 plan.
+
+### Added
+
+- **Mapper accuracy tiering** (v1.2.0 Workstream A). Every supported mapper
+  family is now classified `Core` / `Curated` / `BestEffort` by a single
+  `const fn mapper_tier(id, submapper)` (`rustynes-mappers::tier`). The tier is
+  an honesty marker — runtime behaviour is identical — that keeps the accuracy
+  claim precise as long-tail coverage grows: a CI invariant forbids any
+  `BestEffort` mapper from backing an AccuracyCoin / oracle ROM. ADR 0011.
+- **Nine curated (Tier-1) mapper families** (v1.2.0 Workstream A): 38 (Bit Corp
+  UNL-PCI556), 41 (Caltron 6-in-1), 79 (AVE NINA-03/06), 86 (Jaleco JF-13), 113
+  (NINA-006 / MB-91, register-controlled mirroring), 140 (Jaleco JF-11/14), 232
+  (Camerica Quattro / BF9096), 240 (C&E), and 241 (BxROM-like). Each is a
+  discrete-logic board with register-decode unit tests.
+- **Twenty-seven best-effort (Tier-2) mapper families** (v1.2.0 Workstream A):
+  the aggressive long-tail sweep ported from the GeraNES / Mesen2 references —
+  15, 36, 39, 61, 62, 72, 77, 92, 96, 97, 132, 133, 145, 146 (sprint6) and 147,
+  148, 149, 150, 180, 185, 200, 201, 202, 203, 212, 213, 214 (sprint7). Mostly
+  multicart / Sachen / discrete boards. Register-decode unit-tested only and
+  **not** accuracy-gated (see the tiering note). Total mapper coverage rises
+  from 51 to **87 families** (51 Core + 9 Curated + 27 BestEffort).
+- **Per-game database — region / mapper / submapper overrides** (v1.2.0
+  Workstream B). The CRC32-keyed per-game DB grew from a `(crc, Mirroring)`
+  table to a full `GameDbEntry` (region / mapper / submapper / mirroring /
+  title) parsed from the vendored TetaNES columns. Region / mapper / submapper
+  corrections apply by rewriting the iNES (or NES 2.0) header before the core
+  parses it — frontend-only and idempotent, so the determinism firewall holds
+  (the core test suites never patch). Mirroring / Vs. corrections continue
+  through the existing post-construction setters.
+- **In-app ROM-database editor** (v1.2.0 Workstream B, B4): a new **Tools -> ROM
+  Database** panel shows the loaded ROM's effective per-game entry (user overlay
+  merged over the vendored base, keyed on the ROM CRC32) and lets you edit
+  mirroring / region / mapper / submapper / title. Edits persist to an editable
+  user-overlay file (`<data-dir>/game_db_user.txt`) that overrides the vendored
+  base; the mirroring override applies live, the rest at the next ROM load.
+  "Reset to Default" reverts to the vendored entry. Native; frontend-only.
+- **ROM soft-patching** (v1.2.0 Workstream B): a same-stem `.bps` / `.ups` /
+  `.ips` patch sitting beside a ROM is auto-applied at load (in that
+  precedence), before format detection, so the patched image flows through the
+  deterministic parse unchanged — save-states / netplay / oracle all see the
+  patched bytes. UPS and BPS verify their in-format source and target CRC32s.
+  Native; a malformed patch is surfaced and the unpatched ROM still loads.
+- **`.zip` ROM loading** (v1.2.0 Workstream B): a `.zip` opened as a ROM has its
+  first NES / FDS / NSF entry extracted in memory and loaded as usual (a
+  same-stem soft-patch beside the archive still applies). Native-only (`zip`
+  crate, `deflate`-only to reuse the existing flate2/miniz_oxide); the wasm
+  builds stay byte-identical (the dep is in the `cfg(not(wasm))` table).
+
+### Fixed
+
+- **SMB3 (and any MMC3/other game using a mid-scanline `$2001` split) — sprite
+  flicker.** The PPU OAM-row-corruption model keyed the corrupted row off the
+  raw PPU dot (`dot >> 1`), so *Super Mario Bros. 3*'s mid-scanline rendering
+  disable (its HUD split) intermittently flagged Mario's OAM row and wiped his
+  sprite, flickering him in/out (~26% of frames) in World 1-1. Replaced with a
+  faithful port of TriCNES's eval-pointer model: the corruption index is the
+  live secondary-OAM evaluation pointer (`OAM2Address`), captured at the
+  rendering-disable edge during dots 1-64 and committed on re-enable. Default
+  builds stay byte-identical for games without such a split; AccuracyCoin's
+  OAM-Corruption test (0x047B) and the full 139/139 suite, nestest 0-diff, and
+  blargg/kevtris remain green. `docs/ppu-2c02.md` edge-case 2 updated.
+- **RetroAchievements badge decode** now validates PNG dimensions (from the
+  IHDR header) *before* allocating the decode buffer, so a crafted/corrupt
+  badge declaring huge dimensions can no longer OOM. (Behind the off-by-default
+  `retroachievements` feature.)
+- **Lua scripting** surfaces a failed instruction-budget hook install
+  (`mlua::set_hook`, fallible since 0.11) as a `ScriptError` instead of
+  silently running scripts without the runaway-guard. (Behind the off-by-default
+  `scripting` feature.)
+- **Mapper 89 (Sunsoft-2) — *Tenka no Goikenban: Mito Koumon*** now models the
+  board's **bus conflict** (a register write is ANDed with the PRG-ROM byte at
+  the written address, per nesdev `INES_Mapper_089` "BUS CONFLICTS"). Without it
+  the raw value selected the wrong CHR/PRG bank and the background nametable
+  never latched. Isolated to mapper 89 (its only dump); AccuracyCoin and all
+  other titles unaffected.
+
+### Dependencies
+
+- Dependency modernization (v1.2.0 beta.1). Merged the safe Dependabot bumps
+  (naga 28, toml 1.1, gilrs 0.11, tokio-tungstenite 0.29) and `cargo update`'d
+  the rest of the compatible tree (image 0.25.9, tiff 0.10, windows 0.62, …).
+  Migrated the breaking bumps: **png 0.18** (decoder `Read + Seek` + fallible
+  `output_buffer_size`), **criterion 0.8** (`std::hint::black_box`), **mlua
+  0.11** (`set_hook` now fallible), **cpal 0.18** (`SampleRate` is a `u32` alias;
+  `StreamConfig` is `Copy` + passed by value). `rfd 0.17` is deferred — its
+  sync xdg-portal/libdbus backend fails to compile on Rust 1.86 (an upstream
+  rfd bug), so rfd stays at 0.14 pending a fixed release. The egui / egui-wgpu /
+  egui-winit + wgpu UI-stack cluster bump (**egui 0.29 → 0.32, wgpu 22 → 25,
+  naga → 25**) landed as one coordinated upgrade; `deny.toml` now allows the
+  `Ubuntu-font-1.0` license that egui 0.32's bundled default font declares.
+
 ## [1.1.0] - 2026-06-15 - "Scriptable" (Feature Release)
 
 The first feature release after the v1.0.0 production cut. It folds in the
