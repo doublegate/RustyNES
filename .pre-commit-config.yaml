@@ -35,7 +35,12 @@ repos:
         pass_filenames: false
       - id: cargo-clippy
         name: cargo clippy
-        entry: cargo clippy --all-targets --all-features -- -D warnings
+        # NOT `--all-features`: since v1.2.0 F4, `rustynes-script`'s `script-wasm`
+        # (piccolo, wasm) and the frontend's `scripting` (mlua, native) are
+        # mutually exclusive — `--all-features` can't resolve both. This mirrors
+        # the CI gate (`ci.yml` runs `--workspace --all-targets`; the feature-
+        # gated paths are covered by CI's dedicated `--features ...` clippy jobs).
+        entry: cargo clippy --workspace --all-targets -- -D warnings
         language: system
         types: [rust]
         pass_filenames: false
