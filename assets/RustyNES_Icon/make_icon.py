@@ -21,8 +21,10 @@
 #
 # RENDERING NOTES
 #   Shading uses gradients + translucent overlay shapes only (no SVG <filter>),
-#   so cairosvg rasterizes crisply at every size. Text is converted to <path>
-#   via fontTools, removing any runtime font dependency.
+#   so cairosvg rasterizes crisply at every size. The wordmark is baked to
+#   vector <path> via fontTools; some small labels remain as <text> set in the
+#   bundled Press Start 2P font (committed alongside as PressStart2P.ttf), so
+#   that font is needed at regeneration / raster time.
 #
 # USAGE
 #   python3 make_icon.py [out_dir] [font_path]
@@ -37,7 +39,7 @@ import os
 import sys
 
 import cairosvg
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
 from fontTools.ttLib import TTFont
 from fontTools.pens.svgPathPen import SVGPathPen
 from fontTools.pens.transformPen import TransformPen
@@ -673,18 +675,23 @@ def main():
     png_dir = os.path.join(out_dir, "png")
     os.makedirs(png_dir, exist_ok=True)
 
+    if not os.path.isfile(font_path):
+        sys.exit(f"font not found: {font_path} (pass a path to PressStart2P.ttf, "
+                 f"or place it next to this script)")
+
     font = _Font(font_path)
     svg = build_svg(font)
     svg_path = os.path.join(out_dir, "rustynes.svg")
-    with open(svg_path, "w") as fh:
+    with open(svg_path, "w", encoding="utf-8") as fh:
         fh.write(svg)
     data = svg.encode("utf-8")
 
     for n in PNG_SIZES:
         cairosvg.svg2png(bytestring=data, write_to=os.path.join(png_dir, f"icon-{n}.png"),
                          output_width=n, output_height=n)
-    Image.open(os.path.join(png_dir, "icon-256.png")).convert("RGBA").save(
-        os.path.join(out_dir, "rustynes.ico"), sizes=[(s, s) for s in ICO_SIZES])
+    with Image.open(os.path.join(png_dir, "icon-256.png")) as ico_src:
+        ico_src.convert("RGBA").save(
+            os.path.join(out_dir, "rustynes.ico"), sizes=[(s, s) for s in ICO_SIZES])
     print("wrote", svg_path, "+ png set + ico")
 
 

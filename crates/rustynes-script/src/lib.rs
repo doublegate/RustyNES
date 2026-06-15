@@ -653,13 +653,17 @@ impl ScriptEngine {
             if !accesses.is_empty() {
                 let active_read = AddrBits::from_keys_opt(&read_cbs);
                 let active_write = AddrBits::from_keys_opt(&write_cbs);
+                // Resolve the `Option` discriminant once (these are 8 KiB enums);
+                // the per-access check is then a cheap `Option<&AddrBits>` pointer
+                // test rather than re-reading the discriminant 60k times (gemini #61).
+                let (active_read, active_write) = (active_read.as_ref(), active_write.as_ref());
                 for (is_write, addr, value) in &accesses {
                     let (active, map) = if *is_write {
-                        (&active_write, &write_cbs)
+                        (active_write, &write_cbs)
                     } else {
-                        (&active_read, &read_cbs)
+                        (active_read, &read_cbs)
                     };
-                    if active.as_ref().is_some_and(|a| a.contains(*addr)) {
+                    if active.is_some_and(|a| a.contains(*addr)) {
                         for f in fns_at(lua, map, *addr)? {
                             f.call::<()>((*addr, *value))?;
                         }
