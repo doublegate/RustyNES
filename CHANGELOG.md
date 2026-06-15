@@ -107,15 +107,20 @@ See `docs/adr/0011-mapper-tiering.md`,
   `#[serde(default)]`, so existing configs and the default build are
   byte-identical (a new `shortcut_registry_defaults_are_byte_identical` test
   pins this).
-
-#### Deferred to a follow-up
-
-- **Menu icons** (v1.2.0 Workstream H, H3). FontAwesome-style glyphs next to
-  menu items (GeraNES `withMenuIcon`) were evaluated and **deferred**: the
-  project ships no icon font, and bundling one (FontAwesome `.ttf` /
-  `egui_phosphor`) adds hundreds of KB against the 5 MiB gzip wasm-deploy
-  budget (`scripts/wasm_size_budget.sh`) for a purely cosmetic gain. H1 + H2
-  ship without it.
+- **Menu icons** (v1.2.0 Workstream H, H3; GeraNES `withMenuIcon`). Font Awesome
+  6 Free **Solid** glyphs now precede every top-level menu (File / Emulation /
+  Tools / Mod / View / Debug / Help) and their items, alongside the H1
+  enable/disable state and H2 accelerator labels. The icon font
+  (`assets/fonts/fa-solid-900.ttf`, SIL OFL-1.1, license shipped beside it) is
+  embedded via `include_bytes!` and registered with egui as a trailing fallback
+  family, so ordinary UI text is untouched and any missing glyph degrades to a
+  box rather than crashing (`crate::icons`). Measured against
+  `scripts/wasm_size_budget.sh`, the full font **fit** the 5 MiB gzip wasm-deploy
+  budget (total 2.78 MiB gzip, 2.22 MiB headroom; ~13 KB gzip added), so the
+  **same full font ships on native and both wasm flavours** — no per-target
+  subsetting was needed. The lightweight `wasm-canvas` embed has no egui menu and
+  is unaffected. Pure UI; the core and the `MenuAction` dispatch set are
+  unchanged.
 
 - **Mapper accuracy tiering** (v1.2.0 Workstream A). Every supported mapper
   family is now classified `Core` / `Curated` / `BestEffort` by a single

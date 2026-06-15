@@ -310,6 +310,17 @@ Tools surfaced this way appear as **floating windows without** opening the
 `` ` `` debugger overlay. Menu items carry their accelerator hint from the
 live `[input.system]` binding.
 
+Each top-level menu and its items are prefixed with a **Font Awesome 6 Free
+Solid** glyph (v1.2.0 Workstream H3; the `GeraNES` `withMenuIcon` model). The
+icon font (`crates/rustynes-frontend/assets/fonts/fa-solid-900.ttf`, SIL
+OFL-1.1) is embedded with `include_bytes!` and registered once in
+`DebuggerOverlay::new` via `crate::icons::install` as a trailing egui fallback
+family, so ordinary text is unaffected and a missing glyph degrades to a box.
+The glyph codepoint constants live in `crate::icons::glyph`. The full font fits
+the 5 MiB gzip wasm budget, so the **same full font ships on native and both
+wasm flavours** — there is no per-target subset (the `wasm-canvas` embed has no
+egui menu and is unaffected).
+
 ### Chip panels vs tool panels
 
 The panels split by what they need:

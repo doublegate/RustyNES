@@ -42,6 +42,7 @@ pub mod gfx;
 pub mod hdpack;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod icon;
+pub mod icons;
 pub mod input;
 pub mod movie_ui;
 // v1.2.0 Workstream B — ROM soft-patching (IPS/UPS/BPS). Pure byte ops applied
