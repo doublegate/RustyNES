@@ -32,8 +32,12 @@ pub mod emu_thread;
 pub mod crt;
 // v1.1.0 beta.2 (T-110-D2) — optional graphic EQ output stage (frontend-only).
 pub mod eq;
+// v1.1.0 — embedded app icon (winit window icon + About dialog). Native-only
+// (`png` is in the cfg(not(wasm)) dep table; a browser tab has no window icon).
 pub mod game_db;
 pub mod gfx;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod icon;
 pub mod input;
 pub mod movie_ui;
 // v2.8.0 Phase 0 — frame-pacing / presentation / audio instrumentation

@@ -55,7 +55,7 @@ emu-thread = ["dep:libc"]
 # bytes to an `egui::ColorImage`). Both are native-only optional deps below;
 # the badge-image cache lives in `src/debugger/badge_cache.rs`, gated the same
 # way as the rest of the RA integration.
-retroachievements = ["dep:rustynes-cheevos", "dep:ureq", "dep:png"]
+retroachievements = ["dep:rustynes-cheevos", "dep:ureq"]
 
 # v1.1.0 beta.3 (Workstream E flagship) — Lua scripting (default OFF, native-only).
 # Pulls in `rustynes-script` (sandboxed vendored Lua 5.4). Off by default so the
@@ -148,7 +148,11 @@ rustynes-script = { workspace = true, optional = true }
 # `cfg(not(target_arch = "wasm32"))` table so the wasm builds never see them,
 # and `optional = true` keeps them out of the default (feature-off) build.
 ureq = { version = "2", default-features = false, features = ["tls"], optional = true }
-png = { version = "0.17", optional = true }
+# `png` decodes the embedded app icon (window icon + About dialog, v1.1.0) and
+# the RA badge PNGs. Non-optional on native (the icon ships in every desktop
+# build); native-only (in this `cfg(not(wasm))` table) so the wasm builds never
+# pull it in.
+png = "0.17"
 
 # v2.8.0 Phase 5 increment 3 — best-effort emulation-thread priority
 # elevation (Linux only). `elevate_thread_priority()` in `emu_thread.rs`

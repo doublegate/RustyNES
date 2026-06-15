@@ -1,11 +1,9 @@
 # RustyNES
 
-<p align="center">
-  <img src="images/RustyNES_Banner-Logo.jpg" alt="RustyNES Banner Logo" width="800">
-</p>
+<img src="images/RustyNES_Logo-Icon.jpg" alt="RustyNES Logo Icon" width="150">
 
 <p align="center">
-  <img src="images/RustyNES_Logo-Icon.jpg" alt="RustyNES Logo Icon" width="96">
+  <img src="images/RustyNES_Banner-Logo.jpg" alt="RustyNES Banner Logo" width="800">
 </p>
 
 > **Precise. Pure. Powerful.**
@@ -87,23 +85,14 @@ platform for NES emulation.
 
 ## Showcase
 
-A cross-section of commercial titles running on RustyNES — spanning NROM through
-MMC5, FME-7, and the full VRC line, plus the Famicom Disk System and Vs.-arcade RGB.
+A cross-section of the commercial library running pixel-accurately on RustyNES —
+launch classics like Donkey Kong, Excitebike, and Super Mario Bros.; the Famicom
+Disk System's Kid Icarus; Konami's Castlevania and Contra; the Mega Man
+boss-select; and Mike Tyson's Punch-Out!! — spanning NROM up through MMC3 / MMC5,
+FME-7, and the full VRC line, plus Vs.-arcade RGB.
 
 <p align="center">
-  <img src="screenshots/montage.png" alt="A montage of commercial NES titles running on RustyNES" width="800">
-</p>
-
-<p align="center">
-  <img src="screenshots/external/mapper-000-NROM/Super Mario Bros.png" alt="Super Mario Bros." width="240">
-  <img src="screenshots/external/mapper-001-MMC1/Metroid.png" alt="Metroid" width="240">
-  <img src="screenshots/external/mapper-004-MMC3/Mega Man 3.png" alt="Mega Man 3" width="240">
-</p>
-
-<p align="center">
-  <img src="screenshots/external/mapper-001-MMC1/Legend of Zelda, The.png" alt="The Legend of Zelda" width="240">
-  <img src="screenshots/external/mapper-004-MMC3/Kirby's Adventure.png" alt="Kirby's Adventure" width="240">
-  <img src="screenshots/external/mapper-085-VRC7/Lagrange Point (Japan) (En) (1.01).png" alt="Lagrange Point (VRC7 FM audio)" width="240">
+  <img src="screenshots/showcase.png" alt="A grid of commercial NES titles running on RustyNES: Donkey Kong, Excitebike, Super Mario Bros., Kid Icarus, Castlevania, Contra, Mega Man, and Mike Tyson's Punch-Out!!" width="800">
 </p>
 
 The full per-mapper visual corpus lives in
@@ -492,6 +481,10 @@ long-tail mappers, and a scripting surface for automation. None of these are shi
 v1.0.0; see [`docs/STATUS.md`](docs/STATUS.md) for the authoritative current state.
 
 ---
+
+<p align="center">
+  <img src="screenshots/montage.png" alt="A montage of commercial NES titles running on RustyNES" width="800">
+</p>
 
 ## Contributing
 
