@@ -59,6 +59,14 @@ fn push_capped<T>(q: &Rc<RefCell<Vec<T>>>, cmd: T) {
     }
 }
 
+/// Read `t[key]` as a table, returning `None` if it is absent, `nil`, a
+/// non-table value, or the lookup itself errors (e.g. a hostile `_G` metatable).
+/// All registry access goes through this so a script can never error the host
+/// pump by clobbering the registry with a junk value (M1 / gemini+Copilot #52).
+fn table_field<K: mlua::IntoLua>(t: &Table, key: K) -> Option<Table> {
+    t.get::<mlua::Value>(key).ok()?.as_table().cloned()
+}
+
 /// Errors from loading or running a script.
 #[derive(Debug, thiserror::Error)]
 pub enum ScriptError {
@@ -404,22 +412,13 @@ impl ScriptEngine {
     /// protected Lua registry / Rust-side storage; this graceful degradation
     /// closes the actual failure mode at far lower risk.)
     fn registry_table(&self) -> Option<Table> {
-        self.lua
-            .globals()
-            .get::<mlua::Value>("__rustynes")
-            .ok()?
-            .as_table()
-            .cloned()
+        table_field(&self.lua.globals(), "__rustynes")
     }
 
     /// Fetch a `__rustynes.<name>` address-keyed sub-table, or `None` if the
     /// registry or sub-table is missing / wrong-typed.
     fn registry_subtable(&self, name: &str) -> Option<Table> {
-        self.registry_table()?
-            .get::<mlua::Value>(name)
-            .ok()?
-            .as_table()
-            .cloned()
+        table_field(&self.registry_table()?, name)
     }
 
     /// Whether `__rustynes.<name>` (an address-keyed table) holds any callback.
@@ -445,7 +444,10 @@ impl ScriptEngine {
         let Some(t) = self.registry_subtable(name) else {
             return Ok(set);
         };
-        for pair in t.pairs::<u32, Table>() {
+        // Iterate keys as generic values: a junk non-table value parked at an
+        // address must not error the key scan (gemini #52). The gate only needs
+        // the address; the replay validates that the slot is actually a table.
+        for pair in t.pairs::<u32, mlua::Value>() {
             let (addr, _) = pair?;
             set.insert((addr & 0xFFFF) as u16);
         }
@@ -597,19 +599,15 @@ impl ScriptEngine {
             emu.set("frame", frame)?;
             emu.set("cycle", cycle)?;
 
-            // The internal registry; a script that clobbered `__rustynes`
-            // simply has no callbacks this frame (M1 — graceful, not an error).
-            let Some(registry) = lua
-                .globals()
-                .get::<mlua::Value>("__rustynes")?
-                .as_table()
-                .cloned()
-            else {
+            // The internal registry; a script that clobbered `__rustynes` (even
+            // with a hostile `_G` metatable) simply has no callbacks this frame
+            // (M1 — graceful via `table_field`, never an error; Copilot #52).
+            let Some(registry) = table_field(&lua.globals(), "__rustynes") else {
                 return Ok(());
             };
 
             // Invoke every registered onFrame callback.
-            if let Some(frame_cbs) = registry.get::<Option<Table>>("frame")? {
+            if let Some(frame_cbs) = table_field(&registry, "frame") {
                 for cb in frame_cbs.sequence_values::<mlua::Function>() {
                     cb?.call::<()>(())?;
                 }
@@ -618,17 +616,15 @@ impl ScriptEngine {
             // Replay this frame's exec PCs through onExec(addr). The Rust-side
             // `exec_addrs` set gates the Lua lookup: only PCs with a registered
             // callback cross the FFI boundary (gemini #47).
-            if let (false, Some(exec_t)) =
-                (exec_pcs.is_empty(), registry.get::<Option<Table>>("exec")?)
-            {
+            if let (false, Some(exec_t)) = (exec_pcs.is_empty(), table_field(&registry, "exec")) {
                 for pc in &exec_pcs {
                     if !exec_addrs.contains(pc) {
                         continue;
                     }
-                    // `Option<Table>`: a callback unregistered earlier *this frame*
-                    // leaves the snapshot set stale, so the slot may now be `Nil` —
-                    // skip it rather than crash on a `FromLua` conversion (gemini #49).
-                    if let Some(cbs) = exec_t.get::<Option<Table>>(*pc)? {
+                    // `table_field`: a slot a callback unregistered (or overwrote
+                    // with a non-table) *this frame* leaves the snapshot set
+                    // stale — skip it rather than crash (gemini #49/#52).
+                    if let Some(cbs) = table_field(&exec_t, *pc) {
                         for cb in cbs.sequence_values::<mlua::Function>() {
                             cb?.call::<()>(*pc)?;
                         }
@@ -639,8 +635,8 @@ impl ScriptEngine {
             // Replay this frame's bus accesses through onRead/onWrite(addr, value),
             // gated the same way.
             if !accesses.is_empty() {
-                let read_t = registry.get::<Option<Table>>("read")?;
-                let write_t = registry.get::<Option<Table>>("write")?;
+                let read_t = table_field(&registry, "read");
+                let write_t = table_field(&registry, "write");
                 for (is_write, addr, value) in &accesses {
                     let (set, t) = if *is_write {
                         (&write_addrs, &write_t)
@@ -651,9 +647,9 @@ impl ScriptEngine {
                         continue;
                     }
                     let Some(t) = t.as_ref() else { continue };
-                    // `Option<Table>`: tolerate a callback unregistered mid-frame
-                    // (gemini #49) — the snapshot set may be stale.
-                    if let Some(cbs) = t.get::<Option<Table>>(*addr)? {
+                    // `table_field`: tolerate a slot unregistered / overwritten
+                    // with a non-table mid-frame (gemini #49/#52).
+                    if let Some(cbs) = table_field(t, *addr) {
                         for cb in cbs.sequence_values::<mlua::Function>() {
                             cb?.call::<()>((*addr, *value))?;
                         }
@@ -667,15 +663,11 @@ impl ScriptEngine {
         result.map_err(ScriptError::from)
     }
 
-    /// Number of registered `onFrame` callbacks (for the host UI / tests).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ScriptError::Lua`] if the registry table is malformed.
-    pub fn frame_callback_count(&self) -> Result<usize, ScriptError> {
-        let registry: Table = self.lua.globals().get("__rustynes")?;
-        let frame_cbs: Table = registry.get("frame")?;
-        Ok(frame_cbs.raw_len())
+    /// Number of registered `onFrame` callbacks (for the host UI / tests). A
+    /// missing / clobbered registry counts as zero (M1).
+    #[must_use]
+    pub fn frame_callback_count(&self) -> usize {
+        self.registry_subtable("frame").map_or(0, |t| t.raw_len())
     }
 }
 
@@ -724,7 +716,7 @@ mod tests {
             ",
         )
         .expect("load");
-        assert_eq!(eng.frame_callback_count().unwrap(), 1);
+        assert_eq!(eng.frame_callback_count(), 1);
         for _ in 0..3 {
             nes.run_frame();
             eng.on_frame(&mut nes).expect("on_frame");
@@ -916,6 +908,29 @@ mod tests {
         nes.run_frame();
         eng.on_frame(&mut nes)
             .expect("still fine on the next frame");
+    }
+
+    #[test]
+    fn junk_value_at_a_callback_address_does_not_crash(/* gemini #52 */) {
+        // A script parks a non-table value where a callback table is expected.
+        // The replay must skip it (via `table_field`), not error on a FromLua
+        // conversion.
+        let mut nes = Nes::from_rom(&synth_writing_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            r"
+            emu.onWrite(0x2000, function() end)
+            -- Overwrite the callback list with a number.
+            __rustynes.write[0x2000] = 42
+            emu.onFrame(function() emu.log('ok') end)
+            ",
+        )
+        .expect("load");
+        nes.set_access_logging(true);
+        nes.run_frame();
+        eng.on_frame(&mut nes)
+            .expect("a non-table callback slot must not error on_frame");
+        assert!(eng.drain_log().contains(&"ok".to_owned()));
     }
 
     #[test]
