@@ -146,14 +146,21 @@ fn decode_png(bytes: &[u8]) -> Option<egui::ColorImage> {
     // png 0.18 needs a `Read + Seek` source; `&[u8]` is only `Read`.
     let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
     let mut reader = decoder.read_info().ok()?;
+    // Guard against absurd dimensions BEFORE allocating the decode buffer:
+    // `output_buffer_size()` is derived from the IHDR width/height, so a
+    // crafted/corrupt badge declaring huge dimensions would OOM the `vec!`
+    // below. Validate the header dimensions first (RA badges are small).
+    {
+        let info = reader.info();
+        let (w, h) = (info.width as usize, info.height as usize);
+        if w == 0 || h == 0 || w > 1024 || h > 1024 {
+            return None;
+        }
+    }
     let mut buf = vec![0u8; reader.output_buffer_size()?];
     let info = reader.next_frame(&mut buf).ok()?;
     let w = info.width as usize;
     let h = info.height as usize;
-    // Guard against absurd dimensions before allocating the RGBA buffer.
-    if w == 0 || h == 0 || w > 1024 || h > 1024 {
-        return None;
-    }
     let data = &buf[..info.buffer_size()];
     // Expand whatever color type the badge uses into RGBA8 for egui.
     let rgba: Vec<u8> = match info.color_type {
