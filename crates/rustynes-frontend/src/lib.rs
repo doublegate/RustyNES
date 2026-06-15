@@ -35,6 +35,7 @@ pub mod eq;
 // v1.1.0 — embedded app icon (winit window icon + About dialog). Native-only
 // (`png` is in the cfg(not(wasm)) dep table; a browser tab has no window icon).
 pub mod game_db;
+pub mod genie_db;
 pub mod gfx;
 // v1.2.0 beta.2 (Workstream C3) — HD-pack / mod loader (native-only, default OFF).
 #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]

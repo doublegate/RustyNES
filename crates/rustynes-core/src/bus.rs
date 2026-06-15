@@ -1218,6 +1218,44 @@ impl LockstepBus {
         }
     }
 
+    /// Update an attached SNES mouse's movement + buttons + sensitivity on
+    /// `port`. No-op if the attached device is not a mouse.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `port` is not in `0..=1`.
+    pub const fn set_snes_mouse(
+        &mut self,
+        port: usize,
+        dx: i16,
+        dy: i16,
+        left: bool,
+        right: bool,
+        sensitivity: u8,
+    ) {
+        assert!(port < 2, "mouse port must be 0..=1");
+        if let Some(crate::input_device::InputDevice::SnesMouse(m)) =
+            &mut self.expansion_device[port]
+        {
+            m.set(dx, dy, left, right, sensitivity);
+        }
+    }
+
+    /// Update an attached Family BASIC keyboard's pressed-key bitmap on `port`
+    /// (one byte per matrix row). No-op if the attached device is not a keyboard.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `port` is not in `0..=1`.
+    pub const fn set_family_keyboard(&mut self, port: usize, keys: [u8; 9]) {
+        assert!(port < 2, "keyboard port must be 0..=1");
+        if let Some(crate::input_device::InputDevice::FamilyKeyboard(k)) =
+            &mut self.expansion_device[port]
+        {
+            k.set_keys(keys);
+        }
+    }
+
     /// v1.1.0 beta.1 (T-110-B4) — set (`Some`) or clear (`None`) the per-game
     /// nametable mirroring override. A frontend load-time correction; `None`
     /// (default) defers to the mapper (byte-identical).
@@ -4167,6 +4205,48 @@ mod four_score_tests {
                 assert_eq!(p.buttons_raw(), 0b1010_0101_0011);
             }
             other => panic!("expected a Power Pad on port 1, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn snes_mouse_state_round_trips_through_save_state() {
+        use crate::input_device::{InputDevice, SnesMouseState};
+        let mut bus = test_bus();
+        bus.set_expansion_device(0, Some(InputDevice::SnesMouse(SnesMouseState::new())));
+        bus.set_snes_mouse(0, -7, 9, true, false, 2);
+        let blob = crate::bus_snapshot::encode_bus(&bus);
+        let mut restored = test_bus();
+        crate::bus_snapshot::decode_bus(&mut restored, &blob).unwrap();
+        match restored.expansion_device(0) {
+            Some(InputDevice::SnesMouse(m)) => {
+                assert_eq!(m.dx_raw(), -7);
+                assert_eq!(m.dy_raw(), 9);
+                assert!(m.left_raw());
+                assert!(!m.right_raw());
+                assert_eq!(m.sensitivity_raw(), 2);
+            }
+            other => panic!("expected a SNES mouse on port 0, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn family_keyboard_state_round_trips_through_save_state() {
+        use crate::input_device::{FamilyKeyboardState, InputDevice};
+        let mut bus = test_bus();
+        bus.set_expansion_device(
+            1,
+            Some(InputDevice::FamilyKeyboard(FamilyKeyboardState::new())),
+        );
+        let keys = [0x01, 0x10, 0x00, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00];
+        bus.set_family_keyboard(1, keys);
+        let blob = crate::bus_snapshot::encode_bus(&bus);
+        let mut restored = test_bus();
+        crate::bus_snapshot::decode_bus(&mut restored, &blob).unwrap();
+        match restored.expansion_device(1) {
+            Some(InputDevice::FamilyKeyboard(k)) => {
+                assert_eq!(k.keys_raw(), keys);
+            }
+            other => panic!("expected a Family BASIC keyboard on port 1, got {other:?}"),
         }
     }
 }

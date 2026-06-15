@@ -579,6 +579,20 @@ pub struct App {
     /// trigger / Vaus fire). Native-only.
     #[cfg(not(target_arch = "wasm32"))]
     mouse_pressed: bool,
+    /// v1.2.0 Workstream D — whether the RIGHT mouse button is held (SNES mouse
+    /// right button). Native-only.
+    #[cfg(not(target_arch = "wasm32"))]
+    mouse_right_pressed: bool,
+    /// v1.2.0 Workstream D — accumulated raw mouse motion since the last frame
+    /// latch (`MouseMotion` deltas), consumed + reset by [`Self::frame_inputs`]
+    /// when the SNES mouse is the active device. Native-only.
+    #[cfg(not(target_arch = "wasm32"))]
+    mouse_motion_accum: (f64, f64),
+    /// v1.2.0 Workstream D — live Family BASIC keyboard matrix bitmap (one byte
+    /// per row), driven by host key events via [`crate::input::family_keyboard_index`].
+    /// Native-only.
+    #[cfg(not(target_arch = "wasm32"))]
+    family_keyboard: [u8; 9],
     /// v2.2.0 — the uploaded Famicom Disk System BIOS (`disksys.rom`) bytes
     /// (wasm32). The browser build has no filesystem prompt, so the user
     /// uploads the BIOS via a `<input type="file">` and it is stashed here for
@@ -701,6 +715,12 @@ impl App {
             cursor_pos: None,
             window_size: (NES_W * INITIAL_SCALE, NES_H * INITIAL_SCALE),
             mouse_pressed: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            mouse_right_pressed: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            mouse_motion_accum: (0.0, 0.0),
+            #[cfg(not(target_arch = "wasm32"))]
+            family_keyboard: [0; 9],
             #[cfg(feature = "retroachievements")]
             ra: Some(Self::init_ra_session()),
         })
@@ -1967,6 +1987,12 @@ impl App {
                 ExpansionDevice::PowerPad => {
                     nes.set_power_pad(1, 0);
                 }
+                ExpansionDevice::SnesMouse => {
+                    nes.set_snes_mouse(1, 0, 0, false, false, 0);
+                }
+                ExpansionDevice::FamilyKeyboard => {
+                    nes.set_family_keyboard(1, [0; 9]);
+                }
             }
         }
     }
@@ -2027,6 +2053,9 @@ impl App {
             self.emu.lock().produce_one_frame(&inputs, &mut sinks)
         };
         self.apply_produce_fx(fx);
+        // v1.2.0 Workstream D — the frame consumed this frame's mouse motion.
+        #[cfg(not(target_arch = "wasm32"))]
+        self.drain_mouse_motion();
     }
 
     /// v2.8.0 Phase 5 — build the synchronous (winit-thread) drive's
@@ -2089,7 +2118,31 @@ impl App {
             turbo_mask: self.turbo_mask(),
             turbo_period: self.config.input.turbo_period,
             power_pad: self.input.power_pad(),
+            // v1.2.0 Workstream D — SNES mouse: report the motion accumulated
+            // since the last frame latch (drained by the produce / publish path).
+            #[cfg(not(target_arch = "wasm32"))]
+            #[allow(clippy::cast_possible_truncation)]
+            mouse_delta: {
+                let (ax, ay) = self.mouse_motion_accum;
+                (
+                    ax.clamp(-127.0, 127.0) as i16,
+                    ay.clamp(-127.0, 127.0) as i16,
+                )
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            mouse_right: self.mouse_right_pressed,
+            #[cfg(not(target_arch = "wasm32"))]
+            family_keyboard: self.family_keyboard,
         }
+    }
+
+    /// v1.2.0 Workstream D — drain the SNES-mouse motion accumulator after the
+    /// per-frame latch has consumed it. Called once per produced / published
+    /// frame so each NES poll sees only that frame's motion (a real serial mouse
+    /// reports movement-since-last-strobe). Native-only.
+    #[cfg(not(target_arch = "wasm32"))]
+    const fn drain_mouse_motion(&mut self) {
+        self.mouse_motion_accum = (0.0, 0.0);
     }
 
     /// v1.1.0 beta.1 (T-110-B2) — the configured turbo/autofire button mask
@@ -2133,7 +2186,7 @@ impl App {
     /// so the next produced frame latches it. No-op when the thread isn't
     /// spawned. Native-only + `emu-thread`.
     #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
-    fn publish_shared_input(&self) {
+    fn publish_shared_input(&mut self) {
         if let Some(thread) = self.emu_thread.as_ref() {
             thread.shared_input().publish(&self.frame_inputs());
             // Fast-forward is a control-block flag (not part of the per-frame
@@ -2142,6 +2195,9 @@ impl App {
                 .control()
                 .set_fast_forward(self.input.fast_forward_held());
         }
+        // v1.2.0 Workstream D — the published snapshot carried this frame's
+        // mouse motion; drain so the next publish reports only new movement.
+        self.drain_mouse_motion();
     }
 
     /// v2.8.0 Phase 5 increment 3 — publish the active pacing regime + the
@@ -3171,12 +3227,14 @@ impl App {
 
         #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
         {
-            if let Some(thread) = self.emu_thread.as_ref() {
+            if self.emu_thread.is_some() {
                 // Publish the freshly-latched input into the SharedInput too,
                 // so the stepped frame sees the current buttons.
                 self.publish_shared_input();
-                thread.control().request_frame_advance();
-                thread.unpark();
+                if let Some(thread) = self.emu_thread.as_ref() {
+                    thread.control().request_frame_advance();
+                    thread.unpark();
+                }
                 return;
             }
             self.frame_advance_inline();
@@ -4847,6 +4905,16 @@ impl ApplicationHandler<AppEvent> for App {
             }
             #[cfg(not(target_arch = "wasm32"))]
             WindowEvent::CursorMoved { position, .. } => {
+                // v1.2.0 Workstream D — accumulate the SNES-mouse relative motion
+                // from the cursor delta, scaled to NES pixels (the window maps to
+                // the 256x240 screen). Drained per produced/published frame.
+                if let Some((px, py)) = self.cursor_pos {
+                    let (ww, wh) = self.window_size;
+                    let dx = (position.x - px) * 256.0 / f64::from(ww.max(1));
+                    let dy = (position.y - py) * 240.0 / f64::from(wh.max(1));
+                    self.mouse_motion_accum.0 += dx;
+                    self.mouse_motion_accum.1 += dy;
+                }
                 // Track the cursor for the Zapper aim / Vaus paddle position.
                 self.cursor_pos = Some((position.x, position.y));
             }
@@ -4861,6 +4929,10 @@ impl ApplicationHandler<AppEvent> for App {
                     .is_some_and(DebuggerOverlay::wants_egui_input);
                 if button == winit::event::MouseButton::Left && !egui_pointer {
                     self.mouse_pressed = state == winit::event::ElementState::Pressed;
+                }
+                // v1.2.0 Workstream D — the SNES mouse's right button.
+                if button == winit::event::MouseButton::Right && !egui_pointer {
+                    self.mouse_right_pressed = state == winit::event::ElementState::Pressed;
                 }
             }
             WindowEvent::DroppedFile(path) => {
@@ -4923,6 +4995,22 @@ impl ApplicationHandler<AppEvent> for App {
                         .is_some_and(|d| d.wants_egui_input() || d.shell_is_capturing());
                 if shell_capturing || egui_consumed {
                     return;
+                }
+                // v1.2.0 Workstream D — Family BASIC keyboard matrix: map the
+                // host key to a matrix index and set/clear the row bit. Tracked
+                // unconditionally (cheap); consumed only when a Family BASIC
+                // keyboard is the active device. Native-only.
+                #[cfg(not(target_arch = "wasm32"))]
+                if let winit::keyboard::PhysicalKey::Code(code) = event.physical_key {
+                    if let Some(idx) = crate::input::family_keyboard_index(code) {
+                        let row = idx / 8;
+                        let bit = 1u8 << (idx % 8);
+                        if event.state == winit::event::ElementState::Pressed {
+                            self.family_keyboard[row] |= bit;
+                        } else {
+                            self.family_keyboard[row] &= !bit;
+                        }
+                    }
                 }
                 let action = self.input.handle_key(event.physical_key, event.state);
                 if let Some(act) = action {

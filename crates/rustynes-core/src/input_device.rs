@@ -432,6 +432,393 @@ impl PowerPadState {
     }
 }
 
+/// The (Hyperkin / Nintendo) mouse overlay state — the SNES-style serial mouse
+/// as wired to an NES `$4016`/`$4017` port (D0 serial-out).
+///
+/// Per the `NESdev` "Mouse" page (the SNES mouse, the canonical serial mouse
+/// reused on the NES), a strobe latches a fixed-format 32-bit report that is
+/// then shifted out **MSb-first on D0** (one bit per port read):
+///
+/// ```text
+/// bits 31..28 : signature 0b0001 (device id nibble)
+/// bits 27..26 : 00
+/// bits 25..24 : sensitivity (00 low / 01 medium / 10 high; cycled by pressing
+///               both buttons on real hardware — we expose it as a field)
+/// bit  23     : left button  (1 = pressed)
+/// bit  22     : right button (1 = pressed)
+/// bits 21..16 : 0
+/// bits 15..8  : Y movement — bit 15 = direction sign (1 = up/-), bits 14..8 =
+///               magnitude (0..127); 0 when not moving
+/// bits  7..0  : X movement — bit  7 = direction sign (1 = left/-), bits  6..0 =
+///               magnitude (0..127); 0 when not moving
+/// ```
+///
+/// After the 32 real bits are shifted out, further reads return `1` (the open
+/// serial line idles high), matching the standard controller's post-sequence
+/// behavior. Like the standard controller, while the strobe is held high the
+/// report is continuously re-latched, so reads return the first (signature) bit.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SnesMouseState {
+    /// Live delta-X this frame (signed; clamped into +/-127 on latch).
+    pub(crate) dx: i16,
+    /// Live delta-Y this frame (signed; clamped into +/-127 on latch).
+    pub(crate) dy: i16,
+    /// Left button held.
+    pub(crate) left: bool,
+    /// Right button held.
+    pub(crate) right: bool,
+    /// Sensitivity (0 low / 1 medium / 2 high). Reported in the latched word.
+    pub(crate) sensitivity: u8,
+    /// 32-bit shift register, MSb-first readout. Reloaded from the live state on
+    /// the strobe (the parallel latch).
+    pub(crate) shift: u32,
+    /// Count of real bits shifted out (0..=32); beyond 32, reads idle high (`1`).
+    pub(crate) read_count: u8,
+    /// Last strobe level written (bit 0 of `$4016`).
+    pub(crate) strobe: bool,
+}
+
+impl SnesMouseState {
+    /// New mouse at rest (no movement, buttons up, low sensitivity).
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            dx: 0,
+            dy: 0,
+            left: false,
+            right: false,
+            sensitivity: 0,
+            shift: 0,
+            read_count: 0,
+            strobe: false,
+        }
+    }
+
+    /// Encode one axis into the 8-bit serial field: bit 7 = direction sign
+    /// (1 = negative), bits 6..0 = magnitude clamped to 0..=127.
+    const fn enc_axis(v: i16) -> u32 {
+        let mag = if v < 0 { -v } else { v };
+        #[allow(clippy::cast_sign_loss)]
+        let mag = (if mag > 127 { 127 } else { mag }) as u32;
+        let sign = if v < 0 { 1u32 } else { 0 };
+        (sign << 7) | mag
+    }
+
+    /// Encode the current live state into the 32-bit report word (MSb-first
+    /// serial order; bit 31 is shifted out first).
+    const fn encode(&self) -> u32 {
+        let dx = Self::enc_axis(self.dx);
+        let dy = Self::enc_axis(self.dy);
+        let sig = 0b0001u32 << 28;
+        let sens = ((self.sensitivity & 0b11) as u32) << 24;
+        let left = (self.left as u32) << 23;
+        let right = (self.right as u32) << 22;
+        sig | sens | left | right | (dy << 8) | dx
+    }
+
+    /// Update the live movement + button + sensitivity state. Takes effect on
+    /// the next latch (strobe), matching the standard controller semantics.
+    pub const fn set(&mut self, dx: i16, dy: i16, left: bool, right: bool, sensitivity: u8) {
+        self.dx = dx;
+        self.dy = dy;
+        self.left = left;
+        self.right = right;
+        self.sensitivity = sensitivity & 0b11;
+        if self.strobe {
+            self.shift = self.encode();
+            self.read_count = 0;
+        }
+    }
+
+    /// Handle a `$4016` strobe write. On a high level the 32-bit report is
+    /// (re)latched from the live state; the read counter resets.
+    pub const fn write_strobe(&mut self, value: u8) {
+        let new_strobe = value & 1 != 0;
+        if new_strobe {
+            self.shift = self.encode();
+            self.read_count = 0;
+        }
+        self.strobe = new_strobe;
+    }
+
+    /// Read the device byte for a port access, shifting out one MSb-first bit on
+    /// D0. After 32 bits the line idles high (`1` on D0). While the strobe is
+    /// held high the report is continuously re-latched (reads return bit 31).
+    /// The caller ORs in the open-bus upper bits.
+    pub const fn read(&mut self) -> u8 {
+        if self.strobe {
+            self.shift = self.encode();
+            self.read_count = 0;
+        }
+        if self.read_count >= 32 {
+            return 1; // serial line idles high after the report
+        }
+        let bit = (self.shift >> 31) & 1;
+        self.shift <<= 1;
+        self.read_count += 1;
+        bit as u8
+    }
+
+    /// Side-effect-free sample of the next D0 bit (debugger peek).
+    #[must_use]
+    pub const fn peek(&self) -> u8 {
+        if self.read_count >= 32 {
+            return 1;
+        }
+        ((self.shift >> 31) & 1) as u8
+    }
+
+    /// Reconstruct from save-state parts.
+    #[must_use]
+    #[allow(clippy::too_many_arguments)] // one arg per persisted field
+    pub const fn from_parts(
+        dx: i16,
+        dy: i16,
+        left: bool,
+        right: bool,
+        sensitivity: u8,
+        shift: u32,
+        read_count: u8,
+        strobe: bool,
+    ) -> Self {
+        Self {
+            dx,
+            dy,
+            left,
+            right,
+            sensitivity: sensitivity & 0b11,
+            shift,
+            read_count,
+            strobe,
+        }
+    }
+
+    /// Raw delta-X (save-state).
+    #[must_use]
+    pub const fn dx_raw(&self) -> i16 {
+        self.dx
+    }
+    /// Raw delta-Y (save-state).
+    #[must_use]
+    pub const fn dy_raw(&self) -> i16 {
+        self.dy
+    }
+    /// Raw left button (save-state).
+    #[must_use]
+    pub const fn left_raw(&self) -> bool {
+        self.left
+    }
+    /// Raw right button (save-state).
+    #[must_use]
+    pub const fn right_raw(&self) -> bool {
+        self.right
+    }
+    /// Raw sensitivity (save-state).
+    #[must_use]
+    pub const fn sensitivity_raw(&self) -> u8 {
+        self.sensitivity
+    }
+    /// Raw shift register (save-state).
+    #[must_use]
+    pub const fn shift_raw(&self) -> u32 {
+        self.shift
+    }
+    /// Raw read counter (save-state).
+    #[must_use]
+    pub const fn read_count_raw(&self) -> u8 {
+        self.read_count
+    }
+    /// Raw strobe state (save-state).
+    #[must_use]
+    pub const fn strobe_raw(&self) -> bool {
+        self.strobe
+    }
+}
+
+/// Number of physical keys on the Famicom Family BASIC keyboard matrix
+/// (`9 rows x 8 columns / 2` halves; 72 keys, with a handful of unused matrix
+/// positions reported as `1` / not-pressed).
+pub const FAMILY_KEYBOARD_KEYS: usize = 72;
+
+/// Number of selectable rows in the Family BASIC keyboard matrix.
+const FAMILY_KEYBOARD_ROWS: usize = 9;
+
+/// The Famicom **Family BASIC keyboard** overlay state.
+///
+/// Per the `NESdev` "Family BASIC Keyboard" page, the keyboard is a `9 x 8`
+/// switch matrix (with the data-recorder lines unused here) read through the
+/// expansion port but software-visible on `$4017`. The protocol:
+///
+/// - **`$4016` write** — bit 0 (the "column" select; 0 selects the low 4 keys
+///   of the current row, 1 selects the high 4) and bit 1 (a clock; a 0->1
+///   transition advances to the next row). Bit 2 enables the keyboard matrix;
+///   when bit 2 is 0 the matrix is disabled and `$4017` reads `1`s. Writing
+///   bit 1 = 0 while bit 2 = 1 **resets** the row counter to 0.
+/// - **`$4017` read** — bits 4..1 carry the four key switches of the currently
+///   selected (row, column-half), **active-low** (0 = pressed). There are 9
+///   rows x 2 halves = 18 selectable groups of 4 keys = 72 key positions.
+///
+/// We model the live pressed state as a 72-bit key bitmap (`[u8; 9]`, one byte
+/// per row: low nibble = column-half 0, high nibble = column-half 1) and the
+/// row counter + column select per the write protocol. Determinism holds: it is
+/// a pure function of the writes + the live key bitmap.
+#[derive(Clone, Copy, Debug)]
+pub struct FamilyKeyboardState {
+    /// Per-row key bitmap. `keys[row]` bits 0..=3 = column-half 0 keys, bits
+    /// 4..=7 = column-half 1 keys. A set bit = that key is held.
+    pub(crate) keys: [u8; FAMILY_KEYBOARD_ROWS],
+    /// Current matrix row (0..=8); wraps/saturates at the last row.
+    pub(crate) row: u8,
+    /// Column-half select (bit 0 of the last `$4016` write): 0 = low nibble,
+    /// 1 = high nibble.
+    pub(crate) column: bool,
+    /// Whether the matrix is enabled (bit 2 of the last `$4016` write). When
+    /// disabled, `$4017` reads return all-`1` (no keys).
+    pub(crate) enabled: bool,
+    /// Last clock level (bit 1 of `$4016`); a 0->1 edge advances the row.
+    pub(crate) clock: bool,
+}
+
+impl Default for FamilyKeyboardState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl FamilyKeyboardState {
+    /// New keyboard with no keys held, matrix reset + disabled.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            keys: [0; FAMILY_KEYBOARD_ROWS],
+            row: 0,
+            column: false,
+            enabled: false,
+            clock: false,
+        }
+    }
+
+    /// Set the full pressed-key bitmap (one byte per matrix row; low nibble =
+    /// column-half 0, high nibble = column-half 1). The frontend builds this
+    /// from host keys via its key map.
+    pub const fn set_keys(&mut self, keys: [u8; FAMILY_KEYBOARD_ROWS]) {
+        self.keys = keys;
+    }
+
+    /// Set one key by linear index (0..72) — `index = row * 8 + bit`, matching
+    /// the matrix layout (`bit` 0..=3 = column-half 0, 4..=7 = column-half 1).
+    /// Out-of-range indices are ignored.
+    pub const fn set_key(&mut self, index: usize, pressed: bool) {
+        if index >= FAMILY_KEYBOARD_KEYS {
+            return;
+        }
+        let row = index / 8;
+        #[allow(clippy::cast_possible_truncation)] // index % 8 is always 0..=7
+        let bit = (index % 8) as u8;
+        if pressed {
+            self.keys[row] |= 1 << bit;
+        } else {
+            self.keys[row] &= !(1 << bit);
+        }
+    }
+
+    /// Handle a `$4016` write: latch column select (bit 0), advance the row on a
+    /// clock (bit 1) rising edge, set the matrix-enable (bit 2). A clock low
+    /// while enabled resets the row counter to 0.
+    pub const fn write_strobe(&mut self, value: u8) {
+        let column = value & 0x01 != 0;
+        let clock = value & 0x02 != 0;
+        let enabled = value & 0x04 != 0;
+        if enabled {
+            if clock && !self.clock {
+                // Rising clock edge: advance to the next row (saturate at last).
+                if (self.row as usize) < FAMILY_KEYBOARD_ROWS - 1 {
+                    self.row += 1;
+                }
+            } else if !clock {
+                // Clock low (while enabled): reset to the first row.
+                self.row = 0;
+            }
+        }
+        self.column = column;
+        self.enabled = enabled;
+        self.clock = clock;
+    }
+
+    /// Read the device byte for a `$4017` access. The four selected key switches
+    /// are returned on bits 4..1, **active-low** (0 = pressed). When the matrix
+    /// is disabled, all four bits read `1` (no keys). The caller ORs in the
+    /// open-bus upper bits.
+    #[must_use]
+    pub const fn read(&self) -> u8 {
+        if !self.enabled {
+            // Disabled matrix: key switches all read high (not pressed).
+            return 0b0001_1110;
+        }
+        let row = self.row as usize;
+        let byte = self.keys[row];
+        let nibble = if self.column {
+            (byte >> 4) & 0x0F
+        } else {
+            byte & 0x0F
+        };
+        // Active-low: pressed key (1 in our bitmap) reads 0 on the wire.
+        let wire = (!nibble) & 0x0F;
+        wire << 1
+    }
+
+    /// Side-effect-free sample of the device byte (debugger peek) — identical to
+    /// [`Self::read`] (the keyboard read has no side effects).
+    #[must_use]
+    pub const fn peek(&self) -> u8 {
+        self.read()
+    }
+
+    /// Reconstruct from save-state parts.
+    #[must_use]
+    pub const fn from_parts(
+        keys: [u8; FAMILY_KEYBOARD_ROWS],
+        row: u8,
+        column: bool,
+        enabled: bool,
+        clock: bool,
+    ) -> Self {
+        Self {
+            keys,
+            row,
+            column,
+            enabled,
+            clock,
+        }
+    }
+
+    /// Raw per-row key bitmap (save-state).
+    #[must_use]
+    pub const fn keys_raw(&self) -> [u8; FAMILY_KEYBOARD_ROWS] {
+        self.keys
+    }
+    /// Raw row counter (save-state).
+    #[must_use]
+    pub const fn row_raw(&self) -> u8 {
+        self.row
+    }
+    /// Raw column select (save-state).
+    #[must_use]
+    pub const fn column_raw(&self) -> bool {
+        self.column
+    }
+    /// Raw matrix-enable (save-state).
+    #[must_use]
+    pub const fn enabled_raw(&self) -> bool {
+        self.enabled
+    }
+    /// Raw clock level (save-state).
+    #[must_use]
+    pub const fn clock_raw(&self) -> bool {
+        self.clock
+    }
+}
+
 /// An optional non-standard device overlaid on a controller port. When set,
 /// the bus's `$4016`/`$4017` read path returns this device's byte instead of
 /// the standard controller / Four Score serial byte.
@@ -443,6 +830,10 @@ pub enum InputDevice {
     Vaus(VausState),
     /// NES Power Pad / Family Fun Fitness mat (12 buttons).
     PowerPad(PowerPadState),
+    /// SNES-style serial mouse (Hyperkin / Nintendo), D0 serial-out.
+    SnesMouse(SnesMouseState),
+    /// Famicom Family BASIC keyboard (72-key matrix on `$4017`).
+    FamilyKeyboard(FamilyKeyboardState),
 }
 
 impl InputDevice {
@@ -452,6 +843,8 @@ impl InputDevice {
         match self {
             Self::Vaus(v) => v.write_strobe(value),
             Self::PowerPad(p) => p.write_strobe(value),
+            Self::SnesMouse(m) => m.write_strobe(value),
+            Self::FamilyKeyboard(k) => k.write_strobe(value),
             Self::Zapper(_) => {}
         }
     }
@@ -463,6 +856,8 @@ impl InputDevice {
             Self::Vaus(v) => v.read(),
             Self::Zapper(z) => z.read(),
             Self::PowerPad(p) => p.read(),
+            Self::SnesMouse(m) => m.read(),
+            Self::FamilyKeyboard(k) => k.read(),
         }
     }
 
@@ -473,6 +868,8 @@ impl InputDevice {
             Self::Vaus(v) => v.peek(),
             Self::Zapper(z) => z.read(),
             Self::PowerPad(p) => p.peek(),
+            Self::SnesMouse(m) => m.peek(),
+            Self::FamilyKeyboard(k) => k.peek(),
         }
     }
 }
@@ -667,5 +1064,165 @@ mod tests {
         // Strobe is a no-op for the Zapper.
         z.write_strobe(1);
         assert_eq!(z.read() & (1 << 3), 1 << 3, "zapper: no light by default");
+    }
+
+    /// Shift out `n` D0 bits (MSb-first), returning them packed into a u64 in
+    /// read order (first bit = most significant of the returned `n`-bit value).
+    fn mouse_read_bits(m: &mut SnesMouseState, n: usize) -> u64 {
+        m.write_strobe(1);
+        m.write_strobe(0);
+        let mut acc = 0u64;
+        for _ in 0..n {
+            acc = (acc << 1) | u64::from(m.read() & 1);
+        }
+        acc
+    }
+
+    #[test]
+    fn snes_mouse_signature_nibble_is_0b0001() {
+        let mut m = SnesMouseState::new();
+        // First 4 bits are the device-id signature nibble 0b0001.
+        let bits = mouse_read_bits(&mut m, 4);
+        assert_eq!(bits, 0b0001, "signature nibble must be 0b0001");
+    }
+
+    #[test]
+    fn snes_mouse_full_report_encodes_buttons_and_movement() {
+        let mut m = SnesMouseState::new();
+        // dx = +5, dy = -3, left pressed, sensitivity = 2 (high).
+        m.set(5, -3, true, false, 2);
+        let word = mouse_read_bits(&mut m, 32);
+        // Reconstruct the full 32-bit word and check each field.
+        assert_eq!((word >> 28) & 0x0F, 0b0001, "signature");
+        assert_eq!((word >> 24) & 0b11, 2, "sensitivity");
+        assert_eq!((word >> 23) & 1, 1, "left button");
+        assert_eq!((word >> 22) & 1, 0, "right button");
+        // Y field (bits 15..8): sign=1 (negative), magnitude 3.
+        let y = (word >> 8) & 0xFF;
+        assert_eq!((y >> 7) & 1, 1, "Y sign negative");
+        assert_eq!(y & 0x7F, 3, "Y magnitude");
+        // X field (bits 7..0): sign=0 (positive), magnitude 5.
+        let x = word & 0xFF;
+        assert_eq!((x >> 7) & 1, 0, "X sign positive");
+        assert_eq!(x & 0x7F, 5, "X magnitude");
+    }
+
+    #[test]
+    fn snes_mouse_idles_high_after_32_bits() {
+        let mut m = SnesMouseState::new();
+        m.write_strobe(1);
+        m.write_strobe(0);
+        for _ in 0..32 {
+            let _ = m.read();
+        }
+        for _ in 0..4 {
+            assert_eq!(m.read() & 1, 1, "serial line idles high after the report");
+        }
+    }
+
+    #[test]
+    fn snes_mouse_clamps_movement_to_127() {
+        let mut m = SnesMouseState::new();
+        m.set(1000, -1000, false, false, 0);
+        let word = mouse_read_bits(&mut m, 32);
+        assert_eq!(word & 0x7F, 127, "X magnitude clamps to 127");
+        assert_eq!((word >> 8) & 0x7F, 127, "Y magnitude clamps to 127");
+    }
+
+    #[test]
+    fn snes_mouse_strobe_high_repeats_signature_bit() {
+        let mut m = SnesMouseState::new();
+        m.write_strobe(1); // held high
+        for _ in 0..5 {
+            // Signature MSb (bit 31 of 0b0001 << 28) is 0; repeats while strobed.
+            assert_eq!(m.read() & 1, 0, "strobe-high repeats bit 31");
+        }
+    }
+
+    #[test]
+    fn family_keyboard_disabled_reads_all_high() {
+        let k = FamilyKeyboardState::new();
+        // Not enabled (bit 2 unset): key switches all read high (bits 4..1 set).
+        assert_eq!(
+            k.read(),
+            0b0001_1110,
+            "disabled matrix -> no keys (bits 4..1=1)"
+        );
+    }
+
+    #[test]
+    fn family_keyboard_pressed_key_reads_active_low() {
+        let mut k = FamilyKeyboardState::new();
+        // Press key at row 0, column-half 0, switch 0 (linear index 0).
+        k.set_key(0, true);
+        // Enable matrix (bit2), select column-half 0 (bit0=0), clock low resets row to 0.
+        k.write_strobe(0b0000_0100);
+        let r = k.read();
+        // The pressed switch (bit 0 of the nibble) appears active-low on bit 1.
+        assert_eq!(r & (1 << 1), 0, "pressed key reads 0 (active-low) on bit 1");
+        // The other three switches are not pressed -> read 1.
+        assert_eq!(r & (1 << 2), 1 << 2);
+        assert_eq!(r & (1 << 3), 1 << 3);
+        assert_eq!(r & (1 << 4), 1 << 4);
+    }
+
+    #[test]
+    fn family_keyboard_column_select_picks_high_nibble() {
+        let mut k = FamilyKeyboardState::new();
+        // Key at row 0, column-half 1, switch 0 = linear index 4 (row*8 + 4).
+        k.set_key(4, true);
+        // Enable + select column-half 1 (bit0=1), clock low (resets row to 0).
+        k.write_strobe(0b0000_0101);
+        let r = k.read();
+        assert_eq!(
+            r & (1 << 1),
+            0,
+            "column-half-1 key reads active-low on bit 1"
+        );
+        // Selecting column-half 0 instead shows nothing pressed there.
+        k.write_strobe(0b0000_0100);
+        assert_eq!(k.read() & (1 << 1), 1 << 1, "column-half 0 has no key here");
+    }
+
+    #[test]
+    fn family_keyboard_clock_edge_advances_row() {
+        let mut k = FamilyKeyboardState::new();
+        // Press a key on row 1, column-half 0, switch 0 = linear index 8.
+        k.set_key(8, true);
+        // Enable + clock low -> row 0.
+        k.write_strobe(0b0000_0100);
+        assert_eq!(k.read() & (1 << 1), 1 << 1, "row 0 has no key");
+        // Rising clock edge (bit1 0->1) advances to row 1.
+        k.write_strobe(0b0000_0110);
+        assert_eq!(
+            k.read() & (1 << 1),
+            0,
+            "row 1 key now selected (active-low)"
+        );
+    }
+
+    #[test]
+    fn family_keyboard_save_state_round_trip() {
+        let mut k = FamilyKeyboardState::new();
+        k.set_key(8, true);
+        k.set_key(40, true);
+        k.write_strobe(0b0000_0110);
+        let restored = FamilyKeyboardState::from_parts(
+            k.keys_raw(),
+            k.row_raw(),
+            k.column_raw(),
+            k.enabled_raw(),
+            k.clock_raw(),
+        );
+        assert_eq!(restored.read(), k.read());
+        assert_eq!(restored.keys_raw(), k.keys_raw());
+    }
+
+    #[test]
+    fn family_keyboard_set_key_out_of_range_is_noop() {
+        let mut k = FamilyKeyboardState::new();
+        k.set_key(FAMILY_KEYBOARD_KEYS, true); // index == 72, out of range
+        k.set_key(1000, true);
+        assert_eq!(k.keys_raw(), [0; FAMILY_KEYBOARD_ROWS]);
     }
 }

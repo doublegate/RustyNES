@@ -99,7 +99,8 @@ pub struct SharedInput {
     rewind_held: AtomicBool,
     hardcore_blocked: AtomicBool,
     run_ahead: AtomicU8,
-    /// `ExpansionDevice` as `u8` (0 None / 1 Zapper / 2 Vaus / 3 Power Pad).
+    /// `ExpansionDevice` as `u8` (0 None / 1 Zapper / 2 Vaus / 3 Power Pad /
+    /// 4 SNES mouse / 5 Family BASIC keyboard).
     expansion: AtomicU8,
     /// `(x as u16) << 16 | (y as u16)` NES-screen coords (`u16::MAX` = off).
     mouse: AtomicU32,
@@ -109,6 +110,14 @@ pub struct SharedInput {
     turbo_period: AtomicU32,
     /// v1.1.0 beta.1 (T-110-B1) — Power Pad mat button mask.
     power_pad: AtomicU16,
+    /// v1.2.0 Workstream D — SNES-mouse motion `(dx as u16) << 16 | (dy as u16)`.
+    mouse_delta: AtomicU32,
+    /// v1.2.0 Workstream D — SNES-mouse right button (left reuses `mouse_pressed`).
+    mouse_right: AtomicBool,
+    /// v1.2.0 Workstream D — Family BASIC keyboard matrix bitmap: rows 0..=7
+    /// packed little-endian into a u64, row 8 in `family_keyboard_hi`.
+    family_keyboard_lo: AtomicU64,
+    family_keyboard_hi: AtomicU8,
 }
 
 impl SharedInput {
@@ -135,6 +144,8 @@ impl SharedInput {
                 ExpansionDevice::Zapper => 1,
                 ExpansionDevice::Vaus => 2,
                 ExpansionDevice::PowerPad => 3,
+                ExpansionDevice::SnesMouse => 4,
+                ExpansionDevice::FamilyKeyboard => 5,
             },
             Ordering::Relaxed,
         );
@@ -148,6 +159,19 @@ impl SharedInput {
         self.turbo_period
             .store(inputs.turbo_period, Ordering::Relaxed);
         self.power_pad.store(inputs.power_pad, Ordering::Relaxed);
+        // v1.2.0 Workstream D — SNES mouse + Family BASIC keyboard.
+        let (dx, dy) = inputs.mouse_delta;
+        // Reinterpret the signed deltas as their two's-complement u16 bits
+        // (round-tripped back to i16 on load); not a value-narrowing cast.
+        #[allow(clippy::cast_sign_loss)]
+        let packed = (u32::from(dx as u16) << 16) | u32::from(dy as u16);
+        self.mouse_delta.store(packed, Ordering::Relaxed);
+        self.mouse_right
+            .store(inputs.mouse_right, Ordering::Relaxed);
+        let kb = inputs.family_keyboard;
+        let lo = u64::from_le_bytes([kb[0], kb[1], kb[2], kb[3], kb[4], kb[5], kb[6], kb[7]]);
+        self.family_keyboard_lo.store(lo, Ordering::Relaxed);
+        self.family_keyboard_hi.store(kb[8], Ordering::Relaxed);
     }
 
     /// Reconstruct the [`FrameInputs`] the emu thread feeds to the produce
@@ -169,6 +193,8 @@ impl SharedInput {
                 1 => ExpansionDevice::Zapper,
                 2 => ExpansionDevice::Vaus,
                 3 => ExpansionDevice::PowerPad,
+                4 => ExpansionDevice::SnesMouse,
+                5 => ExpansionDevice::FamilyKeyboard,
                 _ => ExpansionDevice::None,
             },
             #[allow(clippy::cast_possible_truncation)]
@@ -177,6 +203,20 @@ impl SharedInput {
             turbo_mask: Buttons::from_bits_truncate(self.turbo_mask.load(Ordering::Relaxed)),
             turbo_period: self.turbo_period.load(Ordering::Relaxed),
             power_pad: self.power_pad.load(Ordering::Relaxed),
+            mouse_delta: {
+                let m = self.mouse_delta.load(Ordering::Relaxed);
+                #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+                (((m >> 16) as u16) as i16, (m as u16) as i16)
+            },
+            mouse_right: self.mouse_right.load(Ordering::Relaxed),
+            family_keyboard: {
+                let lo = self
+                    .family_keyboard_lo
+                    .load(Ordering::Relaxed)
+                    .to_le_bytes();
+                let hi = self.family_keyboard_hi.load(Ordering::Relaxed);
+                [lo[0], lo[1], lo[2], lo[3], lo[4], lo[5], lo[6], lo[7], hi]
+            },
         }
     }
 }
@@ -725,6 +765,9 @@ mod tests {
             turbo_mask: Buttons::A | Buttons::B,
             turbo_period: 3,
             power_pad: 0b1010_0101_1100,
+            mouse_delta: (-9, 42),
+            mouse_right: true,
+            family_keyboard: [0x01, 0x80, 0x00, 0xFF, 0x10, 0x00, 0x00, 0x00, 0x55],
         };
         si.publish(&inputs);
         let got = si.load();
@@ -740,6 +783,12 @@ mod tests {
         assert_eq!(got.turbo_mask, Buttons::A | Buttons::B);
         assert_eq!(got.turbo_period, 3);
         assert_eq!(got.power_pad, 0b1010_0101_1100);
+        assert_eq!(got.mouse_delta, (-9, 42));
+        assert!(got.mouse_right);
+        assert_eq!(
+            got.family_keyboard,
+            [0x01, 0x80, 0x00, 0xFF, 0x10, 0x00, 0x00, 0x00, 0x55]
+        );
     }
 
     #[test]
@@ -757,6 +806,9 @@ mod tests {
             turbo_mask: Buttons::empty(),
             turbo_period: 2,
             power_pad: 0,
+            mouse_delta: (0, 0),
+            mouse_right: false,
+            family_keyboard: [0; 9],
         };
         si.publish(&inputs);
         assert_eq!(si.load().mouse_nes, (u16::MAX, u16::MAX));

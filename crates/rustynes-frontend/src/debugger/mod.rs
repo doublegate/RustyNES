@@ -905,9 +905,16 @@ impl DebuggerOverlay {
                     &mut self.cheat_ui,
                     nes,
                     self.cheat_persist.as_ref(),
+                    self.rom_crc,
                 );
                 #[cfg(target_arch = "wasm32")]
-                cheat_panel::show(ctx, &mut self.show_cheat, &mut self.cheat_ui, nes);
+                cheat_panel::show(
+                    ctx,
+                    &mut self.show_cheat,
+                    &mut self.cheat_ui,
+                    nes,
+                    self.rom_crc,
+                );
             }
         }
         if self.show_game_db {

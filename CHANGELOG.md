@@ -118,6 +118,43 @@ and the v1.2.0 plan.
   presentation is also byte-identical** — proven by the full ROM corpus
   (AccuracyCoin 139/139, `nestest` 0-diff, blargg / kevtris green) passing
   identically with the feature on and off.
+- **Family BASIC keyboard** (v1.2.0 Workstream D1): a new
+  `InputDevice::FamilyKeyboard` core device implements the Famicom keyboard's
+  9-row x 2-column-half matrix scan — `$4016` write selects the column-half
+  (bit 0), clocks the row counter (bit 1 rising edge advances, low resets), and
+  enables the matrix (bit 2); `$4017` read returns the four selected key
+  switches on bits 4..1, active-low. A new `Nes::set_family_keyboard` setter
+  (mirroring `set_power_pad`) feeds the 72-key bitmap. The frontend maps host
+  keys via `input::family_keyboard_index` (a direct, one-to-one passthrough; a
+  faithful positional layout is a follow-up) and offers it as the player-2
+  device in the input rebind panel. Unit-verified matrix scan; save-state
+  round-trips (snapshot tag 5).
+- **SNES-style serial mouse + Arkanoid on both ports** (v1.2.0 Workstream D2): a
+  new `InputDevice::SnesMouse` core device implements the 32-bit MSb-first D0
+  report (signature nibble `0b0001`, sensitivity, left/right buttons, signed
+  7-bit X/Y movement, idles high after the report), with a `Nes::set_snes_mouse`
+  setter; the frontend derives per-frame movement from the cursor delta and maps
+  the left/right mouse buttons. The Arkanoid **Vaus** paddle is now selectable on
+  **either** port (the core already permits `set_paddle` on port 0). Both are
+  selectable as the player-2 expansion device. Unit-verified serial protocol;
+  save-state round-trips (mouse snapshot tag 4). Konami / Bandai Hyper Shot, the
+  Family Trainer, and the Subor keyboard are noted follow-ups (not implemented).
+- **Game Genie code-name database** (v1.2.0 Workstream D3): a small committed,
+  CRC32-keyed asset (`genie_database.tsv`, public Galoob / community code lists)
+  maps a ROM to named Game Genie codes. The cheat panel shows a pick-list of the
+  loaded ROM's matching codes; selecting one feeds the **existing**
+  `GenieCode` decode + cheat persistence. Pure frontend — the core Game Genie
+  substitution (`rustynes-core/src/genie.rs`) is unchanged; every offered code is
+  validated through `GenieCode::new`, so the no-cheat PRG-read path is
+  byte-identical. The asset is compiled in for both native and wasm (modest size;
+  commercial ROMs are never committed — only the codes).
+- **Determinism contract held for all of Workstream D**: every new input device
+  is additive and OFF by default (`ExpansionDevice::None` stays the default; new
+  `FrameInputs` / `SharedInput` / config fields are `#[serde(default)]` and
+  default to "no device / no keys"), and the core input additions are pure /
+  deterministic. The shipped build + AccuracyCoin **(139/139)** + `nestest`
+  0-diff + blargg / kevtris are byte-identical to before; the no_std chip stack
+  still cross-compiles to `thumbv7em-none-eabihf`.
 
 ### Fixed
 

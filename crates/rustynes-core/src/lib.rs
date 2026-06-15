@@ -47,7 +47,9 @@ pub use bus::{AccessRec, EventKind, EventRec};
 pub use controller::{Buttons, Controller};
 pub use debug::{ApuDebugView, CpuDebugView, MapperDebugView, PpuDebugView};
 pub use genie::{GenieCode, GenieError};
-pub use input_device::{InputDevice, PowerPadState, VausState, ZapperState};
+pub use input_device::{
+    FamilyKeyboardState, InputDevice, PowerPadState, SnesMouseState, VausState, ZapperState,
+};
 pub use movie::{
     FrameInput, Movie, MovieError, MoviePlayer, MovieRecorder, StartPoint, BYTES_PER_FRAME,
     MOVIE_FORMAT_VERSION, MOVIE_MAGIC,

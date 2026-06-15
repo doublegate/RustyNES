@@ -241,6 +241,13 @@ pub enum ExpansionDevice {
     /// NES Power Pad / Family Fun Fitness mat (12 buttons; keys per
     /// `input::POWER_PAD_KEYS`).
     PowerPad,
+    /// SNES-style serial mouse (v1.2.0 Workstream D). Mouse motion drives the
+    /// per-frame movement deltas; left/right mouse buttons map to the device
+    /// buttons.
+    SnesMouse,
+    /// Famicom Family BASIC keyboard (v1.2.0 Workstream D). Host keys map to the
+    /// 72-key matrix via `input::FAMILY_KEYBOARD_KEYMAP`.
+    FamilyKeyboard,
 }
 
 impl Default for InputConfig {

@@ -7,7 +7,9 @@
 
 use crate::bus::LockstepBus;
 use crate::controller::Controller;
-use crate::input_device::{InputDevice, VausState, ZapperState};
+use crate::input_device::{
+    FamilyKeyboardState, InputDevice, SnesMouseState, VausState, ZapperState,
+};
 use crate::save_state::{BinReader, BinWriter, SnapshotError};
 use alloc::format;
 use alloc::vec::Vec;
@@ -79,9 +81,11 @@ pub fn encode_bus(bus: &LockstepBus) -> Vec<u8> {
     w.u64(s.dma_mc_consumed);
     // v2.1.0 non-standard input devices, appended at the tail (same
     // trailing-default pattern): a tag byte per port (0 = None, 1 = Zapper,
-    // 2 = Vaus) followed by that device's fields. Pre-v2.1.0 blobs lack these
-    // bytes and decode with both ports unplugged (`None`) — exactly the
-    // default. Devices are NOT part of the determinism-critical no-device path.
+    // 2 = Vaus, 3 = PowerPad, 4 = SnesMouse, 5 = FamilyKeyboard — the last
+    // three added in v1.1.0 beta.1 / v1.2.0 Workstream D) followed by that
+    // device's fields. Pre-v2.1.0 blobs lack these bytes and decode with both
+    // ports unplugged (`None`) — exactly the default. Devices are NOT part of
+    // the determinism-critical no-device path.
     for port in 0..2 {
         encode_expansion_device(&mut w, bus.expansion_device(port).as_ref());
     }
@@ -144,6 +148,25 @@ fn encode_expansion_device(w: &mut BinWriter, device: Option<&InputDevice>) {
             w.u8(p.shift_h_raw());
             w.bool(p.strobe_raw());
         }
+        Some(InputDevice::SnesMouse(m)) => {
+            w.u8(4);
+            w.i16(m.dx_raw());
+            w.i16(m.dy_raw());
+            w.bool(m.left_raw());
+            w.bool(m.right_raw());
+            w.u8(m.sensitivity_raw());
+            w.u32(m.shift_raw());
+            w.u8(m.read_count_raw());
+            w.bool(m.strobe_raw());
+        }
+        Some(InputDevice::FamilyKeyboard(k)) => {
+            w.u8(5);
+            w.bytes(&k.keys_raw());
+            w.u8(k.row_raw());
+            w.bool(k.column_raw());
+            w.bool(k.enabled_raw());
+            w.bool(k.clock_raw());
+        }
     }
 }
 
@@ -178,6 +201,37 @@ fn decode_expansion_device(r: &mut BinReader<'_>) -> Result<Option<InputDevice>,
             let strobe = r.bool()?;
             Some(InputDevice::PowerPad(
                 crate::input_device::PowerPadState::from_parts(buttons, shift_l, shift_h, strobe),
+            ))
+        }
+        4 => {
+            let dx = r.i16()?;
+            let dy = r.i16()?;
+            let left = r.bool()?;
+            let right = r.bool()?;
+            let sensitivity = r.u8()?;
+            let shift = r.u32()?;
+            let read_count = r.u8()?;
+            let strobe = r.bool()?;
+            Some(InputDevice::SnesMouse(SnesMouseState::from_parts(
+                dx,
+                dy,
+                left,
+                right,
+                sensitivity,
+                shift,
+                read_count,
+                strobe,
+            )))
+        }
+        5 => {
+            let mut keys = [0u8; 9];
+            r.read_into(&mut keys)?;
+            let row = r.u8()?;
+            let column = r.bool()?;
+            let enabled = r.bool()?;
+            let clock = r.bool()?;
+            Some(InputDevice::FamilyKeyboard(
+                FamilyKeyboardState::from_parts(keys, row, column, enabled, clock),
             ))
         }
         // 0 (None) or any unknown tag => no device.

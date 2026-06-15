@@ -129,6 +129,19 @@ pub struct FrameInputs {
     /// button `i+1`). Consumed only when the player-2 expansion device is a
     /// Power Pad.
     pub power_pad: u16,
+    /// v1.2.0 Workstream D — accumulated mouse motion this frame `(dx, dy)`,
+    /// consumed only when the expansion device is a SNES mouse.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub mouse_delta: (i16, i16),
+    /// v1.2.0 Workstream D — right mouse button held (SNES mouse right button;
+    /// the left button reuses `mouse_pressed`).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub mouse_right: bool,
+    /// v1.2.0 Workstream D — Family BASIC keyboard pressed-key matrix bitmap
+    /// (one byte per matrix row). Consumed only when the expansion device is a
+    /// Family BASIC keyboard. All-zero (no keys) by default = byte-identical.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub family_keyboard: [u8; 9],
 }
 
 /// v1.1.0 beta.1 (T-110-B2) — apply turbo/autofire to one port's buttons.
@@ -320,6 +333,13 @@ impl EmuCore {
                     }
                     ExpansionDevice::PowerPad => {
                         nes.set_power_pad(1, inputs.power_pad);
+                    }
+                    ExpansionDevice::SnesMouse => {
+                        let (dx, dy) = inputs.mouse_delta;
+                        nes.set_snes_mouse(1, dx, dy, inputs.mouse_pressed, inputs.mouse_right, 0);
+                    }
+                    ExpansionDevice::FamilyKeyboard => {
+                        nes.set_family_keyboard(1, inputs.family_keyboard);
                     }
                 }
             }

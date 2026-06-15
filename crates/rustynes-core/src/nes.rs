@@ -1038,6 +1038,65 @@ impl Nes {
         self.bus.set_power_pad(port, buttons);
     }
 
+    /// v1.2.0 Workstream D — attach a SNES-style serial mouse on `port` (0 =
+    /// `$4016`, 1 = `$4017`) and set its movement / buttons / sensitivity.
+    /// `(dx, dy)` are the signed per-frame deltas (clamped to +/-127 on latch);
+    /// `sensitivity` is 0 (low) / 1 (medium) / 2 (high). Convenience wrapper
+    /// that attaches the device if absent then updates it. Opt-in: the no-device
+    /// path stays byte-identical.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `port` is not in `0..=1`.
+    pub fn set_snes_mouse(
+        &mut self,
+        port: usize,
+        dx: i16,
+        dy: i16,
+        left: bool,
+        right: bool,
+        sensitivity: u8,
+    ) {
+        if !matches!(
+            self.bus.expansion_device(port),
+            Some(InputDevice::SnesMouse(_))
+        ) {
+            self.bus.set_expansion_device(
+                port,
+                Some(InputDevice::SnesMouse(
+                    crate::input_device::SnesMouseState::new(),
+                )),
+            );
+        }
+        self.bus
+            .set_snes_mouse(port, dx, dy, left, right, sensitivity);
+    }
+
+    /// v1.2.0 Workstream D — attach a Famicom Family BASIC keyboard on `port`
+    /// (typically port 1 / `$4017`) and set its pressed-key bitmap. `keys` is
+    /// one byte per matrix row (`keys[row]` bits 0..=3 = column-half 0 keys,
+    /// bits 4..=7 = column-half 1 keys); the frontend builds it from host keys.
+    /// Convenience wrapper that attaches the device if absent then updates it.
+    /// Opt-in: the no-device path stays byte-identical.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `port` is not in `0..=1`.
+    pub fn set_family_keyboard(&mut self, port: usize, keys: [u8; 9]) {
+        if !matches!(
+            self.bus.expansion_device(port),
+            Some(InputDevice::FamilyKeyboard(_))
+        ) {
+            self.bus.set_expansion_device(
+                port,
+                Some(InputDevice::FamilyKeyboard(
+                    crate::input_device::FamilyKeyboardState::new(),
+                )),
+            );
+        }
+        self.bus.set_family_keyboard(port, keys);
+    }
+
     /// v1.1.0 beta.1 (T-110-B4) — set (`Some`) or clear (`None`) a per-game
     /// **nametable mirroring override**, a load-time correction for ROMs whose
     /// iNES header carries the wrong mirroring flag (supplied by the frontend's

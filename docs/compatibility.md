@@ -254,17 +254,27 @@ This section supersedes the early "Out-of-scope" list above where they disagree
   (`RUSTYNES_FDS_BIOS`) `fdsirqtests.fds` path. Simplified: no CRC/gaps-on-write,
   no analog seek timing. nesdev `FDS*` is the primary source; Mesen2
   `Core/NES/Mappers/FDS/` is a structural-only (GPL-3.0) reference.
-- **Input devices — standard pad + Four Score + Zapper + Vaus + Power Pad.** The
-  **Four Score** 4-player adapter is supported. Also supported: the
-  **Arkanoid Vaus paddle** (`Nes::set_paddle`, game-ROM-verified against
-  `vaus-test`), the **Zapper** light gun (`Nes::set_zapper`, framebuffer-luma
-  light-detect, unit-verified only), and the **Power Pad / Family Fun Fitness mat**
+- **Input devices — standard pad + Four Score + Zapper + Vaus + Power Pad + SNES
+  mouse + Family BASIC keyboard.** The **Four Score** 4-player adapter is
+  supported. Also supported: the **Arkanoid Vaus paddle** (`Nes::set_paddle`,
+  game-ROM-verified against `vaus-test`; selectable on either port), the
+  **Zapper** light gun (`Nes::set_zapper`, framebuffer-luma light-detect,
+  unit-verified only), the **Power Pad / Family Fun Fitness mat**
   (`Nes::set_power_pad`, the 12-button dual-shift-register serial protocol,
-  unit-verified against the `NESdev` / Mesen bit layout) as opt-in per-port
+  unit-verified against the `NESdev` / Mesen bit layout), the **SNES-style serial
+  mouse** (`Nes::set_snes_mouse`, the 32-bit MSb-first D0 report — signature
+  nibble + sensitivity + buttons + signed 7-bit X/Y movement, unit-verified
+  against the `NESdev` "Mouse" layout), and the **Famicom Family BASIC keyboard**
+  (`Nes::set_family_keyboard`, the 9-row x 2-column-half matrix scan on
+  `$4016` write / `$4017` read, active-low, unit-verified) as opt-in per-port
   `InputDevice` overlays — when no device is attached the standard-controller +
-  Four Score read paths are byte-identical. (v1.1.0 beta.1: the Power Pad is playable —
-  selectable as the player-2 device with a 12-key default mapping; rebindable mat keys
-  are a follow-up.) Famicom expansion-port devices (the Family BASIC keyboard), the
+  Four Score read paths are byte-identical. (v1.1.0 beta.1: the Power Pad is
+  playable — selectable as the player-2 device with a 12-key default mapping;
+  rebindable mat keys are a follow-up. v1.2.0 Workstream D: SNES mouse + Family
+  BASIC keyboard added, both selectable as the player-2 device; the Family BASIC
+  keyboard uses a direct host-key passthrough rather than a faithful positional
+  layout — a per-key positional map is a follow-up.) Konami / Bandai Hyper Shot,
+  the Family Trainer (≈ Power Pad), the Subor keyboard (≈ Family BASIC), the
   microphone, and DMC-DMA controller-bit corruption remain deferred.
 - **Vs. System / PlayChoice-10 (2C03/04/05 RGB PPUs) — game-verified.**
   RGB palette tables + 2C05 register quirks + NES 2.0 byte-13 parsing + Vs.
