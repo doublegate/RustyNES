@@ -262,6 +262,30 @@ See `docs/adr/0011-mapper-tiering.md`,
   0-diff + blargg / kevtris stay green; the no_std chip stack still cross-compiles
   to `thumbv7em-none-eabihf`.
 
+### Changed
+
+- **Hosted browser-netplay deploy made turn-key + honest** (v1.2.0 Workstream
+  F3, deploy + verify-prep). The existing `deploy/` bundle (signaling server +
+  Caddy TLS proxy + coturn STUN/TURN) is now deployable with no source edits:
+  the `Dockerfile` builds the correct `rustynes-netplay` crate (was a stale
+  `nes-netplay`), a workspace-root `.dockerignore` (referenced but previously
+  missing) keeps `target/` + ROMs + docs out of the image context, and the
+  per-deploy values (`DOMAIN`, `TURN_USER`/`TURN_SECRET`/`TURN_REALM`) come from
+  a `.env` (new `deploy/.env.example` template; coturn credential/realm injected
+  as CLI flags from env so `turnserver.conf` carries no checked-in secret). All
+  stale `RustyNES v2` / `nes-frontend` references scrubbed; `README.md` now uses
+  clearly-placeholder values (`signaling.example.com`, `TURN_SECRET=changeme`).
+  `docs/netplay-webrtc.md` §3.4/§4 flipped from "Pending" to
+  **deployment-ready; live verification pending the maintainer's hosted run**
+  (explicitly **not** "Verified"), and a copy-pasteable **manual verification
+  checklist** (2-tab → 2-machine → 4-player matrix + ops/DNS/TLS steps + the
+  TURN-bandwidth ops caveat) added to `deploy/README.md`. Documented that
+  browser netplay needs **no COOP/COEP / SharedArrayBuffer** (DataChannel +
+  AudioWorklet). Docs/deploy only — no Rust changes; the `[netplay]`
+  `signaling_url` / `stun_servers` config defaults were already correct and stay
+  byte-identical. Live multi-browser netplay verification remains the
+  maintainer's manual step (not run here).
+
 ### Fixed
 
 - **PR #75 review hardening (beta.2 bot-review follow-up).** Adopted the

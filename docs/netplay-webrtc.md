@@ -1,15 +1,18 @@
 # Netplay: NAT traversal (STUN) + WebRTC / browser transport
 
-**Status:** shipped in v1.0.0 — **deploy bundle + wasm lobby landed**. On top of
-the signaling/transport skeleton, the browser path is **deployable + usable**:
-a `deploy/` Docker bundle (signaling server + Caddy TLS proxy + coturn STUN/TURN),
-a configurable signaling URL + ICE/STUN list (`[netplay] signaling_url` /
+**Status:** shipped in v1.0.0 — **deploy bundle + wasm lobby landed; the hosted
+stack is deployment-ready, live verification pending the maintainer's hosted
+run.** On top of the signaling/transport skeleton, the browser path is
+**deployable + usable**: a turn-key `deploy/` Docker bundle (signaling server +
+Caddy TLS proxy + coturn STUN/TURN, all per-deploy values via `.env`), a
+configurable signaling URL + ICE/STUN list (`[netplay] signaling_url` /
 `stun_servers`, plumbed into `BrowserNetplay::connect`), and a wired wasm **lobby
 UI** that drives the `RollbackSession` over WebRTC per rAF frame. The remaining
 gap is a live end-to-end browser session, which needs the deployed signaling
-server **running** + two real browsers and cannot be verified headlessly. This
-file is the spec for those pieces plus the STUN/hole-punch scaffold they
-build on.
+server **running** + real browsers and **cannot be verified headlessly** — it is
+the maintainer's manual step (checklist in `deploy/README.md`), and is **not**
+claimed verified here. This file is the spec for those pieces plus the
+STUN/hole-punch scaffold they build on.
 
 Also landed: the N-peer UDP roster handshake (3-4 player native UDP mesh,
 loopback-verified); the reference signaling server (a deployable WebSocket relay
@@ -37,7 +40,7 @@ it only ever `send`s and `poll`s `NetMessage`s. The base `Transport` is native U
 | Signaling server + offer/answer/ICE | `crates/rustynes-netplay/examples/signaling_server.rs` | Implemented (reference WS relay, `--features signaling-server`) |
 | N-peer browser mesh signaling (2-4 players) | `rustynes-netplay::signaling` (slot-routed offer/answer/candidate) | Implemented + unit-tested for 2/3/4-peer rooms |
 | Wasm-frontend netplay wiring + lobby UI | `rustynes-frontend` (`wasm_netplay.rs`, `wasm_lobby.rs`) | Wired + compile-verified for 2-4 player mesh; browser session pending a live deploy |
-| Deploy bundle (signaling + TLS + STUN/TURN) | `deploy/` (Dockerfile + compose + Caddy + coturn) | Shipped (builds); live session pending hosting |
+| Deploy bundle (signaling + TLS + STUN/TURN) | `deploy/` (Dockerfile + compose + Caddy + coturn + `.env.example`) | Turn-key + deployment-ready (builds); live session pending the maintainer's hosted run |
 | Configurable signaling URL + ICE/STUN list | `[netplay] signaling_url` / `stun_servers` | Shipped |
 
 Nothing here touches the emulator core, so the determinism contract and the
@@ -304,15 +307,20 @@ present.
 
 ### 3.4 Deploying the signaling + STUN/TURN stack
 
-The `deploy/` directory is a turn-key bundle for the server side:
+The `deploy/` directory is a **turn-key** bundle for the server side — a
+maintainer can `docker compose up` on a host with a domain and get a working
+signaling + STUN/TURN stack with no source edits (all per-deploy values come
+from a `.env`):
 
 | File | Role |
 |---|---|
-| `deploy/Dockerfile` | Builds + runs the `signaling_server` example (`--features signaling-server`). |
-| `deploy/docker-compose.yml` | Wires `signaling` + `caddy` (TLS → `wss://`) + `coturn` (STUN/TURN). |
+| `deploy/Dockerfile` | Builds + runs the `rustynes-netplay` `signaling_server` example (`--features signaling-server`). |
+| `deploy/docker-compose.yml` | Wires `signaling` + `caddy` (TLS → `wss://`) + `coturn` (STUN/TURN); coturn credential/realm injected from env. |
 | `deploy/Caddyfile` | TLS termination + WebSocket-upgrade reverse proxy. |
-| `deploy/turnserver.conf` | Minimal coturn STUN + TURN config. |
-| `deploy/README.md` | Full run/deploy steps. |
+| `deploy/turnserver.conf` | Minimal coturn STUN + TURN config (credential/realm come from env, not checked in). |
+| `deploy/.env.example` | Template for `DOMAIN` + `TURN_*`; copy to `.env` (gitignored). |
+| `deploy/README.md` | Full run/deploy steps + the manual verification checklist. |
+| workspace-root `.dockerignore` | Keeps `target/`, ROMs, docs out of the image build context. |
 
 **Local two-tab test:**
 
@@ -324,10 +332,17 @@ Caddy serves `wss://localhost/` with an internal self-signed CA; coturn provides
 STUN/TURN on `:3478`. Point the wasm build's `signaling_url` at `wss://localhost`
 and open it in two tabs.
 
-**Public deploy:** set `DOMAIN` to a real hostname (Caddy auto-provisions a
-Let's Encrypt cert), set a strong coturn credential + `external-ip`, and point
-`[netplay] signaling_url` / `stun_servers` at your host. Full notes in
-`deploy/README.md`.
+**Public deploy:** `cp deploy/.env.example deploy/.env`, set `DOMAIN` to a real
+hostname (Caddy auto-provisions a Let's Encrypt cert — drop `tls internal` from
+the `Caddyfile`), set a strong `TURN_SECRET` + `TURN_REALM`, and point
+`[netplay] signaling_url` / `stun_servers` at your host. Full notes + the
+**manual verification checklist** (2-tab → 2-machine → 4-player matrix + the
+ops/DNS/TLS/TURN-bandwidth steps) live in `deploy/README.md`.
+
+**No COOP/COEP needed.** The browser path uses a WebRTC `RtcDataChannel` plus an
+`AudioWorklet` — neither needs `SharedArrayBuffer`, so the hosting page needs no
+cross-origin-isolation (`Cross-Origin-Opener-Policy` / `-Embedder-Policy`)
+headers, and the existing GitHub Pages deploy serves it unchanged.
 
 **NAT / relay notes.** ICE (the browser's own STUN/TURN agent) subsumes the §2
 native hole-punch logic for the WebRTC path. STUN alone traverses most home
@@ -354,12 +369,12 @@ for anything beyond a quick test.
 | `Roster` wire encode/decode + oversized/malformed rejection | Unit tests |
 | Wasm WebRTC frontend wiring + lobby compiles (both `wasm-winit` + `wasm-canvas`) | Build |
 | Configurable signaling URL + ICE/STUN list plumbed into `BrowserNetplay::connect` | Build + `wasm_lobby` unit tests |
-| Deploy bundle (signaling + Caddy TLS + coturn) builds | `deploy/` Docker images |
+| Deploy bundle (signaling + Caddy TLS + coturn) builds + is turn-key | `deploy/` Docker images; `.env`-driven, no source edits to deploy |
 | Live STUN round-trip | `#[ignore]`d manual probe — **confirmed working live** against `stun.l.google.com`; kept ignored because CI may be sandboxed |
 
-**Pending:**
+**Pending (deployment-ready, NOT verified — the maintainer's manual run):**
 
 | Item | Needs |
 |---|---|
 | Real cross-NAT UDP traversal | A STUN server + two real NATs |
-| Full browser WebRTC netplay (2-4 players) | The deploy bundle **running** + N browsers — cannot verify headlessly |
+| Full browser WebRTC netplay (2-4 players) | The deploy bundle **running** on a host/domain + N real browsers — cannot verify headlessly. Walk the checklist in `deploy/README.md` (2-tab → 2-machine → 4-player matrix + ops/DNS/TLS/TURN-bandwidth steps). |

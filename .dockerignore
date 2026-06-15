@@ -1,0 +1,46 @@
+# Build context excludes for the deploy/ netplay signaling-server image
+# (deploy/docker-compose.yml builds with the workspace root as context).
+#
+# Keeps the image build fast + small: the signaling server only needs the cargo
+# workspace sources + manifests + lockfile, never build artifacts, ROMs, git
+# history, docs, or test corpora. Cargo.lock is intentionally NOT ignored
+# (Dockerfile builds with --locked).
+
+# Rust build output (huge; rebuilt inside the image).
+/target
+**/target
+
+# Git + editor + CI metadata.
+.git
+.github
+.gitignore
+.gitattributes
+.markdownlint*
+.pre-commit-config.yaml
+
+# Commercial / test ROM dumps and run output (never ship these in an image,
+# and never copy commercial Nintendo ROMs anywhere).
+tests/roms/external
+tests/captures
+**/*.nes
+**/*.fds
+**/*.nsf
+**/*.nsfe
+
+# Docs, reference material, screenshots, golden corpora — not needed to build
+# the signaling server.
+docs
+ref-docs
+ref-proj
+tricnes
+screenshots
+tests/golden
+to-dos
+
+# WebAssembly frontend build output.
+**/dist
+**/pkg
+
+# The deploy bundle itself (Caddy/coturn configs are mounted at runtime via
+# compose volumes, not baked into the signaling image).
+deploy
