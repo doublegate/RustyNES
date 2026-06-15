@@ -155,15 +155,34 @@ wiki + unit-tested + boot-smoked (commercial-ROM visual survey via the
 `coverage_smoke` bin). Pirate, multicart, and ultra-niche mappers remain gated by
 the long-tail policy below.
 
-**Known long-tail render gap — mapper 89 (Sunsoft-2).** *Tenka no
-Goikenban: Mito Koumon* (the only iNES mapper-89 dump on hand) boots and executes
-(CPU/RAM live; sprites briefly render) but its background nametable stays empty
-and the picture degrades to the backdrop colour after ~400 frames. The banking is
-spec-correct (vectors resolve in the fixed last bank; CHR sprite fetches work), so
-the root cause is a rendering-enable / PPU-setup dependency this title needs that
-is not yet modelled — not a banking error. The 9 other long-tail batch-2 games
-(both m32, both m87, both m184, Don Doko Don 2 on m48) render correctly and 7 are
-locked into the `external_extended` oracle.
+**v1.2.0** extends coverage to **87 families**: a curated (Tier-1) batch of 9
+discrete-logic boards and an aggressive best-effort (Tier-2) sweep of 27
+reference-ported multicart / Sachen / discrete boards. The best-effort tier is
+register-decode unit-tested but **not** accuracy-gated; see `docs/mappers.md`
+§Mapper accuracy tiering and `docs/adr/0011-mapper-tiering.md`.
+
+**Resolved in v1.2.0 — mapper 89 (Sunsoft-2) bus conflict.** *Tenka no
+Goikenban: Mito Koumon* (the only iNES mapper-89 dump on hand) previously left its
+background nametable empty, degrading to the backdrop colour after ~400 frames.
+Root cause: the Sunsoft-2 board has **bus conflicts** (nesdev `INES_Mapper_089`
+documents them; GeraNES models them) — a register write is driven onto the bus
+ANDed with the PRG-ROM byte already at that address. RustyNES applied the raw
+write, so a CHR/PRG/mirroring select that the game expects to be masked resolved
+to the wrong bank. The fix masks the written value with `read_prg(addr)` (the
+existing bus-conflict idiom, e.g. `gxrom.rs`); the 4-bit CHR decode (bit 7 = A16)
+is kept — correct for this 128 KiB-CHR title. Verified on the real cartridge:
+the title screen renders and stays rendered past frame 600. A bus-conflict unit
+test guards it.
+
+**Triaged not-a-bug — GxROM-66 / SMB3 "sprite flashing"** (the
+"under investigation" item carried from the v2.4.0 lineage). The report
+misattributes the board: *Super Mario Bros. 3* is **mapper 4 (MMC3)**, not
+GxROM/66. MMC3 is among the most heavily oracle-tested families (incl. the
+AccuracyCoin MMC3 IRQ-timing suite), and SMB3 boots and renders its title /
+demo correctly headless (verified via the `render_smoke` harness over 600
+frames). The "flashing" is not reproducible headlessly and is most likely
+intended animation (the demo / world-map / invincibility flash) or a
+display-pacing artifact, not a core emulation bug. Closed.
 
 ## Audio expansion scope
 
