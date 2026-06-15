@@ -60,6 +60,14 @@ fn main() {
     let out_dir = Path::new(&args[2]);
     std::fs::create_dir_all(out_dir).expect("create out dir");
 
+    // Optional `--state <file>`: restore a save-state (e.g. one taken in the app
+    // with F1 while Mario is mid-run and flickering) and capture straight from
+    // there, skipping the scripted path to 1-1.
+    let state_path = args
+        .iter()
+        .position(|a| a == "--state")
+        .and_then(|i| args.get(i + 1).cloned());
+
     let bytes = std::fs::read(rom_path).unwrap_or_else(|e| panic!("read {rom_path}: {e}"));
     let mut nes = Nes::from_rom(&bytes).unwrap_or_else(|e| panic!("parse {rom_path}: {e}"));
 
@@ -88,16 +96,23 @@ fn main() {
 
     let mut frame = 0u64;
     let dump_every = 15u64;
-    for &(dur, held) in script {
-        for i in 0..dur {
-            // Hold the button only for the first 8 frames of a tap, then release.
-            let buttons = if i < 8 { held } else { Buttons::empty() };
-            nes.set_buttons(0, buttons);
-            let fb = nes.run_frame();
-            if frame % dump_every == 0 {
-                write_png(&out_dir.join(format!("f{frame:04}.png")), fb);
+    if let Some(sp) = &state_path {
+        let blob = std::fs::read(sp).unwrap_or_else(|e| panic!("read state {sp}: {e}"));
+        nes.restore(&blob)
+            .unwrap_or_else(|e| panic!("restore state {sp}: {e:?}"));
+        eprintln!("restored save-state from {sp}; capturing from there");
+    } else {
+        for &(dur, held) in script {
+            for i in 0..dur {
+                // Hold the button only for the first 8 frames of a tap, then release.
+                let buttons = if i < 8 { held } else { Buttons::empty() };
+                nes.set_buttons(0, buttons);
+                let fb = nes.run_frame();
+                if frame % dump_every == 0 {
+                    write_png(&out_dir.join(format!("f{frame:04}.png")), fb);
+                }
+                frame += 1;
             }
-            frame += 1;
         }
     }
 
