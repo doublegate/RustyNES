@@ -23,6 +23,10 @@ irq-timing-trace = ["rustynes-core/irq-timing-trace"]
 # `tests/roms/external/` (gitignored). Default off so CI never depends on
 # non-distributable assets. See `tests/external_real_games.rs`.
 commercial-roms = ["dep:png"]
+# Diagnostic-only: forward to `rustynes-core/debug-hooks` so the SMB3 repro bin
+# can use the per-frame event/access logging APIs (set_event_logging / events /
+# set_access_logging / accesses). NOT part of CI; off by default.
+debug-hooks = ["rustynes-core/debug-hooks"]
 # Forward to `rustynes-core/ppu-state-trace`. Off by default; enabled only by
 # the Session-10 PPU-state-tracing fixture
 # (`cargo test --features test-roms,ppu-state-trace
@@ -107,6 +111,13 @@ required-features = ["commercial-roms"]
 name = "coverage_smoke"
 path = "src/bin/coverage_smoke.rs"
 required-features = ["commercial-roms"]
+
+# v1.2.0 SMB3 OAM-DMA per-cycle trace probe (diagnostic only). Dumps the OAM
+# DMA write stream on a Mario-drop frame to pinpoint the skipped writes.
+[[bin]]
+name = "smb3_dma_trace"
+path = "src/bin/smb3_dma_trace.rs"
+required-features = ["commercial-roms", "irq-timing-trace", "debug-hooks"]
 
 [[bin]]
 name = "fds_smoke"
