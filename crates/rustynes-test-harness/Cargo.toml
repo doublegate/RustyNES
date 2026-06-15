@@ -94,6 +94,11 @@ path = "src/bin/capture_left_edge.rs"
 required-features = ["commercial-roms"]
 
 [[bin]]
+name = "render_smoke"
+path = "src/bin/render_smoke.rs"
+required-features = ["commercial-roms"]
+
+[[bin]]
 name = "coverage_smoke"
 path = "src/bin/coverage_smoke.rs"
 required-features = ["commercial-roms"]
