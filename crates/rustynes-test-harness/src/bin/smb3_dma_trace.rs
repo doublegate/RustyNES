@@ -16,7 +16,11 @@
 //!     --bin smb3_dma_trace -- <rom-path> --movie <file.rnm>
 //! ```
 
-#![allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::too_many_lines
+)]
 
 use rustynes_core::irq_trace::BusAccess;
 use rustynes_core::{Buttons, Movie, MoviePlayer, Nes};
@@ -124,7 +128,7 @@ fn main() {
                     // Print the cycles around the corruption window (writes
                     // 36..52, i.e. OAM offsets 36..52 covering the stale 40..47)
                     // plus DMA start/end markers, to keep output readable.
-                    let near_gap = write_idx >= 35 && write_idx <= 54;
+                    let near_gap = (35..=54).contains(&write_idx);
                     if near_gap || printed < 6 {
                         eprintln!(
                             "    cyc{} sl{} dot{} dmc{} owed{} : {tag}",

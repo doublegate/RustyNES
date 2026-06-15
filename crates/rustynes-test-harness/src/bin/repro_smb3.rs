@@ -24,7 +24,8 @@
     clippy::cast_possible_truncation,
     clippy::cast_precision_loss,
     clippy::cast_sign_loss,
-    clippy::doc_markdown
+    clippy::doc_markdown,
+    clippy::too_many_lines
 )]
 
 use std::path::Path;
@@ -142,7 +143,9 @@ fn main() {
     let mut frame = 0u64;
     let dump_every = 15u64;
     if let Some(mp) = &movie_path {
-        frame = replay_movie(&mut nes, mp, out_dir, dump_every);
+        // replay_movie's return (the next free frame index) is only needed by
+        // the running-stretch capture, which the movie branch doesn't run.
+        let _ = replay_movie(&mut nes, mp, out_dir, dump_every);
         // Discriminator: hold NO input and watch whether the per-frame Mario
         // blink STOPS (an invincibility/flash timer expiring => authentic
         // game-driven flicker) or persists indefinitely (suspicious). Prints a
@@ -241,8 +244,7 @@ fn replay_movie(nes: &mut Nes, movie_path: &str, out_dir: &Path, dump_every: u64
                 .iter()
                 .enumerate()
                 .max_by_key(|(_, c)| **c)
-                .map(|(l, c)| (l, *c))
-                .unwrap_or((0, 0));
+                .map_or((0, 0), |(l, c)| (l, *c));
             // Coverage on Mario's mid scanline (~Y 64) — the 8-limit test.
             let mario_line = 64usize;
             let mario_cov = per_line[mario_line];
@@ -324,6 +326,7 @@ fn observe_idle(nes: &mut Nes, n: usize) {
 }
 
 /// Mario's body tiles in the OAM/RAM sprite buffer (small Mario, idle).
+#[cfg(feature = "debug-hooks")]
 fn mario_in_buf(buf: &[u8]) -> bool {
     buf.chunks_exact(4).any(|s| {
         let (y, tile) = (s[0], s[1]);
@@ -471,7 +474,7 @@ fn diag_idle(nes: &mut Nes, n: usize) {
             );
         }
 
-        let flag = if oam_mario != prev_oam { "<--flip" } else { "" };
+        let flag = if oam_mario == prev_oam { "" } else { "<--flip" };
         // Highlight the smoking gun: Mario in RAM buffer but not in OAM.
         let drop = if ram_mario && !oam_mario {
             "  RAM-has-Mario-but-OAM-DOESNT"
