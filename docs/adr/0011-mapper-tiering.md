@@ -107,3 +107,13 @@ counts).
 - The classifier carries a `submapper` argument (unused today) so a future
   family with a best-effort submapper variant can be expressed without an API
   change.
+- The invariant is **enforced by tests** in
+  `crates/rustynes-test-harness/tests/mapper_tier_honesty.rs`: a headless
+  (CI-runnable) check parses the byte-identity oracle test sources
+  (`external_real_games.rs` / `external_extended.rs`) and asserts every
+  `mapper-NNN-*` corpus dir they reference is accuracy-gated, plus a headless
+  check on the committed `AccuracyCoin` / `nestest` ROMs; the
+  `commercial-roms`-gated check walks the local oracle dumps and fails on any
+  unclassified mapper (it reports `BestEffort` register-decode verification
+  dumps, which are permitted in the tree but never wired to a byte-identity
+  oracle).
