@@ -472,7 +472,14 @@ impl ScriptEngine {
             // negative integer and its float twin map identically (gemini #54).
             let addr = match key {
                 mlua::Value::Integer(i) => i,
-                mlua::Value::Number(n) if n.is_finite() && n.fract() == 0.0 => n as i64,
+                // Integral AND representable in i64 — `1e308` has `fract()==0.0`
+                // but would saturate on cast, inserting a spurious gate address
+                // (Copilot #55), so it is skipped along with non-integral / NaN.
+                mlua::Value::Number(n)
+                    if n.fract() == 0.0 && n >= -(2.0_f64.powi(63)) && n < 2.0_f64.powi(63) =>
+                {
+                    n as i64
+                }
                 _ => continue,
             };
             set.insert((addr & 0xFFFF) as u16);
