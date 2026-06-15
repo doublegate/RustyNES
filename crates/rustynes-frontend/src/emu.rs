@@ -543,6 +543,12 @@ impl EmuCore {
             self.perf.record_produced(Instant::now());
             target += period;
             produced += 1;
+            // A breakpoint stops the (partial) frame; don't run the rest of the
+            // catch-up burst past it, or the core would advance beyond the stop
+            // PC before the UI pauses (Copilot #41).
+            if fx.breakpoint_hit.is_some() {
+                break;
+            }
         }
         // v2.8.0 Phase 0 — pacer anomaly counters.
         if produced >= 2 {

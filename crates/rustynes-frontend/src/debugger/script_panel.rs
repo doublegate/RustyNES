@@ -43,7 +43,7 @@ impl Default for ScriptPanelState {
     #[allow(clippy::derivable_impls)]
     fn default() -> Self {
         Self {
-            available: cfg!(feature = "scripting"),
+            available: cfg!(all(feature = "scripting", not(target_arch = "wasm32"))),
             loaded: String::new(),
             callbacks: 0,
             error: None,

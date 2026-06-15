@@ -318,7 +318,17 @@ impl Mapper for NsfMapper {
             a if (DRIVER_BASE..DRIVER_BASE + 0x40).contains(&a) => {
                 self.driver[(a - DRIVER_BASE) as usize]
             }
-            0x6000..=0x7FFF => self.wram[(addr - 0x6000) as usize],
+            // A non-bankswitched NSF may load its program into `$6000-$7FFF`
+            // (allowed: `load_addr >= 0x6000`). Serve the program there first,
+            // falling back to WRAM only where it doesn't reach (gemini #44).
+            0x6000..=0x7FFF => {
+                if !self.bankswitched {
+                    if let Some(off) = self.prg_offset(addr) {
+                        return self.prg[off];
+                    }
+                }
+                self.wram[(addr - 0x6000) as usize]
+            }
             // Interrupt vectors point at the driver, overriding any PRG bytes.
             0xFFFA => (DRIVER_NMI_ENTRY & 0xFF) as u8,
             0xFFFB => (DRIVER_NMI_ENTRY >> 8) as u8,

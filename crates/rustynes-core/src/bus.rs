@@ -144,7 +144,7 @@ pub struct AccessRec {
 
 /// Max bus accesses captured per frame. A frame issues on the order of 30k CPU
 /// cycles; this caps the worst case so a tight loop can't grow the log
-/// unbounded (the Lua engine documents that an overflowed frame is truncated).
+/// unbounded. A frame that overflows the cap is truncated (the tail is dropped).
 #[cfg(feature = "debug-hooks")]
 const ACCESS_CAP: usize = 60_000;
 
@@ -3292,7 +3292,10 @@ impl Bus for LockstepBus {
         if self.event_logging {
             let kind = match addr {
                 0x2000..=0x3FFF => Some(EventKind::PpuWrite),
-                0x4000..=0x4013 | 0x4015 | 0x4017 => Some(EventKind::ApuWrite),
+                // The whole `$4000-$4017` APU / I/O window (Copilot #43): this
+                // now also captures `$4014` OAM DMA and `$4016` controller
+                // strobe, which the legend's "$4000-4017" already advertises.
+                0x4000..=0x4017 => Some(EventKind::ApuWrite),
                 0x4020..=0xFFFF => Some(EventKind::MapperWrite),
                 _ => None,
             };
