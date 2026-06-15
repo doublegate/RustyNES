@@ -92,7 +92,7 @@ web-sys = "0.3.77"
 web-time = "1.1"
 
 # Dev deps
-criterion = "0.5"
+criterion = "0.8"
 proptest = "1"
 insta = "1"
 pretty_assertions = "1"
