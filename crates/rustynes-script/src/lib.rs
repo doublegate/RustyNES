@@ -490,7 +490,9 @@ impl ScriptEngine {
         self.instr_count.set(0);
         let count = Rc::clone(&self.instr_count);
         let budget = Rc::clone(&self.budget);
-        self.lua.set_hook(
+        // mlua 0.11 makes `set_hook` fallible; the budget guard is advisory, so
+        // a (pathological) install failure just means no instruction cap here.
+        let _ = self.lua.set_hook(
             HookTriggers::new().every_nth_instruction(10_000),
             move |_lua, _debug| {
                 let n = count.get() + 10_000;
@@ -557,7 +559,8 @@ impl ScriptEngine {
         self.instr_count.set(0);
         let count = Rc::clone(&self.instr_count);
         let budget = Rc::clone(&self.budget);
-        lua.set_hook(
+        // mlua 0.11: `set_hook` is fallible; advisory budget guard (see arm_hook).
+        let _ = lua.set_hook(
             HookTriggers::new().every_nth_instruction(10_000),
             move |_lua, _debug| {
                 let n = count.get() + 10_000;

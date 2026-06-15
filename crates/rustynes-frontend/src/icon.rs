@@ -11,9 +11,11 @@ const ICON_PNG: &[u8] = include_bytes!("../../../assets/RustyNES_Icon/icon-256.p
 
 /// Decode the embedded icon to `(rgba8, width, height)`. `None` on any failure.
 fn decode() -> Option<(Vec<u8>, u32, u32)> {
-    let decoder = png::Decoder::new(ICON_PNG);
+    // png 0.18 requires the decoder source to be `Read + Seek`; `&[u8]` is only
+    // `Read`, so wrap it in a `Cursor`.
+    let decoder = png::Decoder::new(std::io::Cursor::new(ICON_PNG));
     let mut reader = decoder.read_info().ok()?;
-    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let mut buf = vec![0u8; reader.output_buffer_size()?];
     let info = reader.next_frame(&mut buf).ok()?;
     buf.truncate(info.buffer_size());
     let rgba = match info.color_type {

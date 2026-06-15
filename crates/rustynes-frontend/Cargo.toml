@@ -152,7 +152,7 @@ ureq = { version = "2", default-features = false, features = ["tls"], optional =
 # the RA badge PNGs. Non-optional on native (the icon ships in every desktop
 # build); native-only (in this `cfg(not(wasm))` table) so the wasm builds never
 # pull it in.
-png = "0.17"
+png = "0.18"
 
 # v2.8.0 Phase 5 increment 3 — best-effort emulation-thread priority
 # elevation (Linux only). `elevate_thread_priority()` in `emu_thread.rs`
@@ -235,5 +235,7 @@ tempfile = "3"
 # Validate the embedded WGSL shaders at test time (the same WGSL front-end +
 # validator wgpu uses at runtime), so a shader error (e.g. dynamically indexing
 # a `let` array) fails CI instead of aborting the app when the user toggles the
-# NTSC filter. Pinned to wgpu 22's naga so the validation matches what ships.
-naga = { version = "28", features = ["wgsl-in"] }
+# NTSC filter. Pinned to wgpu 25's naga (25.x) so the validation matches what
+# ships AND the two don't duplicate (naga 28 also fails to build against the
+# resolved codespan-reporting).
+naga = { version = "25", features = ["wgsl-in"] }

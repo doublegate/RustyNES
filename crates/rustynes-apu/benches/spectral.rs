@@ -22,8 +22,9 @@
 //! measures the full `add_sample` + decimation + drain path under
 //! release-mode optimization.
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 use rustynes_apu::{BlipBuf, CPU_HZ_NTSC};
+use std::hint::black_box;
 
 fn build_square(cycles: usize, freq_hz: f64) -> Vec<f32> {
     let half_period = (CPU_HZ_NTSC / freq_hz / 2.0).round() as usize;

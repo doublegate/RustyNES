@@ -69,6 +69,7 @@ fn frame_time_graph(ui: &mut egui::Ui, presented: &[f32], produced: &[f32], targ
         rect,
         2.0,
         egui::Stroke::new(1.0, egui::Color32::from_gray(0x40)),
+        egui::StrokeKind::Inside,
     );
 
     // Y scale: headroom above the target line, but always reveal real spikes.

@@ -7,7 +7,7 @@
 //! winit-thread `InputState` the emulator is fed), so it touches neither the
 //! core nor the produce path and has no determinism impact.
 
-use egui::{Color32, Pos2, Rect, Rounding, Sense, Stroke, Vec2};
+use egui::{Color32, CornerRadius, Pos2, Rect, Sense, Stroke, Vec2};
 use rustynes_core::Buttons;
 
 /// Input-display panel state. Stateless today (the held buttons are pushed in
@@ -67,8 +67,13 @@ fn draw_pad(ui: &mut egui::Ui, held: Buttons) {
     let fill = |b: Buttons| if held.contains(b) { LIT } else { IDLE };
 
     // Controller body.
-    p.rect_filled(rect, Rounding::same(8.0), BODY);
-    p.rect_stroke(rect, Rounding::same(8.0), Stroke::new(1.0, OUTLINE));
+    p.rect_filled(rect, CornerRadius::same(8), BODY);
+    p.rect_stroke(
+        rect,
+        CornerRadius::same(8),
+        Stroke::new(1.0, OUTLINE),
+        egui::StrokeKind::Inside,
+    );
 
     // D-pad cross (left side). Centre at (44, 42); arm thickness 16, length 16.
     let cx = 44.0;
@@ -76,12 +81,12 @@ fn draw_pad(ui: &mut egui::Ui, held: Buttons) {
     let t = 8.0; // half-thickness
     let l = 14.0; // arm length
     let arm = |b: Buttons, min: Pos2, max: Pos2| {
-        p.rect_filled(Rect::from_min_max(min, max), Rounding::same(2.0), fill(b));
+        p.rect_filled(Rect::from_min_max(min, max), CornerRadius::same(2), fill(b));
     };
     // Centre square.
     p.rect_filled(
         Rect::from_min_max(at(cx - t, cy - t), at(cx + t, cy + t)),
-        Rounding::ZERO,
+        CornerRadius::ZERO,
         IDLE,
     );
     arm(Buttons::UP, at(cx - t, cy - t - l), at(cx + t, cy - t));
@@ -93,7 +98,7 @@ fn draw_pad(ui: &mut egui::Ui, held: Buttons) {
     let pill = |b: Buttons, x: f32| {
         p.rect_filled(
             Rect::from_min_max(at(x, cy - 4.0), at(x + 20.0, cy + 4.0)),
-            Rounding::same(4.0),
+            CornerRadius::same(4),
             fill(b),
         );
     };
