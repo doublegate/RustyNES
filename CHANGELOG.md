@@ -52,6 +52,11 @@ Work toward **v1.2.0 "Curator"** (beta.1, Workstreams A + B). See
   deterministic parse unchanged — save-states / netplay / oracle all see the
   patched bytes. UPS and BPS verify their in-format source and target CRC32s.
   Native; a malformed patch is surfaced and the unpatched ROM still loads.
+- **`.zip` ROM loading** (v1.2.0 Workstream B): a `.zip` opened as a ROM has its
+  first NES / FDS / NSF entry extracted in memory and loaded as usual (a
+  same-stem soft-patch beside the archive still applies). Native-only (`zip`
+  crate, `deflate`-only to reuse the existing flate2/miniz_oxide); the wasm
+  builds stay byte-identical (the dep is in the `cfg(not(wasm))` table).
 
 ### Fixed
 

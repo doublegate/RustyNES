@@ -195,6 +195,32 @@ fn is_fds_image(bytes: &[u8]) -> bool {
     bytes.starts_with(b"FDS\x1A") || bytes.starts_with(b"\x01*NINTENDO-HVC*")
 }
 
+/// Extract the first NES / FDS / NSF entry from a `.zip` archive, returning its
+/// base file name and bytes. Returns `None` if the archive is unreadable or
+/// holds no recognized ROM entry. Native-only (uses the `zip` crate, which is in
+/// the `cfg(not(wasm))` dependency table).
+#[cfg(not(target_arch = "wasm32"))]
+fn extract_rom_from_zip(zip_bytes: &[u8]) -> Option<(String, Vec<u8>)> {
+    use std::io::Read;
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).ok()?;
+    let idx = (0..archive.len()).find(|&i| {
+        archive.by_index(i).is_ok_and(|f| {
+            std::path::Path::new(f.name()).extension().is_some_and(|e| {
+                e.eq_ignore_ascii_case("nes")
+                    || e.eq_ignore_ascii_case("fds")
+                    || e.eq_ignore_ascii_case("nsf")
+            })
+        })
+    })?;
+    let mut file = archive.by_index(idx).ok()?;
+    let name = std::path::Path::new(file.name())
+        .file_name()
+        .map_or_else(|| "rom".to_string(), |n| n.to_string_lossy().into_owned());
+    let mut out = Vec::new();
+    file.read_to_end(&mut out).ok()?;
+    Some((name, out))
+}
+
 /// `true` when `bytes` is an NSF music file (classic `NESM\x1A` form).
 #[cfg(not(target_arch = "wasm32"))]
 fn is_nsf_image(bytes: &[u8]) -> bool {
@@ -839,6 +865,31 @@ impl App {
                 return;
             }
         };
+        // v1.2.0 Workstream B — load a ROM straight out of a `.zip` archive:
+        // extract the first NES / FDS / NSF entry, then continue exactly as for
+        // a bare file (soft-patching + the deterministic parse see the extracted
+        // image). A same-stem patch beside the `.zip` still resolves below.
+        if path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("zip"))
+        {
+            if let Some((name, rom)) = extract_rom_from_zip(&bytes) {
+                bytes = rom;
+                self.ui.set_status(crate::ui_shell::StatusMessage::new(
+                    format!("Loaded {name} from archive"),
+                    egui::Color32::from_rgb(120, 200, 120),
+                    std::time::Duration::from_secs(3),
+                ));
+            } else {
+                eprintln!("rustynes: no NES/FDS/NSF entry in {}", path.display());
+                self.ui.set_status(crate::ui_shell::StatusMessage::new(
+                    "No ROM found inside the .zip archive".to_string(),
+                    egui::Color32::from_rgb(230, 90, 90),
+                    std::time::Duration::from_secs(4),
+                ));
+                return;
+            }
+        }
         // v1.2.0 Workstream B — auto-apply a same-stem soft-patch sitting beside
         // the ROM (`.bps`/`.ups`/`.ips`, in that precedence), BEFORE any format
         // detection, so the patched image flows through the deterministic parse
@@ -5532,10 +5583,48 @@ pub fn run_wasm() -> winit::event_loop::EventLoopProxy<AppEvent> {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_fds_image, resolve_vs_dip};
+    use super::{extract_rom_from_zip, is_fds_image, resolve_vs_dip};
     use crate::config::VsConfig;
     use rustynes_core::rustynes_mappers::VsPpuType;
     use rustynes_core::VsDbEntry;
+
+    #[test]
+    fn zip_extracts_first_rom_entry() {
+        use std::io::Write;
+        // Build an in-memory zip: a junk text entry then a (stored) .nes entry.
+        let mut buf = Vec::new();
+        {
+            let mut w = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+            let opts = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            w.start_file("readme.txt", opts).unwrap();
+            w.write_all(b"not a rom").unwrap();
+            w.start_file("Game (U).nes", opts).unwrap();
+            w.write_all(b"NES\x1A\x01\x01rompayload").unwrap();
+            w.finish().unwrap();
+        }
+        let (name, rom) = extract_rom_from_zip(&buf).expect("extracts the .nes entry");
+        assert_eq!(name, "Game (U).nes");
+        assert!(rom.starts_with(b"NES\x1A"));
+    }
+
+    #[test]
+    fn zip_without_rom_returns_none() {
+        use std::io::Write;
+        let mut buf = Vec::new();
+        {
+            let mut w = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+            w.start_file(
+                "notes.txt",
+                zip::write::SimpleFileOptions::default()
+                    .compression_method(zip::CompressionMethod::Stored),
+            )
+            .unwrap();
+            w.write_all(b"nothing here").unwrap();
+            w.finish().unwrap();
+        }
+        assert!(extract_rom_from_zip(&buf).is_none());
+    }
 
     // Returns the `Some(..)` form because `resolve_vs_dip` takes the DB lookup
     // result directly (which is an `Option`).
