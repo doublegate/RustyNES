@@ -466,9 +466,13 @@ impl ScriptEngine {
         // replay validates that each slot is actually a table.
         for pair in t.pairs::<mlua::Value, mlua::Value>() {
             let (key, _) = pair?;
+            // Accept only integral keys; a non-integral / NaN / Inf float key
+            // (`__rustynes.exec[1.5]`) is skipped rather than inserting a
+            // spurious gate address (Copilot #54). Cast both via `i64` so a
+            // negative integer and its float twin map identically (gemini #54).
             let addr = match key {
-                mlua::Value::Integer(i) => i as u64,
-                mlua::Value::Number(n) => n as u64,
+                mlua::Value::Integer(i) => i,
+                mlua::Value::Number(n) if n.is_finite() && n.fract() == 0.0 => n as i64,
                 _ => continue,
             };
             set.insert((addr & 0xFFFF) as u16);
