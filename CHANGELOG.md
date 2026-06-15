@@ -222,6 +222,36 @@ See `docs/adr/0011-mapper-tiering.md`,
 
 ### Fixed
 
+- **PR #75 review hardening (beta.2 bot-review follow-up).** Adopted the
+  worthwhile bot-review findings from the merged beta.2 PR:
+  - *Security (path traversal):* HD-pack replacement-image filenames parsed
+    from `hires.txt` are now sanitised (`hdpack::sanitize_image_name`) — a
+    malicious pack can no longer reference `../../etc/passwd`, an absolute path,
+    or any path with separators / drive prefixes to escape the pack directory;
+    such rules are rejected.
+  - *Security (zip bomb / OOM):* `hdpack::read_zip_entry` now caps a single
+    archive entry at 64 MiB (declared size **and** actual read bounded),
+    matching `app.rs::extract_rom_from_zip`.
+  - *Panic guard:* `SnesMouseState::enc_axis` no longer panics on `i16::MIN`
+    (used `unsigned_abs` instead of the overflowing `-v`).
+  - *Save-state robustness:* `FamilyKeyboardState::from_parts` clamps a restored
+    `row` to the matrix bound, so a corrupt/malicious save-state cannot drive an
+    out-of-bounds index in `read()`.
+  - *Lock discipline:* the HD compositor's CPU-heavy upscale/tile-hash/blit now
+    runs **after** the emu lock is dropped — only the framebuffer, PPU
+    tile-source telemetry, and the 8 KiB CHR pattern space are snapshotted under
+    the lock.
+  - *Replay-lock consistency:* the Load-State **hotkey** and `MenuAction`
+    dispatch now honour the same movie-record/playback lock the File menu greys
+    the item under (previously bypassable via the bound key).
+  - *Perf (default path):* the Bisqwit NTSC WGSL skips the per-fragment
+    `cos()`/`sin()` hue rotation when `hue == 0` (the default), keeping the
+    default present byte-identical (the C1 `default_knobs_match_legacy_matrix`
+    guard still passes).
+  - *Docs:* corrected the `InputDevice::FamilyKeyboard` doc reference
+    (`input::family_keyboard_index`, not a nonexistent `FAMILY_KEYBOARD_KEYMAP`)
+    and the `hash_tile` doc to state it hashes raw unflipped CHR bytes (it does
+    not consult `flip_h`/`flip_v`).
 - **SMB3 (and any MMC3/other game using a mid-scanline `$2001` split) — sprite
   flicker.** The PPU OAM-row-corruption model keyed the corrupted row off the
   raw PPU dot (`dot >> 1`), so *Super Mario Bros. 3*'s mid-scanline rendering

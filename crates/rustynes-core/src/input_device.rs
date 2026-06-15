@@ -497,9 +497,10 @@ impl SnesMouseState {
     /// Encode one axis into the 8-bit serial field: bit 7 = direction sign
     /// (1 = negative), bits 6..0 = magnitude clamped to 0..=127.
     const fn enc_axis(v: i16) -> u32 {
-        let mag = if v < 0 { -v } else { v };
-        #[allow(clippy::cast_sign_loss)]
-        let mag = (if mag > 127 { 127 } else { mag }) as u32;
+        // `v.unsigned_abs()` avoids the `-i16::MIN` overflow panic that `-v`
+        // would hit for `v == i16::MIN` (32768 is unrepresentable as `i16`).
+        let mag = v.unsigned_abs() as u32;
+        let mag = if mag > 127 { 127 } else { mag };
         let sign = if v < 0 { 1u32 } else { 0 };
         (sign << 7) | mag
     }
@@ -783,6 +784,18 @@ impl FamilyKeyboardState {
         enabled: bool,
         clock: bool,
     ) -> Self {
+        // Clamp the restored row to the matrix bound: a corrupt/malicious
+        // save-state must not be able to drive `read()`'s `self.keys[row]`
+        // out of bounds. The live `write_strobe` path already saturates the
+        // row at `FAMILY_KEYBOARD_ROWS - 1`; mirror that on restore.
+        let row = if (row as usize) >= FAMILY_KEYBOARD_ROWS {
+            #[allow(clippy::cast_possible_truncation)] // ROWS is small (9)
+            {
+                (FAMILY_KEYBOARD_ROWS - 1) as u8
+            }
+        } else {
+            row
+        };
         Self {
             keys,
             row,
@@ -1130,6 +1143,22 @@ mod tests {
     }
 
     #[test]
+    fn snes_mouse_enc_axis_handles_i16_extremes_without_panic() {
+        // Regression: `enc_axis(i16::MIN)` must not panic on the `-v` overflow
+        // (`-(-32768)` is unrepresentable as i16). Both extremes encode sanely:
+        // sign bit set/clear and magnitude clamped to the 7-bit max of 127.
+        let mut m = SnesMouseState::new();
+        m.set(i16::MIN, i16::MAX, false, false, 0);
+        let word = mouse_read_bits(&mut m, 32);
+        // X = i16::MIN: negative -> sign bit (bit 7) set, magnitude clamped 127.
+        assert_eq!(word & 0x80, 0x80, "i16::MIN encodes as negative");
+        assert_eq!(word & 0x7F, 127, "i16::MIN magnitude clamps to 127");
+        // Y = i16::MAX: positive -> sign bit clear, magnitude clamped 127.
+        assert_eq!((word >> 8) & 0x80, 0, "i16::MAX encodes as positive");
+        assert_eq!((word >> 8) & 0x7F, 127, "i16::MAX magnitude clamps to 127");
+    }
+
+    #[test]
     fn snes_mouse_strobe_high_repeats_signature_bit() {
         let mut m = SnesMouseState::new();
         m.write_strobe(1); // held high
@@ -1216,6 +1245,20 @@ mod tests {
         );
         assert_eq!(restored.read(), k.read());
         assert_eq!(restored.keys_raw(), k.keys_raw());
+    }
+
+    #[test]
+    fn family_keyboard_from_parts_clamps_out_of_range_row() {
+        // A corrupt/malicious save-state must not be able to drive a row value
+        // that would index `self.keys[row]` out of bounds in `read()`.
+        let keys = [0u8; FAMILY_KEYBOARD_ROWS];
+        let restored = FamilyKeyboardState::from_parts(keys, 250, false, true, false);
+        assert!(
+            (restored.row_raw() as usize) < FAMILY_KEYBOARD_ROWS,
+            "out-of-range row saturated to the matrix bound"
+        );
+        // Must not panic: enabled matrix indexes keys[row] in read().
+        let _ = restored.read();
     }
 
     #[test]

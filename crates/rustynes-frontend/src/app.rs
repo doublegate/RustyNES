@@ -455,6 +455,12 @@ pub struct App {
     /// telemetry, copied under the emu lock alongside the framebuffer.
     #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
     present_hd_tiles: Vec<rustynes_core::rustynes_ppu::HdTileSource>,
+    /// v1.2.0 C3 — snapshot of the 8 KiB PPU pattern space (`$0000..$2000`),
+    /// copied under the emu lock so the CPU-heavy HD composite (upscale +
+    /// tile-hash + blit) runs *after* the lock is dropped, honouring the
+    /// frontend's "never hold the emu lock during heavy work" discipline.
+    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+    present_chr_snapshot: Vec<u8>,
     /// Native audio output (cpal). wasm32 uses the Web Audio path in
     /// `wasm.rs` instead, so this field is native-only.
     #[cfg(not(target_arch = "wasm32"))]
@@ -678,6 +684,8 @@ impl App {
             hd_compositor: None,
             #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
             present_hd_tiles: Vec::new(),
+            #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+            present_chr_snapshot: Vec::new(),
             audio: None,
             input,
             config,
@@ -769,6 +777,8 @@ impl App {
             hd_compositor: None,
             #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
             present_hd_tiles: Vec::new(),
+            #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+            present_chr_snapshot: Vec::new(),
             input,
             config,
             debugger: None,
@@ -2354,6 +2364,18 @@ impl App {
         false
     }
 
+    /// PR #75 review (H1) — load-state restores the timeline, so it is forbidden
+    /// while a TAS movie is RECORDING (it would rewrite the recording) OR PLAYING
+    /// BACK (it would desync playback). The File menu greys "Load State" /
+    /// "Load from Slot" out under this same condition (`ui_shell::rom_interactive`
+    /// = `rom && !replay_locked`), but the hotkey + `MenuAction` dispatch must
+    /// honour it too — otherwise the greyed item is bypassable via the bound key.
+    /// Mirrors `GeraNES` `replayInteractionLocked` / `replayRecordingActive`.
+    fn replay_interaction_locked(&self) -> bool {
+        let emu = self.emu.lock();
+        emu.movie.is_recording() || emu.movie.is_playing()
+    }
+
     /// v2.7.0 — the per-ROM RA progress sidecar directory
     /// (`<data_dir>/ra-progress/`). `None` if no data dir is available.
     #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
@@ -2542,6 +2564,9 @@ impl App {
                 if self.ra_hardcore_blocks() {
                     self.ui
                         .set_status(StatusMessage::info("Load state disabled (hardcore)"));
+                } else if self.replay_interaction_locked() {
+                    self.ui
+                        .set_status(StatusMessage::info("Load state disabled during movie"));
                 } else {
                     #[cfg(not(target_arch = "wasm32"))]
                     self.handle_load_state(self.active_save_slot);
@@ -2616,6 +2641,9 @@ impl App {
                 if self.ra_hardcore_blocks() {
                     self.ui
                         .set_status(StatusMessage::info("Load state disabled (hardcore)"));
+                } else if self.replay_interaction_locked() {
+                    self.ui
+                        .set_status(StatusMessage::info("Load state disabled during movie"));
                 } else {
                     #[cfg(not(target_arch = "wasm32"))]
                     self.handle_load_state(slot);
@@ -5059,8 +5087,16 @@ impl ApplicationHandler<AppEvent> for App {
                             // v2.7.0 — load-state is disabled in RA hardcore
                             // mode (it would restore achievement-relevant state).
                             // Save-state SAVE stays allowed.
+                            // PR #75 (H1) — also disabled while a movie is
+                            // recording/playing: the menu greys "Load State" out
+                            // under the same rule, so the hotkey must too (else
+                            // the greyed item is bypassable via the bound key).
                             if self.ra_hardcore_blocks() {
                                 self.toast_hardcore("Load state disabled (hardcore)");
+                            } else if self.replay_interaction_locked() {
+                                self.ui.set_status(crate::ui_shell::StatusMessage::info(
+                                    "Load state disabled during movie",
+                                ));
                             } else {
                                 #[cfg(not(target_arch = "wasm32"))]
                                 self.handle_load_state(self.active_save_slot);
@@ -5468,22 +5504,23 @@ impl ApplicationHandler<AppEvent> for App {
                                     .extend_from_slice(nes.index_framebuffer());
                                 self.present_phase = nes.ntsc_phase();
                             }
-                            // v1.2.0 C3 — composite the HD frame under the same
-                            // lock (the PPU tile-source telemetry + CHR peeks need
-                            // the live `Nes`). Output-only; no emulation state is
-                            // touched. Skipped entirely when no pack is loaded.
+                            // v1.2.0 C3 — under the lock, snapshot ONLY the inputs
+                            // the HD composite needs: the PPU per-pixel tile-source
+                            // telemetry + the 8 KiB CHR pattern space. The CPU-heavy
+                            // composite (upscale + tile-hash + blit) runs AFTER the
+                            // lock is dropped (below), honouring the frontend's
+                            // "never hold the emu lock during heavy work" discipline.
+                            // Skipped entirely when no pack is loaded.
                             #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
-                            if let Some(comp) = self.hd_compositor.as_mut() {
+                            if self.hd_compositor.is_some() {
                                 self.present_hd_tiles.clear();
                                 self.present_hd_tiles
                                     .extend_from_slice(nes.hd_tile_source());
-                                let (w, h) = comp.dimensions();
-                                comp.composite(
-                                    &self.present_staging,
-                                    &self.present_hd_tiles,
-                                    |addr| nes.peek_ppu(addr),
-                                );
-                                hd_dims = Some((w, h));
+                                self.present_chr_snapshot.clear();
+                                // CHR pattern space is `$0000..$2000` (8 KiB) — the
+                                // only memory `hash_tile` reads via `chr_peek`.
+                                self.present_chr_snapshot
+                                    .extend((0u16..0x2000).map(|addr| nes.peek_ppu(addr)));
                             }
                         } else {
                             // No ROM: present a black NES image (the shell still
@@ -5491,6 +5528,18 @@ impl ApplicationHandler<AppEvent> for App {
                             self.present_staging.clear();
                             self.present_staging.resize((NES_W * NES_H * 4) as usize, 0);
                         }
+                    }
+                    // v1.2.0 C3 — lock dropped: now run the CPU-heavy HD composite
+                    // off the captured snapshots (framebuffer + tile-source + CHR).
+                    // `chr_peek` reads the local snapshot, so no `Nes` borrow is held.
+                    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                    if let Some(comp) = self.hd_compositor.as_mut() {
+                        let (w, h) = comp.dimensions();
+                        let chr = &self.present_chr_snapshot;
+                        comp.composite(&self.present_staging, &self.present_hd_tiles, |addr| {
+                            chr.get((addr & 0x1FFF) as usize).copied().unwrap_or(0)
+                        });
+                        hd_dims = Some((w, h));
                     }
                     #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
                     let script_draws = &self.script_draws;
