@@ -36,6 +36,9 @@ pub struct ScriptPanelState {
     log: Vec<String>,
     /// Pending user action, drained by the `App`.
     action: Option<ScriptAction>,
+    /// One-time guard so the `emu.setInput`-not-yet-applied notice (L2) is
+    /// logged at most once per loaded script.
+    warned_setinput: bool,
 }
 
 impl Default for ScriptPanelState {
@@ -49,6 +52,7 @@ impl Default for ScriptPanelState {
             error: None,
             log: Vec::new(),
             action: None,
+            warned_setinput: false,
         }
     }
 }
@@ -68,6 +72,20 @@ impl ScriptPanelState {
         self.loaded = label;
         self.callbacks = callbacks;
         self.error = None;
+        self.warned_setinput = false; // a fresh script may warn again
+    }
+
+    /// Log a one-time notice that `emu.setInput` is accepted but not yet applied
+    /// (L2), so a script author isn't left wondering why it has no effect.
+    pub fn warn_setinput_once(&mut self) {
+        if !self.warned_setinput {
+            self.warned_setinput = true;
+            self.push_log([
+                "[note] emu.setInput is accepted but not yet applied (input override is a \
+                 follow-up; see docs/scripting.md)"
+                    .to_owned(),
+            ]);
+        }
     }
 
     /// Mark no script loaded.
