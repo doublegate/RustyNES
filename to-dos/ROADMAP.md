@@ -151,9 +151,12 @@ Sprint 2: APU put/get phase; Sprint 3: sprite-eval residuals;
 Sprint 4: PPU misc residuals; Sprint 5: C1 axis attempt 17;
 Sprint 6: SH* unstable stores).
 
-Tickets (informal — formal sprint files when work begins):
+Tickets (informal — formal sprint files when work begins). The `[~]` markers
+below are **historical**: they record each ticket's state *at this superseded
+phase*, not now — all were closed or documented-deferred by the engine-lineage
+master-clock work (current AccuracyCoin **100.00%**). They are not live TODOs.
 
-- [→] **T-60-001 — Coordinated CPU/Bus/PPU IRQ-sample-timing rework
+- [~] **T-60-001 — Coordinated CPU/Bus/PPU IRQ-sample-timing rework
   (Track C1). DEFERRED to v1.x.** 11 independent fix attempts rolled
   back across multiple sessions; no empirical breakthrough on the
   canonical CPU `T_last - 1` IRQ-sample-point axis. Residuals:
@@ -163,7 +166,7 @@ Tickets (informal — formal sprint files when work begins):
   golden baseline traces + M2-phase plumbing + Phase B4 reload-pending
   discriminator). Does not affect any real game; commercial game
   compatibility intact. Carries forward to v1.x roadmap.
-- [→] **T-60-002 — Push AccuracyCoin pass rate from 69.78% to ≥ 90%.
+- [~] **T-60-002 — Push AccuracyCoin pass rate from 69.78% to ≥ 90%.
   IN PROGRESS at 82.73%** (Cascade B closed 2026-05-19 in commit
   `9b0c81c` + Cascade A partial closure 2026-05-19 via OAMADDR reset
   during dots 257-320 in `f29f7ca` + session-6 `$2004` dots 1-64 `$FF`
@@ -244,7 +247,7 @@ Tickets (informal — formal sprint files when work begins):
   GitHub Actions release workflow which produces Linux/macOS/Windows
   artifacts. User to smoke-test each on a representative ROM (e.g.,
   nestest.nes) before promoting to `v1.0.0`. PENDING USER VERIFICATION.
-- [→] **T-60-005 — `v1.0.0` tag + release notes. SUPERSEDED by
+- [~] **T-60-005 — `v1.0.0` tag + release notes. SUPERSEDED by
   `v1.0.0-rc2`** (2026-05-22). The rc2 tag captures the
   post-Mesen2-alignment release-candidate state with the four C1
   IRQ-timing residuals + the ~20 non-C1 AccuracyCoin residuals

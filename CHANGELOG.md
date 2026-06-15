@@ -257,6 +257,17 @@ content below, plus the first **v1.1.0** feature work (beta.1).
 
 ### Changed (docs / hygiene)
 
+- **v1.0.1 compatibility + hygiene patch** (docs-only; zero core change, AccuracyCoin stays
+  100%). Audited the v1.0.1 plan: most hygiene was already complete (phase-7/8 to-do folders
+  archived, all 24 `#[ignore]`s carry permanent-by-design reasons, the roadmap banner frames the
+  `v1.x`/`v2.x` markers as engine lineage, `deny.toml` allows the shipped license set, no open
+  Dependabot PRs). This patch closes the remainder: the present-tense `[→]` ticket markers under
+  the already-"SUPERSEDED" Phase 6 roadmap section are flipped to historical `[~]` with a note
+  that they record the *then-current* state (not live TODOs), so the roadmap no longer reads as
+  if accuracy work is ongoing. The three flagged compatibility gaps (Mito Koumon mapper-89 render,
+  FDS *Kid Icarus* side-B stall, GxROM "Mario flashing") are documented (not force-fixed — their
+  dumps are gitignored / they need interactive verification and the fixes would risk the 100%
+  core). Full audit in `to-dos/v1.0.1-compat-hygiene/00-patch.md`.
 - Reconciled `docs/STATUS.md` to the shipped v1.0.0 reality: the master-clock core
   is the default and only scheduler (the `mc-r1-full-cpu` umbrella was promoted to
   default and the flag removed), so the AccuracyCoin row now reads **100.00%**
