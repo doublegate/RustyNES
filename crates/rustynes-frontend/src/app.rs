@@ -724,6 +724,12 @@ impl App {
                 NES_H * INITIAL_SCALE,
             ));
 
+        // v1.1.0 — set the taskbar / title-bar icon from the embedded app icon
+        // (native only; a browser tab has no window icon). `None` if decode
+        // fails — the window just falls back to the platform default.
+        #[cfg(not(target_arch = "wasm32"))]
+        let attrs = attrs.with_window_icon(crate::icon::window_icon());
+
         // v1.3.0 Sprint 1.4 — on wasm32, render INTO the existing
         // `<canvas id="nes-canvas">` from index.html (so its CSS
         // sizing + the page layout apply) rather than letting winit
