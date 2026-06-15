@@ -77,9 +77,9 @@ determinism contract intact; see ADR 0010). `onNmi` / `onIrq` are a follow-up
 | `emu.drawPixel(x, y [, color])` | Draw a single pixel. |
 | `emu.log(...)` | Append to the console. `print(...)` is redirected here too. |
 
-Overlay coordinates are NES-framebuffer space (256×240) mapped onto the window;
-the mapping is currently approximate (it does not account for letterbox /
-overscan — pixel-perfect alignment is a follow-up).
+Overlay coordinates are NES-framebuffer space (256×240), mapped onto the actual
+letterboxed game rect — honouring 8:7 pixel-aspect correction and the overscan
+crop — so HUD coordinates line up with game pixels.
 
 ## Determinism + safety
 

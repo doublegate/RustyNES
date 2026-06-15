@@ -205,6 +205,13 @@ content below, plus the first **v1.1.0** feature work (beta.1).
 
 ### Fixed
 
+- **Lua registry access fully crash-proof (PR #52 review follow-up).** All `__rustynes` registry
+  access now goes through one `table_field` helper that returns `None` for a missing / `nil` /
+  **non-table** value or a failing lookup (e.g. a hostile `_G` metatable) — so a script that parks
+  a junk value at a callback address, or clobbers the registry, can no longer raise a `FromLua`
+  error out of the host pump (gemini + Copilot #52). `frame_callback_count` is now infallible;
+  regression test `junk_value_at_a_callback_address_does_not_crash`. Also resolved a
+  `docs/scripting.md` overlay-mapping contradiction.
 - **Lua scripting — self-review hardening (M1/M2/L1–L4).** A code-review pass on the Workstream-E
   code: (M1) the internal `__rustynes` callback registry is now accessed resiliently — a script
   that clobbers it (`__rustynes = nil`) only disables its own callbacks instead of erroring the

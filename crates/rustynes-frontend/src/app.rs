@@ -2548,7 +2548,7 @@ impl App {
         };
         match engine.load(&src) {
             Ok(()) => {
-                let cbs = engine.frame_callback_count().unwrap_or(0);
+                let cbs = engine.frame_callback_count();
                 self.script = Some(engine);
                 if let Some(dbg) = self.debugger.as_mut() {
                     let p = dbg.script_panel();
