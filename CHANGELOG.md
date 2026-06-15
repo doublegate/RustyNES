@@ -15,13 +15,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Work toward **v1.2.0 "Curator"** (beta.1-3, Workstreams A + B + C + D + E + F + H).
+Work toward **v1.2.0 "Curator"** (beta.1-3, Workstreams A + B + C + D + E + F + G + H).
 See `docs/adr/0011-mapper-tiering.md`,
 `docs/adr/0012-wasm-lua-piccolo-backend.md`,
 `docs/adr/0013-composable-shader-stack.md`, and the v1.2.0 plan.
 
 ### Added
 
+- **PGO / BOLT CI promotion gate** (v1.2.0 Workstream G — performance
+  infrastructure, no core behavior change). A new manual-/release-only
+  `.github/workflows/pgo.yml` (`PGO`) gates the previously-unused
+  `scripts/pgo/run.sh` recipe into CI. Triggered by `workflow_dispatch` (with
+  optional `frames` / `run_bolt` inputs) and on push of a release tag (`v*`) —
+  never per-PR (the instrument + train + rebuild cycle is too slow for the PR
+  gate). It builds the plain-release `full_frame` baseline, runs the PGO recipe
+  (instrument → train on the seven committed CC0/MIT ROMs → optimized rebuild),
+  re-benches, and **promotes the PGO binary only when BOTH** (a) it beats plain
+  release by **> 3%** on the `full_frame` Criterion mean (same-runner A/B) AND
+  (b) the full `--features test-roms` oracle — AccuracyCoin 139/139, `nestest`
+  0-diff, blargg/kevtris, golden-framebuffer `visual_regression`, the APU
+  mixer/volume audio suites — is **byte-identical under the PGO codegen**
+  (`cargo pgo optimize test`). An optional Linux-only `bolt` job runs behind the
+  same gate (best-effort; skips cleanly when `llvm-bolt` is unavailable). A
+  failed gate is informational and never blocks a release. Documented in
+  `docs/performance.md` §"Profile-guided optimization (PGO)". No Rust changed;
+  the shipped/wasm/`no_std` builds are unaffected.
 - **Experimental wasm Lua scripting via a piccolo backend** (v1.2.0 Workstream
   F4; default OFF, behind the new `script-wasm` feature; see
   `docs/adr/0012-wasm-lua-piccolo-backend.md`). `rustynes-script` now sits behind
