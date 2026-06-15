@@ -362,23 +362,56 @@ pub struct Ppu {
     /// `_overflowBugCounter` (the 8-sprite-overflow PPU-bug countdown).
     pub(crate) oam_bus_overflow_counter: u8,
 
-    /// OAM-corruption row flags (Mesen2 `_corruptOamRow`, 32 entries
-    /// indexed by row).  When rendering is disabled mid-scanline
-    /// during cycles 0-63 (secondary-OAM clear) or 256-319 (sprite
-    /// tile-fetch), the secondary-OAM-address-derived row is marked.
-    /// At the next rendering re-enable on a visible scanline,
-    /// `process_oam_corruption` copies the first 8 bytes of primary
-    /// OAM over each flagged row.
+    /// OAM-corruption model — faithful port of `TriCNES`'s eval-pointer
+    /// machinery (`Emulator.cs` `PPU_Render_SpriteEvaluation` lines
+    /// 2664-2770 + `CorruptOAM` lines 2635-2651). Replaces the earlier
+    /// Mesen2 `_corruptOamRow` row-flag model (`dot >> 1` index), which
+    /// Mesen ships OFF by default (`EnablePpuOamRowCorruption=false`) and
+    /// documents as unfinished. The bug it fixes: SMB3 (MMC3) toggles
+    /// PPUMASK mid-visible-scanline to split its HUD; NMI/DMA jitter
+    /// shifts the disable dot, and the raw-dot row index intermittently
+    /// landed on Mario's OAM row (offset 40), wiping his sprite.
     ///
-    /// Per `AccuracyCoin` `TEST_OAM_Corruption`
-    /// (`AccuracyCoin.asm` lines 13953-14130) + Mesen2
-    /// `Core/NES/NesPpu.cpp` lines 1290-1330.  Phase 3b of the
-    /// v1.0.0-final brief.
-    pub(crate) corrupt_oam_row: [bool; 32],
+    /// `TriCNES` model: when rendering is disabled (1 -> 0) DURING sprite
+    /// evaluation (dots 1-64, secondary-OAM clear, NOT the pre-render
+    /// line), the corruption is DEFERRED — `oam_corruption_pending` is
+    /// set and `oam_corruption_index` captures the live secondary-OAM
+    /// write pointer (`OAM2Address`) at that instant. When rendering
+    /// RE-ENABLES (or at the pre-render line), one OAM "row" of 8 bytes
+    /// is replaced from row 0: `oam[index*8 + i] = oam[i]` for i in
+    /// 0..8 (index 0x20 wraps to 0), and `secondary_oam[index] =
+    /// secondary_oam[0]`.
+    ///
+    /// `oam2_addr` is the `OAM2Address` analogue maintained across the
+    /// dots 1-64 clear window (our dots 65-256 active eval already walks
+    /// `sprite_eval_sec_idx`, but the SMB3 HUD-split disable lands in the
+    /// clear window where `sprite_eval_sec_idx` is held at 0, so the
+    /// dedicated pointer is required to capture the right index).
+    ///
+    /// `oam_corruption_disabled` / `_instant` mirror `TriCNES`'s
+    /// `PPU_OAMCorruptionRenderingDisabledOutOfVBlank` (1-dot-delayed,
+    /// armed by the `$2001` write-delay) and `..._Instant` (the
+    /// data-bus-immediate path: OAM eval observes the disable the same
+    /// cycle). The disable edge is captured into `pending`/`index`
+    /// during the dots 1-64 eval window; the actual corruption is
+    /// committed at re-enable / pre-render.
+    ///
+    /// None of these fields are persisted in the PPU snapshot — like the
+    /// rest of the per-dot sprite-eval FSM state (`sprite_eval_*`), they
+    /// re-derive within a scanline/frame, matching the prior row-flag
+    /// OAM-corruption model (also un-snapshotted).
+    pub(crate) oam_corruption_pending: bool,
+    pub(crate) oam_corruption_index: u8,
+    pub(crate) oam_corruption_disabled: bool,
+    pub(crate) oam_corruption_disabled_instant: bool,
+    /// `OAM2Address` analogue: the secondary-OAM write pointer as it
+    /// walks the dots 1-64 secondary-OAM clear window. Reset to 0 at the
+    /// dot-1 boundary and incremented once per even clear dot, masked to
+    /// 0x1F, exactly as `TriCNES` drives `OAM2Address` during dots 1-64.
+    pub(crate) oam2_addr: u8,
     /// Previous-tick rendering-enabled state — tracks the rising /
-    /// falling edge of `mask.rendering_enabled()` so the
-    /// `set_oam_corruption_flags` / `process_oam_corruption` paths
-    /// fire on the correct transition.
+    /// falling edge of `mask.rendering_enabled()` so the 1->0 edge
+    /// BG-shifter fix-up fires on the correct transition.
     pub(crate) prev_rendering_enabled: bool,
     /// v2.0 (ported from branch `ae30785`) — 1-PPU-dot-delayed rendering-enabled
     /// gate. Per Mesen2 `NesPpu::UpdateState`: a `$2001` write toggling
@@ -589,7 +622,11 @@ impl Ppu {
             sprite_eval_overflow_search: false,
             sprite_eval_zero_found: false,
             sprite_eval_first_iter: false,
-            corrupt_oam_row: [false; 32],
+            oam_corruption_pending: false,
+            oam_corruption_index: 0,
+            oam_corruption_disabled: false,
+            oam_corruption_disabled_instant: false,
+            oam2_addr: 0,
             prev_rendering_enabled: false,
             rendering_enabled_delayed: false,
             bg_reload_render: false,
@@ -1317,7 +1354,9 @@ impl Ppu {
                 if self.post_reset_mask_remaining > 0 {
                     return;
                 }
+                let was_rendering = self.mask.rendering_enabled();
                 self.mask = PpuMask::from_bits_truncate(value);
+                self.arm_oam_corruption_disable(was_rendering);
                 // v2.0 Phase 6 (mc-ppu-subpos): arm the analog `$2001` BG-reload
                 // delay. `self.mask` (and so the sprite-eval / shift / pixel
                 // path) updates IMMEDIATELY — only the BG shift-register RELOAD
@@ -1597,16 +1636,15 @@ impl Ppu {
         // BG/Sprite). Default build = the immediate value (byte-identical).
         let rendering_gate = self.rendering_enabled_delayed;
 
-        // Phase 3b — OAM-corruption rendering-disable / re-enable
-        // transitions on visible scanlines.  Per Mesen2
-        // `NesPpu::Exec` lines 1435-1455 + AccuracyCoin
-        // `TEST_OAM_Corruption` (`AccuracyCoin.asm` lines
-        // 13953-14130): when rendering goes 1→0 mid-scanline at
-        // cycles 0-63 or 256-319, mark a corruption-row flag based
-        // on the current cycle.
+        // OAM corruption (TriCNES eval-pointer model). The disable edge
+        // itself is armed by the `$2001` write (see the PPUMASK handler);
+        // the index is captured against the live secondary-OAM eval
+        // pointer during the dots 1-64 window (`capture_oam_corruption`,
+        // called from the sprite-eval FSM); and the actual corruption is
+        // committed when rendering RE-ENABLES on a render line, or at the
+        // pre-render line. Here we only retain the unrelated BG-shifter
+        // fix-up that the prior model happened to share the 1->0 edge with.
         if render_line && rendering != self.prev_rendering_enabled && !rendering {
-            // 1 → 0: mark corruption-row flag.
-            self.set_oam_corruption_flags();
             // v2.0 (ppu-sprite-shifter-counter): if rendering is disabled
             // mid-pre-fetch (dots 329-336, the SECOND fetch group after the
             // dot-329 reload), the in-progress group's pending `<<= 8` would be
@@ -1618,15 +1656,27 @@ impl Ppu {
                 self.prefetch_shift_bg_regs();
             }
         }
-        // Per Mesen2 `ProcessScanlineFirstCycle` lines 1378-1387:
-        // at the START of a new frame (scanline wraps to pre-render),
-        // if rendering is currently enabled, process pending OAM
-        // corruption.  This handles the test sequence where
-        // rendering is disabled mid-scanline, then re-enabled during
-        // VBlank — the corruption flags accumulate while disabled,
-        // and process on the first pre-render dot of the next frame.
-        if self.scanline == self.region.prerender_line() && self.dot == 0 && rendering {
+        // Commit pending OAM corruption at the START of the pre-render line
+        // (TriCNES handles this via the dots 1-64 eval path on the
+        // pre-render line; the dot-0 hook covers the case where rendering
+        // was re-enabled during VBlank and stays on into pre-render).
+        // Per TriCNES `CorruptOAM`, the corruption applies on the first
+        // rendered dot once rendering is (re-)enabled.
+        if self.scanline == self.region.prerender_line()
+            && self.dot == 0
+            && rendering
+            && self.oam_corruption_pending
+        {
             self.process_oam_corruption();
+        }
+        // OAM corruption (TriCNES eval-pointer model): maintain the
+        // `OAM2Address` analogue across the dots 1-64 clear window, capture
+        // the corruption index at the disable edge, and commit on re-enable.
+        // Driven every render-line dot independent of the rendering gate so
+        // the disable edge is observed even though the sprite-eval FSM below
+        // stops once rendering is gated off.
+        if render_line {
+            self.tick_oam_corruption(rendering);
         }
         self.prev_rendering_enabled = rendering;
         // v2.0 (ae30785): update the 1-dot-delayed copy AFTER this dot's gate
@@ -2806,67 +2856,124 @@ impl Ppu {
         self.sprite_eval_zero_found = true;
     }
 
-    /// Phase 3b — set OAM-corruption row flags when rendering is
-    /// disabled mid-scanline.  Faithful port of Mesen2's
-    /// `NesPpu::SetOamCorruptionFlags` (`Core/NES/NesPpu.cpp` lines
-    /// 1288-1311).
+    /// Arm the OAM-corruption disable edge on a `$2001` write — faithful
+    /// port of `TriCNES`'s `$2001` write path (`Emulator.cs` lines
+    /// 9684-9696 / 1740-1755). When rendering was ON before the write and
+    /// the new mask turns BOTH BG + sprites OFF while on a render line (NOT
+    /// in vblank), set the disable flags. `_instant` is the
+    /// data-bus-immediate path (OAM eval observes the disable the same
+    /// cycle); the non-instant flag is the regular 1-dot-delayed path. The
+    /// disable edge is captured against the live eval pointer during the
+    /// dots 1-64 window and committed on re-enable; the `!pending` guard
+    /// stops a write from re-arming over an already-captured corruption.
+    const fn arm_oam_corruption_disable(&mut self, was_rendering: bool) {
+        if was_rendering
+            && !self.mask.rendering_enabled()
+            && !self.oam_corruption_pending
+            && (self.scanline < self.region.vblank_start_line()
+                || self.scanline == self.region.prerender_line())
+        {
+            self.oam_corruption_disabled = true;
+            self.oam_corruption_disabled_instant = true;
+        }
+    }
+
+    /// OAM-corruption per-dot driver — faithful port of `TriCNES`'s
+    /// `PPU_Render_SpriteEvaluation` corruption handling (`Emulator.cs`
+    /// lines 2664-2762). Called every render-line dot (independent of the
+    /// rendering gate, so the disable edge is observed even after the
+    /// sprite-eval FSM stops). Three responsibilities, in `TriCNES` order:
     ///
-    /// During cycles 0-63 (secondary-OAM clear), every 2 dots shifts
-    /// the corrupted row by 1 (`_corruptOamRow[cycle >> 1] = true`).
-    /// During cycles 256-319 (sprite-tile-fetch), the corruption
-    /// follows an 8-dot segment pattern: the first 3 dots increment
-    /// the corrupted row by 1, then the last 5 dots stay on the next
-    /// row.
-    fn set_oam_corruption_flags(&mut self) {
-        let cycle = self.dot;
-        if cycle < 64 {
-            // Cycles 0-63: shift by 1 row every 2 dots.
-            let row = (cycle >> 1) as usize;
-            if row < self.corrupt_oam_row.len() {
-                self.corrupt_oam_row[row] = true;
+    /// 1. **Commit on re-enable.** If rendering is currently enabled and a
+    ///    corruption is pending, apply it (`TriCNES` applies on the first
+    ///    rendered dot once `PPU_Mask_Show*_Instant` is set again). The
+    ///    pre-render-line dot-0 hook in `tick` handles the
+    ///    re-enable-during-vblank case.
+    /// 2. **Maintain `OAM2Address` across the dots 1-64 clear window.**
+    ///    Reset at dot 1; incremented once per even clear dot, masked to
+    ///    0x1F — exactly as `TriCNES` drives `OAM2Address` during dots 1-64.
+    /// 3. **Capture the index at the disable edge.** When the disable
+    ///    flag (`oam_corruption_disabled` / `_instant`, armed by the
+    ///    `$2001` write) is set during the dots 1-64 window on a NON
+    ///    pre-render line, set `oam_corruption_pending` and capture
+    ///    `oam_corruption_index = oam2_addr` (the live secondary-OAM write
+    ///    pointer). The pre-render line is excluded from the capture (it is
+    ///    a read-only eval line for OAM-corruption purposes in `TriCNES`).
+    fn tick_oam_corruption(&mut self, rendering: bool) {
+        let pre_render = self.scanline == self.region.prerender_line();
+
+        // (1) Commit pending corruption once rendering is (re-)enabled
+        // during the eval window. The pre-render dot-0 path in `tick`
+        // covers the re-enable-in-VBlank case separately.
+        if rendering && self.oam_corruption_pending && !pre_render && self.dot >= 1 {
+            self.process_oam_corruption();
+        }
+
+        // (2) + (3) only matter inside the dots 1-64 secondary-OAM clear
+        // window. Outside it the disable flags simply persist until the
+        // next eval window (or are committed above on re-enable).
+        if (1..=64).contains(&self.dot) {
+            if self.dot == 1 {
+                // TriCNES resets OAM2Address at dot 1 of the eval window.
+                self.oam2_addr = 0;
             }
-        } else if (256..320).contains(&cycle) {
-            // Cycles 256-319: 8-dot segments.  First 3 dots increment
-            // row, last 5 stay.  Mesen2: `base*4 + offset` where
-            // `base = (cycle-256) >> 3`, `offset = min(3, (cycle-256) & 7)`.
-            let base = ((cycle - 256) >> 3) as usize;
-            let offset = core::cmp::min(3usize, ((cycle - 256) & 0x07) as usize);
-            let row = base * 4 + offset;
-            if row < self.corrupt_oam_row.len() {
-                self.corrupt_oam_row[row] = true;
+
+            // Capture the disable edge against the LIVE pointer, on a
+            // non-pre-render line only (TriCNES: capture is skipped on the
+            // read-only pre-render eval line).
+            if (self.oam_corruption_disabled || self.oam_corruption_disabled_instant)
+                && !pre_render
+                && !self.oam_corruption_pending
+            {
+                self.oam_corruption_pending = true;
+                self.oam_corruption_index = self.oam2_addr;
+            }
+            // The disable arming is single-shot: clear it once observed in
+            // the eval window (TriCNES clears both flags when it fires).
+            self.oam_corruption_disabled = false;
+            self.oam_corruption_disabled_instant = false;
+
+            // Advance OAM2Address on even clear dots (mirrors TriCNES's
+            // `OAM2[OAM2Address] = latch; OAM2Address = (OAM2Address+1) &
+            // 0x1F` on even cycles of the dots 1-64 clear).
+            if (self.dot & 1) == 0 {
+                self.oam2_addr = (self.oam2_addr + 1) & 0x1F;
             }
         }
     }
 
-    /// Phase 3b — process pending OAM-corruption flags when rendering
-    /// re-enables on a visible scanline.  Faithful port of Mesen2's
-    /// `NesPpu::ProcessOamCorruption` (`Core/NES/NesPpu.cpp` lines
-    /// 1314-1330).
-    ///
-    /// For each flagged row (1..32), copy the first 8 bytes of OAM
-    /// over the row.  Row 0 corruption is a no-op (it'd copy onto
-    /// itself).
+    /// Apply a pending OAM corruption — faithful port of `TriCNES`'s
+    /// `CorruptOAM` (`Emulator.cs` lines 2635-2651): one OAM "row" of 8
+    /// bytes is overwritten from row 0, plus the corresponding secondary-OAM
+    /// byte. The index (`oam_corruption_index`) was captured at the disable
+    /// edge from the live secondary-OAM eval pointer; index 0x20 wraps to 0.
+    /// Clears the pending flag.
     fn process_oam_corruption(&mut self) {
-        for i in 0..32 {
-            if self.corrupt_oam_row[i] {
-                if i > 0 {
-                    // Copy OAM[0..8] over OAM[i*8..i*8+8].
-                    let first_eight: [u8; 8] = [
-                        self.oam[0],
-                        self.oam[1],
-                        self.oam[2],
-                        self.oam[3],
-                        self.oam[4],
-                        self.oam[5],
-                        self.oam[6],
-                        self.oam[7],
-                    ];
-                    let dst = i * 8;
-                    self.oam[dst..dst + 8].copy_from_slice(&first_eight);
-                }
-                self.corrupt_oam_row[i] = false;
-            }
+        let mut index = self.oam_corruption_index as usize;
+        if index == 0x20 {
+            index = 0;
         }
+        // OAM[index*8 + i] = OAM[i] for i in 0..8 (a no-op when index == 0,
+        // matching TriCNES — it still runs, copying row 0 onto itself).
+        let first_eight: [u8; 8] = [
+            self.oam[0],
+            self.oam[1],
+            self.oam[2],
+            self.oam[3],
+            self.oam[4],
+            self.oam[5],
+            self.oam[6],
+            self.oam[7],
+        ];
+        let dst = index * 8;
+        if dst + 8 <= self.oam.len() {
+            self.oam[dst..dst + 8].copy_from_slice(&first_eight);
+        }
+        // Also corrupt secondary OAM: OAM2[index] = OAM2[0].
+        if index < self.secondary_oam.len() {
+            self.secondary_oam[index] = self.secondary_oam[0];
+        }
+        self.oam_corruption_pending = false;
     }
 
     /// Fetch one sprite slot's pattern bytes.  Always called for all 8
