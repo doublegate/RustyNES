@@ -40,6 +40,37 @@ fn write_png(path: &Path, fb: &[u8]) {
     writer.write_image_data(fb).expect("png data");
 }
 
+fn write_png_sized(path: &Path, rgba: &[u8], width: u32, height: u32) {
+    let file = std::fs::File::create(path).expect("create png");
+    let mut enc = png::Encoder::new(std::io::BufWriter::new(file), width, height);
+    enc.set_color(png::ColorType::Rgba);
+    enc.set_depth(png::BitDepth::Eight);
+    let mut writer = enc.write_header().expect("png header");
+    writer.write_image_data(rgba).expect("png data");
+}
+
+/// Crop a `cw`x`ch` region at (`cx`,`cy`) and magnify `zoom`x (nearest), so a
+/// running-Mario sprite (camera-locked near screen centre) is legible + any
+/// per-frame missing-sprite-portion flicker is obvious.
+fn crop_zoom(fb: &[u8], cx: usize, cy: usize, cw: usize, ch: usize, zoom: usize) -> Vec<u8> {
+    let w = W as usize;
+    let out_w = cw * zoom;
+    let mut out = vec![0u8; out_w * ch * zoom * 4];
+    for y in 0..ch {
+        for x in 0..cw {
+            let src = ((cy + y) * w + (cx + x)) * 4;
+            let px = [fb[src], fb[src + 1], fb[src + 2], fb[src + 3]];
+            for zy in 0..zoom {
+                for zx in 0..zoom {
+                    let dst = (((y * zoom + zy) * out_w) + (x * zoom + zx)) * 4;
+                    out[dst..dst + 4].copy_from_slice(&px);
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Mean absolute per-byte difference between two RGBA frames.
 fn frame_diff(a: &[u8], b: &[u8]) -> f64 {
     let n = a.len().min(b.len());
@@ -116,33 +147,52 @@ fn main() {
         }
     }
 
-    // Capture window: run Mario RIGHT (B = run) — the flicker only shows while
-    // he's moving. Dump every frame so consecutive frames can be compared for a
-    // Mario-sprite on/off flicker.
-    eprintln!("--- capture window (frame {frame}.., running right) ---");
+    capture_window(&mut nes, out_dir, frame);
+}
+
+/// Parity-oscillation metric over a frame sequence: mean adjacent (f vs f-1,
+/// opposite parity) vs skip-one (f vs f-2, same parity). A per-other-frame
+/// flicker pushes the adj/skip ratio well above 1.
+fn parity_ratio(frames: &[Vec<u8>]) -> (f64, f64, f64) {
+    let adj: f64 = (1..frames.len())
+        .map(|i| frame_diff(&frames[i], &frames[i - 1]))
+        .sum::<f64>()
+        / (frames.len().saturating_sub(1)).max(1) as f64;
+    let skip: f64 = (2..frames.len())
+        .map(|i| frame_diff(&frames[i], &frames[i - 2]))
+        .sum::<f64>()
+        / (frames.len().saturating_sub(2)).max(1) as f64;
+    (adj, skip, if skip > 0.0 { adj / skip } else { 0.0 })
+}
+
+/// Run Mario right (B = run) for a window — the flicker only shows while he's
+/// moving — dumping each full frame + a zoomed Mario-band crop, and report the
+/// parity metric for both the full frame and the crop band.
+fn capture_window(nes: &mut Nes, out_dir: &Path, start_frame: u64) {
+    eprintln!("--- capture window (frame {start_frame}.., running right) ---");
+    // Centre band where SMB3 camera-locks a running Mario (~screen-centre X).
+    let (cx, cy, cw, ch, zoom) = (88usize, 96usize, 80usize, 112usize, 3usize);
     let mut frames: Vec<Vec<u8>> = Vec::new();
+    let mut crops: Vec<Vec<u8>> = Vec::new();
     for k in 0..40 {
         nes.set_buttons(0, Buttons::RIGHT | Buttons::B);
         let fb = nes.run_frame().to_vec();
         write_png(&out_dir.join(format!("win{k:02}.png")), &fb);
+        let crop = crop_zoom(&fb, cx, cy, cw, ch, zoom);
+        write_png_sized(
+            &out_dir.join(format!("crop{k:02}.png")),
+            &crop,
+            (cw * zoom) as u32,
+            (ch * zoom) as u32,
+        );
+        crops.push(crop);
         frames.push(fb);
-        frame += 1;
     }
-
-    // Oscillation metric: adjacent (opposite-parity) vs skip-one (same-parity).
-    let adj: f64 = (1..frames.len())
-        .map(|i| frame_diff(&frames[i], &frames[i - 1]))
-        .sum::<f64>()
-        / (frames.len() - 1) as f64;
-    let skip: f64 = (2..frames.len())
-        .map(|i| frame_diff(&frames[i], &frames[i - 2]))
-        .sum::<f64>()
-        / (frames.len() - 2) as f64;
+    let (cadj, cskip, cratio) = parity_ratio(&crops);
+    println!("Mario-band crop: adj={cadj:.4} skip={cskip:.4} ratio={cratio:.2}");
+    let (adj, skip, ratio) = parity_ratio(&frames);
     println!("mean adjacent-frame diff   (f vs f-1): {adj:.4}");
     println!("mean skip-one-frame diff   (f vs f-2): {skip:.4}");
-    println!(
-        "parity-oscillation ratio (adj/skip): {:.2}  (>~2 suggests a 2-frame flicker)",
-        if skip > 0.0 { adj / skip } else { 0.0 }
-    );
+    println!("parity-oscillation ratio (adj/skip): {ratio:.2}  (>~2 suggests a 2-frame flicker)");
     eprintln!("wrote filmstrip + window PNGs to {}", out_dir.display());
 }
