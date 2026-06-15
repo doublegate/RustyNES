@@ -89,3 +89,10 @@ tap noted in T-110-C3.
   trait threaded through the core run loop.
 - The scripting CI job needs a C toolchain (vendored Lua); the default / wasm /
   no_std jobs are unaffected because they never build the crate.
+- **Callback registry is Rust-side** (`Vec`/`HashMap` of `mlua::RegistryKey`),
+  not a script-visible Lua global. A script can register callbacks but cannot
+  inspect, clobber, or inject junk into the registry, so no malformed registry
+  value can ever error the host pump — the protection is structural. (An earlier
+  iteration kept the registry as a `__rustynes` Lua global and hardened each
+  traversal point against junk; the Rust-side store removes the attack surface
+  entirely and also makes the per-address callback gate a free `HashMap` lookup.)
