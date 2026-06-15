@@ -26,11 +26,32 @@
 //!   policy as the Game Genie / raw-RAM cheat path.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use mlua::{Function, HookTriggers, Lua, RegistryKey, StdLib, Table, VmState};
 use rustynes_core::Nes;
+
+/// A stack-allocated bitset over the 16-bit CPU address space (8 KiB, no heap),
+/// used to gate the hot per-frame replay loops: membership is an O(1) bit test
+/// with no `RefCell` borrow or allocation per event (gemini #58).
+struct AddrBits([u64; 1024]);
+
+impl AddrBits {
+    /// Build a bitset of the keys registered in `map` (one cheap borrow).
+    fn from_keys(map: &AddrCallbacks) -> Self {
+        let mut bits = [0u64; 1024];
+        for &addr in map.borrow().keys() {
+            bits[usize::from(addr) / 64] |= 1u64 << (addr % 64);
+        }
+        Self(bits)
+    }
+
+    #[inline]
+    fn contains(&self, addr: u16) -> bool {
+        self.0[usize::from(addr) / 64] & (1u64 << (addr % 64)) != 0
+    }
+}
 
 /// A set of callbacks registered against CPU addresses (`onExec`/`onRead`/
 /// `onWrite`), stored as Lua registry keys so they live entirely Rust-side —
@@ -595,34 +616,39 @@ impl ScriptEngine {
                 f.call::<()>(())?;
             }
 
-            // Snapshot the registered addresses into plain `HashSet`s so the
-            // hot replay loops can gate on an O(1) check WITHOUT a per-event
-            // `RefCell` borrow — only a matching address pays the borrow +
-            // registry resolution (gemini #47/#57). The snapshot is 3 borrows;
-            // the loops run ~15k + ~60k times per frame.
-            let active_exec: HashSet<u16> = exec_cbs.borrow().keys().copied().collect();
-            let active_read: HashSet<u16> = read_cbs.borrow().keys().copied().collect();
-            let active_write: HashSet<u16> = write_cbs.borrow().keys().copied().collect();
+            // Gate the hot replay loops on a stack-allocated bitset of the
+            // registered addresses (covers the full 16-bit space in 8 KiB, no
+            // heap allocation, no per-event `RefCell` borrow). Built only when
+            // the matching loop will run, so there is zero cost unless a script
+            // registers the corresponding callback (gemini #47/#57/#58). The
+            // loops run ~15k (exec) + ~60k (access) times per frame.
 
             // Replay this frame's exec PCs through onExec(addr).
-            for pc in &exec_pcs {
-                if active_exec.contains(pc) {
-                    for f in fns_at(lua, &exec_cbs, *pc)? {
-                        f.call::<()>(*pc)?;
+            if !exec_pcs.is_empty() {
+                let active = AddrBits::from_keys(&exec_cbs);
+                for pc in &exec_pcs {
+                    if active.contains(*pc) {
+                        for f in fns_at(lua, &exec_cbs, *pc)? {
+                            f.call::<()>(*pc)?;
+                        }
                     }
                 }
             }
 
             // Replay this frame's bus accesses through onRead/onWrite(addr, value).
-            for (is_write, addr, value) in &accesses {
-                let (active, map) = if *is_write {
-                    (&active_write, &write_cbs)
-                } else {
-                    (&active_read, &read_cbs)
-                };
-                if active.contains(addr) {
-                    for f in fns_at(lua, map, *addr)? {
-                        f.call::<()>((*addr, *value))?;
+            if !accesses.is_empty() {
+                let active_read = AddrBits::from_keys(&read_cbs);
+                let active_write = AddrBits::from_keys(&write_cbs);
+                for (is_write, addr, value) in &accesses {
+                    let (active, map) = if *is_write {
+                        (&active_write, &write_cbs)
+                    } else {
+                        (&active_read, &read_cbs)
+                    };
+                    if active.contains(*addr) {
+                        for f in fns_at(lua, map, *addr)? {
+                            f.call::<()>((*addr, *value))?;
+                        }
                     }
                 }
             }
