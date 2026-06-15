@@ -61,7 +61,7 @@ winit = "0.30"
 wgpu = { version = "22", features = ["webgl"] }
 cpal = "0.15"
 egui = "0.29"
-egui-wgpu = "0.29"
+egui-wgpu = "0.32"
 # `links` enables egui-winit's URL opener (webbrowser) so hyperlinks (e.g. the
 # About window's GitHub link) actually launch the default browser; without it
 # (default-features = false drops it) hyperlink_to is inert.
