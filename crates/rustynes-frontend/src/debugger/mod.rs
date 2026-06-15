@@ -429,7 +429,7 @@ impl DebuggerOverlay {
     /// so [`Self::wants_egui_input`] alone misses it).
     #[must_use]
     pub fn shell_is_capturing(&self) -> bool {
-        self.state.egui_ctx().memory(egui::Memory::any_popup_open)
+        egui::Popup::is_any_open(self.state.egui_ctx())
     }
 
     /// Forward a winit window event into egui. Returns `true` if egui
@@ -851,10 +851,10 @@ impl DebuggerOverlay {
                             } else {
                                 egui::Color32::from_rgb(0x20, 0x40, 0x20)
                             };
-                            egui::Frame::none()
+                            egui::Frame::new()
                                 .fill(bg)
-                                .inner_margin(egui::Margin::same(6.0))
-                                .rounding(4.0)
+                                .inner_margin(egui::Margin::same(6))
+                                .corner_radius(4)
                                 .show(ui, |ui| {
                                     ui.horizontal(|ui| {
                                         #[cfg(all(
@@ -1137,10 +1137,10 @@ impl DebuggerOverlay {
                     .order(egui::Order::Foreground)
                     .interactable(false)
                     .show(ctx, |ui| {
-                        egui::Frame::none()
+                        egui::Frame::new()
                             .fill(egui::Color32::from_black_alpha(160))
-                            .inner_margin(egui::Margin::symmetric(24.0, 14.0))
-                            .rounding(6.0)
+                            .inner_margin(egui::Margin::symmetric(24, 14))
+                            .corner_radius(6)
                             .show(ui, |ui| {
                                 ui.label(
                                     egui::RichText::new("PAUSED")

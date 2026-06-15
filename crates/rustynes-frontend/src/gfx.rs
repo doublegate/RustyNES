@@ -332,12 +332,12 @@ impl Gfx {
         // latter needs the `webgl` cargo feature on wgpu). On native,
         // the default backend set (Vulkan/Metal/DX12/GL) is right.
         #[cfg(target_arch = "wasm32")]
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL,
             ..Default::default()
         });
         #[cfg(not(target_arch = "wasm32"))]
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::default());
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
 
         let surface = instance
             .create_surface(window.clone())
@@ -350,7 +350,7 @@ impl Gfx {
                 force_fallback_adapter: false,
             })
             .await
-            .ok_or(GfxError::NoAdapter)?;
+            .map_err(|_| GfxError::NoAdapter)?;
 
         // wasm32 (esp. WebGL2) needs downlevel_webgl2_defaults so the
         // requested limits don't exceed what the backend exposes.
@@ -370,15 +370,14 @@ impl Gfx {
         let required_features = wgpu::Features::empty();
 
         let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: Some("rustynes-device"),
-                    required_features,
-                    required_limits,
-                    memory_hints: wgpu::MemoryHints::Performance,
-                },
-                None,
-            )
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("rustynes-device"),
+                required_features,
+                required_limits,
+                memory_hints: wgpu::MemoryHints::Performance,
+                // wgpu 25 moved the API-trace path into the descriptor.
+                trace: wgpu::Trace::Off,
+            })
             .await
             .map_err(|e| GfxError::Device(e.to_string()))?;
 
@@ -595,13 +594,13 @@ impl Gfx {
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
-                entry_point: "vs_main",
+                entry_point: Some("vs_main"),
                 buffers: &[],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
-                entry_point: "fs_main",
+                entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
                     blend: Some(wgpu::BlendState::REPLACE),
@@ -859,14 +858,14 @@ impl Gfx {
         let video_phase = match (self.ntsc_bisqwit.is_some(), index) {
             (true, Some((idx, phase))) if idx.len() == (NES_W * NES_H) as usize => {
                 self.queue.write_texture(
-                    wgpu::ImageCopyTexture {
+                    wgpu::TexelCopyTextureInfo {
                         texture: &self.index_texture,
                         mip_level: 0,
                         origin: wgpu::Origin3d::ZERO,
                         aspect: wgpu::TextureAspect::All,
                     },
                     bytemuck::cast_slice(idx),
-                    wgpu::ImageDataLayout {
+                    wgpu::TexelCopyBufferLayout {
                         offset: 0,
                         bytes_per_row: Some(NES_W * 2),
                         rows_per_image: Some(NES_H),
@@ -882,14 +881,14 @@ impl Gfx {
             _ => 0,
         };
         self.queue.write_texture(
-            wgpu::ImageCopyTexture {
+            wgpu::TexelCopyTextureInfo {
                 texture: &self.nes_texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
             framebuffer,
-            wgpu::ImageDataLayout {
+            wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(NES_W * 4),
                 rows_per_image: Some(NES_H),

@@ -37,7 +37,7 @@ allow = [
     "MPL-2.0",       # Mozilla Public License 2.0 - used by option-ext, resvg, usvg
     # Font licenses (OSI approved, FSF Free/Libre) - used by egui/epaint default fonts
     "OFL-1.1",       # SIL Open Font License 1.1 - used by epaint_default_fonts
-    "LicenseRef-UFL-1.0",  # Ubuntu Font Licence 1.0 - epaint_default_fonts declares the non-SPDX LicenseRef, not the SPDX `Ubuntu-font-1.0`
+    "Ubuntu-font-1.0",  # Ubuntu Font Licence 1.0 - epaint_default_fonts (egui 0.32) declares this SPDX id for its bundled default font
 ]
 confidence-threshold = 0.8
 exceptions = []

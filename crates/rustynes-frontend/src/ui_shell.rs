@@ -348,13 +348,13 @@ impl UiShell {
         // is a handful of small `String`s, built once per frame — negligible.
         let keys = config.input.system.clone();
         egui::TopBottomPanel::top("shell_menu_bar").show(ctx, |ui| {
-            egui::menu::bar(ui, |ui| {
+            egui::MenuBar::new().ui(ui, |ui| {
                 // ----- File -----
                 ui.menu_button("File", |ui| {
                     #[cfg(not(target_arch = "wasm32"))]
                     if accel_item(ui, "Open ROM...", &keys.open_rom).clicked() {
                         out.action = Some(MenuAction::OpenRom);
-                        ui.close_menu();
+                        ui.close();
                     }
 
                     #[cfg(not(target_arch = "wasm32"))]
@@ -372,13 +372,13 @@ impl UiShell {
                                 let exists = path.exists();
                                 if ui.add_enabled(exists, egui::Button::new(name)).clicked() {
                                     out.action = Some(MenuAction::LoadRom(path));
-                                    ui.close_menu();
+                                    ui.close();
                                 }
                             }
                             ui.separator();
                             if ui.button("Clear Recent").clicked() {
                                 out.action = Some(MenuAction::ClearRecent);
-                                ui.close_menu();
+                                ui.close();
                             }
                         }
                     });
@@ -388,7 +388,7 @@ impl UiShell {
                         ui.separator();
                         if accel_item(ui, "Swap Disk Side", &keys.disk_swap).clicked() {
                             out.action = Some(MenuAction::CycleDiskSide);
-                            ui.close_menu();
+                            ui.close();
                         }
                     }
 
@@ -397,12 +397,12 @@ impl UiShell {
                     if accel_enabled(ui, frame.rom_loaded, "Save State", &keys.save_state).clicked()
                     {
                         out.action = Some(MenuAction::SaveState);
-                        ui.close_menu();
+                        ui.close();
                     }
                     if accel_enabled(ui, frame.rom_loaded, "Load State", &keys.load_state).clicked()
                     {
                         out.action = Some(MenuAction::LoadState);
-                        ui.close_menu();
+                        ui.close();
                     }
                     ui.menu_button("Save Slot", |ui| {
                         for slot in 0u8..8 {
@@ -412,7 +412,7 @@ impl UiShell {
                             {
                                 self.active_slot = slot;
                                 out.action = Some(MenuAction::SetSaveSlot(slot));
-                                ui.close_menu();
+                                ui.close();
                             }
                         }
                     });
@@ -425,7 +425,7 @@ impl UiShell {
                             for slot in 0u8..8 {
                                 if ui.button(format!("Slot {}", slot + 1)).clicked() {
                                     out.action = Some(MenuAction::SaveStateSlot(slot));
-                                    ui.close_menu();
+                                    ui.close();
                                 }
                             }
                         });
@@ -433,7 +433,7 @@ impl UiShell {
                             for slot in 0u8..8 {
                                 if ui.button(format!("Slot {}", slot + 1)).clicked() {
                                     out.action = Some(MenuAction::LoadStateSlot(slot));
-                                    ui.close_menu();
+                                    ui.close();
                                 }
                             }
                         });
@@ -447,7 +447,7 @@ impl UiShell {
                     #[cfg(not(target_arch = "wasm32"))]
                     if ui.button("Save States...").clicked() {
                         out.action = Some(MenuAction::OpenSaveStates);
-                        ui.close_menu();
+                        ui.close();
                     }
 
                     #[cfg(not(target_arch = "wasm32"))]
@@ -458,7 +458,7 @@ impl UiShell {
                             .clicked()
                         {
                             out.action = Some(MenuAction::Screenshot);
-                            ui.close_menu();
+                            ui.close();
                         }
                         // v1.0.0 — copy the current frame to the system clipboard
                         // (in addition to the save-to-PNG above). Native-only.
@@ -470,7 +470,7 @@ impl UiShell {
                             .clicked()
                         {
                             out.action = Some(MenuAction::ScreenshotToClipboard);
-                            ui.close_menu();
+                            ui.close();
                         }
                     }
 
@@ -478,7 +478,7 @@ impl UiShell {
 
                     if accel_item(ui, "Quit", &keys.quit).clicked() {
                         out.action = Some(MenuAction::Quit);
-                        ui.close_menu();
+                        ui.close();
                     }
                 });
 
@@ -495,17 +495,17 @@ impl UiShell {
                         .clicked()
                     {
                         out.action = Some(MenuAction::TogglePause);
-                        ui.close_menu();
+                        ui.close();
                     }
                     if accel_enabled(ui, frame.rom_loaded, "Reset", &keys.reset).clicked() {
                         out.action = Some(MenuAction::Reset);
-                        ui.close_menu();
+                        ui.close();
                     }
                     if accel_enabled(ui, frame.rom_loaded, "Power Cycle", &keys.power_cycle)
                         .clicked()
                     {
                         out.action = Some(MenuAction::PowerCycle);
-                        ui.close_menu();
+                        ui.close();
                     }
                     ui.separator();
                     // Frame advance is meaningful while paused; enabled with a
@@ -514,7 +514,7 @@ impl UiShell {
                         .clicked()
                     {
                         out.action = Some(MenuAction::FrameAdvance);
-                        ui.close_menu();
+                        ui.close();
                     }
                     // Fast-forward is a held key — surface it as a disabled hint
                     // (there is no toggle action; hold the key to engage it).
@@ -531,7 +531,7 @@ impl UiShell {
                             {
                                 config.input.run_ahead = n;
                                 save_config(config);
-                                ui.close_menu();
+                                ui.close();
                             }
                         }
                     });
@@ -549,7 +549,7 @@ impl UiShell {
                             let selected = frame.speed == preset;
                             if ui.radio(selected, format!("{pct}%")).clicked() {
                                 out.action = Some(MenuAction::SetSpeed(preset));
-                                ui.close_menu();
+                                ui.close();
                             }
                         }
                     });
@@ -563,7 +563,7 @@ impl UiShell {
                             .clicked()
                     {
                         out.action = Some(MenuAction::InsertCoin);
-                        ui.close_menu();
+                        ui.close();
                     }
                 });
 
@@ -571,7 +571,7 @@ impl UiShell {
                 ui.menu_button("Tools", |ui| {
                     if ui.button("Cheats...").clicked() {
                         out.action = Some(MenuAction::OpenPanel(ToolPanel::Cheats));
-                        ui.close_menu();
+                        ui.close();
                     }
                     // BUG-1: direct child (not inside add_enabled_ui — see File).
                     if frame.rom_loaded {
@@ -583,7 +583,7 @@ impl UiShell {
                             };
                             if accel_item(ui, rec_label, &keys.movie_record).clicked() {
                                 out.action = Some(MenuAction::MovieRecordToggle);
-                                ui.close_menu();
+                                ui.close();
                             }
                             let play_label = if frame.movie_playing {
                                 "Stop Playback"
@@ -592,11 +592,11 @@ impl UiShell {
                             };
                             if accel_item(ui, play_label, &keys.movie_play).clicked() {
                                 out.action = Some(MenuAction::MoviePlayToggle);
-                                ui.close_menu();
+                                ui.close();
                             }
                             if accel_item(ui, "Branch", &keys.movie_branch).clicked() {
                                 out.action = Some(MenuAction::MovieBranch);
-                                ui.close_menu();
+                                ui.close();
                             }
                         });
                     } else {
@@ -605,24 +605,24 @@ impl UiShell {
                     #[cfg(not(target_arch = "wasm32"))]
                     if ui.button("Netplay...").clicked() {
                         out.action = Some(MenuAction::OpenPanel(ToolPanel::Netplay));
-                        ui.close_menu();
+                        ui.close();
                     }
                     #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
                     if ui.button("RetroAchievements...").clicked() {
                         out.action = Some(MenuAction::OpenPanel(ToolPanel::Cheevos));
-                        ui.close_menu();
+                        ui.close();
                     }
                     if ui.button("Performance Monitor").clicked() {
                         out.action = Some(MenuAction::OpenPanel(ToolPanel::Perf));
-                        ui.close_menu();
+                        ui.close();
                     }
                     if ui.button("Input Display").clicked() {
                         out.action = Some(MenuAction::OpenPanel(ToolPanel::InputDisplay));
-                        ui.close_menu();
+                        ui.close();
                     }
                     if ui.button("ROM Database").clicked() {
                         out.action = Some(MenuAction::OpenPanel(ToolPanel::GameDb));
-                        ui.close_menu();
+                        ui.close();
                     }
                 });
 
@@ -630,7 +630,7 @@ impl UiShell {
                 ui.menu_button("View", |ui| {
                     if ui.button("Settings...").clicked() {
                         self.show_settings_window = true;
-                        ui.close_menu();
+                        ui.close();
                     }
                     ui.menu_button("Theme", |ui| {
                         for theme in [AppTheme::Light, AppTheme::Dark, AppTheme::System] {
@@ -639,7 +639,7 @@ impl UiShell {
                                 .clicked()
                             {
                                 save_config(config);
-                                ui.close_menu();
+                                ui.close();
                             }
                         }
                     });
@@ -665,7 +665,7 @@ impl UiShell {
                         let mut fs = self.fullscreen;
                         if accel_changed(ui, &mut fs, "Fullscreen", &keys.fullscreen) {
                             out.action = Some(MenuAction::ToggleFullscreen);
-                            ui.close_menu();
+                            ui.close();
                         }
                     }
                     #[cfg(not(target_arch = "wasm32"))]
@@ -678,7 +678,7 @@ impl UiShell {
                         ] {
                             if ui.button(label).clicked() {
                                 out.action = Some(MenuAction::SetWindowScale(scale));
-                                ui.close_menu();
+                                ui.close();
                             }
                         }
                     });
@@ -694,7 +694,7 @@ impl UiShell {
                     let mut menu_bar = self.menu_visible;
                     if accel_changed(ui, &mut menu_bar, "Show Menu Bar", &keys.toggle_menu_bar) {
                         out.action = Some(MenuAction::ToggleMenuBar);
-                        ui.close_menu();
+                        ui.close();
                     }
                 });
 
@@ -703,7 +703,7 @@ impl UiShell {
                     let mut dbg = frame.debugger_visible;
                     if accel_changed(ui, &mut dbg, "Show Debugger", &keys.debug_overlay) {
                         out.action = Some(MenuAction::ToggleDebugger);
-                        ui.close_menu();
+                        ui.close();
                     }
                     ui.separator();
                     for (label, panel) in [
@@ -720,7 +720,7 @@ impl UiShell {
                     ] {
                         if ui.button(label).clicked() {
                             out.action = Some(MenuAction::OpenChipPanel(panel));
-                            ui.close_menu();
+                            ui.close();
                         }
                     }
                 });
@@ -729,12 +729,12 @@ impl UiShell {
                 ui.menu_button("Help", |ui| {
                     if ui.button("Keyboard Shortcuts").clicked() {
                         self.show_shortcuts = true;
-                        ui.close_menu();
+                        ui.close();
                     }
                     ui.separator();
                     if ui.button("About").clicked() {
                         self.show_about = true;
-                        ui.close_menu();
+                        ui.close();
                     }
                 });
             });
@@ -746,7 +746,7 @@ impl UiShell {
         egui::TopBottomPanel::bottom("shell_status_bar")
             .frame(
                 egui::Frame::side_top_panel(&ctx.style())
-                    .inner_margin(egui::Margin::symmetric(8.0, 4.0)),
+                    .inner_margin(egui::Margin::symmetric(8, 4)),
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
