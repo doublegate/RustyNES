@@ -205,45 +205,26 @@ content below, plus the first **v1.1.0** feature work (beta.1).
 
 ### Fixed
 
-- **Lua callback registry moved Rust-side — closes the registry-junk class for good.** The
-  `onFrame`/`onExec`/`onRead`/`onWrite` callbacks are now stored Rust-side as `mlua::RegistryKey`s
-  (a `Vec` + per-address `HashMap`) instead of in a script-visible `__rustynes` Lua global. A
-  script can register callbacks but **cannot** inspect, clobber, or inject junk into the registry,
-  so no malformed registry value can ever error the host pump — the protection is *structural*,
-  superseding the per-traversal hardening of #49/#52/#53/#54/#55. As a bonus the per-address
-  callback gate becomes a free `HashMap` lookup (no Lua FFI for non-matching addresses). Test
-  `callback_registry_is_not_script_visible` asserts `__rustynes` is `nil` to scripts. Core
-  untouched (AccuracyCoin byte-identical); ADR 0010 + `docs/scripting.md` updated.
-- **Lua registry traversal fully junk-tolerant (PR #53 review follow-up).** Completing the
-  crash-proofing: `active_addrs` now scans keys as generic `Value`s (skipping non-integer keys),
-  and all three callback-list invocations go through a `call_fns` helper that iterates as `Value`
-  and skips non-function entries. So a script can poke **any** junk anywhere in `__rustynes` —
-  a non-integer key, a non-table at an address, a non-function in a callback list — and it only
-  disables its own callbacks; nothing errors the host pump (gemini/Copilot #53). Regression test
-  `arbitrary_registry_junk_never_errors_the_host` (13 script tests).
-- **Lua registry access fully crash-proof (PR #52 review follow-up).** All `__rustynes` registry
-  access now goes through one `table_field` helper that returns `None` for a missing / `nil` /
-  **non-table** value or a failing lookup (e.g. a hostile `_G` metatable) — so a script that parks
-  a junk value at a callback address, or clobbers the registry, can no longer raise a `FromLua`
-  error out of the host pump (gemini + Copilot #52). `frame_callback_count` is now infallible;
-  regression test `junk_value_at_a_callback_address_does_not_crash`. Also resolved a
-  `docs/scripting.md` overlay-mapping contradiction.
-- **Lua scripting — self-review hardening (M1/M2/L1–L4).** A code-review pass on the Workstream-E
-  code: (M1) the internal `__rustynes` callback registry is now accessed resiliently — a script
-  that clobbers it (`__rustynes = nil`) only disables its own callbacks instead of erroring the
-  host pump; (M2) `pump_scripts` holds the emulator lock only around `on_frame` (the log/control/
+- **Lua callback registry is isolated Rust-side (structural crash-proofing).** The
+  `onFrame`/`onExec`/`onRead`/`onWrite` callbacks are stored Rust-side as `mlua::RegistryKey`s
+  (a `Vec` + per-address `HashMap`), **not** in a script-visible Lua global. A script can register
+  callbacks but cannot inspect, clobber, or inject junk into the registry, so no malformed
+  registry value can ever error the host pump — the protection is *structural*. The per-address
+  callback replay gates on the Rust `HashMap` keys (an O(1) check, no Lua FFI for the ~75k
+  non-matching exec/access events per frame). Test `callback_registry_is_not_script_visible`
+  asserts `__rustynes` is `nil` to scripts. (This was reached via a review cycle, #49–#57, that
+  first hardened a script-visible `__rustynes` global traversal-by-traversal against junk keys /
+  values / non-functions, then moved the registry Rust-side to remove the surface entirely.)
+  Core untouched (AccuracyCoin byte-identical); ADR 0010 + `docs/scripting.md` updated.
+- **Lua scripting — self-review hardening (M2/L1–L4).** A code-review pass on the Workstream-E
+  code: (M2) `pump_scripts` holds the emulator lock only around `on_frame` (the log/control/
   draw drains moved outside it) and the default per-frame instruction budget dropped 5M→1M, so a
   runaway script stalls emulation far less; (L1/L3) the script overlay now maps onto the actual
   letterboxed game rect (8:7 PAR + overscan aware) instead of stretching to the window, and the
   NSF panel notes its ~60 Hz tempo approximation; (L2) `emu.setInput` logs a one-time
   "accepted but not yet applied" notice instead of being a silent no-op; (L4) non-primitive
   `emu.log` args render as their Lua type name, not a `{:?}` debug dump. Core untouched
-  (AccuracyCoin byte-identical); 11 script unit tests.
-- **Lua replay tolerates mid-frame callback unregistration** (gemini #49 follow-up). The Lua
-  `onExec`/`onRead`/`onWrite` replay gates on an active-address set snapshotted *before* the
-  frame's callbacks run; if a callback clears its own registry slot during the frame, that slot
-  is now `Nil` — the replay reads it as `Option<Table>` and skips it instead of crashing on a
-  `FromLua` conversion. Regression test added; a misleading "trace log" test message corrected.
+  (AccuracyCoin byte-identical).
 - **Bot-review sweep round 2 (PRs #38–#48)** — applied the actionable
   `gemini-code-assist` / Copilot suggestions from the v1.1.0 feature PRs:
   - **`emu.read` / debugger peek no longer has side effects** (Copilot #46): `Nes::peek`

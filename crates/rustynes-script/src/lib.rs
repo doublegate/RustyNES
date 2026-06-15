@@ -26,7 +26,7 @@
 //!   policy as the Game Genie / raw-RAM cheat path.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use mlua::{Function, HookTriggers, Lua, RegistryKey, StdLib, Table, VmState};
@@ -595,20 +595,35 @@ impl ScriptEngine {
                 f.call::<()>(())?;
             }
 
-            // Replay this frame's exec PCs through onExec(addr). The Rust-side
-            // map gates the FFI: only PCs with a registered callback resolve a
-            // `Function` handle (gemini #47).
+            // Snapshot the registered addresses into plain `HashSet`s so the
+            // hot replay loops can gate on an O(1) check WITHOUT a per-event
+            // `RefCell` borrow — only a matching address pays the borrow +
+            // registry resolution (gemini #47/#57). The snapshot is 3 borrows;
+            // the loops run ~15k + ~60k times per frame.
+            let active_exec: HashSet<u16> = exec_cbs.borrow().keys().copied().collect();
+            let active_read: HashSet<u16> = read_cbs.borrow().keys().copied().collect();
+            let active_write: HashSet<u16> = write_cbs.borrow().keys().copied().collect();
+
+            // Replay this frame's exec PCs through onExec(addr).
             for pc in &exec_pcs {
-                for f in fns_at(lua, &exec_cbs, *pc)? {
-                    f.call::<()>(*pc)?;
+                if active_exec.contains(pc) {
+                    for f in fns_at(lua, &exec_cbs, *pc)? {
+                        f.call::<()>(*pc)?;
+                    }
                 }
             }
 
             // Replay this frame's bus accesses through onRead/onWrite(addr, value).
             for (is_write, addr, value) in &accesses {
-                let map = if *is_write { &write_cbs } else { &read_cbs };
-                for f in fns_at(lua, map, *addr)? {
-                    f.call::<()>((*addr, *value))?;
+                let (active, map) = if *is_write {
+                    (&active_write, &write_cbs)
+                } else {
+                    (&active_read, &read_cbs)
+                };
+                if active.contains(addr) {
+                    for f in fns_at(lua, map, *addr)? {
+                        f.call::<()>((*addr, *value))?;
+                    }
                 }
             }
             Ok(())
