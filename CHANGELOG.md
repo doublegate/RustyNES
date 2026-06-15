@@ -67,6 +67,25 @@ Work toward **v1.2.0 "Curator"** (beta.1, Workstreams A + B). See
 
 ### Fixed
 
+- **SMB3 (and any MMC3/other game using a mid-scanline `$2001` split) — sprite
+  flicker.** The PPU OAM-row-corruption model keyed the corrupted row off the
+  raw PPU dot (`dot >> 1`), so *Super Mario Bros. 3*'s mid-scanline rendering
+  disable (its HUD split) intermittently flagged Mario's OAM row and wiped his
+  sprite, flickering him in/out (~26% of frames) in World 1-1. Replaced with a
+  faithful port of TriCNES's eval-pointer model: the corruption index is the
+  live secondary-OAM evaluation pointer (`OAM2Address`), captured at the
+  rendering-disable edge during dots 1-64 and committed on re-enable. Default
+  builds stay byte-identical for games without such a split; AccuracyCoin's
+  OAM-Corruption test (0x047B) and the full 139/139 suite, nestest 0-diff, and
+  blargg/kevtris remain green. `docs/ppu-2c02.md` edge-case 2 updated.
+- **RetroAchievements badge decode** now validates PNG dimensions (from the
+  IHDR header) *before* allocating the decode buffer, so a crafted/corrupt
+  badge declaring huge dimensions can no longer OOM. (Behind the off-by-default
+  `retroachievements` feature.)
+- **Lua scripting** surfaces a failed instruction-budget hook install
+  (`mlua::set_hook`, fallible since 0.11) as a `ScriptError` instead of
+  silently running scripts without the runaway-guard. (Behind the off-by-default
+  `scripting` feature.)
 - **Mapper 89 (Sunsoft-2) — *Tenka no Goikenban: Mito Koumon*** now models the
   board's **bus conflict** (a register write is ANDed with the PRG-ROM byte at
   the written address, per nesdev `INES_Mapper_089` "BUS CONFLICTS"). Without it
@@ -85,8 +104,9 @@ Work toward **v1.2.0 "Curator"** (beta.1, Workstreams A + B). See
   `StreamConfig` is `Copy` + passed by value). `rfd 0.17` is deferred — its
   sync xdg-portal/libdbus backend fails to compile on Rust 1.86 (an upstream
   rfd bug), so rfd stays at 0.14 pending a fixed release. The egui / egui-wgpu /
-  egui-winit + wgpu UI stack bump (egui 0.29 → 0.32) is tracked as a separate
-  coordinated upgrade.
+  egui-winit + wgpu UI-stack cluster bump (**egui 0.29 → 0.32, wgpu 22 → 25,
+  naga → 25**) landed as one coordinated upgrade; `deny.toml` now allows the
+  `Ubuntu-font-1.0` license that egui 0.32's bundled default font declares.
 
 ## [1.1.0] - 2026-06-15 - "Scriptable" (Feature Release)
 
