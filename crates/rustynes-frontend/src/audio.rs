@@ -469,7 +469,8 @@ impl AudioOutput {
 
         // Honor the configured sample rate when the device can do it with
         // the same channel count; otherwise keep the device default.
-        let mut sample_rate = default_cfg.sample_rate().0;
+        // cpal 0.18: `SampleRate` is a `u32` alias (no longer a tuple struct).
+        let mut sample_rate = default_cfg.sample_rate();
         let channels = default_cfg.channels();
         let format = default_cfg.sample_format();
         if let Some(want) = preferred_rate {
@@ -479,8 +480,8 @@ impl AudioOutput {
                 .any(|range| {
                     range.channels() == channels
                         && range.sample_format() == format
-                        && range.min_sample_rate().0 <= want
-                        && want <= range.max_sample_rate().0
+                        && range.min_sample_rate() <= want
+                        && want <= range.max_sample_rate()
                 });
             if supported {
                 sample_rate = want;
@@ -493,7 +494,7 @@ impl AudioOutput {
         }
         let config = cpal::StreamConfig {
             channels,
-            sample_rate: cpal::SampleRate(sample_rate),
+            sample_rate,
             buffer_size: cpal::BufferSize::Default,
         };
 
@@ -704,7 +705,7 @@ fn build_stream(
     match format {
         SampleFormat::F32 => device
             .build_output_stream(
-                config,
+                *config,
                 move |data: &mut [f32], _| fill::<f32>(data, &queue, chans, &mut mono),
                 err_fn,
                 None,
@@ -712,7 +713,7 @@ fn build_stream(
             .map_err(|e| AudioError::Cpal(e.to_string())),
         SampleFormat::I16 => device
             .build_output_stream(
-                config,
+                *config,
                 move |data: &mut [i16], _| fill::<i16>(data, &queue, chans, &mut mono),
                 err_fn,
                 None,
@@ -720,7 +721,7 @@ fn build_stream(
             .map_err(|e| AudioError::Cpal(e.to_string())),
         SampleFormat::U16 => device
             .build_output_stream(
-                config,
+                *config,
                 move |data: &mut [u16], _| fill::<u16>(data, &queue, chans, &mut mono),
                 err_fn,
                 None,

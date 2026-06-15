@@ -38,7 +38,7 @@ rustynes-test-harness = { path = "crates/rustynes-test-harness", version = "1.1.
 # from source (no system Lua needed); native-only (the wasm/no_std builds never
 # pull this in, since `rustynes-script` is gated behind the frontend's optional
 # `scripting` feature).
-mlua = { version = "0.10", features = ["lua54", "vendored"] }
+mlua = { version = "0.11", features = ["lua54", "vendored"] }
 
 bitflags = "2.6"
 thiserror = { version = "2.0", default-features = false }
@@ -58,14 +58,14 @@ winit = "0.30"
 # v1.3.0 Sprint 1.4 — `webgl` feature enables the WebGL2 fallback on
 # wasm32 (for browsers without WebGPU: Linux Firefox, pre-A12 iOS).
 # No effect on native builds. WebGPU-primary is on by default.
-wgpu = { version = "22", features = ["webgl"] }
-cpal = "0.15"
-egui = "0.29"
-egui-wgpu = "0.29"
+wgpu = { version = "25", features = ["webgl"] }
+cpal = "0.18"
+egui = "0.32"
+egui-wgpu = "0.32"
 # `links` enables egui-winit's URL opener (webbrowser) so hyperlinks (e.g. the
 # About window's GitHub link) actually launch the default browser; without it
 # (default-features = false drops it) hyperlink_to is inert.
-egui-winit = { version = "0.29", default-features = false, features = ["links", "wayland", "x11"] }
+egui-winit = { version = "0.32", default-features = false, features = ["links", "wayland", "x11"] }
 gilrs = "0.11"
 rfd = "0.14"
 directories = "5"
@@ -92,7 +92,7 @@ web-sys = "0.3.77"
 web-time = "1.1"
 
 # Dev deps
-criterion = "0.5"
+criterion = "0.8"
 proptest = "1"
 insta = "1"
 pretty_assertions = "1"

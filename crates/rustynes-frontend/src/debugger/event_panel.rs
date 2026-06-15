@@ -62,7 +62,12 @@ pub fn show(ctx: &egui::Context, open: &mut bool, _state: &mut EventPanelState, 
             let (rect, _) = ui.allocate_exact_size(Vec2::new(w, h), Sense::hover());
             let p = ui.painter_at(rect);
             p.rect_filled(rect, 2.0, Color32::from_rgb(0x10, 0x10, 0x14));
-            p.rect_stroke(rect, 2.0, Stroke::new(1.0, Color32::from_gray(0x50)));
+            p.rect_stroke(
+                rect,
+                2.0,
+                Stroke::new(1.0, Color32::from_gray(0x50)),
+                egui::StrokeKind::Inside,
+            );
             // Mark the start of the visible region (scanline 0) with a faint line.
             let vis_y = rect.top() + (1.0 / LINES) * rect.height();
             p.line_segment(

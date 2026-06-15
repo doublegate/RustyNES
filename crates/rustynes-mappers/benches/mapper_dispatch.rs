@@ -19,8 +19,9 @@
 
 use std::path::PathBuf;
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use rustynes_mappers::{parse, Mapper};
+use std::hint::black_box;
 
 fn rom_path(rel: &str) -> PathBuf {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

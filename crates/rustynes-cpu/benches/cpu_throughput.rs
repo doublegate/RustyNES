@@ -12,8 +12,9 @@
 //! pressure is therefore minimal; this is an upper bound on
 //! instructions-per-second, not a representative workload.
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 use rustynes_cpu::{Bus, Cpu};
+use std::hint::black_box;
 
 /// Minimal bus: NOPs everywhere, no IRQ/NMI, no cycle callback work.
 struct NopBus {
