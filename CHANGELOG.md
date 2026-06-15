@@ -67,6 +67,20 @@ Work toward **v1.2.0 "Curator"** (beta.1, Workstreams A + B). See
   never latched. Isolated to mapper 89 (its only dump); AccuracyCoin and all
   other titles unaffected.
 
+### Dependencies
+
+- Dependency modernization (v1.2.0 beta.1). Merged the safe Dependabot bumps
+  (naga 28, toml 1.1, gilrs 0.11, tokio-tungstenite 0.29) and `cargo update`'d
+  the rest of the compatible tree (image 0.25.9, tiff 0.10, windows 0.62, …).
+  Migrated the breaking bumps: **png 0.18** (decoder `Read + Seek` + fallible
+  `output_buffer_size`), **criterion 0.8** (`std::hint::black_box`), **mlua
+  0.11** (`set_hook` now fallible), **cpal 0.18** (`SampleRate` is a `u32` alias;
+  `StreamConfig` is `Copy` + passed by value). `rfd 0.17` is deferred — its
+  sync xdg-portal/libdbus backend fails to compile on Rust 1.86 (an upstream
+  rfd bug), so rfd stays at 0.14 pending a fixed release. The egui / egui-wgpu /
+  egui-winit + wgpu UI stack bump (egui 0.29 → 0.32) is tracked as a separate
+  coordinated upgrade.
+
 ## [1.1.0] - 2026-06-15 - "Scriptable" (Feature Release)
 
 The first feature release after the v1.0.0 production cut. It folds in the
