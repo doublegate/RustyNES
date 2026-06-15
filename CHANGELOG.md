@@ -30,8 +30,22 @@ Work toward **v1.2.0 "Curator"** (beta.1, Workstreams A + B). See
   UNL-PCI556), 41 (Caltron 6-in-1), 79 (AVE NINA-03/06), 86 (Jaleco JF-13), 113
   (NINA-006 / MB-91, register-controlled mirroring), 140 (Jaleco JF-11/14), 232
   (Camerica Quattro / BF9096), 240 (C&E), and 241 (BxROM-like). Each is a
-  discrete-logic board with register-decode unit tests; coverage rises from 51
-  to **60 families**.
+  discrete-logic board with register-decode unit tests.
+- **Twenty-seven best-effort (Tier-2) mapper families** (v1.2.0 Workstream A):
+  the aggressive long-tail sweep ported from the GeraNES / Mesen2 references —
+  15, 36, 39, 61, 62, 72, 77, 92, 96, 97, 132, 133, 145, 146 (sprint6) and 147,
+  148, 149, 150, 180, 185, 200, 201, 202, 203, 212, 213, 214 (sprint7). Mostly
+  multicart / Sachen / discrete boards. Register-decode unit-tested only and
+  **not** accuracy-gated (see the tiering note). Total mapper coverage rises
+  from 51 to **87 families** (51 Core + 9 Curated + 27 BestEffort).
+- **Per-game database — region / mapper / submapper overrides** (v1.2.0
+  Workstream B). The CRC32-keyed per-game DB grew from a `(crc, Mirroring)`
+  table to a full `GameDbEntry` (region / mapper / submapper / mirroring /
+  title) parsed from the vendored TetaNES columns. Region / mapper / submapper
+  corrections apply by rewriting the iNES (or NES 2.0) header before the core
+  parses it — frontend-only and idempotent, so the determinism firewall holds
+  (the core test suites never patch). Mirroring / Vs. corrections continue
+  through the existing post-construction setters.
 - **ROM soft-patching** (v1.2.0 Workstream B): a same-stem `.bps` / `.ups` /
   `.ips` patch sitting beside a ROM is auto-applied at load (in that
   precedence), before format detection, so the patched image flows through the

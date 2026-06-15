@@ -26,56 +26,200 @@
 
 use std::sync::OnceLock;
 
-use rustynes_core::rustynes_mappers::Mirroring;
+use rustynes_core::rustynes_mappers::{Mirroring, Region};
 
 /// The vendored database text (CRC + correction columns; `#` lines are comments).
 const DB_TEXT: &str = include_str!("game_database.txt");
 
-/// Parsed `(crc32, mirroring)` table, sorted by CRC for binary search. Built
-/// once on first use. Only rows with a recognized mirroring are kept.
-fn db() -> &'static [(u32, Mirroring)] {
-    static DB: OnceLock<Vec<(u32, Mirroring)>> = OnceLock::new();
+/// A per-game database entry: a set of optional corrections keyed by ROM CRC32.
+///
+/// Each field is an *override* — `None` means "no correction, use the ROM's iNES
+/// header." `mirroring` is applied post-construction via
+/// [`rustynes_core::Nes::set_mirroring_override`]; `region` / `mapper` /
+/// `submapper` are applied by patching the iNES header bytes before the core
+/// parses them (see [`apply_header_overrides`]). This is **frontend-only**: the
+/// core test suites construct the `Nes` directly and never consult the DB, so
+/// `AccuracyCoin` / the commercial oracle stay byte-identical.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GameDbEntry {
+    /// CRC32 of PRG-ROM + CHR-ROM (header/trainer excluded) — the key.
+    pub crc: u32,
+    /// Region / timing override (NTSC / PAL / Dendy).
+    pub region: Option<Region>,
+    /// iNES mapper-id override (for a ROM with a wrong header mapper).
+    pub mapper: Option<u16>,
+    /// NES 2.0 submapper override.
+    pub submapper: Option<u8>,
+    /// Nametable-mirroring override.
+    pub mirroring: Option<Mirroring>,
+    /// Game title (display only).
+    pub title: String,
+}
+
+/// Parsed vendored table, sorted by CRC for binary search. Built once on first
+/// use. Rows with no usable correction field are still kept (title-only) so the
+/// editor can show the game name.
+fn db() -> &'static [GameDbEntry] {
+    static DB: OnceLock<Vec<GameDbEntry>> = OnceLock::new();
     DB.get_or_init(|| {
-        let mut rows: Vec<(u32, Mirroring)> = DB_TEXT.lines().filter_map(parse_row).collect();
-        rows.sort_unstable_by_key(|&(crc, _)| crc);
-        rows.dedup_by_key(|&mut (crc, _)| crc);
-        // This Vec lives for the whole process; release the parse over-capacity.
+        let mut rows: Vec<GameDbEntry> = DB_TEXT.lines().filter_map(parse_row).collect();
+        rows.sort_unstable_by_key(|e| e.crc);
+        rows.dedup_by_key(|e| e.crc);
         rows.shrink_to_fit();
         rows
     })
 }
 
+/// Map a database region token to a [`Region`], or `None` if unrecognized.
+fn parse_region(token: &str) -> Option<Region> {
+    match token {
+        "NTSC" => Some(Region::Ntsc),
+        "PAL" => Some(Region::Pal),
+        "Dendy" => Some(Region::Dendy),
+        _ => None,
+    }
+}
+
+/// Map a database mirroring token to a [`Mirroring`], or `None` if unrecognized
+/// (e.g. mapper-controlled rows that carry no usable static override).
+fn parse_mirroring(token: &str) -> Option<Mirroring> {
+    match token {
+        "Horizontal" => Some(Mirroring::Horizontal),
+        "Vertical" => Some(Mirroring::Vertical),
+        "FourScreen" => Some(Mirroring::FourScreen),
+        "SingleScreenA" => Some(Mirroring::SingleScreenA),
+        "SingleScreenB" => Some(Mirroring::SingleScreenB),
+        _ => None,
+    }
+}
+
 /// Parse one `CRC, Region, Mapper, Sub-Mapper, ChrBanks, PrgRomBanks,
-/// PrgRamBanks, Battery, Mirroring, Title` row into `(crc32, mirroring)`.
-/// Returns `None` for comment / blank / malformed lines.
-fn parse_row(line: &str) -> Option<(u32, Mirroring)> {
+/// PrgRamBanks, Battery, Mirroring, Title` row into a [`GameDbEntry`]. Returns
+/// `None` for comment / blank / malformed lines. The title is the final field
+/// and may contain commas (it is split off with `splitn`).
+fn parse_row(line: &str) -> Option<GameDbEntry> {
     let line = line.trim();
     if line.is_empty() || line.starts_with('#') {
         return None;
     }
-    let mut fields = line.split(',');
-    let crc = u32::from_str_radix(fields.next()?.trim(), 16).ok()?;
-    // Mirroring is the 9th field (index 8): skip 7 between CRC and it.
-    let mirroring = fields.nth(7)?.trim();
-    let mirroring = match mirroring {
-        "Horizontal" => Mirroring::Horizontal,
-        "Vertical" => Mirroring::Vertical,
-        "FourScreen" => Mirroring::FourScreen,
-        "SingleScreenA" => Mirroring::SingleScreenA,
-        "SingleScreenB" => Mirroring::SingleScreenB,
-        // Unknown / mapper-controlled rows carry no useful static override.
-        _ => return None,
-    };
-    Some((crc, mirroring))
+    // 10 columns; the 10th (title) keeps any embedded commas.
+    let fields: Vec<&str> = line.splitn(10, ',').map(str::trim).collect();
+    if fields.len() < 9 {
+        return None;
+    }
+    let crc = u32::from_str_radix(fields[0], 16).ok()?;
+    let region = parse_region(fields[1]);
+    let mapper = fields[2].parse::<u16>().ok();
+    let submapper = fields[3].parse::<u8>().ok();
+    let mirroring = parse_mirroring(fields[8]);
+    let title = fields
+        .get(9)
+        .map(|t| t.trim_matches('"').to_string())
+        .unwrap_or_default();
+    Some(GameDbEntry {
+        crc,
+        region,
+        mapper,
+        submapper,
+        mirroring,
+        title,
+    })
 }
 
-/// Look up a ROM's mirroring correction by CRC32, or `None` if not listed.
+/// Look up a ROM's full database entry by CRC32, or `None` if not listed.
+#[must_use]
+pub fn entry_for_crc(crc: u32) -> Option<&'static GameDbEntry> {
+    let db = db();
+    db.binary_search_by_key(&crc, |e| e.crc)
+        .ok()
+        .map(|i| &db[i])
+}
+
+/// Look up a ROM's mirroring correction by CRC32, or `None` if not listed (or
+/// listed without a usable mirroring override). Thin wrapper over
+/// [`entry_for_crc`], kept for the existing load path.
 #[must_use]
 pub fn mirroring_for_crc(crc: u32) -> Option<Mirroring> {
-    let db = db();
-    db.binary_search_by_key(&crc, |&(c, _)| c)
-        .ok()
-        .map(|i| db[i].1)
+    entry_for_crc(crc).and_then(|e| e.mirroring)
+}
+
+/// Apply a database entry's `region` / `mapper` / `submapper` corrections.
+///
+/// Rewrites the iNES (or NES 2.0) header bytes of `bytes` in place, *before* the
+/// core parses them. Mirroring is **not** applied here — it goes through the
+/// post-construction [`rustynes_core::Nes::set_mirroring_override`] setter.
+///
+/// This keeps the determinism firewall intact: only the frontend patches the
+/// header, the core sees a normal iNES image, and the CRC key (PRG+CHR, header
+/// excluded) is unchanged so the lookup is stable across the patch.
+///
+/// Returns `true` if any byte was changed (the caller may want to log it).
+pub fn apply_header_overrides(bytes: &mut [u8], entry: &GameDbEntry) -> bool {
+    if bytes.len() < 16 || &bytes[0..4] != b"NES\x1A" {
+        return false;
+    }
+    let is_nes2 = (bytes[7] & 0x0C) == 0x08;
+    let mut changed = false;
+
+    if let Some(mapper) = entry.mapper {
+        // iNES: low nibble in flags6[7:4], high nibble in flags7[7:4].
+        // NES 2.0 adds bits 8-11 in byte 8[3:0].
+        let lo = (mapper & 0x0F) as u8;
+        let mid = ((mapper >> 4) & 0x0F) as u8;
+        let new6 = (bytes[6] & 0x0F) | (lo << 4);
+        let new7 = (bytes[7] & 0x0F) | (mid << 4);
+        if new6 != bytes[6] || new7 != bytes[7] {
+            bytes[6] = new6;
+            bytes[7] = new7;
+            changed = true;
+        }
+        if is_nes2 {
+            let hi = ((mapper >> 8) & 0x0F) as u8;
+            let new8 = (bytes[8] & 0xF0) | hi;
+            if new8 != bytes[8] {
+                bytes[8] = new8;
+                changed = true;
+            }
+        }
+    }
+
+    if let Some(submapper) = entry.submapper {
+        if is_nes2 {
+            let new8 = (bytes[8] & 0x0F) | ((submapper & 0x0F) << 4);
+            if new8 != bytes[8] {
+                bytes[8] = new8;
+                changed = true;
+            }
+        }
+    }
+
+    if let Some(region) = entry.region {
+        if is_nes2 {
+            // NES 2.0 region is byte 12, low two bits (0 = NTSC, 1 = PAL,
+            // 2 = multi, 3 = Dendy).
+            let code = match region {
+                Region::Pal => 1,
+                Region::Dendy => 3,
+                _ => 0,
+            };
+            let new12 = (bytes[12] & 0xFC) | code;
+            if new12 != bytes[12] {
+                bytes[12] = new12;
+                changed = true;
+            }
+        } else {
+            // iNES 1.0 TV-system is byte 9 bit 0 (0 = NTSC, 1 = PAL); Dendy is
+            // not representable in iNES 1.0, so map it to PAL timing's flag.
+            let bit = u8::from(matches!(region, Region::Pal | Region::Dendy));
+            let new9 = (bytes[9] & 0xFE) | bit;
+            if new9 != bytes[9] {
+                bytes[9] = new9;
+                changed = true;
+            }
+        }
+    }
+
+    changed
 }
 
 /// Compute the "ROM CRC" of an iNES image: CRC32 of PRG-ROM + CHR-ROM.
@@ -132,16 +276,59 @@ mod tests {
         let db = db();
         assert!(!db.is_empty(), "vendored DB must parse some rows");
         assert!(
-            db.windows(2).all(|w| w[0].0 < w[1].0),
+            db.windows(2).all(|w| w[0].crc < w[1].crc),
             "DB must be strictly sorted by CRC (binary-search invariant)"
         );
-        // A known entry from the vendored file: Mega Man 3 (Europe) 0x1388B3 = Vertical.
+        // A known entry from the vendored file: Mega Man 3 (Europe) 0x1388B3 =
+        // Vertical mirroring, PAL region, mapper 4.
         assert_eq!(mirroring_for_crc(0x0013_88B3), Some(Mirroring::Vertical));
+        let entry = entry_for_crc(0x0013_88B3).expect("Mega Man 3 (Europe) listed");
+        assert_eq!(entry.region, Some(Region::Pal));
+        assert_eq!(entry.mapper, Some(4));
+        assert!(entry.title.contains("Mega Man 3"));
     }
 
     #[test]
     fn lookup_miss_is_none() {
         assert_eq!(mirroring_for_crc(0xDEAD_BEEF), None);
+    }
+
+    #[test]
+    fn header_overrides_rewrite_mapper_and_region() {
+        // Minimal iNES 1.0 header (mapper 0, NTSC). Override to mapper 4 + PAL.
+        let mut rom = vec![0u8; 16 + 16 * 1024 + 8 * 1024];
+        rom[0..4].copy_from_slice(b"NES\x1A");
+        rom[4] = 1; // 1 PRG bank
+        rom[5] = 1; // 1 CHR bank
+        let entry = GameDbEntry {
+            crc: 0,
+            region: Some(Region::Pal),
+            mapper: Some(4),
+            submapper: None,
+            mirroring: None,
+            title: "Test".into(),
+        };
+        assert!(apply_header_overrides(&mut rom, &entry));
+        // Mapper 4: low nibble in flags6[7:4], high nibble (0) in flags7[7:4].
+        assert_eq!(rom[6] >> 4, 4, "mapper low nibble");
+        assert_eq!(rom[7] >> 4, 0, "mapper high nibble");
+        assert_eq!(rom[9] & 1, 1, "iNES 1.0 PAL TV-system bit");
+        // Re-applying the same override is now a no-op (idempotent).
+        assert!(!apply_header_overrides(&mut rom, &entry));
+    }
+
+    #[test]
+    fn header_overrides_noop_for_non_ines() {
+        let mut not_a_rom = b"not a rom".to_vec();
+        let entry = GameDbEntry {
+            crc: 0,
+            region: Some(Region::Pal),
+            mapper: Some(4),
+            submapper: None,
+            mirroring: None,
+            title: String::new(),
+        };
+        assert!(!apply_header_overrides(&mut not_a_rom, &entry));
     }
 
     #[test]

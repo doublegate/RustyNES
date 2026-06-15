@@ -56,6 +56,8 @@ mod rambo1;
 mod sprint2;
 mod sprint3;
 mod sprint5;
+mod sprint6;
+mod sprint7;
 mod sunsoft1;
 mod sunsoft2;
 mod sunsoft3;
@@ -103,6 +105,14 @@ pub use sprint2::{Camerica, ColorDreams, Cprom, M34Variant, Mmc2, Mmc4, Vrc1, M3
 pub use sprint3::{Fme7, Namco163, Vrc2, Vrc4, Vrc6, Vrc7};
 pub use sprint5::{
     Bitcorp38, Bxrom241, Caltron41, Camerica232, Cne240, Jaleco140, Jaleco86, Nina006M113, Nina0379,
+};
+pub use sprint6::{
+    Bandai96, Irem77, Irem97, Jaleco72, Jaleco92, Multicart15, Multicart61, Multicart62, Sachen133,
+    Sachen145, Sachen146, Subor39, Txc132, Txc36,
+};
+pub use sprint7::{
+    CnRom185, Multicart200, Multicart201, Multicart202, Multicart203, Multicart212, Multicart213,
+    Multicart214, Nichibutsu180, Sachen148, Sachen149, Sachen150, Sachen3018M147,
 };
 pub use sunsoft1::Sunsoft1;
 pub use sunsoft2::Sunsoft2;
@@ -737,6 +747,116 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
         ),
         241 => Box::new(
             Bxrom241::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        // --- v1.2.0 Workstream A, best-effort (Tier-2) long-tail sweep
+        // (sprint6 + sprint7). Reference-ported discrete/multicart boards,
+        // register-decode unit-tested only, NOT accuracy-gated. See `tier.rs`
+        // (`MapperTier::BestEffort`) + `docs/adr/0011-mapper-tiering.md`.
+        15 => Box::new(
+            Multicart15::new(prg_rom, &chr_rom)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        36 => Box::new(
+            Txc36::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        39 => Box::new(
+            Subor39::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        61 => Box::new(
+            Multicart61::new(prg_rom, &chr_rom)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        62 => Box::new(
+            Multicart62::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        72 => Box::new(
+            Jaleco72::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        77 => Box::new(
+            Irem77::new(prg_rom, chr_rom).map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        92 => Box::new(
+            Jaleco92::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        96 => Box::new(
+            Bandai96::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        97 => Box::new(
+            Irem97::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        132 => Box::new(
+            Txc132::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        133 => Box::new(
+            Sachen133::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        145 => Box::new(
+            Sachen145::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        146 => Box::new(
+            Sachen146::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        147 => Box::new(
+            Sachen3018M147::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        148 => Box::new(
+            Sachen148::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        149 => Box::new(
+            Sachen149::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        150 => Box::new(
+            Sachen150::new(prg_rom, chr_rom).map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        180 => Box::new(
+            Nichibutsu180::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        185 => Box::new(
+            CnRom185::new(prg_rom, chr_rom, h.mirroring, h.submapper)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        200 => Box::new(
+            Multicart200::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        201 => Box::new(
+            Multicart201::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        202 => Box::new(
+            Multicart202::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        203 => Box::new(
+            Multicart203::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        212 => Box::new(
+            Multicart212::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        213 => Box::new(
+            Multicart213::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        214 => Box::new(
+            Multicart214::new(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         other => return Err(RomError::UnsupportedMapper(other)),

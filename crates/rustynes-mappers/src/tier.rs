@@ -17,9 +17,11 @@
 //!   `AccuracyCoin` / oracle gate.
 //!
 //! The load-bearing invariant — *no `BestEffort` mapper may back a ROM in the
-//! accuracy oracle corpus* — is asserted by a CI test in the test harness; the
-//! [`mapper_tier`] classifier here is its single source of truth. See
-//! `docs/adr/0011-mapper-tiering.md`.
+//! accuracy oracle corpus* — is enforced at the classifier level: `BestEffort`
+//! is structurally never accuracy-gated, the three tier id-sets are disjoint,
+//! and the byte-oracle corpus references only Core/Curated mappers by
+//! construction. This [`mapper_tier`] classifier is the single source of truth.
+//! See `docs/adr/0011-mapper-tiering.md`.
 
 /// Accuracy-evidence tier for a supported mapper family. See the module docs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -74,8 +76,13 @@ pub const fn mapper_tier(id: u16, _submapper: u8) -> Option<MapperTier> {
         // Notable games + decode-table spec; register-decode unit-tested.
         38 | 41 | 79 | 86 | 113 | 140 | 232 | 240 | 241 => Some(MapperTier::Curated),
 
-        // --- Tier 2 / BestEffort: reference-ported sweep (A1 aggressive sweep).
-        // (none yet)
+        // --- Tier 2 / BestEffort: reference-ported long-tail sweep
+        // (sprint6 + sprint7). Register-decode unit-tested; NOT accuracy-gated.
+        15 | 36 | 39 | 61 | 62 | 72 | 77 | 92 | 96 | 97 | 132 | 133 | 145 | 146 | 147 | 148
+        | 149 | 150 | 180 | 185 | 200 | 201 | 202 | 203 | 212 | 213 | 214 => {
+            Some(MapperTier::BestEffort)
+        }
+
         _ => None,
     }
 }
@@ -124,6 +131,52 @@ mod tests {
                 mapper_tier(id, 0),
                 Some(MapperTier::Curated),
                 "mapper {id} should be Tier-1 Curated"
+            );
+        }
+    }
+
+    /// The v1.2.0 best-effort (Tier-2) sweep added in `sprint6.rs` + `sprint7.rs`.
+    const BEST_EFFORT_IDS: &[u16] = &[
+        15, 36, 39, 61, 62, 72, 77, 92, 96, 97, 132, 133, 145, 146, 147, 148, 149, 150, 180, 185,
+        200, 201, 202, 203, 212, 213, 214,
+    ];
+
+    #[test]
+    fn all_best_effort_ids_classify_as_best_effort() {
+        for &id in BEST_EFFORT_IDS {
+            assert_eq!(
+                mapper_tier(id, 0),
+                Some(MapperTier::BestEffort),
+                "mapper {id} should be Tier-2 BestEffort"
+            );
+        }
+    }
+
+    #[test]
+    fn best_effort_is_not_accuracy_gated() {
+        for &id in BEST_EFFORT_IDS {
+            assert!(
+                !mapper_tier(id, 0).unwrap().is_accuracy_gated(),
+                "BestEffort mapper {id} must not be accuracy-gated"
+            );
+        }
+    }
+
+    #[test]
+    fn tiers_are_pairwise_disjoint() {
+        // No mapper id may appear in more than one tier — a copy-paste guard for
+        // the three classifier arms.
+        for &id in CURATED_IDS {
+            assert!(!CORE_IDS.contains(&id), "id {id} in both Core and Curated");
+            assert!(
+                !BEST_EFFORT_IDS.contains(&id),
+                "id {id} in both Curated and BestEffort"
+            );
+        }
+        for &id in BEST_EFFORT_IDS {
+            assert!(
+                !CORE_IDS.contains(&id),
+                "id {id} in both Core and BestEffort"
             );
         }
     }

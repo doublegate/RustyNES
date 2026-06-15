@@ -873,6 +873,17 @@ impl App {
             }
             break;
         }
+        // v1.2.0 Workstream B — apply the per-game DB's region / mapper /
+        // submapper corrections by rewriting the iNES header BEFORE the core
+        // parses it (keyed on the header-excluded CRC32, so stable across the
+        // rewrite). Mirroring / Vs. corrections apply post-construction below.
+        // Frontend-only: the core test suites never patch, so the oracle is
+        // byte-identical.
+        if let Some(crc) = crate::game_db::rom_crc32(&bytes) {
+            if let Some(entry) = crate::game_db::entry_for_crc(crc) {
+                crate::game_db::apply_header_overrides(&mut bytes, entry);
+            }
+        }
         let sample_rate = self.audio.as_ref().map_or(44_100, |a| a.sample_rate);
         // v2.2.0 — a Famicom Disk System `.fds` image needs the disksys.rom
         // BIOS + the writable-disk save path; the standard cartridge `.nes`

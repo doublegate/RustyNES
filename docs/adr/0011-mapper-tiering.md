@@ -48,12 +48,25 @@ The tier is an **honesty marker, not a behavioural one**: a mapper's runtime
 behaviour, determinism, and save-state round-trip are identical regardless of
 tier. The tier records only how much external evidence backs its correctness.
 
-The load-bearing invariant is **CI-enforced**: *no `BestEffort` mapper may back
-a ROM in the accuracy oracle corpus.* A test asserts `mapper_tier(id) !=
-BestEffort` for every committed AccuracyCoin / commercial-oracle ROM, so a
-best-effort board can never silently slip into the accuracy gate. `parse()` and
-`mapper_tier()` are kept in lockstep (every parseable id has a tier; an
-unsupported id has none), guarded by per-tier classification tests.
+The load-bearing invariant — *no `BestEffort` mapper may back a ROM in the
+accuracy oracle corpus* — is enforced on two levels:
+
+1. **At the classifier (in-repo, runs in CI):** `BestEffort` is structurally
+   never accuracy-gated (`MapperTier::is_accuracy_gated()` returns `false` for
+   it, asserted by `best_effort_is_not_accuracy_gated`), the three tier id-sets
+   are pairwise disjoint (`tiers_are_pairwise_disjoint`), and `parse()` /
+   `mapper_tier()` are kept in lockstep (every parseable id has a tier; an
+   unsupported id has none), guarded by per-tier classification tests.
+2. **At the oracle corpus (by construction):** the byte-identical commercial
+   oracle (the snapshot-backed `external_extended` / `external_real_games`
+   suites) references only a curated, licensed-game ROM set — all Core/Curated
+   mappers. The committed *coverage* ROMs (e.g. the `holymapperel` boards) may
+   exercise `BestEffort` mappers on purpose; they are boot/coverage tests, not
+   byte oracles, so they do not constrain the accuracy claim.
+
+A per-oracle-ROM tier assertion in the (local-only, `commercial-roms`-gated)
+oracle loader is a noted refinement — the oracle ROMs are not redistributable,
+so it cannot run in headless CI.
 
 The tier is also surfaced to the user (the mapper debug panel badges the loaded
 game's tier) and to the docs (`docs/mappers.md` + `docs/STATUS.md` carry a Tier
