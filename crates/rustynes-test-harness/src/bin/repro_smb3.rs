@@ -66,15 +66,24 @@ fn main() {
     // Scripted path to World 1-1. Timings are generous taps with idle gaps; the
     // filmstrip lets us verify/refine where we land.
     // (frame budget, buttons-held-for-first-8-frames-of-each-tap)
+    // Path to World 1-1 (per the player's known sequence): wait out the title +
+    // the long "WORLD 1 MARIO x4" intro card, then on the map press RIGHT once,
+    // UP once (to land on the Stage 1 node), then A to enter the level.
     let script: &[(u64, Buttons)] = &[
         (220, Buttons::empty()), // title / curtain demo
-        (16, Buttons::START),    // tap Start -> past title
-        (120, Buttons::empty()), // -> world map + "WORLD 1 MARIO x4" intro card
-        (16, Buttons::START),    // tap Start -> dismiss the intro card
-        (520, Buttons::empty()), // the "WORLD 1 MARIO x4" card persists ~hundreds
-        // of frames before it auto-clears; wait it out (Mario starts on 1-1).
-        (16, Buttons::A),        // tap A -> enter 1-1
-        (220, Buttons::empty()), // 1-1 loads + Mario idle
+        (16, Buttons::START),    // tap Start -> "1/2 PLAYER GAME" select menu
+        (80, Buttons::empty()),  // menu appears
+        (16, Buttons::START),    // tap Start -> confirm 1-player -> world map + card
+        (560, Buttons::empty()), // the intro card auto-clears (~500+ frames) and
+        // absorbs inputs while up; wait it out fully before navigating.
+        (8, Buttons::RIGHT),    // map: move right one node
+        (40, Buttons::empty()), // auto-walk completes
+        (8, Buttons::UP),       // map: move up one node -> land on Stage 1
+        (40, Buttons::empty()), // auto-walk completes
+        (8, Buttons::A),        // enter Stage 1 (World 1-1)
+        (40, Buttons::empty()),
+        (8, Buttons::B),         // fallback: B enters if A opened the item menu
+        (260, Buttons::empty()), // 1-1 loads + Mario idle
     ];
 
     let mut frame = 0u64;
@@ -92,17 +101,17 @@ fn main() {
         }
     }
 
-    // Capture window: 90 consecutive frames in (hopefully) 1-1, idle.
-    eprintln!("--- capture window (frame {frame}..) ---");
+    // Capture window: run Mario RIGHT (B = run) — the flicker only shows while
+    // he's moving. Dump every frame so consecutive frames can be compared for a
+    // Mario-sprite on/off flicker.
+    eprintln!("--- capture window (frame {frame}.., running right) ---");
     let mut frames: Vec<Vec<u8>> = Vec::new();
-    for _ in 0..90 {
-        nes.set_buttons(0, Buttons::empty());
-        frames.push(nes.run_frame().to_vec());
+    for k in 0..40 {
+        nes.set_buttons(0, Buttons::RIGHT | Buttons::B);
+        let fb = nes.run_frame().to_vec();
+        write_png(&out_dir.join(format!("win{k:02}.png")), &fb);
+        frames.push(fb);
         frame += 1;
-    }
-    // Dump the first few of the window for visual inspection.
-    for (k, fb) in frames.iter().enumerate().take(6) {
-        write_png(&out_dir.join(format!("win{k:02}.png")), fb);
     }
 
     // Oscillation metric: adjacent (opposite-parity) vs skip-one (same-parity).
