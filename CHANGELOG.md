@@ -15,6 +15,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Work toward **v1.2.0 "Curator"** (beta.1, Workstreams A + B). See
+`docs/adr/0011-mapper-tiering.md` and the v1.2.0 plan.
+
+### Added
+
+- **Mapper accuracy tiering** (v1.2.0 Workstream A). Every supported mapper
+  family is now classified `Core` / `Curated` / `BestEffort` by a single
+  `const fn mapper_tier(id, submapper)` (`rustynes-mappers::tier`). The tier is
+  an honesty marker — runtime behaviour is identical — that keeps the accuracy
+  claim precise as long-tail coverage grows: a CI invariant forbids any
+  `BestEffort` mapper from backing an AccuracyCoin / oracle ROM. ADR 0011.
+- **Nine curated (Tier-1) mapper families** (v1.2.0 Workstream A): 38 (Bit Corp
+  UNL-PCI556), 41 (Caltron 6-in-1), 79 (AVE NINA-03/06), 86 (Jaleco JF-13), 113
+  (NINA-006 / MB-91, register-controlled mirroring), 140 (Jaleco JF-11/14), 232
+  (Camerica Quattro / BF9096), 240 (C&E), and 241 (BxROM-like). Each is a
+  discrete-logic board with register-decode unit tests; coverage rises from 51
+  to **60 families**.
+- **ROM soft-patching** (v1.2.0 Workstream B): a same-stem `.bps` / `.ups` /
+  `.ips` patch sitting beside a ROM is auto-applied at load (in that
+  precedence), before format detection, so the patched image flows through the
+  deterministic parse unchanged — save-states / netplay / oracle all see the
+  patched bytes. UPS and BPS verify their in-format source and target CRC32s.
+  Native; a malformed patch is surfaced and the unpatched ROM still loads.
+
+### Fixed
+
+- **Mapper 89 (Sunsoft-2) — *Tenka no Goikenban: Mito Koumon*** now models the
+  board's **bus conflict** (a register write is ANDed with the PRG-ROM byte at
+  the written address, per nesdev `INES_Mapper_089` "BUS CONFLICTS"). Without it
+  the raw value selected the wrong CHR/PRG bank and the background nametable
+  never latched. Isolated to mapper 89 (its only dump); AccuracyCoin and all
+  other titles unaffected.
+
 ## [1.1.0] - 2026-06-15 - "Scriptable" (Feature Release)
 
 The first feature release after the v1.0.0 production cut. It folds in the

@@ -825,7 +825,7 @@ impl App {
     #[cfg(not(target_arch = "wasm32"))]
     #[allow(clippy::too_many_lines)] // sequential per-format load + device/cheat/DB setup
     fn load_rom_from_path(&mut self, path: &Path) {
-        let bytes = match std::fs::read(path) {
+        let mut bytes = match std::fs::read(path) {
             Ok(b) => b,
             Err(e) => {
                 eprintln!("rustynes: failed to read {}: {e}", path.display());
@@ -839,6 +839,40 @@ impl App {
                 return;
             }
         };
+        // v1.2.0 Workstream B — auto-apply a same-stem soft-patch sitting beside
+        // the ROM (`.bps`/`.ups`/`.ips`, in that precedence), BEFORE any format
+        // detection, so the patched image flows through the deterministic parse
+        // unchanged (save-states / netplay / oracle all see the patched bytes).
+        // Only the highest-precedence patch present is applied; a malformed
+        // patch is surfaced and the unpatched ROM still loads.
+        for ext in ["bps", "ups", "ips"] {
+            let patch_path = path.with_extension(ext);
+            if patch_path == path {
+                continue;
+            }
+            let Ok(patch_bytes) = std::fs::read(&patch_path) else {
+                continue;
+            };
+            match crate::patch::detect_and_apply(&bytes, &patch_bytes, ext) {
+                Ok(patched) => {
+                    bytes = patched;
+                    self.ui.set_status(crate::ui_shell::StatusMessage::new(
+                        format!("Applied {ext} patch: {}", patch_path.display()),
+                        egui::Color32::from_rgb(120, 200, 120),
+                        std::time::Duration::from_secs(3),
+                    ));
+                }
+                Err(e) => {
+                    eprintln!("rustynes: {ext} patch {} failed: {e}", patch_path.display());
+                    self.ui.set_status(crate::ui_shell::StatusMessage::new(
+                        format!("Patch failed ({ext}): {e}"),
+                        egui::Color32::from_rgb(230, 90, 90),
+                        std::time::Duration::from_secs(4),
+                    ));
+                }
+            }
+            break;
+        }
         let sample_rate = self.audio.as_ref().map_or(44_100, |a| a.sample_rate);
         // v2.2.0 — a Famicom Disk System `.fds` image needs the disksys.rom
         // BIOS + the writable-disk save path; the standard cartridge `.nes`

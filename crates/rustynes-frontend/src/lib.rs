@@ -40,6 +40,10 @@ pub mod gfx;
 pub mod icon;
 pub mod input;
 pub mod movie_ui;
+// v1.2.0 Workstream B — ROM soft-patching (IPS/UPS/BPS). Pure byte ops applied
+// to the in-memory ROM at the load chokepoint, before format detection, so the
+// patched image flows through the deterministic parse unchanged.
+pub mod patch;
 // v2.8.0 Phase 0 — frame-pacing / presentation / audio instrumentation
 // (produced vs presented interval histograms, produce cost, audio-queue
 // health). Target-agnostic; rendered by the debugger Performance panel.

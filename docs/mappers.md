@@ -203,6 +203,35 @@ across the engine lineage in the long-tail batches above (all shipping in
 RustyNES v1.0.0); see `to-dos/ROADMAP.md`. FDS audio shipped as the last
 expansion-audio integration.
 
+### Fifth long-tail batch — v1.2.0 curated (9 families, 51 → 60)
+
+Discrete-logic boards added in `sprint5.rs`, each with register-decode unit
+tests. All are **Tier-1 Curated** (see "Mapper accuracy tiering" below).
+
+| iNES | Name | Audio | IRQ | Notes |
+|------|------|-------|-----|-------|
+| 38 | Bit Corp UNL-PCI556 | — | — | Crime Busters. PRG/CHR latch at `$7000-$7FFF`. |
+| 41 | Caltron 6-in-1 | — | — | Outer register `$6000-$67FF` (PRG/mirroring/CHR-hi); inner CHR-low at `$8000-$FFFF` with a bus conflict, gated by the outer enable bit. |
+| 79 | AVE NINA-03/06 | — | — | PRG+CHR bank via `$4100-$5FFF` (the `$4100`/`$5000` address mask). |
+| 86 | Jaleco JF-13 | — | — | PRG/CHR latch in the `$6000-$7FFF` window. |
+| 113 | NINA-006 / MB-91 | — | — | Like 79 plus a register-controlled mirroring bit (no header mirroring). |
+| 140 | Jaleco JF-11/14 | — | — | PRG/CHR latch in the `$6000-$7FFF` window. |
+| 232 | Camerica Quattro (BF9096) | — | — | Two-level (outer block + inner) 16 KiB PRG banking. |
+| 240 | C&E multicart | — | — | PRG/CHR via `$4020-$5FFF` (write-only). |
+| 241 | BxROM-like (pirate) | — | — | 32 KiB PRG bank via `$8000-$FFFF`; CHR-RAM. |
+
+### Mapper accuracy tiering (v1.2.0)
+
+Every supported family is classified `Core` / `Curated` / `BestEffort` by
+`rustynes-mappers::mapper_tier(id, submapper)` — an **honesty marker** (runtime
+behaviour is identical) that keeps the accuracy claim precise as long-tail
+coverage grows. `Core` (the original 51) and `Curated` are gated by the
+AccuracyCoin / commercial-ROM oracle suites; `BestEffort` (reference-ported
+boards with no redistributable fixture, register-decode unit-tested only) is
+**excluded** from that gate, and a CI invariant forbids any `BestEffort` mapper
+from backing an oracle ROM. See `docs/adr/0011-mapper-tiering.md`. Current
+split: **60 accuracy-gated families** (51 Core + 9 Curated), 0 BestEffort.
+
 ### NSF player (synthetic mapper, v1.1.0)
 
 NSF chiptune files are not cartridges — they have no iNES header and no PPU
