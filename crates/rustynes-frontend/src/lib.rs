@@ -74,6 +74,10 @@ pub mod ntsc_bisqwit;
 #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
 pub mod ra_session;
 pub mod save_state;
+// v1.2.0 C2 — composable post-process shader stack (ping-pong RT executor +
+// `#pragma parameter` model + CRT preset bank). An empty stack falls through to
+// the existing direct blit (byte-identical), so this is purely additive.
+pub mod shader_pass;
 // v1.0.0 — the Save-States manager window (thumbnail grid). Native-only: the
 // slot files live on the filesystem; on wasm the slots are in `localStorage`
 // and the window is not built (the existing F1/F4 path is untouched).

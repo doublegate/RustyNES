@@ -178,7 +178,7 @@ fn wgsl_i32_array(values: &[i32]) -> String {
 
 /// Build the full WGSL source with all static tables baked in.
 #[allow(clippy::too_many_lines)] // the embedded WGSL is naturally long.
-fn shader_src() -> String {
+pub(crate) fn shader_src() -> String {
     let (low, high) = build_signal_luts();
     let sine = build_sinetable();
     let emph: Vec<i32> = EMPHASIS_LUT.iter().map(|&v| v as i32).collect();

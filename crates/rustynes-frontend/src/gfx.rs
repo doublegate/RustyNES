@@ -285,6 +285,16 @@ pub struct Gfx {
     /// v1.1.0 beta.1 — optional CRT / scanline post-pass. Mutually exclusive with
     /// `ntsc` at render time (CRT takes priority when both are set).
     crt: Option<crate::crt::CrtFilter>,
+    /// v1.2.0 C2 — optional composable shader stack (ping-pong RT executor). When
+    /// `Some`, it OWNS the post-process path and the legacy single-select
+    /// `crt`/`ntsc`/`ntsc_bisqwit` chain below is bypassed. `None` (the default,
+    /// for an empty config stack) keeps the EXACT pre-C2 chain, so the default
+    /// presented image is byte-identical. Built/cleared via
+    /// [`Self::apply_shader_stack`].
+    shader_stack: Option<crate::shader_pass::ShaderStack>,
+    /// v1.2.0 C2 — the live NTSC knobs forwarded to a leading composite-rt stack
+    /// pass (kept in sync with the legacy `ntsc_bisqwit` path's knobs).
+    stack_ntsc_knobs: crate::ntsc_bisqwit::NtscKnobs,
     /// Whether the configured present mode was unsupported and the surface
     /// silently runs `Fifo` instead (surfaced in the settings panel so the
     /// resulting pacer-vs-vsync beat is attributable).
@@ -640,6 +650,8 @@ impl Gfx {
             ntsc: None,
             ntsc_bisqwit: None,
             crt: None,
+            shader_stack: None,
+            stack_ntsc_knobs: crate::ntsc_bisqwit::NtscKnobs::DEFAULT,
             present_mode_fell_back,
             supported_present_modes: surface_caps.present_modes,
             #[cfg(all(not(target_arch = "wasm32"), feature = "gpu-timing"))]
@@ -777,6 +789,60 @@ impl Gfx {
         }
     }
 
+    /// v1.2.0 C2 — (re)build the composable shader stack from `cfg`.
+    ///
+    /// When `cfg` has at least one enabled, recognized pass, the ping-pong stack
+    /// takes over the post-process path (and the legacy single-select filters
+    /// are turned off so the two systems never both render). When `cfg` is empty
+    /// (or all-disabled / unknown), the stack is cleared and the renderer falls
+    /// back to the EXACT legacy chain — the byte-identical default. Returns
+    /// `true` when the stack is now active.
+    pub fn apply_shader_stack(&mut self, cfg: &crate::shader_pass::ShaderStackConfig) -> bool {
+        if cfg.has_enabled_passes() {
+            self.shader_stack = crate::shader_pass::ShaderStack::new(
+                &self.device,
+                self.config.format,
+                &self.nes_texture,
+                &self.index_texture,
+                cfg,
+            );
+            if self.shader_stack.is_some() {
+                // The stack owns the post-process path; drop the legacy filters
+                // so they cannot also draw.
+                self.ntsc = None;
+                self.ntsc_bisqwit = None;
+                self.crt = None;
+                return true;
+            }
+        }
+        // Empty / all-disabled / failed-compile -> direct-blit fall-through.
+        self.shader_stack = None;
+        false
+    }
+
+    /// Whether the composable shader stack currently owns the post-process path.
+    #[must_use]
+    pub const fn shader_stack_active(&self) -> bool {
+        self.shader_stack.is_some()
+    }
+
+    /// Whether the active stack's FIRST pass samples the palette-index texture
+    /// (i.e. a leading composite-rt pass), so the caller knows to snapshot +
+    /// supply the index framebuffer this frame — same contract as
+    /// [`Self::ntsc_bisqwit_active`].
+    #[must_use]
+    pub fn shader_stack_needs_index(&self) -> bool {
+        self.shader_stack
+            .as_ref()
+            .is_some_and(crate::shader_pass::ShaderStack::needs_index_source)
+    }
+
+    /// v1.2.0 C2 — push the live Bisqwit NTSC knobs forwarded to a leading
+    /// composite-rt stack pass (kept in sync with the legacy filter's knobs).
+    pub const fn set_stack_ntsc_knobs(&mut self, knobs: crate::ntsc_bisqwit::NtscKnobs) {
+        self.stack_ntsc_knobs = knobs;
+    }
+
     /// Resize the surface (triggered on `WindowEvent::Resized`).
     pub fn resize(&mut self, width: u32, height: u32) {
         let w = width.max(1);
@@ -865,7 +931,8 @@ impl Gfx {
         // v1.1.0 beta.1 (T-110-A1) — upload the palette-index framebuffer for
         // the true composite `NES_NTSC` filter, only when it is active and the
         // caller supplied a correctly-sized snapshot. `R16Uint` = 2 bytes/texel.
-        let video_phase = match (self.ntsc_bisqwit.is_some(), index) {
+        let wants_index = self.ntsc_bisqwit.is_some() || self.shader_stack_needs_index();
+        let video_phase = match (wants_index, index) {
             (true, Some((idx, phase))) if idx.len() == (NES_W * NES_H) as usize => {
                 self.queue.write_texture(
                     wgpu::TexelCopyTextureInfo {
@@ -935,7 +1002,23 @@ impl Gfx {
         // sample-time effect (the wgsl applies horizontal blur + scanline
         // darkening to the input texel; the result goes straight to the
         // surface).
-        if let Some(filter) = &self.crt {
+        // v1.2.0 C2 — when the composable shader stack is active it OWNS the
+        // post-process path (ping-pong RTs -> final letterboxed blit). When it
+        // is `None` (the empty-config default) the renderer falls through to the
+        // EXACT pre-C2 single-select chain below — byte-identical default image.
+        if let Some(stack) = &self.shader_stack {
+            stack.render(
+                &self.queue,
+                &mut encoder,
+                &view,
+                self.config.width,
+                self.config.height,
+                self.par_correction,
+                self.hide_overscan,
+                video_phase,
+                self.stack_ntsc_knobs,
+            );
+        } else if let Some(filter) = &self.crt {
             filter.render(
                 &self.queue,
                 &mut encoder,

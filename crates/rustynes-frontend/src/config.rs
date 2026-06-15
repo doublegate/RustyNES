@@ -689,6 +689,18 @@ pub struct GraphicsConfig {
     /// a rotation of the demodulated (I, Q) vector. Default `0.0` = byte-identical.
     #[serde(default = "default_ntsc_hue")]
     pub ntsc_hue: f32,
+    /// v1.2.0 C2 — the composable post-process shader stack. `#[serde(default)]`
+    /// = an EMPTY stack, so a pre-C2 config (with no `[graphics.shader_stack]`
+    /// key) loads byte-identically and the renderer takes the unchanged
+    /// direct-blit / legacy-filter path. A non-empty stack engages the ping-pong
+    /// shader executor. Presentation-only; no core / accuracy impact.
+    #[serde(default)]
+    pub shader_stack: crate::shader_pass::ShaderStackConfig,
+    /// v1.2.0 C2 — saved named shader-stack presets (the CRT preset bank +
+    /// user-saved stacks). `#[serde(default)]` = empty, so a pre-C2 config is
+    /// byte-identical. Persisted under `[graphics.shader_presets]`.
+    #[serde(default)]
+    pub shader_presets: crate::shader_pass::ShaderPresetBank,
 }
 
 fn default_ntsc_filter() -> String {
@@ -749,6 +761,8 @@ impl Default for GraphicsConfig {
             ntsc_saturation: default_ntsc_saturation(),
             ntsc_brightness: default_ntsc_brightness(),
             ntsc_hue: default_ntsc_hue(),
+            shader_stack: crate::shader_pass::ShaderStackConfig::default(),
+            shader_presets: crate::shader_pass::ShaderPresetBank::default(),
         }
     }
 }

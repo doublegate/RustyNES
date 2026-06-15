@@ -22,7 +22,7 @@
 
 use wgpu::util::DeviceExt;
 
-const SHADER_SRC: &str = r"
+pub(crate) const SHADER_SRC: &str = r"
 struct Uniforms {
     rect: vec4<f32>,   // letterbox transform (same shape + math as gfx.wgsl)
     crop: vec4<f32>,   // overscan crop: x = vertical scale, y = vertical offset
@@ -100,6 +100,27 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     return vec4<f32>(clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
 }
 ";
+
+/// v1.2.0 C2 — the CRT knobs exposed for the composable shader stack.
+///
+/// These RetroArch-style `#pragma parameter` header comments declare the two CRT
+/// knobs (`scanline`, `mask`) so [`crate::shader_pass::parse_pragma_parameters`]
+/// can drive generic egui sliders. The leading `//` keeps the lines valid WGSL
+/// comments. The stack reuses the full `SHADER_SRC` body via its own generic
+/// pipeline; the standalone [`CrtFilter`] below is untouched, so the legacy
+/// single-select CRT path stays byte-identical.
+pub const STACK_SHADER_SRC: &str = concat!(
+    "// #pragma parameter scanline \"Scanline intensity\" 0.5 0.0 1.0 0.05\n",
+    "// #pragma parameter mask \"Aperture mask\" 0.1 0.0 0.5 0.01\n",
+);
+
+/// The `#pragma parameter` header lines the CRT stack pass exposes.
+///
+/// Kept separate from the body so the parser sees only the declarations.
+#[must_use]
+pub const fn stack_shader_src() -> &'static str {
+    STACK_SHADER_SRC
+}
 
 /// CRT / scanline post-process filter.
 pub struct CrtFilter {

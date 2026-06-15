@@ -4280,10 +4280,18 @@ impl App {
     fn on_gfx_ready(&mut self, mut gfx: Gfx, event_loop: &ActiveEventLoop) {
         // Sprint 5-3 — optional NTSC filter. v1.1.0 beta.1 — optional CRT filter
         // (mutually exclusive with NTSC; CRT wins if both are somehow configured).
-        if self.config.graphics.crt_filter {
-            gfx.enable_crt(self.config.graphics.crt_scanline);
-        } else {
-            Self::apply_ntsc_mode(&mut gfx, &self.config.graphics);
+        // v1.2.0 C2 — a non-empty composable shader stack takes priority over the
+        // legacy single-select filters and OWNS the post-process path; an empty
+        // stack (the default) leaves the legacy chain in place, byte-identically.
+        if self.config.graphics.shader_stack.has_enabled_passes() {
+            gfx.set_stack_ntsc_knobs(Self::ntsc_knobs_from(&self.config.graphics));
+        }
+        if !gfx.apply_shader_stack(&self.config.graphics.shader_stack) {
+            if self.config.graphics.crt_filter {
+                gfx.enable_crt(self.config.graphics.crt_scanline);
+            } else {
+                Self::apply_ntsc_mode(&mut gfx, &self.config.graphics);
+            }
         }
         // Sprint 5-3 — egui debugger overlay.
         let surface_format = gfx.surface_format();
@@ -5101,8 +5109,12 @@ impl ApplicationHandler<AppEvent> for App {
                         .is_some_and(DebuggerOverlay::any_nes_tool_open);
                 // v1.1.0 beta.1 (T-110-A1) — snapshot the palette-index
                 // framebuffer + phase only while the true composite `NES_NTSC`
-                // filter is active (zero cost otherwise).
-                let want_index = self.gfx.as_ref().is_some_and(Gfx::ntsc_bisqwit_active);
+                // filter is active (zero cost otherwise). v1.2.0 C2 — also when a
+                // leading composite-rt pass is active in the shader stack.
+                let want_index = self
+                    .gfx
+                    .as_ref()
+                    .is_some_and(|g| g.ntsc_bisqwit_active() || g.shader_stack_needs_index());
                 let render_result = if self.debugger.is_none() || self.gfx.is_none() {
                     // No overlay yet (pre-`resumed`): nothing to render.
                     return;
@@ -5413,6 +5425,17 @@ impl ApplicationHandler<AppEvent> for App {
                 if settings.ntsc_knobs {
                     if let Some(gfx) = self.gfx.as_mut() {
                         gfx.set_ntsc_bisqwit_knobs(Self::ntsc_knobs_from(&self.config.graphics));
+                    }
+                }
+                // v1.2.0 C2 — composable shader-stack live-apply. Rebuild the gfx
+                // ping-pong stack from `[graphics] shader_stack`; an empty /
+                // all-disabled stack rebuilds to the byte-identical direct blit.
+                // When a leading composite-rt pass is present its live picture
+                // knobs are forwarded too.
+                if settings.shader_stack {
+                    if let Some(gfx) = self.gfx.as_mut() {
+                        gfx.set_stack_ntsc_knobs(Self::ntsc_knobs_from(&self.config.graphics));
+                        gfx.apply_shader_stack(&self.config.graphics.shader_stack);
                     }
                 }
                 // v1.1.0 beta.1 — custom .pal palette: the file dialog + apply run

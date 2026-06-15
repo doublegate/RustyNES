@@ -15,8 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Work toward **v1.2.0 "Curator"** (beta.1, Workstreams A + B). See
-`docs/adr/0011-mapper-tiering.md` and the v1.2.0 plan.
+Work toward **v1.2.0 "Curator"** (beta.1-2, Workstreams A + B + C). See
+`docs/adr/0011-mapper-tiering.md`, `docs/adr/0013-composable-shader-stack.md`,
+and the v1.2.0 plan.
 
 ### Added
 
@@ -75,6 +76,25 @@ Work toward **v1.2.0 "Curator"** (beta.1, Workstreams A + B). See
   values), at which the in-shader decode is bit-identical to the previous
   hardcoded coefficients — existing configs and the default build are
   byte-for-byte unchanged.
+- **Composable shader stack + CRT preset bank** (v1.2.0 Workstream C2,
+  `GeraNES`-`ShaderPass`-inspired). The single-select CRT / NTSC / composite-rt
+  post-process filter is now an ordered, composable `ShaderStack`: enabled passes
+  render by ping-ponging two NES-resolution intermediate render targets, with the
+  final pass blitting the letterboxed image to the swapchain. A new
+  Settings -> Graphics -> "Shader stack (composable)" section adds / removes /
+  reorders / toggles passes and exposes each pass's tunable knobs as generic
+  sliders, parsed from RetroArch-style `#pragma parameter` shader headers (new
+  `rustynes-frontend::shader_pass` module). A built-in CRT preset bank (Sharp /
+  Classic / Heavy-Aperture, all reusing the existing CRT shader) plus
+  Save / Load / Delete persist named stacks under `[graphics.shader_presets]`.
+  The Bisqwit `composite-rt` pass is special-cased (it consumes the `R16Uint`
+  palette-index texture, so it is only honoured as the first pass). Frontend /
+  presentation-only — the deterministic core framebuffer and AccuracyCoin /
+  oracle results are unaffected. **An empty / all-disabled stack (the default,
+  and what any pre-C2 `config.toml` deserializes to) falls through to the exact
+  pre-C2 direct blit — the default presented image is byte-for-byte unchanged.**
+  Rejected as out of scope: a RetroArch `.slangp` importer / GLSL->WGSL
+  translation. ADR 0013.
 
 ### Fixed
 
