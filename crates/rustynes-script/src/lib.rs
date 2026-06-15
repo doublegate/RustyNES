@@ -67,6 +67,20 @@ fn table_field<K: mlua::IntoLua>(t: &Table, key: K) -> Option<Table> {
     t.get::<mlua::Value>(key).ok()?.as_table().cloned()
 }
 
+/// Call every **function** in a Lua sequence table with `arg`, skipping any
+/// non-function entry a script may have poked in. Iterating as `Value` (rather
+/// than `Function`) never raises a `FromLua` error, so junk in a callback list
+/// can't crash the host pump (gemini/Copilot #53). A function that itself raises
+/// still propagates (that is a genuine script error, surfaced to the console).
+fn call_fns<A: mlua::IntoLuaMulti + Clone>(list: &Table, arg: &A) -> mlua::Result<()> {
+    for val in list.sequence_values::<mlua::Value>() {
+        if let mlua::Value::Function(f) = val? {
+            f.call::<()>(arg.clone())?;
+        }
+    }
+    Ok(())
+}
+
 /// Errors from loading or running a script.
 #[derive(Debug, thiserror::Error)]
 pub enum ScriptError {
@@ -439,16 +453,24 @@ impl ScriptEngine {
     /// behind an O(1) Rust check — avoiding a Lua FFI crossing for every one of
     /// the ~15k exec PCs / ~60k bus accesses that has no callback (gemini #47).
     /// A missing registry yields an empty set (M1).
+    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)] // masked to 16 bits below.
     fn active_addrs(&self, name: &str) -> Result<HashSet<u16>, ScriptError> {
         let mut set = HashSet::new();
         let Some(t) = self.registry_subtable(name) else {
             return Ok(set);
         };
-        // Iterate keys as generic values: a junk non-table value parked at an
-        // address must not error the key scan (gemini #52). The gate only needs
-        // the address; the replay validates that the slot is actually a table.
-        for pair in t.pairs::<u32, mlua::Value>() {
-            let (addr, _) = pair?;
+        // Iterate keys AND values as generic `Value`s: neither a non-integer
+        // key (`__rustynes.exec.junk = ...`) nor a non-table value parked at an
+        // address may error the key scan (gemini/Copilot #52/#53). Non-integer
+        // keys are skipped; the gate only needs the integer addresses, and the
+        // replay validates that each slot is actually a table.
+        for pair in t.pairs::<mlua::Value, mlua::Value>() {
+            let (key, _) = pair?;
+            let addr = match key {
+                mlua::Value::Integer(i) => i as u64,
+                mlua::Value::Number(n) => n as u64,
+                _ => continue,
+            };
             set.insert((addr & 0xFFFF) as u16);
         }
         Ok(set)
@@ -608,9 +630,7 @@ impl ScriptEngine {
 
             // Invoke every registered onFrame callback.
             if let Some(frame_cbs) = table_field(&registry, "frame") {
-                for cb in frame_cbs.sequence_values::<mlua::Function>() {
-                    cb?.call::<()>(())?;
-                }
+                call_fns(&frame_cbs, &())?;
             }
 
             // Replay this frame's exec PCs through onExec(addr). The Rust-side
@@ -621,13 +641,11 @@ impl ScriptEngine {
                     if !exec_addrs.contains(pc) {
                         continue;
                     }
-                    // `table_field`: a slot a callback unregistered (or overwrote
-                    // with a non-table) *this frame* leaves the snapshot set
-                    // stale — skip it rather than crash (gemini #49/#52).
+                    // `table_field` + `call_fns`: a slot unregistered / set to a
+                    // non-table, or a non-function in the list, is skipped rather
+                    // than crashing (gemini #49/#52/#53).
                     if let Some(cbs) = table_field(&exec_t, *pc) {
-                        for cb in cbs.sequence_values::<mlua::Function>() {
-                            cb?.call::<()>(*pc)?;
-                        }
+                        call_fns(&cbs, pc)?;
                     }
                 }
             }
@@ -647,12 +665,10 @@ impl ScriptEngine {
                         continue;
                     }
                     let Some(t) = t.as_ref() else { continue };
-                    // `table_field`: tolerate a slot unregistered / overwritten
-                    // with a non-table mid-frame (gemini #49/#52).
+                    // `table_field` + `call_fns`: tolerate a slot unregistered /
+                    // set to a non-table, or a non-function entry (gemini #49/#52/#53).
                     if let Some(cbs) = table_field(t, *addr) {
-                        for cb in cbs.sequence_values::<mlua::Function>() {
-                            cb?.call::<()>((*addr, *value))?;
-                        }
+                        call_fns(&cbs, &(*addr, *value))?;
                     }
                 }
             }
@@ -931,6 +947,34 @@ mod tests {
         eng.on_frame(&mut nes)
             .expect("a non-table callback slot must not error on_frame");
         assert!(eng.drain_log().contains(&"ok".to_owned()));
+    }
+
+    #[test]
+    fn arbitrary_registry_junk_never_errors_the_host(/* gemini/Copilot #53 */) {
+        // Every junk vector the bots raised: a non-integer key, a non-function
+        // in the frame list, and a non-function in a callback list. None may
+        // error out of on_frame — the host loop keeps running.
+        let mut nes = Nes::from_rom(&synth_writing_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            r#"
+            emu.onWrite(0x2000, function() end)
+            emu.onFrame(function() end)
+            -- non-integer key in an address-keyed table
+            __rustynes.write["oops"] = 42
+            -- non-function entry in the frame callback list
+            __rustynes.frame[#__rustynes.frame + 1] = "junk"
+            -- non-function entry inside a callback list
+            __rustynes.write[0x2000][2] = "junk"
+            "#,
+        )
+        .expect("load");
+        nes.set_access_logging(true);
+        for _ in 0..3 {
+            nes.run_frame();
+            eng.on_frame(&mut nes)
+                .expect("registry junk must never error the host pump");
+        }
     }
 
     #[test]

@@ -205,6 +205,13 @@ content below, plus the first **v1.1.0** feature work (beta.1).
 
 ### Fixed
 
+- **Lua registry traversal fully junk-tolerant (PR #53 review follow-up).** Completing the
+  crash-proofing: `active_addrs` now scans keys as generic `Value`s (skipping non-integer keys),
+  and all three callback-list invocations go through a `call_fns` helper that iterates as `Value`
+  and skips non-function entries. So a script can poke **any** junk anywhere in `__rustynes` —
+  a non-integer key, a non-table at an address, a non-function in a callback list — and it only
+  disables its own callbacks; nothing errors the host pump (gemini/Copilot #53). Regression test
+  `arbitrary_registry_junk_never_errors_the_host` (13 script tests).
 - **Lua registry access fully crash-proof (PR #52 review follow-up).** All `__rustynes` registry
   access now goes through one `table_field` helper that returns `None` for a missing / `nil` /
   **non-table** value or a failing lookup (e.g. a hostile `_G` metatable) — so a script that parks
