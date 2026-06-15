@@ -205,6 +205,11 @@ content below, plus the first **v1.1.0** feature work (beta.1).
 
 ### Fixed
 
+- **Lua replay tolerates mid-frame callback unregistration** (gemini #49 follow-up). The Lua
+  `onExec`/`onRead`/`onWrite` replay gates on an active-address set snapshotted *before* the
+  frame's callbacks run; if a callback clears its own registry slot during the frame, that slot
+  is now `Nil` — the replay reads it as `Option<Table>` and skips it instead of crashing on a
+  `FromLua` conversion. Regression test added; a misleading "trace log" test message corrected.
 - **Bot-review sweep round 2 (PRs #38–#48)** — applied the actionable
   `gemini-code-assist` / Copilot suggestions from the v1.1.0 feature PRs:
   - **`emu.read` / debugger peek no longer has side effects** (Copilot #46): `Nes::peek`
