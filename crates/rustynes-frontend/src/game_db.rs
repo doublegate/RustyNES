@@ -247,7 +247,12 @@ fn persist_overlay() -> std::io::Result<()> {
         out.push_str(&serialize_row(e));
         out.push('\n');
     }
-    std::fs::write(path, out)
+    // Atomic write: serialize to a sibling temp file, then rename over the
+    // target. A crash/kill mid-write can't truncate or corrupt the user overlay
+    // (rename is atomic on the same filesystem) — Gemini review, PR #74.
+    let tmp = path.with_extension("txt.tmp");
+    std::fs::write(&tmp, out)?;
+    std::fs::rename(&tmp, &path)
 }
 
 /// Serialize a [`GameDbEntry`] back to the 10-column row format `parse_row`

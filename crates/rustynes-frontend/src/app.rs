@@ -202,6 +202,11 @@ fn is_fds_image(bytes: &[u8]) -> bool {
 #[cfg(not(target_arch = "wasm32"))]
 fn extract_rom_from_zip(zip_bytes: &[u8]) -> Option<(String, Vec<u8>)> {
     use std::io::Read;
+    // Reject an implausibly large entry (zip bomb / corrupt archive) before
+    // reading it into memory — NES images are at most a few MiB. Both the
+    // declared size AND the actual read are bounded, since the declared size
+    // can lie (Gemini security-high + Copilot, PR #74).
+    const MAX_ENTRY_BYTES: u64 = 64 * 1024 * 1024;
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).ok()?;
     let idx = (0..archive.len()).find(|&i| {
         archive.by_index(i).is_ok_and(|f| {
@@ -212,12 +217,16 @@ fn extract_rom_from_zip(zip_bytes: &[u8]) -> Option<(String, Vec<u8>)> {
             })
         })
     })?;
-    let mut file = archive.by_index(idx).ok()?;
+    let file = archive.by_index(idx).ok()?;
+    if file.size() > MAX_ENTRY_BYTES {
+        return None;
+    }
     let name = std::path::Path::new(file.name())
         .file_name()
         .map_or_else(|| "rom".to_string(), |n| n.to_string_lossy().into_owned());
-    let mut out = Vec::new();
-    file.read_to_end(&mut out).ok()?;
+    let cap = usize::try_from(file.size()).unwrap_or(0);
+    let mut out = Vec::with_capacity(cap);
+    file.take(MAX_ENTRY_BYTES).read_to_end(&mut out).ok()?;
     Some((name, out))
 }
 
