@@ -9,6 +9,7 @@ Implement dynamic resampling, audio/video synchronization, and buffer optimizati
 The desktop frontend already has a functional audio system using cpal 0.15:
 
 **Completed:**
+
 - [x] cpal 0.15 integration for cross-platform audio I/O
 - [x] Lock-free ring buffer (8192 samples) with atomic operations
 - [x] Volume control via atomic f32 (stored as u32 bits)
@@ -31,6 +32,7 @@ The desktop frontend already has a functional audio system using cpal 0.15:
 ## Tasks
 
 ### Task 1: Dynamic Resampling
+
 - [x] Integrate rubato crate for high-quality sinc interpolation **COMPLETE**
 - [x] Configure resampler for NES APU output rate (derived from CPU clock) **COMPLETE**
 - [x] Handle NTSC (1.789773 MHz / 40 = ~44.7kHz) and PAL rates **COMPLETE**
@@ -39,11 +41,13 @@ The desktop frontend already has a functional audio system using cpal 0.15:
 - [x] Benchmark resampling overhead (should be minimal) **COMPLETE**
 
 **Implementation Notes (Dec 28, 2025):**
+
 - Two-stage decimation via rubato `FftFixedInOut`: 1.79MHz → 192kHz → 48kHz
 - FilterChain with NES-accurate filters: 90Hz HP, 440Hz HP, 14kHz LP
 - Located in `crates/rustynes-apu/src/resampler.rs`
 
 ### Task 2: Audio/Video Synchronization
+
 - [x] Add buffer fill level monitoring to AudioOutput **COMPLETE**
 - [x] Implement adaptive emulation speed in app.rs update loop **COMPLETE**
 - [x] Speed up (1.01x) when buffer >80% full **COMPLETE**
@@ -53,12 +57,14 @@ The desktop frontend already has a functional audio system using cpal 0.15:
 - [x] Test with long gameplay sessions (no drift over 30+ minutes) **COMPLETE**
 
 **Implementation Notes (Dec 28, 2025):**
+
 - `queue_samples_with_sync()` method provides speed adjustment (0.99-1.01x)
 - Buffer health monitoring via `BufferHealth` struct with latency tracking
 - Dynamic buffer sizing: 2048-16384 samples based on system load
 - Located in `crates/rustynes-desktop/src/audio.rs`
 
 ### Task 3: Buffer Management Optimization
+
 - [x] Consider replacing custom RingBuffer with ringbuf crate **COMPLETE (kept custom impl)**
 - [x] Implement adaptive buffer sizing based on system latency **COMPLETE**
 - [x] Reduce buffer latency (target <100ms, ideally ~50ms) **COMPLETE**
@@ -67,12 +73,14 @@ The desktop frontend already has a functional audio system using cpal 0.15:
 - [x] Test with high-load scenarios (streaming, background apps) **COMPLETE**
 
 **Implementation Notes (Dec 28, 2025):**
+
 - Custom RingBuffer retained (simpler, fits our needs well)
 - Dynamic sizing: 2048-16384 samples with automatic adjustment
 - Preallocated mono buffer for audio callback (avoids hot path allocations)
 - Latency tracking in BufferHealth struct
 
 ### Task 4: Fix Audio Glitches
+
 - [x] Identify sources of pops/clicks (buffer underrun, overflow, resampling artifacts) **COMPLETE**
 - [x] Smooth transitions (fade in/out on buffer changes) **COMPLETE**
 - [x] Test with games known for audio edge cases (Mega Man, Castlevania) **COMPLETE**
@@ -80,6 +88,7 @@ The desktop frontend already has a functional audio system using cpal 0.15:
 - [ ] Compare audio quality to Mesen2 (record samples, compare waveforms) **DEFERRED**
 
 **Implementation Notes (Dec 28, 2025):**
+
 - Hardware-accurate non-linear mixer (NESdev TND formula)
 - FilterChain provides smooth audio output
 - Silence fill on underrun prevents pops
@@ -109,6 +118,7 @@ struct RingBuffer {
 ### Resampling Algorithm
 
 **Options:**
+
 1. **Linear Interpolation** - Fast, simple, some aliasing
 2. **Cubic Interpolation** - Better quality, moderate cost
 3. **Sinc Interpolation** - Best quality, highest cost
@@ -164,6 +174,7 @@ impl AudioResampler {
 ### Audio/Video Sync Integration
 
 **Strategy for eframe integration:**
+
 1. Track audio buffer fill level via `AudioOutput::buffer_available()`
 2. Adjust frame duration in accumulator-based timing loop
 3. Maintain sync without noticeable speed changes
@@ -228,6 +239,7 @@ impl AudioBuffer {
 ```
 
 **Advantages of ringbuf:**
+
 - Caching variants reduce atomic overhead
 - Slice-based operations for batch processing
 - Well-tested library (used by tetanes)

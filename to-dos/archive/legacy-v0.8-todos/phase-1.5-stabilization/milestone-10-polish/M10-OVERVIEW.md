@@ -40,6 +40,7 @@ Milestone 10 focuses on **final polish and release preparation** for the Phase 1
 The following foundational work was completed in v0.7.1 and M10-S0, providing a stable base for M10:
 
 **GUI Framework (v0.7.1):**
+
 - [x] **GUI Framework Migration**: Desktop frontend migrated from Iced+wgpu to eframe+egui
 - [x] **Menu System**: egui menu bar with File, Emulation, Video, Audio, Debug, Help
 - [x] **Debug Windows**: CPU, PPU, APU, Memory viewers implemented in egui
@@ -48,6 +49,7 @@ The following foundational work was completed in v0.7.1 and M10-S0, providing a 
 - [x] **Scaling Modes**: PixelPerfect (8:7 PAR), FitWindow, Integer scaling
 
 **Dependency Upgrades (M10-S0 - COMPLETE):**
+
 - [x] **eframe/egui**: 0.29 -> 0.33 (Atoms, Plugin trait, Modal dialogs, kittest)
 - [x] **cpal**: 0.15 -> 0.16 (Buffer underrun/overrun reporting)
 - [x] **thiserror**: 1.0 -> 2.0 (no_std support)
@@ -59,6 +61,7 @@ The following foundational work was completed in v0.7.1 and M10-S0, providing a 
 - [x] **Test Suite**: 508 tests passing (0 failures, 8 ignored)
 
 **Current Technology Stack (Post M10-S0):**
+
 - **Window/GUI**: eframe 0.33 + egui 0.33 (OpenGL via glow backend)
 - **Audio**: cpal 0.16 (cross-platform with buffer underrun reporting)
 - **Input**: gilrs 0.11 (gamepad support with hotplug)
@@ -105,6 +108,7 @@ The following foundational work was completed in v0.7.1 and M10-S0, providing a 
 **Progress:** 100%
 
 **Completed Objectives:**
+
 - [x] Upgrade egui/eframe 0.29 -> 0.33 (Atoms, kittest, Plugin system, Modal dialogs)
 - [x] Upgrade cpal 0.15 -> 0.16 (buffer underrun/overrun reporting)
 - [x] Upgrade thiserror 1.0 -> 2.0 (no_std support)
@@ -130,6 +134,7 @@ The following foundational work was completed in v0.7.1 and M10-S0, providing a 
 **Progress:** 100%
 
 **Completed Objectives:**
+
 - [x] Refine desktop GUI layout (responsive design)
 - [x] Add theme support (Light/Dark/System modes)
 - [x] Improve settings UI (tabbed layout with Video/Audio/Input/Advanced)
@@ -150,6 +155,7 @@ The following foundational work was completed in v0.7.1 and M10-S0, providing a 
 **Focus:** Comprehensive documentation
 
 **Objectives:**
+
 - [ ] Write user guide (installation, usage, controls)
 - [ ] Generate API documentation (rustdoc)
 - [ ] Update developer guide (architecture, testing)
@@ -168,6 +174,7 @@ The following foundational work was completed in v0.7.1 and M10-S0, providing a 
 **Focus:** Final testing and release
 
 **Objectives:**
+
 - [ ] Full regression testing
 - [ ] Build release binaries (Linux, macOS, Windows)
 - [ ] Decide version (v0.9.0 or v1.0.0-alpha.1)
@@ -185,6 +192,7 @@ The following foundational work was completed in v0.7.1 and M10-S0, providing a 
 ### UI/UX Polish (M10-S1)
 
 **Current State (Post M10-S0):**
+
 - egui 0.33 immediate mode GUI with menu bar and debug windows
 - Basic scaling modes: PixelPerfect, FitWindow, Integer
 - Configuration persistence via ron 0.12 format
@@ -192,6 +200,7 @@ The following foundational work was completed in v0.7.1 and M10-S0, providing a 
 - Rust 2024 Edition with modern patterns
 
 **New egui 0.33 Features Available:**
+
 - **Atoms:** Indivisible UI building blocks for status displays, labels
 - **Modal Dialogs:** Native modal support via `egui::Modal` for alerts, confirmations
 - **Plugin Trait:** Cleaner debug window integration via `egui::Plugin`
@@ -200,6 +209,7 @@ The following foundational work was completed in v0.7.1 and M10-S0, providing a 
 - **Crisper Text:** Enhanced font rendering quality
 
 **Desktop GUI Improvements (egui 0.33):**
+
 - **Responsive Layout:** Adapt to window size using `viewport_rect`/`content_rect` (min 800x600, max 4K)
 - **Theme Support:** egui Visuals API (light/dark mode, customizable colors)
 - **Settings Organization:** egui::Window with tabs for video, audio, input, advanced
@@ -208,6 +218,7 @@ The following foundational work was completed in v0.7.1 and M10-S0, providing a 
 - **Animations:** egui built-in animations, smooth transitions
 
 **User Experience:**
+
 - **First-Run Experience:** Welcome screen via egui::Modal, quick start guide
 - **Error Handling:** Modal error dialogs using `egui::Modal`
 - **Keyboard Shortcuts:** Document and implement common shortcuts (Ctrl+O, Ctrl+R, etc.)
@@ -216,17 +227,20 @@ The following foundational work was completed in v0.7.1 and M10-S0, providing a 
 ### Documentation (M10-S2)
 
 **User Guide:**
+
 - Installation (binaries, building from source)
 - Quick start (loading ROMs, controls)
 - Features (save states, screenshots, settings)
 - Troubleshooting (common issues, FAQ)
 
 **API Documentation:**
+
 - Generate rustdoc for all public APIs
 - Add code examples for common use cases
 - Document emulator core interfaces
 
 **Developer Guide:**
+
 - Architecture overview (CPU, PPU, APU, mappers)
 - Testing strategy (unit, integration, test ROMs)
 - Contributing guidelines (code style, pull requests)
@@ -235,10 +249,12 @@ The following foundational work was completed in v0.7.1 and M10-S0, providing a 
 ### Release Preparation (M10-S3)
 
 **Version Decision:**
+
 - **v0.9.0** - If significant improvements but not "alpha-ready"
 - **v1.0.0-alpha.1** - If feature-complete for Phase 1.5 goals
 
 **Release Criteria:**
+
 - Test pass rate: 95%+ (202/212 tests)
 - Performance: 120+ FPS on mid-range hardware
 - Critical bugs: 0
@@ -246,6 +262,7 @@ The following foundational work was completed in v0.7.1 and M10-S0, providing a 
 - Binaries: Linux, macOS, Windows
 
 **GitHub Release:**
+
 - Release notes (features, improvements, known issues)
 - Changelog (detailed changes from v0.5.0)
 - Binaries (compressed archives with README)
@@ -390,6 +407,7 @@ The following foundational work was completed in v0.7.1 and M10-S0, providing a 
 ### v0.9.0 (Stabilization Release)
 
 **Choose if:**
+
 - Test pass rate: 90-94% (190-199 tests)
 - Performance: 110-119 FPS
 - Minor bugs: 5-10 remaining
@@ -402,6 +420,7 @@ The following foundational work was completed in v0.7.1 and M10-S0, providing a 
 ### v1.0.0-alpha.1 (Alpha Release)
 
 **Choose if:**
+
 - Test pass rate: 95%+ (202+ tests)
 - Performance: 120+ FPS
 - Critical bugs: 0

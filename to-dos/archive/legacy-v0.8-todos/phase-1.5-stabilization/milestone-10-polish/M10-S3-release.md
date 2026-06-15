@@ -18,6 +18,7 @@ Final testing, binary builds, version decision, release notes, and GitHub releas
 The following release infrastructure exists:
 
 **Completed:**
+
 - [x] GitHub repository with CI/CD basics
 - [x] Cargo workspace with 6+ crates
 - [x] Desktop binary: `rustynes-desktop`
@@ -26,6 +27,7 @@ The following release infrastructure exists:
 - [x] Dependency upgrade to latest stable versions (M10-S0)
 
 **Build Dependencies (Post M10-S0):**
+
 - eframe 0.33 (cross-platform window + rendering)
 - egui 0.33 (immediate mode GUI with Modal, Atoms, Plugin)
 - cpal 0.16 (cross-platform audio with buffer underrun reporting)
@@ -35,10 +37,12 @@ The following release infrastructure exists:
 - thiserror 2.0 (error handling)
 
 **Toolchain Requirements:**
+
 - Rust Edition: 2024
 - MSRV: 1.88 (required by egui 0.33)
 
 **Platform Considerations:**
+
 - Linux: Requires `libasound2-dev`, `libudev-dev`, `libxkbcommon-dev`, `libwayland-dev`
 - macOS: Universal binary support (x86_64 + arm64)
 - Windows: MSVC toolchain recommended
@@ -56,6 +60,7 @@ The following release infrastructure exists:
 ## Tasks
 
 ### Task 1: Regression Testing
+
 - [ ] Run full test suite (508+ unit tests passing)
 - [ ] Verify 100% Blargg pass rate maintained (90/90 tests)
 - [ ] Test with 10+ different games (Super Mario Bros., Zelda, Mega Man, etc.)
@@ -66,6 +71,7 @@ The following release infrastructure exists:
 - [ ] Verify no clippy warnings: `cargo clippy --workspace -- -D warnings`
 
 ### Task 2: Binary Builds
+
 - [ ] Setup GitHub Actions for automated builds
 - [ ] Build Linux binary (x86_64, musl or glibc)
 - [ ] Build macOS binary (x86_64 and arm64/Apple Silicon)
@@ -74,6 +80,7 @@ The following release infrastructure exists:
 - [ ] Test binaries on fresh systems (no dev environment)
 
 ### Task 3: Version Decision
+
 - [ ] Review Phase 1.5 completion criteria
 - [ ] Assess test pass rate (95%+ → v1.0.0-alpha.1, 90-94% → v0.9.0)
 - [ ] Assess performance (120+ FPS → v1.0.0-alpha.1, 110-119 FPS → v0.9.0)
@@ -82,6 +89,7 @@ The following release infrastructure exists:
 - [ ] Update Cargo.toml files with version
 
 ### Task 4: Release Notes
+
 - [ ] Write release notes summary (highlights, improvements)
 - [ ] List features (CPU, PPU, APU, mappers, desktop GUI)
 - [ ] Document improvements from v0.5.0 (test pass rate, performance, audio)
@@ -90,6 +98,7 @@ The following release infrastructure exists:
 - [ ] Thank contributors
 
 ### Task 5: GitHub Release
+
 - [ ] Create git tag (v0.9.0 or v1.0.0-alpha.1)
 - [ ] Push tag to GitHub
 - [ ] Create GitHub release (attach binaries)
@@ -97,6 +106,7 @@ The following release infrastructure exists:
 - [ ] Announce on social media / forums (optional)
 
 ### Task 6: Phase 1.5 Completion
+
 - [ ] Write Phase 1.5 completion report (achievements, metrics, lessons learned)
 - [ ] Update ROADMAP.md (Phase 1.5 complete, Phase 2 next)
 - [ ] Update VERSION-PLAN.md (v0.9.0/v1.0.0-alpha.1 released)
@@ -308,6 +318,7 @@ jobs:
 ### Recommended Decision
 
 **v1.0.0-alpha.1** if ALL of:
+
 - Test pass rate ≥95% (202+ tests)
 - Performance ≥120 FPS
 - 0 critical bugs

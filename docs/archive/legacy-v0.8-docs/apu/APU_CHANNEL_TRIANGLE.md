@@ -268,7 +268,7 @@ On quarter frame:
 
 ### Control Flag Modes
 
-**Mode 1: Control Flag = 0 (Normal)**
+#### Mode 1: Control Flag = 0 (Normal)
 
 ```
 Write $400B → reload_flag = true
@@ -276,7 +276,7 @@ Next quarter frame → counter = reload_value, reload_flag = false
 Following frames → counter decrements to 0
 ```
 
-**Mode 2: Control Flag = 1 (Hold)**
+#### Mode 2: Control Flag = 1 (Hold)
 
 ```
 reload_flag = true continuously

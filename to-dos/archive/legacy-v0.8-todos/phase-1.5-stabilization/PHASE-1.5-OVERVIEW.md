@@ -159,16 +159,19 @@ Phase 1.5 delivers a **comprehensive stabilization and accuracy improvement phas
 **Known Issues from v0.5.0:**
 
 **Audio System:**
+
 - No dynamic resampling (assumes 44.1kHz)
 - Simple buffer management (FIFO dropping)
 - No audio/video synchronization
 
 **PPU Rendering:**
+
 - Incomplete mapper support
 - Cycle-accurate but not fully dot-accurate
 - Sprite 0 hit minimally tested
 
 **Test Coverage:**
+
 - Missing automated test ROM integration
 - Limited game testing (only Super Mario Bros.)
 
@@ -210,6 +213,7 @@ Phase 1.5 delivers a **comprehensive stabilization and accuracy improvement phas
 3. [M10-S3: Release Preparation](milestone-10-polish/M10-S3-release.md) - Pending
 
 **Current Technology Stack (Post M10-S0):**
+
 - **Window/GUI:** eframe 0.33 + egui 0.33 (OpenGL via glow)
 - **Audio:** cpal 0.16 (buffer underrun/overrun reporting)
 - **Input:** gilrs 0.11 (gamepad with hotplug)

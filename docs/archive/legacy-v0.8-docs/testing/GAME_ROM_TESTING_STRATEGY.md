@@ -700,7 +700,7 @@ While <1% of games, expansion audio is:
 
 #### MMC1 (Mapper 1) - 8 games
 
-9. The Legend of Zelda
+1. The Legend of Zelda
 2. Metroid
 3. Mega Man 2
 4. Castlevania II
@@ -711,7 +711,7 @@ While <1% of games, expansion audio is:
 
 #### UxROM (Mapper 2) - 6 games
 
-17. Mega Man
+1. Mega Man
 2. Castlevania
 3. Contra
 4. Duck Tales
@@ -720,13 +720,13 @@ While <1% of games, expansion audio is:
 
 #### CNROM (Mapper 3) - 3 games
 
-23. Gradius
+1. Gradius
 2. Arkanoid
 3. Solomon's Key
 
 #### MMC3 (Mapper 4) - 10 games
 
-26. Super Mario Bros. 3
+1. Super Mario Bros. 3
 2. Mega Man 3
 3. Mega Man 4
 4. Kirby's Adventure
@@ -739,26 +739,26 @@ While <1% of games, expansion audio is:
 
 #### AxROM (Mapper 7) - 3 games
 
-36. Battletoads
+1. Battletoads
 2. Marble Madness
 3. Wizards & Warriors
 
 #### MMC2 (Mapper 9) - 1 game
 
-39. Punch-Out!!
+1. Punch-Out!!
 
 #### MMC5 (Mapper 5) - 2 games
 
-40. Castlevania III (US)
+1. Castlevania III (US)
 2. Just Breed
 
 #### Color Dreams (Mapper 11) - 1 game
 
-42. Crystal Mines
+1. Crystal Mines
 
 #### Edge Cases - 5 games
 
-43. TMNT (sprite 0 edge case)
+1. TMNT (sprite 0 edge case)
 2. Addams Family (status bar)
 3. Ninja Gaiden (complex sprite 0)
 4. Bee 52 (sprite overflow)
@@ -766,7 +766,7 @@ While <1% of games, expansion audio is:
 
 #### Expansion Audio - 3 games
 
-48. Akumajou Densetsu (VRC6)
+1. Akumajou Densetsu (VRC6)
 2. Lagrange Point (VRC7)
 3. Gimmick! (Sunsoft 5B)
 

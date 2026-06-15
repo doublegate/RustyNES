@@ -1,17 +1,20 @@
 # RustyNES Development TODO Tracker
 
-**RustyNES version:** v1.0.0 (production cut)
-**Project Status:** Released — the v1.0.0 development phases are delivered.
+**RustyNES version:** v1.1.0 (first feature release on the v1.0.0 production core)
+**Project Status:** Released — v1.1.0 shipped on top of the v1.0.0 cycle-accurate core.
 
 ---
 
 ## Overview
 
 This directory holds the phase-and-sprint development history that produced
-RustyNES v1.0.0. The phases below are **largely delivered** — RustyNES ships
-at v1.0.0 with a cycle-accurate core (AccuracyCoin 100%), 51 mapper families,
-FDS, Vs./PC10, rollback netplay, RetroAchievements, TAS movie tooling, and the
-performance + desktop-UX shell.
+RustyNES v1.0.0 (the cycle-accurate production core) and the v1.1.0 feature
+release built on top of it. The phases below are **delivered** — RustyNES ships
+at v1.1.0 with a cycle-accurate core (AccuracyCoin 100%), 51 mapper families,
+FDS, Vs./PC10, rollback netplay, RetroAchievements, TAS movie tooling, the
+performance + desktop-UX shell, and the v1.1.0 feature set (visual filters,
+peripherals/QoL, debugger devtools, NSF player + EQ, and the Lua scripting
+engine).
 
 **Release line (this project's own versions):** `v0.1.0…v0.8.6` (the parent
 emulator) → `v0.9.0…v0.9.7` (engine-lineage integration stages) → **`v1.0.0`**
@@ -38,7 +41,7 @@ notes; when it cites pass/fail numbers they should be read against
 ## Delivered for v1.0.0
 
 | Area | Status |
-|------|--------|
+| ------ | ------ |
 | **CPU 6502** | Delivered — nestest 0-diff, all official + unofficial opcodes, cycle-accurate bus interleaving |
 | **PPU 2C02** | Delivered — dot-resolution lockstep, BG + sprite pipelines, sprite-0/overflow accuracy |
 | **APU 2A03** | Delivered — band-limited polyphase-BLEP synthesis, non-linear mixer, DMC DMA |
@@ -56,26 +59,36 @@ notes; when it cites pass/fail numbers they should be read against
 
 ---
 
-## Forward roadmap (post-v1.0.0)
+## Forward roadmap (post-v1.1.0)
 
-The **live forward plan** lives in two release-named folders (these supersede the
-old `phase-N` numbering; the stale `phase-7`/`phase-8` accuracy plans are archived
-under [`archive/`](./archive/README.md) — their targets are already met by the
-v1.0.0 master-clock core):
+**v1.1.0 is shipped** — the first feature release on the v1.0.0 production core.
+The two release-named folders that staged it (`v1.0.1-compat-hygiene/` and
+`v1.1.0-features/`, along with the engine-lineage `phase-N` plans) are now
+archived under [`archive/`](./archive/README.md). What landed in v1.1.0:
 
-- [**`v1.0.1-compat-hygiene/`**](./v1.0.1-compat-hygiene/overview.md) — the next
-  **patch**: the game-specific compatibility fixes (FDS side-B / Kid Icarus, Mito
-  Koumon m89, the GxROM-66 / SMB3 reports) + doc/roadmap/test hygiene.
-- [**`v1.1.0-features/`**](./v1.1.0-features/overview.md) — the next **minor
-  release**, staged in betas: the **Lua scripting flagship** + visual filters
-  (full NES_NTSC + CRT shaders + `.pal`) + debugger devtools (breakpoints / trace /
-  event viewer) + peripherals & QoL + an NSF player.
+- **Visual filters** — full NES_NTSC composite emulation + CRT / scanline
+  shaders + `.pal` palette-file loading.
+- **Peripherals & QoL** — NES Power Pad support, turbo / autofire, an
+  input-display overlay, and a per-game nametable-mirroring override database.
+- **Debugger devtools** — breakpoints, a cycle-accurate trace logger, and an
+  event viewer.
+- **Audio** — an NSF / NSFe music-file player + a 5-band graphic equalizer.
+- **Lua scripting engine** — the flagship feature: a scriptable hook API over
+  the emulator core.
 
-Longer-horizon, separate initiatives (see `ROADMAP.md` for detail): mobile
-(iOS / Android) frontends; the long-tail mapper coverage (~300-mapper set) + 100%
-TASVideos; a live RetroAchievements account-allowlisting pass; Vs. DualSystem
-(two-CPU/two-PPU) games; browser RetroAchievements (emscripten or pure-Rust
-`rcheevos`).
+See the archived [`v1.1.0-features/`](./archive/v1.1.0-features/overview.md) for
+the shipped-feature detail.
+
+Genuine remaining post-v1.1.0 items (see `ROADMAP.md` for detail):
+
+- **Mobile (iOS / Android)** frontends.
+- The externally-blocked **RetroAchievements account-allowlisting** pass (a
+  request to the RA team, not a code change).
+- **Vs. DualSystem** (two-CPU / two-PPU) games.
+- **Browser / wasm Lua** (the v1.1.0 Lua engine is native-only).
+- **Long-tail mapper coverage** toward the ~300-mapper full set + 100%
+  TASVideos compatibility.
+- The documented **hard-tier accuracy residuals** — document, don't grind.
 
 ---
 
@@ -83,24 +96,29 @@ TASVideos; a live RetroAchievements account-allowlisting pass; Vs. DualSystem
 
 - [`ROADMAP.md`](./ROADMAP.md) — the phase/sprint roadmap entry point (status +
   links to every phase overview).
-- Phase overviews + sprint files (engine-lineage development history; phases 1-5
-  delivered, phases 6-8 marked COMPLETE/SUPERSEDED in-file):
-  - `phase-1-foundation/` — workspace, cartridge parser, CPU core (nestest)
-  - `phase-2-graphics-timing/` — PPU, lockstep scheduler, simple mappers
-  - `phase-3-audio-polish/` — APU channels, DMC, mixer
-  - `phase-4-mapper-coverage/` — MMC3, misc + VRC + MMC5 mappers
-  - `phase-5-frontend-tooling/` — frontend, save/rewind, debugger + release
-  - `phase-6-v1.0.0-final/` + `phase-6-v1-closeout/` — v1.0.0 closeout (SUPERSEDED)
-  - `phase-7-nesdev-accuracy-hardening/` — accuracy hardening (COMPLETE)
-  - `phase-8-v1.2.0-accuracy-residuals/` — DMC get/put scheduler (COMPLETE)
+- [`archive/`](./archive/README.md) — all delivered development history (the
+  engine-lineage `phase-N` plans, the shipped `v1.0.1`/`v1.1.0` plans, the
+  legacy v0.8 tree, and the historical session reports). Phase overviews +
+  sprint files (engine-lineage development history; phases 1-5 delivered, phases
+  6-8 marked COMPLETE/SUPERSEDED in-file):
+  - `archive/phase-1-foundation/` — workspace, cartridge parser, CPU core (nestest)
+  - `archive/phase-2-graphics-timing/` — PPU, lockstep scheduler, simple mappers
+  - `archive/phase-3-audio-polish/` — APU channels, DMC, mixer
+  - `archive/phase-4-mapper-coverage/` — MMC3, misc + VRC + MMC5 mappers
+  - `archive/phase-5-frontend-tooling/` — frontend, save/rewind, debugger + release
+  - `archive/phase-6-v1.0.0-final/` + `archive/phase-6-v1-closeout/` — v1.0.0 closeout (SUPERSEDED)
+  - `archive/phase-7-nesdev-accuracy-hardening/` — accuracy hardening (COMPLETE)
+  - `archive/phase-8-v1.2.0-accuracy-residuals/` — DMC get/put scheduler (COMPLETE)
+  - `archive/v1.0.1-compat-hygiene/` — the shipped v1.0.1 compat/hygiene plan
+  - `archive/v1.1.0-features/` — the shipped v1.1.0 feature plan
   - `archive/legacy-v0.8-todos/` — the parent emulator's pre-synthesis milestone
     TODOs, retained verbatim as history.
 - Historical session reports (dated, point-in-time; superseded by the synthesis —
   see the status note at the top of each):
-  [`TEST-ROM-ACQUISITION-REPORT.md`](./TEST-ROM-ACQUISITION-REPORT.md),
-  [`TEST-ROM-WORKFLOW-SUMMARY.md`](./TEST-ROM-WORKFLOW-SUMMARY.md),
-  [`TODO_AUDIT_SUMMARY_REPORT.md`](./TODO_AUDIT_SUMMARY_REPORT.md),
-  [`TODO-GENERATION-STATUS.md`](./TODO-GENERATION-STATUS.md).
+  [`TEST-ROM-ACQUISITION-REPORT.md`](./archive/TEST-ROM-ACQUISITION-REPORT.md),
+  [`TEST-ROM-WORKFLOW-SUMMARY.md`](./archive/TEST-ROM-WORKFLOW-SUMMARY.md),
+  [`TODO_AUDIT_SUMMARY_REPORT.md`](./archive/TODO_AUDIT_SUMMARY_REPORT.md),
+  [`TODO-GENERATION-STATUS.md`](./archive/TODO-GENERATION-STATUS.md).
 
 ---
 

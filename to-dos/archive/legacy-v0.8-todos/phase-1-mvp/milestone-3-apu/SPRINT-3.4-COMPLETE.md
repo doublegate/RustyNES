@@ -14,6 +14,7 @@ Successfully implemented the DMC (Delta Modulation Channel) for the RustyNES APU
 ### DMC Channel (`dmc.rs`)
 
 **Features Implemented:**
+
 - 1-bit delta modulation playback
 - 7-bit output level (0-127)
 - 16 selectable sample rates (NTSC and PAL)
@@ -27,6 +28,7 @@ Successfully implemented the DMC (Delta Modulation Channel) for the RustyNES APU
 - Address wrap from $FFFF → $8000 (not $0000)
 
 **Key Characteristics:**
+
 - Delta modulation: stores changes (±2) instead of absolute values
 - Sample buffer: 8-bit with bit-by-bit processing (LSB first)
 - Output shifter: increments/decrements based on bit value
@@ -35,6 +37,7 @@ Successfully implemented the DMC (Delta Modulation Channel) for the RustyNES APU
 - Memory callback: flexible DMA interface for CPU integration
 
 **Tests:** 22 comprehensive unit tests
+
 - Rate table correctness (NTSC/PAL)
 - Direct load ($4011)
 - Sample address/length calculation
@@ -51,6 +54,7 @@ Successfully implemented the DMC (Delta Modulation Channel) for the RustyNES APU
 ### APU Integration (`apu.rs`)
 
 **Updates:**
+
 - Added `DmcChannel` instance
 - Integrated register routing ($4010-$4013)
 - Status register ($4015) reports DMC active state and IRQ
@@ -61,19 +65,23 @@ Successfully implemented the DMC (Delta Modulation Channel) for the RustyNES APU
 - Direct output level access via `dmc_output()`
 
 **Status Register ($4015):**
+
 - Bit 4: DMC bytes remaining > 0 (active state)
 - Bit 7: DMC IRQ flag
 - Reading $4015 clears both frame IRQ and DMC IRQ flags
 
 **Memory Read Callback:**
+
 ```rust
 apu.set_memory_read_callback(|addr| memory[addr as usize]);
 ```
+
 This allows the emulator to provide CPU memory access for DMC sample fetching.
 
 ### Library Exports (`lib.rs`)
 
 **Public API:**
+
 - `DmcChannel` - Delta modulation channel
 - `System` - NTSC/PAL system type enum
 - Integrated into main `Apu` struct
@@ -88,6 +96,7 @@ test result: ok. 105 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
 ```
 
 **Test Breakdown:**
+
 - Frame counter: 6 tests
 - Envelope: 6 tests
 - Length counter: 6 tests
@@ -108,6 +117,7 @@ test result: ok. 105 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
 ### Clippy Warnings (24 minor)
 
 All warnings are performance suggestions or code style (not errors):
+
 1. **trivially_copy_pass_by_ref (10)**: Envelope and LengthCounter are small Copy types, const methods could take `self` instead of `&self`
 2. **must_use_candidate (6)**: Several methods could have `#[must_use]` attribute
 3. **cast_lossless (3)**: `u8 as u16` casts could use `u16::from()` instead
@@ -119,12 +129,14 @@ These are minor optimizations and don't affect correctness.
 ### Code Statistics
 
 **DMC Channel:**
+
 - File: `crates/rustynes-apu/src/dmc.rs`
 - Lines: 586 (including tests)
 - Tests: 22 comprehensive tests
 - Documentation: Complete with hardware-accurate examples
 
 **Total APU Crate:**
+
 - Lines: ~3,400+ (all files)
 - Tests: 105 passing
 - Components: 9 modules (apu, pulse, triangle, noise, dmc, envelope, length_counter, sweep, frame_counter)
@@ -136,11 +148,13 @@ These are minor optimizations and don't affect correctness.
 ### Delta Modulation
 
 Traditional PCM stores absolute sample values:
+
 ```
 Samples: [64, 65, 67, 70, 68, 65, ...]
 ```
 
 Delta modulation stores only changes:
+
 ```
 Bits: [1, 1, 1, 0, 0, ...]  (1=+2, 0=-2)
 Output: 64 → 66 → 68 → 70 → 68 → 66 → ...
@@ -151,12 +165,14 @@ This drastically reduces memory requirements at the cost of fidelity.
 ### DMA and CPU Cycle Stealing
 
 Each sample fetch steals 1-4 CPU cycles:
+
 ```rust
 let dma_cycles = dmc.clock_timer(|addr| memory.read(addr));
 cpu_cycles += dma_cycles as u64;
 ```
 
 **Timing:**
+
 - Best case: 1 cycle (aligned fetch)
 - Typical: 3 cycles
 - Worst case: 4 cycles (fetch during opcode read)
@@ -166,6 +182,7 @@ This creates authentic NES timing behavior and is critical for accuracy.
 ### Address Wrapping
 
 Critical implementation detail:
+
 ```rust
 if current_address == 0xFFFF {
     current_address = 0x8000;  // NOT 0x0000!
@@ -179,6 +196,7 @@ Wrapping to $8000 prevents the DMC from reading RAM/PPU/APU registers, ensuring 
 ### Sample Rate Table
 
 16 selectable rates provide flexibility:
+
 ```
 NTSC Rate 0x0F: 1,789,773 / (54 × 8) ≈ 4.1 kHz (fastest)
 NTSC Rate 0x00: 1,789,773 / (428 × 8) ≈ 520 Hz (slowest)
@@ -206,6 +224,7 @@ This design allows the APU to remain decoupled from the CPU/memory bus while sti
 ### IRQ Handling
 
 DMC IRQ fires when sample completes (if enabled):
+
 ```rust
 if apu.irq_pending() {
     cpu.trigger_irq();
@@ -213,12 +232,14 @@ if apu.irq_pending() {
 ```
 
 The IRQ is cleared by:
+
 1. Reading $4015 status register
 2. Writing $4010 with IRQ enable bit = 0
 
 ### Output Level
 
 Unlike other channels (4-bit output), DMC provides 7-bit output (0-127):
+
 ```rust
 let dmc_level = apu.dmc_output();  // 0-127
 ```
@@ -266,14 +287,17 @@ This will be mixed with other channels in Sprint 3.5 using non-linear mixer equa
 ## Files Modified
 
 **New Files:**
+
 - `crates/rustynes-apu/src/dmc.rs` (586 lines)
 - `SPRINT-3.4-COMPLETE.md` (this file)
 
 **Modified Files:**
+
 - `crates/rustynes-apu/src/apu.rs` (DMC integration)
 - `crates/rustynes-apu/src/lib.rs` (exports)
 
 **Total Changes:**
+
 - ~586 lines of new code
 - 22 new tests
 - 1 new module
@@ -326,6 +350,7 @@ This will be mixed with other channels in Sprint 3.5 using non-linear mixer equa
 ### Minor Clippy Suggestions
 
 24 clippy warnings remain (performance suggestions, not errors):
+
 - 10 × trivially_copy_pass_by_ref (use `self` instead of `&self`)
 - 6 × must_use_candidate (add `#[must_use]` to methods)
 - 3 × cast_lossless (use `u16::from()` instead of `as u16`)
@@ -353,4 +378,4 @@ These do not affect correctness and can be addressed in a future cleanup pass.
 
 ---
 
-**Ready for Sprint 3.5: Audio Output & Mixing Implementation**
+### Ready for Sprint 3.5: Audio Output & Mixing Implementation

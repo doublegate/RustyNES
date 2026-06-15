@@ -18,6 +18,7 @@ Integration of sub-cycle accuracy improvements into the rustynes-desktop crate. 
 ## Dependencies
 
 ### Required Before Starting
+
 - **S1 (CPU Refactor)** - Cycle-by-cycle CPU must be complete
 - **S2 (PPU Sync)** - PPU synchronization must be implemented
 - **S3 (APU Precision)** - APU integration must be complete
@@ -25,6 +26,7 @@ Integration of sub-cycle accuracy improvements into the rustynes-desktop crate. 
 - **S5 (Mappers)** - Mapper IRQ timing must be accurate
 
 ### Blocks
+
 - **S7 (Testing)** - Cannot validate until desktop integration complete
 - **v1.0.0 Release** - Cannot release without proper frontend integration
 
@@ -33,6 +35,7 @@ Integration of sub-cycle accuracy improvements into the rustynes-desktop crate. 
 ## Current State (v0.8.6)
 
 ### Desktop Architecture
+
 - **Framework:** eframe 0.33 + egui 0.33
 - **Audio:** cpal 0.16 with lock-free ring buffer (8192 samples)
 - **Resampling:** rubato 0.16 (two-stage decimation)
@@ -40,6 +43,7 @@ Integration of sub-cycle accuracy improvements into the rustynes-desktop crate. 
 - **Frame Timing:** Accumulator-based at 60.0988 Hz NTSC
 
 ### Known Integration Points
+
 - `crates/rustynes-desktop/src/app.rs` - Main application loop
 - `crates/rustynes-desktop/src/emulation.rs` - Emulation thread
 - `crates/rustynes-desktop/src/audio.rs` - Audio output
@@ -56,6 +60,7 @@ Integration of sub-cycle accuracy improvements into the rustynes-desktop crate. 
 **Priority:** P0 (Critical)
 **Effort:** 3 hours
 **Files:**
+
 - `crates/rustynes-desktop/src/app.rs`
 - `crates/rustynes-desktop/src/emulation.rs`
 
@@ -69,6 +74,7 @@ const FRAME_DURATION: Duration = Duration::from_nanos(16_639_265); // ~60.0988 H
 #### Required Changes
 
 ##### Subtasks
+
 - [ ] Validate frame duration matches NES hardware (29780.5 CPU cycles average)
 - [ ] Handle odd/even frame differences for PPU timing
 - [ ] Ensure vsync doesn't introduce timing drift
@@ -91,6 +97,7 @@ fn validate_frame_timing(frame_cycles: u32, is_odd_frame: bool) -> bool {
 ```
 
 #### Validation Criteria
+
 - Frame timing within 0.1% of hardware
 - No visible frame jitter during gameplay
 - Vsync properly synchronized
@@ -103,6 +110,7 @@ fn validate_frame_timing(frame_cycles: u32, is_odd_frame: bool) -> bool {
 **Priority:** P0 (Critical)
 **Effort:** 4 hours
 **Files:**
+
 - `crates/rustynes-desktop/src/audio.rs`
 - `crates/rustynes-desktop/src/emulation.rs`
 
@@ -117,6 +125,7 @@ fn validate_frame_timing(frame_cycles: u32, is_odd_frame: bool) -> bool {
 #### Required Changes
 
 ##### Subtasks
+
 - [ ] Verify audio buffer timing matches APU cycle accuracy
 - [ ] Implement adaptive sync to prevent audio underruns
 - [ ] Handle DMC DMA stalls in audio generation
@@ -152,6 +161,7 @@ fn handle_dmc_stall(&mut self, stall_cycles: u8) {
 ```
 
 #### Validation Criteria
+
 - No audio crackling during normal gameplay
 - No audio desync after 10+ minutes of play
 - Proper DMC sample playback timing
@@ -164,6 +174,7 @@ fn handle_dmc_stall(&mut self, stall_cycles: u8) {
 **Priority:** P1
 **Effort:** 2 hours
 **Files:**
+
 - `crates/rustynes-desktop/src/input.rs`
 - `crates/rustynes-core/src/controller.rs`
 
@@ -179,6 +190,7 @@ fn update_input(&mut self) {
 #### Required Changes
 
 ##### Subtasks
+
 - [ ] Verify controller read timing matches on_cpu_cycle() integration
 - [ ] Ensure open bus behavior works with input system
 - [ ] Test input timing with timing-sensitive games
@@ -210,6 +222,7 @@ fn test_controller_read_open_bus() {
 ```
 
 #### Validation Criteria
+
 - Input latency < 1 frame (16.67ms)
 - Proper open bus behavior on controller reads
 - Strobe latch timing accurate
@@ -222,6 +235,7 @@ fn test_controller_read_open_bus() {
 **Priority:** P1
 **Effort:** 3 hours
 **Files:**
+
 - `crates/rustynes-desktop/src/debug/cpu_debug.rs`
 - `crates/rustynes-desktop/src/debug/ppu_debug.rs`
 - `crates/rustynes-desktop/src/debug/apu_debug.rs`
@@ -240,6 +254,7 @@ Current debug windows:
 #### Required Changes
 
 ##### Subtasks
+
 - [ ] Add cycle counter to CPU debug window
 - [ ] Show PPU dot/scanline in real-time
 - [ ] Display APU frame counter state
@@ -303,6 +318,7 @@ pub struct ApuDebugState {
 ```
 
 #### Validation Criteria
+
 - Debug windows update at 60fps
 - Cycle counters accurate and synchronized
 - No performance impact when debug windows closed
@@ -315,6 +331,7 @@ pub struct ApuDebugState {
 **Priority:** P0 (Critical)
 **Effort:** 4 hours
 **Files:**
+
 - `crates/rustynes-desktop/src/emulation.rs`
 - `crates/rustynes-core/src/console.rs`
 - `crates/rustynes-cpu/src/cpu.rs`
@@ -333,6 +350,7 @@ Performance Targets:
 #### Required Changes
 
 ##### Subtasks
+
 - [ ] Profile tick() loop with cycle callbacks
 - [ ] Optimize hot paths in on_cpu_cycle()
 - [ ] Consider SIMD for PPU rendering
@@ -392,6 +410,7 @@ impl PerformanceMetrics {
 | Memory | 35MB | 42MB | 20% |
 
 #### Validation Criteria
+
 - 60fps maintained on reference hardware
 - No visible stuttering during gameplay
 - Performance regression < 20% vs v0.8.4
@@ -404,9 +423,11 @@ impl PerformanceMetrics {
 **Priority:** P2
 **Effort:** 2 hours
 **Files:**
+
 - Various files in `crates/rustynes-desktop/src/`
 
 #### Subtasks
+
 - [ ] Address TODOs and FIXMEs in rustynes-desktop
 - [ ] Clean up unused code from previous iterations
 - [ ] Ensure consistent error handling
@@ -425,6 +446,7 @@ impl PerformanceMetrics {
 ```
 
 #### Cleanup Checklist
+
 - [ ] Remove unused imports
 - [ ] Clean up dead code paths
 - [ ] Standardize Result/Option usage
@@ -432,6 +454,7 @@ impl PerformanceMetrics {
 - [ ] Update egui deprecated API usage
 
 #### Validation Criteria
+
 - Zero clippy warnings
 - All public APIs documented
 - No unused code warnings
@@ -442,16 +465,19 @@ impl PerformanceMetrics {
 ## Research References
 
 ### Internal Documentation
+
 - [M10-S0-dependency-upgrade.md](../milestone-10-polish/M10-S0-dependency-upgrade.md) - Dependency versions
 - [M10-S1-ui-ux-improvements.md](../milestone-10-polish/M10-S1-ui-ux-improvements.md) - UI/UX patterns
 - [M9-S1-audio-improvements.md](../milestone-9-known-issues/M9-S1-audio-improvements.md) - Audio architecture
 
 ### Reference Emulators
+
 - **Mesen2** (`ref-proj/Mesen2/`) - GUI integration patterns, debug window design
 - **TetaNES** (`ref-proj/TetaNES/`) - Rust + egui immediate mode patterns
 - **FCEUX** (`ref-proj/FCEUX/`) - Frame timing implementation, debug tools
 
 ### External Resources
+
 - [NESdev Wiki - PPU Timing](https://www.nesdev.org/wiki/PPU_frame_timing)
 - [NESdev Wiki - APU Timing](https://www.nesdev.org/wiki/APU_Frame_Counter)
 - [egui Documentation](https://docs.rs/egui/latest/egui/)
@@ -462,12 +488,15 @@ impl PerformanceMetrics {
 ## Test Plan
 
 ### Test ROMs
+
 All existing test ROMs in `test-roms/` should continue to pass:
+
 - Blargg test suite (90 tests)
 - nestest.nes (CPU validation)
 - Timing-sensitive games
 
 ### Manual Testing
+
 | Game | Focus Area | Expected Result |
 |------|------------|-----------------|
 | Super Mario Bros. | Frame timing | Smooth scrolling, no jitter |
@@ -476,6 +505,7 @@ All existing test ROMs in `test-roms/` should continue to pass:
 | Ninja Gaiden | Status bar | IRQ-based effects correct |
 
 ### Automated Tests
+
 - Frame timing validation
 - Audio buffer level monitoring
 - Input latency measurement

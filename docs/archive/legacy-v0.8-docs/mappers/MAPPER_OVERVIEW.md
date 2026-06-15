@@ -1,6 +1,6 @@
 # NES Mapper Overview
 
-**Table of Contents**
+## Table of Contents
 
 - [Introduction](#introduction)
 - [Why Mappers Exist](#why-mappers-exist)

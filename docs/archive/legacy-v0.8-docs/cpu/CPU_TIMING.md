@@ -489,7 +489,7 @@ Same as IRQ, but:
 
 ### Cycle Tracking Strategy
 
-**Option 1: Instruction-Level Tracking**
+#### Option 1: Instruction-Level Tracking
 
 Execute entire instruction, return total cycles:
 
@@ -509,7 +509,7 @@ pub fn step(&mut self, bus: &mut Bus) -> u8 {
 }
 ```
 
-**Option 2: Sub-Cycle Tracking**
+#### Option 2: Sub-Cycle Tracking
 
 Track individual memory operations (more accurate for mid-instruction events):
 

@@ -19,6 +19,7 @@ Polish the desktop GUI with responsive design, theme support, improved settings 
 The desktop frontend uses eframe 0.33 + egui 0.33 with the following existing features:
 
 **Completed (v0.7.1 + M10-S0):**
+
 - [x] eframe 0.33 window management with OpenGL (glow) backend
 - [x] egui 0.33 immediate mode GUI
 - [x] Menu bar (File, Emulation, Video, Audio, Debug, Help)
@@ -31,6 +32,7 @@ The desktop frontend uses eframe 0.33 + egui 0.33 with the following existing fe
 - [x] MSRV 1.88
 
 **New egui 0.33 Features Available:**
+
 - **Atoms:** Indivisible UI building blocks for status displays
 - **Modal Dialogs:** Native `egui::Modal` for alerts, confirmations, first-run
 - **Plugin Trait:** Cleaner debug window organization
@@ -55,6 +57,7 @@ The desktop frontend uses eframe 0.33 + egui 0.33 with the following existing fe
 ## Tasks
 
 ### Task 1: Responsive Layout (egui 0.33)
+
 - [x] Implement window size constraints (min 800x600, max 4K)
 - [x] Use `ctx.viewport_rect()` and `ctx.content_rect()` for layout calculations (replaces deprecated `screen_rect`)
 - [x] Adapt UI elements to window size (scale fonts, spacing)
@@ -63,6 +66,7 @@ The desktop frontend uses eframe 0.33 + egui 0.33 with the following existing fe
 - [x] Optimize for common resolutions (1080p, 1440p, 4K)
 
 ### Task 2: Theme Support
+
 - [x] Implement theme system (light/dark mode)
 - [x] Design light theme colors (background, text, accents)
 - [x] Design dark theme colors (background, text, accents)
@@ -71,6 +75,7 @@ The desktop frontend uses eframe 0.33 + egui 0.33 with the following existing fe
 - [x] Support system theme detection (follow OS preference)
 
 ### Task 3: Settings Organization
+
 - [x] Organize settings into tabs (Video, Audio, Input, Advanced)
 - [x] Video tab: Resolution, scale, filters, vsync, fullscreen
 - [x] Audio tab: Volume, sample rate, buffer size, channels
@@ -79,6 +84,7 @@ The desktop frontend uses eframe 0.33 + egui 0.33 with the following existing fe
 - [x] Add tooltips for complex settings
 
 ### Task 4: Visual Feedback (egui 0.33 Atoms)
+
 - [x] Use Atoms for status bar displays (FPS, audio state, ROM info)
 - [x] Add loading spinner via `egui::Spinner` (ROM loading, save state loading)
 - [ ] Add progress bar (long operations, ROM scanning) - deferred
@@ -88,6 +94,7 @@ The desktop frontend uses eframe 0.33 + egui 0.33 with the following existing fe
 - [x] Add hover effects (buttons, tabs, menu items)
 
 ### Task 4b: Modal Dialogs (egui 0.33)
+
 - [x] Implement first-run welcome modal using `egui::Modal`
 - [x] Add error modal for ROM loading failures
 - [x] Add confirmation modal for destructive actions (reset, close without save)
@@ -95,6 +102,7 @@ The desktop frontend uses eframe 0.33 + egui 0.33 with the following existing fe
 - [x] Test modal interactions (Esc to close, click outside behavior)
 
 ### Task 5: Animations & Transitions
+
 - [x] Smooth fade in/out transitions (dialogs, modals)
 - [x] Button press animations (scale, color change) - via egui defaults
 - [x] Tab switching animations (slide, fade) - via egui defaults
@@ -103,6 +111,7 @@ The desktop frontend uses eframe 0.33 + egui 0.33 with the following existing fe
 - [x] Ensure animations are performant (60 FPS)
 
 ### Task 6: Accessibility
+
 - [x] Add keyboard navigation (Tab, Enter, Arrow keys) - via egui defaults
 - [x] Add keyboard shortcuts (Ctrl+O: Open, Ctrl+R: Reset, Ctrl+P: Pause, Ctrl+Q: Quit, Ctrl+,: Settings)
 - [ ] Add screen reader support (ARIA labels, accessible descriptions) - deferred
@@ -111,6 +120,7 @@ The desktop frontend uses eframe 0.33 + egui 0.33 with the following existing fe
 - [x] Document keyboard shortcuts (in-app help, user guide)
 
 ### Task 7: UI Testing (egui_kittest)
+
 - [ ] Evaluate egui_kittest for automated UI testing - deferred to future sprint
 - [ ] Create snapshot tests for main UI states - deferred
 - [ ] Test menu navigation programmatically - deferred

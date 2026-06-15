@@ -11,7 +11,7 @@
 
 ## Workspace layout
 
-```
+```text
 Cargo.toml                  # workspace manifest
 rust-toolchain.toml         # pin 1.75 stable
 crates/

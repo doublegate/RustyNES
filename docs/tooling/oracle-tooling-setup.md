@@ -20,6 +20,7 @@ Build: `cd Mesen2 && make core -j16` → `bin/pgohelperlib.so` (loaded by
 
 Run a trace (window keyed on the `$4010=$4E` ROM landmark, NOT boot — RustyNES's hardware-correct
 `$2002` vblank phase legitimately diverges the boot cycle-count from Mesen):
+
 ```bash
 MESEN_CELL_TRACE_OUT=/tmp/m_cell.csv MESEN_CELL_TRACE_START=<cyc> MESEN_CELL_TRACE_END=<cyc> \
   scripts/mesen2-irq-oracle/run-irq-trace.sh tests/roms/accuracycoin/AccuracyCoin.nes /tmp/m_irq.csv
@@ -39,6 +40,7 @@ for these exact tests. Closed-source Windows binary:
 
 Runs under `wine` (`/usr/bin/wine`) as a live ground-truth oracle for observable behavior
 (screen/result bytes). For the *model* (the "why"), use the reverse-engineered docs:
+
 - `docs/audit/v2.0-f2-tricnes-reference-model-2026-06-02.md` — the DMA core: per-cycle interleaved
   DMA (`_6502()` once per CPU cycle), ONE `APU_PutCycle` flip-flop toggled once per cycle
   (`Emulator.cs:920`), the GET/PUT priority + halt-clear table (`Emulator.cs:4225-4322`), the port

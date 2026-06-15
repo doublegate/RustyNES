@@ -34,6 +34,7 @@ Achieve **100% sub-cycle level hardware emulation accuracy**, surpassing even Me
 ### Current State
 
 RustyNES v0.8.4 achieves:
+
 - 100% Blargg pass rate (90/90 tests)
 - 517+ unit tests passing
 - Dot-level PPU accuracy
@@ -42,6 +43,7 @@ RustyNES v0.8.4 achieves:
 ### Gap Analysis
 
 Two critical timing tests remain **ignored** due to architectural limitations:
+
 - `ppu_02-vbl_set_time` - Requires +/-2 cycle VBlank flag precision
 - `ppu_03-vbl_clear_time` - Requires +/-2 cycle VBlank clear precision
 
@@ -52,6 +54,7 @@ Two critical timing tests remain **ignored** due to architectural limitations:
 ### Solution
 
 Implement Pinky's `on_cpu_cycle()` callback pattern:
+
 - PPU stepped 3 times before each CPU memory access
 - APU stepped once before each CPU memory access
 - DMA integrated into cycle-by-cycle execution
@@ -91,6 +94,7 @@ pub fn step(&mut self, bus: &mut impl CpuBus) -> u8 {
 #### Gap: No Per-Memory-Access Callbacks
 
 The CPU performs all memory reads/writes within `execute_opcode()` without notifying PPU/APU. This means:
+
 - A 7-cycle instruction reads $2002 on cycle 3
 - PPU state reflects cycle 0, not cycle 3
 - VBlank flag read may be incorrect by several cycles
@@ -168,6 +172,7 @@ fn is_vblank_clear_dot(&self) -> bool {
 #### Required Changes - MINIMAL
 
 PPU infrastructure is ready. Only integration changes needed:
+
 - Expose `step_with_chr()` for callback-based invocation
 - Ensure VBlank flag reads return cycle-accurate state
 

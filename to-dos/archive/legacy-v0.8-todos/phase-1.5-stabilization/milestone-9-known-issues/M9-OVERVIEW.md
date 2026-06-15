@@ -89,12 +89,14 @@ The following foundational work was completed in v0.7.1-v0.8.0, providing a stab
 **Status:** COMPLETE (Dec 28, 2025)
 
 **Objectives:**
+
 - [x] Implement dynamic resampling (variable rate → 48kHz)
 - [x] Add audio/video synchronization
 - [x] Optimize buffer management
 - [x] Fix audio glitches and pops
 
 **Implementation Summary:**
+
 - Two-stage decimation via rubato: 1.79MHz → 192kHz → 48kHz
 - A/V sync with adaptive speed adjustment (0.99x-1.01x)
 - Dynamic buffer sizing (2048-16384 samples)
@@ -113,12 +115,14 @@ The following foundational work was completed in v0.7.1-v0.8.0, providing a stab
 **Status:** CORE IMPLEMENTATION COMPLETE (Dec 28, 2025)
 
 **Objectives:**
+
 - [x] Fix sprite overflow flag behavior (hardware bug emulation)
 - [x] Handle palette RAM edge cases (mirroring verified)
 - [x] Improve scrolling split-screen effects (mid-scanline tracking)
 - [x] Handle mid-scanline register writes ($2005/$2006)
 
 **Implementation Summary:**
+
 - Sprite overflow bug with false positive/negative matching hardware
 - Palette RAM mirroring at $3F10/$3F14/$3F18/$3F1C
 - Mid-scanline write detection for split-screen effects
@@ -137,12 +141,14 @@ The following foundational work was completed in v0.7.1-v0.8.0, providing a stab
 **Status:** CORE OPTIMIZATIONS COMPLETE (Dec 28, 2025)
 
 **Objectives:**
+
 - [x] Profile CPU, PPU, APU hot paths (inline hints added)
 - [x] Optimize critical rendering loops (step functions inlined)
 - [ ] Reduce memory allocations (deferred)
 - [ ] Benchmark improvements (deferred)
 
 **Implementation Summary:**
+
 - Added `#[inline]` to CPU hot paths: step(), execute_opcode(), handle_nmi(), handle_irq()
 - Added `#[inline]` to PPU hot paths: step(), step_with_chr()
 - Verified 68+ existing inline annotations in CPU/PPU crates
@@ -161,6 +167,7 @@ The following foundational work was completed in v0.7.1-v0.8.0, providing a stab
 **Status:** PENDING (requires GitHub issue review)
 
 **Objectives:**
+
 - [ ] Close all critical GitHub issues
 - [ ] Fix edge case crashes
 - [ ] Improve error handling
@@ -179,6 +186,7 @@ The following foundational work was completed in v0.7.1-v0.8.0, providing a stab
 ### Audio Quality (M9-S1)
 
 **Current Implementation (v0.8.0):**
+
 - cpal 0.16 for cross-platform audio I/O
 - rubato 0.16 for high-quality audio resampling
 - Custom lock-free ring buffer (8192 samples) with atomic operations
@@ -187,12 +195,14 @@ The following foundational work was completed in v0.7.1-v0.8.0, providing a stab
 - Sample rate: 44.1kHz (configurable in AudioConfig)
 
 **Remaining Issues:**
+
 - No dynamic resampling (NES ~1.79MHz APU output → device sample rate)
 - No audio/video synchronization (potential audio drift over time)
 - Fixed buffer size (no adaptive sizing based on system latency)
 - Occasional pops/glitches under high system load
 
 **Improvements Needed:**
+
 1. **Dynamic Resampling:**
    - Use rubato crate for high-quality sinc interpolation
    - Handle variable input rate (NTSC 1.789773 MHz, PAL 1.662607 MHz)
@@ -213,18 +223,21 @@ The following foundational work was completed in v0.7.1-v0.8.0, providing a stab
 ### PPU Edge Cases (M9-S2)
 
 **Current Implementation (v0.8.0):**
+
 - PPU debug window implemented in egui 0.33 (pattern tables, nametables, OAM, palette)
 - Basic sprite rendering with 8-sprite-per-scanline limit
 - Palette RAM mirroring implemented
 - VBlank/NMI timing functional with flag read handling
 
 **Remaining Issues:**
+
 - Sprite overflow flag not fully cycle-accurate (hardware quirks not emulated)
 - Palette RAM writes during rendering not handled correctly
 - Scrolling split-screen effects may have edge cases (mid-scanline writes)
 - Some attribute handling edge cases remain
 
 **Improvements Needed:**
+
 1. **Sprite Overflow:**
    - Implement accurate sprite evaluation with hardware bug emulation
    - Set overflow flag correctly (including false positive/negative cases)
@@ -243,6 +256,7 @@ The following foundational work was completed in v0.7.1-v0.8.0, providing a stab
 ### Performance (M9-S3)
 
 **Current State (v0.8.0):**
+
 - eframe 0.33 + egui 0.33 rendering via OpenGL (glow backend)
 - Accumulator-based frame timing (TARGET_FPS = 60.0988)
 - Framebuffer: 256x240 RGBA with egui::TextureOptions::NEAREST
@@ -251,12 +265,14 @@ The following foundational work was completed in v0.7.1-v0.8.0, providing a stab
 - Performance not fully profiled (eframe overhead unknown)
 
 **Potential Bottlenecks:**
+
 - PPU rendering loop (pixel-by-pixel processing)
 - egui texture updates every frame (ColorImage::from_rgba_unmultiplied)
 - Audio callback overhead (mono-to-stereo conversion)
 - Memory allocations in hot paths
 
 **Improvements Needed:**
+
 1. **Profiling:**
    - Use `cargo flamegraph` or `perf` with eframe workload
    - Profile egui rendering overhead (texture updates, layout)
@@ -278,18 +294,21 @@ The following foundational work was completed in v0.7.1-v0.8.0, providing a stab
 ### Bug Fixes (M9-S4)
 
 **Current State (v0.8.0):**
+
 - Configuration persistence via RON 0.12 format
 - Error handling with anyhow + thiserror 2.0 in desktop crate
 - Logging via log crate
 - File dialog errors handled with rfd 0.15
 
 **Known Issues:**
+
 - Edge case crashes (malformed ROMs, invalid states)
 - Save states not yet implemented
 - Input handling edge cases (rapid key presses, gilrs edge cases)
 - Error messages shown in console, not in GUI dialogs
 
 **Improvements Needed:**
+
 1. **Crash Prevention:**
    - Add bounds checking in core emulation
    - Validate ROM headers (iNES, NES 2.0 format checking)

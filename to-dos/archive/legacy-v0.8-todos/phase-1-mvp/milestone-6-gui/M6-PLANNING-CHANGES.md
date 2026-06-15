@@ -146,6 +146,7 @@ The design documents extensively analyze framework choices:
    - egui's immediate mode becomes unwieldy at this scale
 
 **Industry Examples:**
+
 - **TetaNES** (NES emulator): Uses egui successfully for simpler UI
 - **Plastic** (NES emulator): Uses egui + gilrs, acknowledges keyboard responsiveness issues
 - **RetroArch**: C++ but demonstrates value of structured UI for feature-rich emulators
@@ -586,6 +587,7 @@ Based on v2 design specification, this phase establishes the core application an
 **Status (Dec 2025):** Mature, actively maintained, v0.13+ stable
 
 **Pros:**
+
 - Elm architecture prevents state management bugs in large apps
 - Excellent animation system (critical for polished emulator UI)
 - Theme system scales to complex multi-screen applications
@@ -593,17 +595,20 @@ Based on v2 design specification, this phase establishes the core application an
 - Multi-window support (detached debugger/TAS editor)
 
 **Cons:**
+
 - Steeper learning curve than egui
 - Fewer examples than egui (but improving)
 - Larger binary size
 
 **Recommended for:**
+
 - Applications with 5+ major views
 - Complex state management requirements
 - Need for sophisticated animations
 - Long-term maintainability
 
 **References:**
+
 - [Iced GitHub](https://github.com/iced-rs/iced)
 - [Performance comparison](http://lukaskalbertodt.github.io/2023/02/03/tauri-iced-egui-performance-comparison.html)
 
@@ -612,6 +617,7 @@ Based on v2 design specification, this phase establishes the core application an
 **Status (Dec 2025):** Industry standard, v0.20 stable, excellent WebGPU support
 
 **For NES Emulation:**
+
 - 256×240 texture = ~180KB per frame (trivial for modern GPUs)
 - Nearest-neighbor scaling trivial to implement
 - CRT shaders via WGSL (WebGPU Shading Language)
@@ -619,15 +625,18 @@ Based on v2 design specification, this phase establishes the core application an
 - HDR support available
 
 **Performance:**
+
 - 60 FPS easily achievable for NES resolution
 - Rolling scan at 120Hz+ possible
 - Shader complexity is main bottleneck (not texture upload)
 
 **Reference Projects:**
+
 - **TetaNES:** Excellent Rust NES emulator using wgpu
 - [GitHub: lukexor/tetanes](https://github.com/lukexor/tetanes)
 
 **Best Practices:**
+
 - Use `write_texture()` for frame updates (not staging buffers)
 - Nearest-neighbor sampler for pixel-perfect scaling
 - Separate pipelines for game rendering vs CRT effects
@@ -638,24 +647,28 @@ Based on v2 design specification, this phase establishes the core application an
 **Status (Dec 2025):** De facto standard for Rust audio, v0.15 stable
 
 **Backend Support:**
+
 - **Windows:** WASAPI (low latency), ASIO (pro audio, <5ms)
 - **macOS:** CoreAudio (excellent latency)
 - **Linux:** ALSA, PulseAudio, JACK
 - **WebAssembly:** Web Audio API
 
 **For Emulator Audio:**
+
 - Ring buffer design recommended (4096-8192 samples)
 - APU outputs ~44.1kHz, resample to 48kHz (rubato crate)
 - Target latency: <20ms for responsive gameplay
 - Run-ahead requires dynamic sample rate adjustment
 
 **Best Practices:**
+
 - Use exclusive mode on Windows (lower latency)
 - Monitor buffer underruns (audio crackling indicator)
 - Implement adaptive buffer sizing
 - Separate audio thread from emulation thread
 
 **References:**
+
 - [cpal GitHub](https://github.com/RustAudio/cpal)
 - [Rust Audio Programming 2025](https://andrewodendaal.com/rust-audio-programming-ecosystem/)
 
@@ -664,25 +677,30 @@ Based on v2 design specification, this phase establishes the core application an
 **Status (Dec 2025):** Mature, v0.10 stable, SDL-compatible mappings
 
 **Features:**
+
 - **Hot-plug support:** Automatically assigns/reuses gamepad IDs
 - **SDL mappings:** Works with 1000+ controller types
 - **Cross-platform:** Windows (XInput/DirectInput), macOS, Linux
 - **Haptic feedback:** Via optional sdl2 feature
 
 **For NES Emulation:**
+
 - Map D-pad → NES D-pad
 - Map A/B buttons → NES B/A (or configurable)
 - Support for turbo buttons
 - Player 1/2 selection
 
 **Known Issues:**
+
 - Keyboard responsiveness can be lower than gamepad (use JIT polling)
 - Some third-party controllers need custom mappings
 
 **Successful Implementations:**
+
 - **Plastic NES emulator:** Uses gilrs, reports "working very nicely"
 
 **References:**
+
 - [gilrs GitHub](https://github.com/Arvamer/gilrs)
 - [gilrs documentation](https://docs.rs/gilrs/latest/gilrs/)
 
@@ -703,28 +721,33 @@ Run-Ahead (RA=2):
 ```
 
 **Requirements:**
+
 - Fast save state serialization (bincode recommended)
 - Deterministic emulation (critical!)
 - Sufficient CPU overhead (2-3x emulation speed for RA=2)
 - Audio requires dual-instance or dynamic rate control
 
 **NES-Specific:**
+
 - Most NES games have 1-2 frames of internal lag
 - Run-ahead can achieve **lower latency than original hardware**
 - Auto-detection: Use frame advance to measure input → response delay
 
 **Challenges:**
+
 - Non-deterministic games break (rare on NES)
 - Audio sync requires careful handling
 - CPU intensive (needs performance headroom)
 
 **Implementation Notes:**
+
 - Start with RA=1 for MVP
 - Add auto-detection per game in Phase 2
 - Dual-instance mode: Run two emulators (one for video, one for audio)
 - Preemptive Frames: Alternative technique (pre-render multiple possible inputs)
 
 **References:**
+
 - [RetroArch Run-Ahead Docs](https://docs.libretro.com/guides/runahead/)
 - [byuu's Run-Ahead Article](https://bsnes.org/articles/input-run-ahead/)
 - [Emulation Wiki: Input Lag](https://emulation.gametechwiki.com/index.php/Input_lag)
@@ -1004,12 +1027,14 @@ Based on v2 design specification:
 **Impact:** Slower initial development
 
 **Mitigation:**
+
 - Study Iced examples and documentation thoroughly
 - Start with simple views, iterate to complexity
 - Use egui for debug overlay (familiar territory)
 - Budget extra time for Week 1 (learning phase)
 
 **Resources:**
+
 - [Iced GitHub Examples](https://github.com/iced-rs/iced/tree/master/examples)
 - [Iced Book](https://book.iced.rs/)
 
@@ -1019,6 +1044,7 @@ Based on v2 design specification:
 **Impact:** Latency reduction may not work as expected
 
 **Mitigation:**
+
 - Implement basic run-ahead (RA=1) in Phase 1 as proof of concept
 - Ensure save states are fast (<1ms serialization)
 - Test determinism thoroughly (use same ROM across restores)
@@ -1026,6 +1052,7 @@ Based on v2 design specification:
 - Provide fallback to traditional emulation (RA=0)
 
 **Success Criteria:**
+
 - RA=1 provides measurable latency improvement (test with slow-motion camera)
 - No visual glitches or audio crackling
 - <10% performance overhead
@@ -1036,12 +1063,14 @@ Based on v2 design specification:
 **Impact:** Audio crackling or high latency on some platforms
 
 **Mitigation:**
+
 - Test on all platforms early (Windows WASAPI, macOS CoreAudio, Linux ALSA)
 - Implement adaptive buffer sizing (auto-tune based on underruns)
 - Provide ASIO support on Windows (for pro audio users)
 - Monitor latency metrics in status bar
 
 **Known Issues:**
+
 - Linux PulseAudio can have higher latency than ALSA (document workaround)
 - Windows WASAPI shared mode has higher latency than exclusive
 
@@ -1051,12 +1080,14 @@ Based on v2 design specification:
 **Impact:** 60 FPS not achievable with complex shaders
 
 **Mitigation:**
+
 - Implement shader complexity levels (Low/Medium/High)
 - Profile each shader preset on target hardware
 - Provide "Performance Mode" that disables shaders
 - Use pre-compiled SPIR-V shaders (faster than runtime compilation)
 
 **Fallback:**
+
 - Nearest-neighbor scaling with scanlines only (minimal overhead)
 
 ### Challenge 5: HTPC Mode UX
@@ -1065,6 +1096,7 @@ Based on v2 design specification:
 **Impact:** Controller-first navigation may be awkward
 
 **Mitigation:**
+
 - Study existing HTPC interfaces (Kodi, Steam Big Picture, RetroArch)
 - Implement controller navigation early in Phase 3
 - User testing with actual controllers and 10-foot displays
@@ -1131,6 +1163,7 @@ cargo run --release -- --benchmark 1000 game.nes --run-ahead 2
 ### Manual Testing Checklist
 
 Phase 1 (MVP):
+
 - [ ] Load 10 different ROMs
 - [ ] Test keyboard controls (all buttons)
 - [ ] Test gamepad controls (Xbox, PlayStation, Switch Pro)
@@ -1141,6 +1174,7 @@ Phase 1 (MVP):
 - [ ] Test on Windows 10+, macOS 12+, Ubuntu 22.04+
 
 Phase 2 (Polish):
+
 - [ ] Test all CRT shader presets
 - [ ] Verify settings persistence
 - [ ] Test ROM library scanner (1000+ ROMs)
@@ -1149,12 +1183,14 @@ Phase 2 (Polish):
 - [ ] Verify auto-detect run-ahead
 
 Phase 3 (Advanced):
+
 - [ ] Test HTPC mode with controller only
 - [ ] Verify netplay (LAN + Internet)
 - [ ] Test achievement unlock flow
 - [ ] Verify plugin loading
 
 Phase 4 (Tools):
+
 - [ ] Test debugger (breakpoints, memory editor)
 - [ ] Test TAS recording/playback
 - [ ] Verify Lua scripting
@@ -1168,19 +1204,23 @@ Phase 4 (Tools):
 **Dependencies:** None (static linking recommended)
 
 **Features:**
+
 - WASAPI audio (low latency)
 - Optional ASIO support (pro audio, <5ms latency)
 - XInput gamepad support (Xbox controllers)
 
 **Packaging:**
+
 - `.exe` installer (Inno Setup recommended)
 - Portable `.zip` (no installation required)
 
 **Testing:**
+
 - Windows 10 (version 21H2+)
 - Windows 11
 
 **Known Issues:**
+
 - DPI scaling may affect rendering (test on high-DPI displays)
 
 ### macOS
@@ -1188,45 +1228,54 @@ Phase 4 (Tools):
 **Dependencies:** None
 
 **Features:**
+
 - CoreAudio (excellent latency, <10ms typical)
 - Metal backend (wgpu → Metal)
 - System gamepad support
 
 **Packaging:**
+
 - `.dmg` disk image
 - `.app` bundle (code signing required for distribution)
 
 **Testing:**
+
 - macOS 12 (Monterey) minimum
 - Test on Apple Silicon (M1/M2/M3) + Intel
 
 **Known Issues:**
+
 - Notarization required for distribution (Apple Developer account)
 - Retina displays: Test integer scaling
 
 ### Linux
 
 **Dependencies:**
+
 - libxcb (X11 support)
 - libasound / libpulse (audio)
 - libudev (gamepad detection)
 
 **Features:**
+
 - Vulkan backend (wgpu → Vulkan)
 - ALSA / PulseAudio / JACK audio
 - Wayland support (via winit)
 
 **Packaging:**
+
 - AppImage (universal, no dependencies)
 - Flatpak (sandboxed, Flathub distribution)
 - `.deb` package (Debian/Ubuntu)
 
 **Testing:**
+
 - Ubuntu 22.04 LTS (baseline)
 - Fedora 38+ (cutting-edge)
 - Arch Linux (latest packages)
 
 **Known Issues:**
+
 - PulseAudio latency higher than ALSA (document ALSA configuration)
 - Wayland may have different input handling than X11
 
@@ -1264,6 +1313,7 @@ rustynes scan ~/ROMs/NES --scrape              # Build library
 ```
 
 **Implementation:**
+
 - Use `clap` crate for argument parsing
 - Headless mode: Skip Iced initialization, run emulation loop directly
 - Benchmark mode: Measure FPS over N frames, report statistics
@@ -1306,6 +1356,7 @@ This planning document consolidates the comprehensive UI/UX design specification
 ### Research Validation
 
 All technology choices validated through:
+
 - Performance benchmarks (wgpu at 60 FPS for NES trivial)
 - Industry adoption (cpal standard for Rust audio)
 - Reference implementations (TetaNES for wgpu, Plastic for gilrs)
@@ -1325,6 +1376,7 @@ All technology choices validated through:
 **Implementation Status:** Ready to begin Phase 1
 
 **Related Files:**
+
 - `/home/parobek/Code/RustyNES/ref-docs/RustyNES-UI_UX-Design-v2.md`
 - `/home/parobek/Code/RustyNES/to-dos/phase-1-mvp/milestone-6-gui/M6-OVERVIEW.md`
 - Sprint files: M6-S1 through M6-S5 (require updates to reflect Iced)
@@ -1351,7 +1403,8 @@ Following comprehensive analysis of the UI/UX Design v2.0.0 specification and te
 
 ### Feature Rephasing Summary
 
-**PHASE 1 (M6): MVP Core - 4 Weeks**
+#### PHASE 1 (M6): MVP Core - 4 Weeks
+
 - ✅ Iced application foundation (Elm architecture)
 - ✅ wgpu game viewport (60 FPS)
 - ✅ cpal audio output (<20ms latency)
@@ -1361,19 +1414,22 @@ Following comprehensive analysis of the UI/UX Design v2.0.0 specification and te
 - ✅ Basic CRT shader (3-5 presets)
 - ✅ **Basic run-ahead (RA=1)** - architectural foundation
 
-**PHASE 2 (M7-M10): Advanced Features - 4 Months**
+#### PHASE 2 (M7-M10): Advanced Features - 4 Months
+
 - ➡️ **M7:** Advanced Run-Ahead (RA=0-4, auto-detect, frame delay, dual-instance)
 - ✅ **M8:** GGPO Netplay (unchanged)
 - ➡️ **M9:** TAS recording/playback (enhanced from scripting milestone)
 - ➡️ **M10:** Debugger with egui overlay integration
 
-**PHASE 3 (M11-M14): Expansion - 6 Months**
+#### PHASE 3 (M11-M14): Expansion - 6 Months
+
 - ➡️ **M11:** Advanced CRT Shaders (12+ presets, rolling scan, phosphor masks)
 - ✅ **M12:** Expansion Audio (unchanged)
 - ➡️ **M13:** HTPC Mode (Cover Flow, Virtual Shelf, controller-first UI)
 - ➡️ **M14:** Plugin Architecture (shaders, input mappers, cloud sync, Discord)
 
-**PHASE 4 (M15-M18): Polish - 6 Months**
+#### PHASE 4 (M15-M18): Polish - 6 Months
+
 - ➡️ **M15:** Advanced Shader Pipeline (optimization, pre-compiled SPIR-V)
 - ➡️ **M16:** TAS Editor (piano roll interface, greenzone, multi-branch)
 - ➡️ **M17:** Full Run-Ahead Optimization (performance profiling, memory pools)
@@ -1405,6 +1461,7 @@ Following comprehensive analysis of the UI/UX Design v2.0.0 specification and te
 ### Next Actions
 
 **Immediate (Sprint M6-S1):**
+
 1. ✅ Complete M6-REORGANIZATION-SUMMARY.md
 2. ✅ Update M6-PLANNING-CHANGES.md (this addendum)
 3. 🔄 Rewrite M6-S2 through M6-S5 sprint files
@@ -1412,6 +1469,7 @@ Following comprehensive analysis of the UI/UX Design v2.0.0 specification and te
 5. ▶️ Begin M6-S1 implementation (Iced application shell)
 
 **Phase 2 Planning:**
+
 - Create M7-OVERVIEW.md for Advanced Run-Ahead milestone
 - Detail auto-detection algorithm and dual-instance mode
 - Plan frame delay auto-tuning system
@@ -1419,6 +1477,7 @@ Following comprehensive analysis of the UI/UX Design v2.0.0 specification and te
 ### Success Criteria for M6 Completion
 
 ✅ **M6 MVP Complete When:**
+
 - Iced application runs on Linux, Windows, macOS
 - ROM loading functional via file dialog
 - 60 FPS emulation with wgpu rendering

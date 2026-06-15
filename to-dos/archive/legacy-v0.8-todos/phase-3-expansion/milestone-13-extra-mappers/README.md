@@ -535,12 +535,14 @@ version = "1.0"  # Error handling
 ### HTPC Mode Philosophy
 
 **Living Room Experience:**
+
 - Optimize for TV viewing (10-foot UI, large fonts)
 - Controller-first (no mouse/keyboard required)
 - Visual library browsing (Cover Flow, Virtual Shelf)
 - Auto-start mode (power on → play games)
 
 **Box Art Importance:**
+
 - Visual recognition (easier than text menus)
 - Nostalgic experience (authentic box art)
 - Metadata context (publisher, year, genre)
@@ -549,6 +551,7 @@ version = "1.0"  # Error handling
 ### Mapper Priority Rationale
 
 **Common Mappers First:**
+
 - MMC5 (Castlevania III, Laser Invasion)
 - AxROM (Battletoads, Arch Rivals)
 - MMC2/4 (Punch-Out!!, Fire Emblem)
@@ -556,6 +559,7 @@ version = "1.0"  # Error handling
 - Namco 163 (Rolling Thunder, Megami Tensei II)
 
 **Multicart/Bootleg Last:**
+
 - Lower priority (pirate carts)
 - Required for 98% coverage
 - Complex, undocumented behavior

@@ -1,6 +1,6 @@
 # RustyNES Core API
 
-**Table of Contents**
+## Table of Contents
 
 - [Overview](#overview)
 - [Core Library](#core-library)

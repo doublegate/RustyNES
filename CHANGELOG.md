@@ -15,8 +15,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Accumulating toward the next release — the **v1.0.1** compatibility + hygiene
-content below, plus the first **v1.1.0** feature work (beta.1).
+## [1.1.0] - 2026-06-15 - "Scriptable" (Feature Release)
+
+The first feature release after the v1.0.0 production cut. It folds in the
+(never-separately-tagged) **v1.0.1** compatibility + hygiene work and all four
+**v1.1.0** feature workstreams: visual filters (full NES_NTSC composite + a
+CRT / scanline shader pass + `.pal` palette loading), input & peripherals
+(NES Power Pad, turbo / autofire, an input-display overlay, and a per-game
+nametable-mirroring override database), debugger devtools (breakpoints, a cycle
+trace logger, an event viewer), audio (NSF / NSFe music player, 5-band graphic
+EQ), and the flagship **Lua scripting engine** (sandboxed
+Lua 5.4, Mesen2 / FCEUX-style `emu` API). Additive only — the determinism
+contract and **AccuracyCoin 100%** hold; every new state-mutating path
+(Lua writes, new cheats) is gated off in netplay / TAS replay / RA-hardcore.
 
 ### Added
 
@@ -194,7 +205,7 @@ content below, plus the first **v1.1.0** feature work (beta.1).
 - **Custom `.pal` palette loading** (v1.1.0 beta.1). Load a 64-entry `.pal` palette
   file (192-byte form; longer files use the first 64 colours) to re-tint the
   display via the PPU's colour LUT. `rustynes-ppu` gains `build_rgba_lut_from_base`
-  + `Ppu::set_custom_palette` (applying the standard 2C02 composite emphasis to a
+  - `Ppu::set_custom_palette` (applying the standard 2C02 composite emphasis to a
   custom base table), routed through `Nes::set_custom_palette`. The frontend adds a
   `[graphics] palette_file` config, a Settings → Display **Load .pal… / Built-in**
   picker (native), and re-applies the configured palette on every ROM load. Default
@@ -480,7 +491,7 @@ orchestration of the existing snapshot/restore, so the core is untouched.*
   (p50/p95/p99/max), audio-queue health, pacer-anomaly counters, optional GPU pass
   timing, and an opt-in 1 Hz CSV performance log.
 - **Browser AudioWorklet** output (replacing the deprecated `ScriptProcessorNode`)
-  + **rAF display-sync** on ~60 Hz panels (eliminating the wall-clock-vs-rAF beat).
+  - **rAF display-sync** on ~60 Hz panels (eliminating the wall-clock-vs-rAF beat).
 
 ### Changed
 

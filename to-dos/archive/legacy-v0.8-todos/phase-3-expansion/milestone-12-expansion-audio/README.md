@@ -41,4 +41,4 @@ Implement expansion audio chips for enhanced sound capabilities. Supports VRC6, 
 
 ## Future Planning
 
-**Detailed tasks to be created when milestone begins**
+### Detailed tasks to be created when milestone begins

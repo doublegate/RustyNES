@@ -5,12 +5,14 @@ This document captures architecture decisions made during the port from C++ refe
 ## Reference Implementation Analysis Summary
 
 ### Mesen2 (Gold Standard Accuracy)
+
 - **CPU**: Table-driven opcode dispatch, all 256 opcodes including unofficial
 - **PPU**: Template-based design for variants, dot-by-dot rendering, open bus emulation
 - **APU**: Delta-based mixing, catch-up execution model, cycle-accurate frame counter
 - **Timing**: Master clock divider system for accurate NTSC/PAL/Dendy
 
 ### puNES (Mapper Coverage)
+
 - **Mappers**: 842 files covering extensive mapper library
 - **Pattern**: Function pointer tables for mapper extensibility
 - **IRQ**: Dedicated A12/L2F IRQ handling modules
@@ -20,6 +22,7 @@ This document captures architecture decisions made during the port from C++ refe
 ## CPU Architecture Decisions
 
 ### 1. Opcode Dispatch: Table-Driven
+
 **Decision**: Use lookup tables for addressing modes and instruction handlers.
 
 ```rust
@@ -36,6 +39,7 @@ const CYCLE_TABLE: [u8; 256] = [...];
 **Rationale**: Mesen2 uses this pattern for clarity and performance. Avoids large match statements.
 
 ### 2. Cycle-Accurate State Machine
+
 **Decision**: Implement tick() method for sub-instruction stepping.
 
 ```rust
@@ -63,6 +67,7 @@ enum CpuState {
 **Rationale**: Required for VBlank timing tests (ppu_02, ppu_03) and DMC DMA cycle stealing.
 
 ### 3. Interrupt Handling
+
 **Decision**: Edge-triggered NMI, level-triggered IRQ with proper polling.
 
 ```rust
@@ -84,6 +89,7 @@ enum IrqSource {
 **Rationale**: Matches hardware behavior. NMI triggers on 0->1 transition, IRQ is level-sensitive.
 
 ### 4. DMA Handling
+
 **Decision**: CPU stalls during DMA, tracked via cycle counts.
 
 ```rust
@@ -100,6 +106,7 @@ pub struct Cpu {
 ## PPU Architecture Decisions
 
 ### 1. Dot-by-Dot Rendering
+
 **Decision**: Render one dot per PPU cycle, maintain shift registers.
 
 ```rust
@@ -127,6 +134,7 @@ pub struct Ppu {
 **Rationale**: True cycle accuracy requires dot-level simulation. Mesen2 uses identical register structure.
 
 ### 2. Sprite Evaluation with Overflow Bug
+
 **Decision**: Emulate hardware sprite evaluation bug faithfully.
 
 ```rust
@@ -140,6 +148,7 @@ fn evaluate_sprites(&mut self) {
 **Rationale**: Some games rely on the overflow bug behavior. Mesen2 implements this precisely.
 
 ### 3. Open Bus Behavior
+
 **Decision**: Track last bus value for unmapped reads.
 
 ```rust
@@ -152,6 +161,7 @@ pub struct Ppu {
 **Rationale**: Open bus emulation required for accuracy. Bits decay over ~600ms in hardware.
 
 ### 4. VBlank/NMI Timing
+
 **Decision**: NMI raised at dot 1 of scanline 241, VBlank flag set at dot 0.
 
 ```rust
@@ -172,6 +182,7 @@ fn step_vblank(&mut self) {
 ## APU Architecture Decisions
 
 ### 1. Delta-Based Mixing
+
 **Decision**: Use blip-buffer style delta accumulation for audio.
 
 ```rust
@@ -197,6 +208,7 @@ impl ApuTimer {
 **Rationale**: Mesen2 uses this pattern for efficient audio generation with proper anti-aliasing.
 
 ### 2. Frame Counter Timing
+
 **Decision**: Use accurate cycle counts for 4-step and 5-step modes.
 
 ```rust
@@ -209,6 +221,7 @@ const FRAME_COUNTER_PAL_5STEP: [u32; 6] = [8313, 16627, 24939, 33253, 41565, 415
 **Rationale**: Exact cycle counts from Mesen2, verified against Blargg tests.
 
 ### 3. Length Counter Table
+
 **Decision**: Use standard 32-entry lookup table.
 
 ```rust
@@ -221,6 +234,7 @@ const LENGTH_COUNTER_TABLE: [u8; 32] = [
 **Rationale**: Standard NES hardware values.
 
 ### 4. DMC Sample Address Wrapping
+
 **Decision**: Addresses wrap from $FFFF to $8000.
 
 ```rust
@@ -239,6 +253,7 @@ fn increment_dmc_address(&mut self) {
 ## Mapper Architecture Decisions
 
 ### 1. Trait-Based Design
+
 **Decision**: Define Mapper trait with optional methods for flexibility.
 
 ```rust
@@ -263,6 +278,7 @@ pub trait Mapper: Send + Sync {
 **Rationale**: Flexible trait allows each mapper to implement only what it needs.
 
 ### 2. MMC3 A12 IRQ Handling
+
 **Decision**: Clock IRQ on A12 rising edge during PPU accesses.
 
 ```rust
@@ -281,6 +297,7 @@ impl Mmc3 {
 **Rationale**: MMC3 uses PPU A12 for IRQ timing. This is critical for many games.
 
 ### 3. Bank Switching Abstraction
+
 **Decision**: Separate PRG and CHR bank mapping logic.
 
 ```rust
@@ -308,6 +325,7 @@ impl BankMapper {
 ## Bus Architecture Decisions
 
 ### 1. CpuBus Trait
+
 **Decision**: Extend Bus with CPU cycle callback for PPU synchronization.
 
 ```rust
@@ -324,6 +342,7 @@ pub trait CpuBus: Bus {
 **Rationale**: Required for cycle-accurate PPU stepping. PPU runs 3 dots per CPU cycle.
 
 ### 2. Memory Map Organization
+
 **Decision**: Handle all memory regions in bus implementation.
 
 ```rust
@@ -349,6 +368,7 @@ impl Bus for NesBus {
 ## Timing Model
 
 ### Master Clock
+
 ```rust
 const MASTER_CLOCK_NTSC: u32 = 21_477_272;  // 21.477272 MHz
 const MASTER_CLOCK_PAL: u32 = 26_601_712;   // 26.601712 MHz
@@ -359,6 +379,7 @@ const PPU_DIVIDER: u32 = 4;        // PPU = Master / 4
 ```
 
 ### Frame Timing
+
 ```rust
 const PPU_DOTS_PER_SCANLINE: u16 = 341;
 const PPU_SCANLINES_NTSC: u16 = 262;
@@ -372,11 +393,13 @@ const PPU_DOTS_PER_FRAME_PAL: u32 = 341 * 312;   // 106,392
 ## Code Style Decisions
 
 ### 1. No Unsafe
+
 **Decision**: Zero unsafe code except for FFI boundaries.
 
 **Rationale**: Rust safety guarantees, easier auditing, reference implementations prove it's achievable.
 
 ### 2. no_std Compatible
+
 **Decision**: Core crates (cpu, ppu, apu, mappers) must be no_std compatible.
 
 ```rust
@@ -390,6 +413,7 @@ use alloc::boxed::Box;
 **Rationale**: Enables WebAssembly deployment and embedded targets.
 
 ### 3. Newtype Patterns
+
 **Decision**: Use newtypes for type safety on addresses and values.
 
 ```rust
@@ -408,6 +432,7 @@ impl VramAddress {
 **Rationale**: Prevents mixing up similar-looking u16 values, self-documenting code.
 
 ### 4. Inline Hints
+
 **Decision**: Use #[inline] on hot paths identified in Mesen2.
 
 ```rust
@@ -424,16 +449,19 @@ pub fn step(&mut self, bus: &mut impl CpuBus) -> u8 {
 ## Testing Strategy
 
 ### 1. nestest.nes Golden Log
+
 - Compare cycle-by-cycle output against reference log
 - All 256 opcodes including unofficial
 - Validates addressing modes and flag behavior
 
 ### 2. Blargg Test Suites
+
 - CPU instruction tests (timing, flags)
 - PPU tests (VBlank, sprite 0, scrolling)
 - APU tests (timing, channels, mixing)
 
 ### 3. Property-Based Testing
+
 - Use proptest for edge cases
 - Random instruction sequences
 - Memory boundary conditions

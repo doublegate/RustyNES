@@ -1,6 +1,6 @@
 # Mapper 3: CNROM
 
-**Table of Contents**
+## Table of Contents
 
 - [Overview](#overview)
 - [Memory Map](#memory-map)

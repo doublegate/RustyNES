@@ -1,6 +1,6 @@
 # Testing RustyNES
 
-**Table of Contents**
+## Table of Contents
 
 - [Overview](#overview)
 - [Test Suite Structure](#test-suite-structure)
@@ -29,7 +29,7 @@ RustyNES employs a comprehensive testing strategy combining unit tests, integrat
 
 ## Test Suite Structure
 
-```
+```text
 tests/
 ├── unit/                 # Component-level tests
 │   ├── cpu_tests.rs

@@ -9,6 +9,7 @@ Resolve PPU edge cases including sprite overflow, palette RAM writes during rend
 The desktop frontend includes PPU debug windows implemented in egui:
 
 **Completed:**
+
 - [x] PPU debug window with pattern table viewer
 - [x] Nametable viewer (4 nametables with scroll indicator)
 - [x] OAM viewer (64 sprites with attributes)
@@ -30,6 +31,7 @@ The desktop frontend includes PPU debug windows implemented in egui:
 ## Tasks
 
 ### Task 1: Sprite Overflow Flag
+
 - [x] Study hardware sprite evaluation (8 sprite limit per scanline)
 - [x] Implement sprite overflow flag logic ($2002 bit 5)
 - [x] Handle hardware quirks (overflow flag false positives/negatives)
@@ -37,6 +39,7 @@ The desktop frontend includes PPU debug windows implemented in egui:
 - [ ] Validate with games using many sprites (Mega Man, Gradius)
 
 **Implementation Complete (Dec 27, 2025):**
+
 - Hardware-accurate sprite overflow bug implemented in `sprites.rs`
 - When secondary OAM is full (8 sprites), PPU enters OverflowCheck mode
 - Bug: Both n (sprite index) AND m (byte offset) increment together
@@ -45,6 +48,7 @@ The desktop frontend includes PPU debug windows implemented in egui:
 - 3 new tests added: `test_sprite_overflow_bug_false_positive`, `test_sprite_overflow_bug_byte_offset_increment`, `test_sprite_overflow_bug_false_negative`
 
 ### Task 2: Palette RAM Edge Cases
+
 - [x] Handle writes to palette RAM during rendering
 - [x] Test palette mirroring during rendering ($3F10/$3F14/$3F18/$3F1C)
 - [x] Verify background color updates mid-frame
@@ -52,12 +56,14 @@ The desktop frontend includes PPU debug windows implemented in egui:
 - [ ] Validate color accuracy (compare to hardware screenshots) **DEFERRED (manual testing)**
 
 **Implementation Verified (Dec 28, 2025):**
+
 - Palette RAM mirroring correctly implemented in `vram.rs`
 - $3F10/$3F14/$3F18/$3F1C mirror to $3F00/$3F04/$3F08/$3F0C
 - Writes during rendering apply immediately (palette RAM is separate from VRAM)
 - Background color (index 0) shared between background and sprite palettes
 
 ### Task 3: Scrolling Split-Screen Effects
+
 - [x] Handle mid-scanline $2006 writes (VRAM address)
 - [x] Handle mid-scanline $2005 writes (scroll position)
 - [ ] Test with Super Mario Bros. 3 (status bar split)
@@ -65,6 +71,7 @@ The desktop frontend includes PPU debug windows implemented in egui:
 - [x] Verify timing precision (scanline-accurate writes)
 
 **Implementation Complete (Dec 27, 2025):**
+
 - Added mid-scanline tracking to `scroll.rs`:
   - `last_v_before_update: u16` - preserves v before mid-scanline update
   - `mid_scanline_write_detected: bool` - flags mid-scanline writes this frame
@@ -80,6 +87,7 @@ The desktop frontend includes PPU debug windows implemented in egui:
 - Exposed scroll state via PPU getters: `vram_addr()`, `temp_vram_addr()`, `fine_x()`, `coarse_x()`, `coarse_y()`, `fine_y()`, `mid_scanline_write_detected()`, `last_v_before_update()`
 
 ### Task 4: Attribute Handling Edge Cases
+
 - [x] Verify attribute byte extraction for all quadrants (v0.5.0 fix)
 - [x] Test attribute shift register reload timing
 - [x] Handle attribute fetches at tile boundaries
@@ -87,6 +95,7 @@ The desktop frontend includes PPU debug windows implemented in egui:
 - [ ] Test with games using complex palettes (Zelda, Mega Man) **DEFERRED (manual testing)**
 
 **Implementation Verified (Dec 28, 2025):**
+
 - Attribute byte extraction in `background.rs` correctly implements quadrant calculation:
   - `let shift = ((coarse_y & 0x02) << 1) | (coarse_x & 0x02);`
   - Extracts 2-bit palette index from correct position in attribute byte
@@ -98,12 +107,14 @@ The desktop frontend includes PPU debug windows implemented in egui:
 ### Sprite Overflow Flag
 
 **Hardware Behavior:**
+
 - PPU evaluates 64 OAM sprites during pre-render scanline
 - Counts sprites on current scanline (y-coordinate check)
 - If >8 sprites found, sets overflow flag ($2002 bit 5)
 - **Quirk:** Hardware bug can cause false positives/negatives
 
 **Implementation:**
+
 ```rust
 fn evaluate_sprites(&mut self, scanline: u16) {
     let mut sprite_count = 0;
@@ -128,11 +139,13 @@ fn evaluate_sprites(&mut self, scanline: u16) {
 ### Palette RAM During Rendering
 
 **Edge Case:**
+
 - Palette RAM writes during rendering can cause visual artifacts
 - NES hardware allows palette writes during rendering
 - Some games use this for effects (color cycling)
 
 **Implementation:**
+
 ```rust
 fn write_palette(&mut self, addr: u16, value: u8) {
     let mirrored_addr = addr & 0x1F;
@@ -156,11 +169,13 @@ fn write_palette(&mut self, addr: u16, value: u8) {
 ### Split-Screen Scrolling
 
 **Technique:**
+
 - Games use IRQs or precise timing to change scroll mid-scanline
 - Super Mario Bros. 3: Status bar at top, gameplay scrolls below
 - Requires scanline-accurate $2005/$2006 writes
 
 **Implementation:**
+
 ```rust
 fn write_scroll_x(&mut self, value: u8) {
     self.fine_x = value & 0x07;

@@ -90,16 +90,19 @@ This pre-sprint focuses on **dependency upgrades and integration of new features
 ### egui 0.30 -> 0.33 (HIGH PRIORITY)
 
 #### egui 0.30.0 (2024-12-16)
+
 - **Modal dialog support**: Native modal dialogs for alerts, confirmations
 - **egui_kittest**: New testing framework for UI automation and screenshot testing
 - **Layer management**: Improved layer system for complex UI layouts
 
 #### egui 0.31.0 (2025-02-04)
+
 - **SceneContainer**: Better rendering organization for complex scenes
 - **Pixel-perfect rendering**: Enhanced visual quality
 - **CornerRadius/Margin/Shadow optimizations**: Reduced memory usage
 
 #### egui 0.32.0 (2025-07-10)
+
 - **Atoms**: New indivisible UI building blocks combining text, images, or custom content
   - **Relevance:** Useful for debug window labels, status displays
 - **Popup system rewrite**: Complete restructuring of popups, tooltips, menus
@@ -109,6 +112,7 @@ This pre-sprint focuses on **dependency upgrades and integration of new features
 - **BREAKING:** Menus close on click by default
 
 #### egui 0.33.0 (2025-10-09)
+
 - **Plugin trait**: Replace `on_begin_pass`/`on_end_pass` with improved state handling
   - **Relevance:** Cleaner debug window integration
 - **Kerning improvements**: Better font rendering quality
@@ -121,17 +125,20 @@ This pre-sprint focuses on **dependency upgrades and integration of new features
 ### eframe 0.30 -> 0.33 (HIGH PRIORITY)
 
 #### eframe 0.30.0 (2024-12-16)
+
 - **Android support**: New platform target
 - **BREAKING:** Explicit `wayland`/`x11` features required for Linux
 - **MSRV:** Rust 1.80+
 
 #### eframe 0.31.0 (2025-02-04)
+
 - **IME support re-enabled** on Linux
 - **Window maximized state** serialized in WindowSettings
 - **App state saved** on Android/iOS suspension
 - **Web keyboard shortcuts**: cmd-S/O forwarding
 
 #### eframe 0.32.0 (2025-07-10)
+
 - **External event loop support**: Better integration with custom event loops
 - **macOS `movable_by_window_background`**: Drag window by background
 - **macOS `has_shadow`**: Window shadow control
@@ -139,6 +146,7 @@ This pre-sprint focuses on **dependency upgrades and integration of new features
 - **MSRV:** Rust 1.85+
 
 #### eframe 0.33.0 (2025-10-09)
+
 - **iOS SafeArea support**: Important for future iOS port
 - **Rotation gesture support**: Trackpad gestures
 - **Migrated to `windows-sys`**: From `winapi` crate
@@ -147,6 +155,7 @@ This pre-sprint focuses on **dependency upgrades and integration of new features
 ### cpal 0.15 -> 0.16 (MEDIUM PRIORITY)
 
 #### cpal 0.16.0 (2025-06-07)
+
 - **Buffer underrun/overrun reporting**: `StreamError::BufferUnderrun`
   - **Relevance:** Better audio diagnostics for debugging
 - **ALSA improvements**: Updated to alsa 0.10, improved error handling
@@ -156,6 +165,7 @@ This pre-sprint focuses on **dependency upgrades and integration of new features
 ### thiserror 1.0 -> 2.0 (HIGH PRIORITY)
 
 #### thiserror 2.0.0 (2024-11-06)
+
 - **`no_std` support**: Can use in `no_std` environments
   - **Relevance:** Better compatibility with `rustynes-core` no_std goals
 - **Improved derive macro**: Better error messages
@@ -164,6 +174,7 @@ This pre-sprint focuses on **dependency upgrades and integration of new features
 ### ron 0.8 -> 0.12 (MEDIUM PRIORITY)
 
 #### ron 0.9.0 - 0.12.0 (2025)
+
 - **Improved error messages**: Better parsing diagnostics
 - **API improvements**: More flexible serialization options
 - **Performance improvements**: Faster parsing and serialization
@@ -172,6 +183,7 @@ This pre-sprint focuses on **dependency upgrades and integration of new features
 ### gilrs 0.11 -> 0.13 (MEDIUM PRIORITY)
 
 #### gilrs 0.12 - 0.13 (2024-2025)
+
 - **Improved platform support**: Better Linux/Windows compatibility
 - **New controller mappings**: Updated SDL gamepad database
 - **Bug fixes**: Various platform-specific fixes
@@ -179,6 +191,7 @@ This pre-sprint focuses on **dependency upgrades and integration of new features
 ### proptest 1.4 -> 1.9 (LOW PRIORITY)
 
 #### proptest 1.5 - 1.9 (2024-2025)
+
 - **New strategies**: Additional test generation strategies
 - **Performance improvements**: Faster shrinking
 - **Better error reporting**: Improved failure diagnostics
@@ -204,6 +217,7 @@ Upgrade audio stack with minor API changes:
   - No code changes required - API compatible
 
 **Testing:**
+
 - Run audio playback tests
 - Verify no audio crackling or buffer issues
 - Test on multiple audio devices if available
@@ -216,6 +230,7 @@ Upgrade gamepad support:
   - No upgrade needed
 
 **Testing:**
+
 - Test gamepad hotplug detection
 - Verify button mappings
 - Test multiple controller types if available
@@ -230,6 +245,7 @@ Upgrade serialization with potential config migration:
   - No code changes required - API compatible
 
 **Testing:**
+
 - Load existing config files
 - Save and reload configurations
 - Verify error messages unchanged
@@ -245,6 +261,7 @@ Major upgrade with breaking changes - requires careful migration:
 - [x] **MSRV**: 1.75 -> 1.88
 
 **Code Changes Required:**
+
 - Removed explicit `ref` and `ref mut` patterns (Rust 2024 implicit borrowing)
 - Used `is_multiple_of()` instead of `% x == 0` (new clippy lint)
 - Collapsed nested `if let` patterns (new clippy lint)
@@ -273,6 +290,7 @@ Major upgrade with breaking changes - requires careful migration:
    - Evaluate Atoms for status displays
 
 **Testing:**
+
 - Full GUI functionality test
 - Menu navigation
 - Debug window opening/closing
@@ -294,24 +312,30 @@ Major upgrade with breaking changes - requires careful migration:
 ### Task 2: Phase 1 - Utility Updates
 
 - [ ] Update workspace Cargo.toml:
+
   ```toml
   bitflags = "2.10"
   proptest = "1.9"
   ```
+
 - [ ] Update rustynes-desktop/Cargo.toml:
+
   ```toml
   env_logger = "0.11.8"
   rfd = "0.15.4"
   ```
+
 - [ ] Run tests: `cargo test --workspace`
 - [ ] Verify build: `cargo build --workspace`
 
 ### Task 3: Phase 2 - Audio Upgrade
 
 - [ ] Update rustynes-desktop/Cargo.toml:
+
   ```toml
   cpal = "0.16"
   ```
+
 - [ ] Review cpal 0.16 CHANGELOG for API changes
 - [ ] Update audio.rs for new error types
 - [ ] Add buffer underrun logging
@@ -320,9 +344,11 @@ Major upgrade with breaking changes - requires careful migration:
 ### Task 4: Phase 3 - Input Upgrade
 
 - [ ] Update rustynes-desktop/Cargo.toml:
+
   ```toml
   gilrs = "0.13"
   ```
+
 - [ ] Review gilrs CHANGELOG for API changes
 - [ ] Update input.rs if needed
 - [ ] Test gamepad detection and input
@@ -330,10 +356,12 @@ Major upgrade with breaking changes - requires careful migration:
 ### Task 5: Phase 4 - Configuration Upgrade
 
 - [ ] Update Cargo.toml files:
+
   ```toml
   ron = "0.12"
   thiserror = "2.0"
   ```
+
 - [ ] Test config file loading/saving
 - [ ] Update error derive macros if needed
 - [ ] Verify config migration path
@@ -341,11 +369,13 @@ Major upgrade with breaking changes - requires careful migration:
 ### Task 6: Phase 5 - GUI Framework Upgrade
 
 - [ ] Update rustynes-desktop/Cargo.toml:
+
   ```toml
   eframe = { version = "0.33", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
   egui = "0.33"
   egui_extras = { version = "0.33", features = ["image"] }
   ```
+
 - [ ] Fix compilation errors
 - [ ] Update deprecated API usage
 - [ ] Adjust UI layouts for text size change
@@ -364,7 +394,7 @@ Major upgrade with breaking changes - requires careful migration:
 
 ### Current MSRV: Rust 1.75
 
-### Required MSRV After Upgrades:
+### Required MSRV After Upgrades
 
 | Package | Required MSRV | Impact |
 |---------|---------------|--------|
@@ -383,6 +413,7 @@ Major upgrade with breaking changes - requires careful migration:
 - Get all latest features and fixes
 
 #### Option B: Partial Upgrade (Conservative)
+
 - Upgrade to egui/eframe 0.31.x
 - Keep MSRV at 1.80+
 - Miss some features but maintain compatibility
@@ -390,6 +421,7 @@ Major upgrade with breaking changes - requires careful migration:
 ### Action Required
 
 Update `Cargo.toml`:
+
 ```toml
 [workspace.package]
 rust-version = "1.88"
@@ -467,6 +499,7 @@ If critical issues arise:
 ### Version Pinning
 
 If rollback needed for specific package:
+
 ```toml
 # Pin to specific version if issues
 egui = "=0.29.1"

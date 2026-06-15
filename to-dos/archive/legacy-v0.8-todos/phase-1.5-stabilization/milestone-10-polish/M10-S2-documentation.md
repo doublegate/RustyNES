@@ -18,6 +18,7 @@ Create comprehensive documentation including user guide, API documentation, deve
 The following documentation infrastructure exists:
 
 **Completed:**
+
 - [x] `docs/` directory with 40+ specification files
 - [x] `CLAUDE.md` project memory file
 - [x] `ARCHITECTURE.md` comprehensive design document
@@ -26,6 +27,7 @@ The following documentation infrastructure exists:
 - [x] `crates/rustynes-desktop/README.md` GUI architecture documentation
 
 **Needs Update for Current Stack:**
+
 - [ ] Update all docs to reference eframe/egui 0.33 (was 0.29)
 - [ ] Update MSRV documentation: 1.75 -> 1.88
 - [ ] Update Rust edition: 2021 -> 2024
@@ -34,6 +36,7 @@ The following documentation infrastructure exists:
 - [ ] Update thiserror version: 1.0 -> 2.0
 
 **Locations:**
+
 - Main docs: `/docs/`
 - Project root: `/README.md`, `/ARCHITECTURE.md`, `/ROADMAP.md`
 - Desktop crate: `/crates/rustynes-desktop/README.md`
@@ -50,6 +53,7 @@ The following documentation infrastructure exists:
 ## Tasks
 
 ### Task 1: User Guide
+
 - [ ] Write installation guide (binaries, building from source)
 - [ ] Write quick start guide (loading ROMs, controls)
 - [ ] Document features (save states, screenshots, settings)
@@ -58,6 +62,7 @@ The following documentation infrastructure exists:
 - [ ] Generate mdBook or similar (HTML user guide)
 
 ### Task 2: API Documentation
+
 - [ ] Generate rustdoc for all public APIs
 - [ ] Add doc comments to undocumented public items
 - [ ] Add code examples for common use cases
@@ -65,6 +70,7 @@ The following documentation infrastructure exists:
 - [ ] Publish rustdoc to docs.rs or GitHub Pages
 
 ### Task 3: Developer Guide
+
 - [ ] Update architecture overview (CPU, PPU, APU, mappers)
 - [ ] Document testing strategy (unit, integration, test ROMs)
 - [ ] Update contributing guidelines (code style, pull requests)
@@ -73,6 +79,7 @@ The following documentation infrastructure exists:
 - [ ] Add debugging guide (trace logging, test ROM debugging)
 
 ### Task 4: FAQ
+
 - [ ] Collect common questions (community, GitHub issues)
 - [ ] Write answers with clear explanations
 - [ ] Add troubleshooting for known issues
@@ -80,6 +87,7 @@ The following documentation infrastructure exists:
 - [ ] Publish FAQ on GitHub Wiki or docs/FAQ.md
 
 ### Task 5: Known Limitations
+
 - [ ] Document accuracy limitations (remaining test failures)
 - [ ] Document mapper limitations (unsupported mappers)
 - [ ] Document performance considerations
@@ -87,6 +95,7 @@ The following documentation infrastructure exists:
 - [ ] Reference Phase 2 roadmap for future improvements
 
 ### Task 6: Update Existing Docs
+
 - [ ] Update README.md (features, status, screenshots)
 - [ ] Update ROADMAP.md (Phase 1.5 complete)
 - [ ] Update CHANGELOG.md (v0.9.0/v1.0.0-alpha.1 entry)
@@ -98,6 +107,7 @@ The following documentation infrastructure exists:
 ### 1. Installation
 
 **Binary Installation (Recommended):**
+
 ```markdown
 ## Installation
 
@@ -118,6 +128,7 @@ The following documentation infrastructure exists:
 ```
 
 **Building from Source:**
+
 ```markdown
 ## Building from Source
 
@@ -142,6 +153,7 @@ The following documentation infrastructure exists:
 rustc --version  # Should be 1.88.0 or higher
 rustup update    # Update to latest if needed
 ```
+
 ```
 
 ### 2. Quick Start
@@ -356,7 +368,9 @@ cargo test -p rustynes-apu
 ```
 
 ### Integration Tests
+
 Run test ROM validation:
+
 ```bash
 cargo test --test test_roms -- nestest
 cargo test --test test_roms -- blargg_cpu
@@ -364,11 +378,14 @@ cargo test --test test_roms -- blargg_ppu
 ```
 
 ### Test Coverage
+
 Generate coverage report:
+
 ```bash
 cargo tarpaulin --workspace --exclude-files benches/ --out Html
 open tarpaulin-report.html
 ```
+
 ```
 
 ### 3. Contributing Guidelines
@@ -386,6 +403,7 @@ open tarpaulin-report.html
   ```
 
 ### Pull Requests
+
 1. Fork repository
 2. Create feature branch (`git checkout -b feature/my-feature`)
 3. Commit changes (`git commit -m 'Add my feature'`)
@@ -393,13 +411,16 @@ open tarpaulin-report.html
 5. Open pull request on GitHub
 
 ### Commit Messages
+
 Use conventional commits:
+
 - `feat:` New feature
 - `fix:` Bug fix
 - `docs:` Documentation
 - `test:` Tests
 - `refactor:` Code refactoring
 - `perf:` Performance improvements
+
 ```
 
 ## FAQ

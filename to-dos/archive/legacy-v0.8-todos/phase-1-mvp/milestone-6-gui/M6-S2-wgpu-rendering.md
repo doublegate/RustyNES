@@ -39,6 +39,7 @@ This sprint implements the **wgpu-based game viewport** within the Iced 0.13+ ar
 ### Task 1: wgpu Texture Setup (4 hours)
 
 **Files:**
+
 - `crates/rustynes-desktop/src/viewport/mod.rs` (new)
 - `crates/rustynes-desktop/src/viewport/texture.rs` (new)
 
@@ -176,6 +177,7 @@ impl NesSampler {
 ```
 
 **Acceptance Criteria:**
+
 - [ ] Texture created with correct dimensions (256×240)
 - [ ] RGB → RGBA conversion functional
 - [ ] Nearest-neighbor sampler configured
@@ -186,6 +188,7 @@ impl NesSampler {
 ### Task 2: Iced Custom Widget (6 hours)
 
 **Files:**
+
 - `crates/rustynes-desktop/src/viewport/widget.rs` (new)
 - `crates/rustynes-desktop/src/viewport/primitive.rs` (new)
 
@@ -313,6 +316,7 @@ impl Custom for NesViewportPrimitive {
 ```
 
 **Acceptance Criteria:**
+
 - [ ] Canvas widget integrates with Iced element tree
 - [ ] Custom primitive compiles and registers
 - [ ] Widget responds to layout changes
@@ -323,6 +327,7 @@ impl Custom for NesViewportPrimitive {
 ### Task 3: Render Pipeline (8 hours)
 
 **Files:**
+
 - `crates/rustynes-desktop/src/viewport/pipeline.rs` (new)
 - `crates/rustynes-desktop/src/viewport/shaders.wgsl` (new)
 
@@ -496,6 +501,7 @@ impl NesRenderPipeline {
 ```
 
 **Acceptance Criteria:**
+
 - [ ] Shader compiles without errors
 - [ ] Pipeline created successfully
 - [ ] Bind group setup functional
@@ -506,6 +512,7 @@ impl NesRenderPipeline {
 ### Task 4: Scaling Modes (4 hours)
 
 **Files:**
+
 - `crates/rustynes-desktop/src/viewport/scaling.rs` (new)
 
 **Objective:** Implement aspect ratio and scaling logic.
@@ -589,6 +596,7 @@ pub fn calculate_viewport(
 ```
 
 **Acceptance Criteria:**
+
 - [ ] 4:3 aspect ratio correct
 - [ ] Pixel-perfect (8:7) aspect ratio correct
 - [ ] Integer scaling works (2x, 3x, 4x)
@@ -600,6 +608,7 @@ pub fn calculate_viewport(
 ### Task 5: Integration with Iced Application (6 hours)
 
 **Files:**
+
 - `crates/rustynes-desktop/src/main.rs`
 - `crates/rustynes-desktop/src/lib.rs`
 - `crates/rustynes-desktop/src/views/gameplay.rs`
@@ -676,6 +685,7 @@ impl RustyNesModel {
 ```
 
 **Acceptance Criteria:**
+
 - [ ] Viewport widget renders in Gameplay view
 - [ ] Framebuffer updates trigger redraws
 - [ ] Scaling mode changes apply immediately
@@ -686,6 +696,7 @@ impl RustyNesModel {
 ### Task 6: Performance Optimization (4 hours)
 
 **Files:**
+
 - `crates/rustynes-desktop/src/viewport/cache.rs` (new)
 
 **Objective:** Optimize texture uploads and rendering for 60 FPS.
@@ -786,6 +797,7 @@ impl NesTexture {
 ```
 
 **Acceptance Criteria:**
+
 - [ ] Frame time <16ms (60 FPS)
 - [ ] Texture upload <1ms
 - [ ] No allocations in hot path
@@ -796,6 +808,7 @@ impl NesTexture {
 ### Task 7: Video Settings UI (4 hours)
 
 **Files:**
+
 - `crates/rustynes-desktop/src/views/settings.rs`
 
 **Objective:** Add video settings to Settings view.
@@ -845,6 +858,7 @@ impl std::fmt::Display for ScalingMode {
 ```
 
 **Acceptance Criteria:**
+
 - [ ] Video settings accessible from Settings view
 - [ ] Scaling mode changes apply immediately
 - [ ] UI explains each scaling mode

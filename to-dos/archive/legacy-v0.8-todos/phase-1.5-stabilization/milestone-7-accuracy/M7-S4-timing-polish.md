@@ -15,6 +15,7 @@ Ensure precise bus timing and CPU/PPU/APU synchronization for integrated system 
 ## Tasks
 
 ### Task 1: OAM DMA Precision ✅ COMPLETE
+
 - [x] Study hardware OAM DMA timing (513 or 514 cycles depending on alignment) - **NESdev research**
 - [x] Implement precise cycle counting (odd/even cycle start) - **CPU cycle parity tracking**
 - [x] Implement 513 vs 514 cycle detection - **Even cycle: 1 dummy + 512 = 513, Odd cycle: 2 dummy + 512 = 514**
@@ -23,6 +24,7 @@ Ensure precise bus timing and CPU/PPU/APU synchronization for integrated system 
 - [ ] Test OAM DMA during various PPU states (deferred to M8)
 
 ### Task 2: CPU/PPU Synchronization ✅ VERIFIED
+
 - [x] Verify PPU runs 3 dots per CPU cycle - **console.rs implements `for _ in 0..(cpu_cycles * 3)`**
 - [x] Test CPU cycle stealing (OAM DMA, DMC DMA) - **OAM DMA complete, DMC documented**
 - [x] Validate PPU register read/write timing ($2002, $2004, $2007) - **Existing implementation**
@@ -30,6 +32,7 @@ Ensure precise bus timing and CPU/PPU/APU synchronization for integrated system 
 - [ ] Handle edge cases (mid-scanline register access) (deferred to M8)
 
 ### Task 3: Bus Timing & Conflicts
+
 - [ ] Test open bus behavior ($2000-$2007, $4000-$4017)
 - [ ] Verify bus conflicts (older mappers)
 - [ ] Test memory access timing (zero page, absolute, etc.)
@@ -37,6 +40,7 @@ Ensure precise bus timing and CPU/PPU/APU synchronization for integrated system 
 - [ ] Test PPU memory access timing
 
 ### Task 4: Integration Testing
+
 - [ ] Run comprehensive test ROM suite
 - [ ] Test with complex games (Super Mario Bros., Zelda, Mega Man)
 - [ ] Verify audio/video sync in real gameplay

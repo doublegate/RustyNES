@@ -132,7 +132,7 @@ Same seed + ROM + input sequence ⇒ bit-identical framebuffer and audio. Do not
 
 Follow [Conventional Commits](https://www.conventionalcommits.org/):
 
-```
+```text
 <type>(<scope>): <subject>
 
 <body — optional, explains *why*>
@@ -144,7 +144,7 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/):
 
 **Example:**
 
-```
+```text
 fix(ppu): correct sprite 0 hit timing
 
 Sprite 0 hit fired one dot too late; detection now occurs at the

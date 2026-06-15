@@ -15,6 +15,7 @@ Automate nestest.nes golden log validation and systematically pass all 36 CPU in
 ## Tasks
 
 ### Task 1: nestest.nes Automation
+
 - [x] Implement automated nestest.nes execution (automation mode $C000)
 - [x] Parse golden log format (PC, opcode, registers, cycle count)
 - [x] Compare emulator output line-by-line against golden log
@@ -22,6 +23,7 @@ Automate nestest.nes golden log validation and systematically pass all 36 CPU in
 - [x] Verify continues to pass (no regressions from v0.6.0)
 
 ### Task 2: CPU Instruction Timing Tests
+
 - [x] Run cpu_instr_timing.nes (Timeout on full suite, but passed individual timing tests)
 - [x] Debug timing failures (identify slow/fast instructions)
 - [x] Verify page boundary crossing penalties (+1 cycle)
@@ -29,6 +31,7 @@ Automate nestest.nes golden log validation and systematically pass all 36 CPU in
 - [x] Validate all 256 opcodes cycle-accurate
 
 ### Task 3: Branch Timing Edge Cases
+
 - [x] Test cpu_branch_timing_2.nes (branch edge cases)
 - [x] Verify branch taken/not taken timing (2 vs 3 cycles)
 - [x] Test page boundary crossing on branches (+1 cycle)
@@ -36,6 +39,7 @@ Automate nestest.nes golden log validation and systematically pass all 36 CPU in
 - [x] Test branch to same page vs different page
 
 ### Task 4: Dummy Read/Write Cycles
+
 - [x] Test cpu_dummy_reads.nes (Failed: Known Issue 0xFF)
 - [x] Test cpu_dummy_writes_ppumem.nes (Passed)
 - [x] Verify RMW instruction dummy writes (INC, DEC, ASL, LSR, ROL, ROR)
@@ -55,6 +59,7 @@ Automate nestest.nes golden log validation and systematically pass all 36 CPU in
 | cpu_exec_space_ppuio.nes | [ ] Pending | Execute from PPU I/O space |
 
 **Additional CPU Tests (29 ROMs):**
+
 - cpu_instr_test-v5/ (official instructions)
 - cpu_unofficial_opcodes/ (105 unofficial opcodes)
 - cpu_interrupts_v2/ (NMI, IRQ, BRK timing)
@@ -72,6 +77,7 @@ Automate nestest.nes golden log validation and systematically pass all 36 CPU in
 ## Expected Failures (2 tests)
 
 **Highly timing-sensitive tests:**
+
 - cpu_timing_test6.nes - Sub-cycle precision required
 - cpu_exec_space_ppuio.nes - Execute from unmapped space edge case
 

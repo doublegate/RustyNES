@@ -14,6 +14,7 @@
 Milestone 7 implements the **Advanced Run-Ahead System** building on the basic RA=1 foundation from M6-S5. This milestone delivers configurable run-ahead (RA=0-4) with auto-detection, dual-instance mode for pristine audio quality, frame delay auto-tuning, and per-game profiles for optimal latency reduction.
 
 **Run-Ahead Evolution:**
+
 - **M6 (MVP):** Basic run-ahead (RA=1) - architectural foundation
 - **M7 (This Milestone):** Advanced system (RA=0-4, auto-detect, dual-instance, frame delay)
 - **M17 (Phase 4):** Full optimization (multi-threading, memory pools, profiling)
@@ -140,12 +141,14 @@ fn detect_optimal_runahead(rom: &Rom) -> u8 {
 ### Dual-Instance Synchronization
 
 **State Sharing Strategy:**
+
 1. Display instance saves state after each frame
 2. Audio instance loads state and emulates SAME frame
 3. Audio output from non-speculative instance (pristine)
 4. Visual output from speculative instance (low latency)
 
 **Performance:**
+
 - State serialization: <1ms (bincode)
 - State transfer: <0.1ms (in-memory copy)
 - Total overhead: ~1-2ms per frame
@@ -311,16 +314,19 @@ Advanced optimizations deferred to M17:
 ### Design Decisions
 
 **Why Dual-Instance?**
+
 - Run-ahead introduces audio artifacts (speculative frames discarded)
 - Separate audio instance ensures pristine audio quality
 - Trade-off: 20-30% higher memory usage
 
 **Why Auto-Detection?**
+
 - Users shouldn't need to understand RA=0-4
 - Game characteristics dictate optimal setting
 - Power users can still override manually
 
 **Why Frame Delay?**
+
 - Compensates for monitor latency (5-15ms typical)
 - Renders frame closer to vsync
 - Combined with RA: Total latency <10ms
@@ -332,11 +338,13 @@ Advanced optimizations deferred to M17:
 M6-S5 implemented basic RA=1. M7 extends this foundation:
 
 **Preserved:**
+
 - SaveState serialization system
 - RunAheadManager architecture
 - Performance metrics overlay
 
 **Added:**
+
 - Configurable RA frames (0-4)
 - Auto-detection algorithm
 - Dual-instance mode

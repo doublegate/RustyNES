@@ -18,6 +18,7 @@ Integrate PPU stepping into the `on_cpu_cycle()` callback to achieve sub-cycle a
 ## Goal
 
 Pass the currently-ignored VBlank timing tests:
+
 - `ppu_02-vbl_set_time` - Requires +/-2 cycle accuracy
 - `ppu_03-vbl_clear_time` - Requires +/-2 cycle accuracy
 

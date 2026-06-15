@@ -14,7 +14,7 @@ The scheduler is the heart of the cycle-accurate emulator: it advances the PPU, 
 
 ### One tick = one PPU dot
 
-```
+```rust
 fn tick_one_dot(&mut self) {
     self.ppu.tick(&mut self.ppu_bus);
     self.dot_count += 1;
@@ -28,7 +28,7 @@ fn tick_one_dot(&mut self) {
 
 ### CPU tick
 
-```
+```rust
 fn cpu_tick(&mut self) {
     if self.dma.cycles_remaining > 0 {
         self.dma.tick(&mut self.bus);   // owns the bus during DMA
@@ -59,11 +59,13 @@ The mapper sees both buses via separate trait methods (`cpu_read/write`, `ppu_re
 ### DMA controller
 
 A small inner struct that tracks:
+
 - `cycles_remaining: u16` — non-zero means CPU is halted by DMA.
 - `scheduled: Option<DmaRequest>` — pending DMA the controller is waiting to start.
 - DMA type: `OamDma { src_page: u8 }`, `DmcDma { addr: u16, kind: Load | Reload }`.
 
 Scheduling rules per `ref-docs/research-report.md` §DMA:
+
 - DMA can only halt on a CPU read cycle.
 - DMC DMA gets precedence over OAM DMA.
 - OAM DMA: 1 halt + (0 or 1 alignment) + 256 read/write pairs = 513 or 514 cycles.
@@ -94,6 +96,7 @@ The APU emits samples into a band-limited buffer continuously. The frontend's au
 ## Determinism
 
 The scheduler is fully deterministic given:
+
 - A fixed `cpu_phase` (chosen at power-cycle from a seedable PRNG).
 - A fixed initial WRAM pattern (deterministic seeded fill).
 - A fixed sequence of controller inputs (recorded by the test harness).

@@ -19,6 +19,7 @@ Refine CPU cycle timing to ±1 cycle accuracy for all instructions, focusing on 
 ## Tasks
 
 ### Task 1: Instruction Timing Verification ✅ COMPLETE
+
 - [x] Review nestest.nes golden log for cycle counts
 - [x] Verify all 256 opcode cycle counts against documentation
   - **Result:** All opcodes match NESdev specification exactly
@@ -33,6 +34,7 @@ Refine CPU cycle timing to ±1 cycle accuracy for all instructions, focusing on 
   - **Result:** RMW instructions perform dummy write (e.g., INC line 186)
 
 ### Task 2: Unofficial Opcode Timing ✅ COMPLETE
+
 - [x] Verify all 105 unofficial opcodes
   - **Result:** All implemented with correct cycle counts
 - [x] Cross-reference with hardware behavior documentation
@@ -43,6 +45,7 @@ Refine CPU cycle timing to ±1 cycle accuracy for all instructions, focusing on 
   - **Result:** All perform dummy writes correctly
 
 ### Task 3: Interrupt Timing Precision ⏳ NEEDS TEST ROM VALIDATION
+
 - [x] NMI edge detection timing - implemented, needs testing
 - [x] IRQ disable flag (I) timing - implemented, needs testing
 - [x] BRK instruction timing (7 cycles) - ✅ correct in opcode table
@@ -50,6 +53,7 @@ Refine CPU cycle timing to ±1 cycle accuracy for all instructions, focusing on 
 - [x] RTI timing precision - 6 cycles, correct implementation
 
 ### Task 4: Page Boundary Edge Cases ✅ COMPLETE
+
 - [x] Indexed addressing modes (abs,X; abs,Y; ind,Y)
   - **Result:** Perfect implementation with page_crossed() helper
 - [x] Branch instructions crossing pages (+1 cycle)
@@ -84,7 +88,7 @@ Refine CPU cycle timing to ±1 cycle accuracy for all instructions, focusing on 
 **Analyst:** Claude Opus 4.5
 **Detailed Report:** `/temp/phase-1.5-m7-timing-analysis.md`
 
-### Key Findings:
+### Key Findings
 
 1. **Cycle Counts:** All 256 opcodes verified against NESdev CPU_TIMING_REFERENCE.md - 100% match
 2. **Page Crossing:** Addressing modes correctly detect page boundaries using `(addr1 & 0xFF00) != (addr2 & 0xFF00)`
@@ -94,13 +98,14 @@ Refine CPU cycle timing to ±1 cycle accuracy for all instructions, focusing on 
 6. **Unofficial Opcodes:** All 105 implemented with correct timing and dummy writes
 7. **Interrupt Instructions:** BRK (7 cycles), RTI (6 cycles) - correct implementation
 
-### Code Quality:
+### Code Quality
+
 - ✅ Zero unsafe code
 - ✅ Strong type safety with newtype patterns
 - ✅ Comprehensive test coverage
 - ✅ Well-documented edge cases
 
-### Recommended Next Steps:
+### Recommended Next Steps
 
 1. Run CPU test ROM suite (cpu_instr_*, cpu_branch_timing_2, cpu_dummy_reads)
 2. Validate interrupt timing with test ROMs

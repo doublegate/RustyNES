@@ -40,4 +40,4 @@ Comprehensive performance optimization to achieve 1000+ FPS (16x real-time) on m
 
 ## Future Planning
 
-**Detailed tasks to be created when milestone begins**
+### Detailed tasks to be created when milestone begins

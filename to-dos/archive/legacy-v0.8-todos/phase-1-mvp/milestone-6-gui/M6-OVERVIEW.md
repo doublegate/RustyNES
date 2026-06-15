@@ -17,6 +17,7 @@ Milestone 6 delivers a **cross-platform desktop application** with **Iced + egui
 **UI Framework:** **Iced 0.13+ (primary)** + **egui 0.28 (debug overlay only)**
 
 This differs from original planning which used egui as the primary framework. The change is justified by:
+
 - Iced's superior support for complex applications with 5+ views
 - Better animation system (critical for polished UI)
 - Structured state management (Elm architecture prevents bugs)
@@ -27,6 +28,7 @@ This differs from original planning which used egui as the primary framework. Th
 ### MVP Scope
 
 **M6 focuses on core playability only.** Advanced features have been moved to future phases:
+
 - **Kept in M6:** Basic UI, ROM loading, 60 FPS rendering, audio, input, basic run-ahead (RA=1)
 - **Moved to Phase 2:** Advanced run-ahead system, RetroAchievements, netplay, TAS, debugger
 - **Moved to Phase 3:** HTPC mode, Cover Flow, advanced CRT shaders, plugins
@@ -403,21 +405,25 @@ crates/rustynes-desktop/
 ## Performance Requirements
 
 ### Frame Rate
+
 - **Target:** 60 FPS (16.67ms per frame)
 - **UI Refresh:** 60Hz minimum (Iced subscriptions)
 - **CRT Shaders:** 60 FPS with basic effects enabled
 
 ### Latency
+
 - **Input to Display:** <15ms (with basic run-ahead RA=1)
 - **Audio Latency:** <20ms (cpal exclusive mode where available)
 - **UI Responsiveness:** <8ms (half a frame)
 
 ### Memory
+
 - **Base Application:** <50 MB
 - **ROM Library (100 games):** <50 MB
 - **Total (typical):** <100 MB
 
 ### Startup Time
+
 - **Cold Start:** <500ms (Iced compilation)
 - **ROM Loading:** <100ms (average)
 
@@ -469,16 +475,19 @@ crates/rustynes-desktop/
 ## Platform-Specific Notes
 
 ### Linux
+
 - Dependencies: libxcb, libasound, libudev
 - Package: AppImage
 - Test on: Ubuntu 22.04+, Fedora 38+, Arch Linux
 
 ### Windows
+
 - Dependencies: None (static linking)
 - Package: Portable .exe or installer
 - Test on: Windows 10+, Windows 11
 
 ### macOS
+
 - Dependencies: None
 - Package: .dmg or .app bundle
 - Code signing required for distribution

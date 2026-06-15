@@ -20,6 +20,7 @@ v1.0.0 roadmap.
 
 VRC7 is the audio-bearing Konami VRC variant assigned iNES mapper id 85.
 Beyond the standard VRC banking + IRQ surface (PRG 3 × 8 KiB switchable
+
 + 1 fixed; CHR 8 × 1 KiB switchable; CPU-cycle IRQ counter identical to
 VRC6's), the chip carries an on-cart **Yamaha YM2413 OPLL-derived FM
 synthesizer**: 6 channels of 2-operator FM, a fixed 15-entry custom
@@ -78,14 +79,14 @@ The audio register surface itself (`$9010` address latch + `$9030`
 data write) is **decoded and latched** into a small `Vrc7AudioRegs`
 struct even with the audio synthesizer absent. This:
 
-- Preserves the contract that "save-state round-trip across builds
++ Preserves the contract that "save-state round-trip across builds
   with/without audio implementations works" (consistent with VRC6 /
   Sunsoft 5B / Namco 163 / MMC5 audio surfaces).
-- Means a future v1.x commit that lands the actual FM synthesizer only
++ Means a future v1.x commit that lands the actual FM synthesizer only
   needs to call `Vrc7AudioRegs::output_sample()` from `Mapper::mix_audio`
   and `Vrc7AudioRegs::clock()` from `Mapper::notify_cpu_cycle` —
   it does not need to touch the banking / IRQ / save-state layout.
-- Means the AccuracyCoin glyph-decoder and other deterministic tests
++ Means the AccuracyCoin glyph-decoder and other deterministic tests
   see the same byte sequences on banking and IRQ paths as a future
   audio-enabled build would, on identical input.
 
@@ -104,31 +105,31 @@ silent on load).
 
 ### Positive
 
-- v1.0.0 ships with mapper 85 loading correctly: banking + IRQ work,
++ v1.0.0 ships with mapper 85 loading correctly: banking + IRQ work,
   the cart's title screen and gameplay logic run identically to a
   reference emulator. Only the audio is missing.
-- No GPL contamination of the workspace. The repository keeps its
++ No GPL contamination of the workspace. The repository keeps its
   permissive (MIT-or-Apache-2.0) license shape.
-- No C build dependency added. The `no_std + alloc` migration (Track
++ No C build dependency added. The `no_std + alloc` migration (Track
   C5) stays clean — `cargo build -p rustynes-core --target
   thumbv7em-none-eabihf --no-default-features` continues to work.
-- The audit table above documents the rationale so a future
++ The audit table above documents the rationale so a future
   contributor does not re-evaluate the same six crates and reach the
   same dead-end independently. A new Rust OPLL crate appearing on
   crates.io that meets the criteria is the trigger to revisit.
 
 ### Negative / Costs
 
-- *Lagrange Point* — the only commercial title affected — plays
++ *Lagrange Point* — the only commercial title affected — plays
   silently on RustyNES v1.0.0. The game is fully playable; the
   in-game music and SFX are absent. This is a documented user-visible
   gap in `docs/compatibility.md` and `docs/STATUS.md`.
-- v1.0.0 does not ship a complete `mapper-audio` family even though
++ v1.0.0 does not ship a complete `mapper-audio` family even though
   the feature flag exists. Documented in the same places.
 
 ### Neutral
 
-- VRC7 mapper 85 is now usable for non-audio workloads (testing
++ VRC7 mapper 85 is now usable for non-audio workloads (testing
   banking; running gameplay logic; debugging non-audio bugs).
 
 ## Alternatives considered
@@ -167,13 +168,13 @@ silent on load).
 Revisit this ADR (and land VRC7 audio under `mapper-audio`) when **any
 one** of the following becomes true:
 
-- A pure-Rust OPLL/VRC7 crate is published to crates.io under MIT,
++ A pure-Rust OPLL/VRC7 crate is published to crates.io under MIT,
   Apache-2.0, BSD, ISC, or zlib license, with VRC7 instrument-ROM
   awareness and ≤ 18 months since last commit.
-- A maintainer commits to a hand-port of `emu2413` to Rust as a
++ A maintainer commits to a hand-port of `emu2413` to Rust as a
   separate crate (multi-week effort) plus the equivalence-testing
   harness; the resulting crate is then vendored / wrapped here.
-- A maintainer commits to the `bindgen` + C-source-vendor approach
++ A maintainer commits to the `bindgen` + C-source-vendor approach
   with full understanding of the `no_std` cross-compile regression
   it implies (and a chosen workaround: e.g., feature-gating VRC7
   audio behind `std` only, leaving `no_std` builds without it).

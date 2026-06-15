@@ -15,6 +15,7 @@ Systematically pass the Blargg CPU instruction test suite (14 tests) to validate
 ## Tasks
 
 ### Task 1: Blargg Instruction Tests
+
 - [x] Run instr_test-v5/all_instrs.nes (Timeout, but individual tests pass)
 - [x] Debug failures (Fixed RMW timing, Store timing, Unstable Opcodes)
 - [x] Test official_only.nes (Timeout)
@@ -22,6 +23,7 @@ Systematically pass the Blargg CPU instruction test suite (14 tests) to validate
 - [x] Test indexed modes (zp,X; zp,Y; abs,X; abs,Y; ind,X; ind,Y) (Passed)
 
 ### Task 2: Instruction Timing
+
 - [x] Run instr_timing/instr_timing.nes (Timeout)
 - [x] Test 1-instr_timing.nes (Pass)
 - [x] Test 2-branch_timing.nes (Pass)
@@ -29,6 +31,7 @@ Systematically pass the Blargg CPU instruction test suite (14 tests) to validate
 - [x] Debug slow/fast instructions (Fixed RMW +1 cycle)
 
 ### Task 3: Memory Access Tests
+
 - [x] Run instr_misc/instr_misc.nes (Included in suite)
 - [x] Test 03-dummy_reads.nes (Fail - Known Issue)
 - [x] Test 04-dummy_reads_apu.nes (Not run individually)
@@ -36,6 +39,7 @@ Systematically pass the Blargg CPU instruction test suite (14 tests) to validate
 - [x] Test absolute indexed with page crossing (Passed)
 
 ### Task 4: ROM Singles
+
 - [x] Run rom_singles/01-basics.nes (Passed as cpu_instr_01...)
 - [x] Run rom_singles/02-implied.nes (Passed)
 - [x] Run rom_singles/03-immediate.nes (Passed)

@@ -13,6 +13,7 @@
 Milestone 11 implements comprehensive CRT shader system with **12+ presets**, phosphor persistence simulation, scanline rendering, aperture grille effects, and user-customizable shader parameters. This milestone transforms the raw pixel-perfect output into authentic CRT television reproduction with historically accurate phosphor color temperatures and decay curves.
 
 **Philosophy:**
+
 - Authentic vintage experience (NTSC composite artifacts, phosphor glow)
 - Modern enhancements (4K upscaling, HDR, integer scaling)
 - User control (adjustable parameters, custom presets)
@@ -466,7 +467,7 @@ version = "0.8"  # Preset configuration
 
 - [M6-S2-wgpu-rendering.md](../../phase-1-mvp/milestone-6-gui/M6-S2-wgpu-rendering.md) - wgpu rendering foundation
 - [M15 Advanced Shader Pipeline](../../phase-4-polish/milestone-15-video-filters/README.md) - Future shader enhancements
-- wgpu Shader Tutorial: https://sotrh.github.io/learn-wgpu/
+- wgpu Shader Tutorial: <https://sotrh.github.io/learn-wgpu/>
 
 ---
 
@@ -496,18 +497,21 @@ version = "0.8"  # Preset configuration
 ### Why CRT Shaders?
 
 **Historical Accuracy:**
+
 - NES games were designed for CRT televisions
 - Dithering patterns relied on phosphor blending
 - Scanlines were expected visual characteristic
 - Many effects look "wrong" on pixel-perfect displays
 
 **Visual Quality:**
+
 - Phosphor glow softens harsh pixels
 - Scanlines add depth and texture
 - Bloom enhances bright highlights
 - Curvature simulates vintage TVs
 
 **User Choice:**
+
 - Some users prefer pixel-perfect
 - Others want authentic CRT experience
 - Presets accommodate both preferences
@@ -515,16 +519,19 @@ version = "0.8"  # Preset configuration
 ### Performance Considerations
 
 **Multi-Pass Rendering:**
+
 - Each pass requires texture copy (GPU memory bandwidth)
 - Minimize passes (combine where possible)
 - Use lower-resolution intermediate textures (bloom)
 
 **Phosphor Persistence:**
+
 - Requires frame history buffer (3-5 frames)
 - Memory: 256×240×3 bytes × 5 frames = ~900 KB (negligible)
 - Bandwidth: Critical on integrated GPUs
 
 **Target Hardware:**
+
 - GTX 1660 (6GB VRAM) - CRT-Royale at 1080p 60 FPS
 - RTX 3060 (12GB VRAM) - CRT-Royale at 4K 60 FPS
 - Integrated GPUs - CRT-Lottes at 1080p 60 FPS
@@ -561,15 +568,15 @@ Advanced features deferred to M15 (Advanced Shader Pipeline):
 
 ### CRT Shader Resources
 
-- **LibRetro Slang Shaders:** https://github.com/libretro/slang-shaders
-- **CRT-Royale Documentation:** https://github.com/libretro/slang-shaders/tree/master/crt/crt-royale
-- **NTSC Composite Guide:** https://www.nesdev.org/wiki/NTSC_video
+- **LibRetro Slang Shaders:** <https://github.com/libretro/slang-shaders>
+- **CRT-Royale Documentation:** <https://github.com/libretro/slang-shaders/tree/master/crt/crt-royale>
+- **NTSC Composite Guide:** <https://www.nesdev.org/wiki/NTSC_video>
 
 ### wgpu Resources
 
-- **wgpu Tutorial:** https://sotrh.github.io/learn-wgpu/
-- **WGSL Reference:** https://www.w3.org/TR/WGSL/
-- **wgpu Examples:** https://github.com/gfx-rs/wgpu/tree/trunk/examples
+- **wgpu Tutorial:** <https://sotrh.github.io/learn-wgpu/>
+- **WGSL Reference:** <https://www.w3.org/TR/WGSL/>
+- **wgpu Examples:** <https://github.com/gfx-rs/wgpu/tree/trunk/examples>
 
 ---
 

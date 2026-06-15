@@ -18,6 +18,7 @@ Comprehensive testing and validation of sub-cycle accuracy implementation, inclu
 ## Dependencies
 
 ### Required Before Starting
+
 - **S1 (CPU Refactor)** - Cycle-by-cycle CPU must be complete
 - **S2 (PPU Sync)** - VBlank timing must be implemented
 - **S3 (APU)** - APU integration must be complete
@@ -26,6 +27,7 @@ Comprehensive testing and validation of sub-cycle accuracy implementation, inclu
 - **S6 (Desktop)** - Desktop integration must be complete
 
 ### Blocks
+
 - **v1.0.0 Release** - Cannot release until all tests pass
 
 ---
@@ -58,10 +60,12 @@ Comprehensive testing and validation of sub-cycle accuracy implementation, inclu
 **Priority:** P0 (Critical)
 **Effort:** 3 hours
 **Files:**
+
 - `tests/blargg/ppu_vbl_nmi.rs`
 - Test ROMs: `ppu_02-vbl_set_time`, `ppu_03-vbl_clear_time`
 
 #### Subtasks
+
 - [ ] Enable previously-ignored `ppu_02-vbl_set_time` test
 - [ ] Enable previously-ignored `ppu_03-vbl_clear_time` test
 - [ ] Run tests and capture results
@@ -109,9 +113,11 @@ fn test_ppu_03_vbl_clear_time() {
 **Priority:** P0 (Critical)
 **Effort:** 2 hours
 **Files:**
+
 - `tests/blargg/*.rs`
 
 #### Subtasks
+
 - [ ] Run all 90 Blargg tests
 - [ ] Verify 0 regressions from previous passing tests
 - [ ] Document any new failures
@@ -139,10 +145,12 @@ fn test_ppu_03_vbl_clear_time() {
 **Priority:** P0 (Critical)
 **Effort:** 1 hour
 **Files:**
+
 - `tests/nestest.rs`
 - `docs/testing/NESTEST_GOLDEN_LOG.md`
 
 #### Subtasks
+
 - [ ] Run nestest.nes automated mode
 - [ ] Compare output against golden log
 - [ ] Verify all 256 opcodes pass
@@ -166,10 +174,12 @@ nestest.nes Validation:
 **Priority:** P1
 **Effort:** 3 hours
 **Files:**
+
 - `tests/tasvideos/*.rs`
 - Test ROMs from TASVideos suite
 
 #### Subtasks
+
 - [ ] Obtain TASVideos accuracy test suite
 - [ ] Create test harness for TASVideos tests
 - [ ] Run full suite (156 tests)
@@ -194,9 +204,11 @@ nestest.nes Validation:
 **Priority:** P1
 **Effort:** 2 hours
 **Files:**
+
 - `benches/*.rs`
 
 #### Subtasks
+
 - [ ] Create benchmark for frame execution time
 - [ ] Measure cycle-accurate vs instruction-level performance
 - [ ] Profile hot paths (CPU step, PPU step, APU step)
@@ -250,10 +262,12 @@ criterion_main!(benches);
 **Priority:** P1
 **Effort:** 2 hours
 **Files:**
+
 - `tests/games/*.rs` (if applicable)
 - Manual testing
 
 #### Subtasks
+
 - [ ] Test Top 10 most popular NES games
 - [ ] Test known timing-sensitive games
 - [ ] Document any regressions
@@ -282,12 +296,14 @@ criterion_main!(benches);
 **Priority:** P0
 **Effort:** 2 hours
 **Files:**
+
 - `crates/rustynes-cpu/tests/*.rs`
 - `crates/rustynes-ppu/tests/*.rs`
 - `crates/rustynes-apu/tests/*.rs`
 - `crates/rustynes-core/tests/*.rs`
 
 #### Subtasks
+
 - [ ] Update CPU tests for new bus interface
 - [ ] Add cycle callback verification tests
 - [ ] Add VBlank timing edge case tests
@@ -337,10 +353,12 @@ fn test_vblank_read_at_exact_cycle() {
 **Priority:** P0
 **Effort:** 1 hour
 **Files:**
+
 - `.github/workflows/ci.yml`
 - `tests/regression/*.rs`
 
 #### Subtasks
+
 - [ ] Create regression test runner script
 - [ ] Add to CI/CD pipeline
 - [ ] Test on Linux, macOS, Windows
@@ -413,15 +431,18 @@ jobs:
 ## References
 
 ### Internal Documentation
+
 - [Test ROM Guide](../../../docs/testing/TEST_ROM_GUIDE.md)
 - [nestest Golden Log](../../../docs/testing/NESTEST_GOLDEN_LOG.md)
 
 ### External Resources
+
 - [Blargg's Test ROMs](https://github.com/christopherpow/nes-test-roms)
 - [TASVideos Accuracy Tests](https://tasvideos.org/)
 - [NESdev Wiki - Emulator Tests](https://www.nesdev.org/wiki/Emulator_tests)
 
 ### Test ROM Locations
+
 - `test-roms/blargg/` - Blargg test suite
 - `test-roms/nestest/` - nestest CPU validation
 - `test-roms/tasvideos/` - TASVideos accuracy suite

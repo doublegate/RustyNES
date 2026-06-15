@@ -51,6 +51,7 @@ display, branch tree visualisation) is Sprint 4.2.
 | **TetaNES** (Rust cross-reference) | `.replay` | Confirms the Rust-emulator idiom: replay is a deterministic-input stream re-applied from a pinned power-up state (TetaNES pins RAM-init state; we pin it via the embedded start point + the core's seeded power-on phase). |
 
 Sources consulted:
+
 - Mesen2 `Core/Shared/Movies/{MovieTypes.h, MesenMovie.h, MovieRecorder.h, MovieRecorder.cpp}` (local clone).
 - FCEUX FM2 spec: <https://fceux.com/web/FM2.html> and <https://fceux.com/web/help/fm2.html>.
 - TetaNES: <https://github.com/lukexor/tetanes> (record/replay flags + deterministic RAM-init).

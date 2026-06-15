@@ -155,6 +155,7 @@ After mixing, apply: 90 Hz first-order high-pass, 440 Hz first-order high-pass, 
 ### Band-limited sample emission
 
 Naive sample-rate conversion produces aliasing. Use a blip-buf-style ring buffer:
+
 - Each "step" (channel transition) is registered with the time-of-step at CPU-cycle resolution.
 - The buffer convolves each step against a windowed-sinc kernel into the host-sample-rate output buffer.
 - `drain_samples()` returns finalized samples; the buffer slides forward in time.

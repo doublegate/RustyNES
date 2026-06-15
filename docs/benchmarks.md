@@ -6,7 +6,7 @@
 > the specific captured runs, **not** RustyNES releases of their own — RustyNES
 > ships at v1.0.0. The measurements (R1 master-clock scheduler, the performance
 > pass) all describe the technology shipping in v1.0.0.
-
+>
 > **Engine v2.0.1 note:** the legacy integer-lockstep scheduler was **removed** in
 > v2.0.1 — R1 is now the only path. The A/B below was captured at v2.0.0 (when
 > the legacy path was still reachable via `--no-default-features`) and is retained
@@ -15,7 +15,6 @@
 > accuracy) and shows the cost is bus-side, not the CPU core. The R1 columns are
 > the current numbers; the `--no-default-features` reproduce step no longer
 > selects a second scheduler.
-
 
 This document is the full, reproducible benchmark record for the **v2.0.0**
 release, in which the **R1 master-clock scheduler became the default build**

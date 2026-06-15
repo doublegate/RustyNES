@@ -16,18 +16,18 @@ The `.rns` save-state container (`crates/rustynes-core/src/save_state.rs`) is a
 tagged-section format. The 16-byte header (`MAGIC` + `FORMAT_VERSION` +
 truncated ROM SHA-256) is followed by an ordered list of sections; each
 section is `tag(4) || version(1) || length(u32 le) || body`. Tags currently
-in use: `BUS `, `CPU `, `PPU `, `APU `, `MAP `.
+in use: `BUS`, `CPU`, `PPU`, `APU`, `MAP`.
 
 Per-section version bytes already exist but their semantics are not
 documented anywhere. Concrete versioning bumps so far:
 
 | Tag | Latest | Notes |
 |---|---|---|
-| `CPU ` | 1 | Stable since Sprint 2. |
-| `PPU ` | 1 | Stable since Sprint 2. |
-| `APU ` | 1 | Stable since Sprint 2. |
-| `BUS ` | 1 | Stable since Sprint 2. |
-| `MAP ` | 1 → **3** | MMC5 bumped 2→3 in v0.9.0 (vertical split-screen + ExGrafix + dual sprite/BG CHR state). Other mappers still 1. The `MAP ` body itself is opaque to `rustynes-core`; per-mapper version bytes live inside it. |
+| `CPU` | 1 | Stable since Sprint 2. |
+| `PPU` | 1 | Stable since Sprint 2. |
+| `APU` | 1 | Stable since Sprint 2. |
+| `BUS` | 1 | Stable since Sprint 2. |
+| `MAP` | 1 → **3** | MMC5 bumped 2→3 in v0.9.0 (vertical split-screen + ExGrafix + dual sprite/BG CHR state). Other mappers still 1. The `MAP` body itself is opaque to `rustynes-core`; per-mapper version bytes live inside it. |
 
 `CLAUDE.md` says: "cross-version compatibility is best-effort, not
 guaranteed." That's the current state -- but it leaves callers (frontend
@@ -42,14 +42,16 @@ Codify a three-tier policy keyed off the v1.x.y semver scheme:
 
 ### Policy
 
-**Same MAJOR.MINOR (e.g. v1.0.0 ↔ v1.0.1)**
+#### Same MAJOR.MINOR (e.g. v1.0.0 ↔ v1.0.1)
+
 - Same section versions across the two builds.
 - Snapshot/restore MUST round-trip identically. Any divergence is a bug.
 - New sections added by the newer build MUST default-initialize cleanly on
   older builds (older builds skip unknown tags via `SectionIter` — the
   existing parser already does this).
 
-**Different PATCH within the same MINOR (e.g. v1.0.0 ↔ v1.0.2)**
+#### Different PATCH within the same MINOR (e.g. v1.0.0 ↔ v1.0.2)
+
 - A section version bump is permitted within a PATCH if the section is
   strictly additive (new fields written at the end of the body; older readers
   truncate). The body's length prefix lets readers stop at the old field
@@ -58,7 +60,8 @@ Codify a three-tier policy keyed off the v1.x.y semver scheme:
   default-initialized at load time.
 - New tags are permitted; older builds skip them.
 
-**Different MINOR or MAJOR (e.g. v1.0.x ↔ v1.1.x)**
+#### Different MINOR or MAJOR (e.g. v1.0.x ↔ v1.1.x)
+
 - Best-effort. The container format itself is forward-compatible (the
   header carries `FORMAT_VERSION` and the parser rejects anything past
   `FORMAT_VERSION`), so an older build refuses to load a newer slot with
@@ -85,9 +88,10 @@ Every PR that bumps a section version MUST:
 
 ### Thumbnail section
 
-A new optional `THM ` section is being introduced post-v0.9.0 for slot
+A new optional `THM` section is being introduced post-v0.9.0 for slot
 preview thumbnails. Per this policy, it is:
-- Tagged `THM ` (4 bytes).
+
+- Tagged `THM` (4 bytes).
 - Optional — older builds simply skip the tag, and newer builds emit it
   unconditionally but tolerate its absence on load.
 - Body format: version byte (currently `1`) + u16 width + u16 height + u32
@@ -150,6 +154,6 @@ preview thumbnails. Per this policy, it is:
 ## Compatibility test plan
 
 A unit test in `crates/rustynes-core/src/nes.rs` (`thumbnail_section_optional` or
-similar) confirms a v0.9.0-shaped blob (no `THM ` section) round-trips
+similar) confirms a v0.9.0-shaped blob (no `THM` section) round-trips
 through the v1.x-shaped reader. The reader walks the section list, finds the
 THM section absent, and gives the caller `None` for the thumbnail.

@@ -20,6 +20,7 @@ Improve PPU dot-accurate rendering to achieve ±2 cycle VBlank timing precision 
 ## Tasks
 
 ### Task 1: VBlank Timing Precision ⚠️ ARCHITECTURAL LIMITATION
+
 - [x] Study ppu_02-vbl_set_time.nes requirements (±51 cycle → ±2 cycle)
 - [x] Study ppu_03-vbl_clear_time.nes requirements (±10 cycle → exact)
 - [x] Implement precise VBlank flag set timing (scanline 241, dot 1)
@@ -50,6 +51,7 @@ Improve PPU dot-accurate rendering to achieve ±2 cycle VBlank timing precision 
   - **Result:** ✅ PASSING - Functional VBlank/NMI behavior correct
 
 ### Task 2: Sprite 0 Hit Edge Cases ⏳ NEEDS IMPLEMENTATION
+
 - [x] Test sprite 0 hit with ppu_spr_hit_* suite (2 tests passing)
   - **Result:** ppu_01.basics.nes ✅ PASSING
   - **Result:** ppu_02.alignment.nes ✅ PASSING
@@ -62,6 +64,7 @@ Improve PPU dot-accurate rendering to achieve ±2 cycle VBlank timing precision 
 - [ ] Test sprite 0 hit with background clipping (leftmost 8 pixels)
 
 ### Task 3: Attribute Handling Verification ✅ COMPLETE
+
 - [x] Verify attribute shift register behavior (fixed in v0.5.0)
   - **Result:** Attribute shift register timing fix eliminated rendering artifacts
   - **Location:** `crates/rustynes-ppu/src/ppu.rs` - PPU rendering logic
@@ -73,6 +76,7 @@ Improve PPU dot-accurate rendering to achieve ±2 cycle VBlank timing precision 
   - **Result:** No visual artifacts in test ROMs
 
 ### Task 4: Palette RAM Mirroring ✅ COMPLETE
+
 - [x] Test palette mirroring at $3F10, $3F14, $3F18, $3F1C
   - **Result:** ✅ CORRECT - All sprite palette background colors mirror to background palette
   - **Location:** `crates/rustynes-ppu/src/vram.rs` lines 193-207
@@ -114,10 +118,11 @@ Improve PPU dot-accurate rendering to achieve ±2 cycle VBlank timing precision 
 **Date:** 2025-12-20
 **Analyst:** Claude Sonnet 4.5
 **Detailed Reports:**
+
 - `/temp/phase-1.5-m7-timing-analysis.md` (initial analysis)
 - `/temp/m7-vblank-timing-test-results.md` (comprehensive findings)
 
-### Key Findings:
+### Key Findings
 
 1. **VBlank Timing (PPU):** ✅ **ARCHITECTURALLY CORRECT**
    - VBlank flag set: Scanline 241, dot 1 (exact specification)
@@ -145,7 +150,7 @@ Improve PPU dot-accurate rendering to achieve ±2 cycle VBlank timing precision 
    - ppu_02.alignment.nes ✅ PASSING
    - Edge cases pending (corners, flip, clipping)
 
-### Test Results Summary:
+### Test Results Summary
 
 | Category | Passing | Ignored | Pending | Status |
 |----------|---------|---------|---------|--------|
@@ -154,7 +159,7 @@ Improve PPU dot-accurate rendering to achieve ±2 cycle VBlank timing precision 
 | Sprite 0 Hit | 2/2 | 0 | 0 | ✅ Passing |
 | Attribute/Palette | N/A | 0 | 0 | ✅ Verified |
 
-### Implementation Completed:
+### Implementation Completed
 
 1. ✅ PPU timing accessors (`scanline()`, `dot()`)
 2. ✅ $2002 race condition handling (NMI suppression)
@@ -162,14 +167,16 @@ Improve PPU dot-accurate rendering to achieve ±2 cycle VBlank timing precision 
 4. ✅ Comprehensive test execution and analysis
 5. ✅ Architectural limitation documentation
 
-### Recommended Next Steps:
+### Recommended Next Steps
 
 **Phase 1.5 (Current):**
+
 1. **Priority 1:** Implement sprite 0 hit edge cases (ppu_03.corners, ppu_04.flip) - 3-4 hours
 2. **Priority 2:** Visual regression testing with Super Mario Bros. - 1 hour
 3. **Priority 3:** Continue with remaining M7-S2 tasks
 
 **Phase 2+ (Future):**
+
 1. Cycle-by-cycle CPU execution architecture (100+ hours)
 2. Requires: TAS tools, debugger, or comprehensive test ROM suite goals
 3. Benefits: ±2 cycle precision, cycle stepping for debugging

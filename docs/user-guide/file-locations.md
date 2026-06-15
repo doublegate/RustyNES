@@ -77,7 +77,7 @@ change something.
 A `saves/` subdirectory, then one directory per ROM (named by the ROM's
 64-character lowercase hex SHA-256), then up to 10 slot files:
 
-```
+```text
 saves/
   3e9c1d...cafe/
     slot0.rns

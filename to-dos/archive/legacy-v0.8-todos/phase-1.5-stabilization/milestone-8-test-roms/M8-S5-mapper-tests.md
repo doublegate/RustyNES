@@ -16,6 +16,7 @@ Systematically validate mapper implementations (NROM, MMC1, UxROM, CNROM, MMC3) 
 ## Tasks
 
 ### Task 1: Holy Mapperel Suite (40 tests)
+
 - [ ] Download Holy Mapperel test suite (comprehensive mapper tests)
 - [ ] Run all 40 Holy Mapperel tests
 - [ ] Debug mapper-specific failures
@@ -24,6 +25,7 @@ Systematically validate mapper implementations (NROM, MMC1, UxROM, CNROM, MMC3) 
 - [ ] Validate mirroring modes (horizontal, vertical, single-screen, four-screen)
 
 ### Task 2: NROM (Mapper 0) - 3 tests
+
 - [ ] Test NROM-128 (16KB PRG-ROM)
 - [ ] Test NROM-256 (32KB PRG-ROM)
 - [ ] Verify mirroring (horizontal/vertical)
@@ -31,6 +33,7 @@ Systematically validate mapper implementations (NROM, MMC1, UxROM, CNROM, MMC3) 
 - [ ] Test with Super Mario Bros., Donkey Kong, Balloon Fight
 
 ### Task 3: MMC1 (Mapper 1) - 5 tests
+
 - [ ] Test PRG bank switching (16KB/32KB modes)
 - [ ] Test CHR bank switching (4KB/8KB modes)
 - [ ] Verify shift register write behavior ($8000-$FFFF)
@@ -39,17 +42,20 @@ Systematically validate mapper implementations (NROM, MMC1, UxROM, CNROM, MMC3) 
 - [ ] Test with Zelda, Metroid, Mega Man 2
 
 ### Task 4: UxROM (Mapper 2) - 3 tests
+
 - [ ] Test PRG bank switching (16KB switchable + 16KB fixed)
 - [ ] Verify bus conflicts (write to PRG-ROM)
 - [ ] Test fixed bank behavior (last bank)
 - [ ] Validate with Mega Man, Castlevania, Contra
 
 ### Task 5: CNROM (Mapper 3) - 2 tests
+
 - [ ] Test CHR bank switching (8KB banks)
 - [ ] Verify bus conflicts (write to PRG-ROM)
 - [ ] Test with Arkanoid, Solomon's Key, Gradius
 
 ### Task 6: MMC3 (Mapper 4) - 4 tests
+
 - [ ] Test PRG bank switching (8KB/16KB modes)
 - [ ] Test CHR bank switching (2KB/1KB banks)
 - [ ] Verify MMC3 IRQ counter (scanline counter)
@@ -58,6 +64,7 @@ Systematically validate mapper implementations (NROM, MMC1, UxROM, CNROM, MMC3) 
 - [ ] Test with Super Mario Bros. 3, Mega Man 3-6, Kirby's Adventure
 
 ### Task 7: Integration Testing
+
 - [ ] Run full mapper test suite (57 tests)
 - [ ] Verify no regressions in CPU/PPU/APU tests
 - [ ] Test complex games (Super Mario Bros. 3, Zelda, Mega Man)
@@ -82,6 +89,7 @@ Systematically validate mapper implementations (NROM, MMC1, UxROM, CNROM, MMC3) 
 | mapper_004_mmc3_chr_switching.nes | [ ] Pending | 4 | MMC3 CHR switching |
 
 **Additional Mapper Tests (12 ROMs):**
+
 - Bus conflicts tests
 - Mirroring mode tests
 - Bank switching edge cases
@@ -103,6 +111,7 @@ Systematically validate mapper implementations (NROM, MMC1, UxROM, CNROM, MMC3) 
 ## Expected Failures (3 tests)
 
 **Rare Mapper Variants:**
+
 - holy_mapperel_mapper_015.nes - Mapper 15 (100-in-1) - Not in Phase 1.5 scope
 - holy_mapperel_mapper_019.nes - Mapper 19 (Namco 163) - Requires expansion audio
 - holy_mapperel_mapper_024.nes - Mapper 24 (VRC6) - Requires expansion audio
@@ -112,6 +121,7 @@ Systematically validate mapper implementations (NROM, MMC1, UxROM, CNROM, MMC3) 
 ## Mapper Implementation Reference
 
 ### NROM (Mapper 0)
+
 ```rust
 // No bank switching
 // PRG-ROM: 16KB or 32KB (mirrored if 16KB)
@@ -120,6 +130,7 @@ Systematically validate mapper implementations (NROM, MMC1, UxROM, CNROM, MMC3) 
 ```
 
 ### MMC1 (Mapper 1)
+
 ```rust
 // Shift register: 5 writes to $8000-$FFFF
 // PRG: 16KB/32KB modes, switchable/fixed banks
@@ -129,6 +140,7 @@ Systematically validate mapper implementations (NROM, MMC1, UxROM, CNROM, MMC3) 
 ```
 
 ### UxROM (Mapper 2)
+
 ```rust
 // PRG: 16KB switchable ($8000-$BFFF) + 16KB fixed ($C000-$FFFF)
 // CHR: 8KB CHR-RAM (not switchable)
@@ -137,6 +149,7 @@ Systematically validate mapper implementations (NROM, MMC1, UxROM, CNROM, MMC3) 
 ```
 
 ### CNROM (Mapper 3)
+
 ```rust
 // PRG: 16KB/32KB (no switching)
 // CHR: 8KB switchable banks
@@ -145,6 +158,7 @@ Systematically validate mapper implementations (NROM, MMC1, UxROM, CNROM, MMC3) 
 ```
 
 ### MMC3 (Mapper 4)
+
 ```rust
 // PRG: 8KB/16KB banks, switchable/fixed
 // CHR: 2KB/1KB banks (6 switchable banks)

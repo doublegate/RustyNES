@@ -15,6 +15,7 @@ Calibrate APU timing and mixing to achieve hardware-accurate audio synthesis and
 ## Tasks
 
 ### Task 1: Frame Counter Precision ✅ COMPLETE
+
 - [x] Verify 4-step mode timing (7457, 14913, 22372, 29830 cycles) - **Fixed 22371→22372**
 - [x] Verify 5-step mode timing (7457, 14913, 22371, 37281 cycles)
 - [x] Test IRQ flag timing in 4-step mode
@@ -22,6 +23,7 @@ Calibrate APU timing and mixing to achieve hardware-accurate audio synthesis and
 - [x] Handle write timing edge cases ($4017 writes)
 
 ### Task 2: DMC Channel Edge Cases
+
 - [ ] Test DMC DMA conflicts with CPU
 - [ ] Verify sample buffer behavior (empty/refill timing)
 - [ ] Test DMC rates (16 rate values)
@@ -29,6 +31,7 @@ Calibrate APU timing and mixing to achieve hardware-accurate audio synthesis and
 - [ ] Validate memory reader timing
 
 ### Task 3: Triangle Linear Counter
+
 - [ ] Verify linear counter reload timing
 - [ ] Test halt flag behavior
 - [ ] Validate control flag interaction
@@ -36,6 +39,7 @@ Calibrate APU timing and mixing to achieve hardware-accurate audio synthesis and
 - [ ] Handle edge cases (reload while counting)
 
 ### Task 4: Mixer Calibration ✅ COMPLETE
+
 - [x] Verify non-linear mixing formula - **Implemented hardware-accurate NESdev formula**
 - [x] Test output levels for all channels - **TND lookup table corrected**
 - [x] Validate pulse channel mixing (0-15 volume)

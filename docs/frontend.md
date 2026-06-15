@@ -65,7 +65,7 @@ latest produced framebuffer plus the egui shell. The display can therefore
 re-present the same frame (compositor throttling) without stalling
 emulation, and emulation can run ahead without waiting on vsync.
 
-```
+```rust
 fn main() {
     let event_loop = EventLoop::with_user_event().build()?;
     event_loop.run_app(App::new())?;        // window, wgpu surface, cpal stream,
@@ -177,6 +177,16 @@ panel's pacing field reads `raf-display` or `raf` accordingly.
   to the window through an aspect-ratio-correct **letterbox** transform
   (`gfx.rs::letterbox`).
 - Optional NTSC filter / CRT shader runs as a second pass.
+
+**Custom palette (`.pal`).** A user-supplied `.pal` file re-tints the display
+through the PPU's colour LUT. Settings → Display offers a **Load .pal… /
+Built-in** picker (native); the chosen file is remembered in `[graphics]
+palette_file` and re-applied on every ROM load. A 64-entry palette is the
+192-byte form (longer 512-entry files use the first 64 colours); the standard
+2C02 composite emphasis is applied to the custom base table by
+`rustynes-ppu::build_rgba_lut_from_base` / `Ppu::set_custom_palette`, routed
+through `Nes::set_custom_palette`. The default (none) is byte-identical to the
+built-in palette. Native-only file I/O (a no-op on wasm).
 
 **Pixel aspect ratio.** When `[ui] pixel_aspect_correction` is on, the
 letterbox targets the NES's native **8:7** PAR (display aspect
@@ -369,6 +379,32 @@ System hotkeys (rebindable via `[input.system]`):
 
 ROMs can also be loaded by **dragging a `.nes` file onto the window**.
 
+**Turbo / autofire** (`[input] turbo_a` / `turbo_b`, Settings → Input). The A
+and/or B button can rapid-fire while held; `[input] turbo_period` sets the
+frames per on/off half-cycle. Off by default (empty mask = byte-identical
+input). The strobe is keyed on the emulated frame number (`Nes::frame()`) and
+applied where input meets the NES — in `EmuCore::latch` and on the local input
+in both netplay paths — so the gated bits are what get latched / recorded /
+sent: deterministic and rollback / TAS / netplay-safe. The native and
+`wasm-winit` paths apply it; the lightweight `wasm-canvas` embed does not.
+
+**NES Power Pad.** The Power Pad / Family Fun Fitness mat is selectable as the
+player-2 expansion device (Settings → Input "Port 2 device"). Its 12 mat
+buttons default to a left-hand grid (`1`–`4` / `Q W E R` / `A S D F`, chosen to
+avoid the P1 and system-speed keys) and implement the dual-8-bit-shift-register
+serial protocol on `$4017`. Off by default (standard controller), so the
+default + Four Score paths stay byte-identical. Native path (rebindable mat
+keys + a `wasm-canvas` feed are follow-ups).
+
+**Input-display overlay.** A read-only tool panel
+(`debugger/input_display_panel.rs`) that draws a stylized NES controller per
+active player — D-pad, Select/Start, B/A — with each currently-held button lit;
+shows P1+P2 (and P3/P4 with Four Score). Open from **Tools → Input Display** or
+the debugger toolbar's "Input HUD" checkbox. Useful for TAS authoring and
+streaming; it reads the same held-button snapshot the emulator is fed
+(`DebuggerOverlay::set_input_display`), so it is frontend-only with no core or
+determinism impact.
+
 **Input gating.** Emulator key/mouse input is suppressed when egui consumed
 the event, when a settings text field is focused (`wants_egui_input`), or when
 a menu / popup / modal window is open (`shell_is_capturing` plus the
@@ -386,11 +422,25 @@ the Debug menu. The panels are read-only: they never advance
 emulator-visible state, polling the inspection API on `rustynes_core::Nes`
 once per visible frame.
 
-- **CPU**: registers, current instruction, disassembly window (scrollable), breakpoints, step-instruction button.
+- **CPU**: registers, current instruction, disassembly window (scrollable), step-instruction button, and a **Breakpoints** section — exec/PC breakpoints (armed toggle, hex add, per-row remove, clear); when the program counter reaches one, emulation pauses and the CPU panel opens on the stopped PC.
 - **PPU**: nametable viewer (4 tables side-by-side, scroll-cursor overlaid), pattern table viewer (both tables, with palette selector), OAM viewer (sprite list + visual), palette RAM viewer.
 - **APU**: per-channel scope (waveform), volume meters, register dump.
 - **Memory**: hex viewer of CPU bus + PPU bus, with go-to-address (disabled in RetroAchievements hardcore mode).
 - **Mapper**: bank registers, IRQ counter state.
+
+Two additional devtool panels are gated behind the off-by-default
+`debug-hooks` feature (the headless test/bench builds omit it and keep a
+byte-identical hot path; the hooks are output-only so determinism /
+AccuracyCoin are unaffected):
+
+- **Trace** (Debug → Trace Logger): a bounded ring (50k) of each executed
+  instruction's CPU register file + cycle, with a live disassembled tail and
+  an **export** of the full trace to a text file.
+- **Events** (Debug → Event Viewer): the frame's CPU writes — PPU
+  (`$2000-$3FFF`), APU (`$4000-$4017`, including `$4014` OAM DMA and `$4016`
+  strobe), and mapper (`$4020-$FFFF`) — plotted on a scanline×dot grid coloured
+  by kind, so you can see *when* in the frame a game touches scroll / mapper /
+  APU registers. (NMI/IRQ markers are a follow-up.)
 
 All panels are floating windows in egui's window system. The tool panels
 (Cheats / Settings / Netplay / Cheevos / Perf / Input) are the same windows
@@ -432,6 +482,37 @@ v1.0.0 added a `[ui]` section and a few top-level keys:
 - File menu → Open → native dialog.
 - Recent files list (last 10).
 - ROMs are *not* copied; the frontend stores absolute paths. (Save states are keyed by SHA-256 of the ROM, so moving the ROM doesn't break the save.)
+
+**Per-game database (nametable-mirroring override).** A CRC32-keyed game
+database (vendored from TetaNES, ~2.6k entries) auto-corrects ROMs whose iNES
+header carries the wrong mirroring flag: at load the frontend computes the
+ROM's CRC32 (over PRG-ROM + CHR-ROM) and, if listed, applies a nametable
+mirroring override via `Nes::set_mirroring_override`. The override lives in the
+bus's nametable translation (uniform across all mappers, no per-mapper edits),
+does not touch mapper-supplied VRAM (4-screen), and is persisted in the
+save-state so rollback / restore stay consistent. It is frontend-only and
+`None` by default (the core test suites construct the `Nes` directly and never
+consult the database, so the suites stay byte-identical) and deterministic
+(same CRC ⇒ same mirroring, so netplay peers agree). Scope is mirroring only —
+region / mapper overrides and a Game Genie code database are not part of it.
+
+## Lua Script console (`scripting` feature, native-only)
+
+When built with the off-by-default, native-only `scripting` feature,
+**Debug → Lua Script** opens a console that loads / reloads / stops a `.lua`
+file and shows its log, errors, and `onFrame` callback count. The
+`rustynes-script` crate embeds sandboxed **Lua 5.4** (vendored `mlua`) and is
+host-driven: the frontend pumps it once per redraw under the emu lock with the
+live `Nes`, script overlay draws (`drawText` / `drawRect` / `drawPixel`) render
+through the egui pass, and control commands (`pause` / `saveState` /
+`loadState` / `setInput`) apply via the existing pause / save-state path.
+State-mutating script writes (`emu.write`) are gated off during netplay, TAS
+replay/record, and RA-hardcore (the cheat-path policy). Because the feature is
+off by default, the shipped / wasm / `no_std` builds are byte-identical. The
+full `emu` API (memory access, CPU state, `onFrame` / `onExec` / `onRead` /
+`onWrite` callbacks, control, and overlay draw) is documented in
+[scripting.md](scripting.md); `examples/scripts/` ships `hud.lua` and
+`ram_watch.lua`.
 
 ## Shipped / open
 

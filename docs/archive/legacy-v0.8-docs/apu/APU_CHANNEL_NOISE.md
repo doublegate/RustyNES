@@ -316,13 +316,13 @@ The noise channel envelope is **identical to pulse channels**. See [APU_CHANNEL_
 
 ### Quick Reference
 
-**Mode 1: Constant Volume (C=1)**
+#### Mode 1: Constant Volume (C=1)
 
 ```
 Output = VVVV (0-15)
 ```
 
-**Mode 2: Envelope Volume (C=0)**
+#### Mode 2: Envelope Volume (C=0)
 
 ```
 Output = Decay Level (15 → 0 over time)

@@ -13,6 +13,7 @@
 Sprint M6-S5 finalizes the RustyNES MVP with professional polish (icon, window metadata, theme refinement) and implements **basic run-ahead (RA=1)** as the foundation for advanced latency reduction in Phase 2. This sprint delivers a complete, user-friendly desktop application with measurable input latency improvements.
 
 **Run-Ahead Scope:**
+
 - **MVP (M6):** Basic run-ahead (RA=1) - architectural foundation with ~5-10ms latency reduction
 - **Phase 2 (M7):** Advanced run-ahead (RA=0-4, auto-detect, dual-instance mode)
 
@@ -60,6 +61,7 @@ Latency reduction: 16.67ms (1 frame)
 ```
 
 **Trade-offs:**
+
 - **Pro:** 50% latency reduction (2 frames → 1 frame)
 - **Con:** 2x CPU overhead (emulate each frame twice)
 - **Mitigation:** NES easily achieves 120+ FPS on modern hardware
@@ -91,11 +93,13 @@ Add application icon and proper window metadata.
 **File:** `crates/rustynes-desktop/assets/icon.png`
 
 Create a 256x256 PNG icon. For MVP, use a simple design:
+
 - NES controller silhouette on gradient background
 - "RN" monogram in pixel art style
 - Or use a placeholder icon generator
 
 **Icon Requirements:**
+
 - Size: 256x256 pixels (PNG format)
 - Background: Transparent or gradient
 - Style: Retro/pixel art theme
@@ -836,16 +840,19 @@ bincode = "1.3"  # Fast save state serialization
 ### Run-Ahead Performance
 
 **Serialization Strategy:**
+
 - Use `bincode` for fast binary serialization (<1ms)
 - Avoid `serde_json` (too slow for 60 FPS)
 - In-memory state (no disk I/O)
 
 **CPU Overhead:**
+
 - RA=1: 2x emulation speed (emulate each frame twice)
 - NES achieves 300+ FPS on modern hardware → 5x headroom
 - Target: <2ms overhead per frame
 
 **Memory Overhead:**
+
 - Save state: ~10 KB (CPU + PPU + APU + RAM)
 - Negligible compared to framebuffer (256x240x4 = 240 KB)
 
@@ -859,6 +866,7 @@ Use high-speed camera (240+ FPS) to measure latency:
 4. Calculate latency: `frames × (1000ms / camera_fps)`
 
 **Expected Results:**
+
 - Without run-ahead: ~33ms (2 frames at 60 FPS)
 - With RA=1: ~16ms (1 frame at 60 FPS)
 
@@ -906,6 +914,7 @@ Advanced features coming in Phase 2 M7:
 ## Sprint 5 Actual Implementation Summary
 
 **Completed Features:**
+
 - ✅ Application icon (256x256 gradient using RustyNES brand colors)
 - ✅ Theme system (4 variants: Dark, Light, Nord, Gruvbox)
 - ✅ Theme selector UI in settings panel
@@ -917,6 +926,7 @@ Advanced features coming in Phase 2 M7:
 - ✅ DESKTOP.md updated with comprehensive Sprint 5 documentation
 
 **Deferred to Phase 2:**
+
 - ⏸️ Full run-ahead implementation (RA=1-4) - Stub infrastructure complete
 - ⏸️ Save state serialization - Required for run-ahead
 - ⏸️ Toast notifications - Phase 2 error handling
@@ -930,11 +940,12 @@ Run-ahead requires a complete, stable core emulator with save state support. Sin
 
 ---
 
-## Post-MVP: M6 Complete!
+## Post-MVP: M6 Complete
 
 Upon completion of M6-S5, **Phase 1 MVP is COMPLETE**:
 
 ✅ **Delivered:**
+
 - Iced 0.13+ GUI with Elm architecture
 - wgpu rendering at 60 FPS
 - cpal audio with <20ms latency
@@ -946,6 +957,7 @@ Upon completion of M6-S5, **Phase 1 MVP is COMPLETE**:
 - Performance metrics overlay
 
 ✅ **Playable Emulator:**
+
 - Load and play NES ROMs
 - 60 FPS gameplay
 - Low-latency input (1 frame with RA=1)
@@ -953,6 +965,7 @@ Upon completion of M6-S5, **Phase 1 MVP is COMPLETE**:
 - Persistent settings
 
 **Next Phase:** Phase 2 Features (M7-M10)
+
 - M7: Advanced Run-Ahead (RA=0-4, auto-detect, dual-instance)
 - M8: GGPO Netplay
 - M9: TAS Recording/Playback

@@ -10,8 +10,8 @@
 
 - [Overview](#overview)
 - [Complete Opcode Matrix](#complete-opcode-matrix)
-- [Instruction Groups](#instruction-groups)
-- [Official Instructions](#official-instructions)
+- [Instruction Groups](#complete-opcode-matrix)
+- [Official Instructions](#official-opcodes-56-instructions-151-total-opcodes)
 - [Unofficial Instructions](#unofficial-instructions)
 - [Cycle-by-Cycle Breakdown](#cycle-by-cycle-breakdown)
 - [Addressing Mode Details](#addressing-mode-details)
@@ -311,7 +311,7 @@ These opcodes have unpredictable behavior and should crash emulation:
 
 ### Example: LDA $1234,X (Opcode BD)
 
-**Assuming X = $50, Address $1284 contains $42**
+#### Assuming X = $50, Address $1284 contains $42
 
 ```
 Cycle 1: Fetch opcode $BD from PC, PC++
@@ -325,7 +325,7 @@ Cycle 4: Read from $1234 + $50 = $1284, A = $42
 
 ### Example: INC $80 (Opcode E6)
 
-**Read-Modify-Write at Zero Page**
+#### Read-Modify-Write at Zero Page
 
 ```
 Cycle 1: Fetch opcode $E6 from PC, PC++
@@ -339,7 +339,7 @@ Cycle 5: Write new value $06 to $0080, set flags
 
 ### Example: BRK (Opcode 00)
 
-**Software Interrupt**
+#### Software Interrupt
 
 ```
 Cycle 1: Fetch opcode $00 from PC, PC++

@@ -7,6 +7,7 @@ along with the rest of the legacy scheduler. Retained as a historical record.
 **Date:** 2026-05-26
 **Author:** RustyNES maintainers
 **Relates to:**
+
 - [ADR 0002 — IRQ Timing Coordination](0002-irq-timing-coordination.md) (the
   `cpu-implied-dummy-reads` companion feature that motivated this work)
 - [ADR 0003 — Save-State Migration](0003-save-state-migration.md) (no version
@@ -25,14 +26,14 @@ along with the rest of the legacy scheduler. Retained as a historical record.
 v1.1.0 ships with two DMC-related AccuracyCoin residuals that were
 **deferred to v1.2** in the post-release residuals plan:
 
-* **`CPU Behavior 2 :: Implied Dummy Reads [error 3]`** — the cycle-2
+- **`CPU Behavior 2 :: Implied Dummy Reads [error 3]`** — the cycle-2
   PC dummy read of implied/accumulator/transfer/flag opcodes (23
   opcodes total) must be emitted on the bus to satisfy the test's
   cycle-by-cycle behaviour check. Sprint 2.3 (v1.0.0-rc era) landed
   the dummy reads behind the `cpu-implied-dummy-reads` cargo feature
   flag, default-off.
 
-* **`APU Registers and DMA tests :: Implicit DMA Abort`** — the
+- **`APU Registers and DMA tests :: Implicit DMA Abort`** — the
   cascade-sentinel. With `cpu-implied-dummy-reads` ON, this previously
   passing test flips to FAIL. Six independent single-axis recalibrations
   of the four compensating delays (`dmc_dma_short`, `dmc_dma_cooldown`,
@@ -47,7 +48,7 @@ v1.1.0 ships with two DMC-related AccuracyCoin residuals that were
 root cause via paired per-CPU-cycle traces captured against Mesen2
 (canonical) and RustyNES (baseline + with implied-dummy-reads):
 
-* **Mesen2's `NesCpu.cpp::RunDma` (lines 399-447)** uses a unified
+- **Mesen2's `NesCpu.cpp::RunDma` (lines 399-447)** uses a unified
   get/put cycle alternation loop keyed on `(_state.CycleCount & 0x01)`,
   with three independent state flags (`_dmcDmaRunning`, `_needHalt`,
   `_needDummyRead`) consumed across multiple cycle pairs. The
@@ -55,7 +56,7 @@ root cause via paired per-CPU-cycle traces captured against Mesen2
   the order: `_needHalt` → `_needDummyRead`. When both are clear, the
   next GET cycle delivers the DMC byte.
 
-* **RustyNES's `service_dmc_dma`** (pre-Sprint-3.2) used a
+- **RustyNES's `service_dmc_dma`** (pre-Sprint-3.2) used a
   phase-agnostic loop: `noop_cycles = 2` (load DMA, `short=true`) or
   `noop_cycles = 3` (reload DMA, `short=false`), followed by a single
   deliver tick. The four compensating delays (`dmc_dma_short`,
@@ -66,7 +67,7 @@ root cause via paired per-CPU-cycle traces captured against Mesen2
   tuned for the bus-cycle patterns produced when `cpu-implied-dummy-
   reads` is ON.
 
-* **Within-RustyNES cycle-precise diff** (baseline vs implied-dummy-
+- **Within-RustyNES cycle-precise diff** (baseline vs implied-dummy-
   reads-ON) shows **435 divergent same-cycle events**. Every one is
   Idle bus → `R $FF4D=$EA` (the cycle-2 PC dummy read of an implied
   opcode). The DMC sample-fetch lands one cycle earlier under
@@ -85,6 +86,7 @@ harness. This preserves the v1.1.0 baseline bit-identically on the
 default-off path while making the new model available for iteration.
 
 **Promotion strategy:**
+
 - **v1.2.0** (this ADR): land the get/put model default-off; ship the
   equivalence harness; deliver concrete convergence metrics (Sprint 3.4
   closes 6 of 10 AccuracyCoin DMA-cluster tests).
@@ -106,6 +108,7 @@ default-off path while making the new model available for iteration.
 `dmc-get-put-scheduler` cargo feature flag (default-off).**
 
 The flag propagates through three crates:
+
 - `rustynes-apu/dmc-get-put-scheduler` — APU-side state for the new flags
   (`Apu::dmc_need_halt`, `Apu::dmc_need_dummy_read`); always-present
   fields (not `#[cfg]`-gated) so the snapshot wire format is forward-
@@ -292,7 +295,7 @@ Con: AccuracyCoin stuck at 90.65% for ~6 months (v1.2-v1.6); Sprint
 2.3 Step 3 stays open; **concentration risk** if v2.0 Sprint A stalls
 or slips.
 
-### **(c) Hybrid — selected.** Parallel-impl pattern in v1.2; promotion at v1.6 (fallback) or v2.0 (planned).
+### **(c) Hybrid — selected.** Parallel-impl pattern in v1.2; promotion at v1.6 (fallback) or v2.0 (planned)
 
 Pro: zero oracle re-baseline at v1.2 (default-off); forward progress
 visible (Sprint 3.1-3.4 ship real refactor + harness); risk-mitigation
@@ -314,23 +317,23 @@ mis-calibrated.
 
 ## Cross-references
 
-* **Audit thread** (the empirical basis for this ADR):
+- **Audit thread** (the empirical basis for this ADR):
   - `docs/audit/path-beta-dmc-trace-tooling-2026-05-25.md`
   - `docs/audit/path-beta-paired-trace-2026-05-25.md`
   - `docs/audit/path-beta-paired-oracle-captured-2026-05-25.md`
   - `docs/audit/sprint-2.3-step-3-iter-1-2-cooldown-empirical-2026-05-25.md`
-* **Commit chain** (v1.2 Sprint 3.1 → 3.4 iter 2):
+- **Commit chain** (v1.2 Sprint 3.1 → 3.4 iter 2):
   - Sprint 3.1: `feat(apu): scaffold dmc-get-put-scheduler feature flag + API`
   - Sprint 3.2: `feat(bus): get/put DMC scheduler initial landing — Sprint 3.2 (WIP)`
   - Sprint 3.3: `feat(test-harness): DMC get/put parallel-impl equivalence harness`
   - Sprint 3.4 iter 1: `feat(bus): Sprint 3.4 iter 1 — DMC parity convention fix (1/10 -> 6/10)`
   - Sprint 3.4 iter 2: `feat(bus): Sprint 3.4 iter 2 — service_dmc_dma_during_oam under get/put`
-* **Mesen2 reference** (GPL-3.0, structural only — no verbatim code):
+- **Mesen2 reference** (GPL-3.0, structural only — no verbatim code):
   - `Core/NES/NesCpu.cpp::RunDma` (lines 399-447) — unified loop
   - `Core/NES/NesCpu.cpp::RunDma`'s `processCycle` lambda (lines 384-397)
   - `Core/NES/NesCpu.cpp::StartDmcTransfer` (line 527) — flag arming
   - `Core/NES/NesCpu.h:41` — `_needHalt`/`_needDummyRead` field declaration
-* **Source files (this repo)**:
+- **Source files (this repo)**:
   - `crates/rustynes-apu/src/apu.rs` — `Apu::dmc_need_halt`,
     `Apu::dmc_need_dummy_read` + flag arming/clearing wiring
   - `crates/rustynes-core/src/bus.rs::service_dmc_dma` (base path,
@@ -339,6 +342,6 @@ mis-calibrated.
     (OAM-conflict path, `#[cfg]`-gated)
   - `crates/rustynes-test-harness/tests/dmc_get_put_equivalence.rs`
   - `scripts/dmc_equivalence_harness.sh`
-* **External reference**:
+- **External reference**:
   - nesdev wiki §DMA — get/put cycle terminology and alignment rules
   - nesdev wiki §APU DMC — DMC fetch cycle accounting

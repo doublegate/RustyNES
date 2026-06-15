@@ -212,7 +212,7 @@ mapper-decoder edge cases that need separate investigation. See
 `bisect_runner.sh` writes a one-line `[bisect_runner]` summary at every
 exit. The shape:
 
-```
+```text
 [bisect_runner] cargo build failed (rc=101) — SKIP
 [bisect_runner] cargo test PASS — GOOD
 [bisect_runner] cargo test FAIL (rc=1) — BAD

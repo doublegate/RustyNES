@@ -638,14 +638,17 @@ tracing-subscriber = "0.3"
 ### System Requirements
 
 **Linux:**
+
 - libxcb-dev
 - libxkbcommon-dev
 - libwayland-dev (Wayland support)
 
 **Windows:**
+
 - None (static linking)
 
 **macOS:**
+
 - None
 
 ---

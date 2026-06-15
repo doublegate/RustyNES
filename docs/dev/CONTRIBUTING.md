@@ -2,7 +2,7 @@
 
 Thank you for your interest in contributing to RustyNES! This document provides guidelines for contributing code, documentation, and bug reports.
 
-**Table of Contents**
+## Table of Contents
 
 - [Code of Conduct](#code-of-conduct)
 - [Getting Started](#getting-started)
@@ -159,7 +159,7 @@ pub fn step(&mut self) -> u8 {
 
 ### Format
 
-```
+```text
 <type>(<scope>): <subject>
 
 <body>
@@ -181,7 +181,7 @@ pub fn step(&mut self) -> u8 {
 
 **Feature**:
 
-```
+```text
 feat(mapper): Add MMC5 mapper support
 
 Implements iNES mapper 5 with PRG/CHR banking,
@@ -192,7 +192,7 @@ Closes #42
 
 **Bug Fix**:
 
-```
+```text
 fix(ppu): Correct sprite zero hit timing
 
 Sprite 0 hit was occurring one cycle too late,
@@ -204,7 +204,7 @@ Fixes #85
 
 **Documentation**:
 
-```
+```text
 docs(cpu): Add cycle timing tables
 
 Documents cycle counts for all 6502 instructions

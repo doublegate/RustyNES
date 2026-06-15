@@ -178,6 +178,7 @@ Review all Markdown TODO files across Milestones 1-5 to verify completion status
 | **Total** | **5/5 Complete** | **98.5% (398/404)** | **~13,700** | **All Dec 19, 2025** |
 
 **Notes:**
+
 - 6 tests ignored (2 PPU timing tests, 4 mapper doctests requiring file I/O)
 - All ignored tests are intentional and documented
 - No test failures
@@ -222,9 +223,11 @@ Review test ROM infrastructure, understand capabilities, and identify test ROM i
 **Currently Integrated Test ROMs (7 total):**
 
 **CPU (1):**
+
 - ✅ `cpu_nestest.nes` - Golden log validation (5003+ instructions)
 
 **PPU (6):**
+
 - ✅ `ppu_vbl_nmi.nes` - Complete VBL/NMI test suite
 - ✅ `ppu_01-vbl_basics.nes` - Basic VBlank behavior
 - ⏸️ `ppu_02-vbl_set_time.nes` - VBL set timing (ignored - requires ±51 cycle precision)
@@ -261,6 +264,7 @@ test-roms/
 **Status:** ✅ Excellent test ROM infrastructure in place
 
 **Strengths:**
+
 - Comprehensive collection of 212+ test ROMs
 - Clear categorization (CPU, PPU, APU, Mappers)
 - Detailed execution plan with target pass rates
@@ -268,6 +272,7 @@ test-roms/
 - Golden log files available for automated validation
 
 **Recommendations:**
+
 - Continue phased integration of pending test ROMs
 - Prioritize high-value tests (Blargg CPU/APU suites)
 - Document any test ROM-specific quirks or timing requirements
@@ -405,12 +410,14 @@ Rationale: Doctests run in isolated environment without test ROM files.
 | **Total** | **6** | **All valid reasons** | **No blocking issues** |
 
 **Performance:**
+
 - Total test execution time: <30 seconds
 - No timeouts
 - No memory issues
 - Clean test output
 
 **Code Quality:**
+
 - Zero unsafe code across all crates
 - All clippy warnings resolved
 - rustfmt compliant
@@ -562,12 +569,14 @@ Update README.md and ROADMAP.md with accurate current project status and test me
 ### Documentation Quality
 
 **Before Updates:**
+
 - Inconsistent test counts across documentation
 - Misleading 100% pass rate (ignored tests not accounted)
 - Outdated component-specific test numbers
 - No doctest visibility
 
 **After Updates:**
+
 - Consistent test counts across all documentation
 - Honest 98.5% pass rate accounting for ignored tests
 - Accurate per-component test breakdown
@@ -620,20 +629,24 @@ Total             385        9          36       430*     98.5%*
 ### Code Quality Metrics
 
 **Safety:**
+
 - ✅ Zero unsafe code blocks across all 5 crates
 - ✅ All unsafe boundaries documented (none present)
 
 **Linting:**
+
 - ✅ Zero clippy warnings (pedantic mode)
 - ✅ rustfmt compliant (default settings)
 - ✅ Zero compilation warnings
 
 **Documentation:**
+
 - ✅ 100% public API documentation
 - ✅ 32 passing doctests demonstrating API usage
 - ✅ Comprehensive architecture documentation (40+ files)
 
 **Lines of Code:**
+
 - CPU: ~2,500 LOC
 - PPU: ~3,200 LOC
 - APU: ~2,800 LOC
@@ -648,6 +661,7 @@ Total             385        9          36       430*     98.5%*
 **Game Coverage:** 77.7% of licensed NES games (500+ titles)
 
 **Coverage Breakdown:**
+
 - Mapper 0 (NROM): 9.5% of games
 - Mapper 1 (MMC1): 27.9% of games
 - Mapper 2 (UxROM): 10.6% of games
@@ -655,6 +669,7 @@ Total             385        9          36       430*     98.5%*
 - Mapper 4 (MMC3): 23.4% of games
 
 **Notable Playable Games:**
+
 - Super Mario Bros. (Mapper 0)
 - Legend of Zelda (Mapper 1)
 - Metroid (Mapper 1)
@@ -665,6 +680,7 @@ Total             385        9          36       430*     98.5%*
 ### Timeline Analysis
 
 **Original Schedule:**
+
 - M1 (CPU): Month 1
 - M2 (PPU): Month 1
 - M3 (APU): Month 2-3
@@ -673,10 +689,12 @@ Total             385        9          36       430*     98.5%*
 - M6 (GUI): Month 5-6
 
 **Actual Completion:**
+
 - M1-M5: All completed December 19, 2025 (Day 1)
 - **Timeline Impact:** 5+ months ahead of schedule
 
 **Accelerated MVP Target:**
+
 - Original: June 2026
 - Revised: March-April 2026
 - **Acceleration:** 2-3 months
@@ -688,6 +706,7 @@ Total             385        9          36       430*     98.5%*
 ### CPU Emulation (M1)
 
 **Implementation Quality:**
+
 - 100% nestest.nes golden log match (5003+ instructions)
 - All 256 opcodes (151 official + 105 unofficial)
 - Cycle-accurate timing
@@ -696,11 +715,13 @@ Total             385        9          36       430*     98.5%*
 - Zero unsafe code
 
 **Test Coverage:**
+
 - 46 unit tests (each opcode validated)
 - 1 integration test (nestest golden log)
 - 100% pass rate
 
 **Notable Features:**
+
 - Table-driven instruction dispatch
 - Strong typing with newtype patterns
 - Extensive documentation with timing tables
@@ -708,6 +729,7 @@ Total             385        9          36       430*     98.5%*
 ### PPU Emulation (M2)
 
 **Implementation Quality:**
+
 - Dot-level 2C02 rendering (341×262 scanlines)
 - Complete background rendering with scrolling
 - Complete sprite rendering with evaluation
@@ -717,11 +739,13 @@ Total             385        9          36       430*     98.5%*
 - Zero unsafe code
 
 **Test Coverage:**
+
 - 83 unit tests (rendering functions)
 - 4 integration tests (2 passing, 2 ignored)
 - 97.7% pass rate
 
 **Notable Features:**
+
 - Cycle-accurate rendering pipeline
 - Hardware-accurate color palette
 - Correct sprite evaluation (8 sprite limit)
@@ -730,6 +754,7 @@ Total             385        9          36       430*     98.5%*
 ### APU Emulation (M3)
 
 **Implementation Quality:**
+
 - All 5 audio channels (2 pulse, triangle, noise, DMC)
 - Cycle-accurate frame counter (4-step, 5-step)
 - Non-linear mixing with hardware lookup tables
@@ -738,11 +763,13 @@ Total             385        9          36       430*     98.5%*
 - Zero unsafe code
 
 **Test Coverage:**
+
 - 132 unit tests (channel-specific)
 - 4 integration tests (frame counter, mixing)
 - 100% pass rate
 
 **Notable Features:**
+
 - Authentic NES audio characteristics
 - Hardware-accurate mixing curves
 - DMC channel with memory reader
@@ -751,6 +778,7 @@ Total             385        9          36       430*     98.5%*
 ### Mapper Implementation (M4)
 
 **Implementation Quality:**
+
 - 5 essential mappers (NROM, MMC1, UxROM, CNROM, MMC3)
 - Complete iNES 1.0 and NES 2.0 parsing
 - Battery-backed SRAM support
@@ -759,10 +787,12 @@ Total             385        9          36       430*     98.5%*
 - Zero unsafe code
 
 **Test Coverage:**
+
 - 78 unit tests (mapper-specific)
 - 100% pass rate
 
 **Notable Features:**
+
 - Extensible trait design (ready for 250+ mappers)
 - Factory pattern for mapper creation
 - Mirroring modes (H, V, single-screen, four-screen)
@@ -771,6 +801,7 @@ Total             385        9          36       430*     98.5%*
 ### Core Integration (M5)
 
 **Implementation Quality:**
+
 - Complete rustynes-core integration layer
 - Hardware-accurate bus with full memory map
 - Console coordinator with master clock sync
@@ -780,10 +811,12 @@ Total             385        9          36       430*     98.5%*
 - Zero unsafe code
 
 **Test Coverage:**
+
 - 18 unit tests (bus, console, controller, integration)
 - 100% pass rate
 
 **Notable Features:**
+
 - Clean component integration
 - Ready for GUI integration
 - Save state format defined
@@ -802,9 +835,11 @@ Total             385        9          36       430*     98.5%*
 **Integration Details:**
 
 **CPU:**
+
 - ✅ nestest.nes (100% golden log match)
 
 **PPU:**
+
 - ✅ ppu_vbl_nmi.nes (complete VBL/NMI suite)
 - ✅ ppu_01-vbl_basics.nes (basic VBlank)
 - ⏸️ ppu_02-vbl_set_time.nes (ignored - timing precision)
@@ -817,23 +852,27 @@ Total             385        9          36       430*     98.5%*
 **Total Pending:** 205 test ROMs
 
 **CPU (35 pending):**
+
 - Blargg instruction tests (11 ROMs)
 - Blargg timing tests (3 ROMs)
 - Other CPU validation (21 ROMs)
 
 **PPU (43 pending):**
+
 - Additional VBL/NMI tests
 - Sprite overflow tests
 - Rendering edge cases
 - Palette tests
 
 **APU (70 pending):**
+
 - Blargg APU test suite (complete)
 - Channel-specific tests
 - Frame counter tests
 - DMC tests
 
 **Mappers (57 pending):**
+
 - Holy Mapperel suite (45 ROMs)
 - MMC3 specialized tests (12 ROMs)
 
@@ -850,6 +889,7 @@ Total             385        9          36       430*     98.5%*
 ### Test ROM Infrastructure Quality
 
 **Strengths:**
+
 - Comprehensive collection (212+ ROMs)
 - Clear categorization and documentation
 - Automated test harness for integrated ROMs
@@ -857,6 +897,7 @@ Total             385        9          36       430*     98.5%*
 - Detailed pass/fail criteria
 
 **Opportunities:**
+
 - Continue phased integration
 - Add visual regression tests
 - Expand coverage of edge cases
@@ -888,12 +929,14 @@ Total             385        9          36       430*     98.5%*
 ### Resolutions Implemented
 
 **Documentation Updates:**
+
 - ✅ Updated README.md with accurate test counts
 - ✅ Updated ROADMAP.md with milestone status
 - ✅ Documented all ignored tests with rationale
 - ✅ Added doctest accounting to visibility
 
 **Quality Assurance:**
+
 - ✅ Verified all 398 passing tests
 - ✅ Analyzed all 6 ignored tests
 - ✅ Confirmed zero unsafe code
@@ -931,16 +974,19 @@ Total             385        9          36       430*     98.5%*
 ### Test ROM Integration Plan
 
 **Priority 1 (MVP Critical):**
+
 - Blargg CPU instruction tests (11 ROMs)
 - Basic PPU rendering tests
 - Essential mapper tests
 
 **Priority 2 (Post-MVP):**
+
 - Blargg APU test suite (70 ROMs)
 - Advanced PPU tests
 - Mapper edge cases
 
 **Priority 3 (Phase 2+):**
+
 - TASVideos accuracy suite
 - Timing precision tests
 - Exotic hardware tests
@@ -950,6 +996,7 @@ Total             385        9          36       430*     98.5%*
 **Phase 1 MVP:** Focus on correctness over performance
 
 **Phase 2 Optimization:**
+
 - CPU: Jump table dispatch, inline hot paths
 - PPU: SIMD pixel compositing, batch rendering
 - APU: Fast sinc resampling, SSE/NEON mixing
@@ -958,6 +1005,7 @@ Total             385        9          36       430*     98.5%*
 ### Documentation Maintenance
 
 **Ongoing:**
+
 - Keep README.md and ROADMAP.md synchronized
 - Update test counts as new tests added
 - Document any ignored tests with rationale
@@ -966,6 +1014,7 @@ Total             385        9          36       430*     98.5%*
 ### Community Engagement
 
 **Post-MVP Release:**
+
 - GitHub release with binaries
 - Reddit announcement (/r/emulation, /r/rust)
 - Video demo on YouTube
@@ -1058,22 +1107,26 @@ Total             385        9          36       430*     98.5%*
 ### Code Quality Metrics
 
 **Safety:**
+
 - Unsafe blocks: 0
 - Unsafe functions: 0
 - Raw pointers: 0
 - FFI boundaries: 0
 
 **Linting:**
+
 - Clippy warnings: 0
 - Compilation warnings: 0
 - Rustfmt violations: 0
 
 **Documentation:**
+
 - Public API docs: 100%
 - Architecture docs: 40+ files
 - Doctests: 32 passing
 
 **Testing:**
+
 - Unit tests: 385
 - Integration tests: 9
 - Doctests: 36
@@ -1170,16 +1223,19 @@ Ignored: 6 (appropriately documented)
 ### Appendix C: Files Modified
 
 **README.md:**
+
 - 10 edits updating test counts and metrics
 - Lines modified: 11-15, 33, 164-177, 287-291, 296-319, 410-432, 576-586
 
 **ROADMAP.md:**
+
 - 13 edits updating milestone status and test counts
 - Lines modified: 34, 39-41, 151-156, 184-188, 228-236, 267-271, 286, 716-720, 728-782, 874, 929-936, 1013-1021, 1043-1044
 
 ### Appendix D: Reference Documentation
 
 **Project Documentation:**
+
 - OVERVIEW.md - Project vision and philosophy
 - ARCHITECTURE.md - System design (20,000+ lines)
 - ROADMAP.md - Development timeline (1,070 lines)
@@ -1187,6 +1243,7 @@ Ignored: 6 (appropriately documented)
 - CLAUDE.md - Claude Code guidance
 
 **Milestone Documentation:**
+
 - M1-OVERVIEW.md, M1-COMPLETION-REPORT.md (CPU)
 - M2-OVERVIEW.md, M2-COMPLETION-REPORT.md (PPU)
 - M3-OVERVIEW.md, M3-COMPLETION-REPORT.md (APU)
@@ -1194,6 +1251,7 @@ Ignored: 6 (appropriately documented)
 - M5-OVERVIEW.md (Integration)
 
 **Test Documentation:**
+
 - TEST_ROM_PLAN.md (856 lines)
 - TEST_ROM_GUIDE.md (comprehensive test reference)
 

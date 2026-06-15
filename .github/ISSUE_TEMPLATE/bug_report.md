@@ -55,7 +55,7 @@ What actually happened.
 <details>
 <summary>Click to expand logs</summary>
 
-```
+```text
 Paste relevant log output here (enable debug logging with RUST_LOG=debug)
 ```
 

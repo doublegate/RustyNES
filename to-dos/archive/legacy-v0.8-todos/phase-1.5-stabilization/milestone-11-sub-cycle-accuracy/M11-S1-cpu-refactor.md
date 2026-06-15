@@ -118,6 +118,7 @@ impl Cpu {
 Refactor each opcode to use cycle methods. Example:
 
 **Before:**
+
 ```rust
 fn lda_absolute(&mut self, bus: &mut impl CpuBus) -> u8 {
     let lo = bus.read(self.pc);
@@ -132,6 +133,7 @@ fn lda_absolute(&mut self, bus: &mut impl CpuBus) -> u8 {
 ```
 
 **After:**
+
 ```rust
 fn lda_absolute(&mut self, bus: &mut impl CpuBus) -> u8 {
     // Cycle 2: Read low byte

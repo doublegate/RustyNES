@@ -49,4 +49,4 @@ Final testing, documentation, and v1.0 release preparation. Achieves 100% TASVid
 
 ## Future Planning
 
-**Detailed tasks to be created when milestone begins**
+### Detailed tasks to be created when milestone begins

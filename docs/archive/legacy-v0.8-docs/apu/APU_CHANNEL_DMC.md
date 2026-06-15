@@ -371,7 +371,7 @@ Worst case: 4 CPU cycles (fetch during opcode read)
 
 ### Sample Storage Strategies
 
-**Strategy 1: Fixed Location (Simple)**
+#### Strategy 1: Fixed Location (Simple)
 
 ```
 PRG-ROM $E000-$EFFF: 4KB sample bank
@@ -379,14 +379,14 @@ $4012 = $80 (address = $E000)
 $4013 = $FF (length = 4081 bytes)
 ```
 
-**Strategy 2: Mapper Banking (Flexible)**
+#### Strategy 2: Mapper Banking (Flexible)
 
 ```
 Use mapper (MMC3/MMC5) to bank samples into $C000-$DFFF
 $4012 varies based on current bank
 ```
 
-**Strategy 3: Multiple Small Samples**
+#### Strategy 3: Multiple Small Samples
 
 ```
 $C000-$C7FF: 8 samples × 256 bytes
@@ -414,7 +414,7 @@ The DMC output is a **7-bit value** (0-127), providing 128 discrete levels.
 
 Games can write $4011 to manually control output level:
 
-**Example: Generate Triangle Wave**
+#### Example: Generate Triangle Wave
 
 ```rust
 // 32-step triangle wave
@@ -431,7 +431,7 @@ for &level in &TRIANGLE {
 }
 ```
 
-**Example: Bass Drum**
+#### Example: Bass Drum
 
 ```rust
 // Sharp attack, exponential decay
@@ -492,7 +492,7 @@ fn check_apu_irq(&mut self) -> bool {
 }
 ```
 
-**Usage Example: Streamed Audio**
+#### Usage Example: Streamed Audio
 
 ```
 1. Start sample playback (1KB chunk)
@@ -522,7 +522,7 @@ fn check_apu_irq(&mut self) -> bool {
 
 **Workaround Strategies:**
 
-**1. Read Multiple Times**
+#### 1. Read Multiple Times
 
 ```rust
 let read1 = controller.read();
@@ -537,7 +537,7 @@ if read1 == read2 || read1 == read3 {
 }
 ```
 
-**2. Disable DMC During Input Read**
+#### 2. Disable DMC During Input Read
 
 ```rust
 // Save DMC state
@@ -553,7 +553,8 @@ let input = controller.read();
 apu.write(0x4015, dmc_state);
 ```
 
-**3. Use Slower Sample Rates**
+#### 3. Use Slower Sample Rates
+
 Lower DMC frequencies reduce conflict probability.
 
 ### PPU Read Corruption

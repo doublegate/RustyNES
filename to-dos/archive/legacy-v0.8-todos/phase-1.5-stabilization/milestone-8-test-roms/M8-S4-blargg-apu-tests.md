@@ -16,6 +16,7 @@ Systematically pass the Blargg APU test suite (70 tests) to validate audio chann
 ## Tasks
 
 ### Task 1: Comprehensive APU Tests (15 tests)
+
 - [x] Run apu_test/apu_test.nes (Passed test 1, 2, 3, 7, 8. Fails on test 4 jitter)
 - [x] Test 1-len_ctr.nes (Passed)
 - [x] Test 2-len_table.nes (Passed)
@@ -27,6 +28,7 @@ Systematically pass the Blargg APU test suite (70 tests) to validate audio chann
 - [x] Test 8-dmc_rates.nes (Passed)
 
 ### Task 2: Frame Counter Tests (10 tests)
+
 - [x] Run apu_frame_counter/apu_frame_counter.nes (Improvement made)
 - [ ] Test 4-step mode timing (14,915 cycles, 29,829 cycles)
 - [ ] Test 5-step mode timing (18,641 cycles, 37,282 cycles)
@@ -39,6 +41,7 @@ Systematically pass the Blargg APU test suite (70 tests) to validate audio chann
 ### Task 3: Channel-Specific Tests (25 tests)
 
 #### Pulse Channels (8 tests)
+
 - [x] Test pulse 1 duty cycle (Passed)
 - [x] Test pulse 2 duty cycle (Passed)
 - [x] Verify sweep unit behavior (Passed)
@@ -47,6 +50,7 @@ Systematically pass the Blargg APU test suite (70 tests) to validate audio chann
 - [ ] Test frequency sweep edge cases
 
 #### Triangle Channel (6 tests)
+
 - [x] Run apu_lin_ctr/apu_lin_ctr.nes (Passed)
 - [x] Test linear counter reload timing (Passed)
 - [ ] Verify halt flag behavior
@@ -55,6 +59,7 @@ Systematically pass the Blargg APU test suite (70 tests) to validate audio chann
 - [ ] Test triangle output waveform
 
 #### Noise Channel (5 tests)
+
 - [x] Test noise mode 0 (Passed)
 - [x] Test noise mode 1 (Passed)
 - [x] Verify envelope generator (Passed)
@@ -62,6 +67,7 @@ Systematically pass the Blargg APU test suite (70 tests) to validate audio chann
 - [x] Validate noise output levels (Passed)
 
 #### DMC Channel (6 tests)
+
 - [x] Run apu_dmc/apu_dmc.nes (Passed basics and rates)
 - [x] Test DMC sample buffer (Refill immediately fix)
 - [ ] Verify DMC DMA conflicts with CPU
@@ -70,6 +76,7 @@ Systematically pass the Blargg APU test suite (70 tests) to validate audio chann
 - [ ] Test memory reader timing
 
 ### Task 4: Mixer Tests (5 tests)
+
 - [x] Run apu_mixer/apu_mixer.nes (Passed)
 - [ ] Verify non-linear mixing formula
 - [ ] Test pulse channel mixing (0-15 volume levels)
@@ -78,6 +85,7 @@ Systematically pass the Blargg APU test suite (70 tests) to validate audio chann
 - [ ] Compare mixer output to reference recordings
 
 ### Task 5: Miscellaneous APU Tests (15 tests)
+
 - [x] Test $4015 read/write behavior (Fixed)
 - [ ] Verify APU register mirroring
 - [ ] Test open bus behavior ($4000-$4017)
@@ -106,6 +114,7 @@ Systematically pass the Blargg APU test suite (70 tests) to validate audio chann
 | apu_envelope/apu_envelope.nes | ✅ Pass | |
 
 **Additional APU Tests (40+ ROMs):**
+
 - apu_pulse/ (pulse channel tests)
 - apu_triangle/ (triangle channel tests)
 - apu_noise/ (noise channel tests)
@@ -125,6 +134,7 @@ Systematically pass the Blargg APU test suite (70 tests) to validate audio chann
 ## Expected Failures (3 tests)
 
 **Expansion Audio Tests:**
+
 - apu_vrc6/vrc6_test.nes - VRC6 expansion audio (not in Phase 1.5 scope)
 - apu_fds/fds_test.nes - FDS expansion audio (not in Phase 1.5 scope)
 - apu_mmc5/mmc5_test.nes - MMC5 expansion audio (not in Phase 1.5 scope)

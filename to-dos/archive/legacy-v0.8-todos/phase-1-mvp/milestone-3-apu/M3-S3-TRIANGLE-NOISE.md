@@ -649,6 +649,7 @@ mod noise_tests {
 ### Triangle Linear Counter vs Length Counter
 
 The triangle channel has BOTH a linear counter and a length counter:
+
 - **Linear counter**: Clocked every quarter frame, reloads based on control flag
 - **Length counter**: Clocked every half frame, standard behavior
 

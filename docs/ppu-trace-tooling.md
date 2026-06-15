@@ -79,7 +79,8 @@ This tooling is the PPU-side analogue of `crates/rustynes-core/src/irq_trace.rs`
 (the per-CPU-cycle IRQ trace fixture that empirically unblocked
 Phase B4 of Track C1; see ADR 0002 §"Test fixture"). Same design
 pattern (linear buffer with overflow counter, feature-gated, binary
-+ CSV output, integration-test consumer) applied to PPU state.
+
+* CSV output, integration-test consumer) applied to PPU state.
 
 ---
 
@@ -349,7 +350,7 @@ Exit codes:
 
 Output format per divergence:
 
-```
+```text
 [diff @ frame=315 scanline=12 dot=137]
   (anchor: ref(frame=315,scanline=12,dot=137) vs actual(frame=315,scanline=12,dot=137))
     spr_shift_lo                   ref=[00, 03, 00, 00, ...] actual=[00, 04, 00, 00, ...]

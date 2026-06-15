@@ -1,6 +1,6 @@
 # Configuration
 
-**Table of Contents**
+## Table of Contents
 
 - [Overview](#overview)
 - [Configuration Structure](#configuration-structure)

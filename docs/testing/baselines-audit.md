@@ -46,6 +46,7 @@ even when the framebuffer is unchanged.
 
 **Frame counts.** `STABILIZED_FRAME = 600` (10 s @ NTSC 60 Hz) for
 hotswap ROMs — past the upstream "half-second buzz + 256-frame delay
+
 + second buzz" sequence. `STABILIZED_FRAME_NROM = 180` (3 s) for the
 bare-APU ROMs without the hotswap dance (`db_apu`, `tri_silence`,
 `dac_square`).
@@ -118,7 +119,7 @@ A12-transition regression test by tepples. Public-domain via
 **Visible at baseline.** Full-screen red-and-blue checkerboard
 background overlaid with the text banner:
 
-```
+```text
 MMC1 WRAM DISABLE SCANLINE
        COUNTER TEST
        C 2010 BREGALAD
@@ -200,12 +201,12 @@ text under `crates/rustynes-test-harness/tests/snapshots/external_real_games__*.
 **The 6 `#[ignore]`'d ROMs.** Each is annotated with a `reason =
 "…"` on the `#[ignore]` attribute. Common patterns:
 
-- **Uniform-black ($0D palette, hash `1719dca5cef7a325`)**: Tiny Toon
++ **Uniform-black ($0D palette, hash `1719dca5cef7a325`)**: Tiny Toon
   Adventures 2, Mr. Gimmick. Mr. Gimmick's Sunsoft splash + intro
   animation is famously long; Tiny Toon Adventures 2 has a Konami
   intro + character-presentation sequence. Both likely flip to a real
   frame at frames=1200 or with a START tap.
-- **Uniform-gray ($00 palette, hash `89ee4c476c97a325`)**: Fire Emblem
++ **Uniform-gray ($00 palette, hash `89ee4c476c97a325`)**: Fire Emblem
   Gaiden, Ganbare Goemon 2, Esper Dream 2, Madara. Three of the four
   are on VRC4/VRC6 — investigate `rustynes-mappers::vrc24` and `vrc6`
   pinout decoders for the iNES-26 mapping. Fire Emblem Gaiden is
@@ -241,21 +242,21 @@ miss surface here against real commercial title screens.
 
 Factored-out helpers used by the three new harnesses:
 
-- `fnv1a64(bytes) -> u64` — canonical FNV-1a-64.
-- `rom_path(rel) -> PathBuf` — workspace-rooted `tests/roms/` resolver.
-- `write_png(path, fb)` — PNG dump (256×240 RGBA).
-- `dump_frame_if_requested(corpus, rom, frame_label, fb)` — opt-in PNG
++ `fnv1a64(bytes) -> u64` — canonical FNV-1a-64.
++ `rom_path(rel) -> PathBuf` — workspace-rooted `tests/roms/` resolver.
++ `write_png(path, fb)` — PNG dump (256×240 RGBA).
++ `dump_frame_if_requested(corpus, rom, frame_label, fb)` — opt-in PNG
   dump under `/tmp/rustynes-baseline-screenshots/<corpus>/`, gated on
   `RUSTYNES_DUMP_FRAMES=1`.
-- `run_and_hash(rom_rel, frames) -> u64` — fb-only baseline capture.
-- `run_and_hash_with_dump(corpus, rom_rel, frames) -> u64` — adds the
++ `run_and_hash(rom_rel, frames) -> u64` — fb-only baseline capture.
++ `run_and_hash_with_dump(corpus, rom_rel, frames) -> u64` — adds the
   opt-in PNG dump on top of `run_and_hash`.
-- `snapshot_line(rom, frames, hash) -> String` — fb-only one-liner
++ `snapshot_line(rom, frames, hash) -> String` — fb-only one-liner
   matching `tests/visual_regression.rs` convention.
-- `run_and_capture_full(corpus, rom_rel, frames) -> (fb_hash, cycles,
++ `run_and_capture_full(corpus, rom_rel, frames) -> (fb_hash, cycles,
   samples, audio_hash)` — the full-state regression capture used by
   the audio-tests harness.
-- `snapshot_line_full(...) -> String` — full-state one-liner.
++ `snapshot_line_full(...) -> String` — full-state one-liner.
 
 The existing harness `crates/rustynes-test-harness/tests/external_real_games.rs`
 (the FSM-recovery oracle) is intentionally **NOT touched** — it has
@@ -306,9 +307,9 @@ high-level recipes are:
 The `bisect_runner.sh` translates exit codes per `git bisect run`
 conventions:
 
-- `0` GOOD — build + test both passed.
-- `1` BAD — build OK but test failed.
-- `125` SKIP — build broken (unreliable; tells bisect to skip this
++ `0` GOOD — build + test both passed.
++ `1` BAD — build OK but test failed.
++ `125` SKIP — build broken (unreliable; tells bisect to skip this
   commit).
 
 The **shell-redirection gotcha** that bit the FSM-recovery bisect:
@@ -321,23 +322,23 @@ redirections are processed left-to-right.
 
 Confirmed at landing time (2026-05-17):
 
-- `cargo fmt --all --check` — clean.
-- `cargo clippy --workspace --all-targets --features test-roms -- -D warnings` — clean.
-- `cargo clippy --workspace --all-targets --features test-roms,commercial-roms -- -D warnings` — clean.
-- `cargo doc --workspace --no-deps` — clean.
-- `cargo test --workspace --features test-roms` — passes (was 510
++ `cargo fmt --all --check` — clean.
++ `cargo clippy --workspace --all-targets --features test-roms -- -D warnings` — clean.
++ `cargo clippy --workspace --all-targets --features test-roms,commercial-roms -- -D warnings` — clean.
++ `cargo doc --workspace --no-deps` — clean.
++ `cargo test --workspace --features test-roms` — passes (was 510
   strict + 5 ignored before; +21 strict from new harnesses; expected
   531 strict + 5 ignored). `commercial-roms` is OFF by default so this
   count is unchanged by the 60-ROM expansion.
-- `cargo test -p rustynes-test-harness --features test-roms,commercial-roms
++ `cargo test -p rustynes-test-harness --features test-roms,commercial-roms
   --test external_real_games -- --test-threads=1` — **54 passing +
   6 ignored** for the commercial-roms harness alone. Requires staged
   ROMs at `tests/roms/external/` (gitignored).
-- `cargo test --workspace --no-default-features` — preserves the
++ `cargo test --workspace --no-default-features` — preserves the
   no_std + alloc invariant; same pass count as before (375 — new
   harnesses are `cfg(feature = "test-roms")` / `cfg(feature =
   "commercial-roms")` and do not affect it).
-- AccuracyCoin floor — unchanged. The new harnesses don't touch the
++ AccuracyCoin floor — unchanged. The new harnesses don't touch the
   emulator behavior, only test it.
 
 ---

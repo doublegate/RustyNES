@@ -1,6 +1,6 @@
 # NES Memory Map Reference
 
-**Table of Contents**
+## Table of Contents
 
 - [Overview](#overview)
 - [CPU Address Space](#cpu-address-space)

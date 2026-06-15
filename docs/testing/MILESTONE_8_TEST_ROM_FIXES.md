@@ -18,6 +18,7 @@
 Milestone 8 represents a systematic validation and refinement effort across all core NES subsystems (CPU, PPU, APU, Mappers) using the industry-standard Blargg test suite. This milestone achieved **100% pass rate** on all integrated test ROMs through 5 focused sprints addressing timing precision, hardware behavior accuracy, and architectural fixes.
 
 **Key Achievements:**
+
 - **CPU:** 22/22 Blargg tests passing (100%) - NMI hijacking, interrupt timing, cycle-accurate state machine
 - **PPU:** 25/25 Blargg tests passing (100%) - Open bus emulation, CHR-RAM routing, VBlank timing
 - **APU:** 15/15 Blargg tests passing (100%) - Frame counter clocking, DMC timing, IRQ handling
@@ -29,6 +30,7 @@ Milestone 8 represents a systematic validation and refinement effort across all 
 ## Test Results Summary
 
 ### Before Milestone 8 (v0.6.0)
+
 - **nestest.nes:** Pass (baseline)
 - **Blargg CPU tests:** 13/20 (65%)
 - **Blargg PPU tests:** Not integrated
@@ -37,6 +39,7 @@ Milestone 8 represents a systematic validation and refinement effort across all 
 - **Total workspace tests:** 429 passing
 
 ### After Milestone 8 (v0.7.0)
+
 - **nestest.nes:** Pass (no regressions)
 - **Blargg CPU tests:** 22/22 (100%) (+35%)
 - **Blargg PPU tests:** 25/25 (100%) (new)
@@ -54,6 +57,7 @@ Milestone 8 represents a systematic validation and refinement effort across all 
 **Objective:** Establish automated nestest.nes golden log validation and baseline CPU instruction accuracy.
 
 **Key Accomplishments:**
+
 - Automated nestest.nes execution in automation mode ($C000 entry point)
 - Line-by-line golden log comparison with context reporting
 - Verified all 256 opcodes cycle-accurate via nestest
@@ -61,6 +65,7 @@ Milestone 8 represents a systematic validation and refinement effort across all 
 - Confirmed dummy write cycles in RMW instructions
 
 **Test Results:**
+
 | Test ROM | Status | Notes |
 |----------|--------|-------|
 | cpu_nestest.nes | Pass | Baseline validation (no regressions) |
@@ -70,6 +75,7 @@ Milestone 8 represents a systematic validation and refinement effort across all 
 | cpu_dummy_reads.nes | Pass | Fixed: Cycle-accurate dummy read timing implemented |
 
 **Key Fix:**
+
 - `cpu_dummy_reads.nes`: Fixed by implementing proper dummy read cycles in implied addressing mode instructions and RMW indexed addressing
 
 ---
@@ -81,11 +87,13 @@ Milestone 8 represents a systematic validation and refinement effort across all 
 **Critical Fixes:**
 
 #### 2.1 Interrupt Handling - NMI Hijacking During BRK
+
 **Problem:** Test `cpu_interrupts.nes` test #2 failed - NMI during BRK should hijack the interrupt vector.
 
 **Root Cause:** CPU state machine didn't correctly handle NMI detection during `BRK` execution cycle 1 (opcode fetch).
 
 **Fix (crates/rustynes-cpu/src/cpu.rs):**
+
 ```rust
 // In Cpu::tick state machine, cycle 1 of BRK:
 CpuState::Fetch => {
@@ -110,11 +118,13 @@ CpuState::Fetch => {
 ---
 
 #### 2.2 RTI Instruction - Immediate I Flag Restoration
+
 **Problem:** IRQ handling after RTI instruction had off-by-one-instruction timing.
 
 **Root Cause:** When RTI restores the status register with I (Interrupt Disable) flag set to 1, the I flag must block interrupts immediately for the *next* instruction, not the current one.
 
 **Fix (crates/rustynes-cpu/src/cpu.rs - tick_pop_status):**
+
 ```rust
 fn tick_pop_status(&mut self, bus: &mut impl Bus) -> bool {
     let value = bus.read(0x0100 | u16::from(self.sp));
@@ -138,12 +148,15 @@ fn tick_pop_status(&mut self, bus: &mut impl Bus) -> bool {
 ---
 
 #### 2.3 Test Infrastructure
+
 **Added:** `crates/rustynes-core/tests/blargg_cpu_tests.rs` (443 lines)
+
 - Automated execution of 22 Blargg CPU test ROMs
 - Status code extraction and validation
 - Detailed failure diagnostics with test output
 
 **Test Results:**
+
 | Category | Tests | Status |
 |----------|-------|--------|
 | Instruction Singles (11 tests) | cpu_instr_01-11 | PASS: 11/11 |
@@ -163,11 +176,13 @@ fn tick_pop_status(&mut self, bus: &mut impl Bus) -> bool {
 **Critical Fixes:**
 
 #### 3.1 PPU Open Bus Emulation
+
 **Problem:** Tests `ppu_open_bus.nes` failed - PPU must maintain a data latch that decays over ~1 second.
 
 **Root Cause:** Write-only registers ($2000, $2001, $2003, $2005, $2006) returned hardcoded 0x00 instead of open bus data.
 
 **Fix (crates/rustynes-ppu/src/ppu.rs):**
+
 ```rust
 pub struct Ppu {
     // ... existing fields
@@ -225,6 +240,7 @@ impl Ppu {
 ```
 
 **Hardware Behavior:**
+
 - PPU has only one data bus shared by all registers
 - Write-only registers don't drive the bus on reads, so they return the last value on the bus
 - The data bus capacitance holds the value for ~1 second before decaying to 0
@@ -236,11 +252,13 @@ impl Ppu {
 ---
 
 #### 3.2 CHR-RAM Routing Architecture Fix
+
 **Problem:** Games using CHR-RAM (e.g., `ppu_palette_ram.nes`, `apu_len_ctr.nes`) failed because PPU writes to Pattern Tables ($0000-$1FFF) went nowhere.
 
 **Root Cause:** PPU write operations didn't route to mapper-controlled CHR memory. Writes were silently discarded.
 
 **Fix (crates/rustynes-ppu/src/ppu.rs + crates/rustynes-core/src/bus.rs):**
+
 ```rust
 // PPU register interface changed to accept CHR read/write callbacks
 pub fn read_register<F: FnMut(u16) -> u8>(&mut self, addr: u16, mut read_chr: F) -> u8 {
@@ -276,6 +294,7 @@ pub fn write_register<F: FnMut(u16, u8)>(&mut self, addr: u16, value: u8, mut wr
 ```
 
 **Architectural Impact:**
+
 - **Before:** PPU owned CHR memory read, writes were impossible
 - **After:** Mapper owns CHR memory, PPU uses callbacks for reads/writes
 - **Benefits:**
@@ -288,11 +307,13 @@ pub fn write_register<F: FnMut(u16, u8)>(&mut self, addr: u16, value: u8, mut wr
 ---
 
 #### 3.3 OAM Attribute Bit Masking
+
 **Problem:** OAM sprite attribute reads returned all 8 bits, but hardware only stores 3 bits.
 
 **Root Cause:** OAM memory stores only bits 7-5 (priority, flip flags) and 1-0 (palette). Bits 4-2 are undriven.
 
 **Fix (crates/rustynes-ppu/src/oam.rs):**
+
 ```rust
 pub fn read(&self) -> u8 {
     let data = self.data[self.address as usize];
@@ -315,11 +336,13 @@ pub fn read(&self) -> u8 {
 ---
 
 #### 3.4 VBlank Timing Precision
+
 **Problem:** `ppu_vbl_02_set_time.nes` required VBlank flag to be set within ±2 cycles of dot 1 on scanline 241.
 
 **Root Cause:** PPU timing tick order caused off-by-one-dot errors in VBlank flag setting.
 
 **Fix (crates/rustynes-ppu/src/timing.rs):**
+
 - Verified VBlank flag sets exactly on dot 1, scanline 241
 - Confirmed NMI triggers on the same dot (if enabled)
 - No code changes needed - timing was already correct
@@ -329,13 +352,16 @@ pub fn read(&self) -> u8 {
 ---
 
 #### 3.5 Test Infrastructure
+
 **Added:** `crates/rustynes-core/tests/blargg_ppu_tests.rs` (349 lines)
+
 - Automated execution of 25 Blargg PPU test ROMs
 - VBlank/NMI timing validation
 - Sprite 0 hit testing
 - Palette RAM and open bus verification
 
 **Test Results:**
+
 | Category | Tests | Status |
 |----------|-------|--------|
 | VBlank/NMI (10 tests) | ppu_vbl_01-10 | PASS: 10/10 |
@@ -354,11 +380,13 @@ pub fn read(&self) -> u8 {
 **Critical Fixes:**
 
 #### 4.1 Frame Counter Immediate Clocking
+
 **Problem:** Tests `apu_test/04-jitter.nes` and `05-len_timing.nes` failed - writing to $4017 must immediately clock frame actions.
 
 **Root Cause:** Writing to $4017 (frame counter control) only changed mode, but didn't immediately trigger quarter/half frame clocks.
 
 **Fix (crates/rustynes-apu/src/frame_counter.rs + apu.rs):**
+
 ```rust
 // frame_counter.rs
 pub fn write_control(&mut self, value: u8) -> FrameAction {
@@ -388,6 +416,7 @@ pub fn write_register(&mut self, addr: u16, value: u8) {
 ```
 
 **Hardware Behavior:**
+
 - **Mode 0 (4-step):** Writing $4017 resets cycle counter, no immediate action
 - **Mode 1 (5-step):** Writing $4017 resets cycle counter AND immediately clocks quarter + half frame
 
@@ -396,11 +425,13 @@ pub fn write_register(&mut self, addr: u16, value: u8) {
 ---
 
 #### 4.2 Frame Counter Cycle Precision (+1 cycle shift)
+
 **Problem:** Frame counter events fired 1 cycle too early.
 
 **Root Cause:** Original implementation used APU cycle counts (half CPU cycles), causing rounding errors.
 
 **Fix (crates/rustynes-apu/src/frame_counter.rs):**
+
 ```rust
 // BEFORE (v0.6.0):
 fn clock_4step(&mut self) -> FrameAction {
@@ -434,11 +465,13 @@ fn clock_4step(&mut self) -> FrameAction {
 ---
 
 #### 4.3 DMC Sample Buffer Refill Logic
+
 **Problem:** `apu_dmc_basics.nes` failed - DMC sample playback stopped prematurely.
 
 **Root Cause:** DMC memory reader only refilled the sample buffer on timer expiry, not immediately when buffer became empty.
 
 **Fix (crates/rustynes-apu/src/dmc.rs):**
+
 ```rust
 pub fn clock_timer(&mut self) {
     if self.timer == 0 {
@@ -467,6 +500,7 @@ pub fn clock_timer(&mut self) {
 ```
 
 **Hardware Behavior:** DMC has a 2-level pipeline:
+
 1. **Shift Register:** Outputs bits to DAC (8 bits)
 2. **Sample Buffer:** Holds next byte (1 byte)
 
@@ -477,11 +511,13 @@ When the shift register empties, it immediately loads from the sample buffer. If
 ---
 
 #### 4.4 DMC IRQ Flag Handling
+
 **Problem:** `apu_dmc_rates.nes` and IRQ tests failed - DMC IRQ flag cleared incorrectly.
 
 **Root Cause:** Reading $4015 cleared both frame counter IRQ and DMC IRQ flags. Hardware only clears frame counter IRQ.
 
 **Fix (crates/rustynes-apu/src/apu.rs):**
+
 ```rust
 // BEFORE (v0.6.0):
 pub fn read_register(&mut self, addr: u16) -> u8 {
@@ -526,6 +562,7 @@ pub fn write_register(&mut self, addr: u16, value: u8) {
 ```
 
 **Hardware Behavior:**
+
 - **Frame Counter IRQ:** Cleared by reading $4015 or writing $4017
 - **DMC IRQ:** Cleared only by writing to $4015 or disabling DMC
 
@@ -534,11 +571,13 @@ pub fn write_register(&mut self, addr: u16, value: u8) {
 ---
 
 #### 4.5 Pulse/Noise Timer Clock Parity
+
 **Problem:** Audio pitch was incorrect for pulse and noise channels.
 
 **Root Cause:** Pulse and noise timers were clocked every CPU cycle, but hardware clocks them every other cycle (APU is CPU ÷ 2).
 
 **Fix (crates/rustynes-apu/src/apu.rs):**
+
 ```rust
 pub fn step(&mut self) -> FrameAction {
     self.cycles += 1;
@@ -559,6 +598,7 @@ pub fn step(&mut self) -> FrameAction {
 ```
 
 **Hardware Behavior:**
+
 - **APU Clock:** CPU ÷ 2 (894,886 Hz NTSC)
 - **Triangle/DMC:** Clocked at CPU rate (1.789 MHz)
 - **Pulse/Noise:** Clocked at APU rate (894 kHz)
@@ -568,13 +608,16 @@ pub fn step(&mut self) -> FrameAction {
 ---
 
 #### 4.6 Test Infrastructure
+
 **Added:** `crates/rustynes-core/tests/blargg_apu_tests.rs` (277 lines)
+
 - Automated execution of 15 Blargg APU test ROMs
 - Frame counter timing validation
 - Channel-specific behavior verification
 - Mixer output validation
 
 **Test Results:**
+
 | Category | Tests | Status |
 |----------|-------|--------|
 | Comprehensive (8 tests) | apu_test/01-08 | PASS: 8/8 |
@@ -592,10 +635,12 @@ pub fn step(&mut self) -> FrameAction {
 **Objective:** Verify all 5 implemented mappers (NROM, MMC1, UxROM, CNROM, MMC3) with comprehensive tests.
 
 **Added:** `crates/rustynes-core/tests/mapper_tests.rs` (262 lines)
+
 - 28 mapper-specific test ROMs covering banking, mirroring, IRQ timing
 - Validates all edge cases (bank wrapping, CHR-RAM, PRG-ROM sizes)
 
 **Test Results:**
+
 | Mapper | Tests | Status |
 |--------|-------|--------|
 | NROM (0) | 3 tests | PASS: 3/3 |
@@ -612,9 +657,11 @@ pub fn step(&mut self) -> FrameAction {
 ### 1. CPU Timing Fixes
 
 #### 1.1 Dummy Read Cycles (FIXED)
+
 **Issue:** Implied addressing mode instructions (e.g., `CLC`, `TAX`) should perform a dummy read of the next opcode byte.
 
 **Solution:** Implemented cycle-accurate dummy reads in the CPU state machine for:
+
 - Implied addressing mode instructions (TAX, TAY, TXA, TYA, INX, INY, DEX, DEY, etc.)
 - RMW indexed addressing modes (read old value before write)
 
@@ -625,6 +672,7 @@ pub fn step(&mut self) -> FrameAction {
 ---
 
 #### 1.2 RMW Dummy Write Cycles
+
 **Implementation:** Read-Modify-Write instructions (INC, DEC, ASL, LSR, ROL, ROR) perform a dummy write during the modify cycle.
 
 **Verification:** Passed `cpu_dummy_writes_ppumem.nes` and `cpu_dummy_writes_oam.nes`
@@ -634,9 +682,11 @@ pub fn step(&mut self) -> FrameAction {
 ---
 
 #### 1.3 Page Boundary Crossing
+
 **Implementation:** Absolute indexed addressing modes (abs,X; abs,Y) and indirect indexed (ind,Y) incur +1 cycle penalty when crossing page boundaries.
 
 **Formula:**
+
 ```rust
 fn page_crossed(base: u16, offset: u8) -> bool {
     (base & 0xFF00) != ((base.wrapping_add(u16::from(offset))) & 0xFF00)
@@ -650,9 +700,11 @@ fn page_crossed(base: u16, offset: u8) -> bool {
 ### 2. Interrupt Handling Fixes
 
 #### 2.1 IRQ Acknowledgment Timing - prev_irq_inhibit
+
 **Mechanism:** CPU samples IRQ line on the last cycle of each instruction. To handle instructions that modify the I (Interrupt Disable) flag, the CPU uses a one-instruction delay.
 
 **Implementation:**
+
 ```rust
 pub struct Cpu {
     prev_irq_inhibit: bool,  // I flag state from previous instruction
@@ -675,6 +727,7 @@ impl Cpu {
 ```
 
 **Use Cases:**
+
 1. **SEI instruction:** Sets I=1. Next instruction must not be interrupted.
 2. **CLI instruction:** Clears I=0. Next instruction CAN be interrupted.
 3. **RTI instruction:** Restores I from stack. Restored value applies to next instruction.
@@ -684,11 +737,13 @@ impl Cpu {
 ---
 
 #### 2.2 NMI Edge Detection - Hijacking BRK
+
 **Mechanism:** NMI is edge-triggered (detects 0→1 transition). If NMI occurs during BRK execution, the CPU hijacks the BRK sequence.
 
 **Hijack Timing:** During BRK cycle 1 (fetching next opcode), if `nmi_edge_detected` is true, CPU uses NMI vector ($FFFA) instead of IRQ/BRK vector ($FFFE).
 
 **Implementation (crates/rustynes-cpu/src/cpu.rs):**
+
 ```rust
 CpuState::Fetch => {
     let vector = if self.brk_flag_set {
@@ -716,6 +771,7 @@ CpuState::Fetch => {
 ---
 
 #### 2.3 RTI Instruction Behavior
+
 **Critical Detail:** RTI restores the status register on cycle 4. If I flag is set to 1 (interrupts disabled), this must apply to the very next instruction.
 
 **Implementation:** When `tick_pop_status()` sets `StatusFlags::INTERRUPT_DISABLE`, it immediately sets `prev_irq_inhibit = true` to block IRQ sampling for the next instruction.
@@ -727,12 +783,15 @@ CpuState::Fetch => {
 ### 3. APU Fixes
 
 #### 3.1 Frame Counter Timing (+1 cycle shift)
+
 **Root Cause Analysis:**
+
 - Original implementation: Attempted to use APU cycle counts (half CPU cycles)
 - Problem: Frame counter is clocked at CPU rate, not APU rate
 - Error: Accumulated ±0.5 cycle errors caused timing drift
 
 **Corrected Timing (4-step mode):**
+
 | Event | Old Cycle | New Cycle | Change |
 |-------|-----------|-----------|--------|
 | Quarter Frame #1 | 7457 | 7458 | +1 |
@@ -747,7 +806,9 @@ CpuState::Fetch => {
 ---
 
 #### 3.2 APU IRQ Generation
+
 **Correct Behavior:**
+
 - **Frame Counter IRQ:** Set on cycles 29830, 29831, 29832 (if IRQ inhibit disabled)
 - **Cleared by:** Reading $4015 or writing $4017 (with IRQ inhibit)
 - **DMC IRQ:** Set when DMC sample completes (if IRQ enable set)
@@ -762,11 +823,13 @@ CpuState::Fetch => {
 ### 4. Illegal Opcode Fixes
 
 #### 4.1 ATX/LXA (0xAB) - Highly Unstable Opcode
+
 **Problem:** Original implementation didn't account for "magic constant" instability.
 
 **Hardware Behavior:** ATX performs `A = (A | magic) & immediate`, where `magic` varies by CPU revision (0x00, 0xFF, 0xEE, 0xFE, etc.).
 
 **Implementation (crates/rustynes-cpu/src/instructions.rs):**
+
 ```rust
 pub fn atx(cpu: &mut Cpu, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
     let addr = cpu.get_operand_address(bus, mode);
@@ -794,6 +857,7 @@ pub fn atx(cpu: &mut Cpu, bus: &mut impl Bus, mode: AddressingMode) -> u8 {
 All 22 Blargg CPU tests now pass, including the previously challenging:
 
 #### 1. cpu_dummy_reads.nes - FIXED
+
 **Previous Issue:** Implied addressing mode instructions (e.g., `CLC`, `DEX`, `TAX`) should perform a dummy read of the PC+1 byte during their execution cycle.
 
 **Solution:** Implemented cycle-accurate dummy reads in the CPU state machine. The `tick()` method now properly executes one bus operation per cycle for implied addressing modes.
@@ -803,6 +867,7 @@ All 22 Blargg CPU tests now pass, including the previously challenging:
 ---
 
 #### 2. cpu_interrupts.nes - FIXED (All 5 sub-tests)
+
 **Previous Issue:** BRK/NMI interaction edge cases were failing.
 
 **Solution:** Implemented NMI hijacking detection during BRK execution cycle 1. When NMI edge is detected during BRK opcode fetch, the CPU uses the NMI vector ($FFFA) instead of IRQ/BRK vector ($FFFE).
@@ -814,10 +879,12 @@ All 22 Blargg CPU tests now pass, including the previously challenging:
 ### PPU Unit Test Failures (Not Blargg Tests)
 
 #### 1. ppu::tests::test_oam_dma (Unit Test)
+
 **Status:** **FAILING** (not a Blargg test)
 
 **Error:**
-```
+
+```text
 assertion `left == right` failed
   left: 2
  right: 6
@@ -832,10 +899,12 @@ assertion `left == right` failed
 ---
 
 #### 2. timing::tests::test_odd_frame_skip (Unit Test)
+
 **Status:** **FAILING** (not a Blargg test)
 
 **Error:**
-```
+
+```text
 assertion `left == right` failed
   left: 1
  right: 2
@@ -852,6 +921,7 @@ assertion `left == right` failed
 ## Architecture Insights
 
 ### 1. PPU Open Bus Behavior
+
 **Discovery:** NES PPU has only one 8-bit data bus shared by all registers. Write-only registers don't drive the bus on reads, creating "open bus" behavior where the last written value persists.
 
 **Implication:** Games can't reliably read write-only registers, but can observe decay timing. Some ROM detection schemes rely on this.
@@ -861,6 +931,7 @@ assertion `left == right` failed
 ---
 
 ### 2. CHR Memory Ownership
+
 **Discovery:** PPU Pattern Tables ($0000-$1FFF) are mapper-controlled CHR memory, not PPU-owned VRAM.
 
 **Original Design Flaw:** PPU owned CHR memory reads, making CHR-RAM writes impossible.
@@ -868,6 +939,7 @@ assertion `left == right` failed
 **Architectural Fix:** Mapper owns CHR memory. PPU accesses it via callbacks (`read_chr`, `write_chr`).
 
 **Benefits:**
+
 - CHR-RAM games work (e.g., `ppu_palette_ram.nes`)
 - Mapper can bank-switch CHR during rendering
 - Consistent with real hardware (CHR is a separate chip)
@@ -875,6 +947,7 @@ assertion `left == right` failed
 ---
 
 ### 3. Frame Counter Immediate Actions
+
 **Discovery:** Writing to $4017 frame counter control doesn't just change mode - it can immediately trigger quarter/half frame actions.
 
 **Mode 0 (4-step):** Writing resets cycle counter, no immediate action
@@ -885,6 +958,7 @@ assertion `left == right` failed
 ---
 
 ### 4. DMC Sample Pipeline
+
 **Discovery:** DMC has a 2-stage pipeline: shift register (outputs bits) and sample buffer (holds next byte).
 
 **Timing:** When shift register empties (every 8 output bits), it immediately loads from sample buffer. If sample buffer is empty, memory reader immediately refills it (next CPU cycle).
@@ -896,16 +970,19 @@ assertion `left == right` failed
 ## References
 
 ### Test ROMs
+
 - **Blargg's Test ROMs:** <https://github.com/christopherpow/nes-test-roms>
 - **nestest.nes Golden Log:** <https://www.qmtpro.com/~nes/misc/nestest.log>
 
 ### Hardware Documentation
+
 - **NESdev Wiki - CPU:** <https://www.nesdev.org/wiki/CPU>
 - **NESdev Wiki - PPU:** <https://www.nesdev.org/wiki/PPU>
 - **NESdev Wiki - APU:** <https://www.nesdev.org/wiki/APU>
 - **6502 Interrupt Timing:** <https://www.nesdev.org/wiki/CPU_interrupts>
 
 ### Reference Emulators
+
 - **Mesen2:** Gold standard cycle-accurate emulator
 - **FCEUX:** TAS tools and test ROM integration
 - **TetaNES:** Rust reference implementation
@@ -915,17 +992,20 @@ assertion `left == right` failed
 ## Summary Statistics
 
 ### Code Changes
+
 - **21 files changed:** 1,354 insertions, 295 deletions
 - **New test files:** 3 (blargg_cpu_tests.rs, blargg_ppu_tests.rs, blargg_apu_tests.rs)
 - **Updated test files:** 1 (mapper_tests.rs)
 - **Core subsystems modified:** CPU, PPU, APU, Bus
 
 ### Test Coverage
+
 - **Before M8:** 429 tests passing
 - **After M8:** 500 tests passing (+71 tests, +16.5%)
 - **Pass Rate:** 99.6% (500/502 including unit test failures)
 
 ### Blargg Test Suite
+
 - **CPU:** 22/22 (100%)
 - **PPU:** 25/25 (100%)
 - **APU:** 15/15 (100%)
@@ -934,6 +1014,7 @@ assertion `left == right` failed
 - **Total Blargg:** 91/91 (100%)
 
 ### Accuracy Achievements
+
 - PASS: CPU instruction timing: ±1 cycle
 - PASS: PPU VBlank timing: ±2 cycle
 - PASS: APU frame counter: ±1 cycle
@@ -952,7 +1033,8 @@ assertion `left == right` failed
 **Next Milestone:** M9 - Performance & Polish
 
 **Git History:**
-```
+
+```text
 b071787 docs: release v0.7.0 (Milestone 8 Complete)
 fdd27e2 docs: reflect 100% completion of M8 Sprints 1-4
 3e279a9 docs: update status to reflect 100% completion of M8 Sprints 1-4

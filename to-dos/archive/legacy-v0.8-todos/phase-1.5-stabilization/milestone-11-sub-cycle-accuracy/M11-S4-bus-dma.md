@@ -18,13 +18,16 @@ Implement the `on_cpu_cycle()` callback in the Bus, integrate OAM DMA cycle stea
 ## Dependencies
 
 ### Required Before Starting
+
 - **S1 (CPU Refactor)** - `on_cpu_cycle()` trait method must exist
 - **S2 (PPU Sync)** - PPU stepping integration should be defined
 
 ### Parallel Work
+
 - **S3 (APU)** - Can be integrated concurrently
 
 ### Blocks
+
 - **S5 (Mappers)** - Mapper clocking depends on Bus integration
 - **S6 (Testing)** - DMA timing tests require this sprint
 
@@ -99,10 +102,12 @@ pub fn tick(&mut self) -> (bool, bool) {
 **Priority:** P0
 **Effort:** 4 hours
 **Files:**
+
 - `crates/rustynes-core/src/bus.rs`
 - `crates/rustynes-cpu/src/lib.rs`
 
 #### Subtasks
+
 - [ ] Add `on_cpu_cycle()` to CpuBus trait (if not done in S1)
 - [ ] Implement `on_cpu_cycle()` in Bus
 - [ ] Step PPU 3 times per call
@@ -162,9 +167,11 @@ impl CpuBus for Bus {
 **Priority:** P1
 **Effort:** 3 hours
 **Files:**
+
 - `crates/rustynes-core/src/bus.rs`
 
 #### Subtasks
+
 - [ ] Add `last_bus_value: u8` field to Bus
 - [ ] Update `last_bus_value` on every read
 - [ ] Return `last_bus_value` for unmapped addresses
@@ -206,6 +213,7 @@ impl CpuBus for Bus {
 ```
 
 **Open Bus Specifics:**
+
 - Controllers: Bits 0-4 are data, bits 5-7 are open bus
 - PPU $2002: Bits 0-4 are open bus (last write to $2000-$2007)
 - Unmapped ranges return last bus value
@@ -217,10 +225,12 @@ impl CpuBus for Bus {
 **Priority:** P0
 **Effort:** 5 hours
 **Files:**
+
 - `crates/rustynes-core/src/bus.rs`
 - `crates/rustynes-cpu/src/cpu.rs`
 
 #### Subtasks
+
 - [ ] Restructure DMA to work within `on_cpu_cycle()` framework
 - [ ] Handle odd/even CPU cycle alignment (513 vs 514 cycles)
 - [ ] Implement read/write alternation during DMA
@@ -230,6 +240,7 @@ impl CpuBus for Bus {
 #### Implementation Notes
 
 OAM DMA timing:
+
 ```text
 DMA Sequence (starting on even cycle):
   Cycle 0: Dummy cycle (alignment)
@@ -305,10 +316,12 @@ impl Bus {
 **Priority:** P1
 **Effort:** 4 hours
 **Files:**
+
 - `crates/rustynes-core/src/bus.rs`
 - `crates/rustynes-apu/src/dmc.rs`
 
 #### Subtasks
+
 - [ ] Detect DMC sample buffer empty condition
 - [ ] Implement CPU stall for DMC DMA (1-4 cycles)
 - [ ] Handle DMC DMA during OAM DMA
@@ -342,6 +355,7 @@ impl Bus {
 ```
 
 **DMC DMA vs OAM DMA:**
+
 - If OAM DMA is in progress and DMC needs sample:
   - DMC DMA executes during OAM DMA read cycle
   - OAM DMA continues after DMC completes
@@ -354,9 +368,11 @@ impl Bus {
 **Priority:** P0
 **Effort:** 2 hours
 **Files:**
+
 - `crates/rustynes-core/src/console.rs`
 
 #### Subtasks
+
 - [ ] Remove PPU catch-up stepping from `step()` method
 - [ ] Remove APU catch-up stepping from `step()` method
 - [ ] Update `tick()` to rely on `on_cpu_cycle()` for all stepping
@@ -410,10 +426,12 @@ pub fn tick(&mut self) -> (bool, bool) {
 **Priority:** P2
 **Effort:** 2 hours
 **Files:**
+
 - `crates/rustynes-core/src/bus.rs`
 - `crates/rustynes-mappers/src/*.rs`
 
 #### Subtasks
+
 - [ ] Document bus conflict behavior for each mapper
 - [ ] Implement bus conflict for mappers that require it (BNROM, GNROM)
 - [ ] Test with games that depend on bus conflict behavior
@@ -442,6 +460,7 @@ impl Mapper for BnromMapper {
 ## Testing Requirements
 
 ### Unit Tests
+
 - [ ] `on_cpu_cycle()` called correct number of times per instruction
 - [ ] Open bus returns last read value
 - [ ] OAM DMA takes exactly 513/514 cycles
@@ -449,6 +468,7 @@ impl Mapper for BnromMapper {
 - [ ] DMA/instruction interleaving
 
 ### Integration Tests
+
 - [ ] Blargg OAM DMA timing tests
 - [ ] Games using mid-frame DMA (Battletoads)
 - [ ] DMC sample playback timing
@@ -481,15 +501,18 @@ impl Mapper for BnromMapper {
 ## References
 
 ### Internal Documentation
+
 - [Bus Memory Map](../../../docs/bus/BUS_MEMORY_MAP.md)
 - [OAM DMA](../../../docs/bus/OAM_DMA.md)
 
 ### External Resources
+
 - [NESdev Wiki - DMA](https://www.nesdev.org/wiki/PPU_registers#OAMDMA)
 - [NESdev Wiki - CPU Memory Map](https://www.nesdev.org/wiki/CPU_memory_map)
 - [NESdev Wiki - Open Bus](https://www.nesdev.org/wiki/Open_bus_behavior)
 
 ### Reference Implementations
+
 - **Pinky** (`ref-proj/pinky/nes/src/`) - DMA integration with `on_cpu_cycle()`
 - **Mesen2** - C++, accurate DMA timing
 

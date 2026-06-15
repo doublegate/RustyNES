@@ -11,7 +11,7 @@ Parse iNES 1.0 and NES 2.0 ROM files into a `Cartridge` value that the mapper su
 
 ## File structure
 
-```
+```text
 [ 16 bytes header ]
 [ 512 bytes trainer (only if header[6] bit 2 set) ]
 [ PRG-ROM ]
@@ -39,7 +39,7 @@ Parse iNES 1.0 and NES 2.0 ROM files into a `Cartridge` value that the mapper su
 
 ### Detection rule
 
-```
+```rust
 is_nes2 = (header[7] & 0x0C) == 0x08;
 ```
 
@@ -51,7 +51,7 @@ padding changes the mapper or region interpretation.
 
 ### Mapper number
 
-```
+```rust
 mapper = (header[6] >> 4) | (header[7] & 0xF0) | (if is_nes2 { (header[8] & 0x0F) << 8 } else { 0 });
 ```
 
@@ -65,7 +65,7 @@ iNES 1.0 mapper numbers cover 0..=255. NES 2.0 extends to 0..=4095.
 
 ### RAM sizing (NES 2.0)
 
-```
+```rust
 prg_ram_size = if shift == 0 { 0 } else { 64 << shift };
 ```
 

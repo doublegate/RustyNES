@@ -8,7 +8,7 @@ companion (a 5-second eyeball check instead of a recapture/accept/compare loop).
 
 ## Layout
 
-```
+```text
 screenshots/
 ├── README.md            (this file)
 ├── showcase.png         8-game showcase montage (the README hero image)
@@ -31,6 +31,7 @@ so a screenshot maps 1:1 to its ROM directory.
 
 A handful of games can't produce a meaningful frame and are kept at their best
 (near-blank) capture, documented in `docs/compatibility.md`:
+
 - The Vs. **DualSystem** titles (Balloon Fight / Tennis / Mahjong / Wrecking Crew VS) —
   two-CPU/two-PPU hardware this single-system core can't boot past attract.
 - **Mito Koumon** (mapper 89) — a PPU rendering-enable dependency (deferred axis).

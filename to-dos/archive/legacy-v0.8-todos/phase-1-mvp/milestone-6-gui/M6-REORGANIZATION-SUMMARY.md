@@ -18,17 +18,20 @@ This document summarizes the comprehensive reorganization of Milestone 6 (Deskto
 ### 1. Framework Change: egui → Iced 0.13+
 
 **Original Plan:**
+
 - Primary framework: egui 0.28
 - Architecture: Immediate mode
 - Estimated timeline: 12 weeks
 
 **New Plan:**
+
 - **Primary framework: Iced 0.13+** (Elm architecture)
 - **Debug overlay: egui 0.28** (developer tools only)
 - **Estimated timeline: 4 weeks** (MVP core)
 - **Architecture: Model-Update-View** (structured state management)
 
 **Rationale:**
+
 - RustyNES will have 8+ major views (Welcome, Library, Playing, Settings, NetplayLobby, Achievements, Debugger, TasEditor)
 - Requires sophisticated animations and transitions
 - Iced's Elm architecture prevents state management bugs at scale
@@ -60,6 +63,7 @@ See [M6-PLANNING-CHANGES.md](M6-PLANNING-CHANGES.md) lines 110-152 for detailed 
 #### KEPT IN M6 (MVP Core)
 
 ✅ **Core Functionality:**
+
 - Iced application shell with Elm architecture
 - wgpu game viewport (60 FPS)
 - cpal audio output (<20ms latency)
@@ -72,6 +76,7 @@ See [M6-PLANNING-CHANGES.md](M6-PLANNING-CHANGES.md) lines 110-152 for detailed 
 #### MOVED TO PHASE 2 (M7-M10)
 
 ➡️ **M7: Advanced Run-Ahead System**
+
 - Run-ahead (RA=0-4, auto-detect per game)
 - Preemptive Frames (alternative mode)
 - Frame Delay auto-tuning (0-15 frames)
@@ -79,16 +84,19 @@ See [M6-PLANNING-CHANGES.md](M6-PLANNING-CHANGES.md) lines 110-152 for detailed 
 - Just-In-Time input polling optimization
 
 ➡️ **M8: GGPO Netplay** (already planned)
+
 - Rollback netcode (similar to run-ahead!)
 - Lobby system
 
 ➡️ **M9: TAS Tools** (enhanced from scripting milestone)
+
 - Recording/playback (FM2 format)
 - Rewind timeline
 - Frame advance
 - Input visualization
 
 ➡️ **M10: Debugger with egui Overlay** (enhanced)
+
 - CPU/PPU/APU state viewers
 - Memory hex editor
 - **egui integration layer** for immediate-mode debug tools
@@ -97,6 +105,7 @@ See [M6-PLANNING-CHANGES.md](M6-PLANNING-CHANGES.md) lines 110-152 for detailed 
 #### MOVED TO PHASE 3 (M11-M14)
 
 ➡️ **M11: Advanced CRT Shaders**
+
 - 12+ shader presets (CRT-Royale, Lottes, Guest, etc.)
 - Phosphor mask types (Aperture Grille, Slot, Shadow Mask)
 - Rolling scan CRT simulation (Blur Busters technique)
@@ -104,9 +113,11 @@ See [M6-PLANNING-CHANGES.md](M6-PLANNING-CHANGES.md) lines 110-152 for detailed 
 - HDR bloom with phosphor persistence
 
 ➡️ **M12: Expansion Audio** (unchanged)
+
 - VRC6, VRC7, MMC5, FDS, Namco 163, Sunsoft 5B
 
 ➡️ **M13: HTPC Controller-First Mode**
+
 - Full 10-foot UI for living room setups
 - **Cover Flow view** (carousel-style ROM browsing)
 - **Virtual Shelf view** (3D perspective library)
@@ -117,6 +128,7 @@ See [M6-PLANNING-CHANGES.md](M6-PLANNING-CHANGES.md) lines 110-152 for detailed 
 - Haptic feedback patterns
 
 ➡️ **M14: Plugin Architecture & Social**
+
 - Extensible plugin system (shaders, input mappers, scrapers)
 - Discord Rich Presence plugin
 - Cloud sync plugin (Dropbox, GDrive)
@@ -125,23 +137,27 @@ See [M6-PLANNING-CHANGES.md](M6-PLANNING-CHANGES.md) lines 110-152 for detailed 
 #### MOVED TO PHASE 4 (M15-M18)
 
 ➡️ **M15: Advanced Shader Pipeline**
+
 - Shader complexity levels (Low/Medium/High)
 - Pre-compiled SPIR-V shaders
 - Per-shader performance profiling
 - Custom shader hot-reloading
 
 ➡️ **M16: TAS Editor (Piano Roll)**
+
 - Visual timeline editor with piano roll interface
 - Greenzone system (safe states for branch management)
 - Multi-branch TAS workflow
 - Frame-by-frame analysis tools
 
 ➡️ **M17: Full Run-Ahead Optimization**
+
 - Performance profiling for run-ahead overhead
 - Memory pool optimization for save states
 - Multi-threaded state serialization
 
 ➡️ **M18: CLI & Accessibility**
+
 - Full command-line automation mode
 - Comprehensive accessibility audit
 - Screen reader support
@@ -199,6 +215,7 @@ impl eframe::App for RustyNesApp {
 ```
 
 **Issues:**
+
 - State management becomes complex with 8+ views
 - No built-in animation system
 - Theme consistency difficult to maintain
@@ -246,6 +263,7 @@ impl Application for RustyNes {
 ```
 
 **Benefits:**
+
 - Unidirectional data flow prevents state bugs
 - Pure view functions easier to test
 - Built-in animation subscriptions
@@ -293,6 +311,7 @@ debug-overlay = ["egui", "egui-wgpu"]  # Developer tools only
 ### M6 MVP (Basic Run-Ahead RA=1)
 
 **Target Metrics:**
+
 - Frame Rate: 60 FPS (16.67ms/frame)
 - Input Latency: ~10-15ms (with RA=1)
 - Audio Latency: <20ms (cpal exclusive mode)
@@ -300,6 +319,7 @@ debug-overlay = ["egui", "egui-wgpu"]  # Developer tools only
 - Startup Time: <500ms cold start
 
 **Run-Ahead Overhead (RA=1):**
+
 - Save state serialization: <1ms
 - Additional emulation: +16.67ms (1 extra frame)
 - Total overhead: ~2ms per frame (negligible)
@@ -307,6 +327,7 @@ debug-overlay = ["egui", "egui-wgpu"]  # Developer tools only
 ### Phase 2 (Advanced Run-Ahead RA=0-4)
 
 **Target Metrics:**
+
 - Input Latency: <10ms (with RA=2-3)
 - Memory: <50 MB base + <100 MB rewind buffer (dual-instance)
 - CPU Overhead: 2-3x emulation speed (NES easily achieves this)
@@ -318,18 +339,21 @@ debug-overlay = ["egui", "egui-wgpu"]  # Developer tools only
 ### M6 MVP Testing
 
 **Unit Tests:**
+
 - Elm message handling (update function)
 - View rendering (snapshot tests)
 - Save state serialization (determinism)
 - Audio resampling (44.1kHz → 48kHz)
 
 **Integration Tests:**
+
 - ROM loading (valid/invalid files)
 - Controller hot-plugging
 - Theme switching
 - Settings persistence
 
 **Manual Testing:**
+
 - [ ] Test on Linux (Ubuntu 22.04, Arch, Fedora)
 - [ ] Test on Windows (10, 11)
 - [ ] Test on macOS (12+, Intel + Apple Silicon)
@@ -351,6 +375,7 @@ debug-overlay = ["egui", "egui-wgpu"]  # Developer tools only
    - Input handling: Convert to Iced messages
 
 3. **State refactoring:**
+
    ```rust
    // OLD: egui state scattered across update()
    self.playing = true;
@@ -362,6 +387,7 @@ debug-overlay = ["egui", "egui-wgpu"]  # Developer tools only
    ```
 
 4. **Message conversion:**
+
    ```rust
    // OLD: Immediate checks
    if ui.button("Play").clicked() {
@@ -381,12 +407,14 @@ debug-overlay = ["egui", "egui-wgpu"]  # Developer tools only
 ### Risk 1: Iced Learning Curve
 
 **Mitigation:**
+
 - Budget 1 extra week for learning in M6-S1
 - Study Iced examples thoroughly
 - Use egui for debug overlay (familiar territory)
 - Leverage Elm architecture documentation
 
 **Resources:**
+
 - [Iced Book](https://book.iced.rs/)
 - [Iced Examples](https://github.com/iced-rs/iced/tree/master/examples)
 - [Elm Architecture Guide](https://guide.elm-lang.org/architecture/)
@@ -394,6 +422,7 @@ debug-overlay = ["egui", "egui-wgpu"]  # Developer tools only
 ### Risk 2: Basic Run-Ahead Complexity
 
 **Mitigation:**
+
 - Implement simplest version (RA=1) in M6-S5
 - Defer advanced features (auto-detect, dual-instance) to Phase 2
 - Ensure save states are fast (<1ms serialization)
@@ -403,6 +432,7 @@ debug-overlay = ["egui", "egui-wgpu"]  # Developer tools only
 ### Risk 3: Animation Performance
 
 **Mitigation:**
+
 - Profile Iced animations on target hardware
 - Provide "Performance Mode" that disables animations
 - Use 60Hz minimum, 120Hz where hardware permits
@@ -424,6 +454,7 @@ debug-overlay = ["egui", "egui-wgpu"]  # Developer tools only
 | 11-12 | S6 | Debugger + TAS tools |
 
 **Issues:**
+
 - Everything in Phase 1 (feature creep)
 - HTPC mode too early (no library foundation)
 - Advanced features before MVP playable
@@ -431,7 +462,7 @@ debug-overlay = ["egui", "egui-wgpu"]  # Developer tools only
 
 ### New Plan (Iced, 4 weeks MVP + phased features)
 
-**Phase 1 (M6): 4 Weeks**
+#### Phase 1 (M6): 4 Weeks
 
 | Week | Sprint | Description |
 |------|--------|-------------|
@@ -440,25 +471,29 @@ debug-overlay = ["egui", "egui-wgpu"]  # Developer tools only
 | 3 | S3 | Input handling & ROM library (Grid/List) |
 | 4 | S4 | Settings & persistence + S5 (polish + basic run-ahead) |
 
-**Phase 2 (M7-M10): 4 Months**
+#### Phase 2 (M7-M10): 4 Months
+
 - M7: Advanced Run-Ahead (RA=0-4, auto-detect)
 - M8: GGPO Netplay
 - M9: TAS recording/playback
 - M10: Debugger with egui overlay
 
-**Phase 3 (M11-M14): 6 Months**
+#### Phase 3 (M11-M14): 6 Months
+
 - M11: Advanced CRT shaders (12+ presets, rolling scan)
 - M12: Expansion audio
 - M13: HTPC mode (Cover Flow, Virtual Shelf)
 - M14: Plugin architecture
 
-**Phase 4 (M15-M18): 6 Months**
+#### Phase 4 (M15-M18): 6 Months
+
 - M15: Advanced shader pipeline optimization
 - M16: TAS editor with piano roll
 - M17: Full run-ahead optimization
 - M18: CLI automation + accessibility
 
 **Benefits:**
+
 - Playable emulator in 4 weeks
 - Feature-rich by Phase 2
 - HTPC mode only after library is mature
@@ -468,9 +503,10 @@ debug-overlay = ["egui", "egui-wgpu"]  # Developer tools only
 
 ## Success Metrics
 
-### M6 MVP Complete When:
+### M6 MVP Complete When
 
 ✅ **Functional:**
+
 - [ ] Iced application runs on Linux, Windows, macOS
 - [ ] ROM loading via file dialog works
 - [ ] Emulation displays at 60 FPS
@@ -482,6 +518,7 @@ debug-overlay = ["egui", "egui-wgpu"]  # Developer tools only
 - [ ] Basic run-ahead (RA=1) reduces latency measurably
 
 ✅ **Quality:**
+
 - [ ] Zero clippy warnings (`clippy::pedantic`)
 - [ ] Zero unsafe code (except FFI if needed)
 - [ ] All unit tests pass
@@ -489,6 +526,7 @@ debug-overlay = ["egui", "egui-wgpu"]  # Developer tools only
 - [ ] Memory usage <100 MB
 
 ✅ **User Experience:**
+
 - [ ] UI renders at 60 FPS
 - [ ] Input feels responsive
 - [ ] Settings UI intuitive
@@ -552,6 +590,7 @@ The reorganization from egui to Iced represents a **strategic architectural deci
 ### Expected Outcome
 
 By the end of M6 (4 weeks):
+
 - ✅ **Playable** NES emulator with professional UI
 - ✅ **Low latency** via basic run-ahead (RA=1)
 - ✅ **Cross-platform** (Linux, Windows, macOS)
@@ -566,6 +605,7 @@ By the end of M6 (4 weeks):
 **Implementation Status:** Ready to begin M6-S1
 
 **Related Files:**
+
 - [M6-OVERVIEW.md](M6-OVERVIEW.md) - Updated milestone overview
 - [M6-PLANNING-CHANGES.md](M6-PLANNING-CHANGES.md) - Technology analysis
 - [M6-S1-iced-application.md](M6-S1-iced-application.md) - Sprint 1 details

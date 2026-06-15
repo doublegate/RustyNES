@@ -80,7 +80,7 @@ Please provide the following information:
 
 ### Example Report Template
 
-```
+```text
 Subject: [SECURITY] RustyNES - Buffer Overflow in iNES Header Parser
 
 Description:

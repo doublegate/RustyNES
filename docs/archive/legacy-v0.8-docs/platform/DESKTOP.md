@@ -136,6 +136,7 @@ Iced follows The Elm Architecture, a functional pattern with unidirectional data
 ```
 
 **Benefits**:
+
 - Type-safe state management (no runtime state errors)
 - Predictable state transitions (all changes through `update()`)
 - Time-travel debugging (record/replay message sequences)
@@ -511,6 +512,7 @@ impl Application for RustyNes {
 ### wgpu NES Framebuffer Renderer
 
 The NES outputs a 256×240 pixel framebuffer at 60.0988 Hz. The rendering pipeline handles:
+
 - Framebuffer upload to GPU texture
 - Integer scaling (2× minimum, 3×, 4×, 5×, 6× based on window size)
 - Aspect ratio correction (8:7 pixel aspect ratio)
@@ -872,6 +874,7 @@ impl InputManager {
 Settings are stored in platform-specific directories using the `directories` crate.
 
 **File Location:**
+
 - Linux: `~/.config/rustynes/settings.toml`
 - macOS: `~/Library/Application Support/rustynes/settings.toml`
 - Windows: `%APPDATA%\rustynes\settings.toml`
@@ -1267,6 +1270,7 @@ fn bench_save_state(b: &mut Bencher) {
 ### Sprint 1: Iced Application Foundation (Week 1)
 
 **Deliverables:**
+
 - [ ] Create `rustynes-desktop` crate structure
 - [ ] Implement `RustyNes` application state
 - [ ] Build `Message` enum and `update()` function
@@ -1275,6 +1279,7 @@ fn bench_save_state(b: &mut Bencher) {
 - [ ] Theme system (Dark mode only for MVP)
 
 **Files to create:**
+
 - `crates/rustynes-desktop/src/main.rs`
 - `crates/rustynes-desktop/src/app.rs`
 - `crates/rustynes-desktop/src/views/mod.rs`
@@ -1285,6 +1290,7 @@ fn bench_save_state(b: &mut Bencher) {
 ### Sprint 2: wgpu Rendering (Week 2)
 
 **Deliverables:**
+
 - [ ] wgpu NES framebuffer renderer
 - [ ] Integer scaling pipeline
 - [ ] Aspect ratio correction (8:7 PAR)
@@ -1293,6 +1299,7 @@ fn bench_save_state(b: &mut Bencher) {
 - [ ] Basic performance metrics overlay
 
 **Files to create:**
+
 - `crates/rustynes-desktop/src/rendering/mod.rs`
 - `crates/rustynes-desktop/src/rendering/nes_renderer.rs`
 - `crates/rustynes-desktop/src/rendering/shaders/nes.wgsl`
@@ -1302,6 +1309,7 @@ fn bench_save_state(b: &mut Bencher) {
 ### Sprint 3: Input + ROM Library (Week 3)
 
 **Deliverables:**
+
 - [ ] gilrs gamepad support
 - [ ] Keyboard input handling
 - [ ] Controller mapping UI
@@ -1310,6 +1318,7 @@ fn bench_save_state(b: &mut Bencher) {
 - [ ] ROM metadata extraction (iNES header)
 
 **Files to create:**
+
 - `crates/rustynes-desktop/src/input/mod.rs`
 - `crates/rustynes-desktop/src/input/gamepad.rs`
 - `crates/rustynes-desktop/src/input/keyboard.rs`
@@ -1320,6 +1329,7 @@ fn bench_save_state(b: &mut Bencher) {
 ### Sprint 4: Settings Persistence (Week 4)
 
 **Deliverables:**
+
 - [ ] Settings data structures
 - [ ] TOML serialization/deserialization
 - [ ] Settings view (Video, Audio, Input, Paths, Advanced)
@@ -1327,6 +1337,7 @@ fn bench_save_state(b: &mut Bencher) {
 - [ ] Save/load settings on app start/exit
 
 **Files to create:**
+
 - `crates/rustynes-desktop/src/settings/mod.rs`
 - `crates/rustynes-desktop/src/settings/storage.rs`
 - `crates/rustynes-desktop/src/views/settings.rs`
@@ -1334,6 +1345,7 @@ fn bench_save_state(b: &mut Bencher) {
 ### Sprint 5: Polish + Run-Ahead (Variable)
 
 **Deliverables:**
+
 - [ ] Run-ahead manager (RA=1 fixed for MVP)
 - [ ] Performance metrics tracking
 - [ ] Toast notifications system
@@ -1343,6 +1355,7 @@ fn bench_save_state(b: &mut Bencher) {
 - [ ] Save state quick save/load (F5/F6)
 
 **Files to create:**
+
 - `crates/rustynes-desktop/src/run_ahead.rs`
 - `crates/rustynes-desktop/src/widgets/toast.rs`
 - `crates/rustynes-desktop/src/widgets/modal.rs`
@@ -1663,6 +1676,7 @@ fn create_icon() -> Option<window::Icon> {
 ```
 
 **Icon Features:**
+
 - 256x256 RGBA buffer with gradient fill
 - Power Red (#E94560) at top, NES Blue (#0F3460) at bottom
 - Proper icon conversion using `image` crate
@@ -1684,12 +1698,14 @@ pub enum ThemeVariant {
 ```
 
 **Theme Features:**
+
 - Four built-in themes using Iced's built-in theme system
 - Custom `RustyPalette` struct for brand-specific colors
 - Persistent theme selection via ApplicationConfig
 - Theme selector in settings UI (pick_list widget)
 
 **RustyPalette (Brand Colors):**
+
 - Background: Console Black (#1C1E21)
 - Surface: Deep Navy (#262A2E)
 - Accent: NES Blue (#0F3460)
@@ -1711,12 +1727,14 @@ pub enum LoadingState {
 ```
 
 **Loading Features:**
+
 - State enum for tracking loading operations
 - Progress tracking (0.0 to 1.0)
 - Loading screen UI with progress bar (infrastructure ready)
 - Will be activated when ROM loading UI is implemented
 
 **Loading Screen UI:**
+
 - Centered layout with RustyNES branding
 - Progress bar (400px wide)
 - Percentage display (0-100%)
@@ -1739,6 +1757,7 @@ pub struct PerformanceMetrics {
 ```
 
 **Metrics Features:**
+
 - FPS tracking with 60-frame rolling average
 - Color-coded FPS display (Green: 58+, Yellow: 50-58, Red: <50)
 - Frame time, input latency, run-ahead overhead tracking
@@ -1746,6 +1765,7 @@ pub struct PerformanceMetrics {
 - F3 hotkey to toggle overlay visibility
 
 **Metrics Overlay UI:**
+
 - Semi-transparent black background (70% opacity)
 - Top-left corner positioning with 10px padding
 - 1px border with rounded corners (4px radius)
@@ -1765,6 +1785,7 @@ pub struct RunAheadManager {
 ```
 
 **Run-Ahead Stub Features:**
+
 - Complete API surface for Phase 2 implementation
 - Comprehensive documentation explaining run-ahead technique
 - No-op methods (all return default/disabled values)
@@ -1772,6 +1793,7 @@ pub struct RunAheadManager {
 - Default trait implementation
 
 **Phase 2 Implementation Plan (Documented in Module):**
+
 - Fast save state serialization (bincode, <1ms)
 - Configurable RA frames (0-4)
 - Dual-instance mode for pristine audio
@@ -1784,6 +1806,7 @@ pub struct RunAheadManager {
 New message variants and handlers for Sprint 5 features:
 
 **UpdateTheme:**
+
 ```rust
 Message::UpdateTheme(theme) => {
     self.config.app.theme = theme;
@@ -1795,6 +1818,7 @@ Message::UpdateTheme(theme) => {
 ```
 
 **ToggleMetrics:**
+
 ```rust
 Message::ToggleMetrics => {
     self.show_metrics = !self.show_metrics;
@@ -1804,6 +1828,7 @@ Message::ToggleMetrics => {
 ```
 
 **Keyboard Subscription (F3 for Metrics):**
+
 ```rust
 keyboard::on_key_press(|key, modifiers| match key {
     keyboard::Key::Named(keyboard::key::Named::F3)
@@ -1834,6 +1859,7 @@ let theme_selector = container(
 ```
 
 **Theme Selector Features:**
+
 - Pick list widget with all theme variants
 - 80px label width for alignment
 - 150px dropdown width
@@ -1855,6 +1881,7 @@ if model.show_metrics() {
 ```
 
 **Overlay Features:**
+
 - Layered above game viewport using `stack!` widget
 - Top-left positioning with padding
 - Non-intrusive during gameplay
@@ -1875,6 +1902,7 @@ pub struct ApplicationConfig {
 ```
 
 **Default Theme:**
+
 ```rust
 impl Default for ApplicationConfig {
     fn default() -> Self {
@@ -1889,18 +1917,21 @@ impl Default for ApplicationConfig {
 ### Quality Assurance
 
 **Code Quality:**
+
 - Zero clippy warnings (`cargo clippy -p rustynes-desktop -- -D warnings`)
 - All 28 tests passing
 - Proper `#[allow(dead_code)]` annotations for MVP infrastructure
 - Formatted with `cargo fmt`
 
 **Clippy Fixes Applied:**
+
 - `#[allow(dead_code)]` for stub infrastructure (loading, runahead, metrics getters)
 - `#[allow(clippy::unused_self)]` for stub methods (will mutate in Phase 2)
 - `#[derive(Default)]` with `#[default]` attribute for ThemeVariant
 - Fixed `items_after_statements` by moving `use` to top of function
 
 **Test Coverage:**
+
 - Settings module: 5 tests (config, serialization, validation, recent ROMs)
 - Input module: 8 tests (keyboard mapping, gamepad, controller state)
 - Library module: 7 tests (scanner, state, search)

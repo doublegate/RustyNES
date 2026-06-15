@@ -28,7 +28,7 @@ and AccuracyCoin.
 
 - [x] `cpu_interrupts_v2` residuals have updated trace evidence (C1 axis,
   deferred to v2.0 master-clock — `docs/audit/phase-7-sprint-2-cpu-dma-bus-2026-05-24.md`
-  + Session-29 conclusion).
+  - Session-29 conclusion).
 - [x] AccuracyCoin CPU/APU/internal-bus residual list documented; the
   completable items landed as coverage/guards (the residual *fixes* are the v2.0
   master-clock/internal-bus rework). AccuracyCoin held at 90.65%.

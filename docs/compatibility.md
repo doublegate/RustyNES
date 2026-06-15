@@ -250,7 +250,7 @@ This section supersedes the early "Out-of-scope" list above where they disagree
   The corrupted `0x0A` home-dump trap is explicitly ignored (it is NES 2.0 and is
   neither `0x01` nor `0x02`), so the oracles stay byte-identical. The dumps are
   iNES 1.0, so 2C04-000x games would need byte-13 / a game-DB. PC10 second screen
-  + Z80 remain out of scope (see "PPU variant scoping").
+  - Z80 remain out of scope (see "PPU variant scoping").
 - **Long-tail mapper policy.** A pirate / multicart / homebrew-only mapper is
   accepted only when: (a) there is concrete user demand or a notable title that
   needs it, **and** (b) a redistributable test fixture or a well-specified

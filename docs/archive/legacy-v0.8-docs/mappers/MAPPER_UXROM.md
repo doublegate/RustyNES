@@ -1,6 +1,6 @@
 # Mapper 2: UxROM
 
-**Table of Contents**
+## Table of Contents
 
 - [Overview](#overview)
 - [Board Variants](#board-variants)

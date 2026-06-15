@@ -23,6 +23,7 @@ Both mappers are simpler than MMC1 but widely used. UxROM has bus conflicts (imp
 ## Acceptance Criteria
 
 ### Mapper 2 (UxROM)
+
 - [ ] Switchable 16KB PRG-ROM banks at $8000-$BFFF
 - [ ] Fixed last 16KB PRG-ROM bank at $C000-$FFFF
 - [ ] 8KB CHR-ROM or CHR-RAM (no banking)
@@ -30,12 +31,14 @@ Both mappers are simpler than MMC1 but widely used. UxROM has bus conflicts (imp
 - [ ] Horizontal or vertical mirroring (fixed by hardware)
 
 ### Mapper 3 (CNROM)
+
 - [ ] Fixed PRG-ROM (16KB or 32KB)
 - [ ] Switchable 8KB CHR-ROM banks
 - [ ] Bank select via any write to $8000-$FFFF
 - [ ] Horizontal or vertical mirroring (fixed by hardware)
 
 ### Both
+
 - [ ] Zero unsafe code
 - [ ] Unit tests for all features
 - [ ] Integration tests with real games
@@ -558,6 +561,7 @@ mod tests_mapper3 {
 ### Mapper 2 (UxROM)
 
 **Memory Map:**
+
 ```
 $8000-$BFFF: Switchable 16KB PRG-ROM bank
 $C000-$FFFF: Fixed to last 16KB PRG-ROM bank
@@ -565,10 +569,12 @@ $0000-$1FFF: 8KB CHR-ROM or CHR-RAM (no banking)
 ```
 
 **Bank Switching:**
+
 - Any write to $8000-$FFFF sets PRG bank number
 - Only lower bits used (depends on ROM size: 128KB = 3 bits, 256KB = 4 bits)
 
 **Bus Conflicts:**
+
 - UxROM uses discrete logic with no bus conflict avoidance
 - Write value must match ROM data at write address
 - Games carefully place bank switch values in ROM at correct addresses
@@ -577,17 +583,20 @@ $0000-$1FFF: 8KB CHR-ROM or CHR-RAM (no banking)
 ### Mapper 3 (CNROM)
 
 **Memory Map:**
+
 ```
 $8000-$FFFF: Fixed 16KB or 32KB PRG-ROM (16KB mirrored)
 $0000-$1FFF: Switchable 8KB CHR-ROM bank
 ```
 
 **Bank Switching:**
+
 - Any write to $8000-$FFFF sets CHR bank number
 - Lower 2 bits = bank number (some carts use more bits)
 - No bus conflicts (discrete logic avoids this)
 
 **Variants:**
+
 - Some CNROM variants support up to 4 CHR banks (2 bits)
 - Security chip variants exist but are rare
 
@@ -596,6 +605,7 @@ $0000-$1FFF: Switchable 8KB CHR-ROM bank
 ## Test Requirements
 
 ### Mapper 2 (UxROM)
+
 - [ ] Unit tests for PRG bank switching
 - [ ] Unit tests for fixed last bank
 - [ ] Unit tests for bus conflicts (strict mode)
@@ -603,6 +613,7 @@ $0000-$1FFF: Switchable 8KB CHR-ROM bank
 - [ ] Integration test with Mega Man, Castlevania, Contra
 
 ### Mapper 3 (CNROM)
+
 - [ ] Unit tests for CHR bank switching
 - [ ] Unit tests for 16KB PRG mirroring
 - [ ] Unit tests for 32KB PRG
@@ -623,6 +634,7 @@ $0000-$1FFF: Switchable 8KB CHR-ROM bank
 ## Success Criteria
 
 ### Mapper 2 (UxROM)
+
 - [ ] PRG bank switching works
 - [ ] Last PRG bank fixed at $C000
 - [ ] Bus conflicts handled (optional strict mode)
@@ -631,6 +643,7 @@ $0000-$1FFF: Switchable 8KB CHR-ROM bank
 - [ ] Real games work (Mega Man, Castlevania)
 
 ### Mapper 3 (CNROM)
+
 - [ ] CHR bank switching works
 - [ ] PRG-ROM mirroring correct (16KB)
 - [ ] 32KB PRG-ROM works
@@ -638,6 +651,7 @@ $0000-$1FFF: Switchable 8KB CHR-ROM bank
 - [ ] Real games work (Solomon's Key, Arkanoid)
 
 ### Both
+
 - [ ] Zero unsafe code
 - [ ] Documentation complete
 

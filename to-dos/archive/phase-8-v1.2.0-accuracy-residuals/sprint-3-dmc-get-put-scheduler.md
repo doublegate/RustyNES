@@ -117,6 +117,7 @@ investigation into the `$4015` read open-bus latch behaviour
 during DMC halt cycles.
 
 **Decision deferred to maintainer at v1.2 tag-time**:
+
 - Option A: ship v1.2 with the 4 deferred and tag the remaining
   work as a v1.2.x patch series.
 - Option B: spend one more session on iter 3 (abort path port)
@@ -154,5 +155,5 @@ specific test closure is a v1.2.x patch series question."
 - [v2.0.0 release plan](/home/parobek/.claude/plans/generate-a-new-plan-snug-starlight.md)
   — Sprint 2 of the plan (v1.2.0 milestone)
 - Mesen2 reference: `Core/NES/NesCpu.cpp::RunDma` (lines 399-447)
-  + `processCycle` lambda (lines 384-397). GPL-3.0 structural
+  - `processCycle` lambda (lines 384-397). GPL-3.0 structural
   reference only.

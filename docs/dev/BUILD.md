@@ -4,7 +4,7 @@
 > is the single source of truth for the toolchain, workspace layout, feature
 > flags, profiles, and CI. This page is a quick developer-oriented summary.
 
-**Table of Contents**
+## Table of Contents
 
 - [Prerequisites](#prerequisites)
 - [Toolchain Setup](#toolchain-setup)

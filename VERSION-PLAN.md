@@ -15,7 +15,7 @@ v1.0.0 is the **production cut that integrates the cycle-accurate emulation engi
 
 ## Version number components
 
-```
+```text
 MAJOR.MINOR.PATCH[-PRERELEASE]
 ```
 

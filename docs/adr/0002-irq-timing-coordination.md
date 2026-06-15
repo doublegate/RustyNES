@@ -133,7 +133,7 @@ against the other two. None of them is independently the
 The IRQ-poll-to-flag-visibility surface is, in the project's current
 architecture:
 
-```
+```text
 PPU emits A12 rising edge at dot D                  (PPU dot resolution)
     ↓
 Mapper sees notify_a12(level=true) synchronously    (same dot)
@@ -437,8 +437,8 @@ to non-ignored and delete this probe" message). At that point:
 - Track C1 of `/home/parobek/.claude/plans/linked-puzzling-sutherland.md`.
 - `docs/STATUS.md` → "Known residuals (v0.9.0 → v1.0.0)".
 - nesdev wiki §IRQ-and-NMI timing, §MMC3 IRQ filter:
-  - https://www.nesdev.org/wiki/CPU_interrupts
-  - https://www.nesdev.org/wiki/MMC3
+  - <https://www.nesdev.org/wiki/CPU_interrupts>
+  - <https://www.nesdev.org/wiki/MMC3>
 - blargg's `cpu_interrupts_v2` and `mmc3_test_2` ROM corpora documented
   in `tests/roms/LICENSES.md`.
 
@@ -744,6 +744,7 @@ would alter the irq_first_tick recorded value for many tests,
 including the 80+ CPU tests that currently pass. The 1-cycle-
 later IRQ visibility in our impl IS a calibration choice baked
 into many test passes. A coordinated rework is needed:
+
 - Restructure `idle_tick` to record `T_last - 1` as the canonical
   sample point (not every cycle).
 - Re-run all CPU-cycle-sensitive tests (nestest, ppu_vbl_nmi,
@@ -785,6 +786,7 @@ emission point) but at **different sub-dots within the host CPU
 cycle**. The test's `delay_ppu_even` macro intentionally rotates the
 PPU-CPU phase by 1 PPU dot between sub-tests #2 and #3, exposing the
 silicon's M2-phase-dependent IRQ-output latency:
+
 - **M2-high A12 rise (sub_dot 2)**: real silicon's MMC3 latches A12
   late in cycle X; the IRQ output goes high at φ2 of cycle X+1
   (one cycle of propagation delay).
@@ -814,6 +816,7 @@ later (could still land inside `inc`, still pass) but it leaves
 sub-test #3 unchanged. The residual is in the relative position of
 our CPU instruction stream vs. real silicon's at the moment the
 M2-low IRQ becomes visible. Closing sub-test #3 requires either:
+
 - (a) shifting our CPU instruction-cycle counts to match real
       silicon's per-instruction phasing (likely requires
       cycle-precise modeling of one or more instructions whose
@@ -858,6 +861,7 @@ The diff shape is the key diagnostic:
 
 The two Phase D3 fixes that landed concurrently with the trace
 regeneration above:
+
 - `crates/rustynes-cpu/src/cpu.rs` unofficial NOP `$04/$44/$64/$14/$34/$54/$74/$D4/$F4/$0C` dummy reads.
 - `crates/rustynes-mappers/src/mapper.rs` + `crates/rustynes-core/src/bus.rs` `$4020-$5FFF` open-bus latch.
 
@@ -872,24 +876,24 @@ Direct quotes from `https://www.nesdev.org/wiki/MMC3` confirming
 the canonical timing assumptions our PPU + MMC3 use:
 
 > "When using 8x8 sprites, if the BG uses $0000, and the sprites use
->  $1000, the IRQ counter should decrement on PPU cycle 260."
+> $1000, the IRQ counter should decrement on PPU cycle 260."
 
 Our `crates/rustynes-ppu/src/ppu.rs:867` uses `if (260..=316).contains(&self.dot)`
 to drive sprite tile fetches (and the A12 rise inside them), so our
 PPU emits A12 at PPU dot 260 — canonically correct.
 
 > "The MMC3 scanline counter is based entirely on PPU A12, triggered on
->  a rising edge after the line has remained low for three falling
->  edges of M2."
+> a rising edge after the line has remained low for three falling
+> edges of M2."
 
 Our `crates/rustynes-mappers/src/mmc3.rs::notify_a12_at_sub_dot` enforces
 `gap >= 3` against `cpu_cycle - a12_low_cycle` (equivalent to the
 three-falling-edges-of-M2 rule because each CPU cycle has exactly
 one M2 falling edge). Canonical.
 
-> Sharp revision: "generates IRQs when the scanline counter is _equal_
->  to 0." NEC revision: "generates IRQs when the scanline counter is
->  _decremented_ to 0."
+> Sharp revision: "generates IRQs when the scanline counter is *equal*
+> to 0." NEC revision: "generates IRQs when the scanline counter is
+> *decremented* to 0."
 
 Phase B4's `irq_reload_pending_with_nonzero_clear` flag encodes
 exactly this distinction. The Sharp branch asserts on reload-to-0
@@ -1132,7 +1136,7 @@ Full per-ROM diff outputs + capability matrix at
 Session-16 executed the Session-15 follow-up plan items 1, 2, and 3 (the
 three prereqs for a clean hypothesis). The Phase 1 outcome:
 
-* **Confound 1 (MMC3 revision)** is empirically resolved. Forcing
+- **Confound 1 (MMC3 revision)** is empirically resolved. Forcing
   Mesen2 to MMC3A via a `MesenNesDB.txt` override (CRC `0x8AD8A602`
   Chip-field = `MMC3A`, file marked `chmod 0444` to prevent Mesen2's
   per-run rewrite from embedded resource) produces a **byte-identical**
@@ -1141,14 +1145,14 @@ three prereqs for a clean hypothesis). The Phase 1 outcome:
   the scanline -1 vs scanline 0 mismatch.** The first-IRQ scanline
   divergence is real, not a revision artifact.
 
-* **Confound 3 (schema asymmetry)** is closed. `IrqTrace` now records
+- **Confound 3 (schema asymmetry)** is closed. `IrqTrace` now records
   `ServiceEvent`s emitted from `Cpu::service_interrupt` via the new
   `Bus::notify_irq_service` trait method (default no-op; LockstepBus
   override gated on `irq-timing-trace`). The 6 baselines now have a
   `*.svc.csv` sidecar with one row per IRQ or NMI vector fetch, directly
   comparable to Mesen2's `irq_svc` / `nmi_svc` event rows.
 
-* **Confound 2 (boot/anchor offset)** is plumbed but functionally a
+- **Confound 2 (boot/anchor offset)** is plumbed but functionally a
   no-op for these specific ROMs (`BOOT_FRAMES=10` already advances past
   cycle 250,000). Both sides accept `START_CYCLE` env var
   (`MESEN2_IRQ_TRACE_START_CYCLE` / `RUSTYNES_IRQ_TRACE_START_CYCLE`)
@@ -1188,12 +1192,12 @@ Session-17 executed Recommended #1 from Session-16 (per-instruction
 divergence trace in the post-boot in-test-loop window). The outcome is
 the **highest-leverage empirical reframe in the entire C1 series**:
 
-* The PASSING `cpu_interrupts_v2/4-irq_and_dma` is byte-identical to
+- The PASSING `cpu_interrupts_v2/4-irq_and_dma` is byte-identical to
   Mesen2 at every cycle-aligned common record (36,102 records, 100%
   PC-equal). The Session-16 "+10 dot constant" finding was a frame-1
   false-positive that aligns away under proper anchoring. There is no
   load-bearing dot-offset residual on PASSING tests.
-* The FAILING `cpu_interrupts_v2/{2-nmi_and_brk, 3-nmi_and_irq}` first
+- The FAILING `cpu_interrupts_v2/{2-nmi_and_brk, 3-nmi_and_irq}` first
   diverge at a `BIT $2002` instruction inside blargg's `sync_vbl`
   precise-synchronization loop. Mesen2's `$2002` read returns VBL=1;
   RustyNES's returns VBL=0. The two emulators are on opposite sides
@@ -1201,11 +1205,11 @@ the **highest-leverage empirical reframe in the entire C1 series**:
   "Reading the flag on the dot before it is set (scanline 241 dot 0)
   causes it to read as 0 and be cleared"). **This is a PPU-axis
   divergence, NOT a CPU IRQ-sample-point issue.**
-* The FAILING `cpu_interrupts_v2/5-branch_delays_irq` exhibits the
+- The FAILING `cpu_interrupts_v2/5-branch_delays_irq` exhibits the
   same pattern but downstream — first 19,465 parallel-walk records
   match, then divergence at an IRQ service event whose timing is
   determined by the earlier PPU $2002 race.
-* The FAILING `mmc3_test_2/4-scanline_timing` exhibits ZERO PC
+- The FAILING `mmc3_test_2/4-scanline_timing` exhibits ZERO PC
   divergence in the entire 250 k-350 k cycle window — both emulators
   execute identical instruction sequences. The sub-test #3 failure is
   exclusively in the out-of-window IRQ assertion at cycle ~2,203,969,
@@ -1382,7 +1386,7 @@ attempt. Required prereqs:
 
 1. Per-PPU-dot trace at the divergent `BIT $2002` reads to CONFIRM
    the predicted 1-PPU-dot offset (`scripts/mesen2_ppu_trace.lua`
-   + `ppu-state-trace` feature).
+   - `ppu-state-trace` feature).
 2. Quantify the offset distribution at every in-window read across
    all 3 failing tests.
 3. Per-CPU-cycle bus-call instrumentation to verify the offset is

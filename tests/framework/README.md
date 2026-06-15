@@ -37,11 +37,13 @@ This directory contains test ROM validation tools and test harness utilities use
 These tools were primarily used during development and testing. The core emulator now includes integrated test ROM support through the main test suite.
 
 For current test execution, see the main test suite:
+
 ```bash
 cargo test --workspace
 ```
 
 For test ROM specifics, see:
+
 - `tests/roms/` - Test ROM files
 - `/tests/` - Integration test suite
 - `/docs/testing/` - Testing documentation
@@ -49,6 +51,7 @@ For test ROM specifics, see:
 ## Archive Status
 
 These are reference implementations preserved from development sessions. The functionality has been integrated into the main codebase but these standalone tools may be useful for:
+
 - ROM file debugging
 - Standalone validation workflows
 - Reference for test infrastructure patterns

@@ -1,6 +1,6 @@
 # NES Bus Conflicts
 
-**Table of Contents**
+## Table of Contents
 
 - [Overview](#overview)
 - [What is a Bus Conflict?](#what-is-a-bus-conflict)

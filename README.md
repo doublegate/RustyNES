@@ -10,7 +10,7 @@
 
 [![Build Status](https://github.com/doublegate/RustyNES/workflows/CI/badge.svg)](https://github.com/doublegate/RustyNES/actions)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
-[![Version](https://img.shields.io/badge/version-v1.0.0-blue.svg)](https://github.com/doublegate/RustyNES/releases)
+[![Version](https://img.shields.io/badge/version-v1.1.0-blue.svg)](https://github.com/doublegate/RustyNES/releases)
 [![Rust: 1.86](https://img.shields.io/badge/rust-1.86-orange.svg)](rust-toolchain.toml)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web-lightgrey.svg)](#platform-support)
 [![AccuracyCoin](<https://img.shields.io/badge/AccuracyCoin-100%25%20(139%2F139)-brightgreen.svg>)](#compatibility-and-accuracy)
@@ -75,6 +75,8 @@ platform for NES emulation.
 | **Rollback Netplay**   | GGPO-style rollback for up to 4 players, over UDP or browser WebRTC                           |
 | **TAS Tools**          | Frame-perfect deterministic record / replay with save-state branching (`.rnm` format)        |
 | **Run-Ahead**          | Latency reduction that hides a game's internal input lag                                      |
+| **Video Filters** *(v1.1.0)* | Full NES_NTSC composite / S-video, a CRT / scanline shader pass, and custom `.pal` palettes |
+| **Lua Scripting** *(v1.1.0)* | Sandboxed Lua 5.4 — memory/state access, frame & access callbacks, HUD overlay (opt-in)  |
 | **Pure Rust**          | `winit` + `wgpu` + `cpal` + `egui` frontend; safe `no_std + alloc` chip stack                 |
 
 <p align="center">
@@ -152,17 +154,31 @@ The full per-mapper visual corpus lives in
   hold-to-fast-forward, and single-frame advance while paused.
 - **Display-sync pacing + lock-free audio** — an `auto` / `display` / `vrr` /
   `wallclock` pacing matrix ends display-beat judder; a lock-free SPSC audio ring with
-  dynamic rate control keeps audio clean and underrun-free; master volume and
-  per-APU-channel mutes round out the audio mixer.
-- **Cheats and input devices** — Game Genie and raw RAM cheats, four input devices
-  (standard pad, Four Score, Arkanoid Vaus, Zapper), and USB gamepads (`gilrs`) with a
-  deadzone control and hot-plug detection.
+  dynamic rate control keeps audio clean and underrun-free; master volume,
+  per-APU-channel mutes, and a **5-band graphic equalizer** round out the audio mixer.
+- **Video filters** *(v1.1.0)* — a full **NES_NTSC composite / S-video** filter, a
+  **CRT / scanline** shader pass (curvature, scanlines, aperture mask), and
+  **custom `.pal` palette** loading, layered on the existing 8:7 pixel-aspect + overscan
+  pipeline.
+- **NSF / NSFe music player** *(v1.1.0)* — drop in a `.nsf` chiptune and play it through
+  the real APU, with a track selector and the file's title / artist / copyright.
+- **Lua scripting** *(v1.1.0, opt-in `scripting` feature, native-only)* — a sandboxed
+  **Lua 5.4** engine: read / write memory, inspect CPU state, react to per-frame /
+  per-access events, draw an HUD overlay, and drive control actions. See
+  [`docs/scripting.md`](docs/scripting.md).
+- **Cheats and input devices** — Game Genie and raw RAM cheats, input devices
+  (standard pad, Four Score, Arkanoid Vaus, Zapper, and the **Power Pad**),
+  **turbo / autofire** with an **input-display overlay**, a **per-game database** of
+  nametable-mirroring overrides, and USB gamepads (`gilrs`) with a deadzone control and
+  hot-plug detection.
 - **Desktop UX** — a native menu bar, recent-ROMs list, a tabbed Settings window,
   light / dark / system themes, 8:7 pixel-aspect correction, optional overscan
   cropping, integer window-size presets, a pause-dim overlay, a status bar,
   screenshot-to-file/clipboard, and drag-and-drop ROM loading.
-- **Read-only egui debugger** — CPU, PPU, APU, memory, OAM, and mapper panels, plus an
-  optional NTSC `wgsl` post-pass — all preserving the strict determinism contract.
+- **egui debugger + devtools** — a read-only CPU / PPU / APU / memory / OAM / mapper
+  inspector by default, plus opt-in **breakpoints / watchpoints**, a **cycle trace
+  logger**, and an **event viewer** (IRQ / NMI / register-write timeline) behind the
+  `debug-hooks` feature — all preserving the strict determinism contract when off.
 
 ---
 
@@ -335,7 +351,7 @@ in [`docs/architecture.md`](docs/architecture.md) and [`docs/scheduler.md`](docs
 
 ### Project layout
 
-```
+```text
 crates/        Cargo workspace: the crates above
 docs/          Implementation specs, ADRs, audit reports, the user guide,
                STATUS.md (single source of truth), and per-version release notes
@@ -454,11 +470,12 @@ engine-development audit logs are kept locally, outside the public repo.)
 
 ## Version History
 
-RustyNES reaches its first stable release, **v1.0.0**, with a cycle-accurate core, a
-complete platform feature set, and a polished desktop / web UX. The road there:
+The current release is **v1.1.0**, the first feature release on top of the
+cycle-accurate v1.0.0 production core. The road there:
 
 | Version    | Highlights                                                                                  |
 | ---------- | ------------------------------------------------------------------------------------------- |
+| **v1.1.0** | First feature release — visual filters (full NES_NTSC + CRT/scanline shader + `.pal` loading), input & peripherals (Power Pad, turbo/autofire, input-display overlay, per-game mirroring database), debugger devtools (breakpoints, trace logger, event viewer), audio (NSF/NSFe player, 5-band EQ), and the flagship **Lua scripting** engine |
 | **v1.0.0** | First stable release — the production UX (menu bar, themes, tabbed settings, debugger) and documentation synthesis on top of the cycle-accurate engine |
 | v0.9.7     | Performance pass: display-sync pacing, lock-free audio + dynamic rate control, run-ahead, a dedicated emulation thread, core micro-opts |
 | v0.9.6     | RetroAchievements; Vs. DIP / palette database; deployable browser netplay; netplay hardening |
@@ -469,16 +486,18 @@ complete platform feature set, and a polished desktop / web UX. The road there:
 | v0.9.1     | Expansion audio (VRC6/7, FME-7 5B, N163, MMC5), the WebAssembly target, TAS movies, Game Genie |
 | v0.9.0     | The cycle-accurate core: per-cycle CPU bus interleaving, the lockstep PPU, the band-limited APU |
 
-> Note: this is **v1.0.0**, RustyNES's first stable release. The original RustyNES line
-> (v0.8.x) used an earlier, less-accurate emulation core; v1.0.0 replaces that core
-> wholesale with the cycle-accurate engine described above. See [`CHANGELOG.md`](CHANGELOG.md)
-> for full per-version detail.
+> Note: **v1.0.0** was RustyNES's first stable release. The original RustyNES line
+> (v0.8.x) used an earlier, less-accurate emulation core; v1.0.0 replaced that core
+> wholesale with the cycle-accurate engine described above, and **v1.1.0** adds the
+> feature set above on top of it. See [`CHANGELOG.md`](CHANGELOG.md) for full
+> per-version detail.
 
 ### Roadmap
 
 Possible future directions include mobile (iOS / Android) frontends, additional
-long-tail mappers, and a scripting surface for automation. None of these are shipped in
-v1.0.0; see [`docs/STATUS.md`](docs/STATUS.md) for the authoritative current state.
+long-tail mappers, and a browser/wasm build of the Lua scripting surface (the
+native engine shipped in v1.1.0). None of these are shipped yet; see
+[`docs/STATUS.md`](docs/STATUS.md) for the authoritative current state.
 
 ---
 

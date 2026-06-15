@@ -343,6 +343,7 @@ crates/rustynes-apu/
 
 **Milestone Status:** ✅ COMPLETED (December 19, 2025)
 **Deliverables:**
+
 - 5 audio channels fully implemented
 - Non-linear mixer with lookup tables
 - 48 kHz audio resampler

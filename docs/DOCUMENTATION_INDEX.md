@@ -21,7 +21,7 @@ The core "spec" docs — kept in sync with the code in the same PR as a change.
 | [mappers.md](mappers.md) | Mapper system — 51 families, banking, per-mapper IRQ, expansion audio |
 | [cartridge-format.md](cartridge-format.md) | iNES / NES 2.0 / FDS parsing |
 | [architecture.md](architecture.md) | Cross-cutting design (Bus owns mutable state, one-directional crate graph, determinism contract) |
-| [frontend.md](frontend.md) | The `rustynes` desktop app (winit + wgpu + cpal + egui), audio engine, pacing, run-ahead |
+| [frontend.md](frontend.md) | The `rustynes` desktop app (winit + wgpu + cpal + egui), audio engine, pacing, run-ahead, video filters (NES_NTSC / CRT / custom `.pal`), input devices (Power Pad, turbo, input-display overlay), per-game mirroring database, debugger devtools (trace logger, event viewer), Lua Script console |
 
 ## Cross-cutting references
 
@@ -36,6 +36,7 @@ The core "spec" docs — kept in sync with the code in the same PR as a change.
 | [build-and-tooling.md](build-and-tooling.md) | Build, feature flags, toolchain, CI |
 | [nesdev-hardware-emulation-checklist.md](nesdev-hardware-emulation-checklist.md) | Hardware-behavior coverage checklist |
 | [netplay-webrtc.md](netplay-webrtc.md) | Rollback netplay (UDP + browser WebRTC) design |
+| [scripting.md](scripting.md) | Lua scripting `emu` API reference (sandboxed Lua 5.4, `scripting` feature, native-only) |
 | [ppu-trace-tooling.md](ppu-trace-tooling.md) | PPU state-trace diagnostic tooling |
 | [ra-integration-request.md](ra-integration-request.md) | RetroAchievements allowlisting request template |
 

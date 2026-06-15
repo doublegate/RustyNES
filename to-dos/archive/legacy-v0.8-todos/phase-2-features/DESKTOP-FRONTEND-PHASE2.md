@@ -86,6 +86,7 @@ egui 0.33 Immediate Mode Rendering
 ```
 
 **Key Points:**
+
 - **No wgpu**: Using glow (OpenGL) backend for simplicity
 - **No pixels crate**: Framebuffer rendered directly as egui texture
 - **Immediate Mode**: UI rebuilt every frame (no retained state complexity)
@@ -281,6 +282,7 @@ Before beginning Phase 2 development, the following must be complete:
   - [ ] PRG/CHR RAM
 
 **Technical Notes:**
+
 - Use `bincode` or `postcard` for compact binary serialization
 - Target save state size: <64KB for most games
 - Reference: `docs/api/SAVE_STATES.md`
@@ -320,6 +322,7 @@ Before beginning Phase 2 development, the following must be complete:
 - [ ] Performance optimization (delta states)
 
 **Acceptance Criteria:**
+
 - [ ] Save/load completes in <50ms
 - [ ] Loaded state produces identical output to original
 - [ ] Works with all 5 core mappers
@@ -357,6 +360,7 @@ Before beginning Phase 2 development, the following must be complete:
 - [ ] Instruction history/trace
 
 **Technical Notes:**
+
 - Reference: FCEUX debugger for UI patterns
 - Use `rustynes-cpu` internal state access
 - Consider instruction caching for disassembly performance
@@ -451,6 +455,7 @@ Before beginning Phase 2 development, the following must be complete:
 - [ ] Use for informed disassembly
 
 **Acceptance Criteria:**
+
 - [ ] Breakpoints halt execution reliably
 - [ ] Memory edits reflect immediately
 - [ ] PPU viewers update at frame rate
@@ -476,6 +481,7 @@ Before beginning Phase 2 development, the following must be complete:
 - [ ] Error handling for FFI boundary
 
 **Technical Notes:**
+
 - Reference: RetroArch's rcheevos integration
 - Requires C compiler for build
 - Link statically for distribution
@@ -522,6 +528,7 @@ Before beginning Phase 2 development, the following must be complete:
 - [ ] Badge indicator in UI
 
 **Acceptance Criteria:**
+
 - [ ] Achievements unlock correctly in 10+ test games
 - [ ] No false positives or negatives
 - [ ] <1% performance impact
@@ -547,6 +554,7 @@ Before beginning Phase 2 development, the following must be complete:
 - [ ] Frame advance callback
 
 **Technical Notes:**
+
 - backroll-rs is Rust port of GGPO
 - Requires deterministic emulation (byte-perfect replay)
 - Target: <5 frame rollback at 100ms latency
@@ -597,6 +605,7 @@ Before beginning Phase 2 development, the following must be complete:
 - [ ] Spectator chat
 
 **Acceptance Criteria:**
+
 - [ ] 1-2 frame input lag over LAN
 - [ ] <5 frame rollback at 100ms ping
 - [ ] No desyncs in 30-minute sessions
@@ -668,6 +677,7 @@ Before beginning Phase 2 development, the following must be complete:
 - [ ] Configurable position/style
 
 **Acceptance Criteria:**
+
 - [ ] FM2 files from FCEUX play correctly
 - [ ] Exported FM2 files play in FCEUX
 - [ ] Re-recording maintains sync
@@ -730,6 +740,7 @@ Before beginning Phase 2 development, the following must be complete:
 - [ ] Color format: RGB hex or RGBA table
 
 **Technical Notes:**
+
 - Drawing renders to overlay layer, not NES framebuffer
 - Performance target: <5% overhead with typical scripts
 - Reference: FCEUX Lua API for compatibility
@@ -760,6 +771,7 @@ Before beginning Phase 2 development, the following must be complete:
 - [ ] Input display customization
 
 **Acceptance Criteria:**
+
 - [ ] FCEUX-compatible scripts mostly work
 - [ ] Memory read/write at 60 Hz stable
 - [ ] Drawing primitives render correctly
@@ -787,6 +799,7 @@ Before beginning Phase 2 development, the following must be complete:
 - [ ] Custom shader loading (.glsl)
 
 **Technical Notes:**
+
 - eframe uses glow (OpenGL) backend, not wgpu
 - Shaders written in GLSL, not WGSL
 - egui texture rendering with post-processing pipeline
@@ -825,6 +838,7 @@ Before beginning Phase 2 development, the following must be complete:
 - [ ] Recording indicator
 
 **Acceptance Criteria:**
+
 - [ ] Shaders don't affect emulation performance
 - [ ] Integer scaling is pixel-perfect
 - [ ] Screenshots are correct size/format
@@ -839,6 +853,7 @@ Before beginning Phase 2 development, the following must be complete:
 **Dependencies:** cpal 0.16 audio backend
 
 **cpal 0.16 Features Available:**
+
 - Buffer underrun detection and reporting
 - Improved device enumeration
 - Better error handling for audio device changes
@@ -888,6 +903,7 @@ Before beginning Phase 2 development, the following must be complete:
 - [ ] Latency adjustment
 
 **Acceptance Criteria:**
+
 - [ ] Mixer changes don't introduce artifacts
 - [ ] Audio recording is in sync
 - [ ] NSF playback matches native NES
@@ -941,6 +957,7 @@ Before beginning Phase 2 development, the following must be complete:
 - [ ] Power Pad (keyboard grid)
 
 **Acceptance Criteria:**
+
 - [ ] All standard gamepads detected
 - [ ] Input latency <1 frame
 - [ ] Turbo rate is accurate
@@ -993,6 +1010,7 @@ Before beginning Phase 2 development, the following must be complete:
 - [ ] Play history with stats
 
 **Acceptance Criteria:**
+
 - [ ] Scans 1000+ ROMs in <10 seconds
 - [ ] Database persists across sessions
 - [ ] UI responsive with large library
@@ -1045,6 +1063,7 @@ Before beginning Phase 2 development, the following must be complete:
 - [ ] Factory reset option
 
 **Acceptance Criteria:**
+
 - [ ] All settings persist correctly
 - [ ] Per-game overrides work
 - [ ] Settings UI is intuitive
@@ -1106,6 +1125,7 @@ Before beginning Phase 2 development, the following must be complete:
 - [ ] Notification support
 
 **Acceptance Criteria:**
+
 - [ ] Speed controls don't affect audio pitch
 - [ ] Cheats work without save state dependency
 - [ ] Window state persists correctly

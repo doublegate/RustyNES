@@ -16,6 +16,7 @@ Systematically pass the Blargg PPU test suite (49 tests) to validate VBlank/NMI 
 ## Tasks
 
 ### Task 1: VBlank/NMI Tests (10 tests)
+
 - [ ] Run ppu_vbl_nmi/ppu_vbl_nmi.nes (comprehensive VBL/NMI test)
 - [x] Test 01-vbl_basics.nes (VBlank flag basics)
 - [ ] Test 02-vbl_set_time.nes (VBlank flag set timing ±2 cycle)
@@ -29,6 +30,7 @@ Systematically pass the Blargg PPU test suite (49 tests) to validate VBlank/NMI 
 - [ ] Test 10-even_odd_timing.nes (Odd frame skip timing)
 
 ### Task 2: Sprite 0 Hit Tests (11 tests)
+
 - [ ] Run ppu_sprite_hit/ppu_sprite_hit.nes (comprehensive sprite 0 test)
 - [x] Test 01-basics.nes (Sprite 0 hit basics)
 - [ ] Test 02-alignment.nes (Sprite 0 hit alignment)
@@ -43,6 +45,7 @@ Systematically pass the Blargg PPU test suite (49 tests) to validate VBlank/NMI 
 - [ ] Test 11-edge_timing.nes (Sprite 0 hit edge timing)
 
 ### Task 3: Palette RAM Tests (5 tests)
+
 - [ ] Run ppu_palette_ram/ppu_palette_ram.nes (palette RAM mirroring)
 - [ ] Test sprite palette mirroring ($3F10, $3F14, $3F18, $3F1C → $3F00, $3F04, $3F08, $3F0C)
 - [ ] Test background color mirroring ($3F00 mirrored at $3F10)
@@ -50,6 +53,7 @@ Systematically pass the Blargg PPU test suite (49 tests) to validate VBlank/NMI 
 - [ ] Test palette read edge cases
 
 ### Task 4: Open Bus Tests (3 tests)
+
 - [x] Run ppu_open_bus/ppu_open_bus.nes (PPU open bus behavior) - **Passed**
 - [x] Test $2000-$2007 open bus behavior
 - [x] Test $2002 VBlank flag read (clear after read)
@@ -57,6 +61,7 @@ Systematically pass the Blargg PPU test suite (49 tests) to validate VBlank/NMI 
 - [x] Test $2007 VRAM read buffer behavior
 
 ### Task 5: Rendering Edge Cases (20 tests)
+
 - [ ] Test sprite overflow flag behavior
 - [ ] Test sprite priority (front/back)
 - [ ] Test background rendering edge cases
@@ -95,6 +100,7 @@ Systematically pass the Blargg PPU test suite (49 tests) to validate VBlank/NMI 
 | ppu_open_bus/ppu_open_bus.nes | ✅ Pass | Open bus decay & latch fully implemented |
 
 **Additional PPU Tests (20+ ROMs):**
+
 - ppu_sprite_overflow/ (sprite overflow flag)
 - ppu_read_buffer/ (VRAM read buffer $2007)
 - ppu_scroll/ (scrolling edge cases)
@@ -114,6 +120,7 @@ Systematically pass the Blargg PPU test suite (49 tests) to validate VBlank/NMI 
 ## Expected Failures (2 tests)
 
 **Highly timing-sensitive tests:**
+
 - ppu_02-vbl_set_time.nes - Requires ±1 cycle precision (currently ±2)
 - ppu_sprite_hit/11-edge_timing.nes - Sub-dot precision required
 

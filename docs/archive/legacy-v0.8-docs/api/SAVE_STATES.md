@@ -1,6 +1,6 @@
 # Save States
 
-**Table of Contents**
+## Table of Contents
 
 - [Overview](#overview)
 - [Save State Format](#save-state-format)

@@ -42,7 +42,7 @@ is `slot0.rns`.
 
 The on-disk layout is one file per slot, per ROM:
 
-```
+```text
 <data_dir>/saves/<rom_sha256_hex>/slot0.rns
 <data_dir>/saves/<rom_sha256_hex>/slot1.rns
 ... up to slot9.rns
@@ -58,10 +58,10 @@ file around doesn't break the saves.
 
 Each `.rns` file starts with an 8-byte `RUSTYNES` magic, a 2-byte
 little-endian format version, a 6-byte truncated ROM SHA-256 sanity tag,
-then a sequence of tagged sections: `BUS `, `CPU `, `PPU `, `APU `,
-`MAP `. Unknown sections are skipped on load for forward compatibility,
+then a sequence of tagged sections: `BUS`, `CPU`, `PPU`, `APU`,
+`MAP`. Unknown sections are skipped on load for forward compatibility,
 so a state written by a newer version that adds (for example) a
-`NETPLAY ` section will still load on this version with the new section
+`NETPLAY` section will still load on this version with the new section
 ignored.
 
 The format is intentionally simple — no `serde`, no `bincode`, no

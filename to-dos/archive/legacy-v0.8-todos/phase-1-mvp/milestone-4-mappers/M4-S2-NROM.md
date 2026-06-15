@@ -545,6 +545,7 @@ $C000-$FFFF: Last 16KB of PRG-ROM (or mirrored first 16KB)
 ### Bus Conflicts
 
 NROM has no bus conflicts because:
+
 - PRG-ROM writes are simply ignored
 - No bank switching logic that could conflict
 

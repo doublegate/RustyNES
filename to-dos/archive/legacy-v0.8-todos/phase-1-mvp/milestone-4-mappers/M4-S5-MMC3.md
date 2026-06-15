@@ -731,6 +731,7 @@ mod tests {
 ### PRG Banking
 
 **Mode 0:**
+
 ```
 $8000: R6 (8KB)
 $A000: R7 (8KB)
@@ -739,6 +740,7 @@ $E000: Last 8KB bank (fixed)
 ```
 
 **Mode 1:**
+
 ```
 $8000: Second-last 8KB bank (fixed)
 $A000: R7 (8KB)
@@ -763,6 +765,7 @@ $E000: Last 8KB bank (fixed)
 ### Scanline Detection
 
 The MMC3 IRQ counter is designed to count scanlines:
+
 - PPU fetches background tiles from alternating pattern tables
 - Each scanline causes multiple A12 toggles
 - Counter decrements once per scanline (with proper filtering)

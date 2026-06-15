@@ -18,14 +18,17 @@ Integrate mapper clocking into the `on_cpu_cycle()` callback to achieve cycle-ac
 ## Dependencies
 
 ### Required Before Starting
+
 - **S1 (CPU Refactor)** - Cycle-by-cycle execution framework
 - **S2 (PPU Sync)** - PPU dot-accurate stepping for A12 detection
 
 ### Parallel Work
+
 - **S3 (APU)** - Independent work
 - **S4 (Bus/DMA)** - `on_cpu_cycle()` must include mapper.clock()
 
 ### Blocks
+
 - **S6 (Testing)** - Mapper IRQ timing tests
 
 ---
@@ -89,9 +92,11 @@ self.bus.clock_mapper(cpu_cycles);
 **Priority:** P0
 **Effort:** 2 hours
 **Files:**
+
 - `crates/rustynes-core/src/bus.rs`
 
 #### Subtasks
+
 - [ ] Add `self.mapper.clock(1)` to `on_cpu_cycle()`
 - [ ] Ensure mapper is clocked once per CPU cycle
 - [ ] Verify with cycle-based mappers (VRC)
@@ -125,11 +130,13 @@ impl CpuBus for Bus {
 **Priority:** P0
 **Effort:** 5 hours
 **Files:**
+
 - `crates/rustynes-mappers/src/mmc3.rs`
 - `crates/rustynes-ppu/src/ppu.rs`
 - `crates/rustynes-core/src/bus.rs`
 
 #### Subtasks
+
 - [ ] Track A12 state across PPU fetches
 - [ ] Detect rising edge (low-to-high transition)
 - [ ] Clock MMC3 counter on rising edge
@@ -224,9 +231,11 @@ fn on_cpu_cycle(&mut self) {
 **Priority:** P1
 **Effort:** 3 hours
 **Files:**
+
 - `crates/rustynes-mappers/src/mmc3.rs`
 
 #### Subtasks
+
 - [ ] Handle IRQ counter reload timing
 - [ ] Handle counter = 0 and reload = 0 case
 - [ ] Handle IRQ acknowledge timing
@@ -278,9 +287,11 @@ fn clock_irq_counter(&mut self) {
 **Priority:** P2
 **Effort:** 4 hours
 **Files:**
+
 - `crates/rustynes-mappers/src/mmc5.rs` (create if needed)
 
 #### Subtasks
+
 - [ ] Implement MMC5 scanline counter (different from MMC3)
 - [ ] Handle in-frame detection
 - [ ] Integrate with PPU rendering state
@@ -310,9 +321,11 @@ MMC5 IRQ:
 **Priority:** P2
 **Effort:** 3 hours
 **Files:**
+
 - `crates/rustynes-mappers/src/vrc*.rs`
 
 #### Subtasks
+
 - [ ] Implement VRC4/6/7 cycle-based IRQ counter
 - [ ] Handle prescaler modes (256 or 341 cycles)
 - [ ] Integrate with `clock()` method
@@ -362,9 +375,11 @@ impl VrcIrq {
 **Priority:** P2
 **Effort:** 2 hours
 **Files:**
+
 - `crates/rustynes-mappers/src/*.rs`
 
 #### Subtasks
+
 - [ ] Verify register writes take effect at correct cycle
 - [ ] Handle bank switch timing (some mappers have delay)
 - [ ] Test mid-instruction bank switching
@@ -392,10 +407,12 @@ Delayed Effect:
 **Priority:** P2
 **Effort:** 2 hours
 **Files:**
+
 - `crates/rustynes-mappers/src/lib.rs`
 - `crates/rustynes-mappers/src/*.rs`
 
 #### Subtasks
+
 - [ ] Add `has_bus_conflicts()` trait method
 - [ ] Implement bus conflict for BNROM (34), GNROM (66)
 - [ ] Implement bus conflict for Color Dreams (11)
@@ -433,6 +450,7 @@ fn write(&mut self, addr: u16, value: u8) {
 ## Testing Requirements
 
 ### Unit Tests
+
 - [ ] MMC3 A12 edge detection per PPU dot
 - [ ] MMC3 counter reload behavior
 - [ ] MMC3 IRQ fire timing (transition to 0)
@@ -440,6 +458,7 @@ fn write(&mut self, addr: u16, value: u8) {
 - [ ] Bus conflict AND behavior
 
 ### Integration Tests
+
 - [ ] Holy Mapperel MMC3 tests
 - [ ] Super Mario Bros. 3 status bar
 - [ ] Mega Man 3-6 split screens
@@ -474,19 +493,23 @@ fn write(&mut self, addr: u16, value: u8) {
 ## References
 
 ### Internal Documentation
+
 - [Mapper Overview](../../../docs/mappers/MAPPER_OVERVIEW.md)
 - [MMC3 Specification](../../../docs/mappers/MAPPER_004_MMC3.md)
 
 ### External Resources
+
 - [NESdev Wiki - MMC3](https://www.nesdev.org/wiki/MMC3)
 - [NESdev Wiki - MMC5](https://www.nesdev.org/wiki/MMC5)
 - [NESdev Wiki - VRC6](https://www.nesdev.org/wiki/VRC6)
 
 ### Reference Implementations
+
 - **Mesen2** - C++, gold standard mapper accuracy
 - **puNES** - C++, 461+ mapper implementations
 
 ### Test ROMs
+
 - Holy Mapperel MMC3 tests
 - Blargg mapper tests
 

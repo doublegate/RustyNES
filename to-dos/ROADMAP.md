@@ -5,7 +5,9 @@ This is the entry point for project planning. Each phase below links to its over
 The phase bodies preserve the **engine-lineage** development history — the
 internal engine line (v0.9.x → v2.x markers) whose increments produced the
 RustyNES v1.0.0 technology. Those version markers are historical anchors, not
-RustyNES releases of their own; RustyNES ships at **v1.0.0**.
+RustyNES releases of their own; the RustyNES production core shipped at
+**v1.0.0**, and **v1.1.0** — the first feature release on that core — ships on
+top of it.
 
 **RustyNES release line:** `v0.1.0…v0.8.6` (the parent emulator) →
 `v0.9.0…v0.9.7` (engine-lineage integration stages — the inbound cycle-accurate
@@ -20,7 +22,7 @@ v2.8.0 → v0.9.7; the synthesis itself = **v1.0.0**.
 
 ## Status
 
-- **Current release:** **RustyNES v1.0.0 — the production cut.** A cycle-accurate NES/Famicom emulator at the Mesen2 / higan / ares accuracy bar, shipped as a polished desktop application (AccuracyCoin **100.00% / 139**, 60-ROM + 52-entry oracles byte-identical, nestest 0-diff). v1.0.0 delivers: the master-clock cycle-accurate core; 51 mapper families (incl. VRC6/VRC7-OPLL/Sunsoft-5B/Namco-163/MMC5 expansion audio + Vs./PC10 RGB boards); real-BIOS FDS; 2-4-player rollback netplay (native UDP + browser WebRTC); RetroAchievements (opt-in/native); TAS movie record/replay + save states/rewind; the performance + desktop-UX shell (display-sync pacing matrix + late input latch, lock-free audio ring + dynamic rate control, run-ahead, dedicated emulation thread, plus an always-on egui shell — menu bar / status bar, tabbed Settings window, light/dark/system themes, 8:7 pixel-aspect correction, fullscreen, save-state slots, recent-ROMs, and the surfaced Cheats/Movies/Netplay/RA/Performance tool panels); and a WebAssembly build with an AudioWorklet audio path + rAF display-sync. The determinism contract holds (DRC is a frontend resampler stage; run-ahead is frontend snapshot/restore orchestration; the core per-frame output is untouched). See `CHANGELOG.md` `[1.0.0]`. The milestones below are the engine-lineage history that produced this release.
+- **Current release:** **RustyNES v1.1.0 — the first feature release on the v1.0.0 production core.** A cycle-accurate NES/Famicom emulator at the Mesen2 / higan / ares accuracy bar, shipped as a polished desktop application (AccuracyCoin **100.00% / 139**, 60-ROM + 52-entry oracles byte-identical, nestest 0-diff). v1.1.0 adds, on top of the v1.0.0 core, full NES_NTSC composite + CRT/scanline shaders + `.pal` palette filters, NES Power Pad + turbo/autofire + an input-display overlay + a per-game nametable-mirroring override database, debugger breakpoints + a cycle trace logger + an event viewer, an NSF/NSFe player + a 5-band graphic EQ, and the flagship **Lua scripting engine**. The underlying **v1.0.0 production cut** delivers: the master-clock cycle-accurate core; 51 mapper families (incl. VRC6/VRC7-OPLL/Sunsoft-5B/Namco-163/MMC5 expansion audio + Vs./PC10 RGB boards); real-BIOS FDS; 2-4-player rollback netplay (native UDP + browser WebRTC); RetroAchievements (opt-in/native); TAS movie record/replay + save states/rewind; the performance + desktop-UX shell (display-sync pacing matrix + late input latch, lock-free audio ring + dynamic rate control, run-ahead, dedicated emulation thread, plus an always-on egui shell — menu bar / status bar, tabbed Settings window, light/dark/system themes, 8:7 pixel-aspect correction, fullscreen, save-state slots, recent-ROMs, and the surfaced Cheats/Movies/Netplay/RA/Performance tool panels); and a WebAssembly build with an AudioWorklet audio path + rAF display-sync. The determinism contract holds (DRC is a frontend resampler stage; run-ahead is frontend snapshot/restore orchestration; the core per-frame output is untouched). See `CHANGELOG.md` `[1.1.0]` + `[1.0.0]`. The milestones below are the engine-lineage history that produced the v1.0.0 core.
 - **Engine-lineage — the "optimized performance" pass** (folded into v1.0.0): a frontend + build performance pass — a Performance panel + CSV "Logging" checkbox; a lock-free SPSC audio ring + **dynamic rate control**; a **display-sync pacing matrix** (`auto|display|vrr|wallclock`) + **late input latch**; a **snapshot fast path** (36→14.6 µs) + **run-ahead** (default 1, persistent timeline byte-identical); **mapper-caps + pixel-LUT + fat-LTO + SIMD** (**−26%** rendering-heavy bench, −16% nestest); a **dedicated emulation thread** (default-ON `emu-thread`, lock-free `SharedInput`, netplay-pause TOCTOU-closed) + best-effort Linux priority elevation; and a browser **AudioWorklet** + **rAF display-sync**. See `docs/release-notes/v2.8.0.md` (engine-line detail).
 - **Engine-lineage — the master-clock milestone:** the engine's v2.0 line made the R1 `u64` master clock the default (AccuracyCoin 90.65%→**100.00%**, region-exact 3.2:1 PAL via the unified DMA engine) and then removed the legacy integer-lockstep scheduler (R1 is the only path; the `mc-r1-*` flags no longer exist). See `docs/audit/v2.0-phase7f-r1-default-promotion-2026-06-10.md`.
 - **Previous phase:** **v1.7.0 RELEASED (2026-05-25)** — **niceties milestone**: Four Score 4-player support (bus `$4016`/`$4017` 24-read multiplex of 4 controllers + adapter signature; opt-in, OFF by default = byte-identical two-controller reads; a P3/P4 keyboard + gamepad rebind UI + a "Four Score" toggle), GameShark-style raw RAM cheats (`Nes::poke_ram` applied caller-side after `run_frame`, alongside the v1.6.0 Game Genie support; a `RawCheat` `$addr=$value [if $compare]` section in the cheat panel persisted per-ROM), and an in-app graphics/audio/rewind settings panel. **Additive, independent of the deferred v2.0 master-clock axis**; AccuracyCoin held **90.65%**, oracle 60/60, sacred trio + B4 byte-identical, determinism preserved. Workspace `--features test-roms`: **702 strict + 10 ignored**. See `docs/audit/gap-analysis-remediation-plan-2026-05-25.md` §2 + `CHANGELOG.md` `[1.7.0]`.
@@ -30,96 +32,106 @@ v2.8.0 → v0.9.7; the synthesis itself = **v1.0.0**.
 - **Previous phase:** Phase 8 — **v1.2.0 RELEASED (2026-05-24).** DMC DMA scheduler refactor landed under default-off cargo feature `dmc-get-put-scheduler` introducing Mesen2's canonical get/put cycle alternation model alongside the v1.1.0 phase-agnostic scheduler via the parallel-implementation pattern (ADR 0007). AccuracyCoin DMA cluster under flag-on: **6/10 match baseline** (closing 4 → 0 deferred to v1.2.x patches or v2.0 master-clock absorption). Default build bit-identical to v1.1.0.
 - **Earlier work:** **v1.1.0 RELEASED (2026-05-25)** — VRC7 OPLL FM audio via clean-room pure-Rust port of `emu2413 v1.5.9` (MIT); ADR 0006 supersedes ADR 0004; *Lagrange Point* plays with audio. (v1.1.0 was a v2.0.0-release-plan milestone slotted between Phase 6 and Phase 8, **not** the ROADMAP's Phase 7 — see the numbering note below.) Phase 6 — **v1.0.0 RELEASED (2026-05-23)**: AccuracyCoin gate CLEARED at 90.65% (126/139); T-60-001 C1 IRQ-timing residuals (3 `cpu_interrupts_v2` sub-ROMs + `mmc3_test_2/4` #3) deferred to **v2.0** master-clock-precise scheduling refactor (Session-29 empirically falsified Option A global PPU-position shift; 17 documented rollbacks).
 - **Phase-numbering note:** the shipped releases v1.1.0 → v1.4.0 were sequenced from the v2.0.0 release plan and back-labelled in the detailed sections as v1.1.0 (VRC7) → Phase 8 (v1.2.0 DMC) → Phase 9 (v1.3.0 wasm) → Phase 10 (v1.4.0 TAS). **Phase 7 — Nesdev Accuracy Hardening (below) was authored but never executed**; it is now being executed as **v1.5.0**. See `docs/audit/phase-7-assessment-2026-05-24.md` for the full intent-vs-accomplished-vs-completable disposition.
-- **Current state:** **RustyNES v1.0.0 — production cut, delivered.** Every accuracy, compatibility, platform, netplay, RetroAchievements, FDS, Vs/PC10, and performance milestone in the engine-lineage history above is folded into the v1.0.0 release, and the parent emulator's polished desktop-UX shell is ported on top. The remaining work is the post-v1.0.0 forward roadmap below (mobile, the externally-blocked RA allowlist, the Vs. DualSystem games, a few game-specific gaps, Lua scripting). The engine-lineage version markers (v0.9.x → v2.x) in the bullets above and the phase bodies are upstream history, not RustyNES releases.
-- **Forward roadmap (post-v1.0.0)** — everything in the v1.0.0 production cut is complete: the accuracy program (AccuracyCoin 100%), netplay (live-verified native + browser), the compatibility rounds, FDS, Vs/PC10, RetroAchievements + the Vs-DB + deployable browser netplay, the netplay-hardening work, AND the "optimized performance" pass (display-sync pacing matrix + late latch, lock-free audio ring + DRC, run-ahead, −26% core, dedicated emulation thread + Linux priority elevation, browser AudioWorklet + rAF display-sync). What remains for future releases is mobile + the externally-blocked RA-allowlisting + a couple of game-specific gaps + collapsing the synchronous A/B path. **The live forward plan** is tracked in [`to-dos/v1.0.1-compat-hygiene/`](./v1.0.1-compat-hygiene/overview.md) (the next patch — game-compat fixes + this doc/test hygiene) and [`to-dos/v1.1.0-features/`](./v1.1.0-features/overview.md) (the next minor release — **Lua scripting flagship** + visual filters + debugger devtools + peripherals + NSF player). The old `phase-7`/`phase-8` plans are archived under [`to-dos/archive/`](./archive/README.md) (their accuracy targets are already met by the v1.0.0 core).
+- **Current state:** **RustyNES v1.1.0 — first feature release on the v1.0.0 production core, delivered.** Every accuracy, compatibility, platform, netplay, RetroAchievements, FDS, Vs/PC10, and performance milestone in the engine-lineage history above is folded into the v1.0.0 core, the parent emulator's polished desktop-UX shell is ported on top, and v1.1.0 then layers the feature set (visual filters, peripherals/QoL, debugger devtools, NSF player + EQ, and the flagship Lua scripting engine). The remaining work is the post-v1.1.0 forward roadmap below (mobile, the externally-blocked RA allowlist, the Vs. DualSystem games, browser/wasm Lua, long-tail mapper coverage, and the documented hard-tier accuracy residuals). The engine-lineage version markers (v0.9.x → v2.x) in the bullets above and the phase bodies are upstream history, not RustyNES releases.
+- **Forward roadmap (post-v1.1.0)** — everything in the v1.0.0 production cut is complete: the accuracy program (AccuracyCoin 100%), netplay (live-verified native + browser), the compatibility rounds, FDS, Vs/PC10, RetroAchievements + the Vs-DB + deployable browser netplay, the netplay-hardening work, AND the "optimized performance" pass (display-sync pacing matrix + late latch, lock-free audio ring + DRC, run-ahead, −26% core, dedicated emulation thread + Linux priority elevation, browser AudioWorklet + rAF display-sync). **v1.1.0 then SHIPPED** the first feature release on that core: full NES_NTSC composite + CRT/scanline shaders + `.pal` palette filters; NES Power Pad + turbo/autofire + an input-display overlay + a per-game nametable-mirroring override database; debugger breakpoints + a cycle trace logger + an event viewer; an NSF/NSFe player + a 5-band graphic EQ; and the flagship **Lua scripting engine**. Both staging folders have shipped and are archived: see [`to-dos/archive/v1.0.1-compat-hygiene/`](./archive/v1.0.1-compat-hygiene/overview.md) (the v1.0.1 patch — game-compat fixes + doc/test hygiene) and [`to-dos/archive/v1.1.0-features/`](./archive/v1.1.0-features/overview.md) (the v1.1.0 feature release, with the shipped-feature detail). The old `phase-7`/`phase-8` plans are likewise archived under [`to-dos/archive/`](./archive/README.md) (their accuracy targets are already met by the v1.0.0 core). What remains for future releases is the genuine post-v1.1.0 work listed in the sub-bullets below: mobile, the externally-blocked RA-allowlisting, the Vs. DualSystem games, browser/wasm Lua, long-tail mapper coverage, and the documented hard-tier accuracy residuals.
   - **DONE — ...v2.6.0 (Vs/PC10 RGB game-verified, +11 mappers→51, N-peer netplay, real-BIOS FDS)** + **v2.7.0 (RetroAchievements via the vendored rcheevos FFI — achievements/leaderboards/rich-presence/hardcore, opt-in native-only `crates/rustynes-cheevos`; the Vs.-System per-game DIP/2C04-palette DB; deployable browser WebRTC netplay — `deploy/` Docker/compose + a wired wasm lobby; the regenerated/re-sorted screenshot corpus + montage)** + **v2.7.1 (netplay-hardening + live verification — the `power_cycle` true-cold-boot root-cause desync fix incl. a mapper rebuild so all cartridge mappers are netplay-correct; input resend + cumulative `InputAck`; one-frame-per-pace driving on native AND wasm; the >2-player browser WebRTC mesh (2-4 players); RA login/badge-image/badge-lock-state/User-Agent fixes; the MMC6 byte-10 PRG-RAM fix; the NTSC-filter WGSL crash fix + shader-validation tests; Vs. DualSystem detection groundwork)**. RA is opt-in/native-only/frontend-side; stock NES byte-identical; AccuracyCoin 100%.
   - **Next (verify + finish the externally-blocked):** a **live RA-account allowlisting pass with the RA team** (the `RustyNES/<ver>` User-Agent is now sent — the allowlisting itself is a request, not a code change — to clear the "unknown emulator" warning + enable hardcore unlocks); the **Vs. DualSystem** games (two-CPU/two-PPU support — a real feature, now detection-flagged but not yet emulated; design `docs/audit/vs-dualsystem-design-2026-06-11.md`); the **FDS side-B / Kid Icarus** post-registration path (needs interactive testing) + **Mito Koumon (m89)** PPU rendering-enable axis; the two un-reproduced reports (GxROM-66, SMB3 "Mario flashing"). (>2-player browser netplay + the deployable signaling/STUN stack are DONE in v2.7.0/v2.7.1; a live N-browser session just needs the stack hosted.)
-  - **Later (post-v1.0.0, separate initiatives):** **Lua scripting** (the one advertised-but-unbuilt v1.0.0 feature — deferred to a post-1.0 release); the **long-tail mapper coverage** toward the ~300-mapper full set + **100% TASVideos** compatibility; **Mobile (iOS/Android)** frontend; **browser RetroAchievements** (needs an emscripten or pure-Rust rcheevos path). Deferred hard-tier accuracy: `mmc3_test_2/4` #3 + the 2 `apu_reset` residuals (the cycle-accurate reset/IRQ-sample axis — document, don't grind).
+  - **Later (post-v1.1.0, separate initiatives):** **Mobile (iOS/Android)** frontends; **browser/wasm Lua** (the v1.1.0 Lua scripting engine is native-only); the **long-tail mapper coverage** toward the ~300-mapper full set + **100% TASVideos** compatibility; **browser RetroAchievements** (needs an emscripten or pure-Rust rcheevos path). Deferred hard-tier accuracy: `mmc3_test_2/4` #3 + the 2 `apu_reset` residuals (the cycle-accurate reset/IRQ-sample axis — document, don't grind). (**Lua scripting** SHIPPED in v1.1.0 — it was the one advertised-but-unbuilt v1.0.0 feature, now delivered.)
 - **Done:** Phases 1-4 complete; Phase 5 Sprints 1-3 shipped — Frontend MVP, save state + rewind + TOML rebinding, egui debugger overlay (CPU/PPU/OAM/APU/memory/mapper panels + in-app rebind modal closing T-52-007), simplified Blargg-style NTSC wgsl post-pass, release workflow + README badges. **Regression-prevention buildout closed (2026-05-17):** 21-ROM permissive baselines + 60-ROM commercial-ROM oracle (54 strict + 6 ignored across 15 mappers) + 81-PNG visual corpus + permanent `scripts/regression-bisect/` tooling + `docs/audit/` decision-rationale tier. Real-game regression on SMB / Excitebike / Kid Icarus closed by the FSM dot-64 reset fix on `accuracy-stabilization` (`834be9e`). Residual accuracy gaps tracked in `CHANGELOG.md` `[Unreleased]` → "Investigated and rolled back". (Historical note: when this bullet was written, v1.0.0 was still gated on the C1 IRQ-timing rework + AccuracyCoin ≥ 90% (then 69.78%) + multi-OS smoke + the 6 ignored commercial ROMs. All of those resolved: **v1.0.0 released** (the 90.65% gate was an interim engine-lineage milestone), the 6 ROMs are strict-passing, and the master-clock refactor (the engine-lineage "v2.0" axis) **shipped as the v1.0.0 default core**, closing the C1 + sub-cycle residuals — the default build measures **AccuracyCoin 100%**. See `docs/audit/gap-analysis-remediation-plan-2026-05-25.md` for the historical trajectory.)
 - **Status matrix (single source of truth):** see [`docs/STATUS.md`](../docs/STATUS.md) for the per-test-ROM-suite pass count, mapper coverage matrix, feature flag state, and version policy. This roadmap intentionally keeps a short summary only.
 
 ## Phases
 
 ### Phase 1 — Foundation
+
 **Goal:** Empty Cargo workspace builds cleanly with CI green; cartridge parser passes round-trip tests; CPU executes the nestest golden log without diverging.
 
 **Exit criterion:** `cargo test --workspace` green; `nestest.nes` golden-log compare passes; iNES + NES 2.0 parser handles the test ROM corpus without errors.
 
 **Estimated duration:** 4-6 weeks
 
-[Phase 1 overview](phase-1-foundation/overview.md)
+[Phase 1 overview](archive/phase-1-foundation/overview.md)
 
 Sprints:
-- [Sprint 1 — Workspace + CI + lints](phase-1-foundation/sprint-1-workspace.md)
-- [Sprint 2 — Cartridge parser (iNES + NES 2.0)](phase-1-foundation/sprint-2-cartridge.md)
-- [Sprint 3 — CPU core: official opcodes](phase-1-foundation/sprint-3-cpu-official.md)
-- [Sprint 4 — CPU core: unofficial opcodes + nestest](phase-1-foundation/sprint-4-cpu-unofficial.md)
+
+- [Sprint 1 — Workspace + CI + lints](archive/phase-1-foundation/sprint-1-workspace.md)
+- [Sprint 2 — Cartridge parser (iNES + NES 2.0)](archive/phase-1-foundation/sprint-2-cartridge.md)
+- [Sprint 3 — CPU core: official opcodes](archive/phase-1-foundation/sprint-3-cpu-official.md)
+- [Sprint 4 — CPU core: unofficial opcodes + nestest](archive/phase-1-foundation/sprint-4-cpu-unofficial.md)
 
 ---
 
 ### Phase 2 — Graphics + Timing
+
 **Goal:** PPU renders correct pictures for NROM, MMC1, UxROM, AxROM, CNROM, GxROM titles; lockstep scheduler operational; blargg PPU test ROMs pass.
 
 **Exit criterion:** `ppu_vbl_nmi/*`, `ppu_open_bus`, `sprite_overflow_tests/*`, `oam_read`, `oam_stress` all pass; visual diff against Mesen2 reference for a curated demo set.
 
 **Estimated duration:** 6-8 weeks
 
-[Phase 2 overview](phase-2-graphics-timing/overview.md)
+[Phase 2 overview](archive/phase-2-graphics-timing/overview.md)
 
 Sprints:
-- [Sprint 1 — PPU bus, registers, memory map](phase-2-graphics-timing/sprint-1-ppu-bus.md)
-- [Sprint 2 — Background rendering + scrolling](phase-2-graphics-timing/sprint-2-background.md)
-- [Sprint 3 — Sprite evaluation + rendering + sprite-zero hit](phase-2-graphics-timing/sprint-3-sprites.md)
-- [Sprint 4 — Lockstep scheduler + DMA + simple mappers (NROM, UxROM, CNROM, AxROM, GxROM, MMC1)](phase-2-graphics-timing/sprint-4-scheduler-mappers.md)
+
+- [Sprint 1 — PPU bus, registers, memory map](archive/phase-2-graphics-timing/sprint-1-ppu-bus.md)
+- [Sprint 2 — Background rendering + scrolling](archive/phase-2-graphics-timing/sprint-2-background.md)
+- [Sprint 3 — Sprite evaluation + rendering + sprite-zero hit](archive/phase-2-graphics-timing/sprint-3-sprites.md)
+- [Sprint 4 — Lockstep scheduler + DMA + simple mappers (NROM, UxROM, CNROM, AxROM, GxROM, MMC1)](archive/phase-2-graphics-timing/sprint-4-scheduler-mappers.md)
 
 ---
 
 ### Phase 3 — Audio + Polish
+
 **Goal:** APU produces correct audio; lookup-table mixer and analog filter chain in place; band-limited synthesis emits at host sample rate; CPU illegal opcodes complete.
 
 **Exit criterion:** `apu_test/*`, `apu_mixer/*`, `dmc_dma_during_read4/*`, `cpu_interrupts_v2/*` all pass.
 
 **Estimated duration:** 4-6 weeks
 
-[Phase 3 overview](phase-3-audio-polish/overview.md)
+[Phase 3 overview](archive/phase-3-audio-polish/overview.md)
 
 Sprints:
-- [Sprint 1 — APU channels (pulse 1, pulse 2, triangle, noise)](phase-3-audio-polish/sprint-1-apu-channels.md)
-- [Sprint 2 — DMC channel + DMC DMA + frame counter](phase-3-audio-polish/sprint-2-dmc-frame.md)
-- [Sprint 3 — Mixer + filters + band-limited synthesis](phase-3-audio-polish/sprint-3-mixer.md)
+
+- [Sprint 1 — APU channels (pulse 1, pulse 2, triangle, noise)](archive/phase-3-audio-polish/sprint-1-apu-channels.md)
+- [Sprint 2 — DMC channel + DMC DMA + frame counter](archive/phase-3-audio-polish/sprint-2-dmc-frame.md)
+- [Sprint 3 — Mixer + filters + band-limited synthesis](archive/phase-3-audio-polish/sprint-3-mixer.md)
 
 ---
 
 ### Phase 4 — Mapper Coverage
+
 **Goal:** Top-25 mappers implemented; MMC3 IRQ accuracy validated; MMC5 (no audio); audio extension mappers (VRC6, Sunsoft 5B, Namco 163) functional.
 
 **Exit criterion:** Per-mapper boot test passes for one ROM per supported mapper; `mmc3_test_2/*`, `mmc3_irq_tests/*`, `vrc24test`, holy_mapperel pass; AccuracyCoin pass rate ≥ 80%.
 
 **Estimated duration:** 6-8 weeks
 
-[Phase 4 overview](phase-4-mapper-coverage/overview.md)
+[Phase 4 overview](archive/phase-4-mapper-coverage/overview.md)
 
 Sprints:
-- [Sprint 1 — MMC3 (the defining mid-life mapper)](phase-4-mapper-coverage/sprint-1-mmc3.md)
-- [Sprint 2 — MMC2/MMC4 + Color Dreams + CPROM + BNROM/NINA + Camerica + VRC1](phase-4-mapper-coverage/sprint-2-misc-mappers.md)
-- [Sprint 3 — VRC2/4/6 + Sunsoft FME-7 + Namco 163](phase-4-mapper-coverage/sprint-3-vrc-extended.md)
-- [Sprint 4 — MMC5 (without audio extension)](phase-4-mapper-coverage/sprint-4-mmc5.md)
+
+- [Sprint 1 — MMC3 (the defining mid-life mapper)](archive/phase-4-mapper-coverage/sprint-1-mmc3.md)
+- [Sprint 2 — MMC2/MMC4 + Color Dreams + CPROM + BNROM/NINA + Camerica + VRC1](archive/phase-4-mapper-coverage/sprint-2-misc-mappers.md)
+- [Sprint 3 — VRC2/4/6 + Sunsoft FME-7 + Namco 163](archive/phase-4-mapper-coverage/sprint-3-vrc-extended.md)
+- [Sprint 4 — MMC5 (without audio extension)](archive/phase-4-mapper-coverage/sprint-4-mmc5.md)
 
 ---
 
 ### Phase 5 — Frontend + Tooling
+
 **Goal:** `rustynes` binary playable end-to-end with save state + rewind + debugger overlays + NTSC filter; CI publishes signed binaries on tag.
 
 **Exit criterion:** Binary builds and runs on Linux/macOS/Windows; passes manual smoke test of compatibility-difficulty corpus; release pipeline green.
 
 **Estimated duration:** 4-6 weeks
 
-[Phase 5 overview](phase-5-frontend-tooling/overview.md)
+[Phase 5 overview](archive/phase-5-frontend-tooling/overview.md)
 
 Sprints:
-- [Sprint 1 — winit + wgpu + cpal frontend (minimum viable player)](phase-5-frontend-tooling/sprint-1-frontend-mvp.md)
-- [Sprint 2 — Save state + rewind + input bindings](phase-5-frontend-tooling/sprint-2-save-rewind.md)
-- [Sprint 3 — Debugger overlays (egui) + NTSC filter + release pipeline](phase-5-frontend-tooling/sprint-3-debugger-release.md)
+
+- [Sprint 1 — winit + wgpu + cpal frontend (minimum viable player)](archive/phase-5-frontend-tooling/sprint-1-frontend-mvp.md)
+- [Sprint 2 — Save state + rewind + input bindings](archive/phase-5-frontend-tooling/sprint-2-save-rewind.md)
+- [Sprint 3 — Debugger overlays (egui) + NTSC filter + release pipeline](archive/phase-5-frontend-tooling/sprint-3-debugger-release.md)
 
 ---
 
@@ -143,8 +155,8 @@ sub-test #3 flipped + AccuracyCoin ≥ 90% + multi-OS release-artifact smoke tes
 green + the 6 `#[ignore]`'d commercial ROMs investigated. (All resolved by the
 engine-lineage work; AccuracyCoin is now 100%.)
 
-[Phase 6 overview](phase-6-v1-closeout/overview.md)
-[Phase 6 v1.0.0-final sprint backlog](phase-6-v1.0.0-final/overview.md)
+[Phase 6 overview](archive/phase-6-v1-closeout/overview.md)
+[Phase 6 v1.0.0-final sprint backlog](archive/phase-6-v1.0.0-final/overview.md)
 — ordered six-sprint plan to close the AccuracyCoin 90% gate + the 4
 C1 IRQ-timing residuals (Sprint 1: Implied-Dummy + DMC coordinated;
 Sprint 2: APU put/get phase; Sprint 3: sprite-eval residuals;
@@ -161,7 +173,7 @@ master-clock work (current AccuracyCoin **100.00%**). They are not live TODOs.
   back across multiple sessions; no empirical breakthrough on the
   canonical CPU `T_last - 1` IRQ-sample-point axis. Residuals:
   `cpu_interrupts_v2/{2-nmi_and_brk, 3-nmi_and_irq, 5-branch_delays_irq}`
-  + `mmc3_test_2/4-scanline_timing` sub-test #3. Infrastructure landed
+  - `mmc3_test_2/4-scanline_timing` sub-test #3. Infrastructure landed
   (ADR-0002 Decision section + per-CPU-cycle IRQ tracing fixture + 6
   golden baseline traces + M2-phase plumbing + Phase B4 reload-pending
   discriminator). Does not affect any real game; commercial game
@@ -189,7 +201,7 @@ master-clock work (current AccuracyCoin **100.00%**). They are not live TODOs.
   Resize Sprite, $2007 read w/ rendering). The remaining 24
   failing tests cluster as documented in
   `docs/audit/accuracycoin-readme-analysis-2026-05-17.md`'s
-  2026-05-19 addendum + `docs/audit/cascade-a-investigation-2026-05-19.md`'s
+  2026-05-19 addendum +`docs/audit/cascade-a-investigation-2026-05-19.md`'s
   RESOLUTION section:
   - **Cascade A residuals — 10 tests (post-BG-pipeline-fix):** 4
     sprite-eval ($2002 flag timing, Arbitrary Sprite zero, Misaligned
@@ -203,7 +215,7 @@ master-clock work (current AccuracyCoin **100.00%**). They are not live TODOs.
   - **C1 IRQ-timing axis — 5 tests (4 × `cpu_interrupts_v2/{2..5}` +
     `mmc3_test_2/4` sub-test #3) — DEFERRED, see T-60-001.**
   - **Internal-bus model — ~5 tests** (`CPU Behavior :: Open Bus
-    [error 9]`, 5 × SH* opcodes `[error 7]`, `CPU Behavior 2 ::
+    [error 9]`, 5 × SH*opcodes `[error 7]`, `CPU Behavior 2 ::
     Implied Dummy Reads [error 2]`). Requires internal-vs-external
     bus model rework that previously regressed Internal Data Bus
     Test 2. The SH* tests are "Coupled to Cascade B" per audit but
@@ -278,13 +290,14 @@ Nesdev-indexed test categories are vendored or replaced with licensed fixtures;
 PAL/Dendy and remaining AccuracyCoin residuals have automated coverage; platform
 expansion scope is documented.
 
-[Phase 7 overview](phase-7-nesdev-accuracy-hardening/overview.md)
+[Phase 7 overview](archive/phase-7-nesdev-accuracy-hardening/overview.md)
 
 Sprints:
-- [Sprint 1 — Source and test corpus closure](phase-7-nesdev-accuracy-hardening/sprint-1-source-test-corpus.md)
-- [Sprint 2 — CPU, DMA, and internal bus closure](phase-7-nesdev-accuracy-hardening/sprint-2-cpu-dma-internal-bus.md)
-- [Sprint 3 — PPU residuals and region variants](phase-7-nesdev-accuracy-hardening/sprint-3-ppu-region-variants.md)
-- [Sprint 4 — Mapper, expansion audio, and platform variants](phase-7-nesdev-accuracy-hardening/sprint-4-mappers-expansion-platforms.md)
+
+- [Sprint 1 — Source and test corpus closure](archive/phase-7-nesdev-accuracy-hardening/sprint-1-source-test-corpus.md)
+- [Sprint 2 — CPU, DMA, and internal bus closure](archive/phase-7-nesdev-accuracy-hardening/sprint-2-cpu-dma-internal-bus.md)
+- [Sprint 3 — PPU residuals and region variants](archive/phase-7-nesdev-accuracy-hardening/sprint-3-ppu-region-variants.md)
+- [Sprint 4 — Mapper, expansion audio, and platform variants](archive/phase-7-nesdev-accuracy-hardening/sprint-4-mappers-expansion-platforms.md)
 
 ### Phase 8 — v1.2.0 DMC DMA Scheduler (COMPLETE; broader accuracy residuals deferred)
 
@@ -306,10 +319,11 @@ baseline at 6/10 under the flag (the remaining 4 — `DMA + $4015 Read`,
 absorption; ADR 0007 option c). Default build bit-identical to v1.1.0; no
 regression to the 60-ROM oracle, sacred trio, or B4 invariant.
 
-[Phase 8 overview](phase-8-v1.2.0-accuracy-residuals/overview.md)
+[Phase 8 overview](archive/phase-8-v1.2.0-accuracy-residuals/overview.md)
 
 Sprints:
-- [Sprint 3 — DMC get/put scheduler parallel implementation](phase-8-v1.2.0-accuracy-residuals/sprint-3-dmc-get-put-scheduler.md)
+
+- [Sprint 3 — DMC get/put scheduler parallel implementation](archive/phase-8-v1.2.0-accuracy-residuals/sprint-3-dmc-get-put-scheduler.md)
   — Sprint 3.1-3.5 + iter 3 (DMC abort path port) all LANDED. ADR 0007 written.
   v1.2.0 tag landed 2026-05-24.
 

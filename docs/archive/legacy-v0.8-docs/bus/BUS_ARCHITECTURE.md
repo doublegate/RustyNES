@@ -119,7 +119,7 @@ Phase 2 (ALE low):  AD0-AD7 = data
 
 **Critical:** CPU bus and PPU bus operate **completely independently**. CPU accesses PPU registers ($2000-$2007), which **internally** trigger PPU bus operations.
 
-**Example: VRAM Read**
+#### Example: VRAM Read
 
 ```
 CPU writes $20 to $2006  → PPU latches address high byte
@@ -503,7 +503,7 @@ cpu.write(0x8000 | (bank as u16), bank);  // ROM contains $01 at $8001
 
 ### Avoiding Bus Conflicts
 
-**Strategy 1: Match ROM Data**
+#### Strategy 1: Match ROM Data
 
 ```rust
 // Ensure ROM at write address contains the value being written
@@ -515,14 +515,14 @@ rom[0x8002] = 0x02;
 cpu.write(0x8000 | (bank as u16), bank);
 ```
 
-**Strategy 2: Use Writable RAM**
+#### Strategy 2: Use Writable RAM
 
 ```rust
 // Some mappers provide writable registers at $6000-$7FFF
 cpu.write(0x6000, bank);  // No conflict (RAM, not ROM)
 ```
 
-**Strategy 3: Ignore Conflicts**
+#### Strategy 3: Ignore Conflicts
 
 ```rust
 // If ROM data matches write data, conflict is harmless

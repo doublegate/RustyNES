@@ -16,17 +16,19 @@ Rust. It already integrates `rc_client` and enforces the hardcore rules; I'm
 hoping to get it recognized server-side so the "unknown emulator" notice clears
 and hardcore unlocks count.
 
-**Project**
+## Project
+
 - Name / version: **RustyNES v1.0.0**
 - Source (open-source, dual **MIT OR Apache-2.0**): `[https://github.com/<you>/RustyNES]`
-- Live web build (wasm): https://doublegate.github.io/RustyNES/
+- Live web build (wasm): <https://doublegate.github.io/RustyNES/>
 - Platforms: Linux / macOS / Windows (native) + WebAssembly. RA is a native-only,
   opt-in build feature today (the C `rcheevos` lib isn't compiled into the wasm
   build).
 - Accuracy: passes the standard NES test-ROM suites (blargg, MMC3, AccuracyCoin
   100%); the emulator core is deterministic (used for TAS movies + rollback netplay).
 
-**Integration**
+## Integration
+
 - **`rc_client`** via the vendored MIT **rcheevos** (commit `9ade739`), with a
   hand-written `extern "C"` FFI (no bindgen). An ABI guard (`sizeof` accessors +
   Rust `size_of` tests) catches struct-layout drift on a vendor bump.
@@ -46,6 +48,7 @@ and hardcore unlocks count.
 **Hardcore enforcement** (this is the part you care about most — happy to walk
 through the code). In hardcore mode RustyNES disables every state-manipulation
 path:
+
 - save-state **loading** (saving is allowed; loading is blocked)
 - **rewind**
 - **cheats** — both Game Genie codes and raw RAM pokes
@@ -57,7 +60,8 @@ The gates are centralized in a single predicate, so they're easy to audit; the
 relevant files are `crates/rustynes-cheevos/` (the safe `rc_client` wrapper) and the
 frontend's RA session + hardcore-gating predicate.
 
-**What I'm asking for**
+## What I'm asking for
+
 - Allowlisting the `RustyNES` client so the unknown-emulator notice clears and
   hardcore unlocks are credited.
 - Any additional requirements you have (a specific rcheevos version to track, a

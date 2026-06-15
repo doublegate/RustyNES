@@ -38,6 +38,7 @@ Phase 2 builds upon the **eframe 0.33 + egui 0.33** desktop frontend established
 | Rust Edition | 2024 | MSRV 1.88 | Latest Rust features |
 
 **Key Architectural Notes:**
+
 - **Immediate Mode GUI**: egui's immediate mode paradigm simplifies debug windows and real-time displays
 - **OpenGL Rendering**: glow backend via eframe (not wgpu) - simpler than shader pipeline
 - **Lock-Free Audio**: cpal 0.16 with ring buffer and underrun detection
@@ -394,6 +395,7 @@ Phase 2 documentation has been updated to reflect the GUI framework migration co
 | Retained-mode widgets | Immediate-mode widgets |
 
 **Implications for Phase 2:**
+
 - Debug windows use native egui (simpler, no overlay complexity)
 - Achievement toasts use `egui::Window` with custom positioning
 - Netplay lobby uses `egui::Modal` for dialogs
@@ -403,6 +405,7 @@ Phase 2 documentation has been updated to reflect the GUI framework migration co
 ### Rust 2024 Edition
 
 Phase 2 uses Rust 2024 edition with MSRV 1.88, enabling:
+
 - Gen blocks (iterators)
 - Enhanced pattern matching
 - Improved async support

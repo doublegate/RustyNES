@@ -28,7 +28,7 @@ user is running.
 > (`v2.0.x`, `v2.8.0`) are anchors for the internal engine development line that
 > produced RustyNES v1.0.0, not RustyNES releases of their own; RustyNES ships
 > at v1.0.0 and these are the numbers for the technology it ships.
-
+>
 > **Engine v2.0.1:** the legacy integer-lockstep scheduler was removed; R1 is the only
 > path. The A/B below was measured during the engine's v2.0 line and is kept as the historical
 > rationale for that removal — the R1 numbers remain current; the legacy column
@@ -121,13 +121,14 @@ Based on architectural reasoning + cross-validation with TetaNES profiling notes
 
 After Phase 2 (CPU + basic PPU working), run:
 
-```
+```bash
 cargo build --release --profile bench
 perf record --call-graph dwarf -- ./target/release/rustynes [headless 600 frames]
 perf report --stdio | head -50
 ```
 
 Top 5 hot functions get a focused optimization pass. Specifically watch:
+
 - Mapper trait dispatch — if it appears in top 3, switch from `Box<dyn Mapper>` to a `MapperEnum` with all implemented mappers as variants.
 - Cycle-counting overflow checks — `opt-level = 2` in dev keeps them; release strips them. Verify no UB introduced.
 

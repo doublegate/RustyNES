@@ -1,6 +1,6 @@
 # NES Input Handling
 
-**Table of Contents**
+## Table of Contents
 
 - [Overview](#overview)
 - [Standard Controller](#standard-controller)
@@ -118,7 +118,7 @@ LDA #$00
 STA $4016       ; Strobe = 0 (enable serial reads)
 ```
 
-**Step 2: Read 8 Buttons**
+#### Step 2: Read 8 Buttons
 
 ```assembly
 ; Read 8 buttons for Controller 1

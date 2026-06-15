@@ -78,6 +78,7 @@ Milestone 8 focuses on **systematic test ROM validation** to achieve 95%+ pass r
 **Focus:** CPU instruction and timing validation
 
 **Objectives:**
+
 - [ ] Automate nestest.nes (golden log comparison)
 - [ ] Pass all 36 CPU instruction tests
 - [ ] Verify branch timing edge cases
@@ -95,6 +96,7 @@ Milestone 8 focuses on **systematic test ROM validation** to achieve 95%+ pass r
 **Focus:** Blargg CPU instruction timing suite
 
 **Objectives:**
+
 - [ ] Pass cpu_instr_timing.nes (overall timing)
 - [ ] Pass cpu_branch_timing_2.nes (branch edge cases)
 - [ ] Pass cpu_dummy_reads.nes
@@ -112,6 +114,7 @@ Milestone 8 focuses on **systematic test ROM validation** to achieve 95%+ pass r
 **Focus:** Blargg PPU VBL/NMI and sprite tests
 
 **Objectives:**
+
 - [ ] Pass all VBL/NMI timing tests (ppu_vbl_nmi suite)
 - [ ] Pass sprite 0 hit suite (11 tests)
 - [ ] Pass palette RAM tests
@@ -129,6 +132,7 @@ Milestone 8 focuses on **systematic test ROM validation** to achieve 95%+ pass r
 **Focus:** Blargg APU comprehensive test suite
 
 **Objectives:**
+
 - [ ] Pass apu_test.nes (comprehensive)
 - [ ] Pass all channel-specific tests
 - [ ] Pass frame counter timing tests
@@ -146,6 +150,7 @@ Milestone 8 focuses on **systematic test ROM validation** to achieve 95%+ pass r
 **Focus:** Holy Mapperel and mapper-specific validation
 
 **Objectives:**
+
 - [ ] Pass Holy Mapperel comprehensive suite
 - [ ] Validate NROM (0), MMC1 (1), UxROM (2), CNROM (3), MMC3 (4)
 - [ ] Test bank switching edge cases
@@ -162,6 +167,7 @@ Milestone 8 focuses on **systematic test ROM validation** to achieve 95%+ pass r
 ### Automated Test Harness
 
 **Requirements:**
+
 - Execute all 212 test ROMs automatically
 - Compare output against golden logs (where available)
 - Report pass/fail with detailed failure analysis
@@ -169,6 +175,7 @@ Milestone 8 focuses on **systematic test ROM validation** to achieve 95%+ pass r
 - Execution time <10 minutes for full suite
 
 **Implementation:**
+
 ```rust
 #[test]
 fn test_rom_suite() {
@@ -183,11 +190,13 @@ fn test_rom_suite() {
 ### Test ROM Categories
 
 #### CPU Tests (36 total)
+
 - **nestest.nes** (1) - Comprehensive instruction validation
 - **Blargg CPU Tests** (14) - Timing, branches, dummy reads/writes
 - **Edge Cases** (21) - Unofficial opcodes, interrupts, page crossing
 
 #### PPU Tests (49 total)
+
 - **Blargg VBL/NMI** (10) - VBlank flag timing, NMI control
 - **Sprite 0 Hit** (11) - Edge cases, alignment, flip, timing
 - **Palette RAM** (5) - Mirroring, edge cases
@@ -195,6 +204,7 @@ fn test_rom_suite() {
 - **Misc PPU** (20) - Scrolling, rendering edge cases
 
 #### APU Tests (70 total)
+
 - **Blargg APU** (15) - Comprehensive suite
 - **Channel Tests** (25) - Pulse, triangle, noise, DMC
 - **Frame Counter** (10) - 4-step, 5-step, IRQ timing
@@ -202,6 +212,7 @@ fn test_rom_suite() {
 - **Misc APU** (15) - Edge cases, timing
 
 #### Mapper Tests (57 total)
+
 - **Holy Mapperel** (40) - Comprehensive mapper suite
 - **NROM (0)** (3) - Basic mapper
 - **MMC1 (1)** (5) - Bank switching, mirroring
@@ -224,6 +235,7 @@ fn test_rom_suite() {
 ### Remaining Failures (10 tests)
 
 **Expected Failures:**
+
 - CPU (2): Highly timing-sensitive tests requiring sub-cycle precision
 - PPU (2): Rare edge cases (mid-scanline register access)
 - APU (3): Expansion audio edge cases (FDS, VRC6, MMC5)

@@ -1,6 +1,6 @@
 # Debugging RustyNES
 
-**Table of Contents**
+## Table of Contents
 
 - [Overview](#overview)
 - [Built-in Debugger](#built-in-debugger)
@@ -62,7 +62,7 @@ advance emulator-visible state. See
 
 **Execution Control**:
 
-```
+```text
 s / step    - Step one instruction
 n / next    - Step over (JSR)
 c / continue - Resume execution
@@ -71,7 +71,7 @@ p / pause   - Pause execution
 
 **Breakpoints**:
 
-```
+```text
 bp <addr>        - Set breakpoint at address
 bp del <addr>    - Delete breakpoint
 bp list          - List all breakpoints
@@ -80,7 +80,7 @@ watch <addr>     - Break on memory write
 
 **Inspection**:
 
-```
+```text
 r / regs         - Display CPU registers
 m <addr> [len]   - Display memory
 d <addr> [len]   - Disassemble from address
@@ -102,7 +102,7 @@ RUST_LOG=rustynes::cpu=trace cargo run -- rom.nes
 
 ### Log Levels
 
-```
+```text
 error - Critical errors only
 warn  - Warnings and errors
 info  - General information
@@ -112,7 +112,7 @@ trace - Extremely verbose (per-instruction)
 
 ### Example Output
 
-```
+```text
 [INFO] Loading ROM: super_mario_bros.nes
 [DEBUG] Mapper: 0 (NROM)
 [DEBUG] PRG-ROM: 32KB, CHR-ROM: 8KB
@@ -240,14 +240,14 @@ cargo run --release -- tests/roms/nestest.nes --automation
 
 **Expected output**:
 
-```
+```text
 [PASS] nestest automated test
 All 8000+ instructions validated
 ```
 
 **On failure**:
 
-```
+```text
 [FAIL] nestest: Mismatch at line 4523
 Expected: A:42 X:00 Y:00 P:24 SP:FD
 Got:      A:43 X:00 Y:00 P:24 SP:FD

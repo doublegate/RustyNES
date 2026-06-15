@@ -215,7 +215,8 @@ integration-test fixture.
 ## Compliance with the determinism contract
 
 `docs/architecture.md` §Determinism requires: "same seed + ROM
-+ input sequence ⇒ bit-identical framebuffer and audio." The
+
+* input sequence ⇒ bit-identical framebuffer and audio." The
 recorder reads `&self` after a dot's effects have applied; no
 mutable borrow into the PPU is taken, and the resulting
 `PpuStateRecord` is independent of host-side state (no system

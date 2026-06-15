@@ -9,17 +9,20 @@ Systematically resolve all known bugs, close GitHub issues, improve error handli
 The desktop frontend uses eframe+egui with the following error handling and input systems:
 
 **Error Handling:**
+
 - anyhow crate for application-level errors
 - log crate for logging (info, warn, error, debug)
 - Error messages currently output to console (not GUI dialogs)
 - ROM loading errors handled gracefully with fallback
 
 **Input System:**
+
 - gilrs 0.11 for gamepad support with hotplug detection
 - Keyboard input via egui event handling
 - Input handler in `crates/rustynes-desktop/src/input.rs`
 
 **Configuration:**
+
 - RON format with persistence to platform-specific config directory
 - VideoConfig, AudioConfig, InputConfig, DebugConfig structs
 - Located in `crates/rustynes-desktop/src/config.rs`
@@ -37,6 +40,7 @@ The desktop frontend uses eframe+egui with the following error handling and inpu
 ## Tasks
 
 ### Task 1: GitHub Issue Triage
+
 - [ ] Review all open GitHub issues (categorize by severity)
 - [ ] Close duplicate/invalid issues
 - [ ] Assign priorities (critical, high, medium, low)
@@ -44,6 +48,7 @@ The desktop frontend uses eframe+egui with the following error handling and inpu
 - [ ] Document known limitations (defer non-critical to Phase 2)
 
 ### Task 2: Crash Prevention
+
 - [ ] Add bounds checking (array access, buffer writes)
 - [ ] Validate ROM headers (iNES, NES 2.0 format)
 - [ ] Handle invalid save states gracefully (corruption detection)
@@ -51,6 +56,7 @@ The desktop frontend uses eframe+egui with the following error handling and inpu
 - [ ] Add panic handlers (graceful degradation, error reporting)
 
 ### Task 3: Error Handling Improvements
+
 - [ ] Replace panic! with Result<T, Error> in library code
 - [ ] Improve error messages (actionable guidance for users)
 - [ ] Add logging framework (tracing or log crate)
@@ -58,6 +64,7 @@ The desktop frontend uses eframe+egui with the following error handling and inpu
 - [ ] Test error paths (simulate failures)
 
 ### Task 4: Save State Robustness
+
 - [ ] Add save state versioning (compatibility across versions)
 - [ ] Implement checksums (detect corruption)
 - [ ] Test edge cases (mid-frame, mid-instruction)
@@ -65,6 +72,7 @@ The desktop frontend uses eframe+egui with the following error handling and inpu
 - [ ] Document save state format
 
 ### Task 5: Input Handling Edge Cases
+
 - [ ] Fix rapid key press handling (debouncing)
 - [ ] Handle controller disconnection gracefully
 - [ ] Test with multiple controllers (2-player games)
@@ -72,6 +80,7 @@ The desktop frontend uses eframe+egui with the following error handling and inpu
 - [ ] Test with unusual input patterns (hold all buttons)
 
 ### Task 6: Release Preparation
+
 - [ ] Update CHANGELOG.md (v0.8.0 changes)
 - [ ] Update README.md (features, status)
 - [ ] Update ROADMAP.md (completed milestones)
@@ -368,6 +377,7 @@ impl SaveState {
 ## Known Limitations (Documented)
 
 **Defer to Phase 2:**
+
 - Expansion audio (VRC6, FDS, MMC5)
 - Rare mappers (15, 19, 24+)
 - Sub-cycle timing precision (<±1 cycle)

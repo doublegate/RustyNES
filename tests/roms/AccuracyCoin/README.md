@@ -18,7 +18,7 @@ compile-time `include_str!` reaches for a different one.
 
 ## Catalog format
 
-```
+```text
 <suite-name>\t<test-name>\t<ram-address-hex>
 ```
 

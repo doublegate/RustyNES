@@ -64,6 +64,7 @@ cloned for diagnostics.
 ## State
 
 The `Cartridge` owns immutable PRG-ROM and CHR-ROM banks plus mutable PRG-RAM and CHR-RAM. The mapper holds:
+
 - Bank-select registers (one per banking dimension).
 - Mirroring control state (if mapper-controlled).
 - IRQ counter state (latch, counter, enable, pending).

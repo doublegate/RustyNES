@@ -71,6 +71,7 @@ Milestone 7 focuses on **refining the accuracy of CPU, PPU, and APU** to prepare
 **Focus:** CPU cycle timing and edge cases
 
 **Objectives:**
+
 - [x] Refine instruction cycle timing ✅
 - [x] Verify unofficial opcodes ✅
 - [x] Interrupt timing precision ✅
@@ -88,6 +89,7 @@ Milestone 7 focuses on **refining the accuracy of CPU, PPU, and APU** to prepare
 **Focus:** PPU dot-accurate rendering improvements
 
 **Objectives:**
+
 - [x] VBlank timing precision (functional) ✅
 - [x] Sprite 0 hit basic tests passing ✅
 - [x] Attribute shift register verification ✅
@@ -105,6 +107,7 @@ Milestone 7 focuses on **refining the accuracy of CPU, PPU, and APU** to prepare
 **Focus:** APU timing and mixing calibration
 
 **Objectives:**
+
 - [x] Frame counter precision (±1 cycle) ✅
 - [~] DMC channel edge cases (documented, deferred to M8)
 - [x] Triangle linear counter ✅
@@ -122,6 +125,7 @@ Milestone 7 focuses on **refining the accuracy of CPU, PPU, and APU** to prepare
 **Focus:** Bus timing and subsystem synchronization
 
 **Objectives:**
+
 - [x] OAM DMA cycle precision (513/514 cycles) ✅
 - [x] CPU/PPU synchronization ✅
 - [x] Bus timing accuracy ✅
@@ -138,11 +142,13 @@ Milestone 7 focuses on **refining the accuracy of CPU, PPU, and APU** to prepare
 ### CPU Accuracy
 
 **Current State (v0.5.0):**
+
 - nestest.nes passing (100% golden log match)
 - All 256 opcodes implemented
 - Cycle-accurate for standard cases
 
 **Improvements Needed:**
+
 - Edge case timing verification
 - Unofficial opcode timing validation
 - Interrupt handling edge cases
@@ -151,11 +157,13 @@ Milestone 7 focuses on **refining the accuracy of CPU, PPU, and APU** to prepare
 ### PPU Accuracy
 
 **Current State (v0.5.0):**
+
 - 85/87 tests passing (97.7%)
 - 2 tests ignored (timing precision: ±51 cycle, ±10 cycle)
 - VBL/NMI working, sprite 0 hit functional
 
 **Improvements Needed:**
+
 - VBlank timing: ±51 cycle → ±2 cycle precision
 - VBlank clear timing: ±10 cycle → exact timing
 - Sprite 0 hit edge cases
@@ -164,11 +172,13 @@ Milestone 7 focuses on **refining the accuracy of CPU, PPU, and APU** to prepare
 ### APU Accuracy
 
 **Current State (v0.5.0):**
+
 - All 5 channels implemented
 - 136/136 unit tests passing
 - Non-linear mixing functional
 
 **Improvements Needed:**
+
 - Frame counter cycle precision
 - DMC channel edge cases (DMA conflicts, buffer)
 - Triangle linear counter timing
@@ -177,11 +187,13 @@ Milestone 7 focuses on **refining the accuracy of CPU, PPU, and APU** to prepare
 ### Bus & Synchronization
 
 **Current State (v0.5.0):**
+
 - OAM DMA: 513-514 cycles (range, not exact)
 - CPU/PPU synchronization functional
 - Basic bus timing
 
 **Improvements Needed:**
+
 - Exact OAM DMA timing (determine 513 vs 514)
 - CPU/PPU synchronization precision
 - Bus conflict handling
@@ -294,17 +306,20 @@ Milestone 7 focuses on **refining the accuracy of CPU, PPU, and APU** to prepare
 **Completed:** December 20, 2025
 **Version Released:** v0.6.0
 
-### Key Achievements:
+### Key Achievements
+
 1. **CPU:** All 256 opcodes verified (±1 cycle accuracy), page boundary crossing, unofficial opcodes
 2. **PPU:** VBlank/NMI functional, sprite 0 hit working (2/2 tests), palette mirroring correct
 3. **APU:** Frame counter precision fixed (22371→22372), hardware-accurate non-linear mixer
 4. **Bus:** OAM DMA 513/514 cycle precision based on CPU cycle parity, CPU cycle tracking added
 
-### Test Results:
+### Test Results
+
 - 429 tests passing, 0 failures, 6 ignored (valid reasons)
 - Zero regressions from v0.5.0
 
-### Deferred Items (to M8+):
+### Deferred Items (to M8+)
+
 - Cycle-by-cycle CPU execution (architectural refactor for ±2 cycle PPU precision)
 - DMC DMA cycle stealing conflicts
 - Additional sprite 0 hit edge cases

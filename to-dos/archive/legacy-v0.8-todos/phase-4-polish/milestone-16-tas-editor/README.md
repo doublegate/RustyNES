@@ -13,6 +13,7 @@
 Milestone 16 delivers a professional-grade TAS (Tool-Assisted Speedrun) editor with piano roll interface, greenzone system, and advanced branching. This milestone targets feature parity with FCEUX TAS Editor while leveraging Iced's reactive architecture and egui's immediate-mode debug tools.
 
 **Key Features:**
+
 - **Piano Roll Interface:** Multi-track timeline with frame-accurate input editing
 - **Greenzone System:** Verified frame history with instant scrubbing (10,000+ frames)
 - **Branch Manager:** Tree-based timeline branching with visual graph

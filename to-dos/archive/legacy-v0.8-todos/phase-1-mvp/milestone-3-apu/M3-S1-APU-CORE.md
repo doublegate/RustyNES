@@ -755,6 +755,7 @@ The frame counter operates on CPU cycles, not APU-specific clocks. It's critical
 ### Write to $4017 Side Effects
 
 Writing to $4017 has immediate effects:
+
 - Resets the cycle counter to 0
 - If 5-step mode, immediately clocks half frame
 - Clears IRQ flag if IRQ inhibit is set

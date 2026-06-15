@@ -217,7 +217,7 @@ The envelope provides **hardware-controlled volume fade** for attack-decay-susta
 
 ### Operation Modes
 
-**Mode 1: Constant Volume (C=1)**
+#### Mode 1: Constant Volume (C=1)
 
 ```
 Output = VVVV (0-15)
@@ -225,7 +225,7 @@ Output = VVVV (0-15)
 
 Volume is fixed at the value in register bits 0-3.
 
-**Mode 2: Envelope Volume (C=0)**
+#### Mode 2: Envelope Volume (C=0)
 
 ```
 Output = Decay Level (15 → 0 over time)

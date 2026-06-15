@@ -667,6 +667,7 @@ mod tests {
 ### DMC DMA Timing
 
 DMC DMA reads steal CPU cycles:
+
 - **Base cost**: 4 CPU cycles per sample byte
 - **During OAM DMA**: Additional 2-4 cycles depending on alignment
 - **Rarest case**: Up to 8 cycles total during aligned OAM DMA
@@ -678,6 +679,7 @@ DMC can only read from $C000-$FFFF (ROM and upper cartridge space). Address wrap
 ### Output Level Clamping
 
 The 7-bit output level (0-127) is updated in steps of ±2 and clamped:
+
 - Bit 1: Add 2 (max 127)
 - Bit 0: Subtract 2 (min 0)
 

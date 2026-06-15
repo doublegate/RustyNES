@@ -545,6 +545,7 @@ mod tests {
 ### Sweep Unit Differences
 
 Pulse 1 and Pulse 2 differ in their sweep negate behavior:
+
 - **Pulse 1**: Uses one's complement (subtract change + 1)
 - **Pulse 2**: Uses two's complement (subtract change only)
 

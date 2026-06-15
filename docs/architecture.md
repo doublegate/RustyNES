@@ -25,7 +25,7 @@ Rejected: catch-up sacrifices sub-cycle PPU edge cases that the project exists t
 
 ## Workspace shape (Cargo workspace, 7 crates)
 
-```
+```text
 crates/
 ├── rustynes-core/           # Glue: NES struct, run loop, scheduler, save state, region config
 ├── rustynes-cpu/            # Ricoh 2A03 CPU (6502 + interrupt logic). No PPU/APU deps.
@@ -55,7 +55,7 @@ NTSC: 5.369318 MHz. PAL: 5.320342 MHz. Dendy: 5.320342 MHz (PAL pixel clock). Th
 
 ### Tick structure
 
-```
+```rust
 Nes::run_frame() {
     while !self.frame_complete {
         self.tick_one_dot();
@@ -80,7 +80,7 @@ Nes::tick_one_dot() {
 
 When the CPU performs a memory read or write, the bus fans the access out to the right device. PPU and APU do not need to be re-synced inside the bus call because they were already advanced in lockstep above.
 
-```
+```rust
 Bus::read(addr) -> u8 {
     match addr {
         0x0000..=0x1FFF => self.wram[addr & 0x07FF],

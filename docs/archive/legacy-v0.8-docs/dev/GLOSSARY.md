@@ -1,6 +1,6 @@
 # NES Emulation Glossary
 
-**Table of Contents**
+## Table of Contents
 
 - [Hardware Terms](#hardware-terms)
 - [CPU Terms](#cpu-terms)
@@ -13,53 +13,53 @@
 
 ## Hardware Terms
 
-**APU** (Audio Processing Unit)
+### APU (Audio Processing Unit)
 
 - The NES sound chip (integrated into CPU chip on 2A03/2A07)
 - Generates pulse, triangle, noise, and DMC audio channels
 
-**Bus**
+### Bus
 
 - The communication pathway connecting components (CPU, PPU, APU, cartridge)
 - CPU bus (16-bit address, 8-bit data)
 - PPU bus (14-bit address, 8-bit data)
 
-**Cartridge**
+### Cartridge
 
 - Game ROM module inserted into NES
 - Contains PRG-ROM (program), CHR-ROM/RAM (graphics), and mapper hardware
 
-**CHR** (Character ROM/RAM)
+### CHR (Character ROM/RAM)
 
 - Graphics tile data (8×8 pixel tiles)
 - ROM = read-only, RAM = writable
 
-**CPU** (Central Processing Unit)
+### CPU (Central Processing Unit)
 
 - Modified 6502 processor (Ricoh 2A03 NTSC, 2A07 PAL)
 - Runs game code at 1.789773 MHz (NTSC)
 
-**Famicom**
+### Famicom
 
 - Japanese version of NES
 - Different controller ports, expansion port, audio hardware
 
-**NES** (Nintendo Entertainment System)
+### NES (Nintendo Entertainment System)
 
 - North American/European version
 - Released 1985 (US), 1986 (Europe)
 
-**PPU** (Picture Processing Unit)
+### PPU (Picture Processing Unit)
 
 - Graphics chip (Ricoh 2C02 NTSC, 2C07 PAL)
 - Renders 256×240 pixel display at 60 Hz (NTSC)
 
-**PRG-ROM** (Program ROM)
+### PRG-ROM (Program ROM)
 
 - Executable game code and data
 - Mapped to CPU address space ($8000-$FFFF)
 
-**VRAM** (Video RAM)
+### VRAM (Video RAM)
 
 - 2KB internal RAM for nametables
 - Additional CHR-RAM/ROM for tile graphics
@@ -68,53 +68,53 @@
 
 ## CPU Terms
 
-**6502**
+### 6502
 
 - 8-bit microprocessor used in NES (modified version)
 - Also used in Apple II, Commodore 64, Atari 2600
 
-**Accumulator (A)**
+### Accumulator (A)
 
 - Primary 8-bit register for arithmetic/logic operations
 
-**Addressing Mode**
+### Addressing Mode
 
 - How an instruction accesses memory (immediate, zero page, absolute, indexed, etc.)
 
-**Cycle**
+### Cycle
 
 - One CPU clock tick (1/1.789773 MHz ≈ 559 nanoseconds)
 - Instructions take 2-7 cycles
 
-**IRQ** (Interrupt Request)
+### IRQ (Interrupt Request)
 
 - Maskable interrupt (can be disabled)
 - Used by mappers (MMC3 scanline counter)
 
-**NMI** (Non-Maskable Interrupt)
+### NMI (Non-Maskable Interrupt)
 
 - Triggered at start of VBlank (PPU scanline 241)
 - Cannot be disabled
 
-**Program Counter (PC)**
+### Program Counter (PC)
 
 - 16-bit register pointing to next instruction
 
-**Stack Pointer (SP)**
+### Stack Pointer (SP)
 
 - 8-bit register ($0100-$01FF address range)
 - Grows downward
 
-**Status Register (P)**
+### Status Register (P)
 
 - 8-bit flags: Carry, Zero, Interrupt Disable, Decimal (unused on NES), Break, Overflow, Negative
 
-**Unofficial Opcodes**
+### Unofficial Opcodes
 
 - Undocumented 6502 instructions
 - Used by some games for optimization
 
-**Zero Page**
+### Zero Page
 
 - First 256 bytes of RAM ($0000-$00FF)
 - Faster access than absolute addressing
@@ -123,74 +123,74 @@
 
 ## PPU Terms
 
-**Attribute Table**
+### Attribute Table
 
 - 64-byte area defining palette selection for 2×2 tile groups
 - Located at end of each nametable ($23C0, $27C0, etc.)
 
-**Background**
+### Background
 
 - Scrollable 256×240 pixel playfield
 - Composed of 8×8 pixel tiles from pattern tables
 
-**Dot**
+### Dot
 
 - One PPU clock tick (3 dots per CPU cycle)
 - PPU runs at 5.37 MHz (NTSC)
 
-**Mirroring**
+### Mirroring
 
 - How 4 nametables map to 2KB VRAM
 - Horizontal, Vertical, Single-screen, Four-screen
 
-**Nametable**
+### Nametable
 
 - 1024-byte area defining background tile layout
 - 30 rows × 32 columns = 960 bytes + 64-byte attribute table
 
-**OAM** (Object Attribute Memory)
+### OAM (Object Attribute Memory)
 
 - 256 bytes storing sprite data (64 sprites × 4 bytes each)
 - Attributes: Y, tile, flags, X
 
-**Palette**
+### Palette
 
 - 32-byte RAM storing color indices ($3F00-$3F1F)
 - 4 background palettes + 4 sprite palettes
 - Each palette has 4 colors (one shared backdrop)
 
-**Pattern Table**
+### Pattern Table
 
 - 8KB area ($0000-$1FFF) containing tile graphics
 - Two 4KB tables (256 tiles each)
 
-**Rendering**
+### Rendering
 
 - Process of generating 256×240 pixel output
 - Occurs scanlines 0-239, dots 0-256
 
-**Scanline**
+### Scanline
 
 - One horizontal line of pixels (341 PPU dots)
 - 262 scanlines per frame (NTSC), lines 0-239 visible
 
-**Sprite**
+### Sprite
 
 - Movable 8×8 (or 8×16) pixel object
 - Max 64 sprites, 8 per scanline
 
-**Sprite Zero Hit**
+### Sprite Zero Hit
 
 - Flag set when sprite 0 overlaps non-transparent background pixel
 - Used for split-screen effects
 
-**VBlank** (Vertical Blank)
+### VBlank (Vertical Blank)
 
 - Period when PPU is not rendering (scanlines 241-260)
 - Safe time for PPU memory updates
 - Triggers NMI
 
-**VRAM Address**
+### VRAM Address
 
 - 15-bit address in PPU address space
 - Loopy register: holds scroll position and VRAM address
@@ -199,49 +199,49 @@
 
 ## APU Terms
 
-**DMC** (Delta Modulation Channel)
+### DMC (Delta Modulation Channel)
 
 - Sample playback channel (1-bit DPCM)
 - Can play 4-bit PCM samples from ROM
 
-**Duty Cycle**
+### Duty Cycle
 
 - Ratio of high to low in pulse wave (12.5%, 25%, 50%, 75%)
 
-**Envelope**
+### Envelope
 
 - Volume decay over time (ADSR style)
 
-**Frame Counter**
+### Frame Counter
 
 - Controls APU timing (4-step or 5-step mode)
 - Clocks envelopes, length counters, sweep units
 
-**Length Counter**
+### Length Counter
 
 - Automatically disables channels after set duration
 
-**Mixer**
+### Mixer
 
 - Combines 5 APU channels into final audio output
 - Non-linear mixing (lookup tables)
 
-**Noise Channel**
+### Noise Channel
 
 - Generates pseudo-random noise (percussion)
 - 16-step or 93-step mode
 
-**Pulse Channel**
+### Pulse Channel
 
 - Square wave with duty cycle, volume, pitch sweep
 - Two pulse channels available
 
-**Sweep Unit**
+### Sweep Unit
 
 - Automatically adjusts pulse channel frequency
 - Creates pitch bends, glissandos
 
-**Triangle Channel**
+### Triangle Channel
 
 - Low-frequency bass/melody channel
 - No volume control
@@ -250,46 +250,46 @@
 
 ## Mapper Terms
 
-**Bank**
+### Bank
 
 - Fixed-size chunk of ROM (typically 8KB or 16KB)
 - Swapped into address space dynamically
 
-**Bank Switching**
+### Bank Switching
 
 - Changing which ROM bank is visible in address space
 - Enables games larger than 32KB PRG / 8KB CHR
 
-**Bus Conflict**
+### Bus Conflict
 
 - When CPU and ROM both drive data bus during write
 - Occurs on discrete logic mappers (UxROM, CNROM)
 
-**iNES**
+### iNES
 
 - ROM file format (.nes files)
 - 16-byte header + PRG-ROM + CHR-ROM
 
-**Mapper**
+### Mapper
 
 - Hardware in cartridge providing bank switching, IRQ, extra features
 - Over 300 different mappers documented
 
-**MMC** (Memory Management Controller)
+### MMC (Memory Management Controller)
 
 - Nintendo's custom mapper ASICs (MMC1-MMC6)
 
-**NES 2.0**
+### NES 2.0
 
 - Extended iNES format with submapper field
 - Supports larger ROMs, more precise hardware description
 
-**Submapper**
+### Submapper
 
 - 4-bit variant identifier in NES 2.0 header
 - Disambiguates different revisions of same mapper
 
-**UNIF**
+### UNIF
 
 - Alternative ROM format using board names instead of mapper numbers
 - Largely superseded by NES 2.0
@@ -298,56 +298,56 @@
 
 ## Emulation Terms
 
-**Accuracy**
+### Accuracy
 
 - How closely emulator behavior matches real hardware
 - Cycle-accurate, scanline-accurate, frame-accurate
 
-**Cycle-Accurate**
+### Cycle-Accurate
 
 - Emulates hardware at CPU/PPU cycle granularity
 - Required for timing-sensitive games
 
-**Frame**
+### Frame
 
 - One complete screen update (262 scanlines)
 - 60 FPS (NTSC), 50 FPS (PAL)
 
-**Headless**
+### Headless
 
 - Emulation without GUI (for testing, TAS automation)
 
-**Netplay**
+### Netplay
 
 - Online multiplayer via internet
 - GGPO = rollback netcode for low latency
 
-**Open Bus**
+### Open Bus
 
 - Reading unmapped address returns last value on data bus
 - Decays over time (milliseconds)
 
-**Retroachievements**
+### Retroachievements
 
 - Achievement system for retro games
 - Integration via rcheevos library
 
-**Save State**
+### Save State
 
 - Snapshot of entire emulator state
 - Allows instant save/load
 
-**TAS** (Tool-Assisted Speedrun)
+### TAS (Tool-Assisted Speedrun)
 
 - Frame-perfect gameplay using save states, slow-motion
 - FM2 format for NES movies
 
-**Test ROM**
+### Test ROM
 
 - Special ROM designed to validate emulator accuracy
 - Examples: nestest, blargg's suite
 
-**Timing**
+### Timing
 
 - Synchronization between CPU, PPU, APU
 - Critical for accuracy (3 PPU dots = 1 CPU cycle)

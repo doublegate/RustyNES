@@ -94,7 +94,7 @@ fine punch packet — it doubles as the existing handshake.
 
 `HolePunch` models this without doing any I/O (so it is portable + unit-tested):
 
-```
+```text
 Discovering ──(both public addrs known)──▶ Punching ──(peer's packet received)──▶ Connected
 ```
 
@@ -240,7 +240,7 @@ carries no gameplay traffic.
 and `offer` / `answer` / `candidate` carry `{ from, to }` slots so the relay
 routes each to a specific peer:
 
-```
+```text
 client → join      { "room": "<code>", "rom_hash": "<hex>", "max_players": 4 }
 server → joined     { "slot": N, "max_players": 4 }   (your slot + room size)
 server → peer-joined{ "slot": M }                     (a higher-slot peer joined → offer to it)

@@ -18,10 +18,12 @@ Integrate APU stepping into the `on_cpu_cycle()` callback to achieve cycle-accur
 ## Dependencies
 
 ### Required Before Starting
+
 - **S1 (CPU Refactor)** - `on_cpu_cycle()` callback must be implemented in CpuBus trait
 - S2 can run in parallel as APU integration is independent of PPU sync
 
 ### Blocks
+
 - **S4 (Bus/DMA)** - DMC DMA conflicts depend on APU cycle-accurate integration
 - **S6 (Testing)** - APU timing tests require this sprint
 
@@ -94,9 +96,11 @@ for _ in 0..cpu_cycles {
 **Priority:** P0
 **Effort:** 2 hours
 **Files:**
+
 - `crates/rustynes-core/src/bus.rs`
 
 #### Subtasks
+
 - [ ] Add `self.apu.step()` call to `on_cpu_cycle()` implementation
 - [ ] Ensure APU is stepped exactly once per CPU cycle
 - [ ] Verify frame counter receives correct cycle count
@@ -130,10 +134,12 @@ impl CpuBus for Bus {
 **Priority:** P1
 **Effort:** 2 hours
 **Files:**
+
 - `crates/rustynes-apu/src/frame_counter.rs`
 - `crates/rustynes-apu/src/apu.rs`
 
 #### Subtasks
+
 - [ ] Verify 4-step mode cycle values: 7458, 14914, 22373, 29830-29832
 - [ ] Verify 5-step mode cycle values: 7458, 14914, 22372, 37282
 - [ ] Verify IRQ flag timing at cycles 29830, 29831, 29832
@@ -168,10 +174,12 @@ The frame counter timing is already implemented correctly. This task verifies in
 **Priority:** P1
 **Effort:** 1 hour
 **Files:**
+
 - `crates/rustynes-apu/src/length_counter.rs`
 - `crates/rustynes-apu/src/apu.rs`
 
 #### Subtasks
+
 - [ ] Verify length counters clock on HalfFrame only
 - [ ] Verify halt flag prevents clocking
 - [ ] Verify channel silencing when counter reaches 0
@@ -199,10 +207,12 @@ fn clock_half_frame(&mut self) {
 **Priority:** P1
 **Effort:** 1 hour
 **Files:**
+
 - `crates/rustynes-apu/src/sweep.rs`
 - `crates/rustynes-apu/src/pulse.rs`
 
 #### Subtasks
+
 - [ ] Verify sweep units clock on HalfFrame
 - [ ] Verify period calculation and muting behavior
 - [ ] Verify pulse 1 vs pulse 2 negate mode difference
@@ -228,11 +238,13 @@ Sweep Unit Operation:
 **Priority:** P0
 **Effort:** 5 hours
 **Files:**
+
 - `crates/rustynes-apu/src/dmc.rs`
 - `crates/rustynes-core/src/bus.rs`
 - `crates/rustynes-cpu/src/cpu.rs`
 
 #### Subtasks
+
 - [ ] Implement DMC DMA stall detection in `on_cpu_cycle()`
 - [ ] Handle 1-4 cycle CPU stall based on CPU state
 - [ ] Integrate DMC sample fetching with CPU cycle stealing
@@ -275,9 +287,11 @@ fn check_dmc_dma(&mut self) -> bool {
 **Priority:** P1
 **Effort:** 2 hours
 **Files:**
+
 - `crates/rustynes-apu/src/apu.rs`
 
 #### Subtasks
+
 - [ ] Verify $4015 read returns correct channel status at exact cycle
 - [ ] Verify DMC IRQ flag cleared on $4015 read
 - [ ] Verify frame counter IRQ flag cleared on $4015 read
@@ -286,6 +300,7 @@ fn check_dmc_dma(&mut self) -> bool {
 #### Implementation Notes
 
 $4015 status register format:
+
 ```text
 Read $4015:
   D7: DMC IRQ flag
@@ -309,11 +324,13 @@ Side effects:
 **Priority:** P1
 **Effort:** 2 hours
 **Files:**
+
 - `crates/rustynes-apu/src/frame_counter.rs`
 - `crates/rustynes-apu/src/dmc.rs`
 - `crates/rustynes-core/src/bus.rs`
 
 #### Subtasks
+
 - [ ] Verify frame counter IRQ asserted at exact cycles (29830, 29831, 29832)
 - [ ] Verify DMC IRQ asserted when sample completes (if enabled)
 - [ ] Verify IRQ inhibit flag ($4017 bit 6) behavior
@@ -386,16 +403,19 @@ fn on_cpu_cycle(&mut self) {
 ## References
 
 ### Internal Documentation
+
 - [APU Specification](../../../docs/apu/APU_2A03_SPECIFICATION.md)
 - [Frame Counter](../../../docs/apu/APU_FRAME_COUNTER.md)
 - [DMC Channel](../../../docs/apu/APU_CHANNEL_DMC.md)
 
 ### External Resources
+
 - [NESdev Wiki - APU](https://www.nesdev.org/wiki/APU)
 - [NESdev Wiki - APU Frame Counter](https://www.nesdev.org/wiki/APU_Frame_Counter)
 - [NESdev Wiki - APU DMC](https://www.nesdev.org/wiki/APU_DMC)
 
 ### Reference Implementations
+
 - **Pinky** (`ref-proj/pinky/nes/src/apu/`) - Rust, cycle-accurate APU
 - **Mesen2** - C++, gold standard accuracy
 

@@ -19,6 +19,7 @@ This sprint implements **dual-scope functionality**: (1) **Input Handling** (key
 ### Goals
 
 **Input System:**
+
 - ⏳ Keyboard input (Arrow keys, Z/X, Enter/Shift)
 - ⏳ gilrs gamepad detection and mapping
 - ⏳ Player 1 & 2 support
@@ -26,6 +27,7 @@ This sprint implements **dual-scope functionality**: (1) **Input Handling** (key
 - ⏳ Zero unsafe code
 
 **ROM Library:**
+
 - ⏳ File system ROM discovery (`.nes` files)
 - ⏳ Grid view with cover art placeholders
 - ⏳ List view with metadata
@@ -45,6 +47,7 @@ This sprint implements **dual-scope functionality**: (1) **Input Handling** (key
 ### Task 1: Input State Model (4 hours)
 
 **Files:**
+
 - `crates/rustynes-desktop/src/input/mod.rs` (new)
 - `crates/rustynes-desktop/src/input/keyboard.rs` (new)
 
@@ -132,6 +135,7 @@ impl InputState {
 ```
 
 **Acceptance Criteria:**
+
 - [ ] InputState structure compiles
 - [ ] ControllerState manages 8 NES buttons
 - [ ] apply_to_console() updates emulator state
@@ -142,6 +146,7 @@ impl InputState {
 ### Task 2: Keyboard Mapping (6 hours)
 
 **Files:**
+
 - `crates/rustynes-desktop/src/input/keyboard.rs`
 
 **Objective:** Implement keyboard → NES button mapping for Player 1 & 2.
@@ -293,6 +298,7 @@ impl RustyNesModel {
 ```
 
 **Acceptance Criteria:**
+
 - [ ] Player 1 keyboard input functional (Arrow keys + Z/X)
 - [ ] Player 2 keyboard input functional (Numpad)
 - [ ] Key press/release events handled
@@ -304,6 +310,7 @@ impl RustyNesModel {
 ### Task 3: Gamepad Support (gilrs) (6 hours)
 
 **Files:**
+
 - `crates/rustynes-desktop/src/input/gamepad.rs` (new)
 
 **Objective:** Add gamepad detection and button mapping via gilrs.
@@ -493,6 +500,7 @@ impl RustyNesModel {
 ```
 
 **Acceptance Criteria:**
+
 - [ ] Gamepad detection works (1-2 controllers)
 - [ ] D-pad and face buttons mapped correctly
 - [ ] Analog sticks function as D-pad (with deadzone)
@@ -540,6 +548,7 @@ fn test_controller_state() {
 ```
 
 **Acceptance Criteria:**
+
 - [ ] Input latency <1ms (unit test)
 - [ ] Controller state transitions verified
 - [ ] Keyboard and gamepad tested on Linux/macOS/Windows
@@ -552,6 +561,7 @@ fn test_controller_state() {
 ### Task 5: ROM Discovery (6 hours)
 
 **Files:**
+
 - `crates/rustynes-desktop/src/library/mod.rs` (new)
 - `crates/rustynes-desktop/src/library/scanner.rs` (new)
 
@@ -693,6 +703,7 @@ impl Default for LibraryState {
 ```
 
 **Acceptance Criteria:**
+
 - [ ] Scans `.nes` files from directory
 - [ ] Recursive scan (1 level deep)
 - [ ] ROMs sorted alphabetically
@@ -704,6 +715,7 @@ impl Default for LibraryState {
 ### Task 6: Library Views (Grid + List) (8 hours)
 
 **Files:**
+
 - `crates/rustynes-desktop/src/views/library.rs` (new)
 
 **Objective:** Create Grid and List views for ROM library.
@@ -865,6 +877,7 @@ fn list_view<'a>(library: &'a LibraryState) -> Element<'a, Message> {
 ```
 
 **Acceptance Criteria:**
+
 - [ ] Grid view displays ROMs in 4-column layout
 - [ ] List view shows ROM title and size
 - [ ] Search filters results in real-time
@@ -877,6 +890,7 @@ fn list_view<'a>(library: &'a LibraryState) -> Element<'a, Message> {
 ### Task 7: ROM Loading (4 hours)
 
 **Files:**
+
 - `crates/rustynes-desktop/src/lib.rs` (Message handling)
 
 **Objective:** Load selected ROM from library.
@@ -963,6 +977,7 @@ impl RustyNesModel {
 ```
 
 **Acceptance Criteria:**
+
 - [ ] Clicking ROM in library loads and starts emulation
 - [ ] Switch to Gameplay view automatically
 - [ ] Error handling for invalid ROMs
@@ -991,6 +1006,7 @@ impl RustyNesModel {
 ```
 
 **Acceptance Criteria:**
+
 - [ ] Full workflow functional (library → gameplay → input)
 - [ ] No crashes or panics
 - [ ] Input works in Gameplay view

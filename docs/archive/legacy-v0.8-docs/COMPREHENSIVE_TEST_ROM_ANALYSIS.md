@@ -44,6 +44,7 @@
 ### Current Testing Status
 
 **Integrated and Passing**:
+
 - 1 CPU test (cpu_nestest.nes) - 100% passing
 - 6 PPU tests - 4 passing, 2 ignored (timing precision)
 
@@ -60,6 +61,7 @@
 #### CPU Tests (36 files, 35 valid)
 
 **Instruction Tests (11)**:
+
 - cpu_instr_01_implied.nes ✓
 - cpu_instr_02_immediate.nes ✓
 - cpu_instr_03_zero_page.nes ✓
@@ -73,11 +75,13 @@
 - cpu_instr_11_special.nes ✗ (Invalid iNES header - likely NSF or other format)
 
 **Timing Tests (3)**:
+
 - cpu_instr_timing.nes ✓
 - cpu_instr_timing_1.nes ✓
 - cpu_branch_timing_2.nes ✓
 
 **Interrupt Tests (7)**:
+
 - cpu_interrupts.nes ✓
 - cpu_int_nmi_and_irq.nes ✓
 - cpu_int_nmi_and_brk.nes ✓
@@ -87,10 +91,12 @@
 - cpu_flag_concurrency.nes ✓
 
 **DMA Tests (2)**:
+
 - cpu_sprdma_and_dmc_dma.nes ✓
 - cpu_sprdma_and_dmc_dma_512.nes ✓
 
 **Misc CPU Tests (13)**:
+
 - cpu_nestest.nes ✓ (INTEGRATED, PASSING)
 - cpu_all_instrs.nes ✓
 - cpu_official_only.nes ✓
@@ -108,6 +114,7 @@
 #### PPU Tests (49 files, all valid)
 
 **VBL/NMI Tests (10)** - All NROM (Mapper 0):
+
 - ppu_vbl_nmi.nes ✓ (INTEGRATED, PASSING)
 - ppu_01-vbl_basics.nes ✓ (INTEGRATED, PASSING)
 - ppu_02-vbl_set_time.nes ✓ (INTEGRATED, IGNORED - timing precision)
@@ -121,6 +128,7 @@
 - ppu_10-even_odd_timing.nes ✓
 
 **Sprite Hit Tests (19)** - NROM:
+
 - ppu_01.basics.nes ✓ (INTEGRATED, PASSING)
 - ppu_02.alignment.nes ✓ (INTEGRATED, PASSING)
 - ppu_03.corners.nes ✓
@@ -135,6 +143,7 @@
 - ppu_spr_hit_timing_order.nes ✓
 
 **Sprite Overflow Tests (5)** - NROM:
+
 - ppu_spr_overflow_basics.nes ✓
 - ppu_spr_overflow_details.nes ✓
 - ppu_spr_overflow_emulator.nes ✓
@@ -142,6 +151,7 @@
 - ppu_spr_overflow_timing.nes ✓
 
 **Memory/Register Tests (7)** - NROM:
+
 - ppu_palette.nes ✓
 - ppu_palette_ram.nes ✓
 - ppu_sprite_ram.nes ✓
@@ -151,6 +161,7 @@
 - ppu_test_ppu_read_buffer.nes ✓
 
 **Visual/Rendering Tests (7)** - NROM:
+
 - ppu_color.nes ✓
 - ppu_full_palette.nes ✓
 - ppu_full_palette_smooth.nes ✓
@@ -162,11 +173,13 @@
 #### APU Tests (70 files, all valid)
 
 **Blargg APU Suite (12)** - NROM:
+
 - apu_test_1.nes through apu_test_10.nes ✓ (10 files)
 - apu_test/apu_test.nes ✓ (suite ROM)
 - apu_test/rom_singles/*.nes ✓ (6 individual tests)
 
 **Channel Tests (10)** - NROM:
+
 - apu_square.nes, apu_square_pitch.nes ✓
 - apu_triangle.nes, apu_triangle_pitch.nes ✓
 - apu_noise.nes, apu_noise_pitch.nes ✓
@@ -175,53 +188,65 @@
 - apu_sweep_cutoff.nes, apu_sweep_sub.nes ✓
 
 **DMC Tests (14)** - NROM:
+
 - apu_dmc*.nes ✓ (14 tests covering basics, rates, DMA, status, IRQ)
 
 **Length Counter Tests (14)** - NROM:
+
 - apu_len_*.nes ✓ (7 NTSC tests)
 - apu_pal_len_*.nes ✓ (6 PAL tests)
 - apu_reset_len_ctrs_enabled.nes ✓
 
 **IRQ Tests (8)** - NROM:
+
 - apu_irq_*.nes ✓ (3 NTSC tests)
 - apu_pal_irq_*.nes ✓ (3 PAL tests)
 - apu_reset_irq_flag_cleared.nes ✓
 
 **Clock/Timing Tests (4)** - NROM:
+
 - apu_clock_jitter.nes ✓
 - apu_pal_clock_jitter.nes ✓
 
 **Reset Tests (8)** - NROM:
+
 - apu_reset_*.nes ✓ (6 tests)
 - apu_phase_reset.nes ✓
 
 #### Mapper Tests (57 files, all valid)
 
 **NROM (Mapper 0) - 4 ROMs**:
+
 - mapper_nrom_368_test.nes ✓
 - mapper_holymapperel_0_* ✓ (3 variants)
 
 **MMC1 (Mapper 1) - 15 ROMs**:
+
 - mapper_mmc1_a12.nes ✓
 - mapper_holymapperel_1_* ✓ (14 variants covering PRG/CHR banking, SRAM)
 
 **UxROM (Mapper 2) - 2 ROMs**:
+
 - mapper_holymapperel_2_* ✓ (2 variants)
 
 **CNROM (Mapper 3) - 1 ROM**:
+
 - mapper_holymapperel_3_P32K_C32K_H.nes ✓
 
 **MMC3 (Mapper 4) - 11 ROMs**:
+
 - mapper_mmc3_test_*.nes ✓ (6 comprehensive tests)
 - mapper_mmc3_irq_*.nes ✓ (6 IRQ-specific tests)
 - mapper_holymapperel_4_* ✓ (4 variants)
 
 **MMC5 (Mapper 5) - 3 ROMs** (NOT IMPLEMENTED):
+
 - mapper_mmc5test_v1.nes ✓
 - mapper_mmc5test_v2.nes ✓
 - mapper_mmc5exram.nes ✓
 
 **Other Mappers - 21 ROMs** (NOT IMPLEMENTED):
+
 - Mapper 7 (AxROM): 2 ROMs
 - Mapper 9 (MMC2): 1 ROM
 - Mapper 10 (MMC4): 2 ROMs
@@ -243,6 +268,7 @@
 **Method**: Verified iNES header magic bytes (NES\x1A) and minimum file size.
 
 **Results**:
+
 - ✓ 211 ROMs have valid iNES headers (99.5%)
 - ✗ 1 ROM has invalid header (cpu_instr_11_special.nes - likely NSF format or corrupted)
 
@@ -263,6 +289,7 @@
 ### Validation Issues
 
 **cpu_instr_11_special.nes**:
+
 - Status: Invalid iNES header
 - Size: 291 KB
 - Issue: Header magic bytes do not match "NES\x1A"
@@ -343,12 +370,14 @@
 ### Test ROM Integration Status
 
 **Currently Integrated**: 7 test ROMs
+
 - 1 CPU test (cpu_nestest.nes) - 100% passing
 - 6 PPU tests - 66.7% passing (4 pass, 2 ignored)
 
 **Pending Integration**: 205 test ROMs (96.7%)
 
 **Expected Pass Rate (Phase 1)**:
+
 - CPU: 91%+ (32/35 tests)
 - PPU: 70%+ (30/43 pending tests)
 - APU: 85%+ (60/70 tests)
@@ -363,26 +392,31 @@
 ### CPU Tests (36 ROMs, 35 valid)
 
 **Current Status**:
+
 - Integrated: 1 (cpu_nestest.nes)
 - Passing: 1 (100%)
 - Pending: 35
 
 **Priority Tests** (P0 - Must Pass):
+
 1. cpu_nestest.nes ✓ (PASSING - validates all 256 opcodes)
 2. cpu_instr_01_implied.nes through cpu_instr_10_stack.nes (10 tests)
 3. cpu_instr_timing.nes
 4. cpu_dummy_reads.nes
 
 **Expected Results**:
+
 - Instruction tests: 100% pass rate (CPU is cycle-accurate, all opcodes implemented)
 - Timing tests: 100% pass rate (CPU timing validated by nestest)
 - Interrupt tests: 95%+ pass rate (NMI, IRQ, BRK all implemented)
 - DMA tests: 90%+ pass rate (OAM DMA and DMC DMA implemented)
 
 **Known Issues**:
+
 - cpu_instr_11_special.nes has invalid header (needs re-download)
 
 **Recommendations**:
+
 1. Integrate all cpu_instr_*.nes tests (automated test harness)
 2. Add cpu_timing_*.nes tests
 3. Test cpu_int_*.nes suite
@@ -392,12 +426,14 @@
 ### PPU Tests (49 ROMs, all valid)
 
 **Current Status**:
+
 - Integrated: 6 tests
 - Passing: 4 (66.7%)
 - Ignored: 2 (timing precision requirements)
 - Pending: 43
 
 **Priority Tests** (P0 - Must Pass):
+
 1. ppu_vbl_nmi.nes ✓ (PASSING)
 2. ppu_01-vbl_basics.nes ✓ (PASSING)
 3. ppu_01.basics.nes ✓ (PASSING - sprite hit basics)
@@ -407,11 +443,13 @@
 7. ppu_vram_access.nes
 
 **Timing-Sensitive Tests** (P2 - Edge Cases):
+
 - ppu_02-vbl_set_time.nes (IGNORED - ±51 cycle precision)
 - ppu_03-vbl_clear_time.nes (IGNORED - ±10 cycle precision)
 - ppu_spr_hit_timing_*.nes (cycle-level sprite evaluation)
 
 **Expected Results**:
+
 - VBL/NMI tests: 70%+ (basic tests pass, timing tests may fail)
 - Sprite hit tests: 80%+ (basic pass, timing edge cases may fail)
 - Sprite overflow tests: 60%+ (complex hardware bug emulation)
@@ -419,6 +457,7 @@
 - Visual tests: 50%+ (pixel-perfect rendering required)
 
 **Recommendations**:
+
 1. Integrate all ppu_vbl_nmi tests (high priority)
 2. Add sprite hit tests progressively (01-08 basic, then timing)
 3. Test memory/register access (palette_ram, sprite_ram, vram_access)
@@ -428,22 +467,26 @@
 ### APU Tests (70 ROMs, all valid)
 
 **Current Status**:
+
 - Integrated: 0 tests
 - Passing: 0
 - Pending: 70
 
 **Priority Tests** (P0 - Must Pass):
+
 1. apu_test_1.nes through apu_test_10.nes (Blargg suite)
 2. apu_square.nes, apu_triangle.nes, apu_noise.nes (channel basics)
 3. apu_len_ctr.nes, apu_len_table.nes (length counter)
 4. apu_env.nes (envelope)
 
 **Complex Tests** (P2 - Edge Cases):
+
 - apu_dmc_dma_*.nes (DMC DMA conflicts with CPU/PPU)
 - apu_*_timing*.nes (cycle-level timing precision)
 - apu_pal_*.nes (PAL-specific behavior)
 
 **Expected Results**:
+
 - Blargg suite (apu_test_1-10): 90%+ pass rate
 - Channel tests: 95%+ (all channels fully implemented)
 - Length counter tests: 95%+ (length counter in all channels)
@@ -453,6 +496,7 @@
 - Timing tests: 80%+ (may require cycle-level refinement)
 
 **Recommendations**:
+
 1. Start with Blargg suite (apu_test_1-10)
 2. Add channel-specific tests (square, triangle, noise)
 3. Test length counter and envelope
@@ -462,11 +506,13 @@
 ### Mapper Tests (57 ROMs, all valid)
 
 **Current Status**:
+
 - Integrated: 0 tests
 - Passing: 0
 - Pending: 57
 
 **Implemented Mappers** (36 ROMs):
+
 - NROM (Mapper 0): 4 tests - Expected 100% pass rate
 - MMC1 (Mapper 1): 15 tests - Expected 90%+ pass rate
 - UxROM (Mapper 2): 2 tests - Expected 100% pass rate
@@ -474,16 +520,19 @@
 - MMC3 (Mapper 4): 14 tests - Expected 80%+ pass rate
 
 **Unimplemented Mappers** (21 ROMs):
+
 - MMC5 (Mapper 5): 3 tests - Expected 0% (not implemented)
 - Other mappers: 18 tests - Expected 0% (not implemented)
 
 **Priority Tests**:
+
 1. mapper_nrom_368_test.nes (NROM validation)
 2. mapper_holymapperel_0_*.nes (NROM variants)
 3. mapper_mmc1_a12.nes (MMC1 A12 line edge detection)
 4. mapper_mmc3_test_*.nes (MMC3 IRQ and banking)
 
 **Expected Results**:
+
 - NROM (4 tests): 100% pass rate
 - MMC1 (15 tests): 90%+ (shift register edge cases may fail)
 - UxROM (2 tests): 100% pass rate
@@ -491,6 +540,7 @@
 - MMC3 (14 tests): 80%+ (IRQ timing may require refinement)
 
 **Recommendations**:
+
 1. Test NROM variants first (simplest, should pass immediately)
 2. Validate MMC1 implementation
 3. Test UxROM and CNROM (simple mappers)
@@ -506,10 +556,12 @@
 **Target**: 60 FPS (1 frame = 29,780 CPU cycles = 16.67 ms)
 
 **Current Performance** (estimated, needs benchmarking):
+
 - Debug build: ~30-40 FPS
 - Release build: ~100-150 FPS
 
 **Optimization Opportunities**:
+
 1. PPU rendering pipeline (currently per-pixel)
 2. Audio sample buffering
 3. Mapper implementations (reduce virtual calls)
@@ -529,6 +581,7 @@
 **TASVideos Suite**: 156 test ROMs for NES emulator validation
 
 **Estimated RustyNES Compatibility**:
+
 - Milestone 5 (current): ~10% (core components implemented)
 - Phase 1 complete: ~75% (most tests integrated)
 - Phase 2 complete: ~90% (edge cases addressed)

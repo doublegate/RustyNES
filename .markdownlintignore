@@ -1,5 +1,17 @@
 # Reference documents (external design specs)
 ref-docs/
 
-# Generated documentation
+# External reference emulator clones (also gitignored) — never our content
+ref-proj/
+
+# Generated / build output
 target/
+
+# Vendored / upstream content (not authored here — keep pristine, don't lint)
+crates/rustynes-test-harness/golden/tricnes/
+tests/roms/audio-tests/UPSTREAM_README.md
+tests/roms/holy_mapperel/README.md
+
+# Frozen archived docs / to-dos — exempt going forward (lint living docs only)
+docs/archive/
+to-dos/archive/

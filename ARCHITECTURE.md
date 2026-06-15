@@ -51,7 +51,7 @@ These cross-cutting choices span many files and are not negotiable without re-de
 
 ## Crate Structure
 
-```
+```text
 rustynes/
 ├── Cargo.toml                  # Workspace definition (edition 2021, MSRV 1.86)
 ├── crates/
@@ -134,7 +134,7 @@ Internally `Nes::from_rom` delegates to `rustynes_mappers::parse(bytes) -> Resul
 
 CPU address space (16-bit):
 
-```
+```text
 $0000-$07FF   2 KB internal RAM (mirrored to $1FFF)
 $2000-$3FFF   PPU registers (8, mirrored)
 $4000-$4017   APU + I/O registers
@@ -145,7 +145,7 @@ $8000-$FFFF   Cartridge PRG-ROM (mapper-banked)
 
 PPU address space (14-bit):
 
-```
+```text
 $0000-$1FFF   Pattern tables (CHR-ROM/RAM, mapper-banked)
 $2000-$2FFF   Nametables (2 KB internal VRAM, mapper-controlled mirroring)
 $3F00-$3F1F   Palette RAM

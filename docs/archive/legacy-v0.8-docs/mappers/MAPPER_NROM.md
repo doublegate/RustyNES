@@ -1,6 +1,6 @@
 # Mapper 0: NROM
 
-**Table of Contents**
+## Table of Contents
 
 - [Overview](#overview)
 - [Board Variants](#board-variants)

@@ -1,6 +1,6 @@
 # Mapper 4: MMC3 (TxROM)
 
-**Table of Contents**
+## Table of Contents
 
 - [Overview](#overview)
 - [Register Map](#register-map)

@@ -9,6 +9,7 @@ Profile and optimize critical hot paths in CPU, PPU, and APU to achieve 20%+ per
 The desktop frontend uses eframe+egui with the glow (OpenGL) backend:
 
 **Rendering Pipeline:**
+
 - eframe 0.29 for window management and OpenGL context
 - egui 0.29 for immediate mode GUI rendering
 - glow backend for OpenGL rendering (simpler than wgpu)
@@ -17,6 +18,7 @@ The desktop frontend uses eframe+egui with the glow (OpenGL) backend:
 - Accumulator-based frame timing at 60.0988 Hz
 
 **Current Overhead Points:**
+
 - `ColorImage::from_rgba_unmultiplied()` - framebuffer conversion every frame
 - egui layout calculations for debug windows
 - Mono-to-stereo audio conversion in callback
@@ -35,6 +37,7 @@ The desktop frontend uses eframe+egui with the glow (OpenGL) backend:
 ## Tasks
 
 ### Task 1: Profiling
+
 - [ ] Install profiling tools (cargo-flamegraph, perf, Instruments)
 - [ ] Profile full emulation loop (CPU step, PPU step, APU step)
 - [ ] Identify hot paths (>10% CPU time)
@@ -42,6 +45,7 @@ The desktop frontend uses eframe+egui with the glow (OpenGL) backend:
 - [ ] Document baseline performance metrics
 
 ### Task 2: CPU Optimization
+
 - [x] Inline critical functions (opcode dispatch, addressing modes)
 - [x] Optimize opcode lookup table (reduce indirection)
 - [ ] Reduce branching (branchless addressing mode calculation)
@@ -49,6 +53,7 @@ The desktop frontend uses eframe+egui with the glow (OpenGL) backend:
 - [ ] Benchmark before/after (aim for 10%+ improvement)
 
 **Implementation Complete (Dec 28, 2025):**
+
 - Added `#[inline]` hints to CPU hot path functions in `cpu.rs`:
   - `step()` - main CPU step function
   - `execute_opcode()` - opcode dispatch
@@ -58,6 +63,7 @@ The desktop frontend uses eframe+egui with the glow (OpenGL) backend:
 - Opcode lookup uses compile-time initialized table (no runtime indirection)
 
 ### Task 3: PPU Optimization
+
 - [x] Optimize scanline rendering loop (most critical path)
 - [ ] Reduce pixel processing overhead (batch operations)
 - [ ] Optimize sprite rendering (early exit for transparent pixels)
@@ -65,6 +71,7 @@ The desktop frontend uses eframe+egui with the glow (OpenGL) backend:
 - [ ] Benchmark before/after (aim for 15%+ improvement)
 
 **Implementation Complete (Dec 28, 2025):**
+
 - Added `#[inline]` hints to PPU hot path functions in `ppu.rs`:
   - `step()` - main PPU step function
   - `step_with_chr()` - PPU step with CHR callback
@@ -75,6 +82,7 @@ The desktop frontend uses eframe+egui with the glow (OpenGL) backend:
   - All shift register and scroll operations
 
 ### Task 4: Memory Optimization
+
 - [ ] Profile heap allocations (cargo-flamegraph --alloc)
 - [ ] Reduce allocations in hot paths (use stack, reuse buffers)
 - [ ] Preallocate buffers (PPU framebuffer, audio buffer)
@@ -82,6 +90,7 @@ The desktop frontend uses eframe+egui with the glow (OpenGL) backend:
 - [ ] Benchmark memory usage (before/after)
 
 ### Task 5: Benchmarking & Validation
+
 - [ ] Create performance benchmark suite (criterion)
 - [ ] Measure FPS for different games (SMB, Zelda, Mega Man)
 - [ ] Compare against baseline (v0.7.0)
@@ -93,11 +102,13 @@ The desktop frontend uses eframe+egui with the glow (OpenGL) backend:
 ### cargo-flamegraph
 
 **Installation:**
+
 ```bash
 cargo install flamegraph
 ```
 
 **Usage:**
+
 ```bash
 # CPU profiling
 cargo flamegraph --release -p rustynes-core -- test-roms/smb.nes
@@ -109,6 +120,7 @@ cargo flamegraph --release --alloc -p rustynes-core -- test-roms/smb.nes
 ### perf (Linux)
 
 **Usage:**
+
 ```bash
 perf record -F 99 -g target/release/rustynes-desktop test-roms/smb.nes
 perf report
@@ -117,6 +129,7 @@ perf report
 ### Instruments (macOS)
 
 **Usage:**
+
 ```bash
 # Profile in Xcode Instruments
 instruments -t "Time Profiler" target/release/rustynes-desktop test-roms/smb.nes
@@ -127,6 +140,7 @@ instruments -t "Time Profiler" target/release/rustynes-desktop test-roms/smb.nes
 ### 1. Inline Critical Functions
 
 **Before:**
+
 ```rust
 fn execute_lda(&mut self, addr_mode: AddressingMode, bus: &mut Bus) {
     let addr = self.get_address(addr_mode, bus);
@@ -136,6 +150,7 @@ fn execute_lda(&mut self, addr_mode: AddressingMode, bus: &mut Bus) {
 ```
 
 **After:**
+
 ```rust
 #[inline(always)]
 fn execute_lda(&mut self, addr_mode: AddressingMode, bus: &mut Bus) {
@@ -148,6 +163,7 @@ fn execute_lda(&mut self, addr_mode: AddressingMode, bus: &mut Bus) {
 ### 2. Lookup Table Optimization
 
 **Before:**
+
 ```rust
 fn step(&mut self, bus: &mut Bus) {
     let opcode = self.read(bus, self.pc);
@@ -161,6 +177,7 @@ fn step(&mut self, bus: &mut Bus) {
 ```
 
 **After:**
+
 ```rust
 const INSTRUCTION_TABLE: [fn(&mut Cpu, &mut Bus); 256] = [
     Cpu::execute_brk,  // 0x00
@@ -178,6 +195,7 @@ fn step(&mut self, bus: &mut Bus) {
 ### 3. Reduce Branching (Branchless)
 
 **Before:**
+
 ```rust
 fn get_address(&self, mode: AddressingMode, bus: &Bus) -> u16 {
     match mode {
@@ -194,6 +212,7 @@ fn get_address(&self, mode: AddressingMode, bus: &Bus) -> u16 {
 ```
 
 **After:**
+
 ```rust
 // Use lookup tables instead of match (branchless)
 const ADDR_MODE_TABLE: [fn(&Cpu, &Bus) -> u16; 13] = [
@@ -212,6 +231,7 @@ fn get_address(&self, mode: u8, bus: &Bus) -> u16 {
 ### 4. PPU Scanline Rendering Optimization
 
 **Before:**
+
 ```rust
 fn render_scanline(&mut self) {
     for x in 0..256 {
@@ -224,6 +244,7 @@ fn render_scanline(&mut self) {
 ```
 
 **After:**
+
 ```rust
 fn render_scanline(&mut self) {
     // Preallocate buffers
@@ -245,6 +266,7 @@ fn render_scanline(&mut self) {
 ### 5. eframe/egui Texture Update Optimization
 
 **Current Pattern (v0.7.1):**
+
 ```rust
 // crates/rustynes-desktop/src/app.rs
 fn update_texture(&mut self, ctx: &egui::Context) {
@@ -268,6 +290,7 @@ fn update_texture(&mut self, ctx: &egui::Context) {
 ```
 
 **Optimized Pattern:**
+
 ```rust
 fn update_texture(&mut self, ctx: &egui::Context) {
     // Reuse preallocated framebuffer (already done in v0.7.1)
@@ -301,6 +324,7 @@ fn update_texture(&mut self, ctx: &egui::Context) {
 ### 6. Audio Callback Optimization
 
 **Current Pattern (v0.7.1):**
+
 ```rust
 // Allocates Vec every callback
 let mono_samples_needed = data.len() / channels;
@@ -308,6 +332,7 @@ let mut mono_buffer = vec![0.0f32; mono_samples_needed];
 ```
 
 **Optimized Pattern:**
+
 ```rust
 // Use thread-local or pre-allocated buffer
 thread_local! {
@@ -324,6 +349,7 @@ MONO_BUFFER.with(|buf| {
 ### 7. egui Debug Window Optimization
 
 **Avoid layout recalculation when hidden:**
+
 ```rust
 // Only render debug windows when visible
 if self.config.debug.show_ppu {
@@ -346,6 +372,7 @@ egui::CollapsingHeader::new("Pattern Tables")
 ### 5. Memory Allocation Reduction
 
 **Before:**
+
 ```rust
 fn get_tile_data(&self, tile_index: u8) -> Vec<u8> {
     let mut tile = Vec::with_capacity(64); // Allocation on every call!
@@ -355,6 +382,7 @@ fn get_tile_data(&self, tile_index: u8) -> Vec<u8> {
 ```
 
 **After:**
+
 ```rust
 struct PpuContext {
     tile_buffer: [u8; 64], // Reusable buffer
@@ -372,6 +400,7 @@ fn get_tile_data(&mut self, tile_index: u8) -> &[u8] {
 ### Criterion Benchmarks
 
 **Setup:**
+
 ```toml
 # Cargo.toml
 [dev-dependencies]
@@ -383,6 +412,7 @@ harness = false
 ```
 
 **Benchmark:**
+
 ```rust
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 

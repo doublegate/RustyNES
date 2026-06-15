@@ -175,7 +175,7 @@ maintenance entanglement with C build tooling.
 - **New workspace dep edge.** `rustynes-mappers -> rustynes-apu` is a new edge
   in the chip-stack DAG. It is acyclic (rustynes-apu has no chip deps),
   but it does mean `rustynes-mappers` now pulls in the full APU mixer
-  + BLEP synthesis as transitive deps. The cross-compile budget
+  - BLEP synthesis as transitive deps. The cross-compile budget
   absorbed this without measurable impact.
 
 ### Neutral / Future work

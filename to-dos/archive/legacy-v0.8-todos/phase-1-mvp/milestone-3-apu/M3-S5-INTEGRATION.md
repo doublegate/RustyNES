@@ -710,6 +710,7 @@ fn main() {
 ### Resampling Quality
 
 Linear interpolation is sufficient for basic emulation but may introduce aliasing. For higher quality:
+
 - Use band-limited synthesis (blip_buf crate)
 - Apply low-pass filter
 - Use higher intermediate sample rate
@@ -717,6 +718,7 @@ Linear interpolation is sufficient for basic emulation but may introduce aliasin
 ### Audio Latency
 
 Target <20ms latency for responsive gameplay:
+
 - 48 kHz: 960 samples buffer
 - 44.1 kHz: 882 samples buffer
 
