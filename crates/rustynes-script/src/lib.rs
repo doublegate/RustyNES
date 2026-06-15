@@ -42,14 +42,26 @@ impl AddrBits {
     fn from_keys(map: &AddrCallbacks) -> Self {
         let mut bits = [0u64; 1024];
         for &addr in map.borrow().keys() {
-            bits[usize::from(addr) / 64] |= 1u64 << (addr % 64);
+            // `>> 6` / `& 63` (not `/ 64` / `% 64`) — idiomatic + no div/mod even
+            // in debug builds (gemini #59).
+            bits[usize::from(addr >> 6)] |= 1u64 << (addr & 63);
         }
         Self(bits)
     }
 
+    /// Build a bitset only if `map` has any entries (skips the 8 KiB zero-init
+    /// when the corresponding callback type is unused — gemini/Copilot #59).
+    fn from_keys_opt(map: &AddrCallbacks) -> Option<Self> {
+        if map.borrow().is_empty() {
+            None
+        } else {
+            Some(Self::from_keys(map))
+        }
+    }
+
     #[inline]
     fn contains(&self, addr: u16) -> bool {
-        self.0[usize::from(addr) / 64] & (1u64 << (addr % 64)) != 0
+        self.0[usize::from(addr >> 6)] & (1u64 << (addr & 63)) != 0
     }
 }
 
@@ -636,16 +648,18 @@ impl ScriptEngine {
             }
 
             // Replay this frame's bus accesses through onRead/onWrite(addr, value).
+            // Build each bitset only for a callback type that's actually in use
+            // (most scripts watch only reads OR writes) — gemini/Copilot #59.
             if !accesses.is_empty() {
-                let active_read = AddrBits::from_keys(&read_cbs);
-                let active_write = AddrBits::from_keys(&write_cbs);
+                let active_read = AddrBits::from_keys_opt(&read_cbs);
+                let active_write = AddrBits::from_keys_opt(&write_cbs);
                 for (is_write, addr, value) in &accesses {
                     let (active, map) = if *is_write {
                         (&active_write, &write_cbs)
                     } else {
                         (&active_read, &read_cbs)
                     };
-                    if active.contains(*addr) {
+                    if active.as_ref().is_some_and(|a| a.contains(*addr)) {
                         for f in fns_at(lua, map, *addr)? {
                             f.call::<()>((*addr, *value))?;
                         }
