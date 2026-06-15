@@ -109,6 +109,11 @@ pub mod wasm_audio;
 // codec, Blob downloads, file-picker triggers. Used by both wasm frontends.
 #[cfg(target_arch = "wasm32")]
 pub mod wasm_io;
+// v1.2.0 Workstream F1/F2 — shared on-screen touch input (Pointer-Events
+// overlay → button/Power-Pad mask). Read at the late-latch by both wasm
+// frontends, so touch is recorded/replayed like a keypress. wasm-only.
+#[cfg(target_arch = "wasm32")]
+pub mod wasm_touch;
 // v2.6.0 — browser netplay over WebRTC (a WebSocket signaling client + the
 // RtcPeerConnection / RtcDataChannel handshake yielding a `WebRtcTransport`
 // that drives a `RollbackSession`). Compile-verified; a full browser session

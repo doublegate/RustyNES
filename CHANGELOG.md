@@ -21,6 +21,24 @@ See `docs/adr/0011-mapper-tiering.md`,
 
 ### Added
 
+- **Web/wasm input parity — on-screen touch controls + Power Pad** (v1.2.0
+  Workstream F1 + F2). The browser build gains a translucent Pointer-Events
+  touch overlay (pure DOM/CSS in `web/index.html`, zero Rust binary weight
+  beyond the new `web-sys` pointer/touch feature flags): an on-screen D-pad /
+  A / B / Start / Select with multi-touch + pointer-capture handling, a
+  selectable target **port** (player 1-4, for Four Score), and a 12-button
+  **Power Pad** mat. The overlay drives a shared `wasm_touch` thread-local
+  bridge that BOTH wasm frontends read at the SAME deterministic late-latch a
+  keypress uses — the `wasm-canvas` embed folds it into the per-frame
+  `set_buttons` / `set_power_pad` call, and the `wasm-winit` path ORs it into
+  `FrameInputs` so it flows through `EmuCore::latch` exactly like a keyboard
+  bit. Touch input is therefore recorded/replayed identically by TAS movies +
+  netplay and adds no new determinism surface. The native Power Pad latch arm
+  (previously `cfg(not(wasm32))`-gated behind the mouse/cursor block) is
+  narrowed so the Power Pad — which needs only a `u16` mask — also feeds on
+  wasm; Zapper / Vaus stay native-gated. The native build is byte-identical
+  (all touch state is wasm-only). On-device touch UX needs a browser on a
+  touch device to verify.
 - **Menu-bar responsiveness — per-item contextual enable/disable** (v1.2.0
   Workstream H, H1; GeraNES `MenuUI.inl`-inspired). Menu items now grey out
   when the action would be a no-op or unsafe in the current state, instead of

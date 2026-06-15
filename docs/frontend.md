@@ -393,8 +393,25 @@ player-2 expansion device (Settings → Input "Port 2 device"). Its 12 mat
 buttons default to a left-hand grid (`1`–`4` / `Q W E R` / `A S D F`, chosen to
 avoid the P1 and system-speed keys) and implement the dual-8-bit-shift-register
 serial protocol on `$4017`. Off by default (standard controller), so the
-default + Four Score paths stay byte-identical. Native path (rebindable mat
-keys + a `wasm-canvas` feed are follow-ups).
+default + Four Score paths stay byte-identical. Native (keyboard mat keys) +
+both wasm frontends (v1.2.0 Workstream F2: the touch-overlay Power Pad mat,
+fed through the same late-latch — see "Touch controls" below). Rebindable mat
+keys are a follow-up.
+
+**Touch controls (wasm)** (v1.2.0 Workstream F1 + F2). The browser build adds a
+translucent Pointer-Events touch overlay (pure DOM/CSS in `web/index.html`, with
+the `wasm_touch.rs` bridge) — an on-screen D-pad / A / B / Start / Select, a
+selectable target port (player 1–4, for Four Score), and a 12-button Power Pad
+mat. The overlay translates `pointerdown`/`pointerup`/`pointercancel` into a
+`Buttons` mask (and a Power Pad mat mask) and pushes them through the
+`rustynes_touch_*` bindings into a thread-local that BOTH wasm frontends read at
+the SAME deterministic late-latch a keypress uses: the `wasm-canvas` embed folds
+it into its per-frame `set_buttons` / `set_power_pad` call, and the `wasm-winit`
+path ORs it into `FrameInputs` so it flows through `EmuCore::latch` exactly like
+a keyboard bit. Touch input is therefore recorded/replayed identically by TAS
+movies + netplay and adds no new determinism surface. Hidden by default (the
+"Touch controls" checkbox reveals it), so the desktop keyboard UX is unchanged;
+the native build is byte-identical (all touch state is wasm-only).
 
 **Input-display overlay.** A read-only tool panel
 (`debugger/input_display_panel.rs`) that draws a stylized NES controller per

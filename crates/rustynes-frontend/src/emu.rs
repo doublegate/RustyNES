@@ -129,6 +129,13 @@ pub struct FrameInputs {
     /// button `i+1`). Consumed only when the player-2 expansion device is a
     /// Power Pad.
     pub power_pad: u16,
+    /// v1.2.0 Workstream F2 — whether the Power Pad is the active wasm touch
+    /// device. On native the Power Pad selection lives in `expansion`
+    /// (above); on wasm there is no `expansion` field, so this non-gated flag
+    /// gates the wasm-only Power Pad latch arm in [`EmuCore::latch`].
+    /// All-zero/`false` by default = byte-identical latch.
+    #[cfg(target_arch = "wasm32")]
+    pub power_pad_active: bool,
     /// v1.2.0 Workstream D — accumulated mouse motion this frame `(dx, dy)`,
     /// consumed only when the expansion device is a SNES mouse.
     #[cfg(not(target_arch = "wasm32"))]
@@ -372,6 +379,18 @@ impl EmuCore {
                         nes.set_family_keyboard(1, inputs.family_keyboard);
                     }
                 }
+            }
+            // v1.2.0 Workstream F2 — Power Pad on wasm. The native expansion
+            // block above is gated out on wasm (it needs the cursor / mouse
+            // fields, which don't exist there); the Power Pad only needs the
+            // non-gated `power_pad` u16 mask, so feed it here at the SAME
+            // late-latch point. `set_power_pad` self-attaches the mat on port
+            // 1; the `power_pad_active` gate keeps the no-Power-Pad path
+            // byte-identical (the arm is a no-op when the touch UI has not
+            // selected the device).
+            #[cfg(target_arch = "wasm32")]
+            if inputs.power_pad_active {
+                nes.set_power_pad(1, inputs.power_pad);
             }
         }
     }

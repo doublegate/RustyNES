@@ -2094,13 +2094,31 @@ impl App {
     /// winit-thread-resident input state (keyboard maps, gilrs, mouse).
     fn frame_inputs(&self) -> crate::emu::FrameInputs {
         let hardcore_blocked = self.ra_hardcore_blocks();
+        // v1.2.0 Workstream F1/F2 — fold the on-screen touch overlay into the
+        // per-frame snapshot. The touch buttons OR into the routed port and the
+        // Power Pad mat mask ORs into `power_pad`; this is read at the SAME
+        // late-latch a keypress is, so touch is recorded/replayed identically by
+        // TAS movies + netplay. No-op when nothing is touched (byte-identical).
+        #[cfg(target_arch = "wasm32")]
+        let mut buttons = [
+            self.input.player1(),
+            self.input.player2(),
+            self.input.player3(),
+            self.input.player4(),
+        ];
+        #[cfg(target_arch = "wasm32")]
+        {
+            buttons[crate::wasm_touch::touch_target_port()] |= crate::wasm_touch::touch_buttons();
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        let buttons = [
+            self.input.player1(),
+            self.input.player2(),
+            self.input.player3(),
+            self.input.player4(),
+        ];
         crate::emu::FrameInputs {
-            buttons: [
-                self.input.player1(),
-                self.input.player2(),
-                self.input.player3(),
-                self.input.player4(),
-            ],
+            buttons,
             four_score: self.config.input.four_score,
             // v2.7.0 — RA hardcore disables rewind; fold the gate here.
             rewind_held: self.input.rewind_held() && !hardcore_blocked,
@@ -2127,7 +2145,17 @@ impl App {
             mouse_pressed: self.mouse_pressed,
             turbo_mask: self.turbo_mask(),
             turbo_period: self.config.input.turbo_period,
+            // v1.2.0 Workstream F1 — OR the touch Power Pad mat mask into the
+            // keyboard-driven one (native keymap on wasm-winit + touch overlay).
+            #[cfg(target_arch = "wasm32")]
+            power_pad: self.input.power_pad() | crate::wasm_touch::touch_power_pad(),
+            #[cfg(not(target_arch = "wasm32"))]
             power_pad: self.input.power_pad(),
+            // v1.2.0 Workstream F2 — the Power Pad is the active wasm device when
+            // the touch UI selected it (gates the wasm-only latch arm in
+            // `EmuCore::latch`; native keys off `expansion` instead).
+            #[cfg(target_arch = "wasm32")]
+            power_pad_active: crate::wasm_touch::touch_power_pad_active(),
             // v1.2.0 Workstream D — SNES mouse: report the motion accumulated
             // since the last frame latch (drained by the produce / publish path).
             #[cfg(not(target_arch = "wasm32"))]

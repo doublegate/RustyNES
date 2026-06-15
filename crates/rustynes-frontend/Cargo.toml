@@ -247,6 +247,11 @@ web-sys = { workspace = true, features = [
     "RtcDataChannelType", "RtcSessionDescription", "RtcSessionDescriptionInit",
     "RtcSdpType", "RtcIceServer", "RtcPeerConnectionIceEvent", "RtcIceCandidate",
     "RtcIceCandidateInit", "RtcDataChannelEvent",
+    # v1.2.0 Workstream F1/F2 — on-screen touch input. The Pointer-Events
+    # overlay lives in web/index.html (translucent DOM/CSS, zero Rust binary
+    # weight) and calls the `wasm_touch` bridge fns; these features expose the
+    # pointer/touch event types to Rust for any future native-side handler.
+    "PointerEvent", "TouchEvent", "Touch", "TouchList", "MouseEvent", "UiEvent",
 ] }
 
 [dev-dependencies]
