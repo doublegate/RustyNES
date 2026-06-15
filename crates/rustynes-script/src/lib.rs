@@ -35,7 +35,15 @@ use rustynes_core::Nes;
 /// Default per-frame VM-instruction budget. A callback that exceeds this is
 /// aborted with a Lua runtime error (a runaway-loop backstop) — surfaced as
 /// [`ScriptError::Lua`].
-pub const DEFAULT_INSTRUCTION_BUDGET: u64 = 5_000_000;
+///
+/// The host pumps the engine while holding the emulator lock (callbacks need
+/// live `Nes` access), so this budget also bounds how long a runaway script can
+/// stall emulation (M2). 1M VM instructions is ~10 ms worst case — well above
+/// any legitimate per-frame script (real HUD/watch logic is well under 10k
+/// instructions/frame), but tight enough that a runaway is cut off within a
+/// frame or two rather than freezing the emulator. Raise it via
+/// [`ScriptEngine::set_instruction_budget`] for unusual workloads.
+pub const DEFAULT_INSTRUCTION_BUDGET: u64 = 1_000_000;
 
 /// Max control / draw commands queued per frame (drained by the host). A script
 /// can't grow host memory without bound; excess commands in one frame are
@@ -385,12 +393,41 @@ impl ScriptEngine {
         Ok(self.subtable_has_entries("read")? || self.subtable_has_entries("write")?)
     }
 
+    /// Resilient access to the internal `__rustynes` callback registry (M1).
+    ///
+    /// The registry lives as a Lua global, so a buggy / hostile script could
+    /// reassign it (`__rustynes = nil`). Rather than let that error out the
+    /// whole pump, every accessor goes through here: a missing or wrong-typed
+    /// registry resolves to `None`, which the callers treat as "no callbacks
+    /// registered" — so a script can only disable *its own* callbacks, never
+    /// break the host loop. (A deeper isolation would move the registry into the
+    /// protected Lua registry / Rust-side storage; this graceful degradation
+    /// closes the actual failure mode at far lower risk.)
+    fn registry_table(&self) -> Option<Table> {
+        self.lua
+            .globals()
+            .get::<mlua::Value>("__rustynes")
+            .ok()?
+            .as_table()
+            .cloned()
+    }
+
+    /// Fetch a `__rustynes.<name>` address-keyed sub-table, or `None` if the
+    /// registry or sub-table is missing / wrong-typed.
+    fn registry_subtable(&self, name: &str) -> Option<Table> {
+        self.registry_table()?
+            .get::<mlua::Value>(name)
+            .ok()?
+            .as_table()
+            .cloned()
+    }
+
     /// Whether `__rustynes.<name>` (an address-keyed table) holds any callback.
-    /// Surfaces a malformed-table iterator error rather than swallowing it
-    /// (Copilot #47).
+    /// A missing registry is "no callbacks" (M1), not an error.
     fn subtable_has_entries(&self, name: &str) -> Result<bool, ScriptError> {
-        let registry: Table = self.lua.globals().get("__rustynes")?;
-        let t: Table = registry.get(name)?;
+        let Some(t) = self.registry_subtable(name) else {
+            return Ok(false);
+        };
         match t.pairs::<mlua::Value, mlua::Value>().next() {
             Some(Ok(_)) => Ok(true),
             Some(Err(e)) => Err(ScriptError::Lua(e)),
@@ -402,10 +439,12 @@ impl ScriptEngine {
     /// set, so the per-frame replay can gate the (expensive) Lua table lookup
     /// behind an O(1) Rust check — avoiding a Lua FFI crossing for every one of
     /// the ~15k exec PCs / ~60k bus accesses that has no callback (gemini #47).
+    /// A missing registry yields an empty set (M1).
     fn active_addrs(&self, name: &str) -> Result<HashSet<u16>, ScriptError> {
-        let registry: Table = self.lua.globals().get("__rustynes")?;
-        let t: Table = registry.get(name)?;
         let mut set = HashSet::new();
+        let Some(t) = self.registry_subtable(name) else {
+            return Ok(set);
+        };
         for pair in t.pairs::<u32, Table>() {
             let (addr, _) = pair?;
             set.insert((addr & 0xFFFF) as u16);
@@ -558,26 +597,37 @@ impl ScriptEngine {
             emu.set("frame", frame)?;
             emu.set("cycle", cycle)?;
 
+            // The internal registry; a script that clobbered `__rustynes`
+            // simply has no callbacks this frame (M1 — graceful, not an error).
+            let Some(registry) = lua
+                .globals()
+                .get::<mlua::Value>("__rustynes")?
+                .as_table()
+                .cloned()
+            else {
+                return Ok(());
+            };
+
             // Invoke every registered onFrame callback.
-            let registry: Table = lua.globals().get("__rustynes")?;
-            let frame_cbs: Table = registry.get("frame")?;
-            for cb in frame_cbs.sequence_values::<mlua::Function>() {
-                cb?.call::<()>(())?;
+            if let Some(frame_cbs) = registry.get::<Option<Table>>("frame")? {
+                for cb in frame_cbs.sequence_values::<mlua::Function>() {
+                    cb?.call::<()>(())?;
+                }
             }
 
             // Replay this frame's exec PCs through onExec(addr). The Rust-side
             // `exec_addrs` set gates the Lua lookup: only PCs with a registered
             // callback cross the FFI boundary (gemini #47).
-            if !exec_pcs.is_empty() {
-                let exec_t: Table = registry.get("exec")?;
+            if let (false, Some(exec_t)) =
+                (exec_pcs.is_empty(), registry.get::<Option<Table>>("exec")?)
+            {
                 for pc in &exec_pcs {
                     if !exec_addrs.contains(pc) {
                         continue;
                     }
-                    // `Option<Table>`: a callback an earlier callback unregistered
-                    // *this frame* leaves the snapshot set stale, so the slot may
-                    // now be `Nil` — skip it rather than crash on a `FromLua`
-                    // conversion (gemini #49).
+                    // `Option<Table>`: a callback unregistered earlier *this frame*
+                    // leaves the snapshot set stale, so the slot may now be `Nil` —
+                    // skip it rather than crash on a `FromLua` conversion (gemini #49).
                     if let Some(cbs) = exec_t.get::<Option<Table>>(*pc)? {
                         for cb in cbs.sequence_values::<mlua::Function>() {
                             cb?.call::<()>(*pc)?;
@@ -589,8 +639,8 @@ impl ScriptEngine {
             // Replay this frame's bus accesses through onRead/onWrite(addr, value),
             // gated the same way.
             if !accesses.is_empty() {
-                let read_t: Table = registry.get("read")?;
-                let write_t: Table = registry.get("write")?;
+                let read_t = registry.get::<Option<Table>>("read")?;
+                let write_t = registry.get::<Option<Table>>("write")?;
                 for (is_write, addr, value) in &accesses {
                     let (set, t) = if *is_write {
                         (&write_addrs, &write_t)
@@ -600,6 +650,7 @@ impl ScriptEngine {
                     if !set.contains(addr) {
                         continue;
                     }
+                    let Some(t) = t.as_ref() else { continue };
                     // `Option<Table>`: tolerate a callback unregistered mid-frame
                     // (gemini #49) — the snapshot set may be stale.
                     if let Some(cbs) = t.get::<Option<Table>>(*addr)? {
@@ -636,7 +687,9 @@ fn value_to_string(v: &mlua::Value) -> String {
         mlua::Value::Number(n) => n.to_string(),
         mlua::Value::Boolean(b) => b.to_string(),
         mlua::Value::Nil => "nil".to_owned(),
-        other => format!("{other:?}"),
+        // Tables / functions / userdata: render `tostring`-style ("table",
+        // "function", ...) rather than a noisy `{:?}` debug dump (L4).
+        other => other.type_name().to_owned(),
     }
 }
 
@@ -839,6 +892,30 @@ mod tests {
         eng.on_frame(&mut nes)
             .expect("replay tolerates mid-frame unregister");
         assert!(eng.drain_log().contains(&"ok".to_owned()));
+    }
+
+    #[test]
+    fn clobbering_the_registry_does_not_error_the_host(/* M1 */) {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        // A hostile/buggy script nukes the internal registry. It must only
+        // disable its own callbacks — never error out the host pump.
+        eng.load(
+            r"
+            emu.onExec(0xC000, function() end)
+            emu.onFrame(function() __rustynes = nil end)
+            ",
+        )
+        .expect("load");
+        nes.set_exec_logging(true);
+        nes.run_frame();
+        eng.on_frame(&mut nes)
+            .expect("a clobbered registry must not error on_frame");
+        // After the clobber, the engine reports no callbacks (graceful).
+        assert!(!eng.needs_exec_log().unwrap());
+        nes.run_frame();
+        eng.on_frame(&mut nes)
+            .expect("still fine on the next frame");
     }
 
     #[test]

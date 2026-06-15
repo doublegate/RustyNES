@@ -96,7 +96,19 @@ overscan — pixel-perfect alignment is a follow-up).
   always allowed.
 - **Pacing.** The engine runs on the UI thread (Lua is not thread-safe to share
   with the emulation thread), so callbacks fire at display rate; the
-  exec/read/write logs reflect the most recent emulated frame.
+  exec/read/write logs reflect the most recent emulated frame. Callbacks execute
+  while the host holds the emulator lock (they need live state), so a heavy
+  script costs frame time — the per-frame instruction budget (default 1M, ~10 ms)
+  bounds a runaway. Keep per-frame work light.
+- **Registry safety.** The internal callback registry is resilient to a script
+  clobbering it (e.g. `__rustynes = nil`): doing so only disables that script's
+  own callbacks, never the host.
+- **Overlay coordinates** are mapped onto the actual letterboxed game rect
+  (honouring 8:7 pixel-aspect correction + overscan crop), so HUD coordinates
+  line up with game pixels.
+- **`emu.setInput`** is accepted but **not yet applied** (input override through
+  the emulation thread's late-latch path is a follow-up); calling it logs a
+  one-time notice to the console.
 
 ## See also
 

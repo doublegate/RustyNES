@@ -2439,8 +2439,12 @@ impl App {
 
         // Pump under ONE emu lock with the live Nes, collecting the outputs
         // (gemini #48: a single lock, dropped before applying control commands).
+        // M2: only `on_frame` needs the live `Nes`, so the lock is held *just*
+        // around it; the log/control/draw drains touch engine-side buffers only
+        // and run after the guard drops, minimizing contention with the
+        // emulation thread.
         let mut err = None;
-        let (log, controls, draws) = {
+        {
             let mut guard = self.emu.lock();
             // Read the movie flags before the `nes` borrow — a `MutexGuard`
             // deref borrows the whole guard, so the two can't overlap.
@@ -2459,12 +2463,12 @@ impl App {
             if let Err(e) = engine.on_frame(nes) {
                 err = Some(e.to_string());
             }
-            (
-                engine.drain_log(),
-                engine.drain_controls(),
-                engine.drain_draws(),
-            )
-        };
+        } // emu lock dropped here
+
+        // Drain engine-side buffers (no `Nes` access) outside the lock (M2).
+        let log = engine.drain_log();
+        let controls = engine.drain_controls();
+        let draws = engine.drain_draws();
 
         // Feed the console + stash the overlay draws (engine borrow ended).
         if let Some(dbg) = self.debugger.as_mut() {
@@ -2562,23 +2566,45 @@ impl App {
         }
     }
 
-    /// Paint the script's overlay draw commands through the egui pass. NES
-    /// framebuffer space (256x240) is mapped onto the full window — approximate
-    /// (it ignores letterbox / overscan; pixel-perfect mapping is a follow-up).
+    /// Paint the script's overlay draw commands through the egui pass, mapped
+    /// onto the **actual letterboxed game rect** (L3): the NES image is fit into
+    /// the window preserving its (optionally 8:7-corrected) aspect, matching the
+    /// wgpu blit's `letterbox_uniform`, so script HUD coords line up with game
+    /// pixels. `par_8_7` / `hide_overscan` mirror the live present settings.
     #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
     #[allow(
         clippy::cast_possible_truncation,
         clippy::cast_precision_loss,
         clippy::suboptimal_flops
     )] // color byte-extract + px coord mapping.
-    fn paint_script_overlay(ctx: &egui::Context, draws: &[rustynes_script::DrawCmd]) {
+    fn paint_script_overlay(
+        ctx: &egui::Context,
+        draws: &[rustynes_script::DrawCmd],
+        par_8_7: bool,
+        hide_overscan: bool,
+    ) {
         use rustynes_script::DrawCmd;
         if draws.is_empty() {
             return;
         }
         let screen = ctx.screen_rect();
-        let sx = screen.width() / 256.0;
-        let sy = screen.height() / 240.0;
+        // Visible NES region + its display aspect (replicates gfx letterbox).
+        let crop_top = if hide_overscan { 8.0 } else { 0.0 };
+        let visible_h = if hide_overscan { 224.0 } else { 240.0 };
+        let img_w = if par_8_7 { 256.0 * 8.0 / 7.0 } else { 256.0 };
+        let nes_aspect = img_w / visible_h;
+        let win_aspect = screen.width() / screen.height().max(1.0);
+        // Fit the NES image into the window, preserving aspect, centered.
+        let (game_w, game_h) = if win_aspect > nes_aspect {
+            (screen.height() * nes_aspect, screen.height())
+        } else {
+            (screen.width(), screen.width() / nes_aspect)
+        };
+        let origin_x = screen.min.x + (screen.width() - game_w) * 0.5;
+        let origin_y = screen.min.y + (screen.height() - game_h) * 0.5;
+        // One framebuffer pixel in screen points (x over 256, y over visible_h).
+        let sx = game_w / 256.0;
+        let sy = game_h / visible_h;
         let painter = ctx.layer_painter(egui::LayerId::new(
             egui::Order::Foreground,
             egui::Id::new("lua_script_overlay"),
@@ -2591,10 +2617,14 @@ impl App {
                 c as u8,
             )
         };
-        // Offset by the screen origin: `screen_rect()` can have a non-zero
-        // `min` (window decorations / host integration) — gemini #48.
-        let p =
-            |x: i32, y: i32| egui::pos2(screen.min.x + x as f32 * sx, screen.min.y + y as f32 * sy);
+        // Map a framebuffer coord into the game rect (y is relative to the
+        // visible window so overscan-cropped scanlines map correctly).
+        let p = |x: i32, y: i32| {
+            egui::pos2(
+                origin_x + x as f32 * sx,
+                origin_y + (y as f32 - crop_top) * sy,
+            )
+        };
         for d in draws {
             match d {
                 DrawCmd::Text { x, y, color, text } => {
@@ -2642,7 +2672,12 @@ impl App {
             // Input override through the emu-thread input path is a documented
             // follow-up (see docs/scripting.md); the command is accepted but not
             // yet wired so it does not silently corrupt the late-latch input.
-            ControlCmd::SetInput { .. } => {}
+            // Warn the author once so it isn't a silent no-op (L2).
+            ControlCmd::SetInput { .. } => {
+                if let Some(dbg) = self.debugger.as_mut() {
+                    dbg.script_panel().warn_setinput_once();
+                }
+            }
         }
     }
 
@@ -4962,6 +4997,10 @@ impl ApplicationHandler<AppEvent> for App {
                     let nes_for_render = emu.nes.as_mut();
                     #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
                     let script_draws = &self.script_draws;
+                    #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
+                    let script_par = self.config.ui.pixel_aspect_correction;
+                    #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
+                    let script_overscan = self.config.graphics.hide_overscan;
                     let gfx = self.gfx.as_mut().expect("checked above");
                     let debugger = self
                         .debugger
@@ -4997,7 +5036,12 @@ impl ApplicationHandler<AppEvent> for App {
                                     rom_loaded,
                                 );
                                 #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
-                                Self::paint_script_overlay(ctx, script_draws);
+                                Self::paint_script_overlay(
+                                    ctx,
+                                    script_draws,
+                                    script_par,
+                                    script_overscan,
+                                );
                             };
                             shell_out = debugger.render_shell(
                                 device,
@@ -5039,6 +5083,10 @@ impl ApplicationHandler<AppEvent> for App {
                     }
                     #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
                     let script_draws = &self.script_draws;
+                    #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
+                    let script_par = self.config.ui.pixel_aspect_correction;
+                    #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
+                    let script_overscan = self.config.graphics.hide_overscan;
                     let gfx = self.gfx.as_mut().expect("checked above");
                     let debugger = self.debugger.as_mut().expect("checked above");
                     let window = gfx.window.clone();
@@ -5068,7 +5116,12 @@ impl ApplicationHandler<AppEvent> for App {
                                     rom_loaded,
                                 );
                                 #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
-                                Self::paint_script_overlay(ctx, script_draws);
+                                Self::paint_script_overlay(
+                                    ctx,
+                                    script_draws,
+                                    script_par,
+                                    script_overscan,
+                                );
                             };
                             // Debugger panels are skipped (overlay hidden) so
                             // `nes = None` is correct even though a ROM may exist.

@@ -104,5 +104,8 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut NsfPanelState, nes
 
             ui.add_space(4.0);
             ui.weak("Audio plays through the standard APU; NSF files carry no video.");
+            ui.weak(
+                "Tempo \u{2248} NTSC 60 Hz (vblank-driven); non-60 Hz tunes play slightly off.",
+            );
         });
 }

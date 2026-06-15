@@ -205,6 +205,17 @@ content below, plus the first **v1.1.0** feature work (beta.1).
 
 ### Fixed
 
+- **Lua scripting — self-review hardening (M1/M2/L1–L4).** A code-review pass on the Workstream-E
+  code: (M1) the internal `__rustynes` callback registry is now accessed resiliently — a script
+  that clobbers it (`__rustynes = nil`) only disables its own callbacks instead of erroring the
+  host pump; (M2) `pump_scripts` holds the emulator lock only around `on_frame` (the log/control/
+  draw drains moved outside it) and the default per-frame instruction budget dropped 5M→1M, so a
+  runaway script stalls emulation far less; (L1/L3) the script overlay now maps onto the actual
+  letterboxed game rect (8:7 PAR + overscan aware) instead of stretching to the window, and the
+  NSF panel notes its ~60 Hz tempo approximation; (L2) `emu.setInput` logs a one-time
+  "accepted but not yet applied" notice instead of being a silent no-op; (L4) non-primitive
+  `emu.log` args render as their Lua type name, not a `{:?}` debug dump. Core untouched
+  (AccuracyCoin byte-identical); 11 script unit tests.
 - **Lua replay tolerates mid-frame callback unregistration** (gemini #49 follow-up). The Lua
   `onExec`/`onRead`/`onWrite` replay gates on an active-address set snapshotted *before* the
   frame's callbacks run; if a callback clears its own registry slot during the frame, that slot
