@@ -932,7 +932,7 @@ impl App {
         // byte-identical.
         if let Some(crc) = crate::game_db::rom_crc32(&bytes) {
             if let Some(entry) = crate::game_db::entry_for_crc(crc) {
-                crate::game_db::apply_header_overrides(&mut bytes, entry);
+                crate::game_db::apply_header_overrides(&mut bytes, &entry);
             }
         }
         let sample_rate = self.audio.as_ref().map_or(44_100, |a| a.sample_rate);

@@ -126,9 +126,26 @@ fn parse_row(line: &str) -> Option<GameDbEntry> {
     })
 }
 
-/// Look up a ROM's full database entry by CRC32, or `None` if not listed.
+/// Look up a ROM's effective database entry by CRC32 — the **user overlay**
+/// (editable, persisted via the in-app ROM-DB editor) takes precedence over the
+/// vendored base; `None` if listed in neither.
+///
+/// Returns an owned entry because the user overlay is mutable (behind a
+/// `RwLock`). The vendored base alone is reachable via [`vendored_entry`].
 #[must_use]
-pub fn entry_for_crc(crc: u32) -> Option<&'static GameDbEntry> {
+pub fn entry_for_crc(crc: u32) -> Option<GameDbEntry> {
+    if let Ok(overlay) = user_overlay().read() {
+        if let Ok(i) = overlay.binary_search_by_key(&crc, |e| e.crc) {
+            return Some(overlay[i].clone());
+        }
+    }
+    vendored_entry(crc).cloned()
+}
+
+/// Look up a ROM's entry in the **vendored base only** (ignoring the user
+/// overlay) — used by the editor to show "reset to default".
+#[must_use]
+pub fn vendored_entry(crc: u32) -> Option<&'static GameDbEntry> {
     let db = db();
     db.binary_search_by_key(&crc, |e| e.crc)
         .ok()
@@ -141,6 +158,121 @@ pub fn entry_for_crc(crc: u32) -> Option<&'static GameDbEntry> {
 #[must_use]
 pub fn mirroring_for_crc(crc: u32) -> Option<Mirroring> {
     entry_for_crc(crc).and_then(|e| e.mirroring)
+}
+
+// ---------------------------------------------------------------------------
+// User overlay (v1.2.0 Workstream B) — editable per-game corrections persisted
+// to the data dir, overriding the vendored base by CRC. Behind a `RwLock` so
+// the in-app ROM-DB editor can refresh it live. The core test suites never
+// touch this (frontend-only), so the determinism firewall holds.
+// ---------------------------------------------------------------------------
+
+/// Path to the user-overlay file (`game_db_user.txt` in the data dir).
+fn overlay_path() -> Option<std::path::PathBuf> {
+    crate::config::Config::default_data_dir().map(|d| d.join("game_db_user.txt"))
+}
+
+/// The lazily-loaded, live-editable user overlay (sorted by CRC).
+fn user_overlay() -> &'static std::sync::RwLock<Vec<GameDbEntry>> {
+    static OVERLAY: OnceLock<std::sync::RwLock<Vec<GameDbEntry>>> = OnceLock::new();
+    OVERLAY.get_or_init(|| std::sync::RwLock::new(load_overlay()))
+}
+
+fn load_overlay() -> Vec<GameDbEntry> {
+    let Some(path) = overlay_path() else {
+        return Vec::new();
+    };
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+    let mut rows: Vec<GameDbEntry> = text.lines().filter_map(parse_row).collect();
+    rows.sort_unstable_by_key(|e| e.crc);
+    rows.dedup_by_key(|e| e.crc);
+    rows
+}
+
+/// Insert or replace a user-overlay entry and persist the overlay to disk.
+///
+/// # Errors
+///
+/// Returns the underlying I/O error if the overlay file can't be written.
+pub fn upsert_user_entry(entry: GameDbEntry) -> std::io::Result<()> {
+    {
+        let mut ov = user_overlay()
+            .write()
+            .expect("game-db overlay lock poisoned");
+        match ov.binary_search_by_key(&entry.crc, |e| e.crc) {
+            Ok(i) => ov[i] = entry,
+            Err(i) => ov.insert(i, entry),
+        }
+    }
+    persist_overlay()
+}
+
+/// Remove a user-overlay entry (reverting to the vendored base) and persist.
+///
+/// # Errors
+///
+/// Returns the underlying I/O error if the overlay file can't be written.
+pub fn remove_user_entry(crc: u32) -> std::io::Result<()> {
+    {
+        let mut ov = user_overlay()
+            .write()
+            .expect("game-db overlay lock poisoned");
+        if let Ok(i) = ov.binary_search_by_key(&crc, |e| e.crc) {
+            ov.remove(i);
+        }
+    }
+    persist_overlay()
+}
+
+fn persist_overlay() -> std::io::Result<()> {
+    let Some(path) = overlay_path() else {
+        return Ok(());
+    };
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    // Snapshot the rows under a minimal lock, then serialize + write lock-free.
+    let entries: Vec<GameDbEntry> = user_overlay()
+        .read()
+        .expect("game-db overlay lock poisoned")
+        .clone();
+    let mut out = String::from(
+        "# RustyNES per-game user overrides (v1.2.0). Edited via Tools -> ROM Database.\n\
+         # Columns: CRC, Region, Mapper, Sub-Mapper, ChrBanks, PrgRomBanks, PrgRamBanks, \
+         Battery, Mirroring, Title\n",
+    );
+    for e in &entries {
+        out.push_str(&serialize_row(e));
+        out.push('\n');
+    }
+    std::fs::write(path, out)
+}
+
+/// Serialize a [`GameDbEntry`] back to the 10-column row format `parse_row`
+/// reads (unused columns left empty). Round-trips through `parse_row`.
+fn serialize_row(e: &GameDbEntry) -> String {
+    let region = match e.region {
+        Some(Region::Ntsc) => "NTSC",
+        Some(Region::Pal) => "PAL",
+        Some(Region::Dendy) => "Dendy",
+        _ => "",
+    };
+    let mapper = e.mapper.map(|m| m.to_string()).unwrap_or_default();
+    let sub = e.submapper.map(|s| s.to_string()).unwrap_or_default();
+    let mirroring = match e.mirroring {
+        Some(Mirroring::Horizontal) => "Horizontal",
+        Some(Mirroring::Vertical) => "Vertical",
+        Some(Mirroring::FourScreen) => "FourScreen",
+        Some(Mirroring::SingleScreenA) => "SingleScreenA",
+        Some(Mirroring::SingleScreenB) => "SingleScreenB",
+        _ => "",
+    };
+    format!(
+        "{:08X}, {region}, {mapper}, {sub}, , , , , {mirroring}, \"{}\"",
+        e.crc, e.title
+    )
 }
 
 /// Apply a database entry's `region` / `mapper` / `submapper` corrections.
@@ -315,6 +447,35 @@ mod tests {
         assert_eq!(rom[9] & 1, 1, "iNES 1.0 PAL TV-system bit");
         // Re-applying the same override is now a no-op (idempotent).
         assert!(!apply_header_overrides(&mut rom, &entry));
+    }
+
+    #[test]
+    fn overlay_row_round_trips_through_parse() {
+        // The editor serializes user-overlay entries with `serialize_row`; they
+        // must parse back identically via `parse_row` (same on-disk format as
+        // the vendored DB).
+        let entry = GameDbEntry {
+            crc: 0x0013_88B3,
+            region: Some(Region::Pal),
+            mapper: Some(4),
+            submapper: Some(1),
+            mirroring: Some(Mirroring::Vertical),
+            title: "Mega Man 3 (Europe) (Rev A).nes".into(),
+        };
+        let row = serialize_row(&entry);
+        let parsed = parse_row(&row).expect("serialized row parses");
+        assert_eq!(parsed, entry);
+
+        // A sparse entry (only mirroring) also round-trips (empty columns -> None).
+        let sparse = GameDbEntry {
+            crc: 0xABCD_1234,
+            region: None,
+            mapper: None,
+            submapper: None,
+            mirroring: Some(Mirroring::Horizontal),
+            title: "Homebrew".into(),
+        };
+        assert_eq!(parse_row(&serialize_row(&sparse)), Some(sparse));
     }
 
     #[test]
