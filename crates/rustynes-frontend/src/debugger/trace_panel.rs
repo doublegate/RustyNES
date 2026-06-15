@@ -26,8 +26,14 @@ fn disasm_one(nes: &mut Nes, pc: u16) -> String {
     for (i, slot) in w.iter_mut().enumerate() {
         *slot = nes.cpu_bus_peek(pc.wrapping_add(i as u16));
     }
+    // `w` holds only 3 bytes; a 3-byte instruction's disassembler may peek
+    // `pc+3` (or wrap to `pc-1`), so use the safe `.get().unwrap_or(0)` pattern
+    // — `& 3` would index past the array and panic (gemini/Copilot #42).
     let lines = rustynes_core::rustynes_cpu::disassemble_at(
-        |a| w[(a.wrapping_sub(pc) as usize) & 3],
+        |a| {
+            let off = a.wrapping_sub(pc) as usize;
+            w.get(off).copied().unwrap_or(0)
+        },
         pc,
         1,
     );

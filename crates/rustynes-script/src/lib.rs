@@ -16,8 +16,8 @@
 //!   explicitly enabled.
 //! - **Sandbox:** only the `table` / `string` / `math` / `coroutine` standard
 //!   libraries load — no `io`, `os`, `package`, `require`, `debug`. The unsafe
-//!   base globals (`load`, `loadfile`, `dofile`, `loadstring`, `collectgarbage`,
-//!   `print`) are removed; `print` is redirected to the captured log.
+//!   base globals (`load`, `loadfile`, `dofile`, `loadstring`, `collectgarbage`)
+//!   are removed. `print` is kept but redirected to the captured log.
 //! - **Budget guard:** an instruction-count hook aborts a callback that runs
 //!   away (default [`DEFAULT_INSTRUCTION_BUDGET`] VM instructions per frame).
 //! - **Write gating:** when the host sets [`ScriptEngine::set_writes_locked`]
@@ -26,24 +26,38 @@
 //!   policy as the Game Genie / raw-RAM cheat path.
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use mlua::{HookTriggers, Lua, StdLib, Table, VmState};
 use rustynes_core::Nes;
 
 /// Default per-frame VM-instruction budget. A callback that exceeds this is
-/// aborted with [`ScriptError::Runtime`] (a runaway-loop backstop).
+/// aborted with a Lua runtime error (a runaway-loop backstop) — surfaced as
+/// [`ScriptError::Lua`].
 pub const DEFAULT_INSTRUCTION_BUDGET: u64 = 5_000_000;
+
+/// Max control / draw commands queued per frame (drained by the host). A script
+/// can't grow host memory without bound; excess commands in one frame are
+/// dropped (Copilot #47).
+const MAX_QUEUED_CMDS: usize = 8192;
+
+/// Push `cmd` into a host-drained queue unless it is already at the per-frame
+/// cap.
+fn push_capped<T>(q: &Rc<RefCell<Vec<T>>>, cmd: T) {
+    let mut q = q.borrow_mut();
+    if q.len() < MAX_QUEUED_CMDS {
+        q.push(cmd);
+    }
+}
 
 /// Errors from loading or running a script.
 #[derive(Debug, thiserror::Error)]
 pub enum ScriptError {
-    /// The Lua chunk failed to load (syntax error) or a callback raised.
+    /// The Lua chunk failed to load (syntax error), a callback raised, or the
+    /// per-frame instruction budget was exceeded (a Lua runtime error).
     #[error("lua error: {0}")]
     Lua(#[from] mlua::Error),
-    /// A script ran past the per-frame instruction budget.
-    #[error("script exceeded the per-frame instruction budget")]
-    Runtime,
 }
 
 /// A control action a script requested (`emu.pause` / `saveState` / ...).
@@ -120,7 +134,7 @@ pub struct ScriptEngine {
     /// Overlay draw commands a script issued this frame (drained by the host).
     draws: Rc<RefCell<Vec<DrawCmd>>>,
     /// Per-frame instruction counter (reset each `on_frame`); the VM hook
-    /// trips [`ScriptError::Runtime`] when it crosses `budget`.
+    /// trips a Lua runtime error when it crosses `budget`.
     instr_count: Rc<Cell<u64>>,
     /// Per-frame instruction budget.
     budget: Rc<Cell<u64>>,
@@ -201,12 +215,14 @@ impl ScriptEngine {
             })?;
         emu.set("log", log_fn.clone())?;
 
-        // Control commands (collected; the host applies + gates them).
+        // Control commands (collected; the host applies + gates them). Each
+        // queue is capped per frame so a script can't grow host memory without
+        // bound (Copilot #47); excess commands in one frame are dropped.
         let controls = Rc::clone(&self.controls);
         emu.set(
             "pause",
             self.lua.create_function(move |_, ()| {
-                controls.borrow_mut().push(ControlCmd::Pause);
+                push_capped(&controls, ControlCmd::Pause);
                 Ok(())
             })?,
         )?;
@@ -214,7 +230,7 @@ impl ScriptEngine {
         emu.set(
             "saveState",
             self.lua.create_function(move |_, slot: u8| {
-                controls.borrow_mut().push(ControlCmd::SaveState(slot));
+                push_capped(&controls, ControlCmd::SaveState(slot));
                 Ok(())
             })?,
         )?;
@@ -222,7 +238,7 @@ impl ScriptEngine {
         emu.set(
             "loadState",
             self.lua.create_function(move |_, slot: u8| {
-                controls.borrow_mut().push(ControlCmd::LoadState(slot));
+                push_capped(&controls, ControlCmd::LoadState(slot));
                 Ok(())
             })?,
         )?;
@@ -231,9 +247,7 @@ impl ScriptEngine {
             "setInput",
             self.lua
                 .create_function(move |_, (port, buttons): (u8, u8)| {
-                    controls
-                        .borrow_mut()
-                        .push(ControlCmd::SetInput { port, buttons });
+                    push_capped(&controls, ControlCmd::SetInput { port, buttons });
                     Ok(())
                 })?,
         )?;
@@ -244,12 +258,15 @@ impl ScriptEngine {
             "drawText",
             self.lua.create_function(
                 move |_, (x, y, text, color): (i32, i32, String, Option<u32>)| {
-                    draws.borrow_mut().push(DrawCmd::Text {
-                        x,
-                        y,
-                        color: color.unwrap_or(0xFFFF_FFFF),
-                        text,
-                    });
+                    push_capped(
+                        &draws,
+                        DrawCmd::Text {
+                            x,
+                            y,
+                            color: color.unwrap_or(0xFFFF_FFFF),
+                            text,
+                        },
+                    );
                     Ok(())
                 },
             )?,
@@ -259,13 +276,16 @@ impl ScriptEngine {
             "drawRect",
             self.lua.create_function(
                 move |_, (x, y, w, h, color): (i32, i32, i32, i32, Option<u32>)| {
-                    draws.borrow_mut().push(DrawCmd::Rect {
-                        x,
-                        y,
-                        w,
-                        h,
-                        color: color.unwrap_or(0xFFFF_FFFF),
-                    });
+                    push_capped(
+                        &draws,
+                        DrawCmd::Rect {
+                            x,
+                            y,
+                            w,
+                            h,
+                            color: color.unwrap_or(0xFFFF_FFFF),
+                        },
+                    );
                     Ok(())
                 },
             )?,
@@ -275,11 +295,14 @@ impl ScriptEngine {
             "drawPixel",
             self.lua
                 .create_function(move |_, (x, y, color): (i32, i32, Option<u32>)| {
-                    draws.borrow_mut().push(DrawCmd::Pixel {
-                        x,
-                        y,
-                        color: color.unwrap_or(0xFFFF_FFFF),
-                    });
+                    push_capped(
+                        &draws,
+                        DrawCmd::Pixel {
+                            x,
+                            y,
+                            color: color.unwrap_or(0xFFFF_FFFF),
+                        },
+                    );
                     Ok(())
                 })?,
         )?;
@@ -342,13 +365,13 @@ impl ScriptEngine {
     }
 
     /// `true` if any `onExec` callback is registered — the host should enable
-    /// [`rustynes_core::Nes::set_trace_enabled`] so the next frame's exec PCs
+    /// [`rustynes_core::Nes::set_exec_logging`] so the next frame's exec PCs
     /// are captured for replay.
     ///
     /// # Errors
     ///
     /// Returns [`ScriptError::Lua`] if the registry table is malformed.
-    pub fn needs_trace(&self) -> Result<bool, ScriptError> {
+    pub fn needs_exec_log(&self) -> Result<bool, ScriptError> {
         self.subtable_has_entries("exec")
     }
 
@@ -363,10 +386,31 @@ impl ScriptEngine {
     }
 
     /// Whether `__rustynes.<name>` (an address-keyed table) holds any callback.
+    /// Surfaces a malformed-table iterator error rather than swallowing it
+    /// (Copilot #47).
     fn subtable_has_entries(&self, name: &str) -> Result<bool, ScriptError> {
         let registry: Table = self.lua.globals().get("__rustynes")?;
         let t: Table = registry.get(name)?;
-        Ok(t.pairs::<mlua::Value, mlua::Value>().next().is_some())
+        match t.pairs::<mlua::Value, mlua::Value>().next() {
+            Some(Ok(_)) => Ok(true),
+            Some(Err(e)) => Err(ScriptError::Lua(e)),
+            None => Ok(false),
+        }
+    }
+
+    /// Snapshot the integer (address) keys of `__rustynes.<name>` into a Rust
+    /// set, so the per-frame replay can gate the (expensive) Lua table lookup
+    /// behind an O(1) Rust check — avoiding a Lua FFI crossing for every one of
+    /// the ~15k exec PCs / ~60k bus accesses that has no callback (gemini #47).
+    fn active_addrs(&self, name: &str) -> Result<HashSet<u16>, ScriptError> {
+        let registry: Table = self.lua.globals().get("__rustynes")?;
+        let t: Table = registry.get(name)?;
+        let mut set = HashSet::new();
+        for pair in t.pairs::<u32, Table>() {
+            let (addr, _) = pair?;
+            set.insert((addr & 0xFFFF) as u16);
+        }
+        Ok(set)
     }
 
     /// Load (and execute the top level of) a Lua script. Top-level code
@@ -422,20 +466,25 @@ impl ScriptEngine {
 
         // Snapshot the just-finished frame's exec PCs + bus accesses (owned, so
         // they don't tie up the `nes` borrow inside the scope) for the
-        // onExec / onRead / onWrite replay. Empty unless the host enabled the
-        // matching log (which it does per `needs_trace` / `needs_access_log`).
-        let exec_pcs: Vec<u16> = if self.needs_trace()? {
-            nes.trace_records().iter().map(|r| r.pc).collect()
-        } else {
+        // onExec / onRead / onWrite replay. `exec_log` is the dedicated
+        // per-frame log (cleared each frame) — NOT the rolling trace buffer, so
+        // there are no stale / duplicate PCs (gemini #47). Both are empty unless
+        // the host enabled the matching log per `needs_exec_log` / `..access..`.
+        let exec_addrs = self.active_addrs("exec")?;
+        let read_addrs = self.active_addrs("read")?;
+        let write_addrs = self.active_addrs("write")?;
+        let exec_pcs: Vec<u16> = if exec_addrs.is_empty() {
             Vec::new()
+        } else {
+            nes.exec_log().to_vec()
         };
-        let accesses: Vec<(bool, u16, u8)> = if self.needs_access_log()? {
+        let accesses: Vec<(bool, u16, u8)> = if read_addrs.is_empty() && write_addrs.is_empty() {
+            Vec::new()
+        } else {
             nes.accesses()
                 .iter()
                 .map(|a| (a.write, a.addr, a.value))
                 .collect()
-        } else {
-            Vec::new()
         };
 
         let nes_cell = RefCell::new(nes);
@@ -467,10 +516,18 @@ impl ScriptEngine {
             emu.set("read", read)?;
 
             let read_range = scope.create_function(|_, (addr, len): (u32, u32)| {
+                // Cap to the 64 KiB CPU address space — an unbounded `len` would
+                // otherwise let a script OOM the host (gemini/Copilot #46).
+                // `wrapping_add` avoids a debug-build overflow panic.
+                if len > 0x1_0000 {
+                    return Err(mlua::Error::RuntimeError(
+                        "emu.readRange length cannot exceed 65536".into(),
+                    ));
+                }
                 let mut out = Vec::with_capacity(len as usize);
                 let mut nes = nes_cell.borrow_mut();
                 for i in 0..len {
-                    out.push(nes.peek(((addr + i) & 0xFFFF) as u16));
+                    out.push(nes.peek((addr.wrapping_add(i) & 0xFFFF) as u16));
                 }
                 Ok(out)
             })?;
@@ -508,30 +565,39 @@ impl ScriptEngine {
                 cb?.call::<()>(())?;
             }
 
-            // Replay this frame's exec PCs through onExec(addr).
+            // Replay this frame's exec PCs through onExec(addr). The Rust-side
+            // `exec_addrs` set gates the Lua lookup: only PCs with a registered
+            // callback cross the FFI boundary (gemini #47).
             if !exec_pcs.is_empty() {
                 let exec_t: Table = registry.get("exec")?;
                 for pc in &exec_pcs {
-                    let cbs: Option<Table> = exec_t.get(*pc)?;
-                    if let Some(cbs) = cbs {
-                        for cb in cbs.sequence_values::<mlua::Function>() {
-                            cb?.call::<()>(*pc)?;
-                        }
+                    if !exec_addrs.contains(pc) {
+                        continue;
+                    }
+                    let cbs: Table = exec_t.get(*pc)?;
+                    for cb in cbs.sequence_values::<mlua::Function>() {
+                        cb?.call::<()>(*pc)?;
                     }
                 }
             }
 
-            // Replay this frame's bus accesses through onRead/onWrite(addr, value).
+            // Replay this frame's bus accesses through onRead/onWrite(addr, value),
+            // gated the same way.
             if !accesses.is_empty() {
                 let read_t: Table = registry.get("read")?;
                 let write_t: Table = registry.get("write")?;
                 for (is_write, addr, value) in &accesses {
-                    let t = if *is_write { &write_t } else { &read_t };
-                    let cbs: Option<Table> = t.get(*addr)?;
-                    if let Some(cbs) = cbs {
-                        for cb in cbs.sequence_values::<mlua::Function>() {
-                            cb?.call::<()>((*addr, *value))?;
-                        }
+                    let (set, t) = if *is_write {
+                        (&write_addrs, &write_t)
+                    } else {
+                        (&read_addrs, &read_t)
+                    };
+                    if !set.contains(addr) {
+                        continue;
+                    }
+                    let cbs: Table = t.get(*addr)?;
+                    for cb in cbs.sequence_values::<mlua::Function>() {
+                        cb?.call::<()>((*addr, *value))?;
                     }
                 }
             }
@@ -699,7 +765,7 @@ mod tests {
         )
         .expect("load");
         assert!(eng.needs_access_log().unwrap());
-        assert!(!eng.needs_trace().unwrap());
+        assert!(!eng.needs_exec_log().unwrap());
         // The host enables the access log per `needs_access_log`.
         nes.set_access_logging(true);
         let mut saw = false;
@@ -715,7 +781,7 @@ mod tests {
     }
 
     #[test]
-    fn on_exec_fires_from_the_trace() {
+    fn on_exec_fires_from_the_exec_log() {
         let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
         let mut eng = ScriptEngine::new().expect("engine");
         // The boot loop sits at $C000 (JMP $C000); onExec there must fire.
@@ -727,8 +793,8 @@ mod tests {
             ",
         )
         .expect("load");
-        assert!(eng.needs_trace().unwrap());
-        nes.set_trace_enabled(true);
+        assert!(eng.needs_exec_log().unwrap());
+        nes.set_exec_logging(true);
         let mut saw = false;
         for _ in 0..4 {
             nes.run_frame();

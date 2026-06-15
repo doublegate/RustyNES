@@ -67,6 +67,9 @@ pub struct TraceRec {
 /// [`Nes::from_rom`]; drive forward via [`Nes::run_frame`] or
 /// [`Nes::step_instruction`]. The framebuffer can be sampled at any time via
 /// [`Nes::framebuffer`].
+// Several independent debug-hooks toggles (breakpoints / trace / exec log) push
+// the bool count over clippy's threshold; they are genuinely independent flags.
+#[allow(clippy::struct_excessive_bools)]
 pub struct Nes {
     cpu: Cpu,
     bus: LockstepBus,
@@ -102,6 +105,13 @@ pub struct Nes {
     /// The PC that last hit a breakpoint, taken by the frontend to pause.
     #[cfg(feature = "debug-hooks")]
     break_hit: Option<u16>,
+    /// The PC to skip the breakpoint check on for the next step, so a
+    /// "continue" resumes *past* the instruction it stopped on instead of
+    /// re-breaking. Unlike a blind "skip the first iteration", this only skips
+    /// the exact resumed PC — so a breakpoint sitting at the frame's start PC
+    /// (after a reset / save-state load / manual PC change) still fires.
+    #[cfg(feature = "debug-hooks")]
+    skip_breakpoint_at: Option<u16>,
     /// v1.1.0 beta.2 (T-110-C2) — cycle-trace ring buffer (most-recent
     /// [`Self::TRACE_CAP`] instructions). Recorded in `run_frame` while
     /// `trace_enabled`. Output-only.
@@ -110,6 +120,16 @@ pub struct Nes {
     /// Whether the cycle-trace logger is recording. Default `false`.
     #[cfg(feature = "debug-hooks")]
     trace_enabled: bool,
+    /// v1.1.0 beta.3 (T-110-E2) — per-frame executed-PC log for the Lua
+    /// `onExec` callback. Distinct from [`Self::trace`] (a 50k rolling buffer
+    /// shared with the Trace Logger panel): this is **cleared every frame**, so
+    /// `onExec` replays only this frame's PCs — no stale / duplicate dispatch.
+    /// Output-only; recorded only while `exec_logging`.
+    #[cfg(feature = "debug-hooks")]
+    exec_log: Vec<u16>,
+    /// Whether the per-frame exec-PC log is recording. Default `false`.
+    #[cfg(feature = "debug-hooks")]
+    exec_logging: bool,
 }
 
 impl Nes {
@@ -141,9 +161,15 @@ impl Nes {
             #[cfg(feature = "debug-hooks")]
             break_hit: None,
             #[cfg(feature = "debug-hooks")]
+            skip_breakpoint_at: None,
+            #[cfg(feature = "debug-hooks")]
             trace: alloc::collections::VecDeque::new(),
             #[cfg(feature = "debug-hooks")]
             trace_enabled: false,
+            #[cfg(feature = "debug-hooks")]
+            exec_log: Vec::new(),
+            #[cfg(feature = "debug-hooks")]
+            exec_logging: false,
         })
     }
 
@@ -174,9 +200,15 @@ impl Nes {
             #[cfg(feature = "debug-hooks")]
             break_hit: None,
             #[cfg(feature = "debug-hooks")]
+            skip_breakpoint_at: None,
+            #[cfg(feature = "debug-hooks")]
             trace: alloc::collections::VecDeque::new(),
             #[cfg(feature = "debug-hooks")]
             trace_enabled: false,
+            #[cfg(feature = "debug-hooks")]
+            exec_log: Vec::new(),
+            #[cfg(feature = "debug-hooks")]
+            exec_logging: false,
         })
     }
 
@@ -236,9 +268,15 @@ impl Nes {
             #[cfg(feature = "debug-hooks")]
             break_hit: None,
             #[cfg(feature = "debug-hooks")]
+            skip_breakpoint_at: None,
+            #[cfg(feature = "debug-hooks")]
             trace: alloc::collections::VecDeque::new(),
             #[cfg(feature = "debug-hooks")]
             trace_enabled: false,
+            #[cfg(feature = "debug-hooks")]
+            exec_log: Vec::new(),
+            #[cfg(feature = "debug-hooks")]
+            exec_logging: false,
         })
     }
 
@@ -288,9 +326,15 @@ impl Nes {
             #[cfg(feature = "debug-hooks")]
             break_hit: None,
             #[cfg(feature = "debug-hooks")]
+            skip_breakpoint_at: None,
+            #[cfg(feature = "debug-hooks")]
             trace: alloc::collections::VecDeque::new(),
             #[cfg(feature = "debug-hooks")]
             trace_enabled: false,
+            #[cfg(feature = "debug-hooks")]
+            exec_log: Vec::new(),
+            #[cfg(feature = "debug-hooks")]
+            exec_logging: false,
         })
     }
 
@@ -378,12 +422,12 @@ impl Nes {
         if self.bus.access_logging() {
             self.bus.clear_accesses();
         }
-        // v1.1.0 beta.2 (Workstream C) — skip the breakpoint check on the first
-        // iteration so resuming with the PC sitting on a breakpoint executes
-        // that instruction before re-checking (otherwise "continue" would
-        // immediately re-break in place).
+        // T-110-E2 — the Lua onExec exec-PC log is per-frame (cleared here so a
+        // replay only ever sees this frame's PCs, never a stale carry-over).
         #[cfg(feature = "debug-hooks")]
-        let mut first_iter = true;
+        if self.exec_logging {
+            self.exec_log.clear();
+        }
         while !self.bus.take_frame_complete() {
             if self.cpu.is_jammed() {
                 break;
@@ -393,16 +437,30 @@ impl Nes {
             }
             #[cfg(feature = "debug-hooks")]
             {
-                if !first_iter
-                    && self.breakpoints_enabled
-                    && self.breakpoints.contains(&self.cpu.pc)
-                {
-                    // Hit: stop the (partial) frame and report the PC. No state
-                    // mutated; the frame simply isn't completed this call.
-                    self.break_hit = Some(self.cpu.pc);
-                    return self.bus.framebuffer();
+                // v1.1.0 beta.2 (Workstream C) — exec/PC breakpoints. The
+                // `skip_breakpoint_at` PC is stepped past exactly once (so a
+                // "continue" resumes off the instruction it stopped on instead
+                // of re-breaking in place); any OTHER breakpoint PC — including
+                // one at the frame's starting PC after a reset / save-state load
+                // / manual PC change — still fires immediately.
+                if self.breakpoints_enabled && self.breakpoints.contains(&self.cpu.pc) {
+                    if self.skip_breakpoint_at == Some(self.cpu.pc) {
+                        self.skip_breakpoint_at = None;
+                    } else {
+                        // Hit: stop the (partial) frame and report the PC. No
+                        // state mutated; the frame simply isn't completed.
+                        self.break_hit = Some(self.cpu.pc);
+                        self.skip_breakpoint_at = Some(self.cpu.pc);
+                        return self.bus.framebuffer();
+                    }
+                } else {
+                    self.skip_breakpoint_at = None;
                 }
-                first_iter = false;
+                // T-110-E2 — per-frame exec-PC log for Lua onExec (bounded by
+                // MAX_CYCLES_PER_FRAME, so no explicit cap needed).
+                if self.exec_logging {
+                    self.exec_log.push(self.cpu.pc);
+                }
                 // T-110-C2 — cycle trace: record the about-to-execute
                 // instruction's CPU state (ring-capped, oldest dropped).
                 if self.trace_enabled {
@@ -600,6 +658,30 @@ impl Nes {
     #[allow(clippy::missing_const_for_fn)] // slice deref is not const.
     pub fn accesses(&self) -> &[crate::bus::AccessRec] {
         self.bus.accesses()
+    }
+
+    /// v1.1.0 beta.3 (T-110-E2) — start/stop the per-frame exec-PC log for the
+    /// Lua `onExec` callback. Independent of the Trace Logger (`set_trace_enabled`),
+    /// so enabling it does not disturb the debugger's trace recording. Cleared
+    /// every [`Self::run_frame`]; output-only.
+    #[cfg(feature = "debug-hooks")]
+    pub const fn set_exec_logging(&mut self, enabled: bool) {
+        self.exec_logging = enabled;
+    }
+
+    /// Whether the per-frame exec-PC log is recording.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub const fn exec_logging(&self) -> bool {
+        self.exec_logging
+    }
+
+    /// This frame's executed PCs, in execution order (for the Lua engine).
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    #[allow(clippy::missing_const_for_fn)] // slice deref is not const.
+    pub fn exec_log(&self) -> &[u16] {
+        &self.exec_log
     }
 
     /// Borrow the framebuffer (RGBA8, 256x240).
@@ -965,12 +1047,14 @@ impl Nes {
     }
 
     /// Read a byte from the CPU address space (`$0000-$FFFF`) for inspection,
-    /// without the open-bus / controller-strobe side effects of a real CPU
-    /// read. Used by the debugger and the Lua scripting API (`emu.read`). This
-    /// observes state; it does not advance the emulator.
+    /// **without** the register side effects of a real CPU read — reading
+    /// `$2002` does not clear the VBL flag / address latch and `$2007` does not
+    /// advance the PPU read buffer. Used by the debugger and the Lua scripting
+    /// API (`emu.read`); it observes state without advancing the emulator,
+    /// preserving determinism.
     #[must_use]
     pub fn peek(&mut self, addr: u16) -> u8 {
-        self.bus.peek_cpu(addr)
+        self.bus.debug_peek_cpu(addr)
     }
 
     /// Add a Game Genie code (6 or 8 characters, case-insensitive) that
@@ -2101,6 +2185,15 @@ mod tests {
         );
         assert_eq!(nes.take_break_hit(), None, "hit cleared on read");
 
+        // Resuming ("continue") steps past the stopped PC instead of
+        // re-breaking in place, then hits the same PC again next loop.
+        let _ = nes.run_frame();
+        assert_eq!(
+            nes.take_break_hit(),
+            Some(target),
+            "resume steps past, then re-hits on the next pass"
+        );
+
         // Disarmed breakpoints don't fire (the frame runs to completion).
         nes.set_breakpoints_enabled(false);
         let _ = nes.run_frame();
@@ -2109,6 +2202,19 @@ mod tests {
         // Removal empties the list.
         nes.remove_breakpoint(target);
         assert!(nes.breakpoints().is_empty());
+
+        // Regression (gemini #41): a breakpoint sitting at the frame's STARTING
+        // PC must fire immediately — the old `first_iter` skip missed it.
+        let mut nes2 = Nes::from_rom(&rom).expect("parse");
+        let _ = nes2.run_frame(); // warm past the power-on frame-complete latch
+        let start_pc = nes2.cpu.pc;
+        nes2.add_breakpoint(start_pc);
+        let _ = nes2.run_frame();
+        assert_eq!(
+            nes2.take_break_hit(),
+            Some(start_pc),
+            "breaks immediately when starting already on a breakpoint"
+        );
     }
 
     #[cfg(feature = "debug-hooks")]

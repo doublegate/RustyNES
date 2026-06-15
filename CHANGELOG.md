@@ -205,6 +205,36 @@ content below, plus the first **v1.1.0** feature work (beta.1).
 
 ### Fixed
 
+- **Bot-review sweep round 2 (PRs #38–#48)** — applied the actionable
+  `gemini-code-assist` / Copilot suggestions from the v1.1.0 feature PRs:
+  - **`emu.read` / debugger peek no longer has side effects** (Copilot #46): `Nes::peek`
+    now uses the bus's `debug_peek_cpu`, so a script/debugger read of `$2002` doesn't clear
+    the VBL flag and `$2007` doesn't advance the read buffer — restoring the determinism
+    guarantee. (AccuracyCoin reverified byte-identical.)
+  - **`onExec` no longer replays stale/duplicate PCs** (gemini #47, *critical*): the Lua
+    `onExec` callback now reads a dedicated **per-frame exec-PC log** (`Nes::exec_log`, cleared
+    each frame) instead of the 50k rolling trace buffer, and is **independent** of the Trace
+    Logger panel's recording (Copilot #48).
+  - **Lua replay no longer crosses the FFI per instruction/access** (gemini #47): a Rust-side
+    active-address set gates the Lua lookup, so only addresses with a registered callback pay
+    the cost.
+  - **`emu.readRange` is bounded** (gemini/Copilot #46): capped at 64 KiB with `wrapping_add`,
+    so a script can't OOM/overflow the host; control/draw command queues are per-frame capped.
+  - **Breakpoints fire at a frame's starting PC** (gemini #41): replaced the blind
+    "skip first iteration" with a precise `skip_breakpoint_at`, so a breakpoint at the PC after
+    a reset / save-state load / manual change still triggers; and a hit now **stops the
+    catch-up burst** so the core doesn't advance past the stop frame (Copilot #41).
+  - **Event viewer captures `$4014` OAM DMA + `$4016` strobe** (Copilot #43): the tap now covers
+    the whole `$4000-$4017` I/O window its legend advertises.
+  - **Trace panel disassembly can't panic** (gemini/Copilot #42): the 3-byte peek window uses
+    `.get().unwrap_or(0)` instead of an out-of-range `& 3` index.
+  - **NSF programs loaded at `$6000-$7FFF` now play** (gemini #44): a non-bankswitched NSF
+    serves its program there before falling back to WRAM.
+  - Lua engine hardening: `pump_scripts` takes a single emu lock (gemini #48), a failed
+    (re)load clears the previous script first (gemini #48), the overlay honours a non-zero
+    `screen_rect().min` (gemini #48), the dead `ScriptError::Runtime` variant was removed, and
+    the wasm/native `cfg` gates on the overlay path + console availability were made consistent
+    (Copilot #48). Default build remains byte-identical.
 - **CRT / NTSC filters now letterbox + aspect-correct like the main blit**
   (v1.1.0 beta.1, review feedback on T-110-A1/A2). The CRT, simplified-NTSC, and
   true-composite-NTSC post-passes scaled the oversized fullscreen triangle's clip-space

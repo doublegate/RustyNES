@@ -2432,24 +2432,29 @@ impl App {
             return;
         }
 
-        // Determinism gate (same policy as the raw-RAM cheat path).
-        let locked = self.netplay.is_active() || self.ra_hardcore_blocks() || {
-            let g = self.emu.lock();
-            g.movie.is_playing() || g.movie.is_recording()
-        };
-
+        // These reads don't need the emu lock, so resolve them first to keep
+        // the lock window below tight (and non-reentrant).
+        let netplay_locked = self.netplay.is_active() || self.ra_hardcore_blocks();
         let engine = self.script.as_mut().expect("checked is_some");
-        engine.set_writes_locked(locked);
 
-        // Pump under the emu lock with the live Nes, collecting the outputs.
+        // Pump under ONE emu lock with the live Nes, collecting the outputs
+        // (gemini #48: a single lock, dropped before applying control commands).
         let mut err = None;
         let (log, controls, draws) = {
             let mut guard = self.emu.lock();
+            // Read the movie flags before the `nes` borrow — a `MutexGuard`
+            // deref borrows the whole guard, so the two can't overlap.
+            let movie_locked = guard.movie.is_playing() || guard.movie.is_recording();
             let Some(nes) = guard.nes.as_mut() else {
                 return;
             };
-            // Match the core logs to the registered callbacks.
-            nes.set_trace_enabled(engine.needs_trace().unwrap_or(false));
+            // Determinism gate (same policy as the raw-RAM cheat path).
+            engine.set_writes_locked(netplay_locked || movie_locked);
+            // Enable the per-frame exec / access logs the registered callbacks
+            // need. The exec log is independent of the Trace Logger panel's
+            // `set_trace_enabled`, so scripting never fights the user's trace
+            // setting (Copilot #48).
+            nes.set_exec_logging(engine.needs_exec_log().unwrap_or(false));
             nes.set_access_logging(engine.needs_access_log().unwrap_or(false));
             if let Err(e) = engine.on_frame(nes) {
                 err = Some(e.to_string());
@@ -2515,6 +2520,10 @@ impl App {
     /// Read + load a `.lua` file into a fresh engine, reporting to the console.
     #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
     fn load_script_from_path(&mut self, path: &Path) {
+        // Drop any running script up front so a failed (re)load can't leave the
+        // old script's callbacks + overlay running behind an error (gemini #48).
+        self.script = None;
+        self.script_draws.clear();
         let src = match std::fs::read_to_string(path) {
             Ok(s) => s,
             Err(e) => {
@@ -2557,7 +2566,11 @@ impl App {
     /// framebuffer space (256x240) is mapped onto the full window — approximate
     /// (it ignores letterbox / overscan; pixel-perfect mapping is a follow-up).
     #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
-    #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // color byte-extract + px coords.
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
+        clippy::suboptimal_flops
+    )] // color byte-extract + px coord mapping.
     fn paint_script_overlay(ctx: &egui::Context, draws: &[rustynes_script::DrawCmd]) {
         use rustynes_script::DrawCmd;
         if draws.is_empty() {
@@ -2578,7 +2591,10 @@ impl App {
                 c as u8,
             )
         };
-        let p = |x: i32, y: i32| egui::pos2(x as f32 * sx, y as f32 * sy);
+        // Offset by the screen origin: `screen_rect()` can have a non-zero
+        // `min` (window decorations / host integration) — gemini #48.
+        let p =
+            |x: i32, y: i32| egui::pos2(screen.min.x + x as f32 * sx, screen.min.y + y as f32 * sy);
         for d in draws {
             match d {
                 DrawCmd::Text { x, y, color, text } => {
@@ -4980,7 +4996,7 @@ impl ApplicationHandler<AppEvent> for App {
                                     ss_slot,
                                     rom_loaded,
                                 );
-                                #[cfg(feature = "scripting")]
+                                #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
                                 Self::paint_script_overlay(ctx, script_draws);
                             };
                             shell_out = debugger.render_shell(
@@ -5051,7 +5067,7 @@ impl ApplicationHandler<AppEvent> for App {
                                     ss_slot,
                                     rom_loaded,
                                 );
-                                #[cfg(feature = "scripting")]
+                                #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
                                 Self::paint_script_overlay(ctx, script_draws);
                             };
                             // Debugger panels are skipped (overlay hidden) so
