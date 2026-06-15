@@ -95,6 +95,29 @@ and the v1.2.0 plan.
   pre-C2 direct blit — the default presented image is byte-for-byte unchanged.**
   Rejected as out of scope: a RetroArch `.slangp` importer / GLSL->WGSL
   translation. ADR 0013.
+- **HD-pack / mod loader — minimal first cut** (v1.2.0 Workstream C3,
+  Mesen-HD-pack-inspired; native-only, behind the default-OFF `hd-pack` cargo
+  feature). A new per-pixel **tile-source telemetry** export in the PPU
+  (`rustynes_ppu::HdTileSource`, gated on `rustynes-ppu/hd-pack`) records, for
+  each visible pixel, the CHR pattern-table tile base address, the final
+  palette, the sprite flip flags, and whether the pixel came from a sprite or
+  the background — written in `emit_pixel` in lockstep with the existing
+  `index_framebuffer`, observing only already-computed state. It is
+  **output-only**: it reads no new VRAM, issues no new A12 / mapper events,
+  mutates no emulation state, and is not part of the save-state. A new frontend
+  `hdpack` module loads a Mesen-style `hires.txt` (folder or `.zip`), parses the
+  supported subset (`<scale>`, `<patternTable>`, and **unconditional** CHR-hash
+  `<tile>` rules), hashes each rendered tile's 16 CHR bytes with the
+  Mesen-compatible CRC32, and substitutes hi-res replacement images at blit time
+  (a dedicated upscaled-RGBA blit path in `gfx`). A **Mod -> Load HD Pack** menu
+  entry enables a pack per-game (keyed on `rom_sha256`, persisted under
+  `[graphics] hd_packs`). Out of scope (deferred, not v1.2.0): conditions,
+  palette keys, background regions, HD audio, and a `<patternTable>`-bank
+  substitution path. **With the `hd-pack` feature OFF the shipped / wasm /
+  `no_std` builds are byte-identical to today; with it ON but no pack loaded the
+  presentation is also byte-identical** — proven by the full ROM corpus
+  (AccuracyCoin 139/139, `nestest` 0-diff, blargg / kevtris green) passing
+  identically with the feature on and off.
 
 ### Fixed
 

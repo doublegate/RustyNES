@@ -896,6 +896,14 @@ impl LockstepBus {
         self.ppu.index_framebuffer()
     }
 
+    /// v1.2.0 C3 (hd-pack) — borrow the per-pixel HD-pack tile-source buffer.
+    /// See [`rustynes_ppu::Ppu::hd_tile_source`]. Output-only telemetry.
+    #[cfg(feature = "hd-pack")]
+    #[must_use]
+    pub fn hd_tile_source(&self) -> &[rustynes_ppu::HdTileSource] {
+        self.ppu.hd_tile_source()
+    }
+
     /// The per-frame NTSC composite colour phase for the `NES_NTSC` filter
     /// (`0..=2` on NTSC; frame parity `0..=1` on PAL/Dendy). See
     /// [`rustynes_ppu::Ppu::ntsc_phase`].

@@ -19,6 +19,42 @@ pub const FRAMEBUFFER_LEN: usize = 256 * 240 * 4;
 /// [`Ppu::index_framebuffer`] (one `u16` per pixel).
 pub const FRAMEBUFFER_PIXELS: usize = 256 * 240;
 
+/// v1.2.0 beta.2 (Workstream C3) — per-pixel HD-pack tile-source record.
+///
+/// One entry per visible pixel (parallel to [`Ppu::index_framebuffer`]),
+/// populated in the pixel-emit path only when the `hd-pack` cargo feature is
+/// enabled. It records the **identity of the CHR tile** that produced the
+/// pixel — the 16-byte pattern-table tile base address (in PPU `$0000..=$1FFF`
+/// pattern space, fine-Y masked off), the 2-bit attribute/sprite palette, the
+/// sprite flip flags, and whether the source was a sprite or the background.
+///
+/// It is pure output telemetry: it mirrors data the renderer already computed,
+/// reads no new VRAM, and changes no emulation state — so it is byte-identical
+/// with the feature on or off and is never serialized into a save-state. The
+/// frontend's Mesen-style HD-pack loader groups these by 8×8 screen cell, hashes
+/// the referenced CHR bytes, and substitutes hi-res replacement tiles at blit
+/// time. See `docs/ppu-2c02.md` §HD-pack tile-source export.
+#[cfg(feature = "hd-pack")]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct HdTileSource {
+    /// 16-byte CHR tile base address in pattern space (`$0000..=$1FF0`, low
+    /// nibble always 0). `tile = (addr >> 4) & 0xFF`, `table = addr & 0x1000`.
+    /// `0xFFFF` marks a transparent / universal-background pixel (no tile).
+    pub chr_addr: u16,
+    /// Final palette group: BG attribute (0..=3) or sprite palette (0..=3).
+    pub palette: u8,
+    /// `true` when the pixel came from a sprite (vs. the background).
+    pub is_sprite: bool,
+    /// Sprite horizontal flip (always `false` for BG pixels).
+    pub flip_h: bool,
+    /// Sprite vertical flip (always `false` for BG pixels).
+    pub flip_v: bool,
+}
+
+/// Sentinel `chr_addr` for a transparent / universal-background HD-pack pixel.
+#[cfg(feature = "hd-pack")]
+pub const HD_TILE_NONE: u16 = 0xFFFF;
+
 /// Diagnostic: capture the (frame, scanline, dot, mask) of `$2007` reads to
 /// pin where the `$2007 Stress` test's per-dot reads land vs the visible
 /// scanline they target. Gated; default build unaffected.
@@ -509,6 +545,34 @@ pub struct Ppu {
     /// `docs/adr/0005-ppu-state-trace.md`.
     #[cfg(feature = "ppu-state-trace")]
     pub(crate) state_trace: Option<crate::state_trace::PpuStateTrace>,
+
+    /// v1.2.0 beta.2 (Workstream C3) — per-pixel HD-pack tile-source buffer
+    /// (256 × 240 [`HdTileSource`] records), written in [`Self::emit_pixel`]
+    /// in lockstep with [`Self::index_framebuffer`]. Output-only telemetry,
+    /// gated on the `hd-pack` cargo feature so the default build pays no
+    /// memory or codegen cost. Not part of the save-state.
+    #[cfg(feature = "hd-pack")]
+    pub(crate) hd_tile_source: Box<[HdTileSource]>,
+
+    /// v1.2.0 beta.2 (Workstream C3) — BG tile CHR base address latched at
+    /// `fetch_bg_lo` time, then reloaded into the 2-stage `hd_bg_addr_*`
+    /// queue in `reload_bg_shift_regs` so it tracks the BG pattern shift
+    /// registers tile-for-tile. Pure telemetry; only touched when `hd-pack`
+    /// is enabled.
+    #[cfg(feature = "hd-pack")]
+    pub(crate) hd_bg_addr_latch: u16,
+    /// CHR base address of the BG tile currently feeding the shifters' high
+    /// byte (the tile being displayed). See [`Self::hd_bg_addr_latch`].
+    #[cfg(feature = "hd-pack")]
+    pub(crate) hd_bg_addr_cur: u16,
+    /// CHR base address of the next BG tile (shifters' low byte). Promoted to
+    /// `hd_bg_addr_cur` on the prefetch byte-shift / per-tile boundary.
+    #[cfg(feature = "hd-pack")]
+    pub(crate) hd_bg_addr_next: u16,
+    /// CHR base address fetched per sprite slot at `fetch_sprite_tile` time,
+    /// consumed by `emit_pixel` for HD-pack sprite substitution.
+    #[cfg(feature = "hd-pack")]
+    pub(crate) hd_spr_addr: [u16; 8],
 }
 
 /// v2.0 Phase 6 (`mc-ppu-subpos`): the analog `$2001` PPUMASK write delay.
@@ -523,6 +587,10 @@ pub static MASK_WRITE_DELAY: core::sync::atomic::AtomicU8 = core::sync::atomic::
 impl Ppu {
     /// New PPU in power-on state.
     #[must_use]
+    // The power-on field initialization is naturally long (the PPU has many
+    // state fields); the feature-gated `hd-pack` initializers nudge it over the
+    // 100-line lint. Splitting the struct literal would hurt readability.
+    #[allow(clippy::too_many_lines)]
     pub fn new(region: PpuRegion) -> Self {
         let mut p = Self {
             region,
@@ -642,6 +710,16 @@ impl Ppu {
             frame_ntsc_phase: 0,
             #[cfg(feature = "ppu-state-trace")]
             state_trace: None,
+            #[cfg(feature = "hd-pack")]
+            hd_tile_source: vec![HdTileSource::default(); FRAMEBUFFER_PIXELS].into_boxed_slice(),
+            #[cfg(feature = "hd-pack")]
+            hd_bg_addr_latch: HD_TILE_NONE,
+            #[cfg(feature = "hd-pack")]
+            hd_bg_addr_cur: HD_TILE_NONE,
+            #[cfg(feature = "hd-pack")]
+            hd_bg_addr_next: HD_TILE_NONE,
+            #[cfg(feature = "hd-pack")]
+            hd_spr_addr: [HD_TILE_NONE; 8],
         };
         // Clear status flags that match power-on per nesdev wiki: VBL is
         // unspecified on power-on. We start clear.
@@ -845,6 +923,18 @@ impl Ppu {
     #[must_use]
     pub fn index_framebuffer(&self) -> &[u16] {
         &self.index_framebuffer
+    }
+
+    /// v1.2.0 beta.2 (Workstream C3) — borrow the per-pixel HD-pack
+    /// tile-source buffer (256 × 240 [`HdTileSource`] records, parallel to
+    /// [`Self::index_framebuffer`]). Each entry names the CHR tile that
+    /// produced the pixel. Output-only telemetry; the determinism /
+    /// `AccuracyCoin` contract is unaffected. See
+    /// `docs/ppu-2c02.md` §HD-pack tile-source export.
+    #[cfg(feature = "hd-pack")]
+    #[must_use]
+    pub fn hd_tile_source(&self) -> &[HdTileSource] {
+        &self.hd_tile_source
     }
 
     /// The per-frame NTSC composite colour phase — the `videoPhase` the
@@ -2112,6 +2202,14 @@ impl Ppu {
         let addr = bg_table | (u16::from(self.nt_latch) << 4) | fine_y;
         self.observe_a12_addr(bus, addr);
         self.bg_lo_latch = self.read_vram(bus, addr);
+        // v1.2.0 C3 (hd-pack): latch the 16-byte tile base (fine-Y masked off)
+        // for this fetch group. Promoted into the `hd_bg_addr_*` queue at the
+        // next shifter reload so it tracks the BG pattern shifters tile-for-tile.
+        // Output-only; no new VRAM read, no A12.
+        #[cfg(feature = "hd-pack")]
+        {
+            self.hd_bg_addr_latch = addr & 0x1FF0;
+        }
     }
 
     /// Fetch BG pattern high byte (offset +8 from the low fetch).
@@ -2162,6 +2260,12 @@ impl Ppu {
         self.bg_shift_hi <<= 8;
         self.at_shift_lo <<= 8;
         self.at_shift_hi <<= 8;
+        // v1.2.0 C3 (hd-pack): the `<<= 8` promotes the low (next) tile into the
+        // high (displayed) byte — mirror the address queue. Telemetry only.
+        #[cfg(feature = "hd-pack")]
+        {
+            self.hd_bg_addr_cur = self.hd_bg_addr_next;
+        }
     }
 
     /// Reload the low bytes of the BG pattern and attribute shift
@@ -2188,6 +2292,14 @@ impl Ppu {
         };
         self.at_shift_lo = (self.at_shift_lo & 0xFF00) | at_lo;
         self.at_shift_hi = (self.at_shift_hi & 0xFF00) | at_hi;
+        // v1.2.0 C3 (hd-pack): mirror the pattern reload — the prior `next`
+        // tile is now in the high byte (displayed), and the freshly-latched
+        // tile fills the low byte. Telemetry only; no state effect.
+        #[cfg(feature = "hd-pack")]
+        {
+            self.hd_bg_addr_cur = self.hd_bg_addr_next;
+            self.hd_bg_addr_next = self.hd_bg_addr_latch;
+        }
     }
 
     /// Increment coarse X with nametable-X wrap.
@@ -2273,6 +2385,8 @@ impl Ppu {
         let mut spr_pal: u8 = 0;
         let mut spr_priority_front = false;
         let mut spr_zero_pixel = false;
+        #[cfg(feature = "hd-pack")]
+        let mut spr_slot: usize = 0;
         if self.mask.contains(PpuMask::SHOW_SPRITE)
             && (pixel_x >= 8 || self.mask.contains(PpuMask::SHOW_SPRITE_LEFT))
         {
@@ -2296,6 +2410,10 @@ impl Ppu {
                 spr_idx = val;
                 spr_pal = self.spr_attr[i] & 0x03;
                 spr_priority_front = (self.spr_attr[i] & 0x20) == 0;
+                #[cfg(feature = "hd-pack")]
+                {
+                    spr_slot = i;
+                }
                 if i == 0 && self.spr_zero_in_line {
                     spr_zero_pixel = true;
                 }
@@ -2344,6 +2462,46 @@ impl Ppu {
         // (T-110-A1). Same `(emphasis << 6) | colour` value, in index space;
         // `off` is the RGBA byte offset, so `off >> 2` is the pixel index.
         self.index_framebuffer[off >> 2] = lut_idx as u16;
+
+        // v1.2.0 C3 (hd-pack): record the CHR tile that produced this pixel,
+        // mirroring the BG-vs-sprite priority decision above. Output-only; this
+        // reads only already-computed local state, so the framebuffer and all
+        // timing are byte-identical whether the feature is on or off.
+        #[cfg(feature = "hd-pack")]
+        {
+            // A pixel shows the SPRITE iff the sprite pixel is opaque AND
+            // (the BG pixel is transparent OR the sprite has front priority) —
+            // the same condition the `final_idx` priority match encodes.
+            let shows_sprite = spr_idx != 0 && (bg_idx == 0 || spr_priority_front);
+            let rec = if shows_sprite {
+                let attr = self.spr_attr[spr_slot];
+                HdTileSource {
+                    chr_addr: self.hd_spr_addr[spr_slot],
+                    palette: spr_pal,
+                    is_sprite: true,
+                    flip_h: (attr & 0x40) != 0,
+                    flip_v: (attr & 0x80) != 0,
+                }
+            } else if bg_idx != 0 {
+                HdTileSource {
+                    chr_addr: self.hd_bg_addr_cur,
+                    palette: bg_pal,
+                    is_sprite: false,
+                    flip_h: false,
+                    flip_v: false,
+                }
+            } else {
+                // Universal background — no tile to substitute.
+                HdTileSource {
+                    chr_addr: HD_TILE_NONE,
+                    palette: 0,
+                    is_sprite: false,
+                    flip_h: false,
+                    flip_v: false,
+                }
+            };
+            self.hd_tile_source[off >> 2] = rec;
+        }
 
         // Decrement sprite X-counters / shift sprite shift regs.
         //
@@ -3080,6 +3238,18 @@ impl Ppu {
             self.spr_shift_hi[slot] = hi;
             self.spr_attr[slot] = attr;
             self.spr_x[slot] = xpos;
+            // v1.2.0 C3 (hd-pack): stash the 16-byte tile base (in-tile row
+            // masked off) for this sprite slot so `emit_pixel` can name the
+            // CHR tile. Telemetry only; no new VRAM read here.
+            #[cfg(feature = "hd-pack")]
+            {
+                self.hd_spr_addr[slot] = addr_lo & 0x1FF0;
+            }
+        } else {
+            #[cfg(feature = "hd-pack")]
+            {
+                self.hd_spr_addr[slot] = HD_TILE_NONE;
+            }
         }
         // Else: shift regs already cleared in tick_sprite_eval_per_dot.
     }

@@ -315,6 +315,25 @@ pub struct Gfx {
     /// `true`. Drives the overscan `crop` half of the blit uniform; default
     /// `false` = the full 256x240 framebuffer (byte-identical presentation).
     hide_overscan: bool,
+    /// v1.2.0 beta.2 (Workstream C3) — optional HD-pack blit resources. `None`
+    /// (the default, and the only state when no pack is loaded) means the
+    /// presentation path is byte-identical to the stock build. When `Some`, the
+    /// HD compositor's upscaled RGBA buffer is uploaded to `texture` and blitted
+    /// (letterboxed) through the same nearest-sampling pipeline as the NES
+    /// framebuffer. Lazily (re)built when the HD buffer dimensions change.
+    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+    hd: Option<HdBlit>,
+}
+
+/// v1.2.0 C3 — the HD-pack blit texture + its bind group, sized to the
+/// compositor's `scale*256 x scale*240` output.
+#[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+struct HdBlit {
+    texture: wgpu::Texture,
+    bind_group: wgpu::BindGroup,
+    uniforms: wgpu::Buffer,
+    width: u32,
+    height: u32,
 }
 
 impl Gfx {
@@ -658,6 +677,8 @@ impl Gfx {
             gpu_timer,
             par_correction,
             hide_overscan,
+            #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+            hd: None,
         })
     }
 
@@ -1089,6 +1110,183 @@ impl Gfx {
         }
         frame.present();
         Ok(())
+    }
+
+    /// v1.2.0 beta.2 (Workstream C3) — present a pre-composited HD-pack RGBA
+    /// buffer (`hd_w x hd_h`, RGBA8) with the overlay, letterboxed through the
+    /// same nearest pipeline as the NES framebuffer. The HD path bypasses the
+    /// post-process filter chain (the compositor already produced final RGBA);
+    /// it exists only while a pack is loaded, so the default presentation is
+    /// byte-identical.
+    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+    #[allow(clippy::needless_pass_by_ref_mut)]
+    pub fn render_hd_with_overlay<F>(
+        &mut self,
+        hd_rgba: &[u8],
+        hd_w: u32,
+        hd_h: u32,
+        overlay: F,
+    ) -> Result<(), wgpu::SurfaceError>
+    where
+        F: FnOnce(
+            &wgpu::Device,
+            &wgpu::Queue,
+            &mut wgpu::CommandEncoder,
+            &wgpu::TextureView,
+            (u32, u32),
+        ),
+    {
+        debug_assert_eq!(hd_rgba.len(), (hd_w * hd_h * 4) as usize);
+        self.ensure_hd_blit(hd_w, hd_h);
+        let hd = self.hd.as_ref().expect("ensure_hd_blit built it");
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &hd.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            hd_rgba,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(hd_w * 4),
+                rows_per_image: Some(hd_h),
+            },
+            wgpu::Extent3d {
+                width: hd_w,
+                height: hd_h,
+                depth_or_array_layers: 1,
+            },
+        );
+        // The letterbox transform is in normalized UV space, so it is
+        // resolution-independent; the HD compositor already applied (or skipped)
+        // overscan at NES resolution, so HD blit uses no extra crop.
+        self.queue.write_buffer(
+            &hd.uniforms,
+            0,
+            bytemuck::cast_slice(&letterbox_uniform(
+                self.config.width,
+                self.config.height,
+                self.par_correction,
+                self.hide_overscan,
+            )),
+        );
+
+        let frame = self.surface.get_current_texture()?;
+        let view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("nes-hd-encoder"),
+            });
+        {
+            let hd = self.hd.as_ref().expect("built above");
+            let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("nes-hd-pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            rp.set_pipeline(&self.pipeline);
+            rp.set_bind_group(0, &hd.bind_group, &[]);
+            rp.draw(0..3, 0..1);
+        }
+        overlay(
+            &self.device,
+            &self.queue,
+            &mut encoder,
+            &view,
+            (self.config.width, self.config.height),
+        );
+        self.queue.submit(Some(encoder.finish()));
+        frame.present();
+        Ok(())
+    }
+
+    /// (Re)build the HD blit texture + bind group when absent or resized.
+    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+    fn ensure_hd_blit(&mut self, w: u32, h: u32) {
+        if self
+            .hd
+            .as_ref()
+            .is_some_and(|hd| hd.width == w && hd.height == h)
+        {
+            return;
+        }
+        let format = self.nes_texture.format();
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("nes-hd-texture"),
+            size: wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("nes-hd-nearest"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+        let uniforms = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("nes-hd-letterbox"),
+                contents: bytemuck::cast_slice(&letterbox_uniform(
+                    self.config.width,
+                    self.config.height,
+                    self.par_correction,
+                    self.hide_overscan,
+                )),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+        let bgl = self.pipeline.get_bind_group_layout(0);
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("nes-hd-bg"),
+            layout: &bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: uniforms.as_entire_binding(),
+                },
+            ],
+        });
+        self.hd = Some(HdBlit {
+            texture,
+            bind_group,
+            uniforms,
+            width: w,
+            height: h,
+        });
     }
 
     /// v2.8.0 Phase 0 (`gpu-timing`) — the most recently resolved GPU pass

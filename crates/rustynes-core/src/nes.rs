@@ -698,6 +698,18 @@ impl Nes {
         self.bus.index_framebuffer()
     }
 
+    /// v1.2.0 C3 (hd-pack) — borrow the per-pixel HD-pack tile-source buffer
+    /// (256x240 [`rustynes_ppu::HdTileSource`] records). Each entry names the
+    /// CHR tile that produced the pixel; the frontend HD-pack loader groups
+    /// these by 8x8 cell, hashes the CHR bytes, and substitutes hi-res tiles.
+    /// Output-only telemetry; the determinism contract is unaffected. See
+    /// [`rustynes_ppu::Ppu::hd_tile_source`].
+    #[cfg(feature = "hd-pack")]
+    #[must_use]
+    pub fn hd_tile_source(&self) -> &[rustynes_ppu::HdTileSource] {
+        self.bus.hd_tile_source()
+    }
+
     /// The per-frame NTSC composite colour phase consumed by the `NES_NTSC`
     /// filter (`0..=2` on NTSC; frame parity `0..=1` on PAL/Dendy). See
     /// [`rustynes_ppu::Ppu::ntsc_phase`].
@@ -1055,6 +1067,16 @@ impl Nes {
     #[must_use]
     pub fn peek(&mut self, addr: u16) -> u8 {
         self.bus.debug_peek_cpu(addr)
+    }
+
+    /// v1.2.0 C3 (hd-pack) — side-effect-free read of the PPU bus
+    /// (`$0000-$3FFF`): CHR pattern data, nametables, palette RAM. Used by the
+    /// HD-pack compositor to hash a tile's 16 CHR bytes. Observes state without
+    /// advancing the emulator, preserving determinism.
+    #[cfg(feature = "hd-pack")]
+    #[must_use]
+    pub fn peek_ppu(&mut self, addr: u16) -> u8 {
+        self.bus.debug_peek_ppu(addr)
     }
 
     /// Add a Game Genie code (6 or 8 characters, case-insensitive) that

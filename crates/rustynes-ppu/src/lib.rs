@@ -38,6 +38,8 @@ pub use bus::{BgSplitState, ExAttribute, PpuBus};
 pub use palette::{nes_color_to_rgba, palette_color_to_rgba, PpuPalette, NES_PALETTE};
 pub use ppu::read2007_diag;
 pub use ppu::MASK_WRITE_DELAY;
+#[cfg(feature = "hd-pack")]
+pub use ppu::{HdTileSource, HD_TILE_NONE};
 pub use ppu::{Ppu, PpuRegion, FRAMEBUFFER_LEN};
 pub use snapshot::{PpuSnapshotError, PPU_SNAPSHOT_VERSION};
 

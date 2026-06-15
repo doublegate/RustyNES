@@ -445,6 +445,16 @@ pub struct App {
     /// goes with `present_index_staging`.
     present_phase: u8,
     gfx: Option<Gfx>,
+    /// v1.2.0 beta.2 (Workstream C3) — the active HD-pack compositor, `Some`
+    /// only while a pack is loaded for the current ROM. `None` (the default,
+    /// and the only state when no pack is configured) means the present path is
+    /// byte-identical to the stock build.
+    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+    hd_compositor: Option<crate::hdpack::HdCompositor>,
+    /// v1.2.0 C3 — scratch staging for the PPU per-pixel HD tile-source
+    /// telemetry, copied under the emu lock alongside the framebuffer.
+    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+    present_hd_tiles: Vec<rustynes_core::rustynes_ppu::HdTileSource>,
     /// Native audio output (cpal). wasm32 uses the Web Audio path in
     /// `wasm.rs` instead, so this field is native-only.
     #[cfg(not(target_arch = "wasm32"))]
@@ -650,6 +660,10 @@ impl App {
             present_index_staging: Vec::new(),
             present_phase: 0,
             gfx: None,
+            #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+            hd_compositor: None,
+            #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+            present_hd_tiles: Vec::new(),
             audio: None,
             input,
             config,
@@ -731,6 +745,10 @@ impl App {
             present_index_staging: Vec::new(),
             present_phase: 0,
             gfx: None,
+            #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+            hd_compositor: None,
+            #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+            present_hd_tiles: Vec::new(),
             input,
             config,
             debugger: None,
@@ -1038,6 +1056,10 @@ impl App {
             }
         }
         self.apply_cheats_for_current_rom();
+        // v1.2.0 C3 — auto-load a configured HD-pack for this ROM (no-op when
+        // none is configured, so the default presentation is byte-identical).
+        #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+        self.maybe_load_hd_pack_for_rom();
         // v1.0.0 — re-push the per-APU-channel mute mask (the fresh `Nes` booted
         // with the all-on default). Default mask 0x3F = byte-identical audio.
         self.apply_apu_channel_mask();
@@ -1114,6 +1136,113 @@ impl App {
         if let Some(debugger) = self.debugger.as_mut() {
             debugger.set_cheat_persist(dir.clone(), rom_sha256, loaded.genie, loaded.raw);
         }
+    }
+
+    /// v1.2.0 beta.2 (Workstream C3) — load the HD-pack configured for the
+    /// current ROM (if any) into a compositor. No-op when no entry is configured
+    /// for the loaded ROM's hash — so the default presentation is byte-identical.
+    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+    fn maybe_load_hd_pack_for_rom(&mut self) {
+        self.hd_compositor = None;
+        let key = {
+            let guard = self.emu.lock();
+            let Some(nes) = guard.nes.as_ref() else {
+                return;
+            };
+            crate::save_state::hex_sha256(nes.rom_sha256())
+        };
+        let Some(path) = self.config.graphics.hd_packs.get(&key).cloned() else {
+            return;
+        };
+        self.load_hd_pack_from_path(&path);
+    }
+
+    /// v1.2.0 C3 — open a folder/zip picker, load the HD-pack, and persist the
+    /// per-ROM mapping. Native + feature-gated.
+    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+    fn load_hd_pack_dialog(&mut self) {
+        let has_rom = self.emu.lock().nes.is_some();
+        if !has_rom {
+            self.ui.set_status(crate::ui_shell::StatusMessage::new(
+                "Load a ROM before loading an HD pack".to_string(),
+                egui::Color32::from_rgb(230, 180, 90),
+                std::time::Duration::from_secs(4),
+            ));
+            return;
+        }
+        // Accept either a pack folder (containing hires.txt) or a .zip archive.
+        let picked = rfd::FileDialog::new()
+            .set_title("Select HD-pack folder or .zip")
+            .add_filter("HD pack archive", &["zip"])
+            .pick_folder()
+            .or_else(|| {
+                rfd::FileDialog::new()
+                    .set_title("Select HD-pack .zip")
+                    .add_filter("HD pack archive", &["zip"])
+                    .pick_file()
+            });
+        let Some(path) = picked else {
+            return;
+        };
+        if self.load_hd_pack_from_path(&path) {
+            // Persist the per-ROM mapping.
+            let key = {
+                let guard = self.emu.lock();
+                guard
+                    .nes
+                    .as_ref()
+                    .map(|n| crate::save_state::hex_sha256(n.rom_sha256()))
+            };
+            if let Some(key) = key {
+                self.config.graphics.hd_packs.insert(key, path);
+                let _ = self.config.save();
+            }
+        }
+    }
+
+    /// v1.2.0 C3 — load a pack from an explicit path into the compositor and
+    /// surface the result. Returns `true` on success.
+    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+    fn load_hd_pack_from_path(&mut self, path: &Path) -> bool {
+        if let Some(pack) = crate::hdpack::HdPack::load(path) {
+            let rules = pack.rule_count();
+            let scale = pack.scale();
+            self.hd_compositor = Some(crate::hdpack::HdCompositor::new(pack));
+            self.ui
+                .set_status(crate::ui_shell::StatusMessage::success(format!(
+                    "HD pack loaded: {rules} tiles, {scale}x"
+                )));
+            true
+        } else {
+            self.hd_compositor = None;
+            self.ui.set_status(crate::ui_shell::StatusMessage::new(
+                "No usable hires.txt rules found in HD pack".to_string(),
+                egui::Color32::from_rgb(230, 90, 90),
+                std::time::Duration::from_secs(4),
+            ));
+            false
+        }
+    }
+
+    /// v1.2.0 C3 — unload the active HD-pack and drop the per-ROM mapping.
+    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+    fn unload_hd_pack(&mut self) {
+        self.hd_compositor = None;
+        let key = {
+            let guard = self.emu.lock();
+            guard
+                .nes
+                .as_ref()
+                .map(|n| crate::save_state::hex_sha256(n.rom_sha256()))
+        };
+        if let Some(key) = key {
+            if self.config.graphics.hd_packs.remove(&key).is_some() {
+                let _ = self.config.save();
+            }
+        }
+        self.ui.set_status(crate::ui_shell::StatusMessage::success(
+            "HD pack unloaded".to_string(),
+        ));
     }
 
     /// Per-ROM FDS writable-disk save directory (`<data_dir>/fds-saves/`).
@@ -2504,6 +2633,14 @@ impl App {
                 if let Some(d) = self.debugger.as_mut() {
                     d.open_chip_panel(panel);
                 }
+            }
+            MenuAction::LoadHdPack => {
+                #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                self.load_hd_pack_dialog();
+            }
+            MenuAction::UnloadHdPack => {
+                #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                self.unload_hd_pack();
             }
         }
     }
@@ -5205,10 +5342,15 @@ impl ApplicationHandler<AppEvent> for App {
                 } else {
                     // Common path: copy the presented framebuffer under a brief
                     // lock, DROP the guard, then encode + present from staging.
+                    // v1.2.0 C3 — `(width, height)` of a composited HD-pack frame
+                    // when an HD compositor is active for the loaded ROM; `None`
+                    // means the stock NES-resolution present path (byte-identical).
+                    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                    let mut hd_dims: Option<(u32, u32)> = None;
                     {
                         let mut guard = self.emu.lock();
                         let emu = &mut *guard;
-                        if let Some(nes) = emu.nes.as_ref() {
+                        if let Some(nes) = emu.nes.as_mut() {
                             Self::backfill_present_fb(&mut emu.present_fb, nes);
                             self.present_staging.clear();
                             self.present_staging.extend_from_slice(&emu.present_fb);
@@ -5217,6 +5359,23 @@ impl ApplicationHandler<AppEvent> for App {
                                 self.present_index_staging
                                     .extend_from_slice(nes.index_framebuffer());
                                 self.present_phase = nes.ntsc_phase();
+                            }
+                            // v1.2.0 C3 — composite the HD frame under the same
+                            // lock (the PPU tile-source telemetry + CHR peeks need
+                            // the live `Nes`). Output-only; no emulation state is
+                            // touched. Skipped entirely when no pack is loaded.
+                            #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                            if let Some(comp) = self.hd_compositor.as_mut() {
+                                self.present_hd_tiles.clear();
+                                self.present_hd_tiles
+                                    .extend_from_slice(nes.hd_tile_source());
+                                let (w, h) = comp.dimensions();
+                                comp.composite(
+                                    &self.present_staging,
+                                    &self.present_hd_tiles,
+                                    |addr| nes.peek_ppu(addr),
+                                );
+                                hd_dims = Some((w, h));
                             }
                         } else {
                             // No ROM: present a black NES image (the shell still
@@ -5231,6 +5390,12 @@ impl ApplicationHandler<AppEvent> for App {
                     let script_par = self.config.ui.pixel_aspect_correction;
                     #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
                     let script_overscan = self.config.graphics.hide_overscan;
+                    // v1.2.0 C3 — borrow the composited HD frame (disjoint field)
+                    // before the `gfx` borrow so the HD branch can hand it off.
+                    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                    let hd_frame: Option<&[u8]> = hd_dims
+                        .and(self.hd_compositor.as_ref())
+                        .map(crate::hdpack::HdCompositor::frame);
                     let gfx = self.gfx.as_mut().expect("checked above");
                     let debugger = self.debugger.as_mut().expect("checked above");
                     let window = gfx.window.clone();
@@ -5242,48 +5407,63 @@ impl ApplicationHandler<AppEvent> for App {
                     let save_states_ui = &mut self.save_states_ui;
                     let index_arg = want_index
                         .then_some((self.present_index_staging.as_slice(), self.present_phase));
-                    gfx.render_with_overlay(
-                        &self.present_staging,
-                        index_arg,
-                        |device, queue, encoder, view, size| {
-                            #[cfg(target_arch = "wasm32")]
-                            let extra = |ctx: &egui::Context, cfg: &mut crate::config::Config| {
-                                crate::wasm_lobby::show(ctx, wasm_lobby, cfg);
-                            };
-                            #[cfg(not(target_arch = "wasm32"))]
-                            let extra = |ctx: &egui::Context, _cfg: &mut crate::config::Config| {
-                                save_states_ui.show(
-                                    ctx,
-                                    ss_dir.as_deref(),
-                                    ss_sha,
-                                    ss_slot,
-                                    rom_loaded,
-                                );
-                                #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
-                                Self::paint_script_overlay(
-                                    ctx,
-                                    script_draws,
-                                    script_par,
-                                    script_overscan,
-                                );
-                            };
-                            // Debugger panels are skipped (overlay hidden) so
-                            // `nes = None` is correct even though a ROM may exist.
-                            shell_out = debugger.render_shell(
-                                device,
-                                queue,
-                                encoder,
-                                &window,
-                                view,
-                                size,
-                                None,
-                                config,
-                                ui_shell,
-                                &shell_frame,
-                                extra,
+                    let overlay = |device: &wgpu::Device,
+                                   queue: &wgpu::Queue,
+                                   encoder: &mut wgpu::CommandEncoder,
+                                   view: &wgpu::TextureView,
+                                   size: (u32, u32)| {
+                        #[cfg(target_arch = "wasm32")]
+                        let extra = |ctx: &egui::Context, cfg: &mut crate::config::Config| {
+                            crate::wasm_lobby::show(ctx, wasm_lobby, cfg);
+                        };
+                        #[cfg(not(target_arch = "wasm32"))]
+                        let extra = |ctx: &egui::Context, _cfg: &mut crate::config::Config| {
+                            save_states_ui.show(
+                                ctx,
+                                ss_dir.as_deref(),
+                                ss_sha,
+                                ss_slot,
+                                rom_loaded,
                             );
-                        },
-                    )
+                            #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
+                            Self::paint_script_overlay(
+                                ctx,
+                                script_draws,
+                                script_par,
+                                script_overscan,
+                            );
+                        };
+                        // Debugger panels are skipped (overlay hidden) so
+                        // `nes = None` is correct even though a ROM may exist.
+                        shell_out = debugger.render_shell(
+                            device,
+                            queue,
+                            encoder,
+                            &window,
+                            view,
+                            size,
+                            None,
+                            config,
+                            ui_shell,
+                            &shell_frame,
+                            extra,
+                        );
+                    };
+                    // v1.2.0 C3 — when an HD-pack frame was composited this
+                    // redraw, present the upscaled buffer through the dedicated
+                    // HD blit; otherwise the stock NES-resolution present path
+                    // (byte-identical to before).
+                    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                    let render_result = match (hd_dims, hd_frame) {
+                        (Some((w, h)), Some(frame)) => {
+                            gfx.render_hd_with_overlay(frame, w, h, overlay)
+                        }
+                        _ => gfx.render_with_overlay(&self.present_staging, index_arg, overlay),
+                    };
+                    #[cfg(not(all(feature = "hd-pack", not(target_arch = "wasm32"))))]
+                    let render_result =
+                        gfx.render_with_overlay(&self.present_staging, index_arg, overlay);
+                    render_result
                 };
                 match render_result {
                     Ok(()) => {

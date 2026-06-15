@@ -701,6 +701,14 @@ pub struct GraphicsConfig {
     /// byte-identical. Persisted under `[graphics.shader_presets]`.
     #[serde(default)]
     pub shader_presets: crate::shader_pass::ShaderPresetBank,
+    /// v1.2.0 beta.2 (Workstream C3) — per-game HD-pack paths, keyed on the
+    /// ROM SHA-256 (hex). When the loaded ROM's hash has an entry here AND the
+    /// `hd-pack` feature is built in, the frontend loads the referenced pack
+    /// (folder or `.zip`) and substitutes hi-res tiles at blit time. Empty by
+    /// default and `#[serde(default)]`, so a pre-C3 config is byte-identical
+    /// and the default presentation is unchanged. Presentation-only.
+    #[serde(default)]
+    pub hd_packs: std::collections::BTreeMap<String, std::path::PathBuf>,
 }
 
 fn default_ntsc_filter() -> String {
@@ -763,6 +771,7 @@ impl Default for GraphicsConfig {
             ntsc_hue: default_ntsc_hue(),
             shader_stack: crate::shader_pass::ShaderStackConfig::default(),
             shader_presets: crate::shader_pass::ShaderPresetBank::default(),
+            hd_packs: std::collections::BTreeMap::new(),
         }
     }
 }

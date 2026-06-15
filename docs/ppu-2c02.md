@@ -234,6 +234,29 @@ snapshot), the index framebuffer + phase are NOT saved — they regenerate on th
 emitted frame, so a state loaded while paused shows correct NTSC from the first frame
 after resume.
 
+### HD-pack tile-source export (`hd-pack` feature; v1.2.0 C3)
+
+Behind the default-OFF `hd-pack` cargo feature, the emit path writes a third parallel
+buffer — `hd_tile_source()`: one `HdTileSource` per visible pixel, in lockstep with the
+index framebuffer. Each record names the **CHR tile that produced the pixel**: the
+16-byte pattern-table tile base address (`$0000..=$1FF0`, fine-Y / in-tile-row masked
+off), the final 2-bit palette group, the sprite flip flags, and whether the source was a
+sprite or the background (`HD_TILE_NONE` marks a transparent / universal-background
+pixel). The BG tile address rides a small two-stage queue (`hd_bg_addr_cur` /
+`hd_bg_addr_next`) latched at `fetch_bg_lo` and promoted in `reload_bg_shift_regs` /
+`prefetch_shift_bg_regs`, so it tracks the BG pattern shift registers tile-for-tile;
+sprite tile bases are stashed per slot in `fetch_sprite_tile`.
+
+It exists purely so the frontend's Mesen-style HD-pack loader can group pixels by 8×8
+cell, hash the referenced CHR bytes (Mesen CRC32), and substitute hi-res replacement
+tiles at blit time. Like the index framebuffer it is **output-only**: it reads no new
+VRAM, issues no new A12 / mapper events, mutates no emulation state, and is not part of
+the save-state — so the framebuffer is **byte-identical with the feature on or off**
+(proven against the full ROM corpus: AccuracyCoin 139/139, `nestest` 0-diff, blargg /
+kevtris green, identically with `hd-pack` on and off). The whole export is
+`#[cfg(feature = "hd-pack")]`-gated, so the default and `no_std` builds carry no memory
+or codegen cost.
+
 ## Edge cases and gotchas
 
 1. **Mid-scanline scroll write.** Writing PPUSCROLL or PPUADDR mid-scanline shifts the BG tile fetch immediately. Common technique for status bars on top + scrolling playfield below; *Battletoads*, *Megaman III*, *Felix the Cat* all exercise this.

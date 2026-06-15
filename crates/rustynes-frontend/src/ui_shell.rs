@@ -171,6 +171,14 @@ pub enum MenuAction {
     OpenPanel(crate::debugger::ToolPanel),
     /// v1.0.0 — open a chip-inspection panel + force the deep overlay visible.
     OpenChipPanel(crate::debugger::ChipPanel),
+    /// v1.2.0 beta.2 (Workstream C3) — open a dialog to pick an HD-pack folder
+    /// or `.zip` for the loaded ROM and enable substitution (native; the
+    /// dispatch body is `#[cfg(all(feature = "hd-pack", not(wasm32)))]`, the
+    /// variant stays un-gated so the match remains exhaustive on every target).
+    LoadHdPack,
+    /// v1.2.0 beta.2 (Workstream C3) — disable + unload the active HD-pack for
+    /// the loaded ROM.
+    UnloadHdPack,
 }
 
 /// Per-frame outputs from [`UiShell::build`].
@@ -622,6 +630,19 @@ impl UiShell {
                     }
                     if ui.button("ROM Database").clicked() {
                         out.action = Some(MenuAction::OpenPanel(ToolPanel::GameDb));
+                        ui.close();
+                    }
+                });
+
+                // ----- Mod (v1.2.0 C3, HD-pack; native + feature-gated) -----
+                #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                ui.menu_button("Mod", |ui| {
+                    if ui.button("Load HD Pack...").clicked() {
+                        out.action = Some(MenuAction::LoadHdPack);
+                        ui.close();
+                    }
+                    if ui.button("Unload HD Pack").clicked() {
+                        out.action = Some(MenuAction::UnloadHdPack);
                         ui.close();
                     }
                 });

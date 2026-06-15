@@ -36,6 +36,9 @@ pub mod eq;
 // (`png` is in the cfg(not(wasm)) dep table; a browser tab has no window icon).
 pub mod game_db;
 pub mod gfx;
+// v1.2.0 beta.2 (Workstream C3) — HD-pack / mod loader (native-only, default OFF).
+#[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+pub mod hdpack;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod icon;
 pub mod input;
