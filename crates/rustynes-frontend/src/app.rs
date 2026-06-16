@@ -519,6 +519,13 @@ pub struct App {
     /// frontend's "never hold the emu lock during heavy work" discipline.
     #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
     present_chr_snapshot: Vec<u8>,
+    /// v1.3.0 E1 — per-frame snapshot of the watched memory addresses
+    /// referenced by the HD-pack's `<condition>` declarations (Mesen's
+    /// `WatchedAddressValues`). Captured under the emu lock at produce time and
+    /// read by the compositor after the lock drops, mirroring the CHR snapshot.
+    /// Empty when the loaded pack uses no memory conditions.
+    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+    present_watched_mem: crate::hdpack::WatchedMemory,
     /// Native audio output (cpal). wasm32 uses the Web Audio path in
     /// `wasm.rs` instead, so this field is native-only.
     #[cfg(not(target_arch = "wasm32"))]
@@ -750,6 +757,8 @@ impl App {
             present_hd_tiles: Vec::new(),
             #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
             present_chr_snapshot: Vec::new(),
+            #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+            present_watched_mem: crate::hdpack::WatchedMemory::new(),
             audio: None,
             input,
             config,
@@ -847,6 +856,8 @@ impl App {
             present_hd_tiles: Vec::new(),
             #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
             present_chr_snapshot: Vec::new(),
+            #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+            present_watched_mem: crate::hdpack::WatchedMemory::new(),
             input,
             config,
             debugger: None,
@@ -5875,6 +5886,27 @@ impl ApplicationHandler<AppEvent> for App {
                                 {
                                     *slot = nes.peek_ppu(addr);
                                 }
+                                // v1.3.0 E1 — snapshot ONLY the finite set of
+                                // watched memory addresses referenced by the
+                                // pack's `<condition>` declarations (Mesen's
+                                // `WatchedAddressValues`). Read under the lock so
+                                // the compositor evaluates conditions after the
+                                // lock drops without touching `Nes`. Each address
+                                // carries bit 31 (`PPU_MEMORY_MARKER`) to select
+                                // PPU- vs CPU-space; both peeks are side-effect-free.
+                                let watched = &mut self.present_watched_mem;
+                                if let Some(comp) = self.hd_compositor.as_ref() {
+                                    for &tagged in comp.watched_addresses() {
+                                        let lo = (tagged & 0xFFFF) as u16;
+                                        let val = if tagged & crate::hdpack::PPU_MEMORY_MARKER != 0
+                                        {
+                                            nes.ppu_bus_peek(lo)
+                                        } else {
+                                            nes.cpu_bus_peek(lo)
+                                        };
+                                        watched.set(tagged, val);
+                                    }
+                                }
                             }
                         } else {
                             // No ROM: present a black NES image (the shell still
@@ -5890,9 +5922,12 @@ impl ApplicationHandler<AppEvent> for App {
                     if let Some(comp) = self.hd_compositor.as_mut() {
                         let (w, h) = comp.dimensions();
                         let chr = &self.present_chr_snapshot;
-                        comp.composite(&self.present_staging, &self.present_hd_tiles, |addr| {
-                            chr.get((addr & 0x1FFF) as usize).copied().unwrap_or(0)
-                        });
+                        comp.composite(
+                            &self.present_staging,
+                            &self.present_hd_tiles,
+                            &self.present_watched_mem,
+                            |addr| chr.get((addr & 0x1FFF) as usize).copied().unwrap_or(0),
+                        );
                         hd_dims = Some((w, h));
                     }
                     #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
