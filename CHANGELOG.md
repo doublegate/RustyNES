@@ -100,6 +100,20 @@ exercises the affected paths).
   correct (`Pulse::write_timer_hi` resets the duty step to 0 without touching the
   timer divider); added a regression unit test and documented it in
   `docs/apu-2a03.md`.
+- **Performance (v1.4.0 Workstream F — measure-first core micro-opts):** a
+  rendering-path speedup of **−7.6% to −8.7% full-frame time** on the
+  `flowing_palette` bench (2.354 ms → ~2.16 ms), `nestest` within criterion's
+  noise threshold. The PPU `tick` now caches the scanline-stable `visible` /
+  `pre_render` / `render_line` classifications once per scanline (sentinel
+  `flags_cached_scanline`) instead of recomputing ~7 branches on every one of
+  the 89,342 dots/frame, and the hot pixel-fetch / shift-register helpers
+  (`fetch_nt` / `fetch_at` / `fetch_bg_lo` / `fetch_bg_hi` /
+  `reload_bg_shift_regs` / `prefetch_shift_bg_regs`) are `#[inline]`; MMC5
+  `cpu_read` short-circuits the dominant `$8000-$FFFF` PRG fetch before the
+  `$5xxx` register-range match. All zero-behavior: bit-identical framebuffer +
+  audio, AccuracyCoin 100% (139/139), the `visual_regression` golden + the APU
+  oracle (`apu_mixer` / `apu_test`) unchanged with no snapshot re-baseline. See
+  `docs/performance.md` for the per-opt deltas and the dropped candidates.
 
 ## [1.3.0] - 2026-06-16 - "Bedrock" (Feature Release)
 

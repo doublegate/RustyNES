@@ -478,6 +478,23 @@ pub struct Ppu {
     pub(crate) bg_reload_render: bool,
     pub(crate) mask_write_delay: u8,
 
+    /// v1.4.0 Workstream F (F1) — scanline-stable rendering-classification
+    /// cache. `visible` / `pre_render` / `render_line` are pure functions of
+    /// `self.scanline` + `self.region`, so they only change when the scanline
+    /// advances. The hot per-dot `tick` recomputes them ~7 branches deep
+    /// 89,342 times/frame; instead we recompute them once when the scanline
+    /// changes (detected via the `flags_cached_scanline` sentinel) and read the
+    /// cached copies on every other dot. Byte-identical by construction (same
+    /// values, computed less often) and self-healing across reset / save-state
+    /// restore (the sentinel starts mismatched, forcing a recompute on the
+    /// first tick). NOT part of the PPU snapshot — pure derived data.
+    pub(crate) cached_visible: bool,
+    pub(crate) cached_pre_render: bool,
+    pub(crate) cached_render_line: bool,
+    /// Sentinel: the scanline `cached_*` were last computed for. `i16::MIN`
+    /// (an impossible scanline) forces a recompute on the first tick.
+    pub(crate) flags_cached_scanline: i16,
+
     /// Active output palette. Defaults to the 2C02 composite palette so normal
     /// NES/Famicom rendering is byte-for-byte unchanged; set to one of the RGB
     /// variants for Vs. System / PlayChoice-10 carts (see [`Ppu::set_palette`]).
@@ -699,6 +716,10 @@ impl Ppu {
             rendering_enabled_delayed: false,
             bg_reload_render: false,
             mask_write_delay: 0,
+            cached_visible: false,
+            cached_pre_render: false,
+            cached_render_line: false,
+            flags_cached_scanline: i16::MIN,
             active_palette: crate::palette::PpuPalette::Composite2C02,
             rgba_lut: build_rgba_lut(crate::palette::PpuPalette::Composite2C02),
             custom_palette: None,
@@ -1716,9 +1737,20 @@ impl Ppu {
             self.bg_reload_render = self.mask.rendering_enabled();
         }
 
-        let visible = self.scanline >= 0 && self.scanline <= self.region.last_visible_line();
-        let pre_render = self.scanline == self.region.prerender_line();
-        let render_line = visible || pre_render;
+        // v1.4.0 Workstream F (F1): the scanline-classification flags are pure
+        // functions of `self.scanline` + `self.region`, so recompute them only
+        // when the scanline changes; every other dot reads the cached copies.
+        // Byte-identical (same values), self-healing on reset / restore.
+        if self.scanline != self.flags_cached_scanline {
+            self.cached_visible =
+                self.scanline >= 0 && self.scanline <= self.region.last_visible_line();
+            self.cached_pre_render = self.scanline == self.region.prerender_line();
+            self.cached_render_line = self.cached_visible || self.cached_pre_render;
+            self.flags_cached_scanline = self.scanline;
+        }
+        let visible = self.cached_visible;
+        let pre_render = self.cached_pre_render;
+        let render_line = self.cached_render_line;
         let rendering = self.mask.rendering_enabled();
         // v2.0 (ae30785): the fetch/shift/sprite-eval pipeline gates on the
         // 1-PPU-dot-delayed rendering value under `ppu-sprite-shifter-counter`
@@ -2127,6 +2159,7 @@ impl Ppu {
     /// and the 4 KiB CHR bank index. We latch it onto `bg_split_latch` for
     /// consumption by AT / BG-lo / BG-hi within the same fetch group.
     #[allow(clippy::cast_sign_loss)]
+    #[inline]
     fn fetch_nt<B: PpuBus>(&mut self, bus: &mut B) {
         // Compute the (scanline_y, coarse_x) the alt region would be sampled
         // at. The pre-render line passes 0 (the alt region only renders on
@@ -2157,6 +2190,7 @@ impl Ppu {
 
     /// Fetch the attribute byte for the current `v`. Address:
     /// `$23C0 | (v & 0x0C00) | ((v >> 4) & 0x38) | ((v >> 2) & 0x07)`.
+    #[inline]
     fn fetch_at<B: PpuBus>(&mut self, bus: &mut B) {
         // Split active: use the alt AT address and recover coarse-X / coarse-Y
         // from the latched split state's NT address (where coarse-X = bits
@@ -2194,6 +2228,7 @@ impl Ppu {
     /// In MMC5 vertical split-screen mode the mapper has likewise latched
     /// the `$5202` 4 KiB CHR bank from the most recent `bg_split_state`
     /// call, and the alt fine-Y replaces `v`'s fine-Y.
+    #[inline]
     fn fetch_bg_lo<B: PpuBus>(&mut self, bus: &mut B) {
         let bg_table = u16::from(self.ctrl.contains(PpuCtrl::BG_PATTERN_HIGH)) << 12;
         let fine_y = self
@@ -2213,6 +2248,7 @@ impl Ppu {
     }
 
     /// Fetch BG pattern high byte (offset +8 from the low fetch).
+    #[inline]
     fn fetch_bg_hi<B: PpuBus>(&mut self, bus: &mut B) {
         let bg_table = u16::from(self.ctrl.contains(PpuCtrl::BG_PATTERN_HIGH)) << 12;
         let fine_y = self
@@ -2255,6 +2291,7 @@ impl Ppu {
     /// run during the dots 321-336 pre-fetch region. The attribute
     /// registers MUST shift identically to the pattern registers here —
     /// omitting them was the 086ce4d left-edge palette regression.
+    #[inline]
     const fn prefetch_shift_bg_regs(&mut self) {
         self.bg_shift_lo <<= 8;
         self.bg_shift_hi <<= 8;
@@ -2277,6 +2314,7 @@ impl Ppu {
     /// keeps the attribute shifter bit-for-bit aligned with the pattern
     /// shifters through both the per-cycle shifts (dots 1-256) and the
     /// pre-fetch `<<= 8` (dots 328 / 336).
+    #[inline]
     const fn reload_bg_shift_regs(&mut self) {
         self.bg_shift_lo = (self.bg_shift_lo & 0xFF00) | self.bg_lo_latch as u16;
         self.bg_shift_hi = (self.bg_shift_hi & 0xFF00) | self.bg_hi_latch as u16;

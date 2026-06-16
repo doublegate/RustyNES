@@ -175,6 +175,58 @@ of frame cost; a profile must contradict that first (ADR 0001).
   the per-cycle dispatch population ADR-0001's `cpu_read` benches never
   measured, without monomorphizing anything.
 
+### v1.4.0 Workstream F — measure-first micro-opt pass (core)
+
+All changes are zero-behavior / zero-synthesis: bit-identical framebuffer +
+audio, AccuracyCoin 100% (139/139) held, the visual `visual_regression` golden
+and the APU oracle (`apu_mixer` / `apu_test`) stayed byte-identical with no
+snapshot re-baseline. Baseline captured with
+`cargo bench -p rustynes-core --bench full_frame -- --save-baseline v1.4.0-pre`
+on the `nestest` (near-idle menu) + `flowing_palette` (rendering-heavy,
+full-BG-every-frame) inputs; the headline number is the rendering path.
+
+- **F1 — PPU scanline-stable flag cache + hot-helper inlining**
+  (`crates/rustynes-ppu/src/ppu.rs`). The `visible` / `pre_render` /
+  `render_line` classifications are pure functions of `self.scanline` +
+  `self.region`, yet the per-dot `tick` recomputed them (last-visible-line +
+  prerender-line compares, ~7 branches) on all 89,342 dots/frame. They are now
+  computed once when the scanline changes — detected via a
+  `flags_cached_scanline` sentinel — and read from `cached_visible` /
+  `cached_pre_render` / `cached_render_line` on every other dot. The cache is
+  pure derived state (NOT part of the PPU save-state snapshot) and self-heals on
+  reset / restore (the sentinel starts at `i16::MIN`, forcing a recompute on the
+  first tick). The mid-scanline-mutable `$2001` rendering gates
+  (`rendering` / `rendering_gate` / `bg_reload_render`) are deliberately NOT
+  cached — they can change mid-scanline, so caching them would be observable.
+  The six hot pixel-fetch / shift-register helpers (`fetch_nt` / `fetch_at` /
+  `fetch_bg_lo` / `fetch_bg_hi` / `reload_bg_shift_regs` /
+  `prefetch_shift_bg_regs`) are marked `#[inline]`. The v2.8.0 BLEP delta-ring
+  loop (`crates/rustynes-apu/src/blip.rs`) was re-verified as still split into
+  two contiguous SAXPY runs (auto-vectorizes; no change needed).
+- **F2 — MMC5 `cpu_read` hot-path short-circuit**
+  (`crates/rustynes-mappers/src/mmc5.rs`). PRG-ROM/RAM fetches at
+  `$8000-$FFFF` dominate `cpu_read` (every opcode + operand fetch on an MMC5
+  cart), while the register / ExRAM arms only fire on explicit `$5xxx`
+  accesses. An early `if addr >= 0x8000 { return self.read_prg_window(addr); }`
+  short-circuits the common case before the `$5xxx` range match —
+  byte-identical to the `0x8000..=0xFFFF` arm it bypasses.
+
+Measured `full_frame` deltas vs. `v1.4.0-pre` (criterion, two runs):
+**`flowing_palette` −7.6% to −8.7%** (2.354 ms → ~2.16 ms), the rendering-heavy
+path these opts target; **`nestest` within the noise threshold** (the near-idle
+menu barely exercises the BG-fetch pipeline, so there is little to gain and the
+result floats inside criterion's noise band). Net: the rendering path is
+meaningfully faster and the idle path is neutral.
+
+Dropped (kept out — no clear neutral win / determinism risk): the F2 BLEP
+phase-row index cache (the row index genuinely depends on the per-sample phase,
+so there is no cast to elide without reordering the `f64`→`f32`→`i32`
+quantization, risking byte-identity); the F3 `parse()` mapper-id reorder (the
+arms are already ascending 0/1/2/3/4-first and an integer `match` compiles to a
+jump table regardless of source order); the F3 bus controller-strobe gate +
+`mapper_caps.cpu_cycle_hook` (both already gated behind active flags); the F3
+DMA get/put enum unification (a larger refactor with no clear neutral win).
+
 ### Profile-guided optimization (PGO) — recipe
 
 `scripts/pgo/run.sh` adapts Mesen2's `buildPGO.sh` flow to cargo-pgo:
