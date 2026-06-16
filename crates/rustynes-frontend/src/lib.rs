@@ -17,6 +17,9 @@
 
 pub mod app;
 pub mod audio;
+// About-dialog input helper (native only; safe Rust, portable across all arches).
+#[cfg(not(target_arch = "wasm32"))]
+mod about_fx;
 pub mod cheats;
 pub mod config;
 pub mod debugger;

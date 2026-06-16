@@ -336,6 +336,8 @@ impl UiShell {
         self.welcome_modal(&ctx, config);
         about_window(&ctx, &mut self.show_about);
         shortcuts_window(&ctx, &mut self.show_shortcuts);
+        #[cfg(not(target_arch = "wasm32"))]
+        crate::about_fx::render(&ctx);
 
         out
     }
@@ -1337,7 +1339,19 @@ fn about_window(ctx: &egui::Context, open: &mut bool) {
                 // The app icon (native; the rounded corners stay transparent).
                 #[cfg(not(target_arch = "wasm32"))]
                 if let Some(tex) = about_icon_texture(ctx) {
-                    ui.image((tex.id(), egui::vec2(96.0, 96.0)));
+                    let resp = ui.add(
+                        egui::Image::new((tex.id(), egui::vec2(96.0, 96.0)))
+                            .sense(egui::Sense::click()),
+                    );
+                    // Lower-right region of the emblem is an interaction target.
+                    if resp.clicked()
+                        && let Some(p) = resp.interact_pointer_pos()
+                    {
+                        let r = resp.rect;
+                        if p.x >= r.center().x && p.y >= r.center().y {
+                            crate::about_fx::tap();
+                        }
+                    }
                     ui.add_space(8.0);
                 }
                 ui.heading("RustyNES");
@@ -1357,6 +1371,8 @@ fn about_window(ctx: &egui::Context, open: &mut bool) {
                 ui.add_space(4.0);
             });
         });
+    #[cfg(not(target_arch = "wasm32"))]
+    crate::about_fx::pump(ctx);
 }
 
 /// Render the keyboard-shortcuts window.
