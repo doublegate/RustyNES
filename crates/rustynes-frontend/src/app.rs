@@ -230,6 +230,64 @@ fn extract_rom_from_zip(zip_bytes: &[u8]) -> Option<(String, Vec<u8>)> {
     Some((name, out))
 }
 
+/// Read a ROM file and run the same ingest preprocessing the in-app loader does
+/// (`load_rom_from_path`): if the path is a `.zip`, extract the first NES / FDS /
+/// NSF entry; then auto-apply a same-stem `.bps` / `.ups` / `.ips` soft-patch
+/// (that precedence; highest present wins), before any format detection — so the
+/// deterministic parse + the CRC-keyed per-game DB see the extracted / patched
+/// image. Returns the processed bytes and a display label (the inner archive
+/// entry name when unzipped, else the file name). Used by `App::new` so a ROM
+/// passed on argv loads identically to one opened from the menu / drag-drop.
+/// Native-only (the in-app menu path handles the running-app case; the wasm
+/// `AppEvent::RomLoaded` path preprocesses separately).
+#[cfg(not(target_arch = "wasm32"))]
+fn load_and_preprocess_rom(rom_path: &Path) -> std::io::Result<(Vec<u8>, String)> {
+    let mut bytes = std::fs::read(rom_path)?;
+    let mut label = rom_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("rom.nes")
+        .to_string();
+    if rom_path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("zip"))
+    {
+        match extract_rom_from_zip(&bytes) {
+            Some((name, rom)) => {
+                eprintln!("rustynes: loaded {name} from archive");
+                bytes = rom;
+                label = name;
+            }
+            None => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("no NES/FDS/NSF entry in {}", rom_path.display()),
+                ));
+            }
+        }
+    }
+    for ext in ["bps", "ups", "ips"] {
+        let patch_path = rom_path.with_extension(ext);
+        if patch_path == rom_path {
+            continue;
+        }
+        let Ok(patch_bytes) = std::fs::read(&patch_path) else {
+            continue;
+        };
+        match crate::patch::detect_and_apply(&bytes, &patch_bytes, ext) {
+            Ok(patched) => {
+                eprintln!("rustynes: applied {ext} patch: {}", patch_path.display());
+                bytes = patched;
+            }
+            Err(e) => {
+                eprintln!("rustynes: {ext} patch {} failed: {e}", patch_path.display());
+            }
+        }
+        break;
+    }
+    Ok((bytes, label))
+}
+
 /// `true` when `bytes` is an NSF music file (classic `NESM\x1A` form).
 #[cfg(not(target_arch = "wasm32"))]
 fn is_nsf_image(bytes: &[u8]) -> bool {
@@ -670,12 +728,9 @@ impl App {
     /// Returns an `io::Error` if the file can't be read.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn new(rom_path: &std::path::Path) -> std::io::Result<Self> {
-        let rom_bytes = std::fs::read(rom_path)?;
-        let rom_label = rom_path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("rom.nes")
-            .to_string();
+        // The CLI / initial-ROM path must run the same `.zip` extraction +
+        // same-stem soft-patching as `load_rom_from_path` (see the helper).
+        let (rom_bytes, rom_label) = load_and_preprocess_rom(rom_path)?;
         let config = Config::load_or_default();
         let input = InputState::from_config(&config.input);
         let data_dir = Config::default_data_dir();
@@ -6249,7 +6304,7 @@ pub fn run_wasm() -> winit::event_loop::EventLoopProxy<AppEvent> {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_rom_from_zip, is_fds_image, resolve_vs_dip};
+    use super::{extract_rom_from_zip, is_fds_image, load_and_preprocess_rom, resolve_vs_dip};
     use crate::config::VsConfig;
     use rustynes_core::VsDbEntry;
     use rustynes_core::rustynes_mappers::VsPpuType;
@@ -6290,6 +6345,34 @@ mod tests {
             w.finish().unwrap();
         }
         assert!(extract_rom_from_zip(&buf).is_none());
+    }
+
+    // Regression (the CLI / `App::new` initial-ROM path): a `.zip` passed on argv
+    // must be extracted to its bare NES image before the core parses it. Before
+    // the fix, `App::new` stored the raw archive bytes and the load failed with
+    // "rom magic bytes do not match NES\x1A".
+    #[test]
+    fn cli_path_extracts_zip_to_nes_image() {
+        use std::io::Write;
+        let zip_path =
+            std::env::temp_dir().join(format!("rustynes_clizip_{}.zip", std::process::id()));
+        {
+            let f = std::fs::File::create(&zip_path).unwrap();
+            let mut w = zip::ZipWriter::new(f);
+            let opts = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            w.start_file("Cool Game (U).nes", opts).unwrap();
+            w.write_all(b"NES\x1A\x02\x01payload").unwrap();
+            w.finish().unwrap();
+        }
+        let result = load_and_preprocess_rom(&zip_path);
+        let _ = std::fs::remove_file(&zip_path);
+        let (bytes, label) = result.expect("the .zip extracts to a ROM");
+        assert!(
+            bytes.starts_with(b"NES\x1A"),
+            "must return the extracted NES image, not the raw zip bytes"
+        );
+        assert_eq!(label, "Cool Game (U).nes");
     }
 
     // Returns the `Some(..)` form because `resolve_vs_dip` takes the DB lookup
