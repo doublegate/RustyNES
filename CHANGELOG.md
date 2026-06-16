@@ -62,6 +62,27 @@ and stay deferred as a future v2.0-scale item (see `docs/STATUS.md`). See the v1
   side-effect-free `cpu_bus_peek`; never writes the core, determinism unaffected), opened
   from **Debug → Memory Compare**, and disabled under RetroAchievements hardcore mode like
   the Memory viewer + cheat panel.
+- **Netplay desync diagnostics** (v1.3.0 Workstream G1). The Netplay panel gains a
+  read-only **Diagnostics** section mirroring GeraNES's `DesyncMonitor`: the room / input
+  topology (player count + which controller port this peer drives), the in-sync /
+  desynced-at-frame-N status, lifetime checksum-compare + mismatch counts, the consecutive-
+  mismatch counter, the most recent local-vs-remote CRC (classified timing-vs-state), and a
+  rolling CRC-match history table. Backed by a new observational `DesyncDiagnostics` ring in
+  `rustynes-netplay` that records every confirmed-frame checksum comparison the rollback
+  session already performs — purely telemetry, it never feeds back into the rollback
+  algorithm or the checksum exchange, so the determinism contract is untouched.
+- **Niche input-device peripherals** (v1.3.0 Workstream F1), all additive, default-off
+  `InputDevice` overlays selectable as the player-2 expansion device — `ExpansionDevice::None`
+  stays the default, so every standard / Four Score read is byte-identical when unused: the
+  **Family Trainer** mat (`Nes::set_family_trainer`, layout-equivalent to the Power Pad,
+  reusing its 12-button scan), the **Subor keyboard** (`Nes::set_subor_keyboard`, a Family
+  BASIC keyboard work-alike reusing the 9×8 matrix scan), the **Konami Hyper Shot**
+  (`Nes::set_konami_hyper_shot`, the 4-button 2-player Run/Jump parallel read with `$4016`
+  per-player enable), and the **Bandai Hyper Shot** / Exciting Boxing punching bag
+  (`Nes::set_bandai_hyper_shot`, the 8-sensor `$4016`-bit-1-multiplexed read). The reads are
+  cross-checked against the `NESdev` "Konami Hyper Shot" / "Exciting Boxing Punching Bag"
+  pages and round-trip through the save-state; new config / host-key wiring carries
+  `#[serde(default)]` so older configs load unchanged.
 
 ### Changed
 

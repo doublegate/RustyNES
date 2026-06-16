@@ -832,6 +832,205 @@ impl FamilyKeyboardState {
     }
 }
 
+/// The **Konami Hyper Shot** overlay state (v1.3.0 Workstream F1).
+///
+/// A simple 4-button expansion controller (two players, each with a Run and a
+/// Jump button) used by _Hyper Olympic_ / _Hyper Sports_. Per the `NESdev`
+/// "Konami Hyper Shot" page it is read in **parallel** on `$4017` (no shift
+/// register), with `$4016` writes selecting which player's buttons are
+/// enabled:
+///
+/// ```text
+/// $4016 write:               $4017 read:
+/// 7  bit  0                  7  bit  0
+/// ---- ----                  ---- ----
+/// xxxx xEFx                  xxxD CBAx
+///       ||                      | |||
+///       |+- 0 = enable P1          | ||+-- P1 Run
+///       +-- 0 = enable P2          | |+--- P1 Jump
+///                                  | +---- P2 Run
+///                                  +------ P2 Jump
+/// ```
+///
+/// The Jump/Run bits for a player read `0` while that player's enable bit
+/// ($4016 bit 1 for P1, bit 2 for P2) is **set** (i.e. disabled). Determinism
+/// holds: the read is a pure function of the live button mask + the last write.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct KonamiHyperShotState {
+    /// Live button mask: bit 0 = P1 Run, bit 1 = P1 Jump, bit 2 = P2 Run,
+    /// bit 3 = P2 Jump.
+    pub(crate) buttons: u8,
+    /// `true` if P1's buttons are enabled (`$4016` bit 1 == 0).
+    pub(crate) p1_enabled: bool,
+    /// `true` if P2's buttons are enabled (`$4016` bit 2 == 0).
+    pub(crate) p2_enabled: bool,
+}
+
+impl KonamiHyperShotState {
+    /// New controller with no buttons held and both players enabled (the
+    /// power-on `$4016` write has not happened yet; enable is active-low, so the
+    /// quiescent state matches a write of 0).
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            buttons: 0,
+            p1_enabled: true,
+            p2_enabled: true,
+        }
+    }
+
+    /// Set the live 4-button mask (bit 0 = P1 Run, 1 = P1 Jump, 2 = P2 Run,
+    /// 3 = P2 Jump). Bits above 3 are ignored.
+    pub const fn set(&mut self, buttons: u8) {
+        self.buttons = buttons & 0x0F;
+    }
+
+    /// Handle a `$4016` write: bit 1 = 0 enables P1, bit 2 = 0 enables P2
+    /// (active-low).
+    pub const fn write_strobe(&mut self, value: u8) {
+        self.p1_enabled = value & 0x02 == 0;
+        self.p2_enabled = value & 0x04 == 0;
+    }
+
+    /// Read the device byte for a `$4017` access. Bit 1 = P1 Run, bit 2 = P1
+    /// Jump, bit 3 = P2 Run, bit 4 = P2 Jump; a player's bits read `0` while
+    /// disabled. The caller ORs in the open-bus upper bits.
+    #[must_use]
+    pub const fn read(&self) -> u8 {
+        let p1_run = (self.buttons & 0x01 != 0) && self.p1_enabled;
+        let p1_jump = (self.buttons & 0x02 != 0) && self.p1_enabled;
+        let p2_run = (self.buttons & 0x04 != 0) && self.p2_enabled;
+        let p2_jump = (self.buttons & 0x08 != 0) && self.p2_enabled;
+        ((p1_run as u8) << 1)
+            | ((p1_jump as u8) << 2)
+            | ((p2_run as u8) << 3)
+            | ((p2_jump as u8) << 4)
+    }
+
+    /// Side-effect-free sample (debugger peek) — identical to [`Self::read`].
+    #[must_use]
+    pub const fn peek(&self) -> u8 {
+        self.read()
+    }
+
+    /// Reconstruct from save-state parts.
+    #[must_use]
+    pub const fn from_parts(buttons: u8, p1_enabled: bool, p2_enabled: bool) -> Self {
+        Self {
+            buttons: buttons & 0x0F,
+            p1_enabled,
+            p2_enabled,
+        }
+    }
+
+    /// Raw button mask (save-state).
+    #[must_use]
+    pub const fn buttons_raw(&self) -> u8 {
+        self.buttons
+    }
+    /// Raw P1-enable (save-state).
+    #[must_use]
+    pub const fn p1_enabled_raw(&self) -> bool {
+        self.p1_enabled
+    }
+    /// Raw P2-enable (save-state).
+    #[must_use]
+    pub const fn p2_enabled_raw(&self) -> bool {
+        self.p2_enabled
+    }
+}
+
+/// The **Bandai Hyper Shot** (Exciting Boxing punching bag) overlay state
+/// (v1.3.0 Workstream F1).
+///
+/// The punching bag has 8 sensors read on `$4017`, multiplexed by `$4016`
+/// bit 1 (the "A" select) into two groups of four returned on bits 4..1. Per
+/// the `NESdev` "Exciting Boxing Punching Bag" page:
+///
+/// ```text
+/// $4016 write:               $4017 read:
+/// 7  bit  0                  7  bit  0
+/// ---- ----                  ---- ----
+/// xxxx xxAx                  xxxE DCBx
+///        |                      | |||
+///        +- select group        | ||+-- Left Hook (A=0) / Left Jab  (A=1)
+///                               | |+--- Move Right (A=0) / Body      (A=1)
+///                               | +---- Move Left (A=0) / Right Jab  (A=1)
+///                               +------ Right Hook (A=0) / Straight   (A=1)
+/// ```
+///
+/// We model the 8 sensors as a live bitmask and the `A` select from the last
+/// `$4016` write; the read is a pure function of both (deterministic).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct BandaiHyperShotState {
+    /// Live sensor mask. Group A=0 (bits 0..=3): Left Hook, Move Right, Move
+    /// Left, Right Hook. Group A=1 (bits 4..=7): Left Jab, Body, Right Jab,
+    /// Straight. A set bit = that sensor is active.
+    pub(crate) sensors: u8,
+    /// The `A` select latched from the last `$4016` write (bit 1). `false`
+    /// selects the A=0 group (bits 0..=3), `true` the A=1 group (bits 4..=7).
+    pub(crate) select: bool,
+}
+
+impl BandaiHyperShotState {
+    /// New punching bag with no sensor active, group A=0 selected.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            sensors: 0,
+            select: false,
+        }
+    }
+
+    /// Set the live 8-sensor mask. Bits 0..=3 are the A=0 group (Left Hook,
+    /// Move Right, Move Left, Right Hook); bits 4..=7 are the A=1 group (Left
+    /// Jab, Body, Right Jab, Straight).
+    pub const fn set(&mut self, sensors: u8) {
+        self.sensors = sensors;
+    }
+
+    /// Handle a `$4016` write: bit 1 (`A`) selects which sensor group is
+    /// returned on the next reads.
+    pub const fn write_strobe(&mut self, value: u8) {
+        self.select = value & 0x02 != 0;
+    }
+
+    /// Read the device byte for a `$4017` access. The selected group's four
+    /// sensors appear on bits 4..1. The caller ORs in the open-bus upper bits.
+    #[must_use]
+    pub const fn read(&self) -> u8 {
+        let nibble = if self.select {
+            (self.sensors >> 4) & 0x0F
+        } else {
+            self.sensors & 0x0F
+        };
+        nibble << 1
+    }
+
+    /// Side-effect-free sample (debugger peek) — identical to [`Self::read`].
+    #[must_use]
+    pub const fn peek(&self) -> u8 {
+        self.read()
+    }
+
+    /// Reconstruct from save-state parts.
+    #[must_use]
+    pub const fn from_parts(sensors: u8, select: bool) -> Self {
+        Self { sensors, select }
+    }
+
+    /// Raw sensor mask (save-state).
+    #[must_use]
+    pub const fn sensors_raw(&self) -> u8 {
+        self.sensors
+    }
+    /// Raw `A`-select (save-state).
+    #[must_use]
+    pub const fn select_raw(&self) -> bool {
+        self.select
+    }
+}
+
 /// An optional non-standard device overlaid on a controller port. When set,
 /// the bus's `$4016`/`$4017` read path returns this device's byte instead of
 /// the standard controller / Four Score serial byte.
@@ -847,6 +1046,22 @@ pub enum InputDevice {
     SnesMouse(SnesMouseState),
     /// Famicom Family BASIC keyboard (72-key matrix on `$4017`).
     FamilyKeyboard(FamilyKeyboardState),
+    /// Bandai **Family Trainer** mat (v1.3.0 Workstream F1). Layout-equivalent
+    /// to the [`PowerPad`](Self::PowerPad): the Famicom mat reuses the exact
+    /// 12-button parallel-in/serial-out scan (it differs only in the expansion-
+    /// port wiring vs the NES controller-port Power Pad), so the same
+    /// [`PowerPadState`] drives it.
+    FamilyTrainer(PowerPadState),
+    /// **Subor keyboard** (v1.3.0 Workstream F1). A Family BASIC keyboard
+    /// work-alike (the Subor clone matrix), reusing the same
+    /// [`FamilyKeyboardState`] `9 x 8` matrix scan.
+    SuborKeyboard(FamilyKeyboardState),
+    /// **Konami Hyper Shot** (v1.3.0 Workstream F1): a 4-button (2-player
+    /// Run/Jump) parallel-read expansion controller.
+    KonamiHyperShot(KonamiHyperShotState),
+    /// **Bandai Hyper Shot** / Exciting Boxing punching bag (v1.3.0 Workstream
+    /// F1): an 8-sensor expansion controller multiplexed into two groups.
+    BandaiHyperShot(BandaiHyperShotState),
 }
 
 impl InputDevice {
@@ -855,9 +1070,11 @@ impl InputDevice {
     pub const fn write_strobe(&mut self, value: u8) {
         match self {
             Self::Vaus(v) => v.write_strobe(value),
-            Self::PowerPad(p) => p.write_strobe(value),
+            Self::PowerPad(p) | Self::FamilyTrainer(p) => p.write_strobe(value),
             Self::SnesMouse(m) => m.write_strobe(value),
-            Self::FamilyKeyboard(k) => k.write_strobe(value),
+            Self::FamilyKeyboard(k) | Self::SuborKeyboard(k) => k.write_strobe(value),
+            Self::KonamiHyperShot(h) => h.write_strobe(value),
+            Self::BandaiHyperShot(b) => b.write_strobe(value),
             Self::Zapper(_) => {}
         }
     }
@@ -868,9 +1085,11 @@ impl InputDevice {
         match self {
             Self::Vaus(v) => v.read(),
             Self::Zapper(z) => z.read(),
-            Self::PowerPad(p) => p.read(),
+            Self::PowerPad(p) | Self::FamilyTrainer(p) => p.read(),
             Self::SnesMouse(m) => m.read(),
-            Self::FamilyKeyboard(k) => k.read(),
+            Self::FamilyKeyboard(k) | Self::SuborKeyboard(k) => k.read(),
+            Self::KonamiHyperShot(h) => h.read(),
+            Self::BandaiHyperShot(b) => b.read(),
         }
     }
 
@@ -880,9 +1099,11 @@ impl InputDevice {
         match self {
             Self::Vaus(v) => v.peek(),
             Self::Zapper(z) => z.read(),
-            Self::PowerPad(p) => p.peek(),
+            Self::PowerPad(p) | Self::FamilyTrainer(p) => p.peek(),
             Self::SnesMouse(m) => m.peek(),
-            Self::FamilyKeyboard(k) => k.peek(),
+            Self::FamilyKeyboard(k) | Self::SuborKeyboard(k) => k.peek(),
+            Self::KonamiHyperShot(h) => h.peek(),
+            Self::BandaiHyperShot(b) => b.peek(),
         }
     }
 }
@@ -1267,5 +1488,125 @@ mod tests {
         k.set_key(FAMILY_KEYBOARD_KEYS, true); // index == 72, out of range
         k.set_key(1000, true);
         assert_eq!(k.keys_raw(), [0; FAMILY_KEYBOARD_ROWS]);
+    }
+
+    // --- v1.3.0 Workstream F1 — niche peripheral aliases + Hyper Shots ---
+
+    #[test]
+    fn family_trainer_reuses_power_pad_scan() {
+        // The Family Trainer is layout-equivalent to the Power Pad: an identical
+        // PowerPadState must produce an identical serial readout through both
+        // InputDevice variants.
+        let mut pad = InputDevice::PowerPad(PowerPadState::new());
+        let mut mat = InputDevice::FamilyTrainer(PowerPadState::new());
+        if let (InputDevice::PowerPad(p), InputDevice::FamilyTrainer(m)) = (&mut pad, &mut mat) {
+            p.set(0b1010_0101_0011);
+            m.set(0b1010_0101_0011);
+        }
+        pad.write_strobe(1);
+        pad.write_strobe(0);
+        mat.write_strobe(1);
+        mat.write_strobe(0);
+        for i in 0..8 {
+            assert_eq!(pad.read(), mat.read(), "read {i}: trainer == power pad");
+        }
+    }
+
+    #[test]
+    fn subor_keyboard_reuses_family_keyboard_scan() {
+        // The Subor keyboard reuses the Family BASIC keyboard matrix scan; the
+        // same key state must read identically through both variants.
+        let mut fam = FamilyKeyboardState::new();
+        let mut sub = FamilyKeyboardState::new();
+        fam.set_key(8, true);
+        sub.set_key(8, true);
+        let mut famd = InputDevice::FamilyKeyboard(fam);
+        let mut subd = InputDevice::SuborKeyboard(sub);
+        // Enable + clock low (row 0), then rising edge -> row 1.
+        for v in [0b0000_0100u8, 0b0000_0110] {
+            famd.write_strobe(v);
+            subd.write_strobe(v);
+        }
+        assert_eq!(famd.read(), subd.read(), "subor == family keyboard read");
+        assert_eq!(famd.peek(), subd.peek());
+    }
+
+    #[test]
+    fn konami_hyper_shot_buttons_on_expected_bits() {
+        let mut h = KonamiHyperShotState::new();
+        // P1 Run (bit0) -> read bit 1; P2 Jump (bit3) -> read bit 4.
+        h.set(0b1001);
+        h.write_strobe(0); // enable both players (active-low)
+        let r = h.read();
+        assert_eq!(r & (1 << 1), 1 << 1, "P1 Run on bit 1");
+        assert_eq!(r & (1 << 4), 1 << 4, "P2 Jump on bit 4");
+        assert_eq!(r & (1 << 2), 0, "P1 Jump not pressed");
+        assert_eq!(r & (1 << 3), 0, "P2 Run not pressed");
+    }
+
+    #[test]
+    fn konami_hyper_shot_disabled_player_reads_zero() {
+        let mut h = KonamiHyperShotState::new();
+        h.set(0b1111); // all four buttons held
+        // Disable P1 (bit 1 set), enable P2 (bit 2 clear).
+        h.write_strobe(0b0000_0010);
+        let r = h.read();
+        assert_eq!(r & (1 << 1), 0, "disabled P1 Run reads 0");
+        assert_eq!(r & (1 << 2), 0, "disabled P1 Jump reads 0");
+        assert_eq!(r & (1 << 3), 1 << 3, "enabled P2 Run reads pressed");
+        assert_eq!(r & (1 << 4), 1 << 4, "enabled P2 Jump reads pressed");
+    }
+
+    #[test]
+    fn konami_hyper_shot_save_state_round_trip() {
+        let mut h = KonamiHyperShotState::new();
+        h.set(0b0110);
+        h.write_strobe(0b0000_0100); // disable P2
+        let r = KonamiHyperShotState::from_parts(
+            h.buttons_raw(),
+            h.p1_enabled_raw(),
+            h.p2_enabled_raw(),
+        );
+        assert_eq!(r.peek(), h.peek());
+        assert_eq!(r.buttons_raw(), 0b0110);
+    }
+
+    #[test]
+    fn bandai_hyper_shot_select_picks_sensor_group() {
+        let mut b = BandaiHyperShotState::new();
+        // Group A=0 = bits 0..=3 (Left Hook = bit 0), A=1 = bits 4..=7.
+        b.set(0b0001_0001); // Left Hook (group0) + Left Jab (group1)
+        b.write_strobe(0); // A=0 group
+        assert_eq!(b.read() & (1 << 1), 1 << 1, "group0 sensor 0 on bit 1");
+        b.write_strobe(0b0000_0010); // A=1 group
+        assert_eq!(b.read() & (1 << 1), 1 << 1, "group1 sensor 0 on bit 1");
+        // A sensor only in group0 must vanish when the A=1 group is selected.
+        let mut b2 = BandaiHyperShotState::new();
+        b2.set(0b0000_1000); // only group0 bit 3 (Right Hook)
+        b2.write_strobe(0b0000_0010); // select A=1
+        assert_eq!(b2.read() & 0b1_1110, 0, "group0-only sensor absent in A=1");
+    }
+
+    #[test]
+    fn bandai_hyper_shot_save_state_round_trip() {
+        let mut b = BandaiHyperShotState::new();
+        b.set(0b1100_0011);
+        b.write_strobe(0b0000_0010);
+        let r = BandaiHyperShotState::from_parts(b.sensors_raw(), b.select_raw());
+        assert_eq!(r.peek(), b.peek());
+        assert_eq!(r.sensors_raw(), 0b1100_0011);
+        assert!(r.select_raw());
+    }
+
+    #[test]
+    fn hyper_shots_dispatch_through_input_device() {
+        let mut k = InputDevice::KonamiHyperShot(KonamiHyperShotState::new());
+        k.write_strobe(0);
+        let _ = k.read();
+        let _ = k.peek();
+        let mut bd = InputDevice::BandaiHyperShot(BandaiHyperShotState::new());
+        bd.write_strobe(0);
+        let _ = bd.read();
+        let _ = bd.peek();
     }
 }

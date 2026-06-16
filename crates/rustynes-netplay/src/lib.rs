@@ -97,6 +97,7 @@
 
 // The portable session core: transport-agnostic, no `std::net`, compiles on
 // `wasm32-unknown-unknown` (the v2.5.0 Phase C wasm-compile gate).
+pub mod diagnostics;
 pub mod message;
 pub mod rng;
 pub mod session;
@@ -127,6 +128,7 @@ pub mod webrtc;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use connection::{ConnectionState, DisconnectReason, NetplayConnection, UdpTransport};
+pub use diagnostics::{CrcCompare, DesyncDiagnostics};
 #[cfg(not(target_arch = "wasm32"))]
 pub use mesh_net::{MeshError, MeshHost, MeshJoiner, UdpMeshTransport};
 pub use message::{NetMessage, PROTOCOL_VERSION, fnv1a64};

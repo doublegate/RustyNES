@@ -208,6 +208,10 @@ enum DeviceKind {
     PowerPad,
     SnesMouse,
     FamilyKeyboard,
+    FamilyTrainer,
+    SuborKeyboard,
+    KonamiHyperShot,
+    BandaiHyperShot,
 }
 
 trait DeviceKindExt {
@@ -222,6 +226,10 @@ impl DeviceKindExt for Nes {
             Some(InputDevice::PowerPad(_)) => Some(DeviceKind::PowerPad),
             Some(InputDevice::SnesMouse(_)) => Some(DeviceKind::SnesMouse),
             Some(InputDevice::FamilyKeyboard(_)) => Some(DeviceKind::FamilyKeyboard),
+            Some(InputDevice::FamilyTrainer(_)) => Some(DeviceKind::FamilyTrainer),
+            Some(InputDevice::SuborKeyboard(_)) => Some(DeviceKind::SuborKeyboard),
+            Some(InputDevice::KonamiHyperShot(_)) => Some(DeviceKind::KonamiHyperShot),
+            Some(InputDevice::BandaiHyperShot(_)) => Some(DeviceKind::BandaiHyperShot),
             None => None,
         }
     }
@@ -235,4 +243,9 @@ fn input_device_state_types_constructible() {
     let _ = InputDevice::PowerPad(rustynes_core::PowerPadState::new());
     let _ = InputDevice::SnesMouse(rustynes_core::SnesMouseState::new());
     let _ = InputDevice::FamilyKeyboard(rustynes_core::FamilyKeyboardState::new());
+    // v1.3.0 Workstream F1 — the niche peripheral aliases + Hyper Shots.
+    let _ = InputDevice::FamilyTrainer(rustynes_core::PowerPadState::new());
+    let _ = InputDevice::SuborKeyboard(rustynes_core::FamilyKeyboardState::new());
+    let _ = InputDevice::KonamiHyperShot(rustynes_core::KonamiHyperShotState::new());
+    let _ = InputDevice::BandaiHyperShot(rustynes_core::BandaiHyperShotState::new());
 }

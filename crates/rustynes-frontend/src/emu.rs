@@ -149,6 +149,16 @@ pub struct FrameInputs {
     /// Family BASIC keyboard. All-zero (no keys) by default = byte-identical.
     #[cfg(not(target_arch = "wasm32"))]
     pub family_keyboard: [u8; 9],
+    /// v1.3.0 Workstream F1 — Konami Hyper Shot button mask (bit 0 = P1 Run,
+    /// 1 = P1 Jump, 2 = P2 Run, 3 = P2 Jump). Consumed only when the expansion
+    /// device is a Konami Hyper Shot. 0 by default = byte-identical latch.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub konami_hyper_shot: u8,
+    /// v1.3.0 Workstream F1 — Bandai Hyper Shot sensor mask (bits 0..=3 = the
+    /// A=0 group, 4..=7 = the A=1 group). Consumed only when the expansion
+    /// device is a Bandai Hyper Shot. 0 by default = byte-identical latch.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub bandai_hyper_shot: u8,
 }
 
 /// v1.1.0 beta.1 (T-110-B2) — apply turbo/autofire to one port's buttons.
@@ -373,6 +383,18 @@ impl EmuCore {
                     }
                     ExpansionDevice::FamilyKeyboard => {
                         nes.set_family_keyboard(1, inputs.family_keyboard);
+                    }
+                    ExpansionDevice::FamilyTrainer => {
+                        nes.set_family_trainer(1, inputs.power_pad);
+                    }
+                    ExpansionDevice::SuborKeyboard => {
+                        nes.set_subor_keyboard(1, inputs.family_keyboard);
+                    }
+                    ExpansionDevice::KonamiHyperShot => {
+                        nes.set_konami_hyper_shot(1, inputs.konami_hyper_shot);
+                    }
+                    ExpansionDevice::BandaiHyperShot => {
+                        nes.set_bandai_hyper_shot(1, inputs.bandai_hyper_shot);
                     }
                 }
             }

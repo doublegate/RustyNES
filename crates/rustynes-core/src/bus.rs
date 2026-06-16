@@ -1300,6 +1300,66 @@ impl LockstepBus {
         }
     }
 
+    /// v1.3.0 Workstream F1 — update an attached Family Trainer mat's 12-button
+    /// mask on `port`. No-op if the attached device is not a Family Trainer.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `port` is not in `0..=1`.
+    pub const fn set_family_trainer(&mut self, port: usize, buttons: u16) {
+        assert!(port < 2, "family trainer port must be 0..=1");
+        if let Some(crate::input_device::InputDevice::FamilyTrainer(p)) =
+            &mut self.expansion_device[port]
+        {
+            p.set(buttons);
+        }
+    }
+
+    /// v1.3.0 Workstream F1 — update an attached Subor keyboard's pressed-key
+    /// bitmap on `port`. No-op if the attached device is not a Subor keyboard.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `port` is not in `0..=1`.
+    pub const fn set_subor_keyboard(&mut self, port: usize, keys: [u8; 9]) {
+        assert!(port < 2, "subor keyboard port must be 0..=1");
+        if let Some(crate::input_device::InputDevice::SuborKeyboard(k)) =
+            &mut self.expansion_device[port]
+        {
+            k.set_keys(keys);
+        }
+    }
+
+    /// v1.3.0 Workstream F1 — update an attached Konami Hyper Shot's 4-button
+    /// mask on `port`. No-op if the attached device is not a Konami Hyper Shot.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `port` is not in `0..=1`.
+    pub const fn set_konami_hyper_shot(&mut self, port: usize, buttons: u8) {
+        assert!(port < 2, "konami hyper shot port must be 0..=1");
+        if let Some(crate::input_device::InputDevice::KonamiHyperShot(h)) =
+            &mut self.expansion_device[port]
+        {
+            h.set(buttons);
+        }
+    }
+
+    /// v1.3.0 Workstream F1 — update an attached Bandai Hyper Shot's 8-sensor
+    /// mask on `port`. No-op if the attached device is not a Bandai Hyper Shot.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `port` is not in `0..=1`.
+    pub const fn set_bandai_hyper_shot(&mut self, port: usize, sensors: u8) {
+        assert!(port < 2, "bandai hyper shot port must be 0..=1");
+        if let Some(crate::input_device::InputDevice::BandaiHyperShot(b)) =
+            &mut self.expansion_device[port]
+        {
+            b.set(sensors);
+        }
+    }
+
     /// v1.1.0 beta.1 (T-110-B4) — set (`Some`) or clear (`None`) the per-game
     /// nametable mirroring override. A frontend load-time correction; `None`
     /// (default) defers to the mapper (byte-identical).

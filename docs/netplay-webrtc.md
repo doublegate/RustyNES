@@ -371,6 +371,17 @@ for anything beyond a quick test.
 | Configurable signaling URL + ICE/STUN list plumbed into `BrowserNetplay::connect` | Build + `wasm_lobby` unit tests |
 | Deploy bundle (signaling + Caddy TLS + coturn) builds + is turn-key | `deploy/` Docker images; `.env`-driven, no source edits to deploy |
 | Live STUN round-trip | `#[ignore]`d manual probe — **confirmed working live** against `stun.l.google.com`; kept ignored because CI may be sandboxed |
+| Desync-diagnostics capture (CRC-match history, first-desync frame, consecutive-mismatch counter) | Unit tests (`rustynes-netplay::diagnostics`) — synthetic CRC sequences; observational only (does not affect the rollback algorithm) |
+
+**Debugging aid (v1.3.0 Workstream G1).** When a session desyncs, the native
+Netplay panel's read-only **Diagnostics** section surfaces a GeraNES-style
+`DesyncMonitor`: the room / input topology (which peer drives which controller
+port), the in-sync / desynced-at-frame-N status, lifetime checksum-compare +
+mismatch counts, the consecutive-mismatch counter, the most recent local-vs-
+remote CRC (classified as a timing/cycle divergence when the framebuffer hashes
+match, else a state divergence), and a rolling CRC-match history. It reads the
+confirmed-frame digests the session already exchanges (`NetMessage::Checksum`)
+and never feeds back into the rollback — pure telemetry, determinism intact.
 
 **Pending (deployment-ready, NOT verified — the maintainer's manual run):**
 

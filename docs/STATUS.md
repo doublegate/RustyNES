@@ -38,7 +38,14 @@ v1.0.0 core baseline:
   deferral**: there is no committable DualSystem test-ROM oracle, so correctness
   can't be regression-gated (see `docs/audit/vs-dualsystem-design-2026-06-11.md`).
 - **Rollback netplay** — GGPO-style 2-4 player over UDP (native) and WebRTC
-  (browser), live-verified two-instance sessions.
+  (browser), live-verified two-instance sessions. As of v1.3.0 (Workstream G1)
+  the netplay panel surfaces a read-only **desync-diagnostics** section (a
+  `GeraNES`-style `DesyncMonitor`): the room / input topology (who drives which
+  port), the in-sync / desynced-at-frame-N status, lifetime checksum-compare +
+  mismatch counts, the consecutive-mismatch counter, the most recent local-vs-
+  remote CRC, and a rolling CRC-match history. It is purely observational — it
+  reads the digests the session already exchanges and never feeds back into the
+  rollback algorithm, so the determinism contract is intact.
 - **RetroAchievements** — achievements, leaderboards, rich presence, hardcore
   mode via the canonical `rcheevos` library (opt-in, native).
 - **TAS movie recording/playback** — deterministic `.rnm` record/replay with

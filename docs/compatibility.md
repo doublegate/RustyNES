@@ -255,7 +255,8 @@ This section supersedes the early "Out-of-scope" list above where they disagree
   no analog seek timing. nesdev `FDS*` is the primary source; Mesen2
   `Core/NES/Mappers/FDS/` is a structural-only (GPL-3.0) reference.
 - **Input devices — standard pad + Four Score + Zapper + Vaus + Power Pad + SNES
-  mouse + Family BASIC keyboard.** The **Four Score** 4-player adapter is
+  mouse + Family BASIC keyboard + Family Trainer + Subor keyboard + Konami /
+  Bandai Hyper Shot.** The **Four Score** 4-player adapter is
   supported. Also supported: the **Arkanoid Vaus paddle** (`Nes::set_paddle`,
   game-ROM-verified against `vaus-test`; selectable on either port), the
   **Zapper** light gun (`Nes::set_zapper`, framebuffer-luma light-detect,
@@ -273,9 +274,19 @@ This section supersedes the early "Out-of-scope" list above where they disagree
   rebindable mat keys are a follow-up. v1.2.0 Workstream D: SNES mouse + Family
   BASIC keyboard added, both selectable as the player-2 device; the Family BASIC
   keyboard uses a direct host-key passthrough rather than a faithful positional
-  layout — a per-key positional map is a follow-up.) Konami / Bandai Hyper Shot,
-  the Family Trainer (≈ Power Pad), the Subor keyboard (≈ Family BASIC), the
-  microphone, and DMC-DMA controller-bit corruption remain deferred.
+  layout — a per-key positional map is a follow-up. v1.3.0 Workstream F1 added
+  the niche peripheral aliases + simple Hyper Shots: the **Family Trainer**
+  (`Nes::set_family_trainer`) — layout-equivalent to the Power Pad, reusing its
+  12-button scan; the **Subor keyboard** (`Nes::set_subor_keyboard`) — a Family
+  BASIC keyboard work-alike reusing the 9×8 matrix scan; the **Konami Hyper
+  Shot** (`Nes::set_konami_hyper_shot`, the 4-button 2-player Run/Jump parallel
+  read with `$4016` per-player enable, unit-verified against the `NESdev`
+  "Konami Hyper Shot" page); and the **Bandai Hyper Shot** / Exciting Boxing
+  punching bag (`Nes::set_bandai_hyper_shot`, the 8-sensor `$4016`-bit-1-
+  multiplexed read, unit-verified against the `NESdev` "Exciting Boxing Punching
+  Bag" page). All are additive, default-off `InputDevice` overlays, so
+  `ExpansionDevice::None` keeps every read byte-identical.) The microphone and
+  DMC-DMA controller-bit corruption remain deferred.
 - **Vs. System / PlayChoice-10 (2C03/04/05 RGB PPUs) — game-verified.**
   RGB palette tables + 2C05 register quirks + NES 2.0 byte-13 parsing + Vs.
   DIP/coin inputs; **mappers 99 + 151 game-verify in-game RGB** (Vs.

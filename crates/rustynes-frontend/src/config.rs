@@ -248,6 +248,21 @@ pub enum ExpansionDevice {
     /// Famicom Family BASIC keyboard (v1.2.0 Workstream D). Host keys map to the
     /// 72-key matrix via `input::family_keyboard_index`.
     FamilyKeyboard,
+    /// Bandai Family Trainer mat (v1.3.0 Workstream F1) — layout-equivalent to
+    /// the Power Pad; reuses the same 12-button matrix scan (keys per
+    /// `input::POWER_PAD_KEYS`).
+    FamilyTrainer,
+    /// Subor keyboard (v1.3.0 Workstream F1) — a Family BASIC keyboard
+    /// work-alike; reuses the same 72-key matrix (keys per
+    /// `input::family_keyboard_index`).
+    SuborKeyboard,
+    /// Konami Hyper Shot (v1.3.0 Workstream F1) — a 4-button (2-player Run/Jump)
+    /// expansion controller (keys per `input::KONAMI_HYPER_SHOT_KEYS`).
+    KonamiHyperShot,
+    /// Bandai Hyper Shot / Exciting Boxing punching bag (v1.3.0 Workstream F1) —
+    /// an 8-sensor expansion controller (keys per
+    /// `input::BANDAI_HYPER_SHOT_KEYS`).
+    BandaiHyperShot,
 }
 
 impl Default for InputConfig {

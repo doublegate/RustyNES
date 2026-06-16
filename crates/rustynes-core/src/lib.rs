@@ -48,7 +48,8 @@ pub use controller::{Buttons, Controller};
 pub use debug::{ApuDebugView, CpuDebugView, MapperDebugView, PpuDebugView};
 pub use genie::{GenieCode, GenieError};
 pub use input_device::{
-    FamilyKeyboardState, InputDevice, PowerPadState, SnesMouseState, VausState, ZapperState,
+    BandaiHyperShotState, FamilyKeyboardState, InputDevice, KonamiHyperShotState, PowerPadState,
+    SnesMouseState, VausState, ZapperState,
 };
 pub use movie::{
     BYTES_PER_FRAME, FrameInput, MOVIE_FORMAT_VERSION, MOVIE_MAGIC, Movie, MovieError, MoviePlayer,

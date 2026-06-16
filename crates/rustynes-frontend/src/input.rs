@@ -654,6 +654,16 @@ pub struct InputState {
     /// button `i+1`, 0..=11), driven by [`POWER_PAD_KEYS`]. Only consumed when a
     /// Power Pad is the configured player-2 expansion device.
     power_pad: u16,
+    /// v1.3.0 Workstream F1 — Konami Hyper Shot button mask (bit 0 = P1 Run,
+    /// 1 = P1 Jump, 2 = P2 Run, 3 = P2 Jump), driven by
+    /// [`KONAMI_HYPER_SHOT_KEYS`]. Only consumed when a Konami Hyper Shot is the
+    /// configured expansion device.
+    konami_hyper_shot: u8,
+    /// v1.3.0 Workstream F1 — Bandai Hyper Shot sensor mask (bits 0..=3 = the
+    /// A=0 group, bits 4..=7 = the A=1 group), driven by
+    /// [`BANDAI_HYPER_SHOT_KEYS`]. Only consumed when a Bandai Hyper Shot is the
+    /// configured expansion device.
+    bandai_hyper_shot: u8,
 }
 
 /// v1.1.0 beta.1 (T-110-B1) — default keyboard mapping for the 12 Power Pad mat
@@ -679,6 +689,36 @@ pub const POWER_PAD_KEYS: [KeyCode; 12] = [
     KeyCode::KeyS,
     KeyCode::KeyD,
     KeyCode::KeyF,
+];
+
+/// v1.3.0 Workstream F1 — default keyboard mapping for the 4 Konami Hyper Shot
+/// buttons (index = bit: 0 = P1 Run, 1 = P1 Jump, 2 = P2 Run, 3 = P2 Jump).
+///
+/// `G`/`H` drive player 1 (Run/Jump), `J`/`K` drive player 2. Fixed for now
+/// (rebindable is a follow-up); chosen to avoid the P1/P2 controller + system
+/// keys. Only consumed when the Konami Hyper Shot is the active expansion device,
+/// so any overlap with other device keys is harmless.
+pub const KONAMI_HYPER_SHOT_KEYS: [KeyCode; 4] =
+    [KeyCode::KeyG, KeyCode::KeyH, KeyCode::KeyJ, KeyCode::KeyK];
+
+/// v1.3.0 Workstream F1 — default keyboard mapping for the 8 Bandai Hyper Shot
+/// (Exciting Boxing punching-bag) sensors.
+///
+/// Indices 0..=3 are the A=0 group (Left Hook, Move Right, Move Left, Right
+/// Hook); 4..=7 the A=1 group (Left Jab, Body, Right Jab, Straight). A 2×4
+/// cluster `1 2 3 4` / `5 6 7 8`.
+///
+/// Fixed for now; only consumed when the Bandai Hyper Shot is the active
+/// expansion device.
+pub const BANDAI_HYPER_SHOT_KEYS: [KeyCode; 8] = [
+    KeyCode::Digit1,
+    KeyCode::Digit2,
+    KeyCode::Digit3,
+    KeyCode::Digit4,
+    KeyCode::Digit5,
+    KeyCode::Digit6,
+    KeyCode::Digit7,
+    KeyCode::Digit8,
 ];
 
 /// v1.2.0 Workstream D — host-key -> Family BASIC keyboard matrix-index map.
@@ -779,6 +819,8 @@ impl InputState {
             rewind_held: false,
             fast_forward_held: false,
             power_pad: 0,
+            konami_hyper_shot: 0,
+            bandai_hyper_shot: 0,
         }
     }
 
@@ -823,6 +865,22 @@ impl InputState {
     #[must_use]
     pub const fn power_pad(&self) -> u16 {
         self.power_pad
+    }
+
+    /// v1.3.0 Workstream F1 — the current Konami Hyper Shot button mask (bit 0 =
+    /// P1 Run, 1 = P1 Jump, 2 = P2 Run, 3 = P2 Jump). Fed to the device only
+    /// when a Konami Hyper Shot is the configured expansion device.
+    #[must_use]
+    pub const fn konami_hyper_shot(&self) -> u8 {
+        self.konami_hyper_shot
+    }
+
+    /// v1.3.0 Workstream F1 — the current Bandai Hyper Shot sensor mask (bits
+    /// 0..=3 = A=0 group, 4..=7 = A=1 group). Fed to the device only when a
+    /// Bandai Hyper Shot is the configured expansion device.
+    #[must_use]
+    pub const fn bandai_hyper_shot(&self) -> u8 {
+        self.bandai_hyper_shot
     }
 
     /// Currently-held player-1 buttons (keyboard OR gamepad OR stick).
@@ -952,6 +1010,26 @@ impl InputState {
                 self.power_pad |= bit;
             } else {
                 self.power_pad &= !bit;
+            }
+        }
+
+        // v1.3.0 Workstream F1 — Konami / Bandai Hyper Shot masks (fixed default
+        // keys). Tracked unconditionally; only consumed when the matching device
+        // is the active expansion device, so the no-device path is byte-identical.
+        if let Some(i) = KONAMI_HYPER_SHOT_KEYS.iter().position(|&k| k == code) {
+            let bit = 1u8 << i;
+            if pressed {
+                self.konami_hyper_shot |= bit;
+            } else {
+                self.konami_hyper_shot &= !bit;
+            }
+        }
+        if let Some(i) = BANDAI_HYPER_SHOT_KEYS.iter().position(|&k| k == code) {
+            let bit = 1u8 << i;
+            if pressed {
+                self.bandai_hyper_shot |= bit;
+            } else {
+                self.bandai_hyper_shot &= !bit;
             }
         }
 

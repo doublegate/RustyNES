@@ -50,6 +50,7 @@
 
 use rustynes_core::{Buttons, Nes};
 
+use crate::diagnostics::DesyncDiagnostics;
 use crate::message::{NetMessage, fnv1a64};
 use crate::transport::Transport;
 
@@ -255,6 +256,13 @@ pub struct RollbackSession<T: Transport> {
     /// harness to inspect; a production build would keep only a sliding window
     /// (see the Stage 2/3 handoff). `confirmed_entering[f]`.
     confirmed_entering: Vec<Option<u64>>,
+
+    /// Observational desync telemetry (v1.3.0 Workstream G1). Records every
+    /// confirmed-frame checksum comparison — match or mismatch — for the
+    /// frontend's `DesyncMonitor`-style panel. It only reads the digests the
+    /// session already computes and exchanges, never feeding back into the
+    /// rollback algorithm, so it cannot perturb determinism or correctness.
+    diagnostics: DesyncDiagnostics,
 }
 
 impl<T: Transport> RollbackSession<T> {
@@ -293,6 +301,7 @@ impl<T: Transport> RollbackSession<T> {
             remote_checksums: Vec::new(),
             checkpoint: None,
             confirmed_entering: Vec::new(),
+            diagnostics: DesyncDiagnostics::new(),
         };
         // GGPO input-delay convention: the first `input_delay` frames have no
         // buffered local input, so they run with "no buttons" and are
@@ -372,14 +381,25 @@ impl<T: Transport> RollbackSession<T> {
         self.synced
     }
 
+    /// This peer's player index (`0..num_players`): which controller port this
+    /// peer drives (0 = P1 / `$4016`, 1 = P2 / `$4017`, 2/3 = Four Score). For
+    /// the netplay panel's input-topology display.
+    #[must_use]
+    pub const fn local_player(&self) -> u8 {
+        self.config.local_player
+    }
+
+    /// Borrow the read-only desync diagnostics (CRC-match history, first-desync
+    /// frame, consecutive-mismatch count, last local-vs-remote CRC). Surfaced by
+    /// the frontend netplay panel (v1.3.0 Workstream G1).
+    #[must_use]
+    pub const fn diagnostics(&self) -> &DesyncDiagnostics {
+        &self.diagnostics
+    }
+
     /// Borrow the transport (e.g. to inspect link stats). Mainly for tests.
     pub const fn transport(&self) -> &T {
         &self.transport
-    }
-
-    /// The local player's index (`0..num_players`).
-    const fn local_player(&self) -> u8 {
-        self.config.local_player
     }
 
     /// Record the local player's input for the frame it will apply to
@@ -601,15 +621,21 @@ impl<T: Transport> RollbackSession<T> {
                     // stored value is re-checked once we confirm the frame
                     // (see `advance` after `recompute_confirmed`).
                     self.remote_checksums[frame as usize] = Some((hash, fb_hash));
-                    if let Some((local, local_fb)) = self.confirmed_hashes[frame as usize]
-                        && local != hash
-                    {
-                        return Err(NetplayError::Desync {
-                            frame,
-                            local,
-                            remote: hash,
-                            same_framebuffer: local_fb == fb_hash,
-                        });
+                    if let Some((local, local_fb)) = self.confirmed_hashes[frame as usize] {
+                        // Observational: record the compare (match or mismatch)
+                        // before any fatal exit. The remote slot is cleared so
+                        // the deferred pass does not re-record the same frame.
+                        self.diagnostics
+                            .record(frame, local, hash, local_fb, fb_hash);
+                        self.remote_checksums[frame as usize] = None;
+                        if local != hash {
+                            return Err(NetplayError::Desync {
+                                frame,
+                                local,
+                                remote: hash,
+                                same_framebuffer: local_fb == fb_hash,
+                            });
+                        }
                     }
                     let _ = nes;
                 }
@@ -814,6 +840,10 @@ impl<T: Transport> RollbackSession<T> {
                 self.remote_checksums[f as usize] = None;
                 let (local_combined, local_fb) = local;
                 let (remote_combined, remote_fb) = remote;
+                // Observational: record the compare (match or mismatch) before
+                // any fatal exit.
+                self.diagnostics
+                    .record(f, local_combined, remote_combined, local_fb, remote_fb);
                 if local_combined != remote_combined {
                     return Err(NetplayError::Desync {
                         frame: f,
