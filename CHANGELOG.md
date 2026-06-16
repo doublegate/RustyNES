@@ -15,12 +15,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Work toward **v1.2.0 "Curator"** (beta.1-2, Workstreams A + B + C + D + E + H).
+Work toward **v1.2.0 "Curator"** (beta.1-3, Workstreams A + B + C + D + E + F + G + H).
 See `docs/adr/0011-mapper-tiering.md`,
+`docs/adr/0012-wasm-lua-piccolo-backend.md`,
 `docs/adr/0013-composable-shader-stack.md`, and the v1.2.0 plan.
 
 ### Added
 
+- **PGO / BOLT CI promotion gate** (v1.2.0 Workstream G — performance
+  infrastructure, no core behavior change). A new manual-/release-only
+  `.github/workflows/pgo.yml` (`PGO`) gates the previously-unused
+  `scripts/pgo/run.sh` recipe into CI. Triggered by `workflow_dispatch` (with
+  optional `frames` / `run_bolt` inputs) and on push of a release tag (`v*`) —
+  never per-PR (the instrument + train + rebuild cycle is too slow for the PR
+  gate). It builds the plain-release `full_frame` baseline, runs the PGO recipe
+  (instrument → train on the seven committed CC0/MIT ROMs → optimized rebuild),
+  re-benches, and **promotes the PGO binary only when BOTH** (a) it beats plain
+  release by **> 3%** on the `full_frame` Criterion mean (same-runner A/B) AND
+  (b) the full `--features test-roms` oracle — AccuracyCoin 139/139, `nestest`
+  0-diff, blargg/kevtris, golden-framebuffer `visual_regression`, the APU
+  mixer/volume audio suites — is **byte-identical under the PGO codegen**
+  (`cargo pgo optimize test`). An optional Linux-only `bolt` job runs behind the
+  same gate (best-effort; skips cleanly when `llvm-bolt` is unavailable). A
+  failed gate is informational and never blocks a release. Documented in
+  `docs/performance.md` §"Profile-guided optimization (PGO)". No Rust changed;
+  the shipped/wasm/`no_std` builds are unaffected.
+- **Experimental wasm Lua scripting via a piccolo backend** (v1.2.0 Workstream
+  F4; default OFF, behind the new `script-wasm` feature; see
+  `docs/adr/0012-wasm-lua-piccolo-backend.md`). `rustynes-script` now sits behind
+  a `VmBackend` trait with two compile-time-selected backends: the native
+  **mlua** Lua 5.4 engine (the crate-default `mlua-backend` feature, what the
+  frontend's `scripting` feature pulls in — **byte-identical to v1.1.0**) and an
+  experimental pure-Rust **piccolo** VM that compiles to
+  `wasm32-unknown-unknown` with no C toolchain. piccolo's `Fuel` maps onto the
+  per-frame instruction budget. On wasm the engine is loadable from the browser
+  (`rustynes_load_script` / `rustynes_stop_script` JS bridge) and supports
+  `emu.onFrame`, `emu.read`/`peek`/`readRange`, `emu.cpu`/`frame`/`cycle`,
+  `emu.log` + `print`, the overlay draws, and gated `emu.write`. It is
+  **explicitly NOT byte-parity** with the native mlua engine (a different VM) —
+  acceptable because scripts are observational/overlay + gated writes and are
+  never part of the framebuffer/audio determinism oracle. The per-access
+  (`onExec`/`onRead`/`onWrite`) and per-interrupt (`onNmi`/`onIrq`) replay
+  callbacks are a documented native-only limitation (registered as no-ops on
+  piccolo). All native builds — shipped, the default wasm flavours, and the
+  `no_std` chip stack — are byte-identical to before (piccolo is never pulled
+  unless `script-wasm` is explicitly enabled). The native 13-test
+  `rustynes-script` suite is unchanged; the piccolo backend adds 4
+  backend-specific tests (deferred-write-lands, deferred-write-gated,
+  fuel-budget, native-only-callbacks-are-no-ops).
+- **Web/wasm input parity — on-screen touch controls + Power Pad** (v1.2.0
+  Workstream F1 + F2). The browser build gains a translucent Pointer-Events
+  touch overlay (pure DOM/CSS in `web/index.html`, zero Rust binary weight
+  beyond the new `web-sys` pointer/touch feature flags): an on-screen D-pad /
+  A / B / Start / Select with multi-touch + pointer-capture handling, a
+  selectable target **port** (player 1-4, for Four Score), and a 12-button
+  **Power Pad** mat. The overlay drives a shared `wasm_touch` thread-local
+  bridge that BOTH wasm frontends read at the SAME deterministic late-latch a
+  keypress uses — the `wasm-canvas` embed folds it into the per-frame
+  `set_buttons` / `set_power_pad` call, and the `wasm-winit` path ORs it into
+  `FrameInputs` so it flows through `EmuCore::latch` exactly like a keyboard
+  bit. Touch input is therefore recorded/replayed identically by TAS movies +
+  netplay and adds no new determinism surface. The native Power Pad latch arm
+  (previously `cfg(not(wasm32))`-gated behind the mouse/cursor block) is
+  narrowed so the Power Pad — which needs only a `u16` mask — also feeds on
+  wasm; Zapper / Vaus stay native-gated. The native build is byte-identical
+  (all touch state is wasm-only). On-device touch UX needs a browser on a
+  touch device to verify.
 - **Menu-bar responsiveness — per-item contextual enable/disable** (v1.2.0
   Workstream H, H1; GeraNES `MenuUI.inl`-inspired). Menu items now grey out
   when the action would be a no-op or unsafe in the current state, instead of
@@ -47,15 +107,20 @@ See `docs/adr/0011-mapper-tiering.md`,
   `#[serde(default)]`, so existing configs and the default build are
   byte-identical (a new `shortcut_registry_defaults_are_byte_identical` test
   pins this).
-
-#### Deferred to a follow-up
-
-- **Menu icons** (v1.2.0 Workstream H, H3). FontAwesome-style glyphs next to
-  menu items (GeraNES `withMenuIcon`) were evaluated and **deferred**: the
-  project ships no icon font, and bundling one (FontAwesome `.ttf` /
-  `egui_phosphor`) adds hundreds of KB against the 5 MiB gzip wasm-deploy
-  budget (`scripts/wasm_size_budget.sh`) for a purely cosmetic gain. H1 + H2
-  ship without it.
+- **Menu icons** (v1.2.0 Workstream H, H3; GeraNES `withMenuIcon`). Font Awesome
+  6 Free **Solid** glyphs now precede every top-level menu (File / Emulation /
+  Tools / Mod / View / Debug / Help) and their items, alongside the H1
+  enable/disable state and H2 accelerator labels. The icon font
+  (`assets/fonts/fa-solid-900.ttf`, SIL OFL-1.1, license shipped beside it) is
+  embedded via `include_bytes!` and registered with egui as a trailing fallback
+  family, so ordinary UI text is untouched and any missing glyph degrades to a
+  box rather than crashing (`crate::icons`). Measured against
+  `scripts/wasm_size_budget.sh`, the full font **fit** the 5 MiB gzip wasm-deploy
+  budget (total 2.78 MiB gzip, 2.22 MiB headroom; ~13 KB gzip added), so the
+  **same full font ships on native and both wasm flavours** — no per-target
+  subsetting was needed. The lightweight `wasm-canvas` embed has no egui menu and
+  is unaffected. Pure UI; the core and the `MenuAction` dispatch set are
+  unchanged.
 
 - **Mapper accuracy tiering** (v1.2.0 Workstream A). Every supported mapper
   family is now classified `Core` / `Curated` / `BestEffort` by a single
@@ -220,8 +285,62 @@ See `docs/adr/0011-mapper-tiering.md`,
   0-diff + blargg / kevtris stay green; the no_std chip stack still cross-compiles
   to `thumbv7em-none-eabihf`.
 
+### Changed
+
+- **Hosted browser-netplay deploy made turn-key + honest** (v1.2.0 Workstream
+  F3, deploy + verify-prep). The existing `deploy/` bundle (signaling server +
+  Caddy TLS proxy + coturn STUN/TURN) is now deployable with no source edits:
+  the `Dockerfile` builds the correct `rustynes-netplay` crate (was a stale
+  `nes-netplay`), a workspace-root `.dockerignore` (referenced but previously
+  missing) keeps `target/` + ROMs + docs out of the image context, and the
+  per-deploy values (`DOMAIN`, `TURN_USER`/`TURN_SECRET`/`TURN_REALM`) come from
+  a `.env` (new `deploy/.env.example` template; coturn credential/realm injected
+  as CLI flags from env so `turnserver.conf` carries no checked-in secret). All
+  stale `RustyNES v2` / `nes-frontend` references scrubbed; `README.md` now uses
+  clearly-placeholder values (`signaling.example.com`, `TURN_SECRET=changeme`).
+  `docs/netplay-webrtc.md` §3.4/§4 flipped from "Pending" to
+  **deployment-ready; live verification pending the maintainer's hosted run**
+  (explicitly **not** "Verified"), and a copy-pasteable **manual verification
+  checklist** (2-tab → 2-machine → 4-player matrix + ops/DNS/TLS steps + the
+  TURN-bandwidth ops caveat) added to `deploy/README.md`. Documented that
+  browser netplay needs **no COOP/COEP / SharedArrayBuffer** (DataChannel +
+  AudioWorklet). Docs/deploy only — no Rust changes; the `[netplay]`
+  `signaling_url` / `stun_servers` config defaults were already correct and stay
+  byte-identical. Live multi-browser netplay verification remains the
+  maintainer's manual step (not run here).
+
 ### Fixed
 
+- **PR #75 review hardening (beta.2 bot-review follow-up).** Adopted the
+  worthwhile bot-review findings from the merged beta.2 PR:
+  - *Security (path traversal):* HD-pack replacement-image filenames parsed
+    from `hires.txt` are now sanitised (`hdpack::sanitize_image_name`) — a
+    malicious pack can no longer reference `../../etc/passwd`, an absolute path,
+    or any path with separators / drive prefixes to escape the pack directory;
+    such rules are rejected.
+  - *Security (zip bomb / OOM):* `hdpack::read_zip_entry` now caps a single
+    archive entry at 64 MiB (declared size **and** actual read bounded),
+    matching `app.rs::extract_rom_from_zip`.
+  - *Panic guard:* `SnesMouseState::enc_axis` no longer panics on `i16::MIN`
+    (used `unsigned_abs` instead of the overflowing `-v`).
+  - *Save-state robustness:* `FamilyKeyboardState::from_parts` clamps a restored
+    `row` to the matrix bound, so a corrupt/malicious save-state cannot drive an
+    out-of-bounds index in `read()`.
+  - *Lock discipline:* the HD compositor's CPU-heavy upscale/tile-hash/blit now
+    runs **after** the emu lock is dropped — only the framebuffer, PPU
+    tile-source telemetry, and the 8 KiB CHR pattern space are snapshotted under
+    the lock.
+  - *Replay-lock consistency:* the Load-State **hotkey** and `MenuAction`
+    dispatch now honour the same movie-record/playback lock the File menu greys
+    the item under (previously bypassable via the bound key).
+  - *Perf (default path):* the Bisqwit NTSC WGSL skips the per-fragment
+    `cos()`/`sin()` hue rotation when `hue == 0` (the default), keeping the
+    default present byte-identical (the C1 `default_knobs_match_legacy_matrix`
+    guard still passes).
+  - *Docs:* corrected the `InputDevice::FamilyKeyboard` doc reference
+    (`input::family_keyboard_index`, not a nonexistent `FAMILY_KEYBOARD_KEYMAP`)
+    and the `hash_tile` doc to state it hashes raw unflipped CHR bytes (it does
+    not consult `flip_h`/`flip_v`).
 - **SMB3 (and any MMC3/other game using a mid-scanline `$2001` split) — sprite
   flicker.** The PPU OAM-row-corruption model keyed the corrupted row off the
   raw PPU dot (`dot >> 1`), so *Super Mario Bros. 3*'s mid-scanline rendering

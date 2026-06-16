@@ -182,10 +182,72 @@ instrumented build → headless training sweep (`pgo_trainer` runs the
 committed ROM corpus + any user dumps in `tests/roms/external/PGOGames/`
 uncapped with scripted Start-button input, ~3600 frames each) →
 `cargo pgo optimize build -- -p rustynes-frontend`. Prereqs: `cargo install
-cargo-pgo` + `rustup component add llvm-tools-preview`. Measure with the
-criterion baselines before adopting; wire into release CI only if it
-proves >3% and stable (`cargo pgo bolt` chains BOLT on Linux for a
-possible extra ~2%).
+cargo-pgo` + `rustup component add llvm-tools-preview`. The training corpus is
+the seven committed CC0/MIT ROMs (`nestest`, `flowing_palette`, `oam_stress`,
+`db_apu`, `AccuracyCoin`, the MMC1/MMC3 `holy_mapperel` boards) — see the
+`COMMITTED` list in `crates/rustynes-test-harness/src/bin/pgo_trainer.rs`.
+
+#### CI promotion gate — `.github/workflows/pgo.yml`
+
+The recipe is gated into a **manual-/release-only** workflow (`PGO`), NOT the
+per-PR pipeline: an instrument + train + optimized-rebuild cycle compiles the
+workspace twice plus a multi-ROM sweep, far too slow for the PR gate (that's the
+fast absolute-ceiling `bench` job in `ci.yml`). The `PGO` workflow triggers on
+**`workflow_dispatch`** (Actions tab → *Run workflow*; optional `frames` and
+`run_bolt` inputs) and on **push of a release tag (`v*`)**.
+
+Its stages:
+
+1. **Baseline** — `cargo bench -p rustynes-core --bench full_frame` saved as the
+   `plain` Criterion baseline.
+2. **PGO build** — runs `scripts/pgo/run.sh` (instrument → train → optimized
+   rebuild of `rustynes-frontend`).
+3. **PGO bench** — re-runs `full_frame` with the merged profile applied, saved
+   as the `pgo` baseline, A/B'd against `plain` on the **same runner** back to
+   back.
+4. **Determinism oracle** — rebuilds + runs the full `--features test-roms`
+   suite with the PGO codegen applied (`cargo pgo optimize test`):
+   AccuracyCoin 139/139, `nestest` golden-log 0-diff, blargg/kevtris, the
+   golden-framebuffer `visual_regression` suite, and the APU mixer/volume audio
+   suites — all assert byte-exact framebuffer/audio/cycle hashes.
+5. **Gate + upload** — computes the speedup and uploads the PGO binary as an
+   artifact **only when promotable**.
+
+**Promotion gate — both conditions (AND):**
+
+- **Faster** — the PGO `full_frame` mean must beat plain release by **> 3.0%**
+  (`PGO_MIN_SPEEDUP_PCT`). This is a *relative* A/B on one runner, so it is
+  Criterion-stable above shared-runner noise — distinct from the `ci.yml` bench
+  job's *absolute* 10 ms ceiling, which does not apply here.
+- **Byte-identical** — the determinism oracle (stage 4) must pass with zero
+  divergence. PGO changes inlining + code layout, not FP semantics (Rust emits
+  no fast-math), but the gate **proves** it rather than assuming it: any
+  framebuffer/audio/cycle-hash difference fails the stage and blocks promotion.
+
+A failed gate is informational — it never blocks a release; `release.yml` ships
+the plain-release binary independently.
+
+#### BOLT (Linux post-link, optional)
+
+A second Linux-only `bolt` job runs behind the **same > 3% + byte-identical
+gate**, only after the PGO stage has already promoted (`needs.pgo.outputs.promotable
+== 'true'`), and on `workflow_dispatch` only when the `run_bolt` input is true.
+It is **best-effort**: it probes for `llvm-bolt` (PATH, then `apt-get install
+bolt`) and skips cleanly if unavailable, so the workflow never hard-fails on a
+runner image without BOLT. When present it chains `cargo pgo bolt build` →
+re-train → `cargo pgo bolt optimize`, re-benches, re-runs the oracle, and uploads
+the BOLT binary only if it too clears > 3% and stays byte-identical (a possible
+extra ~2% on top of PGO).
+
+#### How to trigger
+
+```bash
+# Manual (from a checkout with the gh CLI):
+gh workflow run PGO.yml                     # default 3600 frames/ROM, no BOLT
+gh workflow run PGO.yml -f frames=7200 -f run_bolt=true
+# Or push a release tag (runs alongside release.yml):
+git tag v1.2.0 && git push origin v1.2.0
+```
 
 ## Things explicitly *not* in scope for v1.0
 

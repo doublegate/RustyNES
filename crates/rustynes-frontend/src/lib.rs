@@ -42,6 +42,7 @@ pub mod gfx;
 pub mod hdpack;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod icon;
+pub mod icons;
 pub mod input;
 pub mod movie_ui;
 // v1.2.0 Workstream B — ROM soft-patching (IPS/UPS/BPS). Pure byte ops applied
@@ -109,6 +110,15 @@ pub mod wasm_audio;
 // codec, Blob downloads, file-picker triggers. Used by both wasm frontends.
 #[cfg(target_arch = "wasm32")]
 pub mod wasm_io;
+// v1.2.0 Workstream F1/F2 — shared on-screen touch input (Pointer-Events
+// overlay → button/Power-Pad mask). Read at the late-latch by both wasm
+// frontends, so touch is recorded/replayed like a keypress. wasm-only.
+#[cfg(target_arch = "wasm32")]
+pub mod wasm_touch;
+// v1.2.0 Workstream F4 — EXPERIMENTAL wasm Lua engine JS bridge (piccolo). Only
+// when the off-by-default `script-wasm` feature is on. See ADR 0012.
+#[cfg(all(target_arch = "wasm32", feature = "script-wasm"))]
+pub mod wasm_script;
 // v2.6.0 — browser netplay over WebRTC (a WebSocket signaling client + the
 // RtcPeerConnection / RtcDataChannel handshake yielding a `WebRtcTransport`
 // that drives a `RollbackSession`). Compile-verified; a full browser session

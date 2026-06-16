@@ -1,0 +1,266 @@
+name: PGO
+
+# Profile-guided-optimization (PGO) build + promotion gate for the shipping
+# `rustynes` binary. This is the CI face of `scripts/pgo/run.sh`
+# (instrument -> train on the committed CC0/MIT corpus -> optimized rebuild).
+#
+# DELIBERATELY NOT per-PR / per-push: an instrument+train+rebuild cycle compiles
+# the workspace twice plus a multi-ROM training sweep — far too slow for the PR
+# gate (that's the fast `bench` job in ci.yml). It runs ONLY on:
+#   * workflow_dispatch  — manual, from the Actions tab; and
+#   * push of a release tag (v*) — alongside release.yml, so a release can
+#     consider shipping the PGO binary.
+#
+# PROMOTION GATE (both conditions, AND):
+#   1. FASTER  — the PGO `full_frame` criterion mean must beat the plain-release
+#                baseline by > 3% (a Criterion-stable margin above shared-runner
+#                noise; the ci.yml bench gate's absolute ceiling does NOT apply
+#                here — this is a relative A/B on the SAME runner, back to back).
+#   2. BYTE-IDENTICAL — the PGO codegen must produce bit-identical emulation
+#                output. PGO changes inlining + code layout, not FP semantics
+#                (Rust emits no fast-math), but we PROVE it: the determinism
+#                stage rebuilds + runs the full `--features test-roms` oracle
+#                (AccuracyCoin 139/139, nestest 0-diff, blargg/kevtris, the
+#                golden-framebuffer visual_regression + audio mixer suites) with
+#                the MERGED PGO profile applied (`cargo pgo optimize test`). Any
+#                framebuffer/audio/cycle-hash divergence fails the stage.
+#
+# The PGO artifact is uploaded + the run is marked "promotable" ONLY when BOTH
+# pass. A failure of either is informational on workflow_dispatch (the plain
+# release binary in release.yml is unaffected) and never blocks a release.
+
+on:
+  workflow_dispatch:
+    inputs:
+      frames:
+        description: "Training frames per ROM (default 3600 = 60 s NTSC each)."
+        required: false
+        default: "3600"
+        type: string
+      run_bolt:
+        description: "Also try the BOLT post-link stage (Linux only, best-effort)."
+        required: false
+        default: false
+        type: boolean
+  push:
+    tags:
+      - "v*"
+
+# Never cancel an in-flight PGO run; let each finish so its A/B numbers + the
+# determinism proof land in the log.
+concurrency:
+  group: pgo-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  # > 3% promotion bar (relative full_frame speedup of PGO vs plain release).
+  PGO_MIN_SPEEDUP_PCT: "3.0"
+
+jobs:
+  pgo:
+    name: PGO build + gate (linux x86_64)
+    runs-on: ubuntu-latest
+    # Instrument build + training sweep + optimized rebuild + the test-roms
+    # oracle is the heaviest job in the repo; give it generous headroom over the
+    # ~30 min release builds.
+    timeout-minutes: 90
+    outputs:
+      promotable: ${{ steps.gate.outputs.promotable }}
+      speedup_pct: ${{ steps.gate.outputs.speedup_pct }}
+    steps:
+      - uses: actions/checkout@v6
+
+      # Pinned to the project toolchain (rust-toolchain.toml = 1.86.0), matching
+      # the other jobs. PGO needs the llvm-tools-preview component (profdata
+      # merge) and the wgpu/winit/cpal apt deps (the optimized rebuild links the
+      # full `rustynes-frontend` binary).
+      - uses: ./.github/actions/rust-setup
+        with:
+          toolchain: 1.86.0
+          components: llvm-tools-preview
+          cache-key: pgo
+
+      - name: Install cargo-pgo
+        run: cargo install cargo-pgo --locked
+
+      # ---- Stage 1: plain-release baseline -------------------------------
+      # Same bench the ci.yml gate + docs/performance.md use. Save a Criterion
+      # baseline named `plain` so stage 4 can A/B against it on this same runner.
+      - name: Baseline — plain release full_frame bench
+        run: |
+          cargo bench -p rustynes-core --bench full_frame -- \
+            --warm-up-time 1 --measurement-time 5 --save-baseline plain
+
+      - name: Capture baseline mean (ns)
+        id: baseline
+        run: |
+          est="target/criterion/nes_run_frame_nestest/plain/estimates.json"
+          mean="$(python3 -c "import json,sys;print(int(json.load(open(sys.argv[1]))['mean']['point_estimate']))" "$est")"
+          echo "mean_ns=${mean}" >> "$GITHUB_OUTPUT"
+          echo "baseline nes_run_frame_nestest mean = ${mean} ns"
+
+      # ---- Stage 2: instrument -> train -> optimized rebuild -------------
+      # scripts/pgo/run.sh: `cargo pgo build` (instrumented trainer + core),
+      # runs `pgo_trainer` over the committed corpus, then
+      # `cargo pgo optimize build -- -p rustynes-frontend`. The optimized
+      # `rustynes` binary lands at target/<triple>/release/rustynes.
+      - name: PGO instrument + train + optimized rebuild
+        run: scripts/pgo/run.sh "${{ github.event.inputs.frames || '3600' }}"
+
+      # ---- Stage 3: PGO full_frame bench (A/B vs the `plain` baseline) ---
+      - name: PGO full_frame bench
+        run: |
+          cargo pgo optimize bench -- -p rustynes-core --bench full_frame -- \
+            --warm-up-time 1 --measurement-time 5 --save-baseline pgo
+
+      # ---- Stage 4: byte-identical determinism oracle (the hard gate) ----
+      # Rebuild + run the FULL test-roms oracle with the MERGED PGO profile
+      # applied. AccuracyCoin 139/139, nestest golden-log 0-diff, blargg/kevtris,
+      # the golden-framebuffer visual_regression suite + the APU mixer/volume
+      # audio suites all assert byte-exact values — if PGO codegen perturbed any
+      # framebuffer/audio/cycle hash, this fails and blocks promotion.
+      - name: Determinism oracle (test-roms, PGO-optimized codegen)
+        id: oracle
+        run: |
+          set -o pipefail
+          cargo pgo optimize test -- --workspace --release --features test-roms \
+            2>&1 | tee oracle.log
+          echo "oracle_ok=true" >> "$GITHUB_OUTPUT"
+
+      # ---- Stage 5: compute delta + decide promotion --------------------
+      - name: Compute speedup + promotion decision
+        id: gate
+        run: |
+          base_ns="${{ steps.baseline.outputs.mean_ns }}"
+          pgo_est="target/criterion/nes_run_frame_nestest/pgo/estimates.json"
+          pgo_ns="$(python3 -c "import json,sys;print(int(json.load(open(sys.argv[1]))['mean']['point_estimate']))" "$pgo_est")"
+          speedup="$(python3 -c "print(f'{(1 - ${pgo_ns}/${base_ns})*100:.2f}')")"
+          echo "speedup_pct=${speedup}" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### PGO promotion gate"
+            echo ""
+            echo "| Metric | Value |"
+            echo "|---|---|"
+            echo "| Baseline (plain) nes_run_frame_nestest | ${base_ns} ns |"
+            echo "| PGO nes_run_frame_nestest | ${pgo_ns} ns |"
+            echo "| Speedup | ${speedup}% |"
+            echo "| Threshold | > ${PGO_MIN_SPEEDUP_PCT}% |"
+            echo "| Oracle byte-identical | ${{ steps.oracle.outputs.oracle_ok == 'true' && 'PASS' || 'FAIL' }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          faster="$(python3 -c "print('1' if ${speedup} > ${PGO_MIN_SPEEDUP_PCT} else '0')")"
+          if [ "${faster}" = "1" ] && [ "${{ steps.oracle.outputs.oracle_ok }}" = "true" ]; then
+            echo "promotable=true" >> "$GITHUB_OUTPUT"
+            echo "PROMOTE: PGO is ${speedup}% faster (> ${PGO_MIN_SPEEDUP_PCT}%) AND byte-identical." | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "promotable=false" >> "$GITHUB_OUTPUT"
+            echo "NO PROMOTE: speedup ${speedup}% (need > ${PGO_MIN_SPEEDUP_PCT}%) / oracle=${{ steps.oracle.outputs.oracle_ok }}." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # ---- Stage 6: upload the PGO binary ONLY when promotable ----------
+      - name: Resolve target triple
+        id: triple
+        run: |
+          echo "triple=$(rustc -vV | sed -n 's/host: //p')" >> "$GITHUB_OUTPUT"
+
+      - name: Upload promoted PGO binary
+        if: steps.gate.outputs.promotable == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustynes-pgo-${{ steps.triple.outputs.triple }}
+          path: target/${{ steps.triple.outputs.triple }}/release/rustynes
+          if-no-files-found: error
+
+  # ---- Optional Linux-only BOLT post-link stage ----------------------------
+  # Behind the SAME > 3% + byte-identical gate, gated further on the PGO stage
+  # having already promoted (BOLT chains onto the PGO binary). Best-effort:
+  # skips cleanly if `llvm-bolt` is unavailable on the runner image.
+  bolt:
+    name: BOLT post-link (linux, best-effort)
+    needs: pgo
+    if: >-
+      needs.pgo.outputs.promotable == 'true' &&
+      (github.event_name != 'workflow_dispatch' || github.event.inputs.run_bolt == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/rust-setup
+        with:
+          toolchain: 1.86.0
+          components: llvm-tools-preview
+          cache-key: pgo-bolt
+      - name: Install cargo-pgo
+        run: cargo install cargo-pgo --locked
+
+      - name: Probe for llvm-bolt
+        id: bolt_probe
+        run: |
+          if command -v llvm-bolt >/dev/null 2>&1; then
+            echo "have_bolt=true" >> "$GITHUB_OUTPUT"
+          elif sudo apt-get update && sudo apt-get install -y --no-install-recommends bolt; then
+            echo "have_bolt=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "have_bolt=false" >> "$GITHUB_OUTPUT"
+            echo "llvm-bolt unavailable on this runner — skipping BOLT stage." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # Re-run PGO so BOLT chains onto a fresh PGO binary (artifacts from the
+      # pgo job are intentionally not BOLT-instrumentable post-strip).
+      - name: PGO instrument + train + optimized rebuild
+        if: steps.bolt_probe.outputs.have_bolt == 'true'
+        run: scripts/pgo/run.sh "${{ github.event.inputs.frames || '3600' }}"
+
+      - name: Plain baseline bench
+        if: steps.bolt_probe.outputs.have_bolt == 'true'
+        run: |
+          cargo bench -p rustynes-core --bench full_frame -- \
+            --warm-up-time 1 --measurement-time 5 --save-baseline plain
+          est="target/criterion/nes_run_frame_nestest/plain/estimates.json"
+          echo "BASE_NS=$(python3 -c "import json,sys;print(int(json.load(open(sys.argv[1]))['mean']['point_estimate']))" "$est")" >> "$GITHUB_ENV"
+
+      - name: BOLT instrument + optimize
+        if: steps.bolt_probe.outputs.have_bolt == 'true'
+        run: |
+          cargo pgo bolt build -- -p rustynes-frontend
+          scripts/pgo/run.sh "${{ github.event.inputs.frames || '3600' }}"
+          cargo pgo bolt optimize -- -p rustynes-frontend
+
+      - name: BOLT full_frame bench + gate
+        if: steps.bolt_probe.outputs.have_bolt == 'true'
+        run: |
+          cargo pgo bolt optimize bench -- -p rustynes-core --bench full_frame -- \
+            --warm-up-time 1 --measurement-time 5 --save-baseline bolt || \
+            cargo bench -p rustynes-core --bench full_frame -- \
+              --warm-up-time 1 --measurement-time 5 --save-baseline bolt
+          bolt_est="target/criterion/nes_run_frame_nestest/bolt/estimates.json"
+          bolt_ns="$(python3 -c "import json,sys;print(int(json.load(open(sys.argv[1]))['mean']['point_estimate']))" "$bolt_est")"
+          speedup="$(python3 -c "print(f'{(1 - ${bolt_ns}/${BASE_NS})*100:.2f}')")"
+          {
+            echo "### BOLT post-link gate"
+            echo "BOLT speedup vs plain release: ${speedup}% (threshold > ${PGO_MIN_SPEEDUP_PCT}%)"
+          } >> "$GITHUB_STEP_SUMMARY"
+          python3 -c "import sys; sys.exit(0 if ${speedup} > ${PGO_MIN_SPEEDUP_PCT} else 1)" || {
+            echo "BOLT did not beat the > ${PGO_MIN_SPEEDUP_PCT}% bar — not promoting." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          }
+
+      - name: Determinism oracle (BOLT codegen)
+        if: steps.bolt_probe.outputs.have_bolt == 'true'
+        run: cargo pgo bolt optimize test -- --workspace --release --features test-roms
+
+      - name: Upload BOLT binary
+        if: steps.bolt_probe.outputs.have_bolt == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustynes-pgo-bolt
+          path: target/**/release/rustynes
+          if-no-files-found: warn

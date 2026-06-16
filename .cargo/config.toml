@@ -11,7 +11,15 @@
 # See `docs/audit/v1.3-sprint-1.1-wasm32-research-2026-05-24.md`.
 
 [target.wasm32-unknown-unknown]
-rustflags = ["--cfg=web_sys_unstable_apis"]
+# `--cfg=getrandom_backend="wasm_js"` (v1.2.0 Workstream F4): the EXPERIMENTAL
+# `script-wasm` build pulls piccolo, whose `ahash` dep activates `getrandom 0.3`
+# — and getrandom 0.3 dropped the `js` Cargo feature in favour of this cfg flag
+# to select its browser backend. It is INERT for the default wasm build (which
+# uses ahash `no-rng`, so getrandom 0.3 isn't compiled at all), so adding it
+# unconditionally here is safe; it only takes effect when `script-wasm` brings
+# getrandom 0.3 into the graph. (The piccolo `rand` -> getrandom 0.2 path is
+# handled by the `getrandom` `js`-feature shim in the frontend's wasm32 deps.)
+rustflags = ["--cfg=web_sys_unstable_apis", "--cfg=getrandom_backend=\"wasm_js\""]
 
 # v1.0.0 — MSRV-aware dependency resolution. The workspace pins
 # rust-version = "1.86"; `fallback` makes `cargo update` prefer dependency

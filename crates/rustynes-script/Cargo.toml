@@ -13,11 +13,30 @@ categories.workspace = true
 [lints]
 workspace = true
 
+[features]
+# v1.2.0 Workstream F4 — two VM backends behind a compile-time switch (the
+# host-facing `ScriptEngine` API is identical for both). `mlua-backend`
+# (default) is the production Lua 5.4 path — vendored C, native-only,
+# byte-identical to v1.1.0. `script-wasm` swaps in the EXPERIMENTAL pure-Rust
+# `piccolo` VM so scripting can compile to wasm32; it is OFF by default and is a
+# SEPARATE feature from the frontend's `scripting` feature. Selection is by
+# `cfg`: `script-wasm` wins when present (mlua's C cannot link on wasm), so the
+# default/shipped/native build never pulls piccolo and a `script-wasm` build
+# never compiles mlua's C.
+default = ["mlua-backend"]
+mlua-backend = ["dep:mlua"]
+script-wasm = ["dep:piccolo"]
+
 [dependencies]
 # `debug-hooks` exposes the trace + bus-access logs the onExec / onRead /
 # onWrite callbacks replay. The hooks are byte-identical no-ops when unarmed
 # (CI's test-roms job proves it), so enabling the feature here does not perturb
 # determinism. The frontend already enables it for the C-sprint debugger.
 rustynes-core = { workspace = true, features = ["debug-hooks"] }
-mlua = { workspace = true }
+# mlua: the production backend (default). Optional so a `script-wasm`-only build
+# (piccolo) never compiles the vendored Lua 5.4 C.
+mlua = { workspace = true, optional = true }
+# piccolo: the EXPERIMENTAL pure-Rust wasm backend (behind `script-wasm`). See
+# `docs/adr/0012-wasm-lua-piccolo-backend.md` for the documented divergence.
+piccolo = { workspace = true, optional = true }
 thiserror = { workspace = true }

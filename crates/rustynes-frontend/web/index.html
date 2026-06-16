@@ -64,6 +64,69 @@
         }
         .hint { opacity: 0.6; font-size: 13px; max-width: 540px; }
         a { color: var(--accent); }
+
+        /*
+            v1.2.0 Workstream F1/F2 — on-screen touch controls.
+
+            A translucent Pointer-Events overlay (pure DOM/CSS — zero Rust
+            binary weight). Hidden by default; the "Touch controls" checkbox
+            reveals it. `touch-action: none` stops the browser from treating
+            a press-drag on a button as a scroll/zoom gesture, and
+            `user-select: none` stops the long-press text selection. Each
+            `.tc-btn` carries a `data-mask` (standard-controller Buttons bit)
+            or `data-pad` (Power Pad mat index); the script in this file ORs
+            the held set into a mask and pushes it to the wasm `wasm_touch`
+            bridge on every pointer event.
+        */
+        #touch-controls { display: none; }
+        #touch-controls.visible { display: block; }
+        #touch-options { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; justify-content: center; }
+        .tc-pad {
+            display: grid;
+            gap: 10px;
+            width: 512px;
+            max-width: 96vw;
+            margin: 8px auto;
+            touch-action: none;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        #tc-dpad-cluster {
+            grid-template-columns: 1fr 1fr;
+            align-items: center;
+        }
+        #tc-dpad {
+            grid-template-columns: repeat(3, 1fr);
+            grid-template-rows: repeat(3, 1fr);
+            width: 180px;
+            aspect-ratio: 1;
+        }
+        #tc-actions { grid-template-columns: 1fr 1fr; }
+        #tc-system { grid-template-columns: 1fr 1fr; max-width: 360px; }
+        #tc-powerpad { grid-template-columns: repeat(3, 1fr); max-width: 240px; }
+        .tc-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 56px;
+            border: 2px solid #555;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.06);
+            color: var(--fg);
+            font: inherit;
+            font-size: 15px;
+            touch-action: none;
+            user-select: none;
+            -webkit-user-select: none;
+            cursor: pointer;
+        }
+        .tc-btn.held { background: var(--accent); color: #000; border-color: var(--accent); }
+        /* D-pad cells occupy a 3x3 grid; place the four directions on the
+           cross. Empty corners are non-interactive spacers. */
+        #tc-dpad .tc-up { grid-area: 1 / 2; }
+        #tc-dpad .tc-left { grid-area: 2 / 1; }
+        #tc-dpad .tc-right { grid-area: 2 / 3; }
+        #tc-dpad .tc-down { grid-area: 3 / 2; }
     </style>
 </head>
 <body>
@@ -77,12 +140,79 @@
     <!-- The wasm `start()` fn blits the PPU framebuffer here each frame. -->
     <canvas id="nes-canvas" width="256" height="240"></canvas>
 
+    <!--
+        v1.2.0 Workstream F1/F2 — on-screen touch controls (best web win for
+        phones/tablets). Pure DOM/CSS overlay; the script at the bottom turns
+        pointer events into a Buttons mask and pushes it to the wasm
+        `wasm_touch` bridge, which both wasm frontends read at the same
+        deterministic late-latch a keypress uses (so TAS/netplay record it
+        identically). Hidden until the checkbox is ticked so the desktop
+        keyboard UX is unchanged.
+    -->
+    <div id="touch-options">
+        <label><input id="touch-toggle" type="checkbox" /> Touch controls</label>
+        <label>Port:
+            <select id="touch-port">
+                <option value="0">Player 1</option>
+                <option value="1">Player 2</option>
+                <option value="2">Player 3 (Four Score)</option>
+                <option value="3">Player 4 (Four Score)</option>
+            </select>
+        </label>
+        <label><input id="touch-powerpad" type="checkbox" /> Power Pad</label>
+    </div>
+
+    <div id="touch-controls">
+        <!-- Standard controller layout: D-pad (left), Select/Start, A/B. -->
+        <div id="tc-controller">
+            <div id="tc-dpad-cluster" class="tc-pad">
+                <div id="tc-dpad" class="tc-pad" style="margin:0">
+                    <button class="tc-btn tc-up" data-mask="16">▲</button>
+                    <button class="tc-btn tc-left" data-mask="64">◀</button>
+                    <button class="tc-btn tc-right" data-mask="128">▶</button>
+                    <button class="tc-btn tc-down" data-mask="32">▼</button>
+                </div>
+                <div id="tc-actions" class="tc-pad" style="margin:0">
+                    <button class="tc-btn" data-mask="2">B</button>
+                    <button class="tc-btn" data-mask="1">A</button>
+                </div>
+            </div>
+            <div id="tc-system" class="tc-pad">
+                <button class="tc-btn" data-mask="4">Select</button>
+                <button class="tc-btn" data-mask="8">Start</button>
+            </div>
+        </div>
+        <!-- Power Pad: 12-button mat (mat button N -> data-pad N-1). -->
+        <div id="tc-powerpad" class="tc-pad" hidden>
+            <button class="tc-btn" data-pad="0">1</button>
+            <button class="tc-btn" data-pad="1">2</button>
+            <button class="tc-btn" data-pad="2">3</button>
+            <button class="tc-btn" data-pad="3">4</button>
+            <button class="tc-btn" data-pad="4">5</button>
+            <button class="tc-btn" data-pad="5">6</button>
+            <button class="tc-btn" data-pad="6">7</button>
+            <button class="tc-btn" data-pad="7">8</button>
+            <button class="tc-btn" data-pad="8">9</button>
+            <button class="tc-btn" data-pad="9">10</button>
+            <button class="tc-btn" data-pad="10">11</button>
+            <button class="tc-btn" data-pad="11">12</button>
+        </div>
+    </div>
+
     <p class="hint">
         Keyboard: arrows = D-pad, Z = A, X = B, Enter = Start,
         Right Shift = Select. <strong>~</strong> toggles the egui
         debugger overlay. Select a <code>.nes</code> ROM above to
         begin — audio starts on the same click (browser autoplay
         policy). Check the devtools console for the boot log.
+    </p>
+    <p class="hint">
+        <strong>Touch controls:</strong> tick "Touch controls" above to
+        reveal an on-screen D-pad / A / B / Start / Select (great on phones
+        and tablets). Choose the target <em>Port</em> to route to player 1-4,
+        or tick "Power Pad" for the 12-button Power Pad mat. Touch input is
+        latched at the same point a keypress is, so it records/replays in TAS
+        movies and netplay identically.
     </p>
     <p class="hint">
         <strong>Famicom Disk System:</strong> upload the 8&nbsp;KiB
@@ -96,5 +226,142 @@
         &nbsp;·&nbsp;
         <a href="api/">API documentation</a>
     </p>
+
+    <!--
+        v1.2.0 Workstream F1/F2 — touch overlay -> wasm bridge.
+
+        Trunk's wasm-bindgen glue exposes the crate's `#[wasm_bindgen]`
+        exports on `window.wasmBindings`. We translate pointer events on the
+        `.tc-btn` elements into a controller `Buttons` mask + a Power Pad mat
+        mask, then push them through `rustynes_touch_*`. Bindings load
+        asynchronously, so every call is guarded — a press before the wasm is
+        ready is simply dropped (the state is also re-pushed on bindings-ready).
+    -->
+    <script>
+        (function () {
+            "use strict";
+
+            // Live state.
+            var btnMask = 0;   // standard controller (Buttons bit layout)
+            var padMask = 0;   // Power Pad mat (bit i = mat button i+1)
+            var port = 0;      // 0..3 -> player 1..4
+            var padActive = false;
+            // Held pointer ids per element, so multi-touch + pointer capture
+            // release the right bit (a finger sliding off still clears).
+            var held = new Map(); // element -> Set<pointerId>
+
+            function bindings() {
+                return window.wasmBindings || null;
+            }
+
+            function pushButtons() {
+                var b = bindings();
+                if (b && b.rustynes_touch_set_buttons) {
+                    b.rustynes_touch_set_buttons(btnMask & 0xff);
+                }
+            }
+            function pushPad() {
+                var b = bindings();
+                if (b && b.rustynes_touch_set_power_pad) {
+                    b.rustynes_touch_set_power_pad(padMask & 0xffff);
+                }
+            }
+            function pushPort() {
+                var b = bindings();
+                if (b && b.rustynes_touch_set_target_port) {
+                    b.rustynes_touch_set_target_port(port & 0xff);
+                }
+            }
+            function pushPadActive() {
+                var b = bindings();
+                if (b && b.rustynes_touch_set_power_pad_active) {
+                    b.rustynes_touch_set_power_pad_active(padActive);
+                }
+            }
+            function pushAll() {
+                pushButtons();
+                pushPad();
+                pushPort();
+                pushPadActive();
+            }
+
+            function setBit(el, on) {
+                var mask = el.getAttribute("data-mask");
+                var pad = el.getAttribute("data-pad");
+                if (mask !== null) {
+                    var bit = parseInt(mask, 10);
+                    if (on) { btnMask |= bit; } else { btnMask &= ~bit; }
+                    el.classList.toggle("held", on);
+                    pushButtons();
+                } else if (pad !== null) {
+                    var pbit = 1 << parseInt(pad, 10);
+                    if (on) { padMask |= pbit; } else { padMask &= ~pbit; }
+                    el.classList.toggle("held", on);
+                    pushPad();
+                }
+            }
+
+            function press(el, id) {
+                var ids = held.get(el);
+                if (!ids) { ids = new Set(); held.set(el, ids); }
+                ids.add(id);
+                if (ids.size === 1) { setBit(el, true); }
+            }
+            function release(el, id) {
+                var ids = held.get(el);
+                if (!ids) { return; }
+                ids.delete(id);
+                if (ids.size === 0) { setBit(el, false); }
+            }
+
+            function wireButton(el) {
+                el.addEventListener("pointerdown", function (e) {
+                    e.preventDefault();
+                    try { el.setPointerCapture(e.pointerId); } catch (_) {}
+                    press(el, e.pointerId);
+                });
+                var up = function (e) {
+                    e.preventDefault();
+                    release(el, e.pointerId);
+                };
+                el.addEventListener("pointerup", up);
+                el.addEventListener("pointercancel", up);
+                // Block the synthetic context menu on long-press.
+                el.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+            }
+
+            document.querySelectorAll(".tc-btn").forEach(wireButton);
+
+            // Toggle overlay visibility.
+            var overlay = document.getElementById("touch-controls");
+            document.getElementById("touch-toggle").addEventListener("change", function (e) {
+                overlay.classList.toggle("visible", e.target.checked);
+            });
+
+            // Port routing.
+            document.getElementById("touch-port").addEventListener("change", function (e) {
+                port = parseInt(e.target.value, 10) || 0;
+                pushPort();
+            });
+
+            // Power Pad selection: show the mat + toggle the device.
+            var pad = document.getElementById("tc-powerpad");
+            var controller = document.getElementById("tc-controller");
+            document.getElementById("touch-powerpad").addEventListener("change", function (e) {
+                padActive = e.target.checked;
+                pad.hidden = !padActive;
+                controller.hidden = padActive;
+                pushPadActive();
+            });
+
+            // Re-push the full state once the wasm bindings are live (they
+            // load after this script runs), then keep it fresh — a cheap
+            // poll until ready avoids racing trunk's async init.
+            (function awaitBindings() {
+                if (bindings()) { pushAll(); return; }
+                setTimeout(awaitBindings, 100);
+            })();
+        })();
+    </script>
 </body>
 </html>

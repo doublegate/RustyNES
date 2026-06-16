@@ -1,4 +1,4 @@
-# RustyNES v2 — Caddy reverse proxy for the netplay signaling server (v2.7.0).
+# RustyNES — Caddy reverse proxy for the netplay signaling server.
 #
 # Terminates TLS and proxies WebSocket upgrades to the plain-ws signaling relay
 # so browsers can connect at wss://<DOMAIN>/. The {$DOMAIN} placeholder is
@@ -23,7 +23,7 @@
 		reverse_proxy signaling:9000
 	}
 	handle {
-		respond "RustyNES v2 signaling server is up. Use this URL (as wss://) as the signaling server in the emulator's browser-netplay lobby. This page is only the health endpoint." 200
+		respond "RustyNES signaling server is up. Use this URL (as wss://) as the signaling server in the emulator's browser-netplay lobby. This page is only the health endpoint." 200
 	}
 
 	# Local/self-signed CA when DOMAIN=localhost (skip ACME). For a real domain,

@@ -350,6 +350,7 @@ impl UiShell {
         out: &mut ShellOutput,
     ) {
         use crate::debugger::{ChipPanel, ToolPanel};
+        use crate::icons::{glyph, label as ic};
         // Clone the system bindings up front so the accelerator hints can read
         // them without holding a `&config` borrow across the `&mut config` edits
         // (theme / aspect / fps / run-ahead) the closure also makes. The clone
@@ -381,13 +382,18 @@ impl UiShell {
         egui::TopBottomPanel::top("shell_menu_bar").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 // ----- File -----
-                ui.menu_button("File", |ui| {
+                ui.menu_button(ic(glyph::FILE, "File"), |ui| {
                     // (H1) Open ROM / Open Recent change the loaded ROM — locked
                     // out while a netplay session is active (a ROM swap would
                     // desync the rollback peers).
                     #[cfg(not(target_arch = "wasm32"))]
-                    if accel_enabled(ui, !rom_change_restricted, "Open ROM...", &keys.open_rom)
-                        .clicked()
+                    if accel_enabled(
+                        ui,
+                        !rom_change_restricted,
+                        &ic(glyph::FOLDER_OPEN, "Open ROM..."),
+                        &keys.open_rom,
+                    )
+                    .clicked()
                     {
                         out.action = Some(MenuAction::OpenRom);
                         ui.close();
@@ -399,9 +405,12 @@ impl UiShell {
                         // `enabled` flag the way a button does, and an
                         // `add_enabled_ui` wrapper breaks egui's sibling-hover
                         // auto-close — BUG-1), so surface it as a greyed item.
-                        ui.add_enabled(false, egui::Button::new("Open Recent"));
+                        ui.add_enabled(
+                            false,
+                            egui::Button::new(ic(glyph::CLOCK_ROTATE_LEFT, "Open Recent")),
+                        );
                     } else {
-                        ui.menu_button("Open Recent", |ui| {
+                        ui.menu_button(ic(glyph::CLOCK_ROTATE_LEFT, "Open Recent"), |ui| {
                             if config.recent_roms.paths.is_empty() {
                                 ui.label("No recent ROMs");
                             } else {
@@ -413,13 +422,19 @@ impl UiShell {
                                         .to_string();
                                     // (audit m3) gray out entries whose file is gone.
                                     let exists = path.exists();
-                                    if ui.add_enabled(exists, egui::Button::new(name)).clicked() {
+                                    if ui
+                                        .add_enabled(
+                                            exists,
+                                            egui::Button::new(ic(glyph::FOLDER_OPEN, &name)),
+                                        )
+                                        .clicked()
+                                    {
                                         out.action = Some(MenuAction::LoadRom(path));
                                         ui.close();
                                     }
                                 }
                                 ui.separator();
-                                if ui.button("Clear Recent").clicked() {
+                                if ui.button(ic(glyph::XMARK, "Clear Recent")).clicked() {
                                     out.action = Some(MenuAction::ClearRecent);
                                     ui.close();
                                 }
@@ -432,8 +447,13 @@ impl UiShell {
                     // replay (it would diverge the recorded timeline).
                     if frame.disk_sides > 0 {
                         ui.separator();
-                        if accel_enabled(ui, !replay_locked, "Swap Disk Side", &keys.disk_swap)
-                            .clicked()
+                        if accel_enabled(
+                            ui,
+                            !replay_locked,
+                            &ic(glyph::FLOPPY_DISK, "Swap Disk Side"),
+                            &keys.disk_swap,
+                        )
+                        .clicked()
                         {
                             out.action = Some(MenuAction::CycleDiskSide);
                             ui.close();
@@ -446,7 +466,14 @@ impl UiShell {
                     // snapshots) but not while RECORDING (the GeraNES rule:
                     // saving mid-record is fine; loading is the dangerous one).
                     // We keep SAVE enabled whenever a ROM is loaded.
-                    if accel_enabled(ui, rom, "Save State", &keys.save_state).clicked() {
+                    if accel_enabled(
+                        ui,
+                        rom,
+                        &ic(glyph::FLOPPY_DISK, "Save State"),
+                        &keys.save_state,
+                    )
+                    .clicked()
+                    {
                         out.action = Some(MenuAction::SaveState);
                         ui.close();
                     }
@@ -454,12 +481,18 @@ impl UiShell {
                     // movie is recording (rewrites the recording) OR playing
                     // back (desyncs playback). Mirrors GeraNES
                     // `replayRecordingActive` / `replayInteractionLocked`.
-                    if accel_enabled(ui, rom_interactive, "Load State", &keys.load_state).clicked()
+                    if accel_enabled(
+                        ui,
+                        rom_interactive,
+                        &ic(glyph::DOWNLOAD, "Load State"),
+                        &keys.load_state,
+                    )
+                    .clicked()
                     {
                         out.action = Some(MenuAction::LoadState);
                         ui.close();
                     }
-                    ui.menu_button("Save Slot", |ui| {
+                    ui.menu_button(ic(glyph::FLOPPY_DISK, "Save Slot"), |ui| {
                         for slot in 0u8..8 {
                             if ui
                                 .radio(self.active_slot == slot, format!("Slot {}", slot + 1))
@@ -478,7 +511,7 @@ impl UiShell {
                     // (H1) Save-to-slot needs only a ROM; Load-from-slot is
                     // additionally replay-locked (same rule as Load State).
                     if rom {
-                        ui.menu_button("Save to Slot", |ui| {
+                        ui.menu_button(ic(glyph::FLOPPY_DISK, "Save to Slot"), |ui| {
                             for slot in 0u8..8 {
                                 if ui.button(format!("Slot {}", slot + 1)).clicked() {
                                     out.action = Some(MenuAction::SaveStateSlot(slot));
@@ -487,10 +520,13 @@ impl UiShell {
                             }
                         });
                     } else {
-                        ui.add_enabled(false, egui::Button::new("Save to Slot"));
+                        ui.add_enabled(
+                            false,
+                            egui::Button::new(ic(glyph::FLOPPY_DISK, "Save to Slot")),
+                        );
                     }
                     if rom_interactive {
-                        ui.menu_button("Load from Slot", |ui| {
+                        ui.menu_button(ic(glyph::DOWNLOAD, "Load from Slot"), |ui| {
                             for slot in 0u8..8 {
                                 if ui.button(format!("Slot {}", slot + 1)).clicked() {
                                     out.action = Some(MenuAction::LoadStateSlot(slot));
@@ -499,7 +535,10 @@ impl UiShell {
                             }
                         });
                     } else {
-                        ui.add_enabled(false, egui::Button::new("Load from Slot"));
+                        ui.add_enabled(
+                            false,
+                            egui::Button::new(ic(glyph::DOWNLOAD, "Load from Slot")),
+                        );
                     }
 
                     // v1.0.0 — the Save-States manager window (thumbnail grid).
@@ -507,7 +546,10 @@ impl UiShell {
                     // grid is keyed on the loaded ROM's hash — needs a ROM.
                     #[cfg(not(target_arch = "wasm32"))]
                     if ui
-                        .add_enabled(rom, egui::Button::new("Save States..."))
+                        .add_enabled(
+                            rom,
+                            egui::Button::new(ic(glyph::FLOPPY_DISK, "Save States...")),
+                        )
                         .clicked()
                     {
                         out.action = Some(MenuAction::OpenSaveStates);
@@ -518,7 +560,10 @@ impl UiShell {
                     {
                         ui.separator();
                         if ui
-                            .add_enabled(frame.rom_loaded, egui::Button::new("Take Screenshot"))
+                            .add_enabled(
+                                frame.rom_loaded,
+                                egui::Button::new(ic(glyph::IMAGE, "Take Screenshot")),
+                            )
                             .clicked()
                         {
                             out.action = Some(MenuAction::Screenshot);
@@ -529,7 +574,10 @@ impl UiShell {
                         if ui
                             .add_enabled(
                                 frame.rom_loaded,
-                                egui::Button::new("Copy Screenshot to Clipboard"),
+                                egui::Button::new(ic(
+                                    glyph::CLIPBOARD,
+                                    "Copy Screenshot to Clipboard",
+                                )),
                             )
                             .clicked()
                         {
@@ -540,15 +588,20 @@ impl UiShell {
 
                     ui.separator();
 
-                    if accel_item(ui, "Quit", &keys.quit).clicked() {
+                    if accel_item(ui, &ic(glyph::RIGHT_FROM_BRACKET, "Quit"), &keys.quit).clicked()
+                    {
                         out.action = Some(MenuAction::Quit);
                         ui.close();
                     }
                 });
 
                 // ----- Emulation -----
-                ui.menu_button("Emulation", |ui| {
-                    let pause_label = if self.paused { "Resume" } else { "Pause" };
+                ui.menu_button(ic(glyph::CALCULATOR, "Emulation"), |ui| {
+                    let pause_label = if self.paused {
+                        ic(glyph::PLAY, "Resume")
+                    } else {
+                        ic(glyph::PAUSE, "Pause")
+                    };
                     // (BUG-4) disabled during netplay. (UX3 BUG-1) show the
                     // pause/resume accelerator key alongside the label.
                     if ui
@@ -566,11 +619,24 @@ impl UiShell {
                     // (diverges the timeline). Mirrors GeraNES Reset gating
                     // (`!netplayClientRestricted && !isReplayResetRestricted`).
                     let hw_interactive = rom && !rom_change_restricted && !replay_locked;
-                    if accel_enabled(ui, hw_interactive, "Reset", &keys.reset).clicked() {
+                    if accel_enabled(
+                        ui,
+                        hw_interactive,
+                        &ic(glyph::ROTATE_RIGHT, "Reset"),
+                        &keys.reset,
+                    )
+                    .clicked()
+                    {
                         out.action = Some(MenuAction::Reset);
                         ui.close();
                     }
-                    if accel_enabled(ui, hw_interactive, "Power Cycle", &keys.power_cycle).clicked()
+                    if accel_enabled(
+                        ui,
+                        hw_interactive,
+                        &ic(glyph::ROTATE_RIGHT, "Power Cycle"),
+                        &keys.power_cycle,
+                    )
+                    .clicked()
                     {
                         out.action = Some(MenuAction::PowerCycle);
                         ui.close();
@@ -582,7 +648,7 @@ impl UiShell {
                     if accel_enabled(
                         ui,
                         rom && !rom_change_restricted,
-                        "Frame Advance",
+                        &ic(glyph::PLAY, "Frame Advance"),
                         &keys.frame_advance,
                     )
                     .clicked()
@@ -594,21 +660,30 @@ impl UiShell {
                     // (there is no toggle action; hold the key to engage it).
                     ui.add_enabled(
                         false,
-                        egui::Button::new(format!("Fast Forward (hold {})", keys.fast_forward)),
+                        egui::Button::new(ic(
+                            glyph::PLAY,
+                            &format!("Fast Forward (hold {})", keys.fast_forward),
+                        )),
                     );
                     ui.separator();
-                    ui.menu_button(format!("Run-Ahead: {}", config.input.run_ahead), |ui| {
-                        for n in 0u32..=3 {
-                            if ui
-                                .radio(config.input.run_ahead == n, format!("{n}"))
-                                .clicked()
-                            {
-                                config.input.run_ahead = n;
-                                save_config(config);
-                                ui.close();
+                    ui.menu_button(
+                        ic(
+                            glyph::SLIDERS,
+                            &format!("Run-Ahead: {}", config.input.run_ahead),
+                        ),
+                        |ui| {
+                            for n in 0u32..=3 {
+                                if ui
+                                    .radio(config.input.run_ahead == n, format!("{n}"))
+                                    .clicked()
+                                {
+                                    config.input.run_ahead = n;
+                                    save_config(config);
+                                    ui.close();
+                                }
                             }
-                        }
-                    });
+                        },
+                    );
                     // v1.0.0 — emulation-speed presets (transient; not
                     // persisted, so the menu always opens at 100% on launch).
                     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
@@ -618,7 +693,7 @@ impl UiShell {
                     // peers run lockstep at the console rate). Mirrors GeraNES
                     // `isNetplaySpeedRestricted` (only `Normal` enabled).
                     ui.add_enabled_ui(rom, |ui| {
-                        ui.menu_button(format!("Speed: {speed_pct}%"), |ui| {
+                        ui.menu_button(ic(glyph::SLIDERS, &format!("Speed: {speed_pct}%")), |ui| {
                             for &preset in &[0.25_f32, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0] {
                                 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                                 let pct = (preset * 100.0).round() as u32;
@@ -644,7 +719,10 @@ impl UiShell {
                     // Region is read-only (no core setter): display only.
                     ui.add_enabled(
                         false,
-                        egui::Button::new(format!("Region: {}", frame.region_label)),
+                        egui::Button::new(ic(
+                            glyph::GLOBE,
+                            &format!("Region: {}", frame.region_label),
+                        )),
                     );
                     // (H1) Inserting a Vs. coin is a hardware action — locked
                     // during netplay (the host drives arcade hardware).
@@ -652,7 +730,7 @@ impl UiShell {
                         && accel_enabled(
                             ui,
                             rom && !rom_change_restricted,
-                            "Vs. Insert Coin",
+                            &ic(glyph::COINS, "Vs. Insert Coin"),
                             &keys.insert_coin,
                         )
                         .clicked()
@@ -663,8 +741,11 @@ impl UiShell {
                 });
 
                 // ----- Tools -----
-                ui.menu_button("Tools", |ui| {
-                    if ui.button("Cheats...").clicked() {
+                ui.menu_button(ic(glyph::WRENCH, "Tools"), |ui| {
+                    if ui
+                        .button(ic(glyph::WAND_MAGIC_SPARKLES, "Cheats..."))
+                        .clicked()
+                    {
                         out.action = Some(MenuAction::OpenPanel(ToolPanel::Cheats));
                         ui.close();
                     }
@@ -672,18 +753,18 @@ impl UiShell {
                     // (H1) The Movies submenu is unavailable during a netplay
                     // session (a rollback session cannot also be a TAS movie).
                     if rom && !rom_change_restricted {
-                        ui.menu_button("Movies (TAS)", |ui| {
+                        ui.menu_button(ic(glyph::VIDEO, "Movies (TAS)"), |ui| {
                             // Record toggles record on/off; it must be locked
                             // while a movie is PLAYING (can't record over a
                             // playback). The toggle-off case (already recording)
                             // stays enabled so the user can stop.
                             let rec_label = if frame.movie_recording {
-                                "Stop Recording"
+                                ic(glyph::STOP, "Stop Recording")
                             } else {
-                                "Record"
+                                ic(glyph::VIDEO, "Record")
                             };
                             let rec_enabled = frame.movie_recording || !frame.movie_playing;
-                            if accel_enabled(ui, rec_enabled, rec_label, &keys.movie_record)
+                            if accel_enabled(ui, rec_enabled, &rec_label, &keys.movie_record)
                                 .clicked()
                             {
                                 out.action = Some(MenuAction::MovieRecordToggle);
@@ -692,12 +773,12 @@ impl UiShell {
                             // Play toggles playback; locked while RECORDING. The
                             // toggle-off (already playing) stays enabled to stop.
                             let play_label = if frame.movie_playing {
-                                "Stop Playback"
+                                ic(glyph::STOP, "Stop Playback")
                             } else {
-                                "Play"
+                                ic(glyph::PLAY, "Play")
                             };
                             let play_enabled = frame.movie_playing || !frame.movie_recording;
-                            if accel_enabled(ui, play_enabled, play_label, &keys.movie_play)
+                            if accel_enabled(ui, play_enabled, &play_label, &keys.movie_play)
                                 .clicked()
                             {
                                 out.action = Some(MenuAction::MoviePlayToggle);
@@ -705,43 +786,54 @@ impl UiShell {
                             }
                             // Branch forks the CURRENT playback into a new
                             // recording — only meaningful while playing back.
-                            if accel_enabled(ui, frame.movie_playing, "Branch", &keys.movie_branch)
-                                .clicked()
+                            if accel_enabled(
+                                ui,
+                                frame.movie_playing,
+                                &ic(glyph::VIDEO, "Branch"),
+                                &keys.movie_branch,
+                            )
+                            .clicked()
                             {
                                 out.action = Some(MenuAction::MovieBranch);
                                 ui.close();
                             }
                         });
                     } else {
-                        ui.add_enabled(false, egui::Button::new("Movies (TAS)"));
+                        ui.add_enabled(false, egui::Button::new(ic(glyph::VIDEO, "Movies (TAS)")));
                     }
                     // (H1) Opening the Netplay panel is locked while a replay
                     // (TAS movie) owns the session. Mirrors GeraNES Netplay
                     // gating (`!replayInteractionLocked`).
                     #[cfg(not(target_arch = "wasm32"))]
                     if ui
-                        .add_enabled(!replay_locked, egui::Button::new("Netplay..."))
+                        .add_enabled(
+                            !replay_locked,
+                            egui::Button::new(ic(glyph::WIFI, "Netplay...")),
+                        )
                         .clicked()
                     {
                         out.action = Some(MenuAction::OpenPanel(ToolPanel::Netplay));
                         ui.close();
                     }
                     #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
-                    if ui.button("RetroAchievements...").clicked() {
+                    if ui
+                        .button(ic(glyph::TROPHY, "RetroAchievements..."))
+                        .clicked()
+                    {
                         out.action = Some(MenuAction::OpenPanel(ToolPanel::Cheevos));
                         ui.close();
                     }
-                    if ui.button("Performance Monitor").clicked() {
+                    if ui.button(ic(glyph::GAUGE, "Performance Monitor")).clicked() {
                         out.action = Some(MenuAction::OpenPanel(ToolPanel::Perf));
                         ui.close();
                     }
-                    if ui.button("Input Display").clicked() {
+                    if ui.button(ic(glyph::GAMEPAD, "Input Display")).clicked() {
                         out.action = Some(MenuAction::OpenPanel(ToolPanel::InputDisplay));
                         ui.close();
                     }
                     // (H1) The ROM Database editor needs a loaded ROM to edit.
                     if ui
-                        .add_enabled(rom, egui::Button::new("ROM Database"))
+                        .add_enabled(rom, egui::Button::new(ic(glyph::DATABASE, "ROM Database")))
                         .clicked()
                     {
                         out.action = Some(MenuAction::OpenPanel(ToolPanel::GameDb));
@@ -754,17 +846,23 @@ impl UiShell {
                 // on the ROM hash) and is locked while a netplay/replay session
                 // owns presentation. Mirrors GeraNES Mod gating.
                 #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
-                ui.menu_button("Mod", |ui| {
+                ui.menu_button(ic(glyph::PUZZLE_PIECE, "Mod"), |ui| {
                     let mod_enabled = rom && !rom_change_restricted && !replay_locked;
                     if ui
-                        .add_enabled(mod_enabled, egui::Button::new("Load HD Pack..."))
+                        .add_enabled(
+                            mod_enabled,
+                            egui::Button::new(ic(glyph::FOLDER_OPEN, "Load HD Pack...")),
+                        )
                         .clicked()
                     {
                         out.action = Some(MenuAction::LoadHdPack);
                         ui.close();
                     }
                     if ui
-                        .add_enabled(mod_enabled, egui::Button::new("Unload HD Pack"))
+                        .add_enabled(
+                            mod_enabled,
+                            egui::Button::new(ic(glyph::XMARK, "Unload HD Pack")),
+                        )
                         .clicked()
                     {
                         out.action = Some(MenuAction::UnloadHdPack);
@@ -773,12 +871,12 @@ impl UiShell {
                 });
 
                 // ----- View -----
-                ui.menu_button("View", |ui| {
-                    if ui.button("Settings...").clicked() {
+                ui.menu_button(ic(glyph::EYE, "View"), |ui| {
+                    if ui.button(ic(glyph::GEAR, "Settings...")).clicked() {
                         self.show_settings_window = true;
                         ui.close();
                     }
-                    ui.menu_button("Theme", |ui| {
+                    ui.menu_button(ic(glyph::PALETTE, "Theme"), |ui| {
                         for theme in [AppTheme::Light, AppTheme::Dark, AppTheme::System] {
                             if ui
                                 .radio_value(&mut config.ui.theme, theme, theme.display_name())
@@ -790,7 +888,10 @@ impl UiShell {
                         }
                     });
                     if ui
-                        .checkbox(&mut config.ui.pixel_aspect_correction, "8:7 Pixel Aspect")
+                        .checkbox(
+                            &mut config.ui.pixel_aspect_correction,
+                            ic(glyph::TV, "8:7 Pixel Aspect"),
+                        )
                         .changed()
                     {
                         save_config(config);
@@ -798,7 +899,10 @@ impl UiShell {
                     // v1.0.0 — overscan crop (top/bottom 8 scanlines). Applied
                     // live via the menu action so the gfx letterbox updates.
                     if ui
-                        .checkbox(&mut config.graphics.hide_overscan, "Hide Overscan")
+                        .checkbox(
+                            &mut config.graphics.hide_overscan,
+                            ic(glyph::TV, "Hide Overscan"),
+                        )
                         .changed()
                     {
                         save_config(config);
@@ -809,13 +913,18 @@ impl UiShell {
                     {
                         // (BUG-2) read-only mirror — never flip here.
                         let mut fs = self.fullscreen;
-                        if accel_changed(ui, &mut fs, "Fullscreen", &keys.fullscreen) {
+                        if accel_changed(
+                            ui,
+                            &mut fs,
+                            &ic(glyph::EXPAND, "Fullscreen"),
+                            &keys.fullscreen,
+                        ) {
                             out.action = Some(MenuAction::ToggleFullscreen);
                             ui.close();
                         }
                     }
                     #[cfg(not(target_arch = "wasm32"))]
-                    ui.menu_button("Window Size", |ui| {
+                    ui.menu_button(ic(glyph::TV, "Window Size"), |ui| {
                         for (label, scale) in [
                             ("1x (100%)", 1u32),
                             ("2x (200%)", 2),
@@ -828,43 +937,59 @@ impl UiShell {
                             }
                         }
                     });
-                    if ui.checkbox(&mut config.ui.show_fps, "Show FPS").changed() {
+                    if ui
+                        .checkbox(&mut config.ui.show_fps, ic(glyph::GAUGE, "Show FPS"))
+                        .changed()
+                    {
                         save_config(config);
                     }
                     if ui
-                        .checkbox(&mut config.ui.pause_on_focus_loss, "Pause When Unfocused")
+                        .checkbox(
+                            &mut config.ui.pause_on_focus_loss,
+                            ic(glyph::PAUSE, "Pause When Unfocused"),
+                        )
                         .changed()
                     {
                         save_config(config);
                     }
                     let mut menu_bar = self.menu_visible;
-                    if accel_changed(ui, &mut menu_bar, "Show Menu Bar", &keys.toggle_menu_bar) {
+                    if accel_changed(
+                        ui,
+                        &mut menu_bar,
+                        &ic(glyph::BARS, "Show Menu Bar"),
+                        &keys.toggle_menu_bar,
+                    ) {
                         out.action = Some(MenuAction::ToggleMenuBar);
                         ui.close();
                     }
                 });
 
                 // ----- Debug -----
-                ui.menu_button("Debug", |ui| {
+                ui.menu_button(ic(glyph::BUG, "Debug"), |ui| {
                     let mut dbg = frame.debugger_visible;
-                    if accel_changed(ui, &mut dbg, "Show Debugger", &keys.debug_overlay) {
+                    if accel_changed(
+                        ui,
+                        &mut dbg,
+                        &ic(glyph::BUG, "Show Debugger"),
+                        &keys.debug_overlay,
+                    ) {
                         out.action = Some(MenuAction::ToggleDebugger);
                         ui.close();
                     }
                     ui.separator();
-                    for (label, panel) in [
-                        ("CPU", ChipPanel::Cpu),
-                        ("PPU", ChipPanel::Ppu),
-                        ("APU", ChipPanel::Apu),
-                        ("Memory", ChipPanel::Memory),
-                        ("OAM", ChipPanel::Oam),
-                        ("Mapper", ChipPanel::Mapper),
-                        ("Trace Logger", ChipPanel::Trace),
-                        ("Event Viewer", ChipPanel::Events),
-                        ("NSF Player", ChipPanel::Nsf),
-                        ("Lua Script", ChipPanel::Script),
+                    for (icon, label, panel) in [
+                        (glyph::MICROCHIP, "CPU", ChipPanel::Cpu),
+                        (glyph::MICROCHIP, "PPU", ChipPanel::Ppu),
+                        (glyph::VOLUME_HIGH, "APU", ChipPanel::Apu),
+                        (glyph::MEMORY, "Memory", ChipPanel::Memory),
+                        (glyph::MEMORY, "OAM", ChipPanel::Oam),
+                        (glyph::PUZZLE_PIECE, "Mapper", ChipPanel::Mapper),
+                        (glyph::CLIPBOARD, "Trace Logger", ChipPanel::Trace),
+                        (glyph::CLIPBOARD, "Event Viewer", ChipPanel::Events),
+                        (glyph::MUSIC, "NSF Player", ChipPanel::Nsf),
+                        (glyph::CODE, "Lua Script", ChipPanel::Script),
                     ] {
-                        if ui.button(label).clicked() {
+                        if ui.button(ic(icon, label)).clicked() {
                             out.action = Some(MenuAction::OpenChipPanel(panel));
                             ui.close();
                         }
@@ -872,13 +997,16 @@ impl UiShell {
                 });
 
                 // ----- Help -----
-                ui.menu_button("Help", |ui| {
-                    if ui.button("Keyboard Shortcuts").clicked() {
+                ui.menu_button(ic(glyph::CIRCLE_QUESTION, "Help"), |ui| {
+                    if ui
+                        .button(ic(glyph::KEYBOARD, "Keyboard Shortcuts"))
+                        .clicked()
+                    {
                         self.show_shortcuts = true;
                         ui.close();
                     }
                     ui.separator();
-                    if ui.button("About").clicked() {
+                    if ui.button(ic(glyph::CIRCLE_INFO, "About")).clicked() {
                         self.show_about = true;
                         ui.close();
                     }

@@ -226,9 +226,32 @@ fn start_raf_loop(canvas: &HtmlCanvasElement) -> Result<(), JsValue> {
     *g.borrow_mut() = Some(Closure::<dyn FnMut()>::new(move || {
         EMU.with(|emu| {
             let mut emu = emu.borrow_mut();
+            // v1.2.0 Workstream F1/F2 — fold the on-screen touch overlay into
+            // this frame's input at the SAME point the keyboard mask is applied
+            // (the canvas embed's single latch site, just before `run_frame`).
+            // The touch buttons OR into the routed port; the Power Pad mat mask
+            // feeds `set_power_pad` (which self-attaches the mat on port 1) when
+            // the touch UI selected the Power Pad. Nothing-touched =
+            // byte-identical to the keyboard-only path.
+            let touch_buttons = crate::wasm_touch::touch_buttons();
+            let touch_port = crate::wasm_touch::touch_target_port();
+            let power_pad_active = crate::wasm_touch::touch_power_pad_active();
+            let power_pad = crate::wasm_touch::touch_power_pad();
             let buttons = emu.buttons;
             if let Some(nes) = emu.nes.as_mut() {
-                nes.set_buttons(0, buttons);
+                // Player 1 is the keyboard-mapped port; the touch overlay can
+                // route its mask to any of ports 0..=3.
+                if touch_port == 0 {
+                    nes.set_buttons(0, buttons | touch_buttons);
+                } else {
+                    nes.set_buttons(0, buttons);
+                    // Ports 1..3 get only the touch contribution (the canvas
+                    // embed maps the keyboard solely to player 1).
+                    nes.set_buttons(touch_port, touch_buttons);
+                }
+                if power_pad_active {
+                    nes.set_power_pad(1, power_pad);
+                }
                 nes.run_frame();
                 // The framebuffer is RGBA8 256x240 — byte-identical
                 // to the canvas ImageData layout. A clamped-array

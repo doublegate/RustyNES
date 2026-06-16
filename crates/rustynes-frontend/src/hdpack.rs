@@ -114,8 +114,11 @@ impl HdPack {
         let parsed = parse_hires(&hires);
         let mut images = Vec::with_capacity(parsed.image_names.len());
         for name in &parsed.image_names {
-            let bytes = std::fs::read(dir.join(name)).ok();
-            images.push(bytes.and_then(|b| decode_png(&b)));
+            // Reject any name that would escape the pack dir (path traversal).
+            let decoded = sanitize_image_name(name)
+                .and_then(|safe| std::fs::read(dir.join(safe)).ok())
+                .and_then(|b| decode_png(&b));
+            images.push(decoded);
         }
         Self::finish(parsed, images)
     }
@@ -147,11 +150,15 @@ impl HdPack {
         let parsed = parse_hires(&hires);
         let mut images = Vec::with_capacity(parsed.image_names.len());
         for name in &parsed.image_names {
-            let joined = prefix.join(name);
-            let entry_name = joined.to_string_lossy().replace('\\', "/");
-            let decoded = read_zip_entry(&mut archive, &entry_name)
-                .or_else(|| read_zip_entry(&mut archive, name))
-                .and_then(|b| decode_png(&b));
+            // Reject any name that would escape the pack prefix (path traversal):
+            // only a plain final component is honoured, joined under the prefix.
+            let decoded = sanitize_image_name(name).and_then(|safe| {
+                let joined = prefix.join(safe);
+                let entry_name = joined.to_string_lossy().replace('\\', "/");
+                read_zip_entry(&mut archive, &entry_name)
+                    .or_else(|| read_zip_entry(&mut archive, safe))
+                    .and_then(|b| decode_png(&b))
+            });
             images.push(decoded);
         }
         Self::finish(parsed, images)
@@ -196,10 +203,41 @@ impl HdPack {
     }
 }
 
+/// Sanitize a replacement-image filename parsed from `hires.txt` against path
+/// traversal: a malicious pack must not be able to reference `../../etc/passwd`
+/// or an absolute path and escape the pack directory. We accept ONLY a plain
+/// final path component (no separators, no `..`, not absolute) and return it;
+/// anything else is rejected (`None`).
+fn sanitize_image_name(name: &str) -> Option<&str> {
+    if name.is_empty() {
+        return None;
+    }
+    // Reject absolute paths and any embedded path separators (forward or back).
+    if name.contains('/') || name.contains('\\') {
+        return None;
+    }
+    // Defence in depth: reject any `..` traversal component and Windows drive
+    // / device prefixes (`:` appears in `C:` / `\\?\` style paths).
+    if name == ".." || name == "." || name.contains(':') {
+        return None;
+    }
+    Some(name)
+}
+
+/// Maximum bytes read from a single HD-pack zip entry (a replacement PNG). Caps
+/// a zip bomb / corrupt archive before it can OOM us — replacement images are at
+/// most a few MiB. Mirrors `app.rs::extract_rom_from_zip`'s cap: both the
+/// declared size AND the actual read are bounded, since the declared size can lie.
+const MAX_HD_ENTRY_BYTES: u64 = 64 * 1024 * 1024;
+
 fn read_zip_entry(archive: &mut zip::ZipArchive<std::fs::File>, name: &str) -> Option<Vec<u8>> {
-    let mut e = archive.by_name(name).ok()?;
-    let mut buf = Vec::with_capacity(usize::try_from(e.size()).unwrap_or(0));
-    e.read_to_end(&mut buf).ok()?;
+    let e = archive.by_name(name).ok()?;
+    if e.size() > MAX_HD_ENTRY_BYTES {
+        return None;
+    }
+    let cap = usize::try_from(e.size()).unwrap_or(0);
+    let mut buf = Vec::with_capacity(cap);
+    e.take(MAX_HD_ENTRY_BYTES).read_to_end(&mut buf).ok()?;
     Some(buf)
 }
 
@@ -533,11 +571,11 @@ impl HdCompositor {
     }
 }
 
-/// Hash a tile's 16 CHR bytes (Mesen-compatible CRC32), honouring sprite flips
-/// so a flipped sprite hashes to the same key Mesen would emit for the unflipped
-/// tile dump. (The minimal cut hashes the raw, unflipped CHR bytes: Mesen keys
-/// on the tile's CHR content, and flips are applied by the renderer, so we read
-/// the pattern bytes straight from CHR.)
+/// Hash a tile's 16 CHR bytes (Mesen-compatible CRC32) from the raw, *unflipped*
+/// pattern bytes. Mesen keys tile replacement on the tile's CHR content, and H/V
+/// flips are applied later by the renderer, so the hash deliberately reads the
+/// pattern bytes straight from CHR and does NOT consult `rec.flip_h` / `flip_v`
+/// — a flipped sprite hashes to the same key as its unflipped tile dump.
 fn hash_tile(rec: HdTileSource, chr_peek: &mut impl FnMut(u16) -> u8) -> u32 {
     let base = rec.chr_addr & 0x1FF0;
     let mut bytes = [0u8; 16];
@@ -656,5 +694,19 @@ mod tests {
     fn split_tag_basic() {
         assert_eq!(split_tag("<scale>2"), Some(("scale", "2")));
         assert_eq!(split_tag("no tag"), None);
+    }
+
+    #[test]
+    fn sanitize_image_name_rejects_traversal() {
+        // Plain final components are accepted unchanged.
+        assert_eq!(sanitize_image_name("tiles.png"), Some("tiles.png"));
+        // Path traversal / absolute / separator / drive forms are all rejected.
+        assert_eq!(sanitize_image_name("../../etc/passwd"), None);
+        assert_eq!(sanitize_image_name("/etc/passwd"), None);
+        assert_eq!(sanitize_image_name("sub/dir/tiles.png"), None);
+        assert_eq!(sanitize_image_name("..\\..\\windows\\system32"), None);
+        assert_eq!(sanitize_image_name(".."), None);
+        assert_eq!(sanitize_image_name("C:\\evil.png"), None);
+        assert_eq!(sanitize_image_name(""), None);
     }
 }

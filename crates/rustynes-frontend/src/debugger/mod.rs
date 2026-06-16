@@ -246,6 +246,11 @@ impl DebuggerOverlay {
         surface_format: wgpu::TextureFormat,
     ) -> Self {
         let ctx = egui::Context::default();
+        // v1.2.0 (H3) — register the Font Awesome Solid icon font so the menu
+        // bar can prefix labels with glyphs. Purely cosmetic + a trailing
+        // fallback, so ordinary UI text is unaffected and missing glyphs
+        // degrade to a box rather than crashing.
+        crate::icons::install(&ctx);
         let viewport_id = ctx.viewport_id();
         let state = egui_winit::State::new(ctx, viewport_id, window, None, None, None);
         let renderer = egui_wgpu::Renderer::new(device, surface_format, None, 1, false);

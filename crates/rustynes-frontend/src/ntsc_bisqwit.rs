@@ -324,13 +324,19 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {{
 
     // Hue rotation of the (I, Q) vector by `hue` degrees (identity at 0). Done in
     // f32 then truncated back to integer so the matrix multiply below is unchanged.
-    let hue_rad = u.knobs.w * 0.017453292; // pi/180
-    let hc = cos(hue_rad);
-    let hs = sin(hue_rad);
-    let isum_r = i32(f32(isum) * hc - f32(qsum) * hs);
-    let qsum_r = i32(f32(isum) * hs + f32(qsum) * hc);
-    isum = isum_r;
-    qsum = qsum_r;
+    // Gated on `hue != 0` so the default (hue==0, byte-identical) path skips the
+    // per-fragment cos()/sin() trig entirely. `hue` is a uniform, so this branch
+    // is coherent across the workgroup (cheap), and the hue==0 result is identical
+    // to multiplying by the identity rotation (no float round-trip applied).
+    if u.knobs.w != 0.0 {{
+        let hue_rad = u.knobs.w * 0.017453292; // pi/180
+        let hc = cos(hue_rad);
+        let hs = sin(hue_rad);
+        let isum_r = i32(f32(isum) * hc - f32(qsum) * hs);
+        let qsum_r = i32(f32(isum) * hs + f32(qsum) * hc);
+        isum = isum_r;
+        qsum = qsum_r;
+    }}
 
     // Build the integer YIQ->RGB matrix from the live contrast / saturation.
     let cf = (u.knobs.x + 1.0) * (u.knobs.x + 1.0) * CONTRAST_BASE;

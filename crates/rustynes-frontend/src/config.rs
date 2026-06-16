@@ -246,7 +246,7 @@ pub enum ExpansionDevice {
     /// buttons.
     SnesMouse,
     /// Famicom Family BASIC keyboard (v1.2.0 Workstream D). Host keys map to the
-    /// 72-key matrix via `input::FAMILY_KEYBOARD_KEYMAP`.
+    /// 72-key matrix via `input::family_keyboard_index`.
     FamilyKeyboard,
 }
 

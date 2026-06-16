@@ -40,6 +40,15 @@ rustynes-test-harness = { path = "crates/rustynes-test-harness", version = "1.1.
 # `scripting` feature).
 mlua = { version = "0.11", features = ["lua54", "vendored"] }
 
+# v1.2.0 Workstream F4 — EXPERIMENTAL pure-Rust Lua VM for the wasm backend of
+# `rustynes-script` (behind the default-OFF `script-wasm` feature). piccolo has
+# NO C dependency (unlike mlua's vendored Lua 5.4), so it compiles to
+# wasm32-unknown-unknown; its `Fuel` mechanism maps onto the per-frame
+# instruction budget. NOT byte-identical to the mlua backend (a different VM) —
+# acceptable because scripts are observational/overlay + gated writes and are
+# never part of the framebuffer/audio determinism oracle. See ADR 0012.
+piccolo = { version = "0.3.3" }
+
 bitflags = "2.6"
 thiserror = { version = "2.0", default-features = false }
 serde = { version = "1.0", features = ["derive"] }

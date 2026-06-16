@@ -38,4 +38,5 @@ cargo pgo optimize build -- -p rustynes-frontend
 
 echo "done: target/${TRIPLE}/release/rustynes (PGO-optimized)"
 echo "Optional extra: 'cargo pgo bolt build -- -p rustynes-frontend' chains BOLT"
-echo "post-link optimization on Linux (adopt only if it adds >2%)."
+echo "post-link optimization on Linux (the CI promotion bar is >3%; see"
+echo ".github/workflows/pgo.yml + docs/performance.md)."

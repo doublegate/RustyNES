@@ -1,8 +1,8 @@
-# RustyNES v2 — browser-netplay deployment bundle (v2.7.0)
+# RustyNES — browser-netplay deployment bundle
 #
 # Three services wired together:
 #   - signaling : the WebRTC signaling relay (ws://signaling:9000), built from
-#                 the nes-netplay `signaling_server` example.
+#                 the rustynes-netplay `signaling_server` example.
 #   - caddy     : a TLS-terminating reverse proxy that exposes the relay as
 #                 wss://<DOMAIN>/  (an https page cannot open a plain ws://).
 #   - coturn    : a STUN + TURN server for NAT traversal (browsers point their
@@ -17,7 +17,7 @@ services:
   signaling:
     build:
       # Build context is the workspace root so the Dockerfile can copy the whole
-      # cargo workspace (the example depends on the nes-netplay crate).
+      # cargo workspace (the example depends on the rustynes-netplay crate).
       context: ..
       dockerfile: deploy/Dockerfile
     image: rustynes-signaling:latest
@@ -53,7 +53,18 @@ services:
     network_mode: host
     volumes:
       - ./turnserver.conf:/etc/coturn/turnserver.conf:ro
-    command: ["-c", "/etc/coturn/turnserver.conf"]
+    # Base config comes from turnserver.conf; the deploy-specific TURN credential
+    # + advertised realm are passed as CLI flags from env vars so a maintainer
+    # never hand-edits the conf file. CLI flags override the conf. Substitute
+    # these in a `.env` next to this file (see deploy/README.md):
+    #   TURN_USER (default rustynes), TURN_SECRET (default changeme), TURN_REALM.
+    # If coturn sits behind 1:1 NAT and cannot self-detect its public address,
+    # append another line here:  - "--external-ip=YOUR.PUBLIC.IP"
+    command:
+      - "-c"
+      - "/etc/coturn/turnserver.conf"
+      - "--user=${TURN_USER:-rustynes}:${TURN_SECRET:-changeme}"
+      - "--realm=${TURN_REALM:-rustynes.local}"
 
 volumes:
   caddy_data:
