@@ -49,3 +49,54 @@ PRG (it required a 32 KiB multiple); fixed to accept + mirror 16 KiB NROM-128-st
 Input-driven re-capture of the backdrop-only boards is future work; they are
 register-decode + save-state unit-tested and boot without panicking, which is the
 BestEffort bar.
+
+## v1.4.0 "Fidelity" Workstream G sweep (`sprint9.rs`)
+
+Twelve more Tier-2 BestEffort families. Source ROMs staged in the gitignored
+`tests/roms/external-besteffort/` (10 of the 12 have a real unlicensed / pirate /
+multicart dump in the library; mappers 28 and 174 have no library dump and are
+register-decode + save-state unit-tested only). Boot-smoked with `render_smoke`
+(no input driven), captured at the frame with the richest render.
+
+| Mapper | Board (sample ROM) | Boot-smoke result |
+|---|---|---|
+| 28 | Action 53 (homebrew) | no library dump (register-decode + save-state tested) |
+| 30 | UNROM-512 (Wampus) | boots + rendering enabled; menu blank w/o input |
+| 63 | NTDEC 0324 (255-in-1) | boots; runs menu code, input-gated |
+| 76 | NAMCOT-3446 (Megami Tensei) | RENDERED |
+| 174 | NTDEC 5-in-1 | no library dump (register-decode + save-state tested) |
+| 225 | ColorDreams 72-in-1 (110-in-1) | RENDERED |
+| 226 | 76-in-1 BMC | RENDERED |
+| 227 | 1200-in-1 BMC | RENDERED |
+| 229 | 31-in-1 BMC | RENDERED |
+| 233 | 42-in-1 reset-based BMC (Super 22-in-1) | boots; reset-gated menu, input-gated |
+| 242 | Waixing 43-in-1 (Wai Xing Zhan Shi) | RENDERED |
+| 246 | Fong Shen Bang / G0151-1 | RENDERED |
+
+The sweep surfaced and fixed several real defects (all in `sprint9.rs` unless
+noted), found via boot-smoke against the real dumps:
+
+- **`cpu_read_unmapped` inversion** (the load-bearing one): mappers 225 + 246
+  (and the pre-existing m132 in `sprint6.rs` + m143 in `sprint8.rs`) used a
+  `!(register-range).contains(addr)` override, which marks the entire
+  `$8000-$FFFF` PRG-ROM window as open bus — so the reset vector + program code
+  read back `$00` and the CPU never boots. Fixed to flag only the genuine
+  open-bus holes (the register/gap sub-ranges), keeping PRG-ROM mapped.
+- **Mapper 225** decode (`A~[.HMO PPPP PPCC CCCC]`): PRG is A6..A11 (6 bits),
+  mode = A12, mirroring = A13, high bit = A14 (was A6..A9 / A10 / A11).
+- **Mapper 226** decode (`reg0 [PMOP PPPP]` + `reg1` high bit): mode bit 6
+  (0 = 32K, 1 = 16K), mirroring bit 7 (0 = H, 1 = V), high PRG bit from reg1
+  bit 0 (was a wrong reg0 bit-5 / inverted mode + mirroring).
+- **Mapper 233**: the bank is in the DATA byte `[MMOP PPPP]`, not the address
+  (was address-decoded); 4-bit page, bit 5 mode (0 = 16K), bits 6-7 mirroring.
+- **Mapper 242**: added the 8 KiB `$6000-$7FFF` work-RAM the boot routine
+  clears before its first bank switch (it derailed without it), plus the precise
+  inner/outer address-bit PRG decode.
+- **Mapper 246**: `$6003` powers on to `$FF`, PRG-RAM is 2 KiB at `$6800-$6FFF`
+  (not 6 KiB at `$6800-$7FFF`), and the `$FFE4-$FFFF`-family reads force PRG A17
+  high so the reset vector resolves into the boot bank.
+
+After the fixes: 7 of the 10 staged dumps render a real screen headless (76, 225,
+226, 227, 229, 242, 246); the other 3 (30, 63, 233) boot and run real PRG code in
+a stable menu loop but are input-/reset-gated, so they sit on a backdrop without a
+driven button — the BestEffort bar (boots + register-decode verified) is met.

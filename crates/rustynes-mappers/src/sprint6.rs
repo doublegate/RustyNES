@@ -1760,10 +1760,12 @@ impl Mapper for Txc132 {
         MapperCaps::NONE
     }
 
-    // The chip's read port lives at $4100-$5FFF; surface it as "mapped" so the
-    // bus uses the real (open-bus-combined low nibble) value.
+    // The chip's read port lives at $4100-$5FFF (mapped); only the $4020-$40FF
+    // gap below it is open bus. $8000-$FFFF PRG-ROM stays mapped (the trait
+    // default) — a `!(...)` here would wrongly open-bus the program ROM and the
+    // reset vector, so the board never boots.
     fn cpu_read_unmapped(&self, addr: u16) -> bool {
-        !(0x4100..=0x5FFF).contains(&addr)
+        (0x4020..=0x40FF).contains(&addr)
     }
 
     fn cpu_read(&mut self, addr: u16) -> u8 {

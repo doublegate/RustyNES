@@ -255,6 +255,40 @@ unit-tested only and not accuracy-gated** (see the tiering note below).
 | 231 | — | 20-in-1 multicart | — | — | landed (v1.3.0 / S8) | Address-decoded dual 16K PRG banks + a mirroring bit; CHR-RAM. |
 | 234 | — | Maxi 15 / BNROM-like multicart | — | — | landed (v1.3.0 / S8) | Two latch regs (`$FF80-$FF9F` / `$FFE8-$FFF8`) selecting 32K PRG + 8K CHR in NINA-style or CNROM-style sub-mode. |
 
+### Eighth long-tail batch — v1.4.0 "Fidelity" best-effort sweep (12 families, 101 → 113)
+
+The v1.4.0 Workstream G Tier-2 sweep, ported into `sprint9.rs` from the
+concretely-documented nesdev decode tables (and the `Mesen2` / `GeraNES`
+reference implementations). Simple discrete / homebrew / multicart boards with
+no IRQ, no on-cart audio, and no per-cycle / A12 hook (`MapperCaps::NONE`);
+**register-decode unit-tested only and not accuracy-gated** (see the tiering
+note below).
+
+| iNES | Submapper | Name | Audio | IRQ | Status | Notes |
+|------|-----------|------|-------|-----|--------|-------|
+| 28 | — | Action 53 homebrew multicart | — | — | landed (v1.4.0 / S9) | Outer `$5xxx` register-select + inner `$8000-$FFFF` bank latch; 2-bit PRG-mode field (NROM-128/256/UNROM) + 2-bit mirroring field; CHR-RAM. |
+| 30 | — | UNROM-512 | — | — | landed (v1.4.0 / S9) | Homebrew. One `$8000-$FFFF` latch (bus conflict): 16K PRG (bits 0-4) + 8K CHR-RAM (bits 5-6) + one-screen bit (bit 7); fixed last bank at `$C000`. |
+| 63 | — | NTDEC 0324 (Powerful 250-in-1) | — | — | landed (v1.4.0 / S9) | Address-decoded multicart: 16/32K PRG bank + mirroring bit; CHR-RAM. |
+| 76 | — | NAMCOT-3446 (Namco 109) | — | — | landed (v1.4.0 / S9) | MMC3-style `$8000`/`$8001` register pairs select two 8K PRG banks (fixed last two) + four 2K CHR banks; header-fixed mirroring. |
+| 174 | — | NTDEC 5-in-1 | — | — | landed (v1.4.0 / S9) | Address-decoded 16/32K PRG bank + 8K CHR bank + mirroring bit. |
+| 225 | — | ColorDreams 72-in-1 | — | — | landed (v1.4.0 / S9) | Address-decoded `A~[.HMO PPPP PPCC CCCC]`: CHR A0-A5, PRG A6-A11, mode A12 (16/32K), mirror A13, high bit A14; plus a `$5800-$5FFF` 4-nibble scratch-RAM block. |
+| 226 | — | 76-in-1 BMC | — | — | landed (v1.4.0 / S9) | Two `$8000-$FFFF` regs (even/odd): reg0 `[PMOP PPPP]` (bit6 mode 0=32K/1=16K, bit7 mirror 0=H/1=V), reg1 bit0 = high PRG bit; CHR-RAM. |
+| 227 | — | 1200-in-1 BMC | — | — | landed (v1.4.0 / S9) | Address-decoded 16/32K PRG + fixed-high-bank mode + mirroring bit; CHR-RAM. |
+| 229 | — | 31-in-1 BMC | — | — | landed (v1.4.0 / S9) | Address-decoded: low bits zero = fixed NROM-32 menu bank, else a 16K bank pair + 8K CHR + mirroring bit. |
+| 233 | — | 42-in-1 reset-based BMC | — | — | landed (v1.4.0 / S9) | DATA-driven `[MMOP PPPP]` (4-bit page, bit5 mode 0=16K/1=32K, bits6-7 mirroring); the reset-selected outer block is host-driven (fixed power-on `0`); CHR-RAM. |
+| 242 | — | Waixing 43-in-1 (Wai Xing Zhan Shi) | — | — | landed (v1.4.0 / S9) | `$8000-$FFFF` address-decoded 32K PRG (inner = A2-A4, outer = A5-A6) + mirror bit (A1); 8K work-RAM at `$6000-$7FFF`; CHR-RAM. |
+| 246 | — | Fong Shen Bang / G0151-1 | — | — | landed (v1.4.0 / S9) | Four `$6000-$6003` PRG (8K) + four `$6004-$6007` CHR (2K) banking regs; 2K PRG-RAM at `$6800-$6FFF`; `$6003` powers on to `$FF` and `$FFE4-$FFFF`-family reads force PRG A17 high; CHR-ROM, header-fixed mirroring. |
+
+These were boot-smoked against real unlicensed / pirate / multicart dumps (10 of
+the 12 families have a library dump; 28 + 174 do not and are register-decode +
+save-state tested only). The boot-smoke caught a shared `cpu_read_unmapped`
+inversion (it had also been latent in the pre-existing m132 + m143) that
+open-bused the whole PRG window so the board never booted, plus several decode
+errors (m225/m226/m233/m242/m246) — all corrected. 7 of the 10 staged dumps now
+render a real screen headless; the other 3 (30/63/233) boot + run real menu code
+but are input-/reset-gated. See `screenshots/besteffort/README.md` for the full
+matrix and the per-mapper fix log.
+
 ### Mapper accuracy tiering (v1.2.0)
 
 Every supported family is classified `Core` / `Curated` / `BestEffort` by
@@ -267,8 +301,9 @@ boards with no redistributable fixture, register-decode unit-tested only) is
 oracle ROM — is enforced at the classifier level (`BestEffort` is structurally
 never accuracy-gated; the three tier id-sets are disjoint) and by the curated
 construction of the byte-oracle corpus. See `docs/adr/0011-mapper-tiering.md`.
-Current split: **101 families** — 51 Core + 9 Curated (60 accuracy-gated) + 41
-BestEffort (27 from v1.2.0 `sprint6`/`sprint7` + 14 from v1.3.0 `sprint8`).
+Current split: **113 families** — 51 Core + 9 Curated (60 accuracy-gated) + 53
+BestEffort (27 from v1.2.0 `sprint6`/`sprint7` + 14 from v1.3.0 `sprint8` + 12
+from v1.4.0 `sprint9`).
 
 ### NSF player (synthetic mapper, v1.1.0)
 

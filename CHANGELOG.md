@@ -103,9 +103,30 @@ exercises the affected paths).
   save-state format are byte-identical. On-device browser manual-verify pending
   (like the v1.2.0 F1/F3 carryovers) — record/replay + the IDB grid can't be
   headlessly CI-certified.
+- **12 new mapper families (101 → 113 coverage)** (Workstream G mapper-breadth
+  continuation, `crates/rustynes-mappers/src/sprint9.rs`): mappers 28 (Action 53
+  homebrew multicart), 30 (UNROM-512), 63 (NTDEC 0324 / Powerful 250-in-1), 76
+  (NAMCOT-3446 / Namco 109), 174 (NTDEC 5-in-1), 225 (ColorDreams 72-in-1), 226
+  (76-in-1 BMC), 227 (1200-in-1 BMC), 229 (31-in-1 BMC), 233 (42-in-1 reset-based
+  BMC), 242 (Waixing 43-in-1 / Wai Xing Zhan Shi), and 246 (Fong Shen Bang /
+  G0151-1). All are hook-free discrete / homebrew / multicart boards classified
+  **BestEffort** (Tier-2, ADR 0011) — register-decode + save-state-round-trip
+  unit-tested, deliberately **excluded** from the AccuracyCoin / commercial-ROM
+  oracle gate, with the honesty gate (`mapper_tier_honesty.rs`) confirming no
+  accuracy-corpus ROM resolves to a BestEffort mapper. Purely additive: the
+  shipped / native / `no_std` / wasm builds stay byte-identical and AccuracyCoin
+  holds 100% (139/139). See `docs/mappers.md` §Eighth long-tail batch.
 
 ### Fixed
 
+- **BestEffort mapper boot regressions (`cpu_read_unmapped` inversion).** Mappers
+  132 (TXC 22211) and 143 (Sachen TCA01) used a `!(register-range).contains(addr)`
+  open-bus override that wrongly marked the entire `$8000-$FFFF` PRG-ROM window as
+  open bus — so the reset vector and program code read back `$00` and the board
+  never booted. Fixed to flag only the genuine open-bus holes, keeping PRG-ROM
+  mapped. Surfaced by boot-smoking the new Workstream G mappers (225/246 had the
+  same bug) against real unlicensed dumps; see `screenshots/besteffort/README.md`
+  for the full sweep + per-mapper decode corrections (m225/m226/m233/m242/m246).
 - **Triangle ultrasonic silence.** When the triangle timer period drops below 2
   (frequency above ~55.9 kHz) the sequencer now freezes instead of clocking at
   ultrasonic speed, matching hardware (and the common-emulator convention); the
