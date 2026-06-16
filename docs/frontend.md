@@ -120,6 +120,20 @@ is `request_redraw()` → `RedrawRequested` on rAF.)
 - Underrun / overrun counters + occupancy are exposed in the debugger
   Performance panel (Phase 0).
 
+**Presented-cadence measurement (v1.3.0 Workstream B1).** The "presented"
+interval is timestamped at the `RedrawRequested` (display-refresh) signal — the
+instant the compositor asks for a frame — and **not** after `surface.present()`
+returns. Timestamping after present folded GPU-submit + vsync-gate +
+coalesced-`RedrawRequested` jitter into the series, which made the panel's
+"presented" graph bottom out and rush to catch up even while "produced"
+(emulation) stayed flat. Measured at the refresh signal, present-to-present
+deltas reflect the display's true visible cadence; a small, steady offset from
+"produced" is the NTSC 60.0988 Hz emulation rate beating against the display
+refresh, not stutter. (The timestamp is still recorded only on an actual present,
+so a skipped / early-returned redraw is not counted.) A true scan-out timestamp
+(a GPU present-timing query) is a possible future refinement — see
+`docs/performance.md`.
+
 The Performance panel also has a **Logging** checkbox (session-only,
 default OFF, native-only): while set, the app appends one CSV row per
 second of everything the panel shows (produced / presented / produce-cost

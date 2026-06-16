@@ -233,6 +233,16 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut PerfPanelState) {
                     egui::RichText::new("presented")
                         .small()
                         .color(egui::Color32::from_rgb(0x60, 0xC0, 0xF0)),
+                )
+                .on_hover_text(
+                    "Present-to-present cadence, timestamped at the \
+                     RedrawRequested (display-refresh) signal — the display's \
+                     visible frame interval. A small, steady offset from \
+                     \"produced\" is the NTSC 60.0988 Hz emulation rate beating \
+                     against the display's refresh, not stutter. (v1.3.0: this is \
+                     now measured at the refresh signal, not after \
+                     surface.present(), so it no longer folds in GPU-submit / \
+                     vsync jitter.)",
                 );
                 ui.label(
                     egui::RichText::new("produced")
