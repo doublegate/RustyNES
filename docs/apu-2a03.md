@@ -177,10 +177,12 @@ external open-bus latch used by cartridge or PPU register accesses.
 2. **Frame counter write jitter.** Writing `$4017` with a value that includes IRQ inhibit set clears any pending frame IRQ flag.
 3. **Length counter halt timing.** The halt flag is sampled at the right edge of the half-frame clock; common subtle bug is sampling on the wrong cycle.
 4. **Triangle disabled silently when length counter or linear counter reaches 0.** Holds the last sequencer step (does not produce a click).
-5. **DMC playback stops mid-scanline?** Yes; `$4015` write to clear bit 4 silences the channel after the current sample byte completes.
-6. **Sweep mute.** When the target period of a pulse channel is > $7FF or the negated-target underflows below 8, the channel is muted regardless of length.
-7. **Pulse 1 sweep negation off-by-one.** Pulse 1 negates by `~target` (one's complement); Pulse 2 negates by `-target`. This produces audible difference at certain frequencies.
-8. **Controller conflict is APU-owned timing.** The standard controller code
+   - **Ultrasonic silence (timer period < 2).** When the triangle timer period is below 2 (frequency above ~55.9 kHz), real hardware cannot follow the sequencer and the channel effectively halts. We freeze the sequencer in `Triangle::clock_timer` (the step does not advance and the output holds its current value) rather than emitting the aliasing tone, matching the common-emulator convention; Mega Man 2's "Crash Man" stage relies on this to silence the triangle. The threshold is strictly `< 2` (period 2 still clocks). See `crates/rustynes-apu/src/triangle.rs`.
+5. **Pulse duty-sequencer phase reset on `$4003`/`$4007`.** Writing the length/timer-high register resets the pulse duty sequencer to step 0 (and sets the envelope-restart flag) but does **not** reset the timer divider. Implemented in `Pulse::write_timer_hi` (`crates/rustynes-apu/src/pulse.rs`).
+6. **DMC playback stops mid-scanline?** Yes; `$4015` write to clear bit 4 silences the channel after the current sample byte completes.
+7. **Sweep mute.** When the target period of a pulse channel is > $7FF or the negated-target underflows below 8, the channel is muted regardless of length.
+8. **Pulse 1 sweep negation off-by-one.** Pulse 1 negates by `~target` (one's complement); Pulse 2 negates by `-target`. This produces audible difference at certain frequencies.
+9. **Controller conflict is APU-owned timing.** The standard controller code
    lives in the input subsystem, but DMC DMA is the root of the classic joypad
    bit deletion/duplication bug. APU/DMA changes must rerun controller-read
    coverage, not only APU audio ROMs.

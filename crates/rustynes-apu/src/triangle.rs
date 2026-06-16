@@ -88,6 +88,15 @@ impl Triangle {
 
     /// One CPU clock.
     pub fn clock_timer(&mut self) {
+        // Ultrasonic-silence (NESdev wiki "APU Triangle"): a timer period below
+        // 2 (frequency above ~55.9 kHz) would clock the sequencer faster than
+        // hardware can follow; the real channel effectively halts there and the
+        // output holds its current step. Most emulators freeze the sequencer to
+        // avoid the resulting pop (Mega Man 2's "Crash Man" stage relies on
+        // this). We hold the sequencer — output stays at the current step.
+        if self.timer_period < 2 {
+            return;
+        }
         if self.timer == 0 {
             self.timer = self.timer_period;
             // Only advance sequencer if both gates are open.
@@ -118,17 +127,12 @@ impl Triangle {
     }
 
     /// Per-cycle output (0..=15).
+    ///
+    /// The ultrasonic-silence behavior is implemented in [`Self::clock_timer`]
+    /// by freezing the sequencer when `timer_period < 2`; the output simply
+    /// holds the current step (so it does not pop), matching hardware.
     #[must_use]
     pub fn output(&self) -> u8 {
-        // Real hardware actually emits the current step regardless — silenced
-        // state holds the last step.  But common emulators (and most test
-        // ROMs) accept "0 when timer < 2" as a heuristic to suppress
-        // ultra-high-frequency noise.  We follow that convention.
-        if self.timer_period < 2 {
-            // Hardware would still emit; we let it through.
-            // This branch is here as a hook in case audible aliasing forces
-            // muting at high pitch; tests don't depend on it.
-        }
         TRIANGLE_TABLE[self.step as usize]
     }
 }
@@ -162,7 +166,8 @@ mod tests {
         let mut t = Triangle::new();
         t.length.count = 5;
         t.linear_counter = 5;
-        t.timer_period = 0;
+        // A non-ultrasonic period (>= 2) so the sequencer is not frozen.
+        t.timer_period = 2;
         t.timer = 0;
         t.clock_timer();
         assert_eq!(t.step, 1);
@@ -173,8 +178,41 @@ mod tests {
         let mut t = Triangle::new();
         t.length.count = 0;
         t.linear_counter = 5;
+        // Non-ultrasonic period so only the length gate (not the ultrasonic
+        // freeze) is what holds the sequencer.
+        t.timer_period = 2;
         t.timer = 0;
         t.clock_timer();
         assert_eq!(t.step, 0);
+    }
+
+    #[test]
+    fn ultrasonic_period_freezes_sequencer() {
+        // Period < 2 (ultrasonic): hardware halts the sequencer; the step must
+        // not advance even with both gates open and the timer expired.
+        let mut t = Triangle::new();
+        t.length.count = 5;
+        t.linear_counter = 5;
+        t.timer_period = 1;
+        t.timer = 0;
+        t.clock_timer();
+        assert_eq!(t.step, 0, "step must not advance at period<2");
+        // Period 0 is also ultrasonic-silenced.
+        t.timer_period = 0;
+        t.timer = 0;
+        t.clock_timer();
+        assert_eq!(t.step, 0, "step must not advance at period==0");
+    }
+
+    #[test]
+    fn period_two_resumes_clocking() {
+        // The threshold is strictly < 2; period == 2 still clocks normally.
+        let mut t = Triangle::new();
+        t.length.count = 5;
+        t.linear_counter = 5;
+        t.timer_period = 2;
+        t.timer = 0;
+        t.clock_timer();
+        assert_eq!(t.step, 1, "step must advance at period==2");
     }
 }
