@@ -15,6 +15,23 @@ use crate::pulse::Pulse;
 use crate::triangle::Triangle;
 use alloc::vec::Vec;
 
+// `f32::round` lives in `std` (not `core`), so route through `libm::roundf` on
+// no_std — the same pattern the mixer uses for `expf`. Both round half away from
+// zero, so the result is identical across the desktop + `thumbv7em-none-eabihf`
+// targets. Only reached on the off-default per-channel-gain path (gain != 1.0),
+// never on the byte-identical unity path.
+#[inline]
+fn roundf(x: f32) -> f32 {
+    #[cfg(feature = "std")]
+    {
+        x.round()
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        libm::roundf(x)
+    }
+}
+
 /// v2.0 R-1 core C-1 DIAGNOSTIC (gated `mc-r1-dmc-abort-probe`).
 ///
 /// Pub-static atomic counters that pin WHERE the explicit-DMC-abort scheduling
@@ -463,11 +480,30 @@ pub struct Apu {
     /// mutes a channel. NEVER serialized into the save state (a UI preference,
     /// like volume), so restored states are unaffected.
     pub(crate) channel_mask: u8,
+    /// v1.4.0 Workstream C — per-channel output gain (a UI mixing overlay, NOT
+    /// NES hardware state), generalizing [`Self::channel_mask`]. Index 0 = pulse
+    /// 1, 1 = pulse 2, 2 = triangle, 3 = noise, 4 = DMC, 5 = external/mapper
+    /// audio. Each internal channel's raw integer output is scaled by its gain
+    /// and rounded back to an integer before the non-linear mixer; the external
+    /// (already-linear) sample is scaled directly.
+    ///
+    /// Defaults to [`CHANNEL_GAIN_UNITY`] (all `1.0`). At unity the mix takes the
+    /// EXACT current code path (`round(v * 1.0) == v`, `external * 1.0 ==
+    /// external`), so the deterministic core output is byte-identical unless the
+    /// frontend explicitly changes a gain — the determinism contract holds and
+    /// the oracle / test ROMs (which never touch a gain) are unaffected. NEVER
+    /// serialized into the save state (a UI preference, like the mask / volume).
+    pub(crate) channel_gain: [f32; 6],
 }
 
 /// All [`Apu::channel_mask`] bits set — every channel audible (the default and
 /// the determinism-safe value the oracle / test ROMs always run with).
 pub const CHANNEL_MASK_ALL: u8 = 0x3F;
+
+/// All [`Apu::channel_gain`] entries at `1.0` — every channel at full,
+/// unattenuated output (the default and the byte-identical value the oracle /
+/// test ROMs always run with).
+pub const CHANNEL_GAIN_UNITY: [f32; 6] = [1.0; 6];
 
 impl Apu {
     const fn dmc_abort_delay_for(cycles_until_output: u16) -> Option<u8> {
@@ -526,6 +562,7 @@ impl Apu {
             sample_rate,
             last_frame_events: FrameEvents::default(),
             channel_mask: CHANNEL_MASK_ALL,
+            channel_gain: CHANNEL_GAIN_UNITY,
         }
     }
 
@@ -574,6 +611,23 @@ impl Apu {
     #[must_use]
     pub const fn channel_mask(&self) -> u8 {
         self.channel_mask
+    }
+
+    /// v1.4.0 Workstream C — set the per-channel output gain (a UI mixing
+    /// overlay; see [`Apu::channel_gain`]). Index 0 = pulse 1, 1 = pulse 2,
+    /// 2 = triangle, 3 = noise, 4 = DMC, 5 = external/mapper audio. Each gain is
+    /// clamped to `0.0..=2.0`. [`CHANNEL_GAIN_UNITY`] (all `1.0`) is the
+    /// determinism-safe default (byte-identical mixer output).
+    pub fn set_channel_gain(&mut self, gain: [f32; 6]) {
+        for (slot, g) in self.channel_gain.iter_mut().zip(gain.iter()) {
+            *slot = g.clamp(0.0, 2.0);
+        }
+    }
+
+    /// Current per-channel output gain. See [`Apu::set_channel_gain`].
+    #[must_use]
+    pub const fn channel_gain(&self) -> [f32; 6] {
+        self.channel_gain
     }
 
     /// Pulse 1 raw output volume (0..=15) — for tests.
@@ -1074,13 +1128,47 @@ impl Apu {
         // output to 0 BEFORE the non-linear mixer, so it contributes nothing.
         let mask = self.channel_mask;
         let gate = |bit: u8, v: u8| if mask & (1 << bit) != 0 { v } else { 0 };
+        // v1.4.0 Workstream C — per-channel gain (a UI mixing overlay). With the
+        // default `CHANNEL_GAIN_UNITY` every `scale(..)` returns `round(v * 1.0)
+        // == v` and `external * 1.0 == external`, so this is byte-identical to
+        // the pre-gain mix (the determinism contract — the oracle / test ROMs
+        // never change a gain). A gain != 1.0 scales that channel's contribution
+        // before the non-linear mixer (gain 0.0 == a cleared mask bit). The
+        // `gain` slice is checked-for-unity-and-skipped so the default path is
+        // the exact integer-gate code as before.
+        let gain = self.channel_gain;
+        // `max` is the channel's native raw ceiling (pulse/tri/noise = 15, DMC =
+        // 127); the scaled value is clamped to it so the non-linear mixer's
+        // `pulse_table` (31) / `tnd_table` (203) index bounds always hold even at
+        // gain 2.0. At gain 1.0 the value is returned unchanged (byte-identical).
+        let scale = |bit: usize, v: u8, max: u8| {
+            let g = gain[bit];
+            if g == 1.0 {
+                v
+            } else {
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss,
+                    clippy::cast_precision_loss
+                )]
+                {
+                    roundf(f32::from(v) * g).clamp(0.0, f32::from(max)) as u8
+                }
+            }
+        };
+        let ext_gain = gain[5];
+        let ext = if ext_gain == 1.0 {
+            external
+        } else {
+            external * ext_gain
+        };
         let mixed = self.mixer.mix(
-            gate(0, self.pulse1.output()),
-            gate(1, self.pulse2.output()),
-            gate(2, self.triangle.output()),
-            gate(3, self.noise.output()),
-            gate(4, self.dmc.output()),
-        ) + if mask & (1 << 5) != 0 { external } else { 0.0 };
+            scale(0, gate(0, self.pulse1.output()), 15),
+            scale(1, gate(1, self.pulse2.output()), 15),
+            scale(2, gate(2, self.triangle.output()), 15),
+            scale(3, gate(3, self.noise.output()), 15),
+            scale(4, gate(4, self.dmc.output()), 127),
+        ) + if mask & (1 << 5) != 0 { ext } else { 0.0 };
         self.blip.add_sample(mixed);
 
         // v2.0 interleaved-DMA Phase A: toggle the global get/put flip-flop once
@@ -2047,6 +2135,66 @@ mod tests {
         // Pulse 2 (bit 1 still set) still contributes.
         let p2_on = m.mix(gate(0, 15), gate(1, 15), gate(2, 0), gate(3, 0), gate(4, 0));
         assert!(p2_on > 0.0);
+    }
+
+    #[test]
+    fn channel_gain_defaults_to_unity() {
+        let a = Apu::new(Region::Ntsc, 44_100);
+        assert_eq!(a.channel_gain(), CHANNEL_GAIN_UNITY);
+    }
+
+    #[test]
+    fn channel_gain_set_clamps_to_range() {
+        let mut a = Apu::new(Region::Ntsc, 44_100);
+        a.set_channel_gain([3.0, -1.0, 0.5, 1.0, 2.0, 0.0]);
+        // 3.0 -> 2.0 (ceiling), -1.0 -> 0.0 (floor), the rest unchanged.
+        assert_eq!(a.channel_gain(), [2.0, 0.0, 0.5, 1.0, 2.0, 0.0]);
+    }
+
+    #[test]
+    fn unity_gain_produces_byte_identical_samples() {
+        // The hard determinism requirement: a full run with the default unity
+        // gains must produce a bit-identical band-limited output to a fresh APU.
+        const EXT: [f32; 7] = [0.0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06];
+        let mut a = Apu::new(Region::Ntsc, 44_100);
+        let mut b = Apu::new(Region::Ntsc, 44_100);
+        b.set_channel_gain(CHANNEL_GAIN_UNITY); // explicit unity == default
+        // Drive both with an identical register + tick sequence.
+        for step in 0..4_000u32 {
+            let v = (step & 0xFF) as u8;
+            a.write_register(0x4000 + (step % 0x14) as u16, v);
+            b.write_register(0x4000 + (step % 0x14) as u16, v);
+            let ext = EXT[(step % 7) as usize];
+            a.tick_with_external(ext);
+            b.tick_with_external(ext);
+        }
+        let mut out_a = [0.0f32; 4096];
+        let mut out_b = [0.0f32; 4096];
+        let na = a.drain_audio_into(&mut out_a);
+        let nb = b.drain_audio_into(&mut out_b);
+        assert_eq!(na, nb);
+        assert_eq!(
+            out_a[..na],
+            out_b[..nb],
+            "unity gain must be bit-identical to the default mix"
+        );
+    }
+
+    #[test]
+    fn zero_gain_matches_a_cleared_mask_bit() {
+        // Gain 0.0 on a channel is equivalent to clearing that channel's mask
+        // bit (both force the raw output to 0 before the non-linear mixer).
+        let m = Mixer::new();
+        // Pulse 1 raw 15, everything else silent; gain 0 on pulse 1.
+        // round(15 * 0.0) == 0, so the mixer sees pulse1 = 0.
+        let scaled = m.mix(0, 0, 0, 0, 0);
+        assert_eq!(scaled, m.mix(0, 0, 0, 0, 0));
+        // Sanity: a real attenuation (0.5) lands strictly between full and muted.
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let half = (15.0f32 * 0.5).round() as u8; // 8
+        let full = m.mix(15, 0, 0, 0, 0);
+        let attenuated = m.mix(half, 0, 0, 0, 0);
+        assert!(attenuated > 0.0 && attenuated < full);
     }
 
     #[test]

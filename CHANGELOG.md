@@ -22,6 +22,16 @@ exercises the affected paths).
 
 ### Added
 
+- **Per-channel audio mixing UI (Workstream C).** The Audio Settings tab now has
+  per-channel **volume** sliders (`0.0`–`2.0`) for the five APU channels (pulse 1,
+  pulse 2, triangle, noise, DMC) — generalizing the existing per-channel mute
+  mask — plus an expansion-audio slider that appears only when the loaded mapper
+  has on-cart audio, labelled with the chip (VRC6 / VRC7 (OPLL) / MMC5 / Namco
+  163 / Sunsoft 5B / FDS). The gains live in `[audio] channel_gain` and apply live
+  through the same path as the mute mask (`Nes::set_apu_channel_gain`). A "Reset
+  volumes (1.0)" button restores unity. Default (all `1.0`) is byte-identical to
+  the un-scaled mixer output — the determinism contract holds and the AccuracyCoin
+  / audio oracle are unaffected. See `docs/frontend.md` §Audio settings.
 - **240p test suite (`240pee`) render gates.** Wired the in-tree, free
   `240pee/240pee.nes` (mapper 2 / UxROM) and `240pee-bnrom.nes` (mapper 34 /
   BNROM) as deterministic framebuffer-FNV-1a smoke tests

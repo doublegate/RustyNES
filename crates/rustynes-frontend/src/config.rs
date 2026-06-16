@@ -864,11 +864,29 @@ pub struct AudioConfig {
     /// identity response. Clamped on use. Only consulted when [`Self::eq_enabled`].
     #[serde(default = "default_audio_eq_bands")]
     pub eq_bands: [f32; 5],
+    /// v1.4.0 Workstream C — per-APU-channel output gain (a UI mixing overlay,
+    /// NOT NES hardware state), generalizing [`Self::channel_mask`]. Index 0 =
+    /// pulse 1, 1 = pulse 2, 2 = triangle, 3 = noise, 4 = DMC, 5 = external /
+    /// mapper expansion audio (VRC6/VRC7/MMC5/Namco-163/Sunsoft-5B). Each gain is
+    /// clamped to `0.0..=2.0` on use.
+    ///
+    /// Default (all `1.0`, `default_audio_channel_gain`) is byte-identical to
+    /// today's mixer output — `#[serde(default = ...)]` so a pre-v1.4.0 config
+    /// (with no `[audio] channel_gain` key) loads unchanged and the deterministic
+    /// core audio + the oracle stay byte-identical until the user moves a slider.
+    #[serde(default = "default_audio_channel_gain")]
+    pub channel_gain: [f32; 6],
 }
 
 /// Serde default for [`AudioConfig::eq_bands`] — flat (0 dB) across all bands.
 const fn default_audio_eq_bands() -> [f32; 5] {
     [0.0; 5]
+}
+
+/// Serde default for [`AudioConfig::channel_gain`] — unity (`1.0`) across all
+/// six channels (byte-identical to the un-scaled mix).
+const fn default_audio_channel_gain() -> [f32; 6] {
+    [1.0; 6]
 }
 
 /// Serde default for [`AudioConfig::channel_mask`] — all six channels enabled.
@@ -902,6 +920,7 @@ impl Default for AudioConfig {
             channel_mask: default_audio_channel_mask(),
             eq_enabled: false,
             eq_bands: default_audio_eq_bands(),
+            channel_gain: default_audio_channel_gain(),
         }
     }
 }

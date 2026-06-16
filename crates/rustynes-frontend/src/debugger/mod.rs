@@ -509,6 +509,13 @@ impl DebuggerOverlay {
         self.settings_ui.set_present_mode_warning(warning);
     }
 
+    /// v1.4.0 Workstream C — push the loaded mapper's expansion-audio chip name
+    /// (or `None`) so the Settings Audio tab shows the expansion-channel volume
+    /// slider only for boards that actually have on-cart audio.
+    pub fn set_expansion_audio_chip(&mut self, chip: Option<&'static str>) {
+        self.settings_ui.set_expansion_audio_chip(chip);
+    }
+
     /// v2.8.0 Phase 0 — push the latest performance snapshot (produced /
     /// presented / produce-cost interval stats + audio health) for the
     /// Performance panel. Called from the app's pacer alongside

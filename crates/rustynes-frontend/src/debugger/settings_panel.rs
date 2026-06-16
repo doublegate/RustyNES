@@ -102,6 +102,11 @@ pub struct SettingsApply {
     /// the app pushes the new `[audio] eq_enabled`/`eq_bands` into the audio
     /// queue. Off (default) is byte-identical to today's output.
     pub audio_eq: bool,
+    /// v1.4.0 Workstream C — a per-APU-channel volume slider changed (or the
+    /// "Reset gains" button); the app pushes the new `[audio] channel_gain` into
+    /// the core under the emu lock. The default (all 1.0) is byte-identical to
+    /// today's mixer output.
+    pub apu_channel_gain: bool,
     /// v1.2.0 C2 — the composable shader stack changed (a pass added / removed /
     /// reordered / toggled / re-parameterized, or a preset loaded); the app
     /// rebuilds the live `gfx` shader stack from `[graphics] shader_stack`. An
@@ -125,6 +130,7 @@ impl SettingsApply {
             || self.palette_clear
             || self.apu_channels
             || self.audio_eq
+            || self.apu_channel_gain
             || self.shader_stack
     }
 }
@@ -150,6 +156,11 @@ pub struct SettingsPanelState {
     reset_video_armed: bool,
     reset_audio_armed: bool,
     reset_advanced_armed: bool,
+    /// v1.4.0 Workstream C — the loaded mapper's expansion-audio chip name
+    /// (`Some("VRC6")`, …) or `None` when the board has no expansion audio.
+    /// Pushed by the app on each ROM load (like [`Self::set_present_mode_warning`]);
+    /// the Audio section shows the expansion-channel volume slider only when set.
+    expansion_audio_chip: Option<&'static str>,
     /// v1.2.0 C2 — index into [`crate::shader_pass::BuiltinPass::all`] for the
     /// "Add pass" picker.
     stack_add_index: usize,
@@ -194,6 +205,13 @@ impl SettingsPanelState {
     /// present-mode selector. Pushed by the app after gfx init.
     pub fn set_present_mode_warning(&mut self, warning: Option<String>) {
         self.present_mode_warning = warning;
+    }
+
+    /// v1.4.0 Workstream C — set (or clear) the loaded mapper's expansion-audio
+    /// chip name. Pushed by the app on each ROM load; the Audio section shows the
+    /// expansion-channel volume slider (labelled with this name) only when `Some`.
+    pub fn set_expansion_audio_chip(&mut self, chip: Option<&'static str>) {
+        self.expansion_audio_chip = chip;
     }
 }
 
@@ -754,6 +772,59 @@ pub fn audio_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
         });
     }
 
+    // v1.4.0 Workstream C — per-channel volume (gain) sliders. A studio mixing
+    // overlay generalizing the mute mask above (a slider at 1.0 = full, at 0.0 =
+    // muted). The 5 internal APU channels are always shown; the expansion-audio
+    // channel (index 5) is shown ONLY when the loaded mapper has on-cart audio
+    // (VRC6 / VRC7 / MMC5 / Namco 163 / Sunsoft 5B / FDS), labelled with the chip
+    // name. Live-applied via `apu_channel_gain`; the default (all 1.0) is
+    // byte-identical to today's mixer output (the determinism contract).
+    ui.add_space(4.0);
+    ui.label("Channel volume");
+    {
+        // (gain index, label) for the five always-present internal channels.
+        const APU_GAINS: [(usize, &str); 5] = [
+            (0, "Pulse 1"),
+            (1, "Pulse 2"),
+            (2, "Triangle"),
+            (3, "Noise"),
+            (4, "DMC"),
+        ];
+        let gain_slider = |ui: &mut egui::Ui, value: &mut f32, label: &str| -> bool {
+            let mut changed = false;
+            ui.horizontal(|ui| {
+                ui.add_sized([72.0, 0.0], egui::Label::new(label));
+                if ui
+                    .add(egui::Slider::new(value, 0.0..=2.0).fixed_decimals(2))
+                    .changed()
+                {
+                    changed = true;
+                }
+            });
+            changed
+        };
+        for (idx, label) in APU_GAINS {
+            if gain_slider(ui, &mut config.audio.channel_gain[idx], label) {
+                config.audio.channel_gain[idx] = config.audio.channel_gain[idx].clamp(0.0, 2.0);
+                state.apply.apu_channel_gain = true;
+                save_config(config);
+            }
+        }
+        // Expansion-audio channel (index 5): only when the loaded mapper has it.
+        if let Some(chip) = state.expansion_audio_chip
+            && gain_slider(ui, &mut config.audio.channel_gain[5], chip)
+        {
+            config.audio.channel_gain[5] = config.audio.channel_gain[5].clamp(0.0, 2.0);
+            state.apply.apu_channel_gain = true;
+            save_config(config);
+        }
+        if ui.button("Reset volumes (1.0)").clicked() {
+            config.audio.channel_gain = [1.0; 6];
+            state.apply.apu_channel_gain = true;
+            save_config(config);
+        }
+    }
+
     // v1.1.0 beta.2 (T-110-D2) — optional graphic EQ output stage. Off by
     // default → byte-identical output; this is a frontend stage (post-resampler),
     // never the deterministic core synthesis.
@@ -844,6 +915,7 @@ pub fn audio_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
         config.audio = crate::config::AudioConfig::default();
         state.apply.audio_gain = true;
         state.apply.apu_channels = true;
+        state.apply.apu_channel_gain = true;
         save_config(config);
     }
 }
@@ -925,6 +997,7 @@ mod tests {
                 palette_pick: false,
                 palette_clear: false,
                 audio_eq: false,
+                apu_channel_gain: false,
                 shader_stack: false,
             },
             ..Default::default()
