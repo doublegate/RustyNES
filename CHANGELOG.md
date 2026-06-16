@@ -15,6 +15,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-06-16
+
+**Patch** — four more BestEffort mapper boot/decode fixes surfaced by the
+boot-smoke-against-real-dumps pass, plus the boot-smoke screenshot corpus
+reorganized to mirror the per-mapper `tests/roms/` tier layout. All fixes are to
+Tier-2 BestEffort boards (excluded from the AccuracyCoin / commercial-ROM oracle
+by the honesty gate), so AccuracyCoin holds 100% (139/139) and the shipped /
+native / `no_std` / wasm builds remain byte-identical to v1.4.0.
+
+### Fixed
+
+- **Mapper 92 (Jaleco JF-19) PRG window layout.** The JF-17/JF-19 family shared
+  one register model that always put the switchable bank at `$8000-$BFFF` and the
+  fixed bank at `$C000-$FFFF`. JF-19 (mapper 92) is the mirror image — fixed FIRST
+  bank at `$8000-$BFFF`, switchable bank at `$C000-$FFFF` — and the reset vector
+  lives in the fixed half, so the wrong layout meant the board never booted. Added
+  a `switchable_high` layout flag (`crates/rustynes-mappers/src/sprint6.rs`).
+- **Mapper 94 (UN1ROM, *Senjou no Ookami*) bank decode + bus conflict.** The
+  bus-conflict AND used a different window mapping than `cpu_read` (so a register
+  write in the `$C000-$FFFF` fixed half ANDed against the wrong byte), and the
+  16 KiB bank was decoded as a 4-bit field instead of the correct 3-bit (8-bank)
+  `(data >> 2) & 0x07`. Both fixed in `crates/rustynes-mappers/src/sprint8.rs`.
+- **Mapper 145 (Sachen SA-72007) 16 KiB PRG.** Required a 32 KiB-multiple PRG and
+  rejected the real 16 KiB NROM-128-style dumps (e.g. *Sidewinder*); now accepts
+  any non-zero 16 KiB multiple and mirrors a sub-32 KiB bank across the CPU window
+  (`crates/rustynes-mappers/src/sprint6.rs`).
+- **Mapper 147 (Sachen 3018 / TXC JV001) protection handshake.** Replaced the
+  simple data-latch stand-in with a faithful model of the JV001 scrambling-
+  accumulator ASIC: the boot code writes a value, reads the chip back at `$4100`,
+  and compares — so the read must return the scrambled accumulator value, not open
+  bus, or boot validation loops forever (`crates/rustynes-mappers/src/sprint7.rs`).
+
+### Changed
+
+- **Boot-smoke screenshot corpus reorganized by tier.** `screenshots/external/`
+  (commercial titles) and `screenshots/besteffort/` (unlicensed / pirate /
+  homebrew) now mirror the per-mapper `mapper-NNN-Name/<rom>.png` layout of the
+  `tests/roms/` fixtures, and a new `scripts/screenshots/categorize_screenshots.py`
+  automates that layout going forward. Screenshots only — no ROMs are committed.
+
 ## [1.4.0] - 2026-06-16
 
 **"Fidelity"** — the compatibility-and-finish release on the cycle-accurate

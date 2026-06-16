@@ -1,7 +1,12 @@
 # RustyNES — Project Status Matrix
 
-**Current release: v1.4.0 "Fidelity" — the compatibility-and-finish release** on
-the cycle-accurate v1.0.0 production core. A NES/Famicom emulator with the Mesen2 /
+**Current release: v1.4.1** (a patch on **v1.4.0 "Fidelity" — the
+compatibility-and-finish release**) on the cycle-accurate v1.0.0 production core.
+v1.4.1 adds four more BestEffort mapper boot/decode fixes (m92 / m94 / m145 / m147)
+from the boot-smoke-vs-real-dumps pass and reorganizes the boot-smoke screenshot
+corpus to mirror the per-mapper `tests/roms/` tier layout — BestEffort-only, so
+AccuracyCoin holds 100% (139/139) and the builds stay byte-identical to v1.4.0.
+A NES/Famicom emulator with the Mesen2 /
 higan / ares accuracy bar, shipped as a polished desktop application.
 **AccuracyCoin 100.00% (139/139)**, the 60-ROM `external_real_games` + 52-entry
 `external_extended` oracles byte-identical, nestest 0-diff. **v1.4.0 "Fidelity"**

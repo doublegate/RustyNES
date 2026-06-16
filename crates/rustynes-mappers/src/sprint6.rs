@@ -849,6 +849,10 @@ impl Mapper for Multicart62 {
 // ===========================================================================
 
 /// Shared register/strobe state for the Jaleco JF-17/19 family (mappers 72/92).
+// The four flags each model a distinct hardware signal (CHR-RAM presence, the
+// two edge-triggered latch strobes, and the JF-17-vs-JF-19 PRG layout); they
+// are not a bitfield-able state and reading them as named bools is clearest.
+#[allow(clippy::struct_excessive_bools)]
 struct JalecoLatch {
     prg_rom: Box<[u8]>,
     chr: Box<[u8]>,
@@ -861,6 +865,12 @@ struct JalecoLatch {
     mirroring: Mirroring,
     /// Mask applied to the PRG-bank nibble (0x0F for 72, 0x1F for 92).
     prg_field_mask: u8,
+    /// PRG window layout. `false` (mapper 72, JF-17): switchable bank at
+    /// `$8000-$BFFF`, fixed LAST bank at `$C000-$FFFF`. `true` (mapper 92,
+    /// JF-19): fixed FIRST bank at `$8000-$BFFF`, switchable bank at
+    /// `$C000-$FFFF` — the reset vector lives in the fixed half, so this layout
+    /// is load-bearing for boot.
+    switchable_high: bool,
 }
 
 impl JalecoLatch {
@@ -869,6 +879,7 @@ impl JalecoLatch {
         chr_rom: Box<[u8]>,
         mirroring: Mirroring,
         prg_field_mask: u8,
+        switchable_high: bool,
         id: u16,
     ) -> Result<Self, MapperError> {
         if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_16K) {
@@ -899,6 +910,7 @@ impl JalecoLatch {
             prev_chr_strobe: false,
             mirroring,
             prg_field_mask,
+            switchable_high,
         })
     }
 
@@ -918,11 +930,26 @@ impl JalecoLatch {
     }
 
     fn cpu_read(&self, addr: u16) -> u8 {
+        let last = self.prg_count_16k() - 1;
         match addr {
-            0x8000..=0xBFFF => self.read_prg_bank(self.prg_bank as usize, addr as usize - 0x8000),
+            0x8000..=0xBFFF => {
+                // JF-19 (mapper 92): fixed FIRST bank here. JF-17 (mapper 72):
+                // switchable bank here.
+                let bank = if self.switchable_high {
+                    0
+                } else {
+                    self.prg_bank as usize
+                };
+                self.read_prg_bank(bank, addr as usize - 0x8000)
+            }
             0xC000..=0xFFFF => {
-                let last = self.prg_count_16k() - 1;
-                self.read_prg_bank(last, addr as usize - 0xC000)
+                // JF-19: switchable bank here. JF-17: fixed LAST bank here.
+                let bank = if self.switchable_high {
+                    self.prg_bank as usize
+                } else {
+                    last
+                };
+                self.read_prg_bank(bank, addr as usize - 0xC000)
             }
             _ => 0,
         }
@@ -1032,7 +1059,7 @@ impl Jaleco72 {
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
         Ok(Self {
-            inner: JalecoLatch::new(prg_rom, chr_rom, mirroring, 0x0F, 72)?,
+            inner: JalecoLatch::new(prg_rom, chr_rom, mirroring, 0x0F, false, 72)?,
         })
     }
 }
@@ -1089,7 +1116,7 @@ impl Jaleco92 {
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
         Ok(Self {
-            inner: JalecoLatch::new(prg_rom, chr_rom, mirroring, 0x1F, 92)?,
+            inner: JalecoLatch::new(prg_rom, chr_rom, mirroring, 0x1F, true, 92)?,
         })
     }
 }
@@ -2005,16 +2032,19 @@ impl Sachen145 {
     ///
     /// # Errors
     ///
-    /// Returns [`MapperError::Invalid`] when PRG is not a non-zero multiple of
-    /// 32 KiB or CHR-ROM is empty / not a multiple of 8 KiB.
+    /// Returns [`MapperError::Invalid`] when PRG is empty / not a multiple of
+    /// 16 KiB or CHR-ROM is empty / not a multiple of 8 KiB.
     pub fn new(
         prg_rom: Box<[u8]>,
         chr_rom: Box<[u8]>,
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_32K) {
+        // Real SA-72007 dumps (e.g. "Sidewinder") are 16 KiB PRG / NROM-128-style
+        // — the fixed bank is simply mirrored across the 32 KiB CPU window. Accept
+        // any non-zero 16 KiB multiple (16 KiB mirrors; 32 KiB maps 1:1).
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_16K) {
             return Err(MapperError::Invalid(format!(
-                "mapper 145 PRG-ROM size {} is not a non-zero multiple of 32 KiB",
+                "mapper 145 PRG-ROM size {} is not a non-zero multiple of 16 KiB",
                 prg_rom.len()
             )));
         }
@@ -2041,8 +2071,8 @@ impl Mapper for Sachen145 {
 
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if (0x8000..=0xFFFF).contains(&addr) {
-            // Fixed 32 KiB bank 0.
-            self.prg_rom[addr as usize - 0x8000]
+            // Fixed bank 0, mirrored across the 32 KiB window for sub-32 KiB PRG.
+            self.prg_rom[(addr as usize - 0x8000) % self.prg_rom.len()]
         } else {
             0
         }
@@ -2443,7 +2473,10 @@ mod tests {
             Jaleco92::new(synth_prg_16k(32), synth_chr_8k(16), Mirroring::Vertical).unwrap();
         // 5-bit PRG field: value 0b1001_0001 -> strobe + bank 0x11 = 17.
         m.cpu_write(0x8001, 0b1001_0001);
-        assert_eq!(m.cpu_read(0x8000), 17);
+        // JF-19 layout: $8000 is the FIXED first bank (0); the switchable bank
+        // appears at $C000.
+        assert_eq!(m.cpu_read(0x8000), 0);
+        assert_eq!(m.cpu_read(0xC000), 17);
     }
 
     // --- Mapper 77 ---------------------------------------------------------
