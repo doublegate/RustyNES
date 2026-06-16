@@ -65,6 +65,18 @@ and stay deferred as a future v2.0-scale item (see `docs/STATUS.md`). See the v1
   `action-gh-release@v3`, `taiki-e/install-action@v2`, `Swatinem/rust-cache@v2`,
   `dtolnay/rust-toolchain@master`) and the `*-latest` runner images already track newest.
 
+### Fixed
+
+- **`.zip` / soft-patched ROMs passed on the command line now load** (a v1.2.0 ingest
+  bug). The CLI / initial-ROM path (`App::new`, used by `rustynes <rom>`) read the file
+  and parsed the raw bytes directly, skipping the `.zip` extraction + same-stem
+  `.ips`/`.ups`/`.bps` soft-patching that the menu / drag-drop / recent-ROM path
+  (`load_rom_from_path`) performs — so `rustynes game.zip` failed with "rom magic bytes
+  do not match `NES\x1A`". The ingest preprocessing is now factored into a shared helper
+  that both paths use, so a zipped or patched ROM on argv reaches the deterministic parse
+  and the CRC-keyed per-game database as the extracted/patched image, identical to every
+  other load path. (Regression-tested.)
+
 ## [1.2.0] - 2026-06-15 - "Curator" (Feature Release)
 
 **v1.2.0 "Curator" is a broad, additive feature release** on the cycle-accurate v1.0.0
