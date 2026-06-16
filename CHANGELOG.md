@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 Work toward **v1.3.0 "Bedrock"** (beta.1-4 / rc): toolchain modernization (Rust edition
-2024, MSRV → latest stable, and the egui 0.34 / wgpu 26 / rfd 0.17 dependency tier), the
+2024, MSRV → latest stable, and the egui 0.34 / wgpu 29 / rfd 0.17 dependency tier), the
 frame-pacing measurement/judder fix, GeraNES-class developer tooling (PPU event viewer,
 symbol-file loading, memory compare, trace annotation), mapper breadth (an aggressive
 BestEffort sweep 87 → 100+ and Vs. DualSystem), HD-pack conditions + background-region
@@ -37,6 +37,12 @@ and stay deferred as a future v2.0-scale item (see `docs/STATUS.md`). See the v1
   boards ported from the GeraNES reference — no IRQ, no expansion audio, no per-cycle / A12
   hook (`MapperCaps::NONE`) — register-decode + save-state unit-tested only and explicitly
   **not** accuracy-gated (the AccuracyCoin / commercial-ROM oracle never references them).
+- **Vs. DualSystem header detection** (v1.3.0 Workstream D2): the NES 2.0 byte-13 high
+  nibble (Vs. hardware type 5/6) is now parsed into `Header`/`Cartridge.vs_dual_system`
+  and exposed as `Nes::is_vs_dual_system()`, so the frontend's "DualSystem not yet
+  emulated" note fires for properly-headered DualSystem ROMs, not only the four
+  SHA-256-DB-known dumps. The two-CPU/two-PPU *emulation* remains a documented v2.0
+  deferral (no committable test-ROM oracle; see `docs/STATUS.md` + the design audit).
 - **Memory Compare (cheat-hunt memory search)** debugger panel (v1.3.0 Workstream C, C3).
   A classic emulator memory search over the 2 KB CPU work RAM (`$0000-$07FF`): snapshot a
   baseline, then iteratively narrow a candidate set by how each byte moved since the last

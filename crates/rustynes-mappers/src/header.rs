@@ -22,7 +22,7 @@ pub const TRAINER_LEN: usize = 512;
 
 /// Parsed header view, format-detected.
 ///
-/// The 4 boolean flags directly mirror the iNES / NES 2.0 wire format and so
+/// The 5 boolean flags directly mirror the iNES / NES 2.0 wire format and so
 /// are not refactorable into an enum without losing parser fidelity.
 #[derive(Debug, Clone, Copy)]
 #[allow(clippy::struct_excessive_bools)]
@@ -48,6 +48,12 @@ pub struct Header {
     /// Resolves to the output palette + 2C05 quirks via [`VsPpuType::ppu_palette`]
     /// / [`VsPpuType::is_2c05`].
     pub vs_ppu_type: VsPpuType,
+    /// True when the NES 2.0 byte-13 **high** nibble marks a Vs. `DualSystem`
+    /// board (Vs. hardware types 5/6), valid only when
+    /// `console_type == ConsoleType::VsSystem`. Drives DUAL-system *detection*
+    /// only; the two-CPU/two-PPU emulation is a documented v2.0 deferral
+    /// (`docs/audit/vs-dualsystem-design-2026-06-11.md`).
+    pub vs_dual_system: bool,
     /// PRG-RAM size in bytes (NES 2.0 byte 10 low nibble; heuristic for iNES 1.0).
     pub prg_ram_size: u32,
     /// CHR-RAM size in bytes (NES 2.0 byte 11 low nibble; heuristic for iNES 1.0).
@@ -151,6 +157,12 @@ pub fn parse_header(bytes: &[u8]) -> Result<Header, RomError> {
         VsPpuType::None
     };
 
+    // Vs. hardware type (NES 2.0 byte 13 HIGH nibble): types 5 and 6 are the
+    // Vs. DualSystem boards (two CPUs / two PPUs). Detection only — the
+    // dual-console emulation is a documented v2.0 deferral.
+    let vs_dual_system =
+        is_nes2 && console_type == ConsoleType::VsSystem && matches!((h[13] >> 4) & 0x0F, 5 | 6);
+
     // RAM sizes.
     let prg_ram_size = if is_nes2 {
         // NES 2.0 byte 10: low nibble = volatile PRG-RAM shift, high nibble =
@@ -188,6 +200,7 @@ pub fn parse_header(bytes: &[u8]) -> Result<Header, RomError> {
         region,
         console_type,
         vs_ppu_type,
+        vs_dual_system,
         prg_ram_size,
         chr_ram_size,
         has_battery,
@@ -291,9 +304,13 @@ pub fn serialize_header(h: &Header) -> [u8; HEADER_LEN] {
             Region::Multi => 2,
             Region::Dendy => 3,
         };
-        // Byte 13: Vs. System PPU type (low nibble) when console = Vs. System.
+        // Byte 13: Vs. System PPU type (low nibble) + Vs. hardware type (high
+        // nibble) when console = Vs. System. We only track the DualSystem bool,
+        // so a dual board re-encodes as hardware type 5 (the bool round-trips
+        // even though the original 5-vs-6 distinction is not retained).
         if h.console_type == ConsoleType::VsSystem {
-            out[13] = vs_ppu_type_to_nibble(h.vs_ppu_type);
+            let hi = if h.vs_dual_system { 5 << 4 } else { 0 };
+            out[13] = vs_ppu_type_to_nibble(h.vs_ppu_type) | hi;
         }
         // Bytes 14-15 reserved/extended; left zero.
     }
@@ -400,6 +417,49 @@ mod tests {
         // Mapper 0xCD: low nibble D, high nibble C.
         let h = ines_header(1, 0, 0xCD, 0);
         assert_eq!(parse_header(&h).unwrap().mapper_id, 0xCD);
+    }
+
+    #[test]
+    fn nes2_vs_dualsystem_detected_from_byte13_high_nibble() {
+        // NES 2.0 (h[7] bits 2-3 = 0b10) + Vs. System console (bits 0-1 = 01).
+        let mut h = ines_header(2, 1, 0, 0);
+        h[7] = 0x08 | 0x01;
+        // byte 13: high nibble = Vs. hardware type, low nibble = Vs. PPU type.
+        h[13] = 0x50; // hardware type 5 (DualSystem), 2C03 PPU
+        let p = parse_header(&h).unwrap();
+        assert!(p.is_nes2);
+        assert_eq!(p.console_type, ConsoleType::VsSystem);
+        assert!(p.vs_dual_system);
+        // Hardware type 6 is also a DualSystem board.
+        h[13] = 0x60;
+        assert!(parse_header(&h).unwrap().vs_dual_system);
+        // A normal Vs. UniSystem (hardware type 0-4) is NOT dual.
+        h[13] = 0x00;
+        assert!(!parse_header(&h).unwrap().vs_dual_system);
+        h[13] = 0x40;
+        assert!(!parse_header(&h).unwrap().vs_dual_system);
+        // A non-Vs. NES 2.0 cart is never dual, even with a stray high nibble.
+        h[7] = 0x08; // NES 2.0, console type = Nes
+        h[13] = 0x50;
+        assert!(!parse_header(&h).unwrap().vs_dual_system);
+        // An iNES-1.0 cart (no NES 2.0 flag) is never dual.
+        let mut h1 = ines_header(2, 1, 0, 0);
+        h1[13] = 0x50;
+        assert!(!parse_header(&h1).unwrap().vs_dual_system);
+    }
+
+    #[test]
+    fn vs_dualsystem_round_trips_through_serialize() {
+        let mut h = ines_header(2, 1, 0, 0);
+        h[7] = 0x08 | 0x01; // NES 2.0 + Vs. System
+        h[13] = 0x60; // DualSystem hardware type 6 + 2C03 PPU
+        let parsed = parse_header(&h).unwrap();
+        assert!(parsed.vs_dual_system);
+        let out = serialize_header(&parsed);
+        let reparsed = parse_header(&out).unwrap();
+        // The bool round-trips (type 6 re-encodes as type 5, both DualSystem).
+        assert!(reparsed.vs_dual_system);
+        assert_eq!(reparsed.console_type, ConsoleType::VsSystem);
     }
 
     #[test]
