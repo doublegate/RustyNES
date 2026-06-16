@@ -301,6 +301,12 @@ web-sys = { workspace = true, features = [
     # is needed to `append_child` the programmatically-created hidden
     # `<input id="rnm-input">` movie loader to the document body.
     "Url", "HtmlAnchorElement", "Node",
+    # v1.4.0 Workstream E2 — IndexedDB save-state store (binary, multi-slot,
+    # thumbnail-grid). Replaces the string-only localStorage slots (which
+    # stay as a fallback + migration source). The `IdbRequest` event types
+    # drive the Promise-wrapped async API in `wasm_idb.rs`.
+    "IdbFactory", "IdbOpenDbRequest", "IdbRequest", "IdbDatabase",
+    "IdbTransaction", "IdbTransactionMode", "IdbObjectStore", "DomStringList",
     # v2.6.0 — browser netplay: a WebSocket signaling client + the WebRTC
     # peer-connection + data-channel offer/answer/ICE handshake that yields
     # the `RtcDataChannel` wrapped by `rustynes_netplay::WebRtcTransport`.

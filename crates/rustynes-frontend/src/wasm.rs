@@ -36,30 +36,36 @@ use web_sys::{
 // `crate::wasm_audio` module (used by both this canvas embed path and
 // the unified winit path).
 use crate::wasm_audio;
-// v1.6.0 Sprint 4 — base64 codec + localStorage accessor moved to the
-// shared `crate::wasm_io` module (used by both wasm frontends).
-use crate::wasm_io::{base64_decode, base64_encode, local_storage};
+// v1.4.0 Workstream E1 — reuse the target-agnostic movie record/play
+// state machine (the SAME one the native + winit-wasm paths use) so the
+// canvas embed records/replays the deterministic `.rnm` format byte-for-byte.
+use crate::movie_ui::MovieUi;
 
 const NES_W: u32 = 256;
 const NES_H: u32 = 240;
 
-/// `localStorage` key for the single save-state slot. v1.3.0 Sprint
-/// 1.4 ships a single slot keyed by a fixed string; multi-slot +
-/// per-ROM keying is a follow-up (would key by the ROM SHA-256 like
-/// the native `save_state` module does).
-const SAVE_STATE_KEY: &str = "rustynes-savestate-slot0";
+/// Default active save-state slot for the canvas embed (slots are
+/// 0-based internally, shown 1-based). v1.4.0 E2 keys the `IndexedDB`
+/// store by the ROM SHA-256 and the slot, so multiple slots are supported;
+/// the canvas embed's F1/F4 hotkeys use slot 0 (the winit path's
+/// Save-States manager exposes the full slot grid).
+const CANVAS_SLOT: u8 = 0;
 
 /// Shared emulator state. Web-sys event closures are `'static`, so
 /// the `Nes` and the current button state live behind `Rc<RefCell>`.
 struct Emu {
     nes: Option<Nes>,
     buttons: Buttons,
+    /// v1.4.0 E1 — TAS movie record/play state. Idle until the user
+    /// presses F6 (record) / F7 (play) / F8 (branch).
+    movie: MovieUi,
 }
 
 thread_local! {
     static EMU: Rc<RefCell<Emu>> = Rc::new(RefCell::new(Emu {
         nes: None,
         buttons: Buttons::empty(),
+        movie: MovieUi::default(),
     }));
 }
 
@@ -112,6 +118,10 @@ pub fn start() -> Result<(), JsValue> {
 
     install_rom_loader(&rom_input);
     install_keyboard_handlers(&document);
+    // v1.4.0 E1 — wire the hidden `.rnm` movie upload picker (created if the
+    // host page doesn't provide one). F7 `.click()`s it from its gesture
+    // handler; the selected bytes are deserialized + replayed.
+    install_movie_loader(&document);
     start_raf_loop(&canvas)?;
 
     log("RustyNES wasm32 — armed. Load a .nes ROM to begin.");
@@ -184,6 +194,25 @@ fn install_keyboard_handlers(document: &web_sys::Document) {
                 load_state();
                 return;
             }
+            // v1.4.0 E1 — TAS movie hotkeys (mirror the native F6/F7/F8
+            // keymap). These run inside the keydown gesture, so the F7
+            // file-picker `.click()` satisfies the browser's user-gesture
+            // requirement.
+            "F6" => {
+                ev.prevent_default();
+                movie_record_toggle();
+                return;
+            }
+            "F7" => {
+                ev.prevent_default();
+                movie_play_toggle();
+                return;
+            }
+            "F8" => {
+                ev.prevent_default();
+                movie_branch();
+                return;
+            }
             _ => {}
         }
         if let Some(btn) = keycode_to_button(&ev.code()) {
@@ -226,6 +255,9 @@ fn start_raf_loop(canvas: &HtmlCanvasElement) -> Result<(), JsValue> {
     *g.borrow_mut() = Some(Closure::<dyn FnMut()>::new(move || {
         EMU.with(|emu| {
             let mut emu = emu.borrow_mut();
+            // Reborrow as `&mut Emu` so the movie + nes fields can be borrowed
+            // disjointly below (a `RefMut` deref alone won't split-borrow).
+            let emu = &mut *emu;
             // v1.2.0 Workstream F1/F2 — fold the on-screen touch overlay into
             // this frame's input at the SAME point the keyboard mask is applied
             // (the canvas embed's single latch site, just before `run_frame`).
@@ -251,6 +283,17 @@ fn start_raf_loop(canvas: &HtmlCanvasElement) -> Result<(), JsValue> {
                 }
                 if power_pad_active {
                     nes.set_power_pad(1, power_pad);
+                }
+                // v1.4.0 E1 — fold in the TAS movie hook at the SAME
+                // single-latch site (after `set_buttons`, before `run_frame`),
+                // exactly as the winit/native produce path does:
+                // - recording: capture the just-latched input for this frame;
+                // - playing: override the latched input with the movie's
+                //   recorded input; `false` => the movie is exhausted, so stop
+                //   playback and hand control back to live input.
+                if !emu.movie.before_frame(nes) {
+                    emu.movie.stop_playback();
+                    log("movie playback finished");
                 }
                 nes.run_frame();
                 // The framebuffer is RGBA8 256x240 — byte-identical
@@ -284,49 +327,196 @@ fn request_animation_frame(f: &Closure<dyn FnMut()>) {
     }
 }
 
-/// F1 — serialize the running `Nes` and stash it in `localStorage`
-/// (base64 of the raw snapshot bytes). Single slot for v1.3.0.
+/// F1 — serialize the running `Nes` and persist it to `IndexedDB`
+/// (v1.4.0 E2), keyed by the ROM SHA-256 and slot. The snapshot is taken
+/// synchronously under the `RefCell` borrow; the async IDB write is then
+/// driven on the microtask queue so the borrow is released first.
 fn save_state() {
-    EMU.with(|emu| {
+    let Some((sha, blob)) = EMU.with(|emu| {
         let emu = emu.borrow();
-        let Some(nes) = emu.nes.as_ref() else {
-            log("save state: no ROM loaded");
+        emu.nes
+            .as_ref()
+            .map(|nes| (*nes.rom_sha256(), nes.snapshot()))
+    }) else {
+        log("save state: no ROM loaded");
+        return;
+    };
+    wasm_bindgen_futures::spawn_local(async move {
+        crate::wasm_idb::put_state(sha, CANVAS_SLOT, blob).await;
+    });
+}
+
+/// F4 — read the slot's blob back from `IndexedDB` (or migrate it from
+/// `localStorage`) and restore the `Nes`. The async read runs on a
+/// `spawn_local` task that re-borrows `EMU` only AFTER the read resolves,
+/// guarding against a mid-read ROM swap by re-checking the SHA.
+fn load_state() {
+    let Some(sha) = EMU.with(|emu| emu.borrow().nes.as_ref().map(|n| *n.rom_sha256())) else {
+        log("load state: no ROM loaded");
+        return;
+    };
+    wasm_bindgen_futures::spawn_local(async move {
+        let Some(blob) = crate::wasm_idb::get_state(sha, CANVAS_SLOT).await else {
+            log("load state: no saved state");
             return;
         };
-        let blob = nes.snapshot();
-        let b64 = base64_encode(&blob);
-        if let Some(storage) = local_storage() {
-            match storage.set_item(SAVE_STATE_KEY, &b64) {
-                Ok(()) => log(&format!("state saved ({} bytes)", blob.len())),
-                Err(_) => log("save state: localStorage write failed (quota?)"),
+        EMU.with(|emu| {
+            let mut emu = emu.borrow_mut();
+            let Some(nes) = emu.nes.as_mut() else {
+                return;
+            };
+            if *nes.rom_sha256() != sha {
+                log("load state: ROM changed during load — skipped");
+                return;
             }
+            match nes.restore(&blob) {
+                Ok(()) => log("state loaded"),
+                Err(e) => log(&format!("load state: restore failed: {e:?}")),
+            }
+        });
+    });
+}
+
+/// F6 — toggle TAS movie recording (v1.4.0 E1). **Start**: power-cycle the
+/// running `Nes` and record from that fresh power-on. **Stop**: finish the
+/// movie, serialize the `.rnm`, and trigger a browser Blob download (the
+/// canvas embed has no `rfd` dialog — same path the winit wasm frontend uses).
+fn movie_record_toggle() {
+    EMU.with(|emu| {
+        let mut emu = emu.borrow_mut();
+        let emu = &mut *emu;
+        if emu.movie.is_recording() {
+            let Some(movie) = emu.movie.finish_recording() else {
+                return;
+            };
+            let bytes = movie.serialize();
+            crate::wasm_io::download_bytes("rustynes-movie.rnm", &bytes);
+            log(&format!(
+                "movie finished ({} frames, {} bytes) — download triggered",
+                movie.len(),
+                bytes.len()
+            ));
+        } else {
+            let Some(nes) = emu.nes.as_mut() else {
+                log("movie record: no ROM loaded");
+                return;
+            };
+            emu.movie.start_recording_power_on(nes);
+            log("movie recording started (power-on)");
         }
     });
 }
 
-/// F4 — restore the `Nes` from the `localStorage` slot.
-fn load_state() {
-    let Some(storage) = local_storage() else {
+/// F7 — toggle TAS movie playback (v1.4.0 E1). **Stop**: end playback and
+/// return to live input. **Start**: open the hidden `.rnm` file picker (its
+/// `change` handler deserializes + replays). The `.click()` runs inside this
+/// keydown gesture, satisfying the browser file-picker policy.
+fn movie_play_toggle() {
+    let playing = EMU.with(|emu| emu.borrow().movie.is_playing());
+    if playing {
+        EMU.with(|emu| emu.borrow_mut().movie.stop_playback());
+        log("movie playback stopped");
         return;
+    }
+    crate::wasm_io::click_file_input("rnm-input");
+}
+
+/// F8 — branch the current state into a new recording (v1.4.0 E1).
+fn movie_branch() {
+    EMU.with(|emu| {
+        let mut emu = emu.borrow_mut();
+        let emu = &mut *emu;
+        let Some(nes) = emu.nes.as_ref() else {
+            log("movie branch: no ROM loaded");
+            return;
+        };
+        emu.movie.start_recording_branch(nes);
+        log("movie branch — recording from current state");
+    });
+}
+
+/// v1.4.0 E1 — create (if absent) the hidden `<input id="rnm-input"
+/// type="file" accept=".rnm">` and wire its change handler to deserialize the
+/// uploaded movie, seek the running `Nes` to the movie's start point, and
+/// begin playback. Mirrors the winit path's `install_movie_loader`, but the
+/// canvas embed drives `EMU` directly (no winit event loop).
+fn install_movie_loader(document: &web_sys::Document) {
+    let input: HtmlInputElement = if let Some(existing) = document
+        .get_element_by_id("rnm-input")
+        .and_then(|el| el.dyn_into::<HtmlInputElement>().ok())
+    {
+        existing
+    } else {
+        let Some(el) = document
+            .create_element("input")
+            .ok()
+            .and_then(|el| el.dyn_into::<HtmlInputElement>().ok())
+        else {
+            log("movie loader: could not create <input>");
+            return;
+        };
+        el.set_id("rnm-input");
+        el.set_type("file");
+        el.set_accept(".rnm");
+        let _ = el.set_attribute("style", "display:none");
+        if let Some(body) = document.body() {
+            let _ = body.append_child(&el);
+        }
+        el
     };
-    let Ok(Some(b64)) = storage.get_item(SAVE_STATE_KEY) else {
-        log("load state: no saved state");
-        return;
-    };
-    let Some(blob) = base64_decode(&b64) else {
-        log("load state: corrupt save (base64 decode failed)");
-        return;
+
+    let on_change = Closure::<dyn FnMut(Event)>::new(move |ev: Event| {
+        let Some(input) = ev
+            .target()
+            .and_then(|t| t.dyn_into::<HtmlInputElement>().ok())
+        else {
+            return;
+        };
+        let Some(files) = input.files() else { return };
+        let Some(file) = files.get(0) else { return };
+        let Ok(reader) = FileReader::new() else {
+            return;
+        };
+        let reader_clone = reader.clone();
+        let on_load = Closure::<dyn FnMut()>::new(move || {
+            let Ok(buffer) = reader_clone.result() else {
+                return;
+            };
+            let bytes = js_sys::Uint8Array::new(&buffer).to_vec();
+            start_movie_from_bytes(&bytes);
+        });
+        reader.set_onload(Some(on_load.as_ref().unchecked_ref()));
+        on_load.forget();
+        let _ = reader.read_as_array_buffer(&file);
+    });
+    input.set_onchange(Some(on_change.as_ref().unchecked_ref()));
+    on_change.forget();
+}
+
+/// Deserialize uploaded `.rnm` bytes, seek the running `Nes` to the movie's
+/// start point, and begin playback (v1.4.0 E1).
+fn start_movie_from_bytes(bytes: &[u8]) {
+    let movie = match rustynes_core::Movie::deserialize(bytes) {
+        Ok(m) => m,
+        Err(e) => {
+            log(&format!("movie parse failed: {e:?}"));
+            return;
+        }
     };
     EMU.with(|emu| {
         let mut emu = emu.borrow_mut();
+        let emu = &mut *emu;
         let Some(nes) = emu.nes.as_mut() else {
-            log("load state: no ROM loaded");
+            log("movie play: no ROM loaded");
             return;
         };
-        match nes.restore(&blob) {
-            Ok(()) => log("state loaded"),
-            Err(e) => log(&format!("load state: restore failed: {e:?}")),
+        if let Err(e) = movie.seek_to_start(nes) {
+            log(&format!("movie seek failed (wrong ROM?): {e:?}"));
+            return;
         }
+        let total = movie.len();
+        emu.movie.start_playback(movie);
+        log(&format!("movie playback started ({total} frames)"));
     });
 }
 

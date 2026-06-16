@@ -527,6 +527,39 @@ movies + netplay and adds no new determinism surface. Hidden by default (the
 "Touch controls" checkbox reveals it), so the desktop keyboard UX is unchanged;
 the native build is byte-identical (all touch state is wasm-only).
 
+**Browser save-states + movies (wasm)** (v1.4.0 Workstream E). The browser
+build reaches native QoL parity for two persistence features:
+
+- **TAS movie `.rnm` I/O (E1).** Both wasm frontends bind the native F6/F7/F8
+  movie hotkeys. F6 toggles recording (a power-on `MovieRecorder`); stopping
+  serializes the `.rnm` and triggers a `Blob` download (the browser has no
+  `rfd` save dialog). F7 toggles playback by `.click()`ing a hidden
+  `<input accept=".rnm">` from within the keydown gesture; the selected bytes
+  are `Movie::deserialize`d, `seek_to_start`ed, and replayed. F8 branches the
+  current state into a new recording. Both frontends reuse the
+  target-agnostic `MovieUi` state machine and the `wasm_io` Blob-download /
+  file-picker helpers, so the browser records/replays the SAME deterministic
+  `.rnm` format byte-for-byte as native (the `wasm-winit` path wired this on
+  the unified `App`; v1.4.0 E1 folds the same hooks into the `wasm-canvas`
+  embed's single-latch rAF loop).
+- **IndexedDB save-states (E2).** Browser save-states moved off `localStorage`
+  (string-only, ~5 MiB, base64-bloated) onto **IndexedDB** (`wasm_idb.rs`):
+  binary `Uint8Array` blobs in the `rustynes`/`save-states` store, keyed by
+  `"<rom_sha256_hex>:slot<N>"`, holding the exact `Nes::snapshot()` blob the
+  native filesystem slots do (same `THM` thumbnail section). IDB is async, so
+  the API is `async fn`-shaped (each `IdbRequest` Promise-wrapped + awaited via
+  `JsFuture`) and the F1/F4/menu handlers drive it through
+  `wasm_bindgen_futures::spawn_local` — never holding the emu lock across an
+  `.await`, and re-checking the ROM SHA after the read in case the user swapped
+  games mid-load. `localStorage` stays as a fallback (private-mode / IDB-blocked
+  browsers) and a one-time migration source. **File → Manage States…** now
+  works in the browser too via `wasm_save_states.rs`, an egui thumbnail grid
+  (the wasm analogue of the native Save-States manager) populated by an async
+  slot scan and rendered in the same egui `extra` closure as the netplay lobby.
+  wasm-only; native + the desktop save-state format are byte-identical. The
+  on-device record/replay + IDB-grid behavior can't be headlessly CI-verified —
+  it carries a maintainer on-device manual-verify like the v1.2.0 F1/F3 items.
+
 **Input-display overlay.** A read-only tool panel
 (`debugger/input_display_panel.rs`) that draws a stylized NES controller per
 active player — D-pad, Select/Start, B/A — with each currently-held button lit;

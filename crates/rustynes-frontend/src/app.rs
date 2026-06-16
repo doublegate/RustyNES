@@ -1900,40 +1900,66 @@ impl App {
         }
     }
 
-    /// v1.6.0 Sprint 4 — F1 save state to `localStorage` (wasm32).
+    /// v1.6.0 Sprint 4 / v1.4.0 E2 — F1 save state to `IndexedDB` (wasm32).
     ///
     /// The browser counterpart of [`Self::handle_save_state`]: serialize the
-    /// running `Nes` and stash it in `localStorage` keyed by the ROM SHA-256
-    /// + slot 0 (base64-encoded). No-op if no ROM is loaded.
+    /// running `Nes` and persist it to `IndexedDB` keyed by the ROM SHA-256
+    /// and the active slot (binary, no base64 bloat). Falls back to
+    /// `localStorage` if `IndexedDB` is unavailable. The snapshot is captured
+    /// synchronously (under the lock); the async IDB write is then driven on
+    /// the microtask queue via `spawn_local`, so the hotkey handler returns
+    /// immediately and never holds the emu lock across an `.await`.
+    /// No-op if no ROM is loaded.
     #[cfg(target_arch = "wasm32")]
-    fn handle_save_state_wasm(&self) {
-        let guard = self.emu.lock();
-        let Some(nes) = guard.nes.as_ref() else {
-            crate::wasm_io::log("save state: no ROM loaded");
-            return;
+    fn handle_save_state_wasm(&self, slot: u8) {
+        let (sha, blob) = {
+            let guard = self.emu.lock();
+            let Some(nes) = guard.nes.as_ref() else {
+                crate::wasm_io::log("save state: no ROM loaded");
+                return;
+            };
+            (*nes.rom_sha256(), nes.snapshot())
         };
-        let blob = nes.snapshot();
-        crate::wasm_io::localstorage_save_state(nes.rom_sha256(), 0, &blob);
+        wasm_bindgen_futures::spawn_local(async move {
+            crate::wasm_idb::put_state(sha, slot, blob).await;
+        });
     }
 
-    /// v1.6.0 Sprint 4 — F4 load state from `localStorage` (wasm32).
+    /// v1.6.0 Sprint 4 / v1.4.0 E2 — F4 load state from `IndexedDB` (wasm32).
     ///
     /// The browser counterpart of [`Self::handle_load_state`]: read the
-    /// per-ROM slot 0 blob back from `localStorage` and restore the `Nes`.
+    /// per-ROM active-slot blob back from `IndexedDB` (or migrate it in from
+    /// `localStorage`) and restore the `Nes`. The async read runs on a
+    /// `spawn_local` task that re-locks the emu (a `Clone` `EmuHandle`) AFTER
+    /// the `.await` resolves — never holding the lock across the await — and
+    /// guards against the user swapping ROMs mid-read by re-checking the SHA.
     #[cfg(target_arch = "wasm32")]
-    fn handle_load_state_wasm(&self) {
-        let mut guard = self.emu.lock();
-        let Some(nes) = guard.nes.as_mut() else {
+    fn handle_load_state_wasm(&self, slot: u8) {
+        let Some(sha) = self.emu.lock().nes.as_ref().map(|n| *n.rom_sha256()) else {
             crate::wasm_io::log("load state: no ROM loaded");
             return;
         };
-        let Some(blob) = crate::wasm_io::localstorage_load_state(nes.rom_sha256(), 0) else {
-            return;
-        };
-        match nes.restore(&blob) {
-            Ok(()) => crate::wasm_io::log("state loaded"),
-            Err(e) => crate::wasm_io::log(&format!("load state: restore failed: {e:?}")),
-        }
+        let emu = self.emu.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let Some(blob) = crate::wasm_idb::get_state(sha, slot).await else {
+                crate::wasm_io::log(&format!("load state: no saved state in slot {}", slot + 1));
+                return;
+            };
+            let mut guard = emu.lock();
+            let Some(nes) = guard.nes.as_mut() else {
+                return;
+            };
+            // The ROM may have been swapped while the async read was in
+            // flight; only restore if it is still the same game.
+            if *nes.rom_sha256() != sha {
+                crate::wasm_io::log("load state: ROM changed during load — skipped");
+                return;
+            }
+            match nes.restore(&blob) {
+                Ok(()) => crate::wasm_io::log("state loaded"),
+                Err(e) => crate::wasm_io::log(&format!("load state: restore failed: {e:?}")),
+            }
+        });
     }
 
     /// v1.6.0 Sprint 4 — F6 toggle TAS movie recording (wasm32).
@@ -2746,7 +2772,7 @@ impl App {
                 #[cfg(not(target_arch = "wasm32"))]
                 self.handle_save_state(self.active_save_slot);
                 #[cfg(target_arch = "wasm32")]
-                self.handle_save_state_wasm();
+                self.handle_save_state_wasm(self.active_save_slot);
                 self.ui.set_status(StatusMessage::success("State saved"));
             }
             MenuAction::LoadState => {
@@ -2760,7 +2786,7 @@ impl App {
                     #[cfg(not(target_arch = "wasm32"))]
                     self.handle_load_state(self.active_save_slot);
                     #[cfg(target_arch = "wasm32")]
-                    self.handle_load_state_wasm();
+                    self.handle_load_state_wasm(self.active_save_slot);
                     self.ui.set_status(StatusMessage::success("State loaded"));
                 }
             }
@@ -2817,10 +2843,7 @@ impl App {
                 #[cfg(not(target_arch = "wasm32"))]
                 self.handle_save_state(slot);
                 #[cfg(target_arch = "wasm32")]
-                {
-                    let _ = slot;
-                    self.handle_save_state_wasm();
-                }
+                self.handle_save_state_wasm(slot);
                 self.ui.set_status(StatusMessage::success(format!(
                     "Saved to slot {}",
                     slot + 1
@@ -2837,10 +2860,7 @@ impl App {
                     #[cfg(not(target_arch = "wasm32"))]
                     self.handle_load_state(slot);
                     #[cfg(target_arch = "wasm32")]
-                    {
-                        let _ = slot;
-                        self.handle_load_state_wasm();
-                    }
+                    self.handle_load_state_wasm(slot);
                     self.ui.set_status(StatusMessage::success(format!(
                         "Loaded from slot {}",
                         slot + 1
@@ -2875,6 +2895,16 @@ impl App {
                     // `ctx` needed to upload thumbnail textures).
                     self.save_states_ui.invalidate_all();
                     self.save_states_ui.open = true;
+                    if let Some(gfx) = self.gfx.as_ref() {
+                        gfx.window.request_redraw();
+                    }
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    // v1.4.0 E2 — open the browser Save-States grid and kick
+                    // off the async IndexedDB slot scan for the current ROM.
+                    let sha = self.emu.lock().nes.as_ref().map(|n| *n.rom_sha256());
+                    crate::wasm_save_states::open(sha);
                     if let Some(gfx) = self.gfx.as_ref() {
                         gfx.window.request_redraw();
                     }
@@ -5540,13 +5570,13 @@ impl ApplicationHandler<AppEvent> for App {
                             }
                         }
                         SysAction::SaveState => {
-                            // Native: filesystem slot. wasm32 (v1.6.0
-                            // Sprint 4): per-ROM `localStorage` slot keyed
-                            // by ROM SHA-256 (synchronous; no IndexedDB).
+                            // Native: filesystem slot. wasm32 (v1.6.0 Sprint 4 /
+                            // v1.4.0 E2): per-ROM IndexedDB slot keyed by the ROM
+                            // SHA-256 + the active slot (async, binary).
                             #[cfg(not(target_arch = "wasm32"))]
                             self.handle_save_state(self.active_save_slot);
                             #[cfg(target_arch = "wasm32")]
-                            self.handle_save_state_wasm();
+                            self.handle_save_state_wasm(self.active_save_slot);
                         }
                         SysAction::LoadState => {
                             // v2.7.0 — load-state is disabled in RA hardcore
@@ -5566,7 +5596,7 @@ impl ApplicationHandler<AppEvent> for App {
                                 #[cfg(not(target_arch = "wasm32"))]
                                 self.handle_load_state(self.active_save_slot);
                                 #[cfg(target_arch = "wasm32")]
-                                self.handle_load_state_wasm();
+                                self.handle_load_state_wasm(self.active_save_slot);
                             }
                         }
                         SysAction::Rewind | SysAction::FastForward => {
@@ -5855,6 +5885,13 @@ impl ApplicationHandler<AppEvent> for App {
                 let ss_dir: Option<PathBuf> = self.data_dir.clone();
                 #[cfg(not(target_arch = "wasm32"))]
                 let ss_slot = self.active_save_slot;
+                // v1.4.0 E2 — the wasm Save-States grid needs only the active
+                // slot + a rom-loaded flag (its slot data is held in the
+                // `wasm_save_states` thread-local, populated by the async scan).
+                #[cfg(target_arch = "wasm32")]
+                let ss_slot_wasm = self.active_save_slot;
+                #[cfg(target_arch = "wasm32")]
+                let ss_rom_loaded_wasm = self.emu.lock().nes.is_some();
                 // v1.0.0 — render-branch selection: take the LOCKED branch (which
                 // passes a live `&mut Nes` to the egui pass) when EITHER the deep
                 // overlay is visible OR a tool panel that reads `nes` (Cheats) is
@@ -5941,6 +5978,12 @@ impl ApplicationHandler<AppEvent> for App {
                             #[cfg(target_arch = "wasm32")]
                             let extra = |ctx: &egui::Context, cfg: &mut crate::config::Config| {
                                 crate::wasm_lobby::show(ctx, wasm_lobby, cfg);
+                                // v1.4.0 E2 — the browser Save-States thumbnail grid.
+                                crate::wasm_save_states::show(
+                                    ctx,
+                                    ss_slot_wasm,
+                                    ss_rom_loaded_wasm,
+                                );
                                 #[cfg(feature = "script-wasm")]
                                 Self::paint_script_overlay_wasm(
                                     ctx,
@@ -6109,6 +6152,8 @@ impl ApplicationHandler<AppEvent> for App {
                         #[cfg(target_arch = "wasm32")]
                         let extra = |ctx: &egui::Context, cfg: &mut crate::config::Config| {
                             crate::wasm_lobby::show(ctx, wasm_lobby, cfg);
+                            // v1.4.0 E2 — the browser Save-States thumbnail grid.
+                            crate::wasm_save_states::show(ctx, ss_slot_wasm, ss_rom_loaded_wasm);
                             #[cfg(feature = "script-wasm")]
                             Self::paint_script_overlay_wasm(
                                 ctx,
@@ -6368,6 +6413,43 @@ impl ApplicationHandler<AppEvent> for App {
                                 ));
                             } else {
                                 self.handle_load_state(slot);
+                                self.ui.set_status(StatusMessage::success(format!(
+                                    "Loaded from slot {}",
+                                    slot + 1
+                                )));
+                            }
+                        }
+                    }
+                }
+                // v1.4.0 E2 — act on a browser Save-States grid click this frame,
+                // routing through the same async IndexedDB save/load path the
+                // F1/F4 hotkeys use. A Save re-scans the grid so the new thumbnail
+                // shows; a Load is replay-locked like every other load path.
+                #[cfg(target_arch = "wasm32")]
+                if let Some(req) = crate::wasm_save_states::take_request() {
+                    use crate::ui_shell::StatusMessage;
+                    use crate::wasm_save_states::SlotRequest;
+                    match req {
+                        SlotRequest::Save(slot) => {
+                            self.handle_save_state_wasm(slot);
+                            let sha = self.emu.lock().nes.as_ref().map(|n| *n.rom_sha256());
+                            crate::wasm_save_states::open(sha);
+                            self.ui.set_status(StatusMessage::success(format!(
+                                "Saved to slot {}",
+                                slot + 1
+                            )));
+                        }
+                        SlotRequest::Load(slot) => {
+                            if self.ra_hardcore_blocks() {
+                                self.ui.set_status(StatusMessage::info(
+                                    "Load state disabled (hardcore)",
+                                ));
+                            } else if self.replay_interaction_locked() {
+                                self.ui.set_status(StatusMessage::info(
+                                    "Load state disabled during movie",
+                                ));
+                            } else {
+                                self.handle_load_state_wasm(slot);
                                 self.ui.set_status(StatusMessage::success(format!(
                                     "Loaded from slot {}",
                                     slot + 1

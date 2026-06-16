@@ -78,6 +78,31 @@ exercises the affected paths).
   static page so piped use and CI never block. All native-only — the clap /
   clap_complete / color-print / anstyle / ratatui deps are gated out of the wasm
   target, leaving the wasm build and size budget unchanged.
+- **Browser TAS movie `.rnm` I/O (Workstream E, E1).** The lightweight
+  canvas-2D embed (`wasm-canvas`) gains the F6/F7/F8 movie hotkeys: F6 toggles
+  recording (a power-on `MovieRecorder`; stopping triggers a `.rnm` Blob
+  download), F7 toggles playback (opening a hidden `.rnm` file picker, then
+  deserializing + replaying), and F8 branches the current state into a new
+  recording. It reuses the target-agnostic `MovieUi` state machine and the
+  `wasm_io` Blob-download / file-picker helpers the unified winit/wasm frontend
+  already used, so the canvas embed now records/replays the SAME deterministic
+  `.rnm` format byte-for-byte. wasm-only; native is byte-identical.
+- **Browser IndexedDB save-states + thumbnail grid (Workstream E, E2).** The
+  browser save-state path moves off `localStorage` (string-only, ~5 MiB, base64
+  bloat) and onto **IndexedDB** (binary `Uint8Array`, larger quota, multi-slot)
+  in the new `wasm_idb.rs` — keyed by the ROM SHA-256 + slot, storing the exact
+  `Nes::snapshot()` blob native filesystem slots hold. F1/F4 and the per-slot
+  menu save/load now target the active/explicit slot; a new browser Save-States
+  manager (`wasm_save_states.rs`, File → Manage States…) surfaces the same
+  thumbnail grid the native manager has, populated by an async slot scan. The
+  old `localStorage` slots are read as a fallback (private-mode / IDB-blocked
+  browsers) and migrated into IndexedDB on first load. New web-sys features:
+  `IdbFactory` / `IdbOpenDbRequest` / `IdbRequest` / `IdbDatabase` /
+  `IdbTransaction` / `IdbTransactionMode` / `IdbObjectStore` / `DomStringList`
+  (web-sys IDB is light — no new crate). wasm-only; native + the desktop
+  save-state format are byte-identical. On-device browser manual-verify pending
+  (like the v1.2.0 F1/F3 carryovers) — record/replay + the IDB grid can't be
+  headlessly CI-certified.
 
 ### Fixed
 
