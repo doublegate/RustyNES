@@ -1,16 +1,19 @@
 # RustyNES — Project Status Matrix
 
-**Current release: v1.3.0 "Bedrock" — the foundation + breadth release** on the
-cycle-accurate v1.0.0 production core. A NES/Famicom emulator with the Mesen2 /
+**Current release: v1.4.0 "Fidelity" — the compatibility-and-finish release** on
+the cycle-accurate v1.0.0 production core. A NES/Famicom emulator with the Mesen2 /
 higan / ares accuracy bar, shipped as a polished desktop application.
 **AccuracyCoin 100.00% (139/139)**, the 60-ROM `external_real_games` + 52-entry
-`external_extended` oracles byte-identical, nestest 0-diff. **v1.3.0 "Bedrock"**
-modernizes the toolchain (edition 2024 / Rust 1.96 / egui 0.34 + wgpu 29), fixes
-frame pacing, adds Memory Compare + the menu/Settings reorg + auto-save, takes
-mapper coverage to **101 families** + Vs. DualSystem detection, adds HD-pack
-`<condition>`/`<background>` rules, netplay desync diagnostics, and niche
-peripheral aliases, and exercises the PGO/BOLT gate. Casual-mode browser
-RetroAchievements is a documented carryover (ADR 0015). Built on top of v1.2.0
+`external_extended` oracles byte-identical, nestest 0-diff. **v1.4.0 "Fidelity"**
+polishes accuracy (triangle ultrasonic silence, DMC-DMA ↔ controller-read conflict
+verified), adds per-channel audio mixing, finishes the devtools (symbol-file
+`.sym`/`.mlb`/`.nl` loading + event breakpoints), adds browser QoL (wasm `.rnm`
+movie I/O + IndexedDB save-states), runs a measure-first perf pass (−8% on the
+rendering-heavy bench), ships a colorful `rustynes help` TUI + styled `--help`, and
+takes mapper coverage 101 → **113 families** (boot-smoke verified, with reset-vector /
+decode fixes to m132/m143/m225/m226/m233/m242/m246). All additive / off-by-default,
+so the shipped / native / `no_std` / wasm builds stay byte-identical to v1.3.0.
+Built on top of v1.3.0 "Bedrock" (toolchain + breadth) and v1.2.0
 "Curator", which was a broad library / compatibility / reach release on v1.1.0
 "Scriptable":
 mapper coverage rises 51 → **87 families** behind a CI accuracy-tiering honesty
@@ -496,8 +499,7 @@ ROM dumps under `tests/roms/external/`, not committed):
 > **Engine-lineage note.** The table above is the **original 15-mapper**
 > coverage from the early engine line (the top-25-by-title-count tranche).
 > RustyNES **v1.0.0 shipped 51 mapper families**; **v1.2.0 extended this to
-> 87**, **v1.3.0 "Bedrock" to 101**, and **v1.4.0 "Fidelity" (in development)
-> extends it to 113** — see
+> 87**, **v1.3.0 "Bedrock" to 101**, and **v1.4.0 "Fidelity" to 113** — see
 > `docs/mappers.md` §Mapper coverage matrix +
 > §Mapper accuracy tiering for the full current list. The "out of scope" notes
 > below were the early-engine scoping; they are retained as history and
@@ -506,7 +508,7 @@ ROM dumps under `tests/roms/external/`, not committed):
 **Mapper count.** 15 distinct mappers in the early engine line (>95% of the
 licensed library by title count) → **51 families at v1.0.0** → **87 families at
 v1.2.0** → **101 families at v1.3.0 "Bedrock"** → **113 families at v1.4.0
-"Fidelity"** (in development), tiered for accuracy honesty:
+"Fidelity"**, tiered for accuracy honesty:
 
 | Tier | Families | Accuracy-gated? | Evidence |
 |------|----------|-----------------|----------|
