@@ -969,10 +969,10 @@ impl Mapper for Multicart225 {
         MapperCaps::NONE
     }
 
-    // The scratch RAM answers reads in $5800-$5FFF; surface it as mapped so the
-    // bus uses the real value rather than open bus.
+    // The scratch RAM answers reads in $5800-$5FFF (mapped). The rest of
+    // $4020-$57FF stays open bus (the trait default); $6000-$FFFF PRG is mapped.
     fn cpu_read_unmapped(&self, addr: u16) -> bool {
-        !(0x5800..=0x5FFF).contains(&addr)
+        (0x4020..=0x57FF).contains(&addr)
     }
 
     fn cpu_read(&mut self, addr: u16) -> u8 {
@@ -1002,9 +1002,14 @@ impl Mapper for Multicart225 {
         match addr {
             0x5800..=0x5FFF => self.scratch[(addr & 0x03) as usize] = value & 0x0F,
             0x8000..=0xFFFF => {
+                // nesdev iNES 225: the bank/mode are in the ADDRESS bits
+                // A~[.HMO PPPP PPCC CCCC]: CHR = A0..A5 (6 bits), PRG = A6..A11
+                // (6 bits), O (PRG mode) = A12 (1 = 16 KiB switchable,
+                // 0 = 32 KiB), M (mirroring) = A13 (1 = horizontal), H (outer
+                // high bit for both PRG and CHR) = A14.
                 let high = ((addr >> 14) & 0x01) as u8;
                 self.prg16_mode = (addr & 0x1000) != 0;
-                self.prg_bank = (high << 6) | (((addr >> 7) & 0x3F) as u8);
+                self.prg_bank = (high << 6) | (((addr >> 6) & 0x3F) as u8);
                 self.chr_bank = (high << 6) | ((addr & 0x3F) as u8);
                 self.horizontal_mirroring = (addr & 0x2000) != 0;
             }
@@ -1122,15 +1127,16 @@ impl Multicart226 {
         })
     }
 
+    /// 7-bit 16 KiB PRG bank index: low 6 bits from reg0, high bit from reg1.
     const fn prg_bank(&self) -> usize {
-        let low = (self.reg0 & 0x1F) as usize;
-        let bit5 = ((self.reg0 >> 5) & 0x01) as usize;
-        let bit6 = (self.reg1 & 0x01) as usize;
-        (bit6 << 6) | (bit5 << 5) | low
+        let low = (self.reg0 & 0x3F) as usize;
+        let high = (self.reg1 & 0x01) as usize;
+        (high << 6) | low
     }
 
-    const fn is_32k(&self) -> bool {
-        (self.reg0 & 0x80) != 0
+    /// PRG mode: reg0 bit 6 set = two 16 KiB banks; clear = one 32 KiB bank.
+    const fn is_16k(&self) -> bool {
+        (self.reg0 & 0x40) != 0
     }
 
     fn read_prg(&self, bank16: usize, addr: u16) -> u8 {
@@ -1148,12 +1154,15 @@ impl Mapper for Multicart226 {
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if (0x8000..=0xFFFF).contains(&addr) {
             let bank = self.prg_bank();
-            if self.is_32k() {
+            if self.is_16k() {
+                // Both 16 KiB halves map the same selected bank.
+                self.read_prg(bank, addr)
+            } else {
+                // 32 KiB mode: the bank index addresses a 32 KiB page (its low
+                // bit is ignored); the high half is +1.
                 let base = bank & !1;
                 let bank16 = base | usize::from(addr >= 0xC000);
                 self.read_prg(bank16, addr)
-            } else {
-                self.read_prg(bank, addr)
             }
         } else {
             0
@@ -1190,10 +1199,11 @@ impl Mapper for Multicart226 {
     }
 
     fn current_mirroring(&self) -> Mirroring {
-        if (self.reg0 & 0x40) != 0 {
-            Mirroring::Horizontal
-        } else {
+        // reg0 bit 7: 0 = horizontal, 1 = vertical.
+        if (self.reg0 & 0x80) != 0 {
             Mirroring::Vertical
+        } else {
+            Mirroring::Horizontal
         }
     }
 
@@ -1628,12 +1638,14 @@ impl Mapper for Multicart233 {
         }
     }
 
-    fn cpu_write(&mut self, addr: u16, _value: u8) {
-        if (0x8000..=0xFFFF).contains(&addr) {
-            self.prg_bank = (addr & 0x1F) as u8;
-            self.mode_32k = (addr & 0x20) != 0;
-            self.mirror_mode = ((addr >> 6) & 0x03) as u8;
-        }
+    fn cpu_write(&mut self, _addr: u16, value: u8) {
+        // nesdev iNES 233: a $8000-$FFFF write carries the bank in the DATA byte
+        // [MMOP PPPP]: PPPP (bits 0-3) = PRG page, O (bit 5) = mode (0 = 16 KiB
+        // single bank, 1 = 32 KiB), MM (bits 6-7) = mirroring (00 = 1-screen A,
+        // 01 = vertical, 10 = horizontal, 11 = 1-screen B).
+        self.prg_bank = value & 0x1F;
+        self.mode_32k = (value & 0x20) != 0;
+        self.mirror_mode = (value >> 6) & 0x03;
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
@@ -1660,9 +1672,9 @@ impl Mapper for Multicart233 {
     fn current_mirroring(&self) -> Mirroring {
         match self.mirror_mode {
             0 => Mirroring::SingleScreenA,
-            1 => Mirroring::SingleScreenB,
-            2 => Mirroring::Vertical,
-            _ => Mirroring::Horizontal,
+            1 => Mirroring::Vertical,
+            2 => Mirroring::Horizontal,
+            _ => Mirroring::SingleScreenB,
         }
     }
 
@@ -1706,10 +1718,13 @@ impl Mapper for Multicart233 {
 // ===========================================================================
 // Mapper 242 — Waixing 43-in-1 / Wai Xing Zhan Shi.
 //
-// A $8000-$FFFF address-decoded register: the 32 KiB PRG bank is (A >> 3) &
-// 0x0F; a mirroring bit is (A >> 1) & 1 (1 = horizontal, 0 = vertical). CHR is
-// 8 KiB RAM. No IRQ. (Some carts add a protection-read window; we model only
-// the documented banking + mirroring.)
+// A $8000-$FFFF address-decoded register selects a switchable 32 KiB PRG page
+// (the inner bank = address bits 2..4, the outer bank = address bits 5..6) and
+// a mirroring bit (address bit 1: 1 = horizontal, 0 = vertical). CHR is 8 KiB
+// RAM. The board carries 8 KiB of (battery) work-RAM at $6000-$7FFF — several
+// Waixing titles boot by clearing/using that RAM before any PRG bank switch, so
+// it must be present and read/write-backed or the reset routine derails.
+// No IRQ.
 // ===========================================================================
 
 /// Mapper 242 (Waixing `43-in-1`).
@@ -1717,6 +1732,8 @@ pub struct Waixing242 {
     prg_rom: Box<[u8]>,
     chr_ram: Box<[u8]>,
     vram: Box<[u8]>,
+    /// 8 KiB work-RAM at $6000-$7FFF.
+    prg_ram: Box<[u8]>,
     prg_bank: u8,
     horizontal_mirroring: bool,
 }
@@ -1743,6 +1760,7 @@ impl Waixing242 {
             prg_rom,
             chr_ram: vec![0u8; CHR_BANK_8K].into_boxed_slice(),
             vram: vec![0u8; 2 * NAMETABLE_SIZE].into_boxed_slice(),
+            prg_ram: vec![0u8; PRG_BANK_8K].into_boxed_slice(),
             prg_bank: 0,
             horizontal_mirroring: false,
         })
@@ -1754,8 +1772,13 @@ impl Mapper for Waixing242 {
         MapperCaps::NONE
     }
 
+    // The $6000-$7FFF work-RAM is mapped (the trait default already treats
+    // $6000-$FFFF as mapped, so no override is needed).
+
     fn cpu_read(&mut self, addr: u16) -> u8 {
-        if (0x8000..=0xFFFF).contains(&addr) {
+        if (0x6000..=0x7FFF).contains(&addr) {
+            self.prg_ram[(addr - 0x6000) as usize]
+        } else if (0x8000..=0xFFFF).contains(&addr) {
             let count = (self.prg_rom.len() / PRG_BANK_32K).max(1);
             let bank = (self.prg_bank as usize) % count;
             self.prg_rom[bank * PRG_BANK_32K + (addr as usize - 0x8000)]
@@ -1764,9 +1787,20 @@ impl Mapper for Waixing242 {
         }
     }
 
-    fn cpu_write(&mut self, addr: u16, _value: u8) {
-        if (0x8000..=0xFFFF).contains(&addr) {
-            self.prg_bank = ((addr >> 3) & 0x0F) as u8;
+    fn cpu_write(&mut self, addr: u16, value: u8) {
+        if (0x6000..=0x7FFF).contains(&addr) {
+            self.prg_ram[(addr - 0x6000) as usize] = value;
+        } else if (0x8000..=0xFFFF).contains(&addr) {
+            // nesdev iNES 242 decode (address-latched): bit 1 (M) = mirroring
+            // (0 = vertical, 1 = horizontal); the 32 KiB PRG bank = the inner
+            // bank (PRG A16..A14 = address bits 2..4) OR'd with the outer bank
+            // (PRG A18..A17 = address bits 5..6) shifted into place. The whole
+            // $8000-$FFFF window is one switchable 32 KiB page.
+            let inner = ((addr >> 2) & 0x07) as u8;
+            let outer = ((addr >> 5) & 0x03) as u8;
+            // inner is A16..A14 (a 16 KiB granularity); the 32 KiB bank takes the
+            // upper bits: A18..A15 = outer<<2 | inner>>1.
+            self.prg_bank = (outer << 2) | (inner >> 1);
             self.horizontal_mirroring = (addr & 0x02) != 0;
         }
     }
@@ -1801,17 +1835,19 @@ impl Mapper for Waixing242 {
     }
 
     fn save_state(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(3 + self.vram.len() + self.chr_ram.len());
+        let mut out =
+            Vec::with_capacity(3 + self.prg_ram.len() + self.vram.len() + self.chr_ram.len());
         out.push(SAVE_STATE_VERSION);
         out.push(self.prg_bank);
         out.push(u8::from(self.horizontal_mirroring));
+        out.extend_from_slice(&self.prg_ram);
         out.extend_from_slice(&self.vram);
         out.extend_from_slice(&self.chr_ram);
         out
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
-        let expected = 3 + self.vram.len() + self.chr_ram.len();
+        let expected = 3 + self.prg_ram.len() + self.vram.len() + self.chr_ram.len();
         if data.len() != expected {
             return Err(MapperError::Truncated {
                 expected,
@@ -1824,6 +1860,9 @@ impl Mapper for Waixing242 {
         self.prg_bank = data[1];
         self.horizontal_mirroring = data[2] != 0;
         let mut cursor = 3;
+        self.prg_ram
+            .copy_from_slice(&data[cursor..cursor + self.prg_ram.len()]);
+        cursor += self.prg_ram.len();
         self.vram
             .copy_from_slice(&data[cursor..cursor + self.vram.len()]);
         cursor += self.vram.len();
@@ -1854,7 +1893,7 @@ pub struct FongShenBang246 {
     prg_rom: Box<[u8]>,
     chr_rom: Box<[u8]>,
     vram: Box<[u8]>,
-    /// 6 KiB on-cart PRG-RAM at $6800-$7FFF.
+    /// 2 KiB battery-backed PRG-RAM at $6800-$6FFF.
     prg_ram: Box<[u8]>,
     prg_banks: [u8; 4],
     chr_banks: [u8; 4],
@@ -1868,7 +1907,6 @@ impl FongShenBang246 {
     ///
     /// Returns [`MapperError::Invalid`] when PRG is not a non-zero multiple of
     /// 8 KiB or CHR-ROM is empty / not a multiple of 2 KiB.
-    #[allow(clippy::cast_possible_truncation)]
     pub fn new(
         prg_rom: Box<[u8]>,
         chr_rom: Box<[u8]>,
@@ -1886,24 +1924,36 @@ impl FongShenBang246 {
                 chr_rom.len()
             )));
         }
-        let last = (prg_rom.len() / PRG_BANK_8K).max(1) - 1;
-        // Power-on fixes the top half of the CPU window to the last banks (a
-        // common reset state so the cart can boot before any register write).
-        let prg_banks = [0, 1, (last.saturating_sub(1)) as u8, last as u8];
+        // Power-on (per the nesdev wiki): the $6000-$6002 PRG regs are 0, but
+        // $6003 (the $E000-$FFFF slot) initializes to 0xFF — so the reset vector
+        // at $FFFC resolves into the last PRG bank, where the boot code lives.
+        let prg_banks = [0, 0, 0, 0xFF];
         Ok(Self {
             prg_rom,
             chr_rom,
             vram: vec![0u8; 2 * NAMETABLE_SIZE].into_boxed_slice(),
-            prg_ram: vec![0u8; 0x1800].into_boxed_slice(),
+            prg_ram: vec![0u8; 0x0800].into_boxed_slice(),
             prg_banks,
-            chr_banks: [0, 1, 2, 3],
+            chr_banks: [0, 0, 0, 0],
             mirroring,
         })
     }
 
     fn prg_byte(&self, slot: usize, addr: u16) -> u8 {
         let count = (self.prg_rom.len() / PRG_BANK_8K).max(1);
-        let bank = (self.prg_banks[slot] as usize) % count;
+        let mut bank = self.prg_banks[slot] as usize;
+        // $E000-$FFFF hardware quirk: reads from $FFE4-$FFE7, $FFEC-$FFEF,
+        // $FFF4-$FFF7, and $FFFC-$FFFF force PRG A17 high (bank bit 4 of an 8 KiB
+        // index). The interrupt/reset vectors live in that forced region.
+        if slot == 3 {
+            let low = addr & 0x001F;
+            let in_window = (0xFFE4..=0xFFFF).contains(&addr)
+                && matches!(low, 0x04..=0x07 | 0x0C..=0x0F | 0x14..=0x17 | 0x1C..=0x1F);
+            if in_window {
+                bank |= 0x10;
+            }
+        }
+        let bank = bank % count;
         self.prg_rom[bank * PRG_BANK_8K + (addr as usize & 0x1FFF)]
     }
 }
@@ -1913,15 +1963,18 @@ impl Mapper for FongShenBang246 {
         MapperCaps::NONE
     }
 
-    // The banking registers and PRG-RAM live in $6000-$7FFF; surface that whole
-    // window as mapped so reads use the cart, not open bus.
+    // Only the dead sub-ranges below the PRG window are open bus: $4020-$67FF
+    // (the write-only register file at $6000-$67FF + the $4020-$5FFF gap) and
+    // the $7000-$7FFF mirror gap. The 2 KiB PRG-RAM at $6800-$6FFF and the PRG
+    // ROM at $8000-$FFFF are mapped (matching the trait default of "$6000-$FFFF
+    // is mapped" but carving out the register/gap holes).
     fn cpu_read_unmapped(&self, addr: u16) -> bool {
-        !(0x6800..=0x7FFF).contains(&addr)
+        (0x4020..=0x67FF).contains(&addr) || (0x7000..=0x7FFF).contains(&addr)
     }
 
     fn cpu_read(&mut self, addr: u16) -> u8 {
         match addr {
-            0x6800..=0x7FFF => self.prg_ram[(addr - 0x6800) as usize],
+            0x6800..=0x6FFF => self.prg_ram[(addr - 0x6800) as usize],
             0x8000..=0x9FFF => self.prg_byte(0, addr),
             0xA000..=0xBFFF => self.prg_byte(1, addr),
             0xC000..=0xDFFF => self.prg_byte(2, addr),
@@ -1934,7 +1987,7 @@ impl Mapper for FongShenBang246 {
         match addr {
             0x6000..=0x6003 => self.prg_banks[(addr & 0x03) as usize] = value,
             0x6004..=0x6007 => self.chr_banks[(addr & 0x03) as usize] = value,
-            0x6800..=0x7FFF => self.prg_ram[(addr - 0x6800) as usize] = value,
+            0x6800..=0x6FFF => self.prg_ram[(addr - 0x6800) as usize] = value,
             _ => {}
         }
     }
@@ -2206,11 +2259,13 @@ mod tests {
     fn m225_address_decoded_and_scratch_ram() {
         let mut m =
             Multicart225::new(synth_prg_16k(16), synth_chr_8k(8), Mirroring::Vertical).unwrap();
-        // A = 0x8100: prg16_mode = (A&0x1000)==0 -> false (32K);
-        // prg_bank = (A>>7)&0x3F = 2; chr = A&0x3F = 0; mirroring = (A&0x2000)==0 -> V.
-        m.cpu_write(0x8100, 0);
+        // nesdev decode A~[.HMO PPPP PPCC CCCC]: PRG = A6..A9, O(mode) = A10,
+        // M(mirror) = A11, H = A14. A = 0x8080: PRG = (0x80>>6)&0xF = 2; O = 0 ->
+        // 32K; M = 0 -> vertical; CHR = A&0x3F = 0.
+        m.cpu_write(0x8080, 0);
         assert_eq!(m.cpu_read(0x8000), 2);
         assert_eq!(m.cpu_read(0xC000), 3);
+        assert_eq!(m.current_mirroring(), Mirroring::Vertical);
         // Scratch RAM round-trips low nibble.
         m.cpu_write(0x5800, 0xA9);
         assert_eq!(m.cpu_read(0x5800), 0x09);
@@ -2316,9 +2371,9 @@ mod tests {
     #[test]
     fn m233_bank_and_mirror_modes() {
         let mut m = Multicart233::new(synth_prg_16k(16), &[], Mirroring::Vertical).unwrap();
-        // A = 0x80C5: prg = A&0x1F = 5; A&0x20 == 0 -> 16K; mirror = (A>>6)&3.
-        // 0x80C5 = 1000_0000_1100_0101; bits 6-7 = 0b11 = 3 -> horizontal.
-        m.cpu_write(0x80C5, 0);
+        // Data-driven [MMOP PPPP]: value 0x85 = MM=10 (horizontal), O=0 (16K),
+        // PPPP=5. 16K mode mirrors the one bank across both halves.
+        m.cpu_write(0x8000, 0x85);
         assert_eq!(m.cpu_read(0x8000), 5);
         assert_eq!(m.cpu_read(0xC000), 5);
         assert_eq!(m.current_mirroring(), Mirroring::Horizontal);
@@ -2327,7 +2382,7 @@ mod tests {
     #[test]
     fn m233_save_state_round_trip() {
         let mut m = Multicart233::new(synth_prg_16k(16), &[], Mirroring::Vertical).unwrap();
-        m.cpu_write(0x8026, 0); // 32K mode, bank 6
+        m.cpu_write(0x8000, 0x26); // O=1 (32K), bank 6
         m.ppu_write(0x0004, 0x88);
         let blob = m.save_state();
         let mut m2 = Multicart233::new(synth_prg_16k(16), &[], Mirroring::Vertical).unwrap();
@@ -2385,13 +2440,13 @@ mod tests {
             FongShenBang246::new(synth_prg_8k(8), synth_chr_2k(8), Mirroring::Vertical).unwrap();
         m.cpu_write(0x6001, 4); // PRG $A000 = bank 4
         m.cpu_write(0x6007, 6); // CHR slot 3 = bank 6
-        m.cpu_write(0x7000, 0x9D);
+        m.cpu_write(0x6900, 0x9D); // PRG-RAM at $6800-$6FFF
         let blob = m.save_state();
         let mut m2 =
             FongShenBang246::new(synth_prg_8k(8), synth_chr_2k(8), Mirroring::Vertical).unwrap();
         m2.load_state(&blob).unwrap();
         assert_eq!(m2.cpu_read(0xA000), 4);
         assert_eq!(m2.ppu_read(0x1800), 6);
-        assert_eq!(m2.cpu_read(0x7000), 0x9D);
+        assert_eq!(m2.cpu_read(0x6900), 0x9D);
     }
 }

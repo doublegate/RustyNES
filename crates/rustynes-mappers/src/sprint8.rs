@@ -964,10 +964,13 @@ impl Mapper for SachenTca01M143 {
         MapperCaps::NONE
     }
 
-    // The protection register answers reads in $4020-$5FFF; surface it as
-    // "mapped" so the bus uses the real value rather than open bus.
-    fn cpu_read_unmapped(&self, addr: u16) -> bool {
-        !(0x4020..=0x5FFF).contains(&addr)
+    // The protection register answers reads across the whole $4020-$5FFF
+    // window (mapped). $8000-$FFFF PRG-ROM stays mapped (the trait default) —
+    // a `!(...)` here would wrongly open-bus the program ROM + reset vector, so
+    // the board never boots. There is no open-bus hole to carve out, so this
+    // returns false for everything the board answers.
+    fn cpu_read_unmapped(&self, _addr: u16) -> bool {
+        false
     }
 
     fn cpu_read(&mut self, addr: u16) -> u8 {
