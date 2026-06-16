@@ -2492,6 +2492,24 @@ impl App {
                     "Breakpoint hit at ${pc:04X} — paused"
                 )));
         }
+        // v1.4.0 Workstream D (D2) — an event-driven breakpoint fired: pause +
+        // open the CPU debugger and report the kind + timing context.
+        if let Some(hit) = fx.event_break_hit {
+            self.set_paused(true);
+            if let Some(d) = self.debugger.as_mut() {
+                d.open_chip_panel(crate::debugger::ChipPanel::Cpu);
+            }
+            self.ui
+                .set_status(crate::ui_shell::StatusMessage::info(format!(
+                    "Event breakpoint: {} (${:04X}) — frame {} cyc {} sl {} dot {} — paused",
+                    hit.kind.label(),
+                    hit.addr,
+                    hit.frame,
+                    hit.cycle,
+                    hit.scanline,
+                    hit.dot
+                )));
+        }
         #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
         {
             if let Some(status) = fx.ra_status
@@ -2897,6 +2915,63 @@ impl App {
                 #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
                 self.unload_hd_pack();
             }
+            MenuAction::LoadSymbols => {
+                #[cfg(not(target_arch = "wasm32"))]
+                self.load_symbols_dialog();
+            }
+            MenuAction::ClearSymbols => {
+                if let Some(d) = self.debugger.as_mut() {
+                    d.clear_symbols();
+                }
+            }
+        }
+    }
+
+    /// v1.4.0 Workstream D (D1) — pick a symbol/label file (`.sym` / Mesen
+    /// `.mlb` / FCEUX `.nl`), parse it, and merge its labels into the debugger's
+    /// annotation map. Display-only (the deterministic core is untouched);
+    /// native-only (it reads a picked file). No-op if the debugger isn't built.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn load_symbols_dialog(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("Symbol/label files", &["sym", "mlb", "nl"])
+            .add_filter("All files", &["*"])
+            .pick_file()
+        else {
+            return;
+        };
+        let format = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .and_then(crate::symbols::SymbolFormat::from_extension);
+        let Some(format) = format else {
+            self.ui.set_status(crate::ui_shell::StatusMessage::error(
+                "Unrecognized symbol-file extension (expected .sym / .mlb / .nl)",
+            ));
+            return;
+        };
+        let text = match std::fs::read_to_string(&path) {
+            Ok(t) => t,
+            Err(e) => {
+                self.ui
+                    .set_status(crate::ui_shell::StatusMessage::error(format!(
+                        "symbol load failed: {e}"
+                    )));
+                return;
+            }
+        };
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("symbols")
+            .to_owned();
+        if let Some(d) = self.debugger.as_mut() {
+            d.load_symbols(&name, &text, format);
+            d.open_chip_panel(crate::debugger::ChipPanel::Cpu);
+            self.ui
+                .set_status(crate::ui_shell::StatusMessage::info(format!(
+                    "Loaded symbols from {name}"
+                )));
         }
     }
 

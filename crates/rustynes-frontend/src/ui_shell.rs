@@ -71,6 +71,16 @@ impl StatusMessage {
         )
     }
 
+    /// Create an error message (red text, 5 seconds). v1.4.0 D1.
+    #[must_use]
+    pub fn error(text: impl Into<String>) -> Self {
+        Self::new(
+            text,
+            egui::Color32::from_rgb(0xE0, 0x60, 0x60),
+            Duration::from_secs(5),
+        )
+    }
+
     /// Returns `true` once the message has outlived its [`Self::duration`].
     #[must_use]
     pub fn is_expired(&self) -> bool {
@@ -185,6 +195,14 @@ pub enum MenuAction {
     /// v1.2.0 beta.2 (Workstream C3) — disable + unload the active HD-pack for
     /// the loaded ROM.
     UnloadHdPack,
+    /// v1.4.0 Workstream D (D1) — open a dialog to pick a symbol/label file
+    /// (`.sym` / Mesen `.mlb` / FCEUX `.nl`) and merge its labels into the
+    /// debugger's annotation map (native; the dispatch body is
+    /// `#[cfg(not(wasm32))]`, the variant stays un-gated so the match remains
+    /// exhaustive on every target).
+    LoadSymbols,
+    /// v1.4.0 Workstream D (D1) — clear all loaded debugger symbols.
+    ClearSymbols,
 }
 
 /// Per-frame outputs from [`UiShell::build`].
@@ -1051,6 +1069,24 @@ impl UiShell {
                     ] {
                         if ui.button(ic(icon, label)).clicked() {
                             out.action = Some(MenuAction::OpenChipPanel(panel));
+                            ui.close();
+                        }
+                    }
+                    // v1.4.0 Workstream D (D1) — symbol/label files annotate the
+                    // disassembler + breakpoint + trace views. Native-only (it
+                    // reads a picked file).
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        ui.separator();
+                        if ui
+                            .button(ic(glyph::FILE, "Load Symbols (.sym/.mlb/.nl)..."))
+                            .clicked()
+                        {
+                            out.action = Some(MenuAction::LoadSymbols);
+                            ui.close();
+                        }
+                        if ui.button(ic(glyph::XMARK, "Clear Symbols")).clicked() {
+                            out.action = Some(MenuAction::ClearSymbols);
                             ui.close();
                         }
                     }

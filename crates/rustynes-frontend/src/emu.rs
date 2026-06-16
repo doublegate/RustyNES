@@ -213,6 +213,10 @@ pub struct ProduceFx {
     /// v1.1.0 beta.2 (Workstream C) — a breakpoint fired this frame at this PC.
     /// `App` pauses emulation + opens the debugger so the user can inspect.
     pub breakpoint_hit: Option<u16>,
+    /// v1.4.0 Workstream D (D2) — an event-driven breakpoint fired this frame.
+    /// `App` pauses emulation + opens the debugger and reports the event kind +
+    /// frame/cycle/scanline/dot context.
+    pub event_break_hit: Option<rustynes_core::EventBreakHit>,
 }
 
 impl ProduceFx {
@@ -237,6 +241,9 @@ impl ProduceFx {
         }
         if later.breakpoint_hit.is_some() {
             self.breakpoint_hit = later.breakpoint_hit;
+        }
+        if later.event_break_hit.is_some() {
+            self.event_break_hit = later.event_break_hit;
         }
     }
 }
@@ -542,6 +549,11 @@ impl EmuCore {
                 // `App` can pause + open the debugger. (Run-ahead's speculative
                 // frames don't check breakpoints — only this persistent path.)
                 fx.breakpoint_hit = nes.take_break_hit();
+                // v1.4.0 Workstream D (D2) — surface an event-breakpoint hit so
+                // `App` can pause + open the debugger (same persistent-path-only
+                // policy as exec breakpoints; run-ahead's speculative frames
+                // don't check it).
+                fx.event_break_hit = nes.take_event_break_hit();
                 // v2.8.0 Phase 3 — harvest the presented framebuffer into a
                 // reused buffer.
                 self.present_fb.clear();
@@ -633,7 +645,7 @@ impl EmuCore {
             // A breakpoint stops the (partial) frame; don't run the rest of the
             // catch-up burst past it, or the core would advance beyond the stop
             // PC before the UI pauses (Copilot #41).
-            if fx.breakpoint_hit.is_some() {
+            if fx.breakpoint_hit.is_some() || fx.event_break_hit.is_some() {
                 break;
             }
         }

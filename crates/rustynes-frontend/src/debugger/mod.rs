@@ -242,6 +242,15 @@ pub struct DebuggerOverlay {
     /// [`crate::ui_shell::apply_theme`] only calls `ctx.set_visuals` on a change
     /// instead of rebuilding the whole `Visuals` every frame.
     last_theme: Option<crate::config::AppTheme>,
+    /// v1.4.0 Workstream D (D1) — loaded debugger symbols (`address -> label`),
+    /// merged from `.sym` / Mesen `.mlb` / FCEUX `.nl` files. Consulted by the
+    /// CPU disassembler + breakpoint list + trace view to annotate raw
+    /// addresses. Empty until the user loads a file (display-only; never touches
+    /// the deterministic core).
+    symbols: crate::symbols::SymbolMap,
+    /// v1.4.0 Workstream D (D1) — the last symbol-load status line (file +
+    /// label count, or an error), shown in the CPU panel.
+    symbols_status: Option<String>,
 }
 
 impl DebuggerOverlay {
@@ -327,7 +336,28 @@ impl DebuggerOverlay {
             #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
             badge_cache: None,
             last_theme: None,
+            symbols: crate::symbols::SymbolMap::default(),
+            symbols_status: None,
         }
+    }
+
+    /// v1.4.0 Workstream D (D1) — merge a parsed symbol file's `text` (in
+    /// `format`) into the debugger's label map and record a status line. The
+    /// `name` is just for the status message (the picked file's display name).
+    /// Display-only; the map annotates the disassembler / breakpoint / trace
+    /// views and never touches the core.
+    pub fn load_symbols(&mut self, name: &str, text: &str, format: crate::symbols::SymbolFormat) {
+        let added = self.symbols.merge_str(text, format);
+        self.symbols_status = Some(format!(
+            "{name}: +{added} labels ({} total)",
+            self.symbols.len()
+        ));
+    }
+
+    /// v1.4.0 Workstream D (D1) — drop every loaded symbol.
+    pub fn clear_symbols(&mut self) {
+        self.symbols.clear();
+        self.symbols_status = Some("symbols cleared".to_owned());
     }
 
     /// Toggle overlay visibility.
@@ -777,7 +807,14 @@ impl DebuggerOverlay {
         });
 
         if self.show_cpu {
-            cpu_panel::show(ctx, &mut self.show_cpu, &mut self.cpu_ui, nes);
+            cpu_panel::show(
+                ctx,
+                &mut self.show_cpu,
+                &mut self.cpu_ui,
+                nes,
+                &self.symbols,
+                self.symbols_status.as_deref(),
+            );
         }
         if self.show_ppu {
             ppu_panel::show(ctx, &mut self.show_ppu, &mut self.ppu_ui, nes);
@@ -842,7 +879,13 @@ impl DebuggerOverlay {
             }
         }
         if self.show_trace {
-            trace_panel::show(ctx, &mut self.show_trace, &mut self.trace_ui, nes);
+            trace_panel::show(
+                ctx,
+                &mut self.show_trace,
+                &mut self.trace_ui,
+                nes,
+                &self.symbols,
+            );
         }
         if self.show_events {
             event_panel::show(ctx, &mut self.show_events, &mut self.event_ui, nes);

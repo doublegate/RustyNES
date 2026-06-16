@@ -514,7 +514,7 @@ the Debug menu. The panels are read-only: they never advance
 emulator-visible state, polling the inspection API on `rustynes_core::Nes`
 once per visible frame.
 
-- **CPU**: registers, current instruction, disassembly window (scrollable), step-instruction button, and a **Breakpoints** section — exec/PC breakpoints (armed toggle, hex add, per-row remove, clear); when the program counter reaches one, emulation pauses and the CPU panel opens on the stopped PC.
+- **CPU**: registers, current instruction, disassembly window (scrollable), step-instruction button, a **Breakpoints** section — exec/PC breakpoints (armed toggle, hex add, per-row remove, clear); when the program counter reaches one, emulation pauses and the CPU panel opens on the stopped PC — and (v1.4.0 Workstream D) an **Event breakpoints** section that breaks on hardware events (see below). Loaded symbol labels (D1) annotate the disassembly (a `label:` line above the matching address) and the breakpoint rows.
 - **PPU**: nametable viewer (4 tables side-by-side, scroll-cursor overlaid), pattern table viewer (both tables, with palette selector), OAM viewer (sprite list + visual), palette RAM viewer.
 - **APU**: per-channel scope (waveform), volume meters, register dump.
 - **Memory**: hex viewer of CPU bus + PPU bus, with go-to-address (disabled in RetroAchievements hardcore mode).
@@ -532,7 +532,52 @@ AccuracyCoin are unaffected):
   (`$2000-$3FFF`), APU (`$4000-$4017`, including `$4014` OAM DMA and `$4016`
   strobe), and mapper (`$4020-$FFFF`) — plotted on a scanline×dot grid coloured
   by kind, so you can see *when* in the frame a game touches scroll / mapper /
-  APU registers. (NMI/IRQ markers are a follow-up.)
+  APU registers.
+
+### v1.4.0 Workstream D — symbol loading + event breakpoints
+
+These extend the existing devtools; both are output-only and live behind the
+same `debug-hooks` feature (determinism / AccuracyCoin unaffected, feature-off
+build byte-identical).
+
+- **Symbol / label files (D1)** — **Debug → Load Symbols (.sym/.mlb/.nl)…**
+  (native) picks a label file in one of three formats and merges its
+  `address → label` map into the debugger:
+  - **`.sym`** — ca65 / WLA-DX `ADDR LABEL` table (bank-prefixed `00:8000`
+    addresses keep the low 16 bits; `;` comments and INI `[section]` headers
+    are tolerated).
+  - **Mesen `.mlb`** — `MemoryType:Address[-End]:Label[:Comment]`; the
+    CPU-visible memory types map into CPU space (`G` system RAM → as-is, `R`
+    WRAM → `$6000+`, `P` PRG ROM → `$8000+`); a range labels its start.
+  - **FCEUX `.nl`** — `$ADDR#Name#Comment` name list (bank banners + comment
+    lines skipped).
+
+  Loaded labels annotate the CPU disassembler (a `label:` line above the
+  matching address), the breakpoint rows, and the Trace Logger tail / export.
+  **Debug → Clear Symbols** drops them. Parsing is a small hand-rolled,
+  line-based reader (no new dependency); malformed lines are skipped, never
+  fatal. Display-only — the deterministic core is never consulted or mutated.
+
+- **Event breakpoints (D2)** — the CPU panel's **Event breakpoints** section
+  arms break-on-event categories: **NMI entry**, **IRQ entry**, **Sprite-0
+  hit** (observed where games detect it — a `$2002` read returning bit 6),
+  **OAM DMA** (`$4014` write), **DMC DMA** (the sample GET), and
+  **PPU/APU/mapper register read/write**. When an armed event fires, emulation
+  pauses, the CPU panel opens, and the status bar reports the event kind +
+  address + **frame / CPU cycle / scanline / dot**. The taps sit at the same
+  observational commit points the event-viewer / interrupt-service / bus-access
+  logs already use (`Bus::cpu_read` / `cpu_write` / `notify_irq_service` / the
+  DMC GET), record-only — they never perturb emulator-visible state, so the
+  determinism contract holds. The default (no category armed) is a single
+  `mask == 0` early-out, so the unarmed hot path is unchanged. Like exec
+  breakpoints, only the persistent run path checks them (run-ahead's
+  speculative frames don't).
+
+- **HD-pack per-pixel inspector (D3)** — **deferred** (documented TODO). The
+  per-pixel HD-pack composition trace (matched CHR hash / replacement asset /
+  gating `<condition>`) would build on the v1.3.0 E1 `HdCompositor` + the
+  `hd-pack` `HdTileSource` telemetry; it needs a new resolve/inspect query on
+  `HdCompositor` + viewport pixel hit-testing and is held for a follow-up.
 
 All panels are floating windows in egui's window system. The tool panels
 (Cheats / Settings / Netplay / Cheevos / Perf / Input) are the same windows

@@ -429,6 +429,12 @@ impl Nes {
         if self.bus.interrupt_logging() {
             self.bus.clear_interrupts();
         }
+        // v1.4.0 Workstream D (D2) — start each frame with no event-breakpoint
+        // hit so the frontend's "first hit of the frame" pause is per-frame.
+        #[cfg(feature = "debug-hooks")]
+        if self.bus.event_breakpoints() != 0 {
+            self.bus.clear_event_break_hit();
+        }
         // T-110-E2 — the Lua onExec exec-PC log is per-frame (cleared here so a
         // replay only ever sees this frame's PCs, never a stale carry-over).
         #[cfg(feature = "debug-hooks")]
@@ -569,6 +575,31 @@ impl Nes {
     #[cfg(feature = "debug-hooks")]
     pub const fn take_break_hit(&mut self) -> Option<u16> {
         self.break_hit.take()
+    }
+
+    /// v1.4.0 Workstream D (D2) — arm the event-driven breakpoint categories
+    /// (a bit-OR of [`crate::EventBpKind::bit`]). `0` (default) disarms every
+    /// category — the per-access taps are then a single cheap `mask == 0`
+    /// early-out. Output-only: a hit pauses + reports but never mutates state.
+    /// `debug-hooks` only.
+    #[cfg(feature = "debug-hooks")]
+    pub const fn set_event_breakpoints(&mut self, mask: u16) {
+        self.bus.set_event_breakpoints(mask);
+    }
+
+    /// The armed event-breakpoint category mask.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub const fn event_breakpoints(&self) -> u16 {
+        self.bus.event_breakpoints()
+    }
+
+    /// Take the first event-breakpoint hit of the current frame (cleared on
+    /// read). The frontend polls this after [`Nes::run_frame`] to pause when an
+    /// armed hardware event fired, reporting its kind + frame/cycle/scanline/dot.
+    #[cfg(feature = "debug-hooks")]
+    pub const fn take_event_break_hit(&mut self) -> Option<crate::EventBreakHit> {
+        self.bus.take_event_break_hit()
     }
 
     /// Maximum cycle-trace ring depth (oldest records drop past this).
@@ -2546,6 +2577,74 @@ mod tests {
         assert!(nes.events().len() <= Nes::TRACE_CAP, "bounded");
         nes.set_event_logging(false);
         assert!(!nes.event_logging());
+    }
+
+    #[cfg(feature = "debug-hooks")]
+    #[test]
+    fn event_breakpoint_fires_on_armed_category_only() {
+        use crate::EventBpKind;
+        // The same `LDA #$00 ; STA $2000 ; JMP $C000` loop — it issues a PPU
+        // write every iteration but never an APU write or interrupt service.
+        let mut bytes = alloc::vec![0u8; 16 + 16 * 1024];
+        bytes[0..4].copy_from_slice(b"NES\x1A");
+        bytes[4] = 1;
+        bytes[5] = 0;
+        let prg = &mut bytes[16..16 + 16 * 1024];
+        prg[0..8].copy_from_slice(&[0xA9, 0x00, 0x8D, 0x00, 0x20, 0x4C, 0x00, 0xC0]);
+        let len = 16 * 1024;
+        prg[len - 4] = 0x00;
+        prg[len - 3] = 0xC0;
+
+        let mut nes = Nes::from_rom(&bytes).expect("parse");
+        let _ = nes.run_frame(); // warm past the power-on frame-complete latch.
+
+        // Default: nothing armed, no hits.
+        assert_eq!(nes.event_breakpoints(), 0, "disarmed by default");
+        let _ = nes.run_frame();
+        assert_eq!(nes.take_event_break_hit(), None, "no hit while disarmed");
+
+        // Arm an UNRELATED category (APU write): the $2000 loop never trips it.
+        nes.set_event_breakpoints(EventBpKind::ApuWrite.bit());
+        let _ = nes.run_frame();
+        assert_eq!(
+            nes.take_event_break_hit(),
+            None,
+            "wrong category does not fire"
+        );
+
+        // Arm PPU write: the very next frame must latch a hit with sane context.
+        nes.set_event_breakpoints(EventBpKind::PpuWrite.bit());
+        let _ = nes.run_frame();
+        let hit = nes.take_event_break_hit().expect("PPU write fires");
+        assert_eq!(hit.kind, EventBpKind::PpuWrite);
+        assert_eq!(hit.addr, 0x2000, "the STA $2000 target");
+        assert!(hit.dot <= 340, "dot in range");
+        assert!(
+            hit.scanline >= -1 && hit.scanline <= 260,
+            "scanline in range"
+        );
+        // Cleared on read + only one (first) hit recorded per frame.
+        assert_eq!(nes.take_event_break_hit(), None, "cleared on read");
+
+        // Disarming all stops it firing again.
+        nes.set_event_breakpoints(0);
+        let _ = nes.run_frame();
+        assert_eq!(nes.take_event_break_hit(), None, "disarmed: silent");
+    }
+
+    #[cfg(feature = "debug-hooks")]
+    #[test]
+    fn event_bp_kind_mask_and_labels_are_distinct() {
+        use crate::EventBpKind;
+        let all = EventBpKind::all();
+        // Every category has a distinct bit and a non-empty label.
+        let mut seen = 0u16;
+        for k in all {
+            assert_eq!(seen & k.bit(), 0, "{} bit collides", k.label());
+            seen |= k.bit();
+            assert!(!k.label().is_empty());
+        }
+        assert_eq!(seen.count_ones() as usize, all.len(), "11 distinct bits");
     }
 
     #[test]
