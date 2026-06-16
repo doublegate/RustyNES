@@ -63,6 +63,7 @@ mod game_db_panel;
 mod input_display_panel;
 mod input_rebind_panel;
 mod mapper_panel;
+mod memory_compare_panel;
 mod memory_panel;
 mod netplay_panel;
 mod nsf_panel;
@@ -120,6 +121,8 @@ pub enum ChipPanel {
     Apu,
     /// CPU/PPU bus hex viewer.
     Memory,
+    /// Memory-search / cheat-hunt panel (v1.3.0 Workstream C, C3).
+    MemoryCompare,
     /// Mapper bank registers + IRQ state.
     Mapper,
     /// Cycle trace logger (T-110-C2).
@@ -146,6 +149,7 @@ pub struct DebuggerOverlay {
     show_oam: bool,
     show_apu: bool,
     show_memory: bool,
+    show_memory_compare: bool,
     show_mapper: bool,
     show_trace: bool,
     show_events: bool,
@@ -169,6 +173,8 @@ pub struct DebuggerOverlay {
     apu_ui: apu_panel::ApuPanelState,
     /// Memory hex viewer state.
     memory_ui: memory_panel::MemoryPanelState,
+    /// Memory-compare (cheat-hunt) panel state.
+    memory_compare_ui: memory_compare_panel::MemoryComparePanelState,
     /// Mapper panel state (currently stateless).
     mapper_ui: mapper_panel::MapperPanelState,
     /// Cycle trace logger panel state (T-110-C2).
@@ -275,6 +281,7 @@ impl DebuggerOverlay {
             show_oam: false,
             show_apu: false,
             show_memory: false,
+            show_memory_compare: false,
             show_mapper: false,
             show_trace: false,
             show_events: false,
@@ -293,6 +300,7 @@ impl DebuggerOverlay {
             oam_ui: oam_panel::OamPanelState::default(),
             apu_ui: apu_panel::ApuPanelState::default(),
             memory_ui: memory_panel::MemoryPanelState::default(),
+            memory_compare_ui: memory_compare_panel::MemoryComparePanelState::default(),
             mapper_ui: mapper_panel::MapperPanelState::default(),
             trace_ui: trace_panel::TracePanelState::default(),
             event_ui: event_panel::EventPanelState,
@@ -582,6 +590,7 @@ impl DebuggerOverlay {
             ChipPanel::Oam => self.show_oam = true,
             ChipPanel::Apu => self.show_apu = true,
             ChipPanel::Memory => self.show_memory = true,
+            ChipPanel::MemoryCompare => self.show_memory_compare = true,
             ChipPanel::Mapper => self.show_mapper = true,
             ChipPanel::Trace => self.show_trace = true,
             ChipPanel::Events => self.show_events = true,
@@ -639,6 +648,7 @@ impl DebuggerOverlay {
                 ui.checkbox(&mut self.show_oam, "OAM");
                 ui.checkbox(&mut self.show_apu, "APU");
                 ui.checkbox(&mut self.show_memory, "Memory");
+                ui.checkbox(&mut self.show_memory_compare, "Memory Compare");
                 ui.checkbox(&mut self.show_mapper, "Mapper");
                 ui.checkbox(&mut self.show_trace, "Trace");
                 ui.checkbox(&mut self.show_events, "Events");
@@ -805,6 +815,35 @@ impl DebuggerOverlay {
                     });
             } else {
                 memory_panel::show(ctx, &mut self.show_memory, &mut self.memory_ui, nes);
+            }
+        }
+        if self.show_memory_compare {
+            // A cheat-hunting (RAM-search) tool — disabled in hardcore mode for
+            // the same reason as the Memory viewer + cheat panel.
+            if self.hardcore_active {
+                egui::Window::new("Memory Compare")
+                    .open(&mut self.show_memory_compare)
+                    .resizable(false)
+                    .show(ctx, |ui| {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(0xF0, 0xC0, 0x40),
+                            "Disabled in hardcore mode.",
+                        );
+                        ui.label(
+                            egui::RichText::new(
+                                "Memory search is unavailable while RetroAchievements \
+                                 hardcore mode is active.",
+                            )
+                            .weak(),
+                        );
+                    });
+            } else {
+                memory_compare_panel::show(
+                    ctx,
+                    &mut self.show_memory_compare,
+                    &mut self.memory_compare_ui,
+                    nes,
+                );
             }
         }
         if self.show_trace {

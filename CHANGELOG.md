@@ -26,6 +26,17 @@ RetroAchievements. The hard-tier accuracy residuals were **re-baselined**:
 (`mmc3_test_2/4` #3, two `apu_reset` cases) share one fractional-master-clock root cause
 and stay deferred as a future v2.0-scale item (see `docs/STATUS.md`). See the v1.3.0 plan.
 
+### Added
+
+- **Memory Compare (cheat-hunt memory search)** debugger panel (v1.3.0 Workstream C, C3).
+  A classic emulator memory search over the 2 KB CPU work RAM (`$0000-$07FF`): snapshot a
+  baseline, then iteratively narrow a candidate set by how each byte moved since the last
+  snapshot — changed / unchanged / increased / decreased / equals-value — until one
+  address remains (feed it to the raw-RAM cheat panel). Read-only (samples via the
+  side-effect-free `cpu_bus_peek`; never writes the core, determinism unaffected), opened
+  from **Debug → Memory Compare**, and disabled under RetroAchievements hardcore mode like
+  the Memory viewer + cheat panel.
+
 ### Changed
 
 - **Rust edition 2021 → 2024** (v1.3.0 Workstream A, toolchain modernization). The

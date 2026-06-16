@@ -986,6 +986,7 @@ impl UiShell {
                         (glyph::MICROCHIP, "PPU", ChipPanel::Ppu),
                         (glyph::VOLUME_HIGH, "APU", ChipPanel::Apu),
                         (glyph::MEMORY, "Memory", ChipPanel::Memory),
+                        (glyph::MEMORY, "Memory Compare", ChipPanel::MemoryCompare),
                         (glyph::MEMORY, "OAM", ChipPanel::Oam),
                         (glyph::PUZZLE_PIECE, "Mapper", ChipPanel::Mapper),
                         (glyph::CLIPBOARD, "Trace Logger", ChipPanel::Trace),
