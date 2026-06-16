@@ -944,14 +944,16 @@ impl App {
         // the ROM is in the DB, independent of the DIP precedence below.
         if let Some(entry) = db_entry {
             nes.set_vs_ppu_type(entry.vs_ppu_type);
-            // A Vs. DualSystem cart (two CPUs + two PPUs) cannot boot past the
-            // attract screen on this single-system core. Surface a clear note
-            // rather than leaving the user staring at a black screen. Full
-            // two-system support is a documented future feature
-            // (docs/audit/vs-dualsystem-design-2026-06-11.md).
-            if entry.dual_system {
-                log_dual_system_note();
-            }
+        }
+        // A Vs. DualSystem cart (two CPUs + two PPUs) cannot boot past the
+        // attract screen on this single-system core. Surface a clear note
+        // rather than leaving the user staring at a black screen. Full
+        // two-system support is a documented future feature
+        // (docs/audit/vs-dualsystem-design-2026-06-11.md). v1.3.0 D2: the note
+        // now also fires for header-flagged DualSystem ROMs (NES 2.0 byte-13
+        // high nibble), not only the SHA-256-DB-known dumps.
+        if db_entry.is_some_and(|e| e.dual_system) || nes.is_vs_dual_system() {
+            log_dual_system_note();
         }
         let dip = resolve_vs_dip(self.config.vs, db_entry);
         nes.set_vs_dip(dip);

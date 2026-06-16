@@ -870,6 +870,18 @@ impl Nes {
         self.bus.is_vs_system()
     }
 
+    /// True when the cart's header marks a Vs. `DualSystem` board (two CPUs /
+    /// two PPUs; NES 2.0 byte-13 high nibble = Vs. hardware type 5/6).
+    ///
+    /// Detection only: this single-system core cannot boot a `DualSystem` title
+    /// past its attract handshake, so the frontend uses this to surface a clear
+    /// note. The two-CPU/two-PPU emulation is a documented v2.0 deferral
+    /// (`docs/audit/vs-dualsystem-design-2026-06-11.md`).
+    #[must_use]
+    pub const fn is_vs_dual_system(&self) -> bool {
+        self.bus.is_vs_dual_system()
+    }
+
     /// Set the Vs. System 8-bit DIP-switch bank (switch 1 = bit 0 .. switch 8 =
     /// bit 7). Read through the upper bits of `$4016`/`$4017`. No effect on
     /// non-Vs. carts; the standard controller read stays byte-identical.

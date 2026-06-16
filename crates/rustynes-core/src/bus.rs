@@ -742,6 +742,7 @@ impl LockstepBus {
             region: rustynes_mappers::Region::Ntsc,
             console_type: rustynes_mappers::ConsoleType::Nes,
             vs_ppu_type: rustynes_mappers::VsPpuType::None,
+            vs_dual_system: false,
             prg_ram_size: 0x8000,
             chr_ram_size: 0x2000,
             has_battery: false,
@@ -776,6 +777,7 @@ impl LockstepBus {
             region: rustynes_mappers::Region::Ntsc,
             console_type: rustynes_mappers::ConsoleType::Nes,
             vs_ppu_type: rustynes_mappers::VsPpuType::None,
+            vs_dual_system: false,
             prg_ram_size: 0x2000,
             chr_ram_size: 0,
             has_battery: false,
@@ -1544,6 +1546,15 @@ impl LockstepBus {
     #[must_use]
     pub fn is_vs_system(&self) -> bool {
         self.cart.console_type == rustynes_mappers::ConsoleType::VsSystem
+    }
+
+    /// True when the cart's header marks a Vs. `DualSystem` board (two CPUs /
+    /// two PPUs). Detection only — the dual-console emulation is a documented
+    /// v2.0 deferral (`docs/audit/vs-dualsystem-design-2026-06-11.md`); this
+    /// lets the frontend surface a clear note instead of a black screen.
+    #[must_use]
+    pub const fn is_vs_dual_system(&self) -> bool {
+        self.cart.vs_dual_system
     }
 
     /// Overlay the Vs. System `$4016` upper bits (service, DIP 1/2, coins) onto

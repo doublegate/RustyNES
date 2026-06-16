@@ -30,7 +30,13 @@ v1.0.0 core baseline:
 - **Famicom Disk System** — real-BIOS `.fds` boot (user-supplied `disksys.rom`),
   read/write drive, multi-side eject/insert, 2C33 wavetable audio.
 - **Vs. System / PlayChoice-10** — 2C03/2C04/2C05 hardware RGB palettes, DIP
-  switches, coin/service inputs.
+  switches, coin/service inputs. **Vs. DualSystem** (two-CPU/two-PPU arcade
+  boards) is *detected* — from both the SHA-256 game DB and, as of v1.3.0 (D2),
+  the NES 2.0 byte-13 high nibble (Vs. hardware type 5/6) — and surfaces a clear
+  "DualSystem not yet emulated" note instead of a black screen. The dual-console
+  *emulation* (5-cycle soft-lockstep + dual framebuffer) is a **documented v2.0
+  deferral**: there is no committable DualSystem test-ROM oracle, so correctness
+  can't be regression-gated (see `docs/audit/vs-dualsystem-design-2026-06-11.md`).
 - **Rollback netplay** — GGPO-style 2-4 player over UDP (native) and WebRTC
   (browser), live-verified two-instance sessions.
 - **RetroAchievements** — achievements, leaderboards, rich presence, hardcore

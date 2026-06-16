@@ -280,6 +280,9 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
         region: h.region,
         console_type,
         vs_ppu_type,
+        // From the header byte-13 high nibble; independent of the mapper-99/151
+        // console-type forcing above (a non-dual Vs. cart stays false).
+        vs_dual_system: h.vs_dual_system,
         prg_ram_size: h.prg_ram_size,
         chr_ram_size: h.chr_ram_size,
         has_battery: h.has_battery,

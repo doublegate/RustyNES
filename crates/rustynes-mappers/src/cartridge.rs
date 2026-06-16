@@ -251,6 +251,7 @@ pub enum RomError {
 /// [`crate::parse`] and stored on the cartridge separately from this metadata
 /// header so the metadata is cheap to clone.
 #[derive(Debug, Clone)]
+#[allow(clippy::struct_excessive_bools)] // header flags map 1:1 to NES 2.0 bits
 pub struct Cartridge {
     /// PRG-ROM bytes. Length is a multiple of 16 KiB for standard sizes; may
     /// be irregular when the NES 2.0 exponent-multiplier encoding is used.
@@ -270,6 +271,10 @@ pub struct Cartridge {
     /// Vs. System PPU type from NES 2.0 byte 13 (low nibble), valid only when
     /// `console_type == ConsoleType::VsSystem`; [`VsPpuType::None`] otherwise.
     pub vs_ppu_type: VsPpuType,
+    /// True when the header marks a Vs. `DualSystem` board (NES 2.0 byte-13
+    /// high nibble = Vs. hardware type 5/6). Detection only; the two-CPU/two-PPU
+    /// emulation is a documented v2.0 deferral.
+    pub vs_dual_system: bool,
     /// Requested PRG-RAM size in bytes.
     pub prg_ram_size: u32,
     /// Requested CHR-RAM size in bytes (0 if the cart ships with CHR-ROM only).
