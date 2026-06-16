@@ -28,6 +28,17 @@ and stay deferred as a future v2.0-scale item (see `docs/STATUS.md`). See the v1
 
 ### Added
 
+- **HD-pack `<condition>` gating + `<background>` region replacement** (v1.3.0
+  Workstream E1, behind the default-off `hd-pack` feature; ADR 0014). Extends the
+  v1.2.0 unconditional tile loader with Mesen-style conditional rules — memory-address
+  checks (`memoryCheck` / `memoryCheckConstant`, CPU- or PPU-space via the
+  `0x8000_0000` marker, `(mem & mask) <op> value`), `frameRange`, and sprite
+  `hmirror`/`vmirror`/`sppalette` — plus full-image/region `<background>` substitution.
+  Conditions evaluate against a per-frame snapshot of only the watched addresses
+  (read-only peeks taken under the emu lock at produce time, then evaluated during
+  the lock-free composite), so it is determinism-safe and byte-identical with the
+  feature off. Neighbor predicates (`TileNearby`/`SpriteAtPos`) + HD audio remain
+  deferred.
 - **14 new mapper families (87 → 101 coverage)** (v1.3.0 Workstream D1 mapper sweep,
   `sprint8.rs`): mappers 29 (Sealie RET-CUFROM), 31 (INL NSF-style / "2A03 Puritans"),
   58 (multicart), 60 (reset-based 4-in-1 multicart), 94 (UN1ROM), 101 (Jaleco JF-10 CHR
