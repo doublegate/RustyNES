@@ -1,4 +1,4 @@
-//! Experimental pure-Rust Lua backend ([`piccolo`]) for `wasm32`.
+//! Experimental pure-Rust Lua backend (`piccolo`) for `wasm32`.
 //!
 //! Compiled only behind the off-by-default `script-wasm` feature. piccolo is a
 //! pure-Rust, stackless Lua VM (no C toolchain), so it links into the
