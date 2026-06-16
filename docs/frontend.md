@@ -134,6 +134,16 @@ so a skipped / early-returned redraw is not counted.) A true scan-out timestamp
 (a GPU present-timing query) is a possible future refinement — see
 `docs/performance.md`.
 
+The panel also surfaces two **present/produce "beat" counters** (`presented_dups`
+/ `produced_dropped`, also logged to the perf CSV): a present with no new produced
+frame is a duplicate (the display repeated a frame); >1 produce between presents
+means the extra frames were dropped (unshown). Under display-sync both stay ~0;
+under wall-clock pacing they tick roughly once every ~10 s for the 60.0988-vs-60.000
+Hz beat. They are read-only diagnostics — the deeper pacer mitigation that would
+*reduce* the beat is deferred (it needs on-device validation across real refresh
+rates and carries pacing-regression risk); these counters are the signal for whether
+that work is warranted.
+
 The Performance panel also has a **Logging** checkbox (session-only,
 default OFF, native-only): while set, the app appends one CSV row per
 second of everything the panel shows (produced / presented / produce-cost

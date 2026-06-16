@@ -203,7 +203,7 @@ fn open_log_file(dir: &Path, ctx: &PerfLogContext) -> std::io::Result<(BufWriter
          produced_mean_ms,produced_p50_ms,produced_p95_ms,produced_p99_ms,produced_max_ms,\
          presented_mean_ms,presented_p50_ms,presented_p95_ms,presented_p99_ms,presented_max_ms,\
          cost_mean_ms,cost_p50_ms,cost_p95_ms,cost_p99_ms,cost_max_ms,\
-         catchup_bursts,snap_forwards,\
+         catchup_bursts,snap_forwards,presented_dups,produced_dropped,\
          audio_queued_ms,audio_queued_samples,audio_sample_rate,underruns,overrun_dropped,\
          gpu_ms,pacing,present_mode"
     )?;
@@ -225,12 +225,14 @@ fn write_row(w: &mut BufWriter<File>, elapsed_s: f32, v: &PerfView) -> std::io::
     };
     writeln!(
         w,
-        "{elapsed_s:.1},{fps:.3},{},{},{},{},{},{:.2},{},{},{},{},{},{},{}",
+        "{elapsed_s:.1},{fps:.3},{},{},{},{},{},{},{},{:.2},{},{},{},{},{},{},{}",
         s(&v.produced),
         s(&v.presented),
         s(&v.produce_cost),
         v.catchup_bursts,
         v.snap_forwards,
+        v.presented_dups,
+        v.produced_dropped,
         v.audio.queued_ms(),
         v.audio.queued_samples,
         v.audio.sample_rate,

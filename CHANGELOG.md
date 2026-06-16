@@ -87,6 +87,14 @@ and stay deferred as a future v2.0-scale item (see `docs/STATUS.md`). See the v1
   beating against the display refresh. Measurement-only (presentation/instrumentation;
   no core or determinism surface). The Performance panel's "presented" legend gains a
   tooltip explaining the semantics; see `docs/frontend.md`.
+- **Performance panel: present/produce "beat" diagnostic** (v1.3.0 Workstream B, B3
+  groundwork). Added duplicate-present and dropped-produce counters (`presented_dups` /
+  `produced_dropped`, also in the CSV log) surfaced in the panel beside the existing
+  present-mode + pacer-anomaly readouts — read-only instrumentation (no pacer change).
+  Under display-sync both stay ~0; under wall-clock they tick ~once every ~10 s for the
+  NES 60.0988 Hz vs 60.000 Hz display beat, so a sudden burst (real judder) is now
+  distinguishable from the harmless inherent beat. This is the signal for deciding
+  whether the deeper present-mode / pacer mitigation is worth its regression risk.
 
 ### Security
 
