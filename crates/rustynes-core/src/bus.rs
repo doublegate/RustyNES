@@ -177,6 +177,117 @@ pub struct InterruptRec {
 #[cfg(feature = "debug-hooks")]
 const INTERRUPT_CAP: usize = 4_096;
 
+/// v1.4.0 Workstream D (D2) — the class of hardware event an event-driven
+/// breakpoint can trigger on.
+///
+/// These are tapped at the SAME observational commit points the event-viewer /
+/// interrupt-service / bus-access logs already use (`Bus::cpu_read`,
+/// `Bus::cpu_write`, `Bus::notify_irq_service`, the DMC-DMA GET, the `$4014`
+/// write). A hit only RECORDS the event (kind + PPU position); it never mutates
+/// emulator-visible state, so the determinism contract holds and the
+/// feature-off build is byte-identical.
+///
+/// The 16 categories are packed into a `u16` arm mask (see
+/// [`LockstepBus::set_event_breakpoints`]); the bit index is the discriminant.
+#[cfg(feature = "debug-hooks")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum EventBpKind {
+    /// An NMI service entry (`$FFFA`), observed at the interrupt-service commit.
+    Nmi = 0,
+    /// An IRQ / BRK service entry (`$FFFE`), observed at the same commit.
+    Irq = 1,
+    /// A sprite-0 hit, observed when the CPU reads `$2002` with bit 6 set (the
+    /// point games actually detect the hit; purely observational).
+    Sprite0Hit = 2,
+    /// An OAM DMA, observed at the `$4014` write that starts it.
+    OamDma = 3,
+    /// A DMC DMA sample fetch (the GET cycle).
+    DmcDma = 4,
+    /// A PPU-register read (`$2000-$3FFF`).
+    PpuRead = 5,
+    /// A PPU-register write (`$2000-$3FFF`).
+    PpuWrite = 6,
+    /// An APU / I/O-register read (`$4000-$4017`).
+    ApuRead = 7,
+    /// An APU / I/O-register write (`$4000-$4017`).
+    ApuWrite = 8,
+    /// A mapper-register read (`$4020-$FFFF`).
+    MapperRead = 9,
+    /// A mapper-register write (`$4020-$FFFF`).
+    MapperWrite = 10,
+}
+
+#[cfg(feature = "debug-hooks")]
+impl EventBpKind {
+    /// The arm-mask bit for this kind.
+    #[must_use]
+    pub const fn bit(self) -> u16 {
+        1u16 << (self as u8)
+    }
+
+    /// A human-readable label (used by the debugger UI + tests).
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Nmi => "NMI entry",
+            Self::Irq => "IRQ entry",
+            Self::Sprite0Hit => "Sprite-0 hit",
+            Self::OamDma => "OAM DMA",
+            Self::DmcDma => "DMC DMA",
+            Self::PpuRead => "PPU read",
+            Self::PpuWrite => "PPU write",
+            Self::ApuRead => "APU read",
+            Self::ApuWrite => "APU write",
+            Self::MapperRead => "Mapper read",
+            Self::MapperWrite => "Mapper write",
+        }
+    }
+
+    /// All categories, in discriminant order (for the UI checkbox list).
+    #[must_use]
+    pub const fn all() -> [Self; 11] {
+        [
+            Self::Nmi,
+            Self::Irq,
+            Self::Sprite0Hit,
+            Self::OamDma,
+            Self::DmcDma,
+            Self::PpuRead,
+            Self::PpuWrite,
+            Self::ApuRead,
+            Self::ApuWrite,
+            Self::MapperRead,
+            Self::MapperWrite,
+        ]
+    }
+}
+
+/// v1.4.0 Workstream D (D2) — one event-driven breakpoint hit.
+///
+/// Carries the kind, the associated address (`0` for the interrupt entries that
+/// carry none), and the full timing context (frame / CPU cycle / PPU
+/// scanline+dot) at the moment of the event. Recorded by the first armed-event
+/// tap of a frame; the frontend takes it via
+/// [`crate::Nes::take_event_break_hit`] to pause + report.
+#[cfg(feature = "debug-hooks")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EventBreakHit {
+    /// Which event fired.
+    pub kind: EventBpKind,
+    /// The associated CPU address (the read/write address, the OAM-DMA `$4014`,
+    /// the DMC sample address, or the service vector for NMI/IRQ).
+    pub addr: u16,
+    /// PPU frame counter at the event.
+    pub frame: u64,
+    /// Cumulative CPU cycle at the event.
+    pub cycle: u64,
+    /// PPU scanline (`-1` pre-render .. `260`).
+    pub scanline: i16,
+    /// PPU dot (`0..=340`).
+    pub dot: u16,
+}
+
 /// Lockstep bus.
 ///
 /// Owns the entire emulator's mutable state. The CPU borrows `&mut LockstepBus`
@@ -288,6 +399,17 @@ pub struct LockstepBus {
     /// Whether the interrupt-service log is recording. Default `false`.
     #[cfg(feature = "debug-hooks")]
     interrupt_logging: bool,
+    /// v1.4.0 Workstream D (D2) — armed event-breakpoint categories, packed as a
+    /// bitmask of [`EventBpKind::bit`]. `0` (default) disarms every category, so
+    /// the per-access tap is a single `mask == 0` early-out — the default + the
+    /// feature-off build are byte-identical and pay no per-cycle cost. Output-
+    /// only: a hit records [`Self::event_break_hit`] but never mutates state.
+    #[cfg(feature = "debug-hooks")]
+    event_bp_mask: u16,
+    /// The first event-breakpoint hit of the current frame (`None` until one
+    /// fires). Recorded by the taps, taken by the frontend after `run_frame`.
+    #[cfg(feature = "debug-hooks")]
+    event_break_hit: Option<EventBreakHit>,
     /// Cumulative CPU cycle counter.
     pub(crate) cycle: u64,
 
@@ -637,6 +759,10 @@ impl LockstepBus {
             interrupts: alloc::vec::Vec::new(),
             #[cfg(feature = "debug-hooks")]
             interrupt_logging: false,
+            #[cfg(feature = "debug-hooks")]
+            event_bp_mask: 0,
+            #[cfg(feature = "debug-hooks")]
+            event_break_hit: None,
             cycle: 0,
             dma_pending: None,
             dma_cycles_owed: 0,
@@ -1446,6 +1572,55 @@ impl LockstepBus {
     #[cfg(feature = "debug-hooks")]
     pub fn clear_interrupts(&mut self) {
         self.interrupts.clear();
+    }
+
+    /// v1.4.0 Workstream D (D2) — set the armed event-breakpoint category mask
+    /// (a bit-OR of [`EventBpKind::bit`]). `0` disarms all (the default + the
+    /// per-cycle-cheap path).
+    #[cfg(feature = "debug-hooks")]
+    pub const fn set_event_breakpoints(&mut self, mask: u16) {
+        self.event_bp_mask = mask;
+    }
+
+    /// The armed event-breakpoint category mask.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub const fn event_breakpoints(&self) -> u16 {
+        self.event_bp_mask
+    }
+
+    /// Take the first event-breakpoint hit of the current frame (cleared on
+    /// read). The frontend polls this after `run_frame`.
+    #[cfg(feature = "debug-hooks")]
+    pub const fn take_event_break_hit(&mut self) -> Option<EventBreakHit> {
+        self.event_break_hit.take()
+    }
+
+    /// Clear any recorded event-breakpoint hit (called per frame by the run
+    /// loop so each frame starts fresh).
+    #[cfg(feature = "debug-hooks")]
+    pub const fn clear_event_break_hit(&mut self) {
+        self.event_break_hit = None;
+    }
+
+    /// v1.4.0 Workstream D (D2) — observational event-breakpoint tap. If `kind`
+    /// is armed and no hit has been recorded yet this frame, latch the event
+    /// with its full timing context. Pure observation — no emulator-visible
+    /// state changes, so determinism holds. The `mask == 0` fast path keeps the
+    /// default (no armed categories) cheap.
+    #[cfg(feature = "debug-hooks")]
+    const fn record_event_break(&mut self, kind: EventBpKind, addr: u16) {
+        if self.event_bp_mask & kind.bit() == 0 || self.event_break_hit.is_some() {
+            return;
+        }
+        self.event_break_hit = Some(EventBreakHit {
+            kind,
+            addr,
+            frame: self.ppu.frame(),
+            cycle: self.cycle,
+            scanline: self.ppu.scanline(),
+            dot: self.ppu.dot(),
+        });
     }
 
     /// Clear the event log (called at each frame start while recording).
@@ -2948,6 +3123,10 @@ impl LockstepBus {
             let byte = self.dmc_dma_read(addr, halted_addr);
             #[cfg(feature = "irq-timing-trace")]
             self.set_trace_dma_access(BusAccess::DmaRead, addr, byte);
+            // v1.4.0 Workstream D (D2) — DMC-DMA event-breakpoint tap (the GET
+            // cycle that fetches a sample). Output-only.
+            #[cfg(feature = "debug-hooks")]
+            self.record_event_break(EventBpKind::DmcDma, addr);
             self.apu.complete_dmc_dma(byte);
             self.in_dmc_dma = false;
             // Program M (M-2): this step performed the GET (steals an OAM slot).
@@ -3448,6 +3627,22 @@ impl Bus for LockstepBus {
                 value,
             });
         }
+        // v1.4.0 Workstream D (D2) — event-breakpoint read taps. Output-only.
+        // The `mask == 0` early-out in `record_event_break` keeps the default
+        // path cheap; the sprite-0-hit category is observed where games detect
+        // it: a `$2002` read returning bit 6 set.
+        #[cfg(feature = "debug-hooks")]
+        if self.event_bp_mask != 0 {
+            match addr {
+                0x2002 if value & 0x40 != 0 => {
+                    self.record_event_break(EventBpKind::Sprite0Hit, addr);
+                }
+                0x2000..=0x3FFF => self.record_event_break(EventBpKind::PpuRead, addr),
+                0x4000..=0x4017 => self.record_event_break(EventBpKind::ApuRead, addr),
+                0x4020..=0xFFFF => self.record_event_break(EventBpKind::MapperRead, addr),
+                _ => {}
+            }
+        }
         #[cfg(feature = "irq-timing-trace")]
         {
             // Session-21: record the CPU-initiated read at the bus-access
@@ -3504,6 +3699,18 @@ impl Bus for LockstepBus {
                     dot: self.ppu.dot(),
                     addr,
                 });
+            }
+        }
+        // v1.4.0 Workstream D (D2) — event-breakpoint write taps. Output-only.
+        // `$4014` is the OAM-DMA trigger; the rest classify by window.
+        #[cfg(feature = "debug-hooks")]
+        if self.event_bp_mask != 0 {
+            match addr {
+                0x2000..=0x3FFF => self.record_event_break(EventBpKind::PpuWrite, addr),
+                REG_OAM_DMA => self.record_event_break(EventBpKind::OamDma, addr),
+                0x4000..=0x4017 => self.record_event_break(EventBpKind::ApuWrite, addr),
+                0x4020..=0xFFFF => self.record_event_break(EventBpKind::MapperWrite, addr),
+                _ => {}
             }
         }
         match addr {
@@ -3663,6 +3870,17 @@ impl Bus for LockstepBus {
                 is_nmi: vector == 0xFFFA,
                 vector,
             });
+        }
+        // v1.4.0 Workstream D (D2) — NMI/IRQ event-breakpoint tap. Classified by
+        // the COMMITTED vector (same discriminator the interrupt log uses).
+        #[cfg(feature = "debug-hooks")]
+        if self.event_bp_mask != 0 {
+            let kind = if vector == 0xFFFA {
+                EventBpKind::Nmi
+            } else {
+                EventBpKind::Irq
+            };
+            self.record_event_break(kind, vector);
         }
         // Phase 1.2 of Track C1 attempt 14: emit a [`ServiceEvent`] into
         // the IRQ trace if the trace is armed.  Production builds with

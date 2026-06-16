@@ -32,6 +32,27 @@ exercises the affected paths).
   volumes (1.0)" button restores unity. Default (all `1.0`) is byte-identical to
   the un-scaled mixer output — the determinism contract holds and the AccuracyCoin
   / audio oracle are unaffected. See `docs/frontend.md` §Audio settings.
+- **Debugger symbol / label files (Workstream D, D1).** Debug → Load Symbols
+  loads `.sym` (ca65 / WLA-DX), Mesen `.mlb`, and FCEUX `.nl` label files and
+  annotates the CPU disassembler (a `label:` line above the matching address),
+  the breakpoint rows, and the Trace Logger tail / export with function/label
+  names. Debug → Clear Symbols drops them. Hand-rolled line-based parsers (no
+  new dependency; native-only — it reads a picked file); the parsed
+  `address → label` map is a frontend display aid that never touches the
+  deterministic core. New `crates/rustynes-frontend/src/symbols.rs` with
+  per-format unit tests.
+- **Event-driven breakpoints (Workstream D, D2).** The CPU panel's Event
+  breakpoints section breaks on hardware events — NMI entry, IRQ entry,
+  sprite-0 hit, OAM DMA, DMC DMA, and PPU/APU/mapper register read/write — each
+  reporting frame / CPU cycle / scanline / dot when it fires. Behind
+  `debug-hooks`; the core taps sit at the existing observational commit points
+  (`Bus::cpu_read` / `cpu_write` / `notify_irq_service` / the DMC-DMA GET),
+  record-only, so emulator-visible state is never perturbed and the
+  feature-off build stays byte-identical (the unarmed path is a single
+  `mask == 0` early-out). New `EventBpKind` / `EventBreakHit` types +
+  `Nes::set_event_breakpoints` / `take_event_break_hit`, with core unit tests.
+  (D3, the HD-pack per-pixel inspector, is deferred to a follow-up — see
+  `docs/frontend.md`.)
 - **240p test suite (`240pee`) render gates.** Wired the in-tree, free
   `240pee/240pee.nes` (mapper 2 / UxROM) and `240pee-bnrom.nes` (mapper 34 /
   BNROM) as deterministic framebuffer-FNV-1a smoke tests

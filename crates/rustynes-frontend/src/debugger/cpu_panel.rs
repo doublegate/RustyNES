@@ -16,7 +16,9 @@
 //! Read-only. The disassembly takes a 64-byte rolling window of CPU bus
 //! peeks per redraw (cheap; 60 Hz it's ~4 KiB/s of work).
 
-use rustynes_core::Nes;
+use rustynes_core::{EventBpKind, Nes};
+
+use crate::symbols::SymbolMap;
 
 /// Persistent state of the CPU debugger panel.
 #[derive(Debug)]
@@ -50,7 +52,17 @@ impl Default for CpuPanelState {
 const FLAG_NAMES: [&str; 8] = ["N", "V", "_", "B", "D", "I", "Z", "C"];
 
 /// Render the CPU panel.
-pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut CpuPanelState, nes: &mut Nes) {
+///
+/// `symbols` annotates the disassembly + breakpoint list with loaded labels
+/// (v1.4.0 D1); `symbols_status` is the last symbol-load status line.
+pub fn show(
+    ctx: &egui::Context,
+    open: &mut bool,
+    state: &mut CpuPanelState,
+    nes: &mut Nes,
+    symbols: &SymbolMap,
+    symbols_status: Option<&str>,
+) {
     let cpu = nes.cpu_snapshot();
     egui::Window::new("CPU")
         .open(open)
@@ -135,12 +147,55 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut CpuPanelState, nes
                     for addr in bps {
                         ui.horizontal(|ui| {
                             ui.monospace(format!("${addr:04X}"));
+                            // v1.4.0 D1 — annotate with the loaded label, if any.
+                            if let Some(label) = symbols.label(addr) {
+                                ui.colored_label(egui::Color32::from_rgb(0x90, 0xC0, 0xF0), label);
+                            }
                             if ui.small_button("x").clicked() {
                                 nes.remove_breakpoint(addr);
                             }
                         });
                     }
                 });
+
+            // v1.4.0 Workstream D (D2) — event-driven breakpoints. Arming a
+            // category pauses + opens this panel the next time that hardware
+            // event fires (NMI/IRQ entry, sprite-0 hit, OAM/DMC DMA, or a
+            // PPU/APU/mapper register read/write), reporting frame/cycle/
+            // scanline/dot. Output-only in the core (observational taps).
+            egui::CollapsingHeader::new("Event breakpoints")
+                .default_open(false)
+                .show(ui, |ui| {
+                    let mut mask = nes.event_breakpoints();
+                    let before = mask;
+                    ui.horizontal_wrapped(|ui| {
+                        for kind in EventBpKind::all() {
+                            let mut on = mask & kind.bit() != 0;
+                            if ui.checkbox(&mut on, kind.label()).changed() {
+                                if on {
+                                    mask |= kind.bit();
+                                } else {
+                                    mask &= !kind.bit();
+                                }
+                            }
+                        }
+                    });
+                    if mask != before {
+                        nes.set_event_breakpoints(mask);
+                    }
+                    ui.weak(
+                        "A hit pauses emulation and reports the frame / CPU \
+                         cycle / scanline / dot in the status bar.",
+                    );
+                });
+
+            // v1.4.0 Workstream D (D1) — loaded-symbol status (set from the
+            // Debug menu's Load Symbols action).
+            if let Some(s) = symbols_status {
+                ui.weak(format!("symbols: {s}"));
+            } else if !symbols.is_empty() {
+                ui.weak(format!("symbols: {} labels", symbols.len()));
+            }
 
             if state.follow_pc {
                 state.origin = cpu.pc;
@@ -168,6 +223,17 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut CpuPanelState, nes
                 .show(ui, |ui| {
                     let pc = cpu.pc;
                     for line in &lines {
+                        // v1.4.0 D1 — if a label maps to this address, print it
+                        // on its own line above the instruction (the ca65 /
+                        // FCEUX listing convention) so the disasm reads like a
+                        // labelled source listing.
+                        if let Some(label) = symbols.label(line.addr) {
+                            ui.label(
+                                egui::RichText::new(format!("{label}:"))
+                                    .monospace()
+                                    .color(egui::Color32::from_rgb(0x90, 0xC0, 0xF0)),
+                            );
+                        }
                         let bytes = line
                             .bytes
                             .iter()

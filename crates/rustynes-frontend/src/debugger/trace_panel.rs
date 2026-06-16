@@ -8,6 +8,8 @@
 
 use rustynes_core::{Nes, TraceRec};
 
+use crate::symbols::SymbolMap;
+
 /// How many tail records the live view renders (the ring holds far more; the
 /// full set is written by Export).
 const TAIL_ROWS: usize = 128;
@@ -43,16 +45,25 @@ fn disasm_one(nes: &mut Nes, pc: u16) -> String {
     )
 }
 
-/// Format one record as a fixed-width trace line.
-fn fmt_rec(disasm: &str, r: &TraceRec) -> String {
+/// Format one record as a fixed-width trace line. `label` (v1.4.0 D1) is the
+/// loaded symbol for `r.pc`, appended in `<label>` form when present.
+fn fmt_rec(disasm: &str, r: &TraceRec, label: Option<&str>) -> String {
+    let label = label.map_or_else(String::new, |l| format!("  <{l}>"));
     format!(
-        "{:04X}  A:{:02X} X:{:02X} Y:{:02X} S:{:02X} P:{:02X}  CYC:{:<12}  {}",
-        r.pc, r.a, r.x, r.y, r.s, r.p, r.cycle, disasm
+        "{:04X}  A:{:02X} X:{:02X} Y:{:02X} S:{:02X} P:{:02X}  CYC:{:<12}  {}{}",
+        r.pc, r.a, r.x, r.y, r.s, r.p, r.cycle, disasm, label
     )
 }
 
-/// Render the trace panel.
-pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut TracePanelState, nes: &mut Nes) {
+/// Render the trace panel. `symbols` (v1.4.0 D1) annotates each record's PC
+/// with its loaded label.
+pub fn show(
+    ctx: &egui::Context,
+    open: &mut bool,
+    state: &mut TracePanelState,
+    nes: &mut Nes,
+    symbols: &SymbolMap,
+) {
     egui::Window::new("Trace")
         .open(open)
         .default_size([460.0, 360.0])
@@ -72,7 +83,7 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut TracePanelState, n
                 // filesystem on wasm). A one-shot debug dump.
                 #[cfg(not(target_arch = "wasm32"))]
                 if ui.button("Export…").clicked() {
-                    state.export_status = Some(export_trace(nes));
+                    state.export_status = Some(export_trace(nes, symbols));
                 }
             });
             if let Some(s) = &state.export_status {
@@ -86,7 +97,7 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut TracePanelState, n
                 .iter()
                 .map(|r| {
                     let d = disasm_one(nes, r.pc);
-                    fmt_rec(&d, r)
+                    fmt_rec(&d, r, symbols.label(r.pc))
                 })
                 .collect();
             egui::ScrollArea::vertical()
@@ -106,12 +117,12 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut TracePanelState, n
 /// Write the entire trace ring to `<temp>/rustynes-trace.log`. Returns a status
 /// string (the path on success, or the error).
 #[cfg(not(target_arch = "wasm32"))]
-fn export_trace(nes: &mut Nes) -> String {
+fn export_trace(nes: &mut Nes, symbols: &SymbolMap) -> String {
     let recs = nes.trace_records();
     let mut out = String::with_capacity(recs.len() * 64);
     for r in &recs {
         let d = disasm_one(nes, r.pc);
-        out.push_str(&fmt_rec(&d, r));
+        out.push_str(&fmt_rec(&d, r, symbols.label(r.pc)));
         out.push('\n');
     }
     let path = std::env::temp_dir().join("rustynes-trace.log");

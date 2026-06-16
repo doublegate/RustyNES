@@ -91,6 +91,11 @@ pub mod shader_pass;
 // and the window is not built (the existing F1/F4 path is untouched).
 #[cfg(not(target_arch = "wasm32"))]
 pub mod save_states_ui;
+// v1.4.0 Workstream D (D1) — debugger symbol/label file loading
+// (`.sym` / Mesen `.mlb` / FCEUX `.nl`). Frontend display aid only; the parsed
+// `address -> label` map annotates the disassembler / breakpoint / trace views
+// and never touches the deterministic core.
+pub mod symbols;
 // v1.0.0 — the always-on desktop UX shell (menu bar, status bar, settings
 // window, welcome/about/shortcuts modals). Runs on native + `wasm-winit`; only
 // the filesystem-backed actions are native-gated at the dispatch site.
