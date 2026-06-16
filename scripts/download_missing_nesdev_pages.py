@@ -352,8 +352,16 @@ def main(argv: list[str] | None = None) -> int:
         # On 404, fall back to opensearch to resolve underscore ambiguity.
         url = candidate_url_interwiki(stem)
         base_host_for_search = NESDEV_BASE
-        if url and "mediawiki.org" in url:
-            base_host_for_search = "https://www.mediawiki.org"
+        # Pick the opensearch host from the candidate URL's ACTUAL host, parsed
+        # out — NOT a substring test. `"mediawiki.org" in url` would also accept a
+        # crafted host like `mediawiki.org.example.com` or a path containing the
+        # string (CodeQL py/incomplete-url-substring-sanitization). Here `url`
+        # only ever comes from `candidate_url_interwiki`, but the host-equality
+        # check is the correct, future-proof form.
+        if url:
+            host = urllib.parse.urlparse(url).hostname or ""
+            if host == "mediawiki.org" or host.endswith(".mediawiki.org"):
+                base_host_for_search = "https://www.mediawiki.org"
         if not url:
             url = candidate_url_nesdev(stem)
 

@@ -40,6 +40,13 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
 
+# Least-privilege default: the audit / deny / clippy-security jobs only read the
+# checked-out tree (cargo-audit, cargo-deny, clippy) — none uploads SARIF or
+# writes to the repo — so the default GITHUB_TOKEN is narrowed to read-only.
+# Resolves the CodeQL `actions/missing-workflow-permissions` alerts (one per job).
+permissions:
+  contents: read
+
 jobs:
   audit:
     name: Dependency Audit
