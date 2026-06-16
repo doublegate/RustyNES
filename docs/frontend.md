@@ -25,6 +25,45 @@ debugger panels layered on top only when toggled. The threading model
 (below) keeps the emulator off the winit event-loop thread so UI, file I/O,
 and GPU submit never disturb emulation cadence.
 
+## Command-line interface (native, v1.4.0 Workstream H)
+
+The native binary uses a [clap 4](https://github.com/clap-rs/clap) `Command`
+(`src/cli.rs`) rather than a hand-rolled argv loop. It preserves the historical
+contract: `rustynes <ROM>` loads and runs a ROM; a missing ROM file exits 1; a
+bad argument exits 2 (clap's usage-error code). clap auto-provides
+`-h`/`--help`/`-V`/`--version`, styles `--help` with ANSI accents
+(`Command::styles`), honours `NO_COLOR` / `--color <auto|always|never>`, and
+appends a colored "Examples" + "Keyboard" footer (`color-print`'s `cstr!`).
+
+| Invocation | Behavior |
+|------------|----------|
+| `rustynes <ROM>` | Load and run the ROM. |
+| `rustynes` (no args) | Prints help and exits 2 (the native binary has no bare-launch path; load further ROMs from the menu / F12 / drag-and-drop once a session is open). |
+| `rustynes --help` / `-V` | clap-styled help / version (exit 0). |
+| `rustynes help [<topic>]` | Topic help (see below). |
+| `rustynes completions <bash\|zsh\|fish\|powershell>` | Print a shell-completion script (`clap_complete`). |
+
+Help topics (`controls`, `hotkeys`, `gamepad`, `features`, `mappers`, `config`,
+`scripting`, `netplay`, `about`) come from a single structured registry
+(`cli::HELP_TOPICS`) kept in sync with this doc, the README, and the in-app
+"Keyboard Shortcuts" window — so the CLI help and the docs can't drift. A
+registry-completeness test guards every topic.
+
+`rustynes help` with no topic on a TTY (or `rustynes help --interactive`)
+launches a full-screen [ratatui](https://github.com/ratatui/ratatui) +
+crossterm browser (`src/help_tui.rs`): a left topic list, a scrollable colored
+content pane, `/` search, and arrow/Tab/PgUp-Dn/Home-End nav (`q`/`Esc` quit).
+It is behind the **default-on `help-tui`** cargo feature (a minimal build can
+drop it with `--no-default-features`). When stdout is **not** a terminal (piped
+output / CI), or the feature is off, it falls back to the static styled topic
+page, so `rustynes help mappers | less` never blocks on a TUI.
+
+All of this is **native-only**: the wasm `main` is an empty shim, and the clap /
+clap_complete / color-print / anstyle / ratatui dependency cluster lives in the
+`[target.'cfg(not(target_arch = "wasm32"))'.dependencies]` table, so the wasm
+build and its size budget are unaffected. There is **zero determinism surface**
+— everything runs before any emulation begins.
+
 ## Threading model (native, default `emu-thread`)
 
 On native builds with the default-ON `emu-thread` feature, single-player

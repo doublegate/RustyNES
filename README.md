@@ -227,6 +227,22 @@ cargo run --release -p rustynes-frontend --features retroachievements -- path/to
 The frontend opens a 256×240 window (scaled, with 8:7 pixel-aspect correction),
 starts audio via the OS default device, and runs the ROM.
 
+#### Command-line help
+
+The native binary ships a clap 4 CLI with styled `--help`, a `help` subcommand,
+shell completions, and an interactive terminal help browser:
+
+```bash
+rustynes --help                 # styled usage + examples + keyboard summary
+rustynes help                   # browse all topics (interactive TUI on a terminal)
+rustynes help mappers           # one topic, printed (also works piped: `… | less`)
+rustynes completions fish       # print a shell-completion script
+```
+
+Help topics: `controls`, `hotkeys`, `gamepad`, `features`, `mappers`, `config`,
+`scripting`, `netplay`, `about`. The interactive browser is behind the default-on
+`help-tui` cargo feature; piped / non-terminal output falls back to a static page.
+
 ### Platform-specific dependencies
 
 **Ubuntu / Debian:**
