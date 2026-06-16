@@ -231,6 +231,30 @@ unit-tested only and not accuracy-gated** (see the tiering note below).
 |---|---|
 | 15 (K-1029 multicart), 36 (TXC 01-22000), 39 (Subor BNROM-like), 61, 62 (multicart), 72 / 92 (Jaleco JF-17/19), 77 (Irem, 4-screen CHR-RAM), 96 (Bandai Oeka Kids, PPU-bus CHR latch), 97 (Irem TAM-S1), 132 (TXC 22211), 133 / 145 / 146 (Sachen) | 147 (Sachen 3018), 148 / 149 (Sachen), 150 (Sachen SA-015, readable protection + custom mirroring), 180 (Nichibutsu UNROM-inverted), 185 (CNROM CHR-disable protection), 200 / 201 / 202 / 203 / 212 / 213 / 214 (multicart) |
 
+### Seventh long-tail batch — v1.3.0 "Bedrock" best-effort sweep (14 families, 87 → 101)
+
+The v1.3.0 Workstream D1 Tier-2 sweep, ported from the GeraNES reference into
+`sprint8.rs`. Simple discrete / homebrew / multicart boards with no IRQ, no
+on-cart audio, and no per-cycle / A12 hook (`MapperCaps::NONE`); **register-decode
+unit-tested only and not accuracy-gated** (see the tiering note below).
+
+| iNES | Submapper | Name | Audio | IRQ | Status | Notes |
+|------|-----------|------|-------|-----|--------|-------|
+| 29 | — | Sealie RET-CUFROM | — | — | landed (v1.3.0 / S8) | Homebrew. 16K PRG (data bits 4-2) + 8K CHR-RAM bank (data bits 1-0); fixed last PRG bank at `$C000`. |
+| 31 | — | INL NSF-style (2A03 Puritans) | — | — | landed (v1.3.0 / S8) | Eight 4K PRG slots latched at `$5FF8-$5FFF`; CHR-RAM; power-on fixes the `$F000` slot to the last bank. |
+| 58 | — | Multicart | — | — | landed (v1.3.0 / S8) | Address-decoded PRG (16/32K mode) + CHR + mirroring bit; data byte ignored. |
+| 60 | — | Reset-based 4-in-1 multicart | — | — | landed (v1.3.0 / S8) | Power-on bank only modelled (reset-latch game selection is host-driven, not exercised in the no_std core). |
+| 94 | — | UN1ROM (Senjou no Ookami) | — | — | landed (v1.3.0 / S8) | 16K PRG bank (data bits 4-2, bus conflict) + fixed last bank at `$C000`; CHR-RAM. |
+| 101 | — | Jaleco JF-10 CHR latch | — | — | landed (v1.3.0 / S8) | Fixed 32K PRG; 8K CHR bank latched via a write to the `$6000-$7FFF` window. |
+| 107 | — | Magic Dragon | — | — | landed (v1.3.0 / S8) | One `$8000-$FFFF` latch: 32K PRG = data>>1, 8K CHR = data. |
+| 111 | — | GTROM / Cheapocabra | — | — | landed (v1.3.0 / S8) | Homebrew. 32K PRG + 16K CHR-RAM (two 8K banks) + 4-screen nametable RAM with a bank-select bit; LED bit ignored. |
+| 143 | — | Sachen TCA01 | — | — | landed (v1.3.0 / S8) | NROM-128 (mirrored) + a simple protection read at `$4020-$5FFF` returning `(~addr & 0x3F) \| 0x40`. |
+| 177 | — | Hengedianzi | — | — | landed (v1.3.0 / S8) | 32K PRG + mirroring bit (bit 5) from one `$8000-$FFFF` latch; CHR-RAM. |
+| 179 | — | Hengedianzi variant | — | — | landed (v1.3.0 / S8) | 32K PRG via `$5000-$5FFF` (data>>1) + mirroring bit (bit 0) via `$8000-$FFFF`; CHR-RAM. |
+| 218 | — | Magic Floor | — | — | landed (v1.3.0 / S8) | No PRG/CHR-ROM banking; the pattern table is served from the console CIRAM under a fixed custom mirroring mode. |
+| 231 | — | 20-in-1 multicart | — | — | landed (v1.3.0 / S8) | Address-decoded dual 16K PRG banks + a mirroring bit; CHR-RAM. |
+| 234 | — | Maxi 15 / BNROM-like multicart | — | — | landed (v1.3.0 / S8) | Two latch regs (`$FF80-$FF9F` / `$FFE8-$FFF8`) selecting 32K PRG + 8K CHR in NINA-style or CNROM-style sub-mode. |
+
 ### Mapper accuracy tiering (v1.2.0)
 
 Every supported family is classified `Core` / `Curated` / `BestEffort` by
@@ -243,8 +267,8 @@ boards with no redistributable fixture, register-decode unit-tested only) is
 oracle ROM — is enforced at the classifier level (`BestEffort` is structurally
 never accuracy-gated; the three tier id-sets are disjoint) and by the curated
 construction of the byte-oracle corpus. See `docs/adr/0011-mapper-tiering.md`.
-Current split: **87 families** — 51 Core + 9 Curated (60 accuracy-gated) + 27
-BestEffort.
+Current split: **101 families** — 51 Core + 9 Curated (60 accuracy-gated) + 41
+BestEffort (27 from v1.2.0 `sprint6`/`sprint7` + 14 from v1.3.0 `sprint8`).
 
 ### NSF player (synthetic mapper, v1.1.0)
 

@@ -77,11 +77,11 @@ pub const fn mapper_tier(id: u16, _submapper: u8) -> Option<MapperTier> {
         38 | 41 | 79 | 86 | 113 | 140 | 232 | 240 | 241 => Some(MapperTier::Curated),
 
         // --- Tier 2 / BestEffort: reference-ported long-tail sweep
-        // (sprint6 + sprint7). Register-decode unit-tested; NOT accuracy-gated.
-        15 | 36 | 39 | 61 | 62 | 72 | 77 | 92 | 96 | 97 | 132 | 133 | 145 | 146 | 147 | 148
-        | 149 | 150 | 180 | 185 | 200 | 201 | 202 | 203 | 212 | 213 | 214 => {
-            Some(MapperTier::BestEffort)
-        }
+        // (sprint6 + sprint7 + sprint8). Register-decode unit-tested; NOT
+        // accuracy-gated.
+        15 | 29 | 31 | 36 | 39 | 58 | 60 | 61 | 62 | 72 | 77 | 92 | 94 | 96 | 97 | 101 | 107
+        | 111 | 132 | 133 | 143 | 145 | 146 | 147 | 148 | 149 | 150 | 177 | 179 | 180 | 185
+        | 200 | 201 | 202 | 203 | 212 | 213 | 214 | 218 | 231 | 234 => Some(MapperTier::BestEffort),
 
         _ => None,
     }
@@ -135,10 +135,12 @@ mod tests {
         }
     }
 
-    /// The v1.2.0 best-effort (Tier-2) sweep added in `sprint6.rs` + `sprint7.rs`.
+    /// The best-effort (Tier-2) sweep added in `sprint6.rs` + `sprint7.rs`
+    /// (v1.2.0) plus the v1.3.0 "Bedrock" Workstream D1 batch (`sprint8.rs`).
     const BEST_EFFORT_IDS: &[u16] = &[
-        15, 36, 39, 61, 62, 72, 77, 92, 96, 97, 132, 133, 145, 146, 147, 148, 149, 150, 180, 185,
-        200, 201, 202, 203, 212, 213, 214,
+        15, 29, 31, 36, 39, 58, 60, 61, 62, 72, 77, 92, 94, 96, 97, 101, 107, 111, 132, 133, 143,
+        145, 146, 147, 148, 149, 150, 177, 179, 180, 185, 200, 201, 202, 203, 212, 213, 214, 218,
+        231, 234,
     ];
 
     #[test]
