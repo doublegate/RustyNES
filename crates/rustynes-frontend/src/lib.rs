@@ -128,6 +128,15 @@ pub mod wasm_audio;
 // codec, Blob downloads, file-picker triggers. Used by both wasm frontends.
 #[cfg(target_arch = "wasm32")]
 pub mod wasm_io;
+// v1.4.0 Workstream E2 — IndexedDB save-state store (async, binary,
+// multi-slot, thumbnail-grid-backing) with a localStorage fallback +
+// one-time migration. Used by both wasm frontends. wasm-only.
+#[cfg(target_arch = "wasm32")]
+pub mod wasm_idb;
+// v1.4.0 Workstream E2 — the browser Save-States manager (egui thumbnail
+// grid backed by the IndexedDB store). wasm-only.
+#[cfg(target_arch = "wasm32")]
+pub mod wasm_save_states;
 // v1.2.0 Workstream F1/F2 — shared on-screen touch input (Pointer-Events
 // overlay → button/Power-Pad mask). Read at the late-latch by both wasm
 // frontends, so touch is recorded/replayed like a keypress. wasm-only.

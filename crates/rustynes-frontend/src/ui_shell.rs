@@ -588,21 +588,20 @@ impl UiShell {
                         }
 
                         // v1.0.0 — the Save-States manager window (thumbnail grid).
-                        // Native-only (the slots live on the filesystem). (H1) The
-                        // grid is keyed on the loaded ROM's hash — needs a ROM.
-                        #[cfg(not(target_arch = "wasm32"))]
+                        // Native slots live on the filesystem; v1.4.0 E2 added the
+                        // browser equivalent backed by IndexedDB (`wasm_save_states`),
+                        // so the manager is now available on both. (H1) The grid is
+                        // keyed on the loaded ROM's hash — needs a ROM.
+                        ui.separator();
+                        if ui
+                            .add_enabled(
+                                rom,
+                                egui::Button::new(ic(glyph::IMAGE, "Manage States...")),
+                            )
+                            .clicked()
                         {
-                            ui.separator();
-                            if ui
-                                .add_enabled(
-                                    rom,
-                                    egui::Button::new(ic(glyph::IMAGE, "Manage States...")),
-                                )
-                                .clicked()
-                            {
-                                out.action = Some(MenuAction::OpenSaveStates);
-                                ui.close();
-                            }
+                            out.action = Some(MenuAction::OpenSaveStates);
+                            ui.close();
                         }
                     });
 
