@@ -89,6 +89,10 @@ pub struct NetplayStatus {
     pub stalled: bool,
     /// An error / disconnect message (Error phase), else empty.
     pub message: String,
+    /// v1.3.0 Workstream G1 — read-only desync diagnostics + session topology,
+    /// rebuilt from the live session each `InGame` tick. Default (inert) in
+    /// every other phase. Observational only.
+    pub diagnostics: crate::debugger::NetplayDiagnosticsView,
 }
 
 /// What a single `NetplayUi::tick` did, so the produce path knows whether
@@ -369,6 +373,7 @@ impl NetplayUi {
                 self.status.rolled_back = rolled_back;
                 self.status.resimulated_frames = resimulated_frames;
                 self.status.stalled = !produced_frame;
+                self.status.diagnostics = diagnostics_view(session);
                 NetplayTick {
                     active: true,
                     produced_frame,
@@ -403,6 +408,8 @@ impl NetplayUi {
         }
     }
 
+    // (diagnostics view builder is a free fn below — see `diagnostics_view`.)
+
     /// Transition to the terminal `Error` phase with a message.
     fn fail(&mut self, message: String) {
         self.status = NetplayStatus {
@@ -412,6 +419,51 @@ impl NetplayUi {
             ..NetplayStatus::default()
         };
         self.state = NetplayState::Error(message);
+    }
+}
+
+/// v1.3.0 Workstream G1 — build the read-only [`NetplayDiagnosticsView`] from a
+/// live session's observational [`DesyncDiagnostics`] + topology. Pure read; it
+/// never mutates the session.
+///
+/// [`NetplayDiagnosticsView`]: crate::debugger::NetplayDiagnosticsView
+/// [`DesyncDiagnostics`]: rustynes_netplay::DesyncDiagnostics
+fn diagnostics_view(
+    session: &RollbackSession<UdpTransport>,
+) -> crate::debugger::NetplayDiagnosticsView {
+    use crate::debugger::{CrcCompareView, NetplayDiagnosticsView};
+    let diag = session.diagnostics();
+    let last = diag.last().map(|c| CrcCompareView {
+        frame: c.frame,
+        local: c.local,
+        remote: c.remote,
+        matched: c.matched,
+        same_framebuffer: c.same_framebuffer,
+    });
+    // Keep only the most recent rows for the panel table (newest preserved).
+    let len = diag.history_len();
+    let skip = len.saturating_sub(NetplayDiagnosticsView::HISTORY_SHOWN);
+    let recent = diag
+        .history()
+        .skip(skip)
+        .map(|c| CrcCompareView {
+            frame: c.frame,
+            local: c.local,
+            remote: c.remote,
+            matched: c.matched,
+            same_framebuffer: c.same_framebuffer,
+        })
+        .collect();
+    NetplayDiagnosticsView {
+        num_players: session.num_players(),
+        local_player: session.local_player(),
+        in_sync: diag.in_sync(),
+        first_desync_frame: diag.first_desync_frame(),
+        consecutive_mismatches: diag.consecutive_mismatches(),
+        total_compares: diag.total(),
+        mismatches: diag.mismatches(),
+        last_compare: last,
+        recent,
     }
 }
 

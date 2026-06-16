@@ -2112,6 +2112,18 @@ impl App {
                 ExpansionDevice::FamilyKeyboard => {
                     nes.set_family_keyboard(1, [0; 9]);
                 }
+                ExpansionDevice::FamilyTrainer => {
+                    nes.set_family_trainer(1, 0);
+                }
+                ExpansionDevice::SuborKeyboard => {
+                    nes.set_subor_keyboard(1, [0; 9]);
+                }
+                ExpansionDevice::KonamiHyperShot => {
+                    nes.set_konami_hyper_shot(1, 0);
+                }
+                ExpansionDevice::BandaiHyperShot => {
+                    nes.set_bandai_hyper_shot(1, 0);
+                }
             }
         }
     }
@@ -2287,6 +2299,12 @@ impl App {
             mouse_right: self.mouse_right_pressed,
             #[cfg(not(target_arch = "wasm32"))]
             family_keyboard: self.family_keyboard,
+            // v1.3.0 Workstream F1 — Konami / Bandai Hyper Shot masks. Consumed
+            // only by their expansion-device arms; 0 otherwise (byte-identical).
+            #[cfg(not(target_arch = "wasm32"))]
+            konami_hyper_shot: self.input.konami_hyper_shot(),
+            #[cfg(not(target_arch = "wasm32"))]
+            bandai_hyper_shot: self.input.bandai_hyper_shot(),
         }
     }
 
@@ -5109,6 +5127,7 @@ fn netplay_status_view(s: &crate::netplay_ui::NetplayStatus) -> crate::debugger:
         resimulated_frames: s.resimulated_frames,
         stalled: s.stalled,
         message: s.message.clone(),
+        diagnostics: s.diagnostics.clone(),
     }
 }
 

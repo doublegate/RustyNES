@@ -76,7 +76,9 @@ mod settings_panel;
 mod trace_panel;
 
 pub use cheevos_panel::{CheevosRequest, CheevosStatusView};
-pub use netplay_panel::{NetplayPhaseView, NetplayRequest, NetplayStatusView};
+pub use netplay_panel::{
+    CrcCompareView, NetplayDiagnosticsView, NetplayPhaseView, NetplayRequest, NetplayStatusView,
+};
 pub use script_panel::ScriptAction;
 pub use settings_panel::SettingsApply;
 

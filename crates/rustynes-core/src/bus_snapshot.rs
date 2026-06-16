@@ -167,10 +167,42 @@ fn encode_expansion_device(w: &mut BinWriter, device: Option<&InputDevice>) {
             w.bool(k.enabled_raw());
             w.bool(k.clock_raw());
         }
+        // v1.3.0 Workstream F1 — the Family Trainer reuses PowerPadState and
+        // the Subor keyboard reuses FamilyKeyboardState, but get distinct tags
+        // so a restore reattaches the SAME device variant the user selected.
+        Some(InputDevice::FamilyTrainer(p)) => {
+            w.u8(6);
+            w.u16(p.buttons_raw());
+            w.u8(p.shift_l_raw());
+            w.u8(p.shift_h_raw());
+            w.bool(p.strobe_raw());
+        }
+        Some(InputDevice::SuborKeyboard(k)) => {
+            w.u8(7);
+            w.bytes(&k.keys_raw());
+            w.u8(k.row_raw());
+            w.bool(k.column_raw());
+            w.bool(k.enabled_raw());
+            w.bool(k.clock_raw());
+        }
+        Some(InputDevice::KonamiHyperShot(h)) => {
+            w.u8(8);
+            w.u8(h.buttons_raw());
+            w.bool(h.p1_enabled_raw());
+            w.bool(h.p2_enabled_raw());
+        }
+        Some(InputDevice::BandaiHyperShot(b)) => {
+            w.u8(9);
+            w.u8(b.sensors_raw());
+            w.bool(b.select_raw());
+        }
     }
 }
 
 /// Decode one port's optional overlay device (trailing-default `None`).
+// A flat one-arm-per-device-tag dispatch decoder; the length is inherent to the
+// device count, not a sign of tangled logic.
+#[allow(clippy::too_many_lines)]
 fn decode_expansion_device(r: &mut BinReader<'_>) -> Result<Option<InputDevice>, SnapshotError> {
     if r.remaining() < 1 {
         return Ok(None);
@@ -232,6 +264,43 @@ fn decode_expansion_device(r: &mut BinReader<'_>) -> Result<Option<InputDevice>,
             let clock = r.bool()?;
             Some(InputDevice::FamilyKeyboard(
                 FamilyKeyboardState::from_parts(keys, row, column, enabled, clock),
+            ))
+        }
+        6 => {
+            let buttons = r.u16()?;
+            let shift_l = r.u8()?;
+            let shift_h = r.u8()?;
+            let strobe = r.bool()?;
+            Some(InputDevice::FamilyTrainer(
+                crate::input_device::PowerPadState::from_parts(buttons, shift_l, shift_h, strobe),
+            ))
+        }
+        7 => {
+            let mut keys = [0u8; 9];
+            r.read_into(&mut keys)?;
+            let row = r.u8()?;
+            let column = r.bool()?;
+            let enabled = r.bool()?;
+            let clock = r.bool()?;
+            Some(InputDevice::SuborKeyboard(FamilyKeyboardState::from_parts(
+                keys, row, column, enabled, clock,
+            )))
+        }
+        8 => {
+            let buttons = r.u8()?;
+            let p1_enabled = r.bool()?;
+            let p2_enabled = r.bool()?;
+            Some(InputDevice::KonamiHyperShot(
+                crate::input_device::KonamiHyperShotState::from_parts(
+                    buttons, p1_enabled, p2_enabled,
+                ),
+            ))
+        }
+        9 => {
+            let sensors = r.u8()?;
+            let select = r.bool()?;
+            Some(InputDevice::BandaiHyperShot(
+                crate::input_device::BandaiHyperShotState::from_parts(sensors, select),
             ))
         }
         // 0 (None) or any unknown tag => no device.

@@ -1144,6 +1144,101 @@ impl Nes {
         self.bus.set_family_keyboard(port, keys);
     }
 
+    /// v1.3.0 Workstream F1 — attach a Bandai **Family Trainer** mat on `port`
+    /// and set its 12-button mask (bit `i` = mat button `i+1`). The Family
+    /// Trainer is layout-equivalent to the Power Pad and reuses its scan; this
+    /// attaches the [`InputDevice::FamilyTrainer`] variant (distinct from
+    /// [`Self::set_power_pad`] so the selected device round-trips through a
+    /// save-state). Opt-in: the no-device path stays byte-identical.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `port` is not in `0..=1`.
+    pub fn set_family_trainer(&mut self, port: usize, buttons: u16) {
+        if !matches!(
+            self.bus.expansion_device(port),
+            Some(InputDevice::FamilyTrainer(_))
+        ) {
+            self.bus.set_expansion_device(
+                port,
+                Some(InputDevice::FamilyTrainer(
+                    crate::input_device::PowerPadState::new(),
+                )),
+            );
+        }
+        self.bus.set_family_trainer(port, buttons);
+    }
+
+    /// v1.3.0 Workstream F1 — attach a **Subor keyboard** on `port` and set its
+    /// pressed-key bitmap (one byte per matrix row, like
+    /// [`Self::set_family_keyboard`]). The Subor keyboard reuses the Family
+    /// BASIC keyboard matrix scan; this attaches the
+    /// [`InputDevice::SuborKeyboard`] variant. Opt-in: the no-device path stays
+    /// byte-identical.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `port` is not in `0..=1`.
+    pub fn set_subor_keyboard(&mut self, port: usize, keys: [u8; 9]) {
+        if !matches!(
+            self.bus.expansion_device(port),
+            Some(InputDevice::SuborKeyboard(_))
+        ) {
+            self.bus.set_expansion_device(
+                port,
+                Some(InputDevice::SuborKeyboard(
+                    crate::input_device::FamilyKeyboardState::new(),
+                )),
+            );
+        }
+        self.bus.set_subor_keyboard(port, keys);
+    }
+
+    /// v1.3.0 Workstream F1 — attach a **Konami Hyper Shot** on `port` and set
+    /// its 4-button mask (bit 0 = P1 Run, 1 = P1 Jump, 2 = P2 Run, 3 = P2 Jump).
+    /// Opt-in: the no-device path stays byte-identical.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `port` is not in `0..=1`.
+    pub fn set_konami_hyper_shot(&mut self, port: usize, buttons: u8) {
+        if !matches!(
+            self.bus.expansion_device(port),
+            Some(InputDevice::KonamiHyperShot(_))
+        ) {
+            self.bus.set_expansion_device(
+                port,
+                Some(InputDevice::KonamiHyperShot(
+                    crate::input_device::KonamiHyperShotState::new(),
+                )),
+            );
+        }
+        self.bus.set_konami_hyper_shot(port, buttons);
+    }
+
+    /// v1.3.0 Workstream F1 — attach a **Bandai Hyper Shot** (Exciting Boxing
+    /// punching bag) on `port` and set its 8-sensor mask (bits 0..=3 = the A=0
+    /// group, bits 4..=7 = the A=1 group). Opt-in: the no-device path stays
+    /// byte-identical.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `port` is not in `0..=1`.
+    pub fn set_bandai_hyper_shot(&mut self, port: usize, sensors: u8) {
+        if !matches!(
+            self.bus.expansion_device(port),
+            Some(InputDevice::BandaiHyperShot(_))
+        ) {
+            self.bus.set_expansion_device(
+                port,
+                Some(InputDevice::BandaiHyperShot(
+                    crate::input_device::BandaiHyperShotState::new(),
+                )),
+            );
+        }
+        self.bus.set_bandai_hyper_shot(port, sensors);
+    }
+
     /// v1.1.0 beta.1 (T-110-B4) — set (`Some`) or clear (`None`) a per-game
     /// **nametable mirroring override**, a load-time correction for ROMs whose
     /// iNES header carries the wrong mirroring flag (supplied by the frontend's

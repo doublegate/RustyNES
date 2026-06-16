@@ -100,7 +100,8 @@ pub struct SharedInput {
     hardcore_blocked: AtomicBool,
     run_ahead: AtomicU8,
     /// `ExpansionDevice` as `u8` (0 None / 1 Zapper / 2 Vaus / 3 Power Pad /
-    /// 4 SNES mouse / 5 Family BASIC keyboard).
+    /// 4 SNES mouse / 5 Family BASIC keyboard / 6 Family Trainer / 7 Subor
+    /// keyboard / 8 Konami Hyper Shot / 9 Bandai Hyper Shot).
     expansion: AtomicU8,
     /// `(x as u16) << 16 | (y as u16)` NES-screen coords (`u16::MAX` = off).
     mouse: AtomicU32,
@@ -118,6 +119,10 @@ pub struct SharedInput {
     /// packed little-endian into a u64, row 8 in `family_keyboard_hi`.
     family_keyboard_lo: AtomicU64,
     family_keyboard_hi: AtomicU8,
+    /// v1.3.0 Workstream F1 — Konami Hyper Shot button mask.
+    konami_hyper_shot: AtomicU8,
+    /// v1.3.0 Workstream F1 — Bandai Hyper Shot sensor mask.
+    bandai_hyper_shot: AtomicU8,
 }
 
 impl SharedInput {
@@ -146,6 +151,10 @@ impl SharedInput {
                 ExpansionDevice::PowerPad => 3,
                 ExpansionDevice::SnesMouse => 4,
                 ExpansionDevice::FamilyKeyboard => 5,
+                ExpansionDevice::FamilyTrainer => 6,
+                ExpansionDevice::SuborKeyboard => 7,
+                ExpansionDevice::KonamiHyperShot => 8,
+                ExpansionDevice::BandaiHyperShot => 9,
             },
             Ordering::Relaxed,
         );
@@ -172,6 +181,10 @@ impl SharedInput {
         let lo = u64::from_le_bytes([kb[0], kb[1], kb[2], kb[3], kb[4], kb[5], kb[6], kb[7]]);
         self.family_keyboard_lo.store(lo, Ordering::Relaxed);
         self.family_keyboard_hi.store(kb[8], Ordering::Relaxed);
+        self.konami_hyper_shot
+            .store(inputs.konami_hyper_shot, Ordering::Relaxed);
+        self.bandai_hyper_shot
+            .store(inputs.bandai_hyper_shot, Ordering::Relaxed);
     }
 
     /// Reconstruct the [`FrameInputs`] the emu thread feeds to the produce
@@ -195,6 +208,10 @@ impl SharedInput {
                 3 => ExpansionDevice::PowerPad,
                 4 => ExpansionDevice::SnesMouse,
                 5 => ExpansionDevice::FamilyKeyboard,
+                6 => ExpansionDevice::FamilyTrainer,
+                7 => ExpansionDevice::SuborKeyboard,
+                8 => ExpansionDevice::KonamiHyperShot,
+                9 => ExpansionDevice::BandaiHyperShot,
                 _ => ExpansionDevice::None,
             },
             #[allow(clippy::cast_possible_truncation)]
@@ -217,6 +234,8 @@ impl SharedInput {
                 let hi = self.family_keyboard_hi.load(Ordering::Relaxed);
                 [lo[0], lo[1], lo[2], lo[3], lo[4], lo[5], lo[6], lo[7], hi]
             },
+            konami_hyper_shot: self.konami_hyper_shot.load(Ordering::Relaxed),
+            bandai_hyper_shot: self.bandai_hyper_shot.load(Ordering::Relaxed),
         }
     }
 }
@@ -768,6 +787,8 @@ mod tests {
             mouse_delta: (-9, 42),
             mouse_right: true,
             family_keyboard: [0x01, 0x80, 0x00, 0xFF, 0x10, 0x00, 0x00, 0x00, 0x55],
+            konami_hyper_shot: 0b1011,
+            bandai_hyper_shot: 0b1100_0011,
         };
         si.publish(&inputs);
         let got = si.load();
@@ -789,6 +810,8 @@ mod tests {
             got.family_keyboard,
             [0x01, 0x80, 0x00, 0xFF, 0x10, 0x00, 0x00, 0x00, 0x55]
         );
+        assert_eq!(got.konami_hyper_shot, 0b1011);
+        assert_eq!(got.bandai_hyper_shot, 0b1100_0011);
     }
 
     #[test]
@@ -809,6 +832,8 @@ mod tests {
             mouse_delta: (0, 0),
             mouse_right: false,
             family_keyboard: [0; 9],
+            konami_hyper_shot: 0,
+            bandai_hyper_shot: 0,
         };
         si.publish(&inputs);
         assert_eq!(si.load().mouse_nes, (u16::MAX, u16::MAX));

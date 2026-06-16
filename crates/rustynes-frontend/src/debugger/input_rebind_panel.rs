@@ -502,6 +502,10 @@ pub fn body(ui: &mut egui::Ui, state: &mut InputPanelState, config: &mut Config)
                     ExpansionDevice::PowerPad => "Power Pad (mat)",
                     ExpansionDevice::SnesMouse => "SNES mouse",
                     ExpansionDevice::FamilyKeyboard => "Family BASIC keyboard",
+                    ExpansionDevice::FamilyTrainer => "Family Trainer (mat)",
+                    ExpansionDevice::SuborKeyboard => "Subor keyboard",
+                    ExpansionDevice::KonamiHyperShot => "Konami Hyper Shot",
+                    ExpansionDevice::BandaiHyperShot => "Bandai Hyper Shot",
                 })
                 .show_ui(ui, |ui| {
                     ui.selectable_value(&mut dev, ExpansionDevice::None, "Standard controller");
@@ -513,6 +517,22 @@ pub fn body(ui: &mut egui::Ui, state: &mut InputPanelState, config: &mut Config)
                         &mut dev,
                         ExpansionDevice::FamilyKeyboard,
                         "Family BASIC keyboard",
+                    );
+                    ui.selectable_value(
+                        &mut dev,
+                        ExpansionDevice::FamilyTrainer,
+                        "Family Trainer (mat)",
+                    );
+                    ui.selectable_value(&mut dev, ExpansionDevice::SuborKeyboard, "Subor keyboard");
+                    ui.selectable_value(
+                        &mut dev,
+                        ExpansionDevice::KonamiHyperShot,
+                        "Konami Hyper Shot",
+                    );
+                    ui.selectable_value(
+                        &mut dev,
+                        ExpansionDevice::BandaiHyperShot,
+                        "Bandai Hyper Shot",
                     );
                 });
             if dev != config.input.expansion_device {
