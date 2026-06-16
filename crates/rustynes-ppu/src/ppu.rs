@@ -3619,12 +3619,12 @@ mod tests {
     fn ppuscroll_two_writes_load_t_and_x() {
         let (mut p, mut b) = fresh_ppu();
         p.cpu_write_register(5, 0b1010_1011, &mut b); // X = 0xAB
-                                                      // t bits 4-0 = X[7:3] = 0b10101 = 0x15. x = X[2:0] = 0b011 = 0x03.
+        // t bits 4-0 = X[7:3] = 0b10101 = 0x15. x = X[2:0] = 0b011 = 0x03.
         assert_eq!(p.t & 0x001F, 0x15);
         assert_eq!(p.x, 0x03);
         assert!(p.w);
         p.cpu_write_register(5, 0b0101_1100, &mut b); // Y = 0x5C
-                                                      // t bits 14-12 = Y[2:0] = 0b100, t bits 9-5 = Y[7:3] = 0b01011.
+        // t bits 14-12 = Y[2:0] = 0b100, t bits 9-5 = Y[7:3] = 0b01011.
         assert_eq!((p.t >> 12) & 0x07, 0x04);
         assert_eq!((p.t >> 5) & 0x1F, 0x0B);
         assert!(!p.w);
@@ -3634,7 +3634,7 @@ mod tests {
     fn ppuaddr_two_writes_copy_t_to_v() {
         let (mut p, mut b) = fresh_ppu();
         p.cpu_write_register(6, 0x3F, &mut b); // high
-                                               // After first write t bits 13-8 = 0x3F & 0x3F; bit 14 cleared.
+        // After first write t bits 13-8 = 0x3F & 0x3F; bit 14 cleared.
         assert_eq!((p.t >> 8) & 0x7F, 0x3F);
         assert!(p.w);
         p.cpu_write_register(6, 0x10, &mut b); // low; copy t to v
@@ -3686,7 +3686,7 @@ mod tests {
         let (mut p, mut b) = fresh_ppu();
         // Enable background rendering so the full visible area is emitted.
         p.cpu_write_register(1, 0x08, &mut b); // PPUMASK: show background
-                                               // Run two full frames so every visible pixel has been written.
+        // Run two full frames so every visible pixel has been written.
         for _ in 0..(341 * 262 * 2) {
             p.tick(&mut b);
         }
@@ -3732,7 +3732,7 @@ mod tests {
         p.cpu_write_register(6, 0x3F, &mut b);
         p.cpu_write_register(6, 0x10, &mut b); // v = $3F10
         p.cpu_write_register(7, 0x21, &mut b); // write palette
-                                               // The mirror should land at index 0 (= $3F00).
+        // The mirror should land at index 0 (= $3F00).
         assert_eq!(p.palette_ram[0], 0x21);
         assert_eq!(p.palette_ram[0x10], 0); // not actually written
     }
@@ -3964,8 +3964,8 @@ mod tests {
         for i in 0..8 {
             let base = i * 4;
             p.oam[base] = 0; // y = 0 (in range)
-                             // bytes 1,2,3 keep the 0xF0 fill so a stray read
-                             // doesn't mis-fire the diagonal test.
+            // bytes 1,2,3 keep the 0xF0 fill so a stray read
+            // doesn't mis-fire the diagonal test.
         }
         // Sprite 8 y is 0xF0 (from the bulk fill) — out of range.
         // Sprite 9 tile byte (OAM[9*4+1]) is the second diagonal read
@@ -4351,7 +4351,7 @@ mod tests {
         p.oam[1] = 0xC0; // CHR
         p.oam[2] = 0x03; // ATT
         p.oam[3] = 0x08; // X = 8
-                         // v = $2C00 (NT 3 top-left).
+        // v = $2C00 (NT 3 top-left).
         p.v = 0x2C00;
         p.t = 0x2C00;
         // PPUCTRL = 0 (both pattern tables at $0000).
@@ -4424,8 +4424,8 @@ mod tests {
         p.cpu_write_register(4, 0xFC, &mut b); // sprite 0 CHR = $FC
         p.cpu_write_register(4, 0x00, &mut b); // sprite 0 ATT = 0
         p.cpu_write_register(4, 0x08, &mut b); // sprite 0 X = 8
-                                               // Advance to scanline 241 dot 1 (VBL start) — matches the ROM
-                                               // post-WaitForVBlank position.
+        // Advance to scanline 241 dot 1 (VBL start) — matches the ROM
+        // post-WaitForVBlank position.
         while !(p.scanline == 241 && p.dot == 1) {
             p.tick(&mut b);
         }
@@ -4919,7 +4919,7 @@ mod tests {
         // boundary across the pre-fetch-fed leftmost tile — the exact
         // condition that exposed the 086ce4d AT lockstep regression.
         p.ciram[0x03C0] = 0b00_00_10_01; // TL=pal1, TR=pal2.
-                                         // The target scanline is row 5 -> tile row 0 -> top quadrants.
+        // The target scanline is row 5 -> tile row 0 -> top quadrants.
 
         // Palettes: pattern value 1...
         //   palette 0 -> $3F01

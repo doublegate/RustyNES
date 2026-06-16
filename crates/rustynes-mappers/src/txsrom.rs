@@ -274,7 +274,7 @@ mod tests {
         // CHR mode 0 (bit 7 clear). R0 bit 7 set -> slots 0/1 use bank 1.
         select_write(&mut m, 0, 0x80); // R0 = $80
         select_write(&mut m, 1, 0x00); // R1 = $00
-                                       // Slot 0 ($2000) and slot 1 ($2400) -> bank 1.
+        // Slot 0 ($2000) and slot 1 ($2400) -> bank 1.
         assert_eq!(m.nametable_address(0x2000) >> 10, 1);
         assert_eq!(m.nametable_address(0x2400) >> 10, 1);
         // Slot 2 ($2800) and slot 3 ($2C00) -> bank 0 (R1 bit 7 clear).

@@ -557,6 +557,23 @@ permanent-by-design `#[ignore]` reason at its test site. (`mmc3_test_2/6` is the
 NEC-rev-B-vs-Sharp-rev-A by-design skip; the live-STUN and interactive-`cpu_reset`
 ignores are likewise by-design.)
 
+> **v1.3.0 re-baseline (2026-06-15).** Per the maintainer's directive ("we already
+> did the master-clock refactor — re-test these before assuming any work"), the
+> hard-tier probes were re-run against the current default master-clock core.
+> Confirmed: `cpu_interrupts_v2` is **5/5 strict (closed)**; exactly **three**
+> residuals remain — `mmc3_test_2/4` sub-test #3 and the two `apu_reset` cases.
+> Two independent root-cause diagnoses found they **share one cause**: the integer
+> "3-PPU-dots-per-CPU-cycle" scheduler cannot represent the M2 sub-cycle phase the
+> MMC3 IRQ-sample bracket needs, and `Nes::reset()` is a function-call reset that
+> does not model the cycle-accurate reset-vector delay + frame-counter re-arm phase.
+> Closing all three is therefore a single **v2.0-scale fractional-master-clock +
+> cycle-accurate-reset refactor** (Mesen2's 12-master-clocks-per-CPU-cycle with a
+> φ1/φ2 access split), HIGH-risk to the AccuracyCoin 100% contract, with 15+
+> documented rollbacks and an ADR-0002 stop condition against further point-fixes.
+> **Maintainer decision: keep deferring** (zero production-ROM impact); the
+> `irq_trace` golden oracle + `cpu-instr-cycle-trace` scaffold remain in place as
+> the gate if a future release ever takes it on.
+
 The detailed engine-lineage attempt-log below is retained as **historical
 provenance only** — it documents how the master-clock axis was investigated
 before it landed. The "deferred to v2.0" language inside it is history, not a plan.

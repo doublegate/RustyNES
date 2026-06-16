@@ -43,7 +43,7 @@ use std::sync::Arc;
 use futures_util::{SinkExt, StreamExt};
 use rustynes_netplay::signaling::{Action, ClientId, Relay, SignalMessage};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 use tokio_tungstenite::tungstenite::Message;
 
 /// Shared server state: the pure relay + a per-client outbound channel sender so

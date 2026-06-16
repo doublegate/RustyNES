@@ -106,7 +106,9 @@ pub enum SnapshotError {
     },
 
     /// A section had a version this build does not handle.
-    #[error("save state section {tag} version {file_version} not supported (chip supports {chip_supports})")]
+    #[error(
+        "save state section {tag} version {file_version} not supported (chip supports {chip_supports})"
+    )]
     VersionMismatch {
         /// 4-byte tag (printable ASCII).
         tag: String,

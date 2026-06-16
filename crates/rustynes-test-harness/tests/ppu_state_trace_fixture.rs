@@ -65,8 +65,8 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
-use rustynes_core::rustynes_ppu::state_trace::{PpuStateTrace, PpuTraceConfig};
 use rustynes_core::Nes;
+use rustynes_core::rustynes_ppu::state_trace::{PpuStateTrace, PpuTraceConfig};
 
 /// Per-fixture record cap. Sized at ~3 frames of visible-only capture
 /// (≈ 720 k records) headroom past the default 10-frame window. Records

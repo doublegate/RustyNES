@@ -8,7 +8,7 @@
 //! Per `docs/testing-strategy.md` §Layer 3.
 
 use rustynes_core::rustynes_cpu::{Bus, Cpu};
-use rustynes_core::rustynes_mappers::{parse, Mapper, RomError};
+use rustynes_core::rustynes_mappers::{Mapper, RomError, parse};
 
 /// Outcome of running a blargg-style ROM to completion.
 #[derive(Debug)]

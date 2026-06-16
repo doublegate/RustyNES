@@ -6238,8 +6238,8 @@ pub fn run_wasm() -> winit::event_loop::EventLoopProxy<AppEvent> {
 mod tests {
     use super::{extract_rom_from_zip, is_fds_image, resolve_vs_dip};
     use crate::config::VsConfig;
-    use rustynes_core::rustynes_mappers::VsPpuType;
     use rustynes_core::VsDbEntry;
+    use rustynes_core::rustynes_mappers::VsPpuType;
 
     #[test]
     fn zip_extracts_first_rom_entry() {

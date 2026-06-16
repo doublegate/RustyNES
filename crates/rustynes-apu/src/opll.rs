@@ -1964,7 +1964,7 @@ mod tests {
         // counter = 4 → index = (4 & 0xc) >> 1 = 2 → table[0][2] = 0 → 4.
         assert_eq!(s.lookup_attack_step(4), 4);
         s.eg_rate_l = 3; // table[3] = [0,1,1,1,1,1,1,1]
-                         // counter = 4 → index = 2 → table[3][2] = 1 → 4 - 1 = 3.
+        // counter = 4 → index = 2 → table[3][2] = 1 → 4 - 1 = 3.
         assert_eq!(s.lookup_attack_step(4), 3);
     }
 

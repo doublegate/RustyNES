@@ -1525,7 +1525,7 @@ mod tests {
         // Inner CHR write (E set, so honoured). PRG bytes are 0xFF except at
         // offset 0; write to $8001 (byte 0xFF) -> no conflict masking.
         m.cpu_write(0x8001, 0b01); // inner CHR low = 1
-                                   // CHR bank = (outer 3 << 2) | inner 1 = 13.
+        // CHR bank = (outer 3 << 2) | inner 1 = 13.
         assert_eq!(m.ppu_read(0x0000), 13);
     }
 

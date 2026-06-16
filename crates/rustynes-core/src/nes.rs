@@ -15,14 +15,14 @@ use sha2::{Digest, Sha256};
 // any caller. See `docs/architecture.md` §149 (no_std + alloc migration).
 use core::time::Duration;
 
+use crate::Region;
 use crate::bus::LockstepBus;
 use crate::controller::Buttons;
 use crate::debug::{ApuDebugView, CpuDebugView, MapperDebugView, PpuDebugView};
 use crate::genie::{GenieCode, GenieError};
 use crate::input_device::InputDevice;
-use crate::rewind::{RewindRing, REWIND_DEFAULT_KEYFRAME_PERIOD, REWIND_DEFAULT_MAX_BYTES};
-use crate::save_state::{self, SnapshotError, ROM_HASH_TAG_LEN};
-use crate::Region;
+use crate::rewind::{REWIND_DEFAULT_KEYFRAME_PERIOD, REWIND_DEFAULT_MAX_BYTES, RewindRing};
+use crate::save_state::{self, ROM_HASH_TAG_LEN, SnapshotError};
 
 /// Nominal NTSC frame duration: `1 / 60.0988 Hz ≈ 16.6393 ms`.
 ///
@@ -2373,7 +2373,7 @@ mod tests {
         let len = 16 * 1024;
         prg[len - 4] = 0x00; // reset vector lo
         prg[len - 3] = 0xC0; // reset vector hi -> $C000
-                             // CHR not appended (header says 1 bank but parse tolerates; use 0 banks).
+        // CHR not appended (header says 1 bank but parse tolerates; use 0 banks).
         bytes[5] = 0;
 
         let mut nes = Nes::from_rom(&bytes).expect("parse");

@@ -1712,7 +1712,7 @@ impl Mapper for Mmc5 {
             other => {
                 return Err(MapperError::Invalid(format!(
                     "unknown mirroring tag {other}"
-                )))
+                )));
             }
         };
         cur += 1;
@@ -1870,7 +1870,7 @@ mod tests {
         m.cpu_write(0x5100, 3);
         // Try to mark $5117 as RAM by clearing bit 7.
         m.cpu_write(0x5117, 7); // page 7, no bit-7 set ("RAM" bit)
-                                // Should still read ROM bank 7.
+        // Should still read ROM bank 7.
         assert_eq!(m.cpu_read(0xE000), 7);
     }
 
@@ -1878,10 +1878,10 @@ mod tests {
     fn chr_mode_0_8k_bank_via_512b() {
         let mut m = fresh(8, 8);
         m.cpu_write(0x5101, 0); // 8K mode
-                                // $512B drives 8K (low 3 bits ignored: bank & ~7).
+        // $512B drives 8K (low 3 bits ignored: bank & ~7).
         m.cpu_write(0x512B, 4); // page 4 -> bank 4 (4 & ~7 = 0). Hmm!
-                                // 4 & ~7 == 0, so $0000 reads bank 0. Use 8 instead -> 8 & ~7 = 8 -> mask.
-                                // With 8 1K banks of CHR, we need banks 0..=7. 4 & ~7 = 0 yields bank 0.
+        // 4 & ~7 == 0, so $0000 reads bank 0. Use 8 instead -> 8 & ~7 = 8 -> mask.
+        // With 8 1K banks of CHR, we need banks 0..=7. 4 & ~7 = 0 yields bank 0.
         assert_eq!(m.ppu_read(0x0000), 0);
         // $1000 (1K slot 4 within 8K window) -> bank 0 + 4 = 4.
         assert_eq!(m.ppu_read(0x1000), 4);
@@ -1891,7 +1891,7 @@ mod tests {
     fn chr_mode_1_two_4k_banks() {
         let mut m = fresh(8, 8);
         m.cpu_write(0x5101, 1); // 4+4K mode
-                                // $5129 drives low 4K, $512B drives high 4K. Bank value masked & ~3.
+        // $5129 drives low 4K, $512B drives high 4K. Bank value masked & ~3.
         m.cpu_write(0x5129, 4); // 4 & ~3 = 4
         m.cpu_write(0x512B, 0); // 0 & ~3 = 0
         assert_eq!(m.ppu_read(0x0000), 4); // low 4K starts at bank 4
@@ -1970,7 +1970,7 @@ mod tests {
         m.cpu_write(0x5104, 0b00);
         // Map NT0 to ExRAM.
         m.cpu_write(0x5105, 0b11_10_01_10); // NT0 = ExRAM (10)
-                                            // Write through PPU bus to $2000 (NT0).
+        // Write through PPU bus to $2000 (NT0).
         m.ppu_write(0x2000, 0xAA);
         assert_eq!(m.ppu_read(0x2000), 0xAA);
         // ExRAM should reflect this too via CPU read.
@@ -2056,7 +2056,7 @@ mod tests {
         assert!(m.irq_pending);
         let v = m.cpu_read(0x5204);
         assert!((v & 0x80) != 0); // status bit was set
-                                  // Read should clear the pending latch.
+        // Read should clear the pending latch.
         assert!(!m.irq_pending);
         assert!(!m.irq_pending());
     }
@@ -2183,9 +2183,9 @@ mod tests {
     fn ex_attribute_decodes_palette_and_chr_bank_in_mode_01() {
         let mut m = fresh(8, 8);
         m.cpu_write(0x5104, 0b01); // ExGrafix
-                                   // ExRAM byte for tile (coarse_x=2, coarse_y=3): index 3*32+2 = 98.
+        // ExRAM byte for tile (coarse_x=2, coarse_y=3): index 3*32+2 = 98.
         m.exram[98] = 0b11_001010; // palette = 3, bank low = 0x0A
-                                   // v: low 5 = coarse_x = 2; bits 5..9 = coarse_y = 3.
+        // v: low 5 = coarse_x = 2; bits 5..9 = coarse_y = 3.
         let v = (3u16 << 5) | 2;
         let ex = m.peek_ex_attribute(v).unwrap();
         assert_eq!(ex.palette, 3);
@@ -2200,11 +2200,11 @@ mod tests {
         let mut m = fresh(8, 16);
         // Mark each bank's first byte uniquely (already done by synth_chr).
         m.cpu_write(0x5104, 0b01); // ExGrafix
-                                   // Tile at coarse (0, 0): ExRAM[0] -> palette=0, bank low6=2 (4K bank 2).
+        // Tile at coarse (0, 0): ExRAM[0] -> palette=0, bank low6=2 (4K bank 2).
         m.exram[0] = 0b00_000010;
         let v = 0u16;
         let _ = m.peek_ex_attribute(v); // sets ex_chr_bank_latch = Some(2)
-                                        // BG fetch at $0000 -> chr_offset uses 4K bank 2 -> 1K bank 8 -> bank index 8.
+        // BG fetch at $0000 -> chr_offset uses 4K bank 2 -> 1K bank 8 -> bank index 8.
         assert_eq!(m.ppu_read(0x0000), 8);
         // BG fetch at $0400 (1K offset 1024 within the 4K bank) -> 1K bank 9.
         assert_eq!(m.ppu_read(0x0400), 9);
@@ -2356,7 +2356,7 @@ mod tests {
     fn split_v_scroll_wraps_at_240() {
         let mut m = fresh(8, 8);
         m.cpu_write(0x5200, 0x80); // enable, left, split = 0 (alt covers cols < 0 = none!)
-                                   // Use split tile 31 so cx=0 is in alt.
+        // Use split tile 31 so cx=0 is in alt.
         m.cpu_write(0x5200, 0x80 | 31);
         m.cpu_write(0x5201, 230);
         m.cpu_write(0x5202, 0);
@@ -2546,8 +2546,8 @@ mod tests {
         m.cpu_write(0x5000, 0b0001_1111); // duty=0, halt=0, const=1, vol=15
         m.cpu_write(0x5002, 0x07); // period 7 (< 8) -> muted
         m.cpu_write(0x5003, 4 << 3); // length nonzero
-                                     // Advance enough CPU cycles to let the duty sequencer step many
-                                     // times. With period < 8 the muted-rule keeps output at 0.
+        // Advance enough CPU cycles to let the duty sequencer step many
+        // times. With period < 8 the muted-rule keeps output at 0.
         for _ in 0..64 {
             m.notify_cpu_cycle();
         }

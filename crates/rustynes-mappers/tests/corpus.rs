@@ -9,7 +9,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use rustynes_mappers::{parse, RomError};
+use rustynes_mappers::{RomError, parse};
 
 fn corpus_dir() -> PathBuf {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

@@ -2532,12 +2532,12 @@ mod tests {
         m.cpu_write(0x4102, 0b0000_1011 & 0x0F); // staging = 3 (0b011), inverter = 0b1000
         m.cpu_write(0x4100, 0x00); // accumulator = staging (no invert) = 3
         m.cpu_write(0x8000, 0x00); // latch: output = (acc&0xF) | ((inv&8)<<1)
-                                   // acc = 3, inverter low nibble 0b1000 -> (8<<1)=0x10
-                                   // output = 3 | 0x10 = 0x13.
-                                   // PRG = (0x13>>2)&1 = 0; CHR = 0x13&3 = 3.
+        // acc = 3, inverter low nibble 0b1000 -> (8<<1)=0x10
+        // output = 3 | 0x10 = 0x13.
+        // PRG = (0x13>>2)&1 = 0; CHR = 0x13&3 = 3.
         assert_eq!(m.cpu_read(0x8000), 0); // PRG bank 0
         assert_eq!(m.ppu_read(0x0000), 3); // CHR bank 3
-                                           // Register read window is mapped (not open bus).
+        // Register read window is mapped (not open bus).
         assert!(!m.cpu_read_unmapped(0x4100));
     }
 

@@ -5,9 +5,9 @@
 //! - Mode 0 (long): feedback = bit 0 XOR bit 1, 15-bit period.
 //! - Mode 1 (short): feedback = bit 0 XOR bit 6, 93-bit period.
 
+use crate::Region;
 use crate::envelope::Envelope;
 use crate::length::LengthCounter;
-use crate::Region;
 
 /// 16-entry NTSC noise period table (NESdev wiki).  Index = bits 0-3 of `$400E`.
 pub const NTSC_NOISE_PERIODS: [u16; 16] = [

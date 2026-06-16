@@ -435,7 +435,7 @@ mod tests {
         let mut fc = FrameCounter::new();
         fc.irq_flag = true;
         fc.write(0xC0, true); // mode=1, inhibit=1
-                              // After 3-cycle delay, reset.
+        // After 3-cycle delay, reset.
         let mut cyc = 0u64;
         for _ in 0..3 {
             drive_tick(&mut fc, &mut cyc, true);

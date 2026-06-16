@@ -32,7 +32,7 @@ use alloc::vec::Vec;
 use thiserror::Error;
 
 use crate::bus::{BgSplitState, ExAttribute};
-use crate::ppu::{Ppu, PpuRegion, FRAMEBUFFER_LEN};
+use crate::ppu::{FRAMEBUFFER_LEN, Ppu, PpuRegion};
 use crate::registers::{PpuCtrl, PpuMask, PpuStatus};
 
 /// Schema version for the PPU snapshot blob.
@@ -550,9 +550,9 @@ mod tests {
         v1.push(0xEF); // v1 at_shift_hi (u8)
         v1.push(0x01); // v1 at_feed_lo (u8)
         v1.push(0x00); // v1 at_feed_hi (u8)
-                       // Tail from ex_attr_latch onward, MINUS the v3 W3-Stage-4 tail
-                       // (23 bytes: u8*3 + [u8;8]*2 + u16 PPUDATA state machine, then
-                       // u8*2 BG-reload freeze) which a v1 blob never carried.
+        // Tail from ex_attr_latch onward, MINUS the v3 W3-Stage-4 tail
+        // (23 bytes: u8*3 + [u8;8]*2 + u16 PPUDATA state machine, then
+        // u8*2 BG-reload freeze) which a v1 blob never carried.
         v1.extend_from_slice(&v2[at + 4..v2.len() - 23]);
         v1[0] = 1; // version byte -> v1
 

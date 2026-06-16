@@ -11,8 +11,8 @@
 //! they take effect the next time the ROM is opened. This is all frontend-side —
 //! the deterministic core / test suites never consult the DB.
 
-use rustynes_core::rustynes_mappers::{Mirroring, Region};
 use rustynes_core::Nes;
+use rustynes_core::rustynes_mappers::{Mirroring, Region};
 
 use crate::game_db::{self, GameDbEntry};
 

@@ -159,7 +159,7 @@ fn pha_php_round_trip() {
     let _ = cpu.step(&mut bus); // PLA -> 0xAA
     assert_eq!(cpu.a, 0xAA);
     let _ = cpu.step(&mut bus); // PLP
-                                // Specifically: push set B+U; pull clears B, sets U.
+    // Specifically: push set B+U; pull clears B, sets U.
     assert!(!cpu.p.contains(Status::BREAK));
     assert!(cpu.p.contains(Status::UNUSED));
 }

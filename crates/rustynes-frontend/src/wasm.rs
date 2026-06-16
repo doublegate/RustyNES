@@ -25,8 +25,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use rustynes_core::{Buttons, Nes};
-use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
+use wasm_bindgen::prelude::*;
 use web_sys::{
     CanvasRenderingContext2d, Event, FileReader, HtmlCanvasElement, HtmlInputElement, ImageData,
     KeyboardEvent,

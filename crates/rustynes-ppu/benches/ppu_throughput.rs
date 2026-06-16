@@ -11,7 +11,7 @@
 //! updates, NOT BG/sprite pattern correctness). The PPU runs through N
 //! full frames (89,342 dots/frame at NTSC).
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use rustynes_ppu::{Ppu, PpuBus, PpuRegion};
 use std::hint::black_box;
 

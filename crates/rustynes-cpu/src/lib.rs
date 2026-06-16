@@ -23,9 +23,9 @@ mod status;
 
 pub use bus::Bus;
 pub use cpu::Cpu;
-pub use disasm::{disassemble_at, DisasmLine};
+pub use disasm::{DisasmLine, disassemble_at};
 pub use scheduler::M2Phase;
-pub use snapshot::{CpuSnapshotError, CPU_SNAPSHOT_VERSION};
+pub use snapshot::{CPU_SNAPSHOT_VERSION, CpuSnapshotError};
 pub use status::Status;
 
 /// Returns the crate version string.

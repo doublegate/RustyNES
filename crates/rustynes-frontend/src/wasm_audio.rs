@@ -40,12 +40,12 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
-use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use wasm_bindgen_futures::{spawn_local, JsFuture};
+use wasm_bindgen::prelude::*;
+use wasm_bindgen_futures::{JsFuture, spawn_local};
 use web_sys::{AudioContext, AudioProcessingEvent, MessageEvent};
 
-use crate::resampler::{drc_ratio, HermiteResampler};
+use crate::resampler::{HermiteResampler, drc_ratio};
 
 /// Cap the main-side staging ring (samples pushed before the worklet node is
 /// live, or the `ScriptProcessorNode` fallback ring). ~0.5 s at 48 kHz; a

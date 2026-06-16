@@ -20,6 +20,7 @@
 use alloc::vec::Vec;
 use thiserror::Error;
 
+use crate::Region;
 use crate::apu::Apu;
 use crate::blip::BlipBuf;
 use crate::dmc::Dmc;
@@ -30,7 +31,6 @@ use crate::mixer::{FilterChain, OnePole};
 use crate::noise::Noise;
 use crate::pulse::Pulse;
 use crate::triangle::Triangle;
-use crate::Region;
 
 /// Schema version for the APU snapshot blob.
 ///

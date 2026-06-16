@@ -16,8 +16,8 @@ use std::path::PathBuf;
 
 use rustynes_core::{Buttons, Nes};
 use rustynes_netplay::{
-    fnv1a64, LinkConditions, MemoryTransport, MeshTransport, NetplayError, RollbackSession,
-    SessionConfig, SplitMix64,
+    LinkConditions, MemoryTransport, MeshTransport, NetplayError, RollbackSession, SessionConfig,
+    SplitMix64, fnv1a64,
 };
 
 /// The deterministic gameplay digest used for cross-peer comparison —

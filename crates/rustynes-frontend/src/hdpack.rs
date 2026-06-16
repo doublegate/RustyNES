@@ -32,7 +32,7 @@ use std::collections::HashMap;
 use std::io::Read;
 use std::path::Path;
 
-use rustynes_core::rustynes_ppu::{HdTileSource, HD_TILE_NONE};
+use rustynes_core::rustynes_ppu::{HD_TILE_NONE, HdTileSource};
 
 use crate::gfx::{NES_H, NES_W};
 

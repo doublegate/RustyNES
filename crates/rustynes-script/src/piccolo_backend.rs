@@ -44,7 +44,7 @@ use piccolo::{Callback, CallbackReturn, Closure, Executor, Fuel, Lua, Table, Val
 use rustynes_core::Nes;
 
 use crate::backend::VmBackend;
-use crate::types::{ControlCmd, DrawCmd, ScriptError, DEFAULT_INSTRUCTION_BUDGET, MAX_QUEUED_CMDS};
+use crate::types::{ControlCmd, DEFAULT_INSTRUCTION_BUDGET, DrawCmd, MAX_QUEUED_CMDS, ScriptError};
 
 /// A buffered `emu.write(addr, val)` (applied to the live `Nes` after the
 /// frame's callbacks run). Kept separate from `ControlCmd` because the host

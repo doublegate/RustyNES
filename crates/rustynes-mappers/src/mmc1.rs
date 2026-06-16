@@ -548,7 +548,7 @@ mod tests {
         m.cpu_write(0xE000, 1); // accepted; shift = 0x10 -> 0x18 (bit 4 from new_lsb)
         m.notify_cpu_cycle();
         m.cpu_write(0xE000, 1); // dropped (cycle = last_write+1)
-                                // Continue with 4 more accepted writes.
+        // Continue with 4 more accepted writes.
         for _ in 0..4 {
             for _ in 0..3 {
                 m.notify_cpu_cycle();
@@ -572,7 +572,7 @@ mod tests {
         // single-screen-B
         write5(&mut m, 0x8000, 0b0_1101);
         m.ppu_write(0x2000, 0xBB); // writes physical bank 1
-                                   // All four nametables now alias to bank 1.
+        // All four nametables now alias to bank 1.
         assert_eq!(m.ppu_read(0x2400), 0xBB);
         // vertical
         write5(&mut m, 0x8000, 0b0_1110);
@@ -580,7 +580,7 @@ mod tests {
         m.ppu_write(0x2400, 0x22); // bank 1
         assert_eq!(m.ppu_read(0x2800), 0x11); // mirror of $2000
         assert_eq!(m.ppu_read(0x2C00), 0x22); // mirror of $2400
-                                              // horizontal
+        // horizontal
         write5(&mut m, 0x8000, 0b0_1111);
         m.ppu_write(0x2000, 0x33); // bank 0
         m.ppu_write(0x2800, 0x44); // bank 1

@@ -17,7 +17,7 @@ use mlua::{Function, HookTriggers, Lua, RegistryKey, StdLib, Table, VmState};
 use rustynes_core::Nes;
 
 use crate::backend::VmBackend;
-use crate::types::{ControlCmd, DrawCmd, ScriptError, DEFAULT_INSTRUCTION_BUDGET, MAX_QUEUED_CMDS};
+use crate::types::{ControlCmd, DEFAULT_INSTRUCTION_BUDGET, DrawCmd, MAX_QUEUED_CMDS, ScriptError};
 
 /// A stack-allocated bitset over the 16-bit CPU address space (8 KiB, no heap),
 /// used to gate the hot per-frame replay loops: membership is an O(1) bit test

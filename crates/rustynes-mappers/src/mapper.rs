@@ -501,7 +501,7 @@ pub const fn mirroring_name(m: Mirroring) -> &'static str {
 #[cfg(test)]
 mod caps_tests {
     use super::MapperCaps;
-    use crate::{parse, Mapper};
+    use crate::{Mapper, parse};
     use alloc::{boxed::Box, vec, vec::Vec};
 
     /// Build a minimal iNES image for `mapper_id` (32 KiB PRG + 8 KiB CHR —

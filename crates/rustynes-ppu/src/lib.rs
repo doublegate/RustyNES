@@ -35,18 +35,18 @@ mod snapshot;
 pub mod state_trace;
 
 pub use bus::{BgSplitState, ExAttribute, PpuBus};
-pub use palette::{nes_color_to_rgba, palette_color_to_rgba, PpuPalette, NES_PALETTE};
-pub use ppu::read2007_diag;
+pub use palette::{NES_PALETTE, PpuPalette, nes_color_to_rgba, palette_color_to_rgba};
 pub use ppu::MASK_WRITE_DELAY;
+pub use ppu::read2007_diag;
+pub use ppu::{FRAMEBUFFER_LEN, Ppu, PpuRegion};
 #[cfg(feature = "hd-pack")]
-pub use ppu::{HdTileSource, HD_TILE_NONE};
-pub use ppu::{Ppu, PpuRegion, FRAMEBUFFER_LEN};
-pub use snapshot::{PpuSnapshotError, PPU_SNAPSHOT_VERSION};
+pub use ppu::{HD_TILE_NONE, HdTileSource};
+pub use snapshot::{PPU_SNAPSHOT_VERSION, PpuSnapshotError};
 
 #[cfg(feature = "ppu-state-trace")]
 pub use state_trace::{
-    fnv1a64, PpuStateRecord, PpuStateTrace, PpuTraceConfig, BINARY_MAGIC, HEADER_SIZE,
-    PPU_TRACE_SCHEMA_VERSION, RECORD_SIZE,
+    BINARY_MAGIC, HEADER_SIZE, PPU_TRACE_SCHEMA_VERSION, PpuStateRecord, PpuStateTrace,
+    PpuTraceConfig, RECORD_SIZE, fnv1a64,
 };
 
 /// Returns the crate version string.

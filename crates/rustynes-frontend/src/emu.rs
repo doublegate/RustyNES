@@ -166,11 +166,7 @@ pub(crate) fn apply_turbo(buttons: Buttons, frame: u64, mask: Buttons, period: u
     }
     let period = u64::from(period.max(1));
     let on = (frame / period) % 2 == 0;
-    if on {
-        buttons
-    } else {
-        buttons & !mask
-    }
+    if on { buttons } else { buttons & !mask }
 }
 
 /// Mutable borrows of the caller-resident sinks the produce path feeds.
@@ -637,11 +633,7 @@ impl EmuCore {
     #[must_use]
     pub fn current_fps(&self) -> f32 {
         let mean = self.perf.view_produced_mean_ms();
-        if mean > 0.0 {
-            1000.0 / mean
-        } else {
-            0.0
-        }
+        if mean > 0.0 { 1000.0 / mean } else { 0.0 }
     }
 
     /// Flush the FDS writable disk to `<data_dir>/fds-saves/<sha>.fds.sav`
@@ -729,7 +721,7 @@ mod tests {
     fn turbo_strobes_only_masked_buttons() {
         let mask = Buttons::A | Buttons::B;
         let held = Buttons::A | Buttons::RIGHT; // A is turbo, RIGHT is not.
-                                                // period 1: on at even frames, off at odd.
+        // period 1: on at even frames, off at odd.
         assert_eq!(apply_turbo(held, 0, mask, 1), Buttons::A | Buttons::RIGHT);
         assert_eq!(apply_turbo(held, 1, mask, 1), Buttons::RIGHT); // A suppressed
         assert_eq!(apply_turbo(held, 2, mask, 1), Buttons::A | Buttons::RIGHT);

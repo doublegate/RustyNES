@@ -15,9 +15,9 @@ mod blargg;
 mod nes_runner;
 mod nestest;
 
-pub use blargg::{run_blargg_until_complete, BlarggBus, BlarggResult};
-pub use nes_runner::{run_nes_blargg, run_nes_blargg_pal, run_nes_blargg_reset, NesTestResult};
-pub use nestest::{format_log_line, parse_log_line, LogLine, NestestBus, NestestRunner};
+pub use blargg::{BlarggBus, BlarggResult, run_blargg_until_complete};
+pub use nes_runner::{NesTestResult, run_nes_blargg, run_nes_blargg_pal, run_nes_blargg_reset};
+pub use nestest::{LogLine, NestestBus, NestestRunner, format_log_line, parse_log_line};
 
 use rustynes_core::rustynes_cpu::Cpu;
 

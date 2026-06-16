@@ -432,7 +432,7 @@ mod tests {
         f[0x0B] = 0x80; // init $8000
         f[0x0C] = 0x03;
         f[0x0D] = 0x80; // play $8003
-                        // program: RTS at init, RTS at play
+        // program: RTS at init, RTS at play
         f.extend_from_slice(&[0x60, 0xEA, 0xEA, 0x60]);
         f
     }

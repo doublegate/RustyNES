@@ -356,7 +356,7 @@ mod tests {
         let mut m = Vrc3::new(synth_prg(8), Mirroring::Vertical).unwrap();
         m.cpu_write(0x8000, 0x0E); // latch low nibble
         m.cpu_write(0x9000, 0x0F); // latch bits 4-7 -> low byte = 0xFE
-                                   // Enable + 8-bit mode (bit 1 | bit 2).
+        // Enable + 8-bit mode (bit 1 | bit 2).
         m.cpu_write(0xC000, 0x06);
         assert_eq!(m.irq_counter & 0xFF, 0xFE);
         m.notify_cpu_cycle(); // 0xFE -> 0xFF

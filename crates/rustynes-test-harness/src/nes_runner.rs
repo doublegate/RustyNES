@@ -8,8 +8,8 @@
 //!
 //! Per `docs/testing-strategy.md` §Layer 3.
 
-use rustynes_core::rustynes_mappers::RomError;
 use rustynes_core::Nes;
+use rustynes_core::rustynes_mappers::RomError;
 
 /// Outcome of running a Nes-based test ROM.
 #[derive(Debug)]

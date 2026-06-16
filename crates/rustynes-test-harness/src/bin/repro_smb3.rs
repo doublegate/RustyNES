@@ -221,8 +221,8 @@ fn replay_movie(nes: &mut Nes, movie_path: &str, out_dir: &Path, dump_every: u64
             let mut per_line = [0u32; 240];
             let mut onscreen = 0u32;
             let mut band = 0u32; // sprites in Mario's vertical band (Y 40..96)
-                                 // On-screen sprites only, in OAM order, so we can see which compete on
-                                 // Mario's scanline and in what order (the drop is order-dependent).
+            // On-screen sprites only, in OAM order, so we can see which compete on
+            // Mario's scanline and in what order (the drop is order-dependent).
             let mut onlist: Vec<(usize, u8, u8, u8)> = Vec::new();
             for (i, s) in oam.chunks_exact(4).enumerate() {
                 let (y, tile, _attr, x) = (s[0], s[1], s[2], s[3]);
@@ -318,7 +318,9 @@ fn observe_idle(nes: &mut Nes, n: usize) {
     // Tail check: is he steady (all-present) by the end?
     let tail = &bits[bits.len().saturating_sub(40)..];
     let tail_absent = tail.chars().filter(|&c| c == '.').count();
-    println!("[idle] last-40-frames absent-count={tail_absent} (0 => flicker stopped => authentic flash)");
+    println!(
+        "[idle] last-40-frames absent-count={tail_absent} (0 => flicker stopped => authentic flash)"
+    );
 
     // DIAGNOSTIC: per-frame correlation of Mario's OAM presence against the
     // game's sprite-DMA pipeline. Why does the GAME drop Mario from OAM?

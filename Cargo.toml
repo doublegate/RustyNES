@@ -15,7 +15,7 @@ members = [
 
 [workspace.package]
 version = "1.2.0"
-edition = "2021"
+edition = "2024"
 rust-version = "1.86"
 license = "MIT OR Apache-2.0"
 authors = ["DoubleGate <parobek@gmail.com>"]

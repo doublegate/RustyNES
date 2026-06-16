@@ -33,7 +33,7 @@ use std::time::Duration;
 
 use rustynes_core::{Buttons, Nes};
 use rustynes_netplay::{
-    fnv1a64, NetplayError, RollbackSession, SessionConfig, SplitMix64, UdpTransport,
+    NetplayError, RollbackSession, SessionConfig, SplitMix64, UdpTransport, fnv1a64,
 };
 
 fn gameplay_digest(nes: &Nes) -> u64 {

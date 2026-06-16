@@ -75,23 +75,23 @@ mod vrc3;
 mod vs_system;
 
 pub use axrom::AxRom;
-pub use bandai152::Bandai152;
-pub use bandai74::Bandai74;
 pub use bandai_fcg::{BandaiFcg, FcgVariant};
+pub use bandai74::Bandai74;
+pub use bandai152::Bandai152;
 pub use cartridge::{Cartridge, ConsoleType, Mirroring, Region, RomError, VsPpuPalette, VsPpuType};
 pub use cnrom::CnRom;
-pub use fds::{parse_fds, Fds, FdsDisk, FdsTraceRec, DISK_BYTE_CYCLES, FDS_SIDE_LEN};
+pub use fds::{DISK_BYTE_CYCLES, FDS_SIDE_LEN, Fds, FdsDisk, FdsTraceRec, parse_fds};
 pub use gxrom::GxRom;
-pub use header::{parse_header, serialize_header, Header};
+pub use header::{Header, parse_header, serialize_header};
 pub use irem_g101::IremG101;
 pub use irem_h3001::IremH3001;
-pub use jaleco87::Jaleco87;
 pub use jaleco_ss88006::JalecoSs88006;
+pub use jaleco87::Jaleco87;
 pub use konami_vs::KonamiVs;
-pub use m78::{M78Variant, M78};
+pub use m78::{M78, M78Variant};
 pub use mapper::{
-    mirroring_name, BgSplitState, ExAttribute, Mapper, MapperCaps, MapperDebugInfo, MapperError,
-    MapperFrameEvents,
+    BgSplitState, ExAttribute, Mapper, MapperCaps, MapperDebugInfo, MapperError, MapperFrameEvents,
+    mirroring_name,
 };
 pub use mmc1::Mmc1;
 pub use mmc3::{Mmc3, Mmc3Revision};
@@ -99,16 +99,16 @@ pub use mmc5::Mmc5;
 pub use namco118::{Namco118, Namco118Board};
 pub use namco175::{Namco175, Namco175Board};
 pub use nrom::Nrom;
-pub use nsf::{is_nsf, parse_nsf, Nsf, NsfMapper};
+pub use nsf::{Nsf, NsfMapper, is_nsf, parse_nsf};
 pub use rambo1::Rambo1;
-pub use sprint2::{Camerica, ColorDreams, Cprom, M34Variant, Mmc2, Mmc4, Vrc1, M34};
+pub use sprint2::{Camerica, ColorDreams, Cprom, M34, M34Variant, Mmc2, Mmc4, Vrc1};
 pub use sprint3::{Fme7, Namco163, Vrc2, Vrc4, Vrc6, Vrc7};
 pub use sprint5::{
-    Bitcorp38, Bxrom241, Caltron41, Camerica232, Cne240, Jaleco140, Jaleco86, Nina006M113, Nina0379,
+    Bitcorp38, Bxrom241, Caltron41, Camerica232, Cne240, Jaleco86, Jaleco140, Nina006M113, Nina0379,
 };
 pub use sprint6::{
     Bandai96, Irem77, Irem97, Jaleco72, Jaleco92, Multicart15, Multicart61, Multicart62, Sachen133,
-    Sachen145, Sachen146, Subor39, Txc132, Txc36,
+    Sachen145, Sachen146, Subor39, Txc36, Txc132,
 };
 pub use sprint7::{
     CnRom185, Multicart200, Multicart201, Multicart202, Multicart203, Multicart212, Multicart213,
@@ -123,7 +123,7 @@ pub use taito_tc0190::TaitoTc0190;
 pub use taito_tc0690::TaitoTc0690;
 pub use taito_x1_005::TaitoX1005;
 pub use taito_x1_017::TaitoX1017;
-pub use tier::{mapper_tier, MapperTier};
+pub use tier::{MapperTier, mapper_tier};
 pub use tqrom::Tqrom;
 pub use txsrom::TxSrom;
 pub use uxrom::UxRom;

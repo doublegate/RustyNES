@@ -23,7 +23,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use common::external::external_rom_path;
-use rustynes_core::rustynes_ppu::{nes_color_to_rgba, palette_color_to_rgba, PpuPalette};
+use rustynes_core::rustynes_ppu::{PpuPalette, nes_color_to_rgba, palette_color_to_rgba};
 use rustynes_core::{Buttons, Nes};
 
 /// The full RGBA set the composite 2C02 can emit across all 64 colour

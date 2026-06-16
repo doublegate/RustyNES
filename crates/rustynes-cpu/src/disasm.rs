@@ -90,7 +90,7 @@ const fn build_opcode_table() -> [(&'static str, AddrMode); 256] {
     // Macro-free, all-const init — verbose but cheap.
     use AddrMode::*;
     macro_rules! set {
-        ($op:expr, $m:expr, $mode:expr) => {
+        ($op:expr_2021, $m:expr_2021, $mode:expr_2021) => {
             t[$op as usize] = ($m, $mode);
         };
     }
