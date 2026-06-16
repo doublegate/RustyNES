@@ -1,13 +1,25 @@
 # RustyNES — Project Status Matrix
 
-**Current release: v1.1.0 — the first feature release** on the cycle-accurate
-v1.0.0 production core. A NES/Famicom emulator with the Mesen2 / higan / ares
-accuracy bar, shipped as a polished desktop application. **AccuracyCoin 100.00%
-(139/139)**, the 60-ROM `external_real_games` + 52-entry `external_extended`
-oracles byte-identical, nestest 0-diff. v1.1.0 adds visual filters, input &
-peripherals, debugger devtools, an NSF/NSFe player + 5-band EQ, and the flagship
-Lua scripting engine — all additive (the determinism contract holds). The v1.0.0
-core baseline:
+**Current release: v1.2.0 "Curator" — the second feature release** on the
+cycle-accurate v1.0.0 production core. A NES/Famicom emulator with the Mesen2 /
+higan / ares accuracy bar, shipped as a polished desktop application.
+**AccuracyCoin 100.00% (139/139)**, the 60-ROM `external_real_games` + 52-entry
+`external_extended` oracles byte-identical, nestest 0-diff. **v1.2.0 "Curator"**
+is a broad library / compatibility / reach release on top of v1.1.0 "Scriptable":
+mapper coverage rises 51 → **87 families** behind a CI accuracy-tiering honesty
+gate (Core / Curated / BestEffort, ADR 0011); `.zip` loading + `.ips`/`.ups`/`.bps`
+soft-patching; a per-game DB + in-app ROM-Database editor; live NTSC knobs + a
+composable shader stack + CRT preset bank (ADR 0013) + a default-off HD-pack loader;
+Family BASIC keyboard / SNES mouse / Arkanoid-both-ports / Game Genie code DB; Lua
+`onNmi`/`onIrq`/`setInput`; menu-bar contextual enable/disable, remappable shortcuts,
+and Font Awesome icons; web touch controls + Power Pad + an experimental piccolo wasm-Lua
+backend (ADR 0012); a turn-key netplay `deploy/` bundle; and a manual/release-only PGO
+CI promotion gate. **Every addition is off-by-default or additive — the shipped /
+native / `no_std` / wasm builds stay byte-identical and AccuracyCoin holds 100%.** The
+SMB3 World 1-1 sprite flicker (a PPU OAM-row-corruption model bug) is fixed and Mapper
+89 now models its bus conflict. (v1.1.0 added visual filters, input & peripherals,
+debugger devtools, an NSF/NSFe player + 5-band EQ, and the flagship Lua engine.) The
+v1.0.0 core baseline:
 
 - **Cycle-accurate core** — PPU-master-clock lockstep scheduling at dot
   resolution, the unified per-cycle DMA engine, region-exact CPU:PPU (3:1
@@ -52,8 +64,8 @@ both-wasm all clean. See `CHANGELOG.md` `[1.0.0]`.
 > line") as historical anchors — they document *how* the technology was built,
 > not RustyNES release numbers. The per-version notes under
 > `docs/release-notes/` are retained as that engine-lineage history; the
-> current RustyNES release is **v1.1.0** (the first feature release on the
-> v1.0.0 production core).
+> current RustyNES release is **v1.2.0 "Curator"** (the second feature release on
+> the v1.0.0 production core; v1.1.0 "Scriptable" preceded it).
 
 ---
 
@@ -234,7 +246,7 @@ One validated configuration:
 
 ---
 
-**RustyNES version of record:** **v1.1.0** (the first feature release on the v1.0.0 production cut). The
+**RustyNES version of record:** **v1.2.0 "Curator"** (the second feature release on the v1.0.0 production cut; v1.1.0 "Scriptable" preceded it). The
 milestone paragraphs that follow are engine-lineage history — they describe
 increments of the internal engine line (the "niceties", "frontend-polish",
 "TAS", "WebAssembly" etc. milestones) that together produced the v1.0.0

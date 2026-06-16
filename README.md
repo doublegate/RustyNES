@@ -10,7 +10,7 @@
 
 [![Build Status](https://github.com/doublegate/RustyNES/workflows/CI/badge.svg)](https://github.com/doublegate/RustyNES/actions)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
-[![Version](https://img.shields.io/badge/version-v1.1.0-blue.svg)](https://github.com/doublegate/RustyNES/releases)
+[![Version](https://img.shields.io/badge/version-v1.2.0-blue.svg)](https://github.com/doublegate/RustyNES/releases)
 [![Rust: 1.86](https://img.shields.io/badge/rust-1.86-orange.svg)](rust-toolchain.toml)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web-lightgrey.svg)](#platform-support)
 [![AccuracyCoin](<https://img.shields.io/badge/AccuracyCoin-100%25%20(139%2F139)-brightgreen.svg>)](#compatibility-and-accuracy)
@@ -68,7 +68,7 @@ platform for NES emulation.
 | Feature                | Description                                                                                  |
 | ---------------------- | -------------------------------------------------------------------------------------------- |
 | **Cycle-Accurate**     | Master-clock-precise CPU / PPU / APU — AccuracyCoin 100% (139/139), nestest 0-diff           |
-| **51 Mapper Families** | NROM through MMC5, the full VRC line, Sunsoft FME-7, Namco 163, Taito, and Vs.-System boards |
+| **87 Mapper Families** | NROM through MMC5, the full VRC line, Sunsoft FME-7, Namco 163, Taito, and Vs.-System boards — classified Core / Curated / BestEffort behind a CI accuracy-honesty gate *(87 as of v1.2.0)* |
 | **Famicom Disk System**| `.fds` games with real-BIOS boot, writable disks, side-swapping, and 2C33 wavetable audio    |
 | **Vs. / PlayChoice-10**| Arcade ROMs in true 2C03 / 2C04 / 2C05 RGB with per-game DIP presets                          |
 | **RetroAchievements**  | Native `rcheevos` integration: achievements, leaderboards, rich presence, hardcore mode      |
@@ -77,6 +77,8 @@ platform for NES emulation.
 | **Run-Ahead**          | Latency reduction that hides a game's internal input lag                                      |
 | **Video Filters** *(v1.1.0)* | Full NES_NTSC composite / S-video, a CRT / scanline shader pass, and custom `.pal` palettes |
 | **Lua Scripting** *(v1.1.0)* | Sandboxed Lua 5.4 — memory/state access, frame & access callbacks, HUD overlay (opt-in)  |
+| **ROM Library** *(v1.2.0)* | `.zip` loading + automatic `.ips`/`.ups`/`.bps` soft-patching + a per-game DB and in-app ROM-Database editor |
+| **Shaders & HD Packs** *(v1.2.0)* | Live NTSC knobs, a composable shader stack + CRT preset bank, and a (default-off) Mesen-style HD-pack loader |
 | **Pure Rust**          | `winit` + `wgpu` + `cpal` + `egui` frontend; safe `no_std + alloc` chip stack                 |
 
 <p align="center">
@@ -470,11 +472,12 @@ engine-development audit logs are kept locally, outside the public repo.)
 
 ## Version History
 
-The current release is **v1.1.0**, the first feature release on top of the
+The current release is **v1.2.0 "Curator"**, the second feature release on top of the
 cycle-accurate v1.0.0 production core. The road there:
 
 | Version    | Highlights                                                                                  |
 | ---------- | ------------------------------------------------------------------------------------------- |
+| **v1.2.0** | "Curator" — library breadth + compatibility + reach: mapper coverage 51 → **87 families** (accuracy-tiering honesty gate), `.zip` loading + `.ips`/`.ups`/`.bps` soft-patching, a per-game DB + in-app ROM-Database editor, live NTSC knobs + a composable shader stack + CRT preset bank + a (default-off) HD-pack loader, new peripherals (Family BASIC keyboard, SNES mouse, Arkanoid-both-ports, Game Genie code DB), Lua `onNmi`/`onIrq`/`setInput`, menu-bar polish (contextual enable/disable + remappable shortcuts + Font Awesome icons), web touch controls + Power Pad + experimental wasm Lua, a turn-key netplay `deploy/` bundle, and a PGO CI promotion gate. AccuracyCoin 100% held |
 | **v1.1.0** | First feature release — visual filters (full NES_NTSC + CRT/scanline shader + `.pal` loading), input & peripherals (Power Pad, turbo/autofire, input-display overlay, per-game mirroring database), debugger devtools (breakpoints, trace logger, event viewer), audio (NSF/NSFe player, 5-band EQ), and the flagship **Lua scripting** engine |
 | **v1.0.0** | First stable release — the production UX (menu bar, themes, tabbed settings, debugger) and documentation synthesis on top of the cycle-accurate engine |
 | v0.9.7     | Performance pass: display-sync pacing, lock-free audio + dynamic rate control, run-ahead, a dedicated emulation thread, core micro-opts |
@@ -488,16 +491,20 @@ cycle-accurate v1.0.0 production core. The road there:
 
 > Note: **v1.0.0** was RustyNES's first stable release. The original RustyNES line
 > (v0.8.x) used an earlier, less-accurate emulation core; v1.0.0 replaced that core
-> wholesale with the cycle-accurate engine described above, and **v1.1.0** adds the
-> feature set above on top of it. See [`CHANGELOG.md`](CHANGELOG.md) for full
+> wholesale with the cycle-accurate engine described above; **v1.1.0** added the
+> scripting/filters/peripherals feature set; and **v1.2.0 "Curator"** adds the library /
+> compatibility / reach set above. See [`CHANGELOG.md`](CHANGELOG.md) for full
 > per-version detail.
 
 ### Roadmap
 
-Possible future directions include mobile (iOS / Android) frontends, additional
-long-tail mappers, and a browser/wasm build of the Lua scripting surface (the
-native engine shipped in v1.1.0). None of these are shipped yet; see
-[`docs/STATUS.md`](docs/STATUS.md) for the authoritative current state.
+The next release, **v1.3.0 "Bedrock"**, is in development: toolchain modernization
+(Rust edition 2024 + the egui/wgpu dependency tier), a frame-pacing fix, GeraNES-class
+developer tooling (PPU event viewer, symbol-file loading, memory compare), an aggressive
+mapper-breadth sweep plus Vs. DualSystem, HD-pack conditions, and casual-mode browser
+RetroAchievements. Further-out directions include mobile (iOS / Android) frontends. None
+of v1.3.0 is shipped yet; see [`docs/STATUS.md`](docs/STATUS.md) for the authoritative
+current state.
 
 ---
 

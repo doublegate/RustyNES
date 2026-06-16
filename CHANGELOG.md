@@ -15,10 +15,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Work toward **v1.2.0 "Curator"** (beta.1-3, Workstreams A + B + C + D + E + F + G + H).
-See `docs/adr/0011-mapper-tiering.md`,
-`docs/adr/0012-wasm-lua-piccolo-backend.md`,
-`docs/adr/0013-composable-shader-stack.md`, and the v1.2.0 plan.
+Work toward **v1.3.0 "Bedrock"** (beta.1-4 / rc): toolchain modernization (Rust edition
+2024, MSRV → latest stable, and the egui 0.34 / wgpu 26 / rfd 0.17 dependency tier), the
+frame-pacing measurement/judder fix, GeraNES-class developer tooling (PPU event viewer,
+symbol-file loading, memory compare, trace annotation), mapper breadth (an aggressive
+BestEffort sweep 87 → 100+ and Vs. DualSystem), HD-pack conditions + background-region
+replacement, niche peripherals + netplay desync diagnostics, and casual-mode browser
+RetroAchievements. The hard-tier accuracy residuals were **re-baselined**:
+`cpu_interrupts_v2` is now strict-pass (closed by the master clock); the remaining three
+(`mmc3_test_2/4` #3, two `apu_reset` cases) share one fractional-master-clock root cause
+and stay deferred as a future v2.0-scale item (see `docs/STATUS.md`). See the v1.3.0 plan.
+
+## [1.2.0] - 2026-06-15 - "Curator" (Feature Release)
+
+**v1.2.0 "Curator" is a broad, additive feature release** on the cycle-accurate v1.0.0
+core (shipped through v1.1.0 "Scriptable"). Theme: **library breadth + compatibility +
+reach** — getting more games to load, run correctly, and be playable anywhere, plus the
+polish to curate them. Mapper coverage rises 51 → **87 families** behind a CI-enforced
+accuracy-tiering honesty gate; ROMs now load from `.zip` and auto-apply
+`.ips` / `.ups` / `.bps` soft-patches; a per-game database + in-app ROM-Database editor
+correct region / mapper / mirroring; the video stack gains live NTSC knobs, a composable
+shader stack + CRT preset bank, and a (default-off) HD-pack loader; new peripherals
+(Family BASIC keyboard, SNES mouse, Arkanoid-both-ports, Game Genie code DB) join the
+input layer; the Lua engine gains `onNmi` / `onIrq` / `setInput`; the menu bar gets
+contextual enable/disable, a remappable shortcut registry, and Font Awesome icons; the
+web build gains on-screen touch controls + a Power Pad feed + an experimental piccolo
+wasm-Lua backend; netplay ships a turn-key `deploy/` bundle; and a manual/release-only
+PGO CI promotion gate lands. **Every addition is off-by-default or additive, so the
+shipped / native / `no_std` / wasm builds stay byte-identical and AccuracyCoin holds
+100% (139/139), `nestest` 0-diff.** The SMB3 World 1-1 sprite flicker (a PPU
+OAM-row-corruption model bug) is fixed via a faithful TriCNES eval-pointer port, and
+Mapper 89 now models its bus conflict. ADRs **0011** (mapper tiering), **0012** (wasm-Lua
+piccolo backend), **0013** (composable shader stack).
 
 ### Added
 
