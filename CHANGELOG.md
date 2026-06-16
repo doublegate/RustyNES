@@ -28,6 +28,15 @@ and stay deferred as a future v2.0-scale item (see `docs/STATUS.md`). See the v1
 
 ### Added
 
+- **14 new mapper families (87 → 101 coverage)** (v1.3.0 Workstream D1 mapper sweep,
+  `sprint8.rs`): mappers 29 (Sealie RET-CUFROM), 31 (INL NSF-style / "2A03 Puritans"),
+  58 (multicart), 60 (reset-based 4-in-1 multicart), 94 (UN1ROM), 101 (Jaleco JF-10 CHR
+  latch), 107 (Magic Dragon), 111 (GTROM / Cheapocabra), 143 (Sachen TCA01), 177 / 179
+  (Hengedianzi + variant), 218 (Magic Floor), 231 (20-in-1 multicart), and 234 (Maxi 15 /
+  BNROM-like multicart). All are Tier-2 **BestEffort** discrete / homebrew / multicart
+  boards ported from the GeraNES reference — no IRQ, no expansion audio, no per-cycle / A12
+  hook (`MapperCaps::NONE`) — register-decode + save-state unit-tested only and explicitly
+  **not** accuracy-gated (the AccuracyCoin / commercial-ROM oracle never references them).
 - **Memory Compare (cheat-hunt memory search)** debugger panel (v1.3.0 Workstream C, C3).
   A classic emulator memory search over the 2 KB CPU work RAM (`$0000-$07FF`): snapshot a
   baseline, then iteratively narrow a candidate set by how each byte moved since the last

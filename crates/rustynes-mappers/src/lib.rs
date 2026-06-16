@@ -58,6 +58,7 @@ mod sprint3;
 mod sprint5;
 mod sprint6;
 mod sprint7;
+mod sprint8;
 mod sunsoft1;
 mod sunsoft2;
 mod sunsoft3;
@@ -113,6 +114,10 @@ pub use sprint6::{
 pub use sprint7::{
     CnRom185, Multicart200, Multicart201, Multicart202, Multicart203, Multicart212, Multicart213,
     Multicart214, Nichibutsu180, Sachen148, Sachen149, Sachen150, Sachen3018M147,
+};
+pub use sprint8::{
+    Cufrom29, Gtrom111, Hengedianzi177, Hengedianzi179, Inl31, Jaleco101, MagicDragon107,
+    MagicFloor218, Maxi15M234, Multicart58, Multicart60, Multicart231, SachenTca01M143, Un1rom94,
 };
 pub use sunsoft1::Sunsoft1;
 pub use sunsoft2::Sunsoft2;
@@ -857,6 +862,67 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
         ),
         214 => Box::new(
             Multicart214::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        // --- v1.3.0 "Bedrock" Workstream D1, best-effort (Tier-2) sweep
+        // (sprint8). Reference-ported discrete / multicart boards,
+        // register-decode unit-tested only, NOT accuracy-gated. See `tier.rs`
+        // (`MapperTier::BestEffort`) + `docs/adr/0011-mapper-tiering.md`.
+        29 => Box::new(
+            Cufrom29::new(prg_rom, &chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        31 => Box::new(
+            Inl31::new(prg_rom, &chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        58 => Box::new(
+            Multicart58::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        60 => Box::new(
+            Multicart60::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        94 => Box::new(
+            Un1rom94::new(prg_rom, &chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        101 => Box::new(
+            Jaleco101::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        107 => Box::new(
+            MagicDragon107::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        // Mapper 111: 4-screen CHR-RAM; no header CHR / mirroring arg.
+        111 => Box::new(
+            Gtrom111::new(prg_rom, &chr_rom).map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        143 => Box::new(
+            SachenTca01M143::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        // Mappers 177 / 179: CHR-RAM; mirroring is register-controlled.
+        177 => Box::new(
+            Hengedianzi177::new(prg_rom, &chr_rom)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        179 => Box::new(
+            Hengedianzi179::new(prg_rom, &chr_rom)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        218 => Box::new(
+            MagicFloor218::new(prg_rom, &chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        231 => Box::new(
+            Multicart231::new(prg_rom, &chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        234 => Box::new(
+            Maxi15M234::new(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         other => return Err(RomError::UnsupportedMapper(other)),
