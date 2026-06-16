@@ -141,7 +141,9 @@ pub mod glyph {
 /// legible — there is no crash path.
 #[must_use]
 pub fn label(icon: char, text: &str) -> String {
-    let mut s = String::with_capacity(text.len() + 2);
+    // FA glyphs are multi-byte in UTF-8 (e.g. U+F15B = 3 bytes); size for the
+    // glyph's real byte length + the separator space (gemini, PR #76).
+    let mut s = String::with_capacity(text.len() + icon.len_utf8() + 1);
     s.push(icon);
     s.push(' ');
     s.push_str(text);

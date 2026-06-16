@@ -207,7 +207,14 @@ impl PiccoloBackend {
                     let snap = snapshot.borrow();
                     let out = Table::new(&ctx);
                     for i in 0..len {
-                        let val = snap.mem.get(mask_addr(addr + i)).copied().unwrap_or(0);
+                        // `wrapping_add` so a near-i64::MAX `addr` can't panic on
+                        // overflow; `mask_addr` folds the result into 0..=0xFFFF
+                        // anyway (gemini, PR #76).
+                        let val = snap
+                            .mem
+                            .get(mask_addr(addr.wrapping_add(i)))
+                            .copied()
+                            .unwrap_or(0);
                         // 1-based, matching the mlua backend's array convention.
                         out.set(ctx, i + 1, i64::from(val)).ok();
                     }
@@ -421,11 +428,16 @@ impl PiccoloBackend {
     /// Refresh the per-frame readable-state snapshot from the live `Nes`.
     fn snapshot_state(&self, nes: &mut Nes) {
         let mut snap = self.snapshot.borrow_mut();
-        snap.mem.clear();
-        snap.mem.reserve(0x1_0000);
-        for addr in 0u32..=0xFFFF {
+        // Persistent 64 KiB buffer overwritten in place (no per-frame clear/grow
+        // churn — gemini, PR #76); the 65536 `peek`s are the inherent cost.
+        if snap.mem.len() != 0x1_0000 {
+            snap.mem.resize(0x1_0000, 0);
+        }
+        for (addr, slot) in snap.mem.iter_mut().enumerate() {
             #[allow(clippy::cast_possible_truncation)]
-            snap.mem.push(nes.peek(addr as u16));
+            {
+                *slot = nes.peek(addr as u16);
+            }
         }
         let c = nes.cpu();
         snap.cpu = [
