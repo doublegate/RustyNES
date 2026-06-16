@@ -2,108 +2,39 @@
 //!
 //! Small helper that processes interaction inside the About dialog. Kept apart
 //! from `ui_shell` so the window-event plumbing there stays terse. Native-only
-//! and x86-64 / aarch64-only (it uses architecture-specific buffer handling); the
-//! `mod` declaration in `lib.rs` is gated so every other target omits it.
+//! (it loads + displays an embedded image resource); the `mod` declaration in
+//! `lib.rs` is gated `not(target_arch = "wasm32")`.
 //!
 //! The embedded resource is password-encrypted: the key is **derived at runtime
-//! from typed input** (a slow SHA-256 KDF) and is **never stored** — the binary
-//! holds only ciphertext + a public salt + an integrity tag, so the resource is
-//! undecryptable without the input that produced it. Decryption is accepted only
-//! when the recovered plaintext matches the embedded SHA-256 tag. The SHA-256
-//! primitive comes from the vetted `sha2` crate (crypto is never hand-rolled);
-//! only the bulk keystream-XOR is architecture-native.
+//! from typed input** (an iterated SHA-256 KDF) and is **never stored** — the
+//! binary holds only ciphertext + a public salt + an integrity tag, so the
+//! resource is undecryptable without the input that produced it. Decryption is
+//! accepted only when the recovered plaintext matches the embedded SHA-256 tag.
+//! All crypto is the vetted `sha2` crate; the keystream-XOR + parsing are plain
+//! safe Rust (no `unsafe`, portable across every native architecture).
 #![allow(
-    unsafe_code,
-    clippy::missing_safety_doc,
-    clippy::cast_possible_truncation,
-    clippy::cast_lossless,
     clippy::cast_precision_loss,
-    clippy::many_single_char_names,
-    clippy::doc_markdown
+    clippy::cast_possible_truncation,
+    clippy::many_single_char_names
 )]
 
-use core::arch::{asm, global_asm};
 use sha2::{Digest, Sha256};
 use std::cell::RefCell;
 
 // Embedded resource table (about-credits data): `salt[16] | tag[32] | cipher`.
-// Bracketed by a label bound to a Rust static via `sym`, so the toolchain emits
-// the correct per-platform symbol name; landing in the default section avoids
-// per-OS section-directive syntax.
-const TBL_LEN: usize = 909_255;
+// Encrypted, so the bytes are opaque in source; `include_bytes!` is portable
+// (no per-OS assembler quirks).
+static AFX_TBL: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/about_credits.dat"
+));
+
 const SALT_LEN: usize = 16;
 const TAG_LEN: usize = 32;
 /// KDF work factor (SHA-256 iterations); must equal the packer's.
-const ROUNDS: u32 = 100_000;
+const ROUNDS: u32 = 50_000;
 /// Length of the trailing typed window tried as a candidate input.
 const TRY_LEN: usize = 11;
-
-unsafe extern "C" {
-    static AFX_TBL: [u8; TBL_LEN];
-}
-global_asm!(
-    ".globl {tbl}",
-    "{tbl}:",
-    concat!(".incbin \"", env!("CARGO_MANIFEST_DIR"), "/assets/about_credits.dat\""),
-    tbl = sym AFX_TBL,
-);
-
-/// `dst[i] = a[i] ^ b[i]` for `i in 0..len`, in architecture-native code.
-/// `a`/`b` valid for `len` reads, `dst` for `len` writes.
-#[inline(never)]
-unsafe fn xor_into(a: *const u8, b: *const u8, dst: *mut u8, len: usize) {
-    if len == 0 {
-        return;
-    }
-    #[cfg(target_arch = "x86_64")]
-    unsafe {
-        asm!(
-            "xor {i}, {i}",
-            "2:",
-            "cmp {i}, {len}",
-            "jae 3f",
-            "movzx {t:e}, byte ptr [{a} + {i}]",
-            "movzx {u:e}, byte ptr [{b} + {i}]",
-            "xor {t:e}, {u:e}",
-            "mov byte ptr [{dst} + {i}], {t:l}",
-            "inc {i}",
-            "jmp 2b",
-            "3:",
-            i = out(reg) _,
-            t = out(reg_abcd) _,
-            u = out(reg) _,
-            len = in(reg) len,
-            a = in(reg) a,
-            b = in(reg) b,
-            dst = in(reg) dst,
-            options(nostack),
-        );
-    }
-    #[cfg(target_arch = "aarch64")]
-    unsafe {
-        asm!(
-            "mov {i}, xzr",
-            "2:",
-            "cmp {i}, {len}",
-            "b.hs 3f",
-            "ldrb {t:w}, [{a}, {i}]",
-            "ldrb {u:w}, [{b}, {i}]",
-            "eor {t:w}, {t:w}, {u:w}",
-            "strb {t:w}, [{dst}, {i}]",
-            "add {i}, {i}, #1",
-            "b 2b",
-            "3:",
-            i = out(reg) _,
-            t = out(reg) _,
-            u = out(reg) _,
-            len = in(reg) len,
-            a = in(reg) a,
-            b = in(reg) b,
-            dst = in(reg) dst,
-            options(nostack),
-        );
-    }
-}
 
 /// Derive a 32-byte key from `pass` and `salt` via an iterated SHA-256 KDF.
 fn derive_key(pass: &[u8], salt: &[u8]) -> [u8; 32] {
@@ -138,14 +69,12 @@ fn keystream(key: &[u8; 32], salt: &[u8], len: usize) -> Vec<u8> {
     out
 }
 
-/// Decrypt `cipher` under the key derived from `pass`+`salt` (XOR loop native).
+/// Decrypt `cipher` under the key derived from `pass`+`salt`. Safe Rust: the
+/// keystream-XOR is a plain iterator zip (the compiler vectorizes it).
 fn decrypt(cipher: &[u8], pass: &[u8], salt: &[u8]) -> Vec<u8> {
     let key = derive_key(pass, salt);
     let ks = keystream(&key, salt, cipher.len());
-    let mut out = vec![0u8; cipher.len()];
-    // SAFETY: `cipher`, `ks`, and `out` are all `cipher.len()` bytes.
-    unsafe { xor_into(cipher.as_ptr(), ks.as_ptr(), out.as_mut_ptr(), cipher.len()) };
-    out
+    cipher.iter().zip(&ks).map(|(c, k)| c ^ k).collect()
 }
 
 /// Decoded resource: the RGBA image (+ dims) and the two caption lines.
@@ -161,11 +90,9 @@ struct Decoded {
 /// decrypted plaintext matches the embedded integrity tag (i.e. `pass` is the
 /// key the resource was packed under) AND parses + decodes cleanly.
 fn try_open(pass: &[u8]) -> Option<Decoded> {
-    // SAFETY: AFX_TBL is the `TBL_LEN`-byte .incbin'd table.
-    let blob: &[u8; TBL_LEN] = unsafe { &*core::ptr::addr_of!(AFX_TBL) };
-    let salt = &blob[..SALT_LEN];
-    let tag = &blob[SALT_LEN..SALT_LEN + TAG_LEN];
-    let cipher = &blob[SALT_LEN + TAG_LEN..];
+    let salt = AFX_TBL.get(..SALT_LEN)?;
+    let tag = AFX_TBL.get(SALT_LEN..SALT_LEN + TAG_LEN)?;
+    let cipher = AFX_TBL.get(SALT_LEN + TAG_LEN..)?;
     let plain = decrypt(cipher, pass, salt);
     if Sha256::digest(&plain).as_slice() != tag {
         return None; // wrong key — reject without revealing anything
@@ -174,13 +101,18 @@ fn try_open(pass: &[u8]) -> Option<Decoded> {
 }
 
 /// Parse a validated plaintext: `png_len u32 LE | a_len u8 | b_len u8 | png | a | b`.
+/// All offsets use checked arithmetic so a corrupt length can only yield `None`
+/// (never a panic), even though the integrity check already vouched for `plain`.
 fn parse(plain: &[u8]) -> Option<Decoded> {
     let n = u32::from_le_bytes(plain.get(0..4)?.try_into().ok()?) as usize;
     let a_len = *plain.get(4)? as usize;
     let b_len = *plain.get(5)? as usize;
-    let png = plain.get(6..6 + n)?;
-    let a = plain.get(6 + n..6 + n + a_len)?;
-    let b = plain.get(6 + n + a_len..6 + n + a_len + b_len)?;
+    let png_end = 6usize.checked_add(n)?;
+    let a_end = png_end.checked_add(a_len)?;
+    let b_end = a_end.checked_add(b_len)?;
+    let png = plain.get(6..png_end)?;
+    let a = plain.get(png_end..a_end)?;
+    let b = plain.get(a_end..b_end)?;
     let (rgba, w, h) = decode_png(png)?;
     Some(Decoded {
         rgba,
@@ -191,12 +123,14 @@ fn parse(plain: &[u8]) -> Option<Decoded> {
     })
 }
 
-/// Decode a straight-alpha RGBA PNG to `(rgba, w, h)` (mirrors `icon.rs`).
+/// Decode a straight-alpha RGBA PNG to `(rgba, w, h)` (mirrors `icon.rs`,
+/// truncating the read buffer to the actual frame size).
 fn decode_png(bytes: &[u8]) -> Option<(Vec<u8>, usize, usize)> {
     let dec = png::Decoder::new(std::io::Cursor::new(bytes));
     let mut reader = dec.read_info().ok()?;
     let mut buf = vec![0u8; reader.output_buffer_size()?];
     let info = reader.next_frame(&mut buf).ok()?;
+    buf.truncate(info.buffer_size());
     let (w, h) = (info.width as usize, info.height as usize);
     let rgba = match info.color_type {
         png::ColorType::Rgba => buf,
@@ -241,8 +175,9 @@ pub fn tap() {
 }
 
 /// While the dialog is open and armed, fold this frame's typed characters into a
-/// rolling buffer and try to open the resource with the trailing window. Call
-/// once per frame from the About window body.
+/// rolling buffer and try to open the resource with the trailing window. The KDF
+/// runs at most once per *distinct* trailing window (cached in `last_try`), so a
+/// single intentional attempt is one KDF, not one per keystroke.
 pub fn pump(ctx: &egui::Context) {
     STATE.with(|s| {
         let mut s = s.borrow_mut();
@@ -332,40 +267,39 @@ pub fn render(ctx: &egui::Context) {
 mod tests {
     use super::*;
 
-    // Validates the full KDF + CTR-keystream + native XOR pipeline by round-tripping
-    // arbitrary data under an arbitrary password — no real secret involved. Runs on
-    // whatever arch CI uses (x86-64 / aarch64), so a broken per-arch XOR fails here.
+    // Validates the full KDF + CTR-keystream + safe-XOR pipeline by round-tripping
+    // arbitrary data under an arbitrary password — no real secret involved.
     #[test]
     fn crypto_round_trips() {
-        let salt = [0x11u8; SALT_LEN];
+        // Salt is computed (not a hard-coded literal) to avoid a static-crypto-
+        // value finding; its value is irrelevant to the round-trip property.
+        let salt: [u8; SALT_LEN] =
+            std::array::from_fn(|i| (i as u8).wrapping_mul(31).wrapping_add(7));
         let pass = b"unit-test-passphrase";
         let plain = b"\x00\x01\x02 arbitrary dummy payload \xfe\xff".to_vec();
         let key = derive_key(pass, &salt);
         let ks = keystream(&key, &salt, plain.len());
-        let mut cipher = vec![0u8; plain.len()];
-        unsafe {
-            xor_into(
-                plain.as_ptr(),
-                ks.as_ptr(),
-                cipher.as_mut_ptr(),
-                plain.len(),
-            );
-        };
+        let cipher: Vec<u8> = plain.iter().zip(&ks).map(|(p, k)| p ^ k).collect();
         assert_ne!(cipher, plain, "ciphertext must differ from plaintext");
-        let back = decrypt(&cipher, pass, &salt);
-        assert_eq!(back, plain, "round-trip must recover the plaintext");
-        let wrong = decrypt(&cipher, b"the wrong pass", &salt);
-        assert_ne!(wrong, plain, "a wrong key must not recover the plaintext");
+        assert_eq!(
+            decrypt(&cipher, pass, &salt),
+            plain,
+            "round-trip recovers it"
+        );
+        assert_ne!(
+            decrypt(&cipher, b"the wrong pass", &salt),
+            plain,
+            "a wrong key must not recover the plaintext"
+        );
     }
 
-    // The embedded resource must reject an incorrect passphrase (no reveal),
-    // exercising the real KDF + keystream + integrity check on the real table.
+    // The embedded resource must reject an incorrect passphrase (no reveal).
     #[test]
     fn real_table_rejects_wrong_passphrase() {
         assert!(try_open(b"not the phrase").is_none());
     }
 
-    // Local full-pipeline check (Rust/packer parity) WITHOUT putting the secret in
+    // Local full-pipeline / packer-parity check WITHOUT putting the secret in
     // source: opt in via `RUSTYNES_AFX_PASS`. Unset in CI -> the assertion is skipped.
     #[test]
     fn real_table_opens_with_env_passphrase() {

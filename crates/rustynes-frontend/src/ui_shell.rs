@@ -336,10 +336,7 @@ impl UiShell {
         self.welcome_modal(&ctx, config);
         about_window(&ctx, &mut self.show_about);
         shortcuts_window(&ctx, &mut self.show_shortcuts);
-        #[cfg(all(
-            not(target_arch = "wasm32"),
-            any(target_arch = "x86_64", target_arch = "aarch64")
-        ))]
+        #[cfg(not(target_arch = "wasm32"))]
         crate::about_fx::render(&ctx);
 
         out
@@ -1347,7 +1344,6 @@ fn about_window(ctx: &egui::Context, open: &mut bool) {
                             .sense(egui::Sense::click()),
                     );
                     // Lower-right region of the emblem is an interaction target.
-                    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                     if resp.clicked()
                         && let Some(p) = resp.interact_pointer_pos()
                     {
@@ -1375,10 +1371,7 @@ fn about_window(ctx: &egui::Context, open: &mut bool) {
                 ui.add_space(4.0);
             });
         });
-    #[cfg(all(
-        not(target_arch = "wasm32"),
-        any(target_arch = "x86_64", target_arch = "aarch64")
-    ))]
+    #[cfg(not(target_arch = "wasm32"))]
     crate::about_fx::pump(ctx);
 }
 
