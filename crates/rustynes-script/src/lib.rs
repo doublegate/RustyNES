@@ -17,11 +17,11 @@
 //! compiled in, selected by a cargo feature (a `cfg`, not a runtime `dyn` —
 //! piccolo's `gc-arena` `'gc` lifetime makes a trait object impractical):
 //!
-//! - **`mlua-backend` (default):** [`mlua`] (vendored **Lua 5.4**, C), the
+//! - **`mlua-backend` (default):** `mlua` (vendored **Lua 5.4**, C), the
 //!   production path. Native-only. Behavior is unchanged from v1.1.0 and is the
 //!   byte-identical reference the determinism contract is defined against. This
 //!   is what the frontend's `scripting` feature uses.
-//! - **`script-wasm` (EXPERIMENTAL, off by default):** [`piccolo`], a pure-Rust
+//! - **`script-wasm` (EXPERIMENTAL, off by default):** `piccolo`, a pure-Rust
 //!   Lua VM, so scripting can compile to `wasm32-unknown-unknown` with no C
 //!   toolchain. It is **explicitly not byte-parity** with mlua (a different VM,
 //!   with deferred writes and snapshot-based reads). That is acceptable because
