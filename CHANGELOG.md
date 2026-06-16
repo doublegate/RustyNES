@@ -119,6 +119,14 @@ exercises the affected paths).
 
 ### Fixed
 
+- **BestEffort mapper boot regressions (`cpu_read_unmapped` inversion).** Mappers
+  132 (TXC 22211) and 143 (Sachen TCA01) used a `!(register-range).contains(addr)`
+  open-bus override that wrongly marked the entire `$8000-$FFFF` PRG-ROM window as
+  open bus — so the reset vector and program code read back `$00` and the board
+  never booted. Fixed to flag only the genuine open-bus holes, keeping PRG-ROM
+  mapped. Surfaced by boot-smoking the new Workstream G mappers (225/246 had the
+  same bug) against real unlicensed dumps; see `screenshots/besteffort/README.md`
+  for the full sweep + per-mapper decode corrections (m225/m226/m233/m242/m246).
 - **Triangle ultrasonic silence.** When the triangle timer period drops below 2
   (frequency above ~55.9 kHz) the sequencer now freezes instead of clocking at
   ultrasonic speed, matching hardware (and the common-emulator convention); the
