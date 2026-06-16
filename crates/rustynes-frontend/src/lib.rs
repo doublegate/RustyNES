@@ -17,6 +17,12 @@
 
 pub mod app;
 pub mod audio;
+// About-dialog input helper (native x86-64 / aarch64 only).
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+mod about_fx;
 pub mod cheats;
 pub mod config;
 pub mod debugger;
