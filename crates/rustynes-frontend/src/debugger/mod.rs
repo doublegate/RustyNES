@@ -1150,10 +1150,14 @@ impl DebuggerOverlay {
                     use crate::ui_shell::SettingsTab;
                     match tab {
                         SettingsTab::Video => settings_panel::video_section(ui, settings_ui, cfg),
+                        // v1.3.0 — the shader stack is its own tab now.
+                        SettingsTab::Shaders => {
+                            settings_panel::shader_stack_section(ui, settings_ui, cfg);
+                        }
                         SettingsTab::Audio => settings_panel::audio_section(ui, settings_ui, cfg),
                         // The Input tab is handled by `input_body`; treat any
-                        // other tab as Advanced for exhaustiveness.
-                        SettingsTab::Advanced | SettingsTab::Input => {
+                        // other tab as Emulation for exhaustiveness.
+                        SettingsTab::Emulation | SettingsTab::Input => {
                             settings_panel::advanced_section(ui, settings_ui, cfg);
                         }
                     }

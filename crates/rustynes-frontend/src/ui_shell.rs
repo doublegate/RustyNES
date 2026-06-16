@@ -94,15 +94,19 @@ impl StatusMessage {
 /// Which tab the settings window currently shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SettingsTab {
-    /// Video / display settings.
+    /// Video / display settings (theme, aspect, NTSC/CRT filter, palette).
     #[default]
     Video,
+    /// v1.3.0 — the composable post-process shader stack + preset bank
+    /// (split out of the Video tab into its own pane).
+    Shaders,
     /// Audio settings.
     Audio,
     /// Input rebinding.
     Input,
-    /// Advanced / debug settings.
-    Advanced,
+    /// v1.3.0 — emulation behaviour: run-ahead latency + rewind
+    /// (formerly the "Advanced" tab).
+    Emulation,
 }
 
 /// An action the user triggered in the shell that needs `&mut App`. Returned
@@ -385,6 +389,21 @@ impl UiShell {
         // (not netplay-locked, not replay-locked). Used to gate the
         // state-mutating items uniformly.
         let rom_interactive = rom && !replay_locked;
+        // egui-0.34 menu close model (BUG-3 investigation). The new `MenuBar`
+        // builds each top item as a `MenuButton` that inherits the bar's
+        // `MenuConfig::close_behavior`, which defaults to
+        // `PopupCloseBehavior::CloseOnClick` — a click ANYWHERE (inside or
+        // outside the popup) closes the open top menu, *gated* by egui's
+        // `is_deepest_open_sub_menu` / `MenuState` tracking: while egui believes
+        // a submenu is still open, the top-level close is deferred to that
+        // submenu. We deliberately keep every item a DIRECT child of its menu
+        // (never wrapped in `add_enabled_ui`, whose nested UI scope perturbs that
+        // tracking — the long-standing BUG-1 caveat) and rely on egui's built-in
+        // CloseOnClick + Escape handling rather than a bespoke close path, so we
+        // don't regress item selection. The "menu lingers until several clicks"
+        // report (BUG-3) needs an on-device repro (which menu, click-vs-hover,
+        // what finally dismisses it) to pin the exact `MenuState` trigger; we do
+        // NOT hack the interaction blind here.
         egui::Panel::top("shell_menu_bar").show_inside(root_ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 // ----- File -----
@@ -461,119 +480,111 @@ impl UiShell {
                         ui.close();
                     }
 
-                    // FDS disk controls (only meaningful for FDS games). (H1)
-                    // Disk-swap mutates the running session — locked during a
-                    // replay (it would diverge the recorded timeline).
-                    if frame.disk_sides > 0 {
-                        ui.separator();
+                    ui.separator();
+
+                    // v1.3.0 menu reorg — all save-state actions grouped under a
+                    // single "Save States" submenu (Save/Load to the active slot,
+                    // the per-slot pickers, and the thumbnail-grid manager). The
+                    // FDS "Swap Disk Side" item moved to the Emulation menu.
+                    ui.menu_button(ic(glyph::FLOPPY_DISK, "Save States"), |ui| {
+                        // (H1) Save-state SAVE is allowed during playback (it just
+                        // snapshots) but not while RECORDING (the GeraNES rule:
+                        // saving mid-record is fine; loading is the dangerous one).
+                        // We keep SAVE enabled whenever a ROM is loaded.
                         if accel_enabled(
                             ui,
-                            !replay_locked,
-                            &ic(glyph::FLOPPY_DISK, "Swap Disk Side"),
-                            &keys.disk_swap,
+                            rom,
+                            &ic(glyph::FLOPPY_DISK, "Save State"),
+                            &keys.save_state,
                         )
                         .clicked()
                         {
-                            out.action = Some(MenuAction::CycleDiskSide);
+                            out.action = Some(MenuAction::SaveState);
                             ui.close();
                         }
-                    }
+                        // (H1) Load-state restores the timeline — forbidden while a
+                        // movie is recording (rewrites the recording) OR playing
+                        // back (desyncs playback). Mirrors GeraNES
+                        // `replayRecordingActive` / `replayInteractionLocked`.
+                        if accel_enabled(
+                            ui,
+                            rom_interactive,
+                            &ic(glyph::DOWNLOAD, "Load State"),
+                            &keys.load_state,
+                        )
+                        .clicked()
+                        {
+                            out.action = Some(MenuAction::LoadState);
+                            ui.close();
+                        }
+                        ui.separator();
+                        ui.menu_button(ic(glyph::FLOPPY_DISK, "Active Slot"), |ui| {
+                            for slot in 0u8..8 {
+                                if ui
+                                    .radio(self.active_slot == slot, format!("Slot {}", slot + 1))
+                                    .clicked()
+                                {
+                                    self.active_slot = slot;
+                                    out.action = Some(MenuAction::SetSaveSlot(slot));
+                                    ui.close();
+                                }
+                            }
+                        });
+                        // BUG-1: build the submenus as DIRECT children (not inside
+                        // `add_enabled_ui`, whose nested UI scope breaks egui's
+                        // sibling-hover auto-close), with disabled placeholders
+                        // when no ROM is loaded.
+                        // (H1) Save-to-slot needs only a ROM; Load-from-slot is
+                        // additionally replay-locked (same rule as Load State).
+                        if rom {
+                            ui.menu_button(ic(glyph::FLOPPY_DISK, "Save to Slot"), |ui| {
+                                for slot in 0u8..8 {
+                                    if ui.button(format!("Slot {}", slot + 1)).clicked() {
+                                        out.action = Some(MenuAction::SaveStateSlot(slot));
+                                        ui.close();
+                                    }
+                                }
+                            });
+                        } else {
+                            ui.add_enabled(
+                                false,
+                                egui::Button::new(ic(glyph::FLOPPY_DISK, "Save to Slot")),
+                            );
+                        }
+                        if rom_interactive {
+                            ui.menu_button(ic(glyph::DOWNLOAD, "Load from Slot"), |ui| {
+                                for slot in 0u8..8 {
+                                    if ui.button(format!("Slot {}", slot + 1)).clicked() {
+                                        out.action = Some(MenuAction::LoadStateSlot(slot));
+                                        ui.close();
+                                    }
+                                }
+                            });
+                        } else {
+                            ui.add_enabled(
+                                false,
+                                egui::Button::new(ic(glyph::DOWNLOAD, "Load from Slot")),
+                            );
+                        }
 
-                    ui.separator();
-
-                    // (H1) Save-state SAVE is allowed during playback (it just
-                    // snapshots) but not while RECORDING (the GeraNES rule:
-                    // saving mid-record is fine; loading is the dangerous one).
-                    // We keep SAVE enabled whenever a ROM is loaded.
-                    if accel_enabled(
-                        ui,
-                        rom,
-                        &ic(glyph::FLOPPY_DISK, "Save State"),
-                        &keys.save_state,
-                    )
-                    .clicked()
-                    {
-                        out.action = Some(MenuAction::SaveState);
-                        ui.close();
-                    }
-                    // (H1) Load-state restores the timeline — forbidden while a
-                    // movie is recording (rewrites the recording) OR playing
-                    // back (desyncs playback). Mirrors GeraNES
-                    // `replayRecordingActive` / `replayInteractionLocked`.
-                    if accel_enabled(
-                        ui,
-                        rom_interactive,
-                        &ic(glyph::DOWNLOAD, "Load State"),
-                        &keys.load_state,
-                    )
-                    .clicked()
-                    {
-                        out.action = Some(MenuAction::LoadState);
-                        ui.close();
-                    }
-                    ui.menu_button(ic(glyph::FLOPPY_DISK, "Save Slot"), |ui| {
-                        for slot in 0u8..8 {
+                        // v1.0.0 — the Save-States manager window (thumbnail grid).
+                        // Native-only (the slots live on the filesystem). (H1) The
+                        // grid is keyed on the loaded ROM's hash — needs a ROM.
+                        #[cfg(not(target_arch = "wasm32"))]
+                        {
+                            ui.separator();
                             if ui
-                                .radio(self.active_slot == slot, format!("Slot {}", slot + 1))
+                                .add_enabled(
+                                    rom,
+                                    egui::Button::new(ic(glyph::IMAGE, "Manage States...")),
+                                )
                                 .clicked()
                             {
-                                self.active_slot = slot;
-                                out.action = Some(MenuAction::SetSaveSlot(slot));
+                                out.action = Some(MenuAction::OpenSaveStates);
                                 ui.close();
                             }
                         }
                     });
-                    // BUG-1: build the submenus as DIRECT children of the File
-                    // menu (not inside `add_enabled_ui`, whose nested UI scope
-                    // breaks egui's sibling-hover auto-close), with disabled
-                    // placeholders when no ROM is loaded.
-                    // (H1) Save-to-slot needs only a ROM; Load-from-slot is
-                    // additionally replay-locked (same rule as Load State).
-                    if rom {
-                        ui.menu_button(ic(glyph::FLOPPY_DISK, "Save to Slot"), |ui| {
-                            for slot in 0u8..8 {
-                                if ui.button(format!("Slot {}", slot + 1)).clicked() {
-                                    out.action = Some(MenuAction::SaveStateSlot(slot));
-                                    ui.close();
-                                }
-                            }
-                        });
-                    } else {
-                        ui.add_enabled(
-                            false,
-                            egui::Button::new(ic(glyph::FLOPPY_DISK, "Save to Slot")),
-                        );
-                    }
-                    if rom_interactive {
-                        ui.menu_button(ic(glyph::DOWNLOAD, "Load from Slot"), |ui| {
-                            for slot in 0u8..8 {
-                                if ui.button(format!("Slot {}", slot + 1)).clicked() {
-                                    out.action = Some(MenuAction::LoadStateSlot(slot));
-                                    ui.close();
-                                }
-                            }
-                        });
-                    } else {
-                        ui.add_enabled(
-                            false,
-                            egui::Button::new(ic(glyph::DOWNLOAD, "Load from Slot")),
-                        );
-                    }
-
-                    // v1.0.0 — the Save-States manager window (thumbnail grid).
-                    // Native-only (the slots live on the filesystem). (H1) The
-                    // grid is keyed on the loaded ROM's hash — needs a ROM.
-                    #[cfg(not(target_arch = "wasm32"))]
-                    if ui
-                        .add_enabled(
-                            rom,
-                            egui::Button::new(ic(glyph::FLOPPY_DISK, "Save States...")),
-                        )
-                        .clicked()
-                    {
-                        out.action = Some(MenuAction::OpenSaveStates);
-                        ui.close();
-                    }
 
                     #[cfg(not(target_arch = "wasm32"))]
                     {
@@ -757,135 +768,23 @@ impl UiShell {
                         out.action = Some(MenuAction::InsertCoin);
                         ui.close();
                     }
-                });
-
-                // ----- Tools -----
-                ui.menu_button(ic(glyph::WRENCH, "Tools"), |ui| {
-                    if ui
-                        .button(ic(glyph::WAND_MAGIC_SPARKLES, "Cheats..."))
-                        .clicked()
-                    {
-                        out.action = Some(MenuAction::OpenPanel(ToolPanel::Cheats));
-                        ui.close();
-                    }
-                    // BUG-1: direct child (not inside add_enabled_ui — see File).
-                    // (H1) The Movies submenu is unavailable during a netplay
-                    // session (a rollback session cannot also be a TAS movie).
-                    if rom && !rom_change_restricted {
-                        ui.menu_button(ic(glyph::VIDEO, "Movies (TAS)"), |ui| {
-                            // Record toggles record on/off; it must be locked
-                            // while a movie is PLAYING (can't record over a
-                            // playback). The toggle-off case (already recording)
-                            // stays enabled so the user can stop.
-                            let rec_label = if frame.movie_recording {
-                                ic(glyph::STOP, "Stop Recording")
-                            } else {
-                                ic(glyph::VIDEO, "Record")
-                            };
-                            let rec_enabled = frame.movie_recording || !frame.movie_playing;
-                            if accel_enabled(ui, rec_enabled, &rec_label, &keys.movie_record)
-                                .clicked()
-                            {
-                                out.action = Some(MenuAction::MovieRecordToggle);
-                                ui.close();
-                            }
-                            // Play toggles playback; locked while RECORDING. The
-                            // toggle-off (already playing) stays enabled to stop.
-                            let play_label = if frame.movie_playing {
-                                ic(glyph::STOP, "Stop Playback")
-                            } else {
-                                ic(glyph::PLAY, "Play")
-                            };
-                            let play_enabled = frame.movie_playing || !frame.movie_recording;
-                            if accel_enabled(ui, play_enabled, &play_label, &keys.movie_play)
-                                .clicked()
-                            {
-                                out.action = Some(MenuAction::MoviePlayToggle);
-                                ui.close();
-                            }
-                            // Branch forks the CURRENT playback into a new
-                            // recording — only meaningful while playing back.
-                            if accel_enabled(
-                                ui,
-                                frame.movie_playing,
-                                &ic(glyph::VIDEO, "Branch"),
-                                &keys.movie_branch,
-                            )
-                            .clicked()
-                            {
-                                out.action = Some(MenuAction::MovieBranch);
-                                ui.close();
-                            }
-                        });
-                    } else {
-                        ui.add_enabled(false, egui::Button::new(ic(glyph::VIDEO, "Movies (TAS)")));
-                    }
-                    // (H1) Opening the Netplay panel is locked while a replay
-                    // (TAS movie) owns the session. Mirrors GeraNES Netplay
-                    // gating (`!replayInteractionLocked`).
-                    #[cfg(not(target_arch = "wasm32"))]
-                    if ui
-                        .add_enabled(
+                    // v1.3.0 menu reorg — FDS disk controls (only meaningful for
+                    // FDS games; moved here from the File menu). (H1) Disk-swap
+                    // mutates the running session — locked during a replay (it
+                    // would diverge the recorded timeline).
+                    if frame.disk_sides > 0 {
+                        ui.separator();
+                        if accel_enabled(
+                            ui,
                             !replay_locked,
-                            egui::Button::new(ic(glyph::WIFI, "Netplay...")),
+                            &ic(glyph::FLOPPY_DISK, "Swap Disk Side"),
+                            &keys.disk_swap,
                         )
                         .clicked()
-                    {
-                        out.action = Some(MenuAction::OpenPanel(ToolPanel::Netplay));
-                        ui.close();
-                    }
-                    #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
-                    if ui
-                        .button(ic(glyph::TROPHY, "RetroAchievements..."))
-                        .clicked()
-                    {
-                        out.action = Some(MenuAction::OpenPanel(ToolPanel::Cheevos));
-                        ui.close();
-                    }
-                    if ui.button(ic(glyph::GAUGE, "Performance Monitor")).clicked() {
-                        out.action = Some(MenuAction::OpenPanel(ToolPanel::Perf));
-                        ui.close();
-                    }
-                    if ui.button(ic(glyph::GAMEPAD, "Input Display")).clicked() {
-                        out.action = Some(MenuAction::OpenPanel(ToolPanel::InputDisplay));
-                        ui.close();
-                    }
-                    // (H1) The ROM Database editor needs a loaded ROM to edit.
-                    if ui
-                        .add_enabled(rom, egui::Button::new(ic(glyph::DATABASE, "ROM Database")))
-                        .clicked()
-                    {
-                        out.action = Some(MenuAction::OpenPanel(ToolPanel::GameDb));
-                        ui.close();
-                    }
-                });
-
-                // ----- Mod (v1.2.0 C3, HD-pack; native + feature-gated) -----
-                // (H1) HD-pack load/unload needs a loaded ROM (the pack is keyed
-                // on the ROM hash) and is locked while a netplay/replay session
-                // owns presentation. Mirrors GeraNES Mod gating.
-                #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
-                ui.menu_button(ic(glyph::PUZZLE_PIECE, "Mod"), |ui| {
-                    let mod_enabled = rom && !rom_change_restricted && !replay_locked;
-                    if ui
-                        .add_enabled(
-                            mod_enabled,
-                            egui::Button::new(ic(glyph::FOLDER_OPEN, "Load HD Pack...")),
-                        )
-                        .clicked()
-                    {
-                        out.action = Some(MenuAction::LoadHdPack);
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(
-                            mod_enabled,
-                            egui::Button::new(ic(glyph::XMARK, "Unload HD Pack")),
-                        )
-                        .clicked()
-                    {
-                        out.action = Some(MenuAction::UnloadHdPack);
-                        ui.close();
+                        {
+                            out.action = Some(MenuAction::CycleDiskSide);
+                            ui.close();
+                        }
                     }
                 });
 
@@ -983,6 +882,138 @@ impl UiShell {
                     }
                 });
 
+                // ----- Tools -----
+                ui.menu_button(ic(glyph::WRENCH, "Tools"), |ui| {
+                    if ui
+                        .button(ic(glyph::WAND_MAGIC_SPARKLES, "Cheats..."))
+                        .clicked()
+                    {
+                        out.action = Some(MenuAction::OpenPanel(ToolPanel::Cheats));
+                        ui.close();
+                    }
+                    // BUG-1: direct child (not inside add_enabled_ui — see File).
+                    // (H1) The Movies submenu is unavailable during a netplay
+                    // session (a rollback session cannot also be a TAS movie).
+                    if rom && !rom_change_restricted {
+                        ui.menu_button(ic(glyph::VIDEO, "Movies (TAS)"), |ui| {
+                            // Record toggles record on/off; it must be locked
+                            // while a movie is PLAYING (can't record over a
+                            // playback). The toggle-off case (already recording)
+                            // stays enabled so the user can stop.
+                            let rec_label = if frame.movie_recording {
+                                ic(glyph::STOP, "Stop Recording")
+                            } else {
+                                ic(glyph::VIDEO, "Record")
+                            };
+                            let rec_enabled = frame.movie_recording || !frame.movie_playing;
+                            if accel_enabled(ui, rec_enabled, &rec_label, &keys.movie_record)
+                                .clicked()
+                            {
+                                out.action = Some(MenuAction::MovieRecordToggle);
+                                ui.close();
+                            }
+                            // Play toggles playback; locked while RECORDING. The
+                            // toggle-off (already playing) stays enabled to stop.
+                            let play_label = if frame.movie_playing {
+                                ic(glyph::STOP, "Stop Playback")
+                            } else {
+                                ic(glyph::PLAY, "Play")
+                            };
+                            let play_enabled = frame.movie_playing || !frame.movie_recording;
+                            if accel_enabled(ui, play_enabled, &play_label, &keys.movie_play)
+                                .clicked()
+                            {
+                                out.action = Some(MenuAction::MoviePlayToggle);
+                                ui.close();
+                            }
+                            // Branch forks the CURRENT playback into a new
+                            // recording — only meaningful while playing back.
+                            if accel_enabled(
+                                ui,
+                                frame.movie_playing,
+                                &ic(glyph::VIDEO, "Branch"),
+                                &keys.movie_branch,
+                            )
+                            .clicked()
+                            {
+                                out.action = Some(MenuAction::MovieBranch);
+                                ui.close();
+                            }
+                        });
+                    } else {
+                        ui.add_enabled(false, egui::Button::new(ic(glyph::VIDEO, "Movies (TAS)")));
+                    }
+                    // (H1) Opening the Netplay panel is locked while a replay
+                    // (TAS movie) owns the session. Mirrors GeraNES Netplay
+                    // gating (`!replayInteractionLocked`).
+                    #[cfg(not(target_arch = "wasm32"))]
+                    if ui
+                        .add_enabled(
+                            !replay_locked,
+                            egui::Button::new(ic(glyph::WIFI, "Netplay...")),
+                        )
+                        .clicked()
+                    {
+                        out.action = Some(MenuAction::OpenPanel(ToolPanel::Netplay));
+                        ui.close();
+                    }
+                    #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
+                    if ui
+                        .button(ic(glyph::TROPHY, "RetroAchievements..."))
+                        .clicked()
+                    {
+                        out.action = Some(MenuAction::OpenPanel(ToolPanel::Cheevos));
+                        ui.close();
+                    }
+                    if ui.button(ic(glyph::GAMEPAD, "Input Display")).clicked() {
+                        out.action = Some(MenuAction::OpenPanel(ToolPanel::InputDisplay));
+                        ui.close();
+                    }
+                    // v1.3.0 menu reorg — NSF/NSFe music player (moved here from
+                    // the Debug menu; it is a playback tool, not a chip inspector).
+                    if ui.button(ic(glyph::MUSIC, "NSF Player")).clicked() {
+                        out.action = Some(MenuAction::OpenChipPanel(ChipPanel::Nsf));
+                        ui.close();
+                    }
+                    // (H1) The ROM Database editor needs a loaded ROM to edit.
+                    if ui
+                        .add_enabled(rom, egui::Button::new(ic(glyph::DATABASE, "ROM Database")))
+                        .clicked()
+                    {
+                        out.action = Some(MenuAction::OpenPanel(ToolPanel::GameDb));
+                        ui.close();
+                    }
+                    // v1.3.0 menu reorg — HD-pack loader (v1.2.0 C3), folded in
+                    // from the former standalone "Mod" menu as a Tools submenu;
+                    // native + `hd-pack`-feature-gated. (H1) Load/unload needs a
+                    // loaded ROM (the pack is keyed on the ROM hash) and is locked
+                    // while a netplay/replay session owns presentation.
+                    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                    ui.menu_button(ic(glyph::PUZZLE_PIECE, "HD Pack"), |ui| {
+                        let mod_enabled = rom && !rom_change_restricted && !replay_locked;
+                        if ui
+                            .add_enabled(
+                                mod_enabled,
+                                egui::Button::new(ic(glyph::FOLDER_OPEN, "Load HD Pack...")),
+                            )
+                            .clicked()
+                        {
+                            out.action = Some(MenuAction::LoadHdPack);
+                            ui.close();
+                        }
+                        if ui
+                            .add_enabled(
+                                mod_enabled,
+                                egui::Button::new(ic(glyph::XMARK, "Unload HD Pack")),
+                            )
+                            .clicked()
+                        {
+                            out.action = Some(MenuAction::UnloadHdPack);
+                            ui.close();
+                        }
+                    });
+                });
+
                 // ----- Debug -----
                 ui.menu_button(ic(glyph::BUG, "Debug"), |ui| {
                     let mut dbg = frame.debugger_visible;
@@ -995,7 +1026,15 @@ impl UiShell {
                         out.action = Some(MenuAction::ToggleDebugger);
                         ui.close();
                     }
+                    // v1.3.0 menu reorg — the Performance Monitor is a debug
+                    // tool, grouped here (moved from Tools).
+                    if ui.button(ic(glyph::GAUGE, "Performance Monitor")).clicked() {
+                        out.action = Some(MenuAction::OpenPanel(ToolPanel::Perf));
+                        ui.close();
+                    }
                     ui.separator();
+                    // Chip / state inspectors. (NSF Player moved to the Tools menu
+                    // in v1.3.0 — it is a playback tool, not a chip inspector.)
                     for (icon, label, panel) in [
                         (glyph::MICROCHIP, "CPU", ChipPanel::Cpu),
                         (glyph::MICROCHIP, "PPU", ChipPanel::Ppu),
@@ -1006,7 +1045,6 @@ impl UiShell {
                         (glyph::PUZZLE_PIECE, "Mapper", ChipPanel::Mapper),
                         (glyph::CLIPBOARD, "Trace Logger", ChipPanel::Trace),
                         (glyph::CLIPBOARD, "Event Viewer", ChipPanel::Events),
-                        (glyph::MUSIC, "NSF Player", ChipPanel::Nsf),
                         (glyph::CODE, "Lua Script", ChipPanel::Script),
                     ] {
                         if ui.button(ic(icon, label)).clicked() {
@@ -1121,6 +1159,12 @@ impl UiShell {
         }
         let mut open = self.show_settings_window;
         let tab = &mut self.settings_tab;
+        // v1.3.0 — auto-save every Settings change: snapshot the config before
+        // the window renders and persist if ANY control mutated it this frame.
+        // This guarantees persistence for every setting in every tab even where
+        // an individual control only flags a live-apply (`state.apply.*`) without
+        // its own `save_config` call. (`Config: Clone + PartialEq`.)
+        let config_before = config.clone();
         egui::Window::new("Settings")
             .open(&mut open)
             .resizable(true)
@@ -1129,9 +1173,10 @@ impl UiShell {
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.selectable_value(tab, SettingsTab::Video, "Video");
+                    ui.selectable_value(tab, SettingsTab::Shaders, "Shaders");
                     ui.selectable_value(tab, SettingsTab::Audio, "Audio");
                     ui.selectable_value(tab, SettingsTab::Input, "Input");
-                    ui.selectable_value(tab, SettingsTab::Advanced, "Advanced");
+                    ui.selectable_value(tab, SettingsTab::Emulation, "Emulation");
                 });
                 ui.separator();
                 egui::ScrollArea::vertical()
@@ -1183,11 +1228,18 @@ impl UiShell {
                         // v1.0.0 settings split — each tab renders ONLY its own
                         // section (the prior catch-all rendered the whole body on
                         // every tab, duplicating every control).
+                        SettingsTab::Shaders => settings_body(ui, config, SettingsTab::Shaders),
                         SettingsTab::Audio => settings_body(ui, config, SettingsTab::Audio),
-                        SettingsTab::Advanced => settings_body(ui, config, SettingsTab::Advanced),
+                        SettingsTab::Emulation => settings_body(ui, config, SettingsTab::Emulation),
                         SettingsTab::Input => input_body(ui, config),
                     });
             });
+        // v1.3.0 auto-save — persist once if any tab mutated the config. The
+        // per-control `save_config` calls in the panel sections remain (harmless
+        // double-save) but this is the backstop that makes EVERY setting sticky.
+        if *config != config_before {
+            save_config(config);
+        }
         self.show_settings_window = open;
     }
 

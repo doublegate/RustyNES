@@ -260,6 +260,10 @@ pub fn show(
 pub fn body(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &mut Config) {
     video_section(ui, state, config);
     ui.add_space(8.0);
+    // v1.3.0 — the shader stack is a dedicated Settings tab; the combined
+    // tool-panel view still stacks it after the Graphics section.
+    shader_stack_section(ui, state, config);
+    ui.add_space(8.0);
     audio_section(ui, state, config);
     ui.add_space(8.0);
     advanced_section(ui, state, config);
@@ -439,10 +443,6 @@ pub fn video_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
         ui.weak("(native only)");
     });
 
-    // v1.2.0 C2 — the composable shader stack + preset bank.
-    ui.add_space(6.0);
-    shader_stack_section(ui, state, config);
-
     ui.add_space(4.0);
     // v1.0.0 — reset the Graphics section to its defaults (guarded by a
     // two-click confirm so it isn't a foot-gun), then re-apply live.
@@ -487,7 +487,13 @@ pub fn video_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
 /// Lives inside a collapsing header so it does not clutter the Graphics tab.
 /// Every mutation flags `state.apply.shader_stack` so the app rebuilds the live
 /// `gfx` stack; an empty stack rebuilds to the byte-identical direct-blit path.
-fn shader_stack_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &mut Config) {
+///
+/// v1.3.0 — `pub` so it can back its own dedicated "Shaders" Settings tab.
+pub fn shader_stack_section(
+    ui: &mut egui::Ui,
+    state: &mut SettingsPanelState,
+    config: &mut Config,
+) {
     use crate::shader_pass::{BuiltinPass, ShaderPassDesc};
 
     egui::CollapsingHeader::new("Shader stack (composable)")
