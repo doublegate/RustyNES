@@ -15,16 +15,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Work toward **v1.3.0 "Bedrock"** (beta.1-4 / rc): toolchain modernization (Rust edition
-2024, MSRV → latest stable, and the egui 0.34 / wgpu 29 / rfd 0.17 dependency tier), the
-frame-pacing measurement/judder fix, GeraNES-class developer tooling (PPU event viewer,
-symbol-file loading, memory compare, trace annotation), mapper breadth (an aggressive
-BestEffort sweep 87 → 100+ and Vs. DualSystem), HD-pack conditions + background-region
-replacement, niche peripherals + netplay desync diagnostics, and casual-mode browser
-RetroAchievements. The hard-tier accuracy residuals were **re-baselined**:
-`cpu_interrupts_v2` is now strict-pass (closed by the master clock); the remaining three
-(`mmc3_test_2/4` #3, two `apu_reset` cases) share one fractional-master-clock root cause
-and stay deferred as a future v2.0-scale item (see `docs/STATUS.md`). See the v1.3.0 plan.
+## [1.3.0] - 2026-06-16 - "Bedrock" (Feature Release)
+
+The foundation + breadth release on the cycle-accurate v1.0.0 core, built atop
+v1.2.0 "Curator". **AccuracyCoin 100% (139/139)** held throughout; the
+determinism contract is intact (every new feature is additive / default-off, so
+the shipped, wasm, and `no_std` builds stay byte-identical where the feature is
+off). Headline:
+
+- **Toolchain modernization** — Rust **edition 2024**, MSRV → **1.96**, and the
+  coordinated **egui 0.34.3 / wgpu 29.0.3 / rfd 0.17.2 / naga 25** dependency tier
+  (+ GitHub Actions runners to latest).
+- **Frame-pacing fix** — the "Presented" judder was a measurement artifact
+  (timestamped after `surface.present()`); now timestamped at RedrawRequested entry
+  with a display-sync-aware pacer and B-diagnostic counters.
+- **Developer tooling + UX** — the Memory Compare (cheat-hunt) panel, a reorganized
+  menu bar (File / Emulation / View / Tools / Debug / Help) with a Close-ROM item +
+  grouped Save-States submenu, Settings Shaders/Emulation tabs, and **every Settings
+  control now auto-saves on change**.
+- **Mapper breadth → 101 families** — a 14-board Tier-2 **BestEffort** sweep
+  (honesty-gated; register-decode + save-state tested) + **Vs. DualSystem header
+  detection** (the dual-console emulation stays a documented v2.0 item).
+- **HD-pack `<condition>` gating + `<background>` regions** (behind `hd-pack`; ADR
+  0014) — Mesen-style memory/frame/sprite conditions evaluated against a per-frame
+  watched-address snapshot taken under the lock at produce time.
+- **Netplay desync diagnostics** (CRC-mismatch history + first-desync-frame +
+  topology, read-only) + **niche peripheral aliases** (Family Trainer, Subor
+  keyboard, Konami / Bandai Hyper Shot).
+- **Performance** — the manual/release-only **PGO/BOLT CI gate** exercised
+  (>3%-Criterion + byte-identical promotion); no speculative hot-path changes.
+- **Hard-tier accuracy residuals re-baselined** — `cpu_interrupts_v2` is now
+  strict-pass (closed by the master clock); the remaining three (`mmc3_test_2/4`
+  #3, two `apu_reset` cases) share one fractional-master-clock root cause and stay
+  deferred as a future v2.0-scale item (see `docs/STATUS.md`, ADR 0002).
+
+**Deferred / carryover:** **casual-mode browser RetroAchievements** (Workstream I)
+is a **documented carryover** (ADR 0015) — it needs an Emscripten/pure-Rust
+rcheevos→wasm build track + live-browser verification (no headless path); native RA
+is unaffected. Full Vs. DualSystem dual-core, FDS-proper, and the fractional
+master-clock refactor remain v2.0-scale.
 
 ### Added
 

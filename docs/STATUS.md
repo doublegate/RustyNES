@@ -1,11 +1,18 @@
 # RustyNES — Project Status Matrix
 
-**Current release: v1.2.0 "Curator" — the second feature release** on the
+**Current release: v1.3.0 "Bedrock" — the foundation + breadth release** on the
 cycle-accurate v1.0.0 production core. A NES/Famicom emulator with the Mesen2 /
 higan / ares accuracy bar, shipped as a polished desktop application.
 **AccuracyCoin 100.00% (139/139)**, the 60-ROM `external_real_games` + 52-entry
-`external_extended` oracles byte-identical, nestest 0-diff. **v1.2.0 "Curator"**
-is a broad library / compatibility / reach release on top of v1.1.0 "Scriptable":
+`external_extended` oracles byte-identical, nestest 0-diff. **v1.3.0 "Bedrock"**
+modernizes the toolchain (edition 2024 / Rust 1.96 / egui 0.34 + wgpu 29), fixes
+frame pacing, adds Memory Compare + the menu/Settings reorg + auto-save, takes
+mapper coverage to **101 families** + Vs. DualSystem detection, adds HD-pack
+`<condition>`/`<background>` rules, netplay desync diagnostics, and niche
+peripheral aliases, and exercises the PGO/BOLT gate. Casual-mode browser
+RetroAchievements is a documented carryover (ADR 0015). Built on top of v1.2.0
+"Curator", which was a broad library / compatibility / reach release on v1.1.0
+"Scriptable":
 mapper coverage rises 51 → **87 families** behind a CI accuracy-tiering honesty
 gate (Core / Curated / BestEffort, ADR 0011); `.zip` loading + `.ips`/`.ups`/`.bps`
 soft-patching; a per-game DB + in-app ROM-Database editor; live NTSC knobs + a
