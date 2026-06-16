@@ -2091,12 +2091,19 @@ impl App {
     /// borrows disjoint. Native-only.
     #[cfg(not(target_arch = "wasm32"))]
     // The shared `'a` ties two params on the RA build; on the default build
-    // only `audio` remains, so clippy sees an elidable single lifetime.
-    #[cfg_attr(not(feature = "retroachievements"), allow(clippy::needless_lifetimes))]
-    fn sync_sinks(
-        audio: &mut Option<AudioOutput>,
+    // only `audio` remains, so clippy sees an elidable single lifetime. The
+    // `'a` is genuinely used by the cfg-gated `ra` param under the feature, so
+    // it must stay declared; suppress the elision lints only on the non-feature
+    // path (Rust 1.96 renamed `needless_lifetimes` -> `elidable_lifetime_names`
+    // for this case, so allow both).
+    #[cfg_attr(
+        not(feature = "retroachievements"),
+        allow(clippy::needless_lifetimes, clippy::elidable_lifetime_names)
+    )]
+    fn sync_sinks<'a>(
+        audio: &'a mut Option<AudioOutput>,
         #[cfg(feature = "retroachievements")] ra: &'a mut Option<crate::ra_session::RaSession>,
-    ) -> crate::emu::FrameSinks<'_> {
+    ) -> crate::emu::FrameSinks<'a> {
         crate::emu::FrameSinks {
             audio: audio
                 .as_mut()
@@ -2324,10 +2331,10 @@ impl App {
                     (Some(s), jl)
                 })
             };
-            if let Some(status) = status {
-                if let Some(debugger) = self.debugger.as_mut() {
-                    debugger.set_cheevos_status(status);
-                }
+            if let Some(status) = status
+                && let Some(debugger) = self.debugger.as_mut()
+            {
+                debugger.set_cheevos_status(status);
             }
             if just_logged_in {
                 self.persist_ra_token_if_new();
@@ -2370,10 +2377,10 @@ impl App {
         }
         #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
         {
-            if let Some(status) = fx.ra_status {
-                if let Some(debugger) = self.debugger.as_mut() {
-                    debugger.set_cheevos_status(status);
-                }
+            if let Some(status) = fx.ra_status
+                && let Some(debugger) = self.debugger.as_mut()
+            {
+                debugger.set_cheevos_status(status);
             }
             // On the login-success edge: persist the freshly-issued token and
             // (re-)identify the currently-loaded ROM (a ROM opened BEFORE the

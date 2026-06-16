@@ -89,11 +89,11 @@ impl BadgeCache {
         if url.is_empty() || self.states.contains_key(url) || self.in_flight.contains(url) {
             return;
         }
-        if let Some(tx) = &self.job_tx {
-            if tx.send(url.to_string()).is_ok() {
-                self.in_flight.insert(url.to_string());
-                self.states.insert(url.to_string(), BadgeState::Pending);
-            }
+        if let Some(tx) = &self.job_tx
+            && tx.send(url.to_string()).is_ok()
+        {
+            self.in_flight.insert(url.to_string());
+            self.states.insert(url.to_string(), BadgeState::Pending);
         }
     }
 
