@@ -1663,6 +1663,16 @@ impl LockstepBus {
         self.mapper.debug_info()
     }
 
+    /// The cached per-cycle mapper capability flags (see
+    /// [`rustynes_mappers::MapperCaps`]). `caps.audio` reflects whether the
+    /// loaded mapper has on-cart expansion audio with the `mapper-audio` feature
+    /// compiled in — used by the frontend to surface expansion-channel mixing
+    /// controls only for boards that actually have them.
+    #[must_use]
+    pub const fn mapper_caps(&self) -> rustynes_mappers::MapperCaps {
+        self.mapper_caps
+    }
+
     /// Borrow CPU RAM (2 KiB).
     #[must_use]
     pub fn ram_bytes(&self) -> &[u8] {

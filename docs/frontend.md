@@ -162,6 +162,38 @@ band-limited synthesis. The Hermite stage only absorbs the residual
 host-clock vs DAC-clock drift — the core's emitted samples are part of the
 determinism contract and never depend on wall-clock feedback.
 
+### Audio settings (Settings → Audio)
+
+The Audio tab exposes the output-mix controls, all of which default to a
+byte-identical no-op so the shipped sound is unchanged until the user touches
+them:
+
+- **Master volume / Mute** (`[audio] volume` / `muted`) — a single gain applied
+  at the cpal consume point (lock-free, post-resampler). Default `1.0` / un-muted.
+- **Per-channel mute** (`[audio] channel_mask`) — six checkboxes (pulse 1 / pulse
+  2 / triangle / noise / DMC / Mapper Audio). A cleared bit forces that channel's
+  contribution to `0` before the non-linear mixer. Default `0x3F` (all on).
+- **Per-channel volume** (`[audio] channel_gain`, v1.4.0 Workstream C) — a slider
+  (`0.0`–`2.0`) per channel, generalizing the mute mask (`0.0` = muted, `1.0` =
+  full). The five internal APU channels are always shown; the **expansion-audio**
+  channel (index 5) appears only when the loaded mapper has on-cart audio, labelled
+  with the chip — discovered dynamically via `Nes::expansion_audio_chip()` (which
+  consults the cached `MapperCaps::audio` flag + mapper id: VRC6, VRC7 (OPLL),
+  MMC5, Namco 163, Sunsoft 5B, FDS). The gains are pushed into the core under the
+  emu lock (`Nes::set_apu_channel_gain`) and re-pushed on each ROM load / power
+  cycle (a fresh `Nes` boots at unity). In the core APU mixer the gain scales each
+  channel's raw integer output and rounds back to an integer before the non-linear
+  lookup mixer (so it is a clean generalization of the integer mute gate); a "Reset
+  volumes (1.0)" button restores unity. Default (all `1.0`) takes the exact
+  pre-gain mixer path — byte-identical, so the determinism contract + the audio
+  oracle are unaffected. (Per-channel gain must touch the core because the
+  non-linear mixer combines the channels before output — there is no per-channel
+  split downstream — but the unity fast-path guarantees the default is provably
+  unchanged.)
+- **Graphic EQ** (`[audio] eq_enabled` / `eq_bands`) — a default-off five-band
+  (60 / 240 / 1k / 3.8k / 12k Hz, ±12 dB) frontend output stage owned by the
+  producer (`audio.rs::EqStage`), bypassed (zero overhead) when off / flat.
+
 ### Browser audio (AudioWorklet)
 
 The wasm builds (`wasm_audio.rs`) output through an **AudioWorklet** whose

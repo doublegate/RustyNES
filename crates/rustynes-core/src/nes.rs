@@ -1784,6 +1784,25 @@ impl Nes {
         self.bus.apu().channel_mask()
     }
 
+    /// v1.4.0 Workstream C — set the APU per-channel output gain (a UI mixing
+    /// overlay, NOT NES hardware state), generalizing [`Self::set_apu_channel_mask`].
+    /// Index 0 = pulse 1, 1 = pulse 2, 2 = triangle, 3 = noise, 4 = DMC,
+    /// 5 = external/mapper audio. Each gain is clamped to `0.0..=2.0`.
+    ///
+    /// The default ([`rustynes_apu::CHANNEL_GAIN_UNITY`], all `1.0`) is
+    /// byte-identical to the un-scaled mixer — the deterministic per-frame audio
+    /// is unchanged unless the frontend explicitly changes a gain. Never written
+    /// into the save state, so it never affects determinism or round-trips.
+    pub fn set_apu_channel_gain(&mut self, gain: [f32; 6]) {
+        self.bus.apu_mut().set_channel_gain(gain);
+    }
+
+    /// Current APU per-channel output gain. See [`Self::set_apu_channel_gain`].
+    #[must_use]
+    pub const fn apu_channel_gain(&self) -> [f32; 6] {
+        self.bus.apu().channel_gain()
+    }
+
     /// Borrow OAM (256 bytes = 64 sprites x 4 bytes).
     ///
     /// Returns a cloned `[u8; 256]` so the caller doesn't have to manage
@@ -1816,6 +1835,35 @@ impl Nes {
     #[must_use]
     pub fn mapper_info(&self) -> MapperDebugView {
         self.bus.mapper_debug_info()
+    }
+
+    /// v1.4.0 Workstream C — the loaded mapper's on-cart expansion-audio chip
+    /// name (e.g. `"VRC6"`, `"VRC7 (OPLL)"`, `"MMC5"`, `"Namco 163"`,
+    /// `"Sunsoft 5B"`, `"FDS"`), or `None` when the board has no expansion audio
+    /// (or the `mapper-audio` feature is compiled out). Used by the frontend to
+    /// show the expansion-channel volume slider only when present, with a label.
+    ///
+    /// Discovery is dynamic: it consults the cached [`rustynes_mappers::MapperCaps`]
+    /// `audio` flag (true only when the mapper overrides `mix_audio` with the
+    /// feature on) and the mapper id to name the chip family.
+    #[must_use]
+    pub fn expansion_audio_chip(&self) -> Option<&'static str> {
+        if !self.bus.mapper_caps().audio {
+            return None;
+        }
+        let id = self.bus.mapper_debug_info().mapper_id;
+        Some(match id {
+            5 => "MMC5",
+            19 | 210 => "Namco 163",
+            20 => "FDS",
+            24 | 26 => "VRC6",
+            69 => "Sunsoft 5B",
+            85 => "VRC7 (OPLL)",
+            // The board overrides `mix_audio` but isn't one of the named
+            // families above — surface a generic label so the slider still
+            // appears (e.g. a future expansion-audio mapper).
+            _ => "Expansion audio",
+        })
     }
 
     /// Side-effect-free CPU bus peek (for the hex viewer).

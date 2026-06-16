@@ -1203,6 +1203,12 @@ impl App {
         // v1.0.0 — re-push the per-APU-channel mute mask (the fresh `Nes` booted
         // with the all-on default). Default mask 0x3F = byte-identical audio.
         self.apply_apu_channel_mask();
+        // v1.4.0 Workstream C — re-push the per-APU-channel output gain (the fresh
+        // `Nes` booted at unity). Default (all 1.0) = byte-identical audio.
+        self.apply_apu_channel_gain();
+        // v1.4.0 Workstream C — refresh the Settings panel's expansion-audio chip
+        // label so the expansion-channel volume slider matches the loaded mapper.
+        self.refresh_expansion_audio_chip();
         // v1.1.0 beta.1 — re-apply the configured custom .pal palette onto the
         // fresh Nes (booted with the built-in palette). None = byte-identical.
         self.apply_palette_from_config();
@@ -3401,6 +3407,35 @@ impl App {
         }
     }
 
+    /// v1.4.0 Workstream C — push the configured per-APU-channel output gain into
+    /// the running core (under the emu lock, respecting the lock discipline). A UI
+    /// mixing overlay generalizing [`Self::apply_apu_channel_mask`]: the default
+    /// (all `1.0`) is byte-identical to today's mixer output, so the deterministic
+    /// per-frame audio + the oracle stay byte-identical unless a slider is moved.
+    /// Cheap; called at startup, on every gain-slider edit, and after each fresh
+    /// ROM load (a new `Nes` boots at unity, so the gains must be re-pushed).
+    fn apply_apu_channel_gain(&self) {
+        let gain = self.config.audio.channel_gain;
+        let mut guard = self.emu.lock();
+        if let Some(nes) = guard.nes.as_mut() {
+            nes.set_apu_channel_gain(gain);
+        }
+    }
+
+    /// v1.4.0 Workstream C — query the loaded mapper's expansion-audio chip name
+    /// from the core and push it into the Settings panel, so the Audio tab shows
+    /// the expansion-channel volume slider only for boards with on-cart audio.
+    /// Called on each ROM load (after the `Nes` is built) and at startup.
+    fn refresh_expansion_audio_chip(&mut self) {
+        let chip = {
+            let guard = self.emu.lock();
+            guard.nes.as_ref().and_then(Nes::expansion_audio_chip)
+        };
+        if let Some(debugger) = self.debugger.as_mut() {
+            debugger.set_expansion_audio_chip(chip);
+        }
+    }
+
     /// v1.1.0 beta.1 (T-110-A3) — load + apply the configured `.pal` palette to the
     /// running core (or clear it when none / unreadable). Called on startup and on
     /// ROM load so a configured palette survives a reload. Native-only (no
@@ -3724,6 +3759,10 @@ impl App {
                 // v1.0.0 — `power_cycle` rebuilds the APU (all-on default), so
                 // re-push the per-channel mute mask. Default 0x3F = byte-identical.
                 nes.set_apu_channel_mask(self.config.audio.channel_mask);
+                // v1.4.0 Workstream C — `power_cycle` rebuilds the APU at unity,
+                // so re-push the per-channel gain. Default (all 1.0) =
+                // byte-identical.
+                nes.set_apu_channel_gain(self.config.audio.channel_gain);
             }
         }
         // v1.0.0 (BUG-7) — a cold boot should RUN: clear any prior pause so the
@@ -4923,6 +4962,9 @@ impl App {
             // (no-op if no ROM is loaded yet; re-applied on each ROM load).
             // Default 0x3F (all on) leaves the deterministic audio unchanged.
             self.apply_apu_channel_mask();
+            // v1.4.0 Workstream C — push the persisted per-APU-channel gain.
+            // Default (all 1.0) leaves the deterministic audio unchanged.
+            self.apply_apu_channel_gain();
             // v1.1.0 beta.1 — re-apply the configured custom .pal palette.
             self.apply_palette_from_config();
             // v2.8.0 Phase 5 increment 3 — spawn the emulation thread (it
@@ -5069,6 +5111,12 @@ impl App {
         // v1.0.0 — re-push the per-APU-channel mute mask onto the fresh `Nes`
         // (booted all-on); default 0x3F = byte-identical audio.
         self.apply_apu_channel_mask();
+        // v1.4.0 Workstream C — re-push the per-APU-channel gain onto the fresh
+        // `Nes` (booted at unity); default (all 1.0) = byte-identical audio.
+        self.apply_apu_channel_gain();
+        // v1.4.0 Workstream C — refresh the Settings panel's expansion-audio chip
+        // label so the expansion-channel volume slider matches the loaded mapper.
+        self.refresh_expansion_audio_chip();
         // v1.1.0 beta.1 — re-apply the configured custom .pal palette.
         self.apply_palette_from_config();
         // v2.7.0 — identify the ROM with RetroAchievements + load its progress
@@ -6215,6 +6263,12 @@ impl ApplicationHandler<AppEvent> for App {
                 // the core under the emu lock. Default mask = byte-identical.
                 if settings.apu_channels {
                     self.apply_apu_channel_mask();
+                }
+                // v1.4.0 Workstream C — per-APU-channel gain live-apply: push the
+                // gains into the core under the emu lock. Default (all 1.0) =
+                // byte-identical.
+                if settings.apu_channel_gain {
+                    self.apply_apu_channel_gain();
                 }
                 // v1.0.0 — act on a Save-States manager Save / Load click this
                 // frame, routing through the existing slot handlers; a Save
