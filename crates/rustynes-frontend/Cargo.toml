@@ -29,9 +29,18 @@ crate-type = ["cdylib", "rlib"]
 # debugger. Build the embed mode with
 # `trunk build --no-default-features --features wasm-canvas`.
 #
-default = ["wasm-winit", "emu-thread"]
+default = ["wasm-winit", "emu-thread", "help-tui"]
 wasm-winit = []
 wasm-canvas = []
+
+# v1.4.0 Workstream H3 — interactive ratatui terminal help browser
+# (`rustynes help` on a TTY). Default ON; a minimal build can drop it with
+# `--no-default-features`. NATIVE-ONLY: it pulls `ratatui` + `crossterm`, which
+# live in the `cfg(not(target_arch = "wasm32"))` dep table below, so this feature
+# is inert on wasm (the `help_tui` module is `cfg`-gated out there too) and the
+# wasm size budget is unaffected. clap 4 styled `--help` + `help <topic>` +
+# completions (H1/H2) are UNCONDITIONAL (no feature flag) — only the TUI is gated.
+help-tui = ["dep:ratatui"]
 
 # v2.8.0 Phase 5 increment 3 — dedicated emulation thread (default ON,
 # native-only; a no-op on wasm32, which is single-threaded). Single-player
@@ -138,6 +147,27 @@ web-time.workspace = true
 # wasm builds compile with netplay absent (the panel shows a native-only note).
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rustynes-netplay.workspace = true
+
+# === v1.4.0 Workstream H — native CLI / terminal help & argument UX ===
+# CRITICAL: these are ALL native-only. They live in this
+# `cfg(not(target_arch = "wasm32"))` table so the wasm builds (and the wasm
+# size budget) NEVER pull them in — the wasm `main` is an empty shim and a
+# browser tab has no terminal. An orchestrator merging around v1.4.0 H should
+# keep this whole block together.
+#   * clap 4 (derive) — the argument parser (replaces the hand-rolled argv loop).
+#     `color` styles `--help`; `cargo` reads version/author from env!.
+#   * clap_complete — `rustynes completions <bash|zsh|fish|pwsh>`.
+#   * color-print — compile-time ANSI for the styled `after_help` footer.
+#   * anstyle — clap's styling vocabulary (Styles / AnsiColor) for `cli_styles()`.
+#   * ratatui — the H3 interactive TUI help browser, behind the default-on
+#     `help-tui` feature (`optional = true` → `dep:ratatui`). It re-exports
+#     `crossterm`, so no separate crossterm dep is needed.
+clap = { version = "4", features = ["derive", "color", "cargo"] }
+clap_complete = "4"
+color-print = "0.3"
+anstyle = "1"
+ratatui = { version = "0.30", optional = true }
+# === end v1.4.0 Workstream H ===
 
 # v1.0.0 — screenshot-to-clipboard (feature J). `arboard` provides the
 # cross-platform system clipboard, including image (`set_image`) support, which

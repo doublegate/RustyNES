@@ -59,6 +59,25 @@ exercises the affected paths).
   (`crates/rustynes-test-harness/tests/p240_test_suite.rs`), gating each
   mapper's boot + PRG/CHR bank-switch + render pipeline against the suite's
   title screen. No ROMs were downloaded — these were already committed.
+- **Modern terminal CLI (clap 4).** Replaced the hand-rolled argv parser with a
+  clap 4 derive `Command` (`crates/rustynes-frontend/src/cli.rs`): the
+  `rustynes <ROM>` positional and all prior behavior are preserved (bad argument
+  still exits 2), with auto `-h`/`--help`/`-V`/`--version`, an ANSI-styled
+  `--help` (`Command::styles` + a `color-print` "Examples"/"Keyboard" footer),
+  and `NO_COLOR` / `--color <auto|always|never>` support.
+- **`help` subcommand + topic registry.** `rustynes help` and
+  `rustynes help <topic>` (controls, hotkeys, gamepad, features, mappers, config,
+  scripting, netplay, about) render from a single structured registry kept in
+  sync with the docs and the in-app keybinding window. `rustynes completions
+  <bash|zsh|fish|powershell>` emits a shell-completion script (`clap_complete`).
+- **Interactive terminal help browser.** `rustynes help` on a TTY (or
+  `rustynes help --interactive`) launches a ratatui + crossterm full-screen
+  browser (`crates/rustynes-frontend/src/help_tui.rs`): topic list, scrollable
+  colored content pane, `/` search, and arrow/Tab/PgUp-Dn/Home-End nav. Behind
+  the default-on `help-tui` cargo feature; non-terminal output falls back to the
+  static page so piped use and CI never block. All native-only — the clap /
+  clap_complete / color-print / anstyle / ratatui deps are gated out of the wasm
+  target, leaving the wasm build and size budget unchanged.
 
 ### Fixed
 

@@ -21,6 +21,11 @@ pub mod audio;
 #[cfg(not(target_arch = "wasm32"))]
 mod about_fx;
 pub mod cheats;
+// v1.4.0 Workstream H — native CLI (clap 4) + structured help-topic registry.
+// Native-only: a browser tab has no terminal, and the clap / clap_complete /
+// color-print deps are gated out of the wasm target in `Cargo.toml`.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod cli;
 pub mod config;
 pub mod debugger;
 // v2.8.0 Phase 5 — the emulation core extracted from `App` (per-frame
@@ -40,6 +45,11 @@ pub mod eq;
 pub mod game_db;
 pub mod genie_db;
 pub mod gfx;
+// v1.4.0 Workstream H3 — interactive ratatui help browser. Native-only +
+// behind the default-on `help-tui` feature (a minimal build can drop it); the
+// ratatui / crossterm deps are gated out of the wasm target in `Cargo.toml`.
+#[cfg(all(not(target_arch = "wasm32"), feature = "help-tui"))]
+pub mod help_tui;
 // v1.2.0 beta.2 (Workstream C3) — HD-pack / mod loader (native-only, default OFF).
 #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
 pub mod hdpack;
