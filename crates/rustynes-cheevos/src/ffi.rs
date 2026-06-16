@@ -254,7 +254,7 @@ pub const RC_CLIENT_LEADERBOARD_LIST_GROUPING_NONE: c_int = 0;
 // extern "C" function declarations.
 // ---------------------------------------------------------------------------
 
-extern "C" {
+unsafe extern "C" {
     pub fn rc_client_create(
         read_memory: rc_client_read_memory_func_t,
         server_call: rc_client_server_call_t,
@@ -306,7 +306,7 @@ extern "C" {
     ) -> c_int;
     pub fn rc_client_progress_size(client: *mut rc_client_t) -> usize;
     pub fn rc_client_deserialize_progress(client: *mut rc_client_t, serialized: *const u8)
-        -> c_int;
+    -> c_int;
 
     pub fn rc_client_get_rich_presence_message(
         client: *mut rc_client_t,
@@ -345,7 +345,7 @@ mod abi_guard {
     // `rc_cheevos_sizeof_*` accessors compiled from `static_asserts.c`), so any
     // Rust/C layout drift is caught on EVERY platform — not pinned to numbers
     // validated on one host. (We avoid C11 `_Static_assert`, which MSVC rejects.)
-    extern "C" {
+    unsafe extern "C" {
         fn rc_cheevos_sizeof_event() -> usize;
         fn rc_cheevos_sizeof_achievement() -> usize;
         fn rc_cheevos_sizeof_leaderboard() -> usize;

@@ -398,7 +398,7 @@ mod tests {
         m.cpu_write(0x8001, 4);
         assert_eq!(m.ppu_read(0x0000), 4);
         assert_eq!(m.ppu_read(0x0400), 5); // 2 KiB block, second 1 KiB
-                                           // R2 (1 KiB @ $1000): write 9.
+        // R2 (1 KiB @ $1000): write 9.
         m.cpu_write(0x8000, 2);
         m.cpu_write(0x8001, 9);
         assert_eq!(m.ppu_read(0x1000), 9);

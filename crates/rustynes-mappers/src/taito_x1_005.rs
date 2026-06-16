@@ -346,7 +346,7 @@ mod tests {
         m.cpu_write(0x7EF0, 4);
         assert_eq!(m.ppu_read(0x0000), 4);
         assert_eq!(m.ppu_read(0x0400), 5); // adjacent 1K slot is bank+1
-                                           // Second 2K register $7EF1 -> slots 2/3.
+        // Second 2K register $7EF1 -> slots 2/3.
         m.cpu_write(0x7EF1, 8);
         assert_eq!(m.ppu_read(0x0800), 8);
         assert_eq!(m.ppu_read(0x0C00), 9);

@@ -149,11 +149,7 @@ fn opll_carrier_produces_expected_fundamental_frequency() {
         mag.iter()
             .enumerate()
             .fold((0usize, f32::NEG_INFINITY), |(bi, bv), (i, v)| {
-                if *v > bv {
-                    (i, *v)
-                } else {
-                    (bi, bv)
-                }
+                if *v > bv { (i, *v) } else { (bi, bv) }
             });
     let bin_hz = OPLL_RATE_HZ / (stationary.len() as f32);
     let peak_hz = peak_bin as f32 * bin_hz;

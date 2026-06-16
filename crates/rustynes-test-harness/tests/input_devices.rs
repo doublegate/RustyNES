@@ -31,8 +31,8 @@ mod common;
 use common::{fnv1a64, rom_path};
 use std::fs;
 
-use rustynes_core::input_device::{InputDevice, VausState, ZapperState};
 use rustynes_core::Nes;
+use rustynes_core::input_device::{InputDevice, VausState, ZapperState};
 
 const VAUS_ROM: &str = "nes-test-roms/vaus-test/vaus-test.nes";
 

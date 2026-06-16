@@ -27,12 +27,12 @@
 //!
 //! See `docs/audit/v1.3-sprint-1.4-winit-wgpu-unification-2026-05-24.md`.
 
-use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
+use wasm_bindgen::prelude::*;
 use web_sys::{Event, FileReader, HtmlInputElement};
 use winit::event_loop::EventLoopProxy;
 
-use crate::app::{run_wasm, AppEvent};
+use crate::app::{AppEvent, run_wasm};
 
 /// Entry point invoked from `index.html` after the `.wasm` loads.
 ///

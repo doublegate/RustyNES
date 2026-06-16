@@ -345,7 +345,7 @@ mod tests {
             IremG101::new(synth_prg(8), synth_chr_1k(8), Mirroring::Vertical, false).unwrap();
         m.cpu_write(0x8000, 0x03); // PRG reg 0 = 3
         m.cpu_write(0x9000, 0x02); // swap mode 1
-                                   // Mode 1: $8000 = {-2}=6, $C000 = PRG reg 0 = 3, $E000 = {-1}=7.
+        // Mode 1: $8000 = {-2}=6, $C000 = PRG reg 0 = 3, $E000 = {-1}=7.
         assert_eq!(m.cpu_read(0x8000), 6);
         assert_eq!(m.cpu_read(0xC000), 3);
         assert_eq!(m.cpu_read(0xE000), 7);

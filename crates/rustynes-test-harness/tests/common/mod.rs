@@ -240,7 +240,7 @@ pub mod external {
     use rustynes_core::{Buttons, Nes};
     use sha2::{Digest, Sha256};
 
-    use super::{dump_frame_if_requested, fnv1a64, FB_HEIGHT, FB_WIDTH};
+    use super::{FB_HEIGHT, FB_WIDTH, dump_frame_if_requested, fnv1a64};
 
     /// Corpus name used for [`dump_frame_if_requested`] output paths
     /// (`/tmp/rustynes-baseline-screenshots/external/...`).

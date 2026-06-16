@@ -19,8 +19,8 @@
 
 use std::path::PathBuf;
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use rustynes_mappers::{parse, Mapper};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use rustynes_mappers::{Mapper, parse};
 use std::hint::black_box;
 
 fn rom_path(rel: &str) -> PathBuf {

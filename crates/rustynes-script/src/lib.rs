@@ -58,7 +58,7 @@ mod backend;
 mod types;
 
 pub use backend::VmBackend;
-pub use types::{ControlCmd, DrawCmd, ScriptError, DEFAULT_INSTRUCTION_BUDGET};
+pub use types::{ControlCmd, DEFAULT_INSTRUCTION_BUDGET, DrawCmd, ScriptError};
 
 use rustynes_core::Nes;
 

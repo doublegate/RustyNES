@@ -2657,11 +2657,7 @@ impl Cpu {
             let _ = self.read1(bus, dummy);
         }
         self.pc = new_pc;
-        if crossed {
-            4
-        } else {
-            3
-        }
+        if crossed { 4 } else { 3 }
     }
 
     fn lax(&mut self, value: u8) {

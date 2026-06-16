@@ -38,7 +38,7 @@
 
 mod common;
 
-use common::external::{run_capture, snapshot_text, InputScript};
+use common::external::{InputScript, run_capture, snapshot_text};
 
 /// Default script: 600 frames idle (no input), 10 s @ NTSC 60 Hz —
 /// past the title-screen ramp-up for the bulk of these games.

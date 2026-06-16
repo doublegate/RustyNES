@@ -10,7 +10,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use rustynes_test_harness::{
-    cpu_for_nestest, format_log_line, parse_log_line, NestestBus, NestestRunner,
+    NestestBus, NestestRunner, cpu_for_nestest, format_log_line, parse_log_line,
 };
 
 fn rom_dir() -> PathBuf {

@@ -708,7 +708,7 @@ impl Mapper for Mmc3 {
             other => {
                 return Err(MapperError::Invalid(format!(
                     "unknown mirroring tag {other}"
-                )))
+                )));
             }
         };
         self.fixed_4screen = data[13] != 0;
@@ -754,7 +754,7 @@ impl Mapper for Mmc3 {
             other => {
                 return Err(MapperError::Invalid(format!(
                     "unknown MMC3 revision tag {other}"
-                )))
+                )));
             }
         };
         cur += 1;
@@ -821,7 +821,7 @@ mod tests {
         let mut m = fresh(8, 8);
         m.cpu_write(0x8000, 6); // select R6
         m.cpu_write(0x8001, 3); // R6 = 3
-                                // Mode 0: $8000 -> R6 = bank 3
+        // Mode 0: $8000 -> R6 = bank 3
         assert_eq!(m.cpu_read(0x8000), 3);
         // Mode 1: $8000 -> second-to-last (bank 6); $C000 -> R6 = bank 3.
         m.cpu_write(0x8000, 0x40 | 6); // PRG mode bit
@@ -838,7 +838,7 @@ mod tests {
         m.cpu_write(0x8001, 6); // R1 = 6
         m.cpu_write(0x8000, 2); // R2
         m.cpu_write(0x8001, 1); // R2 = bank 1
-                                // $0000-$03FF (slot 0) -> R0 & ~1 = 4.
+        // $0000-$03FF (slot 0) -> R0 & ~1 = 4.
         assert_eq!(m.ppu_read(0x0000), 4);
         // $0400 (slot 1) -> R0 | 1 = 5.
         assert_eq!(m.ppu_read(0x0400), 5);
@@ -856,7 +856,7 @@ mod tests {
         m.cpu_write(0x8001, 4);
         m.cpu_write(0x8000, 0x80 | 2);
         m.cpu_write(0x8001, 1); // R2
-                                // Mode 1: $0000 (slot 0) -> R2 = 1; $1000 (slot 4) -> R0 & ~1 = 4.
+        // Mode 1: $0000 (slot 0) -> R2 = 1; $1000 (slot 4) -> R0 & ~1 = 4.
         assert_eq!(m.ppu_read(0x0000), 1);
         assert_eq!(m.ppu_read(0x1000), 4);
     }
@@ -880,7 +880,7 @@ mod tests {
         m.cpu_write(0xA001, 0x00);
         m.cpu_write(0x6000, 0xCD); // ignored
         assert_eq!(m.cpu_read(0x6000), 0); // returns 0 (open bus stub)
-                                           // Re-enable + write-protect.
+        // Re-enable + write-protect.
         m.cpu_write(0xA001, 0x80 | 0x40);
         m.cpu_write(0x6000, 0x12); // ignored (protected)
         assert_eq!(m.cpu_read(0x6000), 0xAB); // original value preserved
@@ -892,8 +892,8 @@ mod tests {
         m.cpu_write(0xC000, 3); // reload = 3
         m.cpu_write(0xC001, 0); // pending reload
         m.cpu_write(0xE001, 0); // enable IRQ
-                                // Simulate four filtered A12 rising edges, advancing CPU cycles
-                                // between each so the M2 filter accepts.
+        // Simulate four filtered A12 rising edges, advancing CPU cycles
+        // between each so the M2 filter accepts.
         for _ in 0..4 {
             // Fall A12 low, advance >= 3 CPU cycles, then raise.
             m.notify_a12(false);
@@ -1134,7 +1134,7 @@ mod tests {
         std_layout.cpu_write(0xC000, 4); // reload = 4
         std_layout.cpu_write(0xC001, 0); // pending reload
         std_layout.cpu_write(0xE001, 0); // enable IRQ
-                                         // 5 scanlines: edges 1 (reload 4), 2 (3), 3 (2), 4 (1), 5 (0 + assert).
+        // 5 scanlines: edges 1 (reload 4), 2 (3), 3 (2), 4 (1), 5 (0 + assert).
         for n in 0..5 {
             let pending = pulse_a12(&mut std_layout);
             // Only the 5th edge should assert (counter went 4→reload, then

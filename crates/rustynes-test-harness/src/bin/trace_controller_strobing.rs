@@ -28,8 +28,8 @@ mod inner {
     use std::fs;
     use std::process::ExitCode;
 
-    use rustynes_core::irq_trace::BusAccess;
     use rustynes_core::Nes;
+    use rustynes_core::irq_trace::BusAccess;
 
     pub fn run() -> ExitCode {
         let args: Vec<String> = env::args().collect();

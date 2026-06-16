@@ -26,6 +26,21 @@ RetroAchievements. The hard-tier accuracy residuals were **re-baselined**:
 (`mmc3_test_2/4` #3, two `apu_reset` cases) share one fractional-master-clock root cause
 and stay deferred as a future v2.0-scale item (see `docs/STATUS.md`). See the v1.3.0 plan.
 
+### Changed
+
+- **Rust edition 2021 → 2024** (v1.3.0 Workstream A, toolchain modernization). The
+  whole workspace now compiles on the 2024 edition. The migration was mechanical and
+  determinism-neutral: `extern "C"` FFI blocks became `unsafe extern "C"`
+  (`rustynes-cheevos`), the `disasm` opcode-table macro pins its fragment specifiers
+  to `expr_2021` (preserving 2021 macro-matching), one `gen` local became the raw
+  identifier `r#gen` (`gen` is a reserved keyword in 2024), and a redundant
+  block-return brace was removed. Imports were reformatted to the 2024 rustfmt style.
+  No `tail_expr_drop_order` restructuring was needed. **Verified byte-identical:**
+  AccuracyCoin 100% (139/139), `visual_regression` golden framebuffers, `nestest`
+  0-diff, and `cpu_interrupts_v2` 5/5 strict all pass unchanged; the chip stack still
+  cross-compiles `no_std` (`thumbv7em-none-eabihf`). MSRV stays 1.86 for now (the
+  egui/wgpu/rfd dependency-tier bump that requires a newer MSRV is a separate step).
+
 ## [1.2.0] - 2026-06-15 - "Curator" (Feature Release)
 
 **v1.2.0 "Curator" is a broad, additive feature release** on the cycle-accurate v1.0.0

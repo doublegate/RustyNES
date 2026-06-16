@@ -1924,11 +1924,7 @@ impl Mapper for Multicart212 {
         match addr {
             0x6000..=0x7FFF => {
                 // Protection: (addr & 0x10) == 0 reads $80; else open-bus-ish 0.
-                if (addr & 0x0010) == 0 {
-                    0x80
-                } else {
-                    0x00
-                }
+                if (addr & 0x0010) == 0 { 0x80 } else { 0x00 }
             }
             0x8000..=0xFFFF => {
                 let count = (self.prg_rom.len() / PRG_BANK_16K).max(1);

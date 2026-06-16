@@ -27,14 +27,14 @@
 //! single-consumer **by convention**: the app's produce path is the only
 //! pusher and the CPAL callback the only popper.
 
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::SampleFormat;
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
-use crate::eq::{Equalizer, BAND_COUNT};
-use crate::resampler::{drc_ratio, HermiteResampler};
+use crate::eq::{BAND_COUNT, Equalizer};
+use crate::resampler::{HermiteResampler, drc_ratio};
 
 /// Default queue capacity in samples when no latency target is supplied
 /// (= the pre-v2.8.0 soft cap; ~341 ms @ 48 kHz).
@@ -390,9 +390,9 @@ impl EqStage {
     /// the caller can skip the (copy +) `run` entirely — keeping the no-DRC
     /// path zero-copy and byte-identical with the EQ off.
     fn engaged(&mut self, queue: &SampleQueue) -> bool {
-        let gen = queue.eq_gen();
-        if gen != self.seen_gen {
-            self.seen_gen = gen;
+        let r#gen = queue.eq_gen();
+        if r#gen != self.seen_gen {
+            self.seen_gen = r#gen;
             let (enabled, bands) = queue.eq_params();
             self.eq = enabled.then(|| Equalizer::new(bands, self.sample_rate));
         }

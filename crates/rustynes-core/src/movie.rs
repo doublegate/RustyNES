@@ -33,10 +33,10 @@
 
 use alloc::vec::Vec;
 
+use crate::Region;
 use crate::controller::Buttons;
 use crate::nes::Nes;
 use crate::save_state::{BinReader, BinWriter, SnapshotError};
-use crate::Region;
 use thiserror::Error;
 
 /// Magic header bytes — first 8 bytes of every `.rnm` movie file.

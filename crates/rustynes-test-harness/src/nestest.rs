@@ -9,7 +9,7 @@
 //! Per `docs/testing-strategy.md` §Layer 2.
 
 use rustynes_core::rustynes_cpu::{Bus, Cpu};
-use rustynes_core::rustynes_mappers::{parse, Mapper};
+use rustynes_core::rustynes_mappers::{Mapper, parse};
 
 /// Pre-execute snapshot captured before each instruction step.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]

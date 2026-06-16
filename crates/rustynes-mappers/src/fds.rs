@@ -2356,7 +2356,7 @@ mod tests {
         }
         assert!(fds.irq_pending());
         let _ = fds.cpu_read(0x4030); // ack
-                                      // No repeat: counter is disabled, no further IRQs.
+        // No repeat: counter is disabled, no further IRQs.
         for _ in 0..20 {
             fds.notify_cpu_cycle();
         }
@@ -2656,13 +2656,13 @@ mod tests {
             fds.cpu_write(0x4040 + i, (i as u8) & 0x3F);
         }
         fds.cpu_write(0x4089, 0x00); // disable write -> channel runs.
-                                     // Mod gain 0 (direct) -> unmodulated pitch add = P * 64 per wave tick.
+        // Mod gain 0 (direct) -> unmodulated pitch add = P * 64 per wave tick.
         fds.cpu_write(0x4084, 0x80); // mod env disabled, gain 0
         fds.cpu_write(0x4085, 0x00); // mod counter 0
-                                     // Wave pitch P = 0x400 (1024) -> add 1024*64 = 65536 per 16-cycle tick.
+        // Wave pitch P = 0x400 (1024) -> add 1024*64 = 65536 per 16-cycle tick.
         fds.cpu_write(0x4082, 0x00);
         fds.cpu_write(0x4083, 0x04); // hi nibble 4 -> P = 0x400, not halted
-                                     // After 4 wave ticks (64 CPU cycles), acc = 4*65536 = 2^18 -> index 1.
+        // After 4 wave ticks (64 CPU cycles), acc = 4*65536 = 2^18 -> index 1.
         for _ in 0..64 {
             fds.notify_cpu_cycle();
         }
@@ -2718,7 +2718,7 @@ mod tests {
         // $408A = 0 disables envelopes, so use 0 multiplier+1 via $408A=0?
         // Period c = 8 * (e+1) * (m+1); pick e=0, m=0 -> c = 8.
         fds.cpu_write(0x408A, 0x00); // m = 0 -> wait: 0 disables. Use m via... set below.
-                                     // m must be non-zero to enable; use $408A = 1 -> m=1, c = 8*1*2 = 16.
+        // m must be non-zero to enable; use $408A = 1 -> m=1, c = 8*1*2 = 16.
         fds.cpu_write(0x408A, 0x01);
         // Volume envelope ON (M=0), direction increase (D=1), speed e=0.
         fds.cpu_write(0x4080, 0x40);
@@ -2742,7 +2742,7 @@ mod tests {
         enable_sound_io(&mut fds);
         fds.cpu_write(0x408A, 0x01);
         fds.cpu_write(0x4080, 0x40); // ON, increase, speed 0
-                                     // Drive many ticks; gain must saturate at 32.
+        // Drive many ticks; gain must saturate at 32.
         for _ in 0..(16 * 64) {
             fds.notify_cpu_cycle();
         }
@@ -2813,7 +2813,7 @@ mod tests {
         // Direct full gain (32), full master (0 -> 2/2).
         fds.cpu_write(0x4080, 0x80 | 0x20);
         fds.cpu_write(0x4089, 0x00); // master volume = 0 (full)
-                                     // Force a known wave sample at the output.
+        // Force a known wave sample at the output.
         fds.audio.wave_out_latch = 63;
         let full = fds.mix_audio();
         // master volume = 3 (2/5) should be quieter than full (2/2).
@@ -3080,8 +3080,8 @@ mod tests {
         );
         fds.cpu_write(0x4025, 0b0110_0100); // motor on, read mode
         settle_drive(&mut fds); // run out the motor spin-up window
-                                // Park at side 1's first block payload (past the lead-in gap + $80
-                                // mark); the first block byte is 0x01 (the disk-info block code).
+        // Park at side 1's first block payload (past the lead-in gap + $80
+        // mark); the first block byte is 0x01 (the disk-info block code).
         seek_head(&mut fds, FIRST_BLOCK_WIRE_PAYLOAD);
         for _ in 0..DISK_BYTE_CYCLES {
             fds.notify_cpu_cycle();
@@ -3109,7 +3109,7 @@ mod tests {
         }
         fds.cpu_write(0x4025, 0b0110_0100); // motor on, read mode
         settle_drive(&mut fds); // run out the motor spin-up window
-                                // No seek: the gap-skip must re-sync from head 0 to the first block.
+        // No seek: the gap-skip must re-sync from head 0 to the first block.
         for _ in 0..DISK_BYTE_CYCLES {
             fds.notify_cpu_cycle();
         }
@@ -3147,7 +3147,7 @@ mod tests {
         enable_disk_io(&mut fds);
         fds.cpu_write(0x4025, 0b0110_0100); // motor on, read
         fds.set_disk_side(Some(1)); // insert -> not-ready window opens
-                                    // Immediately after insert: not-ready set even though motor is on.
+        // Immediately after insert: not-ready set even though motor is on.
         assert_eq!(
             fds.cpu_read(0x4032) & 0x02,
             0x02,

@@ -46,8 +46,8 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
-use rustynes_core::cpu_boot_trace::{CpuBootTrace, CpuBootTraceConfig};
 use rustynes_core::Nes;
+use rustynes_core::cpu_boot_trace::{CpuBootTrace, CpuBootTraceConfig};
 
 /// Per-fixture record cap.  Sized generously at 1M records to comfortably
 /// cover the default 200 k cycle window (~60 k records expected; cap

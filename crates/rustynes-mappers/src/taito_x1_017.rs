@@ -412,7 +412,7 @@ mod tests {
         let mut m = TaitoX1017::new(synth_prg(8), synth_chr_1k(16), Mirroring::Horizontal).unwrap();
         m.cpu_write(0x7EF0, 8); // 2K bank -> base 8
         m.cpu_write(0x7EF2, 12); // 1K bank
-                                 // Mode 1: 1K banks at low half, 2K banks at high half.
+        // Mode 1: 1K banks at low half, 2K banks at high half.
         m.cpu_write(0x7EF6, 0x02);
         assert_eq!(m.ppu_read(0x0000), 12); // 1K bank now at $0000
         assert_eq!(m.ppu_read(0x1000), 8); // 2K bank now at $1000

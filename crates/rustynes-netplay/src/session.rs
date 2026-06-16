@@ -50,7 +50,7 @@
 
 use rustynes_core::{Buttons, Nes};
 
-use crate::message::{fnv1a64, NetMessage};
+use crate::message::{NetMessage, fnv1a64};
 use crate::transport::Transport;
 
 /// The maximum number of players.

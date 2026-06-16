@@ -129,15 +129,15 @@ pub mod webrtc;
 pub use connection::{ConnectionState, DisconnectReason, NetplayConnection, UdpTransport};
 #[cfg(not(target_arch = "wasm32"))]
 pub use mesh_net::{MeshError, MeshHost, MeshJoiner, UdpMeshTransport};
-pub use message::{fnv1a64, NetMessage, PROTOCOL_VERSION};
+pub use message::{NetMessage, PROTOCOL_VERSION, fnv1a64};
 pub use rng::SplitMix64;
-pub use session::{AdvanceOutcome, NetplayError, RollbackSession, SessionConfig, MAX_PLAYERS};
+pub use session::{AdvanceOutcome, MAX_PLAYERS, NetplayError, RollbackSession, SessionConfig};
 pub use signaling::{Action, ClientId, Relay, SignalMessage};
 #[cfg(not(target_arch = "wasm32"))]
 pub use stun::StunClient;
 pub use stun::{
-    build_binding_request, parse_binding_response, HolePunch, PunchState, TransactionId,
-    MAGIC_COOKIE,
+    HolePunch, MAGIC_COOKIE, PunchState, TransactionId, build_binding_request,
+    parse_binding_response,
 };
 pub use transport::{LinkConditions, MemoryTransport, MeshTransport, Transport};
 

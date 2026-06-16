@@ -2430,7 +2430,7 @@ impl LockstepBus {
             return;
         }
         let xfer_idx = consumed - alignment; // 0..512
-                                             // Even xfer index: read; odd: write.
+        // Even xfer index: read; odd: write.
         if xfer_idx & 1 == 0 {
             let src_addr =
                 (u16::from(self.dma_page) << 8) | u16::try_from(xfer_idx >> 1).unwrap_or(0);
@@ -3876,9 +3876,7 @@ impl Bus for LockstepBus {
     // Without the collapse flag the arm cannot surface in that gap, so the
     // original in-flight-only condition is preserved (audit-state invariant).
     fn oam_dma_overlap_ready(&self) -> bool {
-        {
-            self.dma_cycles_owed > 0 || self.dma_pending.is_some()
-        }
+        self.dma_cycles_owed > 0 || self.dma_pending.is_some()
     }
 
     // Program M (M-2): whether the most recent `dmc_dma_step` did the GET.
@@ -3937,11 +3935,7 @@ impl Bus for LockstepBus {
         self.in_dmc_dma = true;
         self.dmc_step_was_get = false;
         self.capture_deferred_dma_replay();
-        if self.apu.dmc_dma_short() {
-            2
-        } else {
-            3
-        }
+        if self.apu.dmc_dma_short() { 2 } else { 3 }
     }
 
     // Program M (M-2, exact): one DMC halt/dummy/align cycle overlapping OAM.

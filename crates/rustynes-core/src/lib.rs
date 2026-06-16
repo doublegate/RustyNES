@@ -51,22 +51,22 @@ pub use input_device::{
     FamilyKeyboardState, InputDevice, PowerPadState, SnesMouseState, VausState, ZapperState,
 };
 pub use movie::{
-    FrameInput, Movie, MovieError, MoviePlayer, MovieRecorder, StartPoint, BYTES_PER_FRAME,
-    MOVIE_FORMAT_VERSION, MOVIE_MAGIC,
+    BYTES_PER_FRAME, FrameInput, MOVIE_FORMAT_VERSION, MOVIE_MAGIC, Movie, MovieError, MoviePlayer,
+    MovieRecorder, StartPoint,
 };
 #[cfg(feature = "debug-hooks")]
 pub use nes::TraceRec;
-pub use nes::{Nes, FRAME_DURATION_DENDY, FRAME_DURATION_NTSC, FRAME_DURATION_PAL};
+pub use nes::{FRAME_DURATION_DENDY, FRAME_DURATION_NTSC, FRAME_DURATION_PAL, Nes};
 pub use rewind::{
-    RewindError, RewindRing, REWIND_DEFAULT_KEYFRAME_PERIOD, REWIND_DEFAULT_MAX_BYTES,
+    REWIND_DEFAULT_KEYFRAME_PERIOD, REWIND_DEFAULT_MAX_BYTES, RewindError, RewindRing,
 };
 pub use save_state::{
-    parse_header, tag, tag_string, write_header, write_section, BinReader, BinWriter, Header,
-    Section, SectionIter, SnapshotError, FORMAT_VERSION, HEADER_LEN, MAGIC, ROM_HASH_TAG_LEN,
-    THUMBNAIL_HEIGHT, THUMBNAIL_LEN, THUMBNAIL_VERSION, THUMBNAIL_WIDTH,
+    BinReader, BinWriter, FORMAT_VERSION, HEADER_LEN, Header, MAGIC, ROM_HASH_TAG_LEN, Section,
+    SectionIter, SnapshotError, THUMBNAIL_HEIGHT, THUMBNAIL_LEN, THUMBNAIL_VERSION,
+    THUMBNAIL_WIDTH, parse_header, tag, tag_string, write_header, write_section,
 };
 pub use scheduler::M2Phase;
-pub use vs_db::{lookup as vs_db_lookup, VsDbEntry};
+pub use vs_db::{VsDbEntry, lookup as vs_db_lookup};
 
 /// Returns the crate version string.
 #[must_use]

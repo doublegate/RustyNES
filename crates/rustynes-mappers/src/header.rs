@@ -229,11 +229,7 @@ fn decoded_size(lsb: u8, msb_nibble: u16, unit: usize) -> Result<usize, RomError
 
 /// NES 2.0 RAM-shift encoding: 0 → 0 bytes, otherwise `64 << shift`.
 const fn ram_size_from_shift(shift: u8) -> u32 {
-    if shift == 0 {
-        0
-    } else {
-        64u32 << shift
-    }
+    if shift == 0 { 0 } else { 64u32 << shift }
 }
 
 /// Re-serialize a [`Header`] back to the canonical 16-byte layout.

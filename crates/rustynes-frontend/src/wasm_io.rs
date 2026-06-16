@@ -19,8 +19,8 @@
 //! degraded to a `log(...)` console message, matching the existing wasm
 //! code style. Native never compiles this module.
 
-use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
+use wasm_bindgen::prelude::*;
 
 use crate::save_state::hex_sha256;
 

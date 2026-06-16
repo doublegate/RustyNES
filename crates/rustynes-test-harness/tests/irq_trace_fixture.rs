@@ -32,8 +32,8 @@
 use std::fs;
 use std::path::PathBuf;
 
-use rustynes_core::irq_trace::IrqTrace;
 use rustynes_core::Nes;
+use rustynes_core::irq_trace::IrqTrace;
 
 /// Per-ROM linear-buffer cap.  Sized to comfortably hold the entire
 /// run from `BOOT_FRAMES_TO_SKIP` to final-status detection for every

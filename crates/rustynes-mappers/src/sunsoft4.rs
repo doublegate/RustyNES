@@ -445,7 +445,7 @@ mod tests {
         // Vertical mirroring: $2000 -> table 0 -> lower -> NT0 bank ($C000).
         m.cpu_write(0xC000, 0x05); // NT0 bank -> (0x05 & 0x7F)|0x80 = 0x85 = 133
         m.cpu_write(0xD000, 0x06); // NT1 bank -> 0x86 = 134
-                                   // Enable ROM nametable mode (bit 4), keep vertical (bits 0-1 = 0).
+        // Enable ROM nametable mode (bit 4), keep vertical (bits 0-1 = 0).
         m.cpu_write(0xE000, 0x10);
         // $2000 (table 0, vertical -> physical 0 -> NT0 = 133).
         assert_eq!(m.nametable_fetch(0x2000), Some(133));

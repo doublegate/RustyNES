@@ -3527,7 +3527,7 @@ mod tests {
         // Set counter low byte = 0xFFE, then high byte+enable.
         m.cpu_write(0x5000, 0xFE);
         m.cpu_write(0x5800, 0xFF); // sets bit 7 & 0x80 of high byte = enable.
-                                   // Ticks until counter reaches 0x7FFF.
+        // Ticks until counter reaches 0x7FFF.
         for _ in 0..3 {
             m.notify_cpu_cycle();
         }
@@ -3781,7 +3781,7 @@ mod tests {
         assert_eq!(a.volume(0), 3);
         a.envelope.level = 1;
         assert_eq!(a.volume(0), 0); // env 0 and 1 both -> 0.
-                                    // Switching back to fixed mode honors $08 bits 3-0 again.
+        // Switching back to fixed mode honors $08 bits 3-0 again.
         a.regs[0x08] = 0x07;
         assert_eq!(a.volume(0), 7);
     }
@@ -3796,7 +3796,7 @@ mod tests {
         // the bias and the mix is positive.
         let mut m = Fme7::new(synth(8), synth_chr(8), Mirroring::Vertical).unwrap();
         fme7_audio_write(&mut m, 0x07, 0x3F); // bits 0..=5 all set => all disabled.
-                                              // Volumes irrelevant when channels are muted.
+        // Volumes irrelevant when channels are muted.
         let silent = m.mix_audio();
         assert_eq!(silent, -SUNSOFT5B_DC_BIAS);
 
@@ -3804,7 +3804,7 @@ mod tests {
         // by ticking once with period = 0 (the chip wraps period=0 to 1).
         fme7_audio_write(&mut m, 0x07, 0b0011_1110); // tone A enabled (bit 0 = 0).
         fme7_audio_write(&mut m, 0x08, 0x0F); // channel A volume = 15.
-                                              // Manually toggle the tone level so we hit the "high" half-cycle.
+        // Manually toggle the tone level so we hit the "high" half-cycle.
         m.audio.tone_a.level = 1;
         let active = m.mix_audio();
         assert!(
@@ -4076,10 +4076,10 @@ mod tests {
         // Channel 8 freq = 0x01_0000 → hi=01, mid=00, lo=00.
         n163_write_ram(&mut m, 0x78, false, 0x00); // freq lo
         n163_write_ram(&mut m, 0x7A, false, 0x00); // freq mid
-                                                   // length=4 (256 - 0xFC), freq-hi=01.
+        // length=4 (256 - 0xFC), freq-hi=01.
         n163_write_ram(&mut m, 0x7C, false, 0xFC | 0x01);
         n163_write_ram(&mut m, 0x7F, false, 0x10); // C=1 → 2 channels
-                                                   // Channel 7 freq = 0.
+        // Channel 7 freq = 0.
         n163_write_ram(&mut m, 0x70, false, 0x00);
         n163_write_ram(&mut m, 0x72, false, 0x00);
         n163_write_ram(&mut m, 0x74, false, 0xFC);
@@ -4274,8 +4274,8 @@ mod tests {
         let mut m = vrc7_default();
         // Latch: 0xFE (so we need only 2 ticks to wrap from 0xFE -> 0xFF -> 0x00 + pending).
         m.cpu_write(0xE008, 0xFE); // $E008 = IRQ latch
-                                   // Control: enable + cycle mode (mode bit 2 = 1 means CPU cycle).
-                                   // Bit 0 = enable_after_ack; bit 1 = enable; bit 2 = mode (1=cycle, 0=scanline).
+        // Control: enable + cycle mode (mode bit 2 = 1 means CPU cycle).
+        // Bit 0 = enable_after_ack; bit 1 = enable; bit 2 = mode (1=cycle, 0=scanline).
         m.cpu_write(0xF000, 0b0000_0110);
         // After enable, counter = latch = 0xFE.  Ticking until pending:
         // 0xFE -> 0xFF (clock 1), pending fires (clock 2 reloads from latch).
@@ -4369,7 +4369,7 @@ mod tests {
         m.cpu_write(0x9030, 0x00);
         m.cpu_write(0x9010, 0x20); // $20 = fnum high + block + key for ch 0
         m.cpu_write(0x9030, 0x35); // key-on bit set + block + fnum high
-                                   // Tick enough cycles for the envelope to clear Damp → Attack.
+        // Tick enough cycles for the envelope to clear Damp → Attack.
         for _ in 0..16_384 {
             m.notify_cpu_cycle();
         }
@@ -4397,8 +4397,8 @@ mod tests {
         let mut m = vrc7_default();
         m.cpu_write(0x9010, 0x20); // address latch = $20
         m.cpu_write(0x9030, 0x55); // data write
-                                   // Snapshot stores the byte in both the mapper's audio.regs
-                                   // (for save-state round-trip) and the OPLL's register shadow.
+        // Snapshot stores the byte in both the mapper's audio.regs
+        // (for save-state round-trip) and the OPLL's register shadow.
         assert_eq!(m.audio.regs[0x20], 0x55);
         #[cfg(feature = "mapper-audio")]
         assert_eq!(
@@ -4423,9 +4423,9 @@ mod tests {
         m.cpu_write(0x9030, 0x80); // fnum low byte
         m.cpu_write(0x9010, 0x20);
         m.cpu_write(0x9030, 0x35); // key-on + block(2) + fnum high(1)
-                                   // Each OPLL sample = 36 CPU cycles. 16,384 CPU cycles = ~455
-                                   // OPLL samples = ~9 ms of audio. Damp → Attack happens within
-                                   // a few hundred OPLL samples for any non-saturated AR.
+        // Each OPLL sample = 36 CPU cycles. 16,384 CPU cycles = ~455
+        // OPLL samples = ~9 ms of audio. Damp → Attack happens within
+        // a few hundred OPLL samples for any non-saturated AR.
         let mut peak_abs: u16 = 0;
         for _ in 0..16_384 {
             m.notify_cpu_cycle();
@@ -4475,7 +4475,7 @@ mod tests {
         m.cpu_write(0xE000, 0b1100_0001); // Horizontal + WRAM enable + audio silenced
         m.cpu_write(0xE008, 0x80); // IRQ latch
         m.cpu_write(0xF000, 0b0000_0011); // enable + scanline mode
-                                          // Audio register stream.
+        // Audio register stream.
         m.cpu_write(0x9010, 0x30);
         m.cpu_write(0x9030, 0x5F);
         let blob = m.save_state();

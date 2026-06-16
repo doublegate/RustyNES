@@ -12,7 +12,7 @@
 //! pressure is therefore minimal; this is an upper bound on
 //! instructions-per-second, not a representative workload.
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use rustynes_cpu::{Bus, Cpu};
 use std::hint::black_box;
 

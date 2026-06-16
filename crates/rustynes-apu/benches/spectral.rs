@@ -22,7 +22,7 @@
 //! measures the full `add_sample` + decimation + drain path under
 //! release-mode optimization.
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use rustynes_apu::{BlipBuf, CPU_HZ_NTSC};
 use std::hint::black_box;
 

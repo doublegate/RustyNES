@@ -445,7 +445,7 @@ mod tests {
         m.cpu_write(0xC000, 0xFE);
         m.cpu_write(0xC001, 0x00); // reload pending
         m.cpu_write(0xC002, 0x00); // enable
-                                   // First filtered rise: reload counter to latch (1).
+        // First filtered rise: reload counter to latch (1).
         pulse_a12(&mut m);
         assert!(!m.irq_pending());
         // Second filtered rise: decrement 1 -> 0, assert.

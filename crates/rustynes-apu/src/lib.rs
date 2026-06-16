@@ -59,12 +59,12 @@ pub use dmc::REENABLE_BUMP;
 pub use dmc::SUBPOS_DELAY;
 pub use envelope::Envelope;
 pub use frame_counter::{FrameCounter, FrameEvents, Mode as FrameCounterMode};
-pub use length::{LengthCounter, LENGTH_TABLE};
+pub use length::{LENGTH_TABLE, LengthCounter};
 pub use mixer::{FilterChain, Mixer, OnePole};
-pub use noise::{Noise, NTSC_NOISE_PERIODS, PAL_NOISE_PERIODS};
+pub use noise::{NTSC_NOISE_PERIODS, Noise, PAL_NOISE_PERIODS};
 pub use opll::{ChipType as OpllChipType, Opll, Patch as OpllPatch};
 pub use pulse::Pulse;
-pub use snapshot::{ApuSnapshotError, APU_SNAPSHOT_VERSION};
+pub use snapshot::{APU_SNAPSHOT_VERSION, ApuSnapshotError};
 pub use triangle::Triangle;
 
 /// NES region — picks clock dividers and per-region tables.

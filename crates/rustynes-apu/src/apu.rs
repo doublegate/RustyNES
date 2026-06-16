@@ -5,6 +5,7 @@
 //! sample emitter.  Driven by the lockstep bus's `Apu::tick` once per CPU
 //! cycle.
 
+use crate::Region;
 use crate::blip::{BlipBuf, CPU_HZ_NTSC, CPU_HZ_PAL};
 use crate::dmc::Dmc;
 use crate::frame_counter::{FrameCounter, FrameEvents};
@@ -12,7 +13,6 @@ use crate::mixer::Mixer;
 use crate::noise::Noise;
 use crate::pulse::Pulse;
 use crate::triangle::Triangle;
-use crate::Region;
 use alloc::vec::Vec;
 
 /// v2.0 R-1 core C-1 DIAGNOSTIC (gated `mc-r1-dmc-abort-probe`).

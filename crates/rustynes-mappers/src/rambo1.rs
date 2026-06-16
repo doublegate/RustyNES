@@ -636,7 +636,7 @@ mod tests {
         let mut m = fresh();
         select_write(&mut m, 0, 4); // R0 (2 KiB)
         select_write(&mut m, 2, 9); // R2 (1 KiB)
-                                    // Without inversion: R0 @ $0000, R2 @ $1000.
+        // Without inversion: R0 @ $0000, R2 @ $1000.
         assert_eq!(m.ppu_read(0x0000), 4);
         assert_eq!(m.ppu_read(0x1000), 9);
         // With inversion (bit 7): R2 region moves to $0000, R0 to $1000.
@@ -668,7 +668,7 @@ mod tests {
         m.cpu_write(0xC000, 2); // latch = 2
         m.cpu_write(0xC001, 1); // CPU-cycle mode (bit 0 = 1), reload pending
         m.cpu_write(0xE001, 0); // enable
-                                // A12 must be ignored in CPU-cycle mode.
+        // A12 must be ignored in CPU-cycle mode.
         m.notify_a12(false);
         m.notify_a12(true);
         assert!(!m.irq_pending());
