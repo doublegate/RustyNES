@@ -122,7 +122,15 @@ def main() -> int:
             print(f"  MOVE  {rel_s}  ->  {rel_d}")
         else:
             os.makedirs(os.path.dirname(dst), exist_ok=True)
-            shutil.move(src, dst)
+            # When both src and dst are existing directories, shutil.move would
+            # nest src *inside* dst (mapper-NN/mapper-NN) instead of merging.
+            # Merge file-by-file and drop the now-empty src.
+            if os.path.isdir(src) and os.path.isdir(dst):
+                for item in os.listdir(src):
+                    shutil.move(os.path.join(src, item), os.path.join(dst, item))
+                os.rmdir(src)
+            else:
+                shutil.move(src, dst)
 
     # 1. Normalize legacy FLAT besteffort PNGs into per-mapper sub-dirs.
     for entry in sorted(os.listdir(be)):

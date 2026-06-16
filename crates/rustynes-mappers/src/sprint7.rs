@@ -96,9 +96,15 @@ impl Jv001Chip {
     const MASK: u8 = 0x0F;
 
     /// The value the chip returns on a $4100 read (the protection handshake).
+    ///
+    /// Per the JV001 hardware spec (and the module comment above), the read
+    /// value splits at `0x3F` (6-bit accumulator) / `0xC0` (2-bit inverter) —
+    /// distinct from the `0x0F`/`0xF0` nibble split the board's *bank-output*
+    /// latch (`self.output`) uses. The handshake read and the bank latch are
+    /// separate chip outputs.
     const fn read(self) -> u8 {
         let inv = if self.invert { 0xFF } else { 0x00 };
-        (self.accumulator & Self::MASK) | ((self.inverter ^ inv) & !Self::MASK)
+        (self.accumulator & 0x3F) | ((self.inverter ^ inv) & 0xC0)
     }
 
     /// `absolute` is the full CPU address; `value` the written byte.
@@ -2471,8 +2477,11 @@ mod tests {
         // $4100 latch (increase off): accumulator = (0 & 0xF0) | (staging & 0x0F)
         //   = 5; output = (acc & 0x0F) | (inverter & 0xF0) = 0x35.
         m.cpu_write(0x4100, 0x00);
-        // The protection read at $4100 returns the scrambled chip value (0x35).
-        assert_eq!(m.cpu_read(0x4100), 0x35);
+        // The protection read at $4100 returns the JV001 scrambled value with
+        // the 0x3F/0xC0 split: (accumulator & 0x3F) | ((inverter ^ inv) & 0xC0)
+        //   = (0x05 & 0x3F) | (0x30 & 0xC0) = 0x05. (The bank-output latch keeps
+        // its own 0x0F/0xF0 split, so the bank-decode asserts below are 0x35.)
+        assert_eq!(m.cpu_read(0x4100), 0x05);
         // Bank decode from the output latch: PRG = (0x35 >> 4) & 3 = 3,
         // CHR = 0x35 & 0x0F = 5.
         assert_eq!(m.cpu_read(0x8000), 3); // bank 3 of 4 -> byte 0 = 3
@@ -2504,7 +2513,8 @@ mod tests {
         let mut m2 =
             Sachen3018M147::new(synth_prg_32k(4), synth_chr_8k(8), Mirroring::Vertical).unwrap();
         m2.load_state(&blob).unwrap();
-        assert_eq!(m2.cpu_read(0x4100), 0x35);
+        // JV001 0x3F/0xC0 handshake read = 0x05 (the bank latch keeps 0x35).
+        assert_eq!(m2.cpu_read(0x4100), 0x05);
         assert_eq!(m2.cpu_read(0x8000), 3);
         assert_eq!(m2.ppu_read(0x0000), 5);
     }
