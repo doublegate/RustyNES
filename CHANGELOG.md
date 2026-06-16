@@ -77,6 +77,18 @@ and stay deferred as a future v2.0-scale item (see `docs/STATUS.md`). See the v1
   and the CRC-keyed per-game database as the extracted/patched image, identical to every
   other load path. (Regression-tested.)
 
+### Security
+
+- **Resolved all 10 open CodeQL code-scanning alerts.** (1) Added a least-privilege
+  top-level `permissions: contents: read` to `ci.yml` and `security.yml` — the 9
+  `actions/missing-workflow-permissions` alerts (one per job; every job is read-only
+  build/test/lint/audit) — so neither workflow's `GITHUB_TOKEN` carries default write
+  scopes. (2) Fixed the one high-severity `py/incomplete-url-substring-sanitization` in
+  `scripts/download_missing_nesdev_pages.py`: the opensearch-host decision used a
+  `"mediawiki.org" in url` substring test (which a crafted host like
+  `mediawiki.org.example.com` or a query string would satisfy); it now parses the URL and
+  compares the actual hostname (`== "mediawiki.org" or endswith(".mediawiki.org")`).
+
 ## [1.2.0] - 2026-06-15 - "Curator" (Feature Release)
 
 **v1.2.0 "Curator" is a broad, additive feature release** on the cycle-accurate v1.0.0

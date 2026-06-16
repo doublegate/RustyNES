@@ -40,6 +40,14 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
+# Least-privilege default for the whole workflow: every job here only builds /
+# tests / lints and reads the checked-out tree, so the default GITHUB_TOKEN is
+# narrowed to read-only. Resolves the CodeQL `actions/missing-workflow-permissions`
+# alerts (one was raised per job for the absent permissions block); a job needing
+# more would override with its own `permissions:` key.
+permissions:
+  contents: read
+
 jobs:
   # fmt + clippy + rustdoc share one runner + one compile of the workspace's
   # dependency graph (clippy and rustdoc differ only in the final pass), so
