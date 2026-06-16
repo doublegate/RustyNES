@@ -26,8 +26,34 @@ RetroAchievements. The hard-tier accuracy residuals were **re-baselined**:
 (`mmc3_test_2/4` #3, two `apu_reset` cases) share one fractional-master-clock root cause
 and stay deferred as a future v2.0-scale item (see `docs/STATUS.md`). See the v1.3.0 plan.
 
+### Added
+
+- **Memory Compare (cheat-hunt memory search)** debugger panel (v1.3.0 Workstream C, C3).
+  A classic emulator memory search over the 2 KB CPU work RAM (`$0000-$07FF`): snapshot a
+  baseline, then iteratively narrow a candidate set by how each byte moved since the last
+  snapshot — changed / unchanged / increased / decreased / equals-value — until one
+  address remains (feed it to the raw-RAM cheat panel). Read-only (samples via the
+  side-effect-free `cpu_bus_peek`; never writes the core, determinism unaffected), opened
+  from **Debug → Memory Compare**, and disabled under RetroAchievements hardcore mode like
+  the Memory viewer + cheat panel.
+
 ### Changed
 
+- **Menu-bar reorganization + Settings auto-save** (v1.3.0 Workstream C, UI). The
+  top-level menu order is now **File / Emulation / View / Tools / Debug / Help**.
+  Items were regrouped for discoverability: a **Close ROM** entry and a grouped
+  **Save States** submenu (Save/Load State, Active Slot, Save-/Load-to-Slot, Manage
+  States) in File; **Swap Disk Side** moved File → Emulation; **NSF Player** moved
+  Debug → Tools; **Performance Monitor** moved Tools → Debug; and the standalone
+  "Mod" menu folded into a Tools **HD Pack** submenu (still `hd-pack`-feature +
+  native-gated). The Settings window gains a dedicated **Shaders** tab (the
+  composable shader stack, split out of Video) and renames "Advanced" → **Emulation**
+  (run-ahead + rewind); it now snapshots the config each frame and persists on any
+  change, so **every setting in every tab auto-saves**. The redundant debugger
+  checkbox toolbar was removed (the menu bar already surfaces every panel). Pure UI;
+  no determinism surface. (The egui-0.34 "menu lingers until several clicks" report
+  is documented in `ui_shell::menu_bar` pending an on-device repro to pin the exact
+  `MenuState` trigger — not hacked blind.)
 - **Rust edition 2021 → 2024** (v1.3.0 Workstream A, toolchain modernization). The
   whole workspace now compiles on the 2024 edition. The migration was mechanical and
   determinism-neutral: `extern "C"` FFI blocks became `unsafe extern "C"`

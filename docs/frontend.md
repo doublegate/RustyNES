@@ -307,27 +307,35 @@ state and emits the toggle action; the app flips the real flag.
   `OpenChipPanel(ChipPanel)`, ...).
 - `ShellFrame` — the per-frame read-only context captured under the brief
   lock (see Rendering).
-- `SettingsTab` (Video / Audio / Input / Advanced), `StatusMessage` (a
-  colored, auto-fading status-bar toast), and `apply_theme`.
+- `SettingsTab` (Video / Shaders / Audio / Input / Emulation; v1.3.0 split the
+  shader stack into its own tab and renamed "Advanced" → "Emulation"),
+  `StatusMessage` (a colored, auto-fading status-bar toast), and `apply_theme`.
 
 ### Menu IA
 
-The menu bar is **File / Emulation / Tools / View / Debug / Help**:
+The menu bar is **File / Emulation / View / Tools / Debug / Help** (v1.3.0
+reorganized the order and regrouped several items — see the per-menu notes):
 
 - **File** — Open ROM (`F12`, native), Open Recent (MRU, missing files greyed
-  out), FDS Swap Disk Side (`F9`, FDS games only), Save/Load State, Save Slot
-  (0-7 radio), Save-to-Slot / Load-from-Slot, Take Screenshot (native), Quit.
+  out), Close ROM (v1.3.0), a **Save States** submenu (Save/Load State, Active
+  Slot 0-7 radio, Save-to-Slot / Load-from-Slot, Manage States…), Take
+  Screenshot + Copy to Clipboard (native), Quit.
 - **Emulation** — Pause/Resume (disabled during netplay), Reset, Power Cycle,
   Frame Advance (`\`, single-steps one frame while paused), a hold-`Tab` Fast
-  Forward hint, Run-Ahead selector (0-3), Region (read-only display), Vs. Insert
-  Coin (`F10`, Vs. games only).
+  Forward hint, Run-Ahead selector (0-3), Speed presets, Region (read-only
+  display), Vs. Insert Coin (`F10`, Vs. games only), and FDS Swap Disk Side
+  (`F9`, FDS games only; moved here from File in v1.3.0).
+- **View** — Settings, Theme (Light/Dark/System), 8:7 Pixel Aspect, Hide
+  Overscan, Fullscreen (`F11`, native), Window Size (1x-4x of the NES
+  resolution, native), Show FPS, Pause When Unfocused (auto-pause on focus
+  loss), Show Menu Bar (`M`).
 - **Tools** — Cheats, Movies (TAS: Record/Play/Branch), Netplay (native),
-  RetroAchievements (native + feature), Performance Monitor.
-- **View** — Settings, Theme (Light/Dark/System), 8:7 Pixel Aspect,
-  Fullscreen (`F11`, native), Window Size (1x-4x of the NES resolution, native),
-  Show FPS, Pause When Unfocused (auto-pause on focus loss), Show Menu Bar (`M`).
-- **Debug** — Show Debugger (`` ` ``), then CPU / PPU / APU / Memory / OAM /
-  Mapper.
+  RetroAchievements (native + feature), Input Display, NSF Player (moved here
+  from Debug in v1.3.0), ROM Database, and an **HD Pack** submenu
+  (`hd-pack` feature + native; folded in from the former standalone "Mod" menu).
+- **Debug** — Show Debugger (`` ` ``), Performance Monitor (moved here from
+  Tools in v1.3.0), then the chip/state inspectors: CPU / PPU / APU / Memory /
+  Memory Compare / OAM / Mapper / Trace Logger / Event Viewer / Lua Script.
 - **Help** — Keyboard Shortcuts, About.
 
 Tools surfaced this way appear as **floating windows without** opening the
@@ -506,9 +514,14 @@ selection, pacing mode, rewind buffer size, run-ahead depth, default region
 for region-less ROMs.
 
 The settings window is the same tabbed UI the menu's View → Settings opens —
-Video / Audio / Input / Advanced — each tab routing to the matching
+Video / Shaders / Audio / Input / Emulation — each tab routing to the matching
 debugger-settings / input-rebind section so the live-apply plumbing is
 shared (a present-mode / NTSC-filter / rewind change applies immediately).
+v1.3.0 split the composable shader stack into its own **Shaders** tab and
+renamed the latency/rewind tab to **Emulation**; the window also snapshots the
+config before each frame and persists it if any control mutated it, so **every
+setting in every tab auto-saves on change** (the per-control `save_config`
+calls remain as a redundant backstop).
 
 v1.0.0 added a `[ui]` section and a few top-level keys:
 

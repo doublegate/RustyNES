@@ -977,6 +977,31 @@ impl App {
     ///
     /// Native-only (filesystem). On wasm32 the ROM arrives as
     /// [`AppEvent::RomLoaded`] from the browser file picker.
+    /// v1.3.0 — close the current ROM: tear down the `Nes` and return to the
+    /// no-ROM state (the inverse of the install in [`Self::load_rom_from_path`]).
+    /// The menu gates this behind a loaded ROM + no active netplay session.
+    fn close_rom(&mut self) {
+        {
+            let mut guard = self.emu.lock();
+            let emu = &mut *guard;
+            emu.nes = None;
+            emu.perf.clear();
+            emu.present_fb.clear();
+            emu.audio_buf.clear();
+            emu.next_frame_time = None;
+        }
+        // Stop the dedicated emulation thread from producing frames.
+        #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
+        if let Some(thread) = self.emu_thread.as_ref() {
+            thread.control().set_has_rom(false);
+        }
+        self.rom_label = String::new();
+        self.rom_bytes = Vec::new();
+        self.present_staging.clear();
+        self.ui
+            .set_status(crate::ui_shell::StatusMessage::info("ROM closed"));
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     #[allow(clippy::too_many_lines)] // sequential per-format load + device/cheat/DB setup
     fn load_rom_from_path(&mut self, path: &Path) {
@@ -2658,6 +2683,9 @@ impl App {
                 let _ = self.config.save();
                 self.ui
                     .set_status(StatusMessage::info("Recent ROMs cleared"));
+            }
+            MenuAction::CloseRom => {
+                self.close_rom();
             }
             MenuAction::SaveState => {
                 #[cfg(not(target_arch = "wasm32"))]
