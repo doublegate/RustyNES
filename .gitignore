@@ -184,3 +184,7 @@ CLAUDE.local.md
 /.claude/
 WARP.md
 /.warp/
+
+# v1.3.0 D1 — BestEffort boot-smoke ROM staging (homebrew/unlicensed/multicart;
+# never committed, like tests/roms/external/). Only screenshots are committed.
+tests/roms/external-besteffort/

@@ -108,6 +108,12 @@ and stay deferred as a future v2.0-scale item (see `docs/STATUS.md`). See the v1
 
 ### Fixed
 
+- **Mapper 218 (Magic Floor) now loads its real 16 KiB-PRG dumps** (v1.3.0 D1
+  verification). The initial sprint8 port required a 32 KiB-multiple PRG and so
+  rejected the actual homebrew ROM (16 KiB, NROM-128-style); it now accepts 16 KiB
+  and mirrors PRG across the 32 KiB CPU window. Found by a boot-smoke pass over
+  homebrew/unlicensed dumps for the 14 new BestEffort families (screenshots under
+  `screenshots/besteffort/`; the ROMs stay gitignored). Regression test added.
 - **`.zip` / soft-patched ROMs passed on the command line now load** (a v1.2.0 ingest
   bug). The CLI / initial-ROM path (`App::new`, used by `rustynes <rom>`) read the file
   and parsed the raw bytes directly, skipping the `.zip` extraction + same-stem

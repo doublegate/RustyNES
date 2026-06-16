@@ -498,15 +498,17 @@ impl MagicFloor218 {
     /// # Errors
     ///
     /// Returns [`MapperError::Invalid`] when PRG is not a non-zero multiple of
-    /// 32 KiB. Any supplied CHR-ROM is rejected (the board has none).
+    /// 16 KiB. Any supplied CHR-ROM is rejected (the board has none). Real Magic
+    /// Floor dumps are 16 KiB (NROM-128-style, mirrored across the 32 KiB CPU
+    /// window); a 32 KiB image is also accepted.
     pub fn new(
         prg_rom: Box<[u8]>,
         chr_rom: &[u8],
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_32K) {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_16K) {
             return Err(MapperError::Invalid(format!(
-                "mapper 218 PRG-ROM size {} is not a non-zero multiple of 32 KiB",
+                "mapper 218 PRG-ROM size {} is not a non-zero multiple of 16 KiB",
                 prg_rom.len()
             )));
         }
@@ -554,7 +556,9 @@ impl Mapper for MagicFloor218 {
 
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if (0x8000..=0xFFFF).contains(&addr) {
-            self.prg_rom[addr as usize - 0x8000]
+            // Mirror the PRG across the 32 KiB window: a 16 KiB image
+            // (NROM-128-style) repeats, a 32 KiB image maps 1:1.
+            self.prg_rom[(addr as usize - 0x8000) % self.prg_rom.len()]
         } else {
             0
         }
@@ -2158,6 +2162,18 @@ mod tests {
         // $2000 = table 0 -> bank 0 = the CHR byte written at $0000.
         assert_eq!(m.ppu_read(0x2000), 0x11);
         assert_eq!(m.current_mirroring(), Mirroring::Vertical);
+    }
+
+    #[test]
+    fn m218_accepts_16k_prg_and_mirrors_it() {
+        // Real Magic Floor dumps are 16 KiB (NROM-128-style). The board must
+        // accept them and mirror PRG across the full 32 KiB CPU window.
+        let mut prg = synth_prg_16k(1);
+        prg[0] = 0xAB; // marker at the start of the 16 KiB image
+        let mut m = MagicFloor218::new(prg, &[], Mirroring::Horizontal).unwrap();
+        // $8000 and the mirror at $C000 both read the same byte.
+        assert_eq!(m.cpu_read(0x8000), 0xAB);
+        assert_eq!(m.cpu_read(0xC000), 0xAB);
     }
 
     #[test]
