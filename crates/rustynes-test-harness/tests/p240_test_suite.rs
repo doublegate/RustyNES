@@ -40,31 +40,43 @@ use rustynes_core::Nes;
 
 /// Run `rel` for `frames` frames with no input and return a one-line
 /// framebuffer FNV-1a snapshot string.
-fn run_and_hash(rel: &str, frames: u64) -> String {
+fn run_and_hash(rel: &str, frames: u64) -> Option<String> {
     let path = rom_path(rel);
+    // The 240p Test Suite ROMs live under the gitignored `tests/roms/nes-test-roms/`
+    // corpus (not redistributed here), so skip gracefully when absent: CI without
+    // the local corpus stays green, while a local run with the ROM present verifies
+    // the deterministic frame-60 framebuffer snapshot.
+    if !path.exists() {
+        eprintln!("SKIP {rel}: ROM not present (gitignored nes-test-roms corpus)");
+        return None;
+    }
     let bytes = fs::read(&path).unwrap_or_else(|e| panic!("read {}: {}", path.display(), e));
     let mut nes = Nes::from_rom(&bytes).unwrap_or_else(|e| panic!("parse {rel}: {e}"));
     for _ in 0..frames {
         nes.run_frame();
     }
     let fb = nes.framebuffer();
-    format!(
+    Some(format!(
         "rom={rel} frames={frames} fb_bytes={} fnv1a64={:016x}",
         fb.len(),
         fnv1a64(fb)
-    )
+    ))
 }
 
 #[test]
 fn p240_uxrom_frame_60() {
     // mapper 2 (UxROM).
-    let snap = run_and_hash("nes-test-roms/240pee/240pee.nes", 60);
+    let Some(snap) = run_and_hash("nes-test-roms/240pee/240pee.nes", 60) else {
+        return;
+    };
     insta::assert_snapshot!("p240_uxrom_frame_60", snap);
 }
 
 #[test]
 fn p240_bnrom_frame_60() {
     // mapper 34 (BNROM).
-    let snap = run_and_hash("nes-test-roms/240pee/240pee-bnrom.nes", 60);
+    let Some(snap) = run_and_hash("nes-test-roms/240pee/240pee-bnrom.nes", 60) else {
+        return;
+    };
     insta::assert_snapshot!("p240_bnrom_frame_60", snap);
 }
