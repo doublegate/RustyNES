@@ -47,7 +47,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       # Install the PREBUILT binary, never `cargo install` (build-from-source):
-      # the repo pins rustc 1.86 (rust-toolchain.toml), but the current
+      # the repo pins rustc 1.96 (rust-toolchain.toml), but the current
       # cargo-audit release needs >= 1.88 to COMPILE. The prebuilt binary RUNS
       # fine under any toolchain — it only parses Cargo.lock, it never compiles
       # the project — so the toolchain pin is irrelevant to it.
@@ -63,7 +63,7 @@ jobs:
       - uses: actions/checkout@v6
       # Prebuilt binary for the same reason as the audit job: the latest
       # cargo-deny needs rustc >= 1.88 to build from source, while the repo is
-      # pinned to 1.86. Policy lives in `deny.toml`.
+      # pinned to 1.96. Policy lives in `deny.toml`.
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-deny
@@ -76,7 +76,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/rust-setup
         with:
-          toolchain: 1.86.0
+          toolchain: 1.96.0
           components: clippy
           cache-key: security-clippy
       # The main CI `lint` job already runs `clippy -D warnings` on the DEFAULT

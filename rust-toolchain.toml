@@ -1,5 +1,5 @@
 [toolchain]
-channel = "1.86.0"
+channel = "1.96.0"
 components = ["rustfmt", "clippy"]
 # Declare cross-compile targets here so rustup auto-installs them
 # whenever any cargo invocation reads this file. Both CI jobs that

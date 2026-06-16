@@ -517,10 +517,10 @@ impl MeshJoiner {
             // module docs). If the address match succeeds it OVERRIDES the
             // provided index (it is ground truth).
             let my_local = self.socket.as_ref().and_then(|s| s.local_addr().ok());
-            if let Some(local) = my_local {
-                if let Some(&(p, _)) = peers.iter().find(|&&(_, a)| a == local) {
-                    self.my_player = p;
-                }
+            if let Some(local) = my_local
+                && let Some(&(p, _)) = peers.iter().find(|&&(_, a)| a == local)
+            {
+                self.my_player = p;
             }
             // The mesh is every peer EXCEPT this joiner's own index.
             let others: Vec<SocketAddr> = peers
@@ -541,16 +541,14 @@ impl MeshJoiner {
         let due = self
             .last_sync_sent
             .is_none_or(|t| now.saturating_duration_since(t) >= Self::SYNC_RESEND_INTERVAL);
-        if due {
-            if let Some(socket) = self.socket.as_ref() {
-                let sync = NetMessage::Sync {
-                    magic: NetMessage::SYNC_MAGIC,
-                    rom_hash: self.rom_hash,
-                }
-                .to_bytes();
-                let _ = socket.send_to(&sync, self.host);
-                self.last_sync_sent = Some(now);
+        if due && let Some(socket) = self.socket.as_ref() {
+            let sync = NetMessage::Sync {
+                magic: NetMessage::SYNC_MAGIC,
+                rom_hash: self.rom_hash,
             }
+            .to_bytes();
+            let _ = socket.send_to(&sync, self.host);
+            self.last_sync_sent = Some(now);
         }
 
         if now.saturating_duration_since(self.started) >= self.timeout {

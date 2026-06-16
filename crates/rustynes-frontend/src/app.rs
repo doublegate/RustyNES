@@ -908,10 +908,10 @@ impl App {
     /// iNES image — e.g. FDS), so the default path is byte-identical. The core
     /// test suites never call this, so `AccuracyCoin` / the oracle are unaffected.
     fn apply_game_db(nes: &mut Nes, bytes: &[u8]) {
-        if let Some(crc) = crate::game_db::rom_crc32(bytes) {
-            if let Some(m) = crate::game_db::mirroring_for_crc(crc) {
-                nes.set_mirroring_override(Some(m));
-            }
+        if let Some(crc) = crate::game_db::rom_crc32(bytes)
+            && let Some(m) = crate::game_db::mirroring_for_crc(crc)
+        {
+            nes.set_mirroring_override(Some(m));
         }
     }
 
@@ -1004,10 +1004,10 @@ impl App {
         // rewrite). Mirroring / Vs. corrections apply post-construction below.
         // Frontend-only: the core test suites never patch, so the oracle is
         // byte-identical.
-        if let Some(crc) = crate::game_db::rom_crc32(&bytes) {
-            if let Some(entry) = crate::game_db::entry_for_crc(crc) {
-                crate::game_db::apply_header_overrides(&mut bytes, &entry);
-            }
+        if let Some(crc) = crate::game_db::rom_crc32(&bytes)
+            && let Some(entry) = crate::game_db::entry_for_crc(crc)
+        {
+            crate::game_db::apply_header_overrides(&mut bytes, &entry);
         }
         let sample_rate = self.audio.as_ref().map_or(44_100, |a| a.sample_rate);
         // v2.2.0 — a Famicom Disk System `.fds` image needs the disksys.rom
@@ -1171,10 +1171,10 @@ impl App {
         let loaded = crate::cheats::load(dir, &rom_sha256);
         nes.clear_genie_codes();
         for entry in &loaded.genie {
-            if entry.enabled {
-                if let Err(e) = nes.add_genie_code(&entry.code) {
-                    eprintln!("rustynes: cheat {} skipped: {e}", entry.code);
-                }
+            if entry.enabled
+                && let Err(e) = nes.add_genie_code(&entry.code)
+            {
+                eprintln!("rustynes: cheat {} skipped: {e}", entry.code);
             }
         }
         // v1.7.0 — prime the per-frame raw-cheat list from this ROM's enabled
@@ -1282,10 +1282,10 @@ impl App {
                 .as_ref()
                 .map(|n| crate::save_state::hex_sha256(n.rom_sha256()))
         };
-        if let Some(key) = key {
-            if self.config.graphics.hd_packs.remove(&key).is_some() {
-                let _ = self.config.save();
-            }
+        if let Some(key) = key
+            && self.config.graphics.hd_packs.remove(&key).is_some()
+        {
+            let _ = self.config.save();
         }
         self.ui.set_status(crate::ui_shell::StatusMessage::success(
             "HD pack unloaded".to_string(),
@@ -1575,8 +1575,7 @@ impl App {
             .collect();
         let secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+            .map_or(0, |d| d.as_secs());
         let path = shots.join(format!("{stem}-{secs}.png"));
         match encode_png_rgba(&frame, NES_W, NES_H) {
             Ok(png) => match std::fs::write(&path, png) {
@@ -2094,10 +2093,10 @@ impl App {
     // The shared `'a` ties two params on the RA build; on the default build
     // only `audio` remains, so clippy sees an elidable single lifetime.
     #[cfg_attr(not(feature = "retroachievements"), allow(clippy::needless_lifetimes))]
-    fn sync_sinks<'a>(
-        audio: &'a mut Option<AudioOutput>,
+    fn sync_sinks(
+        audio: &mut Option<AudioOutput>,
         #[cfg(feature = "retroachievements")] ra: &'a mut Option<crate::ra_session::RaSession>,
-    ) -> crate::emu::FrameSinks<'a> {
+    ) -> crate::emu::FrameSinks<'_> {
         crate::emu::FrameSinks {
             audio: audio
                 .as_mut()
@@ -2977,7 +2976,7 @@ impl App {
         if draws.is_empty() {
             return;
         }
-        let screen = ctx.screen_rect();
+        let screen = ctx.content_rect();
         let crop_top = if hide_overscan { 8.0 } else { 0.0 };
         let visible_h = if hide_overscan { 224.0 } else { 240.0 };
         let img_w = if par_8_7 { 256.0 * 8.0 / 7.0 } else { 256.0 };
@@ -3149,7 +3148,7 @@ impl App {
         if draws.is_empty() {
             return;
         }
-        let screen = ctx.screen_rect();
+        let screen = ctx.content_rect();
         // Visible NES region + its display aspect (replicates gfx letterbox).
         let crop_top = if hide_overscan { 8.0 } else { 0.0 };
         let visible_h = if hide_overscan { 224.0 } else { 240.0 };
@@ -5152,10 +5151,10 @@ impl ApplicationHandler<AppEvent> for App {
         // wants to repaint after processing this event. wasm self-arms its rAF
         // loop, so this is native-only.
         #[cfg(not(target_arch = "wasm32"))]
-        if let (Some(debugger), Some(gfx)) = (self.debugger.as_ref(), self.gfx.as_ref()) {
-            if debugger.egui_wants_repaint() {
-                gfx.window.request_redraw();
-            }
+        if let (Some(debugger), Some(gfx)) = (self.debugger.as_ref(), self.gfx.as_ref())
+            && debugger.egui_wants_repaint()
+        {
+            gfx.window.request_redraw();
         }
 
         match event {
@@ -5270,15 +5269,15 @@ impl ApplicationHandler<AppEvent> for App {
                 // unconditionally (cheap); consumed only when a Family BASIC
                 // keyboard is the active device. Native-only.
                 #[cfg(not(target_arch = "wasm32"))]
-                if let winit::keyboard::PhysicalKey::Code(code) = event.physical_key {
-                    if let Some(idx) = crate::input::family_keyboard_index(code) {
-                        let row = idx / 8;
-                        let bit = 1u8 << (idx % 8);
-                        if event.state == winit::event::ElementState::Pressed {
-                            self.family_keyboard[row] |= bit;
-                        } else {
-                            self.family_keyboard[row] &= !bit;
-                        }
+                if let winit::keyboard::PhysicalKey::Code(code) = event.physical_key
+                    && let Some(idx) = crate::input::family_keyboard_index(code)
+                {
+                    let row = idx / 8;
+                    let bit = 1u8 << (idx % 8);
+                    if event.state == winit::event::ElementState::Pressed {
+                        self.family_keyboard[row] |= bit;
+                    } else {
+                        self.family_keyboard[row] &= !bit;
                     }
                 }
                 let action = self.input.handle_key(event.physical_key, event.state);
@@ -5617,6 +5616,13 @@ impl ApplicationHandler<AppEvent> for App {
                     .gfx
                     .as_ref()
                     .is_some_and(|g| g.ntsc_bisqwit_active() || g.shader_stack_needs_index());
+                // The early-return arm guarantees both `gfx` and `debugger` are
+                // `Some` in the later arms, but the `as_mut().expect(...)` must be
+                // deferred into those arms: binding them up front would hold a
+                // `&mut self.gfx` / `&mut self.debugger` borrow across the emu-lock
+                // acquire + the `&mut self.config` / `&mut self.ui` borrows below.
+                // So the guard-then-expect is intentional, not a redundant unwrap.
+                #[allow(clippy::unnecessary_unwrap)]
                 let render_result = if self.debugger.is_none() || self.gfx.is_none() {
                     // No overlay yet (pre-`resumed`): nothing to render.
                     return;
@@ -5888,7 +5894,7 @@ impl ApplicationHandler<AppEvent> for App {
                         #[cfg(not(target_arch = "wasm32"))]
                         self.display_sync_after_present();
                     }
-                    Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                    Err(crate::gfx::PresentError::Reconfigure) => {
                         if let Some(gfx) = self.gfx.as_mut() {
                             let size = gfx.window.inner_size();
                             gfx.resize(size.width, size.height);
@@ -5957,16 +5963,16 @@ impl ApplicationHandler<AppEvent> for App {
                     .as_mut()
                     .map(DebuggerOverlay::take_settings_apply)
                     .unwrap_or_default();
-                if settings.ntsc_filter {
-                    if let Some(gfx) = self.gfx.as_mut() {
-                        // CRT (if on) takes render priority; selecting any NTSC
-                        // mode turns CRT off so the settings stay coherent.
-                        if self.config.graphics.ntsc_filter != "off" {
-                            gfx.disable_crt();
-                            self.config.graphics.crt_filter = false;
-                        }
-                        Self::apply_ntsc_mode(gfx, &self.config.graphics);
+                if settings.ntsc_filter
+                    && let Some(gfx) = self.gfx.as_mut()
+                {
+                    // CRT (if on) takes render priority; selecting any NTSC
+                    // mode turns CRT off so the settings stay coherent.
+                    if self.config.graphics.ntsc_filter != "off" {
+                        gfx.disable_crt();
+                        self.config.graphics.crt_filter = false;
                     }
+                    Self::apply_ntsc_mode(gfx, &self.config.graphics);
                 }
                 // v1.0.0 — master volume / mute live-apply (the cpal consume
                 // gain). Native-only; wasm has no app-resident audio queue.
@@ -5980,56 +5986,56 @@ impl ApplicationHandler<AppEvent> for App {
                     self.apply_audio_eq();
                 }
                 // v1.0.0 — overscan crop live-apply (the gfx letterbox UV rect).
-                if settings.overscan {
-                    if let Some(gfx) = self.gfx.as_mut() {
-                        gfx.set_hide_overscan(self.config.graphics.hide_overscan);
-                    }
+                if settings.overscan
+                    && let Some(gfx) = self.gfx.as_mut()
+                {
+                    gfx.set_hide_overscan(self.config.graphics.hide_overscan);
                 }
                 // v1.1.0 beta.1 — CRT filter live-apply. CRT and NTSC are
                 // mutually exclusive at render time; turning CRT on drops NTSC so
                 // the settings stay coherent.
-                if settings.crt_filter {
-                    if let Some(gfx) = self.gfx.as_mut() {
-                        if self.config.graphics.crt_filter {
-                            // CRT and NTSC are mutually exclusive; enabling CRT
-                            // turns the NTSC filter off in the config too, so the
-                            // settings stay coherent (and a later CRT-off
-                            // restores "no filter", not a stale NTSC mode).
-                            gfx.enable_crt(self.config.graphics.crt_scanline);
-                            gfx.disable_ntsc();
-                            gfx.disable_ntsc_bisqwit();
-                            self.config.graphics.ntsc_filter = "off".to_string();
-                        } else {
-                            // Turning CRT off restores whatever NTSC mode the
-                            // config now holds (normally "off" → no filter).
-                            gfx.disable_crt();
-                            Self::apply_ntsc_mode(gfx, &self.config.graphics);
-                        }
-                        let _ = self.config.save();
+                if settings.crt_filter
+                    && let Some(gfx) = self.gfx.as_mut()
+                {
+                    if self.config.graphics.crt_filter {
+                        // CRT and NTSC are mutually exclusive; enabling CRT
+                        // turns the NTSC filter off in the config too, so the
+                        // settings stay coherent (and a later CRT-off
+                        // restores "no filter", not a stale NTSC mode).
+                        gfx.enable_crt(self.config.graphics.crt_scanline);
+                        gfx.disable_ntsc();
+                        gfx.disable_ntsc_bisqwit();
+                        self.config.graphics.ntsc_filter = "off".to_string();
+                    } else {
+                        // Turning CRT off restores whatever NTSC mode the
+                        // config now holds (normally "off" → no filter).
+                        gfx.disable_crt();
+                        Self::apply_ntsc_mode(gfx, &self.config.graphics);
                     }
+                    let _ = self.config.save();
                 }
-                if settings.crt_scanline {
-                    if let Some(gfx) = self.gfx.as_mut() {
-                        gfx.set_crt_scanline(self.config.graphics.crt_scanline);
-                    }
+                if settings.crt_scanline
+                    && let Some(gfx) = self.gfx.as_mut()
+                {
+                    gfx.set_crt_scanline(self.config.graphics.crt_scanline);
                 }
                 // v1.2.0 C1 — Bisqwit-NTSC picture-knob live-apply (output-only;
                 // defaults decode byte-identically to the pre-C1 filter).
-                if settings.ntsc_knobs {
-                    if let Some(gfx) = self.gfx.as_mut() {
-                        gfx.set_ntsc_bisqwit_knobs(Self::ntsc_knobs_from(&self.config.graphics));
-                    }
+                if settings.ntsc_knobs
+                    && let Some(gfx) = self.gfx.as_mut()
+                {
+                    gfx.set_ntsc_bisqwit_knobs(Self::ntsc_knobs_from(&self.config.graphics));
                 }
                 // v1.2.0 C2 — composable shader-stack live-apply. Rebuild the gfx
                 // ping-pong stack from `[graphics] shader_stack`; an empty /
                 // all-disabled stack rebuilds to the byte-identical direct blit.
                 // When a leading composite-rt pass is present its live picture
                 // knobs are forwarded too.
-                if settings.shader_stack {
-                    if let Some(gfx) = self.gfx.as_mut() {
-                        gfx.set_stack_ntsc_knobs(Self::ntsc_knobs_from(&self.config.graphics));
-                        gfx.apply_shader_stack(&self.config.graphics.shader_stack);
-                    }
+                if settings.shader_stack
+                    && let Some(gfx) = self.gfx.as_mut()
+                {
+                    gfx.set_stack_ntsc_knobs(Self::ntsc_knobs_from(&self.config.graphics));
+                    gfx.apply_shader_stack(&self.config.graphics.shader_stack);
                 }
                 // v1.1.0 beta.1 — custom .pal palette: the file dialog + apply run
                 // here (after the egui pass), never inside the settings closure.

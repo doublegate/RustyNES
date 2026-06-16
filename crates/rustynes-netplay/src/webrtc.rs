@@ -184,7 +184,7 @@ impl WebRtcMeshTransport {
 
     /// The number of peer channels in the mesh.
     #[must_use]
-    pub fn peer_count(&self) -> usize {
+    pub const fn peer_count(&self) -> usize {
         self.channels.len()
     }
 }

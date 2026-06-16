@@ -38,13 +38,13 @@ impl GxRom {
         chr_rom: Box<[u8]>,
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_32K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_32K) {
             return Err(MapperError::Invalid(format!(
                 "GxROM PRG-ROM size {} is not a non-zero multiple of 32 KiB",
                 prg_rom.len()
             )));
         }
-        if chr_rom.is_empty() || chr_rom.len() % CHR_BANK_8K != 0 {
+        if chr_rom.is_empty() || !chr_rom.len().is_multiple_of(CHR_BANK_8K) {
             return Err(MapperError::Invalid(format!(
                 "GxROM CHR-ROM size {} is not a non-zero multiple of 8 KiB",
                 chr_rom.len()

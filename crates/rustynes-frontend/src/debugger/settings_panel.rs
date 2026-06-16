@@ -662,19 +662,18 @@ fn shader_stack_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, confi
                     .shader_presets
                     .presets
                     .contains_key(&state.selected_preset);
-                if ui.add_enabled(has_sel, egui::Button::new("Load")).clicked() {
-                    if let Some(stack) = config
+                if ui.add_enabled(has_sel, egui::Button::new("Load")).clicked()
+                    && let Some(stack) = config
                         .graphics
                         .shader_presets
                         .presets
                         .get(&state.selected_preset)
                         .cloned()
-                    {
-                        config.graphics.shader_stack = stack;
-                        state.preset_name_input.clone_from(&state.selected_preset);
-                        state.apply.shader_stack = true;
-                        save_config(config);
-                    }
+                {
+                    config.graphics.shader_stack = stack;
+                    state.preset_name_input.clone_from(&state.selected_preset);
+                    state.apply.shader_stack = true;
+                    save_config(config);
                 }
                 if ui
                     .add_enabled(has_sel, egui::Button::new("Delete"))

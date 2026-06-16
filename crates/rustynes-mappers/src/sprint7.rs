@@ -100,7 +100,7 @@ impl Sachen3018M147 {
         chr_rom: Box<[u8]>,
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_32K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_32K) {
             return Err(MapperError::Invalid(format!(
                 "mapper 147 PRG-ROM size {} is not a non-zero multiple of 32 KiB",
                 prg_rom.len()
@@ -109,7 +109,7 @@ impl Sachen3018M147 {
         let chr_is_ram = chr_rom.is_empty();
         let chr_rom: Box<[u8]> = if chr_is_ram {
             vec![0u8; CHR_BANK_8K].into_boxed_slice()
-        } else if chr_rom.len() % CHR_BANK_8K == 0 {
+        } else if chr_rom.len().is_multiple_of(CHR_BANK_8K) {
             chr_rom
         } else {
             return Err(MapperError::Invalid(format!(
@@ -293,7 +293,7 @@ impl Sachen148 {
         chr_rom: Box<[u8]>,
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_32K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_32K) {
             return Err(MapperError::Invalid(format!(
                 "mapper 148 PRG-ROM size {} is not a non-zero multiple of 32 KiB",
                 prg_rom.len()
@@ -302,7 +302,7 @@ impl Sachen148 {
         let chr_is_ram = chr_rom.is_empty();
         let chr_rom: Box<[u8]> = if chr_is_ram {
             vec![0u8; CHR_BANK_8K].into_boxed_slice()
-        } else if chr_rom.len() % CHR_BANK_8K == 0 {
+        } else if chr_rom.len().is_multiple_of(CHR_BANK_8K) {
             chr_rom
         } else {
             return Err(MapperError::Invalid(format!(
@@ -463,13 +463,13 @@ impl Sachen149 {
         chr_rom: Box<[u8]>,
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_32K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_32K) {
             return Err(MapperError::Invalid(format!(
                 "mapper 149 PRG-ROM size {} is not a non-zero multiple of 32 KiB",
                 prg_rom.len()
             )));
         }
-        if chr_rom.is_empty() || chr_rom.len() % CHR_BANK_8K != 0 {
+        if chr_rom.is_empty() || !chr_rom.len().is_multiple_of(CHR_BANK_8K) {
             return Err(MapperError::Invalid(format!(
                 "mapper 149 CHR-ROM size {} is not a non-zero multiple of 8 KiB",
                 chr_rom.len()
@@ -599,7 +599,7 @@ impl Sachen150 {
     /// Returns [`MapperError::Invalid`] when PRG is not a non-zero multiple of
     /// 32 KiB, or CHR-ROM (when present) is not a multiple of 8 KiB.
     pub fn new(prg_rom: Box<[u8]>, chr_rom: Box<[u8]>) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_32K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_32K) {
             return Err(MapperError::Invalid(format!(
                 "mapper 150 PRG-ROM size {} is not a non-zero multiple of 32 KiB",
                 prg_rom.len()
@@ -608,7 +608,7 @@ impl Sachen150 {
         let chr_is_ram = chr_rom.is_empty();
         let chr_rom: Box<[u8]> = if chr_is_ram {
             vec![0u8; CHR_BANK_8K].into_boxed_slice()
-        } else if chr_rom.len() % CHR_BANK_8K == 0 {
+        } else if chr_rom.len().is_multiple_of(CHR_BANK_8K) {
             chr_rom
         } else {
             return Err(MapperError::Invalid(format!(
@@ -837,7 +837,7 @@ impl Nichibutsu180 {
         chr_rom: Box<[u8]>,
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_16K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_16K) {
             return Err(MapperError::Invalid(format!(
                 "mapper 180 PRG-ROM size {} is not a non-zero multiple of 16 KiB",
                 prg_rom.len()
@@ -1019,7 +1019,7 @@ impl CnRom185 {
                 prg_rom.len()
             )));
         }
-        if chr_rom.is_empty() || chr_rom.len() % CHR_BANK_8K != 0 {
+        if chr_rom.is_empty() || !chr_rom.len().is_multiple_of(CHR_BANK_8K) {
             return Err(MapperError::Invalid(format!(
                 "mapper 185 expects non-empty CHR-ROM in 8 KiB units, got {} bytes",
                 chr_rom.len()
@@ -1178,7 +1178,7 @@ impl Multicart200 {
         chr_rom: Box<[u8]>,
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_16K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_16K) {
             return Err(MapperError::Invalid(format!(
                 "mapper 200 PRG-ROM size {} is not a non-zero multiple of 16 KiB",
                 prg_rom.len()
@@ -1187,7 +1187,7 @@ impl Multicart200 {
         let chr_is_ram = chr_rom.is_empty();
         let chr: Box<[u8]> = if chr_is_ram {
             vec![0u8; CHR_BANK_8K].into_boxed_slice()
-        } else if chr_rom.len() % CHR_BANK_8K == 0 {
+        } else if chr_rom.len().is_multiple_of(CHR_BANK_8K) {
             chr_rom
         } else {
             return Err(MapperError::Invalid(format!(
@@ -1341,7 +1341,7 @@ impl Multicart201 {
         chr_rom: Box<[u8]>,
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_32K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_32K) {
             return Err(MapperError::Invalid(format!(
                 "mapper 201 PRG-ROM size {} is not a non-zero multiple of 32 KiB",
                 prg_rom.len()
@@ -1350,7 +1350,7 @@ impl Multicart201 {
         let chr_is_ram = chr_rom.is_empty();
         let chr_rom: Box<[u8]> = if chr_is_ram {
             vec![0u8; CHR_BANK_8K].into_boxed_slice()
-        } else if chr_rom.len() % CHR_BANK_8K == 0 {
+        } else if chr_rom.len().is_multiple_of(CHR_BANK_8K) {
             chr_rom
         } else {
             return Err(MapperError::Invalid(format!(
@@ -1515,7 +1515,7 @@ impl Multicart202 {
         chr_rom: Box<[u8]>,
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_16K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_16K) {
             return Err(MapperError::Invalid(format!(
                 "mapper 202 PRG-ROM size {} is not a non-zero multiple of 16 KiB",
                 prg_rom.len()
@@ -1524,7 +1524,7 @@ impl Multicart202 {
         let chr_is_ram = chr_rom.is_empty();
         let chr_rom: Box<[u8]> = if chr_is_ram {
             vec![0u8; CHR_BANK_8K].into_boxed_slice()
-        } else if chr_rom.len() % CHR_BANK_8K == 0 {
+        } else if chr_rom.len().is_multiple_of(CHR_BANK_8K) {
             chr_rom
         } else {
             return Err(MapperError::Invalid(format!(
@@ -1700,7 +1700,7 @@ impl Multicart203 {
         chr_rom: Box<[u8]>,
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_16K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_16K) {
             return Err(MapperError::Invalid(format!(
                 "mapper 203 PRG-ROM size {} is not a non-zero multiple of 16 KiB",
                 prg_rom.len()
@@ -1709,7 +1709,7 @@ impl Multicart203 {
         let chr_is_ram = chr_rom.is_empty();
         let chr_rom: Box<[u8]> = if chr_is_ram {
             vec![0u8; CHR_BANK_8K].into_boxed_slice()
-        } else if chr_rom.len() % CHR_BANK_8K == 0 {
+        } else if chr_rom.len().is_multiple_of(CHR_BANK_8K) {
             chr_rom
         } else {
             return Err(MapperError::Invalid(format!(
@@ -1874,7 +1874,7 @@ impl Multicart212 {
         chr_rom: Box<[u8]>,
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_16K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_16K) {
             return Err(MapperError::Invalid(format!(
                 "mapper 212 PRG-ROM size {} is not a non-zero multiple of 16 KiB",
                 prg_rom.len()
@@ -1883,7 +1883,7 @@ impl Multicart212 {
         let chr_is_ram = chr_rom.is_empty();
         let chr_rom: Box<[u8]> = if chr_is_ram {
             vec![0u8; CHR_BANK_8K].into_boxed_slice()
-        } else if chr_rom.len() % CHR_BANK_8K == 0 {
+        } else if chr_rom.len().is_multiple_of(CHR_BANK_8K) {
             chr_rom
         } else {
             return Err(MapperError::Invalid(format!(
@@ -2065,7 +2065,7 @@ impl Multicart213 {
         chr_rom: Box<[u8]>,
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_32K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_32K) {
             return Err(MapperError::Invalid(format!(
                 "mapper 213 PRG-ROM size {} is not a non-zero multiple of 32 KiB",
                 prg_rom.len()
@@ -2074,7 +2074,7 @@ impl Multicart213 {
         let chr_is_ram = chr_rom.is_empty();
         let chr_rom: Box<[u8]> = if chr_is_ram {
             vec![0u8; CHR_BANK_8K].into_boxed_slice()
-        } else if chr_rom.len() % CHR_BANK_8K == 0 {
+        } else if chr_rom.len().is_multiple_of(CHR_BANK_8K) {
             chr_rom
         } else {
             return Err(MapperError::Invalid(format!(
@@ -2231,7 +2231,7 @@ impl Multicart214 {
         chr_rom: Box<[u8]>,
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_16K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_16K) {
             return Err(MapperError::Invalid(format!(
                 "mapper 214 PRG-ROM size {} is not a non-zero multiple of 16 KiB",
                 prg_rom.len()
@@ -2240,7 +2240,7 @@ impl Multicart214 {
         let chr_is_ram = chr_rom.is_empty();
         let chr_rom: Box<[u8]> = if chr_is_ram {
             vec![0u8; CHR_BANK_8K].into_boxed_slice()
-        } else if chr_rom.len() % CHR_BANK_8K == 0 {
+        } else if chr_rom.len().is_multiple_of(CHR_BANK_8K) {
             chr_rom
         } else {
             return Err(MapperError::Invalid(format!(

@@ -4829,29 +4829,29 @@ mod tests {
         let mut failures = Vec::<String>::new();
         for (i, row) in expected.iter().enumerate() {
             let obs = &observed[i];
-            if let Some(want) = row.read_bit7 {
-                if obs.read_bit7 != want {
-                    failures.push(format!(
-                        "(sl={}, dot={}): expected read bit7 = {}, got {}",
-                        row.scanline, row.dot, want, obs.read_bit7,
-                    ));
-                }
+            if let Some(want) = row.read_bit7
+                && obs.read_bit7 != want
+            {
+                failures.push(format!(
+                    "(sl={}, dot={}): expected read bit7 = {}, got {}",
+                    row.scanline, row.dot, want, obs.read_bit7,
+                ));
             }
-            if let Some(want) = row.suppress_set {
-                if obs.suppress_set_after != want {
-                    failures.push(format!(
-                        "(sl={}, dot={}): expected suppress_vbl = {}, got {}",
-                        row.scanline, row.dot, want, obs.suppress_set_after,
-                    ));
-                }
+            if let Some(want) = row.suppress_set
+                && obs.suppress_set_after != want
+            {
+                failures.push(format!(
+                    "(sl={}, dot={}): expected suppress_vbl = {}, got {}",
+                    row.scanline, row.dot, want, obs.suppress_set_after,
+                ));
             }
-            if let Some(want) = row.vblank_after_read {
-                if obs.status_vblank_after != want {
-                    failures.push(format!(
-                        "(sl={}, dot={}): expected status.VBLANK after read = {}, got {}",
-                        row.scanline, row.dot, want, obs.status_vblank_after,
-                    ));
-                }
+            if let Some(want) = row.vblank_after_read
+                && obs.status_vblank_after != want
+            {
+                failures.push(format!(
+                    "(sl={}, dot={}): expected status.VBLANK after read = {}, got {}",
+                    row.scanline, row.dot, want, obs.status_vblank_after,
+                ));
             }
         }
 

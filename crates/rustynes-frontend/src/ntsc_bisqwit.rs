@@ -417,8 +417,8 @@ impl NtscBisqwitFilter {
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("ntsc-bisqwit-pipeline-layout"),
-            bind_group_layouts: &[&bgl],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&bgl)],
+            immediate_size: 0,
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("ntsc-bisqwit-pipeline"),
@@ -445,7 +445,7 @@ impl NtscBisqwitFilter {
             },
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
         let uniforms = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -532,6 +532,7 @@ impl NtscBisqwitFilter {
             label: Some("ntsc-bisqwit-pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: out_view,
+                depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
@@ -541,6 +542,7 @@ impl NtscBisqwitFilter {
             depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         });
         rp.set_pipeline(&self.pipeline);
         rp.set_bind_group(0, &self.bind_group, &[]);

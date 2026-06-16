@@ -709,7 +709,7 @@ fn elevate_thread_priority() {
         let param = libc::sched_param {
             sched_priority: EMU_RT_PRIORITY,
         };
-        libc::sched_setscheduler(0, libc::SCHED_RR, &param) == 0
+        libc::sched_setscheduler(0, libc::SCHED_RR, &raw const param) == 0
     };
     if rr {
         eprintln!("rustynes: emu thread elevated to SCHED_RR priority 5.");

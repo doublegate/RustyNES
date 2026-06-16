@@ -81,7 +81,7 @@ impl Mmc2 {
         chr_rom: Box<[u8]>,
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_8K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_8K) {
             return Err(MapperError::Invalid(format!(
                 "MMC2 PRG-ROM size {} is not a non-zero multiple of 8 KiB",
                 prg_rom.len()
@@ -90,7 +90,7 @@ impl Mmc2 {
         let chr_is_ram = chr_rom.is_empty();
         let chr: Box<[u8]> = if chr_is_ram {
             vec![0u8; CHR_BANK_8K].into_boxed_slice()
-        } else if chr_rom.len() % CHR_BANK_4K == 0 {
+        } else if chr_rom.len().is_multiple_of(CHR_BANK_4K) {
             chr_rom
         } else {
             return Err(MapperError::Invalid(format!(
@@ -318,7 +318,7 @@ impl Mmc4 {
         chr_rom: Box<[u8]>,
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_16K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_16K) {
             return Err(MapperError::Invalid(format!(
                 "MMC4 PRG-ROM size {} is not a non-zero multiple of 16 KiB",
                 prg_rom.len()
@@ -327,7 +327,7 @@ impl Mmc4 {
         let chr_is_ram = chr_rom.is_empty();
         let chr: Box<[u8]> = if chr_is_ram {
             vec![0u8; CHR_BANK_8K].into_boxed_slice()
-        } else if chr_rom.len() % CHR_BANK_4K == 0 {
+        } else if chr_rom.len().is_multiple_of(CHR_BANK_4K) {
             chr_rom
         } else {
             return Err(MapperError::Invalid(format!(
@@ -553,7 +553,7 @@ impl ColorDreams {
         chr_rom: Box<[u8]>,
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % (32 * 1024) != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(32 * 1024) {
             return Err(MapperError::Invalid(format!(
                 "Color Dreams PRG-ROM size {} is not a non-zero multiple of 32 KiB",
                 prg_rom.len()
@@ -562,7 +562,7 @@ impl ColorDreams {
         let chr_is_ram = chr_rom.is_empty();
         let chr: Box<[u8]> = if chr_is_ram {
             vec![0u8; CHR_BANK_8K].into_boxed_slice()
-        } else if chr_rom.len() % CHR_BANK_8K == 0 {
+        } else if chr_rom.len().is_multiple_of(CHR_BANK_8K) {
             chr_rom
         } else {
             return Err(MapperError::Invalid(format!(
@@ -828,7 +828,7 @@ impl M34 {
         mirroring: Mirroring,
         variant: M34Variant,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % (32 * 1024) != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(32 * 1024) {
             return Err(MapperError::Invalid(format!(
                 "Mapper 34 PRG-ROM size {} is not a non-zero multiple of 32 KiB",
                 prg_rom.len()
@@ -837,7 +837,7 @@ impl M34 {
         let chr_is_ram = chr_rom.is_empty();
         let chr: Box<[u8]> = if chr_is_ram {
             vec![0u8; CHR_BANK_8K].into_boxed_slice()
-        } else if chr_rom.len() % CHR_BANK_4K == 0 {
+        } else if chr_rom.len().is_multiple_of(CHR_BANK_4K) {
             chr_rom
         } else {
             return Err(MapperError::Invalid(format!(
@@ -1004,7 +1004,7 @@ impl Camerica {
         mirroring: Mirroring,
         has_single_screen: bool,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_16K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_16K) {
             return Err(MapperError::Invalid(format!(
                 "Camerica PRG-ROM size {} is not a non-zero multiple of 16 KiB",
                 prg_rom.len()
@@ -1158,7 +1158,7 @@ impl Vrc1 {
         chr_rom: Box<[u8]>,
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_8K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_8K) {
             return Err(MapperError::Invalid(format!(
                 "VRC1 PRG-ROM size {} is not a non-zero multiple of 8 KiB",
                 prg_rom.len()
@@ -1167,7 +1167,7 @@ impl Vrc1 {
         let chr_is_ram = chr_rom.is_empty();
         let chr: Box<[u8]> = if chr_is_ram {
             vec![0u8; CHR_BANK_8K].into_boxed_slice()
-        } else if chr_rom.len() % CHR_BANK_4K == 0 {
+        } else if chr_rom.len().is_multiple_of(CHR_BANK_4K) {
             chr_rom
         } else {
             return Err(MapperError::Invalid(format!(

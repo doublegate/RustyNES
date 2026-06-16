@@ -61,10 +61,11 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut MemoryPanelState, 
                         .desired_width(64.0)
                         .hint_text("$1234"),
                 );
-                if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    if let Some(addr) = parse_hex16(&state.goto_text) {
-                        state.origin = addr & 0xFFF0;
-                    }
+                if r.lost_focus()
+                    && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                    && let Some(addr) = parse_hex16(&state.goto_text)
+                {
+                    state.origin = addr & 0xFFF0;
                 }
                 if ui.button("- 256").clicked() {
                     state.origin = state.origin.wrapping_sub(256);

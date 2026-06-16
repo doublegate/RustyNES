@@ -37,7 +37,7 @@ impl AxRom {
     ///
     /// Returns [`MapperError::Invalid`] when sizes don't match.
     pub fn new(prg_rom: Box<[u8]>, chr_rom: Box<[u8]>) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_32K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_32K) {
             return Err(MapperError::Invalid(format!(
                 "AxROM PRG-ROM size {} is not a non-zero multiple of 32 KiB",
                 prg_rom.len()

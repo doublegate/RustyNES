@@ -90,7 +90,7 @@ impl IremH3001 {
         chr_rom: Box<[u8]>,
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_8K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_8K) {
             return Err(MapperError::Invalid(format!(
                 "H3001 PRG-ROM size {} is not a non-zero multiple of 8 KiB",
                 prg_rom.len()
@@ -99,7 +99,7 @@ impl IremH3001 {
         let chr_is_ram = chr_rom.is_empty();
         let chr_data: Box<[u8]> = if chr_is_ram {
             vec![0u8; 8 * CHR_BANK_1K].into_boxed_slice()
-        } else if chr_rom.len() % CHR_BANK_1K == 0 {
+        } else if chr_rom.len().is_multiple_of(CHR_BANK_1K) {
             chr_rom
         } else {
             return Err(MapperError::Invalid(format!(

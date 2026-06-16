@@ -1407,10 +1407,8 @@ impl Nes {
         }
         // Loading invalidates the rewind ring (the new state is unrelated
         // to what was buffered before).
-        if clear_rewind {
-            if let Some(r) = &mut self.rewind {
-                r.clear();
-            }
+        if clear_rewind && let Some(r) = &mut self.rewind {
+            r.clear();
         }
         Ok(())
     }

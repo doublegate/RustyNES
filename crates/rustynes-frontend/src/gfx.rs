@@ -68,6 +68,25 @@ pub enum GfxError {
     Device(String),
 }
 
+/// Outcome of trying to acquire + present a swapchain frame.
+///
+/// wgpu 29 replaced the `Result<SurfaceTexture, SurfaceError>` returned by
+/// `get_current_texture` with the [`wgpu::CurrentSurfaceTexture`] enum. This
+/// preserves the two behaviours the frontend cares about: `Reconfigure`
+/// (surface lost / outdated — the caller resizes to rebuild the swapchain)
+/// versus a skip-this-frame status the caller just logs.
+#[derive(Debug, thiserror::Error)]
+pub enum PresentError {
+    /// The surface was lost or outdated; the caller should reconfigure
+    /// (resize) the surface and try again next frame.
+    #[error("surface lost/outdated; reconfiguring")]
+    Reconfigure,
+    /// A transient acquisition status (timeout / occluded / validation); the
+    /// frame is skipped. Carries a static label for logging.
+    #[error("surface unavailable: {0}")]
+    Other(&'static str),
+}
+
 const SHADER_SRC: &str = r"
 struct VsOut {
     @builtin(position) pos: vec4<f32>,
@@ -361,12 +380,14 @@ impl Gfx {
         // latter needs the `webgl` cargo feature on wgpu). On native,
         // the default backend set (Vulkan/Metal/DX12/GL) is right.
         #[cfg(target_arch = "wasm32")]
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL,
-            ..Default::default()
-        });
+        let instance = {
+            let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+            desc.backends = wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL;
+            wgpu::Instance::new(desc)
+        };
         #[cfg(not(target_arch = "wasm32"))]
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let instance =
+            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
 
         let surface = instance
             .create_surface(window.clone())
@@ -406,6 +427,7 @@ impl Gfx {
                 memory_hints: wgpu::MemoryHints::Performance,
                 // wgpu 25 moved the API-trace path into the descriptor.
                 trace: wgpu::Trace::Off,
+                experimental_features: wgpu::ExperimentalFeatures::disabled(),
             })
             .await
             .map_err(|e| GfxError::Device(e.to_string()))?;
@@ -544,7 +566,7 @@ impl Gfx {
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
         });
 
@@ -615,8 +637,8 @@ impl Gfx {
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("nes-pipeline-layout"),
-            bind_group_layouts: &[&bgl],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&bgl)],
+            immediate_size: 0,
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("nes-pipeline"),
@@ -643,7 +665,7 @@ impl Gfx {
             },
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 
@@ -924,7 +946,7 @@ impl Gfx {
     /// Upload the NES framebuffer (RGBA8, 256*240*4 bytes) to the texture
     /// and present a frame.
     #[allow(clippy::needless_pass_by_ref_mut)] // matches `render_with_overlay`.
-    pub fn render(&mut self, framebuffer: &[u8]) -> Result<(), wgpu::SurfaceError> {
+    pub fn render(&mut self, framebuffer: &[u8]) -> Result<(), PresentError> {
         self.render_with_overlay(framebuffer, None, |_, _, _, _, _| {})
     }
 
@@ -938,7 +960,7 @@ impl Gfx {
         framebuffer: &[u8],
         index: Option<(&[u16], u8)>,
         overlay: F,
-    ) -> Result<(), wgpu::SurfaceError>
+    ) -> Result<(), PresentError>
     where
         F: FnOnce(
             &wgpu::Device,
@@ -998,7 +1020,22 @@ impl Gfx {
             },
         );
 
-        let frame = self.surface.get_current_texture()?;
+        // wgpu 29: `get_current_texture` returns the `CurrentSurfaceTexture`
+        // enum instead of a `Result`. Map it to the same behaviour as before:
+        // use the texture from `Success`/`Suboptimal`, reconfigure on
+        // `Lost`/`Outdated`, and skip the frame for any other status.
+        let frame = match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(t)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+            wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
+                return Err(PresentError::Reconfigure);
+            }
+            wgpu::CurrentSurfaceTexture::Timeout => return Err(PresentError::Other("timeout")),
+            wgpu::CurrentSurfaceTexture::Occluded => return Err(PresentError::Other("occluded")),
+            wgpu::CurrentSurfaceTexture::Validation => {
+                return Err(PresentError::Other("validation"));
+            }
+        };
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -1075,6 +1112,7 @@ impl Gfx {
                 label: Some("nes-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
+                    depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
@@ -1084,6 +1122,7 @@ impl Gfx {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
             rp.set_pipeline(&self.pipeline);
             rp.set_bind_group(0, &self.bind_group, &[]);
@@ -1126,7 +1165,7 @@ impl Gfx {
         hd_w: u32,
         hd_h: u32,
         overlay: F,
-    ) -> Result<(), wgpu::SurfaceError>
+    ) -> Result<(), PresentError>
     where
         F: FnOnce(
             &wgpu::Device,
@@ -1172,7 +1211,22 @@ impl Gfx {
             )),
         );
 
-        let frame = self.surface.get_current_texture()?;
+        // wgpu 29: `get_current_texture` returns the `CurrentSurfaceTexture`
+        // enum instead of a `Result`. Map it to the same behaviour as before:
+        // use the texture from `Success`/`Suboptimal`, reconfigure on
+        // `Lost`/`Outdated`, and skip the frame for any other status.
+        let frame = match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(t)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+            wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
+                return Err(PresentError::Reconfigure);
+            }
+            wgpu::CurrentSurfaceTexture::Timeout => return Err(PresentError::Other("timeout")),
+            wgpu::CurrentSurfaceTexture::Occluded => return Err(PresentError::Other("occluded")),
+            wgpu::CurrentSurfaceTexture::Validation => {
+                return Err(PresentError::Other("validation"));
+            }
+        };
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -1187,6 +1241,7 @@ impl Gfx {
                 label: Some("nes-hd-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
+                    depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
@@ -1196,6 +1251,7 @@ impl Gfx {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
             rp.set_pipeline(&self.pipeline);
             rp.set_bind_group(0, &hd.bind_group, &[]);
@@ -1246,7 +1302,7 @@ impl Gfx {
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
         });
         let uniforms = self

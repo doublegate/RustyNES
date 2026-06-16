@@ -70,7 +70,10 @@ pub struct RawCheat {
     pub enabled: bool,
 }
 
-/// On-disk schema: a list of cheats for one ROM.
+/// On-disk schema: a list of cheats for one ROM. Only the native `load`/`save`
+/// paths construct it (cheat files are not persisted on wasm), so it is
+/// `cfg`-gated out of the wasm build to avoid a `dead_code` warning there.
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 struct CheatFile {
     /// The Game Genie cheat entries (TOML `[[cheats]]` array of tables).
@@ -142,14 +145,14 @@ pub fn load(data_dir: &Path, rom_sha256: &[u8; 32]) -> Cheats {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn save(data_dir: &Path, rom_sha256: &[u8; 32], genie: &[CheatEntry], raw: &[RawCheat]) {
     let path = cheat_path(data_dir, rom_sha256);
-    if let Some(parent) = path.parent() {
-        if let Err(e) = fs::create_dir_all(parent) {
-            eprintln!(
-                "rustynes: cheats dir {} create failed: {e}",
-                parent.display()
-            );
-            return;
-        }
+    if let Some(parent) = path.parent()
+        && let Err(e) = fs::create_dir_all(parent)
+    {
+        eprintln!(
+            "rustynes: cheats dir {} create failed: {e}",
+            parent.display()
+        );
+        return;
     }
     let file = CheatFile {
         cheats: genie.to_vec(),

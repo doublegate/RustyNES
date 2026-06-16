@@ -601,15 +601,15 @@ impl<T: Transport> RollbackSession<T> {
                     // stored value is re-checked once we confirm the frame
                     // (see `advance` after `recompute_confirmed`).
                     self.remote_checksums[frame as usize] = Some((hash, fb_hash));
-                    if let Some((local, local_fb)) = self.confirmed_hashes[frame as usize] {
-                        if local != hash {
-                            return Err(NetplayError::Desync {
-                                frame,
-                                local,
-                                remote: hash,
-                                same_framebuffer: local_fb == fb_hash,
-                            });
-                        }
+                    if let Some((local, local_fb)) = self.confirmed_hashes[frame as usize]
+                        && local != hash
+                    {
+                        return Err(NetplayError::Desync {
+                            frame,
+                            local,
+                            remote: hash,
+                            same_framebuffer: local_fb == fb_hash,
+                        });
                     }
                     let _ = nes;
                 }
@@ -888,15 +888,15 @@ impl<T: Transport> RollbackSession<T> {
         };
         let mut f = interval; // skip frame 0
         while f <= confirmed {
-            if self.local_checksums[f as usize].is_none() {
-                if let Some((hash, fb_hash)) = self.confirmed_hashes[f as usize] {
-                    self.local_checksums[f as usize] = Some(hash);
-                    self.transport.send(&NetMessage::Checksum {
-                        frame: f,
-                        hash,
-                        fb_hash,
-                    });
-                }
+            if self.local_checksums[f as usize].is_none()
+                && let Some((hash, fb_hash)) = self.confirmed_hashes[f as usize]
+            {
+                self.local_checksums[f as usize] = Some(hash);
+                self.transport.send(&NetMessage::Checksum {
+                    frame: f,
+                    hash,
+                    fb_hash,
+                });
             }
             f += interval;
         }

@@ -86,7 +86,7 @@ impl Sunsoft3 {
         chr_rom: Box<[u8]>,
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_16K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_16K) {
             return Err(MapperError::Invalid(format!(
                 "Sunsoft-3 PRG-ROM size {} is not a non-zero multiple of 16 KiB",
                 prg_rom.len()
@@ -95,7 +95,7 @@ impl Sunsoft3 {
         let chr_is_ram = chr_rom.is_empty();
         let chr: Box<[u8]> = if chr_is_ram {
             vec![0u8; 4 * CHR_BANK_2K].into_boxed_slice()
-        } else if chr_rom.len() % CHR_BANK_2K == 0 {
+        } else if chr_rom.len().is_multiple_of(CHR_BANK_2K) {
             chr_rom
         } else {
             return Err(MapperError::Invalid(format!(

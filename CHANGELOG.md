@@ -38,8 +38,32 @@ and stay deferred as a future v2.0-scale item (see `docs/STATUS.md`). See the v1
   No `tail_expr_drop_order` restructuring was needed. **Verified byte-identical:**
   AccuracyCoin 100% (139/139), `visual_regression` golden framebuffers, `nestest`
   0-diff, and `cpu_interrupts_v2` 5/5 strict all pass unchanged; the chip stack still
-  cross-compiles `no_std` (`thumbv7em-none-eabihf`). MSRV stays 1.86 for now (the
-  egui/wgpu/rfd dependency-tier bump that requires a newer MSRV is a separate step).
+  cross-compiles `no_std` (`thumbv7em-none-eabihf`).
+- **MSRV 1.86 → 1.96 + the egui / wgpu / rfd dependency tier** (v1.3.0 Workstream A).
+  The pinned toolchain (`rust-toolchain.toml`), `[workspace.package] rust-version`, the
+  two explicit-version crates, and the CI MSRV jobs all move to **Rust 1.96** (latest
+  stable). That unblocks the coordinated UI-stack bump: **egui / egui-wgpu / egui-winit
+  0.32 → 0.34.3**, **wgpu 25 → 29.0.3** (egui 0.34 requires wgpu 29), naga 25, and
+  **rfd 0.14 → 0.17.2**. The wgpu 29 migration is presentation-only (no core/determinism
+  surface): `get_current_texture()` now returns the `CurrentSurfaceTexture` enum (handled
+  via a small `gfx::PresentError` that preserves the reconfigure-on-lost/outdated
+  behavior), `RenderPassColorAttachment` gains `depth_slice`, `RenderPassDescriptor` and
+  `RenderPipelineDescriptor` use `multiview_mask`, `PipelineLayoutDescriptor` uses
+  `immediate_size` + `Option`-wrapped bind-group layouts, samplers use `MipmapFilterMode`,
+  and `InstanceDescriptor` / `DeviceDescriptor` follow the new constructors. egui 0.34
+  deprecations were migrated (`Context::run` → `run_ui` with a root `Ui`, `Panel::top/
+  bottom(..).show_inside(..)`, `content_rect`, `global_style`, `egui_wants_*_input`,
+  `RendererOptions`). The newer 1.96 clippy's lints were cleaned across the workspace
+  (collapsible let-chains, `map_unwrap_or`, `manual_is_multiple_of`, etc.). **Verified:**
+  AccuracyCoin 100% (139/139), `visual_regression` golden + `nestest` unchanged; clippy
+  `-D warnings` clean (native + `scripting,hd-pack` + both wasm flavours); `no_std`
+  cross-compile; `trunk build --release` succeeds with the wasm size budget at 3.06 / 5.00
+  MiB gzip (wasm-bindgen pin 0.2.125 unchanged).
+- **CI: GitHub Actions runner/action versions bumped to latest** (v1.3.0 Workstream A):
+  `actions/upload-artifact` v4 → v7; all other actions (`checkout@v6`,
+  `configure-pages@v6`, `deploy-pages@v5`, `upload-pages-artifact@v5`,
+  `action-gh-release@v3`, `taiki-e/install-action@v2`, `Swatinem/rust-cache@v2`,
+  `dtolnay/rust-toolchain@master`) and the `*-latest` runner images already track newest.
 
 ## [1.2.0] - 2026-06-15 - "Curator" (Feature Release)
 

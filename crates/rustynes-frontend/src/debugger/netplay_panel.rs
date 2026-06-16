@@ -299,13 +299,13 @@ fn body(ui: &mut egui::Ui, state: &mut NetplayPanelState, config: &mut crate::co
             )
             .weak(),
         );
-        if ui.button("Host").clicked() {
-            if let Ok(port) = state.host_port.trim().parse::<u16>() {
-                let num_players = state.host_num_players.clamp(2, 4);
-                config.netplay.host_port = port;
-                config.netplay.num_players = num_players;
-                state.request = Some(NetplayRequest::Host { port, num_players });
-            }
+        if ui.button("Host").clicked()
+            && let Ok(port) = state.host_port.trim().parse::<u16>()
+        {
+            let num_players = state.host_num_players.clamp(2, 4);
+            config.netplay.host_port = port;
+            config.netplay.num_players = num_players;
+            state.request = Some(NetplayRequest::Host { port, num_players });
         }
     });
 

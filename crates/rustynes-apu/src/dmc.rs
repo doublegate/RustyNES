@@ -315,12 +315,13 @@ impl Dmc {
         // that delivers mid-byte (timer below period — e.g. the Loop1/Loop2
         // implicit-abort 1-byte loads) must NOT be re-consumed here; that would
         // corrupt the implicit-abort 1-cycle-DMA measurement.
-        if self.silence && self.timer == self.timer_period {
-            if let Some(b) = self.sample_buffer.take() {
-                self.shift_register = b;
-                self.silence = false;
-                return true;
-            }
+        if self.silence
+            && self.timer == self.timer_period
+            && let Some(b) = self.sample_buffer.take()
+        {
+            self.shift_register = b;
+            self.silence = false;
+            return true;
         }
         false
     }

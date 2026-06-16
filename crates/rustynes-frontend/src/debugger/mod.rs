@@ -253,7 +253,16 @@ impl DebuggerOverlay {
         crate::icons::install(&ctx);
         let viewport_id = ctx.viewport_id();
         let state = egui_winit::State::new(ctx, viewport_id, window, None, None, None);
-        let renderer = egui_wgpu::Renderer::new(device, surface_format, None, 1, false);
+        let renderer = egui_wgpu::Renderer::new(
+            device,
+            surface_format,
+            egui_wgpu::RendererOptions {
+                msaa_samples: 1,
+                depth_stencil_format: None,
+                dithering: false,
+                predictable_texture_filtering: false,
+            },
+        );
         Self {
             state,
             renderer,
@@ -412,7 +421,7 @@ impl DebuggerOverlay {
     #[must_use]
     pub fn wants_egui_input(&self) -> bool {
         let ctx = self.state.egui_ctx();
-        ctx.wants_keyboard_input() || ctx.wants_pointer_input()
+        ctx.egui_wants_keyboard_input() || ctx.egui_wants_pointer_input()
     }
 
     /// v1.0.0 (BUG-1) — whether egui has requested a repaint (an animation, a
@@ -610,16 +619,18 @@ impl DebuggerOverlay {
     /// Build the egui UI for this frame (the deep-overlay path: toolbar HUD +
     /// chip panels + tool panels, all with a live `nes`). Used by [`Self::render`]
     /// and by [`Self::render_shell`] when the overlay is visible.
-    fn ui(&mut self, ctx: &egui::Context, nes: &mut Nes, config: &mut Config) {
-        self.chip_panels(ctx, nes);
-        self.tool_panels(ctx, Some(nes), config);
+    fn ui(&mut self, ui: &mut egui::Ui, nes: &mut Nes, config: &mut Config) {
+        self.chip_panels(ui, nes);
+        self.tool_panels(ui.ctx(), Some(nes), config);
     }
 
     /// v1.0.0 — the chip-inspection UI: the debugger toolbar HUD + the
     /// CPU / PPU / OAM / APU / Memory / Mapper windows. These all read `&mut Nes`
     /// and only render when the deep overlay is visible.
-    fn chip_panels(&mut self, ctx: &egui::Context, nes: &mut Nes) {
-        egui::TopBottomPanel::top("debugger_top").show(ctx, |ui| {
+    fn chip_panels(&mut self, root_ui: &mut egui::Ui, nes: &mut Nes) {
+        let ctx = root_ui.ctx().clone();
+        let ctx = &ctx;
+        egui::Panel::top("debugger_top").show_inside(root_ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new("RustyNES debugger").strong());
                 ui.separator();
@@ -922,16 +933,16 @@ impl DebuggerOverlay {
                 );
             }
         }
-        if self.show_game_db {
-            if let Some(nes) = nes {
-                game_db_panel::show(
-                    ctx,
-                    &mut self.show_game_db,
-                    &mut self.game_db_ui,
-                    nes,
-                    self.rom_crc,
-                );
-            }
+        if self.show_game_db
+            && let Some(nes) = nes
+        {
+            game_db_panel::show(
+                ctx,
+                &mut self.show_game_db,
+                &mut self.game_db_ui,
+                nes,
+                self.rom_crc,
+            );
         }
         if self.show_settings {
             settings_panel::show(ctx, &mut self.show_settings, &mut self.settings_ui, config);
@@ -988,13 +999,18 @@ impl DebuggerOverlay {
         }
         let raw_input = self.state.take_egui_input(window);
         let ctx = self.state.egui_ctx().clone();
-        // `ctx.run` takes an `FnMut`; `extra_ui` is `FnOnce`. The closure runs
+        // egui 0.34 deprecated the `|ctx|` form of `Context::run` (and
+        // context-level `Panel::show`) in favour of `run_ui`, which hands the
+        // body a root `&mut Ui` to host the panels via `show_inside`. The
+        // floating windows reached through `ui.ctx()` are unchanged, so the
+        // single-pass behaviour is identical.
+        // `run_ui` takes an `FnMut`; `extra_ui` is `FnOnce`. The closure runs
         // exactly once, so move it through an `Option::take`.
         let mut extra_ui = Some(extra_ui);
-        let output = ctx.run(raw_input, |ctx| {
-            self.ui(ctx, nes, config);
+        let output = ctx.run_ui(raw_input, |ui| {
+            self.ui(ui, nes, config);
             if let Some(extra_ui) = extra_ui.take() {
-                extra_ui(ctx, config);
+                extra_ui(ui.ctx(), config);
             }
         });
         self.state
@@ -1017,6 +1033,7 @@ impl DebuggerOverlay {
                     label: Some("egui-pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view,
+                        depth_slice: None,
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Load,
@@ -1026,6 +1043,7 @@ impl DebuggerOverlay {
                     depth_stencil_attachment: None,
                     timestamp_writes: None,
                     occlusion_query_set: None,
+                    multiview_mask: None,
                 })
                 .forget_lifetime();
             self.renderer.render(&mut rp, &clipped, &screen_desc);
@@ -1076,7 +1094,16 @@ impl DebuggerOverlay {
         // after. `apply_theme` runs inside the closure only when needed.
         let theme_changed = self.last_theme != Some(config.ui.theme);
         let theme_now = config.ui.theme;
-        let output = ctx.run(raw_input, |ctx| {
+        // egui 0.34 deprecated the `|ctx|` form of `Context::run` (and
+        // context-level `Panel::show`) in favour of `run_ui`, which hands the
+        // body a root `&mut Ui` to host the top/bottom panels via `show_inside`.
+        // The shell's floating windows + the debugger panels reached through
+        // `ui.ctx()` are unchanged, so the single-pass behaviour is identical.
+        let output = ctx.run_ui(raw_input, |ui| {
+            // The owned `&Context` for the context-level windows/areas. Cloning
+            // the handle is cheap and avoids borrowing `ui` for the whole body.
+            let ctx_owned = ui.ctx().clone();
+            let ctx = &ctx_owned;
             // (1) Theme first so the whole frame (shell + debugger) is themed.
             // Only rebuild + apply `Visuals` when the theme actually changed (or
             // on the first frame), not every frame.
@@ -1088,7 +1115,7 @@ impl DebuggerOverlay {
             let settings_ui = &mut self.settings_ui;
             let input_ui = &mut self.input_ui;
             shell_out = shell.build(
-                ctx,
+                ui,
                 config,
                 shell_frame,
                 |ui, cfg, tab| {
@@ -1119,10 +1146,8 @@ impl DebuggerOverlay {
             // toolbar HUD render only when the overlay is visible (they need a
             // live `&mut Nes`).
             self.tool_panels(ctx, nes.as_deref_mut(), config);
-            if visible {
-                if let Some(nes) = nes.as_deref_mut() {
-                    self.chip_panels(ctx, nes);
-                }
+            if visible && let Some(nes) = nes.as_deref_mut() {
+                self.chip_panels(ui, nes);
             }
             // (5) v1.0.0 polish — a pause-screen dimming overlay: a
             // semi-transparent dark rect (~40% black) over the emulated
@@ -1132,7 +1157,7 @@ impl DebuggerOverlay {
             // it is painted at `Background` order so modal windows (Settings /
             // About / a tool panel) stay on top and fully readable.
             if shell_frame.paused && shell_frame.rom_loaded {
-                let viewport = ctx.available_rect();
+                let viewport = ctx.content_rect();
                 egui::Area::new(egui::Id::new("paused_dim"))
                     .order(egui::Order::Background)
                     .interactable(false)
@@ -1189,6 +1214,7 @@ impl DebuggerOverlay {
                     label: Some("egui-shell-pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view,
+                        depth_slice: None,
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Load,
@@ -1198,6 +1224,7 @@ impl DebuggerOverlay {
                     depth_stencil_attachment: None,
                     timestamp_writes: None,
                     occlusion_query_set: None,
+                    multiview_mask: None,
                 })
                 .forget_lifetime();
             self.renderer.render(&mut rp, &clipped, &screen_desc);

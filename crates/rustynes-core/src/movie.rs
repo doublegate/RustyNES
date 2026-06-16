@@ -164,13 +164,13 @@ pub struct Movie {
 impl Movie {
     /// Number of input frames in the movie.
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.frames.len()
     }
 
     /// `true` if the movie has no input frames.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.frames.is_empty()
     }
 
@@ -376,13 +376,13 @@ impl MovieRecorder {
 
     /// Number of frames captured so far.
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.frames.len()
     }
 
     /// `true` if no frames have been captured.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.frames.is_empty()
     }
 
@@ -426,13 +426,13 @@ impl<'a> MoviePlayer<'a> {
 
     /// Total frames in the movie.
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.movie.frames.len()
     }
 
     /// `true` if the movie has no frames.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.movie.frames.is_empty()
     }
 
@@ -444,7 +444,7 @@ impl<'a> MoviePlayer<'a> {
 
     /// `true` if every frame has been played.
     #[must_use]
-    pub fn is_finished(&self) -> bool {
+    pub const fn is_finished(&self) -> bool {
         self.cursor >= self.movie.frames.len()
     }
 

@@ -606,10 +606,10 @@ fn desync_detection() {
         fn poll(&mut self) -> Vec<NetMessage> {
             let mut msgs = self.inner.poll();
             for m in &mut msgs {
-                if let NetMessage::Input { frame, input, .. } = m {
-                    if *frame == self.target_frame {
-                        *input = !*input;
-                    }
+                if let NetMessage::Input { frame, input, .. } = m
+                    && *frame == self.target_frame
+                {
+                    *input = !*input;
                 }
             }
             msgs
@@ -995,10 +995,10 @@ fn n_player_desync_detection() {
         fn poll(&mut self) -> Vec<NetMessage> {
             let mut msgs = self.inner.poll();
             for m in &mut msgs {
-                if let NetMessage::Input { frame, input, .. } = m {
-                    if *frame == self.target_frame {
-                        *input = !*input;
-                    }
+                if let NetMessage::Input { frame, input, .. } = m
+                    && *frame == self.target_frame
+                {
+                    *input = !*input;
                 }
             }
             msgs
