@@ -10,7 +10,7 @@
 
 [![Build Status](https://github.com/doublegate/RustyNES/workflows/CI/badge.svg)](https://github.com/doublegate/RustyNES/actions)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
-[![Version](https://img.shields.io/badge/version-v1.3.0-blue.svg)](https://github.com/doublegate/RustyNES/releases)
+[![Version](https://img.shields.io/badge/version-v1.4.0-blue.svg)](https://github.com/doublegate/RustyNES/releases)
 [![Rust: 1.96](https://img.shields.io/badge/rust-1.96-orange.svg)](rust-toolchain.toml)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web-lightgrey.svg)](#platform-support)
 [![AccuracyCoin](<https://img.shields.io/badge/AccuracyCoin-100%25%20(139%2F139)-brightgreen.svg>)](#compatibility-and-accuracy)
@@ -488,11 +488,12 @@ engine-development audit logs are kept locally, outside the public repo.)
 
 ## Version History
 
-The current release is **v1.3.0 "Bedrock"**, the foundation + breadth release on top of
+The current release is **v1.4.0 "Fidelity"**, the compatibility-and-finish release on top of
 the cycle-accurate v1.0.0 production core. The road there:
 
 | Version    | Highlights                                                                                  |
 | ---------- | ------------------------------------------------------------------------------------------- |
+| **v1.4.0** | "Fidelity" — compatibility + finish: accuracy polish (triangle ultrasonic silence, DMC-DMA ↔ controller-read conflict verified), per-channel audio mixing, devtools finish (symbol-file `.sym`/`.mlb`/`.nl` loading + event breakpoints), browser QoL (wasm `.rnm` movie I/O + IndexedDB save-states), a measure-first perf pass (−8% on the rendering-heavy bench), a colorful **`rustynes help` TUI** + styled `--help` (clap 4 + ratatui), and mapper coverage 101 → **113 families** (boot-smoke verified, with reset-vector / decode fixes to m132/m143/m225/m226/m233/m242/m246). AccuracyCoin 100% (139/139) held. |
 | **v1.3.0** | "Bedrock" — foundation + breadth: edition 2024 / Rust 1.96 / egui 0.34 + wgpu 29 toolchain, the frame-pacing fix, Memory Compare + menu/Settings reorg + auto-save, mapper coverage 87 → **101 families** + Vs. DualSystem detection, HD-pack `<condition>`/`<background>` rules, netplay desync diagnostics + niche peripheral aliases, and the exercised PGO/BOLT gate. AccuracyCoin 100% held. (Casual-mode browser RetroAchievements is a documented carryover — ADR 0015.) |
 | **v1.2.0** | "Curator" — library breadth + compatibility + reach: mapper coverage 51 → **87 families** (accuracy-tiering honesty gate), `.zip` loading + `.ips`/`.ups`/`.bps` soft-patching, a per-game DB + in-app ROM-Database editor, live NTSC knobs + a composable shader stack + CRT preset bank + a (default-off) HD-pack loader, new peripherals (Family BASIC keyboard, SNES mouse, Arkanoid-both-ports, Game Genie code DB), Lua `onNmi`/`onIrq`/`setInput`, menu-bar polish (contextual enable/disable + remappable shortcuts + Font Awesome icons), web touch controls + Power Pad + experimental wasm Lua, a turn-key netplay `deploy/` bundle, and a PGO CI promotion gate. AccuracyCoin 100% held |
 | **v1.1.0** | First feature release — visual filters (full NES_NTSC + CRT/scanline shader + `.pal` loading), input & peripherals (Power Pad, turbo/autofire, input-display overlay, per-game mirroring database), debugger devtools (breakpoints, trace logger, event viewer), audio (NSF/NSFe player, 5-band EQ), and the flagship **Lua scripting** engine |
@@ -509,19 +510,21 @@ the cycle-accurate v1.0.0 production core. The road there:
 > Note: **v1.0.0** was RustyNES's first stable release. The original RustyNES line
 > (v0.8.x) used an earlier, less-accurate emulation core; v1.0.0 replaced that core
 > wholesale with the cycle-accurate engine described above; **v1.1.0** added the
-> scripting/filters/peripherals feature set; and **v1.2.0 "Curator"** adds the library /
-> compatibility / reach set above. See [`CHANGELOG.md`](CHANGELOG.md) for full
-> per-version detail.
+> scripting/filters/peripherals feature set; **v1.2.0 "Curator"** added the library /
+> compatibility / reach set; **v1.3.0 "Bedrock"** added the toolchain + breadth set; and
+> **v1.4.0 "Fidelity"** adds the compatibility-and-finish set above. See
+> [`CHANGELOG.md`](CHANGELOG.md) for full per-version detail.
 
 ### Roadmap
 
-The next release, **v1.3.0 "Bedrock"**, is in development: toolchain modernization
-(Rust edition 2024 + the egui/wgpu dependency tier), a frame-pacing fix, GeraNES-class
-developer tooling (PPU event viewer, symbol-file loading, memory compare), an aggressive
-mapper-breadth sweep plus Vs. DualSystem, HD-pack conditions, and casual-mode browser
-RetroAchievements. Further-out directions include mobile (iOS / Android) frontends. None
-of v1.3.0 is shipped yet; see [`docs/STATUS.md`](docs/STATUS.md) for the authoritative
-current state.
+With v1.4.0 the non-architectural backlog is nearly consumed: emulation accuracy is now at
+or beyond the GeraNES bar, and the remaining accuracy residuals all converge on a single
+future **v2.0 master-clock (fractional-timebase) refactor** (ADR 0002). The next release is
+expected to be either a focused **v1.5.0 "Lens"** consolidation pass (debugger visualization,
+Lua/TAS scriptability depth, creator tooling, UX polish + accessibility, mapper continuation)
+or that v2.0 refactor. Further-out directions include mobile (iOS / Android) frontends and
+casual-mode browser RetroAchievements (ADR 0015). See [`docs/STATUS.md`](docs/STATUS.md) for
+the authoritative current state.
 
 ---
 

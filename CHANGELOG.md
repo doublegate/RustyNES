@@ -15,10 +15,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Toward **v1.4.0 "Fidelity"** — an accuracy + test-ROM-hardening release on the
-cycle-accurate v1.0.0 core. AccuracyCoin holds 100% (139/139) and the
-determinism contract is intact (the audio oracle is unchanged: no committed ROM
-exercises the affected paths).
+## [1.4.0] - 2026-06-16
+
+**"Fidelity"** — the compatibility-and-finish release on the cycle-accurate
+v1.0.0 core: accuracy polish, per-channel audio mixing, the devtools finish
+(symbol loading + event breakpoints), browser QoL (wasm `.rnm` movies +
+IndexedDB save-states), a measure-first performance pass, a colorful
+`rustynes help` TUI + styled `--help`, and mapper coverage 101 -> **113
+families** (boot-smoke verified). All additive and off-by-default where it
+matters, so the shipped / native / `no_std` / wasm builds stay byte-identical to
+v1.3.0. AccuracyCoin holds 100% (139/139) and the determinism contract is intact
+(the audio oracle is unchanged: no committed ROM exercises the affected paths).
 
 ### Added
 
