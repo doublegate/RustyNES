@@ -285,8 +285,10 @@ This section supersedes the early "Out-of-scope" list above where they disagree
   punching bag (`Nes::set_bandai_hyper_shot`, the 8-sensor `$4016`-bit-1-
   multiplexed read, unit-verified against the `NESdev` "Exciting Boxing Punching
   Bag" page). All are additive, default-off `InputDevice` overlays, so
-  `ExpansionDevice::None` keeps every read byte-identical.) The microphone and
-  DMC-DMA controller-bit corruption remain deferred.
+  `ExpansionDevice::None` keeps every read byte-identical.) The microphone
+  remains deferred. (DMC-DMA controller-bit corruption is **modelled** as of
+  v1.4.0 — see `Bus::dmc_dma_read`, gated by `dmc_dma_during_read4/dma_4016_read`,
+  `sprdma_and_dmc_dma`, and `read_joy3/count_errors`.)
 - **Vs. System / PlayChoice-10 (2C03/04/05 RGB PPUs) — game-verified.**
   RGB palette tables + 2C05 register quirks + NES 2.0 byte-13 parsing + Vs.
   DIP/coin inputs; **mappers 99 + 151 game-verify in-game RGB** (Vs.

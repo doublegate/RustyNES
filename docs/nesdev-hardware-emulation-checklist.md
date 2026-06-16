@@ -95,7 +95,7 @@ Primary source clusters:
 | DMC load vs reload DMA | Model different scheduling phase, dummy cycle, and alignment cycle | Implemented; residual $4015/$4016 bracket cases remain |
 | DMA register-read bugs | Repeated halted reads must affect $2007/$4015/$4016/$4017 side-effect registers | Implemented enough for blargg; AccuracyCoin residuals remain |
 | Controller strobe/read | $4016 low 3 bits latch OUT lines; $4016/$4017 reads clock device and return D0-D4 plus open bus | Standard pads + **Four Score** + **Arkanoid Vaus paddle + Zapper** via the opt-in per-port `InputDevice` overlay; microphone / other expansion devices remain deferred |
-| DMC controller conflict | Reads can lose or duplicate joypad bits during DMC DMA | Known; **still untested/undiagnosed** (`read_joy3/count_errors`, `sprdma_and_dmc_dma`) — an ongoing accuracy-polish item |
+| DMC controller conflict | Reads can lose or duplicate joypad bits during DMC DMA | **Resolved (v1.4.0).** Modelled in `Bus::dmc_dma_read` (the `$4016`/`$4017` DMC-fetch conflict clocks the controller shift register, ORing open-bus high bits with the controller read; PAL / non-`$4000`-page guarded). Verified by the strict blargg `dmc_dma_during_read4/dma_4016_read`, `sprdma_and_dmc_dma` (+`_512`), and the `read_joy3/count_errors`/`count_errors_fast` conflict-stress smokes (`count_errors` renders "Conflicts: 149/1000", all compensated) — all green |
 
 ## Cartridge And Mapper Checklist
 
@@ -120,7 +120,7 @@ Primary source clusters:
 | CPU interrupts | `cpu_interrupts_v2`, IRQ trace fixture, mapper IRQ tests | C1 residual carried forward |
 | PPU vblank/open bus | `ppu_vbl_nmi`, `ppu_open_bus`, PPU state traces | Passing; keep traces for future changes |
 | Sprites/OAM | sprite hit/overflow, `oam_read`, `oam_stress`, AccuracyCoin | Residuals tracked under Cascade A |
-| APU/DMA | `apu_test`, `apu_mixer`, `dmc_dma_during_read4` | Passing; AccuracyCoin residuals remain |
+| APU/DMA | `apu_test`, `apu_mixer`, `dmc_dma_during_read4`, `sprdma_and_dmc_dma`, `read_joy3`, `pal_apu_tests`, `240pee` (240p suite) | Passing; AccuracyCoin residuals remain. v1.4.0 added the `240pee` UxROM+BNROM render gates and confirmed the DMC-controller-conflict coverage |
 | Mapper timing | `mmc3_test_2`, `mmc3_irq_tests`, Holy Mapperel, mapper-specific ROMs | MMC3 sub-test #3 residual; VRC24 test source unresolved |
 | Input | Standard pads, DMC conflict, Four Score/Zapper/expansion devices | Standard pads only; expanded devices are v1.x |
 | Commercial canaries | User-supplied external snapshots, never committed ROM bytes | 60-ROM oracle exists |

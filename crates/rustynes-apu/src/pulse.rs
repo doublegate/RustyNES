@@ -255,6 +255,19 @@ mod tests {
     }
 
     #[test]
+    fn timer_hi_write_resets_duty_phase_not_divider() {
+        // NESdev "APU Pulse": writing $4003/$4007 resets the duty sequencer
+        // phase to step 0 but does NOT reset the timer divider.
+        let mut p = Pulse::new(true);
+        p.step = 5;
+        p.timer = 42;
+        p.write_timer_hi(0x03);
+        assert_eq!(p.step, 0, "duty sequencer phase must reset to 0");
+        assert_eq!(p.timer, 42, "timer divider must be preserved");
+        assert!(p.envelope.start, "envelope restart flag must be set");
+    }
+
+    #[test]
     fn length_load_only_when_enabled() {
         let mut p = Pulse::new(true);
         p.length.enabled = false;

@@ -15,6 +15,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Toward **v1.4.0 "Fidelity"** — an accuracy + test-ROM-hardening release on the
+cycle-accurate v1.0.0 core. AccuracyCoin holds 100% (139/139) and the
+determinism contract is intact (the audio oracle is unchanged: no committed ROM
+exercises the affected paths).
+
+### Added
+
+- **240p test suite (`240pee`) render gates.** Wired the in-tree, free
+  `240pee/240pee.nes` (mapper 2 / UxROM) and `240pee-bnrom.nes` (mapper 34 /
+  BNROM) as deterministic framebuffer-FNV-1a smoke tests
+  (`crates/rustynes-test-harness/tests/p240_test_suite.rs`), gating each
+  mapper's boot + PRG/CHR bank-switch + render pipeline against the suite's
+  title screen. No ROMs were downloaded — these were already committed.
+
+### Fixed
+
+- **Triangle ultrasonic silence.** When the triangle timer period drops below 2
+  (frequency above ~55.9 kHz) the sequencer now freezes instead of clocking at
+  ultrasonic speed, matching hardware (and the common-emulator convention); the
+  output holds its current step rather than emitting an aliasing tone. Mega Man
+  2's "Crash Man" stage relies on this. See `crates/rustynes-apu/src/triangle.rs`.
+
+### Changed
+
+- **Verified + documented the DMC-DMA ↔ controller-read conflict as resolved.**
+  The `$4016`/`$4017`-read-during-DMC-DMA shift-register conflict is modelled in
+  `Bus::dmc_dma_read` and gated by the strict `dmc_dma_during_read4/dma_4016_read`,
+  `sprdma_and_dmc_dma` (+`_512`), and `read_joy3/count_errors` smokes (all green).
+  Moved it out of the "open/known-untested" lists in
+  `docs/nesdev-hardware-emulation-checklist.md` and `docs/compatibility.md`. No
+  code change was needed.
+- **Confirmed pulse duty-sequencer phase reset on `$4003`/`$4007`** is already
+  correct (`Pulse::write_timer_hi` resets the duty step to 0 without touching the
+  timer divider); added a regression unit test and documented it in
+  `docs/apu-2a03.md`.
+
 ## [1.3.0] - 2026-06-16 - "Bedrock" (Feature Release)
 
 The foundation + breadth release on the cycle-accurate v1.0.0 core, built atop

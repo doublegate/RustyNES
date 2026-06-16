@@ -1,0 +1,5 @@
+---
+source: crates/rustynes-test-harness/tests/p240_test_suite.rs
+expression: snap
+---
+rom=nes-test-roms/240pee/240pee.nes frames=60 fb_bytes=245760 fnv1a64=5cc8eb3f10885991
