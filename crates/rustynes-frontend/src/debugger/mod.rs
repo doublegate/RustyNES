@@ -643,26 +643,12 @@ impl DebuggerOverlay {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new("RustyNES debugger").strong());
                 ui.separator();
-                ui.checkbox(&mut self.show_cpu, "CPU");
-                ui.checkbox(&mut self.show_ppu, "PPU");
-                ui.checkbox(&mut self.show_oam, "OAM");
-                ui.checkbox(&mut self.show_apu, "APU");
-                ui.checkbox(&mut self.show_memory, "Memory");
-                ui.checkbox(&mut self.show_memory_compare, "Memory Compare");
-                ui.checkbox(&mut self.show_mapper, "Mapper");
-                ui.checkbox(&mut self.show_trace, "Trace");
-                ui.checkbox(&mut self.show_events, "Events");
-                ui.checkbox(&mut self.show_nsf, "NSF");
-                ui.checkbox(&mut self.show_script, "Lua");
-                ui.checkbox(&mut self.show_input, "Input");
-                ui.checkbox(&mut self.show_input_display, "Input HUD");
-                ui.checkbox(&mut self.show_cheat, "Cheats");
-                ui.checkbox(&mut self.show_settings, "Settings");
-                ui.checkbox(&mut self.show_netplay, "Netplay");
-                ui.checkbox(&mut self.show_cheevos, "Cheevos");
-                ui.checkbox(&mut self.show_perf, "Perf");
-                ui.checkbox(&mut self.show_game_db, "ROM Database");
-                ui.separator();
+                // v1.3.0 Workstream C — the per-panel toggle checkboxes were
+                // removed here: every panel now opens from the always-visible
+                // menu bar (Debug menu for chip inspectors, Tools menu for
+                // Cheats / Netplay / Perf / ROM Database / ...), so this HUD no
+                // longer duplicates them. It keeps only the live read-outs the
+                // menu bar does NOT carry (frame/cycle, fps, movie status).
                 ui.label(format!(
                     "frame={} cycle={}",
                     nes.ppu_snapshot().frame,

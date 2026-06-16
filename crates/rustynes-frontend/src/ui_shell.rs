@@ -116,6 +116,8 @@ pub enum MenuAction {
     LoadRom(PathBuf),
     /// Clear the Recent-ROMs list.
     ClearRecent,
+    /// v1.3.0 — close the currently-loaded ROM and return to the no-ROM state.
+    CloseRom,
     /// Save state to the most-recent slot.
     SaveState,
     /// Load state from the most-recent slot.
@@ -444,6 +446,19 @@ impl UiShell {
                                 }
                             }
                         });
+                    }
+
+                    // v1.3.0 — close the current ROM (back to the no-ROM state).
+                    // A ROM change, so locked during netplay like Open ROM/Recent.
+                    if ui
+                        .add_enabled(
+                            rom && !rom_change_restricted,
+                            egui::Button::new(ic(glyph::XMARK, "Close ROM")),
+                        )
+                        .clicked()
+                    {
+                        out.action = Some(MenuAction::CloseRom);
+                        ui.close();
                     }
 
                     // FDS disk controls (only meaningful for FDS games). (H1)
