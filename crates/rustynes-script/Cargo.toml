@@ -2,7 +2,7 @@
 name = "rustynes-script"
 version.workspace = true
 edition = "2024"
-rust-version = "1.86"
+rust-version = "1.96"
 description = "Sandboxed Lua 5.4 scripting engine for the RustyNES emulator (memory/state access, per-frame callbacks)."
 license.workspace = true
 authors.workspace = true

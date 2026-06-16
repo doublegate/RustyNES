@@ -47,7 +47,7 @@ impl CnRom {
                 prg_rom.len()
             )));
         }
-        if chr_rom.is_empty() || chr_rom.len() % CHR_BANK_8K != 0 {
+        if chr_rom.is_empty() || !chr_rom.len().is_multiple_of(CHR_BANK_8K) {
             return Err(MapperError::Invalid(format!(
                 "CNROM expects non-empty CHR-ROM in 8 KiB units, got {} bytes",
                 chr_rom.len()

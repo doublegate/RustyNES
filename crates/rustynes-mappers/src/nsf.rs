@@ -143,7 +143,7 @@ pub fn parse_nsf(bytes: &[u8]) -> Result<Nsf, MapperError> {
         let pad = (load_addr & 0x0FFF) as usize;
         let mut image = vec![0u8; pad];
         image.extend_from_slice(&prg);
-        if image.len() % 0x1000 != 0 {
+        if !image.len().is_multiple_of(0x1000) {
             image.resize(image.len() + (0x1000 - image.len() % 0x1000), 0);
         }
         prg = image;
@@ -322,10 +322,10 @@ impl Mapper for NsfMapper {
             // (allowed: `load_addr >= 0x6000`). Serve the program there first,
             // falling back to WRAM only where it doesn't reach (gemini #44).
             0x6000..=0x7FFF => {
-                if !self.bankswitched {
-                    if let Some(off) = self.prg_offset(addr) {
-                        return self.prg[off];
-                    }
+                if !self.bankswitched
+                    && let Some(off) = self.prg_offset(addr)
+                {
+                    return self.prg[off];
                 }
                 self.wram[(addr - 0x6000) as usize]
             }

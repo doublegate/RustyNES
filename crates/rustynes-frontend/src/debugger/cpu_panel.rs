@@ -94,11 +94,12 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut CpuPanelState, nes
                         .desired_width(64.0)
                         .hint_text("$C000"),
                 );
-                if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    if let Some(addr) = parse_hex16(&state.goto_text) {
-                        state.origin = addr;
-                        state.follow_pc = false;
-                    }
+                if response.lost_focus()
+                    && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                    && let Some(addr) = parse_hex16(&state.goto_text)
+                {
+                    state.origin = addr;
+                    state.follow_pc = false;
                 }
             });
 
@@ -120,11 +121,9 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut CpuPanelState, nes
                         let submit = (add.lost_focus()
                             && ui.input(|i| i.key_pressed(egui::Key::Enter)))
                             || ui.button("Add").clicked();
-                        if submit {
-                            if let Some(addr) = parse_hex16(&state.bp_text) {
-                                nes.add_breakpoint(addr);
-                                state.bp_text.clear();
-                            }
+                        if submit && let Some(addr) = parse_hex16(&state.bp_text) {
+                            nes.add_breakpoint(addr);
+                            state.bp_text.clear();
                         }
                         if !nes.breakpoints().is_empty() && ui.button("Clear").clicked() {
                             nes.clear_breakpoints();

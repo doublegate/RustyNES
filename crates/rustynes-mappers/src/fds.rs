@@ -368,9 +368,9 @@ fn parse_sides(body: &[u8], declared: u8, has_header: bool) -> Result<FdsDisk, R
 
     // Pick the side stride. Prefer 65500 (FDS format); fall back to 65536 (QD)
     // only when the body length is a clean multiple of it but not of 65500.
-    let stride = if body.len() % FDS_SIDE_LEN == 0 {
+    let stride = if body.len().is_multiple_of(FDS_SIDE_LEN) {
         FDS_SIDE_LEN
-    } else if body.len() % QD_SIDE_LEN == 0 {
+    } else if body.len().is_multiple_of(QD_SIDE_LEN) {
         QD_SIDE_LEN
     } else {
         // Irregular trailing bytes (some dumps pad). Use the FDS stride and
@@ -1301,10 +1301,10 @@ impl Fds {
                     // them, so the existing block geometry stays valid.
                     let raw_off = self.wire_head_to_raw(self.head);
                     self.wire[self.head] = self.write_data;
-                    if let Some(off) = raw_off {
-                        if off < self.disk.side(idx).len() {
-                            self.disk.side_mut(idx)[off] = self.write_data;
-                        }
+                    if let Some(off) = raw_off
+                        && off < self.disk.side(idx).len()
+                    {
+                        self.disk.side_mut(idx)[off] = self.write_data;
                     }
                     self.disk_dirty = true;
                 }

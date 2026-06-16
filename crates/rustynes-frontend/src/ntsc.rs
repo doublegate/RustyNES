@@ -161,8 +161,8 @@ impl NtscFilter {
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("ntsc-pipeline-layout"),
-            bind_group_layouts: &[&bgl],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&bgl)],
+            immediate_size: 0,
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("ntsc-pipeline"),
@@ -189,7 +189,7 @@ impl NtscFilter {
             },
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -199,7 +199,7 @@ impl NtscFilter {
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
         });
         let uniforms = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -260,6 +260,7 @@ impl NtscFilter {
             label: Some("ntsc-pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: out_view,
+                depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
@@ -269,6 +270,7 @@ impl NtscFilter {
             depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         });
         rp.set_pipeline(&self.pipeline);
         rp.set_bind_group(0, &self.bind_group, &[]);

@@ -128,10 +128,10 @@ pub fn parse_binding_response(
         return None;
     }
     let tx_id: TransactionId = buf[8..20].try_into().ok()?;
-    if let Some(want) = expected_tx {
-        if &tx_id != want {
-            return None;
-        }
+    if let Some(want) = expected_tx
+        && &tx_id != want
+    {
+        return None;
     }
     // The attribute section must fit exactly within the buffer.
     let attrs = buf.get(HEADER_LEN..HEADER_LEN.checked_add(msg_len)?)?;

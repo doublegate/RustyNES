@@ -95,7 +95,7 @@ impl Multicart15 {
     /// Returns [`MapperError::Invalid`] when PRG is not a non-zero multiple of
     /// 16 KiB. CHR is always 8 KiB RAM (any supplied CHR-ROM is rejected).
     pub fn new(prg_rom: Box<[u8]>, chr_rom: &[u8]) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_16K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_16K) {
             return Err(MapperError::Invalid(format!(
                 "mapper 15 PRG-ROM size {} is not a non-zero multiple of 16 KiB",
                 prg_rom.len()
@@ -283,13 +283,13 @@ impl Txc36 {
         chr_rom: Box<[u8]>,
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_32K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_32K) {
             return Err(MapperError::Invalid(format!(
                 "mapper 36 PRG-ROM size {} is not a non-zero multiple of 32 KiB",
                 prg_rom.len()
             )));
         }
-        if chr_rom.is_empty() || chr_rom.len() % CHR_BANK_8K != 0 {
+        if chr_rom.is_empty() || !chr_rom.len().is_multiple_of(CHR_BANK_8K) {
             return Err(MapperError::Invalid(format!(
                 "mapper 36 CHR-ROM size {} is not a non-zero multiple of 8 KiB",
                 chr_rom.len()
@@ -414,7 +414,7 @@ impl Subor39 {
         chr_rom: Box<[u8]>,
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_32K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_32K) {
             return Err(MapperError::Invalid(format!(
                 "mapper 39 PRG-ROM size {} is not a non-zero multiple of 32 KiB",
                 prg_rom.len()
@@ -423,7 +423,7 @@ impl Subor39 {
         let chr_is_ram = chr_rom.is_empty();
         let chr: Box<[u8]> = if chr_is_ram {
             vec![0u8; CHR_BANK_8K].into_boxed_slice()
-        } else if chr_rom.len() % CHR_BANK_8K == 0 {
+        } else if chr_rom.len().is_multiple_of(CHR_BANK_8K) {
             chr_rom
         } else {
             return Err(MapperError::Invalid(format!(
@@ -561,7 +561,7 @@ impl Multicart61 {
     /// Returns [`MapperError::Invalid`] when PRG is not a non-zero multiple of
     /// 16 KiB. CHR is always 8 KiB RAM (any supplied CHR-ROM is rejected).
     pub fn new(prg_rom: Box<[u8]>, chr_rom: &[u8]) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_16K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_16K) {
             return Err(MapperError::Invalid(format!(
                 "mapper 61 PRG-ROM size {} is not a non-zero multiple of 16 KiB",
                 prg_rom.len()
@@ -716,13 +716,13 @@ impl Multicart62 {
         chr_rom: Box<[u8]>,
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_16K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_16K) {
             return Err(MapperError::Invalid(format!(
                 "mapper 62 PRG-ROM size {} is not a non-zero multiple of 16 KiB",
                 prg_rom.len()
             )));
         }
-        if chr_rom.is_empty() || chr_rom.len() % CHR_BANK_8K != 0 {
+        if chr_rom.is_empty() || !chr_rom.len().is_multiple_of(CHR_BANK_8K) {
             return Err(MapperError::Invalid(format!(
                 "mapper 62 CHR-ROM size {} is not a non-zero multiple of 8 KiB",
                 chr_rom.len()
@@ -871,7 +871,7 @@ impl JalecoLatch {
         prg_field_mask: u8,
         id: u16,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_16K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_16K) {
             return Err(MapperError::Invalid(format!(
                 "mapper {id} PRG-ROM size {} is not a non-zero multiple of 16 KiB",
                 prg_rom.len()
@@ -880,7 +880,7 @@ impl JalecoLatch {
         let chr_is_ram = chr_rom.is_empty();
         let chr: Box<[u8]> = if chr_is_ram {
             vec![0u8; CHR_BANK_8K].into_boxed_slice()
-        } else if chr_rom.len() % CHR_BANK_8K == 0 {
+        } else if chr_rom.len().is_multiple_of(CHR_BANK_8K) {
             chr_rom
         } else {
             return Err(MapperError::Invalid(format!(
@@ -1160,13 +1160,13 @@ impl Irem77 {
     /// Returns [`MapperError::Invalid`] when PRG is not a non-zero multiple of
     /// 32 KiB or CHR-ROM is empty / not a multiple of 2 KiB.
     pub fn new(prg_rom: Box<[u8]>, chr_rom: Box<[u8]>) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_32K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_32K) {
             return Err(MapperError::Invalid(format!(
                 "mapper 77 PRG-ROM size {} is not a non-zero multiple of 32 KiB",
                 prg_rom.len()
             )));
         }
-        if chr_rom.is_empty() || chr_rom.len() % CHR_BANK_2K != 0 {
+        if chr_rom.is_empty() || !chr_rom.len().is_multiple_of(CHR_BANK_2K) {
             return Err(MapperError::Invalid(format!(
                 "mapper 77 CHR-ROM size {} is not a non-zero multiple of 2 KiB",
                 chr_rom.len()
@@ -1326,7 +1326,7 @@ impl Bandai96 {
         chr_rom: Box<[u8]>,
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_32K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_32K) {
             return Err(MapperError::Invalid(format!(
                 "mapper 96 PRG-ROM size {} is not a non-zero multiple of 32 KiB",
                 prg_rom.len()
@@ -1336,7 +1336,7 @@ impl Bandai96 {
         let chr: Box<[u8]> = if chr_is_ram {
             // Two 4 KiB CHR-RAM banks (the Oeka Kids drawing buffer).
             vec![0u8; 2 * CHR_BANK_4K].into_boxed_slice()
-        } else if chr_rom.len() % CHR_BANK_4K == 0 {
+        } else if chr_rom.len().is_multiple_of(CHR_BANK_4K) {
             chr_rom
         } else {
             return Err(MapperError::Invalid(format!(
@@ -1511,7 +1511,7 @@ impl Irem97 {
         chr_rom: Box<[u8]>,
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_16K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_16K) {
             return Err(MapperError::Invalid(format!(
                 "mapper 97 PRG-ROM size {} is not a non-zero multiple of 16 KiB",
                 prg_rom.len()
@@ -1520,7 +1520,7 @@ impl Irem97 {
         let chr_is_ram = chr_rom.is_empty();
         let chr: Box<[u8]> = if chr_is_ram {
             vec![0u8; CHR_BANK_8K].into_boxed_slice()
-        } else if chr_rom.len() % CHR_BANK_8K == 0 {
+        } else if chr_rom.len().is_multiple_of(CHR_BANK_8K) {
             chr_rom
         } else {
             return Err(MapperError::Invalid(format!(
@@ -1733,13 +1733,13 @@ impl Txc132 {
         chr_rom: Box<[u8]>,
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_32K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_32K) {
             return Err(MapperError::Invalid(format!(
                 "mapper 132 PRG-ROM size {} is not a non-zero multiple of 32 KiB",
                 prg_rom.len()
             )));
         }
-        if chr_rom.is_empty() || chr_rom.len() % CHR_BANK_8K != 0 {
+        if chr_rom.is_empty() || !chr_rom.len().is_multiple_of(CHR_BANK_8K) {
             return Err(MapperError::Invalid(format!(
                 "mapper 132 CHR-ROM size {} is not a non-zero multiple of 8 KiB",
                 chr_rom.len()
@@ -1882,13 +1882,13 @@ impl Sachen133 {
         chr_rom: Box<[u8]>,
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_32K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_32K) {
             return Err(MapperError::Invalid(format!(
                 "mapper 133 PRG-ROM size {} is not a non-zero multiple of 32 KiB",
                 prg_rom.len()
             )));
         }
-        if chr_rom.is_empty() || chr_rom.len() % CHR_BANK_8K != 0 {
+        if chr_rom.is_empty() || !chr_rom.len().is_multiple_of(CHR_BANK_8K) {
             return Err(MapperError::Invalid(format!(
                 "mapper 133 CHR-ROM size {} is not a non-zero multiple of 8 KiB",
                 chr_rom.len()
@@ -2010,13 +2010,13 @@ impl Sachen145 {
         chr_rom: Box<[u8]>,
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_32K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_32K) {
             return Err(MapperError::Invalid(format!(
                 "mapper 145 PRG-ROM size {} is not a non-zero multiple of 32 KiB",
                 prg_rom.len()
             )));
         }
-        if chr_rom.is_empty() || chr_rom.len() % CHR_BANK_8K != 0 {
+        if chr_rom.is_empty() || !chr_rom.len().is_multiple_of(CHR_BANK_8K) {
             return Err(MapperError::Invalid(format!(
                 "mapper 145 CHR-ROM size {} is not a non-zero multiple of 8 KiB",
                 chr_rom.len()
@@ -2137,13 +2137,13 @@ impl Sachen146 {
         chr_rom: Box<[u8]>,
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_32K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_32K) {
             return Err(MapperError::Invalid(format!(
                 "mapper 146 PRG-ROM size {} is not a non-zero multiple of 32 KiB",
                 prg_rom.len()
             )));
         }
-        if chr_rom.is_empty() || chr_rom.len() % CHR_BANK_8K != 0 {
+        if chr_rom.is_empty() || !chr_rom.len().is_multiple_of(CHR_BANK_8K) {
             return Err(MapperError::Invalid(format!(
                 "mapper 146 CHR-ROM size {} is not a non-zero multiple of 8 KiB",
                 chr_rom.len()

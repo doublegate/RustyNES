@@ -75,13 +75,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      # Pinned to the project toolchain (rust-toolchain.toml = 1.86.0), matching
+      # Pinned to the project toolchain (rust-toolchain.toml = 1.96.0), matching
       # the other jobs. PGO needs the llvm-tools-preview component (profdata
       # merge) and the wgpu/winit/cpal apt deps (the optimized rebuild links the
       # full `rustynes-frontend` binary).
       - uses: ./.github/actions/rust-setup
         with:
-          toolchain: 1.86.0
+          toolchain: 1.96.0
           components: llvm-tools-preview
           cache-key: pgo
 
@@ -171,7 +171,7 @@ jobs:
 
       - name: Upload promoted PGO binary
         if: steps.gate.outputs.promotable == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rustynes-pgo-${{ steps.triple.outputs.triple }}
           path: target/${{ steps.triple.outputs.triple }}/release/rustynes
@@ -195,7 +195,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/rust-setup
         with:
-          toolchain: 1.86.0
+          toolchain: 1.96.0
           components: llvm-tools-preview
           cache-key: pgo-bolt
       - name: Install cargo-pgo
@@ -259,7 +259,7 @@ jobs:
 
       - name: Upload BOLT binary
         if: steps.bolt_probe.outputs.have_bolt == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rustynes-pgo-bolt
           path: target/**/release/rustynes

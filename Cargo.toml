@@ -16,7 +16,7 @@ members = [
 [workspace.package]
 version = "1.2.0"
 edition = "2024"
-rust-version = "1.86"
+rust-version = "1.96"
 license = "MIT OR Apache-2.0"
 authors = ["DoubleGate <parobek@gmail.com>"]
 repository = "https://github.com/doublegate/RustyNES"
@@ -67,16 +67,16 @@ winit = "0.30"
 # v1.3.0 Sprint 1.4 — `webgl` feature enables the WebGL2 fallback on
 # wasm32 (for browsers without WebGPU: Linux Firefox, pre-A12 iOS).
 # No effect on native builds. WebGPU-primary is on by default.
-wgpu = { version = "25", features = ["webgl"] }
+wgpu = { version = "29", features = ["webgl"] }
 cpal = "0.18"
-egui = "0.32"
-egui-wgpu = "0.32"
+egui = "0.34"
+egui-wgpu = "0.34"
 # `links` enables egui-winit's URL opener (webbrowser) so hyperlinks (e.g. the
 # About window's GitHub link) actually launch the default browser; without it
 # (default-features = false drops it) hyperlink_to is inert.
-egui-winit = { version = "0.32", default-features = false, features = ["links", "wayland", "x11"] }
+egui-winit = { version = "0.34", default-features = false, features = ["links", "wayland", "x11"] }
 gilrs = "0.11"
-rfd = "0.14"
+rfd = "0.17"
 directories = "5"
 
 # v1.3.0 Sprint 1.1 — wasm32 frontend support. The chip stack is

@@ -47,11 +47,11 @@ jobs:
   # spin-ups vs three separate jobs. fmt runs first (it compiles nothing), so
   # a formatting slip still fails in seconds.
   #
-  # Pinned to the project toolchain (rust-toolchain.toml = 1.86.0), NOT a
+  # Pinned to the project toolchain (rust-toolchain.toml = 1.96.0), NOT a
   # floating `stable`: clippy adds lints every release, so `stable` makes the
   # lint gate drift and break on a toolchain bump. Pinning ALSO makes the
   # rustdoc gate match local `cargo doc` exactly (rust-toolchain.toml pins the
-  # local compiler to 1.86 too) — the stable-vs-1.86 mismatch previously let a
+  # local compiler to 1.96 too) — the stable-vs-1.96 mismatch previously let a
   # broken-intra-doc-link slip past local and only fail in CI.
   lint:
     name: fmt + clippy + rustdoc
@@ -62,7 +62,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/rust-setup
         with:
-          toolchain: 1.86.0
+          toolchain: 1.96.0
           components: rustfmt,clippy
       - name: rustfmt
         run: cargo fmt --all -- --check
@@ -72,10 +72,10 @@ jobs:
         run: cargo doc --workspace --no-deps
 
   # Cross-platform behaviour: full `cargo test` on stable across the three
-  # shipped OSes. The previous ubuntu / 1.86 MSRV *test* entry is dropped — the
+  # shipped OSes. The previous ubuntu / 1.96 MSRV *test* entry is dropped — the
   # `lint` job above already compiles the whole workspace (`clippy
-  # --all-targets`) on 1.86, which IS the MSRV compile gate, and the core's
-  # determinism makes "tests pass on 1.86" equivalent to "tests pass on stable".
+  # --all-targets`) on 1.96, which IS the MSRV compile gate, and the core's
+  # determinism makes "tests pass on 1.96" equivalent to "tests pass on stable".
   test:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

@@ -134,10 +134,10 @@ fn parse_row(line: &str) -> Option<GameDbEntry> {
 /// `RwLock`). The vendored base alone is reachable via [`vendored_entry`].
 #[must_use]
 pub fn entry_for_crc(crc: u32) -> Option<GameDbEntry> {
-    if let Ok(overlay) = user_overlay().read() {
-        if let Ok(i) = overlay.binary_search_by_key(&crc, |e| e.crc) {
-            return Some(overlay[i].clone());
-        }
+    if let Ok(overlay) = user_overlay().read()
+        && let Ok(i) = overlay.binary_search_by_key(&crc, |e| e.crc)
+    {
+        return Some(overlay[i].clone());
     }
     vendored_entry(crc).cloned()
 }
@@ -320,13 +320,13 @@ pub fn apply_header_overrides(bytes: &mut [u8], entry: &GameDbEntry) -> bool {
         }
     }
 
-    if let Some(submapper) = entry.submapper {
-        if is_nes2 {
-            let new8 = (bytes[8] & 0x0F) | ((submapper & 0x0F) << 4);
-            if new8 != bytes[8] {
-                bytes[8] = new8;
-                changed = true;
-            }
+    if let Some(submapper) = entry.submapper
+        && is_nes2
+    {
+        let new8 = (bytes[8] & 0x0F) | ((submapper & 0x0F) << 4);
+        if new8 != bytes[8] {
+            bytes[8] = new8;
+            changed = true;
         }
     }
 

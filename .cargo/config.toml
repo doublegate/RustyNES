@@ -21,8 +21,8 @@
 # handled by the `getrandom` `js`-feature shim in the frontend's wasm32 deps.)
 rustflags = ["--cfg=web_sys_unstable_apis", "--cfg=getrandom_backend=\"wasm_js\""]
 
-# v1.0.0 — MSRV-aware dependency resolution. The workspace pins
-# rust-version = "1.86"; `fallback` makes `cargo update` prefer dependency
+# MSRV-aware (v1.3.0 bumped 1.86 -> 1.96) dependency resolution. The workspace pins
+# rust-version = "1.96"; `fallback` makes `cargo update` prefer dependency
 # versions compatible with that MSRV over the newest available. Without it, a
 # future `cargo update` could pull a past-MSRV crate (e.g. `image` >= 0.26, a
 # transitive dep of `arboard`'s clipboard image support, which needs a newer

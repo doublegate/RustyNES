@@ -165,7 +165,7 @@ pub(crate) fn apply_turbo(buttons: Buttons, frame: u64, mask: Buttons, period: u
         return buttons;
     }
     let period = u64::from(period.max(1));
-    let on = (frame / period) % 2 == 0;
+    let on = (frame / period).is_multiple_of(2);
     if on { buttons } else { buttons & !mask }
 }
 
@@ -658,11 +658,11 @@ impl EmuCore {
         }) else {
             return;
         };
-        if let Some(parent) = path.parent() {
-            if let Err(e) = std::fs::create_dir_all(parent) {
-                eprintln!("rustynes: could not create fds-saves dir: {e}");
-                return;
-            }
+        if let Some(parent) = path.parent()
+            && let Err(e) = std::fs::create_dir_all(parent)
+        {
+            eprintln!("rustynes: could not create fds-saves dir: {e}");
+            return;
         }
         match std::fs::write(&path, &bytes) {
             Ok(()) => {

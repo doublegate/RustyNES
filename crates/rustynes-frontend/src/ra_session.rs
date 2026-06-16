@@ -330,20 +330,20 @@ impl RaSession {
     /// (the async completion only carries Ok/Err, so we read the resolved
     /// state here after `poll_http_completions`).
     fn reconcile_login(&mut self) {
-        if self.login == LoginState::LoggingIn {
-            if let Some(u) = self.client.user_info() {
-                self.login = LoginState::LoggedIn;
-                self.just_logged_in = true;
-                self.password_input.clear();
-                self.push_toast(
-                    "RetroAchievements",
-                    &format!("Logged in as {}", u.display_name),
-                    false,
-                );
-            }
-            // If still no user_info, stay LoggingIn; a hard failure surfaces as
-            // a ServerError event handled in `drain_events`.
+        if self.login == LoginState::LoggingIn
+            && let Some(u) = self.client.user_info()
+        {
+            self.login = LoginState::LoggedIn;
+            self.just_logged_in = true;
+            self.password_input.clear();
+            self.push_toast(
+                "RetroAchievements",
+                &format!("Logged in as {}", u.display_name),
+                false,
+            );
         }
+        // If still no user_info, stay LoggingIn; a hard failure surfaces as
+        // a ServerError event handled in `drain_events`.
     }
 
     /// Once the async game-load completes, mark the game loaded, refresh the
@@ -360,14 +360,14 @@ impl RaSession {
         }
         self.game_loaded = true;
         self.refresh_lists();
-        if let Some(blob) = self.pending_progress.take() {
-            if !blob.is_empty() {
-                if let Err(e) = self.client.deserialize_progress(&blob, read) {
-                    self.push_toast("RA progress load failed", &e, true);
-                } else {
-                    // Re-snapshot the lists so the restored unlocks show.
-                    self.refresh_lists();
-                }
+        if let Some(blob) = self.pending_progress.take()
+            && !blob.is_empty()
+        {
+            if let Err(e) = self.client.deserialize_progress(&blob, read) {
+                self.push_toast("RA progress load failed", &e, true);
+            } else {
+                // Re-snapshot the lists so the restored unlocks show.
+                self.refresh_lists();
             }
         }
     }

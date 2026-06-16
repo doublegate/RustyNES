@@ -279,8 +279,7 @@ fn csv_text(s: &str) -> String {
 fn utc_stamp(t: SystemTime) -> String {
     let secs = t
         .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_secs());
     let days = i64::try_from(secs / 86_400).unwrap_or(0);
     let (y, m, d) = civil_from_days(days);
     let tod = secs % 86_400;

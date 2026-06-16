@@ -372,15 +372,15 @@ mod tests {
             "just now"
         );
         assert_eq!(
-            format_modified(Some(now - std::time::Duration::from_secs(120))),
+            format_modified(Some(now - std::time::Duration::from_mins(2))),
             "2 min ago"
         );
         assert_eq!(
-            format_modified(Some(now - std::time::Duration::from_secs(7200))),
+            format_modified(Some(now - std::time::Duration::from_hours(2))),
             "2 h ago"
         );
         assert_eq!(
-            format_modified(Some(now - std::time::Duration::from_secs(2 * 86_400))),
+            format_modified(Some(now - std::time::Duration::from_hours(48))),
             "2 d ago"
         );
     }

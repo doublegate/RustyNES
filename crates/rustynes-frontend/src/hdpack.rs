@@ -90,7 +90,7 @@ impl HdPack {
 
     /// Number of `<patternTable>` references parsed (diagnostic).
     #[must_use]
-    pub fn pattern_table_count(&self) -> usize {
+    pub const fn pattern_table_count(&self) -> usize {
         self.pattern_tables.len()
     }
 
@@ -404,20 +404,18 @@ fn parse_tile_fields(rest: &str) -> Option<(u32, String, u32, u32)> {
     };
 
     // Form A: hash,image,x,y
-    if let Some(hash) = parse_hash(fields[0]) {
-        if !fields[1].is_empty() {
-            if let (Ok(x), Ok(y)) = (fields[2].parse::<u32>(), fields[3].parse::<u32>()) {
-                return Some((hash, fields[1].to_string(), x, y));
-            }
-        }
+    if let Some(hash) = parse_hash(fields[0])
+        && !fields[1].is_empty()
+        && let (Ok(x), Ok(y)) = (fields[2].parse::<u32>(), fields[3].parse::<u32>())
+    {
+        return Some((hash, fields[1].to_string(), x, y));
     }
     // Form B: image,x,y,hash
-    if let Some(hash) = parse_hash(fields[3]) {
-        if !fields[0].is_empty() {
-            if let (Ok(x), Ok(y)) = (fields[1].parse::<u32>(), fields[2].parse::<u32>()) {
-                return Some((hash, fields[0].to_string(), x, y));
-            }
-        }
+    if let Some(hash) = parse_hash(fields[3])
+        && !fields[0].is_empty()
+        && let (Ok(x), Ok(y)) = (fields[1].parse::<u32>(), fields[2].parse::<u32>())
+    {
+        return Some((hash, fields[0].to_string(), x, y));
     }
     None
 }

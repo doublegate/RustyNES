@@ -72,7 +72,7 @@ impl Vrc3 {
     ///
     /// Returns [`MapperError::Invalid`] on PRG size mismatch.
     pub fn new(prg_rom: Box<[u8]>, mirroring: Mirroring) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_16K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_16K) {
             return Err(MapperError::Invalid(format!(
                 "VRC3 PRG-ROM size {} is not a non-zero multiple of 16 KiB",
                 prg_rom.len()

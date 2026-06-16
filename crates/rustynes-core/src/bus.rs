@@ -3414,15 +3414,15 @@ impl Bus for LockstepBus {
                 0x4020..=0xFFFF => Some(EventKind::MapperWrite),
                 _ => None,
             };
-            if let Some(kind) = kind {
-                if self.events.len() < EVENT_CAP {
-                    self.events.push(EventRec {
-                        kind,
-                        scanline: self.ppu.scanline(),
-                        dot: self.ppu.dot(),
-                        addr,
-                    });
-                }
+            if let Some(kind) = kind
+                && self.events.len() < EVENT_CAP
+            {
+                self.events.push(EventRec {
+                    kind,
+                    scanline: self.ppu.scanline(),
+                    dot: self.ppu.dot(),
+                    addr,
+                });
             }
         }
         match addr {

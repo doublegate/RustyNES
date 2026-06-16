@@ -262,18 +262,18 @@ fn attach_worklet_node(ctx: &AudioContext) -> bool {
     };
     // The worklet posts back `Float64Array[occupancy, underruns]`.
     let on_msg = Closure::<dyn FnMut(MessageEvent)>::new(move |ev: MessageEvent| {
-        if let Ok(arr) = ev.data().dyn_into::<js_sys::Float64Array>() {
-            if arr.length() >= 2 {
-                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                let occ = arr.get_index(0) as usize;
-                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                let und = arr.get_index(1) as u64;
-                STATE.with(|s| {
-                    let mut s = s.borrow_mut();
-                    s.occupancy = occ;
-                    s.underruns = und;
-                });
-            }
+        if let Ok(arr) = ev.data().dyn_into::<js_sys::Float64Array>()
+            && arr.length() >= 2
+        {
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let occ = arr.get_index(0) as usize;
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let und = arr.get_index(1) as u64;
+            STATE.with(|s| {
+                let mut s = s.borrow_mut();
+                s.occupancy = occ;
+                s.underruns = und;
+            });
         }
     });
     if let Ok(p) = node.port() {
@@ -393,12 +393,12 @@ pub fn push_samples(samples: &[f32]) {
 /// 60 Hz, negligible). If the node vanished, drop + count an overrun.
 fn post_to_worklet(batch: &[f32]) {
     WORKLET.with(|w| {
-        if let Some(node) = w.borrow().as_ref() {
-            if let Ok(port) = node.port() {
-                let arr = js_sys::Float32Array::from(batch);
-                if port.post_message(&arr).is_ok() {
-                    return;
-                }
+        if let Some(node) = w.borrow().as_ref()
+            && let Ok(port) = node.port()
+        {
+            let arr = js_sys::Float32Array::from(batch);
+            if port.post_message(&arr).is_ok() {
+                return;
             }
         }
         STATE.with(|s| s.borrow_mut().overruns += batch.len() as u64);

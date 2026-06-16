@@ -60,7 +60,7 @@ impl Sunsoft1 {
                 prg_rom.len()
             )));
         }
-        if chr_rom.is_empty() || chr_rom.len() % CHR_BANK_4K != 0 {
+        if chr_rom.is_empty() || !chr_rom.len().is_multiple_of(CHR_BANK_4K) {
             return Err(MapperError::Invalid(format!(
                 "Sunsoft-1 expects non-empty CHR-ROM in 4 KiB units, got {} bytes",
                 chr_rom.len()

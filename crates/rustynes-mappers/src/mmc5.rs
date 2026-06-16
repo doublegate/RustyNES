@@ -539,7 +539,7 @@ impl Mmc5 {
         initial_mirroring: Mirroring,
         prg_ram_bytes: usize,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_8K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_8K) {
             return Err(MapperError::Invalid(format!(
                 "MMC5 PRG-ROM size {} is not a non-zero multiple of 8 KiB",
                 prg_rom.len()
@@ -549,7 +549,7 @@ impl Mmc5 {
         let chr: Box<[u8]> = if chr_is_ram {
             // Some carts use 8 KiB CHR-RAM with MMC5; allocate a default.
             vec![0u8; 8 * CHR_BANK_1K].into_boxed_slice()
-        } else if chr_rom.len() % CHR_BANK_1K == 0 {
+        } else if chr_rom.len().is_multiple_of(CHR_BANK_1K) {
             chr_rom
         } else {
             return Err(MapperError::Invalid(format!(

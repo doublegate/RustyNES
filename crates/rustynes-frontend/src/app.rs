@@ -230,6 +230,64 @@ fn extract_rom_from_zip(zip_bytes: &[u8]) -> Option<(String, Vec<u8>)> {
     Some((name, out))
 }
 
+/// Read a ROM file and run the same ingest preprocessing the in-app loader does
+/// (`load_rom_from_path`): if the path is a `.zip`, extract the first NES / FDS /
+/// NSF entry; then auto-apply a same-stem `.bps` / `.ups` / `.ips` soft-patch
+/// (that precedence; highest present wins), before any format detection — so the
+/// deterministic parse + the CRC-keyed per-game DB see the extracted / patched
+/// image. Returns the processed bytes and a display label (the inner archive
+/// entry name when unzipped, else the file name). Used by `App::new` so a ROM
+/// passed on argv loads identically to one opened from the menu / drag-drop.
+/// Native-only (the in-app menu path handles the running-app case; the wasm
+/// `AppEvent::RomLoaded` path preprocesses separately).
+#[cfg(not(target_arch = "wasm32"))]
+fn load_and_preprocess_rom(rom_path: &Path) -> std::io::Result<(Vec<u8>, String)> {
+    let mut bytes = std::fs::read(rom_path)?;
+    let mut label = rom_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("rom.nes")
+        .to_string();
+    if rom_path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("zip"))
+    {
+        match extract_rom_from_zip(&bytes) {
+            Some((name, rom)) => {
+                eprintln!("rustynes: loaded {name} from archive");
+                bytes = rom;
+                label = name;
+            }
+            None => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("no NES/FDS/NSF entry in {}", rom_path.display()),
+                ));
+            }
+        }
+    }
+    for ext in ["bps", "ups", "ips"] {
+        let patch_path = rom_path.with_extension(ext);
+        if patch_path == rom_path {
+            continue;
+        }
+        let Ok(patch_bytes) = std::fs::read(&patch_path) else {
+            continue;
+        };
+        match crate::patch::detect_and_apply(&bytes, &patch_bytes, ext) {
+            Ok(patched) => {
+                eprintln!("rustynes: applied {ext} patch: {}", patch_path.display());
+                bytes = patched;
+            }
+            Err(e) => {
+                eprintln!("rustynes: {ext} patch {} failed: {e}", patch_path.display());
+            }
+        }
+        break;
+    }
+    Ok((bytes, label))
+}
+
 /// `true` when `bytes` is an NSF music file (classic `NESM\x1A` form).
 #[cfg(not(target_arch = "wasm32"))]
 fn is_nsf_image(bytes: &[u8]) -> bool {
@@ -670,12 +728,9 @@ impl App {
     /// Returns an `io::Error` if the file can't be read.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn new(rom_path: &std::path::Path) -> std::io::Result<Self> {
-        let rom_bytes = std::fs::read(rom_path)?;
-        let rom_label = rom_path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("rom.nes")
-            .to_string();
+        // The CLI / initial-ROM path must run the same `.zip` extraction +
+        // same-stem soft-patching as `load_rom_from_path` (see the helper).
+        let (rom_bytes, rom_label) = load_and_preprocess_rom(rom_path)?;
         let config = Config::load_or_default();
         let input = InputState::from_config(&config.input);
         let data_dir = Config::default_data_dir();
@@ -908,10 +963,10 @@ impl App {
     /// iNES image — e.g. FDS), so the default path is byte-identical. The core
     /// test suites never call this, so `AccuracyCoin` / the oracle are unaffected.
     fn apply_game_db(nes: &mut Nes, bytes: &[u8]) {
-        if let Some(crc) = crate::game_db::rom_crc32(bytes) {
-            if let Some(m) = crate::game_db::mirroring_for_crc(crc) {
-                nes.set_mirroring_override(Some(m));
-            }
+        if let Some(crc) = crate::game_db::rom_crc32(bytes)
+            && let Some(m) = crate::game_db::mirroring_for_crc(crc)
+        {
+            nes.set_mirroring_override(Some(m));
         }
     }
 
@@ -1004,10 +1059,10 @@ impl App {
         // rewrite). Mirroring / Vs. corrections apply post-construction below.
         // Frontend-only: the core test suites never patch, so the oracle is
         // byte-identical.
-        if let Some(crc) = crate::game_db::rom_crc32(&bytes) {
-            if let Some(entry) = crate::game_db::entry_for_crc(crc) {
-                crate::game_db::apply_header_overrides(&mut bytes, &entry);
-            }
+        if let Some(crc) = crate::game_db::rom_crc32(&bytes)
+            && let Some(entry) = crate::game_db::entry_for_crc(crc)
+        {
+            crate::game_db::apply_header_overrides(&mut bytes, &entry);
         }
         let sample_rate = self.audio.as_ref().map_or(44_100, |a| a.sample_rate);
         // v2.2.0 — a Famicom Disk System `.fds` image needs the disksys.rom
@@ -1171,10 +1226,10 @@ impl App {
         let loaded = crate::cheats::load(dir, &rom_sha256);
         nes.clear_genie_codes();
         for entry in &loaded.genie {
-            if entry.enabled {
-                if let Err(e) = nes.add_genie_code(&entry.code) {
-                    eprintln!("rustynes: cheat {} skipped: {e}", entry.code);
-                }
+            if entry.enabled
+                && let Err(e) = nes.add_genie_code(&entry.code)
+            {
+                eprintln!("rustynes: cheat {} skipped: {e}", entry.code);
             }
         }
         // v1.7.0 — prime the per-frame raw-cheat list from this ROM's enabled
@@ -1282,10 +1337,10 @@ impl App {
                 .as_ref()
                 .map(|n| crate::save_state::hex_sha256(n.rom_sha256()))
         };
-        if let Some(key) = key {
-            if self.config.graphics.hd_packs.remove(&key).is_some() {
-                let _ = self.config.save();
-            }
+        if let Some(key) = key
+            && self.config.graphics.hd_packs.remove(&key).is_some()
+        {
+            let _ = self.config.save();
         }
         self.ui.set_status(crate::ui_shell::StatusMessage::success(
             "HD pack unloaded".to_string(),
@@ -1575,8 +1630,7 @@ impl App {
             .collect();
         let secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+            .map_or(0, |d| d.as_secs());
         let path = shots.join(format!("{stem}-{secs}.png"));
         match encode_png_rgba(&frame, NES_W, NES_H) {
             Ok(png) => match std::fs::write(&path, png) {
@@ -2092,8 +2146,15 @@ impl App {
     /// borrows disjoint. Native-only.
     #[cfg(not(target_arch = "wasm32"))]
     // The shared `'a` ties two params on the RA build; on the default build
-    // only `audio` remains, so clippy sees an elidable single lifetime.
-    #[cfg_attr(not(feature = "retroachievements"), allow(clippy::needless_lifetimes))]
+    // only `audio` remains, so clippy sees an elidable single lifetime. The
+    // `'a` is genuinely used by the cfg-gated `ra` param under the feature, so
+    // it must stay declared; suppress the elision lints only on the non-feature
+    // path (Rust 1.96 renamed `needless_lifetimes` -> `elidable_lifetime_names`
+    // for this case, so allow both).
+    #[cfg_attr(
+        not(feature = "retroachievements"),
+        allow(clippy::needless_lifetimes, clippy::elidable_lifetime_names)
+    )]
     fn sync_sinks<'a>(
         audio: &'a mut Option<AudioOutput>,
         #[cfg(feature = "retroachievements")] ra: &'a mut Option<crate::ra_session::RaSession>,
@@ -2325,10 +2386,10 @@ impl App {
                     (Some(s), jl)
                 })
             };
-            if let Some(status) = status {
-                if let Some(debugger) = self.debugger.as_mut() {
-                    debugger.set_cheevos_status(status);
-                }
+            if let Some(status) = status
+                && let Some(debugger) = self.debugger.as_mut()
+            {
+                debugger.set_cheevos_status(status);
             }
             if just_logged_in {
                 self.persist_ra_token_if_new();
@@ -2371,10 +2432,10 @@ impl App {
         }
         #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
         {
-            if let Some(status) = fx.ra_status {
-                if let Some(debugger) = self.debugger.as_mut() {
-                    debugger.set_cheevos_status(status);
-                }
+            if let Some(status) = fx.ra_status
+                && let Some(debugger) = self.debugger.as_mut()
+            {
+                debugger.set_cheevos_status(status);
             }
             // On the login-success edge: persist the freshly-issued token and
             // (re-)identify the currently-loaded ROM (a ROM opened BEFORE the
@@ -2977,7 +3038,7 @@ impl App {
         if draws.is_empty() {
             return;
         }
-        let screen = ctx.screen_rect();
+        let screen = ctx.content_rect();
         let crop_top = if hide_overscan { 8.0 } else { 0.0 };
         let visible_h = if hide_overscan { 224.0 } else { 240.0 };
         let img_w = if par_8_7 { 256.0 * 8.0 / 7.0 } else { 256.0 };
@@ -3149,7 +3210,7 @@ impl App {
         if draws.is_empty() {
             return;
         }
-        let screen = ctx.screen_rect();
+        let screen = ctx.content_rect();
         // Visible NES region + its display aspect (replicates gfx letterbox).
         let crop_top = if hide_overscan { 8.0 } else { 0.0 };
         let visible_h = if hide_overscan { 224.0 } else { 240.0 };
@@ -5152,10 +5213,10 @@ impl ApplicationHandler<AppEvent> for App {
         // wants to repaint after processing this event. wasm self-arms its rAF
         // loop, so this is native-only.
         #[cfg(not(target_arch = "wasm32"))]
-        if let (Some(debugger), Some(gfx)) = (self.debugger.as_ref(), self.gfx.as_ref()) {
-            if debugger.egui_wants_repaint() {
-                gfx.window.request_redraw();
-            }
+        if let (Some(debugger), Some(gfx)) = (self.debugger.as_ref(), self.gfx.as_ref())
+            && debugger.egui_wants_repaint()
+        {
+            gfx.window.request_redraw();
         }
 
         match event {
@@ -5270,15 +5331,15 @@ impl ApplicationHandler<AppEvent> for App {
                 // unconditionally (cheap); consumed only when a Family BASIC
                 // keyboard is the active device. Native-only.
                 #[cfg(not(target_arch = "wasm32"))]
-                if let winit::keyboard::PhysicalKey::Code(code) = event.physical_key {
-                    if let Some(idx) = crate::input::family_keyboard_index(code) {
-                        let row = idx / 8;
-                        let bit = 1u8 << (idx % 8);
-                        if event.state == winit::event::ElementState::Pressed {
-                            self.family_keyboard[row] |= bit;
-                        } else {
-                            self.family_keyboard[row] &= !bit;
-                        }
+                if let winit::keyboard::PhysicalKey::Code(code) = event.physical_key
+                    && let Some(idx) = crate::input::family_keyboard_index(code)
+                {
+                    let row = idx / 8;
+                    let bit = 1u8 << (idx % 8);
+                    if event.state == winit::event::ElementState::Pressed {
+                        self.family_keyboard[row] |= bit;
+                    } else {
+                        self.family_keyboard[row] &= !bit;
                     }
                 }
                 let action = self.input.handle_key(event.physical_key, event.state);
@@ -5617,6 +5678,13 @@ impl ApplicationHandler<AppEvent> for App {
                     .gfx
                     .as_ref()
                     .is_some_and(|g| g.ntsc_bisqwit_active() || g.shader_stack_needs_index());
+                // The early-return arm guarantees both `gfx` and `debugger` are
+                // `Some` in the later arms, but the `as_mut().expect(...)` must be
+                // deferred into those arms: binding them up front would hold a
+                // `&mut self.gfx` / `&mut self.debugger` borrow across the emu-lock
+                // acquire + the `&mut self.config` / `&mut self.ui` borrows below.
+                // So the guard-then-expect is intentional, not a redundant unwrap.
+                #[allow(clippy::unnecessary_unwrap)]
                 let render_result = if self.debugger.is_none() || self.gfx.is_none() {
                     // No overlay yet (pre-`resumed`): nothing to render.
                     return;
@@ -5888,7 +5956,7 @@ impl ApplicationHandler<AppEvent> for App {
                         #[cfg(not(target_arch = "wasm32"))]
                         self.display_sync_after_present();
                     }
-                    Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                    Err(crate::gfx::PresentError::Reconfigure) => {
                         if let Some(gfx) = self.gfx.as_mut() {
                             let size = gfx.window.inner_size();
                             gfx.resize(size.width, size.height);
@@ -5957,16 +6025,16 @@ impl ApplicationHandler<AppEvent> for App {
                     .as_mut()
                     .map(DebuggerOverlay::take_settings_apply)
                     .unwrap_or_default();
-                if settings.ntsc_filter {
-                    if let Some(gfx) = self.gfx.as_mut() {
-                        // CRT (if on) takes render priority; selecting any NTSC
-                        // mode turns CRT off so the settings stay coherent.
-                        if self.config.graphics.ntsc_filter != "off" {
-                            gfx.disable_crt();
-                            self.config.graphics.crt_filter = false;
-                        }
-                        Self::apply_ntsc_mode(gfx, &self.config.graphics);
+                if settings.ntsc_filter
+                    && let Some(gfx) = self.gfx.as_mut()
+                {
+                    // CRT (if on) takes render priority; selecting any NTSC
+                    // mode turns CRT off so the settings stay coherent.
+                    if self.config.graphics.ntsc_filter != "off" {
+                        gfx.disable_crt();
+                        self.config.graphics.crt_filter = false;
                     }
+                    Self::apply_ntsc_mode(gfx, &self.config.graphics);
                 }
                 // v1.0.0 — master volume / mute live-apply (the cpal consume
                 // gain). Native-only; wasm has no app-resident audio queue.
@@ -5980,56 +6048,56 @@ impl ApplicationHandler<AppEvent> for App {
                     self.apply_audio_eq();
                 }
                 // v1.0.0 — overscan crop live-apply (the gfx letterbox UV rect).
-                if settings.overscan {
-                    if let Some(gfx) = self.gfx.as_mut() {
-                        gfx.set_hide_overscan(self.config.graphics.hide_overscan);
-                    }
+                if settings.overscan
+                    && let Some(gfx) = self.gfx.as_mut()
+                {
+                    gfx.set_hide_overscan(self.config.graphics.hide_overscan);
                 }
                 // v1.1.0 beta.1 — CRT filter live-apply. CRT and NTSC are
                 // mutually exclusive at render time; turning CRT on drops NTSC so
                 // the settings stay coherent.
-                if settings.crt_filter {
-                    if let Some(gfx) = self.gfx.as_mut() {
-                        if self.config.graphics.crt_filter {
-                            // CRT and NTSC are mutually exclusive; enabling CRT
-                            // turns the NTSC filter off in the config too, so the
-                            // settings stay coherent (and a later CRT-off
-                            // restores "no filter", not a stale NTSC mode).
-                            gfx.enable_crt(self.config.graphics.crt_scanline);
-                            gfx.disable_ntsc();
-                            gfx.disable_ntsc_bisqwit();
-                            self.config.graphics.ntsc_filter = "off".to_string();
-                        } else {
-                            // Turning CRT off restores whatever NTSC mode the
-                            // config now holds (normally "off" → no filter).
-                            gfx.disable_crt();
-                            Self::apply_ntsc_mode(gfx, &self.config.graphics);
-                        }
-                        let _ = self.config.save();
+                if settings.crt_filter
+                    && let Some(gfx) = self.gfx.as_mut()
+                {
+                    if self.config.graphics.crt_filter {
+                        // CRT and NTSC are mutually exclusive; enabling CRT
+                        // turns the NTSC filter off in the config too, so the
+                        // settings stay coherent (and a later CRT-off
+                        // restores "no filter", not a stale NTSC mode).
+                        gfx.enable_crt(self.config.graphics.crt_scanline);
+                        gfx.disable_ntsc();
+                        gfx.disable_ntsc_bisqwit();
+                        self.config.graphics.ntsc_filter = "off".to_string();
+                    } else {
+                        // Turning CRT off restores whatever NTSC mode the
+                        // config now holds (normally "off" → no filter).
+                        gfx.disable_crt();
+                        Self::apply_ntsc_mode(gfx, &self.config.graphics);
                     }
+                    let _ = self.config.save();
                 }
-                if settings.crt_scanline {
-                    if let Some(gfx) = self.gfx.as_mut() {
-                        gfx.set_crt_scanline(self.config.graphics.crt_scanline);
-                    }
+                if settings.crt_scanline
+                    && let Some(gfx) = self.gfx.as_mut()
+                {
+                    gfx.set_crt_scanline(self.config.graphics.crt_scanline);
                 }
                 // v1.2.0 C1 — Bisqwit-NTSC picture-knob live-apply (output-only;
                 // defaults decode byte-identically to the pre-C1 filter).
-                if settings.ntsc_knobs {
-                    if let Some(gfx) = self.gfx.as_mut() {
-                        gfx.set_ntsc_bisqwit_knobs(Self::ntsc_knobs_from(&self.config.graphics));
-                    }
+                if settings.ntsc_knobs
+                    && let Some(gfx) = self.gfx.as_mut()
+                {
+                    gfx.set_ntsc_bisqwit_knobs(Self::ntsc_knobs_from(&self.config.graphics));
                 }
                 // v1.2.0 C2 — composable shader-stack live-apply. Rebuild the gfx
                 // ping-pong stack from `[graphics] shader_stack`; an empty /
                 // all-disabled stack rebuilds to the byte-identical direct blit.
                 // When a leading composite-rt pass is present its live picture
                 // knobs are forwarded too.
-                if settings.shader_stack {
-                    if let Some(gfx) = self.gfx.as_mut() {
-                        gfx.set_stack_ntsc_knobs(Self::ntsc_knobs_from(&self.config.graphics));
-                        gfx.apply_shader_stack(&self.config.graphics.shader_stack);
-                    }
+                if settings.shader_stack
+                    && let Some(gfx) = self.gfx.as_mut()
+                {
+                    gfx.set_stack_ntsc_knobs(Self::ntsc_knobs_from(&self.config.graphics));
+                    gfx.apply_shader_stack(&self.config.graphics.shader_stack);
                 }
                 // v1.1.0 beta.1 — custom .pal palette: the file dialog + apply run
                 // here (after the egui pass), never inside the settings closure.
@@ -6236,7 +6304,7 @@ pub fn run_wasm() -> winit::event_loop::EventLoopProxy<AppEvent> {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_rom_from_zip, is_fds_image, resolve_vs_dip};
+    use super::{extract_rom_from_zip, is_fds_image, load_and_preprocess_rom, resolve_vs_dip};
     use crate::config::VsConfig;
     use rustynes_core::VsDbEntry;
     use rustynes_core::rustynes_mappers::VsPpuType;
@@ -6277,6 +6345,34 @@ mod tests {
             w.finish().unwrap();
         }
         assert!(extract_rom_from_zip(&buf).is_none());
+    }
+
+    // Regression (the CLI / `App::new` initial-ROM path): a `.zip` passed on argv
+    // must be extracted to its bare NES image before the core parses it. Before
+    // the fix, `App::new` stored the raw archive bytes and the load failed with
+    // "rom magic bytes do not match NES\x1A".
+    #[test]
+    fn cli_path_extracts_zip_to_nes_image() {
+        use std::io::Write;
+        let zip_path =
+            std::env::temp_dir().join(format!("rustynes_clizip_{}.zip", std::process::id()));
+        {
+            let f = std::fs::File::create(&zip_path).unwrap();
+            let mut w = zip::ZipWriter::new(f);
+            let opts = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            w.start_file("Cool Game (U).nes", opts).unwrap();
+            w.write_all(b"NES\x1A\x02\x01payload").unwrap();
+            w.finish().unwrap();
+        }
+        let result = load_and_preprocess_rom(&zip_path);
+        let _ = std::fs::remove_file(&zip_path);
+        let (bytes, label) = result.expect("the .zip extracts to a ROM");
+        assert!(
+            bytes.starts_with(b"NES\x1A"),
+            "must return the extracted NES image, not the raw zip bytes"
+        );
+        assert_eq!(label, "Cool Game (U).nes");
     }
 
     // Returns the `Some(..)` form because `resolve_vs_dip` takes the DB lookup

@@ -126,7 +126,7 @@ impl Vrc2 {
         submapper: u8,
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_8K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_8K) {
             return Err(MapperError::Invalid(format!(
                 "VRC2 PRG-ROM size {} is not a non-zero multiple of 8 KiB",
                 prg_rom.len()
@@ -135,7 +135,7 @@ impl Vrc2 {
         let chr_is_ram = chr_rom.is_empty();
         let chr: Box<[u8]> = if chr_is_ram {
             vec![0u8; CHR_BANK_8K].into_boxed_slice()
-        } else if chr_rom.len() % CHR_BANK_1K == 0 {
+        } else if chr_rom.len().is_multiple_of(CHR_BANK_1K) {
             chr_rom
         } else {
             return Err(MapperError::Invalid(format!(
@@ -391,7 +391,7 @@ impl Vrc4 {
         submapper: u8,
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_8K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_8K) {
             return Err(MapperError::Invalid(format!(
                 "VRC4 PRG-ROM size {} is not a non-zero multiple of 8 KiB",
                 prg_rom.len()
@@ -400,7 +400,7 @@ impl Vrc4 {
         let chr_is_ram = chr_rom.is_empty();
         let chr: Box<[u8]> = if chr_is_ram {
             vec![0u8; CHR_BANK_8K].into_boxed_slice()
-        } else if chr_rom.len() % CHR_BANK_1K == 0 {
+        } else if chr_rom.len().is_multiple_of(CHR_BANK_1K) {
             chr_rom
         } else {
             return Err(MapperError::Invalid(format!(
@@ -862,7 +862,7 @@ impl Vrc6 {
         mapper_id: u16,
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_8K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_8K) {
             return Err(MapperError::Invalid(format!(
                 "VRC6 PRG-ROM size {} is not a non-zero multiple of 8 KiB",
                 prg_rom.len()
@@ -871,7 +871,7 @@ impl Vrc6 {
         let chr_is_ram = chr_rom.is_empty();
         let chr: Box<[u8]> = if chr_is_ram {
             vec![0u8; CHR_BANK_8K].into_boxed_slice()
-        } else if chr_rom.len() % CHR_BANK_1K == 0 {
+        } else if chr_rom.len().is_multiple_of(CHR_BANK_1K) {
             chr_rom
         } else {
             return Err(MapperError::Invalid(format!(
@@ -1516,7 +1516,7 @@ impl Vrc7 {
         chr_rom: Box<[u8]>,
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_8K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_8K) {
             return Err(MapperError::Invalid(format!(
                 "VRC7 PRG-ROM size {} is not a non-zero multiple of 8 KiB",
                 prg_rom.len()
@@ -1525,7 +1525,7 @@ impl Vrc7 {
         let chr_is_ram = chr_rom.is_empty();
         let chr: Box<[u8]> = if chr_is_ram {
             vec![0u8; CHR_BANK_8K].into_boxed_slice()
-        } else if chr_rom.len() % CHR_BANK_1K == 0 {
+        } else if chr_rom.len().is_multiple_of(CHR_BANK_1K) {
             chr_rom
         } else {
             return Err(MapperError::Invalid(format!(
@@ -2461,7 +2461,7 @@ impl Fme7 {
         chr_rom: Box<[u8]>,
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_8K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_8K) {
             return Err(MapperError::Invalid(format!(
                 "FME-7 PRG-ROM size {} is not a non-zero multiple of 8 KiB",
                 prg_rom.len()
@@ -2470,7 +2470,7 @@ impl Fme7 {
         let chr_is_ram = chr_rom.is_empty();
         let chr: Box<[u8]> = if chr_is_ram {
             vec![0u8; CHR_BANK_8K].into_boxed_slice()
-        } else if chr_rom.len() % CHR_BANK_1K == 0 {
+        } else if chr_rom.len().is_multiple_of(CHR_BANK_1K) {
             chr_rom
         } else {
             return Err(MapperError::Invalid(format!(
@@ -3147,7 +3147,7 @@ impl Namco163 {
         chr_rom: Box<[u8]>,
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
-        if prg_rom.is_empty() || prg_rom.len() % PRG_BANK_8K != 0 {
+        if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_8K) {
             return Err(MapperError::Invalid(format!(
                 "Namco163 PRG-ROM size {} is not a non-zero multiple of 8 KiB",
                 prg_rom.len()
@@ -3156,7 +3156,7 @@ impl Namco163 {
         let chr_is_ram = chr_rom.is_empty();
         let chr: Box<[u8]> = if chr_is_ram {
             vec![0u8; CHR_BANK_8K].into_boxed_slice()
-        } else if chr_rom.len() % CHR_BANK_1K == 0 {
+        } else if chr_rom.len().is_multiple_of(CHR_BANK_1K) {
             chr_rom
         } else {
             return Err(MapperError::Invalid(format!(

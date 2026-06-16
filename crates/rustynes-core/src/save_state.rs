@@ -192,13 +192,13 @@ impl BinWriter {
 
     /// Currently-accumulated byte count.
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.buf.len()
     }
 
     /// `true` if no bytes have been written.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.buf.is_empty()
     }
 

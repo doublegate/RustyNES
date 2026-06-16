@@ -315,7 +315,7 @@ impl UiShell {
     #[allow(clippy::too_many_lines)]
     pub fn build(
         &mut self,
-        ctx: &egui::Context,
+        root_ui: &mut egui::Ui,
         config: &mut Config,
         frame: &ShellFrame<'_>,
         mut settings_body: impl FnMut(&mut egui::Ui, &mut Config, SettingsTab),
@@ -324,14 +324,18 @@ impl UiShell {
         self.clear_expired_status();
         let mut out = ShellOutput::default();
 
+        // egui 0.34 — the top/bottom panels are shown inside the root `Ui`
+        // (`show_inside`); the floating windows + modals still take the
+        // `&Context`, reachable via `ui.ctx()`.
+        let ctx = root_ui.ctx().clone();
         if self.menu_visible {
-            self.menu_bar(ctx, config, frame, &mut out);
+            self.menu_bar(root_ui, config, frame, &mut out);
         }
-        self.status_bar(ctx, frame, config);
-        self.settings_window(ctx, config, &mut settings_body, &mut input_body);
-        self.welcome_modal(ctx, config);
-        about_window(ctx, &mut self.show_about);
-        shortcuts_window(ctx, &mut self.show_shortcuts);
+        self.status_bar(root_ui, frame, config);
+        self.settings_window(&ctx, config, &mut settings_body, &mut input_body);
+        self.welcome_modal(&ctx, config);
+        about_window(&ctx, &mut self.show_about);
+        shortcuts_window(&ctx, &mut self.show_shortcuts);
 
         out
     }
@@ -344,7 +348,7 @@ impl UiShell {
     #[allow(clippy::too_many_lines)]
     fn menu_bar(
         &mut self,
-        ctx: &egui::Context,
+        root_ui: &mut egui::Ui,
         config: &mut Config,
         frame: &ShellFrame<'_>,
         out: &mut ShellOutput,
@@ -379,7 +383,7 @@ impl UiShell {
         // (not netplay-locked, not replay-locked). Used to gate the
         // state-mutating items uniformly.
         let rom_interactive = rom && !replay_locked;
-        egui::TopBottomPanel::top("shell_menu_bar").show(ctx, |ui| {
+        egui::Panel::top("shell_menu_bar").show_inside(root_ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 // ----- File -----
                 ui.menu_button(ic(glyph::FILE, "File"), |ui| {
@@ -1016,13 +1020,11 @@ impl UiShell {
     }
 
     /// Render the bottom status bar.
-    fn status_bar(&self, ctx: &egui::Context, frame: &ShellFrame<'_>, config: &Config) {
-        egui::TopBottomPanel::bottom("shell_status_bar")
-            .frame(
-                egui::Frame::side_top_panel(&ctx.style())
-                    .inner_margin(egui::Margin::symmetric(8, 4)),
-            )
-            .show(ctx, |ui| {
+    fn status_bar(&self, root_ui: &mut egui::Ui, frame: &ShellFrame<'_>, config: &Config) {
+        let style = root_ui.ctx().global_style();
+        egui::Panel::bottom("shell_status_bar")
+            .frame(egui::Frame::side_top_panel(&style).inner_margin(egui::Margin::symmetric(8, 4)))
+            .show_inside(root_ui, |ui| {
                 ui.horizontal(|ui| {
                     if frame.rom_loaded {
                         ui.label(format!("ROM: {}", frame.rom_label));
