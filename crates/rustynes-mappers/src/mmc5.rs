@@ -885,6 +885,15 @@ impl Mapper for Mmc5 {
     }
 
     fn cpu_read(&mut self, addr: u16) -> u8 {
+        // v1.4.0 Workstream F (F2): PRG-ROM/RAM fetches at `$8000-$FFFF`
+        // dominate `cpu_read` (every opcode + operand fetch on an MMC5 cart),
+        // while the register/ExRAM arms only fire on explicit `$5xxx` accesses.
+        // Short-circuit the hot case before the register-range match so the
+        // common path is one compare, not a walk of the `$5xxx` decision tree.
+        // Byte-identical to the `0x8000..=0xFFFF` match arm below.
+        if addr >= 0x8000 {
+            return self.read_prg_window(addr);
+        }
         match addr {
             // Audio status (`$5015`): bit 0 = pulse-1 length > 0, bit 1 =
             // pulse-2 length > 0. No DMC bit (MMC5 has no DMC).
