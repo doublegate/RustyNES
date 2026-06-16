@@ -85,9 +85,18 @@ impl HelpApp {
             return;
         }
         let q = q.to_ascii_lowercase();
-        if let Some(idx) = HELP_TOPICS.iter().position(|t| {
-            t.title.to_ascii_lowercase().contains(&q) || t.body.to_ascii_lowercase().contains(&q)
-        }) {
+        // Prefer a TITLE match: searching "netplay" should jump to the Netplay
+        // topic, not the first topic whose body merely mentions it (the Features
+        // topic lists netplay). Fall back to a body match.
+        let idx = HELP_TOPICS
+            .iter()
+            .position(|t| t.title.to_ascii_lowercase().contains(&q))
+            .or_else(|| {
+                HELP_TOPICS
+                    .iter()
+                    .position(|t| t.body.to_ascii_lowercase().contains(&q))
+            });
+        if let Some(idx) = idx {
             self.select(idx);
         }
     }
