@@ -433,11 +433,10 @@ impl PiccoloBackend {
         if snap.mem.len() != 0x1_0000 {
             snap.mem.resize(0x1_0000, 0);
         }
-        for (addr, slot) in snap.mem.iter_mut().enumerate() {
-            #[allow(clippy::cast_possible_truncation)]
-            {
-                *slot = nes.peek(addr as u16);
-            }
+        // Zip a u16 address range with the buffer — no enumerate()/`as u16`
+        // cast + clippy suppression (gemini #76).
+        for (addr, slot) in (0u16..=0xFFFF).zip(snap.mem.iter_mut()) {
+            *slot = nes.peek(addr);
         }
         let c = nes.cpu();
         snap.cpu = [

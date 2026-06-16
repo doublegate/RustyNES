@@ -5757,13 +5757,12 @@ impl ApplicationHandler<AppEvent> for App {
                                 if self.present_chr_snapshot.len() != 0x2000 {
                                     self.present_chr_snapshot.resize(0x2000, 0);
                                 }
+                                // Zip a u16 address range with the buffer — no
+                                // enumerate()/`as u16` cast + suppression (gemini #76).
                                 for (addr, slot) in
-                                    self.present_chr_snapshot.iter_mut().enumerate()
+                                    (0u16..0x2000).zip(self.present_chr_snapshot.iter_mut())
                                 {
-                                    #[allow(clippy::cast_possible_truncation)]
-                                    {
-                                        *slot = nes.peek_ppu(addr as u16);
-                                    }
+                                    *slot = nes.peek_ppu(addr);
                                 }
                             }
                         } else {
