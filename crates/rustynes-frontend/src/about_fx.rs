@@ -175,9 +175,18 @@ pub fn tap() {
 }
 
 /// While the dialog is open and armed, fold this frame's typed characters into a
-/// rolling buffer and try to open the resource with the trailing window. The KDF
-/// runs at most once per *distinct* trailing window (cached in `last_try`), so a
-/// single intentional attempt is one KDF, not one per keystroke.
+/// rolling buffer and try to open the resource with the trailing window.
+///
+/// Cost model (the work is intentionally kept on the UI thread, not offloaded):
+/// the function returns immediately unless `armed` is set, and `armed` only
+/// flips after a deliberate multi-tap activation — so for every ordinary user
+/// this is a zero-cost early return on every keystroke. Once armed, the heavy
+/// path (the iterated-SHA-256 KDF + decrypt + one-shot resource decode) runs at
+/// most once per *distinct* trailing window (cached in `last_try`): a single
+/// intentional attempt is one KDF, not one per keystroke, and the decode happens
+/// exactly once (on the integrity-checked success). The brief, self-inflicted,
+/// once-per-session hitch that remains does not justify a background-worker
+/// state machine in this otherwise self-contained native-only helper.
 pub fn pump(ctx: &egui::Context) {
     STATE.with(|s| {
         let mut s = s.borrow_mut();
