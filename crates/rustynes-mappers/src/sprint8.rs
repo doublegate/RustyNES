@@ -268,9 +268,15 @@ impl Mapper for Un1rom94 {
 
     fn cpu_write(&mut self, addr: u16, value: u8) {
         if (0x8000..=0xFFFF).contains(&addr) {
-            // Bus conflict: AND with the byte the CPU would read at this address.
-            let effective = value & self.read_prg(self.prg_bank as usize, addr);
-            self.prg_bank = (effective >> 2) & 0x0F;
+            // Bus conflict: AND with the byte the CPU actually reads at this
+            // address, using the SAME window mapping as `cpu_read` — the
+            // switchable bank for $8000-$BFFF, the fixed last bank for
+            // $C000-$FFFF (a register write can land in either half).
+            let conflict = self.cpu_read(addr);
+            let effective = value & conflict;
+            // UN1ROM (Senjou no Ookami) selects the 16 KiB bank from data
+            // bits 4..2 (a 3-bit field, 8 banks).
+            self.prg_bank = (effective >> 2) & 0x07;
         }
     }
 

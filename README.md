@@ -10,7 +10,7 @@
 
 [![Build Status](https://github.com/doublegate/RustyNES/workflows/CI/badge.svg)](https://github.com/doublegate/RustyNES/actions)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
-[![Version](https://img.shields.io/badge/version-v1.4.0-blue.svg)](https://github.com/doublegate/RustyNES/releases)
+[![Version](https://img.shields.io/badge/version-v1.4.1-blue.svg)](https://github.com/doublegate/RustyNES/releases)
 [![Rust: 1.96](https://img.shields.io/badge/rust-1.96-orange.svg)](rust-toolchain.toml)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web-lightgrey.svg)](#platform-support)
 [![AccuracyCoin](<https://img.shields.io/badge/AccuracyCoin-100%25%20(139%2F139)-brightgreen.svg>)](#compatibility-and-accuracy)
@@ -488,11 +488,12 @@ engine-development audit logs are kept locally, outside the public repo.)
 
 ## Version History
 
-The current release is **v1.4.0 "Fidelity"**, the compatibility-and-finish release on top of
-the cycle-accurate v1.0.0 production core. The road there:
+The current release is **v1.4.1**, a patch on top of **v1.4.0 "Fidelity"** (the
+compatibility-and-finish release on the cycle-accurate v1.0.0 production core). The road there:
 
 | Version    | Highlights                                                                                  |
 | ---------- | ------------------------------------------------------------------------------------------- |
+| **v1.4.1** | Patch — four more BestEffort mapper boot/decode fixes from the boot-smoke-vs-real-dumps pass (m92 Jaleco JF-19 PRG layout, m94 UN1ROM bank decode + bus conflict, m145 Sachen 16 KiB PRG, m147 Sachen 3018 / TXC JV001 protection handshake), plus the boot-smoke screenshot corpus reorganized to mirror the per-mapper `tests/roms/` tier layout. BestEffort-only; AccuracyCoin 100% (139/139) held, byte-identical to v1.4.0. |
 | **v1.4.0** | "Fidelity" — compatibility + finish: accuracy polish (triangle ultrasonic silence, DMC-DMA ↔ controller-read conflict verified), per-channel audio mixing, devtools finish (symbol-file `.sym`/`.mlb`/`.nl` loading + event breakpoints), browser QoL (wasm `.rnm` movie I/O + IndexedDB save-states), a measure-first perf pass (−8% on the rendering-heavy bench), a colorful **`rustynes help` TUI** + styled `--help` (clap 4 + ratatui), and mapper coverage 101 → **113 families** (boot-smoke verified, with reset-vector / decode fixes to m132/m143/m225/m226/m233/m242/m246). AccuracyCoin 100% (139/139) held. |
 | **v1.3.0** | "Bedrock" — foundation + breadth: edition 2024 / Rust 1.96 / egui 0.34 + wgpu 29 toolchain, the frame-pacing fix, Memory Compare + menu/Settings reorg + auto-save, mapper coverage 87 → **101 families** + Vs. DualSystem detection, HD-pack `<condition>`/`<background>` rules, netplay desync diagnostics + niche peripheral aliases, and the exercised PGO/BOLT gate. AccuracyCoin 100% held. (Casual-mode browser RetroAchievements is a documented carryover — ADR 0015.) |
 | **v1.2.0** | "Curator" — library breadth + compatibility + reach: mapper coverage 51 → **87 families** (accuracy-tiering honesty gate), `.zip` loading + `.ips`/`.ups`/`.bps` soft-patching, a per-game DB + in-app ROM-Database editor, live NTSC knobs + a composable shader stack + CRT preset bank + a (default-off) HD-pack loader, new peripherals (Family BASIC keyboard, SNES mouse, Arkanoid-both-ports, Game Genie code DB), Lua `onNmi`/`onIrq`/`setInput`, menu-bar polish (contextual enable/disable + remappable shortcuts + Font Awesome icons), web touch controls + Power Pad + experimental wasm Lua, a turn-key netplay `deploy/` bundle, and a PGO CI promotion gate. AccuracyCoin 100% held |
