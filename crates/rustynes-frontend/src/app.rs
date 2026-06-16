@@ -5515,6 +5515,19 @@ impl ApplicationHandler<AppEvent> for App {
                 }
             }
             WindowEvent::RedrawRequested => {
+                // v1.3.0 Workstream B (B1) — timestamp the display-refresh
+                // SIGNAL here, at the instant this RedrawRequested fired, and
+                // feed THAT to `record_presented` on a successful present below
+                // (not `Instant::now()` taken after `surface.present()` returns).
+                // The post-present timestamp folded GPU-submit + vsync-gate +
+                // coalesced-RedrawRequested jitter into the "Presented" series —
+                // the cause of the panel "bottoming out then rushing to catch
+                // up" while "Produced" stayed flat. The redraw signal is the
+                // display's own refresh tick, so present-to-present deltas now
+                // measure the display cadence. (Still recorded only on an actual
+                // present — the Ok arm — so a skipped/early-returned redraw is
+                // not counted as a presented frame.)
+                let redraw_signal = Instant::now();
                 // Native: rendering is decoupled from emulation — this
                 // branch only presents the most recent framebuffer.
                 // Emulator advance happens in `about_to_wait` on a
@@ -5950,8 +5963,12 @@ impl ApplicationHandler<AppEvent> for App {
                     Ok(()) => {
                         // v2.8.0 Phase 0 — the display-visible cadence. The
                         // produced-frame histogram alone cannot see judder;
-                        // this one can (present-to-present deltas).
-                        self.emu.lock().perf.record_presented(Instant::now());
+                        // this one can (present-to-present deltas). v1.3.0 B1:
+                        // use the redraw-signal timestamp captured at the top of
+                        // this arm, not a post-present `Instant::now()`, so the
+                        // metric tracks the display refresh and not submit/vsync
+                        // jitter.
+                        self.emu.lock().perf.record_presented(redraw_signal);
                         // v2.8.0 Phase 2 — display-sync self-drive + health.
                         #[cfg(not(target_arch = "wasm32"))]
                         self.display_sync_after_present();

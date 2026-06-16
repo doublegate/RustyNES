@@ -180,6 +180,21 @@ pub struct PerfStats {
     /// Paces that abandoned catch-up and snapped `next_frame_time` to now
     /// (post-stall resets; hibernate, long UI stall, debugger pause).
     pub snap_forwards: u64,
+    /// Working state: produced frames seen since the last present (reset to 0
+    /// on each present). Not exposed — feeds `presented_dups` /
+    /// `produced_dropped`.
+    produced_since_present: u32,
+    /// v1.3.0 Workstream B (diagnostic for B3): cumulative presents that showed
+    /// NO newly-produced frame since the prior present — the display repeated a
+    /// frame. Accrues when the producer is slower than the refresh (or a redraw
+    /// was coalesced). Under display-sync it should stay ~0; under wall-clock it
+    /// reveals the NTSC-60.0988-Hz-vs-refresh beat as a slow tick.
+    pub presented_dups: u64,
+    /// v1.3.0 Workstream B (diagnostic for B3): cumulative produced frames
+    /// superseded by a newer produce before any present consumed them — the
+    /// producer ran ahead of the refresh (≈ one every ~10 s for 60.0988 vs
+    /// 60.000 Hz). The companion to `presented_dups`.
+    pub produced_dropped: u64,
     /// Latest audio-queue health (native; zeroed on wasm until Phase 6).
     pub audio: AudioHealth,
 }
@@ -188,11 +203,20 @@ impl PerfStats {
     /// Record a produced-frame completion timestamp.
     pub fn record_produced(&mut self, ts: Instant) {
         self.produced.record(ts);
+        self.produced_since_present = self.produced_since_present.saturating_add(1);
     }
 
-    /// Record a successful surface present.
+    /// Record a successful surface present. Also derives the present/produce
+    /// mismatch diagnostics: a present with no new produce is a duplicate
+    /// (display repeated a frame); >1 produce since the last present means the
+    /// extra produced frames were dropped (never shown).
     pub fn record_presented(&mut self, ts: Instant) {
         self.presented.record(ts);
+        match self.produced_since_present {
+            0 => self.presented_dups = self.presented_dups.saturating_add(1),
+            n => self.produced_dropped = self.produced_dropped.saturating_add(u64::from(n - 1)),
+        }
+        self.produced_since_present = 0;
     }
 
     /// Record the wall cost of one `produce_one_frame` call.
@@ -205,6 +229,8 @@ impl PerfStats {
     pub const fn break_phase(&mut self) {
         self.produced.break_phase();
         self.presented.break_phase();
+        // Don't count the discontinuity (ROM load / un-pause) as a dup or drop.
+        self.produced_since_present = 0;
     }
 
     /// Clear all rings + counters (new ROM).
@@ -214,6 +240,9 @@ impl PerfStats {
         self.produce_cost.clear();
         self.catchup_bursts = 0;
         self.snap_forwards = 0;
+        self.produced_since_present = 0;
+        self.presented_dups = 0;
+        self.produced_dropped = 0;
         self.audio = AudioHealth::default();
     }
 
@@ -233,6 +262,8 @@ impl PerfStats {
             produce_cost: self.produce_cost.stats(),
             catchup_bursts: self.catchup_bursts,
             snap_forwards: self.snap_forwards,
+            presented_dups: self.presented_dups,
+            produced_dropped: self.produced_dropped,
             audio: self.audio,
             // feature K — the last ~4 s of frame-time samples for the panel
             // sparkline (bounded copies; the percentile tables stay primary).
@@ -257,6 +288,11 @@ pub struct PerfView {
     pub catchup_bursts: u64,
     /// See [`PerfStats::snap_forwards`].
     pub snap_forwards: u64,
+    /// See [`PerfStats::presented_dups`] — duplicate presents (display repeated
+    /// a frame); the NTSC-vs-refresh beat diagnostic.
+    pub presented_dups: u64,
+    /// See [`PerfStats::produced_dropped`] — produced frames never presented.
+    pub produced_dropped: u64,
     /// Audio-queue health.
     pub audio: AudioHealth,
     /// Effective present mode (e.g. "Mailbox", "Fifo"), from `Gfx`.
@@ -321,6 +357,36 @@ mod tests {
         assert_eq!(r.recent(100).len(), 10);
         // Empty ring -> empty vec.
         assert!(SampleRing::default().recent(5).is_empty());
+    }
+
+    // v1.3.0 Workstream B — the present/produce mismatch diagnostics (the
+    // NTSC-vs-refresh beat signal) count duplicate presents and dropped produces.
+    #[test]
+    fn present_produce_mismatch_diagnostics() {
+        let mut p = PerfStats::default();
+        let t = Instant::now();
+        // 1:1 produce:present — clean, no dup, no drop.
+        p.record_produced(t);
+        p.record_presented(t);
+        assert_eq!((p.presented_dups, p.produced_dropped), (0, 0));
+        // A present with no new produce since the last one — duplicate frame.
+        p.record_presented(t);
+        assert_eq!((p.presented_dups, p.produced_dropped), (1, 0));
+        // Two produces then one present — the first produce was dropped (unshown).
+        p.record_produced(t);
+        p.record_produced(t);
+        p.record_presented(t);
+        assert_eq!((p.presented_dups, p.produced_dropped), (1, 1));
+        // break_phase clears the working counter so the in-flight produce is not
+        // later mis-counted as a drop across a ROM-load / un-pause discontinuity.
+        p.record_produced(t);
+        p.break_phase();
+        p.record_produced(t);
+        p.record_presented(t);
+        assert_eq!((p.presented_dups, p.produced_dropped), (1, 1));
+        // clear() zeroes the cumulative counters (new ROM).
+        p.clear();
+        assert_eq!((p.presented_dups, p.produced_dropped), (0, 0));
     }
 
     #[test]

@@ -76,6 +76,25 @@ and stay deferred as a future v2.0-scale item (see `docs/STATUS.md`). See the v1
   that both paths use, so a zipped or patched ROM on argv reaches the deterministic parse
   and the CRC-keyed per-game database as the extracted/patched image, identical to every
   other load path. (Regression-tested.)
+- **Performance panel "presented" cadence no longer shows phantom judder** (v1.3.0
+  Workstream B1). The present-to-present interval was timestamped *after*
+  `surface.present()` returned, so it folded GPU-submit + vsync-gate +
+  coalesced-`RedrawRequested` jitter into the series — the graph bottomed out and
+  "rushed to catch up" while the steadier "produced" (emulation) series stayed flat.
+  It is now timestamped at the `RedrawRequested` display-refresh signal (still only on
+  an actual present), so present-to-present deltas reflect the display's true visible
+  cadence; any small, steady offset from "produced" is just the NTSC 60.0988 Hz rate
+  beating against the display refresh. Measurement-only (presentation/instrumentation;
+  no core or determinism surface). The Performance panel's "presented" legend gains a
+  tooltip explaining the semantics; see `docs/frontend.md`.
+- **Performance panel: present/produce "beat" diagnostic** (v1.3.0 Workstream B, B3
+  groundwork). Added duplicate-present and dropped-produce counters (`presented_dups` /
+  `produced_dropped`, also in the CSV log) surfaced in the panel beside the existing
+  present-mode + pacer-anomaly readouts — read-only instrumentation (no pacer change).
+  Under display-sync both stay ~0; under wall-clock they tick ~once every ~10 s for the
+  NES 60.0988 Hz vs 60.000 Hz display beat, so a sudden burst (real judder) is now
+  distinguishable from the harmless inherent beat. This is the signal for deciding
+  whether the deeper present-mode / pacer mitigation is worth its regression risk.
 
 ### Security
 

@@ -233,6 +233,16 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut PerfPanelState) {
                     egui::RichText::new("presented")
                         .small()
                         .color(egui::Color32::from_rgb(0x60, 0xC0, 0xF0)),
+                )
+                .on_hover_text(
+                    "Present-to-present cadence, timestamped at the \
+                     RedrawRequested (display-refresh) signal — the display's \
+                     visible frame interval. A small, steady offset from \
+                     \"produced\" is the NTSC 60.0988 Hz emulation rate beating \
+                     against the display's refresh, not stutter. (v1.3.0: this is \
+                     now measured at the refresh signal, not after \
+                     surface.present(), so it no longer folds in GPU-submit / \
+                     vsync jitter.)",
                 );
                 ui.label(
                     egui::RichText::new("produced")
@@ -252,6 +262,24 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut PerfPanelState) {
                 "pacer: catch-up bursts {}   snap-forwards {}",
                 v.catchup_bursts, v.snap_forwards
             ));
+            // v1.3.0 Workstream B — present/produce mismatch, the NTSC-vs-refresh
+            // beat diagnostic (the data for deciding whether the deeper B3 pacer
+            // work is worth it). Under display-sync both stay ~0; under
+            // wall-clock they tick slowly (≈ one every ~10 s for 60.0988 vs
+            // 60.000 Hz). A bunched run of either is the visible judder.
+            ui.label(format!(
+                "present beat: dup frames {}   dropped frames {}",
+                v.presented_dups, v.produced_dropped
+            ))
+            .on_hover_text(
+                "Diagnostic for the residual frame-pacing beat. \"dup frames\" = \
+                 presents that repeated the previous frame (producer slower than \
+                 the display); \"dropped frames\" = produced frames superseded \
+                 before being shown (producer faster). For NES 60.0988 Hz on a \
+                 60.000 Hz display, expect ~one tick every ~10 s under wall-clock \
+                 pacing and ~none under display-sync. A steady slow tick is the \
+                 inherent rate beat (harmless); a sudden burst is visible judder.",
+            );
             if let Some(gpu) = v.gpu_ms {
                 ui.label(format!("gpu pass: {gpu:.3} ms (1-3 frames stale)"));
             }
