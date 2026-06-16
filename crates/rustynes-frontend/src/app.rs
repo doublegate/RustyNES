@@ -5750,11 +5750,20 @@ impl ApplicationHandler<AppEvent> for App {
                                 self.present_hd_tiles.clear();
                                 self.present_hd_tiles
                                     .extend_from_slice(nes.hd_tile_source());
-                                self.present_chr_snapshot.clear();
                                 // CHR pattern space is `$0000..$2000` (8 KiB) — the
                                 // only memory `hash_tile` reads via `chr_peek`.
-                                self.present_chr_snapshot
-                                    .extend((0u16..0x2000).map(|addr| nes.peek_ppu(addr)));
+                                // Persistent buffer overwritten in place (no
+                                // clear/grow churn under the lock — gemini, PR #76).
+                                if self.present_chr_snapshot.len() != 0x2000 {
+                                    self.present_chr_snapshot.resize(0x2000, 0);
+                                }
+                                // Zip a u16 address range with the buffer — no
+                                // enumerate()/`as u16` cast + suppression (gemini #76).
+                                for (addr, slot) in
+                                    (0u16..0x2000).zip(self.present_chr_snapshot.iter_mut())
+                                {
+                                    *slot = nes.peek_ppu(addr);
+                                }
                             }
                         } else {
                             // No ROM: present a black NES image (the shell still
