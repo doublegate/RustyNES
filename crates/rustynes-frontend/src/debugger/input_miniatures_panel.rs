@@ -392,7 +392,9 @@ fn draw_mat(ui: &mut egui::Ui, cols: usize, rows: usize, mask: u32) {
     for r in 0..rows {
         for c in 0..cols {
             let bit = r * cols + c;
-            let on = mask & (1 << bit) != 0;
+            // Guard the shift: a future caller passing rows*cols > 32 would
+            // otherwise panic in debug builds on the overflowing `1 << bit`.
+            let on = bit < 32 && mask & (1u32 << bit) != 0;
             if on {
                 count += 1;
             }

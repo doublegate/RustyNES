@@ -54,8 +54,11 @@ impl HdPixelPanelState {
 fn swatch(ui: &mut egui::Ui, label: &str, rgba: [u8; 4]) {
     ui.horizontal(|ui| {
         let (rect, _r) = ui.allocate_exact_size(Vec2::new(18.0, 18.0), Sense::hover());
-        ui.painter()
-            .rect_filled(rect, 2.0, Color32::from_rgb(rgba[0], rgba[1], rgba[2]));
+        ui.painter().rect_filled(
+            rect,
+            2.0,
+            Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]),
+        );
         ui.monospace(format!(
             "{label}: #{:02X}{:02X}{:02X}{:02X}",
             rgba[0], rgba[1], rgba[2], rgba[3]
@@ -83,11 +86,14 @@ pub fn show(
         .default_size([360.0, 440.0])
         .resizable(true)
         .show(ctx, |ui| {
-            if !pack_active || compositor.is_none() {
+            if !pack_active {
                 ui.weak("Load an HD pack (Tools -> HD Pack) to inspect composition.");
                 return;
             }
-            let comp = compositor.expect("checked");
+            let Some(comp) = compositor else {
+                ui.weak("Load an HD pack (Tools -> HD Pack) to inspect composition.");
+                return;
+            };
 
             ui.horizontal(|ui| {
                 ui.label("X");

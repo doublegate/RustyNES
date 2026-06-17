@@ -53,6 +53,12 @@ struct Ev {
 pub struct EventPanelState {
     /// Index into the current frame's event list of the selected event, if any.
     selected: Option<usize>,
+    /// `selected` as of the previous repaint — so `scroll_to_me` fires only when
+    /// the selection actually changes (otherwise it locks the scroll viewport).
+    previous_selected: Option<usize>,
+    /// The frame the current selection belongs to; when the frame advances the
+    /// stale selection is dropped (it would point at an unrelated new event).
+    last_frame: Option<u64>,
 }
 
 /// Map a `$2000-$2007` (mirrored) PPU register address to its mnemonic.
@@ -130,6 +136,13 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut EventPanelState, n
                 ui.label(format!("Frame {frame}"));
             });
             ui.separator();
+
+            if state.last_frame != Some(frame) {
+                // The frame advanced: the previous selection indexed a different
+                // frame's events, so drop it rather than highlight an unrelated one.
+                state.selected = None;
+                state.last_frame = Some(frame);
+            }
 
             if events.is_empty() || state.selected.is_some_and(|i| i >= events.len()) {
                 // No capture, or the capture changed under us (frame advanced) —
@@ -302,7 +315,9 @@ fn event_table(ui: &mut egui::Ui, state: &mut EventPanelState, events: &[Ev]) {
                         if resp.clicked() {
                             state.selected = Some(i);
                         }
-                        if selected {
+                        // Only auto-scroll when the selection actually changed —
+                        // calling this every frame would lock the scroll viewport.
+                        if selected && state.selected != state.previous_selected {
                             resp.scroll_to_me(Some(Align::Center));
                         }
                         ui.colored_label(write_tint(ev.kind), dir_word(ev.kind));
@@ -314,4 +329,6 @@ fn event_table(ui: &mut egui::Ui, state: &mut EventPanelState, events: &[Ev]) {
                     }
                 });
         });
+    // Record the selection so the next repaint can detect a change (scroll-on-change).
+    state.previous_selected = state.selected;
 }
