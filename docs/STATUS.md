@@ -1,23 +1,50 @@
 # RustyNES — Project Status Matrix
 
-**Current release: v1.4.1** (a patch on **v1.4.0 "Fidelity" — the
-compatibility-and-finish release**) on the cycle-accurate v1.0.0 production core.
-v1.4.1 adds four more BestEffort mapper boot/decode fixes (m92 / m94 / m145 / m147)
-from the boot-smoke-vs-real-dumps pass and reorganizes the boot-smoke screenshot
-corpus to mirror the per-mapper `tests/roms/` tier layout — BestEffort-only, so
-AccuracyCoin holds 100% (139/139) and the builds stay byte-identical to v1.4.0.
-A NES/Famicom emulator with the Mesen2 /
-higan / ares accuracy bar, shipped as a polished desktop application.
-**AccuracyCoin 100.00% (139/139)**, the 60-ROM `external_real_games` + 52-entry
-`external_extended` oracles byte-identical, nestest 0-diff. **v1.4.0 "Fidelity"**
+**Current release: v1.5.0 "Lens" — the insight, scriptability, creator-tooling,
+and polish release** on the cycle-accurate v1.0.0 production core. A NES/Famicom
+emulator with the Mesen2 / higan / ares accuracy bar, shipped as a polished
+desktop application. **AccuracyCoin 100.00% (139/139)**, the 60-ROM
+`external_real_games` + 52-entry `external_extended` oracles byte-identical,
+nestest 0-diff. v1.5.0 lands eight additive workstreams: **A** debugger
+visualization (an Input Miniatures overlay, a graphical PPU event-viewer heatmap,
+a per-scanline trace viewer, an HD-pack per-pixel inspector — behind
+`debug-hooks`/`hd-pack`); **B** Lua dev/TAS API depth (memory peek/poke/range,
+cart/system queries, in-memory save-state scripting, breakpoint/symbol hooks,
+bundled example scripts — gated like `emu.write`); **C** creator/TAS tooling (a
+TASVideos compatibility pass, replay/TAS-window polish with device topology +
+timebase, an NSF waveform scope); **H** frontend pacing & audio-sync perf
+(triple-buffer framebuffer handoff, a pacer stall phase-break, audio DRC/buffer
+tuning, GPU pass timing `gpu_ms`, perf-log↔panel parity + a perf-capture
+regression gate, and a bit-identical allocation-only rewind-keyframe-cache core
+tweak); **I** a native-UI overhaul + in-app Documentation pane (clipboard
+screenshot fix, frame-advance/fast-forward fix, Settings polish, a Cheats game-DB
+picklist, Input Display colors, a ROM-DB standalone-open fix, RA-to-status-bar, a
+deeper Mapper panel, a Keyboard-Shortcuts player selector, Help → Documentation);
+**D** UX polish (a named-palette editor, per-side overscan WYSIWYG, an
+"Enhancements" settings group with sprite-limit-disable/overclock staged-but-inert
+pending v2.0 per ADR 0002, device-config controls); **E** accessibility
+(configurable UI scaling, high-contrast + Okabe-Ito colorblind themes,
+keyboard-only menu nav with Esc-closes-modal); **F** mapper breadth 113 → **123
+families** (+10 BestEffort: m40/81/95/112/137/156/162/178/244/250, honesty-gated);
+and **G** casual-mode browser RetroAchievements scaffolding (ADR 0015) behind an
+off-by-default `browser-cheevos` feature — an emcc-built rcheevos wasm side
+module, structural casual-only gating, an auth-proxy contract/stub, and a loud UI
+caveat, with live-browser verify, proxy deploy, and trampoline marshalling left as
+maintainer-manual carryovers. Every addition is additive / off-by-default, so the
+shipped / native / `no_std` / wasm builds stay byte-identical and AccuracyCoin
+holds 100% (139/139); the accuracy residuals all converge on the future v2.0
+fractional-master-clock refactor (ADR 0002). The preceding **v1.4.1** (a patch on
+**v1.4.0 "Fidelity" — the compatibility-and-finish release**) added four BestEffort
+mapper boot/decode fixes (m92 / m94 / m145 / m147) from the boot-smoke-vs-real-dumps
+pass and reorganized the boot-smoke screenshot corpus to mirror the per-mapper
+`tests/roms/` tier layout. **v1.4.0 "Fidelity"**
 polishes accuracy (triangle ultrasonic silence, DMC-DMA ↔ controller-read conflict
 verified), adds per-channel audio mixing, finishes the devtools (symbol-file
 `.sym`/`.mlb`/`.nl` loading + event breakpoints), adds browser QoL (wasm `.rnm`
 movie I/O + IndexedDB save-states), runs a measure-first perf pass (−8% on the
 rendering-heavy bench), ships a colorful `rustynes help` TUI + styled `--help`, and
 takes mapper coverage 101 → **113 families** (boot-smoke verified, with reset-vector /
-decode fixes to m132/m143/m225/m226/m233/m242/m246). All additive / off-by-default,
-so the shipped / native / `no_std` / wasm builds stay byte-identical to v1.3.0.
+decode fixes to m132/m143/m225/m226/m233/m242/m246).
 Built on top of v1.3.0 "Bedrock" (toolchain + breadth) and v1.2.0
 "Curator", which was a broad library / compatibility / reach release on v1.1.0
 "Scriptable":
