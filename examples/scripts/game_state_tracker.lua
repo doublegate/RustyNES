@@ -18,7 +18,9 @@ local WATCH = { "player_x", "player_y", "lives", "score_lo" }
 -- Resolve a watch entry to a CPU address: a label via sym:addr, else parse a
 -- "$XXXX" literal, else nil.
 local function resolve(name)
-    local a = sym:addr(name)
+    -- `sym` is only registered on the native (mlua) backend; guard the access so
+    -- the script degrades to "$XXXX" literals on a backend without it (piccolo).
+    local a = sym and sym:addr(name)
     if a ~= nil then return a end
     local hex = name:match("^%$(%x+)$")
     if hex ~= nil then return tonumber(hex, 16) end

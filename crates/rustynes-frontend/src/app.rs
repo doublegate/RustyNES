@@ -3099,8 +3099,11 @@ impl App {
                 )));
         }
         // v1.5.0 B4 — push the freshly-loaded labels into a running Lua script's
-        // `sym:` query tables (no-op if no script is loaded).
-        #[cfg(feature = "scripting")]
+        // `sym:` query tables (no-op if no script is loaded). The dev/TAS symbol
+        // bridge is native-only (mlua); guard the call to match
+        // `refresh_script_symbols`'s own `not(wasm32)` cfg so a wasm32 +
+        // `scripting` build doesn't reference a method that isn't compiled.
+        #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
         self.refresh_script_symbols();
     }
 

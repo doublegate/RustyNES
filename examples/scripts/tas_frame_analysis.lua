@@ -38,7 +38,8 @@ emu.onFrame(function()
     end
 
     -- Per-frame delta of the watched byte (signed, treating $80-$FF as < 0).
-    local v = memory:peek(WATCH)
+    local raw = memory:peek(WATCH)
+    local v = raw >= 128 and raw - 256 or raw
     if last ~= nil then
         local d = v - last
         if d ~= 0 then
