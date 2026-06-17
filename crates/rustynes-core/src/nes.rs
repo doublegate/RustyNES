@@ -2568,15 +2568,51 @@ mod tests {
         let evs = nes.events();
         assert!(!evs.is_empty(), "the STA $2000 loop produces writes");
         assert!(
-            evs.iter()
-                .all(|e| e.kind == EventKind::PpuWrite && e.addr == 0x2000 && e.dot <= 340),
-            "all events are $2000 PPU writes with a sane dot"
+            evs.iter().all(|e| e.kind == EventKind::PpuWrite
+                && e.addr == 0x2000
+                && e.dot <= 340
+                && e.value == 0x00),
+            "all events are $2000 PPU writes of $00 with a sane dot"
         );
         // Reset per frame: the count stays one-frame-bounded.
         let _ = nes.run_frame();
         assert!(nes.events().len() <= Nes::TRACE_CAP, "bounded");
         nes.set_event_logging(false);
         assert!(!nes.event_logging());
+    }
+
+    #[cfg(feature = "debug-hooks")]
+    #[test]
+    fn event_viewer_records_ppu_reads() {
+        use crate::bus::EventKind;
+        // A tiny NROM that loops `LDA $2002 ; JMP $C000`, generating a PPU
+        // STATUS read ($2002) every iteration (v1.5.0 Workstream A2 read tap).
+        let mut bytes = alloc::vec![0u8; 16 + 16 * 1024];
+        bytes[0..4].copy_from_slice(b"NES\x1A");
+        bytes[4] = 1; // 1x16KB PRG
+        let prg = &mut bytes[16..16 + 16 * 1024];
+        // $C000: LDA $2002 ; JMP $C000
+        prg[0..6].copy_from_slice(&[0xAD, 0x02, 0x20, 0x4C, 0x00, 0xC0]);
+        let len = 16 * 1024;
+        prg[len - 4] = 0x00;
+        prg[len - 3] = 0xC0;
+
+        let mut nes = Nes::from_rom(&bytes).expect("parse");
+        let _ = nes.run_frame();
+        nes.set_event_logging(true);
+        let _ = nes.run_frame();
+        let evs = nes.events();
+        assert!(
+            evs.iter()
+                .any(|e| e.kind == EventKind::PpuRead && e.addr == 0x2002),
+            "the LDA $2002 loop produces PPU reads"
+        );
+        assert!(
+            evs.iter()
+                .all(|e| e.kind.is_read() == (e.kind == EventKind::PpuRead)),
+            "is_read is true only for PpuRead"
+        );
+        nes.set_event_logging(false);
     }
 
     #[cfg(feature = "debug-hooks")]

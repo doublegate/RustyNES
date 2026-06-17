@@ -587,7 +587,7 @@ emulator-visible state, polling the inspection API on `rustynes_core::Nes`
 once per visible frame.
 
 - **CPU**: registers, current instruction, disassembly window (scrollable), step-instruction button, a **Breakpoints** section — exec/PC breakpoints (armed toggle, hex add, per-row remove, clear); when the program counter reaches one, emulation pauses and the CPU panel opens on the stopped PC — and (v1.4.0 Workstream D) an **Event breakpoints** section that breaks on hardware events (see below). Loaded symbol labels (D1) annotate the disassembly (a `label:` line above the matching address) and the breakpoint rows.
-- **PPU**: nametable viewer (4 tables side-by-side, scroll-cursor overlaid), pattern table viewer (both tables, with palette selector), OAM viewer (sprite list + visual), palette RAM viewer.
+- **PPU**: nametable viewer (4 tables side-by-side, scroll-cursor overlaid), pattern table viewer (both tables, with palette selector), OAM viewer (sprite list + visual), palette RAM viewer. **v1.5.0 "Lens" Workstream A3** adds a **Scanline trace** tab (the per-scanline scroll/render register-write trace — $2000/$2001/$2005/$2006 — derived from the `debug-hooks` event log, surfacing mid-frame raster splits) and a native **Export CHR to PNG…** button (the combined 256×128 pattern dump) on the Patterns tab.
 - **APU**: per-channel scope (waveform), volume meters, register dump.
 - **Memory**: hex viewer of CPU bus + PPU bus, with go-to-address (disabled in RetroAchievements hardcore mode).
 - **Mapper**: bank registers, IRQ counter state.
@@ -600,11 +600,16 @@ AccuracyCoin are unaffected):
 - **Trace** (Debug → Trace Logger): a bounded ring (50k) of each executed
   instruction's CPU register file + cycle, with a live disassembled tail and
   an **export** of the full trace to a text file.
-- **Events** (Debug → Event Viewer): the frame's CPU writes — PPU
-  (`$2000-$3FFF`), APU (`$4000-$4017`, including `$4014` OAM DMA and `$4016`
-  strobe), and mapper (`$4020-$FFFF`) — plotted on a scanline×dot grid coloured
-  by kind, so you can see *when* in the frame a game touches scroll / mapper /
-  APU registers.
+- **Events** (Debug → Event Viewer): the frame's CPU register accesses plotted
+  on a scanline×dot grid, so you can see *when* in the frame a game touches scroll
+  / mapper / APU registers. **v1.5.0 "Lens" Workstream A2** turned this into the
+  GeraNES-class **graphical PPU Event Viewer**: a full 341 × 312 per-dot
+  read/write **heatmap** (blue = PPU-register read, red = write) with a hover/click
+  tooltip (register name + value + scanline + dot) and a synchronized
+  register-access table whose selection follows clicks on the heatmap. It captures
+  PPU/APU/mapper writes (`$2000-$3FFF` / `$4000-$4017` / `$4020-$FFFF`) **and** PPU
+  register reads (`$2000-$3FFF`); each record now carries the accessed byte. Backed
+  by the same `debug-hooks` event log (output-only, per-frame reset).
 
 ### v1.4.0 Workstream D — symbol loading + event breakpoints
 
@@ -645,15 +650,51 @@ build byte-identical).
   breakpoints, only the persistent run path checks them (run-ahead's
   speculative frames don't).
 
-- **HD-pack per-pixel inspector (D3)** — **deferred** (documented TODO). The
-  per-pixel HD-pack composition trace (matched CHR hash / replacement asset /
-  gating `<condition>`) would build on the v1.3.0 E1 `HdCompositor` + the
-  `hd-pack` `HdTileSource` telemetry; it needs a new resolve/inspect query on
-  `HdCompositor` + viewport pixel hit-testing and is held for a follow-up.
+- **HD-pack per-pixel inspector (D3)** — **landed in v1.5.0 "Lens" Workstream A4**
+  (see below). The v1.4.0 documented deferral is resolved.
+
+### v1.5.0 "Lens" Workstream A — debugger visualization
+
+These finish the GeraNES-class *visualization* devtools; all are output-only and
+determinism-neutral (the new core telemetry is `debug-hooks`-gated and off in the
+headless / shipped builds, so AccuracyCoin / the determinism oracle are unaffected
+and the feature-off build is byte-identical).
+
+- **Input Miniatures overlay (A1)** — **Tools → Input Miniatures** opens a live
+  panel drawing every connected input device with real-time button / axis state:
+  the standard pads (P1..P4, all four with the Four Score) and whatever
+  non-standard device occupies the port-2 / expansion slot — Zapper (trigger +
+  light-sensor strip), Arkanoid Vaus (paddle-knob slider + button), SNES mouse
+  (left/right buttons + motion delta), Power Pad / Family Trainer mat (12-button
+  grid), Family BASIC / Subor keyboard (pressed-key count), Konami Hyper Shot
+  (P1/P2 Run/Jump), Bandai Hyper Shot (8-sensor mat). The app builds a frontend
+  `MiniaturesSnapshot` each frame from the same host-side input state the emulator
+  is fed (`input_miniatures_snapshot`) and pushes it via
+  `DebuggerOverlay::set_input_miniatures` — no core touch, no determinism surface.
+
+- **Graphical PPU Event Viewer (A2)** — the read/write heatmap described under the
+  **Events** panel above (a new `debug-hooks`-gated PPU-register **read** capture
+  in the core event log: `EventKind::PpuRead` + a `value` byte on `EventRec`).
+
+- **PPU scanline-trace viewer + CHR→PNG export (A3)** — the **Scanline trace** tab
+  plus the CHR→PNG export described under the **PPU** panel above.
+
+- **HD-pack per-pixel inspector (A4)** — **Tools → HD Pack → Pixel Inspector**
+  (native + `hd-pack`). For a chosen NES pixel it shows the HD-pack composition
+  trace via a new `HdCompositor::inspect_pixel` query: the dominant tile's CHR
+  identity (address / sprite-or-bg / flips / palette) + the Mesen CHR hash, the
+  replacement rule that matched (image index) or the gated-off candidate, the
+  gating `<condition>` names with their per-frame outcomes (ADR 0014), the base
+  (stock) vs final (composited) RGBA, and an original/mod blend slider. The panel
+  renders in the app's egui `extra` closure because it needs the live compositor +
+  the per-frame snapshots (`present_hd_tiles` / `present_watched_mem` /
+  `present_chr_snapshot`) the app captured under the emu lock for `composite`; the
+  inspector only reads those already-deterministic snapshots and mutates nothing.
 
 All panels are floating windows in egui's window system. The tool panels
-(Cheats / Settings / Netplay / Cheevos / Perf / Input) are the same windows
-the menu bar surfaces directly (see "Chip panels vs tool panels" above).
+(Cheats / Settings / Netplay / Cheevos / Perf / Input / Input Miniatures /
+HD Pixel Inspector) are the same windows the menu bar surfaces directly (see
+"Chip panels vs tool panels" above).
 
 ## Settings
 

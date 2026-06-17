@@ -103,6 +103,17 @@ gpu-timing = []
 # (archive packs) deps. See `docs/ppu-2c02.md` §HD-pack tile-source export.
 hd-pack = ["rustynes-core/hd-pack"]
 
+# v1.5.0 "Lens" Workstream A — explicit alias for the always-on core
+# `debug-hooks` feature. The frontend ALREADY pulls `rustynes-core` with
+# `debug-hooks` on (so the devtool panels — Trace / Event Viewer / the v1.5.0
+# Input Miniatures + PPU Event heatmap + scanline trace — always compile), but
+# the core's `debug-hooks` telemetry is OFF in the headless test/bench builds,
+# which is what keeps AccuracyCoin / the determinism oracle byte-identical. This
+# alias just lets `cargo clippy -p rustynes-frontend --features debug-hooks`
+# resolve to the same build; it adds nothing (the dependency below is the real
+# enable). The output-only `debug-hooks` core code is determinism-neutral.
+debug-hooks = ["rustynes-core/debug-hooks"]
+
 [[bin]]
 name = "rustynes"
 path = "src/main.rs"

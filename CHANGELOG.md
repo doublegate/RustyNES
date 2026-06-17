@@ -15,6 +15,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **v1.5.0 "Lens" Workstream A — debugger visualization (beta.1).** Four
+  GeraNES-class *visualization* devtools, all output-only and determinism-neutral
+  (the new core telemetry is `debug-hooks`-gated and off in the headless / shipped
+  builds, so AccuracyCoin holds 100% (139/139) and the shipped / native / `no_std`
+  / wasm builds stay byte-identical to v1.4.1):
+  - **Input Miniatures overlay (A1).** A live **Tools -> Input Miniatures** panel
+    drawing every connected input device with real-time button / axis feedback —
+    the standard pads (P1..P4, multitap with the Four Score) plus whatever
+    non-standard device occupies the port-2 / expansion slot: Zapper (trigger +
+    light-sensor strip), Arkanoid Vaus (paddle knob + button), SNES mouse
+    (buttons + motion delta), Power Pad / Family Trainer mat, Family BASIC / Subor
+    keyboard (pressed-key count), Konami / Bandai Hyper Shot. Reads the same
+    host-side input snapshot the emulator is fed
+    (`debugger/input_miniatures_panel.rs`); no new core surface.
+  - **Graphical PPU Event Viewer (A2).** The **Debug -> Event Viewer** panel is
+    now a full 341 x 312 per-dot **read/write heatmap** (blue = PPU-register read,
+    red = write) with hover/click cycle metadata (register name, value, scanline,
+    dot) and a synchronized register-access table. Backed by a new
+    `debug-hooks`-gated PPU-register **read** capture in the event log
+    (a new `EventKind::PpuRead` plus a `value` byte on `EventRec`); bounded by the
+    existing per-frame cap, output-only.
+  - **PPU scanline-trace viewer + CHR->PNG export (A3).** The **Debug -> PPU**
+    panel gains a **Scanline trace** tab (per-scanline scroll/render register-write
+    trace — $2000/$2001/$2005/$2006 — derived from the event log, surfacing
+    mid-frame raster splits) and a **CHR -> PNG export** of the combined 256x128
+    pattern dump (native).
+  - **HD-pack per-pixel inspector (A4; native + `hd-pack`).** A new
+    **Tools -> HD Pack -> Pixel Inspector** window: per-pixel HD-pack composition
+    trace via a new `HdCompositor::inspect_pixel` query — the dominant tile's CHR
+    identity + Mesen hash, the matched replacement rule + image, the gating
+    `<condition>` names with their per-frame outcomes (ADR 0014), base vs final
+    RGBA, and an original/mod blend slider. The v1.4.0 D3 carryover; builds on the
+    HD-pack tile-source telemetry. Display-only — the compositor reads the same
+    deterministic per-frame snapshots `composite` consumed and mutates nothing.
+
 ## [1.4.1] - 2026-06-16
 
 **Patch** — four more BestEffort mapper boot/decode fixes surfaced by the

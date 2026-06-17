@@ -98,6 +98,8 @@ pub mod glyph {
     pub const DATABASE: char = '\u{f1c0}';
     /// `puzzle-piece` — Mod / HD-pack menu.
     pub const PUZZLE_PIECE: char = '\u{f12e}';
+    /// `magnifying-glass` — HD-pack pixel inspector (v1.5.0 A4).
+    pub const MAGNIFYING_GLASS: char = '\u{f002}';
     /// `file-zipper` — ZIP pack.
     pub const FILE_ZIPPER: char = '\u{f1c6}';
     /// `xmark` — clear / unload / close.

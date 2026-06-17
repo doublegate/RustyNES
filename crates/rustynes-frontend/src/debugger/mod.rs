@@ -60,7 +60,14 @@ mod cheevos_panel;
 mod cpu_panel;
 mod event_panel;
 mod game_db_panel;
+// v1.5.0 "Lens" Workstream A4 — HD-pack per-pixel inspector (native + hd-pack).
+// `pub(crate)` so `app.rs` can drive its `show` (the panel needs the compositor
+// + per-frame snapshots the app owns, so its render lives there, not here).
+#[cfg(all(not(target_arch = "wasm32"), feature = "hd-pack"))]
+pub(crate) mod hd_pixel_panel;
 mod input_display_panel;
+// v1.5.0 "Lens" Workstream A1 — live Input Miniatures overlay.
+mod input_miniatures_panel;
 mod input_rebind_panel;
 mod mapper_panel;
 mod memory_compare_panel;
@@ -76,6 +83,8 @@ mod settings_panel;
 mod trace_panel;
 
 pub use cheevos_panel::{CheevosRequest, CheevosStatusView};
+// v1.5.0 "Lens" Workstream A1 — the input-miniatures snapshot the app pushes.
+pub use input_miniatures_panel::{ExpansionMini, MiniaturesSnapshot};
 pub use netplay_panel::{
     CrcCompareView, NetplayDiagnosticsView, NetplayPhaseView, NetplayRequest, NetplayStatusView,
 };
@@ -104,6 +113,12 @@ pub enum ToolPanel {
     InputDisplay,
     /// Per-game ROM-database editor (v1.2.0 Workstream B, B4).
     GameDb,
+    /// Live Input Miniatures overlay (v1.5.0 "Lens" Workstream A1).
+    InputMiniatures,
+    /// HD-pack per-pixel inspector (v1.5.0 "Lens" Workstream A4; native +
+    /// `hd-pack`). The enum variant is unconditional so the menu IA + dispatch
+    /// match stay exhaustive; the actual panel + open path is feature-gated.
+    HdPixelInspector,
 }
 
 /// A chip-inspection panel surfaced from the Debug menu (v1.0.0).
@@ -165,6 +180,11 @@ pub struct DebuggerOverlay {
     show_cheevos: bool,
     show_perf: bool,
     show_game_db: bool,
+    /// v1.5.0 A1 — Input Miniatures overlay open flag.
+    show_input_miniatures: bool,
+    /// v1.5.0 A4 — HD-pack pixel inspector open flag (native + `hd-pack`).
+    #[cfg(all(not(target_arch = "wasm32"), feature = "hd-pack"))]
+    show_hd_pixel: bool,
     /// CPU panel state (auto-follow PC, address jump, ...).
     cpu_ui: cpu_panel::CpuPanelState,
     /// PPU panel state.
@@ -197,6 +217,13 @@ pub struct DebuggerOverlay {
     /// Number of active players to show in the input-display HUD (2, or 4 with
     /// Four Score).
     input_players: usize,
+    /// v1.5.0 A1 — Input Miniatures panel state.
+    input_miniatures_ui: input_miniatures_panel::InputMiniaturesPanelState,
+    /// v1.5.0 A1 — the live input-miniatures snapshot the app pushes each frame.
+    input_miniatures: MiniaturesSnapshot,
+    /// v1.5.0 A4 — HD-pack pixel inspector state (native + `hd-pack`).
+    #[cfg(all(not(target_arch = "wasm32"), feature = "hd-pack"))]
+    hd_pixel_ui: hd_pixel_panel::HdPixelPanelState,
     /// Game Genie cheat panel state (v1.6.0).
     cheat_ui: cheat_panel::CheatPanelState,
     /// ROM-database editor panel state (v1.2.0 Workstream B, B4).
@@ -306,6 +333,9 @@ impl DebuggerOverlay {
             show_cheevos: false,
             show_perf: false,
             show_game_db: false,
+            show_input_miniatures: false,
+            #[cfg(all(not(target_arch = "wasm32"), feature = "hd-pack"))]
+            show_hd_pixel: false,
             cpu_ui: cpu_panel::CpuPanelState::default(),
             ppu_ui: ppu_panel::PpuPanelState::default(),
             oam_ui: oam_panel::OamPanelState::default(),
@@ -314,13 +344,17 @@ impl DebuggerOverlay {
             memory_compare_ui: memory_compare_panel::MemoryComparePanelState::default(),
             mapper_ui: mapper_panel::MapperPanelState::default(),
             trace_ui: trace_panel::TracePanelState::default(),
-            event_ui: event_panel::EventPanelState,
+            event_ui: event_panel::EventPanelState::default(),
             nsf_ui: nsf_panel::NsfPanelState::default(),
             script_ui: script_panel::ScriptPanelState::default(),
             input_ui: input_rebind_panel::InputPanelState::default(),
             input_display_ui: input_display_panel::InputDisplayPanelState,
             input_pads: [Buttons::empty(); 4],
             input_players: 2,
+            input_miniatures_ui: input_miniatures_panel::InputMiniaturesPanelState,
+            input_miniatures: MiniaturesSnapshot::default(),
+            #[cfg(all(not(target_arch = "wasm32"), feature = "hd-pack"))]
+            hd_pixel_ui: hd_pixel_panel::HdPixelPanelState::default(),
             cheat_ui: cheat_panel::CheatPanelState::default(),
             game_db_ui: game_db_panel::GameDbPanelState::default(),
             rom_crc: None,
@@ -615,7 +649,46 @@ impl DebuggerOverlay {
             ToolPanel::Input => self.show_input = true,
             ToolPanel::InputDisplay => self.show_input_display = true,
             ToolPanel::GameDb => self.show_game_db = true,
+            ToolPanel::InputMiniatures => self.show_input_miniatures = true,
+            ToolPanel::HdPixelInspector => {
+                #[cfg(all(not(target_arch = "wasm32"), feature = "hd-pack"))]
+                {
+                    self.show_hd_pixel = true;
+                }
+            }
         }
+    }
+
+    /// v1.5.0 A1 — push the live Input Miniatures snapshot (built by the app
+    /// each frame from its host-side input state). Frontend-only; no core touch.
+    pub fn set_input_miniatures(&mut self, snap: MiniaturesSnapshot) {
+        self.input_miniatures = snap;
+    }
+
+    /// v1.5.0 A4 — whether the HD-pack pixel inspector window is open. Native +
+    /// `hd-pack` only.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "hd-pack"))]
+    #[must_use]
+    pub const fn hd_pixel_open(&self) -> bool {
+        self.show_hd_pixel
+    }
+
+    /// v1.5.0 A4 — clone the HD-pack pixel-inspector state out so the app can
+    /// render the panel in its egui `extra` closure (the panel needs the
+    /// compositor + per-frame snapshots the app owns, so its render lives in
+    /// `app.rs`, borrow-disjoint from the debugger's own `render_shell` pass).
+    #[cfg(all(not(target_arch = "wasm32"), feature = "hd-pack"))]
+    #[must_use]
+    pub fn hd_pixel_state(&self) -> hd_pixel_panel::HdPixelPanelState {
+        self.hd_pixel_ui.clone()
+    }
+
+    /// v1.5.0 A4 — write the HD-pack pixel-inspector state + open flag back after
+    /// the app rendered the panel against a clone.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "hd-pack"))]
+    pub fn set_hd_pixel_state(&mut self, state: hd_pixel_panel::HdPixelPanelState, open: bool) {
+        self.hd_pixel_ui = state;
+        self.show_hd_pixel = open;
     }
 
     /// v1.0.0 — open a chip-inspection panel (CPU / PPU / OAM / APU / Memory /
@@ -985,6 +1058,14 @@ impl DebuggerOverlay {
                 &mut self.input_display_ui,
                 &self.input_pads,
                 self.input_players,
+            );
+        }
+        if self.show_input_miniatures {
+            input_miniatures_panel::show(
+                ctx,
+                &mut self.show_input_miniatures,
+                &mut self.input_miniatures_ui,
+                &self.input_miniatures,
             );
         }
         if self.show_cheat {
