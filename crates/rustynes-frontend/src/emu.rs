@@ -144,6 +144,12 @@ pub struct FrameInputs {
     /// the left button reuses `mouse_pressed`).
     #[cfg(not(target_arch = "wasm32"))]
     pub mouse_right: bool,
+    /// v1.5.0 "Lens" Workstream D4 — SNES-mouse reported sensitivity (0 = low,
+    /// 1 = medium, 2 = high), the 2-bit serial-report field. Default `0` (low)
+    /// matches the previous hardcoded value, so the device report is
+    /// byte-identical to a pre-D4 config.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub mouse_sensitivity: u8,
     /// v1.2.0 Workstream D — Family BASIC keyboard pressed-key matrix bitmap
     /// (one byte per matrix row). Consumed only when the expansion device is a
     /// Family BASIC keyboard. All-zero (no keys) by default = byte-identical.
@@ -386,7 +392,17 @@ impl EmuCore {
                     }
                     ExpansionDevice::SnesMouse => {
                         let (dx, dy) = inputs.mouse_delta;
-                        nes.set_snes_mouse(1, dx, dy, inputs.mouse_pressed, inputs.mouse_right, 0);
+                        // v1.5.0 D4 — reported sensitivity is now configurable
+                        // (was hardcoded 0); default 0 keeps the report
+                        // byte-identical.
+                        nes.set_snes_mouse(
+                            1,
+                            dx,
+                            dy,
+                            inputs.mouse_pressed,
+                            inputs.mouse_right,
+                            inputs.mouse_sensitivity.min(2),
+                        );
                     }
                     ExpansionDevice::FamilyKeyboard => {
                         nes.set_family_keyboard(1, inputs.family_keyboard);

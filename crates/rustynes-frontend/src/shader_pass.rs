@@ -508,14 +508,15 @@ impl ShaderStack {
         width: u32,
         height: u32,
         par_correction: bool,
-        hide_overscan: bool,
+        overscan: crate::config::Overscan,
         video_phase: u8,
         ntsc_knobs: crate::ntsc_bisqwit::NtscKnobs,
     ) {
         // Identity transform for the NES-res -> NES-res intermediate passes (full
         // [0,1] UV, no crop). Only the FINAL pass letterboxes to the swapchain.
-        const IDENTITY: [f32; 8] = [1.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0];
-        let lb = crate::gfx::letterbox_uniform(width, height, par_correction, hide_overscan);
+        // crop = (scale_v=1, offset_v=0, scale_u=1, offset_u=0) leaves UV intact.
+        const IDENTITY: [f32; 8] = [1.0, 1.0, 0.0, 0.0, 1.0, 0.0, 1.0, 0.0];
+        let lb = crate::gfx::letterbox_uniform(width, height, par_correction, overscan);
 
         for (i, pass) in self.passes.iter().enumerate() {
             let transform = if pass.is_final { lb } else { IDENTITY };

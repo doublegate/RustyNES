@@ -25,7 +25,7 @@ use wgpu::util::DeviceExt;
 pub(crate) const SHADER_SRC: &str = r"
 struct Uniforms {
     rect: vec4<f32>,   // letterbox transform (same shape + math as gfx.wgsl)
-    crop: vec4<f32>,   // overscan crop: x = vertical scale, y = vertical offset
+    crop: vec4<f32>,   // overscan crop: x=v-scale, y=v-offset, z=u-scale, w=u-offset
     params: vec4<f32>, // x = scanline intensity, y = mask intensity, z,w unused
 };
 
@@ -65,8 +65,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if (in.uv.x < 0.0 || in.uv.x > 1.0 || in.uv.y < 0.0 || in.uv.y > 1.0) {
         return vec4<f32>(0.0, 0.0, 0.0, 1.0);
     }
-    // Overscan crop: remap the visible V range onto the inner rows.
-    let suv = vec2<f32>(in.uv.x, in.uv.y * u.crop.x + u.crop.y);
+    // Overscan crop: remap the visible V (crop.xy) and U (crop.zw) ranges.
+    let suv = vec2<f32>(in.uv.x * u.crop.z + u.crop.w, in.uv.y * u.crop.x + u.crop.y);
     var rgb = textureSample(nes_tex, nes_smp, suv).rgb;
 
     let scan_amt = u.params.x;
@@ -232,7 +232,7 @@ impl CrtFilter {
             // rect (identity letterbox) + crop (none) + params (scanline, mask).
             contents: bytemuck::cast_slice(&[
                 1.0f32, 1.0, 0.0, 0.0, // rect
-                1.0, 0.0, 0.0, 0.0, // crop
+                1.0, 0.0, 1.0, 0.0, // crop (v-scale, v-off, u-scale, u-off)
                 scanline, mask, 0.0, 0.0, // params
             ]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
@@ -283,10 +283,10 @@ impl CrtFilter {
         width: u32,
         height: u32,
         par_correction: bool,
-        hide_overscan: bool,
+        overscan: crate::config::Overscan,
     ) {
         // rect (4) + crop (4) from the shared helper, then the CRT params (4).
-        let lb = crate::gfx::letterbox_uniform(width, height, par_correction, hide_overscan);
+        let lb = crate::gfx::letterbox_uniform(width, height, par_correction, overscan);
         let uniform = [
             lb[0],
             lb[1],

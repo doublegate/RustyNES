@@ -26,7 +26,7 @@ struct Uniforms {
     // Letterbox transform (same shape + math as gfx.wgsl's blit): rect.xy =
     // the image's fraction of the surface, rect.zw = offset.
     rect: vec4<f32>,
-    // Overscan crop: x = vertical scale, y = vertical offset (texture-V space);
+    // Overscan crop: x=v-scale, y=v-offset, z=u-scale, w=u-offset (texture space);
     // (1.0, 0.0) = full frame.
     crop: vec4<f32>,
 };
@@ -68,8 +68,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if (in.uv.x < 0.0 || in.uv.x > 1.0 || in.uv.y < 0.0 || in.uv.y > 1.0) {
         return vec4<f32>(0.0, 0.0, 0.0, 1.0);
     }
-    // Overscan crop: remap the visible V range onto the inner rows.
-    let suv = vec2<f32>(in.uv.x, in.uv.y * u.crop.x + u.crop.y);
+    // Overscan crop: remap the visible V (crop.xy) and U (crop.zw) ranges.
+    let suv = vec2<f32>(in.uv.x * u.crop.z + u.crop.w, in.uv.y * u.crop.x + u.crop.y);
     let tx_size = vec2<f32>(256.0, 240.0);
     let texel = 1.0 / tx_size.x;
     // 5-tap horizontal box blur in luma; same blur applied per channel.
@@ -251,9 +251,9 @@ impl NtscFilter {
         width: u32,
         height: u32,
         par_correction: bool,
-        hide_overscan: bool,
+        overscan: crate::config::Overscan,
     ) {
-        let uniform = crate::gfx::letterbox_uniform(width, height, par_correction, hide_overscan);
+        let uniform = crate::gfx::letterbox_uniform(width, height, par_correction, overscan);
         queue.write_buffer(&self.uniforms, 0, bytemuck::cast_slice(&uniform));
 
         let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

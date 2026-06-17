@@ -1240,9 +1240,10 @@ impl App {
         // v1.4.0 Workstream C — refresh the Settings panel's expansion-audio chip
         // label so the expansion-channel volume slider matches the loaded mapper.
         self.refresh_expansion_audio_chip();
-        // v1.1.0 beta.1 — re-apply the configured custom .pal palette onto the
-        // fresh Nes (booted with the built-in palette). None = byte-identical.
-        self.apply_palette_from_config();
+        // v1.1.0 beta.1 / v1.5.0 D1 — re-apply the active palette (named bank
+        // entry, else legacy .pal / built-in) onto the fresh Nes (booted with
+        // the built-in palette). None / unselected = byte-identical.
+        self.apply_active_palette();
         // v2.7.0 — (re)identify the ROM with RetroAchievements + load its saved
         // progress sidecar. No-op when no RA session is active.
         #[cfg(feature = "retroachievements")]
@@ -2528,11 +2529,27 @@ impl App {
             // Map the cursor (physical window px) to the 256x240 NES screen,
             // assuming the framebuffer fills the window (letterbox bars read
             // as off-screen — the correct Zapper "no light" behavior).
+            // v1.5.0 D4 — the Vaus paddle X applies the pointer-scale gain
+            // around the screen centre (pointer_scale 1.0 = the prior 1:1 map,
+            // byte-identical); the Zapper aim is unaffected (the gain is only
+            // meaningful for the paddle and the clamp keeps the aim sane).
             #[cfg(not(target_arch = "wasm32"))]
             mouse_nes: self.cursor_pos.map_or((u16::MAX, u16::MAX), |(cx, cy)| {
                 let (ww, wh) = self.window_size;
+                let scale = f64::from(self.config.input.pointer_scale.clamp(0.1, 8.0));
+                let raw_x = (cx / f64::from(ww.max(1))) * 256.0;
+                // Apply the paddle gain (deviation from centre 128, scaled) only
+                // for the Vaus device; the Zapper keeps the raw cursor map.
+                let mapped_x = if matches!(
+                    self.config.input.expansion_device,
+                    crate::config::ExpansionDevice::Vaus
+                ) {
+                    (raw_x - 128.0).mul_add(scale, 128.0)
+                } else {
+                    raw_x
+                };
                 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                let x = ((cx / f64::from(ww.max(1))) * 256.0) as i64;
+                let x = mapped_x.clamp(0.0, 255.0) as i64;
                 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                 let y = ((cy / f64::from(wh.max(1))) * 240.0) as i64;
                 (
@@ -2548,8 +2565,14 @@ impl App {
             // keyboard-driven one (native keymap on wasm-winit + touch overlay).
             #[cfg(target_arch = "wasm32")]
             power_pad: self.input.power_pad() | crate::wasm_touch::touch_power_pad(),
+            // v1.5.0 D4 — remap the mat mask for the selected Power Pad layout
+            // side (Side A = identity, byte-identical).
             #[cfg(not(target_arch = "wasm32"))]
-            power_pad: self.input.power_pad(),
+            power_pad: self
+                .config
+                .input
+                .power_pad_layout
+                .remap_mask(self.input.power_pad()),
             // v1.2.0 Workstream F2 — the Power Pad is the active wasm device when
             // the touch UI selected it (gates the wasm-only latch arm in
             // `EmuCore::latch`; native keys off `expansion` instead).
@@ -2557,17 +2580,23 @@ impl App {
             power_pad_active: crate::wasm_touch::touch_power_pad_active(),
             // v1.2.0 Workstream D — SNES mouse: report the motion accumulated
             // since the last frame latch (drained by the produce / publish path).
+            // v1.5.0 D4 — scale the accumulated motion by the pointer-speed
+            // multiplier (1.0 = the prior 1:1 motion, byte-identical) before the
+            // ±127 clamp the serial mouse reports.
             #[cfg(not(target_arch = "wasm32"))]
             #[allow(clippy::cast_possible_truncation)]
             mouse_delta: {
                 let (ax, ay) = self.mouse_motion_accum;
+                let scale = f64::from(self.config.input.pointer_scale.clamp(0.1, 8.0));
                 (
-                    ax.clamp(-127.0, 127.0) as i16,
-                    ay.clamp(-127.0, 127.0) as i16,
+                    (ax * scale).clamp(-127.0, 127.0) as i16,
+                    (ay * scale).clamp(-127.0, 127.0) as i16,
                 )
             },
             #[cfg(not(target_arch = "wasm32"))]
             mouse_right: self.mouse_right_pressed,
+            #[cfg(not(target_arch = "wasm32"))]
+            mouse_sensitivity: self.config.input.mouse_sensitivity.min(2),
             #[cfg(not(target_arch = "wasm32"))]
             family_keyboard: self.family_keyboard,
             // v1.3.0 Workstream F1 — Konami / Bandai Hyper Shot masks. Consumed
@@ -3867,6 +3896,37 @@ impl App {
             if let Some(nes) = guard.nes.as_mut() {
                 nes.set_custom_palette(pal);
             }
+        }
+    }
+
+    /// v1.5.0 "Lens" Workstream D1 — apply the active named palette to the core
+    /// (or clear back to the built-in / legacy `.pal`). When an entry in the
+    /// named bank is selected it takes precedence over the legacy `.pal` file;
+    /// when nothing is selected we fall back to `apply_palette_from_config`
+    /// (built-in or legacy file). Presentation-only; built-in/unselected is
+    /// byte-identical.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        allow(clippy::missing_const_for_fn, clippy::needless_pass_by_ref_mut)
+    )]
+    fn apply_active_palette(&mut self) {
+        let base = self
+            .config
+            .graphics
+            .active_palette
+            .as_ref()
+            .and_then(|name| self.config.graphics.palettes.palettes.get(name))
+            .map(crate::config::CustomPalette::to_base);
+        match base {
+            Some(pal) => {
+                let mut guard = self.emu.lock();
+                if let Some(nes) = guard.nes.as_mut() {
+                    nes.set_custom_palette(Some(pal));
+                }
+            }
+            // No named palette selected — fall back to the built-in or the
+            // legacy `.pal` file (handles the "cleared to built-in" case too).
+            None => self.apply_palette_from_config(),
         }
     }
 
@@ -5534,8 +5594,9 @@ impl App {
             // v1.4.0 Workstream C — push the persisted per-APU-channel gain.
             // Default (all 1.0) leaves the deterministic audio unchanged.
             self.apply_apu_channel_gain();
-            // v1.1.0 beta.1 — re-apply the configured custom .pal palette.
-            self.apply_palette_from_config();
+            // v1.1.0 beta.1 / v1.5.0 D1 — re-apply the active palette (named
+            // bank entry, else legacy .pal / built-in).
+            self.apply_active_palette();
             // v2.8.0 Phase 5 increment 3 — spawn the emulation thread (it
             // idles until `start_nes` flips its `has_rom`). The `Send` audio
             // producer is made from `self.audio` here, so it must precede
@@ -5686,8 +5747,9 @@ impl App {
         // v1.4.0 Workstream C — refresh the Settings panel's expansion-audio chip
         // label so the expansion-channel volume slider matches the loaded mapper.
         self.refresh_expansion_audio_chip();
-        // v1.1.0 beta.1 — re-apply the configured custom .pal palette.
-        self.apply_palette_from_config();
+        // v1.1.0 beta.1 / v1.5.0 D1 — re-apply the active palette (named bank
+        // entry, else legacy .pal / built-in).
+        self.apply_active_palette();
         // v2.7.0 — identify the ROM with RetroAchievements + load its progress
         // sidecar. No-op when no RA session is active.
         #[cfg(feature = "retroachievements")]
@@ -6782,11 +6844,14 @@ impl ApplicationHandler<AppEvent> for App {
                 if settings.audio_eq {
                     self.apply_audio_eq();
                 }
-                // v1.0.0 — overscan crop live-apply (the gfx letterbox UV rect).
+                // v1.0.0 / v1.5.0 D2 — overscan crop live-apply (the gfx
+                // letterbox UV rect): push BOTH the legacy toggle and the
+                // per-side crop. The gfx combines them via `effective_overscan`.
                 if settings.overscan
                     && let Some(gfx) = self.gfx.as_mut()
                 {
                     gfx.set_hide_overscan(self.config.graphics.hide_overscan);
+                    gfx.set_overscan(self.config.graphics.overscan);
                 }
                 // v1.1.0 beta.1 — CRT filter live-apply. CRT and NTSC are
                 // mutually exclusive at render time; turning CRT on drops NTSC so
@@ -6844,6 +6909,11 @@ impl ApplicationHandler<AppEvent> for App {
                 #[cfg(not(target_arch = "wasm32"))]
                 if settings.palette_clear {
                     self.clear_palette();
+                }
+                // v1.5.0 D1 — named-palette select / edit live-apply: resolve the
+                // active base palette and push it to the core (or clear it).
+                if settings.palette_select {
+                    self.apply_active_palette();
                 }
                 // v1.0.0 — per-APU-channel mute live-apply: push the mask into
                 // the core under the emu lock. Default mask = byte-identical.
