@@ -1966,6 +1966,154 @@ impl App {
         }
     }
 
+    /// v1.6.0 "Studio" A2 — lazily start a `TAStudio` session when the window is
+    /// first opened on a loaded ROM. The current emulator state becomes the
+    /// project's frame-0 anchor (non-destructive: we do not power-cycle the
+    /// running game). No-op if a session is already active or no ROM is loaded.
+    fn ensure_tas_editor(&mut self) {
+        use crate::debugger::DebuggerOverlay;
+        // Greenzone budget + keyframe spacing for the editing session. 256 MiB
+        // holds a generous run of save-states; the editor LRU-evicts past it.
+        const TAS_GREENZONE_BUDGET: usize = 256 << 20;
+        const TAS_CAPTURE_INTERVAL: usize = 16;
+
+        if self
+            .debugger
+            .as_ref()
+            .is_none_or(DebuggerOverlay::tas_active)
+        {
+            return; // no overlay to host it, or a session already exists
+        }
+        let editor = {
+            let guard = self.emu.lock();
+            let Some(nes) = guard.nes.as_ref() else {
+                return; // no ROM loaded — nothing to anchor on
+            };
+            crate::tastudio::TasEditor::new(nes, TAS_GREENZONE_BUDGET, TAS_CAPTURE_INTERVAL)
+        };
+        if let Some(d) = self.debugger.as_mut() {
+            d.set_tas_editor(editor);
+        }
+    }
+
+    /// v1.6.0 "Studio" A2 — apply the `TAStudio` panel's queued requests after the
+    /// egui pass. Edits/seeks touch the `TasEditor` (and, for seek / branch, the
+    /// `Nes`) under the emu lock; seeking re-derives state by replaying inputs,
+    /// so determinism is preserved (no new non-deterministic surface).
+    fn handle_tas_requests(&mut self) {
+        use crate::debugger::TasRequest;
+        let reqs = match self.debugger.as_mut() {
+            Some(d) => d.take_tas_requests(),
+            None => return,
+        };
+        for req in reqs {
+            match req {
+                // .rnmproj file I/O uses the native file dialog; the browser
+                // build has no equivalent yet (parity item for a follow-up), so
+                // these are no-ops on wasm.
+                TasRequest::SaveProject => {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    self.save_tas_project();
+                }
+                TasRequest::LoadProject => {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    self.load_tas_project();
+                }
+                edit => {
+                    let mut guard = self.emu.lock();
+                    let emu = &mut *guard;
+                    let Some(nes) = emu.nes.as_mut() else {
+                        continue;
+                    };
+                    let Some(ed) = self
+                        .debugger
+                        .as_mut()
+                        .and_then(DebuggerOverlay::tas_editor_mut)
+                    else {
+                        continue;
+                    };
+                    match edit {
+                        TasRequest::Seek(f) => ed.seek(nes, f),
+                        TasRequest::SetInput { frame, input } => {
+                            ed.set_input(frame, input);
+                        }
+                        TasRequest::SetMarker { frame, label } => ed.set_marker(frame, label),
+                        TasRequest::RemoveMarker(f) => ed.remove_marker(f),
+                        TasRequest::InsertFrame(f) => ed.insert_frame(f),
+                        TasRequest::DeleteFrame(f) => ed.delete_frame(f),
+                        TasRequest::CreateBranch => {
+                            ed.create_branch(nes);
+                        }
+                        TasRequest::LoadBranch(i) => {
+                            ed.load_branch(i, nes);
+                        }
+                        TasRequest::DeleteBranch(i) => ed.delete_branch(i),
+                        // Handled above (outside the lock — they open dialogs).
+                        TasRequest::SaveProject | TasRequest::LoadProject => {}
+                    }
+                }
+            }
+        }
+    }
+
+    /// v1.6.0 "Studio" A2 — write the active `TAStudio` project to a chosen
+    /// `.rnmproj` file (native file dialog).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn save_tas_project(&mut self) {
+        use crate::debugger::DebuggerOverlay;
+        let Some(bytes) = self
+            .debugger
+            .as_mut()
+            .and_then(DebuggerOverlay::tas_editor_mut)
+            .map(|e| e.to_rnmproj())
+        else {
+            return;
+        };
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("TAStudio project", &["rnmproj"])
+            .set_file_name("project.rnmproj")
+            .save_file()
+        else {
+            return;
+        };
+        if let Err(e) = std::fs::write(&path, &bytes) {
+            eprintln!(
+                "rustynes: TAStudio project save failed {}: {e}",
+                path.display()
+            );
+        }
+    }
+
+    /// v1.6.0 "Studio" A2 — load a `.rnmproj` project into the active session.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn load_tas_project(&mut self) {
+        use crate::debugger::DebuggerOverlay;
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("TAStudio project", &["rnmproj"])
+            .pick_file()
+        else {
+            return;
+        };
+        let bytes = match std::fs::read(&path) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!(
+                    "rustynes: TAStudio project read failed {}: {e}",
+                    path.display()
+                );
+                return;
+            }
+        };
+        if let Some(e) = self
+            .debugger
+            .as_mut()
+            .and_then(DebuggerOverlay::tas_editor_mut)
+            && let Err(err) = e.load_rnmproj(&bytes)
+        {
+            eprintln!("rustynes: TAStudio project parse failed: {err}");
+        }
+    }
+
     /// v1.5.0 "Lens" Workstream C2 — dispatch a Replay / TAS window action.
     ///
     /// Record / Play / Branch reuse the existing F6/F7/F8 menu handlers (so the
@@ -3213,6 +3361,11 @@ impl App {
                 }
             }
             MenuAction::OpenPanel(panel) => {
+                // v1.6.0 "Studio" A2 — opening TAStudio on a loaded ROM starts a
+                // session by anchoring the editor on the current emulator state.
+                if panel == crate::debugger::ToolPanel::TasStudio {
+                    self.ensure_tas_editor();
+                }
                 if let Some(d) = self.debugger.as_mut() {
                     d.open_panel(panel);
                 }
@@ -7125,6 +7278,10 @@ impl ApplicationHandler<AppEvent> for App {
                 {
                     self.handle_replay_request(req, event_loop);
                 }
+
+                // v1.6.0 "Studio" A2 — apply any TAStudio piano-roll edits /
+                // seeks queued by the panel this frame (under the emu lock).
+                self.handle_tas_requests();
             }
             _ => {}
         }

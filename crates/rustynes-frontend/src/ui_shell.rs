@@ -1075,6 +1075,16 @@ impl UiShell {
                         out.action = Some(MenuAction::OpenPanel(ToolPanel::Replay));
                         ui.close();
                     }
+                    // v1.6.0 "Studio" Workstream A2 — TAStudio piano-roll TAS
+                    // editor. Needs a loaded ROM (the editor anchors on the
+                    // current emulator state as the project's frame 0).
+                    if ui
+                        .add_enabled(rom, egui::Button::new(ic(glyph::VIDEO, "TAStudio")))
+                        .clicked()
+                    {
+                        out.action = Some(MenuAction::OpenPanel(ToolPanel::TasStudio));
+                        ui.close();
+                    }
                     // (H1) The ROM Database editor needs a loaded ROM to edit.
                     if ui
                         .add_enabled(rom, egui::Button::new(ic(glyph::DATABASE, "ROM Database")))

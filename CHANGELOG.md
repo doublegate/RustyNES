@@ -17,6 +17,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **TAStudio piano-roll TAS editor** (v1.6.0 Workstream A2). A new Tools →
+  TAStudio window: a vertically-scrolling piano-roll over the editor model —
+  one row per frame, one column per controller button, with click-to-toggle
+  and column drag-paint, cursor / lag / marker row tinting, a forkable-branch
+  list, seek-on-frame-click, insert/delete-frame, and `.rnmproj` project
+  save/load (native). The grid virtualizes its rows, so very long movies stay
+  cheap. Like the other tool windows it queues edits/seeks as requests applied
+  under the emu lock after the egui pass; seeking re-derives state by replaying
+  inputs, so determinism is preserved. Native-only file I/O for now (browser
+  `.rnmproj` is a parity follow-up). Additive + off the default path.
 - **UNIF (`.unf`) cartridge loader** (v1.6.0 Workstream E2). UNIF carries no
   mapper number — it identifies the cartridge by a board-name string in its
   `MAPR` chunk. `rustynes_mappers::unif` parses the header + chunks
