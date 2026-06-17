@@ -49,8 +49,12 @@ impl Biquad {
     fn peaking(freq: f32, gain_db: f32, q: f32, sample_rate: f32) -> Self {
         // Guard against a band at or above Nyquist (possible at very low host
         // sample rates, e.g. an 8 kHz device): the RBJ math would yield an
-        // unstable filter. Fall back to a pass-through identity in that case.
-        if freq >= sample_rate * 0.5 {
+        // unstable filter. The explicit `!is_finite()` check also falls back to
+        // identity for a NaN / inf sample_rate (an uninitialized / corrupt host
+        // device) rather than propagating NaNs through the audio thread —
+        // expressed without a negated partial-ord comparison (clippy
+        // `neg_cmp_op_on_partial_ord`).
+        if !sample_rate.is_finite() || freq >= sample_rate * 0.5 {
             return Self {
                 b0: 1.0,
                 b1: 0.0,
