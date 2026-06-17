@@ -141,6 +141,51 @@ const DEFAULT_CAPTURE: InputScript = InputScript::RepeatStartTap {
     checkpoints: &[900, 1100],
 };
 
+/// Per-ROM capture override.
+///
+/// The `RepeatStartTap` [`DEFAULT_CAPTURE`] is right for intro-heavy games, but
+/// for a sizeable class of titles a START tap ADVANCES the title screen into a
+/// black transition / blank menu, so the captured frame collapses. Those games
+/// render a clean, regression-sensitive title screen with a passive idle (no
+/// input) settled at a late frame instead. A handful need a longer idle to
+/// clear a slow fade. This map keys the `external/`-relative ROM path to a
+/// tailored [`InputScript`]; everything not listed uses [`DEFAULT_CAPTURE`].
+///
+/// These are accuracy-neutral capture-timing choices (the coverage harness is a
+/// screenshot generator + boot-smoke net, not the `AccuracyCoin` oracle). Each
+/// entry was verified to land on a meaningful rendered frame via the
+/// `coverage_smoke` bin.
+fn capture_override(rom_rel: &str) -> Option<InputScript> {
+    // Titles that render a title/menu with a passive idle; a START tap would
+    // advance past it into a blank transition.
+    const IDLE: InputScript = InputScript::IdleOnly { frames: 700 };
+    // A few titles need a longer fade to settle on the title screen.
+    const IDLE_LONG: InputScript = InputScript::IdleOnly { frames: 1200 };
+    let idle = [
+        "mapper-000-NROM/Gyromite.nes",
+        "mapper-001-MMC1/Dr. Mario.nes",
+        "mapper-001-MMC1/Dragon Warrior.nes",
+        "mapper-001-MMC1/Metroid.nes",
+        "mapper-022-VRC2a/Ganbare Pennant Race! (J) [!].nes",
+        "mapper-025-VRC2-VRC4/Ganbare Goemon Gaiden - Kieta Ougon Kiseru (Japan) (En) (0.99c).nes",
+        "mapper-048-TaitoTC0690/Bakushou!! Jinsei Gekijou 3 (Japan).nes",
+        "mapper-082-TaitoX1-017/Kyuukyoku Harikiri Koushien (Japan).nes",
+        "mapper-082-TaitoX1-017/Kyuukyoku Harikiri Stadium III (Japan).nes",
+        "mapper-085-VRC7/Lagrange Point (J) [!].nes",
+        "mapper-085-VRC7/Lagrange Point (Japan) (En) (1.01).nes",
+        "mapper-119-TQROM/High Speed (E) [!].nes",
+        "mapper-119-TQROM/Pin Bot (E) [!].nes",
+    ];
+    let idle_long = ["mapper-001-MMC1/Tecmo Bowl.nes"];
+    if idle.contains(&rom_rel) {
+        Some(IDLE)
+    } else if idle_long.contains(&rom_rel) {
+        Some(IDLE_LONG)
+    } else {
+        None
+    }
+}
+
 /// Walk `tests/roms/external/` and return every staged `.nes` ROM as a
 /// path RELATIVE to that `external/` root (e.g.
 /// `mapper-000-NROM/Donkey Kong.nes`), sorted for deterministic test
@@ -276,9 +321,10 @@ fn external_coverage_boot_smoke() {
         // clear per-ROM failure line.
         let rom = rom_rel.clone();
         let snap = id.clone();
+        let capture_script = capture_override(rom_rel).unwrap_or(DEFAULT_CAPTURE);
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
             move || -> Result<(), String> {
-                let capture = run_capture(&rom, DEFAULT_CAPTURE);
+                let capture = run_capture(&rom, capture_script);
 
                 // (1) Blank / few-colour health — the shared coverage
                 // heuristic. A real boot draws dozens of colours; a
@@ -299,7 +345,7 @@ fn external_coverage_boot_smoke() {
                 };
 
                 // (2) Baseline snapshot comparison.
-                let text = snapshot_text(&rom, DEFAULT_CAPTURE, &capture);
+                let text = snapshot_text(&rom, capture_script, &capture);
                 insta::assert_snapshot!(snap.as_str(), text);
 
                 // Snapshot passed; report the health verdict (if blank).
