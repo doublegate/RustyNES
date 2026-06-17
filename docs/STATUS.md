@@ -504,7 +504,8 @@ ROM dumps under `tests/roms/external/`, not committed):
 > **Engine-lineage note.** The table above is the **original 15-mapper**
 > coverage from the early engine line (the top-25-by-title-count tranche).
 > RustyNES **v1.0.0 shipped 51 mapper families**; **v1.2.0 extended this to
-> 87**, **v1.3.0 "Bedrock" to 101**, and **v1.4.0 "Fidelity" to 113** — see
+> 87**, **v1.3.0 "Bedrock" to 101**, **v1.4.0 "Fidelity" to 113**, and
+> **v1.5.0 "Lens" to 123** — see
 > `docs/mappers.md` §Mapper coverage matrix +
 > §Mapper accuracy tiering for the full current list. The "out of scope" notes
 > below were the early-engine scoping; they are retained as history and
@@ -513,13 +514,13 @@ ROM dumps under `tests/roms/external/`, not committed):
 **Mapper count.** 15 distinct mappers in the early engine line (>95% of the
 licensed library by title count) → **51 families at v1.0.0** → **87 families at
 v1.2.0** → **101 families at v1.3.0 "Bedrock"** → **113 families at v1.4.0
-"Fidelity"**, tiered for accuracy honesty:
+"Fidelity"** → **123 families at v1.5.0 "Lens"**, tiered for accuracy honesty:
 
 | Tier | Families | Accuracy-gated? | Evidence |
 |------|----------|-----------------|----------|
 | **Core** | 51 | Yes (AccuracyCoin + commercial oracle) | spec-implemented, oracle-locked |
 | **Curated** (v1.2.0) | 9 | Yes | notable games + decode spec; register-decode unit tests |
-| **BestEffort** (v1.2.0 + v1.3.0 + v1.4.0) | 53 | **No** | reference-ported long-tail; register-decode unit tests only |
+| **BestEffort** (v1.2.0 + v1.3.0 + v1.4.0 + v1.5.0) | 63 | **No** | reference-ported long-tail; register-decode unit tests only |
 
 A CI-checkable invariant forbids any `BestEffort` mapper from backing an oracle
 ROM (`rustynes-mappers::mapper_tier`; ADR 0011). The remaining tail (unlicensed

@@ -51,6 +51,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     RGBA, and an original/mod blend slider. The v1.4.0 D3 carryover; builds on the
     HD-pack tile-source telemetry. Display-only — the compositor reads the same
     deterministic per-frame snapshots `composite` consumed and mutates nothing.
+- **v1.5.0 "Lens" Workstream F — mapper-breadth continuation (113 → 123).** Ten
+  more BestEffort (Tier-2) mapper families ported into `sprint10.rs` from the
+  nesdev decode tables (and the `Mesen2` / `GeraNES` / `puNES` references):
+  **40** (NTDEC 2722, *SMB2J* pirate — fixed PRG + switchable `$C000` window +
+  a 12-bit M2 IRQ), **81** (NTDEC Super Gun, CNROM-like), **95** (NAMCOT-3425,
+  *Dragon Buster* — MMC3-subset + CHR-bit one-screen select), **112** (NTDEC
+  ASDER / Huang-1, indexed register port, no A12 IRQ), **137** (Sachen 8259D,
+  `$4100`/`$4101` command/data), **156** (DIS23C01 DAOU, split low/high CHR
+  registers + one-screen select), **162** (Waixing FS304, *San Guo Zhi II* —
+  nibble-composed 32K PRG), **178** (Waixing educational series, a
+  `$4800-$4803` register block with work-RAM), **244** (Decathlon,
+  address-decoded multicart), and **250**
+  (Nitra, *Time Diver Avenger* — MMC3-register-compatible with the data carried
+  in the address bits + an M2 IRQ counter). Each has a register-decode and a
+  save-state round-trip unit test. All BestEffort: register-decode tested only
+  and structurally excluded from the AccuracyCoin / commercial-ROM oracle gate
+  (ADR 0011 honesty gate held), so AccuracyCoin stays 100% (139/139), the
+  determinism contract is intact, and the chip stack still cross-compiles to
+  `thumbv7em-none-eabihf` (`#![no_std]` + alloc).
 - **v1.5.0 "Lens" Workstream B — Lua dev/TAS API depth (beta.2).** The native
   (mlua) Lua engine grows from an overlay/observe surface into a real dev/TAS
   automation surface. All behind the existing off-by-default `scripting` feature;
