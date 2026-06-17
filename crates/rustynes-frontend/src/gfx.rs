@@ -411,11 +411,19 @@ impl Gfx {
         let required_limits = wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits());
 
         // v2.8.0 Phase 0 — opt-in GPU pass timing (`gpu-timing` feature):
-        // request TIMESTAMP_QUERY when the adapter offers it so the render
-        // encoder can be bracketed with timestamps. Default builds request
-        // no extra features (byte-for-byte unchanged device).
+        // request the timestamp features the adapter offers so the render
+        // encoder can be bracketed with timestamps. `GpuTimer` writes its
+        // timestamps via `CommandEncoder::write_timestamp`, which needs
+        // BOTH `TIMESTAMP_QUERY` *and* `TIMESTAMP_QUERY_INSIDE_ENCODERS` —
+        // requesting only the former (as before) made wgpu validation abort
+        // at the first `write_timestamp` on any device that didn't already
+        // have the inside-encoders feature enabled. We request whichever of
+        // the two the adapter supports and only arm the timer below when both
+        // were actually granted. Default builds request no extra features
+        // (byte-for-byte unchanged device).
         #[cfg(all(not(target_arch = "wasm32"), feature = "gpu-timing"))]
-        let required_features = adapter.features() & wgpu::Features::TIMESTAMP_QUERY;
+        let required_features = adapter.features()
+            & (wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS);
         #[cfg(not(all(not(target_arch = "wasm32"), feature = "gpu-timing")))]
         let required_features = wgpu::Features::empty();
 
@@ -669,12 +677,17 @@ impl Gfx {
             cache: None,
         });
 
-        // v2.8.0 Phase 0 — arm the GPU pass timer when the feature is on and
-        // the device actually got TIMESTAMP_QUERY.
+        // v2.8.0 Phase 0 — arm the GPU pass timer only when the feature is on
+        // and the device actually got BOTH timestamp features the timer's
+        // encoder-level `write_timestamp` calls require. If the adapter offers
+        // `TIMESTAMP_QUERY` but not `TIMESTAMP_QUERY_INSIDE_ENCODERS`, the timer
+        // stays disarmed (gpu_ms reads "-") instead of aborting at submit.
         #[cfg(all(not(target_arch = "wasm32"), feature = "gpu-timing"))]
         let gpu_timer = device
             .features()
-            .contains(wgpu::Features::TIMESTAMP_QUERY)
+            .contains(
+                wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS,
+            )
             .then(|| GpuTimer::new(&device, &queue));
 
         Ok(Self {
