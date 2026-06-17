@@ -35,6 +35,7 @@ pub mod input_device;
 #[cfg(feature = "irq-timing-trace")]
 pub mod irq_trace;
 mod movie;
+pub mod movie_interop;
 mod nes;
 mod rewind;
 pub mod save_state;
