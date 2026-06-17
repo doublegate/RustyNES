@@ -831,6 +831,28 @@ impl Nes {
         }
     }
 
+    /// Length in bytes of the loaded cartridge's PRG-ROM (read-only metadata).
+    ///
+    /// Exposed for the Lua scripting `cart:prg_size()` query (and any other
+    /// read-only consumer); does not touch deterministic state.
+    #[must_use]
+    pub const fn prg_rom_len(&self) -> usize {
+        self.bus.prg_rom_len()
+    }
+
+    /// Length in bytes of the loaded cartridge's CHR-ROM (0 when the board uses
+    /// CHR-RAM). Read-only metadata; backs the Lua `cart:chr_size()` query.
+    #[must_use]
+    pub const fn chr_rom_len(&self) -> usize {
+        self.bus.chr_rom_len()
+    }
+
+    /// The loaded mapper's iNES / NES 2.0 mapper id (backs `cart:mapper_id()`).
+    #[must_use]
+    pub fn mapper_id(&self) -> u16 {
+        self.bus.mapper_debug_info().mapper_id
+    }
+
     /// Wall-clock frame duration for this cartridge's region. The frontend
     /// uses this to pace emulator advance independently of monitor refresh
     /// rate — without it, `Fifo` present mode on a 144 Hz monitor would

@@ -68,6 +68,26 @@ fn push_capped<T>(q: &Rc<RefCell<Vec<T>>>, cmd: T) {
     }
 }
 
+/// Side-effect-free read of `len` CPU-space bytes starting at `addr` (wrapping
+/// the 16-bit space). Shared by `emu.readRange` and `memory:read_range` (B1).
+/// `len` is capped to the 64 KiB address space so an unbounded request can't OOM
+/// the host; `wrapping_add` avoids a debug-build overflow panic.
+fn read_range_cpu(nes_cell: &RefCell<&mut Nes>, addr: u32, len: u32) -> mlua::Result<Vec<u8>> {
+    if len > 0x1_0000 {
+        return Err(mlua::Error::RuntimeError(
+            "read range length cannot exceed 65536".into(),
+        ));
+    }
+    let mut out = Vec::with_capacity(len as usize);
+    let mut nes = nes_cell.borrow_mut();
+    for i in 0..len {
+        #[allow(clippy::cast_possible_truncation)]
+        let a = (addr.wrapping_add(i) & 0xFFFF) as u16;
+        out.push(nes.peek(a));
+    }
+    Ok(out)
+}
+
 /// Resolve the registry-key callbacks registered at `addr` into live Lua
 /// `Function` handles (empty when none). Collecting up front releases the
 /// `RefCell` borrow before any callback runs, so a callback that registers a
@@ -128,6 +148,30 @@ pub struct MluaBackend {
     /// function read the live value — so `setInput` is gated identically to
     /// `write` (T-110-E2), not merely at the host.
     writes_locked: Rc<Cell<bool>>,
+    /// v1.5.0 B4 — `emu:on_breakpoint(addr, fn)` callbacks, keyed by CPU
+    /// address. Observational: replayed from the per-frame exec-PC log exactly
+    /// like `onExec` (the host arms the exec log when any are registered), so a
+    /// breakpoint never intercepts mid-instruction or mutates deterministic
+    /// state — it reports the PC after the fact.
+    breakpoint_cbs: AddrCallbacks,
+    /// v1.5.0 B4 — `emu:pause_at_frame(n)` targets. Each `on_frame` whose frame
+    /// count has reached a target queues a `ControlCmd::Pause` and drops it.
+    /// Observational control (the host applies the pause); never mutates the
+    /// deterministic run.
+    pause_frames: Rc<RefCell<Vec<u64>>>,
+    /// v1.5.0 B3 — in-memory save-state slots populated by `emu:save_state(slot)`
+    /// (read-only `Nes::snapshot`, always allowed) and consumed by
+    /// `emu:load_state(slot)` (`Nes::restore`, GATED like `emu.write`). Distinct
+    /// from the host's on-disk numbered slots: these live in the script engine
+    /// for the session and are never persisted, so a TAS/analysis script can
+    /// checkpoint + roll back without touching the user's save files.
+    state_slots: Rc<RefCell<HashMap<u8, Vec<u8>>>>,
+    /// v1.5.0 B4 — `sym:name(addr)` lookup (`address -> label`), pushed by the
+    /// host from the debugger's loaded symbols. Read-only; never deterministic.
+    sym_by_addr: Rc<RefCell<HashMap<u16, String>>>,
+    /// v1.5.0 B4 — `sym:addr(name)` reverse lookup (`label -> address`). Built
+    /// alongside [`Self::sym_by_addr`]; last writer wins on a duplicate label.
+    sym_by_name: Rc<RefCell<HashMap<String, u16>>>,
 }
 
 impl MluaBackend {
@@ -279,6 +323,7 @@ impl MluaBackend {
                 })?,
             )?;
         }
+        // Address-keyed registrars (`emu.onExec`/`onRead`/`onWrite`, dot form).
         for (name, map) in [
             ("onExec", &self.exec_cbs),
             ("onRead", &self.read_cbs),
@@ -297,6 +342,68 @@ impl MluaBackend {
                     })?,
             )?;
         }
+
+        // v1.5.0 B4 — `emu:on_breakpoint(addr, fn)` (colon form; the leading
+        // `self` table is ignored). Same `(addr, fn)` Rust-side registry-key
+        // storage as `onExec`, replayed from the same per-frame exec-PC log — an
+        // observational breakpoint that reports the PC after the frame, never an
+        // intercept and never a state mutation.
+        let bp_map = Rc::clone(&self.breakpoint_cbs);
+        emu.set(
+            "on_breakpoint",
+            self.lua.create_function(
+                move |lua, (_this, addr, f): (mlua::Value, i64, Function)| {
+                    let key = lua.create_registry_value(f)?;
+                    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+                    let addr = (addr & 0xFFFF) as u16;
+                    bp_map.borrow_mut().entry(addr).or_default().push(key);
+                    Ok(())
+                },
+            )?,
+        )?;
+
+        // v1.5.0 B4 — `emu:pause_at_frame(n)` (colon form; `self` ignored):
+        // record a frame target; the next `on_frame` to reach it queues a Pause
+        // control and drops the target.
+        let pause_frames = Rc::clone(&self.pause_frames);
+        emu.set(
+            "pause_at_frame",
+            self.lua
+                .create_function(move |_, (_this, n): (mlua::Value, i64)| {
+                    let target = u64::try_from(n).unwrap_or(0);
+                    let mut pf = pause_frames.borrow_mut();
+                    // Cap so a runaway loop can't grow host memory without bound.
+                    if pf.len() < MAX_QUEUED_CMDS {
+                        pf.push(target);
+                    }
+                    Ok(())
+                })?,
+        )?;
+
+        // v1.5.0 B4 — the `sym` table: read-only symbol-label queries against the
+        // host-pushed debugger symbol map. `sym:name(addr)` / `sym:addr(name)`
+        // (colon form; the leading `self` table is ignored). Both lookups are
+        // pure reads of the engine-side maps — never deterministic state.
+        let sym = self.lua.create_table()?;
+        let by_addr = Rc::clone(&self.sym_by_addr);
+        sym.set(
+            "name",
+            self.lua
+                .create_function(move |_, (_this, addr): (mlua::Value, i64)| {
+                    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+                    let addr = (addr & 0xFFFF) as u16;
+                    Ok(by_addr.borrow().get(&addr).cloned())
+                })?,
+        )?;
+        let by_name = Rc::clone(&self.sym_by_name);
+        sym.set(
+            "addr",
+            self.lua
+                .create_function(move |_, (_this, name): (mlua::Value, String)| {
+                    Ok(by_name.borrow().get(&name).copied())
+                })?,
+        )?;
+        self.lua.globals().set("sym", sym)?;
 
         self.lua.globals().set("emu", &emu)?;
         // Redirect base `print` to the same sink.
@@ -377,6 +484,11 @@ impl VmBackend for MluaBackend {
             instr_count,
             budget,
             writes_locked: Rc::new(Cell::new(false)),
+            breakpoint_cbs: Rc::new(RefCell::new(HashMap::new())),
+            pause_frames: Rc::new(RefCell::new(Vec::new())),
+            state_slots: Rc::new(RefCell::new(HashMap::new())),
+            sym_by_addr: Rc::new(RefCell::new(HashMap::new())),
+            sym_by_name: Rc::new(RefCell::new(HashMap::new())),
         };
         engine.install_prelude()?;
         Ok(engine)
@@ -388,6 +500,17 @@ impl VmBackend for MluaBackend {
 
     fn set_writes_locked(&self, locked: bool) {
         self.writes_locked.set(locked);
+    }
+
+    fn set_symbols(&self, pairs: &[(u16, String)]) {
+        let mut by_addr = self.sym_by_addr.borrow_mut();
+        let mut by_name = self.sym_by_name.borrow_mut();
+        by_addr.clear();
+        by_name.clear();
+        for (addr, name) in pairs {
+            by_addr.insert(*addr, name.clone());
+            by_name.insert(name.clone(), *addr);
+        }
     }
 
     fn drain_log(&self) -> Vec<String> {
@@ -403,7 +526,9 @@ impl VmBackend for MluaBackend {
     }
 
     fn needs_exec_log(&self) -> bool {
-        !self.exec_cbs.borrow().is_empty()
+        // `on_breakpoint` replays from the same per-frame exec-PC log as
+        // `onExec`, so either kind of registration arms it (B4).
+        !self.exec_cbs.borrow().is_empty() || !self.breakpoint_cbs.borrow().is_empty()
     }
 
     fn needs_access_log(&self) -> bool {
@@ -461,6 +586,26 @@ impl VmBackend for MluaBackend {
             Vec::new()
         };
 
+        // v1.5.0 B2 — read-only cart / system metadata, captured once before the
+        // scope (cheap; all `const`/O(1) on the core). `sha256` is the lowercase
+        // hex of the ROM's SHA-256 (matches the host's save-state directory key).
+        let cart_mapper_id = nes.mapper_id();
+        let cart_prg_size = nes.prg_rom_len() as u64;
+        let cart_chr_size = nes.chr_rom_len() as u64;
+        let cart_region: &'static str = match nes.region() {
+            rustynes_core::Region::Pal => "PAL",
+            rustynes_core::Region::Dendy => "Dendy",
+            rustynes_core::Region::Ntsc => "NTSC",
+        };
+        let cart_sha256 = {
+            let mut s = String::with_capacity(64);
+            for b in nes.rom_sha256() {
+                use core::fmt::Write as _;
+                let _ = write!(s, "{b:02x}");
+            }
+            s
+        };
+
         let nes_cell = RefCell::new(nes);
         let lua = &self.lua;
         // Rust-side callback registries (clones of the `Rc`s) — used inside the
@@ -471,6 +616,24 @@ impl VmBackend for MluaBackend {
         let write_cbs = Rc::clone(&self.write_cbs);
         let nmi_cbs = Rc::clone(&self.nmi_cbs);
         let irq_cbs = Rc::clone(&self.irq_cbs);
+        let breakpoint_cbs = Rc::clone(&self.breakpoint_cbs);
+        let state_slots = Rc::clone(&self.state_slots);
+        let controls = Rc::clone(&self.controls);
+        // v1.5.0 B4 — drain the pause-at-frame targets reached this frame, OUTSIDE
+        // the scope (no `nes` access): each reached target queues a Pause control.
+        {
+            let mut pf = self.pause_frames.borrow_mut();
+            if !pf.is_empty() {
+                pf.retain(|&target| {
+                    if frame >= target {
+                        push_capped(&controls, ControlCmd::Pause);
+                        false
+                    } else {
+                        true
+                    }
+                });
+            }
+        }
 
         self.instr_count.set(0);
         let count = Rc::clone(&self.instr_count);
@@ -501,20 +664,7 @@ impl VmBackend for MluaBackend {
             emu.set("read", read)?;
 
             let read_range = scope.create_function(|_, (addr, len): (u32, u32)| {
-                // Cap to the 64 KiB CPU address space — an unbounded `len` would
-                // otherwise let a script OOM the host (gemini/Copilot #46).
-                // `wrapping_add` avoids a debug-build overflow panic.
-                if len > 0x1_0000 {
-                    return Err(mlua::Error::RuntimeError(
-                        "emu.readRange length cannot exceed 65536".into(),
-                    ));
-                }
-                let mut out = Vec::with_capacity(len as usize);
-                let mut nes = nes_cell.borrow_mut();
-                for i in 0..len {
-                    out.push(nes.peek((addr.wrapping_add(i) & 0xFFFF) as u16));
-                }
-                Ok(out)
+                read_range_cpu(&nes_cell, addr, len)
             })?;
             emu.set("readRange", read_range)?;
 
@@ -542,6 +692,136 @@ impl VmBackend for MluaBackend {
 
             emu.set("frame", frame)?;
             emu.set("cycle", cycle)?;
+
+            // v1.5.0 B1 — the `memory` table: explicit CPU + PPU space access.
+            // Colon-call form (`memory:peek(addr)`); the leading `self` table is
+            // ignored. Reads use the side-effect-free debug-peek path ($2002 does
+            // NOT clear VBL, $2007 does NOT advance the read buffer), so observing
+            // memory never perturbs the deterministic run. `poke`/`write_range`
+            // are GATED identically to `emu.write` (system RAM only, dropped under
+            // a locked / replayed session).
+            let memory = lua.create_table()?;
+            memory.set(
+                "peek",
+                scope.create_function(|_, (_this, addr): (mlua::Value, u16)| {
+                    Ok(nes_cell.borrow_mut().peek(addr))
+                })?,
+            )?;
+            memory.set(
+                "peek_ppu",
+                scope.create_function(|_, (_this, addr): (mlua::Value, u16)| {
+                    // PPU bus is $0000-$3FFF (mirrored to $4000); mask to 14 bits.
+                    Ok(nes_cell.borrow_mut().ppu_bus_peek(addr & 0x3FFF))
+                })?,
+            )?;
+            memory.set(
+                "read_range",
+                scope.create_function(|_, (_this, addr, len): (mlua::Value, u32, u32)| {
+                    read_range_cpu(&nes_cell, addr, len)
+                })?,
+            )?;
+            memory.set(
+                "read_range_ppu",
+                scope.create_function(|_, (_this, addr, len): (mlua::Value, u32, u32)| {
+                    if len > 0x4000 {
+                        return Err(mlua::Error::RuntimeError(
+                            "memory:read_range_ppu length cannot exceed 16384".into(),
+                        ));
+                    }
+                    let mut out = Vec::with_capacity(len as usize);
+                    let mut nes = nes_cell.borrow_mut();
+                    for i in 0..len {
+                        #[allow(clippy::cast_possible_truncation)]
+                        let a = (addr.wrapping_add(i) & 0x3FFF) as u16;
+                        out.push(nes.ppu_bus_peek(a));
+                    }
+                    Ok(out)
+                })?,
+            )?;
+            memory.set(
+                "poke",
+                scope.create_function(|_, (_this, addr, val): (mlua::Value, u16, u8)| {
+                    if !writes_locked {
+                        nes_cell.borrow_mut().poke_ram(addr, val);
+                    }
+                    Ok(())
+                })?,
+            )?;
+            memory.set(
+                "write_range",
+                scope.create_function(|_, (_this, addr, bytes): (mlua::Value, u32, Vec<u8>)| {
+                    if !writes_locked {
+                        let mut nes = nes_cell.borrow_mut();
+                        for (i, b) in bytes.iter().enumerate() {
+                            #[allow(clippy::cast_possible_truncation)]
+                            let a = (addr.wrapping_add(i as u32) & 0xFFFF) as u16;
+                            nes.poke_ram(a, *b);
+                        }
+                    }
+                    Ok(())
+                })?,
+            )?;
+            lua.globals().set("memory", &memory)?;
+
+            // v1.5.0 B2 — the `cart` table: read-only cart / system queries
+            // (colon form; `self` ignored). All values are captured pre-scope,
+            // so these are cheap constant returns that never touch the core.
+            let cart = lua.create_table()?;
+            cart.set(
+                "mapper_id",
+                lua.create_function(move |_, _this: mlua::Value| Ok(cart_mapper_id))?,
+            )?;
+            cart.set(
+                "prg_size",
+                lua.create_function(move |_, _this: mlua::Value| Ok(cart_prg_size))?,
+            )?;
+            cart.set(
+                "chr_size",
+                lua.create_function(move |_, _this: mlua::Value| Ok(cart_chr_size))?,
+            )?;
+            cart.set(
+                "region",
+                lua.create_function(move |_, _this: mlua::Value| Ok(cart_region))?,
+            )?;
+            cart.set("frame", frame)?;
+            {
+                let sha = cart_sha256.clone();
+                cart.set(
+                    "sha256",
+                    lua.create_function(move |_, _this: mlua::Value| Ok(sha.clone()))?,
+                )?;
+            }
+            lua.globals().set("cart", &cart)?;
+
+            // v1.5.0 B3 — in-memory save-state slots on `emu`. `save_state(slot)`
+            // is a read-only `Nes::snapshot` (always allowed). `load_state(slot)`
+            // applies a stored snapshot via `Nes::restore` and is GATED IDENTICALLY
+            // to `emu.write`: under a locked / replayed session it is a silent
+            // no-op, so a deterministic / netplay / RA-hardcore run is unperturbed.
+            // Distinct from the host's on-disk numbered slots (`emu.saveState`).
+            emu.set(
+                "save_state",
+                scope.create_function(|_, (_this, slot): (mlua::Value, u8)| {
+                    let blob = nes_cell.borrow().snapshot();
+                    state_slots.borrow_mut().insert(slot, blob);
+                    Ok(())
+                })?,
+            )?;
+            emu.set(
+                "load_state",
+                scope.create_function(|_, (_this, slot): (mlua::Value, u8)| {
+                    if writes_locked {
+                        return Ok(false);
+                    }
+                    let blob = state_slots.borrow().get(&slot).cloned();
+                    // A restore failure (e.g. an empty slot mid-session) is
+                    // surfaced as `false`, never a host crash.
+                    blob.map_or_else(
+                        || Ok(false),
+                        |blob| Ok(nes_cell.borrow_mut().restore(&blob).is_ok()),
+                    )
+                })?,
+            )?;
 
             // Invoke every registered onFrame callback (from the Rust-side
             // registry — scripts cannot touch or corrupt it).
@@ -574,6 +854,21 @@ impl VmBackend for MluaBackend {
                 for pc in &exec_pcs {
                     if active.contains(*pc) {
                         for f in fns_at(lua, &exec_cbs, *pc)? {
+                            f.call::<()>(*pc)?;
+                        }
+                    }
+                }
+            }
+
+            // v1.5.0 B4 — replay this frame's exec PCs through on_breakpoint(pc).
+            // Same observational exec-log replay as onExec, kept on a separate map
+            // so a script can use breakpoints and onExec independently. Built only
+            // when a breakpoint is registered (zero cost otherwise).
+            if !exec_pcs.is_empty() && !breakpoint_cbs.borrow().is_empty() {
+                let active = AddrBits::from_keys(&breakpoint_cbs);
+                for pc in &exec_pcs {
+                    if active.contains(*pc) {
+                        for f in fns_at(lua, &breakpoint_cbs, *pc)? {
                             f.call::<()>(*pc)?;
                         }
                     }

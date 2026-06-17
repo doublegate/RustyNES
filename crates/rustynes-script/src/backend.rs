@@ -71,6 +71,14 @@ pub trait VmBackend: Sized {
     /// dropped so a script cannot perturb a locked / replayed session.
     fn set_writes_locked(&self, locked: bool);
 
+    /// v1.5.0 Workstream B (B4) — replace the script-visible symbol table the
+    /// `sym:addr(name)` / `sym:name(addr)` queries resolve against. The host
+    /// pushes the debugger's loaded symbols (`address -> label`) here; each pair
+    /// is `(address, label)`. Read-only on the script side; never touches
+    /// deterministic emulator state. The default no-op suits a backend that does
+    /// not host the dev/TAS symbol API (the experimental piccolo backend).
+    fn set_symbols(&self, _pairs: &[(u16, String)]) {}
+
     /// Drain captured log / `print` output (oldest first).
     fn drain_log(&self) -> Vec<String>;
 

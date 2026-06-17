@@ -137,6 +137,14 @@ impl ScriptEngine {
         self.inner.set_writes_locked(locked);
     }
 
+    /// v1.5.0 Workstream B (B4) — push the host's loaded debugger symbols
+    /// (`address -> label`) into the engine so a script's `sym:addr(name)` /
+    /// `sym:name(addr)` queries resolve against them. Read-only; never perturbs
+    /// deterministic state. A no-op on the experimental piccolo backend.
+    pub fn set_symbols(&self, pairs: &[(u16, String)]) {
+        self.inner.set_symbols(pairs);
+    }
+
     /// Drain captured log / `print` output (oldest first).
     #[must_use]
     pub fn drain_log(&self) -> Vec<String> {
@@ -550,5 +558,312 @@ mod tests {
         assert!(matches!(&draws[0], DrawCmd::Text { text, .. } if text == "HP: 3"));
         // Drained — a second drain is empty.
         assert!(eng.drain_controls().is_empty());
+    }
+
+    // ----- v1.5.0 Workstream B: Lua dev/TAS API depth (native-only / mlua) -----
+    // The `memory` / `cart` / `sym` tables + in-memory save-state slots +
+    // `on_breakpoint` / `pause_at_frame` are installed only on the mlua backend
+    // (the dev/TAS surface is native-only, the same carve-out as the per-access
+    // and per-interrupt callbacks; ADR 0012). So these tests run on mlua only.
+
+    /// B1 — `memory:peek` / `poke` / `read_range` / `write_range` (CPU space)
+    /// round-trip through the live `Nes`. Reads use the side-effect-free path.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn memory_table_cpu_round_trip() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            r"
+            emu.onFrame(function()
+                memory:poke(0x30, 0x12)
+                memory:write_range(0x31, { 0x34, 0x56 })
+                local b = memory:peek(0x30)
+                local r = memory:read_range(0x30, 3)
+                emu.log('m=' .. b .. ' a=' .. r[1] .. ',' .. r[2] .. ',' .. r[3])
+            end)
+            ",
+        )
+        .expect("load");
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+        assert_eq!(eng.drain_log(), vec!["m=18 a=18,52,86"]);
+        assert_eq!(nes.peek(0x30), 0x12);
+        assert_eq!(nes.peek(0x31), 0x34);
+        assert_eq!(nes.peek(0x32), 0x56);
+    }
+
+    /// B1 — `memory:peek` is side-effect-free: a script peek of `$2002` must NOT
+    /// clear the VBL flag (the debug-peek path), so a subsequent CPU read still
+    /// sees it. We assert the engine peek matches the core's own `peek` (both
+    /// the side-effect-free path) before and after, i.e. peeking is idempotent.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn memory_peek_is_side_effect_free() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            r"
+            emu.onFrame(function()
+                local a = memory:peek(0x2002)
+                local b = memory:peek(0x2002)
+                emu.log('eq=' .. tostring(a == b))
+            end)
+            ",
+        )
+        .expect("load");
+        // Run several frames so the PPU has set/!set VBL at various points; the
+        // two back-to-back peeks must always agree (no latch was consumed).
+        for _ in 0..4 {
+            nes.run_frame();
+            eng.on_frame(&mut nes).expect("on_frame");
+        }
+        assert!(eng.drain_log().iter().all(|l| l == "eq=true"));
+    }
+
+    /// B1 — `memory:poke` / `write_range` are GATED identically to `emu.write`:
+    /// under a locked session they are silent no-ops.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn memory_poke_and_write_range_gated_when_locked() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.set_writes_locked(true);
+        eng.load(
+            r"
+            emu.onFrame(function()
+                memory:poke(0x40, 0x99)
+                memory:write_range(0x41, { 0xAA, 0xBB })
+            end)
+            ",
+        )
+        .expect("load");
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+        assert_eq!(nes.peek(0x40), 0x00, "poke must be dropped when locked");
+        assert_eq!(
+            nes.peek(0x41),
+            0x00,
+            "write_range must be dropped when locked"
+        );
+        assert_eq!(nes.peek(0x42), 0x00);
+    }
+
+    /// B2 — `cart:` read-only queries surface the loaded ROM's metadata. The
+    /// synthetic NROM is a 16 KiB-PRG / 8 KiB-CHR mapper-0 NTSC cart.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn cart_queries_report_metadata() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            r"
+            emu.onFrame(function()
+                emu.log('id=' .. cart:mapper_id()
+                    .. ' prg=' .. cart:prg_size()
+                    .. ' chr=' .. cart:chr_size()
+                    .. ' region=' .. cart:region()
+                    .. ' shalen=' .. #cart:sha256())
+            end)
+            ",
+        )
+        .expect("load");
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+        assert_eq!(
+            eng.drain_log(),
+            vec![format!(
+                "id=0 prg={} chr={} region=NTSC shalen=64",
+                16 * 1024,
+                8 * 1024
+            )]
+        );
+    }
+
+    /// B3 — in-memory `emu:save_state` / `load_state` round-trips emulator state.
+    /// The boot loop writes `$80` to `$2000` each iteration; we checkpoint RAM
+    /// byte `$05` (poked by the script), advance, then roll back and confirm the
+    /// restore took.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn save_and_load_state_slots_round_trip() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            r"
+            phase = 0
+            emu.onFrame(function()
+                phase = phase + 1
+                if phase == 1 then
+                    memory:poke(0x05, 0x77)
+                    emu:save_state(1)
+                elseif phase == 2 then
+                    memory:poke(0x05, 0x11)   -- clobber
+                elseif phase == 3 then
+                    local ok = emu:load_state(1)
+                    emu.log('restored=' .. tostring(ok) .. ' v=' .. memory:peek(0x05))
+                end
+            end)
+            ",
+        )
+        .expect("load");
+        for _ in 0..3 {
+            nes.run_frame();
+            eng.on_frame(&mut nes).expect("on_frame");
+        }
+        assert_eq!(eng.drain_log(), vec!["restored=true v=119"]);
+        assert_eq!(nes.peek(0x05), 0x77, "load_state must restore the snapshot");
+    }
+
+    /// B3 — `emu:load_state` is GATED like `emu.write`: under a locked session a
+    /// restore is a silent no-op (returns `false`, state untouched). A `save` is
+    /// always allowed (it is a read-only snapshot).
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn load_state_gated_when_locked() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            r"
+            phase = 0
+            emu.onFrame(function()
+                phase = phase + 1
+                if phase == 1 then
+                    memory:poke(0x06, 0x55)
+                    emu:save_state(2)     -- save still works under lock
+                elseif phase == 2 then
+                    local ok = emu:load_state(2)
+                    emu.log('locked_restore=' .. tostring(ok))
+                end
+            end)
+            ",
+        )
+        .expect("load");
+        // Lock writes (netplay / TAS-replay / RA-hardcore analog). `poke` is then
+        // dropped too, so RAM never changes; the key assertion is `load_state`
+        // returns false and is inert.
+        eng.set_writes_locked(true);
+        for _ in 0..2 {
+            nes.run_frame();
+            eng.on_frame(&mut nes).expect("on_frame");
+        }
+        assert_eq!(eng.drain_log(), vec!["locked_restore=false"]);
+    }
+
+    /// B4 — `sym:addr(name)` / `sym:name(addr)` resolve against the host-pushed
+    /// symbol table (read-only). An unknown lookup returns `nil`.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn symbol_queries_resolve_host_table() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.set_symbols(&[(0xC000, "main".to_owned()), (0x0010, "player_x".to_owned())]);
+        eng.load(
+            r"
+            emu.onFrame(function()
+                emu.log('main=' .. (sym:addr('main') or -1)
+                    .. ' name=' .. (sym:name(0x10) or 'nil')
+                    .. ' miss=' .. tostring(sym:addr('nope')))
+            end)
+            ",
+        )
+        .expect("load");
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+        assert_eq!(
+            eng.drain_log(),
+            vec![format!("main={} name=player_x miss=nil", 0xC000)]
+        );
+    }
+
+    /// B4 — `emu:on_breakpoint(addr, fn)` fires observationally from the per-frame
+    /// exec-PC log (the boot loop sits at `$C000`), and arms the exec log.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn on_breakpoint_fires_from_the_exec_log() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            r"
+            hit = false
+            emu:on_breakpoint(0xC000, function(pc) hit = true end)
+            emu.onFrame(function() if hit then emu.log('bp') end end)
+            ",
+        )
+        .expect("load");
+        assert!(eng.needs_exec_log(), "on_breakpoint must arm the exec log");
+        nes.set_exec_logging(true);
+        let mut saw = false;
+        for _ in 0..4 {
+            nes.run_frame();
+            eng.on_frame(&mut nes).expect("on_frame");
+            if eng.drain_log().contains(&"bp".to_owned()) {
+                saw = true;
+                break;
+            }
+        }
+        assert!(saw, "on_breakpoint($C000) should fire from the exec log");
+    }
+
+    /// B4 — `emu:pause_at_frame(n)` queues exactly one `Pause` control when the
+    /// emulated frame count reaches `n`, then never again.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn pause_at_frame_queues_one_pause() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        // Target a frame a couple of pumps out (the first pump sees frame >= 1).
+        let target = nes.frame() + 2;
+        eng.load(&format!(
+            "emu.onFrame(function() if emu.frame == {target} then emu:pause_at_frame({target}) end end)"
+        ))
+        .expect("load");
+        let mut pauses = 0;
+        for _ in 0..5 {
+            nes.run_frame();
+            eng.on_frame(&mut nes).expect("on_frame");
+            pauses += eng
+                .drain_controls()
+                .iter()
+                .filter(|c| matches!(c, ControlCmd::Pause))
+                .count();
+        }
+        assert_eq!(pauses, 1, "pause_at_frame must queue exactly one Pause");
+    }
+
+    /// B5 — every bundled example script loads + pumps a few frames without a
+    /// load or runtime error (so a doc-referenced example never bit-rots against
+    /// the API). Embedded at compile time relative to this crate.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn bundled_example_scripts_load_and_run() {
+        const EXAMPLES: &[(&str, &str)] = &[
+            (
+                "memory_scanner.lua",
+                include_str!("../../../examples/scripts/memory_scanner.lua"),
+            ),
+            (
+                "tas_frame_analysis.lua",
+                include_str!("../../../examples/scripts/tas_frame_analysis.lua"),
+            ),
+            (
+                "game_state_tracker.lua",
+                include_str!("../../../examples/scripts/game_state_tracker.lua"),
+            ),
+        ];
+        for (name, src) in EXAMPLES {
+            let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+            let mut eng = ScriptEngine::new().expect("engine");
+            eng.set_symbols(&[(0x0010, "player_x".to_owned())]);
+            eng.load(src).unwrap_or_else(|e| panic!("{name} load: {e}"));
+            for _ in 0..3 {
+                nes.run_frame();
+                eng.on_frame(&mut nes)
+                    .unwrap_or_else(|e| panic!("{name} on_frame: {e}"));
+                let _ = eng.drain_controls();
+                let _ = eng.drain_draws();
+                let _ = eng.drain_log();
+            }
+        }
     }
 }
