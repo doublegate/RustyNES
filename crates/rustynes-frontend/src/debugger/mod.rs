@@ -59,6 +59,11 @@ mod badge_cache;
 mod cheat_panel;
 mod cheevos_panel;
 mod cpu_panel;
+// v1.5.0 "Lens" Workstream I10 — in-app Documentation browser. Native-only (it
+// reuses the native-only `cli::HELP_TOPICS` registry; a browser tab has no
+// terminal help to share with).
+#[cfg(not(target_arch = "wasm32"))]
+mod doc_panel;
 mod event_panel;
 mod game_db_panel;
 // v1.5.0 "Lens" Workstream A4 — HD-pack per-pixel inspector (native + hd-pack).
@@ -231,6 +236,12 @@ pub struct DebuggerOverlay {
     /// v1.5.0 A4 — HD-pack pixel inspector state (native + `hd-pack`).
     #[cfg(all(not(target_arch = "wasm32"), feature = "hd-pack"))]
     hd_pixel_ui: hd_pixel_panel::HdPixelPanelState,
+    /// v1.5.0 I10 — Documentation browser state (native-only).
+    #[cfg(not(target_arch = "wasm32"))]
+    doc_ui: doc_panel::DocPanelState,
+    /// v1.5.0 I10 — whether the Documentation window is open (native-only).
+    #[cfg(not(target_arch = "wasm32"))]
+    show_documentation: bool,
     /// Game Genie cheat panel state (v1.6.0).
     cheat_ui: cheat_panel::CheatPanelState,
     /// ROM-database editor panel state (v1.2.0 Workstream B, B4).
@@ -364,6 +375,10 @@ impl DebuggerOverlay {
             input_miniatures: MiniaturesSnapshot::default(),
             #[cfg(all(not(target_arch = "wasm32"), feature = "hd-pack"))]
             hd_pixel_ui: hd_pixel_panel::HdPixelPanelState::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            doc_ui: doc_panel::DocPanelState::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            show_documentation: false,
             cheat_ui: cheat_panel::CheatPanelState::default(),
             game_db_ui: game_db_panel::GameDbPanelState::default(),
             rom_crc: None,
@@ -715,6 +730,22 @@ impl DebuggerOverlay {
         self.input_miniatures = snap;
     }
 
+    /// v1.5.0 "Lens" Workstream I10 — open the in-app Documentation browser
+    /// (Help -> Documentation). Native-only.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub const fn open_documentation(&mut self) {
+        self.show_documentation = true;
+    }
+
+    /// v1.5.0 I10 — whether the Documentation window is open. The app folds this
+    /// into its NES-key gate so typing into the doc search box doesn't drive the
+    /// controller. Native-only.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[must_use]
+    pub const fn documentation_open(&self) -> bool {
+        self.show_documentation
+    }
+
     /// v1.5.0 A4 — whether the HD-pack pixel inspector window is open. Native +
     /// `hd-pack` only.
     #[cfg(all(not(target_arch = "wasm32"), feature = "hd-pack"))]
@@ -784,7 +815,7 @@ impl DebuggerOverlay {
     ///
     /// **v1.5.0 "Lens" Workstream I6** — this is the single predicate that
     /// gates the locked branch, so EVERY `nes`-reading tool panel in
-    /// [`Self::tool_panels`] must be listed here or it silently fails to open
+    /// `tool_panels` must be listed here or it silently fails to open
     /// standalone (it would only render while another `nes`-reading panel
     /// happened to be open, then vanish when that one closed). Today the
     /// `nes`-reading tool panels are **Cheats** (`show_cheat`) and the
@@ -1173,6 +1204,13 @@ impl DebuggerOverlay {
         }
         if self.show_perf {
             perf_panel::show(ctx, &mut self.show_perf, &mut self.perf_ui);
+        }
+        // v1.5.0 "Lens" Workstream I10 — the in-app Documentation browser
+        // (native-only; reuses the `cli::HELP_TOPICS` registry). It reads no
+        // `nes`, so it renders in the always-on path like the other doc windows.
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.show_documentation {
+            doc_panel::show(ctx, &mut self.show_documentation, &mut self.doc_ui);
         }
         if self.show_cheevos {
             #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]

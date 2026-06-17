@@ -3185,6 +3185,15 @@ impl App {
                 #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
                 self.refresh_script_symbols();
             }
+            MenuAction::OpenDocumentation => {
+                // v1.5.0 "Lens" Workstream I10 — open the in-app Documentation
+                // browser. Native-only (the panel reuses the native `cli` topic
+                // registry); the wasm dispatch is a no-op.
+                #[cfg(not(target_arch = "wasm32"))]
+                if let Some(d) = self.debugger.as_mut() {
+                    d.open_documentation();
+                }
+            }
         }
     }
 
@@ -5926,8 +5935,7 @@ impl ApplicationHandler<AppEvent> for App {
                 let shell_window_open = self.ui.show_settings_window
                     || self.ui.show_about
                     || self.ui.show_shortcuts
-                    || self.ui.show_welcome
-                    || self.ui.show_documentation;
+                    || self.ui.show_welcome;
                 // v1.5.0 "Lens" Workstream I2 — split the "egui is busy" gate into
                 // two distinct levels:
                 //   - `text_input`: a real text widget has keyboard focus (a

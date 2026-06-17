@@ -203,6 +203,10 @@ pub enum MenuAction {
     LoadSymbols,
     /// v1.4.0 Workstream D (D1) — clear all loaded debugger symbols.
     ClearSymbols,
+    /// v1.5.0 "Lens" Workstream I10 — open the in-app Documentation browser
+    /// (native; the dispatch body is `#[cfg(not(wasm32))]`, the variant stays
+    /// un-gated so the match remains exhaustive on every target).
+    OpenDocumentation,
 }
 
 /// Per-frame outputs from [`UiShell::build`].
@@ -229,10 +233,6 @@ pub struct UiShell {
     pub show_about: bool,
     /// Whether the keyboard-shortcuts window is open.
     pub show_shortcuts: bool,
-    /// v1.5.0 "Lens" Workstream I10 — whether the in-app Documentation browser
-    /// window is open (Help -> Documentation). Native-only content, but the
-    /// flag is cross-platform so the menu wiring stays uniform.
-    pub show_documentation: bool,
     /// Whether the first-run welcome modal is shown. Initialised from
     /// `!config.welcome_shown`.
     pub show_welcome: bool,
@@ -259,7 +259,6 @@ impl UiShell {
             show_settings_window: false,
             show_about: false,
             show_shortcuts: false,
-            show_documentation: false,
             show_welcome: !config.welcome_shown,
             settings_tab: SettingsTab::default(),
             status_message: None,
@@ -1142,6 +1141,22 @@ impl UiShell {
 
                 // ----- Help -----
                 ui.menu_button(ic(glyph::CIRCLE_QUESTION, "Help"), |ui| {
+                    // v1.5.0 "Lens" Workstream I10 — the in-app Documentation
+                    // browser (reuses the `rustynes help` topic registry so the
+                    // CLI + GUI share one source). Native-only content; the menu
+                    // item is gated out on wasm (no topic registry there).
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        if ui
+                            .button(ic(glyph::BOOK_OPEN, "Documentation..."))
+                            .on_hover_text("Searchable in-app manual, About, and changelog")
+                            .clicked()
+                        {
+                            out.action = Some(MenuAction::OpenDocumentation);
+                            ui.close();
+                        }
+                        ui.separator();
+                    }
                     if ui
                         .button(ic(glyph::KEYBOARD, "Keyboard Shortcuts"))
                         .clicked()
