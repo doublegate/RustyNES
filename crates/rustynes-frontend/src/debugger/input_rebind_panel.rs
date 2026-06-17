@@ -414,15 +414,35 @@ pub fn body(ui: &mut egui::Ui, state: &mut InputPanelState, config: &mut Config)
         }
 
         ui.horizontal(|ui| {
-            if ui.button("Save to disk").clicked() {
-                match config.save() {
-                    Ok(()) => state.status = "Saved.".into(),
-                    Err(e) => state.status = format!("save error: {e}"),
+            // v1.5.0 "Lens" Workstream I3 — the old "Save to disk" button is gone:
+            // every Input control now auto-saves to the live config file (the
+            // Settings window already snapshot-saved; the standalone window now
+            // persists on the bindings-dirty edge in `app.rs`). This button keeps
+            // a real, DISTINCT function — EXPORT the current config to a chosen
+            // `.toml` file (a backup / share copy), via the native save dialog.
+            #[cfg(not(target_arch = "wasm32"))]
+            if ui
+                .button("Export config...")
+                .on_hover_text(
+                    "Settings auto-save continuously. Use this to export a copy of \
+                     the whole config to a chosen .toml file.",
+                )
+                .clicked()
+                && let Some(path) = rfd::FileDialog::new()
+                    .set_title("Export RustyNES config")
+                    .set_file_name("rustynes-config.toml")
+                    .add_filter("TOML", &["toml"])
+                    .save_file()
+            {
+                match config.save_to(&path) {
+                    Ok(()) => state.status = format!("Exported to {}", path.display()),
+                    Err(e) => state.status = format!("export error: {e}"),
                 }
             }
             if ui.button("Reset to defaults").clicked() {
                 *config = Config::default();
-                state.status = "Defaults restored (unsaved).".into();
+                // Auto-save fires on the dirty edge, so this reset persists too.
+                state.status = "Defaults restored.".into();
                 state.bindings_dirty = true;
             }
         });

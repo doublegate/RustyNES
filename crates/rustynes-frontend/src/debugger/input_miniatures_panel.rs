@@ -175,7 +175,13 @@ fn draw_pad(ui: &mut egui::Ui, held: Buttons) {
     let p = ui.painter_at(rect);
     let o = rect.min;
     let at = |x: f32, y: f32| Pos2::new(o.x + x, o.y + y);
-    let bfill = |b: Buttons| fill(held.contains(b));
+    // v1.5.0 I5 — mirror the Input Display per-group lit palette here so the two
+    // overlays stay consistent: D-pad green, Select/Start yellow, B/A Nintendo
+    // red. Non-standard devices (Zapper / Vaus / mouse / mat / keyboard) keep the
+    // generic `ACTIVE` fill via `fill(..)`.
+    let bfill = |b: Buttons, lit: Color32| {
+        if held.contains(b) { lit } else { IDLE }
+    };
 
     p.rect_filled(rect, CornerRadius::same(8), CARD);
     p.rect_stroke(
@@ -191,7 +197,7 @@ fn draw_pad(ui: &mut egui::Ui, held: Buttons) {
         p.rect_filled(
             Rect::from_min_max(min, max),
             CornerRadius::same(2),
-            bfill(b),
+            bfill(b, crate::input_colors::LIT_DPAD),
         );
     };
     p.rect_filled(
@@ -209,7 +215,7 @@ fn draw_pad(ui: &mut egui::Ui, held: Buttons) {
         p.rect_filled(
             Rect::from_min_max(at(x, cy - 4.0), at(x + 20.0, cy + 4.0)),
             CornerRadius::same(4),
-            bfill(b),
+            bfill(b, crate::input_colors::LIT_STARTSEL),
         );
     };
     pill(Buttons::SELECT, 78.0);
@@ -217,8 +223,16 @@ fn draw_pad(ui: &mut egui::Ui, held: Buttons) {
 
     // B / A buttons (right side).
     let r = 11.0;
-    p.circle_filled(at(146.0, cy), r, bfill(Buttons::B));
-    p.circle_filled(at(170.0, cy), r, bfill(Buttons::A));
+    p.circle_filled(
+        at(146.0, cy),
+        r,
+        bfill(Buttons::B, crate::input_colors::LIT_AB),
+    );
+    p.circle_filled(
+        at(170.0, cy),
+        r,
+        bfill(Buttons::A, crate::input_colors::LIT_AB),
+    );
     p.text(
         at(146.0, cy),
         egui::Align2::CENTER_CENTER,

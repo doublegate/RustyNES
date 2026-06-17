@@ -229,6 +229,10 @@ pub struct UiShell {
     pub show_about: bool,
     /// Whether the keyboard-shortcuts window is open.
     pub show_shortcuts: bool,
+    /// v1.5.0 "Lens" Workstream I10 — whether the in-app Documentation browser
+    /// window is open (Help -> Documentation). Native-only content, but the
+    /// flag is cross-platform so the menu wiring stays uniform.
+    pub show_documentation: bool,
     /// Whether the first-run welcome modal is shown. Initialised from
     /// `!config.welcome_shown`.
     pub show_welcome: bool,
@@ -255,6 +259,7 @@ impl UiShell {
             show_settings_window: false,
             show_about: false,
             show_shortcuts: false,
+            show_documentation: false,
             show_welcome: !config.welcome_shown,
             settings_tab: SettingsTab::default(),
             status_message: None,
@@ -324,6 +329,16 @@ pub struct ShellFrame<'a> {
     /// v1.0.0 — whether a TAS movie is currently playing back (drives the Tools
     /// menu Play/Stop label).
     pub movie_playing: bool,
+    /// v1.5.0 "Lens" Workstream I2 — whether Fast Forward is currently engaged
+    /// (the bound key is held). Drives the Emulation-menu Fast Forward item so
+    /// it shows a live "ON" state instead of a permanently greyed hint.
+    pub fast_forwarding: bool,
+    /// v1.5.0 "Lens" Workstream I7 — a compact `RetroAchievements` status string
+    /// for the status bar (e.g. `"RA 12/40 (240 pts) HARDCORE"`), relocated
+    /// from the retired-overlay HUD readout. `None` when the feature is off, no
+    /// user is logged in, or no game is loaded. Shown between the emulator-state
+    /// label and the FPS counter.
+    pub ra_status: Option<String>,
 }
 
 impl UiShell {
@@ -691,13 +706,17 @@ impl UiShell {
                         ui.close();
                     }
                     ui.separator();
-                    // Frame advance is meaningful while paused; enabled with a
-                    // ROM loaded (a press while running is a no-op). (H1) Locked
-                    // during netplay (the peers drive frame stepping).
+                    // v1.5.0 I2 — Frame Advance steps exactly one frame and is
+                    // only meaningful WHILE PAUSED (a press while running is a
+                    // no-op in `request_frame_advance`). The menu item now mirrors
+                    // that: enabled only when a ROM is loaded AND paused AND not
+                    // replay/netplay-locked — so it never looks clickable when it
+                    // would silently do nothing. (H1) Locked during netplay (the
+                    // peers drive frame stepping).
                     if accel_enabled(
                         ui,
-                        rom && !rom_change_restricted,
-                        &ic(glyph::PLAY, "Frame Advance"),
+                        rom && self.paused && !rom_change_restricted,
+                        &ic(glyph::FORWARD_STEP, "Frame Advance"),
                         &keys.frame_advance,
                     )
                     .clicked()
@@ -705,14 +724,23 @@ impl UiShell {
                         out.action = Some(MenuAction::FrameAdvance);
                         ui.close();
                     }
-                    // Fast-forward is a held key — surface it as a disabled hint
-                    // (there is no toggle action; hold the key to engage it).
+                    // v1.5.0 I2 — Fast Forward is a held key (no toggle action),
+                    // but the item is no longer a permanently-greyed dead hint: it
+                    // reads as a live status row showing whether FF is currently
+                    // engaged plus the bound key to hold. Enabled-looking while a
+                    // ROM is loaded so the "(hold X)" affordance is legible.
+                    let ff_label = if frame.fast_forwarding {
+                        format!("Fast Forward: ON (hold {})", keys.fast_forward)
+                    } else {
+                        format!("Fast Forward (hold {})", keys.fast_forward)
+                    };
                     ui.add_enabled(
-                        false,
-                        egui::Button::new(ic(
-                            glyph::PLAY,
-                            &format!("Fast Forward (hold {})", keys.fast_forward),
-                        )),
+                        rom && !rom_change_restricted,
+                        egui::Button::new(ic(glyph::FORWARD_FAST, &ff_label)),
+                    )
+                    .on_hover_text(
+                        "Hold the bound key to run unthrottled (audio muted). \
+                         Rebind in Settings -> Input.",
                     );
                     ui.separator();
                     ui.menu_button(
@@ -1171,6 +1199,21 @@ impl UiShell {
                             ui.colored_label(egui::Color32::from_rgb(80, 180, 240), "Netplay");
                         } else {
                             ui.colored_label(egui::Color32::from_rgb(100, 200, 100), "Running");
+                        }
+                        // v1.5.0 "Lens" Workstream I7 — the RetroAchievements
+                        // readout relocated from the retired `` ` `` overlay HUD,
+                        // placed between the emulator-state label and the FPS
+                        // counter. A gold tint when hardcore is engaged (it ends
+                        // with "HARDCORE"); the trophy colour otherwise.
+                        if let Some(ra) = frame.ra_status.as_deref() {
+                            ui.separator();
+                            let color = if ra.ends_with("HARDCORE") {
+                                egui::Color32::from_rgb(240, 200, 100)
+                            } else {
+                                egui::Color32::from_rgb(180, 160, 220)
+                            };
+                            ui.colored_label(color, ra)
+                                .on_hover_text("RetroAchievements (Tools -> RetroAchievements)");
                         }
                     } else {
                         ui.label("No ROM loaded");

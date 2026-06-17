@@ -57,6 +57,9 @@ pub mod hdpack;
 pub mod icon;
 pub mod icons;
 pub mod input;
+// v1.5.0 "Lens" Workstream I5 — shared lit-button colour palette for the Input
+// Display panel + Input Miniatures overlay (so the two can't drift).
+pub mod input_colors;
 pub mod movie_ui;
 // v1.2.0 Workstream B — ROM soft-patching (IPS/UPS/BPS). Pure byte ops applied
 // to the in-memory ROM at the load chokepoint, before format detection, so the
