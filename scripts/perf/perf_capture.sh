@@ -55,9 +55,13 @@ echo "perf_capture: running ${DURATION}s capture on $ROM (perf logging on)…"
 # background+kill pattern (never `timeout` wrapping a GUI) is the project norm.
 RUSTYNES_PERF_LOG=1 ./target/release/rustynes "$ROM" &
 APP_PID=$!
+# Clean up the background frontend even if the script is interrupted (Ctrl+C)
+# or exits early before the explicit kill below.
+trap 'kill "$APP_PID" 2>/dev/null || true' EXIT
 sleep "$DURATION"
 kill "$APP_PID" 2>/dev/null || true
 wait "$APP_PID" 2>/dev/null || true
+trap - EXIT
 
 NEWEST="$(ls -1t perf-logs/perf-*.csv 2>/dev/null | head -1 || true)"
 AFTER="$(ls -1 perf-logs/ 2>/dev/null | wc -l)"

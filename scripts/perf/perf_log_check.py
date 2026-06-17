@@ -38,7 +38,7 @@ import sys
 
 def load_rows(path: str) -> tuple[list[str], list[dict[str, str]]]:
     """Return (header, data_rows) skipping the `#`-commented header block."""
-    with open(path, newline="") as fh:
+    with open(path, newline="", encoding="utf-8") as fh:
         lines = [ln for ln in fh if not ln.startswith("#")]
     if not lines:
         print(f"perf_log_check: {path}: no data rows", file=sys.stderr)

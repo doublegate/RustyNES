@@ -39,7 +39,7 @@
 
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 /// NES framebuffer size in bytes (256 × 240 × RGBA8).
 const FB_LEN: usize = 256 * 240 * 4;
@@ -47,6 +47,13 @@ const FB_LEN: usize = 256 * 240 * 4;
 /// The three reusable byte buffers behind the handoff.
 struct Slots {
     bufs: [Vec<u8>; 3],
+    /// `front | (ready << 2) | (back << 4)` slot ids; mutated only by the
+    /// producer's `publish` and the consumer's `take_into` via a swap that
+    /// keeps the three fields a permutation of `{0,1,2}`. Stored here (a plain
+    /// `u8` under the `slots` mutex) rather than as an atomic on
+    /// `PresentBuffer`, because it is only ever read or written while the lock
+    /// is held — the atomic would be redundant.
+    index: u8,
 }
 
 /// Triple buffer for the NES framebuffer handoff.
@@ -60,12 +67,8 @@ struct Slots {
 /// (the producer's scratch). `has_new` flags whether `ready` holds a frame the
 /// consumer has not yet taken.
 pub struct PresentBuffer {
-    /// `front | (ready << 2) | (back << 4)` slot ids; mutated only by the
-    /// producer's `publish` and the consumer's `take_into` via a swap that
-    /// keeps the three fields a permutation of `{0,1,2}`.
-    index: AtomicU8,
     /// Set by `publish`, cleared by `take_into`: whether `ready` is fresh.
-    has_new: AtomicU8,
+    has_new: AtomicBool,
     /// Published-frame count (diagnostic only — proves the producer is live).
     generation: AtomicUsize,
     slots: Mutex<Slots>,
@@ -80,11 +83,11 @@ impl PresentBuffer {
     #[must_use]
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
-            index: AtomicU8::new(Self::INIT_INDEX),
-            has_new: AtomicU8::new(0),
+            has_new: AtomicBool::new(false),
             generation: AtomicUsize::new(0),
             slots: Mutex::new(Slots {
                 bufs: [Vec::new(), Vec::new(), Vec::new()],
+                index: Self::INIT_INDEX,
             }),
         })
     }
@@ -111,7 +114,7 @@ impl PresentBuffer {
     /// same 240 KiB memcpy that previously ran under the emu mutex, now off it.
     pub fn publish(&self, frame: &[u8]) {
         let mut slots = self.slots.lock().expect("present buffer slots");
-        let idx = self.index.load(Ordering::Relaxed);
+        let idx = slots.index;
         let back = Self::back(idx);
         {
             let buf = &mut slots.bufs[back];
@@ -124,11 +127,10 @@ impl PresentBuffer {
         // lock before reading any of them).
         let front = Self::front(idx);
         let ready = Self::ready(idx);
-        self.index
-            .store(Self::pack(front, back, ready), Ordering::Relaxed);
-        self.has_new.store(1, Ordering::Relaxed);
-        self.generation.fetch_add(1, Ordering::Relaxed);
+        slots.index = Self::pack(front, back, ready);
+        self.has_new.store(true, Ordering::Relaxed);
         drop(slots);
+        self.generation.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Consumer: if a new frame was published since the last call, swap it
@@ -138,21 +140,20 @@ impl PresentBuffer {
     /// previously presented `out` — the display simply re-presents it).
     pub fn take_into(&self, out: &mut Vec<u8>) -> bool {
         // Cheap pre-check off the lock; the authoritative check is under it.
-        if self.has_new.load(Ordering::Relaxed) == 0 {
+        if !self.has_new.load(Ordering::Relaxed) {
             return false;
         }
-        let slots = self.slots.lock().expect("present buffer slots");
-        if self.has_new.swap(0, Ordering::Relaxed) == 0 {
+        let mut slots = self.slots.lock().expect("present buffer slots");
+        if !self.has_new.swap(false, Ordering::Relaxed) {
             return false;
         }
-        let idx = self.index.load(Ordering::Relaxed);
+        let idx = slots.index;
         let front = Self::front(idx);
         let ready = Self::ready(idx);
         let back = Self::back(idx);
         // Swap front <-> ready so the producer's next `publish` reuses our old
         // front as its back, and we now own the freshest frame in `ready`.
-        self.index
-            .store(Self::pack(ready, front, back), Ordering::Relaxed);
+        slots.index = Self::pack(ready, front, back);
         out.clear();
         out.extend_from_slice(&slots.bufs[ready]);
         true
@@ -168,9 +169,10 @@ impl PresentBuffer {
     /// Reset to the empty (no-frame) state on a ROM load / power cycle so the
     /// next present shows a black frame until the first new frame arrives.
     pub fn reset(&self) {
-        self.has_new.store(0, Ordering::Release);
+        self.has_new.store(false, Ordering::Release);
         self.generation.store(0, Ordering::Relaxed);
         let mut slots = self.slots.lock().expect("present buffer slots");
+        slots.index = Self::INIT_INDEX;
         for b in &mut slots.bufs {
             b.clear();
         }
@@ -225,7 +227,7 @@ mod tests {
             if i % 3 == 0 {
                 let _ = pb.take_into(&mut out);
             }
-            let idx = pb.index.load(Ordering::Relaxed);
+            let idx = pb.slots.lock().unwrap().index;
             let ids = [
                 PresentBuffer::front(idx),
                 PresentBuffer::ready(idx),
@@ -256,15 +258,23 @@ mod tests {
         use std::thread;
         let pb = PresentBuffer::new();
         let prod = Arc::clone(&pb);
+        let done = Arc::new(AtomicBool::new(false));
+        let done_p = Arc::clone(&done);
         let h = thread::spawn(move || {
             for i in 0..10_000u32 {
                 #[allow(clippy::cast_possible_truncation)]
                 prod.publish(&[(i & 0xFF) as u8; 64]);
             }
+            done_p.store(true, Ordering::Release);
         });
+        // Consume until the producer is done AND the buffer is drained. This is
+        // scheduling-independent (no fixed poll budget that a loaded CI runner
+        // could exhaust before the producer is scheduled), so `taken > 0` is
+        // deterministic — the buffer always retains the latest published frame,
+        // and the post-`done` drain catches it.
         let mut out = Vec::new();
         let mut taken = 0u32;
-        for _ in 0..50_000 {
+        loop {
             if pb.take_into(&mut out) {
                 taken += 1;
                 // Every taken frame is a full 64-byte uniform buffer (no torn
@@ -272,10 +282,16 @@ mod tests {
                 assert_eq!(out.len(), 64);
                 let v = out[0];
                 assert!(out.iter().all(|&b| b == v), "torn frame");
+            } else if done.load(Ordering::Acquire) {
+                // Producer finished; one last drain catches the final frame.
+                if !pb.take_into(&mut out) {
+                    break;
+                }
+            } else {
+                std::hint::spin_loop();
             }
         }
         h.join().unwrap();
-        let _ = pb.take_into(&mut out);
         assert!(taken > 0, "consumer never observed a frame");
     }
 }
