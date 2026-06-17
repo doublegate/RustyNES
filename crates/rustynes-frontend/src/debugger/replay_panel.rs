@@ -44,6 +44,9 @@ pub struct ReplayPanelState {
     info: ReplayInfo,
     /// Scratch value bound to the seek slider while the user drags it.
     seek_target: usize,
+    /// True while the user is actively dragging the seek slider — pauses the
+    /// live-cursor tracking so the thumb doesn't fight the user's drag.
+    seek_dragging: bool,
     /// The pending action, taken by the app each frame.
     request: Option<ReplayRequest>,
 }
@@ -202,13 +205,19 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut ReplayPanelState) 
                 // Keep the slider tracking the live cursor unless the user is
                 // dragging it.
                 let last = status.total.saturating_sub(1);
-                if state.seek_target > last {
+                // Track the live playback cursor unless the user is dragging the
+                // slider (otherwise the thumb stays pinned where it was last set).
+                if !state.seek_dragging {
                     state.seek_target = status.cursor.min(last);
                 }
                 let resp =
                     ui.add(egui::Slider::new(&mut state.seek_target, 0..=last).text("frame"));
+                if resp.dragged() {
+                    state.seek_dragging = true;
+                }
                 if resp.drag_stopped() || (resp.changed() && !resp.dragged()) {
                     state.request = Some(ReplayRequest::Seek(state.seek_target));
+                    state.seek_dragging = false;
                 }
                 ui.horizontal(|ui| {
                     if ui.button("⏮ Start").clicked() {

@@ -101,13 +101,11 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut NsfPanelState, nes
                 return;
             }
 
-            let show_or_dash = |s: &str| {
-                if s.is_empty() {
-                    "—".to_owned()
-                } else {
-                    s.to_owned()
-                }
-            };
+            // A `fn` (not a closure) so the borrowed `&str` return lifetime elides
+            // to the input — no per-frame heap allocation in the UI render loop.
+            fn show_or_dash(s: &str) -> &str {
+                if s.is_empty() { "—" } else { s }
+            }
             egui::Grid::new("nsf_meta").num_columns(2).show(ui, |ui| {
                 ui.strong("Title");
                 ui.label(show_or_dash(&state.title));
