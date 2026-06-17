@@ -1154,10 +1154,10 @@ impl WaixingFs304M162 {
         let a = (r3 >> 2) & 1; // $5300.2 — A16 mode
         let b = r3 & 1; // $5300.0 — A15 mode
         let a16 = if a == 0 { 1 } else { (r0 >> 1) & 1 };
-        let a15 = if a == 0 {
-            if b == 0 { (r1 >> 1) & 1 } else { 1 }
-        } else if b == 0 {
+        let a15 = if b == 0 {
             (r1 >> 1) & 1
+        } else if a == 0 {
+            1
         } else {
             r0 & 1
         };

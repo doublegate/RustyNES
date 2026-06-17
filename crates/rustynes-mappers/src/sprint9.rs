@@ -1649,18 +1649,14 @@ impl Mapper for Multicart233 {
         let bank16 = (self.prg_bank as usize) | ((self.outer_block as usize) << 5);
         match addr {
             0x8000..=0xBFFF => {
-                let b = if self.mode_16k {
-                    bank16
-                } else {
-                    (bank16 >> 1) << 1
-                };
+                let b = if self.mode_16k { bank16 } else { bank16 & !1 };
                 self.read_prg(b, addr)
             }
             0xC000..=0xFFFF => {
                 let b = if self.mode_16k {
                     bank16
                 } else {
-                    ((bank16 >> 1) << 1) | 1
+                    (bank16 & !1) | 1
                 };
                 self.read_prg(b, addr)
             }
@@ -1735,7 +1731,10 @@ impl Mapper for Multicart233 {
         self.outer_block = data[1];
         self.prg_bank = data[2];
         self.mode_16k = data[3] != 0;
-        self.mirror_mode = data[4];
+        // Mask to the valid 0..=3 range so a corrupt / hand-edited save state
+        // can never produce an out-of-range mirroring mode (adopted from the
+        // PR #116 Gemini review).
+        self.mirror_mode = data[4] & 0x03;
         let mut cursor = 5;
         self.vram
             .copy_from_slice(&data[cursor..cursor + self.vram.len()]);
