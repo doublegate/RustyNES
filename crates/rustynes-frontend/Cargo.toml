@@ -111,6 +111,19 @@ gpu-timing = []
 # (archive packs) deps. See `docs/ppu-2c02.md` §HD-pack tile-source export.
 hd-pack = ["rustynes-core/hd-pack"]
 
+# v1.5.0 "Lens" Workstream G — EXPERIMENTAL casual-mode browser RetroAchievements
+# (default OFF, wasm-only). The ADR 0015 carryover. Activates the wasm-only
+# `wasm_cheevos` module, which talks to an Emscripten-built rcheevos SIDE MODULE
+# (`web/cheevos/`, produced by `scripts/cheevos/build_rcheevos_wasm.sh`) through
+# a `#[wasm_bindgen]` bridge — NOT the native `rustynes-cheevos` C FFI (which
+# cannot link into a `wasm32-unknown-unknown` cdylib; see ADR 0015 + the script).
+# Casual-only is STRUCTURAL (no hardcore API at any layer). Pulls no extra Rust
+# deps (the wasm32 dep table already carries wasm-bindgen), so it is inert on
+# native and the default wasm builds (and the wasm size budget) are unchanged.
+# Enable with:
+#   cargo build -p rustynes-frontend --target wasm32-unknown-unknown --features browser-cheevos
+browser-cheevos = []
+
 # v1.5.0 "Lens" Workstream A — explicit alias for the always-on core
 # `debug-hooks` feature. The frontend ALREADY pulls `rustynes-core` with
 # `debug-hooks` on (so the devtool panels — Trace / Event Viewer / the v1.5.0

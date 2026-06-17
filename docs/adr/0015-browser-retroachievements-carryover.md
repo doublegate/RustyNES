@@ -4,9 +4,11 @@ Date: 2026-06-16
 
 ## Status
 
-Accepted (v1.3.0 Workstream I) — **documented carryover**: the design + honesty
-constraints are settled here; the build track + live verification are a maintainer
-manual item (see Consequences).
+Accepted (v1.3.0 Workstream I). **Partially implemented in v1.5.0 "Lens"
+Workstream G** — the buildable parts are now done (build track proven, casual-only
+gating made structural, auth-proxy contract + stub, loud in-UI caveat); the live
+hosting + RA-account verification remain a maintainer-manual item (no headless
+path). See the v1.5.0 update at the end of Consequences.
 
 ## Context
 
@@ -61,3 +63,47 @@ structural blockers, all confirmed during v1.3.0:
   opt-in) is **unaffected** and fully supported.
 - The v1.4.0 plan's deferred backlog and `docs/compatibility.md` carry the
   cross-reference; the RA-API-drift maintenance cost is an ongoing flag, not code.
+
+## v1.5.0 "Lens" Workstream G update — what is now implemented
+
+The buildable parts of the planned design were landed behind the default-OFF,
+wasm-only `browser-cheevos` feature. Everything is additive + off-by-default, so
+native RA, the default native build, and both default wasm builds are unchanged
+(AccuracyCoin held 100% / 139-139; the native-RA + wasm clippy gates stay green).
+
+**Done (buildable, in-tree):**
+
+1. **The Emscripten rcheevos→wasm build track is proven.** `emcc` 6.0.0 compiles
+   the SAME vendored rcheevos sources + defines the native `build.rs` uses (26
+   translation units) to a `wasm32-unknown-emscripten` static archive, then links
+   a loadable side module (`rcheevos.wasm` + `rcheevos.js`). Driver:
+   `scripts/cheevos/build_rcheevos_wasm.sh` (the `.wasm`/`.js` outputs are
+   gitignored build artifacts). It is a **separate artifact, not linked into the
+   Rust `.wasm`**: trunk builds `wasm32-unknown-unknown`, whose ABI/libc/linking
+   model is incompatible with an emscripten `.a`. The Rust side reaches it through
+   the `web/cheevos/ra_glue.js` host surface, bound by
+   `crates/rustynes-frontend/src/wasm_cheevos.rs`'s `#[wasm_bindgen(module = ...)]`.
+2. **Casual-only is now STRUCTURAL at three independent layers**, any one of which
+   alone keeps hardcore impossible: (a) the Emscripten module never exports
+   `rc_client_set_hardcore_enabled`; (b) `ra_glue.js` exposes no hardcore method;
+   (c) `BrowserRaSession` has no hardcore field/API and its `hardcore_blocks()` is
+   `const false`. The auth-proxy stub also refuses to forward a hardcore award.
+3. **The auth-proxy contract is documented + has a deployable stub.** RA's
+   `User-Agent` is browser-forbidden, so every server call routes through a proxy
+   that injects `RustyNES/<ver> rcheevos/<ver>` server-side. Contract:
+   `scripts/cheevos/auth-proxy.example.toml`; reference stub (stdlib-only):
+   `scripts/cheevos/auth_proxy_stub.py`; full spec: `docs/cheevos-browser.md`.
+4. **A loud, persistent in-UI caveat** renders on wasm: a top-anchored banner that
+   always says casual-only + experimental (and, when the proxy is unset, that
+   login + unlocks are unavailable). Nothing silently pretends to work.
+
+**Still maintainer-manual (no headless path):**
+
+- Deploy the auth proxy (a host + TLS + a hardened CORS origin) and coordinate the
+  exact `User-Agent` + casual-only intent with the RA team.
+- Finish the `ra_glue.js` rc_client trampoline marshalling (read-memory /
+  server-call / event-handler via `addFunction`) — scaffolded, with the contract
+  shape in place — then point `RA_PROXY_BASE` at the deployed proxy.
+- **Live-browser verification with a real RA account** (open the page, log in via
+  the proxy, confirm a casual unlock). This has no headless path and is the
+  acceptance gate for flipping this ADR to fully Implemented.
