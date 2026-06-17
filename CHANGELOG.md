@@ -52,6 +52,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     HD-pack tile-source telemetry. Display-only — the compositor reads the same
     deterministic per-frame snapshots `composite` consumed and mutates nothing.
 
+### Fixed
+
+- **Closed-PR review-comment triage.** Adjudicated the backlog of open bot-review
+  threads against current `main` and adopted the pertinent, still-actionable ones
+  (all additive / off-by-default, byte-identical for valid states; AccuracyCoin
+  holds 100%):
+  - NSF player: clamp the starting/restored song index to the song count
+    (`NsfMapper::new` + `load_state`) so a malformed header or corrupt save-state
+    can't seed an out-of-range song; doc/wording corrected to classic `NESM` only.
+  - Audio EQ: guard `f32::clamp` against a `NaN` gain deserialized from
+    `config.toml`; treat a flat (all-zero) EQ as disengaged to skip the stage; add
+    a Nyquist guard to the peaking biquad so a low host sample rate can't produce
+    an unstable filter; apply EQ-slider gain live but persist on release; gate the
+    EQ Settings block out of the wasm build (no cpal handle there).
+  - Mapper 76 (Namcot-3446): use `saturating_sub` for the `$C000` fixed window so a
+    single-8 KiB-bank ROM can't underflow in debug builds (output-identical).
+  - HD-pack loader (off by default): accept the `$` hex prefix in condition rules
+    and round (not truncate) the source-over alpha blend.
+  - Frontend hygiene: clear the sibling presentation buffers on ROM close; reuse a
+    single work-RAM snapshot per Memory-Compare filter step; preserve the Events
+    panel aspect ratio on wide windows; drop a leaked IndexedDB upgrade closure on
+    wasm; map Mesen `.mlb` `W`/`S` symbol types; minor allocation cleanups.
+  - Mappers: drop a redundant `& 0x0F` mask in the Vs. DualSystem header check.
+
 ## [1.4.1] - 2026-06-16
 
 **Patch** — four more BestEffort mapper boot/decode fixes surfaced by the

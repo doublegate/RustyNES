@@ -161,7 +161,7 @@ pub fn parse_header(bytes: &[u8]) -> Result<Header, RomError> {
     // Vs. DualSystem boards (two CPUs / two PPUs). Detection only — the
     // dual-console emulation is a documented v2.0 deferral.
     let vs_dual_system =
-        is_nes2 && console_type == ConsoleType::VsSystem && matches!((h[13] >> 4) & 0x0F, 5 | 6);
+        is_nes2 && console_type == ConsoleType::VsSystem && matches!(h[13] >> 4, 5 | 6);
 
     // RAM sizes.
     let prg_ram_size = if is_nes2 {

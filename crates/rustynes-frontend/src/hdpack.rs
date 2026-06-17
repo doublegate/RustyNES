@@ -781,7 +781,11 @@ fn split_tag(line: &str) -> Option<(&str, &str)> {
 /// Parse a hex (`0x`-optional) or decimal integer.
 fn parse_int(s: &str) -> Option<u32> {
     let s = s.trim();
-    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+    if let Some(hex) = s
+        .strip_prefix("0x")
+        .or_else(|| s.strip_prefix("0X"))
+        .or_else(|| s.strip_prefix('$'))
+    {
         return u32::from_str_radix(hex, 16).ok();
     }
     s.parse::<u32>().ok()
@@ -1376,7 +1380,9 @@ fn blit_background(
                 for c in 0..3 {
                     let src = u16::from(img.rgba[s + c]) * u16::from(a);
                     let dstc = u16::from(out[d + c]) * inv;
-                    out[d + c] = u8::try_from((src + dstc) / 255).unwrap_or(0xFF);
+                    // Round to nearest (+127) instead of truncating; overflow-safe
+                    // since the max numerator is 255*255 + 127 = 65152 < u16::MAX.
+                    out[d + c] = u8::try_from((src + dstc + 127) / 255).unwrap_or(0xFF);
                 }
                 // Leave dst alpha opaque (the base upscale is opaque).
                 out[d + 3] = 0xFF;

@@ -659,7 +659,9 @@ impl Mapper for Namcot3446M76 {
         match addr {
             0x8000..=0x9FFF => self.prg_offset(self.prg_banks[0] as usize, addr),
             0xA000..=0xBFFF => self.prg_offset(self.prg_banks[1] as usize, addr),
-            0xC000..=0xDFFF => self.prg_offset(last - 1, addr),
+            // `last - 1` would underflow on a single-8 KiB-bank ROM (`last == 0`);
+            // `prg_offset`'s modulo makes both forms identical for multi-bank ROMs.
+            0xC000..=0xDFFF => self.prg_offset(last.saturating_sub(1), addr),
             0xE000..=0xFFFF => self.prg_offset(last, addr),
             _ => 0,
         }

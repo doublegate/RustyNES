@@ -46,13 +46,9 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut NsfPanelState, nes
                 return;
             }
 
-            let show_or_dash = |s: &str| {
-                if s.is_empty() {
-                    "—".to_owned()
-                } else {
-                    s.to_owned()
-                }
-            };
+            fn show_or_dash(s: &str) -> &str {
+                if s.is_empty() { "—" } else { s }
+            }
             egui::Grid::new("nsf_meta").num_columns(2).show(ui, |ui| {
                 ui.strong("Title");
                 ui.label(show_or_dash(&state.title));

@@ -219,7 +219,14 @@ impl SampleQueue {
     /// the producer rebuilds its biquads on the next push. Bumps the generation.
     pub fn set_eq(&self, enabled: bool, bands: [f32; BAND_COUNT]) {
         for (slot, &g) in self.inner.eq_bands.iter().zip(bands.iter()) {
-            slot.store(g.clamp(-12.0, 12.0).to_bits(), Ordering::Relaxed);
+            // `eq_bands` is deserialized from config.toml unvalidated; guard the
+            // NaN case before `f32::clamp` (which panics on a NaN argument).
+            let g = if g.is_nan() {
+                0.0
+            } else {
+                g.clamp(-12.0, 12.0)
+            };
+            slot.store(g.to_bits(), Ordering::Relaxed);
         }
         self.inner.eq_enabled.store(enabled, Ordering::Relaxed);
         self.inner.eq_gen.fetch_add(1, Ordering::Release);
@@ -396,7 +403,9 @@ impl EqStage {
             let (enabled, bands) = queue.eq_params();
             self.eq = enabled.then(|| Equalizer::new(bands, self.sample_rate));
         }
-        self.eq.is_some()
+        // A flat (all-zero-gain) EQ is a no-op in `Equalizer::process`; report it
+        // as disengaged so callers skip the copy/resample work entirely.
+        self.eq.as_ref().is_some_and(|e| !e.is_bypass())
     }
 
     /// Filter `buf` in place (call only after [`Self::engaged`] returned `true`).

@@ -99,11 +99,11 @@ impl MemoryComparePanelState {
         };
         let eq = parse_byte(&self.eq_text).unwrap_or(0);
         let filter = self.filter;
-        cands.retain(|&addr| {
-            let cur = nes.cpu_bus_peek(addr);
-            filter.matches(base[addr as usize], cur, eq)
-        });
-        self.baseline = Some(snapshot(nes));
+        // Snapshot once, then reuse it for both the filter compare and the next
+        // baseline (avoids a second full 2 KB peek pass).
+        let cur_ram = snapshot(nes);
+        cands.retain(|&addr| filter.matches(base[addr as usize], cur_ram[addr as usize], eq));
+        self.baseline = Some(cur_ram);
         self.steps += 1;
     }
 }

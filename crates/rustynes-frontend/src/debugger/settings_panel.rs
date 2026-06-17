@@ -827,48 +827,54 @@ pub fn audio_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
 
     // v1.1.0 beta.2 (T-110-D2) — optional graphic EQ output stage. Off by
     // default → byte-identical output; this is a frontend stage (post-resampler),
-    // never the deterministic core synthesis.
-    ui.add_space(6.0);
-    ui.separator();
-    if ui
-        .checkbox(&mut config.audio.eq_enabled, "Graphic EQ")
-        .changed()
+    // never the deterministic core synthesis. Native-only: the EQ runs through
+    // the cpal audio handle, which is absent on wasm (the sliders would be inert).
+    #[cfg(not(target_arch = "wasm32"))]
     {
-        state.apply.audio_eq = true;
-        save_config(config);
-    }
-    ui.add_enabled_ui(config.audio.eq_enabled, |ui| {
-        const BANDS: [(usize, &str); 5] =
-            [(0, "60"), (1, "240"), (2, "1k"), (3, "3.8k"), (4, "12k")];
-        ui.horizontal(|ui| {
-            for (i, label) in BANDS {
-                ui.vertical(|ui| {
-                    if ui
-                        .add(
-                            egui::Slider::new(&mut config.audio.eq_bands[i], -12.0..=12.0)
-                                .vertical()
-                                .suffix(" dB"),
-                        )
-                        .changed()
-                    {
-                        state.apply.audio_eq = true;
-                        save_config(config);
-                    }
-                    ui.label(format!("{label} Hz"));
-                });
-            }
-        });
-        if ui.button("Reset EQ (flat)").clicked() {
-            config.audio.eq_bands = [0.0; 5];
+        ui.add_space(6.0);
+        ui.separator();
+        if ui
+            .checkbox(&mut config.audio.eq_enabled, "Graphic EQ")
+            .changed()
+        {
             state.apply.audio_eq = true;
             save_config(config);
         }
-    });
+        ui.add_enabled_ui(config.audio.eq_enabled, |ui| {
+            const BANDS: [(usize, &str); 5] =
+                [(0, "60"), (1, "240"), (2, "1k"), (3, "3.8k"), (4, "12k")];
+            ui.horizontal(|ui| {
+                for (i, label) in BANDS {
+                    ui.vertical(|ui| {
+                        let resp = ui.add(
+                            egui::Slider::new(&mut config.audio.eq_bands[i], -12.0..=12.0)
+                                .vertical()
+                                .suffix(" dB"),
+                        );
+                        // Apply the gain live as the slider moves, but only
+                        // persist on release so a drag doesn't thrash the disk.
+                        if resp.changed() {
+                            state.apply.audio_eq = true;
+                        }
+                        if resp.drag_stopped() || (resp.changed() && !resp.dragged()) {
+                            save_config(config);
+                        }
+                        ui.label(format!("{label} Hz"));
+                    });
+                }
+            });
+            if ui.button("Reset EQ (flat)").clicked() {
+                config.audio.eq_bands = [0.0; 5];
+                state.apply.audio_eq = true;
+                save_config(config);
+            }
+        });
 
-    // Persist on release so a drag doesn't thrash the disk; the live gain is
-    // already applied above.
-    if ui.button("Save audio settings").clicked() {
-        save_config(config);
+        // Manual persist for anything still in-flight; the live gain is already
+        // applied above.
+        if ui.button("Save audio settings").clicked() {
+            save_config(config);
+        }
     }
 
     // Sample rate: persisted only — a live change needs an audio-stream
