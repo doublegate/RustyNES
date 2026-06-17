@@ -862,29 +862,14 @@ impl Overscan {
     /// visible (mirrors the renderer's guard). Returns a copy.
     #[must_use]
     pub fn clamped(self) -> Self {
-        // Keep >= 16 visible rows/cols so the blit never divides by ~0.
-        let v_room = 240u16.saturating_sub(16);
-        let h_room = 256u16.saturating_sub(16);
-        let top = u16::from(self.top);
-        let bottom = u16::from(self.bottom);
-        let left = u16::from(self.left);
-        let right = u16::from(self.right);
-        // Proportionally trim if the pair over-crops; simple cap is enough here.
-        let (top, bottom) = if top + bottom > v_room {
-            (self.top.min(112), self.bottom.min(112))
-        } else {
-            (self.top, self.bottom)
-        };
-        let (left, right) = if left + right > h_room {
-            (self.left.min(120), self.right.min(120))
-        } else {
-            (self.left, self.right)
-        };
+        // Capping each side independently already guarantees at least 16 px of
+        // width + height remain visible (top + bottom <= 224 <= 240 - 16 and
+        // left + right <= 240 <= 256 - 16), so no proportional trim is needed.
         Self {
-            top: top.min(112),
-            bottom: bottom.min(112),
-            left: left.min(120),
-            right: right.min(120),
+            top: self.top.min(112),
+            bottom: self.bottom.min(112),
+            left: self.left.min(120),
+            right: self.right.min(120),
         }
     }
 

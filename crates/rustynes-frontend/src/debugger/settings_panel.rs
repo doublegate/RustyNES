@@ -182,15 +182,30 @@ pub struct SettingsPanelState {
 /// The editor edits a 64-colour working copy (`working`) which the user can
 /// save under a name into the [`crate::config::PaletteBank`] or apply directly.
 /// `open` toggles the editor's collapsing body; `name_input` backs Save-As.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct PaletteEditorState {
-    /// The 64 base RGB colours being edited (the working copy).
-    working: Vec<[u8; 3]>,
+    /// The 64 base RGB colours being edited (the working copy). A NES base
+    /// palette is always exactly 64 colours, so this is a fixed array.
+    working: [[u8; 3]; 64],
     /// Save-As name input.
     name_input: String,
     /// `true` once `working` has been seeded from the active palette / built-in
     /// (so re-opening the editor does not clobber an in-progress edit).
     seeded: bool,
+}
+
+impl Default for PaletteEditorState {
+    fn default() -> Self {
+        // `working` starts all-black; it is seeded from the active / built-in
+        // palette on first show (when `seeded` is still false). A `[[u8; 3]; 64]`
+        // does not get a blanket `Default` (arrays only derive it up to N = 32),
+        // so the impl is spelled out here.
+        Self {
+            working: [[0u8; 3]; 64],
+            name_input: String::new(),
+            seeded: false,
+        }
+    }
 }
 
 /// v1.0.0 — a two-click "Reset to Defaults" button: the first click arms it
@@ -496,6 +511,11 @@ pub fn video_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
         state.apply.palette_clear |= palette_changed;
         state.apply.palette_select |= active_palette_changed;
         state.apply.shader_stack |= stack_changed;
+        if active_palette_changed {
+            // The active selection cleared back to the built-in; re-seed the
+            // palette editor's swatches from it next frame.
+            state.palette_editor.seeded = false;
+        }
         save_config(config);
     }
 }
@@ -592,6 +612,9 @@ fn palette_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &m
         if new_active != config.graphics.active_palette {
             config.graphics.active_palette = new_active;
             state.apply.palette_select = true;
+            // Re-seed the editor from the newly selected palette next frame so
+            // its swatches do not show the previously selected palette's colours.
+            state.palette_editor.seeded = false;
             save_config(config);
         }
     });
@@ -629,9 +652,8 @@ fn palette_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &m
         .default_open(false)
         .show(ui, |ui| {
             // Seed the working copy once from the active palette (or built-in).
-            if !state.palette_editor.seeded || state.palette_editor.working.len() != 64 {
-                let base = resolve_active_base_palette(config);
-                state.palette_editor.working = base.to_vec();
+            if !state.palette_editor.seeded {
+                state.palette_editor.working = resolve_active_base_palette(config);
                 state.palette_editor.seeded = true;
             }
             ui.weak(
@@ -641,25 +663,30 @@ fn palette_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &m
 
             // 8x8 colour-picker grid.
             let mut edited = false;
+            // Only persist (synchronous file I/O) once the drag finishes, so
+            // dragging a colour picker does not write `config.toml` every frame.
+            let mut committed = false;
             egui::Grid::new("palette-editor-grid")
                 .spacing([4.0, 4.0])
                 .show(ui, |ui| {
                     for row in 0..8 {
                         for col in 0..8 {
                             let idx = row * 8 + col;
-                            if idx < state.palette_editor.working.len() {
-                                let c = &mut state.palette_editor.working[idx];
-                                let mut rgb = [
-                                    f32::from(c[0]) / 255.0,
-                                    f32::from(c[1]) / 255.0,
-                                    f32::from(c[2]) / 255.0,
-                                ];
-                                if ui.color_edit_button_rgb(&mut rgb).changed() {
-                                    c[0] = (rgb[0] * 255.0).round().clamp(0.0, 255.0) as u8;
-                                    c[1] = (rgb[1] * 255.0).round().clamp(0.0, 255.0) as u8;
-                                    c[2] = (rgb[2] * 255.0).round().clamp(0.0, 255.0) as u8;
-                                    edited = true;
-                                }
+                            let c = &mut state.palette_editor.working[idx];
+                            let mut rgb = [
+                                f32::from(c[0]) / 255.0,
+                                f32::from(c[1]) / 255.0,
+                                f32::from(c[2]) / 255.0,
+                            ];
+                            let resp = ui.color_edit_button_rgb(&mut rgb);
+                            if resp.changed() {
+                                c[0] = (rgb[0] * 255.0).round().clamp(0.0, 255.0) as u8;
+                                c[1] = (rgb[1] * 255.0).round().clamp(0.0, 255.0) as u8;
+                                c[2] = (rgb[2] * 255.0).round().clamp(0.0, 255.0) as u8;
+                                edited = true;
+                            }
+                            if resp.drag_stopped() || (resp.changed() && !resp.dragged()) {
+                                committed = true;
                             }
                         }
                         ui.end_row();
@@ -667,19 +694,19 @@ fn palette_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &m
                 });
 
             // Live-apply the working edits to the active palette (so the editor
-            // is WYSIWYG when a named palette is selected).
+            // is WYSIWYG when a named palette is selected). The live core-apply
+            // runs on every change during a drag; `save_config` is deferred to
+            // when the drag stops (`committed`) to avoid per-frame disk I/O.
             if edited && let Some(name) = config.graphics.active_palette.clone() {
-                let mut base = [[0u8; 3]; 64];
-                for (dst, src) in base.iter_mut().zip(state.palette_editor.working.iter()) {
-                    *dst = *src;
-                }
                 config
                     .graphics
                     .palettes
                     .palettes
-                    .insert(name, CustomPalette::from_base(base));
+                    .insert(name, CustomPalette::from_base(state.palette_editor.working));
                 state.apply.palette_select = true;
-                save_config(config);
+                if committed {
+                    save_config(config);
+                }
             }
 
             ui.separator();
@@ -692,16 +719,11 @@ fn palette_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &m
                 );
                 if ui.button("Save as").clicked() {
                     let name = state.palette_editor.name_input.trim().to_string();
-                    if !name.is_empty() && state.palette_editor.working.len() == 64 {
-                        let mut base = [[0u8; 3]; 64];
-                        for (dst, src) in base.iter_mut().zip(state.palette_editor.working.iter()) {
-                            *dst = *src;
-                        }
-                        config
-                            .graphics
-                            .palettes
-                            .palettes
-                            .insert(name.clone(), CustomPalette::from_base(base));
+                    if !name.is_empty() {
+                        config.graphics.palettes.palettes.insert(
+                            name.clone(),
+                            CustomPalette::from_base(state.palette_editor.working),
+                        );
                         config.graphics.active_palette = Some(name);
                         state.apply.palette_select = true;
                         save_config(config);
@@ -709,8 +731,7 @@ fn palette_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &m
                 }
                 // Reseed the editor from the built-in palette (start fresh).
                 if ui.button("Reset to built-in").clicked() {
-                    state.palette_editor.working =
-                        rustynes_core::rustynes_ppu::NES_PALETTE.to_vec();
+                    state.palette_editor.working = rustynes_core::rustynes_ppu::NES_PALETTE;
                 }
             });
 
@@ -734,7 +755,7 @@ fn palette_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &m
                     .palettes
                     .insert(name.clone(), CustomPalette::from_base(base));
                 config.graphics.active_palette = Some(name);
-                state.palette_editor.working = base.to_vec();
+                state.palette_editor.working = base;
                 state.apply.palette_select = true;
                 save_config(config);
             }
