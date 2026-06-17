@@ -10,7 +10,7 @@
 
 [![Build Status](https://github.com/doublegate/RustyNES/workflows/CI/badge.svg)](https://github.com/doublegate/RustyNES/actions)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
-[![Version](https://img.shields.io/badge/version-v1.4.1-blue.svg)](https://github.com/doublegate/RustyNES/releases)
+[![Version](https://img.shields.io/badge/version-v1.5.0-blue.svg)](https://github.com/doublegate/RustyNES/releases)
 [![Rust: 1.96](https://img.shields.io/badge/rust-1.96-orange.svg)](rust-toolchain.toml)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web-lightgrey.svg)](#platform-support)
 [![AccuracyCoin](<https://img.shields.io/badge/AccuracyCoin-100%25%20(139%2F139)-brightgreen.svg>)](#compatibility-and-accuracy)
@@ -488,11 +488,13 @@ engine-development audit logs are kept locally, outside the public repo.)
 
 ## Version History
 
-The current release is **v1.4.1**, a patch on top of **v1.4.0 "Fidelity"** (the
-compatibility-and-finish release on the cycle-accurate v1.0.0 production core). The road there:
+The current release is **v1.5.0 "Lens"**, the insight, scriptability, creator-tooling, and
+polish release on the cycle-accurate v1.0.0 production core (it follows the v1.4.0 "Fidelity"
+and v1.4.1 compatibility line). The road there:
 
 | Version    | Highlights                                                                                  |
 | ---------- | ------------------------------------------------------------------------------------------- |
+| **v1.5.0** | "Lens" — insight + scriptability + creator tooling + polish: debugger **visualization** (Input Miniatures overlay, a graphical PPU event-viewer heatmap, a per-scanline trace, an HD-pack pixel inspector), a Lua **dev/TAS API** (memory/cart/save-state/symbol queries), a **TASVideos** compatibility pass + replay/TAS-window polish + an NSF waveform scope, a measure-first **frontend pacing & audio-sync** perf pass with perf-log↔panel parity, **UX polish** (named-palette editor, per-side overscan WYSIWYG, an Enhancements settings group, device-config controls), **accessibility** (UI scaling, high-contrast + Okabe-Ito colorblind themes, keyboard-only nav), a **native-UI overhaul** + in-app **Documentation** pane, mapper coverage 113 → **123 families**, and **casual-mode browser RetroAchievements** scaffolding (ADR 0015, off by default — emcc-built rcheevos side module + auth-proxy contract; live-browser verify is maintainer-manual). All additive / off-by-default so shipped / native / `no_std` / wasm stay byte-identical; AccuracyCoin 100% (139/139) held. |
 | **v1.4.1** | Patch — four more BestEffort mapper boot/decode fixes from the boot-smoke-vs-real-dumps pass (m92 Jaleco JF-19 PRG layout, m94 UN1ROM bank decode + bus conflict, m145 Sachen 16 KiB PRG, m147 Sachen 3018 / TXC JV001 protection handshake), plus the boot-smoke screenshot corpus reorganized to mirror the per-mapper `tests/roms/` tier layout. BestEffort-only; AccuracyCoin 100% (139/139) held, byte-identical to v1.4.0. |
 | **v1.4.0** | "Fidelity" — compatibility + finish: accuracy polish (triangle ultrasonic silence, DMC-DMA ↔ controller-read conflict verified), per-channel audio mixing, devtools finish (symbol-file `.sym`/`.mlb`/`.nl` loading + event breakpoints), browser QoL (wasm `.rnm` movie I/O + IndexedDB save-states), a measure-first perf pass (−8% on the rendering-heavy bench), a colorful **`rustynes help` TUI** + styled `--help` (clap 4 + ratatui), and mapper coverage 101 → **113 families** (boot-smoke verified, with reset-vector / decode fixes to m132/m143/m225/m226/m233/m242/m246). AccuracyCoin 100% (139/139) held. |
 | **v1.3.0** | "Bedrock" — foundation + breadth: edition 2024 / Rust 1.96 / egui 0.34 + wgpu 29 toolchain, the frame-pacing fix, Memory Compare + menu/Settings reorg + auto-save, mapper coverage 87 → **101 families** + Vs. DualSystem detection, HD-pack `<condition>`/`<background>` rules, netplay desync diagnostics + niche peripheral aliases, and the exercised PGO/BOLT gate. AccuracyCoin 100% held. (Casual-mode browser RetroAchievements is a documented carryover — ADR 0015.) |
@@ -512,20 +514,24 @@ compatibility-and-finish release on the cycle-accurate v1.0.0 production core). 
 > (v0.8.x) used an earlier, less-accurate emulation core; v1.0.0 replaced that core
 > wholesale with the cycle-accurate engine described above; **v1.1.0** added the
 > scripting/filters/peripherals feature set; **v1.2.0 "Curator"** added the library /
-> compatibility / reach set; **v1.3.0 "Bedrock"** added the toolchain + breadth set; and
-> **v1.4.0 "Fidelity"** adds the compatibility-and-finish set above. See
+> compatibility / reach set; **v1.3.0 "Bedrock"** added the toolchain + breadth set;
+> **v1.4.0 "Fidelity"** (+ the v1.4.1 patch) added the compatibility-and-finish set; and
+> **v1.5.0 "Lens"** adds the insight / scriptability / creator-tooling / polish set above. See
 > [`CHANGELOG.md`](CHANGELOG.md) for full per-version detail.
 
 ### Roadmap
 
-With v1.4.0 the non-architectural backlog is nearly consumed: emulation accuracy is now at
-or beyond the GeraNES bar, and the remaining accuracy residuals all converge on a single
-future **v2.0 master-clock (fractional-timebase) refactor** (ADR 0002). The next release is
-expected to be either a focused **v1.5.0 "Lens"** consolidation pass (debugger visualization,
-Lua/TAS scriptability depth, creator tooling, UX polish + accessibility, mapper continuation)
-or that v2.0 refactor. Further-out directions include mobile (iOS / Android) frontends and
-casual-mode browser RetroAchievements (ADR 0015). See [`docs/STATUS.md`](docs/STATUS.md) for
-the authoritative current state.
+With **v1.5.0 "Lens"** shipped, the non-architectural backlog is essentially consumed:
+emulation accuracy is at or beyond the GeraNES bar, the GeraNES-class debugger visualization
+and creator/TAS tooling now exists, and the remaining accuracy residuals all converge on a
+single future **v2.0 master-clock (fractional-timebase) refactor** (ADR 0002). The next
+release is expected to be either a **v1.6.0 "Studio"** creator-power + accuracy-polish + reach
+pass (a TAStudio-class piano-roll TAS editor, `.fm2`/`.bk2` movie interop, Mesen2-class
+conditional breakpoints/watchpoints/hex editor, an off-axis accuracy cluster adoptable without
+v2.0, and breadth: mappers → ~150, FDS-proper, A/V recording) or that v2.0 refactor. Browser
+RetroAchievements has its buildable scaffolding in v1.5.0 (ADR 0015); finishing it (deploy the
+auth proxy, live-browser verify) + mobile (iOS / Android) frontends remain further-out. See
+[`docs/STATUS.md`](docs/STATUS.md) for the authoritative current state.
 
 ---
 
