@@ -1376,6 +1376,12 @@ impl DebuggerOverlay {
             if theme_changed {
                 crate::ui_shell::apply_theme(ctx, theme_now);
             }
+            // (1b) v1.5.0 accessibility — UI zoom. `set_zoom_factor` is a no-op
+            // when the value is unchanged, so calling it every frame is cheap
+            // and keeps the egui shell scaled to `config.ui.zoom_factor`. The
+            // emulated NES image is a raw framebuffer blit, not egui content,
+            // so it is unaffected (gameplay/determinism untouched).
+            ctx.set_zoom_factor(config.ui.clamped_zoom_factor());
             // (2) The always-on shell. Its settings/input tab bodies reuse the
             // existing debugger widgets so their live-apply plumbing is intact.
             let settings_ui = &mut self.settings_ui;

@@ -25,7 +25,7 @@ use std::time::Duration;
 
 use web_time::Instant;
 
-use crate::config::{AppTheme, Config};
+use crate::config::{AppTheme, Config, UiConfig};
 
 /// A status message shown in the status bar with a colour and an auto-fade.
 ///
@@ -883,7 +883,7 @@ impl UiShell {
                         ui.close();
                     }
                     ui.menu_button(ic(glyph::PALETTE, "Theme"), |ui| {
-                        for theme in [AppTheme::Light, AppTheme::Dark, AppTheme::System] {
+                        for theme in AppTheme::all() {
                             if ui
                                 .radio_value(&mut config.ui.theme, theme, theme.display_name())
                                 .clicked()
@@ -1305,6 +1305,7 @@ impl UiShell {
     }
 
     /// Render the tabbed settings window.
+    #[allow(clippy::too_many_lines)] // the Video tab inlines the display + accessibility chrome.
     fn settings_window(
         &mut self,
         ctx: &egui::Context,
@@ -1351,16 +1352,19 @@ impl UiShell {
                                 egui::ComboBox::from_id_salt("shell-theme")
                                     .selected_text(config.ui.theme.display_name())
                                     .show_ui(ui, |ui| {
-                                        for theme in
-                                            [AppTheme::Light, AppTheme::Dark, AppTheme::System]
-                                        {
+                                        for theme in AppTheme::all() {
                                             ui.selectable_value(
                                                 &mut config.ui.theme,
                                                 theme,
                                                 theme.display_name(),
                                             );
                                         }
-                                    });
+                                    })
+                                    .response
+                                    .on_hover_text(
+                                        "High Contrast and Colorblind-Safe are accessibility \
+                                         themes (WCAG AA contrast / Okabe-Ito palette).",
+                                    );
                                 if before != config.ui.theme {
                                     save_config(config);
                                 }
@@ -1381,6 +1385,52 @@ impl UiShell {
                                 save_config(config);
                             }
                             ui.separator();
+
+                            // v1.5.0 accessibility — UI zoom. Scales the whole
+                            // egui shell (fonts/menus/panels) via the context
+                            // zoom factor; the emulated NES image is a raw blit
+                            // and is unaffected. Applied live each frame by the
+                            // render loop reading `config.ui.zoom_factor`.
+                            ui.heading("Accessibility");
+                            ui.horizontal(|ui| {
+                                ui.label("UI scale:");
+                                let mut pct = (config.ui.clamped_zoom_factor() * 100.0).round();
+                                let resp = ui.add(
+                                    egui::Slider::new(
+                                        &mut pct,
+                                        (UiConfig::ZOOM_MIN * 100.0)..=(UiConfig::ZOOM_MAX * 100.0),
+                                    )
+                                    .suffix("%")
+                                    .step_by(5.0),
+                                );
+                                if resp.changed() {
+                                    config.ui.zoom_factor =
+                                        (pct / 100.0).clamp(UiConfig::ZOOM_MIN, UiConfig::ZOOM_MAX);
+                                }
+                                // Update the zoom live each frame, but only persist
+                                // when the drag stops so a slider drag doesn't thrash
+                                // the disk (mirrors the EQ/replay-panel idiom).
+                                if resp.drag_stopped() || (resp.changed() && !resp.dragged()) {
+                                    save_config(config);
+                                }
+                                if ui
+                                    .button("Reset")
+                                    .on_hover_text("Reset UI scale to 100%")
+                                    .clicked()
+                                {
+                                    config.ui.zoom_factor = 1.0;
+                                    save_config(config);
+                                }
+                            });
+                            ui.label(
+                                egui::RichText::new(
+                                    "Scales the menus, Settings, and debugger UI. \
+                                     The game image is not affected.",
+                                )
+                                .small()
+                                .weak(),
+                            );
+                            ui.separator();
                             settings_body(ui, config, SettingsTab::Video);
                         }
                         // v1.0.0 settings split — each tab renders ONLY its own
@@ -1395,9 +1445,14 @@ impl UiShell {
         // v1.3.0 auto-save — persist once if any tab mutated the config. The
         // per-control `save_config` calls in the panel sections remain (harmless
         // double-save) but this is the backstop that makes EVERY setting sticky.
-        if *config != config_before {
+        // Skip while a pointer button is held so an in-progress slider drag
+        // doesn't write the config to disk every frame; the release-edge save
+        // (and this backstop on the next idle frame) still persists the change.
+        if *config != config_before && !ctx.input(|i| i.pointer.any_down()) {
             save_config(config);
         }
+        // v1.5.0 accessibility — Esc dismisses the modal for keyboard-only users.
+        esc_closes(ctx, &mut open);
         self.show_settings_window = open;
     }
 
@@ -1496,9 +1551,28 @@ fn accel_changed(ui: &mut egui::Ui, value: &mut bool, label: &str, key: &str) ->
     }
 }
 
-/// Apply the configured [`AppTheme`] to the egui context. Called as the first
-/// statement of the shell egui closure each frame so the chrome (and the
-/// debugger panels) all render in the chosen theme.
+/// v1.5.0 accessibility — keyboard-only modal dismissal.
+///
+/// egui's `Window::open(&mut bool)` gives a mouse-clickable close `X` but does
+/// not close on the `Esc` key, so a keyboard-only user could open Settings /
+/// About / Shortcuts and have no key to dismiss them (the app's `Esc`/Quit
+/// binding is suppressed while a shell window is open, so it can't quit out
+/// either). This consumes a pressed `Esc` and clears `open`, giving every modal
+/// a consistent keyboard escape hatch. Returns `true` when it closed the window.
+fn esc_closes(ctx: &egui::Context, open: &mut bool) -> bool {
+    if *open && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+        *open = false;
+        true
+    } else {
+        false
+    }
+}
+
+/// Apply the configured [`AppTheme`] to the egui context.
+///
+/// Called as the first statement of the shell egui closure each frame (guarded
+/// by a change check) so the chrome (and the debugger panels) all render in the
+/// chosen theme.
 pub fn apply_theme(ctx: &egui::Context, theme: AppTheme) {
     match theme {
         AppTheme::Light => ctx.set_visuals(egui::Visuals::light()),
@@ -1511,7 +1585,81 @@ pub fn apply_theme(ctx: &egui::Context, theme: AppTheme) {
                 _ => ctx.set_visuals(egui::Visuals::dark()),
             }
         }
+        AppTheme::HighContrast => ctx.set_visuals(high_contrast_visuals()),
+        AppTheme::Colorblind => ctx.set_visuals(colorblind_visuals()),
     }
+}
+
+/// A high-contrast dark [`egui::Visuals`] for low-vision accessibility.
+///
+/// Starts from the stock dark theme and pushes every foreground/background pair
+/// to the extremes: a near-black window/panel background, pure-white body text
+/// and a bright cyan selection accent, with thicker, fully-opaque widget
+/// strokes so focus and boundaries read clearly. The text-vs-background ratios
+/// clear WCAG 2.1 AA (4.5:1) — most clear AAA (7:1) — for normal-size text.
+fn high_contrast_visuals() -> egui::Visuals {
+    use egui::Color32;
+    let mut v = egui::Visuals::dark();
+    let black = Color32::from_rgb(8, 8, 8);
+    let white = Color32::from_rgb(250, 250, 250);
+    // Selection / hyperlink accent: bright cyan reads strongly on near-black
+    // and is distinguishable across all common color-vision deficiencies.
+    let accent = Color32::from_rgb(0, 224, 255);
+
+    v.dark_mode = true;
+    v.override_text_color = Some(white);
+    v.panel_fill = black;
+    v.window_fill = black;
+    v.extreme_bg_color = Color32::BLACK;
+    v.faint_bg_color = Color32::from_rgb(28, 28, 28);
+    v.window_stroke = egui::Stroke::new(1.5, white);
+    v.hyperlink_color = accent;
+    v.selection.bg_fill = accent.gamma_multiply(0.55);
+    v.selection.stroke = egui::Stroke::new(1.5, accent);
+
+    // Widget states: opaque fills + bold white strokes for visible boundaries.
+    let stroke = |w: f32| egui::Stroke::new(w, white);
+    v.widgets.noninteractive.bg_fill = black;
+    v.widgets.noninteractive.weak_bg_fill = black;
+    v.widgets.noninteractive.fg_stroke = stroke(1.0);
+    v.widgets.inactive.bg_fill = Color32::from_rgb(40, 40, 40);
+    v.widgets.inactive.weak_bg_fill = Color32::from_rgb(40, 40, 40);
+    v.widgets.inactive.fg_stroke = stroke(1.5);
+    v.widgets.inactive.bg_stroke = stroke(1.0);
+    v.widgets.hovered.bg_fill = Color32::from_rgb(70, 70, 70);
+    v.widgets.hovered.weak_bg_fill = Color32::from_rgb(70, 70, 70);
+    v.widgets.hovered.fg_stroke = stroke(2.0);
+    v.widgets.hovered.bg_stroke = egui::Stroke::new(2.0, accent);
+    v.widgets.active.bg_fill = Color32::from_rgb(90, 90, 90);
+    v.widgets.active.weak_bg_fill = Color32::from_rgb(90, 90, 90);
+    v.widgets.active.fg_stroke = stroke(2.0);
+    v.widgets.active.bg_stroke = egui::Stroke::new(2.0, accent);
+    v
+}
+
+/// A colorblind-safe dark [`egui::Visuals`] (deuteranopia/protanopia-friendly).
+///
+/// Built on the stock dark theme but with interactive accents drawn from the
+/// Okabe-Ito palette — a set chosen to stay mutually distinguishable for the
+/// most common (red-green) forms of color vision deficiency. Selection/active
+/// uses Okabe-Ito blue, hover uses Okabe-Ito orange, and hyperlinks use sky
+/// blue, so the "where is focus / what is selected" cues never collapse to an
+/// ambiguous red-green pair.
+fn colorblind_visuals() -> egui::Visuals {
+    use egui::Color32;
+    let mut v = egui::Visuals::dark();
+    // Okabe-Ito palette (https://jfly.uni-koeln.de/color/).
+    let blue = Color32::from_rgb(0, 114, 178); // selection / active
+    let sky_blue = Color32::from_rgb(86, 180, 233); // hyperlinks / active stroke
+    let orange = Color32::from_rgb(230, 159, 0); // hover
+
+    v.hyperlink_color = sky_blue;
+    v.selection.bg_fill = blue.gamma_multiply(0.55);
+    v.selection.stroke = egui::Stroke::new(1.0, sky_blue);
+    v.widgets.hovered.bg_stroke = egui::Stroke::new(1.5, orange);
+    v.widgets.active.bg_fill = blue.gamma_multiply(0.7);
+    v.widgets.active.bg_stroke = egui::Stroke::new(1.5, sky_blue);
+    v
 }
 
 /// Persist `config` to disk (native) or no-op (wasm: no filesystem).
@@ -1595,6 +1743,8 @@ fn about_window(ctx: &egui::Context, open: &mut bool) {
                 ui.add_space(4.0);
             });
         });
+    // v1.5.0 accessibility — Esc dismisses the modal for keyboard-only users.
+    esc_closes(ctx, open);
     #[cfg(not(target_arch = "wasm32"))]
     crate::about_fx::pump(ctx);
 }
@@ -1647,6 +1797,8 @@ impl UiShell {
                 ui.add_space(4.0);
                 device_bindings_grid(ui, config, *device);
             });
+        // v1.5.0 accessibility — Esc dismisses the modal for keyboard-only users.
+        esc_closes(ctx, &mut open);
         self.show_shortcuts = open;
     }
 }

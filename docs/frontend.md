@@ -473,10 +473,11 @@ reorganized the order and regrouped several items — see the per-menu notes):
   Forward hint, Run-Ahead selector (0-3), Speed presets, Region (read-only
   display), Vs. Insert Coin (`F10`, Vs. games only), and FDS Swap Disk Side
   (`F9`, FDS games only; moved here from File in v1.3.0).
-- **View** — Settings, Theme (Light/Dark/System), 8:7 Pixel Aspect, Hide
-  Overscan, Fullscreen (`F11`, native), Window Size (1x-4x of the NES
-  resolution, native), Show FPS, Pause When Unfocused (auto-pause on focus
-  loss), Show Menu Bar (`M`).
+- **View** — Settings, Theme (Light/Dark/System + the v1.5.0 accessibility
+  themes High Contrast / Colorblind-Safe), 8:7 Pixel Aspect, Hide Overscan,
+  Fullscreen (`F11`, native), Window Size (1x-4x of the NES resolution, native),
+  Show FPS, Pause When Unfocused (auto-pause on focus loss), Show Menu Bar
+  (`M`).
 - **Tools** — Cheats, Movies (TAS: Record/Play/Branch), Netplay (native),
   RetroAchievements (native + feature), Input Display, Input Miniatures, NSF
   Player (moved here from Debug in v1.3.0), Replay / TAS (v1.5.0 C2), ROM
@@ -524,6 +525,38 @@ The glyph codepoint constants live in `crate::icons::glyph`. The full font fits
 the 5 MiB gzip wasm budget, so the **same full font ships on native and both
 wasm flavours** — there is no per-target subset (the `wasm-canvas` embed has no
 egui menu and is unaffected).
+
+### Accessibility (v1.5.0 "Lens" Workstream E)
+
+Frontend-only, additive, off-by-default — the shipped / native / `no_std` / wasm
+builds stay byte-identical and AccuracyCoin holds 100% (139/139). Three features:
+
+- **UI scaling (`[ui] zoom_factor`, default `1.0`).** Scales the entire egui
+  shell (menu bar, Settings, debugger panels, fonts) by calling
+  `ctx.set_zoom_factor` once per frame in the render loop (the call is a no-op
+  when the value is unchanged). The emulated NES image is a raw framebuffer blit,
+  *not* egui content, so it is unaffected — gameplay and determinism are
+  untouched. Surfaced as a **UI scale** slider (50%-300%, 5% steps) with a Reset
+  button in **Settings -> Video -> Accessibility**; the value is clamped to
+  `UiConfig::ZOOM_MIN..=ZOOM_MAX` on apply and persisted.
+- **Accessibility themes.** `AppTheme` is extended past Light/Dark/System with
+  **High Contrast** (`high-contrast`) and **Colorblind-Safe** (`colorblind`).
+  `ui_shell::apply_theme` builds each from a stock `egui::Visuals` base: High
+  Contrast pushes every foreground/background pair to WCAG 2.1 AA/AAA ratios
+  (near-black panels, near-white text, a bright-cyan accent, bold focus strokes)
+  for low vision; Colorblind-Safe uses the deuteranopia/protanopia-friendly
+  Okabe-Ito palette for the selection/hover/active accents so the focus cues
+  never collapse to an ambiguous red-green pair. Both selectors (the **View ->
+  Theme** menu and the Settings combo) iterate `AppTheme::all()` so they can
+  never drift. The themes are applied only on change (the existing `last_theme`
+  cache).
+- **Keyboard-only navigation.** egui's menu bar and Settings are already
+  Tab/arrow/Enter navigable; the gap was modal dismissal, since `egui::Window`'s
+  close `X` has no key equivalent and the app's Esc/Quit binding is suppressed
+  while a shell window is open (`shell_window_open` in the app keyboard gate). The
+  `ui_shell::esc_closes` helper consumes a pressed `Esc` during the egui pass and
+  clears the window's `open` flag, giving **Settings / About / Keyboard
+  Shortcuts** a consistent keyboard escape hatch.
 
 ### Chip panels vs tool panels
 
