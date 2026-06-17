@@ -2125,6 +2125,8 @@ impl Mapper for Fds {
                     format!("{}", self.write_protected),
                 ),
             ],
+            // Cartridge-level metadata is filled by the bus (v1.5.0 I8).
+            ..Default::default()
         }
     }
 }

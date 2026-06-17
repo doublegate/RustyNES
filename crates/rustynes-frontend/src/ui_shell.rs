@@ -247,6 +247,47 @@ pub struct UiShell {
     /// v1.0.0 — the active save-state slot (0-7), mirrored from the app so the
     /// File -> Save Slot radio shows the current selection.
     pub active_slot: u8,
+    /// v1.5.0 "Lens" Workstream I9 — the device whose bindings the Keyboard
+    /// Shortcuts window currently shows (Player 1..4 / Power Pad / Family BASIC),
+    /// below the emulator-hotkey section.
+    pub shortcuts_device: ShortcutsDevice,
+}
+
+/// v1.5.0 "Lens" Workstream I9 — selects which device the Keyboard Shortcuts
+/// window shows in its controller section.
+///
+/// The emulator hotkeys are always listed above a separator; this picks the
+/// per-device key map shown below them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ShortcutsDevice {
+    /// Standard controller, player 1 (the default view).
+    #[default]
+    Player1,
+    /// Standard controller, player 2.
+    Player2,
+    /// Standard controller, player 3 (Four Score).
+    Player3,
+    /// Standard controller, player 4 (Four Score).
+    Player4,
+    /// NES Power Pad / Family Trainer mat (fixed default mat keys).
+    PowerPad,
+    /// Family BASIC / Subor keyboard (host-key matrix, fixed mapping).
+    FamilyKeyboard,
+}
+
+impl ShortcutsDevice {
+    /// Display label for the selector + section header.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Player1 => "Player 1",
+            Self::Player2 => "Player 2",
+            Self::Player3 => "Player 3 (Four Score)",
+            Self::Player4 => "Player 4 (Four Score)",
+            Self::PowerPad => "Power Pad / Family Trainer",
+            Self::FamilyKeyboard => "Family BASIC keyboard",
+        }
+    }
 }
 
 impl UiShell {
@@ -265,6 +306,7 @@ impl UiShell {
             paused: false,
             fullscreen: false,
             active_slot: 0,
+            shortcuts_device: ShortcutsDevice::default(),
         }
     }
 
@@ -373,7 +415,7 @@ impl UiShell {
         self.settings_window(&ctx, config, &mut settings_body, &mut input_body);
         self.welcome_modal(&ctx, config);
         about_window(&ctx, &mut self.show_about);
-        shortcuts_window(&ctx, &mut self.show_shortcuts);
+        self.shortcuts_window(&ctx, config);
         #[cfg(not(target_arch = "wasm32"))]
         crate::about_fx::render(&ctx);
 
@@ -1558,17 +1600,189 @@ fn about_window(ctx: &egui::Context, open: &mut bool) {
 }
 
 /// Render the keyboard-shortcuts window.
-fn shortcuts_window(ctx: &egui::Context, open: &mut bool) {
-    if !*open {
+impl UiShell {
+    /// v1.5.0 "Lens" Workstream I9 — render the Keyboard Shortcuts window from
+    /// the LIVE `[input]` / `[input.system]` config (not the hardcoded defaults),
+    /// with the emulator hotkeys above a separator and a per-device controller
+    /// section below selected by [`Self::shortcuts_device`].
+    fn shortcuts_window(&mut self, ctx: &egui::Context, config: &Config) {
+        if !self.show_shortcuts {
+            return;
+        }
+        let mut open = self.show_shortcuts;
+        let device = &mut self.shortcuts_device;
+        egui::Window::new("Keyboard Shortcuts")
+            .open(&mut open)
+            .resizable(true)
+            .collapsible(true)
+            .default_width(420.0)
+            .show(ctx, |ui| {
+                // --- Emulator / system hotkeys (live bindings) ---
+                ui.label(egui::RichText::new("Emulator hotkeys").strong());
+                system_hotkeys_grid(ui, config);
+
+                // --- Separator between emulator hotkeys and controller mapping ---
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(4.0);
+
+                // --- Controller / device mapping (per-device selector) ---
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("Device:").strong());
+                    egui::ComboBox::from_id_salt("shortcuts-device")
+                        .selected_text(device.label())
+                        .show_ui(ui, |ui| {
+                            for d in [
+                                ShortcutsDevice::Player1,
+                                ShortcutsDevice::Player2,
+                                ShortcutsDevice::Player3,
+                                ShortcutsDevice::Player4,
+                                ShortcutsDevice::PowerPad,
+                                ShortcutsDevice::FamilyKeyboard,
+                            ] {
+                                ui.selectable_value(device, d, d.label());
+                            }
+                        });
+                });
+                ui.add_space(4.0);
+                device_bindings_grid(ui, config, *device);
+            });
+        self.show_shortcuts = open;
+    }
+}
+
+/// v1.5.0 I9 — the live emulator/system hotkey grid (from `[input.system]`).
+fn system_hotkeys_grid(ui: &mut egui::Ui, config: &Config) {
+    let s = &config.input.system;
+    egui::Grid::new("shortcuts_system")
+        .num_columns(2)
+        .spacing([32.0, 4.0])
+        .striped(true)
+        .show(ui, |ui| {
+            ui.label(egui::RichText::new("Action").strong());
+            ui.label(egui::RichText::new("Key").strong());
+            ui.end_row();
+            for (action, key) in [
+                ("Open ROM", s.open_rom.as_str()),
+                ("Save state", s.save_state.as_str()),
+                ("Load state", s.load_state.as_str()),
+                ("Rewind (hold)", s.rewind.as_str()),
+                ("Reset", s.reset.as_str()),
+                ("Power cycle", s.power_cycle.as_str()),
+                ("Pause / resume", s.pause.as_str()),
+                ("Frame advance", s.frame_advance.as_str()),
+                ("Fast forward (hold)", s.fast_forward.as_str()),
+                ("Movie record", s.movie_record.as_str()),
+                ("Movie play", s.movie_play.as_str()),
+                ("Movie branch", s.movie_branch.as_str()),
+                ("Swap disk side (FDS)", s.disk_swap.as_str()),
+                ("Insert coin (Vs.)", s.insert_coin.as_str()),
+                ("Fullscreen", s.fullscreen.as_str()),
+                ("Toggle menu bar", s.toggle_menu_bar.as_str()),
+                ("Toggle debugger", s.debug_overlay.as_str()),
+                ("Quit / exit fullscreen", s.quit.as_str()),
+            ] {
+                ui.label(action);
+                ui.label(pretty_key(key));
+                ui.end_row();
+            }
+        });
+}
+
+/// v1.5.0 I9 — the live per-device controller binding grid. Standard pads read
+/// the `[input]` `PadBindings`; the Power Pad + Family BASIC keyboard use the
+/// fixed default mapping documented in `input.rs` (they are not rebindable yet,
+/// so this reflects their actual host keys).
+fn device_bindings_grid(ui: &mut egui::Ui, config: &Config, device: ShortcutsDevice) {
+    ui.label(egui::RichText::new(device.label()).strong());
+    let pad = match device {
+        ShortcutsDevice::Player1 => Some(&config.input.player1),
+        ShortcutsDevice::Player2 => Some(&config.input.player2),
+        ShortcutsDevice::Player3 => Some(&config.input.player3),
+        ShortcutsDevice::Player4 => Some(&config.input.player4),
+        ShortcutsDevice::PowerPad | ShortcutsDevice::FamilyKeyboard => None,
+    };
+    if let Some(p) = pad {
+        egui::Grid::new("shortcuts_pad")
+            .num_columns(2)
+            .spacing([32.0, 4.0])
+            .striped(true)
+            .show(ui, |ui| {
+                ui.label(egui::RichText::new("Button").strong());
+                ui.label(egui::RichText::new("Key").strong());
+                ui.end_row();
+                for (b, key) in [
+                    ("Up", p.up.as_str()),
+                    ("Down", p.down.as_str()),
+                    ("Left", p.left.as_str()),
+                    ("Right", p.right.as_str()),
+                    ("A", p.a.as_str()),
+                    ("B", p.b.as_str()),
+                    ("Select", p.select.as_str()),
+                    ("Start", p.start.as_str()),
+                ] {
+                    ui.label(b);
+                    ui.label(pretty_key(key));
+                    ui.end_row();
+                }
+            });
         return;
     }
-    egui::Window::new("Keyboard Shortcuts")
-        .open(open)
-        .resizable(false)
-        .collapsible(true)
-        .show(ctx, |ui| {
-            shortcuts_grid(ui, "shortcuts_full");
+    // Non-rebindable devices: show the fixed default host-key layout.
+    let rows: &[(&str, &str)] = match device {
+        ShortcutsDevice::PowerPad => &[
+            ("Top row (1-4)", "1  2  3  4"),
+            ("Middle row (5-8)", "Q  W  E  R"),
+            ("Bottom row (9-12)", "A  S  D  F"),
+            ("Note", "12-button mat; fixed default keys"),
+        ],
+        ShortcutsDevice::FamilyKeyboard => &[
+            ("Layout", "Host keyboard maps to the matrix"),
+            ("Letters / digits", "as labelled on your keyboard"),
+            (
+                "Note",
+                "Active only with the Family BASIC / Subor keyboard device",
+            ),
+        ],
+        _ => &[],
+    };
+    egui::Grid::new("shortcuts_fixed")
+        .num_columns(2)
+        .spacing([32.0, 4.0])
+        .striped(true)
+        .show(ui, |ui| {
+            for (a, k) in rows {
+                ui.label(*a);
+                ui.label(*k);
+                ui.end_row();
+            }
         });
+}
+
+/// v1.5.0 I9 — humanize a winit `KeyCode` config token for display (e.g.
+/// `ArrowUp` -> `Up`, `ShiftRight` -> `Right Shift`, `KeyZ` -> `Z`,
+/// `Backslash` -> `\\`). Falls back to the raw token for anything unmapped.
+fn pretty_key(code: &str) -> String {
+    match code {
+        "ArrowUp" => "Up".into(),
+        "ArrowDown" => "Down".into(),
+        "ArrowLeft" => "Left".into(),
+        "ArrowRight" => "Right".into(),
+        "ShiftRight" => "Right Shift".into(),
+        "ShiftLeft" => "Left Shift".into(),
+        "Backslash" => "\\".into(),
+        "Backquote" => "`".into(),
+        "Equal" => "=".into(),
+        "Minus" => "-".into(),
+        "Space" => "Space".into(),
+        "Enter" => "Enter".into(),
+        "Tab" => "Tab".into(),
+        "Escape" => "Esc".into(),
+        other => other
+            .strip_prefix("Key")
+            .or_else(|| other.strip_prefix("Digit"))
+            .map_or_else(|| other.to_string(), ToString::to_string),
+    }
 }
 
 /// The shared shortcuts grid (the REAL default binds from `input.rs`).
