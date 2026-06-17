@@ -389,6 +389,86 @@ pub fn show(
 /// keyboard + gamepad binding grids. `state` is the SAME [`InputPanelState`]
 /// the debugger owns, so the rebind-capture flow + `bindings_dirty` polling are
 /// shared between the two surfaces.
+/// v1.5.0 "Lens" Workstream D4 — render the device-specific config controls for
+/// the selected port-2 expansion device. Marks `state.bindings_dirty` on any
+/// change so the app reloads the input maps + device state. All defaults are
+/// neutral / byte-identical.
+fn device_config_ui(ui: &mut egui::Ui, state: &mut InputPanelState, config: &mut Config) {
+    use crate::config::{ExpansionDevice, PowerPadLayout};
+
+    match config.input.expansion_device {
+        // SNES mouse: hardware sensitivity (the 2-bit serial report field) +
+        // a frontend DPI multiplier on the host-mouse motion.
+        ExpansionDevice::SnesMouse => {
+            ui.group(|ui| {
+                ui.label(egui::RichText::new("SNES mouse").strong());
+                ui.horizontal(|ui| {
+                    ui.label("Reported sensitivity");
+                    let mut sens = config.input.mouse_sensitivity.min(2);
+                    egui::ComboBox::from_id_salt("dev-mouse-sens")
+                        .selected_text(match sens {
+                            0 => "Low",
+                            1 => "Medium",
+                            _ => "High",
+                        })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut sens, 0u8, "Low");
+                            ui.selectable_value(&mut sens, 1u8, "Medium");
+                            ui.selectable_value(&mut sens, 2u8, "High");
+                        });
+                    if sens != config.input.mouse_sensitivity {
+                        config.input.mouse_sensitivity = sens;
+                        state.bindings_dirty = true;
+                    }
+                });
+                pointer_scale_slider(ui, state, config);
+            });
+        }
+        // Arkanoid Vaus paddle: the frontend pointer-scale multiplier tunes how
+        // far the paddle travels per host-mouse movement.
+        ExpansionDevice::Vaus => {
+            ui.group(|ui| {
+                ui.label(egui::RichText::new("Arkanoid Vaus paddle").strong());
+                pointer_scale_slider(ui, state, config);
+            });
+        }
+        // Power Pad / Family Trainer: the mat layout side (A / mirrored B).
+        ExpansionDevice::PowerPad | ExpansionDevice::FamilyTrainer => {
+            ui.group(|ui| {
+                ui.label(egui::RichText::new("Power Pad / Family Trainer").strong());
+                ui.horizontal(|ui| {
+                    ui.label("Mat layout");
+                    let mut layout = config.input.power_pad_layout;
+                    egui::ComboBox::from_id_salt("dev-powerpad-layout")
+                        .selected_text(layout.label())
+                        .show_ui(ui, |ui| {
+                            for variant in [PowerPadLayout::SideA, PowerPadLayout::SideB] {
+                                ui.selectable_value(&mut layout, variant, variant.label());
+                            }
+                        });
+                    if layout != config.input.power_pad_layout {
+                        config.input.power_pad_layout = layout;
+                        state.bindings_dirty = true;
+                    }
+                });
+            });
+        }
+        _ => {}
+    }
+}
+
+/// v1.5.0 D4 — shared pointer DPI-scale slider (SNES mouse + Vaus).
+fn pointer_scale_slider(ui: &mut egui::Ui, state: &mut InputPanelState, config: &mut Config) {
+    let mut scale = config.input.pointer_scale.clamp(0.1, 8.0);
+    if ui
+        .add(egui::Slider::new(&mut scale, 0.1..=8.0).text("Pointer speed"))
+        .changed()
+    {
+        config.input.pointer_scale = scale;
+        state.bindings_dirty = true;
+    }
+}
+
 pub fn body(ui: &mut egui::Ui, state: &mut InputPanelState, config: &mut Config) {
     // Apply any captured rebind from the previous input event.
     if let Some((slot, name)) = state.captured.take() {
@@ -560,6 +640,12 @@ pub fn body(ui: &mut egui::Ui, state: &mut InputPanelState, config: &mut Config)
                 state.bindings_dirty = true;
             }
         }
+
+        // v1.5.0 "Lens" Workstream D4 — device-config controls, shown
+        // contextually for the selected port-2 device (Arkanoid Vaus + SNES
+        // mouse sensitivity, Power Pad / Family Trainer layout variants). All
+        // off-by-default / neutral so a pre-D4 config is byte-identical.
+        device_config_ui(ui, state, config);
 
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.separator();

@@ -129,8 +129,86 @@ pub struct InputConfig {
     /// state (clamped to >= 1; default 2, ≈ 15 Hz at 60 fps). Lower = faster.
     #[serde(default = "default_turbo_period")]
     pub turbo_period: u32,
+    /// v1.5.0 "Lens" Workstream D4 — SNES-mouse reported sensitivity (0 = low,
+    /// 1 = medium, 2 = high). This is the 2-bit field the mouse sends in its
+    /// serial report (some titles read + cycle it). Default `0` (low) matches
+    /// the previous hardcoded value, so the deterministic device report is
+    /// byte-identical to a pre-D4 config. Clamped to `0..=2` on use.
+    #[serde(default)]
+    pub mouse_sensitivity: u8,
+    /// v1.5.0 "Lens" Workstream D4 — frontend DPI multiplier applied to the
+    /// host mouse motion BEFORE it is clamped + handed to the SNES mouse /
+    /// Vaus paddle. `1.0` (default) is the previous 1:1 mapping, byte-identical.
+    /// A larger value moves the pointer device faster per host-mouse pixel.
+    /// Clamped to `0.1..=8.0` on use.
+    #[serde(default = "default_pointer_scale")]
+    pub pointer_scale: f32,
+    /// v1.5.0 "Lens" Workstream D4 — Power Pad / Family Trainer mat layout
+    /// variant. The NES Power Pad has two labelled sides (the "A" 12-button
+    /// grid and the mirrored "B" side); selecting [`PowerPadLayout::SideB`]
+    /// remaps the host-key mat mask to the B-side button numbering. Default
+    /// [`PowerPadLayout::SideA`] is the previous fixed mapping (byte-identical).
+    #[serde(default)]
+    pub power_pad_layout: PowerPadLayout,
     /// System-level bindings.
     pub system: SystemBindings,
+}
+
+/// Serde default for [`InputConfig::pointer_scale`].
+const fn default_pointer_scale() -> f32 {
+    1.0
+}
+
+/// v1.5.0 "Lens" Workstream D4 — NES Power Pad / Family Trainer mat layout side.
+///
+/// The physical mat is labelled with an "A" side and a "B" side whose button
+/// numbering is the left-right mirror of side A; some games expect one or the
+/// other. The remap is a pure presentation/input mapping of the 12-bit mat
+/// mask — no core change, and side A is byte-identical to the prior fixed
+/// mapping.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum PowerPadLayout {
+    /// Side A — the default 12-button grid (the previous fixed mapping).
+    #[default]
+    SideA,
+    /// Side B — the left-right mirrored button numbering.
+    SideB,
+}
+
+impl PowerPadLayout {
+    /// Human label for the settings combo.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::SideA => "Side A (default)",
+            Self::SideB => "Side B (mirrored)",
+        }
+    }
+
+    /// Remap a side-A 12-bit mat mask (bit `i` = mat button `i+1`) for this
+    /// layout. Side A is the identity; side B mirrors each of the three rows
+    /// left-to-right (the four columns `0 1 2 3` become `3 2 1 0`). The mat is
+    /// a 3-row × 4-column grid, so the per-row mirror is `row*4 + (3 - col)`.
+    #[must_use]
+    pub const fn remap_mask(self, mask: u16) -> u16 {
+        match self {
+            Self::SideA => mask,
+            Self::SideB => {
+                let mut out: u16 = 0;
+                let mut i = 0usize;
+                while i < 12 {
+                    if mask & (1 << i) != 0 {
+                        let row = i / 4;
+                        let col = i % 4;
+                        let dst = row * 4 + (3 - col);
+                        out |= 1 << dst;
+                    }
+                    i += 1;
+                }
+                out
+            }
+        }
+    }
 }
 
 /// Serde default for [`InputConfig::run_ahead`].
@@ -282,6 +360,9 @@ impl Default for InputConfig {
             turbo_a: false,
             turbo_b: false,
             turbo_period: default_turbo_period(),
+            mouse_sensitivity: 0,
+            pointer_scale: default_pointer_scale(),
+            power_pad_layout: PowerPadLayout::default(),
             system: SystemBindings::default(),
         }
     }
@@ -731,6 +812,110 @@ pub struct GraphicsConfig {
     /// and the default presentation is unchanged. Presentation-only.
     #[serde(default)]
     pub hd_packs: std::collections::BTreeMap<String, std::path::PathBuf>,
+    /// v1.5.0 "Lens" Workstream D1 — per-side overscan crop, in NES pixels. The
+    /// legacy [`Self::hide_overscan`] toggle is the equivalent of an
+    /// `8 px top + 8 px bottom` crop; this finer control lets the user trim each
+    /// edge independently (WYSIWYG, live). Default `(0,0,0,0)` (the full
+    /// 256x240 framebuffer) is byte-identical to today's presentation when
+    /// `hide_overscan` is also off. Presentation-only; no core change.
+    #[serde(default)]
+    pub overscan: Overscan,
+    /// v1.5.0 "Lens" Workstream D1 — named custom palette bank. Each entry is a
+    /// user-saved 64-colour base palette (edited in the in-app palette editor or
+    /// imported from a `.pal`). `#[serde(default)]` = empty, so a pre-D1 config
+    /// loads byte-identically. The selected palette (if any) is named by
+    /// [`Self::active_palette`]; an unselected / missing name uses the built-in
+    /// palette. Presentation-only (re-tints the displayed framebuffer).
+    #[serde(default)]
+    pub palettes: PaletteBank,
+    /// v1.5.0 "Lens" Workstream D1 — the name of the active entry in
+    /// [`Self::palettes`], or `None` for the built-in palette (or the legacy
+    /// [`Self::palette_file`]). `#[serde(default)]` = `None`, byte-identical.
+    #[serde(default)]
+    pub active_palette: Option<String>,
+}
+
+/// v1.5.0 "Lens" Workstream D1 — per-side overscan crop in NES pixels.
+///
+/// The cropped image samples the inner `(256 - left - right) x (240 - top -
+/// bottom)` source rect; the renderer letterboxes it to keep the aspect. All
+/// zero (the default) is byte-identical to the uncropped presentation. The
+/// per-side values are clamped so the visible region never collapses.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct Overscan {
+    /// Scanlines cropped from the top edge (0..=112).
+    #[serde(default)]
+    pub top: u8,
+    /// Scanlines cropped from the bottom edge (0..=112).
+    #[serde(default)]
+    pub bottom: u8,
+    /// Columns cropped from the left edge (0..=120).
+    #[serde(default)]
+    pub left: u8,
+    /// Columns cropped from the right edge (0..=120).
+    #[serde(default)]
+    pub right: u8,
+}
+
+impl Overscan {
+    /// Clamp each side so at least 16 px of width + height always remain
+    /// visible (mirrors the renderer's guard). Returns a copy.
+    #[must_use]
+    pub fn clamped(self) -> Self {
+        // Capping each side independently already guarantees at least 16 px of
+        // width + height remain visible (top + bottom <= 224 <= 240 - 16 and
+        // left + right <= 240 <= 256 - 16), so no proportional trim is needed.
+        Self {
+            top: self.top.min(112),
+            bottom: self.bottom.min(112),
+            left: self.left.min(120),
+            right: self.right.min(120),
+        }
+    }
+
+    /// `true` when no side is cropped (the byte-identical default).
+    #[must_use]
+    pub const fn is_zero(self) -> bool {
+        self.top == 0 && self.bottom == 0 && self.left == 0 && self.right == 0
+    }
+}
+
+/// v1.5.0 "Lens" Workstream D1 — a named 64-colour base palette (RGB triples).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CustomPalette {
+    /// The 64 base colours, `[R, G, B]` each (the same form [`parse_pal`]
+    /// produces). Emphasis is applied by the PPU LUT as for the built-in.
+    pub colors: Vec<[u8; 3]>,
+}
+
+impl CustomPalette {
+    /// Build from a fixed 64-entry base palette.
+    #[must_use]
+    pub fn from_base(base: [[u8; 3]; 64]) -> Self {
+        Self {
+            colors: base.to_vec(),
+        }
+    }
+
+    /// Materialize the 64-entry base palette the core expects, padding with
+    /// black / truncating if the stored vector is the wrong length (defensive
+    /// against hand-edited configs).
+    #[must_use]
+    pub fn to_base(&self) -> [[u8; 3]; 64] {
+        let mut base = [[0u8; 3]; 64];
+        for (dst, src) in base.iter_mut().zip(self.colors.iter()) {
+            *dst = *src;
+        }
+        base
+    }
+}
+
+/// v1.5.0 "Lens" Workstream D1 — the named-palette bank (`name -> palette`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PaletteBank {
+    /// Saved custom palettes, keyed by user-chosen name.
+    #[serde(default)]
+    pub palettes: std::collections::BTreeMap<String, CustomPalette>,
 }
 
 fn default_ntsc_filter() -> String {
@@ -794,6 +979,9 @@ impl Default for GraphicsConfig {
             shader_stack: crate::shader_pass::ShaderStackConfig::default(),
             shader_presets: crate::shader_pass::ShaderPresetBank::default(),
             hd_packs: std::collections::BTreeMap::new(),
+            overscan: Overscan::default(),
+            palettes: PaletteBank::default(),
+            active_palette: None,
         }
     }
 }
@@ -1062,6 +1250,11 @@ pub struct Config {
     /// Netplay defaults (last host port + join address) (v2.3.0).
     #[serde(default)]
     pub netplay: NetplayConfig,
+    /// v1.5.0 "Lens" Workstream D3 — grouped non-accuracy "enhancement" modes
+    /// (sprite-limit disable, optional overclock). All off by default and
+    /// never part of the determinism oracle / `AccuracyCoin`.
+    #[serde(default)]
+    pub enhancements: EnhancementsConfig,
     /// Vs. System arcade defaults (DIP switches) (v2.5.0).
     #[serde(default)]
     pub vs: VsConfig,
@@ -1080,6 +1273,39 @@ pub struct Config {
     /// when the user dismisses it (v1.0.0).
     #[serde(default)]
     pub welcome_shown: bool,
+}
+
+/// v1.5.0 "Lens" Workstream D3 — the `[enhancements]` section: non-accuracy
+/// "improvement" modes, grouped together.
+///
+/// Mirrors `GeraNES`' Improvements window / Mesen2's emulation enhancements.
+/// Every field is off / neutral by default, so a pre-D3 config is
+/// byte-identical, and **none of these are ever applied while the determinism
+/// oracle / `AccuracyCoin` / TAS / netplay paths run** — they are explicitly
+/// out-of-oracle enhancement modes.
+///
+/// NOTE (v1.5.0): the cycle-accurate core does not yet expose hooks to disable
+/// the 8-sprite-per-scanline limit or to overclock the PPU/CPU (both require a
+/// core synthesis change, deferred to the v2.0 fractional-master-clock
+/// refactor, ADR 0002). These flags persist the user's *intent* and are
+/// surfaced in the UI as experimental / staged; the frontend applies only the
+/// portions that are achievable without a core change. They never affect the
+/// deterministic core output today.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct EnhancementsConfig {
+    /// Disable the hardware 8-sprite-per-scanline limit (removes sprite
+    /// flicker). Off by default = accurate hardware behaviour. **Staged**: the
+    /// current cycle-accurate core has no no-sprite-limit hook, so this is
+    /// persisted + surfaced but inert until the v2.0 core pass (ADR 0002).
+    #[serde(default)]
+    pub disable_sprite_limit: bool,
+    /// Optional overclock: extra emulated PPU scanlines inserted in the
+    /// vblank, reducing per-scanline slowdown in some games (Mesen2's
+    /// "additional scanlines" enhancement). `0` (default) = stock timing.
+    /// **Staged**: no core hook yet (v2.0, ADR 0002); persisted + surfaced
+    /// only. Clamped to `0..=80` on use.
+    #[serde(default)]
+    pub overclock_scanlines: u16,
 }
 
 /// `[retroachievements]` section (v2.7.0).

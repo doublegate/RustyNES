@@ -100,7 +100,8 @@ struct Uniforms {
     // v1.0.0 overscan crop: x = vertical scale, y = vertical offset (both in
     // texture-V space). Default (1.0, 0.0) samples the full framebuffer; when
     // overscan is hidden, (224/240, 8/240) crops the top + bottom 8 scanlines.
-    // z,w are padding (vec4 alignment).
+    // v1.5.0 D2: z = horizontal scale, w = horizontal offset (texture-U space),
+    // for per-side overscan. Default (1.0, 0.0) leaves the U sample unchanged.
     crop: vec4<f32>,
 };
 
@@ -145,7 +146,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     }
     // v1.0.0 overscan crop: remap the visible V range onto the inner texture
     // rows. Default crop (1.0, 0.0) leaves the sample point unchanged.
-    var sample_uv = vec2<f32>(in.uv.x, in.uv.y * u.crop.x + u.crop.y);
+    // v1.5.0 D2: the same remap on U (crop.zw) for per-side horizontal crop.
+    var sample_uv = vec2<f32>(in.uv.x * u.crop.z + u.crop.w, in.uv.y * u.crop.x + u.crop.y);
     return textureSample(nes_tex, nes_smp, sample_uv);
 }
 ";
@@ -333,7 +335,17 @@ pub struct Gfx {
     /// v1.0.0 — crop the top + bottom 8 NES scanlines (CRT overscan) when
     /// `true`. Drives the overscan `crop` half of the blit uniform; default
     /// `false` = the full 256x240 framebuffer (byte-identical presentation).
+    ///
+    /// v1.5.0 D2 — this legacy toggle is folded into [`Self::overscan`] (it is
+    /// equivalent to an 8 px top + 8 px bottom crop) by the `effective_overscan`
+    /// helper; the field is retained so the existing `set_hide_overscan` API +
+    /// callers keep working.
     hide_overscan: bool,
+    /// v1.5.0 "Lens" Workstream D2 — per-side overscan crop (in NES pixels). All
+    /// zero (default) = the full framebuffer; combined with [`Self::hide_overscan`]
+    /// by the `effective_overscan` helper. Presentation-only; byte-identical at
+    /// zero.
+    overscan: crate::config::Overscan,
     /// v1.2.0 beta.2 (Workstream C3) — optional HD-pack blit resources. `None`
     /// (the default, and the only state when no pack is loaded) means the
     /// presentation path is byte-identical to the stock build. When `Some`, the
@@ -579,7 +591,12 @@ impl Gfx {
         });
 
         // Uniforms (letterbox transform + overscan crop).
-        let initial = letterbox_uniform(size.width, size.height, par_correction, hide_overscan);
+        let initial = letterbox_uniform(
+            size.width,
+            size.height,
+            par_correction,
+            effective_overscan(hide_overscan, crate::config::Overscan::default()),
+        );
         let uniforms = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("nes-letterbox"),
             contents: bytemuck::cast_slice(&initial),
@@ -712,6 +729,7 @@ impl Gfx {
             gpu_timer,
             par_correction,
             hide_overscan,
+            overscan: crate::config::Overscan::default(),
             #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
             hd: None,
         })
@@ -913,7 +931,7 @@ impl Gfx {
                 w,
                 h,
                 self.par_correction,
-                self.hide_overscan,
+                effective_overscan(self.hide_overscan, self.overscan),
             )),
         );
     }
@@ -941,6 +959,20 @@ impl Gfx {
         self.rewrite_blit_uniform();
     }
 
+    /// v1.5.0 "Lens" Workstream D2 — set the per-side overscan crop (in NES
+    /// pixels) and rewrite the blit uniform so the change is live on the next
+    /// present. A no-op when unchanged. Presentation-layer only — the
+    /// framebuffer / core output is untouched. Combined with the legacy
+    /// [`Self::set_hide_overscan`] toggle by the `effective_overscan` helper.
+    pub fn set_overscan(&mut self, overscan: crate::config::Overscan) {
+        let overscan = overscan.clamped();
+        if self.overscan == overscan {
+            return;
+        }
+        self.overscan = overscan;
+        self.rewrite_blit_uniform();
+    }
+
     /// v1.0.0 — rewrite the full blit uniform (letterbox + overscan crop) from
     /// the current surface size + flags.
     fn rewrite_blit_uniform(&self) {
@@ -951,7 +983,7 @@ impl Gfx {
                 self.config.width,
                 self.config.height,
                 self.par_correction,
-                self.hide_overscan,
+                effective_overscan(self.hide_overscan, self.overscan),
             )),
         );
     }
@@ -1085,7 +1117,7 @@ impl Gfx {
                 self.config.width,
                 self.config.height,
                 self.par_correction,
-                self.hide_overscan,
+                effective_overscan(self.hide_overscan, self.overscan),
                 video_phase,
                 self.stack_ntsc_knobs,
             );
@@ -1097,7 +1129,7 @@ impl Gfx {
                 self.config.width,
                 self.config.height,
                 self.par_correction,
-                self.hide_overscan,
+                effective_overscan(self.hide_overscan, self.overscan),
             );
         } else if let Some(filter) = &self.ntsc_bisqwit {
             filter.render(
@@ -1108,7 +1140,7 @@ impl Gfx {
                 self.config.height,
                 video_phase,
                 self.par_correction,
-                self.hide_overscan,
+                effective_overscan(self.hide_overscan, self.overscan),
             );
         } else if let Some(filter) = &self.ntsc {
             filter.render(
@@ -1118,7 +1150,7 @@ impl Gfx {
                 self.config.width,
                 self.config.height,
                 self.par_correction,
-                self.hide_overscan,
+                effective_overscan(self.hide_overscan, self.overscan),
             );
         } else {
             let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1220,7 +1252,7 @@ impl Gfx {
                 self.config.width,
                 self.config.height,
                 self.par_correction,
-                self.hide_overscan,
+                effective_overscan(self.hide_overscan, self.overscan),
             )),
         );
 
@@ -1326,7 +1358,7 @@ impl Gfx {
                     self.config.width,
                     self.config.height,
                     self.par_correction,
-                    self.hide_overscan,
+                    effective_overscan(self.hide_overscan, self.overscan),
                 )),
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             });
@@ -1405,35 +1437,58 @@ fn letterbox(width: u32, height: u32, par_8_7: bool) -> [f32; 4] {
 }
 
 /// v1.0.0 — number of overscan scanlines cropped from the TOP and the BOTTOM
-/// when `hide_overscan` is on (the CRT-cropped region). 8 + 8 = 16, leaving
-/// the inner 256x224 visible.
-const OVERSCAN_CROP: u32 = 8;
+/// when the legacy `hide_overscan` toggle is on (the CRT-cropped region).
+/// 8 + 8 = 16, leaving the inner 256x224 visible.
+const OVERSCAN_CROP: u8 = 8;
+
+/// v1.5.0 D2 — fold the legacy `hide_overscan` toggle and the per-side
+/// [`crate::config::Overscan`] into one effective per-side crop. The toggle is
+/// equivalent to `top = bottom = 8`; the per-side values add on top of it (so a
+/// user who keeps the toggle on AND nudges a slider gets the sum). Clamped so
+/// the visible region never collapses.
+#[must_use]
+pub(crate) fn effective_overscan(
+    hide_overscan: bool,
+    per_side: crate::config::Overscan,
+) -> crate::config::Overscan {
+    let base = if hide_overscan { OVERSCAN_CROP } else { 0 };
+    crate::config::Overscan {
+        top: per_side.top.saturating_add(base),
+        bottom: per_side.bottom.saturating_add(base),
+        left: per_side.left,
+        right: per_side.right,
+    }
+    .clamped()
+}
 
 /// v1.0.0 — build the full 8-float blit uniform: the letterbox `rect`
-/// (`[sx, sy, ox, oy]`, computed against the VISIBLE NES height so the
+/// (`[sx, sy, ox, oy]`, computed against the VISIBLE NES width/height so the
 /// cropped image keeps a correct aspect) followed by the overscan `crop`
-/// (`[scale_v, offset_v, 0, 0]`). With `hide_overscan == false` the crop is
-/// `(1.0, 0.0)` and the letterbox matches `letterbox(..)` exactly — the
-/// default presentation is byte-identical.
+/// (`[scale_v, offset_v, scale_u, offset_u]`). With a zero crop the `crop`
+/// half is `(1, 0, 1, 0)` and the letterbox matches `letterbox(..)` exactly —
+/// the default presentation is byte-identical.
+///
+/// v1.5.0 D2 — generalized from the binary top/bottom-8 crop to a per-side
+/// crop (top/right/bottom/left in NES pixels).
 #[allow(clippy::cast_precision_loss)] // window / NES dims fit in f32.
 pub(crate) fn letterbox_uniform(
     width: u32,
     height: u32,
     par_8_7: bool,
-    hide_overscan: bool,
+    overscan: crate::config::Overscan,
 ) -> [f32; 8] {
-    let visible_h = if hide_overscan {
-        NES_H - 2 * OVERSCAN_CROP
-    } else {
-        NES_H
-    };
+    let os = overscan.clamped();
+    let crop_v = u32::from(os.top) + u32::from(os.bottom);
+    let crop_h = u32::from(os.left) + u32::from(os.right);
+    let visible_h = NES_H.saturating_sub(crop_v).max(1);
+    let visible_w = NES_W.saturating_sub(crop_h).max(1);
     let win_aspect = width as f32 / height.max(1) as f32;
     // Aspect of the VISIBLE image (square-pixel or 8:7-corrected width over
     // the visible height).
     let img_w = if par_8_7 {
-        NES_W as f32 * 8.0 / 7.0
+        visible_w as f32 * 8.0 / 7.0
     } else {
-        NES_W as f32
+        visible_w as f32
     };
     let nes_aspect = img_w / visible_h as f32;
     let (sx, sy) = if win_aspect > nes_aspect {
@@ -1441,15 +1496,22 @@ pub(crate) fn letterbox_uniform(
     } else {
         (1.0, win_aspect / nes_aspect)
     };
-    let (crop_scale, crop_offset) = if hide_overscan {
-        (
-            visible_h as f32 / NES_H as f32,
-            OVERSCAN_CROP as f32 / NES_H as f32,
-        )
-    } else {
-        (1.0, 0.0)
-    };
-    [sx, sy, 0.0, 0.0, crop_scale, crop_offset, 0.0, 0.0]
+    // V crop: scale the [0,1] sample range to the visible rows and offset to
+    // the top kept row. U crop is the same on the horizontal axis.
+    let crop_scale_v = visible_h as f32 / NES_H as f32;
+    let crop_offset_v = f32::from(os.top) / NES_H as f32;
+    let crop_scale_u = visible_w as f32 / NES_W as f32;
+    let crop_offset_u = f32::from(os.left) / NES_W as f32;
+    [
+        sx,
+        sy,
+        0.0,
+        0.0,
+        crop_scale_v,
+        crop_offset_v,
+        crop_scale_u,
+        crop_offset_u,
+    ]
 }
 
 #[cfg(test)]
@@ -1502,28 +1564,53 @@ mod tests {
             (NES_W, NES_H, true),
         ] {
             let base = letterbox(w, h, par);
-            let u = letterbox_uniform(w, h, par, false);
+            let u = letterbox_uniform(w, h, par, crate::config::Overscan::default());
             assert!((u[0] - base[0]).abs() < 1e-6, "sx for {w}x{h} par={par}");
             assert!((u[1] - base[1]).abs() < 1e-6, "sy for {w}x{h} par={par}");
             assert_eq!(u[2], 0.0);
             assert_eq!(u[3], 0.0);
-            // crop = identity.
-            assert!((u[4] - 1.0).abs() < 1e-6, "crop scale");
-            assert_eq!(u[5], 0.0, "crop offset");
+            // crop = identity (v-scale=1, v-off=0, u-scale=1, u-off=0).
+            assert!((u[4] - 1.0).abs() < 1e-6, "crop v-scale");
+            assert_eq!(u[5], 0.0, "crop v-offset");
+            assert!((u[6] - 1.0).abs() < 1e-6, "crop u-scale");
+            assert_eq!(u[7], 0.0, "crop u-offset");
         }
     }
 
     #[test]
     fn letterbox_uniform_overscan_crops_inner_224_rows() {
-        // v1.0.0 — with overscan ON, the crop samples rows [8/240, 232/240]:
-        // scale = 224/240, offset = 8/240.
-        let u = letterbox_uniform(NES_W, NES_H, false, true);
-        assert!((u[4] - 224.0 / 240.0).abs() < 1e-6, "crop scale {}", u[4]);
-        assert!((u[5] - 8.0 / 240.0).abs() < 1e-6, "crop offset {}", u[5]);
+        // v1.0.0 — with the legacy hide-overscan toggle the crop samples rows
+        // [8/240, 232/240]: scale = 224/240, offset = 8/240. The new per-side
+        // path expresses that as top = bottom = 8 (via `effective_overscan`).
+        let os = effective_overscan(true, crate::config::Overscan::default());
+        let u = letterbox_uniform(NES_W, NES_H, false, os);
+        assert!((u[4] - 224.0 / 240.0).abs() < 1e-6, "crop v-scale {}", u[4]);
+        assert!((u[5] - 8.0 / 240.0).abs() < 1e-6, "crop v-offset {}", u[5]);
+        // No horizontal crop -> U identity.
+        assert!((u[6] - 1.0).abs() < 1e-6, "crop u-scale {}", u[6]);
+        assert!(u[7].abs() < 1e-6, "crop u-offset {}", u[7]);
         // The visible image aspect is now 256:224 (taller-pixel), so at a
         // 256x240 window the letterbox is non-identity (the image gains a
         // vertical bar OR widens — either way the height scale changes).
         assert!(u[0] <= 1.0 && u[1] <= 1.0);
+    }
+
+    #[test]
+    fn letterbox_uniform_per_side_crop_remaps_u_and_v() {
+        // v1.5.0 D2 — a per-side crop (top=16, left=32) maps the V/U sample
+        // ranges to the inner rect: V scale=(240-16)/240, offset=16/240; U
+        // scale=(256-32)/256, offset=32/256 (no right/bottom here).
+        let os = crate::config::Overscan {
+            top: 16,
+            bottom: 0,
+            left: 32,
+            right: 0,
+        };
+        let u = letterbox_uniform(NES_W, NES_H, false, os);
+        assert!((u[4] - 224.0 / 240.0).abs() < 1e-6, "v-scale {}", u[4]);
+        assert!((u[5] - 16.0 / 240.0).abs() < 1e-6, "v-offset {}", u[5]);
+        assert!((u[6] - 224.0 / 256.0).abs() < 1e-6, "u-scale {}", u[6]);
+        assert!((u[7] - 32.0 / 256.0).abs() < 1e-6, "u-offset {}", u[7]);
     }
 
     /// The embedded blit WGSL must parse + validate (the same checks wgpu runs

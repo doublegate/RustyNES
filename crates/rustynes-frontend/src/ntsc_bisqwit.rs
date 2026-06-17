@@ -187,7 +187,7 @@ pub(crate) fn shader_src() -> String {
         r"
 struct Uniforms {{
     rect: vec4<f32>,   // letterbox transform (same shape + math as gfx.wgsl)
-    crop: vec4<f32>,   // overscan crop: x = vertical scale, y = vertical offset
+    crop: vec4<f32>,   // overscan crop: x=v-scale, y=v-offset, z=u-scale, w=u-offset
     params: vec4<f32>, // x = videoPhase (0..2), rest reserved
     knobs: vec4<f32>,  // x = contrast, y = saturation, z = brightness, w = hue (degrees)
 }};
@@ -289,8 +289,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {{
     if (in.uv.x < 0.0 || in.uv.x > 1.0 || in.uv.y < 0.0 || in.uv.y > 1.0) {{
         return vec4<f32>(0.0, 0.0, 0.0, 1.0);
     }}
-    // Overscan crop: remap the visible V range onto the inner rows.
-    let suv = vec2<f32>(in.uv.x, in.uv.y * u.crop.x + u.crop.y);
+    // Overscan crop: remap the visible V (crop.xy) and U (crop.zw) ranges.
+    let suv = vec2<f32>(in.uv.x * u.crop.z + u.crop.w, in.uv.y * u.crop.x + u.crop.y);
 
     let video_phase = i32(u.params.x + 0.5);
     let row = clamp(i32(suv.y * 240.0), 0, 239);
@@ -453,7 +453,7 @@ impl NtscBisqwitFilter {
             // rect (identity) + crop (none) + params (videoPhase=0) + knobs (0).
             contents: bytemuck::cast_slice(&[
                 1.0f32, 1.0, 0.0, 0.0, // rect
-                1.0, 0.0, 0.0, 0.0, // crop
+                1.0, 0.0, 1.0, 0.0, // crop (v-scale, v-off, u-scale, u-off)
                 0.0, 0.0, 0.0, 0.0, // params
                 0.0, 0.0, 0.0, 0.0, // knobs (contrast, saturation, brightness, hue)
             ]),
@@ -503,11 +503,11 @@ impl NtscBisqwitFilter {
         height: u32,
         video_phase: u8,
         par_correction: bool,
-        hide_overscan: bool,
+        overscan: crate::config::Overscan,
     ) {
         // rect (4) + crop (4) from the shared helper, then params (videoPhase) +
         // knobs (contrast, saturation, brightness, hue).
-        let lb = crate::gfx::letterbox_uniform(width, height, par_correction, hide_overscan);
+        let lb = crate::gfx::letterbox_uniform(width, height, par_correction, overscan);
         let uniform = [
             lb[0],
             lb[1],

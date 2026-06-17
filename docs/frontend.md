@@ -302,21 +302,37 @@ panel's pacing field reads `raf-display` or `raf` accordingly.
   (`gfx.rs::letterbox`).
 - Optional NTSC filter / CRT shader runs as a second pass.
 
-**Custom palette (`.pal`).** A user-supplied `.pal` file re-tints the display
-through the PPU's colour LUT. Settings → Display offers a **Load .pal… /
-Built-in** picker (native); the chosen file is remembered in `[graphics]
-palette_file` and re-applied on every ROM load. A 64-entry palette is the
-192-byte form (longer 512-entry files use the first 64 colours); the standard
-2C02 composite emphasis is applied to the custom base table by
-`rustynes-ppu::build_rgba_lut_from_base` / `Ppu::set_custom_palette`, routed
-through `Nes::set_custom_palette`. The default (none) is byte-identical to the
-built-in palette. Native-only file I/O (a no-op on wasm).
+**Custom palette + palette editor (v1.5.0 D1).** A user-supplied palette
+re-tints the display through the PPU's colour LUT. **Settings → Video →
+Palette** offers (a) an **active-palette picker** (built-in, or any entry in the
+named bank), (b) the legacy **Load .pal… / Clear .pal** file path, and (c) a
+**Palette editor** (collapsing): an 8×8 per-index colour picker over the 64 base
+colours, **Save as** (into the named bank), **Import .pal into bank**, and
+**Delete**. The named bank lives in `[graphics.palettes]` and the selection in
+`[graphics] active_palette`; the resolved base palette is pushed to the core via
+`App::apply_active_palette` → `Nes::set_custom_palette` (named entry wins over
+the legacy `[graphics] palette_file`) and re-applied on startup + every ROM
+load. A 64-entry palette is the 192-byte form (longer 512-entry files use the
+first 64 colours); the standard 2C02 composite emphasis is applied to the custom
+base table by `rustynes-ppu::build_rgba_lut_from_base` /
+`Ppu::set_custom_palette`. The default (built-in / unselected) is byte-identical.
+Native-only file I/O (the editor + bank work on wasm; file dialogs do not).
 
 **Pixel aspect ratio.** When `[ui] pixel_aspect_correction` is on, the
 letterbox targets the NES's native **8:7** PAR (display aspect
 `(256 · 8/7) / 240`); off, it keeps the square-pixel 256:240 aspect. The
 toggle (View menu / Settings → Video) rewrites the letterbox uniform live via
 `Gfx::set_pixel_aspect`.
+
+**Overscan crop (v1.5.0 D2).** The blit uniform's `crop` half is a per-side
+crop on both axes — `crop.xy` = (V-scale, V-offset), `crop.zw` = (U-scale,
+U-offset). The legacy binary **Hide overscan** toggle (`[graphics]
+hide_overscan`, = top + bottom 8 px) and the per-side `[graphics] overscan`
+(Top/Right/Bottom/Left, in NES pixels) are folded by `gfx::effective_overscan`
+and pushed live via `Gfx::set_hide_overscan` + `Gfx::set_overscan`. **Settings →
+Video → Overscan (per-side)** has live sliders + reset. The same per-side crop
+is applied uniformly across the direct blit and the CRT / NTSC / Bisqwit /
+shader-stack final passes. All-zero + toggle off is byte-identical.
 
 **Lock discipline at present (`emu-thread`).** The egui shell runs every
 frame but **never holds the emu lock inside the egui closure**. Two render
@@ -424,6 +440,24 @@ state and emits the toggle action; the app flips the real flag.
 - `SettingsTab` (Video / Shaders / Audio / Input / Emulation; v1.3.0 split the
   shader stack into its own tab and renamed "Advanced" → "Emulation"),
   `StatusMessage` (a colored, auto-fading status-bar toast), and `apply_theme`.
+
+Per-tab content the panel sections render (`debugger/settings_panel.rs`):
+
+- **Video** — present/pacing/NTSC/CRT, the **Palette** editor (D1), and the
+  per-side **Overscan** group (D2).
+- **Emulation** — run-ahead + rewind, plus the **Enhancements (non-accuracy)**
+  group (v1.5.0 D3): `[enhancements]` disable-sprite-limit / overclock-scanlines
+  (off by default, clearly labelled, **never applied while the oracle / TAS /
+  netplay run**, and currently *staged / inert* — the cycle-accurate core has no
+  hook for them; deferred to the v2.0 master-clock refactor, ADR 0002) and a
+  cross-linked max-rewind-window knob.
+- **Input** — the rebind grids + Port-2 device selector, now with contextual
+  **device config** (v1.5.0 D4): SNES-mouse reported sensitivity + pointer-speed
+  multiplier, Arkanoid Vaus pointer-speed, and the Power Pad / Family Trainer mat
+  layout side (A / mirrored B). New `[input]` fields `mouse_sensitivity`,
+  `pointer_scale`, `power_pad_layout`; defaults match the prior behaviour
+  (byte-identical device report / input). Plumbed through `FrameInputs` /
+  `SharedInput` to the device feed in `emu.rs`.
 
 ### Menu IA
 

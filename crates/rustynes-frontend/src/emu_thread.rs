@@ -115,6 +115,8 @@ pub struct SharedInput {
     mouse_delta: AtomicU32,
     /// v1.2.0 Workstream D — SNES-mouse right button (left reuses `mouse_pressed`).
     mouse_right: AtomicBool,
+    /// v1.5.0 "Lens" Workstream D4 — SNES-mouse reported sensitivity (0/1/2).
+    mouse_sensitivity: AtomicU8,
     /// v1.2.0 Workstream D — Family BASIC keyboard matrix bitmap: rows 0..=7
     /// packed little-endian into a u64, row 8 in `family_keyboard_hi`.
     family_keyboard_lo: AtomicU64,
@@ -177,6 +179,8 @@ impl SharedInput {
         self.mouse_delta.store(packed, Ordering::Relaxed);
         self.mouse_right
             .store(inputs.mouse_right, Ordering::Relaxed);
+        self.mouse_sensitivity
+            .store(inputs.mouse_sensitivity, Ordering::Relaxed);
         let kb = inputs.family_keyboard;
         let lo = u64::from_le_bytes([kb[0], kb[1], kb[2], kb[3], kb[4], kb[5], kb[6], kb[7]]);
         self.family_keyboard_lo.store(lo, Ordering::Relaxed);
@@ -226,6 +230,7 @@ impl SharedInput {
                 (((m >> 16) as u16) as i16, (m as u16) as i16)
             },
             mouse_right: self.mouse_right.load(Ordering::Relaxed),
+            mouse_sensitivity: self.mouse_sensitivity.load(Ordering::Relaxed),
             family_keyboard: {
                 let lo = self
                     .family_keyboard_lo
@@ -812,6 +817,7 @@ mod tests {
             power_pad: 0b1010_0101_1100,
             mouse_delta: (-9, 42),
             mouse_right: true,
+            mouse_sensitivity: 2,
             family_keyboard: [0x01, 0x80, 0x00, 0xFF, 0x10, 0x00, 0x00, 0x00, 0x55],
             konami_hyper_shot: 0b1011,
             bandai_hyper_shot: 0b1100_0011,
@@ -832,6 +838,7 @@ mod tests {
         assert_eq!(got.power_pad, 0b1010_0101_1100);
         assert_eq!(got.mouse_delta, (-9, 42));
         assert!(got.mouse_right);
+        assert_eq!(got.mouse_sensitivity, 2);
         assert_eq!(
             got.family_keyboard,
             [0x01, 0x80, 0x00, 0xFF, 0x10, 0x00, 0x00, 0x00, 0x55]
@@ -857,6 +864,7 @@ mod tests {
             power_pad: 0,
             mouse_delta: (0, 0),
             mouse_right: false,
+            mouse_sensitivity: 0,
             family_keyboard: [0; 9],
             konami_hyper_shot: 0,
             bandai_hyper_shot: 0,

@@ -202,6 +202,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     needs a real display + audio device, so the capture is a maintainer-local /
     on-display gate, skipping cleanly when headless — like the bench ceiling's
     non-flaky philosophy.)
+- **v1.5.0 "Lens" Workstream D — UX polish.** Frontend-only and
+  determinism-neutral: every new field is `#[serde(default)]` returning today's
+  value, every mode is off / neutral by default, and none touch core synthesis —
+  so the feature-off / `no_std` / wasm builds stay byte-identical and AccuracyCoin
+  holds 100% (139/139). The additive UI:
+  - **Full palette editor (D1).** A **Settings -> Video -> Palette** section
+    extends the v1.1.0 `.pal` loader + viewer into a named-palette bank
+    (`[graphics.palettes]` + `[graphics] active_palette`): a live active-palette
+    picker (built-in / any saved entry), an 8x8 per-index colour-picker editor,
+    Save-As, import-a-`.pal`-into-the-bank, and delete. The selected palette is
+    applied to the core via the existing `set_custom_palette` (presentation-only;
+    built-in / unselected is byte-identical) and survives ROM loads. The legacy
+    single `.pal` file path is preserved underneath.
+  - **Overscan WYSIWYG editor (D2).** A **Settings -> Video -> Overscan
+    (per-side)** group with live Top / Right / Bottom / Left pixel sliders + reset,
+    alongside (and combined with) the legacy "Hide overscan" toggle. The blit
+    uniform's overscan crop is generalized from the binary top/bottom-8 form to a
+    per-side crop on both axes (the U/V remap is now in the `gfx`, CRT, NTSC,
+    Bisqwit, and shader-stack final-pass shaders); all-zero + toggle off is
+    byte-identical.
+  - **"Enhancements" grouped settings (D3).** A new
+    **Settings -> Emulation -> Enhancements (non-accuracy)** group + `[enhancements]`
+    config section consolidating the non-accuracy enhancement modes (disable
+    sprite limit / optional overclock) and cross-linking the max-rewind window.
+    Each is off by default, clearly labelled, and **never applied while the
+    determinism oracle / `AccuracyCoin` / TAS / netplay run**. NOTE: the
+    sprite-limit-disable + overclock toggles persist the user's intent and are
+    surfaced as *experimental / staged* — the cycle-accurate core has no hook for
+    them yet (deferred to the v2.0 fractional-master-clock refactor, ADR 0002), so
+    they are inert today and do not affect the deterministic core output.
+  - **Device-config controls (D4).** The Input rebind panel now shows
+    contextual device config for the selected port-2 device: SNES-mouse reported
+    sensitivity (low/medium/high, the 2-bit serial field — was hardcoded `0`) + a
+    pointer-speed (DPI) multiplier, Arkanoid Vaus pointer-speed, and a Power Pad /
+    Family Trainer mat layout side (A / mirrored B). New `[input]` fields
+    (`mouse_sensitivity`, `pointer_scale`, `power_pad_layout`); all defaults match
+    the prior behaviour so the device report / input is byte-identical.
 
 ### Performance
 

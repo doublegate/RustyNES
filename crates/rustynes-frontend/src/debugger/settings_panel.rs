@@ -112,6 +112,10 @@ pub struct SettingsApply {
     /// rebuilds the live `gfx` shader stack from `[graphics] shader_stack`. An
     /// empty stack falls back to the byte-identical direct-blit path.
     pub shader_stack: bool,
+    /// v1.5.0 "Lens" Workstream D1 — the active named palette changed (a custom
+    /// palette was selected / edited / cleared / saved); the app re-applies the
+    /// resolved base palette to the core (or clears it back to the built-in).
+    pub palette_select: bool,
 }
 
 impl SettingsApply {
@@ -132,6 +136,7 @@ impl SettingsApply {
             || self.audio_eq
             || self.apu_channel_gain
             || self.shader_stack
+            || self.palette_select
     }
 }
 
@@ -168,6 +173,39 @@ pub struct SettingsPanelState {
     preset_name_input: String,
     /// v1.2.0 C2 — the currently-selected preset name (for Load / Delete).
     selected_preset: String,
+    /// v1.5.0 "Lens" Workstream D1 — the palette editor's working state.
+    palette_editor: PaletteEditorState,
+}
+
+/// v1.5.0 "Lens" Workstream D1 — the palette editor's working state.
+///
+/// The editor edits a 64-colour working copy (`working`) which the user can
+/// save under a name into the [`crate::config::PaletteBank`] or apply directly.
+/// `open` toggles the editor's collapsing body; `name_input` backs Save-As.
+#[derive(Debug)]
+struct PaletteEditorState {
+    /// The 64 base RGB colours being edited (the working copy). A NES base
+    /// palette is always exactly 64 colours, so this is a fixed array.
+    working: [[u8; 3]; 64],
+    /// Save-As name input.
+    name_input: String,
+    /// `true` once `working` has been seeded from the active palette / built-in
+    /// (so re-opening the editor does not clobber an in-progress edit).
+    seeded: bool,
+}
+
+impl Default for PaletteEditorState {
+    fn default() -> Self {
+        // `working` starts all-black; it is seeded from the active / built-in
+        // palette on first show (when `seeded` is still false). A `[[u8; 3]; 64]`
+        // does not get a blanket `Default` (arrays only derive it up to N = 32),
+        // so the impl is spelled out here.
+        Self {
+            working: [[0u8; 3]; 64],
+            name_input: String::new(),
+            seeded: false,
+        }
+    }
 }
 
 /// v1.0.0 — a two-click "Reset to Defaults" button: the first click arms it
@@ -396,19 +434,10 @@ pub fn video_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
         }
     }
 
-    // v1.0.0 — overscan crop. Applied live (the gfx letterbox samples the
-    // inner source rect); default off = the full 256x240 framebuffer (today's
-    // presentation, byte-identical).
-    if ui
-        .checkbox(
-            &mut config.graphics.hide_overscan,
-            "Hide overscan (crop top/bottom 8 scanlines)",
-        )
-        .changed()
-    {
-        state.apply.overscan = true;
-        save_config(config);
-    }
+    // v1.0.0 / v1.5.0 D2 — overscan crop. Applied live (the gfx letterbox
+    // samples the inner source rect); default off / all-zero = the full
+    // 256x240 framebuffer (today's presentation, byte-identical).
+    overscan_section(ui, state, config);
 
     // v1.1.0 beta.1 — CRT / scanline post-pass. Applied live; mutually exclusive
     // with the NTSC filter (CRT wins). Default off = byte-identical presentation.
@@ -431,35 +460,11 @@ pub fn video_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
         save_config(config);
     }
 
-    // v1.1.0 beta.1 — custom .pal palette. The actual file dialog runs in the app
-    // after the egui pass (it must not block the render / hold the emu lock here);
-    // these buttons just request it. Default = the built-in palette.
-    ui.horizontal(|ui| {
-        ui.label("Palette");
-        let current = config.graphics.palette_file.as_ref().map_or_else(
-            || "built-in".to_string(),
-            |p| {
-                p.file_name().map_or_else(
-                    || p.display().to_string(),
-                    |n| n.to_string_lossy().into_owned(),
-                )
-            },
-        );
-        ui.weak(current);
-        // The file dialog + apply are native-only (no filesystem on wasm), so
-        // the buttons would be silent no-ops there — show a note instead.
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            if ui.button("Load .pal…").clicked() {
-                state.apply.palette_pick = true;
-            }
-            if config.graphics.palette_file.is_some() && ui.button("Built-in").clicked() {
-                state.apply.palette_clear = true;
-            }
-        }
-        #[cfg(target_arch = "wasm32")]
-        ui.weak("(native only)");
-    });
+    // v1.1.0 beta.1 / v1.5.0 D1 — custom palette. The legacy `.pal` file path
+    // loads on the next ROM load; the v1.5.0 named-palette bank + editor below
+    // supersede it. The actual file dialog runs in the app after the egui pass
+    // (it must not block the render / hold the emu lock here). Presentation-only.
+    palette_section(ui, state, config);
 
     ui.add_space(4.0);
     // v1.0.0 — reset the Graphics section to its defaults (guarded by a
@@ -468,10 +473,16 @@ pub fn video_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
         let def = crate::config::GraphicsConfig::default();
         // Cross any off<->on filter / overscan boundary so the app re-applies.
         let ntsc_changed = (config.graphics.ntsc_filter == "off") != (def.ntsc_filter == "off");
-        let overscan_changed = config.graphics.hide_overscan != def.hide_overscan;
+        // v1.5.0 D2 — re-apply if EITHER the legacy toggle or the per-side crop
+        // moves off default.
+        let overscan_changed = config.graphics.hide_overscan != def.hide_overscan
+            || config.graphics.overscan != def.overscan;
         let pacing_changed = config.graphics.pacing_mode != def.pacing_mode;
         let crt_changed = config.graphics.crt_filter != def.crt_filter;
         let palette_changed = config.graphics.palette_file != def.palette_file;
+        // v1.5.0 D1 — re-apply the base palette if a named custom palette was
+        // active (reset clears it back to the built-in).
+        let active_palette_changed = config.graphics.active_palette != def.active_palette;
         // v1.2.0 C1 — re-push the Bisqwit NTSC knobs if any moved off default.
         // Exact equality is intentional: the goal is "differs from the default at
         // all", and the defaults are exact literals.
@@ -486,17 +497,296 @@ pub fn video_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
         // user's named presets).
         let stack_changed = !config.graphics.shader_stack.passes.is_empty();
         let saved_presets = std::mem::take(&mut config.graphics.shader_presets);
+        // v1.5.0 D1 — preserve the user's named palette bank across a reset
+        // (like the shader presets); only the *active* selection clears.
+        let saved_palettes = std::mem::take(&mut config.graphics.palettes);
         config.graphics = def;
         config.graphics.shader_presets = saved_presets;
+        config.graphics.palettes = saved_palettes;
         state.apply.ntsc_filter |= ntsc_changed;
         state.apply.overscan |= overscan_changed;
         state.apply.pacing_mode |= pacing_changed;
         state.apply.crt_filter |= crt_changed;
         state.apply.ntsc_knobs |= knobs_changed;
         state.apply.palette_clear |= palette_changed;
+        state.apply.palette_select |= active_palette_changed;
         state.apply.shader_stack |= stack_changed;
+        if active_palette_changed {
+            // The active selection cleared back to the built-in; re-seed the
+            // palette editor's swatches from it next frame.
+            state.palette_editor.seeded = false;
+        }
         save_config(config);
     }
+}
+
+/// v1.5.0 "Lens" Workstream D2 — per-side overscan WYSIWYG editor.
+///
+/// Replaces the binary "hide overscan" toggle's discoverability gap: the
+/// legacy toggle is kept (8 px top + bottom, the common preset) and four
+/// per-side sliders (Top / Right / Bottom / Left, in NES pixels) live-preview
+/// the crop. Every change flags `state.apply.overscan` so the app pushes the
+/// new crop into the gfx letterbox. All zero + toggle off = byte-identical.
+fn overscan_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &mut Config) {
+    // The legacy preset toggle (8 px top + bottom). Kept for one-click parity.
+    if ui
+        .checkbox(
+            &mut config.graphics.hide_overscan,
+            "Hide overscan (crop top + bottom 8 scanlines)",
+        )
+        .changed()
+    {
+        state.apply.overscan = true;
+        save_config(config);
+    }
+
+    egui::CollapsingHeader::new("Overscan (per-side, live)")
+        .id_salt("settings-overscan")
+        .default_open(false)
+        .show(ui, |ui| {
+            ui.weak(
+                "Trim each edge independently (NES pixels). Combined with the \
+                 toggle above; preview updates live.",
+            );
+            let mut os = config.graphics.overscan;
+            let mut changed = false;
+            // Top/Bottom range to 112 px (keeps >= 16 visible rows), Left/Right
+            // to 120 px (keeps >= 16 visible columns).
+            changed |= ui
+                .add(egui::Slider::new(&mut os.top, 0..=112).text("Top"))
+                .changed();
+            changed |= ui
+                .add(egui::Slider::new(&mut os.bottom, 0..=112).text("Bottom"))
+                .changed();
+            changed |= ui
+                .add(egui::Slider::new(&mut os.left, 0..=120).text("Left"))
+                .changed();
+            changed |= ui
+                .add(egui::Slider::new(&mut os.right, 0..=120).text("Right"))
+                .changed();
+            if changed {
+                config.graphics.overscan = os.clamped();
+                state.apply.overscan = true;
+                save_config(config);
+            }
+            if ui.button("Reset overscan (0,0,0,0)").clicked()
+                && !config.graphics.overscan.is_zero()
+            {
+                config.graphics.overscan = crate::config::Overscan::default();
+                state.apply.overscan = true;
+                save_config(config);
+            }
+        });
+}
+
+/// v1.5.0 "Lens" Workstream D1 — the full palette editor: select / load / edit
+/// / save *named* custom palettes with a per-index colour picker.
+///
+/// Extends the v1.1.0 `.pal` loader + palette viewer: the named-palette bank
+/// (`config.graphics.palettes`) holds saved 64-colour base palettes; the active
+/// selection (`config.graphics.active_palette`) drives the live presentation.
+/// Every change flags `state.apply.palette_select` so the app re-applies the
+/// resolved base palette to the core. Presentation-only (no core/accuracy
+/// impact); built-in / unselected is byte-identical.
+fn palette_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &mut Config) {
+    use crate::config::CustomPalette;
+
+    // --- Active-palette selector ----------------------------------------
+    ui.horizontal(|ui| {
+        ui.label("Palette");
+        let selected_text = config
+            .graphics
+            .active_palette
+            .clone()
+            .unwrap_or_else(|| "Built-in".to_string());
+        let names: Vec<String> = config.graphics.palettes.palettes.keys().cloned().collect();
+        let mut new_active = config.graphics.active_palette.clone();
+        egui::ComboBox::from_id_salt("palette-active")
+            .selected_text(selected_text)
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut new_active, None, "Built-in");
+                for name in &names {
+                    ui.selectable_value(&mut new_active, Some(name.clone()), name);
+                }
+            });
+        if new_active != config.graphics.active_palette {
+            config.graphics.active_palette = new_active;
+            state.apply.palette_select = true;
+            // Re-seed the editor from the newly selected palette next frame so
+            // its swatches do not show the previously selected palette's colours.
+            state.palette_editor.seeded = false;
+            save_config(config);
+        }
+    });
+
+    // Legacy `.pal` file loader (imports straight into the live palette).
+    // Native-only (rfd / filesystem). The named bank below is the v1.5.0 path.
+    ui.horizontal(|ui| {
+        ui.weak("Legacy .pal:");
+        let current = config.graphics.palette_file.as_ref().map_or_else(
+            || "none".to_string(),
+            |p| {
+                p.file_name().map_or_else(
+                    || p.display().to_string(),
+                    |n| n.to_string_lossy().into_owned(),
+                )
+            },
+        );
+        ui.weak(current);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if ui.button("Load .pal…").clicked() {
+                state.apply.palette_pick = true;
+            }
+            if config.graphics.palette_file.is_some() && ui.button("Clear .pal").clicked() {
+                state.apply.palette_clear = true;
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        ui.weak("(native only)");
+    });
+
+    // --- Editor (collapsing) --------------------------------------------
+    egui::CollapsingHeader::new("Palette editor")
+        .id_salt("palette-editor")
+        .default_open(false)
+        .show(ui, |ui| {
+            // Seed the working copy once from the active palette (or built-in).
+            if !state.palette_editor.seeded {
+                state.palette_editor.working = resolve_active_base_palette(config);
+                state.palette_editor.seeded = true;
+            }
+            ui.weak(
+                "Click a swatch to edit its colour. 8 columns x 8 rows = the 64 \
+                 NES base colours; emphasis is applied by the renderer.",
+            );
+
+            // 8x8 colour-picker grid.
+            let mut edited = false;
+            // Only persist (synchronous file I/O) once the drag finishes, so
+            // dragging a colour picker does not write `config.toml` every frame.
+            let mut committed = false;
+            egui::Grid::new("palette-editor-grid")
+                .spacing([4.0, 4.0])
+                .show(ui, |ui| {
+                    for row in 0..8 {
+                        for col in 0..8 {
+                            let idx = row * 8 + col;
+                            let c = &mut state.palette_editor.working[idx];
+                            let mut rgb = [
+                                f32::from(c[0]) / 255.0,
+                                f32::from(c[1]) / 255.0,
+                                f32::from(c[2]) / 255.0,
+                            ];
+                            let resp = ui.color_edit_button_rgb(&mut rgb);
+                            if resp.changed() {
+                                c[0] = (rgb[0] * 255.0).round().clamp(0.0, 255.0) as u8;
+                                c[1] = (rgb[1] * 255.0).round().clamp(0.0, 255.0) as u8;
+                                c[2] = (rgb[2] * 255.0).round().clamp(0.0, 255.0) as u8;
+                                edited = true;
+                            }
+                            if resp.drag_stopped() || (resp.changed() && !resp.dragged()) {
+                                committed = true;
+                            }
+                        }
+                        ui.end_row();
+                    }
+                });
+
+            // Live-apply the working edits to the active palette (so the editor
+            // is WYSIWYG when a named palette is selected). The live core-apply
+            // runs on every change during a drag; `save_config` is deferred to
+            // when the drag stops (`committed`) to avoid per-frame disk I/O.
+            if edited && let Some(name) = config.graphics.active_palette.clone() {
+                config
+                    .graphics
+                    .palettes
+                    .palettes
+                    .insert(name, CustomPalette::from_base(state.palette_editor.working));
+                state.apply.palette_select = true;
+                if committed {
+                    save_config(config);
+                }
+            }
+
+            ui.separator();
+            // Save-As: store the working copy under a name + select it.
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut state.palette_editor.name_input)
+                        .hint_text("Palette name")
+                        .desired_width(160.0),
+                );
+                if ui.button("Save as").clicked() {
+                    let name = state.palette_editor.name_input.trim().to_string();
+                    if !name.is_empty() {
+                        config.graphics.palettes.palettes.insert(
+                            name.clone(),
+                            CustomPalette::from_base(state.palette_editor.working),
+                        );
+                        config.graphics.active_palette = Some(name);
+                        state.apply.palette_select = true;
+                        save_config(config);
+                    }
+                }
+                // Reseed the editor from the built-in palette (start fresh).
+                if ui.button("Reset to built-in").clicked() {
+                    state.palette_editor.working = rustynes_core::rustynes_ppu::NES_PALETTE;
+                }
+            });
+
+            // Import a `.pal` straight into a named bank entry (native only).
+            #[cfg(not(target_arch = "wasm32"))]
+            if ui.button("Import .pal into bank…").clicked()
+                && let Some(path) = rfd::FileDialog::new()
+                    .add_filter("NES palette", &["pal"])
+                    .pick_file()
+                && let Some(base) = std::fs::read(&path)
+                    .ok()
+                    .and_then(|b| crate::config::parse_pal(&b))
+            {
+                let name = path.file_stem().map_or_else(
+                    || "imported".to_string(),
+                    |s| s.to_string_lossy().into_owned(),
+                );
+                config
+                    .graphics
+                    .palettes
+                    .palettes
+                    .insert(name.clone(), CustomPalette::from_base(base));
+                config.graphics.active_palette = Some(name);
+                state.palette_editor.working = base;
+                state.apply.palette_select = true;
+                save_config(config);
+            }
+
+            // Delete the active named palette.
+            if let Some(name) = config.graphics.active_palette.clone()
+                && ui.button(format!("Delete \"{name}\"")).clicked()
+            {
+                config.graphics.palettes.palettes.remove(&name);
+                config.graphics.active_palette = None;
+                state.palette_editor.seeded = false;
+                state.apply.palette_select = true;
+                save_config(config);
+            }
+        });
+}
+
+/// v1.5.0 "Lens" Workstream D1 — resolve the active base palette: the selected
+/// named palette, else the built-in NES palette. (The legacy `.pal` file is
+/// applied separately by the app on ROM load; the named bank takes precedence
+/// when an entry is selected.)
+fn resolve_active_base_palette(config: &Config) -> [[u8; 3]; 64] {
+    config
+        .graphics
+        .active_palette
+        .as_ref()
+        .and_then(|name| config.graphics.palettes.palettes.get(name))
+        .map_or_else(
+            || rustynes_core::rustynes_ppu::NES_PALETTE,
+            crate::config::CustomPalette::to_base,
+        )
 }
 
 /// v1.2.0 C2 — the composable shader-stack editor + preset bank UI (mirrors
@@ -977,14 +1267,92 @@ pub fn advanced_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, confi
         ui.weak("(restart to apply)");
     });
 
+    ui.add_space(8.0);
+    enhancements_section(ui, state, config);
+
     ui.add_space(4.0);
     // v1.0.0 — reset run-ahead + rewind to defaults; re-arm the rewind ring.
     if reset_to_defaults_button(ui, &mut state.reset_advanced_armed, "latency/rewind") {
         config.input.run_ahead = crate::config::InputConfig::default().run_ahead;
         config.rewind = crate::config::RewindConfig::default();
+        config.enhancements = crate::config::EnhancementsConfig::default();
         state.apply.rewind_enabled = true;
         save_config(config);
     }
+}
+
+/// v1.5.0 "Lens" Workstream D3 — the grouped "Enhancements" settings (à la
+/// `GeraNES`' Improvements window / Mesen2's emulation enhancements). These are
+/// non-accuracy *enhancement* modes; each is OFF / neutral by default, clearly
+/// labelled, and **never part of the determinism oracle / `AccuracyCoin` / TAS /
+/// netplay paths**.
+///
+/// The max-rewind window (above, in the Rewind group) is the third
+/// enhancement-adjacent knob; the sprite-limit / overclock toggles below are
+/// staged: the cycle-accurate core has no hook to disable the sprite limit or
+/// to overclock yet (both need the v2.0 fractional-master-clock core pass,
+/// ADR 0002), so they persist the user's intent + are surfaced as experimental
+/// but do not affect the deterministic core output today.
+fn enhancements_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &mut Config) {
+    egui::CollapsingHeader::new("Enhancements (non-accuracy)")
+        .id_salt("settings-enhancements")
+        .default_open(false)
+        .show(ui, |ui| {
+            ui.weak(
+                "Off-by-default enhancement modes. These are NEVER applied while \
+                 accuracy tests / TAS replay / netplay run.",
+            );
+
+            let mut changed = false;
+            changed |= ui
+                .checkbox(
+                    &mut config.enhancements.disable_sprite_limit,
+                    "Disable 8-sprite-per-scanline limit (reduces flicker)",
+                )
+                .changed();
+            ui.indent("enh-sprite-note", |ui| {
+                ui.weak("Experimental: staged for the v2.0 core pass (currently inert).");
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Overclock (extra scanlines)");
+                changed |= ui
+                    .add(
+                        egui::DragValue::new(&mut config.enhancements.overclock_scanlines)
+                            .speed(1.0)
+                            .range(0..=80),
+                    )
+                    .changed();
+            });
+            ui.indent("enh-overclock-note", |ui| {
+                ui.weak("Experimental: staged for the v2.0 core pass (currently inert).");
+            });
+
+            // The max-rewind window cross-links the Rewind group above (the
+            // enhancement-adjacent third knob), surfaced here for grouping.
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label("Max rewind (seconds)");
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut config.rewind.max_seconds)
+                            .speed(1.0)
+                            .range(1..=600),
+                    )
+                    .changed()
+                {
+                    changed = true;
+                }
+                ui.weak("(also in Rewind; restart to resize the buffer)");
+            });
+
+            if changed {
+                save_config(config);
+            }
+        });
+    // The enhancement toggles do not yet drive a live core apply (no core hook);
+    // they are persisted by the auto-save backstop + the explicit save above.
+    let _ = state;
 }
 
 #[cfg(test)]
@@ -997,18 +1365,7 @@ mod tests {
             apply: SettingsApply {
                 ntsc_filter: true,
                 rewind_enabled: true,
-                pacing_mode: false,
-                audio_gain: false,
-                overscan: false,
-                apu_channels: false,
-                crt_filter: false,
-                crt_scanline: false,
-                ntsc_knobs: false,
-                palette_pick: false,
-                palette_clear: false,
-                audio_eq: false,
-                apu_channel_gain: false,
-                shader_stack: false,
+                ..Default::default()
             },
             ..Default::default()
         };
