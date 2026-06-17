@@ -1000,6 +1000,12 @@ impl UiShell {
                         out.action = Some(MenuAction::OpenChipPanel(ChipPanel::Nsf));
                         ui.close();
                     }
+                    // v1.5.0 "Lens" Workstream C2 — Replay / TAS window (device
+                    // topology + timebase + branch/seek UX over the .rnm machinery).
+                    if ui.button(ic(glyph::VIDEO, "Replay / TAS")).clicked() {
+                        out.action = Some(MenuAction::OpenPanel(ToolPanel::Replay));
+                        ui.close();
+                    }
                     // (H1) The ROM Database editor needs a loaded ROM to edit.
                     if ui
                         .add_enabled(rom, egui::Button::new(ic(glyph::DATABASE, "ROM Database")))

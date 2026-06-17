@@ -26,6 +26,29 @@
 
 use rustynes_core::{Movie, MovieRecorder, Nes};
 
+/// A read-only port-topology + timebase snapshot for the Replay / TAS window.
+///
+/// v1.5.0 "Lens" Workstream C2. Frontend-only; gathered each frame from the
+/// host config (`[input]`) + `Nes::region`, never touches the replay/synthesis
+/// path so the determinism contract is unaffected.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ReplayInfo {
+    /// Region label ("NTSC" / "PAL" / "Dendy").
+    pub region: &'static str,
+    /// Whole-Hz frame rate for the region (60 NTSC/Dendy, 50 PAL) — used for
+    /// the elapsed-time readout. Display-only approximation of the precise
+    /// 60.0988 / 50.007 Hz; clearly a wall-clock estimate, not a timing source.
+    pub region_hz: u32,
+    /// Player-1 device label (always the standard pad today).
+    pub port1: &'static str,
+    /// Player-2 / expansion device label (standard pad, or the attached
+    /// expansion peripheral — Zapper, Vaus, SNES mouse, Power Pad, keyboard...).
+    pub port2: &'static str,
+    /// `true` when the Four Score 4-player adapter is active (ports multiplex
+    /// P1..P4).
+    pub four_score: bool,
+}
+
 /// The current movie mode the frontend is in.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum MovieMode {
@@ -156,6 +179,37 @@ impl MovieUi {
         self.playback = None;
     }
 
+    /// v1.5.0 "Lens" Workstream C2 — deterministically seek the active playback
+    /// to `target` (clamped to the movie length). Re-derives state from the
+    /// movie's start point and fast-forwards by replaying the recorded inputs
+    /// frame-by-frame, exactly as normal playback does — so the post-seek state
+    /// is bit-identical to having played up to that frame. No new determinism
+    /// surface: it drives the SAME `seek_to_start` + `set_buttons` + `run_frame`
+    /// the live replay path uses. No-op (returns `false`) if not playing or the
+    /// ROM mismatches.
+    ///
+    /// Seeking is O(target) frames of emulation; the caller should run it under
+    /// the emu lock (off the UI thread budget) and restart its frame clock.
+    pub fn seek_playback(&mut self, nes: &mut Nes, target: usize) -> bool {
+        let Some(pb) = self.playback.as_mut() else {
+            return false;
+        };
+        let target = target.min(pb.movie.len());
+        if pb.movie.seek_to_start(nes).is_err() {
+            return false;
+        }
+        for i in 0..target {
+            let Some(input) = pb.movie.frames.get(i).copied() else {
+                break;
+            };
+            nes.set_buttons(0, input.p1);
+            nes.set_buttons(1, input.p2);
+            nes.run_frame();
+        }
+        pb.cursor = target;
+        true
+    }
+
     /// Per-frame hook, called from `App::produce_one_frame` AFTER the
     /// frontend's live `set_buttons` and BEFORE `run_frame`.
     ///
@@ -274,6 +328,64 @@ mod tests {
             produced += 1;
         }
         assert_eq!(produced, 3, "playback runs exactly the recorded frames");
+        assert_eq!(ui.status().cursor, 3);
+    }
+
+    #[test]
+    fn seek_is_bit_identical_to_linear_playback() {
+        // Record a movie, then prove `seek_playback(N)` lands on exactly the
+        // framebuffer + cycle a linear replay of N frames produces. This is the
+        // C2 determinism guarantee: seek re-derives, it does not snapshot.
+        let rom = synth_nrom();
+        let mut nes = Nes::from_rom(&rom).unwrap();
+        let mut ui = MovieUi::default();
+        ui.start_recording_power_on(&mut nes);
+        for _ in 0..10 {
+            ui.before_frame(&mut nes);
+            nes.run_frame();
+        }
+        let movie = ui.finish_recording().unwrap();
+
+        // Linear replay to frame 7.
+        let mut linear = Nes::from_rom(&rom).unwrap();
+        movie.seek_to_start(&mut linear).unwrap();
+        for i in 0..7 {
+            let f = movie.frames[i];
+            linear.set_buttons(0, f.p1);
+            linear.set_buttons(1, f.p2);
+            linear.run_frame();
+        }
+        let linear_fb = linear.framebuffer().to_vec();
+        let linear_cycle = linear.cycle();
+
+        // Seek to frame 7 from a fresh playback.
+        let mut seeked = Nes::from_rom(&rom).unwrap();
+        movie.seek_to_start(&mut seeked).unwrap();
+        ui.start_playback(movie);
+        assert!(ui.seek_playback(&mut seeked, 7));
+        assert_eq!(ui.status().cursor, 7);
+        assert_eq!(seeked.framebuffer(), linear_fb.as_slice());
+        assert_eq!(seeked.cycle(), linear_cycle);
+    }
+
+    #[test]
+    fn seek_clamps_and_noops_when_idle() {
+        let rom = synth_nrom();
+        let mut nes = Nes::from_rom(&rom).unwrap();
+        let mut ui = MovieUi::default();
+        // Idle: seek is a no-op.
+        assert!(!ui.seek_playback(&mut nes, 5));
+        ui.start_recording_power_on(&mut nes);
+        for _ in 0..3 {
+            ui.before_frame(&mut nes);
+            nes.run_frame();
+        }
+        let movie = ui.finish_recording().unwrap();
+        let mut replay = Nes::from_rom(&rom).unwrap();
+        movie.seek_to_start(&mut replay).unwrap();
+        ui.start_playback(movie);
+        // Seeking past the end clamps to the movie length.
+        assert!(ui.seek_playback(&mut replay, 999));
         assert_eq!(ui.status().cursor, 3);
     }
 

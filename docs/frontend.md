@@ -401,9 +401,10 @@ reorganized the order and regrouped several items — see the per-menu notes):
   resolution, native), Show FPS, Pause When Unfocused (auto-pause on focus
   loss), Show Menu Bar (`M`).
 - **Tools** — Cheats, Movies (TAS: Record/Play/Branch), Netplay (native),
-  RetroAchievements (native + feature), Input Display, NSF Player (moved here
-  from Debug in v1.3.0), ROM Database, and an **HD Pack** submenu
-  (`hd-pack` feature + native; folded in from the former standalone "Mod" menu).
+  RetroAchievements (native + feature), Input Display, Input Miniatures, NSF
+  Player (moved here from Debug in v1.3.0), Replay / TAS (v1.5.0 C2), ROM
+  Database, and an **HD Pack** submenu (`hd-pack` feature + native; folded in
+  from the former standalone "Mod" menu).
 - **Debug** — Show Debugger (`` ` ``), Performance Monitor (moved here from
   Tools in v1.3.0), then the chip/state inspectors: CPU / PPU / APU / Memory /
   Memory Compare / OAM / Mapper / Trace Logger / Event Viewer / Lua Script.
@@ -693,8 +694,43 @@ and the feature-off build is byte-identical).
 
 All panels are floating windows in egui's window system. The tool panels
 (Cheats / Settings / Netplay / Cheevos / Perf / Input / Input Miniatures /
-HD Pixel Inspector) are the same windows the menu bar surfaces directly (see
-"Chip panels vs tool panels" above).
+Replay / TAS / HD Pixel Inspector) are the same windows the menu bar surfaces
+directly (see "Chip panels vs tool panels" above).
+
+### v1.5.0 "Lens" Workstream C — creator / TAS / speedrun tooling
+
+All frontend-only and additive; replay stays bit-identical (no new determinism
+surface).
+
+- **Replay / TAS window (C2)** — **Tools → Replay / TAS** opens a dedicated
+  control + read-out surface for the `.rnm` movie machinery (modelled on
+  GeraNES's `ReplayWindowUI`), complementing the status-bar HUD. It shows the
+  mode (Idle / Recording / Playing) + a frame-progress bar, a **timebase**
+  read-out (region + whole-Hz estimate + elapsed / total wall-clock time
+  derived from the frame cursor), and a **port-topology** read-out (the device
+  on each port — standard pad / Zapper / Vaus / SNES mouse / Power Pad /
+  keyboard / Hyper Shot — and whether the Four Score adapter multiplexes
+  P1..P4). Controls mirror the F6/F7/F8 shortcuts (Record / Play / Branch /
+  Stop) and add **seek-to-frame** (a slider plus Start / −10 / +1 / +10
+  buttons) for playback. The app pushes a read-only `ReplayInfo` snapshot each
+  frame (`DebuggerOverlay::set_replay_info`, built from the host `[input]`
+  config + `Nes::region`); button clicks are drained as a `ReplayRequest`
+  (`take_replay_request`) and dispatched under the emu lock
+  (`App::handle_replay_request`). **Seek is deterministic**:
+  `MovieUi::seek_playback` re-derives state by `seek_to_start` + replaying the
+  recorded inputs frame-by-frame — exactly the live replay path — so the
+  post-seek framebuffer + cycle are bit-identical to having played to that
+  frame (proven by `seek_is_bit_identical_to_linear_playback`).
+
+- **NSF waveform visualizer (C3)** — the **NSF Player** window (Tools → NSF
+  Player) gains a per-channel oscilloscope below the track controls: pulse 1/2,
+  triangle, noise, and DMC, each a rolling 256-sample strip fed from the
+  read-only `Nes::apu_snapshot()` DAC levels once per redraw (the same tap the
+  APU debugger scope uses). When the loaded NSF drives an expansion-audio chip
+  (`Nes::expansion_audio_chip()` — VRC6 / VRC7 / FME-7 / Namco 163 / MMC5 /
+  FDS), the chip name is surfaced and the expansion channels are noted as summed
+  into the master mix the standard APU plays. Output-only eye-candy: it samples
+  a copy for display and changes no synthesis.
 
 ## Settings
 

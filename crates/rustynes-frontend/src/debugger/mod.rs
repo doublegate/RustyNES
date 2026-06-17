@@ -47,8 +47,9 @@ use winit::event::WindowEvent;
 use winit::window::Window;
 
 use crate::config::Config;
-use crate::movie_ui::{MovieMode, MovieStatus};
+use crate::movie_ui::{MovieMode, MovieStatus, ReplayInfo};
 use crate::ui_shell::{ShellFrame, ShellOutput, UiShell};
+pub use replay_panel::ReplayRequest;
 
 mod apu_panel;
 // v2.7.1 — RetroAchievements badge-image cache (native-only, feature-gated).
@@ -75,6 +76,7 @@ mod memory_panel;
 mod netplay_panel;
 mod nsf_panel;
 mod oam_panel;
+mod replay_panel;
 // v2.8.0 Phase 0 — frame-pacing / audio-health instrumentation panel.
 mod perf_panel;
 mod ppu_panel;
@@ -115,6 +117,8 @@ pub enum ToolPanel {
     GameDb,
     /// Live Input Miniatures overlay (v1.5.0 "Lens" Workstream A1).
     InputMiniatures,
+    /// Replay / TAS window (v1.5.0 "Lens" Workstream C2).
+    Replay,
     /// HD-pack per-pixel inspector (v1.5.0 "Lens" Workstream A4; native +
     /// `hd-pack`). The enum variant is unconditional so the menu IA + dispatch
     /// match stay exhaustive; the actual panel + open path is feature-gated.
@@ -171,6 +175,7 @@ pub struct DebuggerOverlay {
     show_trace: bool,
     show_events: bool,
     show_nsf: bool,
+    show_replay: bool,
     show_script: bool,
     show_input: bool,
     show_input_display: bool,
@@ -205,6 +210,8 @@ pub struct DebuggerOverlay {
     event_ui: event_panel::EventPanelState,
     /// NSF player panel state (T-110-D1).
     nsf_ui: nsf_panel::NsfPanelState,
+    /// Replay / TAS window state (v1.5.0 "Lens" Workstream C2).
+    replay_ui: replay_panel::ReplayPanelState,
     /// Lua script console state (T-110-E5).
     script_ui: script_panel::ScriptPanelState,
     /// Input rebind modal state.
@@ -324,6 +331,7 @@ impl DebuggerOverlay {
             show_trace: false,
             show_events: false,
             show_nsf: false,
+            show_replay: false,
             show_script: false,
             show_input: false,
             show_input_display: false,
@@ -346,6 +354,7 @@ impl DebuggerOverlay {
             trace_ui: trace_panel::TracePanelState::default(),
             event_ui: event_panel::EventPanelState::default(),
             nsf_ui: nsf_panel::NsfPanelState::default(),
+            replay_ui: replay_panel::ReplayPanelState::default(),
             script_ui: script_panel::ScriptPanelState::default(),
             input_ui: input_rebind_panel::InputPanelState::default(),
             input_display_ui: input_display_panel::InputDisplayPanelState,
@@ -425,6 +434,20 @@ impl DebuggerOverlay {
     /// toolbar. Called from the frontend's pacer alongside [`Self::set_fps`].
     pub const fn set_movie_status(&mut self, status: MovieStatus) {
         self.movie = status;
+    }
+
+    /// v1.5.0 "Lens" Workstream C2 — push the movie status + port-topology /
+    /// timebase snapshot for the Replay / TAS window. Called from the pacer
+    /// alongside [`Self::set_movie_status`]. Display-only.
+    pub fn set_replay_info(&mut self, status: MovieStatus, info: ReplayInfo) {
+        self.replay_ui.set(status, info);
+    }
+
+    /// v1.5.0 "Lens" Workstream C2 — return (and clear) the pending Replay-window
+    /// request (record/play/branch/stop/seek). The app dispatches it under the
+    /// emu lock.
+    pub fn take_replay_request(&mut self) -> Option<ReplayRequest> {
+        self.replay_ui.take_request()
     }
 
     /// Returns `true` when the overlay is currently visible. The render
@@ -657,6 +680,7 @@ impl DebuggerOverlay {
             ToolPanel::InputDisplay => self.show_input_display = true,
             ToolPanel::GameDb => self.show_game_db = true,
             ToolPanel::InputMiniatures => self.show_input_miniatures = true,
+            ToolPanel::Replay => self.show_replay = true,
             ToolPanel::HdPixelInspector => {
                 #[cfg(all(not(target_arch = "wasm32"), feature = "hd-pack"))]
                 {
@@ -1074,6 +1098,11 @@ impl DebuggerOverlay {
                 &mut self.input_miniatures_ui,
                 &self.input_miniatures,
             );
+        }
+        if self.show_replay {
+            // v1.5.0 "Lens" C2 — control + read-out surface; reads the pushed
+            // status snapshot, not `nes`, so it renders in the always-on path.
+            replay_panel::show(ctx, &mut self.show_replay, &mut self.replay_ui);
         }
         if self.show_cheat {
             // The Cheats panel reads `nes`; with no ROM loaded there is nothing
