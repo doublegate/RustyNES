@@ -1,0 +1,53 @@
+# auth-proxy.example.toml — casual-mode browser RetroAchievements auth proxy
+# contract (ADR 0015, v1.5.0 "Lens" Workstream G).
+#
+# WHY THIS EXISTS
+# ----------------
+# RetroAchievements identifies and allowlists a client by its HTTP `User-Agent`
+# (`RustyNES/<crate-ver> rcheevos/<rcheevos-ver>` — the `RA_USER_AGENT` const in
+# `crates/rustynes-cheevos/src/http.rs`). Browsers FORBID scripts from setting
+# `User-Agent`, so the browser frontend cannot identify itself directly. The
+# casual-mode browser build therefore routes every rcheevos server call through
+# a tiny server-side proxy that injects the header.
+#
+# This file documents the proxy CONTRACT. It is configuration + spec, not a
+# running server. A reference stub is `scripts/cheevos/auth_proxy_stub.py`. Live
+# hosting (a domain, TLS, an allowlisted origin, and coordinating the User-Agent
+# string with the RA team) is the maintainer's manual step — see
+# `docs/cheevos-browser.md`.
+
+[proxy]
+# Where the proxy listens. The browser glue's `RA_PROXY_BASE` points here.
+bind = "127.0.0.1:8092"
+
+# The exact RA identity header the proxy MUST inject on every forwarded request.
+# Keep the leading `RustyNES/` token — RA allowlists by it (a native regression
+# test guards the same invariant in rustynes-cheevos). Coordinate this exact
+# string + the casual-only intent with the RA team before going live.
+user_agent = "RustyNES/1.5.0 rcheevos/12.3.0"
+
+# The upstream RA host the proxy forwards to.
+upstream = "https://retroachievements.org"
+
+# CORS: only serve the page origin(s) that host the wasm frontend. The browser
+# fetch from `ra_glue.js` is cross-origin to the proxy, so the proxy must answer
+# the preflight + echo an allowlisted `Access-Control-Allow-Origin`.
+allowed_origins = [
+  "https://doublegate.github.io",
+  "http://127.0.0.1:8081",
+]
+
+[casual]
+# STRUCTURAL: the proxy MUST refuse to facilitate hardcore. It rejects (or
+# strips) any request whose body/query asks for a hardcore unlock, and it never
+# forwards a `h=1` (hardcore) award. Hardcore in a browser is untrustworthy
+# (DevTools can patch the wasm), so casual is the only mode the proxy serves.
+# This mirrors the unexported hardcore toggle in the Emscripten module and the
+# absent hardcore API in `wasm_cheevos.rs`.
+enforce_casual_only = true
+
+# Endpoints the proxy exposes to the glue (paths relative to `bind`):
+#   POST /login        {username, password}     -> {token} | {error}
+#   POST /ra           <raw rcheevos request>    -> <raw RA response>  (User-Agent injected)
+# The glue NEVER sends a password anywhere but `/login`; only the returned token
+# is persisted client-side.

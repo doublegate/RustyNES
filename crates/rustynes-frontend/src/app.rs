@@ -707,6 +707,13 @@ pub struct App {
     /// load / rewind / cheats / RAM-watch.
     #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
     ra: Option<crate::ra_session::RaSession>,
+    /// v1.5.0 "Lens" Workstream G — EXPERIMENTAL casual-only browser
+    /// `RetroAchievements` session (ADR 0015). wasm-only + behind the
+    /// default-OFF `browser-cheevos` feature. Structurally casual-only (no
+    /// hardcore API at any layer); the per-frame drive + UI caveat live here.
+    /// `None` until the side module initializes (see `wasm_cheevos`).
+    #[cfg(all(target_arch = "wasm32", feature = "browser-cheevos"))]
+    browser_ra: Option<crate::wasm_cheevos::BrowserRaSession>,
 }
 
 /// Frames to hold a Vs. System coin-insert latch (~50 ms at 60 fps).
@@ -902,6 +909,10 @@ impl App {
             browser_netplay: None,
             wasm_lobby: crate::wasm_lobby::WasmLobbyState::default(),
             fds_bios_bytes: None,
+            // v1.5.0 Workstream G — start with the casual-only browser RA session
+            // created (un-initialized); `init` loads the side module lazily.
+            #[cfg(feature = "browser-cheevos")]
+            browser_ra: Some(crate::wasm_cheevos::BrowserRaSession::new()),
         }
     }
 
@@ -3493,6 +3504,24 @@ impl App {
         if let Some(e) = err {
             Self::wasm_console_warn(&format!("[script] runtime error: {e}"));
         }
+    }
+
+    /// v1.5.0 "Lens" Workstream G — paint the loud, persistent casual-only
+    /// browser `RetroAchievements` caveat (ADR 0015) as a top banner. `banner`
+    /// is `None` only if the session was dropped; otherwise it always says
+    /// casual-only + experimental (and, when the auth proxy is not configured,
+    /// that login + unlocks are unavailable). The banner is intentionally
+    /// unmissable: hardcore is native-only and the browser path is experimental.
+    #[cfg(all(target_arch = "wasm32", feature = "browser-cheevos"))]
+    fn paint_browser_ra_caveat(ctx: &egui::Context, banner: Option<&'static str>) {
+        let Some(text) = banner else { return };
+        egui::Window::new("RetroAchievements (browser)")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 8.0))
+            .show(ctx, |ui| {
+                ui.colored_label(egui::Color32::from_rgb(0xFF, 0xB0, 0x40), text);
+            });
     }
 
     /// v1.2.0 Workstream F4 — paint the wasm script's overlay draws through the
@@ -6398,6 +6427,14 @@ impl ApplicationHandler<AppEvent> for App {
                     // the Save-States manager window instead.
                     #[cfg(target_arch = "wasm32")]
                     let wasm_lobby = &mut self.wasm_lobby;
+                    // v1.5.0 Workstream G — capture the casual-only browser RA
+                    // caveat (ADR 0015) as a &'static str before the render
+                    // closure so it doesn't fight the other field borrows.
+                    #[cfg(all(target_arch = "wasm32", feature = "browser-cheevos"))]
+                    let browser_ra_caveat = self
+                        .browser_ra
+                        .as_ref()
+                        .map(crate::wasm_cheevos::BrowserRaSession::caveat_banner);
                     #[cfg(not(target_arch = "wasm32"))]
                     let save_states_ui = &mut self.save_states_ui;
                     let index_arg = want_index
@@ -6409,6 +6446,9 @@ impl ApplicationHandler<AppEvent> for App {
                             #[cfg(target_arch = "wasm32")]
                             let extra = |ctx: &egui::Context, cfg: &mut crate::config::Config| {
                                 crate::wasm_lobby::show(ctx, wasm_lobby, cfg);
+                                // v1.5.0 Workstream G — the casual-only browser RA caveat.
+                                #[cfg(feature = "browser-cheevos")]
+                                Self::paint_browser_ra_caveat(ctx, browser_ra_caveat);
                                 // v1.4.0 E2 — the browser Save-States thumbnail grid.
                                 crate::wasm_save_states::show(
                                     ctx,
@@ -6629,6 +6669,13 @@ impl ApplicationHandler<AppEvent> for App {
                     let ui_shell = &mut self.ui;
                     #[cfg(target_arch = "wasm32")]
                     let wasm_lobby = &mut self.wasm_lobby;
+                    // v1.5.0 Workstream G — capture the casual-only browser RA
+                    // caveat (ADR 0015) before the render closure (see above).
+                    #[cfg(all(target_arch = "wasm32", feature = "browser-cheevos"))]
+                    let browser_ra_caveat = self
+                        .browser_ra
+                        .as_ref()
+                        .map(crate::wasm_cheevos::BrowserRaSession::caveat_banner);
                     #[cfg(not(target_arch = "wasm32"))]
                     let save_states_ui = &mut self.save_states_ui;
                     let index_arg = want_index
@@ -6641,6 +6688,9 @@ impl ApplicationHandler<AppEvent> for App {
                         #[cfg(target_arch = "wasm32")]
                         let extra = |ctx: &egui::Context, cfg: &mut crate::config::Config| {
                             crate::wasm_lobby::show(ctx, wasm_lobby, cfg);
+                            // v1.5.0 Workstream G — the casual-only browser RA caveat.
+                            #[cfg(feature = "browser-cheevos")]
+                            Self::paint_browser_ra_caveat(ctx, browser_ra_caveat);
                             // v1.4.0 E2 — the browser Save-States thumbnail grid.
                             crate::wasm_save_states::show(ctx, ss_slot_wasm, ss_rom_loaded_wasm);
                             #[cfg(feature = "script-wasm")]

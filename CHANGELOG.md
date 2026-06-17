@@ -283,6 +283,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     now close on **Esc** (egui's `Window` X-button has no key equivalent, and the
     app's Esc/Quit binding is suppressed while a shell window is open), giving
     every modal a consistent keyboard escape hatch.
+- **v1.5.0 "Lens" Workstream G — casual-mode browser RetroAchievements
+  (EXPERIMENTAL, the ADR 0015 carryover).** The buildable parts of browser RA,
+  all behind the default-OFF, wasm-only `browser-cheevos` feature, so the shipped
+  native + both default wasm builds are byte-identical and AccuracyCoin holds 100%
+  (139/139); native RetroAchievements is unaffected:
+  - **Emscripten rcheevos→wasm build track (proven).** `scripts/cheevos/build_rcheevos_wasm.sh`
+    compiles the SAME vendored rcheevos sources + defines the native `build.rs`
+    uses (26 translation units) with `emcc` to a loadable side module
+    (`web/cheevos/rcheevos.wasm` + `.js`, gitignored build artifacts). It is a
+    **separate artifact, not linked into the Rust `.wasm`**: trunk builds
+    `wasm32-unknown-unknown`, whose ABI is incompatible with an emscripten `.a`.
+    The Rust side reaches it through the committed `web/cheevos/ra_glue.js` host
+    surface, bound by `crates/rustynes-frontend/src/wasm_cheevos.rs`'s
+    `#[wasm_bindgen]` bridge.
+  - **Casual-only is structural, not a toggle.** Hardcore is impossible in the
+    browser at three independent layers: the Emscripten module never exports
+    `rc_client_set_hardcore_enabled`, `ra_glue.js` exposes no hardcore method, and
+    `BrowserRaSession` has no hardcore field/API (`hardcore_blocks()` is
+    `const false`). The auth-proxy stub also refuses to forward a hardcore award.
+  - **Auth-proxy contract + deployable stub.** RA's identifying HTTP `User-Agent`
+    is browser-forbidden, so server calls route through a proxy that injects it
+    server-side. Contract: `scripts/cheevos/auth-proxy.example.toml`; reference
+    stub (stdlib-only Python): `scripts/cheevos/auth_proxy_stub.py`; full spec:
+    `docs/cheevos-browser.md`.
+  - **Loud, persistent in-UI caveat.** The wasm frontend renders a top-anchored
+    banner: always casual-only + experimental, and (when the proxy is unset) that
+    login + unlocks are unavailable — nothing silently pretends to work.
+  - **Still maintainer-manual (no headless path, per ADR 0015):** deploy the auth
+    proxy, finish the `ra_glue.js` rc_client trampoline marshalling, and verify a
+    casual unlock live in a browser with a real RA account.
 
 ### Performance
 

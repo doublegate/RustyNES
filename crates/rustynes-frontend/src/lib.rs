@@ -165,3 +165,10 @@ pub mod wasm_netplay;
 // `wasm_netplay::BrowserNetplay`. wasm-only.
 #[cfg(target_arch = "wasm32")]
 pub mod wasm_lobby;
+// v1.5.0 "Lens" Workstream G — EXPERIMENTAL casual-only browser RetroAchievements
+// (ADR 0015). wasm-only + behind the default-OFF `browser-cheevos` feature. It
+// bridges to an Emscripten-built rcheevos side module (`web/cheevos/`) rather
+// than the native `rustynes-cheevos` C FFI; casual-only is structural (no
+// hardcore API). Off by default, so the shipped wasm builds never see it.
+#[cfg(all(target_arch = "wasm32", feature = "browser-cheevos"))]
+pub mod wasm_cheevos;
