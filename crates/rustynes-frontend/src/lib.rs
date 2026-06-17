@@ -120,6 +120,12 @@ pub mod symbols;
 // the filesystem-backed actions are native-gated at the dispatch site.
 pub mod ui_shell;
 
+// v1.6.0 Workstream A — the TAStudio piano-roll TAS *editor*: a frame-keyed
+// save-state greenzone + an editable input log + deterministic seek/edit
+// plumbing. The egui piano-roll grid (A2) and branches/projects (A4) layer on
+// top of this model.
+pub mod tastudio;
+
 // v1.3.0 Sprint 1.4 — two wasm32 frontends, selected by cargo
 // feature (each provides a unique `#[wasm_bindgen(start)]`):
 //   - `wasm-winit` (default): the unified winit + wgpu + egui App,
