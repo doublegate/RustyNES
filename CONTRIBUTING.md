@@ -118,7 +118,7 @@ cargo install cargo-nextest --locked                 # or: cargo binstall cargo-
 cargo nextest run --workspace                                  # unit + integration
 cargo nextest run --workspace --release --features test-roms   # + ROM suites
 cargo test --doc --workspace                         # doctests: nextest does NOT run these
-cargo nextest run --run-ignored ignored-only --features test-roms  # expected-fail probes
+cargo nextest run --workspace --run-ignored ignored-only --features test-roms  # expected-fail probes
 ```
 
 Two differences the repo's `.config/nextest.toml` and the commands above already

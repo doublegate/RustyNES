@@ -19,7 +19,8 @@ retries = 0
 fail-fast = false
 
 # The heavy accuracy batteries (AccuracyCoin's 7200-frame run, the blargg /
-# kevtris CPU suites under `--features test-roms`) legitimately run long. The
-# string form WARNS that a test is slow but NEVER terminates it — a killed
-# accuracy test would be a false failure, not a real signal.
-slow-timeout = "60s"
+# kevtris CPU suites under `--features test-roms`) legitimately run long. A
+# `period`-only table (no `terminate-after`) WARNS that a test is slow but NEVER
+# terminates it — a killed accuracy test would be a false failure, not a real
+# signal.
+slow-timeout = { period = "60s" }
