@@ -101,7 +101,9 @@ pub struct UnifImage {
 /// it is not the full UNIF board universe.
 #[must_use]
 pub fn board_to_mapper(board: &str) -> Option<u16> {
-    let upper = board.trim().trim_end_matches('\0').to_ascii_uppercase();
+    // Strip the NUL terminator(s) first, THEN trim — otherwise trailing
+    // whitespace hidden behind a `\0` (e.g. "NES-NROM \0") would survive.
+    let upper = board.trim_end_matches('\0').trim().to_ascii_uppercase();
     // Try the name as-is, then with a leading vendor prefix stripped.
     if let Some(m) = lookup_board(&upper) {
         return Some(m);
@@ -381,6 +383,14 @@ pub fn unif_to_ines(img: &UnifImage) -> Vec<u8> {
     h[7] = ((((mapper >> 4) & 0x0F) as u8) << 4) | 0x08;
     h[8] = ((mapper >> 8) & 0x0F) as u8; // mapper bits 8-11 (submapper nibble = 0)
     h[9] = (((prg_banks >> 8) & 0x0F) as u8) | ((((chr_banks >> 8) & 0x0F) as u8) << 4);
+    // byte 10: PRG-RAM (low nibble) / PRG-NVRAM (high nibble) size shift
+    // (size = 64 << shift). NES 2.0 byte 10 is authoritative — the iNES-1.0
+    // "default 8 KiB for MMC1/3/5" heuristic does NOT apply to a NES-2.0 image —
+    // so declare 8 KiB save/work RAM (64 << 7) unconditionally, as NVRAM when
+    // the board is battery-backed and as volatile PRG-RAM otherwise. Mappers
+    // that need none simply leave it unused; mappers that need it (MMC1/3/5
+    // save data + work RAM) would otherwise get zero and fail to save / boot.
+    h[10] = if img.has_battery { 0x70 } else { 0x07 };
     // byte 11: CHR-RAM size shift (size = 64 << shift). 8 KiB = 64 << 7 when the
     // board ships no CHR-ROM; 0 (no CHR-RAM) when it does.
     h[11] = if chr.is_empty() { 0x07 } else { 0x00 };
@@ -584,5 +594,24 @@ mod tests {
         assert_eq!(cart.mapper_id, 2);
         assert!(cart.uses_chr_ram(), "no CHR chunk => CHR-RAM board");
         assert!(cart.chr_ram_size >= 8 * 1024, "8 KiB CHR-RAM synthesized");
+    }
+
+    #[test]
+    fn unif_save_ram_board_synthesizes_prg_ram() {
+        // An MMC1 SNROM board with a battery must get PRG-(N)RAM — the NES 2.0
+        // byte-10 fix (a save-data board would otherwise get zero PRG-RAM).
+        let blob = build_unif(&[
+            (b"MAPR", b"SNROM\0".to_vec()),
+            (b"PRG0", vec![0u8; 16 * 1024]),
+            (b"BATR", vec![]),
+        ]);
+        let (cart, _) = crate::parse(&blob).expect("unif");
+        assert_eq!(cart.mapper_id, 1, "SNROM => MMC1");
+        assert!(cart.has_battery);
+        assert!(
+            cart.prg_ram_size >= 8 * 1024,
+            "battery MMC1 board must get >= 8 KiB PRG-RAM, got {}",
+            cart.prg_ram_size
+        );
     }
 }
