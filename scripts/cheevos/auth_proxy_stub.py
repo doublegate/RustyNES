@@ -56,20 +56,18 @@ def make_handler(cfg: Config):
             # value written below originates from `cfg.allowed_origins` (config),
             # not from the client's Origin header. The CR/LF reject is kept as a
             # belt-and-suspenders guard on the config value too.
-            if not origin:
+            # O(1) allowlist gate first — fast-rejects the common disallowed /
+            # no-Origin case without iterating the set.
+            if not origin or origin not in cfg.allowed_origins:
                 return
-            allowed = next(
-                (
-                    o
-                    for o in cfg.allowed_origins
-                    if o == origin and "\r" not in o and "\n" not in o
-                ),
-                None,
-            )
-            if allowed is not None:
-                self.send_header("Access-Control-Allow-Origin", allowed)
-                self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
-                self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            # Matched: emit the config-sourced copy (not the request string), and
+            # reject CR/LF on the value actually written.
+            allowed = next(o for o in cfg.allowed_origins if o == origin)
+            if "\r" in allowed or "\n" in allowed:
+                return
+            self.send_header("Access-Control-Allow-Origin", allowed)
+            self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
 
         def do_OPTIONS(self) -> None:  # noqa: N802 (http.server API)
             self.send_response(204)
