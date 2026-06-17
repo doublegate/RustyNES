@@ -117,6 +117,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     trace when an expansion chip (VRC6/VRC7/FME-7/N163/MMC5/FDS) is present.
     Output-only eye-candy over the existing NSF/EQ path — samples a copy for
     display, no synthesis change.
+- **v1.5.0 "Lens" Workstream I — native-UI fixes + menu overhaul + Documentation
+  (beta.3).** Frontend-only and determinism-neutral (AccuracyCoin 100% (139/139)
+  held; the feature-off / `no_std` / wasm builds stay byte-identical). The
+  additive / changed UI:
+  - **In-app Documentation pane (I10).** A new **Help -> Documentation** window
+    (`debugger/doc_panel.rs`, native) reusing the SAME `cli::HELP_TOPICS` registry
+    as `rustynes help` so the CLI and GUI manual share one source — plus
+    GUI-specific topics (menu map / devtools / settings), an **About** card, and a
+    **per-release CHANGELOG** selector. `/`-style search filters the topic list.
+  - **Mapper panel depth (I8).** The Mapper debugger panel now shows mapper
+    id + submapper, accuracy **tier** (Core/Curated/BestEffort), PRG/CHR ROM + RAM
+    sizes with bank counts, battery/NVRAM, the **IRQ mechanism** (PPU A12 /
+    scanline / CPU-cycle), and the expansion-audio chip — alongside the existing
+    live bank windows + IRQ + register state. Driven by new output-only
+    cartridge-metadata fields the bus fills on the existing `MapperDebugInfo` view
+    (byte-identical; no per-mapper changes, no determinism surface).
+  - **Keyboard Shortcuts (I9).** The Help -> Keyboard Shortcuts window now reads
+    the **live** `[input]` / `[input.system]` bindings (not hardcoded defaults),
+    separates emulator hotkeys from the controller mapping, and adds a **device
+    selector** (Player 1-4 / Power Pad / Family BASIC keyboard).
+  - **Input Display colours (I5).** Per-button-group palette — D-pad green,
+    Select/Start yellow, B/A Nintendo red (`#E60012`) — in a shared `input_colors`
+    module mirrored by the A1 Input Miniatures overlay.
+  - **RetroAchievements status in the status bar (I7).** The RA readout
+    (`RA n/total (pts) [HARDCORE]`) is now shown in the bottom status bar between
+    the emulator-state label and the FPS counter.
+  - **Settings polish (I3).** The Shaders tab's "Shader stack (composable)" header
+    defaults open; the Input tab now auto-saves every control in both the Settings
+    window and the standalone Tools -> Input window, and the redundant "Save to
+    disk" button is relabelled **"Export config..."** (a real config-export to a
+    chosen file).
+  - **Game-Genie DB picklist (I4).** Confirmed shipped: the Cheats panel already
+    surfaces the loaded ROM's known Game Genie codes from `genie_database.tsv`
+    feeding the existing `genie.rs` decode + `cheats.rs` persistence.
 
 ### Fixed
 
@@ -141,6 +175,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     panel aspect ratio on wide windows; drop a leaked IndexedDB upgrade closure on
     wasm; map Mesen `.mlb` `W`/`S` symbol types; minor allocation cleanups.
   - Mappers: drop a redundant `& 0x0F` mask in the Vs. DualSystem header check.
+- **v1.5.0 "Lens" Workstream I — three native-UI bugs from hands-on testing**
+  (frontend-only, determinism-neutral; AccuracyCoin holds 100%):
+  - **Copy Screenshot to Clipboard no-op on Linux (I1).** The throwaway
+    `arboard::Clipboard` was dropped immediately after `set_image`, so on X11 /
+    Wayland (where the clipboard is owned by the live process) the image vanished
+    while the status toast still claimed success. Hold a persistent session-long
+    clipboard handle on `App`; report a real failure instead of a false success.
+  - **Frame Advance (`\`) + Fast Forward (`Tab`) dead (I2).** egui consumed
+    `Tab`/`\` for menu/widget focus navigation before the hotkey handler ran. The
+    keyboard gate is split into text-input (block everything — a field is focused)
+    vs egui-busy (route **system hotkeys only** via the new
+    `InputState::handle_system_key`, never the NES controller), so the global
+    hotkeys fire even when egui claims the key; the Emulation-menu predicates are
+    fixed too (Frame Advance enabled only while paused; Fast Forward shows a live
+    ON state instead of a permanently greyed hint). Adds hotkey-mapping tests.
+  - **Tools -> ROM Database wouldn't open standalone (I6).** The locked render
+    branch (which passes a live `&mut Nes` to the egui pass) keyed only on the
+    Cheats panel, so the `nes`-reading ROM Database panel rendered only while
+    Cheats was also open. `any_nes_tool_open` now also checks the ROM Database
+    flag (and documents that EVERY `nes`-reading tool panel must be listed there).
 
 ## [1.4.1] - 2026-06-16
 

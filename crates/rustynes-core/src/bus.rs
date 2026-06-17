@@ -1862,10 +1862,48 @@ impl LockstepBus {
         (base & 0x01) | (self.vs_dip & 0xFC)
     }
 
-    /// Mapper debug info pass-through (for the debugger UI).
+    /// Mapper debug info for the debugger UI: the mapper's own bank/IRQ state
+    /// ENRICHED (v1.5.0 "Lens" Workstream I8) with the cartridge-level metadata
+    /// the bus owns — submapper, accuracy tier, ROM/RAM sizes, battery, the IRQ
+    /// mechanism, and the expansion-audio chip. Output-only; these enrichment
+    /// fields are filled here rather than in each of the 100+ mappers, and they
+    /// default to empty (so a mapper's own `debug_info()` is unchanged).
     #[must_use]
     pub fn mapper_debug_info(&self) -> rustynes_mappers::MapperDebugInfo {
-        self.mapper.debug_info()
+        let mut info = self.mapper.debug_info();
+        let cart = &self.cart;
+        info.submapper = cart.submapper;
+        info.tier = rustynes_mappers::mapper_tier(cart.mapper_id, cart.submapper)
+            .map_or("", rustynes_mappers::MapperTier::name);
+        info.prg_rom_size = cart.prg_rom.len();
+        info.chr_rom_size = cart.chr_rom.len();
+        info.prg_ram_size = cart.prg_ram_size as usize;
+        info.chr_ram_size = cart.chr_ram_size as usize;
+        info.has_battery = cart.has_battery;
+        // IRQ mechanism: named per the documented per-mapper IRQ family table
+        // (docs/mappers.md). MMC3/RAMBO use PPU A12; MMC5 uses scanline
+        // detection; the VRC/FME-7/N163 families tick on the CPU-cycle hook.
+        info.irq_kind = match cart.mapper_id {
+            4 | 64 | 118 | 119 | 206 => "PPU A12 counter (MMC3-style)",
+            5 => "PPU scanline (MMC5)",
+            // CPU-cycle-clocked IRQ counters surface via the caps hook.
+            _ if self.mapper_caps.cpu_cycle_hook => "CPU cycle (VRC / FME-7 / N163)",
+            _ => "",
+        };
+        info.expansion_audio = if self.mapper_caps.audio {
+            Some(match cart.mapper_id {
+                5 => "MMC5",
+                19 | 210 => "Namco 163",
+                20 => "FDS",
+                24 | 26 => "VRC6",
+                69 => "Sunsoft 5B",
+                85 => "VRC7 (OPLL)",
+                _ => "Expansion audio",
+            })
+        } else {
+            None
+        };
+        info
     }
 
     /// The cached per-cycle mapper capability flags (see

@@ -534,6 +534,18 @@ pub struct App {
     config: Config,
     #[cfg(not(target_arch = "wasm32"))]
     data_dir: Option<PathBuf>,
+    /// v1.5.0 "Lens" Workstream I1 — a **persistent** system clipboard handle
+    /// for File -> Copy Screenshot to Clipboard. On X11 / Wayland the clipboard
+    /// content is *owned by the live process*: the previous code created a
+    /// throwaway `arboard::Clipboard`, called `set_image`, and dropped it
+    /// immediately — so on Linux the image vanished the instant the function
+    /// returned (the toast still claimed success). Holding the `Clipboard`
+    /// instance for the whole session keeps the app available to serve paste
+    /// requests, so the copied image actually reaches other applications.
+    /// Lazily created on first use (a missing clipboard subsystem is reported,
+    /// not fatal). Native-only.
+    #[cfg(not(target_arch = "wasm32"))]
+    clipboard: Option<arboard::Clipboard>,
     /// Sprint 5-3 debugger overlay (lazily constructed alongside `Gfx`).
     debugger: Option<DebuggerOverlay>,
     /// v1.1.0 beta.3 (Workstream E) — the Lua scripting engine (native, behind
@@ -763,6 +775,8 @@ impl App {
             input,
             config,
             data_dir,
+            #[cfg(not(target_arch = "wasm32"))]
+            clipboard: None,
             debugger: None,
             #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
             script: None,
@@ -1744,7 +1758,28 @@ impl App {
             height: NES_H as usize,
             bytes: std::borrow::Cow::Owned(frame),
         };
-        match arboard::Clipboard::new().and_then(|mut cb| cb.set_image(image)) {
+        // v1.5.0 I1 — use the PERSISTENT clipboard handle (lazily created). On
+        // X11 / Wayland the clipboard content lives in the owning process, so a
+        // throwaway `Clipboard` dropped at the end of this function would clear
+        // the image immediately (the original no-op bug). The session-long
+        // `App.clipboard` keeps us available to serve paste requests.
+        if self.clipboard.is_none() {
+            match arboard::Clipboard::new() {
+                Ok(cb) => self.clipboard = Some(cb),
+                Err(e) => {
+                    eprintln!("rustynes: clipboard unavailable: {e}");
+                    self.ui
+                        .set_status(StatusMessage::info("Clipboard unavailable"));
+                    return;
+                }
+            }
+        }
+        // SAFETY of the unwrap: just ensured `Some` above (or returned).
+        let cb = self
+            .clipboard
+            .as_mut()
+            .expect("clipboard initialized above");
+        match cb.set_image(image) {
             Ok(()) => {
                 self.ui
                     .set_status(StatusMessage::success("Screenshot copied to clipboard"));
@@ -3151,6 +3186,15 @@ impl App {
                 #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
                 self.refresh_script_symbols();
             }
+            MenuAction::OpenDocumentation => {
+                // v1.5.0 "Lens" Workstream I10 — open the in-app Documentation
+                // browser. Native-only (the panel reuses the native `cli` topic
+                // registry); the wasm dispatch is a no-op.
+                #[cfg(not(target_arch = "wasm32"))]
+                if let Some(d) = self.debugger.as_mut() {
+                    d.open_documentation();
+                }
+            }
         }
     }
 
@@ -3957,6 +4001,113 @@ impl App {
         // responsive while paused.
         if let Some(gfx) = self.gfx.as_ref() {
             gfx.window.request_redraw();
+        }
+    }
+
+    /// v1.5.0 "Lens" Workstream I2 — run a resolved system action. Extracted
+    /// from the keyboard-event handler so BOTH the normal path (key not claimed
+    /// by egui) and the global-hotkey path (key claimed by egui — `Tab` Fast
+    /// Forward, `\` Frame Advance — routed via `handle_system_key`) dispatch
+    /// through one place. `event_loop` is needed only for the `Quit` exit.
+    fn dispatch_sys_action(&mut self, act: SysAction, event_loop: &ActiveEventLoop) {
+        match act {
+            SysAction::Quit => {
+                // v1.0.0 (BUG-3) — Esc (the Quit bind) must not hard-quit while
+                // fullscreen: exit fullscreen first, only quit from windowed.
+                if self.ui.fullscreen {
+                    self.toggle_fullscreen();
+                } else {
+                    self.should_exit = true;
+                    event_loop.exit();
+                }
+            }
+            SysAction::SaveState => {
+                #[cfg(not(target_arch = "wasm32"))]
+                self.handle_save_state(self.active_save_slot);
+                #[cfg(target_arch = "wasm32")]
+                self.handle_save_state_wasm(self.active_save_slot);
+            }
+            SysAction::LoadState => {
+                // v2.7.0 — load-state disabled in RA hardcore mode; PR #75 (H1)
+                // — also disabled while a movie records/plays (matches the greyed
+                // menu item, so the hotkey can't bypass it).
+                if self.ra_hardcore_blocks() {
+                    self.toast_hardcore("Load state disabled (hardcore)");
+                } else if self.replay_interaction_locked() {
+                    self.ui.set_status(crate::ui_shell::StatusMessage::info(
+                        "Load state disabled during movie",
+                    ));
+                } else {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    self.handle_load_state(self.active_save_slot);
+                    #[cfg(target_arch = "wasm32")]
+                    self.handle_load_state_wasm(self.active_save_slot);
+                }
+            }
+            SysAction::Rewind | SysAction::FastForward => {
+                // No-op here. `InputState` already toggled the held flag; the
+                // per-frame rewind step runs in `about_to_wait`, and the
+                // fast-forward state is picked up via `publish_shared_input` (emu
+                // thread) or read directly on the sync / wasm produce paths.
+            }
+            SysAction::Reset => self.do_reset(),
+            SysAction::PowerCycle => self.do_power_cycle(),
+            SysAction::ToggleDebug => {
+                if let Some(d) = self.debugger.as_mut() {
+                    d.toggle();
+                }
+            }
+            SysAction::OpenRom => {
+                #[cfg(not(target_arch = "wasm32"))]
+                self.open_rom_dialog();
+                // On wasm32, ROM loading is wired through the browser-native
+                // `<input type="file">` path; the in-app OpenRom action no-ops.
+            }
+            SysAction::MovieRecordToggle => {
+                #[cfg(not(target_arch = "wasm32"))]
+                self.handle_movie_record_toggle();
+                #[cfg(target_arch = "wasm32")]
+                self.handle_movie_record_toggle_wasm();
+            }
+            SysAction::MoviePlayToggle => {
+                #[cfg(not(target_arch = "wasm32"))]
+                self.handle_movie_play_toggle();
+                #[cfg(target_arch = "wasm32")]
+                self.handle_movie_play_toggle_wasm();
+            }
+            SysAction::MovieBranch => {
+                #[cfg(not(target_arch = "wasm32"))]
+                self.handle_movie_branch();
+                #[cfg(target_arch = "wasm32")]
+                self.handle_movie_branch_wasm();
+            }
+            SysAction::DiskSwap => self.cycle_disk_side(),
+            SysAction::InsertCoin => {
+                // v2.5.0 — insert a Vs. System coin (acceptor #1). No-op for
+                // non-Vs. games. The coin latch clears a few frames later.
+                let mut guard = self.emu.lock();
+                let emu = &mut *guard;
+                if let Some(nes) = emu.nes.as_mut() {
+                    nes.insert_coin(0);
+                    emu.vs_coin_frames = VS_COIN_HOLD_FRAMES;
+                }
+            }
+            SysAction::ToggleFullscreen => self.toggle_fullscreen(),
+            SysAction::ToggleMenuBar => {
+                self.ui.menu_visible = !self.ui.menu_visible;
+                if let Some(gfx) = self.gfx.as_ref() {
+                    gfx.window.request_redraw();
+                }
+            }
+            SysAction::FrameAdvance => self.request_frame_advance(),
+            SysAction::TogglePause => {
+                // UX3 BUG-1 — the keyboard path to pause/resume (same as the
+                // Emulation -> Pause menu item).
+                self.set_paused(!self.ui.paused);
+            }
+            SysAction::SpeedUp => self.step_speed(true),
+            SysAction::SpeedDown => self.step_speed(false),
+            SysAction::SpeedReset => self.set_speed(1.0),
         }
     }
 
@@ -5786,12 +5937,48 @@ impl ApplicationHandler<AppEvent> for App {
                     || self.ui.show_about
                     || self.ui.show_shortcuts
                     || self.ui.show_welcome;
-                let shell_capturing = shell_window_open
+                // v1.5.0 "Lens" Workstream I2 — split the "egui is busy" gate into
+                // two distinct levels:
+                //   - `text_input`: a real text widget has keyboard focus (a
+                //     settings field, the Lua console, a search box, ...) OR a
+                //     modal shell window is open. Here NOTHING reaches the
+                //     emulator — neither the NES controller nor global hotkeys —
+                //     because the keystroke is genuinely text the user is typing.
+                //   - `egui_busy`: egui passively consumed the key (e.g. `Tab`,
+                //     which egui claims for menu-bar / widget focus navigation) or
+                //     a menu/popup is merely dropped. Here the NES controller is
+                //     still suppressed (a key under an open menu must not drive the
+                //     pad), but GLOBAL HOTKEYS MUST STILL FIRE — this is the I2 bug
+                //     fix: `Tab` (Fast Forward) and `\` (Frame Advance) were eaten
+                //     by egui's focus navigation before ever reaching the hotkey
+                //     path. We now route them through `handle_system_key` (system
+                //     bindings only — never the per-player NES maps).
+                let text_input = shell_window_open
                     || self
                         .debugger
                         .as_ref()
-                        .is_some_and(|d| d.wants_egui_input() || d.shell_is_capturing());
-                if shell_capturing || egui_consumed {
+                        .is_some_and(DebuggerOverlay::wants_egui_input);
+                let egui_busy = egui_consumed
+                    || self
+                        .debugger
+                        .as_ref()
+                        .is_some_and(DebuggerOverlay::shell_is_capturing);
+                if text_input {
+                    return;
+                }
+                if egui_busy {
+                    // System hotkeys only (FF / Frame Advance / save-state / ...).
+                    // No NES controller bits, no Family BASIC matrix update.
+                    let action = self
+                        .input
+                        .handle_system_key(event.physical_key, event.state);
+                    if let Some(act) = action {
+                        self.dispatch_sys_action(act, event_loop);
+                    }
+                    // Publish the (possibly changed) held-key state for the emu
+                    // thread, but do NOT latch NES controller input from this key.
+                    #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
+                    self.publish_shared_input();
                     return;
                 }
                 // v1.2.0 Workstream D — Family BASIC keyboard matrix: map the
@@ -5812,152 +5999,14 @@ impl ApplicationHandler<AppEvent> for App {
                 }
                 let action = self.input.handle_key(event.physical_key, event.state);
                 if let Some(act) = action {
-                    match act {
-                        SysAction::Quit => {
-                            // v1.0.0 (BUG-3) — Esc (the Quit bind) must not
-                            // hard-quit while fullscreen: exit fullscreen first,
-                            // only quit from the windowed state.
-                            if self.ui.fullscreen {
-                                self.toggle_fullscreen();
-                            } else {
-                                self.should_exit = true;
-                                event_loop.exit();
-                            }
-                        }
-                        SysAction::SaveState => {
-                            // Native: filesystem slot. wasm32 (v1.6.0 Sprint 4 /
-                            // v1.4.0 E2): per-ROM IndexedDB slot keyed by the ROM
-                            // SHA-256 + the active slot (async, binary).
-                            #[cfg(not(target_arch = "wasm32"))]
-                            self.handle_save_state(self.active_save_slot);
-                            #[cfg(target_arch = "wasm32")]
-                            self.handle_save_state_wasm(self.active_save_slot);
-                        }
-                        SysAction::LoadState => {
-                            // v2.7.0 — load-state is disabled in RA hardcore
-                            // mode (it would restore achievement-relevant state).
-                            // Save-state SAVE stays allowed.
-                            // PR #75 (H1) — also disabled while a movie is
-                            // recording/playing: the menu greys "Load State" out
-                            // under the same rule, so the hotkey must too (else
-                            // the greyed item is bypassable via the bound key).
-                            if self.ra_hardcore_blocks() {
-                                self.toast_hardcore("Load state disabled (hardcore)");
-                            } else if self.replay_interaction_locked() {
-                                self.ui.set_status(crate::ui_shell::StatusMessage::info(
-                                    "Load state disabled during movie",
-                                ));
-                            } else {
-                                #[cfg(not(target_arch = "wasm32"))]
-                                self.handle_load_state(self.active_save_slot);
-                                #[cfg(target_arch = "wasm32")]
-                                self.handle_load_state_wasm(self.active_save_slot);
-                            }
-                        }
-                        SysAction::Rewind | SysAction::FastForward => {
-                            // No-op here. `InputState::handle_key` already
-                            // toggled `rewind_held` / `fast_forward_held`; the
-                            // per-frame rewind step runs in `about_to_wait`
-                            // based on that flag, and the fast-forward state is
-                            // picked up by the emu-thread path via the
-                            // `publish_shared_input` call below (and read
-                            // directly on the sync/wasm produce paths).
-                        }
-                        SysAction::Reset => {
-                            self.do_reset();
-                        }
-                        SysAction::PowerCycle => {
-                            self.do_power_cycle();
-                        }
-                        SysAction::ToggleDebug => {
-                            if let Some(d) = self.debugger.as_mut() {
-                                d.toggle();
-                            }
-                        }
-                        SysAction::OpenRom => {
-                            #[cfg(not(target_arch = "wasm32"))]
-                            self.open_rom_dialog();
-                            // On wasm32, ROM loading is wired through the
-                            // browser-native `<input type="file">` path in
-                            // Sprint 1.3; the in-app OpenRom action is a
-                            // no-op here.
-                        }
-                        SysAction::MovieRecordToggle => {
-                            // Native: toggle recording; saving on stop uses
-                            // the rfd `.rnm` dialog. wasm32 (v1.6.0 Sprint
-                            // 4): saving on stop triggers a browser Blob
-                            // download of the `.rnm` bytes.
-                            #[cfg(not(target_arch = "wasm32"))]
-                            self.handle_movie_record_toggle();
-                            #[cfg(target_arch = "wasm32")]
-                            self.handle_movie_record_toggle_wasm();
-                        }
-                        SysAction::MoviePlayToggle => {
-                            // Native: rfd open dialog. wasm32: open the
-                            // hidden `.rnm` file picker (gesture-safe here).
-                            #[cfg(not(target_arch = "wasm32"))]
-                            self.handle_movie_play_toggle();
-                            #[cfg(target_arch = "wasm32")]
-                            self.handle_movie_play_toggle_wasm();
-                        }
-                        SysAction::MovieBranch => {
-                            #[cfg(not(target_arch = "wasm32"))]
-                            self.handle_movie_branch();
-                            #[cfg(target_arch = "wasm32")]
-                            self.handle_movie_branch_wasm();
-                        }
-                        SysAction::DiskSwap => {
-                            // v2.2.0 — cycle the FDS disk side (no-op for
-                            // non-FDS games). Same on native + wasm.
-                            self.cycle_disk_side();
-                        }
-                        SysAction::InsertCoin => {
-                            // v2.5.0 — insert a Vs. System coin (acceptor #1).
-                            // No-op for non-Vs. games. The coin latch is cleared
-                            // automatically a few frames later (see `vs_coin_*`).
-                            let mut guard = self.emu.lock();
-                            let emu = &mut *guard;
-                            if let Some(nes) = emu.nes.as_mut() {
-                                nes.insert_coin(0);
-                                emu.vs_coin_frames = VS_COIN_HOLD_FRAMES;
-                            }
-                        }
-                        SysAction::ToggleFullscreen => {
-                            self.toggle_fullscreen();
-                        }
-                        SysAction::ToggleMenuBar => {
-                            self.ui.menu_visible = !self.ui.menu_visible;
-                            if let Some(gfx) = self.gfx.as_ref() {
-                                gfx.window.request_redraw();
-                            }
-                        }
-                        SysAction::FrameAdvance => {
-                            self.request_frame_advance();
-                        }
-                        SysAction::TogglePause => {
-                            // UX3 BUG-1 — the keyboard path to pause/resume
-                            // (same as the Emulation -> Pause menu item). Also a
-                            // guaranteed escape from a paused state if a menu
-                            // redraw edge is ever missed.
-                            self.set_paused(!self.ui.paused);
-                        }
-                        SysAction::SpeedUp => {
-                            self.step_speed(true);
-                        }
-                        SysAction::SpeedDown => {
-                            self.step_speed(false);
-                        }
-                        SysAction::SpeedReset => {
-                            self.set_speed(1.0);
-                        }
-                    }
+                    self.dispatch_sys_action(act, event_loop);
                 }
-                // BUG-6 — we already returned above when `egui_consumed` (or the
-                // shell was capturing), so reaching here means this key is the
-                // NES's. v2.8.0 Phase 5 increment 3 — when the emu thread drives,
-                // publish the new input into its SharedInput immediately so a key
-                // press doesn't wait a full frame for the next `EmuFrame`
-                // republish; the direct latch is the synchronous-path write.
+                // BUG-6 — reaching here means this key was NOT claimed by egui as
+                // text input, so the NES controller may latch it.
+                // v2.8.0 Phase 5 increment 3 — when the emu thread drives, publish
+                // the new input into its SharedInput immediately so a key press
+                // doesn't wait a full frame for the next `EmuFrame` republish; the
+                // direct latch is the synchronous-path write.
                 #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
                 self.publish_shared_input();
                 self.latch_input();
@@ -6126,6 +6175,13 @@ impl ApplicationHandler<AppEvent> for App {
                     paused: self.ui.paused,
                     movie_recording,
                     movie_playing,
+                    fast_forwarding: self.input.fast_forward_held(),
+                    // v1.5.0 I7 — RA readout for the status bar (None unless the
+                    // feature is on AND logged in).
+                    ra_status: self
+                        .debugger
+                        .as_ref()
+                        .and_then(DebuggerOverlay::ra_status_line),
                 };
 
                 let mut shell_out = crate::ui_shell::ShellOutput::default();
@@ -6587,6 +6643,21 @@ impl ApplicationHandler<AppEvent> for App {
                     // the bindings dirty; re-sync the attached device here.
                     #[cfg(not(target_arch = "wasm32"))]
                     self.sync_expansion_device();
+                    // v1.5.0 "Lens" Workstream I3 — PERSIST the config when any
+                    // input binding changed. The Settings window already
+                    // auto-saves via its before/after config snapshot, but the
+                    // STANDALONE Tools -> Input window has no such wrapper, so a
+                    // rebind there used to apply live yet never reach disk (the
+                    // old "Save to disk" button was the only persistence path).
+                    // Saving on the same dirty edge makes the per-setting
+                    // auto-save fire for every Input control in BOTH windows, so
+                    // the button is no longer needed for persistence (it was
+                    // relabelled to "Export config..." for its real, distinct
+                    // function). Native-only (no filesystem on wasm).
+                    #[cfg(not(target_arch = "wasm32"))]
+                    if let Err(e) = self.config.save() {
+                        eprintln!("rustynes: config auto-save failed: {e}");
+                    }
                 }
 
                 // v1.7.0 — apply the settings panel's live-applicable edits

@@ -975,6 +975,46 @@ impl InputState {
         self.fast_forward_held
     }
 
+    /// v1.5.0 "Lens" Workstream I2 — apply a winit keyboard event to the
+    /// **system bindings only** (never the per-player NES controller maps).
+    ///
+    /// This is the global-hotkey path used when egui *consumed* the key event
+    /// (e.g. `Tab`, which egui claims for focus navigation, or any key while a
+    /// menu is dropped). Routing those through [`Self::handle_key`] would also
+    /// drive an NES button if the key happened to be controller-bound; this
+    /// method updates only the held-key state (rewind / fast-forward) and the
+    /// system action map, so a global hotkey like Fast Forward (`Tab`) or Frame
+    /// Advance (`\`) still fires while the menu bar has Tab focus, without ever
+    /// leaking into the emulated controller. The caller must still suppress this
+    /// when a text field genuinely has keyboard focus (see `app.rs`).
+    ///
+    /// Returns the same `Some(action)` contract as [`Self::handle_key`] for
+    /// system keys (held keys emit on both edges; others on press).
+    pub fn handle_system_key(
+        &mut self,
+        key: PhysicalKey,
+        state: ElementState,
+    ) -> Option<SysAction> {
+        let PhysicalKey::Code(code) = key else {
+            return None;
+        };
+        let pressed = state == ElementState::Pressed;
+        if let Some(&action) = self.bindings.system.get(&code) {
+            if action == SysAction::Rewind {
+                self.rewind_held = pressed;
+                return Some(SysAction::Rewind);
+            }
+            if action == SysAction::FastForward {
+                self.fast_forward_held = pressed;
+                return Some(SysAction::FastForward);
+            }
+            if pressed {
+                return Some(action);
+            }
+        }
+        None
+    }
+
     /// Apply a winit keyboard event. Returns `Some(action)` for system
     /// keys (`Quit`, `SaveState`, `LoadState`, `Reset`, `PowerCycle`) on
     /// press, and always returns `Some(SysAction::Rewind)` for the rewind
@@ -1136,6 +1176,60 @@ mod tests {
         let (k, e) = up(KeyCode::F5);
         assert_eq!(s.handle_key(k, e), Some(SysAction::Rewind));
         assert!(!s.rewind_held());
+    }
+
+    // ---- v1.5.0 "Lens" Workstream I2 — global-hotkey path smoke tests ----
+
+    #[test]
+    fn system_key_resolves_fast_forward_and_frame_advance() {
+        // The two keys the maintainer reported dead: `Tab` (Fast Forward, a held
+        // key) and `\` (Frame Advance, a press action). `handle_system_key` is
+        // the path used when egui consumed the key (e.g. Tab focus nav), so it
+        // must still resolve the system action.
+        let mut s = InputState::with_defaults();
+        assert!(!s.fast_forward_held());
+        // Tab -> FastForward, held-state tracked on both edges.
+        assert_eq!(
+            s.handle_system_key(PhysicalKey::Code(KeyCode::Tab), ElementState::Pressed),
+            Some(SysAction::FastForward)
+        );
+        assert!(s.fast_forward_held());
+        assert_eq!(
+            s.handle_system_key(PhysicalKey::Code(KeyCode::Tab), ElementState::Released),
+            Some(SysAction::FastForward)
+        );
+        assert!(!s.fast_forward_held());
+        // Backslash -> FrameAdvance (press only).
+        assert_eq!(
+            s.handle_system_key(PhysicalKey::Code(KeyCode::Backslash), ElementState::Pressed),
+            Some(SysAction::FrameAdvance)
+        );
+        // Release of a non-held system key emits nothing.
+        assert_eq!(
+            s.handle_system_key(
+                PhysicalKey::Code(KeyCode::Backslash),
+                ElementState::Released
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn system_key_never_drives_nes_controller() {
+        // The global-hotkey path must NOT leak into the emulated controller even
+        // for a key that is also controller-bound — otherwise a key under a
+        // dropped menu / focused widget would still move the player.
+        let mut s = InputState::with_defaults();
+        // `Z` is P1 A by default. Through the system-only path it must change no
+        // controller bits and resolve to no system action.
+        assert_eq!(
+            s.handle_system_key(PhysicalKey::Code(KeyCode::KeyZ), ElementState::Pressed),
+            None
+        );
+        assert!(
+            s.player1().is_empty(),
+            "system path must not set NES buttons"
+        );
     }
 
     #[test]

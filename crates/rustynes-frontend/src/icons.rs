@@ -72,6 +72,10 @@ pub mod glyph {
     pub const ROTATE_RIGHT: char = '\u{f2f9}';
     /// `play` — frame advance / fast-forward / play.
     pub const PLAY: char = '\u{f04b}';
+    /// `forward-step` — single-step / frame advance (v1.5.0 I2).
+    pub const FORWARD_STEP: char = '\u{f051}';
+    /// `forward-fast` — fast forward (v1.5.0 I2).
+    pub const FORWARD_FAST: char = '\u{f050}';
     /// `stop` — stop recording / stop playback.
     pub const STOP: char = '\u{f04d}';
     /// `forward`/sliders — run-ahead & speed sliders.
@@ -134,6 +138,8 @@ pub mod glyph {
     pub const KEYBOARD: char = '\u{f11c}';
     /// `circle-info` — About.
     pub const CIRCLE_INFO: char = '\u{f05a}';
+    /// `book-open` — in-app Documentation browser (v1.5.0 I10).
+    pub const BOOK_OPEN: char = '\u{f518}';
 }
 
 /// Prefix a menu label with a Font Awesome glyph + a separating space.

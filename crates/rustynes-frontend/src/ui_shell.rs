@@ -203,6 +203,10 @@ pub enum MenuAction {
     LoadSymbols,
     /// v1.4.0 Workstream D (D1) — clear all loaded debugger symbols.
     ClearSymbols,
+    /// v1.5.0 "Lens" Workstream I10 — open the in-app Documentation browser
+    /// (native; the dispatch body is `#[cfg(not(wasm32))]`, the variant stays
+    /// un-gated so the match remains exhaustive on every target).
+    OpenDocumentation,
 }
 
 /// Per-frame outputs from [`UiShell::build`].
@@ -243,6 +247,47 @@ pub struct UiShell {
     /// v1.0.0 — the active save-state slot (0-7), mirrored from the app so the
     /// File -> Save Slot radio shows the current selection.
     pub active_slot: u8,
+    /// v1.5.0 "Lens" Workstream I9 — the device whose bindings the Keyboard
+    /// Shortcuts window currently shows (Player 1..4 / Power Pad / Family BASIC),
+    /// below the emulator-hotkey section.
+    pub shortcuts_device: ShortcutsDevice,
+}
+
+/// v1.5.0 "Lens" Workstream I9 — selects which device the Keyboard Shortcuts
+/// window shows in its controller section.
+///
+/// The emulator hotkeys are always listed above a separator; this picks the
+/// per-device key map shown below them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ShortcutsDevice {
+    /// Standard controller, player 1 (the default view).
+    #[default]
+    Player1,
+    /// Standard controller, player 2.
+    Player2,
+    /// Standard controller, player 3 (Four Score).
+    Player3,
+    /// Standard controller, player 4 (Four Score).
+    Player4,
+    /// NES Power Pad / Family Trainer mat (fixed default mat keys).
+    PowerPad,
+    /// Family BASIC / Subor keyboard (host-key matrix, fixed mapping).
+    FamilyKeyboard,
+}
+
+impl ShortcutsDevice {
+    /// Display label for the selector + section header.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Player1 => "Player 1",
+            Self::Player2 => "Player 2",
+            Self::Player3 => "Player 3 (Four Score)",
+            Self::Player4 => "Player 4 (Four Score)",
+            Self::PowerPad => "Power Pad / Family Trainer",
+            Self::FamilyKeyboard => "Family BASIC keyboard",
+        }
+    }
 }
 
 impl UiShell {
@@ -261,6 +306,7 @@ impl UiShell {
             paused: false,
             fullscreen: false,
             active_slot: 0,
+            shortcuts_device: ShortcutsDevice::default(),
         }
     }
 
@@ -324,6 +370,16 @@ pub struct ShellFrame<'a> {
     /// v1.0.0 — whether a TAS movie is currently playing back (drives the Tools
     /// menu Play/Stop label).
     pub movie_playing: bool,
+    /// v1.5.0 "Lens" Workstream I2 — whether Fast Forward is currently engaged
+    /// (the bound key is held). Drives the Emulation-menu Fast Forward item so
+    /// it shows a live "ON" state instead of a permanently greyed hint.
+    pub fast_forwarding: bool,
+    /// v1.5.0 "Lens" Workstream I7 — a compact `RetroAchievements` status string
+    /// for the status bar (e.g. `"RA 12/40 (240 pts) HARDCORE"`), relocated
+    /// from the retired-overlay HUD readout. `None` when the feature is off, no
+    /// user is logged in, or no game is loaded. Shown between the emulator-state
+    /// label and the FPS counter.
+    pub ra_status: Option<String>,
 }
 
 impl UiShell {
@@ -359,7 +415,7 @@ impl UiShell {
         self.settings_window(&ctx, config, &mut settings_body, &mut input_body);
         self.welcome_modal(&ctx, config);
         about_window(&ctx, &mut self.show_about);
-        shortcuts_window(&ctx, &mut self.show_shortcuts);
+        self.shortcuts_window(&ctx, config);
         #[cfg(not(target_arch = "wasm32"))]
         crate::about_fx::render(&ctx);
 
@@ -691,13 +747,17 @@ impl UiShell {
                         ui.close();
                     }
                     ui.separator();
-                    // Frame advance is meaningful while paused; enabled with a
-                    // ROM loaded (a press while running is a no-op). (H1) Locked
-                    // during netplay (the peers drive frame stepping).
+                    // v1.5.0 I2 — Frame Advance steps exactly one frame and is
+                    // only meaningful WHILE PAUSED (a press while running is a
+                    // no-op in `request_frame_advance`). The menu item now mirrors
+                    // that: enabled only when a ROM is loaded AND paused AND not
+                    // replay/netplay-locked — so it never looks clickable when it
+                    // would silently do nothing. (H1) Locked during netplay (the
+                    // peers drive frame stepping).
                     if accel_enabled(
                         ui,
-                        rom && !rom_change_restricted,
-                        &ic(glyph::PLAY, "Frame Advance"),
+                        rom && self.paused && !rom_change_restricted,
+                        &ic(glyph::FORWARD_STEP, "Frame Advance"),
                         &keys.frame_advance,
                     )
                     .clicked()
@@ -705,14 +765,23 @@ impl UiShell {
                         out.action = Some(MenuAction::FrameAdvance);
                         ui.close();
                     }
-                    // Fast-forward is a held key — surface it as a disabled hint
-                    // (there is no toggle action; hold the key to engage it).
+                    // v1.5.0 I2 — Fast Forward is a held key (no toggle action),
+                    // but the item is no longer a permanently-greyed dead hint: it
+                    // reads as a live status row showing whether FF is currently
+                    // engaged plus the bound key to hold. Enabled-looking while a
+                    // ROM is loaded so the "(hold X)" affordance is legible.
+                    let ff_label = if frame.fast_forwarding {
+                        format!("Fast Forward: ON (hold {})", keys.fast_forward)
+                    } else {
+                        format!("Fast Forward (hold {})", keys.fast_forward)
+                    };
                     ui.add_enabled(
-                        false,
-                        egui::Button::new(ic(
-                            glyph::PLAY,
-                            &format!("Fast Forward (hold {})", keys.fast_forward),
-                        )),
+                        rom && !rom_change_restricted,
+                        egui::Button::new(ic(glyph::FORWARD_FAST, &ff_label)),
+                    )
+                    .on_hover_text(
+                        "Hold the bound key to run unthrottled (audio muted). \
+                         Rebind in Settings -> Input.",
                     );
                     ui.separator();
                     ui.menu_button(
@@ -1114,6 +1183,22 @@ impl UiShell {
 
                 // ----- Help -----
                 ui.menu_button(ic(glyph::CIRCLE_QUESTION, "Help"), |ui| {
+                    // v1.5.0 "Lens" Workstream I10 — the in-app Documentation
+                    // browser (reuses the `rustynes help` topic registry so the
+                    // CLI + GUI share one source). Native-only content; the menu
+                    // item is gated out on wasm (no topic registry there).
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        if ui
+                            .button(ic(glyph::BOOK_OPEN, "Documentation..."))
+                            .on_hover_text("Searchable in-app manual, About, and changelog")
+                            .clicked()
+                        {
+                            out.action = Some(MenuAction::OpenDocumentation);
+                            ui.close();
+                        }
+                        ui.separator();
+                    }
                     if ui
                         .button(ic(glyph::KEYBOARD, "Keyboard Shortcuts"))
                         .clicked()
@@ -1171,6 +1256,21 @@ impl UiShell {
                             ui.colored_label(egui::Color32::from_rgb(80, 180, 240), "Netplay");
                         } else {
                             ui.colored_label(egui::Color32::from_rgb(100, 200, 100), "Running");
+                        }
+                        // v1.5.0 "Lens" Workstream I7 — the RetroAchievements
+                        // readout relocated from the retired `` ` `` overlay HUD,
+                        // placed between the emulator-state label and the FPS
+                        // counter. A gold tint when hardcore is engaged (it ends
+                        // with "HARDCORE"); the trophy colour otherwise.
+                        if let Some(ra) = frame.ra_status.as_deref() {
+                            ui.separator();
+                            let color = if ra.ends_with("HARDCORE") {
+                                egui::Color32::from_rgb(240, 200, 100)
+                            } else {
+                                egui::Color32::from_rgb(180, 160, 220)
+                            };
+                            ui.colored_label(color, ra)
+                                .on_hover_text("RetroAchievements (Tools -> RetroAchievements)");
                         }
                     } else {
                         ui.label("No ROM loaded");
@@ -1500,17 +1600,189 @@ fn about_window(ctx: &egui::Context, open: &mut bool) {
 }
 
 /// Render the keyboard-shortcuts window.
-fn shortcuts_window(ctx: &egui::Context, open: &mut bool) {
-    if !*open {
+impl UiShell {
+    /// v1.5.0 "Lens" Workstream I9 — render the Keyboard Shortcuts window from
+    /// the LIVE `[input]` / `[input.system]` config (not the hardcoded defaults),
+    /// with the emulator hotkeys above a separator and a per-device controller
+    /// section below selected by [`Self::shortcuts_device`].
+    fn shortcuts_window(&mut self, ctx: &egui::Context, config: &Config) {
+        if !self.show_shortcuts {
+            return;
+        }
+        let mut open = self.show_shortcuts;
+        let device = &mut self.shortcuts_device;
+        egui::Window::new("Keyboard Shortcuts")
+            .open(&mut open)
+            .resizable(true)
+            .collapsible(true)
+            .default_width(420.0)
+            .show(ctx, |ui| {
+                // --- Emulator / system hotkeys (live bindings) ---
+                ui.label(egui::RichText::new("Emulator hotkeys").strong());
+                system_hotkeys_grid(ui, config);
+
+                // --- Separator between emulator hotkeys and controller mapping ---
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(4.0);
+
+                // --- Controller / device mapping (per-device selector) ---
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("Device:").strong());
+                    egui::ComboBox::from_id_salt("shortcuts-device")
+                        .selected_text(device.label())
+                        .show_ui(ui, |ui| {
+                            for d in [
+                                ShortcutsDevice::Player1,
+                                ShortcutsDevice::Player2,
+                                ShortcutsDevice::Player3,
+                                ShortcutsDevice::Player4,
+                                ShortcutsDevice::PowerPad,
+                                ShortcutsDevice::FamilyKeyboard,
+                            ] {
+                                ui.selectable_value(device, d, d.label());
+                            }
+                        });
+                });
+                ui.add_space(4.0);
+                device_bindings_grid(ui, config, *device);
+            });
+        self.show_shortcuts = open;
+    }
+}
+
+/// v1.5.0 I9 — the live emulator/system hotkey grid (from `[input.system]`).
+fn system_hotkeys_grid(ui: &mut egui::Ui, config: &Config) {
+    let s = &config.input.system;
+    egui::Grid::new("shortcuts_system")
+        .num_columns(2)
+        .spacing([32.0, 4.0])
+        .striped(true)
+        .show(ui, |ui| {
+            ui.label(egui::RichText::new("Action").strong());
+            ui.label(egui::RichText::new("Key").strong());
+            ui.end_row();
+            for (action, key) in [
+                ("Open ROM", s.open_rom.as_str()),
+                ("Save state", s.save_state.as_str()),
+                ("Load state", s.load_state.as_str()),
+                ("Rewind (hold)", s.rewind.as_str()),
+                ("Reset", s.reset.as_str()),
+                ("Power cycle", s.power_cycle.as_str()),
+                ("Pause / resume", s.pause.as_str()),
+                ("Frame advance", s.frame_advance.as_str()),
+                ("Fast forward (hold)", s.fast_forward.as_str()),
+                ("Movie record", s.movie_record.as_str()),
+                ("Movie play", s.movie_play.as_str()),
+                ("Movie branch", s.movie_branch.as_str()),
+                ("Swap disk side (FDS)", s.disk_swap.as_str()),
+                ("Insert coin (Vs.)", s.insert_coin.as_str()),
+                ("Fullscreen", s.fullscreen.as_str()),
+                ("Toggle menu bar", s.toggle_menu_bar.as_str()),
+                ("Toggle debugger", s.debug_overlay.as_str()),
+                ("Quit / exit fullscreen", s.quit.as_str()),
+            ] {
+                ui.label(action);
+                ui.label(pretty_key(key));
+                ui.end_row();
+            }
+        });
+}
+
+/// v1.5.0 I9 — the live per-device controller binding grid. Standard pads read
+/// the `[input]` `PadBindings`; the Power Pad + Family BASIC keyboard use the
+/// fixed default mapping documented in `input.rs` (they are not rebindable yet,
+/// so this reflects their actual host keys).
+fn device_bindings_grid(ui: &mut egui::Ui, config: &Config, device: ShortcutsDevice) {
+    ui.label(egui::RichText::new(device.label()).strong());
+    let pad = match device {
+        ShortcutsDevice::Player1 => Some(&config.input.player1),
+        ShortcutsDevice::Player2 => Some(&config.input.player2),
+        ShortcutsDevice::Player3 => Some(&config.input.player3),
+        ShortcutsDevice::Player4 => Some(&config.input.player4),
+        ShortcutsDevice::PowerPad | ShortcutsDevice::FamilyKeyboard => None,
+    };
+    if let Some(p) = pad {
+        egui::Grid::new("shortcuts_pad")
+            .num_columns(2)
+            .spacing([32.0, 4.0])
+            .striped(true)
+            .show(ui, |ui| {
+                ui.label(egui::RichText::new("Button").strong());
+                ui.label(egui::RichText::new("Key").strong());
+                ui.end_row();
+                for (b, key) in [
+                    ("Up", p.up.as_str()),
+                    ("Down", p.down.as_str()),
+                    ("Left", p.left.as_str()),
+                    ("Right", p.right.as_str()),
+                    ("A", p.a.as_str()),
+                    ("B", p.b.as_str()),
+                    ("Select", p.select.as_str()),
+                    ("Start", p.start.as_str()),
+                ] {
+                    ui.label(b);
+                    ui.label(pretty_key(key));
+                    ui.end_row();
+                }
+            });
         return;
     }
-    egui::Window::new("Keyboard Shortcuts")
-        .open(open)
-        .resizable(false)
-        .collapsible(true)
-        .show(ctx, |ui| {
-            shortcuts_grid(ui, "shortcuts_full");
+    // Non-rebindable devices: show the fixed default host-key layout.
+    let rows: &[(&str, &str)] = match device {
+        ShortcutsDevice::PowerPad => &[
+            ("Top row (1-4)", "1  2  3  4"),
+            ("Middle row (5-8)", "Q  W  E  R"),
+            ("Bottom row (9-12)", "A  S  D  F"),
+            ("Note", "12-button mat; fixed default keys"),
+        ],
+        ShortcutsDevice::FamilyKeyboard => &[
+            ("Layout", "Host keyboard maps to the matrix"),
+            ("Letters / digits", "as labelled on your keyboard"),
+            (
+                "Note",
+                "Active only with the Family BASIC / Subor keyboard device",
+            ),
+        ],
+        _ => &[],
+    };
+    egui::Grid::new("shortcuts_fixed")
+        .num_columns(2)
+        .spacing([32.0, 4.0])
+        .striped(true)
+        .show(ui, |ui| {
+            for (a, k) in rows {
+                ui.label(*a);
+                ui.label(*k);
+                ui.end_row();
+            }
         });
+}
+
+/// v1.5.0 I9 — humanize a winit `KeyCode` config token for display (e.g.
+/// `ArrowUp` -> `Up`, `ShiftRight` -> `Right Shift`, `KeyZ` -> `Z`,
+/// `Backslash` -> `\\`). Falls back to the raw token for anything unmapped.
+fn pretty_key(code: &str) -> String {
+    match code {
+        "ArrowUp" => "Up".into(),
+        "ArrowDown" => "Down".into(),
+        "ArrowLeft" => "Left".into(),
+        "ArrowRight" => "Right".into(),
+        "ShiftRight" => "Right Shift".into(),
+        "ShiftLeft" => "Left Shift".into(),
+        "Backslash" => "\\".into(),
+        "Backquote" => "`".into(),
+        "Equal" => "=".into(),
+        "Minus" => "-".into(),
+        "Space" => "Space".into(),
+        "Enter" => "Enter".into(),
+        "Tab" => "Tab".into(),
+        "Escape" => "Esc".into(),
+        other => other
+            .strip_prefix("Key")
+            .or_else(|| other.strip_prefix("Digit"))
+            .map_or_else(|| other.to_string(), ToString::to_string),
+    }
 }
 
 /// The shared shortcuts grid (the REAL default binds from `input.rs`).

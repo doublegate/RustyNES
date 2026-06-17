@@ -408,7 +408,30 @@ reorganized the order and regrouped several items — see the per-menu notes):
 - **Debug** — Show Debugger (`` ` ``), Performance Monitor (moved here from
   Tools in v1.3.0), then the chip/state inspectors: CPU / PPU / APU / Memory /
   Memory Compare / OAM / Mapper / Trace Logger / Event Viewer / Lua Script.
-- **Help** — Keyboard Shortcuts, About.
+- **Help** — Documentation (v1.5.0 I10; native, searchable in-app manual),
+  Keyboard Shortcuts, About.
+
+**v1.5.0 "Lens" Workstream I — native-UI fixes + menu overhaul.** Frontend-only,
+determinism-neutral. Headline items: the **Fast Forward** (`Tab`) and **Frame
+Advance** (`\`) global hotkeys now fire even when egui claims the key for menu /
+widget focus navigation — the keyboard gate routes *system hotkeys only* through
+`InputState::handle_system_key` (never the NES controller) on the egui-busy path,
+while a genuinely focused text field still blocks everything (I2); the Emulation
+menu enables Frame Advance only while paused and shows a live Fast-Forward state
+instead of a permanently-greyed hint. **Copy Screenshot to Clipboard** holds a
+persistent `arboard` handle so the image survives on X11 / Wayland (the clipboard
+is owned by the live process), fixing the silent no-op + false success toast
+(I1). **Tools -> ROM Database** opens standalone now that the locked-render
+predicate (`DebuggerOverlay::any_nes_tool_open`) lists every `nes`-reading tool
+panel — Cheats *and* the ROM Database editor (I6). The **RetroAchievements**
+readout moved into the bottom status bar between the emulator-state label and the
+FPS counter (I7). The **Keyboard Shortcuts** window reads the live `[input]` /
+`[input.system]` bindings with a Player/device selector (I9). The **Input
+Display** uses a per-group palette (D-pad green / Select-Start yellow / B-A
+Nintendo red), mirrored in the Input Miniatures overlay (I5). Settings: the
+Shaders "Shader stack" header defaults open, the Input tab auto-saves every
+control in both the Settings window and the standalone window, and the old "Save
+to disk" button is now "Export config..." (I3).
 
 Tools surfaced this way appear as **floating windows without** opening the
 `` ` `` debugger overlay. Menu items carry their accelerator hint from the
@@ -591,7 +614,13 @@ once per visible frame.
 - **PPU**: nametable viewer (4 tables side-by-side, scroll-cursor overlaid), pattern table viewer (both tables, with palette selector), OAM viewer (sprite list + visual), palette RAM viewer. **v1.5.0 "Lens" Workstream A3** adds a **Scanline trace** tab (the per-scanline scroll/render register-write trace — $2000/$2001/$2005/$2006 — derived from the `debug-hooks` event log, surfacing mid-frame raster splits) and a native **Export CHR to PNG…** button (the combined 256×128 pattern dump) on the Patterns tab.
 - **APU**: per-channel scope (waveform), volume meters, register dump.
 - **Memory**: hex viewer of CPU bus + PPU bus, with go-to-address (disabled in RetroAchievements hardcore mode).
-- **Mapper**: bank registers, IRQ counter state.
+- **Mapper**: identity (mapper id + submapper + name + accuracy tier), ROM/RAM
+  sizes with bank counts + battery/NVRAM, the IRQ mechanism (PPU A12 / scanline /
+  CPU-cycle) and expansion-audio chip, the live PRG (`$8000-$FFFF`) / CHR
+  (`$0000-$1FFF`) bank windows, IRQ-counter state, and the register state log
+  (**v1.5.0 "Lens" Workstream I8** deepened this from the bare bank/IRQ dump). The
+  cartridge-level metadata is filled by the bus on the read-only `MapperDebugInfo`
+  view (output-only; no per-mapper change, byte-identical).
 
 Two additional devtool panels are gated behind the off-by-default
 `debug-hooks` feature (the headless test/bench builds omit it and keep a
@@ -804,6 +833,21 @@ full `emu` API (memory access, CPU state, `onFrame` / `onExec` / `onRead` /
 `onWrite` callbacks, control, and overlay draw) is documented in
 [scripting.md](scripting.md); `examples/scripts/` ships `hud.lua` and
 `ram_watch.lua`.
+
+## In-app Documentation (v1.5.0 "Lens" Workstream I10, native)
+
+**Help -> Documentation** opens a searchable egui manual
+(`debugger/doc_panel.rs`) that reuses the SAME structured help-topic registry as
+the `rustynes help` CLI / ratatui TUI (`cli::HELP_TOPICS`), so the terminal help
+and the GUI manual cannot drift. A left topic list (with a `/`-style search box
+filtering by title or body) selects between: the shared CLI topics
+(controls / hotkeys / gamepad / features / mappers / config / scripting /
+netplay), GUI-only topics authored in the panel (menu map, debugger & devtools,
+settings), an **About** card (version / license / author / accuracy / features /
+links), and a **per-release CHANGELOG** browser (the embedded `CHANGELOG.md`
+split by its `## [version]` headings). Native-only (the topic registry lives in
+the native-only `cli` module); the window reads no `nes`, so it renders in the
+always-on tool-panel path. Frontend + output-only — no determinism surface.
 
 ## Shipped / open
 

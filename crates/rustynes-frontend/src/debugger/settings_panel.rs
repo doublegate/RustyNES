@@ -516,6 +516,10 @@ pub fn shader_stack_section(
 
     egui::CollapsingHeader::new("Shader stack (composable)")
         .id_salt("settings-shader-stack")
+        // v1.5.0 "Lens" Workstream I3 — default-OPEN: the composable stack is the
+        // primary control on the Shaders tab, so it should not require a manual
+        // click to reveal.
+        .default_open(true)
         .show(ui, |ui| {
             ui.weak(
                 "Passes run top to bottom. An empty / all-disabled stack uses the \

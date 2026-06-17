@@ -76,6 +76,32 @@ pub struct MapperDebugInfo {
     pub irq_state: Vec<(String, String)>,
     /// Free-form extra status (envelope shape, sub-mapper flags, ...).
     pub extra: Vec<(String, String)>,
+    // v1.5.0 "Lens" Workstream I8 — cartridge-level metadata, populated by the
+    // bus (it owns the `Cartridge`) when it builds the debug view, NOT by each
+    // mapper. All default to empty / 0 / None so a mapper's own `debug_info()`
+    // (which leaves these untouched) is unchanged, and the headless / no-pack
+    // path is byte-identical (this is an output-only inspection struct).
+    /// NES 2.0 submapper id (0 for iNES 1.0).
+    pub submapper: u8,
+    /// Accuracy-evidence tier name (`"Core"` / `"Curated"` / `"BestEffort"`),
+    /// empty if the id isn't classified.
+    pub tier: &'static str,
+    /// PRG-ROM size in bytes.
+    pub prg_rom_size: usize,
+    /// CHR-ROM size in bytes (0 when the board uses CHR-RAM).
+    pub chr_rom_size: usize,
+    /// Requested PRG-RAM size in bytes.
+    pub prg_ram_size: usize,
+    /// Requested CHR-RAM size in bytes (0 when the board ships CHR-ROM).
+    pub chr_ram_size: usize,
+    /// True when PRG-RAM is battery-backed (save RAM / NVRAM present).
+    pub has_battery: bool,
+    /// The IRQ mechanism, when the board has one (e.g. `"PPU A12 (MMC3)"`,
+    /// `"PPU scanline (MMC5)"`, `"CPU cycle (VRC/FME-7/N163)"`). Empty if the
+    /// board has no IRQ source.
+    pub irq_kind: &'static str,
+    /// On-cart expansion-audio chip name, if any (e.g. `"VRC6"`).
+    pub expansion_audio: Option<&'static str>,
 }
 
 /// APU frame-counter event mask fanned out to the mapper, used by on-cart
@@ -473,6 +499,9 @@ pub trait Mapper: Send {
     /// expose bank registers, IRQ counters, etc. Default returns a
     /// minimal entry naming the mapper id.
     fn debug_info(&self) -> MapperDebugInfo {
+        // The bus fills the cartridge-level metadata fields (submapper, tier,
+        // sizes, battery, irq_kind, expansion_audio) — see
+        // `Bus::mapper_debug_info` — so they default here (v1.5.0 I8).
         MapperDebugInfo {
             mapper_id: 0,
             name: "(unknown)".into(),
@@ -481,6 +510,7 @@ pub trait Mapper: Send {
             chr_banks: Vec::new(),
             irq_state: Vec::new(),
             extra: Vec::new(),
+            ..Default::default()
         }
     }
 }

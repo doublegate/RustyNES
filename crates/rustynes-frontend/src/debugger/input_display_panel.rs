@@ -16,8 +16,13 @@ use rustynes_core::Buttons;
 #[derive(Default)]
 pub struct InputDisplayPanelState;
 
-/// Lit (held) vs idle button fill.
-const LIT: Color32 = Color32::from_rgb(0x46, 0xC0, 0x50);
+// v1.5.0 "Lens" Workstream I5 — per-button-group lit palette (mirrored in the
+// A1 Input Miniatures overlay via `crate::input_colors`): the D-pad stays green,
+// Select/Start go yellow, and B/A take the classic Nintendo red (#E60012). The
+// same constants live in one place (`crate::input_colors`) so the two overlays
+// can't drift.
+use crate::input_colors::{LIT_AB, LIT_DPAD, LIT_STARTSEL};
+/// Idle (un-held) button fill.
 const IDLE: Color32 = Color32::from_rgb(0x3A, 0x3A, 0x3A);
 const BODY: Color32 = Color32::from_rgb(0x20, 0x20, 0x24);
 const OUTLINE: Color32 = Color32::from_rgb(0x70, 0x70, 0x78);
@@ -64,7 +69,10 @@ fn draw_pad(ui: &mut egui::Ui, held: Buttons) {
     let p = ui.painter_at(rect);
     let o = rect.min;
     let at = |x: f32, y: f32| Pos2::new(o.x + x, o.y + y);
-    let fill = |b: Buttons| if held.contains(b) { LIT } else { IDLE };
+    // v1.5.0 I5 — lit colour depends on the button group: D-pad green,
+    // Select/Start yellow, B/A Nintendo red. `fill(b, lit)` picks the group tint
+    // when held, the neutral idle fill otherwise.
+    let fill = |b: Buttons, lit: Color32| if held.contains(b) { lit } else { IDLE };
 
     // Controller body.
     p.rect_filled(rect, CornerRadius::same(8), BODY);
@@ -81,7 +89,11 @@ fn draw_pad(ui: &mut egui::Ui, held: Buttons) {
     let t = 8.0; // half-thickness
     let l = 14.0; // arm length
     let arm = |b: Buttons, min: Pos2, max: Pos2| {
-        p.rect_filled(Rect::from_min_max(min, max), CornerRadius::same(2), fill(b));
+        p.rect_filled(
+            Rect::from_min_max(min, max),
+            CornerRadius::same(2),
+            fill(b, LIT_DPAD),
+        );
     };
     // Centre square.
     p.rect_filled(
@@ -99,7 +111,7 @@ fn draw_pad(ui: &mut egui::Ui, held: Buttons) {
         p.rect_filled(
             Rect::from_min_max(at(x, cy - 4.0), at(x + 20.0, cy + 4.0)),
             CornerRadius::same(4),
-            fill(b),
+            fill(b, LIT_STARTSEL),
         );
     };
     pill(Buttons::SELECT, 78.0);
@@ -122,8 +134,8 @@ fn draw_pad(ui: &mut egui::Ui, held: Buttons) {
     // B / A buttons (right side), round. Centres 24 pt apart (radius 11) so the
     // two circles keep a clean 2 pt gap instead of overlapping.
     let r = 11.0;
-    p.circle_filled(at(146.0, cy), r, fill(Buttons::B));
-    p.circle_filled(at(170.0, cy), r, fill(Buttons::A));
+    p.circle_filled(at(146.0, cy), r, fill(Buttons::B, LIT_AB));
+    p.circle_filled(at(170.0, cy), r, fill(Buttons::A, LIT_AB));
     p.text(
         at(146.0, cy),
         egui::Align2::CENTER_CENTER,
