@@ -100,6 +100,9 @@ pub struct TasStudioPanelState {
     follow_cursor: bool,
     /// One-shot: scroll this frame's row into view on the next render.
     scroll_to: Option<usize>,
+    /// Last cursor frame observed, so `follow_cursor` can detect advancement
+    /// (playback / seek) and auto-scroll without fighting a manual scroll.
+    last_cursor: Option<usize>,
 }
 
 impl Default for TasStudioPanelState {
@@ -110,6 +113,7 @@ impl Default for TasStudioPanelState {
             show_p2: false,
             follow_cursor: true,
             scroll_to: None,
+            last_cursor: None,
         }
     }
 }
@@ -212,6 +216,14 @@ pub fn show(
                 ui.weak("No TAStudio session. Load a ROM and open TAStudio from Tools.");
                 return;
             };
+
+            // Follow-cursor: when enabled, auto-scroll to the cursor row only
+            // when it actually advances (playback / seek), so a manual scroll
+            // isn't yanked back every frame while the cursor sits still.
+            if state.follow_cursor && state.last_cursor != Some(editor.cursor()) {
+                state.scroll_to = Some(editor.cursor());
+            }
+            state.last_cursor = Some(editor.cursor());
 
             header(ui, state, editor);
             ui.separator();
