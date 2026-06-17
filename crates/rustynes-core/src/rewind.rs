@@ -189,7 +189,11 @@ impl RewindRing {
             approx = compressed.len();
             body_bytes = compressed.into_boxed_slice();
             // Stash the decoded keyframe so future deltas can XOR against it.
-            self.last_keyframe_decoded = Some(snapshot.to_vec());
+            // v1.5.0 "Lens" Workstream H3 — reuse the cache buffer's
+            // allocation (overwrite in place) instead of a fresh `to_vec()`
+            // every keyframe; bit-identical bytes, no per-keyframe ~9 KiB
+            // alloc in steady state.
+            cache_in_place(&mut self.last_keyframe_decoded, snapshot);
             self.since_keyframe = 0;
         } else {
             // Build a XOR delta against the cached keyframe. If lengths
@@ -204,7 +208,7 @@ impl RewindRing {
                 let compressed = compress_prepend_size(snapshot);
                 approx = compressed.len();
                 body_bytes = compressed.into_boxed_slice();
-                self.last_keyframe_decoded = Some(snapshot.to_vec());
+                cache_in_place(&mut self.last_keyframe_decoded, snapshot);
                 self.since_keyframe = 0;
                 self.entries.push_back(Entry {
                     frame,
@@ -338,6 +342,20 @@ impl RewindRing {
                 self.cur_bytes = self.cur_bytes.saturating_sub(bytes);
             }
         }
+    }
+}
+
+/// v1.5.0 "Lens" Workstream H3 — overwrite the keyframe cache `Option<Vec<u8>>`
+/// with `bytes` IN PLACE, reusing the existing allocation when one is present
+/// (no per-keyframe ~9 KiB `to_vec()` in steady state). Bit-identical to the
+/// prior `Some(bytes.to_vec())`: the cache holds exactly `bytes` afterward.
+fn cache_in_place(cache: &mut Option<Vec<u8>>, bytes: &[u8]) {
+    match cache {
+        Some(buf) => {
+            buf.clear();
+            buf.extend_from_slice(bytes);
+        }
+        None => *cache = Some(bytes.to_vec()),
     }
 }
 
