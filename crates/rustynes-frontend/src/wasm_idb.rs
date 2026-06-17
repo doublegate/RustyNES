@@ -116,10 +116,18 @@ async fn open_db() -> Option<IdbDatabase> {
         }
     });
     open_req.set_onupgradeneeded(Some(on_upgrade.as_ref().unchecked_ref()));
-    on_upgrade.forget();
 
     let promise = request_to_promise(open_req.as_ref());
-    let result = JsFuture::from(promise).await.ok()?;
+    let result = JsFuture::from(promise).await;
+    // Clear the JS-side callback once the open request has settled, so a
+    // kept-alive / cancelled request can't re-enter `on_upgrade` (no reference
+    // cycle / late JS exception).
+    open_req.set_onupgradeneeded(None);
+    let result = result.ok()?;
+    // `on_upgrade` is held alive across the await above (it fires before
+    // `success`), so it is dropped on return here instead of leaked via
+    // `forget()` — avoiding a closure leak on every `open_db()` call.
+    drop(on_upgrade);
     result.dyn_into::<IdbDatabase>().ok()
 }
 

@@ -280,7 +280,10 @@ impl Nes {
         })
     }
 
-    /// Build an emulator that plays an NSF / `NSFe` music file.
+    /// Build an emulator that plays a classic NSF (`NESM`) music file.
+    ///
+    /// Only the classic `NESM\x1a` container is supported; `NSFe` and
+    /// expansion-chip audio are documented deferrals.
     ///
     /// NSF files carry a ripped NES sound engine plus an `init`/`play` address
     /// pair, not a PPU program. Construction parses the file, installs a
@@ -2574,9 +2577,11 @@ mod tests {
                 && e.value == 0x00),
             "all events are $2000 PPU writes of $00 with a sane dot"
         );
-        // Reset per frame: the count stays one-frame-bounded.
+        // Reset per frame: the count stays one-frame-bounded. The event log is
+        // capped at `EVENT_CAP` (20_000, private to the bus module) — distinct
+        // from the looser instruction-trace `TRACE_CAP` — so assert that bound.
         let _ = nes.run_frame();
-        assert!(nes.events().len() <= Nes::TRACE_CAP, "bounded");
+        assert!(nes.events().len() <= 20_000, "bounded by EVENT_CAP");
         nes.set_event_logging(false);
         assert!(!nes.event_logging());
     }

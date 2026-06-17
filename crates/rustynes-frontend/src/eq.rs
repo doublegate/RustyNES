@@ -47,6 +47,26 @@ struct Biquad {
 impl Biquad {
     /// RBJ peaking-EQ coefficients for `freq` (Hz) at `gain_db` and `sample_rate`.
     fn peaking(freq: f32, gain_db: f32, q: f32, sample_rate: f32) -> Self {
+        // Guard against a band at or above Nyquist (possible at very low host
+        // sample rates, e.g. an 8 kHz device): the RBJ math would yield an
+        // unstable filter. The explicit `!is_finite()` check also falls back to
+        // identity for a NaN / inf sample_rate (an uninitialized / corrupt host
+        // device) rather than propagating NaNs through the audio thread —
+        // expressed without a negated partial-ord comparison (clippy
+        // `neg_cmp_op_on_partial_ord`).
+        if !sample_rate.is_finite() || freq >= sample_rate * 0.5 {
+            return Self {
+                b0: 1.0,
+                b1: 0.0,
+                b2: 0.0,
+                a1: 0.0,
+                a2: 0.0,
+                x1: 0.0,
+                x2: 0.0,
+                y1: 0.0,
+                y2: 0.0,
+            };
+        }
         let a = 10.0_f32.powf(gain_db / 40.0);
         let w0 = 2.0 * PI * (freq / sample_rate);
         let (sin_w0, cos_w0) = (w0.sin(), w0.cos());

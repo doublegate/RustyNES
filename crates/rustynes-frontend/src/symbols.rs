@@ -166,7 +166,9 @@ fn parse_mlb(map: &mut SymbolMap, text: &str) {
         // PPU / OAM / palette types (not part of the CPU disassembly view).
         let cpu_addr = match mem.trim() {
             "G" => Some(raw & 0x1FFF), // system RAM ($0000-$1FFF)
-            "R" => Some(0x6000u16.wrapping_add(raw & 0x1FFF)), // WRAM/SRAM ($6000+)
+            // WRAM/SRAM ($6000+): Mesen tags it "R" (Work RAM) or "S" (Save RAM);
+            // FCEUX/older exports also use "W". Map all three into the $6000 window.
+            "W" | "S" | "R" => Some(0x6000u16.wrapping_add(raw & 0x1FFF)),
             "P" => Some(0x8000u16.wrapping_add(raw & 0x7FFF)), // PRG ROM ($8000+)
             _ => None,
         };

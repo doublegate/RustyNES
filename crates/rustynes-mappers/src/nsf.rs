@@ -1,4 +1,7 @@
-//! NSF / `NSFe` music-file player (v1.1.0 beta.2, Workstream D, T-110-D1).
+//! NSF (classic `NESM`) music-file player (v1.1.0 beta.2, Workstream D, T-110-D1).
+//!
+//! Only the classic `NESM\x1a` container is parsed here; `NSFe` and expansion-chip
+//! audio are documented deferrals.
 //!
 //! An `.nsf` file is a ripped NES music engine plus a small header describing
 //! how to drive it: a `load`/`init`/`play` address triplet, a song count, and
@@ -191,7 +194,13 @@ impl NsfMapper {
     /// Build the player from a parsed [`Nsf`], starting on its declared song.
     #[must_use]
     pub fn new(nsf: &Nsf) -> Self {
-        let start = nsf.starting_song.saturating_sub(1);
+        // `starting_song` is 1-based; clamp to the valid 0-based range in case a
+        // malformed header declares a start past `total_songs` (which is already
+        // guaranteed non-zero by `parse_nsf`).
+        let start = nsf
+            .starting_song
+            .saturating_sub(1)
+            .min(nsf.total_songs.saturating_sub(1));
         let mut m = Self {
             prg: nsf.prg.clone().into_boxed_slice(),
             wram: Box::new([0u8; 0x2000]),
@@ -406,7 +415,10 @@ impl Mapper for NsfMapper {
                 got: data.len(),
             });
         }
-        self.current_song = data[1];
+        // Clamp on restore: a corrupt save-state must not feed an out-of-range
+        // song index into `build_driver` (valid round-trips are unaffected, since
+        // `set_song` already keeps `current_song < total_songs`).
+        self.current_song = data[1].min(self.total_songs.saturating_sub(1));
         self.banks.copy_from_slice(&data[2..10]);
         self.wram.copy_from_slice(&data[10..]);
         self.build_driver();

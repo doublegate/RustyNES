@@ -1011,6 +1011,14 @@ impl App {
         self.rom_label = String::new();
         self.rom_bytes = Vec::new();
         self.present_staging.clear();
+        // Drop the sibling presentation buffers too, so a stale frame can't be
+        // re-presented after the ROM is closed.
+        self.present_index_staging.clear();
+        #[cfg(feature = "hd-pack")]
+        {
+            self.present_hd_tiles.clear();
+            self.present_chr_snapshot.clear();
+        }
         self.ui
             .set_status(crate::ui_shell::StatusMessage::info("ROM closed"));
     }
