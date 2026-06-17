@@ -283,17 +283,18 @@ mod tests {
                 let v = out[0];
                 assert!(out.iter().all(|&b| b == v), "torn frame");
             } else if done.load(Ordering::Acquire) {
-                // Producer finished. Re-attempt an authoritative take here and
-                // COUNT it: the main branch's `take_into` does a `Relaxed`
-                // `has_new` pre-check that can read a stale `false`, but
-                // `take_into` acquires the slots mutex, which synchronizes-with
-                // the producer's final `publish` (its `drop(slots)` release) —
-                // and the `done` Acquire-load already established that
-                // happens-before, so a genuinely-pending frame IS taken here.
-                // (The previous version drained without incrementing `taken`,
-                // so a consumer slow enough to only ever take in this branch
-                // ended with `taken == 0` and failed the assert.) An empty take
-                // means the buffer is fully drained, so we stop. This
+                // Producer finished, so at most ONE final frame remains (the
+                // buffer only retains the latest publish). Take it once,
+                // COUNT it, then stop — no need to loop again for a redundant
+                // empty take. The take is authoritative: `take_into` acquires
+                // the slots mutex, which synchronizes-with the producer's final
+                // `publish` (its `drop(slots)` release), and the `done`
+                // Acquire-load already established that happens-before, so a
+                // genuinely-pending frame IS taken here even though the main
+                // branch's `Relaxed` `has_new` pre-check may have read a stale
+                // `false`. (An earlier version drained WITHOUT incrementing
+                // `taken`, so a consumer slow enough to only ever take in this
+                // branch ended with `taken == 0` and failed the assert.) This
                 // guarantees `taken >= 1` whenever the producer published at
                 // least once, independent of how the two threads interleave.
                 if pb.take_into(&mut out) {
@@ -301,9 +302,8 @@ mod tests {
                     assert_eq!(out.len(), 64);
                     let v = out[0];
                     assert!(out.iter().all(|&b| b == v), "torn frame");
-                } else {
-                    break;
                 }
+                break;
             } else {
                 std::hint::spin_loop();
             }
