@@ -29,7 +29,135 @@ pub use greenzone::Greenzone;
 
 use std::collections::BTreeMap;
 
-use rustynes_core::{FrameInput, Nes};
+use rustynes_core::{Buttons, FrameInput, Nes};
+use thiserror::Error;
+
+/// Magic prefix of a `.rnmproj` `TAStudio` project file.
+pub const RNMPROJ_MAGIC: &[u8; 8] = b"RNMPROJ1";
+
+/// Current `.rnmproj` format version.
+pub const RNMPROJ_VERSION: u16 = 1;
+
+/// Errors decoding a `.rnmproj` project file.
+#[derive(Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RnmProjError {
+    /// The blob ran out before a field finished decoding.
+    #[error("rnmproj truncated at offset {0}")]
+    Truncated(usize),
+    /// The magic prefix is not `"RNMPROJ1"`.
+    #[error("rnmproj magic mismatch")]
+    BadMagic,
+    /// The format version is newer than this build understands.
+    #[error("rnmproj version {got} not supported (max {max})")]
+    UnsupportedVersion {
+        /// Version read from the file.
+        got: u16,
+        /// Highest version this build accepts.
+        max: u16,
+    },
+    /// A UTF-8 marker label was malformed.
+    #[error("rnmproj marker label is not valid UTF-8")]
+    BadLabel,
+}
+
+// --- `.rnmproj` binary codec helpers ------------------------------------- #
+
+/// Write a length / frame index as a `u32` LE. Frame counts and lengths are far
+/// below `u32::MAX` (4 billion frames ≈ years of gameplay) in any real project.
+#[allow(clippy::cast_possible_truncation)]
+fn write_len(w: &mut Vec<u8>, n: usize) {
+    w.extend_from_slice(&(n as u32).to_le_bytes());
+}
+
+/// Write a length-prefixed byte blob.
+fn write_bytes(w: &mut Vec<u8>, b: &[u8]) {
+    write_len(w, b.len());
+    w.extend_from_slice(b);
+}
+
+/// Write a length-prefixed input log (3 bytes per frame: p1, p2, expansion).
+fn write_input_log(w: &mut Vec<u8>, log: &[FrameInput]) {
+    write_len(w, log.len());
+    for f in log {
+        w.push(f.p1.bits());
+        w.push(f.p2.bits());
+        w.push(f.expansion);
+    }
+}
+
+/// Write a length-prefixed marker map (`frame` then a length-prefixed label).
+fn write_markers(w: &mut Vec<u8>, m: &BTreeMap<usize, String>) {
+    write_len(w, m.len());
+    for (&frame, label) in m {
+        write_len(w, frame);
+        write_bytes(w, label.as_bytes());
+    }
+}
+
+/// A bounds-checked cursor reader over a `.rnmproj` blob — every read either
+/// advances within bounds or returns [`RnmProjError::Truncated`] (never panics).
+struct Reader<'a> {
+    b: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> Reader<'a> {
+    const fn new(b: &'a [u8]) -> Self {
+        Self { b, pos: 0 }
+    }
+
+    fn take(&mut self, n: usize) -> Result<&'a [u8], RnmProjError> {
+        let end = self
+            .pos
+            .checked_add(n)
+            .filter(|&e| e <= self.b.len())
+            .ok_or(RnmProjError::Truncated(self.pos))?;
+        let s = &self.b[self.pos..end];
+        self.pos = end;
+        Ok(s)
+    }
+
+    fn u16(&mut self) -> Result<u16, RnmProjError> {
+        let s = self.take(2)?;
+        Ok(u16::from_le_bytes([s[0], s[1]]))
+    }
+
+    fn len(&mut self) -> Result<usize, RnmProjError> {
+        let s = self.take(4)?;
+        Ok(u32::from_le_bytes([s[0], s[1], s[2], s[3]]) as usize)
+    }
+
+    fn bytes(&mut self) -> Result<Vec<u8>, RnmProjError> {
+        let n = self.len()?;
+        Ok(self.take(n)?.to_vec())
+    }
+
+    fn input_log(&mut self) -> Result<Vec<FrameInput>, RnmProjError> {
+        let n = self.len()?;
+        let mut v = Vec::with_capacity(n);
+        for _ in 0..n {
+            let s = self.take(3)?;
+            v.push(FrameInput {
+                p1: Buttons::from_bits_truncate(s[0]),
+                p2: Buttons::from_bits_truncate(s[1]),
+                expansion: s[2],
+            });
+        }
+        Ok(v)
+    }
+
+    fn markers(&mut self) -> Result<BTreeMap<usize, String>, RnmProjError> {
+        let n = self.len()?;
+        let mut m = BTreeMap::new();
+        for _ in 0..n {
+            let frame = self.len()?;
+            let label = String::from_utf8(self.bytes()?).map_err(|_| RnmProjError::BadLabel)?;
+            m.insert(frame, label);
+        }
+        Ok(m)
+    }
+}
 
 /// Default greenzone byte budget (256 MiB) — generous for desktop TAS work
 /// while bounded. Tunable by the frontend; the eviction policy keeps the
@@ -46,7 +174,7 @@ pub const DEFAULT_CAPTURE_INTERVAL: usize = 60;
 /// log, the markers, the cursor frame, and the emulator save-state there.
 /// Loading a branch restores all of them. (A framebuffer thumbnail is a
 /// frontend concern, added when the grid lands.)
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Branch {
     /// The frame the branch was forked at (the cursor at save time).
     pub frame: usize,
@@ -302,6 +430,77 @@ impl TasEditor {
             self.greenzone.add_anchor(f);
         }
         true
+    }
+
+    /// Serialize the project — input log + markers + branches — to a `.rnmproj`
+    /// byte blob. Deterministic (identical project ⇒ identical bytes). The
+    /// greenzone and lag log are NOT serialized; they re-derive on load + seek.
+    #[must_use]
+    pub fn to_rnmproj(&self) -> Vec<u8> {
+        let mut w = Vec::new();
+        w.extend_from_slice(RNMPROJ_MAGIC);
+        w.extend_from_slice(&RNMPROJ_VERSION.to_le_bytes());
+        write_input_log(&mut w, &self.input_log);
+        write_markers(&mut w, &self.markers);
+        write_len(&mut w, self.branches.len());
+        for b in &self.branches {
+            write_len(&mut w, b.frame);
+            write_input_log(&mut w, &b.input_log);
+            write_markers(&mut w, &b.markers);
+            write_bytes(&mut w, &b.state);
+        }
+        w
+    }
+
+    /// Load a `.rnmproj` blob: replace the input log / markers / branches, reset
+    /// the greenzone to the durable frame-0 anchor (the power-on state set at
+    /// construction stays valid — it is ROM-derived) + re-anchor the loaded
+    /// markers, clear the lag log, and reset the cursor. The caller seeks to
+    /// re-warm. On a malformed blob returns `Err` WITHOUT mutating the editor.
+    ///
+    /// # Errors
+    /// [`RnmProjError`] for a bad magic, a too-new version, a truncated blob, or
+    /// a non-UTF-8 marker label.
+    pub fn load_rnmproj(&mut self, bytes: &[u8]) -> Result<(), RnmProjError> {
+        let mut r = Reader::new(bytes);
+        if r.take(8)? != RNMPROJ_MAGIC {
+            return Err(RnmProjError::BadMagic);
+        }
+        let version = r.u16()?;
+        if version > RNMPROJ_VERSION {
+            return Err(RnmProjError::UnsupportedVersion {
+                got: version,
+                max: RNMPROJ_VERSION,
+            });
+        }
+        let input_log = r.input_log()?;
+        let markers = r.markers()?;
+        let branch_count = r.len()?;
+        let mut branches = Vec::with_capacity(branch_count);
+        for _ in 0..branch_count {
+            let frame = r.len()?;
+            let b_input = r.input_log()?;
+            let b_markers = r.markers()?;
+            let state = r.bytes()?;
+            branches.push(Branch {
+                frame,
+                input_log: b_input,
+                markers: b_markers,
+                state,
+            });
+        }
+        // Commit only after a fully-successful parse (no partial mutation).
+        self.input_log = input_log;
+        self.markers = markers;
+        self.branches = branches;
+        self.greenzone.invalidate_after(0);
+        let marker_frames: Vec<usize> = self.markers.keys().copied().collect();
+        for f in marker_frames {
+            self.greenzone.add_anchor(f);
+        }
+        self.lag_log.clear();
+        self.cursor = 0;
+        Ok(())
     }
 
     /// Set the input at `frame`, growing the log with default (no-button)
@@ -751,5 +950,60 @@ mod tests {
         assert_eq!(ed.branch_count(), 1);
         ed.delete_branch(5); // out of range — no-op
         assert_eq!(ed.branch_count(), 1);
+    }
+
+    #[test]
+    fn rnmproj_round_trips_input_markers_and_branches() {
+        let rom = synth_nrom();
+        let mut nes = Nes::from_rom(&rom).unwrap();
+        nes.power_cycle();
+        let mut a = TasEditor::from_inputs(&nes, varied_inputs(30), 1 << 24, 20);
+        a.set_marker(5, "alpha");
+        a.set_marker(18, "beta");
+        a.seek(&mut nes, 12);
+        a.create_branch(&nes); // branch at 12 with the current input/markers/state
+        let bytes = a.to_rnmproj();
+
+        // Load into a fresh editor (same ROM power-on pinned at frame 0).
+        let mut fresh = Nes::from_rom(&rom).unwrap();
+        fresh.power_cycle();
+        let mut b = TasEditor::new(&fresh, 1 << 24, 20);
+        b.load_rnmproj(&bytes).expect("round-trip");
+        assert_eq!(b.input_log(), a.input_log());
+        assert_eq!(b.marker_at(5), Some("alpha"));
+        assert_eq!(b.marker_at(18), Some("beta"));
+        assert_eq!(b.branch_count(), 1);
+        assert_eq!(b.branch(0), a.branch(0), "branch survives round-trip");
+        assert_eq!(b.cursor(), 0, "cursor resets on load");
+    }
+
+    #[test]
+    fn load_rnmproj_rejects_malformed_blobs_without_mutating() {
+        let nes = {
+            let mut n = Nes::from_rom(&synth_nrom()).unwrap();
+            n.power_cycle();
+            n
+        };
+        let mut ed = TasEditor::from_inputs(&nes, varied_inputs(5), 1 << 20, 16);
+        let before = ed.input_log().to_vec();
+        assert_eq!(ed.load_rnmproj(b"NOTMAGIC"), Err(RnmProjError::BadMagic));
+        assert!(matches!(
+            ed.load_rnmproj(&[]),
+            Err(RnmProjError::Truncated(_))
+        ));
+        // A valid-magic-but-truncated body also errors, and the editor is intact.
+        let mut short = RNMPROJ_MAGIC.to_vec();
+        short.extend_from_slice(&RNMPROJ_VERSION.to_le_bytes());
+        // claim 99 input frames but provide none
+        short.extend_from_slice(&99u32.to_le_bytes());
+        assert!(matches!(
+            ed.load_rnmproj(&short),
+            Err(RnmProjError::Truncated(_))
+        ));
+        assert_eq!(
+            ed.input_log(),
+            before.as_slice(),
+            "editor unmutated on error"
+        );
     }
 }
