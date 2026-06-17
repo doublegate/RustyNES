@@ -1114,6 +1114,19 @@ impl LockstepBus {
         self.cart.region
     }
 
+    /// Length in bytes of the loaded cartridge's PRG-ROM (read-only metadata).
+    #[must_use]
+    pub const fn prg_rom_len(&self) -> usize {
+        self.cart.prg_rom.len()
+    }
+
+    /// Length in bytes of the loaded cartridge's CHR-ROM (0 when the board uses
+    /// CHR-RAM). Read-only metadata.
+    #[must_use]
+    pub const fn chr_rom_len(&self) -> usize {
+        self.cart.chr_rom.len()
+    }
+
     /// Enable the per-CPU-cycle IRQ-timing trace fixture with the given
     /// record capacity.  Records past the cap are silently dropped (see
     /// `IrqTrace::overflow`).  See ADR-0002 "Decision (revised,

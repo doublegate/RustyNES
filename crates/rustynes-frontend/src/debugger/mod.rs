@@ -394,6 +394,13 @@ impl DebuggerOverlay {
         self.symbols_status = Some("symbols cleared".to_owned());
     }
 
+    /// v1.5.0 Workstream B (B4) — the loaded symbols as `(address, label)` pairs,
+    /// for pushing into the Lua scripting engine's `sym:` query tables.
+    #[must_use]
+    pub fn symbol_pairs(&self) -> Vec<(u16, String)> {
+        self.symbols.pairs()
+    }
+
     /// Toggle overlay visibility.
     pub const fn toggle(&mut self) {
         self.visible = !self.visible;

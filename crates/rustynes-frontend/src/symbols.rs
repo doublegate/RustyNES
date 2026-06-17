@@ -88,6 +88,16 @@ impl SymbolMap {
         self.labels.clear();
     }
 
+    /// v1.5.0 Workstream B (B4) — every `(address, label)` pair (unordered), for
+    /// pushing into the Lua scripting engine's `sym:` query tables.
+    #[must_use]
+    pub fn pairs(&self) -> Vec<(u16, String)> {
+        self.labels
+            .iter()
+            .map(|(addr, label)| (*addr, label.clone()))
+            .collect()
+    }
+
     /// Insert a single label (later inserts overwrite). Empty labels are
     /// ignored so a malformed line can't shadow an address with "".
     fn insert(&mut self, addr: u16, label: &str) {

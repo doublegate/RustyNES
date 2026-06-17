@@ -3046,6 +3046,8 @@ impl App {
                 if let Some(d) = self.debugger.as_mut() {
                     d.clear_symbols();
                 }
+                #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
+                self.refresh_script_symbols();
             }
         }
     }
@@ -3096,6 +3098,27 @@ impl App {
                     "Loaded symbols from {name}"
                 )));
         }
+        // v1.5.0 B4 — push the freshly-loaded labels into a running Lua script's
+        // `sym:` query tables (no-op if no script is loaded).
+        #[cfg(feature = "scripting")]
+        self.refresh_script_symbols();
+    }
+
+    /// v1.5.0 Workstream B (B4) — push the debugger's current symbol map into a
+    /// running Lua script's `sym:` query tables. Called after a symbol load /
+    /// clear so `sym:addr` / `sym:name` track the loaded labels. Read-only on the
+    /// engine side; never perturbs the deterministic core. No-op without a script.
+    #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
+    fn refresh_script_symbols(&self) {
+        let Some(engine) = self.script.as_ref() else {
+            return;
+        };
+        let pairs = self
+            .debugger
+            .as_ref()
+            .map(crate::debugger::DebuggerOverlay::symbol_pairs)
+            .unwrap_or_default();
+        engine.set_symbols(&pairs);
     }
 
     /// v1.0.0 — the emulation-speed presets surfaced in the Emulation -> Speed
@@ -3435,6 +3458,14 @@ impl App {
         match engine.load(&src) {
             Ok(()) => {
                 let cbs = engine.frame_callback_count();
+                // v1.5.0 B4 — seed the engine's `sym:` query tables with any
+                // already-loaded debugger symbols (read-only; never deterministic).
+                if let Some(dbg) = self.debugger.as_ref() {
+                    let pairs = dbg.symbol_pairs();
+                    if !pairs.is_empty() {
+                        engine.set_symbols(&pairs);
+                    }
+                }
                 self.script = Some(engine);
                 if let Some(dbg) = self.debugger.as_mut() {
                     let p = dbg.script_panel();
