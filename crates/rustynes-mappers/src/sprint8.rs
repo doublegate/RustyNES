@@ -1094,7 +1094,11 @@ impl Mapper for Hengedianzi177 {
 
     fn cpu_write(&mut self, addr: u16, value: u8) {
         if (0x8000..=0xFFFF).contains(&addr) {
-            self.prg_bank = value;
+            // $8000-$FFFF: `..MP PPPP` — PRG bank is bits 0-4 (5 bits), mirroring
+            // is bit 5. The old code latched all 8 bits as the bank, so a write
+            // that flips the mirroring bit (e.g. $20) selected bank 32 and the
+            // reset vector read garbage → blank boot.
+            self.prg_bank = value & 0x1F;
             self.horizontal_mirroring = (value & 0x20) != 0;
         }
     }
