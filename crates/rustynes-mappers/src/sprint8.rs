@@ -981,7 +981,17 @@ impl Mapper for SachenTca01M143 {
 
     fn cpu_read(&mut self, addr: u16) -> u8 {
         match addr {
-            0x4020..=0x5FFF => ((!addr & 0x3F) as u8) | 0x40,
+            // Sachen TCA01 protection (puNES extcl_cpu_rd_mem_143): the chip
+            // only answers when A8 is set, returning (~addr & 0x3F) in the low
+            // 6 bits and leaving the top 2 bits as open bus. The old decode
+            // answered across the WHOLE window with a hardcoded bit 6, so the
+            // game's `(~addr & 0x3F)` protection compare failed -> blank boot.
+            // The high 2 open-bus bits are approximated from the address high
+            // byte (the most-recently-driven bus value in this read).
+            0x4100..=0x5FFF if addr & 0x0100 != 0 => {
+                ((!addr & 0x3F) as u8) | ((addr >> 8) as u8 & 0xC0)
+            }
+            0x4100..=0x5FFF if addr >= 0x5000 => 0xFF,
             0x8000..=0xFFFF => self.read_prg(addr),
             _ => 0,
         }
@@ -2258,10 +2268,16 @@ mod tests {
     fn m143_protection_read_and_nrom() {
         let mut m =
             SachenTca01M143::new(synth_prg_16k(1), synth_chr_8k(1), Mirroring::Vertical).unwrap();
-        // Protection: (~addr & 0x3F) | 0x40.
-        let addr = 0x5000u16;
-        assert_eq!(m.cpu_read(addr), ((!addr & 0x3F) as u8) | 0x40);
-        assert!(!m.cpu_read_unmapped(0x5000));
+        // Protection answers only with A8 set: low 6 bits = ~addr & 0x3F, top
+        // 2 bits = open bus (approximated from the address high byte). puNES.
+        let addr = 0x4100u16;
+        assert_eq!(
+            m.cpu_read(addr),
+            ((!addr & 0x3F) as u8) | ((addr >> 8) as u8 & 0xC0)
+        );
+        // A8 clear, addr >= $5000 -> $FF.
+        assert_eq!(m.cpu_read(0x5000), 0xFF);
+        assert!(!m.cpu_read_unmapped(0x4100));
         // NROM-128: $8000 and $C000 read the same (only) 16 KiB bank (index 0).
         assert_eq!(m.cpu_read(0x8000), 0);
         assert_eq!(m.cpu_read(0xC000), 0);
