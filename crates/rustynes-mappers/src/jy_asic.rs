@@ -24,20 +24,39 @@
 //! (`nesdev_wiki/J_Y__Company_ASIC.xhtml`) and the Mesen2 `JyCompany`
 //! implementation (`ref-proj/Mesen2/Core/NES/Mappers/JyCompany/JyCompany.h`).
 //!
-//! # Registers (address masks per the wiki)
+//! # Registers
+//!
+//! The wiki documents per-block address masks (`$5xxx`/`$8xxx`/`$Dxxx` are
+//! `$F803`-masked, `$9xxx`/`$Axxx`/`$Bxxx` are `$F807`-masked, `$Cxxx` is
+//! `$F007`-masked). The "Mask" column below is the mask this port actually
+//! decodes, which follows **Mesen2** rather than the per-block wiki masks:
+//! the `$5000-$5FFF` window decodes with `$F803`, and the entire
+//! `$8000-$FFFF` register space decodes with a single `$F007` (Mesen2's
+//! `WriteRegister` `switch(addr & 0xF007)`). `$F007` keeps A0-A2 and A12-A15
+//! and discards A3-A11 — so, unlike the wiki's `$F803`/`$F807`, it does NOT
+//! mask A11 (`$8800` still writes the `$8000` register). Because A2 survives
+//! the mask, the eight-address banking blocks (PRG `$8000-$8007`, CHR
+//! `$9000-$9007`/`$A000-$A007`, NT `$B000-$B007`) list all eight cases; the
+//! PRG bank index then drops A2 via `& 0x03` so `$8004-$8007` alias
+//! `$8000-$8003`. The `$C000-$C007` IRQ block uses all eight addresses as
+//! distinct registers. The `$D000` mode block acts only on `$D000-$D003`
+//! (Mesen2 lists no `$D004-$D007` cases), so those four addresses are inert.
+//! This matches Mesen2 bit-for-bit; no known game
+//! depends on the stricter wiki decode, so the unified mask is the accuracy
+//! reference here.
 //!
 //! | Range          | Mask    | Purpose                                       |
 //! |----------------|---------|-----------------------------------------------|
-//! | `$5000`        | `$FFFF` | Jumper/dip read (we return 0)                 |
+//! | `$5000`        | `$F803` | Jumper/dip read (we return 0)                 |
 //! | `$5800/$5801`  | `$F803` | Hardware multiplier operands / result         |
 //! | `$5803`        | `$F803` | Test/accumulator register (read/write)         |
-//! | `$8000-$8003`  | `$F803` | PRG bank registers (7-bit)                     |
-//! | `$9000-$9007`  | `$F807` | CHR bank LSB registers                          |
-//! | `$A000-$A007`  | `$F807` | CHR bank MSB registers                          |
-//! | `$B000-$B003`  | `$F807` | Nametable bank LSB registers                    |
-//! | `$B004-$B007`  | `$F807` | Nametable bank MSB registers                    |
+//! | `$8000-$8007`  | `$F007` | PRG bank registers (7-bit; `$8004-7` alias `$8000-3`) |
+//! | `$9000-$9007`  | `$F007` | CHR bank LSB registers                          |
+//! | `$A000-$A007`  | `$F007` | CHR bank MSB registers                          |
+//! | `$B000-$B003`  | `$F007` | Nametable bank LSB registers                    |
+//! | `$B004-$B007`  | `$F007` | Nametable bank MSB registers                    |
 //! | `$C000-$C007`  | `$F007` | IRQ control / prescaler / counter / XOR        |
-//! | `$D000-$D003`  | `$F803` | Mode / mirroring / PPU-config / outer bank     |
+//! | `$D000-$D003`  | `$F007` | Mode / mirroring / PPU-config / outer bank (`$D004-7` inert) |
 //!
 //! # IRQ
 //!
@@ -133,7 +152,6 @@ pub struct JyAsic {
     prg_rom: Box<[u8]>,
     chr: Box<[u8]>,
     chr_is_ram: bool,
-    vram: Box<[u8]>,
 
     // --- Banking registers ---
     prg_regs: [u8; 4],      // $8000-$8003 (7-bit)
@@ -225,7 +243,6 @@ impl JyAsic {
             prg_rom,
             chr,
             chr_is_ram,
-            vram: vec![0u8; 2 * NAMETABLE_SIZE].into_boxed_slice(),
             prg_regs: [0; 4],
             chr_low_regs: [0; 8],
             chr_high_regs: [0; 8],
@@ -273,7 +290,18 @@ impl JyAsic {
         }
     }
 
-    /// Apply the `$D000` bit 0-1 PRG bank-bit reversal used by PRG mode 3.
+    /// Apply the PRG bank-number reversal used by PRG mode 3 (`$D000` bits
+    /// 0-1 == 3).
+    ///
+    /// The wiki describes this as "bank numbers bits 0-6 reversed". This is a
+    /// verbatim port of Mesen2's `InvertPrgBits`, which reverses the three
+    /// outer bit pairs (0<->6, 1<->5, 2<->4) and notably does **not** carry
+    /// bit 3 through: a faithful "reverse a 7-bit field" would leave the
+    /// centre bit (3) in place, but neither Mesen2 nor Disch's original
+    /// writeup preserves it, so this port drops it to match the accuracy
+    /// reference bit-for-bit (no known game distinguishes the two; the JY
+    /// ASIC is BestEffort tier). If a future test ROM proves bit 3 must be
+    /// preserved, OR `reg & 0x08` back into the result here.
     const fn invert_prg_bits(reg: u8, invert: bool) -> u8 {
         if invert {
             (reg & 0x01) << 6
@@ -408,8 +436,25 @@ impl JyAsic {
     fn nametable_offset(&self, addr: u16) -> usize {
         let table = (((addr - 0x2000) / NAMETABLE_SIZE_U16) & 0x03) as u8;
         let local = (addr as usize) & (NAMETABLE_SIZE - 1);
-        let physical = Self::physical_bank_for(table, self.mirroring_reg);
+        let physical = self.ciram_bank_for(table);
         physical * NAMETABLE_SIZE + local
+    }
+
+    /// Resolve a logical nametable index 0..=3 to a physical CIRAM bank (0 or 1).
+    ///
+    /// When the ROM-nametable / Extended-Mirroring feature is active
+    /// ([`Self::nt_control_active`]), each nametable picks its CIRAM page
+    /// independently from `$B00x` bit 0 (Extended Mirroring, `$D001` bit 3).
+    /// This mirrors Mesen2's `UpdateMirroringState`, which calls
+    /// `SetNametable(i, _ntLowRegs[i] & 0x01)` for each of the four tables
+    /// whenever advanced NT control is on (and the PCB is not mapper 90).
+    /// Otherwise the simple `$D001` MM register selects the layout.
+    const fn ciram_bank_for(&self, table: u8) -> usize {
+        if self.nt_control_active() {
+            (self.nt_low_regs[table as usize & 0x03] & 0x01) as usize
+        } else {
+            Self::physical_bank_for(table, self.mirroring_reg)
+        }
     }
 
     /// Resolve a logical nametable index 0..=3 to a physical CIRAM bank (0 or 1)
@@ -569,10 +614,22 @@ impl Mapper for JyAsic {
                 _ => {}
             }
         } else {
+            // Mesen2 decodes the whole $8000-$FFFF register space with a single
+            // $F007 mask (`switch(addr & 0xF007)`), not the wiki's per-block
+            // $F803/$F807. $F007 keeps A0-A2 and A12-A15 but discards A3-A11,
+            // so A11 is NOT masked (unlike the wiki's $F803 — $8800 still hits
+            // the $8000 register). A2 is kept by the mask, so register blocks
+            // that span eight addresses (PRG $8000-$8007, the CHR/NT $9/$A/$B
+            // blocks) must list all eight; the PRG bank index then drops A2 via
+            // `& 0x03` so $8004-$8007 alias $8000-$8003 exactly as Mesen2 does.
+            // (The $C000 IRQ and $D000 mode blocks intentionally only act on
+            // $x000-$x003 — Mesen2 lists no $x004-$x007 cases there either, so
+            // those addresses are inert.) See the module-level register table.
             match addr & 0xF007 {
-                // PRG bank registers (the $F007 mask folds $8004-$8007 onto
-                // $8000-$8003, matching the $F803 register mask).
-                0x8000..=0x8003 => self.prg_regs[(addr & 0x03) as usize] = value & 0x7F,
+                // PRG bank registers (7-bit). $8004-$8007 alias $8000-$8003
+                // (A2 dropped by the `& 0x03` index), matching Mesen2's eight
+                // explicit $8000-$8007 cases.
+                0x8000..=0x8007 => self.prg_regs[(addr & 0x03) as usize] = value & 0x7F,
                 // CHR LSB registers.
                 0x9000..=0x9007 => self.chr_low_regs[(addr & 0x07) as usize] = value,
                 // CHR MSB registers.
@@ -638,51 +695,51 @@ impl Mapper for JyAsic {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
-        let addr = addr & 0x3FFF;
+        // The bus masks pattern-table reads to `$0000-$1FFF` before they reach
+        // here; nametable bytes are routed through `nametable_fetch` /
+        // `nametable_address` instead (the PPU owns CIRAM), so this only
+        // services CHR.
+        let addr = addr & 0x1FFF;
         // PPU-read IRQ source ticks on render reads (pattern fetches).
-        if self.irq_source == IrqSource::PpuRead && addr < 0x2000 {
+        if self.irq_source == IrqSource::PpuRead {
             self.tick_irq();
         }
-        match addr {
-            0x0000..=0x1FFF => {
-                self.update_chr_latch_209(addr);
-                let off = self.chr_offset(addr);
-                self.chr[off % self.chr.len()]
-            }
-            0x2000..=0x3EFF => {
-                let masked = addr & 0x2FFF;
-                let nt_index = ((masked - 0x2000) / NAMETABLE_SIZE_U16) as usize & 0x03;
-                if self.nt_control_active() && self.nt_index_is_rom(nt_index) {
-                    self.nt_rom_byte(masked)
-                } else {
-                    self.vram[self.nametable_offset(addr) % self.vram.len()]
-                }
-            }
-            _ => 0,
-        }
+        self.update_chr_latch_209(addr);
+        let off = self.chr_offset(addr);
+        self.chr[off % self.chr.len()]
     }
 
     fn ppu_write(&mut self, addr: u16, value: u8) {
-        let addr = addr & 0x3FFF;
-        match addr {
-            0x0000..=0x1FFF => {
-                if self.chr_is_ram {
-                    let off = self.chr_offset(addr);
-                    let len = self.chr.len();
-                    self.chr[off % len] = value;
-                }
-            }
-            0x2000..=0x3EFF => {
-                let masked = addr & 0x2FFF;
-                let nt_index = ((masked - 0x2000) / NAMETABLE_SIZE_U16) as usize & 0x03;
-                // ROM-nametable reads are not writable; drop the write.
-                if !(self.nt_control_active() && self.nt_index_is_rom(nt_index)) {
-                    let off = self.nametable_offset(addr) % self.vram.len();
-                    self.vram[off] = value;
-                }
-            }
-            _ => {}
+        // Pattern-table writes only (CHR-RAM). Nametable writes arrive via
+        // `nametable_write`; the bus never routes `$2000+` to `ppu_write`.
+        let addr = addr & 0x1FFF;
+        if self.chr_is_ram {
+            let off = self.chr_offset(addr);
+            let len = self.chr.len();
+            self.chr[off % len] = value;
         }
+    }
+
+    fn nametable_fetch(&mut self, addr: u16) -> Option<u8> {
+        // Serve a ROM (CHR) nametable byte when ROM nametables are active for
+        // this table; otherwise return `None` so the PPU reads CIRAM (banked
+        // via `nametable_address`).
+        let masked = addr & 0x2FFF;
+        let nt_index = ((masked - 0x2000) / NAMETABLE_SIZE_U16) as usize & 0x03;
+        if self.nt_control_active() && self.nt_index_is_rom(nt_index) {
+            Some(self.nt_rom_byte(masked))
+        } else {
+            None
+        }
+    }
+
+    fn nametable_write(&mut self, addr: u16, _value: u8) -> bool {
+        // ROM nametables are not writable: absorb (drop) the write so the PPU
+        // does not fall through to CIRAM. CIRAM-backed tables return `false`
+        // so the PPU performs its normal banked write.
+        let masked = addr & 0x2FFF;
+        let nt_index = ((masked - 0x2000) / NAMETABLE_SIZE_U16) as usize & 0x03;
+        self.nt_control_active() && self.nt_index_is_rom(nt_index)
     }
 
     fn notify_a12(&mut self, level: bool) {
@@ -756,9 +813,7 @@ impl Mapper for JyAsic {
     }
 
     fn save_state(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(
-            64 + self.vram.len() + if self.chr_is_ram { self.chr.len() } else { 0 },
-        );
+        let mut out = Vec::with_capacity(64 + if self.chr_is_ram { self.chr.len() } else { 0 });
         out.push(SAVE_STATE_VERSION);
         out.extend_from_slice(&self.prg_regs);
         out.extend_from_slice(&self.chr_low_regs);
@@ -790,7 +845,6 @@ impl Mapper for JyAsic {
         out.push(self.mul2);
         out.push(self.test_reg);
         out.extend_from_slice(&self.last_ppu_addr.to_le_bytes());
-        out.extend_from_slice(&self.vram);
         if self.chr_is_ram {
             out.extend_from_slice(&self.chr);
         }
@@ -802,7 +856,7 @@ impl Mapper for JyAsic {
         // 1 (ver) + 4 + 8 + 8 + 4 + 4 + 2 (latch) + scalars(23) + 2 (last addr).
         // The 23 scalars: 11 mode/mirroring flags + 9 IRQ fields + 3 misc regs.
         let scalar_len = 1 + 4 + 8 + 8 + 4 + 4 + 2 + 23 + 2;
-        let expected = scalar_len + self.vram.len() + chr_part;
+        let expected = scalar_len + chr_part;
         if data.len() != expected {
             return Err(MapperError::Truncated {
                 expected,
@@ -824,6 +878,12 @@ impl Mapper for JyAsic {
         self.nt_low_regs.copy_from_slice(take(4));
         self.nt_high_regs.copy_from_slice(take(4));
         self.chr_latch.copy_from_slice(take(2));
+        // The CHR latch indexes the 8-entry `chr_low_regs`/`chr_high_regs`
+        // groups (via `chr_reg`) in CHR mode 1, so a corrupted/hand-edited
+        // save-state must not be able to push it out of range. In normal
+        // operation the latch is only ever {0,2,4,6} (init {0,4}), all < 8.
+        self.chr_latch[0] &= 0x07;
+        self.chr_latch[1] &= 0x07;
         self.prg_mode = take(1)[0];
         self.enable_prg_at_6000 = take(1)[0] != 0;
         self.chr_mode = take(1)[0];
@@ -849,7 +909,6 @@ impl Mapper for JyAsic {
         self.test_reg = take(1)[0];
         let la = take(2);
         self.last_ppu_addr = u16::from_le_bytes([la[0], la[1]]);
-        self.vram.copy_from_slice(take(self.vram.len()));
         if self.chr_is_ram {
             let n = self.chr.len();
             self.chr.copy_from_slice(take(n));
@@ -938,6 +997,43 @@ mod tests {
     }
 
     #[test]
+    fn prg_mode3_bit3_matches_mesen2() {
+        // Verify the Mesen2-matching reversal (bits 0<->6, 1<->5, 2<->4) and
+        // pin the documented bit-3 behaviour: Mesen2's `InvertPrgBits` drops
+        // bit 3 (0x08) rather than carrying it through the centre. A bare
+        // 0x08 input therefore reverses to 0x00.
+        assert_eq!(JyAsic::invert_prg_bits(0x08, true), 0x00);
+        // Bit pairs are swapped as documented.
+        assert_eq!(JyAsic::invert_prg_bits(0x01, true), 0x40); // bit0 -> bit6
+        assert_eq!(JyAsic::invert_prg_bits(0x40, true), 0x01); // bit6 -> bit0
+        assert_eq!(JyAsic::invert_prg_bits(0x02, true), 0x20); // bit1 -> bit5
+        assert_eq!(JyAsic::invert_prg_bits(0x04, true), 0x10); // bit2 -> bit4
+        // A value with bit 3 set alongside others keeps the reversed pairs but
+        // still discards bit 3 (0x09 = bit0|bit3 -> 0x40, the bit-3 part lost).
+        assert_eq!(JyAsic::invert_prg_bits(0x09, true), 0x40);
+        // No-invert is the identity.
+        assert_eq!(JyAsic::invert_prg_bits(0x7F, false), 0x7F);
+    }
+
+    #[test]
+    fn prg_register_decode_ignores_a2_accepts_a11() {
+        // Mesen2 decodes $8000-$FFFF with `addr & 0xF007`: A2 is ignored (so
+        // $8004 aliases $8000) and A11 is NOT masked (so $8800 is still a
+        // register write, unlike the wiki's stricter $F803).
+        let mut m = fresh(JyBoard::M209);
+        m.cpu_write(0xD000, 0x02); // PRG mode 2 (8 KiB windows).
+        m.cpu_write(0x8004, 5); // A2 set -> aliases $8000.
+        assert_eq!(m.cpu_read(0x8000), 5, "$8004 must alias the $8000 register");
+        // A11 set ($8800) also decodes to the $8000 register under $F007.
+        m.cpu_write(0x8800, 9);
+        assert_eq!(
+            m.cpu_read(0x8000),
+            9,
+            "$8800 must still write the $8000 reg"
+        );
+    }
+
+    #[test]
     fn prg_at_6000_when_enabled() {
         let mut m = fresh(JyBoard::M209);
         m.cpu_write(0xD000, 0x82); // mode 2 + enable PRG @ $6000.
@@ -1018,8 +1114,69 @@ mod tests {
         let mut m = fresh(JyBoard::M209);
         m.cpu_write(0xD000, 0x60); // NT ROM + global.
         m.cpu_write(0xB000, 7); // NT0 -> CHR 1k page 7.
+        // ROM nametables are served via `nametable_fetch` (the PPU's
+        // nametable path), NOT `ppu_read` (which only handles $0000-$1FFF).
         // Page 7 in synth CHR has its first byte == 7.
-        assert_eq!(m.ppu_read(0x2000), 7);
+        assert_eq!(m.nametable_fetch(0x2000), Some(7));
+    }
+
+    #[test]
+    fn mapper209_ciram_nametable_returns_none() {
+        // With ROM nametables off, `nametable_fetch` must decline so the PPU
+        // reads its own CIRAM (banked via `nametable_address`).
+        let mut m = fresh(JyBoard::M209);
+        assert_eq!(m.nametable_fetch(0x2000), None);
+    }
+
+    #[test]
+    fn extended_mirroring_selects_per_nt_ciram_page() {
+        // $D001 bit 3 enables Extended Mirroring: each nametable's CIRAM page
+        // comes from $B00x bit 0. Verify `nametable_address` honours it (it
+        // previously always used the MM register -> the field was inert).
+        let mut m = fresh(JyBoard::M209);
+        m.cpu_write(0xD001, 0x08); // Extended Mirroring on, MM bits = 0.
+        assert!(m.nt_control_active());
+        // All four B-regs bit 0 = 0 -> every table maps to CIRAM page 0.
+        for table in 0..4u16 {
+            let addr = 0x2000 + table * 0x400;
+            assert_eq!(
+                m.nametable_address(addr) & 0x0400,
+                0,
+                "table {table} page 0"
+            );
+        }
+        // Set $B001 / $B003 bit 0 -> tables 1 and 3 move to CIRAM page 1.
+        m.cpu_write(0xB001, 0x01);
+        m.cpu_write(0xB003, 0x01);
+        assert_eq!(m.nametable_address(0x2000) & 0x0400, 0x000); // NT0 -> page 0
+        assert_eq!(m.nametable_address(0x2400) & 0x0400, 0x400); // NT1 -> page 1
+        assert_eq!(m.nametable_address(0x2800) & 0x0400, 0x000); // NT2 -> page 0
+        assert_eq!(m.nametable_address(0x2C00) & 0x0400, 0x400); // NT3 -> page 1
+    }
+
+    #[test]
+    fn extended_mirroring_off_uses_mm_register() {
+        // With Extended Mirroring / advanced-NT control off, the MM register
+        // drives CIRAM mapping (vertical here): NT0/NT2 -> page 0/0... actually
+        // vertical maps tables 0,2 -> A and 1,3 -> B.
+        let mut m = fresh(JyBoard::M209);
+        m.cpu_write(0xD001, 0x00); // MM = 0 (vertical), Extended Mirroring off.
+        assert!(!m.nt_control_active());
+        assert_eq!(m.nametable_address(0x2000) & 0x0400, 0x000); // table 0 -> A
+        assert_eq!(m.nametable_address(0x2400) & 0x0400, 0x400); // table 1 -> B
+        assert_eq!(m.nametable_address(0x2800) & 0x0400, 0x000); // table 2 -> A
+        assert_eq!(m.nametable_address(0x2C00) & 0x0400, 0x400); // table 3 -> B
+    }
+
+    #[test]
+    fn rom_nametable_write_is_absorbed() {
+        // A write to a ROM nametable must be absorbed (drop), so the PPU does
+        // not also touch CIRAM; CIRAM-backed tables decline the write.
+        let mut m = fresh(JyBoard::M209);
+        m.cpu_write(0xD000, 0x60); // ROM nametables, global.
+        assert!(m.nametable_write(0x2000, 0x42)); // ROM NT -> absorbed.
+        let mut m2 = fresh(JyBoard::M209); // no ROM nametables.
+        assert!(!m2.nametable_write(0x2000, 0x42)); // CIRAM NT -> PPU handles.
     }
 
     #[test]
@@ -1185,7 +1342,6 @@ mod tests {
             m.cpu_write(0xC004, 0x34);
             m.cpu_write(0xC001, 0x41);
             m.cpu_write(0xC000, 0x01);
-            m.ppu_write(0x2000, 0x77);
             m.ppu_read(0x0FE8); // move the latch.
 
             let blob = m.save_state();
@@ -1222,5 +1378,29 @@ mod tests {
             m.load_state(&blob[..blob.len() - 1]),
             Err(MapperError::Truncated { .. })
         ));
+    }
+
+    #[test]
+    fn load_state_clamps_chr_latch() {
+        // A corrupted/hand-edited save-state must not be able to push the CHR
+        // latch past 7 (it indexes the 8-entry CHR register groups in CHR mode
+        // 1). Inject out-of-range latch bytes and confirm `load_state` masks
+        // them to 0..=7 so a subsequent CHR fetch cannot panic.
+        let mut m = fresh(JyBoard::M209);
+        let mut blob = m.save_state();
+        // Latch bytes sit right after prg(4)+chrLow(8)+chrHigh(8)+ntLow(4)
+        // +ntHigh(4) = 28 scalars past the 1-byte version header.
+        let latch_off = 1 + 4 + 8 + 8 + 4 + 4;
+        blob[latch_off] = 0xFF;
+        blob[latch_off + 1] = 0xFE;
+        m.load_state(&blob).unwrap();
+        assert!(m.chr_latch[0] < 8);
+        assert!(m.chr_latch[1] < 8);
+        assert_eq!(m.chr_latch[0], 0x07);
+        assert_eq!(m.chr_latch[1], 0x06);
+        // CHR mode 1 fetch through the (now-clamped) latch must not panic.
+        m.cpu_write(0xD000, 0x08); // CHR mode 1 (4 KiB, MMC4 latch path).
+        let _ = m.ppu_read(0x0000);
+        let _ = m.ppu_read(0x1000);
     }
 }
