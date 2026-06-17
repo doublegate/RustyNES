@@ -214,6 +214,8 @@ fn extract_rom_from_zip(zip_bytes: &[u8]) -> Option<(String, Vec<u8>)> {
                 e.eq_ignore_ascii_case("nes")
                     || e.eq_ignore_ascii_case("fds")
                     || e.eq_ignore_ascii_case("nsf")
+                    || e.eq_ignore_ascii_case("unf")
+                    || e.eq_ignore_ascii_case("unif")
             })
         })
     })?;
@@ -965,7 +967,7 @@ impl App {
     #[cfg(not(target_arch = "wasm32"))]
     fn open_rom_dialog(&mut self) {
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("NES / FDS image", &["nes", "fds"])
+            .add_filter("NES / FDS / UNIF image", &["nes", "fds", "unf", "unif"])
             .pick_file()
         else {
             return;
@@ -6039,10 +6041,14 @@ impl ApplicationHandler<AppEvent> for App {
                 // primary ROM-load path there).
                 #[cfg(not(target_arch = "wasm32"))]
                 {
-                    // Accept any path with a `.nes` or `.fds` extension
-                    // (case-insensitive). v2.2.0 added `.fds`.
+                    // Accept any path with a `.nes` / `.fds` / `.unf` / `.unif`
+                    // extension (case-insensitive). v2.2.0 added `.fds`; v1.6.0
+                    // (E2) added the UNIF container.
                     let ok = path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
-                        e.eq_ignore_ascii_case("nes") || e.eq_ignore_ascii_case("fds")
+                        e.eq_ignore_ascii_case("nes")
+                            || e.eq_ignore_ascii_case("fds")
+                            || e.eq_ignore_ascii_case("unf")
+                            || e.eq_ignore_ascii_case("unif")
                     });
                     if ok {
                         self.load_rom_from_path(&path);

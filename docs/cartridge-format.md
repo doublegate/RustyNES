@@ -128,5 +128,5 @@ pub enum RomError {
 
 ## Open questions
 
-- **`UNIF` format support.** UNIF is an alternate format used by some translation patches and pirate dumps. Out of v1.0 scope.
+- **`UNIF` format support.** UNIF (`.unf`) is an alternate, chunked container used by translation patches, pirate dumps, and multicarts. It carries no mapper number — the cartridge is identified by a board-name string in its `MAPR` chunk. **Implemented in v1.6.0 (Workstream E2):** `rustynes_mappers::unif` parses the 32-byte header + length-prefixed chunks (`MAPR`/`PRG?`/`CHR?`/`MIRR`/`BATR`/`TVCI`), resolves the board name to an iNES mapper via `board_to_mapper` (the puNES/Mesen2 table, RustyNES-implemented subset, vendor-prefix-tolerant, incl. the Sachen 8259 A/B/C/D split), and synthesizes an equivalent NES 2.0 image that flows through the standard `parse()` path (so all mapper construction is shared). `parse()` dispatches on the `"UNIF"` magic. This unlocks the UNIF-only dumps that have no iNES equivalent.
 - **`.fds` Famicom Disk System format.** Out of v1.0 scope; defer to FDS support phase.

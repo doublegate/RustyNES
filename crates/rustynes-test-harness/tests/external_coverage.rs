@@ -223,7 +223,16 @@ fn discover_external_roms() -> Vec<String> {
         let mut roms: Vec<String> = files
             .filter_map(Result::ok)
             .map(|e| e.path())
-            .filter(|p| p.is_file() && p.extension().is_some_and(|e| e.eq_ignore_ascii_case("nes")))
+            .filter(|p| {
+                p.is_file()
+                    && p.extension().is_some_and(|e| {
+                        // v1.6.0 (E2): UNIF (.unf/.unif) dumps are boot-captured
+                        // alongside iNES (.nes) ones.
+                        e.eq_ignore_ascii_case("nes")
+                            || e.eq_ignore_ascii_case("unf")
+                            || e.eq_ignore_ascii_case("unif")
+                    })
+            })
             .filter_map(|p| {
                 p.file_name()
                     .and_then(|s| s.to_str())

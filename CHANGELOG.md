@@ -15,6 +15,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **UNIF (`.unf`) cartridge loader** (v1.6.0 Workstream E2). UNIF carries no
+  mapper number — it identifies the cartridge by a board-name string in its
+  `MAPR` chunk. `rustynes_mappers::unif` parses the header + chunks
+  (`MAPR`/`PRG?`/`CHR?`/`MIRR`/`BATR`/`TVCI`), resolves the board to an iNES
+  mapper (puNES/Mesen2 table, vendor-prefix-tolerant, incl. the Sachen 8259
+  A/B/C/D split), and synthesizes an equivalent NES 2.0 image so the standard
+  `parse()` path builds the cartridge + mapper. Unlocks UNIF-only dumps that
+  have no iNES equivalent. Determinism/oracle unaffected (additive format path).
+
 ### Fixed
 
 - **Mapper 159 (Bandai LZ93D50 + X24C01 EEPROM) blank boot.** All mapper-159
