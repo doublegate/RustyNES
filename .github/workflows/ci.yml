@@ -39,6 +39,16 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # CI builds clean, so full debuginfo (the dev/test default `debug = 2`) only
+  # slows linking and bloats `target/` (worse cache hits). `line-tables-only`
+  # keeps panic/backtrace `file:line` — so failing-test diagnostics stay
+  # readable with RUST_BACKTRACE=1 — while cutting debug compile time ~20-40%.
+  # Set via `CARGO_PROFILE_*` (a stable, per-profile cache-key contributor) NOT
+  # `RUSTFLAGS=-Cdebuginfo=0`, which would bust the rust-cache key + force a
+  # full dependency rebuild. The release profile (test-roms / bench) already
+  # defaults to `debug = 0`, so this only touches the debug-compiling jobs.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_PROFILE_TEST_DEBUG: line-tables-only
 
 # Least-privilege default for the whole workflow: every job here only builds /
 # tests / lints and reads the checked-out tree, so the default GITHUB_TOKEN is
@@ -86,6 +96,12 @@ jobs:
   # determinism makes "tests pass on 1.96" equivalent to "tests pass on stable".
   test:
     name: test (${{ matrix.os }})
+    # Gate the heavy 3-OS matrix on the fast fmt+clippy+rustdoc job: a
+    # formatting / lint / doc slip fails in ~seconds, so there's no point
+    # spinning up (and compiling the workspace on) three OS runners until the
+    # cheap gate is green. Costs ~lint's duration of happy-path latency; saves
+    # the entire matrix's runner-minutes on every lint failure.
+    needs: lint
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -100,12 +116,20 @@ jobs:
 
   test-roms:
     name: test (test-roms feature)
+    # Gate the slowest job (release-mode compile + the heavy CPU/AccuracyCoin
+    # ROM batteries) on the fast lint job — don't pay the ~release compile when
+    # fmt/clippy already failed.
+    needs: lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/rust-setup
         with:
           cache-key: test-roms
+          # A failure here is at the TEST stage (a ROM assertion), so keep the
+          # expensive release-mode dependency compile cached rather than
+          # discarding it.
+          cache-on-failure: "true"
       # Built in `--release`: the heavy CPU test ROMs (instr_test-v3,
       # blargg_nes_cpu_test5, the nes_instr_test singles) + the AccuracyCoin
       # 7200-frame battery are ~10x slower in debug. The emulation core is

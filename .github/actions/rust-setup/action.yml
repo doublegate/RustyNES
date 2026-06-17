@@ -27,6 +27,12 @@ inputs:
   cache-key:
     description: "Extra Swatinem/rust-cache key suffix (distinguishes target matrices)."
     default: ""
+  cache-on-failure:
+    description: >-
+      Pass-through to Swatinem/rust-cache `cache-on-failure`. Enable on jobs
+      whose failures are at the TEST stage (so a flaky test doesn't throw away
+      an expensive dependency / release compile); leave "false" elsewhere.
+    default: "false"
 
 runs:
   using: composite
@@ -51,3 +57,12 @@ runs:
       uses: Swatinem/rust-cache@v2
       with:
         key: ${{ inputs.cache-key }}
+        # Only WRITE the cache from the default branch. A PR-branch save is
+        # scoped to that branch (no other PR can read it) yet still counts
+        # against the 10 GB repo cache budget and LRU-evicts the shared `main`
+        # caches every PR restores from — so PR saves are write-only garbage.
+        # Restore-on-PR + save-on-main keeps the hit rate high without the
+        # thrash (rust-cache README). The post-merge `main` build pays one cold
+        # save; PRs are unaffected.
+        save-if: ${{ github.ref == 'refs/heads/main' }}
+        cache-on-failure: ${{ inputs.cache-on-failure }}
