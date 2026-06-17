@@ -44,6 +44,14 @@ impl PerfPanelState {
     pub fn set_log_note(&mut self, note: Option<String>) {
         self.log_note = note;
     }
+
+    /// v1.5.0 "Lens" Workstream H7 — force the "Logging" checkbox on (the
+    /// `RUSTYNES_PERF_LOG` env hook for the scripted perf-capture regression
+    /// gate). Equivalent to the user ticking the box at launch.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn force_logging(&mut self) {
+        self.logging = true;
+    }
 }
 
 /// feature K — a hand-rolled `ui.painter()` frame-time sparkline (no

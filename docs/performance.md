@@ -227,6 +227,95 @@ jump table regardless of source order); the F3 bus controller-strobe gate +
 `mapper_caps.cpu_cycle_hook` (both already gated behind active flags); the F3
 DMA get/put enum unification (a larger refactor with no clear neutral win).
 
+### v1.5.0 "Lens" Workstream H — frontend pacing & audio-sync pass
+
+Source data: a real high-refresh capture
+(`perf-logs/perf-Super_Mario_Bros_nes-20260616-231215.csv`; 143.975 Hz display,
+`auto`→`wallclock` pacing, Mailbox, run-ahead = 1, rewind on). The baseline is
+reassuring — raw frame `cost_mean ≈ 8.5 ms` / `p99 ≈ 9.2 ms` / `max ≈ 10.2 ms`
+vs. the 16.639 ms NTSC budget (~51%), so the v1.4.0 core perf pass holds and the
+**core synthesis is not the bottleneck**. Every measured problem was in the
+**frontend pacing/present/audio layer** (determinism-safe — pacing lives in the
+frontend by contract): recurring 50–128 ms produce stalls (`produced_max`) with
+climbing `catchup_bursts` (9→62) + `snap_forwards` (3→12) while cost stayed flat
+(⇒ blocking/scheduling, not compute); audio `underruns` 3→12 with
+`audio_queued_ms` oscillating 68–91 ms around the 60 ms target; and a blind
+`gpu_ms`. This pass is measure-first and keeps the determinism contract
+(AccuracyCoin 100% (139/139) + visual golden + APU oracle byte-identical after
+the changes).
+
+- **H1 — decoupled triple-buffer framebuffer handoff** (`present_buffer.rs`).
+  The present (winit) thread formerly copied the 240 KiB framebuffer out of
+  `EmuCore::present_fb` **under the emu mutex**, serializing the present against
+  the dedicated emu thread's whole `produce_one_frame` (~8.5 ms) — so on a 144 Hz
+  panel the present could block up to a full produce (the flat-cost /
+  spiky-`produced_max` signature). The copy moved onto a triple buffer guarded by
+  a small dedicated mutex held only for the brief copy: the emu thread publishes
+  each produced frame while it already holds the emu lock; the common present path
+  (no NTSC composite-rt index buffer, no HD-pack) takes the freshest frame without
+  ever blocking on produce. Native + `emu-thread` only; the synchronous
+  (`--no-default-features`) and wasm single-threaded paths keep the prior locked
+  copy. Pure presentation-path change — the bytes published are exactly
+  `nes.framebuffer()`; a concurrent producer/consumer unit test guards against
+  torn frames.
+- **H2 — pacer stall phase-break.** The hybrid sleep-then-spin wall-clock pacer
+  (`block_until_native`: sleep to within `SPIN_MARGIN`, then busy-spin) and the
+  `MAX_CATCHUP_FRAMES = 3` cap + snap-forward already existed; the 50–128 ms
+  spikes were individual OS deschedules (the code already cites 10–40 ms
+  descheduling and elevates the emu thread's priority to mitigate it), not runaway
+  catch-up. So H2 keeps the interval rings honest rather than re-paving the pacer:
+  when the gap since the last scheduled frame already exceeds the catch-up window,
+  the produced/presented interval phase is broken **before** the gap is recorded,
+  so one transient stall no longer dominates `produced_max` / reads as sustained
+  judder. Perf-ring bookkeeping only — no pacing-behavior or determinism change.
+- **H3 — reuse the rewind keyframe-cache allocation** (see the
+  Performance-pass section's H3 entry above; `rustynes-core`, bit-identical).
+- **H4 — audio DRC + buffer tuning.** Widened `MAX_DRC_DELTA` from the ±0.5%
+  Near/RetroArch default to **±1%** (~17 cents, far below audibility): the narrow
+  band could not drain a catch-up-burst over-fill (a 30 ms excess took ~10 s to
+  drain at ±0.5%, so the servo perpetually lagged and eventually underran), and
+  ±1% roughly doubles the drain rate so the queue tracks the target. Plus a
+  one-time **+20 ms latency-target bump on high-refresh panels** (> 75 Hz, capped
+  by the 250 ms clamp, never below the user's configured floor) for ring headroom
+  against the larger bursts. The resampler stage changes audio *timing* only — the
+  core's emitted samples (the determinism + audio-oracle contract) are untouched.
+- **H5 — GPU pass timing on by default.** The `gpu-timing` feature (the
+  `TIMESTAMP_QUERY`-bracketed encoder timer with async 3-deep readback) is now in
+  the default native feature set, so the shipped Performance panel + perf log
+  report a real `gpu_ms` instead of a blank `-`. Timestamp queries are a pure side
+  channel (requested only when the adapter offers the feature; degrading to `None`
+  otherwise), so the presented image is byte-identical with the feature on/off and
+  the wasm builds (gated out) are unchanged. The panel's pacer-anomaly readout also
+  surfaces the worst recent present gap (`presented.max_ms`).
+- **H6 — high-refresh present-aligned cadence — DROPPED (measure-first).** A
+  present-aligned-to-production cadence under Mailbox to smooth the 60-on-144 beat
+  carries documented pacing-regression risk (`docs/frontend.md`: the deeper beat
+  mitigation "needs on-device validation across real refresh rates") and has **no
+  headless measurement path**, so it can't be validated under the measure-first
+  rule in this environment. H1 already removes the present-blocking that amplified
+  the beat, and the `presented_dups` / `produced_dropped` beat counters remain the
+  diagnostic for whether the work is later warranted. Not implemented.
+- **H7 — perf-log regression gate.** `scripts/perf/perf_capture.sh` drives a
+  bounded windowed capture with perf logging auto-enabled (the new
+  `RUSTYNES_PERF_LOG` env hook), and `scripts/perf/perf_log_check.py` parses the
+  CSV and asserts `underruns` / `produced_max` / `catchup_bursts` / `snap_forwards`
+  stay within bounds — turning them into a tracked, repeatable signal. Pacing /
+  audio behavior only exists with the real winit present loop + cpal stream (no
+  headless path — the same reason the v1.2.0 F1/F3 items are maintainer-manual), so
+  the capture skips cleanly on a headless host (exit 0) and is run locally /
+  on-display by the maintainer, mirroring the bench ceiling's deliberately
+  non-flaky philosophy. The checker looks columns up by name, so it tracks
+  `perf_log.rs::columns()` as it grows (the H8 parity guarantee). It parses the
+  2026-06-16 baseline and correctly flags its 12 underruns / 128.9 ms
+  `produced_max` / 62 `catchup_bursts`.
+- **H8 — perf-log ↔ panel parity** (`perf_log.rs`). The exporter had drifted
+  behind the panel: `gpu_ms` empty (H5), and `present_mode_fell_back` /
+  `target_ms` / the DRC servo + run-ahead/rewind state unlogged. The CSV header +
+  every data row are now built from one ordered `columns()` list, and a
+  `csv_columns_cover_panel_metrics` test asserts every panel-surfaced
+  `PerfView` metric has a column (+ no duplicate columns, + row field count ==
+  header), so the exporter and the live panel can't silently drift again.
+
 ### Profile-guided optimization (PGO) — recipe
 
 `scripts/pgo/run.sh` adapts Mesen2's `buildPGO.sh` flow to cargo-pgo:

@@ -5467,6 +5467,18 @@ impl App {
         self.gfx = Some(gfx);
         self.debugger = Some(debugger);
 
+        // v1.5.0 "Lens" Workstream H7 — `RUSTYNES_PERF_LOG=1` auto-enables the
+        // perf-logging checkbox at launch so a scripted SMB capture
+        // (`scripts/perf/perf_capture.sh`) produces a CSV without UI
+        // interaction; the regression gate then parses `produced_max` /
+        // `underruns` / `catchup_bursts` from it. No effect when unset.
+        #[cfg(not(target_arch = "wasm32"))]
+        if std::env::var_os("RUSTYNES_PERF_LOG").is_some()
+            && let Some(debugger) = self.debugger.as_mut()
+        {
+            debugger.force_perf_logging();
+        }
+
         #[cfg(not(target_arch = "wasm32"))]
         {
             // Native: cpal audio + NES from the ROM bytes loaded in `new`.
