@@ -51,6 +51,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     RGBA, and an original/mod blend slider. The v1.4.0 D3 carryover; builds on the
     HD-pack tile-source telemetry. Display-only — the compositor reads the same
     deterministic per-frame snapshots `composite` consumed and mutates nothing.
+- **v1.5.0 "Lens" Workstream B — Lua dev/TAS API depth (beta.2).** The native
+  (mlua) Lua engine grows from an overlay/observe surface into a real dev/TAS
+  automation surface. All behind the existing off-by-default `scripting` feature;
+  every state-mutating call is gated **identically to `emu.write`/`setInput`** (a
+  silent no-op under netplay / TAS-replay / RetroAchievements-hardcore via
+  `set_writes_locked`), so the determinism contract holds and AccuracyCoin stays
+  100% (139/139). Native-only (the same carve-out as `onExec`/`onNmi`; the
+  experimental piccolo/wasm backend keeps the v1.2.0 subset). Builds with the
+  feature off are byte-identical to v1.5.0 beta.1.
+  - **Memory API (B1).** A `memory` table for explicit CPU + PPU-space access:
+    `memory:peek(addr)` / `memory:read_range(addr, len)` (CPU, side-effect-free
+    debug-peek — `$2002` does not clear VBL, `$2007` does not advance the read
+    buffer) plus `memory:peek_ppu` / `memory:read_range_ppu` (the `$0000-$3FFF`
+    PPU bus), and `memory:poke(addr, val)` / `memory:write_range(addr, bytes)`
+    (system-RAM writes, gated like `emu.write`).
+  - **Cart / system queries (B2).** A read-only `cart` table:
+    `cart:mapper_id()`, `cart:prg_size()`, `cart:chr_size()`, `cart:sha256()`
+    (lowercase hex of the ROM SHA-256), `cart:region()` (`"NTSC"`/`"PAL"`/
+    `"Dendy"`), and `cart.frame`. Backed by new read-only core accessors
+    (`Nes::prg_rom_len`/`chr_rom_len`/`mapper_id`).
+  - **Save-state scripting (B3).** `emu:save_state(slot)` / `emu:load_state(slot)`
+    to in-memory script slots (reusing `Nes::snapshot`/`restore`), distinct from
+    the host's on-disk numbered slots — a TAS/analysis script can checkpoint and
+    roll back without touching the user's save files. Save is read-only (always
+    allowed); load is gated like a write (no-op + returns `false` under lock).
+  - **Debug hooks for scripts (B4).** `emu:on_breakpoint(addr, fn)` (observational,
+    replayed from the per-frame exec-PC log like `onExec`), `emu:pause_at_frame(n)`
+    (queues a one-shot pause when the frame count reaches `n`), and a `sym` table —
+    `sym:addr("name")` / `sym:name(addr)` — that resolves against the v1.4.0
+    debugger symbol-file labels the host now pushes into the engine on script load
+    and on every symbol load/clear.
+  - **Examples + docs + tests (B5).** Three bundled example scripts
+    (`examples/scripts/memory_scanner.lua`, `tas_frame_analysis.lua`,
+    `game_state_tracker.lua`), an expanded `docs/scripting.md` API reference, and
+    new `rustynes-script` tests covering the new API, the side-effect-free peek
+    contract, the write-gating of `poke`/`write_range`/`load_state` under a locked
+    session, and a guard that every bundled example loads + runs.
 
 ## [1.4.1] - 2026-06-16
 

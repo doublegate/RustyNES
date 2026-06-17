@@ -66,8 +66,12 @@ console shows `print` / `emu.log` output, the loaded path, the `onFrame`
 callback count, and any load / runtime error. **Reload** re-reads the file;
 **Stop** unloads it.
 
-Two examples live in [`examples/scripts/`](../examples/scripts): `hud.lua`
-(an on-screen frame/PC HUD) and `ram_watch.lua` (a write tracer + RAM dump).
+Five examples live in [`examples/scripts/`](../examples/scripts): `hud.lua`
+(an on-screen frame/PC HUD), `ram_watch.lua` (a write tracer + RAM dump), and
+the v1.5.0 dev/TAS set — `memory_scanner.lua` (a Cheat-Engine-style RAM
+next-scan), `tas_frame_analysis.lua` (rolling in-memory checkpoints +
+`pause_at_frame` + per-frame deltas), and `game_state_tracker.lua` (a
+symbol-aware HUD that resolves watched fields by name).
 
 ## The `emu` API
 
@@ -134,6 +138,70 @@ Overlay coordinates are NES-framebuffer space (256×240), mapped onto the actual
 letterboxed game rect — honouring 8:7 pixel-aspect correction and the overscan
 crop — so HUD coordinates line up with game pixels.
 
+## The dev / TAS API (v1.5.0 Workstream B)
+
+A deeper automation surface for memory inspection, cart introspection,
+in-script checkpointing, and symbol-aware debugging. These tables and methods
+are **native-only** (the mlua backend) — the same documented carve-out as
+`onExec` / `onNmi` (the experimental piccolo/wasm backend keeps the v1.2.0
+subset; see [ADR 0012](adr/0012-wasm-lua-piccolo-backend.md)). All
+state-mutating calls are **gated identically to `emu.write`** (a silent no-op
+under netplay / TAS replay / RA-hardcore), so they cannot perturb a
+deterministic / locked session.
+
+> These new tables use **colon-call** syntax (`memory:peek(addr)`,
+> `cart:mapper_id()`, `emu:save_state(1)`, `sym:addr("main")`). The original
+> `emu.read` / `emu.write` / `emu.saveState` (dot form) are unchanged.
+
+### `memory` — explicit CPU + PPU memory access (B1)
+
+| Call | Description |
+|---|---|
+| `memory:peek(addr)` | One CPU-bus byte (`$0000-$FFFF`), side-effect-free (`$2002` does not clear VBL; `$2007` does not advance the read buffer). |
+| `memory:read_range(addr, len)` | `len` CPU bytes from `addr` (wrapping), 1-based array. `len` ≤ 65536. |
+| `memory:peek_ppu(addr)` | One PPU-bus byte (`$0000-$3FFF`: CHR, nametables, palette), side-effect-free. |
+| `memory:read_range_ppu(addr, len)` | `len` PPU bytes from `addr` (wrapping the 14-bit PPU space). `len` ≤ 16384. |
+| `memory:poke(addr, value)` | Write a byte into **system RAM** (`$0000-$1FFF`). Gated like `emu.write`. |
+| `memory:write_range(addr, bytes)` | Write a 1-based byte array starting at `addr` into system RAM. Gated like `emu.write`. |
+
+### `cart` — read-only cart / system queries (B2)
+
+| Call | Description |
+|---|---|
+| `cart:mapper_id()` | The loaded iNES / NES 2.0 mapper id. |
+| `cart:prg_size()` | PRG-ROM size in bytes. |
+| `cart:chr_size()` | CHR-ROM size in bytes (0 for CHR-RAM boards). |
+| `cart:sha256()` | Lowercase-hex SHA-256 of the ROM bytes (64 chars). |
+| `cart:region()` | `"NTSC"`, `"PAL"`, or `"Dendy"`. |
+| `cart.frame` | The current frame number (mirrors `emu.frame`). |
+
+### In-memory save-state slots (B3)
+
+| Call | Effect |
+|---|---|
+| `emu:save_state(slot)` | Snapshot the full emulator state into in-memory script slot `slot` (`0-255`). Read-only — always allowed. |
+| `emu:load_state(slot)` | Restore from script slot `slot`. Returns `true` on success, `false` for an empty slot or a locked session. **Gated like `emu.write`.** |
+
+These slots are **distinct** from the host's on-disk numbered slots
+(`emu.saveState` / `emu.loadState`): they live in the script engine for the
+session and are never persisted, so a TAS / analysis script can checkpoint and
+roll back without touching the user's save files.
+
+### Debug hooks for scripts (B4)
+
+| Call | Effect |
+|---|---|
+| `emu:on_breakpoint(addr, fn)` | Register `fn(pc)` to fire each time the CPU executed an instruction at `addr` that frame. Observational — replayed from the per-frame exec-PC log (like `onExec`), never a mid-instruction intercept; arms the exec log. |
+| `emu:pause_at_frame(n)` | Queue a one-shot pause that fires when the emulated frame count reaches `n`. |
+| `sym:addr(name)` | The CPU address for label `name`, or `nil`. |
+| `sym:name(addr)` | The label at `addr`, or `nil`. |
+
+The `sym` table resolves against the debugger's loaded symbol-file labels
+(`.sym` / Mesen `.mlb` / FCEUX `.nl`, the v1.4.0 Workstream D loader). The host
+pushes the current symbol map into the engine when a script loads and on every
+symbol load / clear, so `sym:` tracks whatever is loaded. With no symbol file
+loaded, both queries return `nil`.
+
 ## Determinism + safety
 
 - **Sandbox.** Only the `table` / `string` / `math` / `coroutine` standard
@@ -150,7 +218,12 @@ crop — so HUD coordinates line up with game pixels.
   source (it never queues), and the host re-checks the identical condition
   (`netplay_locked || movie_locked`, which folds in RA-hardcore) at the
   late-latch — so a locked / replayed session is provably unperturbed. Reads and
-  the overlay are always allowed.
+  the overlay are always allowed. The v1.5.0 dev/TAS mutators ride the **same**
+  `set_writes_locked` gate: `memory:poke`, `memory:write_range`, and
+  `emu:load_state` are silent no-ops under a locked session (an in-script
+  `emu:save_state` is a read-only snapshot and is always allowed; `emu:load_state`
+  returns `false` rather than mutating). The `memory:peek*` / `read_range*`,
+  `cart:*`, and `sym:*` queries are pure reads, so they always run.
 - **`emu.setInput` late-latch.** When unlocked, a `setInput(port, buttons)` is
   applied at the *same* deterministic point a real keypress enters — the
   per-frame controller latch, just before the frame runs — so a session that

@@ -830,4 +830,40 @@ mod tests {
         }
         assert_eq!(pauses, 1, "pause_at_frame must queue exactly one Pause");
     }
+
+    /// B5 — every bundled example script loads + pumps a few frames without a
+    /// load or runtime error (so a doc-referenced example never bit-rots against
+    /// the API). Embedded at compile time relative to this crate.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn bundled_example_scripts_load_and_run() {
+        const EXAMPLES: &[(&str, &str)] = &[
+            (
+                "memory_scanner.lua",
+                include_str!("../../../examples/scripts/memory_scanner.lua"),
+            ),
+            (
+                "tas_frame_analysis.lua",
+                include_str!("../../../examples/scripts/tas_frame_analysis.lua"),
+            ),
+            (
+                "game_state_tracker.lua",
+                include_str!("../../../examples/scripts/game_state_tracker.lua"),
+            ),
+        ];
+        for (name, src) in EXAMPLES {
+            let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+            let mut eng = ScriptEngine::new().expect("engine");
+            eng.set_symbols(&[(0x0010, "player_x".to_owned())]);
+            eng.load(src).unwrap_or_else(|e| panic!("{name} load: {e}"));
+            for _ in 0..3 {
+                nes.run_frame();
+                eng.on_frame(&mut nes)
+                    .unwrap_or_else(|e| panic!("{name} on_frame: {e}"));
+                let _ = eng.drain_controls();
+                let _ = eng.drain_draws();
+                let _ = eng.drain_log();
+            }
+        }
+    }
 }
