@@ -333,6 +333,71 @@ pub fn parse_unif(bytes: &[u8]) -> Result<UnifImage, UnifError> {
     })
 }
 
+/// Synthesize an equivalent **NES 2.0** image from a parsed UNIF, so the
+/// standard [`crate::parse`] path builds the [`crate::Cartridge`] + mapper with
+/// zero duplicated mapper construction.
+///
+/// PRG is zero-padded to a 16 KiB multiple and CHR to 8 KiB; empty CHR encodes
+/// a CHR-RAM board (8 KiB CHR-RAM via NES 2.0 byte 11). NES 2.0 (not iNES 1.0)
+/// is used deliberately: it preserves the region (byte 12) the `TVCI` chunk
+/// gave us, and its byte-9 size MSB nibbles represent the large multicart PRG
+/// banks (> 255 × 16 KiB) that iNES 1.0 cannot. Every board in the table maps
+/// to a mapper id ≤ 255, well within range.
+// Every `as u8` below extracts a masked header byte-field (`& 0xFF` / `& 0x0F`),
+// so the truncation is the intended field slice, not a lossy cast.
+#[allow(clippy::cast_possible_truncation)]
+#[must_use]
+pub fn unif_to_ines(img: &UnifImage) -> Vec<u8> {
+    const PRG_UNIT: usize = 16 * 1024;
+    const CHR_UNIT: usize = 8 * 1024;
+
+    let mut prg = img.prg_rom.clone();
+    let prg_rem = prg.len() % PRG_UNIT;
+    if prg_rem != 0 {
+        prg.resize(prg.len() + (PRG_UNIT - prg_rem), 0);
+    }
+    let mut chr = img.chr_rom.clone();
+    let chr_rem = chr.len() % CHR_UNIT;
+    if chr_rem != 0 {
+        chr.resize(chr.len() + (CHR_UNIT - chr_rem), 0);
+    }
+    let prg_banks = prg.len() / PRG_UNIT;
+    let chr_banks = chr.len() / CHR_UNIT;
+    let mapper = img.mapper_id;
+
+    let mirror_bits: u8 = match img.mirroring {
+        Mirroring::Vertical => 0x01,
+        Mirroring::FourScreen => 0x08,
+        _ => 0x00, // Horizontal / single-screen
+    };
+
+    let mut h = [0u8; 16];
+    h[0..4].copy_from_slice(b"NES\x1A");
+    h[4] = (prg_banks & 0xFF) as u8; // PRG size LSB (16 KiB units)
+    h[5] = (chr_banks & 0xFF) as u8; // CHR size LSB (8 KiB units)
+    h[6] = (((mapper & 0x0F) as u8) << 4) | mirror_bits | (u8::from(img.has_battery) << 1);
+    // byte 7: mapper bits 4-7 in the high nibble; bits 2-3 = 0b10 (NES 2.0
+    // marker); console type = 0 (NES).
+    h[7] = ((((mapper >> 4) & 0x0F) as u8) << 4) | 0x08;
+    h[8] = ((mapper >> 8) & 0x0F) as u8; // mapper bits 8-11 (submapper nibble = 0)
+    h[9] = (((prg_banks >> 8) & 0x0F) as u8) | ((((chr_banks >> 8) & 0x0F) as u8) << 4);
+    // byte 11: CHR-RAM size shift (size = 64 << shift). 8 KiB = 64 << 7 when the
+    // board ships no CHR-ROM; 0 (no CHR-RAM) when it does.
+    h[11] = if chr.is_empty() { 0x07 } else { 0x00 };
+    h[12] = match img.region {
+        Region::Pal => 1,
+        Region::Multi => 2,
+        Region::Dendy => 3,
+        Region::Ntsc => 0,
+    };
+
+    let mut out = Vec::with_capacity(16 + prg.len() + chr.len());
+    out.extend_from_slice(&h);
+    out.extend_from_slice(&prg);
+    out.extend_from_slice(&chr);
+    out
+}
+
 /// Map the trailing byte of a `PRG?`/`CHR?` chunk id (`'0'..='9'`, `'A'..='F'`,
 /// `'a'..='f'`) to its bank slot 0..=15. `None` for any other byte.
 const fn hex_nibble(b: u8) -> Option<u8> {
@@ -454,5 +519,70 @@ mod tests {
             parse_unif(&blob),
             Err(UnifError::ChunkOverrun { .. })
         ));
+    }
+
+    #[test]
+    fn unif_parses_through_the_cartridge_path() {
+        // A UNIF blob must load via the top-level `parse()` (UNIF-magic
+        // dispatch -> synthesize NES 2.0 -> standard parse) and yield the right
+        // Cartridge + a constructed mapper.
+        let prg = vec![0xEAu8; 16 * 1024];
+        let chr = vec![0x55u8; 8 * 1024];
+        let blob = build_unif(&[
+            (b"MAPR", b"NES-NROM\0".to_vec()),
+            (b"PRG0", prg.clone()),
+            (b"CHR0", chr.clone()),
+            (b"MIRR", vec![1]), // vertical
+            (b"BATR", vec![]),
+            (b"TVCI", vec![1]), // PAL
+        ]);
+        let (cart, _mapper) = crate::parse(&blob).expect("UNIF loads via the cartridge path");
+        assert_eq!(cart.mapper_id, 0);
+        assert_eq!(&*cart.prg_rom, &prg[..]);
+        assert_eq!(&*cart.chr_rom, &chr[..]);
+        assert_eq!(cart.mirroring, Mirroring::Vertical);
+        assert!(cart.has_battery);
+        assert!(cart.is_nes2, "the synthesized image is NES 2.0");
+        assert_eq!(
+            cart.region,
+            Region::Pal,
+            "TVCI region survives the synthesis"
+        );
+    }
+
+    #[test]
+    fn unif_nrom_matches_the_equivalent_ines() {
+        // The Cartridge a UNIF NROM produces must equal the one the equivalent
+        // hand-built iNES NROM produces (same PRG/CHR/mapper/mirroring).
+        let prg = vec![0x42u8; 16 * 1024];
+        let chr = vec![0x99u8; 8 * 1024];
+        let unif = build_unif(&[
+            (b"MAPR", b"NROM\0".to_vec()),
+            (b"PRG0", prg.clone()),
+            (b"CHR0", chr.clone()),
+        ]);
+        let (uc, _) = crate::parse(&unif).expect("unif");
+        // Equivalent iNES 1.0 NROM: 1x16 KiB PRG, 1x8 KiB CHR, mapper 0, horiz.
+        let mut ines = vec![b'N', b'E', b'S', 0x1A, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        ines.extend_from_slice(&prg);
+        ines.extend_from_slice(&chr);
+        let (ic, _) = crate::parse(&ines).expect("ines");
+        assert_eq!(uc.mapper_id, ic.mapper_id);
+        assert_eq!(uc.prg_rom, ic.prg_rom);
+        assert_eq!(uc.chr_rom, ic.chr_rom);
+        assert_eq!(uc.mirroring, ic.mirroring);
+    }
+
+    #[test]
+    fn unif_chr_ram_board_synthesizes_chr_ram() {
+        // No CHR chunk => CHR-RAM board: empty CHR-ROM, non-zero CHR-RAM.
+        let blob = build_unif(&[
+            (b"MAPR", b"UNROM\0".to_vec()),
+            (b"PRG0", vec![0u8; 16 * 1024]),
+        ]);
+        let (cart, _) = crate::parse(&blob).expect("unif");
+        assert_eq!(cart.mapper_id, 2);
+        assert!(cart.uses_chr_ram(), "no CHR chunk => CHR-RAM board");
+        assert!(cart.chr_ram_size >= 8 * 1024, "8 KiB CHR-RAM synthesized");
     }
 }

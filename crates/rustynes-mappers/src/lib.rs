@@ -142,7 +142,7 @@ pub use taito_x1_017::TaitoX1017;
 pub use tier::{MapperTier, mapper_tier};
 pub use tqrom::Tqrom;
 pub use txsrom::TxSrom;
-pub use unif::{UnifError, UnifImage, board_to_mapper, parse_unif};
+pub use unif::{UnifError, UnifImage, board_to_mapper, parse_unif, unif_to_ines};
 pub use uxrom::UxRom;
 pub use vrc3::Vrc3;
 pub use vs_system::VsSystem;
@@ -196,6 +196,16 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
         return Err(RomError::InvalidConfig(
             "NSF music file — load via Nes::from_nsf, not parse()".into(),
         ));
+    }
+
+    // UNIF container (`"UNIF"` magic): resolve the MAPR board name to an iNES
+    // mapper, synthesize an equivalent NES 2.0 image, and parse that through the
+    // standard path below — reusing all mapper construction + Cartridge assembly
+    // (v1.6.0 Workstream E2). The synthetic image carries `"NES\x1A"` magic, so
+    // it never re-enters this branch.
+    if bytes.len() >= 4 && &bytes[0..4] == unif::UNIF_MAGIC {
+        let img = unif::parse_unif(bytes).map_err(|e| RomError::InvalidConfig(e.to_string()))?;
+        return parse(&unif::unif_to_ines(&img));
     }
 
     let h = parse_header(bytes)?;
