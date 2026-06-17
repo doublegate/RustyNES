@@ -109,13 +109,16 @@ pub fn frame_health(fb: &[u8]) -> FrameHealth {
     }
 }
 
-/// Recursively collect every `.nes` file under `root`, appending to `out`.
+/// Recursively collect every loadable ROM file under `root` (a `.nes` iNES /
+/// NES 2.0 image or a `.unf` / `.unif` UNIF container), appending to `out`.
 ///
 /// Order is filesystem-dependent; callers that need determinism sort the
 /// result. Missing / unreadable directories are silently skipped (a
 /// fresh checkout's gitignored-absent `external/` tree returns nothing
-/// rather than erroring). This is the walk the `coverage_smoke` bin uses
-/// to sweep an arbitrary external directory.
+/// rather than erroring). This is the walk the `coverage_smoke` bin and the
+/// data-driven `external_coverage` harness use to sweep an external directory.
+/// UNIF (`.unf`) is included as of v1.6.0 (E2) so the UNIF-only dumps staged
+/// under `external/` are boot-captured alongside the iNES ones.
 pub fn walk_nes(root: &Path, out: &mut Vec<PathBuf>) {
     let Ok(rd) = std::fs::read_dir(root) else {
         return;
@@ -124,7 +127,11 @@ pub fn walk_nes(root: &Path, out: &mut Vec<PathBuf>) {
         let p = entry.path();
         if p.is_dir() {
             walk_nes(&p, out);
-        } else if p.extension().is_some_and(|x| x.eq_ignore_ascii_case("nes")) {
+        } else if p.extension().is_some_and(|x| {
+            x.eq_ignore_ascii_case("nes")
+                || x.eq_ignore_ascii_case("unf")
+                || x.eq_ignore_ascii_case("unif")
+        }) {
             out.push(p);
         }
     }
