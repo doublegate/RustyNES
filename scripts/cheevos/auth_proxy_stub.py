@@ -49,18 +49,25 @@ def make_handler(cfg: Config):
         server_version = "RustyNESRAProxy/0.1"
 
         def _cors(self, origin: str | None) -> None:
-            # Only ever echo an origin that exactly matches a configured
-            # allowlist entry, AND reject any CR/LF so a crafted Origin can't
-            # split the response into injected headers (CodeQL: HTTP response
-            # splitting). The allowlist already constrains the value; the
-            # control-char check makes the no-injection guarantee explicit.
-            if (
-                origin
-                and origin in cfg.allowed_origins
-                and "\r" not in origin
-                and "\n" not in origin
-            ):
-                self.send_header("Access-Control-Allow-Origin", origin)
+            # Echo ONLY a configured allowlist entry — and the config-sourced
+            # copy of it, never the request-provided string — so no
+            # request-tainted value can reach the response header. This defuses
+            # HTTP response splitting (CodeQL py/http-response-splitting): the
+            # value written below originates from `cfg.allowed_origins` (config),
+            # not from the client's Origin header. The CR/LF reject is kept as a
+            # belt-and-suspenders guard on the config value too.
+            if not origin:
+                return
+            allowed = next(
+                (
+                    o
+                    for o in cfg.allowed_origins
+                    if o == origin and "\r" not in o and "\n" not in o
+                ),
+                None,
+            )
+            if allowed is not None:
+                self.send_header("Access-Control-Allow-Origin", allowed)
                 self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
                 self.send_header("Access-Control-Allow-Headers", "Content-Type")
 
