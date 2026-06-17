@@ -32,11 +32,12 @@ index  ->  survey  ->  discover  ->  stage  ->  [Rust capture]  ->  categorize  
    `--execute` to write. `--unif` adds UNIF gap-fillers for boards without an
    iNES dump.
 5. **Rust capture** — boot every staged ROM and emit screenshots / snapshot
-   hashes. This lives in the Rust test harness, **not** here:
-   `crates/rustynes-test-harness/tests/external_real_games.rs` (run with
-   `--features commercial-roms,test-roms`). A data-driven `external_coverage.rs`
-   variant is being developed on the `feat/coverage-harness` branch — point
-   `stage` at it once it lands.
+   hashes. This lives in the Rust test harness, **not** here. The data-driven
+   `crates/rustynes-test-harness/tests/external_coverage.rs` auto-discovers every
+   ROM under `tests/roms/external/mapper-*/` and blesses one baseline per ROM;
+   run it via **`scripts/coverage/bless.sh`** (see "Blessing baselines" below) —
+   never invoke the raw `cargo test … INSTA_UPDATE=…` by hand. (The older
+   fixed-list `external_real_games.rs` still exists for the curated set.)
 6. **`categorize`** — tier-split the screenshot tree so the screenshot category
    always matches the ROM tier (ADR 0011): `Core`/`Curated` → `screenshots/external/`,
    `BestEffort` → `screenshots/besteffort/`. Reads the live tier table from
@@ -72,6 +73,29 @@ python3 scripts/coverage/coverage.py report
 # point at an extra library root (e.g. a second collection)
 python3 scripts/coverage/coverage.py survey --root /mnt/roms/nes-extra
 ```
+
+## Blessing baselines (`bless.sh`)
+
+`scripts/coverage/bless.sh` is the **one** safe way to (re-)bless the data-driven
+`external_coverage` baselines. A full sweep boots every staged ROM (~20–30 min),
+so it must run exactly once at a time:
+
+```bash
+scripts/coverage/bless.sh                 # full single-threaded sweep, lock-guarded
+cargo insta accept                        # promote the .snap.new it wrote
+python3 scripts/coverage/coverage.py categorize
+```
+
+The script `flock`s `target/.coverage-bless.lock` — a second invocation **refuses**
+rather than racing. **Run it via the harness's tracked background mechanism so it
+stays stoppable; never `nohup` it and never wrap it in a self-relaunching loop.**
+Postmortem (2026-06-17): concurrent + `nohup`-detached + self-relaunching blesses
+raced the single Cargo target lock, produced partial `.snap.new`/PNG state, and —
+once detached — survived being stopped and got reparented as an unkillable runaway.
+The lock + "one at a time, tracked, foreground" rules in the script header exist to
+make that impossible to repeat. `INSTA_UPDATE=auto` is correct here: each ROM is
+wrapped in `catch_unwind`, so a per-ROM snapshot panic is recorded (not fatal) and
+the sweep still writes a `.snap.new` for every new/changed baseline.
 
 ## Tier source of truth
 

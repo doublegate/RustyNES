@@ -90,15 +90,13 @@
 //! ## Blessing baselines for newly-staged ROMs
 //!
 //! ```bash
-//! # Stage ROMs under tests/roms/external/mapper-NNN-Name/, then:
-//! INSTA_UPDATE=auto RUSTYNES_DUMP_FRAMES=1 \
-//!     cargo test -p rustynes-test-harness --features commercial-roms,test-roms \
-//!     --test external_coverage -- --test-threads=1 --nocapture
-//! # Inspect the PNGs at /tmp/rustynes-baseline-screenshots/external/,
-//! # then sort them into the committed tree:
-//! python3 scripts/screenshots/categorize_screenshots.py
-//! # Accept the .snap.new files:
+//! # Stage ROMs under tests/roms/external/mapper-NNN-Name/, then use the ONE
+//! # lock-guarded bless entry point (NEVER run two blesses at once / nohup it —
+//! # they race the Cargo target lock; see the script header for the postmortem):
+//! scripts/coverage/bless.sh                 # full sweep, single-threaded, flock'd
+//! # Inspect the PNGs at /tmp/rustynes-baseline-screenshots/external/, then:
 //! cargo insta accept
+//! python3 scripts/coverage/coverage.py categorize
 //! ```
 //!
 //! In `INSTA_UPDATE=auto` (or `always`) mode every missing / mismatched
