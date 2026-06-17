@@ -410,11 +410,6 @@ pub mod external {
     /// in a regression harness (the user is expected to have staged
     /// the ROMs at `tests/roms/external/`).
     #[allow(clippy::too_many_lines)]
-    // `tick_with` (below) increments `frame_counter` every frame; the sampling
-    // arms read it via `maybe_emit`, but the idle/boot arms that only tick
-    // leave the macro's final increment a dead store — a macro-expansion
-    // artifact, so unused_assignments is allowed at the fn scope.
-    #[allow(unused_assignments)]
     pub fn run_capture(rom_rel: &str, script: InputScript) -> CaptureResult {
         let path = external_rom_path(rom_rel);
         let bytes = fs::read(&path).unwrap_or_else(|e| {
@@ -442,7 +437,6 @@ pub mod external {
                     nes.set_buttons(0, buttons);
                     nes.run_frame();
                     samples.extend(nes.drain_audio());
-                    frame_counter += 1;
                 }
             }};
         }
