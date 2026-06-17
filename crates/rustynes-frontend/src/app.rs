@@ -1908,6 +1908,66 @@ impl App {
         }
     }
 
+    /// v1.5.0 "Lens" Workstream C2 — dispatch a Replay / TAS window action.
+    ///
+    /// Record / Play / Branch reuse the existing F6/F7/F8 menu handlers (so the
+    /// window and the shortcuts share one code path). Stop maps to the active
+    /// mode's toggle (stop-recording goes through the save path; stop-playback
+    /// releases live input). Seek deterministically re-derives playback state by
+    /// replaying the recorded inputs (`MovieUi::seek_playback`) under the emu
+    /// lock — replay stays bit-identical, no new determinism surface.
+    fn handle_replay_request(
+        &mut self,
+        req: crate::debugger::ReplayRequest,
+        event_loop: &ActiveEventLoop,
+    ) {
+        use crate::debugger::ReplayRequest;
+        match req {
+            ReplayRequest::RecordToggle => {
+                self.dispatch_menu_action(
+                    crate::ui_shell::MenuAction::MovieRecordToggle,
+                    event_loop,
+                );
+            }
+            ReplayRequest::PlayToggle => {
+                self.dispatch_menu_action(crate::ui_shell::MenuAction::MoviePlayToggle, event_loop);
+            }
+            ReplayRequest::Branch => {
+                self.dispatch_menu_action(crate::ui_shell::MenuAction::MovieBranch, event_loop);
+            }
+            ReplayRequest::Stop => {
+                let (recording, playing) = {
+                    let emu = self.emu.lock();
+                    (emu.movie.is_recording(), emu.movie.is_playing())
+                };
+                if recording {
+                    // Route through the record toggle so the recording is saved
+                    // rather than silently dropped.
+                    self.dispatch_menu_action(
+                        crate::ui_shell::MenuAction::MovieRecordToggle,
+                        event_loop,
+                    );
+                } else if playing {
+                    self.emu.lock().movie.stop_playback();
+                }
+            }
+            ReplayRequest::Seek(target) => {
+                let mut guard = self.emu.lock();
+                let emu = &mut *guard;
+                // Split the borrows: `nes` and `movie` are distinct fields.
+                let seeked = match emu.nes.as_mut() {
+                    Some(nes) => emu.movie.seek_playback(nes, target),
+                    None => false,
+                };
+                if seeked {
+                    // The seek re-derived emulator state; restart the frame
+                    // clock so the next replayed frame is due now.
+                    emu.next_frame_time = Some(Instant::now());
+                }
+            }
+        }
+    }
+
     /// v1.6.0 Sprint 4 / v1.4.0 E2 — F1 save state to `IndexedDB` (wasm32).
     ///
     /// The browser counterpart of [`Self::handle_save_state`]: serialize the
@@ -2124,6 +2184,40 @@ impl App {
     fn latch_input(&self) {
         let inputs = self.frame_inputs();
         self.emu.lock().latch(&inputs);
+    }
+
+    /// v1.5.0 "Lens" Workstream C2 — build the read-only port-topology +
+    /// timebase snapshot for the Replay / TAS window from the host config +
+    /// the cartridge `region`. Frontend-only; never touches the replay path.
+    const fn build_replay_info(
+        &self,
+        region: rustynes_core::Region,
+    ) -> crate::movie_ui::ReplayInfo {
+        use crate::config::ExpansionDevice;
+        let (region_label, region_hz) = match region {
+            rustynes_core::Region::Pal => ("PAL", 50),
+            rustynes_core::Region::Dendy => ("Dendy", 50),
+            rustynes_core::Region::Ntsc => ("NTSC", 60),
+        };
+        let port2 = match self.config.input.expansion_device {
+            ExpansionDevice::None => "Standard pad",
+            ExpansionDevice::Zapper => "Zapper",
+            ExpansionDevice::Vaus => "Arkanoid Vaus",
+            ExpansionDevice::PowerPad => "Power Pad",
+            ExpansionDevice::SnesMouse => "SNES mouse",
+            ExpansionDevice::FamilyKeyboard => "Family BASIC keyboard",
+            ExpansionDevice::FamilyTrainer => "Family Trainer mat",
+            ExpansionDevice::SuborKeyboard => "Subor keyboard",
+            ExpansionDevice::KonamiHyperShot => "Konami Hyper Shot",
+            ExpansionDevice::BandaiHyperShot => "Bandai Hyper Shot",
+        };
+        crate::movie_ui::ReplayInfo {
+            region: region_label,
+            region_hz,
+            port1: "Standard pad",
+            port2,
+            four_score: self.config.input.four_score,
+        }
     }
 
     /// v2.1.0 — (re)attach the configured non-standard device on the player-2
@@ -4518,7 +4612,7 @@ impl App {
         // user can read them from the top toolbar. One scoped lock builds
         // the whole perf snapshot (the gfx fields are App-resident and are
         // filled in after the guard drops).
-        let (fps, movie_status, mut perf_view) = {
+        let (fps, movie_status, region, mut perf_view) = {
             let mut guard = self.emu.lock();
             let emu = &mut *guard;
             // v2.8.0 Phase 0 — refresh the audio-queue health + snapshot
@@ -4537,8 +4631,13 @@ impl App {
             // the median (steady-state) produce cost, not the p95 tail (which
             // on the emu thread is OS-deschedule noise, not run-ahead cost).
             emu.update_runahead_throttle(view.produce_cost.p50_ms, view.produce_cost.count);
-            (emu.current_fps(), emu.movie.status(), view)
+            let region = emu
+                .nes
+                .as_ref()
+                .map_or(rustynes_core::Region::Ntsc, rustynes_core::Nes::region);
+            (emu.current_fps(), emu.movie.status(), region, view)
         };
+        let replay_info = self.build_replay_info(region);
         perf_view.pacing = self.pacing_label();
         if let Some(gfx) = self.gfx.as_ref() {
             perf_view.present_mode = format!("{:?}", gfx.effective_present_mode());
@@ -4587,6 +4686,7 @@ impl App {
             debugger.set_input_display(input_pads, input_players);
             debugger.set_input_miniatures(miniatures);
             debugger.set_movie_status(movie_status);
+            debugger.set_replay_info(movie_status, replay_info);
             debugger.set_perf_log_note(log_note);
             debugger.set_perf_view(perf_view);
             // v1.7.0 — pull the live enabled raw-cheat list edited in the
@@ -5103,12 +5203,17 @@ impl App {
                 #[cfg(feature = "script-wasm")]
                 self.pump_scripts_wasm();
 
-                let (fps, movie_status, mut perf_view) = {
+                let (fps, movie_status, region, mut perf_view) = {
                     let emu = self.emu.lock();
                     let mut view = emu.perf.view();
                     view.target_ms = emu.frame_duration.as_secs_f32() * 1000.0;
-                    (emu.current_fps(), emu.movie.status(), view)
+                    let region = emu
+                        .nes
+                        .as_ref()
+                        .map_or(rustynes_core::Region::Ntsc, rustynes_core::Nes::region);
+                    (emu.current_fps(), emu.movie.status(), region, view)
                 };
+                let replay_info = self.build_replay_info(region);
                 perf_view.pacing = if display_sync { "raf-display" } else { "raf" }.into();
                 // v2.8.0 Phase 6 — wire the AudioWorklet ring health into the
                 // Perf panel (occupancy / underruns / overruns), the wasm
@@ -5129,6 +5234,7 @@ impl App {
                 if let Some(debugger) = self.debugger.as_mut() {
                     debugger.set_fps(fps);
                     debugger.set_movie_status(movie_status);
+                    debugger.set_replay_info(movie_status, replay_info);
                     debugger.set_perf_view(perf_view);
                     // v1.7.0 — pull the live enabled raw-cheat list edited in
                     // the cheat panel so the next produce iteration pokes the
@@ -6722,6 +6828,16 @@ impl ApplicationHandler<AppEvent> for App {
                         self.handle_cheevos_request(req);
                     }
                     self.persist_ra_token_if_new();
+                }
+
+                // v1.5.0 "Lens" Workstream C2 — act on a Replay / TAS window
+                // button (record/play/branch/stop/seek) clicked this frame.
+                if let Some(req) = self
+                    .debugger
+                    .as_mut()
+                    .and_then(DebuggerOverlay::take_replay_request)
+                {
+                    self.handle_replay_request(req, event_loop);
                 }
             }
             _ => {}
