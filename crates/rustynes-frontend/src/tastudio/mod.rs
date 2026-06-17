@@ -40,6 +40,24 @@ pub const DEFAULT_GREENZONE_BUDGET: usize = 256 * 1024 * 1024;
 /// frames so any later seek only re-emulates at most N-1 frames forward.
 pub const DEFAULT_CAPTURE_INTERVAL: usize = 60;
 
+/// A forkable timeline (`BizHawk` `TasBranch` / FCEUX "Bookmark").
+///
+/// A complete snapshot of the project at the moment it was forked — the input
+/// log, the markers, the cursor frame, and the emulator save-state there.
+/// Loading a branch restores all of them. (A framebuffer thumbnail is a
+/// frontend concern, added when the grid lands.)
+#[derive(Clone, Debug)]
+pub struct Branch {
+    /// The frame the branch was forked at (the cursor at save time).
+    pub frame: usize,
+    /// The full input log at fork time.
+    pub input_log: Vec<FrameInput>,
+    /// The markers at fork time.
+    pub markers: BTreeMap<usize, String>,
+    /// The emulator save-state at [`Self::frame`].
+    pub state: Vec<u8>,
+}
+
 /// The `TAStudio` editor model: an editable input log over a frame-keyed
 /// save-state greenzone, with deterministic seek + edit-invalidation.
 pub struct TasEditor {
@@ -62,6 +80,9 @@ pub struct TasEditor {
     /// marked frame is also pinned as a greenzone anchor so jumping to it is
     /// instant. Markers shift with their frames on insert / delete.
     markers: BTreeMap<usize, String>,
+    /// Saved forkable timelines (A4). Each is a full project snapshot the user
+    /// can branch off and return to.
+    branches: Vec<Branch>,
 }
 
 impl TasEditor {
@@ -80,6 +101,7 @@ impl TasEditor {
             capture_interval: capture_interval.max(1),
             lag_log: Vec::new(),
             markers: BTreeMap::new(),
+            branches: Vec::new(),
         }
     }
 
@@ -216,6 +238,70 @@ impl TasEditor {
             self.markers.insert(new_frame, label);
             self.greenzone.add_anchor(new_frame);
         }
+    }
+
+    /// Fork a new branch from the current state: snapshot the input log,
+    /// markers, cursor, and `nes`'s save-state into a stored [`Branch`].
+    /// `nes` MUST be at the cursor frame (the caller seeks first). Returns the
+    /// new branch's index.
+    pub fn create_branch(&mut self, nes: &Nes) -> usize {
+        self.branches.push(Branch {
+            frame: self.cursor,
+            input_log: self.input_log.clone(),
+            markers: self.markers.clone(),
+            state: nes.snapshot(),
+        });
+        self.branches.len() - 1
+    }
+
+    /// Number of saved branches.
+    #[must_use]
+    pub const fn branch_count(&self) -> usize {
+        self.branches.len()
+    }
+
+    /// Borrow branch `idx`, if it exists.
+    #[must_use]
+    pub fn branch(&self, idx: usize) -> Option<&Branch> {
+        self.branches.get(idx)
+    }
+
+    /// Delete branch `idx` (later branches shift down by one). No-op if absent.
+    pub fn delete_branch(&mut self, idx: usize) {
+        if idx < self.branches.len() {
+            self.branches.remove(idx);
+        }
+    }
+
+    /// Load branch `idx`: restore its input log, markers, cursor, and emulator
+    /// save-state. The greenzone is reset to the durable frame-0 anchor (the
+    /// power-on state is input-independent) plus the branch's own state pinned
+    /// at its frame, so seeking within the branch stays cheap; the lag log is
+    /// dropped past the branch frame (re-derived on replay). Returns `false`
+    /// (leaving `nes` untouched) if `idx` is out of range or the state is
+    /// malformed.
+    pub fn load_branch(&mut self, idx: usize, nes: &mut Nes) -> bool {
+        let Some(b) = self.branches.get(idx).cloned() else {
+            return false;
+        };
+        if nes.restore(&b.state).is_err() {
+            return false;
+        }
+        self.input_log = b.input_log;
+        self.markers = b.markers;
+        self.cursor = b.frame;
+        // Keep frame 0 (power-on, input-independent), drop the rest, and pin the
+        // branch state at its frame.
+        self.greenzone.invalidate_after(0);
+        self.greenzone.store(b.frame, b.state, b.frame);
+        self.lag_log.truncate(b.frame.min(self.lag_log.len()));
+        // Re-anchor the branch's markers (collect first to avoid borrowing self
+        // across the mutable greenzone call).
+        let marker_frames: Vec<usize> = self.markers.keys().copied().collect();
+        for f in marker_frames {
+            self.greenzone.add_anchor(f);
+        }
+        true
     }
 
     /// Set the input at `frame`, growing the log with default (no-button)
@@ -590,5 +676,80 @@ mod tests {
             "marker on the deleted frame is dropped"
         );
         assert_eq!(ed.marker_at(20), Some("b"));
+    }
+
+    #[test]
+    fn branches_fork_and_restore_full_project_state() {
+        let rom = synth_nrom();
+        let mut nes = Nes::from_rom(&rom).unwrap();
+        nes.power_cycle();
+        let mut ed = TasEditor::from_inputs(&nes, varied_inputs(40), 1 << 24, 20);
+        // Advance to frame 25 and mark it, then fork a branch there.
+        ed.seek(&mut nes, 25);
+        ed.set_marker(25, "fork point");
+        let forked_cycle = nes.cycle();
+        let forked_fb = nes.framebuffer().to_vec();
+        let idx = ed.create_branch(&nes);
+        assert_eq!(ed.branch_count(), 1);
+        assert_eq!(ed.branch(idx).unwrap().frame, 25);
+
+        // Diverge on "main": change input, drop the marker, extend the log.
+        ed.set_input(
+            10,
+            FrameInput::new(Buttons::A | Buttons::B, Buttons::empty()),
+        );
+        ed.remove_marker(25);
+        ed.set_input(60, FrameInput::new(Buttons::START, Buttons::empty()));
+        assert!(ed.marker_at(25).is_none());
+        assert_eq!(ed.len(), 61);
+
+        // Load the branch — input log, markers, cursor, and nes state restored.
+        assert!(ed.load_branch(idx, &mut nes));
+        assert_eq!(ed.cursor(), 25);
+        assert_eq!(ed.len(), 40, "branch input log restored");
+        assert_eq!(
+            ed.marker_at(25),
+            Some("fork point"),
+            "branch markers restored"
+        );
+        assert_eq!(nes.cycle(), forked_cycle, "nes restored to the fork state");
+        assert_eq!(nes.framebuffer(), forked_fb.as_slice());
+
+        // Seeking forward within the restored branch stays bit-identical to a
+        // direct linear replay of the branch's input log.
+        ed.seek(&mut nes, 40);
+        let (direct_fb, direct_cycle) = {
+            let mut n2 = Nes::from_rom(&rom).unwrap();
+            n2.power_cycle();
+            for f in &varied_inputs(40) {
+                n2.set_buttons(0, f.p1);
+                n2.set_buttons(1, f.p2);
+                n2.run_frame();
+            }
+            (n2.framebuffer().to_vec(), n2.cycle())
+        };
+        assert_eq!(
+            nes.framebuffer(),
+            direct_fb.as_slice(),
+            "branch replay bit-identical"
+        );
+        assert_eq!(nes.cycle(), direct_cycle);
+    }
+
+    #[test]
+    fn delete_branch_removes_it() {
+        let nes = {
+            let mut n = Nes::from_rom(&synth_nrom()).unwrap();
+            n.power_cycle();
+            n
+        };
+        let mut ed = TasEditor::new(&nes, 1 << 20, 16);
+        ed.create_branch(&nes);
+        ed.create_branch(&nes);
+        assert_eq!(ed.branch_count(), 2);
+        ed.delete_branch(0);
+        assert_eq!(ed.branch_count(), 1);
+        ed.delete_branch(5); // out of range — no-op
+        assert_eq!(ed.branch_count(), 1);
     }
 }
