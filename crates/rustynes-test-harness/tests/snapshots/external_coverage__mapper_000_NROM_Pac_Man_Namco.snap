@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-000-NROM/Pac-Man (Namco).nes
+rom_sha256=16867ee8ca1343f9fa6f36d7f177f8a8d889cfc2f71578972307d22f0037d57a
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=0a577869ad0c43b3
+checkpoint f900 fb_fnv1a64=4cf46b2659e3dc05
+checkpoint f1100 fb_fnv1a64=dff5d54a50ede6e8

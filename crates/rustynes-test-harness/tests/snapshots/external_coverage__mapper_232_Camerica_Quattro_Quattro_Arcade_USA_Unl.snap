@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-232-Camerica-Quattro/Quattro Arcade (USA) (Unl).nes
+rom_sha256=27b0e9946cf43cee0711670b69ab4e385831467773ed9be17ffd67fea735a848
+frames=1141
+fb_bytes=245760
+cycles=33949792
+audio_samples=836505
+audio_fnv1a64=b54e2d1e81b98fb6
+checkpoint f900 fb_fnv1a64=71df5260c4b67d12
+checkpoint f1100 fb_fnv1a64=6731df72ae419a10

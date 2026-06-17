@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-004-MMC3/Mega Man 5.nes
+rom_sha256=fd722165583d3d593ce607a59868e216df97533da9189fab815592930457bb05
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=94e39fbdb2d96254
+checkpoint f900 fb_fnv1a64=657fe0155331d530
+checkpoint f1100 fb_fnv1a64=31e0920b2ef337d0

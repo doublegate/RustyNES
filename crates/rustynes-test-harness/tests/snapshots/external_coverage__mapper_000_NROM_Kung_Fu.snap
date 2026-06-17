@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-000-NROM/Kung Fu.nes
+rom_sha256=8a4eb25ffe9646dc2a13c14d34b91f316a84f072ee78b0663cfcc05fe7bb5362
+frames=1141
+fb_bytes=245760
+cycles=33949779
+audio_samples=836505
+audio_fnv1a64=9a6e974df9d88455
+checkpoint f900 fb_fnv1a64=0e9639f194faba4d
+checkpoint f1100 fb_fnv1a64=a636c48a5ea894b2

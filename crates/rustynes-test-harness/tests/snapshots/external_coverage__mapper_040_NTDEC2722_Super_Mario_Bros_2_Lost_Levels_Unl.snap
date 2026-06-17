@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-040-NTDEC2722/Super Mario Bros 2 (Lost Levels) (Unl).nes
+rom_sha256=4ad5147b11c53cadb677a28432c64cbe4409a4517f581ba9d8447eafc71f1db6
+frames=1141
+fb_bytes=245760
+cycles=33949780
+audio_samples=836505
+audio_fnv1a64=9b9f5920615f1ba2
+checkpoint f900 fb_fnv1a64=2fb63d276ff4c325
+checkpoint f1100 fb_fnv1a64=2fb63d276ff4c325

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-152-Bandai74161/Arkanoid II.nes
+rom_sha256=a8b879dd52ecb688a38a450d2d07ebe53c82978bacfd1475cce0c57e056a58a0
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=74bd5919988cc34b
+checkpoint f900 fb_fnv1a64=836dc7ff65f711b1
+checkpoint f1100 fb_fnv1a64=65bb8ff462d74d71

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-061-Multicart61/Tetris Family 9-in-1 (Hwang Shinwei) (Unl) [!].nes
+rom_sha256=66a7c3979f94fa0df2466c508265caaba62c5f3ac4b9412ac1e1140b91faa0a6
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=04a497e2c1b40f84
+checkpoint f900 fb_fnv1a64=5b5dd8c5ebb12ea8
+checkpoint f1100 fb_fnv1a64=5b5dd8c5ebb12ea8

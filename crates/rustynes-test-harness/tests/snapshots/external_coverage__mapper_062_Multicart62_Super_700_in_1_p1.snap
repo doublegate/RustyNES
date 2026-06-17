@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-062-Multicart62/Super 700-in-1 [p1][!].nes
+rom_sha256=cae7294af6e7b9eb2b0e399538cfbf118f6ef7a602e0f36a4672bfc12ef474c9
+frames=1141
+fb_bytes=245760
+cycles=33949771
+audio_samples=836505
+audio_fnv1a64=f9d0d67b8328bcd1
+checkpoint f900 fb_fnv1a64=56f8da35daa3d3c5
+checkpoint f1100 fb_fnv1a64=56f8da35daa3d3c5

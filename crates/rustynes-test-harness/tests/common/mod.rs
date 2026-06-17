@@ -430,21 +430,58 @@ pub mod external {
         let rom_sha256_hex = compute_rom_sha256(&bytes);
         let mut nes = Nes::from_rom(&bytes).unwrap_or_else(|e| panic!("parse {rom_rel}: {e}"));
 
+        // Vs. System setup. Vs. arcade carts (iNES mapper 99, mapper 151, or
+        // the NES-2.0/header Vs. console flag) boot to an attract loop and
+        // need (a) the correct RGB-PPU palette LUT — iNES-1.0 dumps default to
+        // the 2C03 and the per-game DB ([`rustynes_core::vs_db`]) is
+        // authoritative for the real 2C04-000x / 2C05 type — and (b) a coin on
+        // an acceptor to leave the insert-coin screen. Mirrors the frontend's
+        // `apply_vs_db`. A no-op (both setters ignore) on non-Vs. carts, so a
+        // plain NES capture is byte-identical to before. Coins are pulsed in
+        // the tick loop below.
+        let is_vs = nes.is_vs_system();
+        if is_vs {
+            // Apply the per-game DB's PPU type (palette LUT, authoritative) and
+            // its game-config DSW0 default (e.g. Vs. Super Mario Bros. needs
+            // DSW0=0x10 to leave the attract loop; a forced 0 leaves it blank).
+            // Falls back to DIP 0 for a Vs. cart not in the DB.
+            let dip = rustynes_core::vs_db::lookup(nes.rom_sha256()).map_or(0, |entry| {
+                nes.set_vs_ppu_type(entry.vs_ppu_type);
+                entry.vs_dip
+            });
+            nes.set_vs_dip(dip);
+        }
+
         let label_safe = sanitize(rom_rel);
         let mut checkpoints: Vec<Checkpoint> = Vec::new();
         let mut samples: Vec<f32> = Vec::new();
 
         // Inner helper: tick `n` frames with the given button state and
-        // drain audio each frame.
+        // drain audio each frame. For Vs. carts a coin is pulsed on acceptor
+        // #1 every ~120 frames (4 frames down, then released) so the game
+        // leaves its insert-coin attract loop.
         let mut frame_counter: u32 = 0;
+        macro_rules! pulse_vs_coin {
+            () => {{
+                if is_vs {
+                    if frame_counter % 120 == 30 {
+                        nes.insert_coin(0);
+                    } else if frame_counter % 120 == 34 {
+                        nes.clear_coin();
+                    }
+                }
+            }};
+        }
         macro_rules! tick_with {
             ($buttons:expr, $count:expr) => {{
                 let buttons: Buttons = $buttons;
                 let n: u32 = $count;
                 for _ in 0..n {
                     nes.set_buttons(0, buttons);
+                    pulse_vs_coin!();
                     nes.run_frame();
                     samples.extend(nes.drain_audio());
+                    frame_counter += 1;
                 }
             }};
         }
@@ -478,6 +515,7 @@ pub mod external {
                 // Phase 1: idle_pre frames idle.
                 for _ in 0..idle_pre {
                     nes.set_buttons(0, Buttons::empty());
+                    pulse_vs_coin!();
                     nes.run_frame();
                     samples.extend(nes.drain_audio());
                     frame_counter += 1;
@@ -485,6 +523,7 @@ pub mod external {
                 }
                 // Phase 2: 1 frame START down.
                 nes.set_buttons(0, Buttons::START);
+                pulse_vs_coin!();
                 nes.run_frame();
                 samples.extend(nes.drain_audio());
                 frame_counter += 1;
@@ -492,6 +531,7 @@ pub mod external {
                 // Phase 3: idle_post frames idle.
                 for _ in 0..idle_post {
                     nes.set_buttons(0, Buttons::empty());
+                    pulse_vs_coin!();
                     nes.run_frame();
                     samples.extend(nes.drain_audio());
                     frame_counter += 1;
@@ -499,6 +539,7 @@ pub mod external {
                 }
                 // Phase 4: free-run.
                 for _ in 0..free_run {
+                    pulse_vs_coin!();
                     nes.run_frame();
                     samples.extend(nes.drain_audio());
                     frame_counter += 1;
@@ -534,6 +575,7 @@ pub mod external {
                             Buttons::empty()
                         },
                     );
+                    pulse_vs_coin!();
                     nes.run_frame();
                     samples.extend(nes.drain_audio());
                     frame_counter += 1;
@@ -567,6 +609,7 @@ pub mod external {
                             Buttons::empty()
                         },
                     );
+                    pulse_vs_coin!();
                     nes.run_frame();
                     samples.extend(nes.drain_audio());
                     frame_counter += 1;

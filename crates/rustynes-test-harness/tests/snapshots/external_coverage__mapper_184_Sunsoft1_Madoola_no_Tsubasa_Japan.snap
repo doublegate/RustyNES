@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-184-Sunsoft1/Madoola no Tsubasa (Japan).nes
+rom_sha256=57abe0373bba73b412d32f061bf685a4a0035a5be58e34b5398ba8970a9263a7
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=a661c19bc25958ff
+checkpoint f900 fb_fnv1a64=68ac355df7ef815e
+checkpoint f1100 fb_fnv1a64=68ac355df7ef815e

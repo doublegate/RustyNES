@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-030-UNROM512/Mo Shen Fa Shi (Ch) (Wxn).nes
+rom_sha256=b9c8bd2c56aa249cb00aacb69aff8418053ce80b54d142ac42ed641fd0751297
+frames=1141
+fb_bytes=245760
+cycles=85
+audio_samples=0
+audio_fnv1a64=cbf29ce484222325
+checkpoint f900 fb_fnv1a64=bfb3e42db2f1fb25
+checkpoint f1100 fb_fnv1a64=bfb3e42db2f1fb25

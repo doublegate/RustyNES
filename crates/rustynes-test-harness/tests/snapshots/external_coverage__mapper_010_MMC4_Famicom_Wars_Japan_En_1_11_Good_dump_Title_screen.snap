@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-010-MMC4/Famicom Wars (Japan) (En) (1.11) (Good dump + Title screen).nes
+rom_sha256=76cab2d6622d1fcd6605941637ff3c254157b39e737cf2cc0c20d0f4753e2720
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=9881ba807f6ca80c
+checkpoint f900 fb_fnv1a64=4c1c850e32124474
+checkpoint f1100 fb_fnv1a64=d277ad7c1d3e2925

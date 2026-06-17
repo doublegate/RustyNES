@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-026-VRC6/Esper Dream 2 - Aratanaru Tatakai (Japan) (En) (1.0).nes
+rom_sha256=06f1dfcb506d076b0e48f9e5c30ca9bc9756118a5dfa6f10c96b1d38999c5c60
+frames=1141
+fb_bytes=245760
+cycles=33949789
+audio_samples=836505
+audio_fnv1a64=1bcb9a6b5c542994
+checkpoint f900 fb_fnv1a64=d7746221e2882d75
+checkpoint f1100 fb_fnv1a64=abd806b627e23859

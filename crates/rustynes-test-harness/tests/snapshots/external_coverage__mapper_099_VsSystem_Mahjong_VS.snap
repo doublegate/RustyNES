@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-099-VsSystem/Mahjong (VS) [!].nes
+rom_sha256=63470557afb7b9d57663ccc6e9b4d6cd70026ef01a77dbb466aba1b1d3e4f512
+frames=1141
+fb_bytes=245760
+cycles=33949966
+audio_samples=836510
+audio_fnv1a64=fc8fae57a66c922e
+checkpoint f900 fb_fnv1a64=685b12114a576325
+checkpoint f1100 fb_fnv1a64=685b12114a576325

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-087-Jaleco87/Choplifter (Japan) (En) (Rev 1).nes
+rom_sha256=954f10e87ce3877c069bab48e57eda6a474e51a22bfd35ccc926cf490a121de1
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=9f2b875585b8c3de
+checkpoint f900 fb_fnv1a64=3299204414467417
+checkpoint f1100 fb_fnv1a64=5589aebafe4f3a6c

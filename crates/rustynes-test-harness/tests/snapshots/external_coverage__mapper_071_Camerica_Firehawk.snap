@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-071-Camerica/Firehawk.nes
+rom_sha256=230497b5e2af1abea467ef71f9b15c8d3b837cd035ce74507e36a67e8ab1f7e3
+frames=1141
+fb_bytes=245760
+cycles=33949784
+audio_samples=836505
+audio_fnv1a64=805f1ce69fd4db27
+checkpoint f900 fb_fnv1a64=6ead03181e2ae711
+checkpoint f1100 fb_fnv1a64=effa2c4edf94edc2

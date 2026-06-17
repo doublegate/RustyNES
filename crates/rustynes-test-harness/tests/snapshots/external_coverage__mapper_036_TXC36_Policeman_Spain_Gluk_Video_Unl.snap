@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-036-TXC36/Policeman (Spain) (Gluk Video) (Unl).nes
+rom_sha256=42453fd1efb2af9698bdb90f60d6c1fa127f9c6af443ea07c22a4861d74485b5
+frames=1141
+fb_bytes=245760
+cycles=33949960
+audio_samples=836509
+audio_fnv1a64=15766b4c4a876f4f
+checkpoint f900 fb_fnv1a64=1719dca5cef7a325
+checkpoint f1100 fb_fnv1a64=1719dca5cef7a325

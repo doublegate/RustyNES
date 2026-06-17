@@ -929,7 +929,7 @@ pub struct Daou156 {
     // 8 low nibbles + 8 high nibbles, composed into a 1 KiB bank per slot.
     chr_lo: [u8; 8],
     chr_hi: [u8; 8],
-    one_screen_b: bool,
+    mirroring: Mirroring,
 }
 
 impl Daou156 {
@@ -963,7 +963,9 @@ impl Daou156 {
             prg_bank: 0,
             chr_lo: [0; 8],
             chr_hi: [0; 8],
-            one_screen_b: false,
+            // DAOU/DIS23C01 powers on single-screen (nametable A) per Mesen2
+            // InitMapper; the $C014 register flips it to H/V at runtime.
+            mirroring: Mirroring::SingleScreenA,
         })
     }
 
@@ -997,10 +999,30 @@ impl Mapper for Daou156 {
 
     fn cpu_write(&mut self, addr: u16, value: u8) {
         match addr {
-            0xC000..=0xC007 => self.chr_lo[(addr - 0xC000) as usize] = value,
-            0xC008..=0xC00F => self.chr_hi[(addr - 0xC008) as usize] = value,
+            // $C000-$C00F: 16 CHR-bank-nibble registers. Mesen2 decodes the
+            // 1 KiB slot as (addr & 0x03) + (addr >= 0xC008 ? 4 : 0) and selects
+            // the low/high nibble array by bit 2 (0x04) — NOT a flat lo[0..8] /
+            // hi[0..8] split. The old flat decode wrote the wrong slot's nibble,
+            // so CHR banks resolved to garbage → blank/garbled boot.
+            0xC000..=0xC00F => {
+                let slot = ((addr & 0x03) + if addr >= 0xC008 { 4 } else { 0 }) as usize;
+                if addr & 0x04 != 0 {
+                    self.chr_hi[slot] = value;
+                } else {
+                    self.chr_lo[slot] = value;
+                }
+            }
             0xC010 => self.prg_bank = value,
-            0xC014 => self.one_screen_b = (value & 0x01) != 0,
+            // $C014: 0 = vertical, 1 = horizontal (Mesen2). The old code mapped
+            // this to a single-screen A/B toggle, which never matched the game's
+            // expected nametable layout.
+            0xC014 => {
+                self.mirroring = if value & 0x01 != 0 {
+                    Mirroring::Horizontal
+                } else {
+                    Mirroring::Vertical
+                };
+            }
             _ => {}
         }
     }
@@ -1023,11 +1045,7 @@ impl Mapper for Daou156 {
     }
 
     fn current_mirroring(&self) -> Mirroring {
-        if self.one_screen_b {
-            Mirroring::SingleScreenB
-        } else {
-            Mirroring::SingleScreenA
-        }
+        self.mirroring
     }
 
     fn save_state(&self) -> Vec<u8> {
@@ -1036,7 +1054,12 @@ impl Mapper for Daou156 {
         out.push(self.prg_bank);
         out.extend_from_slice(&self.chr_lo);
         out.extend_from_slice(&self.chr_hi);
-        out.push(u8::from(self.one_screen_b));
+        out.push(match self.mirroring {
+            Mirroring::Horizontal => 0,
+            Mirroring::Vertical => 1,
+            Mirroring::SingleScreenB => 2,
+            _ => 3, // SingleScreenA (power-on default) + any other
+        });
         out.extend_from_slice(&self.vram);
         out
     }
@@ -1055,7 +1078,12 @@ impl Mapper for Daou156 {
         self.prg_bank = data[1];
         self.chr_lo.copy_from_slice(&data[2..10]);
         self.chr_hi.copy_from_slice(&data[10..18]);
-        self.one_screen_b = data[18] != 0;
+        self.mirroring = match data[18] {
+            0 => Mirroring::Horizontal,
+            1 => Mirroring::Vertical,
+            2 => Mirroring::SingleScreenB,
+            _ => Mirroring::SingleScreenA,
+        };
         self.vram.copy_from_slice(&data[19..19 + self.vram.len()]);
         Ok(())
     }
@@ -1064,12 +1092,18 @@ impl Mapper for Daou156 {
 // ===========================================================================
 // Mapper 162 — Waixing FS304 (San Guo Zhi II, and similar Waixing RPGs).
 //
-// Four nibble registers in the $5000-$5FFF window compose a 32 KiB PRG bank
-// select. The widely-cited decode picks the bank from registers 0 and 2:
-//   reg[a] for a in {0,1,2,3} = the low nibble written to $5000 | a*0x100
-//     (i.e. the register index is bits 8-9 of the address).
-//   32 KiB bank = (reg[2] & 0x0F) << 4 | (reg[0] & 0x0F)  (low 8 bits used).
-// CHR is 8 KiB RAM, mirroring header-fixed. No IRQ.
+// Four registers in the $5000-$5FFF window (index = address bits 8-9) compose a
+// 32 KiB PRG-ROM bank select from individual A15-A20 bits, with a mode selector
+// in $5300 (NESdev INES_Mapper_162):
+//   regs[0]=$5000: A18..A17 = bits 3..2; A16 = bit 1 (when $5300.2=1);
+//                  A15 = bit 0 (when $5300.2=1 and $5300.0=1).
+//   regs[1]=$5100: A15 = bit 1 (when $5300.0=0).
+//   regs[2]=$5200: A20..A19 = bits 1..0.
+//   regs[3]=$5300: bit 2 = A16 mode, bit 0 = A15 mode.
+// Because reset clears all registers, games boot in 32 KiB bank #2 (A16=1,
+// A15=0) — the OLD decode booted bank 0 instead, so the reset vector read the
+// wrong bank and the game hung/blanked. CHR is 8 KiB RAM, mirroring header-
+// fixed. No IRQ.
 // ===========================================================================
 
 /// Mapper 162 (Waixing FS304).
@@ -1077,6 +1111,9 @@ pub struct WaixingFs304M162 {
     prg_rom: Box<[u8]>,
     chr_ram: Box<[u8]>,
     vram: Box<[u8]>,
+    /// 8 KiB battery-backed PRG-RAM at CPU $6000-$7FFF. The Waixing RPGs read
+    /// it during boot; without it they hang on a blank frame.
+    prg_ram: Box<[u8]>,
     regs: [u8; 4],
     mirroring: Mirroring,
 }
@@ -1103,13 +1140,32 @@ impl WaixingFs304M162 {
             prg_rom,
             chr_ram: vec![0u8; CHR_BANK_8K].into_boxed_slice(),
             vram: vec![0u8; 2 * NAMETABLE_SIZE].into_boxed_slice(),
+            prg_ram: vec![0u8; PRG_BANK_8K].into_boxed_slice(),
             regs: [0; 4],
             mirroring,
         })
     }
 
     const fn prg_bank(&self) -> usize {
-        ((self.regs[2] as usize & 0x0F) << 4) | (self.regs[0] as usize & 0x0F)
+        let r0 = self.regs[0] as usize;
+        let r1 = self.regs[1] as usize;
+        let r2 = self.regs[2] as usize;
+        let r3 = self.regs[3] as usize;
+        let a = (r3 >> 2) & 1; // $5300.2 — A16 mode
+        let b = r3 & 1; // $5300.0 — A15 mode
+        let a16 = if a == 0 { 1 } else { (r0 >> 1) & 1 };
+        let a15 = if b == 0 {
+            (r1 >> 1) & 1
+        } else if a == 0 {
+            1
+        } else {
+            r0 & 1
+        };
+        let a17 = (r0 >> 2) & 1;
+        let a18 = (r0 >> 3) & 1;
+        let a19 = r2 & 1;
+        let a20 = (r2 >> 1) & 1;
+        a15 | (a16 << 1) | (a17 << 2) | (a18 << 3) | (a19 << 4) | (a20 << 5)
     }
 }
 
@@ -1119,23 +1175,28 @@ impl Mapper for WaixingFs304M162 {
     }
 
     fn cpu_read(&mut self, addr: u16) -> u8 {
-        if (0x8000..=0xFFFF).contains(&addr) {
-            let count = (self.prg_rom.len() / PRG_BANK_32K).max(1);
-            let bank = self.prg_bank() % count;
-            self.prg_rom[bank * PRG_BANK_32K + (addr as usize & 0x7FFF)]
-        } else {
-            0
+        match addr {
+            0x6000..=0x7FFF => self.prg_ram[(addr - 0x6000) as usize],
+            0x8000..=0xFFFF => {
+                let count = (self.prg_rom.len() / PRG_BANK_32K).max(1);
+                let bank = self.prg_bank() % count;
+                self.prg_rom[bank * PRG_BANK_32K + (addr as usize & 0x7FFF)]
+            }
+            _ => 0,
         }
     }
 
     fn cpu_read_unmapped(&self, addr: u16) -> bool {
         // $5000-$5FFF carries the write-only register block; the rest of
-        // $4020-$5FFF is open bus, $8000-$FFFF is mapped PRG.
+        // $4020-$5FFF is open bus. $6000-$7FFF is PRG-RAM and $8000-$FFFF is
+        // mapped PRG.
         (0x4020..=0x5FFF).contains(&addr)
     }
 
     fn cpu_write(&mut self, addr: u16, value: u8) {
-        if (0x5000..=0x5FFF).contains(&addr) {
+        if (0x6000..=0x7FFF).contains(&addr) {
+            self.prg_ram[(addr - 0x6000) as usize] = value;
+        } else if (0x5000..=0x5FFF).contains(&addr) {
             let idx = ((addr >> 8) & 0x03) as usize;
             self.regs[idx] = value;
         }
@@ -1167,16 +1228,18 @@ impl Mapper for WaixingFs304M162 {
     }
 
     fn save_state(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(5 + self.vram.len() + self.chr_ram.len());
+        let mut out =
+            Vec::with_capacity(5 + self.vram.len() + self.chr_ram.len() + self.prg_ram.len());
         out.push(SAVE_STATE_VERSION);
         out.extend_from_slice(&self.regs);
         out.extend_from_slice(&self.vram);
         out.extend_from_slice(&self.chr_ram);
+        out.extend_from_slice(&self.prg_ram);
         out
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
-        let expected = 5 + self.vram.len() + self.chr_ram.len();
+        let expected = 5 + self.vram.len() + self.chr_ram.len() + self.prg_ram.len();
         if data.len() != expected {
             return Err(MapperError::Truncated {
                 expected,
@@ -1193,6 +1256,9 @@ impl Mapper for WaixingFs304M162 {
         cursor += self.vram.len();
         self.chr_ram
             .copy_from_slice(&data[cursor..cursor + self.chr_ram.len()]);
+        cursor += self.chr_ram.len();
+        self.prg_ram
+            .copy_from_slice(&data[cursor..cursor + self.prg_ram.len()]);
         Ok(())
     }
 }
@@ -1200,14 +1266,21 @@ impl Mapper for WaixingFs304M162 {
 // ===========================================================================
 // Mapper 178 — Waixing / San Guo Zhong Chen (educational series).
 //
-// A $4800-$4803 register block plus 8 KiB work-RAM at $6000:
-//   $4800 : bit 0 = PRG mode (0 = 32 KiB, 1 = 16 KiB), bit 1 = mirroring
-//           (0 = vertical, 1 = horizontal).
-//   $4801 : low PRG bank bits.
-//   $4802 : high PRG bank bits (outer block).
-//   $4803 : extra (work-RAM enable / unused — stored only).
-// PRG bank = (reg2 << 2) | reg1, in 16 KiB mode the $C000 half is bank|1; in
-// 32 KiB mode both halves form a 32 KiB pair. CHR is 8 KiB RAM.
+// A $4800-$4803 register block plus 8 KiB work-RAM at $6000 (NESdev
+// INES_Mapper_178 / Waixing FS305):
+//   $4800 : bit 0 = mirroring (0 = vertical, 1 = horizontal),
+//           bits 1-2 = PRG banking mode
+//             0 = NROM-256 / BNROM (32 KiB switchable)
+//             1 = UNROM (16 KiB switchable at $8000, fixed-111b at $C000)
+//             2 = NROM-128 (16 KiB mirrored)
+//             3 = UNROM variant ($C000 = inner|1 instead of all-ones).
+//   $4801 : bits 0-2 = inner PRG bank (PRG A16..A14, i.e. 16 KiB units).
+//   $4802 : outer PRG bank (PRG A17+).
+//   $4803 : PRG-RAM bank (stored only; the staged games use a single 8 KiB).
+// 16 KiB bank = (reg2 << 3) | (reg1 & 0x07). The OLD code read bit 0 of $4800
+// as the PRG mode (it is the MIRRORING bit) and bit 1 as mirroring (it is a
+// PRG-mode bit) — the two were swapped, and the bank composition masked wrong,
+// so educational titles booted the wrong bank and blanked. CHR is 8 KiB RAM.
 // ===========================================================================
 
 /// Mapper 178 (Waixing educational series).
@@ -1246,12 +1319,15 @@ impl Waixing178 {
         })
     }
 
+    /// Composed inner+outer 16 KiB bank: outer ($4802) shifted past the 3-bit
+    /// inner ($4801 bits 0-2).
     const fn prg_base16(&self) -> usize {
-        ((self.regs[2] as usize) << 2) | (self.regs[1] as usize & 0x03)
+        ((self.regs[2] as usize) << 3) | (self.regs[1] as usize & 0x07)
     }
 
-    const fn mode_16k(&self) -> bool {
-        (self.regs[0] & 0x01) != 0
+    /// PRG banking mode from $4800 bits 1-2 (0..=3).
+    const fn prg_mode(&self) -> u8 {
+        (self.regs[0] >> 1) & 0x03
     }
 
     fn read_prg(&self, bank16: usize, addr: u16) -> u8 {
@@ -1271,15 +1347,27 @@ impl Mapper for Waixing178 {
             0x6000..=0x7FFF => self.prg_ram[(addr - 0x6000) as usize],
             0x8000..=0xBFFF => {
                 let base = self.prg_base16();
-                let bank = if self.mode_16k() { base } else { base & !1 };
+                // $8000: NROM-256/BNROM (mode 0) presents the even bank of the
+                // 32 KiB pair; every other mode switches a 16 KiB bank directly.
+                let bank = if self.prg_mode() == 0 {
+                    base & !1
+                } else {
+                    base
+                };
                 self.read_prg(bank, addr)
             }
             0xC000..=0xFFFF => {
                 let base = self.prg_base16();
-                let bank = if self.mode_16k() {
-                    base | 1
-                } else {
-                    (base & !1) | 1
+                let bank = match self.prg_mode() {
+                    // NROM-256 / BNROM: high half of the 32 KiB pair.
+                    0 => (base & !1) | 1,
+                    // UNROM: $C000 fixed to the last bank of the outer block
+                    // (inner bits = 111b).
+                    1 => (base & !0x07) | 0x07,
+                    // NROM-128: 16 KiB mirrored.
+                    2 => base,
+                    // UNROM variant: $C000 = inner | 1.
+                    _ => base | 1,
                 };
                 self.read_prg(bank, addr)
             }
@@ -1323,7 +1411,8 @@ impl Mapper for Waixing178 {
     }
 
     fn current_mirroring(&self) -> Mirroring {
-        if (self.regs[0] & 0x02) != 0 {
+        // $4800 bit 0: 0 = vertical, 1 = horizontal.
+        if (self.regs[0] & 0x01) != 0 {
             Mirroring::Horizontal
         } else {
             Mirroring::Vertical
@@ -1369,11 +1458,11 @@ impl Mapper for Waixing178 {
 // ===========================================================================
 // Mapper 244 — Decathlon (Mega Soft).
 //
-// A $8065-$80FF address-decoded multicart. The bank select is carried in the
-// low byte of the write address (the data byte is ignored):
-//   PRG 32 KiB bank = (A >> 3) & 0x03.
-//   CHR 8 KiB bank  = A & 0x07.
-// Writes outside $8065-$80FF are ignored (the menu uses the $8065 window).
+// A $8000-$FFFF data-decoded multicart. The bank select is carried in the
+// written DATA byte (not the address) through two scramble LUTs, with bit 3
+// selecting CHR vs PRG:
+//   value & 0x08 != 0 -> CHR 8 KiB bank = LUT_CHR[(value>>4)&7][value&7].
+//   else              -> PRG 32 KiB bank = LUT_PRG[(value>>4)&3][value&3].
 // CHR is ROM, mirroring header-fixed. No IRQ.
 // ===========================================================================
 
@@ -1437,10 +1526,31 @@ impl Mapper for Decathlon244 {
         }
     }
 
-    fn cpu_write(&mut self, addr: u16, _value: u8) {
-        if (0x8065..=0x80FF).contains(&addr) {
-            self.prg_bank = ((addr >> 3) & 0x03) as u8;
-            self.chr_bank = (addr & 0x07) as u8;
+    fn cpu_write(&mut self, addr: u16, value: u8) {
+        // Mapper 244 decodes the written DATA byte (not the address) through two
+        // scramble LUTs, selecting CHR vs PRG by bit 3:
+        //   value & 0x08 != 0 -> CHR 8 KiB = LUT_CHR[(value>>4)&7][value&7]
+        //   else              -> PRG 32 KiB = LUT_PRG[(value>>4)&3][value&3]
+        // The old code ignored the data byte and decoded address bits with no
+        // scramble, so it banked to the wrong PRG/CHR and the menu never drew.
+        // (Mesen2 Mapper244 / puNES mapper_244 carry the identical tables.)
+        const LUT_PRG: [[u8; 4]; 4] = [[0, 1, 2, 3], [3, 2, 1, 0], [0, 2, 1, 3], [3, 1, 2, 0]];
+        const LUT_CHR: [[u8; 8]; 8] = [
+            [0, 1, 2, 3, 4, 5, 6, 7],
+            [0, 2, 1, 3, 4, 6, 5, 7],
+            [0, 1, 4, 5, 2, 3, 6, 7],
+            [0, 4, 1, 5, 2, 6, 3, 7],
+            [0, 4, 2, 6, 1, 5, 3, 7],
+            [0, 2, 4, 6, 1, 3, 5, 7],
+            [7, 6, 5, 4, 3, 2, 1, 0],
+            [7, 6, 5, 4, 3, 2, 1, 0],
+        ];
+        if (0x8000..=0xFFFF).contains(&addr) {
+            if value & 0x08 != 0 {
+                self.chr_bank = LUT_CHR[((value >> 4) & 0x07) as usize][(value & 0x07) as usize];
+            } else {
+                self.prg_bank = LUT_PRG[((value >> 4) & 0x03) as usize][(value & 0x03) as usize];
+            }
         }
     }
 
@@ -1625,10 +1735,12 @@ impl Mapper for Nitra250 {
 
     fn cpu_write(&mut self, addr: u16, _value: u8) {
         // The MMC3-equivalent "data" is the low byte of the address (A0-A7); the
-        // MMC3 even/odd register line is carried by A8 (bit 8 of the address),
-        // not the address's own LSB.
+        // MMC3 even/odd register line is carried by A10 (bit 10 of the address),
+        // not A8 — Mesen2 MMC3_250 decodes `(addr & 0xE000) | ((addr & 0x0400)
+        // >> 10)`. A8 left the bank-select / mirroring writes mis-routed, so the
+        // reset vector landed in the wrong PRG bank → blank boot.
         let value = (addr & 0x00FF) as u8;
-        let odd = (addr & 0x0100) != 0;
+        let odd = (addr & 0x0400) != 0;
         match addr & 0xE000 {
             0x8000 => {
                 if odd {
@@ -1988,18 +2100,26 @@ mod tests {
     // --- Mapper 156 --------------------------------------------------------
 
     #[test]
-    fn m156_chr_compose_prg_and_one_screen() {
+    fn m156_chr_compose_prg_and_mirroring() {
         let mut m = Daou156::new(synth_prg_16k(8), synth_chr_1k(32), Mirroring::Vertical).unwrap();
+        // Power-on mirroring is single-screen A (Mesen2 InitMapper).
+        assert_eq!(m.current_mirroring(), Mirroring::SingleScreenA);
         // PRG $C010 -> bank 3.
         m.cpu_write(0xC010, 3);
         assert_eq!(m.cpu_read(0x8000), 3);
         assert_eq!(m.cpu_read(0xC000), 7); // fixed last
-        // CHR slot 0: low = 5, high = 0 -> bank 5.
+        // CHR slot 0: low = 5 ($C000), high = 0 -> bank 5.
         m.cpu_write(0xC000, 5);
         assert_eq!(m.ppu_read(0x0000), 5);
-        // Mirroring $C014.
+        // High nibble of slot 0 lives at $C004 (bit 2 selects the high array):
+        // low 5 | (high 1 << 8) = 0x105, wraps mod 32 -> 5.
+        m.cpu_write(0xC004, 1);
+        assert_eq!(m.ppu_read(0x0000), (0x105usize % 32) as u8);
+        // Mirroring $C014: 1 = horizontal, 0 = vertical.
         m.cpu_write(0xC014, 1);
-        assert_eq!(m.current_mirroring(), Mirroring::SingleScreenB);
+        assert_eq!(m.current_mirroring(), Mirroring::Horizontal);
+        m.cpu_write(0xC014, 0);
+        assert_eq!(m.current_mirroring(), Mirroring::Vertical);
     }
 
     #[test]
@@ -2013,21 +2133,28 @@ mod tests {
         m2.load_state(&blob).unwrap();
         assert_eq!(m2.cpu_read(0x8000), m.cpu_read(0x8000));
         assert_eq!(m2.ppu_read(0x0400), m.ppu_read(0x0400));
-        assert_eq!(m2.current_mirroring(), Mirroring::SingleScreenB);
+        assert_eq!(m2.current_mirroring(), Mirroring::Horizontal);
     }
 
     // --- Mapper 162 --------------------------------------------------------
 
     #[test]
-    fn m162_nibble_regs_compose_prg() {
-        let mut m = WaixingFs304M162::new(synth_prg_32k(8), &[], Mirroring::Vertical).unwrap();
-        // reg0 = 3 ($5000), reg2 = 0 ($5200) -> bank 3.
-        m.cpu_write(0x5000, 3);
+    fn m162_regs_compose_prg() {
+        let mut m = WaixingFs304M162::new(synth_prg_32k(64), &[], Mirroring::Vertical).unwrap();
+        // Reset: all regs 0 -> A=$5300.2=0 -> A16=1, A15=$5100.1=0 -> bank #2.
+        assert_eq!(m.cpu_read(0x8000), 2);
+        // Waixing mode $5300=$04 ($5300.2=1): A16=$5000.1, A15=$5100.1.
+        m.cpu_write(0x5300, 0x04);
+        m.cpu_write(0x5000, 0x02); // $5000.1 = 1 -> A16 = 1 -> bank still has A16 set
+        assert_eq!(m.cpu_read(0x8000), 2); // A16=1 -> bank 2
+        m.cpu_write(0x5100, 0x02); // $5100.1 = 1 -> A15 = 1 -> bank 3
         assert_eq!(m.cpu_read(0x8000), 3);
-        // reg2 high nibble pushes into bits 4-7; with 8 banks it wraps mod 8.
-        m.cpu_write(0x5200, 0);
-        m.cpu_write(0x5000, 5);
-        assert_eq!(m.cpu_read(0x8000), 5);
+        m.cpu_write(0x5000, 0x00); // $5000.1 = 0 -> A16 = 0; A15 still 1 -> bank 1
+        assert_eq!(m.cpu_read(0x8000), 1);
+        // A17/A18 from $5000 bits 2/3; A19/A20 from $5200 bits 0/1.
+        m.cpu_write(0x5000, 0x0C); // bits 3,2 -> A18,A17 = 1,1 -> +12; A16=0,A15(=$5100.1)=1 -> 1
+        m.cpu_write(0x5200, 0x03); // A20,A19 = 1,1 -> +48
+        assert_eq!(m.cpu_read(0x8000), 1 + 12 + 48);
     }
 
     #[test]
@@ -2047,24 +2174,31 @@ mod tests {
     #[test]
     fn m178_prg_mode_and_work_ram() {
         let mut m = Waixing178::new(synth_prg_16k(8), &[], Mirroring::Vertical).unwrap();
-        // 16 KiB mode (bit 0 = 1); reg1 = 3 -> base 3.
-        m.cpu_write(0x4800, 0x01);
+        // UNROM mode (bits 1-2 = 01 -> $4800 = 0x02); inner reg1 = 3 -> base 3.
+        m.cpu_write(0x4800, 0x02);
         m.cpu_write(0x4801, 0x03);
         m.cpu_write(0x4802, 0x00);
-        assert_eq!(m.cpu_read(0x8000), 3);
-        assert_eq!(m.cpu_read(0xC000), 3 | 1); // high half = base|1 -> 3
+        assert_eq!(m.cpu_read(0x8000), 3); // switchable 16 KiB at $8000
+        assert_eq!(m.cpu_read(0xC000), 7); // UNROM: $C000 fixed to inner 111b
+        // NROM-256 / BNROM (mode 0): 32 KiB pair from the even bank.
+        m.cpu_write(0x4800, 0x00);
+        m.cpu_write(0x4801, 0x02); // base 2 -> 32 KiB pair (2,3)
+        assert_eq!(m.cpu_read(0x8000), 2);
+        assert_eq!(m.cpu_read(0xC000), 3);
         // Work-RAM round trips.
         m.cpu_write(0x6000, 0x77);
         assert_eq!(m.cpu_read(0x6000), 0x77);
-        // Mirroring bit.
-        m.cpu_write(0x4800, 0x03); // bit1 set -> horizontal
+        // Mirroring: $4800 bit 0 (1 = horizontal).
+        m.cpu_write(0x4800, 0x01);
         assert_eq!(m.current_mirroring(), Mirroring::Horizontal);
+        m.cpu_write(0x4800, 0x00);
+        assert_eq!(m.current_mirroring(), Mirroring::Vertical);
     }
 
     #[test]
     fn m178_save_state_round_trip() {
         let mut m = Waixing178::new(synth_prg_16k(8), &[], Mirroring::Vertical).unwrap();
-        m.cpu_write(0x4800, 0x01);
+        m.cpu_write(0x4800, 0x02);
         m.cpu_write(0x4801, 0x02);
         m.cpu_write(0x6010, 0x55);
         let blob = m.save_state();
@@ -2077,26 +2211,28 @@ mod tests {
     // --- Mapper 244 --------------------------------------------------------
 
     #[test]
-    fn m244_address_decoded_banks() {
+    fn m244_value_decoded_banks() {
         let mut m =
             Decathlon244::new(synth_prg_32k(4), synth_chr_8k(8), Mirroring::Vertical).unwrap();
-        // A = 0x8065: PRG = (A>>3)&3, CHR = A&7.
-        m.cpu_write(0x8000 | ((2 << 3) | 5), 0); // 0x8000 | 0x15 = 0x8015 < 0x8065 -> ignored
-        assert_eq!(m.cpu_read(0x8000), 0);
-        // Pick an address in range: 0x8000 | 0x68 = 0x8068. PRG = (0x68>>3)&3 = (13)&3 = 1, CHR = 0.
-        m.cpu_write(0x8068, 0);
-        assert_eq!(m.cpu_read(0x8000), 1);
-        assert_eq!(m.ppu_read(0x0000), 0);
-        // 0x806F: PRG=(0x6F>>3)&3=(13)&3=1, CHR=0x6F&7=7.
-        m.cpu_write(0x806F, 0);
-        assert_eq!(m.ppu_read(0x0000), 7);
+        // PRG select (value & 0x08 == 0): value 0x11 -> LUT_PRG[(1)][1] = 2.
+        m.cpu_write(0x8000, 0x11);
+        assert_eq!(m.cpu_read(0x8000), 2);
+        // value 0x30 -> LUT_PRG[3][0] = 3.
+        m.cpu_write(0x8000, 0x30);
+        assert_eq!(m.cpu_read(0x8000), 3);
+        // CHR select (value & 0x08 != 0): value 0x09 -> LUT_CHR[0][1] = 1.
+        m.cpu_write(0x8000, 0x09);
+        assert_eq!(m.ppu_read(0x0000), 1);
+        // value 0x6E -> LUT_CHR[6][6] = 1 (table row 6 reversed).
+        m.cpu_write(0x8000, 0x6E);
+        assert_eq!(m.ppu_read(0x0000), 1);
     }
 
     #[test]
     fn m244_save_state_round_trip() {
         let mut m =
             Decathlon244::new(synth_prg_32k(4), synth_chr_8k(8), Mirroring::Vertical).unwrap();
-        m.cpu_write(0x8088, 0); // PRG=(0x88>>3)&3=(17)&3=1, CHR=0
+        m.cpu_write(0x8000, 0x11); // PRG = LUT_PRG[1][1] = 2
         let blob = m.save_state();
         let mut m2 =
             Decathlon244::new(synth_prg_32k(4), synth_chr_8k(8), Mirroring::Vertical).unwrap();
@@ -2110,13 +2246,13 @@ mod tests {
     #[test]
     fn m250_address_encoded_mmc3_banking() {
         let mut m = Nitra250::new(synth_prg_8k(8), synth_chr_1k(16), Mirroring::Vertical).unwrap();
-        // A8 carries the MMC3 even/odd line; A0-A7 carry the data.
-        // Even $8000 (A8=0), data 0x06 -> reg select index 6.
+        // A10 (0x0400) carries the MMC3 even/odd line; A0-A7 carry the data.
+        // Even $8000 (A10=0), data 0x06 -> reg select index 6.
         m.cpu_write(0x8000 | 0x06, 0);
-        // Odd $8000 (A8=1), data 0x03 -> bank_regs[6] = 3.
-        m.cpu_write(0x8000 | 0x100 | 0x03, 0);
+        // Odd $8000 (A10=1), data 0x03 -> bank_regs[6] = 3.
+        m.cpu_write(0x8000 | 0x400 | 0x03, 0);
         assert_eq!(m.cpu_read(0x8000), 3);
-        // Mirroring via even $A000 (A8=0), data bit0 = 1.
+        // Mirroring via even $A000 (A10=0), data bit0 = 1.
         m.cpu_write(0xA000 | 0x01, 0);
         assert_eq!(m.current_mirroring(), Mirroring::Horizontal);
     }
@@ -2124,16 +2260,16 @@ mod tests {
     #[test]
     fn m250_irq_counts_down() {
         let mut m = Nitra250::new(synth_prg_8k(8), synth_chr_1k(16), Mirroring::Vertical).unwrap();
-        // latch = 3 via even $C000 (A8=0), data 0x03.
+        // latch = 3 via even $C000 (A10=0), data 0x03.
         m.cpu_write(0xC000 | 0x03, 0);
-        m.cpu_write(0xC000 | 0x100, 0); // reload (odd, A8=1)
-        m.cpu_write(0xE000 | 0x100, 0); // enable (odd, A8=1)
+        m.cpu_write(0xC000 | 0x400, 0); // reload (odd, A10=1)
+        m.cpu_write(0xE000 | 0x400, 0); // enable (odd, A10=1)
         // First cycle reloads from latch (=3); subsequent decrements reach 0.
         for _ in 0..5 {
             m.notify_cpu_cycle();
         }
         assert!(m.irq_pending());
-        m.cpu_write(0xE000, 0); // disable + ack (even, A8=0)
+        m.cpu_write(0xE000, 0); // disable + ack (even, A10=0)
         assert!(!m.irq_pending());
     }
 
@@ -2141,10 +2277,10 @@ mod tests {
     fn m250_save_state_round_trip() {
         let mut m = Nitra250::new(synth_prg_8k(8), synth_chr_1k(16), Mirroring::Vertical).unwrap();
         m.cpu_write(0x8000 | 0x06, 0);
-        m.cpu_write(0x8000 | 0x100 | 0x02, 0);
+        m.cpu_write(0x8000 | 0x400 | 0x02, 0);
         m.cpu_write(0xC000 | 0x05, 0);
-        m.cpu_write(0xC000 | 0x100, 0);
-        m.cpu_write(0xE000 | 0x100, 0);
+        m.cpu_write(0xC000 | 0x400, 0);
+        m.cpu_write(0xE000 | 0x400, 0);
         m.notify_cpu_cycle();
         let blob = m.save_state();
         let mut m2 = Nitra250::new(synth_prg_8k(8), synth_chr_1k(16), Mirroring::Vertical).unwrap();

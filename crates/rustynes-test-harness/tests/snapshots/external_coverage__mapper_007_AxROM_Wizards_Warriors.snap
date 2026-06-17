@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-007-AxROM/Wizards & Warriors.nes
+rom_sha256=b23d1d59b489ee93a235954987bc7888a61623db871e8dae91d2e14755a0112a
+frames=1141
+fb_bytes=245760
+cycles=33949776
+audio_samples=836505
+audio_fnv1a64=6a030c8788043fc0
+checkpoint f900 fb_fnv1a64=6f2a7a51a52efc89
+checkpoint f1100 fb_fnv1a64=6f2a7a51a52efc89

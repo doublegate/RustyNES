@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-087-Jaleco87/Argus (Japan).nes
+rom_sha256=c4174587a4598e0216d83e702e75ef82703018c6c6c24729169c77c88ed081ae
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=f83127c8cf0184e4
+checkpoint f900 fb_fnv1a64=e130d67a9c02f222
+checkpoint f1100 fb_fnv1a64=52d06e1b42a713fc

@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-159-BandaiLZ93D50-24C01/Magical Taruruuto-kun - Fantastic World!! (Japan) (Rev 1).nes
+rom_sha256=973ef3404515502151befa04dc91312a19aeb0459ce858b5e3391fe6f446aea8
+frames=600
+fb_bytes=245760
+cycles=17838522
+audio_samples=439524
+audio_fnv1a64=9ced4002270e69a9
+checkpoint f600 fb_fnv1a64=03b7e49f3838d0d2

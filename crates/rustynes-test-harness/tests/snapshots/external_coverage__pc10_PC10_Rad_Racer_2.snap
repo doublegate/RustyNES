@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=pc10/PC10 Rad Racer 2.nes
+rom_sha256=8ba3ffcde7736fcd2684beb083c8015b021410d99108f5a30a3f2ebcb73eaf85
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=c607f7389bf37eb3
+checkpoint f900 fb_fnv1a64=6c7d269766cc9fec
+checkpoint f1100 fb_fnv1a64=51ded9da0bb9d0d0

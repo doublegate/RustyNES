@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-060-Multicart60/TN 95-in-1 (6-in-1) [p1].nes
+rom_sha256=ae704288f69ad22cd174b22cd31655d41a48235003d6dcf8d4fd478b43eeca74
+frames=1141
+fb_bytes=245760
+cycles=33949888
+audio_samples=836508
+audio_fnv1a64=722242fcf6db6c4e
+checkpoint f900 fb_fnv1a64=1719dca5cef7a325
+checkpoint f1100 fb_fnv1a64=1719dca5cef7a325

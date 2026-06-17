@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-146-Sachen-NINA/Twin Eagle (Sachen) [!].nes
+rom_sha256=768bdf5c4afecf4adaf3ebc98cf0ec416ac9074cb5610f696f9e1bc0f437c1b0
+frames=1141
+fb_bytes=245760
+cycles=33949771
+audio_samples=836505
+audio_fnv1a64=2cc47c6b0663443b
+checkpoint f900 fb_fnv1a64=ea8e8c8015804ec8
+checkpoint f1100 fb_fnv1a64=91ac6ad561541559

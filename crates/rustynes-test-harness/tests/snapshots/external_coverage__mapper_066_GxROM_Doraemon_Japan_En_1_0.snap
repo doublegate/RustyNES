@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-066-GxROM/Doraemon (Japan) (En) (1.0).nes
+rom_sha256=3d87cffb1fa4f9604582669e8d64e8bd92d0e8708cf0afc69773c8cb8569eb9f
+frames=1141
+fb_bytes=245760
+cycles=33949781
+audio_samples=836505
+audio_fnv1a64=f908f7c14cac370b
+checkpoint f900 fb_fnv1a64=03f1c57abfcf7249
+checkpoint f1100 fb_fnv1a64=da2773f8ee219070

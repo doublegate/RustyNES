@@ -1245,23 +1245,29 @@ impl Mapper for Multicart226 {
 // ===========================================================================
 // Mapper 227 — 1200-in-1 BMC.
 //
-// Address-decoded register across $8000-$FFFF. For the absolute address A:
-//   prg = ((A >> 2) & 0x1F) | ((A >> 3) & 0x20)   (6-bit 16 KiB bank index)
-//   mode_32k = (A & 0x01)                          (1 = 32 KiB, 0 = 16 KiB)
-//   fixed_low = (A & 0x80)                         (when set, $C000 is fixed)
+// Address-decoded register across $8000-$FFFF (Mesen2 Mapper227). For the
+// absolute write address A:
+//   prg_bank = ((A >> 2) & 0x1F) | ((A & 0x100) >> 3)   (6-bit 16 KiB index)
+//   s_flag   = (A & 0x01)        (set: restrict / half-select)
+//   prg_mode = (A >> 7) & 0x01   (set: NROM modes; clear: UNROM-like)
+//   l_flag   = (A >> 9) & 0x01   (set: fix $C000 to bank|0x07; clear: &0x38)
 //   mirroring = (A & 0x02) -> 1 = horizontal, 0 = vertical
-// CHR is 8 KiB RAM. No IRQ. The "S" / single-bank quirks (last-bank fixing)
-// are modelled via the documented decode below.
+// The two $8000/$C000 16 KiB windows are then composed per the Mesen2 mode
+// table. The old decode read bit 0 as a 32 KiB mode, mis-applied bit 7, and
+// IGNORED bit 9, so the fixed $C000 window pointed at the wrong bank and the
+// multicart menu never drew. CHR is 8 KiB RAM. No IRQ.
 // ===========================================================================
 
 /// Mapper 227 (`1200-in-1` BMC).
+#[allow(clippy::struct_excessive_bools)] // 4 independent decoded register flags
 pub struct Multicart227 {
     prg_rom: Box<[u8]>,
     chr_ram: Box<[u8]>,
     vram: Box<[u8]>,
     prg_bank: u8,
-    mode_32k: bool,
-    fixed_low: bool,
+    s_flag: bool,
+    l_flag: bool,
+    prg_mode: bool,
     horizontal_mirroring: bool,
 }
 
@@ -1288,8 +1294,9 @@ impl Multicart227 {
             chr_ram: vec![0u8; CHR_BANK_8K].into_boxed_slice(),
             vram: vec![0u8; 2 * NAMETABLE_SIZE].into_boxed_slice(),
             prg_bank: 0,
-            mode_32k: false,
-            fixed_low: false,
+            s_flag: false,
+            l_flag: false,
+            prg_mode: false,
             horizontal_mirroring: false,
         })
     }
@@ -1299,6 +1306,23 @@ impl Multicart227 {
         let bank = bank16 % count;
         self.prg_rom[bank * PRG_BANK_16K + (addr as usize & 0x3FFF)]
     }
+
+    /// Compose the ($8000, $C000) 16 KiB bank pair from the decoded flags,
+    /// matching Mesen2 `Mapper227::WriteRegister`.
+    const fn prg_pages(&self) -> (usize, usize) {
+        let b = self.prg_bank as usize;
+        if self.prg_mode {
+            if self.s_flag {
+                (b & 0xFE, (b & 0xFE) | 1) // 32 KiB pair
+            } else {
+                (b, b) // NROM-128 (16 KiB mirrored)
+            }
+        } else {
+            let lo = if self.s_flag { b & 0x3E } else { b };
+            let hi = if self.l_flag { b | 0x07 } else { b & 0x38 };
+            (lo, hi)
+        }
+    }
 }
 
 impl Mapper for Multicart227 {
@@ -1307,23 +1331,10 @@ impl Mapper for Multicart227 {
     }
 
     fn cpu_read(&mut self, addr: u16) -> u8 {
-        let base = self.prg_bank as usize;
+        let (p0, p1) = self.prg_pages();
         match addr {
-            0x8000..=0xBFFF => {
-                let bank = if self.mode_32k { base & !1 } else { base };
-                self.read_prg(bank, addr)
-            }
-            0xC000..=0xFFFF => {
-                let bank = if self.mode_32k {
-                    (base & !1) | 1
-                } else if self.fixed_low {
-                    // The high half is fixed to bank 7 within the outer block.
-                    (base & !0x07) | 0x07
-                } else {
-                    base
-                };
-                self.read_prg(bank, addr)
-            }
+            0x8000..=0xBFFF => self.read_prg(p0, addr),
+            0xC000..=0xFFFF => self.read_prg(p1, addr),
             _ => 0,
         }
     }
@@ -1331,10 +1342,11 @@ impl Mapper for Multicart227 {
     fn cpu_write(&mut self, addr: u16, _value: u8) {
         if (0x8000..=0xFFFF).contains(&addr) {
             let low = ((addr >> 2) & 0x1F) as u8;
-            let high = ((addr >> 3) & 0x20) as u8;
+            let high = ((addr & 0x100) >> 3) as u8; // bit 8 -> bit 5 (0x20)
             self.prg_bank = low | high;
-            self.mode_32k = (addr & 0x01) != 0;
-            self.fixed_low = (addr & 0x80) == 0;
+            self.s_flag = (addr & 0x01) != 0;
+            self.prg_mode = ((addr >> 7) & 0x01) != 0;
+            self.l_flag = ((addr >> 9) & 0x01) != 0;
             self.horizontal_mirroring = (addr & 0x02) != 0;
         }
     }
@@ -1369,11 +1381,12 @@ impl Mapper for Multicart227 {
     }
 
     fn save_state(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(5 + self.vram.len() + self.chr_ram.len());
+        let mut out = Vec::with_capacity(6 + self.vram.len() + self.chr_ram.len());
         out.push(SAVE_STATE_VERSION);
         out.push(self.prg_bank);
-        out.push(u8::from(self.mode_32k));
-        out.push(u8::from(self.fixed_low));
+        out.push(u8::from(self.s_flag));
+        out.push(u8::from(self.l_flag));
+        out.push(u8::from(self.prg_mode));
         out.push(u8::from(self.horizontal_mirroring));
         out.extend_from_slice(&self.vram);
         out.extend_from_slice(&self.chr_ram);
@@ -1381,7 +1394,7 @@ impl Mapper for Multicart227 {
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
-        let expected = 5 + self.vram.len() + self.chr_ram.len();
+        let expected = 6 + self.vram.len() + self.chr_ram.len();
         if data.len() != expected {
             return Err(MapperError::Truncated {
                 expected,
@@ -1392,10 +1405,11 @@ impl Mapper for Multicart227 {
             return Err(MapperError::UnsupportedVersion(data[0]));
         }
         self.prg_bank = data[1];
-        self.mode_32k = data[2] != 0;
-        self.fixed_low = data[3] != 0;
-        self.horizontal_mirroring = data[4] != 0;
-        let mut cursor = 5;
+        self.s_flag = data[2] != 0;
+        self.l_flag = data[3] != 0;
+        self.prg_mode = data[4] != 0;
+        self.horizontal_mirroring = data[5] != 0;
+        let mut cursor = 6;
         self.vram
             .copy_from_slice(&data[cursor..cursor + self.vram.len()]);
         cursor += self.vram.len();
@@ -1579,7 +1593,9 @@ pub struct Multicart233 {
     /// Reset-selected outer block (host-driven; fixed at power-on).
     outer_block: u8,
     prg_bank: u8,
-    mode_32k: bool,
+    /// reg bit 5: set = 16 KiB mode (bank mirrored to both halves), clear =
+    /// 32 KiB mode (the pair at bank>>1). puNES `prg_fix_233`.
+    mode_16k: bool,
     mirror_mode: u8,
 }
 
@@ -1607,15 +1623,14 @@ impl Multicart233 {
             vram: vec![0u8; 2 * NAMETABLE_SIZE].into_boxed_slice(),
             outer_block: 0,
             prg_bank: 0,
-            mode_32k: false,
+            mode_16k: false,
             mirror_mode: 0,
         })
     }
 
     fn read_prg(&self, bank16: usize, addr: u16) -> u8 {
         let count = (self.prg_rom.len() / PRG_BANK_16K).max(1);
-        // The reset-selected outer block adds 0x20 (one half of a 32-bank ROM).
-        let bank = (bank16 | ((self.outer_block as usize) << 5)) % count;
+        let bank = bank16 % count;
         self.prg_rom[bank * PRG_BANK_16K + (addr as usize & 0x3FFF)]
     }
 }
@@ -1626,27 +1641,37 @@ impl Mapper for Multicart233 {
     }
 
     fn cpu_read(&mut self, addr: u16) -> u8 {
-        let base = self.prg_bank as usize;
+        // puNES prg_fix_233: bank = (reg & 0x1F) | reset. reg bit 5 set =>
+        // 16 KiB mode (the SAME bank mirrored to both halves); clear => 32 KiB
+        // mode (the pair at bank>>1). The previous code had the mode bit
+        // inverted (treating bit-5-set as 32 KiB), so the menu's expected bank
+        // never mapped and the multicart booted blank.
+        let bank16 = (self.prg_bank as usize) | ((self.outer_block as usize) << 5);
         match addr {
             0x8000..=0xBFFF => {
-                let bank = if self.mode_32k { base & !1 } else { base };
-                self.read_prg(bank, addr)
+                let b = if self.mode_16k { bank16 } else { bank16 & !1 };
+                self.read_prg(b, addr)
             }
             0xC000..=0xFFFF => {
-                let bank = if self.mode_32k { (base & !1) | 1 } else { base };
-                self.read_prg(bank, addr)
+                let b = if self.mode_16k {
+                    bank16
+                } else {
+                    (bank16 & !1) | 1
+                };
+                self.read_prg(b, addr)
             }
             _ => 0,
         }
     }
 
     fn cpu_write(&mut self, _addr: u16, value: u8) {
-        // nesdev iNES 233: a $8000-$FFFF write carries the bank in the DATA byte
-        // [MMOP PPPP]: PPPP (bits 0-3) = PRG page, O (bit 5) = mode (0 = 16 KiB
-        // single bank, 1 = 32 KiB), MM (bits 6-7) = mirroring (00 = 1-screen A,
-        // 01 = vertical, 10 = horizontal, 11 = 1-screen B).
+        // puNES iNES 233: a $8000-$FFFF write carries the full register in the
+        // DATA byte. PPPPP (bits 0-4) = PRG page (combined with the reset outer
+        // line), bit 5 = 16 KiB mode select (set = 16 KiB mirrored both halves,
+        // clear = 32 KiB pair), MM (bits 6-7) = mirroring (0 = 1-screen A,
+        // 1 = vertical, 2 = horizontal, 3 = 1-screen B).
         self.prg_bank = value & 0x1F;
-        self.mode_32k = (value & 0x20) != 0;
+        self.mode_16k = (value & 0x20) != 0;
         self.mirror_mode = (value >> 6) & 0x03;
     }
 
@@ -1685,7 +1710,7 @@ impl Mapper for Multicart233 {
         out.push(SAVE_STATE_VERSION);
         out.push(self.outer_block);
         out.push(self.prg_bank);
-        out.push(u8::from(self.mode_32k));
+        out.push(u8::from(self.mode_16k));
         out.push(self.mirror_mode);
         out.extend_from_slice(&self.vram);
         out.extend_from_slice(&self.chr_ram);
@@ -1705,8 +1730,11 @@ impl Mapper for Multicart233 {
         }
         self.outer_block = data[1];
         self.prg_bank = data[2];
-        self.mode_32k = data[3] != 0;
-        self.mirror_mode = data[4];
+        self.mode_16k = data[3] != 0;
+        // Mask to the valid 0..=3 range so a corrupt / hand-edited save state
+        // can never produce an out-of-range mirroring mode (adopted from the
+        // PR #116 Gemini review).
+        self.mirror_mode = data[4] & 0x03;
         let mut cursor = 5;
         self.vram
             .copy_from_slice(&data[cursor..cursor + self.vram.len()]);
@@ -2320,17 +2348,29 @@ mod tests {
     #[test]
     fn m227_address_decoded_bank() {
         let mut m = Multicart227::new(synth_prg_16k(16), &[], Mirroring::Vertical).unwrap();
-        // A = 0x8008: prg = (0x8008>>2)&0x1F = (0x2002)&0x1F = 2; (A&1)==0 ->
-        // 16K; (A&0x80)==0 -> fixed_low true; (A&2)==0 -> V.
+        // A = 0x8008: prg_bank = (0x8008>>2)&0x1F = 2; s=(A&1)=0, prg_mode=
+        // (A>>7)&1=0, l=(A>>9)&1=0, mirror=(A&2)=0 -> V. UNROM-like, s=0,l=0:
+        // $8000 = bank 2, $C000 = bank & 0x38 = 0.
         m.cpu_write(0x8008, 0);
         assert_eq!(m.cpu_read(0x8000), 2);
+        assert_eq!(m.cpu_read(0xC000), 0);
         assert_eq!(m.current_mirroring(), Mirroring::Vertical);
+        // l_flag set (A bit 9 = 0x200): $C000 fixed to bank | 0x07.
+        // A = 0x8208: prg_bank still 2, l=1 -> $C000 = 2 | 7 = 7.
+        m.cpu_write(0x8208, 0);
+        assert_eq!(m.cpu_read(0x8000), 2);
+        assert_eq!(m.cpu_read(0xC000), 7);
+        // prg_mode set without s (A bit 7 = 0x80): NROM-128, both halves = bank.
+        // A = 0x8088: prg_bank = (0x8088>>2)&0x1F = 2; prg_mode=1, s=0.
+        m.cpu_write(0x8088, 0);
+        assert_eq!(m.cpu_read(0x8000), 2);
+        assert_eq!(m.cpu_read(0xC000), 2);
     }
 
     #[test]
     fn m227_save_state_round_trip() {
         let mut m = Multicart227::new(synth_prg_16k(16), &[], Mirroring::Vertical).unwrap();
-        m.cpu_write(0x800B, 0); // A&1 -> 32K, A&2 -> H
+        m.cpu_write(0x808B, 0); // prg_mode + s (32K pair) + A&2 -> H
         m.ppu_write(0x0002, 0x33);
         let blob = m.save_state();
         let mut m2 = Multicart227::new(synth_prg_16k(16), &[], Mirroring::Vertical).unwrap();
@@ -2373,18 +2413,24 @@ mod tests {
     #[test]
     fn m233_bank_and_mirror_modes() {
         let mut m = Multicart233::new(synth_prg_16k(16), &[], Mirroring::Vertical).unwrap();
-        // Data-driven [MMOP PPPP]: value 0x85 = MM=10 (horizontal), O=0 (16K),
-        // PPPP=5. 16K mode mirrors the one bank across both halves.
-        m.cpu_write(0x8000, 0x85);
+        // puNES: bit 5 SET = 16 KiB mode (one bank mirrored to both halves),
+        // bits 6-7 = mirroring. value 0xA5 = MM=10 (horizontal), bit5=1 (16K),
+        // bank = 0x05.
+        m.cpu_write(0x8000, 0xA5);
         assert_eq!(m.cpu_read(0x8000), 5);
         assert_eq!(m.cpu_read(0xC000), 5);
         assert_eq!(m.current_mirroring(), Mirroring::Horizontal);
+        // bit 5 CLEAR = 32 KiB mode: the pair at (bank>>1)<<1. value 0x05 ->
+        // bank 5, 32K pair = banks 4 ($8000) / 5 ($C000).
+        m.cpu_write(0x8000, 0x05);
+        assert_eq!(m.cpu_read(0x8000), 4);
+        assert_eq!(m.cpu_read(0xC000), 5);
     }
 
     #[test]
     fn m233_save_state_round_trip() {
         let mut m = Multicart233::new(synth_prg_16k(16), &[], Mirroring::Vertical).unwrap();
-        m.cpu_write(0x8000, 0x26); // O=1 (32K), bank 6
+        m.cpu_write(0x8000, 0x26); // bit5=1 -> 16K mode, bank 6
         m.ppu_write(0x0004, 0x88);
         let blob = m.save_state();
         let mut m2 = Multicart233::new(synth_prg_16k(16), &[], Mirroring::Vertical).unwrap();

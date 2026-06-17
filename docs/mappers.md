@@ -306,15 +306,33 @@ the tiering note below).
 | 95 | — | NAMCOT-3425 (*Dragon Buster*) | — | — | landed (v1.5.0 / S10) | MMC3-subset `$8000`/`$8001` register port (no A12 IRQ); CHR reg-0 bit 5 drives one-screen mirroring select; CHR-ROM. |
 | 112 | — | NTDEC ASDER / Huang-1 | — | — | landed (v1.5.0 / S10) | Indexed `$8000`(idx)/`$A000`(data) port (no A12 IRQ) for two 8K PRG + 2K/1K CHR slots; `$E000` bit 0 = mirroring; `$C000`/`$E000` PRG fixed last two. |
 | 137 | — | Sachen 8259D | — | — | landed (v1.5.0 / S10) | `$4100`(cmd)/`$4101`(data) protection board: 32K fixed PRG select (cmd 5) + four 2K CHR banks (cmds 0-3) + CHR outer (cmd 4) + mirroring (cmd 7). |
-| 156 | — | DIS23C01 DAOU (Open Corp) | — | — | landed (v1.5.0 / S10) | Separate low/high CHR-bank registers (`$C000-$C007`/`$C008-$C00F`) compose eight 1K slots; `$C010` = 16K PRG; `$C014` bit 0 = one-screen select. |
-| 162 | — | Waixing FS304 (*San Guo Zhi II*) | — | — | landed (v1.5.0 / S10) | Four `$5000-$5FFF` nibble registers (index = A8-A9) compose a 32K PRG bank `(reg2<<4)\|reg0`; 8K CHR-RAM; header mirroring. |
-| 178 | — | Waixing educational series | — | — | landed (v1.5.0 / S10) | `$4800-$4803` register block: bit 0 = 16/32K PRG mode, bit 1 = mirroring, `(reg2<<2)\|reg1` = PRG bank; 8K work-RAM at `$6000`; CHR-RAM. |
-| 244 | — | Decathlon (Mega Soft) | — | — | landed (v1.5.0 / S10) | `$8065-$80FF` address-decoded multicart (data ignored): PRG 32K bank = `(A>>3)&3`, CHR 8K bank = `A&7`; CHR-ROM, header mirroring. |
-| 250 | — | Nitra (*Time Diver Avenger*) | — | M2 cycle | landed (v1.5.0 / S10) | MMC3-register-compatible, but the register data is carried in address bits A0-A7 and the even/odd line in A8; MMC3 banking subset + an M2-clocked 8-bit reload IRQ counter; CHR-ROM. |
+| 156 | — | DIS23C01 DAOU (Open Corp) | — | — | landed (v1.5.0 / S10; decode corrected in the coverage pass) | CHR-nibble registers `$C000-$C00F` decode the 1K slot as `(addr&0x03)+(addr>=0xC008?4:0)` with bit 2 selecting the high/low nibble array; `$C010` = 16K PRG; `$C014` = H/V mirroring from a single-screen-A power-on (Mesen2 `DaouInfosys`). |
+| 162 | — | Waixing FS304 (*San Guo Zhi II*) | — | — | landed (v1.5.0 / S10; decode corrected in the coverage pass) | PRG bank composed from individual A15-A20 bits across `$5000`/`$5100`/`$5200` with a `$5300` mode selector (NESdev table; reset boots 32K bank #2); 8K battery PRG-RAM at `$6000-$7FFF`; 8K CHR-RAM; header mirroring. |
+| 178 | — | Waixing educational series (FS305) | — | — | landed (v1.5.0 / S10; decode corrected in the coverage pass) | `$4800` bit 0 = mirroring, bits 1-2 = PRG mode (NROM-256/BNROM, UNROM, NROM-128, UNROM-variant); 16K bank = `(reg2<<3)\|(reg1&0x07)`; 8K work-RAM at `$6000`; CHR-RAM. |
+| 244 | — | Decathlon (Mega Soft) | — | — | landed (v1.5.0 / S10; decode corrected in the coverage pass) | Data-decoded multicart: the written DATA byte selects through two scramble LUTs with bit 3 choosing CHR (`LUT_CHR[(v>>4)&7][v&7]`) vs PRG (`LUT_PRG[(v>>4)&3][v&3]`); CHR-ROM, header mirroring (Mesen2/puNES). |
+| 250 | — | Nitra (*Time Diver Avenger*) | — | M2 cycle | landed (v1.5.0 / S10; decode corrected in the coverage pass) | MMC3-register-compatible, but the register data is carried in address bits A0-A7 and the even/odd line in **A10** (`addr & 0x0400`, Mesen2 `MMC3_250`); MMC3 banking subset + an M2-clocked 8-bit reload IRQ counter; CHR-ROM. |
 
 These are register-decode + save-state unit-tested only (no redistributable
 fixture is committed), and structurally excluded from the AccuracyCoin / oracle
 gate by the BestEffort tier classifier.
+
+### Per-mapper screenshot-coverage decode pass
+
+A boot-coverage pass (the auto-discovering `external_coverage` harness +
+per-mapper commercial dumps) surfaced a cluster of BestEffort boards that booted
+to a blank/few-colour frame. Cross-checking each against puNES / Mesen2 / the
+NESdev wiki corrected real decode bugs in **m143, m147, m150, m156, m162, m177,
+m178, m185, m227, m233, m244, m250** (details in `CHANGELOG.md`); each now renders a
+real screen for the staged dumps. All are BestEffort (off the AccuracyCoin
+oracle), so AccuracyCoin holds 100% (139/139) and the `mapper_tier_honesty`
+gate stays green. A handful of titles remain blank and are documented
+follow-ups: 4 of the 5 m162 FS304 RPGs need the `$5000.7` CHR auto-switch (the
+core decode is proven by *The Mummy* rendering); m036 TXC needs a proper TXC-
+chip port (`$4000-$4FFF & 0x200` register window) rather than the flat decode;
+m030 / m040 / m063 / m111 / m202; the 2 m185 protection titles (Seicross / Spy
+vs Spy) likely carry a non-header submapper; and 2 m227 pirate hacks need the
+m227-hack `$6000` WRAM. Vs. System DualSystem games (Balloon Fight / Mahjong /
+Tennis / Wrecking Crew) stay blank by design on this single-system core.
 
 ### Mapper accuracy tiering (v1.2.0)
 

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-000-NROM/Balloon Fight.nes
+rom_sha256=aee1714a831a79ca539f9f8cfeb283ce78ac1f1461df58524e34f0877dac0aa3
+frames=1141
+fb_bytes=245760
+cycles=33949778
+audio_samples=836505
+audio_fnv1a64=469718413d595944
+checkpoint f900 fb_fnv1a64=d61073bb9d50c2ef
+checkpoint f1100 fb_fnv1a64=b58250ce7f589d80

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=vs-system/VS Super Mario Bros.nes
+rom_sha256=95a9c2b6d1456f5b460fdb3d1a2908e438afa4e493b9aaded21647e6e06735c0
+frames=1141
+fb_bytes=245760
+cycles=33949961
+audio_samples=836509
+audio_fnv1a64=15766b4c4a876f4f
+checkpoint f900 fb_fnv1a64=1b4d41a08302a325
+checkpoint f1100 fb_fnv1a64=1b4d41a08302a325

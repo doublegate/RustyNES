@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-001-MMC1/Faxanadu.nes
+rom_sha256=2ecd51575ae3bc28210ccbbe4f0f380fc8fd80f8280c4245803871cd9a58f5c0
+frames=1141
+fb_bytes=245760
+cycles=33949777
+audio_samples=836505
+audio_fnv1a64=0af58e285c92b607
+checkpoint f900 fb_fnv1a64=17dae1a4d9fdbf09
+checkpoint f1100 fb_fnv1a64=dc5c4a18aa97be93

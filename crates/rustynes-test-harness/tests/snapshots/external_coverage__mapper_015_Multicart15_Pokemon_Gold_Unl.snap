@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-015-Multicart15/Pokemon Gold (Unl) [!].nes
+rom_sha256=c45b1703fb9cf031578cc3e6c2cb4100841c5e85cde6b96ed96ca10865e80ab5
+frames=1141
+fb_bytes=245760
+cycles=33949778
+audio_samples=836505
+audio_fnv1a64=77a7a71a67730623
+checkpoint f900 fb_fnv1a64=1719dca5cef7a325
+checkpoint f1100 fb_fnv1a64=1719dca5cef7a325

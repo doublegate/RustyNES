@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-156-DIS23C01-DAOU/Janggun ui Adeul (General's Son) (K) [!].nes
+rom_sha256=c8d49ea1d3b7ac9743da75fc2efa6b67800fcb1662d9623eb948341d9bfa96a5
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=48f4b75a5d7960d4
+checkpoint f900 fb_fnv1a64=f7c26c639db1b4b1
+checkpoint f1100 fb_fnv1a64=82c874f1da7ada2d

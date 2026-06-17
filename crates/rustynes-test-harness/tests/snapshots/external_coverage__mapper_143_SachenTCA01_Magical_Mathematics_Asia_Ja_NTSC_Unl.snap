@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-143-SachenTCA01/Magical Mathematics (Asia) (Ja) (NTSC) (Unl).nes
+rom_sha256=cbd8e6e442340d933b6acdfb12a390dc9ae6ab214f5f7ad8db2be1321e0b6d7f
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=052b96e399212956
+checkpoint f900 fb_fnv1a64=4e5b46322ae3545c
+checkpoint f1100 fb_fnv1a64=9c20047157a90d10

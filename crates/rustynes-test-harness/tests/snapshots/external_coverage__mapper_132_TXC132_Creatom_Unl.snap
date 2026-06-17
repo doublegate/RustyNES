@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-132-TXC132/Creatom (Unl) [!].nes
+rom_sha256=ac10ce5b5d084644feab5cd34c5ada42d6b69fb066fb58342c30c62a72b13404
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=04631863f3f36941
+checkpoint f900 fb_fnv1a64=866d8e22b68f3e09
+checkpoint f1100 fb_fnv1a64=6cc2566530f91a89

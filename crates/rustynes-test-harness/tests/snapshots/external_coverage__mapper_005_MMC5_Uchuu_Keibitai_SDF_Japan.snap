@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-005-MMC5/Uchuu Keibitai SDF (Japan).nes
+rom_sha256=7ca1cfd76c6c42e40c1997294abbbb89a13a7b1f4d363c6be14cfee49f59e484
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=92458e4ec41068e7
+checkpoint f900 fb_fnv1a64=b760ac99ed5b27a7
+checkpoint f1100 fb_fnv1a64=1719dca5cef7a325

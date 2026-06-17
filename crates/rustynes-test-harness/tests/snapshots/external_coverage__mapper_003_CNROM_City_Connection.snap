@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-003-CNROM/City Connection.nes
+rom_sha256=f32829df8f912103f978c28471e0392ba74084040430979475e137c4c6f9bfe1
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=e9bca1ef6ca043c0
+checkpoint f900 fb_fnv1a64=34e2b13b827bdc3e
+checkpoint f1100 fb_fnv1a64=34e2b13b827bdc3e

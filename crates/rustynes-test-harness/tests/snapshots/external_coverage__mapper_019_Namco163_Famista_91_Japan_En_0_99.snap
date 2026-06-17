@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-019-Namco163/Famista '91 (Japan) (En) (0.99).nes
+rom_sha256=df02393bbbc25b5cd8f5ec9d28bd8da0879f9f5f01e4457b77c94001ed87a814
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=24b371201855df31
+checkpoint f900 fb_fnv1a64=20a9a27f856a74ca
+checkpoint f1100 fb_fnv1a64=8a7229490571ab53

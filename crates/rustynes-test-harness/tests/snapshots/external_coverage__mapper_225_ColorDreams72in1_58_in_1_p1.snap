@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-225-ColorDreams72in1/58-in-1 [p1].nes
+rom_sha256=e9cd5cb3db78e63bdabaa98e3ddd810686d3b56070b1f90b45b1a904f7e2c366
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=f540f7f53d77b989
+checkpoint f900 fb_fnv1a64=3032024c32fd898f
+checkpoint f1100 fb_fnv1a64=f8a0dd31f97cc654

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=pc10/PC10 Rockin' Kats.nes
+rom_sha256=03760e8396152f1fc542be8839be78b2508a9cf5d90dcf4a95ceb824ae58ffbf
+frames=1141
+fb_bytes=245760
+cycles=33949777
+audio_samples=836505
+audio_fnv1a64=ab9e32a5f43fb0b3
+checkpoint f900 fb_fnv1a64=32733ff97cc1e31e
+checkpoint f1100 fb_fnv1a64=e1e45d3758096c78

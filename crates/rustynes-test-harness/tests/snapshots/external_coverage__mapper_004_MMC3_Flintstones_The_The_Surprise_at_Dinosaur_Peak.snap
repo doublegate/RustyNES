@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-004-MMC3/Flintstones, The - The Surprise at Dinosaur Peak!.nes
+rom_sha256=fd0d9448b4e386d3d64cbfd1057626d909aced5c60d395097eb2e6f26c2785c7
+frames=1141
+fb_bytes=245760
+cycles=33949786
+audio_samples=836505
+audio_fnv1a64=be60b120c77cabd0
+checkpoint f900 fb_fnv1a64=39fe7a8567731f03
+checkpoint f1100 fb_fnv1a64=39fe7a8567731f03

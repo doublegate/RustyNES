@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-004-MMC3/Bucky O'Hare.nes
+rom_sha256=a0c0fb8d55b064abfa4065026d06951772cb93389fda1c37ad1168b6062285fa
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=b0ea167c086808ed
+checkpoint f900 fb_fnv1a64=b931690f788e4470
+checkpoint f1100 fb_fnv1a64=01e734b4f1829ab0

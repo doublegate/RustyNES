@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-071-Camerica/Micro Machines.nes
+rom_sha256=ac8795f2c8c9316b360b0a3527f7ac5450f9b59e85b860ea64d54077b9b86854
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=e5ebd95fe9864391
+checkpoint f900 fb_fnv1a64=b39759d0636f1a2f
+checkpoint f1100 fb_fnv1a64=b39759d0636f1a2f

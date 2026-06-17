@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-026-VRC6b/Mouryou Senki Madara (J) [!].nes
+rom_sha256=ce62095be0024d7037bca9cf7248cce5ddbacdc90f5021f3a49af49717c046da
+frames=1141
+fb_bytes=245760
+cycles=33949776
+audio_samples=836505
+audio_fnv1a64=33e4fd55cbf4893c
+checkpoint f900 fb_fnv1a64=f51b62d2abe8e855
+checkpoint f1100 fb_fnv1a64=f51b62d2abe8e855

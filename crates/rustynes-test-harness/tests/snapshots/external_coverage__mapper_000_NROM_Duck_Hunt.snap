@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-000-NROM/Duck Hunt.nes
+rom_sha256=0dea3e89b2c65339a84f7b148d9e4e425dc74216093bdfc4895a59c20189de42
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=ca7544313bf65ce5
+checkpoint f900 fb_fnv1a64=4bd8899908427e1d
+checkpoint f1100 fb_fnv1a64=4bd8899908427e1d

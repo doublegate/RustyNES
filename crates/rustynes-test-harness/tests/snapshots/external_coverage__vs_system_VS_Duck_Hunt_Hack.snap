@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=vs-system/VS Duck Hunt Hack.nes
+rom_sha256=160d43de977fbc8e24112354e70e40cff84310167b07fb0b65ebc819fcf0ca0c
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=f940463486397016
+checkpoint f900 fb_fnv1a64=0889063a35996cb3
+checkpoint f1100 fb_fnv1a64=0889063a35996cb3

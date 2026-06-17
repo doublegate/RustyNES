@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-185-CNROM-Lock/Mighty Bomb Jack (J) (PRG0) [!].nes
+rom_sha256=73c3931cd37401c34079b3cce95888f10ba3d93174021132e59285e3c188d276
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=9c1879db1f838e5d
+checkpoint f900 fb_fnv1a64=ca5235c954ce1a24
+checkpoint f1100 fb_fnv1a64=c9300b6d4cdc2995

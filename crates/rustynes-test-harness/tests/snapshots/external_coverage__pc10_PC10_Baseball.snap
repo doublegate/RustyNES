@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=pc10/PC10 Baseball.nes
+rom_sha256=0baa53dc7111cc4089bf301bd2fb01af52c9363b7d63f37851a7a1393f28b93c
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=0d7dcf77bae382cf
+checkpoint f900 fb_fnv1a64=1f8139e9401cbc2a
+checkpoint f1100 fb_fnv1a64=1f8139e9401cbc2a

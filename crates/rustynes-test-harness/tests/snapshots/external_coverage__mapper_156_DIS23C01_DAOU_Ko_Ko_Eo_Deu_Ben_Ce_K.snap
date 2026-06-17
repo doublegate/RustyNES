@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-156-DIS23C01-DAOU/Ko Ko Eo Deu Ben Ce (K).nes
+rom_sha256=4c4d1818ce89ababd27881e865946f19d32760362173065008cda6100da06c2d
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=07b315915710652b
+checkpoint f900 fb_fnv1a64=e02f5cdaa11ba3bc
+checkpoint f1100 fb_fnv1a64=5a13da931f63402c

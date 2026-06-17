@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=vs-system/VS TKO Boxing Hack.nes
+rom_sha256=b8158a64a1c8b67b530a010678772c43b0aed720bb28f2094acee2f592789cc9
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=d19929f52d7458c4
+checkpoint f900 fb_fnv1a64=138fef5ddc132cdc
+checkpoint f1100 fb_fnv1a64=78300b69866a4664

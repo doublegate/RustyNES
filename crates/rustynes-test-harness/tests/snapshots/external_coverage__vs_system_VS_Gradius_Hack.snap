@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=vs-system/VS Gradius Hack.nes
+rom_sha256=290111929a34105e73562dba9969011d652ab81767ee1c4174d27b7c3395aa78
+frames=1141
+fb_bytes=245760
+cycles=33949778
+audio_samples=836505
+audio_fnv1a64=9b347ca7ed24b247
+checkpoint f900 fb_fnv1a64=69098192be51015a
+checkpoint f1100 fb_fnv1a64=e1cb4973e969ffea

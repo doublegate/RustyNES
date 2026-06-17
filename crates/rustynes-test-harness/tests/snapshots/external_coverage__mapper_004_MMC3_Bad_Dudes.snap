@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-004-MMC3/Bad Dudes.nes
+rom_sha256=4285c4e0115ca383128017058cbf7fc1ea9a1394413a6cb78f58a56eb78d12ec
+frames=1141
+fb_bytes=245760
+cycles=33949777
+audio_samples=836505
+audio_fnv1a64=b4f557b806ccc1a0
+checkpoint f900 fb_fnv1a64=5d23034273fd13b4
+checkpoint f1100 fb_fnv1a64=5d23034273fd13b4

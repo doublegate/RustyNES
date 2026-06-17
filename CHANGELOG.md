@@ -15,7 +15,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Mapper 159 (Bandai LZ93D50 + X24C01 EEPROM) blank boot.** All mapper-159
+  games (Dragon Ball Z - Kyoushuu! Saiya Jin, both Magical Taruruuto-kun
+  titles, SD Gundam Gaiden) booted to a 1-colour blank screen because the
+  Bandai FCG serial-EEPROM state machine mismodeled the X24C01: it clocked
+  bits only on the SCL rising edge and shifted the address/data MSB-first,
+  whereas the X24C01 advances its mode/ACK handshake on the falling edge and
+  shifts **LSB-first** (the 24C02 on mapper 16 is MSB-first). The games
+  busy-waited on the EEPROM probe and never proceeded. The `Eeprom` machine in
+  `crates/rustynes-mappers/src/bandai_fcg.rs` is now a faithful port of the
+  Mesen2 `Eeprom24C01` / `Eeprom24C02` models (rise/fall-split protocol,
+  per-chip bit order, and X24C01 combined-byte addressing vs. the 24C02
+  device-select-then-word-address sequence). Mapper 159 is not in the
+  AccuracyCoin oracle, so the fix is AccuracyCoin- and determinism-neutral
+  (100% (139/139) held).
+
+- **BestEffort mapper decode fixes from the per-mapper screenshot-coverage
+  pass** (all off the AccuracyCoin oracle; AccuracyCoin holds 100% (139/139)
+  and the `mapper_tier_honesty` gate stays green; each was verified to render
+  a previously-blank commercial boot). Checked against puNES / Mesen2 / the
+  NESdev wiki:
+  - **m250 Nitra:** the MMC3 even/odd register line is A10 (`0x0400`), not A8.
+  - **m177 Hengedianzi:** `$8000` PRG bank is bits 0-4 only (bit 5 = mirroring).
+  - **m178 Waixing FS305:** `$4800` bit 0 is mirroring and bits 1-2 are the PRG
+    mode (they were swapped); the 4 documented PRG modes are now implemented.
+  - **m162 Waixing FS304:** rewrite the PRG-bank decode per the NESdev
+    A15-A20/`$5300`-mode table (reset boots 32 KiB bank #2) and add the
+    `$6000-$7FFF` battery PRG-RAM the RPGs read at boot.
+  - **m156 DAOU/DIS23C01:** CHR-nibble registers decode the slot as
+    `(addr&0x03)+(addr>=0xC008?4:0)` with bit 2 selecting the high/low array;
+    `$C014` selects H/V mirroring from a single-screen-A power-on.
+  - **m244 Decathlon:** decode the written DATA byte through the two scramble
+    LUTs with bit 3 selecting CHR vs PRG.
+  - **m227 BMC 1200-in-1:** decode `s_flag`/`prg_mode`/`l_flag` per Mesen2 and
+    compose the `$8000`/`$C000` 16 KiB pair from the documented mode table.
+  - **m233 BMC 42-in-1:** the PRG-mode bit was inverted — reg bit 5 set selects
+    16 KiB mode (puNES), clear selects the 32 KiB pair.
+  - **m185 CNROM-protect:** CHR powers on ENABLED (was deriving disabled from a
+    zero latch, blanking the title), and the submapper-0 heuristic is
+    `(value & 0x0F) != 0 && value != 0x13`.
+  - **m147 Sachen 3018 / TXC JV001 & m150 Sachen 74LS374N:** port the JV001
+    handshake + bank decode (and the m150 PRG/CHR bank composition) bit-for-bit
+    from puNES.
+
 ### Testing
+
+- **Vs.-aware + per-ROM-override boot coverage.** The `external_coverage`
+  harness now detects Vs. System carts (iNES mapper 99/151 or the header Vs.
+  flag) and applies the per-game DB's RGB-PPU type + DSW0 default and pulses a
+  coin so they leave the attract loop (mirrors the frontend's `apply_vs_db`);
+  and a per-ROM `capture_override` gives title-screen titles (Dr. Mario,
+  Dragon Warrior, Metroid, Gyromite, Lagrange Point, both Harikiri baseball
+  games, etc.) a passive `IdleOnly` capture instead of the START-tapping
+  default that advanced them into a blank transition. Both are accuracy-
+  neutral (the coverage harness is a screenshot/boot-smoke net, not the
+  oracle) and no-ops on non-Vs./non-listed ROMs.
 
 - Add `external_coverage` — a data-driven, auto-discovering commercial-ROM
   boot-coverage harness (`crates/rustynes-test-harness/tests/external_coverage.rs`,

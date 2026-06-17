@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-112-NTDEC-Asder/Chik Bik Ji Jin - Saam Gwok Ji (CN-20) (Asder) [!].nes
+rom_sha256=c9200470e3232670dab11a42368d73549414ff9d50fe41827094d936cacddcf2
+frames=1141
+fb_bytes=245760
+cycles=33949782
+audio_samples=836505
+audio_fnv1a64=3d250bdbfcba311f
+checkpoint f900 fb_fnv1a64=c1f4eb88073b1c76
+checkpoint f1100 fb_fnv1a64=11f8f7248671e41e

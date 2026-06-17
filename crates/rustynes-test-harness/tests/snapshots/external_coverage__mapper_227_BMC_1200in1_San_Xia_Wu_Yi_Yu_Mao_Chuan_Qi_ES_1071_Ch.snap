@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-227-BMC-1200in1/San Xia Wu Yi - Yu Mao Chuan Qi (ES-1071) (Ch).nes
+rom_sha256=ef2a336e9d7aaecd87492074dfd300731ec0735172edbf40ed439c32eb9fe54f
+frames=1141
+fb_bytes=245760
+cycles=33949784
+audio_samples=836505
+audio_fnv1a64=c507db0ea2581cd2
+checkpoint f900 fb_fnv1a64=69166346e2a23e40
+checkpoint f1100 fb_fnv1a64=389609a547c5be80

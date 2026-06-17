@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-206-Namcot118/Gauntlet.nes
+rom_sha256=19ad9f30e60c2873345efec2522ec7987d3e17d8ff2d4f0ba6e9a8fa2af50438
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=efa0e6568f8799d4
+checkpoint f900 fb_fnv1a64=8f60c2d8c161be48
+checkpoint f1100 fb_fnv1a64=4d3455fef3edf01c

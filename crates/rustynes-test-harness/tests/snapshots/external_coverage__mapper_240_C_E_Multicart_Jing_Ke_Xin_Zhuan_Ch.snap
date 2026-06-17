@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-240-C-E-Multicart/Jing Ke Xin Zhuan (Ch) [!].nes
+rom_sha256=db0a27f84dddf511cf8f141d737970553db365e18fe152d79b60eb30093c1a8d
+frames=1141
+fb_bytes=245760
+cycles=33949779
+audio_samples=836505
+audio_fnv1a64=9b2523274daf1d4c
+checkpoint f900 fb_fnv1a64=65c681cad3ed54e2
+checkpoint f1100 fb_fnv1a64=e84c94a4e0e6e92f

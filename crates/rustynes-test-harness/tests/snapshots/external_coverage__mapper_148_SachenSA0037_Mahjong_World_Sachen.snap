@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-148-SachenSA0037/Mahjong World (Sachen) [!].nes
+rom_sha256=a5689a70fead9fbe34e8aec93da0afdd089d6d4593266a680175dc4f451d736d
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=508e5b39340b821a
+checkpoint f900 fb_fnv1a64=40cb33fe297d4dfa
+checkpoint f1100 fb_fnv1a64=5564463bc2e54697

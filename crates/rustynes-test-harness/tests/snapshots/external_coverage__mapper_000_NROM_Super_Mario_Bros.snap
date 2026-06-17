@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-000-NROM/Super Mario Bros.nes
+rom_sha256=2a19ffc0e8b95debe3a0ea992379ce82fe1a05b8eb2239d2151e44f72c8bda5a
+frames=1141
+fb_bytes=245760
+cycles=33949782
+audio_samples=836505
+audio_fnv1a64=5c42f2d77860b720
+checkpoint f900 fb_fnv1a64=477c03f503aa695b
+checkpoint f1100 fb_fnv1a64=477c03f503aa695b

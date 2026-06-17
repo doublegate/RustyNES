@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-007-AxROM/Battletoads & Double Dragon - The Ultimate Team.nes
+rom_sha256=124375e4d3fcbc7ae4ee7f25e452e5d62d304dc4bec922b978a4c8da84759b39
+frames=1141
+fb_bytes=245760
+cycles=33949777
+audio_samples=836505
+audio_fnv1a64=9f8fd5460636ae9f
+checkpoint f900 fb_fnv1a64=15f235f45807675d
+checkpoint f1100 fb_fnv1a64=15f235f45807675d

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-002-UxROM/Castlevania.nes
+rom_sha256=3cfa03a397afefa9f6d66f41812a9984ec5a7413f6829864ff3dd8aec5642d08
+frames=1141
+fb_bytes=245760
+cycles=33949783
+audio_samples=836505
+audio_fnv1a64=d5a2be7e2fab2905
+checkpoint f900 fb_fnv1a64=9f6d2445ff713748
+checkpoint f1100 fb_fnv1a64=9f6d2445ff713748

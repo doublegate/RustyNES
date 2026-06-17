@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-004-MMC3/Super Mario Bros. 3 (U) (PRG0) [!].nes
+rom_sha256=6ea0777ca520ba7ad7b0ea0f6452140d59aa0b1dffe5045cb1e8020dde10c267
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=296356a65979f5c8
+checkpoint f900 fb_fnv1a64=933eda6e9f786cb8
+checkpoint f1100 fb_fnv1a64=b61324be40f3a3ac

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-147-Sachen3018-JV001/Shao Lin Wuz He - Chinese Kung Fu (Sachen-JAP) [!].nes
+rom_sha256=cfc60c4f6cee632ee71d216307c5b9671426a638374a5a6bdd68613a9e06e6a9
+frames=1141
+fb_bytes=245760
+cycles=33949783
+audio_samples=836505
+audio_fnv1a64=f181792247ff555a
+checkpoint f900 fb_fnv1a64=715a7fe33141301e
+checkpoint f1100 fb_fnv1a64=715a7fe33141301e

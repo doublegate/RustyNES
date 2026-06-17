@@ -41,7 +41,7 @@
 //!   menu navigation) so the captured frame lands on a MEANINGFUL,
 //!   regression-sensitive screen. Keep these — they carry knowledge no
 //!   auto-discovery can reconstruct.
-//! - this file: a uniform [`DEFAULT_IDLE`] boot capture for EVERY staged
+//! - this file: a uniform [`DEFAULT_CAPTURE`] boot capture for EVERY staged
 //!   ROM, so adding the 5th-Castlevania-clone to `mapper-002-UxROM/`
 //!   gets a regression baseline for free. The snapshot id is derived
 //!   purely from the relative path, so two harnesses snapshotting the
@@ -90,15 +90,13 @@
 //! ## Blessing baselines for newly-staged ROMs
 //!
 //! ```bash
-//! # Stage ROMs under tests/roms/external/mapper-NNN-Name/, then:
-//! INSTA_UPDATE=auto RUSTYNES_DUMP_FRAMES=1 \
-//!     cargo test -p rustynes-test-harness --features commercial-roms,test-roms \
-//!     --test external_coverage -- --test-threads=1 --nocapture
-//! # Inspect the PNGs at /tmp/rustynes-baseline-screenshots/external/,
-//! # then sort them into the committed tree:
-//! python3 scripts/screenshots/categorize_screenshots.py
-//! # Accept the .snap.new files:
+//! # Stage ROMs under tests/roms/external/mapper-NNN-Name/, then use the ONE
+//! # lock-guarded bless entry point (NEVER run two blesses at once / nohup it —
+//! # they race the Cargo target lock; see the script header for the postmortem):
+//! scripts/coverage/bless.sh                 # full sweep, single-threaded, flock'd
+//! # Inspect the PNGs at /tmp/rustynes-baseline-screenshots/external/, then:
 //! cargo insta accept
+//! python3 scripts/coverage/coverage.py categorize
 //! ```
 //!
 //! In `INSTA_UPDATE=auto` (or `always`) mode every missing / mismatched
@@ -122,17 +120,69 @@ use std::path::{Path, PathBuf};
 
 use common::external::{InputScript, run_capture, snapshot_text};
 
-/// Default boot/idle capture: 600 frames (10 s @ NTSC 60 Hz) with no
-/// input. Long enough to clear the title-screen ramp-up + first
-/// attract-mode tick for the overwhelming majority of commercial ROMs.
-/// Mirrors the curated harnesses' `DEFAULT_IDLE` so a ROM that boots to
-/// a stable title under both produces a directly comparable frame hash.
+/// Default boot capture for breadth coverage. A discovered ROM's intro
+/// structure is unknown, so a passive idle frequently lands on a black
+/// title / publisher splash; instead clear the initial ramp-up, then tap
+/// START every `period` frames to press through multi-stage intros
+/// (publisher -> story -> title -> menu), then free-run to a settled late
+/// frame so the captured screen is gameplay / menu rather than a black
+/// boot frame. `RepeatStartTap` is what the curated harnesses use for
+/// intro-heavy games (Mega Man, Bandit Kings); here it is the default
+/// because the structure is unknown per-ROM. ROMs that still land blank
+/// get a hand-tuned entry in `external_real_games` / `external_extended`,
+/// or indicate a genuine mapper-decode bug to fix.
+const DEFAULT_CAPTURE: InputScript = InputScript::RepeatStartTap {
+    warmup: 240,
+    period: 150,
+    taps: 5,
+    free_run: 300,
+    checkpoints: &[900, 1100],
+};
+
+/// Per-ROM capture override.
 ///
-/// ROMs with a long pre-title intro (where 600 frames lands on a black
-/// or animated frame) are better served by a hand-tuned entry in
-/// `external_real_games` / `external_extended`; this harness's job is
-/// breadth, not per-game perfection.
-const DEFAULT_IDLE: InputScript = InputScript::IdleOnly { frames: 600 };
+/// The `RepeatStartTap` [`DEFAULT_CAPTURE`] is right for intro-heavy games, but
+/// for a sizeable class of titles a START tap ADVANCES the title screen into a
+/// black transition / blank menu, so the captured frame collapses. Those games
+/// render a clean, regression-sensitive title screen with a passive idle (no
+/// input) settled at a late frame instead. A handful need a longer idle to
+/// clear a slow fade. This map keys the `external/`-relative ROM path to a
+/// tailored [`InputScript`]; everything not listed uses [`DEFAULT_CAPTURE`].
+///
+/// These are accuracy-neutral capture-timing choices (the coverage harness is a
+/// screenshot generator + boot-smoke net, not the `AccuracyCoin` oracle). Each
+/// entry was verified to land on a meaningful rendered frame via the
+/// `coverage_smoke` bin.
+fn capture_override(rom_rel: &str) -> Option<InputScript> {
+    // Titles that render a title/menu with a passive idle; a START tap would
+    // advance past it into a blank transition.
+    const IDLE: InputScript = InputScript::IdleOnly { frames: 700 };
+    // A few titles need a longer fade to settle on the title screen.
+    const IDLE_LONG: InputScript = InputScript::IdleOnly { frames: 1200 };
+    let idle = [
+        "mapper-000-NROM/Gyromite.nes",
+        "mapper-001-MMC1/Dr. Mario.nes",
+        "mapper-001-MMC1/Dragon Warrior.nes",
+        "mapper-001-MMC1/Metroid.nes",
+        "mapper-022-VRC2a/Ganbare Pennant Race! (J) [!].nes",
+        "mapper-025-VRC2-VRC4/Ganbare Goemon Gaiden - Kieta Ougon Kiseru (Japan) (En) (0.99c).nes",
+        "mapper-048-TaitoTC0690/Bakushou!! Jinsei Gekijou 3 (Japan).nes",
+        "mapper-082-TaitoX1-017/Kyuukyoku Harikiri Koushien (Japan).nes",
+        "mapper-082-TaitoX1-017/Kyuukyoku Harikiri Stadium III (Japan).nes",
+        "mapper-085-VRC7/Lagrange Point (J) [!].nes",
+        "mapper-085-VRC7/Lagrange Point (Japan) (En) (1.01).nes",
+        "mapper-119-TQROM/High Speed (E) [!].nes",
+        "mapper-119-TQROM/Pin Bot (E) [!].nes",
+    ];
+    let idle_long = ["mapper-001-MMC1/Tecmo Bowl.nes"];
+    if idle.contains(&rom_rel) {
+        Some(IDLE)
+    } else if idle_long.contains(&rom_rel) {
+        Some(IDLE_LONG)
+    } else {
+        None
+    }
+}
 
 /// Walk `tests/roms/external/` and return every staged `.nes` ROM as a
 /// path RELATIVE to that `external/` root (e.g.
@@ -269,9 +319,10 @@ fn external_coverage_boot_smoke() {
         // clear per-ROM failure line.
         let rom = rom_rel.clone();
         let snap = id.clone();
+        let capture_script = capture_override(rom_rel).unwrap_or(DEFAULT_CAPTURE);
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
             move || -> Result<(), String> {
-                let capture = run_capture(&rom, DEFAULT_IDLE);
+                let capture = run_capture(&rom, capture_script);
 
                 // (1) Blank / few-colour health — the shared coverage
                 // heuristic. A real boot draws dozens of colours; a
@@ -292,7 +343,7 @@ fn external_coverage_boot_smoke() {
                 };
 
                 // (2) Baseline snapshot comparison.
-                let text = snapshot_text(&rom, DEFAULT_IDLE, &capture);
+                let text = snapshot_text(&rom, capture_script, &capture);
                 insta::assert_snapshot!(snap.as_str(), text);
 
                 // Snapshot passed; report the health verdict (if blank).

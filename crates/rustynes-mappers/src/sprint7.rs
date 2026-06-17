@@ -82,55 +82,65 @@ const fn nametable_offset(addr: u16, mirroring: Mirroring) -> usize {
 
 /// The TXC JV001 scrambling-accumulator chip (mapper 147). Distinct from the
 /// non-JV001 `TxcChip` in `sprint6` (different register/output bit positions).
-#[derive(Clone, Copy, Default)]
+/// Ported bit-for-bit from puNES `JV001.c` / `mapper_147.c`.
+#[derive(Clone, Copy)]
 struct Jv001Chip {
     accumulator: u8,
     inverter: u8,
     staging: u8,
     output: u8,
     increase: bool,
-    invert: bool,
+    /// Full 0x00/0xFF mask (NOT a bool) — puNES stores `0xFF * (value & 1)` and
+    /// hard-resets it to 0xFF, so the very first handshake read inverts.
+    invert: u8,
+}
+
+impl Default for Jv001Chip {
+    fn default() -> Self {
+        Self {
+            accumulator: 0,
+            inverter: 0,
+            staging: 0,
+            output: 0,
+            increase: false,
+            // Hard-reset state (puNES init_JV001): invert latched high.
+            invert: 0xFF,
+        }
+    }
 }
 
 impl Jv001Chip {
-    const MASK: u8 = 0x0F;
-
     /// The value the chip returns on a $4100 read (the protection handshake).
-    ///
-    /// Per the JV001 hardware spec (and the module comment above), the read
-    /// value splits at `0x3F` (6-bit accumulator) / `0xC0` (2-bit inverter) —
-    /// distinct from the `0x0F`/`0xF0` nibble split the board's *bank-output*
-    /// latch (`self.output`) uses. The handshake read and the bank latch are
-    /// separate chip outputs.
+    /// puNES: `((inverter ^ invert) & 0xF0) | (accumulator & 0x0F)`.
     const fn read(self) -> u8 {
-        let inv = if self.invert { 0xFF } else { 0x00 };
-        (self.accumulator & 0x3F) | ((self.inverter ^ inv) & 0xC0)
+        ((self.inverter ^ self.invert) & 0xF0) | (self.accumulator & 0x0F)
     }
 
-    /// `absolute` is the full CPU address; `value` the written byte.
+    /// `absolute` is the full CPU address; `value` the written byte (already
+    /// mapper-147-pre-scrambled by the caller). Mirrors puNES
+    /// `extcl_cpu_wr_mem_JV001`.
     const fn write(&mut self, absolute: u16, value: u8) {
         if absolute < 0x8000 {
-            match absolute & 0x4103 {
-                0x4100 => {
-                    if self.increase {
-                        self.accumulator = self.accumulator.wrapping_add(1);
+            match absolute & 0x0103 {
+                0x0100 => {
+                    self.accumulator = if self.increase {
+                        self.accumulator.wrapping_add(1)
                     } else {
-                        let inv = if self.invert { 0xFF } else { 0x00 };
-                        self.accumulator =
-                            ((self.accumulator & !Self::MASK) | (self.staging & Self::MASK)) ^ inv;
-                    }
+                        (self.accumulator & 0xF0) | ((self.staging ^ self.invert) & 0x0F)
+                    };
                 }
-                0x4101 => self.invert = (value & 0x01) != 0,
-                0x4102 => {
-                    self.staging = value & Self::MASK;
-                    self.inverter = value & !Self::MASK;
+                0x0101 => self.invert = if value & 0x01 != 0 { 0xFF } else { 0x00 },
+                0x0102 => {
+                    self.staging = value & 0x0F;
+                    self.inverter = value & 0xF0;
                 }
-                0x4103 => self.increase = (value & 0x01) != 0,
+                0x0103 => self.increase = (value & 0x01) != 0,
                 _ => {}
             }
+        } else {
+            // A $8000-$FFFF access refreshes the bank-output latch.
+            self.output = (self.inverter & 0xF0) | (self.accumulator & 0x0F);
         }
-        // The output latch refreshes on every chip access.
-        self.output = (self.accumulator & 0x0F) | (self.inverter & 0xF0);
     }
 }
 
@@ -183,14 +193,14 @@ impl Sachen3018M147 {
         })
     }
 
-    /// PRG 32 KiB bank from the chip output latch.
+    /// PRG 32 KiB bank from the chip output latch (puNES `prg_fix_jv001_147`).
     const fn prg_bank(&self) -> usize {
-        ((self.jv001.output >> 4) & 0x03) as usize
+        (((self.jv001.output & 0x20) >> 4) | (self.jv001.output & 0x01)) as usize
     }
 
-    /// CHR 8 KiB bank from the chip output latch.
+    /// CHR 8 KiB bank from the chip output latch (puNES `chr_fix_jv001_147`).
     const fn chr_bank(&self) -> usize {
-        (self.jv001.output & 0x0F) as usize
+        ((self.jv001.output & 0x1E) >> 1) as usize
     }
 
     fn read_prg(&self, addr: u16) -> u8 {
@@ -220,20 +230,29 @@ impl Mapper for Sachen3018M147 {
 
     fn cpu_read(&mut self, addr: u16) -> u8 {
         match addr {
-            // JV001 protection handshake read.
-            0x4100..=0x5FFF if (addr & 0x0103) == 0x0100 => self.jv001.read(),
+            // JV001 protection handshake read. The mapper-147 board post-
+            // scrambles the chip read: ((v & 0x3F) << 2) | ((v & 0xC0) >> 6)
+            // (puNES extcl_cpu_rd_mem_147).
+            0x4100..=0x5FFF if (addr & 0x0103) == 0x0100 => {
+                let v = self.jv001.read();
+                ((v & 0x3F) << 2) | ((v & 0xC0) >> 6)
+            }
             0x8000..=0xFFFF => self.read_prg(addr),
             _ => 0,
         }
     }
 
     fn cpu_write(&mut self, addr: u16, value: u8) {
+        // The mapper-147 board pre-scrambles every write to the JV001:
+        // ((value & 0x03) << 6) | ((value & 0xFC) >> 2) (puNES
+        // extcl_cpu_wr_mem_147).
+        let scramble = |v: u8| ((v & 0x03) << 6) | ((v & 0xFC) >> 2);
         match addr {
-            0x4100..=0x5FFF => self.jv001.write(addr, value),
+            0x4100..=0x5FFF => self.jv001.write(addr, scramble(value)),
             0x8000..=0xFFFF => {
                 // Bus conflict in the PRG window; the write refreshes the latch.
                 let effective = value & self.read_prg(addr);
-                self.jv001.write(addr, effective);
+                self.jv001.write(addr, scramble(effective));
             }
             _ => {}
         }
@@ -283,7 +302,7 @@ impl Mapper for Sachen3018M147 {
         out.push(self.jv001.staging);
         out.push(self.jv001.output);
         out.push(u8::from(self.jv001.increase));
-        out.push(u8::from(self.jv001.invert));
+        out.push(self.jv001.invert); // full 0x00/0xFF mask
         out.extend_from_slice(&self.vram);
         if self.chr_is_ram {
             out.extend_from_slice(&self.chr_rom);
@@ -312,7 +331,7 @@ impl Mapper for Sachen3018M147 {
         self.jv001.staging = data[3];
         self.jv001.output = data[4];
         self.jv001.increase = data[5] != 0;
-        self.jv001.invert = data[6] != 0;
+        self.jv001.invert = data[6]; // full 0x00/0xFF mask
         let mut cursor = 7;
         self.vram
             .copy_from_slice(&data[cursor..cursor + self.vram.len()]);
@@ -691,12 +710,17 @@ impl Sachen150 {
         })
     }
 
+    // puNES prg_fix_150 / chr_fix_150 (the non-243 branch):
+    //   PRG 32 KiB = reg[5] | (reg[2] & 0x01)
+    //   CHR  8 KiB = (reg[2] << 3) | ((reg[4] & 0x01) << 2) | (reg[6] & 0x03)
+    // The old decode masked PRG to reg[5] & 0x03 (dropping reg[2].0) and omitted
+    // the reg[2]<<3 CHR term, so both banks resolved wrong -> blank/garbled.
     const fn prg_bank(&self) -> u8 {
-        self.reg[5] & 0x03
+        self.reg[5] | (self.reg[2] & 0x01)
     }
 
     const fn chr_bank(&self) -> u8 {
-        ((self.reg[4] & 0x01) << 2) | (self.reg[6] & 0x03)
+        ((self.reg[2] & 0x01) << 3) | ((self.reg[4] & 0x01) << 2) | (self.reg[6] & 0x03)
     }
 
     /// Mirroring selector value `(reg[7] >> 1) & 0x03`.
@@ -1058,6 +1082,11 @@ pub struct CnRom185 {
     vram: Box<[u8]>,
     chr_reg_raw: u8,
     chr_bank: u8,
+    /// CHR-ROM enable latch. Powers on ENABLED (Mesen2 `CnromProtect`); the
+    /// protection write may disable it. Initialising this to a derived-from-
+    /// `chr_reg_raw=0` value left CHR reading $FF before the first register
+    /// write, so the title screen never drew -> blank boot.
+    chr_enabled: bool,
     sub_mapper: u8,
     mirroring: Mirroring,
 }
@@ -1096,9 +1125,24 @@ impl CnRom185 {
             vram: vec![0u8; 2 * NAMETABLE_SIZE].into_boxed_slice(),
             chr_reg_raw: 0,
             chr_bank: 0,
+            chr_enabled: true,
             sub_mapper: sub_mapper & 0x0F,
             mirroring,
         })
+    }
+
+    // The per-submapper CHR-enable rule (Mesen2 CnromProtect): submapper 0 is a
+    // heuristic on the raw written latch; 4..=7 are exact low-2-bit matches.
+    #[allow(clippy::verbose_bit_mask)]
+    const fn chr_enable_for(&self, value: u8) -> bool {
+        match self.sub_mapper {
+            4 => (value & 0x03) == 0,
+            5 => (value & 0x03) == 1,
+            6 => (value & 0x03) == 2,
+            7 => (value & 0x03) == 3,
+            // Submapper 0 heuristic: enabled iff low nibble nonzero and != $13.
+            _ => (value & 0x0F) != 0 && value != 0x13,
+        }
     }
 
     fn read_prg(&self, addr: u16) -> u8 {
@@ -1107,20 +1151,6 @@ impl CnRom185 {
             self.prg_rom[off & (PRG_BANK_16K - 1)]
         } else {
             self.prg_rom[off]
-        }
-    }
-
-    // The per-submapper checks compare the low two CHR-register bits against a
-    // fixed pattern; `trailing_zeros` would obscure that 2-bit comparison.
-    #[allow(clippy::verbose_bit_mask)]
-    const fn chr_enabled(&self) -> bool {
-        match self.sub_mapper {
-            4 => (self.chr_reg_raw & 0x03) == 0,
-            5 => (self.chr_reg_raw & 0x03) == 1,
-            6 => (self.chr_reg_raw & 0x03) == 2,
-            7 => (self.chr_reg_raw & 0x03) == 3,
-            // Default heuristic: CHR enabled while either low bit is set.
-            _ => (self.chr_reg_raw & 0x03) != 0,
         }
     }
 }
@@ -1143,6 +1173,7 @@ impl Mapper for CnRom185 {
             // Bus conflict (mapper 185 always has AND-type bus conflicts).
             let effective = value & self.read_prg(addr);
             self.chr_reg_raw = effective;
+            self.chr_enabled = self.chr_enable_for(effective);
             let count = (self.chr_rom.len() / CHR_BANK_8K).max(1);
             let mask = u8::try_from((count - 1) | 0x03).unwrap_or(u8::MAX);
             self.chr_bank = effective & mask;
@@ -1153,12 +1184,13 @@ impl Mapper for CnRom185 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => {
-                if self.chr_enabled() {
+                if self.chr_enabled {
                     let count = (self.chr_rom.len() / CHR_BANK_8K).max(1);
                     let bank = (self.chr_bank as usize) % count;
                     self.chr_rom[bank * CHR_BANK_8K + addr as usize]
                 } else {
-                    // CHR disabled by protection: bus reads $FF.
+                    // CHR disabled by protection: the open bus reads $FF (D0 is
+                    // held high by a pull-up, which $FF already satisfies).
                     0xFF
                 }
             }
@@ -1203,6 +1235,11 @@ impl Mapper for CnRom185 {
         self.chr_reg_raw = data[1];
         self.chr_bank = data[2];
         self.sub_mapper = data[3] & 0x0F;
+        // chr_enabled is a deterministic function of the latched register +
+        // submapper, so it is reconstructed rather than serialised (keeps the
+        // save format stable). Power-on (chr_reg_raw == 0) restores to enabled
+        // only if the heuristic agrees; the first write re-evaluates anyway.
+        self.chr_enabled = self.chr_enable_for(self.chr_reg_raw);
         self.vram.copy_from_slice(&data[4..4 + self.vram.len()]);
         Ok(())
     }
@@ -2470,53 +2507,51 @@ mod tests {
 
     #[test]
     fn m147_jv001_protection_read_and_bank_decode() {
+        // Ported from puNES JV001.c / mapper_147.c. The board pre-scrambles
+        // writes ((v&3)<<6)|((v&0xFC)>>2) and post-scrambles reads
+        // ((v&0x3F)<<2)|((v&0xC0)>>6); the chip resets with invert=0xFF.
         let mut m =
             Sachen3018M147::new(synth_prg_32k(4), synth_chr_8k(8), Mirroring::Vertical).unwrap();
-        // $4102 <- 0x35: staging = 0x05, inverter = 0x30 (invert off).
-        m.cpu_write(0x4102, 0x35);
-        // $4100 latch (increase off): accumulator = (0 & 0xF0) | (staging & 0x0F)
-        //   = 5; output = (acc & 0x0F) | (inverter & 0xF0) = 0x35.
+        // Disable inversion so the handshake is a clean staging->accumulator
+        // copy: write 1 to $4101 (scrambled 0x01 -> 0x40, bit 0 == 0 -> invert
+        // off). puNES: invert = 0xFF * (value & 1); 0x40 & 1 == 0 -> 0x00.
+        m.cpu_write(0x4101, 0x01);
+        // $4102 <- value V: staging = scramble(V)&0x0F, inverter = scramble(V)&0xF0.
+        // Pick V = 0x14: scramble = ((0x14&3)<<6)|((0x14&0xFC)>>2) = 0|0x05 = 0x05
+        //   -> staging 0x05, inverter 0x00.
+        m.cpu_write(0x4102, 0x14);
+        // $4100 latch (increase off, invert off): accumulator =
+        //   (0 & 0xF0) | ((staging ^ 0) & 0x0F) = 0x05.
         m.cpu_write(0x4100, 0x00);
-        // The protection read at $4100 returns the JV001 scrambled value with
-        // the 0x3F/0xC0 split: (accumulator & 0x3F) | ((inverter ^ inv) & 0xC0)
-        //   = (0x05 & 0x3F) | (0x30 & 0xC0) = 0x05. (The bank-output latch keeps
-        // its own 0x0F/0xF0 split, so the bank-decode asserts below are 0x35.)
-        assert_eq!(m.cpu_read(0x4100), 0x05);
-        // Bank decode from the output latch: PRG = (0x35 >> 4) & 3 = 3,
-        // CHR = 0x35 & 0x0F = 5.
-        assert_eq!(m.cpu_read(0x8000), 3); // bank 3 of 4 -> byte 0 = 3
-        assert_eq!(m.ppu_read(0x0000), 5); // chr bank 5 of 8 -> byte 0 = 5
-    }
-
-    #[test]
-    fn m147_prg_window_has_bus_conflict() {
-        // A $8000-$FFFF write refreshes the output latch but ANDs with the PRG
-        // byte first. PRG byte 0 of bank 0 is 0, so a $8000 write latches 0.
-        let mut m =
-            Sachen3018M147::new(synth_prg_32k(4), synth_chr_8k(8), Mirroring::Vertical).unwrap();
-        m.cpu_write(0x4102, 0x35);
-        m.cpu_write(0x4100, 0x00); // output = 0x35
-        m.cpu_write(0x8000, 0xFF); // bus conflict with PRG byte 0 (==0)
-        // The $8000 write does not touch the JV001 register file (addr >= 0x8000
-        // path only refreshes the latch from the current accumulator/inverter),
-        // so the output is unchanged.
-        assert_eq!(m.cpu_read(0x8000), 3);
+        // Handshake read: chip = ((inverter ^ invert) & 0xF0) | (acc & 0x0F)
+        //   = (0x00 & 0xF0) | 0x05 = 0x05; board post-scramble = 0x05<<2 = 0x14.
+        assert_eq!(m.cpu_read(0x4100), 0x14);
+        // Refresh the bank-output latch (a $8000+ access): output =
+        //   (inverter & 0xF0) | (acc & 0x0F) = 0x05.
+        // PRG = ((out&0x20)>>4)|(out&1) = 0|1 = 1; CHR = (out&0x1E)>>1 = (4)>>1 = 2.
+        m.cpu_write(0x8000, 0xFF); // bus conflict with PRG byte 0 (==0) -> 0
+        // The $8000 write refreshes output from acc/inverter (0x05), not the
+        // ANDed data; bank decode below reflects that.
+        assert_eq!(m.cpu_read(0x8000), 1); // PRG bank 1 of 4 -> byte 0 = 1
+        assert_eq!(m.ppu_read(0x0000), 2); // CHR bank 2 of 8 -> byte 0 = 2
     }
 
     #[test]
     fn m147_save_state_round_trip() {
         let mut m =
             Sachen3018M147::new(synth_prg_32k(4), synth_chr_8k(8), Mirroring::Vertical).unwrap();
-        m.cpu_write(0x4102, 0x35);
+        m.cpu_write(0x4101, 0x01);
+        m.cpu_write(0x4102, 0x14);
         m.cpu_write(0x4100, 0x00);
+        m.cpu_write(0x8000, 0x00); // refresh output latch
+        let prg = m.cpu_read(0x8000);
+        let chr = m.ppu_read(0x0000);
         let blob = m.save_state();
         let mut m2 =
             Sachen3018M147::new(synth_prg_32k(4), synth_chr_8k(8), Mirroring::Vertical).unwrap();
         m2.load_state(&blob).unwrap();
-        // JV001 0x3F/0xC0 handshake read = 0x05 (the bank latch keeps 0x35).
-        assert_eq!(m2.cpu_read(0x4100), 0x05);
-        assert_eq!(m2.cpu_read(0x8000), 3);
-        assert_eq!(m2.ppu_read(0x0000), 5);
+        assert_eq!(m2.cpu_read(0x8000), prg);
+        assert_eq!(m2.ppu_read(0x0000), chr);
     }
 
     // --- Mapper 148 --------------------------------------------------------
@@ -2628,12 +2663,18 @@ mod tests {
             0,
         )
         .unwrap();
-        // Default submapper: CHR enabled while (value & 3) != 0.
+        // Power-on: CHR is ENABLED before any register write (Mesen2), so the
+        // title screen draws. (The old derive-from-zero model read $FF here.)
+        assert_eq!(m.ppu_read(0x0000), 0);
+        // Submapper-0 heuristic: enabled iff (value & 0x0F) != 0 and value != $13.
         // Write 1 -> enabled, bank = 1 & mask.
         m.cpu_write(0x8000, 1);
         assert_eq!(m.ppu_read(0x0000), 1);
         // Write 0 -> CHR disabled -> reads $FF.
         m.cpu_write(0x8000, 0);
+        assert_eq!(m.ppu_read(0x0000), 0xFF);
+        // Write $13 -> the documented disabled sentinel -> $FF.
+        m.cpu_write(0x8000, 0x13);
         assert_eq!(m.ppu_read(0x0000), 0xFF);
     }
 

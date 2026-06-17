@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-082-TaitoX1-017/Kyuukyoku Harikiri Koushien (Japan).nes
+rom_sha256=4b044adb00d0a0635d1fd26ff9d0374d9e323b1eee417734ef21e8a20242b9f3
+frames=700
+fb_bytes=245760
+cycles=20816571
+audio_samples=512903
+audio_fnv1a64=2ce778996394b1f3
+checkpoint f700 fb_fnv1a64=62404289efc7e730

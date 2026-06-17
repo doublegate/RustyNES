@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=vs-system/VS Excitebike.nes
+rom_sha256=ea278a35a05017a8049f0ba96e060a26f550ed9202f8ee62502bef50cb045b23
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=37f2715490376016
+checkpoint f900 fb_fnv1a64=bd4faaef9a150a48
+checkpoint f1100 fb_fnv1a64=6cc27d3f5436ab1c

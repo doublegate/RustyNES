@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=vs-system/VS Super Selz Arcade Edition.nes
+rom_sha256=6c69f3ca3e0a2b0652622e108c8319b2a44544b62476fd5fb49457fba5576313
+frames=1141
+fb_bytes=245760
+cycles=33949778
+audio_samples=836505
+audio_fnv1a64=9b347ca7ed24b247
+checkpoint f900 fb_fnv1a64=deb9b186d0e72fe7
+checkpoint f1100 fb_fnv1a64=b8dd0106a1187fd6

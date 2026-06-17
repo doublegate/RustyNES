@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-112-NTDEC-Asder/Master Shooter (CN-26) (Unl) [!].nes
+rom_sha256=ad0a43e5cc95b082e01da991b695d80bd6b712534abff140e61ad11dd274e9b1
+frames=1141
+fb_bytes=245760
+cycles=33949777
+audio_samples=836505
+audio_fnv1a64=e48ad3330d025bc3
+checkpoint f900 fb_fnv1a64=a5587367fd28de35
+checkpoint f1100 fb_fnv1a64=a5587367fd28de35

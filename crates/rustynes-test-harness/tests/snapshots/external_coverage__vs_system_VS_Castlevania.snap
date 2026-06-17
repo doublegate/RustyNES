@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=vs-system/VS Castlevania.nes
+rom_sha256=cabc230a7f8c366ed405fb831e42c358a1f1408a427717161cd1dd3d868d351b
+frames=1141
+fb_bytes=245760
+cycles=33949877
+audio_samples=836507
+audio_fnv1a64=9d7618ac9f24890e
+checkpoint f900 fb_fnv1a64=04c8ee18eb6c2199
+checkpoint f1100 fb_fnv1a64=637d69e09e6793c5

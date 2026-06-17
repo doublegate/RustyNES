@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-089-Sunsoft2/Tenka no Goikenban - Mito Koumon (J) [!].nes
+rom_sha256=259091dc701344f85e58d69c0ba52dc7711a08ea1fbd2350b641e607205a8b8e
+frames=1141
+fb_bytes=245760
+cycles=33949795
+audio_samples=836505
+audio_fnv1a64=67d3d09371151a3a
+checkpoint f900 fb_fnv1a64=deba268ef81fc262
+checkpoint f1100 fb_fnv1a64=f7da5257edee432b

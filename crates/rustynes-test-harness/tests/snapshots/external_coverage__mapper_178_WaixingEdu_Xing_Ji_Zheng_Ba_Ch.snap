@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-178-WaixingEdu/Xing Ji Zheng Ba (Ch).nes
+rom_sha256=dcb0f8576ade48e38a7f6e75650b7b30369c243fbfedfe591c2f99044cefe103
+frames=1141
+fb_bytes=245760
+cycles=33949960
+audio_samples=836509
+audio_fnv1a64=15766b4c4a876f4f
+checkpoint f900 fb_fnv1a64=89ee4c476c97a325
+checkpoint f1100 fb_fnv1a64=89ee4c476c97a325

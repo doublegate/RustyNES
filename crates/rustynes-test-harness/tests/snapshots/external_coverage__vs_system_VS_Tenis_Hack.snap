@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=vs-system/VS Tenis Hack.nes
+rom_sha256=29b30bff0aeaf377fe9ba9ee1d4f24dc316b4c9887f6c7699da6f63f1921259e
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=67d57479bd1d053d
+checkpoint f900 fb_fnv1a64=24d932fb6dedb70d
+checkpoint f1100 fb_fnv1a64=24d932fb6dedb70d

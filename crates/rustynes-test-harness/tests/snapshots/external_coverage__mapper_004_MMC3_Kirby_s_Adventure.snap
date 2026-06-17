@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-004-MMC3/Kirby's Adventure.nes
+rom_sha256=bccef5fe64261045d75688e3d503e41908de23012c0fdfc1eb29139087dfb143
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=cba0ba676e75fe7c
+checkpoint f900 fb_fnv1a64=18c8865dfad88fc2
+checkpoint f1100 fb_fnv1a64=64b5e9fc37ad2136

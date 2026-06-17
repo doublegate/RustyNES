@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-151-KonamiVS/GVS VS. TKO Boxing.nes
+rom_sha256=a6332035a8cb8532132496eccc91d6d46f241eb5c52360b78d31e453b9edbb9e
+frames=1141
+fb_bytes=245760
+cycles=15685
+audio_samples=369
+audio_fnv1a64=3645268d4a836982
+checkpoint f900 fb_fnv1a64=8b797ba4881e3b25
+checkpoint f1100 fb_fnv1a64=8b797ba4881e3b25

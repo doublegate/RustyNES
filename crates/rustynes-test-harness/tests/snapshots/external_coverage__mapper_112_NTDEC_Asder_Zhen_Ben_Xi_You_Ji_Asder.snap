@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-112-NTDEC-Asder/Zhen Ben Xi You Ji (Asder) [!].nes
+rom_sha256=f9664c1416fb2c74a1a247363aca2912bbc120126e0e7c8664ac384c61d9688e
+frames=1141
+fb_bytes=245760
+cycles=33949776
+audio_samples=836505
+audio_fnv1a64=62683036c4fde572
+checkpoint f900 fb_fnv1a64=c03d4006634f6107
+checkpoint f1100 fb_fnv1a64=c71a57f271a2932d

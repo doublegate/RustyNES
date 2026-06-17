@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-156-DIS23C01-DAOU/Buzz & Waldog (USA) (Unl) (Beta).nes
+rom_sha256=ba63d5ec8d6012bf44aa932b19f32ece50cb7f70113adca35191281278a4c6be
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=6538f1fcbc5abd78
+checkpoint f900 fb_fnv1a64=c746cb64b7029018
+checkpoint f1100 fb_fnv1a64=dee50a5cd29b0c88

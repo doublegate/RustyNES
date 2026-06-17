@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=pc10/PC10 Captain Skyhawk.nes
+rom_sha256=ebdb23d69ab9276a81bf847336cb0f22119523e2043aa641d0f3a6dfd2a8bac7
+frames=1141
+fb_bytes=245760
+cycles=33949776
+audio_samples=836505
+audio_fnv1a64=24612fcd3147b2ed
+checkpoint f900 fb_fnv1a64=eb333e83b8cea653
+checkpoint f1100 fb_fnv1a64=f390484092bacd20

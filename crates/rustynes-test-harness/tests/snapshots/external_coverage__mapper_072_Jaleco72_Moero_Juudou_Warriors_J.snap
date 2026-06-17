@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-072-Jaleco72/Moero!! Juudou Warriors (J) [!].nes
+rom_sha256=670a9a05b01236312e08f03e6e6617c6794b8d12fe7d60dac6a12933121f223d
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=436a82aab9f52766
+checkpoint f900 fb_fnv1a64=9f1eb4cb94c55979
+checkpoint f1100 fb_fnv1a64=9f1eb4cb94c55979

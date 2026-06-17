@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-177-Hengedianzi/Wang Zi Fu Chou Ji (Ch).nes
+rom_sha256=4b35f3711fa7f1cc84c386c044e8e73e5ddfd442b02317584b07fadeece1c4c1
+frames=1141
+fb_bytes=245760
+cycles=33949781
+audio_samples=836505
+audio_fnv1a64=6cc96f30ed43b943
+checkpoint f900 fb_fnv1a64=7bb9fa482875095a
+checkpoint f1100 fb_fnv1a64=7bb9fa482875095a

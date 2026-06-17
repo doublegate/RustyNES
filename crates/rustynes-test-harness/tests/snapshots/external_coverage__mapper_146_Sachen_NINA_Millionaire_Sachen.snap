@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-146-Sachen-NINA/Millionaire (Sachen) [!].nes
+rom_sha256=136a81817ab916818acdd56362899dd33803cf688a33c91767e3114bf673fb33
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=8c8eb4bdeaed9a55
+checkpoint f900 fb_fnv1a64=12f9aab9ced5242b
+checkpoint f1100 fb_fnv1a64=6f3c70a5097d823b

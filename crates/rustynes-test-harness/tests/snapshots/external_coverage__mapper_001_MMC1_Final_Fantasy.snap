@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-001-MMC1/Final Fantasy.nes
+rom_sha256=0ff550e8b264fb0e608708e4ce9123321a738bdf851e9e0b28a988e28840e1f8
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=50da7f56735cd029
+checkpoint f900 fb_fnv1a64=7658cdd657f53332
+checkpoint f1100 fb_fnv1a64=7658cdd657f53332

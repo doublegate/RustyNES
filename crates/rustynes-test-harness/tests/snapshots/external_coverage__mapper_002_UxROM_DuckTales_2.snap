@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-002-UxROM/DuckTales 2.nes
+rom_sha256=6a4b8b6ba86fe7969fd0325bf21dd81a35f25938f822972c7ad4c0e551bf63e7
+frames=1141
+fb_bytes=245760
+cycles=33949785
+audio_samples=836505
+audio_fnv1a64=ecea6bfa2a835545
+checkpoint f900 fb_fnv1a64=5a03ca02cbaa93b0
+checkpoint f1100 fb_fnv1a64=073f5327b8ef87a7

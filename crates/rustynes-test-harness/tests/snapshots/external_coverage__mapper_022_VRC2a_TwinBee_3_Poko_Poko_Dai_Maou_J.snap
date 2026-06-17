@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-022-VRC2a/TwinBee 3 - Poko Poko Dai Maou (J) [!].nes
+rom_sha256=d8067b7d51a9cf5bdc202bada8a4a2ea507fb122969ab2fe462304a75a141674
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=fd8b9372b4583856
+checkpoint f900 fb_fnv1a64=dcd5205c620c0015
+checkpoint f1100 fb_fnv1a64=dcd5205c620c0015
