@@ -274,11 +274,11 @@ pub fn run_battery_capturing_ram(max_frames: u64) -> (BatteryResult, Vec<u8>) {
     // delay + the `$2007` fetch-buffer per-phase offsets at runtime (no
     // rebuild). `RUSTYNES_MASK_DELAY` sets the PPUMASK write delay (dots);
     // `RUSTYNES_FETCH_OFF` sets the 8 comma-separated `$2007` fetch offsets.
-    if let Ok(v) = std::env::var("RUSTYNES_MASK_DELAY") {
-        if let Ok(d) = v.trim().parse::<u8>() {
-            rustynes_core::rustynes_ppu::MASK_WRITE_DELAY
-                .store(d, std::sync::atomic::Ordering::Relaxed);
-        }
+    if let Ok(v) = std::env::var("RUSTYNES_MASK_DELAY")
+        && let Ok(d) = v.trim().parse::<u8>()
+    {
+        rustynes_core::rustynes_ppu::MASK_WRITE_DELAY
+            .store(d, std::sync::atomic::Ordering::Relaxed);
     }
     let bytes = fs::read(rom_path())
         .unwrap_or_else(|e| panic!("read AccuracyCoin.nes: {e} (path={})", rom_path().display()));
@@ -305,7 +305,7 @@ pub fn run_battery_capturing_ram(max_frames: u64) -> (BatteryResult, Vec<u8>) {
     while frames < max_frames {
         nes.run_frame();
         frames += 1;
-        if frames % 600 != 0 {
+        if !frames.is_multiple_of(600) {
             continue;
         }
         let cells = classify_grid(nes.framebuffer());

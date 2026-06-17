@@ -437,7 +437,6 @@ pub mod external {
                     nes.set_buttons(0, buttons);
                     nes.run_frame();
                     samples.extend(nes.drain_audio());
-                    frame_counter += 1;
                 }
             }};
         }
