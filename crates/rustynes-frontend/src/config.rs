@@ -1128,6 +1128,22 @@ impl AudioConfig {
 }
 
 /// egui visual theme for the desktop UX shell (menu bar, status bar, windows).
+///
+/// The v1.5.0 "Lens" accessibility pass extends the original light/dark/system
+/// trio with two accessibility-oriented variants:
+///
+/// - [`AppTheme::HighContrast`] — a near-black background with near-white text
+///   and saturated accents, raising every UI foreground/background pair past
+///   the WCAG 2.1 AA 4.5:1 (and most past 7:1 AAA) contrast ratio for
+///   low-vision users.
+/// - [`AppTheme::Colorblind`] — a dark theme whose interactive accents are
+///   drawn from a deuteranopia/protanopia-safe palette (Okabe-Ito), so the
+///   selection/hover/active cues stay distinguishable for the most common
+///   forms of red-green color vision deficiency.
+///
+/// Both are additive: the variants are appended after the originals, so any
+/// existing config that stored `"light"`/`"dark"`/`"system"` deserializes
+/// unchanged and the default is still [`AppTheme::Dark`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum AppTheme {
@@ -1139,6 +1155,13 @@ pub enum AppTheme {
     /// Follow the OS theme when the windowing system reports one (falls back
     /// to [`AppTheme::Dark`] when unknown).
     System,
+    /// High-contrast dark theme (WCAG AA/AAA foreground/background pairs) for
+    /// low-vision accessibility. (v1.5.0)
+    #[serde(rename = "high-contrast")]
+    HighContrast,
+    /// Colorblind-safe dark theme using the Okabe-Ito palette for interactive
+    /// accents (deuteranopia/protanopia-friendly). (v1.5.0)
+    Colorblind,
 }
 
 impl AppTheme {
@@ -1149,7 +1172,22 @@ impl AppTheme {
             Self::Light => "Light",
             Self::Dark => "Dark",
             Self::System => "System",
+            Self::HighContrast => "High Contrast",
+            Self::Colorblind => "Colorblind-Safe",
         }
+    }
+
+    /// All themes in display order — single source of truth for the menu radio
+    /// list and the Settings combo box so the two never drift apart.
+    #[must_use]
+    pub const fn all() -> [Self; 5] {
+        [
+            Self::Light,
+            Self::Dark,
+            Self::System,
+            Self::HighContrast,
+            Self::Colorblind,
+        ]
     }
 }
 
@@ -1190,7 +1228,11 @@ impl RecentRoms {
 
 /// `[ui]` section — the desktop UX shell (theme, pixel aspect, FPS readout)
 /// (v1.0.0).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+//
+// Not `Eq`: the v1.5.0 accessibility `zoom_factor` is an `f32`, so this section
+// (and therefore the whole `Config` tree, which was already `PartialEq`-only)
+// is `PartialEq` only.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct UiConfig {
     /// egui visual theme. Default [`AppTheme::Dark`].
     #[serde(default)]
@@ -1208,11 +1250,38 @@ pub struct UiConfig {
     /// during a netplay session.
     #[serde(default)]
     pub pause_on_focus_loss: bool,
+    /// egui UI zoom factor (accessibility). The whole egui shell — menu bar,
+    /// Settings, debugger panels, fonts — is scaled by this multiplier via
+    /// `ctx.set_zoom_factor`. The emulated NES image is unaffected (it is a
+    /// raw framebuffer blit, not egui content). Default `1.0` so the shipped
+    /// UI is pixel-identical unless the user opts in. Clamped to
+    /// [`UiConfig::ZOOM_MIN`]..=[`UiConfig::ZOOM_MAX`] on apply. (v1.5.0)
+    #[serde(default = "default_ui_zoom_factor")]
+    pub zoom_factor: f32,
 }
 
 /// Serde default for [`UiConfig::show_fps`].
 const fn default_ui_show_fps() -> bool {
     true
+}
+
+/// Serde default for [`UiConfig::zoom_factor`].
+const fn default_ui_zoom_factor() -> f32 {
+    1.0
+}
+
+impl UiConfig {
+    /// Minimum UI zoom factor exposed in the accessibility control.
+    pub const ZOOM_MIN: f32 = 0.5;
+    /// Maximum UI zoom factor exposed in the accessibility control.
+    pub const ZOOM_MAX: f32 = 3.0;
+
+    /// The configured zoom factor clamped to the supported range. Guards
+    /// against a hand-edited config asking for a degenerate value.
+    #[must_use]
+    pub const fn clamped_zoom_factor(&self) -> f32 {
+        self.zoom_factor.clamp(Self::ZOOM_MIN, Self::ZOOM_MAX)
+    }
 }
 
 impl Default for UiConfig {
@@ -1222,6 +1291,7 @@ impl Default for UiConfig {
             pixel_aspect_correction: false,
             show_fps: default_ui_show_fps(),
             pause_on_focus_loss: false,
+            zoom_factor: default_ui_zoom_factor(),
         }
     }
 }
@@ -2168,5 +2238,61 @@ start = "Start"
         )
         .unwrap();
         assert!((pad.axis_deadzone - 0.5).abs() < f32::EPSILON);
+    }
+
+    // v1.5.0 "Lens" Workstream E (accessibility) — UI zoom + extended themes.
+
+    #[test]
+    fn ui_zoom_factor_defaults_to_one_and_round_trips() {
+        let cfg = Config::default();
+        assert!((cfg.ui.zoom_factor - 1.0).abs() < f32::EPSILON);
+        // A config that predates the field (no `zoom_factor` key) fills it via
+        // the field-level `#[serde(default)]`, staying byte-identical at 1.0.
+        let ui: UiConfig = toml::from_str("theme = \"dark\"\n").unwrap();
+        assert!((ui.zoom_factor - 1.0).abs() < f32::EPSILON);
+        // Round-trips a non-default value.
+        let mut cfg2 = Config::default();
+        cfg2.ui.zoom_factor = 1.5;
+        let back: Config = toml::from_str(&toml::to_string_pretty(&cfg2).unwrap()).unwrap();
+        assert!((back.ui.zoom_factor - 1.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn ui_zoom_factor_clamps_to_supported_range() {
+        let with_zoom = |z: f32| UiConfig {
+            zoom_factor: z,
+            ..UiConfig::default()
+        };
+        assert!((with_zoom(99.0).clamped_zoom_factor() - UiConfig::ZOOM_MAX).abs() < f32::EPSILON);
+        assert!((with_zoom(0.01).clamped_zoom_factor() - UiConfig::ZOOM_MIN).abs() < f32::EPSILON);
+        assert!((with_zoom(1.25).clamped_zoom_factor() - 1.25).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn extended_themes_serialize_with_stable_keys() {
+        // The two original-trip keys are unchanged, and the new accessibility
+        // variants use stable, hand-chosen keys (one hyphenated). Guarding the
+        // wire format means an old config never silently maps to a new variant.
+        for (theme, key) in [
+            (AppTheme::Light, "light"),
+            (AppTheme::Dark, "dark"),
+            (AppTheme::System, "system"),
+            (AppTheme::HighContrast, "high-contrast"),
+            (AppTheme::Colorblind, "colorblind"),
+        ] {
+            let toml = toml::to_string(&UiConfig {
+                theme,
+                ..UiConfig::default()
+            })
+            .unwrap();
+            assert!(
+                toml.contains(&format!("theme = \"{key}\"")),
+                "theme {theme:?} should serialize as {key:?}; got:\n{toml}"
+            );
+            let back: UiConfig = toml::from_str(&toml).unwrap();
+            assert_eq!(back.theme, theme);
+        }
+        // `AppTheme::all()` covers every variant exactly once.
+        assert_eq!(AppTheme::all().len(), 5);
     }
 }

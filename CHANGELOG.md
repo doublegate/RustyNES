@@ -239,6 +239,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     Family Trainer mat layout side (A / mirrored B). New `[input]` fields
     (`mouse_sensitivity`, `pointer_scale`, `power_pad_layout`); all defaults match
     the prior behaviour so the device report / input is byte-identical.
+- **v1.5.0 "Lens" Workstream E — accessibility.** Frontend-only and
+  determinism-neutral; all additive and off-by-default so the shipped / native /
+  `no_std` / wasm builds stay byte-identical and AccuracyCoin holds 100%
+  (139/139). Broadens reach for low-vision, colorblind, and keyboard-only users:
+  - **Configurable UI scaling (E1).** A new `[ui] zoom_factor` setting (default
+    `1.0`) scales the entire egui shell — menu bar, Settings, debugger panels,
+    fonts — via `ctx.set_zoom_factor`. The emulated NES image is a raw
+    framebuffer blit (not egui content) and is unaffected, so gameplay and
+    determinism are untouched. Exposed as a **UI scale** slider (50%-300%, in 5%
+    steps) with a Reset button in **View -> Settings -> Video -> Accessibility**;
+    clamped on apply and persisted.
+  - **Colorblind-safe + high-contrast themes (E2).** The light/dark/system theme
+    selector gains two accessibility variants, wired into BOTH the **View ->
+    Theme** menu and the Settings combo (single-sourced via `AppTheme::all()`):
+    **High Contrast** (near-black/near-white WCAG 2.1 AA/AAA foreground pairs +
+    bold focus strokes for low vision) and **Colorblind-Safe** (a dark theme
+    whose interactive accents use the deuteranopia/protanopia-friendly Okabe-Ito
+    palette). Both serialize with stable keys (`high-contrast`/`colorblind`), so
+    existing configs are unchanged and the default stays Dark.
+  - **Keyboard-only menu navigation (E3).** Audited the egui shell for
+    mouse-free operation: the menu bar and Settings are already Tab/arrow/Enter
+    navigable, and the **Settings / About / Keyboard Shortcuts** modal windows
+    now close on **Esc** (egui's `Window` X-button has no key equivalent, and the
+    app's Esc/Quit binding is suppressed while a shell window is open), giving
+    every modal a consistent keyboard escape hatch.
 
 ### Performance
 
