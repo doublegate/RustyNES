@@ -29,9 +29,16 @@ on:
       - ".gitignore"
       - ".codegraph/**"
   workflow_dispatch:
+  # GitHub merge queue. When the queue is enabled in repo settings + the
+  # `CI success` check is required by branch protection, a PR entering the queue
+  # triggers this with the FULL cross-platform matrix (see the `setup` job) — so
+  # nothing merges without macOS+Windows green, even though per-PR runs are
+  # ubuntu-only. Inert until the queue is enabled (no `merge_group` events fire).
+  merge_group:
 
 # Cancel superseded runs on a PR branch (rapid pushes), but let every `main`
-# commit finish its run so the default branch's history stays fully checked.
+# commit + merge-queue run finish so the default branch's history (and the
+# queue's gate) stays fully checked.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -71,6 +78,28 @@ jobs:
   # rustdoc gate match local `cargo doc` exactly (rust-toolchain.toml pins the
   # local compiler to 1.96 too) — the stable-vs-1.96 mismatch previously let a
   # broken-intra-doc-link slip past local and only fail in CI.
+  #
+  # Select the OS test matrix by event: a `pull_request` runs ubuntu-only (cheap
+  # + fast feedback); push-to-`main`, the merge queue, and manual dispatch run
+  # the full ubuntu+macOS+Windows matrix. macOS bills 10x + Windows 2x, so
+  # keeping them off every PR push is the bulk of the runner-minute savings,
+  # while push (post-merge) and the merge queue (pre-merge, once enabled) still
+  # give full cross-platform coverage before a regression can stick on `main`.
+  setup:
+    name: select matrix
+    runs-on: ubuntu-latest
+    outputs:
+      os: ${{ steps.pick.outputs.os }}
+    steps:
+      - id: pick
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo 'os=["ubuntu-latest"]' >> "$GITHUB_OUTPUT"
+          else
+            echo 'os=["ubuntu-latest", "macos-latest", "windows-latest"]' >> "$GITHUB_OUTPUT"
+          fi
+
   lint:
     name: fmt + clippy + rustdoc
     runs-on: ubuntu-latest
@@ -88,6 +117,19 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: rustdoc (-D warnings)
         run: cargo doc --workspace --no-deps
+      # Feature-gated clippy combos CLAUDE.md mandates. These previously ran
+      # ONLY locally, so a feature-gated lint regression (e.g. a `cfg`-stripped
+      # autofix breaking the `retroachievements` build) could land CI-green.
+      # Run them serially on this one already-warm runner (shared dependency
+      # compile) rather than a matrix (which multiplies cache storage). NOT
+      # `--all-features`: `scripting` (mlua) + `script-wasm` (piccolo) are
+      # mutually-exclusive backends that cannot co-resolve.
+      - name: clippy (scripting — native Lua engine)
+        run: cargo clippy -p rustynes-frontend --all-targets --features scripting -- -D warnings
+      - name: clippy (scripting + hd-pack)
+        run: cargo clippy -p rustynes-frontend --all-targets --features scripting,hd-pack -- -D warnings
+      - name: clippy (retroachievements — rcheevos FFI)
+        run: cargo clippy -p rustynes-frontend --all-targets --features retroachievements -- -D warnings
 
   # Cross-platform behaviour: full `cargo test` on stable across the three
   # shipped OSes. The previous ubuntu / 1.96 MSRV *test* entry is dropped — the
@@ -96,17 +138,16 @@ jobs:
   # determinism makes "tests pass on 1.96" equivalent to "tests pass on stable".
   test:
     name: test (${{ matrix.os }})
-    # Gate the heavy 3-OS matrix on the fast fmt+clippy+rustdoc job: a
-    # formatting / lint / doc slip fails in ~seconds, so there's no point
-    # spinning up (and compiling the workspace on) three OS runners until the
-    # cheap gate is green. Costs ~lint's duration of happy-path latency; saves
-    # the entire matrix's runner-minutes on every lint failure.
-    needs: lint
+    # Gate the matrix on the fast fmt+clippy+rustdoc job (a lint slip fails in
+    # ~seconds — no point spinning up OS runners until it's green) and take the
+    # OS list from `setup` (ubuntu-only on PRs; full matrix on push / merge
+    # queue / dispatch).
+    needs: [lint, setup]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: ${{ fromJSON(needs.setup.outputs.os) }}
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/rust-setup
@@ -193,3 +234,26 @@ jobs:
       # shared runners; that's a local criterion-baseline workflow instead).
       # See scripts/bench_regression_check.sh + docs/performance.md.
       - run: ./scripts/bench_regression_check.sh
+
+  # Single summary status — the ONE check to require in branch protection / the
+  # merge queue. It runs always (even when a needed job fails) and fails iff any
+  # job it depends on failed or was cancelled. A *skipped* job counts as success
+  # (so an event-conditional leg — e.g. the macOS/Windows matrix on a PR — never
+  # blocks). KEEP the `needs:` list exhaustive: a job missing from it silently
+  # stops being gated. This is what makes the ubuntu-only-PR / full-on-merge
+  # split safe (branch protection requires only this stable name, not the
+  # event-varying matrix legs).
+  ci-success:
+    name: CI success
+    if: ${{ always() }}
+    needs: [setup, lint, test, test-roms, no_std, wasm, bench]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any required job failed or was cancelled
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+        run: |
+          echo "A required CI job failed or was cancelled:"
+          echo '${{ toJSON(needs) }}'
+          exit 1
+      - name: All required jobs succeeded
+        run: echo "CI success."

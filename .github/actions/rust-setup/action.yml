@@ -63,6 +63,8 @@ runs:
         # caches every PR restores from — so PR saves are write-only garbage.
         # Restore-on-PR + save-on-main keeps the hit rate high without the
         # thrash (rust-cache README). The post-merge `main` build pays one cold
-        # save; PRs are unaffected.
-        save-if: ${{ github.ref == 'refs/heads/main' }}
+        # save; PRs are unaffected. Compared against the repo's actual default
+        # branch (not a hardcoded "main") so this composite stays correct on a
+        # fork or a repo whose default branch is renamed.
+        save-if: ${{ github.ref_name == github.event.repository.default_branch }}
         cache-on-failure: ${{ inputs.cache-on-failure }}
