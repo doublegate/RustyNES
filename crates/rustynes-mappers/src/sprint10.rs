@@ -502,7 +502,7 @@ impl Mapper for Namcot3425M95 {
                     self.one_screen_b = (value & 0x20) != 0;
                 }
                 1 => self.chr_regs[1] = value & 0x3F,
-                2..=5 => self.chr_regs[(self.reg_index - 2) as usize + 2] = value & 0x3F,
+                2..=5 => self.chr_regs[self.reg_index as usize] = value & 0x3F,
                 6 => self.prg_banks[0] = value,
                 _ => self.prg_banks[1] = value,
             },
@@ -1712,7 +1712,7 @@ impl Mapper for Nitra250 {
     }
 
     fn save_state(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(17 + self.vram.len());
+        let mut out = Vec::with_capacity(18 + self.vram.len());
         out.push(SAVE_STATE_VERSION);
         out.push(self.reg_index);
         out.extend_from_slice(&self.bank_regs);
@@ -1739,7 +1739,7 @@ impl Mapper for Nitra250 {
         if data[0] != SAVE_STATE_VERSION {
             return Err(MapperError::UnsupportedVersion(data[0]));
         }
-        self.reg_index = data[1];
+        self.reg_index = data[1] & 0x07;
         self.bank_regs.copy_from_slice(&data[2..10]);
         self.prg_mode = data[10] != 0;
         self.chr_mode = data[11] != 0;
