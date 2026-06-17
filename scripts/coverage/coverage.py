@@ -581,7 +581,7 @@ def _scan_path(path: str, on_ines, on_unif) -> None:
                     if e.lower().endswith(".nes"):
                         with open(os.path.join(td, e), "rb") as f:
                             on_ines(os.path.basename(path), f.read(16), path, e)
-    except (zipfile.BadZipFile, OSError, struct.error):
+    except (zipfile.BadZipFile, OSError, struct.error, subprocess.SubprocessError):
         pass
 
 
@@ -918,32 +918,50 @@ def _open_ines_bytes(path: str, entry: str | None) -> bytes | None:
         if entry is None:
             with open(path, "rb") as f:
                 return f.read()
+        if path.lower().endswith(".7z"):
+            # Stream the named entry to stdout (the index reads .7z too, so
+            # staging must as well; zipfile.ZipFile would BadZipFile here).
+            out = subprocess.run(
+                ["7z", "e", "-so", path, entry],
+                capture_output=True, timeout=120,
+            )
+            return out.stdout if out.returncode == 0 and out.stdout else None
         with zipfile.ZipFile(path) as z:
             return z.read(entry)
-    except (OSError, KeyError, zipfile.BadZipFile):
+    except (OSError, KeyError, zipfile.BadZipFile, subprocess.SubprocessError):
         return None
+
+
+# basename -> first matching absolute path, built once per process so that
+# staging many ROMs doesn't re-walk the (~25k-file) library for every ROM.
+_PATH_CACHE: dict[str, str] = {}
+
+
+def _build_path_cache(roots: list[str]) -> None:
+    for root in roots:
+        for dp, _, files in os.walk(root):
+            if "/target/" in dp or "/.git/" in dp:
+                continue
+            for fn in files:
+                _PATH_CACHE.setdefault(fn, os.path.join(dp, fn))
 
 
 def _record_src(idx: dict, rec: dict) -> tuple[str, str | None] | None:
     """Resolve a {name} record back to a (path, zip-entry) source.
 
-    The cached index stores `name` = "<archive>:<entry>" or "<file.nes>". We
-    re-walk the library roots lazily to find the matching path. To keep this
-    cheap, scan_library stamps each record's archive basename; here we search
-    the configured roots for that basename.
+    The cached index stores `name` = "<archive>:<entry>" or "<file.nes>". A
+    module-level basename->path cache (built once on first use) keeps this
+    O(1) instead of re-walking the library roots for every staged ROM.
     """
     name = rec["name"]
     if ":" in name:
         arc, entry = name.split(":", 1)
     else:
         arc, entry = name, None
-    for root in idx.get("roots", [DEFAULT_LIB]):
-        for dp, _, files in os.walk(root):
-            if "/target/" in dp or "/.git/" in dp:
-                continue
-            if arc in files:
-                return os.path.join(dp, arc), entry
-    return None
+    if not _PATH_CACHE:
+        _build_path_cache(idx.get("roots", [DEFAULT_LIB]))
+    path = _PATH_CACHE.get(arc)
+    return (path, entry) if path else None
 
 
 def _stage_one(rec: dict, target_mapper: int, dest_dir: str, execute: bool) -> bool:
@@ -1144,9 +1162,12 @@ def cmd_montage(args) -> int:
          "-background", "#101014", out],
         check=True,
     )
-    subprocess.run(
-        ["identify", "-format", "montage: %wx%h  %B bytes\n", out], check=False
-    )
+    try:
+        subprocess.run(
+            ["identify", "-format", "montage: %wx%h  %B bytes\n", out], check=False
+        )
+    except FileNotFoundError:
+        pass  # ImageMagick `identify` absent; the montage itself is still written
     return 0
 
 
@@ -1216,7 +1237,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("index", help="build/cache the library mapper index")
     add_root_arg(p)
-    p.add_argument("wanted", nargs="*", help="mapper numbers to summarize")
+    p.add_argument("wanted", nargs="*", type=int, help="mapper numbers to summarize")
     p.set_defaults(func=cmd_index)
 
     p = sub.add_parser("survey", help="avail/staged/shots coverage report")
@@ -1226,7 +1247,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("discover", help="candidate titles per mapper")
     add_root_arg(p)
-    p.add_argument("--mapper", action="append", help="restrict to mapper N (repeatable)")
+    p.add_argument("--mapper", action="append", type=int, help="restrict to mapper N (repeatable)")
     p.add_argument("--count", type=int, default=5, help="candidates per mapper (default 5)")
     p.add_argument("--all", action="store_true", help="include unimplemented mappers seen in library")
     p.set_defaults(func=cmd_discover)
@@ -1236,7 +1257,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ines", type=int, default=None, help="distinct iNES per mapper (default = --target)")
     p.add_argument("--unif", action="store_true", help="also use/report UNIF gap-fillers")
     p.add_argument("--target", type=int, default=5, help="coverage target (default 5)")
-    p.add_argument("--mapper", action="append", help="restrict to mapper N (repeatable)")
+    p.add_argument("--mapper", action="append", type=int, help="restrict to mapper N (repeatable)")
     p.add_argument("--force", action="store_true", help="stage even well-covered mappers")
     g = p.add_mutually_exclusive_group()
     g.add_argument("--dry-run", action="store_true", default=True, help="preview only (DEFAULT)")
