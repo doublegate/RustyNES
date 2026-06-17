@@ -15,10 +15,11 @@ mod blargg;
 mod nes_runner;
 mod nestest;
 
-/// Shared commercial-ROM boot-coverage primitives (the recursive `.nes`
-/// walk + the distinct-colour blank-frame health heuristic). Used by the
-/// `coverage_smoke` / `render_smoke` diagnostic bins and the
-/// `external_coverage` integration test. Compiled only under the
+/// Shared commercial-ROM boot-coverage primitives.
+///
+/// The recursive `.nes` walk + the distinct-colour blank-frame health
+/// heuristic, used by the `coverage_smoke` / `render_smoke` diagnostic bins
+/// and the `external_coverage` integration test. Compiled only under the
 /// `commercial-roms` feature.
 #[cfg(feature = "commercial-roms")]
 pub mod coverage;

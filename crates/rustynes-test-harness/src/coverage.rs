@@ -1,7 +1,8 @@
-//! Shared boot-coverage primitives — the ROM walk + the distinct-colour
-//! "is this a real screen?" health heuristic, factored out of the
-//! `coverage_smoke` / `render_smoke` diagnostic bins so the
-//! auto-discovering `external_coverage` integration test can apply the
+//! Shared boot-coverage primitives: the ROM walk + the distinct-colour
+//! "is this a real screen?" health heuristic.
+//!
+//! Factored out of the `coverage_smoke` / `render_smoke` diagnostic bins so
+//! the auto-discovering `external_coverage` integration test can apply the
 //! SAME blank-frame detector instead of copy-pasting it.
 //!
 //! Gated on the `commercial-roms` feature: the only consumers are the
@@ -45,9 +46,10 @@ pub const BLANK_MAX_DISTINCT_COLORS: usize = 4;
 /// gate, which must never panic on a genuine screen).
 pub const BLANK_MIN_DOMINANT_FRACTION: f64 = 0.99;
 
-/// Objective per-frame render statistics over a 256x240 RGBA8
-/// framebuffer: how many distinct colours it contains and what fraction
-/// of pixels the single most-common colour occupies.
+/// Objective per-frame render statistics over a 256x240 RGBA8 framebuffer.
+///
+/// How many distinct colours it contains and what fraction of pixels the
+/// single most-common colour occupies.
 #[derive(Clone, Copy, Debug)]
 pub struct FrameHealth {
     /// Count of distinct RGBA colours in the frame.
@@ -68,8 +70,9 @@ impl FrameHealth {
 }
 
 /// Compute the distinct-colour count + dominant-colour fraction of an
-/// RGBA8 framebuffer. The shared core of every boot-coverage blank
-/// detector.
+/// RGBA8 framebuffer.
+///
+/// The shared core of every boot-coverage blank detector.
 #[must_use]
 #[allow(clippy::cast_precision_loss)]
 pub fn frame_health(fb: &[u8]) -> FrameHealth {
