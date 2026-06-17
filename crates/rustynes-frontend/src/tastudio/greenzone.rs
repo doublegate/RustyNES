@@ -135,6 +135,14 @@ impl Greenzone {
         self.anchors.contains(&frame)
     }
 
+    /// Drop every anchor except frame 0 (the permanent power-on base). Used when
+    /// the marker set is rebuilt wholesale — a marker shift, a branch load, or a
+    /// project load — so stale anchors from the previous marker set don't
+    /// accumulate and starve the eviction budget.
+    pub fn clear_non_default_anchors(&mut self) {
+        self.anchors.retain(|&f| f == 0);
+    }
+
     /// Drop all cached states (e.g. on loading a new project / power-cycle).
     /// Anchor registrations are kept.
     pub fn clear(&mut self) {

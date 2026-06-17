@@ -11,7 +11,7 @@
 //! (`BizHawk` `TAStudio`, FCEUX `TASEditor`) use:
 //!
 //! 1. **Input log** — the movie itself, one [`FrameInput`] per frame.
-//! 2. **Greenzone** — the frame-keyed save-state cache ([`greenzone`]).
+//! 2. **Greenzone** — the frame-keyed save-state cache ([`Greenzone`]).
 //! 3. *(Lag log — per-frame "did the game poll input", surfaced from the core's
 //!    `debug-hooks` lag flag; wired in with the grid in A2.)*
 //!
@@ -133,9 +133,18 @@ impl<'a> Reader<'a> {
         Ok(self.take(n)?.to_vec())
     }
 
+    /// Bytes not yet consumed. Used to bound `with_capacity` against an
+    /// untrusted length field: each list element consumes at least one byte, so
+    /// capacity can never usefully exceed this — preventing an OOM/DoS from a
+    /// corrupt or hand-edited `.rnmproj`.
+    const fn remaining(&self) -> usize {
+        self.b.len() - self.pos
+    }
+
     fn input_log(&mut self) -> Result<Vec<FrameInput>, RnmProjError> {
         let n = self.len()?;
-        let mut v = Vec::with_capacity(n);
+        // Each frame is 3 bytes; never pre-allocate beyond what the blob holds.
+        let mut v = Vec::with_capacity(n.min(self.remaining() / 3));
         for _ in 0..n {
             let s = self.take(3)?;
             v.push(FrameInput {
@@ -355,6 +364,9 @@ impl TasEditor {
     /// invalidated from the edit point anyway).
     fn shift_markers(&mut self, at: usize, delta: isize) {
         let old = std::mem::take(&mut self.markers);
+        // Rebuild the anchor set from scratch so the shifted-away frames' stale
+        // anchors don't accumulate in the greenzone.
+        self.greenzone.clear_non_default_anchors();
         for (frame, label) in old {
             let new_frame = if frame < at {
                 frame
@@ -418,8 +430,9 @@ impl TasEditor {
         self.input_log = b.input_log;
         self.markers = b.markers;
         self.cursor = b.frame;
-        // Keep frame 0 (power-on, input-independent), drop the rest, and pin the
-        // branch state at its frame.
+        // Keep frame 0 (power-on, input-independent), drop the rest + every
+        // stale marker anchor, then pin the branch state at its frame.
+        self.greenzone.clear_non_default_anchors();
         self.greenzone.invalidate_after(0);
         self.greenzone.store(b.frame, b.state, b.frame);
         self.lag_log.truncate(b.frame.min(self.lag_log.len()));
@@ -476,7 +489,10 @@ impl TasEditor {
         let input_log = r.input_log()?;
         let markers = r.markers()?;
         let branch_count = r.len()?;
-        let mut branches = Vec::with_capacity(branch_count);
+        // Bound the pre-allocation against the blob size (each branch needs at
+        // least 4 length/frame u32s = 16 bytes); guards against an OOM from a
+        // corrupt/hand-edited branch count.
+        let mut branches = Vec::with_capacity(branch_count.min(r.remaining() / 16));
         for _ in 0..branch_count {
             let frame = r.len()?;
             let b_input = r.input_log()?;
@@ -493,6 +509,8 @@ impl TasEditor {
         self.input_log = input_log;
         self.markers = markers;
         self.branches = branches;
+        // Drop stale marker anchors before re-pinning the loaded set.
+        self.greenzone.clear_non_default_anchors();
         self.greenzone.invalidate_after(0);
         let marker_frames: Vec<usize> = self.markers.keys().copied().collect();
         for f in marker_frames {
