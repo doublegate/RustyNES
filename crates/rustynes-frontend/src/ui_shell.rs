@@ -1406,6 +1406,11 @@ impl UiShell {
                                 if resp.changed() {
                                     config.ui.zoom_factor =
                                         (pct / 100.0).clamp(UiConfig::ZOOM_MIN, UiConfig::ZOOM_MAX);
+                                }
+                                // Update the zoom live each frame, but only persist
+                                // when the drag stops so a slider drag doesn't thrash
+                                // the disk (mirrors the EQ/replay-panel idiom).
+                                if resp.drag_stopped() || (resp.changed() && !resp.dragged()) {
                                     save_config(config);
                                 }
                                 if ui
@@ -1440,7 +1445,10 @@ impl UiShell {
         // v1.3.0 auto-save — persist once if any tab mutated the config. The
         // per-control `save_config` calls in the panel sections remain (harmless
         // double-save) but this is the backstop that makes EVERY setting sticky.
-        if *config != config_before {
+        // Skip while a pointer button is held so an in-progress slider drag
+        // doesn't write the config to disk every frame; the release-edge save
+        // (and this backstop on the next idle frame) still persists the change.
+        if *config != config_before && !ctx.input(|i| i.pointer.any_down()) {
             save_config(config);
         }
         // v1.5.0 accessibility — Esc dismisses the modal for keyboard-only users.

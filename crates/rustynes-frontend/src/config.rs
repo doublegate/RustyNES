@@ -1277,10 +1277,16 @@ impl UiConfig {
     pub const ZOOM_MAX: f32 = 3.0;
 
     /// The configured zoom factor clamped to the supported range. Guards
-    /// against a hand-edited config asking for a degenerate value.
+    /// against a hand-edited config asking for a degenerate value, including
+    /// a non-finite (`NaN`/`Infinity`) `zoom_factor` that would otherwise
+    /// propagate into egui layout and panic; those fall back to the default.
     #[must_use]
     pub const fn clamped_zoom_factor(&self) -> f32 {
-        self.zoom_factor.clamp(Self::ZOOM_MIN, Self::ZOOM_MAX)
+        if self.zoom_factor.is_finite() {
+            self.zoom_factor.clamp(Self::ZOOM_MIN, Self::ZOOM_MAX)
+        } else {
+            default_ui_zoom_factor()
+        }
     }
 }
 
@@ -2266,6 +2272,20 @@ start = "Start"
         assert!((with_zoom(99.0).clamped_zoom_factor() - UiConfig::ZOOM_MAX).abs() < f32::EPSILON);
         assert!((with_zoom(0.01).clamped_zoom_factor() - UiConfig::ZOOM_MIN).abs() < f32::EPSILON);
         assert!((with_zoom(1.25).clamped_zoom_factor() - 1.25).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn ui_zoom_factor_non_finite_falls_back_to_default() {
+        // A hand-edited config can put a non-finite value in `zoom_factor`;
+        // `NaN`/`Infinity` would propagate into egui layout and panic, so they
+        // must fall back to the 1.0 default rather than being clamped.
+        let with_zoom = |z: f32| UiConfig {
+            zoom_factor: z,
+            ..UiConfig::default()
+        };
+        assert!((with_zoom(f32::NAN).clamped_zoom_factor() - 1.0).abs() < f32::EPSILON);
+        assert!((with_zoom(f32::INFINITY).clamped_zoom_factor() - 1.0).abs() < f32::EPSILON);
+        assert!((with_zoom(f32::NEG_INFINITY).clamped_zoom_factor() - 1.0).abs() < f32::EPSILON);
     }
 
     #[test]
