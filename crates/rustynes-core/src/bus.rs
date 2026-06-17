@@ -360,6 +360,15 @@ pub struct LockstepBus {
     /// Per-port Four Score signature shift register, reloaded on each strobe
     /// (port 0 = `0x08`, port 1 = `0x04`; shifted out LSB-first).
     four_score_sig: [u8; 2],
+    /// Output-only `TAStudio` lag-log flag (v1.6.0 Workstream A3): set `true`
+    /// whenever the running program reads a controller port (`$4016`/`$4017`)
+    /// during the current frame; cleared at the top of each
+    /// [`crate::Nes::run_frame`]. A frame still `false` at frame end is a "lag
+    /// frame" (the game polled no input that frame). `debug-hooks`-gated and
+    /// never read back into emulation, so the shipped build stays byte-identical
+    /// and the determinism contract is unaffected.
+    #[cfg(feature = "debug-hooks")]
+    controller_polled: bool,
     /// Vs. System DIP switches (8 bits, switch 1 = bit 0 .. switch 8 = bit 7).
     /// Read through the upper bits of `$4016`/`$4017` per the Vs. protocol
     /// (nesdev "Vs. System"). Only consulted when the cart is
@@ -759,6 +768,8 @@ impl LockstepBus {
             controllers34: [Controller::new(); 2],
             four_score_idx: [0; 2],
             four_score_sig: [0; 2],
+            #[cfg(feature = "debug-hooks")]
+            controller_polled: false,
             vs_dip: 0,
             vs_coin: 0,
             vs_service: false,
@@ -1659,6 +1670,22 @@ impl LockstepBus {
         self.events.clear();
     }
 
+    /// Clear the per-frame `TAStudio` lag-log "controller polled" flag (called at
+    /// the top of each [`crate::Nes::run_frame`]). `debug-hooks`-gated;
+    /// output-only, so the shipped build is byte-identical.
+    #[cfg(feature = "debug-hooks")]
+    pub(crate) const fn clear_controller_polled(&mut self) {
+        self.controller_polled = false;
+    }
+
+    /// `true` if a controller port (`$4016`/`$4017`) was read since the last
+    /// [`Self::clear_controller_polled`] — i.e. during the current frame.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub(crate) const fn controller_polled(&self) -> bool {
+        self.controller_polled
+    }
+
     /// Sample the framebuffer luminance at each attached Zapper's aim point.
     /// Called once per frame (only does work when a Zapper is attached, so the
     /// no-device path is byte-identical).
@@ -2050,6 +2077,12 @@ impl LockstepBus {
     /// `controllers[port].read()`; on → the multiplexed 24-read sequence
     /// (primary pad → secondary pad → signature → 1s).
     const fn read_port(&mut self, port: usize) -> u8 {
+        // v1.6.0 Workstream A3 (`TAStudio` lag log): any read of $4016/$4017
+        // counts as the game polling input this frame. Output-only; gated.
+        #[cfg(feature = "debug-hooks")]
+        {
+            self.controller_polled = true;
+        }
         // A non-standard overlay device takes over the port entirely: it
         // returns its own bit-positioned byte (Vaus = bits 3/4, Zapper =
         // bits 3/4) instead of the standard D0 shift-register bit. The

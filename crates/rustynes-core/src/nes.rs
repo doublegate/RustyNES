@@ -432,6 +432,11 @@ impl Nes {
         if self.bus.interrupt_logging() {
             self.bus.clear_interrupts();
         }
+        // v1.6.0 Workstream A3 — reset the `TAStudio` lag-log "controller polled"
+        // flag so was_input_polled_this_frame() reflects only this frame (a
+        // frame that ends still-`false` is a lag frame). Output-only.
+        #[cfg(feature = "debug-hooks")]
+        self.bus.clear_controller_polled();
         // v1.4.0 Workstream D (D2) — start each frame with no event-breakpoint
         // hit so the frontend's "first hit of the frame" pause is per-frame.
         #[cfg(feature = "debug-hooks")]
@@ -723,6 +728,17 @@ impl Nes {
     #[allow(clippy::missing_const_for_fn)] // slice deref is not const.
     pub fn exec_log(&self) -> &[u16] {
         &self.exec_log
+    }
+
+    /// `true` if the running program read a controller port (`$4016`/`$4017`)
+    /// during the most recent [`Self::run_frame`] — the inverse of a `TAStudio`
+    /// "lag frame" (v1.6.0 Workstream A3). The greenzone / piano-roll lag log
+    /// queries this each frame. Output-only; `debug-hooks`-gated, so the
+    /// shipped build is byte-identical and the determinism contract holds.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub const fn was_input_polled_this_frame(&self) -> bool {
+        self.bus.controller_polled()
     }
 
     /// v1.2.0 (T-110-E1) — start/stop the per-frame interrupt-service log for
@@ -2090,6 +2106,43 @@ mod tests {
                 "Vs. inputs leaked into a normal-cart read of {addr:#06X}"
             );
         }
+    }
+
+    /// v1.6.0 Workstream A3 — the `TAStudio` lag-log flag: a frame in which the
+    /// program never reads `$4016`/`$4017` is a lag frame; a controller read
+    /// marks the frame polled; and the flag resets at the top of each frame.
+    #[cfg(feature = "debug-hooks")]
+    #[test]
+    fn lag_flag_tracks_controller_reads_per_frame() {
+        // synth_nrom is a pure `JMP $C000` loop — it never polls input.
+        let rom = synth_nrom(16, 8);
+        let mut nes = Nes::from_rom(&rom).unwrap();
+
+        // A frame of pure JMP never reads a controller port => lag frame.
+        nes.run_frame();
+        assert!(
+            !nes.was_input_polled_this_frame(),
+            "a frame with no $4016/$4017 read must be a lag frame"
+        );
+
+        // A controller-port read marks the (current) frame as polled.
+        let _ = nes.bus_mut().raw_cpu_read(0x4016);
+        assert!(
+            nes.was_input_polled_this_frame(),
+            "a $4016 read must mark the frame polled"
+        );
+
+        // $4017 also counts, and the next frame's clear resets the flag.
+        nes.run_frame();
+        assert!(
+            !nes.was_input_polled_this_frame(),
+            "the flag must reset at the top of each frame"
+        );
+        let _ = nes.bus_mut().raw_cpu_read(0x4017);
+        assert!(
+            nes.was_input_polled_this_frame(),
+            "a $4017 read must also mark the frame polled"
+        );
     }
 
     #[test]
