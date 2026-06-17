@@ -31,24 +31,13 @@
     clippy::doc_markdown
 )]
 
-use std::collections::HashMap;
 use std::path::Path;
 
 use rustynes_core::{Buttons, Nes};
+use rustynes_test_harness::coverage::frame_health;
 
 const W: u32 = 256;
 const H: u32 = 240;
-
-/// (distinct colour count, dominant-colour fraction) over the RGBA framebuffer.
-fn frame_stats(fb: &[u8]) -> (usize, f64) {
-    let mut counts: HashMap<[u8; 4], u32> = HashMap::new();
-    for px in fb.chunks_exact(4) {
-        *counts.entry([px[0], px[1], px[2], px[3]]).or_insert(0) += 1;
-    }
-    let total: u32 = counts.values().sum();
-    let dominant = counts.values().copied().max().unwrap_or(0);
-    (counts.len(), f64::from(dominant) / f64::from(total.max(1)))
-}
 
 fn write_png(path: &Path, fb: &[u8]) {
     let file = std::fs::File::create(path).expect("create png");
@@ -82,7 +71,9 @@ fn main() {
         nes.set_buttons(0, Buttons::empty());
         let fb = nes.run_frame();
         if checkpoints.contains(&f) {
-            let (colours, dom) = frame_stats(fb);
+            let health = frame_health(fb);
+            let colours = health.distinct_colors;
+            let dom = health.dominant_fraction;
             // Backdrop-only degradation (the bug) collapses the frame to one or
             // two colours filling almost the whole screen. A rendered screen has
             // several distinct colours and no single colour near-totally
