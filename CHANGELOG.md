@@ -17,6 +17,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **J.Y. Company ASIC mappers (iNES 90 / 209 / 211)** (v1.6.0 Workstream E,
+  BestEffort tier). One silicon implementation behind three iNES mapper
+  numbers — 90 inhibits the ROM-nametable / extended-mirroring feature via a
+  board jumper, 209 register-enables it, and 211 forces it on (a 209 duplicate
+  defined before `$D001` bit 3 was understood). `crates/rustynes-mappers/src/jy_asic.rs`
+  covers the four PRG modes (32/16/8 KiB + 8 KiB with the low-7 bank bits
+  reversed), the four CHR modes (8/4/2/1 KiB), the CHR-block outer-bank mode,
+  the MMC4-like CHR auto-latch (mapper 209), ROM nametables / extended
+  per-1 KiB CIRAM mirroring, the hardware multiplier, and the configurable
+  prescaler+counter IRQ with all four clock sources (CPU M2 / PPU A12 rise /
+  PPU reads / CPU writes). Ported from the NESdev "J.Y. Company ASIC" page and
+  the Mesen2 `JyCompany` implementation. Register-decode + save-state
+  unit-tested only and not in the AccuracyCoin oracle, so AccuracyCoin holds
+  100% (139/139) and the `mapper_tier_honesty` gate stays green (ADR 0011).
 - **UNIF (`.unf`) cartridge loader** (v1.6.0 Workstream E2). UNIF carries no
   mapper number — it identifies the cartridge by a board-name string in its
   `MAPR` chunk. `rustynes_mappers::unif` parses the header + chunks
