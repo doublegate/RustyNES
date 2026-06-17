@@ -1,0 +1,26 @@
+# RustyNES nextest configuration — LOCAL DEVELOPER CONVENIENCE ONLY.
+#
+# CI is the canonical test gate and runs `cargo test` (see
+# .github/workflows/ci.yml). nextest is offered for *local* debugging because
+# its process-per-test isolation contains a segfault/abort to the single test
+# (handy for the `unsafe` rcheevos FFI in rustynes-cheevos and the large
+# mapper/ROM suite) and its output makes a failing run easy to read. nextest is
+# never a substitute for the `cargo test` gate — the two runners must agree.
+#
+# CRITICAL — retries stay at 0. The determinism contract (same seed + ROM +
+# input sequence => bit-identical framebuffer + audio) means a test that only
+# passes on a retry is hiding a real non-determinism bug. NEVER add `retries`
+# here: a flaky test is a bug to FIX, not to paper over.
+
+[profile.default]
+retries = 0
+
+# Show every failure in one run when debugging (cargo test stops at the first).
+fail-fast = false
+
+# The heavy accuracy batteries (AccuracyCoin's 7200-frame run, the blargg /
+# kevtris CPU suites under `--features test-roms`) legitimately run long. A
+# `period`-only table (no `terminate-after`) WARNS that a test is slow but NEVER
+# terminates it — a killed accuracy test would be a false failure, not a real
+# signal.
+slow-timeout = { period = "60s" }

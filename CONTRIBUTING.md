@@ -104,6 +104,30 @@ cargo build --release --workspace                    # optimized build
 cargo run --release -p rustynes-frontend -- rom.nes  # run the emulator (binary: rustynes)
 ```
 
+### Testing with nextest (optional, local)
+
+CI runs `cargo test` — that is the canonical gate. For *local* work you may
+prefer [`cargo-nextest`](https://nexte.st): it runs each test in its own
+process, so a segfault/abort in one test (e.g. in the `rustynes-cheevos` FFI or
+a mapper) is contained instead of taking down the whole binary, and its output
+makes failures easy to read. It does **not** replace the `cargo test` gate —
+the two must agree.
+
+```bash
+cargo install cargo-nextest --locked                 # or: cargo binstall cargo-nextest
+cargo nextest run --workspace                                  # unit + integration
+cargo nextest run --workspace --release --features test-roms   # + ROM suites
+cargo test --doc --workspace                         # doctests: nextest does NOT run these
+cargo nextest run --workspace --run-ignored ignored-only --features test-roms  # expected-fail probes
+```
+
+Two differences the repo's `.config/nextest.toml` and the commands above already
+handle: nextest skips **doctests** (run `cargo test --doc` separately), and the
+**ignored-probe** flag differs — `--run-ignored ignored-only`, not the
+`cargo test` form `-- --ignored`. Retries are pinned to **0** by design: a
+green-on-retry would hide exactly the non-determinism the determinism contract
+forbids, so a flaky test is a bug to fix, not to retry.
+
 ## Coding Standards
 
 ### Rust Style
