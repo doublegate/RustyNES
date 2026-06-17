@@ -80,6 +80,9 @@ artifacts/
 /tests/roms/external/
 /tests/roms/nes-test-roms/
 /game-roms/
+
+# coverage tool's cached library-header scan (developer-local; ~25k headers)
+/scripts/coverage/.library-index.json
 *.qd
 *.nsf
 *.nsfe
@@ -135,6 +138,12 @@ test-output/
 *.gcno
 *.gcda
 coverage/
+# ...but NOT the committed coverage tooling (the `coverage/` rule above is for
+# code-coverage artifact dirs; the cache JSON stays ignored via its rule above).
+!/scripts/coverage/
+!/scripts/coverage/**
+/scripts/coverage/.library-index.json
+/scripts/coverage/__pycache__/
 tarpaulin-report.html
 perf.data
 perf.data.old
