@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-159-BandaiLZ93D50-24C01/Dragon Ball Z - Kyoushuu! Saiya Jin (Japan).nes
+rom_sha256=02ef93c157c226101bf0790639845bdfa8173df894e095e687f396bbddf583ce
+frames=600
+fb_bytes=245760
+cycles=17838525
+audio_samples=439524
+audio_fnv1a64=e6578f92d14d98ef
+checkpoint f600 fb_fnv1a64=a6ec537737a843e0

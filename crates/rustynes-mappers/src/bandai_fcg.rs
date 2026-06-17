@@ -35,14 +35,19 @@
 //!
 //! # EEPROM
 //!
-//! A minimal I²C state machine ([`Eeprom`]) for the X24C01 (159) / 24C02
-//! (16) is implemented below. It models START/STOP edge detection, an 8-bit
-//! shift register clocked on the SCL rising edge, the word-address/data
-//! phases, and ACK pulses — enough for boot-smoke and a game's save-data
-//! probe. It is **not** datasheet-timing-verified: there are no
-//! redistributable behavioral test fixtures for these boards, so the EEPROM
-//! is spec-implemented but verified only at the unit-test + boot-smoke
-//! level (see the v2.1.0 coverage work notes).
+//! An I²C state machine ([`Eeprom`]) for the X24C01 (159) / 24C02 (16) is
+//! implemented below — a faithful port of the Mesen2 `Eeprom24C01` /
+//! `Eeprom24C02` models. It clocks bits on the SCL **rising** edge and
+//! advances the mode/ACK handshake on the **falling** edge, detects
+//! START/STOP as SDA transitions while SCL is held high, and honors the two
+//! chips' differing bit order (X24C01 LSB-first, 24C02 MSB-first) and
+//! addressing (X24C01 combined word-address+R/W byte vs. 24C02
+//! device-select + word-address). The X24C01 bit order and rise/fall
+//! handshake were the boot-blocker for the mapper-159 games (a blank screen
+//! while the game busy-waited on the EEPROM probe). It is **not**
+//! datasheet-timing-verified — there are no redistributable behavioral test
+//! fixtures for these boards — so it is verified at the unit-test +
+//! boot-smoke level against the reference emulators.
 
 #![allow(
     clippy::cast_possible_truncation,
@@ -107,42 +112,57 @@ impl FcgVariant {
     }
 }
 
-/// Minimal serial I²C EEPROM (X24C01 / 24C02) state machine.
+/// Serial I²C EEPROM (X24C01 / 24C02) state machine.
 ///
-/// Models START/STOP detection on SDA edges while SCL is high, an 8-bit
-/// MSB-first shift register clocked on the SCL rising edge, the
-/// device-select / word-address / data phases, and ACK pulses. It is not a
-/// cycle/timing-accurate datasheet model.
+/// Faithful port of the Mesen2 `Eeprom24C01` / `Eeprom24C02` models
+/// (`ref-proj/Mesen2/Core/NES/Mappers/Bandai/`). The protocol is driven on
+/// **both** SCL edges: bits are clocked on the rising edge, and the
+/// mode/ACK handshake advances on the falling edge — exactly how the boards
+/// drive the line. START / STOP are detected as SDA transitions while SCL is
+/// held high.
+///
+/// The two chips differ in two ways that matter for boot:
+///
+/// - **Bit order.** The X24C01 (mapper 159) shifts addr/data **LSB-first**
+///   (`bit << counter`); the 24C02 (mapper 16) shifts **MSB-first**
+///   (`bit << (7 - counter)`).
+/// - **Addressing.** The X24C01 takes a single combined byte (7-bit word
+///   address + R/W bit); the 24C02 takes a device-select byte (`0xA0 | …`)
+///   followed by a separate word-address byte.
+///
+/// It is not a cycle/timing-accurate datasheet model, but it matches the
+/// reference emulators' boot-relevant behavior.
 #[derive(Debug, Clone)]
 struct Eeprom {
     mem: Box<[u8]>,
     is_x24c01: bool,
 
-    last_scl: bool,
-    last_sda: bool,
+    last_scl: u8,
+    last_sda: u8,
 
-    state: I2cState,
-    bit_count: u8,
-    shift_in: u8,
-    shift_out: u8,
-    word_addr: u8,
-    rw_read: bool,
-    /// For the 24C02 write path: `true` while waiting for the word-address
-    /// byte (the byte after the device-select), `false` once received.
-    awaiting_word_addr: bool,
+    mode: I2cMode,
+    next_mode: I2cMode,
+    /// Device-select byte (24C02 only; includes the R/W bit).
+    chip_addr: u8,
+    /// Word address into `mem`.
+    addr: u8,
+    /// Byte being shifted in (write) or out (read).
+    data: u8,
+    /// Bits shifted so far in the current byte (0..=8).
+    counter: u8,
     /// The bit currently driven back onto SDA toward the CPU (high = 1).
-    out_bit: bool,
+    output: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum I2cState {
+enum I2cMode {
     Idle,
-    AddrSelect,
-    AckAddr,
+    ChipAddress,
+    Address,
     Read,
-    AckRead,
     Write,
-    AckWrite,
+    SendAck,
+    WaitAck,
 }
 
 impl Eeprom {
@@ -150,45 +170,76 @@ impl Eeprom {
         Self {
             mem: vec![0xFFu8; bytes.max(1)].into_boxed_slice(),
             is_x24c01,
-            last_scl: false,
-            last_sda: false,
-            state: I2cState::Idle,
-            bit_count: 0,
-            shift_in: 0,
-            shift_out: 0,
-            word_addr: 0,
-            rw_read: false,
-            awaiting_word_addr: false,
-            out_bit: true,
+            last_scl: 0,
+            last_sda: 0,
+            mode: I2cMode::Idle,
+            next_mode: I2cMode::Idle,
+            chip_addr: 0,
+            addr: 0,
+            data: 0,
+            counter: 0,
+            output: 1,
         }
     }
 
-    fn mask(&self) -> usize {
-        self.mem.len() - 1
+    fn addr_mask(&self) -> u8 {
+        if self.is_x24c01 { 0x7F } else { 0xFF }
     }
 
-    /// Drive the EEPROM lines from the `$x00D` register. `dir_read` is the
-    /// direction bit; when the host releases SDA to read, the device's
-    /// `out_bit` is returned by [`Self::read_sda`].
-    fn write_lines(&mut self, scl: bool, sda: bool) {
-        let scl_rise = scl && !self.last_scl;
-        let scl_high = scl && self.last_scl;
-
-        if scl_high && self.last_sda != sda {
-            if sda {
-                // SDA rising while SCL high = STOP.
-                self.state = I2cState::Idle;
+    /// Shift one bit into `dest` at the current `counter` position, honoring
+    /// the chip's bit order, and advance the counter.
+    fn write_bit(&mut self, dest: &mut u8, value: u8) {
+        if self.counter < 8 {
+            let shift = if self.is_x24c01 {
+                self.counter
             } else {
-                // SDA falling while SCL high = START.
-                self.state = I2cState::AddrSelect;
-                self.bit_count = 0;
-                self.shift_in = 0;
-                self.awaiting_word_addr = false;
-            }
-            // Both START and STOP release SDA back to the host.
-            self.out_bit = true;
-        } else if scl_rise {
-            self.clock_bit(sda);
+                7 - self.counter
+            };
+            let mask = !(1u8 << shift);
+            *dest = (*dest & mask) | (value << shift);
+            self.counter += 1;
+        }
+    }
+
+    /// Drive `output` from the current `data` bit at `counter`, honoring the
+    /// chip's bit order, and advance the counter.
+    fn read_bit(&mut self) {
+        if self.counter < 8 {
+            let shift = if self.is_x24c01 {
+                self.counter
+            } else {
+                7 - self.counter
+            };
+            self.output = u8::from((self.data & (1u8 << shift)) != 0);
+            self.counter += 1;
+        }
+    }
+
+    /// Drive the EEPROM lines from the `$x00D` register. `scl`/`sda` are the
+    /// host-driven clock/data levels; the device's response appears on
+    /// [`Self::read_sda`].
+    fn write_lines(&mut self, scl_b: bool, sda_b: bool) {
+        let scl = u8::from(scl_b);
+        let sda = u8::from(sda_b);
+
+        if self.last_scl != 0 && scl != 0 && sda < self.last_sda {
+            // START: SDA high->low while SCL stable high.
+            self.mode = if self.is_x24c01 {
+                I2cMode::Address
+            } else {
+                I2cMode::ChipAddress
+            };
+            self.addr = 0;
+            self.counter = 0;
+            self.output = 1;
+        } else if self.last_scl != 0 && scl != 0 && sda > self.last_sda {
+            // STOP: SDA low->high while SCL stable high.
+            self.mode = I2cMode::Idle;
+            self.output = 1;
+        } else if scl > self.last_scl {
+            self.clock_rise(sda);
+        } else if scl < self.last_scl {
+            self.clock_fall(sda);
         }
 
         self.last_scl = scl;
@@ -196,78 +247,128 @@ impl Eeprom {
     }
 
     fn read_sda(&self) -> bool {
-        self.out_bit
+        self.output != 0
     }
 
-    fn clock_bit(&mut self, sda: bool) {
-        let mask = self.mask();
-        match self.state {
-            I2cState::Idle => {}
-            I2cState::AddrSelect => {
-                self.shift_in = (self.shift_in << 1) | u8::from(sda);
-                self.bit_count += 1;
-                if self.bit_count == 8 {
-                    self.bit_count = 0;
-                    self.rw_read = (self.shift_in & 1) != 0;
-                    if self.is_x24c01 {
-                        // Combined word-address byte (7-bit addr + R/W).
-                        self.word_addr = (self.shift_in >> 1) & 0x7F;
-                    } else if !self.rw_read {
-                        // 24C02 write: next byte is the word address.
-                        self.awaiting_word_addr = true;
-                    }
-                    self.state = I2cState::AckAddr;
-                    self.out_bit = false; // ACK low
-                }
+    fn clock_rise(&mut self, sda: u8) {
+        match self.mode {
+            I2cMode::ChipAddress => {
+                let mut chip = self.chip_addr;
+                self.write_bit(&mut chip, sda);
+                self.chip_addr = chip;
             }
-            I2cState::AckAddr => {
-                if self.rw_read {
-                    self.shift_out = self.mem[(self.word_addr as usize) & mask];
-                    self.state = I2cState::Read;
+            I2cMode::Address => {
+                if self.is_x24c01 {
+                    // X24C01: 7 address bits, then the 8th bit selects R/W.
+                    if self.counter < 7 {
+                        let mut addr = self.addr;
+                        self.write_bit(&mut addr, sda);
+                        self.addr = addr;
+                    } else if self.counter == 7 {
+                        self.counter = 8;
+                        if sda != 0 {
+                            self.next_mode = I2cMode::Read;
+                            self.data = self.mem[(self.addr & 0x7F) as usize];
+                        } else {
+                            self.next_mode = I2cMode::Write;
+                        }
+                    }
                 } else {
-                    self.state = I2cState::Write;
-                }
-                self.bit_count = 0;
-                self.shift_in = 0;
-                self.out_bit = true;
-            }
-            I2cState::Read => {
-                self.out_bit = (self.shift_out & 0x80) != 0;
-                self.shift_out <<= 1;
-                self.bit_count += 1;
-                if self.bit_count == 8 {
-                    self.bit_count = 0;
-                    self.state = I2cState::AckRead;
+                    let mut addr = self.addr;
+                    self.write_bit(&mut addr, sda);
+                    self.addr = addr;
                 }
             }
-            I2cState::AckRead => {
-                self.word_addr = self.word_addr.wrapping_add(1);
-                self.shift_out = self.mem[(self.word_addr as usize) & mask];
-                self.state = I2cState::Read;
-                self.bit_count = 0;
+            I2cMode::Read => self.read_bit(),
+            I2cMode::Write => {
+                let mut data = self.data;
+                self.write_bit(&mut data, sda);
+                self.data = data;
             }
-            I2cState::Write => {
-                self.shift_in = (self.shift_in << 1) | u8::from(sda);
-                self.bit_count += 1;
-                if self.bit_count == 8 {
-                    self.bit_count = 0;
-                    if self.awaiting_word_addr {
-                        self.word_addr = self.shift_in;
-                        self.awaiting_word_addr = false;
+            I2cMode::SendAck => self.output = 0,
+            I2cMode::WaitAck => {
+                if sda == 0 {
+                    if self.is_x24c01 {
+                        // X24C01: the master ack ends the read; STOP follows.
+                        self.next_mode = I2cMode::Idle;
                     } else {
-                        self.mem[(self.word_addr as usize) & mask] = self.shift_in;
-                        self.word_addr = self.word_addr.wrapping_add(1);
+                        // 24C02: sequential read continues to the next byte.
+                        self.next_mode = I2cMode::Read;
+                        self.data = self.mem[self.addr as usize];
                     }
-                    self.state = I2cState::AckWrite;
-                    self.out_bit = false; // ACK low
                 }
             }
-            I2cState::AckWrite => {
-                self.state = I2cState::Write;
-                self.bit_count = 0;
-                self.shift_in = 0;
-                self.out_bit = true;
+            I2cMode::Idle => {}
+        }
+    }
+
+    fn clock_fall(&mut self, _sda: u8) {
+        match self.mode {
+            I2cMode::ChipAddress => {
+                if self.counter == 8 {
+                    if (self.chip_addr & 0xA0) == 0xA0 {
+                        self.mode = I2cMode::SendAck;
+                        self.counter = 0;
+                        self.output = 1;
+                        if self.chip_addr & 0x01 != 0 {
+                            self.next_mode = I2cMode::Read;
+                            self.data = self.mem[self.addr as usize];
+                        } else {
+                            self.next_mode = I2cMode::Address;
+                        }
+                    } else {
+                        self.mode = I2cMode::Idle;
+                        self.counter = 0;
+                        self.output = 1;
+                    }
+                }
             }
+            I2cMode::Address => {
+                if self.is_x24c01 {
+                    if self.counter == 8 {
+                        // Ack the address, then run the queued read/write.
+                        self.mode = I2cMode::SendAck;
+                        self.output = 1;
+                    }
+                } else if self.counter == 8 {
+                    self.counter = 0;
+                    self.mode = I2cMode::SendAck;
+                    self.next_mode = I2cMode::Write;
+                    self.output = 1;
+                }
+            }
+            I2cMode::SendAck => {
+                self.mode = self.next_mode;
+                self.counter = 0;
+                self.output = 1;
+            }
+            I2cMode::Read => {
+                if self.counter == 8 {
+                    self.mode = I2cMode::WaitAck;
+                    self.addr = (self.addr + 1) & self.addr_mask();
+                }
+            }
+            I2cMode::Write => {
+                if self.counter == 8 {
+                    self.mode = I2cMode::SendAck;
+                    self.next_mode = if self.is_x24c01 {
+                        I2cMode::Idle
+                    } else {
+                        I2cMode::Write
+                    };
+                    self.mem[(self.addr & self.addr_mask()) as usize] = self.data;
+                    self.addr = (self.addr + 1) & self.addr_mask();
+                    self.counter = 0;
+                }
+            }
+            I2cMode::WaitAck => {
+                if !self.is_x24c01 {
+                    self.mode = self.next_mode;
+                    self.counter = 0;
+                    self.output = 1;
+                }
+            }
+            I2cMode::Idle => {}
         }
     }
 }
@@ -785,6 +886,110 @@ mod tests {
         // With no I2C transaction, the device releases SDA (out_bit high) ->
         // bit 4 set.
         assert_eq!(m.cpu_read(0x6000) & 0x10, 0x10);
+    }
+
+    /// Drive the X24C01 I²C lines directly through the `$800D` register,
+    /// mirroring how a game bit-bangs the bus: SDA is set up while SCL is
+    /// low, then SCL is pulsed high and back low to clock the bit.
+    struct I2cDriver<'a> {
+        m: &'a mut BandaiFcg,
+    }
+
+    impl I2cDriver<'_> {
+        const SCL: u8 = 0x20;
+        const SDA: u8 = 0x40;
+
+        fn lines(&mut self, scl: bool, sda: bool) {
+            let v = (u8::from(scl) * Self::SCL) | (u8::from(sda) * Self::SDA);
+            self.m.cpu_write(0x800D, v);
+        }
+
+        fn start(&mut self) {
+            // SDA high, SCL high, then SDA falls while SCL stays high.
+            self.lines(true, true);
+            self.lines(true, false);
+        }
+
+        fn stop(&mut self) {
+            // SDA low while SCL high, then SDA rises while SCL stays high.
+            self.lines(true, false);
+            self.lines(true, true);
+        }
+
+        /// Clock one bit out from the master to the device (write direction).
+        fn send_bit(&mut self, bit: bool) {
+            self.lines(false, bit); // set SDA while SCL low
+            self.lines(true, bit); // clock rise (device samples)
+            self.lines(false, bit); // clock fall (device advances)
+        }
+
+        /// Clock one bit while releasing SDA, returning the device's output.
+        fn recv_bit(&mut self) -> bool {
+            self.lines(false, true); // release SDA, SCL low
+            self.lines(true, true); // clock rise (device drives output)
+            let out = self.m.eeprom.as_ref().unwrap().read_sda();
+            self.lines(false, true); // clock fall
+            out
+        }
+
+        /// The X24C01 word-address byte is LSB-first: 7 address bits then R/W.
+        fn send_addr_rw(&mut self, addr: u8, read: bool) {
+            for i in 0..7 {
+                self.send_bit((addr >> i) & 1 != 0);
+            }
+            self.send_bit(read);
+        }
+
+        /// Read the device-driven ack bit (low = ack).
+        fn read_ack(&mut self) -> bool {
+            !self.recv_bit()
+        }
+
+        fn send_data_lsb_first(&mut self, byte: u8) {
+            for i in 0..8 {
+                self.send_bit((byte >> i) & 1 != 0);
+            }
+        }
+
+        fn recv_data_lsb_first(&mut self) -> u8 {
+            let mut byte = 0u8;
+            for i in 0..8 {
+                if self.recv_bit() {
+                    byte |= 1 << i;
+                }
+            }
+            byte
+        }
+    }
+
+    #[test]
+    fn x24c01_write_then_read_round_trips() {
+        let mut m = BandaiFcg::new(
+            synth_prg(8),
+            synth_chr(16),
+            Mirroring::Vertical,
+            FcgVariant::Lz93d50_24c01,
+        )
+        .unwrap();
+        {
+            let mut d = I2cDriver { m: &mut m };
+            // Write 0x5A to word address 0x12.
+            d.start();
+            d.send_addr_rw(0x12, false); // write
+            assert!(d.read_ack(), "device must ack the address byte");
+            d.send_data_lsb_first(0x5A);
+            assert!(d.read_ack(), "device must ack the data byte");
+            d.stop();
+
+            // Read it back from word address 0x12.
+            d.start();
+            d.send_addr_rw(0x12, true); // read
+            assert!(d.read_ack(), "device must ack the read address");
+            let got = d.recv_data_lsb_first();
+            assert_eq!(got, 0x5A, "read-back must match the written byte");
+            d.stop();
+        }
+        assert_eq!(m.eeprom.as_ref().unwrap().mem[0x12], 0x5A);
     }
 
     #[test]

@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-159-BandaiLZ93D50-24C01/Magical Taruruuto-kun 2 - Mahou Daibouken (Japan).nes
+rom_sha256=b0e346093196791d9e30a30318836828a4964870973b09512b31e907723a5777
+frames=600
+fb_bytes=245760
+cycles=17838522
+audio_samples=439524
+audio_fnv1a64=c6e1f17fd220f6ac
+checkpoint f600 fb_fnv1a64=3b02424bc7c34b0d

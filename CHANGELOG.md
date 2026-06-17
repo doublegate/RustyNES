@@ -17,6 +17,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Mapper 159 (Bandai LZ93D50 + X24C01 EEPROM) blank boot.** All mapper-159
+  games (Dragon Ball Z - Kyoushuu! Saiya Jin, both Magical Taruruuto-kun
+  titles, SD Gundam Gaiden) booted to a 1-colour blank screen because the
+  Bandai FCG serial-EEPROM state machine mismodeled the X24C01: it clocked
+  bits only on the SCL rising edge and shifted the address/data MSB-first,
+  whereas the X24C01 advances its mode/ACK handshake on the falling edge and
+  shifts **LSB-first** (the 24C02 on mapper 16 is MSB-first). The games
+  busy-waited on the EEPROM probe and never proceeded. The `Eeprom` machine in
+  `crates/rustynes-mappers/src/bandai_fcg.rs` is now a faithful port of the
+  Mesen2 `Eeprom24C01` / `Eeprom24C02` models (rise/fall-split protocol,
+  per-chip bit order, and X24C01 combined-byte addressing vs. the 24C02
+  device-select-then-word-address sequence). Mapper 159 is not in the
+  AccuracyCoin oracle, so the fix is AccuracyCoin- and determinism-neutral
+  (100% (139/139) held).
+
 - **BestEffort mapper decode fixes from the per-mapper screenshot-coverage
   pass** (all off the AccuracyCoin oracle; AccuracyCoin holds 100% (139/139)
   and the `mapper_tier_honesty` gate stays green; each was verified to render
