@@ -28,6 +28,8 @@ enum Tab {
     Patterns,
     Nametables,
     Palette,
+    /// v1.5.0 "Lens" Workstream A3 — per-scanline state-capture trace.
+    Scanline,
 }
 
 /// Persistent state of the PPU panel.
@@ -66,6 +68,7 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut PpuPanelState, nes
                 ui.selectable_value(&mut state.tab, Tab::Patterns, "Patterns");
                 ui.selectable_value(&mut state.tab, Tab::Nametables, "Nametables");
                 ui.selectable_value(&mut state.tab, Tab::Palette, "Palette");
+                ui.selectable_value(&mut state.tab, Tab::Scanline, "Scanline trace");
             });
             ui.separator();
             match state.tab {
@@ -73,6 +76,7 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut PpuPanelState, nes
                 Tab::Patterns => patterns_tab(ui, ctx, state, nes),
                 Tab::Nametables => nametables_tab(ui, ctx, state, nes, &ppu),
                 Tab::Palette => palette_tab(ui, ctx, nes),
+                Tab::Scanline => scanline_tab(ui, nes),
             }
         });
 }
@@ -120,6 +124,105 @@ fn patterns_tab(ui: &mut egui::Ui, ctx: &egui::Context, state: &mut PpuPanelStat
             ui.image((handle.id(), egui::vec2(192.0, 192.0)));
         }
     });
+    // v1.5.0 "Lens" Workstream A3 — CHR -> PNG export (native only: needs the
+    // `png` encoder + the `rfd` save dialog, both native-only deps). Exports the
+    // 256x128 combined pattern dump (left $0000 + right $1000 side by side).
+    #[cfg(not(target_arch = "wasm32"))]
+    if ui.button("Export CHR to PNG...").clicked() {
+        export_chr_png(nes);
+    }
+}
+
+/// v1.5.0 A3 — export the two pattern tables as one 256x128 RGBA PNG. Native
+/// only. Display-only: reads the same `pattern_table_rgba` the viewer uses.
+#[cfg(not(target_arch = "wasm32"))]
+fn export_chr_png(nes: &mut Nes) {
+    // Compose the two 128x128 tables side by side into a 256x128 RGBA buffer.
+    let left = nes.pattern_table_rgba(0);
+    let right = nes.pattern_table_rgba(1);
+    let (w, h) = (256usize, 128usize);
+    let mut combined = vec![0u8; w * h * 4];
+    for y in 0..h {
+        let dst = y * w * 4;
+        let src = y * 128 * 4;
+        combined[dst..dst + 128 * 4].copy_from_slice(&left[src..src + 128 * 4]);
+        combined[dst + 128 * 4..dst + 256 * 4].copy_from_slice(&right[src..src + 128 * 4]);
+    }
+    let Some(path) = rfd::FileDialog::new()
+        .add_filter("PNG image", &["png"])
+        .set_file_name("rustynes-chr.png")
+        .save_file()
+    else {
+        return;
+    };
+    let Ok(file) = std::fs::File::create(&path) else {
+        return;
+    };
+    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), w as u32, h as u32);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    if let Ok(mut writer) = encoder.write_header() {
+        let _ = writer.write_image_data(&combined);
+    }
+}
+
+/// v1.5.0 "Lens" Workstream A3 — per-scanline state-capture trace.
+///
+/// Derived entirely from the `debug-hooks` event log (`Nes::events`): the
+/// scroll- and rendering-affecting PPU register writes ($2000 PPUCTRL, $2005
+/// PPUSCROLL, $2006 PPUADDR, $2001 PPUMASK) are grouped by the scanline they
+/// occurred on, so a user can see mid-frame scroll splits (e.g. status-bar
+/// raster effects) without any new core hook. Output-only — the event log is
+/// reset per frame and never perturbs emulation.
+fn scanline_tab(ui: &mut egui::Ui, nes: &mut Nes) {
+    ui.horizontal(|ui| {
+        let mut on = nes.event_logging();
+        if ui.checkbox(&mut on, "Record").changed() {
+            nes.set_event_logging(on);
+        }
+        ui.weak("per-scanline PPU register-write trace ($2000/$2001/$2005/$2006)");
+    });
+    if !nes.event_logging() {
+        ui.weak("(enable Record, then run/step a frame)");
+        return;
+    }
+    // (scanline, reg_name, addr, value), filtered to the scroll/render writes.
+    let mut rows: Vec<(i16, &'static str, u16, u8)> = Vec::new();
+    for e in nes.events() {
+        let name = match e.addr & 0x2007 {
+            0x2000 if (0x2000..=0x3FFF).contains(&e.addr) => "PPUCTRL",
+            0x2001 if (0x2000..=0x3FFF).contains(&e.addr) => "PPUMASK",
+            0x2005 if (0x2000..=0x3FFF).contains(&e.addr) => "PPUSCROLL",
+            0x2006 if (0x2000..=0x3FFF).contains(&e.addr) => "PPUADDR",
+            _ => continue,
+        };
+        // Only writes shape the per-scanline render state; skip reads.
+        if e.kind.is_read() {
+            continue;
+        }
+        rows.push((e.scanline, name, e.addr, e.value));
+    }
+    ui.label(format!("{} scroll/render writes this frame", rows.len()));
+    ui.separator();
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            egui::Grid::new("scanline_trace")
+                .striped(true)
+                .num_columns(3)
+                .show(ui, |ui| {
+                    ui.strong("Scanline");
+                    ui.strong("Register");
+                    ui.strong("Value");
+                    ui.end_row();
+                    for (sl, name, addr, val) in rows {
+                        ui.monospace(format!("{sl:>4}"));
+                        ui.monospace(format!("{name} (${addr:04X})"));
+                        ui.monospace(format!("${val:02X}"));
+                        ui.end_row();
+                    }
+                });
+        });
 }
 
 fn nametables_tab(

@@ -988,6 +988,12 @@ impl UiShell {
                         out.action = Some(MenuAction::OpenPanel(ToolPanel::InputDisplay));
                         ui.close();
                     }
+                    // v1.5.0 "Lens" Workstream A1 — live Input Miniatures overlay
+                    // (every connected device, real-time button/axis state).
+                    if ui.button(ic(glyph::GAMEPAD, "Input Miniatures")).clicked() {
+                        out.action = Some(MenuAction::OpenPanel(ToolPanel::InputMiniatures));
+                        ui.close();
+                    }
                     // v1.3.0 menu reorg — NSF/NSFe music player (moved here from
                     // the Debug menu; it is a playback tool, not a chip inspector).
                     if ui.button(ic(glyph::MUSIC, "NSF Player")).clicked() {
@@ -1028,6 +1034,15 @@ impl UiShell {
                             .clicked()
                         {
                             out.action = Some(MenuAction::UnloadHdPack);
+                            ui.close();
+                        }
+                        ui.separator();
+                        // v1.5.0 "Lens" Workstream A4 — per-pixel composition trace.
+                        if ui
+                            .button(ic(glyph::MAGNIFYING_GLASS, "Pixel Inspector"))
+                            .clicked()
+                        {
+                            out.action = Some(MenuAction::OpenPanel(ToolPanel::HdPixelInspector));
                             ui.close();
                         }
                     });

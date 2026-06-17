@@ -2250,6 +2250,99 @@ impl App {
         }
     }
 
+    /// v1.5.0 "Lens" Workstream A1 — build the live Input Miniatures snapshot
+    /// from the host-side input state: the standard pads (already computed) plus
+    /// the port-2 / expansion device + its live button/axis state. Frontend-only
+    /// (reads the same `self.input` / cursor / mouse state the emulator is fed);
+    /// no core touch, no determinism surface. Native-only — the expansion-device
+    /// live state (cursor / mouse / family-keyboard) is in `cfg(not(wasm32))`
+    /// fields; the wasm builds push a pads-only snapshot inline at the call site.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn input_miniatures_snapshot(
+        &self,
+        pads: [Buttons; 4],
+        players: usize,
+    ) -> crate::debugger::MiniaturesSnapshot {
+        use crate::debugger::{ExpansionMini, MiniaturesSnapshot};
+        let expansion = {
+            use crate::config::ExpansionDevice;
+            // Map the cursor X into 0..=255 for the Vaus paddle / aim, and decide
+            // whether the cursor is on the NES screen (Zapper light sensor).
+            let (knob, on_screen) = self.cursor_pos.map_or((0x80u8, false), |(cx, cy)| {
+                let (ww, wh) = self.window_size;
+                let nx = (cx / f64::from(ww.max(1))) * 256.0;
+                let ny = (cy / f64::from(wh.max(1))) * 240.0;
+                let on = (0.0..256.0).contains(&nx) && (0.0..240.0).contains(&ny);
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let knob = nx.clamp(0.0, 255.0) as u8;
+                (knob, on)
+            });
+            #[allow(clippy::cast_possible_truncation)]
+            let (mdx, mdy) = {
+                let (ax, ay) = self.mouse_motion_accum;
+                (
+                    ax.clamp(-127.0, 127.0) as i16,
+                    ay.clamp(-127.0, 127.0) as i16,
+                )
+            };
+            let kb_pressed = u8::try_from(
+                self.family_keyboard
+                    .iter()
+                    .map(|b| b.count_ones())
+                    .sum::<u32>(),
+            )
+            .unwrap_or(u8::MAX);
+            let khs = self.input.konami_hyper_shot();
+            match self.config.input.expansion_device {
+                ExpansionDevice::None => ExpansionMini::None,
+                ExpansionDevice::Zapper => ExpansionMini::Zapper {
+                    trigger: self.mouse_pressed,
+                    on_screen,
+                },
+                ExpansionDevice::Vaus => ExpansionMini::Vaus {
+                    knob,
+                    button: self.mouse_pressed,
+                },
+                ExpansionDevice::SnesMouse => ExpansionMini::SnesMouse {
+                    left: self.mouse_pressed,
+                    right: self.mouse_right_pressed,
+                    dx: mdx,
+                    dy: mdy,
+                },
+                ExpansionDevice::PowerPad => ExpansionMini::PowerPad {
+                    mask: self.input.power_pad(),
+                    family_trainer: false,
+                },
+                ExpansionDevice::FamilyTrainer => ExpansionMini::PowerPad {
+                    mask: self.input.power_pad(),
+                    family_trainer: true,
+                },
+                ExpansionDevice::FamilyKeyboard => ExpansionMini::Keyboard {
+                    pressed: kb_pressed,
+                    subor: false,
+                },
+                ExpansionDevice::SuborKeyboard => ExpansionMini::Keyboard {
+                    pressed: kb_pressed,
+                    subor: true,
+                },
+                ExpansionDevice::KonamiHyperShot => ExpansionMini::KonamiHyperShot {
+                    p1_run: khs & 0x01 != 0,
+                    p1_jump: khs & 0x02 != 0,
+                    p2_run: khs & 0x04 != 0,
+                    p2_jump: khs & 0x08 != 0,
+                },
+                ExpansionDevice::BandaiHyperShot => ExpansionMini::BandaiHyperShot {
+                    mask: self.input.bandai_hyper_shot(),
+                },
+            }
+        };
+        MiniaturesSnapshot {
+            pads,
+            players,
+            expansion,
+        }
+    }
+
     /// Build the per-pace input snapshot for the emulation core from the
     /// winit-thread-resident input state (keyboard maps, gilrs, mouse).
     fn frame_inputs(&self) -> crate::emu::FrameInputs {
@@ -4434,9 +4527,23 @@ impl App {
             self.input.player3(),
             self.input.player4(),
         ];
+        // v1.5.0 "Lens" Workstream A1 — build the live Input Miniatures snapshot
+        // (standard pads + whatever non-standard device occupies port 2) from the
+        // host-side input state. Frontend-only; no core touch. Native resolves the
+        // expansion device; wasm pushes a pads-only snapshot (the expansion live
+        // state is native-only).
+        #[cfg(not(target_arch = "wasm32"))]
+        let miniatures = self.input_miniatures_snapshot(input_pads, input_players);
+        #[cfg(target_arch = "wasm32")]
+        let miniatures = crate::debugger::MiniaturesSnapshot {
+            pads: input_pads,
+            players: input_players,
+            expansion: crate::debugger::ExpansionMini::None,
+        };
         if let Some(debugger) = self.debugger.as_mut() {
             debugger.set_fps(fps);
             debugger.set_input_display(input_pads, input_players);
+            debugger.set_input_miniatures(miniatures);
             debugger.set_movie_status(movie_status);
             debugger.set_perf_log_note(log_note);
             debugger.set_perf_view(perf_view);
@@ -6133,6 +6240,33 @@ impl ApplicationHandler<AppEvent> for App {
                     let hd_frame: Option<&[u8]> = hd_dims
                         .and(self.hd_compositor.as_ref())
                         .map(crate::hdpack::HdCompositor::frame);
+                    // v1.5.0 "Lens" Workstream A4 — extract the HD pixel-inspector
+                    // open flag + a clone of its state so the `extra` egui closure
+                    // can render it against the captured per-frame snapshots
+                    // (borrow-disjoint from the debugger's own `render_shell` pass,
+                    // which `extra` runs inside). Written back after render_shell.
+                    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                    let hd_pixel_open = self
+                        .debugger
+                        .as_ref()
+                        .is_some_and(crate::debugger::DebuggerOverlay::hd_pixel_open);
+                    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                    let mut hd_pixel_state = self
+                        .debugger
+                        .as_ref()
+                        .map(crate::debugger::DebuggerOverlay::hd_pixel_state);
+                    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                    let hd_comp_ref = self.hd_compositor.as_ref();
+                    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                    let hd_fb = &self.present_staging;
+                    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                    let hd_ts = &self.present_hd_tiles;
+                    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                    let hd_watched = &self.present_watched_mem;
+                    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                    let hd_chr = &self.present_chr_snapshot;
+                    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                    let mut hd_pixel_open_after = hd_pixel_open;
                     let gfx = self.gfx.as_mut().expect("checked above");
                     let debugger = self.debugger.as_mut().expect("checked above");
                     let window = gfx.window.clone();
@@ -6178,6 +6312,23 @@ impl ApplicationHandler<AppEvent> for App {
                                 script_par,
                                 script_overscan,
                             );
+                            // v1.5.0 "Lens" Workstream A4 — HD-pack pixel inspector,
+                            // rendered here (not in the debugger pass) so it can
+                            // read the captured compositor + per-frame snapshots.
+                            #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                            if hd_pixel_open && let Some(state) = hd_pixel_state.as_mut() {
+                                crate::debugger::hd_pixel_panel::show(
+                                    ctx,
+                                    &mut hd_pixel_open_after,
+                                    state,
+                                    hd_comp_ref.is_some(),
+                                    hd_comp_ref,
+                                    hd_fb,
+                                    hd_ts,
+                                    hd_watched,
+                                    hd_chr,
+                                );
+                            }
                         };
                         // Debugger panels are skipped (overlay hidden) so
                         // `nes = None` is correct even though a ROM may exist.
@@ -6209,6 +6360,13 @@ impl ApplicationHandler<AppEvent> for App {
                     #[cfg(not(all(feature = "hd-pack", not(target_arch = "wasm32"))))]
                     let render_result =
                         gfx.render_with_overlay(&self.present_staging, index_arg, overlay);
+                    // v1.5.0 A4 — write the HD pixel-inspector state (px/py/blend)
+                    // + the (possibly closed) open flag back into the debugger now
+                    // that the `extra` closure that mutated the clone is consumed.
+                    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                    if let Some(state) = hd_pixel_state {
+                        debugger.set_hd_pixel_state(state, hd_pixel_open_after);
+                    }
                     render_result
                 };
                 match render_result {

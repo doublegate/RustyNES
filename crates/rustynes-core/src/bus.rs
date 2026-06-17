@@ -102,9 +102,24 @@ pub enum EventKind {
     ApuWrite,
     /// A `$4020-$FFFF` mapper-register write.
     MapperWrite,
+    /// A `$2000-$3FFF` PPU-register read (v1.5.0 Workstream A2 — the graphical
+    /// PPU Event Viewer draws reads as well as writes, so the read/write heatmap
+    /// + the register-access table can show both directions).
+    PpuRead,
 }
 
-/// One event-viewer record: kind + the PPU `(scanline, dot)` + the address.
+#[cfg(feature = "debug-hooks")]
+impl EventKind {
+    /// Whether this event is a CPU read (vs a write). Used by the v1.5.0 PPU
+    /// Event Viewer heatmap to colour reads (blue) vs writes (red).
+    #[must_use]
+    pub const fn is_read(self) -> bool {
+        matches!(self, Self::PpuRead)
+    }
+}
+
+/// One event-viewer record: kind + the PPU `(scanline, dot)` + the address +
+/// (v1.5.0 A2) the byte read or written.
 #[cfg(feature = "debug-hooks")]
 #[derive(Clone, Copy, Debug)]
 pub struct EventRec {
@@ -114,8 +129,10 @@ pub struct EventRec {
     pub scanline: i16,
     /// PPU dot (`0..=340`).
     pub dot: u16,
-    /// The written address.
+    /// The accessed address.
     pub addr: u16,
+    /// The byte written, or the byte the read returned (v1.5.0 Workstream A2).
+    pub value: u8,
 }
 
 /// Max events captured per frame (bounded so a write-heavy frame can't grow the
@@ -3627,6 +3644,22 @@ impl Bus for LockstepBus {
                 value,
             });
         }
+        // v1.5.0 Workstream A2 — event-viewer read tap: the graphical PPU Event
+        // Viewer needs PPU-register READS (`$2002` status polls, `$2007` data
+        // fetches) plotted alongside writes. Only the `$2000-$3FFF` PPU window is
+        // captured (the dense APU/RAM/PRG read stream would swamp the timeline);
+        // writes across PPU/APU/mapper are captured in `cpu_write`. Output-only,
+        // gated, bounded by `EVENT_CAP` — determinism-neutral.
+        #[cfg(feature = "debug-hooks")]
+        if self.event_logging && matches!(addr, 0x2000..=0x3FFF) && self.events.len() < EVENT_CAP {
+            self.events.push(EventRec {
+                kind: EventKind::PpuRead,
+                scanline: self.ppu.scanline(),
+                dot: self.ppu.dot(),
+                addr,
+                value,
+            });
+        }
         // v1.4.0 Workstream D (D2) — event-breakpoint read taps. Output-only.
         // The `mask == 0` early-out in `record_event_break` keeps the default
         // path cheap; the sprite-0-hit category is observed where games detect
@@ -3698,6 +3731,7 @@ impl Bus for LockstepBus {
                     scanline: self.ppu.scanline(),
                     dot: self.ppu.dot(),
                     addr,
+                    value,
                 });
             }
         }

@@ -197,6 +197,53 @@ impl WatchedMemory {
     }
 }
 
+/// v1.5.0 "Lens" Workstream A4 — one gating condition's name + whether it held
+/// this frame, for the per-pixel inspector.
+#[derive(Debug, Clone)]
+pub struct ConditionTrace {
+    /// The `<condition>` name referenced by the matched/candidate tile rule.
+    pub name: String,
+    /// Whether the condition evaluated true this frame.
+    pub held: bool,
+}
+
+/// v1.5.0 "Lens" Workstream A4 — the per-pixel HD-pack composition trace
+/// returned by [`HdCompositor::inspect_pixel`]. Display-only.
+// The bool fields (is_sprite / flip_h / flip_v / matched) are independent
+// per-pixel report flags, not state worth a bitfield.
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Clone)]
+pub struct PixelInspection {
+    /// NES pixel X coordinate (`0..256`).
+    pub x: u32,
+    /// NES pixel Y coordinate (`0..240`).
+    pub y: u32,
+    /// Base (stock) RGBA at this pixel.
+    pub base: [u8; 4],
+    /// Final (composited) RGBA at this pixel.
+    pub final_rgba: [u8; 4],
+    /// The dominant tile's CHR base address, or [`HD_TILE_NONE`].
+    pub chr_addr: u16,
+    /// Whether the dominant tile came from a sprite.
+    pub is_sprite: bool,
+    /// Sprite horizontal flip.
+    pub flip_h: bool,
+    /// Sprite vertical flip.
+    pub flip_v: bool,
+    /// The tile's palette group (0..=3).
+    pub palette: u8,
+    /// The Mesen CHR hash of the dominant tile (`None` if no tile here).
+    pub chr_hash: Option<u32>,
+    /// Whether a replacement rule's conditions all held (a substitution applied).
+    pub matched: bool,
+    /// The replacement image index of the matched / candidate rule (`None` if no
+    /// rule keys this hash).
+    pub replacement_image: Option<usize>,
+    /// The gating conditions of the reported rule (the matched one, else the last
+    /// candidate) with their per-frame outcomes.
+    pub conditions: Vec<ConditionTrace>,
+}
+
 /// A loaded HD-pack: the upscale factor, the decoded replacement images, the
 /// CHR-hash -> rule map, the parsed conditions, and the background regions.
 #[derive(Debug)]
@@ -1130,6 +1177,115 @@ impl HdCompositor {
 
         self.frame = self.frame.wrapping_add(1);
         &self.out
+    }
+
+    /// v1.5.0 "Lens" Workstream A4 — per-pixel HD-pack composition trace.
+    ///
+    /// Resolves what the compositor did at NES pixel `(px, py)` (in the unscaled
+    /// 256x240 space): the dominant tile's CHR identity + Mesen hash, the
+    /// replacement rule that matched (if any) with the gating condition names +
+    /// whether each held, the base (stock) RGBA, and the final (composited) RGBA.
+    /// Mirrors the per-cell logic in [`Self::composite`] but for one cell only.
+    ///
+    /// Display-only: reads the same already-deterministic snapshots `composite`
+    /// consumed; mutates nothing. Returns `None` if the coordinate is off-screen.
+    #[must_use]
+    pub fn inspect_pixel(
+        &self,
+        px: u32,
+        py: u32,
+        framebuffer: &[u8],
+        tile_source: &[HdTileSource],
+        watched: &WatchedMemory,
+        mut chr_peek: impl FnMut(u16) -> u8,
+    ) -> Option<PixelInspection> {
+        if px >= NES_W || py >= NES_H {
+            return None;
+        }
+        // Keep the u32 coords for the report; usize copies for indexing.
+        let (ux, uy) = (px as usize, py as usize);
+        // The composite() that just ran advanced `self.frame`; the values it used
+        // were for the prior count.
+        let frame = self.frame.wrapping_sub(1);
+
+        // Base (stock NES) pixel.
+        let bsrc = (uy * NES_W as usize + ux) * 4;
+        let base = [
+            framebuffer[bsrc],
+            framebuffer[bsrc + 1],
+            framebuffer[bsrc + 2],
+            framebuffer[bsrc + 3],
+        ];
+        // Final (composited) pixel: nearest-neighbour, so the cell's top-left
+        // scaled pixel is representative.
+        let scale = self.pack.scale as usize;
+        let fx = ux * scale;
+        let fy = uy * scale;
+        let fsrc = (fy * self.out_w as usize + fx) * 4;
+        let final_rgba = [
+            self.out[fsrc],
+            self.out[fsrc + 1],
+            self.out[fsrc + 2],
+            self.out[fsrc + 3],
+        ];
+
+        // Dominant tile identity for the containing 8x8 cell (composite keys on
+        // the cell's top-left pixel).
+        let cell_x = ux / TILE;
+        let cell_y = uy / TILE;
+        let cell_px = cell_y * TILE * NES_W as usize + cell_x * TILE;
+        let rec = tile_source[cell_px];
+
+        let mut out = PixelInspection {
+            x: px,
+            y: py,
+            base,
+            final_rgba,
+            chr_addr: rec.chr_addr,
+            is_sprite: rec.is_sprite,
+            flip_h: rec.flip_h,
+            flip_v: rec.flip_v,
+            palette: rec.palette,
+            chr_hash: None,
+            matched: false,
+            replacement_image: None,
+            conditions: Vec::new(),
+        };
+        if rec.chr_addr == HD_TILE_NONE {
+            return Some(out);
+        }
+        let hash = hash_tile(rec, &mut chr_peek);
+        out.chr_hash = Some(hash);
+        let Some(rules) = self.pack.tiles.get(&hash) else {
+            return Some(out);
+        };
+        // Walk the rules in priority order (conditional first); record the gating
+        // condition outcomes for whichever rule we report on, and mark `matched`
+        // once one holds (mirroring composite()'s `find`).
+        for rule in rules {
+            let conds: Vec<ConditionTrace> = rule
+                .conditions
+                .iter()
+                .map(|&i| ConditionTrace {
+                    name: self
+                        .pack
+                        .conditions
+                        .get(i)
+                        .map_or_else(|| "?".to_string(), |c| c.name.clone()),
+                    held: self.pack.eval_condition(i, watched, frame, rec),
+                })
+                .collect();
+            let holds = conds.iter().all(|c| c.held);
+            // Report the first rule that holds; otherwise keep the last rule's
+            // trace so the user can see why nothing matched.
+            out.conditions = conds;
+            out.replacement_image = Some(rule.image);
+            if holds {
+                out.matched = true;
+                break;
+            }
+        }
+        Some(out)
     }
 
     /// Alpha-blit the background regions of one priority half (under = priority
