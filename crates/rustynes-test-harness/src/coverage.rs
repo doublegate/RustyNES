@@ -24,7 +24,6 @@
 
 #![cfg(feature = "commercial-roms")]
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// At most this many distinct colours means treat the frame as blank.
@@ -76,15 +75,37 @@ impl FrameHealth {
 #[must_use]
 #[allow(clippy::cast_precision_loss)]
 pub fn frame_health(fb: &[u8]) -> FrameHealth {
-    let mut counts: HashMap<[u8; 4], u32> = HashMap::new();
-    for px in fb.chunks_exact(4) {
-        *counts.entry([px[0], px[1], px[2], px[3]]).or_insert(0) += 1;
+    // Pack each RGBA8 pixel into a u32, sort, and do one linear pass counting
+    // runs — far cheaper than a SipHash `HashMap` over ~61k pixels/frame (no
+    // per-pixel hashing, a single allocation). The distinct-colour count and
+    // dominant-colour fraction are identical to the map-based tally.
+    let mut pixels: Vec<u32> = fb
+        .chunks_exact(4)
+        .map(|px| u32::from_le_bytes([px[0], px[1], px[2], px[3]]))
+        .collect();
+    let total = pixels.len();
+    if total == 0 {
+        return FrameHealth {
+            distinct_colors: 0,
+            dominant_fraction: 0.0,
+        };
     }
-    let total: u32 = counts.values().sum();
-    let dominant = counts.values().copied().max().unwrap_or(0);
+    pixels.sort_unstable();
+    let mut distinct = 1usize;
+    let mut run = 1usize;
+    let mut max_run = 1usize;
+    for i in 1..total {
+        if pixels[i] == pixels[i - 1] {
+            run += 1;
+        } else {
+            distinct += 1;
+            run = 1;
+        }
+        max_run = max_run.max(run);
+    }
     FrameHealth {
-        distinct_colors: counts.len(),
-        dominant_fraction: f64::from(dominant) / f64::from(total.max(1)),
+        distinct_colors: distinct,
+        dominant_fraction: max_run as f64 / total as f64,
     }
 }
 
