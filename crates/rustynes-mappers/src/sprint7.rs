@@ -1058,6 +1058,11 @@ pub struct CnRom185 {
     vram: Box<[u8]>,
     chr_reg_raw: u8,
     chr_bank: u8,
+    /// CHR-ROM enable latch. Powers on ENABLED (Mesen2 `CnromProtect`); the
+    /// protection write may disable it. Initialising this to a derived-from-
+    /// `chr_reg_raw=0` value left CHR reading $FF before the first register
+    /// write, so the title screen never drew -> blank boot.
+    chr_enabled: bool,
     sub_mapper: u8,
     mirroring: Mirroring,
 }
@@ -1096,9 +1101,24 @@ impl CnRom185 {
             vram: vec![0u8; 2 * NAMETABLE_SIZE].into_boxed_slice(),
             chr_reg_raw: 0,
             chr_bank: 0,
+            chr_enabled: true,
             sub_mapper: sub_mapper & 0x0F,
             mirroring,
         })
+    }
+
+    // The per-submapper CHR-enable rule (Mesen2 CnromProtect): submapper 0 is a
+    // heuristic on the raw written latch; 4..=7 are exact low-2-bit matches.
+    #[allow(clippy::verbose_bit_mask)]
+    const fn chr_enable_for(&self, value: u8) -> bool {
+        match self.sub_mapper {
+            4 => (value & 0x03) == 0,
+            5 => (value & 0x03) == 1,
+            6 => (value & 0x03) == 2,
+            7 => (value & 0x03) == 3,
+            // Submapper 0 heuristic: enabled iff low nibble nonzero and != $13.
+            _ => (value & 0x0F) != 0 && value != 0x13,
+        }
     }
 
     fn read_prg(&self, addr: u16) -> u8 {
@@ -1107,20 +1127,6 @@ impl CnRom185 {
             self.prg_rom[off & (PRG_BANK_16K - 1)]
         } else {
             self.prg_rom[off]
-        }
-    }
-
-    // The per-submapper checks compare the low two CHR-register bits against a
-    // fixed pattern; `trailing_zeros` would obscure that 2-bit comparison.
-    #[allow(clippy::verbose_bit_mask)]
-    const fn chr_enabled(&self) -> bool {
-        match self.sub_mapper {
-            4 => (self.chr_reg_raw & 0x03) == 0,
-            5 => (self.chr_reg_raw & 0x03) == 1,
-            6 => (self.chr_reg_raw & 0x03) == 2,
-            7 => (self.chr_reg_raw & 0x03) == 3,
-            // Default heuristic: CHR enabled while either low bit is set.
-            _ => (self.chr_reg_raw & 0x03) != 0,
         }
     }
 }
@@ -1143,6 +1149,7 @@ impl Mapper for CnRom185 {
             // Bus conflict (mapper 185 always has AND-type bus conflicts).
             let effective = value & self.read_prg(addr);
             self.chr_reg_raw = effective;
+            self.chr_enabled = self.chr_enable_for(effective);
             let count = (self.chr_rom.len() / CHR_BANK_8K).max(1);
             let mask = u8::try_from((count - 1) | 0x03).unwrap_or(u8::MAX);
             self.chr_bank = effective & mask;
@@ -1153,12 +1160,13 @@ impl Mapper for CnRom185 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => {
-                if self.chr_enabled() {
+                if self.chr_enabled {
                     let count = (self.chr_rom.len() / CHR_BANK_8K).max(1);
                     let bank = (self.chr_bank as usize) % count;
                     self.chr_rom[bank * CHR_BANK_8K + addr as usize]
                 } else {
-                    // CHR disabled by protection: bus reads $FF.
+                    // CHR disabled by protection: the open bus reads $FF (D0 is
+                    // held high by a pull-up, which $FF already satisfies).
                     0xFF
                 }
             }
@@ -1203,6 +1211,11 @@ impl Mapper for CnRom185 {
         self.chr_reg_raw = data[1];
         self.chr_bank = data[2];
         self.sub_mapper = data[3] & 0x0F;
+        // chr_enabled is a deterministic function of the latched register +
+        // submapper, so it is reconstructed rather than serialised (keeps the
+        // save format stable). Power-on (chr_reg_raw == 0) restores to enabled
+        // only if the heuristic agrees; the first write re-evaluates anyway.
+        self.chr_enabled = self.chr_enable_for(self.chr_reg_raw);
         self.vram.copy_from_slice(&data[4..4 + self.vram.len()]);
         Ok(())
     }
@@ -2628,12 +2641,18 @@ mod tests {
             0,
         )
         .unwrap();
-        // Default submapper: CHR enabled while (value & 3) != 0.
+        // Power-on: CHR is ENABLED before any register write (Mesen2), so the
+        // title screen draws. (The old derive-from-zero model read $FF here.)
+        assert_eq!(m.ppu_read(0x0000), 0);
+        // Submapper-0 heuristic: enabled iff (value & 0x0F) != 0 and value != $13.
         // Write 1 -> enabled, bank = 1 & mask.
         m.cpu_write(0x8000, 1);
         assert_eq!(m.ppu_read(0x0000), 1);
         // Write 0 -> CHR disabled -> reads $FF.
         m.cpu_write(0x8000, 0);
+        assert_eq!(m.ppu_read(0x0000), 0xFF);
+        // Write $13 -> the documented disabled sentinel -> $FF.
+        m.cpu_write(0x8000, 0x13);
         assert_eq!(m.ppu_read(0x0000), 0xFF);
     }
 
