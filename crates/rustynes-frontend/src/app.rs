@@ -5474,9 +5474,30 @@ impl App {
             // preferred sample rate is requested from the device (falling
             // back to its default), and the latency target + DRC toggle
             // configure the resampler stage.
+            // v1.5.0 "Lens" Workstream H4 — on a high-refresh panel the
+            // wall-clock pacer's catch-up bursts dump several frames of audio
+            // into the ring at once, so a 60 ms target underruns on the
+            // recovery dip. Bump the effective latency target a one-time +20 ms
+            // when the monitor refresh is well above the console rate, giving
+            // the ring headroom to ride out a burst (capped by `try_new`'s
+            // 250 ms clamp). The user's configured `[audio] latency_ms` is the
+            // floor; this only ever raises it, and only for high-refresh hosts.
+            let latency_ms = {
+                let refresh_hz = self
+                    .gfx
+                    .as_ref()
+                    .and_then(|g| g.window.current_monitor())
+                    .and_then(|m| m.refresh_rate_millihertz())
+                    .map_or(60.0, |mhz| f64::from(mhz) / 1000.0);
+                if refresh_hz > 75.0 {
+                    self.config.audio.latency_ms.saturating_add(20)
+                } else {
+                    self.config.audio.latency_ms
+                }
+            };
             let audio = match AudioOutput::try_new(
                 Some(self.config.audio.sample_rate),
-                self.config.audio.latency_ms,
+                latency_ms,
                 self.config.audio.drc,
             ) {
                 Ok(a) => Some(a),

@@ -9,8 +9,8 @@
 //! on wall-clock feedback), and this stage stretches or squeezes the stream
 //! by up to ±0.5% on its way into the output ring so the queue occupancy
 //! tracks a latency target instead of drifting into underruns (silence gaps)
-//! or overruns (dropped-sample pops). A ±0.5% pitch deviation is far below
-//! audibility; a dropped buffer is not.
+//! or overruns (dropped-sample pops). A ±1% pitch deviation is far below
+//! audibility (~17 cents); a dropped buffer is not.
 //!
 //! The interpolation kernel is the classic 4-point Catmull-Rom Hermite
 //! spline — the same shape Mesen2's `HermiteResampler` and ares's
@@ -18,9 +18,19 @@
 //! input delayed by two samples (the kernel's center tap), so the bypass
 //! path and the DRC path stay phase-comparable.
 
-/// Maximum rate deviation the DRC may request (±0.5% — Near's `maxDelta`,
-/// `RetroArch`'s `audio_rate_control_delta` default).
-pub const MAX_DRC_DELTA: f64 = 0.005;
+/// Maximum rate deviation the DRC may request.
+///
+/// v1.5.0 "Lens" Workstream H4 — widened from the ±0.5% Near/`RetroArch`
+/// default to **±1%** because the narrow band could not drain the
+/// catch-up-burst occupancy spikes a real high-refresh capture showed (the
+/// queue oscillated 68–91 ms around a 60 ms target instead of tracking it).
+/// At ±0.5% a 30 ms over-fill took ~10 s to drain (well outside a transient
+/// stall), so the servo perpetually lagged and eventually underran. ±1% (≈17
+/// cents max pitch shift) is still far below audibility for game audio but
+/// roughly doubles the drain rate, letting the queue track the target. The
+/// resampler stage only changes audio *timing*; the core's emitted samples
+/// (the determinism + audio-oracle contract) are untouched.
+pub const MAX_DRC_DELTA: f64 = 0.01;
 
 /// 4-tap Hermite resampler. `ratio` = input samples consumed per output
 /// sample produced (`> 1` squeezes / drains the queue, `< 1` stretches /
