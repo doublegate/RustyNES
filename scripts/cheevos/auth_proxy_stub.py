@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -48,7 +49,17 @@ def make_handler(cfg: Config):
         server_version = "RustyNESRAProxy/0.1"
 
         def _cors(self, origin: str | None) -> None:
-            if origin and origin in cfg.allowed_origins:
+            # Only ever echo an origin that exactly matches a configured
+            # allowlist entry, AND reject any CR/LF so a crafted Origin can't
+            # split the response into injected headers (CodeQL: HTTP response
+            # splitting). The allowlist already constrains the value; the
+            # control-char check makes the no-injection guarantee explicit.
+            if (
+                origin
+                and origin in cfg.allowed_origins
+                and "\r" not in origin
+                and "\n" not in origin
+            ):
                 self.send_header("Access-Control-Allow-Origin", origin)
                 self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
                 self.send_header("Access-Control-Allow-Headers", "Content-Type")
@@ -86,6 +97,11 @@ def make_handler(cfg: Config):
                 with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 (trusted upstream)
                     payload = resp.read()
                     status = resp.status
+            except urllib.error.HTTPError as exc:
+                # Forward upstream HTTP errors (e.g. 401 for bad credentials)
+                # with their real status + body instead of masking as a 502.
+                payload = exc.read()
+                status = exc.code
             except Exception as exc:  # noqa: BLE001 (report any transport failure)
                 self.send_response(502)
                 self._cors(origin)
