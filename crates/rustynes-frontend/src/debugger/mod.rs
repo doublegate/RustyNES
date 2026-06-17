@@ -649,6 +649,13 @@ impl DebuggerOverlay {
         self.perf_ui.set_log_note(note);
     }
 
+    /// v1.5.0 "Lens" Workstream H7 — force perf logging on (the
+    /// `RUSTYNES_PERF_LOG` env hook for the scripted perf-capture gate).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn force_perf_logging(&mut self) {
+        self.perf_ui.force_logging();
+    }
+
     /// v2.3.0 — push the latest netplay status snapshot for the panel + the
     /// top-toolbar HUD to render. Called from the app's pacer alongside
     /// [`Self::set_fps`] / [`Self::set_movie_status`].

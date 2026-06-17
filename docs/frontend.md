@@ -147,10 +147,18 @@ is `request_redraw()` → `RedrawRequested` on rAF.)
   convention.
 - The run loop drains the APU after each frame and pushes through
   [`AudioOutput::push_samples`]: a 4-tap Hermite (Catmull-Rom) resampler
-  (`resampler.rs`) whose ratio is nudged up to ±0.5% by queue occupancy —
+  (`resampler.rs`) whose ratio is nudged up to ±1% by queue occupancy —
   **dynamic rate control** (Near's law: `ratio = (1-δ) + 2·fill·δ`,
-  δ = 0.005, equilibrium at the `[audio] latency_ms` target, default
-  60 ms). `[audio] drc = false` bypasses to a bit-exact push.
+  δ = 0.01, equilibrium at the `[audio] latency_ms` target, default
+  60 ms). `[audio] drc = false` bypasses to a bit-exact push. **v1.5.0 "Lens"
+  Workstream H4** widened δ from the ±0.5% Near/RetroArch default to ±1% (~17
+  cents — far below audibility) so the servo can drain a catch-up-burst over-fill
+  in ~5 s instead of ~10 s (a real high-refresh capture showed the queue
+  oscillating 68–91 ms around the 60 ms target instead of tracking it); on a
+  high-refresh panel (> 75 Hz) the latency target also gets a one-time +20 ms
+  bump for ring headroom against the larger bursts. The resampler stage changes
+  audio *timing* only — the core's emitted samples (the determinism + audio
+  oracle contract) are untouched.
 - **Start-gating + hard resync**: the callback plays silence (without
   consuming) until the queue holds the latency target, then starts; a true
   underrun re-gates until refilled (one clean gap, not a crackle spiral).
@@ -179,9 +187,12 @@ frame is a duplicate (the display repeated a frame); >1 produce between presents
 means the extra frames were dropped (unshown). Under display-sync both stay ~0;
 under wall-clock pacing they tick roughly once every ~10 s for the 60.0988-vs-60.000
 Hz beat. They are read-only diagnostics — the deeper pacer mitigation that would
-*reduce* the beat is deferred (it needs on-device validation across real refresh
-rates and carries pacing-regression risk); these counters are the signal for whether
-that work is warranted.
+*reduce* the beat (a present-aligned-to-production cadence under Mailbox) stays
+deferred: it needs on-device validation across real refresh rates and carries
+pacing-regression risk, so it was explicitly **dropped under the v1.5.0 "Lens"
+Workstream H measure-first rule** (no headless validation path). H1's lock-free
+framebuffer handoff already removes the present-blocking that amplified the beat;
+these counters remain the signal for whether the cadence work is later warranted.
 
 The Performance panel also has a **Logging** checkbox (session-only,
 default OFF, native-only): while set, the app appends one CSV row per
@@ -194,6 +205,24 @@ mode, present mode, audio latency/DRC, run-ahead, rewind, monitor
 refresh, build) as `#`-commented header lines. Loading a different ROM
 while logging rotates to a fresh file. `perf-logs/` is gitignored — the
 files are offline performance-analysis artifacts (`perf_log.rs`).
+
+**v1.5.0 "Lens" Workstream H8 — CSV ↔ panel parity.** The exporter had drifted
+behind the panel; it is now built from a single ordered `columns()` list shared
+by the header and every data row, and a `csv_columns_cover_panel_metrics` test
+asserts every panel-surfaced `PerfView` metric has a column so the two can't
+silently drift again. The row now logs the formerly-missing
+`present_mode_fell_back` / `target_ms`, the audio DRC servo ratio + latency
+setpoint, the run-ahead depth/throttle + rewind enabled/buffered state, and a
+real `gpu_ms` (Workstream H5 put the `gpu-timing` feature in the default native
+set; it requests `TIMESTAMP_QUERY` only when the adapter offers it, so the
+presented image is byte-identical with it on/off and the wasm builds are
+unchanged). **Workstream H7** adds a scripted capture gate:
+`scripts/perf/perf_capture.sh` drives a bounded windowed run with logging
+auto-enabled via the `RUSTYNES_PERF_LOG` env hook, then
+`scripts/perf/perf_log_check.py` asserts `underruns` / `produced_max` /
+`catchup_bursts` / `snap_forwards` stay within bounds (a maintainer-local /
+on-display gate — pacing + audio behavior needs a real display + audio device,
+so it skips cleanly when headless).
 
 Sample rate matching: the APU is configured at startup with the stream's
 actual sample rate and emits directly at that rate via blip_buf-style
@@ -294,10 +323,24 @@ frame but **never holds the emu lock inside the egui closure**. Two render
 branches in `RedrawRequested`:
 
 - The common **hidden** branch (debugger off, no `nes`-reading tool panel
-  open) copies the presented framebuffer into `App.present_staging` under a
-  *brief* lock, **drops the lock**, then renders the shell with `nes = None`
-  and presents with the lock released (so Fifo vsync at present can't block
-  the emu thread).
+  open) refreshes `App.present_staging`, **drops the lock**, then renders the
+  shell with `nes = None` and presents with the lock released (so Fifo vsync at
+  present can't block the emu thread). **v1.5.0 "Lens" Workstream H1 — when the
+  dedicated emu thread is producing and this present needs nothing from the live
+  `Nes` beyond the RGBA framebuffer (no NTSC composite-rt index buffer, no HD
+  pack), `present_staging` is refreshed from a triple-buffer handoff
+  (`present_buffer.rs`) the emu thread published into, so the present path takes
+  the emu mutex *not at all* for the framebuffer.** Before H1 it copied the
+  240 KiB framebuffer out of `EmuCore::present_fb` under the emu lock, which
+  serialized the present against the emu thread's whole `produce_one_frame`
+  (~8.5 ms with run-ahead) — on a 144 Hz panel the present could block up to a
+  full produce (the flat-cost / spiky-`produced_max` signature in the
+  2026-06-16 perf capture). The triple buffer is guarded by a small dedicated
+  mutex held only for the brief copy, never across emulation work; the published
+  bytes are exactly `nes.framebuffer()`, so it is a pure presentation-path
+  change (determinism unaffected). The conditional cases (NTSC composite-rt index
+  buffer, HD-pack snapshots) and the synchronous / wasm single-threaded builds
+  keep the prior under-lock copy.
 - The **locked** branch is taken when the debugger overlay is visible OR a
   tool panel that reads `&mut Nes` is open (today: Cheats) — `needs_nes`. It
   holds the lock across the egui pass so the chip panels can inspect the live

@@ -151,6 +151,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Game-Genie DB picklist (I4).** Confirmed shipped: the Cheats panel already
     surfaces the loaded ROM's known Game Genie codes from `genie_database.tsv`
     feeding the existing `genie.rs` decode + `cheats.rs` persistence.
+- **v1.5.0 "Lens" Workstream H — frontend pacing & audio-sync performance + perf-log
+  parity (beta.3).** Measure-first corrections to the frontend pacing/present/audio
+  layer a real high-refresh perf capture flagged
+  (`perf-logs/perf-Super_Mario_Bros_nes-20260616-231215.csv`: flat ~8.5 ms frame
+  cost but recurring 50-128 ms produce stalls, climbing catch-up bursts /
+  snap-forwards, audio queue oscillating 68-91 ms around a 60 ms target with
+  underruns). All `rustynes-frontend` except an allocation-only core tweak; the
+  determinism contract holds (AccuracyCoin 100% (139/139) + visual golden + APU
+  oracle byte-identical, no `.snap` churn):
+  - **H1 — decoupled triple-buffer framebuffer handoff** (`present_buffer.rs`).
+    The present path's 240 KiB framebuffer copy moved OFF the emu mutex (which it
+    formerly held, serializing the present against the full ~8.5 ms
+    `produce_one_frame` on the dedicated emu thread) onto a triple buffer guarded
+    by a small dedicated mutex held only for the brief copy. The emu thread
+    publishes each produced frame; the common present path (no NTSC composite-rt /
+    HD-pack) takes the freshest frame without ever blocking on produce. Native +
+    `emu-thread` only; the synchronous + wasm paths keep the prior locked copy.
+  - **H2 — pacer stall phase-break.** When the gap since the last scheduled frame
+    already exceeds the catch-up window (`MAX_CATCHUP_FRAMES`*period) — an OS
+    deschedule / UI stall, not a cadence — the produced/presented interval phase
+    is broken before the gap is recorded, so a transient stall no longer dominates
+    `produced_max` and reads as sustained judder. The existing cap + emu-thread
+    priority elevation already bound the snowball + address the descheduling root
+    cause. Perf-ring bookkeeping only.
+  - **H4 — audio DRC + buffer tuning.** Widened the DRC band from +/-0.5% to +/-1%
+    (~17 cents, far below audibility) so the servo can drain a catch-up-burst
+    over-fill in ~5 s instead of ~10 s and the queue tracks the target instead of
+    oscillating; plus a one-time +20 ms latency-target bump on high-refresh panels
+    (>75 Hz) for ring headroom against the larger bursts. Audio *timing* only — the
+    core's emitted samples (determinism + audio oracle) are untouched.
+  - **H5 — GPU pass timing on by default.** The `gpu-timing` feature is now in the
+    default native set, so the Performance panel + perf log report a real `gpu_ms`
+    instead of a blank `-`. Timestamp queries are a side channel (requested only
+    when the adapter offers `TIMESTAMP_QUERY`) — the presented image is
+    byte-identical with it on/off, and the wasm builds are unchanged. The panel's
+    pacer-anomaly readout also surfaces the worst recent present gap.
+  - **H8 — perf-log <-> panel parity.** The CSV exporter (`perf_log.rs`) is rebuilt
+    from a single ordered `columns()` list shared by the header + every data row,
+    and a `csv_columns_cover_panel_metrics` test asserts every Performance-panel
+    metric has a column (so the two can't silently drift again). Newly logged +
+    panel-surfaced: `present_mode_fell_back`, `target_ms`, the audio DRC servo ratio
+    and latency setpoint, and the run-ahead depth/throttle plus rewind
+    enabled/buffered state.
+  - **H7 — perf-log regression gate.** `scripts/perf/perf_capture.sh` drives a
+    bounded windowed capture (perf logging auto-enabled via the new
+    `RUSTYNES_PERF_LOG` env hook) and `scripts/perf/perf_log_check.py` parses the
+    CSV and asserts `underruns` / `produced_max` / `catchup_bursts` / `snap_forwards`
+    stay within bounds, turning them into a tracked signal. (Pacing/audio behavior
+    needs a real display + audio device, so the capture is a maintainer-local /
+    on-display gate, skipping cleanly when headless — like the bench ceiling's
+    non-flaky philosophy.)
+
+### Performance
+
+- **H3 — reuse the rewind keyframe-cache allocation** (`rustynes-core`). The
+  run-ahead snapshot buffer + the per-frame rewind snapshot buffer + the XOR delta
+  scratch already reused their allocations (v2.8.0 Phase 3); the remaining
+  steady-state heap churn in the rewind hot path was the keyframe-cache update
+  doing a fresh ~9 KiB `to_vec()` (~1/s). It now overwrites the cache buffer in
+  place. Bit-identical bytes — allocation strategy only; determinism + AccuracyCoin
+  re-verified byte-identical, `no_std` clean.
 
 ### Fixed
 

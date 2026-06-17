@@ -633,6 +633,13 @@ pub struct App {
     /// services UI). `None` until spawned. Native-only + `emu-thread`.
     #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
     emu_thread: Option<crate::emu_thread::EmuThread>,
+    /// v1.5.0 "Lens" Workstream H1 — lock-free triple-buffer framebuffer
+    /// handoff. The emu thread publishes each produced frame into it; the
+    /// winit present path takes the freshest frame without ever blocking on
+    /// the emu mutex (`docs/frontend.md` "Lock discipline at present").
+    /// Shared with the emu thread on `spawn`. Native-only + `emu-thread`.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
+    present_buffer: std::sync::Arc<crate::present_buffer::PresentBuffer>,
     /// v2.8.0 Phase 5 increment 3 — the `EventLoopProxy` the emu thread uses
     /// to deliver [`AppEvent::EmuFrame`]. Captured by `run` before
     /// `run_app`. Native-only + `emu-thread` (wasm uses its own `proxy`).
@@ -808,6 +815,8 @@ impl App {
             perf_logger: crate::perf_log::PerfLogger::default(),
             #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
             emu_thread: None,
+            #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
+            present_buffer: crate::present_buffer::PresentBuffer::new(),
             #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
             emu_proxy: None,
             netplay: crate::netplay_ui::NetplayUi::default(),
@@ -2674,12 +2683,16 @@ impl App {
             .map(|a| a.make_producer(self.config.audio.drc));
         let control = std::sync::Arc::new(crate::emu_thread::EmuControl::new());
         let shared_input = std::sync::Arc::new(crate::emu_thread::SharedInput::default());
+        // v1.5.0 H1 — the emu thread publishes produced frames into this
+        // shared handoff; the present path takes them lock-free.
+        self.present_buffer.reset();
         self.emu_thread = Some(crate::emu_thread::EmuThread::spawn(
             self.emu.clone(),
             producer,
             proxy,
             control,
             shared_input,
+            std::sync::Arc::clone(&self.present_buffer),
         ));
     }
 
@@ -4782,6 +4795,13 @@ impl App {
             // the median (steady-state) produce cost, not the p95 tail (which
             // on the emu thread is OS-deschedule noise, not run-ahead cost).
             emu.update_runahead_throttle(view.produce_cost.p50_ms, view.produce_cost.count);
+            // v1.5.0 "Lens" Workstream H8 — surface the run-ahead + rewind
+            // state the Performance panel/log previously omitted, captured
+            // under the same lock as the perf view.
+            view.run_ahead = self.config.input.run_ahead;
+            view.run_ahead_throttled = emu.runahead_throttled;
+            view.rewind_enabled = self.config.rewind.enabled;
+            view.rewind_frames = emu.nes.as_ref().map_or(0, rustynes_core::Nes::rewind_len);
             let region = emu
                 .nes
                 .as_ref()
@@ -4790,6 +4810,11 @@ impl App {
         };
         let replay_info = self.build_replay_info(region);
         perf_view.pacing = self.pacing_label();
+        // v1.5.0 H8 — the live audio DRC servo ratio + latency setpoint.
+        if let Some(audio) = self.audio.as_ref() {
+            perf_view.drc_ratio = audio.drc_ratio_now();
+            perf_view.audio_latency_target_ms = audio.latency_target_ms();
+        }
         if let Some(gfx) = self.gfx.as_ref() {
             perf_view.present_mode = format!("{:?}", gfx.effective_present_mode());
             perf_view.present_mode_fell_back = gfx.present_mode_fell_back();
@@ -5442,6 +5467,18 @@ impl App {
         self.gfx = Some(gfx);
         self.debugger = Some(debugger);
 
+        // v1.5.0 "Lens" Workstream H7 — `RUSTYNES_PERF_LOG=1` auto-enables the
+        // perf-logging checkbox at launch so a scripted SMB capture
+        // (`scripts/perf/perf_capture.sh`) produces a CSV without UI
+        // interaction; the regression gate then parses `produced_max` /
+        // `underruns` / `catchup_bursts` from it. No effect when unset.
+        #[cfg(not(target_arch = "wasm32"))]
+        if std::env::var_os("RUSTYNES_PERF_LOG").is_some()
+            && let Some(debugger) = self.debugger.as_mut()
+        {
+            debugger.force_perf_logging();
+        }
+
         #[cfg(not(target_arch = "wasm32"))]
         {
             // Native: cpal audio + NES from the ROM bytes loaded in `new`.
@@ -5449,9 +5486,30 @@ impl App {
             // preferred sample rate is requested from the device (falling
             // back to its default), and the latency target + DRC toggle
             // configure the resampler stage.
+            // v1.5.0 "Lens" Workstream H4 — on a high-refresh panel the
+            // wall-clock pacer's catch-up bursts dump several frames of audio
+            // into the ring at once, so a 60 ms target underruns on the
+            // recovery dip. Bump the effective latency target a one-time +20 ms
+            // when the monitor refresh is well above the console rate, giving
+            // the ring headroom to ride out a burst (capped by `try_new`'s
+            // 250 ms clamp). The user's configured `[audio] latency_ms` is the
+            // floor; this only ever raises it, and only for high-refresh hosts.
+            let latency_ms = {
+                let refresh_hz = self
+                    .gfx
+                    .as_ref()
+                    .and_then(|g| g.window.current_monitor())
+                    .and_then(|m| m.refresh_rate_millihertz())
+                    .map_or(60.0, |mhz| f64::from(mhz) / 1000.0);
+                if refresh_hz > 75.0 {
+                    self.config.audio.latency_ms.saturating_add(20)
+                } else {
+                    self.config.audio.latency_ms
+                }
+            };
             let audio = match AudioOutput::try_new(
                 Some(self.config.audio.sample_rate),
-                self.config.audio.latency_ms,
+                latency_ms,
                 self.config.audio.drc,
             ) {
                 Ok(a) => Some(a),
@@ -6343,7 +6401,38 @@ impl ApplicationHandler<AppEvent> for App {
                     // means the stock NES-resolution present path (byte-identical).
                     #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
                     let mut hd_dims: Option<(u32, u32)> = None;
-                    {
+                    // v1.5.0 H1 — when the dedicated emu thread is producing AND
+                    // this present needs nothing from the live `Nes` beyond the
+                    // RGBA framebuffer (no NTSC composite-rt index buffer, no HD
+                    // pack), take the freshest frame from the lock-free handoff
+                    // and skip the emu mutex entirely — so the present thread
+                    // never blocks on the ~8.5 ms `produce_one_frame`. The
+                    // bytes are the same deterministic `present_fb` the locked
+                    // path copied; only the synchronization changed.
+                    #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
+                    let lockfree_fb = {
+                        #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                        let hd_active = self.hd_compositor.is_some();
+                        #[cfg(not(all(feature = "hd-pack", not(target_arch = "wasm32"))))]
+                        let hd_active = false;
+                        self.emu_thread_drives()
+                            && !want_index
+                            && !hd_active
+                            && self.present_buffer.has_published()
+                    };
+                    #[cfg(not(all(not(target_arch = "wasm32"), feature = "emu-thread")))]
+                    let lockfree_fb = false;
+                    if lockfree_fb {
+                        // Lock-free: refresh staging from the handoff if a new
+                        // frame arrived; otherwise keep the previously presented
+                        // staging (the display simply re-presents it).
+                        #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
+                        if !self.present_buffer.take_into(&mut self.present_staging)
+                            && self.present_staging.is_empty()
+                        {
+                            self.present_staging.resize((NES_W * NES_H * 4) as usize, 0);
+                        }
+                    } else {
                         let mut guard = self.emu.lock();
                         let emu = &mut *guard;
                         if let Some(nes) = emu.nes.as_mut() {

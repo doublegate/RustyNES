@@ -633,6 +633,19 @@ impl EmuCore {
         let mut fx = ProduceFx::default();
         // v1.0.0 — pace against the speed-scaled period (1.0 = console rate).
         let period = self.effective_frame_duration();
+        // v1.5.0 "Lens" Workstream H2 — if the gap since the last scheduled
+        // frame already exceeds the catch-up window, the system slipped on an
+        // OS deschedule / UI stall rather than running behind cadence. Break
+        // the produced/presented interval phase BEFORE the first
+        // `record_produced` so the one-off stall gap is not logged as a frame
+        // interval — otherwise a single transient stall dominates
+        // `produced_max` and reads as sustained judder in the panel / perf log.
+        // The MAX_CATCHUP_FRAMES cap below already bounds the snowball; this
+        // only keeps the interval rings honest about steady-state cadence.
+        let stall_threshold = period * MAX_CATCHUP_FRAMES;
+        if now.saturating_duration_since(next) > stall_threshold {
+            self.perf.break_phase();
+        }
         let mut target = next;
         let mut produced = 0u32;
         while target <= now && produced < MAX_CATCHUP_FRAMES {
@@ -655,7 +668,8 @@ impl EmuCore {
         }
         if target <= now {
             // Far behind — snap forward so we don't replay the catch-up
-            // window indefinitely.
+            // window indefinitely (the H2 phase-break at the top of this fn
+            // already kept the stall gap out of the interval rings).
             self.perf.snap_forwards += 1;
             target = now + period;
         }

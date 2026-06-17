@@ -29,7 +29,7 @@ crate-type = ["cdylib", "rlib"]
 # debugger. Build the embed mode with
 # `trunk build --no-default-features --features wasm-canvas`.
 #
-default = ["wasm-winit", "emu-thread", "help-tui"]
+default = ["wasm-winit", "emu-thread", "help-tui", "gpu-timing"]
 wasm-winit = []
 wasm-canvas = []
 
@@ -83,12 +83,20 @@ scripting = ["dep:rustynes-script"]
 # NOT byte-parity with the native mlua engine — see ADR 0012.
 script-wasm = ["dep:rustynes-script-wasm", "dep:getrandom", "dep:getrandom_03"]
 
-# v2.8.0 Phase 0 — opt-in GPU pass timing (default OFF, native-only).
+# v2.8.0 Phase 0 — GPU pass timing (native-only; default ON since v1.5.0 "Lens"
+# Workstream H5 so the shipped build's Performance panel + perf log report a
+# real `gpu_ms` instead of a blank column).
 #
-# Requests wgpu `TIMESTAMP_QUERY` (when the adapter offers it) and brackets
-# the per-frame command encoder with timestamps; the resolved GPU pass time
-# shows in the debugger Performance panel. Off by default so the standard
-# build's device request is byte-for-byte unchanged.
+# Requests wgpu `TIMESTAMP_QUERY` ONLY when the adapter offers it (degrading to
+# `gpu_ms = None` otherwise) and brackets the per-frame command encoder with
+# two timestamps resolved through a 3-deep async readback ring. Timestamp
+# queries are a pure side channel — they record WHEN passes ran, never WHAT is
+# rendered — so the presented image stays byte-for-byte identical with the
+# feature on or off; the determinism contract is presentation-only here and is
+# unaffected. The whole timer is `cfg(not(target_arch = "wasm32"))`, so adding
+# this to the default set leaves both wasm builds (and the wasm size budget)
+# unchanged. Drop it with `--no-default-features` for a build that requests no
+# extra device features at all.
 gpu-timing = []
 
 # v1.2.0 beta.2 (Workstream C3) — HD-pack / mod loader (minimal first cut),

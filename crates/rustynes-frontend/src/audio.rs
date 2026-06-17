@@ -596,11 +596,37 @@ impl AudioOutput {
         }
     }
 
-    /// Current DRC ratio (1.0 when DRC is off) — Performance panel readout.
-    #[allow(dead_code)]
+    /// v1.5.0 "Lens" Workstream H8 — the live DRC servo ratio derived from the
+    /// shared queue occupancy (Performance panel + perf-log readout).
+    ///
+    /// The DRC resampler itself lives in the detached emu-thread
+    /// [`AudioProducer`], so the winit-side `AudioOutput` recomputes the ratio
+    /// the producer would apply from the same lock-free queue occupancy +
+    /// base-ratio inputs (`drc_ratio(len / 2·latency) · base_ratio`). This
+    /// mirrors `push_samples` exactly, so the readout matches what the DAC
+    /// hears. `1.0` when DRC is off.
     #[must_use]
     pub fn drc_ratio_now(&self) -> f64 {
-        self.resampler.as_ref().map_or(1.0, HermiteResampler::ratio)
+        if self.resampler.is_none() {
+            return 1.0;
+        }
+        let base = self.queue.base_ratio();
+        #[allow(clippy::cast_precision_loss)] // sample counts << 2^52.
+        let fill = self.queue.len() as f64 / (2.0 * self.latency_samples.max(1) as f64);
+        drc_ratio(fill) * base
+    }
+
+    /// H8 — the latency target in milliseconds the DRC servos toward (the
+    /// clamped `[audio] latency_ms` setpoint).
+    #[must_use]
+    pub fn latency_target_ms(&self) -> f32 {
+        if self.sample_rate == 0 {
+            return 0.0;
+        }
+        #[allow(clippy::cast_precision_loss)]
+        {
+            self.latency_samples as f32 * 1000.0 / self.sample_rate as f32
+        }
     }
 
     /// The latency target in samples (Performance panel readout).
