@@ -88,6 +88,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     new `rustynes-script` tests covering the new API, the side-effect-free peek
     contract, the write-gating of `poke`/`write_range`/`load_state` under a locked
     session, and a guard that every bundled example loads + runs.
+- **v1.5.0 "Lens" Workstream C — creator / TAS / speedrun tooling (beta.2).**
+  All additive / off-by-default; replay stays bit-identical and AccuracyCoin holds
+  100% (139/139):
+  - **TASVideos / extended emulator-test pass (C1).** Audited RustyNES against the
+    Nesdev "Emulator tests" + "Tricky-to-emulate games" indices and the
+    `christopherpow/nes-test-roms` aggregator for committable tests beyond the 139
+    AccuracyCoin battery. Wired the older **`mmc3_test` v1** suite (6 sub-ROMs,
+    blargg/kevtris PD, distinct from the existing `mmc3_test_2`): 1/2/3
+    strict-PASS, and 4/5/6 pinned as documented expected-fail probes that converge
+    on the *same* ADR-0002 fractional-master-clock scanline-IRQ-cadence residual as
+    `mmc3_test_2/4` #3 (no new bug — sub-scanline IRQ cadence deferred to v2.0).
+    Added **`dpcmletterbox`** (Damian Yerrick, royalty-free) as a deterministic
+    framebuffer-hash visual smoke — it uses the DMC "sample finished" IRQ as a
+    scanline timer (no mapper IRQ), so it is a sensitive DMC-IRQ + sprite-0 +
+    NMI/DMC-phase sentinel. (`tests/mmc3.rs`, `tests/tasvideos_extended.rs`,
+    `tests/roms/LICENSES.md`, `docs/testing-strategy.md`.)
+  - **Replay / TAS window polish (C2).** The TAS movie status surface now reports a
+    **device topology** (the controller / peripheral occupying each port) and a
+    **timebase / frame readout** (current frame, total, region Hz, elapsed time),
+    with **seek-to-frame** and frame step controls in the playback UI. Frontend-only
+    over the existing `MovieUi` / `rustynes_core::Movie` machinery — replay re-drives
+    the same `set_buttons` + `run_frame`, so it stays bit-identical (no new
+    determinism surface).
+  - **NSF waveform visualizer (C3).** The NSF Player window gains a per-channel
+    oscilloscope (pulse 1/2, triangle, noise, DMC) sampled from the read-only
+    `apu_snapshot()` DAC levels, plus the expansion-audio chip name + a master-mix
+    trace when an expansion chip (VRC6/VRC7/FME-7/N163/MMC5/FDS) is present.
+    Output-only eye-candy over the existing NSF/EQ path — samples a copy for
+    display, no synthesis change.
 
 ### Fixed
 

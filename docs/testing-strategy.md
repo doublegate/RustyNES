@@ -50,7 +50,8 @@ The full blargg + kevtris + community test ROM suite, vendored in `tests/roms/` 
 | PPU sprite | `sprite_overflow_tests/*` (5), `sprite_hit_tests_2005.10.05/*` (10), `ppu_sprite_hit/*`, `oam_read`, `oam_stress` | All |
 | APU | `apu_test/*` (8), `apu_mixer/*` (4) | All |
 | DMC DMA | `dmc_dma_during_read4/*` (4) | All |
-| MMC3 | `mmc3_test_2/*` (5), `mmc3_irq_tests/*` (6) | All |
+| MMC3 | `mmc3_test_2/*` (5), `mmc3_irq_tests/*` (6), `mmc3_test` v1 (6) | `mmc3_test_2` 1/2/3/5 + `mmc3_test` v1 1/2/3 strict; `mmc3_test_2/4` #3 + `mmc3_test` v1 4/5/6 are the ADR-0002 scanline-IRQ-cadence residuals (`#[ignore]`'d; expected-fail probes pin the failure shape) |
+| TASVideos / extended (C1) | `dpcmletterbox` (DMC-IRQ raster split, visual smoke) | Frame-hash sentinel; committable corpus only — see below |
 | Mapper coverage | `holy_mapperel`, `holy_diver_battery_test`; `vrc24test` → in-tree VRC2/4 unit tests + `m22` baseline (T-71-005) | Pass for implemented mappers |
 | Input | standard-controller strobe/read tests (T-71-004); DMC-conflict / Four Score / Zapper documented in `compatibility.md` | Standard-pad path strict; expansion devices deferred |
 | Accuracy battery | `AccuracyCoin` (single ROM) | Pass-rate target ≥ 90% by v1.0 |
@@ -143,6 +144,41 @@ coverage checklist rather than the current repository contents. Gap status
 - FDS, Vs. System, PlayChoice-10, and non-stock PPU palettes are out of v1.0
   but should be represented as explicit unsupported-platform tests or fixture
   metadata when support begins.
+
+### TASVideos / extended emulator-test pass (v1.5.0 Workstream C1)
+
+An audit against the Nesdev "Emulator tests" + "Tricky-to-emulate games"
+indices and the `christopherpow/nes-test-roms` aggregator, looking for
+committable tests BEYOND the 139 AccuracyCoin battery. Findings (pinned
+2026-06-16):
+
+- **`mmc3_test` v1 (6 sub-ROMs)** — wired (`tests/mmc3.rs`). The older
+  kevtris/blargg MMC3 suite (distinct ROMs from the already-wired
+  `mmc3_test_2`; same `$6000` protocol). **1/2/3 strict-PASS.** **4/5/6 are
+  expected-fail** and converge on the *same* ADR-0002
+  fractional-master-clock axis as the existing `mmc3_test_2/4` #3 residual:
+  - `4-scanline_timing` #3 — "Scanline 0 IRQ should occur sooner when
+    `$2000=$08`" (1-CPU-cycle scanline-IRQ bracket).
+  - `5-MMC3` #2 — "Should reload and set IRQ every clock when reload is 0"
+    (the structural reload-to-0 assertion is present in `Mmc3::clock_irq`
+    path 2; only the sub-scanline IRQ cadence differs).
+  - `6-MMC6` #2 — "IRQ should be set when reloading to 0 after clear"
+    (MMC6 reload-to-0 cadence, same axis).
+  These are pinned with `#[ignore]`'d strict tests + `_currently_fails`
+  shape-probes; flip the strict test on and delete the probe if a ROM ever
+  passes. **No new bug was found** — the failures are sub-scanline IRQ
+  cadence precision deferred to the v2.0 refactor (ADR 0002).
+- **`dpcmletterbox`** (Damian Yerrick, royalty-free) — wired
+  (`tests/tasvideos_extended.rs`) as a deterministic framebuffer-hash visual
+  smoke. It splits the screen with the DMC "sample finished" IRQ as a
+  scanline timer (no mapper IRQ), so it is a sensitive DMC-IRQ-cadence +
+  sprite-0 + NMI/DMC-phase sentinel.
+- **Not committed (licensing):** `scanline-a1`, `tvpassfail`, and the other
+  corpus demos lack a clear redistribution license; they stay in the
+  gitignored local `tests/roms/nes-test-roms/` checkout only. The
+  `cpu_exec_space`, `nmi_sync`, `oam_stress`, `ppu_open_bus`, `read_joy3`,
+  `full_palette`, `exram`, and `240p` corpora were already wired in prior
+  releases.
 
 ## Open questions
 

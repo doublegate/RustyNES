@@ -53,6 +53,7 @@ The following ROMs are vendored:
 | `blargg/dmc_dma_during_read4/{dma_2007_read,dma_2007_write,dma_4016_read,double_2007_read,read_write_2007}.nes` | DMC DMA + register-readout bug (5 sub-ROMs) | `dmc_dma_during_read4/*.nes` | NROM (0) | blargg | Public domain |
 | `blargg/cpu_interrupts_v2/1-cli_latency.nes` ... `5-branch_delays_irq.nes` | CPU interrupt timing (5 sub-ROMs) | `cpu_interrupts_v2/rom_singles/*.nes` | NROM (0) | blargg | Public domain |
 | `blargg/mmc3_test_2/1-clocking.nes` ... `6-MMC3_alt.nes` | MMC3 IRQ + banking validation (6 sub-ROMs; modern $6000 protocol) | `mmc3_test_2/rom_singles/*.nes` | MMC3 (4) | blargg | Public domain |
+| `blargg/mmc3_test/1-clocking.nes` ... `6-MMC6.nes` | MMC3/MMC6 IRQ counter (6 sub-ROMs; older v1 suite, same $6000 protocol) | `mmc3_test/*.nes` | MMC3 / MMC6 (4) | blargg / kevtris | Public domain |
 | `blargg/mmc3_irq_tests/1.Clocking.nes` ... `6.MMC3_rev_B.nes` | MMC3 IRQ counter (6 sub-ROMs; older visual-only protocol) | `mmc3_irq_tests/*.nes` | MMC3 (4) | blargg / kevtris | Public domain |
 
 ## kevtris
@@ -119,6 +120,26 @@ the blargg `$6000` status protocol — so the integration tests in
 
 We exclude `M28*`, `M78.3*`, `M118*`, `M180*` because the project does
 not implement those mappers (per `docs/STATUS.md` §"Mapper coverage").
+
+## DPCM Letterbox (Damian Yerrick / Tepples)
+
+| File | Source | Mapper | Author | License |
+|------|--------|--------|--------|---------|
+| `dpcmletterbox/dpcmletterbox.nes` | `dpcmletterbox/dpcmletterbox.nes` | NROM (0) | Damian Yerrick | Permissive (royalty-free) |
+| `dpcmletterbox/README.txt` | as above | n/a | Damian Yerrick | Permissive |
+| `dpcmletterbox/CHANGES.txt` | as above | n/a | Damian Yerrick | Permissive |
+
+This homebrew abuses the NTSC NES's DPCM sample-playback hardware as a
+scanline timer to split the screen twice **without** a mapper-generated
+IRQ — driven entirely by the DMC's "sample finished" IRQ cadence and a
+sprite-0-hit timing reference. It is therefore a sensitive
+cycle-accuracy + DMC-IRQ-timing sentinel: any drift in DMC rate timing,
+sprite-0 hit dot, or the NMI↔DMC phase shows up as a moved raster split
+(a changed framebuffer hash). README "Legal" section: "Copyright 2010
+Damian Yerrick / Copying and distribution ... permitted in any medium
+without royalty provided the copyright notice ... preserved." Wired as a
+deterministic frame-hash visual smoke (no input) in
+`crates/rustynes-test-harness/tests/tasvideos_extended.rs`.
 
 ## AccuracyCoin (100thCoin / Chris Siebert)
 

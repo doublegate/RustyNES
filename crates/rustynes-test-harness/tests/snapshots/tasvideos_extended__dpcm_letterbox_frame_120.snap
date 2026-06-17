@@ -1,0 +1,5 @@
+---
+source: crates/rustynes-test-harness/tests/tasvideos_extended.rs
+expression: snap
+---
+rom=dpcmletterbox/dpcmletterbox.nes frames=120 fb_bytes=245760 fnv1a64=91971023ab8f5242
