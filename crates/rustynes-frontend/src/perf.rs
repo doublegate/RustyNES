@@ -308,6 +308,24 @@ pub struct PerfView {
     /// "display-sync" / "vrr" / "raf" on wasm), with a fallback note when
     /// display-sync disengaged.
     pub pacing: String,
+    /// v1.5.0 "Lens" Workstream H8 — the live audio DRC servo ratio (input
+    /// samples consumed per output; `1.0` = neutral / DRC off). Drifts within
+    /// ±0.5%·`MAX_DRC_DELTA` of the speed factor as the servo tracks the
+    /// latency target. Filled by the app from the active `AudioProducer`.
+    pub drc_ratio: f64,
+    /// H8 — the audio latency target in ms the DRC servos toward (the
+    /// `[audio] latency_ms` setpoint after clamping; `0` when no stream).
+    pub audio_latency_target_ms: f32,
+    /// H8 — the configured run-ahead depth (`[input] run_ahead`, frames).
+    pub run_ahead: u32,
+    /// H8 — whether run-ahead is currently budget-throttled (produce cost too
+    /// high to afford the extra speculative frames).
+    pub run_ahead_throttled: bool,
+    /// H8 — rewind enabled this session.
+    pub rewind_enabled: bool,
+    /// H8 — frames currently buffered in the rewind ring (`0` when rewind is
+    /// off / the ring is empty).
+    pub rewind_frames: usize,
     /// feature K — the most-recent presented-frame interval samples (ms,
     /// oldest-first, up to [`SPARK_WINDOW`]) plotted as the panel's frame-time
     /// sparkline. The presented series is where visible judder lives.

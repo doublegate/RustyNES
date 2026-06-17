@@ -258,10 +258,26 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut PerfPanelState) {
             );
 
             ui.separator();
-            ui.label(format!(
-                "pacer: catch-up bursts {}   snap-forwards {}",
-                v.catchup_bursts, v.snap_forwards
-            ));
+            // v1.5.0 "Lens" Workstream H5 — surface the worst recent present
+            // gap alongside the anomaly counters so a one-off scheduling stall
+            // (the 50-128 ms `produced_max` spikes the perf log caught) is
+            // visible in the panel, not just the CSV.
+            let present_gap = v.presented.max_ms;
+            let gap_warn = v.target_ms > 0.0 && present_gap > v.target_ms * 1.5;
+            ui.horizontal(|ui| {
+                ui.label(format!(
+                    "pacer: catch-up bursts {}   snap-forwards {}   present gap (max) ",
+                    v.catchup_bursts, v.snap_forwards
+                ));
+                if gap_warn {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(0xF0, 0xC0, 0x40),
+                        format!("{present_gap:.1} ms"),
+                    );
+                } else {
+                    ui.label(format!("{present_gap:.1} ms"));
+                }
+            });
             // v1.3.0 Workstream B — present/produce mismatch, the NTSC-vs-refresh
             // beat diagnostic (the data for deciding whether the deeper B3 pacer
             // work is worth it). Under display-sync both stay ~0; under
@@ -310,7 +326,42 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut PerfPanelState) {
                     ui.separator();
                     health(ui, "overrun-dropped samples", a.overrun_dropped);
                 });
+                // v1.5.0 "Lens" Workstream H8/H4 — the DRC servo ratio + the
+                // latency setpoint it tracks (previously panel-invisible). At
+                // equilibrium queued ≈ target and ratio ≈ 1.0; a persistent
+                // ratio at the band edge means the servo is fighting a drift.
+                if v.audio_latency_target_ms > 0.0 {
+                    ui.label(format!(
+                        "drc ratio: {:.4}   latency target: {:.0} ms",
+                        v.drc_ratio, v.audio_latency_target_ms
+                    ))
+                    .on_hover_text(
+                        "Dynamic-rate-control servo. The resampler nudges the \
+                         sample rate within ±0.5% (widened on high-refresh \
+                         displays) so the queued audio tracks the latency \
+                         target instead of drifting into underruns/overruns.",
+                    );
+                }
             }
+
+            // v1.5.0 "Lens" Workstream H8 — run-ahead + rewind state (formerly
+            // CSV-only / panel-invisible).
+            ui.separator();
+            ui.label(format!(
+                "run-ahead: {} frame(s){}    rewind: {}{}",
+                v.run_ahead,
+                if v.run_ahead_throttled {
+                    " (throttled)"
+                } else {
+                    ""
+                },
+                if v.rewind_enabled { "on" } else { "off" },
+                if v.rewind_enabled {
+                    format!(", {} frames buffered", v.rewind_frames)
+                } else {
+                    String::new()
+                },
+            ));
 
             // v2.8.0 — opt-in interval CSV logging of everything this panel
             // shows (plus the run configuration in the file header), for

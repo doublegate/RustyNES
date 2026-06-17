@@ -197,52 +197,125 @@ fn open_log_file(dir: &Path, ctx: &PerfLogContext) -> std::io::Result<(BufWriter
         "# row interval ~{}s; stats over a ~10s window",
         ROW_INTERVAL.as_secs()
     )?;
-    writeln!(
-        w,
-        "elapsed_s,fps,\
-         produced_mean_ms,produced_p50_ms,produced_p95_ms,produced_p99_ms,produced_max_ms,\
-         presented_mean_ms,presented_p50_ms,presented_p95_ms,presented_p99_ms,presented_max_ms,\
-         cost_mean_ms,cost_p50_ms,cost_p95_ms,cost_p99_ms,cost_max_ms,\
-         catchup_bursts,snap_forwards,presented_dups,produced_dropped,\
-         audio_queued_ms,audio_queued_samples,audio_sample_rate,underruns,overrun_dropped,\
-         gpu_ms,pacing,present_mode"
-    )?;
+    let header: Vec<&'static str> = columns(&PerfView::default())
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    writeln!(w, "{}", header.join(","))?;
     Ok((w, path))
 }
 
-/// One CSV data row from a [`PerfView`] snapshot.
-fn write_row(w: &mut BufWriter<File>, elapsed_s: f32, v: &PerfView) -> std::io::Result<()> {
+/// v1.5.0 "Lens" Workstream H8 — the single ordered `(column, value)` list the
+/// CSV header AND every data row are built from, so the two can never drift and
+/// every metric the Performance panel surfaces has a logged column.
+///
+/// Edit this in lockstep with the panel (`debugger/perf_panel.rs`) +
+/// [`PerfView`]; the `csv_columns_cover_panel_metrics` test guards the set.
+fn columns(v: &PerfView) -> Vec<(&'static str, String)> {
     let fps = if v.produced.mean_ms > 0.0 {
         1000.0 / v.produced.mean_ms
     } else {
         0.0
     };
-    let s = |st: &crate::perf::IntervalStats| {
-        format!(
-            "{:.3},{:.3},{:.3},{:.3},{:.3}",
-            st.mean_ms, st.p50_ms, st.p95_ms, st.p99_ms, st.max_ms
-        )
+    let mut cols: Vec<(&'static str, String)> = Vec::with_capacity(40);
+    // Static column names per interval series, so they stay `&'static str`.
+    let stats_names: [(&'static str, [&'static str; 5]); 3] = [
+        (
+            "produced",
+            [
+                "produced_mean_ms",
+                "produced_p50_ms",
+                "produced_p95_ms",
+                "produced_p99_ms",
+                "produced_max_ms",
+            ],
+        ),
+        (
+            "presented",
+            [
+                "presented_mean_ms",
+                "presented_p50_ms",
+                "presented_p95_ms",
+                "presented_p99_ms",
+                "presented_max_ms",
+            ],
+        ),
+        (
+            "cost",
+            [
+                "cost_mean_ms",
+                "cost_p50_ms",
+                "cost_p95_ms",
+                "cost_p99_ms",
+                "cost_max_ms",
+            ],
+        ),
+    ];
+    let stat_for = |series: &str| -> &crate::perf::IntervalStats {
+        match series {
+            "produced" => &v.produced,
+            "presented" => &v.presented,
+            _ => &v.produce_cost,
+        }
     };
-    writeln!(
-        w,
-        "{elapsed_s:.1},{fps:.3},{},{},{},{},{},{},{},{:.2},{},{},{},{},{},{},{}",
-        s(&v.produced),
-        s(&v.presented),
-        s(&v.produce_cost),
-        v.catchup_bursts,
-        v.snap_forwards,
-        v.presented_dups,
-        v.produced_dropped,
-        v.audio.queued_ms(),
-        v.audio.queued_samples,
-        v.audio.sample_rate,
-        v.audio.underruns,
-        v.audio.overrun_dropped,
+    cols.push(("elapsed_s", String::new())); // value filled by `write_row`.
+    cols.push(("fps", format!("{fps:.3}")));
+    for (series, names) in stats_names {
+        let st = stat_for(series);
+        let vals = [st.mean_ms, st.p50_ms, st.p95_ms, st.p99_ms, st.max_ms];
+        for (n, val) in names.into_iter().zip(vals) {
+            cols.push((n, format!("{val:.3}")));
+        }
+    }
+    cols.push(("catchup_bursts", v.catchup_bursts.to_string()));
+    cols.push(("snap_forwards", v.snap_forwards.to_string()));
+    cols.push(("presented_dups", v.presented_dups.to_string()));
+    cols.push(("produced_dropped", v.produced_dropped.to_string()));
+    cols.push(("audio_queued_ms", format!("{:.2}", v.audio.queued_ms())));
+    cols.push(("audio_queued_samples", v.audio.queued_samples.to_string()));
+    cols.push(("audio_sample_rate", v.audio.sample_rate.to_string()));
+    cols.push(("underruns", v.audio.underruns.to_string()));
+    cols.push(("overrun_dropped", v.audio.overrun_dropped.to_string()));
+    // v1.5.0 H8 — audio DRC servo + latency setpoint (the panel's audio row).
+    cols.push(("drc_ratio", format!("{:.5}", v.drc_ratio)));
+    cols.push((
+        "audio_latency_target_ms",
+        format!("{:.2}", v.audio_latency_target_ms),
+    ));
+    cols.push(("target_ms", format!("{:.3}", v.target_ms)));
+    cols.push((
+        "gpu_ms",
         v.gpu_ms
             .map_or_else(|| "-".to_string(), |g| format!("{g:.3}")),
-        csv_text(&v.pacing),
-        csv_text(&v.present_mode),
-    )
+    ));
+    cols.push(("pacing", csv_text(&v.pacing)));
+    cols.push(("present_mode", csv_text(&v.present_mode)));
+    cols.push((
+        "present_mode_fell_back",
+        v.present_mode_fell_back.to_string(),
+    ));
+    // v1.5.0 H8 — run-ahead + rewind state (the panel header readouts).
+    cols.push(("run_ahead", v.run_ahead.to_string()));
+    cols.push(("run_ahead_throttled", v.run_ahead_throttled.to_string()));
+    cols.push(("rewind_enabled", v.rewind_enabled.to_string()));
+    cols.push(("rewind_frames", v.rewind_frames.to_string()));
+    cols
+}
+
+/// One CSV data row from a [`PerfView`] snapshot, built from [`columns`] so it
+/// matches the header column-for-column.
+fn write_row<W: std::io::Write>(w: &mut W, elapsed_s: f32, v: &PerfView) -> std::io::Result<()> {
+    let row: Vec<String> = columns(v)
+        .into_iter()
+        .map(|(name, val)| {
+            if name == "elapsed_s" {
+                format!("{elapsed_s:.1}")
+            } else {
+                val
+            }
+        })
+        .collect();
+    writeln!(w, "{}", row.join(","))
 }
 
 /// Filename-safe ROM label: alphanumerics + `-_` kept, everything else `_`,
@@ -402,19 +475,114 @@ mod tests {
         assert!(first.contains("# rom = smb"));
         assert!(first.contains("# pacing_mode = auto"));
         assert!(first.contains("elapsed_s,fps,produced_mean_ms"));
-        // 2 data rows with the expected fps + audio occupancy fields.
+        // Build a column-name -> index map from the header so the row checks
+        // are order-independent (H8 added columns after `present_mode`).
+        let header_line = first
+            .lines()
+            .find(|l| l.starts_with("elapsed_s,"))
+            .expect("header row");
+        let col: std::collections::HashMap<&str, usize> = header_line
+            .split(',')
+            .enumerate()
+            .map(|(i, n)| (n, i))
+            .collect();
         let rows: Vec<&str> = first
             .lines()
             .filter(|l| !l.starts_with('#') && !l.starts_with("elapsed_s"))
             .collect();
         assert_eq!(rows.len(), 2);
-        assert!(rows[0].contains(",60.096,")); // 1000 / 16.64
-        assert!(rows[0].contains(",60.00,2880,48000,")); // queued_ms,samples,rate
-        assert!(rows[0].ends_with(",display-sync,Fifo"));
+        let f0: Vec<&str> = rows[0].split(',').collect();
+        let get = |name: &str| f0[col[name]];
+        assert_eq!(get("fps"), "60.096"); // 1000 / 16.64
+        assert_eq!(get("audio_queued_ms"), "60.00"); // 2880 / 48000
+        assert_eq!(get("audio_queued_samples"), "2880");
+        assert_eq!(get("audio_sample_rate"), "48000");
+        assert_eq!(get("pacing"), "display-sync");
+        assert_eq!(get("present_mode"), "Fifo");
+        // H8 — the formerly-unlogged fields now have columns.
+        assert_eq!(get("present_mode_fell_back"), "false");
+        assert_eq!(get("gpu_ms"), "-"); // None in the test view
+        assert!(col.contains_key("drc_ratio"));
+        assert!(col.contains_key("run_ahead"));
+        assert!(col.contains_key("rewind_frames"));
 
         let second = std::fs::read_to_string(&path2).unwrap();
         assert!(second.contains("# rom = kid_icarus"));
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// v1.5.0 "Lens" Workstream H8 — parity guard: every metric the
+    /// Performance Monitor panel surfaces from a [`PerfView`] MUST have a CSV
+    /// column, so the exporter and the live panel can't silently drift again
+    /// (the v1.4.0-era drift this workstream fixed). When you add a panel
+    /// readout, add its column to `columns()` and its name here.
+    #[test]
+    fn csv_columns_cover_panel_metrics() {
+        let names: std::collections::HashSet<&'static str> = columns(&PerfView::default())
+            .into_iter()
+            .map(|(n, _)| n)
+            .collect();
+        // The exhaustive set of `PerfView` metrics the panel renders
+        // (`debugger/perf_panel.rs`). Interval stats expand to mean/p50/p95/
+        // p99/max per series.
+        for series in ["produced", "presented", "cost"] {
+            for stat in ["mean_ms", "p50_ms", "p95_ms", "p99_ms", "max_ms"] {
+                let want = format!("{series}_{stat}");
+                assert!(names.contains(want.as_str()), "missing column {want}");
+            }
+        }
+        for want in [
+            "fps",
+            // pacer anomaly + present/produce beat
+            "catchup_bursts",
+            "snap_forwards",
+            "presented_dups",
+            "produced_dropped",
+            // audio health row
+            "audio_queued_ms",
+            "audio_queued_samples",
+            "audio_sample_rate",
+            "underruns",
+            "overrun_dropped",
+            // H8 additions: DRC servo + latency, config/pacing state, GPU
+            "drc_ratio",
+            "audio_latency_target_ms",
+            "target_ms",
+            "gpu_ms",
+            "pacing",
+            "present_mode",
+            "present_mode_fell_back",
+            "run_ahead",
+            "run_ahead_throttled",
+            "rewind_enabled",
+            "rewind_frames",
+        ] {
+            assert!(names.contains(want), "missing CSV column for `{want}`");
+        }
+        // The header (built from `columns`) must have no duplicate column
+        // names (a copy/paste hazard in the ordered list).
+        let header: Vec<&'static str> = columns(&PerfView::default())
+            .into_iter()
+            .map(|(n, _)| n)
+            .collect();
+        let unique: std::collections::HashSet<&'static str> = header.iter().copied().collect();
+        assert_eq!(header.len(), unique.len(), "duplicate CSV column name");
+        // A data row must have exactly as many fields as the header.
+        let row_fields = {
+            use std::io::Write as _;
+            let mut buf: Vec<u8> = Vec::new();
+            {
+                let mut w = BufWriter::new(&mut buf);
+                write_row(&mut w, 1.0, &view()).unwrap();
+                w.flush().unwrap();
+            }
+            String::from_utf8(buf).unwrap().trim().split(',').count()
+        };
+        assert_eq!(
+            row_fields,
+            header.len(),
+            "data row field count != header column count"
+        );
     }
 }

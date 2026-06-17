@@ -4795,6 +4795,13 @@ impl App {
             // the median (steady-state) produce cost, not the p95 tail (which
             // on the emu thread is OS-deschedule noise, not run-ahead cost).
             emu.update_runahead_throttle(view.produce_cost.p50_ms, view.produce_cost.count);
+            // v1.5.0 "Lens" Workstream H8 — surface the run-ahead + rewind
+            // state the Performance panel/log previously omitted, captured
+            // under the same lock as the perf view.
+            view.run_ahead = self.config.input.run_ahead;
+            view.run_ahead_throttled = emu.runahead_throttled;
+            view.rewind_enabled = self.config.rewind.enabled;
+            view.rewind_frames = emu.nes.as_ref().map_or(0, rustynes_core::Nes::rewind_len);
             let region = emu
                 .nes
                 .as_ref()
@@ -4803,6 +4810,11 @@ impl App {
         };
         let replay_info = self.build_replay_info(region);
         perf_view.pacing = self.pacing_label();
+        // v1.5.0 H8 — the live audio DRC servo ratio + latency setpoint.
+        if let Some(audio) = self.audio.as_ref() {
+            perf_view.drc_ratio = audio.drc_ratio_now();
+            perf_view.audio_latency_target_ms = audio.latency_target_ms();
+        }
         if let Some(gfx) = self.gfx.as_ref() {
             perf_view.present_mode = format!("{:?}", gfx.effective_present_mode());
             perf_view.present_mode_fell_back = gfx.present_mode_fell_back();
