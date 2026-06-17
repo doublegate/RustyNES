@@ -49,6 +49,13 @@ pub struct TasEditor {
     cursor: usize,
     /// Keyframe spacing captured while seeking/stepping forward.
     capture_interval: usize,
+    /// The lag log — the third `TAStudio` structure. `lag_log[f] == true` means
+    /// frame `f` was a *lag frame*: the running program polled no controller
+    /// port that frame (derived from the core's `debug-hooks` poll flag, which
+    /// the frontend always has on). Re-derived on re-emulation; truncated past
+    /// an edit, exactly like the greenzone. Sparse: only frames actually played
+    /// have an entry, so `lag_at` returns `None` for not-yet-emulated frames.
+    lag_log: Vec<bool>,
 }
 
 impl TasEditor {
@@ -65,7 +72,18 @@ impl TasEditor {
             greenzone,
             cursor: 0,
             capture_interval: capture_interval.max(1),
+            lag_log: Vec::new(),
         }
+    }
+
+    /// Record frame `f`'s lag verdict from the core's poll flag (called right
+    /// after `nes.run_frame()`). The frontend always builds the core with
+    /// `debug-hooks`, so the flag is available unconditionally.
+    fn record_lag(&mut self, f: usize, nes: &Nes) {
+        if f >= self.lag_log.len() {
+            self.lag_log.resize(f + 1, false);
+        }
+        self.lag_log[f] = !nes.was_input_polled_this_frame();
     }
 
     /// Create an editor seeded from an existing input log (e.g. a loaded `.rnm`
@@ -118,6 +136,20 @@ impl TasEditor {
         &self.greenzone
     }
 
+    /// Whether frame `f` was a lag frame (the program polled no controller that
+    /// frame), or `None` if `f` has not been emulated yet. The piano-roll uses
+    /// this to shade lag rows.
+    #[must_use]
+    pub fn lag_at(&self, f: usize) -> Option<bool> {
+        self.lag_log.get(f).copied()
+    }
+
+    /// Number of lag frames recorded so far (the classic TAS lag count).
+    #[must_use]
+    pub fn lag_count(&self) -> usize {
+        self.lag_log.iter().filter(|&&l| l).count()
+    }
+
     /// Set the input at `frame`, growing the log with default (no-button)
     /// frames if the edit is past the current end. Invalidates the greenzone
     /// after `frame` — every cached state downstream of the edit is now stale
@@ -132,8 +164,11 @@ impl TasEditor {
         }
         self.input_log[frame] = input;
         // The state *before* `frame` is unaffected; the state after applying
-        // `frame`'s input (keyframe `frame+1` onward) is stale.
+        // `frame`'s input (keyframe `frame+1` onward) is stale. Frame `frame`'s
+        // own lag verdict can change (different input -> different execution),
+        // so drop the lag log from `frame` onward too.
         self.greenzone.invalidate_after(frame);
+        self.lag_log.truncate(frame);
         true
     }
 
@@ -143,6 +178,7 @@ impl TasEditor {
         let at = frame.min(self.input_log.len());
         self.input_log.insert(at, FrameInput::default());
         self.greenzone.invalidate_after(at.saturating_sub(1));
+        self.lag_log.truncate(at);
     }
 
     /// Delete the frame at `frame`, shifting later inputs up by one. No-op past
@@ -151,6 +187,7 @@ impl TasEditor {
         if frame < self.input_log.len() {
             self.input_log.remove(frame);
             self.greenzone.invalidate_after(frame.saturating_sub(1));
+            self.lag_log.truncate(frame);
             self.cursor = self.cursor.min(self.input_log.len());
         }
     }
@@ -184,6 +221,7 @@ impl TasEditor {
             nes.set_buttons(0, input.p1);
             nes.set_buttons(1, input.p2);
             nes.run_frame();
+            self.record_lag(f, nes);
             let next = f + 1;
             if next.is_multiple_of(self.capture_interval) && !self.greenzone.has(next) {
                 self.greenzone.store(next, nes.snapshot(), target);
@@ -205,6 +243,7 @@ impl TasEditor {
         nes.set_buttons(0, input.p1);
         nes.set_buttons(1, input.p2);
         nes.run_frame();
+        self.record_lag(frame, nes);
         self.cursor = frame + 1;
         if self.cursor.is_multiple_of(self.capture_interval) && !self.greenzone.has(self.cursor) {
             self.greenzone
@@ -356,5 +395,73 @@ mod tests {
                 "expected a keyframe at {k}: {cached:?}"
             );
         }
+    }
+
+    /// NROM whose program reads `$4016` every loop iteration (`LDA $4016; JMP`),
+    /// so it polls input every frame — the non-lag counterpart to `synth_nrom`.
+    fn synth_polling_nrom() -> Vec<u8> {
+        let mut rom = synth_nrom();
+        // PRG payload starts 16 bytes in (iNES header). Overwrite $C000 with
+        // `LDA $4016` (AD 16 40) then `JMP $C000` (4C 00 C0).
+        let prg = &mut rom[16..16 + 6];
+        prg.copy_from_slice(&[0xAD, 0x16, 0x40, 0x4C, 0x00, 0xC0]);
+        rom
+    }
+
+    #[test]
+    fn lag_log_marks_frames_with_no_input_poll() {
+        // synth_nrom never touches $4016/$4017 -> every frame is a lag frame.
+        let rom = synth_nrom();
+        let mut nes = Nes::from_rom(&rom).unwrap();
+        nes.power_cycle();
+        let mut ed = TasEditor::new(&nes, 1 << 24, 8);
+        for f in &varied_inputs(12) {
+            ed.record_frame(&mut nes, *f);
+        }
+        for f in 0..12 {
+            assert_eq!(ed.lag_at(f), Some(true), "frame {f} polled no input");
+        }
+        assert_eq!(ed.lag_count(), 12);
+        assert_eq!(ed.lag_at(12), None, "unplayed frame has no lag verdict");
+    }
+
+    #[test]
+    fn polling_rom_records_no_lag_frames() {
+        // A program that reads $4016 every loop polls input each frame.
+        let rom = synth_polling_nrom();
+        let mut nes = Nes::from_rom(&rom).unwrap();
+        nes.power_cycle();
+        let mut ed = TasEditor::new(&nes, 1 << 24, 20);
+        ed.seek(&mut nes, 0); // no-op; build via record
+        for _ in 0..10 {
+            ed.record_frame(&mut nes, FrameInput::default());
+        }
+        // Steady state: every frame after the boot/reset frame reaches the poll
+        // loop and reads $4016, so none are lag. (Frame 0 — the reset frame,
+        // before the program's poll loop is entered — may register as a lag
+        // frame, exactly as FCEUX/BizHawk count the power-on frame. The lag log
+        // faithfully reports the core's per-frame poll verdict either way.)
+        let steady_lags: Vec<usize> = (1..10).filter(|&f| ed.lag_at(f) == Some(true)).collect();
+        assert_eq!(
+            steady_lags,
+            Vec::<usize>::new(),
+            "a polling program must not lag in steady state: {steady_lags:?}"
+        );
+        assert_eq!(ed.lag_at(5), Some(false));
+    }
+
+    #[test]
+    fn editing_truncates_the_lag_log() {
+        let rom = synth_nrom();
+        let mut nes = Nes::from_rom(&rom).unwrap();
+        nes.power_cycle();
+        let mut ed = TasEditor::from_inputs(&nes, varied_inputs(30), 1 << 24, 20);
+        ed.seek(&mut nes, 30);
+        assert_eq!(ed.lag_at(20), Some(true));
+        // Editing frame 10 drops the lag log from frame 10 onward.
+        ed.set_input(10, FrameInput::new(Buttons::A, Buttons::empty()));
+        assert_eq!(ed.lag_at(9), Some(true), "pre-edit lag retained");
+        assert_eq!(ed.lag_at(10), None, "lag from the edit onward is dropped");
+        assert_eq!(ed.lag_at(20), None);
     }
 }
