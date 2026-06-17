@@ -215,6 +215,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **GPU pass timing (H5) crashed at startup on adapters without
+  `TIMESTAMP_QUERY_INSIDE_ENCODERS`.** The default-on `gpu-timing` feature's
+  `GpuTimer` brackets the render encoder with `CommandEncoder::write_timestamp`,
+  which requires the `TIMESTAMP_QUERY_INSIDE_ENCODERS` wgpu feature — but the
+  device only requested/gated on `TIMESTAMP_QUERY`, so wgpu validation aborted
+  (SIGABRT) at the first frame on any adapter that exposed `TIMESTAMP_QUERY`
+  without the inside-encoders capability. The device now requests both
+  timestamp features (whichever the adapter offers) and arms the timer only when
+  both were granted; otherwise GPU timing stays disabled (`gpu_ms` reads `-`)
+  instead of crashing. Presented image is byte-identical either way.
 - **Closed-PR review-comment triage.** Adjudicated the backlog of open bot-review
   threads against current `main` and adopted the pertinent, still-actionable ones
   (all additive / off-by-default, byte-identical for valid states; AccuracyCoin

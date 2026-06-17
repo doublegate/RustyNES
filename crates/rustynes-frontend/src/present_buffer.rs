@@ -283,10 +283,27 @@ mod tests {
                 let v = out[0];
                 assert!(out.iter().all(|&b| b == v), "torn frame");
             } else if done.load(Ordering::Acquire) {
-                // Producer finished; one last drain catches the final frame.
-                if !pb.take_into(&mut out) {
-                    break;
+                // Producer finished, so at most ONE final frame remains (the
+                // buffer only retains the latest publish). Take it once,
+                // COUNT it, then stop — no need to loop again for a redundant
+                // empty take. The take is authoritative: `take_into` acquires
+                // the slots mutex, which synchronizes-with the producer's final
+                // `publish` (its `drop(slots)` release), and the `done`
+                // Acquire-load already established that happens-before, so a
+                // genuinely-pending frame IS taken here even though the main
+                // branch's `Relaxed` `has_new` pre-check may have read a stale
+                // `false`. (An earlier version drained WITHOUT incrementing
+                // `taken`, so a consumer slow enough to only ever take in this
+                // branch ended with `taken == 0` and failed the assert.) This
+                // guarantees `taken >= 1` whenever the producer published at
+                // least once, independent of how the two threads interleave.
+                if pb.take_into(&mut out) {
+                    taken += 1;
+                    assert_eq!(out.len(), 64);
+                    let v = out[0];
+                    assert!(out.iter().all(|&b| b == v), "torn frame");
                 }
+                break;
             } else {
                 std::hint::spin_loop();
             }
