@@ -238,6 +238,7 @@ pub mod external {
     use std::path::PathBuf;
 
     use rustynes_core::{Buttons, Nes};
+    use rustynes_test_harness::coverage::{FrameHealth, frame_health};
     use sha2::{Digest, Sha256};
 
     use super::{FB_HEIGHT, FB_WIDTH, dump_frame_if_requested, fnv1a64};
@@ -346,6 +347,13 @@ pub mod external {
         /// FNV-1a 64-bit hash of the drained audio samples (raw f32 LE
         /// bytes). Same audio-hash convention as [`super::run_and_capture_full`].
         pub audio_fnv1a64: u64,
+        /// Distinct-colour / dominant-colour health of the FINAL
+        /// framebuffer, computed via the shared
+        /// [`frame_health`](rustynes_test_harness::coverage::frame_health)
+        /// helper. The auto-discovering coverage harness asserts this is
+        /// not [`looks_blank`](FrameHealth::looks_blank); the curated
+        /// harnesses ignore it.
+        pub final_frame_health: FrameHealth,
     }
 
     /// Resolve `<workspace>/tests/roms/external/<rel>`. The
@@ -577,6 +585,10 @@ pub mod external {
             "framebuffer size mismatch: expected 256x240x4, got {}",
             fb.len()
         );
+        // Distinct-colour / dominant-colour health of the FINAL frame,
+        // via the shared coverage helper. Lets the auto-discovering
+        // coverage harness reject a blank / failed-to-render boot.
+        let final_frame_health = frame_health(fb);
 
         let cycles = nes.cycle();
         let mut audio_bytes: Vec<u8> = Vec::with_capacity(samples.len() * 4);
@@ -591,6 +603,7 @@ pub mod external {
             cycles,
             audio_samples: samples.len(),
             audio_fnv1a64,
+            final_frame_health,
         }
     }
 

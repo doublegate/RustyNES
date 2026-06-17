@@ -15,6 +15,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Testing
+
+- Add `external_coverage` — a data-driven, auto-discovering commercial-ROM
+  boot-coverage harness (`crates/rustynes-test-harness/tests/external_coverage.rs`,
+  gated `commercial-roms`). One test discovers every ROM staged under
+  `tests/roms/external/mapper-*/`, runs a default boot capture, and asserts
+  each (a) is not a blank/few-colour boot via a shared distinct-colour health
+  heuristic and (b) matches its committed `insta` baseline + PNG dump. New
+  ROMs need no code change; a fresh checkout (no staged ROMs) skips cleanly.
+  Reference-only — never feeds the AccuracyCoin/oracle gate.
+- Factor the ROM walk + the blank-frame distinct-colour/dominant-fraction
+  health heuristic out of the `coverage_smoke` / `render_smoke` diagnostic
+  bins into a shared `rustynes_test_harness::coverage` module so the bins and
+  the new harness apply the same detector. Both bins are kept (free-form CLI
+  triage tools); only the duplicated logic was removed.
+
 ## [1.5.0] - 2026-06-17 - "Lens" (Feature Release)
 
 ### Added

@@ -7,6 +7,12 @@
 //! count (a blank/crashed boot shows <=4 colours; a real frame shows dozens),
 //! flagging SUSPICIOUS frames for visual review.
 //!
+//! The walk and the blank/few-colour health verdict are shared with the
+//! `external_coverage` integration test via
+//! `rustynes_test_harness::coverage` (`walk_nes` + `frame_health` /
+//! `FrameHealth::looks_blank`) so the bin and the test apply the SAME
+//! heuristic.
+//!
 //! Usage:
 //!
 //! ```text
@@ -14,11 +20,11 @@
 //!     --bin coverage_smoke -- <external-dir> <frames> <out-dir> [name-filter]
 //! ```
 
-use std::collections::HashSet;
 use std::panic::{self, AssertUnwindSafe};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use rustynes_core::{Buttons, Nes};
+use rustynes_test_harness::coverage::{FrameHealth, frame_health, walk_nes};
 
 fn write_png(path: &Path, fb: &[u8]) {
     let file = std::fs::File::create(path).expect("create png");
@@ -28,20 +34,6 @@ fn write_png(path: &Path, fb: &[u8]) {
     enc.set_depth(png::BitDepth::Eight);
     let mut writer = enc.write_header().expect("png header");
     writer.write_image_data(fb).expect("png data");
-}
-
-fn walk_nes(root: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(rd) = std::fs::read_dir(root) else {
-        return;
-    };
-    for e in rd.flatten() {
-        let p = e.path();
-        if p.is_dir() {
-            walk_nes(&p, out);
-        } else if p.extension().is_some_and(|x| x == "nes") {
-            out.push(p);
-        }
-    }
 }
 
 fn main() {
@@ -97,18 +89,24 @@ fn main() {
         }));
         match result {
             Ok(Ok(fb)) => {
-                let colours: HashSet<[u8; 4]> = fb
-                    .chunks_exact(4)
-                    .map(|c| [c[0], c[1], c[2], c[3]])
-                    .collect();
-                let n = colours.len();
+                let health = frame_health(&fb);
+                let FrameHealth {
+                    distinct_colors: n,
+                    dominant_fraction,
+                } = health;
                 write_png(&Path::new(out_dir).join(format!("{label}.png")), &fb);
-                if n <= 4 {
+                if health.looks_blank() {
                     sus += 1;
-                    println!("SUSPICIOUS  {n:3} colours  {label}");
+                    println!(
+                        "SUSPICIOUS  {n:3} colours  dom={:5.1}%  {label}",
+                        dominant_fraction * 100.0
+                    );
                 } else {
                     ok += 1;
-                    println!("ok          {n:3} colours  {label}");
+                    println!(
+                        "ok          {n:3} colours  dom={:5.1}%  {label}",
+                        dominant_fraction * 100.0
+                    );
                 }
             }
             Ok(Err(e)) => {
