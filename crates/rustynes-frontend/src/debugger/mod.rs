@@ -50,6 +50,7 @@ use crate::config::Config;
 use crate::movie_ui::{MovieMode, MovieStatus, ReplayInfo};
 use crate::ui_shell::{ShellFrame, ShellOutput, UiShell};
 pub use replay_panel::ReplayRequest;
+pub use tastudio_panel::TasRequest;
 
 mod apu_panel;
 // v2.7.1 — RetroAchievements badge-image cache (native-only, feature-gated).
@@ -87,6 +88,7 @@ mod perf_panel;
 mod ppu_panel;
 mod script_panel;
 mod settings_panel;
+mod tastudio_panel;
 mod trace_panel;
 
 pub use cheevos_panel::{CheevosRequest, CheevosStatusView};
@@ -124,6 +126,8 @@ pub enum ToolPanel {
     InputMiniatures,
     /// Replay / TAS window (v1.5.0 "Lens" Workstream C2).
     Replay,
+    /// `TAStudio` piano-roll editor (v1.6.0 "Studio" Workstream A2).
+    TasStudio,
     /// HD-pack per-pixel inspector (v1.5.0 "Lens" Workstream A4; native +
     /// `hd-pack`). The enum variant is unconditional so the menu IA + dispatch
     /// match stay exhaustive; the actual panel + open path is feature-gated.
@@ -181,6 +185,8 @@ pub struct DebuggerOverlay {
     show_events: bool,
     show_nsf: bool,
     show_replay: bool,
+    /// `TAStudio` piano-roll editor open flag (v1.6.0 "Studio" Workstream A2).
+    show_tas: bool,
     show_script: bool,
     show_input: bool,
     show_input_display: bool,
@@ -217,6 +223,13 @@ pub struct DebuggerOverlay {
     nsf_ui: nsf_panel::NsfPanelState,
     /// Replay / TAS window state (v1.5.0 "Lens" Workstream C2).
     replay_ui: replay_panel::ReplayPanelState,
+    /// `TAStudio` piano-roll UI state — pending requests + view toggles
+    /// (v1.6.0 "Studio" Workstream A2).
+    tas_ui: tastudio_panel::TasStudioPanelState,
+    /// The `TAStudio` editor model, present while a `TAStudio` session is active.
+    /// Lives here (not in the app) so the panel renders in the always-on tool
+    /// loop; the app drives its `Nes`-touching ops after the egui pass.
+    tas_editor: Option<crate::tastudio::TasEditor>,
     /// Lua script console state (T-110-E5).
     script_ui: script_panel::ScriptPanelState,
     /// Input rebind modal state.
@@ -343,6 +356,7 @@ impl DebuggerOverlay {
             show_events: false,
             show_nsf: false,
             show_replay: false,
+            show_tas: false,
             show_script: false,
             show_input: false,
             show_input_display: false,
@@ -366,6 +380,8 @@ impl DebuggerOverlay {
             event_ui: event_panel::EventPanelState::default(),
             nsf_ui: nsf_panel::NsfPanelState::default(),
             replay_ui: replay_panel::ReplayPanelState::default(),
+            tas_ui: tastudio_panel::TasStudioPanelState::default(),
+            tas_editor: None,
             script_ui: script_panel::ScriptPanelState::default(),
             input_ui: input_rebind_panel::InputPanelState::default(),
             input_display_ui: input_display_panel::InputDisplayPanelState,
@@ -463,6 +479,36 @@ impl DebuggerOverlay {
     /// emu lock.
     pub fn take_replay_request(&mut self) -> Option<ReplayRequest> {
         self.replay_ui.take_request()
+    }
+
+    /// v1.6.0 "Studio" A2 — `true` while a `TAStudio` editing session is active.
+    #[must_use]
+    pub const fn tas_active(&self) -> bool {
+        self.tas_editor.is_some()
+    }
+
+    /// v1.6.0 "Studio" A2 — `true` while the `TAStudio` window is open.
+    #[must_use]
+    pub const fn tas_visible(&self) -> bool {
+        self.show_tas
+    }
+
+    /// v1.6.0 "Studio" A2 — install the editor model for a new `TAStudio` session
+    /// (the app builds it from the current `Nes`, which the editor needs).
+    pub fn set_tas_editor(&mut self, editor: crate::tastudio::TasEditor) {
+        self.tas_editor = Some(editor);
+    }
+
+    /// v1.6.0 "Studio" A2 — mutable access to the editor so the app can apply
+    /// `Nes`-touching requests (seek / branch / record) after the egui pass.
+    pub const fn tas_editor_mut(&mut self) -> Option<&mut crate::tastudio::TasEditor> {
+        self.tas_editor.as_mut()
+    }
+
+    /// v1.6.0 "Studio" A2 — drain the pending `TAStudio` requests for the app to
+    /// dispatch under the emu lock.
+    pub fn take_tas_requests(&mut self) -> Vec<TasRequest> {
+        self.tas_ui.take_requests()
     }
 
     /// Returns `true` when the overlay is currently visible. The render
@@ -722,6 +768,7 @@ impl DebuggerOverlay {
             ToolPanel::GameDb => self.show_game_db = true,
             ToolPanel::InputMiniatures => self.show_input_miniatures = true,
             ToolPanel::Replay => self.show_replay = true,
+            ToolPanel::TasStudio => self.show_tas = true,
             ToolPanel::HdPixelInspector => {
                 #[cfg(all(not(target_arch = "wasm32"), feature = "hd-pack"))]
                 {
@@ -1168,6 +1215,16 @@ impl DebuggerOverlay {
             // v1.5.0 "Lens" C2 — control + read-out surface; reads the pushed
             // status snapshot, not `nes`, so it renders in the always-on path.
             replay_panel::show(ctx, &mut self.show_replay, &mut self.replay_ui);
+        }
+        if self.show_tas {
+            // v1.6.0 "Studio" A2 — renders the editor model read-only and queues
+            // edits/seeks as `TasRequest`s the app applies under the emu lock.
+            tastudio_panel::show(
+                ctx,
+                &mut self.show_tas,
+                &mut self.tas_ui,
+                self.tas_editor.as_ref(),
+            );
         }
         if self.show_cheat {
             // The Cheats panel reads `nes`; with no ROM loaded there is nothing
