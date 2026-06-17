@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=vs-system/VS Pinball Hack.nes
+rom_sha256=44f434070bf910f4e5135d22ba65b8c7492ccaf325aac191d0abf9acb3a3cec9
+frames=1141
+fb_bytes=245760
+cycles=33949771
+audio_samples=836505
+audio_fnv1a64=1c0066a4b72403d2
+checkpoint f900 fb_fnv1a64=b5cd20060614c6d8
+checkpoint f1100 fb_fnv1a64=69c84ab64b34a770

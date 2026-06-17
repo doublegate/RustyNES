@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-001-MMC1/Blaster Master.nes
+rom_sha256=cff26469090708d1a73e4e65d47decf99a3d3eaf8a410200954cf54d4fcb1035
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=7583e2c1582a5b84
+checkpoint f900 fb_fnv1a64=ee1e6aae1192ac00
+checkpoint f1100 fb_fnv1a64=ee1e6aae1192ac00

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=vs-system/VS The Goonies Hack.nes
+rom_sha256=aee98da85be8102d41bd212ae15d114035c08d522baf222edb1256b8c93f3b7d
+frames=1141
+fb_bytes=245760
+cycles=33949777
+audio_samples=836505
+audio_fnv1a64=86a28b118b870732
+checkpoint f900 fb_fnv1a64=31b088e4f5339384
+checkpoint f1100 fb_fnv1a64=5c709eefc9ffb7cd

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-227-BMC-1200in1/Xiao Ao Jiang Wu (Ch) (Wxn).nes
+rom_sha256=fddaf26acd3d1d507e75b6649fbeb9988954884947dd450021611e4b24776d77
+frames=1141
+fb_bytes=245760
+cycles=33949962
+audio_samples=836509
+audio_fnv1a64=abdcfaf134b65f2f
+checkpoint f900 fb_fnv1a64=89ee4c476c97a325
+checkpoint f1100 fb_fnv1a64=89ee4c476c97a325

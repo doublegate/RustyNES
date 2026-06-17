@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-071-Camerica/Bee 52.nes
+rom_sha256=0c5b19f082c5adbaf96f6b8220b40f2ee82115f3c3c3c446f0864416850b39f4
+frames=1141
+fb_bytes=245760
+cycles=33949782
+audio_samples=836505
+audio_fnv1a64=e85a322bb854f436
+checkpoint f900 fb_fnv1a64=5dc9da89cf1042e3
+checkpoint f1100 fb_fnv1a64=386a1230f6fd4cee

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-004-MMC3/Flintstones, The - The Rescue of Dino & Hoppy.nes
+rom_sha256=6f5fe58bc88d0b38d245f7ea92a740343e9a2061ee7404a0ced39188676cdd3f
+frames=1141
+fb_bytes=245760
+cycles=33949785
+audio_samples=836505
+audio_fnv1a64=2f456355cda19eb8
+checkpoint f900 fb_fnv1a64=d074554956079d7d
+checkpoint f1100 fb_fnv1a64=0a042ae7eb71d214

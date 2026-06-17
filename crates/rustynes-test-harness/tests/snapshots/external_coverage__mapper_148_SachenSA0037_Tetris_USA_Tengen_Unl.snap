@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-148-SachenSA0037/Tetris (USA) (Tengen) (Unl).nes
+rom_sha256=53970a2b25819f9514bb7f32a7b568a3f4bdbd8754da9e7b9142020f1ab8ea62
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=4d3ef25e2577b916
+checkpoint f900 fb_fnv1a64=ddaeb87fecb0d2cd
+checkpoint f1100 fb_fnv1a64=b53bdefedca6cb95

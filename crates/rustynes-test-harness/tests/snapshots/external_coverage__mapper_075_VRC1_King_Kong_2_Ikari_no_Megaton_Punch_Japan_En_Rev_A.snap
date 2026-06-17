@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-075-VRC1/King Kong 2 - Ikari no Megaton Punch (Japan) (En) (Rev-A).nes
+rom_sha256=24a0a2b4dfad5f83c1c96075ef96a38b74d5139abdc1b55b73c918f922cc59f3
+frames=1141
+fb_bytes=245760
+cycles=33949776
+audio_samples=836505
+audio_fnv1a64=99d024e9d2a206ab
+checkpoint f900 fb_fnv1a64=9088562dae727284
+checkpoint f1100 fb_fnv1a64=dfd84c8ac5d3e5f2

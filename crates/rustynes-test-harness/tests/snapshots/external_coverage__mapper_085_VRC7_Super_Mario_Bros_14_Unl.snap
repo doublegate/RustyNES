@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-085-VRC7/Super Mario Bros 14 (Unl) [!].nes
+rom_sha256=54ed68cb77022353aa3f6714b8a3c2d201fd1ea63b418757e0301e16688722bf
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=4e7a31b9afe417e2
+checkpoint f900 fb_fnv1a64=0934fdc40bcd042c
+checkpoint f1100 fb_fnv1a64=4d8eb1602b1ee1fc

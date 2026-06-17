@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-093-Sunsoft3R/Fantasy Zone (J) [!].nes
+rom_sha256=6413ed0e543ee984f77a4a384c3de75fe15903e17cb1604969bc8e51bb2bff40
+frames=1141
+fb_bytes=245760
+cycles=33949786
+audio_samples=836505
+audio_fnv1a64=148a3f006ea333ae
+checkpoint f900 fb_fnv1a64=0c5246bde981c3dc
+checkpoint f1100 fb_fnv1a64=b9dd481b304fb5fa

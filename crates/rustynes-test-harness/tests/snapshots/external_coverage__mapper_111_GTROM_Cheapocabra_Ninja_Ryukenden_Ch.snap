@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-111-GTROM-Cheapocabra/Ninja Ryukenden (Ch).nes
+rom_sha256=6f803b0d3b8df6aa8e11c89cbd056fc48955a9b67e23114d0132f2df99e947ab
+frames=1141
+fb_bytes=245760
+cycles=26
+audio_samples=0
+audio_fnv1a64=cbf29ce484222325
+checkpoint f900 fb_fnv1a64=d66bff2c0190b2c3
+checkpoint f1100 fb_fnv1a64=d66bff2c0190b2c3

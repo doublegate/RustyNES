@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-096-Multicart96/Oeka Kids - Anpanman to Oekaki Shiyou!! (J) [!].nes
+rom_sha256=d7a1d2a77007a58cb639d8d93c4b29b8cc93d922a72336bb3a97d2a91d5a9ef4
+frames=1141
+fb_bytes=245760
+cycles=33949778
+audio_samples=836505
+audio_fnv1a64=4c55cd93c7fb6619
+checkpoint f900 fb_fnv1a64=b5f19c3483911a86
+checkpoint f1100 fb_fnv1a64=b5f19c3483911a86

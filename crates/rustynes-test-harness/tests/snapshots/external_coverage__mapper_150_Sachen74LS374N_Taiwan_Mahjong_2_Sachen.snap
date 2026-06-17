@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-150-Sachen74LS374N/Taiwan Mahjong 2 (Sachen) [!].nes
+rom_sha256=f133bff4bd415543009ab8efa5f9cb1e1a1877f2451937204e0e2c6961eb7472
+frames=1141
+fb_bytes=245760
+cycles=33949771
+audio_samples=836505
+audio_fnv1a64=17b49f1ceb8b3b57
+checkpoint f900 fb_fnv1a64=475ebfa3f195caf9
+checkpoint f1100 fb_fnv1a64=475ebfa3f195caf9

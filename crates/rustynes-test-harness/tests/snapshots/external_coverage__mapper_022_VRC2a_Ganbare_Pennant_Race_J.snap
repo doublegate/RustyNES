@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-022-VRC2a/Ganbare Pennant Race! (J) [!].nes
+rom_sha256=5efe8f930d8f052787d128fba032438d1905db7de36e29c79a0f4475ce2db3e9
+frames=700
+fb_bytes=245760
+cycles=20816571
+audio_samples=512903
+audio_fnv1a64=6e817432332f3742
+checkpoint f700 fb_fnv1a64=6f7ad8b383b926cc

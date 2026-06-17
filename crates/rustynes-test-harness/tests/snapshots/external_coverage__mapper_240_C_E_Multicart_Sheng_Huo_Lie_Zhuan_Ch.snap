@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-240-C-E-Multicart/Sheng Huo Lie Zhuan (Ch).nes
+rom_sha256=d94705c00cfc3f1cbdf1ed7047e663c9b3c424907f1f188a1f4bab2c199cc21c
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=448e53b0a6dfe59a
+checkpoint f900 fb_fnv1a64=6576afdbd2acdb7c
+checkpoint f1100 fb_fnv1a64=6576afdbd2acdb7c

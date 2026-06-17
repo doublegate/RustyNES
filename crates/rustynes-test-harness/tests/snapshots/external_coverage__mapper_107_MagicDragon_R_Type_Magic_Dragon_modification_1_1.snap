@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-107-MagicDragon/R-Type (Magic Dragon modification) (1.1).nes
+rom_sha256=f274c945734ebb87cbdd42c67273f63bf2f6df258e4079c8694850a89b3d5be0
+frames=1141
+fb_bytes=245760
+cycles=33949790
+audio_samples=836505
+audio_fnv1a64=2b74d8cee91370e1
+checkpoint f900 fb_fnv1a64=5cf1e45fa821d8a9
+checkpoint f1100 fb_fnv1a64=5cf1e45fa821d8a9

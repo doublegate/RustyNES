@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-180-UNROM-Nichibutsu/Crazy Climber (J) [!].nes
+rom_sha256=1e9d9412e43a2fb39f48e6f54ca0b0507bedd456084281f57c4b4e9a86efd9fe
+frames=1141
+fb_bytes=245760
+cycles=33949777
+audio_samples=836505
+audio_fnv1a64=4ccbe0f10294c27b
+checkpoint f900 fb_fnv1a64=85c7b7ecde45f3aa
+checkpoint f1100 fb_fnv1a64=96f495c177e5d314

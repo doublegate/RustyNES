@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-001-MMC1/Dragon Warrior.nes
+rom_sha256=bed8bfc77639b1ec9c3bf3cbd467a49728b9ea12c4adf12dc14d2f3cdcf8a2c4
+frames=700
+fb_bytes=245760
+cycles=20816571
+audio_samples=512903
+audio_fnv1a64=0105717c9e832223
+checkpoint f700 fb_fnv1a64=785c8e7f4ff0a656

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-003-CNROM/Gradius.nes
+rom_sha256=b87a848262f2cb887267b357068356af1824b8e80ac0cffc59f214b41e51892b
+frames=1141
+fb_bytes=245760
+cycles=33949780
+audio_samples=836505
+audio_fnv1a64=68a2d1dd548946b7
+checkpoint f900 fb_fnv1a64=28f59e2260c7da15
+checkpoint f1100 fb_fnv1a64=3ead530c0c8bd494

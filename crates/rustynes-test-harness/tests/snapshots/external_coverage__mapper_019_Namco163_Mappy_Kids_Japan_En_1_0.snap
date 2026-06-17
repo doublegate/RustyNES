@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-019-Namco163/Mappy Kids (Japan) (En) (1.0).nes
+rom_sha256=341cc6ab7d744611d9ed26b16dd3348992b735abc0e8198362daed133bb1f84c
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=d423dd09c9625296
+checkpoint f900 fb_fnv1a64=5a4218622677c38c
+checkpoint f1100 fb_fnv1a64=5a4218622677c38c

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=vs-system/VS Clu Clu Land.nes
+rom_sha256=fb43248106a4202590840cca68895ab4b2e94c49f82aa15c7c232699ed7ab90a
+frames=1141
+fb_bytes=245760
+cycles=33949785
+audio_samples=836505
+audio_fnv1a64=92776e3ee573d0b6
+checkpoint f900 fb_fnv1a64=46288c4e84b4e5a0
+checkpoint f1100 fb_fnv1a64=95ebe566055cb0b8

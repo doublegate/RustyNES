@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-001-MMC1/Legend of Zelda, The.nes
+rom_sha256=f95afe154e3a44e594dfc96e744dbd163eb8f7ea6da3dfc11adb297150eb9bc3
+frames=1141
+fb_bytes=245760
+cycles=33949779
+audio_samples=836505
+audio_fnv1a64=dd98937d2ad6dd86
+checkpoint f900 fb_fnv1a64=a2650a2ca54e6d1d
+checkpoint f1100 fb_fnv1a64=f152534468cd12e9

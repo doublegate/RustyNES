@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-007-AxROM/Battletoads.nes
+rom_sha256=62547a7b8b0952d9a2236536924d1b1abc89456010e3667bf904432b9b0184ef
+frames=1141
+fb_bytes=245760
+cycles=33949776
+audio_samples=836505
+audio_fnv1a64=951d684ac5334a7b
+checkpoint f900 fb_fnv1a64=cea60248f06b1ca5
+checkpoint f1100 fb_fnv1a64=462426efe18574d5

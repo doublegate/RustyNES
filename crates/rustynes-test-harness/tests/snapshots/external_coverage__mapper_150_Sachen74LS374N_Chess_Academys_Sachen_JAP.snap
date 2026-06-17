@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-150-Sachen74LS374N/Chess Academys (Sachen-JAP) [!].nes
+rom_sha256=881bc99b9cd1265b9ee2b2d891728297b7e30af7bc7d264a843556dc095ef94d
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=65235d77927894ef
+checkpoint f900 fb_fnv1a64=e16ac63987898bc8
+checkpoint f1100 fb_fnv1a64=e16ac63987898bc8

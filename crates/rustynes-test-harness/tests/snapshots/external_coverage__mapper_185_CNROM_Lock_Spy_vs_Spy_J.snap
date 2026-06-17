@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-185-CNROM-Lock/Spy vs Spy (J) [!].nes
+rom_sha256=dc6e78561f4e3b9fa876da635ff83ee2c58bdbb3bf86c2386de301b24305ba6b
+frames=1141
+fb_bytes=245760
+cycles=33949793
+audio_samples=836505
+audio_fnv1a64=222dc77fc9896368
+checkpoint f900 fb_fnv1a64=814869d6c81b69ab
+checkpoint f1100 fb_fnv1a64=15a2f46f88429843

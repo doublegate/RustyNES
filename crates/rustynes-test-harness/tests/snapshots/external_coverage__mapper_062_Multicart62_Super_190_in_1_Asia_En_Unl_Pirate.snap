@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-062-Multicart62/Super 190-in-1 (Asia) (En) (Unl) (Pirate).nes
+rom_sha256=fcbe6c67249130e03d9a109f22b7aefb4289fd651b2057ec317c0c6a326e5412
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=5b2e03a5496399d3
+checkpoint f900 fb_fnv1a64=449e1ea27205a2d3
+checkpoint f1100 fb_fnv1a64=23556ab22bec65ad

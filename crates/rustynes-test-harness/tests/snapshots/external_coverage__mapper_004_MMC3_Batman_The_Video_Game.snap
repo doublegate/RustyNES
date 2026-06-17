@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-004-MMC3/Batman - The Video Game.nes
+rom_sha256=e0a0f631df217b9a02c2268328082f6d00e42fbaaefd885cd1408de5e4926bf3
+frames=1141
+fb_bytes=245760
+cycles=33949796
+audio_samples=836505
+audio_fnv1a64=8d5499342e3adb44
+checkpoint f900 fb_fnv1a64=e215da306dc86e3c
+checkpoint f1100 fb_fnv1a64=e9778a8b4fd96a82

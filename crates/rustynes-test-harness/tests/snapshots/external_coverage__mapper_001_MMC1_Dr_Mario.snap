@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-001-MMC1/Dr. Mario.nes
+rom_sha256=92f22e59935ca74a05f4ba60d70dfbc299d7d1a3e944c15b0c4a6b449cfeebcf
+frames=700
+fb_bytes=245760
+cycles=20816576
+audio_samples=512903
+audio_fnv1a64=071f927f25e5d3d1
+checkpoint f700 fb_fnv1a64=ab4ac82595be898f

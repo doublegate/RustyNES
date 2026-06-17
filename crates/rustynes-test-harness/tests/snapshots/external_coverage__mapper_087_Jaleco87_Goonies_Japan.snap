@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-087-Jaleco87/Goonies (Japan).nes
+rom_sha256=c6ff0322bdc5c0b0fe75ad468eded052465baa3a03309be5536fe89770bb05d6
+frames=1141
+fb_bytes=245760
+cycles=33949778
+audio_samples=836505
+audio_fnv1a64=0e5aedf9e3579bf6
+checkpoint f900 fb_fnv1a64=28d3ab3c81981d13
+checkpoint f1100 fb_fnv1a64=28d3ab3c81981d13

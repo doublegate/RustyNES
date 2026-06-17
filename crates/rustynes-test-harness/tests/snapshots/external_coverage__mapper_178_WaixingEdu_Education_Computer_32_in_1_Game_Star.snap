@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-178-WaixingEdu/Education Computer 32-in-1 (Game Star) [!].nes
+rom_sha256=0d494e1174d651a3dc0808eced79357cd9a055685c69af85d191f5202fa5c435
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=bed4f9f39e232c34
+checkpoint f900 fb_fnv1a64=f56039612194fa45
+checkpoint f1100 fb_fnv1a64=cf03f81162bf1f8f

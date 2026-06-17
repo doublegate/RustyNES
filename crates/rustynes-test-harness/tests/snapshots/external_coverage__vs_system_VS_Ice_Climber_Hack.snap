@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=vs-system/VS Ice Climber Hack.nes
+rom_sha256=da2d91c847bf5956ebe26a0d643820189a3fa5e1dd715dd776770a615ef2698e
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=9b347ca7ed24b247
+checkpoint f900 fb_fnv1a64=daefed83ece8d394
+checkpoint f1100 fb_fnv1a64=e7af1fd0fc5e0e84

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-133-SachenSA72008/Jovial Race (Sachen) [!].nes
+rom_sha256=953d51cffae411ce92147de6e054236788b42abccf7d8060205014c38a0cb0fd
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=1e8b2a84906dbdef
+checkpoint f900 fb_fnv1a64=5270079fb63e9de5
+checkpoint f1100 fb_fnv1a64=33c0a85c34146cf7

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-036-TXC36/Strike Wolf (MGC-014) (Unl) [!].nes
+rom_sha256=9aa6ced81adbfb09730591efa9aea369ec7bf57d8a1504dfd5f77ff5696b0427
+frames=1141
+fb_bytes=245760
+cycles=33949908
+audio_samples=836508
+audio_fnv1a64=1da2742711746942
+checkpoint f900 fb_fnv1a64=89ee4c476c97a325
+checkpoint f1100 fb_fnv1a64=89ee4c476c97a325

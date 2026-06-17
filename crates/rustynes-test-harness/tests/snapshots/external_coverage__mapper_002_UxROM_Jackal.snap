@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-002-UxROM/Jackal.nes
+rom_sha256=632c4a3f76e7a38e9b743e281dfb83441a796d8ecb973f77cb617d25ec902cba
+frames=1141
+fb_bytes=245760
+cycles=33949785
+audio_samples=836505
+audio_fnv1a64=408ae04e857b7526
+checkpoint f900 fb_fnv1a64=fe9a02ac2e519ef4
+checkpoint f1100 fb_fnv1a64=f74f1bf6dca340b0

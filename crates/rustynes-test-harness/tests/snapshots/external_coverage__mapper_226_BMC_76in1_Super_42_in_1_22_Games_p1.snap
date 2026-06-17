@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-226-BMC-76in1/Super 42-in-1 - 22 Games [p1].nes
+rom_sha256=927d2738e57ca5a6bd54c6eb1c2223c0332a9018249272779bcea968d5f4aabb
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=9580e93b92cc1f27
+checkpoint f900 fb_fnv1a64=3b347384bb087707
+checkpoint f1100 fb_fnv1a64=3b347384bb087707

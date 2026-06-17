@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-001-MMC1/Rad Racer.nes
+rom_sha256=d6356c49aa49d42cd6a6473046f3e9427feffb2d91a2d76c7c3f47f1166398f5
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=9b347ca7ed24b247
+checkpoint f900 fb_fnv1a64=8425e76d8c963d11
+checkpoint f1100 fb_fnv1a64=8425e76d8c963d11

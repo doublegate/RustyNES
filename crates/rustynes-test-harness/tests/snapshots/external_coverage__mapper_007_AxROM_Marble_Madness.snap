@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-007-AxROM/Marble Madness.nes
+rom_sha256=3b2e24f069811a8032ced2ba905317e20271d43a33386cb42a4d591c41c052e7
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=9b347ca7ed24b247
+checkpoint f900 fb_fnv1a64=0a12a0bc07438c3b
+checkpoint f1100 fb_fnv1a64=0a12a0bc07438c3b

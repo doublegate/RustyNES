@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-162-WaixingFS304/Shu Ma Bao Bei (Digimon Crystal) (Ch) (Wxn).nes
+rom_sha256=56877d0934640356cd2bf4bd01265e4cbb17383d81a2f2405407d9fc4cde2236
+frames=1141
+fb_bytes=245760
+cycles=33949962
+audio_samples=836509
+audio_fnv1a64=15766b4c4a876f4f
+checkpoint f900 fb_fnv1a64=89ee4c476c97a325
+checkpoint f1100 fb_fnv1a64=89ee4c476c97a325

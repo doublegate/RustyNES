@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-206-Namcot118/Fantasy Zone.nes
+rom_sha256=2099200dbe0510cc150e0a98cac77b78ea0dba08fbdb1d59112312fda8eb160e
+frames=1141
+fb_bytes=245760
+cycles=33949783
+audio_samples=836505
+audio_fnv1a64=5fbed5fb68f595ac
+checkpoint f900 fb_fnv1a64=53134362678dbea6
+checkpoint f1100 fb_fnv1a64=501e8265ba808cb8

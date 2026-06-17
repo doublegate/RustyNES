@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-112-NTDEC-Asder/Cobra Mission (CN-27) (Asder) [!].nes
+rom_sha256=1ae64ae34433650a2d9e56ffb46ff90c3d8ecf6eded30cc10d76332f0a100c1a
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=fdb53729bd55c8f3
+checkpoint f900 fb_fnv1a64=88f3ab3014779165
+checkpoint f1100 fb_fnv1a64=5bf5db445592ba0b

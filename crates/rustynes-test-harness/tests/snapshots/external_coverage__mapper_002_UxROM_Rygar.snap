@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-002-UxROM/Rygar.nes
+rom_sha256=8ea8b1218cd94dfca894302a046db88670a61155f968d3fc2e4612629f2b5c75
+frames=1141
+fb_bytes=245760
+cycles=33949797
+audio_samples=836505
+audio_fnv1a64=ef155a9658275e1c
+checkpoint f900 fb_fnv1a64=fda0f1110ffe4031
+checkpoint f1100 fb_fnv1a64=e11badd01f44ea3b

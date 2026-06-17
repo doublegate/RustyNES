@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-162-WaixingFS304/Xi You Ji Hou Zhuan (Ch).nes
+rom_sha256=a6ebb82b6d0c1b28f80f97e43232b3a9851ce5a1fa5c4bf617c4482d34c33029
+frames=1141
+fb_bytes=245760
+cycles=33949960
+audio_samples=836509
+audio_fnv1a64=15766b4c4a876f4f
+checkpoint f900 fb_fnv1a64=89ee4c476c97a325
+checkpoint f1100 fb_fnv1a64=89ee4c476c97a325

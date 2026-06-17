@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-004-MMC3/Felix the Cat.nes
+rom_sha256=b6fdbb1d21aeff752cdfc4d4cda6865d39634c45c0653db4f0519b339a383415
+frames=1141
+fb_bytes=245760
+cycles=33949787
+audio_samples=836505
+audio_fnv1a64=36b7fd59832f305c
+checkpoint f900 fb_fnv1a64=996d97bdd96d7c30
+checkpoint f1100 fb_fnv1a64=fd8d2fef84efd257

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-143-SachenTCA01/Dancing Blocks (Sachen) [!].nes
+rom_sha256=5b6a30143854bcb3f56a017abbc2bdf73127eaf18282efdc2a5520eea676d926
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=9b347ca7ed24b247
+checkpoint f900 fb_fnv1a64=b1ce3689ccbdcced
+checkpoint f1100 fb_fnv1a64=b1ce3689ccbdcced

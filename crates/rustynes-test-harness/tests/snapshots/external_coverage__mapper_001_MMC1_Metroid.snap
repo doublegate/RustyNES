@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-001-MMC1/Metroid.nes
+rom_sha256=851a759e81d89f37d7040b88412cf76495453c56c825eaf14212e6a4e33ff81b
+frames=700
+fb_bytes=245760
+cycles=20816572
+audio_samples=512903
+audio_fnv1a64=c930999ee00a6a6a
+checkpoint f700 fb_fnv1a64=1e81aa34bef5ae50

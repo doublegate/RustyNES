@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-019-Namco163/Final Lap (Japan).nes
+rom_sha256=6f24032b9d97286f9f44f06052bc610aebac23d05ed261012fab91fa491c8766
+frames=1141
+fb_bytes=245760
+cycles=33949776
+audio_samples=836505
+audio_fnv1a64=ad05913b53575408
+checkpoint f900 fb_fnv1a64=b959841aa5810bf5
+checkpoint f1100 fb_fnv1a64=b959841aa5810bf5

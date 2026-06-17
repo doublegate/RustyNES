@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-023-VRC2-VRC4/Wai Wai World (Japan) (En) (2.2).nes
+rom_sha256=684aac13515a8aac9a3fa74fe026bfe1df12ed77c4b4d8c4748d214846e3803c
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=d63a11b0765e4e84
+checkpoint f900 fb_fnv1a64=8da23a809fe200b4
+checkpoint f1100 fb_fnv1a64=281f181516164928

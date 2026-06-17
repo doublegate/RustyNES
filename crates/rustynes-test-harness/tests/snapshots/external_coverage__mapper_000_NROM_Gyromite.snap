@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-000-NROM/Gyromite.nes
+rom_sha256=0ab0e4fb46cf44ea820bf7534f8636fe72db812be64fc1064cfd75acc537cb49
+frames=700
+fb_bytes=245760
+cycles=20816573
+audio_samples=512903
+audio_fnv1a64=346194437f08548b
+checkpoint f700 fb_fnv1a64=5869a56e79ef9005

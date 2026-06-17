@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-002-UxROM/1943 - The Battle of Midway.nes
+rom_sha256=cb33e8ce2dbd22bb8c97f976dc72f333e41a421b05afa65e335ca34d3c892a9d
+frames=1141
+fb_bytes=245760
+cycles=33949786
+audio_samples=836505
+audio_fnv1a64=b074d9437de508f6
+checkpoint f900 fb_fnv1a64=a5a9d9a9a5894d0d
+checkpoint f1100 fb_fnv1a64=a5a9d9a9a5894d0d

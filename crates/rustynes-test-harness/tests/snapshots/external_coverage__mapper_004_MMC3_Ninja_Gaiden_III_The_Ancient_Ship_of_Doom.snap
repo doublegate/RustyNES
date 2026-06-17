@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-004-MMC3/Ninja Gaiden III - The Ancient Ship of Doom.nes
+rom_sha256=a114ec24207daa7e802d6b39561a90cc3574a3fc41eca14ea0d5ddedad0cf984
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=87a22a531115451c
+checkpoint f900 fb_fnv1a64=cafd05ca266ca634
+checkpoint f1100 fb_fnv1a64=b635f3e12175b30a

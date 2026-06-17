@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-159-BandaiLZ93D50-24C01/Magical Taruruuto-kun - Fantastic World!! (J) (PRG0) [!].nes
+rom_sha256=422e38bf5ded78de7d4d4e3e7a39d7b16331ca5cbe8dab0172e7896e8190af99
+frames=1141
+fb_bytes=245760
+cycles=33949960
+audio_samples=836509
+audio_fnv1a64=15766b4c4a876f4f
+checkpoint f900 fb_fnv1a64=89ee4c476c97a325
+checkpoint f1100 fb_fnv1a64=89ee4c476c97a325

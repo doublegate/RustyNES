@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-146-Sachen-NINA/Pyramid II (Sachen) [!].nes
+rom_sha256=0def71eeb6653bcc11026d35d113f04e2ff68af07ba7666d6453676db32df5fd
+frames=1141
+fb_bytes=245760
+cycles=33949771
+audio_samples=836505
+audio_fnv1a64=eac12672e6af02cd
+checkpoint f900 fb_fnv1a64=781a5a1e7bfcc695
+checkpoint f1100 fb_fnv1a64=2b7b08d7a228cf8d

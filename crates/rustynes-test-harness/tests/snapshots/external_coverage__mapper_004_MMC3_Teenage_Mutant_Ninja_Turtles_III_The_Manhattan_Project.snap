@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-004-MMC3/Teenage Mutant Ninja Turtles III - The Manhattan Project.nes
+rom_sha256=650635c47203e6696f088f149a16c00287c65b9e15e3bc7c9ad2f38e96076d8b
+frames=1141
+fb_bytes=245760
+cycles=33949776
+audio_samples=836505
+audio_fnv1a64=d85045b2fcf725ef
+checkpoint f900 fb_fnv1a64=7943ae508751cc79
+checkpoint f1100 fb_fnv1a64=2c77101142f65710

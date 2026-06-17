@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-001-MMC1/Darkwing Duck.nes
+rom_sha256=53850b763a97d69d0aca74ac0be44172914b892357a27a2f5b168e3da04a89e1
+frames=1141
+fb_bytes=245760
+cycles=33949776
+audio_samples=836505
+audio_fnv1a64=e5a3fd3ade178bee
+checkpoint f900 fb_fnv1a64=cc533d963545b3bd
+checkpoint f1100 fb_fnv1a64=04fde5a005a7cdc9

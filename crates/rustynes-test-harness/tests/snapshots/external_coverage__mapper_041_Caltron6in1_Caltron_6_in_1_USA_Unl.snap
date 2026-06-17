@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-041-Caltron6in1/Caltron - 6 in 1 (USA) (Unl).nes
+rom_sha256=62a6c95245ed12888bf50ad0376b862f2684b72da49847cafb840b7a3aa3495b
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=9092d3e81a525199
+checkpoint f900 fb_fnv1a64=84dbb4eeb645efac
+checkpoint f1100 fb_fnv1a64=3760ecde7bafc9bf

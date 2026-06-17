@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-227-BMC-1200in1/Xiang Shuai Chuan Qi (NJxxx) (Ch).nes
+rom_sha256=fcaf969fe89ff05a556b1839a81fbb8f8e857b3bbbe8f64130bbfffc8bbd2a19
+frames=1141
+fb_bytes=245760
+cycles=33949777
+audio_samples=836505
+audio_fnv1a64=9b347ca7ed24b247
+checkpoint f900 fb_fnv1a64=b11791045e9f08bb
+checkpoint f1100 fb_fnv1a64=b11791045e9f08bb

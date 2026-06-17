@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-177-Hengedianzi/Mei Guo Fu Hao - American Man (Asia) (Unl).nes
+rom_sha256=9c3ad73bb79c8c4e6b989f2bb04b353d7bab755fe90c097276aa9cb6bb660eb4
+frames=1141
+fb_bytes=245760
+cycles=40428961
+audio_samples=996152
+audio_fnv1a64=95115ba2841ce225
+checkpoint f900 fb_fnv1a64=100fcc4e2cc8bc34
+checkpoint f1100 fb_fnv1a64=100fcc4e2cc8bc34

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-001-MMC1/Kid Icarus.nes
+rom_sha256=335d09f48e5ebb1d7123d1599c5867b9e52b5b4393b7ad92c39cf6a064424233
+frames=1141
+fb_bytes=245760
+cycles=33949781
+audio_samples=836505
+audio_fnv1a64=832ead30a6e5bd1c
+checkpoint f900 fb_fnv1a64=20c0c0112777fe69
+checkpoint f1100 fb_fnv1a64=20c0c0112777fe69

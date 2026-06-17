@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-001-MMC1/Adventures of Lolo.nes
+rom_sha256=aae4aafb736cdd0b5fb7d54fda16fdbc63f97258cb1da1272ffa782c8e5cd534
+frames=1141
+fb_bytes=245760
+cycles=33949780
+audio_samples=836505
+audio_fnv1a64=bf7717e8f45bb1e1
+checkpoint f900 fb_fnv1a64=89930d6b7751ed70
+checkpoint f1100 fb_fnv1a64=8c3f70fc2fe11485

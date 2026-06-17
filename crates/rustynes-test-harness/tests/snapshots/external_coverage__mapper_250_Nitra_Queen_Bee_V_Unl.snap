@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-250-Nitra/Queen Bee V (Unl) [!].nes
+rom_sha256=6be0e6ae583216431d5b61225c8c1966f26b14b843f469582896691df7f8da1e
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=51ad3ca1bff01198
+checkpoint f900 fb_fnv1a64=bb602e194c90940c
+checkpoint f1100 fb_fnv1a64=32f086509ba3e6be

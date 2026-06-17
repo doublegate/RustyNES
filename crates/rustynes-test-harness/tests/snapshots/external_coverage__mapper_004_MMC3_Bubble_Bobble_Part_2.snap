@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-004-MMC3/Bubble Bobble Part 2.nes
+rom_sha256=f5a162555b9e5375311046c13cb7d52f9d86af1cdb06bada4e0ff68509bfd92d
+frames=1141
+fb_bytes=245760
+cycles=33949777
+audio_samples=836505
+audio_fnv1a64=d70ed049f8e76710
+checkpoint f900 fb_fnv1a64=dd3bd1c706883088
+checkpoint f1100 fb_fnv1a64=92708479163bd18a

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-132-TXC132/Qi Wang - Chinese Chess (Ch) [p1][!].nes
+rom_sha256=31b6c6bbb17404f1bca03fc30c256b75c33e74425718a2077f097b2cc7bf13c2
+frames=1141
+fb_bytes=245760
+cycles=33949782
+audio_samples=836505
+audio_fnv1a64=7ae167a95ef04ac9
+checkpoint f900 fb_fnv1a64=c4f2a22eebb7f349
+checkpoint f1100 fb_fnv1a64=c4f2a22eebb7f349

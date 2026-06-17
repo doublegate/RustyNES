@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-092-JalecoJF19/Moero!! Pro Yakyuu '88 - Ketteiban (J) [!].nes
+rom_sha256=32ccb69edfd0858397b9e567a0e52c901bff9120ffac4397667e426574c8ba63
+frames=1141
+fb_bytes=245760
+cycles=33949779
+audio_samples=836505
+audio_fnv1a64=38f25c546ae26346
+checkpoint f900 fb_fnv1a64=1c6ba38d8a65425f
+checkpoint f1100 fb_fnv1a64=1c6ba38d8a65425f

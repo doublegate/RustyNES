@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-000-NROM/Ice Hockey.nes
+rom_sha256=2bb8d19c264fc410336fbcd207d369050b8da0eb7cf12bc3fab67487019a7e9b
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=782c33c5e12f50f3
+checkpoint f900 fb_fnv1a64=38a29be6ea442e44
+checkpoint f1100 fb_fnv1a64=5b29dd697f0e5b68

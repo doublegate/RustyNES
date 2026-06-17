@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-156-DIS23C01-DAOU/Metal Force (K) [!].nes
+rom_sha256=25f5359a73cac2d16ed98940f0b537f0392f232554d457ed476e21a5979419ff
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=a1edb9b36ea4a088
+checkpoint f900 fb_fnv1a64=89ee4c476c97a325
+checkpoint f1100 fb_fnv1a64=89ee4c476c97a325

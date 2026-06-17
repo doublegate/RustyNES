@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=pc10/PC10 Chip 'n Dale Rescue Rangers.nes
+rom_sha256=96ebed87ebc46bb866a79ebafc22e9ed381fe81b6d4db2981d3c8140445704c8
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=98965615095c8ac6
+checkpoint f900 fb_fnv1a64=aeb4c44f424ef77d
+checkpoint f1100 fb_fnv1a64=aeb4c44f424ef77d

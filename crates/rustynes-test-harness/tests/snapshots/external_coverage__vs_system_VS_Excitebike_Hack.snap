@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=vs-system/VS Excitebike Hack.nes
+rom_sha256=31ff4e40e0ac329d207bb6a0c3aa65981ea9a36763f6795d14f03f874cb235c2
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=b994e6e275427753
+checkpoint f900 fb_fnv1a64=dbe031e179d7f81c
+checkpoint f1100 fb_fnv1a64=e240613472e8af4c

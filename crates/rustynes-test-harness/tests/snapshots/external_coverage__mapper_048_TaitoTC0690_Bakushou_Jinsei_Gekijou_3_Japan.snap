@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-048-TaitoTC0690/Bakushou!! Jinsei Gekijou 3 (Japan).nes
+rom_sha256=e8a11b17cdd7b6f5cac5ec119b297f3c4a125fa43b152276fd90c6bd2dd20a5d
+frames=700
+fb_bytes=245760
+cycles=20816573
+audio_samples=512903
+audio_fnv1a64=ce6cd8db167f1bbe
+checkpoint f700 fb_fnv1a64=bf2df3701156973c

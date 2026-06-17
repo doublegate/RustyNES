@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-177-Hengedianzi/Xing He Zhan Shi (Ch).nes
+rom_sha256=93e986d6f9885affb0deb4ad0bcd23fef409f824d6799215b7f9c4d74b4f1f4a
+frames=1141
+fb_bytes=245760
+cycles=146899
+audio_samples=3602
+audio_fnv1a64=483449d72e0c4f86
+checkpoint f900 fb_fnv1a64=89ee4c476c97a325
+checkpoint f1100 fb_fnv1a64=89ee4c476c97a325

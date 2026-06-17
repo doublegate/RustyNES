@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-147-Sachen3018-JV001/Challenge of the Dragon (Sachen) [!].nes
+rom_sha256=98b94d70e4cad6c991d7e42c1e721d4bb4a2d37f386a98467da69db8e3642f3e
+frames=1141
+fb_bytes=245760
+cycles=33949781
+audio_samples=836505
+audio_fnv1a64=46d200e7c6521b2c
+checkpoint f900 fb_fnv1a64=715a7fe33141301e
+checkpoint f1100 fb_fnv1a64=715a7fe33141301e

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-072-Jaleco72/Moero!! Pro Tennis (J) [!].nes
+rom_sha256=7cd7c1b440b8e0b0f7a310f3debaaed2b4fda0acb1696a68f861bbb9cdcd8897
+frames=1141
+fb_bytes=245760
+cycles=33949783
+audio_samples=836505
+audio_fnv1a64=d633128b78e41896
+checkpoint f900 fb_fnv1a64=540ca6b766e4ec26
+checkpoint f1100 fb_fnv1a64=540ca6b766e4ec26

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-178-WaixingEdu/Education Computer 48-in-1 (Game Star) [!].nes
+rom_sha256=44e141e35140a9b4d156f8764a4ae67495f8ef64e738e23e077d143a1ae0c399
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=3cbd820070afcb73
+checkpoint f900 fb_fnv1a64=9ef20820df400852
+checkpoint f1100 fb_fnv1a64=9ef20820df400852

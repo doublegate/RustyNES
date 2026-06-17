@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-226-BMC-76in1/76-in-1 [p1][!].nes
+rom_sha256=6f68854d3402e6338f200c286ded1187734cc9176ada6037ee33c4bb6275c772
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=9b347ca7ed24b247
+checkpoint f900 fb_fnv1a64=1d190771d989cd5d
+checkpoint f1100 fb_fnv1a64=1d190771d989cd5d

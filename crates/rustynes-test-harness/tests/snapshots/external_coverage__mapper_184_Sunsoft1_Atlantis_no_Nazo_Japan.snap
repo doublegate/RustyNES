@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-184-Sunsoft1/Atlantis no Nazo (Japan).nes
+rom_sha256=ba91bb87d51e094bc0ee3980d614d31f0ea3a6f08a1dc549fd9854f3f20b0d49
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=a114b1b1f6518ae7
+checkpoint f900 fb_fnv1a64=2137a0e6f045ccaa
+checkpoint f1100 fb_fnv1a64=7ce024826d01d712

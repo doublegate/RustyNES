@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-007-AxROM/Cobra Triangle.nes
+rom_sha256=a1a4405a432a8c3dc7361df7a60ac45d561f9588e7b37ed04fc60bc87bb70101
+frames=1141
+fb_bytes=245760
+cycles=33949786
+audio_samples=836505
+audio_fnv1a64=9adac0e672791590
+checkpoint f900 fb_fnv1a64=25c6363162edcb7e
+checkpoint f1100 fb_fnv1a64=b8c951003d69e29a

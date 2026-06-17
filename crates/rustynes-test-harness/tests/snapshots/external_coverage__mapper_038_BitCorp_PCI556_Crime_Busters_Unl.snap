@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-038-BitCorp-PCI556/Crime Busters (Unl) [!].nes
+rom_sha256=bb78cce09cbfbb839b3e92edf432ba855aa2f2809041941bfa1cd90c8777b817
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=de2d107996d402b9
+checkpoint f900 fb_fnv1a64=34dda533397d2d09
+checkpoint f1100 fb_fnv1a64=34dda533397d2d09

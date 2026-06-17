@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-030-UNROM512/PROTO DERE .NES (USA) (Unl) (Beta).nes
+rom_sha256=b7c6c9f0f9be5ae1e6fa1b8af81953131deab65629caf2ae0c6ed5501ea5cbe9
+frames=1141
+fb_bytes=245760
+cycles=87772
+audio_samples=2145
+audio_fnv1a64=604e403db899b1b7
+checkpoint f900 fb_fnv1a64=89ee4c476c97a325
+checkpoint f1100 fb_fnv1a64=89ee4c476c97a325

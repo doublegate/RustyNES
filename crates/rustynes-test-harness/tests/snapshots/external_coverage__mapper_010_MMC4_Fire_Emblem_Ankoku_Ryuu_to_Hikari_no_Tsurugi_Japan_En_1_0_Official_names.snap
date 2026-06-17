@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-010-MMC4/Fire Emblem - Ankoku Ryuu to Hikari no Tsurugi (Japan) (En) (1.0) (Official names).nes
+rom_sha256=626d9c3944f8787d4048e7e47f830decd117bc89d4ca567603fd8220ee6d9991
+frames=1141
+fb_bytes=245760
+cycles=33949771
+audio_samples=836505
+audio_fnv1a64=6d5a6970b6f2ea57
+checkpoint f900 fb_fnv1a64=eb0f96c9df5479f6
+checkpoint f1100 fb_fnv1a64=28331e0f69dc3576

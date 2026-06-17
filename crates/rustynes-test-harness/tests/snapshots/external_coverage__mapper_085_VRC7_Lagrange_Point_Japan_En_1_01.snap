@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-085-VRC7/Lagrange Point (Japan) (En) (1.01).nes
+rom_sha256=333cfe66a6e687f34a347e83cf5b82a997cb32415fc449f9d74eddfc616a5db7
+frames=700
+fb_bytes=245760
+cycles=20816585
+audio_samples=512903
+audio_fnv1a64=5faf42b49fe431c3
+checkpoint f700 fb_fnv1a64=b3ac74f4f1cd5941

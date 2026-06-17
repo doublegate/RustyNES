@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=vs-system/VS Super Mario Bros Version MAME V1.1A.nes
+rom_sha256=2faab7a483f9a333066c5427ee78b8f00ae3003184bed4ad2fd0e0ada3b0b19b
+frames=1141
+fb_bytes=245760
+cycles=33949778
+audio_samples=836505
+audio_fnv1a64=9b347ca7ed24b247
+checkpoint f900 fb_fnv1a64=1d7fd7836a6e12c1
+checkpoint f1100 fb_fnv1a64=5beb3dff8915680e

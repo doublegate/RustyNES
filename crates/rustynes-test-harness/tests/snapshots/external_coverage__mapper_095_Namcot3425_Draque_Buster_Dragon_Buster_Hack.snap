@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-095-Namcot3425/Draque Buster (Dragon Buster Hack).nes
+rom_sha256=0d59e056b788e0fb95586b4177126d3ad7c57386a22942271903633e2e7fef46
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=c29cb0d6a3b765c6
+checkpoint f900 fb_fnv1a64=384335a25324b7a2
+checkpoint f1100 fb_fnv1a64=384335a25324b7a2

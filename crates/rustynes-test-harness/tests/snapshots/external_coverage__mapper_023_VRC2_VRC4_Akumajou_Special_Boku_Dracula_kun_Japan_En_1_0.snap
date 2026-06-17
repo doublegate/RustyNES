@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-023-VRC2-VRC4/Akumajou Special - Boku Dracula-kun (Japan) (En) (1.0).nes
+rom_sha256=e10ce161608c4765df9e58e0942ba1fd37c36336878e78e22ddc8b967ece5f73
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=15dfc280c90e4932
+checkpoint f900 fb_fnv1a64=79100f56b3fe190f
+checkpoint f1100 fb_fnv1a64=79100f56b3fe190f

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-218-MagicFloor/Magic Floor by Martin Korth (2012) (PC10 Version) (PD).nes
+rom_sha256=ad62b74460d06cb82e9b6bca78f996896240ed0ca05df04c736bc27a45c6f8ba
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=9b347ca7ed24b247
+checkpoint f900 fb_fnv1a64=29b475e11e7f013c
+checkpoint f1100 fb_fnv1a64=29b475e11e7f013c

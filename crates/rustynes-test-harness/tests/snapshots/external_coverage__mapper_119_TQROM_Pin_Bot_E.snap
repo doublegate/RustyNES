@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-119-TQROM/Pin Bot (E) [!].nes
+rom_sha256=b86c3f54a3070b9a46ef51c09c9016c8d3b6f32193877306ba9f22918f7407aa
+frames=700
+fb_bytes=245760
+cycles=20816574
+audio_samples=512903
+audio_fnv1a64=cb65fc8230d7788a
+checkpoint f700 fb_fnv1a64=482d12feabcbd5b2

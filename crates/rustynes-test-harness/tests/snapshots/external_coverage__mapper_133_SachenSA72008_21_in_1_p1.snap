@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-133-SachenSA72008/21-in-1 [p1][!].nes
+rom_sha256=c85bcc30f7848add954daed8e4126637d49cb85822c899a67b0d846a9fb1b613
+frames=1141
+fb_bytes=245760
+cycles=33949776
+audio_samples=836505
+audio_fnv1a64=e91a78e6964005fc
+checkpoint f900 fb_fnv1a64=1a39297c22df1070
+checkpoint f1100 fb_fnv1a64=1a39297c22df1070

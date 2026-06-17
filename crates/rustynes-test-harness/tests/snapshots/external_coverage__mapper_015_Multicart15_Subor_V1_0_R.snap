@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-015-Multicart15/Subor V1.0 (R).nes
+rom_sha256=c6c6ba22d055910adb061b4256d558a97a773c117e9fdd527c2198b61a43764f
+frames=1141
+fb_bytes=245760
+cycles=10361328
+audio_samples=255286
+audio_fnv1a64=885da9491a79497c
+checkpoint f900 fb_fnv1a64=1719dca5cef7a325
+checkpoint f1100 fb_fnv1a64=1719dca5cef7a325

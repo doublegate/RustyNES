@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-185-CNROM-Lock/Bird Week (J) [!].nes
+rom_sha256=65ab29a84e7e29343093df3c673f5f9fdf9fc5faaa7454f795b12c8d50749911
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=17680a86ba954d1c
+checkpoint f900 fb_fnv1a64=89f5a0d1aec2053f
+checkpoint f1100 fb_fnv1a64=f29c0ac2a269190b

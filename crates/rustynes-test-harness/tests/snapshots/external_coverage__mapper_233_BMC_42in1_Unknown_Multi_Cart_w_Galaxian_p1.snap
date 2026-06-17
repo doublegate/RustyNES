@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-233-BMC-42in1/Unknown Multi Cart w-Galaxian [p1].nes
+rom_sha256=87f5111d08640ab2aa4b59a04b733ad2579208e65cd9f34fe5c9f82156729a83
+frames=1141
+fb_bytes=245760
+cycles=149312
+audio_samples=3662
+audio_fnv1a64=539c285779b2df8e
+checkpoint f900 fb_fnv1a64=62a45bcd20ae6405
+checkpoint f1100 fb_fnv1a64=62a45bcd20ae6405

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-002-UxROM/Gun.Smoke.nes
+rom_sha256=a94d43df6dcb3ea9ccab5b8d0f46e721f8bd4942d489e2ac51286279b1c5527c
+frames=1141
+fb_bytes=245760
+cycles=33949780
+audio_samples=836505
+audio_fnv1a64=08e70dbb634f5762
+checkpoint f900 fb_fnv1a64=1413267e66fd123e
+checkpoint f1100 fb_fnv1a64=d80f07a4d6a07d83

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-150-Sachen74LS374N/Chinese Checkers (Sachen-JAP) [!].nes
+rom_sha256=039ec8ddc3871347fe27a8edb6670ef1b819c0a5f8f99b110faab4e6f2c9394a
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=b3fd5339f07af96d
+checkpoint f900 fb_fnv1a64=6e9eaf7e632ad77d
+checkpoint f1100 fb_fnv1a64=5fb205aeff9f67b5

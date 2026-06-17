@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-150-Sachen74LS374N/Mei Nu Quan (Honey Peach) (Sachen) [!].nes
+rom_sha256=57ad2ec7984be9ab700ac2c45362b1163454e0dd8fdceee2e16319094f9f8279
+frames=1141
+fb_bytes=245760
+cycles=33949771
+audio_samples=836505
+audio_fnv1a64=2f388fdb12509ceb
+checkpoint f900 fb_fnv1a64=35b57521f08be6af
+checkpoint f1100 fb_fnv1a64=58ccc42434a4025f

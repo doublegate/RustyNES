@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-132-TXC132/Zhan Guo Si Chuan Sheng (C&E) (Unl).nes
+rom_sha256=ac15e4023d3af43b32e23e8d21418cd37e88b88badbbcd47ac0f4ef957e44f40
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=6cb12ae116f2072b
+checkpoint f900 fb_fnv1a64=863b4826cefc8225
+checkpoint f1100 fb_fnv1a64=863b4826cefc8225

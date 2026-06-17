@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=pc10/PC10 Yo! Noid.nes
+rom_sha256=1e9f969a9943fe6f4abf096ce8eb2c9b47787f8c0eaf9a00c6d4f64e205366f0
+frames=1141
+fb_bytes=245760
+cycles=33949776
+audio_samples=836505
+audio_fnv1a64=b4c355a82d6f88c2
+checkpoint f900 fb_fnv1a64=738ac15547297b9a
+checkpoint f1100 fb_fnv1a64=bbd29ed6128deb8f

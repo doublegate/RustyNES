@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-233-BMC-42in1/Super 22-in-1 [p1].nes
+rom_sha256=22ab5f67baef6fc7c712f4ba349dd69b33dc49b7d0e92accc1cee23361ec130a
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=478b0542a8adb010
+checkpoint f900 fb_fnv1a64=f666a74016aae945
+checkpoint f1100 fb_fnv1a64=f666a74016aae945

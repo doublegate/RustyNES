@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-004-MMC3/Super Mario Bros. 3.nes
+rom_sha256=ef6b74c29dd297e4afa2a46b8543cc5071f6f98ef0c734cf989e9cd183f7f3b9
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=28e9c3b3f6bee83d
+checkpoint f900 fb_fnv1a64=933eda6e9f786cb8
+checkpoint f1100 fb_fnv1a64=b61324be40f3a3ac
