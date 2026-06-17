@@ -62,6 +62,16 @@ fn main() {
         let vs_coin = std::env::var("RUSTYNES_VS_COIN").is_ok();
         let result = panic::catch_unwind(AssertUnwindSafe(|| -> Result<Vec<u8>, String> {
             let mut nes = Nes::from_rom(&bytes).map_err(|e| e.to_string())?;
+            // Vs. carts: apply the per-game DB's RGB-PPU type (palette LUT) so
+            // the frame renders the right colours, and set DIP 0. Mirrors the
+            // `external_coverage` harness + the frontend's `apply_vs_db`.
+            if nes.is_vs_system() {
+                let dip = rustynes_core::vs_db::lookup(nes.rom_sha256()).map_or(0, |entry| {
+                    nes.set_vs_ppu_type(entry.vs_ppu_type);
+                    entry.vs_dip
+                });
+                nes.set_vs_dip(dip);
+            }
             for f in 0..frames {
                 // Vs. System (mapper 99) games sit on an insert-coin attract
                 // loop; pulse a coin on acceptor #1 every ~120 frames when

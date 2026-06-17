@@ -41,7 +41,7 @@
 //!   menu navigation) so the captured frame lands on a MEANINGFUL,
 //!   regression-sensitive screen. Keep these — they carry knowledge no
 //!   auto-discovery can reconstruct.
-//! - this file: a uniform [`DEFAULT_IDLE`] boot capture for EVERY staged
+//! - this file: a uniform [`DEFAULT_CAPTURE`] boot capture for EVERY staged
 //!   ROM, so adding the 5th-Castlevania-clone to `mapper-002-UxROM/`
 //!   gets a regression baseline for free. The snapshot id is derived
 //!   purely from the relative path, so two harnesses snapshotting the
@@ -122,17 +122,24 @@ use std::path::{Path, PathBuf};
 
 use common::external::{InputScript, run_capture, snapshot_text};
 
-/// Default boot/idle capture: 600 frames (10 s @ NTSC 60 Hz) with no
-/// input. Long enough to clear the title-screen ramp-up + first
-/// attract-mode tick for the overwhelming majority of commercial ROMs.
-/// Mirrors the curated harnesses' `DEFAULT_IDLE` so a ROM that boots to
-/// a stable title under both produces a directly comparable frame hash.
-///
-/// ROMs with a long pre-title intro (where 600 frames lands on a black
-/// or animated frame) are better served by a hand-tuned entry in
-/// `external_real_games` / `external_extended`; this harness's job is
-/// breadth, not per-game perfection.
-const DEFAULT_IDLE: InputScript = InputScript::IdleOnly { frames: 600 };
+/// Default boot capture for breadth coverage. A discovered ROM's intro
+/// structure is unknown, so a passive idle frequently lands on a black
+/// title / publisher splash; instead clear the initial ramp-up, then tap
+/// START every `period` frames to press through multi-stage intros
+/// (publisher -> story -> title -> menu), then free-run to a settled late
+/// frame so the captured screen is gameplay / menu rather than a black
+/// boot frame. `RepeatStartTap` is what the curated harnesses use for
+/// intro-heavy games (Mega Man, Bandit Kings); here it is the default
+/// because the structure is unknown per-ROM. ROMs that still land blank
+/// get a hand-tuned entry in `external_real_games` / `external_extended`,
+/// or indicate a genuine mapper-decode bug to fix.
+const DEFAULT_CAPTURE: InputScript = InputScript::RepeatStartTap {
+    warmup: 240,
+    period: 150,
+    taps: 5,
+    free_run: 300,
+    checkpoints: &[900, 1100],
+};
 
 /// Walk `tests/roms/external/` and return every staged `.nes` ROM as a
 /// path RELATIVE to that `external/` root (e.g.
@@ -271,7 +278,7 @@ fn external_coverage_boot_smoke() {
         let snap = id.clone();
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
             move || -> Result<(), String> {
-                let capture = run_capture(&rom, DEFAULT_IDLE);
+                let capture = run_capture(&rom, DEFAULT_CAPTURE);
 
                 // (1) Blank / few-colour health — the shared coverage
                 // heuristic. A real boot draws dozens of colours; a
@@ -292,7 +299,7 @@ fn external_coverage_boot_smoke() {
                 };
 
                 // (2) Baseline snapshot comparison.
-                let text = snapshot_text(&rom, DEFAULT_IDLE, &capture);
+                let text = snapshot_text(&rom, DEFAULT_CAPTURE, &capture);
                 insta::assert_snapshot!(snap.as_str(), text);
 
                 // Snapshot passed; report the health verdict (if blank).
