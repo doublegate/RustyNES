@@ -775,6 +775,7 @@ impl App {
             input,
             config,
             data_dir,
+            #[cfg(not(target_arch = "wasm32"))]
             clipboard: None,
             debugger: None,
             #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]

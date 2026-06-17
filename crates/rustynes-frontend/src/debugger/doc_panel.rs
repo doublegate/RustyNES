@@ -140,16 +140,18 @@ fn body(ui: &mut egui::Ui, state: &mut DocPanelState) {
 }
 
 /// Whether `needle` (already lowercased) matches a topic's title or body.
+/// Allocation-free case-insensitive substring test — avoids a per-frame
+/// `to_ascii_lowercase()` heap allocation for every topic body during search.
+fn contains_ci(haystack: &str, needle: &str) -> bool {
+    let (h, n) = (haystack.as_bytes(), needle.as_bytes());
+    n.len() <= h.len() && h.windows(n.len()).any(|w| w.eq_ignore_ascii_case(n))
+}
+
 fn matches(needle: &str, title: &str, bodies: &[&str]) -> bool {
     if needle.is_empty() {
         return true;
     }
-    if title.to_ascii_lowercase().contains(needle) {
-        return true;
-    }
-    bodies
-        .iter()
-        .any(|b| b.to_ascii_lowercase().contains(needle))
+    contains_ci(title, needle) || bodies.iter().any(|b| contains_ci(b, needle))
 }
 
 fn topic_list(ui: &mut egui::Ui, state: &mut DocPanelState) {
