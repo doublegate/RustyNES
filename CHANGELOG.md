@@ -36,6 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     LUTs with bit 3 selecting CHR vs PRG.
   - **m227 BMC 1200-in-1:** decode `s_flag`/`prg_mode`/`l_flag` per Mesen2 and
     compose the `$8000`/`$C000` 16 KiB pair from the documented mode table.
+  - **m233 BMC 42-in-1:** the PRG-mode bit was inverted — reg bit 5 set selects
+    16 KiB mode (puNES), clear selects the 32 KiB pair.
   - **m185 CNROM-protect:** CHR powers on ENABLED (was deriving disabled from a
     zero latch, blanking the title), and the submapper-0 heuristic is
     `(value & 0x0F) != 0 && value != 0x13`.

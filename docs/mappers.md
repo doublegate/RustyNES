@@ -322,7 +322,7 @@ A boot-coverage pass (the auto-discovering `external_coverage` harness +
 per-mapper commercial dumps) surfaced a cluster of BestEffort boards that booted
 to a blank/few-colour frame. Cross-checking each against puNES / Mesen2 / the
 NESdev wiki corrected real decode bugs in **m143, m147, m150, m156, m162, m177,
-m178, m185, m227, m244, m250** (details in `CHANGELOG.md`); each now renders a
+m178, m185, m227, m233, m244, m250** (details in `CHANGELOG.md`); each now renders a
 real screen for the staged dumps. All are BestEffort (off the AccuracyCoin
 oracle), so AccuracyCoin holds 100% (139/139) and the `mapper_tier_honesty`
 gate stays green. A handful of titles remain blank and are documented
