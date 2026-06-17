@@ -375,7 +375,9 @@ pub struct EmuThread {
 impl EmuThread {
     /// Spawn the emulation thread. `audio` is the `Send` producer half made
     /// from the cpal output (the stream + the consumer callback stay on the
-    /// winit thread); `None` when audio init failed.
+    /// winit thread); `None` when audio init failed. `present` is the H1
+    /// lock-free framebuffer handoff the loop publishes each produced frame
+    /// into so the winit present path never blocks on the emu mutex.
     #[must_use]
     pub fn spawn(
         emu: EmuHandle,
@@ -383,13 +385,18 @@ impl EmuThread {
         proxy: EventLoopProxy<AppEvent>,
         control: Arc<EmuControl>,
         shared_input: Arc<SharedInput>,
+        present: Arc<crate::present_buffer::PresentBuffer>,
     ) -> Self {
         let (tick_tx, tick_rx) = sync_channel::<()>(1);
         let control_t = Arc::clone(&control);
         let shared_t = Arc::clone(&shared_input);
         let handle = std::thread::Builder::new()
             .name("rustynes-emu".into())
-            .spawn(move || run_loop(&emu, audio, &proxy, &control_t, &shared_t, &tick_rx))
+            .spawn(move || {
+                run_loop(
+                    &emu, audio, &proxy, &control_t, &shared_t, &tick_rx, &present,
+                );
+            })
             .map_err(|e| eprintln!("rustynes: emu thread spawn failed: {e}"))
             .ok();
         Self {
@@ -455,6 +462,7 @@ fn run_loop(
     control: &EmuControl,
     shared_input: &SharedInput,
     tick_rx: &Receiver<()>,
+    present: &crate::present_buffer::PresentBuffer,
 ) {
     elevate_thread_priority();
     loop {
@@ -478,7 +486,7 @@ fn run_loop(
                 // step happens precisely WHILE user-paused), so use the
                 // frame-advance drive, which honors the netplay bail but
                 // deliberately steps through the user pause.
-                if drive_frame_advance(emu, audio.as_mut(), shared_input, control)
+                if drive_frame_advance(emu, audio.as_mut(), shared_input, control, present)
                     && proxy.send_event(AppEvent::EmuFrame).is_err()
                 {
                     return;
@@ -504,14 +512,14 @@ fn run_loop(
                 // Consume one pending tick if present, but never block on it.
                 let _ = tick_rx.try_recv();
             }
-            drive_fast_forward(emu, shared_input, control)
+            drive_fast_forward(emu, shared_input, control, present)
         } else if regime == regime::DISPLAY {
             // Fifo vsync is the clock: one frame per present tick, with a
             // watchdog that keeps producing if presents stop arriving.
             match tick_rx.recv_timeout(DISPLAY_TICK_TIMEOUT) {
-                Ok(()) => drive_one(emu, audio.as_mut(), shared_input, control),
+                Ok(()) => drive_one(emu, audio.as_mut(), shared_input, control, present),
                 Err(RecvTimeoutError::Timeout) => {
-                    drive_wallclock(emu, audio.as_mut(), shared_input, control)
+                    drive_wallclock(emu, audio.as_mut(), shared_input, control, present)
                 }
                 Err(RecvTimeoutError::Disconnected) => return,
             }
@@ -522,7 +530,7 @@ fn run_loop(
             if Instant::now() < next {
                 block_until_native(next);
             }
-            drive_wallclock(emu, audio.as_mut(), shared_input, control)
+            drive_wallclock(emu, audio.as_mut(), shared_input, control, present)
         };
 
         if produced {
@@ -563,6 +571,7 @@ fn drive_one(
     audio: Option<&mut AudioProducer>,
     shared_input: &SharedInput,
     control: &EmuControl,
+    present: &crate::present_buffer::PresentBuffer,
 ) -> bool {
     let inputs = shared_input.load();
     let mut sinks = sinks_for(audio);
@@ -585,6 +594,10 @@ fn drive_one(
     core.perf.record_produced(Instant::now());
     // v1.0.0 — display regime advances by the speed-scaled period.
     core.next_frame_time = Some(Instant::now() + core.effective_frame_duration());
+    // v1.5.0 H1 — publish the produced frame into the lock-free handoff while
+    // we already hold the lock (no extra acquisition), so the winit present
+    // path never blocks on the emu mutex to copy it.
+    present.publish(&core.present_fb);
     true
 }
 
@@ -600,6 +613,7 @@ fn drive_frame_advance(
     audio: Option<&mut AudioProducer>,
     shared_input: &SharedInput,
     control: &EmuControl,
+    present: &crate::present_buffer::PresentBuffer,
 ) -> bool {
     let inputs = shared_input.load();
     let mut sinks = sinks_for(audio);
@@ -614,6 +628,7 @@ fn drive_frame_advance(
     core.perf.record_produce_cost(t0.elapsed());
     core.perf.record_produced(Instant::now());
     core.next_frame_time = Some(Instant::now());
+    present.publish(&core.present_fb);
     true
 }
 
@@ -623,7 +638,12 @@ fn drive_frame_advance(
 /// `now` so releasing fast-forward resumes paced production without a
 /// catch-up burst. Returns `false` on the same netplay/user-pause-claimed
 /// bail as [`drive_one`].
-fn drive_fast_forward(emu: &EmuHandle, shared_input: &SharedInput, control: &EmuControl) -> bool {
+fn drive_fast_forward(
+    emu: &EmuHandle,
+    shared_input: &SharedInput,
+    control: &EmuControl,
+    present: &crate::present_buffer::PresentBuffer,
+) -> bool {
     let inputs = shared_input.load();
     let mut sinks = sinks_for(None);
     let t0 = Instant::now();
@@ -639,6 +659,7 @@ fn drive_fast_forward(emu: &EmuHandle, shared_input: &SharedInput, control: &Emu
     core.perf.record_produced(Instant::now());
     // Rebase so leaving FF doesn't burst-catch-up the elapsed (fast) frames.
     core.next_frame_time = Some(Instant::now());
+    present.publish(&core.present_fb);
     true
 }
 
@@ -652,6 +673,7 @@ fn drive_wallclock(
     audio: Option<&mut AudioProducer>,
     shared_input: &SharedInput,
     control: &EmuControl,
+    present: &crate::present_buffer::PresentBuffer,
 ) -> bool {
     let inputs = shared_input.load();
     let mut sinks = sinks_for(audio);
@@ -667,6 +689,10 @@ fn drive_wallclock(
     let next = core.next_frame_time.unwrap_or(now);
     core.latch(&inputs);
     let _ = core.produce_due_frames(now, next, &inputs, &mut sinks);
+    // v1.5.0 H1 — publish the latest produced frame (after any catch-up
+    // burst, `present_fb` holds the most-recent frame) into the lock-free
+    // handoff under the lock we already hold.
+    present.publish(&core.present_fb);
     true
 }
 

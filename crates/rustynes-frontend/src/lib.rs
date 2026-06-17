@@ -69,6 +69,12 @@ pub mod patch;
 // (produced vs presented interval histograms, produce cost, audio-queue
 // health). Target-agnostic; rendered by the debugger Performance panel.
 pub mod perf;
+// v1.5.0 "Lens" Workstream H1 — lock-free triple-buffer framebuffer handoff,
+// so the present (winit) thread never blocks on the emu mutex to copy the
+// produced frame. Native-only (it exists to decouple the dedicated emulation
+// thread from the present thread; the wasm builds are single-threaded).
+#[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
+pub mod present_buffer;
 // v2.8.0 — opt-in interval CSV performance logging (the Perf panel's
 // "Logging" checkbox). Native-only: it writes files under `perf-logs/`.
 #[cfg(not(target_arch = "wasm32"))]

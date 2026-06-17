@@ -633,6 +633,13 @@ pub struct App {
     /// services UI). `None` until spawned. Native-only + `emu-thread`.
     #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
     emu_thread: Option<crate::emu_thread::EmuThread>,
+    /// v1.5.0 "Lens" Workstream H1 — lock-free triple-buffer framebuffer
+    /// handoff. The emu thread publishes each produced frame into it; the
+    /// winit present path takes the freshest frame without ever blocking on
+    /// the emu mutex (`docs/frontend.md` "Lock discipline at present").
+    /// Shared with the emu thread on `spawn`. Native-only + `emu-thread`.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
+    present_buffer: std::sync::Arc<crate::present_buffer::PresentBuffer>,
     /// v2.8.0 Phase 5 increment 3 — the `EventLoopProxy` the emu thread uses
     /// to deliver [`AppEvent::EmuFrame`]. Captured by `run` before
     /// `run_app`. Native-only + `emu-thread` (wasm uses its own `proxy`).
@@ -808,6 +815,8 @@ impl App {
             perf_logger: crate::perf_log::PerfLogger::default(),
             #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
             emu_thread: None,
+            #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
+            present_buffer: crate::present_buffer::PresentBuffer::new(),
             #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
             emu_proxy: None,
             netplay: crate::netplay_ui::NetplayUi::default(),
@@ -2674,12 +2683,16 @@ impl App {
             .map(|a| a.make_producer(self.config.audio.drc));
         let control = std::sync::Arc::new(crate::emu_thread::EmuControl::new());
         let shared_input = std::sync::Arc::new(crate::emu_thread::SharedInput::default());
+        // v1.5.0 H1 — the emu thread publishes produced frames into this
+        // shared handoff; the present path takes them lock-free.
+        self.present_buffer.reset();
         self.emu_thread = Some(crate::emu_thread::EmuThread::spawn(
             self.emu.clone(),
             producer,
             proxy,
             control,
             shared_input,
+            std::sync::Arc::clone(&self.present_buffer),
         ));
     }
 
@@ -6343,7 +6356,38 @@ impl ApplicationHandler<AppEvent> for App {
                     // means the stock NES-resolution present path (byte-identical).
                     #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
                     let mut hd_dims: Option<(u32, u32)> = None;
-                    {
+                    // v1.5.0 H1 — when the dedicated emu thread is producing AND
+                    // this present needs nothing from the live `Nes` beyond the
+                    // RGBA framebuffer (no NTSC composite-rt index buffer, no HD
+                    // pack), take the freshest frame from the lock-free handoff
+                    // and skip the emu mutex entirely — so the present thread
+                    // never blocks on the ~8.5 ms `produce_one_frame`. The
+                    // bytes are the same deterministic `present_fb` the locked
+                    // path copied; only the synchronization changed.
+                    #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
+                    let lockfree_fb = {
+                        #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                        let hd_active = self.hd_compositor.is_some();
+                        #[cfg(not(all(feature = "hd-pack", not(target_arch = "wasm32"))))]
+                        let hd_active = false;
+                        self.emu_thread_drives()
+                            && !want_index
+                            && !hd_active
+                            && self.present_buffer.has_published()
+                    };
+                    #[cfg(not(all(not(target_arch = "wasm32"), feature = "emu-thread")))]
+                    let lockfree_fb = false;
+                    if lockfree_fb {
+                        // Lock-free: refresh staging from the handoff if a new
+                        // frame arrived; otherwise keep the previously presented
+                        // staging (the display simply re-presents it).
+                        #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
+                        if !self.present_buffer.take_into(&mut self.present_staging)
+                            && self.present_staging.is_empty()
+                        {
+                            self.present_staging.resize((NES_W * NES_H * 4) as usize, 0);
+                        }
+                    } else {
                         let mut guard = self.emu.lock();
                         let emu = &mut *guard;
                         if let Some(nes) = emu.nes.as_mut() {
