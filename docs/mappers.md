@@ -83,7 +83,7 @@ Every mapper resolves a CPU/PPU address into a `(bank_index, offset)` pair on ev
 1. **None** — NROM, UxROM, AxROM, MMC1, CNROM, MMC2/4, BNROM, GxROM, Color Dreams, CPROM. No IRQs.
 2. **PPU A12 edge counter** — MMC3 (and clones, e.g., Namco 108 derivatives). Notify on every A12 transition; filter is *internal to the mapper*. Per `ref-docs/research-report.md` §MMC3, the filter requires A12 to remain low for 3 falling edges of M2 before the next rising edge counts.
 3. **PPU scanline count** — MMC5. Detects scanline by observing PPU attribute-table fetches; IRQ at PPU cycle 4 of the target scanline.
-4. **CPU cycle counter** — VRC2/4/6/7, Sunsoft FME-7, Namco 163. Tick on every CPU cycle (`notify_cpu_cycle`).
+4. **CPU cycle counter** — VRC2/4/6/7, Sunsoft FME-7, Namco 163, plus the BestEffort M2-counter pirate boards (NTDEC 2722 / mapper 40, Nitra / mapper 250). Tick on every CPU cycle (`notify_cpu_cycle`).
 
 ### Mirroring
 
@@ -289,6 +289,33 @@ render a real screen headless; the other 3 (30/63/233) boot + run real menu code
 but are input-/reset-gated. See `screenshots/besteffort/README.md` for the full
 matrix and the per-mapper fix log.
 
+### Ninth long-tail batch — v1.5.0 "Lens" best-effort sweep (10 families, 113 → 123)
+
+The v1.5.0 Workstream F Tier-2 sweep, ported into `sprint10.rs` from the
+concretely-documented nesdev decode tables (and the `Mesen2` / `GeraNES` /
+`puNES` reference implementations). Small pirate / unlicensed / multicart
+boards; eight are hook-free (`MapperCaps::NONE`) and two carry a simple
+CPU-cycle (M2) IRQ (`MapperCaps::CYCLE_IRQ`, m40 + m250 — no A12 hook).
+**Register-decode + save-state unit-tested only and not accuracy-gated** (see
+the tiering note below).
+
+| iNES | Submapper | Name | Audio | IRQ | Status | Notes |
+|------|-----------|------|-------|-----|--------|-------|
+| 40 | — | NTDEC 2722 (*SMB2J* pirate) | — | M2 cycle | landed (v1.5.0 / S10) | Fixed PRG layout (`$8000`/`$A000`/`$E000` = banks 4/5/7) with one switchable 8K window at `$C000`, selected by an `$E000` write (bits 0-2); 12-bit M2 IRQ that arms on `$A000`, asserts at 4096, and disables/acks on `$8000`; CHR-RAM. |
+| 81 | — | NTDEC Super Gun | — | — | landed (v1.5.0 / S10) | CNROM-like single `$8000-$FFFF` register: 16K PRG (bits 2-3, `$C000` half fixed last) + 8K CHR (bits 0-1); header mirroring. |
+| 95 | — | NAMCOT-3425 (*Dragon Buster*) | — | — | landed (v1.5.0 / S10) | MMC3-subset `$8000`/`$8001` register port (no A12 IRQ); CHR reg-0 bit 5 drives one-screen mirroring select; CHR-ROM. |
+| 112 | — | NTDEC ASDER / Huang-1 | — | — | landed (v1.5.0 / S10) | Indexed `$8000`(idx)/`$A000`(data) port (no A12 IRQ) for two 8K PRG + 2K/1K CHR slots; `$E000` bit 0 = mirroring; `$C000`/`$E000` PRG fixed last two. |
+| 137 | — | Sachen 8259D | — | — | landed (v1.5.0 / S10) | `$4100`(cmd)/`$4101`(data) protection board: 32K fixed PRG select (cmd 5) + four 2K CHR banks (cmds 0-3) + CHR outer (cmd 4) + mirroring (cmd 7). |
+| 156 | — | DIS23C01 DAOU (Open Corp) | — | — | landed (v1.5.0 / S10) | Separate low/high CHR-bank registers (`$C000-$C007`/`$C008-$C00F`) compose eight 1K slots; `$C010` = 16K PRG; `$C014` bit 0 = one-screen select. |
+| 162 | — | Waixing FS304 (*San Guo Zhi II*) | — | — | landed (v1.5.0 / S10) | Four `$5000-$5FFF` nibble registers (index = A8-A9) compose a 32K PRG bank `(reg2<<4)\|reg0`; 8K CHR-RAM; header mirroring. |
+| 178 | — | Waixing educational series | — | — | landed (v1.5.0 / S10) | `$4800-$4803` register block: bit 0 = 16/32K PRG mode, bit 1 = mirroring, `(reg2<<2)\|reg1` = PRG bank; 8K work-RAM at `$6000`; CHR-RAM. |
+| 244 | — | Decathlon (Mega Soft) | — | — | landed (v1.5.0 / S10) | `$8065-$80FF` address-decoded multicart (data ignored): PRG 32K bank = `(A>>3)&3`, CHR 8K bank = `A&7`; CHR-ROM, header mirroring. |
+| 250 | — | Nitra (*Time Diver Avenger*) | — | M2 cycle | landed (v1.5.0 / S10) | MMC3-register-compatible, but the register data is carried in address bits A0-A7 and the even/odd line in A8; MMC3 banking subset + an M2-clocked 8-bit reload IRQ counter; CHR-ROM. |
+
+These are register-decode + save-state unit-tested only (no redistributable
+fixture is committed), and structurally excluded from the AccuracyCoin / oracle
+gate by the BestEffort tier classifier.
+
 ### Mapper accuracy tiering (v1.2.0)
 
 Every supported family is classified `Core` / `Curated` / `BestEffort` by
@@ -301,9 +328,9 @@ boards with no redistributable fixture, register-decode unit-tested only) is
 oracle ROM — is enforced at the classifier level (`BestEffort` is structurally
 never accuracy-gated; the three tier id-sets are disjoint) and by the curated
 construction of the byte-oracle corpus. See `docs/adr/0011-mapper-tiering.md`.
-Current split: **113 families** — 51 Core + 9 Curated (60 accuracy-gated) + 53
+Current split: **123 families** — 51 Core + 9 Curated (60 accuracy-gated) + 63
 BestEffort (27 from v1.2.0 `sprint6`/`sprint7` + 14 from v1.3.0 `sprint8` + 12
-from v1.4.0 `sprint9`).
+from v1.4.0 `sprint9` + 10 from v1.5.0 `sprint10`).
 
 ### NSF player (synthetic mapper, v1.1.0)
 
