@@ -64,12 +64,11 @@ fn accuracycoin_pass_rate_meets_floor() {
     // v2.0 Phase 2 (`mc-r1-dmc-reenable-phase`): swept byte-timer realignment
     // applied at the `$4015` re-enable exclusion boundary. Default 0 = the bare
     // `CannotRunDMCDMARightNow` exclusion port.
-    if let Ok(s) = std::env::var("RUSTYNES_REENABLE_BUMP") {
-        if let Ok(n) = s.trim().parse::<i32>() {
-            rustynes_core::rustynes_apu::REENABLE_BUMP
-                .store(n, std::sync::atomic::Ordering::Relaxed);
-            println!("[reenable-phase] REENABLE_BUMP set to {n}");
-        }
+    if let Ok(s) = std::env::var("RUSTYNES_REENABLE_BUMP")
+        && let Ok(n) = s.trim().parse::<i32>()
+    {
+        rustynes_core::rustynes_apu::REENABLE_BUMP.store(n, std::sync::atomic::Ordering::Relaxed);
+        println!("[reenable-phase] REENABLE_BUMP set to {n}");
     }
 
     let (fb_result, ram): (BatteryResult, Vec<u8>) =

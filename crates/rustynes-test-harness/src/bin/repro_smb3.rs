@@ -164,7 +164,7 @@ fn main() {
                 let buttons = if i < 8 { held } else { Buttons::empty() };
                 nes.set_buttons(0, buttons);
                 let fb = nes.run_frame();
-                if frame % dump_every == 0 {
+                if frame.is_multiple_of(dump_every) {
                     write_png(&out_dir.join(format!("f{frame:04}.png")), fb);
                 }
                 frame += 1;
@@ -203,7 +203,7 @@ fn replay_movie(nes: &mut Nes, movie_path: &str, out_dir: &Path, dump_every: u64
     let mut frame = 0u64;
     while player.apply_next(nes) {
         let fb = nes.run_frame();
-        if frame % dump_every == 0 {
+        if frame.is_multiple_of(dump_every) {
             write_png(&out_dir.join(format!("f{frame:04}.png")), fb);
         }
         let idx = frame as usize;

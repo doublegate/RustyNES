@@ -98,10 +98,10 @@ fn main() {
                     "BACKDROP-ONLY"
                 }
             );
-            if let Some(p) = out_png {
-                if f == frames {
-                    write_png(Path::new(p), fb);
-                }
+            if let Some(p) = out_png
+                && f == frames
+            {
+                write_png(Path::new(p), fb);
             }
         }
     }

@@ -22,19 +22,19 @@ fn main() -> ExitCode {
 
     // W2 ($2007 Stress): PPU-dot countdown from the $2007 read to the PPUDATA
     // state machine's data_buffer reload (default 6).
-    if let Ok(v) = std::env::var("RUSTYNES_2007_DELAY") {
-        if let Ok(n) = v.parse::<u32>() {
-            rustynes_core::rustynes_ppu::read2007_diag::RENDER_BUFFER_DOT_DELAY
-                .store(n, core::sync::atomic::Ordering::Relaxed);
-        }
+    if let Ok(v) = std::env::var("RUSTYNES_2007_DELAY")
+        && let Ok(n) = v.parse::<u32>()
+    {
+        rustynes_core::rustynes_ppu::read2007_diag::RENDER_BUFFER_DOT_DELAY
+            .store(n, core::sync::atomic::Ordering::Relaxed);
     }
     // W2 sub-knob: 1 (default) = defer the $2007 v-glitch increment to the
     // TStep landing dot; 0 = legacy immediate increment at read time.
-    if let Ok(v) = std::env::var("RUSTYNES_2007_VINC") {
-        if let Ok(n) = v.parse::<u32>() {
-            rustynes_core::rustynes_ppu::read2007_diag::RENDER_BUFFER_DEFER_V_INC
-                .store(n, core::sync::atomic::Ordering::Relaxed);
-        }
+    if let Ok(v) = std::env::var("RUSTYNES_2007_VINC")
+        && let Ok(n) = v.parse::<u32>()
+    {
+        rustynes_core::rustynes_ppu::read2007_diag::RENDER_BUFFER_DEFER_V_INC
+            .store(n, core::sync::atomic::Ordering::Relaxed);
     }
     let (result, ram) = accuracy_coin::run_battery_capturing_ram(max_frames);
     println!(
