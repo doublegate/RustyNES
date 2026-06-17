@@ -263,20 +263,26 @@ fn header(ui: &mut egui::Ui, state: &mut TasStudioPanelState, editor: &TasEditor
         {
             state.emit(TasRequest::DeleteFrame(editor.cursor()));
         }
-        ui.separator();
-        if ui
-            .button("💾 Save")
-            .on_hover_text("Save project (.rnmproj)")
-            .clicked()
+        // `.rnmproj` file I/O uses the native file dialog; the browser build
+        // has no equivalent yet, so these buttons are native-only (showing
+        // them on wasm would be misleading no-ops).
+        #[cfg(not(target_arch = "wasm32"))]
         {
-            state.emit(TasRequest::SaveProject);
-        }
-        if ui
-            .button("📂 Load")
-            .on_hover_text("Load project (.rnmproj)")
-            .clicked()
-        {
-            state.emit(TasRequest::LoadProject);
+            ui.separator();
+            if ui
+                .button("💾 Save")
+                .on_hover_text("Save project (.rnmproj)")
+                .clicked()
+            {
+                state.emit(TasRequest::SaveProject);
+            }
+            if ui
+                .button("📂 Load")
+                .on_hover_text("Load project (.rnmproj)")
+                .clicked()
+            {
+                state.emit(TasRequest::LoadProject);
+            }
         }
     });
     ui.horizontal(|ui| {
@@ -329,55 +335,52 @@ fn grid(ui: &mut egui::Ui, state: &mut TasStudioPanelState, editor: &TasEditor) 
     let total = editor.len() + FUTURE_PAD;
     let pointer_released = ui.input(|i| i.pointer.any_released());
 
-    egui::ScrollArea::vertical()
+    let mut scroll_area = egui::ScrollArea::vertical()
         .id_salt("tas_grid")
-        .auto_shrink([false, false])
-        .show_rows(ui, row_h, total, |ui, range| {
-            for frame in range {
-                let kind = row_kind(editor, frame);
-                let frame_clone = frame;
-                let resp = ui
-                    .horizontal(|ui| {
-                        if let Some(tint) = row_tint(kind) {
-                            let r = ui.max_rect();
-                            ui.painter().rect_filled(r, 0.0, tint);
-                        }
-                        // Frame number — click to seek the cursor there.
-                        if ui
-                            .add(
-                                egui::Label::new(
-                                    egui::RichText::new(format!("{frame:>6}")).monospace(),
-                                )
-                                .sense(egui::Sense::click()),
-                            )
-                            .on_hover_text("Click to seek")
-                            .clicked()
-                        {
-                            state.emit(TasRequest::Seek(frame_clone));
-                        }
-                        // Marker glyph (read-only here; editing is via the menu).
-                        if let Some(label) = editor.marker_at(frame) {
-                            ui.colored_label(egui::Color32::from_rgb(0xE0, 0xC0, 0x40), "●")
-                                .on_hover_text(label.to_owned());
-                        } else {
-                            ui.label(" ");
-                        }
-                        let input = editor.input_at(frame).unwrap_or_default();
-                        for &port in ports {
-                            ui.separator();
-                            for (button, glyph) in BUTTONS {
-                                button_cell(ui, state, frame, port, button, glyph, input);
-                            }
-                        }
-                    })
-                    .response;
-
-                if state.scroll_to == Some(frame) {
-                    resp.scroll_to_me(Some(egui::Align::Center));
-                    state.scroll_to = None;
+        .auto_shrink([false, false]);
+    // The grid is virtualized (`show_rows`), so a target row that is currently
+    // off-screen is never instantiated — `Response::scroll_to_me` would never
+    // fire for it. Drive the scroll on the builder by row offset instead
+    // (row index * row height), which works for any frame, on- or off-screen.
+    if let Some(target) = state.scroll_to.take() {
+        scroll_area = scroll_area.vertical_scroll_offset(target as f32 * row_h);
+    }
+    scroll_area.show_rows(ui, row_h, total, |ui, range| {
+        for frame in range {
+            let kind = row_kind(editor, frame);
+            ui.horizontal(|ui| {
+                if let Some(tint) = row_tint(kind) {
+                    let r = ui.max_rect();
+                    ui.painter().rect_filled(r, 0.0, tint);
                 }
-            }
-        });
+                // Frame number — click to seek the cursor there.
+                if ui
+                    .add(
+                        egui::Label::new(egui::RichText::new(format!("{frame:>6}")).monospace())
+                            .sense(egui::Sense::click()),
+                    )
+                    .on_hover_text("Click to seek")
+                    .clicked()
+                {
+                    state.emit(TasRequest::Seek(frame));
+                }
+                // Marker glyph (read-only here; editing is via the menu).
+                if let Some(label) = editor.marker_at(frame) {
+                    ui.colored_label(egui::Color32::from_rgb(0xE0, 0xC0, 0x40), "●")
+                        .on_hover_text(label.to_owned());
+                } else {
+                    ui.label(" ");
+                }
+                let input = editor.input_at(frame).unwrap_or_default();
+                for &port in ports {
+                    ui.separator();
+                    for (button, glyph) in BUTTONS {
+                        button_cell(ui, state, frame, port, button, glyph, input);
+                    }
+                }
+            });
+        }
+    });
 
     if pointer_released {
         state.paint = None;

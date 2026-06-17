@@ -511,6 +511,15 @@ impl DebuggerOverlay {
         self.tas_ui.take_requests()
     }
 
+    /// v1.6.0 "Studio" A2 — end the `TAStudio` session and close its window.
+    /// The app calls this whenever the loaded ROM changes (load / close /
+    /// power-cycle): a session anchors on one `Nes`, so a stale editor would
+    /// otherwise replay its inputs/branches against a different game.
+    pub fn clear_tas_editor(&mut self) {
+        self.tas_editor = None;
+        self.show_tas = false;
+    }
+
     /// Returns `true` when the overlay is currently visible. The render
     /// path uses this to pick its emu-lock policy (v2.8.0 Phase 5): the
     /// egui pass needs `&mut Nes`, so a visible overlay holds the lock
