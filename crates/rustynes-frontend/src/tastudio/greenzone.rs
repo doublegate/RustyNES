@@ -129,6 +129,12 @@ impl Greenzone {
         }
     }
 
+    /// `true` if `frame` is a permanent anchor (never evicted).
+    #[must_use]
+    pub fn is_anchor(&self, frame: usize) -> bool {
+        self.anchors.contains(&frame)
+    }
+
     /// Drop all cached states (e.g. on loading a new project / power-cycle).
     /// Anchor registrations are kept.
     pub fn clear(&mut self) {

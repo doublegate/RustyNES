@@ -27,6 +27,8 @@ mod greenzone;
 
 pub use greenzone::Greenzone;
 
+use std::collections::BTreeMap;
+
 use rustynes_core::{FrameInput, Nes};
 
 /// Default greenzone byte budget (256 MiB) — generous for desktop TAS work
@@ -56,6 +58,10 @@ pub struct TasEditor {
     /// an edit, exactly like the greenzone. Sparse: only frames actually played
     /// have an entry, so `lag_at` returns `None` for not-yet-emulated frames.
     lag_log: Vec<bool>,
+    /// Named frame labels (the piano-roll's marker rows), keyed by frame. Each
+    /// marked frame is also pinned as a greenzone anchor so jumping to it is
+    /// instant. Markers shift with their frames on insert / delete.
+    markers: BTreeMap<usize, String>,
 }
 
 impl TasEditor {
@@ -73,6 +79,7 @@ impl TasEditor {
             cursor: 0,
             capture_interval: capture_interval.max(1),
             lag_log: Vec::new(),
+            markers: BTreeMap::new(),
         }
     }
 
@@ -150,6 +157,67 @@ impl TasEditor {
         self.lag_log.iter().filter(|&&l| l).count()
     }
 
+    /// Set (or rename) a named marker at `frame`, pinning it as a greenzone
+    /// anchor so navigating back to it stays instant.
+    pub fn set_marker(&mut self, frame: usize, label: impl Into<String>) {
+        self.markers.insert(frame, label.into());
+        self.greenzone.add_anchor(frame);
+    }
+
+    /// Remove the marker at `frame` (dropping its greenzone anchor unless it is
+    /// frame 0, which is always anchored). No-op if `frame` is unmarked.
+    pub fn remove_marker(&mut self, frame: usize) {
+        if self.markers.remove(&frame).is_some() {
+            self.greenzone.remove_anchor(frame);
+        }
+    }
+
+    /// The marker label at `frame`, if any.
+    #[must_use]
+    pub fn marker_at(&self, frame: usize) -> Option<&str> {
+        self.markers.get(&frame).map(String::as_str)
+    }
+
+    /// All markers in ascending frame order, as `(frame, label)`.
+    pub fn markers(&self) -> impl Iterator<Item = (usize, &str)> + '_ {
+        self.markers.iter().map(|(&f, l)| (f, l.as_str()))
+    }
+
+    /// The nearest marked frame strictly after `from` ("next marker" nav).
+    #[must_use]
+    pub fn next_marker(&self, from: usize) -> Option<usize> {
+        self.markers
+            .range(from.saturating_add(1)..)
+            .next()
+            .map(|(&f, _)| f)
+    }
+
+    /// The nearest marked frame strictly before `from` ("prev marker" nav).
+    #[must_use]
+    pub fn prev_marker(&self, from: usize) -> Option<usize> {
+        self.markers.range(..from).next_back().map(|(&f, _)| f)
+    }
+
+    /// Rebuild the marker map after a frame insert / delete at `at`: every
+    /// marker at-or-after the edit shifts by `delta` (+1 insert, -1 delete) and
+    /// re-pins its greenzone anchor. A delete removes the marker landing on the
+    /// deleted frame. Stale anchors past the edit are harmless (the greenzone is
+    /// invalidated from the edit point anyway).
+    fn shift_markers(&mut self, at: usize, delta: isize) {
+        let old = std::mem::take(&mut self.markers);
+        for (frame, label) in old {
+            let new_frame = if frame < at {
+                frame
+            } else if delta < 0 && frame == at {
+                continue; // marker on the deleted frame is dropped
+            } else {
+                frame.wrapping_add_signed(delta)
+            };
+            self.markers.insert(new_frame, label);
+            self.greenzone.add_anchor(new_frame);
+        }
+    }
+
     /// Set the input at `frame`, growing the log with default (no-button)
     /// frames if the edit is past the current end. Invalidates the greenzone
     /// after `frame` — every cached state downstream of the edit is now stale
@@ -179,6 +247,7 @@ impl TasEditor {
         self.input_log.insert(at, FrameInput::default());
         self.greenzone.invalidate_after(at.saturating_sub(1));
         self.lag_log.truncate(at);
+        self.shift_markers(at, 1);
     }
 
     /// Delete the frame at `frame`, shifting later inputs up by one. No-op past
@@ -188,6 +257,7 @@ impl TasEditor {
             self.input_log.remove(frame);
             self.greenzone.invalidate_after(frame.saturating_sub(1));
             self.lag_log.truncate(frame);
+            self.shift_markers(frame, -1);
             self.cursor = self.cursor.min(self.input_log.len());
         }
     }
@@ -463,5 +533,62 @@ mod tests {
         assert_eq!(ed.lag_at(9), Some(true), "pre-edit lag retained");
         assert_eq!(ed.lag_at(10), None, "lag from the edit onward is dropped");
         assert_eq!(ed.lag_at(20), None);
+    }
+
+    #[test]
+    fn markers_set_get_remove_and_navigate() {
+        let nes = {
+            let mut n = Nes::from_rom(&synth_nrom()).unwrap();
+            n.power_cycle();
+            n
+        };
+        let mut ed = TasEditor::new(&nes, 1 << 20, 16);
+        ed.set_marker(10, "start of level 1");
+        ed.set_marker(50, "boss");
+        ed.set_marker(30, "midpoint");
+        assert_eq!(ed.marker_at(10), Some("start of level 1"));
+        assert_eq!(ed.marker_at(11), None);
+        // Ascending order.
+        let all: Vec<(usize, &str)> = ed.markers().collect();
+        assert_eq!(
+            all,
+            vec![(10, "start of level 1"), (30, "midpoint"), (50, "boss")]
+        );
+        // Navigation.
+        assert_eq!(ed.next_marker(10), Some(30));
+        assert_eq!(ed.next_marker(50), None);
+        assert_eq!(ed.prev_marker(50), Some(30));
+        assert_eq!(ed.prev_marker(10), None);
+        // Marked frames are pinned as greenzone anchors.
+        assert!(ed.greenzone().is_anchor(30));
+        // Remove.
+        ed.remove_marker(30);
+        assert_eq!(ed.marker_at(30), None);
+        assert_eq!(ed.next_marker(10), Some(50));
+    }
+
+    #[test]
+    fn markers_shift_with_insert_and_delete() {
+        let nes = {
+            let mut n = Nes::from_rom(&synth_nrom()).unwrap();
+            n.power_cycle();
+            n
+        };
+        let mut ed = TasEditor::from_inputs(&nes, varied_inputs(60), 1 << 20, 16);
+        ed.set_marker(5, "a");
+        ed.set_marker(20, "b");
+        // Insert a frame at 10: markers >= 10 shift +1 (5 stays, 20 -> 21).
+        ed.insert_frame(10);
+        assert_eq!(ed.marker_at(5), Some("a"));
+        assert_eq!(ed.marker_at(21), Some("b"));
+        assert_eq!(ed.marker_at(20), None);
+        // Delete frame 5 (the marked frame): "a" is dropped, "b" shifts 21 -> 20.
+        ed.delete_frame(5);
+        assert_eq!(
+            ed.marker_at(5),
+            None,
+            "marker on the deleted frame is dropped"
+        );
+        assert_eq!(ed.marker_at(20), Some("b"));
     }
 }
