@@ -66,6 +66,11 @@ mod cpu_panel;
 #[cfg(not(target_arch = "wasm32"))]
 mod doc_panel;
 mod event_panel;
+// v1.6.0 "Studio" Workstream C (C1) — the debugger expression evaluator (CPU /
+// PPU / memory / access-context tokens + the C-style operator set). Shared by
+// the watch panel's conditional breakpoints / watchpoints / watch window /
+// conditional trace. Pure + frontend-only; the unit tests live in the module.
+mod expr;
 mod game_db_panel;
 // v1.5.0 "Lens" Workstream A4 — HD-pack per-pixel inspector (native + hd-pack).
 // `pub(crate)` so `app.rs` can drive its `show` (the panel needs the compositor
@@ -90,6 +95,10 @@ mod script_panel;
 mod settings_panel;
 mod tastudio_panel;
 mod trace_panel;
+// v1.6.0 "Studio" Workstream C (C1 keystone + C4 free riders) — the
+// Mesen2-class Watch / conditional-breakpoint / watchpoint panel built on the
+// `expr` evaluator + the core's observational `debug-hooks` per-frame logs.
+mod watch_panel;
 
 pub use cheevos_panel::{CheevosRequest, CheevosStatusView};
 // v1.5.0 "Lens" Workstream A1 — the input-miniatures snapshot the app pushes.
@@ -157,6 +166,9 @@ pub enum ChipPanel {
     Mapper,
     /// Cycle trace logger (T-110-C2).
     Trace,
+    /// Watch / conditional-breakpoint / watchpoint panel (v1.6.0 "Studio"
+    /// Workstream C, C1 keystone + C4 free riders).
+    Watch,
     /// Event viewer (T-110-C3): scanline×dot write-event timeline.
     Events,
     /// NSF music player (T-110-D1): track selector + metadata.
@@ -182,6 +194,9 @@ pub struct DebuggerOverlay {
     show_memory_compare: bool,
     show_mapper: bool,
     show_trace: bool,
+    /// Watch / conditional-breakpoint / watchpoint panel open flag (v1.6.0
+    /// "Studio" Workstream C).
+    show_watch: bool,
     show_events: bool,
     show_nsf: bool,
     show_replay: bool,
@@ -217,6 +232,10 @@ pub struct DebuggerOverlay {
     mapper_ui: mapper_panel::MapperPanelState,
     /// Cycle trace logger panel state (T-110-C2).
     trace_ui: trace_panel::TracePanelState,
+    /// Watch / conditional-breakpoint / watchpoint panel state — also owns the
+    /// per-frame observational replay that evaluates the expressions (v1.6.0
+    /// "Studio" Workstream C, C1 + C4).
+    watch_ui: watch_panel::WatchPanelState,
     /// Event viewer panel state (T-110-C3).
     event_ui: event_panel::EventPanelState,
     /// NSF player panel state (T-110-D1).
@@ -353,6 +372,7 @@ impl DebuggerOverlay {
             show_memory_compare: false,
             show_mapper: false,
             show_trace: false,
+            show_watch: false,
             show_events: false,
             show_nsf: false,
             show_replay: false,
@@ -377,6 +397,7 @@ impl DebuggerOverlay {
             memory_compare_ui: memory_compare_panel::MemoryComparePanelState::default(),
             mapper_ui: mapper_panel::MapperPanelState::default(),
             trace_ui: trace_panel::TracePanelState::default(),
+            watch_ui: watch_panel::WatchPanelState::default(),
             event_ui: event_panel::EventPanelState::default(),
             nsf_ui: nsf_panel::NsfPanelState::default(),
             replay_ui: replay_panel::ReplayPanelState::default(),
@@ -849,6 +870,7 @@ impl DebuggerOverlay {
             ChipPanel::MemoryCompare => self.show_memory_compare = true,
             ChipPanel::Mapper => self.show_mapper = true,
             ChipPanel::Trace => self.show_trace = true,
+            ChipPanel::Watch => self.show_watch = true,
             ChipPanel::Events => self.show_events = true,
             ChipPanel::Nsf => self.show_nsf = true,
             ChipPanel::Script => self.show_script = true,
@@ -864,6 +886,16 @@ impl DebuggerOverlay {
     /// and polls its action each pump).
     pub fn script_panel(&mut self) -> &mut script_panel::ScriptPanelState {
         &mut self.script_ui
+    }
+
+    /// v1.6.0 "Studio" Workstream C — drive the Watch panel's per-frame
+    /// observational replay: arm the exec/access logs the active breakpoints /
+    /// watchpoints / conditional trace need, then evaluate them against the
+    /// just-finished frame's logs. Called by `App` after a frame is produced,
+    /// under the emu lock, exactly like the Lua engine's `on_frame`. Purely
+    /// observational (it only reads `nes`), so determinism is unaffected.
+    pub fn pump_watchpoints(&mut self, nes: &mut Nes) {
+        self.watch_ui.pump(nes);
     }
 
     /// v1.0.0 — force the deep overlay visible (used when opening a chip panel
@@ -1108,6 +1140,15 @@ impl DebuggerOverlay {
                 ctx,
                 &mut self.show_trace,
                 &mut self.trace_ui,
+                nes,
+                &self.symbols,
+            );
+        }
+        if self.show_watch {
+            watch_panel::show(
+                ctx,
+                &mut self.show_watch,
+                &mut self.watch_ui,
                 nes,
                 &self.symbols,
             );

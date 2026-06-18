@@ -17,6 +17,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Debugger depth — expression/conditional breakpoints + R/W/X watchpoints +
+  watch window + conditional trace** (v1.6.0 Workstream C, the Mesen2-class C1
+  keystone + C4 free riders). A new frontend expression evaluator
+  (`debugger::expr`) compiles a Mesen-`ExpressionEvaluator`-style string —
+  CPU regs (`a x y s p pc`), PPU `scanline`/`cycle`/`frame`, memory `[addr]`
+  (byte) / `{addr}` (LE word), access-context tokens (`value`, `address`,
+  `isRead`/`isWrite`/`isExec`), and the full C operator set (`+ - * / % & | ^ ~
+  << >> && || ! == != < > <= >=`, ternary, parens) — and drives a new **Watch /
+  Breakpoints** panel (Debug → Watch / Breakpoints): conditional exec
+  breakpoints (PC or range + optional condition), read/write/exec watchpoints
+  (address range + access class + optional condition), a watch window (a list of
+  expressions shown each frame), and a conditional trace logger (format-string
+  rows filtered by a condition). All **observational** — `App::pump_watchpoints`
+  replays the just-finished frame's exec/access logs after the frame, exactly
+  like the Lua `onExec`/`onRead`/`onWrite` hooks (ADR 0010); it never intercepts
+  mid-instruction or mutates deterministic state, so AccuracyCoin (139/139) and
+  byte-identical builds hold. Behind the always-on-in-frontend `debug-hooks`
+  feature; C2 (full hex-editor poke/freeze) and C3 (RAM-search upgrade) are a
+  planned follow-up. (See `docs/frontend.md`.)
 - **Lua data breadth — memory domains, sized reads, `joypad`** (v1.6.0
   Workstream B3). The `memory` table gains `memory:read_u16_le(addr)` /
   `memory:read_u16_be(addr)` (16-bit word reads, two side-effect-free CPU

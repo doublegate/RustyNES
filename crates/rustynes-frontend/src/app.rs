@@ -3600,6 +3600,23 @@ impl App {
         }
     }
 
+    /// v1.6.0 "Studio" Workstream C — drive the debugger Watch panel's
+    /// per-frame observational replay (conditional breakpoints + read/write/exec
+    /// watchpoints + watch window + conditional trace). Runs after a frame is
+    /// produced, under the emu lock, exactly like [`Self::pump_scripts`]; it only
+    /// *reads* the just-finished frame's exec/access logs, so determinism is
+    /// unaffected. Runs on every build (the frontend always pulls `debug-hooks`),
+    /// so it is not behind the `scripting` gate.
+    fn pump_watchpoints(&mut self) {
+        let Some(dbg) = self.debugger.as_mut() else {
+            return;
+        };
+        let mut guard = self.emu.lock();
+        if let Some(nes) = guard.nes.as_mut() {
+            dbg.pump_watchpoints(nes);
+        }
+    }
+
     /// v1.2.0 Workstream F4 — load a Lua script into the EXPERIMENTAL wasm
     /// (piccolo) engine, replacing any running one. Called from the
     /// `wasm_load_script` JS bridge. Logs to the browser console; piccolo is
@@ -6403,6 +6420,12 @@ impl ApplicationHandler<AppEvent> for App {
                 // overlay draws are ready for the egui pass below.
                 #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
                 self.pump_scripts();
+
+                // v1.6.0 "Studio" Workstream C — drive the debugger Watch panel's
+                // observational replay (conditional breakpoints / watchpoints /
+                // watch window / conditional trace). Runs after the frame is
+                // produced; observational-only, so determinism holds.
+                self.pump_watchpoints();
 
                 // v2.8.0 Phase 3 — the renderer presents `present_fb` (the
                 // harvested per-frame framebuffer; with run-ahead it is the

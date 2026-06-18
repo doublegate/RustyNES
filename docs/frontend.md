@@ -485,7 +485,8 @@ reorganized the order and regrouped several items — see the per-menu notes):
   from the former standalone "Mod" menu).
 - **Debug** — Show Debugger (`` ` ``), Performance Monitor (moved here from
   Tools in v1.3.0), then the chip/state inspectors: CPU / PPU / APU / Memory /
-  Memory Compare / OAM / Mapper / Trace Logger / Event Viewer / Lua Script.
+  Memory Compare / OAM / Mapper / Trace Logger / Watch / Breakpoints (v1.6.0
+  "Studio" Workstream C) / Event Viewer / Lua Script.
 - **Help** — Documentation (v1.5.0 I10; native, searchable in-app manual),
   Keyboard Shortcuts, About.
 
@@ -870,6 +871,56 @@ surface).
   FDS), the chip name is surfaced and the expansion channels are noted as summed
   into the master mix the standard APU plays. Output-only eye-candy: it samples
   a copy for display and changes no synthesis.
+
+### v1.6.0 "Studio" Workstream C — debugger depth (Mesen2-class)
+
+Frontend-only, built on the existing `debug-hooks` observational logs; replay
+stays bit-identical and the feature-off core build is byte-identical. The
+keystone is a small expression evaluator (`debugger::expr`) that the rest of the
+workstream rides on.
+
+- **Expression evaluator (C1 keystone)** — `debugger::expr::Expr::parse` compiles
+  a Mesen-`ExpressionEvaluator`-style string into a reusable AST; `eval` runs it
+  against an `EvalContext`. The language supports:
+  - **CPU regs** `a x y s p pc`, **PPU** `scanline` / `cycle` (alias `dot`) /
+    `frame`.
+  - **Memory** `[addr]` (one byte) and `{addr}` (a little-endian 16-bit word),
+    both via a non-mutating CPU-bus peek.
+  - **Access-context tokens** `value`, `address` (alias `addr`), and
+    `isRead` / `isWrite` / `isExec` (case-insensitive) — the access being tested
+    during a watchpoint/breakpoint replay; `0` in a context-free evaluation.
+  - The full C operator set: `+ - * / % & | ^ ~ << >> && || ! == != < > <= >=`,
+    ternary `?:`, and parentheses, on `i64` (comparisons / logicals yield `1`/`0`;
+    divide / modulo / shift are guarded so a bad operand can't panic). Number
+    literals are decimal, `$hex` / `0xhex`, or `%binary`.
+
+- **Conditional breakpoints + R/W/X watchpoints (C1)** — the
+  **Watch / Breakpoints** panel (Debug → Watch / Breakpoints). A **conditional
+  breakpoint** is an exec-PC (or address range) plus an optional condition
+  expression; it logs a hit when an executed PC is in range and the condition is
+  true. A **watchpoint** is an address range + an access class (read / write /
+  exec) + an optional condition; it logs every matching access. Hits accumulate
+  in a bounded hit log (frame / tag / address / value, symbol-annotated).
+
+- **Watch window + conditional trace (C4, free riders on C1)** — the same panel
+  hosts a **watch window** (a list of expressions evaluated against the
+  end-of-frame state and displayed each redraw) and a **conditional trace** (a
+  format string with `{token}` / `{[addr]}` / `{{addr}}` substitutions, filtered
+  by an optional condition expression — both reuse the C1 evaluator).
+
+- **Observational contract (ADR 0010)** — all of the above is **observational**:
+  `App::pump_watchpoints` (mirroring the Lua `pump_scripts`) runs after each
+  frame, under the emu lock, arms the per-frame exec / access logs the active
+  tools need (`Nes::set_exec_logging` / `set_access_logging`), and *replays* the
+  just-finished frame's `Nes::exec_log()` / `Nes::accesses()` exactly like the
+  Lua `onExec` / `onRead` / `onWrite` hooks. It never intercepts mid-instruction
+  or mutates emulator-visible state, so determinism / AccuracyCoin hold. One
+  consequence of replay (shared with the Lua hooks): the `value` / `address` /
+  `isRead` / `isWrite` / `isExec` tokens are per-access accurate, but the
+  register / PPU / `[addr]` tokens reflect the machine's **end-of-frame** state,
+  not the exact cycle of the logged access (the panel UI documents this). C2
+  (full hex-editor poke/freeze) and C3 (RAM-search upgrade) are a planned
+  follow-up.
 
 ## Settings
 

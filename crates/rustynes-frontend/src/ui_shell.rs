@@ -1163,6 +1163,7 @@ impl UiShell {
                         (glyph::MEMORY, "OAM", ChipPanel::Oam),
                         (glyph::PUZZLE_PIECE, "Mapper", ChipPanel::Mapper),
                         (glyph::CLIPBOARD, "Trace Logger", ChipPanel::Trace),
+                        (glyph::CLIPBOARD, "Watch / Breakpoints", ChipPanel::Watch),
                         (glyph::CLIPBOARD, "Event Viewer", ChipPanel::Events),
                         (glyph::CODE, "Lua Script", ChipPanel::Script),
                     ] {
