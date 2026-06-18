@@ -92,31 +92,44 @@ fn shader_stem(path: &str) -> String {
     stem.to_ascii_lowercase()
 }
 
-/// Map a shader filename stem onto a built-in pass id, recognizing the common
-/// community-preset naming conventions. Returns `None` when there is no built-in
-/// equivalent (the caller records it as [`ImportedPass::Unsupported`]).
-fn map_stem_to_builtin(stem: &str) -> Option<&'static str> {
+/// The outcome of classifying a preset pass by its filename stem.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StemMap {
+    /// Maps onto the named built-in pass.
+    Builtin(&'static str),
+    /// A pure pass-through stage (`stock` / `passthrough` / `pixellate`): it
+    /// contributes nothing visual, so it is silently **skipped** — not reported
+    /// as unsupported (there is nothing missing to report).
+    Skip,
+    /// No built-in equivalent and not a pass-through: recorded as
+    /// [`ImportedPass::Unsupported`] so the limit is visible.
+    Unsupported,
+}
+
+/// Classify a shader filename stem, recognizing the common community-preset
+/// naming conventions.
+fn map_stem_to_builtin(stem: &str) -> StemMap {
     // Order matters: check the more specific tokens first.
     if stem.contains("xbrz") || stem.contains("xbr") {
-        Some("xbrz")
+        StemMap::Builtin("xbrz")
     } else if stem.contains("hqx") || stem.contains("hq2x") || stem.contains("hq4x") {
-        Some("hqx")
+        StemMap::Builtin("hqx")
     } else if stem.contains("ntsc") || stem.contains("composite") || stem.contains("lmp") {
         // RGBA composite -> the LMP88959 pass (NOT the index-only Bisqwit pass,
         // which can't slot mid-stack).
-        Some("lmp88959")
+        StemMap::Builtin("lmp88959")
     } else if stem.contains("crt")
         || stem.contains("scanline")
         || stem.contains("aperture")
         || stem.contains("geom")
     {
-        Some("crt")
+        StemMap::Builtin("crt")
     } else if stem == "stock" || stem == "passthrough" || stem.contains("pixellate") {
-        // A pure pass-through stage: skip it (mapping to nothing is correct, but
-        // we surface it so the count is honest).
-        None
+        // A pure pass-through stage: skip it (it adds nothing, and it is not a
+        // capability we're missing, so it must NOT count as unsupported).
+        StemMap::Skip
     } else {
-        None
+        StemMap::Unsupported
     }
 }
 
@@ -209,12 +222,15 @@ pub fn import_preset(text: &str) -> Result<ImportResult, String> {
     for (_, path) in shader_paths {
         let stem = shader_stem(&path);
         match map_stem_to_builtin(&stem) {
-            Some(id) => {
+            StemMap::Builtin(id) => {
                 let mut desc = ShaderPassDesc::new(id);
                 carry_params(id, &params, &mut desc);
                 result.stack.passes.push(desc);
             }
-            None => {
+            // Pure pass-through: contributes nothing and is not a missing
+            // capability, so drop it silently (not counted as unsupported).
+            StemMap::Skip => {}
+            StemMap::Unsupported => {
                 result.unsupported.push(ImportedPass::Unsupported {
                     path,
                     reason: "no built-in equivalent (source translation is out of scope)"
@@ -305,8 +321,24 @@ mod tests {
     fn stock_passthrough_is_skipped_not_errored() {
         let text = "shader0 = stock.slang\nshader1 = crt-geom.slang\n";
         let r = import_preset(text).unwrap();
-        // stock is a pass-through (mapped to nothing, not unsupported); crt maps.
+        // stock is a pass-through: skipped entirely (NOT counted as unsupported),
+        // and crt maps. This is the contract `map_stem_to_builtin` promises.
         assert_eq!(r.stack.passes.len(), 1);
         assert_eq!(r.stack.passes[0].id, "crt");
+        assert_eq!(
+            r.unsupported_count(),
+            0,
+            "a pure pass-through must skip, not report as unsupported"
+        );
+    }
+
+    #[test]
+    fn passthrough_and_pixellate_skip_without_unsupported() {
+        let text = "shader0 = passthrough.slang\nshader1 = pixellate.slang\n";
+        let r = import_preset(text).unwrap();
+        // Both are pass-through stages: nothing mapped, nothing unsupported.
+        assert_eq!(r.stack.passes.len(), 0);
+        assert_eq!(r.unsupported_count(), 0);
+        assert!(!r.any_mapped());
     }
 }

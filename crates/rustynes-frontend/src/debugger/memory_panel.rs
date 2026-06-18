@@ -72,9 +72,19 @@ impl Domain {
         }
     }
 
-    /// Whether a poke / freeze is possible in this domain (only CPU work RAM).
+    /// Whether this domain has *any* writable region (only the CPU bus does;
+    /// see [`Domain::addr_writable`] for the per-address gate).
     const fn writable(self) -> bool {
         matches!(self, Self::Cpu)
+    }
+
+    /// Whether a poke / freeze actually takes effect at `addr` in this domain.
+    ///
+    /// [`rustynes_core::Nes::poke_ram`] is a no-op outside CPU work RAM
+    /// (`$0000-$1FFF`), so only that range is editable — a click on ROM /
+    /// mapper / register space would otherwise be a silent, misleading no-op.
+    const fn addr_writable(self, addr: u16) -> bool {
+        matches!(self, Self::Cpu) && addr <= 0x1FFF
     }
 }
 
@@ -279,7 +289,10 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut MemoryPanelState, 
             });
 
             if state.domain.writable() {
-                ui.weak("Click a byte to poke it (Enter to write). Right-click toggles freeze.");
+                ui.weak(
+                    "Click a byte in $0000-$1FFF (work RAM) to poke it (Enter to write). \
+                     Right-click toggles freeze. Bytes outside work RAM are read-only.",
+                );
             } else {
                 ui.weak("Read-only domain (no deterministic poke path).");
             }
@@ -351,11 +364,15 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut MemoryPanelState, 
                                     text = text.color(READ_TINT);
                                 }
                             }
+                            // Only $0000-$1FFF work RAM is actually pokeable;
+                            // a click elsewhere would be a silent no-op, so it
+                            // is not made editable / freezable.
+                            let editable = state.domain.addr_writable(addr);
                             let resp = ui.add(egui::Label::new(text).sense(egui::Sense::click()));
-                            if resp.clicked() && state.domain.writable() {
+                            if resp.clicked() && editable {
                                 state.editing = Some((addr, format!("{byte:02X}")));
                             }
-                            if resp.secondary_clicked() && state.domain.writable() {
+                            if resp.secondary_clicked() && editable {
                                 toggle_freeze = Some(addr);
                             }
                         }

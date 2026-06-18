@@ -4,8 +4,8 @@
 //! NES framebuffer (256x240 RGBA8 — the exact source the screenshot path reads
 //! via [`rustynes_core::Nes::framebuffer`]) plus the audio samples drained for
 //! that same frame (mono `f32`, from the lock-free audio ring's producer side)
-//! are streamed to an external `ffmpeg` process, which muxes them into an
-//! `.mp4` / `.mkv` container.
+//! are buffered to disk and, at [`AvRecorder::stop`], muxed by an external
+//! `ffmpeg` process into an `.mp4` / `.mkv` container.
 //!
 //! ## Why this does NOT touch determinism
 //!
@@ -18,24 +18,30 @@
 //! (the default) this module is not compiled at all — the shipped / wasm /
 //! `no_std` builds are byte-identical.
 //!
-//! ## Encoder approach
+//! ## Encoder approach — mux at stop from two COMPLETE files
 //!
-//! We spawn `ffmpeg` and pipe two raw streams over a single stdin pipe is not
-//! possible (one pipe = one stream), so we hand `ffmpeg` the audio as a
-//! **separate named input** while video flows over stdin. To keep the
-//! implementation simple, robust, and dependency-free we instead:
+//! The earlier design spawned `ffmpeg` at arm time with the still-empty audio
+//! sidecar passed as a regular-file `-i` input. `ffmpeg` opens a regular-file
+//! input and reads it to EOF eagerly at startup — so it saw an empty (or
+//! truncated) audio file before any samples had been written, producing a
+//! recording with broken / missing audio. (A regular file is not a stream
+//! `ffmpeg` keeps polling; only pipes/fifos behave that way.)
 //!
-//! * write **rawvideo** (`rgba`, 256x240, at the region frame rate) to
-//!   `ffmpeg` over **stdin** (input 0), and
-//! * write the corresponding **mono `f32le`** PCM to a small temp file that
-//!   `ffmpeg` reads as input 1.
+//! The robust, dependency-free fix is to make **both** inputs complete before
+//! `ffmpeg` ever runs:
 //!
-//! Buffering the audio to a temp sidecar (rather than a second pipe) avoids the
-//! classic two-pipe deadlock (ffmpeg blocking on one stream while we block
-//! writing the other) without threads. The sidecar is muxed at `stop()` and
-//! deleted. If `ffmpeg` is **absent** the recorder degrades gracefully: arming
-//! fails with a clear [`AvError::FfmpegMissing`] and emulation continues
-//! untouched.
+//! * during recording, append **rawvideo** (`rgba`, 256x240) to a video temp
+//!   file and the corresponding **mono `f32le`** PCM to an audio temp file —
+//!   no child process is alive, so there is no two-pipe deadlock and no
+//!   read-before-write race; and
+//! * at [`AvRecorder::stop`], flush both files and spawn `ffmpeg` **once** with
+//!   `-i video.raw -i audio.raw`, muxing the two fully-written inputs into the
+//!   output container, then delete both temps.
+//!
+//! `ffmpeg` availability is still probed at [`AvRecorder::start`] (a cheap
+//! `ffmpeg -version` spawn) so arming fails fast and gracefully with
+//! [`AvError::FfmpegMissing`] when `ffmpeg` is absent — emulation continues
+//! untouched and the recorder is never armed.
 //!
 //! Choosing an external `ffmpeg` (over a vendored pure-Rust encoder) keeps the
 //! default build free of heavy media codecs; the feature is additive +
@@ -43,7 +49,7 @@
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 
 use crate::gfx::{NES_H, NES_W};
 
@@ -57,9 +63,10 @@ pub enum AvError {
     /// `ffmpeg` is not on `PATH` (or failed to spawn). Recording is unavailable;
     /// emulation is unaffected.
     FfmpegMissing(io::Error),
-    /// The audio sidecar temp file could not be created / written.
+    /// A temp capture file (video or audio) could not be created / written.
     Sidecar(io::Error),
-    /// `ffmpeg` exited non-zero during the final mux, or the spawn pipe broke.
+    /// `ffmpeg` exited non-zero during the final mux, or it could not be spawned
+    /// at stop time.
     Encode(String),
 }
 
@@ -69,7 +76,7 @@ impl core::fmt::Display for AvError {
             Self::FfmpegMissing(e) => {
                 write!(f, "ffmpeg not found (A/V recording unavailable): {e}")
             }
-            Self::Sidecar(e) => write!(f, "A/V audio sidecar I/O failed: {e}"),
+            Self::Sidecar(e) => write!(f, "A/V capture temp I/O failed: {e}"),
             Self::Encode(e) => write!(f, "ffmpeg encode failed: {e}"),
         }
     }
@@ -117,17 +124,18 @@ pub struct AvParams {
     pub fps_den: u32,
 }
 
-/// Build the `ffmpeg` argument vector for the given parameters.
+/// Build the `ffmpeg` argument vector for the final (stop-time) mux.
 ///
 /// Pure + side-effect-free so it can be unit-tested without spawning anything.
-/// Input 0 is rawvideo over stdin (`pipe:0`); input 1 is the mono `f32le` audio
-/// sidecar. Output is H.264 + AAC into the chosen container.
+/// Both inputs are **complete on-disk raw files** read at mux time: input 0 is
+/// the rawvideo (`rgba`, 256x240, at the region frame rate); input 1 is the
+/// mono `f32le` PCM. Output is H.264 + AAC into the chosen container.
 #[must_use]
-pub fn ffmpeg_args(params: &AvParams, audio_sidecar: &Path) -> Vec<String> {
+pub fn ffmpeg_args(params: &AvParams, video_raw: &Path, audio_raw: &Path) -> Vec<String> {
     let mut args: Vec<String> = vec![
         // Overwrite the output without prompting.
         "-y".into(),
-        // ---- input 0: rawvideo over stdin ----
+        // ---- input 0: rawvideo from the completed video temp file ----
         "-f".into(),
         "rawvideo".into(),
         "-pixel_format".into(),
@@ -137,8 +145,8 @@ pub fn ffmpeg_args(params: &AvParams, audio_sidecar: &Path) -> Vec<String> {
         "-framerate".into(),
         format!("{}/{}", params.fps_num, params.fps_den),
         "-i".into(),
-        "pipe:0".into(),
-        // ---- input 1: mono f32le PCM sidecar ----
+        video_raw.to_string_lossy().into_owned(),
+        // ---- input 1: mono f32le PCM from the completed audio temp file ----
         "-f".into(),
         "f32le".into(),
         "-ar".into(),
@@ -146,12 +154,12 @@ pub fn ffmpeg_args(params: &AvParams, audio_sidecar: &Path) -> Vec<String> {
         "-ac".into(),
         "1".into(),
         "-i".into(),
-        audio_sidecar.to_string_lossy().into_owned(),
+        audio_raw.to_string_lossy().into_owned(),
         // ---- encode ----
         "-c:v".into(),
         "libx264".into(),
-        // The NES frame is tiny; a fast preset keeps the encode off the
-        // critical path and is plenty for a 256x240 source.
+        // The NES frame is tiny; a fast preset keeps the encode quick and is
+        // plenty for a 256x240 source.
         "-preset".into(),
         "veryfast".into(),
         // yuv420p so the output plays everywhere (rgba -> yuv420p).
@@ -168,17 +176,22 @@ pub fn ffmpeg_args(params: &AvParams, audio_sidecar: &Path) -> Vec<String> {
 
 /// An active A/V recording session.
 ///
-/// Holds an armed `ffmpeg` child (video over stdin) plus an open audio sidecar
-/// file. Dropping without [`AvRecorder::stop`] aborts the encode (the partial
-/// output is left for the OS / user to clean up).
+/// Buffers rawvideo + mono-`f32le` audio to two temp files while recording; no
+/// child process is alive until [`AvRecorder::stop`] muxes the two completed
+/// files with a single `ffmpeg` invocation. `ffmpeg` presence is verified at
+/// [`AvRecorder::start`]. Dropping without [`AvRecorder::stop`] removes both
+/// temp files (no encode is produced).
 pub struct AvRecorder {
     params: AvParams,
-    child: Child,
-    /// Buffered writer for the mono-`f32le` audio sidecar (input 1). Taken
-    /// (closed) in [`AvRecorder::stop`] before `ffmpeg` is waited on, so the
-    /// muxer sees a fully-flushed file.
-    audio_sidecar: Option<io::BufWriter<std::fs::File>>,
-    audio_sidecar_path: PathBuf,
+    /// Buffered writer for the rawvideo capture (input 0). Taken (closed) in
+    /// [`AvRecorder::stop`] before `ffmpeg` runs, so the muxer sees a fully
+    /// flushed file.
+    video: Option<io::BufWriter<std::fs::File>>,
+    video_path: PathBuf,
+    /// Buffered writer for the mono-`f32le` audio capture (input 1). Closed in
+    /// [`AvRecorder::stop`] before `ffmpeg` runs.
+    audio: Option<io::BufWriter<std::fs::File>>,
+    audio_path: PathBuf,
     /// Frames written so far (informational / status reporting).
     frames: u64,
     /// Audio samples written so far (informational).
@@ -186,81 +199,97 @@ pub struct AvRecorder {
 }
 
 impl AvRecorder {
-    /// Arm a recording: create the audio sidecar and spawn `ffmpeg`. Returns
-    /// [`AvError::FfmpegMissing`] (recording unavailable) if `ffmpeg` is not
-    /// installed — the caller should surface a toast and carry on.
+    /// Arm a recording: verify `ffmpeg` is available, then create the two temp
+    /// capture files. Returns [`AvError::FfmpegMissing`] (recording unavailable)
+    /// if `ffmpeg` is not installed — the caller should surface a toast and
+    /// carry on.
+    ///
+    /// No `ffmpeg` child is spawned here; muxing happens once, at
+    /// [`AvRecorder::stop`], from the completed temp files.
     ///
     /// # Errors
-    /// Fails if the sidecar temp file cannot be created or `ffmpeg` cannot be
-    /// spawned.
+    /// Fails with [`AvError::FfmpegMissing`] if `ffmpeg` cannot be spawned, or
+    /// [`AvError::Sidecar`] if a temp capture file cannot be created.
     pub fn start(params: AvParams) -> Result<Self, AvError> {
-        // Audio sidecar lives next to the output so it shares its filesystem
-        // (cheap rename/cleanup) and is unique per recording.
-        let audio_sidecar_path = sidecar_path(&params.out_path);
-        let sidecar_file = std::fs::File::create(&audio_sidecar_path).map_err(AvError::Sidecar)?;
-        let audio_sidecar = io::BufWriter::new(sidecar_file);
+        // Probe ffmpeg up front so arming fails fast + gracefully when it is
+        // absent (the actual mux runs at stop()). `-version` exits immediately.
+        Self::probe_ffmpeg().map_err(AvError::FfmpegMissing)?;
 
-        let args = ffmpeg_args(&params, &audio_sidecar_path);
-        let child = Command::new("ffmpeg")
-            .args(&args)
-            .stdin(Stdio::piped())
-            // ffmpeg is chatty on stderr; silence it (errors surface via the
-            // exit status at stop()).
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|e| {
-                // Clean up the just-created sidecar so a failed arm leaves no trash.
-                let _ = std::fs::remove_file(&audio_sidecar_path);
-                AvError::FfmpegMissing(e)
-            })?;
+        // Capture temps live next to the output so they share its filesystem
+        // (cheap cleanup) and are unique per recording.
+        let video_path = capture_path(&params.out_path, ".video.rustynes-avtmp");
+        let audio_path = capture_path(&params.out_path, ".audio.rustynes-avtmp");
+
+        let video_file = std::fs::File::create(&video_path).map_err(AvError::Sidecar)?;
+        let audio_file = std::fs::File::create(&audio_path).map_err(|e| {
+            // Don't leak the video temp if the audio temp create fails.
+            let _ = std::fs::remove_file(&video_path);
+            AvError::Sidecar(e)
+        })?;
 
         Ok(Self {
             params,
-            child,
-            audio_sidecar: Some(audio_sidecar),
-            audio_sidecar_path,
+            video: Some(io::BufWriter::new(video_file)),
+            video_path,
+            audio: Some(io::BufWriter::new(audio_file)),
+            audio_path,
             frames: 0,
             samples: 0,
         })
     }
 
-    /// Append one produced video frame (RGBA8, 256x240) to the video pipe.
+    /// Run `ffmpeg -version` to confirm the binary is on `PATH` and spawnable.
+    fn probe_ffmpeg() -> Result<(), io::Error> {
+        let status = Command::new("ffmpeg")
+            .arg("-version")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(io::Error::other(format!("ffmpeg -version exited {status}")))
+        }
+    }
+
+    /// Append one produced video frame (RGBA8, 256x240) to the video temp file.
     ///
     /// A short / mis-sized framebuffer is ignored (logged once by the caller);
-    /// a broken pipe (ffmpeg died) returns an error so the caller can stop.
+    /// a write failure returns an error so the caller can stop.
     ///
     /// # Errors
-    /// Returns [`AvError::Encode`] if the ffmpeg stdin pipe is broken.
+    /// Returns [`AvError::Sidecar`] if the video temp file write fails.
     pub fn push_video(&mut self, framebuffer: &[u8]) -> Result<(), AvError> {
         if framebuffer.len() != FRAME_BYTES {
             // Defensive: never feed ffmpeg a frame of the wrong stride.
             return Ok(());
         }
-        let Some(stdin) = self.child.stdin.as_mut() else {
-            return Err(AvError::Encode("ffmpeg stdin closed".into()));
+        let Some(video) = self.video.as_mut() else {
+            return Err(AvError::Sidecar(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "video capture already closed",
+            )));
         };
-        stdin
-            .write_all(framebuffer)
-            .map_err(|e| AvError::Encode(format!("video pipe write failed: {e}")))?;
+        video.write_all(framebuffer).map_err(AvError::Sidecar)?;
         self.frames += 1;
         Ok(())
     }
 
-    /// Append this frame's audio samples (mono `f32`) to the sidecar.
+    /// Append this frame's audio samples (mono `f32`) to the audio temp file.
     ///
     /// # Errors
-    /// Returns [`AvError::Sidecar`] on a sidecar write failure.
+    /// Returns [`AvError::Sidecar`] on an audio temp write failure.
     pub fn push_audio(&mut self, samples: &[f32]) -> Result<(), AvError> {
         // f32le: little-endian IEEE-754, exactly what ffmpeg's `f32le` expects.
-        let Some(sidecar) = self.audio_sidecar.as_mut() else {
+        let Some(audio) = self.audio.as_mut() else {
             return Err(AvError::Sidecar(io::Error::new(
                 io::ErrorKind::BrokenPipe,
-                "audio sidecar already closed",
+                "audio capture already closed",
             )));
         };
         for &s in samples {
-            sidecar
+            audio
                 .write_all(&s.to_le_bytes())
                 .map_err(AvError::Sidecar)?;
         }
@@ -280,35 +309,44 @@ impl AvRecorder {
         &self.params.out_path
     }
 
-    /// Finalize: flush + close the video pipe and the audio sidecar, wait for
-    /// `ffmpeg` to mux, then delete the sidecar. Consumes `self`.
+    /// Finalize: flush + close both temp capture files, spawn `ffmpeg` once to
+    /// mux the two COMPLETE files, wait for it, then delete the temps. Consumes
+    /// `self`.
     ///
     /// # Errors
-    /// Returns [`AvError::Encode`] if `ffmpeg` exits non-zero.
+    /// Returns [`AvError::Sidecar`] on a final flush failure, or
+    /// [`AvError::Encode`] if `ffmpeg` cannot be spawned or exits non-zero.
     pub fn stop(mut self) -> Result<PathBuf, AvError> {
-        // Flush + close the audio sidecar first so ffmpeg sees a complete input
-        // (taking the Option drops the BufWriter, closing the file handle).
-        if let Some(mut sidecar) = self.audio_sidecar.take() {
-            sidecar.flush().map_err(AvError::Sidecar)?;
+        // Flush + close both inputs (taking the Option drops the BufWriter,
+        // closing the file handle) so ffmpeg reads two fully-written files.
+        if let Some(mut video) = self.video.take() {
+            video.flush().map_err(AvError::Sidecar)?;
         }
-        // Close the video pipe (EOF) so ffmpeg stops reading input 0.
-        drop(self.child.stdin.take());
+        if let Some(mut audio) = self.audio.take() {
+            audio.flush().map_err(AvError::Sidecar)?;
+        }
 
-        let status = self
-            .child
-            .wait()
-            .map_err(|e| AvError::Encode(format!("ffmpeg wait failed: {e}")))?;
+        let args = ffmpeg_args(&self.params, &self.video_path, &self.audio_path);
+        let result = Command::new("ffmpeg")
+            .args(&args)
+            .stdin(Stdio::null())
+            // ffmpeg is chatty on stderr; silence it (errors surface via the
+            // exit status).
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
 
-        // Best-effort sidecar cleanup regardless of the encode outcome.
-        let _ = std::fs::remove_file(&self.audio_sidecar_path);
+        // Best-effort temp cleanup regardless of the encode outcome.
+        let _ = std::fs::remove_file(&self.video_path);
+        let _ = std::fs::remove_file(&self.audio_path);
 
-        if status.success() {
-            Ok(self.params.out_path.clone())
-        } else {
-            Err(AvError::Encode(format!(
+        match result {
+            Ok(status) if status.success() => Ok(self.params.out_path.clone()),
+            Ok(status) => Err(AvError::Encode(format!(
                 "ffmpeg exited with {status} ({} frames, {} samples)",
                 self.frames, self.samples
-            )))
+            ))),
+            Err(e) => Err(AvError::Encode(format!("ffmpeg spawn failed: {e}"))),
         }
     }
 }
@@ -316,19 +354,20 @@ impl AvRecorder {
 impl Drop for AvRecorder {
     fn drop(&mut self) {
         // If the session was dropped without stop() (e.g. ROM closed mid-record
-        // or the app exiting), kill ffmpeg and remove the sidecar so we don't
-        // leak a zombie or a stray temp file.
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-        let _ = std::fs::remove_file(&self.audio_sidecar_path);
+        // or the app exiting), drop the writers and remove both temp files so
+        // we don't leak stray captures. No child process is alive to reap.
+        self.video.take();
+        self.audio.take();
+        let _ = std::fs::remove_file(&self.video_path);
+        let _ = std::fs::remove_file(&self.audio_path);
     }
 }
 
-/// Derive the audio-sidecar path for an output path: `<out>.rustynes-avtmp`.
+/// Derive a capture-temp path for an output path: `<out><suffix>`.
 #[must_use]
-fn sidecar_path(out_path: &Path) -> PathBuf {
+fn capture_path(out_path: &Path, suffix: &str) -> PathBuf {
     let mut p = out_path.as_os_str().to_os_string();
-    p.push(".rustynes-avtmp");
+    p.push(suffix);
     PathBuf::from(p)
 }
 
@@ -364,15 +403,18 @@ mod tests {
     #[test]
     fn ffmpeg_args_describe_both_inputs_and_codecs() {
         let p = params();
-        let sidecar = sidecar_path(&p.out_path);
-        let args = ffmpeg_args(&p, &sidecar);
+        let video = capture_path(&p.out_path, ".video.rustynes-avtmp");
+        let audio = capture_path(&p.out_path, ".audio.rustynes-avtmp");
+        let args = ffmpeg_args(&p, &video, &audio);
 
-        // Two inputs: rawvideo over a pipe + the f32le sidecar.
+        // Two inputs: rawvideo file + the f32le audio file (both complete on
+        // disk at mux time — neither is a pipe).
         assert_eq!(args.iter().filter(|a| *a == "-i").count(), 2);
-        assert!(args.iter().any(|a| a == "pipe:0"));
         assert!(args.iter().any(|a| a == "rawvideo"));
         assert!(args.iter().any(|a| a == "rgba"));
         assert!(args.iter().any(|a| a == "f32le"));
+        // No pipe input any more — both inputs are regular files.
+        assert!(!args.iter().any(|a| a == "pipe:0"));
         // Frame size + exact rational frame rate are passed through verbatim.
         assert!(args.iter().any(|a| a == "256x240"));
         assert!(args.iter().any(|a| a == "60098814/1000000"));
@@ -388,11 +430,12 @@ mod tests {
     }
 
     #[test]
-    fn ffmpeg_args_audio_input_is_the_sidecar() {
+    fn ffmpeg_args_inputs_are_the_video_then_audio_files() {
         let p = params();
-        let sidecar = sidecar_path(&p.out_path);
-        let args = ffmpeg_args(&p, &sidecar);
-        // The second `-i` is followed by the sidecar path.
+        let video = capture_path(&p.out_path, ".video.rustynes-avtmp");
+        let audio = capture_path(&p.out_path, ".audio.rustynes-avtmp");
+        let args = ffmpeg_args(&p, &video, &audio);
+        // The first `-i` is the video file; the second `-i` is the audio file.
         let positions: Vec<usize> = args
             .iter()
             .enumerate()
@@ -400,12 +443,17 @@ mod tests {
             .map(|(i, _)| i)
             .collect();
         assert_eq!(positions.len(), 2);
-        assert_eq!(args[positions[1] + 1], sidecar.to_string_lossy());
+        assert_eq!(args[positions[0] + 1], video.to_string_lossy());
+        assert_eq!(args[positions[1] + 1], audio.to_string_lossy());
     }
 
     #[test]
-    fn sidecar_path_is_derived_from_output() {
-        let s = sidecar_path(Path::new("/x/y/rec.mp4"));
-        assert_eq!(s, PathBuf::from("/x/y/rec.mp4.rustynes-avtmp"));
+    fn capture_paths_are_derived_from_output_and_distinct() {
+        let out = Path::new("/x/y/rec.mp4");
+        let v = capture_path(out, ".video.rustynes-avtmp");
+        let a = capture_path(out, ".audio.rustynes-avtmp");
+        assert_eq!(v, PathBuf::from("/x/y/rec.mp4.video.rustynes-avtmp"));
+        assert_eq!(a, PathBuf::from("/x/y/rec.mp4.audio.rustynes-avtmp"));
+        assert_ne!(v, a);
     }
 }
