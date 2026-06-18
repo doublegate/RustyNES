@@ -541,13 +541,16 @@ ROM dumps under `tests/roms/external/`, not committed):
 **Mapper count.** 15 distinct mappers in the early engine line (>95% of the
 licensed library by title count) → **51 families at v1.0.0** → **87 families at
 v1.2.0** → **101 families at v1.3.0 "Bedrock"** → **113 families at v1.4.0
-"Fidelity"** → **123 families at v1.5.0 "Lens"**, tiered for accuracy honesty:
+"Fidelity"** → **123 families at v1.5.0 "Lens"** → **150 families in v1.6.0
+"Studio" (in development)** (the J.Y. Company ASIC sweep 35/90/209/211 +
+Workstream E's `sprint11` batch: MMC3-clones, Sachen 8259 A/B/C, discrete
+multicarts), tiered for accuracy honesty:
 
 | Tier | Families | Accuracy-gated? | Evidence |
 |------|----------|-----------------|----------|
 | **Core** | 51 | Yes (AccuracyCoin + commercial oracle) | spec-implemented, oracle-locked |
 | **Curated** (v1.2.0) | 9 | Yes | notable games + decode spec; register-decode unit tests |
-| **BestEffort** (v1.2.0 + v1.3.0 + v1.4.0 + v1.5.0) | 63 | **No** | reference-ported long-tail; register-decode unit tests only |
+| **BestEffort** (v1.2.0 + v1.3.0 + v1.4.0 + v1.5.0 + v1.6.0) | 90 | **No** | reference-ported long-tail; register-decode + save-state unit tests only |
 
 A CI-checkable invariant forbids any `BestEffort` mapper from backing an oracle
 ROM (`rustynes-mappers::mapper_tier`; ADR 0011). The remaining tail (unlicensed

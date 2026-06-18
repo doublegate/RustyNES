@@ -89,6 +89,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the Mesen2 `JyCompany` implementation. Register-decode + save-state
   unit-tested only and not in the AccuracyCoin oracle, so AccuracyCoin holds
   100% (139/139) and the `mapper_tier_honesty` gate stays green (ADR 0011).
+- **Mapper breadth 126 → 150 families** (v1.6.0 Workstream E continuation,
+  BestEffort tier). +24 honesty-gated families ported from the NESdev wiki and
+  the Mesen2 reference cores. The J.Y. Company ASIC gains its single-game
+  "extended" sibling **mapper 35** (`jy_asic.rs`, same silicon as 209). A new
+  `crates/rustynes-mappers/src/sprint11.rs` adds: a shared MMC3-style core
+  (eight bank registers, the `$8000`/`$A000`/`$C000`/`$E000` protocol, an A12
+  falling-edge IRQ) wrapped by the **MMC3-clone** variants
+  **44 / 49 / 52 / 115 / 134 / 189 / 205 / 238 / 245 / 348 / 366** (each adds a
+  board-specific outer-bank register + PRG/CHR transform); the **Sachen 8259
+  A/B/C** 2 KiB-CHR variants **141 / 138 / 139** (siblings of the existing 8259D
+  mapper 137, differing only by a CHR shift + per-slot OR constants); and the
+  discrete unlicensed / FDS-conversion / multicart boards **42** + **50** (each
+  with a CPU-cycle M2 IRQ) and **46 / 51 / 57 / 104 / 120 / 290 / 301**
+  (hook-free). Every new family is register-decode + save-state-round-trip
+  unit-tested and classified `BestEffort` in `mapper_tier` — outside the
+  AccuracyCoin / commercial-ROM oracle by construction — so AccuracyCoin holds
+  100% (139/139), the `mapper_tier_honesty` gate stays green (ADR 0011), and the
+  shipped / native / `no_std` / wasm builds stay byte-identical
+  (additive, off the deterministic-core path). (See `docs/mappers.md`.)
 - **UNIF (`.unf`) cartridge loader** (v1.6.0 Workstream E2). UNIF carries no
   mapper number — it identifies the cartridge by a board-name string in its
   `MAPR` chunk. `rustynes_mappers::unif` parses the header + chunks

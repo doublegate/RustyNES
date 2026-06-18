@@ -55,6 +55,7 @@ mod nrom;
 mod nsf;
 mod rambo1;
 mod sprint10;
+mod sprint11;
 mod sprint2;
 mod sprint3;
 mod sprint5;
@@ -131,6 +132,12 @@ pub use sprint9::{
 pub use sprint10::{
     Daou156, Decathlon244, Namcot3425M95, Nitra250, Ntdec81, Ntdec2722M40, NtdecAsder112,
     Sachen8259M137, Waixing178, WaixingFs304M162,
+};
+pub use sprint11::{
+    DiscreteBoard, DiscreteMapper, Mapper42, Mapper50, Mmc3CloneMapper, Sachen8259,
+    Sachen8259Variant, new_m44, new_m46, new_m49, new_m51, new_m52, new_m57, new_m104, new_m115,
+    new_m120, new_m134, new_m189, new_m205, new_m238, new_m245, new_m290, new_m301, new_m348,
+    new_m366,
 };
 pub use sunsoft1::Sunsoft1;
 pub use sunsoft2::Sunsoft2;
@@ -1080,6 +1087,111 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
         ),
         211 => Box::new(
             JyAsic::new(prg_rom, chr_rom, h.mirroring, JyBoard::M211)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        // J.Y. Company ASIC, single-game "extended" board (same silicon as
+        // 90/209/211; the ROM-nametable feature is register-enabled like 209).
+        35 => Box::new(
+            JyAsic::new(prg_rom, chr_rom, h.mirroring, JyBoard::M35)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        // --- v1.6.0 "Studio" Workstream E, best-effort (Tier-2) sweep
+        // (sprint11). MMC3-clone variants (shared MMC3-style core + A12 IRQ),
+        // Sachen 8259 A/B/C, and discrete multicarts. Register-decode +
+        // save-state unit-tested only, NOT accuracy-gated (`tier.rs`).
+        44 => Box::new(
+            sprint11::new_m44(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        49 => Box::new(
+            sprint11::new_m49(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        52 => Box::new(
+            sprint11::new_m52(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        115 => Box::new(
+            sprint11::new_m115(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        134 => Box::new(
+            sprint11::new_m134(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        189 => Box::new(
+            sprint11::new_m189(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        205 => Box::new(
+            sprint11::new_m205(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        238 => Box::new(
+            sprint11::new_m238(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        245 => Box::new(
+            sprint11::new_m245(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        348 => Box::new(
+            sprint11::new_m348(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        366 => Box::new(
+            sprint11::new_m366(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        // Sachen 8259 A/B/C (the 2 KiB-CHR variants; 8259D is mapper 137).
+        141 => Box::new(
+            Sachen8259::new(Sachen8259Variant::A, prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        138 => Box::new(
+            Sachen8259::new(Sachen8259Variant::B, prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        139 => Box::new(
+            Sachen8259::new(Sachen8259Variant::C, prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        // Discrete unlicensed / multicart boards. m42 + m50 carry a CPU-cycle
+        // IRQ; the rest are hook-free.
+        42 => Box::new(
+            Mapper42::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        50 => Box::new(
+            Mapper50::new(prg_rom, &chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        46 => Box::new(
+            sprint11::new_m46(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        51 => Box::new(
+            sprint11::new_m51(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        57 => Box::new(
+            sprint11::new_m57(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        104 => Box::new(
+            sprint11::new_m104(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        120 => Box::new(
+            sprint11::new_m120(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        290 => Box::new(
+            sprint11::new_m290(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        301 => Box::new(
+            sprint11::new_m301(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         other => return Err(RomError::UnsupportedMapper(other)),
