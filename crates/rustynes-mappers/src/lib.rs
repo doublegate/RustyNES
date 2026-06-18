@@ -42,6 +42,7 @@ mod irem_g101;
 mod irem_h3001;
 mod jaleco87;
 mod jaleco_ss88006;
+mod jy_asic;
 mod konami_vs;
 mod m78;
 mod mapper;
@@ -91,6 +92,7 @@ pub use irem_g101::IremG101;
 pub use irem_h3001::IremH3001;
 pub use jaleco_ss88006::JalecoSs88006;
 pub use jaleco87::Jaleco87;
+pub use jy_asic::{JyAsic, JyBoard};
 pub use konami_vs::KonamiVs;
 pub use m78::{M78, M78Variant};
 pub use mapper::{
@@ -1044,6 +1046,24 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
         ),
         250 => Box::new(
             Nitra250::new(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        // --- v1.6.0 "Studio" Workstream E, best-effort (Tier-2): J.Y. Company
+        // ASIC. One silicon implementation behind three iNES mapper numbers;
+        // 90 inhibits the ROM-nametable / extended-mirroring feature, 209
+        // register-enables it, 211 forces it on. Ported from the nesdev
+        // "J.Y. Company ASIC" page + Mesen2 `JyCompany`. Register-decode +
+        // save-state unit-tested only, NOT accuracy-gated (`tier.rs`).
+        90 => Box::new(
+            JyAsic::new(prg_rom, chr_rom, h.mirroring, JyBoard::M90)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        209 => Box::new(
+            JyAsic::new(prg_rom, chr_rom, h.mirroring, JyBoard::M209)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        211 => Box::new(
+            JyAsic::new(prg_rom, chr_rom, h.mirroring, JyBoard::M211)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         other => return Err(RomError::UnsupportedMapper(other)),
