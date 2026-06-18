@@ -26,14 +26,17 @@ scheduling at PPU-dot resolution on a master-clock-precise timebase — clearing
 `nestest` with **zero diff**.
 
 Beyond reference accuracy, RustyNES is a complete, modern emulation platform:
-**123 mapper families** covering the vast majority of the commercial library, the full
-**Famicom Disk System** (real-BIOS boot), **Vs. System / PlayChoice-10** arcade games
-in true RGB, **GGPO-style rollback netplay** (native UDP and browser WebRTC, 2-4
-players), **RetroAchievements**, **TAS movie** recording and playback, save states with
-rewind, run-ahead latency reduction, and a full egui debugger — all on a strict
-bit-determinism contract. The frontend is pure Rust (`winit` + `wgpu` + `cpal` +
-`egui`) with native binaries for Linux, macOS, and Windows, plus a WebAssembly build
-that runs in the browser.
+**150 mapper families** covering the vast majority of the commercial library (plus a
+UNIF `.unf` cartridge loader), the full **Famicom Disk System** (real-BIOS boot with a
+timed disk-head model), **Vs. System / PlayChoice-10** arcade games in true RGB,
+**GGPO-style rollback netplay** (native UDP and browser WebRTC, 2-4 players),
+**RetroAchievements**, a **TAStudio piano-roll TAS editor** with `.fm2` / `.bk2` movie
+interop, save states with rewind, run-ahead latency reduction, a **Mesen2-class
+debugger** (conditional breakpoints, R/W/X watchpoints, a hex editor, RAM search),
+**A/V recording**, **HD-pack** video + audio, and a **shader / filter ecosystem** — all
+on a strict bit-determinism contract. The frontend is pure Rust (`winit` + `wgpu` +
+`cpal` + `egui`) with native binaries for Linux, macOS, and Windows, plus a WebAssembly
+build that runs in the browser.
 
 **[Try it in your browser](https://doublegate.github.io/RustyNES/)** — no install
 required.
@@ -68,7 +71,7 @@ platform for NES emulation.
 | Feature                | Description                                                                                  |
 | ---------------------- | -------------------------------------------------------------------------------------------- |
 | **Cycle-Accurate**     | Master-clock-precise CPU / PPU / APU — AccuracyCoin 100% (139/139), nestest 0-diff           |
-| **123 Mapper Families** | NROM through MMC5, the full VRC line, Sunsoft FME-7, Namco 163, Taito, and Vs.-System boards — classified Core / Curated / BestEffort behind a CI accuracy-honesty gate *(123 as of v1.5.0; 126 on `main` with the v1.6.0 J.Y. ASIC family)* |
+| **150 Mapper Families** | NROM through MMC5, the full VRC line, Sunsoft FME-7, Namco 163, Taito, J.Y. Company ASIC, and Vs.-System boards — classified Core / Curated / BestEffort behind a CI accuracy-honesty gate — plus a UNIF (`.unf`) cartridge loader |
 | **Famicom Disk System**| `.fds` games with real-BIOS boot, writable disks, side-swapping, and 2C33 wavetable audio    |
 | **Vs. / PlayChoice-10**| Arcade ROMs in true 2C03 / 2C04 / 2C05 RGB with per-game DIP presets                          |
 | **RetroAchievements**  | Native `rcheevos` integration: achievements, leaderboards, rich presence, hardcore mode      |
@@ -79,8 +82,12 @@ platform for NES emulation.
 | **Lua Scripting** *(v1.1.0)* | Sandboxed Lua 5.4 — memory/state access, frame & access callbacks, HUD overlay (opt-in)  |
 | **ROM Library** *(v1.2.0)* | `.zip` loading + automatic `.ips`/`.ups`/`.bps` soft-patching + a per-game DB and in-app ROM-Database editor |
 | **Shaders & HD Packs** *(v1.2.0)* | Live NTSC knobs, a composable shader stack + CRT preset bank, and a (default-off) Mesen-style HD-pack loader |
-| **TAStudio Editor** *(v1.6.0, dev)* | A piano-roll TAS editor — per-frame button grid with drag-paint, a save-state greenzone + lag log, markers, forkable branches, and `.rnmproj` projects |
-| **UNIF + Movie Interop** *(v1.6.0, dev)* | `.unf` cartridge loading (board-name → mapper resolution) and FCEUX `.fm2` movie import/export |
+| **TAStudio Editor** *(v1.6.0)* | A piano-roll TAS editor — per-frame button grid with drag-paint, a save-state greenzone + lag log, markers, forkable branches, and `.rnmproj` projects |
+| **Movie Interop** *(v1.6.0)* | FCEUX `.fm2` and BizHawk `.bk2` movie import / export to and from the native `.rnm` format, plus Lua movie driving (`emu.run` / `emu.frameadvance`) |
+| **Mesen2-Class Debugger** *(v1.6.0)* | Expression / conditional breakpoints, R/W/X watchpoints, a watch window, conditional trace, a full hex editor (poke / freeze / heatmap / find), and RAM watch / search |
+| **A/V Recording** *(v1.6.0)* | Synchronized video + audio capture to `.mp4` / `.mkv` via an `ffmpeg` pipe (default-off `av-record`, output-only) |
+| **HD Audio** *(v1.6.0)* | HD-pack `<bgm>` / `<sfx>` OGG tracks triggered through the `$4100` register, mixed on top of the produced APU buffer (default-off `hd-pack`) |
+| **Shader Ecosystem** *(v1.6.0)* | LMP88959 NTSC/PAL, hqNx / xBRZ upscalers, and a constrained `.slangp` / `.cgp` preset import on the composable ShaderStack |
 | **Pure Rust**          | `winit` + `wgpu` + `cpal` + `egui` frontend; safe `no_std + alloc` chip stack                 |
 
 <p align="center">
@@ -104,7 +111,7 @@ FME-7, and the full VRC line, plus Vs.-arcade RGB.
 The full per-mapper visual corpus lives in
 [`screenshots/external/`](screenshots/external/) (Core / Curated) and
 [`screenshots/besteffort/`](screenshots/besteffort/) (BestEffort) — boot / title /
-gameplay frames spanning the bulk of the ~126 mapper families.
+gameplay frames spanning the bulk of the 150 mapper families.
 
 ---
 
@@ -131,14 +138,21 @@ gameplay frames spanning the bulk of the ~126 mapper families.
 
 ### Cartridges and platforms
 
-- **123 mapper families** covering the bulk of the licensed library — NROM, all
+- **150 mapper families** covering the bulk of the licensed library — NROM, all
   MMC1-5, the full VRC1/2/4/6/7 line (incl. VRC6 and VRC7 expansion audio), Sunsoft
   FME-7/1/2/3/4 (+ 5B audio), Namco 163 (+ wavetable), the Taito
-  TC0190/TC0690/X1-005/X1-017 and Irem/Jaleco/Bandai/Tengen boards, and the Vs.-System
-  mappers. See [`docs/mappers.md`](docs/mappers.md).
+  TC0190/TC0690/X1-005/X1-017, J.Y. Company ASIC boards, and the
+  Irem/Jaleco/Bandai/Tengen and Vs.-System mappers — classified Core / Curated /
+  BestEffort behind a CI accuracy-honesty gate. A **UNIF (`.unf`) cartridge loader**
+  resolves board names to the corresponding mapper. See
+  [`docs/mappers.md`](docs/mappers.md).
 - **Famicom Disk System** — `.fds` games with a user-supplied `disksys.rom` BIOS; the
   disk drive and IRQs, writable disks (`.fds.sav`, `F9` side-swap), and 2C33 wavetable
-  audio. Real-BIOS boot works — Zelda, Metroid, and others boot into the game.
+  audio. Real-BIOS boot works — Zelda, Metroid, and others boot into the game. v1.6.0's
+  **FDS-proper** pass adds a timed disk-head position model (a motor restart rewinds the
+  belt-driven disk and re-seeks across a deterministic not-ready window rather than
+  teleporting to track 0), `$4032` drive-status auto-insert, and a per-game CRC quirk
+  table — closing the Kid Icarus side-B post-registration replay.
 - **Vs. System / PlayChoice-10** — the 2C03 / 2C04 / 2C05 RGB PPUs with per-game DIP
   presets and exact palettes; real arcade ROMs render in true RGB.
 
@@ -152,6 +166,13 @@ gameplay frames spanning the bulk of the ~126 mapper families.
   (WebRTC) mesh** path with a deployable signaling / STUN bundle ([`deploy/`](deploy/)).
 - **TAS movie recording and playback** — frame-perfect deterministic record / replay
   with save-state branching, in a versioned `.rnm` format.
+- **TAStudio piano-roll editor** *(v1.6.0)* — a Mesen2 / BizHawk-class TAS-authoring
+  surface: a per-frame button-grid with drag-paint editing, a save-state **greenzone**
+  for instant deterministic seeking, a **lag log**, named **markers**, **forkable
+  branches**, and `.rnmproj` project files.
+- **Movie interop** *(v1.6.0)* — import and export FCEUX `.fm2` and BizHawk `.bk2`
+  movies to and from the native `.rnm` format, so RustyNES interoperates with the wider
+  TAS ecosystem.
 - **Save state + rewind** — a 600-frame rewind ring, instant save / load, and a
   snapshot fast path used by run-ahead, plus a thumbnail save-state manager.
 - **Run-ahead** — hides a game's internal input lag for snappier controls, built on
@@ -170,7 +191,9 @@ gameplay frames spanning the bulk of the ~126 mapper families.
   the real APU, with a track selector and the file's title / artist / copyright.
 - **Lua scripting** *(v1.1.0, opt-in `scripting` feature, native-only)* — a sandboxed
   **Lua 5.4** engine: read / write memory, inspect CPU state, react to per-frame /
-  per-access events, draw an HUD overlay, and drive control actions. See
+  per-access events, draw an HUD overlay, and drive control actions. v1.6.0 adds
+  **movie driving** (`emu.run` / `emu.frameadvance` to step the emulator from a script)
+  and **data breadth** (named memory domains, sized reads, and a `joypad` table). See
   [`docs/scripting.md`](docs/scripting.md).
 - **Cheats and input devices** — Game Genie and raw RAM cheats, input devices
   (standard pad, Four Score, Arkanoid Vaus, Zapper, and the **Power Pad**),
@@ -185,6 +208,26 @@ gameplay frames spanning the bulk of the ~126 mapper families.
   inspector by default, plus opt-in **breakpoints / watchpoints**, a **cycle trace
   logger**, and an **event viewer** (IRQ / NMI / register-write timeline) behind the
   `debug-hooks` feature — all preserving the strict determinism contract when off.
+- **Mesen2-class debugger depth** *(v1.6.0, `debug-hooks`)* — **expression /
+  conditional breakpoints**, **read / write / execute watchpoints**, a **watch window**,
+  **conditional trace** logging, a full **hex editor** (poke, freeze, write-heatmap,
+  find), and **RAM watch / search** — the debugging surface a TAS or homebrew developer
+  expects, all read-only-by-default and determinism-preserving.
+- **A/V recording** *(v1.6.0, opt-in `av-record` feature, native-only)* — capture the
+  running game to an `.mp4` / `.mkv` via an external `ffmpeg` pipe (H.264 + AAC). It is
+  a read-only tap on the already-produced framebuffer and audio, so it never touches the
+  emulator or the determinism contract, and the default build pulls no extra Rust
+  dependencies (only the system `ffmpeg` at run time).
+- **HD-pack HD audio** *(v1.6.0, opt-in `hd-pack` feature, native-only)* — HD-pack
+  `<bgm>` / `<sfx>` OGG tracks triggered through the `$4100` control register and mixed
+  (pure-Rust `lewton` decoder) on top of the buffer the core already produced — the audio
+  analogue of HD tile substitution, output-only and determinism-neutral.
+- **Shader / filter ecosystem** *(v1.6.0)* — built-in **LMP88959** composite NTSC/PAL,
+  **hqNx** and **xBRZ** edge-directed pixel-art upscalers, and a constrained RetroArch
+  **`.slangp` / `.cgp`** preset importer (mapping well-known shader stems onto the
+  built-in passes, never silently dropping the unsupported ones) — all composable on the
+  off-by-default ShaderStack, post-framebuffer and never touching the core. See
+  [`docs/frontend.md`](docs/frontend.md) and ADR 0013.
 
 ---
 
@@ -291,8 +334,9 @@ Everything has a keyboard shortcut, but nothing requires one.
   Slot picker, a thumbnail **Save States…** manager, Take Screenshot, Copy Screenshot to
   Clipboard), Emulation (Pause, Reset, Power Cycle, **Speed 25–300 %**, Run-Ahead 0–3,
   the region label, Vs. Insert Coin / FDS Swap Disk Side when relevant), Tools
-  (Cheats, TAS Movies, Netplay, RetroAchievements, Performance Monitor — opened as
-  floating windows without the debugger), View (Settings, Theme, 8:7 Pixel Aspect,
+  (Cheats, TAS Movies, the **TAStudio** piano-roll editor, **Record A/V**, Netplay,
+  RetroAchievements, Performance Monitor — opened as floating windows without the
+  debugger), View (Settings, Theme, 8:7 Pixel Aspect,
   Hide Overscan, Fullscreen, Window Size 1x–4x, Show FPS, Pause When Unfocused, Show
   Menu Bar), Debug (the debugger overlay + per-chip panels), and Help (Keyboard
   Shortcuts, About).
@@ -364,7 +408,7 @@ in [`docs/architecture.md`](docs/architecture.md) and [`docs/scheduler.md`](docs
 | `rustynes-cpu`           | Cycle-accurate 6502 / 2A03 CPU core                         |
 | `rustynes-ppu`           | Dot-level 2C02 PPU                                          |
 | `rustynes-apu`           | Hardware-accurate 2A03 APU with band-limited synthesis      |
-| `rustynes-mappers`       | 123 mapper families + expansion audio                       |
+| `rustynes-mappers`       | 150 mapper families + expansion audio + UNIF loader         |
 | `rustynes-core`          | Integration layer: Bus, scheduler, console, save states     |
 | `rustynes-frontend`      | `winit` + `wgpu` + `cpal` + `egui` app (binary: `rustynes`) |
 | `rustynes-netplay`       | GGPO-style rollback netcode (UDP + WebRTC)                  |
@@ -408,6 +452,21 @@ expected-fail** is `mmc3_test_2/4` sub-test #3 (a 1-PPU-clock MMC3 reload-pendin
 bracket that affects no AccuracyCoin score and breaks no commercial game). The full
 per-suite breakdown, the mapper coverage matrix, and the version policy live in
 **[`docs/STATUS.md`](docs/STATUS.md)**.
+
+v1.6.0's **off-axis accuracy** pass (Workstream D) was a pin-test-first audit that
+confirmed the cycle-accurate engine already models the dot/CPU-cycle-granular off-axis
+cluster — the DMC/OAM-DMA ↔ `$4016` / `$4017` controller-read double-clock / dropped-bit
+conflict, the `$2007` (PPUDATA) read-during-active-rendering window with its deferred
+state-machine reload and `v`-increment glitch, and the buggy sprite-overflow `n+m`
+evaluation with the three-group open-bus / MDR decay timer — all verified by committed
+oracles with no engine change. The few remaining residuals (a Test 5/6 active-window
+mirror refinement and the `$2002` NMI-suppression race) converge on the future v2.0
+fractional-master-clock refactor (ADR 0002).
+
+**Everything added since the v1.0.0 core is additive and off-by-default.** Each new
+workstream is a frontend tap or an opt-in feature flag, so the shipped / native /
+`no_std` / wasm builds stay **byte-identical** and **AccuracyCoin holds 100%
+(139/139)** at every release.
 
 > A note on test counts: RustyNES is validated by closed-form test ROMs (AccuracyCoin,
 > nestest, blargg, mmc3_test, Holy Mapperel) and a commercial-ROM oracle, not by a
@@ -494,14 +553,14 @@ engine-development audit logs are kept locally, outside the public repo.)
 
 ## Version History
 
-The current release is **v1.5.0 "Lens"**, the insight, scriptability, creator-tooling, and
-polish release on the cycle-accurate v1.0.0 production core (it follows the v1.4.0 "Fidelity"
-and v1.4.1 compatibility line). **v1.6.0 "Studio" is now in active development**, with several
-workstreams already merged to `main` (see the top row). The road so far:
+The current release is **v1.6.0 "Studio"**, the TAS-authoring, debugger-depth, accuracy,
+and breadth release on the cycle-accurate v1.0.0 production core (it follows the v1.5.0
+"Lens" insight/scriptability line and the v1.4.0 "Fidelity" + v1.4.1 compatibility line).
+The road so far:
 
 | Version    | Highlights                                                                                  |
 | ---------- | ------------------------------------------------------------------------------------------- |
-| **v1.6.0** *(in development)* | "Studio" — creator-power + accuracy-polish + reach; **in active development, partially merged to `main`.** Landed so far: a **TAStudio-class piano-roll TAS editor** (a density-tiered save-state greenzone + lag log, markers/forkable branches/`.rnmproj` projects, and the egui piano-roll grid with drag-paint + deterministic seek), **`.fm2` (FCEUX) movie import/export**, a **UNIF (`.unf`) cartridge loader** (board-name → iNES-mapper resolution), the **J.Y. Company ASIC** mapper family (m90/209/211 → **126 families**), a `dorny/paths-filter` CI gate, and a much-expanded per-mapper boot-screenshot corpus. Still ahead: `.bk2` interop, Lua driving (`frameadvance`/coroutine) + data breadth, Mesen2-class conditional breakpoints/watchpoints + hex editor, an off-axis accuracy cluster (DMC/OAM-DMA controller-corruption, `$2007` blocking read, sprite-overflow), mappers → ~150, FDS-proper, A/V recording, HD audio, and shader import. Additive / off-by-default; AccuracyCoin 100% (139/139) held. |
+| **v1.6.0** | "Studio" — creator-power + accuracy-polish + reach. A **TAStudio-class piano-roll TAS editor** (save-state greenzone + lag log + markers + forkable branches + `.rnmproj` projects, with a drag-paint egui grid + deterministic seek); **`.fm2` (FCEUX) and `.bk2` (BizHawk) movie interop** ↔ `.rnm`; **Lua movie driving** (`emu.run` / `emu.frameadvance`) + data breadth (memory domains, sized reads, `joypad`); **Mesen2-class debugger depth** (expression / conditional breakpoints, R/W/X watchpoints, a watch window, conditional trace, a full hex editor, RAM watch / search); an **off-axis accuracy** verification + documentation pass (DMC/OAM-DMA controller corruption, `$2007` read-during-render, sprite-overflow + open-bus decay — verified, no engine change); mapper breadth → **150 families** (J.Y. ASIC + a discrete-multicart batch) + a **UNIF (`.unf`) loader**; **FDS-proper** (timed disk-head + `$4032` auto-insert + per-game CRC quirk table); **A/V recording** (ffmpeg → mp4 / mkv, default-off `av-record`); **HD-pack HD audio** (`<bgm>` / `<sfx>` OGG via `$4100`, default-off `hd-pack`); and a **shader / filter ecosystem** (LMP88959 NTSC/PAL, hqNx / xBRZ, a constrained `.slangp` / `.cgp` import). Additive / off-by-default; the shipped / native / `no_std` / wasm builds stay byte-identical and AccuracyCoin holds 100% (139/139). |
 | **v1.5.0** | "Lens" — insight + scriptability + creator tooling + polish: debugger **visualization** (Input Miniatures overlay, a graphical PPU event-viewer heatmap, a per-scanline trace, an HD-pack pixel inspector), a Lua **dev/TAS API** (memory/cart/save-state/symbol queries), a **TASVideos** compatibility pass + replay/TAS-window polish + an NSF waveform scope, a measure-first **frontend pacing & audio-sync** perf pass with perf-log↔panel parity, **UX polish** (named-palette editor, per-side overscan WYSIWYG, an Enhancements settings group, device-config controls), **accessibility** (UI scaling, high-contrast + Okabe-Ito colorblind themes, keyboard-only nav), a **native-UI overhaul** + in-app **Documentation** pane, mapper coverage 113 → **123 families**, and **casual-mode browser RetroAchievements** scaffolding (ADR 0015, off by default — emcc-built rcheevos side module + auth-proxy contract; live-browser verify is maintainer-manual). All additive / off-by-default so shipped / native / `no_std` / wasm stay byte-identical; AccuracyCoin 100% (139/139) held. |
 | **v1.4.1** | Patch — four more BestEffort mapper boot/decode fixes from the boot-smoke-vs-real-dumps pass (m92 Jaleco JF-19 PRG layout, m94 UN1ROM bank decode + bus conflict, m145 Sachen 16 KiB PRG, m147 Sachen 3018 / TXC JV001 protection handshake), plus the boot-smoke screenshot corpus reorganized to mirror the per-mapper `tests/roms/` tier layout. BestEffort-only; AccuracyCoin 100% (139/139) held, byte-identical to v1.4.0. |
 | **v1.4.0** | "Fidelity" — compatibility + finish: accuracy polish (triangle ultrasonic silence, DMC-DMA ↔ controller-read conflict verified), per-channel audio mixing, devtools finish (symbol-file `.sym`/`.mlb`/`.nl` loading + event breakpoints), browser QoL (wasm `.rnm` movie I/O + IndexedDB save-states), a measure-first perf pass (−8% on the rendering-heavy bench), a colorful **`rustynes help` TUI** + styled `--help` (clap 4 + ratatui), and mapper coverage 101 → **113 families** (boot-smoke verified, with reset-vector / decode fixes to m132/m143/m225/m226/m233/m242/m246). AccuracyCoin 100% (139/139) held. |
@@ -523,30 +582,28 @@ workstreams already merged to `main` (see the top row). The road so far:
 > wholesale with the cycle-accurate engine described above; **v1.1.0** added the
 > scripting/filters/peripherals feature set; **v1.2.0 "Curator"** added the library /
 > compatibility / reach set; **v1.3.0 "Bedrock"** added the toolchain + breadth set;
-> **v1.4.0 "Fidelity"** (+ the v1.4.1 patch) added the compatibility-and-finish set; and
-> **v1.5.0 "Lens"** adds the insight / scriptability / creator-tooling / polish set above. See
-> [`CHANGELOG.md`](CHANGELOG.md) for full per-version detail.
+> **v1.4.0 "Fidelity"** (+ the v1.4.1 patch) added the compatibility-and-finish set;
+> **v1.5.0 "Lens"** added the insight / scriptability / creator-tooling / polish set; and
+> **v1.6.0 "Studio"** adds the TAS-authoring / debugger-depth / accuracy / breadth set
+> above. See [`CHANGELOG.md`](CHANGELOG.md) for full per-version detail.
 
 ### Roadmap
 
-With **v1.5.0 "Lens"** shipped, the non-architectural backlog is essentially consumed:
-emulation accuracy is at or beyond the GeraNES bar, the GeraNES-class debugger visualization
-and creator/TAS tooling now exists, and the remaining accuracy residuals all converge on a
-single future **v2.0 master-clock (fractional-timebase) refactor** (ADR 0002). The next
-release, **v1.6.0 "Studio", is now in active development** — a creator-power + accuracy-polish +
-reach pass: a TAStudio-class piano-roll TAS editor, `.fm2`/`.bk2` movie interop, Mesen2-class
-conditional breakpoints/watchpoints/hex editor, an off-axis accuracy cluster adoptable without
-v2.0, and breadth (mappers → ~150, FDS-proper, A/V recording). Several of its workstreams are
-already merged to `main` (the TAStudio editor, `.fm2` interop, the UNIF loader, the J.Y. ASIC
-mappers — see Version History); the v2.0 refactor remains the subsequent architectural
-milestone. Browser
-RetroAchievements has its buildable scaffolding in v1.5.0 (ADR 0015); finishing it (deploy the
-auth proxy, live-browser verify) is a near-term carryover. The longer forward arc is captured as
-concrete, research-grounded design plans in [`to-dos/plans/`](to-dos/plans/README.md): **v1.7.0**
-(writable + programmable creator tooling), a native **v1.8.0** Android app and **v1.9.0** iOS /
-iPadOS app sharing one Rust core, and the **v2.0.0** timebase refactor that makes the remaining
-accuracy residuals representable. See [`docs/STATUS.md`](docs/STATUS.md) for the authoritative
-current state and [`to-dos/ROADMAP.md`](to-dos/ROADMAP.md) for the full roadmap.
+With **v1.6.0 "Studio"** shipped, the non-architectural backlog is essentially consumed:
+emulation accuracy is at or beyond the Mesen2 / GeraNES bar, a TAStudio-class TAS-authoring
+surface and a Mesen2-class debugger now exist, the off-axis accuracy cluster is verified and
+documented, and mapper / format breadth reaches **150 families** plus the UNIF loader and
+FDS-proper. The remaining accuracy residuals all converge on a single future **v2.0
+master-clock (fractional-timebase) refactor** (ADR 0002), which remains the next architectural
+milestone — the one release expected to break byte-identity and save-state compatibility.
+Browser RetroAchievements has its buildable scaffolding in v1.5.0 (ADR 0015); finishing it
+(deploy the auth proxy, live-browser verify) is a near-term carryover. The longer forward arc is
+captured as concrete, research-grounded design plans in
+[`to-dos/plans/`](to-dos/plans/README.md): **v1.7.0** (writable + programmable creator tooling),
+a native **v1.8.0** Android app and **v1.9.0** iOS / iPadOS app sharing one Rust core, and the
+**v2.0.0** timebase refactor that makes the remaining accuracy residuals representable. See
+[`docs/STATUS.md`](docs/STATUS.md) for the authoritative current state and
+[`to-dos/ROADMAP.md`](to-dos/ROADMAP.md) for the full roadmap.
 
 ---
 
@@ -634,13 +691,14 @@ If you use RustyNES in academic research, please cite:
   author  = {RustyNES Contributors},
   title   = {RustyNES: A Cycle-Accurate NES Emulator in Rust},
   year    = {2026},
-  version = {1.5.0},
+  version = {1.6.0},
   url     = {https://github.com/doublegate/RustyNES},
   note    = {Cycle-accurate NES emulator on a master-clock-precise scheduler;
-             AccuracyCoin 100\% (139/139), nestest 0-diff; 123 mapper families,
+             AccuracyCoin 100\% (139/139), nestest 0-diff; 150 mapper families,
              Famicom Disk System, Vs./PlayChoice-10 RGB, rollback netplay,
-             RetroAchievements, TAS movies; pure-Rust winit/wgpu/cpal/egui frontend
-             with a WebAssembly build}
+             RetroAchievements, a TAStudio piano-roll TAS editor with .fm2/.bk2
+             movie interop, and a Mesen2-class debugger; pure-Rust
+             winit/wgpu/cpal/egui frontend with a WebAssembly build}
 }
 ```
 
