@@ -33,8 +33,19 @@
 //! | 66 (`GxROM`) | `M66_P64K_C16K_V` | |
 //! | 69 (FME-7) | `M69_P128K_C64K_W8K`, `M69_P128K_C64K_S8K` | |
 //!
-//! Mappers 28 / 78.3 / 118 / 180 are excluded — not in the project's
-//! supported set.
+//! v1.7.0 "Forge" F1 note: mappers **28** (Action 53), **118** (`TxSROM`), and
+//! **180** (Crazy Climber / `UNROM`-180) are now ALL in the supported set
+//! (`crates/rustynes-mappers/src/lib.rs`), so the earlier "excluded — not
+//! supported" note for them is stale. The blocker for wiring their
+//! holy-mapperel ROMs here is asset availability: the committed holy-mapperel
+//! v0.02 release does NOT ship `M28_*` / `M118_*` / `M180_*` binaries (they have
+//! to be built from the holy-mapperel source with the right config), and the
+//! project policy is to never fabricate or commit ROMs that aren't already in
+//! the corpus. So these three remain a documented **F1 carryover**: when an
+//! `M28_*` / `M118_*` / `M180_*` ROM is added to `tests/roms/holy_mapperel/`,
+//! add a `smoke_mapperel(...)` line below (the harness already supports their
+//! mappers). Mapper 78.3 stays out of scope. The 17 ROMs below are the present,
+//! committed subset.
 
 #![cfg(feature = "test-roms")]
 
