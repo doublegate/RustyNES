@@ -5,8 +5,9 @@ creator-tooling, and polish release** on the cycle-accurate v1.0.0 production
 core. A NES/Famicom emulator with the Mesen2 / higan / ares accuracy bar, shipped
 as a polished desktop application. **AccuracyCoin 100.00% (139/139)**, the 60-ROM
 `external_real_games` + 52-entry `external_extended` oracles byte-identical,
-nestest 0-diff. **`v1.6.0 "Studio"` is in development on `main` (NOT yet tagged)**
-— see "In development: v1.6.0 Studio" below for what has merged so far. v1.5.0 lands eight additive workstreams: **A** debugger
+nestest 0-diff. **`v1.6.0 "Studio"` is in development on `main` (NOT yet
+tagged)** — see "In development: v1.6.0 Studio" below for what has merged so
+far. v1.5.0 lands eight additive workstreams: **A** debugger
 visualization (an Input Miniatures overlay, a graphical PPU event-viewer heatmap,
 a per-scanline trace viewer, an HD-pack per-pixel inspector — behind
 `debug-hooks`/`hd-pack`); **B** Lua dev/TAS API depth (memory peek/poke/range,
@@ -56,7 +57,7 @@ depth — in progress), D (off-axis accuracy — DMC/OAM-DMA controller corrupti
 E (mapper breadth → ~150 families), F (FDS-proper), G (A/V recording), H (HD
 audio), I (shaders), then the release finals. Per this file's version-policy
 convention the headline mapper count stays at the **tagged** figure (123) until
-v1.6.0 is cut; the ~126-on-`main` figure is the in-development count. Planning
+v1.6.0 is cut; the ~126 on `main` figure is the in-development count. Planning
 lives in `to-dos/ROADMAP.md` (the entry point) + `to-dos/plans/`.
 
 The preceding **v1.4.1** (a patch on
@@ -785,7 +786,7 @@ own semantic-version line starting at **v1.0.0**.
 > *different, still-future* milestone: NOT "add a master clock" but the
 > **one-clock + every-cycle-bus-access collapse** (Mesen2-style fractional master
 > clock with a φ1/φ2 access split), the hard-tier accuracy-residual closure, Vs.
-> DualSystem emulation, and the breaking save-state / cross-version changes that
+> DualSystem emulation, and the breaking save-state / cross-version changes that it
 > entails (ADR 0002). The full forward path (v1.6.0 "Studio" → v1.7.0 "Forge" →
 > v1.8.0/v1.9.0 mobile → v2.0.0 "Timebase") is tracked in `to-dos/ROADMAP.md` +
 > `to-dos/plans/`.
