@@ -55,6 +55,19 @@ The full blargg + kevtris + community test ROM suite, vendored in `tests/roms/` 
 | Mapper coverage | `holy_mapperel`, `holy_diver_battery_test`; `vrc24test` → in-tree VRC2/4 unit tests + `m22` baseline (T-71-005) | Pass for implemented mappers |
 | Input | standard-controller strobe/read tests (T-71-004); DMC-conflict / Four Score / Zapper documented in `compatibility.md` | Standard-pad path strict; expansion devices deferred |
 | Accuracy battery | `AccuracyCoin` (single ROM) | Pass-rate target ≥ 90% by v1.0 |
+| Battery save (v1.7.0 F1) | `battery_save.rs` (synthetic battery-backed NROM) | `$6000` PRG-RAM round-trips through `snapshot`/`restore`; restore is bit-identical |
+| Sub-v2.0 accuracy audit (v1.7.0 F2) | `f2_accuracy_audit.rs` | F2(a) length halt/reload race (`blargg_apu_2005/10`,`11`) strict; F2(b) DMC load even/odd defer (`dmc_tests/latency` audio sig + `sprdma_and_dmc_dma` strict) |
+| Extra-scanlines overclock (v1.7.0 F3) | `extra_scanlines.rs` | Byte-identical at `0`; first-frame image-invariant; CPU-cycle growth in band; deterministic |
+
+**v1.7.0 "Forge" Workstream F — accuracy hardening (dot/CPU-cycle-granular).**
+F1 added the battery-save round-trip oracle (none existed) and audited the
+existing test-ROM bundle (all wired + green; `vbl_nmi_timing/5.nmi_suppression`
+kept as a live pin since it passes on this core; holy-mapperel M28/M118/M180 ROMs
+are a documented corpus carryover). F2 confirmed the length-counter halt/reload
+race and the DMC load-DMA even/odd defer are already implemented and added named
+regression pins. F3 added the determinism-gated PPU extra-scanlines overclock
+(off by default, byte-identical at zero). None of these alter the default build's
+behavior, so AccuracyCoin holds 100% (139/139).
 
 ## Layer 4 — golden framebuffer / audio comparison
 

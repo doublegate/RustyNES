@@ -40,6 +40,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the shipped / native / `no_std` / wasm builds are byte-identical. ROM staging
   and boot-smoke screenshots are a separate later coverage pass.
 
+- **v1.7.0 "Forge" Workstream F — accuracy hardening (dot/CPU-cycle-granular,
+  NOT the v2.0 timebase rewrite).** All additive / off-by-default; AccuracyCoin
+  holds **100% (139/139)**, nestest 0-diff, the commercial oracle byte-identical.
+  - **F1 — test-ROM hardening + a battery-save oracle.** A new
+    `battery_save.rs` oracle (none existed): a synthetic battery-backed NROM
+    fills `$6000` PRG-RAM with a known pattern and the test proves it survives a
+    `snapshot`->`restore` round-trip (the battery-save persistence mechanism) and
+    resumes bit-identically. Audited the existing F1 bundle wiring
+    (`ppu_read_buffer`, `vbl_nmi_timing` x7, `sprdma_and_dmc_dma`, `dmc_tests`,
+    `cpu_exec_space`, `read_joy3`, `volume_tests`, `scanline`) — all wired and
+    green. `vbl_nmi_timing/5.nmi_suppression` already passes on this core, so it
+    is kept as a live pin (not ignored) per the never-reduce-coverage contract.
+    Holy-mapperel **M28/M118/M180** are now supported mappers but their ROMs are
+    not in the committed corpus — recorded as a documented carryover.
+  - **F2 — sub-v2.0 behavior audit.** The APU **length-counter halt/reload
+    race** and the **DMC load-DMA even/odd-cycle delay** are both already
+    implemented and verified on the current dot-lockstep scheduler; added named
+    regression pins (`f2_accuracy_audit.rs`) gating the halt/reload race
+    (`blargg_apu_2005/10.len_halt_timing` + `11.len_reload_timing`) and the DMC
+    load even/odd defer (`dmc_dma_defer_load_entry`, exercised by
+    `dmc_tests/latency` + `sprdma_and_dmc_dma`).
+  - **F3 — PPU extra-scanlines overclock**, determinism-gated. New
+    `Nes::set_extra_scanlines(n)` / `extra_scanlines()` insert `n` extra idle
+    vblank scanlines per frame at the existing dot resolution (more CPU
+    run-time, no visible change). **Off by default (`0`)** and **byte-identical
+    at zero** (proved by `extra_scanlines.rs`), not part of the save-state, and
+    distinct from the CPU-multiplier overclock (a v2.0 item).
+
 ## [1.6.0] - 2026-06-18 - "Studio" (Feature Release)
 
 ### Added
