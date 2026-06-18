@@ -161,6 +161,9 @@ deterministic / locked session.
 | `memory:read_range(addr, len)` | `len` CPU bytes from `addr` (wrapping), 1-based array. `len` ≤ 65536. |
 | `memory:peek_ppu(addr)` | One PPU-bus byte (`$0000-$3FFF`: CHR, nametables, palette), side-effect-free. |
 | `memory:read_range_ppu(addr, len)` | `len` PPU bytes from `addr` (wrapping the 14-bit PPU space). `len` ≤ 16384. |
+| `memory:read_u16_le(addr)` *(v1.6.0)* | A 16-bit **little-endian** word — two CPU `peek`s (`addr`, `addr+1`), side-effect-free. The common need for positions / timers / pointers. |
+| `memory:read_u16_be(addr)` *(v1.6.0)* | A 16-bit **big-endian** word from `addr`. |
+| `memory:read_oam(index)` *(v1.6.0)* | One byte of sprite RAM (**OAM**) — the third read domain alongside CPU and PPU; `index` wraps to `0-255`. |
 | `memory:poke(addr, value)` | Write a byte into **system RAM** (`$0000-$1FFF`). Gated like `emu.write`. |
 | `memory:write_range(addr, bytes)` | Write a 1-based byte array starting at `addr` into system RAM. Gated like `emu.write`. |
 

@@ -738,6 +738,36 @@ impl VmBackend for MluaBackend {
                     Ok(out)
                 })?,
             )?;
+            // v1.6.0 B3 — sized reads. Two CPU-bus `peek`s composed little- or
+            // big-endian; observational (peek never perturbs the run), the
+            // common TAS-script need for 16-bit values (positions, timers).
+            memory.set(
+                "read_u16_le",
+                scope.create_function(|_, (_this, addr): (mlua::Value, u16)| {
+                    let mut nes = nes_cell.borrow_mut();
+                    let lo = u16::from(nes.peek(addr));
+                    let hi = u16::from(nes.peek(addr.wrapping_add(1)));
+                    Ok(lo | (hi << 8))
+                })?,
+            )?;
+            memory.set(
+                "read_u16_be",
+                scope.create_function(|_, (_this, addr): (mlua::Value, u16)| {
+                    let mut nes = nes_cell.borrow_mut();
+                    let hi = u16::from(nes.peek(addr));
+                    let lo = u16::from(nes.peek(addr.wrapping_add(1)));
+                    Ok((hi << 8) | lo)
+                })?,
+            )?;
+            // v1.6.0 B3 — OAM domain (sprite memory). The third read domain
+            // alongside CPU (`peek`) and PPU (`peek_ppu`); `Nes::oam` snapshots
+            // the 256-byte sprite RAM. Index wraps to 8 bits.
+            memory.set(
+                "read_oam",
+                scope.create_function(|_, (_this, index): (mlua::Value, u16)| {
+                    Ok(nes_cell.borrow().oam()[(index & 0xFF) as usize])
+                })?,
+            )?;
             memory.set(
                 "poke",
                 scope.create_function(|_, (_this, addr, val): (mlua::Value, u16, u8)| {

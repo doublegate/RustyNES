@@ -649,6 +649,41 @@ mod tests {
         assert_eq!(nes.peek(0x42), 0x00);
     }
 
+    /// v1.6.0 B3 — sized reads (`read_u16_le` / `read_u16_be`) compose two CPU
+    /// `peek`s, and `read_oam` exposes the sprite-RAM domain. Observational, so
+    /// they never perturb the deterministic run.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn memory_sized_reads_and_oam_domain() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            r"
+            emu.onFrame(function()
+                memory:poke(0x10, 0x34)
+                memory:poke(0x11, 0x12)
+                emu.log('le=' .. memory:read_u16_le(0x10))
+                emu.log('be=' .. memory:read_u16_be(0x10))
+                emu.log('oam=' .. memory:read_oam(0))
+            end)
+            ",
+        )
+        .expect("load");
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+        let log = eng.drain_log();
+        // $34 (lo) | $12 (hi) << 8 = $1234 = 4660 little-endian; $3412 = 13330 big.
+        assert!(log.contains(&"le=4660".to_string()), "LE word: got {log:?}");
+        assert!(
+            log.contains(&"be=13330".to_string()),
+            "BE word: got {log:?}"
+        );
+        assert!(
+            log.iter().any(|l| l.starts_with("oam=")),
+            "read_oam returns a byte: got {log:?}"
+        );
+    }
+
     /// B2 — `cart:` read-only queries surface the loaded ROM's metadata. The
     /// synthetic NROM is a 16 KiB-PRG / 8 KiB-CHR mapper-0 NTSC cart.
     #[cfg(not(feature = "script-wasm"))]
