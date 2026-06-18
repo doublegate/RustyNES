@@ -478,11 +478,12 @@ reorganized the order and regrouped several items — see the per-menu notes):
   Fullscreen (`F11`, native), Window Size (1x-4x of the NES resolution, native),
   Show FPS, Pause When Unfocused (auto-pause on focus loss), Show Menu Bar
   (`M`).
-- **Tools** — Cheats, Movies (TAS: Record/Play/Branch), Netplay (native),
-  RetroAchievements (native + feature), Input Display, Input Miniatures, NSF
-  Player (moved here from Debug in v1.3.0), Replay / TAS (v1.5.0 C2), ROM
-  Database, and an **HD Pack** submenu (`hd-pack` feature + native; folded in
-  from the former standalone "Mod" menu).
+- **Tools** — Cheats, Movies (TAS: Record/Play/Branch + `.fm2`/`.bk2`
+  import/export), **Record A/V** (v1.6.0 G; native + `av-record` feature),
+  Netplay (native), RetroAchievements (native + feature), Input Display, Input
+  Miniatures, NSF Player (moved here from Debug in v1.3.0), Replay / TAS (v1.5.0
+  C2), TAStudio (v1.6.0 A2), ROM Database, and an **HD Pack** submenu (`hd-pack`
+  feature + native; folded in from the former standalone "Mod" menu).
 - **Debug** — Show Debugger (`` ` ``), Performance Monitor (moved here from
   Tools in v1.3.0), then the chip/state inspectors: CPU / PPU / APU / Memory /
   Memory Compare / OAM / Mapper / Trace Logger / Watch / Breakpoints (v1.6.0
@@ -952,6 +953,44 @@ workstream rides on.
   `addr size label` text format). Read-only against the core (the freeze cheats
   are the only writes, applied post-frame like every other cheat), so the
   no-freeze path is byte-identical.
+
+### v1.6.0 "Studio" Workstream G — A/V recording (`av_record`, native + `av-record` feature)
+
+Records the running game to a `.mp4` / `.mkv` (video + synchronized audio).
+**Native-only + behind the default-OFF `av-record` feature**, so the shipped /
+wasm / `no_std` builds are byte-identical with it off (the module is not even
+compiled). Implemented in `src/av_record.rs`.
+
+- **Capture is a read-only tap on the already-produced output.** Inside
+  `EmuCore::produce_one_frame`, *after* the emulator has produced the frame, the
+  recorder copies the visible framebuffer (`present_fb`, RGBA8 256x240 — the same
+  source the screenshot path reads) and the same audio samples the audio sink
+  received that frame (`audio_buf[..n]`, mono `f32`). It **never** advances the
+  emulator, mutates the core, or alters the per-frame framebuffer / audio, so the
+  **determinism contract is untouched** and **AccuracyCoin holds 139/139**. With
+  the feature off the produce path is byte-identical.
+- **Encoder = external `ffmpeg` pipe.** The recorder spawns `ffmpeg`, streams
+  **rawvideo** (`rgba`, 256x240, at the region frame rate as an exact rational
+  `1e9 / frame_nanos`) over **stdin** (input 0), and writes the **mono `f32le`**
+  PCM to a small temp sidecar that `ffmpeg` reads as input 1 (a sidecar rather
+  than a second pipe avoids the classic two-pipe deadlock without threads).
+  Output is H.264 (`libx264`, `veryfast`, `yuv420p`) + AAC. The sidecar is muxed
+  and deleted at stop. This keeps the default build free of heavy media codecs —
+  the only dependency is the system `ffmpeg` binary at run time.
+- **Graceful fallback when `ffmpeg` is absent.** Arming fails with a clear toast
+  (`A/V recording unavailable (no ffmpeg?)`) and emulation continues untouched; a
+  broken video/audio pipe mid-recording auto-stops + drops the recorder.
+- **Menu wiring.** Tools → **Record A/V** toggles via `MenuAction::AvRecordToggle`
+  dispatched *after* the egui pass (like the other tools). Start opens an rfd
+  save dialog (default `<data_dir>/recordings/<rom>-<utc>.mp4`); a second click
+  stops + finalizes. The menu label flips to "Stop A/V Recording" while armed.
+  wasm has no menu item (the variant stays un-gated so the match is exhaustive).
+- **Carryover (maintainer manual-verify):** actual encoded-file playback can't be
+  headless-verified (no GPU / no codec exercise in CI), like the egui-render
+  carveouts — the unit-testable parts (ffmpeg arg construction, container
+  inference, frame/audio buffering bounds, start/stop state) are covered by
+  `av_record`'s tests. The FCEUX-style Code/Data Logger (output-only PRG/CHR
+  coverage side-array) is **deferred** (not in this cut).
 
 ## Settings
 

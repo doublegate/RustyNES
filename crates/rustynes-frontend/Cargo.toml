@@ -135,6 +135,19 @@ browser-cheevos = []
 # enable). The output-only `debug-hooks` core code is determinism-neutral.
 debug-hooks = ["rustynes-core/debug-hooks"]
 
+# v1.6.0 "Studio" Workstream G — A/V recording (default OFF, native-only).
+#
+# Adds the `av_record` frontend module: a read-only tap that pipes the
+# already-produced framebuffer + drained audio to an external `ffmpeg` process
+# (rawvideo over stdin + a mono f32le audio sidecar) to mux an .mp4/.mkv. It
+# pulls NO extra Rust deps (only the system `ffmpeg` binary at run time, with a
+# graceful "ffmpeg not found" fallback), so it is inert on native when off and
+# the wasm builds (and the wasm size budget) are unchanged. The recorder never
+# advances the emulator or alters the per-frame output, so the determinism
+# contract + AccuracyCoin are unaffected. Enable with:
+#   cargo build -p rustynes-frontend --features av-record
+av-record = []
+
 [[bin]]
 name = "rustynes"
 path = "src/main.rs"

@@ -17,6 +17,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A/V recording — synchronized video + audio capture** (v1.6.0 Workstream G,
+  native + default-OFF `av-record` feature). A new frontend module
+  (`crates/rustynes-frontend/src/av_record.rs`) records the running game to an
+  `.mp4` / `.mkv`. Capture is a **read-only tap on the already-produced output**:
+  inside `EmuCore::produce_one_frame`, *after* the emulator produces the frame,
+  the recorder copies the visible framebuffer (RGBA8 256x240 — the same source
+  the screenshot path reads) and the same audio samples the audio sink received
+  that frame (mono `f32`). It never advances the emulator or alters the per-frame
+  framebuffer / audio, so the **determinism contract is untouched** and
+  **AccuracyCoin holds 100% (139/139)**; with the feature off the produce path is
+  byte-identical and the module is not compiled (the shipped / wasm / `no_std`
+  builds are unchanged). The encoder is an **external `ffmpeg` pipe** — rawvideo
+  (`rgba`, exact rational region frame rate) over stdin + a mono `f32le` audio
+  temp sidecar as a second input (avoiding a two-pipe deadlock), muxed to H.264 +
+  AAC — so the default build pulls **no extra Rust deps** (only the system
+  `ffmpeg` at run time, with a graceful "ffmpeg not found" fallback). Wired into
+  **Tools → Record A/V** via `MenuAction::AvRecordToggle` dispatched after the
+  egui pass; start opens an rfd save dialog (default
+  `<data_dir>/recordings/<rom>-<utc>.mp4`), a second click stops + finalizes;
+  wasm = no-op (gated out). Unit-tested parts: ffmpeg arg construction, container
+  inference, framebuffer-stride guard, sidecar path, start/stop state. **Deferred:**
+  the FCEUX-style Code/Data Logger; on-device encoded-file playback is a
+  maintainer manual-verify (CI cannot exercise the codec). Enable with
+  `cargo build -p rustynes-frontend --features av-record`. (See `docs/frontend.md`
+  §"Workstream G — A/V recording".)
 - **FDS-proper — timed disk-head position + `$4032` auto-insert + per-game CRC
   quirk table** (v1.6.0 Workstream F, modelled on puNES `fds.c`). The FDS RAM
   adapter (`rustynes-mappers::Fds`) now models the belt-driven drive's physical

@@ -181,6 +181,13 @@ pub enum MenuAction {
     /// v1.6.0 B1 — export the current recording / loaded movie to an external
     /// TAS movie file (`.fm2` FCEUX / `.bk2` `BizHawk`) via the save dialog.
     MovieExport,
+    /// v1.6.0 "Studio" Workstream G — toggle A/V (video + synchronized audio)
+    /// recording. Start opens a native save dialog (`.mp4` / `.mkv`) and arms an
+    /// `ffmpeg`-piped recorder; a second invocation stops + finalizes. Native +
+    /// `av-record`-feature-gated (the dispatch body is
+    /// `#[cfg(all(feature = "av-record", not(wasm32)))]`); the variant stays
+    /// un-gated so the match remains exhaustive on every target.
+    AvRecordToggle,
     /// v1.0.0 — insert a Vs. System coin (acceptor #1).
     InsertCoin,
     /// Step the emulator exactly one frame (meaningful while paused).
@@ -376,6 +383,11 @@ pub struct ShellFrame<'a> {
     /// v1.0.0 — whether a TAS movie is currently playing back (drives the Tools
     /// menu Play/Stop label).
     pub movie_playing: bool,
+    /// v1.6.0 "Studio" Workstream G — whether an A/V recording is currently
+    /// armed (drives the Tools menu "Record A/V" / "Stop A/V Recording" label).
+    /// Always present so the struct literal is target-agnostic; only read by
+    /// the `av-record`-gated menu item.
+    pub av_recording: bool,
     /// v1.5.0 "Lens" Workstream I2 — whether Fast Forward is currently engaged
     /// (the bound key is held). Drives the Emulation-menu Fast Forward item so
     /// it shows a live "ON" state instead of a permanently greyed hint.
@@ -1073,6 +1085,27 @@ impl UiShell {
                         });
                     } else {
                         ui.add_enabled(false, egui::Button::new(ic(glyph::VIDEO, "Movies (TAS)")));
+                    }
+                    // v1.6.0 "Studio" Workstream G — A/V recording (native +
+                    // `av-record`-gated). Start opens a save dialog + arms an
+                    // ffmpeg-piped recorder; a second click stops + finalizes.
+                    // Needs a loaded ROM to record anything; the stop case stays
+                    // enabled while armed so the user can finish.
+                    #[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
+                    {
+                        let av_label = if frame.av_recording {
+                            ic(glyph::STOP, "Stop A/V Recording")
+                        } else {
+                            ic(glyph::VIDEO, "Record A/V...")
+                        };
+                        let av_enabled = frame.av_recording || rom;
+                        if ui
+                            .add_enabled(av_enabled, egui::Button::new(av_label))
+                            .clicked()
+                        {
+                            out.action = Some(MenuAction::AvRecordToggle);
+                            ui.close();
+                        }
                     }
                     // (H1) Opening the Netplay panel is locked while a replay
                     // (TAS movie) owns the session. Mirrors GeraNES Netplay

@@ -1832,6 +1832,136 @@ impl App {
         self.data_dir.as_ref().map(|d| d.join("movies"))
     }
 
+    /// v1.6.0 "Studio" Workstream G — A/V recordings directory
+    /// (`<data_dir>/recordings/`). Returns `None` if no data dir is available.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
+    fn recordings_dir(&self) -> Option<PathBuf> {
+        self.data_dir.as_ref().map(|d| d.join("recordings"))
+    }
+
+    /// v1.6.0 "Studio" Workstream G — whether an A/V recording is currently
+    /// armed. Always `false` on wasm or a build without the `av-record`
+    /// feature (so the menu item / status reporting compile target-agnostically).
+    #[must_use]
+    #[cfg_attr(
+        not(all(not(target_arch = "wasm32"), feature = "av-record")),
+        allow(clippy::unused_self, clippy::missing_const_for_fn)
+    )]
+    fn av_recording_active(&self) -> bool {
+        #[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
+        let active = self.emu.lock().av_recorder.is_some();
+        #[cfg(not(all(not(target_arch = "wasm32"), feature = "av-record")))]
+        let active = false;
+        active
+    }
+
+    /// v1.6.0 "Studio" Workstream G — toggle A/V recording (native).
+    ///
+    /// **Start**: open a `.mp4` / `.mkv` save dialog, then arm an
+    /// [`crate::av_record::AvRecorder`] (an `ffmpeg`-piped video + audio
+    /// recorder) keyed to the loaded ROM's region frame rate + the audio device
+    /// sample rate. If `ffmpeg` is absent the arm fails gracefully with a toast
+    /// and emulation continues untouched. **Stop**: finalize the in-progress
+    /// recording (flush, close the pipe, wait for `ffmpeg` to mux) and toast the
+    /// output path. The recorder is a READ-ONLY tap on the produced framebuffer
+    /// + drained audio — it never advances the emulator, so determinism holds.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
+    fn handle_av_record_toggle(&mut self) {
+        use crate::av_record::{AvParams, AvRecorder};
+        use crate::ui_shell::StatusMessage;
+
+        // Stop path: take the recorder out under a brief lock, then finalize
+        // with the guard dropped (the ffmpeg wait can block).
+        if self.av_recording_active() {
+            let recorder = self.emu.lock().av_recorder.take();
+            if let Some(recorder) = recorder {
+                let frames = recorder.frames();
+                match recorder.stop() {
+                    Ok(path) => {
+                        eprintln!(
+                            "rustynes: A/V recording -> {} ({frames} frames)",
+                            path.display()
+                        );
+                        self.ui.set_status(StatusMessage::success(format!(
+                            "A/V recording saved: {}",
+                            path.display()
+                        )));
+                    }
+                    Err(e) => {
+                        eprintln!("rustynes: A/V recording finalize failed: {e}");
+                        self.ui
+                            .set_status(StatusMessage::info("A/V recording failed (encode)"));
+                    }
+                }
+            }
+            return;
+        }
+
+        // Start path: need a loaded ROM. Capture the region frame duration +
+        // sample rate under a brief lock; the dialog + spawn run unlocked.
+        let frame_nanos = {
+            let guard = self.emu.lock();
+            if guard.nes.is_none() {
+                drop(guard);
+                self.ui
+                    .set_status(StatusMessage::info("A/V recording: no ROM loaded"));
+                return;
+            }
+            guard.frame_duration.as_nanos()
+        };
+        // Exact rational fps = 1e9 / frame_nanos (drift-free over a long take).
+        let fps_num: u32 = 1_000_000_000;
+        let fps_den: u32 = u32::try_from(frame_nanos).unwrap_or(16_639_267);
+        let sample_rate = self.audio.as_ref().map_or(44_100, |a| a.sample_rate);
+
+        let dir = self.recordings_dir();
+        if let Some(d) = dir.as_ref() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        // Filesystem-safe default name from the ROM label + a UTC timestamp.
+        let stem: String = self
+            .rom_label
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .collect();
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let mut dialog = rfd::FileDialog::new()
+            .add_filter("Video (MP4/MKV)", &["mp4", "mkv"])
+            .set_file_name(format!("{stem}-{secs}.mp4"));
+        if let Some(d) = dir {
+            dialog = dialog.set_directory(d);
+        }
+        let Some(out_path) = dialog.save_file() else {
+            eprintln!("rustynes: A/V recording cancelled");
+            return;
+        };
+
+        let params = AvParams {
+            out_path: out_path.clone(),
+            sample_rate,
+            fps_num,
+            fps_den,
+        };
+        match AvRecorder::start(params) {
+            Ok(recorder) => {
+                self.emu.lock().av_recorder = Some(recorder);
+                eprintln!("rustynes: A/V recording armed -> {}", out_path.display());
+                self.ui.set_status(StatusMessage::success(format!(
+                    "Recording A/V to {}",
+                    out_path.display()
+                )));
+            }
+            Err(e) => {
+                eprintln!("rustynes: A/V recording could not start: {e}");
+                self.ui.set_status(StatusMessage::info(
+                    "A/V recording unavailable (no ffmpeg?)",
+                ));
+            }
+        }
+    }
+
     /// `F6` — toggle TAS movie recording (native).
     ///
     /// **Start**: power-cycle the running `Nes` and begin recording from
@@ -3592,6 +3722,10 @@ impl App {
                     gfx.set_hide_overscan(on);
                     gfx.window.request_redraw();
                 }
+            }
+            MenuAction::AvRecordToggle => {
+                #[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
+                self.handle_av_record_toggle();
             }
             MenuAction::InsertCoin => {
                 let mut guard = self.emu.lock();
@@ -6752,6 +6886,10 @@ impl ApplicationHandler<AppEvent> for App {
                     paused: self.ui.paused,
                     movie_recording,
                     movie_playing,
+                    // v1.6.0 "Studio" Workstream G — A/V recording armed flag
+                    // (drives the Tools menu Record/Stop label). Always false on
+                    // wasm / builds without the `av-record` feature.
+                    av_recording: self.av_recording_active(),
                     fast_forwarding: self.input.fast_forward_held(),
                     // v1.5.0 I7 — RA readout for the status bar (None unless the
                     // feature is on AND logged in).

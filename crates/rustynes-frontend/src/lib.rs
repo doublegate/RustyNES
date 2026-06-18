@@ -17,6 +17,14 @@
 
 pub mod app;
 pub mod audio;
+// v1.6.0 "Studio" Workstream G — A/V (video + synchronized audio) recording.
+// A read-only frontend tap on the already-produced framebuffer + drained audio
+// that pipes them to an external `ffmpeg` to mux an .mp4/.mkv. Native-only +
+// behind the default-OFF `av-record` feature, so the shipped / wasm / `no_std`
+// builds are byte-identical with it off. It NEVER mutates the core or the
+// per-frame output, so the determinism contract is unaffected.
+#[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
+pub mod av_record;
 // About-dialog input helper (native only; safe Rust, portable across all arches).
 #[cfg(not(target_arch = "wasm32"))]
 mod about_fx;
