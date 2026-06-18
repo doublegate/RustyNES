@@ -17,6 +17,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Shader / filter ecosystem — LMP88959 NTSC/PAL, hqNx/xBRZ upscalers, +
+  constrained RetroArch preset import** (v1.6.0 Workstream I, extends the v1.2.0
+  composable `ShaderStack` / ADR 0013). Three new RGBA built-in passes join the
+  Settings → Shaders "Shader stack" picker (each declaring its knobs via
+  `#pragma parameter` headers that drive generic sliders, like the existing CRT
+  pass): **`lmp88959`** (`crates/rustynes-frontend/src/ntsc_lmp88959.rs`) — an
+  LMP88959-style composite NTSC/PAL look (per-texel encode-then-demodulate giving
+  chroma bleed, dot crawl, and edge fringing; knobs `saturation` / `sharpness` /
+  `tint` / `phase` / `pal`), which — unlike the index-only Bisqwit `composite-rt`
+  pass — samples the RGBA framebuffer so it composes anywhere in the stack; and
+  **`hqx`** / **`xbrz`** (`crates/rustynes-frontend/src/upscale.rs`) —
+  hqNx- and xBRZ-style edge-directed pixel-art smoothers (single-pass GPU
+  adaptations of the published edge-blend kernels; independent WGSL, each with a
+  `strength` knob). Plus a **constrained RetroArch `.slangp` / `.cgp` preset
+  importer** (`crates/rustynes-frontend/src/slang_preset.rs`, Settings → Shaders →
+  "Import .slangp / .cgp…"): it parses a preset and maps well-known shader
+  filename stems (`crt-*`, `*ntsc*`/`*composite*`, `*hqx*`/`*hq2x*`,
+  `*xbr*`/`*xbrz*`) onto the built-in passes, carrying over matching parameter
+  overrides — it is **not** a GLSL/Slang → WGSL transpiler (source translation
+  stays out of scope per ADR 0013), and passes with no built-in equivalent are
+  reported as **unsupported** (surfaced with a mapped/unsupported count, never
+  silently dropped). Everything is **output-only** (post-framebuffer, never
+  touching the core, the index framebuffer, or determinism) and **off by default**
+  (an empty / all-disabled stack is the byte-identical direct blit), so
+  **AccuracyCoin holds 100% (139/139)** and the shipped / `no_std` / wasm builds
+  stay byte-identical. The shaders matter for wasm, and both wasm clippy combos +
+  `trunk build` pass. Unit-tested: the `.slangp`/`.cgp` parser + honest-reject
+  path, the stack wiring + param forwarding, and a WGSL parse+validate gate for
+  every new pass; visual shader output is a maintainer manual-verify (it can't be
+  headless-checked). (See `docs/frontend.md` §"CRT / NTSC shaders" and ADR 0013's
+  v1.6.0 supplement.)
 - **A/V recording — synchronized video + audio capture** (v1.6.0 Workstream G,
   native + default-OFF `av-record` feature). A new frontend module
   (`crates/rustynes-frontend/src/av_record.rs`) records the running game to an
