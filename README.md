@@ -3,7 +3,7 @@
 <img src="images/RustyNES_Logo-Icon.png" alt="RustyNES Logo Icon" width="150">
 
 <p align="center">
-  <img src="images/RustyNES_Banner-Logo.jpg" alt="RustyNES Banner Logo" width="800">
+  <img src="images/RustyNES_Banner-Logo.png" alt="RustyNES Banner Logo" width="800">
 </p>
 
 > **Precise. Pure. Powerful.**
@@ -84,7 +84,7 @@ platform for NES emulation.
 | **Pure Rust**          | `winit` + `wgpu` + `cpal` + `egui` frontend; safe `no_std + alloc` chip stack                 |
 
 <p align="center">
-  <img src="images/RustyNES_Arch-Blueprint_1.jpg" alt="RustyNES Architecture Blueprint" width="800">
+  <img src="images/RustyNES_Arch-Blueprint_1.png" alt="RustyNES Architecture Blueprint" width="800">
 </p>
 
 ---
@@ -354,7 +354,7 @@ in [`docs/architecture.md`](docs/architecture.md) and [`docs/scheduler.md`](docs
    `rustynes-apu` dependency; each chip is fuzzable and benchmarkable in isolation.
 
 <p align="center">
-  <img src="images/RustyNES_Arch-Blueprint_2.jpg" alt="RustyNES Component Architecture Blueprint" width="800">
+  <img src="images/RustyNES_Arch-Blueprint_2.png" alt="RustyNES Component Architecture Blueprint" width="800">
 </p>
 
 ### Workspace crates
@@ -415,7 +415,7 @@ per-suite breakdown, the mapper coverage matrix, and the version policy live in
 > wins** — that is the project's definition of "cycle-accurate."
 
 <p align="center">
-  <img src="images/RustyNES_Emu-Compare.jpg" alt="RustyNES Emulator Accuracy Comparison" width="800">
+  <img src="images/RustyNES_Emu-Compare.png" alt="RustyNES Emulator Accuracy Comparison" width="800">
 </p>
 
 ### Sub-cycle accuracy in action
