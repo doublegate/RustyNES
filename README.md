@@ -364,7 +364,7 @@ in [`docs/architecture.md`](docs/architecture.md) and [`docs/scheduler.md`](docs
 | `rustynes-cpu`           | Cycle-accurate 6502 / 2A03 CPU core                         |
 | `rustynes-ppu`           | Dot-level 2C02 PPU                                          |
 | `rustynes-apu`           | Hardware-accurate 2A03 APU with band-limited synthesis      |
-| `rustynes-mappers`       | 51 mapper families + expansion audio                        |
+| `rustynes-mappers`       | 123 mapper families + expansion audio                       |
 | `rustynes-core`          | Integration layer: Bus, scheduler, console, save states     |
 | `rustynes-frontend`      | `winit` + `wgpu` + `cpal` + `egui` app (binary: `rustynes`) |
 | `rustynes-netplay`       | GGPO-style rollback netcode (UDP + WebRTC)                  |
@@ -628,10 +628,10 @@ If you use RustyNES in academic research, please cite:
   author  = {RustyNES Contributors},
   title   = {RustyNES: A Cycle-Accurate NES Emulator in Rust},
   year    = {2026},
-  version = {1.0.0},
+  version = {1.5.0},
   url     = {https://github.com/doublegate/RustyNES},
   note    = {Cycle-accurate NES emulator on a master-clock-precise scheduler;
-             AccuracyCoin 100\% (139/139), nestest 0-diff; 51 mapper families,
+             AccuracyCoin 100\% (139/139), nestest 0-diff; 123 mapper families,
              Famicom Disk System, Vs./PlayChoice-10 RGB, rollback netplay,
              RetroAchievements, TAS movies; pure-Rust winit/wgpu/cpal/egui frontend
              with a WebAssembly build}
