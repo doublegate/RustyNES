@@ -10,9 +10,12 @@ port loads and runs a real homebrew / unlicensed / multicart title.
 
 The source ROMs are unlicensed / homebrew / multicart dumps (these mappers have
 **no commercial fixtures** — that is the premise of the BestEffort tier). They
-were staged in the gitignored `tests/roms/external-besteffort/` (a sibling of the
-oracle corpus so the honesty-gate walk over `tests/roms/external/` stays green)
-and captured at frame 300 with:
+are staged in the gitignored `tests/roms/external/` alongside every other dump
+(the coverage harness discovers a single `external/` ROM tree; the honesty gate
+stays green because it keys on each mapper's *tier* in `tier.rs`, not the
+directory). Only the **screenshots** are tier-split — BestEffort captures land
+here in `screenshots/besteffort/` (Core/Curated go to `screenshots/external/`)
+via `coverage.py categorize`. The original boot-smoke captures used frame 300:
 
 ```text
 cargo run -p rustynes-test-harness --features commercial-roms --bin render_smoke \
