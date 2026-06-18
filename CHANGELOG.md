@@ -17,6 +17,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Lua driving primitives — `emu.run` + `emu.frameadvance`** (v1.6.0 Workstream
+  B2). A script can now *drive* the emulator a frame at a time (the FCEUX /
+  BizHawk model) instead of only reacting to per-frame callbacks: `emu.run(fn)`
+  registers a driving coroutine and `emu.frameadvance()` (a thin alias of Lua's
+  `coroutine.yield`) hands exactly one frame to the emulator before resuming the
+  coroutine. This unblocks the bot / TAS-script ecosystem. Native-only (the mlua
+  backend), the same carve-out as the dev/TAS API; a driver's `emu.setInput` /
+  `emu.write` / `load_state` effects are **gated identically to `emu.write`**
+  (silent no-op under netplay / TAS replay / RA-hardcore), so driving is
+  determinism-safe. Bundled example `examples/scripts/driving_loop.lua`. (See
+  `docs/scripting.md`.)
+- **External TAS movie interop — `.bk2` (BizHawk) import/export ↔ `.rnm`**
+  (v1.6.0 Workstream B1). A new `no_std` core module (`bk2_interop`) parses /
+  emits a `.bk2`'s `Header.txt` + `Input Log.txt` text members (the NES
+  `U D L R S s B A` mnemonic layout, console-buttons group dropped, P1/P2
+  mapped), mirroring the existing FCEUX `.fm2` interop; the `.bk2` ZIP container
+  is read / written frontend-side (keeping the core `no_std`). A new **Movies
+  (TAS) → Import / Export (.fm2 / .bk2)** menu pair wires both formats: import
+  begins playback against the running ROM, export writes the in-progress
+  recording (or the loaded movie). Imported movies use the **canonical
+  movie-import power-on alignment** (a deterministic zeroed-RAM cold boot via
+  `Movie::seek_to_start`) and inherit the running ROM's SHA-256 identity, so they
+  replay without desync. Save-anchored and non-NES `.bk2` movies are rejected
+  cleanly. (See `docs/scripting.md` / `docs/adr/0008-tas-movie-format.md`.)
 - **Debugger depth — expression/conditional breakpoints + R/W/X watchpoints +
   watch window + conditional trace** (v1.6.0 Workstream C, the Mesen2-class C1
   keystone + C4 free riders). A new frontend expression evaluator

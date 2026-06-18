@@ -166,6 +166,13 @@ impl MovieUi {
         self.recorder.take().map(MovieRecorder::finish)
     }
 
+    /// v1.6.0 B1 — clone the movie currently being played back (for export to an
+    /// external `.fm2` / `.bk2`). Returns `None` if not playing.
+    #[must_use]
+    pub fn playing_movie(&self) -> Option<Movie> {
+        self.playback.as_ref().map(|pb| pb.movie.clone())
+    }
+
     /// Begin playing `movie`. The caller must have already
     /// [`Movie::seek_to_start`]ed `nes` to the movie's start point. Stops
     /// any in-progress recording.

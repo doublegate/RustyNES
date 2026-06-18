@@ -104,6 +104,15 @@ fn fns_at(lua: &Lua, map: &AddrCallbacks, addr: u16) -> mlua::Result<Vec<Functio
     )
 }
 
+/// Drop the active driving coroutine (B2): clear the slot and free its Lua
+/// registry value so a finished / errored driver is no longer resumed.
+fn drop_driver(lua: &Lua, driver: &Rc<RefCell<Option<RegistryKey>>>) -> mlua::Result<()> {
+    if let Some(key) = driver.borrow_mut().take() {
+        lua.remove_registry_value(key)?;
+    }
+    Ok(())
+}
+
 /// Resolve the `onFrame` registry keys into live `Function` handles (collected
 /// up front so the `RefCell` borrow is released before any callback runs).
 fn fns_for_frame(lua: &Lua, frame: &Rc<RefCell<Vec<RegistryKey>>>) -> mlua::Result<Vec<Function>> {
@@ -172,6 +181,17 @@ pub struct MluaBackend {
     /// v1.5.0 B4 — `sym:addr(name)` reverse lookup (`label -> address`). Built
     /// alongside [`Self::sym_by_addr`]; last writer wins on a duplicate label.
     sym_by_name: Rc<RefCell<HashMap<String, u16>>>,
+    /// v1.6.0 B2 — the active **driving** coroutine registered via `emu.run(fn)`,
+    /// stored Rust-side as a Lua registry key (a `thread` handle; never
+    /// script-visible). [`Self::on_frame`] resumes it exactly once per emulated
+    /// frame; the coroutine yields control back to the host with
+    /// `emu.frameadvance()` (a thin `coroutine.yield()`), and the host advances
+    /// one frame before the next resume. `None` once no driver is registered or
+    /// the driver has run to completion. The driver only *reads* and issues the
+    /// same gated `emu.write` / `emu.setInput` effects as any callback, so it
+    /// never perturbs the deterministic run beyond what the write-gate already
+    /// allows.
+    driver: Rc<RefCell<Option<RegistryKey>>>,
 }
 
 impl MluaBackend {
@@ -239,6 +259,50 @@ impl MluaBackend {
                     }
                     Ok(())
                 })?,
+        )?;
+
+        // v1.6.0 B2 — Lua DRIVING primitives.
+        //
+        // `emu.frameadvance()` yields the running coroutine back to the host:
+        // when the driving coroutine (registered via `emu.run`) calls it,
+        // control returns to the host's per-frame pump, which advances exactly
+        // one emulated frame and then resumes the coroutine on the next
+        // `on_frame`. Calling it outside a coroutine raises Lua's own "attempt to
+        // yield from outside a coroutine", surfaced to the host as a script
+        // error — so a driving script must register itself with `emu.run`.
+        //
+        // It MUST be a pure-Lua function (a direct alias of `coroutine.yield`),
+        // NOT a Rust `create_function`: a Rust closure is a C-call frame, and Lua
+        // cannot yield across a C-call boundary ("attempt to yield across a
+        // C-call boundary"). Defining it in Lua keeps the yield inside the Lua
+        // stack, where coroutine resumption works. The host loads this chunk
+        // directly (Rust-side `Lua::load`), so it is unaffected by the sandbox's
+        // global stripping.
+        let frameadvance: Function = self
+            .lua
+            .load("return function(...) return coroutine.yield(...) end")
+            .eval()?;
+        emu.set("frameadvance", frameadvance)?;
+
+        // `emu.run(fn)` registers `fn` as the driving coroutine. The function
+        // body typically loops, calling `emu.frameadvance()` between steps to
+        // hand a frame to the emulator. Only one driver is active at a time
+        // (a later `emu.run` replaces an earlier one). The coroutine handle is
+        // stored Rust-side as a registry key (never script-visible), exactly
+        // like the callback registries.
+        let driver = Rc::clone(&self.driver);
+        emu.set(
+            "run",
+            self.lua.create_function(move |lua, f: Function| {
+                let thread = lua.create_thread(f)?;
+                let key = lua.create_registry_value(thread)?;
+                // Replacing an existing driver drops its registry key (the old
+                // coroutine is abandoned); the new one drives from now on.
+                if let Some(old) = driver.borrow_mut().replace(key) {
+                    lua.remove_registry_value(old)?;
+                }
+                Ok(())
+            })?,
         )?;
 
         // Overlay draw commands (collected; the host renders them via egui).
@@ -514,6 +578,7 @@ impl VmBackend for MluaBackend {
             state_slots: Rc::new(RefCell::new(HashMap::new())),
             sym_by_addr: Rc::new(RefCell::new(HashMap::new())),
             sym_by_name: Rc::new(RefCell::new(HashMap::new())),
+            driver: Rc::new(RefCell::new(None)),
         };
         engine.install_prelude()?;
         Ok(engine)
@@ -644,6 +709,7 @@ impl VmBackend for MluaBackend {
         let breakpoint_cbs = Rc::clone(&self.breakpoint_cbs);
         let state_slots = Rc::clone(&self.state_slots);
         let controls = Rc::clone(&self.controls);
+        let driver = Rc::clone(&self.driver);
         // v1.5.0 B4 — drain the pause-at-frame targets reached this frame, OUTSIDE
         // the scope (no `nes` access): each reached target queues a Pause control.
         {
@@ -899,6 +965,39 @@ impl VmBackend for MluaBackend {
             // registry — scripts cannot touch or corrupt it).
             for f in fns_for_frame(lua, &frame_cbs)? {
                 f.call::<()>(())?;
+            }
+
+            // v1.6.0 B2 — resume the driving coroutine (if any) exactly once.
+            // It runs until it next calls `emu.frameadvance()` (a
+            // `coroutine.yield()`) or returns. On `Resumable`/`Running` it
+            // yielded — we keep the handle for the next frame; on `Dead`/error
+            // it finished — we drop the handle so a finished driver stops being
+            // resumed. The driver shares the same gated `emu.write` /
+            // `emu.setInput` / `load_state` accessors bound in this scope, so it
+            // can never perturb the deterministic run beyond the write-gate.
+            let driver_key = driver.borrow().as_ref().map(|k| {
+                // Resolve the live thread handle from its registry key.
+                lua.registry_value::<mlua::Thread>(k)
+            });
+            if let Some(thread_res) = driver_key {
+                let thread = thread_res?;
+                // A fresh coroutine resumes from its top; a yielded one resumes
+                // where `frameadvance` left off. No values are passed in.
+                let step = thread.resume::<()>(());
+                match step {
+                    Ok(()) => {
+                        // Still resumable? keep it; finished? drop it.
+                        if thread.status() != mlua::ThreadStatus::Resumable {
+                            drop_driver(lua, &driver)?;
+                        }
+                    }
+                    Err(e) => {
+                        // A driver that raised is finished (and the error is
+                        // surfaced to the host like any callback error).
+                        drop_driver(lua, &driver)?;
+                        return Err(e);
+                    }
+                }
             }
 
             // Replay this frame's committed interrupt services through

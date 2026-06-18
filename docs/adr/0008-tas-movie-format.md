@@ -198,6 +198,15 @@ local slot file.
    existing `.rns` design and is leaner. (A future export-to-`.fm2`
    converter could live in the frontend.)
 
+   *Update (v1.6.0 B1):* `.fm2` (FCEUX) **and** `.bk2` (BizHawk) **interop**
+   now exist as separate, opt-in import/export converters
+   (`movie_interop` / `bk2_interop` in `rustynes-core`) — the `.rnm` binary
+   container stays the native format. Both text parsers are `no_std`-clean
+   (the `.bk2` ZIP container is read / written frontend-side); imported movies
+   become `StartPoint::PowerOn` `.rnm` movies that replay from the canonical
+   deterministic cold boot, so the interop never weakens the determinism
+   contract.
+
 2. **RLE / delta-encoded input stream.** Rejected for v1 as premature: 3
    bytes/frame is already tiny, and raw bytes give O(1) random frame access
    for the scrubbing UI. Can be added later behind a `bytes_per_frame=0`
