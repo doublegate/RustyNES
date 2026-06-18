@@ -16,7 +16,8 @@ tests/roms/holy_mapperel/README.md
 docs/archive/
 to-dos/archive/
 
-# Verbatim historical release-plan copies (v1.0.0 synthesis .. v1.6.0, plus the
-# engine-lineage v2.x plans) — reference, not maintained prose, so they're kept
-# exactly as authored (like ref-docs/).
+# Release-plan copies (v1.0.0 synthesis .. v1.6.0 + the engine-lineage v2.x
+# plans), the v1.7.0 .. v2.0.0 forward plans, and the per-release research dives
+# that fed them — reference, not maintained prose, kept exactly as authored
+# (like ref-docs/).
 to-dos/plans/
