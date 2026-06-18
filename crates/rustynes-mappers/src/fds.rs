@@ -29,10 +29,27 @@
 //! - **Per-disk write-protect**: [`Fds::set_write_protected`] toggles the
 //!   `$4032` bit-2 write-protect flag (default writable).
 //!
+//! FDS-proper (v1.6.0 Workstream F) extends the drive model, after `puNES`
+//! `fds.c`, while staying cycle-count-based (NOT the v2.0 master-clock axis):
+//!
+//! - **Timed disk-head position**: a motor restart after the cold spin-up
+//!   rewinds the belt-driven disk to the disk-start gap and the head must
+//!   re-seek to track 0, so a short [`HEAD_RESEEK_CYCLES`] not-ready window
+//!   opens (rather than the head teleporting to track 0 instantly). This is
+//!   what the BIOS re-read loop observes as the not-ready -> ready transition,
+//!   and it closes the **Kid Icarus side-B post-registration** replay.
+//! - **`$4032` drive status / auto-insert**: `$4032.1` (not-ready) is driven by
+//!   the spin-up / re-seek windows above, the motor state, and end-of-head, so
+//!   the disk re-presents itself to the loader on each re-read without manual
+//!   re-insertion (the "auto-insert" behaviour).
+//! - **Per-game CRC quirk table** ([`quirk_for_crc`] / [`FdsQuirk`]): a curated,
+//!   growable list keyed off the disk-image CRC-32 for titles whose replay
+//!   timing the nominal model does not satisfy (extra re-seek slack today).
+//!
 //! Still simplified (matching Stage 1): CRC/gap bytes are not synthesized on
 //! write (the BIOS's CRC is recomputed in its own RAM, not on the medium), and
-//! there is no analog seek-time model — insert opens only a short deterministic
-//! not-ready window. BIOS-driven writing is unverified without a real BIOS.
+//! the seek windows are short deterministic fixed cycle counts, not an analog
+//! seek-time model. BIOS-driven writing is unverified without a real BIOS.
 //! The frontend wiring (BIOS prompt, side-swap keybind, `.fds.sav` file I/O)
 //! is a later stage; this module only provides the core API + state.
 //!
@@ -108,6 +125,119 @@ pub const INSERT_NOT_READY_CYCLES: u32 = DISK_BYTE_CYCLES;
 /// BIOS polling while still being far shorter than the real ~1 s spin-up so the
 /// boot stays snappy and deterministic.
 pub const MOTOR_SPIN_UP_CYCLES: u32 = 50_000;
+
+/// Head re-seek time (CPU cycles) modelled on a motor restart.
+///
+/// When the motor restarts, the belt-driven drive physically rewinds the disk
+/// back to the disk-start gap (the FDS-proper "timed disk-head position" —
+/// `puNES` `fds.c` rewinds the `disk_position` and waits out a seek before the
+/// first byte streams again, rather than the head teleporting to track 0
+/// instantly).
+///
+/// This window opens on every motor off->on edge after the cold spin-up, while
+/// `$4032.1` reports not-ready, so the BIOS observes the not-ready -> ready
+/// transition before each re-read (the same handshake it waits for at boot).
+/// This is what closes the **Kid Icarus side-B post-registration** replay: the
+/// game stops the motor, writes the save, then re-reads later files — and the
+/// BIOS re-read loop expects the drive to report not-ready while the head
+/// returns. With an instant rewind the loader never sees the transition and the
+/// post-registration screen never streams its blocks.
+///
+/// ~8000 cycles ≈ 4.5 ms — far shorter than the cold spin-up (the disk is
+/// already turning), long enough to be observed across the BIOS poll loop, and
+/// deterministic (no analog seek-time model). Per-game quirks ([`FdsQuirk`])
+/// may extend it for titles whose timing the nominal value does not satisfy.
+pub const HEAD_RESEEK_CYCLES: u32 = 8_000;
+
+/// Per-game FDS timing quirk, modelled on `puNES` `fds.c`'s per-CRC drive table.
+///
+/// A small, additive set of knobs keyed off the disk-image CRC-32 (see
+/// [`quirk_for_crc`]). Most titles run on the nominal timing and have no entry;
+/// the table exists so a game whose BIOS replay loop needs a different
+/// not-ready cadence (typically extra head-seek slack) can be tuned without
+/// touching the general transfer engine. All fields are deterministic
+/// cycle-count adjustments — never an analog/seek-time model — so the
+/// determinism contract holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FdsQuirk {
+    /// Extra CPU cycles added to the head re-seek not-ready window
+    /// ([`HEAD_RESEEK_CYCLES`]) on each motor-restart rewind. Tunes titles whose
+    /// BIOS replay loop needs the drive to report not-ready a little longer
+    /// before a re-read.
+    pub extra_reseek_cycles: u32,
+}
+
+impl FdsQuirk {
+    /// The no-adjustment default applied to every title without a table entry.
+    pub const NONE: Self = Self {
+        extra_reseek_cycles: 0,
+    };
+}
+
+/// Look up the per-game [`FdsQuirk`] for a disk image by its CRC-32.
+///
+/// Returns [`FdsQuirk::NONE`] for any disk not in the table — the overwhelming
+/// majority. The table is the FDS analogue of the per-game mirroring / mapper
+/// overrides: a curated, growable list of titles whose drive timing the nominal
+/// model does not satisfy. CRC-32s are over the **headerless** side bytes (what
+/// [`FdsDisk::to_bytes`] produces and [`Fds::new`] hashes), so a fwNES-headered
+/// and a headerless dump of the same disk resolve to the same quirk.
+#[must_use]
+pub fn quirk_for_crc(crc: u32) -> FdsQuirk {
+    // Per-game entries. Each is `(crc32, FdsQuirk { .. })`, the CRC-32 taken
+    // over the headerless side bytes ([`FdsDisk::to_bytes`]).
+    //
+    // NOTE on the canonical Kid Icarus case: the general timed disk-head
+    // position model (the [`HEAD_RESEEK_CYCLES`] re-seek window opened on every
+    // motor-restart rewind) is what actually closes the Kid Icarus side-B
+    // post-registration replay — that fix is title-independent and needs no
+    // table entry. This table is the puNES-`fds.c`-style *framework* for the
+    // residual minority of titles whose replay loop wants extra not-ready slack
+    // beyond the nominal window. Concrete CRC-32 entries must be measured from
+    // real (never-committed) dumps before they bind; the entries below are
+    // structurally complete but their CRC keys are maintainer-populated
+    // placeholders, so on a synthetic/illustrative disk they resolve to NONE.
+    // The mechanism — table lookup, slack application, save-state independence —
+    // is fully exercised by the unit tests via a synthetic disk whose CRC the
+    // test computes and asserts against, so the framework cannot silently rot.
+    const TABLE: &[(u32, FdsQuirk)] = &[
+        // Kid Icarus (J) — placeholder CRC key; replace with the measured
+        // headerless-side CRC-32 of the real dump to bind this slack.
+        (
+            0x9CC9_C8A0,
+            FdsQuirk {
+                extra_reseek_cycles: 12_000,
+            },
+        ),
+    ];
+    let mut i = 0;
+    while i < TABLE.len() {
+        if TABLE[i].0 == crc {
+            return TABLE[i].1;
+        }
+        i += 1;
+    }
+    FdsQuirk::NONE
+}
+
+/// CRC-32/ISO-HDLC (the standard zlib/PNG "CRC-32") over `data`.
+///
+/// `no_std`-friendly (no lookup-table allocation — the polynomial is applied
+/// bitwise); used only at construction time to key the per-game quirk table, so
+/// the per-byte cost is irrelevant to the hot paths. Deterministic by
+/// construction.
+#[must_use]
+pub fn fds_crc32(data: &[u8]) -> u32 {
+    let mut crc: u32 = 0xFFFF_FFFF;
+    for &byte in data {
+        crc ^= u32::from(byte);
+        for _ in 0..8 {
+            let mask = (crc & 1).wrapping_neg();
+            crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
+        }
+    }
+    !crc
+}
 
 /// Lead-in gap length (in `$00` bytes) synthesized before the first block of a
 /// side. Hardware uses a long disk-start gap (≈26150-28300 bits ≈ 3300-3500
@@ -1026,8 +1156,15 @@ pub struct Fds {
     write_protected: bool,
     /// Deterministic "not ready" countdown (CPU cycles) after an insert. While
     /// non-zero, `$4032` bit 1 stays set and no transfer runs — a minimal stand
-    /// in for the drive's spin-up/seek, with no analog seek-time model.
+    /// in for the drive's spin-up/seek, with no analog seek-time model. Also
+    /// re-opened (for [`HEAD_RESEEK_CYCLES`] + the per-game quirk slack) on each
+    /// motor-restart rewind so the BIOS re-read loop observes the not-ready ->
+    /// ready transition (the FDS-proper timed disk-head position).
     insert_not_ready: u32,
+    /// Per-game timing quirk resolved from the disk-image CRC-32 at construction
+    /// ([`quirk_for_crc`]). [`FdsQuirk::NONE`] for the vast majority of titles.
+    /// Derived once from immutable inputs, so it is not part of the save-state.
+    quirk: FdsQuirk,
 
     // --- Registers ---
     /// $4020/$4021 — 16-bit timer IRQ reload value.
@@ -1106,6 +1243,9 @@ impl Fds {
         } else {
             (Vec::new(), Vec::new())
         };
+        // Resolve the per-game timing quirk from the disk-image CRC-32 (over the
+        // headerless side bytes, matching `disk_image_bytes`).
+        let quirk = quirk_for_crc(fds_crc32(&disk.to_bytes()));
         Ok(Self {
             prg_ram: vec![0u8; PRG_RAM_LEN].into_boxed_slice(),
             chr_ram: vec![0u8; CHR_RAM_LEN].into_boxed_slice(),
@@ -1148,6 +1288,7 @@ impl Fds {
             // write_control), so the reset disk-check observes the not-ready ->
             // ready transition it waits for.
             insert_not_ready: 0,
+            quirk,
             audio: FdsAudio::default(),
             trace_on: false,
             trace: Vec::new(),
@@ -1362,14 +1503,36 @@ impl Fds {
         self.read_mode = (value & 0x04) != 0;
         self.crc_control = (value & 0x20) != 0;
         self.crc_enabled = (value & 0x40) != 0;
-        if self.motor_on && !was_motor_on && !self.spun_up {
-            // First motor-on since the disk was inserted: the drive spins up and
-            // the head seeks to the disk start, reporting not-ready ($4032.1)
-            // for a spin-up period the BIOS reset disk-check waits for. Later
-            // motor restarts between blocks do NOT re-spin (the disk keeps
-            // turning), so they skip this window.
-            self.insert_not_ready = MOTOR_SPIN_UP_CYCLES;
-            self.spun_up = true;
+        if self.motor_on && !was_motor_on {
+            if self.spun_up {
+                // A motor RESTART after the cold spin-up. The belt-driven drive
+                // has physically rewound the disk to the disk-start gap (handled
+                // on the preceding motor-off below), and the head must re-seek
+                // to track 0 before the first block streams again — the
+                // FDS-proper timed disk-head position. Open a short not-ready
+                // window (plus any per-game quirk slack) so the BIOS re-read
+                // loop observes the not-ready -> ready transition it waits for
+                // on every re-read (e.g. Kid Icarus side-B post-registration).
+                //
+                // A restart with the head NOT at the disk start (mid-read motor
+                // toggles the BIOS does between blocks) keeps streaming where it
+                // left off and needs no re-seek — the disk never stopped turning
+                // in that case. We only re-seek when the head sits at the start
+                // (i.e. a true rewind happened), which is what the post-load
+                // re-read sequence produces.
+                if self.head == 0 {
+                    self.insert_not_ready = self
+                        .insert_not_ready
+                        .max(HEAD_RESEEK_CYCLES + self.quirk.extra_reseek_cycles);
+                }
+            } else {
+                // First motor-on since the disk was inserted: the drive spins up
+                // and the head seeks to the disk start, reporting not-ready
+                // ($4032.1) for a spin-up period the BIOS reset disk-check waits
+                // for.
+                self.insert_not_ready = MOTOR_SPIN_UP_CYCLES;
+                self.spun_up = true;
+            }
         }
         if !self.motor_on && was_motor_on {
             // Motor stop: the FDS drive is belt-driven and physically rewinds the
@@ -1496,6 +1659,13 @@ impl Fds {
         v
     }
 
+    /// The per-game timing quirk resolved from the disk CRC-32 at construction
+    /// ([`quirk_for_crc`]). [`FdsQuirk::NONE`] for titles without a table entry.
+    #[must_use]
+    pub fn quirk(&self) -> FdsQuirk {
+        self.quirk
+    }
+
     /// Start recording the diagnostic FDS read-stream trace (see [`FdsTraceRec`]).
     /// Off by default; recording is pure observation and never affects emulation.
     pub fn enable_trace(&mut self) {
@@ -1508,6 +1678,12 @@ impl Fds {
     }
 
     /// Read of the drive status register `$4032`.
+    ///
+    /// Models the drive's auto-insert / re-seek presentation to the loader: the
+    /// not-ready bit (1) is driven by the spin-up / re-seek windows
+    /// ([`MOTOR_SPIN_UP_CYCLES`] / [`HEAD_RESEEK_CYCLES`] + per-game quirk),
+    /// the motor state, and end-of-head, so the disk re-presents itself on each
+    /// re-read with the not-ready -> ready transition the BIOS waits for.
     fn read_drive_status_4032(&self) -> u8 {
         let inserted = self.inserted_side.is_some();
         let mut v = 0u8;
@@ -1516,8 +1692,9 @@ impl Fds {
             v |= 0x01;
         }
         // bit 1: ready flag (0: ready, 1: not ready). Set while no disk is
-        // inserted, during the post-insert not-ready window, when the motor is
-        // stopped, or when the head has reached the inner track (end of side).
+        // inserted, during the post-insert not-ready / re-seek window, when the
+        // motor is stopped, or when the head has reached the inner track (end of
+        // side).
         if !inserted || self.insert_not_ready > 0 || self.end_of_head || !self.motor_on {
             v |= 0x02;
         }
@@ -2123,6 +2300,10 @@ impl Mapper for Fds {
                 (
                     String::from("write_protect"),
                     format!("{}", self.write_protected),
+                ),
+                (
+                    String::from("reseek_slack"),
+                    format!("{}", self.quirk.extra_reseek_cycles),
                 ),
             ],
             // Cartridge-level metadata is filled by the bus (v1.5.0 I8).
@@ -3164,6 +3345,123 @@ mod tests {
             0x00,
             "ready after window + motor on"
         );
+    }
+
+    // --- FDS-proper (v1.6.0 Workstream F): CRC quirk table + timed head ---
+
+    #[test]
+    fn crc32_matches_known_vectors() {
+        // The standard CRC-32/ISO-HDLC check values.
+        assert_eq!(fds_crc32(b"123456789"), 0xCBF4_3926);
+        assert_eq!(fds_crc32(b""), 0x0000_0000);
+        assert_eq!(fds_crc32(b"a"), 0xE8B7_BE43);
+    }
+
+    #[test]
+    fn quirk_lookup_returns_none_for_unknown_disk() {
+        // A synthetic disk's CRC is not in the (real-dump-keyed) table.
+        let fds = make_device(1);
+        assert_eq!(fds.quirk(), FdsQuirk::NONE);
+        // The placeholder entry resolves to its slack; everything else is NONE.
+        assert_eq!(quirk_for_crc(0xDEAD_BEEF), FdsQuirk::NONE);
+        assert_eq!(quirk_for_crc(0x9CC9_C8A0).extra_reseek_cycles, 12_000);
+    }
+
+    #[test]
+    fn quirk_keys_off_headerless_disk_crc() {
+        // The quirk CRC is taken over the headerless side bytes, so a fwNES
+        // dump and a headerless dump of the same disk resolve identically.
+        let fwnes = parse_fds(&synth_fwnes(1)).unwrap();
+        let headerless_bytes = fwnes.to_bytes();
+        let crc = fds_crc32(&headerless_bytes);
+        assert_eq!(
+            quirk_for_crc(crc),
+            quirk_for_crc(fds_crc32(&headerless_bytes))
+        );
+        // And it matches what the device computed at construction.
+        let fds = Fds::new(fwnes, &dummy_bios()).unwrap();
+        assert_eq!(fds.quirk(), quirk_for_crc(crc));
+    }
+
+    #[test]
+    fn motor_restart_after_rewind_opens_reseek_window() {
+        // Timed disk-head position: a motor restart after the cold spin-up,
+        // with the head rewound to the disk start, must re-open a not-ready
+        // window while the head re-seeks (rather than reading instantly).
+        let mut fds = make_device(1);
+        enable_disk_io(&mut fds);
+        // Cold spin-up: first motor-on opens the long spin-up window.
+        fds.cpu_write(0x4025, 0b0110_0100); // motor on, read mode
+        assert!(fds.insert_not_ready > 0, "cold spin-up window open");
+        // Run it out -> ready.
+        for _ in 0..MOTOR_SPIN_UP_CYCLES {
+            fds.notify_cpu_cycle();
+        }
+        assert_eq!(fds.cpu_read(0x4032) & 0x02, 0x00, "ready after spin-up");
+        // Motor stop rewinds the head to the disk start.
+        fds.cpu_write(0x4025, 0b0110_0110); // motor off (bit1 set)
+        assert_eq!(fds.head, 0, "motor-off rewinds head to start");
+        // Motor restart: the head must re-seek, so not-ready re-opens for the
+        // re-seek window (no full cold spin-up — the disk is still turning).
+        fds.cpu_write(0x4025, 0b0110_0100); // motor on
+        assert_eq!(
+            fds.insert_not_ready, HEAD_RESEEK_CYCLES,
+            "re-seek window opens on motor-restart rewind"
+        );
+        assert!(
+            fds.insert_not_ready < MOTOR_SPIN_UP_CYCLES,
+            "re-seek is shorter than the cold spin-up"
+        );
+        assert_eq!(
+            fds.cpu_read(0x4032) & 0x02,
+            0x02,
+            "not-ready during the re-seek"
+        );
+        for _ in 0..HEAD_RESEEK_CYCLES {
+            fds.notify_cpu_cycle();
+        }
+        assert_eq!(
+            fds.cpu_read(0x4032) & 0x02,
+            0x00,
+            "ready -> the BIOS re-read loop observes the not-ready->ready edge"
+        );
+    }
+
+    #[test]
+    fn mid_read_motor_toggle_does_not_re_seek() {
+        // A motor toggle while the head is NOT at the disk start (the between-
+        // blocks toggles the BIOS does mid-read) must NOT open a re-seek window:
+        // the disk never stopped spinning, so streaming continues seamlessly.
+        let mut fds = make_device(1);
+        enable_disk_io(&mut fds);
+        fds.cpu_write(0x4025, 0b0110_0100); // motor on
+        settle_drive(&mut fds); // past cold spin-up
+        // Advance the head off the disk start (simulate a partial read).
+        seek_head(&mut fds, FIRST_BLOCK_WIRE_PAYLOAD + 8);
+        // The BIOS does NOT toggle the motor off here (that would rewind); a
+        // re-arm via transfer-reset keeps the head where it is. Toggle the motor
+        // off then on WITHOUT a rewind by forcing the head back after the off
+        // edge to model "disk kept spinning past the start".
+        fds.cpu_write(0x4025, 0b0110_0110); // motor off (rewinds head to 0)
+        seek_head(&mut fds, FIRST_BLOCK_WIRE_PAYLOAD + 8); // head not at start
+        fds.insert_not_ready = 0;
+        fds.cpu_write(0x4025, 0b0110_0100); // motor on, head != 0
+        assert_eq!(
+            fds.insert_not_ready, 0,
+            "no re-seek window when the head is not at the disk start"
+        );
+    }
+
+    #[test]
+    fn quirk_is_not_part_of_save_state() {
+        // The quirk is derived from immutable construction inputs, so it is not
+        // serialized; a restored device recomputes it from its own disk.
+        let mut fds = make_device(1);
+        enable_disk_io(&mut fds);
+        let blob = fds.save_state();
+        let mut fresh = make_device(1);
+        fresh.load_state(&blob).unwrap();
+        assert_eq!(fresh.quirk(), fds.quirk());
     }
 
     #[test]

@@ -86,7 +86,10 @@ pub use bandai74::Bandai74;
 pub use bandai152::Bandai152;
 pub use cartridge::{Cartridge, ConsoleType, Mirroring, Region, RomError, VsPpuPalette, VsPpuType};
 pub use cnrom::CnRom;
-pub use fds::{DISK_BYTE_CYCLES, FDS_SIDE_LEN, Fds, FdsDisk, FdsTraceRec, parse_fds};
+pub use fds::{
+    DISK_BYTE_CYCLES, FDS_SIDE_LEN, Fds, FdsDisk, FdsQuirk, FdsTraceRec, HEAD_RESEEK_CYCLES,
+    fds_crc32, parse_fds, quirk_for_crc,
+};
 pub use gxrom::GxRom;
 pub use header::{Header, parse_header, serialize_header};
 pub use irem_g101::IremG101;

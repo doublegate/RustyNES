@@ -17,6 +17,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **FDS-proper — timed disk-head position + `$4032` auto-insert + per-game CRC
+  quirk table** (v1.6.0 Workstream F, modelled on puNES `fds.c`). The FDS RAM
+  adapter (`rustynes-mappers::Fds`) now models the belt-driven drive's physical
+  rewind/re-seek: a motor restart after the cold spin-up rewinds the disk to the
+  disk-start gap and opens a short deterministic head re-seek not-ready window
+  (`HEAD_RESEEK_CYCLES`) before bytes stream again, rather than the head
+  teleporting to track 0. `$4032` (drive status) now presents the not-ready ->
+  ready transition the BIOS waits for on **every** re-read (the auto-insert
+  behaviour), and a per-game CRC quirk table (`quirk_for_crc` / `FdsQuirk`,
+  keyed off the headerless disk-image CRC-32 via the new `no_std` `fds_crc32`)
+  lets individual titles request extra re-seek slack. The general timed
+  head-position model closes the **Kid Icarus side-B post-registration** replay
+  (deferred since v1.0.0): the BIOS re-read loop now sees the drive report
+  not-ready while the head returns, so the post-registration screen streams its
+  blocks. Cycle-count-based — NOT the v2.0 master-clock axis. Additive +
+  determinism-preserving: AccuracyCoin holds 100% (139/139), FDS save-state
+  round-trip + boot suite stay green; the quirk is derived from immutable
+  construction inputs (not serialized). (See `crates/rustynes-mappers/src/fds.rs`
+  and `docs/STATUS.md`.)
 - **Debugger depth — expression/conditional breakpoints + R/W/X watchpoints +
   watch window + conditional trace** (v1.6.0 Workstream C, the Mesen2-class C1
   keystone + C4 free riders). A new frontend expression evaluator

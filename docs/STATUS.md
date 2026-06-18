@@ -70,7 +70,16 @@ v1.0.0 core baseline:
   with VRC6/VRC7-OPLL/Sunsoft-5B/Namco-163/MMC5 expansion audio), FME-7, and
   the Vs. System / PlayChoice-10 RGB-PPU boards.
 - **Famicom Disk System** — real-BIOS `.fds` boot (user-supplied `disksys.rom`),
-  read/write drive, multi-side eject/insert, 2C33 wavetable audio.
+  read/write drive, multi-side eject/insert, 2C33 wavetable audio. **FDS-proper
+  (v1.6.0 Workstream F, after puNES `fds.c`)** adds a timed disk-head position
+  (a motor restart rewinds the belt-driven disk and the head re-seeks across a
+  short deterministic `HEAD_RESEEK_CYCLES` not-ready window before re-reading,
+  rather than teleporting to track 0), the `$4032` drive-status / auto-insert
+  presentation driven by those windows, and a per-game CRC quirk table
+  (`quirk_for_crc`) for titles needing extra re-seek slack. The general timed
+  head-position model closes the **Kid Icarus side-B post-registration** replay
+  (the BIOS re-read loop now observes the not-ready -> ready edge it waits for).
+  Cycle-count-based — NOT the v2.0 master-clock axis; determinism intact.
 - **Vs. System / PlayChoice-10** — 2C03/2C04/2C05 hardware RGB palettes, DIP
   switches, coin/service inputs. **Vs. DualSystem** (two-CPU/two-PPU arcade
   boards) is *detected* — from both the SHA-256 game DB and, as of v1.3.0 (D2),
