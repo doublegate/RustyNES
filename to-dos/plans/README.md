@@ -20,7 +20,7 @@ the markdownlint gate — the same treatment `ref-docs/` and the archive trees g
 | [`v1.0.0-synthesis-plan.md`](v1.0.0-synthesis-plan.md) | v1.0.0 — the synthesis that harvested the engine line into the public repo | Shipped |
 | [`v1.2.0-curator-plan.md`](v1.2.0-curator-plan.md) | v1.2.0 "Curator" — library breadth + compatibility + reach | Shipped |
 | [`v1.3.0-bedrock-plan.md`](v1.3.0-bedrock-plan.md) | v1.3.0 "Bedrock" — foundation + breadth | Shipped |
-| [`v1.3.0-toolchain-modernization-plan.md`](v1.3.0-toolchain-modernization-plan.md) | v1.3.0 Workstream A — edition 2024 + MSRV 1.96 + egui 0.34 / wgpu 29 | Shipped (sub-plan) |
+| [`v1.3.0-toolchain-modernization-plan.md`](v1.3.0-toolchain-modernization-plan.md) | v1.3.0 Workstream A — edition 2024 + MSRV bump + the egui / wgpu / rfd dependency tier | Shipped (sub-plan) |
 | [`v1.4.0-fidelity-plan.md`](v1.4.0-fidelity-plan.md) | v1.4.0 "Fidelity" — compatibility + finish (+ the v1.4.1 patch) | Shipped |
 | [`v1.5.0-lens-plan.md`](v1.5.0-lens-plan.md) | v1.5.0 "Lens" — insight + scriptability + creator tooling + polish | Shipped |
 | [`v1.6.0-studio-plan.md`](v1.6.0-studio-plan.md) | v1.6.0 "Studio" — TAS authoring + debugger depth + accuracy + breadth | **In development** |
