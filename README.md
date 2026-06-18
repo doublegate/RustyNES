@@ -208,7 +208,7 @@ Expand-Archive rustynes-<tag>-x86_64-pc-windows-msvc.zip; .\rustynes.exe path\to
 
 **Prerequisites:**
 
-- **Rust 1.86** — pinned via `rust-toolchain.toml` and auto-installed by
+- **Rust 1.96** — pinned via `rust-toolchain.toml` and auto-installed by
   [rustup](https://rustup.rs).
 - **Linux desktop dependencies** for `winit` / `wgpu` / `cpal` / `egui` (see below).
 - **Git.**
@@ -456,7 +456,7 @@ The reproducible record (methodology, all benches, and the historical A/B) is in
 
 ### System requirements
 
-- **Rust 1.86 stable** (pinned via `rust-toolchain.toml`; auto-installed by `rustup`).
+- **Rust 1.96 stable** (pinned via `rust-toolchain.toml`; auto-installed by `rustup`).
 - A GPU with a `wgpu`-supported backend (Vulkan / Metal / DX12, or WebGPU / WebGL2 in
   the browser).
 - The optional `retroachievements` feature needs a C compiler for the vendored
@@ -473,6 +473,8 @@ The reproducible record (methodology, all benches, and the historical A/B) is in
 | [Architecture](docs/architecture.md)    | System design and the load-bearing decisions                      |
 | [Scheduler](docs/scheduler.md)          | The master-clock lockstep model                                   |
 | [CHANGELOG.md](CHANGELOG.md)            | Version history and release notes                                 |
+| [Roadmap](to-dos/ROADMAP.md)            | The forward roadmap — the path to v2.0.0 and beyond               |
+| [Release plans](to-dos/plans/README.md) | Per-release design plans (v1.0.0 → the v1.7.0–v2.0.0 forward set) + the reference-emulator research dives that fed them |
 
 ### Hardware and subsystem specs
 
@@ -539,8 +541,12 @@ already merged to `main` (the TAStudio editor, `.fm2` interop, the UNIF loader, 
 mappers — see Version History); the v2.0 refactor remains the subsequent architectural
 milestone. Browser
 RetroAchievements has its buildable scaffolding in v1.5.0 (ADR 0015); finishing it (deploy the
-auth proxy, live-browser verify) + mobile (iOS / Android) frontends remain further-out. See
-[`docs/STATUS.md`](docs/STATUS.md) for the authoritative current state.
+auth proxy, live-browser verify) is a near-term carryover. The longer forward arc is captured as
+concrete, research-grounded design plans in [`to-dos/plans/`](to-dos/plans/README.md): **v1.7.0**
+(writable + programmable creator tooling), a native **v1.8.0** Android app and **v1.9.0** iOS /
+iPadOS app sharing one Rust core, and the **v2.0.0** timebase refactor that makes the remaining
+accuracy residuals representable. See [`docs/STATUS.md`](docs/STATUS.md) for the authoritative
+current state and [`to-dos/ROADMAP.md`](to-dos/ROADMAP.md) for the full roadmap.
 
 ---
 
