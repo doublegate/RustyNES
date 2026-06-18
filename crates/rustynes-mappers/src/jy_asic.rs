@@ -101,6 +101,11 @@ pub enum JyBoard {
     M209,
     /// iNES mapper 211: feature always enabled (a 209 duplicate).
     M211,
+    /// iNES mapper 35: the J.Y. Company single-game "extended" board
+    /// (`YY840820C` / `J.Y.061`). Same silicon as 209 — the ROM-nametable /
+    /// extended-mirroring feature is register-enabled — so it shares the 209
+    /// policy (incl. the MMC4-like CHR auto-latch). (v1.6.0 Workstream E.)
+    M35,
 }
 
 impl JyBoard {
@@ -109,6 +114,7 @@ impl JyBoard {
             Self::M90 => 90,
             Self::M209 => 209,
             Self::M211 => 211,
+            Self::M35 => 35,
         }
     }
 }
@@ -286,7 +292,7 @@ impl JyAsic {
         match self.board {
             JyBoard::M211 => true,
             JyBoard::M90 => false,
-            JyBoard::M209 => self.advanced_nt_control || self.extended_mirroring,
+            JyBoard::M209 | JyBoard::M35 => self.advanced_nt_control || self.extended_mirroring,
         }
     }
 
@@ -476,7 +482,7 @@ impl JyAsic {
     /// Update the MMC4-like CHR latch on mapper 209 when a pattern fetch hits a
     /// sentinel address ($x FD8-$x FDF / $x FE8-$x FEF).
     fn update_chr_latch_209(&mut self, addr: u16) {
-        if self.board != JyBoard::M209 {
+        if !matches!(self.board, JyBoard::M209 | JyBoard::M35) {
             return;
         }
         match addr & 0x2FF8 {
@@ -782,6 +788,7 @@ impl Mapper for JyAsic {
                 JyBoard::M90 => "J.Y. Company ASIC (90)".into(),
                 JyBoard::M209 => "J.Y. Company ASIC (209)".into(),
                 JyBoard::M211 => "J.Y. Company ASIC (211)".into(),
+                JyBoard::M35 => "J.Y. Company ASIC (35)".into(),
             },
             mirroring: crate::mapper::mirroring_name(self.current_mirroring()),
             ..Default::default()

@@ -62,8 +62,25 @@ then evaluate conditions against that snapshot during the lock-free composite.
 - **Not full Mesen parity.** Implemented: memoryCheck(Constant), frameRange,
   hmirror/vmirror, sprite-palette, and full-image/region backgrounds. Still
   deferred (no demand / heavier model): `TileNearby` / `TileAtPos` / `SpriteNearby`
-  / `SpriteAtPos` neighbor predicates, position checks, and HD audio. These can be
-  added later without changing the snapshot architecture.
+  / `SpriteAtPos` neighbor predicates, position checks, `<addition>` /
+  `<fallback>` / `<options>`, and the full blend/priority/parallax compositor.
+  These can be added later without changing the snapshot architecture.
+- **HD audio landed in v1.6.0 "Studio" Workstream H** (the biggest remaining
+  Mesen2 gap). The `hires.txt` `<bgm>` / `<sfx>` declarations are parsed in
+  `hdpack.rs`; `src/hd_audio.rs` decodes their OGG tracks (pure-Rust `lewton`,
+  pulled only by `hd-pack`) and an `HdAudioMixer` sums the selected track into
+  the drained APU buffer **in place** in the FRONTEND audio path, gated on the
+  `$4100` HD-pack audio-control register. The same determinism stance as the
+  visual path holds: the mixer reads only a side-effect-free `$4100` peek of the
+  already-produced bus state and never touches core synthesis or the
+  deterministic per-frame audio buffer, so AccuracyCoin and the audio oracle are
+  unchanged and the audio is byte-identical with no audio pack loaded / the
+  feature off. The `$4100` selection is best-effort (RustyNES does not intercept
+  the register write, so the frontend reads it back and edge-detects); folder
+  packs are supported, `.zip`-pack audio + the full `$4100`..`$4106` Mesen state
+  machine are future extensions. Audible playback is a maintainer manual-check
+  (no audio device in CI); the parse / trigger-edge / mixer buffering are
+  unit-tested.
 - HD-pack remains an **output-only**, default-off, native-oriented feature; the
   per-pixel HD-pack debug inspector (to trace which condition gated a substitution)
   is tracked as a future devtools item (v1.4.0 plan, Workstream D).

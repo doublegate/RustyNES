@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-245-m245/Dragon Quest IV (Unl).nes
+rom_sha256=4329d4670b55da7387e6a5037ce4cf5146922865a7cccc6130185e6bc553c316
+frames=1141
+fb_bytes=245760
+cycles=607267
+audio_samples=14946
+audio_fnv1a64=1c505e2a9ea50fa6
+checkpoint f900 fb_fnv1a64=89ee4c476c97a325
+checkpoint f1100 fb_fnv1a64=89ee4c476c97a325

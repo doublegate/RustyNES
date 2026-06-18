@@ -17,6 +17,14 @@
 
 pub mod app;
 pub mod audio;
+// v1.6.0 "Studio" Workstream G — A/V (video + synchronized audio) recording.
+// A read-only frontend tap on the already-produced framebuffer + drained audio
+// that pipes them to an external `ffmpeg` to mux an .mp4/.mkv. Native-only +
+// behind the default-OFF `av-record` feature, so the shipped / wasm / `no_std`
+// builds are byte-identical with it off. It NEVER mutates the core or the
+// per-frame output, so the determinism contract is unaffected.
+#[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
+pub mod av_record;
 // About-dialog input helper (native only; safe Rust, portable across all arches).
 #[cfg(not(target_arch = "wasm32"))]
 mod about_fx;
@@ -53,6 +61,11 @@ pub mod help_tui;
 // v1.2.0 beta.2 (Workstream C3) — HD-pack / mod loader (native-only, default OFF).
 #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
 pub mod hdpack;
+// v1.6.0 "Studio" Workstream H — HD-pack HD AUDIO: `<bgm>`/`<sfx>` OGG tracks
+// mixed into the frontend audio path on the `$4100` control register (output-
+// only). Gated with `hdpack` (native-only, default OFF).
+#[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+pub mod hd_audio;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod icon;
 pub mod icons;
@@ -95,6 +108,13 @@ pub mod runahead;
 pub mod netplay_ui;
 pub mod ntsc;
 pub mod ntsc_bisqwit;
+// v1.6.0 "Studio" Workstream I — shader/filter ecosystem additions: an
+// LMP88959-style RGBA composite NTSC/PAL pass, hqNx/xBRZ pixel-art upscaler
+// passes, and a constrained RetroArch `.slangp`/`.cgp` preset importer. All
+// extend the v1.2.0 composable ShaderStack (ADR 0013) and are output-only.
+pub mod ntsc_lmp88959;
+pub mod slang_preset;
+pub mod upscale;
 // v2.7.0 — RetroAchievements session state. Native-only and behind the
 // default-OFF `retroachievements` feature (it links the vendored rcheevos C
 // library via `rustynes-cheevos`). The browser builds never see it.

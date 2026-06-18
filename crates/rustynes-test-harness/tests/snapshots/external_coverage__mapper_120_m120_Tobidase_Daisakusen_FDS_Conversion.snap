@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-120-m120/Tobidase Daisakusen (FDS Conversion).nes
+rom_sha256=4256107cd62f9c1bb4f96da38dedee4f3acb7be450f97d40d56fd19f1a68a8ed
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=06f3437f39b6a4ea
+checkpoint f900 fb_fnv1a64=0891c48b1429343c
+checkpoint f1100 fb_fnv1a64=6b6a9baed778fd95

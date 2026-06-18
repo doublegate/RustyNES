@@ -367,9 +367,19 @@ boards with no redistributable fixture, register-decode unit-tested only) is
 oracle ROM — is enforced at the classifier level (`BestEffort` is structurally
 never accuracy-gated; the three tier id-sets are disjoint) and by the curated
 construction of the byte-oracle corpus. See `docs/adr/0011-mapper-tiering.md`.
-Current split: **123 families** — 51 Core + 9 Curated (60 accuracy-gated) + 63
+Current split: **150 families** — 51 Core + 9 Curated (60 accuracy-gated) + 90
 BestEffort (27 from v1.2.0 `sprint6`/`sprint7` + 14 from v1.3.0 `sprint8` + 12
-from v1.4.0 `sprint9` + 10 from v1.5.0 `sprint10`).
+from v1.4.0 `sprint9` + 10 from v1.5.0 `sprint10` + the v1.6.0 "Studio"
+J.Y. Company ASIC `jy_asic` family 35/90/209/211 + 23 from v1.6.0 "Studio"
+Workstream E `sprint11`). The v1.6.0 `sprint11` batch ports MMC3-clone variants
+(44/49/52/115/134/189/205/238/245/348/366, on a shared MMC3-style core with an
+A12 falling-edge IRQ + per-board outer-bank transform), the Sachen 8259 A/B/C
+2 KiB-CHR variants (141/138/139 — siblings of the existing 8259D mapper 137),
+and discrete unlicensed / FDS-conversion / multicart boards
+(42/50 with CPU-cycle IRQs, 46/51/57/104/120/290/301 hook-free). Mapper 35 is
+the J.Y. Company single-game "extended" board folded into `jy_asic.rs` (same
+silicon as 209). All are BestEffort: register-decode + save-state round-trip
+unit-tested, outside the AccuracyCoin / oracle gate.
 
 ### NSF player (synthetic mapper, v1.1.0)
 

@@ -1408,10 +1408,32 @@ impl App {
         if let Some(pack) = crate::hdpack::HdPack::load(path) {
             let rules = pack.rule_count();
             let scale = pack.scale();
+            // v1.6.0 H — HD audio: decode the pack's `<bgm>`/`<sfx>` OGG tracks
+            // (folder packs only — a `.zip` pack's audio is a future extension)
+            // and install a frontend-side mixer on the shared `EmuCore`. The
+            // mixer is an OUTPUT-ONLY tap; `None` (no audio decls / a zip pack /
+            // all tracks failed to decode) leaves the audio path byte-identical.
+            let audio_tracks = if path.is_dir() {
+                let rate = self.audio.as_ref().map_or(44_100, |a| a.sample_rate);
+                crate::hd_audio::decode_tracks_from_folder(path, pack.audio_decls(), rate)
+            } else {
+                Vec::new()
+            };
+            let track_count = audio_tracks.len();
+            {
+                let rate = self.audio.as_ref().map_or(44_100, |a| a.sample_rate);
+                let mut guard = self.emu.lock();
+                guard.hd_audio = crate::hd_audio::HdAudioMixer::new(audio_tracks, rate);
+            }
             self.hd_compositor = Some(crate::hdpack::HdCompositor::new(pack));
+            let audio_note = if track_count > 0 {
+                format!(", {track_count} audio tracks")
+            } else {
+                String::new()
+            };
             self.ui
                 .set_status(crate::ui_shell::StatusMessage::success(format!(
-                    "HD pack loaded: {rules} tiles, {scale}x"
+                    "HD pack loaded: {rules} tiles, {scale}x{audio_note}"
                 )));
             true
         } else {
@@ -1430,7 +1452,10 @@ impl App {
     fn unload_hd_pack(&mut self) {
         self.hd_compositor = None;
         let key = {
-            let guard = self.emu.lock();
+            let mut guard = self.emu.lock();
+            // v1.6.0 H — drop the HD-audio mixer so the audio path returns to
+            // byte-identical stock output.
+            guard.hd_audio = None;
             guard
                 .nes
                 .as_ref()
@@ -1832,6 +1857,136 @@ impl App {
         self.data_dir.as_ref().map(|d| d.join("movies"))
     }
 
+    /// v1.6.0 "Studio" Workstream G — A/V recordings directory
+    /// (`<data_dir>/recordings/`). Returns `None` if no data dir is available.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
+    fn recordings_dir(&self) -> Option<PathBuf> {
+        self.data_dir.as_ref().map(|d| d.join("recordings"))
+    }
+
+    /// v1.6.0 "Studio" Workstream G — whether an A/V recording is currently
+    /// armed. Always `false` on wasm or a build without the `av-record`
+    /// feature (so the menu item / status reporting compile target-agnostically).
+    #[must_use]
+    #[cfg_attr(
+        not(all(not(target_arch = "wasm32"), feature = "av-record")),
+        allow(clippy::unused_self, clippy::missing_const_for_fn)
+    )]
+    fn av_recording_active(&self) -> bool {
+        #[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
+        let active = self.emu.lock().av_recorder.is_some();
+        #[cfg(not(all(not(target_arch = "wasm32"), feature = "av-record")))]
+        let active = false;
+        active
+    }
+
+    /// v1.6.0 "Studio" Workstream G — toggle A/V recording (native).
+    ///
+    /// **Start**: open a `.mp4` / `.mkv` save dialog, then arm an
+    /// [`crate::av_record::AvRecorder`] (an `ffmpeg`-piped video + audio
+    /// recorder) keyed to the loaded ROM's region frame rate + the audio device
+    /// sample rate. If `ffmpeg` is absent the arm fails gracefully with a toast
+    /// and emulation continues untouched. **Stop**: finalize the in-progress
+    /// recording (flush, close the pipe, wait for `ffmpeg` to mux) and toast the
+    /// output path. The recorder is a READ-ONLY tap on the produced framebuffer
+    /// + drained audio — it never advances the emulator, so determinism holds.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
+    fn handle_av_record_toggle(&mut self) {
+        use crate::av_record::{AvParams, AvRecorder};
+        use crate::ui_shell::StatusMessage;
+
+        // Stop path: take the recorder out under a brief lock, then finalize
+        // with the guard dropped (the ffmpeg wait can block).
+        if self.av_recording_active() {
+            let recorder = self.emu.lock().av_recorder.take();
+            if let Some(recorder) = recorder {
+                let frames = recorder.frames();
+                match recorder.stop() {
+                    Ok(path) => {
+                        eprintln!(
+                            "rustynes: A/V recording -> {} ({frames} frames)",
+                            path.display()
+                        );
+                        self.ui.set_status(StatusMessage::success(format!(
+                            "A/V recording saved: {}",
+                            path.display()
+                        )));
+                    }
+                    Err(e) => {
+                        eprintln!("rustynes: A/V recording finalize failed: {e}");
+                        self.ui
+                            .set_status(StatusMessage::info("A/V recording failed (encode)"));
+                    }
+                }
+            }
+            return;
+        }
+
+        // Start path: need a loaded ROM. Capture the region frame duration +
+        // sample rate under a brief lock; the dialog + spawn run unlocked.
+        let frame_nanos = {
+            let guard = self.emu.lock();
+            if guard.nes.is_none() {
+                drop(guard);
+                self.ui
+                    .set_status(StatusMessage::info("A/V recording: no ROM loaded"));
+                return;
+            }
+            guard.frame_duration.as_nanos()
+        };
+        // Exact rational fps = 1e9 / frame_nanos (drift-free over a long take).
+        let fps_num: u32 = 1_000_000_000;
+        let fps_den: u32 = u32::try_from(frame_nanos).unwrap_or(16_639_267);
+        let sample_rate = self.audio.as_ref().map_or(44_100, |a| a.sample_rate);
+
+        let dir = self.recordings_dir();
+        if let Some(d) = dir.as_ref() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        // Filesystem-safe default name from the ROM label + a UTC timestamp.
+        let stem: String = self
+            .rom_label
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .collect();
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let mut dialog = rfd::FileDialog::new()
+            .add_filter("Video (MP4/MKV)", &["mp4", "mkv"])
+            .set_file_name(format!("{stem}-{secs}.mp4"));
+        if let Some(d) = dir {
+            dialog = dialog.set_directory(d);
+        }
+        let Some(out_path) = dialog.save_file() else {
+            eprintln!("rustynes: A/V recording cancelled");
+            return;
+        };
+
+        let params = AvParams {
+            out_path: out_path.clone(),
+            sample_rate,
+            fps_num,
+            fps_den,
+        };
+        match AvRecorder::start(params) {
+            Ok(recorder) => {
+                self.emu.lock().av_recorder = Some(recorder);
+                eprintln!("rustynes: A/V recording armed -> {}", out_path.display());
+                self.ui.set_status(StatusMessage::success(format!(
+                    "Recording A/V to {}",
+                    out_path.display()
+                )));
+            }
+            Err(e) => {
+                eprintln!("rustynes: A/V recording could not start: {e}");
+                self.ui.set_status(StatusMessage::info(
+                    "A/V recording unavailable (no ffmpeg?)",
+                ));
+            }
+        }
+    }
+
     /// `F6` — toggle TAS movie recording (native).
     ///
     /// **Start**: power-cycle the running `Nes` and begin recording from
@@ -1974,6 +2129,221 @@ impl App {
             ),
             Err(e) => eprintln!("rustynes: movie save failed {}: {e}", path.display()),
         }
+    }
+
+    /// v1.6.0 B1 — import an external TAS movie (FCEUX `.fm2` / `BizHawk` `.bk2`)
+    /// and begin playback against the running ROM.
+    ///
+    /// `.fm2` is flat text; `.bk2` is a ZIP whose `Header.txt` + `Input Log.txt`
+    /// members are read out and handed to the `no_std` core parser. Both produce
+    /// a [`StartPoint::PowerOn`](rustynes_core::StartPoint) movie that replays
+    /// from the **canonical movie-import power-on alignment** (a deterministic
+    /// zeroed-RAM cold boot via `seek_to_start`), so imports never desync. The
+    /// running ROM's SHA-256 is stamped onto the imported movie as its
+    /// authoritative identity (the external formats carry only MD5 / SHA-1).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn handle_movie_import(&self) {
+        if self.netplay.is_active() {
+            eprintln!("rustynes: leave netplay before importing a movie");
+            return;
+        }
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("TAS movie (FCEUX/BizHawk)", &["fm2", "bk2"])
+            .set_directory(self.movies_dir().unwrap_or_else(|| PathBuf::from(".")))
+            .pick_file()
+        else {
+            return;
+        };
+        // The imported movie inherits the running ROM's identity, so a ROM must
+        // be loaded first. We grab the hash under a short lock, then parse +
+        // play under a second lock (the file read + parse hold no lock).
+        let rom_sha = {
+            let guard = self.emu.lock();
+            let Some(nes) = guard.nes.as_ref() else {
+                eprintln!("rustynes: movie import: no ROM loaded");
+                return;
+            };
+            *nes.rom_sha256()
+        };
+        let movie = match Self::parse_movie_file(&path, rom_sha) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("rustynes: movie import failed {}: {e}", path.display());
+                return;
+            }
+        };
+        let mut guard = self.emu.lock();
+        let emu = &mut *guard;
+        let Some(nes) = emu.nes.as_mut() else {
+            return;
+        };
+        if let Err(e) = movie.seek_to_start(nes) {
+            eprintln!("rustynes: movie import seek failed (wrong ROM?): {e}");
+            return;
+        }
+        let total = movie.len();
+        emu.movie.start_playback(movie);
+        emu.next_frame_time = Some(Instant::now());
+        eprintln!(
+            "rustynes: imported movie playing ({total} frames) from {}",
+            path.display()
+        );
+    }
+
+    /// Parse a `.fm2` / `.bk2` movie file into a [`Movie`], stamping `rom_sha` as
+    /// its identity. `.bk2` ZIP handling stays frontend-side (the core stays
+    /// `no_std`); the text members are parsed by the core.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn parse_movie_file(
+        path: &std::path::Path,
+        rom_sha: [u8; 32],
+    ) -> Result<rustynes_core::Movie, String> {
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if ext == "bk2" {
+            let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+            let (header, input_log) = Self::read_bk2_members(&bytes)?;
+            let (movie, _meta) =
+                rustynes_core::bk2_interop::import_bk2(&header, &input_log, rom_sha)
+                    .map_err(|e| e.to_string())?;
+            Ok(movie)
+        } else {
+            // `.fm2` (or any other extension): flat text.
+            let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+            let (movie, _meta) = rustynes_core::movie_interop::import_fm2(&text, rom_sha)
+                .map_err(|e| e.to_string())?;
+            Ok(movie)
+        }
+    }
+
+    /// Read the `Header.txt` + `Input Log.txt` members out of a `.bk2` ZIP.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn read_bk2_members(zip_bytes: &[u8]) -> Result<(String, String), String> {
+        use std::io::Read as _;
+        // A `.bk2`'s text members are small; cap the read so a corrupt / hostile
+        // archive can't OOM the host (same guard as the ROM zip path).
+        const MAX_MEMBER_BYTES: u64 = 64 * 1024 * 1024;
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes))
+            .map_err(|e| format!("not a valid .bk2 zip: {e}"))?;
+        let read_member =
+            |archive: &mut zip::ZipArchive<_>, name: &str| -> Result<String, String> {
+                let f = archive
+                    .by_name(name)
+                    .map_err(|_| format!(".bk2 missing `{name}`"))?;
+                if f.size() > MAX_MEMBER_BYTES {
+                    return Err(format!(".bk2 member `{name}` is implausibly large"));
+                }
+                let mut s = String::new();
+                f.take(MAX_MEMBER_BYTES)
+                    .read_to_string(&mut s)
+                    .map_err(|e| format!(".bk2 member `{name}` read failed: {e}"))?;
+                Ok(s)
+            };
+        let header = read_member(&mut archive, rustynes_core::bk2_interop::BK2_HEADER_MEMBER)?;
+        let input_log = read_member(
+            &mut archive,
+            rustynes_core::bk2_interop::BK2_INPUT_LOG_MEMBER,
+        )?;
+        Ok((header, input_log))
+    }
+
+    /// v1.6.0 B1 — export the current recording / loaded movie to an external
+    /// TAS movie file. The chosen extension (`.fm2` / `.bk2`) selects the format;
+    /// `.bk2` is packed into a ZIP frontend-side.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn handle_movie_export(&self) {
+        // Prefer the in-progress recording (finished here); else the loaded
+        // playback movie. One of the two is guaranteed by the menu gate.
+        let movie = {
+            let mut guard = self.emu.lock();
+            guard
+                .movie
+                .finish_recording()
+                .or_else(|| guard.movie.playing_movie())
+        };
+        let Some(movie) = movie else {
+            eprintln!("rustynes: movie export: nothing to export");
+            return;
+        };
+        let dir = self.movies_dir();
+        if let Some(d) = dir.as_ref() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        let mut dialog = rfd::FileDialog::new()
+            .add_filter("TAS movie (FCEUX/BizHawk)", &["fm2", "bk2"])
+            .set_file_name("movie.bk2");
+        if let Some(d) = dir {
+            dialog = dialog.set_directory(d);
+        }
+        let Some(path) = dialog.save_file() else {
+            eprintln!("rustynes: movie export cancelled");
+            return;
+        };
+        if let Err(e) = Self::write_movie_file(&path, &movie) {
+            eprintln!("rustynes: movie export failed {}: {e}", path.display());
+        } else {
+            eprintln!(
+                "rustynes: exported movie ({} frames) -> {}",
+                movie.len(),
+                path.display()
+            );
+        }
+    }
+
+    /// Serialize `movie` to a `.fm2` / `.bk2` file (extension selects the
+    /// format). `.bk2` packs the core's two text members into a ZIP.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn write_movie_file(
+        path: &std::path::Path,
+        movie: &rustynes_core::Movie,
+    ) -> Result<(), String> {
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if ext == "fm2" {
+            let text = rustynes_core::movie_interop::export_fm2(
+                movie,
+                &rustynes_core::movie_interop::Fm2ExportOpts::default(),
+            )
+            .map_err(|e| e.to_string())?;
+            std::fs::write(path, text).map_err(|e| e.to_string())
+        } else {
+            // `.bk2` (the default): pack the two text members into a ZIP.
+            let parts = rustynes_core::bk2_interop::export_bk2(
+                movie,
+                &rustynes_core::bk2_interop::Bk2ExportOpts::default(),
+            )
+            .map_err(|e| e.to_string())?;
+            let bytes = Self::pack_bk2_zip(&parts)?;
+            std::fs::write(path, bytes).map_err(|e| e.to_string())
+        }
+    }
+
+    /// Pack a `.bk2`'s `Header.txt` + `Input Log.txt` text members into a ZIP.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn pack_bk2_zip(parts: &rustynes_core::bk2_interop::Bk2Text) -> Result<Vec<u8>, String> {
+        use std::io::Write as _;
+        let mut buf = Vec::new();
+        {
+            let mut w = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+            let opts = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+            w.start_file(rustynes_core::bk2_interop::BK2_HEADER_MEMBER, opts)
+                .map_err(|e| e.to_string())?;
+            w.write_all(parts.header.as_bytes())
+                .map_err(|e| e.to_string())?;
+            w.start_file(rustynes_core::bk2_interop::BK2_INPUT_LOG_MEMBER, opts)
+                .map_err(|e| e.to_string())?;
+            w.write_all(parts.input_log.as_bytes())
+                .map_err(|e| e.to_string())?;
+            w.finish().map_err(|e| e.to_string())?;
+        }
+        Ok(buf)
     }
 
     /// v1.6.0 "Studio" A2 — lazily start a `TAStudio` session when the window is
@@ -3336,6 +3706,14 @@ impl App {
                 #[cfg(target_arch = "wasm32")]
                 self.handle_movie_branch_wasm();
             }
+            MenuAction::MovieImport => {
+                #[cfg(not(target_arch = "wasm32"))]
+                self.handle_movie_import();
+            }
+            MenuAction::MovieExport => {
+                #[cfg(not(target_arch = "wasm32"))]
+                self.handle_movie_export();
+            }
             MenuAction::FrameAdvance => {
                 self.request_frame_advance();
             }
@@ -3369,6 +3747,10 @@ impl App {
                     gfx.set_hide_overscan(on);
                     gfx.window.request_redraw();
                 }
+            }
+            MenuAction::AvRecordToggle => {
+                #[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
+                self.handle_av_record_toggle();
             }
             MenuAction::InsertCoin => {
                 let mut guard = self.emu.lock();
@@ -3597,6 +3979,23 @@ impl App {
         // `writes_locked` is the same gate `emu.write` uses; SetInput honors it.
         for cmd in &controls {
             self.apply_script_control(cmd, writes_locked);
+        }
+    }
+
+    /// v1.6.0 "Studio" Workstream C — drive the debugger Watch panel's
+    /// per-frame observational replay (conditional breakpoints + read/write/exec
+    /// watchpoints + watch window + conditional trace). Runs after a frame is
+    /// produced, under the emu lock, exactly like [`Self::pump_scripts`]; it only
+    /// *reads* the just-finished frame's exec/access logs, so determinism is
+    /// unaffected. Runs on every build (the frontend always pulls `debug-hooks`),
+    /// so it is not behind the `scripting` gate.
+    fn pump_watchpoints(&mut self) {
+        let Some(dbg) = self.debugger.as_mut() else {
+            return;
+        };
+        let mut guard = self.emu.lock();
+        if let Some(nes) = guard.nes.as_mut() {
+            dbg.pump_watchpoints(nes);
         }
     }
 
@@ -4600,6 +4999,16 @@ impl App {
                     emu.audio_buf.resize(target, 0.0);
                 }
                 let n = nes.drain_audio_into(&mut emu.audio_buf);
+                // v1.6.0 H — HD-pack HD audio: peek `$4100` (side-effect-free)
+                // and mix the selected OGG track into the drained buffer in
+                // place before the DRC stage. Output-only; skipped when no audio
+                // pack is loaded. Disjoint field borrows: `nes` is `emu.nes`,
+                // the mixer + buffer are other `emu` fields.
+                #[cfg(feature = "hd-pack")]
+                if let Some(mixer) = emu.hd_audio.as_mut() {
+                    let control = nes.cpu_bus_peek(crate::hd_audio::HD_AUDIO_CONTROL);
+                    mixer.mix(&mut emu.audio_buf[..n], control);
+                }
                 // v2.8.0 Phase 1 — through the DRC resampler stage.
                 audio.push_samples(&emu.audio_buf[..n]);
             }
@@ -6404,6 +6813,12 @@ impl ApplicationHandler<AppEvent> for App {
                 #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
                 self.pump_scripts();
 
+                // v1.6.0 "Studio" Workstream C — drive the debugger Watch panel's
+                // observational replay (conditional breakpoints / watchpoints /
+                // watch window / conditional trace). Runs after the frame is
+                // produced; observational-only, so determinism holds.
+                self.pump_watchpoints();
+
                 // v2.8.0 Phase 3 — the renderer presents `present_fb` (the
                 // harvested per-frame framebuffer; with run-ahead it is the
                 // VISIBLE future frame while `nes` holds the persistent
@@ -6506,6 +6921,10 @@ impl ApplicationHandler<AppEvent> for App {
                     paused: self.ui.paused,
                     movie_recording,
                     movie_playing,
+                    // v1.6.0 "Studio" Workstream G — A/V recording armed flag
+                    // (drives the Tools menu Record/Stop label). Always false on
+                    // wasm / builds without the `av-record` feature.
+                    av_recording: self.av_recording_active(),
                     fast_forwarding: self.input.fast_forward_held(),
                     // v1.5.0 I7 — RA readout for the status bar (None unless the
                     // feature is on AND logged in).

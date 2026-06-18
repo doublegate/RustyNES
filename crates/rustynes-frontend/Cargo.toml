@@ -109,7 +109,7 @@ gpu-timing = []
 # also byte-identical (the substitution path is `Option`-gated). Reuses the
 # already-present native-only `png` (decode replacement images) and `zip`
 # (archive packs) deps. See `docs/ppu-2c02.md` §HD-pack tile-source export.
-hd-pack = ["rustynes-core/hd-pack"]
+hd-pack = ["rustynes-core/hd-pack", "dep:lewton"]
 
 # v1.5.0 "Lens" Workstream G — EXPERIMENTAL casual-mode browser RetroAchievements
 # (default OFF, wasm-only). The ADR 0015 carryover. Activates the wasm-only
@@ -134,6 +134,19 @@ browser-cheevos = []
 # resolve to the same build; it adds nothing (the dependency below is the real
 # enable). The output-only `debug-hooks` core code is determinism-neutral.
 debug-hooks = ["rustynes-core/debug-hooks"]
+
+# v1.6.0 "Studio" Workstream G — A/V recording (default OFF, native-only).
+#
+# Adds the `av_record` frontend module: a read-only tap that pipes the
+# already-produced framebuffer + drained audio to an external `ffmpeg` process
+# (rawvideo over stdin + a mono f32le audio sidecar) to mux an .mp4/.mkv. It
+# pulls NO extra Rust deps (only the system `ffmpeg` binary at run time, with a
+# graceful "ffmpeg not found" fallback), so it is inert on native when off and
+# the wasm builds (and the wasm size budget) are unchanged. The recorder never
+# advances the emulator or alters the per-frame output, so the determinism
+# contract + AccuracyCoin are unaffected. Enable with:
+#   cargo build -p rustynes-frontend --features av-record
+av-record = []
 
 [[bin]]
 name = "rustynes"
@@ -245,6 +258,16 @@ png = "0.18"
 # the AES / zstd / bzip2 extras. The wasm load path receives raw bytes from the
 # browser file picker, so it never needs zip.
 zip = { version = "2", default-features = false, features = ["deflate"] }
+
+# v1.6.0 "Studio" Workstream H — HD-pack HD AUDIO OGG decoder (native-only,
+# behind the default-OFF `hd-pack` feature via `dep:lewton`). `lewton` is a
+# pure-Rust Vorbis decoder (MIT/ISC/Apache-2.0 — no C, no extra system deps), so
+# it adds no build complexity and is kept out of the default + wasm builds (it is
+# `optional = true` and only lives in this `cfg(not(wasm32))` table). It decodes
+# the pack's `<bgm>`/`<sfx>` OGG tracks to mono PCM that `src/hd_audio.rs` mixes
+# into the already-produced frontend audio buffer (output-only — the core's
+# deterministic per-frame audio is untouched).
+lewton = { version = "0.10", optional = true }
 
 # v2.8.0 Phase 5 increment 3 — best-effort emulation-thread priority
 # elevation (Linux only). `elevate_thread_priority()` in `emu_thread.rs`

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-051-m51/11-in-1 Ball Games [p1][!].nes
+rom_sha256=3417f6c740e7e4a9d412f97d36897f5539634d2efc0a8f3cfe9e2f7d5cbed145
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=9b347ca7ed24b247
+checkpoint f900 fb_fnv1a64=b9336a13dcf7a325
+checkpoint f1100 fb_fnv1a64=b9336a13dcf7a325

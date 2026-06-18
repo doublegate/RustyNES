@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-049-m49/Super HIK 4-in-1 [p1][!].nes
+rom_sha256=e0421082ad6a4020f2254f93d1e5a5dceb8d24fc297d17ffb998ee42f6939ff6
+frames=1141
+fb_bytes=245760
+cycles=33949778
+audio_samples=836505
+audio_fnv1a64=d8995fde48a112ea
+checkpoint f900 fb_fnv1a64=8f7deb6d93c033b9
+checkpoint f1100 fb_fnv1a64=833442ac9f019e20

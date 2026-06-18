@@ -262,6 +262,39 @@ them:
   (60 / 240 / 1k / 3.8k / 12k Hz, ±12 dB) frontend output stage owned by the
   producer (`audio.rs::EqStage`), bypassed (zero overhead) when off / flat.
 
+### HD-pack HD audio (v1.6.0 "Studio" Workstream H, `hd-pack`)
+
+An HD-pack can ship external, studio-quality OGG Vorbis tracks that replace /
+layer over the game's audio — the biggest Mesen2 gap vs ADR 0014. The
+`hires.txt` declares them with `<bgm>album,track,filename` (looping background
+music) and `<sfx>album,track,filename` (one-shot sound effects); the game
+*selects* a track at run time by writing to the HD-pack audio-control register
+at **`$4100`**. `src/hd_audio.rs` parses the declarations, decodes the OGG files
+to mono PCM (resampled to the device rate, via the pure-Rust `lewton` decoder
+pulled in only by the `hd-pack` feature), and runs an `HdAudioMixer`.
+
+This is an **output-only** tap, the audio analogue of the HD tile-substitution
+on the framebuffer and Workstream G's A/V-recording tap: it sits in the
+**frontend** audio path, on top of the buffer the core already produced
+(`Nes::drain_audio_into`). Each produced frame `EmuCore::produce_one_frame`
+*peeks* `$4100` (a side-effect-free read of the already-produced bus state, like
+the HD-pack `<condition>` watched-memory snapshot) and, if the control byte
+selected a track, sums the decoded PCM into the drained APU buffer **in place**
+before it reaches the DRC resampler / cpal queue (the same insertion point the
+A/V recorder taps). It mutates no emulation state and adds no determinism
+surface — the core's deterministic per-frame audio (save-state round-trip / TAS
+replay / netplay) is untouched. The mixer is `Option`-gated on `EmuCore`; with
+no audio pack loaded — or the `hd-pack` feature off — the audio is byte-identical
+to the stock build. The `$4100` selection is **best-effort**: RustyNES does not
+intercept the register write (no core change), so the frontend reads the value
+back and treats a *change* as the trigger edge — packs whose cart maps `$4100`
+into readable expansion space drive it faithfully; on pure open-bus carts the
+selection is inert (a documented honesty caveat, like the BestEffort mapper
+tier). Folder packs are supported; `.zip`-pack audio is a future extension.
+Audible playback is a **maintainer manual-check** item (no audio device in CI);
+the parse, the `$4100` trigger-edge logic, and the mixer buffering are
+unit-tested.
+
 ### Browser audio (AudioWorklet)
 
 The wasm builds (`wasm_audio.rs`) output through an **AudioWorklet** whose
@@ -478,14 +511,16 @@ reorganized the order and regrouped several items — see the per-menu notes):
   Fullscreen (`F11`, native), Window Size (1x-4x of the NES resolution, native),
   Show FPS, Pause When Unfocused (auto-pause on focus loss), Show Menu Bar
   (`M`).
-- **Tools** — Cheats, Movies (TAS: Record/Play/Branch), Netplay (native),
-  RetroAchievements (native + feature), Input Display, Input Miniatures, NSF
-  Player (moved here from Debug in v1.3.0), Replay / TAS (v1.5.0 C2), ROM
-  Database, and an **HD Pack** submenu (`hd-pack` feature + native; folded in
-  from the former standalone "Mod" menu).
+- **Tools** — Cheats, Movies (TAS: Record/Play/Branch + `.fm2`/`.bk2`
+  import/export), **Record A/V** (v1.6.0 G; native + `av-record` feature),
+  Netplay (native), RetroAchievements (native + feature), Input Display, Input
+  Miniatures, NSF Player (moved here from Debug in v1.3.0), Replay / TAS (v1.5.0
+  C2), TAStudio (v1.6.0 A2), ROM Database, and an **HD Pack** submenu (`hd-pack`
+  feature + native; folded in from the former standalone "Mod" menu).
 - **Debug** — Show Debugger (`` ` ``), Performance Monitor (moved here from
   Tools in v1.3.0), then the chip/state inspectors: CPU / PPU / APU / Memory /
-  Memory Compare / OAM / Mapper / Trace Logger / Event Viewer / Lua Script.
+  Memory Compare / OAM / Mapper / Trace Logger / Watch / Breakpoints (v1.6.0
+  "Studio" Workstream C) / Event Viewer / Lua Script.
 - **Help** — Documentation (v1.5.0 I10; native, searchable in-app manual),
   Keyboard Shortcuts, About.
 
@@ -871,6 +906,125 @@ surface).
   into the master mix the standard APU plays. Output-only eye-candy: it samples
   a copy for display and changes no synthesis.
 
+### v1.6.0 "Studio" Workstream C — debugger depth (Mesen2-class)
+
+Frontend-only, built on the existing `debug-hooks` observational logs; replay
+stays bit-identical and the feature-off core build is byte-identical. The
+keystone is a small expression evaluator (`debugger::expr`) that the rest of the
+workstream rides on.
+
+- **Expression evaluator (C1 keystone)** — `debugger::expr::Expr::parse` compiles
+  a Mesen-`ExpressionEvaluator`-style string into a reusable AST; `eval` runs it
+  against an `EvalContext`. The language supports:
+  - **CPU regs** `a x y s p pc`, **PPU** `scanline` / `cycle` (alias `dot`) /
+    `frame`.
+  - **Memory** `[addr]` (one byte) and `{addr}` (a little-endian 16-bit word),
+    both via a non-mutating CPU-bus peek.
+  - **Access-context tokens** `value`, `address` (alias `addr`), and
+    `isRead` / `isWrite` / `isExec` (case-insensitive) — the access being tested
+    during a watchpoint/breakpoint replay; `0` in a context-free evaluation.
+  - The full C operator set: `+ - * / % & | ^ ~ << >> && || ! == != < > <= >=`,
+    ternary `?:`, and parentheses, on `i64` (comparisons / logicals yield `1`/`0`;
+    divide / modulo / shift are guarded so a bad operand can't panic). Number
+    literals are decimal, `$hex` / `0xhex`, or `%binary`.
+
+- **Conditional breakpoints + R/W/X watchpoints (C1)** — the
+  **Watch / Breakpoints** panel (Debug → Watch / Breakpoints). A **conditional
+  breakpoint** is an exec-PC (or address range) plus an optional condition
+  expression; it logs a hit when an executed PC is in range and the condition is
+  true. A **watchpoint** is an address range + an access class (read / write /
+  exec) + an optional condition; it logs every matching access. Hits accumulate
+  in a bounded hit log (frame / tag / address / value, symbol-annotated).
+
+- **Watch window + conditional trace (C4, free riders on C1)** — the same panel
+  hosts a **watch window** (a list of expressions evaluated against the
+  end-of-frame state and displayed each redraw) and a **conditional trace** (a
+  format string with `{token}` / `{[addr]}` / `{{addr}}` substitutions, filtered
+  by an optional condition expression — both reuse the C1 evaluator).
+
+- **Observational contract (ADR 0010)** — all of the above is **observational**:
+  `App::pump_watchpoints` (mirroring the Lua `pump_scripts`) runs after each
+  frame, under the emu lock, arms the per-frame exec / access logs the active
+  tools need (`Nes::set_exec_logging` / `set_access_logging`), and *replays* the
+  just-finished frame's `Nes::exec_log()` / `Nes::accesses()` exactly like the
+  Lua `onExec` / `onRead` / `onWrite` hooks. It never intercepts mid-instruction
+  or mutates emulator-visible state, so determinism / AccuracyCoin hold. One
+  consequence of replay (shared with the Lua hooks): the `value` / `address` /
+  `isRead` / `isWrite` / `isExec` tokens are per-access accurate, but the
+  register / PPU / `[addr]` tokens reflect the machine's **end-of-frame** state,
+  not the exact cycle of the logged access (the panel UI documents this).
+
+- **Hex editor (C2)** — the **Memory** panel (Debug → Memory) is now a full hex
+  editor with **CPU bus / PPU bus / OAM** domain tabs. In the CPU domain a byte
+  is editable: click it, type a hex value, Enter writes it via `Nes::poke_ram`
+  (only `$0000-$1FFF` work RAM is writable — the core exposes no deterministic
+  poke for the PPU bus / OAM / ROM, so those domains are read-only). Right-click
+  a CPU byte to **freeze** it: the panel emits the frozen address/value as a
+  `RawCheat` that the app re-applies after every frame, routed through the SAME
+  raw-cheat overlay the Cheats panel uses (see `DebuggerOverlay::enabled_raw_cheats`).
+  An **access-type heatmap** toggle tints each CPU byte by whether it was read
+  (blue) or written (red) in the last frame, driven by the `debug-hooks` access
+  log (refreshed by `App::pump_watchpoints`; arming the heatmap arms the log).
+  A **find** box searches the visible domain for a hex byte sequence
+  (`DE AD BE EF`) and jumps to the first match at/after the cursor, wrapping
+  once. All reads are side-effect-free peeks; the only write path is the
+  work-RAM poke/freeze (applied like a cheat), so the no-edit path is
+  byte-identical and determinism holds.
+
+- **RAM Search + RAM Watch (C3)** — the **Memory Compare** panel (Debug → Memory
+  Compare) is upgraded from the v1.3.0 changed/unchanged search into the
+  BizHawk/FCEUX-class tool. **RAM Search** now has an **operator × compare-to
+  matrix** — each step keeps candidates whose value satisfies an operator
+  (`== != < > <= >=`) against **either** the previous snapshot (find "what went
+  down when you lost a life") **or** a typed constant (find "the value that is
+  now 99") — plus **sizes** (1-, 2-, or 4-byte little-endian values; changing the
+  size resets the in-flight search). Each surviving candidate has **watch** and
+  **freeze** buttons. **RAM Watch** is a named list of `(address, size, label)`
+  entries with live values, a per-entry **freeze** checkbox (also routed through
+  the raw-cheat overlay — a multi-byte freeze expands to one cheat per
+  little-endian byte), and native **`.wch` save / load** (a simple
+  `addr size label` text format). Read-only against the core (the freeze cheats
+  are the only writes, applied post-frame like every other cheat), so the
+  no-freeze path is byte-identical.
+
+### v1.6.0 "Studio" Workstream G — A/V recording (`av_record`, native + `av-record` feature)
+
+Records the running game to a `.mp4` / `.mkv` (video + synchronized audio).
+**Native-only + behind the default-OFF `av-record` feature**, so the shipped /
+wasm / `no_std` builds are byte-identical with it off (the module is not even
+compiled). Implemented in `src/av_record.rs`.
+
+- **Capture is a read-only tap on the already-produced output.** Inside
+  `EmuCore::produce_one_frame`, *after* the emulator has produced the frame, the
+  recorder copies the visible framebuffer (`present_fb`, RGBA8 256x240 — the same
+  source the screenshot path reads) and the same audio samples the audio sink
+  received that frame (`audio_buf[..n]`, mono `f32`). It **never** advances the
+  emulator, mutates the core, or alters the per-frame framebuffer / audio, so the
+  **determinism contract is untouched** and **AccuracyCoin holds 139/139**. With
+  the feature off the produce path is byte-identical.
+- **Encoder = external `ffmpeg` pipe.** The recorder spawns `ffmpeg`, streams
+  **rawvideo** (`rgba`, 256x240, at the region frame rate as an exact rational
+  `1e9 / frame_nanos`) over **stdin** (input 0), and writes the **mono `f32le`**
+  PCM to a small temp sidecar that `ffmpeg` reads as input 1 (a sidecar rather
+  than a second pipe avoids the classic two-pipe deadlock without threads).
+  Output is H.264 (`libx264`, `veryfast`, `yuv420p`) + AAC. The sidecar is muxed
+  and deleted at stop. This keeps the default build free of heavy media codecs —
+  the only dependency is the system `ffmpeg` binary at run time.
+- **Graceful fallback when `ffmpeg` is absent.** Arming fails with a clear toast
+  (`A/V recording unavailable (no ffmpeg?)`) and emulation continues untouched; a
+  broken video/audio pipe mid-recording auto-stops + drops the recorder.
+- **Menu wiring.** Tools → **Record A/V** toggles via `MenuAction::AvRecordToggle`
+  dispatched *after* the egui pass (like the other tools). Start opens an rfd
+  save dialog (default `<data_dir>/recordings/<rom>-<utc>.mp4`); a second click
+  stops + finalizes. The menu label flips to "Stop A/V Recording" while armed.
+  wasm has no menu item (the variant stays un-gated so the match is exhaustive).
+- **Carryover (maintainer manual-verify):** actual encoded-file playback can't be
+  headless-verified (no GPU / no codec exercise in CI), like the egui-render
+  carveouts — the unit-testable parts (ffmpeg arg construction, container
+  inference, frame/audio buffering bounds, start/stop state) are covered by
+  `av_record`'s tests. The FCEUX-style Code/Data Logger (output-only PRG/CHR
+  coverage side-array) is **deferred** (not in this cut).
+
 ## Settings
 
 Stored in `directories::ProjectDirs::config_dir() / "RustyNES" / "config.toml"`.
@@ -978,7 +1132,34 @@ All of the original open questions are resolved in v1.0.0:
     for genuine dot-crawl / fringing artifacts. The index buffer is uploaded only
     while the filter is active; all tables are baked into the WGSL (WebGL2-safe, no
     storage buffers). Frontend-only — no core / determinism impact.
-  Slang-shader ports remain a future enhancement.
+  - **Composable shader stack (v1.2.0 C2, ADR 0013).** Settings → **Shaders** →
+    "Shader stack" builds an ordered, parameterized list of post-passes (the
+    ping-pong executor in `shader_pass.rs`). An empty / all-disabled stack falls
+    through to the byte-identical direct blit. Each built-in pass declares its
+    knobs with RetroArch-style `#pragma parameter` headers, parsed into generic
+    egui sliders; per-pass overrides + a named preset bank persist in the config.
+
+    **v1.6.0 "Studio" Workstream I — shader/filter ecosystem** adds three RGBA
+    built-in passes to the stack (all output-only, so AccuracyCoin / no_std /
+    wasm stay byte-identical with them off):
+    - **`lmp88959`** (`ntsc_lmp88959.rs`, I1) — an LMP88959-style composite
+      NTSC/PAL look (encode-then-demodulate per output texel: chroma bleed, dot
+      crawl, edge fringing). Unlike the index-only Bisqwit `composite-rt` pass it
+      samples the **RGBA framebuffer**, so it can sit anywhere in the stack. Knobs:
+      `saturation`, `sharpness`, `tint`, `phase`, `pal`.
+    - **`hqx`** / **`xbrz`** (`upscale.rs`, I2) — hqNx- and xBRZ-style
+      edge-directed pixel-art smoothers (single-pass GPU adaptations of the
+      hqx / xBR edge-blend kernels), each with a `strength` knob.
+    - **Constrained RetroArch preset import** (`slang_preset.rs`, I3) — Settings →
+      Shaders → "Import .slangp / .cgp" parses a RetroArch preset and maps the
+      well-known shader filename stems (`crt-*`, `*ntsc*`/`*composite*`,
+      `*hqx*`/`*hq2x*`, `*xbr*`/`*xbrz*`) onto the built-in passes, carrying over
+      matching parameter overrides. It is **not** a GLSL/Slang → WGSL transpiler
+      (ADR 0013 keeps source translation out of scope): passes with no built-in
+      equivalent are reported as **unsupported** (not silently dropped), and the
+      import status shows the mapped/unsupported counts. Visual output of every
+      shader pass is maintainer-manual-verified (it can't be headless-checked);
+      the parsers, stack wiring, and WGSL parse+validate are unit-tested.
 - **Movie recording (TAS)** — shipped (`.rnm` record/play/branch).
 - **Netplay** — shipped (rollback netcode, 2-4 players, native UDP + browser
   WebRTC), enabled by the deterministic core.

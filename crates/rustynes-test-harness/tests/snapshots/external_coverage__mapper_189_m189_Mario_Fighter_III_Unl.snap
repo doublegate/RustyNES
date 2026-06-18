@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-189-m189/Mario Fighter III (Unl) [!].nes
+rom_sha256=4a60785a14068531a5257693b5f0e19eafcef6e887cffc3cccbd5499d6eeb3ec
+frames=1141
+fb_bytes=245760
+cycles=33949779
+audio_samples=836505
+audio_fnv1a64=14f5b83a74762494
+checkpoint f900 fb_fnv1a64=5f02ef56b0753aed
+checkpoint f1100 fb_fnv1a64=c5b3f309b89617d1

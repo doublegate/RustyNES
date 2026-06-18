@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-044-m44/Panda Adventure (AbabSoft).nes
+rom_sha256=b7eeaeb1fd51f93b423f4657d481c03faf9f19f5a4370b6b079d9c40083ab94c
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=cf8b20adb3af60d9
+checkpoint f900 fb_fnv1a64=f6bf26975d313ae1
+checkpoint f1100 fb_fnv1a64=f6bf26975d313ae1

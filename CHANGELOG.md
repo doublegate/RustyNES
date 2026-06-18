@@ -15,8 +15,196 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-06-18 - "Studio" (Feature Release)
+
 ### Added
 
+- **Shader / filter ecosystem — LMP88959 NTSC/PAL, hqNx/xBRZ upscalers, +
+  constrained RetroArch preset import** (v1.6.0 Workstream I, extends the v1.2.0
+  composable `ShaderStack` / ADR 0013). Three new RGBA built-in passes join the
+  Settings → Shaders "Shader stack" picker (each declaring its knobs via
+  `#pragma parameter` headers that drive generic sliders, like the existing CRT
+  pass): **`lmp88959`** (`crates/rustynes-frontend/src/ntsc_lmp88959.rs`) — an
+  LMP88959-style composite NTSC/PAL look (per-texel encode-then-demodulate giving
+  chroma bleed, dot crawl, and edge fringing; knobs `saturation` / `sharpness` /
+  `tint` / `phase` / `pal`), which — unlike the index-only Bisqwit `composite-rt`
+  pass — samples the RGBA framebuffer so it composes anywhere in the stack; and
+  **`hqx`** / **`xbrz`** (`crates/rustynes-frontend/src/upscale.rs`) —
+  hqNx- and xBRZ-style edge-directed pixel-art smoothers (single-pass GPU
+  adaptations of the published edge-blend kernels; independent WGSL, each with a
+  `strength` knob). Plus a **constrained RetroArch `.slangp` / `.cgp` preset
+  importer** (`crates/rustynes-frontend/src/slang_preset.rs`, Settings → Shaders →
+  "Import .slangp / .cgp…"): it parses a preset and maps well-known shader
+  filename stems (`crt-*`, `*ntsc*`/`*composite*`, `*hqx*`/`*hq2x*`,
+  `*xbr*`/`*xbrz*`) onto the built-in passes, carrying over matching parameter
+  overrides — it is **not** a GLSL/Slang → WGSL transpiler (source translation
+  stays out of scope per ADR 0013), and passes with no built-in equivalent are
+  reported as **unsupported** (surfaced with a mapped/unsupported count, never
+  silently dropped). Everything is **output-only** (post-framebuffer, never
+  touching the core, the index framebuffer, or determinism) and **off by default**
+  (an empty / all-disabled stack is the byte-identical direct blit), so
+  **AccuracyCoin holds 100% (139/139)** and the shipped / `no_std` / wasm builds
+  stay byte-identical. The shaders matter for wasm, and both wasm clippy combos +
+  `trunk build` pass. Unit-tested: the `.slangp`/`.cgp` parser + honest-reject
+  path, the stack wiring + param forwarding, and a WGSL parse+validate gate for
+  every new pass; visual shader output is a maintainer manual-verify (it can't be
+  headless-checked). (See `docs/frontend.md` §"CRT / NTSC shaders" and ADR 0013's
+  v1.6.0 supplement.)
+- **HD-pack HD audio — `<bgm>` / `<sfx>` OGG tracks via the `$4100` control
+  register** (v1.6.0 Workstream H, native + default-OFF `hd-pack` feature; the
+  biggest Mesen2 gap vs ADR 0014). The HD-pack `hires.txt` parser
+  (`crates/rustynes-frontend/src/hdpack.rs`) now reads `<bgm>album,track,file`
+  (looping background music) and `<sfx>album,track,file` (one-shot sound effects)
+  declarations, and a new module
+  (`crates/rustynes-frontend/src/hd_audio.rs`) decodes their OGG Vorbis files to
+  mono PCM (pure-Rust `lewton` decoder, pulled in only by `hd-pack` — no C, no
+  extra system deps; default / wasm builds never see it) and runs an
+  `HdAudioMixer`. The mixer is an **output-only** tap, the audio analogue of the
+  HD tile-substitution on the framebuffer and Workstream G's recording tap: it
+  sits in the FRONTEND audio path on top of the buffer the core already produced
+  (`Nes::drain_audio_into`), and each produced frame `EmuCore::produce_one_frame`
+  *peeks* the `$4100` HD-pack audio-control register (a side-effect-free read of
+  the already-produced bus state) and, on the selector's change edge, sums the
+  decoded track into the drained APU buffer **in place** before the DRC stage. It
+  touches no emulation state and the core's deterministic per-frame audio
+  (save-state / TAS / netplay) is unaffected; the mixer is `Option`-gated on
+  `EmuCore`, so with no audio pack loaded — or the feature off — the audio is
+  byte-identical and **AccuracyCoin holds 100% (139/139)**. The `$4100` selection
+  is best-effort (RustyNES does not intercept the register write — it reads the
+  value back and edge-detects, faithful on carts that map `$4100` into readable
+  expansion space, inert on open-bus carts, a documented honesty caveat like the
+  BestEffort mapper tier); folder packs are supported, `.zip`-pack audio + the
+  full `$4100`..`$4106` state machine are noted future extensions. Audible
+  playback is a **maintainer manual-check** (no audio device in CI); the
+  `<bgm>`/`<sfx>` parse, the `$4100` trigger-edge logic, and the mixer buffering
+  are unit-tested. (See `docs/frontend.md` §"HD-pack HD audio" + ADR 0014.)
+- **A/V recording — synchronized video + audio capture** (v1.6.0 Workstream G,
+  native + default-OFF `av-record` feature). A new frontend module
+  (`crates/rustynes-frontend/src/av_record.rs`) records the running game to an
+  `.mp4` / `.mkv`. Capture is a **read-only tap on the already-produced output**:
+  inside `EmuCore::produce_one_frame`, *after* the emulator produces the frame,
+  the recorder copies the visible framebuffer (RGBA8 256x240 — the same source
+  the screenshot path reads) and the same audio samples the audio sink received
+  that frame (mono `f32`). It never advances the emulator or alters the per-frame
+  framebuffer / audio, so the **determinism contract is untouched** and
+  **AccuracyCoin holds 100% (139/139)**; with the feature off the produce path is
+  byte-identical and the module is not compiled (the shipped / wasm / `no_std`
+  builds are unchanged). The encoder is an **external `ffmpeg` pipe** — rawvideo
+  (`rgba`, exact rational region frame rate) over stdin + a mono `f32le` audio
+  temp sidecar as a second input (avoiding a two-pipe deadlock), muxed to H.264 +
+  AAC — so the default build pulls **no extra Rust deps** (only the system
+  `ffmpeg` at run time, with a graceful "ffmpeg not found" fallback). Wired into
+  **Tools → Record A/V** via `MenuAction::AvRecordToggle` dispatched after the
+  egui pass; start opens an rfd save dialog (default
+  `<data_dir>/recordings/<rom>-<utc>.mp4`), a second click stops + finalizes;
+  wasm = no-op (gated out). Unit-tested parts: ffmpeg arg construction, container
+  inference, framebuffer-stride guard, sidecar path, start/stop state. **Deferred:**
+  the FCEUX-style Code/Data Logger; on-device encoded-file playback is a
+  maintainer manual-verify (CI cannot exercise the codec). Enable with
+  `cargo build -p rustynes-frontend --features av-record`. (See `docs/frontend.md`
+  §"Workstream G — A/V recording".)
+- **Off-axis accuracy verification + documentation** (v1.6.0 Workstream D). A
+  pin-test-first audit of the dot/CPU-cycle-granular off-axis accuracy cluster
+  confirmed the cycle-accurate engine (plus the v1.4.0 DMC-DMA pass) already
+  models every Workstream D target, with all committed oracles passing and
+  AccuracyCoin holding 100% (139/139). No engine change was made — a speculative
+  edit here could only risk the oracle for zero oracle benefit. The as-built
+  models are now documented in lockstep: **D1** the complete DMC-DMA and
+  OAM-DMA ↔ `$4016`/`$4017` controller-read double-clock / dropped-bit conflict
+  model (verified by `dmc_dma_during_read4/dma_4016_read.nes`,
+  `double_2007_read.nes`, `sprdma_and_dmc_dma{,_512}.nes`, and the `AccuracyCoin`
+  `APU Register Activation` Tests 5-7; see `docs/cpu-6502.md` "DMA ↔
+  controller-read conflicts"); **D2** the `$2007` (PPUDATA) read-during-active-
+  rendering render-buffer window with the deferred state-machine reload and
+  `v`-increment glitch (`ppudata_sm_countdown` / `ppudata_v_inc_pending`, the
+  `AccuracyCoin` `$2007 Stress` bracket; see `docs/ppu-2c02.md`); **D3** the
+  buggy sprite-overflow `n+m` OAM-index evaluation and the three-group MDR /
+  open-bus decay timer (verified by `sprite_overflow_tests` 4/5 and
+  `ppu_open_bus` tests 7/9; already documented in `docs/ppu-2c02.md`). The Test
+  5/6 active-window-mirror refinement and the `$2002` NMI-suppression race
+  remain deferred to the future v2.0 fractional-master-clock refactor (ADR 0002).
+- **FDS-proper — timed disk-head position + `$4032` auto-insert + per-game CRC
+  quirk table** (v1.6.0 Workstream F, modelled on puNES `fds.c`). The FDS RAM
+  adapter (`rustynes-mappers::Fds`) now models the belt-driven drive's physical
+  rewind/re-seek: a motor restart after the cold spin-up rewinds the disk to the
+  disk-start gap and opens a short deterministic head re-seek not-ready window
+  (`HEAD_RESEEK_CYCLES`) before bytes stream again, rather than the head
+  teleporting to track 0. `$4032` (drive status) now presents the not-ready ->
+  ready transition the BIOS waits for on **every** re-read (the auto-insert
+  behaviour), and a per-game CRC quirk table (`quirk_for_crc` / `FdsQuirk`,
+  keyed off the headerless disk-image CRC-32 via the new `no_std` `fds_crc32`)
+  lets individual titles request extra re-seek slack. The general timed
+  head-position model closes the **Kid Icarus side-B post-registration** replay
+  (deferred since v1.0.0): the BIOS re-read loop now sees the drive report
+  not-ready while the head returns, so the post-registration screen streams its
+  blocks. Cycle-count-based — NOT the v2.0 master-clock axis. Additive +
+  determinism-preserving: AccuracyCoin holds 100% (139/139), FDS save-state
+  round-trip + boot suite stay green; the quirk is derived from immutable
+  construction inputs (not serialized). (See `crates/rustynes-mappers/src/fds.rs`
+  and `docs/STATUS.md`.)
+- **Lua driving primitives — `emu.run` + `emu.frameadvance`** (v1.6.0 Workstream
+  B2). A script can now *drive* the emulator a frame at a time (the FCEUX /
+  BizHawk model) instead of only reacting to per-frame callbacks: `emu.run(fn)`
+  registers a driving coroutine and `emu.frameadvance()` (a thin alias of Lua's
+  `coroutine.yield`) hands exactly one frame to the emulator before resuming the
+  coroutine. This unblocks the bot / TAS-script ecosystem. Native-only (the mlua
+  backend), the same carve-out as the dev/TAS API; a driver's `emu.setInput` /
+  `emu.write` / `load_state` effects are **gated identically to `emu.write`**
+  (silent no-op under netplay / TAS replay / RA-hardcore), so driving is
+  determinism-safe. Bundled example `examples/scripts/driving_loop.lua`. (See
+  `docs/scripting.md`.)
+- **External TAS movie interop — `.bk2` (BizHawk) import/export ↔ `.rnm`**
+  (v1.6.0 Workstream B1). A new `no_std` core module (`bk2_interop`) parses /
+  emits a `.bk2`'s `Header.txt` + `Input Log.txt` text members (the NES
+  `U D L R S s B A` mnemonic layout, console-buttons group dropped, P1/P2
+  mapped), mirroring the existing FCEUX `.fm2` interop; the `.bk2` ZIP container
+  is read / written frontend-side (keeping the core `no_std`). A new **Movies
+  (TAS) → Import / Export (.fm2 / .bk2)** menu pair wires both formats: import
+  begins playback against the running ROM, export writes the in-progress
+  recording (or the loaded movie). Imported movies use the **canonical
+  movie-import power-on alignment** (a deterministic zeroed-RAM cold boot via
+  `Movie::seek_to_start`) and inherit the running ROM's SHA-256 identity, so they
+  replay without desync. Save-anchored and non-NES `.bk2` movies are rejected
+  cleanly. (See `docs/scripting.md` / `docs/adr/0008-tas-movie-format.md`.)
+- **Debugger depth — expression/conditional breakpoints + R/W/X watchpoints +
+  watch window + conditional trace** (v1.6.0 Workstream C, the Mesen2-class C1
+  keystone + C4 free riders). A new frontend expression evaluator
+  (`debugger::expr`) compiles a Mesen-`ExpressionEvaluator`-style string —
+  CPU regs (`a x y s p pc`), PPU `scanline`/`cycle`/`frame`, memory `[addr]`
+  (byte) / `{addr}` (LE word), access-context tokens (`value`, `address`,
+  `isRead`/`isWrite`/`isExec`), and the full C operator set (`+ - * / % & | ^ ~
+  << >> && || ! == != < > <= >=`, ternary, parens) — and drives a new **Watch /
+  Breakpoints** panel (Debug → Watch / Breakpoints): conditional exec
+  breakpoints (PC or range + optional condition), read/write/exec watchpoints
+  (address range + access class + optional condition), a watch window (a list of
+  expressions shown each frame), and a conditional trace logger (format-string
+  rows filtered by a condition). All **observational** — `App::pump_watchpoints`
+  replays the just-finished frame's exec/access logs after the frame, exactly
+  like the Lua `onExec`/`onRead`/`onWrite` hooks (ADR 0010); it never intercepts
+  mid-instruction or mutates deterministic state, so AccuracyCoin (139/139) and
+  byte-identical builds hold. Behind the always-on-in-frontend `debug-hooks`
+  feature. (See `docs/frontend.md`.)
+- **Hex editor — in-place poke + freeze + access heatmap + find** (v1.6.0
+  Workstream C, C2). The **Memory** panel is now a full hex editor: CPU bus /
+  PPU bus / OAM domain tabs; click-to-poke a CPU work-RAM byte (`Nes::poke_ram`,
+  `$0000-$1FFF` writable, other domains read-only); right-click to **freeze** a
+  byte (emitted as a `RawCheat` re-applied after every frame, routed through the
+  existing raw-cheat overlay like Mesen/FCEUX); an **access-type heatmap** that
+  tints bytes read (blue) / written (red) in the last frame off the `debug-hooks`
+  access log; and a **find** box for a hex byte sequence. The no-edit path is
+  byte-identical and determinism holds (reads are side-effect-free peeks; the
+  only write is the work-RAM poke/freeze applied like a cheat). (See
+  `docs/frontend.md`.)
+- **RAM Search + RAM Watch upgrade** (v1.6.0 Workstream C, C3). The **Memory
+  Compare** panel is upgraded to the BizHawk/FCEUX-class tool: RAM Search gains
+  an **operator × compare-to matrix** (`== != < > <= >=` against the previous
+  snapshot OR a typed constant) and **1/2/4-byte little-endian sizes**, with
+  per-candidate **watch** / **freeze**; a new **RAM Watch** list holds named
+  `(address, size, label)` entries with live values, per-entry freeze (routed
+  through the raw-cheat overlay; multi-byte freezes expand per LE byte), and
+  native **`.wch` save/load**. Read-only against the core (freeze cheats are the
+  only writes, applied post-frame), so the no-freeze path is byte-identical.
+  (See `docs/frontend.md`.)
 - **Lua data breadth — memory domains, sized reads, `joypad`** (v1.6.0
   Workstream B3). The `memory` table gains `memory:read_u16_le(addr)` /
   `memory:read_u16_be(addr)` (16-bit word reads, two side-effect-free CPU
@@ -56,6 +244,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the Mesen2 `JyCompany` implementation. Register-decode + save-state
   unit-tested only and not in the AccuracyCoin oracle, so AccuracyCoin holds
   100% (139/139) and the `mapper_tier_honesty` gate stays green (ADR 0011).
+- **Mapper breadth 126 → 150 families** (v1.6.0 Workstream E continuation,
+  BestEffort tier). +24 honesty-gated families ported from the NESdev wiki and
+  the Mesen2 reference cores. The J.Y. Company ASIC gains its single-game
+  "extended" sibling **mapper 35** (`jy_asic.rs`, same silicon as 209). A new
+  `crates/rustynes-mappers/src/sprint11.rs` adds: a shared MMC3-style core
+  (eight bank registers, the `$8000`/`$A000`/`$C000`/`$E000` protocol, an A12
+  falling-edge IRQ) wrapped by the **MMC3-clone** variants
+  **44 / 49 / 52 / 115 / 134 / 189 / 205 / 238 / 245 / 348 / 366** (each adds a
+  board-specific outer-bank register + PRG/CHR transform); the **Sachen 8259
+  A/B/C** 2 KiB-CHR variants **141 / 138 / 139** (siblings of the existing 8259D
+  mapper 137, differing only by a CHR shift + per-slot OR constants); and the
+  discrete unlicensed / FDS-conversion / multicart boards **42** + **50** (each
+  with a CPU-cycle M2 IRQ) and **46 / 51 / 57 / 104 / 120 / 290 / 301**
+  (hook-free). Every new family is register-decode + save-state-round-trip
+  unit-tested and classified `BestEffort` in `mapper_tier` — outside the
+  AccuracyCoin / commercial-ROM oracle by construction — so AccuracyCoin holds
+  100% (139/139), the `mapper_tier_honesty` gate stays green (ADR 0011), and the
+  shipped / native / `no_std` / wasm builds stay byte-identical
+  (additive, off the deterministic-core path). (See `docs/mappers.md`.)
 - **UNIF (`.unf`) cartridge loader** (v1.6.0 Workstream E2). UNIF carries no
   mapper number — it identifies the cartridge by a board-name string in its
   `MAPR` chunk. `rustynes_mappers::unif` parses the header + chunks
@@ -67,6 +274,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A/V recording produced broken / empty audio (Workstream G).** The recorder
+  spawned `ffmpeg` at arm time with the still-empty audio sidecar passed as a
+  regular-file `-i` input; `ffmpeg` reads a regular-file input to EOF eagerly at
+  startup, so it saw an empty audio file before any samples were written. The
+  recorder now buffers **both** rawvideo and mono-`f32le` audio to temp files
+  while recording (no child process is alive, so there is no read-before-write
+  race and no two-pipe deadlock) and muxes the two COMPLETE files with a single
+  `ffmpeg` invocation at `stop()`; `ffmpeg` availability is still probed at
+  arm time so arming fails gracefully when it is absent. Output-only and
+  determinism-safe; still default-OFF behind `av-record`.
+  (`crates/rustynes-frontend/src/av_record.rs`.)
+- **Mapper 301 (BMC-8157) ignored the A7 outer-bank select.** The PRG bank decode
+  dropped address line A7 (the 256 KiB outer-bank bit), so any PRG image larger
+  than 256 KiB could only reach its low half. A7 is now slotted between the
+  128 KiB (A5-A6) and 512 KiB (A8) selects. BestEffort, honesty-gated.
+  (`crates/rustynes-mappers/src/sprint11.rs`.)
+- **Mapper 50 (Alibaba / SMB2J conversion) latched a stale IRQ on enable.** On an
+  IRQ-enable write (`$4120` bit 0), the counter was not reset and any pending
+  line was not cleared, so a fresh enable after a prior fire could trip
+  immediately on the stale counter. Enable now resets the counter to 0 and
+  clears the pending flag, per the hardware. (`crates/rustynes-mappers/src/sprint11.rs`.)
+- **FDS per-game CRC quirk table shipped a fabricated placeholder key.** The
+  `quirk_for_crc` timing-quirk table carried a hard-coded "Kid Icarus"
+  placeholder CRC-32 that would have applied unverified head-reseek slack to any
+  real disk that happened to hash to it. The table now ships **empty** (entries
+  are added only from real, maintainer-measured dumps); the Kid Icarus side-B
+  fix is title-independent (the general timed disk-head model) and never relied
+  on the table. (`crates/rustynes-mappers/src/fds.rs`.)
+- **Shader preset import counted stock / pass-through passes as unsupported.**
+  `import_preset` reported `stock` / `passthrough` / `pixellate` stages as
+  *unsupported* even though `map_stem_to_builtin` classified them as skip-able —
+  inflating the unsupported count for presets that are perfectly importable.
+  Pass-through stages are now skipped silently (not counted as unsupported).
+  (`crates/rustynes-frontend/src/slang_preset.rs`.)
+- **Memory hex editor allowed misleading no-op pokes outside work RAM.** The
+  editor let you click-to-poke / freeze any CPU address, but `Nes::poke_ram` is
+  a no-op outside `$0000-$1FFF`, so edits to ROM / register / mapper space
+  silently did nothing. Poke + freeze are now restricted to `$0000-$1FFF` work
+  RAM (matching the module's documented contract), and the help text says so.
+  (`crates/rustynes-frontend/src/debugger/memory_panel.rs`.)
 - **Mapper 30 (UNROM-512) self-flashing carts blank boot.** *Wampus* and the
   *PROTO DERE .NES* beta booted to a solid backdrop because the board always
   applied bus conflicts. Per NESdev "UNROM 512" (and Mesen2's `UnRom512`), a

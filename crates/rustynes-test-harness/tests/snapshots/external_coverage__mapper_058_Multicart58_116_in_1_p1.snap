@@ -2,7 +2,7 @@
 source: crates/rustynes-test-harness/tests/external_coverage.rs
 expression: text
 ---
-rom=mapper-058-Multicart58/116-in-1 [p1][!].nes
+rom=mapper-058-Multicart58/116-in-1 _p1____.nes
 rom_sha256=dd38f035ad9086101e8aca97340164b66949282a87f504389502dcc5cc2a1798
 frames=1141
 fb_bytes=245760

@@ -91,3 +91,32 @@ drift.
   budget are unaffected. No storage buffers, no dynamic value-array indexing.
 - **No new accuracy surface:** the stack lives entirely in `rustynes-frontend`;
   the chip crates are untouched.
+
+## Supplement — v1.6.0 "Studio" Workstream I (shader/filter ecosystem)
+
+The stack's built-in pass set grows by three RGBA passes, all on the existing
+ping-pong executor (no model change) and all output-only:
+
+- **`lmp88959`** (`ntsc_lmp88959.rs`) — an LMP88959-style composite NTSC/PAL
+  look. It samples the **RGBA framebuffer** (not the `R16Uint` index texture),
+  so — unlike the Bisqwit `composite-rt` pass — it has no first-position
+  constraint and composes anywhere in the stack.
+- **`hqx`** / **`xbrz`** (`upscale.rs`) — hqNx- and xBRZ-style edge-directed
+  pixel-art smoothers (single-pass GPU adaptations of the published edge-blend
+  kernels; independent WGSL, not ports of LGPL/GPL source).
+
+These three follow the existing pattern exactly: `#pragma parameter` knobs
+parsed into the generic slider UI, values forwarded into the 16-float uniform
+(`params.x..w`, then `aux.x`), WGSL parse+validate unit-tested. The
+byte-identical-default guarantee is unchanged (they only run when added).
+
+**The original "out of scope: importing RetroArch `.slangp`" decision is
+*partially* revisited.** v1.6.0 adds a deliberately **constrained** importer
+(`slang_preset.rs`): it parses a `.slangp`/`.cgp` preset and maps well-known
+community shader **filename stems** onto the built-in passes (carrying matching
+parameter overrides). It is **still not** a GLSL/Slang → WGSL transpiler — that
+remains out of scope. Passes with no built-in equivalent are reported as
+**unsupported** (surfaced to the user, never silently dropped), making the
+limit of the translation honest and visible. This keeps the payoff (one-click
+adoption of common community presets) without the large, fragile source-
+translation surface the original ADR rejected.

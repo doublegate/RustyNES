@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-245-m245/Ying Lie Qun Xia Zhuan (Ch).nes
+rom_sha256=156076750029d48527becbd1821e7d6db90abc177d21a6dd6e36ca8955db7c2b
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=9b347ca7ed24b247
+checkpoint f900 fb_fnv1a64=65eb8d5b878da325
+checkpoint f1100 fb_fnv1a64=65eb8d5b878da325

@@ -302,6 +302,27 @@ pub struct EmuCore {
     /// / RA-hardcore), so a locked / replayed session is never perturbed.
     #[cfg(feature = "scripting")]
     pub script_input_override: [Option<u8>; 2],
+    /// v1.6.0 "Studio" Workstream G — active A/V recorder, armed via the
+    /// Tools menu. A read-only tap: when `Some`, each produced frame's
+    /// framebuffer + drained audio are *copied* into the recorder AFTER the
+    /// emulator has produced them (it never advances the emulator or alters
+    /// the per-frame output, so determinism is unaffected). Native-only +
+    /// behind the default-OFF `av-record` feature; `None` (idle) is fully
+    /// inert and byte-identical to a build without the feature.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
+    pub av_recorder: Option<crate::av_record::AvRecorder>,
+    /// v1.6.0 "Studio" Workstream H — HD-pack HD-AUDIO mixer, installed by the
+    /// host when a pack that declares `<bgm>`/`<sfx>` tracks loads. A read-only
+    /// tap on the FRONTEND audio path: when `Some`, each produced frame the
+    /// mixer peeks the `$4100` HD-audio-control register (a side-effect-free
+    /// read of the already-produced bus state) and sums the selected OGG track
+    /// into the drained APU buffer in place — AFTER the core handed the frame
+    /// off, so it never advances the emulator or alters the deterministic
+    /// per-frame audio. Native-only + behind the default-OFF `hd-pack` feature;
+    /// `None` (idle, and the only state with no audio pack) is byte-identical to
+    /// a build without HD audio.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "hd-pack"))]
+    pub hd_audio: Option<crate::hd_audio::HdAudioMixer>,
 }
 
 impl EmuCore {
@@ -327,6 +348,10 @@ impl EmuCore {
             fds_disk_sha256: None,
             #[cfg(feature = "scripting")]
             script_input_override: [None, None],
+            #[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
+            av_recorder: None,
+            #[cfg(all(not(target_arch = "wasm32"), feature = "hd-pack"))]
+            hd_audio: None,
         }
     }
 
@@ -504,6 +529,13 @@ impl EmuCore {
         // `nes`. 0 = plain frame.
         #[cfg(not(target_arch = "wasm32"))]
         let run_ahead_n = self.effective_run_ahead(inputs.run_ahead);
+        // v1.6.0 "Studio" Workstream G — count of audio samples drained into
+        // `audio_buf` this frame, so the A/V recorder can tap the same samples
+        // after the `nes` borrow ends (audio + video captured together at the
+        // tail, keeping them synchronized). 0 = no audio this frame (rewind /
+        // no audio sink).
+        #[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
+        let mut av_audio_n: usize = 0;
         let Some(nes) = self.nes.as_mut() else {
             return fx;
         };
@@ -551,7 +583,23 @@ impl EmuCore {
                         self.audio_buf.resize(target, 0.0);
                     }
                     let n = nes.drain_audio_into(&mut self.audio_buf);
+                    // v1.6.0 H — HD-pack HD audio: peek the `$4100` control
+                    // register (side-effect-free) and mix the selected OGG track
+                    // into the drained buffer IN PLACE before it reaches the
+                    // queue. Output-only (see `hd_audio` docs); skipped when no
+                    // audio pack is loaded.
+                    #[cfg(feature = "hd-pack")]
+                    if let Some(mixer) = self.hd_audio.as_mut() {
+                        let control = nes.cpu_bus_peek(crate::hd_audio::HD_AUDIO_CONTROL);
+                        mixer.mix(&mut self.audio_buf[..n], control);
+                    }
                     audio.push_samples(&self.audio_buf[..n]);
+                    // v1.6.0 G — record the same samples for the A/V tap (after
+                    // the `nes` borrow ends, at the tail).
+                    #[cfg(feature = "av-record")]
+                    {
+                        av_audio_n = n;
+                    }
                 }
                 self.runahead.finish(nes);
                 true
@@ -582,8 +630,23 @@ impl EmuCore {
                         self.audio_buf.resize(target, 0.0);
                     }
                     let n = nes.drain_audio_into(&mut self.audio_buf);
+                    // v1.6.0 H — HD-pack HD audio: peek the `$4100` control
+                    // register (side-effect-free) and mix the selected OGG track
+                    // into the drained buffer IN PLACE before the DRC stage.
+                    // Output-only (see `hd_audio` docs); skipped when no audio
+                    // pack is loaded.
+                    #[cfg(feature = "hd-pack")]
+                    if let Some(mixer) = self.hd_audio.as_mut() {
+                        let control = nes.cpu_bus_peek(crate::hd_audio::HD_AUDIO_CONTROL);
+                        mixer.mix(&mut self.audio_buf[..n], control);
+                    }
                     // v2.8.0 Phase 1 — through the DRC resampler stage.
                     audio.push_samples(&self.audio_buf[..n]);
+                    // v1.6.0 G — record the same samples for the A/V tap.
+                    #[cfg(feature = "av-record")]
+                    {
+                        av_audio_n = n;
+                    }
                 }
                 // wasm32 (Sprint 1.4c): push this frame's APU samples into
                 // the shared Web Audio ring.
@@ -614,7 +677,53 @@ impl EmuCore {
                 fx.ra_just_logged_in = crate::ra_session::RaSession::take_just_logged_in(ra);
             }
         }
+        // v1.6.0 "Studio" Workstream G — A/V recording tap. A read-only copy of
+        // the framebuffer + the same audio samples this frame produced into the
+        // recorder (audio then video, captured together here AFTER the `nes`
+        // borrow ends so they stay synchronized). A broken pipe (ffmpeg died)
+        // auto-stops + drops the recorder. This runs AFTER the emulator has
+        // fully produced the frame, so it cannot perturb the emulation or the
+        // per-frame output.
+        #[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
+        {
+            if av_audio_n > 0 {
+                self.av_capture_audio(av_audio_n);
+            }
+            self.av_capture_video();
+        }
         fx
+    }
+
+    /// v1.6.0 "Studio" Workstream G — feed this frame's produced framebuffer
+    /// (`present_fb`, RGBA8 256x240) to the active A/V recorder, if any. A
+    /// read-only copy of the already-produced output; on a broken video pipe
+    /// (ffmpeg died / was killed) the recorder is dropped so emulation carries
+    /// on untouched.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
+    fn av_capture_video(&mut self) {
+        let Some(rec) = self.av_recorder.as_mut() else {
+            return;
+        };
+        if let Err(e) = rec.push_video(&self.present_fb) {
+            eprintln!("rustynes: A/V recording stopped (video): {e}");
+            self.av_recorder = None;
+        }
+    }
+
+    /// v1.6.0 "Studio" Workstream G — feed `n` of this frame's drained audio
+    /// samples (`audio_buf[..n]`, mono `f32`) to the active A/V recorder, if
+    /// any. Called at each per-frame drain site (the audio is captured from the
+    /// SAME samples pushed to the audio sink, keeping A/V in sync). Read-only;
+    /// a sidecar write failure drops the recorder.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
+    fn av_capture_audio(&mut self, n: usize) {
+        let Some(rec) = self.av_recorder.as_mut() else {
+            return;
+        };
+        if let Err(e) = rec.push_audio(&self.audio_buf[..n]) {
+            eprintln!("rustynes: A/V recording stopped (audio): {e}");
+            self.av_recorder = None;
+        }
     }
 
     /// v1.0.0 — the pacing period after applying the emulation-speed factor:

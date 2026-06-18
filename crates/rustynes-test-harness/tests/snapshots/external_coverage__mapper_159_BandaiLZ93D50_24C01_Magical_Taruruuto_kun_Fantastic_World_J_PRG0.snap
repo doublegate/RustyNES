@@ -4,9 +4,10 @@ expression: text
 ---
 rom=mapper-159-BandaiLZ93D50-24C01/Magical Taruruuto-kun - Fantastic World!! (J) (PRG0) [!].nes
 rom_sha256=422e38bf5ded78de7d4d4e3e7a39d7b16331ca5cbe8dab0172e7896e8190af99
-frames=600
+frames=1141
 fb_bytes=245760
-cycles=17838522
-audio_samples=439524
-audio_fnv1a64=9ced4002270e69a9
-checkpoint f600 fb_fnv1a64=03b7e49f3838d0d2
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=a3d3ae7735d9937a
+checkpoint f900 fb_fnv1a64=f5c040112855dad2
+checkpoint f1100 fb_fnv1a64=e93e16afe32c4c1e

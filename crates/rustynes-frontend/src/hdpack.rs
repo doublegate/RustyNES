@@ -20,12 +20,22 @@
 //!   alpha-blended under/over the tile pass, optionally gated on a condition and
 //!   ordered by priority.
 //!
+//! v1.6.0 "Studio" Workstream H — **HD audio**: the `<bgm>` / `<sfx>`
+//! declarations are now parsed here (see [`crate::hd_audio`]). They name an
+//! external OGG track keyed by an `(album, track)` selector the game chooses at
+//! run time via the `$4100` HD-pack audio-control register. The decode + mixer
+//! live in [`crate::hd_audio`]; this module only surfaces the parsed
+//! declarations (so the loader can decode them) — the audio path is entirely
+//! frontend-side + output-only and never touches the compositor / framebuffer.
+//!
 //! Still SKIPPED (not full Mesen parity — see `docs/adr/0014`): the
 //! position/tile/sprite spatial conditions (TileNearby/TileAtPos,
 //! SpriteNearby/SpriteAtPos, PositionCheckX/Y), `bgpriority` (the PPU telemetry
-//! has no background-priority bit yet), `<overlay>`, HD audio, and
-//! `<bgmCondition>`. Unsupported rules are ignored rather than rejected, so a
-//! real pack still loads (just with the unsupported rules inert).
+//! has no background-priority bit yet), `<overlay>`, `<addition>`/`<fallback>`/
+//! `<options>`, the full blend/priority/parallax compositor, and the per-track
+//! `<bgmCondition>` gate (the `$4100` selector drives BGM/SFX instead).
+//! Unsupported rules are ignored rather than rejected, so a real pack still
+//! loads (just with the unsupported rules inert).
 //!
 //! ## Determinism
 //!
@@ -47,6 +57,7 @@ use std::path::Path;
 use rustynes_core::rustynes_ppu::{HD_TILE_NONE, HdTileSource};
 
 use crate::gfx::{NES_H, NES_W};
+use crate::hd_audio::{HdAudioDecl, TrackKind, parse_audio_decl};
 
 /// NES tiles are 8x8.
 const TILE: usize = 8;
@@ -266,6 +277,10 @@ pub struct HdPack {
     /// The set of distinct watched memory addresses (marker-tagged) referenced
     /// by all memoryCheck conditions. The produce path snapshots exactly these.
     watched_addresses: Vec<u32>,
+    /// v1.6.0 H — parsed `<bgm>` / `<sfx>` HD-audio declarations. Decoded +
+    /// mixed by [`crate::hd_audio`] (frontend, output-only); empty for a
+    /// video-only pack.
+    audio_decls: Vec<HdAudioDecl>,
 }
 
 impl HdPack {
@@ -297,6 +312,14 @@ impl HdPack {
     #[must_use]
     pub const fn background_count(&self) -> usize {
         self.backgrounds.len()
+    }
+
+    /// v1.6.0 H — the parsed `<bgm>` / `<sfx>` HD-audio declarations. The loader
+    /// decodes these (relative to the pack folder) into [`crate::hd_audio`]
+    /// tracks. Empty for a video-only pack.
+    #[must_use]
+    pub fn audio_decls(&self) -> &[HdAudioDecl] {
+        &self.audio_decls
     }
 
     /// The distinct watched memory addresses (marker-tagged with bit 31 for PPU
@@ -429,8 +452,9 @@ impl HdPack {
         }
         backgrounds.sort_by_key(|b| b.priority);
 
-        // A pack with no tile rules AND no background regions is useless.
-        if rule_count == 0 && backgrounds.is_empty() {
+        // A pack with no tile rules, no background regions, AND no HD-audio
+        // declarations is useless. (v1.6.0 H: an audio-only pack is valid.)
+        if rule_count == 0 && backgrounds.is_empty() && parsed.audio_decls.is_empty() {
             return None;
         }
 
@@ -462,6 +486,7 @@ impl HdPack {
             conditions: parsed.conditions,
             backgrounds,
             watched_addresses: watched,
+            audio_decls: parsed.audio_decls,
         })
     }
 
@@ -628,6 +653,8 @@ struct ParsedHires {
     tiles: Vec<(u32, ParsedTileRule)>,
     conditions: Vec<Condition>,
     backgrounds: Vec<ParsedBackground>,
+    /// v1.6.0 H — parsed `<bgm>` / `<sfx>` HD-audio declarations.
+    audio_decls: Vec<HdAudioDecl>,
 }
 
 /// Parse the supported subset of a Mesen `hires.txt`.
@@ -647,6 +674,7 @@ fn parse_hires(src: &str) -> ParsedHires {
     let mut conditions: Vec<Condition> = Vec::new();
     let mut cond_name_to_idx: HashMap<String, usize> = HashMap::new();
     let mut backgrounds: Vec<ParsedBackground> = Vec::new();
+    let mut audio_decls: Vec<HdAudioDecl> = Vec::new();
 
     // First pass over `<condition>`/`<img>` so forward-referenced names resolve.
     // We process declarations in two passes: conditions + images first, then
@@ -684,6 +712,18 @@ fn parse_hires(src: &str) -> ParsedHires {
                 {
                     cond_name_to_idx.insert(cond.name.clone(), conditions.len());
                     conditions.push(cond);
+                }
+            }
+            // v1.6.0 H — HD-audio track declarations. No condition/image refs,
+            // so parse them in this first pass; the loader decodes the files.
+            "bgm" => {
+                if let Some(d) = parse_audio_decl(TrackKind::Bgm, rest) {
+                    audio_decls.push(d);
+                }
+            }
+            "sfx" => {
+                if let Some(d) = parse_audio_decl(TrackKind::Sfx, rest) {
+                    audio_decls.push(d);
                 }
             }
             _ => {}
@@ -746,6 +786,7 @@ fn parse_hires(src: &str) -> ParsedHires {
         tiles,
         conditions,
         backgrounds,
+        audio_decls,
     }
 }
 
@@ -1504,6 +1545,22 @@ mod tests {
     }
 
     #[test]
+    fn parses_bgm_and_sfx_audio_decls() {
+        let src = "<scale>1\n\
+                   <bgm>0,1,title.ogg\n\
+                   <sfx>0,2,jump.ogg\n\
+                   <bgmCondition>ignored\n";
+        let parsed = parse_hires(src);
+        assert_eq!(parsed.audio_decls.len(), 2);
+        assert_eq!(parsed.audio_decls[0].kind, TrackKind::Bgm);
+        assert_eq!(parsed.audio_decls[0].track, 1);
+        assert_eq!(parsed.audio_decls[0].file, "title.ogg");
+        assert_eq!(parsed.audio_decls[1].kind, TrackKind::Sfx);
+        assert_eq!(parsed.audio_decls[1].track, 2);
+        // The unrecognized `<bgmCondition>` is ignored, not an audio decl.
+    }
+
+    #[test]
     fn split_tag_basic() {
         assert_eq!(split_tag("<scale>2"), Some(("scale", "2")));
         assert_eq!(split_tag("no tag"), None);
@@ -1658,6 +1715,7 @@ mod tests {
             }],
             backgrounds: Vec::new(),
             watched_addresses: Vec::new(),
+            audio_decls: Vec::new(),
         }
     }
 
@@ -1862,6 +1920,7 @@ mod tests {
             }],
             backgrounds: Vec::new(),
             watched_addresses: vec![0x10],
+            audio_decls: Vec::new(),
         };
         let mut comp = HdCompositor::new(pack);
         let (fb, ts) = one_tile_scene(0x0000);
@@ -1905,6 +1964,7 @@ mod tests {
                 conditions: vec![0],
             }],
             watched_addresses: vec![0x40],
+            audio_decls: Vec::new(),
         };
         let mut comp = HdCompositor::new(pack);
         let fb = vec![0u8; (NES_W * NES_H * 4) as usize];
@@ -1947,6 +2007,7 @@ mod tests {
             conditions: Vec::new(),
             backgrounds: Vec::new(),
             watched_addresses: Vec::new(),
+            audio_decls: Vec::new(),
         };
         let mut comp = HdCompositor::new(pack);
         let (fb, ts) = one_tile_scene(0x0000);

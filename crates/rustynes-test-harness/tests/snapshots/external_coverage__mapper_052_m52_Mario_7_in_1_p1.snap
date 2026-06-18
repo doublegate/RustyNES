@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-052-m52/Mario 7-in-1 [p1][!].nes
+rom_sha256=cbd76bc94ca8bfb065fcb0dd7d780f308f847bc4ccdcf2358c2dea5e473979ce
+frames=1141
+fb_bytes=245760
+cycles=7264102
+audio_samples=178970
+audio_fnv1a64=4779da758e3bb696
+checkpoint f900 fb_fnv1a64=af0463069c544325
+checkpoint f1100 fb_fnv1a64=af0463069c544325

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-031-INL-NSF/2a03puritans.nes
+rom_sha256=53d6680637c07b2b7c6da24b0e6a63a5e42afe52673237829aa5a461b2a65e91
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=a639424c16b62fcc
+checkpoint f900 fb_fnv1a64=1ed4333e3895680d
+checkpoint f1100 fb_fnv1a64=1ed4333e3895680d

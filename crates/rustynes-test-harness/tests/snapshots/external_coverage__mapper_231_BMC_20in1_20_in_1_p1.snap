@@ -2,7 +2,7 @@
 source: crates/rustynes-test-harness/tests/external_coverage.rs
 expression: text
 ---
-rom=mapper-231-BMC-20in1/20-in-1 [p1][!].nes
+rom=mapper-231-BMC-20in1/20-in-1 _p1____.nes
 rom_sha256=4a7bbe9fcab70a2c8e5359de07d98f9a0f6d08548b30a6b49598d916c52186eb
 frames=1141
 fb_bytes=245760

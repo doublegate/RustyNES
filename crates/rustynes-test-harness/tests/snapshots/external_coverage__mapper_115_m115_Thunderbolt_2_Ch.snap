@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-115-m115/Thunderbolt 2 (Ch) [!].nes
+rom_sha256=9b6faef987ec526ca904f2c54ddf555d6c5cb1b1ae969f3c88d9697c64fb8179
+frames=1141
+fb_bytes=245760
+cycles=33949777
+audio_samples=836505
+audio_fnv1a64=8bc46214d5a5994e
+checkpoint f900 fb_fnv1a64=e85deaa8bbd18ebd
+checkpoint f1100 fb_fnv1a64=e85deaa8bbd18ebd

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-189-m189/Master Fighter II (Unl) [!].nes
+rom_sha256=cfe666ecd88f685a12db4503068c579400bdae1e2b9c8c52600b870cdecd3855
+frames=1141
+fb_bytes=245760
+cycles=33949780
+audio_samples=836505
+audio_fnv1a64=a350811ae9503ef7
+checkpoint f900 fb_fnv1a64=2761538b23e4e888
+checkpoint f1100 fb_fnv1a64=f1318c0c61248be9

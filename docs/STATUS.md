@@ -1,13 +1,20 @@
 # RustyNES — Project Status Matrix
 
-**Current release (latest tag): v1.5.0 "Lens" — the insight, scriptability,
-creator-tooling, and polish release** on the cycle-accurate v1.0.0 production
-core. A NES/Famicom emulator with the Mesen2 / higan / ares accuracy bar, shipped
-as a polished desktop application. **AccuracyCoin 100.00% (139/139)**, the 60-ROM
+**Current release: v1.6.0 "Studio" — the TAS-authoring, debugger-depth, accuracy,
+and breadth release** on the cycle-accurate v1.0.0 production core. A NES/Famicom
+emulator with the Mesen2 / higan / ares accuracy bar, shipped as a polished
+desktop application. **AccuracyCoin 100.00% (139/139)**, the 60-ROM
 `external_real_games` + 52-entry `external_extended` oracles byte-identical,
-nestest 0-diff. **`v1.6.0 "Studio"` is in development on `main` (NOT yet
-tagged)** — see "In development: v1.6.0 Studio" below for what has merged so
-far. v1.5.0 lands eight additive workstreams: **A** debugger
+nestest 0-diff. v1.6.0 lands the **TAStudio piano-roll editor**, `.fm2`/`.bk2`
+movie interop, Lua driving + data breadth, **Mesen2-class debugger depth**
+(expression/conditional breakpoints + R/W/X watchpoints + a full hex editor +
+RAM search), off-axis-accuracy verification, mapper breadth to **150 families**,
+FDS-proper, A/V recording, HD audio, and a shader/filter ecosystem — all
+additive/off-by-default, so with the new features off the shipped/wasm/`no_std`
+code paths are behaviourally unchanged from v1.5.0 (the only build delta is the
+embedded `CARGO_PKG_VERSION` string bumping 1.5.0 → 1.6.0) and AccuracyCoin
+holds 100% (139/139). The preceding v1.5.0 "Lens" lands eight
+additive workstreams: **A** debugger
 visualization (an Input Miniatures overlay, a graphical PPU event-viewer heatmap,
 a per-scanline trace viewer, an HD-pack per-pixel inspector — behind
 `debug-hooks`/`hd-pack`); **B** Lua dev/TAS API depth (memory peek/poke/range,
@@ -37,28 +44,26 @@ shipped / native / `no_std` / wasm builds stay byte-identical and AccuracyCoin
 holds 100% (139/139); the accuracy residuals all converge on the future v2.0
 fractional-master-clock refactor (ADR 0002).
 
-**In development: v1.6.0 "Studio" (NOT yet tagged — accumulating on `main`).**
-The studio / TAS-tooling / debugger-depth / accuracy-and-breadth release. Like
-every release on the v1.0.0 core it is additive / off-by-default, so the shipped /
-native / `no_std` / wasm builds stay byte-identical and AccuracyCoin holds
-**100% (139/139)**. *Merged to `main` so far:* the **TAStudio piano-roll TAS
-editor** (editor model A1/A3/A4 + FCEUX `.fm2` interop B1, #118; the A2 piano-roll
-editor, #122); **J.Y. Company ASIC mappers** m90/209/211 (BestEffort, #123) + the
-**UNIF (`.unf`) cartridge loader** (Workstream E2, #117), which take mapper
-coverage from **123 families at the v1.5.0 tag → ~126 on `main`**; the data-driven
-external-coverage harness + per-mapper screenshot coverage + BestEffort
-consolidation (#114/#115/#116/#125); **Lua data breadth** (memory domains, sized
-reads, joypad — Workstream B3, #128); the **m30/m80/m185 blank-boot mapper fixes**
-(#127); a **CI paths-filter gate** for doc-only PRs (#124); the ROADMAP update
-(#129); the to-dos/plans archive (#130); and README freshness (#126). *Remaining /
-in flight:* B2 (Lua movie driving + `.bk2` interop), C (Mesen2-class debugger
-depth — in progress), D (off-axis accuracy — DMC/OAM-DMA controller corruption,
-`$2007` blocking read, sprite-overflow; adoptable *without* the v2.0 refactor),
-E (mapper breadth → ~150 families), F (FDS-proper), G (A/V recording), H (HD
-audio), I (shaders), then the release finals. Per this file's version-policy
-convention the headline mapper count stays at the **tagged** figure (123) until
-v1.6.0 is cut; the ~126 on `main` figure is the in-development count. Planning
-lives in `to-dos/ROADMAP.md` (the entry point) + `to-dos/plans/`.
+**v1.6.0 "Studio" — the studio / TAS-tooling / debugger-depth / accuracy-and-breadth
+release.** Like every release on the v1.0.0 core it is additive / off-by-default:
+with the new features off, behaviour is unchanged — the native / `no_std` / wasm
+code paths are byte-for-byte the same as v1.5.0 (the lone build difference is the
+embedded `CARGO_PKG_VERSION` string) — and AccuracyCoin holds **100% (139/139)**.
+*Shipped (full A–I scope):* the **TAStudio piano-roll TAS editor** (editor model
+A1/A3/A4 + FCEUX `.fm2` interop B1, #118; the A2 piano-roll editor, #122) + **B2**
+Lua movie driving + `.bk2` interop; **J.Y. Company ASIC mappers** m90/209/211
+(BestEffort, #123) + the **UNIF (`.unf`) cartridge loader** (Workstream E2, #117);
+the data-driven external-coverage harness + per-mapper screenshot coverage +
+BestEffort consolidation (#114/#115/#116/#125); **Lua data breadth** (memory
+domains, sized reads, joypad — Workstream B3, #128); the **m30/m80/m185 blank-boot
+mapper fixes** (#127); **C** Mesen2-class debugger depth (expression/conditional
+breakpoints + R/W/X watchpoints + a full hex editor + RAM search); **D** off-axis
+accuracy verification; **E** mapper breadth → **150 families**; **F** FDS-proper;
+**G** A/V recording; **H** HD audio; **I** the shader/filter ecosystem; a **CI
+paths-filter gate** for doc-only PRs (#124); the ROADMAP/to-dos refresh (#129/#130);
+and README freshness (#126). The headline mapper count is the released figure
+(**150**). Planning lives in `to-dos/ROADMAP.md` (the entry point) +
+`to-dos/plans/`.
 
 The preceding **v1.4.1** (a patch on
 **v1.4.0 "Fidelity" — the compatibility-and-finish release**) added four BestEffort
@@ -97,7 +102,16 @@ v1.0.0 core baseline:
   with VRC6/VRC7-OPLL/Sunsoft-5B/Namco-163/MMC5 expansion audio), FME-7, and
   the Vs. System / PlayChoice-10 RGB-PPU boards.
 - **Famicom Disk System** — real-BIOS `.fds` boot (user-supplied `disksys.rom`),
-  read/write drive, multi-side eject/insert, 2C33 wavetable audio.
+  read/write drive, multi-side eject/insert, 2C33 wavetable audio. **FDS-proper
+  (v1.6.0 Workstream F, after puNES `fds.c`)** adds a timed disk-head position
+  (a motor restart rewinds the belt-driven disk and the head re-seeks across a
+  short deterministic `HEAD_RESEEK_CYCLES` not-ready window before re-reading,
+  rather than teleporting to track 0), the `$4032` drive-status / auto-insert
+  presentation driven by those windows, and a per-game CRC quirk table
+  (`quirk_for_crc`) for titles needing extra re-seek slack. The general timed
+  head-position model closes the **Kid Icarus side-B post-registration** replay
+  (the BIOS re-read loop now observes the not-ready -> ready edge it waits for).
+  Cycle-count-based — NOT the v2.0 master-clock axis; determinism intact.
 - **Vs. System / PlayChoice-10** — 2C03/2C04/2C05 hardware RGB palettes, DIP
   switches, coin/service inputs. **Vs. DualSystem** (two-CPU/two-PPU arcade
   boards) is *detected* — from both the SHA-256 game DB and, as of v1.3.0 (D2),
@@ -559,9 +573,9 @@ ROM dumps under `tests/roms/external/`, not committed):
 > coverage from the early engine line (the top-25-by-title-count tranche).
 > RustyNES **v1.0.0 shipped 51 mapper families**; **v1.2.0 extended this to
 > 87**, **v1.3.0 "Bedrock" to 101**, **v1.4.0 "Fidelity" to 113**, and
-> **v1.5.0 "Lens" to 123** (the current tagged count). **v1.6.0 "Studio"
-> (in development on `main`, not tagged)** adds the J.Y. Company ASIC mappers
-> (m90/209/211) + the UNIF loader, taking the in-dev count to **~126** — see
+> **v1.5.0 "Lens" to 123**, and **v1.6.0 "Studio" to 150** (the current
+> released count) — the J.Y. Company ASIC mappers (m90/209/211) + the UNIF
+> loader + Workstream E's `sprint11` batch — see
 > `docs/mappers.md` §Mapper coverage matrix +
 > §Mapper accuracy tiering for the full current list. The "out of scope" notes
 > below were the early-engine scoping; they are retained as history and
@@ -570,15 +584,16 @@ ROM dumps under `tests/roms/external/`, not committed):
 **Mapper count.** 15 distinct mappers in the early engine line (>95% of the
 licensed library by title count) → **51 families at v1.0.0** → **87 families at
 v1.2.0** → **101 families at v1.3.0 "Bedrock"** → **113 families at v1.4.0
-"Fidelity"** → **123 families at v1.5.0 "Lens"** (the current tagged count;
-**~126 in development on `main`** for v1.6.0 "Studio" with the J.Y. ASIC + UNIF
-loader), tiered for accuracy honesty:
+"Fidelity"** → **123 families at v1.5.0 "Lens"** → **150 families at v1.6.0
+"Studio"** (the J.Y. Company ASIC sweep 35/90/209/211 +
+Workstream E's `sprint11` batch: MMC3-clones, Sachen 8259 A/B/C, discrete
+multicarts), tiered for accuracy honesty:
 
 | Tier | Families | Accuracy-gated? | Evidence |
 |------|----------|-----------------|----------|
 | **Core** | 51 | Yes (AccuracyCoin + commercial oracle) | spec-implemented, oracle-locked |
 | **Curated** (v1.2.0) | 9 | Yes | notable games + decode spec; register-decode unit tests |
-| **BestEffort** (v1.2.0 + v1.3.0 + v1.4.0 + v1.5.0) | 63 | **No** | reference-ported long-tail; register-decode unit tests only |
+| **BestEffort** (v1.2.0 + v1.3.0 + v1.4.0 + v1.5.0 + v1.6.0) | 90 | **No** | reference-ported long-tail; register-decode + save-state unit tests only |
 
 A CI-checkable invariant forbids any `BestEffort` mapper from backing an oracle
 ROM (`rustynes-mappers::mapper_tier`; ADR 0011). The remaining tail (unlicensed
@@ -770,9 +785,9 @@ unless the default flips.
 
 **RustyNES ships at v1.0.0** (the production cut), with the additive,
 off-by-default feature releases **v1.1.0 "Scriptable" → v1.2.0 "Curator" →
-v1.3.0 "Bedrock" → v1.4.0 "Fidelity" (+ the v1.4.1 patch) → v1.5.0 "Lens"** on
-top — **v1.5.0 is the current tag**, and **v1.6.0 "Studio" is in development on
-`main`** (not tagged). The table below is the **engine-lineage** version history
+v1.3.0 "Bedrock" → v1.4.0 "Fidelity" (+ the v1.4.1 patch) → v1.5.0 "Lens" →
+v1.6.0 "Studio"** on top — **v1.6.0 "Studio" is the current release**. The
+table below is the **engine-lineage** version history
 — the internal engine line whose increments produced the v1.0.0 technology. Its
 `v0.9.x` / `v1.x` / `v2.x` markers are the engine's own line, retained as
 historical anchors documenting *how* each capability was built; they are **not**

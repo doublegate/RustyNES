@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-134-m134/2-in-1 - Family Kid & Aladdin 4 (Ch) [!].nes
+rom_sha256=67a281b543fedc693ccecd7a2b4c9e8b6be3b2d493f99ab803627aa765f67fe8
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=1e3cf22203606cc1
+checkpoint f900 fb_fnv1a64=7f05e19810bd5de0
+checkpoint f1100 fb_fnv1a64=8674365077d55f99

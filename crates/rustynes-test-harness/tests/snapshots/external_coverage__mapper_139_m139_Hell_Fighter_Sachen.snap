@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-139-m139/Hell Fighter (Sachen) [!].nes
+rom_sha256=1a745a2f00fffb2e3e65c63b53c9e4418b29e2da3e195d5c5f102a3b48759df3
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=3ae6a5c4922b50e1
+checkpoint f900 fb_fnv1a64=456fad1487c08fd1
+checkpoint f1100 fb_fnv1a64=456fad1487c08fd1

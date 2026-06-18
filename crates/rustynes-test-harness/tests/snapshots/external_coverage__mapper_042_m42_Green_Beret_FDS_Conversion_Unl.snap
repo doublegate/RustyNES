@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-042-m42/Green Beret (FDS Conversion) (Unl).nes
+rom_sha256=ae58c1b7431920d7323a57727bf56dce4dc4f92237f8a1200d87cd43a26fc7ad
+frames=1141
+fb_bytes=245760
+cycles=33949779
+audio_samples=836505
+audio_fnv1a64=0674e2370619fdb0
+checkpoint f900 fb_fnv1a64=797af18d34bc9963
+checkpoint f1100 fb_fnv1a64=c1c76e7eed426971

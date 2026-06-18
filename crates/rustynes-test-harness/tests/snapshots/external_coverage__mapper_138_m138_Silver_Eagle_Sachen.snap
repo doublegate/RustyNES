@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-138-m138/Silver Eagle (Sachen) [!].nes
+rom_sha256=a943dfc5b4aabdc044c95fac0fbfa58d41d7733a6cf50b1548dcebdf3ddf5656
+frames=1141
+fb_bytes=245760
+cycles=33949776
+audio_samples=836505
+audio_fnv1a64=d095b0ce0feedbb7
+checkpoint f900 fb_fnv1a64=76c9b17b5b229263
+checkpoint f1100 fb_fnv1a64=d1b2bde8486d8f73

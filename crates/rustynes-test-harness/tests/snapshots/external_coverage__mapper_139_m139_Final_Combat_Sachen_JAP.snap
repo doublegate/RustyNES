@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-139-m139/Final Combat (Sachen-JAP) [!].nes
+rom_sha256=5070e7c5cdf74aa78eac4e3822dadb2ab231986204068adf99f8f89ee034e253
+frames=1141
+fb_bytes=245760
+cycles=33949961
+audio_samples=836509
+audio_fnv1a64=15766b4c4a876f4f
+checkpoint f900 fb_fnv1a64=89ee4c476c97a325
+checkpoint f1100 fb_fnv1a64=89ee4c476c97a325

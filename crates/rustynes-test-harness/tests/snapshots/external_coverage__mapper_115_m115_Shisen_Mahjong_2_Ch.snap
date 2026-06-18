@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-115-m115/Shisen Mahjong 2 (Ch) [!].nes
+rom_sha256=f787614ef0487112e978d0c82827071397ae9de8bf51cb48356659f350eedfc7
+frames=1141
+fb_bytes=245760
+cycles=33949778
+audio_samples=836505
+audio_fnv1a64=2917c33bff320a5d
+checkpoint f900 fb_fnv1a64=1b2c9624fb836e7b
+checkpoint f1100 fb_fnv1a64=8cc2651599194f07

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-057-m57/54-in-1 (Game Star - GK-54) [p1][!].nes
+rom_sha256=b51070a33d520d847a4f725c086e25d4e0797b23a50fb0d1adc24bbc19157222
+frames=1141
+fb_bytes=245760
+cycles=33949777
+audio_samples=836505
+audio_fnv1a64=f6b4ff9f7ad1645b
+checkpoint f900 fb_fnv1a64=0dc27be2a6abaa79
+checkpoint f1100 fb_fnv1a64=c90299bf8aa0a9fd
