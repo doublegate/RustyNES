@@ -450,7 +450,14 @@ impl Mapper for Fk23c {
     fn ppu_write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x3FFF;
         match addr {
-            0x0000..=0x1FFF if self.chr_is_ram || self.select_chr_ram => {
+            // Only the CHR-RAM variant accepts CHR writes. When the cart
+            // provided CHR-ROM (`chr_is_ram == false`), the `select_chr_ram`
+            // banking bit selects a flat-CHR read window but must NOT make
+            // the ROM mutable: writing it here would corrupt CHR-ROM and
+            // (since `save_state` only serializes `self.chr` when
+            // `chr_is_ram`) would not round-trip across a save-state. Gate
+            // the write on `chr_is_ram` so behaviour + serialization agree.
+            0x0000..=0x1FFF if self.chr_is_ram => {
                 self.chr[addr as usize & (self.chr.len() - 1)] = value;
             }
             0x2000..=0x3EFF => {
@@ -2437,6 +2444,11 @@ kaiser_ctor!(
 pub struct Waixing253 {
     prg_rom: Box<[u8]>,
     chr: Box<[u8]>,
+    /// `true` when the cart supplied no CHR-ROM, so `self.chr` is the cart's
+    /// (writable) CHR-RAM and must be serialized in the save-state. Distinct
+    /// from the 2 KiB `chr_ram` escape (the Mesen2 `lo == 4|5` window), which
+    /// always exists.
+    chr_is_ram: bool,
     chr_ram: Box<[u8]>,
     vram: Box<[u8]>,
     mirroring: Mirroring,
@@ -2462,8 +2474,12 @@ impl Waixing253 {
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
         check_prg(&prg_rom, 253)?;
-        let chr: Box<[u8]> = if chr_rom.is_empty() {
-            vec![0u8; CHR_BANK_1K].into_boxed_slice()
+        let chr_is_ram = chr_rom.is_empty();
+        let chr: Box<[u8]> = if chr_is_ram {
+            // CHR-RAM variant: allocate the conventional 8 KiB (matching the
+            // MMC3 `8 * CHR_BANK_1K` convention) so the banked CHR path has a
+            // real, writable backing store instead of a stub 1 KiB.
+            vec![0u8; CHR_BANK_8K].into_boxed_slice()
         } else {
             if !chr_rom.len().is_multiple_of(CHR_BANK_1K) {
                 return Err(MapperError::Invalid(format!(
@@ -2478,6 +2494,7 @@ impl Waixing253 {
         Ok(Self {
             prg_rom,
             chr,
+            chr_is_ram,
             chr_ram: vec![0u8; CHR_BANK_2K].into_boxed_slice(), // 2 KiB CHR-RAM escape.
             vram: vec![0u8; 2 * NAMETABLE_SIZE].into_boxed_slice(),
             mirroring,
@@ -2599,6 +2616,13 @@ impl Mapper for Waixing253 {
                     let page = (lo as usize & 0x01) * CHR_BANK_1K;
                     let off = (page + (addr as usize & 0x3FF)) & (self.chr_ram.len() - 1);
                     self.chr_ram[off] = value;
+                } else if self.chr_is_ram {
+                    // CHR-RAM variant: writes land in the banked CHR store
+                    // (mirrors the `ppu_read` banked path). For a CHR-ROM cart
+                    // this is a no-op (ROM is not writable).
+                    let page =
+                        (lo as usize | ((self.chr_high[slot] as usize) << 8)) % self.chr_count_1k;
+                    self.chr[page * CHR_BANK_1K + (addr as usize & 0x3FF)] = value;
                 }
             }
             0x2000..=0x3EFF => {
@@ -2636,7 +2660,11 @@ impl Mapper for Waixing253 {
     }
 
     fn save_state(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(1 + Self::SAVE_LEN + self.vram.len() + self.chr_ram.len());
+        // CHR-RAM variant: the banked `self.chr` is mutable, so serialize it.
+        let chr_ram_main = if self.chr_is_ram { self.chr.len() } else { 0 };
+        let mut out = Vec::with_capacity(
+            1 + Self::SAVE_LEN + self.vram.len() + self.chr_ram.len() + chr_ram_main,
+        );
         out.push(SAVE_STATE_VERSION);
         out.extend_from_slice(&self.prg);
         out.extend_from_slice(&self.chr_low);
@@ -2650,11 +2678,15 @@ impl Mapper for Waixing253 {
         out.push(mirroring_to_byte(self.mirroring));
         out.extend_from_slice(&self.vram);
         out.extend_from_slice(&self.chr_ram);
+        if self.chr_is_ram {
+            out.extend_from_slice(&self.chr);
+        }
         out
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
-        let expected = 1 + Self::SAVE_LEN + self.vram.len() + self.chr_ram.len();
+        let chr_ram_main = if self.chr_is_ram { self.chr.len() } else { 0 };
+        let expected = 1 + Self::SAVE_LEN + self.vram.len() + self.chr_ram.len() + chr_ram_main;
         if data.len() != expected {
             return Err(MapperError::Truncated {
                 expected,
@@ -2683,6 +2715,10 @@ impl Mapper for Waixing253 {
         c += self.vram.len();
         self.chr_ram
             .copy_from_slice(&data[c..c + self.chr_ram.len()]);
+        c += self.chr_ram.len();
+        if self.chr_is_ram {
+            self.chr.copy_from_slice(&data[c..c + self.chr.len()]);
+        }
         Ok(())
     }
 }
@@ -3138,6 +3174,46 @@ mod tests {
         let mut m2 = new_m253(synth_prg_8k(16), synth_chr_1k(64), Mirroring::Vertical).unwrap();
         m2.load_state(&blob).unwrap();
         assert_eq!(m2.ppu_read(0x0000), 0x5E);
+    }
+
+    #[test]
+    fn waixing253_chr_ram_variant_writable_and_round_trips() {
+        // No CHR-ROM => the banked `self.chr` is 8 KiB CHR-RAM and must be
+        // writable through the normal banked path (regression: it was a
+        // read-only 1 KiB stub that `ppu_write` never touched).
+        let mut m = new_m253(synth_prg_8k(16), Box::new([]), Mirroring::Vertical).unwrap();
+        // Default chr_low[0] == 0 -> banked CHR path (not the 4/5 escape).
+        m.ppu_write(0x0000, 0xA5);
+        m.ppu_write(0x0123, 0x3C);
+        assert_eq!(m.ppu_read(0x0000), 0xA5);
+        assert_eq!(m.ppu_read(0x0123), 0x3C);
+        // The 8 KiB CHR-RAM must survive a save-state round trip.
+        let blob = m.save_state();
+        let mut m2 = new_m253(synth_prg_8k(16), Box::new([]), Mirroring::Vertical).unwrap();
+        m2.load_state(&blob).unwrap();
+        assert_eq!(m2.ppu_read(0x0000), 0xA5);
+        assert_eq!(m2.ppu_read(0x0123), 0x3C);
+    }
+
+    #[test]
+    fn waixing253_chr_rom_not_writable() {
+        // With CHR-ROM provided, `ppu_write` on the banked path is a no-op.
+        let mut m = new_m253(synth_prg_8k(16), synth_chr_1k(64), Mirroring::Vertical).unwrap();
+        let before = m.ppu_read(0x0010);
+        m.ppu_write(0x0010, before.wrapping_add(1));
+        assert_eq!(m.ppu_read(0x0010), before, "CHR-ROM must not be mutable");
+    }
+
+    #[test]
+    fn fk23c_chr_rom_not_writable_via_select_chr_ram() {
+        // FK23C: even with `select_chr_ram` set, a CHR-ROM cart must not be
+        // mutated (regression: `ppu_write` wrote through `self.chr`, which
+        // corrupted CHR-ROM and was never serialized).
+        let mut m = new_m176(synth_prg_8k(32), synth_chr_1k(64), Mirroring::Vertical).unwrap();
+        m.cpu_write(0x5000, 0x20); // select_chr_ram = true
+        let before = m.ppu_read(0x0010);
+        m.ppu_write(0x0010, before.wrapping_add(1));
+        assert_eq!(m.ppu_read(0x0010), before, "CHR-ROM must not be mutable");
     }
 
     #[test]

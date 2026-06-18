@@ -65,8 +65,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `Nes::set_extra_scanlines(n)` / `extra_scanlines()` insert `n` extra idle
     vblank scanlines per frame at the existing dot resolution (more CPU
     run-time, no visible change). **Off by default (`0`)** and **byte-identical
-    at zero** (proved by `extra_scanlines.rs`), not part of the save-state, and
-    distinct from the CPU-multiplier overclock (a v2.0 item).
+    at zero** (proved by `extra_scanlines.rs`), and distinct from the
+    CPU-multiplier overclock (a v2.0 item). The configured count is a frontend
+    knob re-applied on restore; the in-flight per-frame insertion countdown is
+    snapshotted (PPU snapshot v4) so a save-state taken mid-insertion resumes
+    exactly.
 
 ### Performance
 
@@ -80,6 +83,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dropped: `Kernel::row()` runs only on signal edges (not per sample) and the `PHASES =
   256` kernel advances ~6.3 phase buckets per sample, so a phase-row cache has a
   near-zero hit rate. Both rejections are documented in `docs/performance.md`.
+
+### Fixed
+
+- **v1.7.0 beta.1 review fixes** (all additive / off the default path;
+  AccuracyCoin holds **100% (139/139)** and the default `extra_scanlines == 0`
+  path stays byte-identical):
+  - **F3 — snapshot the in-flight extra-scanlines countdown.** A save-state
+    taken mid-insertion (`extra_lines_remaining > 0`) previously restored as
+    `0` and desynced. The PPU snapshot is bumped to **v4** to carry the
+    countdown (v1-v3 blobs upconvert to `0`); at the default it is a zero `u16`
+    so restore is behaviourally identical.
+  - **F3 — reset the per-frame countdown when `set_extra_scanlines()`
+    changes.** Reconfiguring the count (e.g. 8 → 2, or N → 0 disable) now
+    cancels any in-flight insertion so the countdown cannot be left stale or
+    out-of-bounds relative to the new value.
+  - **F3 — avoid a `prerender_line() - 1` underflow.** The "line immediately
+    before pre-render" check is rewritten as `scanline + 1 == prerender_line()`,
+    removing a debug-mode panic risk should `prerender_line()` ever be `0`.
+  - **Mapper 253 (Waixing VRC4-clone) CHR-RAM variant.** A CHR-RAM cart now
+    allocates the conventional 8 KiB (not a 1 KiB stub) and `ppu_write` writes
+    through the banked CHR store, so CHR-RAM is no longer effectively
+    read-only; the CHR-RAM is serialized in the save-state.
+  - **Mapper 176 (FK23C) CHR-ROM mutability.** `ppu_write` no longer writes
+    through `self.chr` when the cart provided CHR-ROM (`select_chr_ram` set but
+    `chr_is_ram == false`), so CHR-ROM is not mutated (which also was not
+    serialized). CHR writes are gated on `chr_is_ram` for behaviour/serialization
+    consistency.
 
 ## [1.6.0] - 2026-06-18 - "Studio" (Feature Release)
 

@@ -573,8 +573,11 @@ pub struct Ppu {
     /// v1.7.0 F3 — countdown of extra blank scanlines remaining for the CURRENT
     /// frame's vblank insertion. Loaded from [`Self::extra_scanlines`] when the
     /// PPU reaches the insertion point and decremented one extra line at a time.
-    /// `0` when no insertion is in flight. Transient; not snapshotted (mirrors
-    /// `extra_scanlines` being a non-persisted config knob).
+    /// `0` when no insertion is in flight. Snapshotted (snapshot v4) so a
+    /// save-state taken mid-insertion restores the in-flight countdown rather
+    /// than resuming as `0` and desyncing. The configured count itself
+    /// (`extra_scanlines`) stays a non-persisted frontend knob, re-applied on
+    /// restore. At the default `extra_scanlines == 0` this is always `0`.
     pub(crate) extra_lines_remaining: u16,
 
     /// Optional per-PPU-dot state trace (Session-10 observability
@@ -814,8 +817,15 @@ impl Ppu {
     /// idle scanlines each frame (more CPU run-time, no visible change), at the
     /// existing dot resolution. Off by default; a frontend config knob, not part
     /// of the save-state. Distinct from the CPU-multiplier overclock (v2.0).
+    ///
+    /// Changing the count cancels any in-flight insertion for the current
+    /// frame: the per-frame countdown (`extra_lines_remaining`) is
+    /// reset to `0` so it cannot remain stale or out-of-bounds relative to
+    /// the new `lines` (e.g. shrinking 8 → 2, or disabling N → 0). The next
+    /// frame reloads the countdown from the new value at the insertion point.
     pub const fn set_extra_scanlines(&mut self, lines: u16) {
         self.extra_scanlines = lines;
+        self.extra_lines_remaining = 0;
     }
 
     /// v1.7.0 F3 — the currently-configured extra-scanline count (`0` = stock).
@@ -3377,7 +3387,7 @@ impl Ppu {
                 self.frame = self.frame.wrapping_add(1);
                 self.frame_complete = true;
                 self.snapshot_ntsc_phase();
-            } else if self.extra_scanlines != 0 && self.scanline == self.region.prerender_line() - 1
+            } else if self.extra_scanlines != 0 && self.scanline + 1 == self.region.prerender_line()
             {
                 // v1.7.0 F3 — PPU extra-scanlines overclock. The line just
                 // before pre-render is a pure idle vblank line (not visible,
