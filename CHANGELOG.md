@@ -15,6 +15,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Mapper breadth 150 → 168 families** (v1.7.0 "Forge" Workstream G1 — next
+  reusable-ASIC BMC/pirate cores, `crates/rustynes-mappers/src/sprint12.rs`). 18
+  new **BestEffort** (Tier-2, honesty-gated, off the AccuracyCoin / commercial
+  oracle) families ported from `Mesen2` + the nesdev wiki: the Waixing **FK23C**
+  8/16 Mbit BMC (mapper 176 — a `$5000-$5003` config bank over a full MMC3
+  surface with an A12 scanline IRQ + outer-bank / extended-MMC3 / CNROM-CHR
+  modes), **COOLBOY / MINDKIDS** (268 — MMC3 + four `$6000-$7FFF` outer-bank
+  registers), Sachen **9602** (513 — MMC3 + PRG-A19/A20 outer override) and
+  **3011** (136 — the TXC protection accumulator driving an 8 KiB CHR select),
+  Waixing **164** (split `$5000`/`$5100` PRG), **253** (*Dragon Ball Z*
+  VRC4-clone — per-1 KiB CHR low/high regs, a CHR-RAM escape, a /114-scaled
+  CPU-cycle IRQ) and **286** (BS-5 DIP-gated multicart), the **Kaiser**
+  FDS-conversion family (56/142 KS202/KS7032 with an up-counting M2 IRQ, 303
+  KS7017 with a down-counting M2 IRQ + `$4030` read-ack, and the PRG-window
+  boards 305 KS7031 / 306 KS7016 / 312 KS7013B), and the BMC multicarts **261**
+  (810544-C-A1) / **289** (60311C) / **320** (830425C-4391T) / **336** (K-3046)
+  / **349** (G-146). Each is register-decode + save-state-round-trip unit-tested,
+  pure / deterministic / `#![no_std]`. The `mapper_tier` honesty gate
+  (`crates/rustynes-test-harness/tests/mapper_tier_honesty.rs`) stays green and
+  **AccuracyCoin holds 100% (139/139)** — these additions are off the oracle, so
+  the shipped / native / `no_std` / wasm builds are byte-identical. ROM staging
+  and boot-smoke screenshots are a separate later coverage pass.
+
 ## [1.6.0] - 2026-06-18 - "Studio" (Feature Release)
 
 ### Added
