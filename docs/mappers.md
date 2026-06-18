@@ -194,7 +194,7 @@ mapper 151 joins mapper 99 as a mapper-driven Vs. signal.
 
 | iNES | Submapper | Name | Audio | IRQ | Notes |
 |------|-----------|------|-------|-----|-------|
-| 80 | — | Taito X1-005 | — | — | Kyonshiizu 2, Kyoto Ryuu no Tera Satsujin Jiken. A `$7EF0-$7EFF` register window: two 2K CHR banks (`value & 0xFE`, each driving a pair of adjacent 1K slots) + four 1K CHR banks, two switchable 8K PRG banks (last two fixed), `$7EF6` bit-0 H/V mirroring, plus an on-cart 128-byte battery RAM at `$7F00-$7FFF` enabled only after writing `$A3` to **both** `$7EF8` and `$7EF9`. No IRQ. Note: Kyonshiizu 2 boots blank on this dump; Kyoto Ryuu renders its full title (visually verified). |
+| 80 | — | Taito X1-005 | — | — | Kyonshiizu 2, Kyoto Ryuu no Tera Satsujin Jiken. A `$7EF0-$7EFF` register window: two 2K CHR banks (`value & 0xFE`, each driving a pair of adjacent 1K slots) + four 1K CHR banks, **three** switchable 8K PRG banks (`$7EFA`→`$8000`, `$7EFC`→`$A000`, `$7EFE`→`$C000`; only `$E000` is fixed to the last bank), `$7EF6` bit-0 mirroring (0 = Horizontal, 1 = Vertical), plus an on-cart 128-byte battery RAM at `$7F00-$7FFF` enabled only after writing `$A3` to **both** `$7EF8` and `$7EF9`. No IRQ. Kyonshiizu 2 renders its title screen (visually verified) — the earlier blank boot was a missing `$7EFE` `$C000` PRG register that stranded the reset bank (also: the `$7EF6` polarity was inverted). |
 | 82 | — | Taito X1-017 | — | (decoded, unused) | Kyuukyoku Harikiri Koushien / Stadium III. Like the X1-005 plus a **CHR A12-inversion mode bit** (`$7EF6` bit 1 swaps the 2K/1K CHR halves between `$0000-$0FFF` and `$1000-$1FFF` — the non-linear X1-017 quirk), **value-shifted** registers (2K CHR banks `value >> 1`; PRG banks `$7EFA-$7EFC` `value >> 2`, ≤128K addressable), and three independently-protected 8K PRG-RAM sub-regions (`$7EF7`=`$CA`, `$7EF8`=`$69`, `$7EF9`=`$84`). The IRQ surface (`$7EFD-$7EFF`) is decoded but never clocked (the licensed games do not use it). `$7EF6` bit 0: 0 = Horizontal, 1 = Vertical. |
 | 151 | — | **Konami VS (VRC1 on Vs.)** | — | — | **Vs. Gradius, GVS VS. TKO Boxing.** Konami VRC1 silicon (banking byte-identical to mapper 75: three 8K PRG banks `$8000`/`$A000`/`$C000` + fixed last; two 4K CHR windows with `$9000`-driven MSB bits; `$9000` bit 0 = H/V) on a Vs. board. Like mapper 99 it forces `ConsoleType::VsSystem` + the 2C03 RGB PPU (mapper-driven, immune to the byte-7 trap). Verified in-game via Vs. Gradius / Vs. The Goonies (both mapper 151). |
 
@@ -267,7 +267,7 @@ note below).
 | iNES | Submapper | Name | Audio | IRQ | Status | Notes |
 |------|-----------|------|-------|-----|--------|-------|
 | 28 | — | Action 53 homebrew multicart | — | — | landed (v1.4.0 / S9) | Outer `$5xxx` register-select + inner `$8000-$FFFF` bank latch; 2-bit PRG-mode field (NROM-128/256/UNROM) + 2-bit mirroring field; CHR-RAM. |
-| 30 | — | UNROM-512 | — | — | landed (v1.4.0 / S9) | Homebrew. One `$8000-$FFFF` latch (bus conflict): 16K PRG (bits 0-4) + 8K CHR-RAM (bits 5-6) + one-screen bit (bit 7); fixed last bank at `$C000`. |
+| 30 | — | UNROM-512 | — | — | landed (v1.4.0 / S9) | Homebrew. Latch `[N CC P PPPP]`: 16K PRG (bits 0-4) + 8K CHR-RAM/ROM (bits 5-6) + nametable bit (bit 7); fixed last bank at `$C000`. Bus-conflict / flash wiring keyed off submapper + battery (sub 0 w/o battery or sub 2 = bus conflicts on `$8000-$FFFF`; sub 0 w/ battery or sub 1/3/4 = no conflicts, latch only on `$C000-$FFFF`, `$8000-$BFFF` = flash window). |
 | 63 | — | NTDEC 0324 (Powerful 250-in-1) | — | — | landed (v1.4.0 / S9) | Address-decoded multicart: 16/32K PRG bank + mirroring bit; CHR-RAM. |
 | 76 | — | NAMCOT-3446 (Namco 109) | — | — | landed (v1.4.0 / S9) | MMC3-style `$8000`/`$8001` register pairs select two 8K PRG banks (fixed last two) + four 2K CHR banks; header-fixed mirroring. |
 | 174 | — | NTDEC 5-in-1 | — | — | landed (v1.4.0 / S9) | Address-decoded 16/32K PRG bank + 8K CHR bank + mirroring bit. |
@@ -329,10 +329,31 @@ gate stays green. A handful of titles remain blank and are documented
 follow-ups: 4 of the 5 m162 FS304 RPGs need the `$5000.7` CHR auto-switch (the
 core decode is proven by *The Mummy* rendering); m036 TXC needs a proper TXC-
 chip port (`$4000-$4FFF & 0x200` register window) rather than the flat decode;
-m030 / m040 / m063 / m111 / m202; the 2 m185 protection titles (Seicross / Spy
-vs Spy) likely carry a non-header submapper; and 2 m227 pirate hacks need the
-m227-hack `$6000` WRAM. Vs. System DualSystem games (Balloon Fight / Mahjong /
-Tennis / Wrecking Crew) stay blank by design on this single-system core.
+m040 / m063 / m111 / m202; and 2 m227 pirate hacks need the m227-hack `$6000`
+WRAM. Vs. System DualSystem games (Balloon Fight / Mahjong / Tennis / Wrecking
+Crew) stay blank by design on this single-system core.
+
+A later boot-coverage pass cleared three more blanks. **m030 UNROM-512** (Wampus,
+PROTO DERE .NES) booted blank because the board unconditionally applied bus
+conflicts; the self-flashing carts set the iNES battery bit, which on submapper
+0 means *no* bus conflicts (and the banking latch responds only to
+`$C000-$FFFF`, with `$8000-$BFFF` the flash window) — both now render gameplay.
+**m080 Taito X1-005** (Kyonshiizu 2) was missing the `$7EFE` `$C000` PRG
+register (only two of three switchable PRG banks were modelled), stranding the
+reset bank; with all three banks it renders its title screen. **m185 Seicross**
+(CRC `0F05FF0A`) is a CHR-disable copy-protection title that loops forever unless
+CHR reads back as *disabled* for its protection latch (`$21`); its GoodNES dump
+is iNES-1.0 mapper 185 submapper 0, but it is really submapper 4 (enabled iff
+the latch low bits are `0`). The fix is a frontend per-game DB submapper
+correction (`game_database.txt`, applied by `apply_header_overrides`, which now
+promotes an iNES-1.0 header to NES 2.0 when a non-zero submapper override is
+set) — the mapper's existing submapper-4 rule already matches FCEUX `Sync181` /
+BizHawk's Seicross special-case, so the core is untouched. The `external_coverage`
+boot-smoke feeds raw bytes to `Nes::from_rom` and bypasses the frontend DB, so
+Seicross still captures blank there (a harness limitation, not a decode bug); the
+three converted Waixing `.WXN` dumps under `mapper-030-` are actually Waixing
+FS005 (iNES mapper 176 submapper 2) misdetected as mapper 30 by GoodNES, so they
+need mapper-176 support + re-staging rather than any mapper-30 change.
 
 ### Mapper accuracy tiering (v1.2.0)
 

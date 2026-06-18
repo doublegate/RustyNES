@@ -52,6 +52,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Mapper 30 (UNROM-512) self-flashing carts blank boot.** *Wampus* and the
+  *PROTO DERE .NES* beta booted to a solid backdrop because the board always
+  applied bus conflicts. Per NESdev "UNROM 512" (and Mesen2's `UnRom512`), a
+  submapper-0 cart with the iNES **battery bit set** has *no* bus conflicts and
+  its banking latch responds only to `$C000-$FFFF` (with `$8000-$BFFF` the
+  flash-write window) — applying bus conflicts ANDed the boot-time bank-switch
+  value with ROM and jumped the CPU into garbage. The mapper now keys the
+  bus-conflict / flash wiring off submapper + battery, reads CHR-ROM when a dump
+  carries it, and re-derives H/V/1-screen/4-screen nametable wiring from the raw
+  iNES byte-6 bits. Both homebrews now render gameplay. (`sprint9.rs`.)
+- **Mapper 80 (Taito X1-005) blank boot.** *Kyonshiizu 2* booted to a solid blue
+  frame because only two of the chip's **three** switchable 8 KiB PRG banks were
+  modelled — the `$7EFE`/`$7EFF` register for `$C000` was missing (treated as a
+  fixed bank), stranding the reset bank. Added the third PRG register (with its
+  odd-address alias) so only `$E000` is fixed, and corrected the `$7EF6`
+  mirroring polarity (0 = Horizontal, 1 = Vertical, per nesdev mapper 080 /
+  Mesen2). Kyonshiizu 2 now renders its title screen. (`taito_x1_005.rs`.)
+- **Mapper 185 (CNROM CHR-disable protection) — Seicross.** *Seicross* hung in
+  its copy-protection loop (a solid grey frame, rendering never enabled): it
+  reads CHR back after a protection write and proceeds only when CHR reads as
+  *disabled*, but the generic submapper-0 heuristic enabled CHR for the `$21`
+  latch. Seicross is really submapper 4 (enabled iff the latch low bits are `0`,
+  matching FCEUX `Sync181` / BizHawk's Seicross special-case), which the mapper
+  already models correctly. Fixed via a per-game DB submapper correction
+  (`game_database.txt` CRC `0F05FF0A` → submapper 4); `apply_header_overrides`
+  now promotes an iNES-1.0 header to NES 2.0 when a non-zero submapper override
+  is set, so the correction reaches the core. The cycle-accurate core is
+  untouched. (`game_db.rs`, `game_database.txt`.)
 - **Mapper 159 (Bandai LZ93D50 + X24C01 EEPROM) blank boot.** All mapper-159
   games (Dragon Ball Z - Kyoushuu! Saiya Jin, both Magical Taruruuto-kun
   titles, SD Gundam Gaiden) booted to a 1-colour blank screen because the

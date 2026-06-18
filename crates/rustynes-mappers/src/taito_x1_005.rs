@@ -14,12 +14,12 @@
 //!   $7EF3 [CCCC CCCC]  1 KiB CHR bank -> PPU $1400-$17FF
 //!   $7EF4 [CCCC CCCC]  1 KiB CHR bank -> PPU $1800-$1BFF
 //!   $7EF5 [CCCC CCCC]  1 KiB CHR bank -> PPU $1C00-$1FFF
-//!   $7EF6 [.... ...M]  M = mirroring (0 = Vertical, 1 = Horizontal)
+//!   $7EF6 [.... ...M]  M = mirroring (0 = Horizontal, 1 = Vertical)
 //!   $7EF8 [VVVV VVVV]  RAM enable port A (write $A3 to enable)
 //!   $7EF9 [VVVV VVVV]  RAM enable port B (write $A3 to enable)
-//!   $7EFA [PPPP PPPP]  8 KiB PRG bank -> $8000-$9FFF
-//!   $7EFB (alias)      8 KiB PRG bank -> $8000-$9FFF
-//!   $7EFC [PPPP PPPP]  8 KiB PRG bank -> $A000-$BFFF
+//!   $7EFA/$7EFB [PPPP PPPP]  8 KiB PRG bank -> $8000-$9FFF
+//!   $7EFC/$7EFD [PPPP PPPP]  8 KiB PRG bank -> $A000-$BFFF
+//!   $7EFE/$7EFF [PPPP PPPP]  8 KiB PRG bank -> $C000-$DFFF
 //!   $7F00-$7FFF        128-byte battery RAM (mirrored every $80) — enabled by
 //!                      writing $A3 to BOTH $7EF8 and $7EF9.
 //! ```
@@ -27,7 +27,11 @@
 //! The two 2 KiB CHR registers ($7EF0/$7EF1) carry the CHR bank in the upper
 //! seven bits; the standard board ignores the low "nametable" bit and uses the
 //! `$7EF6` software H/V control for CIRAM mirroring, which is what we model.
-//! The last two 8 KiB PRG banks are fixed ($C000/$E000).
+//! There are THREE switchable 8 KiB PRG banks ($8000/$A000/$C000) selected by
+//! `$7EFA`/`$7EFC`/`$7EFE` (each with an odd-address alias); only `$E000` is
+//! fixed to the last bank. (nesdev `INES_Mapper_080`, verified against the
+//! Mesen2 `TaitoX1005` board: missing the `$7EFE` $C000 register stranded the
+//! reset bank and blanked `Kyonshiizu 2`; `$7EF6` polarity is 0=Horz/1=Vert.)
 //!
 //! See `docs/mappers.md` §Mapper coverage matrix.
 
@@ -56,8 +60,8 @@ pub struct TaitoX1005 {
     chr_is_ram: bool,
     /// 1 KiB CHR bank registers for PPU `$0000-$1FFF` (eight 1 KiB windows).
     chr_1k: [u8; 8],
-    /// 8 KiB PRG banks for `$8000` and `$A000`.
-    prg_bank: [u8; 2],
+    /// 8 KiB PRG banks for `$8000`, `$A000` and `$C000` (`$E000` is fixed).
+    prg_bank: [u8; 3],
     mirroring: Mirroring,
     /// `$7EF8` / `$7EF9` enable-latch; RAM is readable/writable only when both
     /// hold `$A3`.
@@ -102,7 +106,7 @@ impl TaitoX1005 {
             ram: [0u8; RAM_LEN],
             chr_is_ram,
             chr_1k: [0, 1, 2, 3, 4, 5, 6, 7],
-            prg_bank: [0, 1],
+            prg_bank: [0, 1, 2],
             mirroring,
             ram_enable: [0, 0],
         })
@@ -125,7 +129,9 @@ impl TaitoX1005 {
         let bank = match slot {
             0 => self.prg_bank[0] as usize,
             1 => self.prg_bank[1] as usize,
-            2 => bank_count.saturating_sub(2),
+            2 => self.prg_bank[2] as usize,
+            // $E000-$FFFF is hard-wired to the last 8 KiB bank (the reset
+            // vector lives here).
             _ => bank_count - 1,
         } % bank_count;
         let off = (addr as usize) & (PRG_BANK_8K - 1);
@@ -181,17 +187,20 @@ impl Mapper for TaitoX1005 {
             0x7EF3 => self.chr_1k[5] = value,
             0x7EF4 => self.chr_1k[6] = value,
             0x7EF5 => self.chr_1k[7] = value,
-            0x7EF6 => {
+            0x7EF6 | 0x7EF7 => {
+                // $7EF6 bit 0: 0 = Horizontal, 1 = Vertical (nesdev mapper 080;
+                // Mesen2 TaitoX1005).
                 self.mirroring = if (value & 0x01) != 0 {
-                    Mirroring::Horizontal
-                } else {
                     Mirroring::Vertical
+                } else {
+                    Mirroring::Horizontal
                 };
             }
             0x7EF8 => self.ram_enable[0] = value,
             0x7EF9 => self.ram_enable[1] = value,
             0x7EFA | 0x7EFB => self.prg_bank[0] = value,
-            0x7EFC => self.prg_bank[1] = value,
+            0x7EFC | 0x7EFD => self.prg_bank[1] = value,
+            0x7EFE | 0x7EFF => self.prg_bank[2] = value,
             0x7F00..=0x7FFF if self.ram_enabled() => {
                 self.ram[(addr as usize) & (RAM_LEN - 1)] = value;
             }
@@ -248,8 +257,10 @@ impl Mapper for TaitoX1005 {
     }
 
     fn save_state(&self) -> Vec<u8> {
+        // Header: 1 (version) + 8 (chr_1k) + 3 (prg_bank) + 1 (mirroring) +
+        // 2 (ram_enable) = 15 bytes.
         let mut out = Vec::with_capacity(
-            14 + RAM_LEN + self.vram.len() + if self.chr_is_ram { self.chr.len() } else { 0 },
+            15 + RAM_LEN + self.vram.len() + if self.chr_is_ram { self.chr.len() } else { 0 },
         );
         out.push(SAVE_STATE_VERSION);
         out.extend_from_slice(&self.chr_1k);
@@ -269,7 +280,7 @@ impl Mapper for TaitoX1005 {
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let need_chr = if self.chr_is_ram { self.chr.len() } else { 0 };
-        let expected = 14 + RAM_LEN + self.vram.len() + need_chr;
+        let expected = 15 + RAM_LEN + self.vram.len() + need_chr;
         if data.len() != expected {
             return Err(MapperError::Truncated {
                 expected,
@@ -280,14 +291,14 @@ impl Mapper for TaitoX1005 {
             return Err(MapperError::UnsupportedVersion(data[0]));
         }
         self.chr_1k.copy_from_slice(&data[1..9]);
-        self.prg_bank.copy_from_slice(&data[9..11]);
-        self.mirroring = if data[11] == 1 {
+        self.prg_bank.copy_from_slice(&data[9..12]);
+        self.mirroring = if data[12] == 1 {
             Mirroring::Horizontal
         } else {
             Mirroring::Vertical
         };
-        self.ram_enable.copy_from_slice(&data[12..14]);
-        let mut cursor = 14;
+        self.ram_enable.copy_from_slice(&data[13..15]);
+        let mut cursor = 15;
         self.ram.copy_from_slice(&data[cursor..cursor + RAM_LEN]);
         cursor += RAM_LEN;
         self.vram
@@ -325,18 +336,27 @@ mod tests {
     #[test]
     fn prg_banks_and_fixed_tail() {
         let mut m = TaitoX1005::new(synth_prg(8), synth_chr_1k(8), Mirroring::Vertical).unwrap();
-        // Default: $8000 = bank 0, $A000 = bank 1, $C000 = {-2} = 6, $E000 = {-1} = 7.
+        // Default: $8000 = bank 0, $A000 = bank 1, $C000 = bank 2, $E000 = {-1} = 7.
         assert_eq!(m.cpu_read(0x8000), 0);
         assert_eq!(m.cpu_read(0xA000), 1);
-        assert_eq!(m.cpu_read(0xC000), 6);
+        assert_eq!(m.cpu_read(0xC000), 2);
         assert_eq!(m.cpu_read(0xE000), 7);
+        // All three switchable banks ($7EFA/$7EFC/$7EFE) select independently;
+        // only $E000 is hard-wired to the last bank.
         m.cpu_write(0x7EFA, 3);
         m.cpu_write(0x7EFC, 5);
+        m.cpu_write(0x7EFE, 4);
         assert_eq!(m.cpu_read(0x8000), 3);
         assert_eq!(m.cpu_read(0xA000), 5);
-        // Fixed tail unaffected.
-        assert_eq!(m.cpu_read(0xC000), 6);
+        assert_eq!(m.cpu_read(0xC000), 4);
         assert_eq!(m.cpu_read(0xE000), 7);
+        // Odd-address aliases hit the same registers.
+        m.cpu_write(0x7EFB, 1);
+        m.cpu_write(0x7EFD, 2);
+        m.cpu_write(0x7EFF, 6);
+        assert_eq!(m.cpu_read(0x8000), 1);
+        assert_eq!(m.cpu_read(0xA000), 2);
+        assert_eq!(m.cpu_read(0xC000), 6);
     }
 
     #[test]
@@ -360,10 +380,11 @@ mod tests {
     #[test]
     fn mirroring_register() {
         let mut m = TaitoX1005::new(synth_prg(4), synth_chr_1k(8), Mirroring::Vertical).unwrap();
+        // $7EF6 bit 0: 1 = Vertical, 0 = Horizontal (nesdev mapper 080).
         m.cpu_write(0x7EF6, 0x01);
-        assert_eq!(m.current_mirroring(), Mirroring::Horizontal);
-        m.cpu_write(0x7EF6, 0x00);
         assert_eq!(m.current_mirroring(), Mirroring::Vertical);
+        m.cpu_write(0x7EF6, 0x00);
+        assert_eq!(m.current_mirroring(), Mirroring::Horizontal);
     }
 
     #[test]
