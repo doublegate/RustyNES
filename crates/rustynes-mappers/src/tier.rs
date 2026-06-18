@@ -78,13 +78,19 @@ pub const fn mapper_tier(id: u16, _submapper: u8) -> Option<MapperTier> {
 
         // --- Tier 2 / BestEffort: reference-ported long-tail sweep
         // (sprint6 + sprint7 + sprint8 + sprint9 + sprint10 + the v1.6.0
-        // J.Y. Company ASIC: 90/209/211). Register-decode unit-tested; NOT
-        // accuracy-gated.
-        15 | 28 | 29 | 30 | 31 | 36 | 39 | 40 | 58 | 60 | 61 | 62 | 63 | 72 | 76 | 77 | 81 | 90
-        | 92 | 94 | 95 | 96 | 97 | 101 | 107 | 111 | 112 | 132 | 133 | 137 | 143 | 145 | 146
-        | 147 | 148 | 149 | 150 | 156 | 162 | 174 | 177 | 178 | 179 | 180 | 185 | 200 | 201
-        | 202 | 203 | 209 | 211 | 212 | 213 | 214 | 218 | 225 | 226 | 227 | 229 | 231 | 233
-        | 234 | 242 | 244 | 246 | 250 => Some(MapperTier::BestEffort),
+        // J.Y. Company ASIC 35/90/209/211 + the v1.6.0 "Studio" Workstream E
+        // sprint11 batch: MMC3-clones 44/49/52/115/134/189/205/238/245/348/366,
+        // Sachen 8259 A/B/C 138/139/141, and discrete multicarts
+        // 42/46/50/51/57/104/120/290/301). Register-decode + save-state
+        // unit-tested; NOT accuracy-gated.
+        15 | 28 | 29 | 30 | 31 | 35 | 36 | 39 | 40 | 42 | 44 | 46 | 49 | 50 | 51 | 52 | 57 | 58
+        | 60 | 61 | 62 | 63 | 72 | 76 | 77 | 81 | 90 | 92 | 94 | 95 | 96 | 97 | 101 | 104 | 107
+        | 111 | 112 | 115 | 120 | 132 | 133 | 134 | 137 | 138 | 139 | 141 | 143 | 145 | 146
+        | 147 | 148 | 149 | 150 | 156 | 162 | 174 | 177 | 178 | 179 | 180 | 185 | 189 | 200
+        | 201 | 202 | 203 | 205 | 209 | 211 | 212 | 213 | 214 | 218 | 225 | 226 | 227 | 229
+        | 231 | 233 | 234 | 238 | 242 | 244 | 245 | 246 | 250 | 290 | 301 | 348 | 366 => {
+            Some(MapperTier::BestEffort)
+        }
 
         _ => None,
     }
@@ -140,13 +146,17 @@ mod tests {
 
     /// The best-effort (Tier-2) sweep added in `sprint6.rs` + `sprint7.rs`
     /// (v1.2.0), the v1.3.0 "Bedrock" Workstream D1 batch (`sprint8.rs`), the
-    /// v1.4.0 "Fidelity" Workstream G batch (`sprint9.rs`), and the v1.5.0
-    /// "Lens" Workstream F batch (`sprint10.rs`).
+    /// v1.4.0 "Fidelity" Workstream G batch (`sprint9.rs`), the v1.5.0 "Lens"
+    /// Workstream F batch (`sprint10.rs`), the v1.6.0 "Studio" J.Y. Company
+    /// ASIC (90/209/211 + the 35 sibling), and the v1.6.0 "Studio" Workstream E
+    /// `sprint11.rs` batch (MMC3-clones, Sachen 8259 A/B/C, discrete
+    /// multicarts).
     const BEST_EFFORT_IDS: &[u16] = &[
-        15, 28, 29, 30, 31, 36, 39, 40, 58, 60, 61, 62, 63, 72, 76, 77, 81, 90, 92, 94, 95, 96, 97,
-        101, 107, 111, 112, 132, 133, 137, 143, 145, 146, 147, 148, 149, 150, 156, 162, 174, 177,
-        178, 179, 180, 185, 200, 201, 202, 203, 209, 211, 212, 213, 214, 218, 225, 226, 227, 229,
-        231, 233, 234, 242, 244, 246, 250,
+        15, 28, 29, 30, 31, 35, 36, 39, 40, 42, 44, 46, 49, 50, 51, 52, 57, 58, 60, 61, 62, 63, 72,
+        76, 77, 81, 90, 92, 94, 95, 96, 97, 101, 104, 107, 111, 112, 115, 120, 132, 133, 134, 137,
+        138, 139, 141, 143, 145, 146, 147, 148, 149, 150, 156, 162, 174, 177, 178, 179, 180, 185,
+        189, 200, 201, 202, 203, 205, 209, 211, 212, 213, 214, 218, 225, 226, 227, 229, 231, 233,
+        234, 238, 242, 244, 245, 246, 250, 290, 301, 348, 366,
     ];
 
     #[test]

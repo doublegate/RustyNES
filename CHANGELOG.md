@@ -34,8 +34,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   like the Lua `onExec`/`onRead`/`onWrite` hooks (ADR 0010); it never intercepts
   mid-instruction or mutates deterministic state, so AccuracyCoin (139/139) and
   byte-identical builds hold. Behind the always-on-in-frontend `debug-hooks`
-  feature; C2 (full hex-editor poke/freeze) and C3 (RAM-search upgrade) are a
-  planned follow-up. (See `docs/frontend.md`.)
+  feature. (See `docs/frontend.md`.)
+- **Hex editor — in-place poke + freeze + access heatmap + find** (v1.6.0
+  Workstream C, C2). The **Memory** panel is now a full hex editor: CPU bus /
+  PPU bus / OAM domain tabs; click-to-poke a CPU work-RAM byte (`Nes::poke_ram`,
+  `$0000-$1FFF` writable, other domains read-only); right-click to **freeze** a
+  byte (emitted as a `RawCheat` re-applied after every frame, routed through the
+  existing raw-cheat overlay like Mesen/FCEUX); an **access-type heatmap** that
+  tints bytes read (blue) / written (red) in the last frame off the `debug-hooks`
+  access log; and a **find** box for a hex byte sequence. The no-edit path is
+  byte-identical and determinism holds (reads are side-effect-free peeks; the
+  only write is the work-RAM poke/freeze applied like a cheat). (See
+  `docs/frontend.md`.)
+- **RAM Search + RAM Watch upgrade** (v1.6.0 Workstream C, C3). The **Memory
+  Compare** panel is upgraded to the BizHawk/FCEUX-class tool: RAM Search gains
+  an **operator × compare-to matrix** (`== != < > <= >=` against the previous
+  snapshot OR a typed constant) and **1/2/4-byte little-endian sizes**, with
+  per-candidate **watch** / **freeze**; a new **RAM Watch** list holds named
+  `(address, size, label)` entries with live values, per-entry freeze (routed
+  through the raw-cheat overlay; multi-byte freezes expand per LE byte), and
+  native **`.wch` save/load**. Read-only against the core (freeze cheats are the
+  only writes, applied post-frame), so the no-freeze path is byte-identical.
+  (See `docs/frontend.md`.)
 - **Lua data breadth — memory domains, sized reads, `joypad`** (v1.6.0
   Workstream B3). The `memory` table gains `memory:read_u16_le(addr)` /
   `memory:read_u16_be(addr)` (16-bit word reads, two side-effect-free CPU
@@ -69,6 +89,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the Mesen2 `JyCompany` implementation. Register-decode + save-state
   unit-tested only and not in the AccuracyCoin oracle, so AccuracyCoin holds
   100% (139/139) and the `mapper_tier_honesty` gate stays green (ADR 0011).
+- **Mapper breadth 126 → 150 families** (v1.6.0 Workstream E continuation,
+  BestEffort tier). +24 honesty-gated families ported from the NESdev wiki and
+  the Mesen2 reference cores. The J.Y. Company ASIC gains its single-game
+  "extended" sibling **mapper 35** (`jy_asic.rs`, same silicon as 209). A new
+  `crates/rustynes-mappers/src/sprint11.rs` adds: a shared MMC3-style core
+  (eight bank registers, the `$8000`/`$A000`/`$C000`/`$E000` protocol, an A12
+  falling-edge IRQ) wrapped by the **MMC3-clone** variants
+  **44 / 49 / 52 / 115 / 134 / 189 / 205 / 238 / 245 / 348 / 366** (each adds a
+  board-specific outer-bank register + PRG/CHR transform); the **Sachen 8259
+  A/B/C** 2 KiB-CHR variants **141 / 138 / 139** (siblings of the existing 8259D
+  mapper 137, differing only by a CHR shift + per-slot OR constants); and the
+  discrete unlicensed / FDS-conversion / multicart boards **42** + **50** (each
+  with a CPU-cycle M2 IRQ) and **46 / 51 / 57 / 104 / 120 / 290 / 301**
+  (hook-free). Every new family is register-decode + save-state-round-trip
+  unit-tested and classified `BestEffort` in `mapper_tier` — outside the
+  AccuracyCoin / commercial-ROM oracle by construction — so AccuracyCoin holds
+  100% (139/139), the `mapper_tier_honesty` gate stays green (ADR 0011), and the
+  shipped / native / `no_std` / wasm builds stay byte-identical
+  (additive, off the deterministic-core path). (See `docs/mappers.md`.)
 - **UNIF (`.unf`) cartridge loader** (v1.6.0 Workstream E2). UNIF carries no
   mapper number — it identifies the cartridge by a board-name string in its
   `MAPR` chunk. `rustynes_mappers::unif` parses the header + chunks

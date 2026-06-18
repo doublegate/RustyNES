@@ -918,9 +918,40 @@ workstream rides on.
   consequence of replay (shared with the Lua hooks): the `value` / `address` /
   `isRead` / `isWrite` / `isExec` tokens are per-access accurate, but the
   register / PPU / `[addr]` tokens reflect the machine's **end-of-frame** state,
-  not the exact cycle of the logged access (the panel UI documents this). C2
-  (full hex-editor poke/freeze) and C3 (RAM-search upgrade) are a planned
-  follow-up.
+  not the exact cycle of the logged access (the panel UI documents this).
+
+- **Hex editor (C2)** — the **Memory** panel (Debug → Memory) is now a full hex
+  editor with **CPU bus / PPU bus / OAM** domain tabs. In the CPU domain a byte
+  is editable: click it, type a hex value, Enter writes it via `Nes::poke_ram`
+  (only `$0000-$1FFF` work RAM is writable — the core exposes no deterministic
+  poke for the PPU bus / OAM / ROM, so those domains are read-only). Right-click
+  a CPU byte to **freeze** it: the panel emits the frozen address/value as a
+  `RawCheat` that the app re-applies after every frame, routed through the SAME
+  raw-cheat overlay the Cheats panel uses (see `DebuggerOverlay::enabled_raw_cheats`).
+  An **access-type heatmap** toggle tints each CPU byte by whether it was read
+  (blue) or written (red) in the last frame, driven by the `debug-hooks` access
+  log (refreshed by `App::pump_watchpoints`; arming the heatmap arms the log).
+  A **find** box searches the visible domain for a hex byte sequence
+  (`DE AD BE EF`) and jumps to the first match at/after the cursor, wrapping
+  once. All reads are side-effect-free peeks; the only write path is the
+  work-RAM poke/freeze (applied like a cheat), so the no-edit path is
+  byte-identical and determinism holds.
+
+- **RAM Search + RAM Watch (C3)** — the **Memory Compare** panel (Debug → Memory
+  Compare) is upgraded from the v1.3.0 changed/unchanged search into the
+  BizHawk/FCEUX-class tool. **RAM Search** now has an **operator × compare-to
+  matrix** — each step keeps candidates whose value satisfies an operator
+  (`== != < > <= >=`) against **either** the previous snapshot (find "what went
+  down when you lost a life") **or** a typed constant (find "the value that is
+  now 99") — plus **sizes** (1-, 2-, or 4-byte little-endian values; changing the
+  size resets the in-flight search). Each surviving candidate has **watch** and
+  **freeze** buttons. **RAM Watch** is a named list of `(address, size, label)`
+  entries with live values, a per-entry **freeze** checkbox (also routed through
+  the raw-cheat overlay — a multi-byte freeze expands to one cheat per
+  little-endian byte), and native **`.wch` save / load** (a simple
+  `addr size label` text format). Read-only against the core (the freeze cheats
+  are the only writes, applied post-frame like every other cheat), so the
+  no-freeze path is byte-identical.
 
 ## Settings
 
