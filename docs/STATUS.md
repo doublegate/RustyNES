@@ -1,13 +1,18 @@
 # RustyNES — Project Status Matrix
 
-**Current release (latest tag): v1.5.0 "Lens" — the insight, scriptability,
-creator-tooling, and polish release** on the cycle-accurate v1.0.0 production
-core. A NES/Famicom emulator with the Mesen2 / higan / ares accuracy bar, shipped
-as a polished desktop application. **AccuracyCoin 100.00% (139/139)**, the 60-ROM
+**Current release: v1.6.0 "Studio" — the TAS-authoring, debugger-depth, accuracy,
+and breadth release** on the cycle-accurate v1.0.0 production core. A NES/Famicom
+emulator with the Mesen2 / higan / ares accuracy bar, shipped as a polished
+desktop application. **AccuracyCoin 100.00% (139/139)**, the 60-ROM
 `external_real_games` + 52-entry `external_extended` oracles byte-identical,
-nestest 0-diff. **`v1.6.0 "Studio"` is in development on `main` (NOT yet
-tagged)** — see "In development: v1.6.0 Studio" below for what has merged so
-far. v1.5.0 lands eight additive workstreams: **A** debugger
+nestest 0-diff. v1.6.0 lands the **TAStudio piano-roll editor**, `.fm2`/`.bk2`
+movie interop, Lua driving + data breadth, **Mesen2-class debugger depth**
+(expression/conditional breakpoints + R/W/X watchpoints + a full hex editor +
+RAM search), off-axis-accuracy verification, mapper breadth to **150 families**,
+FDS-proper, A/V recording, HD audio, and a shader/filter ecosystem — all
+additive/off-by-default, so the shipped/wasm/`no_std` builds stay byte-identical
+and AccuracyCoin holds 100% (139/139). The preceding v1.5.0 "Lens" lands eight
+additive workstreams: **A** debugger
 visualization (an Input Miniatures overlay, a graphical PPU event-viewer heatmap,
 a per-scanline trace viewer, an HD-pack per-pixel inspector — behind
 `debug-hooks`/`hd-pack`); **B** Lua dev/TAS API depth (memory peek/poke/range,

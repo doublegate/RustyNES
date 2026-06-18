@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-06-18 - "Studio" (Feature Release)
+
 ### Added
 
 - **Shader / filter ecosystem — LMP88959 NTSC/PAL, hqNx/xBRZ upscalers, +
