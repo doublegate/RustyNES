@@ -44,7 +44,10 @@
 //!   re-insertion (the "auto-insert" behaviour).
 //! - **Per-game CRC quirk table** ([`quirk_for_crc`] / [`FdsQuirk`]): a curated,
 //!   growable list keyed off the disk-image CRC-32 for titles whose replay
-//!   timing the nominal model does not satisfy (extra re-seek slack today).
+//!   timing the nominal model does not satisfy (extra re-seek slack today). It
+//!   ships **empty** — entries are added only from real, maintainer-measured
+//!   dumps; the Kid Icarus side-B fix above is title-independent (the timed
+//!   head model) and needs no entry.
 //!
 //! Still simplified (matching Stage 1): CRC/gap bytes are not synthesized on
 //! write (the BIOS's CRC is recomputed in its own RAM, not on the medium), and
@@ -193,23 +196,18 @@ pub fn quirk_for_crc(crc: u32) -> FdsQuirk {
     // post-registration replay — that fix is title-independent and needs no
     // table entry. This table is the puNES-`fds.c`-style *framework* for the
     // residual minority of titles whose replay loop wants extra not-ready slack
-    // beyond the nominal window. Concrete CRC-32 entries must be measured from
-    // real (never-committed) dumps before they bind; the entries below are
-    // structurally complete but their CRC keys are maintainer-populated
-    // placeholders, so on a synthetic/illustrative disk they resolve to NONE.
-    // The mechanism — table lookup, slack application, save-state independence —
-    // is fully exercised by the unit tests via a synthetic disk whose CRC the
-    // test computes and asserts against, so the framework cannot silently rot.
-    const TABLE: &[(u32, FdsQuirk)] = &[
-        // Kid Icarus (J) — placeholder CRC key; replace with the measured
-        // headerless-side CRC-32 of the real dump to bind this slack.
-        (
-            0x9CC9_C8A0,
-            FdsQuirk {
-                extra_reseek_cycles: 12_000,
-            },
-        ),
-    ];
+    // beyond the nominal window.
+    //
+    // The table is intentionally EMPTY. Every concrete CRC-32 entry must be
+    // measured from a real (never-committed) dump and verified against that
+    // title's actual replay loop before it ships — a fabricated/placeholder CRC
+    // key is unacceptable because a real disk that happens to hash to it would
+    // silently receive unverified timing slack. Maintainers add measured
+    // entries here as `(crc32, FdsQuirk { .. })`, the CRC-32 taken over the
+    // headerless side bytes ([`FdsDisk::to_bytes`]). The lookup mechanism +
+    // slack application + save-state independence are exercised by the unit
+    // tests independently of any specific entry, so the framework cannot rot.
+    const TABLE: &[(u32, FdsQuirk)] = &[];
     let mut i = 0;
     while i < TABLE.len() {
         if TABLE[i].0 == crc {
@@ -3362,9 +3360,12 @@ mod tests {
         // A synthetic disk's CRC is not in the (real-dump-keyed) table.
         let fds = make_device(1);
         assert_eq!(fds.quirk(), FdsQuirk::NONE);
-        // The placeholder entry resolves to its slack; everything else is NONE.
+        // The table ships empty (entries are maintainer-measured from real
+        // dumps only), so every CRC — synthetic or arbitrary — resolves to NONE
+        // and no disk receives unverified timing slack.
         assert_eq!(quirk_for_crc(0xDEAD_BEEF), FdsQuirk::NONE);
-        assert_eq!(quirk_for_crc(0x9CC9_C8A0).extra_reseek_cycles, 12_000);
+        assert_eq!(quirk_for_crc(0x9CC9_C8A0), FdsQuirk::NONE);
+        assert_eq!(quirk_for_crc(0x0000_0000), FdsQuirk::NONE);
     }
 
     #[test]

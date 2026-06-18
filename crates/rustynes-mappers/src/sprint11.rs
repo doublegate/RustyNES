@@ -1320,13 +1320,14 @@ impl Mapper for Mapper50 {
                 self.switch_bank = (value & 0x08) | ((value & 0x01) << 2) | ((value & 0x06) >> 1);
             }
             0x4120 => {
-                if value & 0x01 != 0 {
-                    self.irq_enabled = true;
-                } else {
-                    self.irq_enabled = false;
-                    self.irq_pending = false;
-                    self.irq_counter = 0;
-                }
+                // Both enable and disable (re)start the counter from 0 and
+                // clear any pending line; only the enable flag itself differs.
+                // On IRQ-enable this means a fresh enable after a prior fire
+                // counts a full period rather than tripping on a stale counter
+                // / latched IRQ.
+                self.irq_enabled = value & 0x01 != 0;
+                self.irq_pending = false;
+                self.irq_counter = 0;
             }
             _ => {}
         }
@@ -1596,8 +1597,12 @@ impl Mapper for DiscreteMapper {
                     let a = self.last_addr;
                     let inner = (a >> 2) & 0x07;
                     let outer128 = (a >> 5) & 0x03;
+                    // A7 is the 256 KiB outer-bank select; without it any PRG
+                    // image > 256 KiB can only reach its low half. Slot it
+                    // between the 128 KiB (A5-A6) and 512 KiB (A8) selects.
+                    let outer256 = (a >> 7) & 0x01;
                     let outer512 = (a >> 8) & 0x01;
-                    let bank16 = (outer512 << 6) | (outer128 << 3) | inner;
+                    let bank16 = (outer512 << 6) | (outer256 << 5) | (outer128 << 3) | inner;
                     self.prg_16k(bank16 as usize, addr)
                 } else {
                     0
