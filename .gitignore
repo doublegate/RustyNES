@@ -199,6 +199,7 @@ CLAUDE.local.md
 WARP.md
 /.warp/
 
-# v1.3.0 D1 — BestEffort boot-smoke ROM staging (homebrew/unlicensed/multicart;
-# never committed, like tests/roms/external/). Only screenshots are committed.
-tests/roms/external-besteffort/
+# NOTE: BestEffort boot-smoke ROMs (homebrew/unlicensed/multicart) are no longer
+# a separate tree — they live under the already-ignored tests/roms/external/
+# alongside every other staged dump (the coverage harness discovers ONE external/
+# ROM tree; only the *screenshots* are tier-split, into screenshots/besteffort/).
