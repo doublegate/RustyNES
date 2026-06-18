@@ -2,7 +2,7 @@
 source: crates/rustynes-test-harness/tests/external_coverage.rs
 expression: text
 ---
-rom=mapper-060-Multicart60/Chiu Keung Juen Sek Wong Gam Ka 4-in-1 [p1][!].nes
+rom=mapper-060-Multicart60/Chiu Keung Juen Sek Wong Gam Ka 4-in-1 _p1____.nes
 rom_sha256=e503b587bdc03166d5d3f42ca2796d762f4450a6ce3d11dbb457ebf16796b45c
 frames=1141
 fb_bytes=245760

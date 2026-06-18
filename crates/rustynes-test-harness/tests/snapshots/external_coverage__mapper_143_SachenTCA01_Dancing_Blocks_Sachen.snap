@@ -2,7 +2,7 @@
 source: crates/rustynes-test-harness/tests/external_coverage.rs
 expression: text
 ---
-rom=mapper-143-SachenTCA01/Dancing Blocks (Sachen) [!].nes
+rom=mapper-143-SachenTCA01/Dancing Blocks _Sachen_ ___.nes
 rom_sha256=5b6a30143854bcb3f56a017abbc2bdf73127eaf18282efdc2a5520eea676d926
 frames=1141
 fb_bytes=245760

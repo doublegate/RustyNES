@@ -2,7 +2,7 @@
 source: crates/rustynes-test-harness/tests/external_coverage.rs
 expression: text
 ---
-rom=mapper-094-UN1ROM/Senjou no Ookami (J) [!].nes
+rom=mapper-094-UN1ROM/Senjou no Ookami _J_ ___.nes
 rom_sha256=56a72cd018e7fffbc556789b6e170ae062f5e3792c322b912d7ab5615bcaa863
 frames=1141
 fb_bytes=245760
