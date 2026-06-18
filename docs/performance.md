@@ -227,6 +227,46 @@ jump table regardless of source order); the F3 bus controller-strobe gate +
 `mapper_caps.cpu_cycle_hook` (both already gated behind active flags); the F3
 DMA get/put enum unification (a larger refactor with no clear neutral win).
 
+### v1.7.0 "Forge" Workstream H7 — tier-1 perf (measure-first): no change adopted
+
+H7 named two candidate micro-opts from `to-dos/plans/research/v1.7.0-detail-performance.md`
+(T1.2 / T1.3). The contract is the standing one: adopt only on a **>3% Criterion-stable +
+byte-identical** bar. Both were measured against fresh baselines (`full_frame` on
+`nestest` + `flowing_palette`; `spectral` on `blip_square_wave` + `blip_silence`) and
+**neither cleared the bar — nothing was adopted.** Findings:
+
+- **T1.2 — unified-DMA cycle fast-path.** The research premise (that
+  `unified_dma_cycle` "runs unconditionally every CPU cycle") does not hold for this
+  codebase: the per-cycle dispatch already sits behind a `while bus.unified_dma_pending()`
+  floor in `Cpu::read1` / `idle_tick`, and `unified_dma_pending()` itself leads with the
+  `pending_dmc_dma` bool short-circuit, so a no-DMA cycle already costs only three
+  bool-field reads and the heavy `unified_dma_cycle_impl` is out-of-line (cold). The
+  release profile is `lto = "fat"` + `codegen-units = 1`, so the gate is already inlined
+  across the crate boundary at the LTO stage. An explicit `#[inline]` on
+  `unified_dma_pending` measured **"no change in performance detected"** on both
+  `full_frame` benches (point estimates straddling zero, p > 0.05), as fat-LTO predicts.
+  **REJECTED** — not byte-identity (the change was byte-identical) but the >3% bar.
+- **T1.3 — BLEP phase-row cache.** This is the same optimization the v1.4.0 F2 pass
+  already evaluated and dropped (see above). It cannot win here for two compounding
+  reasons: (a) `Kernel::row()` is only called on signal **edges** (`if delta != 0.0`), not
+  per sample — the `blip_silence` bench (zero edges) is within noise of `blip_square_wave`,
+  so the row lookup is not the hot cost; the per-sample cost is the `phase += step`
+  accumulate + the integrate/emit/`filter.process` loop, which a phase-row cache does not
+  touch. (b) The kernel uses `PHASES = 256` and the NTSC step is
+  `44100 / 1_789_773 ≈ 0.0246`, so the quantized phase bucket advances **~6.3 rows per
+  sample** — consecutive `row()` calls essentially never share a bucket, giving a
+  cache hit-rate near zero. A guarded `(bucket -> row_index)` cache (byte-identical by
+  construction — same bucket maps to the same index maps to the same coeffs, and the APU
+  determinism test passed) showed no stable win; under measurement it only added a branch.
+  **REJECTED** — byte-identical, but < 3% (and structurally a non-win).
+
+Measurement note for any follow-up: the bench host (20 logical cores, `powersave`
+governor, turbo on) carries a large run-to-run variance — even pinned (`taskset`) the
+`full_frame` benches floated ±~4% same-binary, i.e. the noise floor sits at the adoption
+bar, so a sub-4% win is not Criterion-stably provable on this hardware. The PGO/BOLT gate
+(`pgo.yml`) remains the project's authoritative >3%-Criterion + byte-identical promotion
+path; H7 leaves it unexercised because there was no candidate to promote.
+
 ### v1.5.0 "Lens" Workstream H — frontend pacing & audio-sync pass
 
 Source data: a real high-refresh capture

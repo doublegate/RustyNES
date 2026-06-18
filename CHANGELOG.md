@@ -68,6 +68,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     at zero** (proved by `extra_scanlines.rs`), not part of the save-state, and
     distinct from the CPU-multiplier overclock (a v2.0 item).
 
+### Performance
+
+- **v1.7.0 "Forge" Workstream H7 (tier-1 perf, measure-first): no change adopted.**
+  Measured both researched candidates against the **>3% Criterion-stable +
+  byte-identical** bar; neither cleared it, so the emulation core stays
+  byte-identical. T1.2 (unified-DMA cycle fast-path) is a no-op — the per-cycle DMA
+  dispatch already sits behind a short-circuiting `unified_dma_pending()` floor and is
+  inlined by the existing `lto = "fat"` profile (an explicit `#[inline]` measured "no
+  change"). T1.3 (BLEP phase-row cache) is the same optimization the v1.4.0 F2 pass
+  dropped: `Kernel::row()` runs only on signal edges (not per sample) and the `PHASES =
+  256` kernel advances ~6.3 phase buckets per sample, so a phase-row cache has a
+  near-zero hit rate. Both rejections are documented in `docs/performance.md`.
+
 ## [1.6.0] - 2026-06-18 - "Studio" (Feature Release)
 
 ### Added
