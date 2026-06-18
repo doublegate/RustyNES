@@ -61,6 +61,16 @@ struct OpEntry {
     opcode: u8,
 }
 
+/// The opcode-encoding table, built lazily from the disassembler exactly once
+/// and reused for every [`assemble_line`] call. Building it disassembles all
+/// 256 opcodes, so caching it avoids ~256 disassemblies per assembled line.
+static OPCODE_TABLE: std::sync::OnceLock<Vec<OpEntry>> = std::sync::OnceLock::new();
+
+/// Borrow the cached opcode table, building it on first use.
+fn opcode_table() -> &'static [OpEntry] {
+    OPCODE_TABLE.get_or_init(build_table)
+}
+
 /// Build the `(mnemonic, mode) -> opcode` table by introspecting the canonical
 /// disassembler once. Branch (`Relative`) opcodes are detected by their
 /// mnemonic since a disassembled relative target reads as an absolute `$xxxx`.
@@ -182,7 +192,11 @@ fn parse_operand(operand: &str) -> Option<ParsedOperand> {
     }
     if let Some(inner) = op.strip_prefix('(') {
         // (zp,X) | (zp),Y | (abs)
-        if let Some(zp) = inner.strip_suffix(",X)").map(str::trim) {
+        if let Some(zp) = inner
+            .strip_suffix(",X)")
+            .or_else(|| inner.strip_suffix(",x)"))
+            .map(str::trim)
+        {
             return parse_num(zp).map(|v| ParsedOperand {
                 mode: Mode::IndirectX,
                 value: v,
@@ -251,7 +265,7 @@ fn parse_operand(operand: &str) -> Option<ParsedOperand> {
 /// # Errors
 /// Returns a message describing why the line could not be assembled.
 pub fn assemble_line(line: &str, pc: u16) -> Result<Vec<u8>, String> {
-    let table = build_table();
+    let table = opcode_table();
     let line = line.trim();
     if line.is_empty() {
         return Err("empty line".into());
@@ -369,6 +383,15 @@ mod tests {
             );
             assert_eq!(lines[0].mnemonic, src.split_whitespace().next().unwrap());
         }
+    }
+
+    #[test]
+    fn lowercase_indexed_indirect_parses() {
+        // (zp,X) must parse regardless of operand case, like the other modes.
+        let upper = assemble_line("LDA ($20,X)", 0x0000).unwrap();
+        let lower = assemble_line("LDA ($20,x)", 0x0000).unwrap();
+        assert_eq!(upper, vec![0xA1, 0x20]);
+        assert_eq!(lower, upper);
     }
 
     #[test]

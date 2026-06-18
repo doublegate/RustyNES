@@ -77,15 +77,23 @@ struct A1Edit {
 }
 
 impl A1Edit {
-    /// Parse a 2-hex-digit byte from a text buffer (lenient: trims `$`/`0x`).
+    /// Parse a 2-hex-digit byte from a text buffer (lenient: trims `$`/`0x`/`0X`).
     fn parse_byte(s: &str) -> Option<u8> {
-        let t = s.trim().trim_start_matches('$').trim_start_matches("0x");
+        let t = s
+            .trim()
+            .trim_start_matches('$')
+            .trim_start_matches("0x")
+            .trim_start_matches("0X");
         u8::from_str_radix(t, 16).ok()
     }
 
-    /// Parse a 16-bit address from a text buffer.
+    /// Parse a 16-bit address from a text buffer (lenient: trims `$`/`0x`/`0X`).
     fn parse_addr(s: &str) -> Option<u16> {
-        let t = s.trim().trim_start_matches('$').trim_start_matches("0x");
+        let t = s
+            .trim()
+            .trim_start_matches('$')
+            .trim_start_matches("0x")
+            .trim_start_matches("0X");
         u16::from_str_radix(t, 16).ok()
     }
 }
@@ -559,4 +567,24 @@ fn draw_palette_strip(
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_byte_accepts_hex_prefixes() {
+        assert_eq!(A1Edit::parse_byte("$3F"), Some(0x3F));
+        assert_eq!(A1Edit::parse_byte("0x3f"), Some(0x3F));
+        assert_eq!(A1Edit::parse_byte("0X3F"), Some(0x3F));
+        assert_eq!(A1Edit::parse_byte("3f"), Some(0x3F));
+    }
+
+    #[test]
+    fn parse_addr_accepts_hex_prefixes() {
+        assert_eq!(A1Edit::parse_addr("$2006"), Some(0x2006));
+        assert_eq!(A1Edit::parse_addr("0x2006"), Some(0x2006));
+        assert_eq!(A1Edit::parse_addr("0X2006"), Some(0x2006));
+    }
 }

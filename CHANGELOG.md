@@ -147,7 +147,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   256` kernel advances ~6.3 phase buckets per sample, so a phase-row cache has a
   near-zero hit rate. Both rejections are documented in `docs/performance.md`.
 
+- **v1.7.0 beta.2 review — debugger-tooling allocation cleanups** (frontend-only;
+  no core or default-path effect, so AccuracyCoin holds **100% (139/139)** and the
+  builds stay byte-identical):
+  - The access counter (`debugger/access_counter.rs`) folds the per-frame access
+    + exec logs by iterating the borrowed slices directly instead of `collect`ing
+    /`to_vec`-cloning them into fresh `Vec`s every frame.
+  - The inline assembler (`debugger/assembler.rs`) builds its 256-entry
+    `(mnemonic,mode) → opcode` table once via a `OnceLock` and reuses it, instead
+    of re-deriving it (~256 disassemblies) on every assembled line.
+  - The header editor (`debugger/header_editor.rs`) reads only the 16-byte header
+    (and overwrites it in place via seek + partial write) instead of reading /
+    rewriting the entire ROM file just to inspect or edit the header.
+
 ### Fixed
+
+- **v1.7.0 beta.2 review — debugger-tooling robustness** (frontend-only;
+  AccuracyCoin holds **100% (139/139)**):
+  - The inline assembler now parses indexed-indirect `(zp,x)` case-insensitively
+    (matching the other addressing modes), and the CPU panel validates the
+    assemble target stays within work RAM (`$0000-$1FFF`) before queueing — the
+    only region `DebugPoke::CpuRam` applies to — rejecting out-of-range targets
+    and assembled bytes that would run past it.
+  - The PPU/OAM/CPU panel hex parsers now strip an upper-case `0X` prefix as well
+    as `0x`, so `0X..` inputs parse.
 
 - **v1.7.0 beta.1 review fixes** (all additive / off the default path;
   AccuracyCoin holds **100% (139/139)** and the default `extra_scanlines == 0`

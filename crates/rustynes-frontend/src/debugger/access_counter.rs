@@ -140,15 +140,12 @@ impl MemoryAccessCounter {
         }
         let stamp = nes.cpu_snapshot().cycles;
 
-        // Reads + writes (with uninitialized-read detection).
-        let accesses: Vec<(bool, u16)> = nes
-            .accesses()
-            .iter()
-            .map(|acc| (acc.write, acc.addr))
-            .collect();
-        for (write, addr) in accesses {
+        // Reads + writes (with uninitialized-read detection). Iterate the
+        // borrowed slice directly — no per-frame allocation.
+        for acc in nes.accesses() {
+            let addr = acc.addr;
             let c = &mut self.counters[addr as usize];
-            if write {
+            if acc.write {
                 c.writes = c.writes.saturating_add(1);
             } else {
                 // An uninitialized read: this address has been read but never
@@ -162,9 +159,9 @@ impl MemoryAccessCounter {
             c.last_stamp = stamp;
         }
 
-        // Executes (instruction fetches) from the exec log.
-        let exec: Vec<u16> = nes.exec_log().to_vec();
-        for pc in exec {
+        // Executes (instruction fetches) from the exec log. Iterate the
+        // borrowed slice directly — no per-frame allocation.
+        for &pc in nes.exec_log() {
             let c = &mut self.counters[pc as usize];
             c.execs = c.execs.saturating_add(1);
             c.last_stamp = stamp;

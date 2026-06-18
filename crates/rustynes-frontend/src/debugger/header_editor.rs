@@ -22,9 +22,14 @@
 //! both native-only deps. The whole module is `cfg`-gated out of the wasm
 //! build (no filesystem there).
 
+use std::io::{Read, Seek, SeekFrom, Write};
+
 use rustynes_core::rustynes_mappers::{
     ConsoleType, Header, Mirroring, Region, VsPpuType, parse_header, serialize_header,
 };
+
+/// Length of the iNES / NES 2.0 header in bytes.
+const HEADER_LEN: usize = 16;
 
 /// Persistent state of the header editor / Cartridge Info panel.
 #[derive(Default)]
@@ -229,7 +234,8 @@ fn open_file(state: &mut HeaderEditorState) {
     else {
         return;
     };
-    match std::fs::read(&path) {
+    // Read only the 16-byte header rather than the whole ROM file.
+    match read_header_bytes(&path) {
         Ok(bytes) => match parse_header(&bytes) {
             Ok(header) => {
                 state.loaded = Some(Loaded {
@@ -246,20 +252,37 @@ fn open_file(state: &mut HeaderEditorState) {
     }
 }
 
+/// Read just the first [`HEADER_LEN`] bytes of a ROM file (the header).
+fn read_header_bytes(path: &std::path::Path) -> std::io::Result<[u8; HEADER_LEN]> {
+    let mut file = std::fs::File::open(path)?;
+    let mut buf = [0u8; HEADER_LEN];
+    file.read_exact(&mut buf)?;
+    Ok(buf)
+}
+
 /// Re-serialize the edited header and overwrite the first 16 bytes of the file
-/// in place (the ROM body is untouched). Returns a status string.
+/// in place (the ROM body is untouched). Seeks + writes only the header — the
+/// rest of the file is never read or rewritten. Returns a status string.
 fn write_header_to_file(loaded: &Loaded) -> String {
     let new_header = serialize_header(&loaded.header);
-    let mut bytes = match std::fs::read(&loaded.path) {
-        Ok(b) => b,
-        Err(e) => return format!("re-read failed: {e}"),
-    };
-    if bytes.len() < 16 {
-        return "file too short to hold a header".into();
-    }
-    bytes[..16].copy_from_slice(&new_header);
-    match std::fs::write(&loaded.path, &bytes) {
+    match overwrite_header(&loaded.path, &new_header) {
         Ok(()) => "header written".into(),
         Err(e) => format!("write failed: {e}"),
     }
+}
+
+/// Overwrite the first [`HEADER_LEN`] bytes of the file in place via a seek +
+/// partial write, leaving the ROM body untouched.
+fn overwrite_header(path: &std::path::Path, header: &[u8; HEADER_LEN]) -> std::io::Result<()> {
+    let mut file = std::fs::OpenOptions::new().write(true).open(path)?;
+    // Guard against truncated files: the body after the header must exist.
+    if file.metadata()?.len() < HEADER_LEN as u64 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "file too short to hold a header",
+        ));
+    }
+    file.seek(SeekFrom::Start(0))?;
+    file.write_all(header)?;
+    Ok(())
 }

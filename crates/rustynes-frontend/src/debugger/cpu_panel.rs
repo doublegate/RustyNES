@@ -377,6 +377,13 @@ fn assemble_into(a3: &mut A3Asm) -> String {
     let Some(mut addr) = parse_hex16(&a3.addr_text) else {
         return "bad target address".into();
     };
+    // `DebugPoke::CpuRam` only applies in work RAM ($0000-$1FFF); writes
+    // elsewhere are core no-ops. Reject up front so the user isn't misled into
+    // thinking an out-of-range assemble was applied (matches the A1 hex-editor
+    // gating).
+    if addr > WORK_RAM_END {
+        return "target out of work RAM ($0000-$1FFF)".into();
+    }
     let mut bytes_out: Vec<(u16, u8)> = Vec::new();
     for (n, line) in a3.src_text.lines().enumerate() {
         let line = line.trim();
@@ -386,6 +393,12 @@ fn assemble_into(a3: &mut A3Asm) -> String {
         match super::assembler::assemble_line(line, addr) {
             Ok(bytes) => {
                 for b in bytes {
+                    if addr > WORK_RAM_END {
+                        return format!(
+                            "line {}: assembled bytes run past work RAM ($0000-$1FFF)",
+                            n + 1
+                        );
+                    }
                     bytes_out.push((addr, b));
                     addr = addr.wrapping_add(1);
                 }
@@ -403,7 +416,79 @@ fn assemble_into(a3: &mut A3Asm) -> String {
     format!("queued {count} byte(s) (work RAM only; applied after next frame)")
 }
 
+/// Last address of NES work RAM (`$0000-$1FFF`, the 2 KiB internal RAM and its
+/// mirrors) — the only region `DebugPoke::CpuRam` applies to.
+const WORK_RAM_END: u16 = 0x1FFF;
+
 fn parse_hex16(s: &str) -> Option<u16> {
-    let trimmed = s.trim().trim_start_matches('$').trim_start_matches("0x");
+    let trimmed = s
+        .trim()
+        .trim_start_matches('$')
+        .trim_start_matches("0x")
+        .trim_start_matches("0X");
     u16::from_str_radix(trimmed, 16).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn asm(addr: &str, src: &str) -> (String, Vec<DebugPoke>) {
+        let mut a3 = A3Asm {
+            addr_text: addr.to_string(),
+            src_text: src.to_string(),
+            ..Default::default()
+        };
+        let status = assemble_into(&mut a3);
+        (status, a3.pending)
+    }
+
+    #[test]
+    fn parse_hex16_handles_prefixes() {
+        assert_eq!(parse_hex16("$0200"), Some(0x0200));
+        assert_eq!(parse_hex16("0x0200"), Some(0x0200));
+        assert_eq!(parse_hex16("0X0200"), Some(0x0200));
+        assert_eq!(parse_hex16("200"), Some(0x0200));
+    }
+
+    #[test]
+    fn assembles_into_work_ram() {
+        let (status, pending) = asm("$0200", "LDA #$42");
+        assert!(status.contains("queued"), "status was {status:?}");
+        assert_eq!(
+            pending,
+            vec![
+                DebugPoke::CpuRam {
+                    addr: 0x0200,
+                    value: 0xA9
+                },
+                DebugPoke::CpuRam {
+                    addr: 0x0201,
+                    value: 0x42
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_target_outside_work_ram() {
+        // $8000 (PRG ROM) is outside the pokeable $0000-$1FFF window.
+        let (status, pending) = asm("$8000", "LDA #$42");
+        assert!(
+            status.contains("work RAM"),
+            "expected a work-RAM rejection, got {status:?}"
+        );
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn rejects_when_bytes_run_past_work_ram() {
+        // Starting at the last work-RAM byte, a 2-byte instruction overruns.
+        let (status, pending) = asm("$1FFF", "LDA #$42");
+        assert!(
+            status.contains("work RAM"),
+            "expected an overrun rejection, got {status:?}"
+        );
+        assert!(pending.is_empty());
+    }
 }

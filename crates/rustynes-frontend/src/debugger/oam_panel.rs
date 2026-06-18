@@ -51,9 +51,13 @@ impl OamPanelState {
     }
 }
 
-/// Parse a 2-hex-digit byte (lenient: trims `$`/`0x`).
+/// Parse a 2-hex-digit byte (lenient: trims `$`/`0x`/`0X`).
 fn parse_byte(s: &str) -> Option<u8> {
-    let t = s.trim().trim_start_matches('$').trim_start_matches("0x");
+    let t = s
+        .trim()
+        .trim_start_matches('$')
+        .trim_start_matches("0x")
+        .trim_start_matches("0X");
     u8::from_str_radix(t, 16).ok()
 }
 
@@ -205,4 +209,17 @@ fn render_sprite_grid(nes: &mut Nes, oam: &[u8; 256], spr_base: u16) -> Vec<u8> 
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_byte_accepts_hex_prefixes() {
+        assert_eq!(parse_byte("$80"), Some(0x80));
+        assert_eq!(parse_byte("0x80"), Some(0x80));
+        assert_eq!(parse_byte("0X80"), Some(0x80));
+        assert_eq!(parse_byte("80"), Some(0x80));
+    }
 }
