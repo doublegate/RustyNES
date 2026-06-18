@@ -222,6 +222,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   under the emu lock after the egui pass; seeking re-derives state by replaying
   inputs, so determinism is preserved. Native-only file I/O for now (browser
   `.rnmproj` is a parity follow-up). Additive + off the default path.
+- **FCEUX `.fm2` movie interop** (v1.6.0 Workstream B1). RustyNES `.rnm`
+  movies now round-trip with the **FCEUX `.fm2`** text movie format — import a
+  `.fm2` as a playable movie and export the current movie to `.fm2` — over the
+  same deterministic input model that backs the TAStudio editor (Workstream A).
+  Pure core / movie plumbing (`no_std`); the deterministic per-frame output is
+  untouched, so AccuracyCoin holds 100% (139/139).
 - **J.Y. Company ASIC mappers (iNES 90 / 209 / 211)** (v1.6.0 Workstream E,
   BestEffort tier). One silicon implementation behind three iNES mapper
   numbers — 90 inhibits the ROM-nametable / extended-mirroring feature via a

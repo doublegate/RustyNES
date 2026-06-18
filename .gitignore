@@ -59,6 +59,9 @@ venv/
 # these committed fixtures, so re-include them (overrides the Snapcraft `*.snap`).
 !**/snapshots/**/*.snap
 !**/snapshots/*.snap
+# ...but insta's pending/rejected snapshots (`.snap.new`) are transient — accept
+# them into `.snap` (`cargo insta accept`) or delete; never commit.
+*.snap.new
 
 # --- Fuzzing (commit the harnesses; ignore the build/corpus) ---
 fuzz/
@@ -173,6 +176,10 @@ flamegraph.svg
 /temp/
 *.tmp
 
+# --- Merge / patch artifacts (git conflict + `git apply --reject` leftovers) ---
+*.orig
+*.rej
+
 # --- Environment ---
 .env
 .env.local
@@ -180,6 +187,7 @@ flamegraph.svg
 # --- Editors ---
 .idea/
 .vscode/
+.zed/
 *.swp
 *.swo
 *~
@@ -188,6 +196,7 @@ flamegraph.svg
 .DS_Store
 ._*
 Thumbs.db
+Desktop.ini
 
 # --- Pre-commit ---
 .pre-commit-cache/
