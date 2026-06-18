@@ -262,6 +262,39 @@ them:
   (60 / 240 / 1k / 3.8k / 12k Hz, ±12 dB) frontend output stage owned by the
   producer (`audio.rs::EqStage`), bypassed (zero overhead) when off / flat.
 
+### HD-pack HD audio (v1.6.0 "Studio" Workstream H, `hd-pack`)
+
+An HD-pack can ship external, studio-quality OGG Vorbis tracks that replace /
+layer over the game's audio — the biggest Mesen2 gap vs ADR 0014. The
+`hires.txt` declares them with `<bgm>album,track,filename` (looping background
+music) and `<sfx>album,track,filename` (one-shot sound effects); the game
+*selects* a track at run time by writing to the HD-pack audio-control register
+at **`$4100`**. `src/hd_audio.rs` parses the declarations, decodes the OGG files
+to mono PCM (resampled to the device rate, via the pure-Rust `lewton` decoder
+pulled in only by the `hd-pack` feature), and runs an `HdAudioMixer`.
+
+This is an **output-only** tap, the audio analogue of the HD tile-substitution
+on the framebuffer and Workstream G's A/V-recording tap: it sits in the
+**frontend** audio path, on top of the buffer the core already produced
+(`Nes::drain_audio_into`). Each produced frame `EmuCore::produce_one_frame`
+*peeks* `$4100` (a side-effect-free read of the already-produced bus state, like
+the HD-pack `<condition>` watched-memory snapshot) and, if the control byte
+selected a track, sums the decoded PCM into the drained APU buffer **in place**
+before it reaches the DRC resampler / cpal queue (the same insertion point the
+A/V recorder taps). It mutates no emulation state and adds no determinism
+surface — the core's deterministic per-frame audio (save-state round-trip / TAS
+replay / netplay) is untouched. The mixer is `Option`-gated on `EmuCore`; with
+no audio pack loaded — or the `hd-pack` feature off — the audio is byte-identical
+to the stock build. The `$4100` selection is **best-effort**: RustyNES does not
+intercept the register write (no core change), so the frontend reads the value
+back and treats a *change* as the trigger edge — packs whose cart maps `$4100`
+into readable expansion space drive it faithfully; on pure open-bus carts the
+selection is inert (a documented honesty caveat, like the BestEffort mapper
+tier). Folder packs are supported; `.zip`-pack audio is a future extension.
+Audible playback is a **maintainer manual-check** item (no audio device in CI);
+the parse, the `$4100` trigger-edge logic, and the mixer buffering are
+unit-tested.
+
 ### Browser audio (AudioWorklet)
 
 The wasm builds (`wasm_audio.rs`) output through an **AudioWorklet** whose

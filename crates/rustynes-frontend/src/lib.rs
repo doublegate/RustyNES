@@ -61,6 +61,11 @@ pub mod help_tui;
 // v1.2.0 beta.2 (Workstream C3) — HD-pack / mod loader (native-only, default OFF).
 #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
 pub mod hdpack;
+// v1.6.0 "Studio" Workstream H — HD-pack HD AUDIO: `<bgm>`/`<sfx>` OGG tracks
+// mixed into the frontend audio path on the `$4100` control register (output-
+// only). Gated with `hdpack` (native-only, default OFF).
+#[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+pub mod hd_audio;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod icon;
 pub mod icons;

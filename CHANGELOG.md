@@ -48,6 +48,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every new pass; visual shader output is a maintainer manual-verify (it can't be
   headless-checked). (See `docs/frontend.md` §"CRT / NTSC shaders" and ADR 0013's
   v1.6.0 supplement.)
+- **HD-pack HD audio — `<bgm>` / `<sfx>` OGG tracks via the `$4100` control
+  register** (v1.6.0 Workstream H, native + default-OFF `hd-pack` feature; the
+  biggest Mesen2 gap vs ADR 0014). The HD-pack `hires.txt` parser
+  (`crates/rustynes-frontend/src/hdpack.rs`) now reads `<bgm>album,track,file`
+  (looping background music) and `<sfx>album,track,file` (one-shot sound effects)
+  declarations, and a new module
+  (`crates/rustynes-frontend/src/hd_audio.rs`) decodes their OGG Vorbis files to
+  mono PCM (pure-Rust `lewton` decoder, pulled in only by `hd-pack` — no C, no
+  extra system deps; default / wasm builds never see it) and runs an
+  `HdAudioMixer`. The mixer is an **output-only** tap, the audio analogue of the
+  HD tile-substitution on the framebuffer and Workstream G's recording tap: it
+  sits in the FRONTEND audio path on top of the buffer the core already produced
+  (`Nes::drain_audio_into`), and each produced frame `EmuCore::produce_one_frame`
+  *peeks* the `$4100` HD-pack audio-control register (a side-effect-free read of
+  the already-produced bus state) and, on the selector's change edge, sums the
+  decoded track into the drained APU buffer **in place** before the DRC stage. It
+  touches no emulation state and the core's deterministic per-frame audio
+  (save-state / TAS / netplay) is unaffected; the mixer is `Option`-gated on
+  `EmuCore`, so with no audio pack loaded — or the feature off — the audio is
+  byte-identical and **AccuracyCoin holds 100% (139/139)**. The `$4100` selection
+  is best-effort (RustyNES does not intercept the register write — it reads the
+  value back and edge-detects, faithful on carts that map `$4100` into readable
+  expansion space, inert on open-bus carts, a documented honesty caveat like the
+  BestEffort mapper tier); folder packs are supported, `.zip`-pack audio + the
+  full `$4100`..`$4106` state machine are noted future extensions. Audible
+  playback is a **maintainer manual-check** (no audio device in CI); the
+  `<bgm>`/`<sfx>` parse, the `$4100` trigger-edge logic, and the mixer buffering
+  are unit-tested. (See `docs/frontend.md` §"HD-pack HD audio" + ADR 0014.)
 - **A/V recording — synchronized video + audio capture** (v1.6.0 Workstream G,
   native + default-OFF `av-record` feature). A new frontend module
   (`crates/rustynes-frontend/src/av_record.rs`) records the running game to an

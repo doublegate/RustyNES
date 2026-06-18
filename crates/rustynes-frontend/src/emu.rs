@@ -311,6 +311,18 @@ pub struct EmuCore {
     /// inert and byte-identical to a build without the feature.
     #[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
     pub av_recorder: Option<crate::av_record::AvRecorder>,
+    /// v1.6.0 "Studio" Workstream H — HD-pack HD-AUDIO mixer, installed by the
+    /// host when a pack that declares `<bgm>`/`<sfx>` tracks loads. A read-only
+    /// tap on the FRONTEND audio path: when `Some`, each produced frame the
+    /// mixer peeks the `$4100` HD-audio-control register (a side-effect-free
+    /// read of the already-produced bus state) and sums the selected OGG track
+    /// into the drained APU buffer in place — AFTER the core handed the frame
+    /// off, so it never advances the emulator or alters the deterministic
+    /// per-frame audio. Native-only + behind the default-OFF `hd-pack` feature;
+    /// `None` (idle, and the only state with no audio pack) is byte-identical to
+    /// a build without HD audio.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "hd-pack"))]
+    pub hd_audio: Option<crate::hd_audio::HdAudioMixer>,
 }
 
 impl EmuCore {
@@ -338,6 +350,8 @@ impl EmuCore {
             script_input_override: [None, None],
             #[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
             av_recorder: None,
+            #[cfg(all(not(target_arch = "wasm32"), feature = "hd-pack"))]
+            hd_audio: None,
         }
     }
 
@@ -569,6 +583,16 @@ impl EmuCore {
                         self.audio_buf.resize(target, 0.0);
                     }
                     let n = nes.drain_audio_into(&mut self.audio_buf);
+                    // v1.6.0 H — HD-pack HD audio: peek the `$4100` control
+                    // register (side-effect-free) and mix the selected OGG track
+                    // into the drained buffer IN PLACE before it reaches the
+                    // queue. Output-only (see `hd_audio` docs); skipped when no
+                    // audio pack is loaded.
+                    #[cfg(feature = "hd-pack")]
+                    if let Some(mixer) = self.hd_audio.as_mut() {
+                        let control = nes.cpu_bus_peek(crate::hd_audio::HD_AUDIO_CONTROL);
+                        mixer.mix(&mut self.audio_buf[..n], control);
+                    }
                     audio.push_samples(&self.audio_buf[..n]);
                     // v1.6.0 G — record the same samples for the A/V tap (after
                     // the `nes` borrow ends, at the tail).
@@ -606,6 +630,16 @@ impl EmuCore {
                         self.audio_buf.resize(target, 0.0);
                     }
                     let n = nes.drain_audio_into(&mut self.audio_buf);
+                    // v1.6.0 H — HD-pack HD audio: peek the `$4100` control
+                    // register (side-effect-free) and mix the selected OGG track
+                    // into the drained buffer IN PLACE before the DRC stage.
+                    // Output-only (see `hd_audio` docs); skipped when no audio
+                    // pack is loaded.
+                    #[cfg(feature = "hd-pack")]
+                    if let Some(mixer) = self.hd_audio.as_mut() {
+                        let control = nes.cpu_bus_peek(crate::hd_audio::HD_AUDIO_CONTROL);
+                        mixer.mix(&mut self.audio_buf[..n], control);
+                    }
                     // v2.8.0 Phase 1 — through the DRC resampler stage.
                     audio.push_samples(&self.audio_buf[..n]);
                     // v1.6.0 G — record the same samples for the A/V tap.

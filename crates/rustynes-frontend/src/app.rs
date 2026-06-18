@@ -1408,10 +1408,32 @@ impl App {
         if let Some(pack) = crate::hdpack::HdPack::load(path) {
             let rules = pack.rule_count();
             let scale = pack.scale();
+            // v1.6.0 H — HD audio: decode the pack's `<bgm>`/`<sfx>` OGG tracks
+            // (folder packs only — a `.zip` pack's audio is a future extension)
+            // and install a frontend-side mixer on the shared `EmuCore`. The
+            // mixer is an OUTPUT-ONLY tap; `None` (no audio decls / a zip pack /
+            // all tracks failed to decode) leaves the audio path byte-identical.
+            let audio_tracks = if path.is_dir() {
+                let rate = self.audio.as_ref().map_or(44_100, |a| a.sample_rate);
+                crate::hd_audio::decode_tracks_from_folder(path, pack.audio_decls(), rate)
+            } else {
+                Vec::new()
+            };
+            let track_count = audio_tracks.len();
+            {
+                let rate = self.audio.as_ref().map_or(44_100, |a| a.sample_rate);
+                let mut guard = self.emu.lock();
+                guard.hd_audio = crate::hd_audio::HdAudioMixer::new(audio_tracks, rate);
+            }
             self.hd_compositor = Some(crate::hdpack::HdCompositor::new(pack));
+            let audio_note = if track_count > 0 {
+                format!(", {track_count} audio tracks")
+            } else {
+                String::new()
+            };
             self.ui
                 .set_status(crate::ui_shell::StatusMessage::success(format!(
-                    "HD pack loaded: {rules} tiles, {scale}x"
+                    "HD pack loaded: {rules} tiles, {scale}x{audio_note}"
                 )));
             true
         } else {
@@ -1430,7 +1452,10 @@ impl App {
     fn unload_hd_pack(&mut self) {
         self.hd_compositor = None;
         let key = {
-            let guard = self.emu.lock();
+            let mut guard = self.emu.lock();
+            // v1.6.0 H — drop the HD-audio mixer so the audio path returns to
+            // byte-identical stock output.
+            guard.hd_audio = None;
             guard
                 .nes
                 .as_ref()
@@ -4974,6 +4999,16 @@ impl App {
                     emu.audio_buf.resize(target, 0.0);
                 }
                 let n = nes.drain_audio_into(&mut emu.audio_buf);
+                // v1.6.0 H — HD-pack HD audio: peek `$4100` (side-effect-free)
+                // and mix the selected OGG track into the drained buffer in
+                // place before the DRC stage. Output-only; skipped when no audio
+                // pack is loaded. Disjoint field borrows: `nes` is `emu.nes`,
+                // the mixer + buffer are other `emu` fields.
+                #[cfg(feature = "hd-pack")]
+                if let Some(mixer) = emu.hd_audio.as_mut() {
+                    let control = nes.cpu_bus_peek(crate::hd_audio::HD_AUDIO_CONTROL);
+                    mixer.mix(&mut emu.audio_buf[..n], control);
+                }
                 // v2.8.0 Phase 1 — through the DRC resampler stage.
                 audio.push_samples(&emu.audio_buf[..n]);
             }
