@@ -4,11 +4,14 @@ name: CI
 # check is always reported. A required status check that never runs leaves a PR's
 # merge gate stuck "pending" forever — exactly what a docs-only PR would hit if
 # `paths-ignore` skipped the whole run. Instead the `changes` job (dorny/paths-
-# filter) decides whether any BUILD-affecting file changed; if only docs did
-# (markdown, the docs/ + to-dos/ + ref-docs/ trees, screenshots, licences), every
-# heavy job is skipped and `CI success` passes trivially, so the doc-only PR can
-# still merge. This is the branch-protection-safe replacement for the old
-# `paths-ignore` (which was fine only while `main` had no required checks).
+# filter) decides whether any BUILD-affecting file changed; if a change touches
+# only `**/*.md` / `**/*.txt` (the bulk of the docs/ + to-dos/ + ref-docs/ trees),
+# screenshots/, LICENSE*, NOTICE, .gitignore, or .codegraph/, every heavy job is
+# skipped and `CI success` passes trivially, so the doc-only PR can still merge.
+# (This mirrors the old `paths-ignore` set exactly — a non-md/txt asset placed
+# under docs/ etc., e.g. a tarball, still runs full CI, which is intentional.)
+# This is the branch-protection-safe replacement for the old `paths-ignore`
+# (which was fine only while `main` had no required checks).
 on:
   push:
     branches: [main]
@@ -69,7 +72,14 @@ jobs:
     outputs:
       code: ${{ steps.filter.outputs.code }}
     steps:
+      # Full history: on `push`, dorny/paths-filter diffs against the before-SHA
+      # using local git, so the default shallow clone (fetch-depth: 1) can miss
+      # the base commit. (On `pull_request` it uses the GitHub API and needs no
+      # history.) Without this the push-event filter falls back to "everything
+      # changed" — safe, but it loses the docs-only skip on direct main pushes.
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - uses: dorny/paths-filter@v3
         id: filter
         with:
