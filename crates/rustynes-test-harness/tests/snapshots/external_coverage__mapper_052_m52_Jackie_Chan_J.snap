@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-052-m52/Jackie Chan (J) [!].nes
+rom_sha256=0116fcf2d2c3eb77bd726d56669892263c03515fdd52ef020e96888a2deefa03
+frames=1141
+fb_bytes=245760
+cycles=33949776
+audio_samples=836505
+audio_fnv1a64=830e5d3383549e4d
+checkpoint f900 fb_fnv1a64=e423ea66a300433c
+checkpoint f1100 fb_fnv1a64=3930ca1f81ab7ea5

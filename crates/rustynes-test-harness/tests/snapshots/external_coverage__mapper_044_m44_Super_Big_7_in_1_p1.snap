@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-044-m44/Super Big 7-in-1 [p1][!].nes
+rom_sha256=62b9785a8fc5f315d3fceeb9d1970c73c15f348af43506157f73e07f64236a9d
+frames=1141
+fb_bytes=245760
+cycles=33949787
+audio_samples=836505
+audio_fnv1a64=4d0c9979b242d1de
+checkpoint f900 fb_fnv1a64=1719dca5cef7a325
+checkpoint f1100 fb_fnv1a64=f7d7a79bead34acc

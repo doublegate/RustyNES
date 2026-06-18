@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-205-m205/4-in-1 (K-3131GS, GN-45) [p1][!].nes
+rom_sha256=6f79dcc1a53c99d733d0cc5f0f95d2b403cf5259430f97c3a8341eac5f7f2f2e
+frames=1141
+fb_bytes=245760
+cycles=33949962
+audio_samples=836509
+audio_fnv1a64=15766b4c4a876f4f
+checkpoint f900 fb_fnv1a64=89ee4c476c97a325
+checkpoint f1100 fb_fnv1a64=89ee4c476c97a325

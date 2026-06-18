@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-141-m141/Po Po Team (Sachen) [!].nes
+rom_sha256=96e2ec25383c270032cabcb9e7b62dcec51d8efcdee5c88b0931b7550d0ad1e1
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=318d240219f41f42
+checkpoint f900 fb_fnv1a64=3f28f390cb433fe8
+checkpoint f1100 fb_fnv1a64=3f28f390cb433fe8
