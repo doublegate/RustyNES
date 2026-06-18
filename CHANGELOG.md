@@ -274,6 +274,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A/V recording produced broken / empty audio (Workstream G).** The recorder
+  spawned `ffmpeg` at arm time with the still-empty audio sidecar passed as a
+  regular-file `-i` input; `ffmpeg` reads a regular-file input to EOF eagerly at
+  startup, so it saw an empty audio file before any samples were written. The
+  recorder now buffers **both** rawvideo and mono-`f32le` audio to temp files
+  while recording (no child process is alive, so there is no read-before-write
+  race and no two-pipe deadlock) and muxes the two COMPLETE files with a single
+  `ffmpeg` invocation at `stop()`; `ffmpeg` availability is still probed at
+  arm time so arming fails gracefully when it is absent. Output-only and
+  determinism-safe; still default-OFF behind `av-record`.
+  (`crates/rustynes-frontend/src/av_record.rs`.)
+- **Mapper 301 (BMC-8157) ignored the A7 outer-bank select.** The PRG bank decode
+  dropped address line A7 (the 256 KiB outer-bank bit), so any PRG image larger
+  than 256 KiB could only reach its low half. A7 is now slotted between the
+  128 KiB (A5-A6) and 512 KiB (A8) selects. BestEffort, honesty-gated.
+  (`crates/rustynes-mappers/src/sprint11.rs`.)
+- **Mapper 50 (Alibaba / SMB2J conversion) latched a stale IRQ on enable.** On an
+  IRQ-enable write (`$4120` bit 0), the counter was not reset and any pending
+  line was not cleared, so a fresh enable after a prior fire could trip
+  immediately on the stale counter. Enable now resets the counter to 0 and
+  clears the pending flag, per the hardware. (`crates/rustynes-mappers/src/sprint11.rs`.)
+- **FDS per-game CRC quirk table shipped a fabricated placeholder key.** The
+  `quirk_for_crc` timing-quirk table carried a hard-coded "Kid Icarus"
+  placeholder CRC-32 that would have applied unverified head-reseek slack to any
+  real disk that happened to hash to it. The table now ships **empty** (entries
+  are added only from real, maintainer-measured dumps); the Kid Icarus side-B
+  fix is title-independent (the general timed disk-head model) and never relied
+  on the table. (`crates/rustynes-mappers/src/fds.rs`.)
+- **Shader preset import counted stock / pass-through passes as unsupported.**
+  `import_preset` reported `stock` / `passthrough` / `pixellate` stages as
+  *unsupported* even though `map_stem_to_builtin` classified them as skip-able —
+  inflating the unsupported count for presets that are perfectly importable.
+  Pass-through stages are now skipped silently (not counted as unsupported).
+  (`crates/rustynes-frontend/src/slang_preset.rs`.)
+- **Memory hex editor allowed misleading no-op pokes outside work RAM.** The
+  editor let you click-to-poke / freeze any CPU address, but `Nes::poke_ram` is
+  a no-op outside `$0000-$1FFF`, so edits to ROM / register / mapper space
+  silently did nothing. Poke + freeze are now restricted to `$0000-$1FFF` work
+  RAM (matching the module's documented contract), and the help text says so.
+  (`crates/rustynes-frontend/src/debugger/memory_panel.rs`.)
 - **Mapper 30 (UNROM-512) self-flashing carts blank boot.** *Wampus* and the
   *PROTO DERE .NES* beta booted to a solid backdrop because the board always
   applied bus conflicts. Per NESdev "UNROM 512" (and Mesen2's `UnRom512`), a
