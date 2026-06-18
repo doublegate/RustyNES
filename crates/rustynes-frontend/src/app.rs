@@ -3549,6 +3549,9 @@ impl App {
                 // are enabled (the no-cheat path stays byte-identical).
                 if let Some(debugger) = self.debugger.as_mut() {
                     debugger.reapply_genie_codes(nes);
+                    // v1.7.0 "Forge" Workstream C (C1/C2) — the reconstructed
+                    // call stack + access counters are stale after a reset.
+                    debugger.reset_debug_telemetry();
                 }
             }
         }
@@ -3813,19 +3816,28 @@ impl App {
     #[cfg(not(target_arch = "wasm32"))]
     fn load_symbols_dialog(&mut self) {
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("Symbol/label files", &["sym", "mlb", "nl"])
+            .add_filter("Symbol / source-map files", &["sym", "mlb", "nl", "dbg"])
             .add_filter("All files", &["*"])
             .pick_file()
         else {
             return;
         };
-        let format = path
+        let ext = path
             .extension()
             .and_then(|e| e.to_str())
+            .map(str::to_ascii_lowercase);
+        // v1.7.0 "Forge" Workstream C (C3) — a ca65/cc65 `.dbg` file maps source
+        // lines (handled separately from the name-only symbol formats).
+        if ext.as_deref() == Some("dbg") {
+            self.load_source_map_file(&path);
+            return;
+        }
+        let format = ext
+            .as_deref()
             .and_then(crate::symbols::SymbolFormat::from_extension);
         let Some(format) = format else {
             self.ui.set_status(crate::ui_shell::StatusMessage::error(
-                "Unrecognized symbol-file extension (expected .sym / .mlb / .nl)",
+                "Unrecognized file extension (expected .sym / .mlb / .nl / .dbg)",
             ));
             return;
         };
@@ -3859,6 +3871,36 @@ impl App {
         // `scripting` build doesn't reference a method that isn't compiled.
         #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
         self.refresh_script_symbols();
+    }
+
+    /// v1.7.0 "Forge" Workstream C (C3) — read a ca65/cc65 `.dbg` file and load
+    /// its `address -> (source file, line)` mapping into the debugger's source
+    /// map (annotates the disassembly). Display-only; never touches the core.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn load_source_map_file(&mut self, path: &std::path::Path) {
+        let text = match std::fs::read_to_string(path) {
+            Ok(t) => t,
+            Err(e) => {
+                self.ui
+                    .set_status(crate::ui_shell::StatusMessage::error(format!(
+                        "source map load failed: {e}"
+                    )));
+                return;
+            }
+        };
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("debug")
+            .to_owned();
+        if let Some(d) = self.debugger.as_mut() {
+            d.load_source_map(&name, &text);
+            d.open_chip_panel(crate::debugger::ChipPanel::Cpu);
+            self.ui
+                .set_status(crate::ui_shell::StatusMessage::info(format!(
+                    "Loaded source map from {name}"
+                )));
+        }
     }
 
     /// v1.5.0 Workstream B (B4) — push the debugger's current symbol map into a
@@ -3990,12 +4032,35 @@ impl App {
     /// unaffected. Runs on every build (the frontend always pulls `debug-hooks`),
     /// so it is not behind the `scripting` gate.
     fn pump_watchpoints(&mut self) {
-        let Some(dbg) = self.debugger.as_mut() else {
-            return;
-        };
-        let mut guard = self.emu.lock();
-        if let Some(nes) = guard.nes.as_mut() {
-            dbg.pump_watchpoints(nes);
+        let mut step_satisfied = false;
+        let mut step_still_pending = false;
+        {
+            let Some(dbg) = self.debugger.as_mut() else {
+                return;
+            };
+            let mut guard = self.emu.lock();
+            if let Some(nes) = guard.nes.as_mut() {
+                dbg.pump_watchpoints(nes);
+                // v1.7.0 "Forge" Workstream C (C1) — a queued step verb
+                // (step-over / step-out / run-to-NMI / run-to-IRQ) was satisfied
+                // this frame; take the edge so we pause below.
+                step_satisfied = dbg.take_step_satisfied();
+                step_still_pending = dbg.step_pending();
+            }
+        } // emu lock + debugger borrow dropped here
+        if step_satisfied {
+            self.set_paused(true);
+            if let Some(d) = self.debugger.as_mut() {
+                d.open_chip_panel(crate::debugger::ChipPanel::Cpu);
+            }
+            self.ui.set_status(crate::ui_shell::StatusMessage::info(
+                "Step complete — paused".to_owned(),
+            ));
+        } else if step_still_pending && self.ui.paused {
+            // The step verb isn't satisfied yet: keep advancing frame-by-frame
+            // (the user is paused; this drives the step to completion without
+            // resuming free-running play).
+            self.request_frame_advance();
         }
     }
 
@@ -4914,6 +4979,9 @@ impl App {
                 // are enabled (the no-cheat path stays byte-identical).
                 if let Some(debugger) = self.debugger.as_mut() {
                     debugger.reapply_genie_codes(nes);
+                    // v1.7.0 "Forge" Workstream C (C1/C2) — drop the stale call
+                    // stack + access counters across a cold boot.
+                    debugger.reset_debug_telemetry();
                 }
                 // v1.0.0 — `power_cycle` rebuilds the APU (all-on default), so
                 // re-push the per-channel mute mask. Default 0x3F = byte-identical.

@@ -101,6 +101,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     snapshotted (PPU snapshot v4) so a save-state taken mid-insertion resumes
     exactly.
 
+- **v1.7.0 "Forge" Workstream C — debugger depth (source-level / step /
+  callstack).** All additive, output-only telemetry, gated behind the always-on
+  frontend `debug-hooks` feature and **byte-identical with the core's
+  `debug-hooks` feature OFF** (the headless test / bench builds), so the
+  shipped / native / `no_std` / wasm builds are unchanged and **AccuracyCoin
+  holds 100% (139/139)**. None of these are v2.0 items — they ride the current
+  PPU-dot scheduler.
+  - **C1 — call stack + step verbs.** A Mesen2-`CallstackManager`-class live
+    6502 call stack (`crates/rustynes-frontend/src/debugger/callstack.rs`),
+    rebuilt each frame by replaying the observational per-frame exec log +
+    interrupt-service log: `JSR` pushes, `RTS`/`RTI` pops, and an unexplained
+    non-sequential PC is correlated against the interrupt log to label an
+    NMI/IRQ frame. Adds the stepping verbs **step-over / step-out / run-to-NMI /
+    run-to-IRQ / step-scanline / step-frame** (the exec/interrupt-driven verbs
+    ride the per-frame logs; scanline/frame ride frame-advance), surfaced in a
+    new "Call stack" section of the CPU panel. Step completion pauses the
+    emulator and opens the CPU panel, like a breakpoint hit. Output-only.
+  - **C2 — memory access counter + uninitialized-read detection.** A
+    Mesen2-`MemoryAccessCounter`-class per-address read/write/exec counter with
+    last-access stamps and a sticky **uninitialized-read** flag (a read of
+    volatile RAM — `$0000-$1FFF` / `$6000-$7FFF` — before it was ever written),
+    folded from the per-frame access + exec logs
+    (`crates/rustynes-frontend/src/debugger/access_counter.rs`). Surfaced as an
+    "Access counters" section in the Memory panel. Output-only side-array.
+  - **C3 — ca65/cc65 `.dbg` source-line mapping.** A frontend parser for the
+    ld65 `--dbgfile` `.dbg` format
+    (`crates/rustynes-frontend/src/debugger/source_map.rs`): it resolves each
+    `line` record's spans through the `span`/`seg` tables to CPU addresses,
+    building an `address -> (source file, line)` map that annotates the
+    disassembly with the original source line (`; file:line`). Loaded via the
+    existing **Debug -> Load Symbols** picker (now also accepts `.dbg`), pairing
+    with the v1.4.0 `.sym`/`.mlb`/`.nl` symbol-name loader. Display-only.
+
 ### Performance
 
 - **v1.7.0 "Forge" Workstream H7 (tier-1 perf, measure-first): no change adopted.**

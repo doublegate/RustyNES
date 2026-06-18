@@ -18,6 +18,8 @@
 
 use rustynes_core::{EventBpKind, Nes};
 
+use crate::debugger::callstack::{self, CallstackTracker, StepRequest};
+use crate::debugger::source_map::SourceMap;
 use crate::emu::DebugPoke;
 use crate::symbols::SymbolMap;
 
@@ -88,6 +90,13 @@ const FLAG_NAMES: [&str; 8] = ["N", "V", "_", "B", "D", "I", "Z", "C"];
 ///
 /// `symbols` annotates the disassembly + breakpoint list with loaded labels
 /// (v1.4.0 D1); `symbols_status` is the last symbol-load status line.
+///
+/// v1.7.0 "Forge" Workstream C: `callstack` drives the Call Stack section + step
+/// verbs (C1); `source_map` + `source_map_status` annotate the disassembly with
+/// the original ca65/cc65 source line (C3). Returns a step verb the user clicked
+/// (the caller queues it on the tracker + keeps the emulator running until it is
+/// satisfied).
+#[must_use]
 pub fn show(
     ctx: &egui::Context,
     open: &mut bool,
@@ -95,7 +104,11 @@ pub fn show(
     nes: &mut Nes,
     symbols: &SymbolMap,
     symbols_status: Option<&str>,
-) {
+    callstack: &CallstackTracker,
+    source_map: &SourceMap,
+    source_map_status: Option<&str>,
+) -> Option<StepRequest> {
+    let mut step_request = None;
     let cpu = nes.cpu_snapshot();
     egui::Window::new("CPU")
         .open(open)
@@ -236,6 +249,20 @@ pub fn show(
                 ui.weak(format!("symbols: {} labels", symbols.len()));
             }
 
+            // v1.7.0 "Forge" Workstream C (C3) — loaded `.dbg` source-map status.
+            if let Some(s) = source_map_status {
+                ui.weak(format!("source map: {s}"));
+            } else if !source_map.is_empty() {
+                ui.weak(format!("source map: {} addresses", source_map.len()));
+            }
+
+            // v1.7.0 "Forge" Workstream C (C1) — the live call stack + the step
+            // verbs (over / out / run-to-NMI/IRQ / scanline / frame). A clicked
+            // verb is returned to the caller, which queues it on the tracker.
+            if let Some(req) = callstack::show_callstack_section(ui, callstack, symbols) {
+                step_request = Some(req);
+            }
+
             if state.follow_pc {
                 state.origin = cpu.pc;
             }
@@ -273,6 +300,16 @@ pub fn show(
                                     .color(egui::Color32::from_rgb(0x90, 0xC0, 0xF0)),
                             );
                         }
+                        // v1.7.0 "Forge" Workstream C (C3) — annotate with the
+                        // original ca65/cc65 source line (`file:line`), if a
+                        // `.dbg` is loaded and maps this address.
+                        if let Some(src) = source_map.annotation(line.addr) {
+                            ui.label(
+                                egui::RichText::new(format!("; {src}"))
+                                    .monospace()
+                                    .color(egui::Color32::from_rgb(0x80, 0xA0, 0x80)),
+                            );
+                        }
                         let bytes = line
                             .bytes
                             .iter()
@@ -291,6 +328,7 @@ pub fn show(
                     }
                 });
         });
+    step_request
 }
 
 /// v1.7.0 "Forge" Workstream A3 — the inline-assembler UI: an address field +

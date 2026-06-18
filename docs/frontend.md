@@ -1038,6 +1038,55 @@ stack stays `#![no_std]`; AccuracyCoin holds 139/139.
   canonical disassembler** (`rustynes_cpu::disassemble_at`), so it can never
   drift from the CPU core's decode. Branch displacements are range-checked.
 
+### v1.7.0 "Forge" Workstream C — debugger depth (source-level / step / callstack)
+
+Frontend-only, output-only telemetry built on the SAME `debug-hooks`
+observational per-frame log-replay model as the v1.6.0 Watch panel: it is folded
+in `App::pump_watchpoints` (under the emu lock, after each frame) and only
+*reads* the just-finished frame's `Nes::exec_log()` / `Nes::accesses()` /
+`Nes::interrupt_log()` (plus side-effect-free `Nes::cpu_bus_peek`). It never
+intercepts mid-instruction or mutates emulator-visible state, so determinism /
+AccuracyCoin hold, and with the core's `debug-hooks` feature OFF (the headless
+test / bench builds) the build is byte-identical. None of these are v2.0 items —
+they ride the current PPU-dot scheduler.
+
+- **Call stack + step verbs (C1)** — `debugger::callstack::CallstackTracker`
+  rebuilds a Mesen2-`CallstackManager`-class live 6502 call stack each frame by
+  walking the exec log: `JSR` (`$20`) pushes a frame (return = `pc + 3`, target =
+  the next executed PC), `RTS` (`$60`) / `RTI` (`$40`) pop, and a non-sequential
+  PC transition the previous opcode does not explain (not a branch / `JMP` /
+  call / return) is correlated against the per-frame interrupt-service log to
+  label it an **NMI** or **IRQ/BRK** frame. The CPU panel grows a **Call stack**
+  section listing the frames (innermost first, symbol-annotated) plus the
+  stepping verbs **step-over / step-out / run-to-NMI / run-to-IRQ /
+  step-scanline / step-frame**. A clicked verb is queued on the tracker;
+  `App::pump_watchpoints` keeps the (paused) emulator advancing frame-by-frame
+  until the verb is satisfied (`CallstackTracker::take_satisfied`), then pauses
+  and opens the CPU panel — exactly like a breakpoint hit. The tracker is dropped
+  on reset / power-cycle (`DebuggerOverlay::reset_debug_telemetry`).
+
+- **Memory access counter + uninitialized-read detection (C2)** —
+  `debugger::access_counter::MemoryAccessCounter` is a Mesen2-`MemoryAccessCounter`-class
+  per-address (`$0000-$FFFF`) side-array of read / write / exec counts + a
+  last-access CPU-cycle stamp + a sticky **`UninitRead`** flag (set when a
+  volatile-RAM address — `$0000-$1FFF` work RAM or `$6000-$7FFF` cartridge WRAM —
+  is read before it has ever been written). Reads / writes come from the access
+  log, executes from the exec log. The Memory panel grows an **Access counters**
+  section (toggle to enable — it arms the access + exec logs; a Reset button; the
+  in-view 16 addresses' R/W/X counts + an `uninit` marker). Output-only.
+
+- **ca65/cc65 `.dbg` source-line mapping (C3)** —
+  `debugger::source_map::SourceMap::load_dbg` parses the ld65 `--dbgfile` `.dbg`
+  format: it gathers the `seg` (CPU base address), `span` (segment + offset +
+  size), and `file` tables, then resolves every `line` record's `+`-joined span
+  list to CPU addresses, building an `address -> (source file, line)` map. The
+  CPU panel disassembly is annotated with the original source line (a
+  `; file:line` comment line above the matching instruction), complementing the
+  v1.4.0 `.sym`/`.mlb`/`.nl` symbol-name labels. Loaded via the existing
+  **Debug → Load Symbols** picker (the filter + extension dispatch now also
+  accept `.dbg`, routing to `DebuggerOverlay::load_source_map`). Display-only;
+  the parser tolerates malformed / future-extended lines without aborting.
+
 ### v1.6.0 "Studio" Workstream G — A/V recording (`av_record`, native + `av-record` feature)
 
 Records the running game to a `.mp4` / `.mkv` (video + synchronized audio).
