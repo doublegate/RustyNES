@@ -34,8 +34,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   like the Lua `onExec`/`onRead`/`onWrite` hooks (ADR 0010); it never intercepts
   mid-instruction or mutates deterministic state, so AccuracyCoin (139/139) and
   byte-identical builds hold. Behind the always-on-in-frontend `debug-hooks`
-  feature; C2 (full hex-editor poke/freeze) and C3 (RAM-search upgrade) are a
-  planned follow-up. (See `docs/frontend.md`.)
+  feature. (See `docs/frontend.md`.)
+- **Hex editor — in-place poke + freeze + access heatmap + find** (v1.6.0
+  Workstream C, C2). The **Memory** panel is now a full hex editor: CPU bus /
+  PPU bus / OAM domain tabs; click-to-poke a CPU work-RAM byte (`Nes::poke_ram`,
+  `$0000-$1FFF` writable, other domains read-only); right-click to **freeze** a
+  byte (emitted as a `RawCheat` re-applied after every frame, routed through the
+  existing raw-cheat overlay like Mesen/FCEUX); an **access-type heatmap** that
+  tints bytes read (blue) / written (red) in the last frame off the `debug-hooks`
+  access log; and a **find** box for a hex byte sequence. The no-edit path is
+  byte-identical and determinism holds (reads are side-effect-free peeks; the
+  only write is the work-RAM poke/freeze applied like a cheat). (See
+  `docs/frontend.md`.)
+- **RAM Search + RAM Watch upgrade** (v1.6.0 Workstream C, C3). The **Memory
+  Compare** panel is upgraded to the BizHawk/FCEUX-class tool: RAM Search gains
+  an **operator × compare-to matrix** (`== != < > <= >=` against the previous
+  snapshot OR a typed constant) and **1/2/4-byte little-endian sizes**, with
+  per-candidate **watch** / **freeze**; a new **RAM Watch** list holds named
+  `(address, size, label)` entries with live values, per-entry freeze (routed
+  through the raw-cheat overlay; multi-byte freezes expand per LE byte), and
+  native **`.wch` save/load**. Read-only against the core (freeze cheats are the
+  only writes, applied post-frame), so the no-freeze path is byte-identical.
+  (See `docs/frontend.md`.)
 - **Lua data breadth — memory domains, sized reads, `joypad`** (v1.6.0
   Workstream B3). The `memory` table gains `memory:read_u16_le(addr)` /
   `memory:read_u16_be(addr)` (16-bit word reads, two side-effect-free CPU

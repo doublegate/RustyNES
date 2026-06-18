@@ -577,9 +577,17 @@ impl DebuggerOverlay {
     /// cloned for the app's produce path. Pulled once per pacer iteration so
     /// the per-frame poke loop sees the live edited list without threading the
     /// panel through the produce call stack. Empty when nothing is enabled.
+    ///
+    /// v1.6.0 "Studio" Workstream C (C2/C3) — the Memory hex editor's frozen
+    /// bytes and the Memory Compare RAM-Watch frozen entries are merged in here,
+    /// so a freeze in either tool routes through the SAME post-frame raw-cheat
+    /// overlay (the determinism contract holds; the no-freeze path is empty).
     #[must_use]
     pub fn enabled_raw_cheats(&self) -> Vec<crate::cheats::RawCheat> {
-        self.cheat_ui.enabled_raw_cheats()
+        let mut cheats = self.cheat_ui.enabled_raw_cheats();
+        cheats.extend(self.memory_ui.freeze_cheats());
+        cheats.extend(self.memory_compare_ui.freeze_cheats());
+        cheats
     }
 
     /// v1.0.0 (UX3 BUG-3) — re-apply the cheat panel's enabled Game Genie codes
@@ -888,14 +896,22 @@ impl DebuggerOverlay {
         &mut self.script_ui
     }
 
-    /// v1.6.0 "Studio" Workstream C — drive the Watch panel's per-frame
-    /// observational replay: arm the exec/access logs the active breakpoints /
-    /// watchpoints / conditional trace need, then evaluate them against the
-    /// just-finished frame's logs. Called by `App` after a frame is produced,
-    /// under the emu lock, exactly like the Lua engine's `on_frame`. Purely
-    /// observational (it only reads `nes`), so determinism is unaffected.
+    /// v1.6.0 "Studio" Workstream C — drive the per-frame observational debug
+    /// pumps: the Watch panel's breakpoint / watchpoint / trace replay (C1/C4)
+    /// and the Memory hex editor's access-type heatmap (C2). Called by `App`
+    /// after a frame is produced, under the emu lock, exactly like the Lua
+    /// engine's `on_frame`. Purely observational (it only reads `nes`), so
+    /// determinism is unaffected.
     pub fn pump_watchpoints(&mut self, nes: &mut Nes) {
+        // Refresh the hex-editor heatmap from THIS frame's access log first
+        // (before `watch_ui.pump` re-arms the flag for the next frame).
+        self.memory_ui.refresh_heatmap(nes);
         self.watch_ui.pump(nes);
+        // The heatmap also needs the access log; `watch_ui.pump` may have left
+        // it off if no watchpoint wants it, so OR the heatmap's need back in.
+        if self.memory_ui.wants_access_log() {
+            nes.set_access_logging(true);
+        }
     }
 
     /// v1.0.0 — force the deep overlay visible (used when opening a chip panel
