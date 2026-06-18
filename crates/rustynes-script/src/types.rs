@@ -71,6 +71,142 @@ pub enum ControlCmd {
         /// Standard NES button bitmask (A,B,Select,Start,Up,Down,Left,Right).
         buttons: u8,
     },
+    /// v1.7.0 "Forge" Workstream B (B3) — `emu.takeScreenshot()` — request the
+    /// host write the current framebuffer to a PNG (the host owns the `png`
+    /// encoder + the screenshot directory; the script crate stays dep-free).
+    /// Read-only side effect (a file write), so it is not gated by the
+    /// write-lock (a screenshot can't perturb deterministic state).
+    Screenshot,
+}
+
+/// v1.7.0 "Forge" Workstream B (B1) — a `TAStudio` editor action a script
+/// requested via the `tastudio.*` Lua API.
+///
+/// Drained by the host (the frontend, which owns the live `TasEditor`) after
+/// [`crate::ScriptEngine::on_frame`] and applied to the editor. Collected (not
+/// applied inline) for the same reason as [`ControlCmd`]: the script crate has
+/// no reference to the frontend's `TasEditor`, so the host stays the single
+/// owner of the editor and gates every state-mutating action.
+///
+/// Every variant here is a **mutator** and is gated IDENTICALLY to `emu.write`
+/// at the source — under a locked session (netplay / TAS replay / RA-hardcore)
+/// the queue is never appended to, so a script can't perturb a deterministic /
+/// replayed run. (`BizHawk` `TAStudioLuaLibrary` model.)
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TasCmd {
+    /// `tastudio.setrecording(bool)` / `togglerecording()` — set the editor's
+    /// recording mode (`None` toggles it).
+    SetRecording(Option<bool>),
+    /// `tastudio.setplayback(frame)` — seek the editor cursor to a frame.
+    SetPlaybackFrame(usize),
+    /// `tastudio.setplayback(markerName)` — seek to a named marker's frame.
+    SetPlaybackMarker(String),
+    /// `tastudio.setlag(frame, bool)` — override a frame's lag verdict.
+    SetLag {
+        /// The frame whose lag verdict to set.
+        frame: usize,
+        /// The new lag verdict.
+        lag: bool,
+    },
+    /// `tastudio.setmarker(frame, text)` — set or rename a marker.
+    SetMarker {
+        /// The frame to mark.
+        frame: usize,
+        /// The marker label.
+        text: String,
+    },
+    /// `tastudio.removemarker(frame)` — clear a frame's marker.
+    RemoveMarker(usize),
+    /// `tastudio.submitinputchange(frame, port, buttons)` /
+    /// `applyinputchanges()` — apply one queued atomic input edit. The Lua
+    /// `submitinputchange` stages edits engine-side; `applyinputchanges` flushes
+    /// them as a batch of these commands so the host re-seeks at most once.
+    SetInput {
+        /// The frame to edit.
+        frame: usize,
+        /// Controller port (0 = P1, 1 = P2).
+        port: u8,
+        /// Standard NES button bitmask for that frame.
+        buttons: u8,
+    },
+    /// `tastudio.loadbranch(index)` — restore a saved branch.
+    LoadBranch(usize),
+    /// `tastudio.setbranchtext(index, text)` — set a branch's annotation.
+    SetBranchText {
+        /// The branch index.
+        index: usize,
+        /// The annotation text.
+        text: String,
+    },
+}
+
+/// v1.7.0 "Forge" Workstream B (B1/B2) — a read-only `TAStudio` editor snapshot.
+///
+/// Pushed into the engine each frame so the `tastudio.*` query API (`engaged`,
+/// `getseekframe`, `islag`, `hasstate`, `getbranches`, ...) resolves against
+/// current editor state without the script crate ever referencing the
+/// frontend's `TasEditor`.
+///
+/// The same host-push pattern as [`crate::ScriptEngine::set_symbols`]: read-only
+/// on the script side, never deterministic emulator state. When the editor is
+/// closed the host pushes the default ([`TasSnapshot::engaged`] is `false`), and
+/// every query returns its empty / `nil` form.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TasSnapshot {
+    /// `true` when the `TAStudio` editor is open (`tastudio.engaged()`).
+    pub engaged: bool,
+    /// Whether the editor is in recording mode (`tastudio.getrecording()`).
+    pub recording: bool,
+    /// The editor cursor / seek frame (`tastudio.getseekframe()`).
+    pub seek_frame: usize,
+    /// The current piano-roll selection as `(first, last)` inclusive frame
+    /// range, or `None` when nothing is selected (`tastudio.getselection()`).
+    pub selection: Option<(usize, usize)>,
+    /// Per-frame lag verdicts for the played prefix (`tastudio.islag(f)`):
+    /// `lag[f]` is `Some(true)` for a lag frame, `Some(false)` otherwise, and
+    /// indices past the end read back `nil`.
+    pub lag: Vec<bool>,
+    /// Frames that currently hold a greenzone save-state (`tastudio.hasstate`).
+    pub state_frames: Vec<usize>,
+    /// `(frame, label)` markers in ascending frame order
+    /// (`tastudio.getmarker`).
+    pub markers: Vec<(usize, String)>,
+    /// Per-branch `(frame, text)` metadata (`tastudio.getbranches` /
+    /// `getbranchtext`).
+    pub branches: Vec<TasBranchInfo>,
+    /// The input log length, so `getbranchinput` / cursor math can bound-check.
+    pub input_len: usize,
+}
+
+/// v1.7.0 "Forge" Workstream B (B1) — per-branch metadata in a [`TasSnapshot`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TasBranchInfo {
+    /// The frame the branch was forked at.
+    pub frame: usize,
+    /// The branch's annotation text (`tastudio.getbranchtext`).
+    pub text: String,
+    /// The branch's input log as `(p1, p2)` button bitmasks per frame, so
+    /// `tastudio.getbranchinput(index, frame)` resolves without a re-push.
+    pub input: Vec<(u8, u8)>,
+}
+
+/// v1.7.0 "Forge" Workstream B (B2) — what a `tastudio.onqueryitem*` callback
+/// returned for one piano-roll cell, drained by the host to paint the grid.
+///
+/// Pure overlay: the host renders these over the piano-roll `TableBuilder`; no
+/// callback here can mutate emulator or editor state (the analysis-canvas
+/// contract).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TasCellDecor {
+    /// Background colour `0xRRGGBBAA` (`onqueryitembg`), or `None` to keep the
+    /// default row colour.
+    pub bg: Option<u32>,
+    /// Replacement cell text (`onqueryitemtext`), or `None` for the default.
+    pub text: Option<String>,
+    /// An icon key (`onqueryitemicon`) the host's icon cache resolves, or
+    /// `None`.
+    pub icon: Option<String>,
 }
 
 /// One overlay draw command (`emu.drawText` / `drawRect` / `drawPixel`).

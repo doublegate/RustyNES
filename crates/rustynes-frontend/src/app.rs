@@ -3963,7 +3963,15 @@ impl App {
         // These reads don't need the emu lock, so resolve them first to keep
         // the lock window below tight (and non-reentrant).
         let netplay_locked = self.netplay.is_active() || self.ra_hardcore_blocks();
+
+        // v1.7.0 "Forge" Workstream B (B1) — push a read-only snapshot of the
+        // live TAStudio editor so the script's `tastudio.*` query API resolves
+        // against current editor state (the `set_symbols` host-push pattern).
+        // Built before borrowing `self.script` so the two `&self`/`&mut self`
+        // borrows don't overlap.
+        let tas_snapshot = Self::build_tas_snapshot(self.debugger.as_ref());
         let engine = self.script.as_mut().expect("checked is_some");
+        engine.set_tas_snapshot(tas_snapshot);
 
         // Pump under ONE emu lock with the live Nes, collecting the outputs
         // (gemini #48: a single lock, dropped before applying control commands).
@@ -4017,10 +4025,153 @@ impl App {
         }
         self.script_draws = draws;
 
+        // v1.7.0 "Forge" Workstream B (B1) — drain + apply the `tastudio.*`
+        // editor commands. They were already gated AT THE SOURCE (the script
+        // crate drops every mutator when `writes_locked`), so an empty drain
+        // under lock is the expected case; the host applies whatever the v1.6.0
+        // editor model supports.
+        let engine = self.script.as_mut().expect("checked is_some");
+        let tas_cmds = engine.drain_tas_commands();
+        if !tas_cmds.is_empty() {
+            self.apply_tas_commands(&tas_cmds);
+        }
+
         // Apply control commands (these `&mut self` methods re-lock the emu).
         // `writes_locked` is the same gate `emu.write` uses; SetInput honors it.
         for cmd in &controls {
             self.apply_script_control(cmd, writes_locked);
+        }
+    }
+
+    /// v1.7.0 "Forge" Workstream B (B1) — build the read-only `TAStudio` snapshot
+    /// the script's `tastudio.*` query API reads. Empty (editor not engaged)
+    /// when no editor session exists, so a script's `tastudio:engaged()` is
+    /// `false` and every query returns its `nil` / empty form.
+    #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
+    fn build_tas_snapshot(
+        debugger: Option<&crate::debugger::DebuggerOverlay>,
+    ) -> rustynes_script::TasSnapshot {
+        use rustynes_script::{TasBranchInfo, TasSnapshot};
+        let Some(editor) = debugger.and_then(crate::debugger::DebuggerOverlay::tas_editor) else {
+            return TasSnapshot::default();
+        };
+        // Per-frame lag verdicts for the played prefix (None reads back as
+        // `false`; a script bound-checks against `input_len`).
+        let lag: Vec<bool> = (0..editor.len())
+            .map(|f| editor.lag_at(f) == Some(true))
+            .collect();
+        let state_frames: Vec<usize> = editor.greenzone().cached_frames().collect();
+        let markers: Vec<(usize, String)> =
+            editor.markers().map(|(f, l)| (f, l.to_owned())).collect();
+        // The v1.6.0 `Branch` model has no annotation text yet, so `text` is
+        // empty (forward-compatible: `setbranchtext` is a documented host stub).
+        let branches: Vec<TasBranchInfo> = (0..editor.branch_count())
+            .filter_map(|i| editor.branch(i))
+            .map(|b| TasBranchInfo {
+                frame: b.frame,
+                text: String::new(),
+                input: b
+                    .input_log
+                    .iter()
+                    .map(|fi| (fi.p1.bits(), fi.p2.bits()))
+                    .collect(),
+            })
+            .collect();
+        TasSnapshot {
+            engaged: true,
+            // `recording` / `selection` are piano-roll UI concerns the v1.6.0
+            // editor model doesn't own; reported as the default until the model
+            // tracks them.
+            recording: false,
+            seek_frame: editor.cursor(),
+            selection: None,
+            lag,
+            state_frames,
+            markers,
+            branches,
+            input_len: editor.len(),
+        }
+    }
+
+    /// v1.7.0 "Forge" Workstream B (B1) — apply the drained `tastudio.*` editor
+    /// commands to the live `TasEditor`. Every command was already gated at the
+    /// source (dropped by the script crate under a locked session), so this
+    /// path runs only for an unlocked session. Edits re-seek the editor so the
+    /// `Nes` tracks the change (the same deterministic replay path the panel
+    /// uses). Commands the v1.6.0 editor model can't yet honour
+    /// (`SetRecording` / `SetLag` / `SetBranchText`) are accepted no-ops.
+    #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
+    fn apply_tas_commands(&mut self, cmds: &[rustynes_script::TasCmd]) {
+        use rustynes_core::Buttons;
+        use rustynes_script::TasCmd;
+        // Resolve any `setplayback(markerName)` targets to frames BEFORE taking
+        // the mutable editor borrow (avoids an immutable+mutable overlap).
+        let marker_targets: std::collections::HashMap<String, usize> = self
+            .debugger
+            .as_ref()
+            .and_then(crate::debugger::DebuggerOverlay::tas_editor)
+            .map(|ed| {
+                let wanted: std::collections::HashSet<&str> = cmds
+                    .iter()
+                    .filter_map(|c| match c {
+                        TasCmd::SetPlaybackMarker(name) => Some(name.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                ed.markers()
+                    .filter(|(_, l)| wanted.contains(l))
+                    .map(|(f, l)| (l.to_owned(), f))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut guard = self.emu.lock();
+        let Some(nes) = guard.nes.as_mut() else {
+            return;
+        };
+        let Some(editor) = self
+            .debugger
+            .as_mut()
+            .and_then(crate::debugger::DebuggerOverlay::tas_editor_mut)
+        else {
+            return;
+        };
+        for cmd in cmds {
+            match cmd {
+                TasCmd::SetPlaybackFrame(f) => editor.seek(nes, *f),
+                TasCmd::SetPlaybackMarker(name) => {
+                    if let Some(&f) = marker_targets.get(name) {
+                        editor.seek(nes, f);
+                    }
+                }
+                TasCmd::SetMarker { frame, text } => editor.set_marker(*frame, text.clone()),
+                TasCmd::RemoveMarker(frame) => editor.remove_marker(*frame),
+                TasCmd::SetInput {
+                    frame,
+                    port,
+                    buttons,
+                } => {
+                    // Merge the edit into the frame's existing input for the
+                    // edited port, then re-seek so the Nes reflects it.
+                    let mut input = editor.input_at(*frame).unwrap_or_default();
+                    let pad = Buttons::from_bits_truncate(*buttons);
+                    if *port == 0 {
+                        input.p1 = pad;
+                    } else {
+                        input.p2 = pad;
+                    }
+                    let _ = editor.set_input(*frame, input);
+                    let cursor = editor.cursor();
+                    editor.seek(nes, cursor);
+                }
+                TasCmd::LoadBranch(idx) => {
+                    editor.load_branch(*idx, nes);
+                }
+                // No editor target in the v1.6.0 model: `SetRecording` /
+                // `SetLag` / `SetBranchText` are documented host stubs. The
+                // wildcard also absorbs them (and any future variant added
+                // script-side, since `TasCmd` is `#[non_exhaustive]`).
+                _ => {}
+            }
         }
     }
 
@@ -4312,6 +4463,14 @@ impl App {
                 return;
             }
         };
+        // v1.7.0 "Forge" Workstream B (B3) — point `emu.getScriptDataFolder()`
+        // at a sandboxed `scripts/` dir under the app data dir (created lazily by
+        // a script that writes there). The clean persist-without-arbitrary-FS
+        // path; never touches deterministic state.
+        if let Some(dir) = crate::config::Config::default_data_dir() {
+            let scripts = dir.join("scripts");
+            engine.set_script_data_folder(Some(scripts.display().to_string()));
+        }
         match engine.load(&src) {
             Ok(()) => {
                 let cbs = engine.frame_callback_count();
@@ -4462,6 +4621,10 @@ impl App {
                     self.emu.lock().script_input_override[*port as usize] = Some(*buttons);
                 }
             }
+            // v1.7.0 "Forge" Workstream B (B3) — `emu.takeScreenshot()`: write
+            // the current frame to a PNG (the host owns the encoder). A
+            // read-only side effect, so it is NOT write-gated.
+            ControlCmd::Screenshot => self.take_screenshot(),
         }
     }
 

@@ -244,6 +244,85 @@ pushes the current symbol map into the engine when a script loads and on every
 symbol load / clear, so `sym:` tracks whatever is loaded. With no symbol file
 loaded, both queries return `nil`.
 
+## Scriptable TAStudio + full Lua parity (v1.7.0 "Forge" Workstream B)
+
+v1.6.0 built the `TAStudio` piano-roll *editor*; v1.7.0 makes it
+**programmable** (bots, generated TASes, analysis canvases) and rounds out the
+Mesen2 parity surface. All native-only (the mlua backend), behind `scripting`;
+the experimental piccolo wasm backend hosts none of it (the same carve-out as
+the dev/TAS surface above).
+
+### `tastudio` — control the piano-roll editor (B1)
+
+Colon-call form (`tastudio:engaged()`). **Queries** read a snapshot of the live
+editor the host pushes each frame; **mutators** queue an action the host applies
+to the editor (and are **gated identically to `emu.write`** — silent no-ops
+under netplay / TAS replay / RA-hardcore). When no `TAStudio` session is open,
+`engaged()` is `false` and every query returns its empty / `nil` form.
+
+| Call | Effect |
+|---|---|
+| `tastudio:engaged()` | `true` while the editor is open. |
+| `tastudio:getrecording()` | The editor's recording mode. |
+| `tastudio:getseekframe()` | The current cursor / seek frame. |
+| `tastudio:getselection()` | The selected `(first, last)` frame range, or `(nil, nil)`. |
+| `tastudio:islag(frame)` | `true`/`false` lag verdict, or `nil` if `frame` is not yet emulated. |
+| `tastudio:hasstate(frame)` | `true` if a greenzone save-state exists at `frame`. |
+| `tastudio:getmarker(frame)` | The marker label at `frame`, or `nil`. |
+| `tastudio:getbranches()` | An array of `{ frame=, text= }` per saved branch. |
+| `tastudio:getbranchtext(index)` | A branch's annotation text (1-based), or `nil`. |
+| `tastudio:getbranchinput(index, frame)` | The branch's `(p1, p2)` button bitmasks at `frame`, or `(nil, nil)`. |
+| `tastudio:setrecording(bool)` / `:togglerecording()` | Set / toggle recording mode. **Gated.** |
+| `tastudio:setplayback(frame \| markerName)` | Seek the cursor to a frame or a named marker. **Gated.** |
+| `tastudio:setlag(frame, bool)` | Override a frame's lag verdict. **Gated.** |
+| `tastudio:setmarker(frame, text)` / `:removemarker(frame)` | Set/rename or clear a marker. **Gated.** |
+| `tastudio:submitinputchange(frame, port, buttons)` | **Stage** one input edit (does not apply yet). **Gated.** |
+| `tastudio:applyinputchanges()` | Flush the staged edits as one atomic batch (the host re-seeks at most once). **Gated.** |
+| `tastudio:loadbranch(index)` | Restore a saved branch. **Gated.** |
+| `tastudio:setbranchtext(index, text)` | Set a branch's annotation. **Gated.** |
+
+`submitinputchange` + `applyinputchanges` are the BizHawk atomic-edit pattern:
+stage any number of per-frame edits, then apply them all in one shot so the
+editor re-derives state once. (`setrecording` / `setlag` / `setbranchtext` are
+accepted but the v1.6.0 editor model does not yet have a target for them, so
+they are documented host stubs.)
+
+### `tastudio` analysis-canvas callbacks (B2)
+
+Annotate the piano-roll grid programmatically. The cell-query callbacks are
+**pure overlay** — they return a colour / text / icon the host paints, and can
+never mutate state. The event callbacks are observational.
+
+| Call | Effect |
+|---|---|
+| `tastudio:onqueryitembg(fn)` | `fn(frame, column)` returns a `0xRRGGBBAA` cell background, or `nil`. |
+| `tastudio:onqueryitemtext(fn)` | `fn(frame, column)` returns replacement cell text, or `nil`. |
+| `tastudio:onqueryitemicon(fn)` | `fn(frame, column)` returns an icon key, or `nil`. |
+| `tastudio:clearIconCache()` | Ask the host to drop its cached cell icons. |
+| `tastudio:ongreenzoneinvalidated(fn)` | `fn(firstFrame)` fires when an edit invalidates the greenzone. |
+| `tastudio:onbranchload(fn)` | `fn(index)` fires when a branch loads. |
+
+### Full Lua parity (B3, Mesen2)
+
+| Call | Effect |
+|---|---|
+| `emu.getScreenBuffer()` | The 256×240 frame as a flat array (1-based) of `0xRRGGBBAA` pixels. Read-only. |
+| `emu.getPixel(x, y)` | One `0xRRGGBBAA` pixel, or `nil` if out of the 256×240 frame. |
+| `emu:setScreenBuffer(t)` | Paint the **display** framebuffer from such an array (output only — never a register/latch; a later real frame fully repaints). **Gated** like `emu.write`. |
+| `emu:getState()` | A structured map: CPU `a`/`x`/`y`/`s`/`p`/`pc` + `frameCount` / `cycle` / `region`. Read-only. |
+| `emu:setState(t)` | Write back the CPU register file from such a map (a partial table leaves the rest untouched). **Gated** like `emu.write`. |
+| `emu.addEventCallback(fn, type)` | Register `fn` for an event: `nmi`, `irq`, `startFrame`, `endFrame`, `inputPolled`, `stateLoaded`, `stateSaved`. Observational. An unknown type errors at load. |
+| `emu.addMemoryCallback(fn, "write", start[, end])` | A **value-modifying** write watch over `[start, end]`: `fn(addr, value)` may RETURN a replacement byte, which is poked back through the gated `poke_ram` path (a scriptable cheat / watchpoint). **Gated** like `emu.write`. |
+| `emu.takeScreenshot()` | Write the current frame to a PNG (the host owns the encoder + screenshot dir). A read-only side effect — *not* gated. |
+| `emu.getScriptDataFolder()` | A per-script sandboxed data directory (the clean persist-without-arbitrary-FS path), or `nil`. |
+
+The value-modifying memory callback rides the same post-frame access-log replay
+as the observational `onWrite`, so it never intercepts mid-instruction; the poke
+of the replacement byte is the mutation, gated exactly like `emu.write` (dropped
+under a locked / replayed session). `startFrame` / `endFrame` / `inputPolled`
+fire from the per-frame pump; `stateLoaded` / `stateSaved` fire from the
+in-memory `emu:load_state` / `save_state` slots.
+
 ## Determinism + safety
 
 - **Sandbox.** Only the `table` / `string` / `math` / `coroutine` standard
@@ -265,7 +344,12 @@ loaded, both queries return `nil`.
   `emu:load_state` are silent no-ops under a locked session (an in-script
   `emu:save_state` is a read-only snapshot and is always allowed; `emu:load_state`
   returns `false` rather than mutating). The `memory:peek*` / `read_range*`,
-  `cart:*`, and `sym:*` queries are pure reads, so they always run.
+  `cart:*`, and `sym:*` queries are pure reads, so they always run. The v1.7.0
+  Workstream-B mutators ride the **same** gate: every `tastudio:*` editor mutator,
+  `emu:setScreenBuffer`, `emu:setState`, and the value-modify poke of an
+  `emu.addMemoryCallback` write watch are all dropped at the source under a locked
+  session (the `tastudio:*` queries, `emu.getScreenBuffer`/`getPixel`/`getState`,
+  and `emu.takeScreenshot` are reads / read-only side effects, so they always run).
 - **`emu.setInput` late-latch.** When unlocked, a `setInput(port, buttons)` is
   applied at the *same* deterministic point a real keypress enters — the
   per-frame controller latch, just before the frame runs — so a session that

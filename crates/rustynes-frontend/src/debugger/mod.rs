@@ -573,6 +573,13 @@ impl DebuggerOverlay {
         self.tas_editor.as_mut()
     }
 
+    /// v1.7.0 "Forge" Workstream B (B1) — read-only access to the editor so the
+    /// app can build the `tastudio.*` Lua snapshot pushed into the script engine.
+    #[must_use]
+    pub const fn tas_editor(&self) -> Option<&crate::tastudio::TasEditor> {
+        self.tas_editor.as_ref()
+    }
+
     /// v1.6.0 "Studio" A2 — drain the pending `TAStudio` requests for the app to
     /// dispatch under the emu lock.
     pub fn take_tas_requests(&mut self) -> Vec<TasRequest> {

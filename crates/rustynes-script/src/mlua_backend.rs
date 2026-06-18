@@ -17,7 +17,11 @@ use mlua::{Function, HookTriggers, Lua, RegistryKey, StdLib, Table, VmState};
 use rustynes_core::Nes;
 
 use crate::backend::VmBackend;
-use crate::types::{ControlCmd, DEFAULT_INSTRUCTION_BUDGET, DrawCmd, MAX_QUEUED_CMDS, ScriptError};
+use crate::tastudio::{self, TasState};
+use crate::types::{
+    ControlCmd, DEFAULT_INSTRUCTION_BUDGET, DrawCmd, MAX_QUEUED_CMDS, ScriptError, TasCellDecor,
+    TasCmd, TasSnapshot,
+};
 
 /// A stack-allocated bitset over the 16-bit CPU address space (8 KiB, no heap),
 /// used to gate the hot per-frame replay loops: membership is an O(1) bit test
@@ -102,6 +106,23 @@ fn fns_at(lua: &Lua, map: &AddrCallbacks, addr: u16) -> mlua::Result<Vec<Functio
                 .collect()
         },
     )
+}
+
+/// v1.7.0 "Forge" Workstream B (B3) — invoke every registered callback in a
+/// flat event list, passing a single numeric arg. Collects the live `Function`
+/// handles up front so the `RefCell` borrow is released before any callback
+/// runs (a callback could register another). Shared by the `addEventCallback`
+/// per-frame events and the `stateLoaded`/`stateSaved` synchronous events.
+fn fire_event_list(lua: &Lua, list: &Rc<RefCell<Vec<RegistryKey>>>, arg: u64) -> mlua::Result<()> {
+    let fns: Vec<Function> = list
+        .borrow()
+        .iter()
+        .map(|k| lua.registry_value::<Function>(k))
+        .collect::<mlua::Result<_>>()?;
+    for f in fns {
+        f.call::<()>(arg)?;
+    }
+    Ok(())
 }
 
 /// Drop the active driving coroutine (B2): clear the slot and free its Lua
@@ -192,6 +213,37 @@ pub struct MluaBackend {
     /// never perturbs the deterministic run beyond what the write-gate already
     /// allows.
     driver: Rc<RefCell<Option<RegistryKey>>>,
+    /// v1.7.0 "Forge" Workstream B (B1/B2) — all shared state backing the
+    /// `tastudio.*` Lua surface (the host-pushed editor snapshot, the queued
+    /// editor commands, and the cell-query / event callbacks). Self-contained in
+    /// `crate::tastudio` for clean merging.
+    tas: TasState,
+    /// v1.7.0 "Forge" Workstream B (B3) — `emu.addEventCallback(fn, type)`
+    /// callbacks keyed by the host-facing event type. `onNmi`/`onIrq` keep their
+    /// own dedicated lists above (the legacy API); these are the *additional*
+    /// Mesen2-parity events fired from `on_frame`: `startFrame` (top of a pump),
+    /// `endFrame` (after the frame's callbacks), `inputPolled` (the frame polled
+    /// a controller). `stateLoaded`/`stateSaved` fire from the in-memory
+    /// save-state path. All observational (output-only).
+    event_start_frame: Rc<RefCell<Vec<RegistryKey>>>,
+    /// `endFrame` event callbacks (B3).
+    event_end_frame: Rc<RefCell<Vec<RegistryKey>>>,
+    /// `inputPolled` event callbacks (B3).
+    event_input_polled: Rc<RefCell<Vec<RegistryKey>>>,
+    /// `stateLoaded` event callbacks (B3) — fired after `emu:load_state`.
+    event_state_loaded: Rc<RefCell<Vec<RegistryKey>>>,
+    /// `stateSaved` event callbacks (B3) — fired after `emu:save_state`.
+    event_state_saved: Rc<RefCell<Vec<RegistryKey>>>,
+    /// v1.7.0 "Forge" Workstream B (B3) — `emu.addMemoryCallback` *value-modifying*
+    /// write callbacks, keyed by CPU address. Unlike the observational `onWrite`,
+    /// a callback here may RETURN a replacement byte; the engine then pokes it
+    /// back via the GATED `poke_ram` path (a scriptable cheat / watchpoint).
+    /// Dropped under a locked session, exactly like `emu.write`.
+    modify_write_cbs: AddrCallbacks,
+    /// v1.7.0 "Forge" Workstream B (B3) — a per-script sandboxed data directory
+    /// (`emu.getScriptDataFolder()`), pushed by the host (the clean
+    /// persist-without-arbitrary-FS path). `None` until the host sets it.
+    script_data_folder: Rc<RefCell<Option<String>>>,
 }
 
 impl MluaBackend {
@@ -495,8 +547,132 @@ impl MluaBackend {
         }
         self.lua.globals().set("joypad", &joypad)?;
 
+        // v1.7.0 "Forge" Workstream B (B1/B2) — install the persistent
+        // `tastudio` table (queries read the host-pushed snapshot; mutators
+        // queue gated `TasCmd`s; the B2 callbacks store Rust-side registry
+        // keys). Self-contained in `crate::tastudio` for clean merging.
+        tastudio::install(&self.lua, &self.tas, &self.writes_locked)?;
+
+        // v1.7.0 "Forge" Workstream B (B3) — Mesen2-parity event + memory
+        // callback registrars and a couple of "good-citizen" utilities. Kept in
+        // their own clearly-named prelude section.
+        self.install_lua_parity()?;
+
         // Redirect base `print` to the same sink.
         self.lua.globals().set("print", log_fn)?;
+        Ok(())
+    }
+
+    /// v1.7.0 "Forge" Workstream B (B3) — install the Mesen2-parity surface:
+    /// `emu.addEventCallback(fn, type)` (the full event enum), the
+    /// value-modifying `emu.addMemoryCallback(fn, type, start[, end])`,
+    /// `emu.takeScreenshot()`, and `emu.getScriptDataFolder()`. The per-frame
+    /// `getScreenBuffer` / `setScreenBuffer` / `getPixel` / `getState` /
+    /// `setState` accessors need the live `Nes`, so they are bound in the frame
+    /// scope (in [`Self::on_frame`]), exactly like `emu.read` / `emu.write`.
+    fn install_lua_parity(&self) -> Result<(), ScriptError> {
+        let emu: Table = self.lua.globals().get("emu")?;
+
+        // `emu.addEventCallback(fn, type)` — `type` is one of the Mesen2 event
+        // names. `nmi`/`irq` route to the existing dedicated lists (so the new
+        // API and the legacy `onNmi`/`onIrq` share one dispatch); the rest land
+        // in their own per-event lists, fired from `on_frame`.
+        let nmi = Rc::clone(&self.nmi_cbs);
+        let irq = Rc::clone(&self.irq_cbs);
+        let start = Rc::clone(&self.event_start_frame);
+        let end = Rc::clone(&self.event_end_frame);
+        let polled = Rc::clone(&self.event_input_polled);
+        let loaded = Rc::clone(&self.event_state_loaded);
+        let saved = Rc::clone(&self.event_state_saved);
+        emu.set(
+            "addEventCallback",
+            self.lua
+                .create_function(move |lua, (f, ty): (Function, String)| {
+                    let list = match ty.as_str() {
+                        "nmi" => &nmi,
+                        "irq" => &irq,
+                        "startFrame" => &start,
+                        "endFrame" => &end,
+                        "inputPolled" => &polled,
+                        "stateLoaded" => &loaded,
+                        "stateSaved" => &saved,
+                        other => {
+                            return Err(mlua::Error::RuntimeError(format!(
+                                "addEventCallback: unknown event type '{other}'"
+                            )));
+                        }
+                    };
+                    list.borrow_mut().push(lua.create_registry_value(f)?);
+                    Ok(())
+                })?,
+        )?;
+
+        // `emu.addMemoryCallback(fn, type, start[, end])` — a VALUE-MODIFYING
+        // write callback over `[start, end]` (inclusive; `end` defaults to
+        // `start`). `type` must be `"write"` (read/exec value-modify is not a
+        // thing on a post-frame replay). The callback receives `(addr, value)`
+        // and may RETURN a replacement byte; the engine pokes it back through
+        // the GATED `poke_ram` path. This is the scriptable-cheat / scriptable-
+        // watchpoint primitive; it is gated IDENTICALLY to `emu.write`.
+        let modify = Rc::clone(&self.modify_write_cbs);
+        emu.set(
+            "addMemoryCallback",
+            self.lua.create_function(
+                move |lua, (f, ty, start, end): (Function, String, i64, Option<i64>)| {
+                    if ty != "write" {
+                        return Err(mlua::Error::RuntimeError(format!(
+                            "addMemoryCallback: only 'write' supports value-modify (got '{ty}')"
+                        )));
+                    }
+                    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+                    let lo = (start & 0xFFFF) as u16;
+                    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+                    let hi = (end.unwrap_or(start) & 0xFFFF) as u16;
+                    // Register one shared key per address in the range so a hit
+                    // at any address in the span fires the callback (BizHawk /
+                    // Mesen2 range semantics). Clamp an inverted range to `lo`.
+                    let key = lua.create_registry_value(f)?;
+                    // The first address owns the real key; the rest reference it
+                    // by cloning the Function out and re-registering, so each
+                    // address has an independent registry value (a dropped one
+                    // doesn't free another's). Cheap: ranges are tiny in practice.
+                    let f0: Function = lua.registry_value(&key)?;
+                    let mut map = modify.borrow_mut();
+                    for a in lo..=hi.max(lo) {
+                        let k = lua.create_registry_value(f0.clone())?;
+                        map.entry(a).or_default().push(k);
+                    }
+                    lua.remove_registry_value(key)?;
+                    Ok(())
+                },
+            )?,
+        )?;
+
+        // `emu.takeScreenshot()` — queue a host PNG write (the host owns the
+        // encoder + the screenshot dir; the script crate stays dep-free). A
+        // read-only side effect (a file write), so it is NOT write-gated — a
+        // screenshot cannot perturb deterministic state.
+        let controls = Rc::clone(&self.controls);
+        emu.set(
+            "takeScreenshot",
+            self.lua
+                .create_function(move |_, _args: mlua::Variadic<mlua::Value>| {
+                    push_capped(&controls, ControlCmd::Screenshot);
+                    Ok(())
+                })?,
+        )?;
+
+        // `emu.getScriptDataFolder()` — the host-pushed sandboxed data dir
+        // (the clean persist-without-arbitrary-FS path), or `nil` if unset.
+        let folder = Rc::clone(&self.script_data_folder);
+        emu.set(
+            "getScriptDataFolder",
+            self.lua
+                .create_function(move |_, _args: mlua::Variadic<mlua::Value>| {
+                    Ok(folder.borrow().clone())
+                })?,
+        )?;
+
         Ok(())
     }
 
@@ -579,6 +755,14 @@ impl VmBackend for MluaBackend {
             sym_by_addr: Rc::new(RefCell::new(HashMap::new())),
             sym_by_name: Rc::new(RefCell::new(HashMap::new())),
             driver: Rc::new(RefCell::new(None)),
+            tas: TasState::new(),
+            event_start_frame: Rc::new(RefCell::new(Vec::new())),
+            event_end_frame: Rc::new(RefCell::new(Vec::new())),
+            event_input_polled: Rc::new(RefCell::new(Vec::new())),
+            event_state_loaded: Rc::new(RefCell::new(Vec::new())),
+            event_state_saved: Rc::new(RefCell::new(Vec::new())),
+            modify_write_cbs: Rc::new(RefCell::new(HashMap::new())),
+            script_data_folder: Rc::new(RefCell::new(None)),
         };
         engine.install_prelude()?;
         Ok(engine)
@@ -622,7 +806,11 @@ impl VmBackend for MluaBackend {
     }
 
     fn needs_access_log(&self) -> bool {
-        !self.read_cbs.borrow().is_empty() || !self.write_cbs.borrow().is_empty()
+        // The value-modifying write callbacks (B3) replay from the same bus
+        // access log, so they arm it too.
+        !self.read_cbs.borrow().is_empty()
+            || !self.write_cbs.borrow().is_empty()
+            || !self.modify_write_cbs.borrow().is_empty()
     }
 
     fn needs_interrupt_log(&self) -> bool {
@@ -696,6 +884,11 @@ impl VmBackend for MluaBackend {
             s
         };
 
+        // v1.7.0 "Forge" Workstream B (B3) — whether the just-finished frame
+        // polled a controller (drives the `inputPolled` event). Read before
+        // `nes` is moved into the `RefCell`.
+        let input_was_polled = nes.was_input_polled_this_frame();
+
         let nes_cell = RefCell::new(nes);
         let lua = &self.lua;
         // Rust-side callback registries (clones of the `Rc`s) — used inside the
@@ -710,6 +903,14 @@ impl VmBackend for MluaBackend {
         let state_slots = Rc::clone(&self.state_slots);
         let controls = Rc::clone(&self.controls);
         let driver = Rc::clone(&self.driver);
+        // v1.7.0 "Forge" Workstream B (B3) — the additional event lists +
+        // the value-modifying write callbacks, cloned for use inside the scope.
+        let event_start_frame = Rc::clone(&self.event_start_frame);
+        let event_end_frame = Rc::clone(&self.event_end_frame);
+        let event_input_polled = Rc::clone(&self.event_input_polled);
+        let event_state_loaded = Rc::clone(&self.event_state_loaded);
+        let event_state_saved = Rc::clone(&self.event_state_saved);
+        let modify_write_cbs = Rc::clone(&self.modify_write_cbs);
         // v1.5.0 B4 — drain the pause-at-frame targets reached this frame, OUTSIDE
         // the scope (no `nes` access): each reached target queues a Pause control.
         {
@@ -770,6 +971,117 @@ impl VmBackend for MluaBackend {
                 read_range_cpu(&nes_cell, addr, len)
             })?;
             emu.set("readRange", read_range)?;
+
+            // v1.7.0 "Forge" Workstream B (B3) — Mesen2-parity framebuffer +
+            // structured-state accessors. They need the live `Nes`, so they are
+            // bound here in the frame scope like `emu.read` / `emu.write`.
+
+            // `emu.getScreenBuffer()` -> a flat array (1-based) of the 256x240
+            // RGBA8 pixels packed as 0xRRGGBBAA ints. Read-only.
+            emu.set(
+                "getScreenBuffer",
+                scope.create_function(|lua, _args: mlua::Variadic<mlua::Value>| {
+                    let nes = nes_cell.borrow();
+                    let fb = nes.framebuffer();
+                    let t = lua.create_table_with_capacity(fb.len() / 4, 0)?;
+                    for (i, px) in fb.chunks_exact(4).enumerate() {
+                        let argb = (u32::from(px[0]) << 24)
+                            | (u32::from(px[1]) << 16)
+                            | (u32::from(px[2]) << 8)
+                            | u32::from(px[3]);
+                        t.set(i + 1, argb)?;
+                    }
+                    Ok(t)
+                })?,
+            )?;
+            // `emu.getPixel(x, y)` -> the single 0xRRGGBBAA pixel, or nil if out
+            // of the 256x240 frame.
+            emu.set(
+                "getPixel",
+                scope.create_function(|_, (x, y): (i64, i64)| {
+                    if !(0..256).contains(&x) || !(0..240).contains(&y) {
+                        return Ok(None);
+                    }
+                    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+                    let off = ((y as usize) * 256 + (x as usize)) * 4;
+                    let nes = nes_cell.borrow();
+                    let fb = nes.framebuffer();
+                    Ok(fb.get(off..off + 4).map(|px| {
+                        (u32::from(px[0]) << 24)
+                            | (u32::from(px[1]) << 16)
+                            | (u32::from(px[2]) << 8)
+                            | u32::from(px[3])
+                    }))
+                })?,
+            )?;
+            // `emu:setScreenBuffer(t)` — paint output only (the display
+            // framebuffer the frontend presents). GATED like `emu.write`: a
+            // no-op under a locked / replayed session. `t` is the same flat
+            // 0xRRGGBBAA array `getScreenBuffer` returns; a short table leaves
+            // the tail untouched. Output-only — never a register / latch.
+            emu.set(
+                "setScreenBuffer",
+                scope.create_function(|_, (_this, t): (mlua::Value, Vec<u32>)| {
+                    if !writes_locked {
+                        let mut rgba = Vec::with_capacity(t.len() * 4);
+                        for argb in t {
+                            // 0xRRGGBBAA -> [R, G, B, A] (big-endian byte order).
+                            rgba.extend_from_slice(&argb.to_be_bytes());
+                        }
+                        nes_cell.borrow_mut().debug_set_framebuffer(&rgba);
+                    }
+                    Ok(())
+                })?,
+            )?;
+            // `emu:getState()` -> a structured field map (Mesen2 L4): the CPU
+            // register file + frame/cycle/region. Read-only.
+            emu.set(
+                "getState",
+                scope.create_function(|lua, _this: mlua::Value| {
+                    let nes = nes_cell.borrow();
+                    let c = nes.cpu();
+                    let t = lua.create_table()?;
+                    t.set("a", c.a)?;
+                    t.set("x", c.x)?;
+                    t.set("y", c.y)?;
+                    t.set("s", c.s)?;
+                    t.set("p", c.p.bits())?;
+                    t.set("pc", c.pc)?;
+                    t.set("frameCount", frame)?;
+                    t.set("cycle", cycle)?;
+                    t.set("region", cart_region)?;
+                    Ok(t)
+                })?,
+            )?;
+            // `emu:setState(t)` — write back the CPU register file from a state
+            // map (the writable subset of `getState`). GATED like `emu.write`:
+            // a no-op under a locked / replayed session. Missing fields keep
+            // their current value (read from the live CPU first).
+            emu.set(
+                "setState",
+                scope.create_function(|_, (_this, t): (mlua::Value, Table)| {
+                    if !writes_locked {
+                        // Read the current register file, then overlay only the
+                        // fields the state table actually provides (a partial
+                        // `setState` leaves the rest untouched).
+                        let (acc, idx_x, idx_y, sp, status, pc) = {
+                            let nes = nes_cell.borrow();
+                            let c = nes.cpu();
+                            (c.a, c.x, c.y, c.s, c.p.bits(), c.pc)
+                        };
+                        let acc = t.get::<u8>("a").unwrap_or(acc);
+                        let idx_x = t.get::<u8>("x").unwrap_or(idx_x);
+                        let idx_y = t.get::<u8>("y").unwrap_or(idx_y);
+                        let sp = t.get::<u8>("s").unwrap_or(sp);
+                        let status = t.get::<u8>("p").unwrap_or(status);
+                        let pc = t.get::<u16>("pc").unwrap_or(pc);
+                        nes_cell
+                            .borrow_mut()
+                            .debug_set_cpu_state(acc, idx_x, idx_y, sp, status, pc);
+                    }
+                    Ok(())
+                })?,
+            )?;
 
             let write = scope.create_function(|_, (addr, val): (u16, u8)| {
                 if !writes_locked {
@@ -939,27 +1251,39 @@ impl VmBackend for MluaBackend {
             // Distinct from the host's on-disk numbered slots (`emu.saveState`).
             emu.set(
                 "save_state",
-                scope.create_function(|_, (_this, slot): (mlua::Value, u8)| {
+                scope.create_function(|lua, (_this, slot): (mlua::Value, u8)| {
                     let blob = nes_cell.borrow().snapshot();
                     state_slots.borrow_mut().insert(slot, blob);
+                    // v1.7.0 B3 — fire `stateSaved(slot)` (observational; a save
+                    // is a read-only snapshot, so it is always allowed).
+                    fire_event_list(lua, &event_state_saved, u64::from(slot))?;
                     Ok(())
                 })?,
             )?;
             emu.set(
                 "load_state",
-                scope.create_function(|_, (_this, slot): (mlua::Value, u8)| {
+                scope.create_function(|lua, (_this, slot): (mlua::Value, u8)| {
                     if writes_locked {
                         return Ok(false);
                     }
                     let blob = state_slots.borrow().get(&slot).cloned();
                     // A restore failure (e.g. an empty slot mid-session) is
                     // surfaced as `false`, never a host crash.
-                    blob.map_or_else(
-                        || Ok(false),
-                        |blob| Ok(nes_cell.borrow_mut().restore(&blob).is_ok()),
-                    )
+                    let ok = blob.is_some_and(|blob| nes_cell.borrow_mut().restore(&blob).is_ok());
+                    // v1.7.0 B3 — fire `stateLoaded(slot)` only on a successful
+                    // restore (observational).
+                    if ok {
+                        fire_event_list(lua, &event_state_loaded, u64::from(slot))?;
+                    }
+                    Ok(ok)
                 })?,
             )?;
+
+            // v1.7.0 B3 — fire the `startFrame` event (Mesen2 parity), before
+            // the onFrame callbacks. The arg is the frame count.
+            if !event_start_frame.borrow().is_empty() {
+                fire_event_list(lua, &event_start_frame, frame)?;
+            }
 
             // Invoke every registered onFrame callback (from the Rust-side
             // registry — scripts cannot touch or corrupt it).
@@ -1069,6 +1393,43 @@ impl VmBackend for MluaBackend {
                     }
                 }
             }
+
+            // v1.7.0 B3 — replay this frame's WRITES through the VALUE-MODIFYING
+            // memory callbacks (`emu.addMemoryCallback(fn,"write",...)`). Unlike
+            // the observational `onWrite` above, a callback here may RETURN a
+            // replacement byte; we poke it back through the GATED `poke_ram`
+            // path (the scriptable-cheat / scriptable-watchpoint primitive). The
+            // poke is the mutation, so it is gated IDENTICALLY to `emu.write`:
+            // under a locked / replayed session every poke is dropped, so a
+            // value-modify callback can't perturb a deterministic run. (Reads
+            // are skipped — a post-frame replay can't retroactively change a read
+            // the CPU already consumed.)
+            if !accesses.is_empty() && !modify_write_cbs.borrow().is_empty() {
+                let active = AddrBits::from_keys(&modify_write_cbs);
+                for (is_write, addr, value) in &accesses {
+                    if *is_write && active.contains(*addr) {
+                        for f in fns_at(lua, &modify_write_cbs, *addr)? {
+                            // The callback returns a new byte (or nil to leave
+                            // the value unchanged). The poke is gated like
+                            // `emu.write`: dropped under a locked session.
+                            if let Some(new_val) = f.call::<Option<u8>>((*addr, *value))?
+                                && !writes_locked
+                            {
+                                nes_cell.borrow_mut().poke_ram(*addr, new_val);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // v1.7.0 B3 — fire `inputPolled` (if the frame polled a controller)
+            // then `endFrame`, after all per-frame work (Mesen2 parity).
+            if input_was_polled && !event_input_polled.borrow().is_empty() {
+                fire_event_list(lua, &event_input_polled, frame)?;
+            }
+            if !event_end_frame.borrow().is_empty() {
+                fire_event_list(lua, &event_end_frame, frame)?;
+            }
             Ok(())
         });
 
@@ -1078,6 +1439,41 @@ impl VmBackend for MluaBackend {
 
     fn frame_callback_count(&self) -> usize {
         self.frame_cbs.borrow().len()
+    }
+
+    // ---- v1.7.0 "Forge" Workstream B ----
+
+    fn set_tas_snapshot(&self, snapshot: TasSnapshot) {
+        *self.tas.snapshot.borrow_mut() = snapshot;
+    }
+
+    fn drain_tas_commands(&self) -> Vec<TasCmd> {
+        std::mem::take(&mut self.tas.commands.borrow_mut())
+    }
+
+    fn query_tas_cell(&self, frame: usize, column: u32) -> Result<TasCellDecor, ScriptError> {
+        tastudio::query_cell(&self.lua, &self.tas, frame, column).map_err(ScriptError::from)
+    }
+
+    fn take_clear_icon_cache(&self) -> bool {
+        self.tas.clear_icon_cache.replace(false)
+    }
+
+    fn fire_greenzone_invalidated(&self, first_frame: usize) -> Result<(), ScriptError> {
+        tastudio::fire_event(&self.lua, &self.tas.greenzone_cbs, first_frame)
+            .map_err(ScriptError::from)
+    }
+
+    fn fire_branch_load(&self, index: usize) -> Result<(), ScriptError> {
+        tastudio::fire_event(&self.lua, &self.tas.branch_load_cbs, index).map_err(ScriptError::from)
+    }
+
+    fn needs_tas_cell_query(&self) -> bool {
+        self.tas.needs_cell_query()
+    }
+
+    fn set_script_data_folder(&self, path: Option<String>) {
+        *self.script_data_folder.borrow_mut() = path;
     }
 }
 

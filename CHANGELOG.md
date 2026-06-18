@@ -47,6 +47,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     opcode-encoding table is **derived at runtime from the canonical
     disassembler**, so it can never drift from the CPU core's decode.
 
+- **v1.7.0 "Forge" Workstream B — scriptable TAStudio + full Lua API parity.**
+  The v1.6.0 piano-roll editor becomes *programmable* and the Mesen2 Lua surface
+  is rounded out. All native-only, behind `scripting`; **byte-identical with
+  `scripting` off** (the shipped / wasm / `no_std` builds don't pull
+  `rustynes-script`), AccuracyCoin **100% (139/139)** held. Every mutator gates
+  IDENTICALLY to `emu.write` — a silent no-op under netplay / TAS replay /
+  RA-hardcore (`set_writes_locked`), proven by per-item gating tests.
+  - **B1 — the `tastudio.*` Lua control API** (BizHawk `TAStudioLuaLibrary`
+    model). Queries (`engaged` / `getrecording` / `getseekframe` /
+    `getselection` / `islag` / `hasstate` / `getmarker` / `getbranches` /
+    `getbranchtext` / `getbranchinput`) read a per-frame read-only editor
+    snapshot the host pushes (the `set_symbols` pattern); mutators
+    (`setrecording` / `togglerecording` / `setplayback(frame|marker)` /
+    `setlag` / `setmarker` / `removemarker` / `submitinputchange` +
+    `applyinputchanges` atomic-edit batch / `loadbranch` / `setbranchtext`)
+    queue a gated `TasCmd` the host drains and applies to the live `TasEditor`.
+    Self-contained in `crates/rustynes-script/src/tastudio.rs`.
+  - **B2 — `tastudio` analysis-canvas callbacks.** `onqueryitembg|text|icon`
+    (per-cell colour / text / icon — pure overlay) + `clearIconCache`, and the
+    observational `ongreenzoneinvalidated(fn)` / `onbranchload(fn)`. The host
+    queries via `ScriptEngine::query_tas_cell` and fires the events through
+    `fire_greenzone_invalidated` / `fire_branch_load`.
+  - **B3 — full Lua API parity** (Mesen2). `emu.getScreenBuffer()` /
+    `getPixel(x,y)` (read the RGBA frame) + the gated, output-only
+    `emu:setScreenBuffer(t)`; the full `emu.addEventCallback(fn, type)` enum
+    (`nmi`/`irq`/`startFrame`/`endFrame`/`inputPolled`/`stateLoaded`/`stateSaved`);
+    the **value-modifying** `emu.addMemoryCallback(fn, "write", start[, end])`
+    (returns a replacement byte, poked back through the gated path — a scriptable
+    cheat/watchpoint); the structured `emu:getState()` / gated `emu:setState(t)`
+    CPU-register map; `emu.takeScreenshot()` (host PNG write, read-only); and the
+    sandboxed `emu.getScriptDataFolder()`. New gated core hooks
+    `Nes::debug_set_framebuffer` (+ `Bus`/`Ppu`) and `Nes::debug_set_cpu_state`
+    (`debug-hooks`), reached only through the gated post-frame script path.
+
 - **Mapper breadth 150 → 168 families** (v1.7.0 "Forge" Workstream G1 — next
   reusable-ASIC BMC/pirate cores, `crates/rustynes-mappers/src/sprint12.rs`). 18
   new **BestEffort** (Tier-2, honesty-gated, off the AccuracyCoin / commercial
