@@ -782,27 +782,32 @@ impl VmBackend for MluaBackend {
                 "read_u16_le",
                 scope.create_function(|_, (_this, addr): (mlua::Value, u16)| {
                     let mut nes = nes_cell.borrow_mut();
-                    let lo = u16::from(nes.peek(addr));
-                    let hi = u16::from(nes.peek(addr.wrapping_add(1)));
-                    Ok(lo | (hi << 8))
+                    Ok(u16::from_le_bytes([
+                        nes.peek(addr),
+                        nes.peek(addr.wrapping_add(1)),
+                    ]))
                 })?,
             )?;
             memory.set(
                 "read_u16_be",
                 scope.create_function(|_, (_this, addr): (mlua::Value, u16)| {
                     let mut nes = nes_cell.borrow_mut();
-                    let hi = u16::from(nes.peek(addr));
-                    let lo = u16::from(nes.peek(addr.wrapping_add(1)));
-                    Ok((hi << 8) | lo)
+                    Ok(u16::from_be_bytes([
+                        nes.peek(addr),
+                        nes.peek(addr.wrapping_add(1)),
+                    ]))
                 })?,
             )?;
             // v1.6.0 B3 — OAM domain (sprite memory). The third read domain
-            // alongside CPU (`peek`) and PPU (`peek_ppu`); `Nes::oam` snapshots
-            // the 256-byte sprite RAM. Index wraps to 8 bits.
+            // alongside CPU (`peek`) and PPU (`peek_ppu`). `Nes::oam_byte` reads
+            // one byte without copying the whole 256-byte array, so iterating
+            // OAM in a script doesn't pay a full snapshot per access. Index
+            // wraps to 8 bits.
             memory.set(
                 "read_oam",
                 scope.create_function(|_, (_this, index): (mlua::Value, u16)| {
-                    Ok(nes_cell.borrow().oam()[(index & 0xFF) as usize])
+                    #[allow(clippy::cast_possible_truncation)]
+                    Ok(nes_cell.borrow().oam_byte((index & 0xFF) as u8))
                 })?,
             )?;
             memory.set(

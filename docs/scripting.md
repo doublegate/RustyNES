@@ -172,7 +172,7 @@ deterministic / locked session.
 | Call | Description |
 |---|---|
 | `joypad:get(port)` *(v1.6.0)* | The latched standard-controller bitmask for `port` (`0` = P1, `1` = P2, `2`/`3` = Four Score), in `Buttons` bit order (`A`=bit 0 .. `Right`=bit 7). Read-only and side-effect-free (reads the latch, not the shift register). |
-| `joypad:set(port, buttons)` *(v1.6.0)* | Override a controller's button bitmask for the frame — identical to `emu.setInput(port, buttons)`. Gated like `emu.write`: a silent no-op under a locked / replayed session (netplay / TAS replay / RA-hardcore). |
+| `joypad:set(port, buttons)` *(v1.6.0)* | Override a controller's button bitmask for the frame — identical to `emu.setInput(port, buttons)`, so like that call it applies to the **standard ports `0` (P1) / `1` (P2)** the host latches; ports `≥ 2` are accepted but not applied (the frontend feeds only P1/P2). Gated like `emu.write`: a silent no-op under a locked / replayed session (netplay / TAS replay / RA-hardcore). |
 
 ### `cart` — read-only cart / system queries (B2)
 

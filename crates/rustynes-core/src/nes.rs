@@ -1903,6 +1903,14 @@ impl Nes {
         out
     }
 
+    /// One OAM byte (`index` = `0..=255`), without copying the whole 256-byte
+    /// array — for single-byte readers (e.g. the Lua `memory:read_oam`) that
+    /// would otherwise pay a full `oam()` copy per access. Read-only.
+    #[must_use]
+    pub fn oam_byte(&self, index: u8) -> u8 {
+        self.bus.ppu().oam()[index as usize]
+    }
+
     /// Borrow palette RAM (32 bytes).
     #[must_use]
     pub const fn palette_ram(&self) -> [u8; 32] {
