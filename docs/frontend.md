@@ -1099,7 +1099,34 @@ All of the original open questions are resolved in v1.0.0:
     for genuine dot-crawl / fringing artifacts. The index buffer is uploaded only
     while the filter is active; all tables are baked into the WGSL (WebGL2-safe, no
     storage buffers). Frontend-only — no core / determinism impact.
-  Slang-shader ports remain a future enhancement.
+  - **Composable shader stack (v1.2.0 C2, ADR 0013).** Settings → **Shaders** →
+    "Shader stack" builds an ordered, parameterized list of post-passes (the
+    ping-pong executor in `shader_pass.rs`). An empty / all-disabled stack falls
+    through to the byte-identical direct blit. Each built-in pass declares its
+    knobs with RetroArch-style `#pragma parameter` headers, parsed into generic
+    egui sliders; per-pass overrides + a named preset bank persist in the config.
+
+    **v1.6.0 "Studio" Workstream I — shader/filter ecosystem** adds three RGBA
+    built-in passes to the stack (all output-only, so AccuracyCoin / no_std /
+    wasm stay byte-identical with them off):
+    - **`lmp88959`** (`ntsc_lmp88959.rs`, I1) — an LMP88959-style composite
+      NTSC/PAL look (encode-then-demodulate per output texel: chroma bleed, dot
+      crawl, edge fringing). Unlike the index-only Bisqwit `composite-rt` pass it
+      samples the **RGBA framebuffer**, so it can sit anywhere in the stack. Knobs:
+      `saturation`, `sharpness`, `tint`, `phase`, `pal`.
+    - **`hqx`** / **`xbrz`** (`upscale.rs`, I2) — hqNx- and xBRZ-style
+      edge-directed pixel-art smoothers (single-pass GPU adaptations of the
+      hqx / xBR edge-blend kernels), each with a `strength` knob.
+    - **Constrained RetroArch preset import** (`slang_preset.rs`, I3) — Settings →
+      Shaders → "Import .slangp / .cgp" parses a RetroArch preset and maps the
+      well-known shader filename stems (`crt-*`, `*ntsc*`/`*composite*`,
+      `*hqx*`/`*hq2x*`, `*xbr*`/`*xbrz*`) onto the built-in passes, carrying over
+      matching parameter overrides. It is **not** a GLSL/Slang → WGSL transpiler
+      (ADR 0013 keeps source translation out of scope): passes with no built-in
+      equivalent are reported as **unsupported** (not silently dropped), and the
+      import status shows the mapped/unsupported counts. Visual output of every
+      shader pass is maintainer-manual-verified (it can't be headless-checked);
+      the parsers, stack wiring, and WGSL parse+validate are unit-tested.
 - **Movie recording (TAS)** — shipped (`.rnm` record/play/branch).
 - **Netplay** — shipped (rollback netcode, 2-4 players, native UDP + browser
   WebRTC), enabled by the deterministic core.

@@ -173,6 +173,12 @@ pub struct SettingsPanelState {
     preset_name_input: String,
     /// v1.2.0 C2 — the currently-selected preset name (for Load / Delete).
     selected_preset: String,
+    /// v1.6.0 "Studio" I3 — status text after a `RetroArch` `.slangp`/`.cgp`
+    /// preset import (e.g. "imported 2 passes, 1 unsupported"). Empty until an
+    /// import is attempted. Native-only — the wasm32 panel has no file-dialog
+    /// import path.
+    #[cfg(not(target_arch = "wasm32"))]
+    preset_import_status: String,
     /// v1.5.0 "Lens" Workstream D1 — the palette editor's working state.
     palette_editor: PaletteEditorState,
 }
@@ -1006,6 +1012,53 @@ pub fn shader_stack_section(
                     save_config(config);
                 }
             });
+
+            // --- RetroArch `.slangp` / `.cgp` import (v1.6.0 "Studio" I3) --------
+            // A CONSTRAINED translator: it recognizes common community-preset
+            // shader filenames and re-expresses them with RustyNES's built-in
+            // passes; it does NOT translate GLSL/Slang source (out of scope per
+            // ADR 0013). Unsupported passes are reported, not silently dropped.
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                ui.separator();
+                ui.label("Import RetroArch preset (constrained)");
+                ui.weak(
+                    "Recognizes common crt / ntsc / hqx / xbr preset names and maps \
+                     them onto the built-in passes. Source shaders are not translated; \
+                     unrecognized passes are reported.",
+                );
+                if ui.button("Import .slangp / .cgp…").clicked()
+                    && let Some(path) = rfd::FileDialog::new()
+                        .add_filter("RetroArch preset", &["slangp", "cgp"])
+                        .pick_file()
+                {
+                    match std::fs::read_to_string(&path) {
+                        Ok(text) => match crate::slang_preset::import_preset(&text) {
+                            Ok(result) => {
+                                let mapped = result.stack.passes.len();
+                                let unsupported = result.unsupported_count();
+                                if result.any_mapped() {
+                                    config.graphics.shader_stack = result.stack;
+                                    state.apply.shader_stack = true;
+                                    save_config(config);
+                                }
+                                state.preset_import_status = format!(
+                                    "Imported {mapped} pass(es); {unsupported} unsupported."
+                                );
+                            }
+                            Err(e) => {
+                                state.preset_import_status = format!("Import failed: {e}");
+                            }
+                        },
+                        Err(e) => {
+                            state.preset_import_status = format!("Could not read file: {e}");
+                        }
+                    }
+                }
+                if !state.preset_import_status.is_empty() {
+                    ui.weak(state.preset_import_status.clone());
+                }
+            }
         });
 }
 

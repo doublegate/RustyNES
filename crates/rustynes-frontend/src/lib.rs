@@ -103,6 +103,13 @@ pub mod runahead;
 pub mod netplay_ui;
 pub mod ntsc;
 pub mod ntsc_bisqwit;
+// v1.6.0 "Studio" Workstream I — shader/filter ecosystem additions: an
+// LMP88959-style RGBA composite NTSC/PAL pass, hqNx/xBRZ pixel-art upscaler
+// passes, and a constrained RetroArch `.slangp`/`.cgp` preset importer. All
+// extend the v1.2.0 composable ShaderStack (ADR 0013) and are output-only.
+pub mod ntsc_lmp88959;
+pub mod slang_preset;
+pub mod upscale;
 // v2.7.0 — RetroAchievements session state. Native-only and behind the
 // default-OFF `retroachievements` feature (it links the vendored rcheevos C
 // library via `rustynes-cheevos`). The browser builds never see it.

@@ -149,6 +149,14 @@ pub enum BuiltinPass {
     /// True-composite NES_NTSC (Bisqwit). Special-cased: must be first; the
     /// legacy [`crate::gfx::Gfx`] wiring renders it (with its live knobs).
     CompositeRt,
+    /// v1.6.0 "Studio" I1 — LMP88959-style RGBA composite NTSC/PAL pass
+    /// ([`crate::ntsc_lmp88959`]). Unlike [`Self::CompositeRt`] this samples the
+    /// RGBA framebuffer, so it can sit anywhere in the stack.
+    Lmp88959,
+    /// v1.6.0 "Studio" I2 — hqNx-style pixel-art upscaler ([`crate::upscale`]).
+    Hqx,
+    /// v1.6.0 "Studio" I2 — xBRZ-style pixel-art upscaler ([`crate::upscale`]).
+    Xbrz,
 }
 
 impl BuiltinPass {
@@ -159,6 +167,9 @@ impl BuiltinPass {
             "crt" => Some(Self::Crt),
             "ntsc" => Some(Self::Ntsc),
             "composite-rt" => Some(Self::CompositeRt),
+            "lmp88959" => Some(Self::Lmp88959),
+            "hqx" => Some(Self::Hqx),
+            "xbrz" => Some(Self::Xbrz),
             _ => None,
         }
     }
@@ -170,6 +181,9 @@ impl BuiltinPass {
             Self::Crt => "crt",
             Self::Ntsc => "ntsc",
             Self::CompositeRt => "composite-rt",
+            Self::Lmp88959 => "lmp88959",
+            Self::Hqx => "hqx",
+            Self::Xbrz => "xbrz",
         }
     }
 
@@ -180,6 +194,9 @@ impl BuiltinPass {
             Self::Crt => "CRT / scanlines",
             Self::Ntsc => "NTSC (simplified blur)",
             Self::CompositeRt => "NTSC composite (Bisqwit)",
+            Self::Lmp88959 => "NTSC/PAL composite (LMP88959)",
+            Self::Hqx => "hqNx upscale (edge-smooth)",
+            Self::Xbrz => "xBRZ upscale (edge-smooth)",
         }
     }
 
@@ -193,7 +210,14 @@ impl BuiltinPass {
     /// The ordered list of built-in passes a user can add to the stack.
     #[must_use]
     pub const fn all() -> &'static [Self] {
-        &[Self::Crt, Self::Ntsc, Self::CompositeRt]
+        &[
+            Self::Crt,
+            Self::Ntsc,
+            Self::CompositeRt,
+            Self::Lmp88959,
+            Self::Hqx,
+            Self::Xbrz,
+        ]
     }
 
     /// The `#pragma parameter` declarations this pass exposes (parsed from the
@@ -202,6 +226,9 @@ impl BuiltinPass {
     pub fn params(self) -> Vec<ShaderParam> {
         match self {
             Self::Crt => parse_pragma_parameters(crate::crt::stack_shader_src()),
+            Self::Lmp88959 => parse_pragma_parameters(crate::ntsc_lmp88959::stack_shader_params()),
+            Self::Hqx => parse_pragma_parameters(crate::upscale::hqx_params()),
+            Self::Xbrz => parse_pragma_parameters(crate::upscale::xbrz_params()),
             // The simplified NTSC blur and the Bisqwit composite-rt pass expose
             // no stack-tunable knobs here (the latter keeps its own dedicated
             // NtscKnobs UI in the legacy path).
@@ -537,6 +564,17 @@ impl ShaderStack {
                     u[14] = ntsc_knobs.brightness;
                     u[15] = ntsc_knobs.hue;
                 }
+                // v1.6.0 I — RGBA passes with declared `#pragma parameter` knobs
+                // fill the uniform generically in declaration order: the first 4
+                // values land in params.x..w, then a 5th (the LMP `pal` flag) in
+                // aux.x. Each shader reads only the prefix it declares.
+                BuiltinPass::Lmp88959 | BuiltinPass::Hqx | BuiltinPass::Xbrz => {
+                    for (k, v) in pass.param_values.iter().enumerate() {
+                        if 8 + k < u.len() {
+                            u[8 + k] = *v;
+                        }
+                    }
+                }
                 BuiltinPass::Ntsc => {}
             }
             queue.write_buffer(&pass.uniforms, 0, bytemuck::cast_slice(&u));
@@ -591,6 +629,9 @@ fn compile_pass(
         BuiltinPass::Crt => crate::crt::SHADER_SRC.into(),
         BuiltinPass::Ntsc => crate::ntsc::SHADER_SRC.into(),
         BuiltinPass::CompositeRt => crate::ntsc_bisqwit::shader_src().into(),
+        BuiltinPass::Lmp88959 => crate::ntsc_lmp88959::SHADER_SRC.into(),
+        BuiltinPass::Hqx => crate::upscale::hqx_shader_src().into(),
+        BuiltinPass::Xbrz => crate::upscale::xbrz_shader_src().into(),
     };
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("shader-stack-shader"),
