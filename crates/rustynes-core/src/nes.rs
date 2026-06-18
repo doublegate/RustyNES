@@ -1347,6 +1347,30 @@ impl Nes {
         self.bus.poke_ram(addr, value);
     }
 
+    /// v1.7.0 "Forge" Workstream A1 — debugger writeback into the PPU bus
+    /// (`$0000-$3FFF`): CHR pattern bytes (mapper `ppu_write`, a no-op on
+    /// CHR-ROM), nametable tiles/attributes (mapper-absorbed, else CIRAM via the
+    /// active mirroring), and palette RAM. The PPU-bus counterpart of
+    /// [`Self::poke_ram`].
+    ///
+    /// Reached only through the frontend's gated post-frame poke path (the same
+    /// caller-side, after-[`Self::run_frame`] stage the raw RAM cheats use), so
+    /// the deterministic core run loop is unchanged and the no-edit path is
+    /// byte-identical. `debug-hooks`-gated.
+    #[cfg(feature = "debug-hooks")]
+    pub fn debug_poke_ppu(&mut self, addr: u16, value: u8) {
+        self.bus.debug_poke_ppu(addr, value);
+    }
+
+    /// v1.7.0 "Forge" Workstream A1 — debugger writeback for one OAM byte
+    /// (`idx` = 0..256: byte 0 = Y, 1 = tile, 2 = attributes, 3 = X per
+    /// sprite). `debug-hooks`-gated; reached only through the gated post-frame
+    /// poke path, so the default build is byte-identical.
+    #[cfg(feature = "debug-hooks")]
+    pub const fn poke_oam_byte(&mut self, idx: u8, value: u8) {
+        self.bus.debug_poke_oam(idx, value);
+    }
+
     /// Read a byte from the CPU address space (`$0000-$FFFF`) for inspection,
     /// **without** the register side effects of a real CPU read — reading
     /// `$2002` does not clear the VBL flag / address latch and `$2007` does not

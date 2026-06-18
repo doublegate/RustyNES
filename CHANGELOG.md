@@ -17,6 +17,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **v1.7.0 "Forge" Workstream A — editing-capable debugger tools (the
+  read-only → writable leap).** The inspect-only PPU/OAM panels become a
+  creator/RE workbench; all writeback is `debug-hooks`-gated and routes through
+  the SAME gated post-frame poke path the raw RAM cheats use, so it is a no-op
+  under netplay / TAS replay or record / RA-hardcore and **byte-identical with
+  the feature off**. AccuracyCoin holds **100% (139/139)**; the chip stack stays
+  `#![no_std]`.
+  - **A1 — tile/CHR + palette + nametable + OAM editors (writeback).** An
+    "Edit (writeback)" toggle on the PPU panel exposes a palette-entry editor
+    (click a swatch → edit the 6-bit value), a nametable tile/attribute editor
+    (click a cell → edit the tile byte + the 2-bit attribute quadrant via a
+    read-modify-write), and a CHR byte poker; the OAM panel gains a per-sprite
+    Y/tile/attr/X editor. Writes queue as one-shot `DebugPoke`s drained after the
+    next frame. New gated core hooks `Nes::debug_poke_ppu` / `Nes::poke_oam_byte`
+    (`crates/rustynes-core/src/{nes,bus}.rs` + `crates/rustynes-ppu/src/ppu.rs`),
+    plus a "locked = no-op = byte-identical" gate in the frontend produce path.
+  - **A2 — iNES / NES 2.0 header editor + read-only "Cartridge Info" pane**
+    (native-only; `crates/rustynes-frontend/src/debugger/header_editor.rs`,
+    opened from **Debug → Cartridge Info / Header Editor...**). Inspects (read-only
+    by default) and optionally edits the 16-byte header of a ROM file *on disk*
+    (format, mapper, submapper, mirroring, PRG/CHR sizes, battery, trainer,
+    region, console type, RAM sizes, Vs. DualSystem). Decode + re-encode reuse the
+    core's canonical `parse_header` / `serialize_header` round-trip. Edits a file,
+    never the running core.
+  - **A3 — inline 6502 assembler** (`crates/rustynes-frontend/src/debugger/{cpu_panel,assembler.rs}`).
+    Assembles one or more source lines (e.g. `LDA #$42`, `STA $0200,X`,
+    `BNE $C010`) at a target address into the gated work-RAM poke path. The
+    opcode-encoding table is **derived at runtime from the canonical
+    disassembler**, so it can never drift from the CPU core's decode.
+
 - **Mapper breadth 150 → 168 families** (v1.7.0 "Forge" Workstream G1 — next
   reusable-ASIC BMC/pirate cores, `crates/rustynes-mappers/src/sprint12.rs`). 18
   new **BestEffort** (Tier-2, honesty-gated, off the AccuracyCoin / commercial

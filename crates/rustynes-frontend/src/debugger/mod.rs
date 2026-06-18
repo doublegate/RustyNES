@@ -53,6 +53,12 @@ pub use replay_panel::ReplayRequest;
 pub use tastudio_panel::TasRequest;
 
 mod apu_panel;
+// v1.7.0 "Forge" Workstream A3 — inline 6502 assembler used by the CPU panel.
+mod assembler;
+// v1.7.0 "Forge" Workstream A2 — iNES/NES 2.0 header editor + Cartridge Info
+// pane. Native-only (edits a ROM file on disk via std::fs + rfd).
+#[cfg(not(target_arch = "wasm32"))]
+mod header_editor;
 // v2.7.1 — RetroAchievements badge-image cache (native-only, feature-gated).
 // The badge worker + texture cache; the default / wasm builds never see it.
 #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
@@ -175,6 +181,10 @@ pub enum ChipPanel {
     Nsf,
     /// Lua script console (T-110-E5): load/reload/stop + log.
     Script,
+    /// v1.7.0 "Forge" Workstream A2 — Cartridge Info / iNES-NES2.0 header editor
+    /// (native-only; edits a ROM file on disk).
+    #[cfg(not(target_arch = "wasm32"))]
+    HeaderEditor,
 }
 
 /// State of the debugger overlay.
@@ -194,6 +204,10 @@ pub struct DebuggerOverlay {
     show_memory_compare: bool,
     show_mapper: bool,
     show_trace: bool,
+    /// v1.7.0 "Forge" Workstream A2 — Cartridge Info / header-editor window open
+    /// flag (native-only; edits a ROM file on disk).
+    #[cfg(not(target_arch = "wasm32"))]
+    show_header_editor: bool,
     /// Watch / conditional-breakpoint / watchpoint panel open flag (v1.6.0
     /// "Studio" Workstream C).
     show_watch: bool,
@@ -222,6 +236,10 @@ pub struct DebuggerOverlay {
     ppu_ui: ppu_panel::PpuPanelState,
     /// OAM panel state.
     oam_ui: oam_panel::OamPanelState,
+    /// v1.7.0 "Forge" Workstream A2 — Cartridge Info / header-editor state
+    /// (native-only).
+    #[cfg(not(target_arch = "wasm32"))]
+    header_editor_ui: header_editor::HeaderEditorState,
     /// APU panel state (rolling sample buffers).
     apu_ui: apu_panel::ApuPanelState,
     /// Memory hex viewer state.
@@ -372,6 +390,8 @@ impl DebuggerOverlay {
             show_memory_compare: false,
             show_mapper: false,
             show_trace: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            show_header_editor: false,
             show_watch: false,
             show_events: false,
             show_nsf: false,
@@ -392,6 +412,8 @@ impl DebuggerOverlay {
             cpu_ui: cpu_panel::CpuPanelState::default(),
             ppu_ui: ppu_panel::PpuPanelState::default(),
             oam_ui: oam_panel::OamPanelState::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            header_editor_ui: header_editor::HeaderEditorState::default(),
             apu_ui: apu_panel::ApuPanelState::default(),
             memory_ui: memory_panel::MemoryPanelState::default(),
             memory_compare_ui: memory_compare_panel::MemoryComparePanelState::default(),
@@ -588,6 +610,21 @@ impl DebuggerOverlay {
         cheats.extend(self.memory_ui.freeze_cheats());
         cheats.extend(self.memory_compare_ui.freeze_cheats());
         cheats
+    }
+
+    /// v1.7.0 "Forge" Workstream A1 — drain the one-shot editing-tool writeback
+    /// edits queued by the PPU panel (tile/CHR, palette, nametable) and the OAM
+    /// panel. The app forwards these into the gated post-frame poke path
+    /// (`EmuCore::debug_pokes`), where they are applied after the next frame
+    /// under the SAME `emu.write` gate as the cheat pokes — a no-op under
+    /// netplay / TAS replay/record / RA-hardcore. Empty when no edit is pending,
+    /// so the no-edit path is byte-identical.
+    #[must_use]
+    pub fn take_debug_pokes(&mut self) -> Vec<crate::emu::DebugPoke> {
+        let mut pokes = self.ppu_ui.take_pokes();
+        pokes.extend(self.oam_ui.take_pokes());
+        pokes.extend(self.cpu_ui.take_pokes());
+        pokes
     }
 
     /// v1.0.0 (UX3 BUG-3) — re-apply the cheat panel's enabled Game Genie codes
@@ -882,6 +919,8 @@ impl DebuggerOverlay {
             ChipPanel::Events => self.show_events = true,
             ChipPanel::Nsf => self.show_nsf = true,
             ChipPanel::Script => self.show_script = true,
+            #[cfg(not(target_arch = "wasm32"))]
+            ChipPanel::HeaderEditor => self.show_header_editor = true,
         }
     }
 
@@ -1094,6 +1133,16 @@ impl DebuggerOverlay {
         }
         if self.show_oam {
             oam_panel::show(ctx, &mut self.show_oam, &mut self.oam_ui, nes);
+        }
+        // v1.7.0 "Forge" Workstream A2 — Cartridge Info / header editor. Edits a
+        // ROM file on disk (not `nes`), so it needs no emulator borrow.
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.show_header_editor {
+            header_editor::show(
+                ctx,
+                &mut self.show_header_editor,
+                &mut self.header_editor_ui,
+            );
         }
         if self.show_apu {
             apu_panel::show(ctx, &mut self.show_apu, &mut self.apu_ui, nes);

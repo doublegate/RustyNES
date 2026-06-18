@@ -1086,6 +1086,38 @@ impl Ppu {
         &self.ciram
     }
 
+    /// v1.7.0 "Forge" Workstream A1 — debugger writeback: store one palette-RAM
+    /// byte directly (`idx` masked to 0..32, value masked to the 6-bit palette
+    /// width), reusing the same canonical mirroring/masking as the live
+    /// `$2007` write path. Used only by the `debug-hooks` editor writeback,
+    /// which routes through the gated post-frame poke path — so the default
+    /// (no-edit) build never calls it and stays byte-identical.
+    #[cfg(feature = "debug-hooks")]
+    pub const fn debug_poke_palette(&mut self, idx: u8, value: u8) {
+        // `palette_index` mirrors $3F10/$14/$18/$1C → $3F00/.. and folds the
+        // 32-byte window; feed it the raw address so an editor index maps the
+        // same way a $2007 write would.
+        let addr = 0x3F00u16 | ((idx & 0x1F) as u16);
+        let i = palette_index(addr);
+        self.palette_ram[i] = value & 0x3F;
+    }
+
+    /// v1.7.0 "Forge" Workstream A1 — debugger writeback: store one OAM byte
+    /// directly. `debug-hooks`-gated; only reached through the gated post-frame
+    /// poke path, so the default build is byte-identical.
+    #[cfg(feature = "debug-hooks")]
+    pub const fn debug_poke_oam(&mut self, idx: u8, value: u8) {
+        self.oam[idx as usize] = value;
+    }
+
+    /// v1.7.0 "Forge" Workstream A1 — debugger writeback: store one CIRAM byte
+    /// at a physical offset (caller resolves mirroring via the mapper).
+    /// `debug-hooks`-gated; only reached through the gated post-frame poke path.
+    #[cfg(feature = "debug-hooks")]
+    pub const fn debug_poke_ciram(&mut self, phys: usize, value: u8) {
+        self.ciram[phys & 0x07FF] = value;
+    }
+
     /// `true` when sprites are rendered in 8x16 mode (CTRL bit 5).
     #[must_use]
     pub const fn sprite_size_16(&self) -> bool {

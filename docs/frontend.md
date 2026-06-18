@@ -987,6 +987,57 @@ workstream rides on.
   are the only writes, applied post-frame like every other cheat), so the
   no-freeze path is byte-identical.
 
+### v1.7.0 "Forge" Workstream A — editing-capable debugger tools
+
+The inspect-only PPU/OAM panels gain **writeback editors**, and the CPU panel
+gains an **inline 6502 assembler**. Every writeback is `debug-hooks`-gated and
+routes through the **same gated post-frame poke path** the raw RAM cheats use —
+so it is a **no-op under netplay / TAS replay or record / RA-hardcore** and
+**byte-identical with the feature off** (the no-edit queue is empty). The chip
+stack stays `#![no_std]`; AccuracyCoin holds 139/139.
+
+- **The gated post-frame poke path.** A new `EmuCore::debug_pokes:
+  Vec<DebugPoke>` queue (CPU-RAM / PPU-bus / OAM variants) is drained inside
+  `EmuCore::produce_one_frame`, in the *same* caller-side, after-`run_frame`
+  stage as the raw cheats, gated by `!writes_locked && !hardcore_blocked`. When
+  locked the queue is **cleared, not deferred** (locked = no-op = byte-identical;
+  no residual edit can leak into a later unlocked frame). `App` republishes
+  `EmuCore::writes_locked` each frame from the EXACT condition `emu.write` uses
+  (`netplay || RA-hardcore || movie playing/recording`) and harvests the panels'
+  queued edits via `DebuggerOverlay::take_debug_pokes`. The unit test
+  `emu::tests::debug_poke_is_gated_by_writes_locked` proves all three gate cases.
+- **A1 — tile/CHR + palette + nametable + OAM editors.** An **"Edit (writeback)"**
+  toggle on the PPU panel (off by default → read-only) exposes: a **palette**
+  editor (click a swatch → edit the 6-bit value, queued as a `$3F00+idx` PPU-bus
+  poke), a **nametable** tile/attribute editor (click a 32×30 cell → edit the
+  tile byte and the 2-bit attribute quadrant, the latter via a read-modify-write
+  of the attribute byte), and a **CHR** byte poker (`$0000-$1FFF`; a no-op on
+  CHR-ROM carts, accepted on CHR-RAM). The OAM panel's row list becomes clickable
+  to select a sprite, with a Y/tile/attr/X **byte editor**. Core hooks:
+  `Nes::debug_poke_ppu` (→ `Bus::debug_poke_ppu`, the structural mirror of
+  `debug_peek_ppu`: mapper CHR write / mapper-or-CIRAM nametable / PPU palette)
+  and `Nes::poke_oam_byte`, both `debug-hooks`-gated; the PPU-side `debug_poke_*`
+  helpers gate on the new `rustynes-ppu/debug-hooks` feature.
+- **A2 — iNES / NES 2.0 header editor + read-only "Cartridge Info" pane**
+  (native-only, `src/debugger/header_editor.rs`, **Debug → Cartridge Info /
+  Header Editor...**). Inspects (read-only by default) and optionally edits the
+  16-byte header of a ROM **file on disk** — never the running core. The pane
+  shows format / mapper / submapper / mirroring / PRG-CHR sizes / battery /
+  trainer / region / console type / RAM sizes (+ Vs. PPU + DualSystem for Vs.
+  carts). The editor exposes combo boxes + unit-count fields and, on "Write
+  header to file", re-serializes via the core's canonical `serialize_header` and
+  overwrites the file's first 16 bytes (the ROM body is untouched). Decode +
+  re-encode reuse `parse_header` / `serialize_header`, so the editor can't drift
+  from the loader.
+- **A3 — inline 6502 assembler** (`src/debugger/{cpu_panel,assembler}.rs`). An
+  **"Assemble (6502)"** collapsing section (off by default) with an address
+  field + a multi-line source box; "Assemble + queue" assembles each line in
+  sequence and queues the bytes as `DebugPoke::CpuRam` writes (work RAM
+  `$0000-$1FFF` only — the same gated target as the raw cheats; writes elsewhere
+  are core no-ops). The opcode-encoding table is **derived at runtime from the
+  canonical disassembler** (`rustynes_cpu::disassemble_at`), so it can never
+  drift from the CPU core's decode. Branch displacements are range-checked.
+
 ### v1.6.0 "Studio" Workstream G — A/V recording (`av_record`, native + `av-record` feature)
 
 Records the running game to a `.mp4` / `.mkv` (video + synchronized audio).

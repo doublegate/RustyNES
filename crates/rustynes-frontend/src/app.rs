@@ -5539,7 +5539,22 @@ impl App {
             // v1.7.0 — pull the live enabled raw-cheat list edited in the
             // cheat panel so the next produce iteration pokes the current
             // set (mirrors the fps / movie-status pull pattern).
-            self.emu.lock().raw_cheats = debugger.enabled_raw_cheats();
+            let raw_cheats = debugger.enabled_raw_cheats();
+            // v1.7.0 "Forge" Workstream A1 — harvest the one-shot debugger
+            // writeback edits (tile/CHR, palette, nametable, OAM, hex) queued
+            // by the editing panels. They land in the SAME gated post-frame
+            // poke stage as the raw cheats, under the SAME `emu.write` gate.
+            let debug_pokes = debugger.take_debug_pokes();
+            // Republish the combined write gate (netplay / RA-hardcore / TAS
+            // replay or record) computed from the EXACT same condition
+            // `emu.write` uses, so the produce path drops the edits when
+            // locked (locked = no-op = byte-identical).
+            let netplay_locked = self.netplay_is_active() || self.ra_hardcore_blocks();
+            let mut guard = self.emu.lock();
+            let movie_locked = guard.movie.is_playing() || guard.movie.is_recording();
+            guard.writes_locked = netplay_locked || movie_locked;
+            guard.raw_cheats = raw_cheats;
+            guard.debug_pokes.extend(debug_pokes);
         }
     }
 
@@ -6086,7 +6101,15 @@ impl App {
                     // v1.7.0 — pull the live enabled raw-cheat list edited in
                     // the cheat panel so the next produce iteration pokes the
                     // current set (mirrors the fps / movie-status pull).
-                    self.emu.lock().raw_cheats = debugger.enabled_raw_cheats();
+                    let raw_cheats = debugger.enabled_raw_cheats();
+                    // v1.7.0 "Forge" Workstream A1 — harvest the one-shot
+                    // debugger writeback edits + republish the write gate (TAS
+                    // replay/record; wasm has no native netplay/RA-hardcore).
+                    let debug_pokes = debugger.take_debug_pokes();
+                    let mut guard = self.emu.lock();
+                    guard.writes_locked = guard.movie.is_playing() || guard.movie.is_recording();
+                    guard.raw_cheats = raw_cheats;
+                    guard.debug_pokes.extend(debug_pokes);
                 }
             }
         }

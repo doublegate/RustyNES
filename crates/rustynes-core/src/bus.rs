@@ -1331,6 +1331,45 @@ impl LockstepBus {
         }
     }
 
+    /// v1.7.0 "Forge" Workstream A1 — debugger writeback. The structural mirror
+    /// of [`Self::debug_peek_ppu`]: `$0000-$1FFF` → mapper CHR (`ppu_write`,
+    /// a no-op on CHR-ROM), `$2000-$3EFF` → nametable (mapper-absorbed, else
+    /// CIRAM via the active mirroring), `$3F00-$3FFF` → palette RAM.
+    ///
+    /// Side-effect-free w.r.t. the run loop: it is reached *only* through the
+    /// gated post-frame poke path (the same caller-side, after-`run_frame` stage
+    /// the raw RAM cheats use), so the deterministic core run loop is unchanged
+    /// and the no-edit path is byte-identical. `debug-hooks`-gated.
+    #[cfg(feature = "debug-hooks")]
+    pub fn debug_poke_ppu(&mut self, addr: u16, value: u8) {
+        let addr = addr & 0x3FFF;
+        match addr {
+            0x0000..=0x1FFF => self.mapper.ppu_write(addr & 0x1FFF, value),
+            0x2000..=0x3EFF => {
+                let nt_addr = if addr >= 0x3000 { addr - 0x1000 } else { addr };
+                // Give the mapper a chance to absorb the write (ExRAM
+                // nametables, fill-mode drops), exactly like `write_vram`.
+                if !self.mapper.nametable_write(nt_addr, value) {
+                    let phys = match self.nt_mirroring_override {
+                        Some(m) => override_nt_addr(m, nt_addr) as usize,
+                        None => self.mapper.nametable_address(nt_addr) as usize,
+                    };
+                    self.ppu.debug_poke_ciram(phys, value);
+                }
+            }
+            0x3F00..=0x3FFF => self.ppu.debug_poke_palette((addr & 0x1F) as u8, value),
+            _ => {}
+        }
+    }
+
+    /// v1.7.0 "Forge" Workstream A1 — debugger writeback for one OAM byte
+    /// (`idx` = 0..256). `debug-hooks`-gated; reached only through the gated
+    /// post-frame poke path, so the default build is byte-identical.
+    #[cfg(feature = "debug-hooks")]
+    pub const fn debug_poke_oam(&mut self, idx: u8, value: u8) {
+        self.ppu.debug_poke_oam(idx, value);
+    }
+
     /// Borrow the PPU (debugger / tests).
     #[must_use]
     pub const fn ppu(&self) -> &Ppu {

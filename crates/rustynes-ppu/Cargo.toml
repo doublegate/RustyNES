@@ -37,6 +37,12 @@ ppu-state-trace = []
 # substitute Mesen-style hi-res replacement tiles at blit time. See
 # `docs/ppu-2c02.md` §HD-pack tile-source export.
 hd-pack = []
+# v1.7.0 "Forge" Workstream A1 — debugger writeback hooks (palette / OAM /
+# CIRAM direct pokes). Off by default so the shipped / wasm / no_std builds are
+# byte-identical; the core forwards its own `debug-hooks` here, and those pokes
+# are reached only through the gated post-frame poke path (never the run loop),
+# so determinism + the AccuracyCoin contract are unaffected.
+debug-hooks = []
 
 [dependencies]
 bitflags.workspace = true

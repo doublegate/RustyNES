@@ -18,6 +18,7 @@
 
 use rustynes_core::{EventBpKind, Nes};
 
+use crate::emu::DebugPoke;
 use crate::symbols::SymbolMap;
 
 /// Persistent state of the CPU debugger panel.
@@ -34,6 +35,37 @@ pub struct CpuPanelState {
     /// v1.1.0 beta.2 (Workstream C) — text box for adding an exec breakpoint
     /// (hex address).
     pub bp_text: String,
+    /// v1.7.0 "Forge" Workstream A3 — inline 6502 assembler state. Self-contained
+    /// for clean merges alongside other CPU-panel work.
+    a3: A3Asm,
+}
+
+/// v1.7.0 "Forge" Workstream A3 — inline-assembler UI state + the one-shot poke
+/// queue. Assembled bytes are queued as [`DebugPoke::CpuRam`] writes through the
+/// gated post-frame poke path (work-RAM `$0000-$1FFF` only — the same gated
+/// target as the raw RAM cheats; writes elsewhere are core no-ops), so the
+/// assembler never touches the running `Nes` directly and determinism + the
+/// `emu.write` gate hold.
+#[derive(Debug, Default)]
+struct A3Asm {
+    /// Master enable (off by default → the assembler row is hidden).
+    enabled: bool,
+    /// Target address hex text (where the first assembled byte lands).
+    addr_text: String,
+    /// The source line(s) to assemble (one instruction per line).
+    src_text: String,
+    /// Last assembler status / error line.
+    status: String,
+    /// Pending writeback bytes, drained by [`CpuPanelState::take_pokes`].
+    pending: Vec<DebugPoke>,
+}
+
+impl CpuPanelState {
+    /// v1.7.0 "Forge" Workstream A3 — drain the queued assembler writeback bytes
+    /// for the debugger to forward to the gated post-frame poke path.
+    pub fn take_pokes(&mut self) -> Vec<DebugPoke> {
+        core::mem::take(&mut self.a3.pending)
+    }
 }
 
 impl Default for CpuPanelState {
@@ -44,6 +76,7 @@ impl Default for CpuPanelState {
             rows: 32,
             goto_text: String::new(),
             bp_text: String::new(),
+            a3: A3Asm::default(),
         }
     }
 }
@@ -114,6 +147,12 @@ pub fn show(
                     state.follow_pc = false;
                 }
             });
+
+            // v1.7.0 "Forge" Workstream A3 — inline 6502 assembler. Off by
+            // default; when on, assembled bytes are queued through the gated
+            // post-frame poke path (work RAM only, like the raw cheats), so the
+            // no-assemble path is byte-identical.
+            a3_assembler(ui, &mut state.a3);
 
             // v1.1.0 beta.2 (Workstream C) — exec/PC breakpoints. Adding one
             // pauses emulation + opens this panel the next time PC reaches it.
@@ -252,6 +291,78 @@ pub fn show(
                     }
                 });
         });
+}
+
+/// v1.7.0 "Forge" Workstream A3 — the inline-assembler UI: an address field +
+/// a multi-line source box + Assemble. Each source line is assembled in
+/// sequence (advancing the target address by each instruction's length), and
+/// every byte is queued as a gated `DebugPoke::CpuRam` write. On the first
+/// per-line error nothing is queued (atomic per assemble click).
+fn a3_assembler(ui: &mut egui::Ui, a3: &mut A3Asm) {
+    egui::CollapsingHeader::new("Assemble (6502)")
+        .default_open(false)
+        .show(ui, |ui| {
+            ui.checkbox(&mut a3.enabled, "Enable inline assembler (writeback)");
+            if !a3.enabled {
+                ui.weak(
+                    "Assembled bytes are poked into work RAM ($0000-$1FFF) \
+                         after the next frame, via the same gated path as cheats.",
+                );
+                return;
+            }
+            ui.horizontal(|ui| {
+                ui.label("addr $");
+                ui.add(
+                    egui::TextEdit::singleline(&mut a3.addr_text)
+                        .desired_width(56.0)
+                        .hint_text("0200"),
+                );
+            });
+            ui.add(
+                egui::TextEdit::multiline(&mut a3.src_text)
+                    .desired_rows(3)
+                    .font(egui::TextStyle::Monospace)
+                    .hint_text("LDA #$42\nSTA $0200\nRTS"),
+            );
+            if ui.button("Assemble + queue").clicked() {
+                a3.status = assemble_into(a3);
+            }
+            if !a3.status.is_empty() {
+                ui.weak(&a3.status);
+            }
+        });
+}
+
+/// Assemble every source line into the pending poke queue. Returns a status
+/// string. Atomic: a parse error on any line queues nothing.
+fn assemble_into(a3: &mut A3Asm) -> String {
+    let Some(mut addr) = parse_hex16(&a3.addr_text) else {
+        return "bad target address".into();
+    };
+    let mut bytes_out: Vec<(u16, u8)> = Vec::new();
+    for (n, line) in a3.src_text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        match super::assembler::assemble_line(line, addr) {
+            Ok(bytes) => {
+                for b in bytes {
+                    bytes_out.push((addr, b));
+                    addr = addr.wrapping_add(1);
+                }
+            }
+            Err(e) => return format!("line {}: {e}", n + 1),
+        }
+    }
+    if bytes_out.is_empty() {
+        return "nothing to assemble".into();
+    }
+    let count = bytes_out.len();
+    for (a, v) in bytes_out {
+        a3.pending.push(DebugPoke::CpuRam { addr: a, value: v });
+    }
+    format!("queued {count} byte(s) (work RAM only; applied after next frame)")
 }
 
 fn parse_hex16(s: &str) -> Option<u16> {
