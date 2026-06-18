@@ -1,11 +1,13 @@
 # Release plans
 
 Verbatim copies of the planning documents along the RustyNES line — the public
-**v1.0.0** synthesis through the in-development **v1.6.0**, plus the upstream
-**engine-lineage** (`v2.x`) plans that produced the v1.0.0 cycle-accurate core
-(under [`engine-lineage/`](engine-lineage/)). They are kept exactly as authored
-(historical / reference, not maintained prose), so this folder is exempt from
-the markdownlint gate — the same treatment `ref-docs/` and the archive trees get.
+**v1.0.0** synthesis through the in-development **v1.6.0**, the **forward plans**
+(v1.7.0 → v2.0.0, in design), the upstream **engine-lineage** (`v2.x`) plans that
+produced the v1.0.0 cycle-accurate core (under [`engine-lineage/`](engine-lineage/)),
+and the per-release **research dives** that fed the forward plans (under
+[`research/`](research/README.md)). They are kept exactly as authored (historical
+/ reference, not maintained prose), so this folder is exempt from the markdownlint
+gate — the same treatment `ref-docs/` and the archive trees get.
 
 > **Authoritative current state lives elsewhere.** For "where the project is
 > right now" read [`docs/STATUS.md`](../../docs/STATUS.md) (per-suite pass counts
@@ -27,6 +29,26 @@ the markdownlint gate — the same treatment `ref-docs/` and the archive trees g
 
 > **v1.1.0** has no plan here — its staging folder was archived under
 > [`../archive/`](../archive/README.md) (see `to-dos/archive/v1.1.0-features/`).
+
+## Forward plans (in design)
+
+Synthesized from the reference-mining dives in [`research/`](research/README.md)
+(BizHawk/FCEUX, Mesen2/GeraNES, ares/higan/TriCNES/puNES + accuracy/breadth/niche/perf,
+Android, iOS, and the v2.0.0 master-clock analysis), with the keystone scope
+decisions locked by the maintainer. Not yet started.
+
+| Plan | Release | Scope decision |
+|---|---|---|
+| [`v1.7.0-forge-plan.md`](v1.7.0-forge-plan.md) | v1.7.0 "Forge" — writable + programmable tooling, on the current scheduler | **Maximal** (full A–H) |
+| [`v1.8.0-android-plan.md`](v1.8.0-android-plan.md) | v1.8.0 — Android app | **Hybrid** (Rust core + wgpu `SurfaceView` + Compose) + focused MVP; factors the shared `rustynes-mobile` bridge |
+| [`v1.9.0-ios-plan.md`](v1.9.0-ios-plan.md) | v1.9.0 — iOS / iPadOS app | **SwiftUI + wgpu→Metal** reusing the shared bridge; same focused MVP |
+| [`v2.0.0-master-clock-plan.md`](v2.0.0-master-clock-plan.md) | v2.0.0 "Timebase" — one-clock + every-cycle-bus-access rewrite | **Full rewrite + aggressive residual closure**; ships after v1.9.0 |
+
+> **Versioning note:** v2.0.0 is *not* "add a master clock" — that already
+> shipped (it is today's only scheduler). v2.0.0 collapses the five-counter
+> substrate to one clock with every-cycle bus access, which is what makes the
+> last accuracy residuals representable. It is the one release licensed to break
+> save-state / cross-version determinism.
 
 ## Engine-lineage plans (`engine-lineage/`) — upstream history
 
