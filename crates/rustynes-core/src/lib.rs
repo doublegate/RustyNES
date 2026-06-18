@@ -25,6 +25,7 @@ mod bus;
 // v2.0 R1c-1 diagnostic — per-instruction (PC, cpu_cycle) trace ring (gated).
 #[cfg(feature = "cpu-instr-cycle-trace")]
 pub use bus::instr_trace;
+pub mod bk2_interop;
 mod bus_snapshot;
 mod controller;
 #[cfg(feature = "cpu-boot-trace")]

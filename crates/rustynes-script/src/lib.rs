@@ -934,6 +934,10 @@ mod tests {
                 "game_state_tracker.lua",
                 include_str!("../../../examples/scripts/game_state_tracker.lua"),
             ),
+            (
+                "driving_loop.lua",
+                include_str!("../../../examples/scripts/driving_loop.lua"),
+            ),
         ];
         for (name, src) in EXAMPLES {
             let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
@@ -949,5 +953,148 @@ mod tests {
                 let _ = eng.drain_log();
             }
         }
+    }
+
+    // ----- v1.6.0 Workstream B2: Lua driving primitives (native-only / mlua) --
+    // `emu.run(fn)` + `emu.frameadvance()` let a script drive the emulator a
+    // frame at a time (the FCEUX / BizHawk model). Driving is hosted on the
+    // mlua backend (the dev/TAS surface is native-only; ADR 0012).
+
+    /// A driving coroutine resumes exactly once per `on_frame`, picking up after
+    /// the `emu.frameadvance()` it yielded on. So N frames advance the loop N
+    /// steps (one log line per frame here).
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn driving_coroutine_resumes_once_per_frame() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            r"
+            emu.run(function()
+                local n = 0
+                while true do
+                    n = n + 1
+                    emu.log('step ' .. n)
+                    emu.frameadvance()
+                end
+            end)
+            ",
+        )
+        .expect("load");
+        // Driving needs no onFrame callback registered.
+        assert_eq!(eng.frame_callback_count(), 0);
+        for _ in 0..3 {
+            nes.run_frame();
+            eng.on_frame(&mut nes).expect("on_frame");
+        }
+        assert_eq!(eng.drain_log(), vec!["step 1", "step 2", "step 3"]);
+    }
+
+    /// A driver that returns (finishes) stops being resumed — no further log
+    /// output, and no error.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn driving_coroutine_stops_when_finished() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            r"
+            emu.run(function()
+                emu.log('a')
+                emu.frameadvance()
+                emu.log('b')
+                -- returns here: the driver is done.
+            end)
+            ",
+        )
+        .expect("load");
+        for _ in 0..4 {
+            nes.run_frame();
+            eng.on_frame(&mut nes).expect("on_frame");
+        }
+        // Resume 1 logs 'a' then yields; resume 2 logs 'b' then returns; resumes
+        // 3 and 4 see no driver. No duplicate / runaway output.
+        assert_eq!(eng.drain_log(), vec!["a", "b"]);
+    }
+
+    /// A driver's `emu.setInput` is gated identically to `emu.write`: dropped
+    /// under a locked session, queued when unlocked.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn driving_set_input_is_gated_when_locked() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.set_writes_locked(true);
+        eng.load(
+            r"
+            emu.run(function()
+                while true do
+                    emu.setInput(0, 0x81)
+                    emu.frameadvance()
+                end
+            end)
+            ",
+        )
+        .expect("load");
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+        assert!(
+            eng.drain_controls().is_empty(),
+            "driver setInput must be a no-op when writes are locked"
+        );
+
+        eng.set_writes_locked(false);
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+        assert!(
+            eng.drain_controls().contains(&ControlCmd::SetInput {
+                port: 0,
+                buttons: 0x81
+            }),
+            "driver setInput must queue a SetInput command when unlocked"
+        );
+    }
+
+    /// A later `emu.run` replaces an earlier driver (only one drives at a time).
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn driving_run_replaces_previous_driver() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            r"
+            emu.run(function()
+                while true do emu.log('first'); emu.frameadvance() end
+            end)
+            emu.run(function()
+                while true do emu.log('second'); emu.frameadvance() end
+            end)
+            ",
+        )
+        .expect("load");
+        for _ in 0..2 {
+            nes.run_frame();
+            eng.on_frame(&mut nes).expect("on_frame");
+        }
+        // Only the second driver runs.
+        assert_eq!(eng.drain_log(), vec!["second", "second"]);
+    }
+
+    /// `emu.frameadvance()` outside a coroutine raises (Lua's "yield from outside
+    /// a coroutine"), surfaced to the host as a script error rather than a panic.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn frameadvance_outside_coroutine_errors() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        // Calling frameadvance from an onFrame callback (not a driving coroutine)
+        // must surface an error, not crash the host pump.
+        eng.load("emu.onFrame(function() emu.frameadvance() end)")
+            .expect("load");
+        nes.run_frame();
+        assert!(
+            eng.on_frame(&mut nes).is_err(),
+            "frameadvance outside a coroutine must surface a script error"
+        );
     }
 }

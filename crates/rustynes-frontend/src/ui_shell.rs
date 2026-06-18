@@ -175,6 +175,12 @@ pub enum MenuAction {
     MoviePlayToggle,
     /// v1.0.0 — branch the current movie playback into a new recording.
     MovieBranch,
+    /// v1.6.0 B1 — import an external TAS movie (`.fm2` FCEUX / `.bk2`
+    /// `BizHawk`) and begin playback against the running ROM.
+    MovieImport,
+    /// v1.6.0 B1 — export the current recording / loaded movie to an external
+    /// TAS movie file (`.fm2` FCEUX / `.bk2` `BizHawk`) via the save dialog.
+    MovieExport,
     /// v1.0.0 — insert a Vs. System coin (acceptor #1).
     InsertCoin,
     /// Step the emulator exactly one frame (meaningful while paused).
@@ -1026,6 +1032,43 @@ impl UiShell {
                             {
                                 out.action = Some(MenuAction::MovieBranch);
                                 ui.close();
+                            }
+                            ui.separator();
+                            // v1.6.0 B1 — external TAS movie interop (FCEUX
+                            // `.fm2` / BizHawk `.bk2`). Import begins playback
+                            // (locked while recording, like Play); Export writes
+                            // the current recording / loaded movie (enabled when
+                            // a movie exists to export).
+                            #[cfg(not(target_arch = "wasm32"))]
+                            {
+                                let import_enabled = !frame.movie_recording;
+                                if ui
+                                    .add_enabled(
+                                        import_enabled,
+                                        egui::Button::new(ic(
+                                            glyph::FOLDER_OPEN,
+                                            "Import (.fm2 / .bk2)",
+                                        )),
+                                    )
+                                    .clicked()
+                                {
+                                    out.action = Some(MenuAction::MovieImport);
+                                    ui.close();
+                                }
+                                let export_enabled = frame.movie_recording || frame.movie_playing;
+                                if ui
+                                    .add_enabled(
+                                        export_enabled,
+                                        egui::Button::new(ic(
+                                            glyph::FLOPPY_DISK,
+                                            "Export (.fm2 / .bk2)",
+                                        )),
+                                    )
+                                    .clicked()
+                                {
+                                    out.action = Some(MenuAction::MovieExport);
+                                    ui.close();
+                                }
                             }
                         });
                     } else {

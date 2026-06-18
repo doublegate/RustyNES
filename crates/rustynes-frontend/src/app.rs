@@ -1976,6 +1976,221 @@ impl App {
         }
     }
 
+    /// v1.6.0 B1 — import an external TAS movie (FCEUX `.fm2` / `BizHawk` `.bk2`)
+    /// and begin playback against the running ROM.
+    ///
+    /// `.fm2` is flat text; `.bk2` is a ZIP whose `Header.txt` + `Input Log.txt`
+    /// members are read out and handed to the `no_std` core parser. Both produce
+    /// a [`StartPoint::PowerOn`](rustynes_core::StartPoint) movie that replays
+    /// from the **canonical movie-import power-on alignment** (a deterministic
+    /// zeroed-RAM cold boot via `seek_to_start`), so imports never desync. The
+    /// running ROM's SHA-256 is stamped onto the imported movie as its
+    /// authoritative identity (the external formats carry only MD5 / SHA-1).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn handle_movie_import(&self) {
+        if self.netplay.is_active() {
+            eprintln!("rustynes: leave netplay before importing a movie");
+            return;
+        }
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("TAS movie (FCEUX/BizHawk)", &["fm2", "bk2"])
+            .set_directory(self.movies_dir().unwrap_or_else(|| PathBuf::from(".")))
+            .pick_file()
+        else {
+            return;
+        };
+        // The imported movie inherits the running ROM's identity, so a ROM must
+        // be loaded first. We grab the hash under a short lock, then parse +
+        // play under a second lock (the file read + parse hold no lock).
+        let rom_sha = {
+            let guard = self.emu.lock();
+            let Some(nes) = guard.nes.as_ref() else {
+                eprintln!("rustynes: movie import: no ROM loaded");
+                return;
+            };
+            *nes.rom_sha256()
+        };
+        let movie = match Self::parse_movie_file(&path, rom_sha) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("rustynes: movie import failed {}: {e}", path.display());
+                return;
+            }
+        };
+        let mut guard = self.emu.lock();
+        let emu = &mut *guard;
+        let Some(nes) = emu.nes.as_mut() else {
+            return;
+        };
+        if let Err(e) = movie.seek_to_start(nes) {
+            eprintln!("rustynes: movie import seek failed (wrong ROM?): {e}");
+            return;
+        }
+        let total = movie.len();
+        emu.movie.start_playback(movie);
+        emu.next_frame_time = Some(Instant::now());
+        eprintln!(
+            "rustynes: imported movie playing ({total} frames) from {}",
+            path.display()
+        );
+    }
+
+    /// Parse a `.fm2` / `.bk2` movie file into a [`Movie`], stamping `rom_sha` as
+    /// its identity. `.bk2` ZIP handling stays frontend-side (the core stays
+    /// `no_std`); the text members are parsed by the core.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn parse_movie_file(
+        path: &std::path::Path,
+        rom_sha: [u8; 32],
+    ) -> Result<rustynes_core::Movie, String> {
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if ext == "bk2" {
+            let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+            let (header, input_log) = Self::read_bk2_members(&bytes)?;
+            let (movie, _meta) =
+                rustynes_core::bk2_interop::import_bk2(&header, &input_log, rom_sha)
+                    .map_err(|e| e.to_string())?;
+            Ok(movie)
+        } else {
+            // `.fm2` (or any other extension): flat text.
+            let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+            let (movie, _meta) = rustynes_core::movie_interop::import_fm2(&text, rom_sha)
+                .map_err(|e| e.to_string())?;
+            Ok(movie)
+        }
+    }
+
+    /// Read the `Header.txt` + `Input Log.txt` members out of a `.bk2` ZIP.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn read_bk2_members(zip_bytes: &[u8]) -> Result<(String, String), String> {
+        use std::io::Read as _;
+        // A `.bk2`'s text members are small; cap the read so a corrupt / hostile
+        // archive can't OOM the host (same guard as the ROM zip path).
+        const MAX_MEMBER_BYTES: u64 = 64 * 1024 * 1024;
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes))
+            .map_err(|e| format!("not a valid .bk2 zip: {e}"))?;
+        let read_member =
+            |archive: &mut zip::ZipArchive<_>, name: &str| -> Result<String, String> {
+                let f = archive
+                    .by_name(name)
+                    .map_err(|_| format!(".bk2 missing `{name}`"))?;
+                if f.size() > MAX_MEMBER_BYTES {
+                    return Err(format!(".bk2 member `{name}` is implausibly large"));
+                }
+                let mut s = String::new();
+                f.take(MAX_MEMBER_BYTES)
+                    .read_to_string(&mut s)
+                    .map_err(|e| format!(".bk2 member `{name}` read failed: {e}"))?;
+                Ok(s)
+            };
+        let header = read_member(&mut archive, rustynes_core::bk2_interop::BK2_HEADER_MEMBER)?;
+        let input_log = read_member(
+            &mut archive,
+            rustynes_core::bk2_interop::BK2_INPUT_LOG_MEMBER,
+        )?;
+        Ok((header, input_log))
+    }
+
+    /// v1.6.0 B1 — export the current recording / loaded movie to an external
+    /// TAS movie file. The chosen extension (`.fm2` / `.bk2`) selects the format;
+    /// `.bk2` is packed into a ZIP frontend-side.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn handle_movie_export(&self) {
+        // Prefer the in-progress recording (finished here); else the loaded
+        // playback movie. One of the two is guaranteed by the menu gate.
+        let movie = {
+            let mut guard = self.emu.lock();
+            guard
+                .movie
+                .finish_recording()
+                .or_else(|| guard.movie.playing_movie())
+        };
+        let Some(movie) = movie else {
+            eprintln!("rustynes: movie export: nothing to export");
+            return;
+        };
+        let dir = self.movies_dir();
+        if let Some(d) = dir.as_ref() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        let mut dialog = rfd::FileDialog::new()
+            .add_filter("TAS movie (FCEUX/BizHawk)", &["fm2", "bk2"])
+            .set_file_name("movie.bk2");
+        if let Some(d) = dir {
+            dialog = dialog.set_directory(d);
+        }
+        let Some(path) = dialog.save_file() else {
+            eprintln!("rustynes: movie export cancelled");
+            return;
+        };
+        if let Err(e) = Self::write_movie_file(&path, &movie) {
+            eprintln!("rustynes: movie export failed {}: {e}", path.display());
+        } else {
+            eprintln!(
+                "rustynes: exported movie ({} frames) -> {}",
+                movie.len(),
+                path.display()
+            );
+        }
+    }
+
+    /// Serialize `movie` to a `.fm2` / `.bk2` file (extension selects the
+    /// format). `.bk2` packs the core's two text members into a ZIP.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn write_movie_file(
+        path: &std::path::Path,
+        movie: &rustynes_core::Movie,
+    ) -> Result<(), String> {
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if ext == "fm2" {
+            let text = rustynes_core::movie_interop::export_fm2(
+                movie,
+                &rustynes_core::movie_interop::Fm2ExportOpts::default(),
+            )
+            .map_err(|e| e.to_string())?;
+            std::fs::write(path, text).map_err(|e| e.to_string())
+        } else {
+            // `.bk2` (the default): pack the two text members into a ZIP.
+            let parts = rustynes_core::bk2_interop::export_bk2(
+                movie,
+                &rustynes_core::bk2_interop::Bk2ExportOpts::default(),
+            )
+            .map_err(|e| e.to_string())?;
+            let bytes = Self::pack_bk2_zip(&parts)?;
+            std::fs::write(path, bytes).map_err(|e| e.to_string())
+        }
+    }
+
+    /// Pack a `.bk2`'s `Header.txt` + `Input Log.txt` text members into a ZIP.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn pack_bk2_zip(parts: &rustynes_core::bk2_interop::Bk2Text) -> Result<Vec<u8>, String> {
+        use std::io::Write as _;
+        let mut buf = Vec::new();
+        {
+            let mut w = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+            let opts = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+            w.start_file(rustynes_core::bk2_interop::BK2_HEADER_MEMBER, opts)
+                .map_err(|e| e.to_string())?;
+            w.write_all(parts.header.as_bytes())
+                .map_err(|e| e.to_string())?;
+            w.start_file(rustynes_core::bk2_interop::BK2_INPUT_LOG_MEMBER, opts)
+                .map_err(|e| e.to_string())?;
+            w.write_all(parts.input_log.as_bytes())
+                .map_err(|e| e.to_string())?;
+            w.finish().map_err(|e| e.to_string())?;
+        }
+        Ok(buf)
+    }
+
     /// v1.6.0 "Studio" A2 — lazily start a `TAStudio` session when the window is
     /// first opened on a loaded ROM. The current emulator state becomes the
     /// project's frame-0 anchor (non-destructive: we do not power-cycle the
@@ -3335,6 +3550,14 @@ impl App {
                 self.handle_movie_branch();
                 #[cfg(target_arch = "wasm32")]
                 self.handle_movie_branch_wasm();
+            }
+            MenuAction::MovieImport => {
+                #[cfg(not(target_arch = "wasm32"))]
+                self.handle_movie_import();
+            }
+            MenuAction::MovieExport => {
+                #[cfg(not(target_arch = "wasm32"))]
+                self.handle_movie_export();
             }
             MenuAction::FrameAdvance => {
                 self.request_frame_advance();

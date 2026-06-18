@@ -138,6 +138,38 @@ Overlay coordinates are NES-framebuffer space (256×240), mapped onto the actual
 letterboxed game rect — honouring 8:7 pixel-aspect correction and the overscan
 crop — so HUD coordinates line up with game pixels.
 
+### Driving the emulator (v1.6.0 Workstream B2)
+
+The callbacks above are *reactive* — the host drives the emulator and calls your
+`onFrame` once per frame. The **driving** primitives let a single script drive
+the emulator a frame at a time instead, the FCEUX / BizHawk model that bots and
+TAS scripts want: linear "do this, advance one frame, then do that" logic.
+
+| Call | Effect |
+|---|---|
+| `emu.run(fn)` | Register `fn` as the **driving coroutine**. It runs until it next calls `emu.frameadvance()`. Only one driver is active at a time (a later `emu.run` replaces it). |
+| `emu.frameadvance()` | Yield control back to the emulator. The host advances **exactly one frame**, then resumes the coroutine where it left off, so each `emu.frameadvance()` corresponds to one emulated frame. |
+
+```lua
+emu.run(function()
+  while true do
+    emu.setInput(0, 0x01)  -- hold A
+    emu.frameadvance()     -- one frame elapses, then we resume here
+  end
+end)
+```
+
+`emu.frameadvance()` is a thin alias of Lua's `coroutine.yield()`, so it only
+works inside the coroutine `emu.run` creates; calling it elsewhere raises an
+error (surfaced to the script console, never a host crash). A driver that
+returns simply stops being resumed.
+
+Driving is **determinism-safe**: a driver issues the same `emu.write` /
+`emu.setInput` / `load_state` effects as any callback, and those are gated
+identically to `emu.write` (a silent no-op under netplay / TAS replay /
+RA-hardcore). Driving is **native-only** (the mlua backend), the same carve-out
+as the dev/TAS API below. See `examples/scripts/driving_loop.lua`.
+
 ## The dev / TAS API (v1.5.0 Workstream B)
 
 A deeper automation surface for memory inspection, cart introspection,
