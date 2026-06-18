@@ -76,6 +76,36 @@ Per `ref-docs/research-report.md` §Frame and scanline structure:
 
 Odd-frame skip on NTSC: the pre-render scanline of odd frames omits the final dot, jumping `(339, 261) → (0, 0)`. The decision is taken on the transition out of dot 339 and gated on the rendering-enabled flag. The flag read by the dot-skip detector lags `mask` by **two PPU clocks** via a two-stage shift pipeline (`mask_for_skip_check` / `mask_skip_pipe1`), so a `$2001` write whose CPU cycle straddles dot 339 doesn't move the threshold by a full CPU cycle. This compensates for `LockstepBus`'s atomic write-before-tick ordering (CPU PPUMASK write lands ~3 PPU dots earlier than real hardware's φ2 latch); two dots of delay align the visible threshold with blargg's `ppu_vbl_nmi/10-even_odd_timing` expectations. The pipeline is fed only from `mask` and does not affect background, sprite, or palette-greyscale paths, all of which keep using `mask` directly.
 
+### Extra-scanlines overclock (v1.7.0 F3)
+
+The PPU can insert **N extra blank scanlines** into the vblank period each frame
+(Mesen2 `UpdateTimings`), at the existing dot resolution. Set via
+`Nes::set_extra_scanlines(n)` (forwarded to `Ppu::set_extra_scanlines`); read
+back via `Nes::extra_scanlines()`. **Off by default (`0`)**, and a frontend
+config knob — it is **not** part of the save-state (the frontend re-applies it on
+restore, like the region / palette).
+
+How it works: when `extra_scanlines != 0`, `Ppu::advance_dot` holds the PPU on
+the idle vblank line immediately *before* the pre-render line (NTSC line 260) and
+re-runs it `n` times before advancing to pre-render. That line is not visible
+(scanline > 239), not the VBL-set line (241), and not pre-render — so the extra
+lines emit no pixels, set/clear no `PPUSTATUS` flag, and fire no VBL / NMI / A12
+event. They are pure additional CPU run-time (the scheduler still clocks the CPU
+every third dot), giving timing-sensitive games more compute headroom without
+altering the visible image.
+
+**Byte-identical at zero.** The entire insertion branch is guarded by
+`extra_scanlines != 0`, so at the default `0` not a single code path differs and
+the frame is byte-for-byte identical to stock NES timing — `AccuracyCoin`, the
+commercial oracle, and nestest (which never set it) are unaffected. This is
+proved by `crates/rustynes-test-harness/tests/extra_scanlines.rs`
+(`extra_scanlines_zero_is_byte_identical_to_stock`, plus an image-invariance
+proof on the first frame and a CPU-cycle-growth check).
+
+This is **distinct from the CPU-multiplier overclock**, which needs the
+fractional-master-clock timebase rewrite and is a v2.0 item (ADR 0002); only the
+dot-resolution scanline *insertion* is in scope here.
+
 ### Power-up and reset state
 
 The PPU has a reset mask distinct from the CPU reset sequence:

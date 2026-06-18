@@ -1117,6 +1117,18 @@ impl LockstepBus {
         self.ppu.set_custom_palette(base);
     }
 
+    /// v1.7.0 "Forge" F3 — set the PPU extra-scanlines overclock (extra idle
+    /// vblank lines per frame). `0` (default) is byte-identical to stock timing.
+    pub const fn set_extra_scanlines(&mut self, lines: u16) {
+        self.ppu.set_extra_scanlines(lines);
+    }
+
+    /// v1.7.0 F3 — the configured extra-scanline count (`0` = stock).
+    #[must_use]
+    pub const fn extra_scanlines(&self) -> u16 {
+        self.ppu.extra_scanlines()
+    }
+
     /// Cartridge region (NTSC / PAL / Dendy / Multi). Drives wall-clock
     /// frame pacing in the frontend and clock-divider selection inside the
     /// PPU + APU.
