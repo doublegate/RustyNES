@@ -32,7 +32,11 @@
 
 use rustynes_core::Nes;
 
-use crate::types::{ControlCmd, DrawCmd, ScriptError, TasCellDecor, TasCmd, TasSnapshot};
+use crate::types::{
+    ClientCmd, ControlCmd, DrawCmd, ScriptError, TasCellDecor, TasCmd, TasSnapshot,
+};
+#[cfg(feature = "script-ipc")]
+use crate::types::{CommCmd, CommResult};
 
 /// The host-facing contract a Lua VM backend fulfils.
 ///
@@ -166,4 +170,33 @@ pub trait VmBackend: Sized {
     /// B3 — set the per-script sandboxed data directory returned by
     /// `emu.getScriptDataFolder()` (`None` clears it). No-op default.
     fn set_script_data_folder(&self, _path: Option<String>) {}
+
+    /// v1.7.0 "Forge" E2 — drain the `client.*` automation verbs requested this
+    /// frame. The default empties nothing (a backend that does not host the
+    /// `client` table, e.g. the experimental piccolo backend).
+    fn drain_clients(&self) -> Vec<ClientCmd> {
+        Vec::new()
+    }
+
+    /// v1.7.0 "Forge" E1 — drain the host-mediated `comm.*` IPC requests issued
+    /// this frame. Default empty (the `comm` table is mlua-only + `script-ipc`).
+    #[cfg(feature = "script-ipc")]
+    fn drain_comm(&self) -> Vec<CommCmd> {
+        Vec::new()
+    }
+
+    /// v1.7.0 "Forge" E1 — deliver a host-fulfilled [`CommResult`] back to the
+    /// engine (surfaced to the script via `comm.receive()`). Default no-op.
+    #[cfg(feature = "script-ipc")]
+    fn push_comm_result(&self, _result: CommResult) {}
+
+    /// v1.7.0 "Forge" E3 — snapshot the `userdata.*` KV store (sorted by key).
+    /// Default empty (a backend without the `userdata` table).
+    fn userdata_snapshot(&self) -> Vec<(String, String)> {
+        Vec::new()
+    }
+
+    /// v1.7.0 "Forge" E3 — restore the `userdata.*` KV store from a snapshot.
+    /// Default no-op.
+    fn userdata_restore(&self, _pairs: &[(String, String)]) {}
 }

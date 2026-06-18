@@ -249,3 +249,155 @@ pub enum DrawCmd {
         color: u32,
     },
 }
+
+/// v1.7.0 "Forge" Workstream E1 — a host-mediated IPC request a script issued
+/// via the `comm.*` table.
+///
+/// The defining property: **the script never gets a raw socket.** It issues one
+/// of these high-level, fully-marshalled requests, the **host** (the frontend's
+/// [`crate`]-external `script_host`) owns the actual TCP / HTTP / WebSocket /
+/// memory-mapped-file connection, performs the I/O off the emulator lock, and
+/// feeds the marshalled bytes/strings back via [`CommResult`]. This preserves
+/// the Lua sandbox guarantee (no `io` / `os` / `package` / net) — the VM only
+/// ever sees plain Lua values.
+///
+/// `comm.*` is a NEW non-deterministic input/output source, so every variant is
+/// gated like `emu.write`: when the host sets
+/// [`crate::ScriptEngine::set_writes_locked`] (netplay / TAS replay / record /
+/// RA-hardcore) the command is dropped at the source and never queued. The core
+/// synthesis never sees a `CommCmd`.
+///
+/// Only present when the crate's `script-ipc` feature is enabled; with the
+/// feature off the `comm` table is not installed and this type is unused.
+#[cfg(feature = "script-ipc")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommCmd {
+    /// `comm.socketServerSend(data)` — send a string over the host's configured
+    /// outbound TCP socket. Fire-and-forget (no per-call result).
+    SocketSend(Vec<u8>),
+    /// `comm.httpGet(url)` — issue an HTTP GET. The host fulfils it and pushes a
+    /// [`CommResult::Http`] tagged with `id`.
+    HttpGet {
+        /// Correlation id the host echoes back in the [`CommResult`].
+        id: u64,
+        /// Target URL (host-validated; the script never opens a connection).
+        url: String,
+    },
+    /// `comm.httpPost(url, body)` — issue an HTTP POST with `body`.
+    HttpPost {
+        /// Correlation id the host echoes back in the [`CommResult`].
+        id: u64,
+        /// Target URL (host-validated).
+        url: String,
+        /// Request body.
+        body: String,
+    },
+    /// `comm.ws_open(url)` — open a WebSocket. The host owns the connection and
+    /// reports readiness via [`CommResult::WsState`].
+    WsOpen {
+        /// Correlation id the host echoes back.
+        id: u64,
+        /// WebSocket URL.
+        url: String,
+    },
+    /// `comm.ws_send(text)` — send a text frame over the open WebSocket.
+    WsSend(String),
+    /// `comm.ws_close()` — close the open WebSocket.
+    WsClose,
+    /// `comm.mmfWrite(name, data)` — write `data` into the named memory-mapped
+    /// file the host owns.
+    MmfWrite {
+        /// Host-side memory-mapped-file identifier.
+        name: String,
+        /// Bytes to write.
+        data: Vec<u8>,
+    },
+    /// `comm.mmfRead(name, len)` — request up to `len` bytes from the named MMF;
+    /// the host pushes a [`CommResult::Mmf`] tagged with `id`.
+    MmfRead {
+        /// Correlation id the host echoes back.
+        id: u64,
+        /// Host-side memory-mapped-file identifier.
+        name: String,
+        /// Max bytes to read.
+        len: u32,
+    },
+}
+
+/// v1.7.0 "Forge" Workstream E1 — a result the **host** injects back into the
+/// engine in response to an asynchronous [`CommCmd`].
+///
+/// The host performs the I/O off the emulator lock, then calls
+/// [`crate::ScriptEngine::push_comm_result`] to deliver the marshalled value. On
+/// the next pump the engine surfaces it to the script (e.g. via a polled
+/// `comm.receive()` queue). The script only ever sees these plain values, never
+/// a connection handle.
+#[cfg(feature = "script-ipc")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommResult {
+    /// Response to an [`CommCmd::HttpGet`] / [`CommCmd::HttpPost`].
+    Http {
+        /// The correlation id from the request.
+        id: u64,
+        /// HTTP status code (0 = host-side transport error).
+        status: u16,
+        /// Response body (empty on error).
+        body: String,
+    },
+    /// A WebSocket lifecycle / inbound-message event.
+    WsState {
+        /// The correlation id from [`CommCmd::WsOpen`].
+        id: u64,
+        /// `true` once the socket is open, `false` on close/error.
+        open: bool,
+        /// An inbound text frame, if this event carries one.
+        message: Option<String>,
+    },
+    /// Response to a [`CommCmd::MmfRead`].
+    Mmf {
+        /// The correlation id from the request.
+        id: u64,
+        /// The bytes read (empty on error).
+        data: Vec<u8>,
+    },
+}
+
+/// v1.7.0 "Forge" Workstream E2 — a host-automation verb a script issued via the
+/// `client.*` table.
+///
+/// Like [`ControlCmd`], these are **collected, never applied inline** — the host
+/// stays the single owner of window / tool / capture / cheat state and drains
+/// them after [`crate::ScriptEngine::on_frame`]. State-changing verbs
+/// (`RebootCore`, `AddCheat`, `RemoveCheat`) are gated like `emu.write`:
+/// dropped at the source under a locked session. The observational verbs
+/// (`Screenshot`, `SetWindowSize`, `SpeedMode`, `FrameSkip`, `PauseAv` …) are
+/// host-presentation only and never perturb the deterministic core.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClientCmd {
+    /// `client.opentool(name)` — open a named tool window (debugger, cheats,
+    /// tastudio, …). The host maps the name; an unknown name is a no-op.
+    OpenTool(String),
+    /// `client.screenshot()` — capture the current framebuffer to a file.
+    Screenshot,
+    /// `client.screenshottoclipboard()` — capture to the system clipboard.
+    ScreenshotToClipboard,
+    /// `client.setwindowsize(scale)` — set the integer window scale.
+    SetWindowSize(u32),
+    /// `client.speedmode(pct)` — set the emulation speed as a percentage
+    /// (`100` = realtime). Presentation-only; never alters per-frame output.
+    SpeedMode(u32),
+    /// `client.frameskip(n)` — set the render frame-skip count.
+    FrameSkip(u32),
+    /// `client.reboot_core()` — power-cycle the running ROM. Gated like
+    /// `emu.write` (it perturbs the run).
+    RebootCore,
+    /// `client.pause_av()` — pause A/V recording.
+    PauseAv,
+    /// `client.unpause_av()` — resume A/V recording.
+    UnpauseAv,
+    /// `client.addcheat(code)` — add a Game Genie code. Gated like `emu.write`.
+    AddCheat(String),
+    /// `client.removecheat(code)` — remove a Game Genie code. Gated like
+    /// `emu.write`.
+    RemoveCheat(String),
+}

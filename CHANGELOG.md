@@ -17,6 +17,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **v1.7.0 "Forge" Workstream E — host IPC / automation (RustyNES as a
+  platform).** The power-user tier (modelled on BizHawk's `comm` / `client` /
+  `userdata` libraries) that turns RustyNES into a host for external bots / RL
+  agents / randomizers / stream tools — its determinism is a selling point for
+  reproducible RL episodes. All additive; AccuracyCoin holds **100% (139/139)**
+  and the core synthesis never sees any of it. New ADR 0016 records the
+  host-mediated IPC security posture; `docs/scripting.md` documents the three
+  tables.
+  - **E1 — host-mediated `comm.*` IPC** (`crates/rustynes-frontend/src/script_host.rs`,
+    behind a NEW off-by-default `script-ipc` feature; requires `scripting`). TCP
+    (`comm.socketServerSend`), HTTP (`comm.httpGet` / `httpPost`), WebSocket
+    (`comm.ws_open` / `ws_send` / `ws_close`), and a memory-mapped-file bridge
+    (`comm.mmfWrite` / `mmfRead`), with `comm.receive()` polling the host-fulfilled
+    results. The defining contract: **the Lua sandbox never gets a raw socket** —
+    the script only queues a marshalled `CommCmd`, and the host (`ScriptHost`)
+    owns every connection and does the I/O **off the emulator lock** on a worker
+    thread, feeding plain `CommResult` values back. The no-`io`/`os`/`package`/net
+    sandbox guarantee is preserved even with IPC on. IPC is a new
+    non-deterministic source, so every `comm.*` verb is **gated like `emu.write`**
+    (`set_writes_locked` + RA-hardcore): dropped at the source under netplay / TAS
+    replay or record / RA-hardcore, so no `CommCmd` is queued and the host opens
+    no connection. Off by default → the shipped / native-default / `no_std` / wasm
+    builds are byte-identical. Pulls no new dependency into `rustynes-script`
+    (reuses the frontend's existing native-only `ureq` for HTTP; TCP + the
+    in-process MMF bridge use `std`). The full WebSocket client + an OS
+    shared-memory MMF backing are documented maintainer follow-ups.
+  - **E2 — `client.*` host-automation verbs** (`crates/rustynes-script` `client`
+    table + `App::apply_script_client`; ships with the base `scripting` surface,
+    no feature gate). `opentool`, `screenshot` / `screenshottoclipboard`,
+    `setwindowsize`, `speedmode` / `frameskip`, `reboot_core`, `pause_av` /
+    `unpause_av`, `addcheat` / `removecheat`. Collected (never applied inline)
+    and drained by the host; the state-changing verbs (`reboot_core`, cheats) are
+    gated like `emu.write` (dropped under a locked session), the observational
+    verbs are presentation-only and never perturb the deterministic core.
+  - **E3 — `userdata.*` persisted KV store** (`crates/rustynes-script` `userdata`
+    table). A per-script string→string store (`set` / `get` / `containskey` /
+    `remove` / `keys`) the host can snapshot/restore across runs (and into
+    save-states). Script-local host memory, never emulator state, so it is not
+    write-gated. (A SQLite-backed store is a documented later option, not in this
+    pass.)
+
 - **v1.7.0 "Forge" Workstream A — editing-capable debugger tools (the
   read-only → writable leap).** The inspect-only PPU/OAM panels become a
   creator/RE workbench; all writeback is `debug-hooks`-gated and routes through

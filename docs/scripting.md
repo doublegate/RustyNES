@@ -323,6 +323,75 @@ under a locked / replayed session). `startFrame` / `endFrame` / `inputPolled`
 fire from the per-frame pump; `stateLoaded` / `stateSaved` fire from the
 in-memory `emu:load_state` / `save_state` slots.
 
+## Host IPC / automation (v1.7.0 "Forge" Workstream E)
+
+The power-user tier (modelled on BizHawk's `comm` / `client` / `userdata`
+libraries) that turns RustyNES into a platform for external bots / RL agents /
+randomizers / stream tools. The defining property: **a script never gets a raw
+socket or any OS handle** — the host owns every connection and marshals plain
+values across the boundary, so the sandbox guarantee below is preserved.
+
+### `comm` — host-mediated IPC (E1, `script-ipc` only)
+
+Enabled by the off-by-default `script-ipc` feature
+(`cargo build -p rustynes-frontend --features scripting,script-ipc`). The
+**host** (`rustynes-frontend::script_host::ScriptHost`) owns the TCP / HTTP /
+WebSocket / memory-mapped-file connection and does the I/O off the emulator lock
+on a dedicated worker thread; the script only queues a request and polls the
+result. See ADR 0016.
+
+| Call | Effect |
+|---|---|
+| `comm.socketServerSend(data)` | Send `data` over the host's configured outbound TCP socket (`RUSTYNES_COMM_TCP` endpoint). Fire-and-forget. |
+| `comm.httpGet(url)` → `id` | Issue an HTTP GET; returns a correlation `id`. |
+| `comm.httpPost(url, body)` → `id` | Issue an HTTP POST. |
+| `comm.ws_open(url)` → `id` | Open a WebSocket (host-owned). |
+| `comm.ws_send(text)` | Send a text frame. |
+| `comm.ws_close()` | Close the WebSocket. |
+| `comm.mmfWrite(name, data)` | Write `data` to the host's named memory-mapped-file buffer. |
+| `comm.mmfRead(name, len)` → `id` | Read up to `len` bytes from a named MMF. |
+| `comm.receive()` → table or `nil` | Pop the oldest host-fulfilled result. `{kind="http", id, status, body}`, `{kind="ws", id, open, message}`, or `{kind="mmf", id, data}`. |
+
+`comm.*` is a **new non-deterministic source**, so every verb is gated EXACTLY
+like `emu.write`: under netplay / TAS replay or record / RA-hardcore the verb is
+dropped at the source (the async ones return `id = 0`), no `CommCmd` is queued,
+and the host opens no connection. The core synthesis never sees a `CommCmd`.
+
+### `client` — host automation (E2)
+
+Ships with the base `scripting` surface (no feature gate). Collected and applied
+by the host after the frame.
+
+| Call | Effect |
+|---|---|
+| `client.opentool(name)` | Open a debugger panel (`cpu`/`ppu`/`oam`/`apu`/`memory`/`mapper`/`trace`/`watch`/`events`/`script`). |
+| `client.screenshot()` | Capture the framebuffer to a file. |
+| `client.screenshottoclipboard()` | Capture to the system clipboard. |
+| `client.setwindowsize(scale)` | Set the integer window scale. |
+| `client.speedmode(pct)` | Set emulation speed (`100` = realtime). Presentation-only. |
+| `client.frameskip(n)` | Request a render frame-skip (recorded; no skip pipeline today). |
+| `client.reboot_core()` | Power-cycle the running ROM. **Gated like `emu.write`.** |
+| `client.pause_av()` / `client.unpause_av()` | A/V-recorder pause intent (recorder is start/stop only today). |
+| `client.addcheat(code)` / `client.removecheat(code)` | Add/remove a Game Genie code. **Gated like `emu.write`.** |
+
+The observational verbs (screenshot, window size, speed, …) are
+presentation-only and never perturb the deterministic core; the state-changing
+verbs (`reboot_core`, cheats) are dropped under a locked session.
+
+### `userdata` — persisted KV store (E3)
+
+A per-script string→string store the host persists across runs (and may carry
+into save-states). Script-local host memory, never emulator state, so it is not
+write-gated.
+
+| Call | Effect |
+|---|---|
+| `userdata.set(key, value)` | Store a string value. |
+| `userdata.get(key)` → string or `nil` | Read a value. |
+| `userdata.containskey(key)` → bool | Membership test. |
+| `userdata.remove(key)` → bool | Remove a key (returns whether it existed). |
+| `userdata.keys()` → table | All keys, sorted (deterministic order). |
+
 ## Determinism + safety
 
 - **Sandbox.** Only the `table` / `string` / `math` / `coroutine` standard
@@ -350,6 +419,18 @@ in-memory `emu:load_state` / `save_state` slots.
   `emu.addMemoryCallback` write watch are all dropped at the source under a locked
   session (the `tastudio:*` queries, `emu.getScreenBuffer`/`getPixel`/`getState`,
   and `emu.takeScreenshot` are reads / read-only side effects, so they always run).
+  The v1.7.0 host-IPC / automation surface rides the **same** gate: every `comm.*`
+  verb (E1, `script-ipc`) and the state-changing `client.*` verbs (`reboot_core` /
+  `addcheat` / `removecheat`, E2) are dropped at the source under a locked
+  session, so a script can neither open a connection nor perturb the run while
+  netplay / replay / hardcore is active. The `userdata.*` KV store (E3) is
+  script-local host memory and is never gated.
+- **Host-mediated IPC (no raw sockets).** With `script-ipc` on, the `comm`
+  table still does **not** expose a socket / file handle / OS object — it only
+  queues marshalled requests, and the host (`script_host`) owns the connection
+  and does the I/O off the emulator lock. The sandbox stdlib set is unchanged,
+  so a script with IPC enabled still cannot reach `io` / `os` / `package` / the
+  raw network. See ADR 0016.
 - **`emu.setInput` late-latch.** When unlocked, a `setInput(port, buttons)` is
   applied at the *same* deterministic point a real keypress enters — the
   per-frame controller latch, just before the frame runs — so a session that
@@ -373,4 +454,7 @@ in-memory `emu:load_state` / `save_state` slots.
 ## See also
 
 - `docs/adr/0010-lua-scripting-engine.md` — the architecture decision.
+- `docs/adr/0016-host-mediated-script-ipc.md` — the host-mediated IPC security
+  posture (the host owns the socket; the sandbox never does).
 - `crates/rustynes-script/` — the engine crate.
+- `crates/rustynes-frontend/src/script_host.rs` — the host-mediated IPC bridge.

@@ -559,6 +559,13 @@ pub struct App {
     /// egui pass and refreshed on each pump.
     #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
     script_draws: Vec<rustynes_script::DrawCmd>,
+    /// v1.7.0 "Forge" Workstream E1 — the host-mediated IPC bridge that OWNS the
+    /// `comm.*` TCP / HTTP / WebSocket / memory-mapped-file connections. `None`
+    /// until a script is loaded. The Lua sandbox never sees a socket: the engine
+    /// queues marshalled `CommCmd`s (gated like `emu.write`), this host does the
+    /// I/O off the emu lock, and feeds `CommResult`s back. See ADR 0016.
+    #[cfg(all(feature = "script-ipc", not(target_arch = "wasm32")))]
+    script_host: Option<crate::script_host::ScriptHost>,
     /// v1.2.0 Workstream F4 — the EXPERIMENTAL wasm Lua engine (piccolo, behind
     /// the `script-wasm` feature). Same shape as the native `script` field but
     /// over the `rustynes_script_wasm` (piccolo) backend; loaded from the
@@ -798,6 +805,8 @@ impl App {
             script: None,
             #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
             script_draws: Vec::new(),
+            #[cfg(all(feature = "script-ipc", not(target_arch = "wasm32")))]
+            script_host: None,
             #[cfg(all(feature = "script-wasm", target_arch = "wasm32"))]
             script_wasm: None,
             #[cfg(all(feature = "script-wasm", target_arch = "wasm32"))]
@@ -897,6 +906,8 @@ impl App {
             script: None,
             #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
             script_draws: Vec::new(),
+            #[cfg(all(feature = "script-ipc", not(target_arch = "wasm32")))]
+            script_host: None,
             #[cfg(all(feature = "script-wasm", target_arch = "wasm32"))]
             script_wasm: None,
             #[cfg(all(feature = "script-wasm", target_arch = "wasm32"))]
@@ -3984,6 +3995,18 @@ impl App {
         // control application below reuses the EXACT same condition as
         // `emu.write` (T-110-E2). Every path that reaches the later read has run
         // through the block (the early `return` exits the whole function).
+        // v1.7.0 "Forge" E1 — feed back any host-fulfilled IPC results BEFORE
+        // the pump, so a script polling `comm.receive()` sees this frame's
+        // replies. The host (`script_host`) did the I/O off the emu lock; here
+        // we only move already-marshalled plain values into the engine. Done
+        // before the lock window so it never extends lock hold time.
+        #[cfg(feature = "script-ipc")]
+        if let Some(host) = self.script_host.as_ref() {
+            for result in host.drain_results() {
+                engine.push_comm_result(result);
+            }
+        }
+
         let writes_locked;
         {
             let mut guard = self.emu.lock();
@@ -3994,7 +4017,8 @@ impl App {
             let Some(nes) = guard.nes.as_mut() else {
                 return;
             };
-            // Determinism gate (same policy as the raw-RAM cheat path).
+            // Determinism gate (same policy as the raw-RAM cheat path). It also
+            // gates the new `comm.*` IPC + the `client.*` mutators identically.
             engine.set_writes_locked(writes_locked);
             // Enable the per-frame exec / access logs the registered callbacks
             // need. The exec log is independent of the Trace Logger panel's
@@ -4014,6 +4038,21 @@ impl App {
         let log = engine.drain_log();
         let controls = engine.drain_controls();
         let draws = engine.drain_draws();
+        // v1.7.0 "Forge" E2 — the `client.*` automation verbs this frame.
+        let clients = engine.drain_clients();
+        // v1.7.0 "Forge" E1 — the host-mediated `comm.*` IPC requests. The
+        // engine already dropped them at the source if `writes_locked`, so this
+        // is empty under a locked session; forward the rest to the host bridge,
+        // which owns the connection and does the I/O off this lock.
+        #[cfg(feature = "script-ipc")]
+        {
+            let comm = engine.drain_comm();
+            if let Some(host) = self.script_host.as_ref() {
+                for cmd in comm {
+                    host.submit(cmd);
+                }
+            }
+        }
 
         // Feed the console + stash the overlay draws (engine borrow ended).
         if let Some(dbg) = self.debugger.as_mut() {
@@ -4040,6 +4079,13 @@ impl App {
         // `writes_locked` is the same gate `emu.write` uses; SetInput honors it.
         for cmd in &controls {
             self.apply_script_control(cmd, writes_locked);
+        }
+
+        // v1.7.0 "Forge" E2 — apply the `client.*` automation verbs. The
+        // state-changing verbs (reboot / cheats) were already dropped at the
+        // source when locked; this re-checks `writes_locked` as defence in depth.
+        for cmd in &clients {
+            self.apply_script_client(cmd, writes_locked);
         }
     }
 
@@ -4483,6 +4529,13 @@ impl App {
                     }
                 }
                 self.script = Some(engine);
+                // v1.7.0 "Forge" E1 — spawn the host-mediated IPC bridge that
+                // owns the `comm.*` connections (off the emu lock). The Lua
+                // sandbox never gets a socket; the host marshals plain values.
+                #[cfg(feature = "script-ipc")]
+                {
+                    self.script_host = Some(crate::script_host::ScriptHost::new());
+                }
                 if let Some(dbg) = self.debugger.as_mut() {
                     let p = dbg.script_panel();
                     p.set_loaded(path.display().to_string(), cbs);
@@ -4625,6 +4678,90 @@ impl App {
             // the current frame to a PNG (the host owns the encoder). A
             // read-only side effect, so it is NOT write-gated.
             ControlCmd::Screenshot => self.take_screenshot(),
+        }
+    }
+
+    /// v1.7.0 "Forge" Workstream E2 — apply one drained `client.*` automation
+    /// verb. Mirrors [`Self::apply_script_control`]: the host stays the single
+    /// owner of window / tool / capture / cheat state. The observational verbs
+    /// (open tool, screenshot, window size, speed, frameskip, A/V pause) are
+    /// presentation-only and never perturb the deterministic core; the
+    /// state-changing verbs (`reboot_core`, cheats) re-check `writes_locked` as
+    /// defence in depth — the engine already dropped them at the source when
+    /// locked (so a netplay / TAS / RA-hardcore session is provably unperturbed).
+    #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
+    fn apply_script_client(&mut self, cmd: &rustynes_script::ClientCmd, writes_locked: bool) {
+        use rustynes_script::ClientCmd;
+        match cmd {
+            ClientCmd::OpenTool(name) => {
+                let panel = match name.to_ascii_lowercase().as_str() {
+                    "cpu" => Some(crate::debugger::ChipPanel::Cpu),
+                    "ppu" => Some(crate::debugger::ChipPanel::Ppu),
+                    "oam" => Some(crate::debugger::ChipPanel::Oam),
+                    "apu" => Some(crate::debugger::ChipPanel::Apu),
+                    "memory" | "hex" => Some(crate::debugger::ChipPanel::Memory),
+                    "mapper" => Some(crate::debugger::ChipPanel::Mapper),
+                    "trace" => Some(crate::debugger::ChipPanel::Trace),
+                    "watch" => Some(crate::debugger::ChipPanel::Watch),
+                    "events" => Some(crate::debugger::ChipPanel::Events),
+                    "script" | "lua" => Some(crate::debugger::ChipPanel::Script),
+                    _ => None,
+                };
+                if let (Some(panel), Some(dbg)) = (panel, self.debugger.as_mut()) {
+                    dbg.open_chip_panel(panel);
+                }
+            }
+            ClientCmd::Screenshot => self.take_screenshot(),
+            ClientCmd::ScreenshotToClipboard => self.screenshot_to_clipboard(),
+            ClientCmd::SetWindowSize(scale) => self.set_window_scale(*scale),
+            ClientCmd::SpeedMode(pct) => {
+                // `pct` is a percentage (100 = realtime); `set_speed` clamps.
+                #[allow(clippy::cast_precision_loss)]
+                self.set_speed(*pct as f32 / 100.0);
+            }
+            ClientCmd::FrameSkip(n) => {
+                // RustyNES renders every frame (no frame-skip pipeline today);
+                // record the request rather than silently dropping it.
+                if let Some(dbg) = self.debugger.as_mut() {
+                    dbg.script_panel()
+                        .push_log([format!("[client.frameskip({n}) — not yet supported]")]);
+                }
+            }
+            ClientCmd::PauseAv | ClientCmd::UnpauseAv => {
+                // The A/V recorder is start/stop only (no pause); surface the
+                // intent without faking a capability.
+                if let Some(dbg) = self.debugger.as_mut() {
+                    dbg.script_panel()
+                        .push_log(["[client A/V pause — recorder is start/stop only]".to_string()]);
+                }
+            }
+            ClientCmd::RebootCore => {
+                if !writes_locked {
+                    self.do_power_cycle();
+                }
+            }
+            ClientCmd::AddCheat(code) => {
+                if !writes_locked {
+                    let mut guard = self.emu.lock();
+                    if let Some(nes) = guard.nes.as_mut()
+                        && let Err(e) = nes.add_genie_code(code)
+                    {
+                        drop(guard);
+                        if let Some(dbg) = self.debugger.as_mut() {
+                            dbg.script_panel()
+                                .push_log([format!("[client.addcheat {code} skipped: {e}]")]);
+                        }
+                    }
+                }
+            }
+            ClientCmd::RemoveCheat(code) => {
+                if !writes_locked {
+                    let mut guard = self.emu.lock();
+                    if let Some(nes) = guard.nes.as_mut() {
+                        nes.remove_genie_code(code);
+                    }
+                }
+            }
         }
     }
 

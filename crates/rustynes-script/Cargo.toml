@@ -27,6 +27,18 @@ default = ["mlua-backend"]
 mlua-backend = ["dep:mlua"]
 script-wasm = ["dep:piccolo"]
 
+# v1.7.0 "Forge" Workstream E1 — host-mediated `comm.*` IPC (TCP / HTTP /
+# WebSocket / memory-mapped-file). OFF by default. This feature only adds the
+# `comm` Lua table + the `CommCmd` / `CommResult` host queues; it pulls NO
+# network dependency into this crate, because the SCRIPT NEVER GETS A RAW
+# SOCKET — the host (the frontend) owns every connection and marshals plain
+# values across the boundary, preserving the sandbox's no-`io`/`os`/net
+# guarantee. `comm.*` is a new non-deterministic source, so every verb is gated
+# like `emu.write` and the core synthesis never sees it. The `client.*`
+# automation verbs (E2) + the `userdata.*` KV store (E3) are UNCONDITIONAL (no
+# net, no new non-determinism) and ship with the base `scripting` surface.
+script-ipc = []
+
 [dependencies]
 # `debug-hooks` exposes the trace + bus-access logs the onExec / onRead /
 # onWrite callbacks replay. The hooks are byte-identical no-ops when unarmed

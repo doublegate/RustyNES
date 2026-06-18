@@ -59,9 +59,11 @@ mod types;
 
 pub use backend::VmBackend;
 pub use types::{
-    ControlCmd, DEFAULT_INSTRUCTION_BUDGET, DrawCmd, ScriptError, TasBranchInfo, TasCellDecor,
-    TasCmd, TasSnapshot,
+    ClientCmd, ControlCmd, DEFAULT_INSTRUCTION_BUDGET, DrawCmd, ScriptError, TasBranchInfo,
+    TasCellDecor, TasCmd, TasSnapshot,
 };
+#[cfg(feature = "script-ipc")]
+pub use types::{CommCmd, CommResult};
 
 use rustynes_core::Nes;
 
@@ -267,6 +269,49 @@ impl ScriptEngine {
     /// backend.
     pub fn set_script_data_folder(&self, path: Option<String>) {
         self.inner.set_script_data_folder(path);
+    }
+
+    /// v1.7.0 "Forge" Workstream E2 — drain the `client.*` automation verbs a
+    /// script requested this frame. The host applies (and gates the mutators
+    /// among) them after [`Self::on_frame`], exactly like [`Self::drain_controls`].
+    #[must_use]
+    pub fn drain_clients(&self) -> Vec<ClientCmd> {
+        self.inner.drain_clients()
+    }
+
+    /// v1.7.0 "Forge" Workstream E1 — drain the host-mediated `comm.*` IPC
+    /// requests a script issued this frame. The host (which owns every
+    /// connection) performs the I/O off the emulator lock and feeds results back
+    /// via [`Self::push_comm_result`]. Empty unless the `script-ipc` feature is
+    /// on AND the host has not locked writes.
+    #[cfg(feature = "script-ipc")]
+    #[must_use]
+    pub fn drain_comm(&self) -> Vec<CommCmd> {
+        self.inner.drain_comm()
+    }
+
+    /// v1.7.0 "Forge" Workstream E1 — deliver a host-fulfilled [`CommResult`]
+    /// back to the engine. Surfaced to the script on the next pump via the
+    /// polled `comm.receive()` queue. The host calls this off the emulator lock.
+    #[cfg(feature = "script-ipc")]
+    pub fn push_comm_result(&self, result: CommResult) {
+        self.inner.push_comm_result(result);
+    }
+
+    /// v1.7.0 "Forge" Workstream E3 — snapshot the per-script `userdata.*` KV
+    /// store as `(key, value)` string pairs (sorted by key for determinism). The
+    /// host persists this into save-states / on-disk so the store survives across
+    /// runs. The KV store is script-local host memory, never emulator state, so
+    /// snapshotting it never perturbs the deterministic core.
+    #[must_use]
+    pub fn userdata_snapshot(&self) -> Vec<(String, String)> {
+        self.inner.userdata_snapshot()
+    }
+
+    /// v1.7.0 "Forge" Workstream E3 — replace the `userdata.*` KV store from a
+    /// snapshot (the host restores it from a save-state / disk on script load).
+    pub fn userdata_restore(&self, pairs: &[(String, String)]) {
+        self.inner.userdata_restore(pairs);
     }
 }
 
@@ -1626,5 +1671,205 @@ mod tests {
             eng.on_frame(&mut nes).is_err(),
             "frameadvance outside a coroutine must surface a script error"
         );
+    }
+
+    // ====================================================================
+    // v1.7.0 "Forge" Workstream E — host IPC / automation.
+    // ====================================================================
+
+    /// E2 — observational `client.*` verbs queue a `ClientCmd` the host drains;
+    /// they are NOT write-gated (presentation-only, never perturb the core).
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn client_observational_verbs_queue() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            r"
+            emu.onFrame(function()
+                client.screenshot()
+                client.setwindowsize(3)
+                client.speedmode(200)
+            end)
+            ",
+        )
+        .expect("load");
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+        let cmds = eng.drain_clients();
+        assert_eq!(
+            cmds,
+            vec![
+                ClientCmd::Screenshot,
+                ClientCmd::SetWindowSize(3),
+                ClientCmd::SpeedMode(200),
+            ]
+        );
+    }
+
+    /// E2 — the state-changing `client.*` verbs (`reboot_core` / `addcheat` /
+    /// `removecheat`) are gated EXACTLY like `emu.write`: dropped at the source
+    /// when the host has locked writes, while the observational verbs still run.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn client_mutators_gated_when_locked() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.set_writes_locked(true);
+        eng.load(
+            r"
+            emu.onFrame(function()
+                client.reboot_core()
+                client.addcheat('SXIOPO')
+                client.removecheat('SXIOPO')
+                client.screenshot()
+            end)
+            ",
+        )
+        .expect("load");
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+        // Only the observational `screenshot` survives the lock.
+        assert_eq!(
+            eng.drain_clients(),
+            vec![ClientCmd::Screenshot],
+            "client mutators must be dropped when writes are locked"
+        );
+    }
+
+    /// E3 — the `userdata.*` KV store round-trips through Lua, and the host can
+    /// snapshot/restore it (persistence across runs / into save-states).
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn userdata_kv_round_trips_and_snapshots() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            r"
+            emu.onFrame(function()
+                userdata.set('seed', '42')
+                userdata.set('best', 'world1-1')
+                emu.log('has=' .. tostring(userdata.containskey('seed')))
+                emu.log('seed=' .. userdata.get('seed'))
+                userdata.remove('best')
+                emu.log('best=' .. tostring(userdata.get('best')))
+            end)
+            ",
+        )
+        .expect("load");
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+        assert_eq!(eng.drain_log(), vec!["has=true", "seed=42", "best=nil"]);
+        // The host snapshot mirrors the live store (sorted, `best` removed).
+        assert_eq!(
+            eng.userdata_snapshot(),
+            vec![("seed".to_string(), "42".to_string())]
+        );
+
+        // A fresh engine restored from a snapshot sees the persisted values.
+        let mut eng2 = ScriptEngine::new().expect("engine");
+        eng2.userdata_restore(&[("seed".to_string(), "99".to_string())]);
+        eng2.load("emu.onFrame(function() emu.log('r=' .. userdata.get('seed')) end)")
+            .expect("load");
+        nes.run_frame();
+        eng2.on_frame(&mut nes).expect("on_frame");
+        assert_eq!(eng2.drain_log(), vec!["r=99"]);
+    }
+
+    /// E1 (`script-ipc`) — a `comm.*` request queues a host-owned `CommCmd`, and
+    /// the host's fulfilled `CommResult` is surfaced back via `comm.receive()`.
+    /// The script only ever sees marshalled plain values — never a socket.
+    #[cfg(all(feature = "script-ipc", not(feature = "script-wasm")))]
+    #[test]
+    fn comm_request_queues_and_result_polls_back() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            r"
+            req = nil
+            emu.onFrame(function()
+                if req == nil then
+                    req = comm.httpGet('http://localhost/state')
+                else
+                    local r = comm.receive()
+                    if r ~= nil then emu.log('got ' .. r.status .. ' ' .. r.body) end
+                end
+            end)
+            ",
+        )
+        .expect("load");
+        // Frame 1: the script issues the request; the host owns the connection.
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+        let out = eng.drain_comm();
+        let id = match out.as_slice() {
+            [CommCmd::HttpGet { id, url }] => {
+                assert_eq!(url, "http://localhost/state");
+                *id
+            }
+            other => panic!("expected one HttpGet, got {other:?}"),
+        };
+        // The host fulfils it off the emu lock and injects the result.
+        eng.push_comm_result(CommResult::Http {
+            id,
+            status: 200,
+            body: "ok".to_string(),
+        });
+        // Frame 2: the script polls the marshalled result.
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+        assert_eq!(eng.drain_log(), vec!["got 200 ok"]);
+    }
+
+    /// E1 — `comm.*` is gated EXACTLY like `emu.write`: under a locked session
+    /// (netplay / TAS replay / RA-hardcore) every IPC verb is a no-op, so no
+    /// `CommCmd` is queued and the host never opens a connection.
+    #[cfg(all(feature = "script-ipc", not(feature = "script-wasm")))]
+    #[test]
+    fn comm_is_a_no_op_when_locked() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.set_writes_locked(true);
+        eng.load(
+            r"
+            emu.onFrame(function()
+                comm.socketServerSend('x')
+                comm.httpGet('http://localhost/')
+                comm.ws_open('ws://localhost/')
+                comm.ws_send('hi')
+                comm.mmfWrite('m', 'data')
+                comm.mmfRead('m', 4)
+            end)
+            ",
+        )
+        .expect("load");
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+        assert!(
+            eng.drain_comm().is_empty(),
+            "comm.* must queue nothing when writes are locked"
+        );
+    }
+
+    /// E1 — the host-mediated design preserves the sandbox: even with the `comm`
+    /// table present, the script still cannot reach any RAW networking / OS
+    /// surface (`io` / `os` / `package` / `require` / loaders stay stripped). The
+    /// only IPC path is the host-owned `comm.*` marshalling.
+    #[cfg(all(feature = "script-ipc", not(feature = "script-wasm")))]
+    #[test]
+    fn comm_does_not_open_the_raw_net_sandbox() {
+        let mut eng = ScriptEngine::new().expect("engine");
+        for probe in [
+            "return io.open('/etc/passwd')",
+            "return os.execute('curl http://x')",
+            "return require('socket')",
+            "return package.loadlib('libc.so', 'connect')",
+            "return load('return io')",
+        ] {
+            assert!(
+                eng.load(probe).is_err(),
+                "comm must not open a raw-net escape: {probe}"
+            );
+        }
     }
 }

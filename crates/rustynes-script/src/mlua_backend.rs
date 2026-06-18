@@ -19,9 +19,11 @@ use rustynes_core::Nes;
 use crate::backend::VmBackend;
 use crate::tastudio::{self, TasState};
 use crate::types::{
-    ControlCmd, DEFAULT_INSTRUCTION_BUDGET, DrawCmd, MAX_QUEUED_CMDS, ScriptError, TasCellDecor,
-    TasCmd, TasSnapshot,
+    ClientCmd, ControlCmd, DEFAULT_INSTRUCTION_BUDGET, DrawCmd, MAX_QUEUED_CMDS, ScriptError,
+    TasCellDecor, TasCmd, TasSnapshot,
 };
+#[cfg(feature = "script-ipc")]
+use crate::types::{CommCmd, CommResult};
 
 /// A stack-allocated bitset over the 16-bit CPU address space (8 KiB, no heap),
 /// used to gate the hot per-frame replay loops: membership is an O(1) bit test
@@ -244,6 +246,30 @@ pub struct MluaBackend {
     /// (`emu.getScriptDataFolder()`), pushed by the host (the clean
     /// persist-without-arbitrary-FS path). `None` until the host sets it.
     script_data_folder: Rc<RefCell<Option<String>>>,
+    /// v1.7.0 "Forge" E2 — `client.*` host-automation verbs requested this frame
+    /// (drained by the host). Collected, never applied inline — the host stays
+    /// the single owner of window / tool / capture / cheat state and gates the
+    /// mutators among them.
+    clients: Rc<RefCell<Vec<ClientCmd>>>,
+    /// v1.7.0 "Forge" E3 — the per-script `userdata.*` KV store (string→string).
+    /// Script-local host memory, never emulator state; the host persists it
+    /// across runs via [`MluaBackend::userdata_snapshot`] /
+    /// [`MluaBackend::userdata_restore`].
+    userdata: Rc<RefCell<HashMap<String, String>>>,
+    /// v1.7.0 "Forge" E1 — host-mediated `comm.*` IPC requests issued this frame
+    /// (drained by the host, which owns every connection). Gated like
+    /// `emu.write`: a locked session never queues one. Only present (and only
+    /// installed) under the `script-ipc` feature.
+    #[cfg(feature = "script-ipc")]
+    comm_out: Rc<RefCell<Vec<CommCmd>>>,
+    /// v1.7.0 "Forge" E1 — host-fulfilled `CommResult`s the script polls via
+    /// `comm.receive()`. The host pushes here off the emulator lock.
+    #[cfg(feature = "script-ipc")]
+    comm_in: Rc<RefCell<std::collections::VecDeque<CommResult>>>,
+    /// v1.7.0 "Forge" E1 — monotonic correlation-id source for async `comm.*`
+    /// requests (HTTP / WS / MMF-read), so a result is matched to its request.
+    #[cfg(feature = "script-ipc")]
+    comm_next_id: Rc<Cell<u64>>,
 }
 
 impl MluaBackend {
@@ -676,6 +702,366 @@ impl MluaBackend {
         Ok(())
     }
 
+    /// v1.7.0 "Forge" Workstream E — install the platform tables that turn
+    /// `RustyNES` into a host for external bots / RL agents / randomizers:
+    ///
+    /// - **`client.*` (E2)** — host-automation verbs (open tools, screenshot,
+    ///   window size, speed/frameskip, reboot, A/V pause, cheats). Collected as
+    ///   [`ClientCmd`]s and drained by the host; the state-changing verbs
+    ///   (`reboot_core`, `addcheat`, `removecheat`) are gated like `emu.write`.
+    /// - **`userdata.*` (E3)** — a per-script string→string KV store the host
+    ///   persists across runs. Pure host memory, never emulator state.
+    /// - **`comm.*` (E1, `script-ipc` only)** — host-mediated TCP / HTTP / WS /
+    ///   memory-mapped-file IPC. The script NEVER gets a raw socket: it queues a
+    ///   [`CommCmd`] and the host owns the connection, marshalling plain values
+    ///   back via [`CommResult`]. A new non-deterministic source, so every verb
+    ///   is gated like `emu.write`.
+    ///
+    /// Kept in one self-contained method (separate from the v1.0–v1.6 `emu` /
+    /// `joypad` / `sym` prelude) so the workstream merges cleanly.
+    fn install_platform_tables(&self) -> Result<(), ScriptError> {
+        self.install_client_table()?;
+        self.install_userdata_table()?;
+        #[cfg(feature = "script-ipc")]
+        self.install_comm_table()?;
+        Ok(())
+    }
+
+    /// E2 — the `client.*` host-automation table.
+    fn install_client_table(&self) -> Result<(), ScriptError> {
+        let client = self.lua.create_table()?;
+
+        // Observational / presentation-only verbs (never perturb the core), so
+        // they are NOT write-gated — like `emu.pause` / `emu.saveState`.
+        let q = Rc::clone(&self.clients);
+        client.set(
+            "opentool",
+            self.lua.create_function(move |_, name: String| {
+                push_capped(&q, ClientCmd::OpenTool(name));
+                Ok(())
+            })?,
+        )?;
+        let q = Rc::clone(&self.clients);
+        client.set(
+            "screenshot",
+            self.lua.create_function(move |_, ()| {
+                push_capped(&q, ClientCmd::Screenshot);
+                Ok(())
+            })?,
+        )?;
+        let q = Rc::clone(&self.clients);
+        client.set(
+            "screenshottoclipboard",
+            self.lua.create_function(move |_, ()| {
+                push_capped(&q, ClientCmd::ScreenshotToClipboard);
+                Ok(())
+            })?,
+        )?;
+        let q = Rc::clone(&self.clients);
+        client.set(
+            "setwindowsize",
+            self.lua.create_function(move |_, scale: u32| {
+                push_capped(&q, ClientCmd::SetWindowSize(scale));
+                Ok(())
+            })?,
+        )?;
+        let q = Rc::clone(&self.clients);
+        client.set(
+            "speedmode",
+            self.lua.create_function(move |_, pct: u32| {
+                push_capped(&q, ClientCmd::SpeedMode(pct));
+                Ok(())
+            })?,
+        )?;
+        let q = Rc::clone(&self.clients);
+        client.set(
+            "frameskip",
+            self.lua.create_function(move |_, n: u32| {
+                push_capped(&q, ClientCmd::FrameSkip(n));
+                Ok(())
+            })?,
+        )?;
+        let q = Rc::clone(&self.clients);
+        client.set(
+            "pause_av",
+            self.lua.create_function(move |_, ()| {
+                push_capped(&q, ClientCmd::PauseAv);
+                Ok(())
+            })?,
+        )?;
+        let q = Rc::clone(&self.clients);
+        client.set(
+            "unpause_av",
+            self.lua.create_function(move |_, ()| {
+                push_capped(&q, ClientCmd::UnpauseAv);
+                Ok(())
+            })?,
+        )?;
+
+        // State-changing verbs — GATED like `emu.write`: dropped at the source
+        // under a locked session (netplay / TAS replay / record / RA-hardcore),
+        // so a script can never perturb a deterministic / replayed run.
+        let q = Rc::clone(&self.clients);
+        let locked = Rc::clone(&self.writes_locked);
+        client.set(
+            "reboot_core",
+            self.lua.create_function(move |_, ()| {
+                if !locked.get() {
+                    push_capped(&q, ClientCmd::RebootCore);
+                }
+                Ok(())
+            })?,
+        )?;
+        let q = Rc::clone(&self.clients);
+        let locked = Rc::clone(&self.writes_locked);
+        client.set(
+            "addcheat",
+            self.lua.create_function(move |_, code: String| {
+                if !locked.get() {
+                    push_capped(&q, ClientCmd::AddCheat(code));
+                }
+                Ok(())
+            })?,
+        )?;
+        let q = Rc::clone(&self.clients);
+        let locked = Rc::clone(&self.writes_locked);
+        client.set(
+            "removecheat",
+            self.lua.create_function(move |_, code: String| {
+                if !locked.get() {
+                    push_capped(&q, ClientCmd::RemoveCheat(code));
+                }
+                Ok(())
+            })?,
+        )?;
+
+        self.lua.globals().set("client", client)?;
+        Ok(())
+    }
+
+    /// E3 — the `userdata.*` per-script KV store (`set` / `get` / `containskey`
+    /// / `remove` / `keys`). String→string; lives in host memory and is
+    /// persisted across runs by the host. Never touches emulator state, so it is
+    /// not write-gated.
+    fn install_userdata_table(&self) -> Result<(), ScriptError> {
+        let userdata = self.lua.create_table()?;
+
+        let kv = Rc::clone(&self.userdata);
+        userdata.set(
+            "set",
+            self.lua
+                .create_function(move |_, (key, value): (String, String)| {
+                    kv.borrow_mut().insert(key, value);
+                    Ok(())
+                })?,
+        )?;
+        let kv = Rc::clone(&self.userdata);
+        userdata.set(
+            "get",
+            self.lua
+                .create_function(move |_, key: String| Ok(kv.borrow().get(&key).cloned()))?,
+        )?;
+        let kv = Rc::clone(&self.userdata);
+        userdata.set(
+            "containskey",
+            self.lua
+                .create_function(move |_, key: String| Ok(kv.borrow().contains_key(&key)))?,
+        )?;
+        let kv = Rc::clone(&self.userdata);
+        userdata.set(
+            "remove",
+            self.lua.create_function(move |_, key: String| {
+                Ok(kv.borrow_mut().remove(&key).is_some())
+            })?,
+        )?;
+        let kv = Rc::clone(&self.userdata);
+        userdata.set(
+            "keys",
+            self.lua.create_function(move |lua, ()| {
+                // Sorted for a stable, deterministic iteration order.
+                let mut keys: Vec<String> = kv.borrow().keys().cloned().collect();
+                keys.sort_unstable();
+                lua.create_sequence_from(keys)
+            })?,
+        )?;
+
+        self.lua.globals().set("userdata", userdata)?;
+        Ok(())
+    }
+
+    /// E1 — the host-mediated `comm.*` IPC table (`script-ipc` only).
+    ///
+    /// Every entry queues a [`CommCmd`] (the host owns the connection and does
+    /// the I/O) or polls the host-injected [`CommResult`] inbox via
+    /// `comm.receive()`. The script never sees a socket handle, so the sandbox's
+    /// no-`io`/`os`/net guarantee is preserved. All verbs are GATED like
+    /// `emu.write` (dropped under a locked session) because IPC is a new
+    /// non-deterministic source.
+    #[cfg(feature = "script-ipc")]
+    #[allow(clippy::too_many_lines)] // one create_function per comm.* entry.
+    fn install_comm_table(&self) -> Result<(), ScriptError> {
+        let comm = self.lua.create_table()?;
+
+        // A fresh async correlation id (host echoes it back in the CommResult).
+        let next_id = Rc::clone(&self.comm_next_id);
+        let alloc_id = move || -> u64 {
+            let id = next_id.get();
+            next_id.set(id.wrapping_add(1));
+            id
+        };
+
+        let out = Rc::clone(&self.comm_out);
+        let locked = Rc::clone(&self.writes_locked);
+        comm.set(
+            "socketServerSend",
+            self.lua.create_function(move |_, data: mlua::String| {
+                if !locked.get() {
+                    push_capped(&out, CommCmd::SocketSend(data.as_bytes().to_vec()));
+                }
+                Ok(())
+            })?,
+        )?;
+        let out = Rc::clone(&self.comm_out);
+        let locked = Rc::clone(&self.writes_locked);
+        let mk = alloc_id.clone();
+        comm.set(
+            "httpGet",
+            self.lua.create_function(move |_, url: String| {
+                if locked.get() {
+                    return Ok(0u64);
+                }
+                let id = mk();
+                push_capped(&out, CommCmd::HttpGet { id, url });
+                Ok(id)
+            })?,
+        )?;
+        let out = Rc::clone(&self.comm_out);
+        let locked = Rc::clone(&self.writes_locked);
+        let mk = alloc_id.clone();
+        comm.set(
+            "httpPost",
+            self.lua
+                .create_function(move |_, (url, body): (String, String)| {
+                    if locked.get() {
+                        return Ok(0u64);
+                    }
+                    let id = mk();
+                    push_capped(&out, CommCmd::HttpPost { id, url, body });
+                    Ok(id)
+                })?,
+        )?;
+        let out = Rc::clone(&self.comm_out);
+        let locked = Rc::clone(&self.writes_locked);
+        let mk = alloc_id.clone();
+        comm.set(
+            "ws_open",
+            self.lua.create_function(move |_, url: String| {
+                if locked.get() {
+                    return Ok(0u64);
+                }
+                let id = mk();
+                push_capped(&out, CommCmd::WsOpen { id, url });
+                Ok(id)
+            })?,
+        )?;
+        let out = Rc::clone(&self.comm_out);
+        let locked = Rc::clone(&self.writes_locked);
+        comm.set(
+            "ws_send",
+            self.lua.create_function(move |_, text: String| {
+                if !locked.get() {
+                    push_capped(&out, CommCmd::WsSend(text));
+                }
+                Ok(())
+            })?,
+        )?;
+        let out = Rc::clone(&self.comm_out);
+        let locked = Rc::clone(&self.writes_locked);
+        comm.set(
+            "ws_close",
+            self.lua.create_function(move |_, ()| {
+                if !locked.get() {
+                    push_capped(&out, CommCmd::WsClose);
+                }
+                Ok(())
+            })?,
+        )?;
+        let out = Rc::clone(&self.comm_out);
+        let locked = Rc::clone(&self.writes_locked);
+        comm.set(
+            "mmfWrite",
+            self.lua
+                .create_function(move |_, (name, data): (String, mlua::String)| {
+                    if !locked.get() {
+                        push_capped(
+                            &out,
+                            CommCmd::MmfWrite {
+                                name,
+                                data: data.as_bytes().to_vec(),
+                            },
+                        );
+                    }
+                    Ok(())
+                })?,
+        )?;
+        let out = Rc::clone(&self.comm_out);
+        let locked = Rc::clone(&self.writes_locked);
+        let mk = alloc_id;
+        comm.set(
+            "mmfRead",
+            self.lua
+                .create_function(move |_, (name, len): (String, u32)| {
+                    if locked.get() {
+                        return Ok(0u64);
+                    }
+                    let id = mk();
+                    push_capped(&out, CommCmd::MmfRead { id, name, len });
+                    Ok(id)
+                })?,
+        )?;
+
+        // `comm.receive()` — pop the oldest host-injected result (or nil). The
+        // host fulfils the async requests off the emulator lock and pushes a
+        // `CommResult`; the script polls it here. Returns a small Lua table the
+        // script destructures (`{kind=..., id=..., status=..., body=..., ...}`).
+        let inbox = Rc::clone(&self.comm_in);
+        comm.set(
+            "receive",
+            self.lua.create_function(move |lua, ()| {
+                let next = inbox.borrow_mut().pop_front();
+                match next {
+                    None => Ok(mlua::Value::Nil),
+                    Some(result) => {
+                        let t = lua.create_table()?;
+                        match result {
+                            CommResult::Http { id, status, body } => {
+                                t.set("kind", "http")?;
+                                t.set("id", id)?;
+                                t.set("status", status)?;
+                                t.set("body", body)?;
+                            }
+                            CommResult::WsState { id, open, message } => {
+                                t.set("kind", "ws")?;
+                                t.set("id", id)?;
+                                t.set("open", open)?;
+                                t.set("message", message)?;
+                            }
+                            CommResult::Mmf { id, data } => {
+                                t.set("kind", "mmf")?;
+                                t.set("id", id)?;
+                                t.set("data", lua.create_string(&data)?)?;
+                            }
+                        }
+                        Ok(mlua::Value::Table(t))
+                    }
+                }
+            })?,
+        )?;
+
+        self.lua.globals().set("comm", comm)?;
+        Ok(())
+    }
+
     /// Install the per-frame instruction-budget hook (and reset the counter).
     fn arm_hook(&self) -> Result<(), ScriptError> {
         self.instr_count.set(0);
@@ -763,8 +1149,17 @@ impl VmBackend for MluaBackend {
             event_state_saved: Rc::new(RefCell::new(Vec::new())),
             modify_write_cbs: Rc::new(RefCell::new(HashMap::new())),
             script_data_folder: Rc::new(RefCell::new(None)),
+            clients: Rc::new(RefCell::new(Vec::new())),
+            userdata: Rc::new(RefCell::new(HashMap::new())),
+            #[cfg(feature = "script-ipc")]
+            comm_out: Rc::new(RefCell::new(Vec::new())),
+            #[cfg(feature = "script-ipc")]
+            comm_in: Rc::new(RefCell::new(std::collections::VecDeque::new())),
+            #[cfg(feature = "script-ipc")]
+            comm_next_id: Rc::new(Cell::new(1)),
         };
         engine.install_prelude()?;
+        engine.install_platform_tables()?;
         Ok(engine)
     }
 
@@ -1474,6 +1869,48 @@ impl VmBackend for MluaBackend {
 
     fn set_script_data_folder(&self, path: Option<String>) {
         *self.script_data_folder.borrow_mut() = path;
+    }
+
+    // v1.7.0 "Forge" Workstream E — host IPC / automation drains.
+
+    fn drain_clients(&self) -> Vec<ClientCmd> {
+        std::mem::take(&mut self.clients.borrow_mut())
+    }
+
+    #[cfg(feature = "script-ipc")]
+    fn drain_comm(&self) -> Vec<CommCmd> {
+        std::mem::take(&mut self.comm_out.borrow_mut())
+    }
+
+    #[cfg(feature = "script-ipc")]
+    fn push_comm_result(&self, result: CommResult) {
+        let mut inbox = self.comm_in.borrow_mut();
+        // Bound the inbox so a host (or a script that never drains it) can't grow
+        // memory without limit; drop the oldest on overflow.
+        if inbox.len() >= MAX_QUEUED_CMDS {
+            inbox.pop_front();
+        }
+        inbox.push_back(result);
+    }
+
+    fn userdata_snapshot(&self) -> Vec<(String, String)> {
+        let mut pairs: Vec<(String, String)> = self
+            .userdata
+            .borrow()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        // Sorted by key so the persisted/save-state blob is deterministic.
+        pairs.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        pairs
+    }
+
+    fn userdata_restore(&self, pairs: &[(String, String)]) {
+        let mut kv = self.userdata.borrow_mut();
+        kv.clear();
+        for (k, v) in pairs {
+            kv.insert(k.clone(), v.clone());
+        }
     }
 }
 
