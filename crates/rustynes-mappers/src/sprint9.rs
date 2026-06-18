@@ -284,24 +284,43 @@ impl Mapper for Action53M28 {
 // boot-time bank-switch value with ROM and jumps the CPU into garbage (a solid
 // backdrop frame). See `docs/mappers.md`.
 //
-// Nametable arrangement bits in iNES byte 6 (`%....N..M`, N = bit 3, M = bit 0)
-// for submappers 0-2/4: `00` = Vertical, `01` = Horizontal, `10` = 1-screen
-// (software-switchable via latch bit 7), `11` = 4-screen (cartridge VRAM). The
-// generic header parser maps byte 6 with the *standard* iNES convention
-// (bit 0 = Vertical), which is inverted from this board, so we re-derive H/V
-// here from the raw mirror flags handed to the constructor.
+// Nametable arrangement bits in iNES byte 6 (`%....N..M`, N = bit 3 = the
+// four-screen flag, M = bit 0). UNROM-512 uses the *standard* iNES byte-6
+// convention (no inversion) — verified against Mesen2 `UnRom512::InitMapper`,
+// which decodes `Byte6 & 0x09`:
+//
+//   * `00` (N=0,M=0) -> Horizontal mirroring (the wiki's "vertical arrangement").
+//   * `01` (N=0,M=1) -> Vertical mirroring   (the wiki's "horizontal arrangement").
+//   * `10` (N=1,M=0) -> 1-screen, software-switchable A/B via latch bit 7.
+//   * `11` (N=1,M=1) -> 4-screen, cartridge VRAM (last 8 KiB of CHR-RAM; latch
+//     bit 7 is inert for mirroring here, per Mesen2).
+//
+// The wiki phrases the M bit in *arrangement* terms ("vertical arrangement" =
+// horizontal mirroring); this codebase's `Mirroring` enum is in *mirroring*
+// terms, so M=1 -> `Mirroring::Vertical`. That matches both Mesen2 and the
+// generic header parser (`header.rs`: `byte6 bit0 -> Vertical`). The raw flags
+// are still threaded through the constructor so the 1-screen / 4-screen N=1
+// wirings (which the generic parser collapses) can be reconstructed precisely.
 // ===========================================================================
 
 /// Per-board nametable wiring resolved from the iNES header for mapper 30.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum M30Nametable {
-    /// Hard-wired horizontal arrangement.
+    /// Hard-wired horizontal mirroring.
     Horizontal,
-    /// Hard-wired vertical arrangement.
+    /// Hard-wired vertical mirroring.
     Vertical,
+    /// Submapper 3: latch bit 7 selects horizontal vs vertical mirroring at
+    /// runtime (Mesen2 `UnRom512`: `value & 0x80 ? Vertical : Horizontal`).
+    SwitchableHv,
     /// Software-switchable single-screen (latch bit 7 picks A/B).
     OneScreen,
-    /// Four-screen, cartridge VRAM (latch bit 7 picks A/B per the INL variant).
+    /// Four-screen, cartridge VRAM. On real hardware (the `InfiniteNESLives`
+    /// variant) the four nametables come from the last 8 KiB of the 32 KiB
+    /// CHR-RAM, not a separate 4 KiB VRAM chip. We allocate only the standard
+    /// 2 KiB CIRAM, so this is approximated as single-screen rather than true
+    /// 4-screen — an honest `BestEffort` limitation, not a true 4-screen claim.
+    /// No game in the corpus exercises it; revisit if one appears.
     FourScreen,
 }
 
@@ -358,10 +377,11 @@ impl Unrom512M30 {
             )));
         }
 
-        // Nametable wiring. Submapper 3 = software H/V select (latch bit 7).
+        // Nametable wiring. Submapper 3 = runtime mapper-controlled H/V select
+        // (latch bit 7); power-on default is Vertical (matching Mesen2).
         // Otherwise the byte-6 N/M bits select the four configurations.
         let nametable = if submapper == 3 {
-            M30Nametable::Vertical // default; latch bit 7 flips H/V at runtime
+            M30Nametable::SwitchableHv
         } else if four_screen && vertical {
             M30Nametable::FourScreen
         } else if four_screen {
@@ -384,6 +404,13 @@ impl Unrom512M30 {
             (chr_rom.to_vec().into_boxed_slice(), true)
         };
 
+        // Power-on `nt_bit`: for submapper 3 the board defaults to Vertical
+        // (Mesen2 `UnRom512::InitMapper`), and `current_mirroring()` maps a set
+        // bit to Vertical, so seed it `true` to match that default before the
+        // first latch write. For every other wiring the bit only matters for
+        // the single-screen case, whose A/B default is `false` (ScreenA).
+        let nt_bit = nametable == M30Nametable::SwitchableHv;
+
         Ok(Self {
             prg_rom,
             chr,
@@ -391,7 +418,7 @@ impl Unrom512M30 {
             vram: vec![0u8; 2 * NAMETABLE_SIZE].into_boxed_slice(),
             prg_bank: 0,
             chr_bank: 0,
-            nt_bit: false,
+            nt_bit,
             nametable,
             bus_conflicts,
             flash_window,
@@ -413,8 +440,17 @@ impl Unrom512M30 {
     /// Apply a write to the banking latch (already known to target the latch).
     fn write_latch(&mut self, addr: u16, value: u8) {
         let effective = if self.bus_conflicts {
-            // Bus conflict: AND with the PRG byte the CPU would read here.
-            value & self.read_prg(self.prg_bank as usize, addr)
+            // Bus conflict: AND with the PRG byte actually driving the bus at the
+            // write address. The switchable bank serves $8000-$BFFF; the FIXED
+            // last 16 KiB bank serves $C000-$FFFF, so a write there conflicts
+            // with the fixed bank, not the currently-selected low bank (matches
+            // Mesen2's address-based `BaseMapper` conflict resolution).
+            let conflict_bank = if addr >= 0xC000 {
+                (self.prg_rom.len() / PRG_BANK_16K).max(1) - 1
+            } else {
+                self.prg_bank as usize
+            };
+            value & self.read_prg(conflict_bank, addr)
         } else {
             value
         };
@@ -488,8 +524,19 @@ impl Mapper for Unrom512M30 {
         match self.nametable {
             M30Nametable::Horizontal => Mirroring::Horizontal,
             M30Nametable::Vertical => Mirroring::Vertical,
-            // Software-switchable single-screen / 4-screen-with-VRAM: latch
-            // bit 7 selects which CIRAM half (A10=0 lower, A10=1 upper).
+            // Submapper 3: latch bit 7 picks vertical (set) vs horizontal
+            // (clear) at runtime (Mesen2 `value & 0x80 ? Vertical : Horizontal`).
+            M30Nametable::SwitchableHv => {
+                if self.nt_bit {
+                    Mirroring::Vertical
+                } else {
+                    Mirroring::Horizontal
+                }
+            }
+            // Software-switchable single-screen: latch bit 7 selects which CIRAM
+            // half (A10=0 lower, A10=1 upper). The 4-screen wiring routes its
+            // nametables through cartridge CHR-RAM, so the mapper still reports a
+            // single-screen base here; the bit is otherwise inert for it.
             M30Nametable::OneScreen | M30Nametable::FourScreen => {
                 if self.nt_bit {
                     Mirroring::SingleScreenB
@@ -527,8 +574,13 @@ impl Mapper for Unrom512M30 {
         if data[0] != SAVE_STATE_VERSION {
             return Err(MapperError::UnsupportedVersion(data[0]));
         }
-        self.prg_bank = data[1];
-        self.chr_bank = data[2];
+        // Mask the register indices to their live-invariant widths so a
+        // corrupted / hand-edited save-state can't seed an out-of-range value
+        // (mirrors the write-latch masks; same defensive treatment as the
+        // JY-ASIC `chr_latch` clamp in `jy_asic.rs`). The read paths already
+        // wrap with `% count`, so this is belt-and-suspenders, not a panic fix.
+        self.prg_bank = data[1] & 0x1F;
+        self.chr_bank = data[2] & 0x03;
         self.nt_bit = data[3] != 0;
         let mut cursor = 4;
         self.vram
@@ -2338,6 +2390,55 @@ mod tests {
         m2.load_state(&blob).unwrap();
         assert_eq!(m2.cpu_read(0x8000), m.cpu_read(0x8000));
         assert_eq!(m2.ppu_read(0x0003), 0x77);
+    }
+
+    #[test]
+    fn m30_header_mirroring_matches_mesen2() {
+        // byte6 N/M decode, mirroring vocabulary (Mesen2 `UnRom512`):
+        //   00 (four_screen=0, vertical=0) -> Horizontal mirroring
+        //   01 (four_screen=0, vertical=1) -> Vertical mirroring
+        // No latch write needed; this is the hard-wired arrangement.
+        let m_h = Unrom512M30::new(synth_prg_16k(2), &[], false, false, 0, false).unwrap();
+        assert_eq!(m_h.current_mirroring(), Mirroring::Horizontal);
+        let m_v = Unrom512M30::new(synth_prg_16k(2), &[], false, true, 0, false).unwrap();
+        assert_eq!(m_v.current_mirroring(), Mirroring::Vertical);
+    }
+
+    #[test]
+    fn m30_submapper3_runtime_hv_switch() {
+        // Submapper 3: latch bit 7 flips H/V at runtime; power-on default is
+        // Vertical (Mesen2). No bus conflicts (flash wiring), latch at $C000+.
+        let mut m = Unrom512M30::new(synth_prg_16k(8), &[], false, false, 3, false).unwrap();
+        assert_eq!(
+            m.current_mirroring(),
+            Mirroring::Vertical,
+            "power-on default"
+        );
+        // Clear bit 7 -> Horizontal.
+        m.cpu_write(0xC000, 0x00);
+        assert_eq!(m.current_mirroring(), Mirroring::Horizontal);
+        // Set bit 7 -> Vertical.
+        m.cpu_write(0xC000, 0x80);
+        assert_eq!(m.current_mirroring(), Mirroring::Vertical);
+    }
+
+    #[test]
+    fn m30_bus_conflict_high_window_uses_fixed_bank() {
+        // Bus-conflict cart (submapper 0, no battery): the latch responds across
+        // the whole $8000-$FFFF. A $C000-$FFFF write ANDs against the FIXED last
+        // bank's byte, NOT the currently-selected low bank. In an 8-bank
+        // `synth_prg_16k` ROM, bank b holds `b` at offset 0 and `0xFF` elsewhere.
+        let mut m = Unrom512M30::new(synth_prg_16k(8), &[], false, true, 0, false).unwrap();
+        // Seed the low bank to 2 via a write at offset 1 (current low bank 0,
+        // byte 1 = 0xFF, so the value passes through unmasked).
+        m.cpu_write(0x8001, 0x02);
+        assert_eq!(m.cpu_read(0x8000), 2);
+        // Write 0x1F at $C000 (offset 0). The AND source is the FIXED bank 7
+        // (byte 0 = 0x07): 0x1F & 0x07 = 0x07 -> low bank becomes 7. The old
+        // (buggy) behaviour would source the now-bank-2 low window (byte 0 =
+        // 0x02): 0x1F & 0x02 = 0x02 -> bank 2. Asserting 7 proves the fix.
+        m.cpu_write(0xC000, 0x1F);
+        assert_eq!(m.cpu_read(0x8000), 7);
     }
 
     // --- Mapper 63 ---------------------------------------------------------

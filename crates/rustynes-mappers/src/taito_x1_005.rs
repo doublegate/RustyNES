@@ -49,7 +49,11 @@ const NAMETABLE_SIZE_U16: u16 = 0x0400;
 const RAM_LEN: usize = 0x80; // 128-byte on-cart battery RAM
 const RAM_MAGIC: u8 = 0xA3;
 
-const SAVE_STATE_VERSION: u8 = 1;
+// Bumped 1 -> 2 when the switchable PRG bank array grew from 2 to 3 entries
+// (the `$7EFE/$7EFF` $C000 register was added): the header layout changed size,
+// so a version-1 blob is structurally incompatible and is rejected cleanly via
+// `UnsupportedVersion` rather than surfacing a confusing length mismatch.
+const SAVE_STATE_VERSION: u8 = 2;
 
 /// Taito X1-005 mapper (iNES mapper 80).
 pub struct TaitoX1005 {
@@ -279,6 +283,15 @@ impl Mapper for TaitoX1005 {
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
+        // Check the version byte FIRST: a version-1 blob has a different length
+        // (the PRG bank array grew 2 -> 3), so checking length first would mask
+        // the real cause with a `Truncated` error. An empty blob has no version
+        // byte to read, so fall through to the length check in that case.
+        if let Some(&ver) = data.first()
+            && ver != SAVE_STATE_VERSION
+        {
+            return Err(MapperError::UnsupportedVersion(ver));
+        }
         let need_chr = if self.chr_is_ram { self.chr.len() } else { 0 };
         let expected = 15 + RAM_LEN + self.vram.len() + need_chr;
         if data.len() != expected {
@@ -286,9 +299,6 @@ impl Mapper for TaitoX1005 {
                 expected,
                 got: data.len(),
             });
-        }
-        if data[0] != SAVE_STATE_VERSION {
-            return Err(MapperError::UnsupportedVersion(data[0]));
         }
         self.chr_1k.copy_from_slice(&data[1..9]);
         self.prg_bank.copy_from_slice(&data[9..12]);
@@ -403,6 +413,21 @@ mod tests {
         assert_eq!(m.cpu_read(0x7F00), 0x55);
         // Mirrors every 128 bytes within $7F00-$7FFF.
         assert_eq!(m.cpu_read(0x7F80), 0x55);
+    }
+
+    #[test]
+    fn load_state_rejects_old_version_cleanly() {
+        // A version-1 blob (the pre-fix 2-entry PRG layout) is one byte shorter
+        // than the current version-2 header. The version byte is checked first,
+        // so it must surface a clean `UnsupportedVersion(1)` rather than a
+        // confusing `Truncated` length mismatch.
+        let mut m = TaitoX1005::new(synth_prg(8), synth_chr_1k(16), Mirroring::Vertical).unwrap();
+        let mut blob = m.save_state();
+        blob[0] = 1; // masquerade as a legacy version-1 state
+        match m.load_state(&blob) {
+            Err(MapperError::UnsupportedVersion(1)) => {}
+            other => panic!("expected UnsupportedVersion(1), got {other:?}"),
+        }
     }
 
     #[test]

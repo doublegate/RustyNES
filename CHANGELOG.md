@@ -122,6 +122,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **m147 Sachen 3018 / TXC JV001 & m150 Sachen 74LS374N:** port the JV001
     handshake + bank decode (and the m150 PRG/CHR bank composition) bit-for-bit
     from puNES.
+- **Blank-boot fix code-review hardening (m30 / m80 / m185).** Follow-ups from
+  the PR #127 review, all behaviour-neutral for the affected commercial ROMs
+  (the m30/m80 renders stay byte-identical):
+  - **m30 bus-conflict source byte.** A `$C000-$FFFF` write on a bus-conflict
+    cart now ANDs against the *fixed last 16 KiB bank* (the bank actually mapped
+    at the write address), not the currently-selected low bank — matching
+    Mesen2's address-based conflict resolution.
+  - **m30 submapper 3 runtime mirroring.** Submapper 3 now flips H/V at runtime
+    from latch bit 7 (`set` → Vertical, `clear` → Horizontal; power-on Vertical),
+    instead of being stuck in one mode. A new `M30Nametable::SwitchableHv` wiring
+    carries it. The header-mirroring comment was corrected (UNROM-512 uses the
+    *standard* iNES byte-6 convention — no inversion — matching Mesen2), and the
+    4-screen variant is documented as an honest single-screen approximation
+    (true 4-screen would need CHR-RAM-backed nametables; no corpus ROM uses it).
+  - **m30 save-state index masking.** `load_state` masks the PRG/CHR bank
+    indices to their live widths so a corrupted/hand-edited state can't seed an
+    out-of-range value (mirrors the JY-ASIC clamp).
+  - **m80 save-state version bump.** The switchable-PRG array grew 2 → 3 entries
+    (the `$C000` register), so `SAVE_STATE_VERSION` is bumped 1 → 2 and the
+    version byte is now checked before the length, rejecting a legacy version-1
+    state cleanly with `UnsupportedVersion` instead of a confusing `Truncated`.
+  - **m185 header-promotion sanitization.** When `apply_header_overrides`
+    promotes an iNES-1.0 header to NES 2.0 (the Seicross sub-0 → sub-4 path), it
+    now zeroes byte-8's low nibble (the new mapper bits 8-11) and bytes 9-15 (the
+    newly-meaningful NES-2.0 fields), so legacy garbage can no longer change the
+    mapper number or fabricate RAM/timing fields.
 
 ### Testing
 
