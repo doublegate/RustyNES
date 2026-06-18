@@ -295,7 +295,7 @@ pub fn apply_header_overrides(bytes: &mut [u8], entry: &GameDbEntry) -> bool {
     if bytes.len() < 16 || &bytes[0..4] != b"NES\x1A" {
         return false;
     }
-    let is_nes2 = (bytes[7] & 0x0C) == 0x08;
+    let mut is_nes2 = (bytes[7] & 0x0C) == 0x08;
     let mut changed = false;
 
     if let Some(mapper) = entry.mapper {
@@ -321,8 +321,30 @@ pub fn apply_header_overrides(bytes: &mut [u8], entry: &GameDbEntry) -> bool {
     }
 
     if let Some(submapper) = entry.submapper
-        && is_nes2
+        && submapper != 0
     {
+        // The submapper field only exists in NES 2.0 headers. A correction that
+        // sets a non-zero submapper on an iNES-1.0 ROM (e.g. Seicross, whose
+        // GoodNES dump is iNES-1.0 mapper 185 sub 0 but is really sub 4 — the
+        // CHR-disable copy-protection variant) must first PROMOTE the header to
+        // NES 2.0 by setting byte-7 bits 2-3 to `10`, otherwise the core's iNES
+        // path forces submapper 0 and the override is silently dropped.
+        if !is_nes2 {
+            bytes[7] = (bytes[7] & 0xF3) | 0x08;
+            // Promotion reinterprets header fields the iNES-1.0 spec leaves
+            // undefined: byte-8 low nibble becomes mapper bits 8-11, and bytes
+            // 9-15 become NES-2.0 fields (PRG/CHR-RAM sizes, sub-mapper, CPU/PPU
+            // timing, etc.). Legacy dumps routinely carry garbage there, so
+            // sanitize before the core parses the now-NES-2.0 header — otherwise
+            // a stray byte-8 low nibble would silently change the mapper number
+            // (e.g. push mapper 185 to 185 + (garbage << 8)) and stale bytes
+            // 9-15 would fabricate RAM/timing fields. The mapper high nibble is
+            // already 0 for every mapper this promotion path targets (< 256).
+            bytes[8] &= 0xF0;
+            bytes[9..16].fill(0);
+            is_nes2 = true;
+            changed = true;
+        }
         let new8 = (bytes[8] & 0x0F) | ((submapper & 0x0F) << 4);
         if new8 != bytes[8] {
             bytes[8] = new8;
@@ -452,6 +474,68 @@ mod tests {
         assert_eq!(rom[9] & 1, 1, "iNES 1.0 PAL TV-system bit");
         // Re-applying the same override is now a no-op (idempotent).
         assert!(!apply_header_overrides(&mut rom, &entry));
+    }
+
+    #[test]
+    fn seicross_entry_corrects_protection_submapper() {
+        // Seicross (Japan) CRC 0x0F05FF0A is iNES mapper 185 sub 0 in its GoodNES
+        // dump, but is really the sub-4 CHR-disable copy-protection variant
+        // (enabled iff latch bits 0-1 == 0). The DB carries the correction.
+        let entry = entry_for_crc(0x0F05_FF0A).expect("Seicross (Japan) listed");
+        assert_eq!(entry.mapper, Some(185));
+        assert_eq!(entry.submapper, Some(4));
+    }
+
+    #[test]
+    fn submapper_override_promotes_ines1_to_nes2() {
+        // A non-zero submapper correction on an iNES-1.0 ROM must promote the
+        // header to NES 2.0 (byte-7 bits 2-3 = 0b10) so the core actually reads
+        // the submapper (the iNES path forces submapper 0). This is what makes
+        // the Seicross sub-4 correction reach mapper 185.
+        let mut rom = vec![0u8; 16 + 32 * 1024 + 8 * 1024];
+        rom[0..4].copy_from_slice(b"NES\x1A");
+        rom[4] = 2; // 32 KiB PRG
+        rom[5] = 1; // 8 KiB CHR
+        rom[6] = 0xB1; // mapper-185 low nibble (9) + vertical
+        rom[7] = 0xB0; // mapper-185 mid nibble; iNES 1.0 (bits 2-3 = 00)
+        // Legacy iNES-1.0 garbage in the bytes NES 2.0 reinterprets: byte-8 low
+        // nibble (becomes mapper bits 8-11 -> would push mapper 185 to 0x509)
+        // and bytes 9-15 (become PRG/CHR-RAM sizes, timing, etc.).
+        rom[8] = 0x0F;
+        for b in &mut rom[9..16] {
+            *b = 0xCC;
+        }
+        assert_eq!((rom[7] & 0x0C), 0, "starts as iNES 1.0");
+        let entry = GameDbEntry {
+            crc: 0,
+            region: None,
+            mapper: None,
+            submapper: Some(4),
+            mirroring: None,
+            title: "Seicross-like".into(),
+        };
+        assert!(apply_header_overrides(&mut rom, &entry));
+        assert_eq!(rom[7] & 0x0C, 0x08, "promoted to NES 2.0");
+        assert_eq!(rom[8] >> 4, 4, "submapper 4 landed in byte 8");
+        // Promotion sanitized the reinterpreted bytes: mapper bits 8-11 (byte-8
+        // low nibble) are zero so the mapper number stays 185, and bytes 9-15
+        // are zeroed so no phantom NES-2.0 RAM/timing fields are fabricated.
+        assert_eq!(
+            rom[8] & 0x0F,
+            0,
+            "mapper hi-nibble cleared (mapper stays 185)"
+        );
+        assert!(rom[9..16].iter().all(|&b| b == 0), "bytes 9-15 sanitized");
+        // A zero-submapper override is a no-op (no spurious promotion).
+        let mut rom2 = rom.clone();
+        rom2[7] = 0xB0; // back to iNES 1.0
+        rom2[8] = 0;
+        let entry0 = GameDbEntry {
+            submapper: Some(0),
+            ..entry
+        };
+        assert!(!apply_header_overrides(&mut rom2, &entry0));
+        assert_eq!(rom2[7] & 0x0C, 0, "sub-0 override does not promote");
     }
 
     #[test]

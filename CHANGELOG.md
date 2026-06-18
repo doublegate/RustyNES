@@ -61,6 +61,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Mapper 30 (UNROM-512) self-flashing carts blank boot.** *Wampus* and the
+  *PROTO DERE .NES* beta booted to a solid backdrop because the board always
+  applied bus conflicts. Per NESdev "UNROM 512" (and Mesen2's `UnRom512`), a
+  submapper-0 cart with the iNES **battery bit set** has *no* bus conflicts and
+  its banking latch responds only to `$C000-$FFFF` (with `$8000-$BFFF` the
+  flash-write window) — applying bus conflicts ANDed the boot-time bank-switch
+  value with ROM and jumped the CPU into garbage. The mapper now keys the
+  bus-conflict / flash wiring off submapper + battery, reads CHR-ROM when a dump
+  carries it, and re-derives H/V/1-screen/4-screen nametable wiring from the raw
+  iNES byte-6 bits. Both homebrews now render gameplay. (`sprint9.rs`.)
+- **Mapper 80 (Taito X1-005) blank boot.** *Kyonshiizu 2* booted to a solid blue
+  frame because only two of the chip's **three** switchable 8 KiB PRG banks were
+  modelled — the `$7EFE`/`$7EFF` register for `$C000` was missing (treated as a
+  fixed bank), stranding the reset bank. Added the third PRG register (with its
+  odd-address alias) so only `$E000` is fixed, and corrected the `$7EF6`
+  mirroring polarity (0 = Horizontal, 1 = Vertical, per nesdev mapper 080 /
+  Mesen2). Kyonshiizu 2 now renders its title screen. (`taito_x1_005.rs`.)
+- **Mapper 185 (CNROM CHR-disable protection) — Seicross.** *Seicross* hung in
+  its copy-protection loop (a solid grey frame, rendering never enabled): it
+  reads CHR back after a protection write and proceeds only when CHR reads as
+  *disabled*, but the generic submapper-0 heuristic enabled CHR for the `$21`
+  latch. Seicross is really submapper 4 (enabled iff the latch low bits are `0`,
+  matching FCEUX `Sync181` / BizHawk's Seicross special-case), which the mapper
+  already models correctly. Fixed via a per-game DB submapper correction
+  (`game_database.txt` CRC `0F05FF0A` → submapper 4); `apply_header_overrides`
+  now promotes an iNES-1.0 header to NES 2.0 when a non-zero submapper override
+  is set, so the correction reaches the core. The cycle-accurate core is
+  untouched. (`game_db.rs`, `game_database.txt`.)
 - **Mapper 159 (Bandai LZ93D50 + X24C01 EEPROM) blank boot.** All mapper-159
   games (Dragon Ball Z - Kyoushuu! Saiya Jin, both Magical Taruruuto-kun
   titles, SD Gundam Gaiden) booted to a 1-colour blank screen because the
@@ -103,6 +131,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **m147 Sachen 3018 / TXC JV001 & m150 Sachen 74LS374N:** port the JV001
     handshake + bank decode (and the m150 PRG/CHR bank composition) bit-for-bit
     from puNES.
+- **Blank-boot fix code-review hardening (m30 / m80 / m185).** Follow-ups from
+  the PR #127 review, all behaviour-neutral for the affected commercial ROMs
+  (the m30/m80 renders stay byte-identical):
+  - **m30 bus-conflict source byte.** A `$C000-$FFFF` write on a bus-conflict
+    cart now ANDs against the *fixed last 16 KiB bank* (the bank actually mapped
+    at the write address), not the currently-selected low bank — matching
+    Mesen2's address-based conflict resolution.
+  - **m30 submapper 3 runtime mirroring.** Submapper 3 now flips H/V at runtime
+    from latch bit 7 (`set` → Vertical, `clear` → Horizontal; power-on Vertical),
+    instead of being stuck in one mode. A new `M30Nametable::SwitchableHv` wiring
+    carries it. The header-mirroring comment was corrected (UNROM-512 uses the
+    *standard* iNES byte-6 convention — no inversion — matching Mesen2), and the
+    4-screen variant is documented as an honest single-screen approximation
+    (true 4-screen would need CHR-RAM-backed nametables; no corpus ROM uses it).
+  - **m30 save-state index masking.** `load_state` masks the PRG/CHR bank
+    indices to their live widths so a corrupted/hand-edited state can't seed an
+    out-of-range value (mirrors the JY-ASIC clamp).
+  - **m80 save-state version bump.** The switchable-PRG array grew 2 → 3 entries
+    (the `$C000` register), so `SAVE_STATE_VERSION` is bumped 1 → 2 and the
+    version byte is now checked before the length, rejecting a legacy version-1
+    state cleanly with `UnsupportedVersion` instead of a confusing `Truncated`.
+  - **m185 header-promotion sanitization.** When `apply_header_overrides`
+    promotes an iNES-1.0 header to NES 2.0 (the Seicross sub-0 → sub-4 path), it
+    now zeroes byte-8's low nibble (the new mapper bits 8-11) and bytes 9-15 (the
+    newly-meaningful NES-2.0 fields), so legacy garbage can no longer change the
+    mapper number or fabricate RAM/timing fields.
 
 ### Testing
 

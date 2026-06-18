@@ -163,7 +163,7 @@
    EC6C023, NTSC, 5, 0, 32, 16, 0, true, Horizontal, "Gemfire (USA).nes"
    ED96F42, NTSC, 4, 0, 32, 8, 0, false, Horizontal, "Gremlins 2 - The New Batch (USA).nes"
    EF730E7, NTSC, 4, 0, 16, 8, 0, false, Horizontal, "Twin Cobra (USA).nes"
-   F05FF0A, NTSC, 185, 0, 0, 2, 0, false, Vertical, "Seicross (Japan).nes"
+   F05FF0A, NTSC, 185, 4, 0, 2, 0, false, Vertical, "Seicross (Japan).nes"
    F1BABE7, NTSC, 18, 0, 16, 8, 0, true, Horizontal, "Jajamaru Gekimaden - Maboroshi no Kinmajou (Japan).nes"
    F1CC048, NTSC, 1, 0, 16, 8, 0, false, Horizontal, "Double Dragon (USA).nes"
    F20210D, NTSC, 241, 0, 0, 8, 0, false, Vertical, "Journey to the West (Asia) (Unl).nes"

@@ -960,10 +960,26 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
             Action53M28::new(prg_rom, &chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
-        30 => Box::new(
-            Unrom512M30::new(prg_rom, &chr_rom, h.mirroring)
+        30 => {
+            // UNROM-512 decodes its nametable wiring from the RAW iNES byte-6
+            // N/M bits (bit 3 = four-screen, bit 0 = vertical), which use an
+            // inverted convention from the generic parser; pass them through.
+            // `bytes[6]` is always the real iNES header here (the UNIF path
+            // recurses on a synthesized iNES image before reaching this point).
+            let four_screen = h.four_screen;
+            let vertical = (bytes[6] & 0x01) != 0;
+            Box::new(
+                Unrom512M30::new(
+                    prg_rom,
+                    &chr_rom,
+                    four_screen,
+                    vertical,
+                    h.submapper,
+                    h.has_battery,
+                )
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
-        ),
+            )
+        }
         63 => Box::new(
             Ntdec63::new(prg_rom, &chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
