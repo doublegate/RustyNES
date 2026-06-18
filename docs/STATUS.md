@@ -587,13 +587,16 @@ v1.2.0** → **101 families at v1.3.0 "Bedrock"** → **113 families at v1.4.0
 "Fidelity"** → **123 families at v1.5.0 "Lens"** → **150 families at v1.6.0
 "Studio"** (the J.Y. Company ASIC sweep 35/90/209/211 +
 Workstream E's `sprint11` batch: MMC3-clones, Sachen 8259 A/B/C, discrete
-multicarts), tiered for accuracy honesty:
+multicarts) → **168 families in development on `main` for v1.7.0 "Forge"**
+(Workstream G1's `sprint12` reusable-ASIC batch: FK23C, COOLBOY/MINDKIDS,
+Sachen 9602/3011, Waixing 164/253/286, Kaiser 56/142/303/305/306/312, and BMC
+multicarts 261/289/320/336/349), tiered for accuracy honesty:
 
 | Tier | Families | Accuracy-gated? | Evidence |
 |------|----------|-----------------|----------|
 | **Core** | 51 | Yes (AccuracyCoin + commercial oracle) | spec-implemented, oracle-locked |
 | **Curated** (v1.2.0) | 9 | Yes | notable games + decode spec; register-decode unit tests |
-| **BestEffort** (v1.2.0 + v1.3.0 + v1.4.0 + v1.5.0 + v1.6.0) | 90 | **No** | reference-ported long-tail; register-decode + save-state unit tests only |
+| **BestEffort** (v1.2.0 + v1.3.0 + v1.4.0 + v1.5.0 + v1.6.0 + v1.7.0 G1) | 108 | **No** | reference-ported long-tail; register-decode + save-state unit tests only |
 
 A CI-checkable invariant forbids any `BestEffort` mapper from backing an oracle
 ROM (`rustynes-mappers::mapper_tier`; ADR 0011). The remaining tail (unlicensed

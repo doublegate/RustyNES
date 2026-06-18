@@ -1,0 +1,6 @@
+---
+source: crates/rustynes-test-harness/tests/f2_accuracy_audit.rs
+assertion_line: 112
+expression: snap
+---
+rom=nes-test-roms/dmc_tests/latency.nes frames=240 audio_samples=175360 audio_fnv1a64=2b4cacae717f270b

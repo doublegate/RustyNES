@@ -9,6 +9,14 @@
 //!
 //! Observed status (v2.1.0 coverage wiring, R1 master-clock default build):
 //! all seven PASS.
+//!
+//! v1.7.0 "Forge" F1 note: the v1.7.0 plan flags `5.nmi_suppression.nes` as a
+//! v2.0 (`$2002` NMI-suppression race) item and asks for it to be `#[ignore]`d.
+//! On THIS cycle-accurate core it already PASSES strictly (status 0) — the
+//! suppression race is closed on the current dot-lockstep scheduler — so per the
+//! hard contract (never reduce passing oracle coverage; "make MORE pass") it is
+//! kept as a live, asserting pin rather than ignored. If a future timebase
+//! refactor (ADR 0002) ever regresses it, this assertion will catch it.
 
 #![cfg(feature = "test-roms")]
 

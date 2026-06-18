@@ -56,6 +56,7 @@ mod nsf;
 mod rambo1;
 mod sprint10;
 mod sprint11;
+mod sprint12;
 mod sprint2;
 mod sprint3;
 mod sprint5;
@@ -1195,6 +1196,82 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
         ),
         301 => Box::new(
             sprint11::new_m301(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        // --- v1.7.0 "Forge" Workstream G1, best-effort (Tier-2) reusable-ASIC
+        // BMC / pirate cores (sprint12). FK23C / COOLBOY / MINDKIDS / Sachen /
+        // Waixing / Kaiser clusters. Register-decode + save-state unit-tested
+        // only, NOT accuracy-gated (`tier.rs`).
+        176 => Box::new(
+            sprint12::new_m176(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        268 => Box::new(
+            sprint12::new_m268(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        513 => Box::new(
+            sprint12::new_m513(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        136 => Box::new(
+            sprint12::new_m136(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        164 => Box::new(
+            sprint12::new_m164(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        253 => Box::new(
+            sprint12::new_m253(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        286 => Box::new(
+            sprint12::new_m286(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        56 => Box::new(
+            sprint12::new_m56(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        142 => Box::new(
+            sprint12::new_m142(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        303 => Box::new(
+            sprint12::new_m303(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        305 => Box::new(
+            sprint12::new_m305(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        306 => Box::new(
+            sprint12::new_m306(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        312 => Box::new(
+            sprint12::new_m312(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        261 => Box::new(
+            sprint12::new_m261(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        289 => Box::new(
+            sprint12::new_m289(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        320 => Box::new(
+            sprint12::new_m320(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        336 => Box::new(
+            sprint12::new_m336(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        349 => Box::new(
+            sprint12::new_m349(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         other => return Err(RomError::UnsupportedMapper(other)),

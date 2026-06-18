@@ -48,7 +48,14 @@ use crate::registers::{PpuCtrl, PpuMask, PpuStatus};
 ///   (zeros when the feature is off) so the layout is identical across
 ///   feature builds; v1/v2 blobs upconvert with the tail at the inactive
 ///   defaults (the state the old clear-on-restore assumption imposed).
-pub const PPU_SNAPSHOT_VERSION: u8 = 3;
+/// - v4 (v1.7.0 F3, 2026-06-18): appends the `extra_lines_remaining`
+///   countdown for the in-flight PPU extra-scanlines overclock insertion.
+///   At the default `extra_scanlines == 0` this is always `0`, so the
+///   blob merely gains a zero `u16` and restore is behaviourally identical
+///   to v3; a non-default countdown taken mid-insertion now round-trips
+///   instead of restoring as `0` (which desynced). v1/v2/v3 blobs upconvert
+///   with `extra_lines_remaining = 0` (no insertion in flight).
+pub const PPU_SNAPSHOT_VERSION: u8 = 4;
 
 const CIRAM_LEN: usize = 0x800;
 const OAM_LEN: usize = 0x100;
@@ -276,6 +283,13 @@ impl Ppu {
             w.u8(self.mask_write_delay);
         }
 
+        // v4 (v1.7.0 F3): the in-flight extra-scanlines overclock countdown.
+        // Always `0` at the default `extra_scanlines == 0`, so this is a
+        // zero `u16` in the stock build (no behavioural change). The
+        // configured count itself (`extra_scanlines`) stays a frontend knob
+        // re-applied on restore, like `region` / `active_palette`.
+        w.u16(self.extra_lines_remaining);
+
         w.buf
     }
 
@@ -287,7 +301,7 @@ impl Ppu {
     pub fn restore(&mut self, data: &[u8]) -> Result<(), PpuSnapshotError> {
         let mut r = R { src: data, pos: 0 };
         let version = r.u8()?;
-        if version != PPU_SNAPSHOT_VERSION && version != 1 && version != 2 {
+        if !matches!(version, 1..=4) {
             return Err(PpuSnapshotError::UnsupportedVersion(version));
         }
         self.region = region_from_u8(r.u8()?)?;
@@ -388,6 +402,11 @@ impl Ppu {
         if version >= 3 {
             self.restore_stage4_tail(&mut r)?;
         }
+
+        // v4 (v1.7.0 F3): the in-flight extra-scanlines overclock countdown.
+        // v1/v2/v3 blobs lack it; upconvert to `0` (no insertion in flight),
+        // which is exactly the state a pre-v4 restore left it in.
+        self.extra_lines_remaining = if version >= 4 { r.u16()? } else { 0 };
 
         // sanity: the schema-fixed sizes mean we should be at end of input now.
         if r.pos != data.len() {
@@ -552,8 +571,10 @@ mod tests {
         v1.push(0x00); // v1 at_feed_hi (u8)
         // Tail from ex_attr_latch onward, MINUS the v3 W3-Stage-4 tail
         // (23 bytes: u8*3 + [u8;8]*2 + u16 PPUDATA state machine, then
-        // u8*2 BG-reload freeze) which a v1 blob never carried.
-        v1.extend_from_slice(&v2[at + 4..v2.len() - 23]);
+        // u8*2 BG-reload freeze) AND the v4 extra-scanlines countdown (2
+        // bytes: u16 `extra_lines_remaining`), neither of which a v1 blob
+        // carried.
+        v1.extend_from_slice(&v2[at + 4..v2.len() - 25]);
         v1[0] = 1; // version byte -> v1
 
         let mut q = Ppu::new(PpuRegion::Ntsc);
@@ -580,5 +601,46 @@ mod tests {
     fn snapshot_is_deterministic() {
         let p = Ppu::new(PpuRegion::Ntsc);
         assert_eq!(p.snapshot(), p.snapshot());
+    }
+
+    #[test]
+    fn snapshot_round_trips_extra_lines_remaining() {
+        // v1.7.0 F3: a save-state taken mid-insertion (extra_lines_remaining
+        // > 0) must restore the in-flight countdown, not reset it to 0.
+        let mut p = Ppu::new(PpuRegion::Ntsc);
+        p.set_extra_scanlines(8);
+        p.extra_lines_remaining = 5;
+        let blob = p.snapshot();
+        assert_eq!(blob[0], PPU_SNAPSHOT_VERSION, "blob carries v4");
+
+        let mut q = Ppu::new(PpuRegion::Ntsc);
+        q.restore(&blob).unwrap();
+        assert_eq!(q.extra_lines_remaining, 5);
+    }
+
+    #[test]
+    fn snapshot_default_extra_lines_remaining_is_zero() {
+        // At the default extra_scanlines == 0 the countdown is always 0, so
+        // the v4 field is a zero u16 and restore is behaviourally identical.
+        let p = Ppu::new(PpuRegion::Ntsc);
+        assert_eq!(p.extra_lines_remaining, 0);
+        let blob = p.snapshot();
+        let mut q = Ppu::new(PpuRegion::Ntsc);
+        q.restore(&blob).unwrap();
+        assert_eq!(q.extra_lines_remaining, 0);
+    }
+
+    #[test]
+    fn set_extra_scanlines_resets_in_flight_countdown() {
+        // Changing the configured count cancels any in-flight insertion so
+        // the per-frame countdown cannot remain stale/out-of-bounds.
+        let mut p = Ppu::new(PpuRegion::Ntsc);
+        p.set_extra_scanlines(8);
+        p.extra_lines_remaining = 6;
+        p.set_extra_scanlines(2);
+        assert_eq!(p.extra_lines_remaining, 0);
+        p.extra_lines_remaining = 1;
+        p.set_extra_scanlines(0); // disable
+        assert_eq!(p.extra_lines_remaining, 0);
     }
 }

@@ -133,6 +133,20 @@ get/put phase. Both perform a dummy cycle after halting the CPU and may need an
 alignment cycle before the memory read. This distinction is observable through
 CPU stalls and repeated side-effect reads.
 
+#### DMC load-DMA even/odd-cycle delay (v1.7.0 F2b)
+
+A DMC sample-buffer **LOAD** DMA that begins on a "get" (odd) CPU cycle is
+deferred one extra cycle relative to one that begins on a "put" (even) cycle —
+the load only takes effect on its put half. This is modelled by
+`Bus::dmc_dma_defer_load_entry` in `crates/rustynes-core/src/bus.rs`, which gates
+the load entry on the APU's `put_cycle()` parity (on the current dot-lockstep
+scheduler the pre-cycle parity is read flip-invariant; see the in-source note for
+why the predicate is `put_cycle` rather than `!put_cycle`). The behavior is
+**already implemented** and verified, not new in v1.7.0; the
+`f2b_*` tests in `crates/rustynes-test-harness/tests/f2_accuracy_audit.rs` pin it
+end-to-end via `dmc_tests/latency.nes` (a deterministic DMC fetch-latency audio
+signature) and the strictly-passing `sprdma_and_dmc_dma` alignment ROM.
+
 ### Mixer
 
 Per `ref-docs/research-report.md` §APU Mixer, two implementations:
@@ -175,7 +189,7 @@ external open-bus latch used by cartridge or PPU register accesses.
 
 1. **DMC DMA stalls CPU mid-instruction.** Per `ref-docs/research-report.md` §DMA, halt only on read cycles. The 2A03 register-readout bug (extra reads of `$2007`, `$4015`-`$4017` while halted) must be reproduced — required by `dmc_dma_during_read4`.
 2. **Frame counter write jitter.** Writing `$4017` with a value that includes IRQ inhibit set clears any pending frame IRQ flag.
-3. **Length counter halt timing.** The halt flag is sampled at the right edge of the half-frame clock; common subtle bug is sampling on the wrong cycle.
+3. **Length counter halt / reload race (v1.7.0 F2a).** The halt flag is sampled at the right edge of the half-frame clock; the common subtle bug is sampling on the wrong cycle. A `$400x` halt-bit write — or a length **reload** — on the CPU cycle adjacent to the half-frame length clock has a one-cycle race over whether the length counter is clocked this step. This behavior is **already implemented** and verified on the current scheduler (not new in v1.7.0); blargg `blargg_apu_2005.07.30/10.len_halt_timing.nes` + `11.len_reload_timing.nes` bracket the exact cycle and both pass strictly. The `f2a_*` tests in `crates/rustynes-test-harness/tests/f2_accuracy_audit.rs` are the named regression pin.
 4. **Triangle disabled silently when length counter or linear counter reaches 0.** Holds the last sequencer step (does not produce a click).
    - **Ultrasonic silence (timer period < 2).** When the triangle timer period is below 2 (frequency above ~55.9 kHz), real hardware cannot follow the sequencer and the channel effectively halts. We freeze the sequencer in `Triangle::clock_timer` (the step does not advance and the output holds its current value) rather than emitting the aliasing tone, matching the common-emulator convention; Mega Man 2's "Crash Man" stage relies on this to silence the triangle. The threshold is strictly `< 2` (period 2 still clocks). See `crates/rustynes-apu/src/triangle.rs`.
 5. **Pulse duty-sequencer phase reset on `$4003`/`$4007`.** Writing the length/timer-high register resets the pulse duty sequencer to step 0 (and sets the envelope-restart flag) but does **not** reset the timer divider. Implemented in `Pulse::write_timer_hi` (`crates/rustynes-apu/src/pulse.rs`).

@@ -1927,6 +1927,25 @@ impl Nes {
         self.bus.set_custom_palette(base);
     }
 
+    /// v1.7.0 "Forge" Workstream F3 — set the PPU extra-scanlines overclock: the
+    /// number of EXTRA idle vblank scanlines the PPU inserts per frame (at the
+    /// existing dot resolution, Mesen2 `UpdateTimings`). Each extra line is pure
+    /// additional CPU run-time — it renders nothing, sets/clears no PPU flag, and
+    /// fires no VBL/NMI/A12 event, so the visible image is unchanged. `0` (the
+    /// default) is **byte-identical** to stock NES timing — `AccuracyCoin`, the
+    /// commercial oracle, and nestest (which never set it) are unaffected.
+    /// **Off by default**; a frontend config knob, not part of the save-state.
+    /// Distinct from the CPU-multiplier overclock (a v2.0 timebase item).
+    pub const fn set_extra_scanlines(&mut self, lines: u16) {
+        self.bus.set_extra_scanlines(lines);
+    }
+
+    /// v1.7.0 F3 — the configured extra-scanline overclock count (`0` = stock).
+    #[must_use]
+    pub const fn extra_scanlines(&self) -> u16 {
+        self.bus.extra_scanlines()
+    }
+
     /// Mapper debug info (bank registers, IRQ counters, mirroring, ...).
     #[must_use]
     pub fn mapper_info(&self) -> MapperDebugView {

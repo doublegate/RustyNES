@@ -367,18 +367,29 @@ boards with no redistributable fixture, register-decode unit-tested only) is
 oracle ROM — is enforced at the classifier level (`BestEffort` is structurally
 never accuracy-gated; the three tier id-sets are disjoint) and by the curated
 construction of the byte-oracle corpus. See `docs/adr/0011-mapper-tiering.md`.
-Current split: **150 families** — 51 Core + 9 Curated (60 accuracy-gated) + 90
+Current split: **168 families** — 51 Core + 9 Curated (60 accuracy-gated) + 108
 BestEffort (27 from v1.2.0 `sprint6`/`sprint7` + 14 from v1.3.0 `sprint8` + 12
 from v1.4.0 `sprint9` + 10 from v1.5.0 `sprint10` + the v1.6.0 "Studio"
 J.Y. Company ASIC `jy_asic` family 35/90/209/211 + 23 from v1.6.0 "Studio"
-Workstream E `sprint11`). The v1.6.0 `sprint11` batch ports MMC3-clone variants
+Workstream E `sprint11` + 18 from v1.7.0 "Forge" Workstream G1 `sprint12`). The
+v1.6.0 `sprint11` batch ports MMC3-clone variants
 (44/49/52/115/134/189/205/238/245/348/366, on a shared MMC3-style core with an
 A12 falling-edge IRQ + per-board outer-bank transform), the Sachen 8259 A/B/C
 2 KiB-CHR variants (141/138/139 — siblings of the existing 8259D mapper 137),
 and discrete unlicensed / FDS-conversion / multicart boards
 (42/50 with CPU-cycle IRQs, 46/51/57/104/120/290/301 hook-free). Mapper 35 is
 the J.Y. Company single-game "extended" board folded into `jy_asic.rs` (same
-silicon as 209). All are BestEffort: register-decode + save-state round-trip
+silicon as 209). The v1.7.0 `sprint12` batch ports the next reusable-ASIC
+BMC/pirate cores: the Waixing **FK23C** 8/16 Mbit BMC (176, `$5000` config +
+MMC3 surface + A12 IRQ), **COOLBOY / MINDKIDS** (268, MMC3 + four `$6000` outer
+registers), Sachen **9602** (513, MMC3 + PRG-A19/A20 outer) and **3011** (136,
+the TXC protection accumulator driving an 8 KiB CHR select), Waixing **164**
+(split `$5000`/`$5100` PRG), **253** (*Dragon Ball Z* VRC4-clone, per-1 KiB CHR
+regs + CHR-RAM escape + scaled CPU-cycle IRQ) and **286** (BS-5 DIP-gated
+multicart), the **Kaiser** FDS-conversion family (56/142 KS202/KS7032 with an
+up-counting M2 IRQ, 303 KS7017 with a down-counting M2 IRQ + read-ack, and the
+window boards 305/306/312), and the BMC multicarts **261**/**289**/**320**/
+**336**/**349**. All are BestEffort: register-decode + save-state round-trip
 unit-tested, outside the AccuracyCoin / oracle gate.
 
 ### NSF player (synthetic mapper, v1.1.0)

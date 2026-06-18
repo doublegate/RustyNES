@@ -556,6 +556,30 @@ pub struct Ppu {
     /// Cosmetic; not part of the save-state.
     pub(crate) frame_ntsc_phase: u8,
 
+    /// v1.7.0 "Forge" Workstream F3 — PPU extra-scanlines overclock.
+    ///
+    /// Number of EXTRA blank scanlines to insert into the vblank period each
+    /// frame (immediately before the pre-render line), at the existing dot
+    /// resolution (Mesen2 `UpdateTimings`). These lines render nothing, emit no
+    /// pixels, set/clear no PPU flags, and fire no VBL/NMI/A12 events — they are
+    /// pure additional CPU run-time per frame, giving games more compute headroom
+    /// without altering the visible image. **Off by default (`0`)**; the
+    /// `advance_dot` insertion path is entirely guarded by `extra_scanlines != 0`,
+    /// so at the default this field changes nothing and the frame is
+    /// byte-identical to stock. Distinct from the CPU-multiplier overclock (a
+    /// v2.0 timebase item). A frontend config knob, NOT part of the save-state
+    /// (re-applied by the frontend on restore, like `region` / `active_palette`).
+    pub(crate) extra_scanlines: u16,
+    /// v1.7.0 F3 — countdown of extra blank scanlines remaining for the CURRENT
+    /// frame's vblank insertion. Loaded from [`Self::extra_scanlines`] when the
+    /// PPU reaches the insertion point and decremented one extra line at a time.
+    /// `0` when no insertion is in flight. Snapshotted (snapshot v4) so a
+    /// save-state taken mid-insertion restores the in-flight countdown rather
+    /// than resuming as `0` and desyncing. The configured count itself
+    /// (`extra_scanlines`) stays a non-persisted frontend knob, re-applied on
+    /// restore. At the default `extra_scanlines == 0` this is always `0`.
+    pub(crate) extra_lines_remaining: u16,
+
     /// Optional per-PPU-dot state trace (Session-10 observability
     /// tooling). Gated on the `ppu-state-trace` cargo feature so
     /// the default build pays no memory or codegen cost. See
@@ -729,6 +753,8 @@ impl Ppu {
             index_framebuffer: vec![0u16; FRAMEBUFFER_PIXELS].into_boxed_slice(),
             dot_counter: 0,
             frame_ntsc_phase: 0,
+            extra_scanlines: 0,
+            extra_lines_remaining: 0,
             #[cfg(feature = "ppu-state-trace")]
             state_trace: None,
             #[cfg(feature = "hd-pack")]
@@ -781,6 +807,31 @@ impl Ppu {
     pub const fn set_custom_palette(&mut self, base: Option<[[u8; 3]; 64]>) {
         self.custom_palette = base;
         self.rebuild_rgba_lut();
+    }
+
+    /// v1.7.0 "Forge" Workstream F3 — set the number of EXTRA blank vblank
+    /// scanlines to insert per frame (the PPU extra-scanlines overclock).
+    ///
+    /// `0` (the default) is stock NES timing and is **byte-identical** to a PPU
+    /// that never calls this. A non-zero value lengthens vblank by that many
+    /// idle scanlines each frame (more CPU run-time, no visible change), at the
+    /// existing dot resolution. Off by default; a frontend config knob, not part
+    /// of the save-state. Distinct from the CPU-multiplier overclock (v2.0).
+    ///
+    /// Changing the count cancels any in-flight insertion for the current
+    /// frame: the per-frame countdown (`extra_lines_remaining`) is
+    /// reset to `0` so it cannot remain stale or out-of-bounds relative to
+    /// the new `lines` (e.g. shrinking 8 → 2, or disabling N → 0). The next
+    /// frame reloads the countdown from the new value at the insertion point.
+    pub const fn set_extra_scanlines(&mut self, lines: u16) {
+        self.extra_scanlines = lines;
+        self.extra_lines_remaining = 0;
+    }
+
+    /// v1.7.0 F3 — the currently-configured extra-scanline count (`0` = stock).
+    #[must_use]
+    pub const fn extra_scanlines(&self) -> u16 {
+        self.extra_scanlines
     }
 
     /// Rebuild [`Self::rgba_lut`] from the custom palette when one is loaded,
@@ -3336,6 +3387,26 @@ impl Ppu {
                 self.frame = self.frame.wrapping_add(1);
                 self.frame_complete = true;
                 self.snapshot_ntsc_phase();
+            } else if self.extra_scanlines != 0 && self.scanline + 1 == self.region.prerender_line()
+            {
+                // v1.7.0 F3 — PPU extra-scanlines overclock. The line just
+                // before pre-render is a pure idle vblank line (not visible,
+                // not the VBL-set line, not pre-render): repeating it emits no
+                // pixels, sets/clears no flags, and fires no VBL/NMI/A12 event
+                // — it only adds CPU run-time (the surrounding scheduler still
+                // clocks the CPU every third dot). When the counter is exhausted
+                // we fall through to the pre-render line as usual. This whole
+                // branch is unreachable while `extra_scanlines == 0`, so the
+                // default build is byte-identical.
+                if self.extra_lines_remaining == 0 {
+                    self.extra_lines_remaining = self.extra_scanlines;
+                }
+                self.extra_lines_remaining -= 1;
+                if self.extra_lines_remaining == 0 {
+                    // Done inserting: advance to pre-render as normal.
+                    self.scanline += 1;
+                }
+                // else: hold on this idle line and run it again.
             } else {
                 self.scanline += 1;
             }

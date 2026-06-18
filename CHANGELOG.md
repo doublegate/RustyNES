@@ -15,6 +15,102 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Mapper breadth 150 → 168 families** (v1.7.0 "Forge" Workstream G1 — next
+  reusable-ASIC BMC/pirate cores, `crates/rustynes-mappers/src/sprint12.rs`). 18
+  new **BestEffort** (Tier-2, honesty-gated, off the AccuracyCoin / commercial
+  oracle) families ported from `Mesen2` + the nesdev wiki: the Waixing **FK23C**
+  8/16 Mbit BMC (mapper 176 — a `$5000-$5003` config bank over a full MMC3
+  surface with an A12 scanline IRQ + outer-bank / extended-MMC3 / CNROM-CHR
+  modes), **COOLBOY / MINDKIDS** (268 — MMC3 + four `$6000-$7FFF` outer-bank
+  registers), Sachen **9602** (513 — MMC3 + PRG-A19/A20 outer override) and
+  **3011** (136 — the TXC protection accumulator driving an 8 KiB CHR select),
+  Waixing **164** (split `$5000`/`$5100` PRG), **253** (*Dragon Ball Z*
+  VRC4-clone — per-1 KiB CHR low/high regs, a CHR-RAM escape, a /114-scaled
+  CPU-cycle IRQ) and **286** (BS-5 DIP-gated multicart), the **Kaiser**
+  FDS-conversion family (56/142 KS202/KS7032 with an up-counting M2 IRQ, 303
+  KS7017 with a down-counting M2 IRQ + `$4030` read-ack, and the PRG-window
+  boards 305 KS7031 / 306 KS7016 / 312 KS7013B), and the BMC multicarts **261**
+  (810544-C-A1) / **289** (60311C) / **320** (830425C-4391T) / **336** (K-3046)
+  / **349** (G-146). Each is register-decode + save-state-round-trip unit-tested,
+  pure / deterministic / `#![no_std]`. The `mapper_tier` honesty gate
+  (`crates/rustynes-test-harness/tests/mapper_tier_honesty.rs`) stays green and
+  **AccuracyCoin holds 100% (139/139)** — these additions are off the oracle, so
+  the shipped / native / `no_std` / wasm builds are byte-identical. ROM staging
+  and boot-smoke screenshots are a separate later coverage pass.
+
+- **v1.7.0 "Forge" Workstream F — accuracy hardening (dot/CPU-cycle-granular,
+  NOT the v2.0 timebase rewrite).** All additive / off-by-default; AccuracyCoin
+  holds **100% (139/139)**, nestest 0-diff, the commercial oracle byte-identical.
+  - **F1 — test-ROM hardening + a battery-save oracle.** A new
+    `battery_save.rs` oracle (none existed): a synthetic battery-backed NROM
+    fills `$6000` PRG-RAM with a known pattern and the test proves it survives a
+    `snapshot`->`restore` round-trip (the battery-save persistence mechanism) and
+    resumes bit-identically. Audited the existing F1 bundle wiring
+    (`ppu_read_buffer`, `vbl_nmi_timing` x7, `sprdma_and_dmc_dma`, `dmc_tests`,
+    `cpu_exec_space`, `read_joy3`, `volume_tests`, `scanline`) — all wired and
+    green. `vbl_nmi_timing/5.nmi_suppression` already passes on this core, so it
+    is kept as a live pin (not ignored) per the never-reduce-coverage contract.
+    Holy-mapperel **M28/M118/M180** are now supported mappers but their ROMs are
+    not in the committed corpus — recorded as a documented carryover.
+  - **F2 — sub-v2.0 behavior audit.** The APU **length-counter halt/reload
+    race** and the **DMC load-DMA even/odd-cycle delay** are both already
+    implemented and verified on the current dot-lockstep scheduler; added named
+    regression pins (`f2_accuracy_audit.rs`) gating the halt/reload race
+    (`blargg_apu_2005/10.len_halt_timing` + `11.len_reload_timing`) and the DMC
+    load even/odd defer (`dmc_dma_defer_load_entry`, exercised by
+    `dmc_tests/latency` + `sprdma_and_dmc_dma`).
+  - **F3 — PPU extra-scanlines overclock**, determinism-gated. New
+    `Nes::set_extra_scanlines(n)` / `extra_scanlines()` insert `n` extra idle
+    vblank scanlines per frame at the existing dot resolution (more CPU
+    run-time, no visible change). **Off by default (`0`)** and **byte-identical
+    at zero** (proved by `extra_scanlines.rs`), and distinct from the
+    CPU-multiplier overclock (a v2.0 item). The configured count is a frontend
+    knob re-applied on restore; the in-flight per-frame insertion countdown is
+    snapshotted (PPU snapshot v4) so a save-state taken mid-insertion resumes
+    exactly.
+
+### Performance
+
+- **v1.7.0 "Forge" Workstream H7 (tier-1 perf, measure-first): no change adopted.**
+  Measured both researched candidates against the **>3% Criterion-stable +
+  byte-identical** bar; neither cleared it, so the emulation core stays
+  byte-identical. T1.2 (unified-DMA cycle fast-path) is a no-op — the per-cycle DMA
+  dispatch already sits behind a short-circuiting `unified_dma_pending()` floor and is
+  inlined by the existing `lto = "fat"` profile (an explicit `#[inline]` measured "no
+  change"). T1.3 (BLEP phase-row cache) is the same optimization the v1.4.0 F2 pass
+  dropped: `Kernel::row()` runs only on signal edges (not per sample) and the `PHASES =
+  256` kernel advances ~6.3 phase buckets per sample, so a phase-row cache has a
+  near-zero hit rate. Both rejections are documented in `docs/performance.md`.
+
+### Fixed
+
+- **v1.7.0 beta.1 review fixes** (all additive / off the default path;
+  AccuracyCoin holds **100% (139/139)** and the default `extra_scanlines == 0`
+  path stays byte-identical):
+  - **F3 — snapshot the in-flight extra-scanlines countdown.** A save-state
+    taken mid-insertion (`extra_lines_remaining > 0`) previously restored as
+    `0` and desynced. The PPU snapshot is bumped to **v4** to carry the
+    countdown (v1-v3 blobs upconvert to `0`); at the default it is a zero `u16`
+    so restore is behaviourally identical.
+  - **F3 — reset the per-frame countdown when `set_extra_scanlines()`
+    changes.** Reconfiguring the count (e.g. 8 → 2, or N → 0 disable) now
+    cancels any in-flight insertion so the countdown cannot be left stale or
+    out-of-bounds relative to the new value.
+  - **F3 — avoid a `prerender_line() - 1` underflow.** The "line immediately
+    before pre-render" check is rewritten as `scanline + 1 == prerender_line()`,
+    removing a debug-mode panic risk should `prerender_line()` ever be `0`.
+  - **Mapper 253 (Waixing VRC4-clone) CHR-RAM variant.** A CHR-RAM cart now
+    allocates the conventional 8 KiB (not a 1 KiB stub) and `ppu_write` writes
+    through the banked CHR store, so CHR-RAM is no longer effectively
+    read-only; the CHR-RAM is serialized in the save-state.
+  - **Mapper 176 (FK23C) CHR-ROM mutability.** `ppu_write` no longer writes
+    through `self.chr` when the cart provided CHR-ROM (`select_chr_ram` set but
+    `chr_is_ram == false`), so CHR-ROM is not mutated (which also was not
+    serialized). CHR writes are gated on `chr_is_ram` for behaviour/serialization
+    consistency.
+
 ## [1.6.0] - 2026-06-18 - "Studio" (Feature Release)
 
 ### Added
