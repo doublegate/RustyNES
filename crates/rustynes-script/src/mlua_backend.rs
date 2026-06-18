@@ -406,6 +406,31 @@ impl MluaBackend {
         self.lua.globals().set("sym", sym)?;
 
         self.lua.globals().set("emu", &emu)?;
+
+        // v1.6.0 B3 — the `joypad` table (colon-call). `joypad:set` mirrors
+        // `emu.setInput` (the same gated `ControlCmd::SetInput` path); the
+        // per-frame `joypad:get(port)` read is bound in the frame scope (it
+        // needs the live `Nes`), exactly as `emu.read` is.
+        let joypad = self.lua.create_table()?;
+        {
+            let controls = Rc::clone(&self.controls);
+            let locked = Rc::clone(&self.writes_locked);
+            joypad.set(
+                "set",
+                self.lua.create_function(
+                    move |_, (_this, port, buttons): (mlua::Value, u8, u8)| {
+                        // Gated identically to `emu.setInput`: dropped under a
+                        // locked / replayed session.
+                        if !locked.get() {
+                            push_capped(&controls, ControlCmd::SetInput { port, buttons });
+                        }
+                        Ok(())
+                    },
+                )?,
+            )?;
+        }
+        self.lua.globals().set("joypad", &joypad)?;
+
         // Redirect base `print` to the same sink.
         self.lua.globals().set("print", log_fn)?;
         Ok(())
@@ -662,6 +687,18 @@ impl VmBackend for MluaBackend {
             let read =
                 scope.create_function(|_, addr: u16| Ok(nes_cell.borrow_mut().peek(addr)))?;
             emu.set("read", read)?;
+
+            // v1.6.0 B3 — bind the per-frame `joypad:get(port)` read against the
+            // live `Nes` (`joypad:set` was installed on the table in the prelude).
+            // Returns the latched standard-controller bitmask (port 0=P1 .. 3),
+            // side-effect-free (reads the latch, not the shift register).
+            let joypad: Table = lua.globals().get("joypad")?;
+            joypad.set(
+                "get",
+                scope.create_function(|_, (_this, port): (mlua::Value, u16)| {
+                    Ok(nes_cell.borrow().controller_buttons((port & 0x03) as usize))
+                })?,
+            )?;
 
             let read_range = scope.create_function(|_, (addr, len): (u32, u32)| {
                 read_range_cpu(&nes_cell, addr, len)

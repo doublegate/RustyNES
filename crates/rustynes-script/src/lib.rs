@@ -684,6 +684,55 @@ mod tests {
         );
     }
 
+    /// v1.6.0 B3 — `joypad:get(port)` reads the latched standard-controller
+    /// bitmask (side-effect-free), and `joypad:set` queues the same gated
+    /// `ControlCmd::SetInput` as `emu.setInput` (a silent no-op when locked).
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn joypad_get_reads_latched_and_set_is_gated() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            r"
+            emu.onFrame(function()
+                emu.log('p1=' .. joypad:get(0))
+                joypad:set(1, 0xC1)
+            end)
+            ",
+        )
+        .expect("load");
+        // A | START = bit0 | bit3 = 0x09 = 9.
+        nes.set_buttons(0, rustynes_core::Buttons::A | rustynes_core::Buttons::START);
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+        let log = eng.drain_log();
+        assert!(
+            log.contains(&"p1=9".to_string()),
+            "joypad:get reads A|START: {log:?}"
+        );
+        let controls = eng.drain_controls();
+        assert!(
+            controls.iter().any(|c| matches!(
+                c,
+                ControlCmd::SetInput {
+                    port: 1,
+                    buttons: 0xC1
+                }
+            )),
+            "joypad:set queues SetInput: {controls:?}"
+        );
+        // Gated under a locked session, exactly like emu.setInput.
+        eng.set_writes_locked(true);
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+        assert!(
+            !eng.drain_controls()
+                .iter()
+                .any(|c| matches!(c, ControlCmd::SetInput { .. })),
+            "joypad:set must be dropped when locked"
+        );
+    }
+
     /// B2 — `cart:` read-only queries surface the loaded ROM's metadata. The
     /// synthetic NROM is a 16 KiB-PRG / 8 KiB-CHR mapper-0 NTSC cart.
     #[cfg(not(feature = "script-wasm"))]

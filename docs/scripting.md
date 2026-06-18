@@ -167,6 +167,13 @@ deterministic / locked session.
 | `memory:poke(addr, value)` | Write a byte into **system RAM** (`$0000-$1FFF`). Gated like `emu.write`. |
 | `memory:write_range(addr, bytes)` | Write a 1-based byte array starting at `addr` into system RAM. Gated like `emu.write`. |
 
+### `joypad` — controller input (B3)
+
+| Call | Description |
+|---|---|
+| `joypad:get(port)` *(v1.6.0)* | The latched standard-controller bitmask for `port` (`0` = P1, `1` = P2, `2`/`3` = Four Score), in `Buttons` bit order (`A`=bit 0 .. `Right`=bit 7). Read-only and side-effect-free (reads the latch, not the shift register). |
+| `joypad:set(port, buttons)` *(v1.6.0)* | Override a controller's button bitmask for the frame — identical to `emu.setInput(port, buttons)`. Gated like `emu.write`: a silent no-op under a locked / replayed session (netplay / TAS replay / RA-hardcore). |
+
 ### `cart` — read-only cart / system queries (B2)
 
 | Call | Description |
