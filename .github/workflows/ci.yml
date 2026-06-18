@@ -1,33 +1,22 @@
 name: CI
 
-# Triggers only when something that affects the BUILD changes. Pure
-# documentation pushes (markdown, the docs/ + to-dos/ + ref-docs/ trees,
-# screenshots, licences) skip CI entirely — they compile nothing, and rustdoc
-# covers doc-comments IN code (`.rs` files, which are NOT ignored), not the
-# markdown files. `paths-ignore` is safe here because `main` has no required
-# status checks (a skipped run can't leave a PR's merge gate hanging); if
-# branch protection is ever added, switch to a `dorny/paths-filter` gate job.
+# The workflow ALWAYS triggers (no `paths-ignore`), so the required `CI success`
+# check is always reported. A required status check that never runs leaves a PR's
+# merge gate stuck "pending" forever — exactly what a docs-only PR would hit if
+# `paths-ignore` skipped the whole run. Instead the `changes` job (dorny/paths-
+# filter) decides whether any BUILD-affecting file changed; if a change touches
+# only `**/*.md` / `**/*.txt` (the bulk of the docs/ + to-dos/ + ref-docs/ trees),
+# screenshots/, LICENSE*, NOTICE, .gitignore, or .codegraph/, every heavy job is
+# skipped and `CI success` passes trivially, so the doc-only PR can still merge.
+# (This mirrors the old `paths-ignore` set exactly — a non-md/txt asset placed
+# under docs/ etc., e.g. a tarball, still runs full CI, which is intentional.)
+# This is the branch-protection-safe replacement for the old `paths-ignore`
+# (which was fine only while `main` had no required checks).
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - "**/*.md"
-      - "**/*.txt"
-      - "screenshots/**"
-      - "LICENSE*"
-      - "NOTICE"
-      - ".gitignore"
-      - ".codegraph/**"
   pull_request:
     branches: [main]
-    paths-ignore:
-      - "**/*.md"
-      - "**/*.txt"
-      - "screenshots/**"
-      - "LICENSE*"
-      - "NOTICE"
-      - ".gitignore"
-      - ".codegraph/**"
   workflow_dispatch:
   # GitHub merge queue. When the queue is enabled in repo settings + the
   # `CI success` check is required by branch protection, a PR entering the queue
@@ -66,6 +55,45 @@ permissions:
   contents: read
 
 jobs:
+  # Decide whether any build-affecting file changed. Because the workflow always
+  # runs (so `CI success` always reports for branch protection), this is what
+  # actually skips the heavy jobs on a docs-only change: they each gate on
+  # `needs.changes.outputs.code == 'true'`. The `code` filter is the inverse of
+  # the doc set the old `paths-ignore` listed (match everything, then exclude
+  # docs — picomatch/gitignore precedence). For events with no diff base (manual
+  # dispatch, merge queue) paths-filter reports every filter as changed, so they
+  # run the full suite.
+  changes:
+    name: detect code changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      # Full history: on `push`, dorny/paths-filter diffs against the before-SHA
+      # using local git, so the default shallow clone (fetch-depth: 1) can miss
+      # the base commit. (On `pull_request` it uses the GitHub API and needs no
+      # history.) Without this the push-event filter falls back to "everything
+      # changed" — safe, but it loses the docs-only skip on direct main pushes.
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            code:
+              - '**'
+              - '!**/*.md'
+              - '!**/*.txt'
+              - '!screenshots/**'
+              - '!LICENSE*'
+              - '!NOTICE'
+              - '!.gitignore'
+              - '!.codegraph/**'
+
   # fmt + clippy + rustdoc share one runner + one compile of the workspace's
   # dependency graph (clippy and rustdoc differ only in the final pass), so
   # merging them removes two redundant dependency compiles and two runner
@@ -87,6 +115,8 @@ jobs:
   # give full cross-platform coverage before a regression can stick on `main`.
   setup:
     name: select matrix
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
     runs-on: ubuntu-latest
     outputs:
       os: ${{ steps.pick.outputs.os }}
@@ -102,6 +132,8 @@ jobs:
 
   lint:
     name: fmt + clippy + rustdoc
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
     runs-on: ubuntu-latest
     env:
       RUSTDOCFLAGS: -D warnings
@@ -141,8 +173,9 @@ jobs:
     # Gate the matrix on the fast fmt+clippy+rustdoc job (a lint slip fails in
     # ~seconds — no point spinning up OS runners until it's green) and take the
     # OS list from `setup` (ubuntu-only on PRs; full matrix on push / merge
-    # queue / dispatch).
-    needs: [lint, setup]
+    # queue / dispatch). `changes` keeps the whole chain off a docs-only run.
+    needs: [changes, lint, setup]
+    if: ${{ needs.changes.outputs.code == 'true' }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -160,7 +193,8 @@ jobs:
     # Gate the slowest job (release-mode compile + the heavy CPU/AccuracyCoin
     # ROM batteries) on the fast lint job — don't pay the ~release compile when
     # fmt/clippy already failed.
-    needs: lint
+    needs: [changes, lint]
+    if: ${{ needs.changes.outputs.code == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -183,6 +217,8 @@ jobs:
 
   no_std:
     name: no_std build (thumbv7em-none-eabihf)
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -199,6 +235,8 @@ jobs:
 
   wasm:
     name: wasm32 build + clippy
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -220,6 +258,8 @@ jobs:
 
   bench:
     name: frame-time regression gate
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -236,17 +276,16 @@ jobs:
       - run: ./scripts/bench_regression_check.sh
 
   # Single summary status — the ONE check to require in branch protection / the
-  # merge queue. It runs always (even when a needed job fails) and fails iff any
-  # job it depends on failed or was cancelled. A *skipped* job counts as success
-  # (so an event-conditional leg — e.g. the macOS/Windows matrix on a PR — never
-  # blocks). KEEP the `needs:` list exhaustive: a job missing from it silently
-  # stops being gated. This is what makes the ubuntu-only-PR / full-on-merge
-  # split safe (branch protection requires only this stable name, not the
-  # event-varying matrix legs).
+  # merge queue. It runs always (even when a needed job fails or is skipped) and
+  # fails iff any job it depends on failed or was cancelled. A *skipped* job
+  # counts as success — so an event-conditional leg (the macOS/Windows matrix on
+  # a PR) never blocks, AND a docs-only change (every heavy job skipped via the
+  # `changes` gate) still reports this check green so the PR can merge. KEEP the
+  # `needs:` list exhaustive: a job missing from it silently stops being gated.
   ci-success:
     name: CI success
     if: ${{ always() }}
-    needs: [setup, lint, test, test-roms, no_std, wasm, bench]
+    needs: [changes, setup, lint, test, test-roms, no_std, wasm, bench]
     runs-on: ubuntu-latest
     steps:
       - name: Fail if any required job failed or was cancelled
