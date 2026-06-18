@@ -191,6 +191,7 @@ Per `ref-docs/research-report.md` §Internal scroll registers:
 
 - **PPUSTATUS read** clears VBL flag *and* `w`.
 - **PPUDATA read buffering**: returns previous buffered value, fills buffer with current `v`'s data; palette reads (`$3F00-$3FFF`) bypass buffer but still update it with the underlying nametable mirror.
+- **PPUDATA (`$2007`) read during active rendering**: a `$2007` read while rendering is enabled does NOT do a clean buffered VRAM fetch. Instead it returns the value the rendering fetch cadence most recently drove on the VRAM data bus (the "render buffer"), and the `PPUDATA` state machine reloads `data_buffer` a few PPU dots *after* the read ends rather than immediately — modelled as a short PPU-dot countdown (`ppudata_sm_countdown`) with the `v`-increment glitch deferred to the same `TStep` dot (`ppudata_v_inc_pending`). This is the `AccuracyCoin` `$2007 Stress` per-dot-read bracket; verified complete (no v1.6.0 Workstream D change needed). The diag knobs `RUSTYNES_2007_DELAY` / `RUSTYNES_2007_VINC` are read-only investigation tools, not shipped behavior.
 - **PPUDATA increment**: 1 or 32 per PPUCTRL bit 2.
 - **OAMADDR write during rendering**: glitches OAMADDR's high 6 bits; OAM data is not modified during rendering writes.
 - **OAMADDR ≥ 8 at rendering start**: row at `OAMADDR & 0xF8` is copied to OAM[0..=7]. (2C02G bug.)
