@@ -1,11 +1,12 @@
 # RustyNES — Project Status Matrix
 
-**Current release: v1.5.0 "Lens" — the insight, scriptability, creator-tooling,
-and polish release** on the cycle-accurate v1.0.0 production core. A NES/Famicom
-emulator with the Mesen2 / higan / ares accuracy bar, shipped as a polished
-desktop application. **AccuracyCoin 100.00% (139/139)**, the 60-ROM
+**Current release (latest tag): v1.5.0 "Lens" — the insight, scriptability,
+creator-tooling, and polish release** on the cycle-accurate v1.0.0 production
+core. A NES/Famicom emulator with the Mesen2 / higan / ares accuracy bar, shipped
+as a polished desktop application. **AccuracyCoin 100.00% (139/139)**, the 60-ROM
 `external_real_games` + 52-entry `external_extended` oracles byte-identical,
-nestest 0-diff. v1.5.0 lands eight additive workstreams: **A** debugger
+nestest 0-diff. **`v1.6.0 "Studio"` is in development on `main` (NOT yet tagged)**
+— see "In development: v1.6.0 Studio" below for what has merged so far. v1.5.0 lands eight additive workstreams: **A** debugger
 visualization (an Input Miniatures overlay, a graphical PPU event-viewer heatmap,
 a per-scanline trace viewer, an HD-pack per-pixel inspector — behind
 `debug-hooks`/`hd-pack`); **B** Lua dev/TAS API depth (memory peek/poke/range,
@@ -33,7 +34,32 @@ caveat, with live-browser verify, proxy deploy, and trampoline marshalling left 
 maintainer-manual carryovers. Every addition is additive / off-by-default, so the
 shipped / native / `no_std` / wasm builds stay byte-identical and AccuracyCoin
 holds 100% (139/139); the accuracy residuals all converge on the future v2.0
-fractional-master-clock refactor (ADR 0002). The preceding **v1.4.1** (a patch on
+fractional-master-clock refactor (ADR 0002).
+
+**In development: v1.6.0 "Studio" (NOT yet tagged — accumulating on `main`).**
+The studio / TAS-tooling / debugger-depth / accuracy-and-breadth release. Like
+every release on the v1.0.0 core it is additive / off-by-default, so the shipped /
+native / `no_std` / wasm builds stay byte-identical and AccuracyCoin holds
+**100% (139/139)**. *Merged to `main` so far:* the **TAStudio piano-roll TAS
+editor** (editor model A1/A3/A4 + FCEUX `.fm2` interop B1, #118; the A2 piano-roll
+editor, #122); **J.Y. Company ASIC mappers** m90/209/211 (BestEffort, #123) + the
+**UNIF (`.unf`) cartridge loader** (Workstream E2, #117), which take mapper
+coverage from **123 families at the v1.5.0 tag → ~126 on `main`**; the data-driven
+external-coverage harness + per-mapper screenshot coverage + BestEffort
+consolidation (#114/#115/#116/#125); **Lua data breadth** (memory domains, sized
+reads, joypad — Workstream B3, #128); the **m30/m80/m185 blank-boot mapper fixes**
+(#127); a **CI paths-filter gate** for doc-only PRs (#124); the ROADMAP update
+(#129); the to-dos/plans archive (#130); and README freshness (#126). *Remaining /
+in flight:* B2 (Lua movie driving + `.bk2` interop), C (Mesen2-class debugger
+depth — in progress), D (off-axis accuracy — DMC/OAM-DMA controller corruption,
+`$2007` blocking read, sprite-overflow; adoptable *without* the v2.0 refactor),
+E (mapper breadth → ~150 families), F (FDS-proper), G (A/V recording), H (HD
+audio), I (shaders), then the release finals. Per this file's version-policy
+convention the headline mapper count stays at the **tagged** figure (123) until
+v1.6.0 is cut; the ~126-on-`main` figure is the in-development count. Planning
+lives in `to-dos/ROADMAP.md` (the entry point) + `to-dos/plans/`.
+
+The preceding **v1.4.1** (a patch on
 **v1.4.0 "Fidelity" — the compatibility-and-finish release**) added four BestEffort
 mapper boot/decode fixes (m92 / m94 / m145 / m147) from the boot-smoke-vs-real-dumps
 pass and reorganized the boot-smoke screenshot corpus to mirror the per-mapper
@@ -532,7 +558,9 @@ ROM dumps under `tests/roms/external/`, not committed):
 > coverage from the early engine line (the top-25-by-title-count tranche).
 > RustyNES **v1.0.0 shipped 51 mapper families**; **v1.2.0 extended this to
 > 87**, **v1.3.0 "Bedrock" to 101**, **v1.4.0 "Fidelity" to 113**, and
-> **v1.5.0 "Lens" to 123** — see
+> **v1.5.0 "Lens" to 123** (the current tagged count). **v1.6.0 "Studio"
+> (in development on `main`, not tagged)** adds the J.Y. Company ASIC mappers
+> (m90/209/211) + the UNIF loader, taking the in-dev count to **~126** — see
 > `docs/mappers.md` §Mapper coverage matrix +
 > §Mapper accuracy tiering for the full current list. The "out of scope" notes
 > below were the early-engine scoping; they are retained as history and
@@ -541,7 +569,9 @@ ROM dumps under `tests/roms/external/`, not committed):
 **Mapper count.** 15 distinct mappers in the early engine line (>95% of the
 licensed library by title count) → **51 families at v1.0.0** → **87 families at
 v1.2.0** → **101 families at v1.3.0 "Bedrock"** → **113 families at v1.4.0
-"Fidelity"** → **123 families at v1.5.0 "Lens"**, tiered for accuracy honesty:
+"Fidelity"** → **123 families at v1.5.0 "Lens"** (the current tagged count;
+**~126 in development on `main`** for v1.6.0 "Studio" with the J.Y. ASIC + UNIF
+loader), tiered for accuracy honesty:
 
 | Tier | Families | Accuracy-gated? | Evidence |
 |------|----------|-----------------|----------|
@@ -737,13 +767,28 @@ unless the default flips.
 
 ## Version policy
 
-**RustyNES ships at v1.0.0** (the production cut). The table below is the
-**engine-lineage** version history — the internal engine line whose increments
-produced the v1.0.0 technology. Its `v0.9.x` / `v1.x` / `v2.x` markers are the
-engine's own line, retained as historical anchors documenting *how* each
-capability was built; they are **not** RustyNES releases of their own. When
-RustyNES makes a release it does so under its own semantic-version line
-starting at **v1.0.0**.
+**RustyNES ships at v1.0.0** (the production cut), with the additive,
+off-by-default feature releases **v1.1.0 "Scriptable" → v1.2.0 "Curator" →
+v1.3.0 "Bedrock" → v1.4.0 "Fidelity" (+ the v1.4.1 patch) → v1.5.0 "Lens"** on
+top — **v1.5.0 is the current tag**, and **v1.6.0 "Studio" is in development on
+`main`** (not tagged). The table below is the **engine-lineage** version history
+— the internal engine line whose increments produced the v1.0.0 technology. Its
+`v0.9.x` / `v1.x` / `v2.x` markers are the engine's own line, retained as
+historical anchors documenting *how* each capability was built; they are **not**
+RustyNES releases of their own. When RustyNES makes a release it does so under its
+own semantic-version line starting at **v1.0.0**.
+
+> **Two distinct "v2.0"s — do not conflate them.** The **engine-lineage v2.0**
+> master-clock work (which took AccuracyCoin to **100.00%**) is *upstream engine
+> history* and **already shipped, as the v1.0.0 production core** — it is today's
+> only scheduler. The forward **RustyNES v2.0.0 "Timebase"** in the roadmap is a
+> *different, still-future* milestone: NOT "add a master clock" but the
+> **one-clock + every-cycle-bus-access collapse** (Mesen2-style fractional master
+> clock with a φ1/φ2 access split), the hard-tier accuracy-residual closure, Vs.
+> DualSystem emulation, and the breaking save-state / cross-version changes that
+> entails (ADR 0002). The full forward path (v1.6.0 "Studio" → v1.7.0 "Forge" →
+> v1.8.0/v1.9.0 mobile → v2.0.0 "Timebase") is tracked in `to-dos/ROADMAP.md` +
+> `to-dos/plans/`.
 
 | Version | Status | Bar |
 |---------|--------|-----|
