@@ -17,6 +17,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Off-axis accuracy verification + documentation** (v1.6.0 Workstream D). A
+  pin-test-first audit of the dot/CPU-cycle-granular off-axis accuracy cluster
+  confirmed the cycle-accurate engine (plus the v1.4.0 DMC-DMA pass) already
+  models every Workstream D target, with all committed oracles passing and
+  AccuracyCoin holding 100% (139/139). No engine change was made — a speculative
+  edit here could only risk the oracle for zero oracle benefit. The as-built
+  models are now documented in lockstep: **D1** the complete DMC-DMA and
+  OAM-DMA ↔ `$4016`/`$4017` controller-read double-clock / dropped-bit conflict
+  model (verified by `dmc_dma_during_read4/dma_4016_read.nes`,
+  `double_2007_read.nes`, `sprdma_and_dmc_dma{,_512}.nes`, and the `AccuracyCoin`
+  `APU Register Activation` Tests 5-7; see `docs/cpu-6502.md` "DMA ↔
+  controller-read conflicts"); **D2** the `$2007` (PPUDATA) read-during-active-
+  rendering render-buffer window with the deferred state-machine reload and
+  `v`-increment glitch (`ppudata_sm_countdown` / `ppudata_v_inc_pending`, the
+  `AccuracyCoin` `$2007 Stress` bracket; see `docs/ppu-2c02.md`); **D3** the
+  buggy sprite-overflow `n+m` OAM-index evaluation and the three-group MDR /
+  open-bus decay timer (verified by `sprite_overflow_tests` 4/5 and
+  `ppu_open_bus` tests 7/9; already documented in `docs/ppu-2c02.md`). The Test
+  5/6 active-window-mirror refinement and the `$2002` NMI-suppression race
+  remain deferred to the future v2.0 fractional-master-clock refactor (ADR 0002).
 - **FDS-proper — timed disk-head position + `$4032` auto-insert + per-game CRC
   quirk table** (v1.6.0 Workstream F, modelled on puNES `fds.c`). The FDS RAM
   adapter (`rustynes-mappers::Fds`) now models the belt-driven drive's physical
