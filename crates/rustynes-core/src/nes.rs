@@ -1157,6 +1157,22 @@ impl Nes {
         self.bus.set_power_pad(port, buttons);
     }
 
+    /// v1.6.0 B3 — the latched standard-controller button bitmask for `port`
+    /// (`0` = P1 / `$4016`, `1` = P2 / `$4017`; `2`/`3` are the Four Score
+    /// players), in [`Buttons`](crate::Buttons) bit order (A = bit 0 .. Right =
+    /// bit 7). Read-only and side-effect-free — it reads the latched state, not
+    /// the shift register, so it never perturbs a controller poll. Exposed for
+    /// the Lua `joypad.get` query.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `port` is not in `0..=3`.
+    #[must_use]
+    pub fn controller_buttons(&self, port: usize) -> u8 {
+        assert!(port <= 3, "controller port {port} out of range (0..=3)");
+        self.bus.controller(port).buttons().bits()
+    }
+
     /// v1.2.0 Workstream D — attach a SNES-style serial mouse on `port` (0 =
     /// `$4016`, 1 = `$4017`) and set its movement / buttons / sensitivity.
     /// `(dx, dy)` are the signed per-frame deltas (clamped to +/-127 on latch);
@@ -1885,6 +1901,14 @@ impl Nes {
         let oam = self.bus.ppu().oam();
         out.copy_from_slice(&oam[..256]);
         out
+    }
+
+    /// One OAM byte (`index` = `0..=255`), without copying the whole 256-byte
+    /// array — for single-byte readers (e.g. the Lua `memory:read_oam`) that
+    /// would otherwise pay a full `oam()` copy per access. Read-only.
+    #[must_use]
+    pub fn oam_byte(&self, index: u8) -> u8 {
+        self.bus.ppu().oam()[index as usize]
     }
 
     /// Borrow palette RAM (32 bytes).

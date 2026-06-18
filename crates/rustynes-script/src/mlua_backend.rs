@@ -406,6 +406,31 @@ impl MluaBackend {
         self.lua.globals().set("sym", sym)?;
 
         self.lua.globals().set("emu", &emu)?;
+
+        // v1.6.0 B3 — the `joypad` table (colon-call). `joypad:set` mirrors
+        // `emu.setInput` (the same gated `ControlCmd::SetInput` path); the
+        // per-frame `joypad:get(port)` read is bound in the frame scope (it
+        // needs the live `Nes`), exactly as `emu.read` is.
+        let joypad = self.lua.create_table()?;
+        {
+            let controls = Rc::clone(&self.controls);
+            let locked = Rc::clone(&self.writes_locked);
+            joypad.set(
+                "set",
+                self.lua.create_function(
+                    move |_, (_this, port, buttons): (mlua::Value, u8, u8)| {
+                        // Gated identically to `emu.setInput`: dropped under a
+                        // locked / replayed session.
+                        if !locked.get() {
+                            push_capped(&controls, ControlCmd::SetInput { port, buttons });
+                        }
+                        Ok(())
+                    },
+                )?,
+            )?;
+        }
+        self.lua.globals().set("joypad", &joypad)?;
+
         // Redirect base `print` to the same sink.
         self.lua.globals().set("print", log_fn)?;
         Ok(())
@@ -663,6 +688,18 @@ impl VmBackend for MluaBackend {
                 scope.create_function(|_, addr: u16| Ok(nes_cell.borrow_mut().peek(addr)))?;
             emu.set("read", read)?;
 
+            // v1.6.0 B3 — bind the per-frame `joypad:get(port)` read against the
+            // live `Nes` (`joypad:set` was installed on the table in the prelude).
+            // Returns the latched standard-controller bitmask (port 0=P1 .. 3),
+            // side-effect-free (reads the latch, not the shift register).
+            let joypad: Table = lua.globals().get("joypad")?;
+            joypad.set(
+                "get",
+                scope.create_function(|_, (_this, port): (mlua::Value, u16)| {
+                    Ok(nes_cell.borrow().controller_buttons((port & 0x03) as usize))
+                })?,
+            )?;
+
             let read_range = scope.create_function(|_, (addr, len): (u32, u32)| {
                 read_range_cpu(&nes_cell, addr, len)
             })?;
@@ -736,6 +773,41 @@ impl VmBackend for MluaBackend {
                         out.push(nes.ppu_bus_peek(a));
                     }
                     Ok(out)
+                })?,
+            )?;
+            // v1.6.0 B3 — sized reads. Two CPU-bus `peek`s composed little- or
+            // big-endian; observational (peek never perturbs the run), the
+            // common TAS-script need for 16-bit values (positions, timers).
+            memory.set(
+                "read_u16_le",
+                scope.create_function(|_, (_this, addr): (mlua::Value, u16)| {
+                    let mut nes = nes_cell.borrow_mut();
+                    Ok(u16::from_le_bytes([
+                        nes.peek(addr),
+                        nes.peek(addr.wrapping_add(1)),
+                    ]))
+                })?,
+            )?;
+            memory.set(
+                "read_u16_be",
+                scope.create_function(|_, (_this, addr): (mlua::Value, u16)| {
+                    let mut nes = nes_cell.borrow_mut();
+                    Ok(u16::from_be_bytes([
+                        nes.peek(addr),
+                        nes.peek(addr.wrapping_add(1)),
+                    ]))
+                })?,
+            )?;
+            // v1.6.0 B3 — OAM domain (sprite memory). The third read domain
+            // alongside CPU (`peek`) and PPU (`peek_ppu`). `Nes::oam_byte` reads
+            // one byte without copying the whole 256-byte array, so iterating
+            // OAM in a script doesn't pay a full snapshot per access. Index
+            // wraps to 8 bits.
+            memory.set(
+                "read_oam",
+                scope.create_function(|_, (_this, index): (mlua::Value, u16)| {
+                    #[allow(clippy::cast_possible_truncation)]
+                    Ok(nes_cell.borrow().oam_byte((index & 0xFF) as u8))
                 })?,
             )?;
             memory.set(

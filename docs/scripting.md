@@ -161,8 +161,18 @@ deterministic / locked session.
 | `memory:read_range(addr, len)` | `len` CPU bytes from `addr` (wrapping), 1-based array. `len` ≤ 65536. |
 | `memory:peek_ppu(addr)` | One PPU-bus byte (`$0000-$3FFF`: CHR, nametables, palette), side-effect-free. |
 | `memory:read_range_ppu(addr, len)` | `len` PPU bytes from `addr` (wrapping the 14-bit PPU space). `len` ≤ 16384. |
+| `memory:read_u16_le(addr)` *(v1.6.0)* | A 16-bit **little-endian** word — two CPU `peek`s (`addr`, `addr+1`), side-effect-free. The common need for positions / timers / pointers. |
+| `memory:read_u16_be(addr)` *(v1.6.0)* | A 16-bit **big-endian** word from `addr`. |
+| `memory:read_oam(index)` *(v1.6.0)* | One byte of sprite RAM (**OAM**) — the third read domain alongside CPU and PPU; `index` wraps to `0-255`. |
 | `memory:poke(addr, value)` | Write a byte into **system RAM** (`$0000-$1FFF`). Gated like `emu.write`. |
 | `memory:write_range(addr, bytes)` | Write a 1-based byte array starting at `addr` into system RAM. Gated like `emu.write`. |
+
+### `joypad` — controller input (B3)
+
+| Call | Description |
+|---|---|
+| `joypad:get(port)` *(v1.6.0)* | The latched standard-controller bitmask for `port` (`0` = P1, `1` = P2, `2`/`3` = Four Score), in `Buttons` bit order (`A`=bit 0 .. `Right`=bit 7). Read-only and side-effect-free (reads the latch, not the shift register). |
+| `joypad:set(port, buttons)` *(v1.6.0)* | Override a controller's button bitmask for the frame — identical to `emu.setInput(port, buttons)`, so like that call it applies to the **standard ports `0` (P1) / `1` (P2)** the host latches; ports `≥ 2` are accepted but not applied (the frontend feeds only P1/P2). Gated like `emu.write`: a silent no-op under a locked / replayed session (netplay / TAS replay / RA-hardcore). |
 
 ### `cart` — read-only cart / system queries (B2)
 

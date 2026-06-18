@@ -649,6 +649,90 @@ mod tests {
         assert_eq!(nes.peek(0x42), 0x00);
     }
 
+    /// v1.6.0 B3 — sized reads (`read_u16_le` / `read_u16_be`) compose two CPU
+    /// `peek`s, and `read_oam` exposes the sprite-RAM domain. Observational, so
+    /// they never perturb the deterministic run.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn memory_sized_reads_and_oam_domain() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            r"
+            emu.onFrame(function()
+                memory:poke(0x10, 0x34)
+                memory:poke(0x11, 0x12)
+                emu.log('le=' .. memory:read_u16_le(0x10))
+                emu.log('be=' .. memory:read_u16_be(0x10))
+                emu.log('oam=' .. memory:read_oam(0))
+            end)
+            ",
+        )
+        .expect("load");
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+        let log = eng.drain_log();
+        // $34 (lo) | $12 (hi) << 8 = $1234 = 4660 little-endian; $3412 = 13330 big.
+        assert!(log.contains(&"le=4660".to_string()), "LE word: got {log:?}");
+        assert!(
+            log.contains(&"be=13330".to_string()),
+            "BE word: got {log:?}"
+        );
+        assert!(
+            log.iter().any(|l| l.starts_with("oam=")),
+            "read_oam returns a byte: got {log:?}"
+        );
+    }
+
+    /// v1.6.0 B3 — `joypad:get(port)` reads the latched standard-controller
+    /// bitmask (side-effect-free), and `joypad:set` queues the same gated
+    /// `ControlCmd::SetInput` as `emu.setInput` (a silent no-op when locked).
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn joypad_get_reads_latched_and_set_is_gated() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            r"
+            emu.onFrame(function()
+                emu.log('p1=' .. joypad:get(0))
+                joypad:set(1, 0xC1)
+            end)
+            ",
+        )
+        .expect("load");
+        // A | START = bit0 | bit3 = 0x09 = 9.
+        nes.set_buttons(0, rustynes_core::Buttons::A | rustynes_core::Buttons::START);
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+        let log = eng.drain_log();
+        assert!(
+            log.contains(&"p1=9".to_string()),
+            "joypad:get reads A|START: {log:?}"
+        );
+        let controls = eng.drain_controls();
+        assert!(
+            controls.iter().any(|c| matches!(
+                c,
+                ControlCmd::SetInput {
+                    port: 1,
+                    buttons: 0xC1
+                }
+            )),
+            "joypad:set queues SetInput: {controls:?}"
+        );
+        // Gated under a locked session, exactly like emu.setInput.
+        eng.set_writes_locked(true);
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+        assert!(
+            !eng.drain_controls()
+                .iter()
+                .any(|c| matches!(c, ControlCmd::SetInput { .. })),
+            "joypad:set must be dropped when locked"
+        );
+    }
+
     /// B2 — `cart:` read-only queries surface the loaded ROM's metadata. The
     /// synthetic NROM is a 16 KiB-PRG / 8 KiB-CHR mapper-0 NTSC cart.
     #[cfg(not(feature = "script-wasm"))]

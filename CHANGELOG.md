@@ -17,6 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Lua data breadth — memory domains, sized reads, `joypad`** (v1.6.0
+  Workstream B3). The `memory` table gains `memory:read_u16_le(addr)` /
+  `memory:read_u16_be(addr)` (16-bit word reads, two side-effect-free CPU
+  `peek`s) and `memory:read_oam(index)` (the sprite-RAM domain, alongside the
+  existing CPU `peek` and PPU `peek_ppu`). A new `joypad` table adds
+  `joypad:get(port)` (the latched standard-controller bitmask, read-only) and
+  `joypad:set(port, buttons)` (gated identically to `emu.setInput`). All reads
+  are observational — they never perturb the deterministic run. (`mlua` native
+  backend; see `docs/scripting.md`.)
 - **TAStudio piano-roll TAS editor** (v1.6.0 Workstream A2). A new Tools →
   TAStudio window: a vertically-scrolling piano-roll over the editor model —
   one row per frame, one column per controller button, with click-to-toggle
