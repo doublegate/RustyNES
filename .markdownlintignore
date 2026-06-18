@@ -15,3 +15,8 @@ tests/roms/holy_mapperel/README.md
 # Frozen archived docs / to-dos — exempt going forward (lint living docs only)
 docs/archive/
 to-dos/archive/
+
+# Verbatim historical release-plan copies (v1.0.0 synthesis .. v1.6.0, plus the
+# engine-lineage v2.x plans) — reference, not maintained prose, so they're kept
+# exactly as authored (like ref-docs/).
+to-dos/plans/
