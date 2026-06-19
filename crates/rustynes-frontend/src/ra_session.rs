@@ -711,7 +711,7 @@ mod tests {
         let mut s = RaSession::new(&cfg(false, false, "", ""));
         for i in 0..(MAX_SCOREBOARDS + 3) {
             s.push_scoreboard(ScoreboardPopup {
-                leaderboard_id: i as u32,
+                leaderboard_id: u32::try_from(i).unwrap(),
                 submitted_score: String::new(),
                 best_score: String::new(),
                 new_rank: 1,
