@@ -58,6 +58,12 @@ pub mod gfx;
 // ratatui / crossterm deps are gated out of the wasm target in `Cargo.toml`.
 #[cfg(all(not(target_arch = "wasm32"), feature = "help-tui"))]
 pub mod help_tui;
+// v1.7.0 "Forge" Workstream D1 — the HistoryViewer: a scrubbable full-session
+// timeline over the rewind ring (per-frame input log + periodic start-anchors)
+// with export-last-N-seconds-as-`.rnm`. Output-only: it observes the inputs the
+// frontend already latched and copies the save-states the core already produced,
+// so it cannot perturb the deterministic timeline. Native + `wasm-winit`.
+pub mod history_viewer;
 // v1.2.0 beta.2 (Workstream C3) — HD-pack / mod loader (native-only, default OFF).
 #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
 pub mod hdpack;

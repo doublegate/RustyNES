@@ -242,3 +242,95 @@ fn snapshot_round_trip_preserves_full_byte_stream() {
         "snapshot bytes must be reproducible after restore"
     );
 }
+
+// ---------------------------------------------------------------------------
+// v1.7.0 "Forge" Workstream D2 — Zwinder-class compressed tiered state manager.
+//
+// THE D2 DETERMINISM GATE: a save -> compress -> decompress -> restore lossless
+// round-trip MUST byte-equal the saved state, over REAL `Nes` snapshots, for
+// keyframes AND XOR-deltas, and after eviction. Anything other than perfect
+// round-trip equality would break save-states / TAS replay / netplay rollback.
+// ---------------------------------------------------------------------------
+
+use rustynes_core::ZwinderStateManager;
+
+/// Drive 60 real per-frame `Nes` snapshots through the Zwinder
+/// (store/compress), then decode each (decompress) and assert byte-equality
+/// against the original blob AND that a fresh `Nes` restored from the decoded
+/// blob is functionally identical (cycle + framebuffer).
+#[test]
+fn zwinder_round_trip_equals_saved_state_over_real_snapshots() {
+    let rom = synth_nrom(16, 8);
+    let mut nes = Nes::from_rom(&rom).unwrap();
+    // Keyframe interval 8: ~7/8 of the stored frames are XOR-deltas, so the
+    // delta path is exercised heavily. Generous budget: no eviction this run,
+    // so EVERY frame must round-trip exactly.
+    let mut z = ZwinderStateManager::new(64 * 1024 * 1024, 8);
+
+    let mut originals: Vec<(u64, Vec<u8>)> = Vec::new();
+    for f in 0..60u64 {
+        nes.run_frame();
+        let blob = nes.snapshot();
+        z.store(f, &blob, f);
+        originals.push((f, blob));
+    }
+
+    // Every stored frame decodes BYTE-FOR-BYTE to its original save-state.
+    for (f, original) in &originals {
+        let decoded = z
+            .get(*f)
+            .unwrap_or_else(|| panic!("frame {f} should still be cached"))
+            .unwrap_or_else(|e| panic!("frame {f} failed to decompress: {e}"));
+        assert_eq!(
+            &decoded, original,
+            "Zwinder round-trip for frame {f} is NOT byte-identical to the saved state"
+        );
+        // And the decoded blob restores to a functionally-identical emulator.
+        let mut fresh = Nes::from_rom(&rom).unwrap();
+        fresh.restore(&decoded).unwrap();
+        assert_eq!(
+            fresh.snapshot(),
+            *original,
+            "restore + re-encode mismatch at frame {f}"
+        );
+    }
+}
+
+/// Round-trip equality must hold AFTER density-tiered eviction too: a tight
+/// budget forces the far past to be thinned, but every surviving frame (and the
+/// frame-0 anchor) must still decompress to exactly its saved bytes.
+#[test]
+fn zwinder_round_trip_holds_after_eviction() {
+    let rom = synth_nrom(16, 8);
+    let mut nes = Nes::from_rom(&rom).unwrap();
+    // A budget tight enough to force eviction across a 200-frame sweep.
+    let mut z = ZwinderStateManager::new(256 * 1024, 8);
+
+    let mut originals: std::collections::BTreeMap<u64, Vec<u8>> = std::collections::BTreeMap::new();
+    for f in 0..200u64 {
+        nes.run_frame();
+        let blob = nes.snapshot();
+        z.store(f, &blob, f); // cursor tracks the head
+        originals.insert(f, blob);
+    }
+    assert!(
+        z.used_bytes() <= z.budget_bytes(),
+        "budget must be honoured"
+    );
+    assert!(z.len() < 200, "eviction must have thinned the history");
+
+    // The frame-0 anchor must survive AND round-trip.
+    assert!(z.has(0), "frame-0 anchor must survive eviction");
+    let kf0 = z.get(0).unwrap().unwrap();
+    assert_eq!(&kf0, &originals[&0], "anchor frame 0 must be lossless");
+
+    // Every SURVIVING frame round-trips byte-for-byte.
+    let survivors: Vec<u64> = z.cached_frames().collect();
+    for f in survivors {
+        let decoded = z.get(f).unwrap().unwrap();
+        assert_eq!(
+            &decoded, &originals[&f],
+            "surviving frame {f} must round-trip losslessly after eviction"
+        );
+    }
+}

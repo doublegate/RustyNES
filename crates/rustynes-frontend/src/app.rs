@@ -1302,6 +1302,8 @@ impl App {
             emu.audio_buf.clear();
             emu.perf.clear();
             emu.present_fb.clear();
+            // v1.7.0 "Forge" D1 — a new ROM starts a fresh session timeline.
+            emu.history.clear();
             emu.nes = Some(nes);
         }
         // v1.6.0 "Studio" A2 — the new ROM invalidates any TAStudio session
@@ -2465,6 +2467,57 @@ impl App {
         let md5_b64 = base64_std(Md5::digest(&self.rom_bytes).as_slice());
         let sha1 = hex::encode(Sha1::digest(&self.rom_bytes));
         Some(MovieRomHashes { md5_b64, sha1 })
+    }
+
+    /// v1.7.0 "Forge" Workstream D1 — export the trailing `seconds` of the live
+    /// session timeline (the `HistoryViewer` over the rewind ring) as a replayable
+    /// `.rnm` clip. The clip starts at the nearest start-anchor at-or-before the
+    /// window and replays bit-identically (its `StartPoint` is a real
+    /// save-state + the recorded input stream).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn handle_history_export_clip(&self, seconds: f64) {
+        let movie = {
+            let guard = self.emu.lock();
+            // The region frame rate (NTSC ~60, PAL/Dendy ~50) for seconds->frames.
+            let fps = guard.nes.as_ref().map_or(60.0, |nes| {
+                let d = nes.frame_duration().as_secs_f64();
+                if d > 0.0 { 1.0 / d } else { 60.0 }
+            });
+            guard.history.export_last_seconds(seconds, fps)
+        };
+        let movie = match movie {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("rustynes: history clip export: {e}");
+                return;
+            }
+        };
+        let dir = self.movies_dir();
+        if let Some(d) = dir.as_ref() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        let mut dialog = rfd::FileDialog::new()
+            .add_filter("RustyNES movie", &["rnm"])
+            .set_file_name("clip.rnm");
+        if let Some(d) = dir {
+            dialog = dialog.set_directory(d);
+        }
+        let Some(path) = dialog.save_file() else {
+            eprintln!("rustynes: history clip export cancelled");
+            return;
+        };
+        match std::fs::write(&path, movie.serialize()) {
+            Ok(()) => eprintln!(
+                "rustynes: exported {:.0}s history clip ({} frames) -> {}",
+                seconds,
+                movie.len(),
+                path.display()
+            ),
+            Err(e) => eprintln!(
+                "rustynes: history clip export failed {}: {e}",
+                path.display()
+            ),
+        }
     }
 
     /// Serialize `movie` to a `.fm2` / `.bk2` file (extension selects the
@@ -3902,6 +3955,12 @@ impl App {
             MenuAction::MovieExport => {
                 #[cfg(not(target_arch = "wasm32"))]
                 self.handle_movie_export();
+            }
+            MenuAction::HistoryExportClip { seconds } => {
+                #[cfg(not(target_arch = "wasm32"))]
+                self.handle_history_export_clip(seconds);
+                #[cfg(target_arch = "wasm32")]
+                let _ = seconds;
             }
             MenuAction::FrameAdvance => {
                 self.request_frame_advance();
@@ -5504,6 +5563,8 @@ impl App {
                 // byte-identical.
                 nes.set_apu_channel_gain(self.config.audio.channel_gain);
             }
+            // v1.7.0 "Forge" D1 — a cold boot restarts the session timeline.
+            guard.history.clear();
         }
         // v1.0.0 (BUG-7) — a cold boot should RUN: clear any prior pause so the
         // status bar doesn't read "Paused" with a freshly-booted, running core.

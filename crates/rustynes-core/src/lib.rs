@@ -46,6 +46,12 @@ mod rewind;
 pub mod save_state;
 pub mod scheduler;
 pub mod vs_db;
+// v1.7.0 "Forge" Workstream D2 — the Zwinder-class compressed, density-tiered
+// state manager (XOR-delta + LZ4 over the v1.6.0 uncompressed greenzone, with
+// reserved anchors), scaling the TAStudio greenzone to feature-length TASes.
+// Determinism-neutral: lossless round-trip, no timebase change. See
+// `docs/rewind.md` §Zwinder.
+pub mod zwinder;
 
 pub use bus::LockstepBus;
 #[cfg(feature = "debug-hooks")]
@@ -77,6 +83,10 @@ pub use save_state::{
 };
 pub use scheduler::M2Phase;
 pub use vs_db::{VsDbEntry, lookup as vs_db_lookup};
+pub use zwinder::{
+    ZWINDER_DEFAULT_BUDGET_BYTES, ZWINDER_DEFAULT_KEYFRAME_INTERVAL, ZwinderError,
+    ZwinderStateManager,
+};
 
 /// Returns the crate version string.
 #[must_use]

@@ -299,6 +299,15 @@ pub struct EmuCore {
     /// The framebuffer the renderer presents (with run-ahead active it is
     /// the visible FUTURE frame while `nes` holds the persistent one).
     pub present_fb: Vec<u8>,
+    /// v1.7.0 "Forge" Workstream D1 — the scrubbable-session `HistoryViewer`: a
+    /// per-frame input log + periodic start-anchors recorded in lock-step with
+    /// the rewind ring, used to scrub the timeline and export the last N seconds
+    /// as a `.rnm`. Output-only — it observes the inputs already latched and
+    /// copies the save-states the core already produced, so it cannot perturb
+    /// the deterministic timeline. Recorded on persistent forward frames only
+    /// (never on a rewind step). Empty / unrecorded keeps the produce path
+    /// byte-identical.
+    pub history: crate::history_viewer::HistoryViewer,
     /// Enabled raw RAM cheats, pulled from the cheat panel each frame.
     pub raw_cheats: Vec<RawCheat>,
     /// v1.7.0 "Forge" Workstream A1 — one-shot debugger writeback edits, queued
@@ -380,6 +389,7 @@ impl EmuCore {
             movie: MovieUi::default(),
             perf: PerfStats::default(),
             present_fb: Vec::new(),
+            history: crate::history_viewer::HistoryViewer::default(),
             raw_cheats: Vec::new(),
             debug_pokes: Vec::new(),
             writes_locked: false,
@@ -609,6 +619,16 @@ impl EmuCore {
                 self.movie.stop_playback();
                 eprintln!("rustynes: movie playback finished");
             }
+            // v1.7.0 "Forge" Workstream D1 — record this forward frame into the
+            // HistoryViewer timeline, at the SAME point as the TAS movie hook
+            // (after the input latch + any movie override, BEFORE `run_frame`),
+            // mirroring `MovieRecorder::capture`: the captured `(state-before,
+            // input-for-this-frame)` pair makes an exported clip replay
+            // bit-identically. Disjoint borrow (`self.movie`/`self.history` vs
+            // `self.nes`). Output-only — it reads the latched input + copies the
+            // pre-frame save-state, so it never perturbs emulation. Skipped on
+            // rewind (this branch is the non-rewind path).
+            self.history.record_frame(nes);
             // v2.5.0 — Vs. System coin latch: a coin-insert (F10) holds the
             // acceptor signal for a few frames, then auto-clears.
             if self.vs_coin_frames > 0 {

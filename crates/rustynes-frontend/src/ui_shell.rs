@@ -181,6 +181,14 @@ pub enum MenuAction {
     /// v1.6.0 B1 — export the current recording / loaded movie to an external
     /// TAS movie file (`.fm2` FCEUX / `.bk2` `BizHawk`) via the save dialog.
     MovieExport,
+    /// v1.7.0 "Forge" Workstream D1 — export the trailing `seconds` of the live
+    /// session timeline (the `HistoryViewer` over the rewind ring) as a replayable
+    /// `.rnm` clip via the save dialog. The clip begins at the nearest start
+    /// anchor at-or-before the window and replays bit-identically.
+    HistoryExportClip {
+        /// How many trailing seconds of the session to export.
+        seconds: f64,
+    },
     /// v1.6.0 "Studio" Workstream G — toggle A/V (video + synchronized audio)
     /// recording. Start opens a native save dialog (`.mp4` / `.mkv`) and arms an
     /// `ffmpeg`-piped recorder; a second invocation stops + finalizes. Native +
@@ -1172,6 +1180,19 @@ impl UiShell {
                         .clicked()
                     {
                         out.action = Some(MenuAction::OpenPanel(ToolPanel::TasStudio));
+                        ui.close();
+                    }
+                    // v1.7.0 "Forge" Workstream D1 — export the last 30 s of the
+                    // live session timeline (the HistoryViewer over the rewind
+                    // ring) as a replayable `.rnm` clip. Needs a loaded ROM.
+                    if ui
+                        .add_enabled(
+                            rom,
+                            egui::Button::new(ic(glyph::FLOPPY_DISK, "Export Last 30s (.rnm)")),
+                        )
+                        .clicked()
+                    {
+                        out.action = Some(MenuAction::HistoryExportClip { seconds: 30.0 });
                         ui.close();
                     }
                     // (H1) The ROM Database editor needs a loaded ROM to edit.

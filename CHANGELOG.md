@@ -69,6 +69,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `tiles.png` starter pack that loads straight back through the loader. Reads
     only already-deterministic snapshots under the existing lock discipline;
     mutates no emulation state.
+- **v1.7.0 "Forge" Workstream D — timeline + scaling rewind engine.** A
+  scrubbable full-session timeline with clip export, plus a compressed,
+  density-tiered greenzone that scales the TAStudio editor to feature-length
+  TASes. Both ride the current PPU-dot scheduler (**no timebase change**), are
+  additive / output-only / determinism-neutral, so AccuracyCoin holds **100%
+  (139/139)** and the shipped / native / `no_std` / wasm builds stay
+  byte-identical.
+  - **D1 — HistoryViewer** (`crates/rustynes-frontend/src/history_viewer.rs`,
+    native + `wasm-winit`). A bookkeeping layer over the per-frame rewind ring
+    that records the live session's input stream (`FrameInput` per port) in
+    lock-step with the emulator + periodically stashes a lightweight
+    start-anchor save-state. Driven from `EmuCore::produce_one_frame` on
+    persistent forward frames only (never a rewind step), after the `nes` borrow
+    is released — it observes already-latched inputs + copies an already-produced
+    save-state, so it cannot perturb emulation. New **Tools → Export Last 30s
+    (.rnm)** assembles a `Movie` covering the trailing N seconds (start = the
+    nearest anchor at-or-before the window) and writes a `.rnm` via the save
+    dialog; the clip **replays bit-identically** (proven by a `MoviePlayer`
+    round-trip test). Cleared on ROM load + power-cycle.
+  - **D2 — Zwinder-class compressed tiered greenzone**
+    (`rustynes_core::zwinder::ZwinderStateManager`, `#![no_std]` + `alloc`). The
+    compressed successor to the v1.6.0 uncompressed greenzone: frame-keyed
+    snapshots as **XOR-deltas + LZ4** against periodic keyframes, with reserved
+    anchors (frame 0 / markers / branch points — always self-contained
+    keyframes, never evicted) and density-tiered eviction over the *compressed*
+    sizes. Source: BizHawk `ZwinderBuffer` / `ZwinderStateManager`. The TAStudio
+    greenzone (`crates/rustynes-frontend/src/tastudio/greenzone.rs`) now stores
+    its save-states through it (a thin `usize`-frame adapter), so the same RAM
+    holds far more history while the deterministic seek/replay contract is
+    unchanged. **Determinism gate:** compression is lossless —
+    `restore(compress(store(s))) == s` byte-for-byte — proven by an in-module
+    round-trip-equality test (keyframes + deltas + post-eviction) **and**
+    `rustynes-test-harness` integration tests that drive real `Nes` snapshots
+    through save → compress → decompress → restore and assert byte-equality.
+
 - **v1.7.0 "Forge" Workstream E — host IPC / automation (RustyNES as a
   platform).** The power-user tier (modelled on BizHawk's `comm` / `client` /
   `userdata` libraries) that turns RustyNES into a host for external bots / RL
