@@ -434,6 +434,11 @@ pub struct ShellFrame<'a> {
     /// ping + frame + rollback/stall), relocated from the retired `` ` `` toolbar
     /// HUD into the status bar. `None` while no session is active/connecting.
     pub netplay_detail: Option<String>,
+    /// v1.7.0 "Forge" Workstream H4 — the running lag-frame count since the ROM
+    /// loaded (forward frames in which the program polled no controller).
+    /// Shown next to FPS when `[ui] show_lag_frames` is on; `None` (the toggle
+    /// off, or no ROM) hides the readout. Pure observation.
+    pub lag_frames: Option<u32>,
 }
 
 impl UiShell {
@@ -1013,6 +1018,20 @@ impl UiShell {
                     {
                         save_config(config);
                     }
+                    // v1.7.0 "Forge" Workstream H4 — lag-frame counter toggle.
+                    if ui
+                        .checkbox(
+                            &mut config.ui.show_lag_frames,
+                            ic(glyph::GAUGE, "Show Lag Frames"),
+                        )
+                        .on_hover_text(
+                            "Show a counter of frames where the game polled no \
+                             controller (a TAS / debug diagnostic).",
+                        )
+                        .changed()
+                    {
+                        save_config(config);
+                    }
                     if ui
                         .checkbox(
                             &mut config.ui.pause_on_focus_loss,
@@ -1412,6 +1431,7 @@ impl UiShell {
     }
 
     /// Render the bottom status bar.
+    #[allow(clippy::too_many_lines)] // sequential per-segment status-bar layout
     fn status_bar(&self, root_ui: &mut egui::Ui, frame: &ShellFrame<'_>, config: &Config) {
         let style = root_ui.ctx().global_style();
         egui::Panel::bottom("shell_status_bar")
@@ -1523,6 +1543,20 @@ impl UiShell {
                             ui.label(format!("FPS: {fps:.1}"));
                         });
                     }
+                    // v1.7.0 "Forge" Workstream H4 — the lag-frame counter, shown
+                    // next to FPS when enabled + a ROM is loaded. A TAS/debug
+                    // diagnostic; pure observation of the core's input-poll
+                    // telemetry, so it never affects emulation.
+                    if config.ui.show_lag_frames
+                        && let Some(lag) = frame.lag_frames
+                    {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(format!("Lag: {lag}")).on_hover_text(
+                                "Lag frames since ROM load (no controller polled). \
+                                     Toggle in View -> Show Lag Frames.",
+                            );
+                        });
+                    }
                 });
             });
     }
@@ -1603,6 +1637,16 @@ impl UiShell {
                             }
                             if ui
                                 .checkbox(&mut config.ui.show_fps, "Show FPS in status bar")
+                                .changed()
+                            {
+                                save_config(config);
+                            }
+                            // v1.7.0 "Forge" Workstream H4 — lag-frame counter.
+                            if ui
+                                .checkbox(
+                                    &mut config.ui.show_lag_frames,
+                                    "Show lag-frame counter in status bar",
+                                )
                                 .changed()
                             {
                                 save_config(config);

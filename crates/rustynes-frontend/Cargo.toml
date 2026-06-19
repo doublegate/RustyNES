@@ -191,6 +191,8 @@ thiserror.workspace = true
 # Phase 5 Sprint 2: TOML config + serde for input rebinding + rom hashing.
 serde.workspace = true
 toml.workspace = true
+# v1.7.0 "Forge" H4 — per-game `<rom>.json` config overlay (de)serialization.
+serde_json.workspace = true
 sha2.workspace = true
 
 # Frontend-only utilities. Both already in the dependency tree as

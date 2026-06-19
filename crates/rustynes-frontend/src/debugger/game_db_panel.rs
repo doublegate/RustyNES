@@ -30,6 +30,38 @@ pub struct GameDbPanelState {
     title: String,
     /// Last action result, shown under the buttons.
     status: Option<String>,
+    /// v1.7.0 "Forge" Workstream H4 — whether a per-game DIP override is set for
+    /// this ROM (loaded from the `<rom>.json` overlay; `false` = follow the
+    /// global `[vs] dip` / per-game-DB precedence).
+    dip_override: bool,
+    /// v1.7.0 H4 — the 8 DIP-switch bits being edited (switch 1 = index 0).
+    dip_bits: [bool; 8],
+    /// v1.7.0 H4 — last per-game-overlay (DIP) action result.
+    per_game_status: Option<String>,
+}
+
+/// Pack the 8 edited DIP bits (switch 1 = index 0 = bit 0) into a byte.
+fn dip_byte(bits: [bool; 8]) -> u8 {
+    let mut v = 0u8;
+    for (i, &on) in bits.iter().enumerate() {
+        if on {
+            v |= 1 << i;
+        }
+    }
+    v
+}
+
+/// Unpack a DIP byte into the 8 edited bits (switch 1 = index 0 = bit 0).
+// Only the native load path reads a persisted DIP from the `<rom>.json` overlay;
+// the wasm build has no filesystem overlay (the editor applies DIPs live only),
+// so this unpacker is unused there.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+fn dip_bits_from(byte: u8) -> [bool; 8] {
+    let mut bits = [false; 8];
+    for (i, b) in bits.iter_mut().enumerate() {
+        *b = byte & (1 << i) != 0;
+    }
+    bits
 }
 
 impl GameDbPanelState {
@@ -50,8 +82,18 @@ impl GameDbPanelState {
             .map(|s| s.to_string())
             .unwrap_or_default();
         self.title = entry.map(|e| e.title).unwrap_or_default();
+        // v1.7.0 "Forge" Workstream H4 — load the per-game DIP override (if any)
+        // from the `<rom>.json` overlay. No sibling path here (the editor only
+        // ever reads/writes the config-dir overlay), so pass `None`.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let dip = crate::per_game::resolve(crc, None).and_then(|c| c.dip_switches);
+            self.dip_override = dip.is_some();
+            self.dip_bits = dip_bits_from(dip.unwrap_or(0));
+        }
         self.loaded_crc = Some(crc);
         self.status = None;
+        self.per_game_status = None;
     }
 
     /// Build a [`GameDbEntry`] from the current edit buffers.
@@ -195,6 +237,117 @@ pub fn show(
             if let Some(msg) = &state.status {
                 ui.label(egui::RichText::new(msg).small());
             }
+
+            // v1.7.0 "Forge" Workstream H4 — Vs. System / arcade DIP-switch
+            // editor. Only meaningful for a Vs. cart; for a normal NES game the
+            // section is hidden (DIPs read through `$4016`/`$4017`'s upper bits
+            // are inert on a standard controller). Edits persist into the
+            // per-game `<rom>.json` overlay (config-dir, keyed by CRC) and apply
+            // live via the same `set_vs_dip` core setter the load path uses.
+            dip_switch_section(ui, state, nes, crc);
         });
     *open = win_open;
+}
+
+/// Render the Vs. System DIP-switch editor for the loaded ROM (no-op for a
+/// non-Vs. cart). v1.7.0 "Forge" Workstream H4.
+fn dip_switch_section(ui: &mut egui::Ui, state: &mut GameDbPanelState, nes: &mut Nes, crc: u32) {
+    if !nes.is_vs_system() {
+        return;
+    }
+    ui.separator();
+    ui.heading("Vs. System DIP Switches");
+    ui.label(
+        egui::RichText::new(
+            "Per-game DIP switches (difficulty / lives / coinage / free-play — \
+             see the game's manual). Saved into this ROM's per-game overlay and \
+             applied immediately.",
+        )
+        .small()
+        .weak(),
+    );
+
+    let mut changed = false;
+    let was_override = state.dip_override;
+    changed |= ui
+        .checkbox(
+            &mut state.dip_override,
+            "Override DIP switches for this game",
+        )
+        .changed();
+    // On the OFF -> ON transition, seed the edit bits from the currently-effective
+    // DIP byte so enabling the override is a no-op until the user edits a switch.
+    // Without this, `dip_bits` may be stale/zeroed (no prior overlay), so merely
+    // ticking the box would force the DIP byte to its uninitialized value and
+    // perturb behaviour before any actual edit.
+    if state.dip_override && !was_override {
+        state.dip_bits = dip_bits_from(nes.vs_dip());
+    }
+
+    ui.add_enabled_ui(state.dip_override, |ui| {
+        egui::Grid::new("vs_dip_grid")
+            .num_columns(2)
+            .show(ui, |ui| {
+                for (i, bit) in state.dip_bits.iter_mut().enumerate() {
+                    // Per-game DB labels are not modeled yet, so show numbered
+                    // switches (switch 1 = least-significant DIP bit). A known-label
+                    // table can replace this `format!` when one is vendored.
+                    changed |= ui.checkbox(bit, format!("Switch {}", i + 1)).changed();
+                    if i % 2 == 1 {
+                        ui.end_row();
+                    }
+                }
+            });
+        ui.label(
+            egui::RichText::new(format!("DIP byte: {:02X}", dip_byte(state.dip_bits)))
+                .small()
+                .weak(),
+        );
+    });
+
+    // Apply live whenever the edited value changes (cheap; `set_vs_dip` is a
+    // no-op for a non-Vs. cart). When the override is off we still push the
+    // edited byte so toggling "off" reverts to the global precedence on the
+    // next reload, but leave the running value as-is to avoid a surprise jump.
+    if changed && state.dip_override {
+        nes.set_vs_dip(dip_byte(state.dip_bits));
+    }
+
+    ui.horizontal(|ui| {
+        if ui.button("Save DIP to Per-Game File").clicked() {
+            state.per_game_status = Some(persist_dip(crc, state));
+        }
+        if ui.button("Clear Per-Game DIP").clicked() {
+            state.dip_override = false;
+            state.per_game_status = Some(persist_dip(crc, state));
+        }
+    });
+    if let Some(msg) = &state.per_game_status {
+        ui.label(egui::RichText::new(msg).small());
+    }
+}
+
+/// Persist the edited DIP into this ROM's per-game `<rom>.json` overlay (merging
+/// with any existing overrides so saving the DIP never drops them). Returns a
+/// short user-facing status string. v1.7.0 "Forge" Workstream H4.
+#[cfg(not(target_arch = "wasm32"))]
+fn persist_dip(crc: u32, state: &GameDbPanelState) -> String {
+    // Merge over any existing overlay so we don't clobber `overrides` / `notes`.
+    let mut cfg = crate::per_game::resolve(crc, None).unwrap_or_default();
+    cfg.dip_switches = if state.dip_override {
+        Some(dip_byte(state.dip_bits))
+    } else {
+        None
+    };
+    match crate::per_game::save_overlay(crc, &cfg) {
+        Ok(()) if state.dip_override => "Saved DIP to the per-game overlay.".to_string(),
+        Ok(()) => "Cleared the per-game DIP override.".to_string(),
+        Err(e) => format!("Save failed: {e}"),
+    }
+}
+
+/// On wasm there is no filesystem overlay; the edit applies live only.
+#[cfg(target_arch = "wasm32")]
+fn persist_dip(_crc: u32, _state: &GameDbPanelState) -> String {
+    "Per-game files are unavailable in the browser build (applied live only).".to_string()
 }
