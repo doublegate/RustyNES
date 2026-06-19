@@ -1,6 +1,22 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v1.7.0 "Forge"** (released 2026-06-19) — the "writable +
+> **Current release: v1.7.1** (2026-06-19) — a bugfix / polish PATCH on **v1.7.0
+> "Forge"** (the feature release it patches; framed below). Additive / bugfix-only:
+> with the optional features off the shipped / native / `no_std` / wasm builds behave
+> as v1.7.0 (only the embedded `CARGO_PKG_VERSION` string + the seven fixes differ)
+> and **AccuracyCoin holds 100% (139/139)** (`cargo test --workspace --features
+> test-roms`: **1906 passed, 20 ignored**). The seven fixes: #1 ROM-close GPU abort
+> (skip the `write_texture` upload on a pixel-slice length mismatch; `close_rom`
+> presents a clean blank frame) · #6 clean pause/unpause (pacing-timer
+> `break_phase()` reset on resume + a sticky audio pause gate → no `produced_max_ms`
+> spike, zero underruns) · #4 Documentation-pane overhaul (word-wrap at any UI scale,
+> collapsible multi-level sidebar tree with intra-doc links, `[Unreleased]` ordered
+> last) · #7 exhaustive README rewrite · #2 Tools-menu NSF Player / Pixel Inspector
+> icon glyph swap (dodges egui's Ubuntu-Light `fi`/`fl` PUA-ligature collision) · #5
+> removed the vestigial "Show Debugger" checkbox + dead plumbing · #3 HD-pack tile
+> substitution now applies in the debugger / tool render branch.
+>
+> **v1.7.0 "Forge"** (released 2026-06-19) — the "writable +
 > programmable tools" release, MAXIMAL scope (full A–H + an H1–H9 reach wave) on the
 > current dot-lockstep scheduler. **beta.1** (#134, F accuracy hardening + G1 ASIC
 > mappers 150→**168** + H7 measure-first perf) · **beta.2** (#135, A editing-capable
@@ -18,8 +34,9 @@
 > output widening) · 0021 (File System Access fallback) · 0022 (settings share-link) ·
 > 0023 (i18n string-catalog).
 
-**Current release: v1.7.0 "Forge" — the writable + programmable tooling, accuracy,
-mapper-breadth, and reach release** on the cycle-accurate v1.0.0 production core. A
+**Current release: v1.7.1 — a bugfix / polish patch on v1.7.0 "Forge"** (the
+writable + programmable tooling, accuracy, mapper-breadth, and reach feature release
+it patches, described below) on the cycle-accurate v1.0.0 production core. A
 NES/Famicom emulator with the Mesen2 / higan / ares accuracy bar, shipped as a
 polished desktop application. **AccuracyCoin 100.00% (139/139)**, the 60-ROM
 `external_real_games` + 52-entry `external_extended` oracles byte-identical,
@@ -849,8 +866,8 @@ unless the default flips.
 **RustyNES ships at v1.0.0** (the production cut), with the additive,
 off-by-default feature releases **v1.1.0 "Scriptable" → v1.2.0 "Curator" →
 v1.3.0 "Bedrock" → v1.4.0 "Fidelity" (+ the v1.4.1 patch) → v1.5.0 "Lens" →
-v1.6.0 "Studio" → v1.7.0 "Forge"** on top — **v1.7.0 "Forge" is the current
-release**. The
+v1.6.0 "Studio" → v1.7.0 "Forge" → v1.7.1 (patch)** on top — **v1.7.1 (the
+bugfix/polish patch on v1.7.0 "Forge") is the current release**. The
 table below is the **engine-lineage** version history
 — the internal engine line whose increments produced the v1.0.0 technology. Its
 `v0.9.x` / `v1.x` / `v2.x` markers are the engine's own line, retained as
