@@ -13,7 +13,8 @@ to a single **mono** signal, and RustyNES preserves that faithfully: the
 deterministic core produces one mono sample stream and hands it to the frontend
 via `Nes::drain_audio_into`. The frontend already runs output-only stages on
 that mono stream in the cpal producer/callback path — the master-gain multiply
-(v1.0.0) and the optional graphic EQ (v1.1.0 `eq.rs::EqStage`) — none of which
+(v1.0.0) and the optional graphic EQ (v1.1.0; the `EqStage` wrapper in
+`audio.rs` driving the band-generic `Equalizer` in `eq.rs`) — none of which
 touch the core synthesis, so they sit *outside* the determinism contract (the
 AccuracyCoin audio oracle, save-state round-trip, TAS replay, netplay rollback).
 

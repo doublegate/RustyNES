@@ -24,9 +24,11 @@
 //! (Pulse1/Pulse2/Triangle/Noise/DMC/expansion), but because the core hands the
 //! frontend a single *pre-mixed* mono master (splitting it would require core
 //! changes, deferred to the v2.0 every-cycle rewrite), the active stage applies
-//! the **average** of the enabled channels' pans as one master image. The
-//! per-channel surface is forward-compatible: when the master pan is center
-//! (every channel at 0.0, the default) the image is bit-exact identity.
+//! the **average of the configured pan array** (all [`PAN_COUNT`] slots,
+//! unconditionally — there is no enabled/mute mask plumbed in at this stage) as
+//! one master image over the mono master. The per-channel surface is
+//! forward-compatible: when the master pan is center (every channel at 0.0, the
+//! default) the image is bit-exact identity.
 
 // Audio DSP: the textbook reverb/pan math reads best in the direct form; the
 // FMA-vs-separate-ops rounding difference is inaudible and the buffer-length
@@ -75,6 +77,14 @@ impl Comb {
         }
     }
 
+    /// Update the feedback coefficient in place (no reallocation). Only the
+    /// feedback depends on room size; the delay-line length is fixed, so this is
+    /// real-time-safe to call from the audio callback.
+    #[inline]
+    const fn set_feedback(&mut self, feedback: f32) {
+        self.feedback = feedback;
+    }
+
     #[inline]
     fn process(&mut self, x: f32) -> f32 {
         let y = self.buf[self.idx];
@@ -105,9 +115,18 @@ impl AllPass {
 
     #[inline]
     fn process(&mut self, x: f32) -> f32 {
-        let buffered = self.buf[self.idx];
-        let y = -x + buffered;
-        self.buf[self.idx] = x + buffered * self.gain;
+        // Canonical Schroeder all-pass, transfer function
+        //   H(z) = (-g + z^-D) / (1 - g·z^-D).
+        // Single-delay difference equations (g = feedback gain, D = delay len):
+        //   v[n] = x[n] + g·v[n-D]      (delayed value read first)
+        //   y[n] = -g·v[n] + v[n-D]
+        // then push v[n] into the delay line. This yields a unit-magnitude
+        // (flat) response for |g| < 1; g = 0 collapses to a pure delay
+        // (y[n] = v[n-D] = x[n-D]).
+        let v_delayed = self.buf[self.idx];
+        let v = x + self.gain * v_delayed;
+        let y = -self.gain * v + v_delayed;
+        self.buf[self.idx] = v;
         self.idx += 1;
         if self.idx >= self.buf.len() {
             self.idx = 0;
@@ -130,7 +149,7 @@ impl Reverb {
         // Schroeder's reference comb delays (ms), prime-ish to avoid flutter.
         let comb_ms = [29.7, 37.1, 41.1, 43.7];
         let allpass_ms = [5.0, 1.7];
-        let feedback = 0.7 + 0.28 * room.clamp(0.0, 1.0);
+        let feedback = Self::room_feedback(room);
         let combs = comb_ms
             .iter()
             .map(|&ms| Comb::new(((ms / 1000.0) * sr) as usize, feedback))
@@ -140,6 +159,25 @@ impl Reverb {
             .map(|&ms| AllPass::new(((ms / 1000.0) * sr) as usize, 0.5))
             .collect();
         Self { combs, allpasses }
+    }
+
+    /// Map a room size `0..=1` to a comb feedback coefficient (decay time).
+    #[inline]
+    fn room_feedback(room: f32) -> f32 {
+        0.7 + 0.28 * room.clamp(0.0, 1.0)
+    }
+
+    /// Re-voice the reverb for a new room size **in place** — only the comb
+    /// feedback coefficients change; the delay-line lengths are fixed, so no
+    /// allocation occurs. This is the real-time-safe path called from the audio
+    /// callback when the room-size parameter moves (the all-pass smear stays
+    /// fixed, as in the reference Schroeder topology).
+    #[inline]
+    fn set_room(&mut self, room: f32) {
+        let feedback = Self::room_feedback(room);
+        for c in &mut self.combs {
+            c.set_feedback(feedback);
+        }
     }
 
     /// One mono wet sample for one dry input sample.
@@ -161,10 +199,15 @@ impl Reverb {
 ///
 /// Owned by the cpal callback closure; live params are pushed in from the
 /// Settings UI via [`StereoStage::set_params`] (the caller mirrors the shared
-/// atomics into here once per callback). Built lazily so a pure-bypass config
-/// allocates nothing.
+/// atomics into here once per callback).
+///
+/// The reverb (and its comb/all-pass delay lines) is allocated **once** up
+/// front in [`StereoStage::new`], so nothing on the real-time `process` path
+/// ever allocates: a room-size change only re-voices the fixed-length combs in
+/// place (`Reverb::set_room`). The bypass path still emits the mono value
+/// duplicated bit-for-bit, so a pure-bypass config pays only the one-time
+/// construction cost.
 pub struct StereoStage {
-    sample_rate: u32,
     /// Master pan in `-1.0..=1.0` (the per-channel average; center = identity).
     pan: f32,
     /// Reverb wet mix `0.0..=1.0` (0 = dry/bypass).
@@ -173,24 +216,27 @@ pub struct StereoStage {
     reverb_room: f32,
     /// Headphone crossfeed amount `0.0..=1.0` (0 = bypass).
     crossfeed: f32,
-    reverb: Option<Reverb>,
-    /// Room the live `reverb` was built for (rebuild on change).
+    /// Pre-allocated reverb (delay-line lengths fixed for `sample_rate`); only
+    /// the comb feedback is re-voiced on a room change, never reallocated.
+    reverb: Reverb,
+    /// Room the live `reverb` is currently voiced for (re-voice on change).
     built_room: f32,
 }
 
 impl StereoStage {
     /// New all-bypass stage (center pan, no reverb, no crossfeed) for
-    /// `sample_rate`.
+    /// `sample_rate`. Allocates the reverb delay lines once here so the
+    /// real-time `process` path never allocates.
     #[must_use]
-    pub const fn new(sample_rate: u32) -> Self {
+    pub fn new(sample_rate: u32) -> Self {
+        let reverb_room = 0.5;
         Self {
-            sample_rate,
             pan: 0.0,
             reverb_mix: 0.0,
-            reverb_room: 0.5,
+            reverb_room,
             crossfeed: 0.0,
-            reverb: None,
-            built_room: -1.0,
+            reverb: Reverb::new(sample_rate, reverb_room),
+            built_room: reverb_room,
         }
     }
 
@@ -204,19 +250,18 @@ impl StereoStage {
         reverb_room: f32,
         crossfeed: f32,
     ) {
-        // NaN-guard each (config is deserialized unvalidated).
+        // Non-finite guard each (config is deserialized unvalidated): map any
+        // NaN/Inf to the param's neutral value *before* clamping, so a corrupt
+        // config can never poison the DSP state.
         let mean = pans
             .iter()
-            .map(|p| if p.is_nan() { 0.0 } else { p.clamp(-1.0, 1.0) })
+            .map(|&p| nan_to_zero(p).clamp(-1.0, 1.0))
             .sum::<f32>()
             / PAN_COUNT as f32;
         self.pan = mean;
         self.reverb_mix = nan_to_zero(reverb_mix).clamp(0.0, 1.0);
-        self.reverb_room = if reverb_room.is_nan() {
-            0.5
-        } else {
-            reverb_room.clamp(0.0, 1.0)
-        };
+        // Reverb room's neutral default is 0.5 (not 0.0), so guard to that.
+        self.reverb_room = nan_to_default(reverb_room, 0.5).clamp(0.0, 1.0);
         self.crossfeed = nan_to_zero(crossfeed).clamp(0.0, 1.0);
     }
 
@@ -240,23 +285,23 @@ impl StereoStage {
         let mut l = mono * lg * SQRT2;
         let mut r = mono * rg * SQRT2;
 
-        // Reverb (mono send summed equally into both channels).
+        // Reverb (mono send summed equally into both channels). The reverb is
+        // pre-allocated in `new`, so a room-size change only re-voices the comb
+        // feedback in place — no allocation occurs on this real-time path.
         if self.reverb_mix > 0.0 {
             // Exact equality is intentional: `built_room` is a cache key set from
             // the same `reverb_room` value, so a bit-difference means a genuine
-            // change requiring a rebuild.
+            // change requiring a re-voice.
             #[allow(clippy::float_cmp)]
             let stale = self.built_room != self.reverb_room;
-            if self.reverb.is_none() || stale {
-                self.reverb = Some(Reverb::new(self.sample_rate, self.reverb_room));
+            if stale {
+                self.reverb.set_room(self.reverb_room);
                 self.built_room = self.reverb_room;
             }
-            if let Some(rev) = self.reverb.as_mut() {
-                let wet = rev.process(mono);
-                let dry = 1.0 - self.reverb_mix;
-                l = l * dry + wet * self.reverb_mix;
-                r = r * dry + wet * self.reverb_mix;
-            }
+            let wet = self.reverb.process(mono);
+            let dry = 1.0 - self.reverb_mix;
+            l = l * dry + wet * self.reverb_mix;
+            r = r * dry + wet * self.reverb_mix;
         }
 
         // Crossfeed: blend a fraction of each channel into the other (narrows
@@ -271,9 +316,20 @@ impl StereoStage {
     }
 }
 
+/// Map a non-finite input (NaN or ±Inf) to `default`, otherwise pass it
+/// through. `f32::is_finite` is const-stable since Rust 1.83 (our MSRV is
+/// 1.96), so this runs in `const` context and guards every config float before
+/// it is clamped into range.
+#[inline]
+const fn nan_to_default(x: f32, default: f32) -> f32 {
+    if x.is_finite() { x } else { default }
+}
+
+/// Non-finite → `0.0` (the neutral value for pan/mix/crossfeed); see
+/// [`nan_to_default`].
 #[inline]
 const fn nan_to_zero(x: f32) -> f32 {
-    if x.is_nan() { 0.0 } else { x }
+    nan_to_default(x, 0.0)
 }
 
 #[cfg(test)]
@@ -352,5 +408,94 @@ mod tests {
             peak = peak.max(l.abs()).max(r.abs());
         }
         assert!(peak < 4.0, "reverb must stay bounded: peak={peak}");
+    }
+
+    #[test]
+    fn reverb_room_change_does_not_reallocate() {
+        // The reverb is pre-allocated once; a room-size change must only
+        // re-voice the comb feedback in place. Assert the comb/all-pass buffer
+        // capacities are invariant across the full room-size sweep, proving no
+        // realloc happens on the real-time `process` path.
+        let mut s = StereoStage::new(48_000);
+        s.set_params([0.0; PAN_COUNT], 0.4, 0.0, 0.0);
+        let _ = s.process(0.1); // build/voice path engaged.
+        let comb_caps: Vec<usize> = s.reverb.combs.iter().map(|c| c.buf.capacity()).collect();
+        let ap_caps: Vec<usize> = s
+            .reverb
+            .allpasses
+            .iter()
+            .map(|a| a.buf.capacity())
+            .collect();
+        for &room in &[0.0f32, 0.1, 0.5, 0.9, 1.0, 0.25] {
+            s.set_params([0.0; PAN_COUNT], 0.4, room, 0.0);
+            let _ = s.process(0.1);
+            let new_comb: Vec<usize> = s.reverb.combs.iter().map(|c| c.buf.capacity()).collect();
+            let new_ap: Vec<usize> = s
+                .reverb
+                .allpasses
+                .iter()
+                .map(|a| a.buf.capacity())
+                .collect();
+            assert_eq!(
+                new_comb, comb_caps,
+                "comb buffers reallocated at room={room}"
+            );
+            assert_eq!(
+                new_ap, ap_caps,
+                "all-pass buffers reallocated at room={room}"
+            );
+        }
+    }
+
+    #[test]
+    fn allpass_zero_gain_is_pure_delay() {
+        // With g = 0 the Schroeder all-pass collapses to y[n] = x[n-D].
+        let len = 8;
+        let mut ap = AllPass::new(len, 0.0);
+        // Feed a unit impulse, then zeros; the impulse must reappear after D.
+        let mut out = Vec::new();
+        for n in 0..(len * 2) {
+            let x = if n == 0 { 1.0 } else { 0.0 };
+            out.push(ap.process(x));
+        }
+        for (n, &y) in out.iter().enumerate() {
+            if n == len {
+                assert!((y - 1.0).abs() < 1e-6, "delayed impulse at D: {y}");
+            } else {
+                assert!(
+                    y.abs() < 1e-6,
+                    "pure delay must be silent off-tap at n={n}: {y}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn allpass_has_flat_magnitude_and_unit_energy() {
+        // A lossless all-pass preserves energy: the output energy of an impulse
+        // response equals the input energy (1.0). Also assert boundedness.
+        let len = 11;
+        let g = 0.6f32;
+        let mut ap = AllPass::new(len, g);
+        let mut energy = 0.0f32;
+        let mut peak = 0.0f32;
+        // Long enough for the IIR tail to decay below the energy tolerance.
+        for n in 0..4000 {
+            let x = if n == 0 { 1.0 } else { 0.0 };
+            let y = ap.process(x);
+            assert!(y.is_finite());
+            energy += y * y;
+            peak = peak.max(y.abs());
+        }
+        // All-pass impulse-response energy == input impulse energy (Parseval:
+        // |H(e^jw)| == 1 everywhere => sum(y^2) == sum(x^2) == 1).
+        assert!(
+            (energy - 1.0).abs() < 1e-3,
+            "all-pass must be lossless: energy={energy}"
+        );
+        assert!(
+            peak <= 1.0 + 1e-6,
+            "all-pass output must stay bounded: peak={peak}"
+        );
     }
 }

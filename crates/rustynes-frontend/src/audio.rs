@@ -880,6 +880,10 @@ fn build_stream(
     // v1.7.0 H3 — the stateful stereo output stage (pan / reverb / crossfeed),
     // owned by the callback. Built at the stream's sample rate; live params are
     // pulled from the shared queue once per callback when its generation moves.
+    // NOTE: in cpal 0.18 `cpal::SampleRate` is a plain `u32` type alias (not the
+    // `SampleRate(u32)` newtype of older releases), so `config.sample_rate` is
+    // already the integer Hz here — no `.0` unwrap, and the reverb/EQ filter
+    // center-frequency math receives true Hz directly.
     let sr = config.sample_rate;
     let mut stereo = StereoStage::new(sr);
     let mut seen_stereo_gen = u64::MAX; // force a first sync.
