@@ -7986,25 +7986,108 @@ impl ApplicationHandler<AppEvent> for App {
                     // No overlay yet (pre-`resumed`): nothing to render.
                     return;
                 } else if needs_nes {
+                    // v1.2.0 C3 — `(width, height)` of a composited HD-pack frame
+                    // when an HD compositor is active; `None` means the stock
+                    // NES-resolution present path (byte-identical).
+                    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                    let mut hd_dims: Option<(u32, u32)> = None;
+                    // v1.7.1 (#154 review) — snapshot ALL HD-composite inputs into
+                    // owned locals under a BRIEF lock, then DROP the guard before the
+                    // CPU-heavy `comp.composite` runs (the frontend discipline: never
+                    // hold the emu lock during heavy work — see docs/frontend.md). This
+                    // scope mirrors the common `else` branch exactly; the only reason
+                    // this branch later re-takes the lock is that the debugger pass
+                    // needs a live `&mut Nes`, which the common branch does not.
+                    {
+                        let mut guard = self.emu.lock();
+                        let emu = &mut *guard;
+                        // Backfill the presented framebuffer into staging under the
+                        // held lock (a ROM may or may not be loaded). The debugger
+                        // panels read `nes` from the re-acquired lock below. v1.7.1
+                        // (#3): bound `as_mut` so the HD-snapshot peeks (`peek_ppu` /
+                        // `ppu_bus_peek` / `cpu_bus_peek` all take `&mut self`,
+                        // side-effect-free) can run here; the framebuffer backfill
+                        // reborrows it shared.
+                        if let Some(nes) = emu.nes.as_mut() {
+                            Self::backfill_present_fb(&mut emu.present_fb, nes);
+                            self.present_staging.clear();
+                            self.present_staging.extend_from_slice(&emu.present_fb);
+                            if want_index {
+                                self.present_index_staging.clear();
+                                self.present_index_staging
+                                    .extend_from_slice(nes.index_framebuffer());
+                                self.present_phase = nes.ntsc_phase();
+                            }
+                            // v1.7.1 (#3) — the deep-overlay / nes-tool branch must
+                            // STILL run the HD-pack composite, or a loaded pack is
+                            // silently inert whenever the debugger overlay or a Cheats
+                            // / ROM-Database panel is open (it would always present the
+                            // stock framebuffer below). Snapshot the same inputs the
+                            // common `else` branch does — the per-pixel tile-source,
+                            // the 8 KiB CHR pattern space, and the watched-memory set —
+                            // while the lock is held. The `&mut nes` here only drives
+                            // side-effect-free peeks; `nes_for_render` (`as_mut`) is
+                            // re-taken below for the debugger pass. The composite +
+                            // present then mirror the common `else` branch. Skipped
+                            // (no snapshot, no cost) when no pack is loaded.
+                            #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                            if self.hd_compositor.is_some() {
+                                self.present_hd_tiles.clear();
+                                self.present_hd_tiles
+                                    .extend_from_slice(nes.hd_tile_source());
+                                if self.present_chr_snapshot.len() != 0x2000 {
+                                    self.present_chr_snapshot.resize(0x2000, 0);
+                                }
+                                for (addr, slot) in
+                                    (0u16..0x2000).zip(self.present_chr_snapshot.iter_mut())
+                                {
+                                    *slot = nes.peek_ppu(addr);
+                                }
+                                let watched = &mut self.present_watched_mem;
+                                if let Some(comp) = self.hd_compositor.as_ref() {
+                                    for &tagged in comp.watched_addresses() {
+                                        let lo = (tagged & 0xFFFF) as u16;
+                                        let val = if tagged & crate::hdpack::PPU_MEMORY_MARKER != 0
+                                        {
+                                            nes.ppu_bus_peek(lo)
+                                        } else {
+                                            nes.cpu_bus_peek(lo)
+                                        };
+                                        watched.set(tagged, val);
+                                    }
+                                }
+                            }
+                        } else {
+                            self.present_staging.clear();
+                            self.present_staging.resize((NES_W * NES_H * 4) as usize, 0);
+                        }
+                        // `guard` drops here, releasing the emu lock BEFORE the
+                        // CPU-heavy composite below.
+                    }
+                    // v1.7.1 (#154 review) — lock dropped: run the CPU-heavy HD
+                    // composite off the captured snapshots, exactly like the common
+                    // `else` branch. The `chr_peek` closure reads the local snapshot,
+                    // so no `Nes` borrow is held; the `&mut self.hd_compositor` +
+                    // `&self.present_*` borrows are disjoint from the emu lock.
+                    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                    if let Some(comp) = self.hd_compositor.as_mut() {
+                        let (w, h) = comp.dimensions();
+                        let chr = &self.present_chr_snapshot;
+                        comp.composite(
+                            &self.present_staging,
+                            &self.present_hd_tiles,
+                            &self.present_watched_mem,
+                            |addr| chr.get((addr & 0x1FFF) as usize).copied().unwrap_or(0),
+                        );
+                        hd_dims = Some((w, h));
+                    }
+                    // v1.7.1 (#154 review) — re-acquire the lock to hand the debugger
+                    // pass a live `&mut Nes`. The composite is already done (above,
+                    // unlocked), so the lock is now held only across the egui /
+                    // `render_shell` pass — the same discipline the rest of the shell
+                    // follows. This `guard` stays alive until after the present call.
                     let mut guard = self.emu.lock();
                     let emu = &mut *guard;
-                    // Backfill the presented framebuffer into staging under the
-                    // held lock (a ROM may or may not be loaded). The debugger
-                    // panels read `nes` directly below.
-                    if let Some(nes) = emu.nes.as_ref() {
-                        Self::backfill_present_fb(&mut emu.present_fb, nes);
-                        self.present_staging.clear();
-                        self.present_staging.extend_from_slice(&emu.present_fb);
-                        if want_index {
-                            self.present_index_staging.clear();
-                            self.present_index_staging
-                                .extend_from_slice(nes.index_framebuffer());
-                            self.present_phase = nes.ntsc_phase();
-                        }
-                    } else {
-                        self.present_staging.clear();
-                        self.present_staging.resize((NES_W * NES_H * 4) as usize, 0);
-                    }
                     let nes_for_render = emu.nes.as_mut();
                     #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
                     let script_draws = &self.script_draws;
@@ -8018,6 +8101,12 @@ impl ApplicationHandler<AppEvent> for App {
                     let script_par_wasm = self.config.ui.pixel_aspect_correction;
                     #[cfg(all(feature = "script-wasm", target_arch = "wasm32"))]
                     let script_overscan_wasm = self.config.graphics.hide_overscan;
+                    // v1.7.1 (#3) — borrow the composited HD frame (a disjoint
+                    // field) before the `gfx` borrow so the present can hand it off.
+                    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                    let hd_frame: Option<&[u8]> = hd_dims
+                        .and(self.hd_compositor.as_ref())
+                        .map(crate::hdpack::HdCompositor::frame);
                     let gfx = self.gfx.as_mut().expect("checked above");
                     let debugger = self
                         .debugger
@@ -8043,62 +8132,73 @@ impl ApplicationHandler<AppEvent> for App {
                     let save_states_ui = &mut self.save_states_ui;
                     let index_arg = want_index
                         .then_some((self.present_index_staging.as_slice(), self.present_phase));
-                    gfx.render_with_overlay(
-                        &self.present_staging,
-                        index_arg,
-                        |device, queue, encoder, view, size| {
-                            #[cfg(target_arch = "wasm32")]
-                            let extra = |ctx: &egui::Context, cfg: &mut crate::config::Config| {
-                                crate::wasm_lobby::show(ctx, wasm_lobby, cfg);
-                                // v1.5.0 Workstream G — the casual-only browser RA caveat.
-                                #[cfg(feature = "browser-cheevos")]
-                                Self::paint_browser_ra_caveat(ctx, browser_ra_caveat);
-                                // v1.4.0 E2 — the browser Save-States thumbnail grid.
-                                crate::wasm_save_states::show(
-                                    ctx,
-                                    ss_slot_wasm,
-                                    ss_rom_loaded_wasm,
-                                );
-                                #[cfg(feature = "script-wasm")]
-                                Self::paint_script_overlay_wasm(
-                                    ctx,
-                                    script_draws_wasm,
-                                    script_par_wasm,
-                                    script_overscan_wasm,
-                                );
-                            };
-                            #[cfg(not(target_arch = "wasm32"))]
-                            let extra = |ctx: &egui::Context, _cfg: &mut crate::config::Config| {
-                                save_states_ui.show(
-                                    ctx,
-                                    ss_dir.as_deref(),
-                                    ss_sha,
-                                    ss_slot,
-                                    rom_loaded,
-                                );
-                                #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
-                                Self::paint_script_overlay(
-                                    ctx,
-                                    script_draws,
-                                    script_par,
-                                    script_overscan,
-                                );
-                            };
-                            shell_out = debugger.render_shell(
-                                device,
-                                queue,
-                                encoder,
-                                &window,
-                                view,
-                                size,
-                                nes_for_render,
-                                config,
-                                ui_shell,
-                                &shell_frame,
-                                extra,
+                    let overlay = |device: &wgpu::Device,
+                                   queue: &wgpu::Queue,
+                                   encoder: &mut wgpu::CommandEncoder,
+                                   view: &wgpu::TextureView,
+                                   size: (u32, u32)| {
+                        #[cfg(target_arch = "wasm32")]
+                        let extra = |ctx: &egui::Context, cfg: &mut crate::config::Config| {
+                            crate::wasm_lobby::show(ctx, wasm_lobby, cfg);
+                            // v1.5.0 Workstream G — the casual-only browser RA caveat.
+                            #[cfg(feature = "browser-cheevos")]
+                            Self::paint_browser_ra_caveat(ctx, browser_ra_caveat);
+                            // v1.4.0 E2 — the browser Save-States thumbnail grid.
+                            crate::wasm_save_states::show(ctx, ss_slot_wasm, ss_rom_loaded_wasm);
+                            #[cfg(feature = "script-wasm")]
+                            Self::paint_script_overlay_wasm(
+                                ctx,
+                                script_draws_wasm,
+                                script_par_wasm,
+                                script_overscan_wasm,
                             );
-                        },
-                    )
+                        };
+                        #[cfg(not(target_arch = "wasm32"))]
+                        let extra = |ctx: &egui::Context, _cfg: &mut crate::config::Config| {
+                            save_states_ui.show(
+                                ctx,
+                                ss_dir.as_deref(),
+                                ss_sha,
+                                ss_slot,
+                                rom_loaded,
+                            );
+                            #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
+                            Self::paint_script_overlay(
+                                ctx,
+                                script_draws,
+                                script_par,
+                                script_overscan,
+                            );
+                        };
+                        shell_out = debugger.render_shell(
+                            device,
+                            queue,
+                            encoder,
+                            &window,
+                            view,
+                            size,
+                            nes_for_render,
+                            config,
+                            ui_shell,
+                            &shell_frame,
+                            extra,
+                        );
+                    };
+                    // v1.7.1 (#3) — present the upscaled HD buffer when a pack
+                    // composited this redraw (the deep-overlay panels still draw on
+                    // top via `overlay`); else the stock NES-resolution present path
+                    // (byte-identical to before).
+                    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                    let render_result = match (hd_dims, hd_frame) {
+                        (Some((w, h)), Some(frame)) => {
+                            gfx.render_hd_with_overlay(frame, w, h, overlay)
+                        }
+                        _ => gfx.render_with_overlay(&self.present_staging, index_arg, overlay),
+                    };
+                    #[cfg(not(all(feature = "hd-pack", not(target_arch = "wasm32"))))]
+                    let render_result =
+                        gfx.render_with_overlay(&self.present_staging, index_arg, overlay);
+                    render_result
                 } else {
                     // Common path: copy the presented framebuffer under a brief
                     // lock, DROP the guard, then encode + present from staging.
