@@ -370,6 +370,43 @@ pub struct DebuggerOverlay {
     source_map_status: Option<String>,
 }
 
+/// v1.7.1 — the pure visibility predicate behind
+/// [`DebuggerOverlay::any_chip_panel_open`]: `true` when ANY chip-inspection
+/// panel is open. Kept as a free function (one bool per chip `show_*` flag) so
+/// the visibility lifecycle is unit-testable without constructing the
+/// GPU-backed overlay. `header_editor` is the native-only header-editor flag
+/// (pass `false` on wasm, where that panel doesn't exist).
+#[must_use]
+#[allow(clippy::fn_params_excessive_bools, clippy::too_many_arguments)]
+const fn chip_panels_open(
+    cpu: bool,
+    ppu: bool,
+    oam: bool,
+    apu: bool,
+    memory: bool,
+    memory_compare: bool,
+    mapper: bool,
+    trace: bool,
+    watch: bool,
+    events: bool,
+    nsf: bool,
+    script: bool,
+    header_editor: bool,
+) -> bool {
+    cpu || ppu
+        || oam
+        || apu
+        || memory
+        || memory_compare
+        || mapper
+        || trace
+        || watch
+        || events
+        || nsf
+        || script
+        || header_editor
+}
+
 impl DebuggerOverlay {
     /// Construct the overlay, allocating egui-wgpu textures + binding the
     /// winit integration.
@@ -506,11 +543,6 @@ impl DebuggerOverlay {
         self.symbols.pairs()
     }
 
-    /// Toggle overlay visibility.
-    pub const fn toggle(&mut self) {
-        self.visible = !self.visible;
-    }
-
     /// Update the measured wall-clock FPS shown in the top toolbar. Called
     /// from the frontend's wall-clock pacer on each completed frame.
     pub const fn set_fps(&mut self, fps: f32) {
@@ -587,9 +619,15 @@ impl DebuggerOverlay {
     /// path uses this to pick its emu-lock policy (v2.8.0 Phase 5): the
     /// egui pass needs `&mut Nes`, so a visible overlay holds the lock
     /// across the render; hidden renders from the staging copy instead.
+    ///
+    /// v1.7.1 — derived directly from the live chip-panel state rather than the
+    /// cached `visible` field, so `app.rs`'s pre-egui-pass `dbg_visible` /
+    /// `needs_nes` read engages the heavier lock-holding render branch ONLY
+    /// while a chip panel is actually open (the field is also kept in sync by
+    /// `recompute_visible` for the in-closure `render_shell` branch).
     #[must_use]
     pub const fn is_visible(&self) -> bool {
-        self.visible
+        self.any_chip_panel_open()
     }
 
     /// v1.6.0 — point the cheat panel at a freshly-loaded ROM: store the
@@ -1121,6 +1159,53 @@ impl DebuggerOverlay {
         self.visible = true;
     }
 
+    /// v1.7.1 — `true` while ANY chip-inspection panel (the windows that need a
+    /// live `&mut Nes` and only render when the overlay is visible) is open.
+    ///
+    /// This is the predicate the overlay's visibility tracks: the deep overlay
+    /// is "visible" exactly when at least one of these panels is open. With the
+    /// `~`/backtick toggle and the standalone debugger toolbar both removed
+    /// (v1.7.0 "Forge" beta.5, #55), opening a chip panel is the only thing that
+    /// shows the overlay, so closing the last one must hide it again — otherwise
+    /// `self.visible` would latch on forever and permanently engage the heavier
+    /// lock-holding render branch (see `recompute_visible`).
+    ///
+    /// EVERY chip `show_*` flag drawn by `chip_panels` must be listed
+    /// here; add a new one's flag when you add a new chip panel.
+    #[must_use]
+    pub const fn any_chip_panel_open(&self) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        let header_editor = self.show_header_editor;
+        #[cfg(target_arch = "wasm32")]
+        let header_editor = false;
+        chip_panels_open(
+            self.show_cpu,
+            self.show_ppu,
+            self.show_oam,
+            self.show_apu,
+            self.show_memory,
+            self.show_memory_compare,
+            self.show_mapper,
+            self.show_trace,
+            self.show_watch,
+            self.show_events,
+            self.show_nsf,
+            self.show_script,
+            header_editor,
+        )
+    }
+
+    /// v1.7.1 — re-derive overlay visibility from the live chip-panel state so it
+    /// accurately reflects "is any chip panel currently open." Called once per
+    /// frame at the top of [`Self::render`] / [`Self::render_shell`], BEFORE the
+    /// egui pass that may toggle the `show_*` flags. A panel closed via its
+    /// window X (which clears its `show_*` flag during the egui pass) therefore
+    /// drops `visible` back to `false` on the next frame, releasing the
+    /// lock-holding render branch in `app.rs` (`dbg_visible` / `needs_nes`).
+    const fn recompute_visible(&mut self) {
+        self.visible = self.any_chip_panel_open();
+    }
+
     /// v1.0.0 — whether any tool panel that needs `&mut Nes` is currently open.
     /// The render path uses this to take the locked branch (which passes a real
     /// `nes` to the egui pass) even when the deep overlay is off.
@@ -1582,6 +1667,9 @@ impl DebuggerOverlay {
         config: &mut Config,
         extra_ui: F,
     ) {
+        // v1.7.1 — re-derive visibility from the live chip-panel state so a
+        // closed-last-panel drops the overlay (see `recompute_visible`).
+        self.recompute_visible();
         if !self.visible {
             return;
         }
@@ -1671,6 +1759,11 @@ impl DebuggerOverlay {
         shell_frame: &ShellFrame<'_>,
         extra_ui: F,
     ) -> ShellOutput {
+        // v1.7.1 — re-derive visibility from the live chip-panel state BEFORE
+        // the egui pass so closing the last chip panel hides the overlay again
+        // (see `recompute_visible`); otherwise `visible` would latch on forever
+        // and permanently engage the heavier lock-holding render branch.
+        self.recompute_visible();
         let raw_input = self.state.take_egui_input(window);
         let ctx = self.state.egui_ctx().clone();
         let visible = self.visible;
@@ -1838,5 +1931,84 @@ impl DebuggerOverlay {
             self.renderer.free_texture(&id);
         }
         shell_out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::chip_panels_open;
+
+    /// A minimal mirror of the overlay's chip `show_*` flags + the cached
+    /// `visible` field, driven by the SAME [`chip_panels_open`] predicate the
+    /// real `DebuggerOverlay::recompute_visible` uses. Lets us exercise the
+    /// open -> visible -> close-all -> hidden lifecycle without standing up the
+    /// GPU-backed overlay (`DebuggerOverlay::new` needs a window + wgpu device).
+    #[derive(Default)]
+    struct VisModel {
+        cpu: bool,
+        ppu: bool,
+        memory: bool,
+        visible: bool,
+    }
+
+    impl VisModel {
+        fn any_chip_panel_open(&self) -> bool {
+            chip_panels_open(
+                self.cpu,
+                self.ppu,
+                false,
+                false,
+                self.memory,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+            )
+        }
+
+        // Mirrors `DebuggerOverlay::recompute_visible` (run once per frame).
+        fn recompute_visible(&mut self) {
+            self.visible = self.any_chip_panel_open();
+        }
+    }
+
+    #[test]
+    fn visibility_tracks_chip_panel_state() {
+        let mut m = VisModel::default();
+        // No panels open at construction => overlay hidden.
+        m.recompute_visible();
+        assert!(!m.visible, "no panels open => overlay must be hidden");
+        assert!(!m.any_chip_panel_open());
+
+        // Opening a chip panel (e.g. `open_chip_panel(Cpu)`) shows the overlay.
+        m.cpu = true;
+        m.recompute_visible();
+        assert!(m.visible, "an open chip panel => overlay visible");
+        assert!(m.any_chip_panel_open());
+
+        // A second panel keeps it visible.
+        m.ppu = true;
+        m.recompute_visible();
+        assert!(m.visible);
+
+        // Closing ONE of two panels keeps the overlay visible.
+        m.cpu = false;
+        m.recompute_visible();
+        assert!(m.visible, "still one panel open => overlay stays visible");
+        assert!(m.any_chip_panel_open());
+
+        // Closing the LAST panel hides the overlay again (the regression fix:
+        // `visible` must not latch on once any panel was opened).
+        m.ppu = false;
+        m.recompute_visible();
+        assert!(
+            !m.visible,
+            "all panels closed => overlay must hide (no sticky-true latch)"
+        );
+        assert!(!m.any_chip_panel_open());
     }
 }

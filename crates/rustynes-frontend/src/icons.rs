@@ -102,8 +102,14 @@ pub mod glyph {
     pub const DATABASE: char = '\u{f1c0}';
     /// `puzzle-piece` — Mod / HD-pack menu.
     pub const PUZZLE_PIECE: char = '\u{f12e}';
-    /// `magnifying-glass` — HD-pack pixel inspector (v1.5.0 A4).
-    pub const MAGNIFYING_GLASS: char = '\u{f002}';
+    /// `magnifying-glass-plus` — HD-pack pixel inspector (v1.5.0 A4).
+    ///
+    /// Deliberately NOT `magnifying-glass` (U+F002): egui's default proportional
+    /// font (`Ubuntu-Light`) maps U+F002 to its `fl` ligature in the Private Use
+    /// Area, and the FA font is only the *trailing* fallback — so U+F002 would
+    /// resolve to "fl" instead of the icon. U+F00E (`magnifying-glass-plus`) is
+    /// above that collision range and renders from the FA font as intended.
+    pub const MAGNIFYING_GLASS_PLUS: char = '\u{f00e}';
     /// `file-zipper` — ZIP pack.
     pub const FILE_ZIPPER: char = '\u{f1c6}';
     /// `xmark` — clear / unload / close.
@@ -128,8 +134,14 @@ pub mod glyph {
     pub const MEMORY: char = '\u{f538}';
     /// `volume-high` — APU / audio.
     pub const VOLUME_HIGH: char = '\u{f028}';
-    /// `music` — NSF player.
-    pub const MUSIC: char = '\u{f001}';
+    /// `headphones` — NSF player.
+    ///
+    /// Deliberately NOT `music` (U+F001): egui's default proportional font
+    /// (`Ubuntu-Light`) maps U+F001 to its `fi` ligature in the Private Use
+    /// Area, and the FA font is only the *trailing* fallback — so U+F001 would
+    /// resolve to "fi" instead of the icon. U+F025 (`headphones`) is above that
+    /// collision range and renders from the FA font as intended.
+    pub const HEADPHONES: char = '\u{f025}';
     /// `code` — Lua scripting.
     pub const CODE: char = '\u{f121}';
     /// `circle-question` — top-level Help menu.

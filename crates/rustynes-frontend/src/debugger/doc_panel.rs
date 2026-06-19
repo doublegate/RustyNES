@@ -763,7 +763,6 @@ Tools menu
 Debug menu
 ==========
 
-  Show Debugger ....... toggle the deep chip-inspector overlay.
   Performance Monitor . frame-time + GPU-pass timing panel.
   CPU / PPU / APU ..... the chip inspectors
                         ([[Debugger & devtools|devtools]]).
@@ -919,10 +918,11 @@ const DEVTOOLS_BODY: &str = "\
 Debugger & devtools
 ===================
 
-Every panel opens from the Tools / Debug menus (the v1.7.0 build removed
-the old debugger toolbar HUD). Toggle the deep chip-inspector overlay
-from Debug -> Show Debugger; the dedicated tool windows open whether or
-not it is visible.
+Every panel opens directly from the Tools / Debug menus (the v1.7.0
+build removed the old debugger toolbar HUD, and v1.7.1 removed the
+vestigial Debug -> Show Debugger toggle). Picking a chip inspector from
+the Debug menu opens its window on the spot; the tool windows are
+independent of one another.
 
 The devtools are output-only and never perturb emulation, so the
 determinism contract and AccuracyCoin (100%, 139/139) are unaffected.
