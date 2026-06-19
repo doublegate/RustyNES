@@ -500,9 +500,16 @@ branches in `RedrawRequested`:
   buffer, HD-pack snapshots) and the synchronous / wasm single-threaded builds
   keep the prior under-lock copy.
 - The **locked** branch is taken when the debugger overlay is visible OR a
-  tool panel that reads `&mut Nes` is open (today: Cheats) — `needs_nes`. It
-  holds the lock across the egui pass so the chip panels can inspect the live
-  core.
+  tool panel that reads `&mut Nes` is open (today: Cheats / ROM-Database) —
+  `needs_nes`. It holds the lock across the egui pass so the chip panels can
+  inspect the live core. When the `hd-pack` feature is active and a pack is
+  loaded, this branch ALSO captures the HD snapshots (tile-source, the 8 KiB
+  CHR pattern space, watched-memory) under the same lock, runs the compositor,
+  and presents the upscaled buffer through `render_hd_with_overlay` — so a
+  loaded pack substitutes regardless of whether the debugger/tool panels are
+  open (v1.7.1 #3; previously this branch silently presented the stock
+  framebuffer). The deep-overlay panels still draw on top via the `overlay`
+  closure.
 
 A snapshot of core facts the status bar / menu IA need (ROM loaded, FPS, FDS
 disk-side count, Vs.-System flag, mapper + region labels, movie state) is

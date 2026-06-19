@@ -2297,6 +2297,84 @@ mod tests {
         assert_eq!(from_bytes, from_hex);
     }
 
+    /// v1.7.1 (#3) — the full runtime contract: a `<tile>` rule whose `tileData`
+    /// is the CRC of a known 16-byte CHR tile MUST substitute when the live
+    /// compositor hashes those same 16 CHR bytes (read via `chr_peek`), and a
+    /// tile whose CHR bytes do NOT match any rule key MUST fall through to the
+    /// original. This is the loader-key ↔ runtime-key alignment the #3 fix
+    /// depends on, exercised end-to-end through `composite` (the GPU blit itself
+    /// is maintainer-manual; this drives the CPU compositor only).
+    #[test]
+    fn real_format_tile_substitutes_when_chr_matches_and_falls_through_otherwise() {
+        // A real Mesen <ver>106 tile line: tileData = the 16 CHR bytes at a given
+        // pattern address. Place those bytes in a synthetic CHR snapshot at that
+        // address so the live hash reproduces the loader key.
+        const TILE_DATA: &str = "00000000000000007F3F1F0F07030100";
+        let mut chr_bytes = [0u8; 16];
+        for (i, b) in chr_bytes.iter_mut().enumerate() {
+            *b = u8::from_str_radix(&TILE_DATA[i * 2..i * 2 + 2], 16).unwrap();
+        }
+        let key = parse_tile_data_key(TILE_DATA).unwrap();
+        assert_eq!(key, crc32(&chr_bytes));
+
+        // Build the pack with a single unconditional rule keyed by that tileData,
+        // mapping to a solid-red replacement image.
+        let red = solid_image(8, 8, [0xFF, 0, 0, 0xFF]);
+        let mut tiles = HashMap::new();
+        tiles.insert(
+            key,
+            vec![TileRule {
+                image: 0,
+                x: 0,
+                y: 0,
+                conditions: Vec::new(),
+            }],
+        );
+        let pack = HdPack {
+            scale: 1,
+            images: vec![red],
+            tiles,
+            pattern_tables: Vec::new(),
+            conditions: Vec::new(),
+            backgrounds: Vec::new(),
+            watched_addresses: Vec::new(),
+            audio_decls: Vec::new(),
+        };
+        let mut comp = HdCompositor::new(pack);
+
+        // The top-left cell shows the tile at CHR base 0x0040 (a non-zero address,
+        // so the `& 0x1FF0` masking + `chr_peek` offset are exercised, not a
+        // degenerate 0x0000 case).
+        const BASE: u16 = 0x0040;
+        let (fb, ts) = one_tile_scene(BASE);
+
+        // A CHR snapshot that holds `chr_bytes` exactly at [BASE..BASE+16].
+        let mut chr = vec![0u8; 0x2000];
+        chr[BASE as usize..BASE as usize + 16].copy_from_slice(&chr_bytes);
+        let peek = |addr: u16| chr.get((addr & 0x1FFF) as usize).copied().unwrap_or(0);
+
+        // Matching CHR -> the rule substitutes (top-left pixel becomes red).
+        let out = comp.composite(&fb, &ts, &WatchedMemory::new(), peek);
+        assert_eq!(
+            &out[0..4],
+            &[0xFF, 0, 0, 0xFF],
+            "the loader key and the live hash must agree so the tile substitutes"
+        );
+
+        // Now zero the CHR at that address: the live hash no longer matches the
+        // rule key, so the cell falls through to the (black) original.
+        let mut chr2 = vec![0u8; 0x2000];
+        // (chr2 already all-zero -> a different CRC than `key`.)
+        let _ = &mut chr2;
+        let peek2 = |addr: u16| chr2.get((addr & 0x1FFF) as usize).copied().unwrap_or(0);
+        let out = comp.composite(&fb, &ts, &WatchedMemory::new(), peek2);
+        assert_eq!(
+            &out[0..4],
+            &[0, 0, 0, 0],
+            "a non-matching CHR tile must NOT substitute"
+        );
+    }
+
     // LOCAL-ONLY verification against a real copyrighted pack. Never committed to
     // run in CI: gated on `RUSTYNES_HDPACK_LOCAL` pointing at a folder with a
     // `hires.txt`. Run: RUSTYNES_HDPACK_LOCAL=/path cargo test ... -- --ignored

@@ -15,6 +15,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **HD-pack tile substitution now applies in the debugger / tool branch (#3).**
+  A loaded HD pack (e.g. *Zelda Remastered*, ~15,849 rules) parsed and reported
+  success, but nothing changed on screen whenever the debugger overlay or a
+  Cheats / ROM-Database panel was open: that render branch (`needs_nes`) always
+  presented the stock NES framebuffer and never invoked the HD compositor. The
+  branch now captures the same per-frame snapshots (tile-source telemetry, the
+  8 KiB CHR pattern space, watched-memory) under the emu lock, runs
+  `HdCompositor::composite`, and presents the upscaled buffer via
+  `render_hd_with_overlay` (the deep-overlay panels still draw on top). The
+  runtime tile-key derivation was verified against a real `<ver>106` pack +
+  live ROM (every rendered tile's CRC-32-of-16-CHR-bytes key hit the loaded
+  rule set). All `hd-pack`-gated frontend code; with the feature off the
+  shipped / native / `no_std` / wasm builds stay byte-identical and AccuracyCoin
+  holds 100% (139/139).
+
 ## [1.7.0] - 2026-06-19 - "Forge" (Feature Release)
 
 ### Added
