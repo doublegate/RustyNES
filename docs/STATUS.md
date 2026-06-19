@@ -1,5 +1,21 @@
 # RustyNES — Project Status Matrix
 
+> **In development: v1.7.0 "Forge"** (NOT released — accumulating on `main`) — the
+> "writable + programmable tools" release, MAXIMAL scope (full A–H) across five
+> betas on the current dot-lockstep scheduler. **Merged:** beta.1 (#134, F accuracy
+> hardening + G1 ASIC mappers 150→**168** + H7 measure-first perf) · beta.2 (#135,
+> A editing-capable tools + C debugger depth) · beta.3 (#136, B scriptable TAStudio
+> with Lua parity + E host IPC/automation behind `script-ipc`). **In closeout:** beta.4
+> (#137, D rewind/Zwinder + G2/G3 expansion-audio + G4 movie-import + G5 HD-Pack
+> Builder). **beta.5 in progress:** HD-pack loader real-Mesen-format fix (ADR 0018),
+> UI overhaul (consolidated Input Display, menu/status-bar, Documentation pane,
+> debugger-bar removal), screenshot No-Intro curation, coverage-harness archive/`.fds`
+> support, then the H1–H9 reach/polish wave + a cargo `full` build. Additive /
+> off-by-default → byte-identical with features off; **AccuracyCoin 100% (139/139)**
+> held at every beta. New ADRs 0016 (IPC) · 0017 (HD-Pack Builder) · 0018 (HD-pack
+> loader format). The matrix below still reflects the **v1.6.0** release; it is
+> re-synced in full at the v1.7.0 finals (version bump + tag).
+
 **Current release: v1.6.0 "Studio" — the TAS-authoring, debugger-depth, accuracy,
 and breadth release** on the cycle-accurate v1.0.0 production core. A NES/Famicom
 emulator with the Mesen2 / higan / ares accuracy bar, shipped as a polished
