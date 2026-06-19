@@ -2273,7 +2273,12 @@ fn shortcuts_grid(ui: &mut egui::Ui, id: &str) {
                 ("Insert coin (Vs.)", "F10"),
                 ("Fullscreen", "F11"),
                 ("Toggle menu bar", "M"),
-                ("Toggle debugger", "`"),
+                // v1.7.1 — the backtick key toggles the status-bar
+                // RetroAchievements read-out (compact <-> long-form), not the
+                // debugger overlay; the debugger has no single toggle (each
+                // inspector opens from the Debug menu). Kept consistent with
+                // `system_hotkeys_grid`.
+                ("Toggle RA status detail", "`"),
                 ("Quit / exit fullscreen", "Esc"),
                 ("D-pad", "Arrow keys"),
                 ("A button", "Z"),
