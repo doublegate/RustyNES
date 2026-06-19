@@ -1,11 +1,12 @@
 //! v1.5.0 "Lens" Workstream I5 — the shared "lit button" colour palette for the
-//! input visualizers.
+//! input visualizer.
 //!
-//! Both the **Input Display** panel (`debugger/input_display_panel.rs`) and the
-//! A1 **Input Miniatures** overlay (`debugger/input_miniatures_panel.rs`) draw a
+//! The consolidated **Input Display** panel
+//! (`debugger/input_miniatures_panel.rs`; v1.7.0 "Forge" beta.5 #51 merged the
+//! former standalone Input Display + Input Miniatures panels into it) draws a
 //! held NES button in a colour keyed by which button group it belongs to. Having
-//! the constants in one module is what keeps the two overlays from drifting
-//! apart (the maintainer asked for the same palette in both):
+//! the constants in one module keeps the palette consistent across the standard
+//! pads + any expansion devices (the maintainer asked for the same palette):
 //!
 //! - **D-pad** → green (the original lit colour).
 //! - **Select / Start** → yellow.

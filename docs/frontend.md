@@ -445,8 +445,9 @@ A single `DebuggerOverlay::render_shell` (`debugger/mod.rs`) runs one
    `ui_shell.rs`;
 3. draws the wasm-netplay lobby (`extra_ui`, a no-op on native);
 4. renders the tool panels (Cheats / Settings / Netplay / Cheevos / Perf /
-   Input) whenever their `show_*` flag is set, and the chip panels +
-   debugger toolbar HUD **only** when the overlay is visible.
+   Input / Input Display) whenever their `show_*` flag is set, and the chip
+   panels **only** when the overlay is visible (v1.7.0 beta.5 #55 removed the
+   debugger toolbar HUD that used to render alongside them).
 
 **The `MenuAction` / dispatch idiom.** The shell never mutates `App` from
 inside the egui closure (the closure already mutably borrows `config`, and
@@ -517,7 +518,10 @@ reorganized the order and regrouped several items — see the per-menu notes):
   corpus — and stamps the matching ROM checksum (MD5 for `.fm2`, SHA-1 for `.bk2`)
   onto exports so they verify on TASVideos), **Record A/V** (v1.6.0 G; native +
   `av-record` feature), Netplay (native), RetroAchievements (native + feature),
-  Input Display, Input Miniatures, NSF Player (moved here from Debug in v1.3.0),
+  **Input Display** (v1.7.0 beta.5 #51 — the single consolidated controller HUD
+  that covers the standard pads *and* every expansion peripheral; the former
+  standalone "Input Display" + "Input Miniatures" entries were merged), Export
+  Last 30s (.rnm) (v1.7.0 D1), NSF Player (moved here from Debug in v1.3.0),
   Replay / TAS (v1.5.0 C2), TAStudio (v1.6.0 A2), ROM Database, and an **HD Pack**
   submenu (`hd-pack` feature + native; folded in from the former standalone "Mod"
   menu) — which v1.7.0 G5 extends with an **HD-Pack Builder** (Build HD Pack
@@ -528,12 +532,31 @@ reorganized the order and regrouped several items — see the per-menu notes):
   `bitmapIndex,tileData,palette,x,y,brightness,defaultTile` tile line keyed on the
   CRC-32 of the 16-byte CHR `tileData` — so real third-party packs (e.g. Zelda /
   SMB HD remasters) load (ADR 0018), not just builder-authored ones.
-- **Debug** — Show Debugger (`` ` ``), Performance Monitor (moved here from
-  Tools in v1.3.0), then the chip/state inspectors: CPU / PPU / APU / Memory /
-  Memory Compare / OAM / Mapper / Trace Logger / Watch / Breakpoints (v1.6.0
-  "Studio" Workstream C) / Event Viewer / Lua Script.
-- **Help** — Documentation (v1.5.0 I10; native, searchable in-app manual),
-  Keyboard Shortcuts, About.
+- **Debug** — Show Debugger (a checkbox; v1.7.0 beta.5 #55 removed its `` ` ``
+  accelerator — see below), Performance Monitor (moved here from Tools in
+  v1.3.0), then the chip/state inspectors: CPU / PPU / APU / Memory / Memory
+  Compare / OAM / Mapper / Trace Logger / Watch / Breakpoints (v1.6.0 "Studio"
+  Workstream C) / Event Viewer / Lua Script, plus Cartridge Info / Header Editor
+  (v1.7.0 A2) and Load/Clear Symbols (v1.4.0 D1).
+- **Help** — Documentation (v1.5.0 I10; native, searchable in-app manual —
+  overhauled in v1.7.0 beta.5 #53 with word-wrap, colorization, navigable
+  sub-pages, and intra-doc links), Keyboard Shortcuts, About.
+
+**v1.7.0 "Forge" beta.5 — UI overhaul (#51/#52/#53/#55).** Frontend-only,
+determinism-neutral (the core stays byte-identical; AccuracyCoin 100%, 139/139).
+(#51) The two input HUDs were **consolidated into one "Input Display" panel** —
+the superset miniatures panel (standard pads + Zapper / Vaus / SNES mouse /
+Power Pad / Family Trainer / Family BASIC / Subor keyboard / Konami + Bandai
+Hyper Shot / Four Score) kept its capability and took the "Input Display" name;
+the old standalone panel + its `ToolPanel::InputDisplay` were removed. (#52) The
+menu bar was audited for full v1.7.0 coverage and every entry carries a
+Font-Awesome glyph; new recording state (TAS movie REC/PLAY, A/V REC, HD-Pack
+REC) and the rich netplay read-out are surfaced in the bottom status bar. (#55)
+The **debugger toolbar HUD was removed** (every panel opens from the menu bar
+now); its only distinct content was the long-form RetroAchievements read-out, so
+the freed backtick (`` ` ``) key now **toggles the status-bar RA display between
+its compact and long-form variants** (the overlay is toggled from Debug → Show
+Debugger).
 
 **v1.5.0 "Lens" Workstream I — native-UI fixes + menu overhaul.** Frontend-only,
 determinism-neutral. Headline items: the **Fast Forward** (`Tab`) and **Frame
@@ -552,7 +575,8 @@ readout moved into the bottom status bar between the emulator-state label and th
 FPS counter (I7). The **Keyboard Shortcuts** window reads the live `[input]` /
 `[input.system]` bindings with a Player/device selector (I9). The **Input
 Display** uses a per-group palette (D-pad green / Select-Start yellow / B-A
-Nintendo red), mirrored in the Input Miniatures overlay (I5). Settings: the
+Nintendo red) (I5; the two HUDs were later merged into one "Input Display" panel
+in v1.7.0 beta.5 #51). Settings: the
 Shaders "Shader stack" header defaults open, the Input tab auto-saves every
 control in both the Settings window and the standalone window, and the old "Save
 to disk" button is now "Export config..." (I3).
@@ -669,7 +693,9 @@ System hotkeys (rebindable via `[input.system]`):
 - `F12` — open a different ROM via the system file dialog
 - `M` — toggle the menu bar
 - `Esc` — exit fullscreen if fullscreen, otherwise quit
-- `` ` `` (backtick) — toggle the egui debugger overlay
+- `` ` `` (backtick) — toggle the status-bar RetroAchievements read-out between
+  its compact and long-form variants (v1.7.0 beta.5 #55; it formerly toggled the
+  debugger overlay, which now opens from Debug → Show Debugger)
 
 ROMs can also be loaded by **dragging a `.nes` file onto the window**.
 
@@ -740,12 +766,16 @@ build reaches native QoL parity for two persistence features:
   on-device record/replay + IDB-grid behavior can't be headlessly CI-verified —
   it carries a maintainer on-device manual-verify like the v1.2.0 F1/F3 items.
 
-**Input-display overlay.** A read-only tool panel
-(`debugger/input_display_panel.rs`) that draws a stylized NES controller per
-active player — D-pad, Select/Start, B/A — with each currently-held button lit;
-shows P1+P2 (and P3/P4 with Four Score). Open from **Tools → Input Display** or
-the debugger toolbar's "Input HUD" checkbox. Useful for TAS authoring and
-streaming; it reads the same held-button snapshot the emulator is fed
+**Input Display panel.** A read-only tool panel
+(`debugger/input_miniatures_panel.rs`) that draws a live diagram of every
+connected input device — a stylized NES controller per active player (D-pad,
+Select/Start, B/A; P1+P2, and P3/P4 with Four Score) **plus** whatever expansion
+peripheral occupies port 2 (Zapper, Arkanoid Vaus, SNES mouse, Power Pad /
+Family Trainer mat, Family BASIC / Subor keyboard, Konami / Bandai Hyper Shot) —
+with each held button / axis lit. Open from **Tools → Input Display**. v1.7.0
+beta.5 (#51) consolidated the former standalone "Input Display" + "Input
+Miniatures" panels into this one superset panel. Useful for TAS authoring and
+streaming; it reads the same host-side input snapshot the emulator is fed
 (`DebuggerOverlay::set_input_display`), so it is frontend-only with no core or
 determinism impact.
 
@@ -759,12 +789,13 @@ lock-free `SharedInput` for the emu thread to read immediately before
 
 ## Debugger panels (egui)
 
-Toggled with `` ` ``; opening just shows the debugger toolbar HUD (frame /
-cycle / FPS / movie / disk / netplay / RA status) with the chip sub-windows
-closed — the user opens the panels they want from the toolbar checkboxes or
-the Debug menu. The panels are read-only: they never advance
-emulator-visible state, polling the inspection API on `rustynes_core::Nes`
-once per visible frame.
+Toggled from **Debug → Show Debugger** (v1.7.0 beta.5 #55 removed the `` ` ``
+accelerator and the toolbar HUD entirely). Opening the overlay shows the chip
+sub-windows the user has opened from the Debug menu; there is no longer a
+"debugger toolbar" — the read-outs it used to carry (frame / cycle / FPS /
+movie / disk / netplay / RA status) all live in the bottom status bar now. The
+panels are read-only: they never advance emulator-visible state, polling the
+inspection API on `rustynes_core::Nes` once per visible frame.
 
 - **CPU**: registers, current instruction, disassembly window (scrollable), step-instruction button, a **Breakpoints** section — exec/PC breakpoints (armed toggle, hex add, per-row remove, clear); when the program counter reaches one, emulation pauses and the CPU panel opens on the stopped PC — and (v1.4.0 Workstream D) an **Event breakpoints** section that breaks on hardware events (see below). Loaded symbol labels (D1) annotate the disassembly (a `label:` line above the matching address) and the breakpoint rows.
 - **PPU**: nametable viewer (4 tables side-by-side, scroll-cursor overlaid), pattern table viewer (both tables, with palette selector), OAM viewer (sprite list + visual), palette RAM viewer. **v1.5.0 "Lens" Workstream A3** adds a **Scanline trace** tab (the per-scanline scroll/render register-write trace — $2000/$2001/$2005/$2006 — derived from the `debug-hooks` event log, surfacing mid-frame raster splits) and a native **Export CHR to PNG…** button (the combined 256×128 pattern dump) on the Patterns tab.
@@ -846,17 +877,18 @@ determinism-neutral (the new core telemetry is `debug-hooks`-gated and off in th
 headless / shipped builds, so AccuracyCoin / the determinism oracle are unaffected
 and the feature-off build is byte-identical).
 
-- **Input Miniatures overlay (A1)** — **Tools → Input Miniatures** opens a live
-  panel drawing every connected input device with real-time button / axis state:
-  the standard pads (P1..P4, all four with the Four Score) and whatever
-  non-standard device occupies the port-2 / expansion slot — Zapper (trigger +
-  light-sensor strip), Arkanoid Vaus (paddle-knob slider + button), SNES mouse
-  (left/right buttons + motion delta), Power Pad / Family Trainer mat (12-button
-  grid), Family BASIC / Subor keyboard (pressed-key count), Konami Hyper Shot
-  (P1/P2 Run/Jump), Bandai Hyper Shot (8-sensor mat). The app builds a frontend
-  `MiniaturesSnapshot` each frame from the same host-side input state the emulator
-  is fed (`input_miniatures_snapshot`) and pushes it via
-  `DebuggerOverlay::set_input_miniatures` — no core touch, no determinism surface.
+- **Input Miniatures overlay (A1)** — **Tools → Input Display** (renamed +
+  consolidated in v1.7.0 beta.5 #51; this is now the single "Input Display"
+  panel) opens a live panel drawing every connected input device with real-time
+  button / axis state: the standard pads (P1..P4, all four with the Four Score)
+  and whatever non-standard device occupies the port-2 / expansion slot — Zapper
+  (trigger + light-sensor strip), Arkanoid Vaus (paddle-knob slider + button),
+  SNES mouse (left/right buttons + motion delta), Power Pad / Family Trainer mat
+  (12-button grid), Family BASIC / Subor keyboard (pressed-key count), Konami
+  Hyper Shot (P1/P2 Run/Jump), Bandai Hyper Shot (8-sensor mat). The app builds a
+  frontend `MiniaturesSnapshot` each frame from the same host-side input state
+  the emulator is fed (`input_miniatures_snapshot`) and pushes it via
+  `DebuggerOverlay::set_input_display` — no core touch, no determinism surface.
 
 - **Graphical PPU Event Viewer (A2)** — the read/write heatmap described under the
   **Events** panel above (a new `debug-hooks`-gated PPU-register **read** capture
@@ -878,7 +910,7 @@ and the feature-off build is byte-identical).
   inspector only reads those already-deterministic snapshots and mutates nothing.
 
 All panels are floating windows in egui's window system. The tool panels
-(Cheats / Settings / Netplay / Cheevos / Perf / Input / Input Miniatures /
+(Cheats / Settings / Netplay / Cheevos / Perf / Input / Input Display /
 Replay / TAS / HD Pixel Inspector) are the same windows the menu bar surfaces
 directly (see "Chip panels vs tool panels" above).
 
@@ -1254,20 +1286,39 @@ full `emu` API (memory access, CPU state, `onFrame` / `onExec` / `onRead` /
 [scripting.md](scripting.md); `examples/scripts/` ships `hud.lua` and
 `ram_watch.lua`.
 
-## In-app Documentation (v1.5.0 "Lens" Workstream I10, native)
+## In-app Documentation (v1.5.0 "Lens" Workstream I10, native; overhauled in v1.7.0 beta.5 #53)
 
 **Help -> Documentation** opens a searchable egui manual
 (`debugger/doc_panel.rs`) that reuses the SAME structured help-topic registry as
 the `rustynes help` CLI / ratatui TUI (`cli::HELP_TOPICS`), so the terminal help
-and the GUI manual cannot drift. A left topic list (with a `/`-style search box
-filtering by title or body) selects between: the shared CLI topics
+and the GUI manual cannot drift. A left topic **tree** (with a `/`-style search
+box filtering by title or body) selects between: the shared CLI topics
 (controls / hotkeys / gamepad / features / mappers / config / scripting /
-netplay), GUI-only topics authored in the panel (menu map, debugger & devtools,
-settings), an **About** card (version / license / author / accuracy / features /
-links), and a **per-release CHANGELOG** browser (the embedded `CHANGELOG.md`
-split by its `## [version]` headings). Native-only (the topic registry lives in
-the native-only `cli` module); the window reads no `nes`, so it renders in the
-always-on tool-panel path. Frontend + output-only — no determinism surface.
+netplay), GUI-only topics authored in the panel (menu map; debugger & devtools;
+settings; TAS & movies; Lua scripting & automation) — each of which may expose
+**navigable sub-pages** — an **About** card (version / license / author /
+accuracy / features / links), and a **per-release CHANGELOG** browser (the
+embedded `CHANGELOG.md` split by its `## [version]` headings). Native-only (the
+topic registry lives in the native-only `cli` module); the window reads no
+`nes`, so it renders in the always-on tool-panel path. Frontend + output-only —
+no determinism surface.
+
+**v1.7.0 "Forge" beta.5 (#53) — pane overhaul.** Four long-standing defects
+fixed: (1) **word-wrap** — bodies render through `render_body`, which wraps every
+paragraph to the pane width (the old `ui.monospace(body)` overflowed the
+viewport); (2) **sub-level navigation** — GUI topics now carry child pages
+(`GuiTopic::children`, e.g. one per chip inspector under "Debugger & devtools",
+the TAStudio editor under "TAS & movies"), the sidebar renders the tree, and
+every node resolves to content instead of returning nothing; (3) **colorization**
+— headings (with their `===`/`---` underline consumed), indented "code"/detail
+lines, and bullets are tinted for readability; (4) **intra-doc hyperlinks** — a
+`[[id]]` / `[[label|id]]` token in any body becomes a clickable link that
+navigates to another doc page (resolved by `resolve_link` against the shared
+topic ids, GUI topic ids, and sub-page ids), with breadcrumb back-links on
+sub-pages. The content was also expanded to cover the full v1.7.0 feature set
+(TAStudio, A/V recording, HD-Pack Builder, IPC/automation, the consolidated
+Input Display, the new debugger depth, and the removed toolbar HUD / repurposed
+backtick).
 
 ## Shipped / open
 
