@@ -17,6 +17,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **v1.7.0 "Forge" H5 — i18n framework: a compile-time string catalog + a
+  Settings language picker.** RustyNES's one systemic gap — no localization
+  anywhere — closed with a lightweight, frontend-only, English-by-default i18n
+  layer (`crate::i18n`, ADR 0023). A `Key` enum + one `const fn` catalog per
+  locale resolve through `tr(key)` / the `t!(Key)` macro; there is **no runtime
+  file I/O, no Fluent/ICU/`rust-i18n` dependency** (rejected on the wasm size
+  budget — the bundle stays inside the `scripts/wasm_size_budget.sh` 5 MiB gate),
+  just a few KiB of `&'static str` data. **English (`Locale::English`) is the
+  `Default` and the universal fallback**: the `[ui] locale` config field is
+  `#[serde(default)]`, the English catalog holds the *verbatim* current strings,
+  and any key a non-English catalog omits falls back to English — so with the
+  default locale every label is **byte-identical to v1.6.0** and AccuracyCoin
+  holds 100% (139/139). Ships a second real locale (Spanish) to prove the
+  mechanism, a **Language** combo in Settings -> Video -> Display (persisted to
+  `[ui] locale`, re-renders on the next egui frame), and conversion of the
+  high-visibility surfaces — the menu bar (top-level menus + common File/View
+  items), the Settings title/tab strip/Display labels, and the status-bar state
+  words. Conversion is **incremental**: deeper panels keep their literals and
+  follow the documented `t!(Key)` / `tr(..)` pattern (`docs/frontend.md`) over time. New ADR
+  **0023** (i18n string-catalog approach). Frontend-only; the chip stack /
+  `rustynes-core` / test-harness are untouched.
+
 - **v1.7.0 "Forge" H6 — web/wasm parity: browser Lua, File System Access API,
   Gamepad API, PWA/offline, and `?settings=` share-links.** Five additive,
   web-only browser-platform features. All are wasm-only or behind the existing

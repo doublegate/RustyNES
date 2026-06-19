@@ -1361,6 +1361,13 @@ pub struct UiConfig {
     /// [`UiConfig::ZOOM_MIN`]..=[`UiConfig::ZOOM_MAX`] on apply. (v1.5.0)
     #[serde(default = "default_ui_zoom_factor")]
     pub zoom_factor: f32,
+    /// v1.7.0 "Forge" Workstream H5 — UI language (i18n). Selects the active
+    /// string catalog (see [`crate::i18n`]). Defaults to
+    /// [`Locale::English`](crate::i18n::Locale::English), so a config that omits
+    /// the field (every pre-H5 config) renders the verbatim English UI, byte-
+    /// identical to v1.6.0. Set from the Settings language picker.
+    #[serde(default)]
+    pub locale: crate::i18n::Locale,
 }
 
 /// Serde default for [`UiConfig::show_fps`].
@@ -1402,6 +1409,7 @@ impl Default for UiConfig {
             show_lag_frames: false,
             pause_on_focus_loss: false,
             zoom_factor: default_ui_zoom_factor(),
+            locale: crate::i18n::Locale::default(),
         }
     }
 }

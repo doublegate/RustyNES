@@ -1704,6 +1704,13 @@ impl DebuggerOverlay {
             // emulated NES image is a raw framebuffer blit, not egui content,
             // so it is unaffected (gameplay/determinism untouched).
             ctx.set_zoom_factor(config.ui.clamped_zoom_factor());
+            // (1c) v1.7.0 "Forge" Workstream H5 — i18n. Publish the configured
+            // UI locale to the process-global so every `tr(..)` call this frame
+            // resolves against it. A relaxed atomic store; egui re-renders each
+            // frame, so a language change in Settings takes effect next frame
+            // with no explicit invalidation. English (the default) reproduces
+            // the verbatim pre-i18n labels.
+            crate::i18n::set_locale(config.ui.locale);
             // (2) The always-on shell. Its settings/input tab bodies reuse the
             // existing debugger widgets so their live-apply plumbing is intact.
             let settings_ui = &mut self.settings_ui;

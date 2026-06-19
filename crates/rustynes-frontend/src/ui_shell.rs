@@ -552,7 +552,7 @@ impl UiShell {
         egui::Panel::top("shell_menu_bar").show_inside(root_ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 // ----- File -----
-                ui.menu_button(ic(glyph::FILE, "File"), |ui| {
+                ui.menu_button(ic(glyph::FILE, crate::t!(MenuFile)), |ui| {
                     // (H1) Open ROM / Open Recent change the loaded ROM — locked
                     // out while a netplay session is active (a ROM swap would
                     // desync the rollback peers).
@@ -560,7 +560,7 @@ impl UiShell {
                     if accel_enabled(
                         ui,
                         !rom_change_restricted,
-                        &ic(glyph::FOLDER_OPEN, "Open ROM..."),
+                        &ic(glyph::FOLDER_OPEN, crate::t!(MenuOpenRom)),
                         &keys.open_rom,
                     )
                     .clicked()
@@ -577,39 +577,45 @@ impl UiShell {
                         // auto-close — BUG-1), so surface it as a greyed item.
                         ui.add_enabled(
                             false,
-                            egui::Button::new(ic(glyph::CLOCK_ROTATE_LEFT, "Open Recent")),
+                            egui::Button::new(ic(
+                                glyph::CLOCK_ROTATE_LEFT,
+                                crate::t!(MenuOpenRecent),
+                            )),
                         );
                     } else {
-                        ui.menu_button(ic(glyph::CLOCK_ROTATE_LEFT, "Open Recent"), |ui| {
-                            if config.recent_roms.paths.is_empty() {
-                                ui.label("No recent ROMs");
-                            } else {
-                                for path in config.recent_roms.paths.clone() {
-                                    let name = path
-                                        .file_name()
-                                        .and_then(|n| n.to_str())
-                                        .unwrap_or("Unknown")
-                                        .to_string();
-                                    // (audit m3) gray out entries whose file is gone.
-                                    let exists = path.exists();
-                                    if ui
-                                        .add_enabled(
-                                            exists,
-                                            egui::Button::new(ic(glyph::FOLDER_OPEN, &name)),
-                                        )
-                                        .clicked()
-                                    {
-                                        out.action = Some(MenuAction::LoadRom(path));
+                        ui.menu_button(
+                            ic(glyph::CLOCK_ROTATE_LEFT, crate::t!(MenuOpenRecent)),
+                            |ui| {
+                                if config.recent_roms.paths.is_empty() {
+                                    ui.label(crate::t!(MenuNoRecentRoms));
+                                } else {
+                                    for path in config.recent_roms.paths.clone() {
+                                        let name = path
+                                            .file_name()
+                                            .and_then(|n| n.to_str())
+                                            .unwrap_or("Unknown")
+                                            .to_string();
+                                        // (audit m3) gray out entries whose file is gone.
+                                        let exists = path.exists();
+                                        if ui
+                                            .add_enabled(
+                                                exists,
+                                                egui::Button::new(ic(glyph::FOLDER_OPEN, &name)),
+                                            )
+                                            .clicked()
+                                        {
+                                            out.action = Some(MenuAction::LoadRom(path));
+                                            ui.close();
+                                        }
+                                    }
+                                    ui.separator();
+                                    if ui.button(ic(glyph::XMARK, "Clear Recent")).clicked() {
+                                        out.action = Some(MenuAction::ClearRecent);
                                         ui.close();
                                     }
                                 }
-                                ui.separator();
-                                if ui.button(ic(glyph::XMARK, "Clear Recent")).clicked() {
-                                    out.action = Some(MenuAction::ClearRecent);
-                                    ui.close();
-                                }
-                            }
-                        });
+                            },
+                        );
                     }
 
                     // v1.3.0 — close the current ROM (back to the no-ROM state).
@@ -631,7 +637,7 @@ impl UiShell {
                     // single "Save States" submenu (Save/Load to the active slot,
                     // the per-slot pickers, and the thumbnail-grid manager). The
                     // FDS "Swap Disk Side" item moved to the Emulation menu.
-                    ui.menu_button(ic(glyph::FLOPPY_DISK, "Save States"), |ui| {
+                    ui.menu_button(ic(glyph::FLOPPY_DISK, crate::t!(MenuSaveStates)), |ui| {
                         // (H1) Save-state SAVE is allowed during playback (it just
                         // snapshots) but not while RECORDING (the GeraNES rule:
                         // saving mid-record is fine; loading is the dangerous one).
@@ -762,7 +768,12 @@ impl UiShell {
 
                     ui.separator();
 
-                    if accel_item(ui, &ic(glyph::RIGHT_FROM_BRACKET, "Quit"), &keys.quit).clicked()
+                    if accel_item(
+                        ui,
+                        &ic(glyph::RIGHT_FROM_BRACKET, crate::t!(MenuQuit)),
+                        &keys.quit,
+                    )
+                    .clicked()
                     {
                         out.action = Some(MenuAction::Quit);
                         ui.close();
@@ -770,7 +781,7 @@ impl UiShell {
                 });
 
                 // ----- Emulation -----
-                ui.menu_button(ic(glyph::CALCULATOR, "Emulation"), |ui| {
+                ui.menu_button(ic(glyph::CALCULATOR, crate::t!(MenuEmulation)), |ui| {
                     let pause_label = if self.paused {
                         ic(glyph::PLAY, "Resume")
                     } else {
@@ -946,12 +957,12 @@ impl UiShell {
                 });
 
                 // ----- View -----
-                ui.menu_button(ic(glyph::EYE, "View"), |ui| {
+                ui.menu_button(ic(glyph::EYE, crate::t!(MenuView)), |ui| {
                     if ui.button(ic(glyph::GEAR, "Settings...")).clicked() {
                         self.show_settings_window = true;
                         ui.close();
                     }
-                    ui.menu_button(ic(glyph::PALETTE, "Theme"), |ui| {
+                    ui.menu_button(ic(glyph::PALETTE, crate::t!(MenuTheme)), |ui| {
                         for theme in AppTheme::all() {
                             if ui
                                 .radio_value(&mut config.ui.theme, theme, theme.display_name())
@@ -999,7 +1010,7 @@ impl UiShell {
                         }
                     }
                     #[cfg(not(target_arch = "wasm32"))]
-                    ui.menu_button(ic(glyph::TV, "Window Size"), |ui| {
+                    ui.menu_button(ic(glyph::TV, crate::t!(MenuWindowSize)), |ui| {
                         for (label, scale) in [
                             ("1x (100%)", 1u32),
                             ("2x (200%)", 2),
@@ -1054,7 +1065,7 @@ impl UiShell {
                 });
 
                 // ----- Tools -----
-                ui.menu_button(ic(glyph::WRENCH, "Tools"), |ui| {
+                ui.menu_button(ic(glyph::WRENCH, crate::t!(MenuTools)), |ui| {
                     if ui
                         .button(ic(glyph::WAND_MAGIC_SPARKLES, "Cheats..."))
                         .clicked()
@@ -1320,7 +1331,7 @@ impl UiShell {
                 });
 
                 // ----- Debug -----
-                ui.menu_button(ic(glyph::BUG, "Debug"), |ui| {
+                ui.menu_button(ic(glyph::BUG, crate::t!(MenuDebug)), |ui| {
                     // v1.7.0 "Forge" beta.5 (#55) — the debugger overlay is now
                     // toggled ONLY from this menu item: the backtick (`` ` ``)
                     // key was repurposed to toggle the status-bar RA read-out
@@ -1396,7 +1407,7 @@ impl UiShell {
                 });
 
                 // ----- Help -----
-                ui.menu_button(ic(glyph::CIRCLE_QUESTION, "Help"), |ui| {
+                ui.menu_button(ic(glyph::CIRCLE_QUESTION, crate::t!(MenuHelp)), |ui| {
                     // v1.5.0 "Lens" Workstream I10 — the in-app Documentation
                     // browser (reuses the `rustynes help` topic registry so the
                     // CLI + GUI share one source). Native-only content; the menu
@@ -1466,11 +1477,17 @@ impl UiShell {
                         }
                         ui.separator();
                         if self.paused {
-                            ui.colored_label(egui::Color32::YELLOW, "Paused");
+                            ui.colored_label(egui::Color32::YELLOW, crate::t!(StatusPaused));
                         } else if frame.netplay_active {
-                            ui.colored_label(egui::Color32::from_rgb(80, 180, 240), "Netplay");
+                            ui.colored_label(
+                                egui::Color32::from_rgb(80, 180, 240),
+                                crate::t!(StatusNetplay),
+                            );
                         } else {
-                            ui.colored_label(egui::Color32::from_rgb(100, 200, 100), "Running");
+                            ui.colored_label(
+                                egui::Color32::from_rgb(100, 200, 100),
+                                crate::t!(StatusRunning),
+                            );
                         }
                         // v1.7.0 "Forge" beta.5 (#55) — the rich netplay read-out
                         // (ping / frame / rollback / stall) relocated from the
@@ -1516,9 +1533,9 @@ impl UiShell {
                                 .on_hover_text("RetroAchievements (Tools -> RetroAchievements)");
                         }
                     } else {
-                        ui.label("No ROM loaded");
+                        ui.label(crate::t!(StatusNoRom));
                         ui.separator();
-                        ui.colored_label(egui::Color32::GRAY, "Idle");
+                        ui.colored_label(egui::Color32::GRAY, crate::t!(StatusIdle));
                     }
 
                     if let Some(msg) = &self.status_message {
@@ -1581,18 +1598,22 @@ impl UiShell {
         // an individual control only flags a live-apply (`state.apply.*`) without
         // its own `save_config` call. (`Config: Clone + PartialEq`.)
         let config_before = config.clone();
-        egui::Window::new("Settings")
+        egui::Window::new(crate::t!(SettingsTitle))
             .open(&mut open)
             .resizable(true)
             .default_width(460.0)
             .min_width(400.0)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.selectable_value(tab, SettingsTab::Video, "Video");
-                    ui.selectable_value(tab, SettingsTab::Shaders, "Shaders");
-                    ui.selectable_value(tab, SettingsTab::Audio, "Audio");
-                    ui.selectable_value(tab, SettingsTab::Input, "Input");
-                    ui.selectable_value(tab, SettingsTab::Emulation, "Emulation");
+                    ui.selectable_value(tab, SettingsTab::Video, crate::t!(SettingsTabVideo));
+                    ui.selectable_value(tab, SettingsTab::Shaders, crate::t!(SettingsTabShaders));
+                    ui.selectable_value(tab, SettingsTab::Audio, crate::t!(SettingsTabAudio));
+                    ui.selectable_value(tab, SettingsTab::Input, crate::t!(SettingsTabInput));
+                    ui.selectable_value(
+                        tab,
+                        SettingsTab::Emulation,
+                        crate::t!(SettingsTabEmulation),
+                    );
                 });
                 ui.separator();
                 egui::ScrollArea::vertical()
@@ -1602,9 +1623,9 @@ impl UiShell {
                             // Display chrome (theme / aspect / fps) is shell-only,
                             // so it lives here; the rest of the Video tab is the
                             // settings panel's `video_section`.
-                            ui.heading("Display");
+                            ui.heading(crate::t!(SettingsHeadingDisplay));
                             ui.horizontal(|ui| {
-                                ui.label("Theme:");
+                                ui.label(crate::t!(SettingsTheme));
                                 let before = config.ui.theme;
                                 egui::ComboBox::from_id_salt("shell-theme")
                                     .selected_text(config.ui.theme.display_name())
@@ -1623,6 +1644,34 @@ impl UiShell {
                                          themes (WCAG AA contrast / Okabe-Ito palette).",
                                     );
                                 if before != config.ui.theme {
+                                    save_config(config);
+                                }
+                            });
+                            // v1.7.0 "Forge" Workstream H5 — language picker.
+                            // Persisted to `[ui] locale`; the render loop pushes
+                            // it to the i18n global each frame, so the change
+                            // re-renders the whole shell on the next frame.
+                            ui.horizontal(|ui| {
+                                ui.label(crate::t!(SettingsLanguage));
+                                let before = config.ui.locale;
+                                egui::ComboBox::from_id_salt("shell-language")
+                                    .selected_text(config.ui.locale.display_name())
+                                    .show_ui(ui, |ui| {
+                                        for locale in crate::i18n::Locale::all() {
+                                            ui.selectable_value(
+                                                &mut config.ui.locale,
+                                                locale,
+                                                locale.display_name(),
+                                            );
+                                        }
+                                    })
+                                    .response
+                                    .on_hover_text(
+                                        "Translations are incremental: untranslated \
+                                         strings fall back to English.",
+                                    );
+                                if before != config.ui.locale {
+                                    crate::i18n::set_locale(config.ui.locale);
                                     save_config(config);
                                 }
                             });
@@ -1658,7 +1707,7 @@ impl UiShell {
                             // zoom factor; the emulated NES image is a raw blit
                             // and is unaffected. Applied live each frame by the
                             // render loop reading `config.ui.zoom_factor`.
-                            ui.heading("Accessibility");
+                            ui.heading(crate::t!(SettingsHeadingAccessibility));
                             ui.horizontal(|ui| {
                                 ui.label("UI scale:");
                                 let mut pct = (config.ui.clamped_zoom_factor() * 100.0).round();

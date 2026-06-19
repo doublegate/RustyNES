@@ -89,6 +89,11 @@ pub mod hdpack_builder;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod icon;
 pub mod icons;
+// v1.7.0 "Forge" Workstream H5 — internationalization (i18n). A lightweight,
+// compile-time string-catalog layer (no runtime file I/O / Fluent / ICU, so it
+// is wasm-safe and adds only a few KiB). English is the default + fallback, so
+// with the default locale every label is byte-identical to v1.6.0. See ADR 0023.
+pub mod i18n;
 pub mod input;
 // v1.5.0 "Lens" Workstream I5 — shared lit-button colour palette for the
 // consolidated "Input Display" panel (v1.7.0 "Forge" beta.5, #51).
