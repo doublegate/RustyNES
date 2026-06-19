@@ -66,6 +66,13 @@ pub mod hdpack;
 // only). Gated with `hdpack` (native-only, default OFF).
 #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
 pub mod hd_audio;
+// v1.7.0 "Forge" Workstream G5 — HD-Pack BUILDER. The authoring counterpart to
+// `hdpack` (which plays packs): an in-emulator recorder that observes the same
+// per-frame PPU tile-source telemetry and emits a Mesen-compatible `hires.txt`
+// + `tiles.png` starter pack. Output-only + native-only; gated with `hdpack`,
+// default OFF. See ADR 0017.
+#[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+pub mod hdpack_builder;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod icon;
 pub mod icons;

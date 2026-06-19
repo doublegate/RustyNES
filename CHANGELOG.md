@@ -39,6 +39,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tail (ADR-0003 style; v1 blobs still load). `docs/apu-2a03.md` gains an
   "Expansion-chip audio" section. The synth cores were exposed `pub(crate)` from
   their owning mapper modules for the reuse (cartridge code byte-identical).
+- **v1.7.0 "Forge" Workstream G (G4 + G5) — broad movie-format import +
+  HD-Pack Builder.** Both additive / output-only; the shipped / native / `no_std`
+  / wasm builds stay byte-identical and AccuracyCoin holds **100% (139/139)**.
+  Imported movies replay deterministically via the same canonical power-on
+  alignment as the v1.6.0 `.fm2` importer. New ADR 0017 records the HD-Pack
+  Builder.
+  - **G4 — broad movie-format import** (`crates/rustynes-core/src/legacy_movie.rs`,
+    `no_std`-clean; frontend dispatch in `app.rs`). Importers for the historical
+    pre-`.fm2` TASVideos corpus so RustyNES can "play any NES TAS": **`.fcm`**
+    (FCEUX / FCE Ultra — a sparse toggle/delta stream, decoded to a dense input
+    log), **`.fmv`** (Famtasia — fixed 144-byte header, full per-frame dump with
+    the Famtasia bit permutation), and **`.vmv`** (VirtuaNES —
+    documentation-derived, since BizHawk never shipped a `.vmv` importer). Each
+    rejects save-state-anchored starts (only `StartPoint::PowerOn` is portable).
+    `.mc2` is handled with a clean, documented rejection (it is a PC Engine
+    PCEjin/Mednafen format, not NES). Plus **`.fm2`/`.bk2` export hardening**: the
+    matching ROM checksum is recomputed from the loaded ROM and stamped on
+    (`base64:`-MD5 `romChecksum` for `.fm2`, hex SHA-1 `SHA1` for `.bk2`) so an
+    exported movie is verifiable on TASVideos. The import file dialog now offers
+    `fm2`/`bk2`/`fcm`/`fmv`/`vmv`.
+  - **G5 — HD-Pack Builder** (`crates/rustynes-frontend/src/hdpack_builder.rs`,
+    `hd-pack` feature + native; ADR 0017). The authoring counterpart to the
+    existing pack *loader* (v1.2.0): an in-emulator recorder (Tools → HD Pack →
+    Build HD Pack (Record) / Stop & Save) that observes the same per-frame PPU
+    tile-source telemetry + CHR snapshot the compositor already captures, dedups
+    the distinct tiles a game draws by their Mesen CRC-32 key, captures each
+    tile's native 8x8 pixels, and emits a Mesen-compatible `hires.txt` +
+    `tiles.png` starter pack that loads straight back through the loader. Reads
+    only already-deterministic snapshots under the existing lock discipline;
+    mutates no emulation state.
 - **v1.7.0 "Forge" Workstream E — host IPC / automation (RustyNES as a
   platform).** The power-user tier (modelled on BizHawk's `comm` / `client` /
   `userdata` libraries) that turns RustyNES into a host for external bots / RL
@@ -249,7 +279,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   builds stay byte-identical):
   - The access counter (`debugger/access_counter.rs`) folds the per-frame access
     and exec logs by iterating the borrowed slices directly instead of
-    `collect`ing /`to_vec`-cloning them into fresh `Vec`s every frame.
+    `collect`ing / `to_vec`-cloning them into fresh `Vec`s every frame.
   - The inline assembler (`debugger/assembler.rs`) builds its 256-entry
     `(mnemonic,mode) → opcode` table once via a `OnceLock` and reuses it, instead
     of re-deriving it (~256 disassemblies) on every assembled line.

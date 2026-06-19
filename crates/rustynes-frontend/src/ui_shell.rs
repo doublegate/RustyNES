@@ -208,6 +208,14 @@ pub enum MenuAction {
     /// v1.2.0 beta.2 (Workstream C3) — disable + unload the active HD-pack for
     /// the loaded ROM.
     UnloadHdPack,
+    /// v1.7.0 "Forge" G5 — start recording an HD-pack STARTER pack from live
+    /// play (the HD-Pack Builder). Output-only; the variant stays un-gated so the
+    /// match is exhaustive on every target (the dispatch body is gated on
+    /// `hd-pack` + native).
+    HdPackBuilderStart,
+    /// v1.7.0 "Forge" G5 — stop the HD-Pack Builder and write the captured
+    /// `hires.txt` + `tiles.png` starter pack to a chosen folder.
+    HdPackBuilderStop,
     /// v1.4.0 Workstream D (D1) — open a dialog to pick a symbol/label file
     /// (`.sym` / Mesen `.mlb` / FCEUX `.nl`) and merge its labels into the
     /// debugger's annotation map (native; the dispatch body is
@@ -392,6 +400,11 @@ pub struct ShellFrame<'a> {
     /// (the bound key is held). Drives the Emulation-menu Fast Forward item so
     /// it shows a live "ON" state instead of a permanently greyed hint.
     pub fast_forwarding: bool,
+    /// v1.7.0 "Forge" G5 — whether the HD-Pack Builder is currently recording a
+    /// starter pack (drives the HD Pack submenu Start/Stop label). Always present
+    /// so the struct literal is target-agnostic; only read by the `hd-pack`-gated
+    /// menu item.
+    pub hd_pack_building: bool,
     /// v1.5.0 "Lens" Workstream I7 — a compact `RetroAchievements` status string
     /// for the status bar (e.g. `"RA 12/40 (240 pts) HARDCORE"`), relocated
     /// from the retired-overlay HUD readout. `None` when the feature is off, no
@@ -1204,6 +1217,28 @@ impl UiShell {
                             .clicked()
                         {
                             out.action = Some(MenuAction::OpenPanel(ToolPanel::HdPixelInspector));
+                            ui.close();
+                        }
+                        ui.separator();
+                        // v1.7.0 "Forge" G5 — the HD-Pack BUILDER (author a pack
+                        // from live play). Output-only; recording needs a loaded
+                        // ROM and an unrestricted (non-replay/netplay) session.
+                        if frame.hd_pack_building {
+                            if ui
+                                .button(ic(glyph::FLOPPY_DISK, "Stop & Save HD Pack..."))
+                                .clicked()
+                            {
+                                out.action = Some(MenuAction::HdPackBuilderStop);
+                                ui.close();
+                            }
+                        } else if ui
+                            .add_enabled(
+                                rom && !rom_change_restricted && !replay_locked,
+                                egui::Button::new(ic(glyph::IMAGE, "Build HD Pack (Record)")),
+                            )
+                            .clicked()
+                        {
+                            out.action = Some(MenuAction::HdPackBuilderStart);
                             ui.close();
                         }
                     });

@@ -512,11 +512,18 @@ reorganized the order and regrouped several items — see the per-menu notes):
   Show FPS, Pause When Unfocused (auto-pause on focus loss), Show Menu Bar
   (`M`).
 - **Tools** — Cheats, Movies (TAS: Record/Play/Branch + `.fm2`/`.bk2`
-  import/export), **Record A/V** (v1.6.0 G; native + `av-record` feature),
-  Netplay (native), RetroAchievements (native + feature), Input Display, Input
-  Miniatures, NSF Player (moved here from Debug in v1.3.0), Replay / TAS (v1.5.0
-  C2), TAStudio (v1.6.0 A2), ROM Database, and an **HD Pack** submenu (`hd-pack`
-  feature + native; folded in from the former standalone "Mod" menu).
+  import/export; v1.7.0 G4 also **imports** the legacy binary containers `.fcm`
+  (FCEUX), `.fmv` (Famtasia), and `.vmv` (VirtuaNES) — the pre-`.fm2` TASVideos
+  corpus — and stamps the matching ROM checksum (MD5 for `.fm2`, SHA-1 for `.bk2`)
+  onto exports so they verify on TASVideos), **Record A/V** (v1.6.0 G; native +
+  `av-record` feature), Netplay (native), RetroAchievements (native + feature),
+  Input Display, Input Miniatures, NSF Player (moved here from Debug in v1.3.0),
+  Replay / TAS (v1.5.0 C2), TAStudio (v1.6.0 A2), ROM Database, and an **HD Pack**
+  submenu (`hd-pack` feature + native; folded in from the former standalone "Mod"
+  menu) — which v1.7.0 G5 extends with an **HD-Pack Builder** (Build HD Pack
+  (Record) → Stop & Save): an in-emulator recorder that captures the distinct
+  tiles a game draws and writes a Mesen-compatible `hires.txt` + `tiles.png`
+  starter pack (output-only; see ADR 0017).
 - **Debug** — Show Debugger (`` ` ``), Performance Monitor (moved here from
   Tools in v1.3.0), then the chip/state inspectors: CPU / PPU / APU / Memory /
   Memory Compare / OAM / Mapper / Trace Logger / Watch / Breakpoints (v1.6.0
