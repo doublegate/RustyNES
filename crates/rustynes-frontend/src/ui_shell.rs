@@ -144,8 +144,6 @@ pub enum MenuAction {
     Reset,
     /// Power-cycle (cold boot).
     PowerCycle,
-    /// Toggle the debugger overlay.
-    ToggleDebugger,
     /// Toggle borderless fullscreen.
     ToggleFullscreen,
     /// v1.0.0 — toggle the menu bar (from the View menu).
@@ -381,9 +379,6 @@ pub struct ShellFrame<'a> {
     pub rom_loaded: bool,
     /// The latest measured frames-per-second.
     pub fps: f32,
-    /// Whether the debugger overlay is currently visible (drives the Debug menu
-    /// checkmark).
-    pub debugger_visible: bool,
     /// v1.0.0 (BUG-4) — whether a netplay session is active. The Pause menu item
     /// is disabled while this is set (pausing would stall the rollback session).
     pub netplay_active: bool,
@@ -1227,7 +1222,7 @@ impl UiShell {
                     }
                     // v1.3.0 menu reorg — NSF/NSFe music player (moved here from
                     // the Debug menu; it is a playback tool, not a chip inspector).
-                    if ui.button(ic(glyph::MUSIC, "NSF Player")).clicked() {
+                    if ui.button(ic(glyph::HEADPHONES, "NSF Player")).clicked() {
                         out.action = Some(MenuAction::OpenChipPanel(ChipPanel::Nsf));
                         ui.close();
                     }
@@ -1299,7 +1294,7 @@ impl UiShell {
                         ui.separator();
                         // v1.5.0 "Lens" Workstream A4 — per-pixel composition trace.
                         if ui
-                            .button(ic(glyph::MAGNIFYING_GLASS, "Pixel Inspector"))
+                            .button(ic(glyph::MAGNIFYING_GLASS_PLUS, "Pixel Inspector"))
                             .clicked()
                         {
                             out.action = Some(MenuAction::OpenPanel(ToolPanel::HdPixelInspector));
@@ -1332,19 +1327,14 @@ impl UiShell {
 
                 // ----- Debug -----
                 ui.menu_button(ic(glyph::BUG, crate::t!(MenuDebug)), |ui| {
-                    // v1.7.0 "Forge" beta.5 (#55) — the debugger overlay is now
-                    // toggled ONLY from this menu item: the backtick (`` ` ``)
-                    // key was repurposed to toggle the status-bar RA read-out
-                    // (compact <-> long-form), so no accelerator hint is shown
-                    // here (it would advertise a key that no longer opens it).
-                    let mut dbg = frame.debugger_visible;
-                    if ui
-                        .checkbox(&mut dbg, ic(glyph::BUG, "Show Debugger"))
-                        .changed()
-                    {
-                        out.action = Some(MenuAction::ToggleDebugger);
-                        ui.close();
-                    }
+                    // v1.7.1 — the vestigial "Show Debugger" checkbox was removed:
+                    // after v1.7.0 "Forge" beta.5 (#55) retired the debugger
+                    // toolbar/overlay, every panel below opens its own window
+                    // directly (each `OpenChipPanel` / `OpenPanel` action forces
+                    // the overlay visible), so toggling the bare visibility flag
+                    // with no panel open did nothing. The backtick (`` ` ``) key
+                    // now toggles the status-bar RA read-out, not the debugger.
+                    //
                     // v1.3.0 menu reorg — the Performance Monitor is a debug
                     // tool, grouped here (moved from Tools).
                     if ui.button(ic(glyph::GAUGE, "Performance Monitor")).clicked() {
@@ -2148,10 +2138,11 @@ fn system_hotkeys_grid(ui: &mut egui::Ui, config: &Config) {
                 ("Fullscreen", s.fullscreen.as_str()),
                 ("Toggle menu bar", s.toggle_menu_bar.as_str()),
                 // v1.7.0 "Forge" beta.5 (#55) — the backtick key now toggles the
-                // status-bar RetroAchievements read-out (compact <-> long-form);
-                // the debugger overlay moved to Debug -> Show Debugger.
+                // status-bar RetroAchievements read-out (compact <-> long-form).
+                // v1.7.1 — the debugger has no single toggle; each inspector
+                // opens directly from the Debug menu.
                 ("Toggle RA status detail", s.debug_overlay.as_str()),
-                ("Show debugger", "Debug menu"),
+                ("Debugger panels", "Debug menu"),
                 ("Quit / exit fullscreen", s.quit.as_str()),
             ] {
                 ui.label(action);

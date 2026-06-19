@@ -23,14 +23,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Cheats / ROM-Database panel was open: that render branch (`needs_nes`) always
   presented the stock NES framebuffer and never invoked the HD compositor. The
   branch now captures the same per-frame snapshots (tile-source telemetry, the
-  8 KiB CHR pattern space, watched-memory) under the emu lock, runs
-  `HdCompositor::composite`, and presents the upscaled buffer via
+  8 KiB CHR pattern space, watched-memory) under the emu lock, drops the lock,
+  runs `HdCompositor::composite`, and presents the upscaled buffer via
   `render_hd_with_overlay` (the deep-overlay panels still draw on top). The
   runtime tile-key derivation was verified against a real `<ver>106` pack +
   live ROM (every rendered tile's CRC-32-of-16-CHR-bytes key hit the loaded
   rule set). All `hd-pack`-gated frontend code; with the feature off the
   shipped / native / `no_std` / wasm builds stay byte-identical and AccuracyCoin
   holds 100% (139/139).
+- **Tools-menu icons for "NSF Player" and "Pixel Inspector" now render
+  correctly.** They used Font Awesome U+F001 / U+F002, which egui's default
+  proportional font (`Ubuntu-Light`) maps to its `fi` / `fl` ligatures in the
+  Private Use Area; since the icon font is only the trailing fallback, those two
+  codepoints resolved to the ligatures and showed a literal "fi" / "fl". Switched
+  to `headphones` (U+F025) and `magnifying-glass-plus` (U+F00E), which sit above
+  the collision range and render from the icon font as intended.
+
+### Removed
+
+- **The vestigial "Show Debugger" checkbox in the Debug menu.** Since v1.7.0
+  "Forge" beta.5 (#55) retired the debugger toolbar/overlay, every chip inspector
+  opens its own window directly from the Debug menu, so the bare visibility toggle
+  did nothing. Removed the checkbox and its now-dead plumbing
+  (`MenuAction::ToggleDebugger`, the `ShellFrame::debugger_visible` field, and the
+  `DebuggerOverlay::toggle` method).
 
 ## [1.7.0] - 2026-06-19 - "Forge" (Feature Release)
 

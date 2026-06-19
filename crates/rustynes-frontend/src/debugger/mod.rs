@@ -506,11 +506,6 @@ impl DebuggerOverlay {
         self.symbols.pairs()
     }
 
-    /// Toggle overlay visibility.
-    pub const fn toggle(&mut self) {
-        self.visible = !self.visible;
-    }
-
     /// Update the measured wall-clock FPS shown in the top toolbar. Called
     /// from the frontend's wall-clock pacer on each completed frame.
     pub const fn set_fps(&mut self, fps: f32) {

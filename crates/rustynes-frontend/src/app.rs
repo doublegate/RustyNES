@@ -4027,11 +4027,6 @@ impl App {
                 self.do_power_cycle();
                 self.ui.set_status(StatusMessage::info("Power cycled"));
             }
-            MenuAction::ToggleDebugger => {
-                if let Some(d) = self.debugger.as_mut() {
-                    d.toggle();
-                }
-            }
             MenuAction::ToggleFullscreen => {
                 self.toggle_fullscreen();
             }
@@ -5604,11 +5599,12 @@ impl App {
             SysAction::PowerCycle => self.do_power_cycle(),
             SysAction::ToggleDebug => {
                 // v1.7.0 "Forge" beta.5 (#55) — the backtick (`` ` ``) key no
-                // longer toggles the debugger overlay (that moved to Debug ->
-                // Show Debugger in the menu, since every panel opens from the
-                // menu bar now). It now toggles the status-bar RetroAchievements
-                // read-out between its compact and long-form variants — the only
-                // distinct content the retired toolbar HUD carried.
+                // longer toggles the debugger overlay: every chip inspector now
+                // opens directly from the Debug menu (v1.7.1 also removed the
+                // vestigial Debug -> Show Debugger toggle). The key now toggles
+                // the status-bar RetroAchievements read-out between its compact
+                // and long-form variants — the only distinct content the retired
+                // toolbar HUD carried.
                 self.ui.ra_detail = !self.ui.ra_detail;
             }
             SysAction::OpenRom => {
@@ -7885,7 +7881,6 @@ impl ApplicationHandler<AppEvent> for App {
                     rom_label: &self.rom_label,
                     rom_loaded,
                     fps,
-                    debugger_visible: dbg_visible,
                     netplay_active,
                     disk_sides,
                     vs_system,
