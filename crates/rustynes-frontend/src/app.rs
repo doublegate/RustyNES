@@ -1125,7 +1125,16 @@ impl App {
         }
         self.rom_label = String::new();
         self.rom_bytes = Vec::new();
+        // v1.7.1 — present a clean BLANK screen on close, not a frozen last
+        // frame and never an empty slice. Reset the lock-free triple buffer so
+        // `has_published()` reports "no frame" (the present path then falls
+        // through to the zeroed-staging branch instead of re-presenting a
+        // stale slot), and replace `present_staging` with a valid zeroed
+        // `NES_W*NES_H*4` frame so the next upload uploads black, not nothing.
+        #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
+        self.present_buffer.reset();
         self.present_staging.clear();
+        self.present_staging.resize((NES_W * NES_H * 4) as usize, 0);
         // Drop the sibling presentation buffers too, so a stale frame can't be
         // re-presented after the ROM is closed.
         self.present_index_staging.clear();
@@ -5487,6 +5496,25 @@ impl App {
             return;
         }
         self.ui.paused = paused;
+        // v1.7.1 — engage a sticky audio pause gate so the cpal callback plays
+        // silence WITHOUT draining the buffered tail. Otherwise the producer
+        // stops pushing while the callback keeps consuming: the ring drains and
+        // the first short fill counts one (sticky) underrun — the spurious "one
+        // underrun on resume" from the perf logs. The gate is sticky because
+        // `pop_or_silence` would otherwise re-open the start-gate the instant
+        // `avail >= start_threshold` (true in steady state at pause time) and
+        // keep draining (#152 review). On resume we clear the gate so the
+        // normal threshold-gated startup re-opens once the producer has
+        // refilled — with the buffered tail intact. No-op effect when never
+        // pausing, so steady-state playback is byte-identical.
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(audio) = self.audio.as_ref() {
+            if paused {
+                audio.queue.gate_for_pause();
+            } else {
+                audio.queue.resume_from_pause();
+            }
+        }
         #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
         if let Some(thread) = self.emu_thread.as_ref() {
             thread.control().set_user_paused(paused);
@@ -5500,8 +5528,19 @@ impl App {
         // v1.0.0 (BUG-1) — on resume, rebase the pacer to "now" so the producer
         // does not burst-catch-up the frames that elapsed while paused (mirrors
         // the netplay-leave rebase).
+        //
+        // v1.7.1 — rebasing `next_frame_time` makes `now - next` ~0 on the first
+        // produce, so the emu-thread stall-threshold guard does NOT fire
+        // `break_phase()`. The produced/presented interval rings still hold the
+        // pre-pause `last` timestamp, so the very next `record_produced` would
+        // log the *entire pause duration* as one frame interval — the spurious
+        // `produced_max_ms` spike (675 ms / 1395 ms in the captured logs). Break
+        // the interval phase here so the paused wall-clock gap is dropped, not
+        // counted as a produced/presented frame time or a catch-up burst.
         if !paused {
-            self.emu.lock().next_frame_time = Some(Instant::now());
+            let mut guard = self.emu.lock();
+            guard.next_frame_time = Some(Instant::now());
+            guard.perf.break_phase();
         }
         self.ui.set_status(StatusMessage::info(if paused {
             "Paused"

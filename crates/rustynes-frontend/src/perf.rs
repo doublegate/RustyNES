@@ -408,6 +408,36 @@ mod tests {
     }
 
     #[test]
+    fn unpause_break_phase_drops_the_paused_gap() {
+        // v1.7.1 — reproduce the pause/unpause pacing glitch: a few healthy
+        // 60 fps produced frames, then a long wall-clock gap (the pause), then
+        // resume. `break_phase()` on resume must keep the paused gap out of the
+        // produced-interval ring, so `produced_max_ms` reflects steady-state
+        // cadence (~16.6 ms) and NOT the 675 ms / 1395 ms pause spike.
+        let mut p = PerfStats::default();
+        let t0 = Instant::now();
+        let frame = Duration::from_micros(16_639); // 60.0988 Hz
+        for i in 0..4 {
+            p.record_produced(t0 + frame * i);
+        }
+        // Steady-state max is ~one frame interval.
+        assert!(p.produced.ring.stats().max_ms < 20.0);
+        // The user pauses for ~675 ms, then resumes. On resume the frontend
+        // rebases the pacer AND breaks the interval phase.
+        let resume = t0 + frame * 3 + Duration::from_millis(675);
+        p.break_phase();
+        // First post-resume produce: must NOT log the 675 ms paused gap.
+        p.record_produced(resume);
+        p.record_produced(resume + frame);
+        let stats = p.produced.ring.stats();
+        assert!(
+            stats.max_ms < 20.0,
+            "paused gap leaked into produced_max_ms: {} ms",
+            stats.max_ms
+        );
+    }
+
+    #[test]
     fn ring_caps_at_window() {
         let mut r = SampleRing::default();
         for _ in 0..(WINDOW + 50) {
