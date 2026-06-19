@@ -71,7 +71,7 @@ pub struct Nsf {
     /// Initial bank register values (`$070-$077` of the header).
     pub initial_banks: [u8; 8],
     /// Expansion-chip bitfield (`$07B`). Routed into the matching synth cores
-    /// by [`crate::nsf_expansion`] when any bit is set (v1.7.0 G2/G3).
+    /// by the `nsf_expansion` module when any bit is set (v1.7.0 G2/G3).
     pub expansion: u8,
     /// `true` when the file declares a PAL or dual-region timing preference.
     pub pal: bool,
