@@ -17,6 +17,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **v1.7.0 "Forge" beta.5 — UI overhaul (#51/#52/#53/#55).** Frontend-only and
+  determinism-neutral (the core stays byte-identical; AccuracyCoin 100%,
+  139/139). (#51) The two controller HUDs were **consolidated into one "Input
+  Display" panel** — the superset panel (standard pads + Zapper / Arkanoid Vaus /
+  SNES mouse / Power Pad / Family Trainer mat / Family BASIC / Subor keyboard /
+  Konami + Bandai Hyper Shot / Four Score multitap) kept its full capability and
+  took the "Input Display" name. (#52) The menu bar was audited for the complete
+  v1.7.0 feature set and **every entry now carries a Font-Awesome glyph**; the
+  bottom status bar gained live recording markers (TAS movie REC/PLAY, A/V REC,
+  HD-Pack REC) and a rich netplay read-out (peer role / ping / frame /
+  rollback / stall). (#53) The **Help → Documentation** pane was overhauled —
+  word-wrap, heading/code/bullet colorization, navigable sub-pages (a tree with
+  per-chip-inspector and TAStudio child pages), and clickable intra-doc links
+  (`[[id]]` / `[[label|id]]`), plus expanded content covering all v1.7.0
+  features.
 - **v1.7.0 "Forge" Workstream G2/G3 — NSF + MMC5 expansion-audio synthesis.**
   Classic `.nsf` files that declare expansion audio in the `$07B` bitfield now
   actually play it. A new thin router (`crates/rustynes-mappers/src/nsf_expansion.rs`,
@@ -357,7 +372,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     persisted — the chips are rebuilt from the immutable `$07B` bitfield and live
     phase re-converges from the next register write (correct for a paused/restored
     NSF); the presence byte only records which chips a v2 tail described.
-
+- **HD-pack loader now parses the REAL Mesen `hires.txt` format** (task #56;
+  `crates/rustynes-frontend/src/hdpack.rs`, `hd-pack` feature; ADR 0018). Every
+  real third-party HD-pack previously failed to load with a red "hires.txt"
+  status-bar error: the parser only accepted an invented `hash,image,x,y` /
+  `image,x,y,hash` `<tile>` grammar and `.parse::<u32>()`'d x/y from the wrong
+  positions, so a real `<ver>106` tile line
+  (`<tile>bitmapIndex,tileData,palette,x,y,brightness,defaultTile[,chrBankPage,tileIndex]`)
+  failed for **every** tile → zero rules → `load()` returned `None`. The parser now reads the
+  real Mesen layout (verified against `Mesen2/Core/NES/HdPacks/HdPackLoader.cpp`):
+  the real `<tile>` field order (`bitmapIndex,tileData,palette,x,y,brightness,
+  defaultTile[,chrBankPage,tileIndex]`) with the 32-hex `tileData` (the tile's 16
+  CHR bytes) as the match key (CRC-32, the exact key the compositor computes from
+  the live CHR snapshot); `[Cond1&Cond2]` per-line **condition prefixes** (AND-
+  joined, with `!name` inversion); hex condition memory addresses/operands/masks;
+  `<img>` referenced by declaration index; the real `<background>`
+  `name,brightness[,hScroll,vScroll][,priority][,left,top]` layout; and lenient
+  `<ver>`/`<options>`/`<supportedRom>`/`#`-comment handling. A real *Zelda
+  Remastered* `<ver>106` pack now parses from **0 → 15,849 tile rules**. The G5
+  **HD-Pack Builder** was reconciled to **emit** the same real `<ver>106`
+  `<tile>bitmapIndex,tileData,palette,x,y,brightness,defaultTile` form (the
+  captured 16 CHR bytes as `tileData`), so author→load round-trips and its output
+  is consumable by real Mesen tooling. A committed synthetic `<ver>106` fixture
+  regression-guards the parser (no copyrighted assets committed). Output-only +
+  `hd-pack`-gated: the core is untouched, AccuracyCoin holds **100% (139/139)**,
+  and with the feature off the shipped / native / `no_std` / wasm builds stay
+  byte-identical.
 - **v1.7.0 beta.3 review — scriptable-TAStudio + host-IPC robustness** (all
   additive / off the default path; `scripting` / `script-ipc` stay byte-identical
   off; AccuracyCoin holds **100% (139/139)**):
@@ -425,6 +465,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `chr_is_ram == false`), so CHR-ROM is not mutated (which also was not
     serialized). CHR writes are gated on `chr_is_ram` for behaviour/serialization
     consistency.
+  - **v1.7.0 "Forge" beta.5 (#53) — Documentation pane.** The Help →
+    Documentation body text now word-wraps to the pane width (it previously
+    overflowed in a non-wrapping monospace block), and the left-sidebar
+    sub-level navigation entries resolve to real content instead of returning
+    nothing.
+
+### Changed
+
+- **v1.7.0 "Forge" beta.5 (#55) — backtick key repurposed.** The backtick
+  (`` ` ``) key no longer toggles the debugger overlay (which now opens from
+  Debug → Show Debugger, every panel being menu-driven). It now toggles the
+  status-bar RetroAchievements read-out between its compact and long-form
+  variants — the only distinct content the removed debugger toolbar HUD carried.
+  The Keyboard Shortcuts window reflects the new binding.
+
+### Removed
+
+- **v1.7.0 "Forge" beta.5 (#55) — debugger toolbar HUD.** The `debugger_top`
+  toolbar panel was removed; its read-outs (frame/cycle, FPS, movie/disk/netplay
+  status, RetroAchievements) are now surfaced in the bottom status bar.
+- **v1.7.0 "Forge" beta.5 (#51) — standalone Input Display panel.** The old
+  `debugger/input_display_panel.rs` + `ToolPanel::InputDisplay` (the simple
+  pads-only HUD) were removed; the superset "Input Display" panel (formerly
+  "Input Miniatures") absorbed it.
 
 ## [1.6.0] - 2026-06-18 - "Studio" (Feature Release)
 

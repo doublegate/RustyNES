@@ -147,6 +147,10 @@ struct Condition {
     #[allow(dead_code)]
     name: String,
     kind: ConditionKind,
+    /// When set, the condition's result is logically inverted. Mesen declares a
+    /// matching `!name` inverted twin for every `<condition>`, referenced from a
+    /// `[!name]` line prefix.
+    inverted: bool,
 }
 
 /// One CHR-hash tile-replacement rule, optionally gated on conditions.
@@ -172,8 +176,8 @@ struct BackgroundRegion {
     /// Destination top-left in NES pixel space (before upscale).
     x: i32,
     y: i32,
-    /// Draw priority (Mesen's `<background>` priority field; default 0). Higher
-    /// = drawn later = on top.
+    /// Draw priority (Mesen's `<background>` priority field; default 10 when the
+    /// field is absent, matching Mesen). Higher = drawn later = on top.
     priority: i32,
     /// Conditions that must ALL hold for the region to render (AND). Empty =
     /// always.
@@ -502,7 +506,7 @@ impl HdPack {
             // An unresolved condition reference fails closed.
             return false;
         };
-        match &cond.kind {
+        let held = match &cond.kind {
             ConditionKind::MemoryCheckConstant {
                 addr,
                 op,
@@ -531,7 +535,8 @@ impl HdPack {
             ConditionKind::HMirror => rec.is_sprite && rec.flip_h,
             ConditionKind::VMirror => rec.is_sprite && rec.flip_v,
             ConditionKind::SpritePalette { id } => rec.is_sprite && rec.palette == *id,
-        }
+        };
+        held ^ cond.inverted
     }
 
     /// Whether ALL of `conditions` hold (AND); empty = always true.
@@ -626,8 +631,8 @@ fn decode_png(bytes: &[u8]) -> Option<ReplacementImage> {
     })
 }
 
-/// A parsed tile rule before image-index reindex (image is an index into
-/// `image_names`, conditions are unresolved indices into `conditions`).
+/// A parsed tile rule before image-index reindex (image is the `<img>`
+/// declaration index, conditions are resolved indices into `conditions`).
 struct ParsedTileRule {
     image: usize,
     x: u32,
@@ -657,13 +662,41 @@ struct ParsedHires {
     audio_decls: Vec<HdAudioDecl>,
 }
 
-/// Parse the supported subset of a Mesen `hires.txt`.
+/// Strip a leading `[Cond1&Cond2&...]` condition prefix off a `hires.txt` line
+/// (Mesen attaches per-line conditions this way, AND-joined). Returns the
+/// `&`-split condition names (with any leading `!` inversion marker kept on the
+/// name so it can resolve against an inverted condition) and the remainder of
+/// the line. If there is no prefix, the name list is empty.
+fn split_line_conditions(line: &str) -> (Vec<String>, &str) {
+    let Some(rest) = line.strip_prefix('[') else {
+        return (Vec::new(), line);
+    };
+    let Some(end) = rest.find(']') else {
+        // Malformed prefix: treat the whole line as having no condition prefix.
+        return (Vec::new(), line);
+    };
+    let names = rest[..end]
+        .split('&')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect();
+    (names, rest[end + 1..].trim_start())
+}
+
+/// Parse the supported subset of a real Mesen `hires.txt` (format `<ver>` up to
+/// the current Mesen revision, e.g. 100..=200).
 ///
-/// Mesen's format is line-oriented; each line is `<tag>` followed by
-/// comma-separated fields. We recognize `<ver>` / `<scale>` / `<patternTable>`
-/// headers, `<img>NAME`, `<condition>`, `<tile>`, and `<background>`. Lines we
-/// do not recognize (overlays, audio, options) are ignored; malformed lines are
-/// skipped.
+/// Mesen's format is line-oriented; each line is optionally prefixed with a
+/// `[Cond1&Cond2]` condition list and then a `<tag>` followed by comma-separated
+/// fields. We recognize `<ver>` / `<scale>` / `<patternTable>` / `<options>` /
+/// `<supportedRom>` headers, `<img>NAME` (indexed by declaration order),
+/// `<condition>`, `<tile>`, and `<background>`. Lines we do not recognize
+/// (overlays, additions, fallbacks, patches) are ignored; malformed lines are
+/// skipped. The real `<tile>` layout is
+/// `bitmapIndex,tileData,palette,x,y,brightness,defaultTile[,chrBankPage,tileIndex]`,
+/// and the tile match key is the CRC-32 of the 16-byte CHR bitmap (`tileData`) —
+/// the exact key [`HdCompositor::composite`] computes from the live CHR snapshot.
 #[allow(clippy::too_many_lines)]
 fn parse_hires(src: &str) -> ParsedHires {
     let mut scale = 1u32;
@@ -676,15 +709,21 @@ fn parse_hires(src: &str) -> ParsedHires {
     let mut backgrounds: Vec<ParsedBackground> = Vec::new();
     let mut audio_decls: Vec<HdAudioDecl> = Vec::new();
 
-    // First pass over `<condition>`/`<img>` so forward-referenced names resolve.
-    // We process declarations in two passes: conditions + images first, then
-    // tiles + backgrounds (which reference them). Mesen files declare in order,
-    // but a two-pass parse is robust to ordering.
+    // First pass over `<condition>` / `<img>` (and the headers + audio decls) so
+    // forward-referenced names resolve. `<img>` indices are declaration order, so
+    // they MUST be interned in this first pass before any `<tile>` references one.
+    // Tiles + backgrounds (which reference conditions + images) are resolved in
+    // the second pass. A condition / image declaration is never itself behind a
+    // condition prefix, so the prefix is stripped + ignored for these tags.
     for raw in src.lines() {
         let line = raw.trim();
-        if line.is_empty() || line.starts_with("//") {
+        if line.is_empty() || line.starts_with("//") || line.starts_with('#') {
             continue;
         }
+        // A condition / image / header / audio declaration is never itself
+        // behind a `[...]` condition prefix (only `<tile>` / `<background>`
+        // rules carry one), so split the tag directly off the line and skip the
+        // per-line `split_line_conditions` work this first pass doesn't use.
         let Some((tag, rest)) = split_tag(line) else {
             continue;
         };
@@ -710,8 +749,17 @@ fn parse_hires(src: &str) -> ParsedHires {
                 if let Some(cond) = parse_condition(rest)
                     && !cond_name_to_idx.contains_key(&cond.name)
                 {
+                    // Mesen declares a matching inverted `!name` twin for every
+                    // condition; register both so a `[!name]` prefix resolves.
+                    let inv = Condition {
+                        name: format!("!{}", cond.name),
+                        kind: cond.kind.clone(),
+                        inverted: true,
+                    };
                     cond_name_to_idx.insert(cond.name.clone(), conditions.len());
                     conditions.push(cond);
+                    cond_name_to_idx.insert(inv.name.clone(), conditions.len());
+                    conditions.push(inv);
                 }
             }
             // v1.6.0 H — HD-audio track declarations. No condition/image refs,
@@ -726,52 +774,57 @@ fn parse_hires(src: &str) -> ParsedHires {
                     audio_decls.push(d);
                 }
             }
+            // `<ver>`, `<options>`, `<supportedRom>`, `<overscan>`, `<patch>`,
+            // overlays, additions, fallbacks, etc. are accepted-and-ignored (the
+            // supported-subset compositor doesn't act on them, but their presence
+            // must not reject the pack).
             _ => {}
         }
     }
 
-    // Second pass: tiles + backgrounds, resolving condition + image refs.
+    // Second pass: tiles + backgrounds, resolving condition + image refs. The
+    // condition list comes from the line's `[...]` prefix.
     for raw in src.lines() {
         let line = raw.trim();
-        if line.is_empty() || line.starts_with("//") {
+        if line.is_empty() || line.starts_with("//") || line.starts_with('#') {
             continue;
         }
-        let Some((tag, rest)) = split_tag(line) else {
+        let (prefix_conds, body) = split_line_conditions(line);
+        let Some((tag, rest)) = split_tag(body) else {
             continue;
         };
         match tag {
             "tile" => {
-                if let Some((hash, img_name, x, y, cond_refs)) = parse_tile_fields(rest) {
-                    let image = intern_name(&mut image_names, &mut name_to_idx, &img_name);
-                    let conditions = resolve_condition_refs(&cond_refs, &cond_name_to_idx);
+                if let Some((hash, img_idx, x, y)) = parse_tile_fields(rest) {
+                    let conditions = resolve_condition_refs(&prefix_conds, &cond_name_to_idx);
                     // Skip a tile rule that names a condition we never parsed.
-                    if conditions.is_none() {
+                    let Some(conditions) = conditions else {
                         continue;
-                    }
+                    };
                     tiles.push((
                         hash,
                         ParsedTileRule {
-                            image,
+                            image: img_idx,
                             x,
                             y,
-                            conditions: conditions.unwrap_or_default(),
+                            conditions,
                         },
                     ));
                 }
             }
             "background" => {
-                if let Some((img_name, x, y, priority, cond_refs)) = parse_background_fields(rest) {
+                if let Some((img_name, x, y, priority)) = parse_background_fields(rest) {
                     let image = intern_name(&mut image_names, &mut name_to_idx, &img_name);
-                    let conditions = resolve_condition_refs(&cond_refs, &cond_name_to_idx);
-                    if conditions.is_none() {
+                    let Some(conditions) = resolve_condition_refs(&prefix_conds, &cond_name_to_idx)
+                    else {
                         continue;
-                    }
+                    };
                     backgrounds.push(ParsedBackground {
                         image,
                         x,
                         y,
                         priority,
-                        conditions: conditions.unwrap_or_default(),
+                        conditions,
                     });
                 }
             }
@@ -832,20 +885,48 @@ fn parse_int(s: &str) -> Option<u32> {
     s.parse::<u32>().ok()
 }
 
-/// Parse a memory-address operand: Mesen prefixes a PPU-space address with `@`
-/// (and internally sets bit 31). A leading `@` here tags [`PPU_MEMORY_MARKER`].
-fn parse_mem_addr(s: &str) -> Option<u32> {
+/// Parse a hex memory address (Mesen reads condition memory addresses with
+/// `HexUtilities::FromHex`, so a bare `16` is `0x16` and `62D` is `0x62D`). A
+/// leading `@` (a `RustyNES`-additive marker) also tags [`PPU_MEMORY_MARKER`].
+fn parse_hex_addr(s: &str) -> Option<u32> {
     let s = s.trim();
     let (ppu, body) = s.strip_prefix('@').map_or((false, s), |rest| (true, rest));
-    let addr = parse_int(body)? & 0xFFFF;
+    let body = body
+        .strip_prefix("0x")
+        .or_else(|| body.strip_prefix("0X"))
+        .or_else(|| body.strip_prefix('$'))
+        .unwrap_or(body);
+    let addr = u32::from_str_radix(body, 16).ok()? & 0xFFFF;
     Some(if ppu { addr | PPU_MEMORY_MARKER } else { addr })
+}
+
+/// Parse a hex byte value (`HexUtilities::FromHex`). A value that does not fit in
+/// 8 bits is REJECTED (`None`) rather than silently truncated — a condition
+/// operand / mask wider than a byte is a malformed pack field, so the rule that
+/// references it should be dropped instead of matching against a wrong value.
+fn parse_hex_u8(s: &str) -> Option<u8> {
+    let s = s.trim();
+    let body = s
+        .strip_prefix("0x")
+        .or_else(|| s.strip_prefix("0X"))
+        .or_else(|| s.strip_prefix('$'))
+        .unwrap_or(s);
+    u32::from_str_radix(body, 16)
+        .ok()
+        .and_then(|v| u8::try_from(v).ok())
 }
 
 /// Parse a `<condition>` line: `NAME,TYPE,args...`.
 ///
 /// Supported `TYPE`s: `memoryCheck` / `ppuMemoryCheck`, `memoryCheckConstant` /
-/// `ppuMemoryCheckConstant`, `frameRange`, `hmirror`, `vmirror`, `sppalette`.
-/// Any other type is ignored (returns `None`).
+/// `ppuMemoryCheckConstant`, `frameRange`, `hmirror`, `vmirror`, `sppalette` (+
+/// the indexed `sppalette0..3` Mesen global-condition names). Per the real Mesen
+/// loader, memory addresses + operands + masks are parsed as **hex**.
+///
+/// Unsupported types (`tileAtPosition`, `tileNearby`, `spriteAtPosition`,
+/// `spriteNearby`, `positionCheckX/Y`, `originPositionCheckX/Y`) return `None`:
+/// they're outside the PPU telemetry `RustyNES` carries, so a tile gated on one is
+/// dropped (a documented subset limitation — see `docs/adr/0014`).
 fn parse_condition(rest: &str) -> Option<Condition> {
     let fields: Vec<&str> = rest.split(',').map(str::trim).collect();
     if fields.len() < 2 {
@@ -857,22 +938,18 @@ fn parse_condition(rest: &str) -> Option<Condition> {
     }
     let ty = fields[1];
     let kind = match ty {
-        // memoryCheckConstant: NAME,type,addr,op,operand[,mask]
+        // memoryCheckConstant: NAME,type,addr,op,operand[,mask] (all hex).
         "memoryCheckConstant" | "ppuMemoryCheckConstant" => {
             if fields.len() < 5 {
                 return None;
             }
-            let mut addr = parse_mem_addr(fields[2])?;
+            let mut addr = parse_hex_addr(fields[2])?;
             if ty.starts_with("ppu") {
                 addr |= PPU_MEMORY_MARKER;
             }
             let op = CmpOp::parse(fields[3])?;
-            let operand = u8::try_from(parse_int(fields[4])? & 0xFF).ok()?;
-            let mask = fields
-                .get(5)
-                .and_then(|m| parse_int(m))
-                .and_then(|m| u8::try_from(m & 0xFF).ok())
-                .unwrap_or(0xFF);
+            let operand = parse_hex_u8(fields[4])?;
+            let mask = fields.get(5).and_then(|m| parse_hex_u8(m)).unwrap_or(0xFF);
             ConditionKind::MemoryCheckConstant {
                 addr,
                 op,
@@ -880,23 +957,19 @@ fn parse_condition(rest: &str) -> Option<Condition> {
                 mask,
             }
         }
-        // memoryCheck: NAME,type,addrA,op,addrB[,mask]
+        // memoryCheck: NAME,type,addrA,op,addrB[,mask] (addresses hex).
         "memoryCheck" | "ppuMemoryCheck" => {
             if fields.len() < 5 {
                 return None;
             }
-            let mut addr_a = parse_mem_addr(fields[2])?;
+            let mut addr_a = parse_hex_addr(fields[2])?;
             let op = CmpOp::parse(fields[3])?;
-            let mut addr_b = parse_mem_addr(fields[4])?;
+            let mut addr_b = parse_hex_addr(fields[4])?;
             if ty.starts_with("ppu") {
                 addr_a |= PPU_MEMORY_MARKER;
                 addr_b |= PPU_MEMORY_MARKER;
             }
-            let mask = fields
-                .get(5)
-                .and_then(|m| parse_int(m))
-                .and_then(|m| u8::try_from(m & 0xFF).ok())
-                .unwrap_or(0xFF);
+            let mask = fields.get(5).and_then(|m| parse_hex_u8(m)).unwrap_or(0xFF);
             ConditionKind::MemoryCheck {
                 addr_a,
                 addr_b,
@@ -904,7 +977,7 @@ fn parse_condition(rest: &str) -> Option<Condition> {
                 mask,
             }
         }
-        // frameRange: NAME,frameRange,period,offset
+        // frameRange: NAME,frameRange,period,offset (decimal for v102+).
         "frameRange" => {
             if fields.len() < 4 {
                 return None;
@@ -924,102 +997,107 @@ fn parse_condition(rest: &str) -> Option<Condition> {
                 .unwrap_or(0);
             ConditionKind::SpritePalette { id }
         }
+        // Mesen's indexed global-condition aliases `sppalette0`..`sppalette3`
+        // (the palette group is encoded in the type name, no `id` arg field).
+        "sppalette0" => ConditionKind::SpritePalette { id: 0 },
+        "sppalette1" => ConditionKind::SpritePalette { id: 1 },
+        "sppalette2" => ConditionKind::SpritePalette { id: 2 },
+        "sppalette3" => ConditionKind::SpritePalette { id: 3 },
         _ => return None, // unsupported condition type: ignored (inert).
     };
     Some(Condition {
         name: name.to_string(),
         kind,
+        inverted: false,
     })
 }
 
-/// Split a condition-reference field on `&` or `+` (Mesen joins multiple
-/// conditions for AND), trimming and dropping empties.
-fn split_condition_refs(field: &str) -> Vec<String> {
-    field
-        .split(['&', '+'])
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-        .collect()
-}
-
-/// Parse the comma-separated fields of a `<tile>` rule into
-/// `(chrHash, imageName, x, y, conditionRefs)`.
-///
-/// Accepts both `hash,image,x,y[,conditions]` and `image,x,y,hash[,conditions]`
-/// (disambiguated by whether field 0 parses as a hex hash), where the optional
-/// 5th field is a condition-name reference (`&`/`+`-joined for AND). An empty
-/// 5th field means unconditional.
-fn parse_tile_fields(rest: &str) -> Option<(u32, String, u32, u32, Vec<String>)> {
-    let fields: Vec<&str> = rest.split(',').map(str::trim).collect();
-    if fields.len() < 4 {
+/// Parse a 32-hex-character `tileData` string (a tile's 16 CHR bytes) into the
+/// CRC-32 lookup key the compositor computes from the live CHR snapshot. Returns
+/// `None` if the field is not at least 32 hex digits (a CHR-ROM tile referenced
+/// by index rather than raw bitmap — not supported by the hash-keyed substitution
+/// path, so its rule is skipped rather than mis-decoded).
+fn parse_tile_data_key(s: &str) -> Option<u32> {
+    if s.len() < 32 {
         return None;
     }
-    let cond_refs = fields
-        .get(4)
-        .map_or_else(Vec::new, |f| split_condition_refs(f));
-
-    let parse_hash = |s: &str| -> Option<u32> {
-        let s = s.trim_start_matches("0x").trim_start_matches("0X");
-        u32::from_str_radix(s, 16).ok()
-    };
-
-    // Form A: hash,image,x,y[,cond]
-    if let Some(hash) = parse_hash(fields[0])
-        && !fields[1].is_empty()
-        && let (Ok(x), Ok(y)) = (fields[2].parse::<u32>(), fields[3].parse::<u32>())
-    {
-        return Some((hash, fields[1].to_string(), x, y, cond_refs));
+    let mut bytes = [0u8; 16];
+    for (i, b) in bytes.iter_mut().enumerate() {
+        *b = u8::from_str_radix(s.get(i * 2..i * 2 + 2)?, 16).ok()?;
     }
-    // Form B: image,x,y,hash[,cond]
-    if let Some(hash) = parse_hash(fields[3])
-        && !fields[0].is_empty()
-        && let (Ok(x), Ok(y)) = (fields[1].parse::<u32>(), fields[2].parse::<u32>())
-    {
-        return Some((hash, fields[0].to_string(), x, y, cond_refs));
-    }
-    None
+    Some(crc32(&bytes))
 }
 
-/// Parse a `<background>` line into `(imageName, x, y, priority, conditionRefs)`.
+/// Parse the comma-separated fields of a real Mesen `<tile>` rule into
+/// `(chrKey, bitmapIndex, x, y)`.
 ///
-/// Mesen's documented form is `<background>image[,brightness][,condition]`, with
-/// the image full-screen at the origin. We accept the additive `RustyNES` form
-/// `<background>image[,x,y][,priority][,condition]` (x/y/priority optional and
-/// positional) so packs can also place a region; bare `<background>image` =
-/// full-screen at (0,0), priority 0, unconditional. A trailing non-numeric field
-/// is taken as the condition reference.
-fn parse_background_fields(rest: &str) -> Option<(String, i32, i32, i32, Vec<String>)> {
+/// The real `<ver>`>=100 layout is
+/// `bitmapIndex,tileData,palette,x,y,brightness,defaultTile[,chrBankPage,tileIndex]`
+/// — e.g. `31,00000000000000007F3F1F0F07030100,0F162736,80,224,1,N,4018065946,231`:
+///
+/// - field 0 = `bitmapIndex` (index into the `<img>` declarations),
+/// - field 1 = `tileData` (32 hex chars = the tile's 16 CHR bytes; the match key),
+/// - field 2 = `palette` (4-colour palette, hex; not consulted by the
+///   CRC-keyed substitution — `RustyNES`'s PPU telemetry has no palette-discriminated
+///   tile identity, a documented subset limitation),
+/// - field 3 = `x`, field 4 = `y` (the replacement rectangle's top-left in the
+///   bitmap),
+/// - field 5 = `brightness`, field 6 = `defaultTile` (Y/N) — both informational
+///   here,
+/// - trailing `chrBankPage,tileIndex` for CHR-RAM tiles — informational.
+///
+/// The conditions come from the line's `[...]` prefix, not a trailing field.
+/// Returns `None` for a CHR-ROM (index-keyed) tile or a malformed line.
+fn parse_tile_fields(rest: &str) -> Option<(u32, usize, u32, u32)> {
+    let fields: Vec<&str> = rest.split(',').map(str::trim).collect();
+    // Need at least bitmapIndex, tileData, palette, x, y.
+    if fields.len() < 5 {
+        return None;
+    }
+    let bitmap_index = usize::try_from(parse_int(fields[0])?).ok()?;
+    let key = parse_tile_data_key(fields[1])?;
+    // fields[2] = palette (ignored). x = fields[3], y = fields[4].
+    let x = parse_int(fields[3])?;
+    let y = parse_int(fields[4])?;
+    Some((key, bitmap_index, x, y))
+}
+
+/// Parse a real Mesen `<background>` line into `(imageName, x, y, priority)`.
+///
+/// The real layout is
+/// `name,brightness[,hScroll,vScroll][,priority][,left,top][,blendMode]` — e.g.
+/// `CreditsFlashFixRed.png,1,1,1,11`: name, brightness=1, hScroll=1, vScroll=1,
+/// priority=11. The conditions come from the line's `[...]` prefix.
+///
+/// `RustyNES`'s compositor places the background at `(left, top)` and orders by
+/// `priority` (Mesen's default priority is 10 when the field is absent; `<` it
+/// draws under, `>=` over — here we map the Mesen priority straight through and
+/// the compositor's under/over split keys on a signed comparison, so a default
+/// Mesen background renders OVER the tile pass, matching Mesen). Scroll ratios +
+/// blend mode are parsed-and-ignored (subset). A bare `name` with no priority
+/// field is accepted (full-screen, the Mesen default priority 10).
+fn parse_background_fields(rest: &str) -> Option<(String, i32, i32, i32)> {
     let fields: Vec<&str> = rest.split(',').map(str::trim).collect();
     if fields.is_empty() || fields[0].is_empty() {
         return None;
     }
     let image = fields[0].to_string();
-    let mut x = 0i32;
-    let mut y = 0i32;
-    let mut priority = 0i32;
-    let mut cond_refs: Vec<String> = Vec::new();
-
-    // Walk the trailing fields: numeric ones fill x, y, priority in order; the
-    // first non-numeric, non-empty one is the condition reference.
-    let mut numeric_seen = 0;
-    for f in &fields[1..] {
-        if f.is_empty() {
-            continue;
-        }
-        if let Ok(v) = f.parse::<i32>() {
-            match numeric_seen {
-                0 => x = v,
-                1 => y = v,
-                _ => priority = v,
-            }
-            numeric_seen += 1;
-        } else {
-            cond_refs = split_condition_refs(f);
-            break;
-        }
-    }
-    Some((image, x, y, priority, cond_refs))
+    // field 1 = brightness (ignored). fields 2,3 = scroll ratios (ignored).
+    // field 4 = priority (v106+; Mesen default 10 when absent). fields 5,6 =
+    // left,top.
+    let priority = fields
+        .get(4)
+        .and_then(|p| p.parse::<i32>().ok())
+        .unwrap_or(10);
+    let x = fields
+        .get(5)
+        .and_then(|p| p.parse::<i32>().ok())
+        .unwrap_or(0);
+    let y = fields
+        .get(6)
+        .and_then(|p| p.parse::<i32>().ok())
+        .unwrap_or(0);
+    Some((image, x, y, priority))
 }
 
 // =============================================================================
@@ -1504,41 +1582,95 @@ mod tests {
         assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
     }
 
+    /// The 32-hex `tileData` of all-zero CHR bytes (the common blank tile) and
+    /// the CRC-32 key it maps to — used across the real-format parse tests.
+    const ZERO_TILE_DATA: &str = "00000000000000000000000000000000";
+
     #[test]
     fn parses_scale_and_unconditional_tile() {
-        let src = "<ver>100\n\
-                   <scale>2\n\
-                   <patternTable>bank0.png\n\
-                   <img>tiles.png\n\
-                   <tile>0a1b2c3d,tiles.png,16,0\n";
-        let parsed = parse_hires(src);
+        // Real Mesen <ver>106 layout: bitmapIndex,tileData,palette,x,y,bright,def.
+        let src = format!(
+            "<ver>106\n\
+             <scale>2\n\
+             <patternTable>bank0.png\n\
+             <img>tiles.png\n\
+             <tile>0,{ZERO_TILE_DATA},0F162736,16,0,1,N\n"
+        );
+        let parsed = parse_hires(&src);
         assert_eq!(parsed.scale, 2);
         assert_eq!(parsed.pattern_tables, vec!["bank0.png".to_string()]);
         assert_eq!(parsed.tiles.len(), 1);
         let (hash, rule) = &parsed.tiles[0];
-        assert_eq!(*hash, 0x0a1b_2c3d);
+        // The match key is the CRC-32 of the 16 CHR bytes, not a literal field.
+        assert_eq!(*hash, crc32(&[0u8; 16]));
+        assert_eq!(rule.image, 0, "bitmap index 0 = first <img>");
         assert_eq!(rule.x, 16);
         assert_eq!(rule.y, 0);
         assert!(rule.conditions.is_empty());
-        // image name "tiles.png" was interned (also referenced by <img>).
         assert_eq!(parsed.image_names, vec!["tiles.png".to_string()]);
     }
 
     #[test]
-    fn parses_image_first_tile_form() {
-        // image,x,y,hash
-        let src = "<scale>1\n<tile>sheet.png,8,24,deadbeef\n";
+    fn parses_real_chr_ram_tile_with_trailing_bank_index() {
+        // A real Zelda-pack line: the trailing chrBankPage,tileIndex must not
+        // break parsing, and x/y come from fields 3/4 (NOT a condition ref).
+        let src = "<img>Chr_0.png\n<tile>0,00000000000000007F3F1F0F07030100,0F162736,80,224,1,N,4018065946,231\n";
         let parsed = parse_hires(src);
         assert_eq!(parsed.tiles.len(), 1);
         let (hash, rule) = &parsed.tiles[0];
-        assert_eq!(*hash, 0xdead_beef);
-        assert_eq!(rule.x, 8);
-        assert_eq!(rule.y, 24);
+        let mut bytes = [0u8; 16];
+        for (i, b) in bytes.iter_mut().enumerate() {
+            *b = u8::from_str_radix(&"00000000000000007F3F1F0F07030100"[i * 2..i * 2 + 2], 16)
+                .unwrap();
+        }
+        assert_eq!(*hash, crc32(&bytes));
+        assert_eq!(rule.x, 80);
+        assert_eq!(rule.y, 224);
+    }
+
+    #[test]
+    fn line_condition_prefix_gates_tile() {
+        // The condition is a `[...]` PREFIX, not a trailing field.
+        let src = format!(
+            "<condition>flag,memoryCheckConstant,10,==,9\n\
+             [flag]<tile>0,{ZERO_TILE_DATA},00000000,0,0,1,N\n"
+        );
+        let parsed = parse_hires(&src);
+        assert_eq!(parsed.tiles.len(), 1);
+        // memoryCheckConstant declares a base + an inverted twin (indices 0,1).
+        assert_eq!(parsed.tiles[0].1.conditions, vec![0]);
+    }
+
+    #[test]
+    fn inverted_condition_prefix_resolves() {
+        let src = format!(
+            "<condition>flag,memoryCheckConstant,10,==,9\n\
+             [!flag]<tile>0,{ZERO_TILE_DATA},00000000,0,0,1,N\n"
+        );
+        let parsed = parse_hires(&src);
+        assert_eq!(parsed.tiles.len(), 1);
+        // !flag is index 1 (the inverted twin).
+        assert_eq!(parsed.tiles[0].1.conditions, vec![1]);
+        assert!(parsed.conditions[1].inverted);
+    }
+
+    #[test]
+    fn tile_gated_on_unsupported_condition_is_dropped() {
+        // tileNearby is outside RustyNES's PPU telemetry -> the rule is dropped.
+        let src = format!(
+            "<condition>near,tileNearby,0,-8,{ZERO_TILE_DATA},0F123712\n\
+             [near]<tile>0,{ZERO_TILE_DATA},00000000,0,0,1,N\n"
+        );
+        let parsed = parse_hires(&src);
+        assert!(
+            parsed.tiles.is_empty(),
+            "unsupported condition -> drop rule"
+        );
     }
 
     #[test]
     fn ignores_unknown_tags() {
-        let src = "<overlay>x,y,z\n<bgmCondition>a\n";
+        let src = "<overlay>x,y,z\n<bgmCondition>a\n<supportedRom>DEADBEEF\n<options>disableOriginalTiles\n";
         let parsed = parse_hires(src);
         assert!(parsed.tiles.is_empty());
         assert_eq!(parsed.scale, 1);
@@ -1586,8 +1718,11 @@ mod tests {
     fn parses_memory_check_constant_condition() {
         let src = "<condition>lives,memoryCheckConstant,0x0075,>=,3\n";
         let parsed = parse_hires(src);
-        assert_eq!(parsed.conditions.len(), 1);
+        // The base condition + its inverted `!lives` twin.
+        assert_eq!(parsed.conditions.len(), 2);
         assert_eq!(parsed.conditions[0].name, "lives");
+        assert_eq!(parsed.conditions[1].name, "!lives");
+        assert!(parsed.conditions[1].inverted);
         match parsed.conditions[0].kind {
             ConditionKind::MemoryCheckConstant {
                 addr,
@@ -1646,6 +1781,42 @@ mod tests {
     }
 
     #[test]
+    fn parses_indexed_sppalette_global_conditions() {
+        // Mesen's indexed `sppalette0..3` global-condition aliases (the palette
+        // group is in the type name, no `id` arg field).
+        for id in 0u8..=3 {
+            let src = format!("<condition>p{id},sppalette{id}\n");
+            let parsed = parse_hires(&src);
+            match parsed.conditions[0].kind {
+                ConditionKind::SpritePalette { id: got } => assert_eq!(got, id),
+                _ => panic!("sppalette{id} should parse to SpritePalette {{ id: {id} }}"),
+            }
+        }
+    }
+
+    #[test]
+    fn parse_hex_u8_rejects_out_of_range() {
+        // A value that fits in 8 bits parses; a wider value is rejected (not
+        // silently truncated to its low byte).
+        assert_eq!(parse_hex_u8("FF"), Some(0xFF));
+        assert_eq!(parse_hex_u8("0x7F"), Some(0x7F));
+        assert_eq!(parse_hex_u8("100"), None); // 0x100 does not fit in a u8
+        assert_eq!(parse_hex_u8("1FF"), None);
+    }
+
+    #[test]
+    fn condition_with_out_of_range_operand_is_dropped() {
+        // An operand wider than a byte makes the whole condition unparseable, so
+        // a tile gated on it is dropped rather than matching a truncated value.
+        let src = "<condition>bad,memoryCheckConstant,0x10,==,0x1FF\n";
+        let parsed = parse_hires(src);
+        assert!(
+            parsed.conditions.is_empty(),
+            "out-of-range operand -> condition rejected"
+        );
+    }
+
+    #[test]
     fn parses_frame_range_condition() {
         let src = "<condition>blink,frameRange,60,30\n";
         let parsed = parse_hires(src);
@@ -1660,9 +1831,12 @@ mod tests {
 
     #[test]
     fn conditional_tile_references_condition() {
-        let src = "<condition>lives,memoryCheckConstant,0x0075,>=,3\n\
-                   <tile>0a1b2c3d,tiles.png,16,0,lives\n";
-        let parsed = parse_hires(src);
+        let src = format!(
+            "<condition>lives,memoryCheckConstant,75,>=,3\n\
+             <img>tiles.png\n\
+             [lives]<tile>0,{ZERO_TILE_DATA},00000000,16,0,1,N\n"
+        );
+        let parsed = parse_hires(&src);
         assert_eq!(parsed.tiles.len(), 1);
         assert_eq!(parsed.tiles[0].1.conditions, vec![0]);
     }
@@ -1670,33 +1844,40 @@ mod tests {
     #[test]
     fn tile_with_unknown_condition_is_dropped() {
         // The condition name was never declared -> the rule's gate is unknown.
-        let src = "<tile>0a1b2c3d,tiles.png,16,0,missing\n";
-        let parsed = parse_hires(src);
+        let src = format!("[missing]<tile>0,{ZERO_TILE_DATA},00000000,16,0,1,N\n");
+        let parsed = parse_hires(&src);
         assert!(parsed.tiles.is_empty());
     }
 
     #[test]
     fn tile_with_anded_conditions() {
-        let src = "<condition>a,frameRange,2,1\n\
-                   <condition>b,frameRange,4,2\n\
-                   <tile>deadbeef,t.png,0,0,a&b\n";
-        let parsed = parse_hires(src);
-        assert_eq!(parsed.tiles[0].1.conditions, vec![0, 1]);
+        // frameRange a,b each register a base + inverted twin: a=0, b=2.
+        let src = format!(
+            "<condition>a,frameRange,2,1\n\
+             <condition>b,frameRange,4,2\n\
+             [a&b]<tile>0,{ZERO_TILE_DATA},00000000,0,0,1,N\n"
+        );
+        let parsed = parse_hires(&src);
+        assert_eq!(parsed.tiles[0].1.conditions, vec![0, 2]);
     }
 
     #[test]
     fn parses_background_full_screen_and_region() {
-        let src = "<background>bg.png\n\
-                   <background>panel.png,16,32,1,nightcond\n\
+        // Real Mesen <background> layout: name,brightness,hScroll,vScroll,
+        // priority,left,top — conditions are a `[...]` line prefix.
+        let src = "<background>bg.png,1\n\
+                   [nightcond]<background>panel.png,1,1,1,3,16,32\n\
                    <condition>nightcond,frameRange,2,1\n";
         let parsed = parse_hires(src);
         assert_eq!(parsed.backgrounds.len(), 2);
         assert_eq!(parsed.backgrounds[0].x, 0);
         assert_eq!(parsed.backgrounds[0].y, 0);
+        // No priority field present -> Mesen default priority 10.
+        assert_eq!(parsed.backgrounds[0].priority, 10);
         assert!(parsed.backgrounds[0].conditions.is_empty());
+        assert_eq!(parsed.backgrounds[1].priority, 3);
         assert_eq!(parsed.backgrounds[1].x, 16);
         assert_eq!(parsed.backgrounds[1].y, 32);
-        assert_eq!(parsed.backgrounds[1].priority, 1);
         assert_eq!(parsed.backgrounds[1].conditions, vec![0]);
     }
 
@@ -1712,6 +1893,7 @@ mod tests {
             conditions: vec![Condition {
                 name: "c".into(),
                 kind,
+                inverted: false,
             }],
             backgrounds: Vec::new(),
             watched_addresses: Vec::new(),
@@ -1917,6 +2099,7 @@ mod tests {
                     operand: 0x01,
                     mask: 0xFF,
                 },
+                inverted: false,
             }],
             backgrounds: Vec::new(),
             watched_addresses: vec![0x10],
@@ -1955,6 +2138,7 @@ mod tests {
                     operand: 0x00,
                     mask: 0xFF,
                 },
+                inverted: false,
             }],
             backgrounds: vec![BackgroundRegion {
                 image: 0,
@@ -2017,31 +2201,128 @@ mod tests {
 
     #[test]
     fn watched_addresses_collected_from_conditions() {
-        let src = "<condition>a,memoryCheckConstant,0x0075,==,3\n\
-                   <condition>b,memoryCheck,0x10,!=,0x11\n\
-                   <condition>c,ppuMemoryCheckConstant,0x3F00,==,0x0F\n\
-                   <condition>f,frameRange,2,1\n\
-                   <tile>deadbeef,t.png,0,0,a\n";
-        // Need an image so finish() keeps the rule; fabricate via load path is
-        // heavy, so test the collection logic on the parsed conditions directly.
+        let src = "<condition>a,memoryCheckConstant,75,==,3\n\
+                   <condition>b,memoryCheck,10,!=,11\n\
+                   <condition>c,ppuMemoryCheckConstant,3F00,==,0F\n\
+                   <condition>f,frameRange,2,1\n";
         let parsed = parse_hires(src);
-        // 4 conditions parsed; frameRange contributes no watched address.
-        assert_eq!(parsed.conditions.len(), 4);
+        // 4 declared conditions, each with an inverted twin -> 8 entries.
+        assert_eq!(parsed.conditions.len(), 8);
+        // Collect distinct watched addresses (dedup across base + twin).
         let mut watched: Vec<u32> = Vec::new();
         for cond in &parsed.conditions {
+            let mut add = |a: u32| {
+                if !watched.contains(&a) {
+                    watched.push(a);
+                }
+            };
             match &cond.kind {
-                ConditionKind::MemoryCheckConstant { addr, .. } => watched.push(*addr),
+                ConditionKind::MemoryCheckConstant { addr, .. } => add(*addr),
                 ConditionKind::MemoryCheck { addr_a, addr_b, .. } => {
-                    watched.push(*addr_a);
-                    watched.push(*addr_b);
+                    add(*addr_a);
+                    add(*addr_b);
                 }
                 _ => {}
             }
         }
+        // Addresses are hex: 75=0x75, 10=0x10, 11=0x11, 3F00 in PPU space.
         assert!(watched.contains(&0x0075));
         assert!(watched.contains(&0x10));
         assert!(watched.contains(&0x11));
         assert!(watched.contains(&(0x3F00 | PPU_MEMORY_MARKER)));
         assert_eq!(watched.len(), 4); // frameRange added none.
+    }
+
+    // ---- v1.7.0 G5: real Mesen <ver>106 parse regression ----
+
+    /// A tiny but real-format `hires.txt`: a `<ver>106` header, options, two
+    /// `<img>` declarations, a `memoryCheckConstant` condition, two
+    /// unconditional `<tile>`s, one condition-gated `<tile>` (via `[...]`
+    /// prefix), and a `<background>`. Mirrors the structure of a real Zelda /
+    /// SMB HD pack without shipping any copyrighted asset. The PNGs it names do
+    /// NOT exist, so it exercises the PARSER (`parse_hires`), not the full
+    /// image-decoding `load()` path.
+    const SAMPLE_VER106: &str = "\
+<ver>106
+<scale>2
+<overscan>0,0,0,0
+<options>disableOriginalTiles
+<supportedRom>DAB79C84934F9AA5DB4E7DAD390E5D0C12443FA2
+<img>Chr_0.png
+<img>Chr_1.png
+<condition>SaveSlot1,memoryCheckConstant,16,==,0
+# a real Mesen comment / section marker line
+<tile>0,00000000000000007F3F1F0F07030100,0F162736,80,224,1,N,4018065946,231
+<tile>1,0000000000A854FF0000000000A85400,FF022230,48,128,1,N,1011652562,134
+[SaveSlot1]<tile>0,54A800000000000054A8000000000000,FF022230,48,144,1,N
+<background>Backdrop.png,1,0,0,11
+";
+
+    #[test]
+    fn parses_real_ver106_sample_to_nonzero_rules() {
+        let parsed = parse_hires(SAMPLE_VER106);
+        assert_eq!(parsed.scale, 2);
+        // Two <img> declarations interned in order.
+        assert_eq!(parsed.image_names[0], "Chr_0.png");
+        assert_eq!(parsed.image_names[1], "Chr_1.png");
+        // Three <tile> rules survive (none gated on an unsupported condition).
+        assert_eq!(parsed.tiles.len(), 3, "all three real tiles parse");
+        // The bitmap indices are honoured (fields[0] = <img> index).
+        assert_eq!(parsed.tiles[0].1.image, 0);
+        assert_eq!(parsed.tiles[1].1.image, 1);
+        // x/y come from fields 3/4, NOT mis-read as condition refs.
+        assert_eq!((parsed.tiles[0].1.x, parsed.tiles[0].1.y), (80, 224));
+        assert_eq!((parsed.tiles[1].1.x, parsed.tiles[1].1.y), (48, 128));
+        // The third tile is gated on the SaveSlot1 condition (index 0).
+        assert_eq!(parsed.tiles[2].1.conditions, vec![0]);
+        // memoryCheckConstant 16 = hex 0x16 watched address; one background.
+        assert_eq!(parsed.backgrounds.len(), 1);
+        assert_eq!(parsed.backgrounds[0].priority, 11);
+        // The match keys are the CRC-32 of each tile's 16 CHR bytes.
+        let key0 = parse_tile_data_key("00000000000000007F3F1F0F07030100").unwrap();
+        assert_eq!(parsed.tiles[0].0, key0);
+    }
+
+    #[test]
+    fn real_ver106_tile_data_is_the_match_key() {
+        // The compositor's hash_tile() CRC over a tile's live 16 CHR bytes MUST
+        // equal the loader's key parsed from that same tile's `tileData` hex —
+        // this is the contract that makes a real pack actually substitute.
+        let chr: [u8; 16] = [
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7F, 0x3F, 0x1F, 0x0F, 0x07, 0x03,
+            0x01, 0x00,
+        ];
+        let from_bytes = crc32(&chr);
+        let from_hex = parse_tile_data_key("00000000000000007F3F1F0F07030100").unwrap();
+        assert_eq!(from_bytes, from_hex);
+    }
+
+    // LOCAL-ONLY verification against a real copyrighted pack. Never committed to
+    // run in CI: gated on `RUSTYNES_HDPACK_LOCAL` pointing at a folder with a
+    // `hires.txt`. Run: RUSTYNES_HDPACK_LOCAL=/path cargo test ... -- --ignored
+    #[test]
+    #[ignore = "needs a local (copyrighted) HD pack via RUSTYNES_HDPACK_LOCAL"]
+    fn local_real_pack_parses_nonzero() {
+        let Ok(dir) = std::env::var("RUSTYNES_HDPACK_LOCAL") else {
+            return;
+        };
+        let text = std::fs::read_to_string(std::path::Path::new(&dir).join("hires.txt")).unwrap();
+        let parsed = parse_hires(&text);
+        eprintln!(
+            "parsed: scale={} imgs={} tiles={} conds={} bgs={}",
+            parsed.scale,
+            parsed.image_names.len(),
+            parsed.tiles.len(),
+            parsed.conditions.len(),
+            parsed.backgrounds.len()
+        );
+        assert!(
+            !parsed.tiles.is_empty(),
+            "real pack must parse to >0 tile rules"
+        );
+        // Full load (decodes the PNGs that live alongside hires.txt).
+        let pack = HdPack::load(std::path::Path::new(&dir)).expect("real pack loads");
+        eprintln!("loaded rule_count={}", pack.rule_count());
+        assert!(pack.rule_count() > 0);
     }
 }

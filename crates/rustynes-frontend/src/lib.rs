@@ -83,8 +83,8 @@ pub mod hdpack_builder;
 pub mod icon;
 pub mod icons;
 pub mod input;
-// v1.5.0 "Lens" Workstream I5 — shared lit-button colour palette for the Input
-// Display panel + Input Miniatures overlay (so the two can't drift).
+// v1.5.0 "Lens" Workstream I5 — shared lit-button colour palette for the
+// consolidated "Input Display" panel (v1.7.0 "Forge" beta.5, #51).
 pub mod input_colors;
 pub mod movie_ui;
 // v1.2.0 Workstream B — ROM soft-patching (IPS/UPS/BPS). Pure byte ops applied

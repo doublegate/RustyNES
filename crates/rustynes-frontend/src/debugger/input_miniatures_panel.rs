@@ -1,4 +1,11 @@
-//! Input Miniatures overlay (v1.5.0 "Lens" Workstream A1).
+//! "Input Display" panel (v1.5.0 "Lens" Workstream A1 — consolidated in v1.7.0
+//! "Forge" beta.5, #51).
+//!
+//! Originally the "Input Miniatures" overlay; in v1.7.0 "Forge" beta.5 the older
+//! standalone "Input Display" HUD was removed and this superset panel — which
+//! already covered the standard pads AND every expansion peripheral — took over
+//! the "Input Display" name (the menu entry + window title both read "Input
+//! Display"). The module keeps its historical filename to minimise churn.
 //!
 //! A live, read-only egui panel that draws a small diagram of every connected
 //! input device — the standard pads on each port, plus whatever non-standard
@@ -12,7 +19,7 @@
 //!
 //! Frontend-only: it reads the same live host-side input snapshot the emulator
 //! is fed (pushed each frame via
-//! [`crate::debugger::DebuggerOverlay::set_input_miniatures`]), so it touches
+//! [`crate::debugger::DebuggerOverlay::set_input_display`]), so it touches
 //! neither the core nor the produce path and has no determinism impact.
 
 // Lots of small geometric layout coords (x/y/w/h/o/p/r/c/t/l) in the device
@@ -119,14 +126,14 @@ impl Default for MiniaturesSnapshot {
 #[derive(Default)]
 pub struct InputMiniaturesPanelState;
 
-/// Render the Input Miniatures overlay window.
+/// Render the "Input Display" window (v1.7.0 "Forge" beta.5, #51).
 pub fn show(
     ctx: &egui::Context,
     open: &mut bool,
     _state: &mut InputMiniaturesPanelState,
     snap: &MiniaturesSnapshot,
 ) {
-    egui::Window::new("Input Miniatures")
+    egui::Window::new("Input Display")
         .open(open)
         .resizable(false)
         .show(ctx, |ui| {

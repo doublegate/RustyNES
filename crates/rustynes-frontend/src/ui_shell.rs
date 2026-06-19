@@ -280,6 +280,12 @@ pub struct UiShell {
     /// Shortcuts window currently shows (Player 1..4 / Power Pad / Family BASIC),
     /// below the emulator-hotkey section.
     pub shortcuts_device: ShortcutsDevice,
+    /// v1.7.0 "Forge" beta.5 (#55) — whether the status-bar `RetroAchievements`
+    /// read-out shows its LONG-FORM variant (name + score + rich-presence +
+    /// leaderboard trackers) instead of the compact `RA u/t (p pts)` line.
+    /// Toggled by the freed backtick (`` ` ``) key, which formerly toggled the
+    /// (now-removed) debugger toolbar HUD.
+    pub ra_detail: bool,
 }
 
 /// v1.5.0 "Lens" Workstream I9 — selects which device the Keyboard Shortcuts
@@ -336,6 +342,7 @@ impl UiShell {
             fullscreen: false,
             active_slot: 0,
             shortcuts_device: ShortcutsDevice::default(),
+            ra_detail: false,
         }
     }
 
@@ -419,6 +426,10 @@ pub struct ShellFrame<'a> {
     /// user is logged in, or no game is loaded. Shown between the emulator-state
     /// label and the FPS counter.
     pub ra_status: Option<String>,
+    /// v1.7.0 "Forge" beta.5 (#55) — a compact netplay status line (peer role +
+    /// ping + frame + rollback/stall), relocated from the retired `` ` `` toolbar
+    /// HUD into the status bar. `None` while no session is active/connecting.
+    pub netplay_detail: Option<String>,
 }
 
 impl UiShell {
@@ -466,6 +477,16 @@ impl UiShell {
     /// burying them in the debugger overlay). Every ROM-dependent item is
     /// disabled when no ROM is loaded; platform-only items (Open ROM, Netplay,
     /// Screenshot, RA) are `#[cfg]`-gated out on wasm.
+    ///
+    /// v1.7.0 "Forge" beta.5 (#52) — the bar covers the full v1.7.0 feature set:
+    /// the consolidated Input Display (#51), `TAStudio`, Replay/TAS, movie
+    /// import /
+    /// export (`.fm2` / `.bk2`), Export-Last-30s clip (`HistoryViewer`), A/V
+    /// recording, the HD-Pack loader + Pixel Inspector + Builder, the Cartridge
+    /// Info / header editor, symbol loading, and the chip / Watch / call-stack
+    /// inspectors. The Lua-script IPC / automation surface (`comm.*` / `client.*`)
+    /// is driven from the Lua Script panel, not its own menu item. Every entry
+    /// carries a Font-Awesome glyph (audited in #52).
     #[allow(clippy::too_many_lines)]
     fn menu_bar(
         &mut self,
@@ -976,7 +997,7 @@ impl UiShell {
                             ("3x (300%)", 3),
                             ("4x (400%)", 4),
                         ] {
-                            if ui.button(label).clicked() {
+                            if ui.button(ic(glyph::TV, label)).clicked() {
                                 out.action = Some(MenuAction::SetWindowScale(scale));
                                 ui.close();
                             }
@@ -1150,14 +1171,12 @@ impl UiShell {
                         out.action = Some(MenuAction::OpenPanel(ToolPanel::Cheevos));
                         ui.close();
                     }
+                    // v1.7.0 "Forge" beta.5 (#51) — one consolidated "Input
+                    // Display" panel: standard pads + every expansion peripheral
+                    // (Zapper / Vaus / SNES mouse / Power Pad / keyboard / Hyper
+                    // Shot / Four Score), real-time button/axis state.
                     if ui.button(ic(glyph::GAMEPAD, "Input Display")).clicked() {
                         out.action = Some(MenuAction::OpenPanel(ToolPanel::InputDisplay));
-                        ui.close();
-                    }
-                    // v1.5.0 "Lens" Workstream A1 — live Input Miniatures overlay
-                    // (every connected device, real-time button/axis state).
-                    if ui.button(ic(glyph::GAMEPAD, "Input Miniatures")).clicked() {
-                        out.action = Some(MenuAction::OpenPanel(ToolPanel::InputMiniatures));
                         ui.close();
                     }
                     // v1.3.0 menu reorg — NSF/NSFe music player (moved here from
@@ -1267,13 +1286,16 @@ impl UiShell {
 
                 // ----- Debug -----
                 ui.menu_button(ic(glyph::BUG, "Debug"), |ui| {
+                    // v1.7.0 "Forge" beta.5 (#55) — the debugger overlay is now
+                    // toggled ONLY from this menu item: the backtick (`` ` ``)
+                    // key was repurposed to toggle the status-bar RA read-out
+                    // (compact <-> long-form), so no accelerator hint is shown
+                    // here (it would advertise a key that no longer opens it).
                     let mut dbg = frame.debugger_visible;
-                    if accel_changed(
-                        ui,
-                        &mut dbg,
-                        &ic(glyph::BUG, "Show Debugger"),
-                        &keys.debug_overlay,
-                    ) {
+                    if ui
+                        .checkbox(&mut dbg, ic(glyph::BUG, "Show Debugger"))
+                        .changed()
+                    {
                         out.action = Some(MenuAction::ToggleDebugger);
                         ui.close();
                     }
@@ -1413,6 +1435,34 @@ impl UiShell {
                             ui.colored_label(egui::Color32::from_rgb(80, 180, 240), "Netplay");
                         } else {
                             ui.colored_label(egui::Color32::from_rgb(100, 200, 100), "Running");
+                        }
+                        // v1.7.0 "Forge" beta.5 (#55) — the rich netplay read-out
+                        // (ping / frame / rollback / stall) relocated from the
+                        // retired `` ` `` toolbar HUD, shown only while a session
+                        // is active or connecting.
+                        if let Some(net) = frame.netplay_detail.as_deref() {
+                            ui.separator();
+                            ui.colored_label(egui::Color32::from_rgb(80, 180, 240), net)
+                                .on_hover_text("Netplay session status");
+                        }
+                        // v1.7.0 "Forge" beta.5 (#52) — surface the new recording
+                        // states in the status bar: a TAS movie record/playback
+                        // marker, an A/V capture marker, and the HD-Pack Builder
+                        // marker. All red/amber so an active capture is obvious.
+                        if frame.movie_recording {
+                            ui.separator();
+                            ui.colored_label(egui::Color32::from_rgb(224, 64, 64), "REC movie");
+                        } else if frame.movie_playing {
+                            ui.separator();
+                            ui.colored_label(egui::Color32::from_rgb(64, 192, 64), "PLAY movie");
+                        }
+                        if frame.av_recording {
+                            ui.separator();
+                            ui.colored_label(egui::Color32::from_rgb(224, 64, 64), "REC A/V");
+                        }
+                        if frame.hd_pack_building {
+                            ui.separator();
+                            ui.colored_label(egui::Color32::from_rgb(240, 200, 100), "HD-Pack REC");
                         }
                         // v1.5.0 "Lens" Workstream I7 — the RetroAchievements
                         // readout relocated from the retired `` ` `` overlay HUD,
@@ -1988,7 +2038,11 @@ fn system_hotkeys_grid(ui: &mut egui::Ui, config: &Config) {
                 ("Insert coin (Vs.)", s.insert_coin.as_str()),
                 ("Fullscreen", s.fullscreen.as_str()),
                 ("Toggle menu bar", s.toggle_menu_bar.as_str()),
-                ("Toggle debugger", s.debug_overlay.as_str()),
+                // v1.7.0 "Forge" beta.5 (#55) — the backtick key now toggles the
+                // status-bar RetroAchievements read-out (compact <-> long-form);
+                // the debugger overlay moved to Debug -> Show Debugger.
+                ("Toggle RA status detail", s.debug_overlay.as_str()),
+                ("Show debugger", "Debug menu"),
                 ("Quit / exit fullscreen", s.quit.as_str()),
             ] {
                 ui.label(action);

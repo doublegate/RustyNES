@@ -10,8 +10,13 @@ Accepted (v1.3.0 Workstream E1).
 
 The v1.2.0 HD-pack loader (ADR 0013's sibling; behind the default-off `hd-pack`
 feature) handled only **unconditional** Mesen `hires.txt` tile replacement:
-`<scale>` / `<patternTable>` / CHR-hash `<tile>` rules. Two Mesen capabilities
-were explicitly deferred:
+`<scale>` / `<patternTable>` / CHR-hash `<tile>` rules. (Note: the original
+`<tile>` grammar this and the v1.3.0 condition work parsed was an *invented*
+`hash,image,x,y[,condition]` form that no real Mesen pack uses; **ADR 0018**
+replaced it with the real Mesen layout — `[Cond1&Cond2]`-prefixed conditions and
+a `bitmapIndex,tileData,palette,x,y,brightness,defaultTile` tile line keyed on
+the CRC-32 of the 16 CHR `tileData` bytes. The condition-snapshot architecture
+below is unchanged.) Two Mesen capabilities were explicitly deferred:
 
 1. **`<condition>` gating** — a `<tile>`/`<background>` rule that only applies when
    a runtime predicate holds (a memory-address compare, a frame-number range, a

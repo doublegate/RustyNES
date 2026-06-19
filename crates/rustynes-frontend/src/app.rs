@@ -5364,9 +5364,13 @@ impl App {
             SysAction::Reset => self.do_reset(),
             SysAction::PowerCycle => self.do_power_cycle(),
             SysAction::ToggleDebug => {
-                if let Some(d) = self.debugger.as_mut() {
-                    d.toggle();
-                }
+                // v1.7.0 "Forge" beta.5 (#55) — the backtick (`` ` ``) key no
+                // longer toggles the debugger overlay (that moved to Debug ->
+                // Show Debugger in the menu, since every panel opens from the
+                // menu bar now). It now toggles the status-bar RetroAchievements
+                // read-out between its compact and long-form variants — the only
+                // distinct content the retired toolbar HUD carried.
+                self.ui.ra_detail = !self.ui.ra_detail;
             }
             SysAction::OpenRom => {
                 #[cfg(not(target_arch = "wasm32"))]
@@ -6172,8 +6176,9 @@ impl App {
         };
         if let Some(debugger) = self.debugger.as_mut() {
             debugger.set_fps(fps);
-            debugger.set_input_display(input_pads, input_players);
-            debugger.set_input_miniatures(miniatures);
+            // v1.7.0 "Forge" beta.5 (#51) — the single consolidated "Input
+            // Display" panel (standard pads + active expansion device).
+            debugger.set_input_display(miniatures);
             debugger.set_movie_status(movie_status);
             debugger.set_replay_info(movie_status, replay_info);
             debugger.set_perf_log_note(log_note);
@@ -7605,11 +7610,23 @@ impl ApplicationHandler<AppEvent> for App {
                     },
                     fast_forwarding: self.input.fast_forward_held(),
                     // v1.5.0 I7 — RA readout for the status bar (None unless the
-                    // feature is on AND logged in).
-                    ra_status: self
+                    // feature is on AND logged in). v1.7.0 "Forge" beta.5 (#55) —
+                    // the backtick-toggled `ui.ra_detail` flag selects the
+                    // long-form line (name/score/rich-presence/trackers) over the
+                    // compact one.
+                    ra_status: self.debugger.as_ref().and_then(|d| {
+                        if self.ui.ra_detail {
+                            d.ra_status_long()
+                        } else {
+                            d.ra_status_line()
+                        }
+                    }),
+                    // v1.7.0 "Forge" beta.5 (#55) — the netplay read-out moved
+                    // from the retired toolbar HUD to the status bar.
+                    netplay_detail: self
                         .debugger
                         .as_ref()
-                        .and_then(DebuggerOverlay::ra_status_line),
+                        .and_then(DebuggerOverlay::netplay_status_line),
                 };
 
                 let mut shell_out = crate::ui_shell::ShellOutput::default();

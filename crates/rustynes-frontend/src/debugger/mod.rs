@@ -42,12 +42,12 @@
 
 use std::sync::Arc;
 
-use rustynes_core::{Buttons, Nes};
+use rustynes_core::Nes;
 use winit::event::WindowEvent;
 use winit::window::Window;
 
 use crate::config::Config;
-use crate::movie_ui::{MovieMode, MovieStatus, ReplayInfo};
+use crate::movie_ui::{MovieStatus, ReplayInfo};
 use crate::ui_shell::{ShellFrame, ShellOutput, UiShell};
 pub use replay_panel::ReplayRequest;
 pub use tastudio_panel::TasRequest;
@@ -87,8 +87,11 @@ mod game_db_panel;
 // + per-frame snapshots the app owns, so its render lives there, not here).
 #[cfg(all(not(target_arch = "wasm32"), feature = "hd-pack"))]
 pub(crate) mod hd_pixel_panel;
-mod input_display_panel;
-// v1.5.0 "Lens" Workstream A1 — live Input Miniatures overlay.
+// v1.7.0 "Forge" beta.5 (#51) — the live "Input Display" panel: a single
+// consolidated controller HUD covering the standard pads + every expansion
+// peripheral (the former standalone `input_display_panel` was folded in, its
+// superset capability retained). The module keeps its historical filename; the
+// user-facing window + menu entry read "Input Display".
 mod input_miniatures_panel;
 mod input_rebind_panel;
 mod mapper_panel;
@@ -140,12 +143,12 @@ pub enum ToolPanel {
     Perf,
     /// Input rebinding panel.
     Input,
-    /// Live input-display controller HUD (v1.1.0 beta.1, Workstream B).
-    InputDisplay,
     /// Per-game ROM-database editor (v1.2.0 Workstream B, B4).
     GameDb,
-    /// Live Input Miniatures overlay (v1.5.0 "Lens" Workstream A1).
-    InputMiniatures,
+    /// Live "Input Display" panel — the consolidated controller + expansion-
+    /// device HUD (v1.7.0 "Forge" beta.5, #51; the v1.5.0 "Lens" Workstream A1
+    /// Input Miniatures overlay absorbed the former standalone Input Display).
+    InputDisplay,
     /// Replay / TAS window (v1.5.0 "Lens" Workstream C2).
     Replay,
     /// `TAStudio` piano-roll editor (v1.6.0 "Studio" Workstream A2).
@@ -225,15 +228,15 @@ pub struct DebuggerOverlay {
     show_tas: bool,
     show_script: bool,
     show_input: bool,
-    show_input_display: bool,
     show_cheat: bool,
     show_settings: bool,
     show_netplay: bool,
     show_cheevos: bool,
     show_perf: bool,
     show_game_db: bool,
-    /// v1.5.0 A1 — Input Miniatures overlay open flag.
-    show_input_miniatures: bool,
+    /// "Input Display" panel open flag (v1.7.0 "Forge" beta.5, #51; née the
+    /// v1.5.0 A1 Input Miniatures overlay).
+    show_input_display: bool,
     /// v1.5.0 A4 — HD-pack pixel inspector open flag (native + `hd-pack`).
     #[cfg(all(not(target_arch = "wasm32"), feature = "hd-pack"))]
     show_hd_pixel: bool,
@@ -278,18 +281,11 @@ pub struct DebuggerOverlay {
     script_ui: script_panel::ScriptPanelState,
     /// Input rebind modal state.
     input_ui: input_rebind_panel::InputPanelState,
-    /// Input-display HUD state (v1.1.0 beta.1, Workstream B).
-    input_display_ui: input_display_panel::InputDisplayPanelState,
-    /// Held buttons per player, pushed each frame via
-    /// [`Self::set_input_display`] and drawn by the input-display HUD.
-    input_pads: [Buttons; 4],
-    /// Number of active players to show in the input-display HUD (2, or 4 with
-    /// Four Score).
-    input_players: usize,
-    /// v1.5.0 A1 — Input Miniatures panel state.
-    input_miniatures_ui: input_miniatures_panel::InputMiniaturesPanelState,
-    /// v1.5.0 A1 — the live input-miniatures snapshot the app pushes each frame.
-    input_miniatures: MiniaturesSnapshot,
+    /// "Input Display" panel state (v1.7.0 "Forge" beta.5, #51).
+    input_display_ui: input_miniatures_panel::InputMiniaturesPanelState,
+    /// The live input snapshot the app pushes each frame (standard pads + the
+    /// active expansion device), drawn by the "Input Display" panel.
+    input_display: MiniaturesSnapshot,
     /// v1.5.0 A4 — HD-pack pixel inspector state (native + `hd-pack`).
     #[cfg(all(not(target_arch = "wasm32"), feature = "hd-pack"))]
     hd_pixel_ui: hd_pixel_panel::HdPixelPanelState,
@@ -326,13 +322,18 @@ pub struct DebuggerOverlay {
     #[cfg(not(target_arch = "wasm32"))]
     cheat_persist: Option<cheat_panel::CheatPersist>,
     /// Most recent measured frames-per-second (wall-clock moving average).
-    /// Updated by [`DebuggerOverlay::set_fps`] from the frontend's pacing
-    /// loop; rendered in the top toolbar so users can visually confirm the
-    /// emulator runs at the target 60.0988 Hz (NTSC) / 50.0070 Hz (PAL).
+    /// Updated by [`DebuggerOverlay::set_fps`] from the frontend's pacing loop.
+    /// v1.7.0 "Forge" beta.5 (#55) — the toolbar HUD that displayed this was
+    /// removed; the status bar shows FPS from its own `ShellFrame`. The setter
+    /// + field are retained for the stable public API (and future panels).
+    #[allow(dead_code)]
     fps: f32,
-    /// v1.4.0 Sprint 4.2 — current TAS movie record/playback status,
-    /// pushed by [`DebuggerOverlay::set_movie_status`] from the pacing
-    /// loop and shown read-only in the top toolbar.
+    /// v1.4.0 Sprint 4.2 — current TAS movie record/playback status, pushed by
+    /// [`DebuggerOverlay::set_movie_status`] from the pacing loop. v1.7.0
+    /// "Forge" beta.5 (#55) — retained for the public API after the toolbar HUD
+    /// that displayed it was removed (movie state is now in the menu + status
+    /// bar).
+    #[allow(dead_code)]
     movie: MovieStatus,
     /// v2.7.1 — `RetroAchievements` badge-image cache (achievement icons in the
     /// panel rows + unlock toasts). Lazily created the first time a badge URL is
@@ -420,14 +421,13 @@ impl DebuggerOverlay {
             show_tas: false,
             show_script: false,
             show_input: false,
-            show_input_display: false,
             show_cheat: false,
             show_settings: false,
             show_netplay: false,
             show_cheevos: false,
             show_perf: false,
             show_game_db: false,
-            show_input_miniatures: false,
+            show_input_display: false,
             #[cfg(all(not(target_arch = "wasm32"), feature = "hd-pack"))]
             show_hd_pixel: false,
             cpu_ui: cpu_panel::CpuPanelState::default(),
@@ -448,11 +448,8 @@ impl DebuggerOverlay {
             tas_editor: None,
             script_ui: script_panel::ScriptPanelState::default(),
             input_ui: input_rebind_panel::InputPanelState::default(),
-            input_display_ui: input_display_panel::InputDisplayPanelState,
-            input_pads: [Buttons::empty(); 4],
-            input_players: 2,
-            input_miniatures_ui: input_miniatures_panel::InputMiniaturesPanelState,
-            input_miniatures: MiniaturesSnapshot::default(),
+            input_display_ui: input_miniatures_panel::InputMiniaturesPanelState,
+            input_display: MiniaturesSnapshot::default(),
             #[cfg(all(not(target_arch = "wasm32"), feature = "hd-pack"))]
             hd_pixel_ui: hd_pixel_panel::HdPixelPanelState::default(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -518,15 +515,6 @@ impl DebuggerOverlay {
     /// from the frontend's wall-clock pacer on each completed frame.
     pub const fn set_fps(&mut self, fps: f32) {
         self.fps = fps;
-    }
-
-    /// v1.1.0 beta.1 (Workstream B) — push the current held-button snapshot for
-    /// the input-display HUD. `pads` is per-player (P1..P4); `players` is how
-    /// many to show (2, or 4 with Four Score). Mirrors the [`Self::set_fps`]
-    /// pull pattern; a no-op for rendering when the HUD is closed.
-    pub const fn set_input_display(&mut self, pads: [Buttons; 4], players: usize) {
-        self.input_pads = pads;
-        self.input_players = players;
     }
 
     /// Update the TAS movie record/playback status shown in the top
@@ -852,6 +840,71 @@ impl DebuggerOverlay {
         Some(line)
     }
 
+    /// v1.7.0 "Forge" beta.5 (#55) — the LONG-FORM `RetroAchievements` status
+    /// line for the status bar, carrying the rich read-out the retired `` ` ``
+    /// toolbar HUD used to show: the display name + session score, the
+    /// unlocked/total count, the hardcore flag, an optional rich-presence
+    /// string, and any active leaderboard trackers. The backtick key toggles
+    /// the status bar between this and the compact [`Self::ra_status_line`].
+    /// `None` under the same conditions (feature off / not logged in). The
+    /// trailing `HARDCORE` token is preserved so the status bar keeps keying its
+    /// gold tint on it.
+    #[must_use]
+    pub fn ra_status_long(&self) -> Option<String> {
+        use std::fmt::Write as _;
+        let s = self.cheevos_ui.status();
+        if !s.enabled || !s.logged_in {
+            return None;
+        }
+        let mut line = format!(
+            "RA {} - {} pts - {}/{}",
+            s.display_name, s.score, s.unlocked, s.total
+        );
+        if !s.rich_presence.is_empty() {
+            let _ = write!(line, " - {}", s.rich_presence);
+        }
+        for tr in &s.trackers {
+            let _ = write!(line, " - LB {tr}");
+        }
+        if s.hardcore {
+            line.push_str(" HARDCORE");
+        }
+        Some(line)
+    }
+
+    /// v1.7.0 "Forge" beta.5 (#55) — a compact netplay status line for the
+    /// status bar (relocated from the retired `` ` `` toolbar HUD): the peer
+    /// role + smoothed ping + current frame, with rollback / stall annotations.
+    /// `None` while no session is active or connecting (so the status bar stays
+    /// clean for single-player). Mirrors the format the old HUD used.
+    #[must_use]
+    pub fn netplay_status_line(&self) -> Option<String> {
+        use std::fmt::Write as _;
+        let net = self.netplay_ui.status();
+        match net.phase {
+            NetplayPhaseView::Idle => None,
+            NetplayPhaseView::Connecting => Some("NET connecting".to_string()),
+            NetplayPhaseView::Error => Some("NET error".to_string()),
+            NetplayPhaseView::InGame => {
+                let ping = net
+                    .ping_ms
+                    .map_or_else(|| "-".to_string(), |ms| format!("{ms}ms"));
+                let mut s = format!(
+                    "NET {} {ping} f{}",
+                    if net.is_host { "P1" } else { "P2" },
+                    net.current_frame
+                );
+                if net.rolled_back {
+                    let _ = write!(s, " rb{}", net.resimulated_frames);
+                }
+                if net.stalled {
+                    s.push_str(" stall");
+                }
+                Some(s)
+            }
+        }
+    }
+
     /// v2.7.0 — return (and clear) the pending RA login/logout/hardcore request
     /// the user triggered in the cheevos panel. The app acts on it by driving
     /// its `RaSession` (the feature-gated `RetroAchievements` session).
@@ -871,9 +924,8 @@ impl DebuggerOverlay {
             ToolPanel::Cheevos => self.show_cheevos = true,
             ToolPanel::Perf => self.show_perf = true,
             ToolPanel::Input => self.show_input = true,
-            ToolPanel::InputDisplay => self.show_input_display = true,
             ToolPanel::GameDb => self.show_game_db = true,
-            ToolPanel::InputMiniatures => self.show_input_miniatures = true,
+            ToolPanel::InputDisplay => self.show_input_display = true,
             ToolPanel::Replay => self.show_replay = true,
             ToolPanel::TasStudio => self.show_tas = true,
             ToolPanel::HdPixelInspector => {
@@ -885,10 +937,12 @@ impl DebuggerOverlay {
         }
     }
 
-    /// v1.5.0 A1 — push the live Input Miniatures snapshot (built by the app
-    /// each frame from its host-side input state). Frontend-only; no core touch.
-    pub fn set_input_miniatures(&mut self, snap: MiniaturesSnapshot) {
-        self.input_miniatures = snap;
+    /// Push the live "Input Display" snapshot (built by the app each frame from
+    /// its host-side input state: the standard pads + the active expansion
+    /// device). Frontend-only; no core touch (v1.7.0 "Forge" beta.5, #51; née
+    /// `set_input_miniatures`).
+    pub fn set_input_display(&mut self, snap: MiniaturesSnapshot) {
+        self.input_display = snap;
     }
 
     /// v1.5.0 "Lens" Workstream I10 — open the in-app Documentation browser
@@ -1069,147 +1123,38 @@ impl DebuggerOverlay {
         self.show_cheat || self.show_game_db
     }
 
-    /// Build the egui UI for this frame (the deep-overlay path: toolbar HUD +
-    /// chip panels + tool panels, all with a live `nes`). Used by [`Self::render`]
-    /// and by [`Self::render_shell`] when the overlay is visible.
-    fn ui(&mut self, ui: &mut egui::Ui, nes: &mut Nes, config: &mut Config) {
+    /// Build the egui UI for this frame (the deep-overlay path: chip panels +
+    /// tool panels, all with a live `nes`). Used by [`Self::render`] and by
+    /// [`Self::render_shell`] when the overlay is visible.
+    fn ui(&mut self, ui: &egui::Ui, nes: &mut Nes, config: &mut Config) {
         self.chip_panels(ui, nes);
         self.tool_panels(ui.ctx(), Some(nes), config);
     }
 
-    /// v1.0.0 — the chip-inspection UI: the debugger toolbar HUD + the
-    /// CPU / PPU / OAM / APU / Memory / Mapper windows. These all read `&mut Nes`
-    /// and only render when the deep overlay is visible.
-    fn chip_panels(&mut self, root_ui: &mut egui::Ui, nes: &mut Nes) {
+    /// v1.0.0 — the chip-inspection UI: the CPU / PPU / OAM / APU / Memory /
+    /// Mapper windows. These all read `&mut Nes` and only render when the deep
+    /// overlay is visible. v1.7.0 "Forge" beta.5 (#55) removed the toolbar HUD
+    /// that this used to draw first.
+    fn chip_panels(&mut self, root_ui: &egui::Ui, nes: &mut Nes) {
+        // v1.7.0 "Forge" beta.5 (#55) — `root_ui` is now read-only here: with the
+        // `debugger_top` toolbar panel removed, the chip windows all render via
+        // `ctx` (floating windows), so only the context handle is needed.
         let ctx = root_ui.ctx().clone();
         let ctx = &ctx;
-        egui::Panel::top("debugger_top").show_inside(root_ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("RustyNES debugger").strong());
-                ui.separator();
-                // v1.3.0 Workstream C — the per-panel toggle checkboxes were
-                // removed here: every panel now opens from the always-visible
-                // menu bar (Debug menu for chip inspectors, Tools menu for
-                // Cheats / Netplay / Perf / ROM Database / ...), so this HUD no
-                // longer duplicates them. It keeps only the live read-outs the
-                // menu bar does NOT carry (frame/cycle, fps, movie status).
-                ui.label(format!(
-                    "frame={} cycle={}",
-                    nes.ppu_snapshot().frame,
-                    nes.cycle()
-                ));
-                ui.separator();
-                ui.label(format!("fps: {:.1}", self.fps));
-                // v1.4.0 Sprint 4.2 — TAS movie status indicator (read-only).
-                match self.movie.mode {
-                    MovieMode::Idle => {}
-                    MovieMode::Recording => {
-                        ui.separator();
-                        ui.label(
-                            egui::RichText::new(format!("REC {} frames", self.movie.cursor))
-                                .color(egui::Color32::from_rgb(0xE0, 0x40, 0x40))
-                                .strong(),
-                        );
-                    }
-                    MovieMode::Playing => {
-                        ui.separator();
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "PLAY {}/{}",
-                                self.movie.cursor, self.movie.total
-                            ))
-                            .color(egui::Color32::from_rgb(0x40, 0xC0, 0x40))
-                            .strong(),
-                        );
-                    }
-                }
-                // v2.2.0 — FDS disk-side indicator (read-only). Only shown for
-                // FDS games (disk_side_count() > 0). Read straight off `nes`.
-                let disk_sides = nes.disk_side_count();
-                if disk_sides > 0 {
-                    ui.separator();
-                    let label = nes.inserted_disk_side().map_or_else(
-                        || "Disk: Ejected".to_string(),
-                        |s| format!("Disk: Side {}/{disk_sides}", s + 1),
-                    );
-                    ui.label(
-                        egui::RichText::new(label)
-                            .color(egui::Color32::from_rgb(0xF0, 0xC0, 0x40))
-                            .strong(),
-                    );
-                }
-
-                // v2.3.0 — netplay HUD (read-only). Only shown while a
-                // session is active or connecting.
-                let net = self.netplay_ui.status();
-                let (txt, color) = match net.phase {
-                    NetplayPhaseView::Idle => (String::new(), egui::Color32::WHITE),
-                    NetplayPhaseView::Connecting => (
-                        "NET connecting".to_string(),
-                        egui::Color32::from_rgb(0xF0, 0xC0, 0x40),
-                    ),
-                    NetplayPhaseView::InGame => {
-                        let ping = net
-                            .ping_ms
-                            .map_or_else(|| "-".to_string(), |ms| format!("{ms}ms"));
-                        let mut s = format!(
-                            "NET {} {ping} f{}",
-                            if net.is_host { "P1" } else { "P2" },
-                            net.current_frame
-                        );
-                        if net.rolled_back {
-                            use std::fmt::Write as _;
-                            let _ = write!(s, " rb{}", net.resimulated_frames);
-                        }
-                        if net.stalled {
-                            s.push_str(" stall");
-                        }
-                        (s, egui::Color32::from_rgb(0x40, 0xC0, 0xF0))
-                    }
-                    NetplayPhaseView::Error => (
-                        "NET error".to_string(),
-                        egui::Color32::from_rgb(0xE0, 0x40, 0x40),
-                    ),
-                };
-                if !txt.is_empty() {
-                    ui.separator();
-                    ui.label(egui::RichText::new(txt).color(color).strong());
-                }
-
-                // v2.7.0 — RetroAchievements HUD (read-only). Points + an
-                // optional rich-presence string + active leaderboard trackers,
-                // shown only when an RA session is logged in.
-                let ra = self.cheevos_ui.status();
-                if ra.enabled && ra.logged_in {
-                    ui.separator();
-                    let mut s = format!(
-                        "RA {}{} {}pts",
-                        ra.display_name,
-                        if ra.hardcore { " [HC]" } else { "" },
-                        ra.score
-                    );
-                    if ra.total > 0 {
-                        use std::fmt::Write as _;
-                        let _ = write!(s, " {}/{}", ra.unlocked, ra.total);
-                    }
-                    ui.label(
-                        egui::RichText::new(s)
-                            .color(egui::Color32::from_rgb(0xF0, 0xD0, 0x60))
-                            .strong(),
-                    );
-                    if !ra.rich_presence.is_empty() {
-                        ui.label(egui::RichText::new(&ra.rich_presence).italics());
-                    }
-                    for tr in &ra.trackers {
-                        ui.separator();
-                        ui.label(
-                            egui::RichText::new(format!("LB {tr}"))
-                                .color(egui::Color32::from_rgb(0x40, 0xC0, 0xF0)),
-                        );
-                    }
-                }
-            });
-        });
+        // v1.7.0 "Forge" beta.5 (#55) — the `debugger_top` toolbar HUD was
+        // removed: every panel now opens from the always-on menu bar, and the
+        // live read-outs it carried (frame/cycle, fps, movie/disk/netplay
+        // status, and the RetroAchievements line) are all surfaced in the
+        // bottom status bar instead. The freed backtick (`` ` ``) key now
+        // toggles the status-bar RA display between its compact and long-form
+        // variants (see `App`'s `SysAction::ToggleDebug` + `UiShell::ra_detail`).
+        //
+        // What follows is the chip-inspector window dispatch (each renders only
+        // while its `show_*` flag is set + the overlay is visible).
+        // v1.3.0 Workstream C — the per-panel toggle checkboxes had already been
+        // removed; opening every panel from the menu bar (Debug menu for chip
+        // inspectors, Tools menu for Cheats / Netplay / Perf / ROM Database /
+        // ...) is now the only path; the read-outs moved to the status bar.
 
         if self.show_cpu {
             // v1.7.0 "Forge" Workstream C — the CPU panel also renders the Call
@@ -1421,20 +1366,13 @@ impl DebuggerOverlay {
             input_rebind_panel::show(ctx, &mut self.show_input, &mut self.input_ui, config);
         }
         if self.show_input_display {
-            input_display_panel::show(
+            // v1.7.0 "Forge" beta.5 (#51) — the consolidated "Input Display"
+            // panel (standard pads + every expansion peripheral).
+            input_miniatures_panel::show(
                 ctx,
                 &mut self.show_input_display,
                 &mut self.input_display_ui,
-                &self.input_pads,
-                self.input_players,
-            );
-        }
-        if self.show_input_miniatures {
-            input_miniatures_panel::show(
-                ctx,
-                &mut self.show_input_miniatures,
-                &mut self.input_miniatures_ui,
-                &self.input_miniatures,
+                &self.input_display,
             );
         }
         if self.show_replay {
