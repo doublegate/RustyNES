@@ -17,6 +17,10 @@
 
 pub mod app;
 pub mod audio;
+// v1.7.0 "Forge" H3 — frontend stereo output DSP (panning / Schroeder reverb /
+// headphone crossfeed). Bypass-by-default (center pan, 0% reverb, 0 crossfeed)
+// reproduces today's mono-duplicated-to-stereo output bit-for-bit.
+pub mod audio_dsp;
 // v1.6.0 "Studio" Workstream G — A/V (video + synchronized audio) recording.
 // A read-only frontend tap on the already-produced framebuffer + drained audio
 // that pipes them to an external `ffmpeg` to mux an .mp4/.mkv. Native-only +

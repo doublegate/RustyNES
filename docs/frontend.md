@@ -258,9 +258,45 @@ them:
   non-linear mixer combines the channels before output — there is no per-channel
   split downstream — but the unity fast-path guarantees the default is provably
   unchanged.)
-- **Graphic EQ** (`[audio] eq_enabled` / `eq_bands`) — a default-off five-band
-  (60 / 240 / 1k / 3.8k / 12k Hz, ±12 dB) frontend output stage owned by the
-  producer (`audio.rs::EqStage`), bypassed (zero overhead) when off / flat.
+- **Graphic EQ** (`[audio] eq_enabled` / `eq_bands` / `eq_20_band` / `eq_bands_20`)
+  — a default-off frontend output stage owned by the producer (`audio.rs::EqStage`),
+  bypassed (zero overhead) when off / flat. The classic five-band voicing
+  (60 / 240 / 1k / 3.8k / 12k Hz, ±12 dB) is the default; **v1.7.0 "Forge"
+  Workstream H3** adds a **20-band graphic EQ** at the ISO third-octave centers
+  (25 Hz–20 kHz, `eq.rs::EQ20_FREQS`), selected by the "20-band graphic EQ"
+  checkbox (`eq_20_band`). The `Equalizer` is band-count-generic (a `Vec<Biquad>`
+  cascade); a flat bank in either mode is a true bypass and bit-identical to a
+  no-EQ build. A pre-v1.7.0 config (no `eq_20_band` / `eq_bands_20` keys) loads
+  with the 5-band voicing and a flat 20-band default — byte-identical.
+
+The following four groups are all **v1.7.0 "Forge" Workstream H3** additions —
+each a frontend, output-only stage applied after the core has handed off its
+mono samples, all bypass-by-default so the shipped sound is byte-identical
+(see `docs/adr/0020`):
+
+- **Stereo image** (`[audio] pan` / `reverb_mix` / `reverb_room` / `crossfeed`) —
+  the NES APU is mono and the deterministic core hands the frontend one mono
+  master, so this widens that master to stereo in the cpal callback
+  (`audio_dsp.rs::StereoStage`). A per-APU-channel **pan** array (`-1`=L … `+1`=R,
+  default all `0.0`=center) collapses to the *average* master pan applied to the
+  mono master (true per-channel panning needs the core split deferred to v2.0); a
+  small Schroeder **reverb** (4-comb + 2-allpass, `reverb_mix` wet, `reverb_room`
+  decay, default `0.0`=dry); and a headphone **crossfeed** (default `0.0`=off). At
+  center pan / 0 reverb / 0 crossfeed (the default) `StereoStage::is_bypass()` is
+  true and the callback emits the mono value duplicated to L/R **bit-for-bit** —
+  the byte-identical pre-H3 output. The reverb is rebuilt on the audio thread only
+  when a param generation changes (the params are pushed lock-free from the UI).
+- **Per-context volume** (`[audio] master_volume` / `volume_game` / `volume_menu`)
+  — master × per-context (game vs menu) legs folded into the single cpal consume
+  gain alongside `volume` / `muted` (`AudioConfig::effective_gain_for`). All three
+  default to `1.0`, so the product equals the existing `effective_gain()` exactly
+  until a slider moves — byte-identical default.
+- **Output device picker** (`[audio] output_device`) — a combo box listing the
+  enumerated cpal output devices plus "System default" (`None`). A named device is
+  opened at the next stream open (restart); an absent / now-unplugged device falls
+  back to the host default gracefully (`AudioOutput::try_new`'s `device_name`).
+  Native-only (cpal enumeration); the wasm path is unaffected. Default `None` =
+  the system default device (today's behaviour).
 
 ### HD-pack HD audio (v1.6.0 "Studio" Workstream H, `hd-pack`)
 

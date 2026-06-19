@@ -12,6 +12,12 @@
 //! at 0 dB is an identity filter; when every band is 0 dB the whole stage is a
 //! no-op and is bypassed. Mono (the NES mixes to one channel).
 //!
+//! v1.7.0 "Forge" H3 — the EQ is now band-count-generic: the original 5-band
+//! voicing is retained, and a **20-band graphic EQ** at the standard ISO octave
+//! /third-octave center frequencies ([`EQ20_FREQS`]) is selectable. Either way
+//! a flat (all-0-dB) bank is bypassed and bit-identical to a no-EQ build, so the
+//! default (flat) output is byte-identical.
+//!
 //! Reference: Mesen2 `Utilities/Audio/Equalizer.h`; RBJ "Audio EQ Cookbook".
 
 // Audio DSP: the FMA-vs-separate-ops rounding difference is inaudible, and the
@@ -24,11 +30,26 @@ use core::f32::consts::PI;
 /// Center frequencies (Hz) of the five fixed bands.
 pub const BAND_FREQS: [f32; 5] = [60.0, 240.0, 1_000.0, 3_800.0, 12_000.0];
 
-/// Number of EQ bands.
+/// Number of EQ bands (the classic 5-band voicing).
 pub const BAND_COUNT: usize = 5;
 
-/// Per-band Q (bandwidth). A moderate value so adjacent bands overlap smoothly.
+/// v1.7.0 H3 — number of bands in the graphic EQ (20).
+pub const EQ20_BAND_COUNT: usize = 20;
+
+/// v1.7.0 H3 — center frequencies (Hz) of the 20-band graphic EQ, on (close to)
+/// the ISO standard third-octave grid spanning the NES audible range.
+pub const EQ20_FREQS: [f32; EQ20_BAND_COUNT] = [
+    25.0, 40.0, 63.0, 100.0, 160.0, 250.0, 400.0, 630.0, 1_000.0, 1_600.0, 2_500.0, 4_000.0,
+    6_300.0, 8_000.0, 10_000.0, 12_500.0, 14_000.0, 16_000.0, 18_000.0, 20_000.0,
+];
+
+/// Per-band Q (bandwidth) for the classic 5-band voicing. A moderate value so
+/// adjacent bands overlap smoothly.
 const BAND_Q: f32 = 0.9;
+
+/// Per-band Q for the 20-band graphic EQ. Denser bands want a higher Q so each
+/// slider stays a recognisable third-octave control.
+const BAND_Q_20: f32 = 2.1;
 
 /// A single Direct-Form-I peaking biquad.
 #[derive(Clone, Copy, Default)]
@@ -105,20 +126,40 @@ impl Biquad {
     }
 }
 
-/// A cascaded 5-band peaking equalizer over a mono host-rate stream.
+/// A cascaded peaking equalizer over a mono host-rate stream.
+///
+/// Band-count-generic since v1.7.0 H3: the same cascade serves the classic
+/// 5-band voicing ([`Equalizer::new`]) and the 20-band graphic EQ
+/// ([`Equalizer::new_20`]). A flat bank (every gain 0 dB) is bypassed and
+/// bit-identical to a no-EQ build.
 pub struct Equalizer {
-    bands: [Biquad; BAND_COUNT],
+    bands: Vec<Biquad>,
     /// `true` when every band is 0 dB (the stage is a pure passthrough).
     bypass: bool,
 }
 
 impl Equalizer {
-    /// Build an equalizer for `sample_rate` with per-band gains in dB.
+    /// Build a 5-band equalizer for `sample_rate` with per-band gains in dB.
     #[must_use]
     pub fn new(gains_db: [f32; BAND_COUNT], sample_rate: u32) -> Self {
+        Self::from_bands(&BAND_FREQS, &gains_db, BAND_Q, sample_rate)
+    }
+
+    /// v1.7.0 H3 — build a 20-band graphic equalizer for `sample_rate` with
+    /// per-band gains in dB at the [`EQ20_FREQS`] center frequencies.
+    #[must_use]
+    pub fn new_20(gains_db: [f32; EQ20_BAND_COUNT], sample_rate: u32) -> Self {
+        Self::from_bands(&EQ20_FREQS, &gains_db, BAND_Q_20, sample_rate)
+    }
+
+    /// Build a cascade from matching `freqs` / `gains_db` slices at a shared `q`.
+    fn from_bands(freqs: &[f32], gains_db: &[f32], q: f32, sample_rate: u32) -> Self {
         let sr = sample_rate as f32;
-        let bands =
-            core::array::from_fn(|i| Biquad::peaking(BAND_FREQS[i], gains_db[i], BAND_Q, sr));
+        let bands = freqs
+            .iter()
+            .zip(gains_db.iter())
+            .map(|(&f, &g)| Biquad::peaking(f, g, q, sr))
+            .collect();
         let bypass = gains_db.iter().all(|&g| g.abs() < f32::EPSILON);
         Self { bands, bypass }
     }
@@ -188,6 +229,37 @@ mod tests {
         eq.process(&mut buf);
         let tail = &buf[4096..];
         (tail.iter().map(|v| v * v).sum::<f32>() / tail.len() as f32).sqrt()
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)] // intentional: flat 20-band bypass must be BIT-identical.
+    fn flat_20_band_eq_is_bypassed_and_identity() {
+        let mut eq = Equalizer::new_20([0.0; EQ20_BAND_COUNT], 48_000);
+        assert!(eq.is_bypass());
+        let mut buf = [0.1, -0.2, 0.3, -0.4, 0.5, 0.9, -1.0];
+        let orig = buf;
+        eq.process(&mut buf);
+        assert!(
+            buf.iter()
+                .zip(orig)
+                .all(|(a, b)| a.to_bits() == b.to_bits()),
+            "flat 20-band EQ must not alter samples"
+        );
+    }
+
+    #[test]
+    fn nonflat_20_band_eq_is_active_and_stable() {
+        let mut gains = [0.0f32; EQ20_BAND_COUNT];
+        gains[5] = 9.0;
+        gains[12] = -9.0;
+        let mut eq = Equalizer::new_20(gains, 48_000);
+        assert!(!eq.is_bypass());
+        let mut buf: Vec<f32> = (0..2048).map(|i| (i as f32 * 0.05).sin() * 0.5).collect();
+        eq.process(&mut buf);
+        assert!(
+            buf.iter().all(|v| v.is_finite() && v.abs() < 8.0),
+            "20-band EQ output must remain finite and bounded"
+        );
     }
 
     #[test]

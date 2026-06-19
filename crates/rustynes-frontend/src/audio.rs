@@ -33,7 +33,8 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering}
 use cpal::SampleFormat;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
-use crate::eq::{BAND_COUNT, Equalizer};
+use crate::audio_dsp::{PAN_COUNT, StereoStage};
+use crate::eq::{BAND_COUNT, EQ20_BAND_COUNT, Equalizer};
 use crate::resampler::{HermiteResampler, drc_ratio};
 
 /// Default queue capacity in samples when no latency target is supplied
@@ -136,6 +137,24 @@ struct QueueInner {
     eq_enabled: AtomicBool,
     /// Per-band gains in dB (f32 bits), five fixed bands.
     eq_bands: [AtomicU32; BAND_COUNT],
+    /// v1.7.0 H3 — `true` selects the 20-band graphic EQ (using `eq_bands_20`);
+    /// `false` (default) keeps the classic 5-band voicing (`eq_bands`). Shared
+    /// so the Settings UI can switch modes live.
+    eq_20_band: AtomicBool,
+    /// v1.7.0 H3 — per-band gains in dB (f32 bits) for the 20-band graphic EQ.
+    eq_bands_20: [AtomicU32; EQ20_BAND_COUNT],
+    /// v1.7.0 H3 — stereo output DSP params, shared so the Settings UI (winit
+    /// thread) live-updates them and the cpal callback (which owns the stateful
+    /// reverb) picks the change up. `stereo_gen` bumps on every change.
+    stereo_gen: AtomicU64,
+    /// Per-APU-channel pan positions (`-1.0..=1.0` f32 bits); default all 0.0.
+    pan: [AtomicU32; PAN_COUNT],
+    /// Reverb wet mix `0.0..=1.0` (f32 bits); default 0.0 (dry/bypass).
+    reverb_mix: AtomicU32,
+    /// Reverb room size `0.0..=1.0` (f32 bits); default 0.5.
+    reverb_room: AtomicU32,
+    /// Headphone crossfeed `0.0..=1.0` (f32 bits); default 0.0 (bypass).
+    crossfeed: AtomicU32,
 }
 
 /// Thread-safe sample queue between the emulator and the CPAL callback.
@@ -175,6 +194,13 @@ impl SampleQueue {
                 eq_gen: AtomicU64::new(0),
                 eq_enabled: AtomicBool::new(false),
                 eq_bands: core::array::from_fn(|_| AtomicU32::new(0)),
+                eq_20_band: AtomicBool::new(false),
+                eq_bands_20: core::array::from_fn(|_| AtomicU32::new(0)),
+                stereo_gen: AtomicU64::new(0),
+                pan: core::array::from_fn(|_| AtomicU32::new(0)),
+                reverb_mix: AtomicU32::new(0),
+                reverb_room: AtomicU32::new(0.5f32.to_bits()),
+                crossfeed: AtomicU32::new(0),
             }),
         }
     }
@@ -214,22 +240,66 @@ impl SampleQueue {
             .store(u64::from(base.to_bits()), Ordering::Relaxed);
     }
 
-    /// v1.1.0 beta.2 — set the graphic-EQ params (enabled + per-band dB gains).
-    /// Lock-free + live: the Settings UI calls this from the winit thread and
-    /// the producer rebuilds its biquads on the next push. Bumps the generation.
+    /// v1.1.0 beta.2 — set the 5-band graphic-EQ params (enabled + per-band dB
+    /// gains). Lock-free + live: the Settings UI calls this from the winit thread
+    /// and the producer rebuilds its biquads on the next push. Bumps the
+    /// generation. Selects the classic 5-band voicing.
     pub fn set_eq(&self, enabled: bool, bands: [f32; BAND_COUNT]) {
-        for (slot, &g) in self.inner.eq_bands.iter().zip(bands.iter()) {
-            // `eq_bands` is deserialized from config.toml unvalidated; guard the
-            // NaN case before `f32::clamp` (which panics on a NaN argument).
-            let g = if g.is_nan() {
-                0.0
-            } else {
-                g.clamp(-12.0, 12.0)
-            };
-            slot.store(g.to_bits(), Ordering::Relaxed);
-        }
+        store_db_bands(&self.inner.eq_bands, &bands);
+        self.inner.eq_20_band.store(false, Ordering::Relaxed);
         self.inner.eq_enabled.store(enabled, Ordering::Relaxed);
         self.inner.eq_gen.fetch_add(1, Ordering::Release);
+    }
+
+    /// v1.7.0 H3 — set the full EQ params: `enabled`, whether the 20-band graphic
+    /// EQ is active (`use_20_band`), and both band arrays. The producer reads the
+    /// active array based on the mode flag. Lock-free + live (bumps the
+    /// generation). Off / flat → byte-identical to a no-EQ build.
+    pub fn set_eq_full(
+        &self,
+        enabled: bool,
+        use_20_band: bool,
+        bands_5: [f32; BAND_COUNT],
+        bands_20: [f32; EQ20_BAND_COUNT],
+    ) {
+        store_db_bands(&self.inner.eq_bands, &bands_5);
+        store_db_bands(&self.inner.eq_bands_20, &bands_20);
+        self.inner.eq_20_band.store(use_20_band, Ordering::Relaxed);
+        self.inner.eq_enabled.store(enabled, Ordering::Relaxed);
+        self.inner.eq_gen.fetch_add(1, Ordering::Release);
+    }
+
+    /// v1.7.0 H3 — set the stereo output DSP params (per-channel pan, reverb
+    /// mix/room, crossfeed). Lock-free + live: the Settings UI calls this from
+    /// the winit thread; the cpal callback rebuilds its reverb on the next
+    /// generation. All-center / 0 mix / 0 crossfeed (the default) is bypass.
+    pub fn set_stereo(
+        &self,
+        pans: [f32; PAN_COUNT],
+        reverb_mix: f32,
+        reverb_room: f32,
+        crossfeed: f32,
+    ) {
+        for (slot, &p) in self.inner.pan.iter().zip(pans.iter()) {
+            let p = if p.is_nan() { 0.0 } else { p.clamp(-1.0, 1.0) };
+            slot.store(p.to_bits(), Ordering::Relaxed);
+        }
+        let store01 = |slot: &AtomicU32, v: f32| {
+            let v = if v.is_nan() { 0.0 } else { v.clamp(0.0, 1.0) };
+            slot.store(v.to_bits(), Ordering::Relaxed);
+        };
+        store01(&self.inner.reverb_mix, reverb_mix);
+        // room defaults to 0.5, not 0.0, but a NaN still maps to a safe value.
+        let room = if reverb_room.is_nan() {
+            0.5
+        } else {
+            reverb_room.clamp(0.0, 1.0)
+        };
+        self.inner
+            .reverb_room
+            .store(room.to_bits(), Ordering::Relaxed);
+        store01(&self.inner.crossfeed, crossfeed);
+        self.inner.stereo_gen.fetch_add(1, Ordering::Release);
     }
 
     /// v1.1.0 beta.2 — current EQ generation counter (the producer compares this
@@ -238,13 +308,35 @@ impl SampleQueue {
         self.inner.eq_gen.load(Ordering::Acquire)
     }
 
-    /// v1.1.0 beta.2 — snapshot the EQ params: `(enabled, per-band dB gains)`.
-    fn eq_params(&self) -> (bool, [f32; BAND_COUNT]) {
+    /// v1.1.0 beta.2 / v1.7.0 H3 — snapshot the EQ params:
+    /// `(enabled, use_20_band, 5-band gains, 20-band gains)`.
+    fn eq_params(&self) -> (bool, bool, [f32; BAND_COUNT], [f32; EQ20_BAND_COUNT]) {
         let enabled = self.inner.eq_enabled.load(Ordering::Relaxed);
+        let use_20 = self.inner.eq_20_band.load(Ordering::Relaxed);
         let bands = core::array::from_fn(|i| {
             f32::from_bits(self.inner.eq_bands[i].load(Ordering::Relaxed))
         });
-        (enabled, bands)
+        let bands_20 = core::array::from_fn(|i| {
+            f32::from_bits(self.inner.eq_bands_20[i].load(Ordering::Relaxed))
+        });
+        (enabled, use_20, bands, bands_20)
+    }
+
+    /// v1.7.0 H3 — current stereo-DSP generation counter (the cpal callback
+    /// compares this to the last value it built from).
+    fn stereo_gen(&self) -> u64 {
+        self.inner.stereo_gen.load(Ordering::Acquire)
+    }
+
+    /// v1.7.0 H3 — snapshot the stereo-DSP params:
+    /// `(per-channel pans, reverb_mix, reverb_room, crossfeed)`.
+    fn stereo_params(&self) -> ([f32; PAN_COUNT], f32, f32, f32) {
+        let pans =
+            core::array::from_fn(|i| f32::from_bits(self.inner.pan[i].load(Ordering::Relaxed)));
+        let mix = f32::from_bits(self.inner.reverb_mix.load(Ordering::Relaxed));
+        let room = f32::from_bits(self.inner.reverb_room.load(Ordering::Relaxed));
+        let cf = f32::from_bits(self.inner.crossfeed.load(Ordering::Relaxed));
+        (pans, mix, room, cf)
     }
 
     /// v1.0.0 — the current DRC base-ratio (emulation-speed) factor.
@@ -373,6 +465,21 @@ impl Default for SampleQueue {
     }
 }
 
+/// v1.7.0 H3 — store a dB-gain band array into shared atomic slots, NaN-guarding
+/// and clamping each to `-12..=12` (config.toml is deserialized unvalidated, and
+/// `f32::clamp` panics on a NaN argument). The slot array and the gain slice are
+/// the same length by construction at each call site.
+fn store_db_bands(slots: &[AtomicU32], gains: &[f32]) {
+    for (slot, &g) in slots.iter().zip(gains.iter()) {
+        let g = if g.is_nan() {
+            0.0
+        } else {
+            g.clamp(-12.0, 12.0)
+        };
+        slot.store(g.to_bits(), Ordering::Relaxed);
+    }
+}
+
 /// v1.1.0 beta.2 (T-110-D2) — the producer-side graphic-EQ stage. Owns the
 /// stateful biquads; rebuilds them from the shared queue params whenever the
 /// Settings UI bumps the EQ generation. Bypassed (zero overhead) when the EQ is
@@ -400,8 +507,14 @@ impl EqStage {
         let r#gen = queue.eq_gen();
         if r#gen != self.seen_gen {
             self.seen_gen = r#gen;
-            let (enabled, bands) = queue.eq_params();
-            self.eq = enabled.then(|| Equalizer::new(bands, self.sample_rate));
+            let (enabled, use_20, bands, bands_20) = queue.eq_params();
+            self.eq = enabled.then(|| {
+                if use_20 {
+                    Equalizer::new_20(bands_20, self.sample_rate)
+                } else {
+                    Equalizer::new(bands, self.sample_rate)
+                }
+            });
         }
         // A flat (all-zero-gain) EQ is a no-op in `Equalizer::process`; report it
         // as disengaged so callers skip the copy/resample work entirely.
@@ -448,10 +561,23 @@ impl AudioOutput {
     /// default rate, 60 ms latency target, DRC on). Kept for tests.
     #[allow(dead_code)]
     pub fn try_default() -> Result<Self, AudioError> {
-        Self::try_new(None, 60, true)
+        Self::try_new(None, 60, true, None)
     }
 
-    /// Open the default output device.
+    /// v1.7.0 H3 — enumerate the names of the available output devices.
+    /// The Settings device picker lists these alongside a "System default"
+    /// entry. Returns an empty list when the host exposes none.
+    #[must_use]
+    pub fn output_device_names() -> Vec<String> {
+        let host = cpal::default_host();
+        // cpal 0.18: the device name is its `Display` form (`to_string()`); the
+        // structured `description()` is richer but we only need the picker label.
+        host.output_devices()
+            .map(|it| it.map(|d: cpal::Device| d.to_string()).collect())
+            .unwrap_or_default()
+    }
+
+    /// Open an output device.
     ///
     /// - `preferred_rate` — request this sample rate when the device
     ///   supports it (the previously dead `[audio] sample_rate` config);
@@ -460,6 +586,9 @@ impl AudioOutput {
     ///   the start-gate waits for (clamped to 20..=250 ms).
     /// - `drc` — dynamic rate control on/off (off = bit-exact passthrough
     ///   of the core's samples to the DAC).
+    /// - `device_name` — v1.7.0 H3: open the output device with this name;
+    ///   `None` (the default) or an unmatched / now-absent name falls back to
+    ///   the host's default device (graceful device-gone handling).
     ///
     /// # Errors
     ///
@@ -469,9 +598,20 @@ impl AudioOutput {
         preferred_rate: Option<u32>,
         latency_ms: u32,
         drc: bool,
+        device_name: Option<&str>,
     ) -> Result<Self, AudioError> {
         let host = cpal::default_host();
-        let device = host.default_output_device().ok_or(AudioError::NoDevice)?;
+        // v1.7.0 H3 — pick the named device when it is present; otherwise fall
+        // back to the host default (covers `None` and a device that has since
+        // been unplugged).
+        let device = device_name
+            .and_then(|want| {
+                host.output_devices()
+                    .ok()
+                    .and_then(|mut it| it.find(|d: &cpal::Device| d.to_string() == want))
+            })
+            .or_else(|| host.default_output_device())
+            .ok_or(AudioError::NoDevice)?;
         let default_cfg = device
             .default_output_config()
             .map_err(|e| AudioError::Cpal(e.to_string()))?;
@@ -737,11 +877,26 @@ fn build_stream(
     // Reused mono scratch buffer — the real-time callback must not allocate
     // (v2.8.0 Phase 1; the old `vec![0.0; frames]` per callback is gone).
     let mut mono: Vec<f32> = Vec::new();
+    // v1.7.0 H3 — the stateful stereo output stage (pan / reverb / crossfeed),
+    // owned by the callback. Built at the stream's sample rate; live params are
+    // pulled from the shared queue once per callback when its generation moves.
+    let sr = config.sample_rate;
+    let mut stereo = StereoStage::new(sr);
+    let mut seen_stereo_gen = u64::MAX; // force a first sync.
     match format {
         SampleFormat::F32 => device
             .build_output_stream(
                 *config,
-                move |data: &mut [f32], _| fill::<f32>(data, &queue, chans, &mut mono),
+                move |data: &mut [f32], _| {
+                    fill::<f32>(
+                        data,
+                        &queue,
+                        chans,
+                        &mut mono,
+                        &mut stereo,
+                        &mut seen_stereo_gen,
+                    );
+                },
                 err_fn,
                 None,
             )
@@ -749,7 +904,16 @@ fn build_stream(
         SampleFormat::I16 => device
             .build_output_stream(
                 *config,
-                move |data: &mut [i16], _| fill::<i16>(data, &queue, chans, &mut mono),
+                move |data: &mut [i16], _| {
+                    fill::<i16>(
+                        data,
+                        &queue,
+                        chans,
+                        &mut mono,
+                        &mut stereo,
+                        &mut seen_stereo_gen,
+                    );
+                },
                 err_fn,
                 None,
             )
@@ -757,7 +921,16 @@ fn build_stream(
         SampleFormat::U16 => device
             .build_output_stream(
                 *config,
-                move |data: &mut [u16], _| fill::<u16>(data, &queue, chans, &mut mono),
+                move |data: &mut [u16], _| {
+                    fill::<u16>(
+                        data,
+                        &queue,
+                        chans,
+                        &mut mono,
+                        &mut stereo,
+                        &mut seen_stereo_gen,
+                    );
+                },
                 err_fn,
                 None,
             )
@@ -766,25 +939,68 @@ fn build_stream(
     }
 }
 
-/// Drain the queue into the device's interleaved output buffer, replicating
-/// the mono sample to every channel. `mono` is the closure-owned reusable
-/// scratch (grown once to the device period, then stable — no allocation in
-/// steady state).
+/// Drain the queue into the device's interleaved output buffer. With the stereo
+/// DSP stage at its defaults (center pan, no reverb, no crossfeed) the mono
+/// sample is replicated to every channel **bit-for-bit** — byte-identical to
+/// the pre-v1.7.0 mono-duplicated output. When the stage is engaged it widens
+/// the mono master into a stereo (L/R) image written to the first two channels
+/// (with extra channels fed the L/R average) (v1.7.0 H3).
+///
+/// `mono` is the closure-owned reusable scratch (grown once to the device
+/// period, then stable — no allocation in steady state). `stereo` is the
+/// stateful pan/reverb/crossfeed stage; `seen_stereo_gen` tracks the shared
+/// param generation so the stage re-syncs only when the UI changes a setting.
 fn fill<S: cpal::SizedSample + cpal::FromSample<f32>>(
     data: &mut [S],
     queue: &SampleQueue,
     channels: usize,
     mono: &mut Vec<f32>,
+    stereo: &mut StereoStage,
+    seen_stereo_gen: &mut u64,
 ) {
     let frames = data.len() / channels.max(1);
     mono.resize(frames, 0.0);
     queue.pop_or_silence(mono);
-    for (frame_idx, sample) in mono.iter().enumerate() {
-        for c in 0..channels {
-            let out_idx = frame_idx * channels + c;
-            if out_idx < data.len() {
-                data[out_idx] = S::from_sample(*sample);
+
+    // Re-sync the stereo stage from the shared params only when they changed.
+    let r#gen = queue.stereo_gen();
+    if r#gen != *seen_stereo_gen {
+        *seen_stereo_gen = r#gen;
+        let (pans, mix, room, cf) = queue.stereo_params();
+        stereo.set_params(pans, mix, room, cf);
+    }
+
+    // Bypass fast path: bit-exact mono duplication (today's output exactly), and
+    // mono devices (1 channel) never need the stereo image regardless.
+    if channels < 2 || stereo.is_bypass() {
+        for (frame_idx, sample) in mono.iter().enumerate() {
+            for c in 0..channels {
+                let out_idx = frame_idx * channels + c;
+                if out_idx < data.len() {
+                    data[out_idx] = S::from_sample(*sample);
+                }
             }
+        }
+        return;
+    }
+
+    // Engaged: widen each mono frame into a stereo (L/R) pair.
+    for (frame_idx, &sample) in mono.iter().enumerate() {
+        let (l, r) = stereo.process(sample);
+        let base = frame_idx * channels;
+        for c in 0..channels {
+            let out_idx = base + c;
+            if out_idx >= data.len() {
+                break;
+            }
+            // Channel 0 = L, channel 1 = R; any extra channels get the centre
+            // (L/R average) so surround layouts stay coherent.
+            let v = match c {
+                0 => l,
+                1 => r,
+                _ => 0.5 * (l + r),
+            };
+            data[out_idx] = S::from_sample(v);
         }
     }
 }

@@ -17,6 +17,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **v1.7.0 "Forge" H3 — audio depth: stereo panning, reverb/crossfeed, output
+  device picker, 20-band graphic EQ, per-context volume.** Five additive,
+  **bypass-by-default** frontend mixer/output stages. The deterministic core
+  sample stream is untouched (no chip-stack / `rustynes-core` / test-harness
+  change), so with the new controls at their defaults the native / `no_std` /
+  wasm output is **byte-identical** to v1.6.0 and AccuracyCoin holds 100%
+  (139/139). (1) **Stereo panning** widens the mono master to L/R in the cpal
+  callback (`audio_dsp.rs::StereoStage`) with a per-APU-channel pan array
+  (default all-center, which duplicates the mono value bit-for-bit). (2)
+  **Reverb / crossfeed** — a small Schroeder reverb (4-comb + 2-allpass) and a
+  headphone crossfeed, both default off (0% wet / 0 crossfeed = dry passthrough).
+  (3) **Output device picker** (`[audio] output_device`) enumerates the cpal
+  output devices; default = the system default device, and a now-absent device
+  falls back to it gracefully (native-only; the wasm path is unaffected). (4) a
+  **20-band graphic EQ** at the ISO third-octave centers (25 Hz–20 kHz) extends
+  the existing `eq.rs` (the `Equalizer` is now band-count-generic); flat in
+  either the 5- or 20-band mode is a true unity bypass, and a pre-v1.7.0 config
+  migrates (5-band kept, flat 20-band default). (5) **Per-context volume**
+  (master × game / menu legs) folds into the single cpal consume gain
+  (`AudioConfig::effective_gain_for`); all legs default to 1.0 (no-op). Wired
+  into Settings → Audio with `#[serde(default)]` config fields. See ADR 0020 for
+  the mono→stereo widening contract. (`docs/frontend.md`, `docs/adr/0020`.)
 - **v1.7.0 "Forge" H4 — per-game `<rom>.json` config overrides + DIP editor +
   lag-frame counter.** Additive / off-by-default; the core stays byte-identical
   and AccuracyCoin holds 100% (139/139). A frontend-only per-game config overlay
