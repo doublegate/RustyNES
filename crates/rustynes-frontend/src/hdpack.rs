@@ -2344,13 +2344,14 @@ mod tests {
 
         // The top-left cell shows the tile at CHR base 0x0040 (a non-zero address,
         // so the `& 0x1FF0` masking + `chr_peek` offset are exercised, not a
-        // degenerate 0x0000 case).
-        const BASE: u16 = 0x0040;
-        let (fb, ts) = one_tile_scene(BASE);
+        // degenerate 0x0000 case). A `let` (not a `const` item) keeps clippy's
+        // `items_after_statements` happy now that statements precede it.
+        let base: u16 = 0x0040;
+        let (fb, ts) = one_tile_scene(base);
 
-        // A CHR snapshot that holds `chr_bytes` exactly at [BASE..BASE+16].
+        // A CHR snapshot that holds `chr_bytes` exactly at [base..base+16].
         let mut chr = vec![0u8; 0x2000];
-        chr[BASE as usize..BASE as usize + 16].copy_from_slice(&chr_bytes);
+        chr[base as usize..base as usize + 16].copy_from_slice(&chr_bytes);
         let peek = |addr: u16| chr.get((addr & 0x1FFF) as usize).copied().unwrap_or(0);
 
         // Matching CHR -> the rule substitutes (top-left pixel becomes red).
