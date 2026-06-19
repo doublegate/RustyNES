@@ -241,13 +241,16 @@ impl HdPackBuilder {
         // Emit tiles in insertion order for a stable, diff-friendly manifest.
         let mut ordered: Vec<(&u32, &CapturedTile)> = self.tiles.iter().collect();
         ordered.sort_by_key(|(_, t)| t.index);
+        // Reused across tiles so the 32-char hex buffer is allocated once, not
+        // once per tile.
+        let mut tile_data = String::with_capacity(32);
         for (_key, tile) in ordered {
             let col = tile.index % SHEET_COLS;
             let row = tile.index / SHEET_COLS;
             let x = col * TILE;
             let y = row * TILE;
             // tileData = the 16 CHR bytes as 32 upper-case hex chars (Mesen form).
-            let mut tile_data = String::with_capacity(32);
+            tile_data.clear();
             for b in tile.chr {
                 let _ = write!(tile_data, "{b:02X}");
             }

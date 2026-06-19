@@ -243,15 +243,16 @@ fn topic_list(ui: &mut egui::Ui, state: &mut DocPanelState) {
     ui.add_space(4.0);
     ui.label(egui::RichText::new("Desktop app").strong().weak());
     for (i, topic) in GUI_TOPICS.iter().enumerate() {
-        // A parent matches if its own text matches OR any child matches (so a
-        // filtered search still surfaces the branch leading to a hit).
-        let child_bodies: Vec<&str> = topic.children.iter().map(|c| c.body).collect();
+        // A parent matches if its own text matches OR any child (title OR body)
+        // matches — so a filtered search still surfaces the branch leading to a
+        // hit. The per-child `matches` already tests the child body, so no
+        // per-frame `Vec<&str>` of bodies is needed (avoids a heap alloc every
+        // egui frame).
         let parent_match = matches(&needle, topic.title, &[topic.body])
             || topic
                 .children
                 .iter()
-                .any(|c| matches(&needle, c.title, &[c.body]))
-            || !child_bodies.is_empty() && matches(&needle, "", &child_bodies);
+                .any(|c| matches(&needle, c.title, &[c.body]));
         if parent_match {
             let sel = state.selected == DocSection::Gui(i);
             if ui.selectable_label(sel, topic.title).clicked() {
@@ -474,7 +475,9 @@ fn render_line_with_links(
                 if monospace {
                     rt = rt.monospace();
                 }
-                ui.label(rt);
+                // #53.1 — wrap text segments so a long run between links cannot
+                // overflow the pane horizontally.
+                ui.add(egui::Label::new(rt).wrap());
             }
             let after = &after[2..]; // skip "[["
             if let Some(end) = after.find("]]") {
@@ -489,7 +492,12 @@ fn render_line_with_links(
                 rest = &after[end + 2..];
             } else {
                 // Unterminated token — render the rest verbatim and stop.
-                ui.label(egui::RichText::new(rest).color(color));
+                // #53.2 — wrap it so the trailing run cannot overflow.
+                let mut rt = egui::RichText::new(rest).color(color);
+                if monospace {
+                    rt = rt.monospace();
+                }
+                ui.add(egui::Label::new(rt).wrap());
                 rest = "";
                 break;
             }
@@ -499,7 +507,8 @@ fn render_line_with_links(
             if monospace {
                 rt = rt.monospace();
             }
-            ui.label(rt);
+            // #53.3 — wrap the trailing text segment after the last link.
+            ui.add(egui::Label::new(rt).wrap());
         }
     });
     nav
@@ -683,7 +692,7 @@ Memory tools (Debug menu)
   OAM ............ the sprite list + a visual sprite grid.
 
 In RetroAchievements hardcore mode the Memory viewer is disabled (it is
-a RAM-watch surface); see [[RetroAchievements|netplay]] in the manual.",
+a RAM-watch surface); see [[RetroAchievements|features]] in the manual.",
     },
     SubPage {
         id: "dt-mapper",

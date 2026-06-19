@@ -378,8 +378,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   status-bar error: the parser only accepted an invented `hash,image,x,y` /
   `image,x,y,hash` `<tile>` grammar and `.parse::<u32>()`'d x/y from the wrong
   positions, so a real `<ver>106` tile line
-  (`<tile>chrBankPage,tileData,image,x,y,brightness,defaultTile,...`) failed for
-  **every** tile → zero rules → `load()` returned `None`. The parser now reads the
+  (`<tile>bitmapIndex,tileData,palette,x,y,brightness,defaultTile[,chrBankPage,tileIndex]`)
+  failed for **every** tile → zero rules → `load()` returned `None`. The parser now reads the
   real Mesen layout (verified against `Mesen2/Core/NES/HdPacks/HdPackLoader.cpp`):
   the real `<tile>` field order (`bitmapIndex,tileData,palette,x,y,brightness,
   defaultTile[,chrBankPage,tileIndex]`) with the 32-hex `tileData` (the tile's 16

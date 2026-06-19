@@ -176,8 +176,8 @@ struct BackgroundRegion {
     /// Destination top-left in NES pixel space (before upscale).
     x: i32,
     y: i32,
-    /// Draw priority (Mesen's `<background>` priority field; default 0). Higher
-    /// = drawn later = on top.
+    /// Draw priority (Mesen's `<background>` priority field; default 10 when the
+    /// field is absent, matching Mesen). Higher = drawn later = on top.
     priority: i32,
     /// Conditions that must ALL hold for the region to render (AND). Empty =
     /// always.
@@ -720,8 +720,11 @@ fn parse_hires(src: &str) -> ParsedHires {
         if line.is_empty() || line.starts_with("//") || line.starts_with('#') {
             continue;
         }
-        let (_prefix, body) = split_line_conditions(line);
-        let Some((tag, rest)) = split_tag(body) else {
+        // A condition / image / header / audio declaration is never itself
+        // behind a `[...]` condition prefix (only `<tile>` / `<background>`
+        // rules carry one), so split the tag directly off the line and skip the
+        // per-line `split_line_conditions` work this first pass doesn't use.
+        let Some((tag, rest)) = split_tag(line) else {
             continue;
         };
         match tag {
@@ -897,7 +900,10 @@ fn parse_hex_addr(s: &str) -> Option<u32> {
     Some(if ppu { addr | PPU_MEMORY_MARKER } else { addr })
 }
 
-/// Parse a hex byte value (`HexUtilities::FromHex`), masked to 8 bits.
+/// Parse a hex byte value (`HexUtilities::FromHex`). A value that does not fit in
+/// 8 bits is REJECTED (`None`) rather than silently truncated — a condition
+/// operand / mask wider than a byte is a malformed pack field, so the rule that
+/// references it should be dropped instead of matching against a wrong value.
 fn parse_hex_u8(s: &str) -> Option<u8> {
     let s = s.trim();
     let body = s
@@ -907,7 +913,7 @@ fn parse_hex_u8(s: &str) -> Option<u8> {
         .unwrap_or(s);
     u32::from_str_radix(body, 16)
         .ok()
-        .and_then(|v| u8::try_from(v & 0xFF).ok())
+        .and_then(|v| u8::try_from(v).ok())
 }
 
 /// Parse a `<condition>` line: `NAME,TYPE,args...`.
@@ -991,6 +997,12 @@ fn parse_condition(rest: &str) -> Option<Condition> {
                 .unwrap_or(0);
             ConditionKind::SpritePalette { id }
         }
+        // Mesen's indexed global-condition aliases `sppalette0`..`sppalette3`
+        // (the palette group is encoded in the type name, no `id` arg field).
+        "sppalette0" => ConditionKind::SpritePalette { id: 0 },
+        "sppalette1" => ConditionKind::SpritePalette { id: 1 },
+        "sppalette2" => ConditionKind::SpritePalette { id: 2 },
+        "sppalette3" => ConditionKind::SpritePalette { id: 3 },
         _ => return None, // unsupported condition type: ignored (inert).
     };
     Some(Condition {
@@ -1058,12 +1070,12 @@ fn parse_tile_fields(rest: &str) -> Option<(u32, usize, u32, u32)> {
 /// priority=11. The conditions come from the line's `[...]` prefix.
 ///
 /// `RustyNES`'s compositor places the background at `(left, top)` and orders by
-/// `priority` (Mesen's default priority is 10; `<` it draws under, `>=` over —
-/// here we map the unsigned Mesen priority straight through and the compositor's
-/// under/over split keys on a signed comparison, so a Mesen background always
-/// renders OVER the tile pass, matching Mesen). Scroll ratios + blend mode are
-/// parsed-and-ignored (subset). A bare `name` with no brightness is accepted
-/// (full-screen, priority 0).
+/// `priority` (Mesen's default priority is 10 when the field is absent; `<` it
+/// draws under, `>=` over — here we map the Mesen priority straight through and
+/// the compositor's under/over split keys on a signed comparison, so a default
+/// Mesen background renders OVER the tile pass, matching Mesen). Scroll ratios +
+/// blend mode are parsed-and-ignored (subset). A bare `name` with no priority
+/// field is accepted (full-screen, the Mesen default priority 10).
 fn parse_background_fields(rest: &str) -> Option<(String, i32, i32, i32)> {
     let fields: Vec<&str> = rest.split(',').map(str::trim).collect();
     if fields.is_empty() || fields[0].is_empty() {
@@ -1071,11 +1083,12 @@ fn parse_background_fields(rest: &str) -> Option<(String, i32, i32, i32)> {
     }
     let image = fields[0].to_string();
     // field 1 = brightness (ignored). fields 2,3 = scroll ratios (ignored).
-    // field 4 = priority (v106+; default 10). fields 5,6 = left,top.
+    // field 4 = priority (v106+; Mesen default 10 when absent). fields 5,6 =
+    // left,top.
     let priority = fields
         .get(4)
         .and_then(|p| p.parse::<i32>().ok())
-        .unwrap_or(0);
+        .unwrap_or(10);
     let x = fields
         .get(5)
         .and_then(|p| p.parse::<i32>().ok())
@@ -1768,6 +1781,42 @@ mod tests {
     }
 
     #[test]
+    fn parses_indexed_sppalette_global_conditions() {
+        // Mesen's indexed `sppalette0..3` global-condition aliases (the palette
+        // group is in the type name, no `id` arg field).
+        for id in 0u8..=3 {
+            let src = format!("<condition>p{id},sppalette{id}\n");
+            let parsed = parse_hires(&src);
+            match parsed.conditions[0].kind {
+                ConditionKind::SpritePalette { id: got } => assert_eq!(got, id),
+                _ => panic!("sppalette{id} should parse to SpritePalette {{ id: {id} }}"),
+            }
+        }
+    }
+
+    #[test]
+    fn parse_hex_u8_rejects_out_of_range() {
+        // A value that fits in 8 bits parses; a wider value is rejected (not
+        // silently truncated to its low byte).
+        assert_eq!(parse_hex_u8("FF"), Some(0xFF));
+        assert_eq!(parse_hex_u8("0x7F"), Some(0x7F));
+        assert_eq!(parse_hex_u8("100"), None); // 0x100 does not fit in a u8
+        assert_eq!(parse_hex_u8("1FF"), None);
+    }
+
+    #[test]
+    fn condition_with_out_of_range_operand_is_dropped() {
+        // An operand wider than a byte makes the whole condition unparseable, so
+        // a tile gated on it is dropped rather than matching a truncated value.
+        let src = "<condition>bad,memoryCheckConstant,0x10,==,0x1FF\n";
+        let parsed = parse_hires(src);
+        assert!(
+            parsed.conditions.is_empty(),
+            "out-of-range operand -> condition rejected"
+        );
+    }
+
+    #[test]
     fn parses_frame_range_condition() {
         let src = "<condition>blink,frameRange,60,30\n";
         let parsed = parse_hires(src);
@@ -1823,7 +1872,8 @@ mod tests {
         assert_eq!(parsed.backgrounds.len(), 2);
         assert_eq!(parsed.backgrounds[0].x, 0);
         assert_eq!(parsed.backgrounds[0].y, 0);
-        assert_eq!(parsed.backgrounds[0].priority, 0);
+        // No priority field present -> Mesen default priority 10.
+        assert_eq!(parsed.backgrounds[0].priority, 10);
         assert!(parsed.backgrounds[0].conditions.is_empty());
         assert_eq!(parsed.backgrounds[1].priority, 3);
         assert_eq!(parsed.backgrounds[1].x, 16);
