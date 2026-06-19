@@ -717,24 +717,24 @@ impl Mapper for Vrc4 {
 /// duty index <= duty-cycle threshold (or always-on when "ignore duty" mode
 /// is set); zero otherwise.
 #[derive(Clone, Default)]
-struct Vrc6Pulse {
+pub(crate) struct Vrc6Pulse {
     /// Bits 0-3: volume (0..=15). Bits 4-6: duty (0..=7, sets the duty-cycle
     /// threshold). Bit 7: ignore-duty (output always = volume).
-    ctrl: u8,
+    pub(crate) ctrl: u8,
     /// 12-bit period reload value.
-    period: u16,
+    pub(crate) period: u16,
     /// Channel enable bit (from period-hi bit 7).
-    enabled: bool,
+    pub(crate) enabled: bool,
     /// 12-bit countdown timer.
-    timer: u16,
+    pub(crate) timer: u16,
     /// 4-bit duty-cycle step (0..=15).
-    step: u8,
+    pub(crate) step: u8,
 }
 
 impl Vrc6Pulse {
     /// Clock the timer one CPU cycle. When it underflows, advance the duty
     /// step and reload from `period`.
-    fn clock(&mut self) {
+    pub(crate) fn clock(&mut self) {
         if !self.enabled {
             return;
         }
@@ -747,7 +747,7 @@ impl Vrc6Pulse {
     }
 
     /// Current 4-bit unsigned output (0..=15). 0 when disabled.
-    fn output(&self) -> u8 {
+    pub(crate) fn output(&self) -> u8 {
         if !self.enabled {
             return 0;
         }
@@ -767,24 +767,24 @@ impl Vrc6Pulse {
 /// the high 5 bits of the accumulator are emitted (0..=31) and the
 /// accumulator resets.
 #[derive(Clone, Default)]
-struct Vrc6Saw {
+pub(crate) struct Vrc6Saw {
     /// 6-bit accumulator-rate value (bits 5-0 of `$B000`).
-    rate: u8,
+    pub(crate) rate: u8,
     /// 12-bit period reload value.
-    period: u16,
+    pub(crate) period: u16,
     /// Channel enable bit (from period-hi bit 7).
-    enabled: bool,
+    pub(crate) enabled: bool,
     /// 12-bit countdown timer.
-    timer: u16,
+    pub(crate) timer: u16,
     /// Internal step counter 0..=13 (every other increment "ticks the
     /// accumulator"; 7 ticks per cycle = 14 steps).
-    step: u8,
+    pub(crate) step: u8,
     /// 8-bit accumulator. Output = accumulator >> 3 (5-bit, 0..=31).
-    acc: u8,
+    pub(crate) acc: u8,
 }
 
 impl Vrc6Saw {
-    fn clock(&mut self) {
+    pub(crate) fn clock(&mut self) {
         if !self.enabled {
             return;
         }
@@ -806,7 +806,7 @@ impl Vrc6Saw {
     }
 
     /// 5-bit unsigned output (0..=31).
-    fn output(&self) -> u8 {
+    pub(crate) fn output(&self) -> u8 {
         if !self.enabled {
             return 0;
         }
@@ -2212,7 +2212,7 @@ impl Sunsoft5BEnvelope {
 /// generator, envelope generator, plus the address-latch byte that the
 /// `$C000-$DFFF` writes use to select the next `$E000-$FFFF` data target.
 #[derive(Clone, Default)]
-struct Sunsoft5BAudio {
+pub(crate) struct Sunsoft5BAudio {
     /// Latched 4-bit register index from the most recent `$C000-$DFFF`
     /// write.  Bits 7-4 of the high-byte are silently ignored (per the
     /// NESdev wiki: writes with bits 7-4 nonzero are inhibited; we model
@@ -2230,7 +2230,7 @@ struct Sunsoft5BAudio {
 }
 
 impl Sunsoft5BAudio {
-    fn write_addr(&mut self, value: u8) {
+    pub(crate) fn write_addr(&mut self, value: u8) {
         // Per the wiki, writes with the high nibble nonzero are inhibited.
         // The simplest faithful model is to mask the latch to 4 bits and
         // accept the next data write unconditionally — no known software
@@ -2238,7 +2238,7 @@ impl Sunsoft5BAudio {
         self.addr_latch = value & 0x0F;
     }
 
-    fn write_data(&mut self, value: u8) {
+    pub(crate) fn write_data(&mut self, value: u8) {
         let idx = self.addr_latch as usize;
         self.regs[idx] = value;
         match idx {
@@ -2304,7 +2304,7 @@ impl Sunsoft5BAudio {
     /// "none of the various generators can be halted" — they run whenever
     /// the chip is clocked, regardless of mixer/enable state.
     #[cfg(feature = "mapper-audio")]
-    fn clock(&mut self) {
+    pub(crate) fn clock(&mut self) {
         self.tone_a.clock();
         self.tone_b.clock();
         self.tone_c.clock();
@@ -2315,7 +2315,7 @@ impl Sunsoft5BAudio {
     /// Linear-summed audio output, scaled to ~i16 with the same headroom
     /// VRC6 leaves for the APU mixer.
     #[cfg(feature = "mapper-audio")]
-    fn mix(&self) -> i16 {
+    pub(crate) fn mix(&self) -> i16 {
         let mut sum: i32 = 0;
         for (ch, tone) in [&self.tone_a, &self.tone_b, &self.tone_c]
             .iter()
@@ -2339,6 +2339,18 @@ impl Sunsoft5BAudio {
         // for an idle (all-channels-on-with-fixed-volume) cartridge.  Cast
         // is safe: sum <= 3 * 1882 = 5646, DC bias = 3 * (1882/2) = 2823.
         (sum - i32::from(SUNSOFT5B_DC_BIAS)) as i16
+    }
+
+    /// Feature-off shim: the generators do not advance with `mapper-audio`
+    /// disabled (mirrors the gated path so the shared NSF expansion router
+    /// can clock unconditionally).
+    #[cfg(not(feature = "mapper-audio"))]
+    pub(crate) fn clock(&mut self) {}
+
+    /// Feature-off shim: silence when `mapper-audio` is disabled.
+    #[cfg(not(feature = "mapper-audio"))]
+    pub(crate) fn mix(&self) -> i16 {
+        0
     }
 
     /// Serialize the live audio state.  21-byte tail:
@@ -2824,7 +2836,7 @@ impl Mapper for Fme7 {
 /// the APU mixer.
 #[cfg(feature = "mapper-audio")]
 #[derive(Clone)]
-struct Namco163Audio {
+pub(crate) struct Namco163Audio {
     /// 128-byte internal sound RAM.  Shared between wavetable samples
     /// (`$00-$3F` conventionally) and per-channel register file
     /// (`$40-$7F`).
@@ -2851,7 +2863,7 @@ struct Namco163Audio {
 // state required for those two paths.
 #[cfg(not(feature = "mapper-audio"))]
 #[derive(Clone)]
-struct Namco163Audio {
+pub(crate) struct Namco163Audio {
     ram: [u8; 128],
     addr_latch: u8,
     auto_inc: bool,
@@ -2874,7 +2886,7 @@ impl Default for Namco163Audio {
 impl Namco163Audio {
     /// Write to the address port (`$F800-$FFFF`).  Bit 7 = auto-increment;
     /// bits 6-0 = 7-bit address into internal RAM.
-    fn write_addr_port(&mut self, value: u8) {
+    pub(crate) fn write_addr_port(&mut self, value: u8) {
         self.auto_inc = value & 0x80 != 0;
         self.addr_latch = value & 0x7F;
     }
@@ -2889,7 +2901,7 @@ impl Namco163Audio {
 
     /// Write to the data port (`$4800-$4FFF`).  Stores at the latched
     /// address; advances the latch when auto-increment is set.
-    fn write_data_port(&mut self, value: u8) {
+    pub(crate) fn write_data_port(&mut self, value: u8) {
         let idx = (self.addr_latch & 0x7F) as usize;
         self.ram[idx] = value;
         self.step_addr();
@@ -2897,7 +2909,7 @@ impl Namco163Audio {
 
     /// Read from the data port (`$4800-$4FFF`).  Returns the byte at the
     /// latched address; advances the latch when auto-increment is set.
-    fn read_data_port(&mut self) -> u8 {
+    pub(crate) fn read_data_port(&mut self) -> u8 {
         let idx = (self.addr_latch & 0x7F) as usize;
         let v = self.ram[idx];
         self.step_addr();
@@ -2992,7 +3004,7 @@ impl Namco163Audio {
     /// When the phase exceeds `L * 65536`, wrap around — the integer
     /// part of `phase >> 16` modulo `L` is the wavetable index.
     #[cfg(feature = "mapper-audio")]
-    fn clock(&mut self) {
+    pub(crate) fn clock(&mut self) {
         self.prescaler = self.prescaler.wrapping_add(1);
         if self.prescaler < 15 {
             return;
@@ -3053,7 +3065,7 @@ impl Namco163Audio {
     /// effectively the same average since each channel only drives the
     /// output `1/n` of the time.
     #[cfg(feature = "mapper-audio")]
-    fn mix(&self) -> i16 {
+    pub(crate) fn mix(&self) -> i16 {
         let n = self.channel_count();
         if n == 0 {
             return 0;
@@ -3070,7 +3082,7 @@ impl Namco163Audio {
 
     /// `mix_audio` shim for the no-audio build.
     #[cfg(not(feature = "mapper-audio"))]
-    fn mix(&self) -> i16 {
+    pub(crate) fn mix(&self) -> i16 {
         0
     }
 

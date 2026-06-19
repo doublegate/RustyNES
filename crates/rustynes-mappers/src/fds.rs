@@ -547,7 +547,7 @@ fn parse_sides(body: &[u8], declared: u8, has_header: bool) -> Result<FdsDisk, R
 /// save-state tail are identical between `mapper-audio` on/off builds); the
 /// synthesis (`clock` / `output`) is only driven when the feature is on.
 #[derive(Clone)]
-struct FdsAudio {
+pub(crate) struct FdsAudio {
     // --- Wavetable ($4040-$407F) ---
     /// 64-entry, 6-bit wavetable RAM (0..=63 per step).
     wavetable: [u8; 64],
@@ -662,7 +662,7 @@ impl FdsAudio {
     /// Returns nothing; side effects update the channel state. Wavetable RAM
     /// (`$4040-$407F`) is only mutable while wave-write-enable (`$4089` bit 7)
     /// is set.
-    fn write_reg(&mut self, addr: u16, value: u8) {
+    pub(crate) fn write_reg(&mut self, addr: u16, value: u8) {
         match addr {
             0x4040..=0x407F => {
                 if self.wave_write_enable {
@@ -925,7 +925,7 @@ impl FdsAudio {
     /// Advance the whole sound channel by one CPU cycle: tick the envelopes
     /// every cycle and the wave + modulation units every 16 CPU cycles.
     #[cfg(feature = "mapper-audio")]
-    fn clock(&mut self) {
+    pub(crate) fn clock(&mut self) {
         self.clock_envelopes();
         self.cycle_prescaler += 1;
         if self.cycle_prescaler >= 16 {
@@ -943,7 +943,7 @@ impl FdsAudio {
     /// square. We scale so the peak (`63 * 32` at master=full) lands near
     /// VRC6's loudness ballpark (`~±15k`) — comfortably under `i16::MAX`.
     #[cfg(feature = "mapper-audio")]
-    fn output(&self) -> i16 {
+    pub(crate) fn output(&self) -> i16 {
         // Volume gain clamps to 32 at the output multiply (PWM duty 32/32).
         let gain = u32::from(self.vol_gain.min(32));
         let sample = u32::from(self.wave_out_latch & 0x3F);
@@ -966,6 +966,18 @@ impl FdsAudio {
         // full-gain step; the full-scale (gain 32, master full) reaches
         // ~±6.9k, in the APU-square-x2.4 ballpark and well under i16::MAX.
         (centered * 7) as i16
+    }
+
+    /// Feature-off shim: with `mapper-audio` disabled the synthesizer does
+    /// not advance, so a clock is a no-op (mirrors the gated path so the
+    /// shared NSF expansion router can call `clock()` unconditionally).
+    #[cfg(not(feature = "mapper-audio"))]
+    pub(crate) fn clock(&mut self) {}
+
+    /// Feature-off shim: silence when `mapper-audio` is disabled.
+    #[cfg(not(feature = "mapper-audio"))]
+    pub(crate) fn output(&self) -> i16 {
+        0
     }
 
     /// Save-state tail (kept lock-step with [`Self::read_tail`]).

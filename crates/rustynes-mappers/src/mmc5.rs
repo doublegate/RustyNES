@@ -150,14 +150,14 @@ const DUTY_TABLE: [[u8; 8]; 4] = [
 ///   contract as `$4015` for the 2A03 pulses; no DMC bit since there's no
 ///   DMC).
 #[derive(Debug, Clone, Default)]
-struct Mmc5Audio {
-    pulse1: Mmc5Pulse,
-    pulse2: Mmc5Pulse,
+pub(crate) struct Mmc5Audio {
+    pub(crate) pulse1: Mmc5Pulse,
+    pub(crate) pulse2: Mmc5Pulse,
     /// `$5010` raw byte. Bit 0 = read-mode (silences PCM); bit 7 = PCM IRQ
     /// enable (not modelled).
-    pcm_ctrl: u8,
+    pub(crate) pcm_ctrl: u8,
     /// `$5011` last write — 7-bit linear PCM level (low 7 bits used).
-    pcm_sample: u8,
+    pub(crate) pcm_sample: u8,
 }
 
 /// MMC5 audio pulse channel. Same architecture as the 2A03 pulse (duty
@@ -165,7 +165,7 @@ struct Mmc5Audio {
 /// sweep unit. Length and envelope tick on the APU frame-counter events
 /// fanned out via [`crate::mapper::Mapper::notify_frame_event`].
 #[derive(Debug, Clone, Default)]
-struct Mmc5Pulse {
+pub(crate) struct Mmc5Pulse {
     /// Duty selection (bits 6-7 of `$5000` / `$5004`).
     duty: u8,
     /// Length-halt + envelope-loop bit (bit 5 of `$5000` / `$5004`).
@@ -182,7 +182,7 @@ struct Mmc5Pulse {
     /// 3-bit step into `DUTY_TABLE`.
     step: u8,
     /// Length counter (5-bit lookup -> 0..=254). 0 mutes the channel.
-    length: u8,
+    pub(crate) length: u8,
     /// Length-counter channel-enable from `$5015` writes.
     length_enabled: bool,
     /// Envelope start flag (set on `$5003`/`$5007` write).
@@ -195,7 +195,7 @@ struct Mmc5Pulse {
 
 impl Mmc5Pulse {
     /// `$5000` / `$5004` write: duty + length-halt + envelope.
-    fn write_ctrl(&mut self, value: u8) {
+    pub(crate) fn write_ctrl(&mut self, value: u8) {
         self.duty = (value >> 6) & 0x03;
         self.halt = (value & 0x20) != 0;
         self.envelope_constant = (value & 0x10) != 0;
@@ -203,13 +203,13 @@ impl Mmc5Pulse {
     }
 
     /// `$5002` / `$5006` write: timer-period low byte.
-    fn write_timer_lo(&mut self, value: u8) {
+    pub(crate) fn write_timer_lo(&mut self, value: u8) {
         self.timer_period = (self.timer_period & 0xFF00) | u16::from(value);
     }
 
     /// `$5003` / `$5007` write: length-load + timer-period high 3 bits.
     /// Also resets the duty step and primes the envelope.
-    fn write_timer_hi(&mut self, value: u8) {
+    pub(crate) fn write_timer_hi(&mut self, value: u8) {
         self.timer_period = (self.timer_period & 0x00FF) | (u16::from(value & 0x07) << 8);
         if self.length_enabled {
             self.length = LENGTH_TABLE[(value >> 3) as usize];
@@ -220,7 +220,7 @@ impl Mmc5Pulse {
 
     /// `$5015` write: per-channel length-enable. Clearing the bit forces
     /// the length count to 0 (same contract as `$4015` for the 2A03).
-    fn set_length_enabled(&mut self, enabled: bool) {
+    pub(crate) fn set_length_enabled(&mut self, enabled: bool) {
         self.length_enabled = enabled;
         if !enabled {
             self.length = 0;
@@ -229,7 +229,7 @@ impl Mmc5Pulse {
 
     /// One APU clock (every other CPU cycle) — advance the timer / duty
     /// sequencer. Caller is responsible for the every-other-cycle gating.
-    fn clock_timer(&mut self) {
+    pub(crate) fn clock_timer(&mut self) {
         if self.timer == 0 {
             self.timer = self.timer_period;
             self.step = (self.step + 1) & 0x07;
@@ -239,7 +239,7 @@ impl Mmc5Pulse {
     }
 
     /// Quarter-frame: clock envelope.
-    fn clock_envelope(&mut self) {
+    pub(crate) fn clock_envelope(&mut self) {
         if self.envelope_start {
             self.envelope_start = false;
             self.envelope_decay = 15;
@@ -258,7 +258,7 @@ impl Mmc5Pulse {
 
     /// Half-frame: clock length counter (no sweep — MMC5 pulses have no
     /// sweep unit).
-    fn clock_length(&mut self) {
+    pub(crate) fn clock_length(&mut self) {
         if !self.halt && self.length > 0 {
             self.length -= 1;
         }
@@ -281,7 +281,7 @@ impl Mmc5Pulse {
     }
 
     /// Per-cycle 4-bit output (0..=15). 0 when muted.
-    fn output(&self) -> u8 {
+    pub(crate) fn output(&self) -> u8 {
         if self.muted() || DUTY_TABLE[self.duty as usize][self.step as usize] == 0 {
             0
         } else {
