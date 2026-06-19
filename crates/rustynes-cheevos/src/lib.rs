@@ -44,7 +44,7 @@ pub mod memory;
 mod util;
 
 pub use client::{RaAchievement, RaClient, RaGameSummary, RaLeaderboard, RaUser};
-pub use events::RaEvent;
+pub use events::{RaEvent, RaScoreboardEntry};
 pub use memory::ra_addr_to_nes;
 
 #[cfg(test)]

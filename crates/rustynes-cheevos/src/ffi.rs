@@ -171,6 +171,34 @@ pub struct rc_client_server_error_t {
     pub related_id: u32,
 }
 
+/// `RC_CLIENT_LEADERBOARD_DISPLAY_SIZE` (the fixed `char[]` width of the
+/// formatted leaderboard score strings).
+pub const RC_CLIENT_LEADERBOARD_DISPLAY_SIZE: usize = 24;
+
+/// `rc_client_leaderboard_scoreboard_entry_t`. Valid only inside the event
+/// callback (rcheevos owns the backing storage); the event trampoline copies
+/// the fields it needs out immediately.
+#[repr(C)]
+pub struct rc_client_leaderboard_scoreboard_entry_t {
+    pub username: *const c_char,
+    pub rank: u32,
+    pub score: [c_char; RC_CLIENT_LEADERBOARD_DISPLAY_SIZE],
+}
+
+/// `rc_client_leaderboard_scoreboard_t`. The payload of the
+/// `RC_CLIENT_EVENT_LEADERBOARD_SCOREBOARD` event — the server's response to a
+/// submitted leaderboard entry (the player's new rank/score + the top entries).
+#[repr(C)]
+pub struct rc_client_leaderboard_scoreboard_t {
+    pub leaderboard_id: u32,
+    pub submitted_score: [c_char; RC_CLIENT_LEADERBOARD_DISPLAY_SIZE],
+    pub best_score: [c_char; RC_CLIENT_LEADERBOARD_DISPLAY_SIZE],
+    pub new_rank: u32,
+    pub num_entries: u32,
+    pub top_entries: *const rc_client_leaderboard_scoreboard_entry_t,
+    pub num_top_entries: u32,
+}
+
 /// `rc_client_event_t`. The "union" in the docs is really a flat set of
 /// pointers; the active one is selected by `type`.
 #[repr(C)]
@@ -179,7 +207,7 @@ pub struct rc_client_event_t {
     pub achievement: *mut rc_client_achievement_t,
     pub leaderboard: *mut rc_client_leaderboard_t,
     pub leaderboard_tracker: *mut rc_client_leaderboard_tracker_t,
-    pub leaderboard_scoreboard: *mut c_void, // rc_client_leaderboard_scoreboard_t (unused)
+    pub leaderboard_scoreboard: *mut rc_client_leaderboard_scoreboard_t,
     pub server_error: *mut rc_client_server_error_t,
     pub subset: *mut c_void, // rc_client_subset_t (unused)
 }
@@ -234,7 +262,6 @@ pub const RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_UPDATE: u32 = 9;
 pub const RC_CLIENT_EVENT_LEADERBOARD_TRACKER_SHOW: u32 = 10;
 pub const RC_CLIENT_EVENT_LEADERBOARD_TRACKER_HIDE: u32 = 11;
 pub const RC_CLIENT_EVENT_LEADERBOARD_TRACKER_UPDATE: u32 = 12;
-#[allow(dead_code)] // documents the full event enum; scoreboard not modeled
 pub const RC_CLIENT_EVENT_LEADERBOARD_SCOREBOARD: u32 = 13;
 pub const RC_CLIENT_EVENT_RESET: u32 = 14;
 pub const RC_CLIENT_EVENT_GAME_COMPLETED: u32 = 15;
@@ -299,6 +326,11 @@ unsafe extern "C" {
     pub fn rc_client_idle(client: *mut rc_client_t);
     pub fn rc_client_reset(client: *mut rc_client_t);
 
+    /// Returns non-zero if enough frames have elapsed since the previous call
+    /// to allow a pause. When it returns zero and `frames_remaining` is
+    /// non-null, the number of frames still required is written there.
+    pub fn rc_client_can_pause(client: *mut rc_client_t, frames_remaining: *mut u32) -> c_int;
+
     pub fn rc_client_serialize_progress_sized(
         client: *mut rc_client_t,
         buffer: *mut u8,
@@ -357,6 +389,8 @@ mod abi_guard {
         fn rc_cheevos_sizeof_leaderboard_bucket() -> usize;
         fn rc_cheevos_sizeof_leaderboard_list() -> usize;
         fn rc_cheevos_sizeof_server_error() -> usize;
+        fn rc_cheevos_sizeof_scoreboard_entry() -> usize;
+        fn rc_cheevos_sizeof_scoreboard() -> usize;
         fn rc_cheevos_sizeof_api_server_response() -> usize;
     }
 
@@ -402,6 +436,14 @@ mod abi_guard {
             assert_eq!(
                 size_of::<rc_client_server_error_t>(),
                 rc_cheevos_sizeof_server_error()
+            );
+            assert_eq!(
+                size_of::<rc_client_leaderboard_scoreboard_entry_t>(),
+                rc_cheevos_sizeof_scoreboard_entry()
+            );
+            assert_eq!(
+                size_of::<rc_client_leaderboard_scoreboard_t>(),
+                rc_cheevos_sizeof_scoreboard()
             );
             assert_eq!(
                 size_of::<rc_api_server_response_t>(),

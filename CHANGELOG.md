@@ -17,6 +17,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **v1.7.0 "Forge" H1/H2 — browser RetroAchievements completion + RA HUD depth.**
+  Additive / off-by-default; the core stays byte-identical and AccuracyCoin holds
+  100% (139/139). **H1 (browser RA, `browser-cheevos`):** `web/cheevos/ra_glue.js`
+  gained the real rc_client **wasm trampoline marshalling** — `addFunction`-bound
+  read-memory / server-call / event-handler callbacks, the `rc_api_request_t` →
+  auth-proxy `fetch` → `rc_api_server_response_t` bridge (verbatim path/body
+  forwarding so the proxy can inject the browser-forbidden RA `User-Agent`
+  server-side), client create + event-handler install + casual-only enforcement
+  (no hardcore export), and a per-frame `ra_do_frame(readByte)` driver returning a
+  JSON event array. The Rust bridge (`wasm_cheevos.rs`) added `begin_login` /
+  `load_game` / `do_frame` over those imports; the side-module build script now
+  exports `set_event_handler` + the `getValue` / `setValue` / `HEAPU8` runtime
+  methods the marshalling needs. The auth-proxy **deploy** and a **live-browser
+  unlock with a real RA account** remain maintainer-manual (no headless path —
+  ADR 0015; native RA unaffected). **H2 (RA HUD completion):** surfaces RA data
+  the session already decoded then dropped — a **leaderboard-scoreboard popup**
+  (new `RaEvent::LeaderboardScoreboard` from the previously-unmodeled event 13,
+  shown as "#N of M" + the top entries), **challenge** + **progress** indicators
+  (now stored + drawn instead of ignored), per-achievement **rarity** ("% earn")
+  in the panel, and hardcore **pause-gating** (`rc_client_can_pause`) wired into
+  `set_paused` so a hardcore pause is deferred with the seconds remaining.
 - **v1.7.0 "Forge" beta.5 — UI overhaul (#51/#52/#53/#55).** Frontend-only and
   determinism-neutral (the core stays byte-identical; AccuracyCoin 100%,
   139/139). (#51) The two controller HUDs were **consolidated into one "Input

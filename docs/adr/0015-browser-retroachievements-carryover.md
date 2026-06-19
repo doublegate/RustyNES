@@ -4,11 +4,18 @@ Date: 2026-06-16
 
 ## Status
 
-Accepted (v1.3.0 Workstream I). **Partially implemented in v1.5.0 "Lens"
-Workstream G** — the buildable parts are now done (build track proven, casual-only
-gating made structural, auth-proxy contract + stub, loud in-UI caveat); the live
-hosting + RA-account verification remain a maintainer-manual item (no headless
-path). See the v1.5.0 update at the end of Consequences.
+Accepted (v1.3.0 Workstream I). **Implemented in code through v1.7.0 "Forge"
+H1** — v1.5.0 "Lens" Workstream G did the buildable parts (build track proven,
+casual-only gating made structural, auth-proxy contract + stub, loud in-UI
+caveat); v1.7.0 H1 then landed the `ra_glue.js` rc_client **wasm trampoline
+marshalling** (read-memory / server-call / event-handler via `addFunction`, the
+request → auth-proxy `fetch` → response bridge, client create + event-handler
+install, and the `ra_do_frame` driver) plus the Rust bridge methods. **The only
+remaining carryovers are the two that cannot be CI-self-certified:** the auth
+proxy **deploy** (host + TLS + hardened CORS + the RA-team `User-Agent`
+coordination) and a **live-browser unlock with a real RA account** (no headless
+path). Those two are the acceptance gate for flipping this ADR to fully
+Implemented. See the v1.5.0 + v1.7.0 updates at the end of Consequences.
 
 ## Context
 
@@ -97,13 +104,22 @@ native RA, the default native build, and both default wasm builds are unchanged
    always says casual-only + experimental (and, when the proxy is unset, that
    login + unlocks are unavailable). Nothing silently pretends to work.
 
-**Still maintainer-manual (no headless path):**
+**v1.7.0 "Forge" H1 update — the trampoline marshalling is now done.** The
+`ra_glue.js` rc_client wasm trampoline marshalling is implemented:
+`addFunction`-bound read-memory / server-call / event-handler callbacks; the
+server-call trampoline marshals an `rc_api_request_t` → an auth-proxy `fetch`
+(verbatim path/body, so the proxy injects the `User-Agent`) → an
+`rc_api_server_response_t` and invokes the rcheevos completion; `ra_init` creates
+the client + installs the event handler (casual-only, no hardcore export); and
+`ra_do_frame(readByte)` drives a frame, returning a JSON event array. The Rust
+bridge gained `begin_login` / `load_game` / `do_frame`; the side-module build
+script exports `set_event_handler` + `getValue`/`setValue`/`HEAPU8`.
 
-- Deploy the auth proxy (a host + TLS + a hardened CORS origin) and coordinate the
-  exact `User-Agent` + casual-only intent with the RA team.
-- Finish the `ra_glue.js` rc_client trampoline marshalling (read-memory /
-  server-call / event-handler via `addFunction`) — scaffolded, with the contract
-  shape in place — then point `RA_PROXY_BASE` at the deployed proxy.
+**Still maintainer-manual (no headless path) — the only remaining carryovers:**
+
+- **Deploy the auth proxy** (a host + TLS + a hardened CORS origin) and coordinate
+  the exact `User-Agent` + casual-only intent with the RA team, then point
+  `RA_PROXY_BASE` at the deployed proxy.
 - **Live-browser verification with a real RA account** (open the page, log in via
   the proxy, confirm a casual unlock). This has no headless path and is the
   acceptance gate for flipping this ADR to fully Implemented.

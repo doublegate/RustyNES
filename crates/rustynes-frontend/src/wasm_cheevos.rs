@@ -49,6 +49,7 @@
 // `wasm_idb.rs`).
 #![allow(clippy::doc_markdown, clippy::future_not_send)]
 
+use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 
 // The host surface implemented by `web/cheevos/ra_glue.js`. These imports
@@ -58,7 +59,9 @@ use wasm_bindgen::prelude::*;
 #[wasm_bindgen(module = "/web/cheevos/ra_glue.js")]
 extern "C" {
     /// Initialize the casual-only client. Resolves to `true` on success.
-    /// Hardcore is never enabled (the toggle is unexported).
+    /// Hardcore is never enabled (the toggle is unexported). v1.7.0 H1: this
+    /// now registers the read-memory / server-call / event-handler trampolines
+    /// in the side module and installs the event handler.
     #[wasm_bindgen(catch, js_name = ra_init)]
     async fn ra_init() -> Result<JsValue, JsValue>;
 
@@ -66,6 +69,21 @@ extern "C" {
     /// unlocks). Drives the UI "not configured" caveat.
     #[wasm_bindgen(js_name = ra_proxy_configured)]
     fn ra_proxy_configured() -> bool;
+
+    /// Begin a casual login through the auth proxy. Resolves to `true` if the
+    /// request was issued (completion is observed on later `ra_do_frame` polls).
+    #[wasm_bindgen(catch, js_name = ra_begin_login)]
+    async fn ra_begin_login(username: &str, password: &str) -> Result<JsValue, JsValue>;
+
+    /// Begin identifying + loading a game from its ROM bytes. Resolves to `true`
+    /// if the request was issued.
+    #[wasm_bindgen(catch, js_name = ra_load_game)]
+    async fn ra_load_game(rom: &[u8]) -> Result<JsValue, JsValue>;
+
+    /// Drive one frame of achievement logic. `read_byte` is a JS callback that
+    /// reads one NES CPU-bus byte. Returns a JSON array of this frame's events.
+    #[wasm_bindgen(js_name = ra_do_frame)]
+    fn ra_do_frame(read_byte: &js_sys::Function) -> String;
 
     /// Tear down the client + module.
     #[wasm_bindgen(js_name = ra_shutdown)]
@@ -130,6 +148,68 @@ impl BrowserRaSession {
         false
     }
 
+    /// Begin a casual login through the auth proxy (v1.7.0 H1). No-op + returns
+    /// `false` when the proxy is not configured / the module is not initialized.
+    /// Completion is observed by later [`Self::do_frame`] polls (the login
+    /// request is carried by the server-call trampoline in `ra_glue.js`).
+    pub async fn begin_login(&self, username: &str, password: &str) -> bool {
+        if !self.initialized || !self.proxy_configured {
+            return false;
+        }
+        ra_begin_login(username, password)
+            .await
+            .ok()
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    }
+
+    /// Begin identifying + loading a game from its ROM bytes (v1.7.0 H1).
+    /// Returns `false` when the module is not initialized.
+    pub async fn load_game(&self, rom: &[u8]) -> bool {
+        if !self.initialized {
+            return false;
+        }
+        ra_load_game(rom)
+            .await
+            .ok()
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    }
+
+    /// Drive one frame of achievement logic (v1.7.0 H1), reading NES CPU-bus
+    /// bytes through `read`. Returns the titles of any achievement-unlock
+    /// events raised this frame (for HUD toasts). No-op (empty) when the module
+    /// is not initialized.
+    ///
+    /// The `read` closure is wrapped in a JS function for the side module's
+    /// read-memory trampoline; it is only invoked synchronously inside the
+    /// `ra_do_frame` call, so the borrow never escapes.
+    pub fn do_frame(&self, read: &mut dyn FnMut(u16) -> u8) -> Vec<String> {
+        if !self.initialized {
+            return Vec::new();
+        }
+        // `Closure::new` requires a `'static` body, but our `read` borrows the
+        // emulator and only needs to be valid for this synchronous call.
+        // `ra_do_frame` invokes the JS callback ONLY synchronously while we are
+        // inside it (the browser is single-threaded and the side module never
+        // retains the function pointer past the call), then we drop the closure
+        // before returning. So we erase the borrow's lifetime to `'static`,
+        // matching the native bridge's `ReadGuard` idiom.
+        //
+        // SAFETY: the erased pointer is only dereferenced by `ra_do_frame`
+        // synchronously below, and `closure` is dropped at the end of this
+        // function, so the call can never outlive the real borrow.
+        #[allow(unsafe_code)] // localized lifetime erasure; see SAFETY above
+        let read_static: &mut (dyn FnMut(u16) -> u8 + 'static) =
+            unsafe { core::mem::transmute(read) };
+        let closure = Closure::<dyn FnMut(u32) -> u32>::new(move |addr: u32| {
+            u32::from(read_static((addr & 0xffff) as u16))
+        });
+        let json = ra_do_frame(closure.as_ref().unchecked_ref());
+        drop(closure);
+        parse_unlock_titles(&json)
+    }
+
     /// The loud, persistent in-UI caveat banner text. Always casual-only +
     /// experimental; additionally flags when the auth proxy is not configured.
     #[must_use]
@@ -152,6 +232,36 @@ impl Drop for BrowserRaSession {
             ra_shutdown();
         }
     }
+}
+
+/// rc_client `RC_CLIENT_EVENT_ACHIEVEMENT_TRIGGERED`.
+const RC_CLIENT_EVENT_ACHIEVEMENT_TRIGGERED: f64 = 1.0;
+
+/// Parse the JSON event array `ra_do_frame` returns and extract the titles of
+/// achievement-unlock events (the only ones the casual HUD toasts). Tolerant of
+/// a malformed / empty payload (returns an empty list).
+fn parse_unlock_titles(json: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let Ok(parsed) = js_sys::JSON::parse(json) else {
+        return out;
+    };
+    let Ok(arr) = parsed.dyn_into::<js_sys::Array>() else {
+        return out;
+    };
+    for ev in arr.iter() {
+        let ty = js_sys::Reflect::get(&ev, &JsValue::from_str("type"))
+            .ok()
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+        if (ty - RC_CLIENT_EVENT_ACHIEVEMENT_TRIGGERED).abs() < f64::EPSILON {
+            let title = js_sys::Reflect::get(&ev, &JsValue::from_str("title"))
+                .ok()
+                .and_then(|v| v.as_string())
+                .unwrap_or_default();
+            out.push(title);
+        }
+    }
+    out
 }
 
 #[cfg(test)]

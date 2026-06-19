@@ -1362,6 +1362,92 @@ impl DebuggerOverlay {
             }
         }
 
+        // v1.7.0 "Forge" H2 — RetroAchievements HUD completion. These surface
+        // the leaderboard-scoreboard / challenge / progress data the session
+        // already decodes. They read the inert pushed status snapshot (no `nes`
+        // and no feature gate), so they render in every build configuration;
+        // when the `retroachievements` feature is off the vectors are empty.
+        {
+            let status = self.cheevos_ui.status();
+
+            // Active challenge indicators + the transient progress indicator,
+            // drawn as a compact bottom-right stack (above the status bar).
+            let challenges = status.challenges.clone();
+            let progress = status.progress.clone();
+            if !challenges.is_empty() || progress.is_some() {
+                egui::Area::new(egui::Id::new("cheevos_indicators"))
+                    .anchor(egui::Align2::RIGHT_BOTTOM, [-12.0, -48.0])
+                    .show(ctx, |ui| {
+                        egui::Frame::new()
+                            .fill(egui::Color32::from_rgba_unmultiplied(
+                                0x20, 0x20, 0x30, 0xC0,
+                            ))
+                            .inner_margin(egui::Margin::same(6))
+                            .corner_radius(4)
+                            .show(ui, |ui| {
+                                if let Some(measured) = &progress {
+                                    ui.label(
+                                        egui::RichText::new(format!("Progress: {measured}"))
+                                            .strong(),
+                                    );
+                                }
+                                if !challenges.is_empty() {
+                                    ui.label(
+                                        egui::RichText::new(format!(
+                                            "Challenge x{}",
+                                            challenges.len()
+                                        ))
+                                        .color(egui::Color32::from_rgb(0xF0, 0xC8, 0x60)),
+                                    );
+                                }
+                            });
+                    });
+            }
+
+            // Leaderboard-scoreboard popups (shown for a few seconds after a
+            // submission): the player's new rank "#N of M" + the top entries.
+            let scoreboards = status.scoreboards.clone();
+            if !scoreboards.is_empty() {
+                egui::Area::new(egui::Id::new("cheevos_scoreboards"))
+                    .anchor(egui::Align2::CENTER_TOP, [0.0, 56.0])
+                    .show(ctx, |ui| {
+                        for sb in &scoreboards {
+                            egui::Frame::new()
+                                .fill(egui::Color32::from_rgba_unmultiplied(
+                                    0x18, 0x18, 0x28, 0xE0,
+                                ))
+                                .inner_margin(egui::Margin::same(8))
+                                .corner_radius(4)
+                                .show(ui, |ui| {
+                                    ui.label(
+                                        egui::RichText::new(format!(
+                                            "Leaderboard: #{} of {}",
+                                            sb.new_rank, sb.num_entries
+                                        ))
+                                        .strong()
+                                        .color(egui::Color32::from_rgb(0xB4, 0xA0, 0xDC)),
+                                    );
+                                    if !sb.submitted_score.is_empty() {
+                                        ui.label(format!(
+                                            "Your score: {}   (best: {})",
+                                            sb.submitted_score, sb.best_score
+                                        ));
+                                    }
+                                    for (rank, user, score) in &sb.top_entries {
+                                        ui.label(
+                                            egui::RichText::new(format!(
+                                                "  {rank}. {user} - {score}"
+                                            ))
+                                            .weak(),
+                                        );
+                                    }
+                                });
+                            ui.add_space(4.0);
+                        }
+                    });
+            }
+        }
+
         if self.show_input {
             input_rebind_panel::show(ctx, &mut self.show_input, &mut self.input_ui, config);
         }

@@ -98,6 +98,7 @@ mkdir -p "$out"
 # deliberately NOT exported, so DevTools cannot reach it through this module.
 EXPORTS='[
   "_rc_client_create","_rc_client_destroy",
+  "_rc_client_set_event_handler",
   "_rc_client_set_unofficial_enabled",
   "_rc_client_begin_login_with_password","_rc_client_begin_login_with_token",
   "_rc_client_logout","_rc_client_get_user_info",
@@ -114,7 +115,7 @@ EXPORTS='[
 
 emcc "$work/librcheevos.a" -O3 \
   -sEXPORTED_FUNCTIONS="$EXPORTS" \
-  -sEXPORTED_RUNTIME_METHODS='["ccall","cwrap","addFunction","UTF8ToString","stringToUTF8","lengthBytesUTF8"]' \
+  -sEXPORTED_RUNTIME_METHODS='["ccall","cwrap","addFunction","removeFunction","UTF8ToString","stringToUTF8","lengthBytesUTF8","getValue","setValue","HEAPU8"]' \
   -sALLOW_TABLE_GROWTH=1 \
   -sALLOW_MEMORY_GROWTH=1 \
   -sMODULARIZE=1 \

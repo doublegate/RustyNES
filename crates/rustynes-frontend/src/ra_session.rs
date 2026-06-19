@@ -29,13 +29,66 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use rustynes_cheevos::{RaAchievement, RaClient, RaEvent, RaGameSummary, RaLeaderboard, RaUser};
+use rustynes_cheevos::{
+    RaAchievement, RaClient, RaEvent, RaGameSummary, RaLeaderboard, RaScoreboardEntry, RaUser,
+};
 
 /// How long a transient unlock / event toast stays on the HUD.
 const TOAST_TTL: Duration = Duration::from_secs(5);
 
 /// Maximum number of toasts shown at once (oldest dropped beyond this).
 const MAX_TOASTS: usize = 6;
+
+/// How long a leaderboard-scoreboard popup stays on the HUD after a submission.
+const SCOREBOARD_TTL: Duration = Duration::from_secs(8);
+
+/// Maximum number of scoreboard popups shown at once (oldest dropped beyond this).
+const MAX_SCOREBOARDS: usize = 2;
+
+/// How long the achievement progress indicator lingers after its last update
+/// if rcheevos never sends an explicit hide.
+const PROGRESS_TTL: Duration = Duration::from_secs(2);
+
+/// One active challenge indicator (a "you are attempting a challenge"
+/// achievement badge shown while its trigger is primed).
+#[derive(Clone, Debug, Default)]
+pub struct ChallengeIndicators {
+    /// achievement id → badge name (the small 8-char RA badge token).
+    pub active: HashMap<u32, String>,
+}
+
+/// The currently-shown achievement progress indicator (the transient
+/// "12/50" style overlay rcheevos asks the HUD to show/update/hide).
+#[derive(Clone, Debug, Default)]
+pub struct ProgressIndicator {
+    /// `true` while the indicator should be drawn.
+    pub visible: bool,
+    /// The measured-progress string (e.g. "12 / 50").
+    pub measured: String,
+    /// When the indicator was last shown/updated; it auto-hides after a beat
+    /// even if rcheevos does not send an explicit hide.
+    pub updated: Option<Instant>,
+}
+
+/// A leaderboard-scoreboard popup (shown for a few seconds after the player
+/// submits an entry): the player's new rank "#N of M" plus the top entries.
+#[derive(Clone, Debug)]
+pub struct ScoreboardPopup {
+    /// The leaderboard id this scoreboard is for.
+    pub leaderboard_id: u32,
+    /// The score the player just submitted (formatted).
+    pub submitted_score: String,
+    /// The player's best submitted score (formatted).
+    pub best_score: String,
+    /// The player's new 1-based rank in the leaderboard.
+    pub new_rank: u32,
+    /// The total number of entries in the leaderboard.
+    pub num_entries: u32,
+    /// The top entries the server returned.
+    pub top_entries: Vec<RaScoreboardEntry>,
+    /// When the popup was created; it expires after `SCOREBOARD_TTL`.
+    pub created: Instant,
+}
 
 /// The coarse login state of an [`RaSession`].
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -93,6 +146,13 @@ pub struct RaSession {
     pub toasts: Vec<Toast>,
     /// Active leaderboard trackers (HUD).
     pub trackers: Trackers,
+    /// Active challenge indicators (HUD) — achievements currently being
+    /// attempted, drawn as small primed badges.
+    pub challenges: ChallengeIndicators,
+    /// The transient achievement progress indicator (HUD).
+    pub progress: ProgressIndicator,
+    /// Active leaderboard-scoreboard popups (HUD), shown after a submission.
+    pub scoreboards: Vec<ScoreboardPopup>,
     /// The current rich-presence string (HUD), refreshed each frame.
     pub rich_presence: String,
     /// Cached achievement list (refreshed on load / unlock; the panel renders
@@ -135,6 +195,9 @@ impl RaSession {
             password_input: String::new(),
             toasts: Vec::new(),
             trackers: Trackers::default(),
+            challenges: ChallengeIndicators::default(),
+            progress: ProgressIndicator::default(),
+            scoreboards: Vec::new(),
             rich_presence: String::new(),
             achievements: Vec::new(),
             leaderboards: Vec::new(),
@@ -161,6 +224,22 @@ impl RaSession {
     #[must_use]
     pub const fn hardcore_blocks(&self) -> bool {
         self.hardcore
+    }
+
+    /// Hardcore pause-gating (rcheevos throttles how often the player may pause
+    /// in hardcore to prevent pause-abuse). Returns `(allowed, frames_remaining)`:
+    /// `allowed` is `false` when a pause must be deferred, with the number of
+    /// frames still required. In softcore (or with no game loaded) it is always
+    /// `(true, 0)`.
+    ///
+    /// Only call this when the user is actually trying to pause — the underlying
+    /// rcheevos call is stateful (each call advances the throttle window).
+    #[must_use]
+    pub fn can_pause(&mut self) -> (bool, u32) {
+        if !self.hardcore || !self.game_loaded {
+            return (true, 0);
+        }
+        self.client.can_pause()
     }
 
     /// Toggle hardcore mode. rcheevos resets the active achievement session on
@@ -317,11 +396,21 @@ impl RaSession {
         self.summary = self.client.user_game_summary();
     }
 
-    /// Expire toasts older than `TOAST_TTL` (call once per frame).
+    /// Expire transient HUD elements: toasts older than `TOAST_TTL`, scoreboard
+    /// popups older than `SCOREBOARD_TTL`, and the progress indicator once it
+    /// has gone stale past `PROGRESS_TTL` (call once per frame).
     pub fn expire_toasts(&mut self) {
         let now = Instant::now();
         self.toasts
             .retain(|t| now.duration_since(t.created) < TOAST_TTL);
+        self.scoreboards
+            .retain(|s| now.duration_since(s.created) < SCOREBOARD_TTL);
+        if self.progress.visible
+            && let Some(updated) = self.progress.updated
+            && now.duration_since(updated) >= PROGRESS_TTL
+        {
+            self.progress.visible = false;
+        }
     }
 
     // --- internal ---------------------------------------------------------
@@ -372,8 +461,9 @@ impl RaSession {
         }
     }
 
-    /// Drain rcheevos events into toasts / trackers / list-refresh. Returns
-    /// `true` if a `Reset` event fired.
+    /// Drain rcheevos events into toasts / trackers / indicators / list-refresh.
+    /// Returns `true` if a `Reset` event fired.
+    #[allow(clippy::too_many_lines)] // a flat dispatch over every rcheevos event
     fn drain_events(&mut self) -> bool {
         let mut reset_requested = false;
         let mut refresh = false;
@@ -410,6 +500,47 @@ impl RaSession {
                         self.trackers.active.insert(id, display);
                     }
                 },
+                RaEvent::LeaderboardScoreboard {
+                    leaderboard_id,
+                    submitted_score,
+                    best_score,
+                    new_rank,
+                    num_entries,
+                    top_entries,
+                } => {
+                    self.push_scoreboard(ScoreboardPopup {
+                        leaderboard_id,
+                        submitted_score,
+                        best_score,
+                        new_rank,
+                        num_entries,
+                        top_entries,
+                        created: Instant::now(),
+                    });
+                }
+                RaEvent::ChallengeIndicator {
+                    id,
+                    show,
+                    badge_name,
+                } => {
+                    if show {
+                        self.challenges.active.insert(id, badge_name);
+                    } else {
+                        self.challenges.active.remove(&id);
+                    }
+                }
+                RaEvent::ProgressIndicator {
+                    show,
+                    measured_progress,
+                } => {
+                    if show == Some(false) {
+                        self.progress.visible = false;
+                    } else {
+                        self.progress.visible = true;
+                        self.progress.measured = measured_progress;
+                        self.progress.updated = Some(Instant::now());
+                    }
+                }
                 RaEvent::GameCompleted => {
                     self.push_toast("Game Completed!", "All achievements unlocked", false);
                     refresh = true;
@@ -433,11 +564,8 @@ impl RaSession {
                     }
                     self.push_toast("RA server error", &msg, true);
                 }
-                // ChallengeIndicator / ProgressIndicator / Other: no HUD surface
-                // needed for the MVP (the achievement list shows progress).
-                RaEvent::ChallengeIndicator { .. }
-                | RaEvent::ProgressIndicator { .. }
-                | RaEvent::Other { .. } => {}
+                // Other: an event type the wrapper does not model in detail.
+                RaEvent::Other { .. } => {}
             }
         }
         if refresh {
@@ -472,10 +600,21 @@ impl RaSession {
         }
     }
 
+    /// Push a scoreboard popup, capping the queue at `MAX_SCOREBOARDS`.
+    fn push_scoreboard(&mut self, popup: ScoreboardPopup) {
+        self.scoreboards.push(popup);
+        while self.scoreboards.len() > MAX_SCOREBOARDS {
+            self.scoreboards.remove(0);
+        }
+    }
+
     fn clear_game_caches(&mut self) {
         self.achievements.clear();
         self.leaderboards.clear();
         self.trackers.active.clear();
+        self.challenges.active.clear();
+        self.progress = ProgressIndicator::default();
+        self.scoreboards.clear();
         self.summary = RaGameSummary::default();
         self.rich_presence.clear();
     }
@@ -555,5 +694,61 @@ mod tests {
         assert_eq!(s.game_sha256(), Some([7u8; 32]));
         s.unload_game();
         assert!(s.game_sha256().is_none());
+    }
+
+    // v1.7.0 H2 — softcore (and no-game) never gates pausing.
+    #[test]
+    fn can_pause_unblocked_in_softcore() {
+        let mut s = RaSession::new(&cfg(false, false, "", ""));
+        assert!(!s.hardcore());
+        assert_eq!(s.can_pause(), (true, 0));
+    }
+
+    // v1.7.0 H2 — scoreboard popups cap + clear with the game caches; the
+    // progress / challenge HUD state resets too.
+    #[test]
+    fn hud_state_caps_and_clears() {
+        let mut s = RaSession::new(&cfg(false, false, "", ""));
+        for i in 0..(MAX_SCOREBOARDS + 3) {
+            s.push_scoreboard(ScoreboardPopup {
+                leaderboard_id: i as u32,
+                submitted_score: String::new(),
+                best_score: String::new(),
+                new_rank: 1,
+                num_entries: 10,
+                top_entries: Vec::new(),
+                created: Instant::now(),
+            });
+        }
+        assert_eq!(s.scoreboards.len(), MAX_SCOREBOARDS);
+        s.challenges.active.insert(1, "abcd".to_string());
+        s.progress.visible = true;
+        s.clear_game_caches();
+        assert!(s.scoreboards.is_empty());
+        assert!(s.challenges.active.is_empty());
+        assert!(!s.progress.visible);
+    }
+
+    // v1.7.0 H2 — expiry drops a stale progress indicator + an old scoreboard.
+    #[test]
+    fn hud_transients_expire() {
+        let mut s = RaSession::new(&cfg(false, false, "", ""));
+        let past = Instant::now()
+            .checked_sub(SCOREBOARD_TTL + Duration::from_secs(1))
+            .expect("instant in range");
+        s.push_scoreboard(ScoreboardPopup {
+            leaderboard_id: 1,
+            submitted_score: String::new(),
+            best_score: String::new(),
+            new_rank: 1,
+            num_entries: 1,
+            top_entries: Vec::new(),
+            created: past,
+        });
+        s.progress.visible = true;
+        s.progress.updated = Instant::now().checked_sub(PROGRESS_TTL + Duration::from_secs(1));
+        s.expire_toasts();
+        assert!(s.scoreboards.is_empty());
+        assert!(!s.progress.visible);
     }
 }

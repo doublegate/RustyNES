@@ -3636,6 +3636,29 @@ impl App {
         false
     }
 
+    /// v1.7.0 "Forge" H2 — hardcore pause-gating. rcheevos throttles how often
+    /// the player may pause in hardcore (to prevent pause-abuse). Returns
+    /// `Some(frames_remaining)` when a pause must be deferred, or `None` when a
+    /// pause is allowed right now. In softcore / no-game / feature-off this is
+    /// always `None` (a pause is always allowed). Only call when actually trying
+    /// to pause — the rcheevos call is stateful.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
+    fn ra_pause_gate(&mut self) -> Option<u32> {
+        self.ra.as_mut().and_then(|ra| {
+            let (allowed, frames) = ra.can_pause();
+            if allowed { None } else { Some(frames) }
+        })
+    }
+
+    /// v1.7.0 "Forge" H2 — the pause-gating predicate, always `None` when the
+    /// `retroachievements` feature is not built, so `set_paused` compiles to the
+    /// unchanged path on the default build.
+    #[cfg(not(all(not(target_arch = "wasm32"), feature = "retroachievements")))]
+    #[allow(clippy::unused_self, clippy::needless_pass_by_ref_mut)]
+    const fn ra_pause_gate(&mut self) -> Option<u32> {
+        None
+    }
+
     /// PR #75 review (H1) — load-state restores the timeline, so it is forbidden
     /// while a TAS movie is RECORDING (it would rewrite the recording) OR PLAYING
     /// BACK (it would desync playback). The File menu greys "Load State" /
@@ -5284,6 +5307,17 @@ impl App {
         if paused && self.netplay_is_active() {
             self.ui
                 .set_status(StatusMessage::info("Cannot pause during netplay"));
+            return;
+        }
+        // v1.7.0 "Forge" H2 — hardcore pause-gating: rcheevos throttles pausing
+        // in hardcore to prevent pause-abuse. Defer the pause when not yet
+        // allowed, telling the user how long remains. No-op in softcore /
+        // feature-off (resume is always honored).
+        if paused && let Some(frames) = self.ra_pause_gate() {
+            let secs = f64::from(frames) / 60.0;
+            self.ui.set_status(StatusMessage::info(format!(
+                "Pause held by hardcore mode ({secs:.1}s remaining)"
+            )));
             return;
         }
         self.ui.paused = paused;

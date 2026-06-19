@@ -39,7 +39,13 @@ constraints that the design works around honestly rather than papering over.
   module with `emcc` (same sources/defines as the native `build.rs`). Output is
   gitignored — rebuild on demand.
 - **`crates/rustynes-frontend/web/cheevos/ra_glue.js`** (committed) is the loader
-  plus the casual-only host surface the Rust bridge imports.
+  plus the casual-only host surface the Rust bridge imports. As of v1.7.0 "Forge"
+  H1 it implements the rc_client **wasm trampoline marshalling**: the
+  read-memory / server-call / event-handler callbacks are registered with
+  `addFunction`, `ra_init` creates the client + installs the event handler, the
+  server-call trampoline marshals an `rc_api_request_t` → an auth-proxy `fetch` →
+  an `rc_api_server_response_t` (so rcheevos sees a normal completion), and
+  `ra_do_frame(readByte)` drives a frame and returns a JSON event array.
 - **`crates/rustynes-frontend/src/wasm_cheevos.rs`** (behind the default-OFF,
   wasm-only `browser-cheevos` feature) owns `BrowserRaSession` and renders the
   caveat. It has **no hardcore field or API**.
@@ -77,10 +83,15 @@ the browser is routed through a small proxy that injects the header server-side.
   python3 scripts/cheevos/auth_proxy_stub.py --config scripts/cheevos/auth-proxy.example.toml
   ```
 
-- **Endpoints** the glue uses (relative to the proxy origin):
-  - `POST /login {username, password}` → `{token}` | `{error}` (the glue never
-    sends a password anywhere else; only the returned token is persisted).
-  - `POST /ra <raw rcheevos request>` → `<raw RA response>` (User-Agent injected).
+- **Request shape** the glue produces: the server-call trampoline forwards each
+  rcheevos request **verbatim** — it takes the path + query of the rcheevos-built
+  URL and re-targets it at the proxy origin (`${RA_PROXY_BASE}<path?query>`),
+  POSTing the `post_data` body with the rcheevos `content_type`. The proxy's one
+  job is to re-target that path at upstream RA and inject the identifying
+  `User-Agent` header (the reference stub forwards `self.path` to `upstream`
+  verbatim). rcheevos itself drives the login (`rc_client_begin_login_with_*`)
+  through this same path; the glue never sends a password anywhere except as part
+  of the rcheevos login request body, and only the returned token is persisted.
 
 Point `RA_PROXY_BASE` in `web/cheevos/ra_glue.js` at the deployed proxy origin.
 Until it is set, `BrowserRaSession::proxy_configured()` is `false`, server calls
@@ -102,16 +113,24 @@ cargo build -p rustynes-frontend --target wasm32-unknown-unknown --features brow
 ## Status + remaining maintainer-manual steps
 
 **Done (in-tree, buildable):** the build track (proven with `emcc` 6.0.0), the
-three-layer structural casual gating, the auth-proxy contract + stub, and the loud
-in-UI caveat. Off by default, so the shipped native + wasm builds are byte-
-identical and AccuracyCoin holds 100% (139/139).
+three-layer structural casual gating, the auth-proxy contract + stub, the loud
+in-UI caveat, and — **as of v1.7.0 "Forge" H1** — the full `ra_glue.js` rc_client
+**trampoline marshalling** (read-memory / server-call / event-handler via
+`addFunction`, the request → proxy `fetch` → response bridge, client create +
+event-handler install, and the `ra_do_frame` per-frame driver) plus the Rust
+bridge methods (`begin_login` / `load_game` / `do_frame`) over it. The side-module
+build script now also exports `set_event_handler` and the `getValue` / `setValue`
+/ `HEAPU8` runtime methods the marshalling reads/writes the rcheevos structs with.
+Off by default, so the shipped native + wasm builds are byte-identical and
+AccuracyCoin holds 100% (139/139).
 
-**Maintainer-manual (no headless path — ADR 0015):**
+**Maintainer-manual (no headless path — ADR 0015) — the only remaining carryovers:**
 
-1. Deploy the auth proxy (host + TLS + hardened CORS) and coordinate the exact
-   `User-Agent` + casual-only intent with the RA team.
-2. Finish the `ra_glue.js` rc_client trampoline marshalling (read-memory /
-   server-call / event-handler via `addFunction`); the contract shape is in place.
-3. **Live-browser verification with a real RA account** — log in via the proxy and
-   confirm a casual unlock in a browser. This is the acceptance gate for flipping
-   ADR 0015 to fully Implemented.
+1. **Deploy the auth proxy** (host + TLS + hardened CORS) and coordinate the exact
+   `User-Agent` + casual-only intent with the RA team. Then set `RA_PROXY_BASE`.
+2. **Live-browser verification with a real RA account** — build with
+   `--features browser-cheevos`, add the `<script type="module" src="./cheevos/ra_glue.js">`
+   to `web/index.html`, build the side module, log in through the deployed proxy,
+   and confirm a casual unlock in a real browser. CI cannot do this (it needs a
+   human, a live RA login, and the deployed proxy). This is the acceptance gate
+   for flipping ADR 0015 to fully Implemented; native RA is unaffected.
