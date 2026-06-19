@@ -22,7 +22,7 @@ irq-timing-trace = ["rustynes-core/irq-timing-trace"]
 # Real-game regression bisect harness. Requires commercial ROM dumps at
 # `tests/roms/external/` (gitignored). Default off so CI never depends on
 # non-distributable assets. See `tests/external_real_games.rs`.
-commercial-roms = ["dep:png"]
+commercial-roms = ["dep:png", "dep:zip"]
 # Diagnostic-only: forward to `rustynes-core/debug-hooks` so the SMB3 repro bin
 # can use the per-frame event/access logging APIs (set_event_logging / events /
 # set_access_logging / accesses). NOT part of CI; off by default.
@@ -56,6 +56,13 @@ thiserror.workspace = true
 # which is a regular bin target and so cannot use the dev-dependency `png`.
 # Optional + only enabled by the `commercial-roms` feature the bin requires.
 png = { version = "0.18", optional = true }
+# Archive extraction for the commercial-roms coverage harness: a ROM left as a
+# `.zip` (the No-Intro distribution form) is unzipped in-memory to its first
+# NES/FDS/UNIF entry before the deterministic parse — mirroring the frontend's
+# `extract_rom_from_zip`. Native-only (the harness is never compiled for wasm);
+# `deflate`-only to match the frontend's feature set. `.7z` is handled via the
+# `7z` CLI (no Rust dep), matching `scripts/coverage/coverage.py`.
+zip = { version = "2", default-features = false, features = ["deflate"], optional = true }
 
 [dev-dependencies]
 insta.workspace = true

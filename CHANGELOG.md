@@ -359,6 +359,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     existing **Debug -> Load Symbols** picker (now also accepts `.dbg`), pairing
     with the v1.4.0 `.sym`/`.mlb`/`.nl` symbol-name loader. Display-only.
 
+### Testing
+
+- **v1.7.0 "Forge" T-PS-059 — coverage harness archive/`.fds` ROM discovery.**
+  The external-coverage boot-smoke harness now discovers ROMs inside `.zip` /
+  `.7z` archives and `.fds` disk images (in addition to `.nes` / `.unf`),
+  unwrapping an archive to its first NES/FDS/UNIF entry and routing an FDS disk
+  through the BIOS path — mirroring the frontend's load dispatch so a dump left
+  zipped or as a raw disk gets a boot screenshot just like a loose `.nes`. The
+  archive reader is gated behind the existing `commercial-roms` feature and the
+  new discovery only fires on the maintainer's local gitignored
+  `tests/roms/external/` dumps (CI's committed corpus is `.nes`-only), so CI
+  behaviour is unchanged. Commercial-ROM screenshot baselines for the
+  newly-discoverable dumps remain a local maintainer follow-up.
+
 ### Performance
 
 - **v1.7.0 "Forge" Workstream H7 (tier-1 perf, measure-first): no change adopted.**

@@ -102,6 +102,22 @@ covers the *commercial* library (gitignored under
   filter (`HARNESS_FILTER=external_mmc3_ ./run.sh`). Drove the
   May-2026 recovery in 5 iterations (`0b1d4b66..HEAD` →
   `63d8dea` first-bad).
+- **Auto-discovering companion:**
+  `crates/rustynes-test-harness/tests/external_coverage.rs` walks
+  `tests/roms/external/` at runtime and runs one default boot capture
+  per staged ROM against a derived `insta` snapshot — new ROMs need no
+  code change. As of T-PS-059 it discovers **every loadable form** the
+  frontend accepts, not just bare `.nes`: iNES (`.nes`), UNIF (`.unf` /
+  `.unif`), FDS disk images (`.fds`), and `.zip` / `.7z` archives (the
+  No-Intro distribution form). The shared loader
+  (`common::external::load_nes`) mirrors the frontend's load dispatch —
+  it unwraps an archive to its first NES/FDS/UNIF entry (`.zip` via the
+  `zip` crate, `.7z` via the `7z` CLI), and routes an FDS disk through
+  `Nes::from_disk` with a BIOS resolved from `RUSTYNES_FDS_BIOS` or the
+  staged `tests/roms/external/fds/disksys.rom`. A `.fds` on a BIOS-less
+  checkout SKIPs cleanly (the BIOS is Nintendo IP and is never
+  committed). So a ROM left zipped, or an `.fds` disk, gets a boot
+  screenshot just like a loose `.nes`.
 - **Trade-off:** snapshots commit emulator output (deterministic
   bytes), not ROM bytes (copyrighted). User-supplied dumps under
   `tests/roms/external/mapper-NNN-NAME/` are gitignored and entirely
