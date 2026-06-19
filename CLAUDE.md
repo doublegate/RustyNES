@@ -67,6 +67,13 @@ cargo build -p rustynes-core --target thumbv7em-none-eabihf --no-default-feature
 # Frontend (winit + wgpu + cpal + egui). Binary name is `rustynes`.
 cargo run --release -p rustynes-frontend -- path/to/rom.nes
 cargo run --release -p rustynes-frontend                 # opens with no ROM; menu / F12 to load
+# Maximal NATIVE build — the "cargo --full equivalent" (#54): the `full` feature
+# aggregates every native feature (retroachievements + scripting + script-ipc +
+# hd-pack + debug-hooks + av-record, additive on top of the default set). It is
+# purely opt-in (shipped/default build + core unchanged). Aliases in .cargo/config.toml:
+cargo full-run path/to/rom.nes                           # run the maximal native binary (alias ends in `--`, so flags forward, e.g. `cargo full-run --fullscreen rom.nes`)
+cargo full-build                                         # build it (= --release -p rustynes-frontend --features full)
+# WASM-only features (script-wasm, browser-cheevos, wasm-canvas) are excluded by design.
 # Default keys P1: arrows = D-pad, Z = A, X = B, Enter = Start, RShift = Select.
 # Default keys P2: WASD = D-pad, Q = A, E = B, P = Start, L = Select.
 # System: Esc = quit, F1 = save state, F4 = load state, F5 (held) = rewind,

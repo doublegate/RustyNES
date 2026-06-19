@@ -94,6 +94,27 @@ runs on the winit thread) for A/B comparison. The browser builds
 (`wasm-winit` / `wasm-canvas`) always run on the single main thread, driven
 by `requestAnimationFrame`.
 
+### The `full` maximal-native build (`cargo full-run`)
+
+For the most fully-featured desktop binary in one command, the frontend has an
+opt-in **`full`** feature that aggregates the maximal NATIVE feature set —
+`retroachievements`, `scripting`, `script-ipc`, `hd-pack`, `debug-hooks`, and
+`av-record` — additively on top of the `default` set. Two cargo aliases in
+`.cargo/config.toml` are the "cargo --full equivalent":
+
+```bash
+cargo full-run path/to/rom.nes   # run the maximal native binary
+cargo full-run --fullscreen rom.nes  # the `full-run` alias ends in `--`, so flags/args forward to the binary
+cargo full-build                 # = build --release -p rustynes-frontend --features full
+```
+
+WASM-only features are deliberately excluded because `full` targets a native
+binary: `script-wasm` is wasm-only *and* mutually exclusive with `scripting`
+(piccolo vs. mlua), and `browser-cheevos` / `wasm-canvas` are browser-only. The
+build is purely opt-in — the shipped/default build and the emulation core are
+unchanged (`hd-pack` / `debug-hooks` only forward to the off-by-default
+`rustynes-core` telemetry, proven byte-identical), so AccuracyCoin is unaffected.
+
 ## Run loop
 
 `App` implements winit's `ApplicationHandler<AppEvent>`. Frame *production*

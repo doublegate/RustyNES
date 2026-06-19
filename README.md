@@ -269,7 +269,18 @@ cargo run --release -p rustynes-frontend -- path/to/rom.nes
 
 # Optional: build with RetroAchievements (needs a C compiler for vendored rcheevos)
 cargo run --release -p rustynes-frontend --features retroachievements -- path/to/rom.nes
+
+# Maximal NATIVE build — the "cargo --full equivalent". The `full` feature
+# aggregates every native feature (RetroAchievements + Lua scripting + host IPC +
+# HD-pack + debugger telemetry + A/V recording). Aliases make it a one-liner:
+cargo full-run path/to/rom.nes       # run the most fully-featured desktop binary
+cargo full-run --fullscreen rom.nes  # the alias ends in `--`, so flags forward to the binary
+cargo full-build                     # build it (= --release -p rustynes-frontend --features full)
 ```
+
+The `full` build is purely opt-in — the default/shipped build and the emulation
+core are unchanged. The WASM-only features (`script-wasm`, `browser-cheevos`,
+`wasm-canvas`) are deliberately excluded, since `full` targets a native binary.
 
 The frontend opens a 256×240 window (scaled, with 8:7 pixel-aspect correction),
 starts audio via the OS default device, and runs the ROM.
