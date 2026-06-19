@@ -1015,7 +1015,15 @@ impl Gfx {
             (u32, u32),
         ),
     {
+        // v1.7.1 — `debug_assert` keeps dev builds honest, but a release build
+        // must NEVER hand a mismatched-length slice to `write_texture`: wgpu
+        // validation aborts the process (SIGABRT) when the source buffer is
+        // smaller than the copy region. The ROM-close path (`emu.nes = None`)
+        // presents an empty/zeroed staging slice, so guard the upload and skip
+        // it on a size mismatch — the texture keeps its previously-uploaded
+        // contents and we still present (a blank/idle frame, never a crash).
         debug_assert_eq!(framebuffer.len(), (NES_W * NES_H * 4) as usize);
+        let fb_ok = framebuffer.len() == (NES_W * NES_H * 4) as usize;
         // v1.1.0 beta.1 (T-110-A1) — upload the palette-index framebuffer for
         // the true composite `NES_NTSC` filter, only when it is active and the
         // caller supplied a correctly-sized snapshot. `R16Uint` = 2 bytes/texel.
@@ -1045,25 +1053,27 @@ impl Gfx {
             }
             _ => 0,
         };
-        self.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.nes_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            framebuffer,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(NES_W * 4),
-                rows_per_image: Some(NES_H),
-            },
-            wgpu::Extent3d {
-                width: NES_W,
-                height: NES_H,
-                depth_or_array_layers: 1,
-            },
-        );
+        if fb_ok {
+            self.queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.nes_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                framebuffer,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(NES_W * 4),
+                    rows_per_image: Some(NES_H),
+                },
+                wgpu::Extent3d {
+                    width: NES_W,
+                    height: NES_H,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
 
         // wgpu 29: `get_current_texture` returns the `CurrentSurfaceTexture`
         // enum instead of a `Result`. Map it to the same behaviour as before:
@@ -1220,28 +1230,35 @@ impl Gfx {
             (u32, u32),
         ),
     {
+        // v1.7.1 — same size guard as `render_with_overlay`: never feed a
+        // mismatched-length slice to `write_texture` in a release build (it
+        // aborts the process via wgpu validation). Skip the upload on mismatch
+        // and present with the texture's previous contents.
         debug_assert_eq!(hd_rgba.len(), (hd_w * hd_h * 4) as usize);
+        let hd_ok = hd_rgba.len() == (hd_w * hd_h * 4) as usize;
         self.ensure_hd_blit(hd_w, hd_h);
         let hd = self.hd.as_ref().expect("ensure_hd_blit built it");
-        self.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &hd.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            hd_rgba,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(hd_w * 4),
-                rows_per_image: Some(hd_h),
-            },
-            wgpu::Extent3d {
-                width: hd_w,
-                height: hd_h,
-                depth_or_array_layers: 1,
-            },
-        );
+        if hd_ok {
+            self.queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &hd.texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                hd_rgba,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(hd_w * 4),
+                    rows_per_image: Some(hd_h),
+                },
+                wgpu::Extent3d {
+                    width: hd_w,
+                    height: hd_h,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
         // The letterbox transform is in normalized UV space, so it is
         // resolution-independent; the HD compositor already applied (or skipped)
         // overscan at NES resolution, so HD blit uses no extra crop.

@@ -457,6 +457,22 @@ impl SampleQueue {
             .overrun_dropped
             .fetch_add(n as u64, Ordering::Relaxed);
     }
+
+    /// v1.7.1 — re-gate the start-gate for a frontend pause.
+    ///
+    /// While emulation is paused the producer stops pushing, so the cpal
+    /// callback would drain the ring and, on the first short fill, count one
+    /// (sticky) underrun and re-gate anyway — the spurious "one underrun on
+    /// resume" seen in the perf logs. Closing the gate here makes the callback
+    /// play silence *without* consuming the already-buffered tail, so the ring
+    /// is not drained-then-starved: there is no short fill, no underrun, and on
+    /// resume the gate re-opens once the producer has refilled to the start
+    /// threshold. Lock-free and idempotent; a no-op effect when never pausing,
+    /// so steady-state playback is byte-identical. Pause is a pure frontend
+    /// concept (no core determinism surface).
+    pub fn gate_for_pause(&self) {
+        self.inner.playing.store(false, Ordering::Relaxed);
+    }
 }
 
 impl Default for SampleQueue {
@@ -1134,6 +1150,36 @@ mod tests {
         assert_eq!(q.gain(), 1.0);
         q.set_gain(-3.0);
         assert_eq!(q.gain(), 0.0);
+    }
+
+    #[test]
+    fn gate_for_pause_holds_buffer_and_avoids_underrun() {
+        // v1.7.1 — pausing must NOT drain-then-starve the ring. After
+        // `gate_for_pause`, the callback plays silence WITHOUT consuming the
+        // buffered tail and WITHOUT counting an underrun, then re-opens once
+        // the producer refills to the threshold on resume.
+        let q = SampleQueue::with_capacity(256);
+        q.set_start_threshold(8);
+        q.push(&[1.0; 8]);
+        let mut out = [0.0f32; 4];
+        // Gate opens, plays normally.
+        assert_eq!(q.pop_or_silence(&mut out), 4);
+        assert!(out.iter().all(|&s| s == 1.0));
+        assert_eq!(q.underruns(), 0);
+        // Pause: re-gate. The remaining 4 buffered samples are preserved and
+        // the next callback plays silence without consuming or counting an
+        // underrun (vs. the old drain-then-short-fill that ticked one).
+        q.gate_for_pause();
+        let mut paused_out = [9.0f32; 4];
+        assert_eq!(q.pop_or_silence(&mut paused_out), 0);
+        assert!(paused_out.iter().all(|&s| s == 0.0));
+        assert_eq!(q.len(), 4, "buffered tail preserved across pause");
+        assert_eq!(q.underruns(), 0, "pause must not count an underrun");
+        // Resume: producer refills past the threshold, gate re-opens cleanly.
+        q.push(&[2.0; 4]); // now 8 buffered >= threshold
+        assert_eq!(q.pop_or_silence(&mut out), 4);
+        assert!(out.iter().all(|&s| s == 1.0));
+        assert_eq!(q.underruns(), 0, "clean pause/resume = zero underruns");
     }
 
     #[test]
