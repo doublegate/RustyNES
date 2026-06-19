@@ -31,6 +31,8 @@
   - `[~]` in flight or partially landed (scaffolding present, finish pending)
   - `[M]` maintainer-manual — cannot be CI-self-certified (needs a device,
     a live account, a GPU/audio device, or a hosted deploy)
+  - `[x]` resolved / rejected — already landed, or deliberately decided
+    against (kept here for the record)
 - Plan cross-links are relative to this file (`to-dos/`):
   [v1.6.0](plans/v1.6.0-studio-plan.md) ·
   [v1.7.0](plans/v1.7.0-forge-plan.md) ·
