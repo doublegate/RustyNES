@@ -174,7 +174,7 @@ gameplay frames spanning the bulk of the 168 mapper families.
   surface: a per-frame button-grid with drag-paint editing, a save-state **greenzone**
   for instant deterministic seeking, a **lag log**, named **markers**, **forkable
   branches**, and `.rnmproj` project files.
-- **Movie interop** *(v1.6.0+)* — import and export FCEUX `.fm2` and BizHawk `.bk2`
+- **Movie interop** *(v1.6.0)* — import and export FCEUX `.fm2` and BizHawk `.bk2`
   movies to and from the native `.rnm` format; v1.7.0 widens import to `.fcm` / `.fmv` /
   `.vmv` (and hashes the `.fm2` / `.bk2` exports), so RustyNES interoperates with the wider
   TAS ecosystem.
@@ -288,8 +288,8 @@ and AccuracyCoin holds 100% (139/139).
 
 ### Web / WebAssembly *(v1.7.0 reach wave)*
 
-The browser build reaches feature parity with the desktop on several fronts (all web-only,
-so the native build is byte-identical):
+The browser build closes several desktop-parity gaps with web-specific implementations
+(these live only in the wasm build, so the native build is byte-identical):
 
 - **Lua in the browser** — the experimental `piccolo` Lua backend runs end-to-end from a
   `.lua` picker / paste box (observational, off by default, never in the determinism
