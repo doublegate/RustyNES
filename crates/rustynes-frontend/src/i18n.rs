@@ -267,49 +267,49 @@ const fn english(key: Key) -> &'static str {
 // when they currently share a translation.
 #[allow(clippy::match_same_arms)]
 const fn spanish(key: Key) -> Option<&'static str> {
-    Some(match key {
-        Key::MenuFile => "Archivo",
-        Key::MenuEmulation => "Emulación",
-        Key::MenuTools => "Herramientas",
-        Key::MenuView => "Ver",
-        Key::MenuDebug => "Depurar",
-        Key::MenuHelp => "Ayuda",
+    match key {
+        Key::MenuFile => Some("Archivo"),
+        Key::MenuEmulation => Some("Emulación"),
+        Key::MenuTools => Some("Herramientas"),
+        Key::MenuView => Some("Ver"),
+        Key::MenuDebug => Some("Depurar"),
+        Key::MenuHelp => Some("Ayuda"),
 
-        Key::MenuOpenRom => "Abrir ROM...",
-        Key::MenuOpenRecent => "Abrir reciente",
-        Key::MenuNoRecentRoms => "Sin ROMs recientes",
-        Key::MenuSaveStates => "Estados guardados",
-        Key::MenuQuit => "Salir",
-        Key::MenuTheme => "Tema",
-        Key::MenuWindowSize => "Tamaño de ventana",
+        Key::MenuOpenRom => Some("Abrir ROM..."),
+        Key::MenuOpenRecent => Some("Abrir reciente"),
+        Key::MenuNoRecentRoms => Some("Sin ROMs recientes"),
+        Key::MenuSaveStates => Some("Estados guardados"),
+        Key::MenuQuit => Some("Salir"),
+        Key::MenuTheme => Some("Tema"),
+        Key::MenuWindowSize => Some("Tamaño de ventana"),
 
-        Key::SettingsTitle => "Configuración",
-        Key::SettingsTabVideo => "Vídeo",
+        Key::SettingsTitle => Some("Configuración"),
+        Key::SettingsTabVideo => Some("Vídeo"),
         // "Shaders" and "Audio" are kept untranslated by returning `None`: both
         // are loanwords used verbatim in Spanish UIs, so they fall through to
         // the English catalog. This also keeps the English-fallback path live
         // and unit-tested (see `missing_key_falls_back_to_english`).
-        Key::SettingsTabShaders | Key::SettingsTabAudio => return None,
-        Key::SettingsTabInput => "Controles",
-        Key::SettingsTabEmulation => "Emulación",
-        Key::SettingsHeadingDisplay => "Pantalla",
-        Key::SettingsHeadingAccessibility => "Accesibilidad",
-        Key::SettingsTheme => "Tema:",
-        Key::SettingsLanguage => "Idioma:",
+        Key::SettingsTabShaders | Key::SettingsTabAudio => None,
+        Key::SettingsTabInput => Some("Controles"),
+        Key::SettingsTabEmulation => Some("Emulación"),
+        Key::SettingsHeadingDisplay => Some("Pantalla"),
+        Key::SettingsHeadingAccessibility => Some("Accesibilidad"),
+        Key::SettingsTheme => Some("Tema:"),
+        Key::SettingsLanguage => Some("Idioma:"),
 
-        Key::StatusNoRom => "Sin ROM cargada",
-        Key::StatusIdle => "Inactivo",
-        Key::StatusRunning => "En ejecución",
-        Key::StatusPaused => "Pausado",
-        Key::StatusNetplay => "Juego en red",
+        Key::StatusNoRom => Some("Sin ROM cargada"),
+        Key::StatusIdle => Some("Inactivo"),
+        Key::StatusRunning => Some("En ejecución"),
+        Key::StatusPaused => Some("Pausado"),
+        Key::StatusNetplay => Some("Juego en red"),
 
-        Key::ButtonOk => "Aceptar",
-        Key::ButtonCancel => "Cancelar",
-        Key::ButtonSave => "Guardar",
-        Key::ButtonLoad => "Cargar",
-        Key::ButtonApply => "Aplicar",
-        Key::ButtonReset => "Restablecer",
-    })
+        Key::ButtonOk => Some("Aceptar"),
+        Key::ButtonCancel => Some("Cancelar"),
+        Key::ButtonSave => Some("Guardar"),
+        Key::ButtonLoad => Some("Cargar"),
+        Key::ButtonApply => Some("Aplicar"),
+        Key::ButtonReset => Some("Restablecer"),
+    }
 }
 
 /// Resolve `key` in `locale`, falling back to English for any key the locale's
@@ -355,15 +355,23 @@ mod tests {
     #[test]
     fn default_locale_strings_are_verbatim() {
         // The English catalog must reproduce the pre-i18n literals byte-for-byte
-        // so the shipped default UI is unchanged.
-        set_locale(Locale::English);
-        assert_eq!(tr(Key::MenuFile), "File");
-        assert_eq!(tr(Key::MenuEmulation), "Emulation");
-        assert_eq!(tr(Key::MenuHelp), "Help");
-        assert_eq!(tr(Key::SettingsTitle), "Settings");
-        assert_eq!(tr(Key::SettingsHeadingDisplay), "Display");
-        assert_eq!(tr(Key::StatusRunning), "Running");
-        assert_eq!(tr(Key::ButtonReset), "Reset");
+        // so the shipped default UI is unchanged. Asserted via `tr_in` against
+        // the explicit English locale (and `english` directly) so this test
+        // never touches the process-global `CURRENT_LOCALE` — keeping it sound
+        // under parallel test execution.
+        assert_eq!(tr_in(Locale::English, Key::MenuFile), "File");
+        assert_eq!(tr_in(Locale::English, Key::MenuEmulation), "Emulation");
+        assert_eq!(tr_in(Locale::English, Key::MenuHelp), "Help");
+        assert_eq!(tr_in(Locale::English, Key::SettingsTitle), "Settings");
+        assert_eq!(
+            tr_in(Locale::English, Key::SettingsHeadingDisplay),
+            "Display"
+        );
+        assert_eq!(tr_in(Locale::English, Key::StatusRunning), "Running");
+        assert_eq!(tr_in(Locale::English, Key::ButtonReset), "Reset");
+        // The same strings via the per-locale catalog const fn.
+        assert_eq!(english(Key::MenuFile), "File");
+        assert_eq!(english(Key::ButtonReset), "Reset");
     }
 
     #[test]
@@ -410,7 +418,13 @@ mod tests {
 
     #[test]
     fn macro_matches_tr() {
-        set_locale(Locale::English);
-        assert_eq!(t!(MenuFile), tr(Key::MenuFile));
+        // The `t!` macro expands to `tr(Key::..)`, which reads the process-
+        // global locale. Validate the expansion against `tr_in(current_locale(),
+        // ..)` — the exact value `tr` resolves to — WITHOUT calling `set_locale`,
+        // so the test reads but never mutates the global and is sound under
+        // parallel execution regardless of which locale happens to be active.
+        let loc = current_locale();
+        assert_eq!(t!(MenuFile), tr_in(loc, Key::MenuFile));
+        assert_eq!(t!(ButtonReset), tr_in(loc, Key::ButtonReset));
     }
 }

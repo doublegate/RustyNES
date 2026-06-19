@@ -35,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   high-visibility surfaces — the menu bar (top-level menus + common File/View
   items), the Settings title/tab strip/Display labels, and the status-bar state
   words. Conversion is **incremental**: deeper panels keep their literals and
-  follow the documented `tr!` pattern (`docs/frontend.md`) over time. New ADR
+  follow the documented `t!(Key)` / `tr(..)` pattern (`docs/frontend.md`) over time. New ADR
   **0023** (i18n string-catalog approach). Frontend-only; the chip stack /
   `rustynes-core` / test-harness are untouched.
 

@@ -749,7 +749,7 @@ The layer lives in `crate::i18n`:
   language change takes effect on the next frame with no explicit invalidation.
 
 **Incremental conversion.** This change wires the high-visibility surfaces
-through `tr!`/`t!` — the menu bar (top-level menus + common File/View items),
+through `t!(Key)` / `tr(..)` — the menu bar (top-level menus + common File/View items),
 the Settings title/tabs/Display labels, and the status-bar state words. Deeper
 panels keep their literals for now. To convert a string:
 

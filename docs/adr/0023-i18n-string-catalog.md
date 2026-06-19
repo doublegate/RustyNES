@@ -86,7 +86,7 @@ like any other `[ui]` field.
 
 ### Incremental conversion
 
-Only the high-visibility surfaces are wired through `tr!`/`t!` in this change:
+Only the high-visibility surfaces are wired through `t!(Key)` / `tr(..)` in this change:
 the menu bar (top-level menus + the common File/View items), the Settings window
 title + tab strip + the Display/Accessibility/Theme/Language labels, and the
 status-bar state words. Deeper panels (debugger internals, the per-subsystem
@@ -105,7 +105,7 @@ breaks while a string is still a literal.
   identical to v1.6.0 and AccuracyCoin stays 139/139 (i18n never touches the
   core).
 - Conversion is incremental: the framework + the high-visibility surfaces land
-  now; the remaining panels follow the documented `tr!` pattern over time. Until
+  now; the remaining panels follow the documented `t!(Key)` / `tr(..)` pattern over time. Until
   a string is converted it simply renders its literal as before.
 - The hand-rolled catalog trades Fluent's grammatical richness (plurals,
   gender, ordered placeholders) for size and simplicity. RustyNES's UI strings
