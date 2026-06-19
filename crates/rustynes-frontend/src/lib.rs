@@ -211,6 +211,16 @@ pub mod wasm_save_states;
 // frontends, so touch is recorded/replayed like a keypress. wasm-only.
 #[cfg(target_arch = "wasm32")]
 pub mod wasm_touch;
+// v1.7.0 "Forge" beta.5 Workstream H6 — shared browser Gamepad API input
+// (`navigator.getGamepads()` polled in JS → button mask). Read at the same
+// late-latch as touch/keyboard by both wasm frontends. wasm-only.
+#[cfg(target_arch = "wasm32")]
+pub mod wasm_gamepad;
+// v1.7.0 "Forge" beta.5 Workstream H6 — `?settings=` share-links: a curated
+// base64url-encoded subset of `Config` read on load + minted for "Copy share
+// link". wasm-only. See ADR 0022.
+#[cfg(target_arch = "wasm32")]
+pub mod wasm_share;
 // v1.2.0 Workstream F4 — EXPERIMENTAL wasm Lua engine JS bridge (piccolo). Only
 // when the off-by-default `script-wasm` feature is on. See ADR 0012.
 #[cfg(all(target_arch = "wasm32", feature = "script-wasm"))]

@@ -25,8 +25,21 @@
     <link data-trunk rel="rust" href="../Cargo.toml"
           data-target-name="rustynes_frontend" data-cargo-features="" />
 
-    <!-- Optional favicon copy via trunk asset pipeline. -->
-    <!-- <link data-trunk rel="copy-file" href="../../docs/favicon.png" /> -->
+    <!--
+        v1.7.0 "Forge" beta.5 Workstream H6 — PWA: manifest + service worker +
+        icons, copied into dist/ by the trunk asset pipeline. The manifest +
+        icons + the SW make the demo installable and offline-capable (the SW
+        runtime-caches the app shell on first load). Icons are reused from the
+        repo's `assets/RustyNES_Icon/` set.
+    -->
+    <link data-trunk rel="copy-file" href="manifest.webmanifest" />
+    <link data-trunk rel="copy-file" href="sw.js" />
+    <link data-trunk rel="copy-file" href="../../../assets/RustyNES_Icon/icon-256.png" />
+    <link data-trunk rel="copy-file" href="../../../assets/RustyNES_Icon/icon-512.png" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" type="image/png" href="icon-256.png" />
+    <link rel="apple-touch-icon" href="icon-256.png" />
+    <meta name="theme-color" content="#ff8800" />
 
     <style>
         :root {
@@ -221,6 +234,39 @@
         disk image. Press <strong>F9</strong> to cycle the inserted disk
         side when a game asks you to "insert disk side B".
     </p>
+    <!--
+        v1.7.0 "Forge" beta.5 Workstream H6 — browser Lua (piccolo) loader.
+
+        Only meaningful in a build with the off-by-default `script-wasm` feature
+        (the `rustynes_load_script` / `rustynes_stop_script` exports exist only
+        then; the controls degrade to a no-op otherwise). Pick a `.lua` file or
+        paste source, then "Run" hands it to the running emulator's piccolo
+        engine, which is observational/overlay + gated writes (NOT byte-parity
+        with native mlua — ADR 0012).
+    -->
+    <details id="lua-panel">
+        <summary>Lua scripting (experimental, browser piccolo backend)</summary>
+        <div style="display:flex; flex-direction:column; gap:8px; max-width:540px; margin:8px auto; text-align:left;">
+            <label>Load a <code>.lua</code> file: <input id="lua-file" type="file" accept=".lua,.txt" /></label>
+            <textarea id="lua-src" rows="6" placeholder="-- paste Lua here, e.g.&#10;emu.onFrame(function() emu.drawText(8, 8, 'hi') end)" style="width:100%; font-family:inherit; font-size:13px; background:#111; color:var(--fg); border:1px solid #444; border-radius:6px; padding:6px;"></textarea>
+            <div style="display:flex; gap:8px;">
+                <button id="lua-run" type="button">Run</button>
+                <button id="lua-stop" type="button">Stop</button>
+            </div>
+            <span class="hint" style="margin:0">Output + errors print to the devtools console. Writes (<code>emu.write</code>) are gated during netplay.</span>
+        </div>
+    </details>
+
+    <!--
+        v1.7.0 "Forge" beta.5 Workstream H6 — `?settings=` share-link affordance.
+        Copies a URL encoding the current display/audio settings to the
+        clipboard; loading that URL re-applies them.
+    -->
+    <div id="share-controls">
+        <button id="share-link" type="button">Copy share link</button>
+        <span id="share-status" class="hint" style="margin:0"></span>
+    </div>
+
     <p class="hint">
         <a href="https://github.com/doublegate/RustyNES">github.com/doublegate/RustyNES</a>
         &nbsp;·&nbsp;
@@ -361,6 +407,131 @@
                 if (bindings()) { pushAll(); return; }
                 setTimeout(awaitBindings, 100);
             })();
+        })();
+    </script>
+
+    <!--
+        v1.7.0 "Forge" beta.5 Workstream H6 — PWA registration, browser Gamepad
+        API poll, Lua loader, and the `?settings=` share-link.
+
+        All of these are pure DOM/JS that drive the wasm `#[wasm_bindgen]`
+        exports, mirroring the touch-overlay pattern above (zero extra Rust
+        binary weight beyond the small bridge fns). Each call is guarded so a
+        build without the relevant feature (e.g. `script-wasm`) degrades to a
+        harmless no-op.
+    -->
+    <script>
+        (function () {
+            "use strict";
+
+            function bindings() { return window.wasmBindings || null; }
+
+            // --- PWA: register the service worker (offline app shell). ---
+            if ("serviceWorker" in navigator) {
+                window.addEventListener("load", function () {
+                    navigator.serviceWorker.register("sw.js").catch(function (e) {
+                        console.warn("RustyNES: service worker registration failed", e);
+                    });
+                });
+            }
+
+            // --- Gamepad API poll (Xbox-style standard mapping -> P1 mask). ---
+            // Buttons bit layout: A=1, B=2, SELECT=4, START=8, UP=16, DOWN=32,
+            // LEFT=64, RIGHT=128. The browser "standard" mapping puts South (A)
+            // at index 0, West (X) at 2, Back/Select at 8, Start at 9, and the
+            // D-pad at 12..15; the left stick is axes 0 (X) and 1 (Y).
+            var AXIS_DEADZONE = 0.5;
+            // Hoisted out of the per-pad loop so it is allocated once, not 60x/sec.
+            function down(bt, idx) { return bt[idx] && (bt[idx].pressed || bt[idx].value > 0.5); }
+            function pollGamepads() {
+                var b = bindings();
+                if (b && b.rustynes_gamepad_set_buttons) {
+                    var pads = navigator.getGamepads ? navigator.getGamepads() : [];
+                    var mask = 0;
+                    for (var i = 0; i < pads.length; i++) {
+                        var gp = pads[i];
+                        if (!gp || gp.mapping !== "standard") { continue; }
+                        var bt = gp.buttons;
+                        if (down(bt, 0)) { mask |= 1; }    // South -> A
+                        if (down(bt, 2)) { mask |= 2; }    // West -> B
+                        // Some pads only expose A/B; also accept East (1) as B.
+                        if (down(bt, 1)) { mask |= 2; }
+                        if (down(bt, 8)) { mask |= 4; }    // Back/Select
+                        if (down(bt, 9)) { mask |= 8; }    // Start
+                        if (down(bt, 12)) { mask |= 16; }  // D-pad up
+                        if (down(bt, 13)) { mask |= 32; }  // D-pad down
+                        if (down(bt, 14)) { mask |= 64; }  // D-pad left
+                        if (down(bt, 15)) { mask |= 128; } // D-pad right
+                        // Left analog stick -> D-pad.
+                        var ax = gp.axes[0] || 0, ay = gp.axes[1] || 0;
+                        if (ay < -AXIS_DEADZONE) { mask |= 16; }
+                        if (ay > AXIS_DEADZONE) { mask |= 32; }
+                        if (ax < -AXIS_DEADZONE) { mask |= 64; }
+                        if (ax > AXIS_DEADZONE) { mask |= 128; }
+                    }
+                    b.rustynes_gamepad_set_buttons(mask & 0xff);
+                }
+                requestAnimationFrame(pollGamepads);
+            }
+            requestAnimationFrame(pollGamepads);
+
+            // --- Lua loader (script-wasm builds only). ---
+            var luaFile = document.getElementById("lua-file");
+            var luaSrc = document.getElementById("lua-src");
+            var luaRun = document.getElementById("lua-run");
+            var luaStop = document.getElementById("lua-stop");
+            if (luaFile) {
+                luaFile.addEventListener("change", function (e) {
+                    var f = e.target.files && e.target.files[0];
+                    if (!f) { return; }
+                    var r = new FileReader();
+                    r.onload = function () { luaSrc.value = r.result || ""; };
+                    r.readAsText(f);
+                });
+            }
+            if (luaRun) {
+                luaRun.addEventListener("click", function () {
+                    var b = bindings();
+                    if (b && b.rustynes_load_script) {
+                        b.rustynes_load_script(luaSrc.value || "");
+                    } else {
+                        console.warn("RustyNES: Lua scripting unavailable (build without the script-wasm feature)");
+                    }
+                });
+            }
+            if (luaStop) {
+                luaStop.addEventListener("click", function () {
+                    var b = bindings();
+                    if (b && b.rustynes_stop_script) { b.rustynes_stop_script(); }
+                });
+            }
+
+            // --- Share link: copy a ?settings= URL for the current settings. ---
+            var shareBtn = document.getElementById("share-link");
+            var shareStatus = document.getElementById("share-status");
+            if (shareBtn) {
+                shareBtn.addEventListener("click", function () {
+                    var b = bindings();
+                    if (!b || !b.rustynes_share_link) {
+                        if (shareStatus) { shareStatus.textContent = "share link unavailable (wasm not ready)"; }
+                        return;
+                    }
+                    var url = b.rustynes_share_link();
+                    if (!url) {
+                        if (shareStatus) { shareStatus.textContent = "could not build share link"; }
+                        return;
+                    }
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                        navigator.clipboard.writeText(url).then(function () {
+                            if (shareStatus) { shareStatus.textContent = "link copied to clipboard"; }
+                        }, function () {
+                            if (shareStatus) { shareStatus.textContent = url; }
+                        });
+                    } else if (shareStatus) {
+                        shareStatus.textContent = url;
+                    }
+                });
+            }
         })();
     </script>
 </body>

@@ -342,10 +342,9 @@ impl PiccoloBackend {
                 let f = Callback::from_fn(&ctx, move |ctx, _ex, mut stack| {
                     let (x, y, text, color) = stack
                         .consume::<(i64, i64, piccolo::String, Option<i64>)>(ctx)
-                        .map(|(x, y, s, c)| {
+                        .map_or((0, 0, String::new(), None), |(x, y, s, c)| {
                             (x, y, String::from_utf8_lossy(s.as_bytes()).into_owned(), c)
-                        })
-                        .unwrap_or((0, 0, String::new(), None));
+                        });
                     push_capped(
                         &draws,
                         DrawCmd::Text {
