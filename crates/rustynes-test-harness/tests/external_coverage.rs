@@ -194,7 +194,7 @@ fn capture_override(rom_rel: &str) -> Option<InputScript> {
 /// always `external/<dir>/<rom>.<ext>`. Every loadable form the frontend
 /// accepts is discovered (T-PS-059): iNES (`.nes`), UNIF (`.unf` / `.unif`),
 /// FDS disk images (`.fds`), and `.zip` / `.7z` archives (the No-Intro
-/// distribution form) — `run_capture` (via `common::external::load_nes`)
+/// distribution form) — `run_capture_opt` (via `common::external::load_nes`)
 /// mirrors the frontend's load dispatch, unwrapping an archive to its first
 /// NES/FDS/UNIF entry and routing an FDS disk through `Nes::from_disk` with a
 /// resolved BIOS. So a ROM left zipped, or an `.fds` disk, gets a boot

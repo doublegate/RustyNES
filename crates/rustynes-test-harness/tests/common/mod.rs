@@ -455,7 +455,11 @@ pub mod external {
     /// way). Returns `None` if `7z` is missing, the archive is unreadable, or
     /// it holds no recognized ROM entry.
     fn extract_rom_from_7z(path: &std::path::Path) -> Option<Vec<u8>> {
+        use std::io::Read;
         use std::process::Command;
+        // Same hard cap as the `.zip` path so a 7z-bomb (a huge or
+        // maliciously-sized member) can't OOM the harness.
+        const MAX_ENTRY_BYTES: u64 = 64 * 1024 * 1024;
         // List entries (`-slt` = technical, machine-readable) and pick the
         // first NES/FDS/UNIF member.
         let listing = Command::new("7z")
@@ -479,18 +483,37 @@ pub mod external {
                         || e.eq_ignore_ascii_case("unif")
                 })
             })?;
-        // Stream that single entry to stdout (`e` = extract, `-so` = to stdout).
-        let extracted = Command::new("7z")
+        // Stream that single entry to stdout (`e` = extract, `-so` = to
+        // stdout) and read it under the cap above so an oversize member is
+        // rejected, not buffered whole.
+        let mut child = Command::new("7z")
             .arg("e")
             .arg("-so")
             .arg(path)
             .arg(entry)
-            .output()
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
             .ok()?;
-        if !extracted.status.success() || extracted.stdout.is_empty() {
+        let mut out = Vec::new();
+        // Read one byte past the cap so an oversize member is detected (and
+        // rejected) rather than silently truncated.
+        let mut stdout = child.stdout.take()?;
+        let read = stdout
+            .by_ref()
+            .take(MAX_ENTRY_BYTES + 1)
+            .read_to_end(&mut out);
+        // Drop our read end; if the member is oversize the child takes SIGPIPE.
+        drop(stdout);
+        let oversize = out.len() as u64 > MAX_ENTRY_BYTES;
+        if oversize {
+            let _ = child.kill();
+        }
+        let status = child.wait().ok()?;
+        if read.is_err() || oversize || !status.success() || out.is_empty() {
             return None;
         }
-        Some(extracted.stdout)
+        Some(out)
     }
 
     /// Outcome of resolving + loading a staged ROM path into a [`Nes`].
@@ -624,7 +647,11 @@ pub mod external {
         let path = external_rom_path(rom_rel);
         // The SHA-256 pins the *staged file* (archive bytes for a `.zip`/`.7z`,
         // disk bytes for a `.fds`, ROM bytes for a `.nes`) — a stable identity
-        // for the on-disk dump regardless of container.
+        // for the on-disk dump regardless of container. This is intentional and
+        // shared with `assert_rom_sha256_or_recapture`, which fails-fast on a
+        // wrong/corrupt dump by hashing the *same* on-disk bytes; deriving this
+        // from the extracted ROM image would break that coherence. A given dump
+        // is staged exactly one way, so there is no per-ROM churn.
         let rom_sha256_hex = {
             let raw = fs::read(&path).unwrap_or_else(|e| {
                 panic!(
