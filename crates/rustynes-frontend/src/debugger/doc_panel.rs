@@ -11,8 +11,9 @@
 //! `children`), built once via a `OnceLock`. The same tree drives:
 //!
 //! - the **left sidebar**, rendered as a real expandable/collapsible tree
-//!   (egui [`egui::CollapsingHeader`] per node, nested). In the default initial
-//!   view only the top level is shown — every node below it starts collapsed;
+//!   (a per-node egui `CollapsingState` whose disclosure triangle only toggles
+//!   while the title label navigates, nested). In the default initial view only
+//!   the top level is shown — every node below it starts collapsed;
 //! - the **content pane** (with working word-wrap and clickable intra-doc links).
 //!
 //! v1.7.1 fixes (this pass) on top of the v1.7.0 #53 work:
@@ -162,8 +163,10 @@ fn doc_tree() -> &'static [DocNode] {
 
         // Reference: About + the changelog browser. The card uses a distinct
         // `about-gui` id so it does not collide with the shared CLI `about`
-        // help topic (both are "about" content; only the id must be unique).
-        roots.push(DocNode::leaf("about-gui", "About", ABOUT_GUI_BODY));
+        // help topic, and a disambiguating sidebar title so the two "about"
+        // entries are not indistinguishable in the tree (the stable id stays
+        // `about-gui`).
+        roots.push(DocNode::leaf("about-gui", "About RustyNES", ABOUT_GUI_BODY));
         roots.push(DocNode {
             id: "changelog",
             title: "Changelog",
@@ -225,24 +228,33 @@ fn changelog_releases() -> &'static [(String, String)] {
 /// The display order of [`changelog_releases`]: released versions newest-first
 /// (their natural file order) with the `[Unreleased]` section moved LAST (#2).
 /// Returns indices into [`changelog_releases`].
-fn changelog_display_order() -> Vec<usize> {
-    let releases = changelog_releases();
-    let mut released: Vec<usize> = Vec::with_capacity(releases.len());
-    let mut unreleased: Vec<usize> = Vec::new();
-    for (i, (head, _)) in releases.iter().enumerate() {
-        if is_unreleased_heading(head) {
-            unreleased.push(i);
-        } else {
-            released.push(i);
+///
+/// Cached once via `OnceLock`: [`changelog_releases`] is itself a static parse,
+/// so the computed indices stay valid for the process lifetime and we avoid
+/// rebuilding the `Vec` every frame the changelog page is open.
+fn changelog_display_order() -> &'static [usize] {
+    use std::sync::OnceLock;
+    static ORDER: OnceLock<Vec<usize>> = OnceLock::new();
+    ORDER.get_or_init(|| {
+        let releases = changelog_releases();
+        let mut released: Vec<usize> = Vec::with_capacity(releases.len());
+        let mut unreleased: Vec<usize> = Vec::new();
+        for (i, (head, _)) in releases.iter().enumerate() {
+            if is_unreleased_heading(head) {
+                unreleased.push(i);
+            } else {
+                released.push(i);
+            }
         }
-    }
-    released.extend(unreleased);
-    released
+        released.extend(unreleased);
+        released
+    })
 }
 
-/// Whether a changelog heading is the `[Unreleased]` section.
+/// Whether a changelog heading is the `[Unreleased]` section. Reuses the
+/// allocation-free [`contains_ci`] helper (no per-call `to_ascii_lowercase`).
 fn is_unreleased_heading(head: &str) -> bool {
-    head.to_ascii_lowercase().contains("unreleased")
+    contains_ci(head, "unreleased")
 }
 
 /// Render the Documentation window. `open` toggles visibility.
@@ -310,15 +322,21 @@ fn body(ui: &mut egui::Ui, state: &mut DocPanelState) {
     }
 }
 
-/// Whether `needle` (already lowercased) matches `haystack`. Allocation-free
-/// case-insensitive substring test.
+/// Whether `haystack` contains `needle`, case-insensitively. Allocation-free
+/// (the caller may pass the raw filter — no pre-lowercasing required). An empty
+/// needle conventionally matches everything (and guards `windows(0)`, which
+/// would otherwise panic).
 fn contains_ci(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
     let (h, n) = (haystack.as_bytes(), needle.as_bytes());
     n.len() <= h.len() && h.windows(n.len()).any(|w| w.eq_ignore_ascii_case(n))
 }
 
-/// Whether `node` or any descendant matches the (already-lowercased) `needle`.
-/// An empty needle matches everything.
+/// Whether `node` or any descendant matches `needle` (case-insensitively, via
+/// [`contains_ci`] — the needle need not be pre-lowercased). An empty needle
+/// matches everything.
 fn node_matches(node: &DocNode, needle: &str) -> bool {
     if needle.is_empty() {
         return true;
@@ -333,22 +351,25 @@ fn node_matches(node: &DocNode, needle: &str) -> bool {
 /// **collapsed** (so the default initial view shows only the top level); deeper
 /// nodes nest recursively.
 fn topic_tree(ui: &mut egui::Ui, state: &DocPanelState) -> Option<String> {
-    let needle = state.filter.trim().to_ascii_lowercase();
+    // `contains_ci` is already case-insensitive, so pass the raw filter (no
+    // per-frame `to_ascii_lowercase` heap alloc).
+    let needle = state.filter.trim();
     let mut nav: Option<String> = None;
     // When a filter is active, force-open the matching branches so hits are
     // visible without manual expansion.
     let force_open = !needle.is_empty();
     for node in doc_tree() {
-        if node_matches(node, &needle) {
-            render_tree_node(ui, node, &state.selected, &needle, force_open, &mut nav);
+        if node_matches(node, needle) {
+            render_tree_node(ui, node, &state.selected, needle, force_open, &mut nav);
         }
     }
     nav
 }
 
 /// Render one tree node (recursively). A leaf is a selectable label; a branch is
-/// a `CollapsingHeader` whose header row is itself selectable (clicking the
-/// title navigates; clicking the triangle expands).
+/// a collapsing header where the disclosure triangle ONLY expands/collapses and
+/// the title label navigates — the two are kept separate so toggling a branch
+/// open never also changes the selected page (#5).
 fn render_tree_node(
     ui: &mut egui::Ui,
     node: &'static DocNode,
@@ -365,39 +386,43 @@ fn render_tree_node(
         return;
     }
 
-    // A branch: a collapsing header. Default-collapsed (so the initial view is
-    // top-level only); force-open while filtering so matches are visible.
-    let mut header = egui::CollapsingHeader::new(node.title)
-        .id_salt(("doc-tree", node.id))
-        .default_open(false);
+    // A branch. Drive the collapsing state manually so the disclosure triangle
+    // (the toggle button) is a SEPARATE response from the header label: clicking
+    // the triangle only opens/closes the branch, while clicking the title label
+    // navigates to the branch's own page. Default-collapsed (so the initial view
+    // is top-level only); force-open while filtering so matches are visible.
+    let id = ui.make_persistent_id(("doc-tree", node.id));
+    let mut state =
+        egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, false);
     if force_open {
-        header = header.open(Some(true));
+        state.set_open(true);
     }
-    let resp = header.show(ui, |ui| {
-        // A selectable "(open this page)" row so the branch's own body is
-        // reachable distinctly from expand/collapse.
-        if ui.selectable_label(is_sel, "\u{2022} overview").clicked() {
-            *nav = Some(node.id.to_string());
-        }
-        for child in node.children {
-            if node_matches(child, needle) {
-                render_tree_node(ui, child, selected, needle, force_open, nav);
+    state
+        .show_header(ui, |ui| {
+            // Only this label navigates; it is not part of the toggle button.
+            if ui.selectable_label(is_sel, node.title).clicked() {
+                *nav = Some(node.id.to_string());
             }
-        }
-    });
-    // Clicking the header text itself also navigates to the branch body.
-    if resp.header_response.clicked() {
-        *nav = Some(node.id.to_string());
-    }
+        })
+        .body(|ui| {
+            for child in node.children {
+                if node_matches(child, needle) {
+                    render_tree_node(ui, child, selected, needle, force_open, nav);
+                }
+            }
+        });
 }
 
 /// Render the content pane for the current selection. Returns a navigation
 /// target id if the user clicked an intra-doc link, applied by the caller.
 fn content(ui: &mut egui::Ui, state: &mut DocPanelState) -> Option<String> {
     let Some(node) = find_node(&state.selected) else {
-        // Stale selection (shouldn't happen) — recover to the first topic.
+        // Stale selection (shouldn't happen) — actually recover to the first
+        // topic (the root) so the panel state stays consistent instead of
+        // lingering on an unresolvable id. Navigation is returned to the caller,
+        // which applies it to `state.selected` after the render pass.
         ui.label("Select a topic from the tree on the left.");
-        return None;
+        return doc_tree().first().map(|n| n.id.to_string());
     };
 
     if node.is_changelog {
@@ -593,7 +618,7 @@ fn changelog_view(ui: &mut egui::Ui, state: &mut DocPanelState) {
         egui::ComboBox::from_id_salt("doc-changelog-release")
             .selected_text(releases[state.changelog_idx].0.clone())
             .show_ui(ui, |ui| {
-                for &i in &order {
+                for &i in order {
                     let (head, _) = &releases[i];
                     ui.selectable_value(&mut state.changelog_idx, i, head.clone());
                 }
@@ -1203,7 +1228,7 @@ mod tests {
         );
         // Every index appears exactly once.
         let mut seen = std::collections::HashSet::new();
-        for &i in &order {
+        for &i in order {
             assert!(seen.insert(i), "duplicate index in display order");
         }
         // The LAST display entry is the [Unreleased] section...
@@ -1336,5 +1361,37 @@ mod tests {
         let st = DocPanelState::default();
         assert_eq!(st.selected, HELP_TOPICS[0].id);
         assert!(find_node(&st.selected).is_some());
+    }
+
+    #[test]
+    fn contains_ci_empty_needle_matches_and_does_not_panic() {
+        // #1 — an empty needle conventionally matches everything and must not
+        // hit `windows(0)` (which would panic).
+        assert!(contains_ci("", ""));
+        assert!(contains_ci("anything", ""));
+        // Sanity: case-insensitive substring still works, and a too-long needle
+        // does not match.
+        assert!(contains_ci("Unreleased", "RELEASE"));
+        assert!(!contains_ci("ab", "abc"));
+    }
+
+    #[test]
+    fn changelog_display_order_is_cached_and_stable() {
+        // #3 — the order is cached via OnceLock: repeated calls return the same
+        // (identical) slice, and it still lists [Unreleased] last.
+        let a = changelog_display_order();
+        let b = changelog_display_order();
+        assert_eq!(a, b, "cached display order must be stable across calls");
+        assert!(
+            std::ptr::eq(a, b),
+            "the cached slice must be reused, not rebuilt"
+        );
+        let releases = changelog_releases();
+        let last = *a.last().expect("non-empty changelog");
+        assert!(
+            is_unreleased_heading(&releases[last].0),
+            "[Unreleased] must sort last, got {:?}",
+            releases[last].0
+        );
     }
 }
