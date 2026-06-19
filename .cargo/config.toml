@@ -35,8 +35,11 @@ incompatible-rust-versions = "fallback"
 # the most fully-featured NATIVE binary by activating the frontend's `full`
 # feature (the maximal native feature set; see
 # `crates/rustynes-frontend/Cargo.toml`). `cargo full-run path/to/rom.nes` Just
-# Works; trailing args after the alias are forwarded to the binary. These names
-# do not collide with any built-in cargo subcommand.
+# Works: the `full-run` alias ends in `--`, so EVERY arg you put after the alias
+# (the ROM path, and flags like `--fullscreen` whose leading dash would otherwise
+# be eaten by `cargo run`) is forwarded to the emulator binary, not to Cargo.
+# `full-build` takes no binary args, so it has no trailing `--`. These names do
+# not collide with any built-in cargo subcommand.
 [alias]
-full-run = "run --release -p rustynes-frontend --features full"
+full-run = "run --release -p rustynes-frontend --features full --"
 full-build = "build --release -p rustynes-frontend --features full"

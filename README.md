@@ -273,8 +273,9 @@ cargo run --release -p rustynes-frontend --features retroachievements -- path/to
 # Maximal NATIVE build — the "cargo --full equivalent". The `full` feature
 # aggregates every native feature (RetroAchievements + Lua scripting + host IPC +
 # HD-pack + debugger telemetry + A/V recording). Aliases make it a one-liner:
-cargo full-run path/to/rom.nes   # run the most fully-featured desktop binary
-cargo full-build                 # build it (= --release -p rustynes-frontend --features full)
+cargo full-run path/to/rom.nes       # run the most fully-featured desktop binary
+cargo full-run --fullscreen rom.nes  # the alias ends in `--`, so flags forward to the binary
+cargo full-build                     # build it (= --release -p rustynes-frontend --features full)
 ```
 
 The `full` build is purely opt-in — the default/shipped build and the emulation

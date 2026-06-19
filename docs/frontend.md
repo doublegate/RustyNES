@@ -104,6 +104,7 @@ opt-in **`full`** feature that aggregates the maximal NATIVE feature set —
 
 ```bash
 cargo full-run path/to/rom.nes   # run the maximal native binary
+cargo full-run --fullscreen rom.nes  # the `full-run` alias ends in `--`, so flags/args forward to the binary
 cargo full-build                 # = build --release -p rustynes-frontend --features full
 ```
 
