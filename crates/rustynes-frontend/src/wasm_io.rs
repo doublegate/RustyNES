@@ -93,8 +93,12 @@ pub fn download_bytes(filename: &str, bytes: &[u8]) {
     };
 
     // A Blob is built from a JS array of parts; wrap the bytes in a
-    // Uint8Array and pass a single-element array to the Blob ctor.
-    let array = js_sys::Uint8Array::from(bytes);
+    // Uint8Array and pass a single-element array to the Blob ctor. Allocate a
+    // sized array and `copy_from` the slice (the canonical, copy-explicit form).
+    // wasm32 is a 32-bit target, so `usize`->`u32` cannot truncate here.
+    #[allow(clippy::cast_possible_truncation)]
+    let array = js_sys::Uint8Array::new_with_length(bytes.len() as u32);
+    array.copy_from(bytes);
     let parts = js_sys::Array::new();
     parts.push(&array.into());
     let Ok(blob) = web_sys::Blob::new_with_u8_array_sequence(&parts) else {
@@ -147,13 +151,22 @@ pub fn fs_access_supported() -> bool {
 /// Save `bytes` to a user-chosen file, preferring the File System Access API.
 ///
 /// v1.7.0 "Forge" beta.5 Workstream H6. Drives `showSaveFilePicker` →
-/// `createWritable` → `write` → `close`, with a graceful fallback to the
-/// [`download_bytes`] (synthetic `<a download>`) path on unsupported browsers
-/// or any failure.
+/// `createWritable` → `write` → `close`.
+///
+/// Fallback behavior is **API-presence-gated, not failure-gated**: only when
+/// the File System Access API is *absent* (Firefox / Safari) does this fall
+/// back to the [`download_bytes`] (synthetic `<a download>`) path. When the API
+/// *is* present, a picker cancel or write failure is logged and is a no-op — it
+/// deliberately does NOT fall back to a download, since silently downloading a
+/// file the user just cancelled would surprise them.
 ///
 /// `suggested_name` seeds the picker's filename; `description` / `accept` set
 /// the file-type filter (e.g. `"NES save state"` + `(".rns", "application/octet-stream")`).
 /// MUST be called from a user-gesture handler (the picker requires it).
+///
+/// Takes ownership of `bytes` (the async picker task needs an owned buffer);
+/// callers that already hold a `Vec<u8>` (e.g. `movie.serialize()`) move it in
+/// without an extra copy.
 ///
 /// The whole API is reached **dynamically** through `js_sys::Reflect` /
 /// `js_sys::Function` rather than `web-sys`'s unstable-gated bindings, so the
@@ -164,10 +177,10 @@ pub fn save_file_with_fallback(
     description: &str,
     accept_ext: &str,
     accept_mime: &str,
-    bytes: &[u8],
+    bytes: Vec<u8>,
 ) {
     if !fs_access_supported() {
-        download_bytes(suggested_name, bytes);
+        download_bytes(suggested_name, &bytes);
         return;
     }
     // Drive the async picker on the microtask queue. On ANY failure (including
@@ -178,7 +191,7 @@ pub fn save_file_with_fallback(
     let desc = description.to_owned();
     let ext = accept_ext.to_owned();
     let mime = accept_mime.to_owned();
-    let data = bytes.to_vec();
+    let data = bytes;
     wasm_bindgen_futures::spawn_local(async move {
         if let Err(e) = save_via_fs_access(&name, &desc, &ext, &mime, &data).await {
             log(&format!("File System Access save failed/cancelled: {e:?}"));
@@ -241,7 +254,10 @@ async fn save_via_fs_access(
     let write: Function = Reflect::get(&writable, &JsValue::from_str("write"))?
         .dyn_into()
         .map_err(|_| JsValue::from_str("write not a function"))?;
-    let array = js_sys::Uint8Array::from(bytes);
+    // wasm32 is a 32-bit target, so `usize`->`u32` cannot truncate here.
+    #[allow(clippy::cast_possible_truncation)]
+    let array = js_sys::Uint8Array::new_with_length(bytes.len() as u32);
+    array.copy_from(bytes);
     JsFuture::from(Promise::resolve(&write.call1(&writable, &array)?)).await?;
 
     // await writable.close()

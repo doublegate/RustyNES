@@ -34,6 +34,23 @@ self.addEventListener("activate", (event) => {
     );
 });
 
+// The cache key for a request. Navigation requests (the app shell) carry a
+// `?settings=…` share-link query that varies per link; keying the cache by the
+// full URL would (a) duplicate the whole shell once per distinct share link
+// (unbounded cache bloat) and (b) make a freshly-opened share link miss the
+// cache and fail offline. So for navigations we normalize the key to the
+// pathname only (query stripped) — every `?settings=…` URL resolves to the one
+// cached shell. Sub-resources (wasm/JS/icons) keep their full URL key.
+function cacheKey(req) {
+    if (req.mode === "navigate") {
+        const url = new URL(req.url);
+        url.search = "";
+        url.hash = "";
+        return new Request(url.toString(), { method: "GET" });
+    }
+    return req;
+}
+
 // Cache-first for same-origin GETs; fall back to (and populate the cache
 // from) the network. Cross-origin and non-GET requests pass straight through.
 self.addEventListener("fetch", (event) => {
@@ -45,17 +62,18 @@ self.addEventListener("fetch", (event) => {
     if (url.origin !== self.location.origin) {
         return;
     }
+    const key = cacheKey(req);
     event.respondWith(
         (async () => {
             const cache = await caches.open(CACHE_NAME);
-            const cached = await cache.match(req);
+            const cached = await cache.match(key);
             if (cached) {
                 // Refresh the cache entry in the background (best-effort).
                 event.waitUntil(
                     fetch(req)
                         .then((resp) => {
                             if (resp && resp.ok) {
-                                cache.put(req, resp.clone());
+                                cache.put(key, resp.clone());
                             }
                         })
                         .catch(() => {})
@@ -65,7 +83,7 @@ self.addEventListener("fetch", (event) => {
             try {
                 const resp = await fetch(req);
                 if (resp && resp.ok) {
-                    cache.put(req, resp.clone());
+                    cache.put(key, resp.clone());
                 }
                 return resp;
             } catch (err) {

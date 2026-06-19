@@ -441,6 +441,8 @@
             // at index 0, West (X) at 2, Back/Select at 8, Start at 9, and the
             // D-pad at 12..15; the left stick is axes 0 (X) and 1 (Y).
             var AXIS_DEADZONE = 0.5;
+            // Hoisted out of the per-pad loop so it is allocated once, not 60x/sec.
+            function down(bt, idx) { return bt[idx] && (bt[idx].pressed || bt[idx].value > 0.5); }
             function pollGamepads() {
                 var b = bindings();
                 if (b && b.rustynes_gamepad_set_buttons) {
@@ -450,17 +452,16 @@
                         var gp = pads[i];
                         if (!gp || gp.mapping !== "standard") { continue; }
                         var bt = gp.buttons;
-                        function down(idx) { return bt[idx] && (bt[idx].pressed || bt[idx].value > 0.5); }
-                        if (down(0)) { mask |= 1; }    // South -> A
-                        if (down(2)) { mask |= 2; }    // West -> B
+                        if (down(bt, 0)) { mask |= 1; }    // South -> A
+                        if (down(bt, 2)) { mask |= 2; }    // West -> B
                         // Some pads only expose A/B; also accept East (1) as B.
-                        if (down(1)) { mask |= 2; }
-                        if (down(8)) { mask |= 4; }    // Back/Select
-                        if (down(9)) { mask |= 8; }    // Start
-                        if (down(12)) { mask |= 16; }  // D-pad up
-                        if (down(13)) { mask |= 32; }  // D-pad down
-                        if (down(14)) { mask |= 64; }  // D-pad left
-                        if (down(15)) { mask |= 128; } // D-pad right
+                        if (down(bt, 1)) { mask |= 2; }
+                        if (down(bt, 8)) { mask |= 4; }    // Back/Select
+                        if (down(bt, 9)) { mask |= 8; }    // Start
+                        if (down(bt, 12)) { mask |= 16; }  // D-pad up
+                        if (down(bt, 13)) { mask |= 32; }  // D-pad down
+                        if (down(bt, 14)) { mask |= 64; }  // D-pad left
+                        if (down(bt, 15)) { mask |= 128; } // D-pad right
                         // Left analog stick -> D-pad.
                         var ax = gp.axes[0] || 0, ay = gp.axes[1] || 0;
                         if (ay < -AXIS_DEADZONE) { mask |= 16; }

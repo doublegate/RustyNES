@@ -40,9 +40,21 @@ thread_local! {
 }
 
 /// Publish the live config's shareable subset into the thread-local snapshot.
-/// Called by the `App` (cheap — a flat struct of primitives + one `String`).
+///
+/// Called every frame by the `App`, so it is change-checked: the shareable
+/// subset is only rebuilt (and the `ntsc_filter` `String` only re-cloned) when
+/// a relevant field actually changed. The steady state is a field-by-field
+/// equality check against the stored snapshot — `String` compares by slice, so
+/// it allocates nothing.
 pub fn publish_live(config: &Config) {
-    LIVE_SHARE.with(|s| *s.borrow_mut() = ShareSettings::from_config(config));
+    LIVE_SHARE.with(|s| {
+        // Cheap dirty-check: compare the live config's shareable fields against
+        // the stored snapshot without building a fresh `ShareSettings` first.
+        if s.borrow().matches_config(config) {
+            return;
+        }
+        *s.borrow_mut() = ShareSettings::from_config(config);
+    });
 }
 
 /// JS bridge: return a full share URL for the current live settings.
@@ -71,6 +83,33 @@ pub fn rustynes_share_link() -> String {
 /// A legitimate blob is a few hundred bytes; this cap (8 KiB) stops a
 /// pathological URL from forcing a large allocation in `atob`.
 const MAX_SHARE_LEN: usize = 8 * 1024;
+
+/// Validate + clamp a numeric field decoded from an untrusted share link.
+///
+/// Returns `fallback` when `value` is non-finite (`NaN` / `±Infinity`),
+/// otherwise `value` clamped to `[min, max]`. Used by [`ShareSettings::apply_to`]
+/// so a malformed/malicious `?settings=` blob can never push a float field
+/// out of the range its settings-UI slider enforces.
+#[must_use]
+const fn sanitize_f32(value: f32, min: f32, max: f32, fallback: f32) -> f32 {
+    if !value.is_finite() {
+        fallback
+    } else if value < min {
+        min
+    } else if value > max {
+        max
+    } else {
+        value
+    }
+}
+
+/// Bit-exact `f32` equality (sidesteps the `float_cmp` lint). Used by
+/// [`ShareSettings::matches_config`] for the per-frame publish dirty-check,
+/// where "unchanged" means literally the same bits.
+#[must_use]
+const fn bits_eq(a: f32, b: f32) -> bool {
+    a.to_bits() == b.to_bits()
+}
 
 /// Format version embedded in the blob. Bumped only on a breaking field-shape
 /// change; readers tolerate any version (serde-default the unknowns), so this
@@ -156,22 +195,76 @@ impl ShareSettings {
         }
     }
 
+    /// Whether this snapshot already reflects the live `Config`'s shareable
+    /// fields. Used by [`publish_live`] to skip rebuilding (and re-cloning the
+    /// `ntsc_filter` `String`) when nothing changed. Allocates nothing — the
+    /// `String` comparison is a byte-slice compare.
+    ///
+    /// Float fields compare bit-exact (`to_bits`), which is what we want for a
+    /// "did this exact value change since last publish" dirty-check (and it
+    /// sidesteps the `float_cmp` lint).
+    #[must_use]
+    fn matches_config(&self, c: &Config) -> bool {
+        self.v == SHARE_VERSION
+            && self.ntsc_filter == c.graphics.ntsc_filter
+            && self.crt_filter == c.graphics.crt_filter
+            && bits_eq(self.crt_scanline, c.graphics.crt_scanline)
+            && bits_eq(self.ntsc_contrast, c.graphics.ntsc_contrast)
+            && bits_eq(self.ntsc_saturation, c.graphics.ntsc_saturation)
+            && bits_eq(self.ntsc_brightness, c.graphics.ntsc_brightness)
+            && bits_eq(self.ntsc_hue, c.graphics.ntsc_hue)
+            && self.hide_overscan == c.graphics.hide_overscan
+            && self.theme == c.ui.theme
+            && self.pixel_aspect_correction == c.ui.pixel_aspect_correction
+            && bits_eq(self.zoom_factor, c.ui.zoom_factor)
+            && self.show_fps == c.ui.show_fps
+            && bits_eq(self.volume, c.audio.volume)
+    }
+
     /// Apply the shareable subset over a [`Config`] in place. Only the curated
     /// fields are touched; everything else keeps the destination config's value.
+    ///
+    /// A share link is untrusted input: a malformed or malicious blob could
+    /// carry `NaN`, negative, or absurdly large float values that would corrupt
+    /// layout (`zoom_factor`) or audio (`volume`), or push the NTSC/CRT knobs
+    /// off-scale. Each numeric field is therefore validated through
+    /// [`sanitize_f32`] — non-finite values are rejected (the destination keeps
+    /// its current value) and finite values are clamped to the same range the
+    /// settings UI enforces for that field.
     pub fn apply_to(&self, c: &mut Config) {
-        c.graphics.ntsc_filter.clone_from(&self.ntsc_filter);
+        // Only adopt a known filter token; an unknown/garbage value would leave
+        // the renderer in a confused state, so fall back to keeping the current.
+        if matches!(
+            self.ntsc_filter.as_str(),
+            "off" | "composite" | "rgb" | "composite-rt"
+        ) {
+            c.graphics.ntsc_filter.clone_from(&self.ntsc_filter);
+        }
         c.graphics.crt_filter = self.crt_filter;
-        c.graphics.crt_scanline = self.crt_scanline;
-        c.graphics.ntsc_contrast = self.ntsc_contrast;
-        c.graphics.ntsc_saturation = self.ntsc_saturation;
-        c.graphics.ntsc_brightness = self.ntsc_brightness;
-        c.graphics.ntsc_hue = self.ntsc_hue;
+        c.graphics.crt_scanline =
+            sanitize_f32(self.crt_scanline, 0.0, 1.0, c.graphics.crt_scanline);
+        c.graphics.ntsc_contrast =
+            sanitize_f32(self.ntsc_contrast, -1.0, 1.0, c.graphics.ntsc_contrast);
+        c.graphics.ntsc_saturation =
+            sanitize_f32(self.ntsc_saturation, -1.0, 1.0, c.graphics.ntsc_saturation);
+        c.graphics.ntsc_brightness = sanitize_f32(
+            self.ntsc_brightness,
+            -100.0,
+            100.0,
+            c.graphics.ntsc_brightness,
+        );
+        c.graphics.ntsc_hue = sanitize_f32(self.ntsc_hue, -180.0, 180.0, c.graphics.ntsc_hue);
         c.graphics.hide_overscan = self.hide_overscan;
         c.ui.theme = self.theme;
         c.ui.pixel_aspect_correction = self.pixel_aspect_correction;
-        c.ui.zoom_factor = self.zoom_factor;
+        c.ui.zoom_factor = sanitize_f32(
+            self.zoom_factor,
+            crate::config::UiConfig::ZOOM_MIN,
+            crate::config::UiConfig::ZOOM_MAX,
+            c.ui.zoom_factor,
+        );
         c.ui.show_fps = self.show_fps;
-        c.audio.volume = self.volume;
+        c.audio.volume = sanitize_f32(self.volume, 0.0, 1.0, c.audio.volume);
     }
 
     /// Encode to a compact URL-safe base64 blob (TOML body → base64url).

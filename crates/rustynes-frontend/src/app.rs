@@ -2985,20 +2985,21 @@ impl App {
                 return;
             };
             let bytes = movie.serialize();
+            let byte_len = bytes.len();
             // v1.7.0 "Forge" beta.5 Workstream H6 — save through the File System
             // Access API (a real "Save As" dialog) where the browser supports
             // it, falling back to the synthetic-anchor download elsewhere.
+            // `bytes` is moved in (owned), avoiding an extra copy.
             crate::wasm_io::save_file_with_fallback(
                 "rustynes-movie.rnm",
                 "RustyNES TAS movie",
                 ".rnm",
                 "application/octet-stream",
-                &bytes,
+                bytes,
             );
             crate::wasm_io::log(&format!(
-                "movie finished ({} frames, {} bytes) — save triggered",
+                "movie finished ({} frames, {byte_len} bytes) — save triggered",
                 movie.len(),
-                bytes.len()
             ));
         } else {
             let Some(nes) = emu.nes.as_mut() else {
