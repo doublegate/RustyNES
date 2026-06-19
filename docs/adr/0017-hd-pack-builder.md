@@ -49,8 +49,13 @@ compositor and writes a Mesen-compatible starter pack.
   (ADR 0014) is still compositor-only.
 - `HdPackBuilder::write_pack(dir)` emits `tiles.png` (a packed RGBA8 sheet, 16
   tiles per row, encoded with the same `png` crate the loader decodes with) and
-  `hires.txt` (`<ver>100` / `<scale>` / `<img>tiles.png` + one `<tile>hash,
-  tiles.png,x,y` rule per distinct tile, in stable insertion order).
+  `hires.txt` in the **real Mesen `<ver>106` format** (ADR 0018): `<ver>106` /
+  `<scale>` / `<img>tiles.png` + one
+  `<tile>bitmapIndex,tileData,palette,x,y,brightness,defaultTile` rule per
+  distinct tile, in stable insertion order, where `tileData` is the captured
+  16 CHR bytes as 32 hex chars (Mesen's match key) and `bitmapIndex` is `0`.
+  This makes the builder's output consumable by real Mesen tooling, not just the
+  RustyNES loader.
 - A two-item HD-Pack submenu (`Build HD Pack (Record)` / `Stop & Save HD Pack`)
   plus `MenuAction::HdPackBuilderStart` / `HdPackBuilderStop` drive it. Recording
   needs a loaded ROM and an unrestricted (non-replay/non-netplay) session.

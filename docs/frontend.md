@@ -522,8 +522,12 @@ reorganized the order and regrouped several items — see the per-menu notes):
   submenu (`hd-pack` feature + native; folded in from the former standalone "Mod"
   menu) — which v1.7.0 G5 extends with an **HD-Pack Builder** (Build HD Pack
   (Record) → Stop & Save): an in-emulator recorder that captures the distinct
-  tiles a game draws and writes a Mesen-compatible `hires.txt` + `tiles.png`
-  starter pack (output-only; see ADR 0017).
+  tiles a game draws and writes a real-Mesen-`<ver>106`-format `hires.txt` +
+  `tiles.png` starter pack (output-only; see ADR 0017). The loader reads the same
+  real format — `[Cond1&Cond2]`-prefixed conditions + a
+  `bitmapIndex,tileData,palette,x,y,brightness,defaultTile` tile line keyed on the
+  CRC-32 of the 16-byte CHR `tileData` — so real third-party packs (e.g. Zelda /
+  SMB HD remasters) load (ADR 0018), not just builder-authored ones.
 - **Debug** — Show Debugger (`` ` ``), Performance Monitor (moved here from
   Tools in v1.3.0), then the chip/state inspectors: CPU / PPU / APU / Memory /
   Memory Compare / OAM / Mapper / Trace Logger / Watch / Breakpoints (v1.6.0

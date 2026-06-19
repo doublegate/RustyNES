@@ -51,6 +51,9 @@ struct CapturedTile {
     rgba: [u8; TILE * TILE * 4],
     /// Insertion order, used to lay the tile out in the sheet grid.
     index: usize,
+    /// The tile's 16 raw CHR bytes (un-flipped), emitted as the real Mesen
+    /// `<tile>` `tileData` field (32 hex chars). This IS Mesen's match key.
+    chr: [u8; 16],
 }
 
 /// Errors produced when emitting an HD-pack.
@@ -171,7 +174,7 @@ impl HdPackBuilder {
                 }
                 let index = self.tiles.len();
                 let rgba = lift_cell(framebuffer, cell_x, cell_y);
-                self.tiles.insert(key, CapturedTile { rgba, index });
+                self.tiles.insert(key, CapturedTile { rgba, index, chr });
             }
         }
     }
@@ -207,20 +210,26 @@ impl HdPackBuilder {
         )
     }
 
-    /// Build the `hires.txt` manifest text for the captured tiles. One `<tile>`
-    /// rule per distinct tile, mapping its CRC-32 key to the tile's `(x, y)` slot
-    /// in `tiles.png`. The rule grammar matches [`crate::hdpack`]'s parser
-    /// (`<tile>hash,image,x,y`).
+    /// Build the `hires.txt` manifest text for the captured tiles in the **real
+    /// Mesen `<ver>106` format** — one `<tile>` rule per distinct tile, mapping
+    /// the tile's 16 CHR bytes (`tileData`, 32 hex chars — Mesen's match key) to
+    /// its `(x, y)` slot in `tiles.png`. The grammar this emits is exactly what
+    /// [`crate::hdpack`]'s loader reads and what real Mesen tooling consumes:
+    /// `<tile>bitmapIndex,tileData,palette,x,y,brightness,defaultTile`.
+    ///
+    /// `bitmapIndex` is `0` (the single `<img>tiles.png` declaration). `palette`
+    /// is an all-zero placeholder — `RustyNES`'s CRC-of-CHR match key is
+    /// palette-agnostic (a documented subset of Mesen's palette-discriminated
+    /// keying), so the field is emitted for format compliance only. `brightness`
+    /// is `1` (full) and `defaultTile` is `N`.
     #[must_use]
     fn manifest_text(&self) -> String {
         use std::fmt::Write as _;
         let mut out = String::new();
-        // `<ver>` 100 is the Mesen HD-pack format version the loader accepts.
-        out.push_str("<ver>100\n");
+        // `<ver>106` is the real Mesen HD-pack format this builder + loader speak.
+        out.push_str("<ver>106\n");
         let _ = writeln!(out, "<scale>{}", self.scale);
-        // The pattern-table reference is informational for the loader; the tile
-        // rules below carry the authoritative CRC keys.
-        out.push_str("<patternTable>\n");
+        // A single tile sheet, referenced as bitmap index 0 by the rules below.
         out.push_str("<img>tiles.png\n");
         // A friendly provenance comment (ignored by the parser, which skips
         // non-`<...>` lines). RustyNES emits the observed frame count.
@@ -232,13 +241,18 @@ impl HdPackBuilder {
         // Emit tiles in insertion order for a stable, diff-friendly manifest.
         let mut ordered: Vec<(&u32, &CapturedTile)> = self.tiles.iter().collect();
         ordered.sort_by_key(|(_, t)| t.index);
-        for (key, tile) in ordered {
+        for (_key, tile) in ordered {
             let col = tile.index % SHEET_COLS;
             let row = tile.index / SHEET_COLS;
             let x = col * TILE;
             let y = row * TILE;
-            // Mesen tile hashes are 8-digit lower-case hex.
-            let _ = writeln!(out, "<tile>{key:08x},tiles.png,{x},{y}");
+            // tileData = the 16 CHR bytes as 32 upper-case hex chars (Mesen form).
+            let mut tile_data = String::with_capacity(32);
+            for b in tile.chr {
+                let _ = write!(tile_data, "{b:02X}");
+            }
+            // bitmapIndex,tileData,palette,x,y,brightness,defaultTile
+            let _ = writeln!(out, "<tile>0,{tile_data},00000000,{x},{y},1,N");
         }
         out
     }
@@ -373,13 +387,23 @@ mod tests {
         ]);
         b.observe(&fb, &ts, chr_for);
         let text = b.manifest_text();
-        let tile_lines = text.lines().filter(|l| l.starts_with("<tile>")).count();
-        assert_eq!(tile_lines, 2);
-        assert!(text.contains("<ver>100"));
+        let tile_lines: Vec<&str> = text.lines().filter(|l| l.starts_with("<tile>")).collect();
+        assert_eq!(tile_lines.len(), 2);
+        assert!(text.contains("<ver>106"));
         assert!(text.contains("<img>tiles.png"));
-        // Each tile rule references tiles.png and a hex hash.
-        for l in text.lines().filter(|l| l.starts_with("<tile>")) {
-            assert!(l.contains(",tiles.png,"));
+        // Each tile rule is the real Mesen form:
+        // `<tile>bitmapIndex,tileData(32 hex),palette,x,y,brightness,defaultTile`.
+        for l in &tile_lines {
+            let fields: Vec<&str> = l.trim_start_matches("<tile>").split(',').collect();
+            assert_eq!(fields.len(), 7, "real Mesen <tile> has 7 fields: {l}");
+            assert_eq!(fields[0], "0", "bitmap index 0 (single tiles.png)");
+            assert_eq!(fields[1].len(), 32, "tileData is 16 CHR bytes = 32 hex");
+            assert!(
+                fields[1].chars().all(|c| c.is_ascii_hexdigit()),
+                "tileData hex"
+            );
+            assert_eq!(fields[5], "1", "brightness");
+            assert_eq!(fields[6], "N", "defaultTile");
         }
     }
 

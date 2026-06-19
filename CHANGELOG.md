@@ -357,7 +357,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     persisted — the chips are rebuilt from the immutable `$07B` bitfield and live
     phase re-converges from the next register write (correct for a paused/restored
     NSF); the presence byte only records which chips a v2 tail described.
-
+- **HD-pack loader now parses the REAL Mesen `hires.txt` format** (task #56;
+  `crates/rustynes-frontend/src/hdpack.rs`, `hd-pack` feature; ADR 0018). Every
+  real third-party HD-pack previously failed to load with a red "hires.txt"
+  status-bar error: the parser only accepted an invented `hash,image,x,y` /
+  `image,x,y,hash` `<tile>` grammar and `.parse::<u32>()`'d x/y from the wrong
+  positions, so a real `<ver>106` tile line
+  (`<tile>chrBankPage,tileData,image,x,y,brightness,defaultTile,...`) failed for
+  **every** tile → zero rules → `load()` returned `None`. The parser now reads the
+  real Mesen layout (verified against `Mesen2/Core/NES/HdPacks/HdPackLoader.cpp`):
+  the real `<tile>` field order (`bitmapIndex,tileData,palette,x,y,brightness,
+  defaultTile[,chrBankPage,tileIndex]`) with the 32-hex `tileData` (the tile's 16
+  CHR bytes) as the match key (CRC-32, the exact key the compositor computes from
+  the live CHR snapshot); `[Cond1&Cond2]` per-line **condition prefixes** (AND-
+  joined, with `!name` inversion); hex condition memory addresses/operands/masks;
+  `<img>` referenced by declaration index; the real `<background>`
+  `name,brightness[,hScroll,vScroll][,priority][,left,top]` layout; and lenient
+  `<ver>`/`<options>`/`<supportedRom>`/`#`-comment handling. A real *Zelda
+  Remastered* `<ver>106` pack now parses from **0 → 15,849 tile rules**. The G5
+  **HD-Pack Builder** was reconciled to **emit** the same real `<ver>106`
+  `<tile>bitmapIndex,tileData,palette,x,y,brightness,defaultTile` form (the
+  captured 16 CHR bytes as `tileData`), so author→load round-trips and its output
+  is consumable by real Mesen tooling. A committed synthetic `<ver>106` fixture
+  regression-guards the parser (no copyrighted assets committed). Output-only +
+  `hd-pack`-gated: the core is untouched, AccuracyCoin holds **100% (139/139)**,
+  and with the feature off the shipped / native / `no_std` / wasm builds stay
+  byte-identical.
 - **v1.7.0 beta.3 review — scriptable-TAStudio + host-IPC robustness** (all
   additive / off the default path; `scripting` / `script-ipc` stay byte-identical
   off; AccuracyCoin holds **100% (139/139)**):
