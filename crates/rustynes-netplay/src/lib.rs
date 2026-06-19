@@ -101,6 +101,12 @@ pub mod diagnostics;
 pub mod message;
 pub mod rng;
 pub mod session;
+// v1.7.0 "Forge" Workstream H8 — the read-only spectator session: a
+// determinism-safe, receive-only extension of the rollback stack (it replays
+// the players' confirmed input stream, predicts nothing, sends nothing). It is
+// transport-agnostic + std-free in the same way the session core is, so it
+// compiles on the wasm gate too.
+pub mod spectator;
 pub mod stun;
 pub mod transport;
 
@@ -135,6 +141,7 @@ pub use message::{NetMessage, PROTOCOL_VERSION, fnv1a64};
 pub use rng::SplitMix64;
 pub use session::{AdvanceOutcome, MAX_PLAYERS, NetplayError, RollbackSession, SessionConfig};
 pub use signaling::{Action, ClientId, Relay, SignalMessage};
+pub use spectator::{SpectatorConfig, SpectatorOutcome, SpectatorSession};
 #[cfg(not(target_arch = "wasm32"))]
 pub use stun::StunClient;
 pub use stun::{

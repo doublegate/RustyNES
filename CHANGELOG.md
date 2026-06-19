@@ -38,6 +38,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (now stored + drawn instead of ignored), per-achievement **rarity** ("% earn")
   in the panel, and hardcore **pause-gating** (`rc_client_can_pause`) wired into
   `set_paused` so a hardcore pause is deferred with the seconds remaining.
+- **v1.7.0 "Forge" Workstream H8 — spectator netplay (read-only).** A
+  determinism-safe, receive-only extension of the rollback stack:
+  `rustynes_netplay::SpectatorSession` replays a match's confirmed input stream
+  into a local emulator, one frame at a time, the moment every player's real
+  input for that frame arrives. It **predicts nothing, rolls back never, and
+  sends nothing** (poll-only transport), so it is byte-identical to the players'
+  confirmed timeline and invisible to the match it watches — the existing 2-4
+  player rollback path is untouched (AccuracyCoin 100%, 139/139). The native
+  Netplay panel gains a **Spectate** control (`netplay_ui::start_spectate`); the
+  status bar shows `spectate fN +pending` (how far behind the live match). The
+  byte-identical replay is unit-tested against a reference run; the host-side
+  broadcast/relay + `deploy/` relay config remain a documented maintainer-manual
+  carryover (see `docs/netplay-webrtc.md` §4). New module
+  `crates/rustynes-netplay/src/spectator.rs`.
+- **v1.7.0 "Forge" Workstream H9 — power-user niceties.** All additive,
+  frontend-only, determinism-neutral. **Game Genie encoder** — a new pure
+  `genie_encode` module produces a canonical 6-/8-character code from a known
+  `(address, data[, compare])` substitution (the exact inverse of the core
+  decoder; every code round-trips back through `rustynes_core::GenieCode::new`),
+  surfaced as a "Game Genie encoder" section in the Cheats panel ("Encode" →
+  "Add to list"). **`.tbl` text tables** — the same module parses the
+  community `XX=glyph` table format and renders a byte stream into readable text
+  (for non-ASCII game encodings in the hex editor / RAM search). **Movie
+  subtitles → `.srt` export** — a new pure `movie_srt` module converts TAStudio
+  markers into a frame-exact SubRip subtitle track at the region's frame rate
+  (NTSC 60.0988 fps drift-free), via File → Movies → "Export subtitles (.srt)".
+  New modules `crates/rustynes-frontend/src/{genie_encode,movie_srt}.rs`.
 - **v1.7.0 "Forge" beta.5 — UI overhaul (#51/#52/#53/#55).** Frontend-only and
   determinism-neutral (the core stays byte-identical; AccuracyCoin 100%,
   139/139). (#51) The two controller HUDs were **consolidated into one "Input

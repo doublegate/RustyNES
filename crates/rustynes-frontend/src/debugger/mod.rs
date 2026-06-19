@@ -902,6 +902,13 @@ impl DebuggerOverlay {
                 }
                 Some(s)
             }
+            NetplayPhaseView::Spectating => {
+                let mut s = format!("NET spectate f{}", net.current_frame);
+                if net.spectator_pending > 0 {
+                    let _ = write!(s, " +{}", net.spectator_pending);
+                }
+                Some(s)
+            }
         }
     }
 

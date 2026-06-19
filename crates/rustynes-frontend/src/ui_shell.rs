@@ -181,6 +181,10 @@ pub enum MenuAction {
     /// v1.6.0 B1 — export the current recording / loaded movie to an external
     /// TAS movie file (`.fm2` FCEUX / `.bk2` `BizHawk`) via the save dialog.
     MovieExport,
+    /// v1.7.0 "Forge" Workstream H9 — export the current `TAStudio` movie's
+    /// markers as a `SubRip` (`.srt`) subtitle track (frame-exact, at the
+    /// region's frame rate), for muxing into an `A/V` dump. Native-only.
+    MovieExportSubtitles,
     /// v1.7.0 "Forge" Workstream D1 — export the trailing `seconds` of the live
     /// session timeline (the `HistoryViewer` over the rewind ring) as a replayable
     /// `.rnm` clip via the save dialog. The clip begins at the nearest start
@@ -1121,6 +1125,18 @@ impl UiShell {
                                     .clicked()
                                 {
                                     out.action = Some(MenuAction::MovieExport);
+                                    ui.close();
+                                }
+                                // v1.7.0 H9 — export TAStudio markers as a
+                                // SubRip (.srt) subtitle track.
+                                if ui
+                                    .add(egui::Button::new(ic(
+                                        glyph::FLOPPY_DISK,
+                                        "Export subtitles (.srt)",
+                                    )))
+                                    .clicked()
+                                {
+                                    out.action = Some(MenuAction::MovieExportSubtitles);
                                     ui.close();
                                 }
                             }

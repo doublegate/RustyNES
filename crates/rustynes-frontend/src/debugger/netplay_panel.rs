@@ -49,6 +49,9 @@ pub struct NetplayStatusView {
     pub resimulated_frames: u32,
     /// The most recent tick stalled for time-sync (no frame produced).
     pub stalled: bool,
+    /// v1.7.0 H8 — confirmed-but-unshown frames buffered while `Spectating`
+    /// (how far behind the live match); `0` otherwise.
+    pub spectator_pending: u32,
     /// Error / disconnect text (Error phase), else empty.
     pub message: String,
     /// v1.3.0 Workstream G1 — read-only desync diagnostics + room / input
@@ -121,6 +124,8 @@ pub enum NetplayPhaseView {
     Connecting,
     /// Rollback session running.
     InGame,
+    /// v1.7.0 H8 — read-only spectator session running.
+    Spectating,
     /// Terminal error.
     Error,
 }
@@ -143,6 +148,11 @@ pub enum NetplayRequest {
         /// The host's `IP:port`.
         remote: String,
     },
+    /// v1.7.0 H8 — spectate (watch read-only) a match at the given `host:port`.
+    Spectate {
+        /// The host's `IP:port`.
+        remote: String,
+    },
     /// Leave the current session (back to single-player).
     Leave,
 }
@@ -162,6 +172,8 @@ pub struct NetplayPanelState {
     host_num_players: u8,
     /// Join "host:port" address buffer.
     join_remote: String,
+    /// v1.7.0 H8 — spectate "host:port" address buffer.
+    spectate_remote: String,
     /// `true` once the fields have been seeded from config (so we don't
     /// clobber user edits on later syncs).
     seeded: bool,
@@ -262,7 +274,7 @@ pub fn show(
 
 #[cfg(not(target_arch = "wasm32"))]
 fn body(ui: &mut egui::Ui, state: &mut NetplayPanelState, config: &mut crate::config::Config) {
-    use NetplayPhaseView::{Connecting, Error, Idle, InGame};
+    use NetplayPhaseView::{Connecting, Error, Idle, InGame, Spectating};
 
     // --- Status block ---
     ui.label(egui::RichText::new("Status").strong());
@@ -318,6 +330,26 @@ fn body(ui: &mut egui::Ui, state: &mut NetplayPanelState, config: &mut crate::co
                 ui.label(sync.join("   "));
             }
             diagnostics_section(ui, &st.diagnostics);
+        }
+        Spectating => {
+            ui.colored_label(
+                egui::Color32::from_rgb(0x40, 0xA0, 0xE0),
+                "Spectating (read-only)",
+            );
+            ui.label(format!(
+                "frame: {}   confirmed: {}   behind: {}",
+                st.current_frame,
+                st.confirmed_frame
+                    .map_or_else(|| "-".to_string(), |f| f.to_string()),
+                st.spectator_pending,
+            ));
+            ui.label(
+                egui::RichText::new(
+                    "You are watching the match's confirmed input stream. \
+                     Your controls do nothing and you send no input.",
+                )
+                .weak(),
+            );
         }
         Error => {
             ui.colored_label(
@@ -384,6 +416,37 @@ fn body(ui: &mut egui::Ui, state: &mut NetplayPanelState, config: &mut crate::co
             config.netplay.last_join_address = state.join_remote.trim().to_string();
             state.request = Some(NetplayRequest::Join {
                 remote: state.join_remote.trim().to_string(),
+            });
+        }
+    });
+
+    ui.separator();
+
+    // --- Spectate (read-only) (v1.7.0 H8) ---
+    ui.add_enabled_ui(!active, |ui| {
+        ui.label(egui::RichText::new("Spectate (watch, read-only)").strong());
+        if state.spectate_remote.is_empty() {
+            state.join_remote.clone_into(&mut state.spectate_remote);
+        }
+        ui.horizontal(|ui| {
+            ui.label("host:port:");
+            ui.add(
+                egui::TextEdit::singleline(&mut state.spectate_remote)
+                    .hint_text("ip:port")
+                    .desired_width(180.0),
+            );
+        });
+        ui.label(
+            egui::RichText::new(
+                "Watch a running match without joining it. You replay the \
+                 confirmed input stream locally and send no input, so you \
+                 cannot affect the players.",
+            )
+            .weak(),
+        );
+        if ui.button("Spectate").clicked() {
+            state.request = Some(NetplayRequest::Spectate {
+                remote: state.spectate_remote.trim().to_string(),
             });
         }
     });

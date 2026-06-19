@@ -1213,6 +1213,49 @@ compiled). Implemented in `src/av_record.rs`.
   `av_record`'s tests. The FCEUX-style Code/Data Logger (output-only PRG/CHR
   coverage side-array) is **deferred** (not in this cut).
 
+### v1.7.0 "Forge" Workstream H8 — spectator netplay (read-only)
+
+The Netplay panel gains a **Spectate (watch, read-only)** control next to
+Host / Join. It dials a host and runs a `rustynes_netplay::SpectatorSession`
+(`netplay_ui::NetplayUi::start_spectate`): the local emulator replays the
+match's *confirmed* input stream, one frame at a time, and **sends no gameplay
+input**, so your controls do nothing and you cannot perturb the match. Because a
+spectator predicts nothing and rolls back never, its framebuffer is
+byte-identical to the players' confirmed timeline (unit-tested). It runs behind
+the live match by the network latency; the status bar shows `NET spectate fN
++pending` (`pending` = confirmed-but-unshown frames). The host-side
+broadcast/relay is a documented maintainer-manual carryover — see
+`docs/netplay-webrtc.md` §4.
+
+### v1.7.0 "Forge" Workstream H9 — power-user niceties
+
+All additive + frontend-only; the core stays byte-identical.
+
+- **Game Genie encoder** (Cheats panel, "Game Genie encoder" section) — enter a
+  PRG address (`$8000-$FFFF`), a data byte, and an optional compare byte, click
+  **Encode** to get the canonical 6-/8-character code, then **Add to list**.
+  The encoder (`genie_encode`) is the exact inverse of the core decoder; every
+  code it emits round-trips back through `rustynes_core::GenieCode::new` to the
+  same substitution.
+- **`.tbl` text tables** (`genie_encode::Table`) — parse the community
+  `XX=glyph` byte→glyph table format and render a byte stream into readable text
+  (for games with a non-ASCII character encoding, in the hex editor / RAM
+  search).
+- **Movie subtitles → `.srt`** (File → Movies → "Export subtitles (.srt)") —
+  export the open TAStudio movie's named markers as a frame-exact SubRip
+  subtitle track at the region's frame rate (NTSC's 60.0988 fps stays
+  drift-free), for muxing into an A/V dump (`movie_srt::markers_to_srt`).
+
+**Deferred (noted for a follow-up):** Virtual Pad (clickable on-screen
+controller → `SharedInput`), input Macros feeding the piano-roll pattern-paint,
+BasicBot (savestate-anchored brute-force search), multi-monitor / detachable
+egui multi-viewport tool windows, A/V dump codec/sync depth, FDS Firmware
+Manager (BIOS hash-verify), Multi-Disk Bundler, and a first-class headless Batch
+Runner. The shipped subset (spectator + Genie encoder + `.tbl` + `.srt`) is the
+self-contained, fully-tested core; the deferred items are larger and more
+cross-cutting (most touch `app.rs`/the emu thread heavily, which a parallel-merge
+cut keeps minimal).
+
 ## Settings
 
 Stored in `directories::ProjectDirs::config_dir() / "RustyNES" / "config.toml"`.

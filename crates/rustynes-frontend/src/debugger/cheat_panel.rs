@@ -70,6 +70,16 @@ pub struct CheatPanelState {
     raw_compare_text: String,
     /// Last raw RAM add error (cleared on a successful add).
     raw_error: String,
+    /// v1.7.0 H9 — Game Genie ENCODER fields: PRG address (hex, $8000-$FFFF),
+    /// data byte (hex), optional compare byte (hex). The inverse of the decoder
+    /// (`crate::genie_encode`): produce a code from a known substitution.
+    enc_addr_text: String,
+    enc_data_text: String,
+    enc_compare_text: String,
+    /// The last successfully-encoded code (display + "Add to list" source).
+    enc_result: String,
+    /// Last encoder error (cleared on a successful encode).
+    enc_error: String,
 }
 
 impl CheatPanelState {
@@ -86,6 +96,11 @@ impl CheatPanelState {
         self.raw_value_text.clear();
         self.raw_compare_text.clear();
         self.raw_error.clear();
+        self.enc_addr_text.clear();
+        self.enc_data_text.clear();
+        self.enc_compare_text.clear();
+        self.enc_result.clear();
+        self.enc_error.clear();
     }
 
     /// The currently-ENABLED raw RAM cheats, cloned for the app's produce
@@ -231,10 +246,103 @@ fn body(ui: &mut egui::Ui, state: &mut CheatPanelState, rom_crc: Option<u32>) ->
     }
 
     ui.add_space(8.0);
+    egui::CollapsingHeader::new("Game Genie encoder")
+        .default_open(false)
+        .show(ui, |ui| {
+            changed |= encoder_body(ui, state);
+        });
+
+    ui.add_space(8.0);
     ui.heading("RAM cheats");
     changed |= raw_body(ui, state);
 
     changed
+}
+
+/// v1.7.0 H9 — the Game Genie ENCODER section: turn a known
+/// `(address, data[, compare])` substitution into a canonical code (the
+/// inverse of the decoder). Returns `true` if a generated code was added to the
+/// Game Genie list. A power user who found the value with a RAM search / hex
+/// editor can author the code without a code-book lookup.
+fn encoder_body(ui: &mut egui::Ui, state: &mut CheatPanelState) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.label("Addr $");
+        ui.add(
+            egui::TextEdit::singleline(&mut state.enc_addr_text)
+                .desired_width(56.0)
+                .hint_text("91D9"),
+        );
+        ui.label("=");
+        ui.add(
+            egui::TextEdit::singleline(&mut state.enc_data_text)
+                .desired_width(40.0)
+                .hint_text("AD"),
+        );
+        ui.label("if");
+        ui.add(
+            egui::TextEdit::singleline(&mut state.enc_compare_text)
+                .desired_width(40.0)
+                .hint_text("(any)"),
+        );
+        if ui.button("Encode").clicked() {
+            encode_from_fields(state);
+        }
+    });
+    if !state.enc_error.is_empty() {
+        ui.colored_label(
+            egui::Color32::from_rgb(0xE0, 0x40, 0x40),
+            state.enc_error.clone(),
+        );
+    }
+    if !state.enc_result.is_empty() {
+        ui.horizontal(|ui| {
+            ui.monospace(state.enc_result.clone());
+            if ui.button("Add to list").clicked() {
+                state.enc_result.clone_into(&mut state.add_text);
+                changed |= try_add(state);
+            }
+        });
+    }
+    ui.label(
+        egui::RichText::new(
+            "Address is the PRG byte the code substitutes ($8000-$FFFF). With a \
+             compare byte you get an 8-character (bank-specific) code.",
+        )
+        .weak(),
+    );
+    changed
+}
+
+/// Parse the encoder fields and produce a code into `state.enc_result` (or an
+/// error into `state.enc_error`). Address must be `$8000-$FFFF`; the data +
+/// optional compare are single hex bytes.
+fn encode_from_fields(state: &mut CheatPanelState) {
+    state.enc_error.clear();
+    let addr_str = state.enc_addr_text.trim().trim_start_matches('$');
+    let data_str = state.enc_data_text.trim();
+    let cmp_str = state.enc_compare_text.trim();
+
+    let Ok(addr) = u16::from_str_radix(addr_str, 16) else {
+        state.enc_error = "address must be hex".to_string();
+        return;
+    };
+    if addr < 0x8000 {
+        state.enc_error = "address must be in $8000-$FFFF".to_string();
+        return;
+    }
+    let Ok(data) = u8::from_str_radix(data_str, 16) else {
+        state.enc_error = "data must be a hex byte".to_string();
+        return;
+    };
+    if cmp_str.is_empty() {
+        state.enc_result = crate::genie_encode::encode_6(addr, data);
+    } else if let Ok(cmp) = u8::from_str_radix(cmp_str, 16) {
+        state.enc_result = crate::genie_encode::encode_8(addr, data, cmp);
+    } else {
+        state.enc_error = "compare must be a hex byte (or blank)".to_string();
+        state.enc_result = String::new();
+    }
 }
 
 /// The raw RAM cheat section of the window body. Returns `true` if the raw
