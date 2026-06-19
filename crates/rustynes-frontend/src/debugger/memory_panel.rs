@@ -41,6 +41,7 @@ use egui::Color32;
 use rustynes_core::Nes;
 
 use crate::cheats::RawCheat;
+use crate::debugger::access_counter::{self, MemoryAccessCounter};
 
 /// Which memory domain the editor is viewing.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -224,7 +225,13 @@ impl MemoryPanelState {
     }
 }
 
-pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut MemoryPanelState, nes: &mut Nes) {
+pub fn show(
+    ctx: &egui::Context,
+    open: &mut bool,
+    state: &mut MemoryPanelState,
+    nes: &mut Nes,
+    counter: &mut MemoryAccessCounter,
+) {
     egui::Window::new("Memory")
         .open(open)
         .default_pos([336.0, 480.0])
@@ -405,6 +412,12 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut MemoryPanelState, 
                     }
                 });
             }
+
+            // v1.7.0 "Forge" Workstream C (C2) — the per-address read/write/exec
+            // access-counter + uninitialized-read detector, shown for the 16
+            // addresses currently in view. Self-contained so it merges cleanly.
+            ui.separator();
+            access_counter::show_access_counter_section(ui, counter, state.origin);
         });
 }
 

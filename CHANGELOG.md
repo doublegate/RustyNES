@@ -17,6 +17,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **v1.7.0 "Forge" Workstream A — editing-capable debugger tools (the
+  read-only → writable leap).** The inspect-only PPU/OAM panels become a
+  creator/RE workbench; all writeback is `debug-hooks`-gated and routes through
+  the SAME gated post-frame poke path the raw RAM cheats use, so it is a no-op
+  under netplay / TAS replay or record / RA-hardcore and **byte-identical with
+  the feature off**. AccuracyCoin holds **100% (139/139)**; the chip stack stays
+  `#![no_std]`.
+  - **A1 — tile/CHR + palette + nametable + OAM editors (writeback).** An
+    "Edit (writeback)" toggle on the PPU panel exposes a palette-entry editor
+    (click a swatch → edit the 6-bit value), a nametable tile/attribute editor
+    (click a cell → edit the tile byte + the 2-bit attribute quadrant via a
+    read-modify-write), and a CHR byte poker; the OAM panel gains a per-sprite
+    Y/tile/attr/X editor. Writes queue as one-shot `DebugPoke`s drained after the
+    next frame. New gated core hooks `Nes::debug_poke_ppu` / `Nes::poke_oam_byte`
+    (`crates/rustynes-core/src/{nes,bus}.rs` + `crates/rustynes-ppu/src/ppu.rs`),
+    plus a "locked = no-op = byte-identical" gate in the frontend produce path.
+  - **A2 — iNES / NES 2.0 header editor + read-only "Cartridge Info" pane**
+    (native-only; `crates/rustynes-frontend/src/debugger/header_editor.rs`,
+    opened from **Debug → Cartridge Info / Header Editor...**). Inspects (read-only
+    by default) and optionally edits the 16-byte header of a ROM file *on disk*
+    (format, mapper, submapper, mirroring, PRG/CHR sizes, battery, trainer,
+    region, console type, RAM sizes, Vs. DualSystem). Decode + re-encode reuse the
+    core's canonical `parse_header` / `serialize_header` round-trip. Edits a file,
+    never the running core.
+  - **A3 — inline 6502 assembler** (`crates/rustynes-frontend/src/debugger/{cpu_panel,assembler.rs}`).
+    Assembles one or more source lines (e.g. `LDA #$42`, `STA $0200,X`,
+    `BNE $C010`) at a target address into the gated work-RAM poke path. The
+    opcode-encoding table is **derived at runtime from the canonical
+    disassembler**, so it can never drift from the CPU core's decode.
+
 - **Mapper breadth 150 → 168 families** (v1.7.0 "Forge" Workstream G1 — next
   reusable-ASIC BMC/pirate cores, `crates/rustynes-mappers/src/sprint12.rs`). 18
   new **BestEffort** (Tier-2, honesty-gated, off the AccuracyCoin / commercial
@@ -71,6 +101,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     snapshotted (PPU snapshot v4) so a save-state taken mid-insertion resumes
     exactly.
 
+- **v1.7.0 "Forge" Workstream C — debugger depth (source-level / step /
+  callstack).** All additive, output-only telemetry, gated behind the always-on
+  frontend `debug-hooks` feature and **byte-identical with the core's
+  `debug-hooks` feature OFF** (the headless test / bench builds), so the
+  shipped / native / `no_std` / wasm builds are unchanged and **AccuracyCoin
+  holds 100% (139/139)**. None of these are v2.0 items — they ride the current
+  PPU-dot scheduler.
+  - **C1 — call stack + step verbs.** A Mesen2-`CallstackManager`-class live
+    6502 call stack (`crates/rustynes-frontend/src/debugger/callstack.rs`),
+    rebuilt each frame by replaying the observational per-frame exec log +
+    interrupt-service log: `JSR` pushes, `RTS`/`RTI` pops, and an unexplained
+    non-sequential PC is correlated against the interrupt log to label an
+    NMI/IRQ frame. Adds the stepping verbs **step-over / step-out / run-to-NMI /
+    run-to-IRQ / step-scanline / step-frame** (the exec/interrupt-driven verbs
+    ride the per-frame logs; scanline/frame ride frame-advance), surfaced in a
+    new "Call stack" section of the CPU panel. Step completion pauses the
+    emulator and opens the CPU panel, like a breakpoint hit. Output-only.
+  - **C2 — memory access counter + uninitialized-read detection.** A
+    Mesen2-`MemoryAccessCounter`-class per-address read/write/exec counter with
+    last-access stamps and a sticky **uninitialized-read** flag (a read of
+    volatile RAM — `$0000-$1FFF` / `$6000-$7FFF` — before it was ever written),
+    folded from the per-frame access + exec logs
+    (`crates/rustynes-frontend/src/debugger/access_counter.rs`). Surfaced as an
+    "Access counters" section in the Memory panel. Output-only side-array.
+  - **C3 — ca65/cc65 `.dbg` source-line mapping.** A frontend parser for the
+    ld65 `--dbgfile` `.dbg` format
+    (`crates/rustynes-frontend/src/debugger/source_map.rs`): it resolves each
+    `line` record's spans through the `span`/`seg` tables to CPU addresses,
+    building an `address -> (source file, line)` map that annotates the
+    disassembly with the original source line (`; file:line`). Loaded via the
+    existing **Debug -> Load Symbols** picker (now also accepts `.dbg`), pairing
+    with the v1.4.0 `.sym`/`.mlb`/`.nl` symbol-name loader. Display-only.
+
 ### Performance
 
 - **v1.7.0 "Forge" Workstream H7 (tier-1 perf, measure-first): no change adopted.**
@@ -84,7 +147,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   256` kernel advances ~6.3 phase buckets per sample, so a phase-row cache has a
   near-zero hit rate. Both rejections are documented in `docs/performance.md`.
 
+- **v1.7.0 beta.2 review — debugger-tooling allocation cleanups** (frontend-only;
+  no core or default-path effect, so AccuracyCoin holds **100% (139/139)** and the
+  builds stay byte-identical):
+  - The access counter (`debugger/access_counter.rs`) folds the per-frame access
+    + exec logs by iterating the borrowed slices directly instead of `collect`ing
+    /`to_vec`-cloning them into fresh `Vec`s every frame.
+  - The inline assembler (`debugger/assembler.rs`) builds its 256-entry
+    `(mnemonic,mode) → opcode` table once via a `OnceLock` and reuses it, instead
+    of re-deriving it (~256 disassemblies) on every assembled line.
+  - The header editor (`debugger/header_editor.rs`) reads only the 16-byte header
+    (and overwrites it in place via seek + partial write) instead of reading /
+    rewriting the entire ROM file just to inspect or edit the header.
+
 ### Fixed
+
+- **v1.7.0 beta.2 review — debugger-tooling robustness** (frontend-only;
+  AccuracyCoin holds **100% (139/139)**):
+  - The inline assembler now parses indexed-indirect `(zp,x)` case-insensitively
+    (matching the other addressing modes), and the CPU panel validates the
+    assemble target stays within work RAM (`$0000-$1FFF`) before queueing — the
+    only region `DebugPoke::CpuRam` applies to — rejecting out-of-range targets
+    and assembled bytes that would run past it.
+  - The PPU/OAM/CPU panel hex parsers now strip an upper-case `0X` prefix as well
+    as `0x`, so `0X..` inputs parse.
 
 - **v1.7.0 beta.1 review fixes** (all additive / off the default path;
   AccuracyCoin holds **100% (139/139)** and the default `extra_scanlines == 0`

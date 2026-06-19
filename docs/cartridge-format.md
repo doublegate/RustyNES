@@ -106,6 +106,32 @@ pub enum RomError {
 
 `parse` validates the magic, applies the detection rule, computes expected file length (header + optional trainer + PRG + CHR + optional misc), errors `Truncated` if short, then dispatches on mapper to construct the right `dyn Mapper` and returns `Cartridge`.
 
+The 16-byte header itself has a separate decode/encode pair used by tooling:
+
+```rust
+pub fn parse_header(bytes: &[u8]) -> Result<Header, RomError>;
+pub fn serialize_header(h: &Header) -> [u8; HEADER_LEN];   // canonical 16-byte layout
+```
+
+`serialize_header` is the exact inverse of `parse_header` for the standard
+(non-exponent-multiplier) size notation. It re-derives the mapper low/mid/hi
+nibbles, the flags-6/flags-7 bits, the submapper, the standard PRG/CHR unit
+counts, the NES 2.0 region/console/RAM-shift bytes, and the Vs. byte-13 nibbles.
+A round-trip test guards `parse → serialize → parse` equality.
+
+## Header editor (v1.7.0 "Forge" Workstream A2, frontend tooling)
+
+The frontend ships an **iNES / NES 2.0 header editor + read-only "Cartridge
+Info" pane** (`crates/rustynes-frontend/src/debugger/header_editor.rs`,
+native-only, opened from **Debug → Cartridge Info / Header Editor...**). It edits
+the 16-byte header of a ROM **file on disk** — never the running core. Decode +
+re-encode reuse the canonical `parse_header` / `serialize_header` round-trip
+above, so the tool cannot drift from the loader; "Write header to file"
+re-serializes the edited `Header` and overwrites only the file's first 16 bytes
+(the ROM body is untouched). Sizes are edited in their 16 KiB / 8 KiB unit
+counts so the re-encode stays in the standard notation. Source inspiration:
+FCEUX `iNesHeaderEditor.cpp`.
+
 ## Edge cases
 
 1. **Lying iNES headers.** Many old dumps incorrectly set the four-screen bit, the trainer bit, or claim a mapper variant. Strategy: trust the file but expose overrides via `parse_with_override(bytes, options)` for the test harness.

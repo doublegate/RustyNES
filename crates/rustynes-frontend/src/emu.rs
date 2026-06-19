@@ -27,6 +27,40 @@ use crate::cheats::RawCheat;
 use crate::movie_ui::MovieUi;
 use crate::perf::PerfStats;
 
+/// v1.7.0 "Forge" Workstream A1 — one queued debugger writeback edit.
+///
+/// Applied through the SAME gated post-frame poke stage the raw RAM cheats use.
+/// Unlike a `RawCheat` it is one-shot (drained, not retained), so a
+/// tile/palette/OAM edit from a debugger panel lands exactly once on the next
+/// produced frame and then stops perturbing the run — preserving the
+/// determinism contract for any later replay/record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DebugPoke {
+    /// Write one byte into CPU work RAM (`$0000-$1FFF`); the same target as a
+    /// raw RAM cheat, exposed for the assembler + hex-editor inline poke.
+    CpuRam {
+        /// CPU work-RAM address (`$0000-$1FFF`; the core no-ops outside it).
+        addr: u16,
+        /// Byte value to write.
+        value: u8,
+    },
+    /// Write one byte into the PPU bus (`$0000-$3FFF`): CHR / nametable /
+    /// palette. Routes through `Nes::debug_poke_ppu`.
+    PpuBus {
+        /// PPU-bus address (`$0000-$3FFF`).
+        addr: u16,
+        /// Byte value to write.
+        value: u8,
+    },
+    /// Write one OAM byte (`idx` = 0..256). Routes through `Nes::poke_oam_byte`.
+    Oam {
+        /// OAM byte index (0..256: per sprite, 0 = Y, 1 = tile, 2 = attr, 3 = X).
+        idx: u8,
+        /// Byte value to write.
+        value: u8,
+    },
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 use crate::config::ExpansionDevice;
 
@@ -267,6 +301,18 @@ pub struct EmuCore {
     pub present_fb: Vec<u8>,
     /// Enabled raw RAM cheats, pulled from the cheat panel each frame.
     pub raw_cheats: Vec<RawCheat>,
+    /// v1.7.0 "Forge" Workstream A1 — one-shot debugger writeback edits, queued
+    /// by the editing-capable debugger panels (tile/CHR, palette, nametable,
+    /// OAM, hex). Drained in the SAME gated post-frame stage as `raw_cheats`,
+    /// under the SAME write gate (`writes_locked` + `hardcore_blocked`), so the
+    /// edits are a no-op under netplay / TAS replay/record / RA-hardcore. Empty
+    /// (the no-edit default) makes the produce path byte-identical.
+    pub debug_pokes: Vec<DebugPoke>,
+    /// v1.7.0 "Forge" Workstream A1 — the combined write gate (`true` under
+    /// netplay / TAS replay or record). `App` republishes it each frame from the
+    /// EXACT same condition `emu.write` uses (T-110-E2). When `true`, the
+    /// post-frame `debug_pokes` drain is skipped — locked = no-op = byte-identical.
+    pub writes_locked: bool,
     /// Vs. System coin-hold countdown (frames until `clear_coin`).
     pub vs_coin_frames: u8,
     /// Per-region frame duration (NTSC ~16.639 ms, PAL/Dendy ~19.997 ms).
@@ -335,6 +381,8 @@ impl EmuCore {
             perf: PerfStats::default(),
             present_fb: Vec::new(),
             raw_cheats: Vec::new(),
+            debug_pokes: Vec::new(),
+            writes_locked: false,
             vs_coin_frames: 0,
             frame_duration: rustynes_core::FRAME_DURATION_NTSC,
             speed: 1.0,
@@ -665,6 +713,26 @@ impl EmuCore {
                     }
                 }
             }
+            // v1.7.0 "Forge" Workstream A1 — apply the queued debugger writeback
+            // edits, AFTER the frame, in the same caller-side stage as the raw
+            // cheats. Gated EXACTLY like `emu.write`: a no-op under netplay / TAS
+            // replay/record (`writes_locked`) and under RA-hardcore
+            // (`hardcore_blocked`). One-shot: drained, so a later replay/record
+            // sees no residual perturbation. The empty (no-edit) queue keeps the
+            // produce path byte-identical.
+            if !self.writes_locked && !hardcore_blocked {
+                for poke in self.debug_pokes.drain(..) {
+                    match poke {
+                        DebugPoke::CpuRam { addr, value } => nes.poke_ram(addr, value),
+                        DebugPoke::PpuBus { addr, value } => nes.debug_poke_ppu(addr, value),
+                        DebugPoke::Oam { idx, value } => nes.poke_oam_byte(idx, value),
+                    }
+                }
+            } else {
+                // Locked / hardcore: discard queued edits so they never leak into
+                // a later unlocked frame (locked = no-op, not deferred).
+                self.debug_pokes.clear();
+            }
         }
 
         // v2.7.0 — drive RetroAchievements after the frame. Only the
@@ -889,6 +957,120 @@ pub(crate) fn drive_ra(
 #[allow(clippy::suboptimal_flops)] // readability over FMA in assertions.
 mod tests {
     use super::*;
+
+    /// v1.7.0 "Forge" Workstream A1 — a minimal NES 2.0 NROM (16 KiB PRG / 8 KiB
+    /// CHR) whose reset vector loops on itself, so `run_frame` advances without
+    /// touching work RAM — leaving the queued-poke effect cleanly observable.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn synth_nrom() -> Vec<u8> {
+        let mut rom = vec![0u8; 16 + 16 * 1024 + 8 * 1024];
+        rom[0..4].copy_from_slice(b"NES\x1A");
+        rom[4] = 1; // 1x16 KiB PRG
+        rom[5] = 1; // 1x8 KiB CHR
+        // Reset vector ($FFFC/$FFFD) → $C000; opcode at $C000 is a JMP $C000.
+        let prg = 16;
+        rom[prg] = 0x4C; // JMP abs
+        rom[prg + 1] = 0x00;
+        rom[prg + 2] = 0xC0;
+        let reset_lo = 16 + (0xFFFC - 0xC000);
+        rom[reset_lo] = 0x00;
+        rom[reset_lo + 1] = 0xC0;
+        rom
+    }
+
+    /// v1.7.0 "Forge" Workstream A1 — default-quiet [`FrameInputs`] for a
+    /// produce-path test (no input, no rewind, not hardcore-blocked).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn quiet_inputs() -> FrameInputs {
+        FrameInputs {
+            buttons: [Buttons::empty(); 4],
+            four_score: false,
+            rewind_held: false,
+            hardcore_blocked: false,
+            run_ahead: 0,
+            expansion: ExpansionDevice::None,
+            mouse_nes: (u16::MAX, u16::MAX),
+            mouse_pressed: false,
+            turbo_mask: Buttons::empty(),
+            turbo_period: 1,
+            power_pad: 0,
+            mouse_delta: (0, 0),
+            mouse_right: false,
+            mouse_sensitivity: 0,
+            family_keyboard: [0; 9],
+            konami_hyper_shot: 0,
+            bandai_hyper_shot: 0,
+        }
+    }
+
+    /// v1.7.0 "Forge" Workstream A1 — the gated-writeback contract: a queued
+    /// `DebugPoke` applies after a frame when UNLOCKED, but is a no-op (and the
+    /// queue is cleared) when `writes_locked` (TAS replay / netplay) — proving
+    /// "locked = no-op = byte-identical" against the same poke applied unlocked.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn debug_poke_is_gated_by_writes_locked() {
+        let rom = synth_nrom();
+        let mut sinks = FrameSinks {
+            audio: None,
+            #[cfg(feature = "retroachievements")]
+            ra: None,
+        };
+        let inputs = quiet_inputs();
+
+        // UNLOCKED: the queued work-RAM poke lands after the frame.
+        let mut core = EmuCore::new();
+        core.nes = Some(Nes::from_rom(&rom).unwrap());
+        core.writes_locked = false;
+        core.debug_pokes.push(DebugPoke::CpuRam {
+            addr: 0x0040,
+            value: 0xAB,
+        });
+        core.produce_one_frame(&inputs, &mut sinks);
+        assert_eq!(
+            core.nes.as_mut().unwrap().peek(0x0040),
+            0xAB,
+            "unlocked poke must apply"
+        );
+        assert!(core.debug_pokes.is_empty(), "queue is drained after apply");
+
+        // LOCKED: an identical poke is a no-op AND the queue is cleared, so a
+        // later unlocked frame sees no residual edit (byte-identical timeline).
+        let mut locked = EmuCore::new();
+        locked.nes = Some(Nes::from_rom(&rom).unwrap());
+        locked.writes_locked = true;
+        locked.debug_pokes.push(DebugPoke::CpuRam {
+            addr: 0x0040,
+            value: 0xAB,
+        });
+        locked.produce_one_frame(&inputs, &mut sinks);
+        assert_eq!(
+            locked.nes.as_mut().unwrap().peek(0x0040),
+            0x00,
+            "locked poke must be a no-op"
+        );
+        assert!(
+            locked.debug_pokes.is_empty(),
+            "locked queue is cleared (not deferred)"
+        );
+
+        // RA-hardcore (hardcore_blocked) is gated the same way.
+        let mut hc = EmuCore::new();
+        hc.nes = Some(Nes::from_rom(&rom).unwrap());
+        hc.writes_locked = false;
+        hc.debug_pokes.push(DebugPoke::CpuRam {
+            addr: 0x0040,
+            value: 0xAB,
+        });
+        let mut hc_inputs = quiet_inputs();
+        hc_inputs.hardcore_blocked = true;
+        hc.produce_one_frame(&hc_inputs, &mut sinks);
+        assert_eq!(
+            hc.nes.as_mut().unwrap().peek(0x0040),
+            0x00,
+            "hardcore-blocked poke must be a no-op"
+        );
+    }
 
     #[test]
     fn turbo_strobes_only_masked_buttons() {

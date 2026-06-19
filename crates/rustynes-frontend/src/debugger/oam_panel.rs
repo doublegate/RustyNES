@@ -16,11 +16,49 @@
 use egui::ColorImage;
 use rustynes_core::Nes;
 
+use crate::emu::DebugPoke;
+
 /// Persistent state of the OAM panel.
 #[derive(Default)]
 pub struct OamPanelState {
     /// Cached visual texture.
     visual_tex: Option<egui::TextureHandle>,
+    /// v1.7.0 "Forge" Workstream A1 — editing state (master toggle, selected
+    /// sprite, the four per-byte hex entry buffers, and the one-shot poke
+    /// queue). Self-contained for clean merges.
+    a1: OamEdit,
+}
+
+/// v1.7.0 "Forge" Workstream A1 — OAM editing state. Edits queue gated
+/// post-frame OAM-byte pokes (`DebugPoke::Oam`); the panel never writes the
+/// running `Nes` directly, preserving determinism + the `emu.write` gate.
+#[derive(Default)]
+struct OamEdit {
+    /// Master enable (off by default → read-only, byte-identical).
+    enabled: bool,
+    /// The selected sprite index (0..64).
+    sel: Option<u8>,
+    /// Per-byte hex entry buffers: [Y, tile, attr, X].
+    bytes: [String; 4],
+    /// Pending writeback edits, drained by [`OamPanelState::take_pokes`].
+    pending: Vec<DebugPoke>,
+}
+
+impl OamPanelState {
+    /// v1.7.0 "Forge" Workstream A1 — drain the queued OAM writeback edits.
+    pub fn take_pokes(&mut self) -> Vec<DebugPoke> {
+        core::mem::take(&mut self.a1.pending)
+    }
+}
+
+/// Parse a 2-hex-digit byte (lenient: trims `$`/`0x`/`0X`).
+fn parse_byte(s: &str) -> Option<u8> {
+    let t = s
+        .trim()
+        .trim_start_matches('$')
+        .trim_start_matches("0x")
+        .trim_start_matches("0X");
+    u8::from_str_radix(t, 16).ok()
 }
 
 pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut OamPanelState, nes: &mut Nes) {
@@ -32,13 +70,20 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut OamPanelState, nes
         .default_size([520.0, 460.0])
         .resizable(true)
         .show(ctx, |ui| {
-            ui.label(format!(
-                "{} sprites — {}",
-                64,
-                if ppu.sprite_size_16 { "8x16" } else { "8x8" }
-            ));
+            ui.horizontal(|ui| {
+                ui.label(format!(
+                    "{} sprites — {}",
+                    64,
+                    if ppu.sprite_size_16 { "8x16" } else { "8x8" }
+                ));
+                // v1.7.0 "Forge" Workstream A1 — editing master toggle. Off by
+                // default → read-only (byte-identical with no edits queued).
+                ui.checkbox(&mut state.a1.enabled, "Edit (writeback)");
+            });
             ui.separator();
-            // Sprite list (scrollable).
+            // Sprite list (scrollable). While editing, each row is clickable to
+            // select the sprite for the editor below.
+            let editing = state.a1.enabled;
             egui::ScrollArea::vertical()
                 .id_salt("oam-list")
                 .max_height(240.0)
@@ -57,11 +102,31 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut OamPanelState, nes
                             0xC0 => "hv",
                             _ => "-",
                         };
-                        ui.monospace(format!(
+                        let text = format!(
                             "#{i:02}  x={x:3} y={y:3}  tile=${tile:02X}  pal={palette}  pri={priority}  flip={flip}"
-                        ));
+                        );
+                        if editing {
+                            let selected = state.a1.sel == Some(i as u8);
+                            if ui
+                                .selectable_label(selected, egui::RichText::new(text).monospace())
+                                .clicked()
+                            {
+                                state.a1.sel = Some(i as u8);
+                                state.a1.bytes = [
+                                    format!("{y:02X}"),
+                                    format!("{tile:02X}"),
+                                    format!("{attr:02X}"),
+                                    format!("{x:02X}"),
+                                ];
+                            }
+                        } else {
+                            ui.monospace(text);
+                        }
                     }
                 });
+            if editing {
+                oam_editor(ui, &mut state.a1);
+            }
             ui.separator();
             // Visual: render the 64 sprites onto a 8x8 grid of 16x16 cells
             // (one tile each — we don't fetch the full 8x16 in this view).
@@ -73,6 +138,38 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut OamPanelState, nes
             handle.set(image, egui::TextureOptions::NEAREST);
             ui.image((handle.id(), egui::vec2(256.0, 256.0)));
         });
+}
+
+/// v1.7.0 "Forge" Workstream A1 — the sprite-byte editor (Y / tile / attr / X).
+/// "Apply" queues a gated OAM-byte writeback for each field that parses.
+fn oam_editor(ui: &mut egui::Ui, a1: &mut OamEdit) {
+    ui.separator();
+    let Some(sel) = a1.sel else {
+        ui.weak("Click a sprite row above to edit it.");
+        return;
+    };
+    let labels = ["Y", "tile", "attr", "X"];
+    ui.horizontal(|ui| {
+        ui.monospace(format!("Sprite #{sel:02}"));
+        for (b, label) in labels.iter().enumerate() {
+            ui.label(format!("{label}:"));
+            ui.add(
+                egui::TextEdit::singleline(&mut a1.bytes[b])
+                    .desired_width(28.0)
+                    .hint_text("00"),
+            );
+        }
+        if ui.button("Apply").clicked() {
+            for b in 0..4u8 {
+                if let Some(v) = parse_byte(&a1.bytes[b as usize]) {
+                    a1.pending.push(DebugPoke::Oam {
+                        idx: sel * 4 + b,
+                        value: v,
+                    });
+                }
+            }
+        }
+    });
 }
 
 fn render_sprite_grid(nes: &mut Nes, oam: &[u8; 256], spr_base: u16) -> Vec<u8> {
@@ -112,4 +209,17 @@ fn render_sprite_grid(nes: &mut Nes, oam: &[u8; 256], spr_base: u16) -> Vec<u8> 
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_byte_accepts_hex_prefixes() {
+        assert_eq!(parse_byte("$80"), Some(0x80));
+        assert_eq!(parse_byte("0x80"), Some(0x80));
+        assert_eq!(parse_byte("0X80"), Some(0x80));
+        assert_eq!(parse_byte("80"), Some(0x80));
+    }
 }

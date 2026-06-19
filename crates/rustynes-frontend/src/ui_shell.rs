@@ -1248,6 +1248,20 @@ impl UiShell {
                             ui.close();
                         }
                     }
+                    // v1.7.0 "Forge" Workstream A2 — Cartridge Info / header
+                    // editor. Native-only (it inspects + edits a ROM file on
+                    // disk).
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        ui.separator();
+                        if ui
+                            .button(ic(glyph::FILE, "Cartridge Info / Header Editor..."))
+                            .clicked()
+                        {
+                            out.action = Some(MenuAction::OpenChipPanel(ChipPanel::HeaderEditor));
+                            ui.close();
+                        }
+                    }
                     // v1.4.0 Workstream D (D1) — symbol/label files annotate the
                     // disassembler + breakpoint + trace views. Native-only (it
                     // reads a picked file).

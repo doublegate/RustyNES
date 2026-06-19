@@ -51,7 +51,7 @@ cpu-instr-cycle-trace = ["rustynes-cpu/cpu-instr-cycle-trace"]
 # determinism contract; the frontend enables it. The hooks are output-only (they may
 # stop the frame early or record state) and never mutate emulation, so even with the
 # feature ON the persistent timeline is unchanged.
-debug-hooks = ["std"]
+debug-hooks = ["std", "rustynes-ppu/debug-hooks"]
 # v1.2.0 beta.2 (Workstream C3) — HD-pack tile-source telemetry. Forwards to
 # `rustynes-ppu/hd-pack`, which gates the per-pixel `HdTileSource` export inside
 # `emit_pixel`. Off by default so the shipped / wasm / no_std builds are
