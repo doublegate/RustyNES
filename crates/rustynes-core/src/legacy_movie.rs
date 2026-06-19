@@ -177,7 +177,9 @@ pub fn import_fcm(
     // firstFrameOffset (the absolute offset of the input data) lives at 0x1C; the
     // 0x14 size field and the 0x18 savestate offset are read-and-discarded.
     let first_frame = rd_u32_le(bytes, 0x1C).unwrap_or(0) as usize;
-    if first_frame == 0 || first_frame > bytes.len() {
+    // The input stream must begin at or after the fixed header — an offset below
+    // MIN_HEADER would overlap the header and parse header bytes as movie input.
+    if first_frame < MIN_HEADER || first_frame > bytes.len() {
         return Err(LegacyMovieError::Malformed {
             format: FMT,
             reason: "input-data offset is out of range",
@@ -206,15 +208,26 @@ pub fn import_fcm(
 /// The running state of both controllers is held across records; a controller
 /// update flips one button bit, a control command (bit7 set) is consumed but not
 /// represented. `frame_hint` is the header's frame count; we honour it as a cap
-/// and stop early if the stream ends.
+/// (the tighter of it and the hard `1 << 24` output cap) and stop early if the
+/// stream ends. The hard cap applies even when `frame_hint` is 0, so a crafted
+/// header/stream cannot force an unbounded output allocation.
 fn decode_fcm_stream(
     stream: &[u8],
     frame_hint: usize,
 ) -> Result<Vec<FrameInput>, LegacyMovieError> {
     const FMT: &str = "fcm";
-    // Cap allocation by the declared frame count (defensive: a hostile header
-    // can't force a huge pre-allocation, and a runaway stream can't grow past it).
-    let cap = frame_hint.min(1 << 24);
+    // Hard output cap (~16.7M frames ≈ 77+ hours at 60 fps): a crafted `.fcm`
+    // with a tiny stream but a huge delta-advance (or a missing/zero header
+    // frame count) must not be able to force an unbounded allocation. The cap is
+    // enforced *unconditionally* — when the header declares a frame count we use
+    // the tighter of the two, but a `frame_hint` of 0 (absent/zero header count)
+    // still falls back to the hard cap rather than running uncapped.
+    const HARD_CAP: usize = 1 << 24;
+    let cap = if frame_hint == 0 {
+        HARD_CAP
+    } else {
+        frame_hint.min(HARD_CAP)
+    };
     let mut frames: Vec<FrameInput> = Vec::with_capacity(cap.min(4096));
     // Running held state for P1/P2.
     let mut held = [Buttons::empty(); 2];
@@ -222,7 +235,7 @@ fn decode_fcm_stream(
 
     let emit = |frames: &mut Vec<FrameInput>, held: &[Buttons; 2], n: usize| {
         for _ in 0..n {
-            if frames.len() >= frame_hint && frame_hint != 0 {
+            if frames.len() >= cap {
                 break;
             }
             frames.push(FrameInput::new(held[0], held[1]));
@@ -230,7 +243,7 @@ fn decode_fcm_stream(
     };
 
     while i < stream.len() {
-        if frame_hint != 0 && frames.len() >= frame_hint {
+        if frames.len() >= cap {
             break;
         }
         let update = stream[i];
@@ -419,7 +432,9 @@ pub fn import_fmv(
 ///
 /// # Errors
 ///
-/// [`LegacyMovieError`] for a bad magic, a save-state start, or a truncated body.
+/// [`LegacyMovieError`] for a bad magic, a save-state start, a four-score
+/// (>2-controller) movie, an offset that overlaps the header, or a truncated
+/// body.
 pub fn import_vmv(
     bytes: &[u8],
     rom_sha256: [u8; 32],
@@ -449,6 +464,17 @@ pub fn import_vmv(
         + usize::from(flags & 0x2 != 0)
         + usize::from(flags & 0x4 != 0)
         + usize::from(flags & 0x8 != 0);
+    // RustyNES movies model exactly the two standard NES ports ([`FrameInput`]
+    // has no Four Score / controller-3-4 representation). A `.vmv` that enables
+    // controllers 3/4 cannot be imported without silently dropping their input
+    // (which would desync replay), so reject it up front — the same stance the
+    // `.fcm` path takes for a four-score (>2-controller) update.
+    if ctrl_count > 2 {
+        return Err(LegacyMovieError::Unsupported {
+            format: FMT,
+            reason: "four-score (>2 controllers) not supported",
+        });
+    }
     // Default to a single controller if the flag word declares none (some 0.93
     // movies leave the bits clear and imply P1).
     let ctrl_count = ctrl_count.max(1);
@@ -457,6 +483,15 @@ pub fn import_vmv(
     let pal = bytes[0x23] == 1;
     let frame_count = rd_u32_le(bytes, 0x38).unwrap_or(0) as usize;
     let data_off = rd_u32_le(bytes, 0x34).unwrap_or(0) as usize;
+    // A non-zero offset below MIN_HEADER would overlap the header and parse
+    // header bytes as controller input — reject it. A zero (or past-EOF) offset
+    // falls back to the documented 0.93 reset-based header size.
+    if data_off != 0 && data_off < MIN_HEADER {
+        return Err(LegacyMovieError::Malformed {
+            format: FMT,
+            reason: "movie-data offset overlaps the header",
+        });
+    }
     let data_off = if data_off == 0 || data_off > bytes.len() {
         // Fall back to the documented 0.93 reset-based offset.
         MIN_HEADER
@@ -728,6 +763,71 @@ mod tests {
             import_mc2(&[0u8; 16], TEST_SHA),
             Err(LegacyMovieError::Unsupported { format: "mc2", .. })
         ));
+    }
+
+    #[test]
+    fn fcm_rejects_overlapping_first_frame_offset() {
+        // first_frame below MIN_HEADER (0x34) would overlap the header.
+        let mut b = synth_fcm(0x02, 0, &[]);
+        b[0x1C..0x20].copy_from_slice(&0x10u32.to_le_bytes());
+        assert!(matches!(
+            import_fcm(&b, TEST_SHA),
+            Err(LegacyMovieError::Malformed { .. })
+        ));
+    }
+
+    #[test]
+    fn fcm_oversized_advance_is_capped_not_unbounded() {
+        // frame_count = 0 (no hint) + a control byte with a 3-byte delta of
+        // 0xFFFFFF would, uncapped, try to emit ~16M frames. With the hard cap
+        // enforced regardless of frame_hint, the output stays bounded (<= 1<<24)
+        // and the import does not hang or OOM.
+        // update = 1110_0000 = 0xE0 -> bit7 set (command), delta_bytes = 3.
+        let stream = [0xE0u8, 0xFFu8, 0xFFu8, 0xFFu8];
+        let b = synth_fcm(0x02, 0, &stream);
+        let (movie, _) = import_fcm(&b, TEST_SHA).expect("fcm import");
+        assert!(
+            movie.frames.len() <= (1 << 24),
+            "output must be capped at the hard limit, got {}",
+            movie.frames.len()
+        );
+    }
+
+    #[test]
+    fn vmv_rejects_overlapping_data_offset() {
+        // data_off below MIN_HEADER (0x40) overlaps the header.
+        let mut b = synth_vmv((1u32 << 6) | 1, 0, 1, &[0u8]);
+        b[0x34..0x38].copy_from_slice(&0x20u32.to_le_bytes());
+        assert!(matches!(
+            import_vmv(&b, TEST_SHA),
+            Err(LegacyMovieError::Malformed { .. })
+        ));
+    }
+
+    #[test]
+    fn vmv_rejects_four_controllers() {
+        // reset-based (bit6) + all 4 controllers enabled (bits 0..3).
+        let flags = (1u32 << 6) | 0xF;
+        let b = synth_vmv(flags, 0, 1, &[0u8, 0u8, 0u8, 0u8]);
+        assert!(
+            matches!(
+                import_vmv(&b, TEST_SHA),
+                Err(LegacyMovieError::Unsupported { .. })
+            ),
+            "a 4-controller .vmv must be rejected rather than silently dropping P3/P4"
+        );
+    }
+
+    #[test]
+    fn vmv_two_controllers_round_trip() {
+        // reset-based + P1 & P2 enabled. One frame: P1=A, P2=START.
+        let flags = (1u32 << 6) | 0x3;
+        let body = [Buttons::A.bits(), Buttons::START.bits()];
+        let b = synth_vmv(flags, 0, 1, &body);
+        let (movie, _) = import_vmv(&b, TEST_SHA).expect("vmv import");
+        assert_eq!(movie.frames.len(), 1);
+        assert_eq!(movie.frames[0].p1, Buttons::A);
+        assert_eq!(movie.frames[0].p2, Buttons::START);
     }
 
     #[test]

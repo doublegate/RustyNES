@@ -324,6 +324,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **v1.7.0 beta.4 review — untrusted-movie-parsing hardening + rewind/NSF fixes**
+  (all additive / determinism-neutral; imported movies still replay
+  deterministically, the Zwinder round-trip stays lossless, the chip stack stays
+  `no_std`, and AccuracyCoin holds **100% (139/139)**):
+  - **`.fcm` import can no longer be forced into an unbounded allocation
+    (security).** `decode_fcm_stream` now enforces a hard `1 << 24`-frame output
+    cap *unconditionally* — previously the cap was skipped when the header frame
+    count was `0`, so a crafted `.fcm` with a large delta-advance could emit
+    millions of frames (DoS / OOM). The cap is the tighter of the header hint and
+    the hard limit.
+  - **`.fcm` rejects a header-overlapping input offset.** A `firstFrameOffset`
+    below the `0x34` fixed header (which would parse header bytes as input) is now
+    rejected as malformed (previously only an offset past EOF was caught).
+  - **`.vmv` rejects a header-overlapping data offset.** A non-zero movie-data
+    offset below the `0x40` header is rejected as malformed.
+  - **`.vmv` rejects four-controller movies instead of silently dropping P3/P4.**
+    `FrameInput` models only the two standard NES ports, so a `.vmv` enabling
+    controllers 3/4 is now rejected up front (matching the `.fcm` four-score
+    stance) rather than producing a "successful" import with missing inputs that
+    would desync replay.
+  - **Zwinder greenzone store decodes the preceding keyframe at most once.**
+    `ZwinderStateManager::store` no longer calls `preceding_keyframe_raw` twice on
+    the common delta path (once to test presence, once to fetch), halving the LZ4
+    decompress + allocation in the greenzone hot loop. Lossless round-trip
+    equality is unchanged.
+  - **NSF v2 save-state tail is now consumed + validated, and its doc matches the
+    implementation.** `NsfMapper::load_state` reads the v2 expansion presence byte
+    and rejects a tail that disagrees with the `$07B` bitfield, so the blob fully
+    round-trips. `NsfExpansion::save_state`'s doc-comment is corrected to state
+    plainly that volatile oscillator/register state is *intentionally not*
+    persisted — the chips are rebuilt from the immutable `$07B` bitfield and live
+    phase re-converges from the next register write (correct for a paused/restored
+    NSF); the presence byte only records which chips a v2 tail described.
+
 - **v1.7.0 beta.3 review — scriptable-TAStudio + host-IPC robustness** (all
   additive / off the default path; `scripting` / `script-ipc` stay byte-identical
   off; AccuracyCoin holds **100% (139/139)**):

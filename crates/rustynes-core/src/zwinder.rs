@@ -181,22 +181,32 @@ impl ZwinderStateManager {
     /// promoted to a keyframe.
     pub fn store(&mut self, frame: u64, snapshot: &[u8], cursor: u64) {
         let is_anchor = self.anchors.contains(&frame);
+        // Decode the nearest preceding keyframe at most once: it is needed both
+        // to decide keyframe-vs-delta (its absence forces a keyframe) and, on the
+        // delta path, to XOR against. `preceding_keyframe_raw` performs an LZ4
+        // decompress + allocation, so calling it twice would double that work on
+        // every non-keyframe store (the greenzone hot path).
+        let anchor_or_interval = is_anchor || self.since_keyframe + 1 >= self.keyframe_interval;
+        // Only decode the preceding keyframe when a delta is actually possible —
+        // an anchor/interval boundary becomes a keyframe regardless.
+        let preceding_kf = if anchor_or_interval {
+            None
+        } else {
+            self.preceding_keyframe_raw(frame)
+        };
         // Decide keyframe vs delta. Anchors and interval boundaries become
         // keyframes; so does any frame with no preceding keyframe to delta
         // against.
-        let force_keyframe = is_anchor
-            || self.since_keyframe + 1 >= self.keyframe_interval
-            || self.preceding_keyframe_raw(frame).is_none();
+        let force_keyframe = anchor_or_interval || preceding_kf.is_none();
 
         let (body, is_keyframe, approx) = if force_keyframe {
             let compressed = compress_prepend_size(snapshot);
             let approx = compressed.len();
             (Body::Keyframe(compressed.into_boxed_slice()), true, approx)
         } else {
-            // Delta against the nearest preceding keyframe's raw bytes.
-            let kf = self
-                .preceding_keyframe_raw(frame)
-                .expect("preceding keyframe checked present");
+            // Delta against the nearest preceding keyframe's raw bytes (decoded
+            // above, exactly once).
+            let kf = preceding_kf.expect("preceding keyframe checked present");
             if kf.len() == snapshot.len() {
                 let mut delta = vec![0u8; snapshot.len()];
                 for ((slot, &s), &k) in delta.iter_mut().zip(snapshot).zip(kf.iter()) {

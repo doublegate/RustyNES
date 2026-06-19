@@ -460,11 +460,17 @@ impl NsfExpansion {
         sum.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16
     }
 
-    /// Serialize live expansion state for the NSF save-state tail. Only the
-    /// presence-flag byte + each present chip's volatile register-driven
-    /// state needs persisting; the chips are reconstructed from `$07B` on
-    /// load, so we re-feed nothing structural here — the live oscillator
-    /// state round-trips via the chips' own minimal serialization.
+    /// Serialize the NSF save-state expansion tail: a single presence byte that
+    /// mirrors the `$07B` bitfield (which chips are live).
+    ///
+    /// The volatile oscillator / register-driven state of the synth cores is
+    /// **intentionally not persisted.** On load the chips are rebuilt fresh from
+    /// the immutable `$07B` bitfield ([`NsfExpansion::from_bits`]) and their live
+    /// phase re-converges from the next register write — the correct behaviour
+    /// for a paused/restored NSF, where the driver re-establishes channel state
+    /// on the next play call. The presence byte exists only so a reader can
+    /// confirm *which* chips a v2 tail described (a forward-compatible,
+    /// self-describing tail in the ADR-0003 style); it carries no per-chip phase.
     pub(crate) fn save_state(&self, out: &mut Vec<u8>) {
         // A presence byte mirroring `from_bits`, for a forward-compatible
         // self-describing tail (ADR-0003 style).
@@ -476,6 +482,21 @@ impl NsfExpansion {
         present |= u8::from(self.n163.is_some()) * EXP_N163;
         present |= u8::from(self.s5b.is_some()) * EXP_5B;
         out.push(present);
+    }
+
+    /// The presence bitfield this expansion bundle serializes — the same byte
+    /// [`Self::save_state`] writes. Used by the NSF mapper's `load_state` to
+    /// confirm the v2 tail's presence byte matches the chips rebuilt from the
+    /// `$07B` bitfield (a self-consistency check; the byte carries no phase).
+    pub(crate) fn presence_bits(&self) -> u8 {
+        let mut present = 0u8;
+        present |= u8::from(self.vrc6.is_some()) * EXP_VRC6;
+        present |= u8::from(self.vrc7.is_some()) * EXP_VRC7;
+        present |= u8::from(self.fds.is_some()) * EXP_FDS;
+        present |= u8::from(self.mmc5.is_some()) * EXP_MMC5;
+        present |= u8::from(self.n163.is_some()) * EXP_N163;
+        present |= u8::from(self.s5b.is_some()) * EXP_5B;
+        present
     }
 }
 

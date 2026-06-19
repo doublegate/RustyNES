@@ -503,8 +503,25 @@ impl Mapper for NsfMapper {
         // The expansion-audio chips are reconstructed from the (immutable)
         // `$07B` bitfield; the v2 presence byte is self-describing but does
         // not carry oscillator phase, so we rebuild the chips fresh. Live
-        // synthesis re-converges from the next register write.
+        // synthesis re-converges from the next register write (the correct
+        // behaviour for a paused/restored NSF — see `NsfExpansion::save_state`).
         self.exp_audio = NsfExpansion::from_bits(self.expansion);
+        // Consume the v2 expansion tail (round-trips with `save_state`). The
+        // byte only carries which chips were present, so we validate it against
+        // the chips rebuilt from `$07B` rather than discarding it; a mismatch
+        // means the tail describes a different chip set than this ROM's header.
+        if version == 2 {
+            let tail = data[core_len];
+            let rebuilt = self
+                .exp_audio
+                .as_ref()
+                .map_or(0, NsfExpansion::presence_bits);
+            if tail != rebuilt {
+                return Err(MapperError::Invalid(format!(
+                    "NSF v2 expansion presence tail {tail:#04x} disagrees with the $07B bitfield {rebuilt:#04x}"
+                )));
+            }
+        }
         self.build_driver();
         Ok(())
     }
@@ -591,5 +608,42 @@ mod tests {
         m2.load_state(&blob).expect("round trip");
         assert_eq!(m2.current_song(), 1);
         assert_eq!(m2.cpu_read(0x6000), 0xAB);
+    }
+
+    #[test]
+    fn expansion_save_state_round_trips_v2_tail() {
+        // An NSF declaring VRC6 expansion audio ($07B bit0) emits a v2 blob with
+        // the 1-byte presence tail; load_state must consume + validate it (round
+        // trip), not error or leave bytes unread.
+        let mut f = synth_nsf();
+        f[0x7B] = 0x01; // EXP_VRC6
+        let nsf = parse_nsf(&f).expect("valid expansion nsf");
+        let mut m = NsfMapper::new(&nsf);
+        assert!(m.exp_audio.is_some(), "VRC6 expansion must be present");
+        m.set_song(2);
+        m.cpu_write(0x6000, 0xCD);
+        let blob = m.save_state();
+        assert_eq!(blob.first().copied(), Some(2u8), "expansion NSF is v2");
+        let mut m2 = NsfMapper::new(&nsf);
+        m2.load_state(&blob).expect("v2 round trip");
+        assert_eq!(m2.current_song(), 2);
+        assert_eq!(m2.cpu_read(0x6000), 0xCD);
+        assert!(
+            m2.exp_audio.is_some(),
+            "expansion rebuilt from $07B on load"
+        );
+    }
+
+    #[test]
+    fn expansion_load_state_rejects_corrupt_presence_tail() {
+        // A v2 blob whose presence tail disagrees with the $07B bitfield is a
+        // corrupt save-state and must be rejected rather than silently accepted.
+        let mut f = synth_nsf();
+        f[0x7B] = 0x01; // EXP_VRC6
+        let nsf = parse_nsf(&f).expect("valid expansion nsf");
+        let mut m = NsfMapper::new(&nsf);
+        let mut blob = m.save_state();
+        *blob.last_mut().expect("tail byte") ^= 0x80; // flip a presence bit
+        assert!(matches!(m.load_state(&blob), Err(MapperError::Invalid(_))));
     }
 }
