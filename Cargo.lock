@@ -3907,7 +3907,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-apu"
-version = "1.6.0"
+version = "1.7.0"
 dependencies = [
  "bitflags 2.13.0",
  "criterion",
@@ -3920,7 +3920,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-cheevos"
-version = "1.6.0"
+version = "1.7.0"
 dependencies = [
  "cc",
  "ureq",
@@ -3928,7 +3928,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-core"
-version = "1.6.0"
+version = "1.7.0"
 dependencies = [
  "bitflags 2.13.0",
  "criterion",
@@ -3945,7 +3945,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-cpu"
-version = "1.6.0"
+version = "1.7.0"
 dependencies = [
  "bitflags 2.13.0",
  "criterion",
@@ -3956,7 +3956,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-frontend"
-version = "1.6.0"
+version = "1.7.0"
 dependencies = [
  "anstyle",
  "arboard",
@@ -4006,7 +4006,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-mappers"
-version = "1.6.0"
+version = "1.7.0"
 dependencies = [
  "bitflags 2.13.0",
  "criterion",
@@ -4018,7 +4018,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-netplay"
-version = "1.6.0"
+version = "1.7.0"
 dependencies = [
  "futures-util",
  "js-sys",
@@ -4033,7 +4033,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-ppu"
-version = "1.6.0"
+version = "1.7.0"
 dependencies = [
  "bitflags 2.13.0",
  "criterion",
@@ -4044,7 +4044,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-script"
-version = "1.6.0"
+version = "1.7.0"
 dependencies = [
  "mlua",
  "piccolo",
@@ -4054,7 +4054,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-test-harness"
-version = "1.6.0"
+version = "1.7.0"
 dependencies = [
  "insta",
  "png",

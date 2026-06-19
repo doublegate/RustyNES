@@ -10,7 +10,7 @@
 
 [![Build Status](https://github.com/doublegate/RustyNES/workflows/CI/badge.svg)](https://github.com/doublegate/RustyNES/actions)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
-[![Version](https://img.shields.io/badge/version-v1.6.0-blue.svg)](https://github.com/doublegate/RustyNES/releases)
+[![Version](https://img.shields.io/badge/version-v1.7.0-blue.svg)](https://github.com/doublegate/RustyNES/releases)
 [![Rust: 1.96](https://img.shields.io/badge/rust-1.96-orange.svg)](rust-toolchain.toml)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web-lightgrey.svg)](#platform-support)
 [![AccuracyCoin](<https://img.shields.io/badge/AccuracyCoin-100%25%20(139%2F139)-brightgreen.svg>)](#compatibility-and-accuracy)
@@ -26,15 +26,18 @@ scheduling at PPU-dot resolution on a master-clock-precise timebase — clearing
 `nestest` with **zero diff**.
 
 Beyond reference accuracy, RustyNES is a complete, modern emulation platform:
-**150 mapper families** covering the vast majority of the commercial library (plus a
+**168 mapper families** covering the vast majority of the commercial library (plus a
 UNIF `.unf` cartridge loader), the full **Famicom Disk System** (real-BIOS boot with a
 timed disk-head model), **Vs. System / PlayChoice-10** arcade games in true RGB,
 **GGPO-style rollback netplay** (native UDP and browser WebRTC, 2-4 players),
-**RetroAchievements**, a **TAStudio piano-roll TAS editor** with `.fm2` / `.bk2` movie
-interop, save states with rewind, run-ahead latency reduction, a **Mesen2-class
-debugger** (conditional breakpoints, R/W/X watchpoints, a hex editor, RAM search),
-**A/V recording**, **HD-pack** video + audio, and a **shader / filter ecosystem** — all
-on a strict bit-determinism contract. The frontend is pure Rust (`winit` + `wgpu` +
+**RetroAchievements**, a **scriptable TAStudio piano-roll TAS editor** with `.fm2` /
+`.bk2` / `.fcm` / `.fmv` / `.vmv` movie interop, editing-capable debug tools
+(palette / nametable / CHR / OAM writeback, an iNES / NES 2.0 header editor, an inline
+6502 assembler), save states with rewind, run-ahead latency reduction, a **Mesen2-class
+debugger** (expression / conditional breakpoints, R/W/X watchpoints, a hex editor, RAM
+search, a callstack, `.dbg` source maps), **A/V recording**, **HD-pack** video + audio
+(with an HD-Pack Builder), a **shader / filter ecosystem**, and a localized
+(i18n) UI — all on a strict bit-determinism contract. The frontend is pure Rust (`winit` + `wgpu` +
 `cpal` + `egui`) with native binaries for Linux, macOS, and Windows, plus a WebAssembly
 build that runs in the browser.
 
@@ -71,7 +74,7 @@ platform for NES emulation.
 | Feature                | Description                                                                                  |
 | ---------------------- | -------------------------------------------------------------------------------------------- |
 | **Cycle-Accurate**     | Master-clock-precise CPU / PPU / APU — AccuracyCoin 100% (139/139), nestest 0-diff           |
-| **150 Mapper Families** | NROM through MMC5, the full VRC line, Sunsoft FME-7, Namco 163, Taito, J.Y. Company ASIC, and Vs.-System boards — classified Core / Curated / BestEffort behind a CI accuracy-honesty gate — plus a UNIF (`.unf`) cartridge loader |
+| **168 Mapper Families** | NROM through MMC5, the full VRC line, Sunsoft FME-7, Namco 163, Taito, J.Y. Company ASIC, reusable-ASIC multicarts (FK23C / COOLBOY / MINDKIDS / Sachen / Waixing / Kaiser), and Vs.-System boards — classified Core / Curated / BestEffort behind a CI accuracy-honesty gate — plus a UNIF (`.unf`) cartridge loader |
 | **Famicom Disk System**| `.fds` games with real-BIOS boot, writable disks, side-swapping, and 2C33 wavetable audio    |
 | **Vs. / PlayChoice-10**| Arcade ROMs in true 2C03 / 2C04 / 2C05 RGB with per-game DIP presets                          |
 | **RetroAchievements**  | Native `rcheevos` integration: achievements, leaderboards, rich presence, hardcore mode      |
@@ -111,7 +114,7 @@ FME-7, and the full VRC line, plus Vs.-arcade RGB.
 The full per-mapper visual corpus lives in
 [`screenshots/external/`](screenshots/external/) (Core / Curated) and
 [`screenshots/besteffort/`](screenshots/besteffort/) (BestEffort) — boot / title /
-gameplay frames spanning the bulk of the 150 mapper families.
+gameplay frames spanning the bulk of the 168 mapper families.
 
 ---
 
@@ -138,7 +141,7 @@ gameplay frames spanning the bulk of the 150 mapper families.
 
 ### Cartridges and platforms
 
-- **150 mapper families** covering the bulk of the licensed library — NROM, all
+- **168 mapper families** covering the bulk of the licensed library — NROM, all
   MMC1-5, the full VRC1/2/4/6/7 line (incl. VRC6 and VRC7 expansion audio), Sunsoft
   FME-7/1/2/3/4 (+ 5B audio), Namco 163 (+ wavetable), the Taito
   TC0190/TC0690/X1-005/X1-017, J.Y. Company ASIC boards, and the
@@ -419,7 +422,7 @@ in [`docs/architecture.md`](docs/architecture.md) and [`docs/scheduler.md`](docs
 | `rustynes-cpu`           | Cycle-accurate 6502 / 2A03 CPU core                         |
 | `rustynes-ppu`           | Dot-level 2C02 PPU                                          |
 | `rustynes-apu`           | Hardware-accurate 2A03 APU with band-limited synthesis      |
-| `rustynes-mappers`       | 150 mapper families + expansion audio + UNIF loader         |
+| `rustynes-mappers`       | 168 mapper families + expansion audio + UNIF loader         |
 | `rustynes-core`          | Integration layer: Bus, scheduler, console, save states     |
 | `rustynes-frontend`      | `winit` + `wgpu` + `cpal` + `egui` app (binary: `rustynes`) |
 | `rustynes-netplay`       | GGPO-style rollback netcode (UDP + WebRTC)                  |
@@ -564,13 +567,14 @@ engine-development audit logs are kept locally, outside the public repo.)
 
 ## Version History
 
-The current release is **v1.6.0 "Studio"**, the TAS-authoring, debugger-depth, accuracy,
-and breadth release on the cycle-accurate v1.0.0 production core (it follows the v1.5.0
-"Lens" insight/scriptability line and the v1.4.0 "Fidelity" + v1.4.1 compatibility line).
+The current release is **v1.7.0 "Forge"**, the writable + programmable tooling, accuracy,
+mapper-breadth, and reach release on the cycle-accurate v1.0.0 production core (it follows
+the v1.6.0 "Studio" TAS-authoring line and the v1.5.0 "Lens" insight/scriptability line).
 The road so far:
 
 | Version    | Highlights                                                                                  |
 | ---------- | ------------------------------------------------------------------------------------------- |
+| **v1.7.0** | "Forge" — the tools become **writable** and **programmable**. **F** accuracy hardening (battery-save round-trip oracle + length-halt/reload + DMC even/odd-defer pins + an off-by-default PPU extra-scanlines overclock); mapper breadth → **168 families** (G1 reusable-ASIC: FK23C / COOLBOY / MINDKIDS / Sachen / Waixing / Kaiser, BestEffort honesty-gated); **A** editing-capable tools (palette / nametable / CHR / OAM writeback, an iNES / NES 2.0 header editor, an inline 6502 assembler); **C** debugger depth (CallstackManager + step modes, MemoryAccessCounter + uninit-read, ca65 / cc65 `.dbg` source maps); **B** scriptable **TAStudio** (`tastudio.*` Lua API + analysis-canvas callbacks) + full Lua parity; **E** host IPC / automation (`comm.*` / `client.*` / `userdata.*`) behind a new off-by-default `script-ipc` feature (host-mediated sandbox, ADR 0016); **D** rewind (HistoryViewer + Export-Last-30s `.rnm` + a Zwinder XOR-delta + LZ4 tiered greenzone); **G** expansion-audio (NSF router reusing VRC6/7 / FDS / MMC5 / N163 / 5B + MMC5 audio), movie import (`.fcm` / `.fmv` / `.vmv`; `.fm2` / `.bk2` export hashing), and an **HD-Pack Builder** (ADR 0017) + the HD-pack loader real-Mesen-`<tile>`-format fix (ADR 0018); a UI overhaul (consolidated Input Display, modernized menu / status bar, a polished Documentation pane); plus the **H1–H9 reach wave** — browser-RA finish + an RA HUD, spectator netplay + Game-Genie-encoder / `.srt` / `.tbl`, coverage-harness `.zip` / `.7z` / `.fds` discovery, per-game `<rom>.json` config overrides + a DIP editor + a lag counter (ADR 0019), audio depth (stereo panning / Schroeder reverb / crossfeed / output-device picker / 20-band EQ, ADR 0020), web/wasm parity (browser Lua / File-System-Access-API / Gamepad-API / PWA-offline / `?settings=` share-links, ADRs 0021+0022), an **i18n** framework (compile-time string catalog + a language picker, English + Spanish, ADR 0023), and a `full` maximal-native-feature build + `cargo full-run` alias. Additive / off-by-default; the shipped / native / `no_std` / wasm builds stay byte-identical and AccuracyCoin holds 100% (139/139). |
 | **v1.6.0** | "Studio" — creator-power + accuracy-polish + reach. A **TAStudio-class piano-roll TAS editor** (save-state greenzone + lag log + markers + forkable branches + `.rnmproj` projects, with a drag-paint egui grid + deterministic seek); **`.fm2` (FCEUX) and `.bk2` (BizHawk) movie interop** ↔ `.rnm`; **Lua movie driving** (`emu.run` / `emu.frameadvance`) + data breadth (memory domains, sized reads, `joypad`); **Mesen2-class debugger depth** (expression / conditional breakpoints, R/W/X watchpoints, a watch window, conditional trace, a full hex editor, RAM watch / search); an **off-axis accuracy** verification + documentation pass (DMC/OAM-DMA controller corruption, `$2007` read-during-render, sprite-overflow + open-bus decay — verified, no engine change); mapper breadth → **150 families** (J.Y. ASIC + a discrete-multicart batch) + a **UNIF (`.unf`) loader**; **FDS-proper** (timed disk-head + `$4032` auto-insert + per-game CRC quirk table); **A/V recording** (ffmpeg → mp4 / mkv, default-off `av-record`); **HD-pack HD audio** (`<bgm>` / `<sfx>` OGG via `$4100`, default-off `hd-pack`); and a **shader / filter ecosystem** (LMP88959 NTSC/PAL, hqNx / xBRZ, a constrained `.slangp` / `.cgp` import). Additive / off-by-default; the shipped / native / `no_std` / wasm builds stay byte-identical and AccuracyCoin holds 100% (139/139). |
 | **v1.5.0** | "Lens" — insight + scriptability + creator tooling + polish: debugger **visualization** (Input Miniatures overlay, a graphical PPU event-viewer heatmap, a per-scanline trace, an HD-pack pixel inspector), a Lua **dev/TAS API** (memory/cart/save-state/symbol queries), a **TASVideos** compatibility pass + replay/TAS-window polish + an NSF waveform scope, a measure-first **frontend pacing & audio-sync** perf pass with perf-log↔panel parity, **UX polish** (named-palette editor, per-side overscan WYSIWYG, an Enhancements settings group, device-config controls), **accessibility** (UI scaling, high-contrast + Okabe-Ito colorblind themes, keyboard-only nav), a **native-UI overhaul** + in-app **Documentation** pane, mapper coverage 113 → **123 families**, and **casual-mode browser RetroAchievements** scaffolding (ADR 0015, off by default — emcc-built rcheevos side module + auth-proxy contract; live-browser verify is maintainer-manual). All additive / off-by-default so shipped / native / `no_std` / wasm stay byte-identical; AccuracyCoin 100% (139/139) held. |
 | **v1.4.1** | Patch — four more BestEffort mapper boot/decode fixes from the boot-smoke-vs-real-dumps pass (m92 Jaleco JF-19 PRG layout, m94 UN1ROM bank decode + bus conflict, m145 Sachen 16 KiB PRG, m147 Sachen 3018 / TXC JV001 protection handshake), plus the boot-smoke screenshot corpus reorganized to mirror the per-mapper `tests/roms/` tier layout. BestEffort-only; AccuracyCoin 100% (139/139) held, byte-identical to v1.4.0. |
@@ -594,17 +598,19 @@ The road so far:
 > scripting/filters/peripherals feature set; **v1.2.0 "Curator"** added the library /
 > compatibility / reach set; **v1.3.0 "Bedrock"** added the toolchain + breadth set;
 > **v1.4.0 "Fidelity"** (+ the v1.4.1 patch) added the compatibility-and-finish set;
-> **v1.5.0 "Lens"** added the insight / scriptability / creator-tooling / polish set; and
-> **v1.6.0 "Studio"** adds the TAS-authoring / debugger-depth / accuracy / breadth set
-> above. See [`CHANGELOG.md`](CHANGELOG.md) for full per-version detail.
+> **v1.5.0 "Lens"** added the insight / scriptability / creator-tooling / polish set;
+> **v1.6.0 "Studio"** added the TAS-authoring / debugger-depth / accuracy / breadth set;
+> and **v1.7.0 "Forge"** adds the writable + programmable tooling / accuracy /
+> mapper-breadth / reach set above. See [`CHANGELOG.md`](CHANGELOG.md) for full
+> per-version detail.
 
 ### Roadmap
 
-With **v1.6.0 "Studio"** shipped, the non-architectural backlog is essentially consumed:
-emulation accuracy is at or beyond the Mesen2 / GeraNES bar, a TAStudio-class TAS-authoring
-surface and a Mesen2-class debugger now exist, the off-axis accuracy cluster is verified and
-documented, and mapper / format breadth reaches **150 families** plus the UNIF loader and
-FDS-proper. The remaining accuracy residuals all converge on a single future **v2.0
+With **v1.7.0 "Forge"** shipped, the non-architectural backlog is essentially consumed:
+emulation accuracy is at or beyond the Mesen2 / GeraNES bar, the TAS-authoring and debugger
+surfaces are now both *writable* and *programmable* (editing-capable tools + a scriptable
+TAStudio + host IPC), the off-axis accuracy cluster is verified and documented, and
+mapper / format breadth reaches **168 families** plus the UNIF loader and FDS-proper. The remaining accuracy residuals all converge on a single future **v2.0
 master-clock (fractional-timebase) refactor** (ADR 0002), which remains the next architectural
 milestone — the one release expected to break byte-identity and save-state compatibility.
 Browser RetroAchievements has its buildable scaffolding in v1.5.0 (ADR 0015); finishing it
@@ -702,10 +708,10 @@ If you use RustyNES in academic research, please cite:
   author  = {RustyNES Contributors},
   title   = {RustyNES: A Cycle-Accurate NES Emulator in Rust},
   year    = {2026},
-  version = {1.6.0},
+  version = {1.7.0},
   url     = {https://github.com/doublegate/RustyNES},
   note    = {Cycle-accurate NES emulator on a master-clock-precise scheduler;
-             AccuracyCoin 100\% (139/139), nestest 0-diff; 150 mapper families,
+             AccuracyCoin 100\% (139/139), nestest 0-diff; 168 mapper families,
              Famicom Disk System, Vs./PlayChoice-10 RGB, rollback netplay,
              RetroAchievements, a TAStudio piano-roll TAS editor with .fm2/.bk2
              movie interop, and a Mesen2-class debugger; pure-Rust

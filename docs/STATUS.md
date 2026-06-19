@@ -1,35 +1,45 @@
 # RustyNES — Project Status Matrix
 
-> **In development: v1.7.0 "Forge"** (NOT released — accumulating on `main`) — the
-> "writable + programmable tools" release, MAXIMAL scope (full A–H) across five
-> betas on the current dot-lockstep scheduler. **Merged:** beta.1 (#134, F accuracy
-> hardening + G1 ASIC mappers 150→**168** + H7 measure-first perf) · beta.2 (#135,
-> A editing-capable tools + C debugger depth) · beta.3 (#136, B scriptable TAStudio
-> with Lua parity + E host IPC/automation behind `script-ipc`). **In closeout:** beta.4
-> (#137, D rewind/Zwinder + G2/G3 expansion-audio + G4 movie-import + G5 HD-Pack
-> Builder). **beta.5 in progress:** HD-pack loader real-Mesen-format fix (ADR 0018),
-> UI overhaul (consolidated Input Display, menu/status-bar, Documentation pane,
-> debugger-bar removal), screenshot No-Intro curation, coverage-harness archive/`.fds`
-> support, then the H1–H9 reach/polish wave + a cargo `full` build. Additive /
-> off-by-default → byte-identical with features off; **AccuracyCoin 100% (139/139)**
-> held at every beta. New ADRs 0016 (IPC) · 0017 (HD-Pack Builder) · 0018 (HD-pack
-> loader format). The matrix below still reflects the **v1.6.0** release; it is
-> re-synced in full at the v1.7.0 finals (version bump + tag).
+> **Current release: v1.7.0 "Forge"** (released 2026-06-19) — the "writable +
+> programmable tools" release, MAXIMAL scope (full A–H + an H1–H9 reach wave) on the
+> current dot-lockstep scheduler. **beta.1** (#134, F accuracy hardening + G1 ASIC
+> mappers 150→**168** + H7 measure-first perf) · **beta.2** (#135, A editing-capable
+> tools + C debugger depth) · **beta.3** (#136, B scriptable TAStudio with Lua parity +
+> E host IPC/automation behind `script-ipc`) · **beta.4** (#137, D rewind/Zwinder +
+> G2/G3 expansion-audio + G4 movie-import + G5 HD-Pack Builder) · **beta.5 wave-1**
+> (HD-pack loader real-Mesen-format fix #56 / ADR 0018; UI overhaul #51/#52/#53/#55) ·
+> **beta.5 wave-2** (#142 browser-RA finish + RA HUD + spectator netplay; #143
+> coverage-harness `.zip`/`.7z`/`.fds` discovery; #144 per-game `<rom>.json`
+> overrides + DIP editor + lag counter; #145 audio depth; #146 web/wasm parity; #147
+> i18n; #148 `full` build + `cargo full-run`). Additive / off-by-default → byte-identical with
+> features off; **AccuracyCoin 100% (139/139)** held at every beta. New default-off
+> feature flag `script-ipc`; new ADRs 0016 (IPC) · 0017 (HD-Pack Builder) · 0018
+> (HD-pack real-Mesen format) · 0019 (per-game config overlay) · 0020 (mono→stereo
+> output widening) · 0021 (File System Access fallback) · 0022 (settings share-link) ·
+> 0023 (i18n string-catalog).
 
-**Current release: v1.6.0 "Studio" — the TAS-authoring, debugger-depth, accuracy,
-and breadth release** on the cycle-accurate v1.0.0 production core. A NES/Famicom
-emulator with the Mesen2 / higan / ares accuracy bar, shipped as a polished
-desktop application. **AccuracyCoin 100.00% (139/139)**, the 60-ROM
+**Current release: v1.7.0 "Forge" — the writable + programmable tooling, accuracy,
+mapper-breadth, and reach release** on the cycle-accurate v1.0.0 production core. A
+NES/Famicom emulator with the Mesen2 / higan / ares accuracy bar, shipped as a
+polished desktop application. **AccuracyCoin 100.00% (139/139)**, the 60-ROM
 `external_real_games` + 52-entry `external_extended` oracles byte-identical,
-nestest 0-diff. v1.6.0 lands the **TAStudio piano-roll editor**, `.fm2`/`.bk2`
-movie interop, Lua driving + data breadth, **Mesen2-class debugger depth**
-(expression/conditional breakpoints + R/W/X watchpoints + a full hex editor +
-RAM search), off-axis-accuracy verification, mapper breadth to **150 families**,
-FDS-proper, A/V recording, HD audio, and a shader/filter ecosystem — all
-additive/off-by-default, so with the new features off the shipped/wasm/`no_std`
-code paths are behaviourally unchanged from v1.5.0 (the only build delta is the
-embedded `CARGO_PKG_VERSION` string bumping 1.5.0 → 1.6.0) and AccuracyCoin
-holds 100% (139/139). The preceding v1.5.0 "Lens" lands eight
+nestest 0-diff. v1.7.0 makes the tools *writable* and *programmable* — A
+editing-capable tools (palette/nametable/CHR/OAM writeback + iNES/NES 2.0 header
+editor + inline 6502 assembler), B scriptable TAStudio (`tastudio.*` Lua + full
+Lua parity), C Mesen2-class debugger depth (CallstackManager + step modes,
+MemoryAccessCounter + uninit-read, ca65/cc65 `.dbg` source maps), D rewind
+(HistoryViewer + Export-Last-30s `.rnm` + Zwinder XOR-delta+LZ4 greenzone), E host
+IPC/automation behind the off-by-default `script-ipc` feature, F accuracy hardening,
+G expansion-audio + movie-import + HD-Pack Builder, plus the H1–H9 reach wave
+(browser-RA finish + RA HUD, spectator netplay, audio depth, per-game `<rom>.json`,
+i18n, web/wasm parity, a `full` native build) — and takes mapper breadth to **168
+families**. All additive/off-by-default, so with the new features off the
+shipped/wasm/`no_std` code paths are byte-identical to v1.6.0 (the only build delta
+is the embedded `CARGO_PKG_VERSION` string bumping 1.6.0 → 1.7.0) and AccuracyCoin
+holds 100% (139/139). The preceding v1.6.0 "Studio" landed the TAStudio piano-roll
+editor, `.fm2`/`.bk2` movie interop, Mesen2-class debugger depth, off-axis-accuracy
+verification, mapper breadth to **150 families**, FDS-proper, A/V recording, HD
+audio, and a shader/filter ecosystem. The preceding v1.5.0 "Lens" lands eight
 additive workstreams: **A** debugger
 visualization (an Input Miniatures overlay, a graphical PPU event-viewer heatmap,
 a per-scanline trace viewer, an HD-pack per-pixel inspector — behind
@@ -59,6 +69,39 @@ maintainer-manual carryovers. Every addition is additive / off-by-default, so th
 shipped / native / `no_std` / wasm builds stay byte-identical and AccuracyCoin
 holds 100% (139/139); the accuracy residuals all converge on the future v2.0
 fractional-master-clock refactor (ADR 0002).
+
+**v1.7.0 "Forge" — the writable + programmable tooling / accuracy / mapper-breadth /
+reach release.** Like every release on the v1.0.0 core it is additive /
+off-by-default: with the new features off, behaviour is unchanged — the native /
+`no_std` / wasm code paths are byte-for-byte the same as v1.6.0 (the lone build
+difference is the embedded `CARGO_PKG_VERSION` string) — and AccuracyCoin holds
+**100% (139/139)**. *Shipped (full A–H + the H1–H9 reach wave):* **F** accuracy
+hardening (battery-save round-trip oracle + length-halt/reload + DMC even/odd-defer
+audit pins + off-by-default PPU extra-scanlines overclock); **G1** reusable-ASIC
+mappers 150 → **168 families** (FK23C/COOLBOY/MINDKIDS/Sachen/Waixing/Kaiser,
+BestEffort honesty-gated); **A** editing-capable tools (palette/nametable/CHR/OAM
+writeback editors gated like `emu.write`, iNES/NES 2.0 header editor, inline 6502
+assembler); **C** debugger depth (CallstackManager + step modes, a
+MemoryAccessCounter + uninit-read, ca65/cc65 `.dbg` source maps); **B** scriptable TAStudio (`tastudio.*`
+Lua + full Lua parity); **E** host IPC/automation (`comm.*`/`client.*`/`userdata.*`)
+behind the off-by-default `script-ipc` feature (host-mediated sandbox, ADR 0016);
+**D** rewind (HistoryViewer + Export-Last-30s `.rnm` + Zwinder XOR-delta+LZ4
+greenzone); **G2/G3** expansion-audio (NSF router reusing VRC6/7/FDS/MMC5/N163/5B;
+MMC5 audio); **G4** movie import (`.fcm`/`.fmv`/`.vmv`; `.fm2`/`.bk2` export hashing);
+**G5** HD-Pack Builder (ADR 0017) + the HD-pack loader real-Mesen-`<tile>`-format fix
+(ADR 0018); a UI overhaul (consolidated Input Display, menu/status-bar
+modernization + full icon coverage, Documentation-pane polish, backtick toggle of
+the status-bar RA readout); and the **H1–H9 reach wave** — browser-RA finish + RA
+HUD, spectator netplay + Game-Genie-encoder/`.srt`/`.tbl`, coverage-harness
+`.zip`/`.7z`/`.fds` discovery (7z-bomb OOM cap), per-game `<rom>.json` config
+overrides + DIP editor + lag counter (ADR 0019), audio depth (stereo
+panning/Schroeder-reverb/crossfeed/output-device-picker/20-band-EQ, ADR 0020),
+web/wasm parity (browser Lua/File-System-Access-API/Gamepad-API/PWA-offline/
+`?settings=` share-links, ADRs 0021+0022), an i18n framework (compile-time string
+catalog + language picker, English+Spanish, English byte-identical, ADR 0023), and a
+`full` maximal-native-feature build + `cargo full-run` alias. The headline mapper
+count is the released figure (**168**). Planning lives in `to-dos/ROADMAP.md` (the
+entry point) + `to-dos/plans/`.
 
 **v1.6.0 "Studio" — the studio / TAS-tooling / debugger-depth / accuracy-and-breadth
 release.** Like every release on the v1.0.0 core it is additive / off-by-default:
@@ -589,9 +632,10 @@ ROM dumps under `tests/roms/external/`, not committed):
 > coverage from the early engine line (the top-25-by-title-count tranche).
 > RustyNES **v1.0.0 shipped 51 mapper families**; **v1.2.0 extended this to
 > 87**, **v1.3.0 "Bedrock" to 101**, **v1.4.0 "Fidelity" to 113**, and
-> **v1.5.0 "Lens" to 123**, and **v1.6.0 "Studio" to 150** (the current
-> released count) — the J.Y. Company ASIC mappers (m90/209/211) + the UNIF
-> loader + Workstream E's `sprint11` batch — see
+> **v1.5.0 "Lens" to 123**, **v1.6.0 "Studio" to 150** — the J.Y. Company ASIC
+> mappers (m90/209/211) + the UNIF loader + Workstream E's `sprint11` batch — and
+> **v1.7.0 "Forge" to 168** (the current released count, Workstream G1's reusable-ASIC
+> batch). See
 > `docs/mappers.md` §Mapper coverage matrix +
 > §Mapper accuracy tiering for the full current list. The "out of scope" notes
 > below were the early-engine scoping; they are retained as history and
@@ -603,8 +647,8 @@ v1.2.0** → **101 families at v1.3.0 "Bedrock"** → **113 families at v1.4.0
 "Fidelity"** → **123 families at v1.5.0 "Lens"** → **150 families at v1.6.0
 "Studio"** (the J.Y. Company ASIC sweep 35/90/209/211 +
 Workstream E's `sprint11` batch: MMC3-clones, Sachen 8259 A/B/C, discrete
-multicarts) → **168 families in development on `main` for v1.7.0 "Forge"**
-(Workstream G1's `sprint12` reusable-ASIC batch: FK23C, COOLBOY/MINDKIDS,
+multicarts) → **168 families at v1.7.0 "Forge"** (the current released count;
+Workstream G1's `sprint12` reusable-ASIC batch: FK23C, COOLBOY/MINDKIDS,
 Sachen 9602/3011, Waixing 164/253/286, Kaiser 56/142/303/305/306/312, and BMC
 multicarts 261/289/320/336/349), tiered for accuracy honesty:
 
@@ -805,7 +849,8 @@ unless the default flips.
 **RustyNES ships at v1.0.0** (the production cut), with the additive,
 off-by-default feature releases **v1.1.0 "Scriptable" → v1.2.0 "Curator" →
 v1.3.0 "Bedrock" → v1.4.0 "Fidelity" (+ the v1.4.1 patch) → v1.5.0 "Lens" →
-v1.6.0 "Studio"** on top — **v1.6.0 "Studio" is the current release**. The
+v1.6.0 "Studio" → v1.7.0 "Forge"** on top — **v1.7.0 "Forge" is the current
+release**. The
 table below is the **engine-lineage** version history
 — the internal engine line whose increments produced the v1.0.0 technology. Its
 `v0.9.x` / `v1.x` / `v2.x` markers are the engine's own line, retained as
@@ -821,9 +866,8 @@ own semantic-version line starting at **v1.0.0**.
 > **one-clock + every-cycle-bus-access collapse** (Mesen2-style fractional master
 > clock with a φ1/φ2 access split), the hard-tier accuracy-residual closure, Vs.
 > DualSystem emulation, and the breaking save-state / cross-version changes that it
-> entails (ADR 0002). The full forward path (v1.6.0 "Studio" → v1.7.0 "Forge" →
-> v1.8.0/v1.9.0 mobile → v2.0.0 "Timebase") is tracked in `to-dos/ROADMAP.md` +
-> `to-dos/plans/`.
+> entails (ADR 0002). The full forward path (v1.7.0 "Forge" shipped → v1.8.0/v1.9.0
+> mobile → v2.0.0 "Timebase") is tracked in `to-dos/ROADMAP.md` + `to-dos/plans/`.
 
 | Version | Status | Bar |
 |---------|--------|-----|
