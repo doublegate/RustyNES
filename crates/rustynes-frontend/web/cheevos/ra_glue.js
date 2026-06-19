@@ -52,6 +52,14 @@ const RC_CLIENT_EVENT_SERVER_ERROR = 16;
 let _module = null; // the instantiated Emscripten Module (rcheevos.wasm)
 let _client = 0; // the rc_client_t pointer (0 = none)
 
+// Session epoch, bumped on every shutdown (and thus on every ROM close / reset
+// / page teardown). An async server call captures the epoch (and the client
+// pointer) at issue time and re-checks them when the network resolves: if the
+// session has since been torn down (or replaced), the rcheevos completion
+// callback + its callbackData point into freed/reallocated wasm memory, so we
+// MUST NOT invoke it (use-after-free / dangling-pointer guard — ADR 0015).
+let _clientEpoch = 0;
+
 // addFunction pointers (kept so we never re-register / can remove on shutdown).
 let _readFnPtr = 0;
 let _serverFnPtr = 0;
@@ -108,6 +116,13 @@ function serverCallTrampoline(request, callback, callbackData, _client) {
   const m = _module;
   if (!m) return;
 
+  // Capture the live-session identity at issue time. If the session is torn
+  // down or replaced before the async fetch resolves, `callback`/`callbackData`
+  // become dangling wasm pointers — the completion below refuses to invoke
+  // them when this no longer matches (use-after-free guard, ADR 0015).
+  const issueEpoch = _clientEpoch;
+  const issueClient = _client;
+
   // Read the request struct fields (pointers at 0/4/8).
   const urlPtr = m.getValue(request + 0, "i32");
   const postPtr = m.getValue(request + 4, "i32");
@@ -121,6 +136,19 @@ function serverCallTrampoline(request, callback, callbackData, _client) {
   // Build a completion that marshals the HTTP outcome into an
   // rc_api_server_response_t and invokes the rcheevos callback.
   const complete = (status, bodyText) => {
+    // Session-validity guard: if the client was shut down / reset / replaced
+    // since this call was issued, the rcheevos callback + callbackData point
+    // into freed (or reallocated) wasm memory. Skip the callback entirely —
+    // invoking it would be a use-after-free. We allocate nothing and free
+    // nothing for callbackData (it is owned by the now-dead rcheevos session).
+    if (
+      _clientEpoch !== issueEpoch ||
+      _client !== issueClient ||
+      _client === 0 ||
+      !_module
+    ) {
+      return;
+    }
     let bodyPtr = 0;
     let bodyLen = 0;
     if (bodyText) {
@@ -370,6 +398,10 @@ export function ra_shutdown() {
   _eventFnPtr = 0;
   _readByte = null;
   _events = [];
+  // Invalidate any in-flight server call: its completion will see a bumped
+  // epoch (and a cleared `_client`) and refuse to invoke the now-dangling
+  // rcheevos callback.
+  _clientEpoch++;
 }
 
 // Allocate a NUL-terminated C string in the module heap; caller frees it.

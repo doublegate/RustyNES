@@ -43,6 +43,20 @@ use crate::message::NetMessage;
 use crate::session::MAX_PLAYERS;
 use crate::transport::Transport;
 
+/// How far ahead of the current confirmed/horizon frame a peer-supplied
+/// `Input.frame` may legitimately be before we reject it.
+///
+/// A spectator only ever shows fully-confirmed frames, lagging the live match
+/// by `input_delay + network-latency` frames; it never predicts. So the
+/// newest in-flight `Input.frame` it can plausibly receive sits a small,
+/// bounded distance ahead of the frame it is currently confirming. We allow a
+/// generous window — comfortably larger than any player's `max_rollback_frames`
+/// (default 8) plus jitter/reorder slack — but cap it so a malicious or
+/// corrupt peer cannot drive [`SpectatorSession::ensure_frame`] into an
+/// unbounded `Vec` resize (an OOM `DoS`). A frame beyond this horizon is simply
+/// dropped (mirrors the beta.4 movie-parser bounds hardening).
+const MAX_SPECTATOR_FRAME_LOOKAHEAD: u32 = 1024;
+
 /// Configuration for a [`SpectatorSession`].
 #[derive(Clone, Copy, Debug)]
 pub struct SpectatorConfig {
@@ -221,10 +235,26 @@ impl<T: Transport> SpectatorSession<T> {
                     frame,
                     input,
                 } => {
-                    // Drop an out-of-range player index (a malformed / foreign
-                    // packet must never index out of bounds or corrupt a real
-                    // player's stream).
+                    // Drop an out-of-range player index. `num_players` is fixed
+                    // by construction (and only ever set by a `Roster` BEFORE
+                    // the first confirmed frame — see below), so a `player`
+                    // beyond it can never become valid: dropping it is correct,
+                    // not merely a best-effort guard, and it keeps a malformed /
+                    // foreign packet from indexing out of bounds or corrupting a
+                    // real player's stream.
                     if player >= self.config.num_players {
+                        continue;
+                    }
+                    // Reject a `frame` that sits implausibly far ahead of the
+                    // frame we are currently confirming. A spectator never shows
+                    // anything beyond the confirmed horizon, so any legitimate
+                    // in-flight `Input.frame` is only a small bounded distance
+                    // ahead. Without this cap a peer-supplied `frame` near
+                    // `u32::MAX` would make `ensure_frame` resize `history`
+                    // unboundedly (an OOM DoS). Dropping it is safe: a real,
+                    // in-window frame is retransmitted by the players' session.
+                    let horizon = self.last_confirmed_frame.map_or(0, |c| c + 1);
+                    if frame > horizon.saturating_add(MAX_SPECTATOR_FRAME_LOOKAHEAD) {
                         continue;
                     }
                     self.ensure_frame(frame);
@@ -237,8 +267,18 @@ impl<T: Transport> SpectatorSession<T> {
                     // expect; clamp into the valid range. (A relay that fans the
                     // match to spectators forwards this.) `peers.len()` is bounded
                     // by `MAX_ROSTER` (4) on the wire, so the cast cannot truncate.
-                    let n = u8::try_from(peers.len()).unwrap_or(4);
-                    self.config.num_players = n.clamp(2, 4);
+                    //
+                    // Only honor a roster BEFORE any frame has been produced or
+                    // confirmed. Changing `num_players` after frames are
+                    // confirmed would retroactively re-define what "fully
+                    // confirmed" means without re-walking the existing prefix,
+                    // which could silently un-confirm already-shown frames.
+                    // Once the match's player count is locked in, a later roster
+                    // is stale relay chatter and is ignored.
+                    if self.current_frame == 0 && self.last_confirmed_frame.is_none() {
+                        let n = u8::try_from(peers.len()).unwrap_or(4);
+                        self.config.num_players = n.clamp(2, 4);
+                    }
                 }
                 // A spectator ignores acks (it sends no input to ack), peer
                 // checksums (it does not participate in desync detection), and
@@ -343,6 +383,100 @@ mod tests {
     /// framebuffer** to a reference `Nes` run directly over those inputs. This
     /// is exactly the cross-peer determinism the players' rollback session
     /// relies on, exercised through the receive-only spectator path.
+    /// A peer-supplied `Input.frame` far beyond the confirmed horizon must be
+    /// dropped WITHOUT growing `history` (otherwise a `frame` near `u32::MAX`
+    /// would resize the `Vec` unboundedly — an OOM `DoS`). The in-window frame
+    /// that follows is still accepted.
+    #[test]
+    fn spectator_rejects_out_of_window_frame_without_allocating() {
+        let rom = synth_nrom();
+        let hash = *Nes::from_rom(&rom).unwrap().rom_sha256();
+        let (spec_link, mut feeder) = MemoryTransport::pair(LinkConditions::PERFECT, 7);
+        let mut spec = SpectatorSession::new(SpectatorConfig { num_players: 2 }, spec_link, hash);
+        let mut nes = Nes::from_rom(&rom).unwrap();
+
+        // An absurd frame index (near u32::MAX) for a valid player. The horizon
+        // starts at 0, so this is far past MAX_SPECTATOR_FRAME_LOOKAHEAD.
+        feeder.send(&NetMessage::Input {
+            player: 0,
+            frame: u32::MAX - 5,
+            input: 0xFF,
+        });
+        feeder.send(&NetMessage::Input {
+            player: 1,
+            frame: u32::MAX,
+            input: 0x0F,
+        });
+        let out = spec.advance(&mut nes);
+        assert!(!out.produced_frame, "out-of-window frames produce nothing");
+        assert!(
+            spec.history.len() <= MAX_SPECTATOR_FRAME_LOOKAHEAD as usize + 1,
+            "history must not be resized to an attacker-chosen frame index (len = {})",
+            spec.history.len()
+        );
+
+        // A legitimate in-window frame is still accepted (both players),
+        // confirming frame 0 and letting the spectator show it.
+        feeder.send(&NetMessage::Input {
+            player: 0,
+            frame: 0,
+            input: 0,
+        });
+        feeder.send(&NetMessage::Input {
+            player: 1,
+            frame: 0,
+            input: 0,
+        });
+        let out = spec.advance(&mut nes);
+        assert!(out.produced_frame, "in-window frame 0 is shown");
+        assert_eq!(out.frame, 0);
+    }
+
+    /// A `Roster` that arrives AFTER a frame has been confirmed/produced must be
+    /// ignored — applying it could retroactively un-confirm already-shown frames
+    /// (the confirmed prefix is not re-walked). A `Roster` before any frame is
+    /// honored.
+    #[test]
+    fn spectator_ignores_late_roster() {
+        use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+        let addr = |p: u8| -> (u8, SocketAddr) {
+            (
+                p,
+                SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 5000 + u16::from(p))),
+            )
+        };
+        let rom = synth_nrom();
+        let hash = *Nes::from_rom(&rom).unwrap().rom_sha256();
+        let (spec_link, mut feeder) = MemoryTransport::pair(LinkConditions::PERFECT, 7);
+        let mut spec = SpectatorSession::new(SpectatorConfig { num_players: 2 }, spec_link, hash);
+        let mut nes = Nes::from_rom(&rom).unwrap();
+
+        // Confirm + show frame 0 (a 2-player match).
+        feeder.send(&NetMessage::Input {
+            player: 0,
+            frame: 0,
+            input: 0,
+        });
+        feeder.send(&NetMessage::Input {
+            player: 1,
+            frame: 0,
+            input: 0,
+        });
+        assert!(spec.advance(&mut nes).produced_frame);
+        assert_eq!(spec.num_players(), 2);
+
+        // A late roster claiming 4 players must be ignored.
+        feeder.send(&NetMessage::Roster {
+            peers: vec![addr(0), addr(1), addr(2), addr(3)],
+        });
+        let _ = spec.advance(&mut nes);
+        assert_eq!(
+            spec.num_players(),
+            2,
+            "a roster after a confirmed frame is ignored"
+        );
+    }
+
     #[test]
     fn spectator_matches_reference_framebuffer() {
         const FRAMES: usize = 24;

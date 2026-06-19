@@ -5381,7 +5381,16 @@ impl App {
         // allowed, telling the user how long remains. No-op in softcore /
         // feature-off (resume is always honored).
         if paused && let Some(frames) = self.ra_pause_gate() {
-            let secs = f64::from(frames) / 60.0;
+            // Use the loaded ROM's region frame duration (NTSC ~60, PAL/Dendy
+            // ~50 Hz) so the remaining-time hint is correct off-NTSC, rather
+            // than a hardcoded 60 fps. Fall back to ~60 Hz if no ROM is loaded.
+            let frame_secs = self.emu.lock().frame_duration.as_secs_f64();
+            let frame_secs = if frame_secs > 0.0 {
+                frame_secs
+            } else {
+                1.0 / 60.0
+            };
+            let secs = f64::from(frames) * frame_secs;
             self.ui.set_status(StatusMessage::info(format!(
                 "Pause held by hardcore mode ({secs:.1}s remaining)"
             )));

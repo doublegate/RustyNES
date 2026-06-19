@@ -319,6 +319,9 @@ fn encoder_body(ui: &mut egui::Ui, state: &mut CheatPanelState) -> bool {
 /// optional compare are single hex bytes.
 fn encode_from_fields(state: &mut CheatPanelState) {
     state.enc_error.clear();
+    // Clear any previously-encoded code up front so an error path below cannot
+    // leave a stale success result (and its "Add to list" button) showing.
+    state.enc_result.clear();
     let addr_str = state.enc_addr_text.trim().trim_start_matches('$');
     let data_str = state.enc_data_text.trim();
     let cmp_str = state.enc_compare_text.trim();
@@ -341,7 +344,6 @@ fn encode_from_fields(state: &mut CheatPanelState) {
         state.enc_result = crate::genie_encode::encode_8(addr, data, cmp);
     } else {
         state.enc_error = "compare must be a hex byte (or blank)".to_string();
-        state.enc_result = String::new();
     }
 }
 
