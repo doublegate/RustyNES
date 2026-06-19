@@ -362,6 +362,58 @@ every ~9 s. On 120/144 Hz panels (cadence far from the console rate) it
 keeps the wall-clock-delta catch-up, which is correct there. The Perf
 panel's pacing field reads `raf-display` or `raf` accordingly.
 
+### Web / wasm parity (v1.7.0 "Forge" Workstream H6)
+
+Five additive, web-only browser-platform features bring the wasm build closer
+to native parity. All are wasm-only (`#[cfg(target_arch = "wasm32")]`) or behind
+the existing off-by-default `script-wasm` feature, so the native build is
+byte-identical and the deterministic core is untouched (AccuracyCoin 100%,
+139/139).
+
+- **Lua in the browser.** The unified winit path runs the experimental piccolo
+  Lua engine (`script-wasm` feature, ADR 0012) end-to-end: a `.lua` file picker
+  / paste box in `web/index.html` hands source to the `rustynes_load_script` /
+  `rustynes_stop_script` bridge (`wasm_script.rs`), the `App` drains it
+  (`take_pending` → `load_script_wasm` → `pump_scripts_wasm`) once per produced
+  frame under the live `Nes`, and overlay draws render through the egui pass.
+  Writes (`emu.write`) are gated during browser netplay, mirroring the native
+  cheat-path policy. piccolo is observational/overlay-only and explicitly NOT
+  byte-parity with native mlua (ADR 0012); it is never part of the determinism
+  oracle. With the feature off (the shipped default) the bridge is absent and
+  the JS controls no-op.
+- **File System Access API** (`wasm_io::save_file_with_fallback`, ADR 0021).
+  TAS `.rnm` exports save through a real `showSaveFilePicker` "Save As" dialog
+  where the browser supports it (Chromium-family), with a graceful fallback to
+  the synthetic-anchor download (`download_bytes`) on Firefox/Safari. The API is
+  reached dynamically via `js_sys::Reflect`, so no `web_sys_unstable_apis` flag
+  is needed; save-states stay on IndexedDB (`wasm_idb.rs`).
+- **Gamepad API** (`wasm_gamepad.rs`). The page polls
+  `navigator.getGamepads()` on every `requestAnimationFrame`, folds the
+  browser "standard" (Xbox) mapping + the left analog stick into a `Buttons`
+  mask (South=A, West/East=B, Back=Select, Start, D-pad), and pushes it through
+  the `rustynes_gamepad_set_buttons` bridge. The Rust side reads it at the SAME
+  late-latch as touch/keyboard (`App::frame_inputs` for winit, the per-frame
+  `set_buttons` in the canvas rAF loop), routed to player 1 — so it is
+  recorded/replayed identically by TAS movies + netplay and adds no new
+  determinism surface (empty when no pad is connected = byte-identical default).
+- **PWA / offline.** A `manifest.webmanifest` + a service worker (`sw.js`,
+  registered from `index.html`) make the demo installable and offline-capable.
+  The SW uses a cache-first-then-network strategy over same-origin GETs (Trunk
+  hashes the `.wasm`/`.js` filenames per build, so a fixed precache manifest
+  would go stale every rebuild); the app shell is cached on first load and
+  served from cache offline. ROMs are loaded from local disk and never fetched,
+  so nothing proprietary is ever cached. The manifest + icons + `sw.js` are
+  copied into `dist/` by the Trunk asset pipeline; the bundle stays well within
+  the 5 MiB gzip size budget.
+- **`?settings=` share-links** (`wasm_share.rs`, ADR 0022). A curated subset of
+  `Config` (NTSC/CRT filter + knobs, overscan, theme, 8:7, zoom, FPS, volume)
+  serializes to a compact URL-safe base64 blob. On load,
+  `config_from_url_or_default` applies any `?settings=` over the default config;
+  the "Copy share link" button mints a URL (via the `rustynes_share_link`
+  bridge) reflecting the live settings and copies it to the clipboard. `decode`
+  is length-capped (8 KiB) and tolerant of malformed input (silently keeps
+  defaults), and the blob is version-tolerant (`#[serde(default)]` fields).
+
 ## Rendering
 
 - The PPU emits a `[u8; 256*240*4]` RGBA8 sRGB framebuffer.

@@ -269,7 +269,10 @@ fn start_raf_loop(canvas: &HtmlCanvasElement) -> Result<(), JsValue> {
             let touch_port = crate::wasm_touch::touch_target_port();
             let power_pad_active = crate::wasm_touch::touch_power_pad_active();
             let power_pad = crate::wasm_touch::touch_power_pad();
-            let buttons = emu.buttons;
+            // v1.7.0 "Forge" beta.5 Workstream H6 — the browser Gamepad API poll
+            // (Xbox-style → P1), OR'd into the keyboard mask at this single latch
+            // site. Empty when no pad is connected (byte-identical default).
+            let buttons = emu.buttons | crate::wasm_gamepad::gamepad_buttons();
             if let Some(nes) = emu.nes.as_mut() {
                 // Player 1 is the keyboard-mapped port; the touch overlay can
                 // route its mask to any of ports 0..=3.
@@ -390,9 +393,17 @@ fn movie_record_toggle() {
                 return;
             };
             let bytes = movie.serialize();
-            crate::wasm_io::download_bytes("rustynes-movie.rnm", &bytes);
+            // v1.7.0 "Forge" beta.5 Workstream H6 — File System Access "Save As"
+            // where supported, falling back to the synthetic-anchor download.
+            crate::wasm_io::save_file_with_fallback(
+                "rustynes-movie.rnm",
+                "RustyNES TAS movie",
+                ".rnm",
+                "application/octet-stream",
+                &bytes,
+            );
             log(&format!(
-                "movie finished ({} frames, {} bytes) — download triggered",
+                "movie finished ({} frames, {} bytes) — save triggered",
                 movie.len(),
                 bytes.len()
             ));

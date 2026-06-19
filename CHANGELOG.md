@@ -17,6 +17,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **v1.7.0 "Forge" H6 — web/wasm parity: browser Lua, File System Access API,
+  Gamepad API, PWA/offline, and `?settings=` share-links.** Five additive,
+  web-only browser-platform features. All are wasm-only or behind the existing
+  off-by-default `script-wasm` feature, so the **native build is byte-identical**
+  (the chip stack / `rustynes-core` / test-harness are untouched) and
+  AccuracyCoin holds 100% (139/139). (1) **Lua in the browser** — the unified
+  winit path now runs the experimental piccolo Lua engine end-to-end: a `.lua`
+  picker / paste box in `web/index.html` drives the `rustynes_load_script` /
+  `rustynes_stop_script` bridge, the `App` drains + pumps it each produced frame
+  under the live `Nes`, and overlay draws render through the egui pass; writes
+  are gated during browser netplay. piccolo is observational + NOT byte-parity
+  with native mlua (ADR 0012) and never in the determinism oracle; off by
+  default. (2) **File System Access API** (`wasm_io::save_file_with_fallback`,
+  ADR 0021) — TAS `.rnm` exports save through a real `showSaveFilePicker` "Save
+  As" dialog on Chromium-family browsers, with a graceful fallback to the
+  synthetic-anchor download on Firefox/Safari; reached dynamically via
+  `js_sys::Reflect` so no `web_sys_unstable_apis` flag is needed. (3) **Gamepad
+  API** (`wasm_gamepad.rs`) — the page polls `navigator.getGamepads()` each
+  `requestAnimationFrame`, maps the standard (Xbox) layout + left stick to a
+  `Buttons` mask, and routes it to player 1 at the SAME late-latch as
+  touch/keyboard, so it records/replays identically in TAS movies + netplay
+  (empty when no pad is connected = byte-identical default). (4) **PWA /
+  offline** — a `manifest.webmanifest` + a service worker (`sw.js`,
+  cache-first-then-network over same-origin GETs) make the demo installable +
+  offline-capable; manifest, icons, and `sw.js` are copied into `dist/` by the
+  Trunk asset pipeline and the bundle stays within the 5 MiB gzip budget. (5)
+  **`?settings=` share-links** (`wasm_share.rs`, ADR 0022) — a curated subset of
+  `Config` (NTSC/CRT filter + knobs, overscan, theme, 8:7, zoom, FPS, volume)
+  serializes to a compact URL-safe base64 blob applied on load; a "Copy share
+  link" button mints + copies the URL for the live settings. Decode is
+  length-capped (8 KiB) + tolerant of malformed/old/new blobs (all
+  `#[serde(default)]`). New web-sys feature `Location`; new ADRs **0021** (FS
+  Access fallback) + **0022** (share-link format/versioning).
+
 - **v1.7.0 "Forge" H3 — audio depth: stereo panning, reverb/crossfeed, output
   device picker, 20-band graphic EQ, per-context volume.** Five additive,
   **bypass-by-default** frontend mixer/output stages. The deterministic core

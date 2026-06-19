@@ -935,7 +935,11 @@ impl App {
     #[cfg(target_arch = "wasm32")]
     #[must_use]
     pub fn new_empty(proxy: winit::event_loop::EventLoopProxy<AppEvent>) -> Self {
-        let config = Config::default();
+        // v1.7.0 "Forge" beta.5 Workstream H6 — apply any `?settings=` share-link
+        // over the in-memory default (no filesystem on the web). Falls back to the
+        // plain default when there is no/invalid blob.
+        let config = crate::wasm_share::config_from_url_or_default();
+        crate::wasm_share::publish_live(&config);
         let input = InputState::from_config(&config.input);
         let ui = crate::ui_shell::UiShell::new(&config);
         let prev_par_correction = config.ui.pixel_aspect_correction;
@@ -2981,9 +2985,18 @@ impl App {
                 return;
             };
             let bytes = movie.serialize();
-            crate::wasm_io::download_bytes("rustynes-movie.rnm", &bytes);
+            // v1.7.0 "Forge" beta.5 Workstream H6 — save through the File System
+            // Access API (a real "Save As" dialog) where the browser supports
+            // it, falling back to the synthetic-anchor download elsewhere.
+            crate::wasm_io::save_file_with_fallback(
+                "rustynes-movie.rnm",
+                "RustyNES TAS movie",
+                ".rnm",
+                "application/octet-stream",
+                &bytes,
+            );
             crate::wasm_io::log(&format!(
-                "movie finished ({} frames, {} bytes) — download triggered",
+                "movie finished ({} frames, {} bytes) — save triggered",
                 movie.len(),
                 bytes.len()
             ));
@@ -3399,6 +3412,11 @@ impl App {
         #[cfg(target_arch = "wasm32")]
         {
             buttons[crate::wasm_touch::touch_target_port()] |= crate::wasm_touch::touch_buttons();
+            // v1.7.0 "Forge" beta.5 Workstream H6 — fold the browser Gamepad API
+            // poll into player 1 (the Xbox-style native USB-pad binding), at the
+            // SAME late-latch the touch overlay + keyboard use. Empty when no pad
+            // is connected, so this is byte-identical to the keyboard-only path.
+            buttons[0] |= crate::wasm_gamepad::gamepad_buttons();
         }
         #[cfg(not(target_arch = "wasm32"))]
         let buttons = [
@@ -6913,6 +6931,12 @@ impl App {
                 // its overlay draws are ready for the egui pass.
                 #[cfg(feature = "script-wasm")]
                 self.pump_scripts_wasm();
+
+                // v1.7.0 "Forge" beta.5 Workstream H6 — refresh the live
+                // share-link snapshot so "Copy share link" reflects any settings
+                // the user changed this frame. Cheap (flat primitives + one
+                // String clone); no determinism surface.
+                crate::wasm_share::publish_live(&self.config);
 
                 let (fps, movie_status, region, mut perf_view) = {
                     let emu = self.emu.lock();

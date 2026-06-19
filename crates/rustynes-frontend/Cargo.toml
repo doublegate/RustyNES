@@ -379,6 +379,11 @@ web-sys = { workspace = true, features = [
     # is needed to `append_child` the programmatically-created hidden
     # `<input id="rnm-input">` movie loader to the document body.
     "Url", "HtmlAnchorElement", "Node",
+    # v1.7.0 "Forge" beta.5 Workstream H6 — `?settings=` share-links read
+    # `window.location.search` / `.origin` / `.pathname`. The File System Access
+    # API save path + the clipboard write + the Gamepad poll are all reached
+    # dynamically (js-sys Reflect), so they need no extra web-sys features.
+    "Location",
     # v1.4.0 Workstream E2 — IndexedDB save-state store (binary, multi-slot,
     # thumbnail-grid). Replaces the string-only localStorage slots (which
     # stay as a fallback + migration source). The `IdbRequest` event types
