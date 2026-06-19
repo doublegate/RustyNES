@@ -237,6 +237,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **v1.7.0 beta.3 review — scriptable-TAStudio + host-IPC robustness** (all
+  additive / off the default path; `scripting` / `script-ipc` stay byte-identical
+  off; AccuracyCoin holds **100% (139/139)**):
+  - **Host IPC never hangs the worker.** The outbound `comm.socketServerSend` TCP
+    socket now connects with a bounded `TcpStream::connect_timeout` (2 s) and
+    backs off reconnects to a dead/unreachable endpoint (5 s), so a script
+    spamming sends can no longer stall the IPC worker thread on a blocking
+    `connect`.
+  - **Batched TAStudio input edits re-seek once.** `App::apply_tas_commands` now
+    accumulates `SetInput` edits and performs the expensive deterministic re-seek
+    a single time at the end of the batch (the `applyinputchanges` case), instead
+    of once per edit.
+  - **Idle TAStudio costs no per-frame clone.** The host now pushes a rebuilt
+    `TasSnapshot` only when the editor's new `TasEditor::revision()` edit-counter
+    moves (or it opens/closes); an idle editor no longer clones its input log,
+    lag vector, markers, and branches every frame.
+  - **Port validation at the script boundary.** `tastudio.submitinputchange` and
+    `emu.setInput` now reject a controller port outside `{0, 1}` with a clear Lua
+    error (the host treated any `port != 0` as P2), and the host-side
+    `TasCmd::SetInput` mapping mirrors the rule defensively.
+  - **Bounded `emu.addMemoryCallback` range.** The value-modifying write callback
+    now rejects a range wider than 4096 addresses (it registered one Lua registry
+    key per address, so a 64K span allocated 64K entries); a whole-RAM watch
+    belongs on the observational `onWrite` hook.
+  - **No double-borrow in `tastudio.query_cell`.** The cell-query callbacks are
+    resolved into owned handles before any Lua runs, so a callback that registers
+    another no longer double-borrow-panics (matching `fire_event`).
+  - **Gate-first short-circuit + minor cleanups.** The value-modifying-write
+    replay now checks `!writes_locked` first (skipping the whole loop and its
+    callback work under a locked session); `Nes::debug_set_cpu_state` drops a
+    pointless `const`; and the `TasSnapshot::lag` doc clarifies the dense-`bool`
+    field vs. the tri-state `tastudio.islag` Lua return.
+
 - **v1.7.0 beta.2 review — debugger-tooling robustness** (frontend-only;
   AccuracyCoin holds **100% (139/139)**):
   - The inline assembler now parses indexed-indirect `(zp,x)` case-insensitively

@@ -163,9 +163,12 @@ pub struct TasSnapshot {
     /// The current piano-roll selection as `(first, last)` inclusive frame
     /// range, or `None` when nothing is selected (`tastudio.getselection()`).
     pub selection: Option<(usize, usize)>,
-    /// Per-frame lag verdicts for the played prefix (`tastudio.islag(f)`):
-    /// `lag[f]` is `Some(true)` for a lag frame, `Some(false)` otherwise, and
-    /// indices past the end read back `nil`.
+    /// Per-frame lag verdicts for the played prefix, one `bool` per emulated
+    /// frame: `lag[f] == true` is a lag frame, `false` otherwise. The Lua
+    /// `tastudio.islag(f)` accessor maps this to `Some(true)` / `Some(false)`
+    /// for an in-range frame and `nil` for an index past the end (the `.get(f)`
+    /// miss), so the Lua-visible verdict is tri-state while this field is a
+    /// dense `bool` vector over the played prefix.
     pub lag: Vec<bool>,
     /// Frames that currently hold a greenzone save-state (`tastudio.hasstate`).
     pub state_frames: Vec<usize>,

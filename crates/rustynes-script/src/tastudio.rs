@@ -325,6 +325,15 @@ pub fn install(lua: &Lua, state: &TasState, writes_locked: &Rc<Cell<bool>>) -> m
         "submitinputchange",
         lua.create_function(
             move |_, (_this, frame, port, buttons): (Value, usize, u8, u8)| {
+                // Reject any port outside {0 = P1, 1 = P2} at the script
+                // boundary so an out-of-range port can never silently apply to
+                // the wrong player downstream (the host trusts the queued
+                // value). A clear Lua error beats a silent mis-route.
+                if port > 1 {
+                    return Err(mlua::Error::RuntimeError(format!(
+                        "submitinputchange: port must be 0 (P1) or 1 (P2), got {port}"
+                    )));
+                }
                 if !locked.get() {
                     let mut p = pending.borrow_mut();
                     if p.len() < MAX_QUEUED_CMDS {
@@ -412,23 +421,26 @@ pub fn query_cell(
 ) -> mlua::Result<TasCellDecor> {
     let mut decor = TasCellDecor::default();
     let f = u64::try_from(frame).unwrap_or(0);
+    // Resolve every callback handle up front, releasing each `RefCell` borrow
+    // BEFORE any Lua runs. A cell-query callback that registers another callback
+    // (or otherwise re-enters this list) would otherwise double-borrow-panic.
+    let bg_fns = resolve_cbs(lua, &state.query_bg)?;
+    let text_fns = resolve_cbs(lua, &state.query_text)?;
+    let icon_fns = resolve_cbs(lua, &state.query_icon)?;
     // bg -> u32 colour (0xRRGGBBAA).
-    for key in state.query_bg.borrow().iter() {
-        let cb: Function = lua.registry_value(key)?;
+    for cb in bg_fns {
         if let Some(c) = cb.call::<Option<u32>>((f, column))? {
             decor.bg = Some(c);
         }
     }
     // text -> string.
-    for key in state.query_text.borrow().iter() {
-        let cb: Function = lua.registry_value(key)?;
+    for cb in text_fns {
         if let Some(s) = cb.call::<Option<String>>((f, column))? {
             decor.text = Some(s);
         }
     }
     // icon -> string key.
-    for key in state.query_icon.borrow().iter() {
-        let cb: Function = lua.registry_value(key)?;
+    for cb in icon_fns {
         if let Some(s) = cb.call::<Option<String>>((f, column))? {
             decor.icon = Some(s);
         }
@@ -436,16 +448,23 @@ pub fn query_cell(
     Ok(decor)
 }
 
+/// Resolve a registry-key callback list into owned [`Function`] handles,
+/// releasing the `RefCell` borrow before the caller invokes any of them — so a
+/// callback that re-enters the same list (registering another callback) can't
+/// double-borrow-panic.
+fn resolve_cbs(lua: &Lua, list: &Rc<RefCell<Vec<RegistryKey>>>) -> mlua::Result<Vec<Function>> {
+    list.borrow()
+        .iter()
+        .map(|k| lua.registry_value::<Function>(k))
+        .collect()
+}
+
 /// Invoke every registered callback in `list`, passing a single `usize` arg
 /// (`ongreenzoneinvalidated(firstFrame)` / `onbranchload(index)`). Observational.
 pub fn fire_event(lua: &Lua, list: &Rc<RefCell<Vec<RegistryKey>>>, arg: usize) -> mlua::Result<()> {
     // Collect the handles up front so the RefCell borrow is released before any
     // callback runs (a callback could register another).
-    let fns: Vec<Function> = list
-        .borrow()
-        .iter()
-        .map(|k| lua.registry_value::<Function>(k))
-        .collect::<mlua::Result<_>>()?;
+    let fns = resolve_cbs(lua, list)?;
     let a = u64::try_from(arg).unwrap_or(0);
     for f in fns {
         f.call::<()>(a)?;

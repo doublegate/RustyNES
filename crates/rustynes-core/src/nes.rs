@@ -1393,7 +1393,11 @@ impl Nes {
     /// `debug-hooks`-gated. `p` is taken as a raw status-bits byte (truncated to
     /// the defined flags, mirroring a `PLP` / save-state restore).
     #[cfg(feature = "debug-hooks")]
-    pub const fn debug_set_cpu_state(&mut self, a: u8, x: u8, y: u8, s: u8, p_bits: u8, pc: u16) {
+    // This is a runtime register-file mutator (the structured-state counterpart
+    // of `poke_ram`); `const` adds no value and would needlessly constrain the
+    // body, so the `missing_const_for_fn` suggestion is declined here.
+    #[allow(clippy::missing_const_for_fn)]
+    pub fn debug_set_cpu_state(&mut self, a: u8, x: u8, y: u8, s: u8, p_bits: u8, pc: u16) {
         self.cpu.a = a;
         self.cpu.x = x;
         self.cpu.y = y;

@@ -28,12 +28,24 @@
 
 use std::collections::HashMap;
 use std::io::Write;
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 use rustynes_script::{CommCmd, CommResult};
+
+/// Per-connect timeout for the outbound `socketServerSend` TCP socket, so a dead
+/// / unreachable / firewalled endpoint can never block the worker thread
+/// indefinitely on `connect` (it would otherwise hang until the OS default
+/// timeout, freezing every later IPC command behind it).
+const TCP_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Minimum spacing between reconnect attempts after a failed/dropped socket, so
+/// a script spamming `socketServerSend` at an unreachable target can't make the
+/// worker re-attempt (and re-pay the connect timeout) on every single command.
+const TCP_RECONNECT_BACKOFF: Duration = Duration::from_secs(5);
 
 /// The host side of the `comm.*` bridge: owns the worker thread + the result
 /// inbox the host pumps back into the engine each frame.
@@ -119,6 +131,10 @@ fn worker_loop(job_rx: &Receiver<CommCmd>, result_tx: &Sender<CommResult>) {
     // host's configured endpoint via the env override (off-by-default; an
     // unconfigured host simply drops the byte stream). Kept host-side.
     let mut tcp: Option<TcpStream> = None;
+    // When the last connect was attempted, so a failed connect backs off rather
+    // than re-paying `TCP_CONNECT_TIMEOUT` on every queued send (see
+    // `try_connect_tcp`). `None` = no attempt yet.
+    let mut last_connect_attempt: Option<Instant> = None;
     // The in-process memory-mapped-file bridge: a host-owned named byte buffer
     // map. A real OS shared-memory backing is a maintainer follow-up; this gives
     // a deterministic, dependency-free host-owned MMF surface today.
@@ -127,15 +143,13 @@ fn worker_loop(job_rx: &Receiver<CommCmd>, result_tx: &Sender<CommResult>) {
     while let Ok(cmd) = job_rx.recv() {
         match cmd {
             CommCmd::SocketSend(data) => {
-                if tcp.is_none()
-                    && let Ok(addr) = std::env::var("RUSTYNES_COMM_TCP")
-                {
-                    tcp = TcpStream::connect(addr).ok();
+                if tcp.is_none() {
+                    tcp = try_connect_tcp(&mut last_connect_attempt);
                 }
                 if let Some(s) = tcp.as_mut()
                     && s.write_all(&data).is_err()
                 {
-                    tcp = None; // drop a dead socket; reconnect next send.
+                    tcp = None; // drop a dead socket; reconnect (backed-off) next send.
                 }
             }
             #[cfg(feature = "script-ipc")]
@@ -188,6 +202,33 @@ fn worker_loop(job_rx: &Receiver<CommCmd>, result_tx: &Sender<CommResult>) {
             _ => {}
         }
     }
+}
+
+/// Attempt to (re)connect the outbound TCP socket to the `RUSTYNES_COMM_TCP`
+/// endpoint, using a bounded [`TcpStream::connect_timeout`] so an unreachable
+/// target never hangs the worker, and throttling retries to
+/// [`TCP_RECONNECT_BACKOFF`] so a script spamming sends at a dead endpoint
+/// re-attempts at most once per backoff window. Returns `None` (without
+/// attempting) when unconfigured, inside the backoff window, or on any failure.
+fn try_connect_tcp(last_attempt: &mut Option<Instant>) -> Option<TcpStream> {
+    // Honour the reconnect backoff first (cheap; no env / DNS work in the
+    // window).
+    if let Some(t) = last_attempt
+        && t.elapsed() < TCP_RECONNECT_BACKOFF
+    {
+        return None;
+    }
+    let addr = std::env::var("RUSTYNES_COMM_TCP").ok()?;
+    *last_attempt = Some(Instant::now());
+    // Resolve to a concrete `SocketAddr` (connect_timeout needs one). Try each
+    // resolved address with the bounded timeout; the first success wins.
+    let resolved = addr.to_socket_addrs().ok()?;
+    for sa in resolved {
+        if let Ok(s) = TcpStream::connect_timeout(&sa, TCP_CONNECT_TIMEOUT) {
+            return Some(s);
+        }
+    }
+    None
 }
 
 /// Marshal a `ureq` HTTP result into `(status, body)` plain values. Any

@@ -25,6 +25,14 @@ use crate::types::{
 #[cfg(feature = "script-ipc")]
 use crate::types::{CommCmd, CommResult};
 
+/// Max inclusive address span a single value-modifying `emu.addMemoryCallback`
+/// may cover. The implementation registers one Lua registry value per address,
+/// so an unbounded range (up to 64K) would allocate 64K registry entries; this
+/// caps it. A real watchpoint spans a handful of addresses (4 KiB is already far
+/// beyond any legitimate scriptable-cheat); a whole-RAM watch belongs on the
+/// observational `onWrite` hook, which stores one key for the whole range.
+const MAX_MEMORY_CALLBACK_SPAN: u32 = 4096;
+
 /// A stack-allocated bitset over the 16-bit CPU address space (8 KiB, no heap),
 /// used to gate the hot per-frame replay loops: membership is an O(1) bit test
 /// with no `RefCell` borrow or allocation per event (gemini #58).
@@ -328,6 +336,14 @@ impl MluaBackend {
             "setInput",
             self.lua
                 .create_function(move |_, (port, buttons): (u8, u8)| {
+                    // Reject any port outside {0 = P1, 1 = P2} so an out-of-range
+                    // value can never silently apply to the wrong player at the
+                    // host's late-latch (which treats `port != 0` as P2).
+                    if port > 1 {
+                        return Err(mlua::Error::RuntimeError(format!(
+                            "setInput: port must be 0 (P1) or 1 (P2), got {port}"
+                        )));
+                    }
                     // T-110-E2 — gated IDENTICALLY to `emu.write`: under a locked
                     // session (netplay / TAS replay / RA-hardcore) the command is
                     // dropped at the source, so it can never reach the host's
@@ -654,6 +670,19 @@ impl MluaBackend {
                     let lo = (start & 0xFFFF) as u16;
                     #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
                     let hi = (end.unwrap_or(start) & 0xFFFF) as u16;
+                    // This registers one registry key PER address, so a huge span
+                    // (up to 64K) would allocate 64K registry values. Reject an
+                    // oversized range so a script can't force that allocation; a
+                    // legitimate watchpoint covers a handful of addresses, and a
+                    // whole-RAM watch should use the observational `onWrite` hook.
+                    let span = u32::from(hi.max(lo) - lo) + 1;
+                    if span > MAX_MEMORY_CALLBACK_SPAN {
+                        return Err(mlua::Error::RuntimeError(format!(
+                            "addMemoryCallback: range too large ({span} addresses; max \
+                             {MAX_MEMORY_CALLBACK_SPAN}). Use a narrower span or the \
+                             observational emu.addMemoryCallback 'onWrite' hook."
+                        )));
+                    }
                     // Register one shared key per address in the range so a hit
                     // at any address in the span fires the callback (BizHawk /
                     // Mesen2 range semantics). Clamp an inverted range to `lo`.
@@ -1799,17 +1828,19 @@ impl VmBackend for MluaBackend {
             // value-modify callback can't perturb a deterministic run. (Reads
             // are skipped — a post-frame replay can't retroactively change a read
             // the CPU already consumed.)
-            if !accesses.is_empty() && !modify_write_cbs.borrow().is_empty() {
+            // Check `!writes_locked` FIRST: the poke is this loop's only effect
+            // and it is gated like `emu.write`, so under a locked / replayed
+            // session the entire replay (and every callback invocation) is
+            // skipped — no wasted callback work and the gate short-circuits.
+            if !writes_locked && !accesses.is_empty() && !modify_write_cbs.borrow().is_empty() {
                 let active = AddrBits::from_keys(&modify_write_cbs);
                 for (is_write, addr, value) in &accesses {
                     if *is_write && active.contains(*addr) {
                         for f in fns_at(lua, &modify_write_cbs, *addr)? {
                             // The callback returns a new byte (or nil to leave
-                            // the value unchanged). The poke is gated like
-                            // `emu.write`: dropped under a locked session.
-                            if let Some(new_val) = f.call::<Option<u8>>((*addr, *value))?
-                                && !writes_locked
-                            {
+                            // the value unchanged); poke it back through the
+                            // gated path (we're already in the unlocked branch).
+                            if let Some(new_val) = f.call::<Option<u8>>((*addr, *value))? {
                                 nes_cell.borrow_mut().poke_ram(*addr, new_val);
                             }
                         }

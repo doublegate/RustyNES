@@ -1361,6 +1361,78 @@ mod tests {
         assert_eq!(cmds.len(), 2, "apply flushes both staged edits: {cmds:?}");
     }
 
+    /// Review finding — `submitinputchange` REJECTS a port outside {0, 1} at
+    /// the script boundary (a clear Lua error), so an out-of-range port can
+    /// never silently mis-route to the wrong player downstream. A valid port
+    /// still queues.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn tastudio_submitinputchange_rejects_out_of_range_port() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load("emu.onFrame(function() tastudio:submitinputchange(0, 2, 0x01) end)")
+            .expect("load");
+        nes.run_frame();
+        let err = eng
+            .on_frame(&mut nes)
+            .expect_err("port 2 must be rejected at the boundary");
+        assert!(
+            err.to_string().contains("port must be 0"),
+            "error should name the port rule: {err}"
+        );
+        // Nothing was staged, so a follow-up apply produces no command.
+        assert!(eng.drain_tas_commands().is_empty());
+
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            "emu.onFrame(function() tastudio:submitinputchange(3, 1, 0x05); tastudio:applyinputchanges() end)",
+        )
+        .expect("load");
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("valid port 1 is accepted");
+        assert!(eng.drain_tas_commands().contains(&TasCmd::SetInput {
+            frame: 3,
+            port: 1,
+            buttons: 0x05
+        }));
+    }
+
+    /// Review finding — `emu.setInput` rejects a port outside {0, 1} the same
+    /// way (the host late-latch treats `port != 0` as P2, so an out-of-range
+    /// value must not reach it).
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn emu_setinput_rejects_out_of_range_port() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load("emu.onFrame(function() emu.setInput(9, 0x01) end)")
+            .expect("load");
+        nes.run_frame();
+        let err = eng.on_frame(&mut nes).expect_err("port 9 must be rejected");
+        assert!(err.to_string().contains("port must be 0"), "{err}");
+    }
+
+    /// Review finding — value-modifying `emu.addMemoryCallback` REJECTS an
+    /// oversized range (it registers one registry key per address, so an
+    /// unbounded span would allocate up to 64K). A small range is accepted.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn add_memory_callback_rejects_oversized_range() {
+        let mut eng = ScriptEngine::new().expect("engine");
+        let err = eng
+            .load("emu.addMemoryCallback(function(a, v) return v end, 'write', 0x0000, 0xFFFF)")
+            .expect_err("a 64K span must be rejected");
+        assert!(
+            err.to_string().contains("range too large"),
+            "error should explain the cap: {err}"
+        );
+
+        // A small, legitimate watchpoint range still registers fine.
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load("emu.addMemoryCallback(function(a, v) return v end, 'write', 0x10, 0x1F)")
+            .expect("a 16-address range is accepted");
+    }
+
     /// B2 — `onqueryitem*` callbacks paint a piano-roll cell; the host queries
     /// via [`ScriptEngine::query_tas_cell`]. Pure overlay (returns decoration).
     #[cfg(not(feature = "script-wasm"))]

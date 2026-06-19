@@ -559,6 +559,13 @@ pub struct App {
     /// egui pass and refreshed on each pump.
     #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
     script_draws: Vec<rustynes_script::DrawCmd>,
+    /// The `TasEditor` revision (or `None` for no editor) the last pushed
+    /// `TasSnapshot` was built from. Lets `pump_scripts` skip the per-frame
+    /// rebuild-and-clone of the whole editor when its state is unchanged — an
+    /// idle `TAStudio` costs no allocation each frame (the engine keeps the
+    /// prior snapshot). Reset when the editor's revision moves or it opens/closes.
+    #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
+    tas_snapshot_revision: Option<u64>,
     /// v1.7.0 "Forge" Workstream E1 — the host-mediated IPC bridge that OWNS the
     /// `comm.*` TCP / HTTP / WebSocket / memory-mapped-file connections. `None`
     /// until a script is loaded. The Lua sandbox never sees a socket: the engine
@@ -805,6 +812,8 @@ impl App {
             script: None,
             #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
             script_draws: Vec::new(),
+            #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
+            tas_snapshot_revision: None,
             #[cfg(all(feature = "script-ipc", not(target_arch = "wasm32")))]
             script_host: None,
             #[cfg(all(feature = "script-wasm", target_arch = "wasm32"))]
@@ -906,6 +915,8 @@ impl App {
             script: None,
             #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
             script_draws: Vec::new(),
+            #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
+            tas_snapshot_revision: None,
             #[cfg(all(feature = "script-ipc", not(target_arch = "wasm32")))]
             script_host: None,
             #[cfg(all(feature = "script-wasm", target_arch = "wasm32"))]
@@ -3979,10 +3990,22 @@ impl App {
         // live TAStudio editor so the script's `tastudio.*` query API resolves
         // against current editor state (the `set_symbols` host-push pattern).
         // Built before borrowing `self.script` so the two `&self`/`&mut self`
-        // borrows don't overlap.
-        let tas_snapshot = Self::build_tas_snapshot(self.debugger.as_ref());
+        // borrows don't overlap. Only rebuilt (and re-cloned) when the editor's
+        // edit revision moved or it opened/closed — an idle TAStudio costs no
+        // per-frame clone of the whole input log + lag vector + markers +
+        // branches; the engine retains the previously-pushed snapshot.
+        let editor_revision = self
+            .debugger
+            .as_ref()
+            .and_then(crate::debugger::DebuggerOverlay::tas_editor)
+            .map(crate::tastudio::TasEditor::revision);
+        if editor_revision != self.tas_snapshot_revision {
+            let tas_snapshot = Self::build_tas_snapshot(self.debugger.as_ref());
+            let engine = self.script.as_mut().expect("checked is_some");
+            engine.set_tas_snapshot(tas_snapshot);
+            self.tas_snapshot_revision = editor_revision;
+        }
         let engine = self.script.as_mut().expect("checked is_some");
-        engine.set_tas_snapshot(tas_snapshot);
 
         // Pump under ONE emu lock with the live Nes, collecting the outputs
         // (gemini #48: a single lock, dropped before applying control commands).
@@ -4181,11 +4204,22 @@ impl App {
         else {
             return;
         };
+        // Batch `SetInput` edits: each `set_input` only invalidates the
+        // greenzone; the expensive deterministic replay is the `seek`. So we
+        // accumulate input edits and re-seek the cursor ONCE — either when a
+        // command that itself seeks intervenes (to preserve ordering) or at the
+        // end of the batch — instead of re-seeking per edit (the common
+        // `applyinputchanges` case stages a whole batch of `SetInput`s).
+        let mut input_dirty = false;
         for cmd in cmds {
             match cmd {
-                TasCmd::SetPlaybackFrame(f) => editor.seek(nes, *f),
+                TasCmd::SetPlaybackFrame(f) => {
+                    input_dirty = false; // the explicit seek subsumes any pending edit re-seek.
+                    editor.seek(nes, *f);
+                }
                 TasCmd::SetPlaybackMarker(name) => {
                     if let Some(&f) = marker_targets.get(name) {
+                        input_dirty = false;
                         editor.seek(nes, f);
                     }
                 }
@@ -4197,19 +4231,21 @@ impl App {
                     buttons,
                 } => {
                     // Merge the edit into the frame's existing input for the
-                    // edited port, then re-seek so the Nes reflects it.
+                    // edited port (the script boundary already rejects any
+                    // `port > 1`; the match mirrors that defensively so an
+                    // out-of-range port can never silently apply to P2 here),
+                    // then mark the downstream state dirty for ONE re-seek.
                     let mut input = editor.input_at(*frame).unwrap_or_default();
                     let pad = Buttons::from_bits_truncate(*buttons);
-                    if *port == 0 {
-                        input.p1 = pad;
-                    } else {
-                        input.p2 = pad;
+                    match *port {
+                        0 => input.p1 = pad,
+                        1 => input.p2 = pad,
+                        _ => continue, // unreachable past the boundary; ignore.
                     }
-                    let _ = editor.set_input(*frame, input);
-                    let cursor = editor.cursor();
-                    editor.seek(nes, cursor);
+                    input_dirty |= editor.set_input(*frame, input);
                 }
                 TasCmd::LoadBranch(idx) => {
+                    input_dirty = false; // load_branch reseats the whole timeline.
                     editor.load_branch(*idx, nes);
                 }
                 // No editor target in the v1.6.0 model: `SetRecording` /
@@ -4218,6 +4254,11 @@ impl App {
                 // script-side, since `TasCmd` is `#[non_exhaustive]`).
                 _ => {}
             }
+        }
+        // Flush the batched input edits with a single deterministic re-seek.
+        if input_dirty {
+            let cursor = editor.cursor();
+            editor.seek(nes, cursor);
         }
     }
 
