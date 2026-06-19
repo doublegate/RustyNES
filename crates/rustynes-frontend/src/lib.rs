@@ -130,6 +130,12 @@ pub mod shader_pass;
 // and the window is not built (the existing F1/F4 path is untouched).
 #[cfg(not(target_arch = "wasm32"))]
 pub mod save_states_ui;
+// v1.7.0 "Forge" Workstream E1 — the host-mediated `comm.*` IPC bridge
+// (native-only, behind `script-ipc`). The component that OWNS every TCP / HTTP /
+// WebSocket / memory-mapped-file connection so the Lua sandbox never gets a raw
+// socket; off by default, disabled under a locked session. See ADR 0016.
+#[cfg(all(not(target_arch = "wasm32"), feature = "script-ipc"))]
+pub mod script_host;
 // v1.4.0 Workstream D (D1) — debugger symbol/label file loading
 // (`.sym` / Mesen `.mlb` / FCEUX `.nl`). Frontend display aid only; the parsed
 // `address -> label` map annotates the disassembler / breakpoint / trace views

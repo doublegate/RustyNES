@@ -72,6 +72,20 @@ retroachievements = ["dep:rustynes-cheevos", "dep:ureq"]
 # `cargo build -p rustynes-frontend --features scripting`.
 scripting = ["dep:rustynes-script"]
 
+# v1.7.0 "Forge" Workstream E1 — host-mediated `comm.*` IPC (default OFF,
+# native-only). Forwards `rustynes-script/script-ipc` (which adds the sandboxed
+# `comm` Lua table) and activates the frontend's `script_host` module — the
+# component that ACTUALLY OWNS the TCP / HTTP / WebSocket / memory-mapped-file
+# connections. The script never touches a socket: it queues a marshalled
+# `CommCmd`, the host does the I/O off the emulator lock, and feeds plain values
+# back via `CommResult`. IPC is a new non-deterministic source, so every verb is
+# gated like `emu.write` and is disabled under replay / netplay / RA exactly the
+# same way. Reuses the already-present native-only optional `ureq` (HTTP); TCP +
+# the in-process memory-mapped-file bridge use std only, so no new dependency is
+# pulled. Requires `scripting`. Enable with:
+#   cargo build -p rustynes-frontend --features scripting,script-ipc
+script-ipc = ["scripting", "rustynes-script/script-ipc", "dep:ureq"]
+
 # v1.2.0 Workstream F4 — EXPERIMENTAL wasm Lua scripting (default OFF, wasm-only).
 # Forwards into `rustynes-script`'s pure-Rust piccolo backend (the
 # `rustynes-script-wasm` alias in the wasm32 dep table below, built

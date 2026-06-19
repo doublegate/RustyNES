@@ -775,6 +775,16 @@ impl Nes {
         self.bus.framebuffer()
     }
 
+    /// v1.7.0 "Forge" Workstream B (B3) — overwrite the RGBA8 output framebuffer
+    /// (the Lua `emu:setScreenBuffer(t)` paints output only). Output-only; see
+    /// [`rustynes_ppu::Ppu::debug_set_framebuffer`]. Reached only through the
+    /// script crate's gated post-frame path, so the shipped build is
+    /// byte-identical and the determinism contract holds. `debug-hooks`-gated.
+    #[cfg(feature = "debug-hooks")]
+    pub fn debug_set_framebuffer(&mut self, rgba: &[u8]) {
+        self.bus.debug_set_framebuffer(rgba);
+    }
+
     /// Borrow the parallel palette-index framebuffer (256x240 `u16`s, each
     /// `(emphasis << 6) | colour`) for the `NES_NTSC` composite filter.
     /// See [`rustynes_ppu::Ppu::index_framebuffer`].
@@ -1369,6 +1379,31 @@ impl Nes {
     #[cfg(feature = "debug-hooks")]
     pub const fn poke_oam_byte(&mut self, idx: u8, value: u8) {
         self.bus.debug_poke_oam(idx, value);
+    }
+
+    /// v1.7.0 "Forge" Workstream B (Lua API parity) — debugger/scripted
+    /// writeback of the CPU register file (`a`/`x`/`y`/`s`/`p` bits/`pc`). The
+    /// structured-state counterpart of [`Self::poke_ram`], backing the Lua
+    /// `emu:setState(t)` field map (Mesen2 parity).
+    ///
+    /// Reached only through the frontend / script crate's gated post-frame poke
+    /// path (the same caller-side, after-[`Self::run_frame`] stage the raw RAM
+    /// cheats + the other `debug_poke_*` writebacks use), so the deterministic
+    /// core run loop is unchanged and the no-edit path is byte-identical.
+    /// `debug-hooks`-gated. `p` is taken as a raw status-bits byte (truncated to
+    /// the defined flags, mirroring a `PLP` / save-state restore).
+    #[cfg(feature = "debug-hooks")]
+    // This is a runtime register-file mutator (the structured-state counterpart
+    // of `poke_ram`); `const` adds no value and would needlessly constrain the
+    // body, so the `missing_const_for_fn` suggestion is declined here.
+    #[allow(clippy::missing_const_for_fn)]
+    pub fn debug_set_cpu_state(&mut self, a: u8, x: u8, y: u8, s: u8, p_bits: u8, pc: u16) {
+        self.cpu.a = a;
+        self.cpu.x = x;
+        self.cpu.y = y;
+        self.cpu.s = s;
+        self.cpu.p = rustynes_cpu::Status::from_bits_truncate(p_bits);
+        self.cpu.pc = pc;
     }
 
     /// Read a byte from the CPU address space (`$0000-$FFFF`) for inspection,

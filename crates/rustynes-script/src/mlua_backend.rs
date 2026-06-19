@@ -17,7 +17,21 @@ use mlua::{Function, HookTriggers, Lua, RegistryKey, StdLib, Table, VmState};
 use rustynes_core::Nes;
 
 use crate::backend::VmBackend;
-use crate::types::{ControlCmd, DEFAULT_INSTRUCTION_BUDGET, DrawCmd, MAX_QUEUED_CMDS, ScriptError};
+use crate::tastudio::{self, TasState};
+use crate::types::{
+    ClientCmd, ControlCmd, DEFAULT_INSTRUCTION_BUDGET, DrawCmd, MAX_QUEUED_CMDS, ScriptError,
+    TasCellDecor, TasCmd, TasSnapshot,
+};
+#[cfg(feature = "script-ipc")]
+use crate::types::{CommCmd, CommResult};
+
+/// Max inclusive address span a single value-modifying `emu.addMemoryCallback`
+/// may cover. The implementation registers one Lua registry value per address,
+/// so an unbounded range (up to 64K) would allocate 64K registry entries; this
+/// caps it. A real watchpoint spans a handful of addresses (4 KiB is already far
+/// beyond any legitimate scriptable-cheat); a whole-RAM watch belongs on the
+/// observational `onWrite` hook, which stores one key for the whole range.
+const MAX_MEMORY_CALLBACK_SPAN: u32 = 4096;
 
 /// A stack-allocated bitset over the 16-bit CPU address space (8 KiB, no heap),
 /// used to gate the hot per-frame replay loops: membership is an O(1) bit test
@@ -102,6 +116,23 @@ fn fns_at(lua: &Lua, map: &AddrCallbacks, addr: u16) -> mlua::Result<Vec<Functio
                 .collect()
         },
     )
+}
+
+/// v1.7.0 "Forge" Workstream B (B3) — invoke every registered callback in a
+/// flat event list, passing a single numeric arg. Collects the live `Function`
+/// handles up front so the `RefCell` borrow is released before any callback
+/// runs (a callback could register another). Shared by the `addEventCallback`
+/// per-frame events and the `stateLoaded`/`stateSaved` synchronous events.
+fn fire_event_list(lua: &Lua, list: &Rc<RefCell<Vec<RegistryKey>>>, arg: u64) -> mlua::Result<()> {
+    let fns: Vec<Function> = list
+        .borrow()
+        .iter()
+        .map(|k| lua.registry_value::<Function>(k))
+        .collect::<mlua::Result<_>>()?;
+    for f in fns {
+        f.call::<()>(arg)?;
+    }
+    Ok(())
 }
 
 /// Drop the active driving coroutine (B2): clear the slot and free its Lua
@@ -192,6 +223,61 @@ pub struct MluaBackend {
     /// never perturbs the deterministic run beyond what the write-gate already
     /// allows.
     driver: Rc<RefCell<Option<RegistryKey>>>,
+    /// v1.7.0 "Forge" Workstream B (B1/B2) — all shared state backing the
+    /// `tastudio.*` Lua surface (the host-pushed editor snapshot, the queued
+    /// editor commands, and the cell-query / event callbacks). Self-contained in
+    /// `crate::tastudio` for clean merging.
+    tas: TasState,
+    /// v1.7.0 "Forge" Workstream B (B3) — `emu.addEventCallback(fn, type)`
+    /// callbacks keyed by the host-facing event type. `onNmi`/`onIrq` keep their
+    /// own dedicated lists above (the legacy API); these are the *additional*
+    /// Mesen2-parity events fired from `on_frame`: `startFrame` (top of a pump),
+    /// `endFrame` (after the frame's callbacks), `inputPolled` (the frame polled
+    /// a controller). `stateLoaded`/`stateSaved` fire from the in-memory
+    /// save-state path. All observational (output-only).
+    event_start_frame: Rc<RefCell<Vec<RegistryKey>>>,
+    /// `endFrame` event callbacks (B3).
+    event_end_frame: Rc<RefCell<Vec<RegistryKey>>>,
+    /// `inputPolled` event callbacks (B3).
+    event_input_polled: Rc<RefCell<Vec<RegistryKey>>>,
+    /// `stateLoaded` event callbacks (B3) — fired after `emu:load_state`.
+    event_state_loaded: Rc<RefCell<Vec<RegistryKey>>>,
+    /// `stateSaved` event callbacks (B3) — fired after `emu:save_state`.
+    event_state_saved: Rc<RefCell<Vec<RegistryKey>>>,
+    /// v1.7.0 "Forge" Workstream B (B3) — `emu.addMemoryCallback` *value-modifying*
+    /// write callbacks, keyed by CPU address. Unlike the observational `onWrite`,
+    /// a callback here may RETURN a replacement byte; the engine then pokes it
+    /// back via the GATED `poke_ram` path (a scriptable cheat / watchpoint).
+    /// Dropped under a locked session, exactly like `emu.write`.
+    modify_write_cbs: AddrCallbacks,
+    /// v1.7.0 "Forge" Workstream B (B3) — a per-script sandboxed data directory
+    /// (`emu.getScriptDataFolder()`), pushed by the host (the clean
+    /// persist-without-arbitrary-FS path). `None` until the host sets it.
+    script_data_folder: Rc<RefCell<Option<String>>>,
+    /// v1.7.0 "Forge" E2 — `client.*` host-automation verbs requested this frame
+    /// (drained by the host). Collected, never applied inline — the host stays
+    /// the single owner of window / tool / capture / cheat state and gates the
+    /// mutators among them.
+    clients: Rc<RefCell<Vec<ClientCmd>>>,
+    /// v1.7.0 "Forge" E3 — the per-script `userdata.*` KV store (string→string).
+    /// Script-local host memory, never emulator state; the host persists it
+    /// across runs via [`MluaBackend::userdata_snapshot`] /
+    /// [`MluaBackend::userdata_restore`].
+    userdata: Rc<RefCell<HashMap<String, String>>>,
+    /// v1.7.0 "Forge" E1 — host-mediated `comm.*` IPC requests issued this frame
+    /// (drained by the host, which owns every connection). Gated like
+    /// `emu.write`: a locked session never queues one. Only present (and only
+    /// installed) under the `script-ipc` feature.
+    #[cfg(feature = "script-ipc")]
+    comm_out: Rc<RefCell<Vec<CommCmd>>>,
+    /// v1.7.0 "Forge" E1 — host-fulfilled `CommResult`s the script polls via
+    /// `comm.receive()`. The host pushes here off the emulator lock.
+    #[cfg(feature = "script-ipc")]
+    comm_in: Rc<RefCell<std::collections::VecDeque<CommResult>>>,
+    /// v1.7.0 "Forge" E1 — monotonic correlation-id source for async `comm.*`
+    /// requests (HTTP / WS / MMF-read), so a result is matched to its request.
+    #[cfg(feature = "script-ipc")]
+    comm_next_id: Rc<Cell<u64>>,
 }
 
 impl MluaBackend {
@@ -250,6 +336,14 @@ impl MluaBackend {
             "setInput",
             self.lua
                 .create_function(move |_, (port, buttons): (u8, u8)| {
+                    // Reject any port outside {0 = P1, 1 = P2} so an out-of-range
+                    // value can never silently apply to the wrong player at the
+                    // host's late-latch (which treats `port != 0` as P2).
+                    if port > 1 {
+                        return Err(mlua::Error::RuntimeError(format!(
+                            "setInput: port must be 0 (P1) or 1 (P2), got {port}"
+                        )));
+                    }
                     // T-110-E2 — gated IDENTICALLY to `emu.write`: under a locked
                     // session (netplay / TAS replay / RA-hardcore) the command is
                     // dropped at the source, so it can never reach the host's
@@ -495,8 +589,505 @@ impl MluaBackend {
         }
         self.lua.globals().set("joypad", &joypad)?;
 
+        // v1.7.0 "Forge" Workstream B (B1/B2) — install the persistent
+        // `tastudio` table (queries read the host-pushed snapshot; mutators
+        // queue gated `TasCmd`s; the B2 callbacks store Rust-side registry
+        // keys). Self-contained in `crate::tastudio` for clean merging.
+        tastudio::install(&self.lua, &self.tas, &self.writes_locked)?;
+
+        // v1.7.0 "Forge" Workstream B (B3) — Mesen2-parity event + memory
+        // callback registrars and a couple of "good-citizen" utilities. Kept in
+        // their own clearly-named prelude section.
+        self.install_lua_parity()?;
+
         // Redirect base `print` to the same sink.
         self.lua.globals().set("print", log_fn)?;
+        Ok(())
+    }
+
+    /// v1.7.0 "Forge" Workstream B (B3) — install the Mesen2-parity surface:
+    /// `emu.addEventCallback(fn, type)` (the full event enum), the
+    /// value-modifying `emu.addMemoryCallback(fn, type, start[, end])`,
+    /// `emu.takeScreenshot()`, and `emu.getScriptDataFolder()`. The per-frame
+    /// `getScreenBuffer` / `setScreenBuffer` / `getPixel` / `getState` /
+    /// `setState` accessors need the live `Nes`, so they are bound in the frame
+    /// scope (in [`Self::on_frame`]), exactly like `emu.read` / `emu.write`.
+    fn install_lua_parity(&self) -> Result<(), ScriptError> {
+        let emu: Table = self.lua.globals().get("emu")?;
+
+        // `emu.addEventCallback(fn, type)` — `type` is one of the Mesen2 event
+        // names. `nmi`/`irq` route to the existing dedicated lists (so the new
+        // API and the legacy `onNmi`/`onIrq` share one dispatch); the rest land
+        // in their own per-event lists, fired from `on_frame`.
+        let nmi = Rc::clone(&self.nmi_cbs);
+        let irq = Rc::clone(&self.irq_cbs);
+        let start = Rc::clone(&self.event_start_frame);
+        let end = Rc::clone(&self.event_end_frame);
+        let polled = Rc::clone(&self.event_input_polled);
+        let loaded = Rc::clone(&self.event_state_loaded);
+        let saved = Rc::clone(&self.event_state_saved);
+        emu.set(
+            "addEventCallback",
+            self.lua
+                .create_function(move |lua, (f, ty): (Function, String)| {
+                    let list = match ty.as_str() {
+                        "nmi" => &nmi,
+                        "irq" => &irq,
+                        "startFrame" => &start,
+                        "endFrame" => &end,
+                        "inputPolled" => &polled,
+                        "stateLoaded" => &loaded,
+                        "stateSaved" => &saved,
+                        other => {
+                            return Err(mlua::Error::RuntimeError(format!(
+                                "addEventCallback: unknown event type '{other}'"
+                            )));
+                        }
+                    };
+                    list.borrow_mut().push(lua.create_registry_value(f)?);
+                    Ok(())
+                })?,
+        )?;
+
+        // `emu.addMemoryCallback(fn, type, start[, end])` — a VALUE-MODIFYING
+        // write callback over `[start, end]` (inclusive; `end` defaults to
+        // `start`). `type` must be `"write"` (read/exec value-modify is not a
+        // thing on a post-frame replay). The callback receives `(addr, value)`
+        // and may RETURN a replacement byte; the engine pokes it back through
+        // the GATED `poke_ram` path. This is the scriptable-cheat / scriptable-
+        // watchpoint primitive; it is gated IDENTICALLY to `emu.write`.
+        let modify = Rc::clone(&self.modify_write_cbs);
+        emu.set(
+            "addMemoryCallback",
+            self.lua.create_function(
+                move |lua, (f, ty, start, end): (Function, String, i64, Option<i64>)| {
+                    if ty != "write" {
+                        return Err(mlua::Error::RuntimeError(format!(
+                            "addMemoryCallback: only 'write' supports value-modify (got '{ty}')"
+                        )));
+                    }
+                    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+                    let lo = (start & 0xFFFF) as u16;
+                    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+                    let hi = (end.unwrap_or(start) & 0xFFFF) as u16;
+                    // This registers one registry key PER address, so a huge span
+                    // (up to 64K) would allocate 64K registry values. Reject an
+                    // oversized range so a script can't force that allocation; a
+                    // legitimate watchpoint covers a handful of addresses, and a
+                    // whole-RAM watch should use the observational `onWrite` hook.
+                    let span = u32::from(hi.max(lo) - lo) + 1;
+                    if span > MAX_MEMORY_CALLBACK_SPAN {
+                        return Err(mlua::Error::RuntimeError(format!(
+                            "addMemoryCallback: range too large ({span} addresses; max \
+                             {MAX_MEMORY_CALLBACK_SPAN}). Use a narrower span or the \
+                             observational emu.addMemoryCallback 'onWrite' hook."
+                        )));
+                    }
+                    // Register one shared key per address in the range so a hit
+                    // at any address in the span fires the callback (BizHawk /
+                    // Mesen2 range semantics). Clamp an inverted range to `lo`.
+                    let key = lua.create_registry_value(f)?;
+                    // The first address owns the real key; the rest reference it
+                    // by cloning the Function out and re-registering, so each
+                    // address has an independent registry value (a dropped one
+                    // doesn't free another's). Cheap: ranges are tiny in practice.
+                    let f0: Function = lua.registry_value(&key)?;
+                    let mut map = modify.borrow_mut();
+                    for a in lo..=hi.max(lo) {
+                        let k = lua.create_registry_value(f0.clone())?;
+                        map.entry(a).or_default().push(k);
+                    }
+                    lua.remove_registry_value(key)?;
+                    Ok(())
+                },
+            )?,
+        )?;
+
+        // `emu.takeScreenshot()` — queue a host PNG write (the host owns the
+        // encoder + the screenshot dir; the script crate stays dep-free). A
+        // read-only side effect (a file write), so it is NOT write-gated — a
+        // screenshot cannot perturb deterministic state.
+        let controls = Rc::clone(&self.controls);
+        emu.set(
+            "takeScreenshot",
+            self.lua
+                .create_function(move |_, _args: mlua::Variadic<mlua::Value>| {
+                    push_capped(&controls, ControlCmd::Screenshot);
+                    Ok(())
+                })?,
+        )?;
+
+        // `emu.getScriptDataFolder()` — the host-pushed sandboxed data dir
+        // (the clean persist-without-arbitrary-FS path), or `nil` if unset.
+        let folder = Rc::clone(&self.script_data_folder);
+        emu.set(
+            "getScriptDataFolder",
+            self.lua
+                .create_function(move |_, _args: mlua::Variadic<mlua::Value>| {
+                    Ok(folder.borrow().clone())
+                })?,
+        )?;
+
+        Ok(())
+    }
+
+    /// v1.7.0 "Forge" Workstream E — install the platform tables that turn
+    /// `RustyNES` into a host for external bots / RL agents / randomizers:
+    ///
+    /// - **`client.*` (E2)** — host-automation verbs (open tools, screenshot,
+    ///   window size, speed/frameskip, reboot, A/V pause, cheats). Collected as
+    ///   [`ClientCmd`]s and drained by the host; the state-changing verbs
+    ///   (`reboot_core`, `addcheat`, `removecheat`) are gated like `emu.write`.
+    /// - **`userdata.*` (E3)** — a per-script string→string KV store the host
+    ///   persists across runs. Pure host memory, never emulator state.
+    /// - **`comm.*` (E1, `script-ipc` only)** — host-mediated TCP / HTTP / WS /
+    ///   memory-mapped-file IPC. The script NEVER gets a raw socket: it queues a
+    ///   [`CommCmd`] and the host owns the connection, marshalling plain values
+    ///   back via [`CommResult`]. A new non-deterministic source, so every verb
+    ///   is gated like `emu.write`.
+    ///
+    /// Kept in one self-contained method (separate from the v1.0–v1.6 `emu` /
+    /// `joypad` / `sym` prelude) so the workstream merges cleanly.
+    fn install_platform_tables(&self) -> Result<(), ScriptError> {
+        self.install_client_table()?;
+        self.install_userdata_table()?;
+        #[cfg(feature = "script-ipc")]
+        self.install_comm_table()?;
+        Ok(())
+    }
+
+    /// E2 — the `client.*` host-automation table.
+    fn install_client_table(&self) -> Result<(), ScriptError> {
+        let client = self.lua.create_table()?;
+
+        // Observational / presentation-only verbs (never perturb the core), so
+        // they are NOT write-gated — like `emu.pause` / `emu.saveState`.
+        let q = Rc::clone(&self.clients);
+        client.set(
+            "opentool",
+            self.lua.create_function(move |_, name: String| {
+                push_capped(&q, ClientCmd::OpenTool(name));
+                Ok(())
+            })?,
+        )?;
+        let q = Rc::clone(&self.clients);
+        client.set(
+            "screenshot",
+            self.lua.create_function(move |_, ()| {
+                push_capped(&q, ClientCmd::Screenshot);
+                Ok(())
+            })?,
+        )?;
+        let q = Rc::clone(&self.clients);
+        client.set(
+            "screenshottoclipboard",
+            self.lua.create_function(move |_, ()| {
+                push_capped(&q, ClientCmd::ScreenshotToClipboard);
+                Ok(())
+            })?,
+        )?;
+        let q = Rc::clone(&self.clients);
+        client.set(
+            "setwindowsize",
+            self.lua.create_function(move |_, scale: u32| {
+                push_capped(&q, ClientCmd::SetWindowSize(scale));
+                Ok(())
+            })?,
+        )?;
+        let q = Rc::clone(&self.clients);
+        client.set(
+            "speedmode",
+            self.lua.create_function(move |_, pct: u32| {
+                push_capped(&q, ClientCmd::SpeedMode(pct));
+                Ok(())
+            })?,
+        )?;
+        let q = Rc::clone(&self.clients);
+        client.set(
+            "frameskip",
+            self.lua.create_function(move |_, n: u32| {
+                push_capped(&q, ClientCmd::FrameSkip(n));
+                Ok(())
+            })?,
+        )?;
+        let q = Rc::clone(&self.clients);
+        client.set(
+            "pause_av",
+            self.lua.create_function(move |_, ()| {
+                push_capped(&q, ClientCmd::PauseAv);
+                Ok(())
+            })?,
+        )?;
+        let q = Rc::clone(&self.clients);
+        client.set(
+            "unpause_av",
+            self.lua.create_function(move |_, ()| {
+                push_capped(&q, ClientCmd::UnpauseAv);
+                Ok(())
+            })?,
+        )?;
+
+        // State-changing verbs — GATED like `emu.write`: dropped at the source
+        // under a locked session (netplay / TAS replay / record / RA-hardcore),
+        // so a script can never perturb a deterministic / replayed run.
+        let q = Rc::clone(&self.clients);
+        let locked = Rc::clone(&self.writes_locked);
+        client.set(
+            "reboot_core",
+            self.lua.create_function(move |_, ()| {
+                if !locked.get() {
+                    push_capped(&q, ClientCmd::RebootCore);
+                }
+                Ok(())
+            })?,
+        )?;
+        let q = Rc::clone(&self.clients);
+        let locked = Rc::clone(&self.writes_locked);
+        client.set(
+            "addcheat",
+            self.lua.create_function(move |_, code: String| {
+                if !locked.get() {
+                    push_capped(&q, ClientCmd::AddCheat(code));
+                }
+                Ok(())
+            })?,
+        )?;
+        let q = Rc::clone(&self.clients);
+        let locked = Rc::clone(&self.writes_locked);
+        client.set(
+            "removecheat",
+            self.lua.create_function(move |_, code: String| {
+                if !locked.get() {
+                    push_capped(&q, ClientCmd::RemoveCheat(code));
+                }
+                Ok(())
+            })?,
+        )?;
+
+        self.lua.globals().set("client", client)?;
+        Ok(())
+    }
+
+    /// E3 — the `userdata.*` per-script KV store (`set` / `get` / `containskey`
+    /// / `remove` / `keys`). String→string; lives in host memory and is
+    /// persisted across runs by the host. Never touches emulator state, so it is
+    /// not write-gated.
+    fn install_userdata_table(&self) -> Result<(), ScriptError> {
+        let userdata = self.lua.create_table()?;
+
+        let kv = Rc::clone(&self.userdata);
+        userdata.set(
+            "set",
+            self.lua
+                .create_function(move |_, (key, value): (String, String)| {
+                    kv.borrow_mut().insert(key, value);
+                    Ok(())
+                })?,
+        )?;
+        let kv = Rc::clone(&self.userdata);
+        userdata.set(
+            "get",
+            self.lua
+                .create_function(move |_, key: String| Ok(kv.borrow().get(&key).cloned()))?,
+        )?;
+        let kv = Rc::clone(&self.userdata);
+        userdata.set(
+            "containskey",
+            self.lua
+                .create_function(move |_, key: String| Ok(kv.borrow().contains_key(&key)))?,
+        )?;
+        let kv = Rc::clone(&self.userdata);
+        userdata.set(
+            "remove",
+            self.lua.create_function(move |_, key: String| {
+                Ok(kv.borrow_mut().remove(&key).is_some())
+            })?,
+        )?;
+        let kv = Rc::clone(&self.userdata);
+        userdata.set(
+            "keys",
+            self.lua.create_function(move |lua, ()| {
+                // Sorted for a stable, deterministic iteration order.
+                let mut keys: Vec<String> = kv.borrow().keys().cloned().collect();
+                keys.sort_unstable();
+                lua.create_sequence_from(keys)
+            })?,
+        )?;
+
+        self.lua.globals().set("userdata", userdata)?;
+        Ok(())
+    }
+
+    /// E1 — the host-mediated `comm.*` IPC table (`script-ipc` only).
+    ///
+    /// Every entry queues a [`CommCmd`] (the host owns the connection and does
+    /// the I/O) or polls the host-injected [`CommResult`] inbox via
+    /// `comm.receive()`. The script never sees a socket handle, so the sandbox's
+    /// no-`io`/`os`/net guarantee is preserved. All verbs are GATED like
+    /// `emu.write` (dropped under a locked session) because IPC is a new
+    /// non-deterministic source.
+    #[cfg(feature = "script-ipc")]
+    #[allow(clippy::too_many_lines)] // one create_function per comm.* entry.
+    fn install_comm_table(&self) -> Result<(), ScriptError> {
+        let comm = self.lua.create_table()?;
+
+        // A fresh async correlation id (host echoes it back in the CommResult).
+        let next_id = Rc::clone(&self.comm_next_id);
+        let alloc_id = move || -> u64 {
+            let id = next_id.get();
+            next_id.set(id.wrapping_add(1));
+            id
+        };
+
+        let out = Rc::clone(&self.comm_out);
+        let locked = Rc::clone(&self.writes_locked);
+        comm.set(
+            "socketServerSend",
+            self.lua.create_function(move |_, data: mlua::String| {
+                if !locked.get() {
+                    push_capped(&out, CommCmd::SocketSend(data.as_bytes().to_vec()));
+                }
+                Ok(())
+            })?,
+        )?;
+        let out = Rc::clone(&self.comm_out);
+        let locked = Rc::clone(&self.writes_locked);
+        let mk = alloc_id.clone();
+        comm.set(
+            "httpGet",
+            self.lua.create_function(move |_, url: String| {
+                if locked.get() {
+                    return Ok(0u64);
+                }
+                let id = mk();
+                push_capped(&out, CommCmd::HttpGet { id, url });
+                Ok(id)
+            })?,
+        )?;
+        let out = Rc::clone(&self.comm_out);
+        let locked = Rc::clone(&self.writes_locked);
+        let mk = alloc_id.clone();
+        comm.set(
+            "httpPost",
+            self.lua
+                .create_function(move |_, (url, body): (String, String)| {
+                    if locked.get() {
+                        return Ok(0u64);
+                    }
+                    let id = mk();
+                    push_capped(&out, CommCmd::HttpPost { id, url, body });
+                    Ok(id)
+                })?,
+        )?;
+        let out = Rc::clone(&self.comm_out);
+        let locked = Rc::clone(&self.writes_locked);
+        let mk = alloc_id.clone();
+        comm.set(
+            "ws_open",
+            self.lua.create_function(move |_, url: String| {
+                if locked.get() {
+                    return Ok(0u64);
+                }
+                let id = mk();
+                push_capped(&out, CommCmd::WsOpen { id, url });
+                Ok(id)
+            })?,
+        )?;
+        let out = Rc::clone(&self.comm_out);
+        let locked = Rc::clone(&self.writes_locked);
+        comm.set(
+            "ws_send",
+            self.lua.create_function(move |_, text: String| {
+                if !locked.get() {
+                    push_capped(&out, CommCmd::WsSend(text));
+                }
+                Ok(())
+            })?,
+        )?;
+        let out = Rc::clone(&self.comm_out);
+        let locked = Rc::clone(&self.writes_locked);
+        comm.set(
+            "ws_close",
+            self.lua.create_function(move |_, ()| {
+                if !locked.get() {
+                    push_capped(&out, CommCmd::WsClose);
+                }
+                Ok(())
+            })?,
+        )?;
+        let out = Rc::clone(&self.comm_out);
+        let locked = Rc::clone(&self.writes_locked);
+        comm.set(
+            "mmfWrite",
+            self.lua
+                .create_function(move |_, (name, data): (String, mlua::String)| {
+                    if !locked.get() {
+                        push_capped(
+                            &out,
+                            CommCmd::MmfWrite {
+                                name,
+                                data: data.as_bytes().to_vec(),
+                            },
+                        );
+                    }
+                    Ok(())
+                })?,
+        )?;
+        let out = Rc::clone(&self.comm_out);
+        let locked = Rc::clone(&self.writes_locked);
+        let mk = alloc_id;
+        comm.set(
+            "mmfRead",
+            self.lua
+                .create_function(move |_, (name, len): (String, u32)| {
+                    if locked.get() {
+                        return Ok(0u64);
+                    }
+                    let id = mk();
+                    push_capped(&out, CommCmd::MmfRead { id, name, len });
+                    Ok(id)
+                })?,
+        )?;
+
+        // `comm.receive()` — pop the oldest host-injected result (or nil). The
+        // host fulfils the async requests off the emulator lock and pushes a
+        // `CommResult`; the script polls it here. Returns a small Lua table the
+        // script destructures (`{kind=..., id=..., status=..., body=..., ...}`).
+        let inbox = Rc::clone(&self.comm_in);
+        comm.set(
+            "receive",
+            self.lua.create_function(move |lua, ()| {
+                let next = inbox.borrow_mut().pop_front();
+                match next {
+                    None => Ok(mlua::Value::Nil),
+                    Some(result) => {
+                        let t = lua.create_table()?;
+                        match result {
+                            CommResult::Http { id, status, body } => {
+                                t.set("kind", "http")?;
+                                t.set("id", id)?;
+                                t.set("status", status)?;
+                                t.set("body", body)?;
+                            }
+                            CommResult::WsState { id, open, message } => {
+                                t.set("kind", "ws")?;
+                                t.set("id", id)?;
+                                t.set("open", open)?;
+                                t.set("message", message)?;
+                            }
+                            CommResult::Mmf { id, data } => {
+                                t.set("kind", "mmf")?;
+                                t.set("id", id)?;
+                                t.set("data", lua.create_string(&data)?)?;
+                            }
+                        }
+                        Ok(mlua::Value::Table(t))
+                    }
+                }
+            })?,
+        )?;
+
+        self.lua.globals().set("comm", comm)?;
         Ok(())
     }
 
@@ -579,8 +1170,25 @@ impl VmBackend for MluaBackend {
             sym_by_addr: Rc::new(RefCell::new(HashMap::new())),
             sym_by_name: Rc::new(RefCell::new(HashMap::new())),
             driver: Rc::new(RefCell::new(None)),
+            tas: TasState::new(),
+            event_start_frame: Rc::new(RefCell::new(Vec::new())),
+            event_end_frame: Rc::new(RefCell::new(Vec::new())),
+            event_input_polled: Rc::new(RefCell::new(Vec::new())),
+            event_state_loaded: Rc::new(RefCell::new(Vec::new())),
+            event_state_saved: Rc::new(RefCell::new(Vec::new())),
+            modify_write_cbs: Rc::new(RefCell::new(HashMap::new())),
+            script_data_folder: Rc::new(RefCell::new(None)),
+            clients: Rc::new(RefCell::new(Vec::new())),
+            userdata: Rc::new(RefCell::new(HashMap::new())),
+            #[cfg(feature = "script-ipc")]
+            comm_out: Rc::new(RefCell::new(Vec::new())),
+            #[cfg(feature = "script-ipc")]
+            comm_in: Rc::new(RefCell::new(std::collections::VecDeque::new())),
+            #[cfg(feature = "script-ipc")]
+            comm_next_id: Rc::new(Cell::new(1)),
         };
         engine.install_prelude()?;
+        engine.install_platform_tables()?;
         Ok(engine)
     }
 
@@ -622,7 +1230,11 @@ impl VmBackend for MluaBackend {
     }
 
     fn needs_access_log(&self) -> bool {
-        !self.read_cbs.borrow().is_empty() || !self.write_cbs.borrow().is_empty()
+        // The value-modifying write callbacks (B3) replay from the same bus
+        // access log, so they arm it too.
+        !self.read_cbs.borrow().is_empty()
+            || !self.write_cbs.borrow().is_empty()
+            || !self.modify_write_cbs.borrow().is_empty()
     }
 
     fn needs_interrupt_log(&self) -> bool {
@@ -696,6 +1308,11 @@ impl VmBackend for MluaBackend {
             s
         };
 
+        // v1.7.0 "Forge" Workstream B (B3) — whether the just-finished frame
+        // polled a controller (drives the `inputPolled` event). Read before
+        // `nes` is moved into the `RefCell`.
+        let input_was_polled = nes.was_input_polled_this_frame();
+
         let nes_cell = RefCell::new(nes);
         let lua = &self.lua;
         // Rust-side callback registries (clones of the `Rc`s) — used inside the
@@ -710,6 +1327,14 @@ impl VmBackend for MluaBackend {
         let state_slots = Rc::clone(&self.state_slots);
         let controls = Rc::clone(&self.controls);
         let driver = Rc::clone(&self.driver);
+        // v1.7.0 "Forge" Workstream B (B3) — the additional event lists +
+        // the value-modifying write callbacks, cloned for use inside the scope.
+        let event_start_frame = Rc::clone(&self.event_start_frame);
+        let event_end_frame = Rc::clone(&self.event_end_frame);
+        let event_input_polled = Rc::clone(&self.event_input_polled);
+        let event_state_loaded = Rc::clone(&self.event_state_loaded);
+        let event_state_saved = Rc::clone(&self.event_state_saved);
+        let modify_write_cbs = Rc::clone(&self.modify_write_cbs);
         // v1.5.0 B4 — drain the pause-at-frame targets reached this frame, OUTSIDE
         // the scope (no `nes` access): each reached target queues a Pause control.
         {
@@ -770,6 +1395,117 @@ impl VmBackend for MluaBackend {
                 read_range_cpu(&nes_cell, addr, len)
             })?;
             emu.set("readRange", read_range)?;
+
+            // v1.7.0 "Forge" Workstream B (B3) — Mesen2-parity framebuffer +
+            // structured-state accessors. They need the live `Nes`, so they are
+            // bound here in the frame scope like `emu.read` / `emu.write`.
+
+            // `emu.getScreenBuffer()` -> a flat array (1-based) of the 256x240
+            // RGBA8 pixels packed as 0xRRGGBBAA ints. Read-only.
+            emu.set(
+                "getScreenBuffer",
+                scope.create_function(|lua, _args: mlua::Variadic<mlua::Value>| {
+                    let nes = nes_cell.borrow();
+                    let fb = nes.framebuffer();
+                    let t = lua.create_table_with_capacity(fb.len() / 4, 0)?;
+                    for (i, px) in fb.chunks_exact(4).enumerate() {
+                        let argb = (u32::from(px[0]) << 24)
+                            | (u32::from(px[1]) << 16)
+                            | (u32::from(px[2]) << 8)
+                            | u32::from(px[3]);
+                        t.set(i + 1, argb)?;
+                    }
+                    Ok(t)
+                })?,
+            )?;
+            // `emu.getPixel(x, y)` -> the single 0xRRGGBBAA pixel, or nil if out
+            // of the 256x240 frame.
+            emu.set(
+                "getPixel",
+                scope.create_function(|_, (x, y): (i64, i64)| {
+                    if !(0..256).contains(&x) || !(0..240).contains(&y) {
+                        return Ok(None);
+                    }
+                    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+                    let off = ((y as usize) * 256 + (x as usize)) * 4;
+                    let nes = nes_cell.borrow();
+                    let fb = nes.framebuffer();
+                    Ok(fb.get(off..off + 4).map(|px| {
+                        (u32::from(px[0]) << 24)
+                            | (u32::from(px[1]) << 16)
+                            | (u32::from(px[2]) << 8)
+                            | u32::from(px[3])
+                    }))
+                })?,
+            )?;
+            // `emu:setScreenBuffer(t)` — paint output only (the display
+            // framebuffer the frontend presents). GATED like `emu.write`: a
+            // no-op under a locked / replayed session. `t` is the same flat
+            // 0xRRGGBBAA array `getScreenBuffer` returns; a short table leaves
+            // the tail untouched. Output-only — never a register / latch.
+            emu.set(
+                "setScreenBuffer",
+                scope.create_function(|_, (_this, t): (mlua::Value, Vec<u32>)| {
+                    if !writes_locked {
+                        let mut rgba = Vec::with_capacity(t.len() * 4);
+                        for argb in t {
+                            // 0xRRGGBBAA -> [R, G, B, A] (big-endian byte order).
+                            rgba.extend_from_slice(&argb.to_be_bytes());
+                        }
+                        nes_cell.borrow_mut().debug_set_framebuffer(&rgba);
+                    }
+                    Ok(())
+                })?,
+            )?;
+            // `emu:getState()` -> a structured field map (Mesen2 L4): the CPU
+            // register file + frame/cycle/region. Read-only.
+            emu.set(
+                "getState",
+                scope.create_function(|lua, _this: mlua::Value| {
+                    let nes = nes_cell.borrow();
+                    let c = nes.cpu();
+                    let t = lua.create_table()?;
+                    t.set("a", c.a)?;
+                    t.set("x", c.x)?;
+                    t.set("y", c.y)?;
+                    t.set("s", c.s)?;
+                    t.set("p", c.p.bits())?;
+                    t.set("pc", c.pc)?;
+                    t.set("frameCount", frame)?;
+                    t.set("cycle", cycle)?;
+                    t.set("region", cart_region)?;
+                    Ok(t)
+                })?,
+            )?;
+            // `emu:setState(t)` — write back the CPU register file from a state
+            // map (the writable subset of `getState`). GATED like `emu.write`:
+            // a no-op under a locked / replayed session. Missing fields keep
+            // their current value (read from the live CPU first).
+            emu.set(
+                "setState",
+                scope.create_function(|_, (_this, t): (mlua::Value, Table)| {
+                    if !writes_locked {
+                        // Read the current register file, then overlay only the
+                        // fields the state table actually provides (a partial
+                        // `setState` leaves the rest untouched).
+                        let (acc, idx_x, idx_y, sp, status, pc) = {
+                            let nes = nes_cell.borrow();
+                            let c = nes.cpu();
+                            (c.a, c.x, c.y, c.s, c.p.bits(), c.pc)
+                        };
+                        let acc = t.get::<u8>("a").unwrap_or(acc);
+                        let idx_x = t.get::<u8>("x").unwrap_or(idx_x);
+                        let idx_y = t.get::<u8>("y").unwrap_or(idx_y);
+                        let sp = t.get::<u8>("s").unwrap_or(sp);
+                        let status = t.get::<u8>("p").unwrap_or(status);
+                        let pc = t.get::<u16>("pc").unwrap_or(pc);
+                        nes_cell
+                            .borrow_mut()
+                            .debug_set_cpu_state(acc, idx_x, idx_y, sp, status, pc);
+                    }
+                    Ok(())
+                })?,
+            )?;
 
             let write = scope.create_function(|_, (addr, val): (u16, u8)| {
                 if !writes_locked {
@@ -939,27 +1675,39 @@ impl VmBackend for MluaBackend {
             // Distinct from the host's on-disk numbered slots (`emu.saveState`).
             emu.set(
                 "save_state",
-                scope.create_function(|_, (_this, slot): (mlua::Value, u8)| {
+                scope.create_function(|lua, (_this, slot): (mlua::Value, u8)| {
                     let blob = nes_cell.borrow().snapshot();
                     state_slots.borrow_mut().insert(slot, blob);
+                    // v1.7.0 B3 — fire `stateSaved(slot)` (observational; a save
+                    // is a read-only snapshot, so it is always allowed).
+                    fire_event_list(lua, &event_state_saved, u64::from(slot))?;
                     Ok(())
                 })?,
             )?;
             emu.set(
                 "load_state",
-                scope.create_function(|_, (_this, slot): (mlua::Value, u8)| {
+                scope.create_function(|lua, (_this, slot): (mlua::Value, u8)| {
                     if writes_locked {
                         return Ok(false);
                     }
                     let blob = state_slots.borrow().get(&slot).cloned();
                     // A restore failure (e.g. an empty slot mid-session) is
                     // surfaced as `false`, never a host crash.
-                    blob.map_or_else(
-                        || Ok(false),
-                        |blob| Ok(nes_cell.borrow_mut().restore(&blob).is_ok()),
-                    )
+                    let ok = blob.is_some_and(|blob| nes_cell.borrow_mut().restore(&blob).is_ok());
+                    // v1.7.0 B3 — fire `stateLoaded(slot)` only on a successful
+                    // restore (observational).
+                    if ok {
+                        fire_event_list(lua, &event_state_loaded, u64::from(slot))?;
+                    }
+                    Ok(ok)
                 })?,
             )?;
+
+            // v1.7.0 B3 — fire the `startFrame` event (Mesen2 parity), before
+            // the onFrame callbacks. The arg is the frame count.
+            if !event_start_frame.borrow().is_empty() {
+                fire_event_list(lua, &event_start_frame, frame)?;
+            }
 
             // Invoke every registered onFrame callback (from the Rust-side
             // registry — scripts cannot touch or corrupt it).
@@ -1069,6 +1817,45 @@ impl VmBackend for MluaBackend {
                     }
                 }
             }
+
+            // v1.7.0 B3 — replay this frame's WRITES through the VALUE-MODIFYING
+            // memory callbacks (`emu.addMemoryCallback(fn,"write",...)`). Unlike
+            // the observational `onWrite` above, a callback here may RETURN a
+            // replacement byte; we poke it back through the GATED `poke_ram`
+            // path (the scriptable-cheat / scriptable-watchpoint primitive). The
+            // poke is the mutation, so it is gated IDENTICALLY to `emu.write`:
+            // under a locked / replayed session every poke is dropped, so a
+            // value-modify callback can't perturb a deterministic run. (Reads
+            // are skipped — a post-frame replay can't retroactively change a read
+            // the CPU already consumed.)
+            // Check `!writes_locked` FIRST: the poke is this loop's only effect
+            // and it is gated like `emu.write`, so under a locked / replayed
+            // session the entire replay (and every callback invocation) is
+            // skipped — no wasted callback work and the gate short-circuits.
+            if !writes_locked && !accesses.is_empty() && !modify_write_cbs.borrow().is_empty() {
+                let active = AddrBits::from_keys(&modify_write_cbs);
+                for (is_write, addr, value) in &accesses {
+                    if *is_write && active.contains(*addr) {
+                        for f in fns_at(lua, &modify_write_cbs, *addr)? {
+                            // The callback returns a new byte (or nil to leave
+                            // the value unchanged); poke it back through the
+                            // gated path (we're already in the unlocked branch).
+                            if let Some(new_val) = f.call::<Option<u8>>((*addr, *value))? {
+                                nes_cell.borrow_mut().poke_ram(*addr, new_val);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // v1.7.0 B3 — fire `inputPolled` (if the frame polled a controller)
+            // then `endFrame`, after all per-frame work (Mesen2 parity).
+            if input_was_polled && !event_input_polled.borrow().is_empty() {
+                fire_event_list(lua, &event_input_polled, frame)?;
+            }
+            if !event_end_frame.borrow().is_empty() {
+                fire_event_list(lua, &event_end_frame, frame)?;
+            }
             Ok(())
         });
 
@@ -1078,6 +1865,83 @@ impl VmBackend for MluaBackend {
 
     fn frame_callback_count(&self) -> usize {
         self.frame_cbs.borrow().len()
+    }
+
+    // ---- v1.7.0 "Forge" Workstream B ----
+
+    fn set_tas_snapshot(&self, snapshot: TasSnapshot) {
+        *self.tas.snapshot.borrow_mut() = snapshot;
+    }
+
+    fn drain_tas_commands(&self) -> Vec<TasCmd> {
+        std::mem::take(&mut self.tas.commands.borrow_mut())
+    }
+
+    fn query_tas_cell(&self, frame: usize, column: u32) -> Result<TasCellDecor, ScriptError> {
+        tastudio::query_cell(&self.lua, &self.tas, frame, column).map_err(ScriptError::from)
+    }
+
+    fn take_clear_icon_cache(&self) -> bool {
+        self.tas.clear_icon_cache.replace(false)
+    }
+
+    fn fire_greenzone_invalidated(&self, first_frame: usize) -> Result<(), ScriptError> {
+        tastudio::fire_event(&self.lua, &self.tas.greenzone_cbs, first_frame)
+            .map_err(ScriptError::from)
+    }
+
+    fn fire_branch_load(&self, index: usize) -> Result<(), ScriptError> {
+        tastudio::fire_event(&self.lua, &self.tas.branch_load_cbs, index).map_err(ScriptError::from)
+    }
+
+    fn needs_tas_cell_query(&self) -> bool {
+        self.tas.needs_cell_query()
+    }
+
+    fn set_script_data_folder(&self, path: Option<String>) {
+        *self.script_data_folder.borrow_mut() = path;
+    }
+
+    // v1.7.0 "Forge" Workstream E — host IPC / automation drains.
+
+    fn drain_clients(&self) -> Vec<ClientCmd> {
+        std::mem::take(&mut self.clients.borrow_mut())
+    }
+
+    #[cfg(feature = "script-ipc")]
+    fn drain_comm(&self) -> Vec<CommCmd> {
+        std::mem::take(&mut self.comm_out.borrow_mut())
+    }
+
+    #[cfg(feature = "script-ipc")]
+    fn push_comm_result(&self, result: CommResult) {
+        let mut inbox = self.comm_in.borrow_mut();
+        // Bound the inbox so a host (or a script that never drains it) can't grow
+        // memory without limit; drop the oldest on overflow.
+        if inbox.len() >= MAX_QUEUED_CMDS {
+            inbox.pop_front();
+        }
+        inbox.push_back(result);
+    }
+
+    fn userdata_snapshot(&self) -> Vec<(String, String)> {
+        let mut pairs: Vec<(String, String)> = self
+            .userdata
+            .borrow()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        // Sorted by key so the persisted/save-state blob is deterministic.
+        pairs.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        pairs
+    }
+
+    fn userdata_restore(&self, pairs: &[(String, String)]) {
+        let mut kv = self.userdata.borrow_mut();
+        kv.clear();
+        for (k, v) in pairs {
+            kv.insert(k.clone(), v.clone());
+        }
     }
 }
 

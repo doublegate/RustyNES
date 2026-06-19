@@ -58,7 +58,12 @@ mod backend;
 mod types;
 
 pub use backend::VmBackend;
-pub use types::{ControlCmd, DEFAULT_INSTRUCTION_BUDGET, DrawCmd, ScriptError};
+pub use types::{
+    ClientCmd, ControlCmd, DEFAULT_INSTRUCTION_BUDGET, DrawCmd, ScriptError, TasBranchInfo,
+    TasCellDecor, TasCmd, TasSnapshot,
+};
+#[cfg(feature = "script-ipc")]
+pub use types::{CommCmd, CommResult};
 
 use rustynes_core::Nes;
 
@@ -75,6 +80,11 @@ use piccolo_backend::PiccoloBackend as Backend;
 mod mlua_backend;
 #[cfg(all(feature = "mlua-backend", not(feature = "script-wasm")))]
 use mlua_backend::MluaBackend as Backend;
+
+// v1.7.0 "Forge" Workstream B — the scriptable-`TAStudio` Lua surface, a
+// self-contained native-only module on the mlua backend.
+#[cfg(all(feature = "mlua-backend", not(feature = "script-wasm")))]
+mod tastudio;
 
 /// A sandboxed Lua scripting engine bound to one emulator session.
 ///
@@ -192,6 +202,116 @@ impl ScriptEngine {
     #[must_use]
     pub fn frame_callback_count(&self) -> usize {
         self.inner.frame_callback_count()
+    }
+
+    // ---- v1.7.0 "Forge" Workstream B — scriptable TAStudio + Lua parity ----
+
+    /// B1 — push a read-only snapshot of the host's live `TAStudio` editor so
+    /// the `tastudio.*` query API resolves against current editor state. The
+    /// host pushes this each frame before [`Self::on_frame`]. A no-op on the
+    /// piccolo backend (the dev/TAS surface is native-only; ADR 0012).
+    pub fn set_tas_snapshot(&self, snapshot: TasSnapshot) {
+        self.inner.set_tas_snapshot(snapshot);
+    }
+
+    /// B1 — drain the `TAStudio` editor actions a script requested this frame
+    /// (`tastudio.*` mutators); the host applies + gates them. Always empty on
+    /// the piccolo backend.
+    #[must_use]
+    pub fn drain_tas_commands(&self) -> Vec<TasCmd> {
+        self.inner.drain_tas_commands()
+    }
+
+    /// B2 — the per-cell decoration a script's `onqueryitem*` callbacks produce
+    /// for piano-roll cell `(frame, column)`. The default (no decoration) when
+    /// no callback is registered or on the piccolo backend.
+    ///
+    /// # Errors
+    /// Returns [`ScriptError`] if a callback raises.
+    pub fn query_tas_cell(&self, frame: usize, column: u32) -> Result<TasCellDecor, ScriptError> {
+        self.inner.query_tas_cell(frame, column)
+    }
+
+    /// B2 — whether a script asked to clear the piano-roll icon cache
+    /// (`tastudio.clearIconCache()`) since the last drain.
+    #[must_use]
+    pub fn take_clear_icon_cache(&self) -> bool {
+        self.inner.take_clear_icon_cache()
+    }
+
+    /// B2 — invoke the registered `ongreenzoneinvalidated(fn)` callbacks with
+    /// the first invalidated frame (the host calls this after an edit).
+    ///
+    /// # Errors
+    /// Returns [`ScriptError`] if a callback raises.
+    pub fn fire_greenzone_invalidated(&self, first_frame: usize) -> Result<(), ScriptError> {
+        self.inner.fire_greenzone_invalidated(first_frame)
+    }
+
+    /// B2 — invoke the registered `onbranchload(fn)` callbacks with the loaded
+    /// branch index (the host calls this after a branch loads).
+    ///
+    /// # Errors
+    /// Returns [`ScriptError`] if a callback raises.
+    pub fn fire_branch_load(&self, index: usize) -> Result<(), ScriptError> {
+        self.inner.fire_branch_load(index)
+    }
+
+    /// B2 — `true` if any `tastudio.onqueryitem*` callback is registered, so the
+    /// host knows to call [`Self::query_tas_cell`] while painting the grid.
+    #[must_use]
+    pub fn needs_tas_cell_query(&self) -> bool {
+        self.inner.needs_tas_cell_query()
+    }
+
+    /// B3 — set the per-script sandboxed data directory returned by
+    /// `emu.getScriptDataFolder()` (`None` clears it). A no-op on the piccolo
+    /// backend.
+    pub fn set_script_data_folder(&self, path: Option<String>) {
+        self.inner.set_script_data_folder(path);
+    }
+
+    /// v1.7.0 "Forge" Workstream E2 — drain the `client.*` automation verbs a
+    /// script requested this frame. The host applies (and gates the mutators
+    /// among) them after [`Self::on_frame`], exactly like [`Self::drain_controls`].
+    #[must_use]
+    pub fn drain_clients(&self) -> Vec<ClientCmd> {
+        self.inner.drain_clients()
+    }
+
+    /// v1.7.0 "Forge" Workstream E1 — drain the host-mediated `comm.*` IPC
+    /// requests a script issued this frame. The host (which owns every
+    /// connection) performs the I/O off the emulator lock and feeds results back
+    /// via [`Self::push_comm_result`]. Empty unless the `script-ipc` feature is
+    /// on AND the host has not locked writes.
+    #[cfg(feature = "script-ipc")]
+    #[must_use]
+    pub fn drain_comm(&self) -> Vec<CommCmd> {
+        self.inner.drain_comm()
+    }
+
+    /// v1.7.0 "Forge" Workstream E1 — deliver a host-fulfilled [`CommResult`]
+    /// back to the engine. Surfaced to the script on the next pump via the
+    /// polled `comm.receive()` queue. The host calls this off the emulator lock.
+    #[cfg(feature = "script-ipc")]
+    pub fn push_comm_result(&self, result: CommResult) {
+        self.inner.push_comm_result(result);
+    }
+
+    /// v1.7.0 "Forge" Workstream E3 — snapshot the per-script `userdata.*` KV
+    /// store as `(key, value)` string pairs (sorted by key for determinism). The
+    /// host persists this into save-states / on-disk so the store survives across
+    /// runs. The KV store is script-local host memory, never emulator state, so
+    /// snapshotting it never perturbs the deterministic core.
+    #[must_use]
+    pub fn userdata_snapshot(&self) -> Vec<(String, String)> {
+        self.inner.userdata_snapshot()
+    }
+
+    /// v1.7.0 "Forge" Workstream E3 — replace the `userdata.*` KV store from a
+    /// snapshot (the host restores it from a save-state / disk on script load).
+    pub fn userdata_restore(&self, pairs: &[(String, String)]) {
+        self.inner.userdata_restore(pairs);
     }
 }
 
@@ -1080,6 +1200,533 @@ mod tests {
         assert_eq!(eng.drain_log(), vec!["second", "second"]);
     }
 
+    // ===== v1.7.0 "Forge" Workstream B — scriptable TAStudio + Lua parity =====
+    // All native-only (mlua), the same carve-out as the dev/TAS surface above.
+
+    /// B1 — the `tastudio.*` query API reads the host-pushed [`TasSnapshot`].
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn tastudio_queries_read_host_snapshot() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.set_tas_snapshot(TasSnapshot {
+            engaged: true,
+            recording: true,
+            seek_frame: 42,
+            selection: Some((10, 20)),
+            lag: vec![false, true, false],
+            state_frames: vec![0, 60],
+            markers: vec![(5, "start".to_owned()), (60, "boss".to_owned())],
+            branches: vec![TasBranchInfo {
+                frame: 30,
+                text: "alt route".to_owned(),
+                input: vec![(0x01, 0x00), (0x02, 0x80)],
+            }],
+            input_len: 100,
+        });
+        eng.load(
+            r"
+            emu.onFrame(function()
+                local first, last = tastudio:getselection()
+                emu.log('eng=' .. tostring(tastudio:engaged())
+                    .. ' rec=' .. tostring(tastudio:getrecording())
+                    .. ' seek=' .. tastudio:getseekframe()
+                    .. ' sel=' .. first .. ',' .. last
+                    .. ' lag1=' .. tostring(tastudio:islag(1))
+                    .. ' lag9=' .. tostring(tastudio:islag(9))
+                    .. ' hs60=' .. tostring(tastudio:hasstate(60))
+                    .. ' hs61=' .. tostring(tastudio:hasstate(61))
+                    .. ' mk5=' .. tastudio:getmarker(5)
+                    .. ' br1=' .. tastudio:getbranchtext(1)
+                    .. ' brn=' .. tostring(tastudio:getbranches()[1].frame))
+                local p1, p2 = tastudio:getbranchinput(1, 1)
+                emu.log('bi=' .. p1 .. ',' .. p2)
+            end)
+            ",
+        )
+        .expect("load");
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+        let log = eng.drain_log();
+        assert!(
+            log[0].contains("eng=true rec=true seek=42 sel=10,20 lag1=true lag9=nil"),
+            "snapshot reads: {log:?}"
+        );
+        assert!(log[0].contains("hs60=true hs61=false mk5=start br1=alt route brn=30"));
+        assert_eq!(log[1], "bi=2,128");
+    }
+
+    /// B1 — every `tastudio.*` mutator queues a [`TasCmd`] when unlocked, and is
+    /// a silent no-op (NO queued command) under a locked session — gated exactly
+    /// like `emu.write`.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn tastudio_mutators_queue_and_gate_like_emu_write() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            r"
+            emu.onFrame(function()
+                tastudio:setrecording(true)
+                tastudio:setplayback(100)
+                tastudio:setplayback('boss')
+                tastudio:setlag(7, true)
+                tastudio:setmarker(9, 'here')
+                tastudio:removemarker(3)
+                tastudio:submitinputchange(0, 0, 0x81)
+                tastudio:submitinputchange(1, 1, 0x42)
+                tastudio:applyinputchanges()
+                tastudio:loadbranch(2)
+                tastudio:setbranchtext(2, 'alt')
+            end)
+            ",
+        )
+        .expect("load");
+
+        // Unlocked: each call queues its command (the two submits flush as a
+        // batch on applyinputchanges).
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+        let cmds = eng.drain_tas_commands();
+        assert!(cmds.contains(&TasCmd::SetRecording(Some(true))));
+        assert!(cmds.contains(&TasCmd::SetPlaybackFrame(100)));
+        assert!(cmds.contains(&TasCmd::SetPlaybackMarker("boss".to_owned())));
+        assert!(cmds.contains(&TasCmd::SetLag {
+            frame: 7,
+            lag: true
+        }));
+        assert!(cmds.contains(&TasCmd::SetMarker {
+            frame: 9,
+            text: "here".to_owned()
+        }));
+        assert!(cmds.contains(&TasCmd::RemoveMarker(3)));
+        assert!(cmds.contains(&TasCmd::SetInput {
+            frame: 0,
+            port: 0,
+            buttons: 0x81
+        }));
+        assert!(cmds.contains(&TasCmd::SetInput {
+            frame: 1,
+            port: 1,
+            buttons: 0x42
+        }));
+        assert!(cmds.contains(&TasCmd::LoadBranch(2)));
+        assert!(cmds.contains(&TasCmd::SetBranchText {
+            index: 2,
+            text: "alt".to_owned()
+        }));
+
+        // Locked: NOTHING queues (every mutator is gated like emu.write).
+        eng.set_writes_locked(true);
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+        assert!(
+            eng.drain_tas_commands().is_empty(),
+            "all tastudio mutators must be no-ops when locked"
+        );
+    }
+
+    /// B1 — `submitinputchange` STAGES; nothing reaches the host queue until
+    /// `applyinputchanges()` flushes the batch (the `BizHawk` atomic-edit pattern).
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn tastudio_submit_is_atomic_until_apply() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            r"
+            phase = 0
+            emu.onFrame(function()
+                phase = phase + 1
+                if phase == 1 then
+                    tastudio:submitinputchange(5, 0, 0x01)
+                    tastudio:submitinputchange(6, 0, 0x02)
+                    -- no apply yet
+                elseif phase == 2 then
+                    tastudio:applyinputchanges()
+                end
+            end)
+            ",
+        )
+        .expect("load");
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+        assert!(
+            eng.drain_tas_commands().is_empty(),
+            "staged edits must not reach the host before apply"
+        );
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+        let cmds = eng.drain_tas_commands();
+        assert_eq!(cmds.len(), 2, "apply flushes both staged edits: {cmds:?}");
+    }
+
+    /// Review finding — `submitinputchange` REJECTS a port outside {0, 1} at
+    /// the script boundary (a clear Lua error), so an out-of-range port can
+    /// never silently mis-route to the wrong player downstream. A valid port
+    /// still queues.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn tastudio_submitinputchange_rejects_out_of_range_port() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load("emu.onFrame(function() tastudio:submitinputchange(0, 2, 0x01) end)")
+            .expect("load");
+        nes.run_frame();
+        let err = eng
+            .on_frame(&mut nes)
+            .expect_err("port 2 must be rejected at the boundary");
+        assert!(
+            err.to_string().contains("port must be 0"),
+            "error should name the port rule: {err}"
+        );
+        // Nothing was staged, so a follow-up apply produces no command.
+        assert!(eng.drain_tas_commands().is_empty());
+
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            "emu.onFrame(function() tastudio:submitinputchange(3, 1, 0x05); tastudio:applyinputchanges() end)",
+        )
+        .expect("load");
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("valid port 1 is accepted");
+        assert!(eng.drain_tas_commands().contains(&TasCmd::SetInput {
+            frame: 3,
+            port: 1,
+            buttons: 0x05
+        }));
+    }
+
+    /// Review finding — `emu.setInput` rejects a port outside {0, 1} the same
+    /// way (the host late-latch treats `port != 0` as P2, so an out-of-range
+    /// value must not reach it).
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn emu_setinput_rejects_out_of_range_port() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load("emu.onFrame(function() emu.setInput(9, 0x01) end)")
+            .expect("load");
+        nes.run_frame();
+        let err = eng.on_frame(&mut nes).expect_err("port 9 must be rejected");
+        assert!(err.to_string().contains("port must be 0"), "{err}");
+    }
+
+    /// Review finding — value-modifying `emu.addMemoryCallback` REJECTS an
+    /// oversized range (it registers one registry key per address, so an
+    /// unbounded span would allocate up to 64K). A small range is accepted.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn add_memory_callback_rejects_oversized_range() {
+        let mut eng = ScriptEngine::new().expect("engine");
+        let err = eng
+            .load("emu.addMemoryCallback(function(a, v) return v end, 'write', 0x0000, 0xFFFF)")
+            .expect_err("a 64K span must be rejected");
+        assert!(
+            err.to_string().contains("range too large"),
+            "error should explain the cap: {err}"
+        );
+
+        // A small, legitimate watchpoint range still registers fine.
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load("emu.addMemoryCallback(function(a, v) return v end, 'write', 0x10, 0x1F)")
+            .expect("a 16-address range is accepted");
+    }
+
+    /// B2 — `onqueryitem*` callbacks paint a piano-roll cell; the host queries
+    /// via [`ScriptEngine::query_tas_cell`]. Pure overlay (returns decoration).
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn tastudio_cell_query_callbacks_decorate() {
+        let mut eng = ScriptEngine::new().expect("engine");
+        assert!(!eng.needs_tas_cell_query());
+        eng.load(
+            r"
+            tastudio:onqueryitembg(function(frame, col)
+                if frame == 5 then return 0xFF0000FF end
+            end)
+            tastudio:onqueryitemtext(function(frame, col)
+                if frame == 5 and col == 1 then return 'X' end
+            end)
+            tastudio:onqueryitemicon(function(frame, col)
+                if frame == 5 then return 'star' end
+            end)
+            ",
+        )
+        .expect("load");
+        assert!(eng.needs_tas_cell_query());
+        let decor = eng.query_tas_cell(5, 1).expect("query");
+        assert_eq!(decor.bg, Some(0xFF00_00FF));
+        assert_eq!(decor.text.as_deref(), Some("X"));
+        assert_eq!(decor.icon.as_deref(), Some("star"));
+        // A different cell gets no decoration.
+        let none = eng.query_tas_cell(6, 1).expect("query");
+        assert_eq!(none, TasCellDecor::default());
+    }
+
+    /// B2 — `clearIconCache()` raises the host-drained flag once.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn tastudio_clear_icon_cache_flag() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load("emu.onFrame(function() tastudio:clearIconCache() end)")
+            .expect("load");
+        assert!(!eng.take_clear_icon_cache());
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+        assert!(
+            eng.take_clear_icon_cache(),
+            "clearIconCache raises the flag"
+        );
+        assert!(!eng.take_clear_icon_cache(), "flag is taken (one-shot)");
+    }
+
+    /// B2 — `ongreenzoneinvalidated` / `onbranchload` event callbacks fire from
+    /// the host entry points with the right argument.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn tastudio_event_callbacks_fire() {
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            r"
+            gz = -1
+            bl = -1
+            tastudio:ongreenzoneinvalidated(function(frame) gz = frame end)
+            tastudio:onbranchload(function(idx) bl = idx end)
+            emu.onFrame(function() emu.log('gz=' .. gz .. ' bl=' .. bl) end)
+            ",
+        )
+        .expect("load");
+        eng.fire_greenzone_invalidated(37).expect("gz");
+        eng.fire_branch_load(2).expect("bl");
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+        assert_eq!(eng.drain_log(), vec!["gz=37 bl=2"]);
+    }
+
+    /// B3 — `getScreenBuffer` / `getPixel` read the framebuffer; `setScreenBuffer`
+    /// paints output and is GATED like `emu.write` (no-op when locked).
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn parity_screen_buffer_get_set_and_gate() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            r"
+            emu.onFrame(function()
+                local buf = emu.getScreenBuffer()
+                emu.log('len=' .. #buf)
+                emu.log('px=' .. tostring(emu.getPixel(0, 0)))
+                emu.log('oob=' .. tostring(emu.getPixel(999, 0)))
+                -- paint the whole frame opaque red (0xRRGGBBAA).
+                local red = {}
+                for i = 1, 256 * 240 do red[i] = 0xFF0000FF end
+                emu:setScreenBuffer(red)
+            end)
+            ",
+        )
+        .expect("load");
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+        let log = eng.drain_log();
+        assert_eq!(log[0], format!("len={}", 256 * 240));
+        assert!(log[1].starts_with("px="));
+        assert_eq!(log[2], "oob=nil");
+        // The paint landed: top-left pixel is now opaque red.
+        assert_eq!(&nes.framebuffer()[0..4], &[0xFF, 0x00, 0x00, 0xFF]);
+
+        // Locked: setScreenBuffer is a no-op. Repaint green, but locked.
+        nes.run_frame(); // a fresh frame repaints the framebuffer
+        eng.set_writes_locked(true);
+        eng.load("emu.onFrame(function() local g = {}; for i=1,256*240 do g[i]=0x00FF00FF end; emu:setScreenBuffer(g) end)").expect("load2");
+        let before = nes.framebuffer()[0..4].to_vec();
+        eng.on_frame(&mut nes).expect("on_frame");
+        assert_eq!(
+            &nes.framebuffer()[0..4],
+            before.as_slice(),
+            "setScreenBuffer must be a no-op when locked"
+        );
+    }
+
+    /// B3 — `getState` returns a structured CPU/system map; `setState` writes
+    /// back the register file and is GATED like `emu.write`.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn parity_get_set_state_and_gate() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            r"
+            emu.onFrame(function()
+                local s = emu:getState()
+                emu.log('has_pc=' .. tostring(s.pc ~= nil)
+                    .. ' has_a=' .. tostring(s.a ~= nil)
+                    .. ' region=' .. s.region
+                    .. ' fc=' .. tostring(s.frameCount ~= nil))
+                emu:setState({ a = 0x55, x = 0x66 })
+            end)
+            ",
+        )
+        .expect("load");
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+        let log = eng.drain_log();
+        assert!(
+            log[0].contains("has_pc=true has_a=true region=NTSC fc=true"),
+            "getState map: {log:?}"
+        );
+        assert_eq!(nes.cpu().a, 0x55, "setState wrote A");
+        assert_eq!(nes.cpu().x, 0x66, "setState wrote X");
+
+        // Locked: setState is a no-op.
+        eng.set_writes_locked(true);
+        eng.load("emu.onFrame(function() emu:setState({ a = 0x11 }) end)")
+            .expect("load2");
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+        assert_eq!(nes.cpu().a, 0x55, "setState must be a no-op when locked");
+    }
+
+    /// B3 — the value-modifying write callback intercepts a RAM write and pokes a
+    /// replacement byte; the poke is GATED like `emu.write`.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn parity_value_modifying_write_callback_and_gate() {
+        // NROM whose boot loop writes $33 to $0000 (zero-page RAM) each frame:
+        // `LDA #$33; STA $0000; JMP $C000`.
+        fn synth_ram_writer() -> Vec<u8> {
+            let mut bytes = vec![b'N', b'E', b'S', 0x1A, 1, 1, 0, 0];
+            bytes.resize(16, 0);
+            let mut prg = vec![0u8; 16 * 1024];
+            prg[0..8].copy_from_slice(&[0xA9, 0x33, 0x8D, 0x00, 0x00, 0x4C, 0x00, 0xC0]);
+            let len = prg.len();
+            prg[len - 4] = 0x00;
+            prg[len - 3] = 0xC0;
+            bytes.extend_from_slice(&prg);
+            bytes.resize(16 + 16 * 1024 + 8 * 1024, 0);
+            bytes
+        }
+        let mut nes = Nes::from_rom(&synth_ram_writer()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            r"
+            emu.addMemoryCallback(function(addr, value)
+                -- Intercept the write to $0000, force the stored byte to $99.
+                if value == 0x33 then return 0x99 end
+            end, 'write', 0x0000)
+            ",
+        )
+        .expect("load");
+        assert!(
+            eng.needs_access_log(),
+            "modify callback arms the access log"
+        );
+        nes.set_access_logging(true);
+        // Run a few frames so the CPU clears reset warmup and the boot loop's
+        // `STA $0000` actually executes (a write into the access log).
+        let mut saw = false;
+        for _ in 0..4 {
+            nes.run_frame();
+            eng.on_frame(&mut nes).expect("on_frame");
+            if nes.peek(0x0000) == 0x99 {
+                saw = true;
+                break;
+            }
+        }
+        assert!(saw, "value-modify poked the replacement");
+
+        // Locked: the modify poke is dropped; the original write stands.
+        eng.set_writes_locked(true);
+        nes.run_frame(); // writes $33 again
+        eng.on_frame(&mut nes).expect("on_frame");
+        assert_eq!(
+            nes.peek(0x0000),
+            0x33,
+            "value-modify poke must be dropped when locked"
+        );
+    }
+
+    /// B3 — the full `addEventCallback` enum: `startFrame`/`endFrame`/
+    /// `inputPolled` fire from the per-frame pump; an unknown type errors.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn parity_event_callbacks_fire_and_reject_unknown() {
+        // A polling ROM so `inputPolled` fires (`LDA $4016; JMP $C000`).
+        fn synth_polling() -> Vec<u8> {
+            let mut bytes = vec![b'N', b'E', b'S', 0x1A, 1, 1, 0, 0];
+            bytes.resize(16, 0);
+            let mut prg = vec![0u8; 16 * 1024];
+            prg[0..6].copy_from_slice(&[0xAD, 0x16, 0x40, 0x4C, 0x00, 0xC0]);
+            let len = prg.len();
+            prg[len - 4] = 0x00;
+            prg[len - 3] = 0xC0;
+            bytes.extend_from_slice(&prg);
+            bytes.resize(16 + 16 * 1024 + 8 * 1024, 0);
+            bytes
+        }
+        let mut nes = Nes::from_rom(&synth_polling()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            r"
+            sf = 0; ef = 0; ip = 0
+            emu.addEventCallback(function() sf = sf + 1 end, 'startFrame')
+            emu.addEventCallback(function() ef = ef + 1 end, 'endFrame')
+            emu.addEventCallback(function() ip = ip + 1 end, 'inputPolled')
+            emu.onFrame(function() emu.log('sf=' .. sf .. ' ef=' .. ef .. ' ip=' .. ip) end)
+            ",
+        )
+        .expect("load");
+        let mut polled = false;
+        for _ in 0..6 {
+            nes.run_frame();
+            eng.on_frame(&mut nes).expect("on_frame");
+            let log = eng.drain_log();
+            if log.iter().any(|l| !l.ends_with("ip=0")) {
+                polled = true;
+            }
+        }
+        assert!(polled, "inputPolled should fire on a polling ROM");
+
+        // An unknown event type is a load-time error.
+        let mut eng2 = ScriptEngine::new().expect("engine");
+        assert!(
+            eng2.load("emu.addEventCallback(function() end, 'bogus')")
+                .is_err(),
+            "unknown addEventCallback type must error"
+        );
+    }
+
+    /// B3 — `takeScreenshot()` queues a `Screenshot` control (NOT gated — a
+    /// screenshot is a read-only side effect), and `getScriptDataFolder()`
+    /// returns the host-pushed path or nil.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn parity_screenshot_and_script_data_folder() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.set_script_data_folder(Some("/tmp/rustynes/scripts".to_owned()));
+        eng.load(
+            r"
+            emu.onFrame(function()
+                emu.takeScreenshot()
+                emu.log('dir=' .. tostring(emu.getScriptDataFolder()))
+            end)
+            ",
+        )
+        .expect("load");
+        // Even locked, a screenshot is allowed (read-only side effect).
+        eng.set_writes_locked(true);
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+        assert!(
+            eng.drain_controls().contains(&ControlCmd::Screenshot),
+            "takeScreenshot queues a Screenshot control even when locked"
+        );
+        assert_eq!(eng.drain_log(), vec!["dir=/tmp/rustynes/scripts"]);
+    }
+
     /// `emu.frameadvance()` outside a coroutine raises (Lua's "yield from outside
     /// a coroutine"), surfaced to the host as a script error rather than a panic.
     #[cfg(not(feature = "script-wasm"))]
@@ -1096,5 +1743,205 @@ mod tests {
             eng.on_frame(&mut nes).is_err(),
             "frameadvance outside a coroutine must surface a script error"
         );
+    }
+
+    // ====================================================================
+    // v1.7.0 "Forge" Workstream E — host IPC / automation.
+    // ====================================================================
+
+    /// E2 — observational `client.*` verbs queue a `ClientCmd` the host drains;
+    /// they are NOT write-gated (presentation-only, never perturb the core).
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn client_observational_verbs_queue() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            r"
+            emu.onFrame(function()
+                client.screenshot()
+                client.setwindowsize(3)
+                client.speedmode(200)
+            end)
+            ",
+        )
+        .expect("load");
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+        let cmds = eng.drain_clients();
+        assert_eq!(
+            cmds,
+            vec![
+                ClientCmd::Screenshot,
+                ClientCmd::SetWindowSize(3),
+                ClientCmd::SpeedMode(200),
+            ]
+        );
+    }
+
+    /// E2 — the state-changing `client.*` verbs (`reboot_core` / `addcheat` /
+    /// `removecheat`) are gated EXACTLY like `emu.write`: dropped at the source
+    /// when the host has locked writes, while the observational verbs still run.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn client_mutators_gated_when_locked() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.set_writes_locked(true);
+        eng.load(
+            r"
+            emu.onFrame(function()
+                client.reboot_core()
+                client.addcheat('SXIOPO')
+                client.removecheat('SXIOPO')
+                client.screenshot()
+            end)
+            ",
+        )
+        .expect("load");
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+        // Only the observational `screenshot` survives the lock.
+        assert_eq!(
+            eng.drain_clients(),
+            vec![ClientCmd::Screenshot],
+            "client mutators must be dropped when writes are locked"
+        );
+    }
+
+    /// E3 — the `userdata.*` KV store round-trips through Lua, and the host can
+    /// snapshot/restore it (persistence across runs / into save-states).
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn userdata_kv_round_trips_and_snapshots() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            r"
+            emu.onFrame(function()
+                userdata.set('seed', '42')
+                userdata.set('best', 'world1-1')
+                emu.log('has=' .. tostring(userdata.containskey('seed')))
+                emu.log('seed=' .. userdata.get('seed'))
+                userdata.remove('best')
+                emu.log('best=' .. tostring(userdata.get('best')))
+            end)
+            ",
+        )
+        .expect("load");
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+        assert_eq!(eng.drain_log(), vec!["has=true", "seed=42", "best=nil"]);
+        // The host snapshot mirrors the live store (sorted, `best` removed).
+        assert_eq!(
+            eng.userdata_snapshot(),
+            vec![("seed".to_string(), "42".to_string())]
+        );
+
+        // A fresh engine restored from a snapshot sees the persisted values.
+        let mut eng2 = ScriptEngine::new().expect("engine");
+        eng2.userdata_restore(&[("seed".to_string(), "99".to_string())]);
+        eng2.load("emu.onFrame(function() emu.log('r=' .. userdata.get('seed')) end)")
+            .expect("load");
+        nes.run_frame();
+        eng2.on_frame(&mut nes).expect("on_frame");
+        assert_eq!(eng2.drain_log(), vec!["r=99"]);
+    }
+
+    /// E1 (`script-ipc`) — a `comm.*` request queues a host-owned `CommCmd`, and
+    /// the host's fulfilled `CommResult` is surfaced back via `comm.receive()`.
+    /// The script only ever sees marshalled plain values — never a socket.
+    #[cfg(all(feature = "script-ipc", not(feature = "script-wasm")))]
+    #[test]
+    fn comm_request_queues_and_result_polls_back() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            r"
+            req = nil
+            emu.onFrame(function()
+                if req == nil then
+                    req = comm.httpGet('http://localhost/state')
+                else
+                    local r = comm.receive()
+                    if r ~= nil then emu.log('got ' .. r.status .. ' ' .. r.body) end
+                end
+            end)
+            ",
+        )
+        .expect("load");
+        // Frame 1: the script issues the request; the host owns the connection.
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+        let out = eng.drain_comm();
+        let id = match out.as_slice() {
+            [CommCmd::HttpGet { id, url }] => {
+                assert_eq!(url, "http://localhost/state");
+                *id
+            }
+            other => panic!("expected one HttpGet, got {other:?}"),
+        };
+        // The host fulfils it off the emu lock and injects the result.
+        eng.push_comm_result(CommResult::Http {
+            id,
+            status: 200,
+            body: "ok".to_string(),
+        });
+        // Frame 2: the script polls the marshalled result.
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+        assert_eq!(eng.drain_log(), vec!["got 200 ok"]);
+    }
+
+    /// E1 — `comm.*` is gated EXACTLY like `emu.write`: under a locked session
+    /// (netplay / TAS replay / RA-hardcore) every IPC verb is a no-op, so no
+    /// `CommCmd` is queued and the host never opens a connection.
+    #[cfg(all(feature = "script-ipc", not(feature = "script-wasm")))]
+    #[test]
+    fn comm_is_a_no_op_when_locked() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.set_writes_locked(true);
+        eng.load(
+            r"
+            emu.onFrame(function()
+                comm.socketServerSend('x')
+                comm.httpGet('http://localhost/')
+                comm.ws_open('ws://localhost/')
+                comm.ws_send('hi')
+                comm.mmfWrite('m', 'data')
+                comm.mmfRead('m', 4)
+            end)
+            ",
+        )
+        .expect("load");
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+        assert!(
+            eng.drain_comm().is_empty(),
+            "comm.* must queue nothing when writes are locked"
+        );
+    }
+
+    /// E1 — the host-mediated design preserves the sandbox: even with the `comm`
+    /// table present, the script still cannot reach any RAW networking / OS
+    /// surface (`io` / `os` / `package` / `require` / loaders stay stripped). The
+    /// only IPC path is the host-owned `comm.*` marshalling.
+    #[cfg(all(feature = "script-ipc", not(feature = "script-wasm")))]
+    #[test]
+    fn comm_does_not_open_the_raw_net_sandbox() {
+        let mut eng = ScriptEngine::new().expect("engine");
+        for probe in [
+            "return io.open('/etc/passwd')",
+            "return os.execute('curl http://x')",
+            "return require('socket')",
+            "return package.loadlib('libc.so', 'connect')",
+            "return load('return io')",
+        ] {
+            assert!(
+                eng.load(probe).is_err(),
+                "comm must not open a raw-net escape: {probe}"
+            );
+        }
     }
 }

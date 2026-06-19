@@ -988,6 +988,20 @@ impl Ppu {
         &self.framebuffer
     }
 
+    /// v1.7.0 "Forge" Workstream B (B3) — overwrite the RGBA8 output framebuffer
+    /// (the Lua `emu:setScreenBuffer(t)` paints output only). Copies up to the
+    /// framebuffer length; a short source leaves the tail untouched. Output-only
+    /// — it touches only the display buffer the frontend presents, NOT any
+    /// register / latch / scroll state, so the determinism contract is
+    /// unaffected (a later real frame fully repaints it). `debug-hooks`-gated and
+    /// reached only through the script crate's gated post-frame path, so the
+    /// shipped build is byte-identical.
+    #[cfg(feature = "debug-hooks")]
+    pub fn debug_set_framebuffer(&mut self, rgba: &[u8]) {
+        let n = rgba.len().min(self.framebuffer.len());
+        self.framebuffer[..n].copy_from_slice(&rgba[..n]);
+    }
+
     /// Borrow the parallel per-pixel **palette-index** framebuffer
     /// (256 × 240 `u16`s, each `(emphasis << 6) | colour`, 0..=511) used by the
     /// true composite `NES_NTSC` filter (T-110-A1). A faithful index-space mirror

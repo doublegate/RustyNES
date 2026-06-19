@@ -559,6 +559,20 @@ pub struct App {
     /// egui pass and refreshed on each pump.
     #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
     script_draws: Vec<rustynes_script::DrawCmd>,
+    /// The `TasEditor` revision (or `None` for no editor) the last pushed
+    /// `TasSnapshot` was built from. Lets `pump_scripts` skip the per-frame
+    /// rebuild-and-clone of the whole editor when its state is unchanged — an
+    /// idle `TAStudio` costs no allocation each frame (the engine keeps the
+    /// prior snapshot). Reset when the editor's revision moves or it opens/closes.
+    #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
+    tas_snapshot_revision: Option<u64>,
+    /// v1.7.0 "Forge" Workstream E1 — the host-mediated IPC bridge that OWNS the
+    /// `comm.*` TCP / HTTP / WebSocket / memory-mapped-file connections. `None`
+    /// until a script is loaded. The Lua sandbox never sees a socket: the engine
+    /// queues marshalled `CommCmd`s (gated like `emu.write`), this host does the
+    /// I/O off the emu lock, and feeds `CommResult`s back. See ADR 0016.
+    #[cfg(all(feature = "script-ipc", not(target_arch = "wasm32")))]
+    script_host: Option<crate::script_host::ScriptHost>,
     /// v1.2.0 Workstream F4 — the EXPERIMENTAL wasm Lua engine (piccolo, behind
     /// the `script-wasm` feature). Same shape as the native `script` field but
     /// over the `rustynes_script_wasm` (piccolo) backend; loaded from the
@@ -798,6 +812,10 @@ impl App {
             script: None,
             #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
             script_draws: Vec::new(),
+            #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
+            tas_snapshot_revision: None,
+            #[cfg(all(feature = "script-ipc", not(target_arch = "wasm32")))]
+            script_host: None,
             #[cfg(all(feature = "script-wasm", target_arch = "wasm32"))]
             script_wasm: None,
             #[cfg(all(feature = "script-wasm", target_arch = "wasm32"))]
@@ -897,6 +915,10 @@ impl App {
             script: None,
             #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
             script_draws: Vec::new(),
+            #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
+            tas_snapshot_revision: None,
+            #[cfg(all(feature = "script-ipc", not(target_arch = "wasm32")))]
+            script_host: None,
             #[cfg(all(feature = "script-wasm", target_arch = "wasm32"))]
             script_wasm: None,
             #[cfg(all(feature = "script-wasm", target_arch = "wasm32"))]
@@ -3963,6 +3985,26 @@ impl App {
         // These reads don't need the emu lock, so resolve them first to keep
         // the lock window below tight (and non-reentrant).
         let netplay_locked = self.netplay.is_active() || self.ra_hardcore_blocks();
+
+        // v1.7.0 "Forge" Workstream B (B1) — push a read-only snapshot of the
+        // live TAStudio editor so the script's `tastudio.*` query API resolves
+        // against current editor state (the `set_symbols` host-push pattern).
+        // Built before borrowing `self.script` so the two `&self`/`&mut self`
+        // borrows don't overlap. Only rebuilt (and re-cloned) when the editor's
+        // edit revision moved or it opened/closed — an idle TAStudio costs no
+        // per-frame clone of the whole input log + lag vector + markers +
+        // branches; the engine retains the previously-pushed snapshot.
+        let editor_revision = self
+            .debugger
+            .as_ref()
+            .and_then(crate::debugger::DebuggerOverlay::tas_editor)
+            .map(crate::tastudio::TasEditor::revision);
+        if editor_revision != self.tas_snapshot_revision {
+            let tas_snapshot = Self::build_tas_snapshot(self.debugger.as_ref());
+            let engine = self.script.as_mut().expect("checked is_some");
+            engine.set_tas_snapshot(tas_snapshot);
+            self.tas_snapshot_revision = editor_revision;
+        }
         let engine = self.script.as_mut().expect("checked is_some");
 
         // Pump under ONE emu lock with the live Nes, collecting the outputs
@@ -3976,6 +4018,18 @@ impl App {
         // control application below reuses the EXACT same condition as
         // `emu.write` (T-110-E2). Every path that reaches the later read has run
         // through the block (the early `return` exits the whole function).
+        // v1.7.0 "Forge" E1 — feed back any host-fulfilled IPC results BEFORE
+        // the pump, so a script polling `comm.receive()` sees this frame's
+        // replies. The host (`script_host`) did the I/O off the emu lock; here
+        // we only move already-marshalled plain values into the engine. Done
+        // before the lock window so it never extends lock hold time.
+        #[cfg(feature = "script-ipc")]
+        if let Some(host) = self.script_host.as_ref() {
+            for result in host.drain_results() {
+                engine.push_comm_result(result);
+            }
+        }
+
         let writes_locked;
         {
             let mut guard = self.emu.lock();
@@ -3986,7 +4040,8 @@ impl App {
             let Some(nes) = guard.nes.as_mut() else {
                 return;
             };
-            // Determinism gate (same policy as the raw-RAM cheat path).
+            // Determinism gate (same policy as the raw-RAM cheat path). It also
+            // gates the new `comm.*` IPC + the `client.*` mutators identically.
             engine.set_writes_locked(writes_locked);
             // Enable the per-frame exec / access logs the registered callbacks
             // need. The exec log is independent of the Trace Logger panel's
@@ -4006,6 +4061,21 @@ impl App {
         let log = engine.drain_log();
         let controls = engine.drain_controls();
         let draws = engine.drain_draws();
+        // v1.7.0 "Forge" E2 — the `client.*` automation verbs this frame.
+        let clients = engine.drain_clients();
+        // v1.7.0 "Forge" E1 — the host-mediated `comm.*` IPC requests. The
+        // engine already dropped them at the source if `writes_locked`, so this
+        // is empty under a locked session; forward the rest to the host bridge,
+        // which owns the connection and does the I/O off this lock.
+        #[cfg(feature = "script-ipc")]
+        {
+            let comm = engine.drain_comm();
+            if let Some(host) = self.script_host.as_ref() {
+                for cmd in comm {
+                    host.submit(cmd);
+                }
+            }
+        }
 
         // Feed the console + stash the overlay draws (engine borrow ended).
         if let Some(dbg) = self.debugger.as_mut() {
@@ -4017,10 +4087,178 @@ impl App {
         }
         self.script_draws = draws;
 
+        // v1.7.0 "Forge" Workstream B (B1) — drain + apply the `tastudio.*`
+        // editor commands. They were already gated AT THE SOURCE (the script
+        // crate drops every mutator when `writes_locked`), so an empty drain
+        // under lock is the expected case; the host applies whatever the v1.6.0
+        // editor model supports.
+        let engine = self.script.as_mut().expect("checked is_some");
+        let tas_cmds = engine.drain_tas_commands();
+        if !tas_cmds.is_empty() {
+            self.apply_tas_commands(&tas_cmds);
+        }
+
         // Apply control commands (these `&mut self` methods re-lock the emu).
         // `writes_locked` is the same gate `emu.write` uses; SetInput honors it.
         for cmd in &controls {
             self.apply_script_control(cmd, writes_locked);
+        }
+
+        // v1.7.0 "Forge" E2 — apply the `client.*` automation verbs. The
+        // state-changing verbs (reboot / cheats) were already dropped at the
+        // source when locked; this re-checks `writes_locked` as defence in depth.
+        for cmd in &clients {
+            self.apply_script_client(cmd, writes_locked);
+        }
+    }
+
+    /// v1.7.0 "Forge" Workstream B (B1) — build the read-only `TAStudio` snapshot
+    /// the script's `tastudio.*` query API reads. Empty (editor not engaged)
+    /// when no editor session exists, so a script's `tastudio:engaged()` is
+    /// `false` and every query returns its `nil` / empty form.
+    #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
+    fn build_tas_snapshot(
+        debugger: Option<&crate::debugger::DebuggerOverlay>,
+    ) -> rustynes_script::TasSnapshot {
+        use rustynes_script::{TasBranchInfo, TasSnapshot};
+        let Some(editor) = debugger.and_then(crate::debugger::DebuggerOverlay::tas_editor) else {
+            return TasSnapshot::default();
+        };
+        // Per-frame lag verdicts for the played prefix (None reads back as
+        // `false`; a script bound-checks against `input_len`).
+        let lag: Vec<bool> = (0..editor.len())
+            .map(|f| editor.lag_at(f) == Some(true))
+            .collect();
+        let state_frames: Vec<usize> = editor.greenzone().cached_frames().collect();
+        let markers: Vec<(usize, String)> =
+            editor.markers().map(|(f, l)| (f, l.to_owned())).collect();
+        // The v1.6.0 `Branch` model has no annotation text yet, so `text` is
+        // empty (forward-compatible: `setbranchtext` is a documented host stub).
+        let branches: Vec<TasBranchInfo> = (0..editor.branch_count())
+            .filter_map(|i| editor.branch(i))
+            .map(|b| TasBranchInfo {
+                frame: b.frame,
+                text: String::new(),
+                input: b
+                    .input_log
+                    .iter()
+                    .map(|fi| (fi.p1.bits(), fi.p2.bits()))
+                    .collect(),
+            })
+            .collect();
+        TasSnapshot {
+            engaged: true,
+            // `recording` / `selection` are piano-roll UI concerns the v1.6.0
+            // editor model doesn't own; reported as the default until the model
+            // tracks them.
+            recording: false,
+            seek_frame: editor.cursor(),
+            selection: None,
+            lag,
+            state_frames,
+            markers,
+            branches,
+            input_len: editor.len(),
+        }
+    }
+
+    /// v1.7.0 "Forge" Workstream B (B1) — apply the drained `tastudio.*` editor
+    /// commands to the live `TasEditor`. Every command was already gated at the
+    /// source (dropped by the script crate under a locked session), so this
+    /// path runs only for an unlocked session. Edits re-seek the editor so the
+    /// `Nes` tracks the change (the same deterministic replay path the panel
+    /// uses). Commands the v1.6.0 editor model can't yet honour
+    /// (`SetRecording` / `SetLag` / `SetBranchText`) are accepted no-ops.
+    #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
+    fn apply_tas_commands(&mut self, cmds: &[rustynes_script::TasCmd]) {
+        use rustynes_core::Buttons;
+        use rustynes_script::TasCmd;
+        // Resolve any `setplayback(markerName)` targets to frames BEFORE taking
+        // the mutable editor borrow (avoids an immutable+mutable overlap).
+        let marker_targets: std::collections::HashMap<String, usize> = self
+            .debugger
+            .as_ref()
+            .and_then(crate::debugger::DebuggerOverlay::tas_editor)
+            .map(|ed| {
+                let wanted: std::collections::HashSet<&str> = cmds
+                    .iter()
+                    .filter_map(|c| match c {
+                        TasCmd::SetPlaybackMarker(name) => Some(name.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                ed.markers()
+                    .filter(|(_, l)| wanted.contains(l))
+                    .map(|(f, l)| (l.to_owned(), f))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut guard = self.emu.lock();
+        let Some(nes) = guard.nes.as_mut() else {
+            return;
+        };
+        let Some(editor) = self
+            .debugger
+            .as_mut()
+            .and_then(crate::debugger::DebuggerOverlay::tas_editor_mut)
+        else {
+            return;
+        };
+        // Batch `SetInput` edits: each `set_input` only invalidates the
+        // greenzone; the expensive deterministic replay is the `seek`. So we
+        // accumulate input edits and re-seek the cursor ONCE — either when a
+        // command that itself seeks intervenes (to preserve ordering) or at the
+        // end of the batch — instead of re-seeking per edit (the common
+        // `applyinputchanges` case stages a whole batch of `SetInput`s).
+        let mut input_dirty = false;
+        for cmd in cmds {
+            match cmd {
+                TasCmd::SetPlaybackFrame(f) => {
+                    input_dirty = false; // the explicit seek subsumes any pending edit re-seek.
+                    editor.seek(nes, *f);
+                }
+                TasCmd::SetPlaybackMarker(name) => {
+                    if let Some(&f) = marker_targets.get(name) {
+                        input_dirty = false;
+                        editor.seek(nes, f);
+                    }
+                }
+                TasCmd::SetMarker { frame, text } => editor.set_marker(*frame, text.clone()),
+                TasCmd::RemoveMarker(frame) => editor.remove_marker(*frame),
+                TasCmd::SetInput {
+                    frame,
+                    port,
+                    buttons,
+                } => {
+                    // Merge the edit into the frame's existing input for the
+                    // edited port (the script boundary already rejects any
+                    // `port > 1`; the match mirrors that defensively so an
+                    // out-of-range port can never silently apply to P2 here),
+                    // then mark the downstream state dirty for ONE re-seek.
+                    let mut input = editor.input_at(*frame).unwrap_or_default();
+                    let pad = Buttons::from_bits_truncate(*buttons);
+                    match *port {
+                        0 => input.p1 = pad,
+                        1 => input.p2 = pad,
+                        _ => continue, // unreachable past the boundary; ignore.
+                    }
+                    input_dirty |= editor.set_input(*frame, input);
+                }
+                TasCmd::LoadBranch(idx) => {
+                    input_dirty = false; // load_branch reseats the whole timeline.
+                    editor.load_branch(*idx, nes);
+                }
+                // No editor target in the v1.6.0 model: `SetRecording` /
+                // `SetLag` / `SetBranchText` are documented host stubs. The
+                // wildcard also absorbs them (and any future variant added
+                // script-side, since `TasCmd` is `#[non_exhaustive]`).
+                _ => {}
+            }
+        }
+        // Flush the batched input edits with a single deterministic re-seek.
+        if input_dirty {
+            let cursor = editor.cursor();
+            editor.seek(nes, cursor);
         }
     }
 
@@ -4312,6 +4550,14 @@ impl App {
                 return;
             }
         };
+        // v1.7.0 "Forge" Workstream B (B3) — point `emu.getScriptDataFolder()`
+        // at a sandboxed `scripts/` dir under the app data dir (created lazily by
+        // a script that writes there). The clean persist-without-arbitrary-FS
+        // path; never touches deterministic state.
+        if let Some(dir) = crate::config::Config::default_data_dir() {
+            let scripts = dir.join("scripts");
+            engine.set_script_data_folder(Some(scripts.display().to_string()));
+        }
         match engine.load(&src) {
             Ok(()) => {
                 let cbs = engine.frame_callback_count();
@@ -4324,6 +4570,13 @@ impl App {
                     }
                 }
                 self.script = Some(engine);
+                // v1.7.0 "Forge" E1 — spawn the host-mediated IPC bridge that
+                // owns the `comm.*` connections (off the emu lock). The Lua
+                // sandbox never gets a socket; the host marshals plain values.
+                #[cfg(feature = "script-ipc")]
+                {
+                    self.script_host = Some(crate::script_host::ScriptHost::new());
+                }
                 if let Some(dbg) = self.debugger.as_mut() {
                     let p = dbg.script_panel();
                     p.set_loaded(path.display().to_string(), cbs);
@@ -4460,6 +4713,94 @@ impl App {
                 }
                 if *port < 2 {
                     self.emu.lock().script_input_override[*port as usize] = Some(*buttons);
+                }
+            }
+            // v1.7.0 "Forge" Workstream B (B3) — `emu.takeScreenshot()`: write
+            // the current frame to a PNG (the host owns the encoder). A
+            // read-only side effect, so it is NOT write-gated.
+            ControlCmd::Screenshot => self.take_screenshot(),
+        }
+    }
+
+    /// v1.7.0 "Forge" Workstream E2 — apply one drained `client.*` automation
+    /// verb. Mirrors [`Self::apply_script_control`]: the host stays the single
+    /// owner of window / tool / capture / cheat state. The observational verbs
+    /// (open tool, screenshot, window size, speed, frameskip, A/V pause) are
+    /// presentation-only and never perturb the deterministic core; the
+    /// state-changing verbs (`reboot_core`, cheats) re-check `writes_locked` as
+    /// defence in depth — the engine already dropped them at the source when
+    /// locked (so a netplay / TAS / RA-hardcore session is provably unperturbed).
+    #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
+    fn apply_script_client(&mut self, cmd: &rustynes_script::ClientCmd, writes_locked: bool) {
+        use rustynes_script::ClientCmd;
+        match cmd {
+            ClientCmd::OpenTool(name) => {
+                let panel = match name.to_ascii_lowercase().as_str() {
+                    "cpu" => Some(crate::debugger::ChipPanel::Cpu),
+                    "ppu" => Some(crate::debugger::ChipPanel::Ppu),
+                    "oam" => Some(crate::debugger::ChipPanel::Oam),
+                    "apu" => Some(crate::debugger::ChipPanel::Apu),
+                    "memory" | "hex" => Some(crate::debugger::ChipPanel::Memory),
+                    "mapper" => Some(crate::debugger::ChipPanel::Mapper),
+                    "trace" => Some(crate::debugger::ChipPanel::Trace),
+                    "watch" => Some(crate::debugger::ChipPanel::Watch),
+                    "events" => Some(crate::debugger::ChipPanel::Events),
+                    "script" | "lua" => Some(crate::debugger::ChipPanel::Script),
+                    _ => None,
+                };
+                if let (Some(panel), Some(dbg)) = (panel, self.debugger.as_mut()) {
+                    dbg.open_chip_panel(panel);
+                }
+            }
+            ClientCmd::Screenshot => self.take_screenshot(),
+            ClientCmd::ScreenshotToClipboard => self.screenshot_to_clipboard(),
+            ClientCmd::SetWindowSize(scale) => self.set_window_scale(*scale),
+            ClientCmd::SpeedMode(pct) => {
+                // `pct` is a percentage (100 = realtime); `set_speed` clamps.
+                #[allow(clippy::cast_precision_loss)]
+                self.set_speed(*pct as f32 / 100.0);
+            }
+            ClientCmd::FrameSkip(n) => {
+                // RustyNES renders every frame (no frame-skip pipeline today);
+                // record the request rather than silently dropping it.
+                if let Some(dbg) = self.debugger.as_mut() {
+                    dbg.script_panel()
+                        .push_log([format!("[client.frameskip({n}) — not yet supported]")]);
+                }
+            }
+            ClientCmd::PauseAv | ClientCmd::UnpauseAv => {
+                // The A/V recorder is start/stop only (no pause); surface the
+                // intent without faking a capability.
+                if let Some(dbg) = self.debugger.as_mut() {
+                    dbg.script_panel()
+                        .push_log(["[client A/V pause — recorder is start/stop only]".to_string()]);
+                }
+            }
+            ClientCmd::RebootCore => {
+                if !writes_locked {
+                    self.do_power_cycle();
+                }
+            }
+            ClientCmd::AddCheat(code) => {
+                if !writes_locked {
+                    let mut guard = self.emu.lock();
+                    if let Some(nes) = guard.nes.as_mut()
+                        && let Err(e) = nes.add_genie_code(code)
+                    {
+                        drop(guard);
+                        if let Some(dbg) = self.debugger.as_mut() {
+                            dbg.script_panel()
+                                .push_log([format!("[client.addcheat {code} skipped: {e}]")]);
+                        }
+                    }
+                }
+            }
+            ClientCmd::RemoveCheat(code) => {
+                if !writes_locked {
+                    let mut guard = self.emu.lock();
+                    if let Some(nes) = guard.nes.as_mut() {
+                        nes.remove_genie_code(code);
+                    }
                 }
             }
         }

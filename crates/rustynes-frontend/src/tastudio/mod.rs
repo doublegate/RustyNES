@@ -220,6 +220,12 @@ pub struct TasEditor {
     /// Saved forkable timelines (A4). Each is a full project snapshot the user
     /// can branch off and return to.
     branches: Vec<Branch>,
+    /// Monotonic edit counter bumped on every mutation that changes a field a
+    /// [`crate::app`]-built `TasSnapshot` reads (input log, lag log, greenzone,
+    /// cursor, markers, branches). The script-host snapshot push reads it via
+    /// [`Self::revision`] to skip the per-frame clone of the whole editor when
+    /// nothing changed (an idle `TAStudio` costs no allocation).
+    revision: u64,
 }
 
 impl TasEditor {
@@ -239,7 +245,21 @@ impl TasEditor {
             lag_log: Vec::new(),
             markers: BTreeMap::new(),
             branches: Vec::new(),
+            revision: 0,
         }
+    }
+
+    /// Bump the snapshot-relevant edit counter (see [`Self::revision`]). Called
+    /// by every mutation a host-built `TasSnapshot` would observe.
+    const fn bump(&mut self) {
+        self.revision = self.revision.wrapping_add(1);
+    }
+
+    /// The current edit revision — a monotonic counter the host compares
+    /// frame-to-frame to decide whether to rebuild the (cloned) script snapshot.
+    #[must_use]
+    pub const fn revision(&self) -> u64 {
+        self.revision
     }
 
     /// Record frame `f`'s lag verdict from the core's poll flag (called right
@@ -250,6 +270,7 @@ impl TasEditor {
             self.lag_log.resize(f + 1, false);
         }
         self.lag_log[f] = !nes.was_input_polled_this_frame();
+        self.bump();
     }
 
     /// Create an editor seeded from an existing input log (e.g. a loaded `.rnm`
@@ -263,6 +284,7 @@ impl TasEditor {
     ) -> Self {
         let mut editor = Self::new(nes, budget_bytes, capture_interval);
         editor.input_log = inputs;
+        editor.bump();
         editor
     }
 
@@ -321,6 +343,7 @@ impl TasEditor {
     pub fn set_marker(&mut self, frame: usize, label: impl Into<String>) {
         self.markers.insert(frame, label.into());
         self.greenzone.add_anchor(frame);
+        self.bump();
     }
 
     /// Remove the marker at `frame` (dropping its greenzone anchor unless it is
@@ -328,6 +351,7 @@ impl TasEditor {
     pub fn remove_marker(&mut self, frame: usize) {
         if self.markers.remove(&frame).is_some() {
             self.greenzone.remove_anchor(frame);
+            self.bump();
         }
     }
 
@@ -391,6 +415,7 @@ impl TasEditor {
             markers: self.markers.clone(),
             state: nes.snapshot(),
         });
+        self.bump();
         self.branches.len() - 1
     }
 
@@ -410,6 +435,7 @@ impl TasEditor {
     pub fn delete_branch(&mut self, idx: usize) {
         if idx < self.branches.len() {
             self.branches.remove(idx);
+            self.bump();
         }
     }
 
@@ -442,6 +468,7 @@ impl TasEditor {
         for f in marker_frames {
             self.greenzone.add_anchor(f);
         }
+        self.bump();
         true
     }
 
@@ -518,6 +545,7 @@ impl TasEditor {
         }
         self.lag_log.clear();
         self.cursor = 0;
+        self.bump();
         Ok(())
     }
 
@@ -540,6 +568,7 @@ impl TasEditor {
         // so drop the lag log from `frame` onward too.
         self.greenzone.invalidate_after(frame);
         self.lag_log.truncate(frame);
+        self.bump();
         true
     }
 
@@ -551,6 +580,7 @@ impl TasEditor {
         self.greenzone.invalidate_after(at.saturating_sub(1));
         self.lag_log.truncate(at);
         self.shift_markers(at, 1);
+        self.bump();
     }
 
     /// Delete the frame at `frame`, shifting later inputs up by one. No-op past
@@ -562,6 +592,7 @@ impl TasEditor {
             self.lag_log.truncate(frame);
             self.shift_markers(frame, -1);
             self.cursor = self.cursor.min(self.input_log.len());
+            self.bump();
         }
     }
 
@@ -601,6 +632,7 @@ impl TasEditor {
             }
         }
         self.cursor = target;
+        self.bump();
     }
 
     /// Append `input` as the next frame and advance `nes` one frame by it
@@ -665,6 +697,37 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    /// Review finding — the edit `revision` bumps on every snapshot-relevant
+    /// mutation and stays put when nothing changed, so the host can skip the
+    /// per-frame snapshot rebuild for an idle editor.
+    #[test]
+    fn revision_tracks_snapshot_relevant_mutations() {
+        let mut nes = Nes::from_rom(&synth_nrom()).unwrap();
+        nes.power_cycle();
+        let mut ed = TasEditor::new(&nes, 1 << 20, 16);
+
+        let r0 = ed.revision();
+        // A real edit bumps.
+        assert!(ed.set_input(0, FrameInput::new(Buttons::A, Buttons::empty())));
+        let r1 = ed.revision();
+        assert!(r1 > r0, "set_input must bump the revision");
+
+        // A no-op set_input (same value) does NOT bump.
+        assert!(!ed.set_input(0, FrameInput::new(Buttons::A, Buttons::empty())));
+        assert_eq!(ed.revision(), r1, "an unchanged set_input must not bump");
+
+        // A marker edit bumps; a no-op removemarker does not.
+        ed.set_marker(0, "start");
+        let r2 = ed.revision();
+        assert!(r2 > r1);
+        ed.remove_marker(999); // unmarked frame -> no-op
+        assert_eq!(ed.revision(), r2, "a no-op removemarker must not bump");
+
+        // A seek bumps (cursor / greenzone / lag can change).
+        ed.seek(&mut nes, 1);
+        assert!(ed.revision() > r2, "seek must bump the revision");
     }
 
     #[test]

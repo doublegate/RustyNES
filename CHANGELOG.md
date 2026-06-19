@@ -17,6 +17,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **v1.7.0 "Forge" Workstream E — host IPC / automation (RustyNES as a
+  platform).** The power-user tier (modelled on BizHawk's `comm` / `client` /
+  `userdata` libraries) that turns RustyNES into a host for external bots / RL
+  agents / randomizers / stream tools — its determinism is a selling point for
+  reproducible RL episodes. All additive; AccuracyCoin holds **100% (139/139)**
+  and the core synthesis never sees any of it. New ADR 0016 records the
+  host-mediated IPC security posture; `docs/scripting.md` documents the three
+  tables.
+  - **E1 — host-mediated `comm.*` IPC** (`crates/rustynes-frontend/src/script_host.rs`,
+    behind a NEW off-by-default `script-ipc` feature; requires `scripting`). TCP
+    (`comm.socketServerSend`), HTTP (`comm.httpGet` / `httpPost`), WebSocket
+    (`comm.ws_open` / `ws_send` / `ws_close`), and a memory-mapped-file bridge
+    (`comm.mmfWrite` / `mmfRead`), with `comm.receive()` polling the host-fulfilled
+    results. The defining contract: **the Lua sandbox never gets a raw socket** —
+    the script only queues a marshalled `CommCmd`, and the host (`ScriptHost`)
+    owns every connection and does the I/O **off the emulator lock** on a worker
+    thread, feeding plain `CommResult` values back. The no-`io`/`os`/`package`/net
+    sandbox guarantee is preserved even with IPC on. IPC is a new
+    non-deterministic source, so every `comm.*` verb is **gated like `emu.write`**
+    (`set_writes_locked` + RA-hardcore): dropped at the source under netplay / TAS
+    replay or record / RA-hardcore, so no `CommCmd` is queued and the host opens
+    no connection. Off by default → the shipped / native-default / `no_std` / wasm
+    builds are byte-identical. Pulls no new dependency into `rustynes-script`
+    (reuses the frontend's existing native-only `ureq` for HTTP; TCP + the
+    in-process MMF bridge use `std`). The full WebSocket client + an OS
+    shared-memory MMF backing are documented maintainer follow-ups.
+  - **E2 — `client.*` host-automation verbs** (`crates/rustynes-script` `client`
+    table + `App::apply_script_client`; ships with the base `scripting` surface,
+    no feature gate). `opentool`, `screenshot` / `screenshottoclipboard`,
+    `setwindowsize`, `speedmode` / `frameskip`, `reboot_core`, `pause_av` /
+    `unpause_av`, `addcheat` / `removecheat`. Collected (never applied inline)
+    and drained by the host; the state-changing verbs (`reboot_core`, cheats) are
+    gated like `emu.write` (dropped under a locked session), the observational
+    verbs are presentation-only and never perturb the deterministic core.
+  - **E3 — `userdata.*` persisted KV store** (`crates/rustynes-script` `userdata`
+    table). A per-script string→string store (`set` / `get` / `containskey` /
+    `remove` / `keys`) the host can snapshot/restore across runs (and into
+    save-states). Script-local host memory, never emulator state, so it is not
+    write-gated. (A SQLite-backed store is a documented later option, not in this
+    pass.)
+
 - **v1.7.0 "Forge" Workstream A — editing-capable debugger tools (the
   read-only → writable leap).** The inspect-only PPU/OAM panels become a
   creator/RE workbench; all writeback is `debug-hooks`-gated and routes through
@@ -46,6 +87,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `BNE $C010`) at a target address into the gated work-RAM poke path. The
     opcode-encoding table is **derived at runtime from the canonical
     disassembler**, so it can never drift from the CPU core's decode.
+
+- **v1.7.0 "Forge" Workstream B — scriptable TAStudio + full Lua API parity.**
+  The v1.6.0 piano-roll editor becomes *programmable* and the Mesen2 Lua surface
+  is rounded out. All native-only, behind `scripting`; **byte-identical with
+  `scripting` off** (the shipped / wasm / `no_std` builds don't pull
+  `rustynes-script`), AccuracyCoin **100% (139/139)** held. Every mutator gates
+  IDENTICALLY to `emu.write` — a silent no-op under netplay / TAS replay /
+  RA-hardcore (`set_writes_locked`), proven by per-item gating tests.
+  - **B1 — the `tastudio.*` Lua control API** (BizHawk `TAStudioLuaLibrary`
+    model). Queries (`engaged` / `getrecording` / `getseekframe` /
+    `getselection` / `islag` / `hasstate` / `getmarker` / `getbranches` /
+    `getbranchtext` / `getbranchinput`) read a per-frame read-only editor
+    snapshot the host pushes (the `set_symbols` pattern); mutators
+    (`setrecording` / `togglerecording` / `setplayback(frame|marker)` /
+    `setlag` / `setmarker` / `removemarker` / `submitinputchange` +
+    `applyinputchanges` atomic-edit batch / `loadbranch` / `setbranchtext`)
+    queue a gated `TasCmd` the host drains and applies to the live `TasEditor`.
+    Self-contained in `crates/rustynes-script/src/tastudio.rs`.
+  - **B2 — `tastudio` analysis-canvas callbacks.** `onqueryitembg|text|icon`
+    (per-cell colour / text / icon — pure overlay) + `clearIconCache`, and the
+    observational `ongreenzoneinvalidated(fn)` / `onbranchload(fn)`. The host
+    queries via `ScriptEngine::query_tas_cell` and fires the events through
+    `fire_greenzone_invalidated` / `fire_branch_load`.
+  - **B3 — full Lua API parity** (Mesen2). `emu.getScreenBuffer()` /
+    `getPixel(x,y)` (read the RGBA frame) + the gated, output-only
+    `emu:setScreenBuffer(t)`; the full `emu.addEventCallback(fn, type)` enum
+    (`nmi`/`irq`/`startFrame`/`endFrame`/`inputPolled`/`stateLoaded`/`stateSaved`);
+    the **value-modifying** `emu.addMemoryCallback(fn, "write", start[, end])`
+    (returns a replacement byte, poked back through the gated path — a scriptable
+    cheat/watchpoint); the structured `emu:getState()` / gated `emu:setState(t)`
+    CPU-register map; `emu.takeScreenshot()` (host PNG write, read-only); and the
+    sandboxed `emu.getScriptDataFolder()`. New gated core hooks
+    `Nes::debug_set_framebuffer` (+ `Bus`/`Ppu`) and `Nes::debug_set_cpu_state`
+    (`debug-hooks`), reached only through the gated post-frame script path.
 
 - **Mapper breadth 150 → 168 families** (v1.7.0 "Forge" Workstream G1 — next
   reusable-ASIC BMC/pirate cores, `crates/rustynes-mappers/src/sprint12.rs`). 18
@@ -161,6 +236,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     rewriting the entire ROM file just to inspect or edit the header.
 
 ### Fixed
+
+- **v1.7.0 beta.3 review — scriptable-TAStudio + host-IPC robustness** (all
+  additive / off the default path; `scripting` / `script-ipc` stay byte-identical
+  off; AccuracyCoin holds **100% (139/139)**):
+  - **Host IPC never hangs the worker.** The outbound `comm.socketServerSend` TCP
+    socket now connects with a bounded `TcpStream::connect_timeout` (2 s) and
+    backs off reconnects to a dead/unreachable endpoint (5 s), so a script
+    spamming sends can no longer stall the IPC worker thread on a blocking
+    `connect`.
+  - **Batched TAStudio input edits re-seek once.** `App::apply_tas_commands` now
+    accumulates `SetInput` edits and performs the expensive deterministic re-seek
+    a single time at the end of the batch (the `applyinputchanges` case), instead
+    of once per edit.
+  - **Idle TAStudio costs no per-frame clone.** The host now pushes a rebuilt
+    `TasSnapshot` only when the editor's new `TasEditor::revision()` edit-counter
+    moves (or it opens/closes); an idle editor no longer clones its input log,
+    lag vector, markers, and branches every frame.
+  - **Port validation at the script boundary.** `tastudio.submitinputchange` and
+    `emu.setInput` now reject a controller port outside `{0, 1}` with a clear Lua
+    error (the host treated any `port != 0` as P2), and the host-side
+    `TasCmd::SetInput` mapping mirrors the rule defensively.
+  - **Bounded `emu.addMemoryCallback` range.** The value-modifying write callback
+    now rejects a range wider than 4096 addresses (it registered one Lua registry
+    key per address, so a 64K span allocated 64K entries); a whole-RAM watch
+    belongs on the observational `onWrite` hook.
+  - **No double-borrow in `tastudio.query_cell`.** The cell-query callbacks are
+    resolved into owned handles before any Lua runs, so a callback that registers
+    another no longer double-borrow-panics (matching `fire_event`).
+  - **Gate-first short-circuit + minor cleanups.** The value-modifying-write
+    replay now checks `!writes_locked` first (skipping the whole loop and its
+    callback work under a locked session); `Nes::debug_set_cpu_state` drops a
+    pointless `const`; and the `TasSnapshot::lag` doc clarifies the dense-`bool`
+    field vs. the tri-state `tastudio.islag` Lua return.
 
 - **v1.7.0 beta.2 review — debugger-tooling robustness** (frontend-only;
   AccuracyCoin holds **100% (139/139)**):

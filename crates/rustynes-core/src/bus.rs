@@ -1087,6 +1087,14 @@ impl LockstepBus {
         self.ppu.framebuffer()
     }
 
+    /// v1.7.0 "Forge" Workstream B (B3) — overwrite the RGBA8 output framebuffer
+    /// (the Lua `emu:setScreenBuffer`). Output-only; see
+    /// [`rustynes_ppu::Ppu::debug_set_framebuffer`]. `debug-hooks`-gated.
+    #[cfg(feature = "debug-hooks")]
+    pub fn debug_set_framebuffer(&mut self, rgba: &[u8]) {
+        self.ppu.debug_set_framebuffer(rgba);
+    }
+
     /// Borrow the parallel palette-index framebuffer (256x240 `u16`s) for the
     /// `NES_NTSC` composite filter. See [`rustynes_ppu::Ppu::index_framebuffer`].
     #[must_use]

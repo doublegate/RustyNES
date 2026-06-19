@@ -32,7 +32,11 @@
 
 use rustynes_core::Nes;
 
-use crate::types::{ControlCmd, DrawCmd, ScriptError};
+use crate::types::{
+    ClientCmd, ControlCmd, DrawCmd, ScriptError, TasCellDecor, TasCmd, TasSnapshot,
+};
+#[cfg(feature = "script-ipc")]
+use crate::types::{CommCmd, CommResult};
 
 /// The host-facing contract a Lua VM backend fulfils.
 ///
@@ -101,4 +105,98 @@ pub trait VmBackend: Sized {
 
     /// Number of registered `onFrame` callbacks (for the host UI / tests).
     fn frame_callback_count(&self) -> usize;
+
+    // ---- v1.7.0 "Forge" Workstream B — scriptable TAStudio + Lua parity ----
+    //
+    // These extend the contract with the `tastudio.*` namespace (B1/B2) and the
+    // Mesen2-parity surface (B3). They all carry a default that suits a backend
+    // that does NOT host the dev/TAS surface (the experimental piccolo wasm
+    // backend), exactly like `set_symbols`: the native mlua backend overrides
+    // them, piccolo inherits the no-ops (the same native-only carve-out as the
+    // per-access / per-interrupt callbacks; ADR 0012).
+
+    /// B1 — push a read-only snapshot of the host's live `TAStudio` editor so
+    /// the `tastudio.*` query API resolves against current editor state. The
+    /// host pushes this each frame before [`VmBackend::on_frame`]. No-op default.
+    fn set_tas_snapshot(&self, _snapshot: TasSnapshot) {}
+
+    /// B1 — drain the `TAStudio` editor actions a script requested this frame
+    /// (`tastudio.*` mutators). The host applies + gates them. Empty default.
+    fn drain_tas_commands(&self) -> Vec<TasCmd> {
+        Vec::new()
+    }
+
+    /// B2 — query the per-cell decoration a script's `onqueryitem*` callbacks
+    /// produce for piano-roll cell `(frame, column)`. Returns the default
+    /// (no decoration) unless a backend hosts the callbacks. `column` is the
+    /// host's grid column index (0 = frame#, 1 = P1 buttons, ...).
+    ///
+    /// # Errors
+    /// Returns [`ScriptError`] if a callback raises.
+    fn query_tas_cell(&self, _frame: usize, _column: u32) -> Result<TasCellDecor, ScriptError> {
+        Ok(TasCellDecor::default())
+    }
+
+    /// B2 — clear the icon cache (`tastudio.clearIconCache()` requested it).
+    /// Returns whether a script asked to clear it since the last drain.
+    fn take_clear_icon_cache(&self) -> bool {
+        false
+    }
+
+    /// B2 — invoke the registered `ongreenzoneinvalidated(fn)` callbacks,
+    /// passing the first invalidated frame. The host calls this after an edit.
+    ///
+    /// # Errors
+    /// Returns [`ScriptError`] if a callback raises.
+    fn fire_greenzone_invalidated(&self, _first_frame: usize) -> Result<(), ScriptError> {
+        Ok(())
+    }
+
+    /// B2 — invoke the registered `onbranchload(fn)` callbacks, passing the
+    /// loaded branch index. The host calls this after a branch loads.
+    ///
+    /// # Errors
+    /// Returns [`ScriptError`] if a callback raises.
+    fn fire_branch_load(&self, _index: usize) -> Result<(), ScriptError> {
+        Ok(())
+    }
+
+    /// B3 — `true` if any `tastudio.onqueryitem*` callback is registered, so the
+    /// host knows to call [`VmBackend::query_tas_cell`] while painting the grid.
+    fn needs_tas_cell_query(&self) -> bool {
+        false
+    }
+
+    /// B3 — set the per-script sandboxed data directory returned by
+    /// `emu.getScriptDataFolder()` (`None` clears it). No-op default.
+    fn set_script_data_folder(&self, _path: Option<String>) {}
+
+    /// v1.7.0 "Forge" E2 — drain the `client.*` automation verbs requested this
+    /// frame. The default empties nothing (a backend that does not host the
+    /// `client` table, e.g. the experimental piccolo backend).
+    fn drain_clients(&self) -> Vec<ClientCmd> {
+        Vec::new()
+    }
+
+    /// v1.7.0 "Forge" E1 — drain the host-mediated `comm.*` IPC requests issued
+    /// this frame. Default empty (the `comm` table is mlua-only + `script-ipc`).
+    #[cfg(feature = "script-ipc")]
+    fn drain_comm(&self) -> Vec<CommCmd> {
+        Vec::new()
+    }
+
+    /// v1.7.0 "Forge" E1 — deliver a host-fulfilled [`CommResult`] back to the
+    /// engine (surfaced to the script via `comm.receive()`). Default no-op.
+    #[cfg(feature = "script-ipc")]
+    fn push_comm_result(&self, _result: CommResult) {}
+
+    /// v1.7.0 "Forge" E3 — snapshot the `userdata.*` KV store (sorted by key).
+    /// Default empty (a backend without the `userdata` table).
+    fn userdata_snapshot(&self) -> Vec<(String, String)> {
+        Vec::new()
+    }
+
+    /// v1.7.0 "Forge" E3 — restore the `userdata.*` KV store from a snapshot.
+    /// Default no-op.
+    fn userdata_restore(&self, _pairs: &[(String, String)]) {}
 }
