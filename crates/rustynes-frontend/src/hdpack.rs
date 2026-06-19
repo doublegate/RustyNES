@@ -2364,9 +2364,8 @@ mod tests {
 
         // Now zero the CHR at that address: the live hash no longer matches the
         // rule key, so the cell falls through to the (black) original.
-        let mut chr2 = vec![0u8; 0x2000];
+        let chr2 = vec![0u8; 0x2000];
         // (chr2 already all-zero -> a different CRC than `key`.)
-        let _ = &mut chr2;
         let peek2 = |addr: u16| chr2.get((addr & 0x1FFF) as usize).copied().unwrap_or(0);
         let out = comp.composite(&fb, &ts, &WatchedMemory::new(), peek2);
         assert_eq!(
