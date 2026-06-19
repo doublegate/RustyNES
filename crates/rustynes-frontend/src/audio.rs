@@ -107,6 +107,17 @@ struct QueueInner {
     underruns: AtomicU64,
     /// Set by the first `push`; gates underrun counting.
     started: AtomicBool,
+    /// v1.7.1 — explicit frontend-pause flag (sticky). When set, the cpal
+    /// callback plays silence WITHOUT consuming the ring AND without running
+    /// the `avail >= start_threshold` auto-reopen, so the buffered tail is
+    /// preserved across a pause instead of drained. Independent of `playing`:
+    /// in steady-state native playback the ring is typically full at the
+    /// instant of a pause (`avail >= start_threshold`), so without this flag
+    /// the next callback would immediately re-open the start-gate and keep
+    /// draining the tail — defeating the pause gate (#152 review). Cleared on
+    /// resume so the normal threshold-gated startup resumes with the tail
+    /// intact (zero underrun on resume).
+    paused: AtomicBool,
     /// Start-gate: the callback plays silence (without consuming) until the
     /// queue holds at least `start_threshold` samples, then flips this on;
     /// a true underrun flips it back off so playback resumes only after the
@@ -187,6 +198,7 @@ impl SampleQueue {
                 overrun_dropped: AtomicU64::new(0),
                 underruns: AtomicU64::new(0),
                 started: AtomicBool::new(false),
+                paused: AtomicBool::new(false),
                 playing: AtomicBool::new(false),
                 start_threshold: AtomicUsize::new(0),
                 gain: AtomicU64::new(u64::from(1.0f32.to_bits())),
@@ -384,6 +396,19 @@ impl SampleQueue {
         let tail = self.inner.tail.load(Ordering::Acquire);
         let avail = tail.wrapping_sub(head);
 
+        // v1.7.1 (#152 review) — an explicit frontend pause takes precedence
+        // over the `playing`/`start_threshold` startup-buffering logic: output
+        // silence WITHOUT consuming the ring and WITHOUT running the
+        // `avail >= start_threshold` auto-reopen, so the buffered tail is
+        // preserved (not drained) while paused. In steady-state native playback
+        // the ring is typically full at the instant of a pause, so `avail`
+        // already meets the threshold — without this short-circuit the next
+        // callback would re-open the start-gate and keep draining the tail.
+        if self.inner.paused.load(Ordering::Relaxed) {
+            out.fill(0.0);
+            return 0;
+        }
+
         if !self.inner.playing.load(Ordering::Relaxed) {
             let threshold = self.inner.start_threshold.load(Ordering::Relaxed);
             if avail >= threshold && (avail > 0 || threshold == 0) {
@@ -458,20 +483,39 @@ impl SampleQueue {
             .fetch_add(n as u64, Ordering::Relaxed);
     }
 
-    /// v1.7.1 — re-gate the start-gate for a frontend pause.
+    /// v1.7.1 — engage the sticky pause gate for a frontend pause.
     ///
-    /// While emulation is paused the producer stops pushing, so the cpal
-    /// callback would drain the ring and, on the first short fill, count one
-    /// (sticky) underrun and re-gate anyway — the spurious "one underrun on
-    /// resume" seen in the perf logs. Closing the gate here makes the callback
-    /// play silence *without* consuming the already-buffered tail, so the ring
-    /// is not drained-then-starved: there is no short fill, no underrun, and on
-    /// resume the gate re-opens once the producer has refilled to the start
-    /// threshold. Lock-free and idempotent; a no-op effect when never pausing,
-    /// so steady-state playback is byte-identical. Pause is a pure frontend
+    /// While emulation is paused the producer stops pushing. The earlier fix
+    /// only cleared `playing`, but [`Self::pop_or_silence`] re-opens the
+    /// start-gate whenever `avail >= start_threshold`, and in steady-state
+    /// native playback the ring is typically full at the instant of a pause —
+    /// so the very next cpal callback re-opened the gate and kept *draining*
+    /// the buffered tail, defeating the pause gate and still producing the
+    /// underrun on resume that it was meant to prevent (#152 review).
+    ///
+    /// Setting an explicit, sticky `paused` flag makes the callback play
+    /// silence *without* consuming the already-buffered tail and *without*
+    /// running the threshold auto-reopen, so the ring is preserved rather than
+    /// drained-then-starved: there is no short fill, no underrun, and on resume
+    /// (see [`Self::resume_from_pause`]) the gate re-opens once the producer
+    /// has refilled to the start threshold — with the tail intact. We also
+    /// clear `playing` so resume always re-runs the clean threshold-gated
+    /// startup. Lock-free and idempotent; a no-op effect when never pausing, so
+    /// steady-state playback is byte-identical. Pause is a pure frontend
     /// concept (no core determinism surface).
     pub fn gate_for_pause(&self) {
+        self.inner.paused.store(true, Ordering::Relaxed);
         self.inner.playing.store(false, Ordering::Relaxed);
+    }
+
+    /// v1.7.1 — clear the sticky pause gate on resume (see
+    /// [`Self::gate_for_pause`]). With `paused` cleared the normal
+    /// `playing`/`start_threshold` startup-buffering logic takes over again, so
+    /// playback re-opens cleanly once the producer has refilled to the start
+    /// threshold — with the buffered tail preserved across the pause (zero
+    /// underrun on resume). Lock-free and idempotent.
+    pub fn resume_from_pause(&self) {
+        self.inner.paused.store(false, Ordering::Relaxed);
     }
 }
 
@@ -1154,31 +1198,60 @@ mod tests {
 
     #[test]
     fn gate_for_pause_holds_buffer_and_avoids_underrun() {
-        // v1.7.1 — pausing must NOT drain-then-starve the ring. After
-        // `gate_for_pause`, the callback plays silence WITHOUT consuming the
-        // buffered tail and WITHOUT counting an underrun, then re-opens once
-        // the producer refills to the threshold on resume.
+        // v1.7.1 (#152 review) — the sticky pause gate must take precedence over
+        // the `avail >= start_threshold` auto-reopen. This reproduces the exact
+        // steady-state condition the reviewers flagged: the ring is FULLER than
+        // the start threshold at the instant of the pause, so a non-sticky
+        // `playing = false` would be immediately re-opened by `pop_or_silence`
+        // and keep draining the buffered tail. With the sticky `paused` flag the
+        // callback returns silence WITHOUT consuming and WITHOUT counting an
+        // underrun; occupancy is unchanged across repeated paused callbacks.
         let q = SampleQueue::with_capacity(256);
         q.set_start_threshold(8);
-        q.push(&[1.0; 8]);
+        q.push(&[1.0; 16]); // 16 buffered; threshold is 8
         let mut out = [0.0f32; 4];
-        // Gate opens, plays normally.
+        // Gate opens, plays normally; 12 remain, still >= threshold (8).
         assert_eq!(q.pop_or_silence(&mut out), 4);
         assert!(out.iter().all(|&s| s == 1.0));
         assert_eq!(q.underruns(), 0);
-        // Pause: re-gate. The remaining 4 buffered samples are preserved and
-        // the next callback plays silence without consuming or counting an
-        // underrun (vs. the old drain-then-short-fill that ticked one).
+        let buffered = q.len();
+        assert!(
+            buffered >= 8,
+            "precondition: avail ({buffered}) >= start_threshold (8) at pause time"
+        );
+
+        // Pause: engage the sticky gate. Several callbacks while paused must each
+        // return silence and consume NOTHING — even though avail >= threshold the
+        // whole time (the defeat the reviewers found). Occupancy is invariant.
         q.gate_for_pause();
         let mut paused_out = [9.0f32; 4];
-        assert_eq!(q.pop_or_silence(&mut paused_out), 0);
-        assert!(paused_out.iter().all(|&s| s == 0.0));
-        assert_eq!(q.len(), 4, "buffered tail preserved across pause");
+        for _ in 0..3 {
+            assert_eq!(
+                q.pop_or_silence(&mut paused_out),
+                0,
+                "paused callback must not consume"
+            );
+            assert!(
+                paused_out.iter().all(|&s| s == 0.0),
+                "paused callback must output silence"
+            );
+            assert_eq!(
+                q.len(),
+                buffered,
+                "buffered tail preserved unchanged across paused callbacks"
+            );
+        }
         assert_eq!(q.underruns(), 0, "pause must not count an underrun");
-        // Resume: producer refills past the threshold, gate re-opens cleanly.
-        q.push(&[2.0; 4]); // now 8 buffered >= threshold
+
+        // Resume: clear the sticky gate. The buffered tail is intact, so the
+        // normal threshold-gated startup re-opens immediately (avail >=
+        // threshold) and plays the PRESERVED samples — zero underrun on resume.
+        q.resume_from_pause();
         assert_eq!(q.pop_or_silence(&mut out), 4);
-        assert!(out.iter().all(|&s| s == 1.0));
+        assert!(
+            out.iter().all(|&s| s == 1.0),
+            "resume plays the preserved buffered tail"
+        );
         assert_eq!(q.underruns(), 0, "clean pause/resume = zero underruns");
     }
 

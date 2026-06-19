@@ -5496,16 +5496,24 @@ impl App {
             return;
         }
         self.ui.paused = paused;
-        // v1.7.1 — when pausing, re-gate the audio ring so the cpal callback
-        // plays silence WITHOUT draining the buffered tail. Otherwise the
-        // producer stops pushing, the ring drains, and the first short fill
-        // counts one (sticky) underrun + re-gates anyway — the spurious "one
-        // underrun on resume" from the perf logs. On resume the start-gate
-        // re-opens once the producer refills to the threshold. No-op effect
-        // when never pausing, so steady-state playback is byte-identical.
+        // v1.7.1 — engage a sticky audio pause gate so the cpal callback plays
+        // silence WITHOUT draining the buffered tail. Otherwise the producer
+        // stops pushing while the callback keeps consuming: the ring drains and
+        // the first short fill counts one (sticky) underrun — the spurious "one
+        // underrun on resume" from the perf logs. The gate is sticky because
+        // `pop_or_silence` would otherwise re-open the start-gate the instant
+        // `avail >= start_threshold` (true in steady state at pause time) and
+        // keep draining (#152 review). On resume we clear the gate so the
+        // normal threshold-gated startup re-opens once the producer has
+        // refilled — with the buffered tail intact. No-op effect when never
+        // pausing, so steady-state playback is byte-identical.
         #[cfg(not(target_arch = "wasm32"))]
-        if paused && let Some(audio) = self.audio.as_ref() {
-            audio.queue.gate_for_pause();
+        if let Some(audio) = self.audio.as_ref() {
+            if paused {
+                audio.queue.gate_for_pause();
+            } else {
+                audio.queue.resume_from_pause();
+            }
         }
         #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
         if let Some(thread) = self.emu_thread.as_ref() {
