@@ -91,6 +91,7 @@ platform for NES emulation.
 | **A/V Recording** *(v1.6.0)* | Synchronized video + audio capture to `.mp4` / `.mkv` via an `ffmpeg` pipe (default-off `av-record`, output-only) |
 | **HD Audio** *(v1.6.0)* | HD-pack `<bgm>` / `<sfx>` OGG tracks triggered through the `$4100` register, mixed on top of the produced APU buffer (default-off `hd-pack`) |
 | **Shader Ecosystem** *(v1.6.0)* | LMP88959 NTSC/PAL, hqNx / xBRZ upscalers, and a constrained `.slangp` / `.cgp` preset import on the composable ShaderStack |
+| **Writable + Programmable** *(v1.7.0)* | Editing-capable debug tools (palette / nametable / CHR / OAM writeback, an iNES / NES 2.0 header editor, an inline 6502 assembler), a scriptable `tastudio.*` Lua API, host IPC automation (`script-ipc`), `.dbg` source maps, Zwinder tiered rewind, audio depth (stereo / reverb / 20-band EQ), web parity, and an i18n framework |
 | **Pure Rust**          | `winit` + `wgpu` + `cpal` + `egui` frontend; safe `no_std + alloc` chip stack                 |
 
 <p align="center">
@@ -173,8 +174,9 @@ gameplay frames spanning the bulk of the 168 mapper families.
   surface: a per-frame button-grid with drag-paint editing, a save-state **greenzone**
   for instant deterministic seeking, a **lag log**, named **markers**, **forkable
   branches**, and `.rnmproj` project files.
-- **Movie interop** *(v1.6.0)* — import and export FCEUX `.fm2` and BizHawk `.bk2`
-  movies to and from the native `.rnm` format, so RustyNES interoperates with the wider
+- **Movie interop** *(v1.6.0+)* — import and export FCEUX `.fm2` and BizHawk `.bk2`
+  movies to and from the native `.rnm` format; v1.7.0 widens import to `.fcm` / `.fmv` /
+  `.vmv` (and hashes the `.fm2` / `.bk2` exports), so RustyNES interoperates with the wider
   TAS ecosystem.
 - **Save state + rewind** — a 600-frame rewind ring, instant save / load, and a
   snapshot fast path used by run-ahead, plus a thumbnail save-state manager.
@@ -185,7 +187,8 @@ gameplay frames spanning the bulk of the 168 mapper families.
 - **Display-sync pacing + lock-free audio** — an `auto` / `display` / `vrr` /
   `wallclock` pacing matrix ends display-beat judder; a lock-free SPSC audio ring with
   dynamic rate control keeps audio clean and underrun-free; master volume,
-  per-APU-channel mutes, and a **5-band graphic equalizer** round out the audio mixer.
+  per-APU-channel mutes, and a graphic equalizer (selectable **5-band** or
+  **20-band ISO third-octave**) round out the audio mixer.
 - **Video filters** *(v1.1.0)* — a full **NES_NTSC composite / S-video** filter, a
   **CRT / scanline** shader pass (curvature, scanlines, aperture mask), and
   **custom `.pal` palette** loading, layered on the existing 8:7 pixel-aspect + overscan
@@ -196,13 +199,20 @@ gameplay frames spanning the bulk of the 168 mapper families.
   **Lua 5.4** engine: read / write memory, inspect CPU state, react to per-frame /
   per-access events, draw an HUD overlay, and drive control actions. v1.6.0 adds
   **movie driving** (`emu.run` / `emu.frameadvance` to step the emulator from a script)
-  and **data breadth** (named memory domains, sized reads, and a `joypad` table). See
-  [`docs/scripting.md`](docs/scripting.md).
-- **Cheats and input devices** — Game Genie and raw RAM cheats, input devices
-  (standard pad, Four Score, Arkanoid Vaus, Zapper, and the **Power Pad**),
-  **turbo / autofire** with an **input-display overlay**, a **per-game database** of
-  nametable-mirroring overrides, and USB gamepads (`gilrs`) with a deadzone control and
-  hot-plug detection.
+  and **data breadth** (named memory domains, sized reads, and a `joypad` table). v1.7.0
+  adds a `tastudio.*` API to drive the piano-roll editor from a script, full Lua parity
+  (`getScreenBuffer` / `setState` / value-modifying callbacks), and a host-mediated IPC
+  sandbox (`comm.*` / `client.*` / `userdata.*`, opt-in `script-ipc`). The browser build
+  runs an experimental `piccolo` Lua backend (observational, not byte-parity with native
+  `mlua`, ADR 0012). See [`docs/scripting.md`](docs/scripting.md).
+- **Cheats and input devices** — Game Genie codes (with a Game Genie *encoder*) and raw
+  RAM cheats, plus a broad peripheral set: the standard pad, **Four Score** (4-player),
+  the **Arkanoid Vaus** paddle (both ports), the **Zapper** light gun, the **Power Pad**,
+  the **SNES mouse**, the **Family BASIC keyboard**, the **Family Trainer** mat, the
+  Konami / Bandai **Hyper Shot**, and the **Subor keyboard**. **Turbo / autofire** with an
+  **input-display overlay** (the consolidated all-device Input Display), a **per-game
+  database** of nametable-mirroring overrides, and USB gamepads (`gilrs`) with a deadzone
+  control and hot-plug detection.
 - **Desktop UX** — a native menu bar, recent-ROMs list, a tabbed Settings window,
   light / dark / system themes, 8:7 pixel-aspect correction, optional overscan
   cropping, integer window-size presets, a pause-dim overlay, a status bar,
@@ -231,6 +241,68 @@ gameplay frames spanning the bulk of the 168 mapper families.
   built-in passes, never silently dropping the unsupported ones) — all composable on the
   off-by-default ShaderStack, post-framebuffer and never touching the core. See
   [`docs/frontend.md`](docs/frontend.md) and ADR 0013.
+
+### Authoring and automation *(v1.7.0)*
+
+v1.7.0 "Forge" is the release where the tools become **writable** and **programmable** —
+every item below is additive and off-by-default, so the shipped core stays byte-identical
+and AccuracyCoin holds 100% (139/139).
+
+- **Editing-capable debug tools** *(`debug-hooks`)* — the inspector panels become editors:
+  **palette / nametable / CHR / OAM writeback** (gated like `emu.write`), an
+  **iNES / NES 2.0 header editor**, and an **inline 6502 assembler** that patches code live.
+- **Deeper debugger** *(`debug-hooks`)* — on top of the Mesen2-class breakpoint /
+  watchpoint / hex-editor / RAM-search surface, a **CallstackManager** with step-into /
+  over / out modes, a **memory-access counter** with uninitialized-read detection, and
+  **ca65 / cc65 `.dbg` source maps** (plus the existing `.sym` / `.mlb` / `.nl` symbol
+  files) for source-level debugging.
+- **Scriptable TAStudio** *(`scripting`)* — a `tastudio.*` Lua API drives the piano-roll
+  editor from a script, with analysis-canvas callbacks, alongside full Lua parity
+  (`getScreenBuffer`, `setState`, value-modifying callbacks).
+- **Host IPC / automation** *(opt-in `script-ipc` feature, native-only)* — a
+  host-mediated `comm.*` / `client.*` / `userdata.*` sandbox lets an external process
+  drive and observe the emulator over IPC for automation and CI harnesses, behind a
+  documented security posture (ADR 0016).
+- **Rewind, deepened** — a **HistoryViewer**, an **Export-Last-30-seconds** to `.rnm`, and
+  a **Zwinder**-style tiered greenzone (XOR-delta + LZ4) that stretches the rewind window
+  far beyond the classic ring without bloating memory.
+- **Expansion-audio NSF router** — the NSF / NSFe player now routes through the real
+  VRC6 / VRC7 / FDS / MMC5 / Namco 163 / Sunsoft 5B expansion-audio synths, and MMC5's
+  expansion audio is synthesized in-game.
+- **Movie import breadth** — in addition to FCEUX `.fm2` and BizHawk `.bk2`, RustyNES now
+  imports `.fcm` / `.fmv` / `.vmv` movies (and hashes `.fm2` / `.bk2` exports), widening
+  TAS-ecosystem interop.
+- **HD-Pack Builder** *(`hd-pack`)* — author Mesen-format HD packs from the running game
+  (ADR 0017); the loader was also corrected to parse the authentic Mesen `<tile>` format
+  (ADR 0018).
+- **Audio depth** — bypass-by-default **stereo panning** (per-APU-channel pan), a Schroeder
+  **reverb** + headphone **crossfeed**, an **output-device picker**, the **20-band** EQ
+  mode, and per-context (game / menu) volume (ADR 0020).
+- **Per-game config overlay** — a `<rom>.json` overlay (region / mapper / submapper /
+  mirroring overrides), a **DIP-switch editor**, and a **lag-frame counter** (ADR 0019).
+- **Internationalization (i18n)** — a compile-time string catalog with a Settings language
+  picker; English is the default and universal fallback (byte-identical strings), with
+  Spanish shipped to prove the mechanism (ADR 0023).
+- **Spectator netplay** — observers can join a rollback session read-only, alongside the
+  existing 2–4-player rollback.
+
+### Web / WebAssembly *(v1.7.0 reach wave)*
+
+The browser build reaches feature parity with the desktop on several fronts (all web-only,
+so the native build is byte-identical):
+
+- **Lua in the browser** — the experimental `piccolo` Lua backend runs end-to-end from a
+  `.lua` picker / paste box (observational, off by default, never in the determinism
+  oracle — ADR 0012).
+- **File System Access API** — TAS `.rnm` exports save through a native "Save As" dialog on
+  Chromium browsers, with a graceful download fallback on Firefox / Safari (ADR 0021).
+- **Gamepad API** — `navigator.getGamepads()` is polled each frame and routed to player 1
+  at the same late-latch as touch / keyboard, so it records and replays identically.
+- **PWA / offline** — a web manifest + service worker make the demo installable and
+  offline-capable, within a 5 MiB bundle budget.
+- **`?settings=` share-links** — a curated subset of `Config` (filter + knobs, overscan,
+  theme, aspect, zoom, FPS, volume) round-trips through a compact URL-safe blob, with a
+  "Copy share link" button (ADR 0022).
 
 ---
 
@@ -424,6 +496,7 @@ in [`docs/architecture.md`](docs/architecture.md) and [`docs/scheduler.md`](docs
 | `rustynes-apu`           | Hardware-accurate 2A03 APU with band-limited synthesis      |
 | `rustynes-mappers`       | 168 mapper families + expansion audio + UNIF loader         |
 | `rustynes-core`          | Integration layer: Bus, scheduler, console, save states     |
+| `rustynes-script`        | Sandboxed Lua 5.4 scripting engine (native `mlua`, wasm `piccolo`) |
 | `rustynes-frontend`      | `winit` + `wgpu` + `cpal` + `egui` app (binary: `rustynes`) |
 | `rustynes-netplay`       | GGPO-style rollback netcode (UDP + WebRTC)                  |
 | `rustynes-cheevos`       | RetroAchievements FFI (opt-in, native-only)                 |
@@ -560,8 +633,13 @@ The reproducible record (methodology, all benches, and the historical A/B) is in
 | Testing    | [docs/testing-strategy.md](docs/testing-strategy.md) |
 | Netplay    | [docs/netplay-webrtc.md](docs/netplay-webrtc.md) |
 
-Architecture Decision Records live in [`docs/adr/`](docs/adr/). (The deeper
+Architecture Decision Records live in [`docs/adr/`](docs/adr/) (0001–0023). (The deeper
 engine-development audit logs are kept locally, outside the public repo.)
+
+The hosted GitHub Pages deployment serves both the playable WebAssembly demo at
+**[doublegate.github.io/RustyNES](https://doublegate.github.io/RustyNES/)** and the
+workspace API docs (rustdoc) at
+**[doublegate.github.io/RustyNES/api/](https://doublegate.github.io/RustyNES/api/)**.
 
 ---
 
