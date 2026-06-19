@@ -1006,8 +1006,12 @@ pub fn parse_pal(bytes: &[u8]) -> Option<[[u8; 3]; 64]> {
 //
 // Not `Eq`: the v1.0.0 `volume` field is an `f32`, so the section is
 // `PartialEq` only (matching `Config`, which already drops `Eq` for the
-// gamepad deadzone).
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+// gamepad deadzone). Not `Copy` since v1.7.0 H3: the `output_device` name is an
+// owned `Option<String>`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+// Several independent on/off audio settings (mute / DRC / EQ enable / 20-band
+// mode); they are unrelated config flags, not a state machine.
+#[allow(clippy::struct_excessive_bools)]
 pub struct AudioConfig {
     /// Preferred host sample rate (Hz). The actual rate may differ if
     /// CPAL refuses; the emulator and APU rebuild themselves at the
@@ -1064,11 +1068,75 @@ pub struct AudioConfig {
     /// core audio + the oracle stay byte-identical until the user moves a slider.
     #[serde(default = "default_audio_channel_gain")]
     pub channel_gain: [f32; 6],
+    /// v1.7.0 "Forge" H3 — select the 20-band graphic EQ (using [`Self::eq_bands_20`])
+    /// instead of the classic 5-band voicing ([`Self::eq_bands`]). `false`
+    /// (default) keeps the 5-band behaviour, so a pre-v1.7.0 config with no key
+    /// loads byte-identical.
+    #[serde(default)]
+    pub eq_20_band: bool,
+    /// v1.7.0 H3 — per-band gains in dB (−12..=+12) for the 20-band graphic EQ at
+    /// the ISO third-octave centers. All-zero (the default) is flat (bypass) and
+    /// byte-identical to a no-EQ build. Only consulted when [`Self::eq_enabled`]
+    /// and [`Self::eq_20_band`].
+    #[serde(default = "default_audio_eq_bands_20")]
+    pub eq_bands_20: [f32; 20],
+    /// v1.7.0 H3 — per-APU-channel stereo pan in `-1.0..=1.0` (−1 = hard left,
+    /// 0 = center, +1 = hard right): index 0 = pulse 1 .. 5 = expansion. All
+    /// `0.0` (the default) duplicates the mono master to L/R bit-for-bit, so the
+    /// default output is byte-identical. (The frontend applies the average pan
+    /// to the pre-mixed mono master; true per-channel panning awaits the v2.0
+    /// core split.)
+    #[serde(default = "default_audio_pan")]
+    pub pan: [f32; 6],
+    /// v1.7.0 H3 — reverb wet mix `0.0..=1.0`. `0.0` (default) = dry/bypass.
+    #[serde(default)]
+    pub reverb_mix: f32,
+    /// v1.7.0 H3 — reverb room size `0.0..=1.0` (decay-time control).
+    #[serde(default = "default_audio_reverb_room")]
+    pub reverb_room: f32,
+    /// v1.7.0 H3 — headphone crossfeed amount `0.0..=1.0`. `0.0` (default) =
+    /// bypass.
+    #[serde(default)]
+    pub crossfeed: f32,
+    /// v1.7.0 H3 — preferred output device name. `None` (default) = the system
+    /// default device (today's behaviour). An unmatched / now-absent name also
+    /// falls back to the default device.
+    #[serde(default)]
+    pub output_device: Option<String>,
+    /// v1.7.0 H3 — master output volume multiplier `0.0..=1.0` applied across
+    /// every context, on top of the per-context gains. `1.0` (default) is a
+    /// no-op. (Distinct from [`Self::volume`], the existing single master
+    /// slider; this is the per-context mixer's master leg.)
+    #[serde(default = "default_audio_volume")]
+    pub master_volume: f32,
+    /// v1.7.0 H3 — gain applied while a game is running `0.0..=1.0`. `1.0`
+    /// (default) is a no-op.
+    #[serde(default = "default_audio_volume")]
+    pub volume_game: f32,
+    /// v1.7.0 H3 — gain applied while in a menu / no game is running
+    /// `0.0..=1.0`. `1.0` (default) is a no-op.
+    #[serde(default = "default_audio_volume")]
+    pub volume_menu: f32,
 }
 
 /// Serde default for [`AudioConfig::eq_bands`] — flat (0 dB) across all bands.
 const fn default_audio_eq_bands() -> [f32; 5] {
     [0.0; 5]
+}
+
+/// Serde default for [`AudioConfig::eq_bands_20`] — flat (0 dB) across 20 bands.
+const fn default_audio_eq_bands_20() -> [f32; 20] {
+    [0.0; 20]
+}
+
+/// Serde default for [`AudioConfig::pan`] — all center (`0.0`).
+const fn default_audio_pan() -> [f32; 6] {
+    [0.0; 6]
+}
+
+/// Serde default for [`AudioConfig::reverb_room`] — a medium room.
+const fn default_audio_reverb_room() -> f32 {
+    0.5
 }
 
 /// Serde default for [`AudioConfig::channel_gain`] — unity (`1.0`) across all
@@ -1109,6 +1177,16 @@ impl Default for AudioConfig {
             eq_enabled: false,
             eq_bands: default_audio_eq_bands(),
             channel_gain: default_audio_channel_gain(),
+            eq_20_band: false,
+            eq_bands_20: default_audio_eq_bands_20(),
+            pan: default_audio_pan(),
+            reverb_mix: 0.0,
+            reverb_room: default_audio_reverb_room(),
+            crossfeed: 0.0,
+            output_device: None,
+            master_volume: default_audio_volume(),
+            volume_game: default_audio_volume(),
+            volume_menu: default_audio_volume(),
         }
     }
 }
@@ -1124,6 +1202,22 @@ impl AudioConfig {
         } else {
             self.volume.clamp(0.0, 1.0)
         }
+    }
+
+    /// v1.7.0 H3 — the master gain folded with the per-context mixer legs:
+    /// [`Self::effective_gain`] × `master_volume` × (`volume_game` when
+    /// `in_game`, else `volume_menu`). All the new legs default to `1.0`, so the
+    /// product equals [`Self::effective_gain`] exactly until the user moves a
+    /// per-context slider — keeping the default output byte-identical.
+    #[must_use]
+    pub fn effective_gain_for(&self, in_game: bool) -> f32 {
+        let context = if in_game {
+            self.volume_game
+        } else {
+            self.volume_menu
+        };
+        (self.effective_gain() * self.master_volume.clamp(0.0, 1.0) * context.clamp(0.0, 1.0))
+            .clamp(0.0, 1.0)
     }
 }
 

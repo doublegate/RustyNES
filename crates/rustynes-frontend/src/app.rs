@@ -4315,7 +4315,14 @@ impl App {
     #[cfg(not(target_arch = "wasm32"))]
     fn apply_audio_gain(&self) {
         if let Some(audio) = self.audio.as_ref() {
-            audio.queue.set_gain(self.config.audio.effective_gain());
+            // v1.7.0 H3 — fold in the per-context mixer legs (master ×
+            // game/menu). All the new legs default to 1.0, so this equals
+            // `effective_gain()` until a per-context slider moves — the default
+            // output stays byte-identical.
+            let in_game = self.emu.lock().nes.is_some();
+            audio
+                .queue
+                .set_gain(self.config.audio.effective_gain_for(in_game));
         }
     }
 
@@ -5175,9 +5182,32 @@ impl App {
     #[cfg(not(target_arch = "wasm32"))]
     fn apply_audio_eq(&self) {
         if let Some(audio) = self.audio.as_ref() {
-            audio
-                .queue
-                .set_eq(self.config.audio.eq_enabled, self.config.audio.eq_bands);
+            // v1.7.0 H3 — push both the 5-band and 20-band gains + the mode flag.
+            // Flat / off (the default) is byte-identical to a no-EQ build.
+            audio.queue.set_eq_full(
+                self.config.audio.eq_enabled,
+                self.config.audio.eq_20_band,
+                self.config.audio.eq_bands,
+                self.config.audio.eq_bands_20,
+            );
+        }
+    }
+
+    /// v1.7.0 "Forge" H3 — push the configured stereo output DSP params
+    /// (per-channel pan, reverb mix/room, headphone crossfeed) into the shared
+    /// audio queue; the cpal callback rebuilds its reverb on the next change.
+    /// Applied at startup + on every edit. Center pan / 0 reverb / 0 crossfeed
+    /// (the default) is a true bypass → byte-identical output. No-op when audio
+    /// is disabled.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn apply_stereo_dsp(&self) {
+        if let Some(audio) = self.audio.as_ref() {
+            audio.queue.set_stereo(
+                self.config.audio.pan,
+                self.config.audio.reverb_mix,
+                self.config.audio.reverb_room,
+                self.config.audio.crossfeed,
+            );
         }
     }
 
@@ -6968,6 +6998,10 @@ impl App {
         // Sprint 5-3 — egui debugger overlay.
         let surface_format = gfx.surface_format();
         let mut debugger = DebuggerOverlay::new(&gfx.device, gfx.window.as_ref(), surface_format);
+        // v1.7.0 "Forge" H3 — populate the Audio settings device picker with the
+        // enumerated cpal output devices (native-only; cheap one-time scan).
+        #[cfg(not(target_arch = "wasm32"))]
+        debugger.set_audio_output_devices(AudioOutput::output_device_names());
         // v2.8.0 Phase 0 — surface a present-mode fallback instead of
         // silently double-gating the wall-clock pacer against vsync.
         if gfx.present_mode_fell_back() {
@@ -7024,6 +7058,7 @@ impl App {
                 Some(self.config.audio.sample_rate),
                 latency_ms,
                 self.config.audio.drc,
+                self.config.audio.output_device.as_deref(),
             ) {
                 Ok(a) => Some(a),
                 Err(e) => {
@@ -7040,6 +7075,9 @@ impl App {
             // v1.1.0 beta.2 — apply the persisted graphic-EQ params (off by
             // default → byte-identical).
             self.apply_audio_eq();
+            // v1.7.0 H3 — apply the persisted stereo DSP params (center pan /
+            // 0 reverb / 0 crossfeed by default → bypass, byte-identical).
+            self.apply_stereo_dsp();
             // v1.0.0 — push the persisted per-APU-channel mute mask to the core
             // (no-op if no ROM is loaded yet; re-applied on each ROM load).
             // Default 0x3F (all on) leaves the deterministic audio unchanged.
@@ -8410,6 +8448,12 @@ impl ApplicationHandler<AppEvent> for App {
                 #[cfg(not(target_arch = "wasm32"))]
                 if settings.audio_eq {
                     self.apply_audio_eq();
+                }
+                // v1.7.0 H3 — stereo DSP live-apply (pan / reverb / crossfeed,
+                // a frontend output stage; bypass-by-default is byte-identical).
+                #[cfg(not(target_arch = "wasm32"))]
+                if settings.audio_stereo {
+                    self.apply_stereo_dsp();
                 }
                 // v1.0.0 / v1.5.0 D2 — overscan crop live-apply (the gfx
                 // letterbox UV rect): push BOTH the legacy toggle and the

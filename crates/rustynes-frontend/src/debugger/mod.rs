@@ -766,6 +766,14 @@ impl DebuggerOverlay {
         self.settings_ui.set_expansion_audio_chip(chip);
     }
 
+    /// v1.7.0 "Forge" H3 — populate the Settings Audio tab's output-device
+    /// picker with the enumerated device names. Pushed once by the app at
+    /// startup (cpal host enumeration is native-only).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_audio_output_devices(&mut self, names: Vec<String>) {
+        self.settings_ui.set_audio_output_devices(names);
+    }
+
     /// v2.8.0 Phase 0 — push the latest performance snapshot (produced /
     /// presented / produce-cost interval stats + audio health) for the
     /// Performance panel. Called from the app's pacer alongside

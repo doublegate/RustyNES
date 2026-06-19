@@ -102,6 +102,11 @@ pub struct SettingsApply {
     /// the app pushes the new `[audio] eq_enabled`/`eq_bands` into the audio
     /// queue. Off (default) is byte-identical to today's output.
     pub audio_eq: bool,
+    /// v1.7.0 "Forge" H3 — a stereo-DSP control changed (per-channel pan, reverb
+    /// mix/room, or headphone crossfeed); the app pushes the new params into the
+    /// audio queue. Center pan / 0 reverb / 0 crossfeed (the default) is a true
+    /// bypass → byte-identical output.
+    pub audio_stereo: bool,
     /// v1.4.0 Workstream C — a per-APU-channel volume slider changed (or the
     /// "Reset gains" button); the app pushes the new `[audio] channel_gain` into
     /// the core under the emu lock. The default (all 1.0) is byte-identical to
@@ -134,6 +139,7 @@ impl SettingsApply {
             || self.palette_clear
             || self.apu_channels
             || self.audio_eq
+            || self.audio_stereo
             || self.apu_channel_gain
             || self.shader_stack
             || self.palette_select
@@ -166,6 +172,11 @@ pub struct SettingsPanelState {
     /// Pushed by the app on each ROM load (like [`Self::set_present_mode_warning`]);
     /// the Audio section shows the expansion-channel volume slider only when set.
     expansion_audio_chip: Option<&'static str>,
+    /// v1.7.0 "Forge" H3 — the enumerated output device names for the Audio
+    /// section's device picker. Populated once by the app at startup (the cpal
+    /// host enumeration is native-only); empty on wasm / when no devices.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    audio_output_devices: Vec<String>,
     /// v1.2.0 C2 — index into [`crate::shader_pass::BuiltinPass::all`] for the
     /// "Add pass" picker.
     stack_add_index: usize,
@@ -256,6 +267,13 @@ impl SettingsPanelState {
     /// expansion-channel volume slider (labelled with this name) only when `Some`.
     pub fn set_expansion_audio_chip(&mut self, chip: Option<&'static str>) {
         self.expansion_audio_chip = chip;
+    }
+
+    /// v1.7.0 "Forge" H3 — populate the Audio section's output-device picker list.
+    /// Pushed once by the app at startup (cpal host enumeration is native-only).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_audio_output_devices(&mut self, names: Vec<String>) {
+        self.audio_output_devices = names;
     }
 }
 
@@ -1187,34 +1205,223 @@ pub fn audio_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
             state.apply.audio_eq = true;
             save_config(config);
         }
+        // v1.7.0 H3 — choose the 5-band voicing or the 20-band graphic EQ.
+        if ui
+            .checkbox(&mut config.audio.eq_20_band, "20-band graphic EQ")
+            .on_hover_text("ISO third-octave bands (25 Hz–20 kHz); off uses the classic 5 bands")
+            .changed()
+        {
+            state.apply.audio_eq = true;
+            save_config(config);
+        }
         ui.add_enabled_ui(config.audio.eq_enabled, |ui| {
-            const BANDS: [(usize, &str); 5] =
-                [(0, "60"), (1, "240"), (2, "1k"), (3, "3.8k"), (4, "12k")];
-            ui.horizontal(|ui| {
-                for (i, label) in BANDS {
-                    ui.vertical(|ui| {
-                        let resp = ui.add(
-                            egui::Slider::new(&mut config.audio.eq_bands[i], -12.0..=12.0)
-                                .vertical()
-                                .suffix(" dB"),
-                        );
-                        // Apply the gain live as the slider moves, but only
-                        // persist on release so a drag doesn't thrash the disk.
+            const BANDS_5: [&str; 5] = ["60", "240", "1k", "3.8k", "12k"];
+            // Compact labels for the 20 ISO bands (Hz / k).
+            const BANDS_20: [&str; 20] = [
+                "25", "40", "63", "100", "160", "250", "400", "630", "1k", "1.6k", "2.5k", "4k",
+                "6.3k", "8k", "10k", "12.5k", "14k", "16k", "18k", "20k",
+            ];
+            let band_slider = |ui: &mut egui::Ui, value: &mut f32, label: &str| {
+                ui.vertical(|ui| {
+                    let resp = ui.add(
+                        egui::Slider::new(value, -12.0..=12.0)
+                            .vertical()
+                            .suffix(" dB"),
+                    );
+                    ui.label(label);
+                    resp
+                })
+                .inner
+            };
+            ui.horizontal_wrapped(|ui| {
+                if config.audio.eq_20_band {
+                    for (i, label) in BANDS_20.iter().enumerate() {
+                        let resp = band_slider(ui, &mut config.audio.eq_bands_20[i], label);
                         if resp.changed() {
                             state.apply.audio_eq = true;
                         }
                         if resp.drag_stopped() || (resp.changed() && !resp.dragged()) {
                             save_config(config);
                         }
-                        ui.label(format!("{label} Hz"));
-                    });
+                    }
+                } else {
+                    for (i, label) in BANDS_5.iter().enumerate() {
+                        let resp = band_slider(ui, &mut config.audio.eq_bands[i], label);
+                        if resp.changed() {
+                            state.apply.audio_eq = true;
+                        }
+                        if resp.drag_stopped() || (resp.changed() && !resp.dragged()) {
+                            save_config(config);
+                        }
+                    }
                 }
             });
             if ui.button("Reset EQ (flat)").clicked() {
-                config.audio.eq_bands = [0.0; 5];
+                if config.audio.eq_20_band {
+                    config.audio.eq_bands_20 = [0.0; 20];
+                } else {
+                    config.audio.eq_bands = [0.0; 5];
+                }
                 state.apply.audio_eq = true;
                 save_config(config);
             }
+        });
+
+        // v1.7.0 H3 — stereo output DSP: per-channel pan, reverb, headphone
+        // crossfeed. Native-only (the cpal output stage); bypass-by-default
+        // (center pan / 0 reverb / 0 crossfeed) is byte-identical to the prior
+        // mono-duplicated output.
+        ui.add_space(6.0);
+        ui.separator();
+        ui.label("Stereo");
+        {
+            const PANS: [(usize, &str); 5] = [
+                (0, "Pulse 1"),
+                (1, "Pulse 2"),
+                (2, "Triangle"),
+                (3, "Noise"),
+                (4, "DMC"),
+            ];
+            let pan_slider = |ui: &mut egui::Ui, value: &mut f32, label: &str| -> bool {
+                let mut changed = false;
+                ui.horizontal(|ui| {
+                    ui.add_sized([72.0, 0.0], egui::Label::new(label));
+                    let resp = ui.add(
+                        egui::Slider::new(value, -1.0..=1.0)
+                            .fixed_decimals(2)
+                            .custom_formatter(|v, _| {
+                                if v.abs() < 0.005 {
+                                    "C".to_owned()
+                                } else if v < 0.0 {
+                                    format!("L{:.0}", v.abs() * 100.0)
+                                } else {
+                                    format!("R{:.0}", v * 100.0)
+                                }
+                            }),
+                    );
+                    changed = resp.changed();
+                });
+                changed
+            };
+            for (idx, label) in PANS {
+                if pan_slider(ui, &mut config.audio.pan[idx], label) {
+                    config.audio.pan[idx] = config.audio.pan[idx].clamp(-1.0, 1.0);
+                    state.apply.audio_stereo = true;
+                    save_config(config);
+                }
+            }
+            if let Some(chip) = state.expansion_audio_chip
+                && pan_slider(ui, &mut config.audio.pan[5], chip)
+            {
+                config.audio.pan[5] = config.audio.pan[5].clamp(-1.0, 1.0);
+                state.apply.audio_stereo = true;
+                save_config(config);
+            }
+            ui.horizontal(|ui| {
+                ui.label("Reverb");
+                if ui
+                    .add(
+                        egui::Slider::new(&mut config.audio.reverb_mix, 0.0..=1.0)
+                            .fixed_decimals(2),
+                    )
+                    .changed()
+                {
+                    state.apply.audio_stereo = true;
+                    save_config(config);
+                }
+                if ui
+                    .add(
+                        egui::Slider::new(&mut config.audio.reverb_room, 0.0..=1.0)
+                            .fixed_decimals(2)
+                            .text("room"),
+                    )
+                    .changed()
+                {
+                    state.apply.audio_stereo = true;
+                    save_config(config);
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label("Crossfeed");
+                if ui
+                    .add(
+                        egui::Slider::new(&mut config.audio.crossfeed, 0.0..=1.0).fixed_decimals(2),
+                    )
+                    .on_hover_text("Headphone L/R blend; 0 = off")
+                    .changed()
+                {
+                    state.apply.audio_stereo = true;
+                    save_config(config);
+                }
+            });
+            if ui.button("Reset stereo (center / dry)").clicked() {
+                config.audio.pan = [0.0; 6];
+                config.audio.reverb_mix = 0.0;
+                config.audio.reverb_room = 0.5;
+                config.audio.crossfeed = 0.0;
+                state.apply.audio_stereo = true;
+                save_config(config);
+            }
+        }
+
+        // v1.7.0 H3 — per-context master volumes (master / game / menu). All
+        // default to 1.0 (no-op → byte-identical).
+        ui.add_space(6.0);
+        ui.label("Context volume");
+        {
+            let vol_slider = |ui: &mut egui::Ui, value: &mut f32, label: &str| -> bool {
+                let mut changed = false;
+                ui.horizontal(|ui| {
+                    ui.add_sized([56.0, 0.0], egui::Label::new(label));
+                    if ui
+                        .add(egui::Slider::new(value, 0.0..=1.0).fixed_decimals(2))
+                        .changed()
+                    {
+                        *value = value.clamp(0.0, 1.0);
+                        changed = true;
+                    }
+                });
+                changed
+            };
+            if vol_slider(ui, &mut config.audio.master_volume, "Master")
+                || vol_slider(ui, &mut config.audio.volume_game, "Game")
+                || vol_slider(ui, &mut config.audio.volume_menu, "Menu")
+            {
+                state.apply.audio_gain = true;
+                save_config(config);
+            }
+        }
+
+        // v1.7.0 H3 — output device picker. "System default" = None (today's
+        // behaviour); a named device takes effect on the next stream open
+        // (restart), and an absent device falls back to the default gracefully.
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.label("Output device");
+            let selected = config
+                .audio
+                .output_device
+                .clone()
+                .unwrap_or_else(|| "System default".to_owned());
+            egui::ComboBox::from_id_salt("settings-audio-device")
+                .selected_text(selected)
+                .show_ui(ui, |ui| {
+                    if ui
+                        .selectable_label(config.audio.output_device.is_none(), "System default")
+                        .clicked()
+                    {
+                        config.audio.output_device = None;
+                        save_config(config);
+                    }
+                    for name in &state.audio_output_devices {
+                        let on = config.audio.output_device.as_deref() == Some(name.as_str());
+                        if ui.selectable_label(on, name).clicked() {
+                            config.audio.output_device = Some(name.clone());
+                            save_config(config);
+                        }
+                    }
+                });
+            ui.weak("(restart to apply)");
         });
 
         // Manual persist for anything still in-flight; the live gain is already
@@ -1269,6 +1476,10 @@ pub fn audio_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
         state.apply.audio_gain = true;
         state.apply.apu_channels = true;
         state.apply.apu_channel_gain = true;
+        // v1.1.0 / v1.7.0 H3 — re-apply the EQ + stereo DSP (reset to flat /
+        // bypass) so the live output stage matches the reset config.
+        state.apply.audio_eq = true;
+        state.apply.audio_stereo = true;
         save_config(config);
     }
 }
