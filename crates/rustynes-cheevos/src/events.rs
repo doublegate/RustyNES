@@ -16,6 +16,17 @@ use std::collections::VecDeque;
 use crate::ffi;
 use crate::util::cstr_to_string;
 
+/// One row of a leaderboard scoreboard (a top entry shown after a submission).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RaScoreboardEntry {
+    /// The username for this rank.
+    pub username: String,
+    /// The 1-based rank of this entry.
+    pub rank: u32,
+    /// The formatted score string (rcheevos pre-formats it for display).
+    pub score: String,
+}
+
 /// A safe, owned RetroAchievements event.
 #[derive(Debug, Clone, PartialEq)]
 pub enum RaEvent {
@@ -53,6 +64,21 @@ pub enum RaEvent {
         /// `Some(true)` = show, `Some(false)` = hide, `None` = update.
         show: Option<bool>,
         display: String,
+    },
+    /// A new leaderboard ranking was received after a submission — the data
+    /// for the scoreboard popup (your new rank "#N of M" + the top entries).
+    LeaderboardScoreboard {
+        leaderboard_id: u32,
+        /// The score the player just submitted (formatted).
+        submitted_score: String,
+        /// The player's best submitted score (formatted).
+        best_score: String,
+        /// The player's new rank in the leaderboard (1-based).
+        new_rank: u32,
+        /// The total number of entries in the leaderboard.
+        num_entries: u32,
+        /// The top entries the server returned for the scoreboard.
+        top_entries: Vec<RaScoreboardEntry>,
     },
     /// All achievements for the game have been earned.
     GameCompleted,
@@ -136,6 +162,14 @@ fn translate_event(ev: &ffi::rc_client_event_t) -> RaEvent {
             Some(unsafe { &*ev.leaderboard_tracker })
         }
     };
+    let scoreboard = || -> Option<&ffi::rc_client_leaderboard_scoreboard_t> {
+        if ev.leaderboard_scoreboard.is_null() {
+            None
+        } else {
+            // SAFETY: non-null for the scoreboard event type.
+            Some(unsafe { &*ev.leaderboard_scoreboard })
+        }
+    };
 
     match ev.r#type {
         ffi::RC_CLIENT_EVENT_ACHIEVEMENT_TRIGGERED => {
@@ -201,6 +235,39 @@ fn translate_event(ev: &ffi::rc_client_event_t) -> RaEvent {
                 display: t.map_or_else(String::new, |t| {
                     crate::util::cchar_arr_to_string(&t.display)
                 }),
+            }
+        }
+        ffi::RC_CLIENT_EVENT_LEADERBOARD_SCOREBOARD => {
+            let sb = scoreboard();
+            let top_entries = sb.map_or_else(Vec::new, |s| {
+                if s.top_entries.is_null() {
+                    return Vec::new();
+                }
+                let n = s.num_top_entries as usize;
+                let mut out = Vec::with_capacity(n);
+                for i in 0..n {
+                    // SAFETY: i < num_top_entries; rcheevos owns the array for
+                    // the duration of this callback. We copy each field out.
+                    let e = unsafe { &*s.top_entries.add(i) };
+                    out.push(RaScoreboardEntry {
+                        username: cstr_to_string(e.username),
+                        rank: e.rank,
+                        score: crate::util::cchar_arr_to_string(&e.score),
+                    });
+                }
+                out
+            });
+            RaEvent::LeaderboardScoreboard {
+                leaderboard_id: sb.map_or(0, |s| s.leaderboard_id),
+                submitted_score: sb.map_or_else(String::new, |s| {
+                    crate::util::cchar_arr_to_string(&s.submitted_score)
+                }),
+                best_score: sb.map_or_else(String::new, |s| {
+                    crate::util::cchar_arr_to_string(&s.best_score)
+                }),
+                new_rank: sb.map_or(0, |s| s.new_rank),
+                num_entries: sb.map_or(0, |s| s.num_entries),
+                top_entries,
             }
         }
         ffi::RC_CLIENT_EVENT_GAME_COMPLETED => RaEvent::GameCompleted,

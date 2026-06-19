@@ -2450,6 +2450,69 @@ impl App {
         }
     }
 
+    /// v1.7.0 "Forge" Workstream H9 — export the current `TAStudio` movie's
+    /// markers as a `SubRip` (`.srt`) subtitle track, frame-exact at the
+    /// region's frame rate, for muxing into an `A/V` dump. Requires the
+    /// `TAStudio` editor to be open with at least one named marker; otherwise it
+    /// reports and returns.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn handle_movie_export_subtitles(&mut self) {
+        use crate::ui_shell::StatusMessage;
+        let markers: Vec<(u64, String)> = self
+            .debugger
+            .as_ref()
+            .and_then(crate::debugger::DebuggerOverlay::tas_editor)
+            .map(|editor| {
+                editor
+                    .markers()
+                    .map(|(f, l)| (f as u64, l.to_owned()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if markers.iter().all(|(_, l)| l.trim().is_empty()) {
+            self.ui.set_status(StatusMessage::info(
+                "Subtitle export: no TAStudio markers to export",
+            ));
+            return;
+        }
+
+        // The region's exact rational frame rate (the A/V recorder convention:
+        // fps = 1e9 / frame_nanos). `movie_srt` consumes (num, den) directly.
+        let frame_nanos = self.emu.lock().frame_duration.as_nanos();
+        let fps_num: u32 = 1_000_000_000;
+        let fps_den: u32 = u32::try_from(frame_nanos).unwrap_or(16_639_267);
+        // A ~2s tail for the final marker's cue.
+        let tail_frames = u64::from(fps_num) / u64::from(fps_den.max(1)) * 2;
+        let srt = crate::movie_srt::markers_to_srt(markers, fps_num, fps_den, tail_frames.max(1));
+
+        let dir = self.movies_dir();
+        if let Some(d) = dir.as_ref() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        let mut dialog = rfd::FileDialog::new()
+            .add_filter("SubRip subtitles", &["srt"])
+            .set_file_name("movie.srt");
+        if let Some(d) = dir {
+            dialog = dialog.set_directory(d);
+        }
+        let Some(path) = dialog.save_file() else {
+            eprintln!("rustynes: subtitle export cancelled");
+            return;
+        };
+        match std::fs::write(&path, srt) {
+            Ok(()) => {
+                self.ui.set_status(StatusMessage::success(format!(
+                    "Subtitles -> {}",
+                    path.display()
+                )));
+            }
+            Err(e) => {
+                self.ui
+                    .set_status(StatusMessage::error(format!("Subtitle export failed: {e}")));
+            }
+        }
+    }
+
     /// v1.7.0 "Forge" G4 — recompute the legacy/interchange ROM digests from the
     /// loaded ROM bytes for movie export: the MD5 a `.fm2` `romChecksum` uses and
     /// the SHA-1 a `.bk2` `SHA1` header uses. Returns `None` when no ROM is
@@ -3636,6 +3699,29 @@ impl App {
         false
     }
 
+    /// v1.7.0 "Forge" H2 — hardcore pause-gating. rcheevos throttles how often
+    /// the player may pause in hardcore (to prevent pause-abuse). Returns
+    /// `Some(frames_remaining)` when a pause must be deferred, or `None` when a
+    /// pause is allowed right now. In softcore / no-game / feature-off this is
+    /// always `None` (a pause is always allowed). Only call when actually trying
+    /// to pause — the rcheevos call is stateful.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
+    fn ra_pause_gate(&mut self) -> Option<u32> {
+        self.ra.as_mut().and_then(|ra| {
+            let (allowed, frames) = ra.can_pause();
+            if allowed { None } else { Some(frames) }
+        })
+    }
+
+    /// v1.7.0 "Forge" H2 — the pause-gating predicate, always `None` when the
+    /// `retroachievements` feature is not built, so `set_paused` compiles to the
+    /// unchanged path on the default build.
+    #[cfg(not(all(not(target_arch = "wasm32"), feature = "retroachievements")))]
+    #[allow(clippy::unused_self, clippy::needless_pass_by_ref_mut)]
+    const fn ra_pause_gate(&mut self) -> Option<u32> {
+        None
+    }
+
     /// PR #75 review (H1) — load-state restores the timeline, so it is forbidden
     /// while a TAS movie is RECORDING (it would rewrite the recording) OR PLAYING
     /// BACK (it would desync playback). The File menu greys "Load State" /
@@ -3955,6 +4041,10 @@ impl App {
             MenuAction::MovieExport => {
                 #[cfg(not(target_arch = "wasm32"))]
                 self.handle_movie_export();
+            }
+            MenuAction::MovieExportSubtitles => {
+                #[cfg(not(target_arch = "wasm32"))]
+                self.handle_movie_export_subtitles();
             }
             MenuAction::HistoryExportClip { seconds } => {
                 #[cfg(not(target_arch = "wasm32"))]
@@ -5286,6 +5376,26 @@ impl App {
                 .set_status(StatusMessage::info("Cannot pause during netplay"));
             return;
         }
+        // v1.7.0 "Forge" H2 — hardcore pause-gating: rcheevos throttles pausing
+        // in hardcore to prevent pause-abuse. Defer the pause when not yet
+        // allowed, telling the user how long remains. No-op in softcore /
+        // feature-off (resume is always honored).
+        if paused && let Some(frames) = self.ra_pause_gate() {
+            // Use the loaded ROM's region frame duration (NTSC ~60, PAL/Dendy
+            // ~50 Hz) so the remaining-time hint is correct off-NTSC, rather
+            // than a hardcoded 60 fps. Fall back to ~60 Hz if no ROM is loaded.
+            let frame_secs = self.emu.lock().frame_duration.as_secs_f64();
+            let frame_secs = if frame_secs > 0.0 {
+                frame_secs
+            } else {
+                1.0 / 60.0
+            };
+            let secs = f64::from(frames) * frame_secs;
+            self.ui.set_status(StatusMessage::info(format!(
+                "Pause held by hardcore mode ({secs:.1}s remaining)"
+            )));
+            return;
+        }
         self.ui.paused = paused;
         #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
         if let Some(thread) = self.emu_thread.as_ref() {
@@ -5781,12 +5891,16 @@ impl App {
                     debugger.set_netplay_status(netplay_status_view(&self.netplay.status()));
                 }
             }
-            NetplayRequest::Host { .. } | NetplayRequest::Join { .. }
+            NetplayRequest::Host { .. }
+            | NetplayRequest::Join { .. }
+            | NetplayRequest::Spectate { .. }
                 if self.emu.lock().nes.is_none() =>
             {
                 eprintln!("rustynes: netplay needs a loaded ROM first");
             }
-            NetplayRequest::Host { .. } | NetplayRequest::Join { .. }
+            NetplayRequest::Host { .. }
+            | NetplayRequest::Join { .. }
+            | NetplayRequest::Spectate { .. }
                 if {
                     let emu = self.emu.lock();
                     emu.movie.is_recording() || emu.movie.is_playing()
@@ -5820,6 +5934,21 @@ impl App {
                         #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
                         self.pause_emu_thread_for_netplay();
                         self.netplay.start_join(addr, rom_hash);
+                    }
+                    Err(e) => eprintln!("rustynes: bad host address {remote:?}: {e}"),
+                }
+            }
+            // v1.7.0 H8 — read-only spectator: same ROM + emu-thread plumbing as
+            // Join, but the spectator never authors input (see `start_spectate`).
+            NetplayRequest::Spectate { remote } => {
+                let Some(rom_hash) = self.emu.lock().nes.as_ref().map(|n| *n.rom_sha256()) else {
+                    return;
+                };
+                match remote.parse::<std::net::SocketAddr>() {
+                    Ok(addr) => {
+                        #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
+                        self.pause_emu_thread_for_netplay();
+                        self.netplay.start_spectate(addr, rom_hash);
                     }
                     Err(e) => eprintln!("rustynes: bad host address {remote:?}: {e}"),
                 }
@@ -7080,6 +7209,7 @@ fn netplay_status_view(s: &crate::netplay_ui::NetplayStatus) -> crate::debugger:
         NetplayPhase::Idle => NetplayPhaseView::Idle,
         NetplayPhase::Connecting => NetplayPhaseView::Connecting,
         NetplayPhase::InGame => NetplayPhaseView::InGame,
+        NetplayPhase::Spectating => NetplayPhaseView::Spectating,
         NetplayPhase::Error => NetplayPhaseView::Error,
     };
     crate::debugger::NetplayStatusView {
@@ -7091,6 +7221,7 @@ fn netplay_status_view(s: &crate::netplay_ui::NetplayStatus) -> crate::debugger:
         rolled_back: s.rolled_back,
         resimulated_frames: s.resimulated_frames,
         stalled: s.stalled,
+        spectator_pending: s.spectator_pending,
         message: s.message.clone(),
         diagnostics: s.diagnostics.clone(),
     }

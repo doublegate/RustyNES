@@ -50,6 +50,15 @@ pub struct CheevosStatusView {
     pub rich_presence: String,
     /// Active leaderboard tracker display strings (HUD).
     pub trackers: Vec<String>,
+    /// v1.7.0 H2 — active challenge-indicator badge tokens (HUD): the small
+    /// RA badge names for achievements currently being attempted.
+    pub challenges: Vec<String>,
+    /// v1.7.0 H2 — the transient achievement progress indicator (HUD):
+    /// `Some(measured)` while shown, `None` when hidden.
+    pub progress: Option<String>,
+    /// v1.7.0 H2 — active leaderboard-scoreboard popups (HUD), shown for a few
+    /// seconds after the player submits an entry.
+    pub scoreboards: Vec<ScoreboardView>,
     /// Transient toast headlines (HUD); `(title, detail, is_error, badge_url)`.
     /// `badge_url` is non-empty only for achievement-unlock toasts (v2.7.1).
     pub toasts: Vec<(String, String, bool, String)>,
@@ -58,6 +67,22 @@ pub struct CheevosStatusView {
     pub achievements: Vec<AchievementRow>,
     /// Cached leaderboard rows: `(title, description)`.
     pub leaderboards: Vec<(String, String)>,
+}
+
+/// v1.7.0 H2 — a leaderboard-scoreboard popup snapshot for the HUD: the
+/// player's new ranking "#N of M" + the formatted top entries.
+#[derive(Clone, Debug, Default)]
+pub struct ScoreboardView {
+    /// The player's new 1-based rank in the leaderboard.
+    pub new_rank: u32,
+    /// The total number of entries in the leaderboard.
+    pub num_entries: u32,
+    /// The score the player just submitted (formatted).
+    pub submitted_score: String,
+    /// The player's best submitted score (formatted).
+    pub best_score: String,
+    /// The top entries: `(rank, username, score)`.
+    pub top_entries: Vec<(u32, String, String)>,
 }
 
 /// One achievement row for the panel list.
@@ -73,6 +98,9 @@ pub struct AchievementRow {
     pub unlocked: bool,
     /// Measured-progress string (e.g. "12/50"), empty when not applicable.
     pub measured_progress: String,
+    /// v1.7.0 H2 — the softcore rarity (percent of players who have earned it,
+    /// 0..=100). 0.0 until the server populates it.
+    pub rarity: f32,
     /// v2.7.1 — RA media-server URL of the unlocked (color) badge PNG. Empty
     /// until rcheevos resolves the game's badges. Used by the panel to draw the
     /// badge icon (via the debugger's badge cache); falls back to the text badge.
@@ -111,6 +139,7 @@ impl CheevosStatusView {
                 points: a.points,
                 unlocked: a.unlocked,
                 measured_progress: a.measured_progress.clone(),
+                rarity: a.rarity,
                 badge_url: a.badge_url.clone(),
                 badge_locked_url: a.badge_locked_url.clone(),
             })
@@ -140,6 +169,27 @@ impl CheevosStatusView {
             points_total: s.summary.points_core,
             rich_presence: s.rich_presence.clone(),
             trackers: s.trackers.active.values().cloned().collect(),
+            challenges: s.challenges.active.values().cloned().collect(),
+            progress: if s.progress.visible {
+                Some(s.progress.measured.clone())
+            } else {
+                None
+            },
+            scoreboards: s
+                .scoreboards
+                .iter()
+                .map(|p| ScoreboardView {
+                    new_rank: p.new_rank,
+                    num_entries: p.num_entries,
+                    submitted_score: p.submitted_score.clone(),
+                    best_score: p.best_score.clone(),
+                    top_entries: p
+                        .top_entries
+                        .iter()
+                        .map(|e| (e.rank, e.username.clone(), e.score.clone()))
+                        .collect(),
+                })
+                .collect(),
             toasts: s
                 .toasts
                 .iter()
@@ -413,6 +463,14 @@ fn body(
                             draw_badge(ui, badges, a);
                             ui.label(egui::RichText::new(&a.title).strong());
                             ui.label(format!("({})", a.points));
+                            // v1.7.0 H2 — rarity: the percent of players who
+                            // have earned it (lower = rarer). 0.0 = unresolved.
+                            if a.rarity > 0.0 {
+                                ui.label(
+                                    egui::RichText::new(format!("{:.1}% earn", a.rarity)).weak(),
+                                )
+                                .on_hover_text("Rarity: proportion of players who unlocked this");
+                            }
                         });
                         ui.label(egui::RichText::new(&a.description).weak());
                         if !a.unlocked && !a.measured_progress.is_empty() {

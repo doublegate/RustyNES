@@ -353,7 +353,49 @@ for anything beyond a quick test.
 
 ---
 
-## 4. What is verified vs. pending
+## 4. Spectator mode — read-only (v1.7.0 "Forge" Workstream H8)
+
+A **spectator** joins a running match purely to watch. It is a
+determinism-safe, *receive-only* extension of the rollback stack:
+`rustynes_netplay::SpectatorSession` (`crates/rustynes-netplay/src/spectator.rs`),
+surfaced natively by the Netplay panel's **Spectate** control
+(`netplay_ui::NetplayUi::start_spectate`).
+
+**How it stays determinism-safe (the hard contract):**
+
+- A spectator **predicts nothing and rolls back never.** It advances the local
+  emulator a frame *only* once every player's real input for that frame has
+  arrived (the frame is fully confirmed). Because the players, at a confirmed
+  frame, ran it from real inputs only, the spectator — replaying those same
+  confirmed inputs from the same deterministic cold-boot — reproduces the frame
+  **byte-for-byte** (the same `set_buttons` / Four Score / `run_frame` routing
+  as the players, in `apply_and_run`). This is a strict subset of the player
+  rollback algorithm.
+- It uses the transport **poll-only**: it `send`s no `Input`, `InputAck`,
+  `Checksum`, or `Quality`, so it cannot perturb the match it watches. It does
+  one optional self-announce `Sync` so a spectator-aware host can learn where to
+  relay the stream; after that it is silent.
+- It draws no randomness and reads no wall clock. Its effect on the existing
+  2-4 player rollback path is **zero** — a spectator is invisible to the players
+  (the players' `RollbackSession` already drops any unexpected packet).
+
+A spectator necessarily runs `input_delay + network-latency` frames *behind*
+the live match (it can only show a frame it has *received* every input for).
+`SpectatorSession::pending_frames` reports how far behind it is, so the frontend
+can fast-forward to catch up; the Netplay panel + status bar show `spectate fN
++pending`.
+
+**Maintainer-manual carryover (like the live 2-4p matrix):** the host-side
+spectator *broadcast/relay* (a host fanning the confirmed input stream to N
+spectators) + the `deploy/` relay config are deployment-ready but not
+self-certifiable headlessly. The frontend driver + the determinism-safety
+property are exercised by unit tests (see the verified table below). Until the
+relay is wired, the panel's Spectate control dials a host and waits for a stream;
+the byte-identical replay path it runs on receipt is the tested-and-proven part.
+
+---
+
+## 5. What is verified vs. pending
 
 **Verified:**
 
@@ -372,6 +414,8 @@ for anything beyond a quick test.
 | Deploy bundle (signaling + Caddy TLS + coturn) builds + is turn-key | `deploy/` Docker images; `.env`-driven, no source edits to deploy |
 | Live STUN round-trip | `#[ignore]`d manual probe — **confirmed working live** against `stun.l.google.com`; kept ignored because CI may be sandboxed |
 | Desync-diagnostics capture (CRC-match history, first-desync frame, consecutive-mismatch counter) | Unit tests (`rustynes-netplay::diagnostics`) — synthetic CRC sequences; observational only (does not affect the rollback algorithm) |
+| Spectator replay is byte-identical to a reference run over the same confirmed inputs (H8) | Unit test (`rustynes-netplay::spectator` — framebuffer compare); `SpectatorSession` sends nothing and waits for fully-confirmed frames |
+| Spectator frontend driver (enter `Spectating`, poll-only tick, clean leave) | Unit test (`netplay_ui::spectator_enters_phase_and_leaves_cleanly`) |
 
 **Debugging aid (v1.3.0 Workstream G1).** When a session desyncs, the native
 Netplay panel's read-only **Diagnostics** section surfaces a GeraNES-style
@@ -389,3 +433,4 @@ and never feeds back into the rollback — pure telemetry, determinism intact.
 |---|---|
 | Real cross-NAT UDP traversal | A STUN server + two real NATs |
 | Full browser WebRTC netplay (2-4 players) | The deploy bundle **running** on a host/domain + N real browsers — cannot verify headlessly. Walk the checklist in `deploy/README.md` (2-tab → 2-machine → 4-player matrix + ops/DNS/TLS/TURN-bandwidth steps). |
+| Host-side spectator broadcast/relay + live spectate (H8) | A spectator-aware host fanning the confirmed input stream to N spectators + the `deploy/` relay config running — the frontend driver + byte-identical replay are unit-tested, the live relay is the maintainer's manual run. |

@@ -46,7 +46,7 @@ use std::net::SocketAddr;
 use rustynes_core::{Buttons, Nes};
 use rustynes_netplay::{
     AdvanceOutcome, ConnectionState, DisconnectReason, NetplayConnection, NetplayError,
-    RollbackSession, SessionConfig, UdpTransport,
+    RollbackSession, SessionConfig, SpectatorConfig, SpectatorSession, UdpTransport,
 };
 
 /// Default local UDP port a host binds when none is specified.
@@ -62,6 +62,9 @@ pub enum NetplayPhase {
     Connecting,
     /// A rollback session is running.
     InGame,
+    /// A read-only spectator session is running (v1.7.0 H8): the local
+    /// emulator replays the match's confirmed input stream — it never plays.
+    Spectating,
     /// The connection / session ended in an error (terminal until `leave`).
     Error,
 }
@@ -87,6 +90,10 @@ pub struct NetplayStatus {
     /// `true` if the most recent tick stalled for time-sync (no frame
     /// produced — the caller skipped rendering).
     pub stalled: bool,
+    /// v1.7.0 H8 — when [`Spectating`](NetplayPhase::Spectating), how many
+    /// fully-confirmed frames are buffered but not yet shown (how far the
+    /// spectator is behind the live match). `0` in every other phase.
+    pub spectator_pending: u32,
     /// An error / disconnect message (Error phase), else empty.
     pub message: String,
     /// v1.3.0 Workstream G1 — read-only desync diagnostics + session topology,
@@ -126,6 +133,9 @@ enum NetplayState {
     Connecting(Box<NetplayConnection>),
     /// Rollback session running.
     InGame(Box<RollbackSession<UdpTransport>>),
+    /// v1.7.0 H8 — read-only spectator session running. Drives the local
+    /// emulator from the received confirmed input stream; sends nothing.
+    Spectating(Box<SpectatorSession<UdpTransport>>),
     /// Terminal error (until `leave`).
     Error(String),
 }
@@ -177,6 +187,7 @@ impl NetplayUi {
             NetplayState::Idle => NetplayPhase::Idle,
             NetplayState::Connecting(_) => NetplayPhase::Connecting,
             NetplayState::InGame(_) => NetplayPhase::InGame,
+            NetplayState::Spectating(_) => NetplayPhase::Spectating,
             NetplayState::Error(_) => NetplayPhase::Error,
         }
     }
@@ -245,6 +256,55 @@ impl NetplayUi {
         }
     }
 
+    /// v1.7.0 "Forge" Workstream H8 — **spectate** a match hosted at `remote`:
+    /// bind an ephemeral local port and join as a READ-ONLY observer. The
+    /// spectator replays the match's confirmed input stream into the local
+    /// emulator and **never authors or sends gameplay input**, so it cannot
+    /// perturb the match it is watching (the determinism-safety contract).
+    ///
+    /// It announces itself once with a single `Sync` so a spectator-aware host
+    /// learns where to relay the input stream; after that it is purely
+    /// poll-only. Any previous session is dropped.
+    ///
+    /// The host-side spectator-broadcast wiring + the `deploy/` relay config are
+    /// a documented maintainer-manual carryover (like the live 2-4p host/TURN
+    /// matrix) — the frontend driver here is exercised by the loopback unit
+    /// test. The local emulator is power-cycled to the deterministic cold-boot
+    /// so frame 0 matches the players' canonical timeline.
+    pub fn start_spectate(&mut self, remote: SocketAddr, rom_hash: [u8; 32]) {
+        let local = SocketAddr::from(([0, 0, 0, 0], 0));
+        self.is_host = false;
+        self.rom_hash = rom_hash;
+        // A spectator does not own a controller port; the count is adopted from
+        // the host's roster (defaults to 2 until then).
+        self.config.num_players = 2;
+        match UdpTransport::bind(local, remote) {
+            Ok(mut transport) => {
+                // One-shot self-announce so a spectator-aware host can register
+                // us and start relaying the stream. After this we never send.
+                use rustynes_netplay::{NetMessage, Transport as _};
+                transport.send(&NetMessage::Sync {
+                    magic: NetMessage::SYNC_MAGIC,
+                    rom_hash,
+                });
+                let session = SpectatorSession::new(
+                    SpectatorConfig {
+                        num_players: self.config.num_players,
+                    },
+                    transport,
+                    rom_hash,
+                );
+                self.state = NetplayState::Spectating(Box::new(session));
+                self.status = NetplayStatus {
+                    phase: NetplayPhase::Spectating,
+                    is_host: false,
+                    ..NetplayStatus::default()
+                };
+            }
+            Err(e) => self.fail(format!("spectate bind failed: {e}")),
+        }
+    }
+
     /// Shared post-bind transition into the `Connecting` phase.
     fn enter_connecting(&mut self, conn: NetplayConnection, is_host: bool) {
         self.state = NetplayState::Connecting(Box::new(conn));
@@ -279,6 +339,8 @@ impl NetplayUi {
             NetplayState::Idle => NetplayTick::INACTIVE,
             NetplayState::Connecting(_) => self.tick_connecting(nes),
             NetplayState::InGame(_) => self.tick_in_game(nes, local_buttons),
+            // A spectator ignores `local_buttons` — it never authors input.
+            NetplayState::Spectating(_) => self.tick_spectating(nes),
             NetplayState::Error(msg) => {
                 self.status.phase = NetplayPhase::Error;
                 self.status.message = msg.clone();
@@ -409,6 +471,29 @@ impl NetplayUi {
     }
 
     // (diagnostics view builder is a free fn below — see `diagnostics_view`.)
+
+    /// v1.7.0 H8 — drive the read-only spectator one tick: poll the input
+    /// stream and advance the local emulator when the next frame is confirmed.
+    /// Never sends, predicts, or rolls back — so it cannot error. A tick that
+    /// produces no frame is a "waiting for the next confirmed frame" stall (the
+    /// caller skips rendering), exactly like the time-sync stall on the player
+    /// path.
+    fn tick_spectating(&mut self, nes: &mut Nes) -> NetplayTick {
+        let NetplayState::Spectating(session) = &mut self.state else {
+            unreachable!("tick_spectating only runs in the Spectating state");
+        };
+        let out = session.advance(nes);
+        self.status.phase = NetplayPhase::Spectating;
+        self.status.is_host = false;
+        self.status.current_frame = session.current_frame();
+        self.status.confirmed_frame = session.last_confirmed_frame();
+        self.status.spectator_pending = session.pending_frames();
+        self.status.stalled = !out.produced_frame;
+        NetplayTick {
+            active: true,
+            produced_frame: out.produced_frame,
+        }
+    }
 
     /// Transition to the terminal `Error` phase with a message.
     fn fail(&mut self, message: String) {
@@ -581,5 +666,42 @@ mod tests {
         }
         assert_ne!(host.phase(), NetplayPhase::Error, "host did not error");
         assert_ne!(join.phase(), NetplayPhase::Error, "joiner did not error");
+    }
+
+    /// v1.7.0 H8 — starting a spectator binds cleanly, enters the read-only
+    /// `Spectating` phase, ticks without error (waiting for a stream that never
+    /// arrives in this no-host loopback), and leaves back to Idle. Asserts the
+    /// determinism-safety surface: a spectator tick never produces a frame
+    /// until inputs arrive, and `leave` is clean.
+    #[test]
+    fn spectator_enters_phase_and_leaves_cleanly() {
+        let rom = synth_nrom();
+        let hash = *Nes::from_rom(&rom).unwrap().rom_sha256();
+        let mut nes = Nes::from_rom(&rom).unwrap();
+
+        let mut ui = NetplayUi::default();
+        // No host is listening; the bind still succeeds (we only dial), and the
+        // spectator simply receives nothing.
+        let remote = SocketAddr::from((Ipv4Addr::LOCALHOST, 7000));
+        ui.start_spectate(remote, hash);
+        assert_eq!(ui.phase(), NetplayPhase::Spectating);
+        assert!(ui.is_active());
+
+        for _ in 0..10 {
+            let t = ui.tick(&mut nes, Buttons::A);
+            assert!(t.active, "spectator tick is active");
+            assert!(
+                !t.produced_frame,
+                "spectator produces no frame without a confirmed input stream"
+            );
+        }
+        let status = ui.status();
+        assert_eq!(status.phase, NetplayPhase::Spectating);
+        assert!(!status.is_host);
+        assert_eq!(status.current_frame, 0);
+
+        ui.leave();
+        assert_eq!(ui.phase(), NetplayPhase::Idle);
+        assert!(!ui.is_active());
     }
 }

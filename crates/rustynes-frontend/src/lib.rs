@@ -52,6 +52,9 @@ pub mod eq;
 // (`png` is in the cfg(not(wasm)) dep table; a browser tab has no window icon).
 pub mod game_db;
 pub mod genie_db;
+// v1.7.0 "Forge" Workstream H9 — Game Genie encoder + `.tbl` text tables
+// (frontend-only, pure; round-trips through the core decoder).
+pub mod genie_encode;
 pub mod gfx;
 // v1.4.0 Workstream H3 — interactive ratatui help browser. Native-only +
 // behind the default-on `help-tui` feature (a minimal build can drop it); the
@@ -86,6 +89,9 @@ pub mod input;
 // v1.5.0 "Lens" Workstream I5 — shared lit-button colour palette for the
 // consolidated "Input Display" panel (v1.7.0 "Forge" beta.5, #51).
 pub mod input_colors;
+// v1.7.0 "Forge" Workstream H9 — movie subtitles → SubRip (`.srt`) export
+// (frontend-only, pure; driven by TAStudio markers).
+pub mod movie_srt;
 pub mod movie_ui;
 // v1.2.0 Workstream B — ROM soft-patching (IPS/UPS/BPS). Pure byte ops applied
 // to the in-memory ROM at the load chokepoint, before format detection, so the

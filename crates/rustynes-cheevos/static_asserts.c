@@ -21,4 +21,6 @@ size_t rc_cheevos_sizeof_achievement_list(void) { return sizeof(rc_client_achiev
 size_t rc_cheevos_sizeof_leaderboard_bucket(void) { return sizeof(rc_client_leaderboard_bucket_t); }
 size_t rc_cheevos_sizeof_leaderboard_list(void) { return sizeof(rc_client_leaderboard_list_t); }
 size_t rc_cheevos_sizeof_server_error(void) { return sizeof(rc_client_server_error_t); }
+size_t rc_cheevos_sizeof_scoreboard_entry(void) { return sizeof(rc_client_leaderboard_scoreboard_entry_t); }
+size_t rc_cheevos_sizeof_scoreboard(void) { return sizeof(rc_client_leaderboard_scoreboard_t); }
 size_t rc_cheevos_sizeof_api_server_response(void) { return sizeof(rc_api_server_response_t); }

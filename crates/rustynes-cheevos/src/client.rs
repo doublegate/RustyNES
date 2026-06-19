@@ -215,6 +215,12 @@ pub struct RaAchievement {
     pub bucket: u8,
     pub measured_percent: f32,
     pub measured_progress: String,
+    /// The proportion of players (0..=100) who have earned this achievement in
+    /// softcore — the "rarity" the HUD shows. 0.0 until the server populates it.
+    pub rarity: f32,
+    /// The proportion of players (0..=100) who have earned this achievement in
+    /// hardcore. 0.0 until the server populates it.
+    pub rarity_hardcore: f32,
     /// The RA media-server URL of the unlocked (color) badge PNG. Empty if
     /// rcheevos has not populated it (e.g. before the game's badges resolve).
     pub badge_url: String,
@@ -360,6 +366,27 @@ impl RaClient {
         unsafe { ffi::rc_client_reset(self.raw) };
     }
 
+    /// Whether a pause is currently allowed under the hardcore pause-gating
+    /// rule (rcheevos throttles how often the player may pause in hardcore to
+    /// prevent pause-abuse). Returns `(allowed, frames_remaining)`: when
+    /// `allowed` is `false`, `frames_remaining` is the number of frames still
+    /// required before a pause is permitted (0 when allowed).
+    ///
+    /// In softcore this always returns `(true, 0)`. Only call it when the user
+    /// is actually trying to pause (the rcheevos contract is stateful — each
+    /// call advances the throttle window).
+    #[must_use]
+    pub fn can_pause(&mut self) -> (bool, u32) {
+        let mut frames_remaining: u32 = 0;
+        // SAFETY: valid client; `frames_remaining` is a valid out-pointer.
+        let ok = unsafe { ffi::rc_client_can_pause(self.raw, &mut frames_remaining) };
+        if ok != 0 {
+            (true, 0)
+        } else {
+            (false, frames_remaining)
+        }
+    }
+
     /// Serialize the runtime achievement progress into a byte buffer.
     #[must_use]
     pub fn serialize_progress(&mut self) -> Vec<u8> {
@@ -460,6 +487,8 @@ impl RaClient {
                         bucket: ach.bucket,
                         measured_percent: ach.measured_percent,
                         measured_progress: cchar_arr_to_string(&ach.measured_progress),
+                        rarity: ach.rarity,
+                        rarity_hardcore: ach.rarity_hardcore,
                         badge_url: cstr_to_string(ach.badge_url),
                         badge_locked_url: cstr_to_string(ach.badge_locked_url),
                     });
