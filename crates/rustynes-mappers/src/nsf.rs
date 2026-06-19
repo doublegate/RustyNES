@@ -1,7 +1,10 @@
 //! NSF (classic `NESM`) music-file player (v1.1.0 beta.2, Workstream D, T-110-D1).
 //!
-//! Only the classic `NESM\x1a` container is parsed here; `NSFe` and expansion-chip
-//! audio are documented deferrals.
+//! Only the classic `NESM\x1a` container is parsed here; `NSFe` is a
+//! documented deferral. Expansion-chip audio (VRC6/7, FDS, MMC5, N163,
+//! Sunsoft 5B) declared in the `$07B` bitfield IS synthesized — the NSF
+//! mapper routes the expansion register windows into the existing cartridge
+//! synth cores via [`crate::nsf_expansion`] (v1.7.0 "Forge" G2/G3).
 //!
 //! An `.nsf` file is a ripped NES music engine plus a small header describing
 //! how to drive it: a `load`/`init`/`play` address triplet, a song count, and
@@ -19,13 +22,15 @@
 //! produces audio exactly as it does for a cartridge and the determinism
 //! contract is untouched.
 //!
-//! Scope for this first cut: the base 2A03 APU, standard `$5FF8-$5FFF`
-//! `$8000-$FFFF` 4 KiB bank-switching, and NTSC 60 Hz playback. Expansion-chip
-//! audio (VRC6/7, MMC5, N163, Sunsoft 5B, FDS), the FDS-style `$5FF6/$5FF7`
-//! RAM banking, and exact non-60 Hz play rates are deferred (documented).
+//! Scope: the base 2A03 APU, standard `$5FF8-$5FFF` `$8000-$FFFF` 4 KiB
+//! bank-switching, NTSC 60 Hz playback, and expansion-chip audio (VRC6/7,
+//! MMC5, N163, Sunsoft 5B, FDS) routed into the existing synth cores. The
+//! FDS-style `$5FF6/$5FF7` RAM banking and exact non-60 Hz play rates are
+//! deferred (documented).
 
 use crate::cartridge::Mirroring;
-use crate::mapper::{Mapper, MapperCaps, MapperError};
+use crate::mapper::{Mapper, MapperCaps, MapperError, MapperFrameEvents};
+use crate::nsf_expansion::NsfExpansion;
 use alloc::{boxed::Box, format, vec, vec::Vec};
 
 /// Header length of a classic NSF file (`NESM` form).
@@ -65,7 +70,8 @@ pub struct Nsf {
     pub bankswitched: bool,
     /// Initial bank register values (`$070-$077` of the header).
     pub initial_banks: [u8; 8],
-    /// Expansion-chip bitfield (`$07B`). Audio for these is not yet synthesized.
+    /// Expansion-chip bitfield (`$07B`). Routed into the matching synth cores
+    /// by the `nsf_expansion` module when any bit is set (v1.7.0 G2/G3).
     pub expansion: u8,
     /// `true` when the file declares a PAL or dual-region timing preference.
     pub pal: bool,
@@ -188,6 +194,12 @@ pub struct NsfMapper {
     current_song: u8,
     /// The synthetic 6502 driver image served at [`DRIVER_BASE`].
     driver: [u8; 0x40],
+    /// Raw `$07B` expansion bitfield (kept for save-state reconstruction).
+    expansion: u8,
+    /// Expansion-audio synth cores, present only when the bitfield requests
+    /// at least one chip (G2/G3). `None` for a base-2A03 NSF, so the common
+    /// path carries no extra state and is byte-identical to before.
+    exp_audio: Option<NsfExpansion>,
 }
 
 impl NsfMapper {
@@ -213,6 +225,8 @@ impl NsfMapper {
             total_songs: nsf.total_songs,
             current_song: start,
             driver: [0u8; 0x40],
+            expansion: nsf.expansion,
+            exp_audio: NsfExpansion::from_bits(nsf.expansion),
         };
         m.build_driver();
         m
@@ -317,11 +331,30 @@ impl NsfMapper {
 
 impl Mapper for NsfMapper {
     fn caps(&self) -> MapperCaps {
-        // No per-cycle hooks (no IRQ, no on-cart audio synthesis yet).
-        MapperCaps::NONE
+        // Base NSF (no expansion audio): no per-cycle hooks, no IRQ, no
+        // synthesis — same as before. When the `$07B` bitfield requests
+        // expansion audio, enable the CPU-cycle clock (oscillators), the
+        // frame-event hook (MMC5 envelope/length cadence), and audio mixing.
+        if self.exp_audio.is_some() {
+            MapperCaps {
+                cpu_cycle_hook: true,
+                audio: true,
+                frame_event_hook: true,
+                irq_source: false,
+            }
+        } else {
+            MapperCaps::NONE
+        }
     }
 
     fn cpu_read(&mut self, addr: u16) -> u8 {
+        // Expansion-audio read ports (N163 data port `$4800-$4FFF`, MMC5
+        // status `$5015`) take precedence over the default mapper read.
+        if let Some(exp) = self.exp_audio.as_mut()
+            && let Some(byte) = exp.cpu_read(addr)
+        {
+            return byte;
+        }
         match addr {
             // Synthetic driver image.
             a if (DRIVER_BASE..DRIVER_BASE + 0x40).contains(&a) => {
@@ -352,12 +385,20 @@ impl Mapper for NsfMapper {
 
     fn cpu_write(&mut self, addr: u16, value: u8) {
         match addr {
-            // 4 KiB bank registers for $8000-$FFFF.
+            // 4 KiB bank registers for $8000-$FFFF (take priority over any
+            // expansion-audio window — base NSFs bank only through here).
             0x5FF8..=0x5FFF if self.bankswitched => {
                 self.banks[(addr - 0x5FF8) as usize] = value;
             }
             0x6000..=0x7FFF => self.wram[(addr - 0x6000) as usize] = value,
-            _ => {}
+            _ => {
+                // Route everything else to the expansion-audio chips. For a
+                // base-2A03 NSF (`exp_audio == None`) this is a no-op, so the
+                // behaviour is unchanged.
+                if let Some(exp) = self.exp_audio.as_mut() {
+                    exp.cpu_write(addr, value);
+                }
+            }
         }
     }
 
@@ -365,8 +406,35 @@ impl Mapper for NsfMapper {
         // The driver image and the bank registers ARE mapped in $4020-$5FFF, so
         // the bus must use our real bytes there (not open bus). Everything else
         // in that window is unmapped (open bus).
-        !((DRIVER_BASE..DRIVER_BASE + 0x40).contains(&addr) || (0x5FF8..=0x5FFF).contains(&addr))
-            && (0x4020..=0x5FFF).contains(&addr)
+        if !(0x4020..=0x5FFF).contains(&addr) {
+            return false;
+        }
+        // Driver image and bank registers are always mapped.
+        if (DRIVER_BASE..DRIVER_BASE + 0x40).contains(&addr) || (0x5FF8..=0x5FFF).contains(&addr) {
+            return false;
+        }
+        // Expansion-audio read ports (N163 `$4800-$4FFF`, MMC5 `$5015`) are
+        // mapped when those chips are present (real bytes, not open bus).
+        if self.exp_audio.is_some() && ((0x4800..=0x4FFF).contains(&addr) || addr == 0x5015) {
+            return false;
+        }
+        true
+    }
+
+    fn notify_cpu_cycle(&mut self) {
+        if let Some(exp) = self.exp_audio.as_mut() {
+            exp.clock();
+        }
+    }
+
+    fn notify_frame_event(&mut self, events: MapperFrameEvents) {
+        if let Some(exp) = self.exp_audio.as_mut() {
+            exp.frame_event(events.quarter, events.half);
+        }
+    }
+
+    fn mix_audio(&mut self) -> i16 {
+        self.exp_audio.as_ref().map_or(0, NsfExpansion::mix)
     }
 
     fn ppu_read(&mut self, _addr: u16) -> u8 {
@@ -394,21 +462,32 @@ impl Mapper for NsfMapper {
     }
 
     fn save_state(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(2 + 8 + self.wram.len());
-        out.push(1); // version tag
+        // v1: version + song + 8 bank regs + WRAM.
+        // v2 (G2/G3): appends a 1-byte expansion-audio presence tail when
+        // expansion audio is present (ADR-0003: additive; v1 readers ignore
+        // the tail). A base-2A03 NSF still writes a v1 blob, so existing
+        // save-states stay byte-identical.
+        let has_exp = self.exp_audio.is_some();
+        let version = if has_exp { 2u8 } else { 1u8 };
+        let mut out = Vec::with_capacity(2 + 8 + self.wram.len() + usize::from(has_exp));
+        out.push(version);
         out.push(self.current_song);
         out.extend_from_slice(&self.banks);
         out.extend_from_slice(self.wram.as_ref());
+        if let Some(exp) = self.exp_audio.as_ref() {
+            exp.save_state(&mut out);
+        }
         out
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
-        if data.first() != Some(&1) {
-            return Err(MapperError::UnsupportedVersion(
-                data.first().copied().unwrap_or(0),
-            ));
+        let version = data.first().copied().unwrap_or(0);
+        if !(1..=2).contains(&version) {
+            return Err(MapperError::UnsupportedVersion(version));
         }
-        let expected = 2 + 8 + self.wram.len();
+        let core_len = 2 + 8 + self.wram.len();
+        // v1 must match exactly; v2 carries a 1-byte expansion tail.
+        let expected = core_len + usize::from(version == 2);
         if data.len() != expected {
             return Err(MapperError::Truncated {
                 expected,
@@ -420,7 +499,29 @@ impl Mapper for NsfMapper {
         // `set_song` already keeps `current_song < total_songs`).
         self.current_song = data[1].min(self.total_songs.saturating_sub(1));
         self.banks.copy_from_slice(&data[2..10]);
-        self.wram.copy_from_slice(&data[10..]);
+        self.wram.copy_from_slice(&data[10..core_len]);
+        // The expansion-audio chips are reconstructed from the (immutable)
+        // `$07B` bitfield; the v2 presence byte is self-describing but does
+        // not carry oscillator phase, so we rebuild the chips fresh. Live
+        // synthesis re-converges from the next register write (the correct
+        // behaviour for a paused/restored NSF — see `NsfExpansion::save_state`).
+        self.exp_audio = NsfExpansion::from_bits(self.expansion);
+        // Consume the v2 expansion tail (round-trips with `save_state`). The
+        // byte only carries which chips were present, so we validate it against
+        // the chips rebuilt from `$07B` rather than discarding it; a mismatch
+        // means the tail describes a different chip set than this ROM's header.
+        if version == 2 {
+            let tail = data[core_len];
+            let rebuilt = self
+                .exp_audio
+                .as_ref()
+                .map_or(0, NsfExpansion::presence_bits);
+            if tail != rebuilt {
+                return Err(MapperError::Invalid(format!(
+                    "NSF v2 expansion presence tail {tail:#04x} disagrees with the $07B bitfield {rebuilt:#04x}"
+                )));
+            }
+        }
         self.build_driver();
         Ok(())
     }
@@ -507,5 +608,42 @@ mod tests {
         m2.load_state(&blob).expect("round trip");
         assert_eq!(m2.current_song(), 1);
         assert_eq!(m2.cpu_read(0x6000), 0xAB);
+    }
+
+    #[test]
+    fn expansion_save_state_round_trips_v2_tail() {
+        // An NSF declaring VRC6 expansion audio ($07B bit0) emits a v2 blob with
+        // the 1-byte presence tail; load_state must consume + validate it (round
+        // trip), not error or leave bytes unread.
+        let mut f = synth_nsf();
+        f[0x7B] = 0x01; // EXP_VRC6
+        let nsf = parse_nsf(&f).expect("valid expansion nsf");
+        let mut m = NsfMapper::new(&nsf);
+        assert!(m.exp_audio.is_some(), "VRC6 expansion must be present");
+        m.set_song(2);
+        m.cpu_write(0x6000, 0xCD);
+        let blob = m.save_state();
+        assert_eq!(blob.first().copied(), Some(2u8), "expansion NSF is v2");
+        let mut m2 = NsfMapper::new(&nsf);
+        m2.load_state(&blob).expect("v2 round trip");
+        assert_eq!(m2.current_song(), 2);
+        assert_eq!(m2.cpu_read(0x6000), 0xCD);
+        assert!(
+            m2.exp_audio.is_some(),
+            "expansion rebuilt from $07B on load"
+        );
+    }
+
+    #[test]
+    fn expansion_load_state_rejects_corrupt_presence_tail() {
+        // A v2 blob whose presence tail disagrees with the $07B bitfield is a
+        // corrupt save-state and must be rejected rather than silently accepted.
+        let mut f = synth_nsf();
+        f[0x7B] = 0x01; // EXP_VRC6
+        let nsf = parse_nsf(&f).expect("valid expansion nsf");
+        let mut m = NsfMapper::new(&nsf);
+        let mut blob = m.save_state();
+        *blob.last_mut().expect("tail byte") ^= 0x80; // flip a presence bit
+        assert!(matches!(m.load_state(&blob), Err(MapperError::Invalid(_))));
     }
 }

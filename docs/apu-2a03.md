@@ -209,8 +209,28 @@ external open-bus latch used by cartridge or PPU register accesses.
 - **Audio capture comparison**: emit 60 frames of audio for a curated set of demo ROMs, compare PSNR against a Mesen-generated reference. (Not a strict pass/fail but a regression detector.)
 - **Property test**: random `$4017` writes interleaved with channel writes; assert frame counter cycle accounting matches a hand-rolled reference.
 
+## Expansion-chip audio
+
+Six on-cart expansion sound chips are synthesized and summed into the external-audio mix via the `Mapper::mix_audio(&mut self) -> i16` hook (default 0). Each synth core lives in the owning mapper crate, **not** the 2A03 APU crate, because they are cartridge hardware:
+
+| Chip       | Mapper(s)        | Synth core                                            | Clock cadence                  |
+|------------|------------------|-------------------------------------------------------|--------------------------------|
+| VRC6       | 24 / 26          | `Vrc6Pulse` x2 + `Vrc6Saw` (`crates/rustynes-mappers/src/sprint3.rs`) | every CPU cycle (`$9003` halt + freq-scale shift) |
+| VRC7       | 85               | `rustynes_apu::Opll` (emu2413-derived, MIT)           | OPLL `calc()` every 36 CPU cycles (49,716 Hz)      |
+| FDS        | 20 (FDS device)  | `FdsAudio` wavetable + FM (`crates/rustynes-mappers/src/fds.rs`) | wave/mod every 16 CPU cycles; envelopes per cycle |
+| MMC5       | 5                | `Mmc5Audio` (2 pulse + 7-bit PCM, `crates/rustynes-mappers/src/mmc5.rs`) | pulse timer every other CPU cycle; envelope/length on 2A03 frame events |
+| Namco 163  | 19 / 210         | `Namco163Audio` (1-8 time-multiplexed wavetable channels) | round-robin channel update every 15 CPU cycles    |
+| Sunsoft 5B | 69 (FME-7)       | `Sunsoft5BAudio` (3 tone + noise + envelope)          | every CPU cycle                |
+
+All synth cores are behind the default-on `mapper-audio` Cargo feature; when it is off (e.g. the `no_std` build) the register decoders still latch (save-state round-trip preserved) but `clock`/`mix` are no-op shims that return silence. The VRC7 OPLL core is deliberately the MIT `emu2413` lineage — **not** Nuked-OPLL (GPL/LGPL, license-incompatible).
+
+### NSF expansion-audio routing (v1.7.0 "Forge" G2/G3)
+
+A classic `.nsf` may declare expansion audio in the `$07B` bitfield (bit 0 VRC6, 1 VRC7, 2 FDS, 3 MMC5, 4 N163, 5 5B). The NSF player (`crates/rustynes-mappers/src/nsf.rs`) does **not** reimplement any synthesis: `crates/rustynes-mappers/src/nsf_expansion.rs` (`NsfExpansion`) owns instances of the **exact same** cores listed above and routes the NSF register windows into them — `$9000-$B002` (VRC6), `$9010`/`$9030` (VRC7), `$4040-$408A` (FDS), `$5000-$5015` (MMC5), `$4800`/`$F800` (N163), `$C000`/`$E000` (5B) — clocking on `notify_cpu_cycle` and fanning APU frame events (MMC5 envelope/length) on `notify_frame_event`. Because the bit-for-bit math is shared with the cartridge path, an NSF VRC6 tune sounds identical to a VRC6 cartridge. The `$5FF8-$5FFF` bank registers retain priority over the overlapping expansion windows. `NsfExpansion` is constructed only for NSF files and is unreachable from any oracle cartridge ROM, so it cannot perturb existing AccuracyCoin / blargg / kevtris audio.
+
+**MMC5 expansion audio (G3)** was the one chip whose synthesis was started-but-deferred for NSF use; the cartridge `Mmc5Audio` core (2 pulse + raw PCM) is now driven for both cartridge-MMC5 and NSF-MMC5 playback through the shared router.
+
 ## Open questions
 
 - **Sample-rate conversion**: blip_buf-rs vs. hand-rolled. blip_buf-rs is a thin wrapper; we may inline it for fewer dependencies.
 - **Audio API choice in cpal**: `f32` vs `i16` output streams. cpal supports both; default device choice depends on platform. Architecture: emit i16 internally, convert to f32 in the cpal callback if needed.
-- **Mapper-extended audio.** VRC6 (3 channels), VRC7 (FM, 6 channels), Sunsoft 5B (3 channels), Namco 163 (8 channels), MMC5 (2 pulse + raw PCM), FDS (wavetable + envelope) — all need extra summing into the mix. Architecture: mappers expose a `fn mix_audio(&mut self) -> i16` called per APU sample; default impl returns 0.

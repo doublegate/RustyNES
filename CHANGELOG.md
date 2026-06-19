@@ -17,6 +17,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **v1.7.0 "Forge" Workstream G2/G3 — NSF + MMC5 expansion-audio synthesis.**
+  Classic `.nsf` files that declare expansion audio in the `$07B` bitfield now
+  actually play it. A new thin router (`crates/rustynes-mappers/src/nsf_expansion.rs`,
+  `NsfExpansion`) owns instances of the **existing** cartridge synth cores —
+  VRC6 (`Vrc6Pulse`/`Vrc6Saw`), VRC7 (`rustynes_apu::Opll`, MIT emu2413 lineage —
+  **not** Nuked-OPLL), FDS (`FdsAudio`), MMC5 (`Mmc5Audio`), Namco 163
+  (`Namco163Audio`), Sunsoft 5B (`Sunsoft5BAudio`) — and routes the NSF
+  register windows (`$9000-$B002`, `$9010`/`$9030`, `$4040-$408A`, `$5000-$5015`,
+  `$4800`/`$F800`, `$C000`/`$E000`) into them, clocking on `notify_cpu_cycle`
+  and fanning APU frame events on `notify_frame_event`. No synthesis is
+  reimplemented — the bit-for-bit math is shared with the cartridge path, so an
+  NSF VRC6/MMC5/etc. tune is identical to the cartridge. **G3** drives the
+  cartridge `Mmc5Audio` core (the one expansion chip whose NSF synthesis had
+  been started-but-deferred) for both cartridge-MMC5 and NSF-MMC5 playback.
+  `NsfExpansion` is constructed only for NSF files and is unreachable from any
+  oracle cartridge ROM, so existing audio is byte-identical: AccuracyCoin holds
+  **100% (139/139)**, the chip stack stays `no_std` (feature-off `clock`/`mix`
+  shims return silence), and base-2A03 NSFs carry no extra state (`exp_audio:
+  None`, `caps() == NONE`). NSF save-states gain an additive v2 presence-byte
+  tail (ADR-0003 style; v1 blobs still load). `docs/apu-2a03.md` gains an
+  "Expansion-chip audio" section. The synth cores were exposed `pub(crate)` from
+  their owning mapper modules for the reuse (cartridge code byte-identical).
+- **v1.7.0 "Forge" Workstream G (G4 + G5) — broad movie-format import +
+  HD-Pack Builder.** Both additive / output-only; the shipped / native / `no_std`
+  / wasm builds stay byte-identical and AccuracyCoin holds **100% (139/139)**.
+  Imported movies replay deterministically via the same canonical power-on
+  alignment as the v1.6.0 `.fm2` importer. New ADR 0017 records the HD-Pack
+  Builder.
+  - **G4 — broad movie-format import** (`crates/rustynes-core/src/legacy_movie.rs`,
+    `no_std`-clean; frontend dispatch in `app.rs`). Importers for the historical
+    pre-`.fm2` TASVideos corpus so RustyNES can "play any NES TAS": **`.fcm`**
+    (FCEUX / FCE Ultra — a sparse toggle/delta stream, decoded to a dense input
+    log), **`.fmv`** (Famtasia — fixed 144-byte header, full per-frame dump with
+    the Famtasia bit permutation), and **`.vmv`** (VirtuaNES —
+    documentation-derived, since BizHawk never shipped a `.vmv` importer). Each
+    rejects save-state-anchored starts (only `StartPoint::PowerOn` is portable).
+    `.mc2` is handled with a clean, documented rejection (it is a PC Engine
+    PCEjin/Mednafen format, not NES). Plus **`.fm2`/`.bk2` export hardening**: the
+    matching ROM checksum is recomputed from the loaded ROM and stamped on
+    (`base64:`-MD5 `romChecksum` for `.fm2`, hex SHA-1 `SHA1` for `.bk2`) so an
+    exported movie is verifiable on TASVideos. The import file dialog now offers
+    `fm2`/`bk2`/`fcm`/`fmv`/`vmv`.
+  - **G5 — HD-Pack Builder** (`crates/rustynes-frontend/src/hdpack_builder.rs`,
+    `hd-pack` feature + native; ADR 0017). The authoring counterpart to the
+    existing pack *loader* (v1.2.0): an in-emulator recorder (Tools → HD Pack →
+    Build HD Pack (Record) / Stop & Save) that observes the same per-frame PPU
+    tile-source telemetry + CHR snapshot the compositor already captures, dedups
+    the distinct tiles a game draws by their Mesen CRC-32 key, captures each
+    tile's native 8x8 pixels, and emits a Mesen-compatible `hires.txt` +
+    `tiles.png` starter pack that loads straight back through the loader. Reads
+    only already-deterministic snapshots under the existing lock discipline;
+    mutates no emulation state.
+- **v1.7.0 "Forge" Workstream D — timeline + scaling rewind engine.** A
+  scrubbable full-session timeline with clip export, plus a compressed,
+  density-tiered greenzone that scales the TAStudio editor to feature-length
+  TASes. Both ride the current PPU-dot scheduler (**no timebase change**), are
+  additive / output-only / determinism-neutral, so AccuracyCoin holds **100%
+  (139/139)** and the shipped / native / `no_std` / wasm builds stay
+  byte-identical.
+  - **D1 — HistoryViewer** (`crates/rustynes-frontend/src/history_viewer.rs`,
+    native + `wasm-winit`). A bookkeeping layer over the per-frame rewind ring
+    that records the live session's input stream (`FrameInput` per port) in
+    lock-step with the emulator + periodically stashes a lightweight
+    start-anchor save-state. Driven from `EmuCore::produce_one_frame` on
+    persistent forward frames only (never a rewind step), after the `nes` borrow
+    is released — it observes already-latched inputs + copies an already-produced
+    save-state, so it cannot perturb emulation. New **Tools → Export Last 30s
+    (.rnm)** assembles a `Movie` covering the trailing N seconds (start = the
+    nearest anchor at-or-before the window) and writes a `.rnm` via the save
+    dialog; the clip **replays bit-identically** (proven by a `MoviePlayer`
+    round-trip test). Cleared on ROM load + power-cycle.
+  - **D2 — Zwinder-class compressed tiered greenzone**
+    (`rustynes_core::zwinder::ZwinderStateManager`, `#![no_std]` + `alloc`). The
+    compressed successor to the v1.6.0 uncompressed greenzone: frame-keyed
+    snapshots as **XOR-deltas + LZ4** against periodic keyframes, with reserved
+    anchors (frame 0 / markers / branch points — always self-contained
+    keyframes, never evicted) and density-tiered eviction over the *compressed*
+    sizes. Source: BizHawk `ZwinderBuffer` / `ZwinderStateManager`. The TAStudio
+    greenzone (`crates/rustynes-frontend/src/tastudio/greenzone.rs`) now stores
+    its save-states through it (a thin `usize`-frame adapter), so the same RAM
+    holds far more history while the deterministic seek/replay contract is
+    unchanged. **Determinism gate:** compression is lossless —
+    `restore(compress(store(s))) == s` byte-for-byte — proven by an in-module
+    round-trip-equality test (keyframes + deltas + post-eviction) **and**
+    `rustynes-test-harness` integration tests that drive real `Nes` snapshots
+    through save → compress → decompress → restore and assert byte-equality.
+
 - **v1.7.0 "Forge" Workstream E — host IPC / automation (RustyNES as a
   platform).** The power-user tier (modelled on BizHawk's `comm` / `client` /
   `userdata` libraries) that turns RustyNES into a host for external bots / RL
@@ -226,8 +313,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no core or default-path effect, so AccuracyCoin holds **100% (139/139)** and the
   builds stay byte-identical):
   - The access counter (`debugger/access_counter.rs`) folds the per-frame access
-    + exec logs by iterating the borrowed slices directly instead of `collect`ing
-    /`to_vec`-cloning them into fresh `Vec`s every frame.
+    and exec logs by iterating the borrowed slices directly instead of
+    `collect`ing / `to_vec`-cloning them into fresh `Vec`s every frame.
   - The inline assembler (`debugger/assembler.rs`) builds its 256-entry
     `(mnemonic,mode) → opcode` table once via a `OnceLock` and reuses it, instead
     of re-deriving it (~256 disassemblies) on every assembled line.
@@ -236,6 +323,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     rewriting the entire ROM file just to inspect or edit the header.
 
 ### Fixed
+
+- **v1.7.0 beta.4 review — untrusted-movie-parsing hardening + rewind/NSF fixes**
+  (all additive / determinism-neutral; imported movies still replay
+  deterministically, the Zwinder round-trip stays lossless, the chip stack stays
+  `no_std`, and AccuracyCoin holds **100% (139/139)**):
+  - **`.fcm` import can no longer be forced into an unbounded allocation
+    (security).** `decode_fcm_stream` now enforces a hard `1 << 24`-frame output
+    cap *unconditionally* — previously the cap was skipped when the header frame
+    count was `0`, so a crafted `.fcm` with a large delta-advance could emit
+    millions of frames (DoS / OOM). The cap is the tighter of the header hint and
+    the hard limit.
+  - **`.fcm` rejects a header-overlapping input offset.** A `firstFrameOffset`
+    below the `0x34` fixed header (which would parse header bytes as input) is now
+    rejected as malformed (previously only an offset past EOF was caught).
+  - **`.vmv` rejects a header-overlapping data offset.** A non-zero movie-data
+    offset below the `0x40` header is rejected as malformed.
+  - **`.vmv` rejects four-controller movies instead of silently dropping P3/P4.**
+    `FrameInput` models only the two standard NES ports, so a `.vmv` enabling
+    controllers 3/4 is now rejected up front (matching the `.fcm` four-score
+    stance) rather than producing a "successful" import with missing inputs that
+    would desync replay.
+  - **Zwinder greenzone store decodes the preceding keyframe at most once.**
+    `ZwinderStateManager::store` no longer calls `preceding_keyframe_raw` twice on
+    the common delta path (once to test presence, once to fetch), halving the LZ4
+    decompress + allocation in the greenzone hot loop. Lossless round-trip
+    equality is unchanged.
+  - **NSF v2 save-state tail is now consumed + validated, and its doc matches the
+    implementation.** `NsfMapper::load_state` reads the v2 expansion presence byte
+    and rejects a tail that disagrees with the `$07B` bitfield, so the blob fully
+    round-trips. `NsfExpansion::save_state`'s doc-comment is corrected to state
+    plainly that volatile oscillator/register state is *intentionally not*
+    persisted — the chips are rebuilt from the immutable `$07B` bitfield and live
+    phase re-converges from the next register write (correct for a paused/restored
+    NSF); the presence byte only records which chips a v2 tail described.
 
 - **v1.7.0 beta.3 review — scriptable-TAStudio + host-IPC robustness** (all
   additive / off the default path; `scripting` / `script-ipc` stay byte-identical

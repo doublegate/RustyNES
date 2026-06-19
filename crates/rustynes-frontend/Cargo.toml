@@ -207,6 +207,13 @@ web-time.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rustynes-netplay.workspace = true
 
+# v1.7.0 "Forge" G4 — movie-export hash hardening (native export path only, so
+# the wasm size budget is untouched). `.fm2` wants an MD5 `romChecksum`, `.bk2`
+# a SHA-1; recompute both from the loaded ROM and render as hex on export.
+md-5.workspace = true
+sha1.workspace = true
+hex.workspace = true
+
 # === v1.4.0 Workstream H — native CLI / terminal help & argument UX ===
 # CRITICAL: these are ALL native-only. They live in this
 # `cfg(not(target_arch = "wasm32"))` table so the wasm builds (and the wasm

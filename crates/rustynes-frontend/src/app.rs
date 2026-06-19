@@ -511,6 +511,12 @@ pub struct App {
     /// byte-identical to the stock build.
     #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
     hd_compositor: Option<crate::hdpack::HdCompositor>,
+    /// v1.7.0 "Forge" G5 — the active HD-Pack BUILDER recorder, `Some` only
+    /// while the user is recording a starter pack. It observes the same per-frame
+    /// tile-source + CHR snapshot the compositor consumes (output-only); `None`
+    /// (the default) leaves the present path byte-identical to stock.
+    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+    hd_pack_builder: Option<crate::hdpack_builder::HdPackBuilder>,
     /// v1.2.0 C3 — scratch staging for the PPU per-pixel HD tile-source
     /// telemetry, copied under the emu lock alongside the framebuffer.
     #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
@@ -769,6 +775,45 @@ fn log_dual_system_note() {
     web_sys::console::warn_1(&wasm_bindgen::JsValue::from_str(note));
 }
 
+/// v1.7.0 "Forge" G4 — the recomputed ROM digests stamped onto an exported TAS
+/// movie so it is verifiable on `TASVideos`. Native-only (movie export is a
+/// filesystem operation).
+#[cfg(not(target_arch = "wasm32"))]
+struct MovieRomHashes {
+    /// Base64 of the 16 raw MD5 bytes (the `.fm2` `romChecksum` `base64:` value).
+    md5_b64: String,
+    /// Lower-case hex SHA-1 (the `.bk2` `SHA1` header value).
+    sha1: String,
+}
+
+/// Standard (RFC 4648) base64-encode `bytes` with `=` padding. A tiny local
+/// encoder so the native export path needs no extra base64 dependency (the wasm
+/// `base64_encode` uses the browser's `btoa`, which is unavailable on native).
+#[cfg(not(target_arch = "wasm32"))]
+fn base64_std(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = u32::from(chunk[0]);
+        let b1 = chunk.get(1).copied().map_or(0, u32::from);
+        let b2 = chunk.get(2).copied().map_or(0, u32::from);
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        out.push(ALPHABET[((n >> 18) & 0x3F) as usize] as char);
+        out.push(ALPHABET[((n >> 12) & 0x3F) as usize] as char);
+        out.push(if chunk.len() > 1 {
+            ALPHABET[((n >> 6) & 0x3F) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            ALPHABET[(n & 0x3F) as usize] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
 impl App {
     /// Build an app from a path to a `.nes` file (native).
     ///
@@ -795,6 +840,8 @@ impl App {
             gfx: None,
             #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
             hd_compositor: None,
+            #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+            hd_pack_builder: None,
             #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
             present_hd_tiles: Vec::new(),
             #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
@@ -902,6 +949,8 @@ impl App {
             gfx: None,
             #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
             hd_compositor: None,
+            #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+            hd_pack_builder: None,
             #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
             present_hd_tiles: Vec::new(),
             #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
@@ -1253,6 +1302,8 @@ impl App {
             emu.audio_buf.clear();
             emu.perf.clear();
             emu.present_fb.clear();
+            // v1.7.0 "Forge" D1 — a new ROM starts a fresh session timeline.
+            emu.history.clear();
             emu.nes = Some(nes);
         }
         // v1.6.0 "Studio" A2 — the new ROM invalidates any TAStudio session
@@ -1491,6 +1542,66 @@ impl App {
         self.ui.set_status(crate::ui_shell::StatusMessage::success(
             "HD pack unloaded".to_string(),
         ));
+    }
+
+    /// v1.7.0 "Forge" G5 — start recording an HD-pack STARTER pack from live
+    /// play. The recorder observes the per-frame tile-source + CHR snapshot in
+    /// the present path (output-only) and accumulates the distinct tiles the
+    /// game draws. No-op if already recording or no ROM is loaded.
+    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+    fn hd_pack_builder_start(&mut self) {
+        if self.hd_pack_builder.is_some() {
+            return;
+        }
+        if self.emu.lock().nes.is_none() {
+            self.ui.set_status(crate::ui_shell::StatusMessage::error(
+                "Load a ROM before building an HD pack".to_string(),
+            ));
+            return;
+        }
+        self.hd_pack_builder = Some(crate::hdpack_builder::HdPackBuilder::new());
+        self.ui.set_status(crate::ui_shell::StatusMessage::info(
+            "HD-Pack Builder recording — play through the scenes you want to capture".to_string(),
+        ));
+    }
+
+    /// v1.7.0 "Forge" G5 — stop the HD-Pack Builder and write the captured
+    /// `hires.txt` + `tiles.png` starter pack to a folder the user picks. No-op
+    /// if not recording.
+    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+    fn hd_pack_builder_stop(&mut self) {
+        let Some(builder) = self.hd_pack_builder.take() else {
+            return;
+        };
+        if builder.tile_count() == 0 {
+            self.ui.set_status(crate::ui_shell::StatusMessage::error(
+                "HD-Pack Builder captured no tiles (was anything rendered?)".to_string(),
+            ));
+            return;
+        }
+        let mut dialog = rfd::FileDialog::new().set_file_name("MyHdPack");
+        if let Some(d) = self.data_dir.clone() {
+            dialog = dialog.set_directory(d);
+        }
+        let Some(dir) = dialog.pick_folder() else {
+            self.ui.set_status(crate::ui_shell::StatusMessage::info(
+                "HD-Pack Builder save cancelled".to_string(),
+            ));
+            return;
+        };
+        match builder.write_pack(&dir) {
+            Ok(n) => self
+                .ui
+                .set_status(crate::ui_shell::StatusMessage::success(format!(
+                    "HD pack written: {n} tile(s) -> {}",
+                    dir.display()
+                ))),
+            Err(e) => self
+                .ui
+                .set_status(crate::ui_shell::StatusMessage::error(format!(
+                    "HD-Pack Builder write failed: {e}"
+                ))),
+        }
     }
 
     /// Per-ROM FDS writable-disk save directory (`<data_dir>/fds-saves/`).
@@ -2170,7 +2281,7 @@ impl App {
             return;
         }
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("TAS movie (FCEUX/BizHawk)", &["fm2", "bk2"])
+            .add_filter("TAS movie", &["fm2", "bk2", "fcm", "fmv", "vmv"])
             .set_directory(self.movies_dir().unwrap_or_else(|| PathBuf::from(".")))
             .pick_file()
         else {
@@ -2225,19 +2336,37 @@ impl App {
             .and_then(|e| e.to_str())
             .unwrap_or("")
             .to_ascii_lowercase();
-        if ext == "bk2" {
-            let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
-            let (header, input_log) = Self::read_bk2_members(&bytes)?;
-            let (movie, _meta) =
-                rustynes_core::bk2_interop::import_bk2(&header, &input_log, rom_sha)
-                    .map_err(|e| e.to_string())?;
-            Ok(movie)
-        } else {
-            // `.fm2` (or any other extension): flat text.
-            let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-            let (movie, _meta) = rustynes_core::movie_interop::import_fm2(&text, rom_sha)
+        match ext.as_str() {
+            "bk2" => {
+                let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+                let (header, input_log) = Self::read_bk2_members(&bytes)?;
+                let (movie, _meta) =
+                    rustynes_core::bk2_interop::import_bk2(&header, &input_log, rom_sha)
+                        .map_err(|e| e.to_string())?;
+                Ok(movie)
+            }
+            // v1.7.0 "Forge" G4 — legacy binary TAS containers. Each is a small
+            // binary header + per-frame input; the core parses bytes -> Movie and
+            // reuses the canonical power-on alignment (so replay is bit-identical).
+            "fcm" | "fmv" | "vmv" | "mc2" => {
+                let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+                let (movie, _meta) = match ext.as_str() {
+                    "fcm" => rustynes_core::import_fcm(&bytes, rom_sha),
+                    "fmv" => rustynes_core::import_fmv(&bytes, rom_sha),
+                    "vmv" => rustynes_core::import_vmv(&bytes, rom_sha),
+                    // `.mc2` is a PC Engine format, not NES — rejected cleanly.
+                    _ => rustynes_core::import_mc2(&bytes, rom_sha),
+                }
                 .map_err(|e| e.to_string())?;
-            Ok(movie)
+                Ok(movie)
+            }
+            // `.fm2` (or any other extension): flat text.
+            _ => {
+                let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+                let (movie, _meta) = rustynes_core::movie_interop::import_fm2(&text, rom_sha)
+                    .map_err(|e| e.to_string())?;
+                Ok(movie)
+            }
         }
     }
 
@@ -2272,9 +2401,11 @@ impl App {
         Ok((header, input_log))
     }
 
-    /// v1.6.0 B1 — export the current recording / loaded movie to an external
-    /// TAS movie file. The chosen extension (`.fm2` / `.bk2`) selects the format;
-    /// `.bk2` is packed into a ZIP frontend-side.
+    /// v1.6.0 B1 / v1.7.0 G4 — export the current recording / loaded movie to an
+    /// external TAS movie file. The chosen extension (`.fm2` / `.bk2`) selects the
+    /// format; `.bk2` is packed into a ZIP frontend-side. The matching ROM
+    /// checksum (MD5 for `.fm2`, SHA-1 for `.bk2`) is recomputed and stamped on so
+    /// the movie is verifiable on `TASVideos`.
     #[cfg(not(target_arch = "wasm32"))]
     fn handle_movie_export(&self) {
         // Prefer the in-progress recording (finished here); else the loaded
@@ -2304,7 +2435,11 @@ impl App {
             eprintln!("rustynes: movie export cancelled");
             return;
         };
-        if let Err(e) = Self::write_movie_file(&path, &movie) {
+        // v1.7.0 "Forge" G4 — recompute the ROM digests the interchange formats
+        // verify against (`.fm2` wants an MD5 `romChecksum`, `.bk2` a SHA-1) from
+        // the loaded ROM, so an exported RustyNES movie is checkable on TASVideos.
+        let hashes = self.movie_rom_hashes();
+        if let Err(e) = Self::write_movie_file(&path, &movie, hashes.as_ref()) {
             eprintln!("rustynes: movie export failed {}: {e}", path.display());
         } else {
             eprintln!(
@@ -2315,32 +2450,114 @@ impl App {
         }
     }
 
+    /// v1.7.0 "Forge" G4 — recompute the legacy/interchange ROM digests from the
+    /// loaded ROM bytes for movie export: the MD5 a `.fm2` `romChecksum` uses and
+    /// the SHA-1 a `.bk2` `SHA1` header uses. Returns `None` when no ROM is
+    /// loaded. Both are rendered as the lower-case hex the formats expect.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn movie_rom_hashes(&self) -> Option<MovieRomHashes> {
+        use md5::Md5;
+        use sha1::Sha1;
+        use sha2::Digest as _;
+        if self.rom_bytes.is_empty() {
+            return None;
+        }
+        // `.fm2`'s `romChecksum` convention is `base64:<base64 of the 16 raw MD5
+        // bytes>`; `.bk2`'s `SHA1` is lower-case hex.
+        let md5_b64 = base64_std(Md5::digest(&self.rom_bytes).as_slice());
+        let sha1 = hex::encode(Sha1::digest(&self.rom_bytes));
+        Some(MovieRomHashes { md5_b64, sha1 })
+    }
+
+    /// v1.7.0 "Forge" Workstream D1 — export the trailing `seconds` of the live
+    /// session timeline (the `HistoryViewer` over the rewind ring) as a replayable
+    /// `.rnm` clip. The clip starts at the nearest start-anchor at-or-before the
+    /// window and replays bit-identically (its `StartPoint` is a real
+    /// save-state + the recorded input stream).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn handle_history_export_clip(&self, seconds: f64) {
+        let movie = {
+            let guard = self.emu.lock();
+            // The region frame rate (NTSC ~60, PAL/Dendy ~50) for seconds->frames.
+            let fps = guard.nes.as_ref().map_or(60.0, |nes| {
+                let d = nes.frame_duration().as_secs_f64();
+                if d > 0.0 { 1.0 / d } else { 60.0 }
+            });
+            guard.history.export_last_seconds(seconds, fps)
+        };
+        let movie = match movie {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("rustynes: history clip export: {e}");
+                return;
+            }
+        };
+        let dir = self.movies_dir();
+        if let Some(d) = dir.as_ref() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        let mut dialog = rfd::FileDialog::new()
+            .add_filter("RustyNES movie", &["rnm"])
+            .set_file_name("clip.rnm");
+        if let Some(d) = dir {
+            dialog = dialog.set_directory(d);
+        }
+        let Some(path) = dialog.save_file() else {
+            eprintln!("rustynes: history clip export cancelled");
+            return;
+        };
+        match std::fs::write(&path, movie.serialize()) {
+            Ok(()) => eprintln!(
+                "rustynes: exported {:.0}s history clip ({} frames) -> {}",
+                seconds,
+                movie.len(),
+                path.display()
+            ),
+            Err(e) => eprintln!(
+                "rustynes: history clip export failed {}: {e}",
+                path.display()
+            ),
+        }
+    }
+
     /// Serialize `movie` to a `.fm2` / `.bk2` file (extension selects the
-    /// format). `.bk2` packs the core's two text members into a ZIP.
+    /// format). `.bk2` packs the core's two text members into a ZIP. When `hashes`
+    /// is supplied, the export carries the matching ROM checksum so the movie is
+    /// verifiable on `TASVideos`.
     #[cfg(not(target_arch = "wasm32"))]
     fn write_movie_file(
         path: &std::path::Path,
         movie: &rustynes_core::Movie,
+        hashes: Option<&MovieRomHashes>,
     ) -> Result<(), String> {
+        // The export file's stem doubles as the ROM/game name the formats record.
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(std::string::ToString::to_string);
         let ext = path
             .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("")
             .to_ascii_lowercase();
         if ext == "fm2" {
-            let text = rustynes_core::movie_interop::export_fm2(
-                movie,
-                &rustynes_core::movie_interop::Fm2ExportOpts::default(),
-            )
-            .map_err(|e| e.to_string())?;
+            let opts = rustynes_core::movie_interop::Fm2ExportOpts {
+                rom_filename: name.map(|n| format!("{n}.nes")),
+                rom_checksum_md5: hashes.map(|h| format!("base64:{}", h.md5_b64)),
+                ..Default::default()
+            };
+            let text = rustynes_core::movie_interop::export_fm2(movie, &opts)
+                .map_err(|e| e.to_string())?;
             std::fs::write(path, text).map_err(|e| e.to_string())
         } else {
             // `.bk2` (the default): pack the two text members into a ZIP.
-            let parts = rustynes_core::bk2_interop::export_bk2(
-                movie,
-                &rustynes_core::bk2_interop::Bk2ExportOpts::default(),
-            )
-            .map_err(|e| e.to_string())?;
+            let opts = rustynes_core::bk2_interop::Bk2ExportOpts {
+                game_name: name,
+                sha1: hashes.map(|h| h.sha1.clone()),
+                ..Default::default()
+            };
+            let parts =
+                rustynes_core::bk2_interop::export_bk2(movie, &opts).map_err(|e| e.to_string())?;
             let bytes = Self::pack_bk2_zip(&parts)?;
             std::fs::write(path, bytes).map_err(|e| e.to_string())
         }
@@ -3739,6 +3956,12 @@ impl App {
                 #[cfg(not(target_arch = "wasm32"))]
                 self.handle_movie_export();
             }
+            MenuAction::HistoryExportClip { seconds } => {
+                #[cfg(not(target_arch = "wasm32"))]
+                self.handle_history_export_clip(seconds);
+                #[cfg(target_arch = "wasm32")]
+                let _ = seconds;
+            }
             MenuAction::FrameAdvance => {
                 self.request_frame_advance();
             }
@@ -3807,6 +4030,14 @@ impl App {
             MenuAction::UnloadHdPack => {
                 #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
                 self.unload_hd_pack();
+            }
+            MenuAction::HdPackBuilderStart => {
+                #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                self.hd_pack_builder_start();
+            }
+            MenuAction::HdPackBuilderStop => {
+                #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                self.hd_pack_builder_stop();
             }
             MenuAction::LoadSymbols => {
                 #[cfg(not(target_arch = "wasm32"))]
@@ -5332,6 +5563,8 @@ impl App {
                 // byte-identical.
                 nes.set_apu_channel_gain(self.config.audio.channel_gain);
             }
+            // v1.7.0 "Forge" D1 — a cold boot restarts the session timeline.
+            guard.history.clear();
         }
         // v1.0.0 (BUG-7) — a cold boot should RUN: clear any prior pause so the
         // status bar doesn't read "Paused" with a freshly-booted, running core.
@@ -7357,6 +7590,19 @@ impl ApplicationHandler<AppEvent> for App {
                     // (drives the Tools menu Record/Stop label). Always false on
                     // wasm / builds without the `av-record` feature.
                     av_recording: self.av_recording_active(),
+                    // v1.7.0 "Forge" G5 — HD-Pack Builder recording flag (drives
+                    // the HD Pack menu Start/Stop label). Always false on wasm /
+                    // builds without the `hd-pack` feature.
+                    hd_pack_building: {
+                        #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                        {
+                            self.hd_pack_builder.is_some()
+                        }
+                        #[cfg(not(all(feature = "hd-pack", not(target_arch = "wasm32"))))]
+                        {
+                            false
+                        }
+                    },
                     fast_forwarding: self.input.fast_forward_held(),
                     // v1.5.0 I7 — RA readout for the status bar (None unless the
                     // feature is on AND logged in).
@@ -7586,9 +7832,11 @@ impl ApplicationHandler<AppEvent> for App {
                             // composite (upscale + tile-hash + blit) runs AFTER the
                             // lock is dropped (below), honouring the frontend's
                             // "never hold the emu lock during heavy work" discipline.
-                            // Skipped entirely when no pack is loaded.
+                            // Skipped entirely when no pack is loaded AND the
+                            // G5 builder is not recording (the builder needs the
+                            // same tile-source + CHR snapshot to capture tiles).
                             #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
-                            if self.hd_compositor.is_some() {
+                            if self.hd_compositor.is_some() || self.hd_pack_builder.is_some() {
                                 self.present_hd_tiles.clear();
                                 self.present_hd_tiles
                                     .extend_from_slice(nes.hd_tile_source());
@@ -7649,6 +7897,19 @@ impl ApplicationHandler<AppEvent> for App {
                             |addr| chr.get((addr & 0x1FFF) as usize).copied().unwrap_or(0),
                         );
                         hd_dims = Some((w, h));
+                    }
+                    // v1.7.0 "Forge" G5 — feed the HD-Pack BUILDER the same
+                    // already-captured snapshots (the *native* framebuffer, the
+                    // per-pixel tile-source, and the CHR snapshot). Output-only:
+                    // it records distinct tiles + their native pixels and mutates
+                    // nothing, so the present path stays byte-identical. Runs after
+                    // the lock drops (CPU-heavy hashing) like the composite.
+                    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                    if let Some(builder) = self.hd_pack_builder.as_mut() {
+                        let chr = &self.present_chr_snapshot;
+                        builder.observe(&self.present_staging, &self.present_hd_tiles, |addr| {
+                            chr.get((addr & 0x1FFF) as usize).copied().unwrap_or(0)
+                        });
                     }
                     #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
                     let script_draws = &self.script_draws;

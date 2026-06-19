@@ -21,6 +21,12 @@
 
 #![no_std]
 #![warn(missing_docs)]
+// The expansion-audio synth cores (VRC6/VRC7/FDS/MMC5/N163/5B) live in their
+// owning mapper modules but are reused by the NSF expansion-audio router
+// (`nsf_expansion`). Exposing them `pub(crate)` from private modules is the
+// intended cross-module reuse pattern, so the redundant-pub-crate lint
+// (which assumes `pub(crate)` in a private module is a mistake) is wrong here.
+#![allow(clippy::redundant_pub_crate)]
 
 extern crate alloc;
 
@@ -53,6 +59,7 @@ mod namco118;
 mod namco175;
 mod nrom;
 mod nsf;
+mod nsf_expansion;
 mod rambo1;
 mod sprint10;
 mod sprint11;

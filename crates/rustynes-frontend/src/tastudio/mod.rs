@@ -610,8 +610,9 @@ impl TasEditor {
         let start = if let Some((frame, bytes)) = self.greenzone.nearest_at_or_before(target) {
             // The frame-0 anchor is always present, so this branch is the
             // normal path. A malformed blob would be a logic bug, not user
-            // input, so surface it loudly.
-            nes.restore(bytes)
+            // input, so surface it loudly. The greenzone now decompresses the
+            // state losslessly (v1.7.0 D2) and hands back an owned blob.
+            nes.restore(&bytes)
                 .expect("greenzone holds only states this build produced");
             frame
         } else {

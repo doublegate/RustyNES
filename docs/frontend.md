@@ -512,11 +512,18 @@ reorganized the order and regrouped several items — see the per-menu notes):
   Show FPS, Pause When Unfocused (auto-pause on focus loss), Show Menu Bar
   (`M`).
 - **Tools** — Cheats, Movies (TAS: Record/Play/Branch + `.fm2`/`.bk2`
-  import/export), **Record A/V** (v1.6.0 G; native + `av-record` feature),
-  Netplay (native), RetroAchievements (native + feature), Input Display, Input
-  Miniatures, NSF Player (moved here from Debug in v1.3.0), Replay / TAS (v1.5.0
-  C2), TAStudio (v1.6.0 A2), ROM Database, and an **HD Pack** submenu (`hd-pack`
-  feature + native; folded in from the former standalone "Mod" menu).
+  import/export; v1.7.0 G4 also **imports** the legacy binary containers `.fcm`
+  (FCEUX), `.fmv` (Famtasia), and `.vmv` (VirtuaNES) — the pre-`.fm2` TASVideos
+  corpus — and stamps the matching ROM checksum (MD5 for `.fm2`, SHA-1 for `.bk2`)
+  onto exports so they verify on TASVideos), **Record A/V** (v1.6.0 G; native +
+  `av-record` feature), Netplay (native), RetroAchievements (native + feature),
+  Input Display, Input Miniatures, NSF Player (moved here from Debug in v1.3.0),
+  Replay / TAS (v1.5.0 C2), TAStudio (v1.6.0 A2), ROM Database, and an **HD Pack**
+  submenu (`hd-pack` feature + native; folded in from the former standalone "Mod"
+  menu) — which v1.7.0 G5 extends with an **HD-Pack Builder** (Build HD Pack
+  (Record) → Stop & Save): an in-emulator recorder that captures the distinct
+  tiles a game draws and writes a Mesen-compatible `hires.txt` + `tiles.png`
+  starter pack (output-only; see ADR 0017).
 - **Debug** — Show Debugger (`` ` ``), Performance Monitor (moved here from
   Tools in v1.3.0), then the chip/state inspectors: CPU / PPU / APU / Memory /
   Memory Compare / OAM / Mapper / Trace Logger / Watch / Breakpoints (v1.6.0
@@ -1086,6 +1093,51 @@ they ride the current PPU-dot scheduler.
   **Debug → Load Symbols** picker (the filter + extension dispatch now also
   accept `.dbg`, routing to `DebuggerOverlay::load_source_map`). Display-only;
   the parser tolerates malformed / future-extended lines without aborting.
+
+### v1.7.0 "Forge" Workstream D — timeline + scaling rewind engine
+
+Two additive, output-only / determinism-neutral pieces that scale the
+session-history machinery: a scrubbable full-session **HistoryViewer** with
+clip export (D1, frontend), and a **Zwinder-class compressed greenzone** that
+the TAStudio editor now stores its save-states through (D2, core-adjacent). Both
+ride the current PPU-dot scheduler — **no timebase change** — so AccuracyCoin
+(139/139) holds and the shipped / native / `no_std` / wasm builds stay
+byte-identical (the HistoryViewer only *observes*; compression is lossless).
+
+- **HistoryViewer (D1)** — `src/history_viewer.rs`. A bookkeeping layer over the
+  per-frame rewind ring that records the live session's **input stream**
+  (`FrameInput` per port) in lock-step with the emulator + periodically stashes
+  a lightweight **start-anchor** save-state. It is driven from
+  `EmuCore::produce_one_frame` on persistent forward frames only (never on a
+  rewind step), *after* the `nes` borrow is released — it reads the
+  already-latched inputs + copies an already-produced save-state, so it cannot
+  perturb emulation. **Tools → Export Last 30s (.rnm)** assembles a
+  `rustynes_core::Movie` covering the trailing N seconds (start = the nearest
+  anchor at-or-before the window, input stream = the recorded frames forward)
+  and writes a `.rnm` via the save dialog; the clip **replays bit-identically**
+  through `MoviePlayer` (unit-tested in the module). Frame ordering / eviction /
+  export key off a monotonic internal record index, not the emulator's
+  `frame()` (which repeats once at boot), so the timeline is robust. Cleared on
+  ROM load + power-cycle. Native + `wasm-winit`.
+
+- **Zwinder-class compressed greenzone (D2)** — `rustynes_core::zwinder`
+  (`ZwinderStateManager`, `#![no_std]` + `alloc`). The compressed successor to
+  the v1.6.0 uncompressed greenzone: frame-keyed snapshots stored as **LZ4 XOR-
+  deltas** against periodic keyframes (interval default 16), with **reserved
+  anchors** (frame 0 + markers + branch points, always self-contained keyframes,
+  never evicted) and **density-tiered eviction** over the *compressed* sizes
+  (thin the dense, distant-from-cursor past first; keep the cursor neighbourhood
+  dense). Source: BizHawk `ZwinderBuffer` / `ZwinderStateManager`. The TAStudio
+  greenzone (`src/tastudio/greenzone.rs`) is now a thin `usize`-frame adapter
+  over it, so the same RAM holds far more history (feature-length TASes) and the
+  deterministic seek/replay contract is unchanged — the TAStudio suite + the
+  greenzone adapter tests still pass. **Determinism gate:** compression is
+  lossless — `restore(compress(store(s))) == s` byte-for-byte; proven by the
+  in-module `round_trip_equality_lossless` test (keyframes + deltas + post-
+  eviction) **and** the integration tests in `rustynes-test-harness` that drive
+  real `Nes` snapshots through store → compress → decompress → restore and
+  assert byte-equality. LZ4 (`lz4_flex`, already a core dep + no_std-wired) is
+  reused as the deflate codec; the round-trip gate is codec-agnostic.
 
 ### v1.6.0 "Studio" Workstream G — A/V recording (`av_record`, native + `av-record` feature)
 
