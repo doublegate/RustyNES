@@ -371,6 +371,188 @@ pub mod external {
             .join(rel)
     }
 
+    /// 8 KiB Famicom Disk System BIOS (`disksys.rom`) length.
+    const FDS_BIOS_LEN: usize = 8192;
+
+    /// Detect whether `bytes` is a Famicom Disk System disk image.
+    ///
+    /// Mirrors the frontend's `is_fds_image`: recognizes both the fwNES
+    /// 16-byte-header form (ASCII magic `"FDS\x1A"`) and the headerless raw
+    /// form (first side opens with `\x01*NINTENDO-HVC*`). A standard iNES /
+    /// NES 2.0 cartridge opens with `"NES\x1A"`, so this never misfires on the
+    /// cartridge path.
+    fn is_fds_image(bytes: &[u8]) -> bool {
+        bytes.starts_with(b"FDS\x1A") || bytes.starts_with(b"\x01*NINTENDO-HVC*")
+    }
+
+    /// Resolve the FDS BIOS bytes for a disk-image capture, returning `None`
+    /// (so the caller can SKIP) when no usable BIOS is available.
+    ///
+    /// Resolution order — the BIOS is Nintendo IP and is never committed:
+    /// 1. the `RUSTYNES_FDS_BIOS` env var (the convention `tests/fds.rs`
+    ///    already uses for its real-BIOS path); else
+    /// 2. the conventional staged copy `tests/roms/external/fds/disksys.rom`.
+    ///
+    /// Either source must be exactly 8 KiB. Returns `None` when neither
+    /// resolves so an FDS capture degrades to a clean skip rather than a hard
+    /// failure on a checkout that has the disks but not the BIOS.
+    fn resolve_fds_bios() -> Option<Vec<u8>> {
+        let try_path = |path: PathBuf| -> Option<Vec<u8>> {
+            match fs::read(&path) {
+                Ok(b) if b.len() == FDS_BIOS_LEN => Some(b),
+                Ok(b) => {
+                    eprintln!(
+                        "[external] FDS BIOS {} is {} bytes (expected {FDS_BIOS_LEN}); ignoring",
+                        path.display(),
+                        b.len()
+                    );
+                    None
+                }
+                Err(_) => None,
+            }
+        };
+        if let Ok(p) = std::env::var("RUSTYNES_FDS_BIOS")
+            && let Some(b) = try_path(PathBuf::from(p))
+        {
+            return Some(b);
+        }
+        try_path(external_rom_path("fds/disksys.rom"))
+    }
+
+    /// Extract the first NES / FDS / UNIF entry from a `.zip` archive's bytes,
+    /// returning its inner bytes. Mirrors the frontend's `extract_rom_from_zip`
+    /// (same recognized extensions, same zip-bomb guard). Returns `None` if the
+    /// archive is unreadable or holds no recognized ROM entry.
+    fn extract_rom_from_zip(zip_bytes: &[u8]) -> Option<Vec<u8>> {
+        use std::io::Read;
+        // Bound both the declared size AND the actual read — the declared size
+        // can lie (matches the frontend's PR #74 hardening).
+        const MAX_ENTRY_BYTES: u64 = 64 * 1024 * 1024;
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).ok()?;
+        let idx = (0..archive.len()).find(|&i| {
+            archive.by_index(i).is_ok_and(|f| {
+                std::path::Path::new(f.name()).extension().is_some_and(|e| {
+                    e.eq_ignore_ascii_case("nes")
+                        || e.eq_ignore_ascii_case("fds")
+                        || e.eq_ignore_ascii_case("unf")
+                        || e.eq_ignore_ascii_case("unif")
+                })
+            })
+        })?;
+        let file = archive.by_index(idx).ok()?;
+        if file.size() > MAX_ENTRY_BYTES {
+            return None;
+        }
+        let cap = usize::try_from(file.size()).unwrap_or(0);
+        let mut out = Vec::with_capacity(cap);
+        file.take(MAX_ENTRY_BYTES).read_to_end(&mut out).ok()?;
+        Some(out)
+    }
+
+    /// Extract the first NES / FDS / UNIF entry from a `.7z` archive at `path`
+    /// via the system `7z` CLI (no Rust 7z dep — matches
+    /// `scripts/coverage/coverage.py`, which indexes/stages `.7z` the same
+    /// way). Returns `None` if `7z` is missing, the archive is unreadable, or
+    /// it holds no recognized ROM entry.
+    fn extract_rom_from_7z(path: &std::path::Path) -> Option<Vec<u8>> {
+        use std::process::Command;
+        // List entries (`-slt` = technical, machine-readable) and pick the
+        // first NES/FDS/UNIF member.
+        let listing = Command::new("7z")
+            .arg("l")
+            .arg("-slt")
+            .arg(path)
+            .output()
+            .ok()?;
+        if !listing.status.success() {
+            return None;
+        }
+        let text = String::from_utf8_lossy(&listing.stdout);
+        let entry = text
+            .lines()
+            .filter_map(|l| l.strip_prefix("Path = "))
+            .find(|name| {
+                std::path::Path::new(name).extension().is_some_and(|e| {
+                    e.eq_ignore_ascii_case("nes")
+                        || e.eq_ignore_ascii_case("fds")
+                        || e.eq_ignore_ascii_case("unf")
+                        || e.eq_ignore_ascii_case("unif")
+                })
+            })?;
+        // Stream that single entry to stdout (`e` = extract, `-so` = to stdout).
+        let extracted = Command::new("7z")
+            .arg("e")
+            .arg("-so")
+            .arg(path)
+            .arg(entry)
+            .output()
+            .ok()?;
+        if !extracted.status.success() || extracted.stdout.is_empty() {
+            return None;
+        }
+        Some(extracted.stdout)
+    }
+
+    /// Outcome of resolving + loading a staged ROM path into a [`Nes`].
+    pub enum Load {
+        /// The ROM loaded successfully.
+        Ok(Box<Nes>),
+        /// The ROM was an FDS disk image but no BIOS could be resolved; the
+        /// caller should treat this as a clean SKIP, not a failure.
+        SkipNoBios,
+    }
+
+    /// Load the staged ROM at `external/`-relative `rom_rel` into a [`Nes`],
+    /// mirroring the frontend's load dispatch so EVERY loadable form is
+    /// covered, not just bare `.nes`:
+    ///
+    /// - `.zip` / `.7z`: extract the first NES / FDS / UNIF entry, then treat
+    ///   the extracted bytes exactly as a loose file (FDS-magic detection
+    ///   still applies to a `.fds` inside the archive).
+    /// - FDS disk image (`.fds`, or FDS magic after archive extraction): build
+    ///   via [`Nes::from_disk`] with a resolved BIOS (`RUSTYNES_FDS_BIOS` or the
+    ///   staged `fds/disksys.rom`); a missing BIOS yields [`Load::SkipNoBios`].
+    /// - everything else (`.nes` / `.unf` / `.unif` / raw): [`Nes::from_rom`].
+    ///
+    /// Panics on a file-read / archive-extract / parse failure — those are
+    /// hard-fail in a regression harness (the ROM is expected to be staged and
+    /// valid). A missing FDS BIOS is the one soft case (skip).
+    pub fn load_nes(rom_rel: &str) -> Load {
+        let path = external_rom_path(rom_rel);
+        let ext_is = |e: &str| path.extension().is_some_and(|x| x.eq_ignore_ascii_case(e));
+
+        // 1. Resolve to the raw ROM/disk bytes, unwrapping any archive.
+        let bytes = if ext_is("zip") {
+            let raw = fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+            extract_rom_from_zip(&raw)
+                .unwrap_or_else(|| panic!("no NES/FDS/UNIF entry in archive {rom_rel}"))
+        } else if ext_is("7z") {
+            extract_rom_from_7z(&path).unwrap_or_else(|| {
+                panic!("no NES/FDS/UNIF entry in (or 7z CLI missing for) archive {rom_rel}")
+            })
+        } else {
+            fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
+        };
+
+        // 2. Dispatch FDS vs. cartridge by content magic (covers a `.fds`
+        //    loose file AND a `.fds` extracted from an archive).
+        if ext_is("fds") || is_fds_image(&bytes) {
+            let Some(bios) = resolve_fds_bios() else {
+                eprintln!(
+                    "[external] SKIP {rom_rel}: FDS disk but no BIOS \
+                     (set RUSTYNES_FDS_BIOS or stage tests/roms/external/fds/disksys.rom)."
+                );
+                return Load::SkipNoBios;
+            };
+            let nes = Nes::from_disk(&bytes, &bios)
+                .unwrap_or_else(|e| panic!("load FDS disk {rom_rel}: {e}"));
+            return Load::Ok(Box::new(nes));
+        }
+
+        let nes = Nes::from_rom(&bytes).unwrap_or_else(|e| panic!("parse {rom_rel}: {e}"));
+        Load::Ok(Box::new(nes))
+    }
+
     /// Compute the SHA-256 of `bytes` as a lower-case hex string.
     #[must_use]
     pub fn compute_rom_sha256(bytes: &[u8]) -> String {
@@ -419,16 +601,44 @@ pub mod external {
     /// the ROMs at `tests/roms/external/`).
     #[allow(clippy::too_many_lines)]
     pub fn run_capture(rom_rel: &str, script: InputScript) -> CaptureResult {
-        let path = external_rom_path(rom_rel);
-        let bytes = fs::read(&path).unwrap_or_else(|e| {
+        run_capture_opt(rom_rel, script).unwrap_or_else(|| {
             panic!(
-                "read {}: {} — is the ROM staged at tests/roms/external/?",
-                path.display(),
-                e
+                "run_capture({rom_rel}): FDS disk but no BIOS — set RUSTYNES_FDS_BIOS \
+                 or stage tests/roms/external/fds/disksys.rom"
             )
-        });
-        let rom_sha256_hex = compute_rom_sha256(&bytes);
-        let mut nes = Nes::from_rom(&bytes).unwrap_or_else(|e| panic!("parse {rom_rel}: {e}"));
+        })
+    }
+
+    /// Like [`run_capture`] but returns `None` (instead of panicking) when the
+    /// ROM is an FDS disk image and no BIOS could be resolved — the
+    /// auto-discovering coverage harness uses this so an FDS disk on a
+    /// BIOS-less checkout SKIPs cleanly rather than failing the whole sweep.
+    ///
+    /// Loads via [`load_nes`], so `.zip` / `.7z` archives and `.fds` disks are
+    /// covered identically to loose `.nes` files.
+    ///
+    /// Panics on a file-read / archive-extract / parse failure (hard-fail in a
+    /// regression harness); a missing FDS BIOS is the one soft case.
+    #[allow(clippy::too_many_lines)]
+    pub fn run_capture_opt(rom_rel: &str, script: InputScript) -> Option<CaptureResult> {
+        let path = external_rom_path(rom_rel);
+        // The SHA-256 pins the *staged file* (archive bytes for a `.zip`/`.7z`,
+        // disk bytes for a `.fds`, ROM bytes for a `.nes`) — a stable identity
+        // for the on-disk dump regardless of container.
+        let rom_sha256_hex = {
+            let raw = fs::read(&path).unwrap_or_else(|e| {
+                panic!(
+                    "read {}: {} — is the ROM staged at tests/roms/external/?",
+                    path.display(),
+                    e
+                )
+            });
+            compute_rom_sha256(&raw)
+        };
+        let mut nes = match load_nes(rom_rel) {
+            Load::Ok(nes) => *nes,
+            Load::SkipNoBios => return None,
+        };
 
         // Vs. System setup. Vs. arcade carts (iNES mapper 99, mapper 151, or
         // the NES-2.0/header Vs. console flag) boot to an attract loop and
@@ -640,14 +850,14 @@ pub mod external {
         }
         let audio_fnv1a64 = fnv1a64(&audio_bytes);
 
-        CaptureResult {
+        Some(CaptureResult {
             rom_sha256_hex,
             checkpoints,
             cycles,
             audio_samples: samples.len(),
             audio_fnv1a64,
             final_frame_health,
-        }
+        })
     }
 
     /// Convenience: dump PNG via the common helper but with the

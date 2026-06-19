@@ -118,7 +118,7 @@ mod common;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use common::external::{InputScript, run_capture, snapshot_text};
+use common::external::{InputScript, run_capture_opt, snapshot_text};
 
 /// Default boot capture for breadth coverage. A discovered ROM's intro
 /// structure is unknown, so a passive idle frequently lands on a black
@@ -191,12 +191,14 @@ fn capture_override(rom_rel: &str) -> Option<InputScript> {
 ///
 /// Only `mapper-*` (plus the special `fds` / `pc10` / `vs-system`)
 /// sub-directories are walked, one level deep — the ROM corpus layout is
-/// always `external/<dir>/<rom>.nes`. `.zip` is intentionally NOT
-/// discovered: `run_capture` feeds raw bytes to `Nes::from_rom`, which
-/// has no archive support, and the test-harness crate deliberately
-/// carries no `zip` dependency. Stage ROMs as plain `.nes` (the
-/// mapper-coverage policy stages `.nes` per-mapper); pre-extract any
-/// archives first.
+/// always `external/<dir>/<rom>.<ext>`. Every loadable form the frontend
+/// accepts is discovered (T-PS-059): iNES (`.nes`), UNIF (`.unf` / `.unif`),
+/// FDS disk images (`.fds`), and `.zip` / `.7z` archives (the No-Intro
+/// distribution form) — `run_capture` (via `common::external::load_nes`)
+/// mirrors the frontend's load dispatch, unwrapping an archive to its first
+/// NES/FDS/UNIF entry and routing an FDS disk through `Nes::from_disk` with a
+/// resolved BIOS. So a ROM left zipped, or an `.fds` disk, gets a boot
+/// screenshot just like a loose `.nes`.
 fn discover_external_roms() -> Vec<String> {
     let root = external_root();
     let mut out: Vec<String> = Vec::new();
@@ -227,10 +229,16 @@ fn discover_external_roms() -> Vec<String> {
                 p.is_file()
                     && p.extension().is_some_and(|e| {
                         // v1.6.0 (E2): UNIF (.unf/.unif) dumps are boot-captured
-                        // alongside iNES (.nes) ones.
+                        // alongside iNES (.nes) ones. T-PS-059: also FDS disk
+                        // images (.fds) and .zip / .7z archives, so a ROM left
+                        // in any loadable form gets a boot screenshot. load_nes
+                        // unwraps the archive / routes the FDS disk.
                         e.eq_ignore_ascii_case("nes")
                             || e.eq_ignore_ascii_case("unf")
                             || e.eq_ignore_ascii_case("unif")
+                            || e.eq_ignore_ascii_case("fds")
+                            || e.eq_ignore_ascii_case("zip")
+                            || e.eq_ignore_ascii_case("7z")
                     })
             })
             .filter_map(|p| {
@@ -330,8 +338,11 @@ fn external_coverage_boot_smoke() {
         let snap = id.clone();
         let capture_script = capture_override(rom_rel).unwrap_or(DEFAULT_CAPTURE);
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
-            move || -> Result<(), String> {
-                let capture = run_capture(&rom, capture_script);
+            move || -> Result<Option<()>, String> {
+                // FDS disk on a BIOS-less checkout -> clean skip (Ok(None)).
+                let Some(capture) = run_capture_opt(&rom, capture_script) else {
+                    return Ok(None);
+                };
 
                 // (1) Blank / few-colour health — the shared coverage
                 // heuristic. A real boot draws dozens of colours; a
@@ -356,12 +367,16 @@ fn external_coverage_boot_smoke() {
                 insta::assert_snapshot!(snap.as_str(), text);
 
                 // Snapshot passed; report the health verdict (if blank).
-                blank.map_or(Ok(()), Err)
+                blank.map_or(Ok(Some(())), Err)
             },
         ));
         match result {
             // Snapshot passed AND frame not blank.
-            Ok(Ok(())) => {}
+            Ok(Ok(Some(()))) => {}
+            // ROM was an FDS disk with no resolvable BIOS — clean skip.
+            Ok(Ok(None)) => {
+                eprintln!("[external_coverage] SKIP {rom_rel}: FDS disk, no BIOS resolved.");
+            }
             // Snapshot passed but the final frame was blank/few-colour.
             Ok(Err(reason)) => {
                 failures.push(format!("{rom_rel}  (snapshot id: {id}) — {reason}"));
