@@ -1229,11 +1229,11 @@ impl App {
         // corrections and the CRC key stays stable). Its mirroring / DIP are
         // applied post-construction below. Absent / inert file ⇒ no-op ⇒
         // byte-identical. Frontend-only — the core never reads it.
-        let per_game = crate::game_db::rom_crc32(&bytes)
-            .and_then(|crc| crate::per_game::resolve(crc, Some(path)));
+        let rom_crc = crate::game_db::rom_crc32(&bytes);
+        let per_game = rom_crc.and_then(|crc| crate::per_game::resolve(crc, Some(path)));
         if let Some(cfg) = per_game.as_ref()
             && !cfg.overrides.is_empty()
-            && let Some(crc) = crate::game_db::rom_crc32(&bytes)
+            && let Some(crc) = rom_crc
         {
             let entry = cfg.overrides.to_game_db_entry(crc, String::new());
             crate::game_db::apply_header_overrides(&mut bytes, &entry);

@@ -432,7 +432,10 @@ impl EmuCore {
 
     /// Reset the lag-frame counter (called on ROM load / reset / power-cycle so
     /// the readout reflects only the current session).
-    pub const fn reset_lag_frames(&mut self) {
+    // A runtime state mutator, not a compile-time helper — deliberately not
+    // `const fn` so it reads as the side-effecting reset it is.
+    #[allow(clippy::missing_const_for_fn)]
+    pub fn reset_lag_frames(&mut self) {
         self.lag_frames = 0;
     }
 

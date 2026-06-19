@@ -268,12 +268,21 @@ fn dip_switch_section(ui: &mut egui::Ui, state: &mut GameDbPanelState, nes: &mut
     );
 
     let mut changed = false;
+    let was_override = state.dip_override;
     changed |= ui
         .checkbox(
             &mut state.dip_override,
             "Override DIP switches for this game",
         )
         .changed();
+    // On the OFF -> ON transition, seed the edit bits from the currently-effective
+    // DIP byte so enabling the override is a no-op until the user edits a switch.
+    // Without this, `dip_bits` may be stale/zeroed (no prior overlay), so merely
+    // ticking the box would force the DIP byte to its uninitialized value and
+    // perturb behaviour before any actual edit.
+    if state.dip_override && !was_override {
+        state.dip_bits = dip_bits_from(nes.vs_dip());
+    }
 
     ui.add_enabled_ui(state.dip_override, |ui| {
         egui::Grid::new("vs_dip_grid")

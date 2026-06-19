@@ -194,14 +194,32 @@ pub fn parse(bytes: &[u8]) -> Option<PerGameConfig> {
 #[cfg(not(target_arch = "wasm32"))]
 #[must_use]
 pub fn resolve(crc: u32, rom_path: Option<&std::path::Path>) -> Option<PerGameConfig> {
-    // 1) Config-dir overlay wins (the user's edits, keyed by CRC).
-    if let Some(path) = overlay_path(crc)
-        && let Ok(bytes) = std::fs::read(&path)
-        && let Some(cfg) = parse(&bytes)
+    resolve_from_paths(overlay_path(crc).as_deref(), rom_path)
+}
+
+/// Core resolution logic, parameterized on the already-resolved config-dir
+/// overlay path so it is testable without touching the platform config dir.
+///
+/// Precedence: the config-dir overlay is AUTHORITATIVE when its file is present
+/// (a present-but-malformed user overlay yields `None`, NOT the sibling); only
+/// when the config-dir overlay file is ABSENT do we consult the sibling.
+#[cfg(not(target_arch = "wasm32"))]
+fn resolve_from_paths(
+    overlay: Option<&std::path::Path>,
+    rom_path: Option<&std::path::Path>,
+) -> Option<PerGameConfig> {
+    // 1) The config-dir overlay is AUTHORITATIVE when its file is present (the
+    //    user's edits, keyed by CRC). If the file exists but fails to parse we
+    //    return `None` (no overlay applied) rather than silently falling through
+    //    to the sibling — a present-but-malformed user overlay must not be
+    //    overridden by whatever sits beside the ROM.
+    if let Some(path) = overlay
+        && let Ok(bytes) = std::fs::read(path)
     {
-        return Some(cfg);
+        return parse(&bytes);
     }
-    // 2) Fall back to a sibling `<rom-stem>.json` next to the ROM.
+    // 2) Only when the config-dir overlay is ABSENT, fall back to a sibling
+    //    `<rom-stem>.json` next to the ROM.
     if let Some(rom_path) = rom_path {
         let sibling = rom_path.with_extension("json");
         // Never confuse the ROM itself for its sidecar (a `Game.json` ROM is
@@ -338,6 +356,58 @@ mod tests {
         let json = serde_json::to_vec(&cfg).expect("serialize");
         let back = parse(&json).expect("re-parse");
         assert_eq!(cfg, back);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn malformed_config_dir_overlay_yields_none_not_sibling() {
+        // A PRESENT-but-malformed config-dir overlay is authoritative: it must
+        // resolve to `None` (no overlay applied), NOT silently fall through to a
+        // valid sibling beside the ROM.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let overlay = dir.path().join("DEADBEEF.json");
+        std::fs::write(&overlay, b"not json").expect("write overlay");
+        // A perfectly valid sibling that must NOT win.
+        let rom = dir.path().join("Game.nes");
+        let sibling = dir.path().join("Game.json");
+        std::fs::write(&sibling, br#"{ "dip_switches": 42 }"#).expect("write sibling");
+
+        assert_eq!(
+            resolve_from_paths(Some(&overlay), Some(&rom)),
+            None,
+            "a present-but-malformed config-dir overlay must yield None, not the sibling"
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn absent_config_dir_overlay_falls_back_to_sibling() {
+        // When the config-dir overlay is ABSENT, the sibling `<rom-stem>.json` is
+        // consulted.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let missing_overlay = dir.path().join("DEADBEEF.json"); // never created
+        let rom = dir.path().join("Game.nes");
+        let sibling = dir.path().join("Game.json");
+        std::fs::write(&sibling, br#"{ "dip_switches": 42 }"#).expect("write sibling");
+
+        let cfg = resolve_from_paths(Some(&missing_overlay), Some(&rom))
+            .expect("absent overlay -> sibling used");
+        assert_eq!(cfg.dip_switches, Some(42));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn valid_config_dir_overlay_wins_over_sibling() {
+        // A PRESENT, valid config-dir overlay wins over the sibling.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let overlay = dir.path().join("DEADBEEF.json");
+        std::fs::write(&overlay, br#"{ "dip_switches": 7 }"#).expect("write overlay");
+        let rom = dir.path().join("Game.nes");
+        let sibling = dir.path().join("Game.json");
+        std::fs::write(&sibling, br#"{ "dip_switches": 42 }"#).expect("write sibling");
+
+        let cfg = resolve_from_paths(Some(&overlay), Some(&rom)).expect("valid overlay resolves");
+        assert_eq!(cfg.dip_switches, Some(7), "config-dir overlay wins");
     }
 
     #[cfg(not(target_arch = "wasm32"))]
