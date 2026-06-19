@@ -17,6 +17,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **v1.7.0 "Forge" H4 — per-game `<rom>.json` config overrides + DIP editor +
+  lag-frame counter.** Additive / off-by-default; the core stays byte-identical
+  and AccuracyCoin holds 100% (139/139). A frontend-only per-game config overlay
+  (`per_game::PerGameConfig`) layered on the v1.2.0 game-DB: at ROM load the
+  frontend resolves a `<rom>.json` — a config-dir overlay
+  (`<data-dir>/per-game/<CRC8>.json`) that **wins** over a sibling
+  `<rom-stem>.json`, keyed on the same header-excluded CRC32 the game-DB uses —
+  and applies its `overrides` (region / mapper / submapper / mirroring) through
+  the SAME `apply_header_overrides` + `set_mirroring_override` paths and its Vs.
+  `dip_switches` via `Nes::set_vs_dip`; an absent or inert file applies nothing,
+  so the load path is byte-identical and the deterministic core / test harness
+  never read it (the firewall). A **DIP-switch editor** in the Tools → ROM
+  Database panel (shown for Vs. System carts) exposes the 8 DIP bits, applies
+  edits live, and persists them into the config-dir overlay (atomic write; an
+  inert overlay deletes the file, never a sibling ROM). A **lag-frame counter**
+  (View → Show Lag Frames, off by default) tallies forward frames since ROM load
+  in which the program polled no controller — sampled via the core's output-only
+  `was_input_polled_this_frame()` `debug-hooks` telemetry, a pure observation
+  that never perturbs emulation — and shows it next to the FPS readout. New
+  `[ui] show_lag_frames` config toggle (`#[serde(default)] = false`). See ADR
+  0019 for the precedence/firewall decision.
 - **v1.7.0 "Forge" H1/H2 — browser RetroAchievements completion + RA HUD depth.**
   Additive / off-by-default; the core stays byte-identical and AccuracyCoin holds
   100% (139/139). **H1 (browser RA, `browser-cheevos`):** `web/cheevos/ra_glue.js`

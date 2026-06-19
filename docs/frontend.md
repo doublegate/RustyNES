@@ -510,7 +510,9 @@ reorganized the order and regrouped several items — see the per-menu notes):
 - **View** — Settings, Theme (Light/Dark/System + the v1.5.0 accessibility
   themes High Contrast / Colorblind-Safe), 8:7 Pixel Aspect, Hide Overscan,
   Fullscreen (`F11`, native), Window Size (1x-4x of the NES resolution, native),
-  Show FPS, Pause When Unfocused (auto-pause on focus loss), Show Menu Bar
+  Show FPS, **Show Lag Frames** (v1.7.0 H4 — a status-bar counter of forward
+  frames since ROM load in which the program polled no controller; off by
+  default), Pause When Unfocused (auto-pause on focus loss), Show Menu Bar
   (`M`).
 - **Tools** — Cheats, Movies (TAS: Record/Play/Branch + `.fm2`/`.bk2`
   import/export; v1.7.0 G4 also **imports** the legacy binary containers `.fcm`
@@ -1310,6 +1312,30 @@ save-state so rollback / restore stay consistent. It is frontend-only and
 consult the database, so the suites stay byte-identical) and deterministic
 (same CRC ⇒ same mirroring, so netplay peers agree). Scope is mirroring only —
 region / mapper overrides and a Game Genie code database are not part of it.
+
+**Per-game `<rom>.json` config overlay (v1.7.0 "Forge" Workstream H4).** Layered
+on the v1.2.0 game-DB, a small frontend-only overlay lets a single ROM carry its
+own settings (the Mesen2 "per-game config" idea). On load — after the
+header-excluded CRC32 is known — the frontend resolves a `<rom>.json` from two
+places: a **config-dir overlay** (`<data-dir>/per-game/<CRC8>.json`, written by
+the editor) and a **sibling** `<rom-stem>.json` next to the ROM; the config-dir
+overlay **wins** (mirroring the game-DB user-overlay precedence). The schema
+(`per_game::PerGameConfig`) is all-`#[serde(default)]`/`Option`: an `overrides`
+block (region / mapper / submapper / mirroring — applied through the *same*
+`apply_header_overrides` + `set_mirroring_override` paths the game-DB uses, so
+they stack on the game-DB corrections), a Vs. `dip_switches` byte (applied via
+`Nes::set_vs_dip`), reserved `video`/`audio`/`input` blocks (round-tripped, not
+yet consumed), and free-form `notes`. An absent or inert file applies nothing,
+so the default load path is **byte-identical** to today; the deterministic core
+and the test harness never read it (the firewall), and because both netplay peers
+resolve the overlay from the shared ROM CRC (the same file or none) and the
+resolved mirroring/DIP live in the save-state, rollback stays consistent — the
+same contract as the game-DB. Edited from **Tools → ROM Database**: the editor's
+DIP-switch section (shown for Vs. System carts) exposes the 8 DIP bits with
+numbered switches, applies edits live via `set_vs_dip`, and persists them to the
+config-dir overlay (atomic temp-file + rename; an inert overlay deletes the
+file). See [ADR 0019](adr/0019-per-game-config-overlay.md) for the
+precedence/firewall decision.
 
 ## Lua Script console (`scripting` feature, native-only)
 

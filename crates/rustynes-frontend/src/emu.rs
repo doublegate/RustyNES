@@ -378,6 +378,14 @@ pub struct EmuCore {
     /// a build without HD audio.
     #[cfg(all(not(target_arch = "wasm32"), feature = "hd-pack"))]
     pub hd_audio: Option<crate::hd_audio::HdAudioMixer>,
+    /// v1.7.0 "Forge" Workstream H4 — running count of "lag frames" since the
+    /// ROM loaded: produced (non-rewind) frames in which the running program did
+    /// NOT read a controller port (`$4016`/`$4017`). Sampled via the core's
+    /// output-only `debug-hooks` `was_input_polled_this_frame()` telemetry AFTER
+    /// each forward frame — a pure observation that never advances the emulator
+    /// or perturbs the deterministic timeline. Reset to 0 on ROM load / reset /
+    /// power-cycle. Displayed (off by default) in the status bar.
+    pub lag_frames: u32,
 }
 
 impl EmuCore {
@@ -410,7 +418,22 @@ impl EmuCore {
             av_recorder: None,
             #[cfg(all(not(target_arch = "wasm32"), feature = "hd-pack"))]
             hd_audio: None,
+            lag_frames: 0,
         }
+    }
+
+    /// v1.7.0 "Forge" Workstream H4 — the lag-frame count since this ROM loaded
+    /// (forward frames in which the program polled no controller). Pure
+    /// observation; reset by [`Self::reset_lag_frames`] on ROM load / reset.
+    #[must_use]
+    pub const fn lag_frames(&self) -> u32 {
+        self.lag_frames
+    }
+
+    /// Reset the lag-frame counter (called on ROM load / reset / power-cycle so
+    /// the readout reflects only the current session).
+    pub const fn reset_lag_frames(&mut self) {
+        self.lag_frames = 0;
     }
 
     /// Latch the per-pace input snapshot into the emulator (controllers +
@@ -753,6 +776,17 @@ impl EmuCore {
                 // a later unlocked frame (locked = no-op, not deferred).
                 self.debug_pokes.clear();
             }
+            // v1.7.0 "Forge" Workstream H4 — tally a lag frame when the program
+            // polled no controller this forward frame. `was_input_polled_this_frame`
+            // is the core's output-only `debug-hooks` telemetry (the frontend always
+            // builds the core with `debug-hooks` on); reading it is a pure
+            // observation — it neither advances the emulator nor alters the
+            // per-frame output, so determinism is unaffected. Counted on forward
+            // frames only (this is the non-rewind branch); a rewind step never
+            // re-runs a frame, so it cannot create or undo a lag verdict.
+            if !nes.was_input_polled_this_frame() {
+                self.lag_frames = self.lag_frames.saturating_add(1);
+            }
         }
 
         // v2.7.0 — drive RetroAchievements after the frame. Only the
@@ -1090,6 +1124,44 @@ mod tests {
             0x00,
             "hardcore-blocked poke must be a no-op"
         );
+    }
+
+    /// v1.7.0 "Forge" Workstream H4 — the lag-frame tally. The synth NROM loops
+    /// `JMP self` and never reads `$4016`/`$4017`, so every produced forward
+    /// frame is a lag frame; a rewind step never re-runs a frame so it cannot
+    /// add to the tally; and `reset_lag_frames` clears it.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn lag_frames_count_unpolled_forward_frames() {
+        let rom = synth_nrom();
+        let mut sinks = FrameSinks {
+            audio: None,
+            #[cfg(feature = "retroachievements")]
+            ra: None,
+        };
+        let inputs = quiet_inputs();
+
+        let mut core = EmuCore::new();
+        core.nes = Some(Nes::from_rom(&rom).unwrap());
+        assert_eq!(core.lag_frames(), 0, "fresh core starts at 0");
+
+        // Three forward frames of a never-polling program → three lag frames.
+        for _ in 0..3 {
+            core.produce_one_frame(&inputs, &mut sinks);
+        }
+        assert_eq!(core.lag_frames(), 3, "every unpolled forward frame counts");
+
+        // A rewind step re-presents a prior frame without re-running one, so the
+        // tally is unchanged (rewind needs the ring enabled to actually step,
+        // but the counter is only touched on the non-rewind branch regardless).
+        let mut rewind = inputs;
+        rewind.rewind_held = true;
+        core.produce_one_frame(&rewind, &mut sinks);
+        assert_eq!(core.lag_frames(), 3, "a rewind step adds no lag frame");
+
+        // Reset clears the tally (a fresh session).
+        core.reset_lag_frames();
+        assert_eq!(core.lag_frames(), 0, "reset_lag_frames zeroes the counter");
     }
 
     #[test]

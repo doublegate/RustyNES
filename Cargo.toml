@@ -64,6 +64,10 @@ md-5 = { version = "0.10", default-features = false }
 sha1 = { version = "0.10", default-features = false }
 hex = { version = "0.4", default-features = false, features = ["alloc"] }
 toml = "1.1"
+# v1.7.0 "Forge" H4 — per-game `<rom>.json` config overlays (frontend-only).
+# A sibling/config-dir JSON layered over the v1.2.0 game-DB; absent file is a
+# no-op so the default load path stays byte-identical. Native + wasm frontend.
+serde_json = "1.0"
 # `lz4_flex` is a pure-Rust LZ4 implementation; the `safe-encode` /
 # `safe-decode` features avoid all `unsafe` in the hot path. Used by the
 # rewind ring buffer to compress per-frame snapshots. `std` is opted in

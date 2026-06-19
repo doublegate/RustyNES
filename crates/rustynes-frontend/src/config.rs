@@ -1233,6 +1233,9 @@ impl RecentRoms {
 // (and therefore the whole `Config` tree, which was already `PartialEq`-only)
 // is `PartialEq` only.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+// v1.7.0 H4 — `show_lag_frames` pushed the visibility toggles past 3 bools; they
+// are independent display flags, so a struct is clearer than packed bitflags.
+#[allow(clippy::struct_excessive_bools)]
 pub struct UiConfig {
     /// egui visual theme. Default [`AppTheme::Dark`].
     #[serde(default)]
@@ -1244,6 +1247,12 @@ pub struct UiConfig {
     /// Show the FPS readout in the status bar. Default `true`.
     #[serde(default = "default_ui_show_fps")]
     pub show_fps: bool,
+    /// v1.7.0 "Forge" Workstream H4 — show the lag-frame counter in the status
+    /// bar (forward frames since ROM load in which the program polled no
+    /// controller — a TAS/debug diagnostic). Default `false`, so the status bar
+    /// is unchanged unless opted in. Pure observation; never affects emulation.
+    #[serde(default)]
+    pub show_lag_frames: bool,
     /// Auto-pause emulation when the window loses focus, auto-resume when it
     /// regains focus. Default `false` (no behavior change unless enabled). A
     /// manual user pause is never overridden, and this never auto-pauses
@@ -1296,6 +1305,7 @@ impl Default for UiConfig {
             theme: AppTheme::default(),
             pixel_aspect_correction: false,
             show_fps: default_ui_show_fps(),
+            show_lag_frames: false,
             pause_on_focus_loss: false,
             zoom_factor: default_ui_zoom_factor(),
         }

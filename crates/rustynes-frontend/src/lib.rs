@@ -97,6 +97,11 @@ pub mod movie_ui;
 // to the in-memory ROM at the load chokepoint, before format detection, so the
 // patched image flows through the deterministic parse unchanged.
 pub mod patch;
+// v1.7.0 "Forge" Workstream H4 — per-game `<rom>.json` config overlay (region /
+// mapper / mirroring corrections + Vs. DIP switches), layered on the v1.2.0
+// game-DB. Frontend-only; an absent file is a no-op, so the default load path
+// stays byte-identical and the deterministic core never consults it.
+pub mod per_game;
 // v2.8.0 Phase 0 — frame-pacing / presentation / audio instrumentation
 // (produced vs presented interval histograms, produce cost, audio-queue
 // health). Target-agnostic; rendered by the debugger Performance panel.

@@ -1221,6 +1221,23 @@ impl App {
         {
             crate::game_db::apply_header_overrides(&mut bytes, &entry);
         }
+        // v1.7.0 "Forge" Workstream H4 — resolve the per-game `<rom>.json`
+        // overlay (config-dir overlay wins over a sibling, mirroring the v1.2.0
+        // game-DB user-overlay precedence), keyed on the SAME header-excluded
+        // CRC32. Its load-time `overrides` rewrite the iNES header through the
+        // SAME `apply_header_overrides` path (so they stack on the game-DB
+        // corrections and the CRC key stays stable). Its mirroring / DIP are
+        // applied post-construction below. Absent / inert file ⇒ no-op ⇒
+        // byte-identical. Frontend-only — the core never reads it.
+        let per_game = crate::game_db::rom_crc32(&bytes)
+            .and_then(|crc| crate::per_game::resolve(crc, Some(path)));
+        if let Some(cfg) = per_game.as_ref()
+            && !cfg.overrides.is_empty()
+            && let Some(crc) = crate::game_db::rom_crc32(&bytes)
+        {
+            let entry = cfg.overrides.to_game_db_entry(crc, String::new());
+            crate::game_db::apply_header_overrides(&mut bytes, &entry);
+        }
         let sample_rate = self.audio.as_ref().map_or(44_100, |a| a.sample_rate);
         // v2.2.0 — a Famicom Disk System `.fds` image needs the disksys.rom
         // BIOS + the writable-disk save path; the standard cartridge `.nes`
@@ -1282,6 +1299,26 @@ impl App {
         // preset (explicit config dip wins over the DB; see `apply_vs_db`).
         self.apply_vs_db(&mut nes);
         Self::apply_game_db(&mut nes, &bytes);
+        // v1.7.0 "Forge" Workstream H4 — apply the per-game overlay's
+        // post-construction settings, layered ON TOP of the game-DB / Vs.-DB
+        // results above so the per-game file has the final say: an explicit
+        // mirroring override wins over the game-DB mirroring, and an explicit
+        // DIP value wins over the `[vs] dip` / Vs.-DB precedence. Both flow
+        // through the same core setters the game-DB editor uses; a no-op for a
+        // non-Vs. cart / absent override, so the default path is byte-identical.
+        if let Some(cfg) = per_game.as_ref() {
+            if let Some(m) = cfg
+                .overrides
+                .mirroring
+                .as_deref()
+                .and_then(crate::per_game::mirroring_from_token)
+            {
+                nes.set_mirroring_override(Some(m));
+            }
+            if let Some(dip) = cfg.dip_switches {
+                nes.set_vs_dip(dip);
+            }
+        }
         // v1.2.0 (B4) — let the ROM-database editor key its overlay on this ROM.
         let rom_crc = crate::game_db::rom_crc32(&bytes);
         if let Some(debugger) = self.debugger.as_mut() {
@@ -1304,6 +1341,8 @@ impl App {
             emu.present_fb.clear();
             // v1.7.0 "Forge" D1 — a new ROM starts a fresh session timeline.
             emu.history.clear();
+            // v1.7.0 "Forge" H4 — a new ROM starts a fresh lag-frame tally.
+            emu.reset_lag_frames();
             emu.nes = Some(nes);
         }
         // v1.6.0 "Studio" A2 — the new ROM invalidates any TAStudio session
@@ -3879,6 +3918,8 @@ impl App {
                     debugger.reset_debug_telemetry();
                 }
             }
+            // v1.7.0 "Forge" H4 — a reset starts a fresh lag-frame tally.
+            guard.reset_lag_frames();
         }
         #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
         self.reset_ra();
@@ -5679,6 +5720,8 @@ impl App {
             }
             // v1.7.0 "Forge" D1 — a cold boot restarts the session timeline.
             guard.history.clear();
+            // v1.7.0 "Forge" H4 — a cold boot restarts the lag-frame tally.
+            guard.reset_lag_frames();
         }
         // v1.0.0 (BUG-7) — a cold boot should RUN: clear any prior pause so the
         // status bar doesn't read "Paused" with a freshly-booted, running core.
@@ -7111,6 +7154,30 @@ impl App {
         self.apply_vs_db(&mut nes);
         // v1.1.0 beta.1 (T-110-B4) — per-game nametable mirroring override.
         Self::apply_game_db(&mut nes, &self.rom_bytes);
+        // v1.7.0 "Forge" Workstream H4 — resolve + apply the per-game overlay's
+        // post-construction settings (mirroring / Vs. DIP) for the CLI/startup
+        // ROM too, layered on top of the game-DB / Vs.-DB results above. (The
+        // overlay's load-time iNES header `overrides` are applied at the menu /
+        // drag load chokepoint; a CLI ROM uses the unrewritten image — its
+        // mirroring/DIP still take effect here.) Absent / inert ⇒ no-op.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let per_game = crate::game_db::rom_crc32(&self.rom_bytes)
+                .and_then(|crc| crate::per_game::resolve(crc, None));
+            if let Some(cfg) = per_game.as_ref() {
+                if let Some(m) = cfg
+                    .overrides
+                    .mirroring
+                    .as_deref()
+                    .and_then(crate::per_game::mirroring_from_token)
+                {
+                    nes.set_mirroring_override(Some(m));
+                }
+                if let Some(dip) = cfg.dip_switches {
+                    nes.set_vs_dip(dip);
+                }
+            }
+        }
         {
             let mut guard = self.emu.lock();
             let emu = &mut *guard;
@@ -7666,11 +7733,14 @@ impl ApplicationHandler<AppEvent> for App {
                     region_label,
                     movie_recording,
                     movie_playing,
+                    // v1.7.0 H4 — running lag-frame tally (independent of `nes`).
+                    lag_frames,
                 ) = {
                     let mut emu = self.emu.lock();
                     let f = emu.current_fps();
                     let rec = emu.movie.is_recording();
                     let play = emu.movie.is_playing();
+                    let lag = emu.lag_frames();
                     emu.nes.as_mut().map_or_else(
                         || {
                             (
@@ -7682,6 +7752,7 @@ impl ApplicationHandler<AppEvent> for App {
                                 String::new(),
                                 rec,
                                 play,
+                                lag,
                             )
                         },
                         |nes| {
@@ -7699,6 +7770,7 @@ impl ApplicationHandler<AppEvent> for App {
                                 region.to_string(),
                                 rec,
                                 play,
+                                lag,
                             )
                         },
                     )
@@ -7758,6 +7830,9 @@ impl ApplicationHandler<AppEvent> for App {
                         .debugger
                         .as_ref()
                         .and_then(DebuggerOverlay::netplay_status_line),
+                    // v1.7.0 "Forge" H4 — surface the lag-frame count only while a
+                    // ROM is loaded (no ROM ⇒ no meaningful tally ⇒ hidden).
+                    lag_frames: rom_loaded.then_some(lag_frames),
                 };
 
                 let mut shell_out = crate::ui_shell::ShellOutput::default();
