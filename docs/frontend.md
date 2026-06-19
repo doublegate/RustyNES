@@ -718,6 +718,50 @@ builds stay byte-identical and AccuracyCoin holds 100% (139/139). Three features
   clears the window's `open` flag, giving **Settings / About / Keyboard
   Shortcuts** a consistent keyboard escape hatch.
 
+### Internationalization (i18n, v1.7.0 "Forge" Workstream H5)
+
+Frontend-only, additive, English-by-default — with the default locale every
+label is byte-identical to v1.6.0 and AccuracyCoin holds 100% (139/139). See
+ADR 0023 for the rationale (why a hand-rolled catalog over Fluent/ICU/`rust-i18n`
+and the wasm size budget).
+
+The layer lives in `crate::i18n`:
+
+- **Compile-time string catalog.** A `Key` enum names every translatable
+  string; one `const fn` per locale (`english`, `spanish`) `match`es `Key` to a
+  `&'static str`. There is no runtime file I/O, no parser, no extra dependency —
+  the strings are read-only data baked into the binary, which keeps the wasm
+  bundle inside the `scripts/wasm_size_budget.sh` 5 MiB gate.
+- **Resolution.** `tr(key) -> &'static str` resolves against the current
+  process-global locale; the `t!(Key)` macro is sugar for it (`crate::t!(MenuFile)`
+  == `crate::i18n::tr(crate::i18n::Key::MenuFile)`). `tr_in(locale, key)` is the
+  explicit form used in tests.
+- **English fallback.** `Locale::English` is the `Default` and the universal
+  fallback. The English catalog defines a value for *every* key; a non-English
+  catalog may return `None` for an untranslated key, which `tr_in` resolves to
+  the English string — so a partial translation degrades gracefully per string.
+- **Selection + persistence.** The active locale is `[ui] locale` (TOML,
+  `#[serde(default)]` → English, so older configs are unchanged). It is published
+  to the i18n global via `i18n::set_locale` once at startup and every frame in the
+  render loop (a relaxed atomic store), and surfaced as a **Language** combo in
+  **Settings -> Video -> Display** next to the Theme picker. Because egui
+  re-renders every frame and each converted call site reads `tr(..)` fresh, a
+  language change takes effect on the next frame with no explicit invalidation.
+
+**Incremental conversion.** This change wires the high-visibility surfaces
+through `tr!`/`t!` — the menu bar (top-level menus + common File/View items),
+the Settings title/tabs/Display labels, and the status-bar state words. Deeper
+panels keep their literals for now. To convert a string:
+
+1. Add a `Key` variant in `i18n.rs` whose **English** value is the *verbatim*
+   current literal, and add the translation to each non-English catalog (or omit
+   it to fall back to English).
+2. Replace the literal at the call site with `crate::t!(TheKey)` (or
+   `crate::i18n::tr(Key::TheKey)` when the key is computed).
+
+Until a string is converted it renders its literal exactly as before, so the
+conversion can proceed panel-by-panel without regressions.
+
 ### Chip panels vs tool panels
 
 The panels split by what they need:
