@@ -38,7 +38,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   follow the documented `t!(Key)` / `tr(..)` pattern (`docs/frontend.md`) over time. New ADR
   **0023** (i18n string-catalog approach). Frontend-only; the chip stack /
   `rustynes-core` / test-harness are untouched.
-
+- **v1.7.0 "Forge" #54 — `full` maximal-native-feature build + `cargo full-run`
+  alias (the "cargo --full equivalent").** A new opt-in `full` feature on
+  `rustynes-frontend` aggregates the maximal NATIVE feature set —
+  `retroachievements` + `scripting` + `script-ipc` + `hd-pack` + `debug-hooks` +
+  `av-record` — additively on top of the default set (`wasm-winit` / `emu-thread`
+  / `help-tui` / `gpu-timing`). Two cargo aliases in `.cargo/config.toml` make it
+  a one-liner: `cargo full-run path/to/rom.nes` and `cargo full-build`. The
+  WASM-only features (`script-wasm` — wasm-only and mutually exclusive with
+  `scripting`; `browser-cheevos`; `wasm-canvas`) are deliberately excluded, since
+  `full` targets a native binary. Purely opt-in: the shipped/default build and the
+  emulation core are unchanged (`hd-pack`/`debug-hooks` only forward to the
+  existing off-by-default `rustynes-core` telemetry, proven byte-identical), so
+  AccuracyCoin holds 100% (139/139). The value of this entry point is the
+  full-feature *combination* compiling clean — a gap single-feature CI gates miss.
 - **v1.7.0 "Forge" H6 — web/wasm parity: browser Lua, File System Access API,
   Gamepad API, PWA/offline, and `?settings=` share-links.** Five additive,
   web-only browser-platform features. All are wasm-only or behind the existing

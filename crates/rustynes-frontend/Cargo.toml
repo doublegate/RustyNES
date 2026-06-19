@@ -162,6 +162,38 @@ debug-hooks = ["rustynes-core/debug-hooks"]
 #   cargo build -p rustynes-frontend --features av-record
 av-record = []
 
+# v1.7.0 "Forge" #54 — the `full` maximal-NATIVE-feature build. One opt-in
+# feature aggregating every native feature so a single command (the
+# `cargo full-run` / `cargo full-build` aliases in `.cargo/config.toml`) builds
+# the most fully-featured desktop binary. PURELY OPT-IN: the shipped/default
+# build is unchanged and the core is untouched (`hd-pack` / `debug-hooks` only
+# forward to the existing off-by-default `rustynes-core` telemetry, proven
+# byte-identical), so AccuracyCoin is unaffected.
+#
+# `full` is ADDITIVE ON TOP OF the `default` set — it does NOT re-list the
+# default features (`wasm-winit` / `emu-thread` / `help-tui` / `gpu-timing`),
+# which `cargo` keeps active alongside `--features full` (the `--features` flag
+# adds to the default set unless `--no-default-features` is passed). On native,
+# the only default member that is wasm-flavoured (`wasm-winit`) is an inert
+# empty marker, so it costs nothing here.
+#
+# WASM-only features are DELIBERATELY EXCLUDED — they cannot belong to a NATIVE
+# build:
+#   * `script-wasm`   — wasm-only AND mutually exclusive with `scripting`
+#                       (piccolo vs. mlua: two distinct `rustynes-script`
+#                       backends that cannot coexist). `full` takes `scripting`.
+#   * `browser-cheevos` — wasm-only casual-mode browser RA. `full` takes the
+#                       native `retroachievements` instead.
+#   * `wasm-canvas`   — wasm-only lightweight embed mode.
+full = [
+    "retroachievements",
+    "scripting",
+    "script-ipc", # already implies `scripting`; listed for clarity
+    "hd-pack",
+    "debug-hooks",
+    "av-record",
+]
+
 [[bin]]
 name = "rustynes"
 path = "src/main.rs"

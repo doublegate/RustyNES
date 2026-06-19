@@ -30,3 +30,13 @@ rustflags = ["--cfg=web_sys_unstable_apis", "--cfg=getrandom_backend=\"wasm_js\"
 # holds MSRV-safe versions; this guards future resolves.
 [resolver]
 incompatible-rust-versions = "fallback"
+
+# v1.7.0 "Forge" #54 — the "cargo --full equivalent". One command builds/runs
+# the most fully-featured NATIVE binary by activating the frontend's `full`
+# feature (the maximal native feature set; see
+# `crates/rustynes-frontend/Cargo.toml`). `cargo full-run path/to/rom.nes` Just
+# Works; trailing args after the alias are forwarded to the binary. These names
+# do not collide with any built-in cargo subcommand.
+[alias]
+full-run = "run --release -p rustynes-frontend --features full"
+full-build = "build --release -p rustynes-frontend --features full"
