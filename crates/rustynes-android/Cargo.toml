@@ -1,0 +1,41 @@
+[package]
+name = "rustynes-android"
+description = "Android platform host for RustyNES: JNI surface/audio hot glue over the rustynes-mobile bridge (wgpu on a SurfaceView, AAudio sink)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords = ["nes", "emulator", "android", "jni", "wgpu"]
+categories = ["emulators"]
+
+# Loaded by the JVM via `System.loadLibrary("rustynes_android")`. `cdylib` is the
+# `.so`; `lib` keeps the host build (`cargo build --workspace`) green so CI lints
+# the crate — the Android-only entry points are `#[cfg(target_os = "android")]`,
+# so on host this compiles to a thin shell with no JNI/NDK symbols.
+[lib]
+crate-type = ["lib", "cdylib"]
+
+[lints]
+workspace = true
+
+[dependencies]
+# The shared, byte-identical control surface. UniFFI already gives Kotlin a
+# generated `NesController`; this crate adds only the hot glue UniFFI can't
+# express (native surface handle -> wgpu, the audio sink).
+rustynes-mobile.workspace = true
+log = "0.4"
+
+# Android-target-only host glue. None of this is pulled into the host build, so
+# `cargo build/clippy --workspace` on Linux/macOS/Windows never sees the NDK.
+# `jni` 0.21 — the surface/audio JNI entry points the Compose shell binds.
+# `ndk` — `ANativeWindow` from an `android.view.Surface` for the wgpu handoff.
+# `android-activity` — the `android_main` entry for the beta.1 winit+wgpu spike.
+# `android_logger` — routes `log` to logcat.
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+ndk = "0.9"
+ndk-context = "0.1"
+android-activity = { version = "0.6", features = ["game-activity"] }
+android_logger = "0.14"

@@ -1,0 +1,132 @@
+name: Android
+
+# v1.8.0 "Android" — the platform-build gate. Host CI (ci.yml) remains the
+# authoritative accuracy/determinism gate (AccuracyCoin 100%, oracles, nestest);
+# this workflow only proves the mobile host *links* against the NDK toolchain and
+# that the UniFFI binding pipeline + Gradle packaging are intact. It is NOT a
+# required check — accuracy is never gated on a device toolchain.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/rustynes-mobile/**'
+      - 'crates/rustynes-android/**'
+      - 'crates/rustynes-core/**'
+      - 'android/**'
+      - '.github/workflows/android.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'crates/rustynes-mobile/**'
+      - 'crates/rustynes-android/**'
+      - 'crates/rustynes-core/**'
+      - 'android/**'
+      - '.github/workflows/android.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  cross-build:
+    name: NDK cross-build + UniFFI bindings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # The project toolchain (rust-toolchain.toml = 1.96) plus the two shipped
+      # Android targets (arm64 ships; x86_64 is the emulator/CI ABI).
+      - name: Install Android Rust targets
+        run: rustup target add aarch64-linux-android x86_64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android-ndk
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --version "^3" --locked
+
+      # ubuntu-latest ships the Android SDK + an NDK; resolve its path so
+      # cargo-ndk finds the toolchain. (We pin a recent NDK; r27+ aligns .so to
+      # 16 KB by default — a Play requirement for Android 15+.)
+      - name: Resolve NDK
+        run: echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+
+      - name: Cross-compile mobile + android (arm64 + x86_64)
+        run: |
+          cargo ndk -t arm64-v8a -t x86_64 --platform 26 \
+            build --release -p rustynes-mobile -p rustynes-android
+
+      - name: Generate Kotlin bindings (UniFFI smoke)
+        run: |
+          cargo run -q -p rustynes-mobile --bin uniffi-bindgen -- \
+            generate \
+            --library target/aarch64-linux-android/release/librustynes_mobile.so \
+            --language kotlin --out-dir target/uniffi-kotlin
+          test -f target/uniffi-kotlin/uniffi/rustynes_mobile/rustynes_mobile.kt
+
+      # 16 KB page-alignment check on the shipped arm64 library. Every PT_LOAD
+      # segment must be aligned to at least 2**14; r27+ does this by default but
+      # the check keeps a toolchain regression from silently shipping a 4 KB AAB
+      # that Play would reject on Android 15+.
+      - name: Verify 16 KB ELF alignment (arm64)
+        run: |
+          set -euo pipefail
+          so=target/aarch64-linux-android/release/librustynes_mobile.so
+          bad=$("${ANDROID_NDK_HOME}"/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf -l "$so" \
+            | awk '/LOAD/ { if (strtonum($NF) < 0x4000) print }')
+          if [ -n "$bad" ]; then
+            echo "::error::LOAD segment under 16 KB alignment in $so"; echo "$bad"; exit 1
+          fi
+          echo "All LOAD segments >= 16 KB aligned."
+
+      - name: Upload cross-built libraries
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustynes-android-so
+          path: |
+            target/aarch64-linux-android/release/librustynes_*.so
+            target/x86_64-linux-android/release/librustynes_*.so
+
+  gradle-bundle:
+    name: Gradle bundleRelease (best-effort packaging)
+    runs-on: ubuntu-latest
+    # Packaging is informational: the cross-build job above is the real link
+    # gate. R8/Compose packaging pulls the full Android SDK, so a transient
+    # tooling hiccup here must not fail the merge.
+    continue-on-error: true
+    needs: cross-build
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Android Rust targets
+        run: rustup target add aarch64-linux-android x86_64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android-ndk
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --version "^3" --locked
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Resolve NDK
+        run: echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Bundle release AAB (unsigned)
+        working-directory: android
+        run: |
+          gradle wrapper --gradle-version 8.11.1
+          ./gradlew :app:bundleRelease --no-daemon
+      - name: Upload AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustynes-aab
+          path: android/app/build/outputs/bundle/release/*.aab
+          if-no-files-found: warn

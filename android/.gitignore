@@ -1,0 +1,21 @@
+# Gradle / Android build outputs
+.gradle/
+build/
+local.properties
+
+# Signing material — NEVER commit (Play App Signing upload key)
+keystore.properties
+*.keystore
+*.jks
+
+# cargo-ndk drops the cross-compiled .so here; regenerated every build
+app/src/main/jniLibs/
+
+# The Gradle wrapper jar is materialised by `gradle wrapper` in CI / first build
+gradle/wrapper/gradle-wrapper.jar
+
+# The repo-root .gitignore blanket-ignores `*.xml`; the Android manifest +
+# resources are essential tracked source, so force-include them here (a deeper
+# .gitignore's negation overrides the root pattern).
+!app/src/main/AndroidManifest.xml
+!app/src/main/res/**/*.xml
