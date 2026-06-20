@@ -58,6 +58,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     UniFFI-bridge + hybrid-wgpu/Compose-host decision). The cross-build + UniFFI
     binding pipeline are verified end-to-end (host build/tests, Kotlin
     generation, NDK cross-compile to arm64 producing both `.so` libraries).
+  - **A working emulator, verified on hardware (Samsung Galaxy Z Fold 7, Android
+    16, arm64).** Beyond the foundation, the app now does: **audio** (a low-latency
+    mono `AudioTrack` sink pulling the core's samples, blocking-write paced);
+    **input** (the on-screen D-pad/A/B/Select/Start overlay + hardware gamepad
+    keys → the single late-latched mask); **save-states / SRAM / a recent-ROMs
+    library** (`.rns` blobs keyed by ROM SHA-256 in `filesDir`, persistable SAF
+    URI grants, save-on-background + auto-resume); **QoL** (pause, fast-forward,
+    mute); a **responsive, foldable-aware, sticky-immersive** UI (runs full-screen
+    on both the cover and the unfolded inner display with the system bars hidden);
+    and a verified **release AAB** (R8-minified, arm64-only, 3.2 MB). On-device:
+    nestest passes all 14 CPU suites (the core is cycle-accurate on ARM).
+  - **Freemium monetization (Play Billing).** A free download with a one-time,
+    non-consumable **"Full Unlock" IAP at $2.99** (`full_unlock`); the free tier is
+    a **10-minute demo** with save-states, save-on-background/resume, and on-cart
+    battery-backed SRAM persistence disabled — otherwise feature-complete. Every
+    gate is host policy over persistence + a session clock, so the emulated
+    framebuffer/audio is byte-identical between demo and paid (core / `.rns` /
+    AccuracyCoin untouched). The gating, timer, and demo-expiry/unlock UI are
+    verified on-device; the Play Console product + the real purchase transaction
+    are maintainer-manual. See [`docs/android.md`](docs/android.md).
+  - **Documented next increment** (not in this cut): the wgpu `SurfaceView` render
+    path + the NTSC/CRT shader stack — the current RGBA `Bitmap` renderer is
+    complete and performant, so wgpu is a fidelity/perf upgrade, not a blocker.
+    Netplay / RetroAchievements / Lua remain deferred per the locked MVP.
 
 ## [1.7.1] - 2026-06-19
 
