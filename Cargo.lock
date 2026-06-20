@@ -4066,20 +4066,24 @@ dependencies = [
 
 [[package]]
 name = "rustynes-android"
-version = "1.8.3"
+version = "1.8.4"
 dependencies = [
  "android-activity",
  "android_logger",
+ "bytemuck",
  "jni 0.21.1",
  "log",
  "ndk",
  "ndk-context",
+ "pollster 0.3.0",
+ "raw-window-handle",
  "rustynes-mobile",
+ "wgpu",
 ]
 
 [[package]]
 name = "rustynes-apu"
-version = "1.8.3"
+version = "1.8.4"
 dependencies = [
  "bitflags 2.13.0",
  "criterion",
@@ -4092,7 +4096,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-cheevos"
-version = "1.8.3"
+version = "1.8.4"
 dependencies = [
  "cc",
  "ureq",
@@ -4100,7 +4104,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-core"
-version = "1.8.3"
+version = "1.8.4"
 dependencies = [
  "bitflags 2.13.0",
  "criterion",
@@ -4117,7 +4121,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-cpu"
-version = "1.8.3"
+version = "1.8.4"
 dependencies = [
  "bitflags 2.13.0",
  "criterion",
@@ -4128,7 +4132,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-frontend"
-version = "1.8.3"
+version = "1.8.4"
 dependencies = [
  "anstyle",
  "arboard",
@@ -4178,7 +4182,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-mappers"
-version = "1.8.3"
+version = "1.8.4"
 dependencies = [
  "bitflags 2.13.0",
  "criterion",
@@ -4190,7 +4194,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-mobile"
-version = "1.8.3"
+version = "1.8.4"
 dependencies = [
  "rustynes-core",
  "thiserror 2.0.18",
@@ -4199,7 +4203,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-netplay"
-version = "1.8.3"
+version = "1.8.4"
 dependencies = [
  "futures-util",
  "js-sys",
@@ -4214,7 +4218,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-ppu"
-version = "1.8.3"
+version = "1.8.4"
 dependencies = [
  "bitflags 2.13.0",
  "criterion",
@@ -4225,7 +4229,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-script"
-version = "1.8.3"
+version = "1.8.4"
 dependencies = [
  "mlua",
  "piccolo",
@@ -4235,7 +4239,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-test-harness"
-version = "1.8.3"
+version = "1.8.4"
 dependencies = [
  "insta",
  "png",

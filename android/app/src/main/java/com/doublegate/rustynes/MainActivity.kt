@@ -438,6 +438,22 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
         else -> ScreenMode.Inner
     }
 
+    // Native wgpu SurfaceView renderer (v1.8.4, Workstream B). Opt-in + API 33+;
+    // read ONCE at launch so it never flips mid-session. When off (default), the
+    // proven Compose Bitmap path is used unchanged. The emulation loop still packs
+    // the Bitmap (for casting / the idle thumbnail); the SurfaceView just draws the
+    // raw frame on the GPU.
+    val gpuSurface = remember {
+        if (settings.useGpuRenderer &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            NativeRenderer.ensureLoaded()
+        ) {
+            NesSurfaceView(context)
+        } else {
+            null
+        }
+    }
+
     // SAF document picker — no broad storage permission required. The picked
     // bytes are handed straight to the core (no path), a persistable read grant
     // is taken, and the ROM is recorded in the recents list (Workstream E).
@@ -514,7 +530,15 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
             contentAlignment = Alignment.Center,
         ) {
             val current = frame
-            if (current != null) {
+            // GPU SurfaceView render path (opt-in, v1.8.4). Mounted continuously and
+            // draws each submitted frame on the GPU (black until the first frame).
+            if (gpuSurface != null) {
+                androidx.compose.ui.viewinterop.AndroidView(
+                    factory = { gpuSurface },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+            if (gpuSurface == null && current != null) {
                 Image(
                     bitmap = current,
                     contentDescription = "NES screen",
@@ -538,7 +562,8 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                     // Nearest-neighbour: preserve the crisp pixel grid.
                     filterQuality = FilterQuality.None,
                 )
-            } else {
+            }
+            if (current == null) {
                 // Idle: status + the recent-ROMs list (tap to resume).
                 Column(
                     modifier = Modifier.verticalScroll(rememberScrollState()).padding(16.dp),
@@ -726,6 +751,9 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                 // setPixels + asImageBitmap stay on the UI thread.
                 withContext(Dispatchers.Default) {
                     val fb = ctrl.runFrame()
+                    // Hand the raw RGBA frame to the GPU SurfaceView (opt-in path);
+                    // no-op when the GPU renderer is off.
+                    gpuSurface?.submitFrame(fb)
                     val samples = ctrl.drainAudio()
                     // In fast-forward the audio is dropped (writing it would block
                     // the loop back to real time); otherwise play unless muted.

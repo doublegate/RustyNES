@@ -76,6 +76,13 @@ class AppSettings(context: Context) {
         get() = _onboardingSuppressed.value
         set(v) { _onboardingSuppressed.value = v; prefs.edit().putBoolean("onboardDone", v).apply() }
 
+    /** Use the native wgpu SurfaceView renderer instead of the Compose Bitmap blit
+     *  (v1.8.4, API 33+). Off by default; read once at launch (applies on restart). */
+    private val _useGpuRenderer = mutableStateOf(prefs.getBoolean("gpuRenderer", false))
+    var useGpuRenderer: Boolean
+        get() = _useGpuRenderer.value
+        set(v) { _useGpuRenderer.value = v; prefs.edit().putBoolean("gpuRenderer", v).apply() }
+
     // Per-screen-mode (cover / inner / cast) controller size + opacity (item 5).
     // Each mode keeps its own values, so the controller is right on the narrow
     // cover screen, the large inner screen, and while casting.
@@ -149,6 +156,13 @@ fun SettingsSheet(settings: AppSettings, mode: ScreenMode, onDismiss: () -> Unit
             }
 
             ToggleRow("Mute audio", settings.muted) { settings.muted = it }
+
+            // Native wgpu SurfaceView renderer (v1.8.4, API 33+). Applies on restart.
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                ToggleRow("GPU renderer (restart to apply)", settings.useGpuRenderer) {
+                    settings.useGpuRenderer = it
+                }
+            }
 
             // Haptic intensity (Off / Low / Medium / High).
             Text("Haptics")
