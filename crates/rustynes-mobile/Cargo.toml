@@ -43,6 +43,14 @@ rustynes-script.workspace = true
 # with the NDK. Native-only by construction (empty crate on wasm32) — the mobile
 # bridge is never a wasm target.
 rustynes-ra.workspace = true
+# v1.8.6 — direct-IP / same-LAN netplay on mobile. The native UDP rollback path
+# (`UdpTransport` + `NetplayConnection` + `RollbackSession`) is all `std::net` +
+# `Send`, so this UniFFI bridge can hold a session across the FFI boundary; it
+# cross-compiles to `aarch64-linux-android` with the NDK. Direct-IP/LAN only —
+# STUN/TURN is deferred, so no NAT-traversal wiring is pulled in here. The
+# in-memory `MemoryTransport`/`MeshTransport` are `!Send` test-only and never
+# used by the bridge.
+rustynes-netplay.workspace = true
 thiserror.workspace = true
 # UniFFI generates the foreign-language bindings from the `#[uniffi::export]`
 # surface (proc-macro mode — no UDL file). The `cli` feature backs the

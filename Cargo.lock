@@ -4216,6 +4216,7 @@ version = "1.8.6"
 dependencies = [
  "rustynes-core",
  "rustynes-hdpack",
+ "rustynes-netplay",
  "rustynes-ra",
  "rustynes-script",
  "thiserror 2.0.18",
