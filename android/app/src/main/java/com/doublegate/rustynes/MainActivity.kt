@@ -394,6 +394,19 @@ private class AudioPlayer(sampleRate: Int) {
         }
     }
 
+    /**
+     * v1.8.4 hot path: write raw little-endian `f32` bytes straight to the
+     * `PCM_FLOAT` track. The bytes come from `NesController.drainAudioBytes()` as a
+     * single `ByteArray` (no per-sample `Float` boxing); `AudioTrack` reads them as
+     * native-order PCM floats (Android is little-endian), so there's no float copy
+     * either. Blocks while the ring is full (paces the loop), exactly like [write].
+     */
+    fun writeBytes(bytes: ByteArray) {
+        if (bytes.isNotEmpty()) {
+            track.write(java.nio.ByteBuffer.wrap(bytes), bytes.size, AudioTrack.WRITE_BLOCKING)
+        }
+    }
+
     fun release() {
         runCatching { track.pause(); track.flush(); track.stop() }
         track.release()
@@ -759,10 +772,12 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                     // Hand the raw RGBA frame to the GPU SurfaceView (opt-in path);
                     // no-op when the GPU renderer is off.
                     gpuSurface?.submitFrame(fb)
-                    val samples = ctrl.drainAudio()
+                    // Hot path: drain audio as raw bytes (no per-sample Float boxing)
+                    // and write straight to the PCM_FLOAT track.
+                    val audioBytes = ctrl.drainAudioBytes()
                     // In fast-forward the audio is dropped (writing it would block
                     // the loop back to real time); otherwise play unless muted.
-                    if (!turbo && !emulator.muted) audio.write(samples)
+                    if (!turbo && !emulator.muted) audio.writeBytes(audioBytes)
                     packRgbaToArgb(fb, pixels)
                 }
                 reuse.setPixels(pixels, 0, NES_WIDTH, 0, 0, NES_WIDTH, NES_HEIGHT)
