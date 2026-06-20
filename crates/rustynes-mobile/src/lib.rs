@@ -313,12 +313,20 @@ impl NesController {
     /// Returns [`MobileError::SaveState`] if the blob is malformed or was
     /// produced by a different ROM.
     pub fn load_state(&self, data: Vec<u8>) -> Result<(), MobileError> {
-        self.lock()
-            .nes
-            .restore(&data)
-            .map_err(|e| MobileError::SaveState {
-                reason: e.to_string(),
-            })
+        let mut g = self.lock();
+        g.nes.restore(&data).map_err(|e| MobileError::SaveState {
+            reason: e.to_string(),
+        })?;
+        // The restore overwrote the core's controller latch with the snapshot's
+        // state, so re-apply the masks the host currently holds — otherwise a
+        // button held across a load would stick or desync (the desktop host
+        // re-latches input the same way after a state load).
+        for p in 0..4 {
+            let m = Buttons::from_bits_truncate(g.masks[p]);
+            g.nes.set_buttons(p, m);
+        }
+        drop(g);
+        Ok(())
     }
 
     /// The number of frames emulated since power-on.
@@ -438,6 +446,18 @@ mod tests {
         ctrl.load_state(blob).expect("restore");
         assert_eq!(ctrl.frame(), 10);
         assert_ne!(later, 10);
+    }
+
+    #[test]
+    fn load_state_preserves_held_input() {
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        ctrl.step_frame();
+        let blob = ctrl.save_state();
+        // Hold A, then restore a state captured before A was held: the host mask
+        // must survive (and be re-applied to the core) rather than be lost.
+        ctrl.set_button(0, NesButton::A, true).unwrap();
+        ctrl.load_state(blob).expect("restore");
+        assert_eq!(ctrl.buttons(0).unwrap(), Buttons::A.bits());
     }
 
     #[test]

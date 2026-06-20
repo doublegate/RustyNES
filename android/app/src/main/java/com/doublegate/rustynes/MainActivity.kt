@@ -436,14 +436,15 @@ private fun EmulatorScreen(emulator: EmulatorHandle) {
                     continue
                 }
                 val start = System.nanoTime()
-                // Emulate + play this frame's audio off the main thread (the
-                // blocking audio write must never run on the UI thread).
-                val rgba = withContext(Dispatchers.Default) {
+                // Emulate, play this frame's audio, and pack the framebuffer all
+                // off the main thread (the blocking audio write and the 61k-pixel
+                // RGBA->ARGB pack must never run on the UI thread). Only the cheap
+                // setPixels + asImageBitmap stay on the UI thread.
+                withContext(Dispatchers.Default) {
                     val fb = ctrl.runFrame()
                     audio.write(ctrl.drainAudio())
-                    fb
+                    packRgbaToArgb(fb, pixels)
                 }
-                packRgbaToArgb(rgba, pixels)
                 reuse.setPixels(pixels, 0, NES_WIDTH, 0, 0, NES_WIDTH, NES_HEIGHT)
                 frame = reuse.asImageBitmap()
                 val remainingMs = (FRAME_NANOS - (System.nanoTime() - start)) / 1_000_000

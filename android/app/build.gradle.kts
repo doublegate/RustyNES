@@ -14,9 +14,13 @@ val workspaceRoot: File = rootDir.parentFile
 val jniLibsDir: File = file("src/main/jniLibs")
 val uniffiGenDir: File = layout.buildDirectory.dir("generated/uniffi").get().asFile
 
-// Ship arm64 only (smallest AAB); x86_64 is built too so the app runs on the
-// emulator / CI smoke test. armeabi-v7a is opt-in (see the maintainer defaults).
-val shippedAbis = listOf("arm64-v8a", "x86_64")
+// ABIs cross-compiled by cargo-ndk (the jniLibs always contain both): arm64 for
+// devices, x86_64 for the emulator / CI smoke test. The *release* variant then
+// packages arm64 only (smallest AAB — see the `release` buildType's abiFilters);
+// the *debug* variant keeps x86_64 so it runs on the emulator. armeabi-v7a is
+// opt-in (see the maintainer defaults).
+val builtAbis = listOf("arm64-v8a", "x86_64")
+val shipAbi = "arm64-v8a"
 
 android {
     namespace = "com.doublegate.rustynes"
@@ -28,7 +32,8 @@ android {
         targetSdk = 35 // Play mandate since 2025-08-31.
         versionCode = 10800 // 1.8.0
         versionName = "1.8.0"
-        ndk { abiFilters += shippedAbis }
+        // No abiFilters here — set per buildType so release ships arm64 only
+        // while debug keeps x86_64 for the emulator.
     }
 
     // Release signing reads `keystore.properties` (gitignored) or env vars; when
@@ -53,12 +58,16 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // The shipped AAB carries arm64 only (smallest download).
+            ndk { abiFilters += shipAbi }
             if (keystorePropsFile.exists()) {
                 signingConfig = signingConfigs.getByName("upload")
             }
         }
         debug {
             applicationIdSuffix = ".debug"
+            // Debug keeps x86_64 too so it installs on the emulator / CI.
+            ndk { abiFilters += builtAbis }
         }
     }
 
@@ -93,7 +102,7 @@ val cargoNdkBuild by tasks.registering(Exec::class) {
     group = "rust"
     description = "Cross-compile rustynes-mobile + rustynes-android into jniLibs via cargo-ndk."
     workingDir = workspaceRoot
-    val abiArgs = shippedAbis.flatMap { listOf("-t", it) }
+    val abiArgs = builtAbis.flatMap { listOf("-t", it) }
     commandLine(
         listOf("cargo", "ndk") + abiArgs +
             listOf(
