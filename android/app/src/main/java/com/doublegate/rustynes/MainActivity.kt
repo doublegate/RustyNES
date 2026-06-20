@@ -1,11 +1,22 @@
 package com.doublegate.rustynes
 
+import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
+import android.net.Uri
 import android.os.Bundle
+import android.provider.OpenableColumns
 import android.view.KeyEvent
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.OutlinedButton
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -102,6 +113,19 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // Save-on-background: write the `auto` save-state for the current ROM so the
+    // next open of it resumes where the player left off. The bridge's internal
+    // lock serialises this against the emulation thread, so the snapshot is
+    // consistent; it is a quick in-memory encode, fine to do on the main thread.
+    override fun onPause() {
+        super.onPause()
+        val ctrl = emulator.controller
+        val sha = emulator.romSha
+        if (ctrl != null && sha != null) {
+            runCatching { SaveStateStore.save(this, sha, SaveStateStore.AUTO_SLOT, ctrl.saveState()) }
+        }
+    }
+
     // Hardware gamepad / keyboard: Android dispatches KeyEvents to the Activity.
     // Map them onto P1 and feed the same controller the touch overlay drives.
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
@@ -118,6 +142,9 @@ class MainActivity : ComponentActivity() {
  */
 class EmulatorHandle {
     var controller: NesController? = null
+
+    /** Lowercase hex SHA-256 of the loaded ROM — the save-state directory key. */
+    var romSha: String? = null
 
     /** Returns true if the key was consumed (a mapped NES button). */
     fun onKey(keyCode: Int, pressed: Boolean): Boolean {
@@ -137,6 +164,57 @@ class EmulatorHandle {
         KeyEvent.KEYCODE_DPAD_RIGHT -> NesButton.RIGHT
         else -> null
     }
+}
+
+/**
+ * Load a ROM into [emulator] from raw bytes: build the controller, key it by
+ * SHA-256, auto-resume the on-background save-state for that ROM if present, and
+ * — when the bytes came from a SAF [uri] — take a persistable read grant + record
+ * it in the recent-ROMs list so it survives reboot. Returns a status line. May
+ * throw if the bytes are not a valid ROM (callers wrap in `runCatching`).
+ */
+private fun loadRom(
+    context: Context,
+    emulator: EmulatorHandle,
+    bytes: ByteArray,
+    uri: Uri?,
+    name: String?,
+): String {
+    val ctrl = NesController(bytes, 48_000u)
+    val sha = sha256Hex(bytes)
+    emulator.controller = ctrl
+    emulator.romSha = sha
+    // Resume where the player left off (the on-background auto-state), if any.
+    SaveStateStore.load(context, sha, SaveStateStore.AUTO_SLOT)?.let { blob ->
+        runCatching { ctrl.loadState(blob) }
+    }
+    if (uri != null) {
+        runCatching {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            )
+        }
+        RomLibrary.remember(context, uri.toString(), name ?: uri.lastPathSegment ?: "ROM")
+    }
+    return "Running" + (name?.let { " · $it" } ?: "")
+}
+
+/** Resolve a SAF document's human-readable display name for the recents list. */
+private fun displayName(context: Context, uri: Uri): String {
+    context.contentResolver.query(
+        uri,
+        arrayOf(OpenableColumns.DISPLAY_NAME),
+        null,
+        null,
+        null,
+    )?.use { c ->
+        if (c.moveToFirst()) {
+            val i = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            if (i >= 0) return c.getString(i)
+        }
+    }
+    return uri.lastPathSegment ?: "ROM"
 }
 
 private const val NES_WIDTH = 256
@@ -215,20 +293,32 @@ private fun EmulatorScreen(emulator: EmulatorHandle) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var frame by remember { mutableStateOf<ImageBitmap?>(null) }
     var status by remember { mutableStateOf("Open a .nes ROM to start") }
+    var recents by remember { mutableStateOf(RomLibrary.recents(context)) }
 
     // SAF document picker — no broad storage permission required. The picked
-    // bytes are handed straight to the core (no path, exactly like the wasm
-    // byte-picker). Persistable URI grants for a library view land in beta.4.
+    // bytes are handed straight to the core (no path), a persistable read grant
+    // is taken, and the ROM is recorded in the recents list (Workstream E).
     val picker = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
     ) { uri ->
         if (uri != null) {
             runCatching {
+                val name = displayName(context, uri)
                 val bytes = context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
-                emulator.controller = NesController(bytes, 48000u)
-                status = "Running"
+                status = loadRom(context, emulator, bytes, uri, name)
+                recents = RomLibrary.recents(context)
             }.onFailure { status = "Failed to load ROM: ${it.message}" }
         }
+    }
+
+    // Open a recent ROM via its persistable content URI.
+    fun openRecent(rom: RecentRom) {
+        runCatching {
+            val uri = Uri.parse(rom.uri)
+            val bytes = context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+            status = loadRom(context, emulator, bytes, uri, rom.name)
+            recents = RomLibrary.recents(context)
+        }.onFailure { status = "Can't open ${rom.name}: ${it.message}" }
     }
 
     // Debug-only convenience: auto-load a ROM pushed to the app's external files
@@ -240,8 +330,7 @@ private fun EmulatorScreen(emulator: EmulatorHandle) {
             val auto = java.io.File(context.getExternalFilesDir(null), "autoload.nes")
             if (auto.exists()) {
                 runCatching {
-                    emulator.controller = NesController(auto.readBytes(), 48000u)
-                    status = "Running (autoload)"
+                    status = loadRom(context, emulator, auto.readBytes(), null, "autoload")
                 }.onFailure { status = "Autoload failed: ${it.message}" }
             }
         }
@@ -272,15 +361,60 @@ private fun EmulatorScreen(emulator: EmulatorHandle) {
                     filterQuality = FilterQuality.None,
                 )
             } else {
-                Text(status, color = Color.White)
+                // Idle: status + the recent-ROMs list (tap to resume).
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()).padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(status, color = Color.White)
+                    if (recents.isNotEmpty()) {
+                        Spacer(Modifier.height(16.dp))
+                        Text("Recent", color = Color.Gray)
+                        recents.forEach { rom ->
+                            Text(
+                                rom.name,
+                                color = Color(0xFFB39DDB),
+                                modifier = Modifier
+                                    .padding(vertical = 8.dp)
+                                    .clickable { openRecent(rom) },
+                            )
+                        }
+                    }
+                }
             }
         }
 
+        // Control bar: load / save-state / load-state / reset.
         Row(
-            modifier = Modifier.fillMaxWidth().padding(8.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.Center,
         ) {
-            Button(onClick = { picker.launch(arrayOf("*/*")) }) { Text("Open ROM") }
+            Button(onClick = { picker.launch(arrayOf("*/*")) }) { Text("Open") }
+            Spacer(Modifier.width(8.dp))
+            OutlinedButton(onClick = {
+                val ctrl = emulator.controller
+                val sha = emulator.romSha
+                if (ctrl != null && sha != null) {
+                    runCatching { SaveStateStore.save(context, sha, "1", ctrl.saveState()) }
+                        .onSuccess { status = "Saved slot 1" }
+                        .onFailure { status = "Save failed: ${it.message}" }
+                }
+            }) { Text("Save") }
+            Spacer(Modifier.width(8.dp))
+            OutlinedButton(onClick = {
+                val ctrl = emulator.controller
+                val sha = emulator.romSha
+                val blob = if (sha != null) SaveStateStore.load(context, sha, "1") else null
+                if (ctrl != null && blob != null) {
+                    runCatching { ctrl.loadState(blob) }
+                        .onSuccess { status = "Loaded slot 1" }
+                        .onFailure { status = "Load failed: ${it.message}" }
+                } else {
+                    status = "No save in slot 1"
+                }
+            }) { Text("Load") }
+            Spacer(Modifier.width(8.dp))
+            OutlinedButton(onClick = { emulator.controller?.reset() }) { Text("Reset") }
         }
 
         TouchOverlay(emulator)
