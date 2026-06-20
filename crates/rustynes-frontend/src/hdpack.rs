@@ -343,10 +343,18 @@ impl HdPack {
             .extension()
             .is_some_and(|e| e.eq_ignore_ascii_case("zip"));
         if is_zip {
-            Self::load_zip(path)
+            Self::load_zip_from_reader(std::fs::File::open(path).ok()?)
         } else {
             Self::load_folder(path)
         }
+    }
+
+    /// Load an HD-pack from in-memory `.zip` bytes — for hosts with no filesystem
+    /// path (e.g. an Android SAF stream). Same parsing as [`Self::load`]'s zip
+    /// branch; the bytes are read through a `Cursor`.
+    #[must_use]
+    pub fn load_from_zip_bytes(data: &[u8]) -> Option<Self> {
+        Self::load_zip_from_reader(std::io::Cursor::new(data))
     }
 
     fn load_folder(dir: &Path) -> Option<Self> {
@@ -363,9 +371,8 @@ impl HdPack {
         Self::finish(parsed, images)
     }
 
-    fn load_zip(path: &Path) -> Option<Self> {
-        let file = std::fs::File::open(path).ok()?;
-        let mut archive = zip::ZipArchive::new(file).ok()?;
+    fn load_zip_from_reader<R: std::io::Read + std::io::Seek>(reader: R) -> Option<Self> {
+        let mut archive = zip::ZipArchive::new(reader).ok()?;
         // Find the `hires.txt` entry (allow it to live in a subfolder).
         let hires_name = (0..archive.len()).find_map(|i| {
             let e = archive.by_index(i).ok()?;
@@ -580,7 +587,10 @@ fn sanitize_image_name(name: &str) -> Option<&str> {
 /// declared size AND the actual read are bounded, since the declared size can lie.
 const MAX_HD_ENTRY_BYTES: u64 = 64 * 1024 * 1024;
 
-fn read_zip_entry(archive: &mut zip::ZipArchive<std::fs::File>, name: &str) -> Option<Vec<u8>> {
+fn read_zip_entry<R: std::io::Read + std::io::Seek>(
+    archive: &mut zip::ZipArchive<R>,
+    name: &str,
+) -> Option<Vec<u8>> {
     let e = archive.by_name(name).ok()?;
     if e.size() > MAX_HD_ENTRY_BYTES {
         return None;
