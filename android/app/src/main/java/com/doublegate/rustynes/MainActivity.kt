@@ -11,6 +11,7 @@ import android.os.Bundle
 import android.provider.OpenableColumns
 import android.view.KeyEvent
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
@@ -145,6 +146,18 @@ class EmulatorHandle {
 
     /** Lowercase hex SHA-256 of the loaded ROM — the save-state directory key. */
     var romSha: String? = null
+
+    /** Emulation paused (the loop idles, no frames advance). Read by the loop. */
+    @Volatile
+    var paused: Boolean = false
+
+    /** Fast-forward: drop the frame-pace delay + audio so the core runs ahead. */
+    @Volatile
+    var turbo: Boolean = false
+
+    /** Mute the audio sink (the core still produces samples; they're discarded). */
+    @Volatile
+    var muted: Boolean = false
 
     /** Returns true if the key was consumed (a mapped NES button). */
     fun onKey(keyCode: Int, pressed: Boolean): Boolean {
@@ -384,13 +397,20 @@ private fun EmulatorScreen(emulator: EmulatorHandle) {
             }
         }
 
-        // Control bar: load / save-state / load-state / reset.
+        // Control bar: load / save / load / reset / pause / fast-forward / mute.
+        // Horizontally scrollable so all controls reach on a narrow cover screen.
+        var paused by remember { mutableStateOf(false) }
+        var turbo by remember { mutableStateOf(false) }
+        var muted by remember { mutableStateOf(false) }
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.Center,
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             Button(onClick = { picker.launch(arrayOf("*/*")) }) { Text("Open") }
-            Spacer(Modifier.width(8.dp))
             OutlinedButton(onClick = {
                 val ctrl = emulator.controller
                 val sha = emulator.romSha
@@ -400,7 +420,6 @@ private fun EmulatorScreen(emulator: EmulatorHandle) {
                         .onFailure { status = "Save failed: ${it.message}" }
                 }
             }) { Text("Save") }
-            Spacer(Modifier.width(8.dp))
             OutlinedButton(onClick = {
                 val ctrl = emulator.controller
                 val sha = emulator.romSha
@@ -413,8 +432,19 @@ private fun EmulatorScreen(emulator: EmulatorHandle) {
                     status = "No save in slot 1"
                 }
             }) { Text("Load") }
-            Spacer(Modifier.width(8.dp))
             OutlinedButton(onClick = { emulator.controller?.reset() }) { Text("Reset") }
+            OutlinedButton(onClick = {
+                paused = !paused
+                emulator.paused = paused
+            }) { Text(if (paused) "Resume" else "Pause") }
+            OutlinedButton(onClick = {
+                turbo = !turbo
+                emulator.turbo = turbo
+            }) { Text(if (turbo) ">> On" else ">>") }
+            OutlinedButton(onClick = {
+                muted = !muted
+                emulator.muted = muted
+            }) { Text(if (muted) "Unmute" else "Mute") }
         }
 
         TouchOverlay(emulator)
@@ -431,10 +461,11 @@ private fun EmulatorScreen(emulator: EmulatorHandle) {
         try {
             while (isActive) {
                 val ctrl = emulator.controller
-                if (ctrl == null) {
-                    delay(100)
+                if (ctrl == null || emulator.paused) {
+                    delay(50)
                     continue
                 }
+                val turbo = emulator.turbo
                 val start = System.nanoTime()
                 // Emulate, play this frame's audio, and pack the framebuffer all
                 // off the main thread (the blocking audio write and the 61k-pixel
@@ -442,13 +473,19 @@ private fun EmulatorScreen(emulator: EmulatorHandle) {
                 // setPixels + asImageBitmap stay on the UI thread.
                 withContext(Dispatchers.Default) {
                     val fb = ctrl.runFrame()
-                    audio.write(ctrl.drainAudio())
+                    val samples = ctrl.drainAudio()
+                    // In fast-forward the audio is dropped (writing it would block
+                    // the loop back to real time); otherwise play unless muted.
+                    if (!turbo && !emulator.muted) audio.write(samples)
                     packRgbaToArgb(fb, pixels)
                 }
                 reuse.setPixels(pixels, 0, NES_WIDTH, 0, 0, NES_WIDTH, NES_HEIGHT)
                 frame = reuse.asImageBitmap()
-                val remainingMs = (FRAME_NANOS - (System.nanoTime() - start)) / 1_000_000
-                if (remainingMs > 0) delay(remainingMs)
+                // Fast-forward skips the pacing delay so the core runs ahead.
+                if (!turbo) {
+                    val remainingMs = (FRAME_NANOS - (System.nanoTime() - start)) / 1_000_000
+                    if (remainingMs > 0) delay(remainingMs)
+                }
             }
         } finally {
             audio.release()
