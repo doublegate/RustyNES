@@ -218,9 +218,10 @@ pub enum RaLoginStatus {
     Error,
 }
 
-/// One transient `RetroAchievements` HUD toast, marshalled across the FFI
-/// (v1.8.6). The host renders + times these out itself; the bridge only hands
-/// them over once via [`NesController::ra_poll_toasts`].
+/// One transient `RetroAchievements` HUD toast, marshalled across the FFI.
+///
+/// (v1.8.6.) The host renders these; the bridge TTLs them out (`expire_toasts`)
+/// and exposes the current live set via [`NesController::ra_poll_toasts`].
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct RaToast {
     /// The toast headline (e.g. the achievement title).
@@ -889,7 +890,11 @@ impl NesController {
     /// later frame; poll [`Self::ra_login_status`] / [`Self::ra_poll_toasts`].
     pub fn ra_login_password(&self, user: String, password: String) {
         let mut g = self.lock();
-        ensure_ra(&mut g, true).begin_login_password(&user, &password);
+        // Seed `false`: a lazily-created session defaults to softcore (matching
+        // the host's default-off hardcore setting). An already-created session
+        // keeps its existing hardcore flag (`ensure_ra` only uses the seed on
+        // creation). Hardcore is set explicitly via `ra_init` / `ra_set_hardcore`.
+        ensure_ra(&mut g, false).begin_login_password(&user, &password);
         drop(g);
     }
 
@@ -897,7 +902,9 @@ impl NesController {
     /// password). Completion reconciled on a later frame.
     pub fn ra_login_token(&self, user: String, token: String) {
         let mut g = self.lock();
-        ensure_ra(&mut g, true).begin_login_token(&user, &token);
+        // Seed `false` (softcore default); see `ra_login_password` for the
+        // rationale. An existing session keeps its hardcore flag.
+        ensure_ra(&mut g, false).begin_login_token(&user, &token);
         drop(g);
     }
 
@@ -984,7 +991,9 @@ impl NesController {
             })?;
         let pending = (!sidecar.is_empty()).then_some(sidecar);
         let mut g = self.lock();
-        ensure_ra(&mut g, true).begin_load_game(&rom, sha, pending);
+        // Seed `false` (softcore default); see `ra_login_password` for the
+        // rationale. An existing session keeps its hardcore flag.
+        ensure_ra(&mut g, false).begin_load_game(&rom, sha, pending);
         drop(g);
         Ok(())
     }
@@ -1023,13 +1032,15 @@ impl NesController {
         blob
     }
 
-    /// Drain the pending HUD toasts since the last call (achievement unlocks,
-    /// login/server messages). The host renders + times these out itself.
+    /// The current live HUD toasts (achievement unlocks, login/server messages).
+    /// This does NOT drain: `expire_toasts` (run per frame in `post_frame_ra`)
+    /// TTLs them out after `TOAST_TTL`, so the host can poll this repeatedly and
+    /// assign the result unconditionally — the set both gains new toasts and
+    /// clears itself once they expire. The host renders these as-is.
     pub fn ra_poll_toasts(&self) -> Vec<RaToast> {
-        let mut g = self.lock();
-        let toasts = g.ra.as_mut().map_or_else(Vec::new, |ra| {
-            let out: Vec<RaToast> = ra
-                .toasts
+        let g = self.lock();
+        let toasts = g.ra.as_ref().map_or_else(Vec::new, |ra| {
+            ra.toasts
                 .iter()
                 .map(|t| RaToast {
                     title: t.title.clone(),
@@ -1037,9 +1048,7 @@ impl NesController {
                     is_error: t.is_error,
                     badge_url: t.badge_url.clone(),
                 })
-                .collect();
-            ra.toasts.clear();
-            out
+                .collect()
         });
         drop(g);
         toasts
@@ -1679,6 +1688,21 @@ mod tests {
         // Softcore re-allows it.
         ctrl.ra_set_hardcore(false);
         ctrl.load_state(blob).expect("softcore load");
+    }
+
+    // v1.8.6 — a lazily-created session (login/load before `ra_init`) defaults
+    // to softcore, so `load_state` is NOT silently blocked. Regression guard for
+    // the #164 review: the login/load call sites must seed `false`, not `true`.
+    #[test]
+    fn lazy_session_defaults_softcore() {
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        // First `ra_*` call is a login (no prior `ra_init`) — must default off.
+        ctrl.ra_login_token("nobody".to_string(), "deadbeeftoken".to_string());
+        assert!(ctrl.ra_is_enabled());
+        assert!(
+            !ctrl.ra_hardcore(),
+            "a lazily-created session must default to softcore"
+        );
     }
 
     // --- Netplay (v1.8.6) — direct-IP / same-LAN -------------------------

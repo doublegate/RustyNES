@@ -797,8 +797,9 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                 emulator.controller // touch (no-op); RA session is controller-scoped
                 runCatching {
                     // The session is created lazily on the first ra_* call; init it
-                    // and token-login. If no controller exists yet, the login still
-                    // registers on the session and re-applies when a ROM is opened.
+                    // and token-login — but only when a controller already exists
+                    // (the RA session is controller-scoped). If no ROM is open yet,
+                    // there is no controller, so login happens when one is loaded.
                     val ctrl = emulator.controller
                     if (ctrl != null) {
                         ctrl.raInit(settings.raHardcore)
@@ -1376,8 +1377,11 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                 if (settings.raEnabled && (++raFrame % 15) == 0) {
                     val rctrl = emulator.controller
                     if (rctrl != null && rctrl.raIsEnabled()) {
-                        val toasts = rctrl.raPollToasts()
-                        if (toasts.isNotEmpty()) raToasts = toasts
+                        // Assign unconditionally: raPollToasts returns the live,
+                        // TTL'd toast set (it does not drain), so reflecting it
+                        // every poll both shows new toasts and clears them once
+                        // they expire (an empty poll => the HUD goes away).
+                        raToasts = rctrl.raPollToasts()
                         val st = rctrl.raLoginStatus()
                         val loggedIn = st == RaLoginStatus.LOGGED_IN
                         if (loggedIn && !raWasLoggedIn) {
