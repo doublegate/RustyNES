@@ -166,6 +166,10 @@ fun SettingsSheet(
     mode: ScreenMode,
     onLoadPalette: () -> Unit = {},
     onClearPalette: () -> Unit = {},
+    onMovieRecord: () -> Unit = {},
+    onMoviePlay: () -> Unit = {},
+    onMovieSave: () -> Unit = {},
+    onMovieStop: () -> Unit = {},
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -245,6 +249,18 @@ fun SettingsSheet(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick = onLoadPalette) { Text("Load .pal…") }
                 TextButton(onClick = onClearPalette) { Text("Reset") }
+            }
+
+            // TAS movie (v1.8.5) — record/play deterministic .rnm movies. Record
+            // power-cycles; Stop & save writes the .rnm; Play seeks to its start.
+            Text("TAS movie (.rnm)")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onMovieRecord) { Text("Record") }
+                TextButton(onClick = onMovieSave) { Text("Stop & save…") }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onMoviePlay) { Text("Play…") }
+                TextButton(onClick = onMovieStop) { Text("Stop") }
             }
 
             ToggleRow("Mute audio", settings.muted) { settings.muted = it }

@@ -165,6 +165,11 @@ struct Inner {
     nes: Nes,
     masks: [u8; 4],
     sample_rate: u32,
+    /// Active TAS recording (`.rnm`), if any — captured each frame before the tick.
+    recorder: Option<rustynes_core::MovieRecorder>,
+    /// Active TAS playback: the loaded movie + the next frame index. While set,
+    /// `run_frame` drives input from the movie instead of the host masks.
+    playback: Option<(rustynes_core::Movie, usize)>,
 }
 
 /// The handle the mobile shells drive the emulator through.
@@ -208,6 +213,8 @@ impl NesController {
                 nes,
                 masks: [0; 4],
                 sample_rate,
+                recorder: None,
+                playback: None,
             }),
         }))
     }
@@ -227,6 +234,9 @@ impl NesController {
         g.nes = nes;
         g.masks = [0; 4];
         g.sample_rate = sample_rate;
+        // A new cartridge invalidates any in-flight movie.
+        g.recorder = None;
+        g.playback = None;
         drop(g);
         Ok(())
     }
@@ -238,6 +248,7 @@ impl NesController {
     /// copying; this owned-`Vec` form is the typed-surface convenience.
     pub fn run_frame(&self) -> Vec<u8> {
         let mut g = self.lock();
+        pre_tick_movie(&mut g);
         g.nes.run_frame().to_vec()
     }
 
@@ -245,6 +256,7 @@ impl NesController {
     /// the framebuffer through the native surface path and only need the tick.
     pub fn step_frame(&self) {
         let mut g = self.lock();
+        pre_tick_movie(&mut g);
         let _ = g.nes.run_frame();
     }
 
@@ -426,6 +438,68 @@ impl NesController {
     pub fn ntsc_phase(&self) -> u8 {
         self.lock().nes.ntsc_phase()
     }
+
+    /// Start recording a TAS movie from a fresh power-on (the ROM is power-cycled so
+    /// the recording starts from the same state a replay reconstructs).
+    pub fn movie_record_from_power_on(&self) {
+        let mut g = self.lock();
+        g.nes.power_cycle();
+        g.playback = None;
+        g.recorder = Some(rustynes_core::MovieRecorder::power_on(&g.nes));
+    }
+
+    /// Start recording a TAS movie branching from the current state (embeds a
+    /// save-state as the start point).
+    pub fn movie_record_from_here(&self) {
+        let mut g = self.lock();
+        g.playback = None;
+        g.recorder = Some(rustynes_core::MovieRecorder::from_current_state(&g.nes));
+    }
+
+    /// Finish recording and return the serialized `.rnm` movie bytes (empty if not
+    /// recording). The caller writes them to storage.
+    pub fn movie_stop_recording(&self) -> Vec<u8> {
+        let rec = self.lock().recorder.take();
+        rec.map(|r| r.finish().serialize()).unwrap_or_default()
+    }
+
+    /// Load + play a `.rnm` movie: seek the emulator to its start point and drive
+    /// input from the recorded stream each frame until it ends. Stops any recording.
+    ///
+    /// # Errors
+    /// [`MobileError::Movie`] if the bytes are not a valid movie or the ROM differs.
+    pub fn movie_play(&self, bytes: Vec<u8>) -> Result<(), MobileError> {
+        let movie = rustynes_core::Movie::deserialize(&bytes).map_err(|e| MobileError::Movie {
+            reason: e.to_string(),
+        })?;
+        let mut g = self.lock();
+        movie
+            .seek_to_start(&mut g.nes)
+            .map_err(|e| MobileError::Movie {
+                reason: e.to_string(),
+            })?;
+        g.recorder = None;
+        g.playback = Some((movie, 0));
+        drop(g);
+        Ok(())
+    }
+
+    /// Stop any active movie recording or playback.
+    pub fn movie_stop(&self) {
+        let mut g = self.lock();
+        g.recorder = None;
+        g.playback = None;
+    }
+
+    /// Whether a TAS recording is in progress.
+    pub fn movie_is_recording(&self) -> bool {
+        self.lock().recorder.is_some()
+    }
+
+    /// Whether a TAS movie is playing back.
+    pub fn movie_is_playing(&self) -> bool {
+        self.lock().playback.is_some()
+    }
 }
 
 /// If `bytes` is a ZIP archive (PK magic), extract the first NES-format entry
@@ -460,6 +534,35 @@ fn decompress_rom(bytes: Vec<u8>) -> Vec<u8> {
         (!out.is_empty()).then_some(out)
     })();
     extracted.unwrap_or(bytes)
+}
+
+/// Apply movie playback (drive input from the loaded movie) and recording (capture
+/// the upcoming frame's input) around a tick. Called holding the lock, immediately
+/// before `Nes::run_frame`.
+fn pre_tick_movie(g: &mut Inner) {
+    // Playback: drive input from the next movie frame, then advance the index.
+    let pb = g.playback.as_mut().and_then(|(movie, idx)| {
+        let fi = movie.frames.get(*idx).copied();
+        if fi.is_some() {
+            *idx += 1;
+        }
+        fi
+    });
+    if let Some(fi) = pb {
+        g.nes.set_buttons(0, fi.p1);
+        g.nes.set_buttons(1, fi.p2);
+    }
+    // Stop playback once the movie is exhausted.
+    if g.playback
+        .as_ref()
+        .is_some_and(|(m, i)| *i >= m.frames.len())
+    {
+        g.playback = None;
+    }
+    // Recording: capture the inputs the upcoming frame will consume.
+    if let Some(rec) = g.recorder.as_mut() {
+        rec.capture(&g.nes);
+    }
 }
 
 /// Validate and convert an FFI `u32` port into a `0..=3` array index.

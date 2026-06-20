@@ -518,6 +518,32 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
         }
     }
 
+    // SAF picker to play a .rnm TAS movie (reads the bytes, seeks to its start).
+    val moviePicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            runCatching {
+                val bytes = context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+                emulator.controller?.moviePlay(bytes)
+                status = "Playing movie: ${displayName(context, uri)}"
+            }.onFailure { status = "Failed to play movie: ${it.message}" }
+        }
+    }
+
+    // SAF document creator to save the just-recorded .rnm movie (finalizes + writes).
+    val movieSaver = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/octet-stream"),
+    ) { uri ->
+        if (uri != null) {
+            runCatching {
+                val bytes = emulator.controller?.movieStopRecording() ?: ByteArray(0)
+                context.contentResolver.openOutputStream(uri)!!.use { it.write(bytes) }
+                status = "Saved movie (${bytes.size} bytes)"
+            }.onFailure { status = "Failed to save movie: ${it.message}" }
+        }
+    }
+
     // Open a recent ROM via its persistable content URI.
     fun openRecent(rom: RecentRom) {
         runCatching {
@@ -755,6 +781,16 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
             onClearPalette = {
                 emulator.controller?.clearPalette()
                 status = "Palette reset to default"
+            },
+            onMovieRecord = {
+                emulator.controller?.movieRecordFromPowerOn()
+                status = "Recording movie from power-on"
+            },
+            onMoviePlay = { moviePicker.launch(arrayOf("*/*")) },
+            onMovieSave = { movieSaver.launch("movie.rnm") },
+            onMovieStop = {
+                emulator.controller?.movieStop()
+                status = "Movie stopped"
             },
             onDismiss = { showSettings = false },
         )
