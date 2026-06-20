@@ -198,6 +198,20 @@ flamegraph.svg
 Thumbs.db
 Desktop.ini
 
+# --- Android (v1.8.0) ---
+# The android/ Gradle module has its own .gitignore (build/, .gradle/, jniLibs/,
+# keystore.properties, local.properties, the wrapper jar); these belt-and-suspenders
+# rules cover the same outputs if a tool scans from the repo root. The committed
+# Gradle wrapper (gradlew[.bat] + gradle-wrapper.jar) and keystore.properties.example
+# are intentionally tracked.
+android/**/build/
+android/.gradle/
+android/local.properties
+android/keystore.properties
+*.jks
+*.keystore
+android/app/src/main/jniLibs/
+
 # --- Pre-commit ---
 .pre-commit-cache/
 

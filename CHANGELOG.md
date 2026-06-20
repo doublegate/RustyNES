@@ -15,6 +15,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-06-19 - "Android" (Patch)
+
+### Changed
+
+- **Free-tier demo session shortened from 10 minutes to 8 minutes** per launch
+  (`DEMO_SESSION_SECONDS`, Android). Debug builds keep the 60-second testing
+  value. No other behaviour changes; the paid Full Unlock is unaffected.
+
+### Security
+
+- **Confirmed the debug "Full Unlock" override is absent from the Play (release)
+  build.** The `DBG:unlock`/`DBG:demo` toggle, the `LicenseManager.debugForceUnlocked`
+  body, and the ROM autoload are all gated on `BuildConfig.DEBUG`, which is the
+  compile-time constant `false` in the `release` variant — R8 strips the dead
+  branches, so the override cannot be reached (or even referenced by string) in the
+  shipped AAB. Verified by inspecting the release `classes*.dex` (no `DBG:unlock`
+  literal) and running the release variant (no debug toggle in the UI).
+
 ## [1.8.0] - 2026-06-19 - "Android" (Platform Release)
 
 > The first **platform** (not accuracy) release: a complete, shippable Android
