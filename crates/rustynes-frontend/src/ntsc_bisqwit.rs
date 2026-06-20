@@ -563,7 +563,14 @@ mod tests {
     /// committed `crates/rustynes-gfx-shaders/src/bisqwit.wgsl`.
     #[test]
     fn shared_bisqwit_wgsl_matches_generator() {
-        assert_eq!(shader_src(), rustynes_gfx_shaders::BISQWIT_WGSL);
+        // Normalize line endings before comparing: a Windows checkout (autocrlf) can
+        // hand the committed `.wgsl` CRLF while the generator emits LF — the WGSL is
+        // identical either way. `.gitattributes` pins the file to LF, but normalize
+        // here too so the drift test can never flake on line endings.
+        assert_eq!(
+            shader_src().replace("\r\n", "\n"),
+            rustynes_gfx_shaders::BISQWIT_WGSL.replace("\r\n", "\n"),
+        );
     }
 
     /// The generated WGSL must parse AND validate (the same naga front-end +
