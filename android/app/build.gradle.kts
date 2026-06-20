@@ -62,7 +62,10 @@ android {
         }
     }
 
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        buildConfig = true // exposes BuildConfig.DEBUG for the debug-only ROM autoload.
+    }
 
     sourceSets["main"].java.srcDir(uniffiGenDir)
     sourceSets["main"].jniLibs.srcDir(jniLibsDir)

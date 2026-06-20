@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -136,14 +135,33 @@ private fun EmulatorScreen(emulator: EmulatorHandle) {
         }
     }
 
+    // Debug-only convenience: auto-load a ROM pushed to the app's external files
+    // dir (`/sdcard/Android/data/<pkg>/files/autoload.nes`) so the render path
+    // can be verified on-device without driving the SAF picker by hand. Never
+    // shipped (BuildConfig.DEBUG-gated); release boots straight to the picker.
+    LaunchedEffect(Unit) {
+        if (BuildConfig.DEBUG && emulator.controller == null) {
+            val auto = java.io.File(context.getExternalFilesDir(null), "autoload.nes")
+            if (auto.exists()) {
+                runCatching {
+                    emulator.controller = NesController(auto.readBytes(), 48000u)
+                    status = "Running (autoload)"
+                }.onFailure { status = "Autoload failed: ${it.message}" }
+            }
+        }
+    }
+
     Column(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        // The NES image takes the remaining vertical space and letterboxes
+        // (ContentScale.Fit) — driving height from width would overflow on a
+        // wide/foldable display and push the controls off-screen.
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(NES_WIDTH.toFloat() / NES_HEIGHT.toFloat())
+                .weight(1f)
                 .background(Color.Black),
             contentAlignment = Alignment.Center,
         ) {
