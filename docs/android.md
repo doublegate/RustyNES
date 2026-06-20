@@ -138,6 +138,38 @@ A guaranteed sideload / F-Droid + GitHub-Releases channel is maintained so the
 project never depends solely on Play (also the home for the optional egui-debugger
 power-user build).
 
+## Monetization (freemium $2.99 unlock)
+
+The app is a **free download** with a single **one-time, non-consumable in-app
+purchase** — "Full Unlock", product id `full_unlock`, **$2.99 USD** — via Play
+Billing (Workstream M, `LicenseManager`). The free tier is a time-limited demo:
+
+- a **10-minute play session per launch** (60 s in debug builds for testing),
+- **save-states disabled** (Save/Load hidden),
+- **save-on-background / auto-resume disabled**, and
+- **on-cart battery-backed SRAM never persisted** across a close.
+
+Everything else — full emulation accuracy, video, audio, input, pause/fast-forward,
+the ROM library — is identical to the paid tier. The emulated framebuffer/audio is
+byte-identical in demo and paid; every gate is host policy over persistence + a
+session clock, so the core, the `.rns` format, and AccuracyCoin are untouched.
+
+**Maintainer-manual Play Console setup (can't be CI-self-certified):**
+
+1. In the Play Console → Monetize → Products → **In-app products**, create a
+   **managed product** with id **`full_unlock`**, set its price to **$2.99**, and
+   activate it.
+2. Upload a build to a **closed/internal test track** and add a
+   **license-tested** account — the Play purchase flow only runs for an app
+   distributed through Play, not a sideloaded APK.
+3. Verify: buy → the demo timer + Unlock button disappear and Save/Load appear;
+   reinstall → "Restore purchase" (or the automatic `queryPurchasesAsync` on
+   launch) re-grants the entitlement (a non-consumable is owned forever).
+
+A `BuildConfig.DEBUG`-only `DBG:unlock` toggle in the control bar exercises the
+gating + timer + unlock UI on a sideloaded build without Play (the gating logic is
+verified that way; only the real billing transaction needs the Console).
+
 ## CI
 
 `.github/workflows/android.yml` runs on changes to the mobile crates / `android/`:
@@ -155,7 +187,8 @@ alignment** on the shipped arm64 `.so`, and best-effort-bundles the AAB. It is
 | **D** Input (touch overlay + hardware gamepad → one late-latched mask) | **Done** — touch on-device |
 | **E** Save-states / SRAM / auto-resume / persistable ROM library | **Done** — save/load on-device |
 | **F** QoL (pause / fast-forward / mute) + responsive/foldable/immersive UI | **Done** — on-device |
-| **G** Play packaging (release AAB, signing config, distribution) | Config in place; signing is maintainer-manual |
+| **G** Play packaging (release AAB, signing config, distribution) | Release AAB verified (R8, arm64-only); signing is maintainer-manual |
+| **M** Freemium $2.99 unlock + 10-min demo gating | **Done** — gating/timer/overlay on-device; Play product maintainer-manual |
 | **B** wgpu `SurfaceView` + surface-loss lifecycle | **Next increment** (Bitmap blit ships now) |
 | **F** shaders / palettes / per-game DB / TAS UI | **Next increment** (depends on B for shaders) |
 
