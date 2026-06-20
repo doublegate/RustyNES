@@ -113,6 +113,13 @@ class AppSettings(context: Context) {
         get() = prefs.getString("raToken", "") ?: ""
         set(v) { prefs.edit().putString("raToken", v).apply() }
 
+    /** Direct-IP / LAN netplay (v1.8.6): the last "ip:port" the user joined, so the
+     *  Join field prefills it. Host-only state (the bound port + LAN IP) is derived
+     *  live and not persisted. */
+    var lastJoinAddress: String
+        get() = prefs.getString("npLastJoin", "") ?: ""
+        set(v) { prefs.edit().putString("npLastJoin", v).apply() }
+
     // Per-screen-mode (cover / inner / cast) controller size + opacity (item 5).
     // Each mode keeps its own values, so the controller is right on the narrow
     // cover screen, the large inner screen, and while casting.

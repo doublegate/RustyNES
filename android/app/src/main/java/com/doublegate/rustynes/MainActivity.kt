@@ -268,6 +268,11 @@ class EmulatorHandle {
         controller?.setButtons(0u, (touchMask or keyMask).toUByte())
     }
 
+    /** The current combined P1 mask (touch | key) — the `local_mask` netplay feeds
+     *  to `npAdvanceFrame` (where the bridge owns the latch, so `setButtons` is not
+     *  the input path). Synchronized against the touch/key updaters. */
+    fun p1Mask(): Int = synchronized(this) { touchMask or keyMask }
+
     private fun keyToBit(keyCode: Int): Int? = when (keyCode) {
         KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_DPAD_CENTER -> NesBit.A
         KeyEvent.KEYCODE_BUTTON_B -> NesBit.B
@@ -467,6 +472,14 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
     // Set after a game was opened so RA can (re-)identify it once login completes;
     // cleared once raLoadGame has been issued for the current login + ROM.
     var raGameLoaded by remember { mutableStateOf(false) }
+    // Netplay (v1.8.6, LAN/direct-IP): the panel sheet visibility, the latest status
+    // snapshot (polled in the loop at the RA cadence), and the host's bound IP:port
+    // to share once listening. `npActive` is mirrored each poll so the loop's
+    // controls-gate (turbo/etc.) and the overlay react without re-locking the bridge.
+    var showNetplay by remember { mutableStateOf(false) }
+    var npStatus by remember { mutableStateOf<uniffi.rustynes_mobile.NpStatus?>(null) }
+    var npHostInfo by remember { mutableStateOf<String?>(null) }
+    var npActive by remember { mutableStateOf(false) }
     // Tracks the previous login status to detect the LOGGED_OUT -> LOGGED_IN edge.
     var raWasLoggedIn by remember { mutableStateOf(false) }
     // Off-main-thread scope for the one-shot SAF loads (HD-pack parse, config I/O).
@@ -691,6 +704,54 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
         }
     }
 
+    // Netplay (v1.8.6): begin hosting. The socket bind is network I/O, so run it off
+    // the main thread; on success surface the OS-bound port + this device's LAN IP as
+    // "IP:port" for the joiner to dial. A ROM must be loaded (the ROM hash gates the
+    // handshake) — the bridge errors otherwise.
+    fun netplayHost(localPort: UShort, numPlayers: UByte) {
+        val ctrl = emulator.controller
+        if (ctrl == null) {
+            status = "Open a ROM first, then host"
+            return
+        }
+        scope.launch {
+            runCatching {
+                val bound = withContext(Dispatchers.IO) { ctrl.npHost(localPort, numPlayers) }
+                val ip = localWifiIpv4(context) ?: "<this device's IP>"
+                npHostInfo = "$ip:$bound"
+                status = "Hosting on $ip:$bound — waiting for a player"
+            }.onFailure { status = "Host failed: ${it.message}" }
+        }
+    }
+
+    // Netplay (v1.8.6): join a host at "ip:port" (parse + bind + connect = network
+    // I/O, so off the main thread). A ROM must be loaded so the ROM-hash check passes.
+    fun netplayJoin(address: String) {
+        val ctrl = emulator.controller
+        if (ctrl == null) {
+            status = "Open the same ROM first, then join"
+            return
+        }
+        npHostInfo = null
+        scope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) { ctrl.npJoin(address) }
+                status = "Joining $address…"
+            }.onFailure { status = "Join failed: ${it.message}" }
+        }
+    }
+
+    // Netplay (v1.8.6): tear the session down and return to single-player.
+    fun netplayLeave() {
+        scope.launch {
+            withContext(Dispatchers.IO) { runCatching { emulator.controller?.npLeave() } }
+            npHostInfo = null
+            npStatus = null
+            npActive = false
+            status = "Left netplay"
+        }
+    }
+
     // Open a recent ROM via its persistable content URI.
     fun openRecent(rom: RecentRom) {
         runCatching {
@@ -783,13 +844,16 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
             // draws each submitted frame on the GPU (black until the first frame).
             // GPU path is bypassed while an HD-pack is active (its output is upscaled,
             // but the GPU texture is fixed 256x240 — HD goes through the Bitmap path).
-            if (gpuSurface != null && !hdActive && romLoaded) {
+            // During netplay the frame is presented via the Bitmap path (the loop reads
+            // the non-advancing index framebuffer into ARGB), so the GPU SurfaceView is
+            // bypassed too — same as the HD-pack path.
+            if (gpuSurface != null && !hdActive && !npActive && romLoaded) {
                 androidx.compose.ui.viewinterop.AndroidView(
                     factory = { gpuSurface },
                     modifier = Modifier.fillMaxSize(),
                 )
             }
-            if ((gpuSurface == null || hdActive) && current != null) {
+            if ((gpuSurface == null || hdActive || npActive) && current != null) {
                 Image(
                     bitmap = current,
                     contentDescription = "NES screen",
@@ -843,6 +907,34 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                         }
                     }
                 }
+            }
+            // Netplay status overlay (v1.8.6) — a compact "connecting / synced f=… "
+            // line while a LAN session is active. Reuses the RA/Lua overlay pattern.
+            npStatus?.takeIf { npActive && it.phase != uniffi.rustynes_mobile.NpPhase.IDLE }?.let { s ->
+                val line = when (s.phase) {
+                    uniffi.rustynes_mobile.NpPhase.CONNECTING -> "Netplay: connecting…"
+                    uniffi.rustynes_mobile.NpPhase.IN_GAME ->
+                        "Netplay: synced f=${s.currentFrame}" +
+                            (s.pingMs?.let { " ping=${it}ms" } ?: "") +
+                            (if (s.stalled) " (stall)" else "")
+                    uniffi.rustynes_mobile.NpPhase.ERROR ->
+                        "Netplay: ${s.message.ifEmpty { "disconnected" }}"
+                    uniffi.rustynes_mobile.NpPhase.IDLE -> ""
+                }
+                Text(
+                    line,
+                    color = if (s.phase == uniffi.rustynes_mobile.NpPhase.ERROR || s.desync) {
+                        Color(0xFFEF9A9A)
+                    } else {
+                        Color(0xFF80D8FF)
+                    },
+                    fontSize = 11.sp,
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(8.dp)
+                        .background(Color(0xC0000000))
+                        .padding(horizontal = 6.dp, vertical = 4.dp),
+                )
             }
             // Lua script log overlay (v1.8.6) — the script's print/log output.
             if (scriptLoaded && scriptLog.isNotEmpty()) {
@@ -949,11 +1041,19 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                 paused = !paused
                 emulator.paused = paused
             }) { Text(if (paused) "Resume" else "Pause") }
-            OutlinedButton(onClick = {
-                turbo = !turbo
-                emulator.turbo = turbo
-            }) { Text(if (turbo) ">> On" else ">>") }
+            // Fast-forward — disabled during netplay (rollback owns pacing).
+            OutlinedButton(
+                onClick = {
+                    turbo = !turbo
+                    emulator.turbo = turbo
+                },
+                enabled = !npActive,
+            ) { Text(if (turbo) ">> On" else ">>") }
             OutlinedButton(onClick = { showSettings = true }) { Text("Settings") }
+            // Direct-IP / LAN netplay (v1.8.6). Ungated (not a paid feature here).
+            OutlinedButton(onClick = { showNetplay = true }) {
+                Text(if (npActive) "Netplay*" else "Netplay")
+            }
             OutlinedButton(onClick = { showAbout = true }) { Text("About") }
             // Cast gameplay to a connected TV/external display (only when present).
             if (castManager.available) {
@@ -1111,6 +1211,18 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
     if (showAbout) {
         AboutDialog(onDismiss = { showAbout = false })
     }
+    if (showNetplay) {
+        NetplaySheet(
+            status = npStatus,
+            hostInfo = npHostInfo,
+            lastJoinAddress = settings.lastJoinAddress,
+            onHost = { port, players -> netplayHost(port, players) },
+            onJoin = { addr -> netplayJoin(addr) },
+            onLeave = { netplayLeave() },
+            onSaveJoinAddress = { settings.lastJoinAddress = it },
+            onDismiss = { showNetplay = false },
+        )
+    }
     if (showOnboarding) {
         OnboardingDialogs(
             onSuppress = { settings.onboardingSuppressed = true },
@@ -1139,6 +1251,9 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
         // and login status don't need per-frame granularity, and skipping the FFI
         // round-trips keeps the hot path clean when RA is off.
         var raFrame = 0
+        // Netplay status is polled at the same low cadence as RA, on its own
+        // always-advancing counter (the RA counter only ticks when RA is enabled).
+        var npFrame = 0
         try {
             while (isActive) {
                 val ctrl = emulator.controller
@@ -1147,7 +1262,12 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                     delay(50)
                     continue
                 }
-                val turbo = emulator.turbo
+                // Netplay (v1.8.6): while a session is active the loop drives the core
+                // via `npAdvanceFrame` (rollback owns pacing), NOT `runFrame`. Force
+                // speed to 100% — no turbo / fast-forward / frame-skip / rewind — and
+                // present + drain audio only on a frame that actually advanced.
+                val np = ctrl.npIsActive()
+                val turbo = !np && emulator.turbo
                 val start = System.nanoTime()
                 // Emulate, play this frame's audio, and pack the framebuffer all
                 // off the main thread (the blocking audio write and the 61k-pixel
@@ -1155,10 +1275,35 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                 // setPixels + asImageBitmap stay on the UI thread.
                 var usedHd = false
                 var logLines: List<String> = emptyList()
+                // Whether this iteration produced a frame to present (always for
+                // single-player; for netplay only when the tick advanced — a stalled /
+                // connecting / error tick produces nothing and skips present + audio).
+                var producedFrame = true
                 // Capture the HD bitmap once per iteration so an Unload on the UI
                 // thread can't null it mid-frame (the local keeps the object alive).
-                val hdBmp = if (hdActive) hd.bitmap else null
+                val hdBmp = if (np) null else if (hdActive) hd.bitmap else null
                 withContext(Dispatchers.Default) {
+                    if (np) {
+                        // Netplay tick: REPLACES runFrame. `npAdvanceFrame` advanced the
+                        // same `Nes`, so read the framebuffer via the non-advancing
+                        // index path (running runFrame again would desync rollback).
+                        val tick = ctrl.npAdvanceFrame(emulator.p1Mask().toUByte())
+                        if (!tick.producedFrame) {
+                            producedFrame = false
+                            // Still drain the audio ring so it doesn't back up while
+                            // connecting / stalling (discarded — no present this tick).
+                            ctrl.drainAudioBytes()
+                            return@withContext
+                        }
+                        // Index framebuffer -> ARGB via the shared composite LUT (the
+                        // GPU SurfaceView is bypassed during netplay — the picture goes
+                        // through the Bitmap path, like the HD-pack path).
+                        packIndexToArgb(ctrl.indexFramebufferBytes(), pixels)
+                        val audioBytes = ctrl.drainAudioBytes()
+                        if (!emulator.muted) audio.writeBytes(audioBytes)
+                        if (scriptLoaded) logLines = ctrl.drainScriptLog()
+                        return@withContext
+                    }
                     val fb = ctrl.runFrame()
                     if (hdBmp != null) {
                         // HD-pack: composite the upscaled frame (Bitmap path only —
@@ -1191,21 +1336,35 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                     // Lua: drain the script's print/log output (cheap when empty).
                     if (scriptLoaded) logLines = ctrl.drainScriptLog()
                 }
-                if (usedHd && hdBmp != null) {
-                    hdBmp.setPixels(hd.pixels, 0, hd.w, 0, 0, hd.w, hd.h)
-                    frame = hdBmp.asImageBitmap()
-                } else {
-                    reuse.setPixels(pixels, 0, NES_WIDTH, 0, 0, NES_WIDTH, NES_HEIGHT)
-                    frame = reuse.asImageBitmap()
+                if (producedFrame) {
+                    if (usedHd && hdBmp != null) {
+                        hdBmp.setPixels(hd.pixels, 0, hd.w, 0, 0, hd.w, hd.h)
+                        frame = hdBmp.asImageBitmap()
+                    } else {
+                        reuse.setPixels(pixels, 0, NES_WIDTH, 0, 0, NES_WIDTH, NES_HEIGHT)
+                        frame = reuse.asImageBitmap()
+                    }
+                    // Append new script log lines (keep the last 8 for the overlay).
+                    if (logLines.isNotEmpty()) {
+                        scriptLog = (scriptLog.split("\n").filter { it.isNotEmpty() } + logLines)
+                            .takeLast(8).joinToString("\n")
+                    }
+                    // Mirror the picture to the external display while casting (no-op
+                    // otherwise). Same main-thread publish point as the Compose frame.
+                    castManager.pushFrame(reuse)
                 }
-                // Append new script log lines (keep the last 8 for the overlay).
-                if (logLines.isNotEmpty()) {
-                    scriptLog = (scriptLog.split("\n").filter { it.isNotEmpty() } + logLines)
-                        .takeLast(8).joinToString("\n")
+                // Netplay status poll (v1.8.6): refresh the panel/overlay snapshot at a
+                // low cadence whether or not a frame was produced (so a stall / connect
+                // shows live). Its counter always advances (unlike the RA one).
+                if (np) {
+                    if (!npActive) npActive = true
+                    if (++npFrame % 15 == 0) npStatus = ctrl.npStatus()
+                } else if (npActive) {
+                    // A session that ended (Leave / error tear-down) clears the snapshot.
+                    npStatus = null
+                    npActive = false
+                    npHostInfo = null
                 }
-                // Mirror the picture to the external display while casting (no-op
-                // otherwise). Same main-thread publish point as the Compose frame.
-                castManager.pushFrame(reuse)
                 // RetroAchievements: poll the toast queue + login status at a low
                 // cadence. Cheap when RA is off (a single `raIsEnabled` bool check).
                 if (settings.raEnabled && (++raFrame % 15) == 0) {
