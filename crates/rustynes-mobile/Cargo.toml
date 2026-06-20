@@ -31,6 +31,11 @@ rustynes-core = { workspace = true, features = ["hd-pack"] }
 # v1.8.5 — the HD-pack loader + compositor (now a shared std crate). The compositor
 # takes the framebuffer / watched memory / chr-peek as args, fed from the core.
 rustynes-hdpack.workspace = true
+# v1.8.6 — Lua scripting on mobile. The same sandboxed engine the desktop uses
+# (per-frame `on_frame`, gated writes, no io/os/net); made `Send` (mlua `send`
+# feature + Arc<Mutex> internals) so this UniFFI bridge can hold it. The default
+# `mlua-backend` (vendored Lua 5.4 C) cross-compiles with the NDK.
+rustynes-script.workspace = true
 thiserror.workspace = true
 # UniFFI generates the foreign-language bindings from the `#[uniffi::export]`
 # surface (proc-macro mode — no UDL file). The `cli` feature backs the

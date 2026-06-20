@@ -4215,6 +4215,7 @@ version = "1.8.6"
 dependencies = [
  "rustynes-core",
  "rustynes-hdpack",
+ "rustynes-script",
  "thiserror 2.0.18",
  "uniffi",
  "zip",

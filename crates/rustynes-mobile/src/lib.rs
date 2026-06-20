@@ -90,6 +90,12 @@ pub enum MobileError {
         /// What was wrong with the HD-pack.
         reason: String,
     },
+    /// A Lua script failed to start or compile.
+    #[error("script error: {reason}")]
+    Script {
+        /// Underlying script error rendered as text.
+        reason: String,
+    },
 }
 
 /// A single NES controller button, used by [`NesController::set_button`] for
@@ -179,6 +185,9 @@ struct Inner {
     /// Active HD-pack compositor (v1.8.5), if a pack is loaded. `composite_hd_frame`
     /// runs it over the current frame's snapshots.
     hd_pack: Option<rustynes_hdpack::hdpack::HdCompositor>,
+    /// Active Lua script (v1.8.6), if loaded — its `on_frame` callback runs each
+    /// frame after the tick (sandboxed; gated writes; no io/os/net).
+    script: Option<rustynes_script::ScriptEngine>,
 }
 
 /// The handle the mobile shells drive the emulator through.
@@ -225,6 +234,7 @@ impl NesController {
                 recorder: None,
                 playback: None,
                 hd_pack: None,
+                script: None,
             }),
         }))
     }
@@ -244,10 +254,11 @@ impl NesController {
         g.nes = nes;
         g.masks = [0; 4];
         g.sample_rate = sample_rate;
-        // A new cartridge invalidates any in-flight movie + HD-pack.
+        // A new cartridge invalidates any in-flight movie + HD-pack + script.
         g.recorder = None;
         g.playback = None;
         g.hd_pack = None;
+        g.script = None;
         drop(g);
         Ok(())
     }
@@ -260,7 +271,10 @@ impl NesController {
     pub fn run_frame(&self) -> Vec<u8> {
         let mut g = self.lock();
         pre_tick_movie(&mut g);
-        g.nes.run_frame().to_vec()
+        let fb = g.nes.run_frame().to_vec();
+        post_frame_script(&mut g);
+        drop(g);
+        fb
     }
 
     /// Run one frame and discard the framebuffer copy — for callers that read
@@ -269,6 +283,8 @@ impl NesController {
         let mut g = self.lock();
         pre_tick_movie(&mut g);
         let _ = g.nes.run_frame();
+        post_frame_script(&mut g);
+        drop(g);
     }
 
     /// Drain the audio samples produced since the last call (interleaved mono
@@ -585,6 +601,44 @@ impl NesController {
         drop(g);
         out
     }
+
+    /// Load + start a Lua script (the same sandboxed engine the desktop uses).
+    /// Replaces any active script; its `on_frame` callback then runs each frame after
+    /// the tick (gated writes; no io/os/net).
+    ///
+    /// # Errors
+    /// [`MobileError::Script`] if the engine fails to start or the script fails to
+    /// compile / load.
+    pub fn load_script(&self, src: String) -> Result<(), MobileError> {
+        let mut engine = rustynes_script::ScriptEngine::new().map_err(|e| MobileError::Script {
+            reason: e.to_string(),
+        })?;
+        engine.load(&src).map_err(|e| MobileError::Script {
+            reason: e.to_string(),
+        })?;
+        self.lock().script = Some(engine);
+        Ok(())
+    }
+
+    /// Unload the active script.
+    pub fn unload_script(&self) {
+        self.lock().script = None;
+    }
+
+    /// Whether a script is loaded.
+    pub fn script_is_loaded(&self) -> bool {
+        self.lock().script.is_some()
+    }
+
+    /// Drain the script's log output (its `print` / `emu.log` lines) since the last
+    /// call. Empty if no script is loaded.
+    pub fn drain_script_log(&self) -> Vec<String> {
+        self.lock()
+            .script
+            .as_ref()
+            .map(rustynes_script::ScriptEngine::drain_log)
+            .unwrap_or_default()
+    }
 }
 
 /// If `bytes` is a ZIP archive (PK magic), extract the first NES-format entry
@@ -653,6 +707,15 @@ fn pre_tick_movie(g: &mut Inner) {
     // Recording: capture the inputs the upcoming frame will consume.
     if let Some(rec) = g.recorder.as_mut() {
         rec.capture(&g.nes);
+    }
+}
+
+/// Run the loaded Lua script's `on_frame` callback after a tick. Errors are swallowed
+/// (the host reads them via the script log) so a buggy script can't wedge the
+/// emulator. Called holding the lock, after `Nes::run_frame`.
+fn post_frame_script(g: &mut Inner) {
+    if let Some(engine) = g.script.as_mut() {
+        let _ = engine.on_frame(&mut g.nes);
     }
 }
 
