@@ -15,6 +15,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.3] - 2026-06-20 - "Android" (Controller, casting & polish)
+
+### Added
+
+- **Authentic NES-004 on-screen controller (Android).** The virtual controller is
+  redrawn to match a real NES-004 controller, every feature measured against a flat
+  reference: light-grey body with barely-rounded corners and a sharp-cornered
+  near-black face; a white-outlined D-pad with a black band, lighter grey face,
+  dark head+shaft arrows pushed to the arm ends, and a hollow centre circle; four
+  grey stripes (top/bottom truncated); the **"RustyNES" wordmark** (Press Start 2P)
+  over **SELECT/START** in the bundled real **"NES Controller" font**; a white
+  housing with a black inset border + two black pills; concave bright-red **A/B**
+  buttons with B/A labels; and the red **"M E N U" pill** (menu toggle) at the
+  wordmark spot. Multi-touch (pointer-id tracked, 3+ buttons at once).
+- **Cast gameplay to a TV / external display (Android).** A `Presentation`-API path
+  sends **only the NES picture** to a connected presentation display (HDMI, Samsung
+  DeX, or a Miracast / other wireless *presentation* display — `DisplayManager`'s
+  `DISPLAY_CATEGORY_PRESENTATION`, not the Google Cast SDK), keeping the on-screen
+  controller on the phone. A "Cast to TV" / "Stop Cast" control appears only when a
+  display is connected, with a "Casting to <name>" banner. (Not screen mirroring.)
+- **Per-screen-mode controller size + opacity (Android).** Controller size and
+  opacity are remembered separately for the **Cover**, **Inner**, and **Cast**
+  screens, so the pad is right on the folded cover screen, the unfolded inner
+  screen, and while casting. The active mode is shown in the Settings labels.
+- **Controller size slider 25–110%** with snap ticks (25/50/75/100/110%), free
+  drag, and a haptic tick on each crossing; sizes >100% overrun the screen edges by
+  design. Resizing never reflows the gameplay view above it.
+- **Haptics: Off / Low / Medium / High** (`VibrationEffect` strength) for on-screen
+  button presses.
+- **First-run onboarding** (Android): a welcome + "play responsibly / own your
+  ROMs" flow with "Do not show again".
+- **About dialog** (Android): the app icon + the desktop project description, with a
+  **tappable github.com link** that opens the repo in the browser.
+- **Clear Recent** action next to the recently-played list on the idle screen.
+- **Settings sheet (Android).** A Material-3 bottom sheet (now scrollable)
+  consolidating the scattered controls: a **Light / Dark / System theme** selector
+  (default System), a **video-filter picker** (None / Scanlines / CRT, replacing the
+  FX cycle button), **mute**, **haptics**, and the per-mode **controller size +
+  opacity** sliders — all persisted in `SharedPreferences` and applied live.
+- **Save-state manager (Android).** A "States" sheet with **four explicit slots**
+  keyed by ROM SHA, each showing its last-saved time with **Save / Load / Delete**
+  — replacing the single Save/Load pair. The `auto` resume slot (save-on-background
+  and auto-resume) is unchanged. Gated to the unlocked tier in Play builds.
+
+### Changed
+
+- **Control bar decluttered** to Open / States / Reset / Pause / Fast-forward /
+  Settings / About / Cast; Save/Load moved into the States sheet, Mute/Filter into
+  Settings.
+
+### Fixed
+
+- **About no longer crashes** (Android): the dialog rendered the adaptive launcher
+  icon via `painterResource`, which throws on `AdaptiveIconDrawable`; it is now
+  rendered as a bitmap via `getApplicationIcon().toBitmap()`.
+
 ## [1.8.2] - 2026-06-20 - "Android" (Input & the virtual controller)
 
 ### Added

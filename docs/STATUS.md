@@ -1,16 +1,22 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v1.8.2 "Android"** (2026-06-20) — the input & virtual-controller
-> increment on the first **platform** (not accuracy) release line **v1.8.0
+> **Current release: v1.8.3 "Android"** (2026-06-20) — the controller / casting /
+> polish increment on the first **platform** (not accuracy) release line **v1.8.0
 > "Android"**: a complete Android app (shared `rustynes-mobile` UniFFI bridge +
 > `rustynes-android` platform crate + a Jetpack Compose shell; audio /
 > touch+gamepad input / save-states+SRAM+recent-ROMs / pause-FF-mute /
 > foldable+immersive UI / AGSL CRT+scanline filters; a freemium $2.99 Play unlock +
 > an 8-minute demo, **held to the v1.8.6 Play launch** — interim builds are
-> full-featured via `PLAY_BUILD=false`), verified on a Galaxy Z Fold 7. **v1.8.2**
-> adds a **multi-touch on-screen NES controller** (styled per the RustyNES icon,
-> resizing/remapping across the Z Fold 7's cover & inner displays) + the real app
-> icon. The pure-Rust core is **byte-identical on ARM** (additive host only), so
+> full-featured via `PLAY_BUILD=false`), verified on a Galaxy Z Fold 7. **v1.8.3**
+> redraws the on-screen pad as an **authentic NES-004 controller** (real "NES
+> Controller" font, measured geometry, directional-arrow D-pad, MENU pill), adds
+> **cast-gameplay-only to a TV** (`Presentation` API), **per-screen-mode**
+> (cover/inner/cast) controller size+opacity, a 25–110% size slider, Off/Low/Medium/
+> High haptics, **first-run onboarding** + an **About** dialog (tappable repo link),
+> **Clear Recent**, a Material-3 **Settings sheet** (theme / filter / mute / haptics
+> / per-mode controller) + a **save-state manager** (4 slots), on top of v1.8.2's
+> multi-touch on-screen NES controller + the real app icon. The
+> pure-Rust core is **byte-identical on ARM** (additive host only), so
 > **AccuracyCoin holds 100% (139/139)** and every desktop gate is unchanged. The
 > full wgpu-`SurfaceView` native renderer is the documented next increment. Built on
 > the patches **v1.8.1** / **v1.7.1** on **v1.7.0 "Forge"** (framed below). v1.7.1's seven fixes: #1 ROM-close GPU abort
