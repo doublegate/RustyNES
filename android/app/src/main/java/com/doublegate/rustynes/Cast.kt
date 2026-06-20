@@ -126,6 +126,7 @@ private class GamePresentation(context: Context, display: Display) :
     Presentation(context, display) {
 
     private lateinit var image: ImageView
+    private var boundBitmap: Bitmap? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -146,9 +147,13 @@ private class GamePresentation(context: Context, display: Display) :
     }
 
     fun update(bitmap: Bitmap) {
-        if (::image.isInitialized) {
+        if (!::image.isInitialized) return
+        // The emulation loop reuses one mutable Bitmap, so bind it once and then
+        // just invalidate each frame (no per-frame drawable re-wrap on the UI thread).
+        if (boundBitmap !== bitmap) {
             image.setImageBitmap(bitmap)
-            image.invalidate()
+            boundBitmap = bitmap
         }
+        image.invalidate()
     }
 }

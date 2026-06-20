@@ -79,11 +79,13 @@ class AppSettings(context: Context) {
     // Per-screen-mode (cover / inner / cast) controller size + opacity (item 5).
     // Each mode keeps its own values, so the controller is right on the narrow
     // cover screen, the large inner screen, and while casting.
+    // Coerce persisted values into the slider ranges — out-of-range prefs (corrupt,
+    // or a future range change) would otherwise make Material's Slider throw.
     private val scaleStates = ScreenMode.entries.associateWith {
-        mutableFloatStateOf(prefs.getFloat("ctrlScale_${it.name}", 1.0f))
+        mutableFloatStateOf(prefs.getFloat("ctrlScale_${it.name}", 1.0f).coerceIn(0.25f, 1.1f))
     }
     private val opacityStates = ScreenMode.entries.associateWith {
-        mutableFloatStateOf(prefs.getFloat("ctrlOpacity_${it.name}", 1.0f))
+        mutableFloatStateOf(prefs.getFloat("ctrlOpacity_${it.name}", 1.0f).coerceIn(0.4f, 1.0f))
     }
 
     fun controllerScale(mode: ScreenMode): Float = scaleStates.getValue(mode).floatValue

@@ -30,10 +30,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   buttons with B/A labels; and the red **"M E N U" pill** (menu toggle) at the
   wordmark spot. Multi-touch (pointer-id tracked, 3+ buttons at once).
 - **Cast gameplay to a TV / external display (Android).** A `Presentation`-API path
-  sends **only the NES picture** to a connected presentation display (HDMI /
-  Chromecast / Miracast / wireless), keeping the on-screen controller on the phone.
-  A "Cast to TV" / "Stop Cast" control appears only when a display is connected,
-  with a "Casting to <name>" banner. (Not screen mirroring.)
+  sends **only the NES picture** to a connected presentation display (HDMI, Samsung
+  DeX, or a Miracast / other wireless *presentation* display — `DisplayManager`'s
+  `DISPLAY_CATEGORY_PRESENTATION`, not the Google Cast SDK), keeping the on-screen
+  controller on the phone. A "Cast to TV" / "Stop Cast" control appears only when a
+  display is connected, with a "Casting to <name>" banner. (Not screen mirroring.)
 - **Per-screen-mode controller size + opacity (Android).** Controller size and
   opacity are remembered separately for the **Cover**, **Inner**, and **Cast**
   screens, so the pad is right on the folded cover screen, the unfolded inner

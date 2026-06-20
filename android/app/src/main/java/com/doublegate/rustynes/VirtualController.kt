@@ -87,22 +87,27 @@ fun VirtualController(
                 // (e.g. D-pad + B + A at once in SMB) are all live — recompute the
                 // mask from the FULL set each event, not just this event's changes.
                 val active = HashMap<PointerId, Offset>()
+                // Pointers that went down on the MENU pill are "owned" by it for the
+                // whole gesture, so dragging out of the pill never presses a button.
+                val pillPointers = HashSet<PointerId>()
                 while (true) {
                     val event = awaitPointerEvent()
                     val w = size.width.toFloat()
                     val h = size.height.toFloat()
                     val pill = logoPillRect(w, h)
                     for (change in event.changes) {
-                        // The red "RustyNES" pill is a tap target (toggle the menu),
-                        // not an NES button — fire on its press and keep it out of
-                        // the button set.
-                        val inPill = pill.contains(change.position)
-                        if (inPill && change.changedToDown()) onLogoTap()
-                        if (change.pressed && !inPill) {
+                        // The red MENU pill is a tap target (toggle the menu), not an
+                        // NES button — fire on its press and claim the pointer.
+                        if (change.changedToDown() && pill.contains(change.position)) {
+                            onLogoTap()
+                            pillPointers.add(change.id)
+                        }
+                        if (change.pressed && change.id !in pillPointers) {
                             active[change.id] = change.position
                         } else {
                             active.remove(change.id)
                         }
+                        if (!change.pressed) pillPointers.remove(change.id)
                         change.consume()
                     }
                     var m = 0
@@ -128,7 +133,7 @@ fun VirtualController(
 // --- haptics (system Vibrator — reliable where Compose's TextHandleMove tick is
 //     too subtle / gated on Samsung) ---
 
-fun systemVibrator(context: Context): Vibrator? =
+internal fun systemVibrator(context: Context): Vibrator? =
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
         (context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager)?.defaultVibrator
     } else {
@@ -137,7 +142,7 @@ fun systemVibrator(context: Context): Vibrator? =
     }
 
 /** A short button-press tick at the chosen intensity (shared with the size slider). */
-fun tick(vibrator: Vibrator?, level: HapticLevel) {
+internal fun tick(vibrator: Vibrator?, level: HapticLevel) {
     if (level == HapticLevel.Off) return
     val v = vibrator ?: return
     if (!v.hasVibrator()) return

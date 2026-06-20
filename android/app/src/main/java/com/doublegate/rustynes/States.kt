@@ -82,12 +82,17 @@ fun StatesSheet(
                             enabled = ts > 0L,
                             onClick = {
                                 val ctrl = emulator.controller
-                                val blob = SaveStateStore.load(context, sha, slot)
-                                if (ctrl != null && blob != null) {
-                                    runCatching { ctrl.loadState(blob) }
-                                        .onSuccess { onStatus("Loaded slot $slot"); onDismiss() }
-                                        .onFailure { onStatus("Load failed: ${it.message}") }
+                                // The read itself can throw (I/O error); keep it in
+                                // runCatching so a failure reports a status, not a crash.
+                                runCatching {
+                                    val blob = SaveStateStore.load(context, sha, slot)
+                                    if (ctrl != null && blob != null) ctrl.loadState(blob)
+                                    blob != null
                                 }
+                                    .onSuccess { ok ->
+                                        if (ok == true) { onStatus("Loaded slot $slot"); onDismiss() }
+                                    }
+                                    .onFailure { onStatus("Load failed: ${it.message}") }
                             },
                         ) { Text("Load") }
                         TextButton(
