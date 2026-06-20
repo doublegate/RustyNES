@@ -72,6 +72,18 @@ pub enum MobileError {
         /// The out-of-range port index the caller passed.
         port: u32,
     },
+    /// A custom palette blob was not a valid `.pal` (needs ≥ 192 bytes).
+    #[error("invalid palette: {reason}")]
+    Palette {
+        /// What was wrong with the palette bytes.
+        reason: String,
+    },
+    /// A `.rnm` movie failed to decode or seek.
+    #[error("movie error: {reason}")]
+    Movie {
+        /// Underlying movie error rendered as text.
+        reason: String,
+    },
 }
 
 /// A single NES controller button, used by [`NesController::set_button`] for
@@ -365,6 +377,52 @@ impl NesController {
             chr_rom_len: g.nes.chr_rom_len() as u64,
             is_vs_system: g.nes.is_vs_system(),
         }
+    }
+
+    /// Load a custom 64-colour palette from `.pal` bytes (≥ 192 bytes, RGB triples;
+    /// extra colours — e.g. a 512-colour Mesen palette — are ignored). Presentation
+    /// only; the rendered output is byte-identical to the built-in palette once
+    /// [`Self::clear_palette`] restores it.
+    ///
+    /// # Errors
+    /// [`MobileError::Palette`] if fewer than 192 bytes were supplied.
+    pub fn load_palette(&self, bytes: Vec<u8>) -> Result<(), MobileError> {
+        if bytes.len() < 192 {
+            return Err(MobileError::Palette {
+                reason: format!("need >= 192 bytes, got {}", bytes.len()),
+            });
+        }
+        let mut pal = [[0u8; 3]; 64];
+        for (i, chunk) in bytes[..192].chunks_exact(3).enumerate() {
+            pal[i] = [chunk[0], chunk[1], chunk[2]];
+        }
+        self.lock().nes.set_custom_palette(Some(pal));
+        Ok(())
+    }
+
+    /// Clear the custom palette, restoring the built-in NES palette.
+    pub fn clear_palette(&self) {
+        self.lock().nes.set_custom_palette(None);
+    }
+
+    /// The per-pixel **palette-index** framebuffer (256×240 `u16`s as little-endian
+    /// bytes, 2 per pixel; each value is `(emphasis << 6) | colour`, 0..=511). Feeds
+    /// the GPU Bisqwit-NTSC composite, which needs the raw indices, not the RGBA.
+    pub fn index_framebuffer_bytes(&self) -> Vec<u8> {
+        // Copy the indices out under the lock (one statement), then build the bytes
+        // lock-free — keeps the guard's hold tight (clippy significant_drop).
+        let idx = self.lock().nes.index_framebuffer().to_vec();
+        let mut out = Vec::with_capacity(idx.len() * 2);
+        for v in idx {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        out
+    }
+
+    /// The current frame's NTSC colour phase (`0..=2` NTSC, `0..=1` PAL/Dendy) —
+    /// the Bisqwit composite's `videoPhase`.
+    pub fn ntsc_phase(&self) -> u8 {
+        self.lock().nes.ntsc_phase()
     }
 }
 
