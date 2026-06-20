@@ -262,7 +262,7 @@ pub struct RaAchievementInfo {
 /// The coarse phase a direct-IP netplay session is in (v1.8.6).
 ///
 /// Mirrored across the FFI — a flat projection of the internal
-/// [`NetplaySession`] / [`ConnectionState`]. STUN/TURN is out of scope, so there
+/// `NetplaySession` / `ConnectionState`. STUN/TURN is out of scope, so there
 /// is no NAT-traversal phase.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum NpPhase {
