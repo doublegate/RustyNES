@@ -61,6 +61,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -435,6 +436,9 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
     // SurfaceView is fixed 256x240; HD output is upscaled), `hd` holds its bitmap.
     var hdActive by remember { mutableStateOf(false) }
     val hd = remember { HdRender() }
+    // Lua scripting (v1.8.6): whether a script is loaded + its rolling log output.
+    var scriptLoaded by remember { mutableStateOf(false) }
+    var scriptLog by remember { mutableStateOf("") }
     // Off-main-thread scope for the one-shot SAF loads (HD-pack parse, config I/O).
     val scope = rememberCoroutineScope()
     var status by remember { mutableStateOf("Open a .nes ROM to start") }
@@ -601,6 +605,27 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
         }
     }
 
+    // SAF picker for a Lua script (.lua) — loaded into the sandboxed engine; its
+    // on_frame callback then runs each frame and its print/log output is shown.
+    val scriptPicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                runCatching {
+                    val src = withContext(Dispatchers.IO) {
+                        context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+                            .decodeToString()
+                    }
+                    withContext(Dispatchers.IO) { emulator.controller?.loadScript(src) }
+                    scriptLoaded = true
+                    scriptLog = ""
+                    status = "Script loaded: ${displayName(context, uri)}"
+                }.onFailure { status = "Failed to load script: ${it.message}" }
+            }
+        }
+    }
+
     // Open a recent ROM via its persistable content URI.
     fun openRecent(rom: RecentRom) {
         runCatching {
@@ -694,6 +719,19 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                     contentScale = ContentScale.Fit,
                     // Nearest-neighbour: preserve the crisp pixel grid.
                     filterQuality = FilterQuality.None,
+                )
+            }
+            // Lua script log overlay (v1.8.6) — the script's print/log output.
+            if (scriptLoaded && scriptLog.isNotEmpty()) {
+                Text(
+                    scriptLog,
+                    color = Color(0xFF7CFC00),
+                    fontSize = 10.sp,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(8.dp)
+                        .background(Color(0xC0000000))
+                        .padding(horizontal = 6.dp, vertical = 4.dp),
                 )
             }
             if (current == null) {
@@ -858,6 +896,13 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                 hd.bitmap = null
                 status = "HD-pack unloaded"
             },
+            onLoadScript = { scriptPicker.launch(arrayOf("*/*")) },
+            onUnloadScript = {
+                emulator.controller?.unloadScript()
+                scriptLoaded = false
+                scriptLog = ""
+                status = "Script unloaded"
+            },
             onDismiss = { showSettings = false },
         )
     }
@@ -909,6 +954,7 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                 // RGBA->ARGB pack must never run on the UI thread). Only the cheap
                 // setPixels + asImageBitmap stay on the UI thread.
                 var usedHd = false
+                var logLines: List<String> = emptyList()
                 // Capture the HD bitmap once per iteration so an Unload on the UI
                 // thread can't null it mid-frame (the local keeps the object alive).
                 val hdBmp = if (hdActive) hd.bitmap else null
@@ -942,6 +988,8 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                     // In fast-forward the audio is dropped (writing it would block
                     // the loop back to real time); otherwise play unless muted.
                     if (!turbo && !emulator.muted) audio.writeBytes(audioBytes)
+                    // Lua: drain the script's print/log output (cheap when empty).
+                    if (scriptLoaded) logLines = ctrl.drainScriptLog()
                 }
                 if (usedHd && hdBmp != null) {
                     hdBmp.setPixels(hd.pixels, 0, hd.w, 0, 0, hd.w, hd.h)
@@ -949,6 +997,11 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                 } else {
                     reuse.setPixels(pixels, 0, NES_WIDTH, 0, 0, NES_WIDTH, NES_HEIGHT)
                     frame = reuse.asImageBitmap()
+                }
+                // Append new script log lines (keep the last 8 for the overlay).
+                if (logLines.isNotEmpty()) {
+                    scriptLog = (scriptLog.split("\n").filter { it.isNotEmpty() } + logLines)
+                        .takeLast(8).joinToString("\n")
                 }
                 // Mirror the picture to the external display while casting (no-op
                 // otherwise). Same main-thread publish point as the Compose frame.

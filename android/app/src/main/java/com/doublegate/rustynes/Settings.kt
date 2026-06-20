@@ -172,6 +172,8 @@ fun SettingsSheet(
     onMovieStop: () -> Unit = {},
     onLoadHdpack: () -> Unit = {},
     onUnloadHdpack: () -> Unit = {},
+    onLoadScript: () -> Unit = {},
+    onUnloadScript: () -> Unit = {},
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -272,6 +274,14 @@ fun SettingsSheet(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick = onLoadHdpack) { Text("Load .zip…") }
                 TextButton(onClick = onUnloadHdpack) { Text("Unload") }
+            }
+
+            // Lua scripting (v1.8.6) — load a sandboxed `.lua` script (per-frame
+            // callback, gated writes, no io/os/net); its print output shows on-screen.
+            Text("Lua script")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onLoadScript) { Text("Load .lua…") }
+                TextButton(onClick = onUnloadScript) { Text("Unload") }
             }
 
             ToggleRow("Mute audio", settings.muted) { settings.muted = it }
