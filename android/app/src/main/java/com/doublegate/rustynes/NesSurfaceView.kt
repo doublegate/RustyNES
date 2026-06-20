@@ -60,7 +60,10 @@ class NesSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Cal
     override fun surfaceCreated(holder: SurfaceHolder) {
         if (!NativeRenderer.ensureLoaded()) return
         synchronized(lock) { surfaceGone = false }
-        if (thread == null) {
+        // Only start a render thread if the previous one has actually exited — guards
+        // the (rare) case where a prior `surfaceDestroyed` join timed out with the old
+        // thread still alive (e.g. blocked in a long present), so we never run two.
+        if (thread?.isAlive != true) {
             running = true
             thread = Thread(::renderLoop, "nes-gl").apply { start() }
         }
@@ -83,7 +86,9 @@ class NesSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Cal
         val t = thread
         running = false
         runCatching { t?.join(800) }
-        thread = null
+        // Only clear the reference if it actually exited; if the join timed out (the
+        // thread is still alive), keep it so `surfaceCreated` won't start a second.
+        if (t?.isAlive != true) thread = null
     }
 
     private fun renderLoop() {
