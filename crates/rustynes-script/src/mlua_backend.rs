@@ -1217,12 +1217,16 @@ impl VmBackend for MluaBackend {
         {
             let mut by_addr = self.sym_by_addr.borrow_mut();
             by_addr.clear();
+            // Pre-allocate for the incoming pairs so the inserts below don't
+            // rehash as the map grows.
+            by_addr.reserve(pairs.len());
             for (addr, name) in pairs {
                 by_addr.insert(*addr, name.clone());
             }
         }
         let mut by_name = self.sym_by_name.borrow_mut();
         by_name.clear();
+        by_name.reserve(pairs.len());
         for (addr, name) in pairs {
             by_name.insert(name.clone(), *addr);
         }

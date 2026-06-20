@@ -247,7 +247,9 @@ fun localWifiIpv4(context: Context): String? {
     }
     // Fallback: scan interfaces for a site-local IPv4 (e.g. on Ethernet/USB tether).
     return runCatching {
-        NetworkInterface.getNetworkInterfaces().toList()
+        // `getNetworkInterfaces()` is a nullable platform type (it can return null
+        // when no interfaces are enumerable); guard it so `.toList()` can't NPE.
+        java.util.Collections.list(NetworkInterface.getNetworkInterfaces() ?: return null)
             .asSequence()
             .filter { it.isUp && !it.isLoopback }
             .flatMap { it.inetAddresses.toList().asSequence() }

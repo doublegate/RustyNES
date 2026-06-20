@@ -32,7 +32,7 @@
 // though some are only read. This is dictated by the binding ABI, not a smell.
 #![allow(clippy::needless_pass_by_value)]
 
-use std::net::SocketAddr;
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use rustynes_core::{Buttons, Nes, Region};
@@ -1149,9 +1149,19 @@ impl NesController {
     /// [`MobileError::Netplay`] if `address` is not a valid `host:port`, or the
     /// socket bind/connect fails.
     pub fn np_join(&self, address: String) -> Result<(), MobileError> {
-        let remote: SocketAddr = address.parse().map_err(|e| MobileError::Netplay {
-            reason: format!("invalid host:port '{address}': {e}"),
-        })?;
+        // Resolve via `ToSocketAddrs` so a hostname (`my-laptop.local:7000`) works
+        // as well as a raw IP — `SocketAddr::parse` rejects hostnames. This runs
+        // off the UI thread (the host calls `np_join` on a worker), so the brief
+        // DNS resolution is fine. Take the first resolved address.
+        let remote: SocketAddr = address
+            .to_socket_addrs()
+            .map_err(|e| MobileError::Netplay {
+                reason: format!("invalid host:port '{address}': {e}"),
+            })?
+            .next()
+            .ok_or_else(|| MobileError::Netplay {
+                reason: format!("host:port '{address}' resolved to no addresses"),
+            })?;
         let mut g = self.lock();
         let rom_hash = *g.nes.rom_sha256();
         let local = SocketAddr::from(([0, 0, 0, 0], 0));

@@ -568,7 +568,8 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
         if (uri != null) {
             runCatching {
                 val name = displayName(context, uri)
-                val bytes = context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+                val bytes = (context.contentResolver.openInputStream(uri)
+                    ?: throw java.io.IOException("can't open ROM stream")).use { it.readBytes() }
                 status = loadRom(context, emulator, bytes, uri, name, unlocked, settings)
                 recents = RomLibrary.recents(context)
             }.onFailure { status = "Failed to load ROM: ${it.message}" }
@@ -583,7 +584,8 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
     ) { uri ->
         if (uri != null) {
             runCatching {
-                val bytes = context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+                val bytes = (context.contentResolver.openInputStream(uri)
+                    ?: throw java.io.IOException("can't open palette stream")).use { it.readBytes() }
                 emulator.controller?.loadPalette(bytes)
                 status = "Palette loaded: ${displayName(context, uri)}"
             }.onFailure { status = "Failed to load palette: ${it.message}" }
@@ -596,7 +598,8 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
     ) { uri ->
         if (uri != null) {
             runCatching {
-                val bytes = context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+                val bytes = (context.contentResolver.openInputStream(uri)
+                    ?: throw java.io.IOException("can't open movie stream")).use { it.readBytes() }
                 emulator.controller?.moviePlay(bytes)
                 status = "Playing movie: ${displayName(context, uri)}"
             }.onFailure { status = "Failed to play movie: ${it.message}" }
@@ -627,7 +630,8 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
             scope.launch {
                 runCatching {
                     val dims = withContext(Dispatchers.IO) {
-                        val bytes = context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+                        val bytes = (context.contentResolver.openInputStream(uri)
+                            ?: throw java.io.IOException("can't open HD-pack stream")).use { it.readBytes() }
                         emulator.controller?.loadHdpackFromZipBytes(bytes)
                         emulator.controller?.hdpackDimensions() ?: listOf(0u, 0u)
                     }
@@ -657,7 +661,8 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
             scope.launch {
                 runCatching {
                     val src = withContext(Dispatchers.IO) {
-                        context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+                        (context.contentResolver.openInputStream(uri)
+                            ?: throw java.io.IOException("can't open script stream")).use { it.readBytes() }
                             .decodeToString()
                     }
                     withContext(Dispatchers.IO) { emulator.controller?.loadScript(src) }
@@ -756,7 +761,8 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
     fun openRecent(rom: RecentRom) {
         runCatching {
             val uri = Uri.parse(rom.uri)
-            val bytes = context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+            val bytes = (context.contentResolver.openInputStream(uri)
+                ?: throw java.io.IOException("can't open recent ROM stream")).use { it.readBytes() }
             status = loadRom(context, emulator, bytes, uri, rom.name, unlocked, settings)
             recents = RomLibrary.recents(context)
         }.onFailure { status = "Can't open ${rom.name}: ${it.message}" }
