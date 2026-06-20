@@ -429,6 +429,10 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
     // Freemium is active only in the Play build; sideload/dev builds are unlimited.
     val unlocked = !BuildConfig.PLAY_BUILD || license.isUnlocked
     var frame by remember { mutableStateOf<ImageBitmap?>(null) }
+    // HD-pack (v1.8.5): `hdActive` switches the UI to the Bitmap path (the GPU
+    // SurfaceView is fixed 256x240; HD output is upscaled), `hd` holds its bitmap.
+    var hdActive by remember { mutableStateOf(false) }
+    val hd = remember { HdRender() }
     var status by remember { mutableStateOf("Open a .nes ROM to start") }
     var recents by remember { mutableStateOf(RomLibrary.recents(context)) }
     // Demo session clock: seconds remaining this launch (full unlock = no limit).
@@ -557,6 +561,32 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
         }
     }
 
+    // SAF picker for an HD-pack .zip (Mesen-style hires.txt + PNG tiles). Loads it,
+    // sizes the upscaled output bitmap, and switches the UI to the Bitmap path.
+    val hdpackPicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            runCatching {
+                val bytes = context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+                emulator.controller?.loadHdpackFromZipBytes(bytes)
+                val dims = emulator.controller?.hdpackDimensions() ?: listOf(0u, 0u)
+                val w = dims[0].toInt()
+                val h = dims[1].toInt()
+                if (w > 0 && h > 0) {
+                    hd.w = w
+                    hd.h = h
+                    hd.bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                    hd.pixels = IntArray(w * h)
+                    hdActive = true
+                    status = "HD-pack loaded (${w}x$h)"
+                } else {
+                    status = "HD-pack: no usable tiles"
+                }
+            }.onFailure { status = "Failed to load HD-pack: ${it.message}" }
+        }
+    }
+
     // Open a recent ROM via its persistable content URI.
     fun openRecent(rom: RecentRom) {
         runCatching {
@@ -619,13 +649,15 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
             val current = frame
             // GPU SurfaceView render path (opt-in, v1.8.4). Mounted continuously and
             // draws each submitted frame on the GPU (black until the first frame).
-            if (gpuSurface != null) {
+            // GPU path is bypassed while an HD-pack is active (its output is upscaled,
+            // but the GPU texture is fixed 256x240 — HD goes through the Bitmap path).
+            if (gpuSurface != null && !hdActive) {
                 androidx.compose.ui.viewinterop.AndroidView(
                     factory = { gpuSurface },
                     modifier = Modifier.fillMaxSize(),
                 )
             }
-            if (gpuSurface == null && current != null) {
+            if ((gpuSurface == null || hdActive) && current != null) {
                 Image(
                     bitmap = current,
                     contentDescription = "NES screen",
@@ -805,6 +837,13 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                 emulator.controller?.movieStop()
                 status = "Movie stopped"
             },
+            onLoadHdpack = { hdpackPicker.launch(arrayOf("*/*")) },
+            onUnloadHdpack = {
+                emulator.controller?.unloadHdpack()
+                hdActive = false
+                hd.bitmap = null
+                status = "HD-pack unloaded"
+            },
             onDismiss = { showSettings = false },
         )
     }
@@ -855,15 +894,29 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                 // off the main thread (the blocking audio write and the 61k-pixel
                 // RGBA->ARGB pack must never run on the UI thread). Only the cheap
                 // setPixels + asImageBitmap stay on the UI thread.
+                var usedHd = false
                 withContext(Dispatchers.Default) {
                     val fb = ctrl.runFrame()
-                    // Hand the raw RGBA frame to the GPU SurfaceView (opt-in path);
-                    // no-op when the GPU renderer is off.
-                    gpuSurface?.submitFrame(fb)
-                    // Bisqwit needs the palette-index frame + NTSC phase each frame
-                    // (only fetched while that filter is active — it's not free).
-                    if (gpuSurface != null && settings.filter == VideoFilter.Bisqwit) {
-                        gpuSurface.submitIndexFrame(ctrl.indexFramebufferBytes(), ctrl.ntscPhase().toInt())
+                    if (hdActive && hd.bitmap != null) {
+                        // HD-pack: composite the upscaled frame (Bitmap path only —
+                        // the GPU SurfaceView is fixed at 256x240).
+                        val comp = ctrl.compositeHdFrame()
+                        if (comp.size == hd.w * hd.h * 4) {
+                            packRgbaToArgb(comp, hd.pixels)
+                            usedHd = true
+                        } else {
+                            packRgbaToArgb(fb, pixels)
+                        }
+                    } else {
+                        // Hand the raw RGBA frame to the GPU SurfaceView (opt-in path);
+                        // no-op when the GPU renderer is off.
+                        gpuSurface?.submitFrame(fb)
+                        // Bisqwit needs the palette-index frame + NTSC phase each frame
+                        // (only fetched while that filter is active — it's not free).
+                        if (gpuSurface != null && settings.filter == VideoFilter.Bisqwit) {
+                            gpuSurface.submitIndexFrame(ctrl.indexFramebufferBytes(), ctrl.ntscPhase().toInt())
+                        }
+                        packRgbaToArgb(fb, pixels)
                     }
                     // Hot path: drain audio as raw bytes (no per-sample Float boxing)
                     // and write straight to the PCM_FLOAT track.
@@ -871,10 +924,14 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                     // In fast-forward the audio is dropped (writing it would block
                     // the loop back to real time); otherwise play unless muted.
                     if (!turbo && !emulator.muted) audio.writeBytes(audioBytes)
-                    packRgbaToArgb(fb, pixels)
                 }
-                reuse.setPixels(pixels, 0, NES_WIDTH, 0, 0, NES_WIDTH, NES_HEIGHT)
-                frame = reuse.asImageBitmap()
+                if (usedHd) {
+                    hd.bitmap!!.setPixels(hd.pixels, 0, hd.w, 0, 0, hd.w, hd.h)
+                    frame = hd.bitmap!!.asImageBitmap()
+                } else {
+                    reuse.setPixels(pixels, 0, NES_WIDTH, 0, 0, NES_WIDTH, NES_HEIGHT)
+                    frame = reuse.asImageBitmap()
+                }
                 // Mirror the picture to the external display while casting (no-op
                 // otherwise). Same main-thread publish point as the Compose frame.
                 castManager.pushFrame(reuse)
@@ -892,6 +949,19 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
     DisposableEffect(Unit) {
         onDispose { emulator.controller = null }
     }
+}
+
+/**
+ * Render state for an active HD-pack (v1.8.5): the upscaled output bitmap + its
+ * scratch ARGB buffer and dimensions. Plain holder (not Compose state) read by the
+ * emulation loop; the `hdActive` flag that switches the UI to the Bitmap path is a
+ * separate Compose state.
+ */
+private class HdRender {
+    var bitmap: Bitmap? = null
+    var pixels: IntArray = IntArray(0)
+    var w = 0
+    var h = 0
 }
 
 /** Convert the core's RGBA8 framebuffer into packed ARGB_8888 pixels. */

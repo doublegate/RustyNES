@@ -84,6 +84,12 @@ pub enum MobileError {
         /// Underlying movie error rendered as text.
         reason: String,
     },
+    /// An HD-pack `.zip` failed to load.
+    #[error("HD-pack error: {reason}")]
+    HdPack {
+        /// What was wrong with the HD-pack.
+        reason: String,
+    },
 }
 
 /// A single NES controller button, used by [`NesController::set_button`] for
@@ -170,6 +176,9 @@ struct Inner {
     /// Active TAS playback: the loaded movie + the next frame index. While set,
     /// `run_frame` drives input from the movie instead of the host masks.
     playback: Option<(rustynes_core::Movie, usize)>,
+    /// Active HD-pack compositor (v1.8.5), if a pack is loaded. `composite_hd_frame`
+    /// runs it over the current frame's snapshots.
+    hd_pack: Option<rustynes_hdpack::hdpack::HdCompositor>,
 }
 
 /// The handle the mobile shells drive the emulator through.
@@ -215,6 +224,7 @@ impl NesController {
                 sample_rate,
                 recorder: None,
                 playback: None,
+                hd_pack: None,
             }),
         }))
     }
@@ -234,9 +244,10 @@ impl NesController {
         g.nes = nes;
         g.masks = [0; 4];
         g.sample_rate = sample_rate;
-        // A new cartridge invalidates any in-flight movie.
+        // A new cartridge invalidates any in-flight movie + HD-pack.
         g.recorder = None;
         g.playback = None;
+        g.hd_pack = None;
         drop(g);
         Ok(())
     }
@@ -499,6 +510,80 @@ impl NesController {
     /// Whether a TAS movie is playing back.
     pub fn movie_is_playing(&self) -> bool {
         self.lock().playback.is_some()
+    }
+
+    /// Load an HD-pack from `.zip` bytes (a SAF stream). Replaces any active pack.
+    ///
+    /// # Errors
+    /// [`MobileError::HdPack`] if the bytes are not a valid HD-pack archive.
+    pub fn load_hdpack_from_zip_bytes(&self, bytes: Vec<u8>) -> Result<(), MobileError> {
+        let pack =
+            rustynes_hdpack::hdpack::HdPack::load_from_zip_bytes(&bytes).ok_or_else(|| {
+                MobileError::HdPack {
+                    reason: "not a valid HD-pack zip (no usable hires.txt)".into(),
+                }
+            })?;
+        self.lock().hd_pack = Some(rustynes_hdpack::hdpack::HdCompositor::new(pack));
+        Ok(())
+    }
+
+    /// Unload the active HD-pack (revert to the stock framebuffer).
+    pub fn unload_hdpack(&self) {
+        self.lock().hd_pack = None;
+    }
+
+    /// `[width, height]` of the active HD-pack's upscaled output, or `[0, 0]` if no
+    /// pack is loaded.
+    pub fn hdpack_dimensions(&self) -> Vec<u32> {
+        self.lock().hd_pack.as_ref().map_or_else(
+            || vec![0, 0],
+            |c| {
+                let (w, h) = c.dimensions();
+                vec![w, h]
+            },
+        )
+    }
+
+    /// Composite the current frame through the active HD-pack and return the upscaled
+    /// RGBA8 bytes (`hdpack_dimensions` w*h*4), or empty if no pack is loaded. Call
+    /// after `run_frame`.
+    pub fn composite_hd_frame(&self) -> Vec<u8> {
+        let mut g = self.lock();
+        if g.hd_pack.is_none() {
+            return Vec::new();
+        }
+        // Snapshot the per-pixel tile source, the CHR (0x0000..0x2000), and the frame.
+        let hd_tiles = g.nes.hd_tile_source().to_vec();
+        let framebuffer = g.nes.framebuffer().to_vec();
+        let mut chr = vec![0u8; 0x2000];
+        for (addr, slot) in (0u16..0x2000).zip(chr.iter_mut()) {
+            *slot = g.nes.peek_ppu(addr);
+        }
+        // Snapshot the pack's watched memory (PPU bus or CPU bus per the tag bit).
+        let watched_addrs = g
+            .hd_pack
+            .as_ref()
+            .map_or_else(Vec::new, |c| c.watched_addresses().to_vec());
+        let mut watched = rustynes_hdpack::hdpack::WatchedMemory::new();
+        for tagged in watched_addrs {
+            let lo = (tagged & 0xFFFF) as u16;
+            let val = if tagged & rustynes_hdpack::hdpack::PPU_MEMORY_MARKER != 0 {
+                g.nes.ppu_bus_peek(lo)
+            } else {
+                g.nes.cpu_bus_peek(lo)
+            };
+            watched.set(tagged, val);
+        }
+        let Some(comp) = g.hd_pack.as_mut() else {
+            return Vec::new();
+        };
+        let out = comp
+            .composite(&framebuffer, &hd_tiles, &watched, |addr| {
+                chr.get((addr & 0x1FFF) as usize).copied().unwrap_or(0)
+            })
+            .to_vec();
+        drop(g);
+        out
     }
 }
 

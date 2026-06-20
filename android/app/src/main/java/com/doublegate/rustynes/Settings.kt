@@ -170,6 +170,8 @@ fun SettingsSheet(
     onMoviePlay: () -> Unit = {},
     onMovieSave: () -> Unit = {},
     onMovieStop: () -> Unit = {},
+    onLoadHdpack: () -> Unit = {},
+    onUnloadHdpack: () -> Unit = {},
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -261,6 +263,15 @@ fun SettingsSheet(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick = onMoviePlay) { Text("Play…") }
                 TextButton(onClick = onMovieStop) { Text("Stop") }
+            }
+
+            // HD-pack (v1.8.5) — load a Mesen-style .zip pack (hires.txt + PNG tiles).
+            // While active the picture upscales through the Bitmap path (the GPU
+            // renderer is bypassed, since its texture is fixed at 256x240).
+            Text("HD-pack")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onLoadHdpack) { Text("Load .zip…") }
+                TextButton(onClick = onUnloadHdpack) { Text("Unload") }
             }
 
             ToggleRow("Mute audio", settings.muted) { settings.muted = it }

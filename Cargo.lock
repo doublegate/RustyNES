@@ -4214,6 +4214,7 @@ name = "rustynes-mobile"
 version = "1.8.5"
 dependencies = [
  "rustynes-core",
+ "rustynes-hdpack",
  "thiserror 2.0.18",
  "uniffi",
  "zip",

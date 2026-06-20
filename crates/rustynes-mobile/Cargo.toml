@@ -24,8 +24,13 @@ workspace = true
 
 [dependencies]
 # Default features include `std`; the bridge is a hosted (std) target, never the
-# `no_std` chip-stack gate. It re-exports the byte-identical core unchanged.
-rustynes-core.workspace = true
+# `no_std` chip-stack gate. It re-exports the byte-identical core unchanged. The
+# `hd-pack` feature turns on the PPU's per-pixel `HdTileSource` telemetry the
+# compositor reads (output-only, byte-identical to the framebuffer).
+rustynes-core = { workspace = true, features = ["hd-pack"] }
+# v1.8.5 — the HD-pack loader + compositor (now a shared std crate). The compositor
+# takes the framebuffer / watched memory / chr-peek as args, fed from the core.
+rustynes-hdpack.workspace = true
 thiserror.workspace = true
 # UniFFI generates the foreign-language bindings from the `#[uniffi::export]`
 # surface (proc-macro mode — no UDL file). The `cli` feature backs the
