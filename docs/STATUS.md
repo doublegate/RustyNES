@@ -1,15 +1,17 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v1.8.0 "Android"** (2026-06-19) — the first **platform** (not
-> accuracy) release: a complete, shippable Android app (shared `rustynes-mobile`
-> UniFFI bridge + `rustynes-android` platform crate + a Jetpack Compose shell;
-> audio / touch+gamepad input / save-states+SRAM+recent-ROMs / pause-FF-mute /
-> foldable+immersive UI / AGSL CRT+scanline filters / a freemium $2.99 Play unlock +
-> 10-min demo), verified on a Galaxy Z Fold 7. The pure-Rust core is **byte-identical
-> on ARM** (additive host only), so **AccuracyCoin holds 100% (139/139)** and every
-> desktop gate is unchanged. The full wgpu-`SurfaceView` native renderer is the
-> documented next increment. Built on the bugfix PATCH **v1.7.1** on **v1.7.0
-> "Forge"** (framed below). v1.7.1's seven fixes: #1 ROM-close GPU abort
+> **Current release: v1.8.1 "Android"** (2026-06-19) — a patch on the first
+> **platform** (not accuracy) release **v1.8.0 "Android"**: a complete, shippable
+> Android app (shared `rustynes-mobile` UniFFI bridge + `rustynes-android` platform
+> crate + a Jetpack Compose shell; audio / touch+gamepad input /
+> save-states+SRAM+recent-ROMs / pause-FF-mute / foldable+immersive UI / AGSL
+> CRT+scanline filters / a freemium $2.99 Play unlock + an **8-minute** demo),
+> verified on a Galaxy Z Fold 7. v1.8.1 trims the demo from 10 → 8 minutes and
+> confirms the debug Full-Unlock override is **R8-stripped from the release AAB**.
+> The pure-Rust core is **byte-identical on ARM** (additive host only), so
+> **AccuracyCoin holds 100% (139/139)** and every desktop gate is unchanged. The
+> full wgpu-`SurfaceView` native renderer is the documented next increment. Built on
+> the bugfix PATCH **v1.7.1** on **v1.7.0 "Forge"** (framed below). v1.7.1's seven fixes: #1 ROM-close GPU abort
 > (skip the `write_texture` upload on a pixel-slice length mismatch; `close_rom`
 > presents a clean blank frame) · #6 clean pause/unpause (pacing-timer
 > `break_phase()` reset on resume + a sticky audio pause gate → no `produced_max_ms`
