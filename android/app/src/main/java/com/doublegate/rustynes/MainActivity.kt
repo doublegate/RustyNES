@@ -449,6 +449,9 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
     // Freemium is active only in the Play build; sideload/dev builds are unlimited.
     val unlocked = !BuildConfig.PLAY_BUILD || license.isUnlocked
     var frame by remember { mutableStateOf<ImageBitmap?>(null) }
+    // Whether a ROM is currently loaded — drives the Open/Close toggle button and
+    // gates the gameplay view vs. the idle (Open + recents) screen.
+    var romLoaded by remember { mutableStateOf(false) }
     // HD-pack (v1.8.5): `hdActive` switches the UI to the Bitmap path (the GPU
     // SurfaceView is fixed 256x240; HD output is upscaled), `hd` holds its bitmap.
     var hdActive by remember { mutableStateOf(false) }
@@ -780,7 +783,7 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
             // draws each submitted frame on the GPU (black until the first frame).
             // GPU path is bypassed while an HD-pack is active (its output is upscaled,
             // but the GPU texture is fixed 256x240 — HD goes through the Bitmap path).
-            if (gpuSurface != null && !hdActive) {
+            if (gpuSurface != null && !hdActive && romLoaded) {
                 androidx.compose.ui.viewinterop.AndroidView(
                     factory = { gpuSurface },
                     modifier = Modifier.fillMaxSize(),
@@ -906,6 +909,22 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
         var paused by remember { mutableStateOf(false) }
         var turbo by remember { mutableStateOf(false) }
         var controlsVisible by remember { mutableStateOf(false) }
+        // Close the current ROM: persist RA progress, unload, and return to the idle
+        // screen (Open button + recent-ROMs list). Mirrors the desktop close_rom.
+        fun closeRom() {
+            raSaveProgress()
+            val ctrl = emulator.controller
+            if (settings.raEnabled) runCatching { ctrl?.raUnloadGame() }
+            emulator.controller = null
+            emulator.romSha = null
+            emulator.romBytes = null
+            raGameLoaded = false
+            frame = null
+            romLoaded = false
+            paused = false
+            emulator.paused = false
+            status = "No ROM loaded"
+        }
         if (controlsVisible) {
             Row(
             modifier = Modifier
@@ -915,7 +934,12 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Button(onClick = { picker.launch(arrayOf("*/*")) }) { Text("Open") }
+            // Open a ROM, or Close the running one (toggles on whether one is loaded).
+            if (romLoaded) {
+                Button(onClick = { closeRom() }) { Text("Close") }
+            } else {
+                Button(onClick = { picker.launch(arrayOf("*/*")) }) { Text("Open") }
+            }
             // Save-states are a paid feature; the demo hides the manager.
             if (unlocked) {
                 OutlinedButton(onClick = { showStates = true }) { Text("States") }
@@ -1118,6 +1142,7 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
         try {
             while (isActive) {
                 val ctrl = emulator.controller
+                if (ctrl != null && !romLoaded) romLoaded = true
                 if (ctrl == null || emulator.paused) {
                     delay(50)
                     continue
