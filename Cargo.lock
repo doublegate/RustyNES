@@ -4220,6 +4220,7 @@ dependencies = [
  "rustynes-ra",
  "rustynes-script",
  "thiserror 2.0.18",
+ "tungstenite",
  "uniffi",
  "zip",
 ]

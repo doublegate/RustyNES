@@ -37,8 +37,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use rustynes_core::{Buttons, Nes, Region};
 use rustynes_netplay::{
-    AdvanceOutcome, ConnectionState, DisconnectReason, NetplayConnection, NetplayError,
-    RollbackSession, SessionConfig, UdpTransport,
+    AdvanceOutcome, ConnectionState, DEFAULT_STUN_SERVERS, DisconnectReason, NatConfig, NatConnect,
+    NatPhase, NetplayConnection, NetplayError, RollbackSession, SessionConfig, TurnConfig,
+    UdpTransport,
 };
 
 uniffi::setup_scaffolding!();
@@ -259,16 +260,24 @@ pub struct RaAchievementInfo {
 
 // --- Netplay (v1.8.6) — direct-IP / same-LAN only ----------------------------
 
-/// The coarse phase a direct-IP netplay session is in (v1.8.6).
+/// The coarse phase a netplay session is in (v1.8.6; `Negotiating` added in
+/// v1.8.7).
 ///
 /// Mirrored across the FFI — a flat projection of the internal
-/// `NetplaySession` / `ConnectionState`. STUN/TURN is out of scope, so there
-/// is no NAT-traversal phase.
+/// `NetplaySession` / `ConnectionState` / `NatPhase`. The direct-IP / LAN path
+/// (v1.8.6) starts at `Connecting`; the room-code / internet path (v1.8.7)
+/// starts at `Negotiating` (NAT traversal) and converges on the same
+/// `Connecting → InGame` tail once a transport is open.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum NpPhase {
     /// No session — single-player (the host loop runs `run_frame`).
     Idle,
-    /// The `Sync` handshake is in progress (host listening or joiner dialing).
+    /// NAT traversal is in progress (v1.8.7 room-code path): registering with the
+    /// signaling room, STUN discovery, address exchange, hole-punch, or TURN
+    /// relay fallback. The granular step is in [`NpStatus::detail`].
+    Negotiating,
+    /// The `Sync` handshake is in progress (host listening or joiner dialing, or
+    /// the post-traversal handshake over the now-open mapping).
     Connecting,
     /// A rollback session is running (synced; rolling back as needed).
     InGame,
@@ -305,8 +314,13 @@ impl NpTick {
     };
 }
 
-/// A copyable status snapshot for the netplay panel/HUD (v1.8.6), returned by
-/// [`NesController::np_status`].
+/// A copyable status snapshot for the netplay panel/HUD (v1.8.6; `detail` +
+/// `relayed` added in v1.8.7), returned by [`NesController::np_status`].
+// This is a flat FFI status record, not a behavioural config — the several
+// independent bool flags (host / stalled / desync / relayed) are each a distinct
+// piece of HUD state, so a bitflag/enum would only obscure the generated Kotlin /
+// Swift surface.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct NpStatus {
     /// The current coarse phase.
@@ -329,18 +343,102 @@ pub struct NpStatus {
     pub desync: bool,
     /// An error / disconnect / desync message (`Error` phase), else empty.
     pub message: String,
+    /// A short human-readable sub-step for the `Negotiating` phase (v1.8.7) —
+    /// e.g. `"Registering"`, `"Discovering"`, `"Exchanging"`, `"Punching"`,
+    /// `"Relaying"`. Empty outside `Negotiating`. The host renders it under the
+    /// room code while NAT traversal runs.
+    pub detail: String,
+    /// `true` once the session is running over a TURN relay rather than a direct
+    /// hole-punched path (v1.8.7). Always `false` for the direct-IP / LAN path
+    /// and for the cone-NAT hole-punch path. (Currently always `false`: the
+    /// relay-fallback transport hand-off is a tracked carryover — see
+    /// `np_tick_negotiating`.)
+    pub relayed: bool,
 }
 
-/// An active direct-IP netplay session (v1.8.6). Exactly one variant is live;
-/// `None` in [`Inner::netplay`] means single-player.
+/// Endpoints for a room-code (internet) netplay session (v1.8.7), mapped onto
+/// [`NatConfig`] by [`NesController::np_host_room`] / `np_join_room`.
 ///
-/// The lifecycle is `Connecting` → (handshake completes) → `InGame`. The
+/// All fields are caller-supplied so the deployment can point at the
+/// maintainer's relay (or any other). An empty `stun_servers` falls back to the
+/// crate's [`DEFAULT_STUN_SERVERS`]. The `turn_*` trio is optional: with all
+/// three present a TURN relay is configured for the symmetric-NAT fallback;
+/// otherwise the session is punch-or-fail (cone-NAT only).
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct NpNetConfig {
+    /// STUN servers (`host:port`, optional `stun:` scheme) for public-address
+    /// discovery. Empty → [`DEFAULT_STUN_SERVERS`].
+    pub stun_servers: Vec<String>,
+    /// The TURN relay's `host:port` for the symmetric-NAT fallback. `None`
+    /// disables the relay path. Resolved at run time (never a bare IP in config).
+    pub turn_url: Option<String>,
+    /// The TURN long-term-credential username (required alongside `turn_url`).
+    pub turn_user: Option<String>,
+    /// The TURN long-term-credential password / shared secret.
+    pub turn_secret: Option<String>,
+    /// The signaling relay URL (e.g. `wss://relay.example` or `ws://host:9000`).
+    pub signaling_url: String,
+}
+
+impl NpNetConfig {
+    /// Project the FFI config onto the orchestrator's [`NatConfig`]: substitute
+    /// the default STUN list when none was supplied, and build a [`TurnConfig`]
+    /// only when the URL resolves AND both credentials are present.
+    fn to_nat_config(&self) -> NatConfig {
+        let stun_servers = if self.stun_servers.is_empty() {
+            DEFAULT_STUN_SERVERS
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect()
+        } else {
+            self.stun_servers.clone()
+        };
+        let turn = match (
+            self.turn_url.as_deref(),
+            self.turn_user.as_deref(),
+            self.turn_secret.as_deref(),
+        ) {
+            (Some(url), Some(user), Some(secret)) => {
+                // Resolve the TURN server to a concrete `SocketAddr` (the config
+                // takes a host:port, not a bare IP). A URL that does not resolve
+                // disables the relay path rather than failing the whole session.
+                let host = url.strip_prefix("turn:").unwrap_or(url);
+                host.to_socket_addrs()
+                    .ok()
+                    .and_then(|mut a| a.next())
+                    .map(|server| TurnConfig {
+                        server,
+                        username: user.to_string(),
+                        credential: secret.to_string(),
+                    })
+            }
+            _ => None,
+        };
+        NatConfig {
+            stun_servers,
+            turn,
+            signaling_url: self.signaling_url.clone(),
+        }
+    }
+}
+
+/// An active netplay session. Exactly one variant is live; `None` in
+/// [`Inner::netplay`] means single-player.
+///
+/// The room-code (internet) path (v1.8.7) starts at `Negotiating` (NAT
+/// traversal); the direct-IP / LAN path (v1.8.6) starts at `Connecting`. Both
+/// converge on the same tail: `Connecting` → (handshake completes) → `InGame`.
+/// The `Negotiating` variant owns the [`NatConnect`] orchestrator doing
+/// signaling + STUN/punch + TURN; once it reaches [`NatPhase::Synced`] the
+/// handed-off [`NetplayConnection`] promotes it to `Connecting`. The
 /// `Connecting` variant owns the [`NetplayConnection`] doing the `Sync`
 /// handshake; once it reports [`ConnectionState::Synced`], the bound +
 /// handshaken [`UdpTransport`] is moved into a fresh [`RollbackSession`] and the
-/// session promotes to `InGame`. A handshake timeout / rom-mismatch tears the
-/// session down (back to `None`) with a recorded error message.
+/// session promotes to `InGame`. A traversal / handshake timeout or rom-mismatch
+/// tears the session down (back to `None`) with a recorded error message.
 enum NetplaySession {
+    /// NAT traversal is in progress (v1.8.7 room-code path). `bool` is `is_host`.
+    Negotiating(Box<NatConnect>, bool),
     /// The `Sync` handshake is in progress. `bool` is `is_host`.
     Connecting(Box<NetplayConnection>, bool),
     /// A rollback session is running. `bool` is `is_host`.
@@ -1187,11 +1285,86 @@ impl NesController {
         Ok(())
     }
 
+    /// Host a room-code (internet) session (v1.8.7): connect to the signaling
+    /// relay, announce a new room + the loaded ROM's hash, and return the
+    /// **6-char room code** to share with the joiner. NAT traversal (STUN
+    /// hole-punch, with the optional TURN fallback in `cfg`) runs as the host
+    /// loop drives [`Self::np_advance_frame`]; poll [`Self::np_status`] for the
+    /// `Negotiating` sub-step. Any previous session is dropped.
+    ///
+    /// `num_players` is clamped into `2..=4`; the room-code path here completes
+    /// the **first** joiner (a 2-player link), mirroring `np_host`. Unlike
+    /// `np_host` (direct-IP / LAN), this path traverses NAT, so it works across
+    /// the internet — at the cost of a reachable signaling relay (and a TURN
+    /// relay for symmetric NATs).
+    ///
+    /// # Errors
+    /// [`MobileError::Netplay`] if the local UDP socket bind fails. (Signaling /
+    /// STUN / punch failures surface later as the session moving to `Error` —
+    /// poll [`Self::np_status`].)
+    pub fn np_host_room(&self, num_players: u8, cfg: NpNetConfig) -> Result<String, MobileError> {
+        let mut g = self.lock();
+        let rom_hash = *g.nes.rom_sha256();
+        let players = num_players.clamp(2, 4);
+        // Seed the room-code + STUN-transaction PRNG from a non-deterministic
+        // source so two concurrent hosts don't collide on a room code. This is
+        // host-side orchestration, NOT emulator state, so it does not touch the
+        // determinism contract (the ROM + input + seed that the core consumes
+        // are untouched).
+        let seed = nondeterministic_seed();
+        let (nat, room) =
+            NatConnect::host(players, rom_hash, cfg.to_nat_config(), seed).map_err(|e| {
+                MobileError::Netplay {
+                    reason: format!("host room failed: {e}"),
+                }
+            })?;
+        g.netplay = Some(NetplaySession::Negotiating(Box::new(nat), true));
+        g.netplay_error = None;
+        g.netplay_desync = false;
+        g.netplay_last_stalled = true;
+        drop(g);
+        Ok(room)
+    }
+
+    /// Join a room-code (internet) session (v1.8.7) by its `room_code`: connect
+    /// to the signaling relay, announce the loaded ROM's hash, and begin NAT
+    /// traversal as player 1 (P2). Drive [`Self::np_advance_frame`] and poll
+    /// [`Self::np_status`] for the `Negotiating` sub-step; on success the session
+    /// converges on `Connecting` → `InGame`. Any previous session is dropped.
+    ///
+    /// # Errors
+    /// [`MobileError::Netplay`] if the local UDP socket bind fails. (A wrong
+    /// code, an unreachable relay, or a failed traversal surface later as the
+    /// session moving to `Error`.)
+    pub fn np_join_room(&self, room_code: String, cfg: NpNetConfig) -> Result<(), MobileError> {
+        let mut g = self.lock();
+        let rom_hash = *g.nes.rom_sha256();
+        let seed = nondeterministic_seed();
+        let nat =
+            NatConnect::join(&room_code, rom_hash, cfg.to_nat_config(), seed).map_err(|e| {
+                MobileError::Netplay {
+                    reason: format!("join room failed: {e}"),
+                }
+            })?;
+        g.netplay = Some(NetplaySession::Negotiating(Box::new(nat), false));
+        g.netplay_error = None;
+        g.netplay_desync = false;
+        g.netplay_last_stalled = true;
+        drop(g);
+        Ok(())
+    }
+
     /// Drive one netplay tick. **The host loop calls this instead of
     /// `run_frame`** whenever [`Self::np_is_active`] is true. `local_mask` is
     /// this peer's live 8-bit controller mask (same bit order as
     /// [`Self::set_buttons`]).
     ///
+    /// - **Negotiating** (v1.8.7 room-code path): pumps the NAT-traversal
+    ///   orchestrator (signaling + STUN/punch + TURN fallback; no emulation). On
+    ///   [`NatPhase::Synced`] it hands the open transport off to a
+    ///   [`NetplayConnection`] and promotes to `Connecting`. On
+    ///   [`NatPhase::Failed`], tears the session down to an error. Returns a
+    ///   stalled tick.
     /// - **Connecting**: pumps the handshake (no emulation). On `Synced`,
     ///   promotes the connection into a [`RollbackSession`] (and power-cycles the
     ///   core to the deterministic cold boot so frame 0 is byte-identical across
@@ -1206,6 +1379,9 @@ impl NesController {
     pub fn np_advance_frame(&self, local_mask: u8) -> NpTick {
         let mut g = self.lock();
         let tick = match g.netplay.take() {
+            Some(NetplaySession::Negotiating(nat, is_host)) => {
+                np_tick_negotiating(&mut g, *nat, is_host)
+            }
             Some(NetplaySession::Connecting(conn, is_host)) => {
                 np_tick_connecting(&mut g, *conn, is_host)
             }
@@ -1244,6 +1420,19 @@ impl NesController {
     pub fn np_status(&self) -> NpStatus {
         let g = self.lock();
         let status = match &g.netplay {
+            Some(NetplaySession::Negotiating(nat, is_host)) => NpStatus {
+                phase: NpPhase::Negotiating,
+                is_host: *is_host,
+                num_players: 2,
+                ping_ms: None,
+                current_frame: 0,
+                confirmed_frame: None,
+                stalled: g.netplay_last_stalled,
+                desync: false,
+                message: String::new(),
+                detail: nat_phase_detail(&nat.phase()),
+                relayed: false,
+            },
             Some(NetplaySession::Connecting(conn, is_host)) => NpStatus {
                 phase: NpPhase::Connecting,
                 is_host: *is_host,
@@ -1254,6 +1443,8 @@ impl NesController {
                 stalled: g.netplay_last_stalled,
                 desync: false,
                 message: String::new(),
+                detail: String::new(),
+                relayed: false,
             },
             Some(NetplaySession::InGame(session, is_host)) => NpStatus {
                 phase: NpPhase::InGame,
@@ -1265,6 +1456,8 @@ impl NesController {
                 stalled: g.netplay_last_stalled,
                 desync: false,
                 message: String::new(),
+                detail: String::new(),
+                relayed: false,
             },
             None => NpStatus {
                 phase: if g.netplay_error.is_some() {
@@ -1280,6 +1473,8 @@ impl NesController {
                 stalled: g.netplay_last_stalled,
                 desync: g.netplay_desync,
                 message: g.netplay_error.clone().unwrap_or_default(),
+                detail: String::new(),
+                relayed: false,
             },
         };
         drop(g);
@@ -1385,6 +1580,92 @@ fn post_frame_ra(g: &mut Inner) {
     ra.expire_toasts();
     if reset {
         nes.reset();
+    }
+}
+
+/// A short human-readable label for a [`NatPhase`], for [`NpStatus::detail`].
+fn nat_phase_detail(phase: &NatPhase) -> String {
+    match phase {
+        NatPhase::Registering => "Registering",
+        NatPhase::Discovering => "Discovering",
+        NatPhase::Exchanging => "Exchanging",
+        NatPhase::Punching => "Punching",
+        NatPhase::Relaying => "Relaying",
+        NatPhase::Synced => "Synced",
+        NatPhase::Failed(reason) => return reason.clone(),
+    }
+    .to_string()
+}
+
+/// A non-deterministic 64-bit seed for the NAT orchestrator's room-code +
+/// STUN-transaction PRNG (v1.8.7). Drawn from wall-clock + the address of a
+/// stack local so two concurrently-launched hosts don't collide on a room code.
+///
+/// This seeds ONLY host-side network orchestration — never the emulator core's
+/// power-on PRNG — so the cross-platform determinism contract (same ROM + seed +
+/// input ⇒ byte-identical state) is untouched: the core still cold-boots
+/// deterministically when the session promotes to `InGame`.
+fn nondeterministic_seed() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    // Truncating the 128-bit nanosecond count to 64 bits is intentional — this is
+    // a PRNG seed, not a timestamp, so the discarded high bits don't matter.
+    #[allow(clippy::cast_possible_truncation)]
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos() as u64);
+    let stack = std::ptr::addr_of!(nanos) as u64;
+    nanos ^ stack.rotate_left(17)
+}
+
+/// Drive a `Negotiating` netplay session one tick (v1.8.7 room-code path). Pumps
+/// the [`NatConnect`] orchestrator (signaling + STUN/punch + TURN fallback). On
+/// [`NatPhase::Synced`] it hands the open (punched) transport off to a
+/// [`NetplayConnection`] and promotes the session to `Connecting` — which the
+/// existing [`np_tick_connecting`] then drives through the `Sync` handshake and
+/// into the [`RollbackSession`] (NO duplication of that tail). On
+/// [`NatPhase::Failed`] it records an error and leaves `netplay = None`.
+/// Returns a stalled tick (negotiation produces no emulator frame). Called
+/// holding the lock, having `take()`n the session out.
+///
+/// ## Relay-fallback transport hand-off — TRACKED CARRYOVER (not faked)
+///
+/// For the direct / cone-NAT path, `NatConnect::into_connection` hands off the
+/// hole-punched `UdpSocket`, and the existing [`UdpTransport`] /
+/// [`RollbackSession`] drive it unchanged — fully wired here. For the
+/// **symmetric-NAT TURN-relay** path the orchestrator reaches
+/// [`NatPhase::Synced`] but `into_connection` still returns the *punched*
+/// transport: `rustynes-netplay` retains the `RelayUdpSocket` internally
+/// (`NatConnect::relay_socket`) but exposes **no** accessor to consume it, and
+/// [`NetplayConnection`] / [`UdpTransport`] speak a plain `UdpSocket`, not the
+/// relay shim. Routing gameplay through the relay therefore needs a small
+/// upstream surface (either a `NetplayConnection::with_relay(RelayUdpSocket)`
+/// constructor or a transport generic over the socket type) that does not exist
+/// yet. Rather than silently mis-route a symmetric-NAT session over the dead
+/// punched mapping, we keep `relayed` reported as `false` and let the direct /
+/// cone path be the one that reaches `InGame`. When the upstream hand-off lands,
+/// branch here on whether the orchestrator relayed and build the relay-backed
+/// connection, then set `NpStatus.relayed`.
+fn np_tick_negotiating(g: &mut Inner, mut nat: NatConnect, is_host: bool) -> NpTick {
+    match nat.pump() {
+        NatPhase::Synced => {
+            // The punched (direct / cone-NAT) transport is ready; hand it off to
+            // the standard connection layer and converge on the existing
+            // Connecting → InGame tail.
+            let conn = nat.into_connection();
+            g.netplay = Some(NetplaySession::Connecting(Box::new(conn), is_host));
+            NpTick::STALLED
+        }
+        NatPhase::Failed(reason) => {
+            g.netplay = None;
+            g.netplay_error = Some(format!("nat traversal failed: {reason}"));
+            NpTick::STALLED
+        }
+        // Still registering / discovering / exchanging / punching / relaying —
+        // keep negotiating.
+        _ => {
+            g.netplay = Some(NetplaySession::Negotiating(Box::new(nat), is_host));
+            NpTick::STALLED
+        }
     }
 }
 
@@ -1836,6 +2117,311 @@ mod tests {
             if let (Some(hd), Some(jd)) = (hd, jd) {
                 assert_eq!(hd, jd, "confirmed entering digests agree at frame {probe}");
             }
+        }
+    }
+
+    // --- Netplay (v1.8.7) — room-code / internet path --------------------
+    //
+    // The loopback proof for the room-code (NAT-traversal) path: two
+    // `NesController`s drive `np_host_room` / `np_join_room` against an
+    // in-process WebSocket signaling relay + a mock STUN responder (the same
+    // harness shape as `rustynes-netplay`'s `tests/nat_loopback.rs`), pump
+    // `np_advance_frame` until both reach `InGame`, and assert their confirmed
+    // digests agree. On loopback there is no NAT, so the hole-punch path
+    // succeeds (no TURN needed) — proving the Negotiating → Connecting → InGame
+    // wiring through the bridge end-to-end.
+
+    mod room {
+        // Test-harness scaffolding — relax the pedantic/nursery lints that fire
+        // on the mock relay + the long end-to-end flow (matching the allow-set on
+        // `rustynes-netplay`'s `tests/nat_loopback.rs`); not worth fracturing the
+        // mock for.
+        #![allow(
+            clippy::items_after_statements,
+            clippy::collection_is_never_read,
+            clippy::manual_let_else,
+            clippy::collapsible_if,
+            clippy::redundant_clone
+        )]
+        use super::*;
+        use std::collections::HashMap;
+        use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
+        use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+        use std::sync::mpsc::Sender as MpscSender;
+        use std::sync::{Arc, Mutex};
+        use std::thread;
+        use std::time::{Duration, Instant};
+
+        use rustynes_netplay::{Action, ClientId, Relay, SignalMessage};
+
+        const MAGIC_COOKIE: u32 = 0x2112_A442;
+
+        /// Build a STUN Binding Success Response with an XOR-MAPPED-ADDRESS for a
+        /// v4 `addr` (echoing the source the responder saw) — the loopback peer
+        /// address that the other side can actually reach.
+        fn build_stun_success(addr: SocketAddr, tx: &[u8; 12]) -> Vec<u8> {
+            let SocketAddr::V4(v4) = addr else {
+                panic!("mock stun is loopback v4 only");
+            };
+            let cookie_be = MAGIC_COOKIE.to_be_bytes();
+            let cookie_hi16 = u16::try_from(MAGIC_COOKIE >> 16).unwrap();
+            let x_port = v4.port() ^ cookie_hi16;
+            let mut x_addr = v4.ip().octets();
+            for (b, k) in x_addr.iter_mut().zip(cookie_be.iter()) {
+                *b ^= *k;
+            }
+            let mut value = vec![0u8, 0x01]; // reserved + family v4
+            value.extend_from_slice(&x_port.to_be_bytes());
+            value.extend_from_slice(&x_addr);
+
+            let mut attr = Vec::new();
+            attr.extend_from_slice(&0x0020u16.to_be_bytes()); // XOR-MAPPED-ADDRESS
+            attr.extend_from_slice(&u16::try_from(value.len()).unwrap().to_be_bytes());
+            attr.extend_from_slice(&value);
+
+            let mut msg = Vec::new();
+            msg.extend_from_slice(&0x0101u16.to_be_bytes()); // Binding Success
+            msg.extend_from_slice(&u16::try_from(attr.len()).unwrap().to_be_bytes());
+            msg.extend_from_slice(&MAGIC_COOKIE.to_be_bytes());
+            msg.extend_from_slice(tx);
+            msg.extend_from_slice(&attr);
+            msg
+        }
+
+        /// A mock STUN server echoing each Binding Request's source address.
+        fn spawn_mock_stun() -> (SocketAddr, Arc<AtomicBool>, thread::JoinHandle<()>) {
+            let socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind mock stun");
+            socket
+                .set_read_timeout(Some(Duration::from_millis(50)))
+                .unwrap();
+            let addr = socket.local_addr().unwrap();
+            let stop = Arc::new(AtomicBool::new(false));
+            let stop_t = Arc::clone(&stop);
+            let handle = thread::spawn(move || {
+                let mut buf = [0u8; 512];
+                while !stop_t.load(Ordering::Relaxed) {
+                    match socket.recv_from(&mut buf) {
+                        Ok((len, from)) if len >= 20 => {
+                            let tx: [u8; 12] = buf[8..20].try_into().unwrap();
+                            let resp = build_stun_success(from, &tx);
+                            let _ = socket.send_to(&resp, from);
+                        }
+                        Ok(_) => {}
+                        Err(e)
+                            if e.kind() == std::io::ErrorKind::WouldBlock
+                                || e.kind() == std::io::ErrorKind::TimedOut => {}
+                        Err(_) => break,
+                    }
+                }
+            });
+            (addr, stop, handle)
+        }
+
+        type Outbox = Arc<Mutex<HashMap<ClientId, MpscSender<SignalMessage>>>>;
+
+        /// A mock signaling relay: a real WebSocket server on `127.0.0.1`
+        /// driving the production [`Relay`] routing logic.
+        fn spawn_mock_relay() -> (String, Arc<AtomicBool>) {
+            let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind mock relay");
+            listener.set_nonblocking(true).unwrap();
+            let addr = listener.local_addr().unwrap();
+            let url = format!("ws://{addr}");
+            let stop = Arc::new(AtomicBool::new(false));
+            let stop_t = Arc::clone(&stop);
+
+            let relay = Arc::new(Mutex::new(Relay::new()));
+            let outbox: Outbox = Arc::new(Mutex::new(HashMap::new()));
+            let next_id = Arc::new(AtomicU64::new(1));
+
+            thread::spawn(move || {
+                let mut workers = Vec::new();
+                while !stop_t.load(Ordering::Relaxed) {
+                    match listener.accept() {
+                        Ok((stream, _peer)) => {
+                            stream.set_nonblocking(false).ok();
+                            let relay = Arc::clone(&relay);
+                            let outbox = Arc::clone(&outbox);
+                            let id = next_id.fetch_add(1, Ordering::Relaxed);
+                            let stop_w = Arc::clone(&stop_t);
+                            workers.push(thread::spawn(move || {
+                                relay_client_worker(stream, id, &relay, &outbox, &stop_w);
+                            }));
+                        }
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            thread::sleep(Duration::from_millis(2));
+                        }
+                        Err(_) => break,
+                    }
+                }
+            });
+            (url, stop)
+        }
+
+        fn relay_client_worker(
+            stream: TcpStream,
+            id: ClientId,
+            relay: &Mutex<Relay>,
+            outbox: &Outbox,
+            stop: &AtomicBool,
+        ) {
+            use tungstenite::Message;
+
+            let mut ws = match tungstenite::accept(stream) {
+                Ok(ws) => ws,
+                Err(_) => return,
+            };
+            let _ = ws
+                .get_ref()
+                .set_read_timeout(Some(Duration::from_millis(10)));
+            let (out_tx, out_rx) = std::sync::mpsc::channel::<SignalMessage>();
+            outbox.lock().unwrap().insert(id, out_tx);
+
+            while !stop.load(Ordering::Relaxed) {
+                while let Ok(msg) = out_rx.try_recv() {
+                    if ws.send(Message::Text(msg.to_json().into())).is_err() {
+                        return;
+                    }
+                }
+                match ws.read() {
+                    Ok(Message::Text(txt)) => {
+                        if let Some(msg) = SignalMessage::parse(&txt) {
+                            let actions = relay.lock().unwrap().handle(id, msg);
+                            dispatch(&actions, outbox);
+                        }
+                    }
+                    Ok(Message::Close(_)) => break,
+                    Ok(_) => {}
+                    Err(tungstenite::Error::Io(e))
+                        if matches!(
+                            e.kind(),
+                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                        ) => {}
+                    Err(_) => break,
+                }
+            }
+            let _ = relay.lock().unwrap().disconnect(id);
+        }
+
+        fn dispatch(actions: &[Action], outbox: &Outbox) {
+            let map = outbox.lock().unwrap();
+            for action in actions {
+                if let Action::Send { to, msg } = action {
+                    if let Some(tx) = map.get(to) {
+                        let _ = tx.send(msg.clone());
+                    }
+                }
+            }
+        }
+
+        /// End-to-end loopback for the v1.8.7 room-code path: two
+        /// `NesController`s host/join by room code through the bridge, traverse
+        /// NAT (signaling + STUN + loopback hole-punch), reach `InGame`, advance
+        /// frames, and agree on their confirmed digests. The room-code create /
+        /// join + the `Negotiating → Connecting → InGame` transition are all
+        /// exercised through the public FFI surface.
+        #[test]
+        #[allow(clippy::too_many_lines)]
+        fn two_controllers_host_join_by_room_code() {
+            let host = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("host load");
+            let join = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("join load");
+
+            let (stun_addr, stun_stop, stun_handle) = spawn_mock_stun();
+            let (relay_url, relay_stop) = spawn_mock_relay();
+            // Let the relay listener come up.
+            thread::sleep(Duration::from_millis(20));
+
+            let cfg = NpNetConfig {
+                stun_servers: vec![stun_addr.to_string()],
+                turn_url: None,
+                turn_user: None,
+                turn_secret: None,
+                signaling_url: relay_url.clone(),
+            };
+
+            let room = host
+                .np_host_room(2, cfg.clone())
+                .expect("host room returns a code");
+            assert_eq!(room.len(), 6, "room code is 6 chars");
+            assert_eq!(host.np_status().phase, NpPhase::Negotiating);
+            assert!(host.np_is_active());
+
+            join.np_join_room(room, cfg).expect("join by room code");
+            assert_eq!(join.np_status().phase, NpPhase::Negotiating);
+
+            // Pump both through Negotiating → Connecting → InGame (bounded).
+            let deadline = Instant::now() + Duration::from_secs(20);
+            while Instant::now() < deadline
+                && !(host.np_status().phase == NpPhase::InGame
+                    && join.np_status().phase == NpPhase::InGame)
+            {
+                host.np_advance_frame(0);
+                join.np_advance_frame(0);
+                let hs = host.np_status();
+                let js = join.np_status();
+                assert_ne!(hs.phase, NpPhase::Error, "host negotiation: {}", hs.message);
+                assert_ne!(js.phase, NpPhase::Error, "join negotiation: {}", js.message);
+                thread::sleep(Duration::from_millis(2));
+            }
+
+            assert_eq!(
+                host.np_status().phase,
+                NpPhase::InGame,
+                "host reached InGame via room code (detail: {})",
+                host.np_status().detail
+            );
+            assert_eq!(
+                join.np_status().phase,
+                NpPhase::InGame,
+                "joiner reached InGame via room code (detail: {})",
+                join.np_status().detail
+            );
+
+            // Advance frames with fixed input; neither errors / desyncs.
+            for _ in 0..120 {
+                host.np_advance_frame(Buttons::A.bits());
+                join.np_advance_frame(Buttons::A.bits());
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            let hs = host.np_status();
+            let js = join.np_status();
+            assert_ne!(
+                hs.phase,
+                NpPhase::Error,
+                "host did not error: {}",
+                hs.message
+            );
+            assert_ne!(
+                js.phase,
+                NpPhase::Error,
+                "joiner did not error: {}",
+                js.message
+            );
+            assert!(
+                !hs.desync && !js.desync,
+                "no desync over the room-code path"
+            );
+            assert!(
+                !hs.relayed && !js.relayed,
+                "loopback uses the direct punch path"
+            );
+
+            // Confirmed digests agree (cross-peer determinism after handoff).
+            let common = hs
+                .confirmed_frame
+                .zip(js.confirmed_frame)
+                .map(|(a, b)| a.min(b));
+            if let Some(common) = common {
+                let probe = u32::try_from(common.saturating_sub(2)).unwrap_or(0);
+                let hd = host.np_confirmed_digest_for_test(probe);
+                let jd = join.np_confirmed_digest_for_test(probe);
+                if let (Some(hd), Some(jd)) = (hd, jd) {
+                    assert_eq!(hd, jd, "confirmed digests agree at frame {probe}");
+                }
+            }
+
+            stun_stop.store(true, Ordering::Relaxed);
+            relay_stop.store(true, Ordering::Relaxed);
+            let _ = stun_handle.join();
         }
     }
 }
