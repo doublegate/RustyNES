@@ -240,6 +240,22 @@ impl NesController {
         self.lock().nes.drain_audio()
     }
 
+    /// Drain the same audio as little-endian `f32` **bytes** (4 per sample).
+    ///
+    /// `UniFFI` marshals `Vec<u8>` as a single `ByteArray` (one bulk copy, no
+    /// per-element boxing), so the Android sink writes it straight to a
+    /// `PCM_FLOAT` `AudioTrack` — the allocation-light per-frame hot path, vs
+    /// [`Self::drain_audio`]'s boxed `List<Float>`. Identical samples, just a
+    /// cheaper transport; the determinism contract (timing-only) is untouched.
+    pub fn drain_audio_bytes(&self) -> Vec<u8> {
+        let samples = self.lock().nes.drain_audio();
+        let mut out = Vec::with_capacity(samples.len() * 4);
+        for s in &samples {
+            out.extend_from_slice(&s.to_le_bytes());
+        }
+        out
+    }
+
     /// Set the entire 8-bit controller mask for `port` (`0..=3`). Bit order
     /// matches [`Buttons`]: A, B, Select, Start, Up, Down, Left, Right.
     ///

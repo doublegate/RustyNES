@@ -43,6 +43,11 @@ pub fn core_version() -> String {
     rustynes_mobile::core_version()
 }
 
+/// The Android wgpu render path (Workstream B). Android-only; pulls in wgpu + the
+/// NDK, so it never touches the host shell build.
+#[cfg(target_os = "android")]
+mod gfx;
+
 #[cfg(target_os = "android")]
 mod android {
     //! Android-only entry points: logcat init, the JNI surface/audio seam, and
@@ -95,7 +100,146 @@ mod android {
     /// beta.3 (audio); the module is the stable binding seam the Kotlin side
     /// links against.
     mod jni_glue {
-        // Populated in beta.2/beta.3. Kept as a named module so the Kotlin
-        // `external fun` declarations have a stable symbol home.
+        //! The Kotlin `NativeRenderer` object's `external fun`s land here as the
+        //! `SurfaceView`'s `SurfaceHolder.Callback` drives the surface lifecycle:
+        //! init (Surface → `ANativeWindow` → wgpu), resize, render one frame, and
+        //! destroy. The handle is a boxed [`AndroidGfx`] pointer as a `jlong`.
+
+        use crate::gfx::AndroidGfx;
+        use jni::JNIEnv;
+        use jni::objects::{JByteArray, JObject};
+        use jni::sys::{jfloat, jint, jlong};
+        use ndk::native_window::NativeWindow;
+
+        /// `NativeRenderer.nativeInitSurface(surface, w, h): Long` — returns an
+        /// opaque renderer handle, or 0 on failure.
+        ///
+        /// # Safety
+        /// Invoked by the JVM; `surface` is a live `android.view.Surface`.
+        #[unsafe(no_mangle)]
+        pub extern "C" fn Java_com_doublegate_rustynes_NativeRenderer_nativeInitSurface(
+            env: JNIEnv,
+            _this: JObject,
+            surface: JObject,
+            width: jint,
+            height: jint,
+        ) -> jlong {
+            // SAFETY: `surface` is a valid Surface jobject for this call;
+            // `ANativeWindow_fromSurface` returns a new owned reference that
+            // `NativeWindow` takes ownership of (released on drop).
+            let window = unsafe {
+                NativeWindow::from_surface(env.get_raw().cast(), surface.as_raw().cast())
+            };
+            let Some(window) = window else {
+                log::error!("nativeInitSurface: ANativeWindow_fromSurface returned null");
+                return 0;
+            };
+            match AndroidGfx::new(window, width.max(0) as u32, height.max(0) as u32) {
+                Ok(gfx) => Box::into_raw(Box::new(gfx)) as jlong,
+                Err(e) => {
+                    log::error!("nativeInitSurface failed: {e}");
+                    0
+                }
+            }
+        }
+
+        /// `NativeRenderer.nativeResize(handle, w, h)`.
+        ///
+        /// # Safety
+        /// `handle` must be a live value returned by `nativeInitSurface`.
+        #[unsafe(no_mangle)]
+        pub extern "C" fn Java_com_doublegate_rustynes_NativeRenderer_nativeResize(
+            _env: JNIEnv,
+            _this: JObject,
+            handle: jlong,
+            width: jint,
+            height: jint,
+        ) {
+            if handle == 0 {
+                return;
+            }
+            // SAFETY: `handle` is a live `Box<AndroidGfx>` pointer (the Kotlin side
+            // only calls this between init and destroy on the render thread).
+            let gfx = unsafe { &mut *(handle as *mut AndroidGfx) };
+            gfx.resize(width.max(0) as u32, height.max(0) as u32);
+        }
+
+        /// `NativeRenderer.nativeRender(handle, fb)` — upload + present one 256×240
+        /// RGBA frame.
+        ///
+        /// # Safety
+        /// `handle` must be live; `fb` a Java `byte[]` of the framebuffer.
+        #[unsafe(no_mangle)]
+        pub extern "C" fn Java_com_doublegate_rustynes_NativeRenderer_nativeRender(
+            env: JNIEnv,
+            _this: JObject,
+            handle: jlong,
+            fb: JByteArray,
+        ) {
+            if handle == 0 {
+                return;
+            }
+            let Ok(len) = env.get_array_length(&fb) else {
+                return;
+            };
+            // SAFETY: live handle (see `nativeResize`).
+            let gfx = unsafe { &mut *(handle as *mut AndroidGfx) };
+            let buf = gfx.frame_buf_mut();
+            if len as usize != buf.len() {
+                return;
+            }
+            // Copy the Java `byte[]` straight into the reused buffer (no per-frame
+            // `Vec` allocation). `byte[]` is `i8` on the JVM; same bytes as `u8`.
+            let buf_i8: &mut [i8] = bytemuck::cast_slice_mut(buf);
+            if env.get_byte_array_region(&fb, 0, buf_i8).is_err() {
+                return;
+            }
+            gfx.render();
+        }
+
+        /// `NativeRenderer.nativeSetFilter(handle, filter, p0..p3)` — 0 none /
+        /// 1 scanlines / 2 CRT / 3 NTSC, plus the shader `params` (filter-specific:
+        /// Scanlines = [intensity, _, rows]; CRT = [intensity, mask, rows];
+        /// NTSC = [saturation, sharpness, tint, phase]).
+        ///
+        /// # Safety
+        /// `handle` must be a live value returned by `nativeInitSurface`.
+        #[unsafe(no_mangle)]
+        pub extern "C" fn Java_com_doublegate_rustynes_NativeRenderer_nativeSetFilter(
+            _env: JNIEnv,
+            _this: JObject,
+            handle: jlong,
+            filter: jint,
+            p0: jfloat,
+            p1: jfloat,
+            p2: jfloat,
+            p3: jfloat,
+        ) {
+            if handle == 0 {
+                return;
+            }
+            // SAFETY: live handle (see `nativeResize`).
+            let gfx = unsafe { &mut *(handle as *mut AndroidGfx) };
+            gfx.set_filter(filter.max(0) as u8, [p0, p1, p2, p3]);
+        }
+
+        /// `NativeRenderer.nativeDestroy(handle)` — drop the renderer (releases the
+        /// wgpu surface before the `ANativeWindow`).
+        ///
+        /// # Safety
+        /// `handle` must be a live value from `nativeInitSurface`, not used after.
+        #[unsafe(no_mangle)]
+        pub extern "C" fn Java_com_doublegate_rustynes_NativeRenderer_nativeDestroy(
+            _env: JNIEnv,
+            _this: JObject,
+            handle: jlong,
+        ) {
+            if handle == 0 {
+                return;
+            }
+            // SAFETY: reclaim the `Box` created in `nativeInitSurface`; the Kotlin
+            // side nulls its handle immediately after this call.
+            drop(unsafe { Box::from_raw(handle as *mut AndroidGfx) });
+        }
     }
 }

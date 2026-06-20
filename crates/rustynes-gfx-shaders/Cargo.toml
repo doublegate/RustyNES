@@ -1,0 +1,18 @@
+[package]
+name = "rustynes-gfx-shaders"
+description = "Shared WGSL presentation-shader sources for the RustyNES wgpu render path (desktop + Android)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords = ["nes", "emulator", "wgpu", "wgsl", "shader"]
+categories = ["emulators"]
+
+# Pure `const &str` WGSL sources — no dependencies, `no_std`, so both the desktop
+# frontend and the Android renderer can share the exact same shader text.
+[lib]
+
+[lints]
+workspace = true

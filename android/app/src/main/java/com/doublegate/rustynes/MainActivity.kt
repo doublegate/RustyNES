@@ -394,6 +394,23 @@ private class AudioPlayer(sampleRate: Int) {
         }
     }
 
+    /**
+     * v1.8.4 hot path: write raw little-endian `f32` bytes straight to the
+     * `PCM_FLOAT` track. The bytes come from `NesController.drainAudioBytes()` as a
+     * single `ByteArray` (no per-sample `Float` boxing); `AudioTrack` reads them as
+     * native-order PCM floats (Android is little-endian), so there's no float copy
+     * either. Blocks while the ring is full (paces the loop), exactly like [write].
+     */
+    fun writeBytes(bytes: ByteArray) {
+        if (bytes.isNotEmpty()) {
+            // The samples are little-endian f32 (from `to_le_bytes`); set the buffer
+            // order explicitly so the PCM_FLOAT track reads them correctly regardless
+            // of the JVM's default (BIG_ENDIAN) — Android is LE, so this is identity.
+            val bb = java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            track.write(bb, bytes.size, AudioTrack.WRITE_BLOCKING)
+        }
+    }
+
     fun release() {
         runCatching { track.pause(); track.flush(); track.stop() }
         track.release()
@@ -436,6 +453,38 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
         castManager.casting -> ScreenMode.Cast
         config.screenWidthDp < 520 -> ScreenMode.Cover
         else -> ScreenMode.Inner
+    }
+
+    // Native wgpu SurfaceView renderer (v1.8.4, Workstream B). Opt-in + API 33+;
+    // read ONCE at launch so it never flips mid-session. When off (default), the
+    // proven Compose Bitmap path is used unchanged. The emulation loop still packs
+    // the Bitmap (for casting / the idle thumbnail); the SurfaceView just draws the
+    // raw frame on the GPU.
+    val gpuSurface = remember {
+        if (settings.useGpuRenderer &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            NativeRenderer.ensureLoaded()
+        ) {
+            NesSurfaceView(context)
+        } else {
+            null
+        }
+    }
+    // Drive the GPU renderer's filter + its tuning params from the settings; the
+    // VideoFilter ordinals line up with the native filter codes. Re-applies live
+    // whenever the selected filter OR any of its sliders change. No-op without it.
+    LaunchedEffect(
+        gpuSurface,
+        settings.filter,
+        settings.scanlineIntensity,
+        settings.scanlineRows,
+        settings.apertureMask,
+        settings.ntscSaturation,
+        settings.ntscSharpness,
+        settings.ntscTint,
+        settings.ntscPhase,
+    ) {
+        gpuSurface?.setFilter(settings.filter.ordinal, settings.filterParams(settings.filter))
     }
 
     // SAF document picker — no broad storage permission required. The picked
@@ -514,7 +563,15 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
             contentAlignment = Alignment.Center,
         ) {
             val current = frame
-            if (current != null) {
+            // GPU SurfaceView render path (opt-in, v1.8.4). Mounted continuously and
+            // draws each submitted frame on the GPU (black until the first frame).
+            if (gpuSurface != null) {
+                androidx.compose.ui.viewinterop.AndroidView(
+                    factory = { gpuSurface },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+            if (gpuSurface == null && current != null) {
                 Image(
                     bitmap = current,
                     contentDescription = "NES screen",
@@ -538,7 +595,8 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                     // Nearest-neighbour: preserve the crisp pixel grid.
                     filterQuality = FilterQuality.None,
                 )
-            } else {
+            }
+            if (current == null) {
                 // Idle: status + the recent-ROMs list (tap to resume).
                 Column(
                     modifier = Modifier.verticalScroll(rememberScrollState()).padding(16.dp),
@@ -726,10 +784,15 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                 // setPixels + asImageBitmap stay on the UI thread.
                 withContext(Dispatchers.Default) {
                     val fb = ctrl.runFrame()
-                    val samples = ctrl.drainAudio()
+                    // Hand the raw RGBA frame to the GPU SurfaceView (opt-in path);
+                    // no-op when the GPU renderer is off.
+                    gpuSurface?.submitFrame(fb)
+                    // Hot path: drain audio as raw bytes (no per-sample Float boxing)
+                    // and write straight to the PCM_FLOAT track.
+                    val audioBytes = ctrl.drainAudioBytes()
                     // In fast-forward the audio is dropped (writing it would block
                     // the loop back to real time); otherwise play unless muted.
-                    if (!turbo && !emulator.muted) audio.write(samples)
+                    if (!turbo && !emulator.muted) audio.writeBytes(audioBytes)
                     packRgbaToArgb(fb, pixels)
                 }
                 reuse.setPixels(pixels, 0, NES_WIDTH, 0, 0, NES_WIDTH, NES_HEIGHT)

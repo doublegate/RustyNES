@@ -76,6 +76,13 @@ class AppSettings(context: Context) {
         get() = _onboardingSuppressed.value
         set(v) { _onboardingSuppressed.value = v; prefs.edit().putBoolean("onboardDone", v).apply() }
 
+    /** Use the native wgpu SurfaceView renderer instead of the Compose Bitmap blit
+     *  (v1.8.4, API 33+). Off by default; read once at launch (applies on restart). */
+    private val _useGpuRenderer = mutableStateOf(prefs.getBoolean("gpuRenderer", false))
+    var useGpuRenderer: Boolean
+        get() = _useGpuRenderer.value
+        set(v) { _useGpuRenderer.value = v; prefs.edit().putBoolean("gpuRenderer", v).apply() }
+
     // Per-screen-mode (cover / inner / cast) controller size + opacity (item 5).
     // Each mode keeps its own values, so the controller is right on the narrow
     // cover screen, the large inner screen, and while casting.
@@ -98,6 +105,54 @@ class AppSettings(context: Context) {
     fun setControllerOpacity(mode: ScreenMode, v: Float) {
         opacityStates.getValue(mode).floatValue = v
         prefs.edit().putFloat("ctrlOpacity_${mode.name}", v).apply()
+    }
+
+    // Per-filter shader params (v1.8.4) — tuned via the sliders that appear for the
+    // selected filter on the GPU renderer. Defaults match the phone-tuned look.
+    private fun floatState(key: String, default: Float) = mutableFloatStateOf(prefs.getFloat(key, default))
+    private val _scanInt = floatState("scanInt", 0.5f)
+    private val _scanRows = floatState("scanRows", 240f)
+    private val _aperture = floatState("aperture", 0.10f)
+    private val _ntscSat = floatState("ntscSat", 0.55f)
+    private val _ntscSharp = floatState("ntscSharp", 0.08f)
+    private val _ntscTint = floatState("ntscTint", 0f)
+    private val _ntscPhase = floatState("ntscPhase", 0f)
+
+    private fun putFloat(key: String, state: androidx.compose.runtime.MutableFloatState, v: Float) {
+        state.floatValue = v
+        prefs.edit().putFloat(key, v).apply()
+    }
+
+    var scanlineIntensity: Float
+        get() = _scanInt.floatValue
+        set(v) = putFloat("scanInt", _scanInt, v)
+    var scanlineRows: Float
+        get() = _scanRows.floatValue
+        set(v) = putFloat("scanRows", _scanRows, v)
+    var apertureMask: Float
+        get() = _aperture.floatValue
+        set(v) = putFloat("aperture", _aperture, v)
+    var ntscSaturation: Float
+        get() = _ntscSat.floatValue
+        set(v) = putFloat("ntscSat", _ntscSat, v)
+    var ntscSharpness: Float
+        get() = _ntscSharp.floatValue
+        set(v) = putFloat("ntscSharp", _ntscSharp, v)
+    var ntscTint: Float
+        get() = _ntscTint.floatValue
+        set(v) = putFloat("ntscTint", _ntscTint, v)
+    var ntscPhase: Float
+        get() = _ntscPhase.floatValue
+        set(v) = putFloat("ntscPhase", _ntscPhase, v)
+
+    /** The four shader params for [filter], in the order the native renderer wants:
+     *  Scanlines [intensity, _, rows], CRT [intensity, mask, rows], NTSC
+     *  [saturation, sharpness, tint, phase], None all-zero. */
+    fun filterParams(filter: VideoFilter): FloatArray = when (filter) {
+        VideoFilter.Scanlines -> floatArrayOf(scanlineIntensity, 0f, scanlineRows, 0f)
+        VideoFilter.Crt -> floatArrayOf(scanlineIntensity, apertureMask, scanlineRows, 0f)
+        VideoFilter.Ntsc -> floatArrayOf(ntscSaturation, ntscSharpness, ntscTint, ntscPhase)
+        VideoFilter.None -> floatArrayOf(0f, 0f, 0f, 0f)
     }
 }
 
@@ -146,9 +201,40 @@ fun SettingsSheet(settings: AppSettings, mode: ScreenMode, onDismiss: () -> Unit
                         )
                     }
                 }
+
+                // Tuning sliders for the GPU renderer — ONLY the ones for the
+                // selected filter (None shows none). They drive the native shader's
+                // params live; the AGSL/Bitmap path uses its own fixed look.
+                if (settings.useGpuRenderer) {
+                    when (settings.filter) {
+                        VideoFilter.None -> {}
+                        VideoFilter.Scanlines -> {
+                            ParamSlider("Scanline intensity", settings.scanlineIntensity, 0f..1f) { settings.scanlineIntensity = it }
+                            ParamSlider("Scanline count", settings.scanlineRows, 120f..480f, "%.0f") { settings.scanlineRows = it }
+                        }
+                        VideoFilter.Crt -> {
+                            ParamSlider("Scanline intensity", settings.scanlineIntensity, 0f..1f) { settings.scanlineIntensity = it }
+                            ParamSlider("Scanline count", settings.scanlineRows, 120f..480f, "%.0f") { settings.scanlineRows = it }
+                            ParamSlider("Aperture mask", settings.apertureMask, 0f..0.5f) { settings.apertureMask = it }
+                        }
+                        VideoFilter.Ntsc -> {
+                            ParamSlider("Saturation", settings.ntscSaturation, 0f..2f) { settings.ntscSaturation = it }
+                            ParamSlider("Sharpness", settings.ntscSharpness, 0f..1f) { settings.ntscSharpness = it }
+                            ParamSlider("Tint", settings.ntscTint, -0.5f..0.5f) { settings.ntscTint = it }
+                            ParamSlider("Phase", settings.ntscPhase, 0f..1f) { settings.ntscPhase = it }
+                        }
+                    }
+                }
             }
 
             ToggleRow("Mute audio", settings.muted) { settings.muted = it }
+
+            // Native wgpu SurfaceView renderer (v1.8.4, API 33+). Applies on restart.
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                ToggleRow("GPU renderer (restart to apply)", settings.useGpuRenderer) {
+                    settings.useGpuRenderer = it
+                }
+            }
 
             // Haptic intensity (Off / Low / Medium / High).
             Text("Haptics")
@@ -202,6 +288,21 @@ private fun LabeledSlider(
 ) {
     Column {
         Text("$label  ${"%.0f".format(value * 100)}%")
+        Slider(value = value, onValueChange = onChange, valueRange = range)
+    }
+}
+
+/** A raw-value slider for a shader param (shows the value with [format], not a %). */
+@Composable
+private fun ParamSlider(
+    label: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    format: String = "%.2f",
+    onChange: (Float) -> Unit,
+) {
+    Column {
+        Text("$label  ${format.format(value)}")
         Slider(value = value, onValueChange = onChange, valueRange = range)
     }
 }
