@@ -422,6 +422,22 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
     var showOnboarding by remember { mutableStateOf(!settings.onboardingSuppressed) }
     var screenSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
 
+    // Casting (item 1): track external presentation displays and present the
+    // gameplay there while the phone keeps the controller.
+    val castManager = remember { CastManager(context) }
+    DisposableEffect(Unit) {
+        castManager.register()
+        onDispose { castManager.unregister() }
+    }
+    // Current screen mode (item 5): each remembers its own controller size/opacity.
+    // Cast wins; otherwise a narrow width means the folded cover screen.
+    val config = androidx.compose.ui.platform.LocalConfiguration.current
+    val screenMode = when {
+        castManager.casting -> ScreenMode.Cast
+        config.screenWidthDp < 520 -> ScreenMode.Cover
+        else -> ScreenMode.Inner
+    }
+
     // SAF document picker — no broad storage permission required. The picked
     // bytes are handed straight to the core (no path), a persistable read grant
     // is taken, and the ROM is recorded in the recents list (Workstream E).
@@ -557,6 +573,14 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                     }
                 }
             }
+            // While casting, a small banner over the (still-mirrored) phone picture.
+            if (castManager.casting) {
+                Text(
+                    "Casting to ${castManager.displayName ?: "TV"}",
+                    color = Color(0xFF80D8FF),
+                    modifier = Modifier.align(Alignment.TopCenter).padding(8.dp),
+                )
+            }
         }
 
         // Control bar: open / states / reset / pause / fast-forward / settings.
@@ -591,6 +615,12 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
             }) { Text(if (turbo) ">> On" else ">>") }
             OutlinedButton(onClick = { showSettings = true }) { Text("Settings") }
             OutlinedButton(onClick = { showAbout = true }) { Text("About") }
+            // Cast gameplay to a connected TV/external display (only when present).
+            if (castManager.available) {
+                OutlinedButton(onClick = { castManager.toggle() }) {
+                    Text(if (castManager.casting) "Stop Cast" else "Cast to TV")
+                }
+            }
             // Demo: an always-visible unlock affordance + the session countdown.
             if (!unlocked) {
                 val price = license.product
@@ -635,9 +665,9 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                     settings.hapticLevel,
                     { controlsVisible = !controlsVisible },
                     Modifier
-                        .width(mw * settings.controllerScale)
+                        .width(mw * settings.controllerScale(screenMode))
                         .aspectRatio(123f / 53f)
-                        .alpha(settings.controllerOpacity),
+                        .alpha(settings.controllerOpacity(screenMode)),
                 )
             }
         }
@@ -645,7 +675,7 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
 
     // Settings + save-state manager sheets (v1.8.3).
     if (showSettings) {
-        SettingsSheet(settings, onDismiss = { showSettings = false })
+        SettingsSheet(settings, screenMode, onDismiss = { showSettings = false })
     }
     if (showStates) {
         StatesSheet(
@@ -704,6 +734,9 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                 }
                 reuse.setPixels(pixels, 0, NES_WIDTH, 0, 0, NES_WIDTH, NES_HEIGHT)
                 frame = reuse.asImageBitmap()
+                // Mirror the picture to the external display while casting (no-op
+                // otherwise). Same main-thread publish point as the Compose frame.
+                castManager.pushFrame(reuse)
                 // Fast-forward skips the pacing delay so the core runs ahead.
                 if (!turbo) {
                     val remainingMs = (FRAME_NANOS - (System.nanoTime() - start)) / 1_000_000

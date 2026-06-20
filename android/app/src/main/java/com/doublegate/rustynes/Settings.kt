@@ -6,7 +6,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.ModalBottomSheet
@@ -33,6 +35,14 @@ enum class ThemeMode(val label: String) { System("System"), Light("Light"), Dark
 
 /** On-screen button haptic strength (Off disables the Vibrator entirely). */
 enum class HapticLevel(val label: String) { Off("Off"), Low("Low"), Medium("Medium"), High("High") }
+
+/**
+ * Which physical screen the controller is currently drawn on. Each mode remembers
+ * its own controller size + opacity (item 5): Cover = folded outer screen,
+ * Inner = unfolded large screen, Cast = while casting gameplay to an external
+ * display (the controller then has the whole phone to itself).
+ */
+enum class ScreenMode(val label: String) { Cover("Cover"), Inner("Inner"), Cast("Cast") }
 
 class AppSettings(context: Context) {
     private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
@@ -66,25 +76,40 @@ class AppSettings(context: Context) {
         get() = _onboardingSuppressed.value
         set(v) { _onboardingSuppressed.value = v; prefs.edit().putBoolean("onboardDone", v).apply() }
 
-    private val _controllerScale = mutableFloatStateOf(prefs.getFloat("ctrlScale", 1.0f))
-    var controllerScale: Float
-        get() = _controllerScale.floatValue
-        set(v) { _controllerScale.floatValue = v; prefs.edit().putFloat("ctrlScale", v).apply() }
+    // Per-screen-mode (cover / inner / cast) controller size + opacity (item 5).
+    // Each mode keeps its own values, so the controller is right on the narrow
+    // cover screen, the large inner screen, and while casting.
+    private val scaleStates = ScreenMode.entries.associateWith {
+        mutableFloatStateOf(prefs.getFloat("ctrlScale_${it.name}", 1.0f))
+    }
+    private val opacityStates = ScreenMode.entries.associateWith {
+        mutableFloatStateOf(prefs.getFloat("ctrlOpacity_${it.name}", 1.0f))
+    }
 
-    private val _controllerOpacity = mutableFloatStateOf(prefs.getFloat("ctrlOpacity", 1.0f))
-    var controllerOpacity: Float
-        get() = _controllerOpacity.floatValue
-        set(v) { _controllerOpacity.floatValue = v; prefs.edit().putFloat("ctrlOpacity", v).apply() }
+    fun controllerScale(mode: ScreenMode): Float = scaleStates.getValue(mode).floatValue
+    fun setControllerScale(mode: ScreenMode, v: Float) {
+        scaleStates.getValue(mode).floatValue = v
+        prefs.edit().putFloat("ctrlScale_${mode.name}", v).apply()
+    }
+
+    fun controllerOpacity(mode: ScreenMode): Float = opacityStates.getValue(mode).floatValue
+    fun setControllerOpacity(mode: ScreenMode, v: Float) {
+        opacityStates.getValue(mode).floatValue = v
+        prefs.edit().putFloat("ctrlOpacity_${mode.name}", v).apply()
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsSheet(settings: AppSettings, onDismiss: () -> Unit) {
+fun SettingsSheet(settings: AppSettings, mode: ScreenMode, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val vibrator = remember { systemVibrator(context) }
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text("Settings")
@@ -138,14 +163,17 @@ fun SettingsSheet(settings: AppSettings, onDismiss: () -> Unit) {
                 }
             }
 
-            ControllerSizeSlider(settings.controllerScale, vibrator, settings.hapticLevel) {
-                settings.controllerScale = it
+            // Per-screen-mode controller size + opacity (item 5). The active mode
+            // is shown so it's clear which screen these apply to.
+            Text("Controller — ${mode.label} screen")
+            ControllerSizeSlider(settings.controllerScale(mode), mode, vibrator, settings.hapticLevel) {
+                settings.setControllerScale(mode, it)
             }
             LabeledSlider(
-                "Controller opacity",
-                settings.controllerOpacity,
+                "Controller opacity (${mode.label})",
+                settings.controllerOpacity(mode),
                 0.4f..1.0f,
-                { settings.controllerOpacity = it },
+                { settings.setControllerOpacity(mode, it) },
             )
         }
     }
@@ -187,12 +215,13 @@ private val SIZE_TICKS = listOf(0.25f, 0.5f, 0.75f, 1.0f, 1.1f)
 @Composable
 private fun ControllerSizeSlider(
     value: Float,
+    mode: ScreenMode,
     vibrator: android.os.Vibrator?,
     haptic: HapticLevel,
     onChange: (Float) -> Unit,
 ) {
     Column {
-        Text("Controller size  ${(value * 100).roundToInt()}%")
+        Text("Controller size (${mode.label})  ${(value * 100).roundToInt()}%")
         Slider(
             value = value,
             onValueChange = { nv ->
