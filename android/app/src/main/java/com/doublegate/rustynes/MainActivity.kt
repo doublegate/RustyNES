@@ -1,5 +1,6 @@
 package com.doublegate.rustynes
 
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -80,17 +81,29 @@ class MainActivity : ComponentActivity() {
      *  Activity, not Compose) can reach the same instance the UI drives. */
     private val emulator = EmulatorHandle()
 
+    /** Freemium entitlement (Workstream M); created in onCreate. */
+    private lateinit var license: LicenseManager
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        license = LicenseManager(applicationContext)
+        license.connect()
         enableEdgeToEdge()
         hideSystemBars()
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = Color.Black) {
-                    EmulatorScreen(emulator)
+                    EmulatorScreen(emulator, license)
                 }
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Re-verify entitlement against Play on each foreground (a purchase made
+        // elsewhere, a refund, or a restore reflects here).
+        if (::license.isInitialized) license.refreshEntitlement()
     }
 
     // Re-assert immersive mode whenever the window regains focus: the system
@@ -120,6 +133,9 @@ class MainActivity : ComponentActivity() {
     // consistent; it is a quick in-memory encode, fine to do on the main thread.
     override fun onPause() {
         super.onPause()
+        // Save-on-background is a paid feature: the demo never persists state
+        // (no resume, no battery-backed SRAM survives a close).
+        if (!::license.isInitialized || !license.isUnlocked) return
         val ctrl = emulator.controller
         val sha = emulator.romSha
         if (ctrl != null && sha != null) {
@@ -192,14 +208,18 @@ private fun loadRom(
     bytes: ByteArray,
     uri: Uri?,
     name: String?,
+    unlocked: Boolean,
 ): String {
     val ctrl = NesController(bytes, 48_000u)
     val sha = sha256Hex(bytes)
     emulator.controller = ctrl
     emulator.romSha = sha
-    // Resume where the player left off (the on-background auto-state), if any.
-    SaveStateStore.load(context, sha, SaveStateStore.AUTO_SLOT)?.let { blob ->
-        runCatching { ctrl.loadState(blob) }
+    // Auto-resume the on-background save-state is a paid feature; the demo always
+    // cold-boots the ROM.
+    if (unlocked) {
+        SaveStateStore.load(context, sha, SaveStateStore.AUTO_SLOT)?.let { blob ->
+            runCatching { ctrl.loadState(blob) }
+        }
     }
     if (uri != null) {
         runCatching {
@@ -302,11 +322,16 @@ private class AudioPlayer(sampleRate: Int) {
 }
 
 @Composable
-private fun EmulatorScreen(emulator: EmulatorHandle) {
+private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val activity = context as? Activity
+    val unlocked = license.isUnlocked
     var frame by remember { mutableStateOf<ImageBitmap?>(null) }
     var status by remember { mutableStateOf("Open a .nes ROM to start") }
     var recents by remember { mutableStateOf(RomLibrary.recents(context)) }
+    // Demo session clock: seconds remaining this launch (full unlock = no limit).
+    var demoSecondsLeft by remember { mutableStateOf(DEMO_SESSION_SECONDS) }
+    var demoExpired by remember { mutableStateOf(false) }
 
     // SAF document picker — no broad storage permission required. The picked
     // bytes are handed straight to the core (no path), a persistable read grant
@@ -318,7 +343,7 @@ private fun EmulatorScreen(emulator: EmulatorHandle) {
             runCatching {
                 val name = displayName(context, uri)
                 val bytes = context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
-                status = loadRom(context, emulator, bytes, uri, name)
+                status = loadRom(context, emulator, bytes, uri, name, unlocked)
                 recents = RomLibrary.recents(context)
             }.onFailure { status = "Failed to load ROM: ${it.message}" }
         }
@@ -329,9 +354,29 @@ private fun EmulatorScreen(emulator: EmulatorHandle) {
         runCatching {
             val uri = Uri.parse(rom.uri)
             val bytes = context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
-            status = loadRom(context, emulator, bytes, uri, rom.name)
+            status = loadRom(context, emulator, bytes, uri, rom.name, unlocked)
             recents = RomLibrary.recents(context)
         }.onFailure { status = "Can't open ${rom.name}: ${it.message}" }
+    }
+
+    // Demo countdown: tick once per second while a ROM is running, unpaused, and
+    // not yet unlocked; on expiry, pause the emulator and raise the unlock sheet.
+    // Purchasing (unlocked -> true) cancels the limit immediately.
+    LaunchedEffect(unlocked) {
+        if (unlocked) {
+            demoExpired = false
+            return@LaunchedEffect
+        }
+        while (true) {
+            kotlinx.coroutines.delay(1000)
+            if (emulator.controller != null && !emulator.paused && !demoExpired) {
+                demoSecondsLeft -= 1
+                if (demoSecondsLeft <= 0) {
+                    demoExpired = true
+                    emulator.paused = true
+                }
+            }
+        }
     }
 
     // Debug-only convenience: auto-load a ROM pushed to the app's external files
@@ -343,7 +388,7 @@ private fun EmulatorScreen(emulator: EmulatorHandle) {
             val auto = java.io.File(context.getExternalFilesDir(null), "autoload.nes")
             if (auto.exists()) {
                 runCatching {
-                    status = loadRom(context, emulator, auto.readBytes(), null, "autoload")
+                    status = loadRom(context, emulator, auto.readBytes(), null, "autoload", unlocked)
                 }.onFailure { status = "Autoload failed: ${it.message}" }
             }
         }
@@ -411,27 +456,30 @@ private fun EmulatorScreen(emulator: EmulatorHandle) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Button(onClick = { picker.launch(arrayOf("*/*")) }) { Text("Open") }
-            OutlinedButton(onClick = {
-                val ctrl = emulator.controller
-                val sha = emulator.romSha
-                if (ctrl != null && sha != null) {
-                    runCatching { SaveStateStore.save(context, sha, "1", ctrl.saveState()) }
-                        .onSuccess { status = "Saved slot 1" }
-                        .onFailure { status = "Save failed: ${it.message}" }
-                }
-            }) { Text("Save") }
-            OutlinedButton(onClick = {
-                val ctrl = emulator.controller
-                val sha = emulator.romSha
-                val blob = if (sha != null) SaveStateStore.load(context, sha, "1") else null
-                if (ctrl != null && blob != null) {
-                    runCatching { ctrl.loadState(blob) }
-                        .onSuccess { status = "Loaded slot 1" }
-                        .onFailure { status = "Load failed: ${it.message}" }
-                } else {
-                    status = "No save in slot 1"
-                }
-            }) { Text("Load") }
+            // Save-states are a paid feature; the demo hides them.
+            if (unlocked) {
+                OutlinedButton(onClick = {
+                    val ctrl = emulator.controller
+                    val sha = emulator.romSha
+                    if (ctrl != null && sha != null) {
+                        runCatching { SaveStateStore.save(context, sha, "1", ctrl.saveState()) }
+                            .onSuccess { status = "Saved slot 1" }
+                            .onFailure { status = "Save failed: ${it.message}" }
+                    }
+                }) { Text("Save") }
+                OutlinedButton(onClick = {
+                    val ctrl = emulator.controller
+                    val sha = emulator.romSha
+                    val blob = if (sha != null) SaveStateStore.load(context, sha, "1") else null
+                    if (ctrl != null && blob != null) {
+                        runCatching { ctrl.loadState(blob) }
+                            .onSuccess { status = "Loaded slot 1" }
+                            .onFailure { status = "Load failed: ${it.message}" }
+                    } else {
+                        status = "No save in slot 1"
+                    }
+                }) { Text("Load") }
+            }
             OutlinedButton(onClick = { emulator.controller?.reset() }) { Text("Reset") }
             OutlinedButton(onClick = {
                 paused = !paused
@@ -445,9 +493,39 @@ private fun EmulatorScreen(emulator: EmulatorHandle) {
                 muted = !muted
                 emulator.muted = muted
             }) { Text(if (muted) "Unmute" else "Mute") }
+            // Demo: an always-visible unlock affordance + the session countdown.
+            if (!unlocked) {
+                val price = license.product
+                    ?.oneTimePurchaseOfferDetails?.formattedPrice ?: "$2.99"
+                Button(onClick = { activity?.let { license.purchase(it) } }) {
+                    Text("Unlock $price")
+                }
+                val mins = demoSecondsLeft / 60
+                val secs = demoSecondsLeft % 60
+                Text(
+                    "Demo · %d:%02d".format(mins, secs),
+                    color = Color.Gray,
+                )
+            }
+            // Debug-only: simulate the Full Unlock (the real Play purchase flow
+            // can't run on a sideloaded build). No-op / absent in release.
+            if (BuildConfig.DEBUG) {
+                OutlinedButton(onClick = { license.debugForceUnlocked(!unlocked) }) {
+                    Text(if (unlocked) "DBG:demo" else "DBG:unlock")
+                }
+            }
         }
 
         TouchOverlay(emulator)
+    }
+
+    // Demo-expired gate: a blocking sheet over everything with Unlock + Restore.
+    if (!unlocked && demoExpired) {
+        DemoExpiredOverlay(
+            price = license.product?.oneTimePurchaseOfferDetails?.formattedPrice ?: "$2.99",
+            onUnlock = { activity?.let { license.purchase(it) } },
+            onRestore = { license.refreshEntitlement() },
+        )
     }
 
     // Emulation loop: run frames + render audio on a background dispatcher, then
@@ -508,6 +586,34 @@ private fun packRgbaToArgb(rgba: ByteArray, out: IntArray) {
         out[p] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
         i += 4
         p += 1
+    }
+}
+
+/** Blocking sheet shown when the free 10-minute demo session expires. */
+@Composable
+private fun DemoExpiredOverlay(price: String, onUnlock: () -> Unit, onRestore: () -> Unit) {
+    Box(
+        modifier = Modifier.fillMaxSize().background(Color(0xE6000000)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            modifier = Modifier.padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text("Demo time's up", color = Color.White)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Unlock the full version to keep playing — save states, resume, " +
+                    "and in-cart battery saves included.",
+                color = Color.LightGray,
+            )
+            Spacer(Modifier.height(20.dp))
+            Button(onClick = onUnlock) { Text("Unlock $price") }
+            Spacer(Modifier.height(8.dp))
+            androidx.compose.material3.TextButton(onClick = onRestore) {
+                Text("Restore purchase")
+            }
+        }
     }
 }
 

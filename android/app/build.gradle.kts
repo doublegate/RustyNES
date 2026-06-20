@@ -145,4 +145,6 @@ dependencies {
     // UniFFI's generated Kotlin loads the cdylib through JNA; the `@aar`
     // classifier pulls the Android-native JNA dispatcher.
     implementation("net.java.dev.jna:jna:5.15.0@aar")
+    // Play Billing — the one-time "Full Unlock" IAP (Workstream M, freemium model).
+    implementation("com.android.billingclient:billing-ktx:8.0.0")
 }
