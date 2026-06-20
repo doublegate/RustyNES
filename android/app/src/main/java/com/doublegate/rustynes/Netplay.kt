@@ -31,12 +31,15 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.net.Inet4Address
 import java.net.NetworkInterface
+import uniffi.rustynes_mobile.NpNetConfig
 import uniffi.rustynes_mobile.NpPhase
 import uniffi.rustynes_mobile.NpStatus
 
@@ -53,6 +56,42 @@ import uniffi.rustynes_mobile.NpStatus
 
 /** Host vs. Join — the two ways to start a direct-IP session. */
 private enum class NetplayRole(val label: String) { Host("Host"), Join("Join") }
+
+/** LAN (direct-IP) vs. Online (room-code) — the two transports. */
+private enum class NetplayMode(val label: String) { Lan("LAN"), Online("Online (room code)") }
+
+/**
+ * Default online-netplay endpoints (v1.8.7, Phase C). The Phase-B bridge ships NO
+ * hardcoded defaults — Phase C owns them, and [AppSettings] lets the user override
+ * each in the "Netplay (online)" Settings section.
+ *
+ * IMPORTANT (maintainer carryover): [SIGNALING_URL] is a CLEARLY-PLACEHOLDER value.
+ * Online play does NOT work until the maintainer hosts the `deploy/` relay stack
+ * (signaling server + optional coturn) and replaces this URL (in Settings or here).
+ * Until then the UI shows a caveat and host/join will fail fast on the placeholder.
+ */
+object NetplayEndpoints {
+    /** Placeholder signaling relay — REPLACE with the hosted `deploy/` stack URL. */
+    const val SIGNALING_URL = "wss://relay.rustynes.example/ws"
+}
+
+/**
+ * Build the bridge's [NpNetConfig] from the user-overridable Settings endpoints.
+ * Empty STUN → the bridge falls back to Google's public STUN servers. TURN is only
+ * configured when the URL + both credentials are present (else punch-or-fail).
+ */
+fun netplayConfig(settings: AppSettings): NpNetConfig {
+    val turnUrl = settings.npTurnUrl.trim().ifBlank { null }
+    val turnUser = settings.npTurnUser.trim().ifBlank { null }
+    val turnSecret = settings.npTurnSecret.ifBlank { null }
+    return NpNetConfig(
+        stunServers = emptyList(),
+        turnUrl = turnUrl,
+        turnUser = turnUser,
+        turnSecret = turnSecret,
+        signalingUrl = settings.npSignalingUrl.trim(),
+    )
+}
 
 /**
  * The bottom-sheet netplay panel. Mirrors [SettingsSheet] / the other sheets: a
@@ -72,17 +111,26 @@ private enum class NetplayRole(val label: String) { Host("Host"), Join("Join") }
 fun NetplaySheet(
     status: NpStatus?,
     hostInfo: String?,
+    roomCode: String?,
     lastJoinAddress: String,
+    lastRoomCode: String,
+    onlineConfigured: Boolean,
     onHost: (UShort, UByte) -> Unit,
     onJoin: (String) -> Unit,
+    onHostRoom: () -> Unit,
+    onJoinRoom: (String) -> Unit,
     onLeave: () -> Unit,
     onSaveJoinAddress: (String) -> Unit,
+    onSaveRoomCode: (String) -> Unit,
+    onShareRoomCode: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val active = status != null && status.phase != NpPhase.IDLE
+    var mode by remember { mutableStateOf(NetplayMode.Lan) }
     var role by remember { mutableStateOf(NetplayRole.Host) }
     var portText by remember { mutableStateOf("") }
     var joinText by remember { mutableStateOf(lastJoinAddress) }
+    var roomText by remember { mutableStateOf(lastRoomCode) }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
@@ -92,16 +140,52 @@ fun NetplaySheet(
                 .padding(horizontal = 20.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("Netplay (LAN)")
-            Text(
-                "Two devices on the same Wi-Fi. The host shares its IP and port; " +
-                    "the other player joins it. No internet matchmaking.",
-                fontSize = 12.sp,
-                color = Color.Gray,
-            )
+            Text("Netplay")
 
             if (!active) {
-                // Host / Join segmented control.
+                // LAN vs. Online (room-code) transport selector.
+                Row(
+                    modifier = Modifier.fillMaxWidth().selectableGroup(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    NetplayMode.entries.forEach { m ->
+                        FilterChip(
+                            selected = mode == m,
+                            onClick = { mode = m },
+                            label = { Text(m.label) },
+                        )
+                    }
+                }
+            }
+
+            when (mode) {
+                NetplayMode.Lan -> Text(
+                    "Two devices on the same Wi-Fi. The host shares its IP and port; " +
+                        "the other player joins it. No internet matchmaking.",
+                    fontSize = 12.sp,
+                    color = Color.Gray,
+                )
+                NetplayMode.Online -> {
+                    Text(
+                        "Play over the internet: the host gets a 6-character room code " +
+                            "to share; the other player enters it.",
+                        fontSize = 12.sp,
+                        color = Color.Gray,
+                    )
+                    if (!onlineConfigured) {
+                        Text(
+                            "Online play requires a relay server. None is configured yet, " +
+                                "so only LAN works until one is set in Settings → " +
+                                "Netplay (online).",
+                            fontSize = 12.sp,
+                            color = Color(0xFFFFB300),
+                        )
+                    }
+                }
+            }
+
+            if (!active) {
+                // Host / Join segmented control (shared by both transports).
                 Row(
                     modifier = Modifier.fillMaxWidth().selectableGroup(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -115,48 +199,87 @@ fun NetplaySheet(
                     }
                 }
 
-                when (role) {
-                    NetplayRole.Host -> {
-                        Text("Players: 2", fontSize = 13.sp)
-                        OutlinedTextField(
-                            value = portText,
-                            onValueChange = { portText = it.filter(Char::isDigit).take(5) },
-                            label = { Text("Port (empty = auto)") },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Button(
-                            onClick = {
-                                val port = portText.toUShortOrNull() ?: 0u
-                                onHost(port, 2u)
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) { Text("Start hosting") }
+                when (mode) {
+                    NetplayMode.Lan -> when (role) {
+                        NetplayRole.Host -> {
+                            Text("Players: 2", fontSize = 13.sp)
+                            OutlinedTextField(
+                                value = portText,
+                                onValueChange = { portText = it.filter(Char::isDigit).take(5) },
+                                label = { Text("Port (empty = auto)") },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Button(
+                                onClick = {
+                                    val port = portText.toUShortOrNull() ?: 0u
+                                    onHost(port, 2u)
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text("Start hosting") }
+                        }
+                        NetplayRole.Join -> {
+                            OutlinedTextField(
+                                value = joinText,
+                                onValueChange = { joinText = it },
+                                label = { Text("Host address (ip:port)") },
+                                placeholder = { Text("192.168.1.50:7000") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Button(
+                                onClick = {
+                                    val addr = joinText.trim()
+                                    onSaveJoinAddress(addr)
+                                    onJoin(addr)
+                                },
+                                enabled = joinText.contains(':'),
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text("Join") }
+                        }
                     }
-                    NetplayRole.Join -> {
-                        OutlinedTextField(
-                            value = joinText,
-                            onValueChange = { joinText = it },
-                            label = { Text("Host address (ip:port)") },
-                            placeholder = { Text("192.168.1.50:7000") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Button(
-                            onClick = {
-                                val addr = joinText.trim()
-                                onSaveJoinAddress(addr)
-                                onJoin(addr)
-                            },
-                            enabled = joinText.contains(':'),
-                            modifier = Modifier.fillMaxWidth(),
-                        ) { Text("Join") }
+                    NetplayMode.Online -> when (role) {
+                        NetplayRole.Host -> {
+                            // Players is fixed at 2 for the room-code path.
+                            Text("Players: 2", fontSize = 13.sp)
+                            Button(
+                                onClick = onHostRoom,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text("Host online") }
+                        }
+                        NetplayRole.Join -> {
+                            OutlinedTextField(
+                                value = roomText,
+                                onValueChange = {
+                                    // Auto-uppercase, alphanumeric only, max 6 chars.
+                                    roomText = it.uppercase()
+                                        .filter(Char::isLetterOrDigit)
+                                        .take(6)
+                                },
+                                label = { Text("Room code") },
+                                placeholder = { Text("ABC123") },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(
+                                    capitalization = KeyboardCapitalization.Characters,
+                                ),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Button(
+                                onClick = {
+                                    val code = roomText.trim()
+                                    onSaveRoomCode(code)
+                                    onJoinRoom(code)
+                                },
+                                enabled = roomText.length == 6,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text("Join online") }
+                        }
                     }
                 }
             }
 
-            // The bound address to share (host only, once listening).
+            // The bound LAN address to share (host only, once listening).
             if (hostInfo != null) {
                 Spacer(Modifier.height(4.dp))
                 Text(
@@ -165,6 +288,28 @@ fun NetplaySheet(
                     color = Color.Gray,
                 )
                 Text(hostInfo, fontSize = 16.sp, color = Color(0xFF80D8FF))
+            }
+
+            // The room code to share (online host only, once registered).
+            if (roomCode != null) {
+                Spacer(Modifier.height(4.dp))
+                Text("Room code", fontSize = 12.sp, color = Color.Gray)
+                Text(
+                    roomCode,
+                    fontSize = 40.sp,
+                    fontFamily = FontFamily.Monospace,
+                    letterSpacing = 6.sp,
+                    color = Color(0xFF80D8FF),
+                )
+                Text(
+                    "Tell the other player to enter this code.",
+                    fontSize = 12.sp,
+                    color = Color.Gray,
+                )
+                OutlinedButton(
+                    onClick = { onShareRoomCode(roomCode) },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Share code") }
             }
 
             // Live status row.
@@ -184,7 +329,8 @@ fun NetplaySheet(
 private fun NetplayStatusRow(status: NpStatus) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            // A red dot on desync; otherwise green while in-game, amber while connecting.
+            // A red dot on desync; otherwise green while in-game, amber while
+            // negotiating/connecting.
             val dot = when {
                 status.desync -> Color(0xFFE53935)
                 status.phase == NpPhase.IN_GAME -> Color(0xFF66BB6A)
@@ -200,12 +346,30 @@ private fun NetplayStatusRow(status: NpStatus) {
             Spacer(Modifier.size(8.dp))
             val phaseLabel = when (status.phase) {
                 NpPhase.IDLE -> "Idle"
+                NpPhase.NEGOTIATING -> "Connecting (online)"
                 NpPhase.CONNECTING -> "Connecting"
                 NpPhase.IN_GAME -> "In game"
                 NpPhase.ERROR -> "Error"
             }
             val roleLabel = if (status.isHost) "Host" else "Joiner"
             Text("$phaseLabel · $roleLabel", fontSize = 13.sp)
+            // "via relay" badge — gated on relayed (reserved; currently always false).
+            if (status.relayed) {
+                Spacer(Modifier.size(8.dp))
+                Text(
+                    "via relay",
+                    fontSize = 11.sp,
+                    color = Color(0xFFCE93D8),
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(Color(0x33CE93D8))
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                )
+            }
+        }
+        // While negotiating (online room-code NAT traversal), show the sub-step.
+        if (status.phase == NpPhase.NEGOTIATING && status.detail.isNotEmpty()) {
+            Text("${status.detail}…", fontSize = 12.sp, color = Color.Gray)
         }
         val ping = status.pingMs
         if (ping != null) {

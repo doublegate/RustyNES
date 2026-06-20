@@ -479,6 +479,9 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
     var showNetplay by remember { mutableStateOf(false) }
     var npStatus by remember { mutableStateOf<uniffi.rustynes_mobile.NpStatus?>(null) }
     var npHostInfo by remember { mutableStateOf<String?>(null) }
+    // Online (room-code) netplay (v1.8.7): the host's 6-char code to share, set once
+    // np_host_room returns (null otherwise).
+    var npRoomCode by remember { mutableStateOf<String?>(null) }
     var npActive by remember { mutableStateOf(false) }
     // Tracks the previous login status to detect the LOGGED_OUT -> LOGGED_IN edge.
     var raWasLoggedIn by remember { mutableStateOf(false) }
@@ -746,11 +749,71 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
         }
     }
 
+    // Netplay (v1.8.7): host an online (room-code) session. Registers with the
+    // signaling relay + STUN/NAT traversal (all network I/O, so off the main thread);
+    // on success the bridge returns a 6-char room code to share. A ROM must be loaded
+    // (the ROM hash gates the handshake). The NpNetConfig endpoints come from Settings
+    // (defaulting to the placeholder relay), so an unconfigured relay fails here fast.
+    fun netplayHostRoom() {
+        val ctrl = emulator.controller
+        if (ctrl == null) {
+            status = "Open a ROM first, then host"
+            return
+        }
+        npHostInfo = null
+        npRoomCode = null
+        scope.launch {
+            runCatching {
+                val cfg = netplayConfig(settings)
+                val code = withContext(Dispatchers.IO) { ctrl.npHostRoom(2u, cfg) }
+                npRoomCode = code
+                status = "Hosting online — room code $code"
+            }.onFailure { status = "Host failed: ${it.message}" }
+        }
+    }
+
+    // Netplay (v1.8.7): join an online session by its 6-char room code. NAT traversal
+    // = network I/O, so off the main thread. A ROM must be loaded so the ROM-hash check
+    // passes; the code is persisted so the Join-online field prefills it next time.
+    fun netplayJoinRoom(code: String) {
+        val ctrl = emulator.controller
+        if (ctrl == null) {
+            status = "Open the same ROM first, then join"
+            return
+        }
+        npHostInfo = null
+        npRoomCode = null
+        scope.launch {
+            runCatching {
+                val cfg = netplayConfig(settings)
+                withContext(Dispatchers.IO) { ctrl.npJoinRoom(code, cfg) }
+                status = "Joining room $code…"
+            }.onFailure { status = "Join failed: ${it.message}" }
+        }
+    }
+
+    // Share the room code via the system ACTION_SEND chooser (v1.8.7).
+    fun shareRoomCode(code: String) {
+        runCatching {
+            val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(
+                    android.content.Intent.EXTRA_TEXT,
+                    "Join my RustyNES game — room code: $code",
+                )
+            }
+            context.startActivity(
+                android.content.Intent.createChooser(send, "Share room code"),
+            )
+        }.onFailure { status = "Couldn't share: ${it.message}" }
+    }
+
     // Netplay (v1.8.6): tear the session down and return to single-player.
     fun netplayLeave() {
         scope.launch {
             withContext(Dispatchers.IO) { runCatching { emulator.controller?.npLeave() } }
             npHostInfo = null
+            npRoomCode = null
             npStatus = null
             npActive = false
             status = "Left netplay"
@@ -919,6 +982,8 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
             // line while a LAN session is active. Reuses the RA/Lua overlay pattern.
             npStatus?.takeIf { npActive && it.phase != uniffi.rustynes_mobile.NpPhase.IDLE }?.let { s ->
                 val line = when (s.phase) {
+                    uniffi.rustynes_mobile.NpPhase.NEGOTIATING ->
+                        "Netplay: ${s.detail.ifEmpty { "connecting" }}…"
                     uniffi.rustynes_mobile.NpPhase.CONNECTING -> "Netplay: connecting…"
                     uniffi.rustynes_mobile.NpPhase.IN_GAME ->
                         "Netplay: synced f=${s.currentFrame}" +
@@ -1222,11 +1287,20 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
         NetplaySheet(
             status = npStatus,
             hostInfo = npHostInfo,
+            roomCode = npRoomCode,
             lastJoinAddress = settings.lastJoinAddress,
+            lastRoomCode = settings.lastRoomCode,
+            // Online play needs a real (non-placeholder) signaling relay configured.
+            onlineConfigured = settings.npSignalingUrl.trim().isNotEmpty() &&
+                settings.npSignalingUrl.trim() != NetplayEndpoints.SIGNALING_URL,
             onHost = { port, players -> netplayHost(port, players) },
             onJoin = { addr -> netplayJoin(addr) },
+            onHostRoom = { netplayHostRoom() },
+            onJoinRoom = { code -> netplayJoinRoom(code) },
             onLeave = { netplayLeave() },
             onSaveJoinAddress = { settings.lastJoinAddress = it },
+            onSaveRoomCode = { settings.lastRoomCode = it },
+            onShareRoomCode = { shareRoomCode(it) },
             onDismiss = { showNetplay = false },
         )
     }
@@ -1371,6 +1445,7 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                     npStatus = null
                     npActive = false
                     npHostInfo = null
+                    npRoomCode = null
                 }
                 // RetroAchievements: poll the toast queue + login status at a low
                 // cadence. Cheap when RA is off (a single `raIsEnabled` bool check).

@@ -120,6 +120,42 @@ class AppSettings(context: Context) {
         get() = prefs.getString("npLastJoin", "") ?: ""
         set(v) { prefs.edit().putString("npLastJoin", v).apply() }
 
+    /** Online (room-code) netplay (v1.8.7): the last 6-char room code the user
+     *  joined, so the Join-online field prefills it. */
+    var lastRoomCode: String
+        get() = prefs.getString("npLastRoom", "") ?: ""
+        set(v) { prefs.edit().putString("npLastRoom", v).apply() }
+
+    // Online-netplay endpoints (v1.8.7). The Phase-B bridge has NO hardcoded
+    // defaults, so Phase C supplies them and lets the user override each in the
+    // "Netplay (online)" Settings section. They default to the placeholders in
+    // [NetplayEndpoints] (which point at the maintainer's not-yet-hosted relay) so
+    // a fresh install at least has a coherent — if non-functional until hosted —
+    // config. Empty STUN falls back to the bridge's public Google STUN list.
+
+    /** The signaling relay URL (`wss://…/ws`). Placeholder default until the
+     *  maintainer hosts the `deploy/` stack and replaces it. */
+    var npSignalingUrl: String
+        get() = prefs.getString("npSignalingUrl", NetplayEndpoints.SIGNALING_URL)
+            ?: NetplayEndpoints.SIGNALING_URL
+        set(v) { prefs.edit().putString("npSignalingUrl", v).apply() }
+
+    /** Optional TURN relay `host:port` for the symmetric-NAT fallback (empty =
+     *  punch-or-fail; cone-NAT only). Needs the hosted coturn to be useful. */
+    var npTurnUrl: String
+        get() = prefs.getString("npTurnUrl", "") ?: ""
+        set(v) { prefs.edit().putString("npTurnUrl", v).apply() }
+
+    /** TURN long-term-credential username (paired with [npTurnUrl]). */
+    var npTurnUser: String
+        get() = prefs.getString("npTurnUser", "") ?: ""
+        set(v) { prefs.edit().putString("npTurnUser", v).apply() }
+
+    /** TURN shared secret / password (paired with [npTurnUrl]). */
+    var npTurnSecret: String
+        get() = prefs.getString("npTurnSecret", "") ?: ""
+        set(v) { prefs.edit().putString("npTurnSecret", v).apply() }
+
     // Per-screen-mode (cover / inner / cast) controller size + opacity (item 5).
     // Each mode keeps its own values, so the controller is right on the narrow
     // cover screen, the large inner screen, and while casting.
@@ -368,6 +404,53 @@ fun SettingsSheet(
                 ToggleRow("Hardcore mode", raHardcore, onRaHardcoreChange)
                 Text(raStatus)
             }
+
+            // Netplay (online) endpoints (v1.8.7). The bridge has NO hardcoded
+            // defaults, so these supply them. The signaling URL defaults to the
+            // clearly-placeholder relay; until the maintainer hosts the `deploy/`
+            // stack and sets a real URL here, only LAN netplay works. TURN is
+            // optional (cone-NAT hole-punch works without it); fill all three to
+            // enable the symmetric-NAT relay fallback.
+            Text("Netplay (online)")
+            Text(
+                "Room-code play needs a relay server. The default URL is a " +
+                    "placeholder — set your hosted signaling relay to enable it.",
+                style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+            )
+            var npSig by remember { mutableStateOf(settings.npSignalingUrl) }
+            OutlinedTextField(
+                value = npSig,
+                onValueChange = { npSig = it; settings.npSignalingUrl = it },
+                label = { Text("Signaling URL (wss://…)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            var npTUrl by remember { mutableStateOf(settings.npTurnUrl) }
+            OutlinedTextField(
+                value = npTUrl,
+                onValueChange = { npTUrl = it; settings.npTurnUrl = it },
+                label = { Text("TURN URL (optional, host:port)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            var npTUser by remember { mutableStateOf(settings.npTurnUser) }
+            OutlinedTextField(
+                value = npTUser,
+                onValueChange = { npTUser = it; settings.npTurnUser = it },
+                label = { Text("TURN username (optional)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            var npTSecret by remember { mutableStateOf(settings.npTurnSecret) }
+            OutlinedTextField(
+                value = npTSecret,
+                onValueChange = { npTSecret = it; settings.npTurnSecret = it },
+                label = { Text("TURN secret (optional)") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                modifier = Modifier.fillMaxWidth(),
+            )
 
             ToggleRow("Mute audio", settings.muted) { settings.muted = it }
 
