@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.view.KeyEvent
+import android.view.MotionEvent
 import java.security.MessageDigest
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -93,6 +94,11 @@ class MainActivity : ComponentActivity() {
      *  Activity, not Compose) can reach the same instance the UI drives. */
     private val emulator = EmulatorHandle()
 
+    /** Hardware game-controller manager (v1.8.7): device->port assignment, hot-plug,
+     *  per-pad remapping, analog/HAT decode, and turbo/autofire. Created in onCreate
+     *  (needs the application Context) and registered/unregistered in onResume/onPause. */
+    private lateinit var gamepad: GamepadManager
+
     /** Freemium entitlement (Workstream M); created in onCreate. */
     private lateinit var license: LicenseManager
 
@@ -104,11 +110,14 @@ class MainActivity : ComponentActivity() {
         license = LicenseManager(applicationContext)
         // Only connect to Play Billing in the Play build; off-Play it can't transact.
         if (BuildConfig.PLAY_BUILD) license.connect()
+        gamepad = GamepadManager(applicationContext, emulator)
         registerThermalBackoff()
         enableEdgeToEdge()
         hideSystemBars()
         setContent {
             val settings = remember { AppSettings(this@MainActivity) }
+            // Load any persisted per-pad remap tables + the autofire toggle once.
+            LaunchedEffect(Unit) { gamepad.loadRemaps(settings) }
             val dark = when (settings.themeMode) {
                 ThemeMode.System -> isSystemInDarkTheme()
                 ThemeMode.Light -> false
@@ -119,7 +128,7 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background,
                 ) {
-                    EmulatorScreen(emulator, license, settings)
+                    EmulatorScreen(emulator, gamepad, license, settings)
                 }
             }
         }
@@ -130,6 +139,15 @@ class MainActivity : ComponentActivity() {
         // Re-verify entitlement against Play on each foreground (a purchase made
         // elsewhere, a refund, or a restore reflects here).
         if (BuildConfig.PLAY_BUILD && ::license.isInitialized) license.refreshEntitlement()
+        // Start listening for controller hot-plug + enumerate connected pads.
+        if (::gamepad.isInitialized) gamepad.register()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // Stop listening for controller hot-plug while backgrounded.
+        if (::gamepad.isInitialized) gamepad.unregister()
+        onPauseSaveState()
     }
 
     // Cancel fast-forward when the device starts thermally throttling — the NES
@@ -177,8 +195,7 @@ class MainActivity : ComponentActivity() {
     // next open of it resumes where the player left off. The bridge's internal
     // lock serialises this against the emulation thread, so the snapshot is
     // consistent; it is a quick in-memory encode, fine to do on the main thread.
-    override fun onPause() {
-        super.onPause()
+    private fun onPauseSaveState() {
         val ctrl = emulator.controller
         val sha = emulator.romSha
         // RetroAchievements progress sidecar (v1.8.6) is persisted unconditionally —
@@ -199,12 +216,19 @@ class MainActivity : ComponentActivity() {
     }
 
     // Hardware gamepad / keyboard: Android dispatches KeyEvents to the Activity.
-    // Map them onto P1 and feed the same controller the touch overlay drives.
+    // Try the assigned-gamepad path first (device->port + per-pad remap); if the key
+    // wasn't from an assigned pad, fall back to the fixed keyboard profile (P1).
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
-        emulator.onKey(keyCode, true) || super.onKeyDown(keyCode, event)
+        gamepad.onKey(event) || emulator.onKeyboard(keyCode, true) || super.onKeyDown(keyCode, event)
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean =
-        emulator.onKey(keyCode, false) || super.onKeyUp(keyCode, event)
+        gamepad.onKey(event) || emulator.onKeyboard(keyCode, false) || super.onKeyUp(keyCode, event)
+
+    // Joystick motion: analog sticks, L/R triggers, and the d-pad-as-HAT axis arrive
+    // here (NOT as KeyEvents). Without this override they were silently dropped, so
+    // many pads' d-pads did nothing. Routed to the manager which decodes them per port.
+    override fun onGenericMotionEvent(event: MotionEvent): Boolean =
+        gamepad.onMotion(event) || super.onGenericMotionEvent(event)
 }
 
 /**
@@ -234,15 +258,21 @@ class EmulatorHandle {
     @Volatile
     var muted: Boolean = false
 
-    // P1 input is the OR of two sources that must not clobber each other: the
-    // on-screen virtual controller (multi-touch) and any hardware gamepad/keyboard.
-    // Each updates its own mask; applyP1() combines them into the bridge's single
-    // late-latched P1 mask.
+    // Each NES port's mask is the OR of two sources that must not clobber each
+    // other: P1 also gets the on-screen virtual controller (multi-touch), and every
+    // port gets its assigned hardware gamepad (via GamepadManager). applyPort()
+    // combines them into that port's single late-latched bridge mask.
     @Volatile
     private var touchMask: Int = 0
 
+    /** Per-port hardware-gamepad masks (port 0..3), set by [GamepadManager]. Index 0
+     *  is OR'd with [touchMask] for P1. */
+    private val gamepadMasks = IntArray(4)
+
+    /** Hardware-keyboard mask — a default profile that always feeds P1 (so a USB/BT
+     *  keyboard works even with no game pad assigned to port 0). */
     @Volatile
-    private var keyMask: Int = 0
+    private var keyboardMask: Int = 0
 
     /** Set the on-screen virtual-controller mask (the full set of pressed buttons). */
     fun setTouchMask(mask: Int) {
@@ -250,34 +280,59 @@ class EmulatorHandle {
         // read-modify-combine so neither source clobbers the other's mask.
         synchronized(this) {
             touchMask = mask
-            applyP1()
+            applyPort(0)
         }
     }
 
-    /** Returns true if the key was consumed (a mapped NES button). */
-    fun onKey(keyCode: Int, pressed: Boolean): Boolean {
-        val bit = keyToBit(keyCode) ?: return false
+    /** Set a port's hardware-gamepad mask (the full pressed set), from the manager. */
+    fun setGamepadMask(port: Int, mask: Int) {
+        if (port !in 0..3) return
         synchronized(this) {
-            keyMask = if (pressed) keyMask or bit else keyMask and bit.inv()
-            applyP1()
+            gamepadMasks[port] = mask
+            applyPort(port)
+        }
+    }
+
+    /**
+     * Hardware-keyboard fallback: a fixed default profile feeding P1, used when a
+     * KeyEvent wasn't consumed by an assigned gamepad. Returns true if the key was a
+     * mapped NES button.
+     */
+    fun onKeyboard(keyCode: Int, pressed: Boolean): Boolean {
+        val bit = keyboardKeyToBit(keyCode) ?: return false
+        synchronized(this) {
+            keyboardMask = if (pressed) keyboardMask or bit else keyboardMask and bit.inv()
+            applyPort(0)
         }
         return true
     }
 
-    private fun applyP1() {
-        controller?.setButtons(0u, (touchMask or keyMask).toUByte())
+    private fun applyPort(port: Int) {
+        val mask = if (port == 0) {
+            touchMask or gamepadMasks[0] or keyboardMask
+        } else {
+            gamepadMasks[port]
+        }
+        controller?.setButtons(port.toUInt(), mask.toUByte())
     }
 
-    /** The current combined P1 mask (touch | key) — the `local_mask` netplay feeds
-     *  to `npAdvanceFrame` (where the bridge owns the latch, so `setButtons` is not
-     *  the input path). Synchronized against the touch/key updaters. */
-    fun p1Mask(): Int = synchronized(this) { touchMask or keyMask }
+    /** Re-push every port's mask — used after a fresh ROM load so the new controller
+     *  immediately reflects any held inputs (and so port 0 isn't left stale). */
+    fun reapplyAllPorts() {
+        synchronized(this) { for (p in 0..3) applyPort(p) }
+    }
 
-    private fun keyToBit(keyCode: Int): Int? = when (keyCode) {
-        KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_DPAD_CENTER -> NesBit.A
-        KeyEvent.KEYCODE_BUTTON_B -> NesBit.B
-        KeyEvent.KEYCODE_BUTTON_START, KeyEvent.KEYCODE_ENTER -> NesBit.START
-        KeyEvent.KEYCODE_BUTTON_SELECT, KeyEvent.KEYCODE_SPACE -> NesBit.SELECT
+    /** The current combined P1 mask (touch | gamepad[0] | keyboard) — the
+     *  `local_mask` netplay feeds to `npAdvanceFrame` (where the bridge owns the
+     *  latch, so `setButtons` is not the input path). Synchronized against the
+     *  touch/key updaters. */
+    fun p1Mask(): Int = synchronized(this) { touchMask or gamepadMasks[0] or keyboardMask }
+
+    private fun keyboardKeyToBit(keyCode: Int): Int? = when (keyCode) {
+        KeyEvent.KEYCODE_ENTER -> NesBit.START
+        KeyEvent.KEYCODE_SPACE -> NesBit.SELECT
+        KeyEvent.KEYCODE_Z -> NesBit.A
+        KeyEvent.KEYCODE_X -> NesBit.B
         KeyEvent.KEYCODE_DPAD_UP -> NesBit.UP
         KeyEvent.KEYCODE_DPAD_DOWN -> NesBit.DOWN
         KeyEvent.KEYCODE_DPAD_LEFT -> NesBit.LEFT
@@ -448,7 +503,12 @@ private class AudioPlayer(sampleRate: Int) {
 }
 
 @Composable
-private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, settings: AppSettings) {
+private fun EmulatorScreen(
+    emulator: EmulatorHandle,
+    gamepad: GamepadManager,
+    license: LicenseManager,
+    settings: AppSettings,
+) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val activity = context as? Activity
     // Freemium is active only in the Play build; sideload/dev builds are unlimited.
@@ -498,6 +558,7 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
     var showSettings by remember { mutableStateOf(false) }
     var showStates by remember { mutableStateOf(false) }
     var showAbout by remember { mutableStateOf(false) }
+    var showControllers by remember { mutableStateOf(false) }
     // First-run onboarding shows until the user ticks "Do not show again".
     var showOnboarding by remember { mutableStateOf(!settings.onboardingSuppressed) }
     var screenSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
@@ -1122,6 +1183,8 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                 enabled = !npActive,
             ) { Text(if (turbo) ">> On" else ">>") }
             OutlinedButton(onClick = { showSettings = true }) { Text("Settings") }
+            // Hardware controllers (v1.8.7): port assignment, remapping, autofire.
+            OutlinedButton(onClick = { showControllers = true }) { Text("Controllers") }
             // Direct-IP / LAN netplay (v1.8.6). Ungated (not a paid feature here).
             OutlinedButton(onClick = { showNetplay = true }) {
                 Text(if (npActive) "Netplay*" else "Netplay")
@@ -1283,6 +1346,13 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
     if (showAbout) {
         AboutDialog(onDismiss = { showAbout = false })
     }
+    if (showControllers) {
+        ControllersSheet(
+            gamepad = gamepad,
+            settings = settings,
+            onDismiss = { showControllers = false },
+        )
+    }
     if (showNetplay) {
         NetplaySheet(
             status = npStatus,
@@ -1338,11 +1408,21 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
         try {
             while (isActive) {
                 val ctrl = emulator.controller
-                if (ctrl != null && !romLoaded) romLoaded = true
+                if (ctrl != null && !romLoaded) {
+                    romLoaded = true
+                    // A fresh controller just appeared: (re-)apply Four Score for the
+                    // current pad count and re-push every port's held mask onto it.
+                    gamepad.onControllerReady()
+                    emulator.reapplyAllPorts()
+                }
                 if (ctrl == null || emulator.paused) {
                     delay(50)
                     continue
                 }
+                // Advance the turbo/autofire pulse once per emulated frame, then push
+                // the per-port masks updated below. Cheap no-op when nothing is held
+                // in turbo. Must run BEFORE the input is latched into the core.
+                gamepad.onFrameTick()
                 // Netplay (v1.8.6): while a session is active the loop drives the core
                 // via `npAdvanceFrame` (rollback owns pacing), NOT `runFrame`. Force
                 // speed to 100% — no turbo / fast-forward / frame-skip / rewind — and

@@ -113,6 +113,19 @@ class AppSettings(context: Context) {
         get() = prefs.getString("raToken", "") ?: ""
         set(v) { prefs.edit().putString("raToken", v).apply() }
 
+    // Hardware controllers (v1.8.7). The per-pad remap tables are serialized as one
+    // JSON object keyed by InputDevice.getDescriptor (stable across reconnects);
+    // `autofireAB` is the global A/B autofire toggle.
+    /** Serialized per-descriptor gamepad remap tables (JSON; empty = all default). */
+    var gamepadRemaps: String
+        get() = prefs.getString("gpRemaps", "") ?: ""
+        set(v) { prefs.edit().putString("gpRemaps", v).apply() }
+
+    private val _autofireAB = mutableStateOf(prefs.getBoolean("gpAutofireAB", false))
+    var autofireAB: Boolean
+        get() = _autofireAB.value
+        set(v) { _autofireAB.value = v; prefs.edit().putBoolean("gpAutofireAB", v).apply() }
+
     /** Direct-IP / LAN netplay (v1.8.6): the last "ip:port" the user joined, so the
      *  Join field prefills it. Host-only state (the bound port + LAN IP) is derived
      *  live and not persisted. */
