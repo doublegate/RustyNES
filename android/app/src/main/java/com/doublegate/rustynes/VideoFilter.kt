@@ -27,6 +27,9 @@ enum class VideoFilter(val label: String) {
     // AGSL/Bitmap path shows it unfiltered (no AGSL NTSC). Ordinals match the native
     // filter codes (0/1/2/3).
     Ntsc("NTSC"),
+    // v1.8.5: Bisqwit composite NTSC — GPU-renderer only; needs the palette-index
+    // frame fed each frame. Ordinal 4 matches the native code.
+    Bisqwit("Bisqwit NTSC"),
     ;
 
     fun next(): VideoFilter = entries[(ordinal + 1) % entries.size]
@@ -68,8 +71,13 @@ half4 main(float2 coord) {
  */
 @RequiresApi(Build.VERSION_CODES.TIRAMISU)
 fun buildRenderEffect(filter: VideoFilter, width: Float, height: Float): ComposeRenderEffect? {
-    // None has no effect; NTSC is handled only by the native wgpu renderer (no AGSL).
-    if (filter == VideoFilter.None || filter == VideoFilter.Ntsc || width <= 0f || height <= 0f) {
+    // None has no effect; NTSC + Bisqwit are native-wgpu-renderer only (no AGSL).
+    if (filter == VideoFilter.None ||
+        filter == VideoFilter.Ntsc ||
+        filter == VideoFilter.Bisqwit ||
+        width <= 0f ||
+        height <= 0f
+    ) {
         return null
     }
     val shader = RuntimeShader(AGSL_SOURCE)

@@ -223,6 +223,32 @@ mod android {
             gfx.set_filter(filter.max(0) as u8, [p0, p1, p2, p3]);
         }
 
+        /// `NativeRenderer.nativeSetIndexFrame(handle, idx, phase)` — upload the
+        /// palette-index frame (`256*240*2` LE `u16` bytes) + the NTSC phase for the
+        /// Bisqwit pass. Only called while that filter is active, so the per-frame
+        /// `convert_byte_array` copy is off the common path.
+        ///
+        /// # Safety
+        /// `handle` must be a live value returned by `nativeInitSurface`.
+        #[unsafe(no_mangle)]
+        pub extern "C" fn Java_com_doublegate_rustynes_NativeRenderer_nativeSetIndexFrame(
+            env: JNIEnv,
+            _this: JObject,
+            handle: jlong,
+            idx: JByteArray,
+            phase: jint,
+        ) {
+            if handle == 0 {
+                return;
+            }
+            let Ok(bytes) = env.convert_byte_array(&idx) else {
+                return;
+            };
+            // SAFETY: live handle (see `nativeResize`).
+            let gfx = unsafe { &mut *(handle as *mut AndroidGfx) };
+            gfx.set_index_frame(&bytes, phase.max(0) as u8);
+        }
+
         /// `NativeRenderer.nativeDestroy(handle)` — drop the renderer (releases the
         /// wgpu surface before the `ANativeWindow`).
         ///

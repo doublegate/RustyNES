@@ -38,6 +38,11 @@ class NesSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Cal
     private class FilterState(val filter: Int, val params: FloatArray)
     private val filterState = java.util.concurrent.atomic.AtomicReference(FilterState(0, FloatArray(4)))
 
+    /** The latest palette-index frame + NTSC phase for the Bisqwit pass, consumed
+     *  atomically; null unless that filter is active. */
+    private class IndexFrame(val idx: ByteArray, val phase: Int)
+    private val latestIndex = java.util.concurrent.atomic.AtomicReference<IndexFrame?>(null)
+
     @Volatile
     private var running = false
     private var thread: Thread? = null
@@ -49,6 +54,12 @@ class NesSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Cal
     /** Hand the render thread the latest RGBA frame (called from the emu loop). */
     fun submitFrame(fb: ByteArray) {
         latestFrame.set(fb)
+    }
+
+    /** Hand the render thread the latest palette-index frame + NTSC phase (only
+     *  called while the Bisqwit filter is active). */
+    fun submitIndexFrame(idx: ByteArray, phase: Int) {
+        latestIndex.set(IndexFrame(idx, phase))
     }
 
     /** Set the video filter (0 none / 1 scanlines / 2 CRT / 3 NTSC) and its four
@@ -133,6 +144,10 @@ class NesSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Cal
                 // Fifo present blocks to vsync, so a present paces the thread.
                 val fb = latestFrame.getAndSet(null)
                 if (handle != 0L && fb != null) {
+                    // Upload the Bisqwit index frame (if any) before presenting.
+                    latestIndex.getAndSet(null)?.let {
+                        NativeRenderer.nativeSetIndexFrame(handle, it.idx, it.phase)
+                    }
                     NativeRenderer.nativeRender(handle, fb)
                 } else {
                     Thread.sleep(2)

@@ -152,6 +152,9 @@ class AppSettings(context: Context) {
         VideoFilter.Scanlines -> floatArrayOf(scanlineIntensity, 0f, scanlineRows, 0f)
         VideoFilter.Crt -> floatArrayOf(scanlineIntensity, apertureMask, scanlineRows, 0f)
         VideoFilter.Ntsc -> floatArrayOf(ntscSaturation, ntscSharpness, ntscTint, ntscPhase)
+        // Bisqwit: the picture knobs (contrast/sat/bright/hue) ride in `aux`; neutral
+        // (all 0) is byte-identical to the desktop default. videoPhase is per-frame.
+        VideoFilter.Bisqwit -> floatArrayOf(0f, 0f, 0f, 0f)
         VideoFilter.None -> floatArrayOf(0f, 0f, 0f, 0f)
     }
 }
@@ -229,6 +232,9 @@ fun SettingsSheet(
                             ParamSlider("Tint", settings.ntscTint, -0.5f..0.5f) { settings.ntscTint = it }
                             ParamSlider("Phase", settings.ntscPhase, 0f..1f) { settings.ntscPhase = it }
                         }
+                        // Bisqwit runs at its neutral picture knobs (matching the
+                        // desktop default); no sliders for now.
+                        VideoFilter.Bisqwit -> {}
                     }
                 }
             }

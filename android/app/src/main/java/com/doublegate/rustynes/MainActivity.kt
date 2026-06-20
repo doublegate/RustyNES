@@ -811,6 +811,11 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                     // Hand the raw RGBA frame to the GPU SurfaceView (opt-in path);
                     // no-op when the GPU renderer is off.
                     gpuSurface?.submitFrame(fb)
+                    // Bisqwit needs the palette-index frame + NTSC phase each frame
+                    // (only fetched while that filter is active — it's not free).
+                    if (gpuSurface != null && settings.filter == VideoFilter.Bisqwit) {
+                        gpuSurface.submitIndexFrame(ctrl.indexFramebufferBytes(), ctrl.ntscPhase().toInt())
+                    }
                     // Hot path: drain audio as raw bytes (no per-sample Float boxing)
                     // and write straight to the PCM_FLOAT track.
                     val audioBytes = ctrl.drainAudioBytes()

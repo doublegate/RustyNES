@@ -52,17 +52,25 @@ pub struct AndroidGfx {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     nes_texture: wgpu::Texture,
+    /// R16Uint palette-index texture for the Bisqwit NTSC pass (filter 4).
+    index_texture: wgpu::Texture,
     uniform_buf: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     /// CRT/scanline pipeline (filters None / Scanlines / CRT, selected by `params`).
     pipeline: wgpu::RenderPipeline,
     /// LMP88959 NTSC pipeline (filter NTSC).
     ntsc_pipeline: wgpu::RenderPipeline,
-    /// Active video filter: 0 = none, 1 = scanlines, 2 = CRT, 3 = NTSC.
+    /// Bisqwit composite NTSC pipeline (filter 4; reads `index_texture`).
+    bisqwit_bind_group: wgpu::BindGroup,
+    bisqwit_pipeline: wgpu::RenderPipeline,
+    /// Active video filter: 0 = none, 1 = scanlines, 2 = CRT, 3 = NTSC, 4 = Bisqwit.
     filter: u8,
     /// The shader `params` for the active filter (meaning is filter-specific:
     /// Scanlines = [scan]; CRT = [scan, mask]; NTSC = [sat, sharp, tint, phase]).
     params: [f32; 4],
+    /// The Bisqwit pass's per-frame NTSC colour phase (`videoPhase`), set with the
+    /// index frame.
+    ntsc_phase: u8,
     /// Reused framebuffer staging buffer — the JNI copies each frame's bytes in
     /// place (`get_byte_array_region`) instead of allocating a fresh `Vec` per frame.
     frame_buf: Vec<u8>,
@@ -160,6 +168,24 @@ impl AndroidGfx {
             min_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
         });
+
+        // R16Uint palette-index texture for the Bisqwit NTSC pass (filled by
+        // `set_index_frame`; the shader reads it with `textureLoad`, no sampler).
+        let index_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("nes palette-index"),
+            size: wgpu::Extent3d {
+                width: NES_W,
+                height: NES_H,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R16Uint,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let index_view = index_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("letterbox uniforms"),
@@ -288,18 +314,99 @@ impl AndroidGfx {
             cache: None,
         });
 
+        // The Bisqwit NTSC pipeline reads the R16Uint palette-index texture (via
+        // `textureLoad`, no sampler) + the shared 64-byte uniform — a different
+        // bind-group layout from the CRT/NTSC pipelines.
+        let bisqwit_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("bisqwit bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Uint,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let bisqwit_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("bisqwit bind group"),
+            layout: &bisqwit_bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&index_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: uniform_buf.as_entire_binding(),
+                },
+            ],
+        });
+        let bisqwit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("bisqwit shader"),
+            source: wgpu::ShaderSource::Wgsl(rustynes_gfx_shaders::BISQWIT_WGSL.into()),
+        });
+        let bisqwit_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("bisqwit layout"),
+            bind_group_layouts: &[Some(&bisqwit_bgl)],
+            immediate_size: 0,
+        });
+        let bisqwit_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("bisqwit pipeline"),
+            layout: Some(&bisqwit_layout),
+            vertex: wgpu::VertexState {
+                module: &bisqwit_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &bisqwit_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
         let gfx = Self {
             surface,
             device,
             queue,
             config,
             nes_texture,
+            index_texture,
             uniform_buf,
             bind_group,
             pipeline,
             ntsc_pipeline,
+            bisqwit_bind_group,
+            bisqwit_pipeline,
             filter: 0,
             params: [0.0; 4],
+            ntsc_phase: 0,
             frame_buf: vec![0u8; (NES_W * NES_H * 4) as usize],
             _window: window,
         };
@@ -333,13 +440,19 @@ impl AndroidGfx {
         } else {
             (1.0, screen_aspect / IMG_ASPECT) // letterbox
         };
-        // The shader `params` come straight from the caller (the per-filter sliders);
-        // `aux.x` is NTSC's PAL flag (off). None just leaves params at (0,0,0,0).
+        // For CRT/scanline/LMP-NTSC the `params` come straight from the per-filter
+        // sliders (aux unused). For Bisqwit (filter 4) `params.x` is the per-frame
+        // videoPhase and the picture knobs (contrast/sat/bright/hue) ride in `aux`.
+        let (params, aux) = if self.filter == 4 {
+            ([f32::from(self.ntsc_phase), 0.0, 0.0, 0.0], self.params)
+        } else {
+            (self.params, [0.0, 0.0, 0.0, 0.0])
+        };
         let u = Uniforms {
             rect: [sx, sy, 0.0, 0.0],
             crop: [1.0, 0.0, 1.0, 0.0],
-            params: self.params,
-            aux: [0.0, 0.0, 0.0, 0.0],
+            params,
+            aux,
         };
         self.queue
             .write_buffer(&self.uniform_buf, 0, bytemuck::bytes_of(&u));
@@ -353,6 +466,36 @@ impl AndroidGfx {
     /// at `NES_W*NES_H*4`.
     pub fn frame_buf_mut(&mut self) -> &mut [u8] {
         &mut self.frame_buf
+    }
+
+    /// Upload one 256×240 palette-index frame (`NES_W*NES_H*2` little-endian `u16`
+    /// bytes — `(emphasis << 6) | colour`) plus the NTSC `phase`, for the Bisqwit
+    /// pass. The host calls this each frame only while the Bisqwit filter is active.
+    pub fn set_index_frame(&mut self, idx_bytes: &[u8], phase: u8) {
+        if idx_bytes.len() != (NES_W * NES_H * 2) as usize {
+            return;
+        }
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.index_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            idx_bytes,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(NES_W * 2),
+                rows_per_image: Some(NES_H),
+            },
+            wgpu::Extent3d {
+                width: NES_W,
+                height: NES_H,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.ntsc_phase = phase;
+        self.write_uniforms();
     }
 
     pub fn render(&mut self) {
@@ -411,13 +554,20 @@ impl AndroidGfx {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            let pipeline = if self.filter == 3 {
-                &self.ntsc_pipeline
+            if self.filter == 4 {
+                // Bisqwit reads its own R16Uint index texture via a distinct bind
+                // group (no nes_texture/sampler).
+                pass.set_pipeline(&self.bisqwit_pipeline);
+                pass.set_bind_group(0, &self.bisqwit_bind_group, &[]);
             } else {
-                &self.pipeline
-            };
-            pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[]);
+                let pipeline = if self.filter == 3 {
+                    &self.ntsc_pipeline
+                } else {
+                    &self.pipeline
+                };
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(0, &self.bind_group, &[]);
+            }
             pass.draw(0..3, 0..1);
         }
         self.queue.submit(Some(encoder.finish()));
