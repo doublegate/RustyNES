@@ -15,6 +15,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.4] - 2026-06-20 - "Android" (Native wgpu renderer & shaders)
+
+The native GPU render path: the NES picture now draws through **wgpu on a
+`SurfaceView`** (Vulkan/GLES) instead of the Compose `Bitmap` blit, reusing the
+desktop WGSL shaders. Presentation-only — the emulation core is byte-identical, so
+**AccuracyCoin holds 100% (139/139)** and every desktop gate is unchanged.
+
+### Added
+
+- **Native wgpu `SurfaceView` renderer (Android, Workstream B).** A new
+  `rustynes-android` wgpu path (`AndroidGfx`) draws the 256x240 framebuffer onto the
+  `SurfaceView`'s `ANativeWindow` with 8:7-PAR letterboxing, on a dedicated render
+  thread that owns the full surface-loss lifecycle (drop on `surfaceDestroyed`,
+  recreate on `surfaceCreated`; the core runs headless across the gap). Opt-in behind
+  a **"GPU renderer (restart to apply)"** setting (API 33+); off by default, so the
+  proven `Bitmap` + AGSL path is unchanged and stays the API-<33 fallback. Verified
+  on a Galaxy Z Fold 7 (Adreno / Vulkan).
+- **Shared WGSL shader stack.** A new no-dep **`rustynes-gfx-shaders`** crate holds
+  the **CRT / scanline** and **LMP88959 NTSC** post-pass WGSL as the single source of
+  truth; both the desktop frontend and the Android renderer use it (the desktop's
+  inline copies were dedup'd to it, byte-identically — the WGSL-validation tests still
+  pass). So **None / Scanlines / CRT / NTSC** all run on the Android GPU path with the
+  same look as the desktop.
+- **Per-filter shader tuning sliders.** Settings shows live tuning sliders for **only
+  the selected filter** (None shows none): Scanlines = intensity + count; CRT =
+  intensity + count + aperture mask; NTSC = saturation + sharpness + tint + phase.
+  They drive the native shader's `params` live and persist; the NTSC defaults are
+  tuned softer for phone DPI. The shared CRT WGSL reads the scanline **count** from
+  `params.z` (falling back to 240, so the desktop is byte-identical).
+
+### Changed
+
+- **Native-audio hot path.** The bridge gains `drain_audio_bytes()` (the samples as a
+  single `ByteArray`, no per-sample `Float` boxing); the Android sink writes those
+  bytes straight to the `PCM_FLOAT` `AudioTrack`. Identical samples, cheaper transport.
+
 ## [1.8.3] - 2026-06-20 - "Android" (Controller, casting & polish)
 
 ### Added
