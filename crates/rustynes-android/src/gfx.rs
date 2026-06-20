@@ -36,7 +36,10 @@ const IMG_ASPECT: f32 = PAR_W / NES_H as f32;
 struct Uniforms {
     rect: [f32; 4],
     crop: [f32; 4],
+    // CRT: (scanline, mask, _, _). NTSC: (saturation, sharpness, tint, phase).
     params: [f32; 4],
+    // NTSC only: x = PAL mode. Padding for the CRT shader (which reads 12 floats).
+    aux: [f32; 4],
 }
 
 /// Owns the wgpu device/surface/pipeline + the `NES` texture for one
@@ -50,8 +53,11 @@ pub struct AndroidGfx {
     nes_texture: wgpu::Texture,
     uniform_buf: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
+    /// CRT/scanline pipeline (filters None / Scanlines / CRT, selected by `params`).
     pipeline: wgpu::RenderPipeline,
-    /// Active video filter: 0 = none, 1 = scanlines, 2 = CRT.
+    /// LMP88959 NTSC pipeline (filter NTSC).
+    ntsc_pipeline: wgpu::RenderPipeline,
+    /// Active video filter: 0 = none, 1 = scanlines, 2 = CRT, 3 = NTSC.
     filter: u8,
     _window: NativeWindow,
 }
@@ -243,6 +249,38 @@ impl AndroidGfx {
             cache: None,
         });
 
+        // The LMP88959 NTSC pipeline (also shared with the desktop), same bind-group
+        // layout (texture + sampler + the 16-float uniform).
+        let ntsc_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("ntsc shader"),
+            source: wgpu::ShaderSource::Wgsl(rustynes_gfx_shaders::NTSC_LMP_WGSL.into()),
+        });
+        let ntsc_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("ntsc pipeline"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &ntsc_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &ntsc_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
         let gfx = Self {
             surface,
             device,
@@ -252,6 +290,7 @@ impl AndroidGfx {
             uniform_buf,
             bind_group,
             pipeline,
+            ntsc_pipeline,
             filter: 0,
             _window: window,
         };
@@ -283,16 +322,24 @@ impl AndroidGfx {
         } else {
             (1.0, screen_aspect / IMG_ASPECT) // letterbox
         };
-        // params (scanline, mask) per filter; (0,0) = plain letterboxed blit.
-        let (scan, mask) = match self.filter {
-            1 => (0.5, 0.0),  // scanlines
-            2 => (0.5, 0.10), // CRT (scanlines + aperture grille)
-            _ => (0.0, 0.0),  // none
+        // params depend on the active filter; aux carries NTSC's PAL-mode flag.
+        let (params, aux) = if self.filter == 3 {
+            // NTSC: (saturation, sharpness, tint, phase); PAL off.
+            ([1.0, 0.5, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0])
+        } else {
+            // CRT/scanline: (scanline, mask, _, _); (0,0) = plain letterboxed blit.
+            let (scan, mask) = match self.filter {
+                1 => (0.5, 0.0),  // scanlines
+                2 => (0.5, 0.10), // CRT (scanlines + aperture grille)
+                _ => (0.0, 0.0),  // none
+            };
+            ([scan, mask, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0])
         };
         let u = Uniforms {
             rect: [sx, sy, 0.0, 0.0],
             crop: [1.0, 0.0, 1.0, 0.0],
-            params: [scan, mask, 0.0, 0.0],
+            params,
+            aux,
         };
         self.queue
             .write_buffer(&self.uniform_buf, 0, bytemuck::bytes_of(&u));
@@ -360,7 +407,12 @@ impl AndroidGfx {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.pipeline);
+            let pipeline = if self.filter == 3 {
+                &self.ntsc_pipeline
+            } else {
+                &self.pipeline
+            };
+            pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.draw(0..3, 0..1);
         }

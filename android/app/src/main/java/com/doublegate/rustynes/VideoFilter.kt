@@ -23,6 +23,10 @@ enum class VideoFilter(val label: String) {
     None("None"),
     Scanlines("Scanlines"),
     Crt("CRT"),
+    // v1.8.4: NTSC composite (LMP88959) — only on the native wgpu GPU renderer; the
+    // AGSL/Bitmap path shows it unfiltered (no AGSL NTSC). Ordinals match the native
+    // filter codes (0/1/2/3).
+    Ntsc("NTSC"),
     ;
 
     fun next(): VideoFilter = entries[(ordinal + 1) % entries.size]
@@ -64,7 +68,10 @@ half4 main(float2 coord) {
  */
 @RequiresApi(Build.VERSION_CODES.TIRAMISU)
 fun buildRenderEffect(filter: VideoFilter, width: Float, height: Float): ComposeRenderEffect? {
-    if (filter == VideoFilter.None || width <= 0f || height <= 0f) return null
+    // None has no effect; NTSC is handled only by the native wgpu renderer (no AGSL).
+    if (filter == VideoFilter.None || filter == VideoFilter.Ntsc || width <= 0f || height <= 0f) {
+        return null
+    }
     val shader = RuntimeShader(AGSL_SOURCE)
     shader.setFloatUniform("size", width, height)
     shader.setFloatUniform("mode", if (filter == VideoFilter.Crt) 2f else 1f)
