@@ -179,12 +179,22 @@ mod android {
             if handle == 0 {
                 return;
             }
-            let Ok(bytes) = env.convert_byte_array(&fb) else {
+            let Ok(len) = env.get_array_length(&fb) else {
                 return;
             };
             // SAFETY: live handle (see `nativeResize`).
             let gfx = unsafe { &mut *(handle as *mut AndroidGfx) };
-            gfx.render(&bytes);
+            let buf = gfx.frame_buf_mut();
+            if len as usize != buf.len() {
+                return;
+            }
+            // Copy the Java `byte[]` straight into the reused buffer (no per-frame
+            // `Vec` allocation). `byte[]` is `i8` on the JVM; same bytes as `u8`.
+            let buf_i8: &mut [i8] = bytemuck::cast_slice_mut(buf);
+            if env.get_byte_array_region(&fb, 0, buf_i8).is_err() {
+                return;
+            }
+            gfx.render();
         }
 
         /// `NativeRenderer.nativeSetFilter(handle, filter, p0..p3)` — 0 none /

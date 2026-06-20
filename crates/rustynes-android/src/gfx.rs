@@ -62,6 +62,9 @@ pub struct AndroidGfx {
     /// The shader `params` for the active filter (meaning is filter-specific:
     /// Scanlines = [scan]; CRT = [scan, mask]; NTSC = [sat, sharp, tint, phase]).
     params: [f32; 4],
+    /// Reused framebuffer staging buffer — the JNI copies each frame's bytes in
+    /// place (`get_byte_array_region`) instead of allocating a fresh `Vec` per frame.
+    frame_buf: Vec<u8>,
     _window: NativeWindow,
 }
 
@@ -296,6 +299,7 @@ impl AndroidGfx {
             ntsc_pipeline,
             filter: 0,
             params: [0.0; 4],
+            frame_buf: vec![0u8; (NES_W * NES_H * 4) as usize],
             _window: window,
         };
         gfx.write_uniforms();
@@ -343,10 +347,14 @@ impl AndroidGfx {
     /// Upload one 256×240 RGBA8 frame and present it. `fb` must be
     /// `NES_W*NES_H*4` bytes; tolerates a transient `Lost`/`Outdated` surface by
     /// reconfiguring and skipping the frame.
-    pub fn render(&mut self, fb: &[u8]) {
-        if fb.len() != (NES_W * NES_H * 4) as usize {
-            return;
-        }
+    /// The reused frame staging buffer; the JNI copies the Java `byte[]` into this
+    /// (`get_byte_array_region`) so no `Vec` is allocated per frame. Length is fixed
+    /// at `NES_W*NES_H*4`.
+    pub fn frame_buf_mut(&mut self) -> &mut [u8] {
+        &mut self.frame_buf
+    }
+
+    pub fn render(&mut self) {
         self.queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &self.nes_texture,
@@ -354,7 +362,7 @@ impl AndroidGfx {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            fb,
+            &self.frame_buf,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(NES_W * 4),
