@@ -35,10 +35,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   late-latched mask.
 - **The RustyNES app icon** (Android). The launcher icon is now the actual
   RustyNES artwork (from `assets/RustyNES_Icon/icon-1024.png`) — an adaptive icon
-  (inset foreground over a `#1C1F24` background) + legacy density mipmaps —
-  replacing the placeholder monogram.
+  (a 62%-inset foreground over a `#1C1F24` background, so the launcher squircle
+  keeps the corner peripherals) + legacy density mipmaps — replacing the
+  placeholder monogram.
 
 ### Changed
+
+- **Icon wordmark refresh.** Regenerated the icon (`make_icon.py`) so "Rusty"
+  matches "NES" in size (cap height 27 → 35, baseline kept, nudged right ~1/8
+  char, overlapping the cog). This refreshes `assets/RustyNES_Icon/` (svg / ico /
+  `icon-*.png` / preview), the Android launcher mipmaps, and the README header
+  logo (`images/RustyNES_Logo-Icon.png`) — so the desktop window/About icon
+  updates too.
 
 - **`PLAY_BUILD` build flag (Android, default false).** Per the deferred-Play-launch
   plan, the freemium logic (the demo timer + persistence locks + Play Billing) is
