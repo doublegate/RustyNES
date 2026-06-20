@@ -63,6 +63,15 @@ fun VirtualController(
             isAntiAlias = true
         }
     }
+    // The "RustyNES" wordmark uses the icon's Press Start 2P face + Nintendo red.
+    val wordmarkPaint = remember {
+        android.graphics.Paint().apply {
+            color = android.graphics.Color.parseColor("#E60012")
+            textAlign = android.graphics.Paint.Align.CENTER
+            isAntiAlias = true
+            typeface = androidx.core.content.res.ResourcesCompat.getFont(context, R.font.press_start_2p)
+        }
+    }
     Canvas(
         modifier = modifier.pointerInput(Unit) {
             // try/finally so a cancelled gesture (parent intercept, focus loss,
@@ -108,7 +117,7 @@ fun VirtualController(
             }
         },
     ) {
-        drawNesController(size.width, size.height, mask, labelPaint)
+        drawNesController(size.width, size.height, mask, labelPaint, wordmarkPaint)
     }
 }
 
@@ -192,7 +201,13 @@ private val BTN_RED = Color(0xFF9A1C1C)
 private val RED = Color(0xFFE60012)
 private val LIT = Color(0x66FFFFFF) // pressed-state highlight overlay
 
-private fun DrawScope.drawNesController(w: Float, h: Float, mask: Int, label: android.graphics.Paint) {
+private fun DrawScope.drawNesController(
+    w: Float,
+    h: Float,
+    mask: Int,
+    label: android.graphics.Paint,
+    wordmark: android.graphics.Paint,
+) {
     val cy = h / 2f
     fun rr(r: Float) = androidx.compose.ui.geometry.CornerRadius(r, r)
 
@@ -263,24 +278,34 @@ private fun DrawScope.drawNesController(w: Float, h: Float, mask: Int, label: an
         label.textSize = 0.06f * h
         drawText("SELECT", ssx - 0.064f * w, ssy - 0.13f * h, label)
         drawText("START", ssx + 0.064f * w, ssy - 0.13f * h, label)
+        // "RustyNES" wordmark (icon's Press Start 2P + Nintendo red) in the grey
+        // plate band above the SELECT/START labels, fit to the housing width (0.25w)
+        // and centred between the plate top (~0.11h) and the red labels (~0.44h).
+        wordmark.textSize = 0.06f * h
+        val rw = wordmark.measureText("RustyNES")
+        if (rw > 0f) wordmark.textSize = 0.06f * h * (0.235f * w / rw)
+        val wfm = wordmark.fontMetrics
+        drawText("RustyNES", ssx, 0.275f * h - (wfm.ascent + wfm.descent) / 2f, wordmark)
         label.textSize = 0.11f * h
         drawText("B", abx - 0.068f * w, aby + 0.255f * h, label)
         drawText("A", abx + 0.068f * w, aby + 0.255f * h, label)
-        // "RustyNES" centered inside the red pill, sized to fit (same red/bold
-        // face as the SELECT/START labels) without touching the oval outline.
-        label.textSize = 100f
-        val tw = label.measureText("RustyNES")
-        label.textSize = minOf(pill.width * 0.78f / tw * 100f, pill.height * 0.56f)
+        // "M E N U" centered inside the red pill — same red/bold face + size as
+        // SELECT/START, with a width guard so it never touches the oval outline.
+        label.textSize = 0.06f * h
+        val menuW = label.measureText("M E N U")
+        if (menuW > pill.width * 0.84f) label.textSize = 0.06f * h * (pill.width * 0.84f / menuW)
         val fm = label.fontMetrics
-        drawText("RustyNES", pill.center.x, pill.center.y - (fm.ascent + fm.descent) / 2f, label)
+        drawText("M E N U", pill.center.x, pill.center.y - (fm.ascent + fm.descent) / 2f, label)
     }
 }
 
-/** The red racetrack logo pill — shared by the art and the menu-toggle hit-test. */
+/** The red racetrack "MENU" pill — shared by the art and the menu-toggle hit-test.
+ *  Taller than a logo capsule so the "M E N U" glyphs can match the SELECT/START
+ *  size and still clear the oval; kept centered around its original position. */
 private fun logoPillRect(w: Float, h: Float): Rect {
     val lw = 0.16f * w
-    val lh = 0.085f * h
+    val lh = 0.11f * h
     val left = 0.805f * w - lw / 2
-    val top = 0.235f * h
+    val top = 0.2225f * h
     return Rect(left, top, left + lw, top + lh)
 }
