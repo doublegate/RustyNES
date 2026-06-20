@@ -506,6 +506,44 @@ impl RelayUdpSocket {
             )),
         }
     }
+
+    /// One step of a non-blocking *drain* over the relay socket, distinguishing
+    /// three outcomes the plain [`recv_from`](Self::recv_from) collapses:
+    ///
+    /// - `Ok(Some((n, peer)))` — a valid Data Indication was decoded into `buf`;
+    /// - `Ok(None)` — a datagram was read but it was a *stray* (not from the
+    ///   relay server, or not a Data Indication), so the caller should KEEP
+    ///   draining rather than stop;
+    /// - `Err(WouldBlock)` — the socket is genuinely empty (stop draining);
+    /// - any other `Err` — a real socket error.
+    ///
+    /// This is the primitive a relay-backed [`UdpTransport`](crate::UdpTransport)
+    /// poll loop is built on: it must skip strays but stop on a true `WouldBlock`,
+    /// which the single `WouldBlock`-for-both [`recv_from`](Self::recv_from)
+    /// cannot express.
+    ///
+    /// # Errors
+    ///
+    /// Returns `WouldBlock` when the socket is empty, or any other socket
+    /// receive error verbatim.
+    pub fn recv_step(&self, buf: &mut [u8]) -> io::Result<Option<(usize, SocketAddr)>> {
+        let mut raw = [0u8; 1500];
+        let (len, from) = self.socket.recv_from(&mut raw)?;
+        if from != self.turn.server_addr() {
+            // A stray from some other source: consumed, keep draining.
+            return Ok(None);
+        }
+        match TurnClient::unwrap(&raw[..len]) {
+            Some((peer, payload)) => {
+                let n = payload.len().min(buf.len());
+                buf[..n].copy_from_slice(&payload[..n]);
+                Ok(Some((n, peer)))
+            }
+            // A non-Data-Indication frame from the server (e.g. a stray STUN
+            // response): consumed, keep draining.
+            None => Ok(None),
+        }
+    }
 }
 
 // ── shared TLV / attribute helpers ──────────────────────────────────────────

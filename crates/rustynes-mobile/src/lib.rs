@@ -480,6 +480,13 @@ struct Inner {
     netplay_error: Option<String>,
     netplay_desync: bool,
     netplay_last_stalled: bool,
+    /// Sticky flag: the live session fell back to a TURN relay (symmetric NAT),
+    /// so gameplay rides the relay rather than a direct / hole-punched socket
+    /// (v1.8.7). Set when `np_tick_negotiating` hands a relayed connection off;
+    /// surfaced via [`NpStatus::relayed`]. Reset when a session starts / on
+    /// `np_leave` (it outlives the `NatConnect` object, which is consumed at
+    /// hand-off, so it cannot be re-derived from the live session later).
+    netplay_relayed: bool,
 }
 
 /// The handle the mobile shells drive the emulator through.
@@ -532,6 +539,7 @@ impl NesController {
                 netplay_error: None,
                 netplay_desync: false,
                 netplay_last_stalled: false,
+                netplay_relayed: false,
             }),
         }))
     }
@@ -562,6 +570,7 @@ impl NesController {
         g.netplay_error = None;
         g.netplay_desync = false;
         g.netplay_last_stalled = false;
+        g.netplay_relayed = false;
         // The RA session is deliberately preserved across ROM swaps (the login
         // outlives a single game) — just unload the previous game's achievement
         // set; a fresh `ra_load_game` from the host re-identifies the new ROM.
@@ -1244,6 +1253,7 @@ impl NesController {
         g.netplay_error = None;
         g.netplay_desync = false;
         g.netplay_last_stalled = true;
+        g.netplay_relayed = false;
         drop(g);
         Ok(bound)
     }
@@ -1281,6 +1291,7 @@ impl NesController {
         g.netplay_error = None;
         g.netplay_desync = false;
         g.netplay_last_stalled = true;
+        g.netplay_relayed = false;
         drop(g);
         Ok(())
     }
@@ -1322,6 +1333,7 @@ impl NesController {
         g.netplay_error = None;
         g.netplay_desync = false;
         g.netplay_last_stalled = true;
+        g.netplay_relayed = false;
         drop(g);
         Ok(room)
     }
@@ -1350,6 +1362,7 @@ impl NesController {
         g.netplay_error = None;
         g.netplay_desync = false;
         g.netplay_last_stalled = true;
+        g.netplay_relayed = false;
         drop(g);
         Ok(())
     }
@@ -1402,6 +1415,7 @@ impl NesController {
         g.netplay_error = None;
         g.netplay_desync = false;
         g.netplay_last_stalled = false;
+        g.netplay_relayed = false;
         drop(g);
     }
 
@@ -1444,7 +1458,7 @@ impl NesController {
                 desync: false,
                 message: String::new(),
                 detail: String::new(),
-                relayed: false,
+                relayed: g.netplay_relayed,
             },
             Some(NetplaySession::InGame(session, is_host)) => NpStatus {
                 phase: NpPhase::InGame,
@@ -1457,7 +1471,7 @@ impl NesController {
                 desync: false,
                 message: String::new(),
                 detail: String::new(),
-                relayed: false,
+                relayed: g.netplay_relayed,
             },
             None => NpStatus {
                 phase: if g.netplay_error.is_some() {
@@ -1627,30 +1641,26 @@ fn nondeterministic_seed() -> u64 {
 /// Returns a stalled tick (negotiation produces no emulator frame). Called
 /// holding the lock, having `take()`n the session out.
 ///
-/// ## Relay-fallback transport hand-off — TRACKED CARRYOVER (not faked)
+/// ## Relay-fallback transport hand-off (v1.8.7 — wired)
 ///
 /// For the direct / cone-NAT path, `NatConnect::into_connection` hands off the
-/// hole-punched `UdpSocket`, and the existing [`UdpTransport`] /
-/// [`RollbackSession`] drive it unchanged — fully wired here. For the
-/// **symmetric-NAT TURN-relay** path the orchestrator reaches
-/// [`NatPhase::Synced`] but `into_connection` still returns the *punched*
-/// transport: `rustynes-netplay` retains the `RelayUdpSocket` internally
-/// (`NatConnect::relay_socket`) but exposes **no** accessor to consume it, and
-/// [`NetplayConnection`] / [`UdpTransport`] speak a plain `UdpSocket`, not the
-/// relay shim. Routing gameplay through the relay therefore needs a small
-/// upstream surface (either a `NetplayConnection::with_relay(RelayUdpSocket)`
-/// constructor or a transport generic over the socket type) that does not exist
-/// yet. Rather than silently mis-route a symmetric-NAT session over the dead
-/// punched mapping, we keep `relayed` reported as `false` and let the direct /
-/// cone path be the one that reaches `InGame`. When the upstream hand-off lands,
-/// branch here on whether the orchestrator relayed and build the relay-backed
-/// connection, then set `NpStatus.relayed`.
+/// hole-punched `UdpSocket`. For the **symmetric-NAT TURN-relay** path it hands
+/// off a relay-backed [`UdpTransport`] built from the orchestrator's
+/// `RelayUdpSocket` + the peer's relayed transport address — both are now a
+/// single [`UdpTransport`] over an internal `Direct`/`Relayed` socket source, so
+/// the existing [`NetplayConnection`] / [`RollbackSession`] drive either path
+/// unchanged (no second session generic). We record `NatConnect::is_relayed`
+/// into the sticky `netplay_relayed` flag here, since the `NatConnect` is
+/// consumed by `into_connection` and the relayed-ness cannot be re-derived from
+/// the live session later; [`NpStatus::relayed`] reads that flag.
 fn np_tick_negotiating(g: &mut Inner, mut nat: NatConnect, is_host: bool) -> NpTick {
     match nat.pump() {
         NatPhase::Synced => {
-            // The punched (direct / cone-NAT) transport is ready; hand it off to
-            // the standard connection layer and converge on the existing
-            // Connecting → InGame tail.
+            // The transport (direct OR relayed) is ready; record whether we fell
+            // back to the relay BEFORE consuming the orchestrator, then hand the
+            // connection off and converge on the existing Connecting → InGame
+            // tail.
+            g.netplay_relayed = nat.is_relayed();
             let conn = nat.into_connection();
             g.netplay = Some(NetplaySession::Connecting(Box::new(conn), is_host));
             NpTick::STALLED

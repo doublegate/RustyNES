@@ -109,8 +109,17 @@ pub struct NatConnect {
     last_punch_sent: Option<Instant>,
     last_addr_sent: bool,
     rng: SplitMix64,
-    /// The peer's relayed address (TURN fallback), once exchanged.
+    /// Our allocated TURN relay socket (symmetric-NAT fallback), once the
+    /// `Relaying` phase has allocated it. The gameplay transport is built from
+    /// this on the relay path.
     relay_socket: Option<RelayUdpSocket>,
+    /// The peer's **relayed** transport address (its TURN allocation), learned
+    /// from the second `PublicAddr` the peer sends during the relay handshake.
+    /// This is where we route gameplay on the relay path.
+    peer_relayed: Option<SocketAddr>,
+    /// Whether traversal fell back to the TURN relay. Set in `tick_relaying`;
+    /// read by [`is_relayed`](Self::is_relayed) and [`into_connection`].
+    relayed: bool,
 }
 
 impl NatConnect {
@@ -190,6 +199,8 @@ impl NatConnect {
             last_addr_sent: false,
             rng,
             relay_socket: None,
+            peer_relayed: None,
+            relayed: false,
         }
     }
 
@@ -223,32 +234,58 @@ impl NatConnect {
         self.phase.clone()
     }
 
+    /// Whether traversal fell back to the TURN relay (symmetric NAT) rather than
+    /// completing a direct hole punch. Valid once [`pump`](Self::pump) has
+    /// reached [`NatPhase::Synced`]; the resulting [`NetplayConnection`] /
+    /// [`UdpTransport`] reports the same via their own `is_relayed`.
+    #[must_use]
+    pub const fn is_relayed(&self) -> bool {
+        self.relayed
+    }
+
     /// Consume the orchestrator, yielding the ready [`NetplayConnection`]. Only
     /// valid once [`pump`](Self::pump) has reached [`NatPhase::Synced`]; panics
     /// otherwise (call sites gate on the phase).
     ///
     /// For the **direct** path the connection's transport targets the peer's
-    /// punched public address; for the **relay** path it targets the peer
-    /// through the [`RelayUdpSocket`], so the same
-    /// [`RollbackSession`](crate::session::RollbackSession) drives either.
+    /// punched public address over a plain [`UdpSocket`]; for the **relay** path
+    /// it targets the peer's *relayed* transport address through the
+    /// [`RelayUdpSocket`]. Either way the result is a [`NetplayConnection`] whose
+    /// [`UdpTransport`] presents the same plain peer-addressed datagram surface,
+    /// so the same [`RollbackSession`](crate::session::RollbackSession) drives
+    /// it with no second generic.
     #[must_use]
     pub fn into_connection(mut self) -> NetplayConnection {
         assert!(
             matches!(self.phase, NatPhase::Synced),
             "into_connection called before Synced"
         );
-        let socket = self
-            .socket
-            .take()
-            .expect("synced orchestration retains its socket");
-        let peer = self
-            .punch
-            .peer_public()
-            .expect("synced orchestration knows the peer address");
-        // The socket already carries the open NAT mapping; build a UdpTransport
-        // fixed at the peer's public address and run the normal handshake.
-        let transport = UdpTransport::from_socket(socket, peer)
-            .expect("socket reconfigured for the punched transport");
+        let transport = if self.relayed {
+            // Relay path: hand the RelayUdpSocket + the peer's relayed transport
+            // address to a relay-backed UdpTransport.
+            let relay = self
+                .relay_socket
+                .take()
+                .expect("relayed orchestration retains its relay socket");
+            let peer_relayed = self
+                .peer_relayed
+                .expect("relayed orchestration knows the peer's relayed address");
+            UdpTransport::from_relay(relay, peer_relayed)
+                .expect("relay socket reconfigured for the relayed transport")
+        } else {
+            // Direct path: the socket already carries the open NAT mapping; build
+            // a UdpTransport fixed at the peer's punched public address.
+            let socket = self
+                .socket
+                .take()
+                .expect("synced orchestration retains its socket");
+            let peer = self
+                .punch
+                .peer_public()
+                .expect("synced orchestration knows the peer address");
+            UdpTransport::from_socket(socket, peer)
+                .expect("socket reconfigured for the punched transport")
+        };
         NetplayConnection::with_transport(transport, self.rom_hash)
     }
 
@@ -274,7 +311,19 @@ impl NatConnect {
                         self.peer_slot = Some(from);
                     }
                     if let Ok(parsed) = addr.parse::<SocketAddr>() {
-                        self.punch.peer_discovered(parsed);
+                        // Each peer sends at most TWO PublicAddrs: its public
+                        // reflexive address (always), then — only on the relay
+                        // fallback — its relayed transport address. The FIRST one
+                        // feeds the hole punch; any SUBSEQUENT one is the relayed
+                        // address (captured separately, never clobbering the
+                        // punch peer). Keying off arrival order rather than our
+                        // own phase is robust to the two peers entering Relaying
+                        // at different times.
+                        if self.punch.peer_public().is_none() {
+                            self.punch.peer_discovered(parsed);
+                        } else {
+                            self.peer_relayed = Some(parsed);
+                        }
                     }
                 }
                 SignalEvent::Message(SignalMessage::Error { reason }) => {
@@ -418,54 +467,66 @@ impl NatConnect {
     }
 
     fn tick_relaying(&mut self) {
-        // Allocate a TURN relay (blocking, bounded) over a FRESH socket, install
-        // a permission for the peer, exchange the relayed address, and route the
-        // gameplay socket through the relay. The relayed transport is then handed
-        // off identically — but because the existing UdpTransport speaks plain
-        // UdpSocket, full relay routing needs the RelayUdpSocket shim wired into
-        // a transport, which is a Phase-B bridge concern. Here we allocate +
-        // exchange so the addresses are correct; if allocation fails we fail.
+        // Two sub-steps, each idempotent across pumps:
+        //   1. Once, allocate a TURN relay (blocking, bounded) over the gameplay
+        //      socket, install a permission for the peer, send our relayed
+        //      address over signaling, and keep the RelayUdpSocket.
+        //   2. Wait for the peer's relayed address (its second PublicAddr,
+        //      captured into `peer_relayed`), then go Synced — at which point
+        //      `into_connection` builds a relay-backed UdpTransport.
         let Some(turn_cfg) = self.cfg.turn.clone() else {
             self.phase = NatPhase::Failed("relay requested without TURN config".into());
             return;
         };
-        let Some(socket) = self.socket.take() else {
-            return;
-        };
-        let blocking = socket.set_nonblocking(false);
-        let alloc = TurnClient::allocate(
-            &socket,
-            &turn_cfg,
-            Duration::from_secs(5),
-            self.rng.next_u64(),
-        );
-        let _ = socket.set_nonblocking(true);
-        let _ = blocking;
-        match alloc {
-            Ok(mut turn) => {
-                if let Some(peer) = self.punch.peer_public() {
-                    let _ = turn.create_permission(&socket, peer, Duration::from_secs(2));
+
+        // Sub-step 1: allocate exactly once (the RelayUdpSocket, once present,
+        // owns the gameplay socket; allocation has already happened).
+        if self.relay_socket.is_none() {
+            let Some(socket) = self.socket.take() else {
+                return;
+            };
+            let blocking = socket.set_nonblocking(false);
+            let alloc = TurnClient::allocate(
+                &socket,
+                &turn_cfg,
+                Duration::from_secs(5),
+                self.rng.next_u64(),
+            );
+            let _ = socket.set_nonblocking(true);
+            let _ = blocking;
+            match alloc {
+                Ok(mut turn) => {
+                    if let Some(peer) = self.punch.peer_public() {
+                        let _ = turn.create_permission(&socket, peer, Duration::from_secs(2));
+                    }
+                    let relayed = turn.relayed_addr();
+                    self.relay_socket = Some(RelayUdpSocket::new(socket, turn));
+                    self.relayed = true;
+                    // Send our relayed address so the peer relays back to it.
+                    if let (Some(relayed), Some(to)) = (relayed, self.peer_slot) {
+                        let from = self.slot.unwrap_or(0);
+                        self.signaling.send(SignalMessage::PublicAddr {
+                            from,
+                            to,
+                            addr: relayed.to_string(),
+                        });
+                    }
                 }
-                let relayed = turn.relayed_addr();
-                self.relay_socket = Some(RelayUdpSocket::new(socket, turn));
-                // Send our relayed address so the peer relays back to it.
-                if let (Some(relayed), Some(to)) = (relayed, self.peer_slot) {
-                    let from = self.slot.unwrap_or(0);
-                    self.signaling.send(SignalMessage::PublicAddr {
-                        from,
-                        to,
-                        addr: relayed.to_string(),
-                    });
+                Err(e) => {
+                    self.socket = Some(socket);
+                    self.phase = NatPhase::Failed(format!("TURN allocate failed: {e}"));
+                    return;
                 }
-                // The relayed path is established at the address level. Marking
-                // Synced lets the bridge take over (Phase B wires the relay
-                // socket into a transport); the punch peer addr is retained.
-                self.phase = NatPhase::Synced;
             }
-            Err(e) => {
-                self.socket = Some(socket);
-                self.phase = NatPhase::Failed(format!("TURN allocate failed: {e}"));
-            }
+        }
+
+        // Sub-step 2: once both allocations are exchanged, the relay path is
+        // ready end-to-end — go Synced. `into_connection` then builds the
+        // relay-backed transport from `relay_socket` + `peer_relayed`.
+        if self.peer_relayed.is_some() {
+            self.phase = NatPhase::Synced;
+        } else if self.started.elapsed() >= SIGNALING_TIMEOUT {
+            self.phase = NatPhase::Failed("no peer relayed address exchanged".into());
         }
     }
 

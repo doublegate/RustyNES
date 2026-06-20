@@ -46,6 +46,7 @@ use std::net::{SocketAddr, UdpSocket};
 use std::time::{Duration, Instant};
 
 use crate::message::NetMessage;
+use crate::relay::RelayUdpSocket;
 use crate::transport::Transport;
 
 /// Largest datagram we will ever read. The longest [`NetMessage`] encoding is
@@ -61,13 +62,37 @@ const RECV_BUF_LEN: usize = 1500;
 /// well-behaved peer sends per frame.
 const MAX_DATAGRAMS_PER_POLL: usize = 1024;
 
-/// A [`Transport`] over a non-blocking UDP socket bound to a local address,
-/// talking to a single remote peer that may be learned after construction.
+/// The datagram backend a [`UdpTransport`] rides on. Either a plain
+/// [`UdpSocket`] (the direct / hole-punched path) or a [`RelayUdpSocket`] (the
+/// symmetric-NAT TURN-relay fallback). This is the **socket-source-agnostic**
+/// abstraction that lets the SAME `UdpTransport` — and therefore the same
+/// [`RollbackSession`](crate::session::RollbackSession) — run over either path
+/// with no new transport type and no second session generic (v1.8.7).
 ///
-/// `send` encodes via [`NetMessage::to_bytes`] and `send_to`s the remote;
-/// `poll` drains all pending datagrams (`recv_from` until `WouldBlock`),
-/// decoding each with [`NetMessage::from_bytes`] and dropping anything that
-/// fails to parse. The socket is non-blocking, so neither call ever blocks.
+/// `Direct` does plain `send_to(peer)` / `recv_from`; `Relayed` wraps each
+/// outgoing datagram in a TURN Send Indication to the peer's *relayed* address
+/// and unwraps inbound Data Indications, all internal to
+/// [`RelayUdpSocket`]. Both are non-blocking, so dispatch is uniform.
+#[derive(Debug)]
+enum SocketKind {
+    /// The direct / hole-punched path: a plain non-blocking UDP socket.
+    Direct(UdpSocket),
+    /// The symmetric-NAT fallback: gameplay framed through a TURN relay.
+    Relayed(RelayUdpSocket),
+}
+
+/// A [`Transport`] over a non-blocking datagram socket talking to a single
+/// remote peer that may be learned after construction.
+///
+/// The socket is either a direct [`UdpSocket`] or a TURN [`RelayUdpSocket`]
+/// (chosen at construction); both present the same plain peer-addressed
+/// datagram surface, so the transport — and the session above it — is identical
+/// on either path.
+///
+/// `send` encodes via [`NetMessage::to_bytes`] and sends to the remote;
+/// `poll` drains all pending datagrams (until `WouldBlock`), decoding each with
+/// [`NetMessage::from_bytes`] and dropping anything that fails to parse. The
+/// socket is non-blocking, so neither call ever blocks.
 ///
 /// The remote may be **unknown** at construction: a host that "listens" binds
 /// a port without knowing who will dial it. While `remote` is `None`, `send`
@@ -81,9 +106,10 @@ const MAX_DATAGRAMS_PER_POLL: usize = 1024;
 /// by the determinism harness, which keeps [`crate::MemoryTransport`].
 #[derive(Debug)]
 pub struct UdpTransport {
-    socket: UdpSocket,
+    socket: SocketKind,
     /// The peer we send to. `None` in host-listen mode until the first valid
-    /// `Sync` is adopted via [`set_remote`](Self::set_remote).
+    /// `Sync` is adopted via [`set_remote`](Self::set_remote). On the relay
+    /// path this is the peer's **relayed** transport address.
     remote: Option<SocketAddr>,
     /// Count of datagrams that failed to parse (malformed / truncated /
     /// foreign-version) since construction. Exposed for diagnostics; never
@@ -113,8 +139,28 @@ impl UdpTransport {
     pub fn from_socket_opt(socket: UdpSocket, remote: Option<SocketAddr>) -> io::Result<Self> {
         socket.set_nonblocking(true)?;
         Ok(Self {
-            socket,
+            socket: SocketKind::Direct(socket),
             remote,
+            dropped_invalid: 0,
+        })
+    }
+
+    /// Wrap an allocated TURN [`RelayUdpSocket`] and fix the peer's **relayed**
+    /// transport address (the address the peer's own TURN allocation listens
+    /// on, exchanged over signaling). Every datagram then rides the relay, but
+    /// the transport surface is identical to the direct path, so the same
+    /// [`RollbackSession`](crate::session::RollbackSession) drives it — this is
+    /// the symmetric-NAT fallback hand-off (v1.8.7). The underlying socket is
+    /// set non-blocking.
+    ///
+    /// # Errors
+    ///
+    /// Returns any error from setting the underlying socket non-blocking.
+    pub fn from_relay(relay: RelayUdpSocket, peer_relayed: SocketAddr) -> io::Result<Self> {
+        relay.socket().set_nonblocking(true)?;
+        Ok(Self {
+            socket: SocketKind::Relayed(relay),
+            remote: Some(peer_relayed),
             dropped_invalid: 0,
         })
     }
@@ -142,13 +188,26 @@ impl UdpTransport {
     }
 
     /// The local address the socket is bound to (resolves an ephemeral
-    /// `:0` port to the concrete one the OS picked).
+    /// `:0` port to the concrete one the OS picked). On the relay path this is
+    /// the local UDP port the relay traffic flows over (NOT the relayed
+    /// transport address peers send to).
     ///
     /// # Errors
     ///
     /// Returns any error from the underlying `local_addr` call.
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
-        self.socket.local_addr()
+        match &self.socket {
+            SocketKind::Direct(s) => s.local_addr(),
+            SocketKind::Relayed(r) => r.socket().local_addr(),
+        }
+    }
+
+    /// `true` if this transport rides a TURN relay (the symmetric-NAT
+    /// fallback) rather than a direct / hole-punched socket. Surfaced so the
+    /// frontend can report "relayed" in its connection status.
+    #[must_use]
+    pub const fn is_relayed(&self) -> bool {
+        matches!(self.socket, SocketKind::Relayed(_))
     }
 
     /// The remote peer address, once known. `None` in host-listen mode before
@@ -188,8 +247,31 @@ impl UdpTransport {
         let mut out = Vec::new();
         let mut buf = [0u8; RECV_BUF_LEN];
         for _ in 0..MAX_DATAGRAMS_PER_POLL {
-            match self.socket.recv_from(&mut buf) {
-                Ok((len, from)) => {
+            // Read one datagram, dispatching over the socket source. Both arms
+            // map to the same three outcomes: a decoded `(len, from)`, "stray —
+            // keep draining", or "empty / fatal — stop".
+            let recv = match &self.socket {
+                SocketKind::Direct(s) => match s.recv_from(&mut buf) {
+                    Ok((len, from)) => RecvStep::Got(len, from),
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => RecvStep::Empty,
+                    // Windows surfaces an ICMP port-unreachable for a prior
+                    // send_to as a ConnectionReset on the *next* recv. It is
+                    // not fatal and not tied to a specific inbound datagram —
+                    // keep draining; the peer may simply not be listening yet.
+                    Err(e) if e.kind() == io::ErrorKind::ConnectionReset => RecvStep::Stray,
+                    Err(_) => RecvStep::Empty,
+                },
+                SocketKind::Relayed(r) => match r.recv_step(&mut buf) {
+                    Ok(Some((len, from))) => RecvStep::Got(len, from),
+                    // A stray relay datagram (not from the server / not a Data
+                    // Indication) was consumed — keep draining.
+                    Ok(None) => RecvStep::Stray,
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => RecvStep::Empty,
+                    Err(_) => RecvStep::Empty,
+                },
+            };
+            match recv {
+                RecvStep::Got(len, from) => {
                     // We accept datagrams from any source (a NAT may rewrite
                     // the peer's address, and the handshake already bound us to
                     // one logical peer); a foreign or malformed packet simply
@@ -200,18 +282,24 @@ impl UdpTransport {
                         None => self.dropped_invalid = self.dropped_invalid.saturating_add(1),
                     }
                 }
-                Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
-                Err(e) if e.kind() == io::ErrorKind::ConnectionReset => {
-                    // Windows surfaces an ICMP port-unreachable for a prior
-                    // send_to as a ConnectionReset on the *next* recv. It is
-                    // not fatal and not tied to a specific inbound datagram —
-                    // keep draining; the peer may simply not be listening yet.
-                }
-                Err(_) => break,
+                RecvStep::Stray => {}
+                RecvStep::Empty => break,
             }
         }
         out
     }
+}
+
+/// The outcome of one datagram read inside [`UdpTransport::poll_with_source`],
+/// uniform across the direct and relay socket sources.
+enum RecvStep {
+    /// A datagram of `len` bytes arrived from `SocketAddr`.
+    Got(usize, SocketAddr),
+    /// A datagram was consumed but should not surface (a stray / benign error);
+    /// keep draining the socket.
+    Stray,
+    /// The socket is empty or hit a fatal error; stop draining.
+    Empty,
 }
 
 impl Transport for UdpTransport {
@@ -226,7 +314,14 @@ impl Transport for UdpTransport {
         // ConnectionReset on Windows, or a full socket buffer) is non-fatal:
         // the rollback protocol tolerates loss, and the next resend covers it.
         // We deliberately swallow the error rather than propagate or panic.
-        let _ = self.socket.send_to(&bytes, remote);
+        match &mut self.socket {
+            SocketKind::Direct(s) => {
+                let _ = s.send_to(&bytes, remote);
+            }
+            SocketKind::Relayed(r) => {
+                let _ = r.send_to(&bytes, remote);
+            }
+        }
     }
 
     fn poll(&mut self) -> Vec<NetMessage> {
@@ -444,6 +539,14 @@ impl NetplayConnection {
         &self.transport
     }
 
+    /// `true` if the underlying transport rides a TURN relay (the symmetric-NAT
+    /// fallback) rather than a direct / hole-punched socket. Surfaced so the
+    /// frontend's connection status can report whether gameplay is relayed.
+    #[must_use]
+    pub const fn is_relayed(&self) -> bool {
+        self.transport.is_relayed()
+    }
+
     /// Mutably borrow the underlying transport — the surface a
     /// [`RollbackSession`](crate::session::RollbackSession) drives. NOTE: a
     /// session calls `poll` itself, which consumes inbound datagrams; if you
@@ -658,7 +761,9 @@ mod tests {
         // Send raw junk straight at b: an empty packet, an unknown tag, a
         // truncated Sync, and a valid one. Only the valid one should surface;
         // none may panic.
-        let raw = a.socket;
+        let SocketKind::Direct(raw) = a.socket else {
+            panic!("transport_pair builds a Direct transport");
+        };
         let dst = b.local_addr().unwrap();
         raw.send_to(&[], dst).unwrap();
         raw.send_to(&[250, 1, 2, 3], dst).unwrap();
