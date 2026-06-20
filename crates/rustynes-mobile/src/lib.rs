@@ -52,16 +52,19 @@ pub const DEFAULT_SAMPLE_RATE: u32 = 48_000;
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum MobileError {
     /// The supplied bytes are not a loadable iNES/NES 2.0 ROM image.
-    #[error("failed to load ROM: {message}")]
+    // The field is named `reason` (not `message`): UniFFI maps error variants to
+    // Kotlin `Exception` subclasses, and a `message` field would collide with
+    // `Throwable.message`, breaking the generated bindings' compile.
+    #[error("failed to load ROM: {reason}")]
     RomLoad {
         /// Underlying core error rendered as text.
-        message: String,
+        reason: String,
     },
     /// A save-state blob failed to decode / restore.
-    #[error("failed to restore save state: {message}")]
+    #[error("failed to restore save state: {reason}")]
     SaveState {
         /// Underlying snapshot error rendered as text.
-        message: String,
+        reason: String,
     },
     /// A controller port index outside `0..=3` was supplied.
     #[error("invalid controller port {port} (valid range 0..=3)")]
@@ -184,7 +187,7 @@ impl NesController {
     pub fn new(rom: Vec<u8>, sample_rate: u32) -> Result<Arc<Self>, MobileError> {
         let nes = Nes::from_rom_with_sample_rate(&rom, sample_rate).map_err(|e| {
             MobileError::RomLoad {
-                message: e.to_string(),
+                reason: e.to_string(),
             }
         })?;
         Ok(Arc::new(Self {
@@ -203,7 +206,7 @@ impl NesController {
     pub fn load_rom(&self, rom: Vec<u8>, sample_rate: u32) -> Result<(), MobileError> {
         let nes = Nes::from_rom_with_sample_rate(&rom, sample_rate).map_err(|e| {
             MobileError::RomLoad {
-                message: e.to_string(),
+                reason: e.to_string(),
             }
         })?;
         let mut g = self.lock();
@@ -314,7 +317,7 @@ impl NesController {
             .nes
             .restore(&data)
             .map_err(|e| MobileError::SaveState {
-                message: e.to_string(),
+                reason: e.to_string(),
             })
     }
 

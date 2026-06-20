@@ -117,7 +117,7 @@ private const val NES_HEIGHT = 240
 
 @Composable
 private fun EmulatorScreen(emulator: EmulatorHandle) {
-    val context = androidx.activity.compose.LocalActivity.current ?: return
+    val context = androidx.compose.ui.platform.LocalContext.current
     var frame by remember { mutableStateOf<ImageBitmap?>(null) }
     var status by remember { mutableStateOf("Open a .nes ROM to start") }
 

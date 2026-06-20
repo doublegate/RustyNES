@@ -11,8 +11,8 @@ keystore.properties
 # cargo-ndk drops the cross-compiled .so here; regenerated every build
 app/src/main/jniLibs/
 
-# The Gradle wrapper jar is materialised by `gradle wrapper` in CI / first build
-gradle/wrapper/gradle-wrapper.jar
+# The Gradle wrapper jar IS committed (standard Android practice — makes the
+# module build out-of-the-box without a pre-installed Gradle).
 
 # The repo-root .gitignore blanket-ignores `*.xml`; the Android manifest +
 # resources are essential tracked source, so force-include them here (a deeper
