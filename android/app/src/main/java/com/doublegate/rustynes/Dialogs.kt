@@ -1,9 +1,13 @@
 package com.doublegate.rustynes
 
+import android.content.Intent
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -20,7 +24,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.core.net.toUri
+import androidx.core.graphics.drawable.toBitmap
 import androidx.compose.ui.unit.dp
 
 /**
@@ -37,8 +46,7 @@ private const val ABOUT_TEXT =
         "Features: 168 mapper families, the Famicom Disk System, Vs. System / " +
         "PlayChoice-10, rollback netplay, RetroAchievements, TAS movies + the TAStudio " +
         "editor, save-states, rewind, run-ahead, Lua scripting + automation, HD packs, " +
-        "and A/V recording — all on a strict bit-determinism contract.\n\n" +
-        "github.com/doublegate/RustyNES"
+        "and A/V recording — all on a strict bit-determinism contract."
 
 /** The About dialog: the RustyNES icon + the desktop project's About text. */
 @Composable
@@ -47,16 +55,37 @@ fun AboutDialog(onDismiss: () -> Unit) {
         onDismissRequest = onDismiss,
         confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
         icon = {
+            // Render the (adaptive) launcher icon as a bitmap — painterResource
+            // throws on an AdaptiveIconDrawable, which was crashing the dialog.
+            val ctx = LocalContext.current
+            val icon = remember {
+                ctx.packageManager.getApplicationIcon(ctx.packageName).toBitmap(160, 160).asImageBitmap()
+            }
             Image(
-                painter = painterResource(R.mipmap.ic_launcher),
+                bitmap = icon,
                 contentDescription = "RustyNES icon",
                 modifier = Modifier.size(72.dp),
             )
         },
         title = { Text("RustyNES") },
         text = {
+            val ctx = LocalContext.current
             Column(modifier = Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
                 Text(ABOUT_TEXT)
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "github.com/doublegate/RustyNES",
+                    color = Color(0xFF4FC3F7),
+                    textDecoration = TextDecoration.Underline,
+                    modifier = Modifier.clickable {
+                        runCatching {
+                            ctx.startActivity(
+                                Intent(Intent.ACTION_VIEW, "https://github.com/doublegate/RustyNES".toUri())
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                            )
+                        }
+                    },
+                )
             }
         },
     )
