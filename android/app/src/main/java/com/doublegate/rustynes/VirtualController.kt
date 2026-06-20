@@ -18,6 +18,7 @@ import android.os.Vibrator
 import android.os.VibratorManager
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import kotlin.math.hypot
@@ -49,17 +50,24 @@ fun VirtualController(emulator: EmulatorHandle, modifier: Modifier) {
     Canvas(
         modifier = modifier.pointerInput(Unit) {
             awaitPointerEventScope {
+                // Track every active pointer by id, so arbitrarily many fingers
+                // (e.g. D-pad + B + A at once in SMB) are all live — recompute the
+                // mask from the FULL set each event, not just this event's changes.
+                val active = HashMap<PointerId, Offset>()
                 while (true) {
                     val event = awaitPointerEvent()
                     val w = size.width.toFloat()
                     val h = size.height.toFloat()
-                    var m = 0
                     for (change in event.changes) {
                         if (change.pressed) {
-                            m = m or hitTest(change.position.x, change.position.y, w, h)
-                            change.consume()
+                            active[change.id] = change.position
+                        } else {
+                            active.remove(change.id)
                         }
+                        change.consume()
                     }
+                    var m = 0
+                    for (pos in active.values) m = m or hitTest(pos.x, pos.y, w, h)
                     if (m != mask) {
                         // Light tick when a new button engages (not on release).
                         if (m and mask.inv() != 0) tick(vibrator)
