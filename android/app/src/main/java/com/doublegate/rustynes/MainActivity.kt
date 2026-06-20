@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.view.KeyEvent
+import java.security.MessageDigest
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -71,6 +72,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import uniffi.rustynes_mobile.NesController
+import uniffi.rustynes_mobile.RaLoginStatus
+import uniffi.rustynes_mobile.RaToast
 
 /**
  * RustyNES Android — first-boot Compose shell (v1.8.0 "Android", beta.1).
@@ -176,11 +179,20 @@ class MainActivity : ComponentActivity() {
     // consistent; it is a quick in-memory encode, fine to do on the main thread.
     override fun onPause() {
         super.onPause()
+        val ctrl = emulator.controller
+        val sha = emulator.romSha
+        // RetroAchievements progress sidecar (v1.8.6) is persisted unconditionally —
+        // it is unlock progress, not a save-state, so the freemium gate below does
+        // not apply. A no-op when no RA session / game is loaded (empty blob).
+        if (ctrl != null && sha != null) {
+            runCatching {
+                val blob = ctrl.raSerializeProgress()
+                if (blob.isNotEmpty()) RaProgressStore.save(this, sha, blob)
+            }
+        }
         // Save-on-background is a paid feature in the Play build; sideload builds
         // (PLAY_BUILD=false) always persist. The demo never persists state.
         if (BuildConfig.PLAY_BUILD && (!::license.isInitialized || !license.isUnlocked)) return
-        val ctrl = emulator.controller
-        val sha = emulator.romSha
         if (ctrl != null && sha != null) {
             runCatching { SaveStateStore.save(this, sha, SaveStateStore.AUTO_SLOT, ctrl.saveState()) }
         }
@@ -205,6 +217,10 @@ class EmulatorHandle {
 
     /** Lowercase hex SHA-256 of the loaded ROM — the save-state directory key. */
     var romSha: String? = null
+
+    /** Raw bytes of the loaded ROM — kept so RetroAchievements can (re-)identify
+     *  the game via `raLoadGame` if login completes after the ROM was opened. */
+    var romBytes: ByteArray? = null
 
     /** Emulation paused (the loop idles, no frames advance). Read by the loop. */
     @Volatile
@@ -297,6 +313,7 @@ private fun loadRom(
     val sha = sha256Hex(bytes)
     emulator.controller = ctrl
     emulator.romSha = sha
+    emulator.romBytes = bytes
     // Apply this game's remembered video filter (per-game DB), if any.
     GameConfig.filter(context, sha)?.let { f ->
         settings.filter = VideoFilter.entries.getOrElse(f) { VideoFilter.None }
@@ -439,6 +456,16 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
     // Lua scripting (v1.8.6): whether a script is loaded + its rolling log output.
     var scriptLoaded by remember { mutableStateOf(false) }
     var scriptLog by remember { mutableStateOf("") }
+    // RetroAchievements (v1.8.6): coarse login status text, the signed-in user (or
+    // null), and the live HUD toast queue drained from the bridge each frame.
+    var raStatus by remember { mutableStateOf("Logged out") }
+    var raUserName by remember { mutableStateOf<String?>(null) }
+    var raToasts by remember { mutableStateOf<List<RaToast>>(emptyList()) }
+    // Set after a game was opened so RA can (re-)identify it once login completes;
+    // cleared once raLoadGame has been issued for the current login + ROM.
+    var raGameLoaded by remember { mutableStateOf(false) }
+    // Tracks the previous login status to detect the LOGGED_OUT -> LOGGED_IN edge.
+    var raWasLoggedIn by remember { mutableStateOf(false) }
     // Off-main-thread scope for the one-shot SAF loads (HD-pack parse, config I/O).
     val scope = rememberCoroutineScope()
     var status by remember { mutableStateOf("Open a .nes ROM to start") }
@@ -626,6 +653,41 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
         }
     }
 
+    // Identify the loaded ROM to RetroAchievements: compute its SHA-256, read any
+    // saved progress sidecar, and call raLoadGame off-thread. A no-op unless RA is
+    // enabled, a ROM is loaded, and the session is logged in. Marks raGameLoaded so
+    // a login that completes after the ROM was opened can re-issue this once.
+    fun raIdentifyGame() {
+        val ctrl = emulator.controller ?: return
+        val bytes = emulator.romBytes ?: return
+        if (!settings.raEnabled) return
+        scope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    if (!ctrl.raIsEnabled() || ctrl.raLoginStatus() != RaLoginStatus.LOGGED_IN) {
+                        return@withContext
+                    }
+                    val sha = MessageDigest.getInstance("SHA-256").digest(bytes)
+                    val shaHex = sha.joinToString("") { "%02x".format(it) }
+                    val sidecar = RaProgressStore.load(context, shaHex)
+                    ctrl.raLoadGame(bytes, sha, sidecar)
+                }
+                raGameLoaded = true
+            }.onFailure { status = "RA load failed: ${it.message}" }
+        }
+    }
+
+    // Persist the current RA progress sidecar (if any) for the loaded ROM.
+    fun raSaveProgress() {
+        val ctrl = emulator.controller ?: return
+        val sha = emulator.romSha ?: return
+        if (!settings.raEnabled) return
+        runCatching {
+            val blob = ctrl.raSerializeProgress()
+            if (blob.isNotEmpty()) RaProgressStore.save(context, sha, blob)
+        }
+    }
+
     // Open a recent ROM via its persistable content URI.
     fun openRecent(rom: RecentRom) {
         runCatching {
@@ -654,6 +716,34 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                 }
             }
         }
+    }
+
+    // RetroAchievements auto-login (v1.8.6): on first composition, if RA is enabled
+    // and a token was saved from a prior password login, init the session and
+    // token-login silently (fire-and-forget; status/toasts are polled in the loop).
+    LaunchedEffect(Unit) {
+        if (settings.raEnabled && settings.raToken.isNotEmpty() && settings.raUsername.isNotEmpty()) {
+            withContext(Dispatchers.IO) {
+                emulator.controller // touch (no-op); RA session is controller-scoped
+                runCatching {
+                    // The session is created lazily on the first ra_* call; init it
+                    // and token-login. If no controller exists yet, the login still
+                    // registers on the session and re-applies when a ROM is opened.
+                    val ctrl = emulator.controller
+                    if (ctrl != null) {
+                        ctrl.raInit(settings.raHardcore)
+                        ctrl.raLoginToken(settings.raUsername, settings.raToken)
+                    }
+                }
+            }
+        }
+    }
+
+    // (Re-)identify the loaded game to RA whenever the ROM changes (keyed by SHA).
+    // A no-op until logged in; the login-edge handler in the loop re-issues it then.
+    LaunchedEffect(emulator.romSha) {
+        raGameLoaded = false
+        raIdentifyGame()
     }
 
     // Debug-only convenience: auto-load a ROM pushed to the app's external files
@@ -720,6 +810,36 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                     // Nearest-neighbour: preserve the crisp pixel grid.
                     filterQuality = FilterQuality.None,
                 )
+            }
+            // RetroAchievements toast HUD (v1.8.6) — unlock + login/server messages.
+            // Text-only cards (no badge images); error toasts tint red. They clear
+            // when the next poll returns an empty queue.
+            if (raToasts.isNotEmpty()) {
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp),
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    raToasts.forEach { toast ->
+                        Column(
+                            modifier = Modifier
+                                .background(if (toast.isError) Color(0xD0701010) else Color(0xC0102030))
+                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                        ) {
+                            Text(
+                                toast.title,
+                                color = if (toast.isError) Color(0xFFFFCDD2) else Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                            )
+                            if (toast.detail.isNotEmpty()) {
+                                Text(toast.detail, color = Color(0xFFCFD8DC), fontSize = 10.sp)
+                            }
+                        }
+                    }
+                }
             }
             // Lua script log overlay (v1.8.6) — the script's print/log output.
             if (scriptLoaded && scriptLog.isNotEmpty()) {
@@ -903,6 +1023,57 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                 scriptLog = ""
                 status = "Script unloaded"
             },
+            raStatus = raStatus,
+            raUser = raUserName,
+            onRaLogin = { user, pass ->
+                // Off-thread, like the SAF loads: init the session at the current
+                // hardcore setting and fire the async password login. Status/toasts
+                // are polled in the emulation loop; on the LOGGED_IN edge the token
+                // is persisted and the loaded game is identified.
+                settings.raUsername = user
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        runCatching {
+                            val ctrl = emulator.controller
+                            if (ctrl != null) {
+                                ctrl.raInit(settings.raHardcore)
+                                ctrl.raLoginPassword(user, pass)
+                                raStatus = "Logging in…"
+                            } else {
+                                raStatus = "Open a ROM first, then log in"
+                            }
+                        }
+                    }
+                }
+            },
+            onRaLogout = {
+                scope.launch {
+                    withContext(Dispatchers.IO) { runCatching { emulator.controller?.raLogout() } }
+                    settings.raToken = ""
+                    raUserName = null
+                    raStatus = "Logged out"
+                }
+            },
+            raEnabled = settings.raEnabled,
+            onRaEnabledChange = { on ->
+                settings.raEnabled = on
+                if (on) {
+                    scope.launch {
+                        withContext(Dispatchers.IO) {
+                            runCatching { emulator.controller?.raInit(settings.raHardcore) }
+                        }
+                    }
+                }
+            },
+            raHardcore = settings.raHardcore,
+            onRaHardcoreChange = { hc ->
+                settings.raHardcore = hc
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        runCatching { emulator.controller?.raSetHardcore(hc) }
+                    }
+                }
+            },
             onDismiss = { showSettings = false },
         )
     }
@@ -940,6 +1111,10 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
         val reuse = Bitmap.createBitmap(NES_WIDTH, NES_HEIGHT, Bitmap.Config.ARGB_8888)
         val pixels = IntArray(NES_WIDTH * NES_HEIGHT)
         val audio = AudioPlayer(48_000)
+        // RetroAchievements is polled at a low cadence (every ~15 frames) — toasts
+        // and login status don't need per-frame granularity, and skipping the FFI
+        // round-trips keeps the hot path clean when RA is off.
+        var raFrame = 0
         try {
             while (isActive) {
                 val ctrl = emulator.controller
@@ -1006,6 +1181,32 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                 // Mirror the picture to the external display while casting (no-op
                 // otherwise). Same main-thread publish point as the Compose frame.
                 castManager.pushFrame(reuse)
+                // RetroAchievements: poll the toast queue + login status at a low
+                // cadence. Cheap when RA is off (a single `raIsEnabled` bool check).
+                if (settings.raEnabled && (++raFrame % 15) == 0) {
+                    val rctrl = emulator.controller
+                    if (rctrl != null && rctrl.raIsEnabled()) {
+                        val toasts = rctrl.raPollToasts()
+                        if (toasts.isNotEmpty()) raToasts = toasts
+                        val st = rctrl.raLoginStatus()
+                        val loggedIn = st == RaLoginStatus.LOGGED_IN
+                        if (loggedIn && !raWasLoggedIn) {
+                            // LOGGED_OUT -> LOGGED_IN edge: persist the token + user
+                            // (never the password) for silent re-login, surface the
+                            // user, and identify the loaded game if not yet done.
+                            rctrl.raToken()?.let { settings.raToken = it }
+                            raUserName = rctrl.raUser()?.displayName ?: settings.raUsername
+                            raStatus = "Signed in"
+                            if (!raGameLoaded) raIdentifyGame()
+                        } else if (!loggedIn && raWasLoggedIn) {
+                            raUserName = null
+                            raStatus = "Logged out"
+                        } else if (st == RaLoginStatus.ERROR) {
+                            raStatus = "Login failed"
+                        }
+                        raWasLoggedIn = loggedIn
+                    }
+                }
                 // Fast-forward skips the pacing delay so the core runs ahead.
                 if (!turbo) {
                     val remainingMs = (FRAME_NANOS - (System.nanoTime() - start)) / 1_000_000
@@ -1018,7 +1219,11 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
     }
 
     DisposableEffect(Unit) {
-        onDispose { emulator.controller = null }
+        onDispose {
+            // Persist RA progress before tearing down the controller (ROM unload).
+            raSaveProgress()
+            emulator.controller = null
+        }
     }
 }
 
