@@ -8,6 +8,7 @@ import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.view.KeyEvent
@@ -86,10 +87,14 @@ class MainActivity : ComponentActivity() {
     /** Freemium entitlement (Workstream M); created in onCreate. */
     private lateinit var license: LicenseManager
 
+    /** Thermal-throttle listener (perf/battery); cancels fast-forward when hot. */
+    private var thermalListener: android.os.PowerManager.OnThermalStatusChangedListener? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         license = LicenseManager(applicationContext)
         license.connect()
+        registerThermalBackoff()
         enableEdgeToEdge()
         hideSystemBars()
         setContent {
@@ -106,6 +111,26 @@ class MainActivity : ComponentActivity() {
         // Re-verify entitlement against Play on each foreground (a purchase made
         // elsewhere, a refund, or a restore reflects here).
         if (::license.isInitialized) license.refreshEntitlement()
+    }
+
+    // Cancel fast-forward when the device starts thermally throttling — the NES
+    // itself is light, but uncapped fast-forward can heat a phone; emulation
+    // speed (and thus determinism) is unaffected, only the host pacing.
+    private fun registerThermalBackoff() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        val pm = getSystemService(POWER_SERVICE) as android.os.PowerManager
+        val l = android.os.PowerManager.OnThermalStatusChangedListener { status ->
+            if (status >= android.os.PowerManager.THERMAL_STATUS_SEVERE) emulator.turbo = false
+        }
+        pm.addThermalStatusListener(l)
+        thermalListener = l
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        thermalListener?.let {
+            (getSystemService(POWER_SERVICE) as android.os.PowerManager).removeThermalStatusListener(it)
+        }
     }
 
     // Re-assert immersive mode whenever the window regains focus: the system
