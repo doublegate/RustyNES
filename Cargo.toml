@@ -16,7 +16,7 @@ members = [
 ]
 
 [workspace.package]
-version = "1.7.1"
+version = "1.8.0"
 edition = "2024"
 rust-version = "1.96"
 license = "MIT OR Apache-2.0"
@@ -27,17 +27,17 @@ keywords = ["nes", "emulator", "famicom", "6502", "retro"]
 categories = ["emulators", "games"]
 
 [workspace.dependencies]
-rustynes-core = { path = "crates/rustynes-core", version = "1.7.1" }
-rustynes-cpu = { path = "crates/rustynes-cpu", version = "1.7.1" }
-rustynes-ppu = { path = "crates/rustynes-ppu", version = "1.7.1" }
-rustynes-apu = { path = "crates/rustynes-apu", version = "1.7.1", default-features = false }
-rustynes-mappers = { path = "crates/rustynes-mappers", version = "1.7.1" }
-rustynes-netplay = { path = "crates/rustynes-netplay", version = "1.7.1" }
-rustynes-script = { path = "crates/rustynes-script", version = "1.7.1" }
-rustynes-test-harness = { path = "crates/rustynes-test-harness", version = "1.7.1" }
+rustynes-core = { path = "crates/rustynes-core", version = "1.8.0" }
+rustynes-cpu = { path = "crates/rustynes-cpu", version = "1.8.0" }
+rustynes-ppu = { path = "crates/rustynes-ppu", version = "1.8.0" }
+rustynes-apu = { path = "crates/rustynes-apu", version = "1.8.0", default-features = false }
+rustynes-mappers = { path = "crates/rustynes-mappers", version = "1.8.0" }
+rustynes-netplay = { path = "crates/rustynes-netplay", version = "1.8.0" }
+rustynes-script = { path = "crates/rustynes-script", version = "1.8.0" }
+rustynes-test-harness = { path = "crates/rustynes-test-harness", version = "1.8.0" }
 # v1.8.0 "Android" — the shared mobile bridge, consumed by rustynes-android (and
 # v1.9.0's rustynes-ios). Path dep; the version req is a floor.
-rustynes-mobile = { path = "crates/rustynes-mobile", version = "1.7.1" }
+rustynes-mobile = { path = "crates/rustynes-mobile", version = "1.8.0" }
 
 # v1.1.0 beta.3 (Workstream E) — Lua scripting. `vendored` compiles Lua 5.4
 # from source (no system Lua needed); native-only (the wasm/no_std builds never

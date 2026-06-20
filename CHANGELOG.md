@@ -15,6 +15,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-06-19 - "Android" (Platform Release)
+
+> The first **platform** (not accuracy) release: a complete, shippable Android
+> app, verified on a Samsung Galaxy Z Fold 7. The pure-Rust core is **byte-
+> identical** on ARM — only a new host shell is added — so **AccuracyCoin 100%
+> (139/139)** and every desktop gate are unchanged. Distributed on Google Play as
+> a free download with a one-time **$2.99 "Full Unlock"** (10-minute demo without
+> save-states / resume / battery-SRAM). The wgpu `SurfaceView` native renderer +
+> the desktop WGSL shader stack remain a documented next increment; this release
+> ships the RGBA `Bitmap` render path with AGSL CRT/scanline post-processing.
+
 ### Added
 
 - **v1.8.0 "Android" — Workstream A (foundation & build).** The first *platform*
@@ -78,10 +89,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     AccuracyCoin untouched). The gating, timer, and demo-expiry/unlock UI are
     verified on-device; the Play Console product + the real purchase transaction
     are maintainer-manual. See [`docs/android.md`](docs/android.md).
-  - **Documented next increment** (not in this cut): the wgpu `SurfaceView` render
-    path + the NTSC/CRT shader stack — the current RGBA `Bitmap` renderer is
-    complete and performant, so wgpu is a fidelity/perf upgrade, not a blocker.
-    Netplay / RetroAchievements / Lua remain deferred per the locked MVP.
+  - **Video filters + perf.** GPU **CRT / Scanlines** post-processing via an AGSL
+    `RuntimeShader` (API 33+) over the Compose render path (an "FX:" cycle with the
+    choice persisted; the plain `Bitmap` blit is the always-on fallback) — post-
+    processing only, so determinism holds. Plus a `PowerManager` thermal-throttle
+    listener that cancels fast-forward when the device runs hot.
+  - **Documented next increment** (not in this cut): the **full wgpu `SurfaceView`
+    native renderer** reusing the desktop WGSL NTSC/CRT/Bisqwit shader stack — the
+    current `Bitmap` + AGSL path is complete and performant, so this is a
+    fidelity/perf upgrade, not a blocker. Netplay / RetroAchievements / Lua remain
+    deferred per the locked MVP.
 
 ## [1.7.1] - 2026-06-19
 
