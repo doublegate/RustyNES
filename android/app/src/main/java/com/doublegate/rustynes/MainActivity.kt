@@ -288,11 +288,16 @@ private fun loadRom(
     uri: Uri?,
     name: String?,
     unlocked: Boolean,
+    settings: AppSettings,
 ): String {
     val ctrl = NesController(bytes, 48_000u)
     val sha = sha256Hex(bytes)
     emulator.controller = ctrl
     emulator.romSha = sha
+    // Apply this game's remembered video filter (per-game DB), if any.
+    GameConfig.filter(context, sha)?.let { f ->
+        settings.filter = VideoFilter.entries.getOrElse(f) { VideoFilter.None }
+    }
     // Auto-resume the on-background save-state is a paid feature; the demo always
     // cold-boots the ROM.
     if (unlocked) {
@@ -487,6 +492,14 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
         gpuSurface?.setFilter(settings.filter.ordinal, settings.filterParams(settings.filter))
     }
 
+    // Per-game DB (v1.8.5): remember the chosen filter for the loaded ROM (by SHA),
+    // so it reopens with that look. Fires on filter change; a no-op without a ROM.
+    LaunchedEffect(settings.filter) {
+        emulator.romSha?.takeIf { it.isNotEmpty() }?.let { sha ->
+            GameConfig.setFilter(context, sha, settings.filter.ordinal)
+        }
+    }
+
     // SAF document picker — no broad storage permission required. The picked
     // bytes are handed straight to the core (no path), a persistable read grant
     // is taken, and the ROM is recorded in the recents list (Workstream E).
@@ -497,7 +510,7 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
             runCatching {
                 val name = displayName(context, uri)
                 val bytes = context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
-                status = loadRom(context, emulator, bytes, uri, name, unlocked)
+                status = loadRom(context, emulator, bytes, uri, name, unlocked, settings)
                 recents = RomLibrary.recents(context)
             }.onFailure { status = "Failed to load ROM: ${it.message}" }
         }
@@ -549,7 +562,7 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
         runCatching {
             val uri = Uri.parse(rom.uri)
             val bytes = context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
-            status = loadRom(context, emulator, bytes, uri, rom.name, unlocked)
+            status = loadRom(context, emulator, bytes, uri, rom.name, unlocked, settings)
             recents = RomLibrary.recents(context)
         }.onFailure { status = "Can't open ${rom.name}: ${it.message}" }
     }
@@ -583,7 +596,7 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
             val auto = java.io.File(context.getExternalFilesDir(null), "autoload.nes")
             if (auto.exists()) {
                 runCatching {
-                    status = loadRom(context, emulator, auto.readBytes(), null, "autoload", unlocked)
+                    status = loadRom(context, emulator, auto.readBytes(), null, "autoload", unlocked, settings)
                 }.onFailure { status = "Autoload failed: ${it.message}" }
             }
         }
