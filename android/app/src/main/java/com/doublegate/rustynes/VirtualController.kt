@@ -13,7 +13,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalHapticFeedback
 import kotlin.math.hypot
 
 /**
@@ -38,6 +40,7 @@ import kotlin.math.hypot
 fun VirtualController(emulator: EmulatorHandle, modifier: Modifier) {
     // The live pressed-button mask, used both to drive input and to light the art.
     var mask by remember { mutableIntStateOf(0) }
+    val haptic = LocalHapticFeedback.current
     Canvas(
         modifier = modifier.pointerInput(Unit) {
             awaitPointerEventScope {
@@ -53,6 +56,10 @@ fun VirtualController(emulator: EmulatorHandle, modifier: Modifier) {
                         }
                     }
                     if (m != mask) {
+                        // Light tick when a new button engages (not on release).
+                        if (m and mask.inv() != 0) {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        }
                         mask = m
                         emulator.setTouchMask(m)
                     }

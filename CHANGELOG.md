@@ -15,6 +15,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.2] - 2026-06-20 - "Android" (Input & the virtual controller)
+
+### Added
+
+- **Multi-touch virtual NES controller (Android).** A single `Canvas` both draws
+  an NES-001 control pad — styled per `assets/RustyNES_Icon/rustynes.svg`
+  (`nes_controller()` geometry + palette: grey body, charcoal face plate, black
+  cross D-pad, grey Select/Start pills, the red racetrack logo, dark-red concave
+  A/B buttons, red labels, with pressed-state lighting) — and collects input
+  through one container-level pointer loop that recomputes the full `Buttons` mask
+  from **all** currently-pressed pointers each event. This gives **simultaneous
+  presses** (A + a direction), **D-pad diagonals**, and slide-between-buttons,
+  replacing the old per-button overlay that registered one input at a time. The
+  art and the touch regions both derive from the measured size, so they **resize +
+  remap in lockstep** across the Z Fold 7's cover and unfolded-inner displays. Plus
+  light haptics on press, and touch + hardware-gamepad masks OR'd so they don't
+  clobber each other. Determinism-safe — input still flows through the one
+  late-latched mask.
+- **The RustyNES app icon** (Android). The launcher icon is now the actual
+  RustyNES artwork (from `assets/RustyNES_Icon/icon-1024.png`) — an adaptive icon
+  (inset foreground over a `#1C1F24` background) + legacy density mipmaps —
+  replacing the placeholder monogram.
+
+### Changed
+
+- **`PLAY_BUILD` build flag (Android, default false).** Per the deferred-Play-launch
+  plan, the freemium logic (the demo timer + persistence locks + Play Billing) is
+  now gated on `PLAY_BUILD`, so **sideload / GitHub / dev builds are full-featured**;
+  only the Google Play AAB (the v1.8.6 launch) flips it on. The verified freemium
+  code stays compiled but dormant.
+
 ## [1.8.1] - 2026-06-19 - "Android" (Patch)
 
 ### Changed
