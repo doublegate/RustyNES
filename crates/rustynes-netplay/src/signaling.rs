@@ -134,6 +134,24 @@ pub enum SignalMessage {
         /// The media-line index.
         sdp_m_line_index: u32,
     },
+    /// Relayed peer→peer: a STUN-discovered **public reflexive address** from
+    /// peer `from` to peer `to`, for the native raw-UDP NAT-traversal path
+    /// (v1.8.7). Unlike [`Offer`](Self::Offer) / [`Answer`](Self::Answer) /
+    /// [`Candidate`](Self::Candidate) — which carry browser WebRTC SDP/ICE — this
+    /// carries a single `IP:port` string (an `addr.to_string()` of a
+    /// [`SocketAddr`](std::net::SocketAddr)) the mobile / native client exchanges
+    /// to drive UDP hole punching ([`crate::stun::HolePunch`]). One relay serves
+    /// both the browser SDP handshake and the native address rendezvous; this
+    /// variant is routed by slot exactly like the SDP ones.
+    PublicAddr {
+        /// The sender's slot.
+        from: u8,
+        /// The destination slot.
+        to: u8,
+        /// The sender's public reflexive address as `IP:port` (a
+        /// [`SocketAddr`](std::net::SocketAddr) string).
+        addr: String,
+    },
     /// Server → client: a fatal signaling error (room full, rom mismatch, …).
     Error {
         /// A short human-readable reason.
@@ -194,6 +212,11 @@ impl SignalMessage {
                 sdp_mid: json_str_field(json, "sdp_mid").unwrap_or_default(),
                 sdp_m_line_index: u32::try_from(json_num_field(json, "sdp_m_line_index")?).ok()?,
             }),
+            "public-addr" => Some(Self::PublicAddr {
+                from: slot_or("from"),
+                to: slot_or("to"),
+                addr: json_str_field(json, "addr")?,
+            }),
             "error" => Some(Self::Error {
                 reason: json_str_field(json, "reason").unwrap_or_default(),
             }),
@@ -245,6 +268,12 @@ impl SignalMessage {
                 json_quote(sdp_mid),
                 sdp_m_line_index
             ),
+            Self::PublicAddr { from, to, addr } => {
+                format!(
+                    r#"{{"type":"public-addr","from":{from},"to":{to},"addr":{}}}"#,
+                    json_quote(addr)
+                )
+            }
             Self::Error { reason } => {
                 format!(r#"{{"type":"error","reason":{}}}"#, json_quote(reason))
             }
@@ -331,7 +360,8 @@ impl Relay {
             } => self.handle_join(client, room, rom_hash, max_players),
             relayable @ (SignalMessage::Offer { .. }
             | SignalMessage::Answer { .. }
-            | SignalMessage::Candidate { .. }) => self.relay(client, &relayable),
+            | SignalMessage::Candidate { .. }
+            | SignalMessage::PublicAddr { .. }) => self.relay(client, &relayable),
             // Server→client message types arriving FROM a client are not
             // expected; ignore them rather than trust them.
             _ => Vec::new(),
@@ -485,7 +515,8 @@ const fn signal_to_slot(msg: &SignalMessage) -> Option<u8> {
     match msg {
         SignalMessage::Offer { to, .. }
         | SignalMessage::Answer { to, .. }
-        | SignalMessage::Candidate { to, .. } => Some(*to),
+        | SignalMessage::Candidate { to, .. }
+        | SignalMessage::PublicAddr { to, .. } => Some(*to),
         _ => None,
     }
 }
@@ -614,6 +645,11 @@ mod tests {
                 sdp_mid: "0".into(),
                 sdp_m_line_index: 0,
             },
+            SignalMessage::PublicAddr {
+                from: 0,
+                to: 1,
+                addr: "203.0.113.7:51234".into(),
+            },
             SignalMessage::Error {
                 reason: "room full".into(),
             },
@@ -624,6 +660,38 @@ mod tests {
                 SignalMessage::parse(&json).unwrap_or_else(|| panic!("parse failed for {json}"));
             assert_eq!(*m, back, "roundtrip mismatch for {json}");
         }
+    }
+
+    #[test]
+    fn public_addr_relays_to_the_named_slot() {
+        // The native raw-UDP rendezvous rides the same slot-routed relay as the
+        // browser SDP messages: peer at slot 0 sends its STUN-discovered public
+        // address specifically to the peer at slot 1.
+        let mut relay = Relay::new();
+        let _ = relay.handle(1, join("r", "h"));
+        let _ = relay.handle(2, join("r", "h"));
+        let pub_addr = SignalMessage::PublicAddr {
+            from: 0,
+            to: 1,
+            addr: "198.51.100.9:40000".into(),
+        };
+        let acts = relay.handle(1, pub_addr.clone());
+        assert_eq!(
+            acts,
+            vec![Action::Send {
+                to: 2,
+                msg: pub_addr
+            }]
+        );
+
+        // And the reverse direction routes back to slot 0 (client 1).
+        let reply = SignalMessage::PublicAddr {
+            from: 1,
+            to: 0,
+            addr: "192.0.2.5:55555".into(),
+        };
+        let acts = relay.handle(2, reply.clone());
+        assert_eq!(acts, vec![Action::Send { to: 1, msg: reply }]);
     }
 
     #[test]

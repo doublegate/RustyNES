@@ -121,6 +121,21 @@ pub mod connection;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod mesh_net;
 
+// v1.8.7 — the TURN relay client (RFC 8656) for the symmetric-NAT fallback +
+// the `RelayUdpSocket` shim so the existing `UdpTransport` runs over a relay
+// unchanged. Native-only (`std::net`); the STUN framing is reused from `stun`.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod relay;
+
+// v1.8.7 — the blocking signaling CLIENT (worker thread + mpsc, no tokio) and
+// the NAT-traversal orchestrator that ties signaling + STUN/punch + TURN into
+// one steppable pump. Native-only and behind the `netplay-client` feature (it
+// pulls a sync WebSocket client); the modules carry their own cfg gate.
+#[cfg(all(not(target_arch = "wasm32"), feature = "netplay-client"))]
+pub mod nat_connect;
+#[cfg(all(not(target_arch = "wasm32"), feature = "netplay-client"))]
+pub mod signaling_client;
+
 // The WebRTC signaling room/relay protocol (v2.6.0) — the pure, async-free core
 // of the reference signaling server (`examples/signaling_server.rs`, behind the
 // `signaling-server` feature). I/O-free + portable, so it compiles everywhere:
@@ -138,9 +153,15 @@ pub use diagnostics::{CrcCompare, DesyncDiagnostics};
 #[cfg(not(target_arch = "wasm32"))]
 pub use mesh_net::{MeshError, MeshHost, MeshJoiner, UdpMeshTransport};
 pub use message::{NetMessage, PROTOCOL_VERSION, fnv1a64};
+#[cfg(all(not(target_arch = "wasm32"), feature = "netplay-client"))]
+pub use nat_connect::{NatConfig, NatConnect, NatPhase};
+#[cfg(not(target_arch = "wasm32"))]
+pub use relay::{RelayUdpSocket, TurnClient, TurnConfig};
 pub use rng::SplitMix64;
 pub use session::{AdvanceOutcome, MAX_PLAYERS, NetplayError, RollbackSession, SessionConfig};
 pub use signaling::{Action, ClientId, Relay, SignalMessage};
+#[cfg(all(not(target_arch = "wasm32"), feature = "netplay-client"))]
+pub use signaling_client::{SignalEvent, SignalingClient};
 pub use spectator::{SpectatorConfig, SpectatorOutcome, SpectatorSession};
 #[cfg(not(target_arch = "wasm32"))]
 pub use stun::StunClient;
