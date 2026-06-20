@@ -29,17 +29,14 @@ class NesSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Cal
     private var sizeDirty = false
     private var surfaceGone = false
 
-    @Volatile
-    private var latestFrame: ByteArray? = null
+    /** The latest frame, consumed atomically by the render thread (`getAndSet(null)`)
+     *  so a frame is never re-rendered and there's no torn read. */
+    private val latestFrame = java.util.concurrent.atomic.AtomicReference<ByteArray?>(null)
 
-    @Volatile
-    private var filter = 0
-
-    @Volatile
-    private var fparams = FloatArray(4)
-
-    @Volatile
-    private var filterDirty = false
+    /** The active filter + its params as one immutable value, swapped atomically —
+     *  no race between the UI thread (setter) and the render thread (reader). */
+    private class FilterState(val filter: Int, val params: FloatArray)
+    private val filterState = java.util.concurrent.atomic.AtomicReference(FilterState(0, FloatArray(4)))
 
     @Volatile
     private var running = false
@@ -51,15 +48,13 @@ class NesSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Cal
 
     /** Hand the render thread the latest RGBA frame (called from the emu loop). */
     fun submitFrame(fb: ByteArray) {
-        latestFrame = fb
+        latestFrame.set(fb)
     }
 
     /** Set the video filter (0 none / 1 scanlines / 2 CRT / 3 NTSC) and its four
      *  shader params; applied on the render thread before the next frame. */
     fun setFilter(f: Int, params: FloatArray) {
-        filter = f
-        fparams = params
-        filterDirty = true
+        filterState.set(FilterState(f, params))
     }
 
     override fun surfaceCreated(holder: SurfaceHolder) {
@@ -93,6 +88,7 @@ class NesSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Cal
 
     private fun renderLoop() {
         var handle = 0L
+        var appliedFilter: FilterState? = null
         try {
             while (running) {
                 var surface: Surface? = null
@@ -113,29 +109,28 @@ class NesSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Cal
                 if (gone) break
                 if (resize && surface != null) {
                     handle = if (handle == 0L) {
-                        val newHandle = NativeRenderer.nativeInitSurface(surface!!, w, h)
-                        if (newHandle != 0L) {
-                            val p = fparams
-                            NativeRenderer.nativeSetFilter(newHandle, filter, p[0], p[1], p[2], p[3])
-                            filterDirty = false
-                        }
-                        newHandle
+                        NativeRenderer.nativeInitSurface(surface!!, w, h)
                     } else {
                         NativeRenderer.nativeResize(handle, w, h)
                         handle
                     }
+                    appliedFilter = null // force a re-apply on (re)create
                 }
-                if (filterDirty && handle != 0L) {
-                    val p = fparams
-                    NativeRenderer.nativeSetFilter(handle, filter, p[0], p[1], p[2], p[3])
-                    filterDirty = false
+                // Apply the filter when it changes (identity compare on the atomic
+                // value) or after a surface (re)create.
+                val fs = filterState.get()
+                if (handle != 0L && fs !== appliedFilter) {
+                    val p = fs.params
+                    NativeRenderer.nativeSetFilter(handle, fs.filter, p[0], p[1], p[2], p[3])
+                    appliedFilter = fs
                 }
-                val fb = latestFrame
+                // Render only a NEW frame (atomic consume); idle otherwise. The wgpu
+                // Fifo present blocks to vsync, so a present paces the thread.
+                val fb = latestFrame.getAndSet(null)
                 if (handle != 0L && fb != null) {
-                    // wgpu Fifo present blocks to vsync, so this paces the thread.
                     NativeRenderer.nativeRender(handle, fb)
                 } else {
-                    Thread.sleep(4)
+                    Thread.sleep(2)
                 }
             }
         } finally {

@@ -403,7 +403,11 @@ private class AudioPlayer(sampleRate: Int) {
      */
     fun writeBytes(bytes: ByteArray) {
         if (bytes.isNotEmpty()) {
-            track.write(java.nio.ByteBuffer.wrap(bytes), bytes.size, AudioTrack.WRITE_BLOCKING)
+            // The samples are little-endian f32 (from `to_le_bytes`); set the buffer
+            // order explicitly so the PCM_FLOAT track reads them correctly regardless
+            // of the JVM's default (BIG_ENDIAN) — Android is LE, so this is identity.
+            val bb = java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            track.write(bb, bytes.size, AudioTrack.WRITE_BLOCKING)
         }
     }
 
