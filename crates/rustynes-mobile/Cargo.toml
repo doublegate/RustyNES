@@ -31,6 +31,10 @@ thiserror.workspace = true
 # surface (proc-macro mode — no UDL file). The `cli` feature backs the
 # `uniffi-bindgen` binary used by the Gradle/Xcode build to emit Kotlin/Swift.
 uniffi = { version = "0.31", features = ["cli"] }
+# v1.8.5 — accept still-compressed `.zip` ROMs (extract the first NES entry), the
+# same convenience the desktop has. `deflate` is the only codec real NES zips use;
+# default features off keeps bzip2/zstd/aes out of the mobile binary.
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [[bin]]
 # The binding generator the platform builds invoke:

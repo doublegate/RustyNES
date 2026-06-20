@@ -197,6 +197,7 @@ impl NesController {
     /// added in later increments).
     #[uniffi::constructor]
     pub fn new(rom: Vec<u8>, sample_rate: u32) -> Result<Arc<Self>, MobileError> {
+        let rom = decompress_rom(rom);
         let nes = Nes::from_rom_with_sample_rate(&rom, sample_rate).map_err(|e| {
             MobileError::RomLoad {
                 reason: e.to_string(),
@@ -216,6 +217,7 @@ impl NesController {
     /// # Errors
     /// Returns [`MobileError::RomLoad`] if `rom` is not a valid cartridge image.
     pub fn load_rom(&self, rom: Vec<u8>, sample_rate: u32) -> Result<(), MobileError> {
+        let rom = decompress_rom(rom);
         let nes = Nes::from_rom_with_sample_rate(&rom, sample_rate).map_err(|e| {
             MobileError::RomLoad {
                 reason: e.to_string(),
@@ -424,6 +426,40 @@ impl NesController {
     pub fn ntsc_phase(&self) -> u8 {
         self.lock().nes.ntsc_phase()
     }
+}
+
+/// If `bytes` is a ZIP archive (PK magic), extract the first NES-format entry
+/// (`.nes` / `.fds` / `.unf` / `.unif`); otherwise return `bytes` unchanged. Lets
+/// the host hand a still-compressed ROM straight through — the same convenience the
+/// desktop has — without unzipping on the Kotlin/Swift side. A malformed archive or
+/// a zip with no ROM entry falls back to the original bytes (the cartridge loader
+/// then reports a clean error).
+fn decompress_rom(bytes: Vec<u8>) -> Vec<u8> {
+    use std::io::Read;
+    if bytes.len() < 4 || &bytes[..4] != b"PK\x03\x04" {
+        return bytes;
+    }
+    // The archive borrows `bytes`, so do every read inside this closure and hand
+    // back an owned `Vec`; only then is it safe to fall back to moving `bytes`.
+    let extracted = (|| {
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).ok()?;
+        let idx = (0..archive.len()).find(|&i| {
+            archive.by_index(i).is_ok_and(|e| {
+                std::path::Path::new(e.name())
+                    .extension()
+                    .is_some_and(|ext| {
+                        ["nes", "fds", "unf", "unif"]
+                            .iter()
+                            .any(|k| ext.eq_ignore_ascii_case(k))
+                    })
+            })
+        })?;
+        let mut e = archive.by_index(idx).ok()?;
+        let mut out = Vec::new();
+        e.read_to_end(&mut out).ok()?;
+        (!out.is_empty()).then_some(out)
+    })();
+    extracted.unwrap_or(bytes)
 }
 
 /// Validate and convert an FFI `u32` port into a `0..=3` array index.

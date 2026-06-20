@@ -158,7 +158,13 @@ class AppSettings(context: Context) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsSheet(settings: AppSettings, mode: ScreenMode, onDismiss: () -> Unit) {
+fun SettingsSheet(
+    settings: AppSettings,
+    mode: ScreenMode,
+    onLoadPalette: () -> Unit = {},
+    onClearPalette: () -> Unit = {},
+    onDismiss: () -> Unit,
+) {
     val context = LocalContext.current
     val vibrator = remember { systemVibrator(context) }
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -225,6 +231,14 @@ fun SettingsSheet(settings: AppSettings, mode: ScreenMode, onDismiss: () -> Unit
                         }
                     }
                 }
+            }
+
+            // Custom NES palette (v1.8.5) — load a .pal file (a 192-byte RGB table)
+            // applied live to the running core, or reset to the built-in palette.
+            Text("Custom palette")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onLoadPalette) { Text("Load .pal…") }
+                TextButton(onClick = onClearPalette) { Text("Reset") }
             }
 
             ToggleRow("Mute audio", settings.muted) { settings.muted = it }

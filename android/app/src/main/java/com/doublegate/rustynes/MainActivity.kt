@@ -503,6 +503,21 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
         }
     }
 
+    // SAF picker for a custom .pal palette (a 192-byte RGB table; extra colours,
+    // e.g. a 512-colour Mesen palette, are ignored). Applied live to the running
+    // core via the bridge; presentation-only, so determinism is untouched.
+    val palettePicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            runCatching {
+                val bytes = context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+                emulator.controller?.loadPalette(bytes)
+                status = "Palette loaded: ${displayName(context, uri)}"
+            }.onFailure { status = "Failed to load palette: ${it.message}" }
+        }
+    }
+
     // Open a recent ROM via its persistable content URI.
     fun openRecent(rom: RecentRom) {
         runCatching {
@@ -733,7 +748,16 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
 
     // Settings + save-state manager sheets (v1.8.3).
     if (showSettings) {
-        SettingsSheet(settings, screenMode, onDismiss = { showSettings = false })
+        SettingsSheet(
+            settings,
+            screenMode,
+            onLoadPalette = { palettePicker.launch(arrayOf("*/*")) },
+            onClearPalette = {
+                emulator.controller?.clearPalette()
+                status = "Palette reset to default"
+            },
+            onDismiss = { showSettings = false },
+        )
     }
     if (showStates) {
         StatesSheet(

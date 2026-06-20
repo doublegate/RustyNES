@@ -4205,6 +4205,7 @@ dependencies = [
  "rustynes-core",
  "thiserror 2.0.18",
  "uniffi",
+ "zip",
 ]
 
 [[package]]
