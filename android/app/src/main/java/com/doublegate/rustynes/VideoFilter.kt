@@ -25,7 +25,7 @@ enum class VideoFilter(val label: String) {
     Crt("CRT"),
     // v1.8.4: NTSC composite (LMP88959) — only on the native wgpu GPU renderer; the
     // AGSL/Bitmap path shows it unfiltered (no AGSL NTSC). Ordinals match the native
-    // filter codes (0/1/2/3).
+    // filter codes (0/1/2/3/4).
     Ntsc("NTSC"),
     // v1.8.5: Bisqwit composite NTSC — GPU-renderer only; needs the palette-index
     // frame fed each frame. Ordinal 4 matches the native code.

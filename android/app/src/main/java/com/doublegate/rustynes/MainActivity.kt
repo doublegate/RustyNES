@@ -47,6 +47,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -65,6 +66,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import uniffi.rustynes_mobile.NesController
@@ -433,6 +435,8 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
     // SurfaceView is fixed 256x240; HD output is upscaled), `hd` holds its bitmap.
     var hdActive by remember { mutableStateOf(false) }
     val hd = remember { HdRender() }
+    // Off-main-thread scope for the one-shot SAF loads (HD-pack parse, config I/O).
+    val scope = rememberCoroutineScope()
     var status by remember { mutableStateOf("Open a .nes ROM to start") }
     var recents by remember { mutableStateOf(RomLibrary.recents(context)) }
     // Demo session clock: seconds remaining this launch (full unlock = no limit).
@@ -500,7 +504,11 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
     // so it reopens with that look. Fires on filter change; a no-op without a ROM.
     LaunchedEffect(settings.filter) {
         emulator.romSha?.takeIf { it.isNotEmpty() }?.let { sha ->
-            GameConfig.setFilter(context, sha, settings.filter.ordinal)
+            // The JSON read+write is small but still disk I/O — keep it off the main
+            // thread (this effect runs on the main dispatcher).
+            withContext(Dispatchers.IO) {
+                GameConfig.setFilter(context, sha, settings.filter.ordinal)
+            }
         }
     }
 
@@ -567,23 +575,29 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
         androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
     ) { uri ->
         if (uri != null) {
-            runCatching {
-                val bytes = context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
-                emulator.controller?.loadHdpackFromZipBytes(bytes)
-                val dims = emulator.controller?.hdpackDimensions() ?: listOf(0u, 0u)
-                val w = dims[0].toInt()
-                val h = dims[1].toInt()
-                if (w > 0 && h > 0) {
-                    hd.w = w
-                    hd.h = h
-                    hd.bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-                    hd.pixels = IntArray(w * h)
-                    hdActive = true
-                    status = "HD-pack loaded (${w}x$h)"
-                } else {
-                    status = "HD-pack: no usable tiles"
-                }
-            }.onFailure { status = "Failed to load HD-pack: ${it.message}" }
+            // Read + parse + decode the pack off the main thread (it can be large);
+            // the bitmap/state updates land back on the main dispatcher.
+            scope.launch {
+                runCatching {
+                    val dims = withContext(Dispatchers.IO) {
+                        val bytes = context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+                        emulator.controller?.loadHdpackFromZipBytes(bytes)
+                        emulator.controller?.hdpackDimensions() ?: listOf(0u, 0u)
+                    }
+                    val w = dims[0].toInt()
+                    val h = dims[1].toInt()
+                    if (w > 0 && h > 0) {
+                        hd.w = w
+                        hd.h = h
+                        hd.bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                        hd.pixels = IntArray(w * h)
+                        hdActive = true
+                        status = "HD-pack loaded (${w}x$h)"
+                    } else {
+                        status = "HD-pack: no usable tiles"
+                    }
+                }.onFailure { status = "Failed to load HD-pack: ${it.message}" }
+            }
         }
     }
 
@@ -895,9 +909,12 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                 // RGBA->ARGB pack must never run on the UI thread). Only the cheap
                 // setPixels + asImageBitmap stay on the UI thread.
                 var usedHd = false
+                // Capture the HD bitmap once per iteration so an Unload on the UI
+                // thread can't null it mid-frame (the local keeps the object alive).
+                val hdBmp = if (hdActive) hd.bitmap else null
                 withContext(Dispatchers.Default) {
                     val fb = ctrl.runFrame()
-                    if (hdActive && hd.bitmap != null) {
+                    if (hdBmp != null) {
                         // HD-pack: composite the upscaled frame (Bitmap path only —
                         // the GPU SurfaceView is fixed at 256x240).
                         val comp = ctrl.compositeHdFrame()
@@ -908,14 +925,15 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                             packRgbaToArgb(fb, pixels)
                         }
                     } else {
-                        // Hand the raw RGBA frame to the GPU SurfaceView (opt-in path);
-                        // no-op when the GPU renderer is off.
-                        gpuSurface?.submitFrame(fb)
-                        // Bisqwit needs the palette-index frame + NTSC phase each frame
-                        // (only fetched while that filter is active — it's not free).
+                        // Bisqwit needs the palette-index frame + NTSC phase; submit it
+                        // BEFORE the frame so the render thread pairs them (it consumes
+                        // the frame first). Only fetched while that filter is active.
                         if (gpuSurface != null && settings.filter == VideoFilter.Bisqwit) {
                             gpuSurface.submitIndexFrame(ctrl.indexFramebufferBytes(), ctrl.ntscPhase().toInt())
                         }
+                        // Hand the raw RGBA frame to the GPU SurfaceView (opt-in path);
+                        // no-op when the GPU renderer is off.
+                        gpuSurface?.submitFrame(fb)
                         packRgbaToArgb(fb, pixels)
                     }
                     // Hot path: drain audio as raw bytes (no per-sample Float boxing)
@@ -925,9 +943,9 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                     // the loop back to real time); otherwise play unless muted.
                     if (!turbo && !emulator.muted) audio.writeBytes(audioBytes)
                 }
-                if (usedHd) {
-                    hd.bitmap!!.setPixels(hd.pixels, 0, hd.w, 0, 0, hd.w, hd.h)
-                    frame = hd.bitmap!!.asImageBitmap()
+                if (usedHd && hdBmp != null) {
+                    hdBmp.setPixels(hd.pixels, 0, hd.w, 0, 0, hd.w, hd.h)
+                    frame = hdBmp.asImageBitmap()
                 } else {
                     reuse.setPixels(pixels, 0, NES_WIDTH, 0, 0, NES_WIDTH, NES_HEIGHT)
                     frame = reuse.asImageBitmap()

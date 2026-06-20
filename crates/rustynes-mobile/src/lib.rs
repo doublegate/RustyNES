@@ -595,6 +595,9 @@ impl NesController {
 /// then reports a clean error).
 fn decompress_rom(bytes: Vec<u8>) -> Vec<u8> {
     use std::io::Read;
+    // Bound both the declared size AND the actual read so a zip bomb (or a bogus huge
+    // entry) can't OOM the app — any real NES/FDS/UNIF image is well under 16 MiB.
+    const MAX_ROM_BYTES: u64 = 16 * 1024 * 1024;
     if bytes.len() < 4 || &bytes[..4] != b"PK\x03\x04" {
         return bytes;
     }
@@ -613,9 +616,12 @@ fn decompress_rom(bytes: Vec<u8>) -> Vec<u8> {
                     })
             })
         })?;
-        let mut e = archive.by_index(idx).ok()?;
+        let e = archive.by_index(idx).ok()?;
+        if e.size() > MAX_ROM_BYTES {
+            return None;
+        }
         let mut out = Vec::new();
-        e.read_to_end(&mut out).ok()?;
+        e.take(MAX_ROM_BYTES).read_to_end(&mut out).ok()?;
         (!out.is_empty()).then_some(out)
     })();
     extracted.unwrap_or(bytes)

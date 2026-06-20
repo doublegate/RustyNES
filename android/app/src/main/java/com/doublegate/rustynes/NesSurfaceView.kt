@@ -62,8 +62,8 @@ class NesSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Cal
         latestIndex.set(IndexFrame(idx, phase))
     }
 
-    /** Set the video filter (0 none / 1 scanlines / 2 CRT / 3 NTSC) and its four
-     *  shader params; applied on the render thread before the next frame. */
+    /** Set the video filter (0 none / 1 scanlines / 2 CRT / 3 NTSC / 4 Bisqwit) and
+     *  its four shader params; applied on the render thread before the next frame. */
     fun setFilter(f: Int, params: FloatArray) {
         filterState.set(FilterState(f, params))
     }
