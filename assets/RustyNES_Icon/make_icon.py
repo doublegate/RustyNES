@@ -66,7 +66,11 @@ CTRL_W, CTRL_H = 232.0, 94.0
 CTRL_CX, CTRL_CY = CX, CY
 
 # --- Wordmark (cap height in px, and vertical center) ------------------------
-WORD_TOP   = ("Rusty", 27.0, CX, 184.0)
+# "Rusty" matches "NES" at cap height 35 (was 27); its baseline is kept fixed at
+# the previous bottom (184 + 27/2 = 197.5), so the center moves to 197.5 - 35/2 =
+# 180. The taller "Rusty" may overlap the cog behind it — intentional. It is also
+# nudged right by 1/8 of a character (one char = the 35px em, so +4.375).
+WORD_TOP   = ("Rusty", 35.0, CX + 4.375, 180.0)
 WORD_BOT   = ("NES",   35.0, CX, 338.0)
 NINTENDO_RED = "#e60012"
 RED_SHADOW   = "#7a0008"
