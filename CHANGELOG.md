@@ -15,8 +15,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-06-19
+
 ### Fixed
 
+- **ROM-close GPU abort fixed (#1).** In a release build `Gfx::render_with_overlay`'s
+  `debug_assert_eq!` size check is compiled out, so when `close_rom` set
+  `emu.nes = None` and the render path handed an empty `present_staging` slice to
+  `queue.write_texture`, wgpu validation aborted the process ("Copy ... would end
+  up overrunning the bounds of the Source buffer of size 0"). `render_with_overlay`
+  (the framebuffer + `index` upload branches) and `render_hd_with_overlay` now skip
+  the `write_texture` upload when the supplied pixel slice length does not match
+  `width * height * bytes_per_texel`, keeping the previously-uploaded texture; the
+  `debug_assert` stays for dev builds. `close_rom` now seeds `present_staging` with
+  a valid zeroed `NES_W * NES_H * 4` frame, so closing a ROM presents a clean blank
+  (black) window rather than a frozen last frame or a crash. Frontend-only;
+  byte-identical when never closing a ROM.
+- **Clean pause / unpause — no spurious pacing spike, zero audio underruns (#6).**
+  Two paused-state glitches fixed. (1) Pacing: on resume `set_paused` rebased
+  `next_frame_time` to "now" so the producer does not burst-catch-up, but the
+  produced/presented interval rings still held the pre-pause `last` timestamp, so
+  the next `record_produced` logged the whole pause duration as a single giant
+  `produced_max_ms` spike (675 ms / 1395 ms in captured logs). `set_paused` now also
+  calls `perf.break_phase()` on resume so the paused wall-clock gap is dropped
+  instead of counted as a produced/presented frame interval. (2) Audio: while paused
+  the producer stops pushing and the cpal callback drained the ring, then logged an
+  underrun and re-gated on resume. A new sticky pause flag
+  (`SampleQueue::gate_for_pause()` / `resume_from_pause()`) outputs silence WITHOUT
+  consuming the buffered tail and takes precedence over the `start_threshold`
+  auto-reopen (which previously re-opened the gate on the very next callback because
+  the full ring satisfied `avail >= start_threshold`), so a clean pause/unpause now
+  yields zero underruns. Frontend-only; byte-identical when never pausing.
+- **Help -> Documentation pane overhaul (#4).** Three fixes to `doc_panel.rs`
+  (emulation core untouched). (1) Word-wrap at any UI scale: the content pane was a
+  `ScrollArea::both`, which gives the inner UI unbounded horizontal width so
+  `Label::wrap` had nothing to wrap against and text only reflowed after a manual
+  resize at x4 scale; it is now a vertical-only `ScrollArea` with the content column
+  pinned to `available_width`, so bodies wrap to the pane's real width at x1-x4 and
+  any pane size. (2) A collapsible multi-level sidebar tree (default-collapsed below
+  the top level) with intra-document hyperlinks. (3) The changelog dropdown now
+  lists released versions newest-first but orders the `[Unreleased]` section last.
 - **HD-pack tile substitution now applies in the debugger / tool branch (#3).**
   A loaded HD pack (e.g. *Zelda Remastered*, ~15,849 rules) parsed and reported
   success, but nothing changed on screen whenever the debugger overlay or a
@@ -47,6 +85,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   did nothing. Removed the checkbox and its now-dead plumbing
   (`MenuAction::ToggleDebugger`, the `ShellFrame::debugger_visible` field, and the
   `DebuggerOverlay::toggle` method).
+
+### Documentation
+
+- **Exhaustive README rewrite (#7).** README.md rewritten for v1.7.0 "Forge":
+  the full feature catalogue, a complete WebAssembly / browser section, the
+  previously-missing workspace crate, and the full peripheral set, with version
+  tags and links corrected (#151 review nits applied).
 
 ## [1.7.0] - 2026-06-19 - "Forge" (Feature Release)
 
