@@ -20,8 +20,8 @@ import com.android.billingclient.api.QueryPurchasesParams
 /** The one-time, non-consumable "Full Unlock" product id (set up in Play Console). */
 const val FULL_UNLOCK_PRODUCT = "full_unlock"
 
-/** Free-tier demo session length: 10 minutes (shortened in debug for testing). */
-val DEMO_SESSION_SECONDS: Int = if (BuildConfig.DEBUG) 60 else 600
+/** Free-tier demo session length: 8 minutes (shortened in debug for testing). */
+val DEMO_SESSION_SECONDS: Int = if (BuildConfig.DEBUG) 60 else 480
 
 /**
  * Owns the freemium entitlement (Workstream M).
