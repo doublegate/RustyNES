@@ -222,6 +222,10 @@ CLAUDE.local.md
 WARP.md
 /.warp/
 
+# Local scratch / salvage working dir (data/docs/logs pulled from /tmp triage); not
+# part of the repo.
+/salvaged/
+
 # NOTE: BestEffort boot-smoke ROMs (homebrew/unlicensed/multicart) are no longer
 # a separate tree — they live under the already-ignored tests/roms/external/
 # alongside every other staged dump (the coverage harness discovers ONE external/
