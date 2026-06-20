@@ -417,6 +417,9 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
     LaunchedEffect(settings.muted) { emulator.muted = settings.muted }
     var showSettings by remember { mutableStateOf(false) }
     var showStates by remember { mutableStateOf(false) }
+    var showAbout by remember { mutableStateOf(false) }
+    // First-run onboarding shows until the user ticks "Do not show again".
+    var showOnboarding by remember { mutableStateOf(!settings.onboardingSuppressed) }
     var screenSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
 
     // SAF document picker — no broad storage permission required. The picked
@@ -574,6 +577,7 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                 emulator.turbo = turbo
             }) { Text(if (turbo) ">> On" else ">>") }
             OutlinedButton(onClick = { showSettings = true }) { Text("Settings") }
+            OutlinedButton(onClick = { showAbout = true }) { Text("About") }
             // Demo: an always-visible unlock affordance + the session countdown.
             if (!unlocked) {
                 val price = license.product
@@ -599,7 +603,7 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
         } // end control bar (toggled by the RustyNES pill)
 
         // The multi-touch virtual NES controller, sized to the NES-001 aspect
-        // (232:94). Its width is `controllerScale` of the available width
+        // (123:53, the real NES-004 proportions). Its width is `controllerScale` of the available width
         // (centered), so it rescales for the active display (cover vs unfolded
         // inner) AND the user's size preference (0.6–1.1×; >1 slightly overruns
         // the edges by design); its hit regions remap in lockstep because the
@@ -611,11 +615,11 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
         ) {
             VirtualController(
                 emulator,
-                settings.haptics,
+                settings.hapticLevel,
                 { controlsVisible = !controlsVisible },
                 Modifier
                     .width(maxWidth * settings.controllerScale)
-                    .aspectRatio(232f / 94f)
+                    .aspectRatio(123f / 53f)
                     .alpha(settings.controllerOpacity)
                     .padding(vertical = 4.dp),
             )
@@ -631,6 +635,15 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
             context, emulator.romSha, emulator,
             onStatus = { status = it },
             onDismiss = { showStates = false },
+        )
+    }
+    if (showAbout) {
+        AboutDialog(onDismiss = { showAbout = false })
+    }
+    if (showOnboarding) {
+        OnboardingDialogs(
+            onSuppress = { settings.onboardingSuppressed = true },
+            onFinished = { showOnboarding = false },
         )
     }
 

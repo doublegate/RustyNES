@@ -11,6 +11,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import android.content.Context
 import android.os.Build
@@ -46,7 +47,7 @@ import kotlin.math.hypot
 @Composable
 fun VirtualController(
     emulator: EmulatorHandle,
-    haptics: Boolean,
+    hapticLevel: HapticLevel,
     onLogoTap: () -> Unit,
     modifier: Modifier,
 ) {
@@ -105,7 +106,7 @@ fun VirtualController(
                     for (pos in active.values) m = m or hitTest(pos.x, pos.y, w, h)
                     if (m != mask) {
                         // Light tick when a new button engages (not on release).
-                        if (haptics && m and mask.inv() != 0) tick(vibrator)
+                        if (m and mask.inv() != 0) tick(vibrator, hapticLevel)
                         mask = m
                         emulator.setTouchMask(m)
                     }
@@ -124,7 +125,7 @@ fun VirtualController(
 // --- haptics (system Vibrator — reliable where Compose's TextHandleMove tick is
 //     too subtle / gated on Samsung) ---
 
-private fun systemVibrator(context: Context): Vibrator? =
+fun systemVibrator(context: Context): Vibrator? =
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
         (context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager)?.defaultVibrator
     } else {
@@ -132,15 +133,26 @@ private fun systemVibrator(context: Context): Vibrator? =
         context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
     }
 
-/** A short, clearly-felt click on a button press. */
-private fun tick(vibrator: Vibrator?) {
+/** A short button-press tick at the chosen intensity (shared with the size slider). */
+fun tick(vibrator: Vibrator?, level: HapticLevel) {
+    if (level == HapticLevel.Off) return
     val v = vibrator ?: return
     if (!v.hasVibrator()) return
     val effect = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-        VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK)
+        val predef = when (level) {
+            HapticLevel.Low -> VibrationEffect.EFFECT_TICK
+            HapticLevel.High -> VibrationEffect.EFFECT_HEAVY_CLICK
+            else -> VibrationEffect.EFFECT_CLICK
+        }
+        VibrationEffect.createPredefined(predef)
     } else {
         @Suppress("DEPRECATION")
-        VibrationEffect.createOneShot(20, VibrationEffect.DEFAULT_AMPLITUDE)
+        val ms = when (level) {
+            HapticLevel.Low -> 10L
+            HapticLevel.High -> 30L
+            else -> 20L
+        }
+        VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE)
     }
     runCatching { v.vibrate(effect) }
 }
@@ -188,8 +200,8 @@ private fun hitTest(px: Float, py: Float, w: Float, h: Float): Int {
 
 private val BODY = Color(0xFFCFCDC6)
 private val BODY_EDGE = Color(0xFF6F6E69)
-private val PLATE = Color(0xFF37373A)
-private val PLATE_EDGE = Color(0xFF1D1D1F)
+private val PLATE = Color(0xFF131315) // near-black central face (authentic NES)
+private val PLATE_EDGE = Color(0xFF000000)
 private val DPAD_WELL = Color(0xFF27272A)
 private val DPAD = Color(0xFF161618)
 private val DPAD_HUB = Color(0xFF26282D)
@@ -198,6 +210,11 @@ private val HOUSING_EDGE = Color(0xFF7D7C77)
 private val PILL = Color(0xFF2E3138)
 private val BTN_WELL = Color(0xFF26282C)
 private val BTN_RED = Color(0xFF9A1C1C)
+private val BTN_RED_DISH = Color(0xFF6E1212) // concave centre of the A/B buttons
+private val BTN_RED_RIM = Color(0x33FFFFFF) // subtle top rim highlight
+private val DPAD_ARROW = Color(0xFF3A3D44) // inset directional arrows on the cross
+private val DPAD_DIVOT = Color(0xFF101012) // recessed centre dish
+private val STRIP_BLACK = Color(0xFF111113) // black inset behind the RustyNES label
 private val RED = Color(0xFFE60012)
 private val LIT = Color(0x66FFFFFF) // pressed-state highlight overlay
 
@@ -228,6 +245,22 @@ private fun DrawScope.drawNesController(
     drawRoundRect(DPAD, Offset(dCx - daT, dCy - daL), Size(2 * daT, 2 * daL), rr(0.03f * h))
     drawRoundRect(DPAD, Offset(dCx - daL, dCy - daT), Size(2 * daL, 2 * daT), rr(0.03f * h))
     drawCircle(DPAD_HUB, 0.105f * h, Offset(dCx, dCy))
+    // Inset directional arrows on each arm + a recessed centre divot (NES detail).
+    val aH = 0.05f * h
+    val aW = 0.05f * h
+    val ar = daL * 0.64f
+    fun arrow(tip: Offset, b1: Offset, b2: Offset) {
+        drawPath(
+            Path().apply { moveTo(tip.x, tip.y); lineTo(b1.x, b1.y); lineTo(b2.x, b2.y); close() },
+            DPAD_ARROW,
+        )
+    }
+    arrow(Offset(dCx, dCy - ar), Offset(dCx - aW, dCy - ar + aH), Offset(dCx + aW, dCy - ar + aH))
+    arrow(Offset(dCx, dCy + ar), Offset(dCx - aW, dCy + ar - aH), Offset(dCx + aW, dCy + ar - aH))
+    arrow(Offset(dCx - ar, dCy), Offset(dCx - ar + aH, dCy - aW), Offset(dCx - ar + aH, dCy + aW))
+    arrow(Offset(dCx + ar, dCy), Offset(dCx + ar - aH, dCy - aW), Offset(dCx + ar - aH, dCy + aW))
+    drawCircle(DPAD_DIVOT, 0.058f * h, Offset(dCx, dCy))
+    drawCircle(DPAD_ARROW, 0.058f * h, Offset(dCx, dCy), style = Stroke(0.006f * h))
     // lit arms
     if (mask and NesBit.UP != 0) drawRoundRect(LIT, Offset(dCx - daT, dCy - daL), Size(2 * daT, daL), rr(0.03f * h))
     if (mask and NesBit.DOWN != 0) drawRoundRect(LIT, Offset(dCx - daT, dCy), Size(2 * daT, daL), rr(0.03f * h))
@@ -249,6 +282,21 @@ private fun DrawScope.drawNesController(
     drawRoundRect(PILL, Offset(staBx - pw / 2, ssy - ph / 2), Size(pw, ph), rr(ph / 2))
     if (mask and NesBit.START != 0) drawRoundRect(LIT, Offset(staBx - pw / 2, ssy - ph / 2), Size(pw, ph), rr(ph / 2))
 
+    // "RustyNES" brand label — a grey NES-style panel (the width of the SELECT/START
+    // housing) inset into a black recess on the dark face, evoking the console's
+    // "Entertainment System" strip. The red wordmark is drawn into it in the labels
+    // block below. No "Nintendo" branding anywhere.
+    val stripW = 0.25f * w
+    val stripH = 0.11f * h
+    val stripL = ssx - stripW / 2
+    val stripT = 0.275f * h - stripH / 2
+    drawRoundRect(
+        STRIP_BLACK, Offset(stripL - 0.008f * w, stripT - 0.006f * h),
+        Size(stripW + 0.016f * w, stripH + 0.012f * h), rr(stripH / 2 + 0.006f * h),
+    )
+    drawRoundRect(HOUSING, Offset(stripL, stripT), Size(stripW, stripH), rr(stripH / 2))
+    drawRoundRect(HOUSING_EDGE, Offset(stripL, stripT), Size(stripW, stripH), rr(stripH / 2), style = Stroke(0.006f * h))
+
     // Red racetrack logo capsule (upper-right of the plate) carrying a "RustyNES"
     // wordmark (drawn in the labels block below); it doubles as the menu toggle.
     val pill = logoPillRect(w, h)
@@ -263,13 +311,19 @@ private fun DrawScope.drawNesController(
     val br = 0.118f * h
     drawRoundRect(HOUSING, Offset(abx - 0.155f * w, aby - 0.16f * h), Size(0.31f * w, 0.32f * h), rr(0.10f * h))
     drawRoundRect(HOUSING_EDGE, Offset(abx - 0.155f * w, aby - 0.16f * h), Size(0.31f * w, 0.32f * h), rr(0.10f * h), style = Stroke(0.008f * h))
+    // Each button: dark well, red top, a darker concave dish (NES A/B are concave),
+    // and a faint top rim highlight for the bevel.
     val bBx = abx - 0.068f * w
     drawCircle(BTN_WELL, br + 0.025f * h, Offset(bBx, aby))
     drawCircle(BTN_RED, br, Offset(bBx, aby))
+    drawCircle(BTN_RED_DISH, br * 0.72f, Offset(bBx, aby))
+    drawCircle(BTN_RED_RIM, br * 0.92f, Offset(bBx, aby - 0.01f * h), style = Stroke(0.012f * h))
     if (mask and NesBit.B != 0) drawCircle(LIT, br, Offset(bBx, aby))
     val aBx = abx + 0.068f * w
     drawCircle(BTN_WELL, br + 0.025f * h, Offset(aBx, aby))
     drawCircle(BTN_RED, br, Offset(aBx, aby))
+    drawCircle(BTN_RED_DISH, br * 0.72f, Offset(aBx, aby))
+    drawCircle(BTN_RED_RIM, br * 0.92f, Offset(aBx, aby - 0.01f * h), style = Stroke(0.012f * h))
     if (mask and NesBit.A != 0) drawCircle(LIT, br, Offset(aBx, aby))
 
     // Labels (native canvas): SELECT/START above the pills, B/A below the buttons.
@@ -281,9 +335,9 @@ private fun DrawScope.drawNesController(
         // "RustyNES" wordmark (icon's Press Start 2P + Nintendo red) in the grey
         // plate band above the SELECT/START labels, fit to the housing width (0.25w)
         // and centred between the plate top (~0.11h) and the red labels (~0.44h).
-        wordmark.textSize = 0.06f * h
+        wordmark.textSize = 100f
         val rw = wordmark.measureText("RustyNES")
-        if (rw > 0f) wordmark.textSize = 0.06f * h * (0.235f * w / rw)
+        wordmark.textSize = minOf(0.21f * w / rw * 100f, 0.058f * h)
         val wfm = wordmark.fontMetrics
         drawText("RustyNES", ssx, 0.275f * h - (wfm.ascent + wfm.descent) / 2f, wordmark)
         label.textSize = 0.11f * h

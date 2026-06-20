@@ -27,6 +27,9 @@ import androidx.compose.ui.unit.dp
 /** App theme: follow the system, or force light/dark. */
 enum class ThemeMode(val label: String) { System("System"), Light("Light"), Dark("Dark") }
 
+/** On-screen button haptic strength (Off disables the Vibrator entirely). */
+enum class HapticLevel(val label: String) { Off("Off"), Low("Low"), Medium("Medium"), High("High") }
+
 class AppSettings(context: Context) {
     private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
@@ -42,15 +45,22 @@ class AppSettings(context: Context) {
         get() = _filter.value
         set(v) { _filter.value = v; prefs.edit().putInt("filter", v.ordinal).apply() }
 
-    private val _haptics = mutableStateOf(prefs.getBoolean("haptics", true))
-    var haptics: Boolean
-        get() = _haptics.value
-        set(v) { _haptics.value = v; prefs.edit().putBoolean("haptics", v).apply() }
+    private val _hapticLevel =
+        mutableStateOf(HapticLevel.entries.getOrElse(prefs.getInt("hapticLvl", HapticLevel.Medium.ordinal)) { HapticLevel.Medium })
+    var hapticLevel: HapticLevel
+        get() = _hapticLevel.value
+        set(v) { _hapticLevel.value = v; prefs.edit().putInt("hapticLvl", v.ordinal).apply() }
 
     private val _muted = mutableStateOf(prefs.getBoolean("muted", false))
     var muted: Boolean
         get() = _muted.value
         set(v) { _muted.value = v; prefs.edit().putBoolean("muted", v).apply() }
+
+    /** Set once the user ticks "Do not show again" on the first-run dialogs. */
+    private val _onboardingSuppressed = mutableStateOf(prefs.getBoolean("onboardDone", false))
+    var onboardingSuppressed: Boolean
+        get() = _onboardingSuppressed.value
+        set(v) { _onboardingSuppressed.value = v; prefs.edit().putBoolean("onboardDone", v).apply() }
 
     private val _controllerScale = mutableFloatStateOf(prefs.getFloat("ctrlScale", 1.0f))
     var controllerScale: Float
@@ -106,7 +116,21 @@ fun SettingsSheet(settings: AppSettings, onDismiss: () -> Unit) {
             }
 
             ToggleRow("Mute audio", settings.muted) { settings.muted = it }
-            ToggleRow("Haptics", settings.haptics) { settings.haptics = it }
+
+            // Haptic intensity (Off / Low / Medium / High).
+            Text("Haptics")
+            Row(
+                modifier = Modifier.fillMaxWidth().selectableGroup(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                HapticLevel.entries.forEach { level ->
+                    FilterChip(
+                        selected = settings.hapticLevel == level,
+                        onClick = { settings.hapticLevel = level },
+                        label = { Text(level.label) },
+                    )
+                }
+            }
 
             LabeledSlider(
                 "Controller size",
