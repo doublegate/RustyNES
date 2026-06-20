@@ -603,26 +603,30 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
         } // end control bar (toggled by the RustyNES pill)
 
         // The multi-touch virtual NES controller, sized to the NES-001 aspect
-        // (123:53, the real NES-004 proportions). Its width is `controllerScale` of the available width
-        // (centered), so it rescales for the active display (cover vs unfolded
-        // inner) AND the user's size preference (0.6–1.1×; >1 slightly overruns
-        // the edges by design); its hit regions remap in lockstep because the
-        // art + regions both derive from the measured size. Opacity + haptics
-        // are user settings.
-        BoxWithConstraints(
-            modifier = Modifier.fillMaxWidth(),
-            contentAlignment = Alignment.Center,
-        ) {
-            VirtualController(
-                emulator,
-                settings.hapticLevel,
-                { controlsVisible = !controlsVisible },
-                Modifier
-                    .width(maxWidth * settings.controllerScale)
-                    .aspectRatio(123f / 53f)
-                    .alpha(settings.controllerOpacity)
-                    .padding(vertical = 4.dp),
-            )
+        // (123:53, the real NES-004 proportions). Its width is `controllerScale`
+        // (0.25–1.1×) of the available width, centered, so it rescales for the
+        // active display AND the user's preference; >1 overruns the screen edges
+        // by design. Its hit regions remap in lockstep (art + regions both derive
+        // from the measured size). The host Box reserves the LARGEST (110%)
+        // controller height, so changing the size never reflows/shifts the
+        // gameplay view above it (item 7).
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            val mw = maxWidth // capture: not visible inside the inner BoxScope
+            val reserved = mw * 1.1f * 53f / 123f
+            Box(
+                modifier = Modifier.fillMaxWidth().height(reserved),
+                contentAlignment = Alignment.Center,
+            ) {
+                VirtualController(
+                    emulator,
+                    settings.hapticLevel,
+                    { controlsVisible = !controlsVisible },
+                    Modifier
+                        .width(mw * settings.controllerScale)
+                        .aspectRatio(123f / 53f)
+                        .alpha(settings.controllerOpacity),
+                )
+            }
         }
     }
 

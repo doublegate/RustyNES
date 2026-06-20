@@ -13,12 +13,16 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import kotlin.math.roundToInt
 
 /**
  * User settings (v1.8.3), Compose-observable and persisted in `SharedPreferences`.
@@ -76,6 +80,8 @@ class AppSettings(context: Context) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsSheet(settings: AppSettings, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val vibrator = remember { systemVibrator(context) }
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
@@ -132,12 +138,9 @@ fun SettingsSheet(settings: AppSettings, onDismiss: () -> Unit) {
                 }
             }
 
-            LabeledSlider(
-                "Controller size",
-                settings.controllerScale,
-                0.6f..1.1f,
-                { settings.controllerScale = it },
-            )
+            ControllerSizeSlider(settings.controllerScale, vibrator, settings.hapticLevel) {
+                settings.controllerScale = it
+            }
             LabeledSlider(
                 "Controller opacity",
                 settings.controllerOpacity,
@@ -170,5 +173,43 @@ private fun LabeledSlider(
     Column {
         Text("$label  ${"%.0f".format(value * 100)}%")
         Slider(value = value, onValueChange = onChange, valueRange = range)
+    }
+}
+
+/** The 25-110% snap points for the controller-size slider. */
+private val SIZE_TICKS = listOf(0.25f, 0.5f, 0.75f, 1.0f, 1.1f)
+
+/**
+ * Controller-size slider: a continuous 25-110% drag (the controller overruns the
+ * screen edges past 100%) with a haptic tick each time the value crosses a snap
+ * point, plus a quick-tap row that snaps to 25/50/75/100/110%.
+ */
+@Composable
+private fun ControllerSizeSlider(
+    value: Float,
+    vibrator: android.os.Vibrator?,
+    haptic: HapticLevel,
+    onChange: (Float) -> Unit,
+) {
+    Column {
+        Text("Controller size  ${(value * 100).roundToInt()}%")
+        Slider(
+            value = value,
+            onValueChange = { nv ->
+                if (SIZE_TICKS.any { (value < it) != (nv < it) }) tick(vibrator, haptic)
+                onChange(nv)
+            },
+            valueRange = 0.25f..1.1f,
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            SIZE_TICKS.forEach { t ->
+                TextButton(onClick = { tick(vibrator, haptic); onChange(t) }) {
+                    Text("${(t * 100).roundToInt()}%")
+                }
+            }
+        }
     }
 }
