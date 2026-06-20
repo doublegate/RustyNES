@@ -4077,6 +4077,7 @@ dependencies = [
  "ndk-context",
  "pollster 0.3.0",
  "raw-window-handle",
+ "rustynes-gfx-shaders",
  "rustynes-mobile",
  "wgpu",
 ]
@@ -4161,6 +4162,7 @@ dependencies = [
  "rfd",
  "rustynes-cheevos",
  "rustynes-core",
+ "rustynes-gfx-shaders",
  "rustynes-netplay",
  "rustynes-script",
  "serde",
@@ -4179,6 +4181,10 @@ dependencies = [
  "winit",
  "zip",
 ]
+
+[[package]]
+name = "rustynes-gfx-shaders"
+version = "1.8.4"
 
 [[package]]
 name = "rustynes-mappers"

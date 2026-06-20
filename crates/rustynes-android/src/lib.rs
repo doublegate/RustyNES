@@ -187,6 +187,26 @@ mod android {
             gfx.render(&bytes);
         }
 
+        /// `NativeRenderer.nativeSetFilter(handle, filter)` — 0 none / 1 scanlines /
+        /// 2 CRT (the shared CRT/scanline shader's `params`).
+        ///
+        /// # Safety
+        /// `handle` must be a live value returned by `nativeInitSurface`.
+        #[unsafe(no_mangle)]
+        pub extern "C" fn Java_com_doublegate_rustynes_NativeRenderer_nativeSetFilter(
+            _env: JNIEnv,
+            _this: JObject,
+            handle: jlong,
+            filter: jint,
+        ) {
+            if handle == 0 {
+                return;
+            }
+            // SAFETY: live handle (see `nativeResize`).
+            let gfx = unsafe { &mut *(handle as *mut AndroidGfx) };
+            gfx.set_filter(filter.max(0) as u8);
+        }
+
         /// `NativeRenderer.nativeDestroy(handle)` — drop the renderer (releases the
         /// wgpu surface before the `ANativeWindow`).
         ///

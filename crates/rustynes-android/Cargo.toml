@@ -47,3 +47,5 @@ wgpu = "29"
 raw-window-handle = "0.6"
 pollster = "0.3"
 bytemuck = { version = "1", features = ["derive"] }
+# Shared CRT/scanline WGSL (single source of truth with the desktop frontend).
+rustynes-gfx-shaders.workspace = true

@@ -211,6 +211,9 @@ rustynes-core = { workspace = true, features = ["debug-hooks"] }
 # Phase 5 Sprint 1 frontend stack.
 winit.workspace = true
 wgpu.workspace = true
+# v1.8.4 — shared WGSL sources (the CRT/scanline post-pass), reused by the Android
+# wgpu renderer so the on-screen filter look matches across platforms.
+rustynes-gfx-shaders.workspace = true
 cpal.workspace = true
 egui.workspace = true
 egui-wgpu.workspace = true

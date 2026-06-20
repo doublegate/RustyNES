@@ -10,10 +10,11 @@
 //! while the core keeps running headless; `render` tolerates `Lost`/`Outdated` by
 //! reconfiguring.
 //!
-//! The richer desktop shader stack (LMP88959 NTSC / CRT / hqNx-xBRZ) is reused in
-//! a follow-up increment by lifting those WGSL passes into a shared, winit-free
-//! core; this first pass establishes the SurfaceView → wgpu pipeline with the
-//! base PAR/overscan blit.
+//! The CRT / scanline post-pass WGSL is SHARED with the desktop frontend (the
+//! `rustynes-gfx-shaders` crate), so the on-screen filter look matches across
+//! platforms; the `params` uniform selects None / Scanlines / CRT (None = a plain
+//! letterboxed blit). The heavier NTSC passes (LMP88959 / Bisqwit, which need the
+//! palette-index texture) are a follow-up.
 
 use ndk::native_window::NativeWindow;
 use raw_window_handle::{AndroidDisplayHandle, HasWindowHandle, RawDisplayHandle};
@@ -25,43 +26,18 @@ const NES_H: u32 = 240;
 const PAR_W: f32 = NES_W as f32 * 8.0 / 7.0;
 const IMG_ASPECT: f32 = PAR_W / NES_H as f32;
 
-/// Letterbox transform handed to the shader: the image occupies `scale` of the
-/// surface, centered at `offset` (both in [0,1] screen space).
+/// Uniform for the shared CRT/scanline shader (`rustynes_gfx_shaders::CRT_WGSL`):
+/// `rect` letterbox (x,y = scale of the surface; z,w = extra centre offset, 0
+/// here — the shader centres), `crop` overscan (none), and `params` (x = scanline
+/// intensity, y = aperture-mask intensity) selected by the active filter. With
+/// `params = (0,0)` the shader is a plain letterboxed blit (the "None" filter).
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct Uniforms {
-    scale: [f32; 2],
-    offset: [f32; 2],
+    rect: [f32; 4],
+    crop: [f32; 4],
+    params: [f32; 4],
 }
-
-const SHADER_SRC: &str = r#"
-struct Uniforms { scale: vec2<f32>, offset: vec2<f32> };
-@group(0) @binding(0) var nes_tex: texture_2d<f32>;
-@group(0) @binding(1) var nes_smp: sampler;
-@group(0) @binding(2) var<uniform> u: Uniforms;
-
-struct VsOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
-
-@vertex
-fn vs_main(@builtin(vertex_index) vi: u32) -> VsOut {
-    var p = array<vec2<f32>, 3>(vec2<f32>(-1.0, -1.0), vec2<f32>(3.0, -1.0), vec2<f32>(-1.0, 3.0));
-    let xy = p[vi];
-    var o: VsOut;
-    o.pos = vec4<f32>(xy, 0.0, 1.0);
-    // Screen UV in [0,1] with y pointing down.
-    o.uv = vec2<f32>((xy.x + 1.0) * 0.5, (1.0 - xy.y) * 0.5);
-    return o;
-}
-
-@fragment
-fn fs_main(i: VsOut) -> @location(0) vec4<f32> {
-    let t = (i.uv - u.offset) / u.scale;
-    if (t.x < 0.0 || t.x > 1.0 || t.y < 0.0 || t.y > 1.0) {
-        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
-    }
-    return textureSample(nes_tex, nes_smp, t);
-}
-"#;
 
 /// Owns the wgpu device/surface/pipeline + the `NES` texture for one
 /// `SurfaceView`. Declared field order keeps `surface` dropping before
@@ -75,6 +51,8 @@ pub struct AndroidGfx {
     uniform_buf: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     pipeline: wgpu::RenderPipeline,
+    /// Active video filter: 0 = none, 1 = scanlines, 2 = CRT.
+    filter: u8,
     _window: NativeWindow,
 }
 
@@ -198,7 +176,9 @@ impl AndroidGfx {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    // The CRT shader reads the uniform in BOTH stages (vertex uses
+                    // `rect` for the letterbox; fragment uses `crop`/`params`).
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -227,9 +207,10 @@ impl AndroidGfx {
             ],
         });
 
+        // The CRT/scanline WGSL is shared with the desktop frontend.
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("blit shader"),
-            source: wgpu::ShaderSource::Wgsl(SHADER_SRC.into()),
+            label: Some("crt/blit shader"),
+            source: wgpu::ShaderSource::Wgsl(rustynes_gfx_shaders::CRT_WGSL.into()),
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("blit layout"),
@@ -271,9 +252,10 @@ impl AndroidGfx {
             uniform_buf,
             bind_group,
             pipeline,
+            filter: 0,
             _window: window,
         };
-        gfx.write_letterbox();
+        gfx.write_uniforms();
         Ok(gfx)
     }
 
@@ -282,10 +264,17 @@ impl AndroidGfx {
         self.config.width = width.max(1);
         self.config.height = height.max(1);
         self.surface.configure(&self.device, &self.config);
-        self.write_letterbox();
+        self.write_uniforms();
     }
 
-    fn write_letterbox(&self) {
+    /// Set the active video filter (0 = none, 1 = scanlines, 2 = CRT) and rewrite
+    /// the shader uniform.
+    pub fn set_filter(&mut self, filter: u8) {
+        self.filter = filter;
+        self.write_uniforms();
+    }
+
+    fn write_uniforms(&self) {
         let sw = self.config.width as f32;
         let sh = self.config.height as f32;
         let screen_aspect = sw / sh;
@@ -294,9 +283,16 @@ impl AndroidGfx {
         } else {
             (1.0, screen_aspect / IMG_ASPECT) // letterbox
         };
+        // params (scanline, mask) per filter; (0,0) = plain letterboxed blit.
+        let (scan, mask) = match self.filter {
+            1 => (0.5, 0.0),  // scanlines
+            2 => (0.5, 0.10), // CRT (scanlines + aperture grille)
+            _ => (0.0, 0.0),  // none
+        };
         let u = Uniforms {
-            scale: [sx, sy],
-            offset: [(1.0 - sx) * 0.5, (1.0 - sy) * 0.5],
+            rect: [sx, sy, 0.0, 0.0],
+            crop: [1.0, 0.0, 1.0, 0.0],
+            params: [scan, mask, 0.0, 0.0],
         };
         self.queue
             .write_buffer(&self.uniform_buf, 0, bytemuck::bytes_of(&u));

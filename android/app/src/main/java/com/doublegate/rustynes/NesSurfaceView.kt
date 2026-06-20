@@ -33,6 +33,12 @@ class NesSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Cal
     private var latestFrame: ByteArray? = null
 
     @Volatile
+    private var filter = 0
+
+    @Volatile
+    private var filterDirty = false
+
+    @Volatile
     private var running = false
     private var thread: Thread? = null
 
@@ -43,6 +49,13 @@ class NesSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Cal
     /** Hand the render thread the latest RGBA frame (called from the emu loop). */
     fun submitFrame(fb: ByteArray) {
         latestFrame = fb
+    }
+
+    /** Set the video filter (0 = none, 1 = scanlines, 2 = CRT); applied on the
+     *  render thread before the next frame. */
+    fun setFilter(f: Int) {
+        filter = f
+        filterDirty = true
     }
 
     override fun surfaceCreated(holder: SurfaceHolder) {
@@ -96,11 +109,20 @@ class NesSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Cal
                 if (gone) break
                 if (resize && surface != null) {
                     handle = if (handle == 0L) {
-                        NativeRenderer.nativeInitSurface(surface!!, w, h)
+                        val newHandle = NativeRenderer.nativeInitSurface(surface!!, w, h)
+                        if (newHandle != 0L) {
+                            NativeRenderer.nativeSetFilter(newHandle, filter)
+                            filterDirty = false
+                        }
+                        newHandle
                     } else {
                         NativeRenderer.nativeResize(handle, w, h)
                         handle
                     }
+                }
+                if (filterDirty && handle != 0L) {
+                    NativeRenderer.nativeSetFilter(handle, filter)
+                    filterDirty = false
                 }
                 val fb = latestFrame
                 if (handle != 0L && fb != null) {

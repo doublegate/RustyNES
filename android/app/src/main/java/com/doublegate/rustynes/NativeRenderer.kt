@@ -40,6 +40,9 @@ object NativeRenderer {
     /** Upload + present one 256×240 RGBA8 frame (`fb` = 245_760 bytes). */
     external fun nativeRender(handle: Long, fb: ByteArray)
 
+    /** Set the video filter: 0 = none, 1 = scanlines, 2 = CRT. */
+    external fun nativeSetFilter(handle: Long, filter: Int)
+
     /** Drop the renderer (releases the wgpu surface before the ANativeWindow). */
     external fun nativeDestroy(handle: Long)
 }

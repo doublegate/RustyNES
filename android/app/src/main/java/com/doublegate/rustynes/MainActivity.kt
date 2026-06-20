@@ -453,6 +453,11 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
             null
         }
     }
+    // Drive the GPU renderer's filter (None/Scanlines/CRT) from the setting; the
+    // VideoFilter ordinals line up with the native filter codes. No-op without it.
+    LaunchedEffect(settings.filter, gpuSurface) {
+        gpuSurface?.setFilter(settings.filter.ordinal)
+    }
 
     // SAF document picker — no broad storage permission required. The picked
     // bytes are handed straight to the core (no path), a persistable read grant
