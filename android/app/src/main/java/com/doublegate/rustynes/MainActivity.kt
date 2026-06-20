@@ -50,6 +50,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
@@ -332,6 +334,12 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager) {
     // Demo session clock: seconds remaining this launch (full unlock = no limit).
     var demoSecondsLeft by remember { mutableStateOf(DEMO_SESSION_SECONDS) }
     var demoExpired by remember { mutableStateOf(false) }
+    // GPU video filter (AGSL); persisted so the choice sticks across launches.
+    val videoPrefs = remember { context.getSharedPreferences("video", Context.MODE_PRIVATE) }
+    var filter by remember {
+        mutableStateOf(VideoFilter.entries.getOrElse(videoPrefs.getInt("filter", 0)) { VideoFilter.None })
+    }
+    var screenSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
 
     // SAF document picker — no broad storage permission required. The picked
     // bytes are handed straight to the core (no path), a persistable read grant
@@ -413,7 +421,22 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager) {
                 Image(
                     bitmap = current,
                     contentDescription = "NES screen",
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .onSizeChanged { screenSize = it }
+                        .then(
+                            if (videoFiltersSupported && filter != VideoFilter.None && screenSize.width > 0) {
+                                Modifier.graphicsLayer {
+                                    renderEffect = buildRenderEffect(
+                                        filter,
+                                        screenSize.width.toFloat(),
+                                        screenSize.height.toFloat(),
+                                    )
+                                }
+                            } else {
+                                Modifier
+                            },
+                        ),
                     contentScale = ContentScale.Fit,
                     // Nearest-neighbour: preserve the crisp pixel grid.
                     filterQuality = FilterQuality.None,
@@ -493,6 +516,12 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager) {
                 muted = !muted
                 emulator.muted = muted
             }) { Text(if (muted) "Unmute" else "Mute") }
+            if (videoFiltersSupported) {
+                OutlinedButton(onClick = {
+                    filter = filter.next()
+                    videoPrefs.edit().putInt("filter", filter.ordinal).apply()
+                }) { Text("FX: ${filter.label}") }
+            }
             // Demo: an always-visible unlock affordance + the session countdown.
             if (!unlocked) {
                 val price = license.product
