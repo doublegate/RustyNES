@@ -324,8 +324,11 @@ impl AndroidGfx {
         };
         // params depend on the active filter; aux carries NTSC's PAL-mode flag.
         let (params, aux) = if self.filter == 3 {
-            // NTSC: (saturation, sharpness, tint, phase); PAL off.
-            ([1.0, 0.5, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0])
+            // NTSC: (saturation, sharpness, tint, phase); PAL off. Tuned softer than
+            // the desktop default (sat 1.0 / sharp 0.5) — the composite chroma
+            // artifacts are much harsher at phone DPI, so mute the chroma and widen
+            // the luma window for a gentler dot-crawl.
+            ([0.55, 0.08, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0])
         } else {
             // CRT/scanline: (scanline, mask, _, _); (0,0) = plain letterboxed blit.
             let (scan, mask) = match self.filter {
