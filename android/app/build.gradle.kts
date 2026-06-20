@@ -46,6 +46,10 @@ android {
     // still links and verifies. Play App Signing manages the app key; this is the
     // upload key only.
     val keystorePropsFile = rootProject.file("keystore.properties")
+    // CI / automated signing: the same four values via env vars (e.g. GitHub Actions
+    // secrets) when the gitignored file isn't present. `RUSTYNES_UPLOAD_STORE_FILE`
+    // gates it; the others are read only when it is set.
+    val keystoreEnvFile = System.getenv("RUSTYNES_UPLOAD_STORE_FILE")
     signingConfigs {
         create("upload") {
             if (keystorePropsFile.exists()) {
@@ -54,6 +58,11 @@ android {
                 storePassword = props.getProperty("storePassword")
                 keyAlias = props.getProperty("keyAlias")
                 keyPassword = props.getProperty("keyPassword")
+            } else if (keystoreEnvFile != null) {
+                storeFile = file(keystoreEnvFile)
+                storePassword = System.getenv("RUSTYNES_UPLOAD_STORE_PASSWORD")
+                keyAlias = System.getenv("RUSTYNES_UPLOAD_KEY_ALIAS")
+                keyPassword = System.getenv("RUSTYNES_UPLOAD_KEY_PASSWORD")
             }
         }
     }
@@ -65,7 +74,7 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             // The shipped AAB carries arm64 only (smallest download).
             ndk { abiFilters += shipAbi }
-            if (keystorePropsFile.exists()) {
+            if (keystorePropsFile.exists() || keystoreEnvFile != null) {
                 signingConfig = signingConfigs.getByName("upload")
             }
         }
