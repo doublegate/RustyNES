@@ -14,6 +14,7 @@ import android.provider.OpenableColumns
 import android.view.KeyEvent
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
@@ -28,6 +29,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -35,6 +37,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -46,6 +50,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.FilterQuality
@@ -97,9 +102,18 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         hideSystemBars()
         setContent {
-            MaterialTheme {
-                Surface(modifier = Modifier.fillMaxSize(), color = Color.Black) {
-                    EmulatorScreen(emulator, license)
+            val settings = remember { AppSettings(this@MainActivity) }
+            val dark = when (settings.themeMode) {
+                ThemeMode.System -> isSystemInDarkTheme()
+                ThemeMode.Light -> false
+                ThemeMode.Dark -> true
+            }
+            MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme()) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background,
+                ) {
+                    EmulatorScreen(emulator, license, settings)
                 }
             }
         }
@@ -381,7 +395,7 @@ private class AudioPlayer(sampleRate: Int) {
 }
 
 @Composable
-private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager) {
+private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, settings: AppSettings) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val activity = context as? Activity
     // Freemium is active only in the Play build; sideload/dev builds are unlimited.
@@ -392,11 +406,11 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager) {
     // Demo session clock: seconds remaining this launch (full unlock = no limit).
     var demoSecondsLeft by remember { mutableStateOf(DEMO_SESSION_SECONDS) }
     var demoExpired by remember { mutableStateOf(false) }
-    // GPU video filter (AGSL); persisted so the choice sticks across launches.
-    val videoPrefs = remember { context.getSharedPreferences("video", Context.MODE_PRIVATE) }
-    var filter by remember {
-        mutableStateOf(VideoFilter.entries.getOrElse(videoPrefs.getInt("filter", 0)) { VideoFilter.None })
-    }
+    // Settings are created at the theme root and passed in (v1.8.3).
+    // Drive the audio-mute flag from the persisted setting.
+    LaunchedEffect(settings.muted) { emulator.muted = settings.muted }
+    var showSettings by remember { mutableStateOf(false) }
+    var showStates by remember { mutableStateOf(false) }
     var screenSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
 
     // SAF document picker — no broad storage permission required. The picked
@@ -483,10 +497,10 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager) {
                         .fillMaxSize()
                         .onSizeChanged { screenSize = it }
                         .then(
-                            if (videoFiltersSupported && filter != VideoFilter.None && screenSize.width > 0) {
+                            if (videoFiltersSupported && settings.filter != VideoFilter.None && screenSize.width > 0) {
                                 Modifier.graphicsLayer {
                                     renderEffect = buildRenderEffect(
-                                        filter,
+                                        settings.filter,
                                         screenSize.width.toFloat(),
                                         screenSize.height.toFloat(),
                                     )
@@ -523,12 +537,15 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager) {
             }
         }
 
-        // Control bar: load / save / load / reset / pause / fast-forward / mute.
-        // Horizontally scrollable so all controls reach on a narrow cover screen.
+        // Control bar: open / states / reset / pause / fast-forward / settings.
+        // Hidden until the controller's "RustyNES" pill is first tapped (it
+        // toggles thereafter). Horizontally scrollable so all controls reach on a
+        // narrow cover screen.
         var paused by remember { mutableStateOf(false) }
         var turbo by remember { mutableStateOf(false) }
-        var muted by remember { mutableStateOf(false) }
-        Row(
+        var controlsVisible by remember { mutableStateOf(false) }
+        if (controlsVisible) {
+            Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState())
@@ -537,29 +554,9 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Button(onClick = { picker.launch(arrayOf("*/*")) }) { Text("Open") }
-            // Save-states are a paid feature; the demo hides them.
+            // Save-states are a paid feature; the demo hides the manager.
             if (unlocked) {
-                OutlinedButton(onClick = {
-                    val ctrl = emulator.controller
-                    val sha = emulator.romSha
-                    if (ctrl != null && sha != null) {
-                        runCatching { SaveStateStore.save(context, sha, "1", ctrl.saveState()) }
-                            .onSuccess { status = "Saved slot 1" }
-                            .onFailure { status = "Save failed: ${it.message}" }
-                    }
-                }) { Text("Save") }
-                OutlinedButton(onClick = {
-                    val ctrl = emulator.controller
-                    val sha = emulator.romSha
-                    val blob = if (sha != null) SaveStateStore.load(context, sha, "1") else null
-                    if (ctrl != null && blob != null) {
-                        runCatching { ctrl.loadState(blob) }
-                            .onSuccess { status = "Loaded slot 1" }
-                            .onFailure { status = "Load failed: ${it.message}" }
-                    } else {
-                        status = "No save in slot 1"
-                    }
-                }) { Text("Load") }
+                OutlinedButton(onClick = { showStates = true }) { Text("States") }
             }
             OutlinedButton(onClick = { emulator.controller?.reset() }) { Text("Reset") }
             OutlinedButton(onClick = {
@@ -570,16 +567,7 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager) {
                 turbo = !turbo
                 emulator.turbo = turbo
             }) { Text(if (turbo) ">> On" else ">>") }
-            OutlinedButton(onClick = {
-                muted = !muted
-                emulator.muted = muted
-            }) { Text(if (muted) "Unmute" else "Mute") }
-            if (videoFiltersSupported) {
-                OutlinedButton(onClick = {
-                    filter = filter.next()
-                    videoPrefs.edit().putInt("filter", filter.ordinal).apply()
-                }) { Text("FX: ${filter.label}") }
-            }
+            OutlinedButton(onClick = { showSettings = true }) { Text("Settings") }
             // Demo: an always-visible unlock affordance + the session countdown.
             if (!unlocked) {
                 val price = license.product
@@ -601,17 +589,42 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager) {
                     Text(if (unlocked) "DBG:demo" else "DBG:unlock")
                 }
             }
-        }
+            }
+        } // end control bar (toggled by the RustyNES pill)
 
         // The multi-touch virtual NES controller, sized to the NES-001 aspect
-        // (232:94); it fills the width, so it rescales for the active display
-        // (cover vs unfolded inner) and its hit regions remap in lockstep.
-        VirtualController(
-            emulator,
-            Modifier
-                .fillMaxWidth()
-                .aspectRatio(232f / 94f)
-                .padding(horizontal = 6.dp, vertical = 4.dp),
+        // (232:94). Its width is `controllerScale` of the available width
+        // (centered), so it rescales for the active display (cover vs unfolded
+        // inner) AND the user's size preference (0.6–1.1×; >1 slightly overruns
+        // the edges by design); its hit regions remap in lockstep because the
+        // art + regions both derive from the measured size. Opacity + haptics
+        // are user settings.
+        BoxWithConstraints(
+            modifier = Modifier.fillMaxWidth(),
+            contentAlignment = Alignment.Center,
+        ) {
+            VirtualController(
+                emulator,
+                settings.haptics,
+                { controlsVisible = !controlsVisible },
+                Modifier
+                    .width(maxWidth * settings.controllerScale)
+                    .aspectRatio(232f / 94f)
+                    .alpha(settings.controllerOpacity)
+                    .padding(vertical = 4.dp),
+            )
+        }
+    }
+
+    // Settings + save-state manager sheets (v1.8.3).
+    if (showSettings) {
+        SettingsSheet(settings, onDismiss = { showSettings = false })
+    }
+    if (showStates) {
+        StatesSheet(
+            context, emulator.romSha, emulator,
+            onStatus = { status = it },
+            onDismiss = { showStates = false },
         )
     }
 

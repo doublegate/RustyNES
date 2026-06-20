@@ -15,6 +15,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.3] - 2026-06-20 - "Android" (Settings & save-state depth)
+
+### Added
+
+- **Settings sheet (Android).** A Material-3 bottom sheet consolidating the
+  scattered controls: a **Light / Dark / System theme** selector (default System),
+  a **video-filter picker** (None / Scanlines / CRT, replacing the FX cycle
+  button), **mute**, a **haptics** toggle, and **controller size (0.6–1.1×) +
+  opacity** sliders — all persisted in `SharedPreferences` and applied live. The
+  controller size scales the on-screen pad (centered) on top of the per-display
+  responsive sizing.
+- **Save-state manager (Android).** A "States" sheet with **four explicit slots**
+  keyed by ROM SHA, each showing its last-saved time with **Save / Load / Delete**
+  — replacing the single Save/Load pair. The `auto` resume slot (save-on-background
+  and auto-resume) is unchanged. Gated to the unlocked tier in Play builds.
+
+### Changed
+
+- **Control bar decluttered** to Open / States / Reset / Pause / Fast-forward /
+  Settings; Save/Load moved into the States sheet, Mute/Filter into Settings.
+
 ## [1.8.2] - 2026-06-20 - "Android" (Input & the virtual controller)
 
 ### Added

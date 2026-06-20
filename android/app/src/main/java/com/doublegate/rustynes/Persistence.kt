@@ -54,6 +54,9 @@ object RomLibrary {
 object SaveStateStore {
     const val AUTO_SLOT = "auto"
 
+    /** The explicit, user-facing save slots (the manager UI, v1.8.3). */
+    val USER_SLOTS = listOf("1", "2", "3", "4")
+
     private fun dir(ctx: Context, sha: String) =
         File(ctx.filesDir, "states/$sha").apply { mkdirs() }
 
@@ -71,4 +74,13 @@ object SaveStateStore {
 
     fun exists(ctx: Context, sha: String, slot: String): Boolean =
         slotFile(ctx, sha, slot).exists()
+
+    /** Last-write epoch millis for a slot, or 0 if it is empty. */
+    fun lastModified(ctx: Context, sha: String, slot: String): Long {
+        val f = slotFile(ctx, sha, slot)
+        return if (f.exists()) f.lastModified() else 0L
+    }
+
+    fun delete(ctx: Context, sha: String, slot: String): Boolean =
+        slotFile(ctx, sha, slot).delete()
 }

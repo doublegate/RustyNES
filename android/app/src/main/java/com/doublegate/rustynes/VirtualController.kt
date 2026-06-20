@@ -8,6 +8,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -19,6 +20,7 @@ import android.os.VibratorManager
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.PointerId
+import androidx.compose.ui.input.pointer.changedToDown
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import kotlin.math.hypot
@@ -42,7 +44,12 @@ import kotlin.math.hypot
  * Determinism is unaffected: the mask flows through the existing late-latch path.
  */
 @Composable
-fun VirtualController(emulator: EmulatorHandle, modifier: Modifier) {
+fun VirtualController(
+    emulator: EmulatorHandle,
+    haptics: Boolean,
+    onLogoTap: () -> Unit,
+    modifier: Modifier,
+) {
     // The live pressed-button mask, used both to drive input and to light the art.
     var mask by remember { mutableIntStateOf(0) }
     val context = LocalContext.current
@@ -58,8 +65,14 @@ fun VirtualController(emulator: EmulatorHandle, modifier: Modifier) {
                     val event = awaitPointerEvent()
                     val w = size.width.toFloat()
                     val h = size.height.toFloat()
+                    val pill = logoPillRect(w, h)
                     for (change in event.changes) {
-                        if (change.pressed) {
+                        // The red "RustyNES" pill is a tap target (toggle the menu),
+                        // not an NES button — fire on its press and keep it out of
+                        // the button set.
+                        val inPill = pill.contains(change.position)
+                        if (inPill && change.changedToDown()) onLogoTap()
+                        if (change.pressed && !inPill) {
                             active[change.id] = change.position
                         } else {
                             active.remove(change.id)
@@ -70,7 +83,7 @@ fun VirtualController(emulator: EmulatorHandle, modifier: Modifier) {
                     for (pos in active.values) m = m or hitTest(pos.x, pos.y, w, h)
                     if (m != mask) {
                         // Light tick when a new button engages (not on release).
-                        if (m and mask.inv() != 0) tick(vibrator)
+                        if (haptics && m and mask.inv() != 0) tick(vibrator)
                         mask = m
                         emulator.setTouchMask(m)
                     }
@@ -201,10 +214,13 @@ private fun DrawScope.drawNesController(w: Float, h: Float, mask: Int) {
         if (mask and bit != 0) drawRoundRect(LIT, Offset(bx - pw / 2, ssy - ph / 2), Size(pw, ph), rr(ph / 2))
     }
 
-    // Red racetrack logo capsule (upper-right of the plate, no wordmark).
-    val lw = 0.16f * w
-    val lh = 0.085f * h
-    drawRoundRect(RED, Offset(0.805f * w - lw / 2, 0.235f * h), Size(lw, lh), rr(lh / 2), style = Stroke(0.018f * h))
+    // Red racetrack logo capsule (upper-right of the plate) carrying a "RustyNES"
+    // wordmark (drawn in the labels block below); it doubles as the menu toggle.
+    val pill = logoPillRect(w, h)
+    drawRoundRect(
+        RED, Offset(pill.left, pill.top), Size(pill.width, pill.height),
+        rr(pill.height / 2), style = Stroke(0.018f * h),
+    )
 
     // A / B: housing + dark wells + concave red buttons + lit overlay.
     val abx = 0.805f * w
@@ -232,5 +248,21 @@ private fun DrawScope.drawNesController(w: Float, h: Float, mask: Int) {
         label.textSize = 0.11f * h
         drawText("B", abx - 0.068f * w, aby + 0.255f * h, label)
         drawText("A", abx + 0.068f * w, aby + 0.255f * h, label)
+        // "RustyNES" centered inside the red pill, sized to fit (same red/bold
+        // face as the SELECT/START labels) without touching the oval outline.
+        label.textSize = 100f
+        val tw = label.measureText("RustyNES")
+        label.textSize = minOf(pill.width * 0.78f / tw * 100f, pill.height * 0.56f)
+        val fm = label.fontMetrics
+        drawText("RustyNES", pill.center.x, pill.center.y - (fm.ascent + fm.descent) / 2f, label)
     }
+}
+
+/** The red racetrack logo pill — shared by the art and the menu-toggle hit-test. */
+private fun logoPillRect(w: Float, h: Float): Rect {
+    val lw = 0.16f * w
+    val lh = 0.085f * h
+    val left = 0.805f * w - lw / 2
+    val top = 0.235f * h
+    return Rect(left, top, left + lw, top + lh)
 }
