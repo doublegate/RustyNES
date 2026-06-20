@@ -192,6 +192,20 @@ alignment** on the shipped arm64 `.so`, and best-effort-bundles the AAB. It is
 | **B** wgpu `SurfaceView` + surface-loss lifecycle | **Next increment** (Bitmap blit ships now) |
 | **F** shaders / palettes / per-game DB / TAS UI | **Next increment** (depends on B for shaders) |
 
-**Deferred to a follow-up mobile point release** (per the locked MVP): netplay
-(mobile NAT/CGNAT/TURN), RetroAchievements (Compose login UI over rcheevos), and
-Lua scripting. The egui debugger stays an optional sideload power-user overlay.
+**Room-code / online netplay (v1.8.7).** Mobile netplay landed past the locked
+MVP: alongside direct-IP / LAN play, the app hosts and joins **internet** matches
+by sharing a short 6-char **room code**, traversing carrier-grade NAT (CGNAT) via
+STUN discovery + UDP hole punching. The bridge exposes
+`np_host_room(num_players, NpNetConfig) -> room code` / `np_join_room(room_code,
+NpNetConfig)`; `NpNetConfig` carries the `signaling_url`, STUN servers, and an
+optional TURN trio, overridable in Settings. The same signaling + coturn stack in
+`deploy/` serves both this path and the browser path; the app ships with a
+**placeholder** relay URL until the maintainer hosts it. The cone-NAT hole-punch
+is end-to-end and loopback/mock-verified in CI; the symmetric-NAT TURN
+relay-transport hand-off and live two-cellular-device play are tracked
+carryovers. See `docs/netplay-webrtc.md` §2.5 and the **Mobile room-code
+checklist** in `deploy/README.md`.
+
+**Deferred to a follow-up mobile point release** (per the locked MVP):
+RetroAchievements (Compose login UI over rcheevos) and Lua scripting. The egui
+debugger stays an optional sideload power-user overlay.

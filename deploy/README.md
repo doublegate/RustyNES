@@ -1,22 +1,36 @@
-# RustyNES — browser-netplay deployment bundle
+# RustyNES — netplay deployment bundle
 
-This directory deploys the pieces a **browser (WebRTC) netplay** session needs:
-a **signaling server** (brokers the WebRTC handshake), a **TLS reverse proxy**
-(so an `https` page can reach the relay as `wss://`), and a **STUN/TURN server**
-(NAT traversal). Native UDP netplay needs none of this — it is for the wasm
-build only.
+This directory deploys the pieces an internet **netplay** session needs: a
+**signaling server** (brokers the rendezvous), a **TLS reverse proxy** (so an
+`https` page / a `wss://` client can reach the relay), and a **STUN/TURN server**
+(NAT traversal).
 
-See `docs/netplay-webrtc.md` for the protocol + how the wasm frontend plugs in.
+**One stack, two clients.** The exact same signaling + Caddy-TLS + coturn stack
+serves **both**:
+
+- the **browser (WebRTC)** path — the relay brokers the SDP offer/answer + ICE
+  candidates; ICE (the browser's own STUN/TURN agent) does the traversal; and
+- the **mobile / native UDP** path (v1.8.7 room-code netplay) — the *same* relay
+  routes the `PublicAddr` raw-`IP:port` rendezvous, STUN gives each peer its
+  reflexive address, and the peers UDP-hole-punch directly. This is the path two
+  phones behind carrier-grade NAT (CGNAT) use.
+
+LAN / direct-IP native netplay needs none of this — it is only the *internet*
+paths (browser + mobile room-code) that need a hosted relay.
+
+See `docs/netplay-webrtc.md` for the protocol — §2.5 (mobile native-UDP
+rendezvous) and §3 (browser WebRTC) — and how each frontend plugs in.
 
 ## Status
 
 **Deployment-ready; live verification pending.** Every piece below builds and is
 unit/loopback-tested, and this bundle is turn-key (`docker compose up` on a host
-with a domain brings up signaling + STUN/TURN). A real end-to-end multi-browser
-netplay session — WebRTC ICE + a live signaling round-trip — **cannot be
-exercised headlessly** and has **not** been run here. It is the maintainer's
-manual step: the copy-pasteable checklist is in
-[Manual verification checklist](#manual-verification-checklist) below.
+with a domain brings up signaling + STUN/TURN). A real end-to-end internet
+session — browser WebRTC ICE, or the mobile room-code STUN/punch, plus a live
+signaling round-trip — **cannot be exercised headlessly** and has **not** been
+run here. It is the maintainer's manual step: the copy-pasteable checklists are
+the [Mobile room-code checklist](#mobile-room-code-checklist-maintainer-ops) and
+the [Manual verification checklist](#manual-verification-checklist) below.
 
 ## What's here
 
@@ -29,9 +43,12 @@ manual step: the copy-pasteable checklist is in
 | `.env.example` | Template for the per-deploy values (`DOMAIN`, `TURN_*`); copy to `.env`. |
 | `.dockerignore` lives at the **workspace root** | Keeps `target/`, ROMs, docs out of the build context. |
 
-The signaling relay carries **no gameplay traffic** — it only relays the SDP
-offer/answer + ICE candidates so the browsers form peer-to-peer WebRTC data
-channels; the game state flows directly between peers over those channels.
+The signaling relay carries **no gameplay traffic** — for the browser path it
+only relays the SDP offer/answer + ICE candidates, and for the mobile path it
+only relays the `PublicAddr` reflexive addresses; in both cases the game state
+flows directly between peers (over the WebRTC data channel, or over the punched
+UDP socket). The lone exception is a **TURN-relayed** symmetric-NAT pair, where
+coturn carries the media (browser path only today — see the mobile caveat below).
 
 > **No COOP/COEP / SharedArrayBuffer required.** Browser netplay uses a WebRTC
 > `RtcDataChannel` (and the audio path is an `AudioWorklet`); neither needs
@@ -118,6 +135,56 @@ trunk build --release
 # serve dist/ from your https host, or `trunk serve` for local dev
 ```
 
+## Point the mobile (Android) build at it
+
+The Android **room-code** netplay (v1.8.7) uses the *same* deployed stack. The
+app passes an `NpNetConfig` to `np_host_room` / `np_join_room`, with the
+endpoints overridable in **Settings**. Map the `.env` values you set above onto
+the config exactly like this:
+
+| `NpNetConfig` field | Value (from your `.env`) |
+|---|---|
+| `signaling_url` | `wss://<DOMAIN>` — Caddy serves `wss://` on `DOMAIN`, proxying WebSocket upgrades to the relay at the **root** path (e.g. `wss://signaling.example.com`). The relay speaks WS at `/`, so no path suffix. |
+| `stun_servers` | leave empty to use the built-in default (`stun.l.google.com:19302` + `stun1`), **or** point at your own: `["stun:<DOMAIN>:3478"]`. |
+| `turn_url` | `turn:<DOMAIN>:3478` (optional — enables the symmetric-NAT fallback). |
+| `turn_user` | `<TURN_USER>` (the username in your `.env`). |
+| `turn_secret` | `<TURN_SECRET>` (the long-term credential you replaced `changeme` with). |
+
+`turn_url` + `turn_user` + `turn_secret` are only wired up **when all three are
+present**; otherwise the session is punch-or-fail (cone-NAT only). An empty
+`stun_servers` falls back to `DEFAULT_STUN_SERVERS`.
+
+> **Placeholder default — replace it.** The shipped app defaults
+> `signaling_url` to a **placeholder** `wss://relay.rustynes.example/ws`, which
+> does not resolve. Until you host this `deploy/` stack and substitute your real
+> `wss://<DOMAIN>`, mobile room-code netplay cannot connect. (Direct-IP / LAN
+> netplay is unaffected — it needs no relay.)
+>
+> **Symmetric-NAT relay is not yet wired for mobile.** The TURN *client* is
+> implemented and a `turn_url`/creds trio configures it, but routing live
+> gameplay over the relay is a tracked carryover (`docs/netplay-webrtc.md` §2.5):
+> symmetric-NAT mobile pairs do not yet relay. Cone NAT (the common home/CGNAT
+> case) hole-punches end-to-end without TURN.
+
+### Mobile room-code checklist (maintainer ops)
+
+Standing the mobile path up is the same host as the browser path plus pointing
+the app at it:
+
+- [ ] Host this `deploy/` stack (the **Ops / hosting** steps below) — host,
+      domain, TLS, coturn — once; it serves both the browser and mobile paths.
+- [ ] In the app's Settings, set `signaling_url` to `wss://<DOMAIN>` (replace
+      the `wss://relay.rustynes.example/ws` placeholder).
+- [ ] (Optional) set the TURN trio (`turn_url`/`turn_user`/`turn_secret`) to
+      match `.env` for the symmetric-NAT fallback; leave STUN empty for the
+      default servers.
+- [ ] Host a room on one device → share the 6-char room code → join from the
+      other device. Both should pass `Negotiating` (Discovering → Exchanging →
+      Punching) into the in-game session.
+- [ ] For a true CGNAT test, run the two devices on **two different cellular
+      networks** (not the same Wi-Fi) — that exercises the live STUN + punch
+      across real carrier NAT.
+
 ## Manual verification checklist
 
 This is the maintainer's hands-on run — **not done in CI / by the build**. Tick
@@ -150,6 +217,11 @@ tabs) to fullest (four players across machines).
       validates real ICE candidate exchange + local-network traversal.
 - [ ] **2 machines, different networks (real NAT)** — one peer off-LAN (e.g.
       mobile hotspot). Validates STUN hole-punching across real NATs.
+- [ ] **2 mobile devices, two cellular networks (room code, real CGNAT)** — host
+      a room on one Android device, share the code, join from another device on a
+      *different* carrier network. Validates the v1.8.7 native-UDP rendezvous
+      (`PublicAddr` over the same relay) + live STUN/punch through carrier-grade
+      NAT. (Symmetric-NAT mobile relay is a known carryover — see §2.5.)
 - [ ] **Symmetric-NAT fallback (TURN relay)** — force a relay path (a symmetric
       NAT, or temporarily STUN-disabled). Confirms coturn relays the data
       channel. **Watch TURN bandwidth:** relayed traffic flows through your box
