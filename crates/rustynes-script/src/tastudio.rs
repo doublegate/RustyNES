@@ -35,54 +35,52 @@
 //! piccolo wasm backend inherits the default no-ops on the [`crate::VmBackend`]
 //! trait.
 
-use std::cell::{Cell, RefCell};
-use std::rc::Rc;
-
 use mlua::{Function, Lua, RegistryKey, Table, Value};
 
 use crate::types::{MAX_QUEUED_CMDS, TasCellDecor, TasCmd, TasSnapshot};
+use crate::{Shared, SharedFlag};
 
 /// All shared engine-side state backing the `tastudio` Lua table. Held by the
-/// mlua backend and cloned (`Rc`) into the table's closures + the host entry
-/// points. Self-contained so the backend only stores one field for the whole
-/// Workstream-B `TAStudio` surface.
+/// mlua backend and cloned (the `Shared` / `SharedFlag` `Arc` handles) into the
+/// table's closures + the host entry points. Self-contained so the backend only
+/// stores one field for the whole Workstream-B `TAStudio` surface.
 #[derive(Clone)]
 pub struct TasState {
     /// The host-pushed read-only editor snapshot (refreshed each frame).
-    pub snapshot: Rc<RefCell<TasSnapshot>>,
+    pub snapshot: Shared<TasSnapshot>,
     /// Editor actions queued this frame (drained + gated + applied by the host).
-    pub commands: Rc<RefCell<Vec<TasCmd>>>,
+    pub commands: Shared<Vec<TasCmd>>,
     /// Staged input edits from `submitinputchange`, flushed to [`Self::commands`]
     /// as a batch by `applyinputchanges` (the `BizHawk` atomic-edit pattern), so
     /// the host re-seeks at most once per apply.
-    pub pending_input: Rc<RefCell<Vec<TasCmd>>>,
+    pub pending_input: Shared<Vec<TasCmd>>,
     /// `onqueryitembg(fn)` callbacks (Lua registry keys; Rust-side).
-    pub query_bg: Rc<RefCell<Vec<RegistryKey>>>,
+    pub query_bg: Shared<Vec<RegistryKey>>,
     /// `onqueryitemtext(fn)` callbacks.
-    pub query_text: Rc<RefCell<Vec<RegistryKey>>>,
+    pub query_text: Shared<Vec<RegistryKey>>,
     /// `onqueryitemicon(fn)` callbacks.
-    pub query_icon: Rc<RefCell<Vec<RegistryKey>>>,
+    pub query_icon: Shared<Vec<RegistryKey>>,
     /// `ongreenzoneinvalidated(fn)` callbacks (observational).
-    pub greenzone_cbs: Rc<RefCell<Vec<RegistryKey>>>,
+    pub greenzone_cbs: Shared<Vec<RegistryKey>>,
     /// `onbranchload(fn)` callbacks (observational).
-    pub branch_load_cbs: Rc<RefCell<Vec<RegistryKey>>>,
+    pub branch_load_cbs: Shared<Vec<RegistryKey>>,
     /// Set by `tastudio.clearIconCache()`, taken by the host.
-    pub clear_icon_cache: Rc<Cell<bool>>,
+    pub clear_icon_cache: SharedFlag,
 }
 
 impl TasState {
     /// Fresh, empty state (no editor pushed, no callbacks, no queued commands).
     pub fn new() -> Self {
         Self {
-            snapshot: Rc::new(RefCell::new(TasSnapshot::default())),
-            commands: Rc::new(RefCell::new(Vec::new())),
-            pending_input: Rc::new(RefCell::new(Vec::new())),
-            query_bg: Rc::new(RefCell::new(Vec::new())),
-            query_text: Rc::new(RefCell::new(Vec::new())),
-            query_icon: Rc::new(RefCell::new(Vec::new())),
-            greenzone_cbs: Rc::new(RefCell::new(Vec::new())),
-            branch_load_cbs: Rc::new(RefCell::new(Vec::new())),
-            clear_icon_cache: Rc::new(Cell::new(false)),
+            snapshot: Shared::new(TasSnapshot::default()),
+            commands: Shared::new(Vec::new()),
+            pending_input: Shared::new(Vec::new()),
+            query_bg: Shared::new(Vec::new()),
+            query_text: Shared::new(Vec::new()),
+            query_icon: Shared::new(Vec::new()),
+            greenzone_cbs: Shared::new(Vec::new()),
+            branch_load_cbs: Shared::new(Vec::new()),
+            clear_icon_cache: SharedFlag::new(false),
         }
     }
 
@@ -96,7 +94,7 @@ impl TasState {
 
 /// Push a TAS command into the host-drained queue unless it is at the per-frame
 /// cap (the same backstop as the `emu.*` control queue).
-fn push_capped(q: &Rc<RefCell<Vec<TasCmd>>>, cmd: TasCmd) {
+fn push_capped(q: &Shared<Vec<TasCmd>>, cmd: TasCmd) {
     let mut q = q.borrow_mut();
     if q.len() < MAX_QUEUED_CMDS {
         q.push(cmd);
@@ -111,9 +109,9 @@ fn install_cb_registrar(
     lua: &Lua,
     table: &Table,
     name: &str,
-    list: &Rc<RefCell<Vec<RegistryKey>>>,
+    list: &Shared<Vec<RegistryKey>>,
 ) -> mlua::Result<()> {
-    let list = Rc::clone(list);
+    let list = list.clone();
     table.set(
         name,
         lua.create_function(move |lua, (_this, f): (Value, Function)| {
@@ -128,22 +126,22 @@ fn install_cb_registrar(
 /// shared `writes_locked` cell; the query accessors read the host-pushed
 /// snapshot, the mutators queue gated [`TasCmd`]s.
 #[allow(clippy::too_many_lines)] // one create_function per API entry.
-pub fn install(lua: &Lua, state: &TasState, writes_locked: &Rc<Cell<bool>>) -> mlua::Result<()> {
+pub fn install(lua: &Lua, state: &TasState, writes_locked: &SharedFlag) -> mlua::Result<()> {
     let t = lua.create_table()?;
 
     // ---- Queries (read the host-pushed snapshot; never deterministic) ----
 
-    let snap = Rc::clone(&state.snapshot);
+    let snap = state.snapshot.clone();
     t.set(
         "engaged",
         lua.create_function(move |_, _this: Value| Ok(snap.borrow().engaged))?,
     )?;
-    let snap = Rc::clone(&state.snapshot);
+    let snap = state.snapshot.clone();
     t.set(
         "getrecording",
         lua.create_function(move |_, _this: Value| Ok(snap.borrow().recording))?,
     )?;
-    let snap = Rc::clone(&state.snapshot);
+    let snap = state.snapshot.clone();
     t.set(
         "getseekframe",
         lua.create_function(move |_, _this: Value| {
@@ -151,7 +149,7 @@ pub fn install(lua: &Lua, state: &TasState, writes_locked: &Rc<Cell<bool>>) -> m
         })?,
     )?;
     // `getselection()` -> (first, last) or (nil, nil) when nothing is selected.
-    let snap = Rc::clone(&state.snapshot);
+    let snap = state.snapshot.clone();
     t.set(
         "getselection",
         lua.create_function(move |_, _this: Value| {
@@ -162,7 +160,7 @@ pub fn install(lua: &Lua, state: &TasState, writes_locked: &Rc<Cell<bool>>) -> m
         })?,
     )?;
     // `islag(frame)` -> bool, or nil for a frame not yet emulated.
-    let snap = Rc::clone(&state.snapshot);
+    let snap = state.snapshot.clone();
     t.set(
         "islag",
         lua.create_function(move |_, (_this, frame): (Value, usize)| {
@@ -170,7 +168,7 @@ pub fn install(lua: &Lua, state: &TasState, writes_locked: &Rc<Cell<bool>>) -> m
         })?,
     )?;
     // `hasstate(frame)` -> bool (a greenzone save-state exists at `frame`).
-    let snap = Rc::clone(&state.snapshot);
+    let snap = state.snapshot.clone();
     t.set(
         "hasstate",
         lua.create_function(move |_, (_this, frame): (Value, usize)| {
@@ -178,7 +176,7 @@ pub fn install(lua: &Lua, state: &TasState, writes_locked: &Rc<Cell<bool>>) -> m
         })?,
     )?;
     // `getmarker(frame)` -> label or nil.
-    let snap = Rc::clone(&state.snapshot);
+    let snap = state.snapshot.clone();
     t.set(
         "getmarker",
         lua.create_function(move |_, (_this, frame): (Value, usize)| {
@@ -191,23 +189,32 @@ pub fn install(lua: &Lua, state: &TasState, writes_locked: &Rc<Cell<bool>>) -> m
         })?,
     )?;
     // `getbranches()` -> array of { frame=, text= } in branch order.
-    let snap = Rc::clone(&state.snapshot);
+    let snap = state.snapshot.clone();
     t.set(
         "getbranches",
         lua.create_function(move |lua, _this: Value| {
-            let s = snap.borrow();
+            // Clone the branch (frame, text) pairs out and release the lock
+            // before building the Lua table (don't hold the guard across the
+            // table-construction calls; clippy flags a `MutexGuard` held to
+            // scope end).
+            let branches: Vec<(usize, String)> = snap
+                .borrow()
+                .branches
+                .iter()
+                .map(|b| (b.frame, b.text.clone()))
+                .collect();
             let arr = lua.create_table()?;
-            for (i, b) in s.branches.iter().enumerate() {
+            for (i, (frame, text)) in branches.into_iter().enumerate() {
                 let entry = lua.create_table()?;
-                entry.set("frame", u64::try_from(b.frame).unwrap_or(0))?;
-                entry.set("text", b.text.clone())?;
+                entry.set("frame", u64::try_from(frame).unwrap_or(0))?;
+                entry.set("text", text)?;
                 arr.set(i + 1, entry)?;
             }
             Ok(arr)
         })?,
     )?;
     // `getbranchtext(index)` -> text or nil (1-based, matching Lua arrays).
-    let snap = Rc::clone(&state.snapshot);
+    let snap = state.snapshot.clone();
     t.set(
         "getbranchtext",
         lua.create_function(move |_, (_this, index): (Value, usize)| {
@@ -219,7 +226,7 @@ pub fn install(lua: &Lua, state: &TasState, writes_locked: &Rc<Cell<bool>>) -> m
         })?,
     )?;
     // `getbranchinput(index, frame)` -> (p1, p2) button bitmasks or (nil, nil).
-    let snap = Rc::clone(&state.snapshot);
+    let snap = state.snapshot.clone();
     t.set(
         "getbranchinput",
         lua.create_function(move |_, (_this, index, frame): (Value, usize, usize)| {
@@ -234,8 +241,8 @@ pub fn install(lua: &Lua, state: &TasState, writes_locked: &Rc<Cell<bool>>) -> m
 
     // ---- Mutators (queue a gated TasCmd; dropped under a locked session) ----
 
-    let cmds = Rc::clone(&state.commands);
-    let locked = Rc::clone(writes_locked);
+    let cmds = state.commands.clone();
+    let locked = writes_locked.clone();
     t.set(
         "setrecording",
         lua.create_function(move |_, (_this, on): (Value, bool)| {
@@ -245,8 +252,8 @@ pub fn install(lua: &Lua, state: &TasState, writes_locked: &Rc<Cell<bool>>) -> m
             Ok(())
         })?,
     )?;
-    let cmds = Rc::clone(&state.commands);
-    let locked = Rc::clone(writes_locked);
+    let cmds = state.commands.clone();
+    let locked = writes_locked.clone();
     t.set(
         "togglerecording",
         lua.create_function(move |_, _this: Value| {
@@ -257,8 +264,8 @@ pub fn install(lua: &Lua, state: &TasState, writes_locked: &Rc<Cell<bool>>) -> m
         })?,
     )?;
     // `setplayback(target)` accepts a frame number OR a marker name (string).
-    let cmds = Rc::clone(&state.commands);
-    let locked = Rc::clone(writes_locked);
+    let cmds = state.commands.clone();
+    let locked = writes_locked.clone();
     t.set(
         "setplayback",
         lua.create_function(move |_, (_this, target): (Value, Value)| {
@@ -282,8 +289,8 @@ pub fn install(lua: &Lua, state: &TasState, writes_locked: &Rc<Cell<bool>>) -> m
             Ok(())
         })?,
     )?;
-    let cmds = Rc::clone(&state.commands);
-    let locked = Rc::clone(writes_locked);
+    let cmds = state.commands.clone();
+    let locked = writes_locked.clone();
     t.set(
         "setlag",
         lua.create_function(move |_, (_this, frame, lag): (Value, usize, bool)| {
@@ -293,8 +300,8 @@ pub fn install(lua: &Lua, state: &TasState, writes_locked: &Rc<Cell<bool>>) -> m
             Ok(())
         })?,
     )?;
-    let cmds = Rc::clone(&state.commands);
-    let locked = Rc::clone(writes_locked);
+    let cmds = state.commands.clone();
+    let locked = writes_locked.clone();
     t.set(
         "setmarker",
         lua.create_function(move |_, (_this, frame, text): (Value, usize, String)| {
@@ -304,8 +311,8 @@ pub fn install(lua: &Lua, state: &TasState, writes_locked: &Rc<Cell<bool>>) -> m
             Ok(())
         })?,
     )?;
-    let cmds = Rc::clone(&state.commands);
-    let locked = Rc::clone(writes_locked);
+    let cmds = state.commands.clone();
+    let locked = writes_locked.clone();
     t.set(
         "removemarker",
         lua.create_function(move |_, (_this, frame): (Value, usize)| {
@@ -319,8 +326,8 @@ pub fn install(lua: &Lua, state: &TasState, writes_locked: &Rc<Cell<bool>>) -> m
     // touch the editor until `applyinputchanges()` flushes the batch. The stage
     // is gated too (no staging under a locked session), so a locked session
     // never accumulates pending edits.
-    let pending = Rc::clone(&state.pending_input);
-    let locked = Rc::clone(writes_locked);
+    let pending = state.pending_input.clone();
+    let locked = writes_locked.clone();
     t.set(
         "submitinputchange",
         lua.create_function(
@@ -350,9 +357,9 @@ pub fn install(lua: &Lua, state: &TasState, writes_locked: &Rc<Cell<bool>>) -> m
     )?;
     // `applyinputchanges()` flushes the staged edits into the host command queue
     // as one batch (still gated — under a lock the staged list is empty anyway).
-    let pending = Rc::clone(&state.pending_input);
-    let cmds = Rc::clone(&state.commands);
-    let locked = Rc::clone(writes_locked);
+    let pending = state.pending_input.clone();
+    let cmds = state.commands.clone();
+    let locked = writes_locked.clone();
     t.set(
         "applyinputchanges",
         lua.create_function(move |_, _this: Value| {
@@ -365,8 +372,8 @@ pub fn install(lua: &Lua, state: &TasState, writes_locked: &Rc<Cell<bool>>) -> m
             Ok(())
         })?,
     )?;
-    let cmds = Rc::clone(&state.commands);
-    let locked = Rc::clone(writes_locked);
+    let cmds = state.commands.clone();
+    let locked = writes_locked.clone();
     t.set(
         "loadbranch",
         lua.create_function(move |_, (_this, index): (Value, usize)| {
@@ -376,8 +383,8 @@ pub fn install(lua: &Lua, state: &TasState, writes_locked: &Rc<Cell<bool>>) -> m
             Ok(())
         })?,
     )?;
-    let cmds = Rc::clone(&state.commands);
-    let locked = Rc::clone(writes_locked);
+    let cmds = state.commands.clone();
+    let locked = writes_locked.clone();
     t.set(
         "setbranchtext",
         lua.create_function(move |_, (_this, index, text): (Value, usize, String)| {
@@ -396,7 +403,7 @@ pub fn install(lua: &Lua, state: &TasState, writes_locked: &Rc<Cell<bool>>) -> m
     install_cb_registrar(lua, &t, "ongreenzoneinvalidated", &state.greenzone_cbs)?;
     install_cb_registrar(lua, &t, "onbranchload", &state.branch_load_cbs)?;
 
-    let clear = Rc::clone(&state.clear_icon_cache);
+    let clear = state.clear_icon_cache.clone();
     t.set(
         "clearIconCache",
         lua.create_function(move |_, _this: Value| {
@@ -452,7 +459,7 @@ pub fn query_cell(
 /// releasing the `RefCell` borrow before the caller invokes any of them — so a
 /// callback that re-enters the same list (registering another callback) can't
 /// double-borrow-panic.
-fn resolve_cbs(lua: &Lua, list: &Rc<RefCell<Vec<RegistryKey>>>) -> mlua::Result<Vec<Function>> {
+fn resolve_cbs(lua: &Lua, list: &Shared<Vec<RegistryKey>>) -> mlua::Result<Vec<Function>> {
     list.borrow()
         .iter()
         .map(|k| lua.registry_value::<Function>(k))
@@ -461,7 +468,7 @@ fn resolve_cbs(lua: &Lua, list: &Rc<RefCell<Vec<RegistryKey>>>) -> mlua::Result<
 
 /// Invoke every registered callback in `list`, passing a single `usize` arg
 /// (`ongreenzoneinvalidated(firstFrame)` / `onbranchload(index)`). Observational.
-pub fn fire_event(lua: &Lua, list: &Rc<RefCell<Vec<RegistryKey>>>, arg: usize) -> mlua::Result<()> {
+pub fn fire_event(lua: &Lua, list: &Shared<Vec<RegistryKey>>, arg: usize) -> mlua::Result<()> {
     // Collect the handles up front so the RefCell borrow is released before any
     // callback runs (a callback could register another).
     let fns = resolve_cbs(lua, list)?;

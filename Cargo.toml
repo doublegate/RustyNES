@@ -18,7 +18,7 @@ members = [
 ]
 
 [workspace.package]
-version = "1.8.5"
+version = "1.8.6"
 edition = "2024"
 rust-version = "1.96"
 license = "MIT OR Apache-2.0"
@@ -51,7 +51,7 @@ rustynes-hdpack = { path = "crates/rustynes-hdpack", version = "1.8.5" }
 # from source (no system Lua needed); native-only (the wasm/no_std builds never
 # pull this in, since `rustynes-script` is gated behind the frontend's optional
 # `scripting` feature).
-mlua = { version = "0.11", features = ["lua54", "vendored"] }
+mlua = { version = "0.11", features = ["lua54", "vendored", "send"] }
 
 # v1.2.0 Workstream F4 — EXPERIMENTAL pure-Rust Lua VM for the wasm backend of
 # `rustynes-script` (behind the default-OFF `script-wasm` feature). piccolo has
