@@ -119,6 +119,13 @@ jobs:
       - name: Resolve NDK
         run: echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          # Publish a Gradle Build Scan for every run (the free scans.gradle.com
+          # service) so CI Gradle failures have a shareable diagnostic URL in the
+          # log. ToS auto-accepted for the public service.
+          build-scan-publish: true
+          build-scan-terms-of-use-url: "https://gradle.com/terms-of-service"
+          build-scan-terms-of-use-agree: "yes"
       - name: Bundle release AAB (unsigned)
         working-directory: android
         run: ./gradlew :app:bundleRelease --no-daemon

@@ -64,7 +64,7 @@ emu-thread = ["dep:libc"]
 # bytes to an `egui::ColorImage`). Both are native-only optional deps below;
 # the badge-image cache lives in `src/debugger/badge_cache.rs`, gated the same
 # way as the rest of the RA integration.
-retroachievements = ["dep:rustynes-cheevos", "dep:ureq"]
+retroachievements = ["dep:rustynes-cheevos", "dep:rustynes-ra", "dep:ureq"]
 
 # v1.1.0 beta.3 (Workstream E flagship) — Lua scripting (default OFF, native-only).
 # Pulls in `rustynes-script` (sandboxed vendored Lua 5.4). Off by default so the
@@ -288,6 +288,12 @@ arboard = "3"
 # default build, and placing it in this `cfg(not(target_arch = "wasm32"))`
 # table guarantees the two wasm builds never attempt to compile it.
 rustynes-cheevos = { path = "../rustynes-cheevos", optional = true }
+
+# v1.8.6 — the RetroAchievements session state (login state machine, HUD model,
+# per-game progress), extracted from this crate into `rustynes-ra` so the mobile
+# bridge can drive the same session. Native-only, behind the `retroachievements`
+# feature; `App` holds an `Option<rustynes_ra::RaSession>`.
+rustynes-ra = { workspace = true, optional = true }
 
 # v1.1.0 beta.3 (Workstream E) — Lua scripting (native-only, behind the
 # default-OFF `scripting` feature). `rustynes-script` embeds vendored Lua 5.4 (C),

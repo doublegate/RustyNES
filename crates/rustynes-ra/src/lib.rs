@@ -1,7 +1,7 @@
-//! `RetroAchievements` session state (v2.7.0, native-only, feature-gated).
+//! `rustynes-ra` — the `RetroAchievements` session state (v1.8.6, native-only).
 //!
 //! [`RaSession`] bundles the safe [`rustynes_cheevos::RaClient`] together with all
-//! the frontend-side state the achievement integration needs:
+//! the host-side state the achievement integration needs:
 //!
 //! - the **login state machine** (logged-out / logging-in / logged-in / error)
 //!   plus the login-dialog text buffers (username + password + token);
@@ -14,17 +14,27 @@
 //! - the **per-game progress** persistence bookkeeping (the loaded game's ROM
 //!   bytes hash → `<data_dir>/ra-progress/<sha>.rap`).
 //!
-//! The whole module is compiled only with the `retroachievements` feature on a
-//! native target (see `lib.rs`); the browser builds never see it.
+//! This crate was extracted from the desktop frontend in v1.8.6 so the mobile
+//! bridge (`rustynes-mobile`) can drive the same session over `UniFFI`. It is
+//! native-only: `rustynes-cheevos` compiles to an empty crate on `wasm32`, so a
+//! wasm workspace build still succeeds (the desktop wasm host uses the separate
+//! browser RA scaffolding instead).
 //!
 //! # Threading / borrow model
 //!
-//! `RaClient` is `!Send`/`!Sync` and all of its calls (and the C callback
-//! bridging) run on the emulator/main thread — the same thread that owns the
-//! `App`. The per-frame hook borrows `self.ra` and `self.nes` as *disjoint*
-//! `App` fields (Rust's field-borrow splitting permits `&mut self.ra` +
-//! `&mut self.nes` simultaneously), so the `do_frame(&mut |a| nes.cpu_bus_peek(a))`
-//! read-closure can call into `nes` while the client is mutably borrowed.
+//! [`rustynes_cheevos::RaClient`] is `Send` (v1.8.6) but `!Sync`: all of its
+//! calls (and the C callback bridging) must run on a single driving thread at a
+//! time — the same thread that owns the [`RaSession`]. On desktop that is the
+//! emulator/main thread; on mobile the bridge's `Mutex` serializes access. The
+//! per-frame hook borrows the session and the emulator as *disjoint* host
+//! fields, so the `do_frame(&mut |a| nes.cpu_bus_peek(a))` read-closure can call
+//! into the emulator while the client is mutably borrowed.
+
+// `rustynes-cheevos` compiles to an empty crate on wasm32 (no C toolchain), so
+// this crate's body — which names `RaClient` etc. — is likewise native-only. A
+// wasm workspace build sees an empty crate; the desktop wasm host uses the
+// separate browser RA scaffolding instead, and never depends on this crate.
+#![cfg(not(target_arch = "wasm32"))]
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -32,6 +42,44 @@ use std::time::{Duration, Instant};
 use rustynes_cheevos::{
     RaAchievement, RaClient, RaEvent, RaGameSummary, RaLeaderboard, RaScoreboardEntry, RaUser,
 };
+
+// Re-export the `rustynes_cheevos` types the hosts read off `RaSession` so a
+// downstream consumer depends on `rustynes_ra::…` alone (the frontend + the
+// mobile bridge never name `rustynes_cheevos` directly).
+pub use rustynes_cheevos::{
+    RaAchievement as Achievement, RaClient as Client, RaEvent as Event,
+    RaGameSummary as GameSummary, RaLeaderboard as Leaderboard,
+    RaScoreboardEntry as ScoreboardEntry, RaUser as User,
+};
+
+/// Compile-time proof that [`RaSession`] is `Send` (the whole reason the
+/// session was extracted into this crate): the mobile bridge moves it into a
+/// `Mutex<Inner>` behind a `UniFFI` object, which requires `Send`.
+const _: fn() = || {
+    const fn assert_send<T: Send>() {}
+    assert_send::<RaSession>();
+};
+
+/// The persisted `RetroAchievements` settings the session reads at construction +
+/// auto-login time.
+///
+/// This is a plain, host-agnostic struct (extracted in v1.8.6 to sever the
+/// frontend `config` coupling): the desktop frontend maps its
+/// `RetroAchievementsConfig` onto it, and the mobile bridge builds it directly.
+/// Note it intentionally carries no `host` field — the session never overrides
+/// the rcheevos default host through this type.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RaConfig {
+    /// Master enable. When `true` and a saved [`Self::token`] is present, the
+    /// host can auto-login at startup.
+    pub enabled: bool,
+    /// The `RetroAchievements` username.
+    pub username: String,
+    /// The login **token** returned by a successful login (NOT the password).
+    pub token: String,
+    /// Hardcore mode (no save-state load / rewind / cheats / RAM-watch).
+    pub hardcore: bool,
+}
 
 /// How long a transient unlock / event toast stays on the HUD.
 const TOAST_TTL: Duration = Duration::from_secs(5);
@@ -115,9 +163,9 @@ pub struct Toast {
     pub created: Instant,
     /// `true` for an error/warning toast (rendered in a warmer color).
     pub is_error: bool,
-    /// v2.7.1 — for an achievement-unlock toast, the RA media-server URL of the
-    /// unlocked badge PNG (empty for non-achievement toasts). The HUD draws the
-    /// badge image next to the toast text when this is set.
+    /// For an achievement-unlock toast, the RA media-server URL of the unlocked
+    /// badge PNG (empty for non-achievement toasts). The HUD draws the badge
+    /// image next to the toast text when this is set.
     pub badge_url: String,
 }
 
@@ -128,7 +176,7 @@ pub struct Trackers {
     pub active: HashMap<u32, String>,
 }
 
-/// The `RetroAchievements` session bundled into the `App` as `Option<RaSession>`.
+/// The `RetroAchievements` session, held by a host as `Option<RaSession>`.
 pub struct RaSession {
     /// The safe rcheevos client.
     client: RaClient,
@@ -169,7 +217,7 @@ pub struct RaSession {
     /// Sidecar progress bytes loaded at `begin_load_game` time, pending until
     /// the async game-load completes (then applied in `reconcile_game_loaded`).
     pending_progress: Option<Vec<u8>>,
-    /// Set `true` for one poll when a login just succeeded, so the app can
+    /// Set `true` for one poll when a login just succeeded, so the host can
     /// (re-)identify the currently-loaded ROM (a ROM opened *before* logging in
     /// could not be identified yet — `rc_client` must be logged in first).
     /// Consumed via [`Self::take_just_logged_in`].
@@ -182,7 +230,7 @@ impl RaSession {
     /// caller drives [`Self::auto_login`] once, to keep `new` side-effect-free
     /// w.r.t. the network).
     #[must_use]
-    pub fn new(config: &crate::config::RetroAchievementsConfig) -> Self {
+    pub fn new(config: &RaConfig) -> Self {
         let mut client = RaClient::new();
         client.set_hardcore_enabled(config.hardcore);
         client.set_unofficial_enabled(false);
@@ -215,7 +263,7 @@ impl RaSession {
         self.hardcore
     }
 
-    /// The predicate the app's gating sites consult: when this session is
+    /// The predicate the host's gating sites consult: when this session is
     /// hardcore, the "soft" affordances (save-state load, rewind, cheats,
     /// frame-advance, RAM-watch / memory editing) are refused.
     ///
@@ -273,7 +321,7 @@ impl RaSession {
 
     /// Auto-login from config at startup if enabled and a token is saved.
     /// Returns `true` if a login was started.
-    pub fn auto_login(&mut self, config: &crate::config::RetroAchievementsConfig) -> bool {
+    pub fn auto_login(&mut self, config: &RaConfig) -> bool {
         if config.enabled && !config.username.is_empty() && !config.token.is_empty() {
             self.begin_login_token(&config.username, &config.token);
             true
@@ -299,7 +347,7 @@ impl RaSession {
     }
 
     /// Consume the "a login just succeeded" edge (true for exactly one poll
-    /// after login completes). The app uses it to (re-)identify a ROM that was
+    /// after login completes). The host uses it to (re-)identify a ROM that was
     /// loaded before the user logged in.
     pub fn take_just_logged_in(&mut self) -> bool {
         core::mem::take(&mut self.just_logged_in)
@@ -579,7 +627,7 @@ impl RaSession {
         self.push_toast_with_badge(title, detail, is_error, String::new());
     }
 
-    /// Push a transient toast carrying an optional badge URL (v2.7.1; used for
+    /// Push a transient toast carrying an optional badge URL (used for
     /// achievement-unlock toasts so the HUD can show the badge image).
     fn push_toast_with_badge(
         &mut self,
@@ -624,18 +672,12 @@ impl RaSession {
 mod tests {
     use super::*;
 
-    fn cfg(
-        enabled: bool,
-        hardcore: bool,
-        user: &str,
-        token: &str,
-    ) -> crate::config::RetroAchievementsConfig {
-        crate::config::RetroAchievementsConfig {
+    fn cfg(enabled: bool, hardcore: bool, user: &str, token: &str) -> RaConfig {
+        RaConfig {
             enabled,
             username: user.to_string(),
             token: token.to_string(),
             hardcore,
-            host: "https://retroachievements.org".to_string(),
         }
     }
 
@@ -696,7 +738,7 @@ mod tests {
         assert!(s.game_sha256().is_none());
     }
 
-    // v1.7.0 H2 — softcore (and no-game) never gates pausing.
+    // softcore (and no-game) never gates pausing.
     #[test]
     fn can_pause_unblocked_in_softcore() {
         let mut s = RaSession::new(&cfg(false, false, "", ""));
@@ -704,8 +746,8 @@ mod tests {
         assert_eq!(s.can_pause(), (true, 0));
     }
 
-    // v1.7.0 H2 — scoreboard popups cap + clear with the game caches; the
-    // progress / challenge HUD state resets too.
+    // scoreboard popups cap + clear with the game caches; the progress /
+    // challenge HUD state resets too.
     #[test]
     fn hud_state_caps_and_clears() {
         let mut s = RaSession::new(&cfg(false, false, "", ""));
@@ -729,7 +771,7 @@ mod tests {
         assert!(!s.progress.visible);
     }
 
-    // v1.7.0 H2 — expiry drops a stale progress indicator + an old scoreboard.
+    // expiry drops a stale progress indicator + an old scoreboard.
     #[test]
     fn hud_transients_expire() {
         let mut s = RaSession::new(&cfg(false, false, "", ""));

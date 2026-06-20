@@ -12,6 +12,9 @@
     <!-- Light haptic tick on on-screen button presses (the virtual controller). -->
     <uses-permission android:name="android.permission.VIBRATE" />
 
+    <!-- RetroAchievements (v1.8.6, opt-in) talks to the RA servers over HTTPS. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"

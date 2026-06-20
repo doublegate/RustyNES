@@ -146,14 +146,9 @@ pub mod ntsc_bisqwit;
 // passes, and a constrained RetroArch `.slangp`/`.cgp` preset importer. All
 // extend the v1.2.0 composable ShaderStack (ADR 0013) and are output-only.
 pub mod ntsc_lmp88959;
+pub mod save_state;
 pub mod slang_preset;
 pub mod upscale;
-// v2.7.0 — RetroAchievements session state. Native-only and behind the
-// default-OFF `retroachievements` feature (it links the vendored rcheevos C
-// library via `rustynes-cheevos`). The browser builds never see it.
-#[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
-pub mod ra_session;
-pub mod save_state;
 // v1.2.0 C2 — composable post-process shader stack (ping-pong RT executor +
 // `#pragma parameter` model + CRT preset bank). An empty stack falls through to
 // the existing direct blit (byte-identical), so this is purely additive.

@@ -4066,7 +4066,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-android"
-version = "1.8.5"
+version = "1.8.6"
 dependencies = [
  "android-activity",
  "android_logger",
@@ -4084,7 +4084,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-apu"
-version = "1.8.5"
+version = "1.8.6"
 dependencies = [
  "bitflags 2.13.0",
  "criterion",
@@ -4097,7 +4097,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-cheevos"
-version = "1.8.5"
+version = "1.8.6"
 dependencies = [
  "cc",
  "ureq",
@@ -4105,7 +4105,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-core"
-version = "1.8.5"
+version = "1.8.6"
 dependencies = [
  "bitflags 2.13.0",
  "criterion",
@@ -4122,7 +4122,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-cpu"
-version = "1.8.5"
+version = "1.8.6"
 dependencies = [
  "bitflags 2.13.0",
  "criterion",
@@ -4133,7 +4133,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-frontend"
-version = "1.8.5"
+version = "1.8.6"
 dependencies = [
  "anstyle",
  "arboard",
@@ -4164,6 +4164,7 @@ dependencies = [
  "rustynes-gfx-shaders",
  "rustynes-hdpack",
  "rustynes-netplay",
+ "rustynes-ra",
  "rustynes-script",
  "serde",
  "serde_json",
@@ -4184,11 +4185,11 @@ dependencies = [
 
 [[package]]
 name = "rustynes-gfx-shaders"
-version = "1.8.5"
+version = "1.8.6"
 
 [[package]]
 name = "rustynes-hdpack"
-version = "1.8.5"
+version = "1.8.6"
 dependencies = [
  "lewton",
  "png",
@@ -4199,7 +4200,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-mappers"
-version = "1.8.5"
+version = "1.8.6"
 dependencies = [
  "bitflags 2.13.0",
  "criterion",
@@ -4211,10 +4212,13 @@ dependencies = [
 
 [[package]]
 name = "rustynes-mobile"
-version = "1.8.5"
+version = "1.8.6"
 dependencies = [
  "rustynes-core",
  "rustynes-hdpack",
+ "rustynes-netplay",
+ "rustynes-ra",
+ "rustynes-script",
  "thiserror 2.0.18",
  "uniffi",
  "zip",
@@ -4222,7 +4226,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-netplay"
-version = "1.8.5"
+version = "1.8.6"
 dependencies = [
  "futures-util",
  "js-sys",
@@ -4237,7 +4241,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-ppu"
-version = "1.8.5"
+version = "1.8.6"
 dependencies = [
  "bitflags 2.13.0",
  "criterion",
@@ -4247,8 +4251,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustynes-ra"
+version = "1.8.6"
+dependencies = [
+ "rustynes-cheevos",
+]
+
+[[package]]
 name = "rustynes-script"
-version = "1.8.5"
+version = "1.8.6"
 dependencies = [
  "mlua",
  "piccolo",
@@ -4258,7 +4269,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-test-harness"
-version = "1.8.5"
+version = "1.8.6"
 dependencies = [
  "insta",
  "png",

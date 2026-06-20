@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.view.KeyEvent
+import java.security.MessageDigest
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -61,6 +62,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -70,6 +72,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import uniffi.rustynes_mobile.NesController
+import uniffi.rustynes_mobile.RaLoginStatus
+import uniffi.rustynes_mobile.RaToast
 
 /**
  * RustyNES Android — first-boot Compose shell (v1.8.0 "Android", beta.1).
@@ -175,11 +179,20 @@ class MainActivity : ComponentActivity() {
     // consistent; it is a quick in-memory encode, fine to do on the main thread.
     override fun onPause() {
         super.onPause()
+        val ctrl = emulator.controller
+        val sha = emulator.romSha
+        // RetroAchievements progress sidecar (v1.8.6) is persisted unconditionally —
+        // it is unlock progress, not a save-state, so the freemium gate below does
+        // not apply. A no-op when no RA session / game is loaded (empty blob).
+        if (ctrl != null && sha != null) {
+            runCatching {
+                val blob = ctrl.raSerializeProgress()
+                if (blob.isNotEmpty()) RaProgressStore.save(this, sha, blob)
+            }
+        }
         // Save-on-background is a paid feature in the Play build; sideload builds
         // (PLAY_BUILD=false) always persist. The demo never persists state.
         if (BuildConfig.PLAY_BUILD && (!::license.isInitialized || !license.isUnlocked)) return
-        val ctrl = emulator.controller
-        val sha = emulator.romSha
         if (ctrl != null && sha != null) {
             runCatching { SaveStateStore.save(this, sha, SaveStateStore.AUTO_SLOT, ctrl.saveState()) }
         }
@@ -204,6 +217,10 @@ class EmulatorHandle {
 
     /** Lowercase hex SHA-256 of the loaded ROM — the save-state directory key. */
     var romSha: String? = null
+
+    /** Raw bytes of the loaded ROM — kept so RetroAchievements can (re-)identify
+     *  the game via `raLoadGame` if login completes after the ROM was opened. */
+    var romBytes: ByteArray? = null
 
     /** Emulation paused (the loop idles, no frames advance). Read by the loop. */
     @Volatile
@@ -251,6 +268,11 @@ class EmulatorHandle {
         controller?.setButtons(0u, (touchMask or keyMask).toUByte())
     }
 
+    /** The current combined P1 mask (touch | key) — the `local_mask` netplay feeds
+     *  to `npAdvanceFrame` (where the bridge owns the latch, so `setButtons` is not
+     *  the input path). Synchronized against the touch/key updaters. */
+    fun p1Mask(): Int = synchronized(this) { touchMask or keyMask }
+
     private fun keyToBit(keyCode: Int): Int? = when (keyCode) {
         KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_DPAD_CENTER -> NesBit.A
         KeyEvent.KEYCODE_BUTTON_B -> NesBit.B
@@ -296,6 +318,7 @@ private fun loadRom(
     val sha = sha256Hex(bytes)
     emulator.controller = ctrl
     emulator.romSha = sha
+    emulator.romBytes = bytes
     // Apply this game's remembered video filter (per-game DB), if any.
     GameConfig.filter(context, sha)?.let { f ->
         settings.filter = VideoFilter.entries.getOrElse(f) { VideoFilter.None }
@@ -431,10 +454,34 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
     // Freemium is active only in the Play build; sideload/dev builds are unlimited.
     val unlocked = !BuildConfig.PLAY_BUILD || license.isUnlocked
     var frame by remember { mutableStateOf<ImageBitmap?>(null) }
+    // Whether a ROM is currently loaded — drives the Open/Close toggle button and
+    // gates the gameplay view vs. the idle (Open + recents) screen.
+    var romLoaded by remember { mutableStateOf(false) }
     // HD-pack (v1.8.5): `hdActive` switches the UI to the Bitmap path (the GPU
     // SurfaceView is fixed 256x240; HD output is upscaled), `hd` holds its bitmap.
     var hdActive by remember { mutableStateOf(false) }
     val hd = remember { HdRender() }
+    // Lua scripting (v1.8.6): whether a script is loaded + its rolling log output.
+    var scriptLoaded by remember { mutableStateOf(false) }
+    var scriptLog by remember { mutableStateOf("") }
+    // RetroAchievements (v1.8.6): coarse login status text, the signed-in user (or
+    // null), and the live HUD toast queue drained from the bridge each frame.
+    var raStatus by remember { mutableStateOf("Logged out") }
+    var raUserName by remember { mutableStateOf<String?>(null) }
+    var raToasts by remember { mutableStateOf<List<RaToast>>(emptyList()) }
+    // Set after a game was opened so RA can (re-)identify it once login completes;
+    // cleared once raLoadGame has been issued for the current login + ROM.
+    var raGameLoaded by remember { mutableStateOf(false) }
+    // Netplay (v1.8.6, LAN/direct-IP): the panel sheet visibility, the latest status
+    // snapshot (polled in the loop at the RA cadence), and the host's bound IP:port
+    // to share once listening. `npActive` is mirrored each poll so the loop's
+    // controls-gate (turbo/etc.) and the overlay react without re-locking the bridge.
+    var showNetplay by remember { mutableStateOf(false) }
+    var npStatus by remember { mutableStateOf<uniffi.rustynes_mobile.NpStatus?>(null) }
+    var npHostInfo by remember { mutableStateOf<String?>(null) }
+    var npActive by remember { mutableStateOf(false) }
+    // Tracks the previous login status to detect the LOGGED_OUT -> LOGGED_IN edge.
+    var raWasLoggedIn by remember { mutableStateOf(false) }
     // Off-main-thread scope for the one-shot SAF loads (HD-pack parse, config I/O).
     val scope = rememberCoroutineScope()
     var status by remember { mutableStateOf("Open a .nes ROM to start") }
@@ -521,7 +568,8 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
         if (uri != null) {
             runCatching {
                 val name = displayName(context, uri)
-                val bytes = context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+                val bytes = (context.contentResolver.openInputStream(uri)
+                    ?: throw java.io.IOException("can't open ROM stream")).use { it.readBytes() }
                 status = loadRom(context, emulator, bytes, uri, name, unlocked, settings)
                 recents = RomLibrary.recents(context)
             }.onFailure { status = "Failed to load ROM: ${it.message}" }
@@ -536,7 +584,8 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
     ) { uri ->
         if (uri != null) {
             runCatching {
-                val bytes = context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+                val bytes = (context.contentResolver.openInputStream(uri)
+                    ?: throw java.io.IOException("can't open palette stream")).use { it.readBytes() }
                 emulator.controller?.loadPalette(bytes)
                 status = "Palette loaded: ${displayName(context, uri)}"
             }.onFailure { status = "Failed to load palette: ${it.message}" }
@@ -549,7 +598,8 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
     ) { uri ->
         if (uri != null) {
             runCatching {
-                val bytes = context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+                val bytes = (context.contentResolver.openInputStream(uri)
+                    ?: throw java.io.IOException("can't open movie stream")).use { it.readBytes() }
                 emulator.controller?.moviePlay(bytes)
                 status = "Playing movie: ${displayName(context, uri)}"
             }.onFailure { status = "Failed to play movie: ${it.message}" }
@@ -580,7 +630,8 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
             scope.launch {
                 runCatching {
                     val dims = withContext(Dispatchers.IO) {
-                        val bytes = context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+                        val bytes = (context.contentResolver.openInputStream(uri)
+                            ?: throw java.io.IOException("can't open HD-pack stream")).use { it.readBytes() }
                         emulator.controller?.loadHdpackFromZipBytes(bytes)
                         emulator.controller?.hdpackDimensions() ?: listOf(0u, 0u)
                     }
@@ -601,11 +652,117 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
         }
     }
 
+    // SAF picker for a Lua script (.lua) — loaded into the sandboxed engine; its
+    // on_frame callback then runs each frame and its print/log output is shown.
+    val scriptPicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                runCatching {
+                    val src = withContext(Dispatchers.IO) {
+                        (context.contentResolver.openInputStream(uri)
+                            ?: throw java.io.IOException("can't open script stream")).use { it.readBytes() }
+                            .decodeToString()
+                    }
+                    withContext(Dispatchers.IO) { emulator.controller?.loadScript(src) }
+                    scriptLoaded = true
+                    scriptLog = ""
+                    status = "Script loaded: ${displayName(context, uri)}"
+                }.onFailure { status = "Failed to load script: ${it.message}" }
+            }
+        }
+    }
+
+    // Identify the loaded ROM to RetroAchievements: compute its SHA-256, read any
+    // saved progress sidecar, and call raLoadGame off-thread. A no-op unless RA is
+    // enabled, a ROM is loaded, and the session is logged in. Marks raGameLoaded so
+    // a login that completes after the ROM was opened can re-issue this once.
+    fun raIdentifyGame() {
+        val ctrl = emulator.controller ?: return
+        val bytes = emulator.romBytes ?: return
+        if (!settings.raEnabled) return
+        scope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    if (!ctrl.raIsEnabled() || ctrl.raLoginStatus() != RaLoginStatus.LOGGED_IN) {
+                        return@withContext
+                    }
+                    val sha = MessageDigest.getInstance("SHA-256").digest(bytes)
+                    val shaHex = sha.joinToString("") { "%02x".format(it) }
+                    val sidecar = RaProgressStore.load(context, shaHex)
+                    ctrl.raLoadGame(bytes, sha, sidecar)
+                }
+                raGameLoaded = true
+            }.onFailure { status = "RA load failed: ${it.message}" }
+        }
+    }
+
+    // Persist the current RA progress sidecar (if any) for the loaded ROM.
+    fun raSaveProgress() {
+        val ctrl = emulator.controller ?: return
+        val sha = emulator.romSha ?: return
+        if (!settings.raEnabled) return
+        runCatching {
+            val blob = ctrl.raSerializeProgress()
+            if (blob.isNotEmpty()) RaProgressStore.save(context, sha, blob)
+        }
+    }
+
+    // Netplay (v1.8.6): begin hosting. The socket bind is network I/O, so run it off
+    // the main thread; on success surface the OS-bound port + this device's LAN IP as
+    // "IP:port" for the joiner to dial. A ROM must be loaded (the ROM hash gates the
+    // handshake) — the bridge errors otherwise.
+    fun netplayHost(localPort: UShort, numPlayers: UByte) {
+        val ctrl = emulator.controller
+        if (ctrl == null) {
+            status = "Open a ROM first, then host"
+            return
+        }
+        scope.launch {
+            runCatching {
+                val bound = withContext(Dispatchers.IO) { ctrl.npHost(localPort, numPlayers) }
+                val ip = localWifiIpv4(context) ?: "<this device's IP>"
+                npHostInfo = "$ip:$bound"
+                status = "Hosting on $ip:$bound — waiting for a player"
+            }.onFailure { status = "Host failed: ${it.message}" }
+        }
+    }
+
+    // Netplay (v1.8.6): join a host at "ip:port" (parse + bind + connect = network
+    // I/O, so off the main thread). A ROM must be loaded so the ROM-hash check passes.
+    fun netplayJoin(address: String) {
+        val ctrl = emulator.controller
+        if (ctrl == null) {
+            status = "Open the same ROM first, then join"
+            return
+        }
+        npHostInfo = null
+        scope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) { ctrl.npJoin(address) }
+                status = "Joining $address…"
+            }.onFailure { status = "Join failed: ${it.message}" }
+        }
+    }
+
+    // Netplay (v1.8.6): tear the session down and return to single-player.
+    fun netplayLeave() {
+        scope.launch {
+            withContext(Dispatchers.IO) { runCatching { emulator.controller?.npLeave() } }
+            npHostInfo = null
+            npStatus = null
+            npActive = false
+            status = "Left netplay"
+        }
+    }
+
     // Open a recent ROM via its persistable content URI.
     fun openRecent(rom: RecentRom) {
         runCatching {
             val uri = Uri.parse(rom.uri)
-            val bytes = context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+            val bytes = (context.contentResolver.openInputStream(uri)
+                ?: throw java.io.IOException("can't open recent ROM stream")).use { it.readBytes() }
             status = loadRom(context, emulator, bytes, uri, rom.name, unlocked, settings)
             recents = RomLibrary.recents(context)
         }.onFailure { status = "Can't open ${rom.name}: ${it.message}" }
@@ -629,6 +786,35 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                 }
             }
         }
+    }
+
+    // RetroAchievements auto-login (v1.8.6): on first composition, if RA is enabled
+    // and a token was saved from a prior password login, init the session and
+    // token-login silently (fire-and-forget; status/toasts are polled in the loop).
+    LaunchedEffect(Unit) {
+        if (settings.raEnabled && settings.raToken.isNotEmpty() && settings.raUsername.isNotEmpty()) {
+            withContext(Dispatchers.IO) {
+                emulator.controller // touch (no-op); RA session is controller-scoped
+                runCatching {
+                    // The session is created lazily on the first ra_* call; init it
+                    // and token-login — but only when a controller already exists
+                    // (the RA session is controller-scoped). If no ROM is open yet,
+                    // there is no controller, so login happens when one is loaded.
+                    val ctrl = emulator.controller
+                    if (ctrl != null) {
+                        ctrl.raInit(settings.raHardcore)
+                        ctrl.raLoginToken(settings.raUsername, settings.raToken)
+                    }
+                }
+            }
+        }
+    }
+
+    // (Re-)identify the loaded game to RA whenever the ROM changes (keyed by SHA).
+    // A no-op until logged in; the login-edge handler in the loop re-issues it then.
+    LaunchedEffect(emulator.romSha) {
+        raGameLoaded = false
+        raIdentifyGame()
     }
 
     // Debug-only convenience: auto-load a ROM pushed to the app's external files
@@ -665,13 +851,16 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
             // draws each submitted frame on the GPU (black until the first frame).
             // GPU path is bypassed while an HD-pack is active (its output is upscaled,
             // but the GPU texture is fixed 256x240 — HD goes through the Bitmap path).
-            if (gpuSurface != null && !hdActive) {
+            // During netplay the frame is presented via the Bitmap path (the loop reads
+            // the non-advancing index framebuffer into ARGB), so the GPU SurfaceView is
+            // bypassed too — same as the HD-pack path.
+            if (gpuSurface != null && !hdActive && !npActive && romLoaded) {
                 androidx.compose.ui.viewinterop.AndroidView(
                     factory = { gpuSurface },
                     modifier = Modifier.fillMaxSize(),
                 )
             }
-            if ((gpuSurface == null || hdActive) && current != null) {
+            if ((gpuSurface == null || hdActive || npActive) && current != null) {
                 Image(
                     bitmap = current,
                     contentDescription = "NES screen",
@@ -694,6 +883,77 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                     contentScale = ContentScale.Fit,
                     // Nearest-neighbour: preserve the crisp pixel grid.
                     filterQuality = FilterQuality.None,
+                )
+            }
+            // RetroAchievements toast HUD (v1.8.6) — unlock + login/server messages.
+            // Text-only cards (no badge images); error toasts tint red. They clear
+            // when the next poll returns an empty queue.
+            if (raToasts.isNotEmpty()) {
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp),
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    raToasts.forEach { toast ->
+                        Column(
+                            modifier = Modifier
+                                .background(if (toast.isError) Color(0xD0701010) else Color(0xC0102030))
+                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                        ) {
+                            Text(
+                                toast.title,
+                                color = if (toast.isError) Color(0xFFFFCDD2) else Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                            )
+                            if (toast.detail.isNotEmpty()) {
+                                Text(toast.detail, color = Color(0xFFCFD8DC), fontSize = 10.sp)
+                            }
+                        }
+                    }
+                }
+            }
+            // Netplay status overlay (v1.8.6) — a compact "connecting / synced f=… "
+            // line while a LAN session is active. Reuses the RA/Lua overlay pattern.
+            npStatus?.takeIf { npActive && it.phase != uniffi.rustynes_mobile.NpPhase.IDLE }?.let { s ->
+                val line = when (s.phase) {
+                    uniffi.rustynes_mobile.NpPhase.CONNECTING -> "Netplay: connecting…"
+                    uniffi.rustynes_mobile.NpPhase.IN_GAME ->
+                        "Netplay: synced f=${s.currentFrame}" +
+                            (s.pingMs?.let { " ping=${it}ms" } ?: "") +
+                            (if (s.stalled) " (stall)" else "")
+                    uniffi.rustynes_mobile.NpPhase.ERROR ->
+                        "Netplay: ${s.message.ifEmpty { "disconnected" }}"
+                    uniffi.rustynes_mobile.NpPhase.IDLE -> ""
+                }
+                Text(
+                    line,
+                    color = if (s.phase == uniffi.rustynes_mobile.NpPhase.ERROR || s.desync) {
+                        Color(0xFFEF9A9A)
+                    } else {
+                        Color(0xFF80D8FF)
+                    },
+                    fontSize = 11.sp,
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(8.dp)
+                        .background(Color(0xC0000000))
+                        .padding(horizontal = 6.dp, vertical = 4.dp),
+                )
+            }
+            // Lua script log overlay (v1.8.6) — the script's print/log output.
+            if (scriptLoaded && scriptLog.isNotEmpty()) {
+                Text(
+                    scriptLog,
+                    color = Color(0xFF7CFC00),
+                    fontSize = 10.sp,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(8.dp)
+                        .background(Color(0xC0000000))
+                        .padding(horizontal = 6.dp, vertical = 4.dp),
                 )
             }
             if (current == null) {
@@ -748,6 +1008,22 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
         var paused by remember { mutableStateOf(false) }
         var turbo by remember { mutableStateOf(false) }
         var controlsVisible by remember { mutableStateOf(false) }
+        // Close the current ROM: persist RA progress, unload, and return to the idle
+        // screen (Open button + recent-ROMs list). Mirrors the desktop close_rom.
+        fun closeRom() {
+            raSaveProgress()
+            val ctrl = emulator.controller
+            if (settings.raEnabled) runCatching { ctrl?.raUnloadGame() }
+            emulator.controller = null
+            emulator.romSha = null
+            emulator.romBytes = null
+            raGameLoaded = false
+            frame = null
+            romLoaded = false
+            paused = false
+            emulator.paused = false
+            status = "No ROM loaded"
+        }
         if (controlsVisible) {
             Row(
             modifier = Modifier
@@ -757,7 +1033,12 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Button(onClick = { picker.launch(arrayOf("*/*")) }) { Text("Open") }
+            // Open a ROM, or Close the running one (toggles on whether one is loaded).
+            if (romLoaded) {
+                Button(onClick = { closeRom() }) { Text("Close") }
+            } else {
+                Button(onClick = { picker.launch(arrayOf("*/*")) }) { Text("Open") }
+            }
             // Save-states are a paid feature; the demo hides the manager.
             if (unlocked) {
                 OutlinedButton(onClick = { showStates = true }) { Text("States") }
@@ -767,11 +1048,19 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                 paused = !paused
                 emulator.paused = paused
             }) { Text(if (paused) "Resume" else "Pause") }
-            OutlinedButton(onClick = {
-                turbo = !turbo
-                emulator.turbo = turbo
-            }) { Text(if (turbo) ">> On" else ">>") }
+            // Fast-forward — disabled during netplay (rollback owns pacing).
+            OutlinedButton(
+                onClick = {
+                    turbo = !turbo
+                    emulator.turbo = turbo
+                },
+                enabled = !npActive,
+            ) { Text(if (turbo) ">> On" else ">>") }
             OutlinedButton(onClick = { showSettings = true }) { Text("Settings") }
+            // Direct-IP / LAN netplay (v1.8.6). Ungated (not a paid feature here).
+            OutlinedButton(onClick = { showNetplay = true }) {
+                Text(if (npActive) "Netplay*" else "Netplay")
+            }
             OutlinedButton(onClick = { showAbout = true }) { Text("About") }
             // Cast gameplay to a connected TV/external display (only when present).
             if (castManager.available) {
@@ -858,6 +1147,64 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                 hd.bitmap = null
                 status = "HD-pack unloaded"
             },
+            onLoadScript = { scriptPicker.launch(arrayOf("*/*")) },
+            onUnloadScript = {
+                emulator.controller?.unloadScript()
+                scriptLoaded = false
+                scriptLog = ""
+                status = "Script unloaded"
+            },
+            raStatus = raStatus,
+            raUser = raUserName,
+            onRaLogin = { user, pass ->
+                // Off-thread, like the SAF loads: init the session at the current
+                // hardcore setting and fire the async password login. Status/toasts
+                // are polled in the emulation loop; on the LOGGED_IN edge the token
+                // is persisted and the loaded game is identified.
+                settings.raUsername = user
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        runCatching {
+                            val ctrl = emulator.controller
+                            if (ctrl != null) {
+                                ctrl.raInit(settings.raHardcore)
+                                ctrl.raLoginPassword(user, pass)
+                                raStatus = "Logging in…"
+                            } else {
+                                raStatus = "Open a ROM first, then log in"
+                            }
+                        }
+                    }
+                }
+            },
+            onRaLogout = {
+                scope.launch {
+                    withContext(Dispatchers.IO) { runCatching { emulator.controller?.raLogout() } }
+                    settings.raToken = ""
+                    raUserName = null
+                    raStatus = "Logged out"
+                }
+            },
+            raEnabled = settings.raEnabled,
+            onRaEnabledChange = { on ->
+                settings.raEnabled = on
+                if (on) {
+                    scope.launch {
+                        withContext(Dispatchers.IO) {
+                            runCatching { emulator.controller?.raInit(settings.raHardcore) }
+                        }
+                    }
+                }
+            },
+            raHardcore = settings.raHardcore,
+            onRaHardcoreChange = { hc ->
+                settings.raHardcore = hc
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        runCatching { emulator.controller?.raSetHardcore(hc) }
+                    }
+                }
+            },
             onDismiss = { showSettings = false },
         )
     }
@@ -870,6 +1217,18 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
     }
     if (showAbout) {
         AboutDialog(onDismiss = { showAbout = false })
+    }
+    if (showNetplay) {
+        NetplaySheet(
+            status = npStatus,
+            hostInfo = npHostInfo,
+            lastJoinAddress = settings.lastJoinAddress,
+            onHost = { port, players -> netplayHost(port, players) },
+            onJoin = { addr -> netplayJoin(addr) },
+            onLeave = { netplayLeave() },
+            onSaveJoinAddress = { settings.lastJoinAddress = it },
+            onDismiss = { showNetplay = false },
+        )
     }
     if (showOnboarding) {
         OnboardingDialogs(
@@ -895,24 +1254,63 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
         val reuse = Bitmap.createBitmap(NES_WIDTH, NES_HEIGHT, Bitmap.Config.ARGB_8888)
         val pixels = IntArray(NES_WIDTH * NES_HEIGHT)
         val audio = AudioPlayer(48_000)
+        // RetroAchievements is polled at a low cadence (every ~15 frames) — toasts
+        // and login status don't need per-frame granularity, and skipping the FFI
+        // round-trips keeps the hot path clean when RA is off.
+        var raFrame = 0
+        // Netplay status is polled at the same low cadence as RA, on its own
+        // always-advancing counter (the RA counter only ticks when RA is enabled).
+        var npFrame = 0
         try {
             while (isActive) {
                 val ctrl = emulator.controller
+                if (ctrl != null && !romLoaded) romLoaded = true
                 if (ctrl == null || emulator.paused) {
                     delay(50)
                     continue
                 }
-                val turbo = emulator.turbo
+                // Netplay (v1.8.6): while a session is active the loop drives the core
+                // via `npAdvanceFrame` (rollback owns pacing), NOT `runFrame`. Force
+                // speed to 100% — no turbo / fast-forward / frame-skip / rewind — and
+                // present + drain audio only on a frame that actually advanced.
+                val np = ctrl.npIsActive()
+                val turbo = !np && emulator.turbo
                 val start = System.nanoTime()
                 // Emulate, play this frame's audio, and pack the framebuffer all
                 // off the main thread (the blocking audio write and the 61k-pixel
                 // RGBA->ARGB pack must never run on the UI thread). Only the cheap
                 // setPixels + asImageBitmap stay on the UI thread.
                 var usedHd = false
+                var logLines: List<String> = emptyList()
+                // Whether this iteration produced a frame to present (always for
+                // single-player; for netplay only when the tick advanced — a stalled /
+                // connecting / error tick produces nothing and skips present + audio).
+                var producedFrame = true
                 // Capture the HD bitmap once per iteration so an Unload on the UI
                 // thread can't null it mid-frame (the local keeps the object alive).
-                val hdBmp = if (hdActive) hd.bitmap else null
+                val hdBmp = if (np) null else if (hdActive) hd.bitmap else null
                 withContext(Dispatchers.Default) {
+                    if (np) {
+                        // Netplay tick: REPLACES runFrame. `npAdvanceFrame` advanced the
+                        // same `Nes`, so read the framebuffer via the non-advancing
+                        // index path (running runFrame again would desync rollback).
+                        val tick = ctrl.npAdvanceFrame(emulator.p1Mask().toUByte())
+                        if (!tick.producedFrame) {
+                            producedFrame = false
+                            // Still drain the audio ring so it doesn't back up while
+                            // connecting / stalling (discarded — no present this tick).
+                            ctrl.drainAudioBytes()
+                            return@withContext
+                        }
+                        // Index framebuffer -> ARGB via the shared composite LUT (the
+                        // GPU SurfaceView is bypassed during netplay — the picture goes
+                        // through the Bitmap path, like the HD-pack path).
+                        packIndexToArgb(ctrl.indexFramebufferBytes(), pixels)
+                        val audioBytes = ctrl.drainAudioBytes()
+                        if (!emulator.muted) audio.writeBytes(audioBytes)
+                        if (scriptLoaded) logLines = ctrl.drainScriptLog()
+                        return@withContext
+                    }
                     val fb = ctrl.runFrame()
                     if (hdBmp != null) {
                         // HD-pack: composite the upscaled frame (Bitmap path only —
@@ -942,17 +1340,67 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                     // In fast-forward the audio is dropped (writing it would block
                     // the loop back to real time); otherwise play unless muted.
                     if (!turbo && !emulator.muted) audio.writeBytes(audioBytes)
+                    // Lua: drain the script's print/log output (cheap when empty).
+                    if (scriptLoaded) logLines = ctrl.drainScriptLog()
                 }
-                if (usedHd && hdBmp != null) {
-                    hdBmp.setPixels(hd.pixels, 0, hd.w, 0, 0, hd.w, hd.h)
-                    frame = hdBmp.asImageBitmap()
-                } else {
-                    reuse.setPixels(pixels, 0, NES_WIDTH, 0, 0, NES_WIDTH, NES_HEIGHT)
-                    frame = reuse.asImageBitmap()
+                if (producedFrame) {
+                    if (usedHd && hdBmp != null) {
+                        hdBmp.setPixels(hd.pixels, 0, hd.w, 0, 0, hd.w, hd.h)
+                        frame = hdBmp.asImageBitmap()
+                    } else {
+                        reuse.setPixels(pixels, 0, NES_WIDTH, 0, 0, NES_WIDTH, NES_HEIGHT)
+                        frame = reuse.asImageBitmap()
+                    }
+                    // Append new script log lines (keep the last 8 for the overlay).
+                    if (logLines.isNotEmpty()) {
+                        scriptLog = (scriptLog.split("\n").filter { it.isNotEmpty() } + logLines)
+                            .takeLast(8).joinToString("\n")
+                    }
+                    // Mirror the picture to the external display while casting (no-op
+                    // otherwise). Same main-thread publish point as the Compose frame.
+                    castManager.pushFrame(reuse)
                 }
-                // Mirror the picture to the external display while casting (no-op
-                // otherwise). Same main-thread publish point as the Compose frame.
-                castManager.pushFrame(reuse)
+                // Netplay status poll (v1.8.6): refresh the panel/overlay snapshot at a
+                // low cadence whether or not a frame was produced (so a stall / connect
+                // shows live). Its counter always advances (unlike the RA one).
+                if (np) {
+                    if (!npActive) npActive = true
+                    if (++npFrame % 15 == 0) npStatus = ctrl.npStatus()
+                } else if (npActive) {
+                    // A session that ended (Leave / error tear-down) clears the snapshot.
+                    npStatus = null
+                    npActive = false
+                    npHostInfo = null
+                }
+                // RetroAchievements: poll the toast queue + login status at a low
+                // cadence. Cheap when RA is off (a single `raIsEnabled` bool check).
+                if (settings.raEnabled && (++raFrame % 15) == 0) {
+                    val rctrl = emulator.controller
+                    if (rctrl != null && rctrl.raIsEnabled()) {
+                        // Assign unconditionally: raPollToasts returns the live,
+                        // TTL'd toast set (it does not drain), so reflecting it
+                        // every poll both shows new toasts and clears them once
+                        // they expire (an empty poll => the HUD goes away).
+                        raToasts = rctrl.raPollToasts()
+                        val st = rctrl.raLoginStatus()
+                        val loggedIn = st == RaLoginStatus.LOGGED_IN
+                        if (loggedIn && !raWasLoggedIn) {
+                            // LOGGED_OUT -> LOGGED_IN edge: persist the token + user
+                            // (never the password) for silent re-login, surface the
+                            // user, and identify the loaded game if not yet done.
+                            rctrl.raToken()?.let { settings.raToken = it }
+                            raUserName = rctrl.raUser()?.displayName ?: settings.raUsername
+                            raStatus = "Signed in"
+                            if (!raGameLoaded) raIdentifyGame()
+                        } else if (!loggedIn && raWasLoggedIn) {
+                            raUserName = null
+                            raStatus = "Logged out"
+                        } else if (st == RaLoginStatus.ERROR) {
+                            raStatus = "Login failed"
+                        }
+                        raWasLoggedIn = loggedIn
+                    }
+                }
                 // Fast-forward skips the pacing delay so the core runs ahead.
                 if (!turbo) {
                     val remainingMs = (FRAME_NANOS - (System.nanoTime() - start)) / 1_000_000
@@ -965,7 +1413,11 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
     }
 
     DisposableEffect(Unit) {
-        onDispose { emulator.controller = null }
+        onDispose {
+            // Persist RA progress before tearing down the controller (ROM unload).
+            raSaveProgress()
+            emulator.controller = null
+        }
     }
 }
 

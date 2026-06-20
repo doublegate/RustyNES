@@ -280,6 +280,28 @@ pub struct RaClient {
     _not_send: std::marker::PhantomData<*const ()>,
 }
 
+// SAFETY: `RaClient` is `!Send` only by the `*mut rc_client_t` + `PhantomData<*const ()>`
+// marker, not by any thread-affine state. The mobile bridge (v1.8.6) needs to move the
+// session into the `UniFFI` object's `Mutex<Inner>`, so we assert `Send` here under the
+// following invariants, all of which already hold in the existing single-thread design:
+//
+//   * Every `rc_client_*` call runs synchronously on the one thread that currently owns
+//     the value; the C runtime invokes its read/server/event callbacks inline during that
+//     same call (no rcheevos-spawned threads touch `raw`).
+//   * The mobile bridge serializes ALL access to the session through its `Mutex`, so the
+//     value is only ever touched from one thread at a time (an `&mut self` method holds
+//     the lock for its whole duration). `Send` (not `Sync`) is exactly what that needs.
+//   * The HTTP worker is channel-isolated: it never receives a pointer into `raw`; it only
+//     exchanges owned request/response messages, so it is unaffected by which thread owns
+//     the client.
+//   * The read-closure / transport thread-locals are installed and removed within a single
+//     call by their RAII guards (`ReadGuard` / `TransportGuard`), so they are per-call and
+//     per-thread by construction — nothing thread-local outlives a method call.
+//
+// `Sync` is deliberately NOT asserted: concurrent shared access would violate the
+// single-driving-thread contract.
+unsafe impl Send for RaClient {}
+
 impl RaClient {
     /// Create a new client. Spawns the HTTP worker thread, installs the
     /// read/server/event trampolines, and enables unofficial achievements off

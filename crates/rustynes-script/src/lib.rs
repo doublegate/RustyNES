@@ -86,6 +86,106 @@ use mlua_backend::MluaBackend as Backend;
 #[cfg(all(feature = "mlua-backend", not(feature = "script-wasm")))]
 mod tastudio;
 
+// v1.8.6 — `Send`-ify the mlua backend so the mobile UniFFI bridge
+// (`rustynes-mobile`, an `Arc`-shared object that requires `Send + Sync`) can
+// hold a `ScriptEngine`. mlua's `Lua` becomes `Send` with its `send` feature
+// (enabled in the workspace `Cargo.toml`); the backend's host-side queues are
+// the only remaining `!Send` pieces. They were `Rc<RefCell<T>>` /
+// `Rc<Cell<_>>` (single-thread shared, interior mutability); these tiny
+// newtypes swap the backing to `Arc<Mutex<T>>` / `Arc<Atomic*>` so they are
+// `Send + Sync` while keeping the `Rc<RefCell>` / `Rc<Cell>` call-site spelling
+// (`.borrow()` / `.borrow_mut()` / `.get()` / `.set()` / `.replace()`).
+//
+// NOTE on the hazard this trades for: `RefCell` allows reentrant *immutable*
+// borrows on one thread; `Mutex::lock` is exclusive and self-deadlocks on a
+// reentrant lock. The engine already collects callback handles out of every
+// list BEFORE invoking any callback (so a callback re-registering into the same
+// list never re-enters a held borrow); those patterns keep each [`Shared`]
+// guard's scope short, so the swap is deadlock-free. The
+// `lock().unwrap_or_else(into_inner)` keeps a poisoned lock usable rather than
+// propagating a panic — the engine is always driven single-threaded behind the
+// bridge's own lock, so poisoning is not expected, but recovering is strictly
+// safer than re-panicking.
+#[cfg(all(feature = "mlua-backend", not(feature = "script-wasm")))]
+#[derive(Default)]
+pub(crate) struct Shared<T>(std::sync::Arc<std::sync::Mutex<T>>);
+
+#[cfg(all(feature = "mlua-backend", not(feature = "script-wasm")))]
+impl<T> Clone for Shared<T> {
+    fn clone(&self) -> Self {
+        Self(std::sync::Arc::clone(&self.0))
+    }
+}
+
+#[cfg(all(feature = "mlua-backend", not(feature = "script-wasm")))]
+impl<T> Shared<T> {
+    pub(crate) fn new(v: T) -> Self {
+        Self(std::sync::Arc::new(std::sync::Mutex::new(v)))
+    }
+
+    /// Lock the shared cell. Named `borrow` so the `Rc<RefCell<_>>` call sites
+    /// compile unchanged; the returned `MutexGuard` derefs like a `Ref`/`RefMut`.
+    pub(crate) fn borrow(&self) -> std::sync::MutexGuard<'_, T> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// `borrow_mut` alias of [`Self::borrow`] (a `MutexGuard` is always mutable;
+    /// the two names just mirror the `RefCell` API at the call sites).
+    pub(crate) fn borrow_mut(&self) -> std::sync::MutexGuard<'_, T> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+/// A `Send + Sync` boolean flag standing in for the old `Rc<Cell<bool>>` —
+/// keeps the `.get()` / `.set(v)` / `.replace(v)` call-site spelling. These are
+/// plain flags (the write-lock gate, the clear-icon-cache request), not
+/// synchronisation points, so `Relaxed` ordering is correct.
+#[cfg(all(feature = "mlua-backend", not(feature = "script-wasm")))]
+#[derive(Clone, Default)]
+pub(crate) struct SharedFlag(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+#[cfg(all(feature = "mlua-backend", not(feature = "script-wasm")))]
+impl SharedFlag {
+    pub(crate) fn new(v: bool) -> Self {
+        Self(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(v)))
+    }
+    pub(crate) fn get(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::Relaxed)
+    }
+    pub(crate) fn set(&self, v: bool) {
+        self.0.store(v, std::sync::atomic::Ordering::Relaxed);
+    }
+    /// Swap in `v`, returning the prior value (mirrors `Cell::replace`).
+    pub(crate) fn replace(&self, v: bool) -> bool {
+        self.0.swap(v, std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+/// A `Send + Sync` `u64` counter standing in for the old `Rc<Cell<u64>>` —
+/// keeps the `.get()` / `.set(v)` call-site spelling. Used for the per-frame
+/// instruction count + budget and the `comm.*` correlation-id source; all are
+/// plain counters, not synchronisation points, so `Relaxed` is correct.
+#[cfg(all(feature = "mlua-backend", not(feature = "script-wasm")))]
+#[derive(Clone, Default)]
+pub(crate) struct SharedCounter(std::sync::Arc<std::sync::atomic::AtomicU64>);
+
+#[cfg(all(feature = "mlua-backend", not(feature = "script-wasm")))]
+impl SharedCounter {
+    pub(crate) fn new(v: u64) -> Self {
+        Self(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(v)))
+    }
+    pub(crate) fn get(&self) -> u64 {
+        self.0.load(std::sync::atomic::Ordering::Relaxed)
+    }
+    pub(crate) fn set(&self, v: u64) {
+        self.0.store(v, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 /// A sandboxed Lua scripting engine bound to one emulator session.
 ///
 /// A thin facade over the compile-time-selected [`VmBackend`]; the public API
@@ -96,6 +196,18 @@ mod tastudio;
 pub struct ScriptEngine {
     inner: Backend,
 }
+
+// v1.8.6 — the whole point of the `Send`-ification work: the mobile UniFFI
+// bridge (`rustynes-mobile`) is an `Arc`-shared object requiring `Send + Sync`,
+// so the engine it holds must be `Send`. This is a compile-time assertion (it
+// emits no code) that fails the build if the mlua backend ever regresses to a
+// `!Send` field. Asserted on the mlua backend specifically — that is the one
+// the mobile bridge compiles.
+#[cfg(all(feature = "mlua-backend", not(feature = "script-wasm")))]
+const _: fn() = || {
+    const fn assert_send<T: Send>() {}
+    assert_send::<ScriptEngine>();
+};
 
 #[cfg(any(feature = "mlua-backend", feature = "script-wasm"))]
 impl ScriptEngine {

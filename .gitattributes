@@ -1,0 +1,6 @@
+# Shader sources are byte-compared against in-repo generators (e.g. the Bisqwit
+# WGSL drift test `shared_bisqwit_wgsl_matches_generator`). Force LF on every
+# platform so a Windows autocrlf checkout can't turn the committed file into CRLF
+# and break that strict equality. WGSL/GLSL line endings are not semantic.
+*.wgsl text eol=lf
+*.glsl text eol=lf

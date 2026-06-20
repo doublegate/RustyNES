@@ -52,6 +52,29 @@ object RomLibrary {
 }
 
 /**
+ * RetroAchievements per-game progress sidecars (v1.8.6), stored at
+ * `filesDir/ra-progress/<rom-sha256>.rap`. The RA session serializes its runtime
+ * progress here on background / ROM unload and re-applies it on the next
+ * `raLoadGame` of the same ROM, so unlock progress survives across launches.
+ */
+object RaProgressStore {
+    private fun dir(ctx: Context) = File(ctx.filesDir, "ra-progress").apply { mkdirs() }
+
+    private fun file(ctx: Context, sha: String) = File(dir(ctx), "$sha.rap")
+
+    /** The saved progress sidecar for a ROM, or an empty array if none exists. */
+    fun load(ctx: Context, sha: String): ByteArray {
+        val f = file(ctx, sha)
+        return if (f.exists()) f.readBytes() else ByteArray(0)
+    }
+
+    /** Persist the progress sidecar for a ROM (a no-op for an empty blob). */
+    fun save(ctx: Context, sha: String, blob: ByteArray) {
+        if (blob.isNotEmpty()) file(ctx, sha).writeBytes(blob)
+    }
+}
+
+/**
  * Save-state slots, stored at `filesDir/states/<rom-sha256>/<slot>.rns`. The
  * `auto` slot is written on background and auto-loaded on the next open of the
  * same ROM (resume-where-you-left-off); numbered slots are explicit user saves.

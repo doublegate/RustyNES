@@ -233,7 +233,7 @@ pub struct FrameSinks<'a> {
     pub audio: Option<&'a mut dyn crate::audio::AudioSink>,
     /// `RetroAchievements` session (None when the emu thread produces).
     #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
-    pub ra: Option<&'a mut crate::ra_session::RaSession>,
+    pub ra: Option<&'a mut rustynes_ra::RaSession>,
     /// wasm has no app-resident sinks (Web Audio is a thread-local ring).
     #[cfg(target_arch = "wasm32")]
     pub _marker: core::marker::PhantomData<&'a ()>,
@@ -799,7 +799,7 @@ impl EmuCore {
         {
             if let Some(ra) = sinks.ra.as_deref_mut() {
                 fx.ra_status = Some(drive_ra(self.nes.as_mut(), ra, !rewinding));
-                fx.ra_just_logged_in = crate::ra_session::RaSession::take_just_logged_in(ra);
+                fx.ra_just_logged_in = rustynes_ra::RaSession::take_just_logged_in(ra);
             }
         }
         // v1.6.0 "Studio" Workstream G — A/V recording tap. A read-only copy of
@@ -986,7 +986,7 @@ impl Default for EmuCore {
 #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
 pub(crate) fn drive_ra(
     nes: Option<&mut Nes>,
-    ra: &mut crate::ra_session::RaSession,
+    ra: &mut rustynes_ra::RaSession,
     produced_frame: bool,
 ) -> crate::debugger::CheevosStatusView {
     match nes {

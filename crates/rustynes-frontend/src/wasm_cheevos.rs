@@ -3,7 +3,7 @@
 //!
 //! # What this is
 //!
-//! The browser analog of the native [`crate::ra_session`] module — but
+//! The browser analog of the native `rustynes_ra` session — but
 //! **structurally casual-only**. It owns no `RaClient` (the native rcheevos FFI
 //! does not exist on `wasm32-unknown-unknown`); instead it talks to the
 //! Emscripten-built rcheevos side module through the `ra_glue.js` host surface
@@ -138,7 +138,7 @@ impl BrowserRaSession {
         self.proxy_configured
     }
 
-    /// The gating predicate, mirroring the native [`crate::ra_session`] API
+    /// The gating predicate, mirroring the native `rustynes_ra` API
     /// shape so call sites stay symmetric. In the browser this is ALWAYS
     /// `false`: casual-only means there is no hardcore session to protect, so
     /// the soft affordances (save-state load / rewind / cheats) are never

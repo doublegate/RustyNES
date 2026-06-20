@@ -127,8 +127,8 @@ impl AchievementRow {
 impl CheevosStatusView {
     /// Build a status snapshot from a live `RaSession`.
     #[must_use]
-    pub fn from_session(s: &crate::ra_session::RaSession) -> Self {
-        use crate::ra_session::LoginState;
+    pub fn from_session(s: &rustynes_ra::RaSession) -> Self {
+        use rustynes_ra::LoginState;
         let user = s.user_info();
         let achievements = s
             .achievements

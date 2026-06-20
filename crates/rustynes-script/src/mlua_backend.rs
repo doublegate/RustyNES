@@ -9,9 +9,8 @@
 //!
 //! See the module doc on [`crate::backend`] for the contract.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::HashMap;
-use std::rc::Rc;
 
 use mlua::{Function, HookTriggers, Lua, RegistryKey, StdLib, Table, VmState};
 use rustynes_core::Nes;
@@ -24,6 +23,7 @@ use crate::types::{
 };
 #[cfg(feature = "script-ipc")]
 use crate::types::{CommCmd, CommResult};
+use crate::{Shared, SharedCounter, SharedFlag};
 
 /// Max inclusive address span a single value-modifying `emu.addMemoryCallback`
 /// may cover. The implementation registers one Lua registry value per address,
@@ -71,11 +71,11 @@ impl AddrBits {
 /// **not** in a script-visible global. A script therefore cannot inspect,
 /// clobber, or inject junk into the registry, which removes the whole class of
 /// "malformed registry value crashes the host pump" issues at the source.
-type AddrCallbacks = Rc<RefCell<HashMap<u16, Vec<RegistryKey>>>>;
+type AddrCallbacks = Shared<HashMap<u16, Vec<RegistryKey>>>;
 
 /// Push `cmd` into a host-drained queue unless it is already at the per-frame
 /// cap.
-fn push_capped<T>(q: &Rc<RefCell<Vec<T>>>, cmd: T) {
+fn push_capped<T>(q: &Shared<Vec<T>>, cmd: T) {
     let mut q = q.borrow_mut();
     if q.len() < MAX_QUEUED_CMDS {
         q.push(cmd);
@@ -123,7 +123,7 @@ fn fns_at(lua: &Lua, map: &AddrCallbacks, addr: u16) -> mlua::Result<Vec<Functio
 /// handles up front so the `RefCell` borrow is released before any callback
 /// runs (a callback could register another). Shared by the `addEventCallback`
 /// per-frame events and the `stateLoaded`/`stateSaved` synchronous events.
-fn fire_event_list(lua: &Lua, list: &Rc<RefCell<Vec<RegistryKey>>>, arg: u64) -> mlua::Result<()> {
+fn fire_event_list(lua: &Lua, list: &Shared<Vec<RegistryKey>>, arg: u64) -> mlua::Result<()> {
     let fns: Vec<Function> = list
         .borrow()
         .iter()
@@ -137,8 +137,13 @@ fn fire_event_list(lua: &Lua, list: &Rc<RefCell<Vec<RegistryKey>>>, arg: u64) ->
 
 /// Drop the active driving coroutine (B2): clear the slot and free its Lua
 /// registry value so a finished / errored driver is no longer resumed.
-fn drop_driver(lua: &Lua, driver: &Rc<RefCell<Option<RegistryKey>>>) -> mlua::Result<()> {
-    if let Some(key) = driver.borrow_mut().take() {
+fn drop_driver(lua: &Lua, driver: &Shared<Option<RegistryKey>>) -> mlua::Result<()> {
+    // Take the key, dropping the lock guard BEFORE the registry call (a
+    // `MutexGuard` held across the `if let` body would needlessly hold the lock;
+    // unlike `RefCell`'s `Ref`, clippy flags the held guard — and we never want
+    // the lock held across re-entrant Lua work).
+    let key = driver.borrow_mut().take();
+    if let Some(key) = key {
         lua.remove_registry_value(key)?;
     }
     Ok(())
@@ -146,7 +151,7 @@ fn drop_driver(lua: &Lua, driver: &Rc<RefCell<Option<RegistryKey>>>) -> mlua::Re
 
 /// Resolve the `onFrame` registry keys into live `Function` handles (collected
 /// up front so the `RefCell` borrow is released before any callback runs).
-fn fns_for_frame(lua: &Lua, frame: &Rc<RefCell<Vec<RegistryKey>>>) -> mlua::Result<Vec<Function>> {
+fn fns_for_frame(lua: &Lua, frame: &Shared<Vec<RegistryKey>>) -> mlua::Result<Vec<Function>> {
     frame
         .borrow()
         .iter()
@@ -158,13 +163,13 @@ fn fns_for_frame(lua: &Lua, frame: &Rc<RefCell<Vec<RegistryKey>>>) -> mlua::Resu
 pub struct MluaBackend {
     lua: Lua,
     /// Captured `print` / `emu.log` output, drained by the host for display.
-    log: Rc<RefCell<Vec<String>>>,
+    log: Shared<Vec<String>>,
     /// Control actions a script requested this frame (drained by the host).
-    controls: Rc<RefCell<Vec<ControlCmd>>>,
+    controls: Shared<Vec<ControlCmd>>,
     /// Overlay draw commands a script issued this frame (drained by the host).
-    draws: Rc<RefCell<Vec<DrawCmd>>>,
+    draws: Shared<Vec<DrawCmd>>,
     /// `onFrame` callbacks (Lua registry keys; Rust-side, not script-visible).
-    frame_cbs: Rc<RefCell<Vec<RegistryKey>>>,
+    frame_cbs: Shared<Vec<RegistryKey>>,
     /// `onExec(addr, fn)` callbacks, keyed by CPU address.
     exec_cbs: AddrCallbacks,
     /// `onRead(addr, fn)` callbacks, keyed by CPU address.
@@ -173,21 +178,21 @@ pub struct MluaBackend {
     write_cbs: AddrCallbacks,
     /// `onNmi(fn)` callbacks (Lua registry keys; Rust-side, not script-visible).
     /// Output-only; replayed once per NMI service entry in the interrupt log.
-    nmi_cbs: Rc<RefCell<Vec<RegistryKey>>>,
+    nmi_cbs: Shared<Vec<RegistryKey>>,
     /// `onIrq(fn)` callbacks (Lua registry keys; Rust-side, not script-visible).
     /// Output-only; replayed once per IRQ/BRK service entry in the interrupt log.
-    irq_cbs: Rc<RefCell<Vec<RegistryKey>>>,
+    irq_cbs: Shared<Vec<RegistryKey>>,
     /// Per-frame instruction counter (reset each `on_frame`); the VM hook
     /// trips a Lua runtime error when it crosses `budget`.
-    instr_count: Rc<Cell<u64>>,
+    instr_count: SharedCounter,
     /// Per-frame instruction budget.
-    budget: Rc<Cell<u64>>,
+    budget: SharedCounter,
     /// When `true`, `emu.write` AND `emu.setInput` are silent no-ops
-    /// (deterministic / locked session). Shared as an `Rc<Cell<_>>` so both the
+    /// (deterministic / locked session). Shared as a `SharedFlag` so both the
     /// per-frame-scoped `write` accessor and the persistent `setInput` prelude
     /// function read the live value — so `setInput` is gated identically to
     /// `write` (T-110-E2), not merely at the host.
-    writes_locked: Rc<Cell<bool>>,
+    writes_locked: SharedFlag,
     /// v1.5.0 B4 — `emu:on_breakpoint(addr, fn)` callbacks, keyed by CPU
     /// address. Observational: replayed from the per-frame exec-PC log exactly
     /// like `onExec` (the host arms the exec log when any are registered), so a
@@ -198,20 +203,20 @@ pub struct MluaBackend {
     /// count has reached a target queues a `ControlCmd::Pause` and drops it.
     /// Observational control (the host applies the pause); never mutates the
     /// deterministic run.
-    pause_frames: Rc<RefCell<Vec<u64>>>,
+    pause_frames: Shared<Vec<u64>>,
     /// v1.5.0 B3 — in-memory save-state slots populated by `emu:save_state(slot)`
     /// (read-only `Nes::snapshot`, always allowed) and consumed by
     /// `emu:load_state(slot)` (`Nes::restore`, GATED like `emu.write`). Distinct
     /// from the host's on-disk numbered slots: these live in the script engine
     /// for the session and are never persisted, so a TAS/analysis script can
     /// checkpoint + roll back without touching the user's save files.
-    state_slots: Rc<RefCell<HashMap<u8, Vec<u8>>>>,
+    state_slots: Shared<HashMap<u8, Vec<u8>>>,
     /// v1.5.0 B4 — `sym:name(addr)` lookup (`address -> label`), pushed by the
     /// host from the debugger's loaded symbols. Read-only; never deterministic.
-    sym_by_addr: Rc<RefCell<HashMap<u16, String>>>,
+    sym_by_addr: Shared<HashMap<u16, String>>,
     /// v1.5.0 B4 — `sym:addr(name)` reverse lookup (`label -> address`). Built
     /// alongside [`Self::sym_by_addr`]; last writer wins on a duplicate label.
-    sym_by_name: Rc<RefCell<HashMap<String, u16>>>,
+    sym_by_name: Shared<HashMap<String, u16>>,
     /// v1.6.0 B2 — the active **driving** coroutine registered via `emu.run(fn)`,
     /// stored Rust-side as a Lua registry key (a `thread` handle; never
     /// script-visible). [`Self::on_frame`] resumes it exactly once per emulated
@@ -222,7 +227,7 @@ pub struct MluaBackend {
     /// same gated `emu.write` / `emu.setInput` effects as any callback, so it
     /// never perturbs the deterministic run beyond what the write-gate already
     /// allows.
-    driver: Rc<RefCell<Option<RegistryKey>>>,
+    driver: Shared<Option<RegistryKey>>,
     /// v1.7.0 "Forge" Workstream B (B1/B2) — all shared state backing the
     /// `tastudio.*` Lua surface (the host-pushed editor snapshot, the queued
     /// editor commands, and the cell-query / event callbacks). Self-contained in
@@ -235,15 +240,15 @@ pub struct MluaBackend {
     /// `endFrame` (after the frame's callbacks), `inputPolled` (the frame polled
     /// a controller). `stateLoaded`/`stateSaved` fire from the in-memory
     /// save-state path. All observational (output-only).
-    event_start_frame: Rc<RefCell<Vec<RegistryKey>>>,
+    event_start_frame: Shared<Vec<RegistryKey>>,
     /// `endFrame` event callbacks (B3).
-    event_end_frame: Rc<RefCell<Vec<RegistryKey>>>,
+    event_end_frame: Shared<Vec<RegistryKey>>,
     /// `inputPolled` event callbacks (B3).
-    event_input_polled: Rc<RefCell<Vec<RegistryKey>>>,
+    event_input_polled: Shared<Vec<RegistryKey>>,
     /// `stateLoaded` event callbacks (B3) — fired after `emu:load_state`.
-    event_state_loaded: Rc<RefCell<Vec<RegistryKey>>>,
+    event_state_loaded: Shared<Vec<RegistryKey>>,
     /// `stateSaved` event callbacks (B3) — fired after `emu:save_state`.
-    event_state_saved: Rc<RefCell<Vec<RegistryKey>>>,
+    event_state_saved: Shared<Vec<RegistryKey>>,
     /// v1.7.0 "Forge" Workstream B (B3) — `emu.addMemoryCallback` *value-modifying*
     /// write callbacks, keyed by CPU address. Unlike the observational `onWrite`,
     /// a callback here may RETURN a replacement byte; the engine then pokes it
@@ -253,31 +258,31 @@ pub struct MluaBackend {
     /// v1.7.0 "Forge" Workstream B (B3) — a per-script sandboxed data directory
     /// (`emu.getScriptDataFolder()`), pushed by the host (the clean
     /// persist-without-arbitrary-FS path). `None` until the host sets it.
-    script_data_folder: Rc<RefCell<Option<String>>>,
+    script_data_folder: Shared<Option<String>>,
     /// v1.7.0 "Forge" E2 — `client.*` host-automation verbs requested this frame
     /// (drained by the host). Collected, never applied inline — the host stays
     /// the single owner of window / tool / capture / cheat state and gates the
     /// mutators among them.
-    clients: Rc<RefCell<Vec<ClientCmd>>>,
+    clients: Shared<Vec<ClientCmd>>,
     /// v1.7.0 "Forge" E3 — the per-script `userdata.*` KV store (string→string).
     /// Script-local host memory, never emulator state; the host persists it
     /// across runs via [`MluaBackend::userdata_snapshot`] /
     /// [`MluaBackend::userdata_restore`].
-    userdata: Rc<RefCell<HashMap<String, String>>>,
+    userdata: Shared<HashMap<String, String>>,
     /// v1.7.0 "Forge" E1 — host-mediated `comm.*` IPC requests issued this frame
     /// (drained by the host, which owns every connection). Gated like
     /// `emu.write`: a locked session never queues one. Only present (and only
     /// installed) under the `script-ipc` feature.
     #[cfg(feature = "script-ipc")]
-    comm_out: Rc<RefCell<Vec<CommCmd>>>,
+    comm_out: Shared<Vec<CommCmd>>,
     /// v1.7.0 "Forge" E1 — host-fulfilled `CommResult`s the script polls via
     /// `comm.receive()`. The host pushes here off the emulator lock.
     #[cfg(feature = "script-ipc")]
-    comm_in: Rc<RefCell<std::collections::VecDeque<CommResult>>>,
+    comm_in: Shared<std::collections::VecDeque<CommResult>>,
     /// v1.7.0 "Forge" E1 — monotonic correlation-id source for async `comm.*`
     /// requests (HTTP / WS / MMF-read), so a result is matched to its request.
     #[cfg(feature = "script-ipc")]
-    comm_next_id: Rc<Cell<u64>>,
+    comm_next_id: SharedCounter,
 }
 
 impl MluaBackend {
@@ -290,7 +295,7 @@ impl MluaBackend {
         let emu = self.lua.create_table()?;
 
         // emu.log(msg) — append to the host-visible buffer.
-        let log = Rc::clone(&self.log);
+        let log = self.log.clone();
         let log_fn = self
             .lua
             .create_function(move |_, msg: mlua::Variadic<mlua::Value>| {
@@ -306,7 +311,7 @@ impl MluaBackend {
         // Control commands (collected; the host applies + gates them). Each
         // queue is capped per frame so a script can't grow host memory without
         // bound (Copilot #47); excess commands in one frame are dropped.
-        let controls = Rc::clone(&self.controls);
+        let controls = self.controls.clone();
         emu.set(
             "pause",
             self.lua.create_function(move |_, ()| {
@@ -314,7 +319,7 @@ impl MluaBackend {
                 Ok(())
             })?,
         )?;
-        let controls = Rc::clone(&self.controls);
+        let controls = self.controls.clone();
         emu.set(
             "saveState",
             self.lua.create_function(move |_, slot: u8| {
@@ -322,7 +327,7 @@ impl MluaBackend {
                 Ok(())
             })?,
         )?;
-        let controls = Rc::clone(&self.controls);
+        let controls = self.controls.clone();
         emu.set(
             "loadState",
             self.lua.create_function(move |_, slot: u8| {
@@ -330,8 +335,8 @@ impl MluaBackend {
                 Ok(())
             })?,
         )?;
-        let controls = Rc::clone(&self.controls);
-        let setinput_locked = Rc::clone(&self.writes_locked);
+        let controls = self.controls.clone();
+        let setinput_locked = self.writes_locked.clone();
         emu.set(
             "setInput",
             self.lua
@@ -384,15 +389,18 @@ impl MluaBackend {
         // (a later `emu.run` replaces an earlier one). The coroutine handle is
         // stored Rust-side as a registry key (never script-visible), exactly
         // like the callback registries.
-        let driver = Rc::clone(&self.driver);
+        let driver = self.driver.clone();
         emu.set(
             "run",
             self.lua.create_function(move |lua, f: Function| {
                 let thread = lua.create_thread(f)?;
                 let key = lua.create_registry_value(thread)?;
                 // Replacing an existing driver drops its registry key (the old
-                // coroutine is abandoned); the new one drives from now on.
-                if let Some(old) = driver.borrow_mut().replace(key) {
+                // coroutine is abandoned); the new one drives from now on. Take
+                // the old key out and drop the lock guard before the registry
+                // call (don't hold the lock across re-entrant Lua work).
+                let old = driver.borrow_mut().replace(key);
+                if let Some(old) = old {
                     lua.remove_registry_value(old)?;
                 }
                 Ok(())
@@ -400,7 +408,7 @@ impl MluaBackend {
         )?;
 
         // Overlay draw commands (collected; the host renders them via egui).
-        let draws = Rc::clone(&self.draws);
+        let draws = self.draws.clone();
         emu.set(
             "drawText",
             self.lua.create_function(
@@ -418,7 +426,7 @@ impl MluaBackend {
                 },
             )?,
         )?;
-        let draws = Rc::clone(&self.draws);
+        let draws = self.draws.clone();
         emu.set(
             "drawRect",
             self.lua.create_function(
@@ -437,7 +445,7 @@ impl MluaBackend {
                 },
             )?,
         )?;
-        let draws = Rc::clone(&self.draws);
+        let draws = self.draws.clone();
         emu.set(
             "drawPixel",
             self.lua
@@ -458,7 +466,7 @@ impl MluaBackend {
         // keys (NOT in a script-visible global), so a script can register but
         // can never inspect / clobber / inject junk into the registry — the
         // whole "malformed registry value crashes the host" class is gone.
-        let frame = Rc::clone(&self.frame_cbs);
+        let frame = self.frame_cbs.clone();
         emu.set(
             "onFrame",
             self.lua.create_function(move |lua, f: Function| {
@@ -472,7 +480,7 @@ impl MluaBackend {
         // but never inspect / clobber the registry). Output-only: the callback
         // observes the service vector but cannot mutate emulation.
         for (name, list) in [("onNmi", &self.nmi_cbs), ("onIrq", &self.irq_cbs)] {
-            let list = Rc::clone(list);
+            let list = list.clone();
             emu.set(
                 name,
                 self.lua.create_function(move |lua, f: Function| {
@@ -487,7 +495,7 @@ impl MluaBackend {
             ("onRead", &self.read_cbs),
             ("onWrite", &self.write_cbs),
         ] {
-            let map = Rc::clone(map);
+            let map = map.clone();
             emu.set(
                 name,
                 self.lua
@@ -506,7 +514,7 @@ impl MluaBackend {
         // storage as `onExec`, replayed from the same per-frame exec-PC log — an
         // observational breakpoint that reports the PC after the frame, never an
         // intercept and never a state mutation.
-        let bp_map = Rc::clone(&self.breakpoint_cbs);
+        let bp_map = self.breakpoint_cbs.clone();
         emu.set(
             "on_breakpoint",
             self.lua.create_function(
@@ -523,17 +531,15 @@ impl MluaBackend {
         // v1.5.0 B4 — `emu:pause_at_frame(n)` (colon form; `self` ignored):
         // record a frame target; the next `on_frame` to reach it queues a Pause
         // control and drops the target.
-        let pause_frames = Rc::clone(&self.pause_frames);
+        let pause_frames = self.pause_frames.clone();
         emu.set(
             "pause_at_frame",
             self.lua
                 .create_function(move |_, (_this, n): (mlua::Value, i64)| {
                     let target = u64::try_from(n).unwrap_or(0);
-                    let mut pf = pause_frames.borrow_mut();
-                    // Cap so a runaway loop can't grow host memory without bound.
-                    if pf.len() < MAX_QUEUED_CMDS {
-                        pf.push(target);
-                    }
+                    // Capped (and the lock dropped promptly) like every other
+                    // host queue, so a runaway loop can't grow host memory.
+                    push_capped(&pause_frames, target);
                     Ok(())
                 })?,
         )?;
@@ -543,7 +549,7 @@ impl MluaBackend {
         // (colon form; the leading `self` table is ignored). Both lookups are
         // pure reads of the engine-side maps — never deterministic state.
         let sym = self.lua.create_table()?;
-        let by_addr = Rc::clone(&self.sym_by_addr);
+        let by_addr = self.sym_by_addr.clone();
         sym.set(
             "name",
             self.lua
@@ -553,7 +559,7 @@ impl MluaBackend {
                     Ok(by_addr.borrow().get(&addr).cloned())
                 })?,
         )?;
-        let by_name = Rc::clone(&self.sym_by_name);
+        let by_name = self.sym_by_name.clone();
         sym.set(
             "addr",
             self.lua
@@ -571,8 +577,8 @@ impl MluaBackend {
         // needs the live `Nes`), exactly as `emu.read` is.
         let joypad = self.lua.create_table()?;
         {
-            let controls = Rc::clone(&self.controls);
-            let locked = Rc::clone(&self.writes_locked);
+            let controls = self.controls.clone();
+            let locked = self.writes_locked.clone();
             joypad.set(
                 "set",
                 self.lua.create_function(
@@ -619,13 +625,13 @@ impl MluaBackend {
         // names. `nmi`/`irq` route to the existing dedicated lists (so the new
         // API and the legacy `onNmi`/`onIrq` share one dispatch); the rest land
         // in their own per-event lists, fired from `on_frame`.
-        let nmi = Rc::clone(&self.nmi_cbs);
-        let irq = Rc::clone(&self.irq_cbs);
-        let start = Rc::clone(&self.event_start_frame);
-        let end = Rc::clone(&self.event_end_frame);
-        let polled = Rc::clone(&self.event_input_polled);
-        let loaded = Rc::clone(&self.event_state_loaded);
-        let saved = Rc::clone(&self.event_state_saved);
+        let nmi = self.nmi_cbs.clone();
+        let irq = self.irq_cbs.clone();
+        let start = self.event_start_frame.clone();
+        let end = self.event_end_frame.clone();
+        let polled = self.event_input_polled.clone();
+        let loaded = self.event_state_loaded.clone();
+        let saved = self.event_state_saved.clone();
         emu.set(
             "addEventCallback",
             self.lua
@@ -656,7 +662,7 @@ impl MluaBackend {
         // and may RETURN a replacement byte; the engine pokes it back through
         // the GATED `poke_ram` path. This is the scriptable-cheat / scriptable-
         // watchpoint primitive; it is gated IDENTICALLY to `emu.write`.
-        let modify = Rc::clone(&self.modify_write_cbs);
+        let modify = self.modify_write_cbs.clone();
         emu.set(
             "addMemoryCallback",
             self.lua.create_function(
@@ -692,10 +698,15 @@ impl MluaBackend {
                     // address has an independent registry value (a dropped one
                     // doesn't free another's). Cheap: ranges are tiny in practice.
                     let f0: Function = lua.registry_value(&key)?;
-                    let mut map = modify.borrow_mut();
-                    for a in lo..=hi.max(lo) {
-                        let k = lua.create_registry_value(f0.clone())?;
-                        map.entry(a).or_default().push(k);
+                    // Scope the lock guard to the fill loop so it is released
+                    // before the final registry call (and never held across
+                    // unrelated Lua work).
+                    {
+                        let mut map = modify.borrow_mut();
+                        for a in lo..=hi.max(lo) {
+                            let k = lua.create_registry_value(f0.clone())?;
+                            map.entry(a).or_default().push(k);
+                        }
                     }
                     lua.remove_registry_value(key)?;
                     Ok(())
@@ -707,7 +718,7 @@ impl MluaBackend {
         // encoder + the screenshot dir; the script crate stays dep-free). A
         // read-only side effect (a file write), so it is NOT write-gated — a
         // screenshot cannot perturb deterministic state.
-        let controls = Rc::clone(&self.controls);
+        let controls = self.controls.clone();
         emu.set(
             "takeScreenshot",
             self.lua
@@ -719,7 +730,7 @@ impl MluaBackend {
 
         // `emu.getScriptDataFolder()` — the host-pushed sandboxed data dir
         // (the clean persist-without-arbitrary-FS path), or `nil` if unset.
-        let folder = Rc::clone(&self.script_data_folder);
+        let folder = self.script_data_folder.clone();
         emu.set(
             "getScriptDataFolder",
             self.lua
@@ -762,7 +773,7 @@ impl MluaBackend {
 
         // Observational / presentation-only verbs (never perturb the core), so
         // they are NOT write-gated — like `emu.pause` / `emu.saveState`.
-        let q = Rc::clone(&self.clients);
+        let q = self.clients.clone();
         client.set(
             "opentool",
             self.lua.create_function(move |_, name: String| {
@@ -770,7 +781,7 @@ impl MluaBackend {
                 Ok(())
             })?,
         )?;
-        let q = Rc::clone(&self.clients);
+        let q = self.clients.clone();
         client.set(
             "screenshot",
             self.lua.create_function(move |_, ()| {
@@ -778,7 +789,7 @@ impl MluaBackend {
                 Ok(())
             })?,
         )?;
-        let q = Rc::clone(&self.clients);
+        let q = self.clients.clone();
         client.set(
             "screenshottoclipboard",
             self.lua.create_function(move |_, ()| {
@@ -786,7 +797,7 @@ impl MluaBackend {
                 Ok(())
             })?,
         )?;
-        let q = Rc::clone(&self.clients);
+        let q = self.clients.clone();
         client.set(
             "setwindowsize",
             self.lua.create_function(move |_, scale: u32| {
@@ -794,7 +805,7 @@ impl MluaBackend {
                 Ok(())
             })?,
         )?;
-        let q = Rc::clone(&self.clients);
+        let q = self.clients.clone();
         client.set(
             "speedmode",
             self.lua.create_function(move |_, pct: u32| {
@@ -802,7 +813,7 @@ impl MluaBackend {
                 Ok(())
             })?,
         )?;
-        let q = Rc::clone(&self.clients);
+        let q = self.clients.clone();
         client.set(
             "frameskip",
             self.lua.create_function(move |_, n: u32| {
@@ -810,7 +821,7 @@ impl MluaBackend {
                 Ok(())
             })?,
         )?;
-        let q = Rc::clone(&self.clients);
+        let q = self.clients.clone();
         client.set(
             "pause_av",
             self.lua.create_function(move |_, ()| {
@@ -818,7 +829,7 @@ impl MluaBackend {
                 Ok(())
             })?,
         )?;
-        let q = Rc::clone(&self.clients);
+        let q = self.clients.clone();
         client.set(
             "unpause_av",
             self.lua.create_function(move |_, ()| {
@@ -830,8 +841,8 @@ impl MluaBackend {
         // State-changing verbs — GATED like `emu.write`: dropped at the source
         // under a locked session (netplay / TAS replay / record / RA-hardcore),
         // so a script can never perturb a deterministic / replayed run.
-        let q = Rc::clone(&self.clients);
-        let locked = Rc::clone(&self.writes_locked);
+        let q = self.clients.clone();
+        let locked = self.writes_locked.clone();
         client.set(
             "reboot_core",
             self.lua.create_function(move |_, ()| {
@@ -841,8 +852,8 @@ impl MluaBackend {
                 Ok(())
             })?,
         )?;
-        let q = Rc::clone(&self.clients);
-        let locked = Rc::clone(&self.writes_locked);
+        let q = self.clients.clone();
+        let locked = self.writes_locked.clone();
         client.set(
             "addcheat",
             self.lua.create_function(move |_, code: String| {
@@ -852,8 +863,8 @@ impl MluaBackend {
                 Ok(())
             })?,
         )?;
-        let q = Rc::clone(&self.clients);
-        let locked = Rc::clone(&self.writes_locked);
+        let q = self.clients.clone();
+        let locked = self.writes_locked.clone();
         client.set(
             "removecheat",
             self.lua.create_function(move |_, code: String| {
@@ -875,7 +886,7 @@ impl MluaBackend {
     fn install_userdata_table(&self) -> Result<(), ScriptError> {
         let userdata = self.lua.create_table()?;
 
-        let kv = Rc::clone(&self.userdata);
+        let kv = self.userdata.clone();
         userdata.set(
             "set",
             self.lua
@@ -884,26 +895,26 @@ impl MluaBackend {
                     Ok(())
                 })?,
         )?;
-        let kv = Rc::clone(&self.userdata);
+        let kv = self.userdata.clone();
         userdata.set(
             "get",
             self.lua
                 .create_function(move |_, key: String| Ok(kv.borrow().get(&key).cloned()))?,
         )?;
-        let kv = Rc::clone(&self.userdata);
+        let kv = self.userdata.clone();
         userdata.set(
             "containskey",
             self.lua
                 .create_function(move |_, key: String| Ok(kv.borrow().contains_key(&key)))?,
         )?;
-        let kv = Rc::clone(&self.userdata);
+        let kv = self.userdata.clone();
         userdata.set(
             "remove",
             self.lua.create_function(move |_, key: String| {
                 Ok(kv.borrow_mut().remove(&key).is_some())
             })?,
         )?;
-        let kv = Rc::clone(&self.userdata);
+        let kv = self.userdata.clone();
         userdata.set(
             "keys",
             self.lua.create_function(move |lua, ()| {
@@ -932,15 +943,15 @@ impl MluaBackend {
         let comm = self.lua.create_table()?;
 
         // A fresh async correlation id (host echoes it back in the CommResult).
-        let next_id = Rc::clone(&self.comm_next_id);
+        let next_id = self.comm_next_id.clone();
         let alloc_id = move || -> u64 {
             let id = next_id.get();
             next_id.set(id.wrapping_add(1));
             id
         };
 
-        let out = Rc::clone(&self.comm_out);
-        let locked = Rc::clone(&self.writes_locked);
+        let out = self.comm_out.clone();
+        let locked = self.writes_locked.clone();
         comm.set(
             "socketServerSend",
             self.lua.create_function(move |_, data: mlua::String| {
@@ -950,8 +961,8 @@ impl MluaBackend {
                 Ok(())
             })?,
         )?;
-        let out = Rc::clone(&self.comm_out);
-        let locked = Rc::clone(&self.writes_locked);
+        let out = self.comm_out.clone();
+        let locked = self.writes_locked.clone();
         let mk = alloc_id.clone();
         comm.set(
             "httpGet",
@@ -964,8 +975,8 @@ impl MluaBackend {
                 Ok(id)
             })?,
         )?;
-        let out = Rc::clone(&self.comm_out);
-        let locked = Rc::clone(&self.writes_locked);
+        let out = self.comm_out.clone();
+        let locked = self.writes_locked.clone();
         let mk = alloc_id.clone();
         comm.set(
             "httpPost",
@@ -979,8 +990,8 @@ impl MluaBackend {
                     Ok(id)
                 })?,
         )?;
-        let out = Rc::clone(&self.comm_out);
-        let locked = Rc::clone(&self.writes_locked);
+        let out = self.comm_out.clone();
+        let locked = self.writes_locked.clone();
         let mk = alloc_id.clone();
         comm.set(
             "ws_open",
@@ -993,8 +1004,8 @@ impl MluaBackend {
                 Ok(id)
             })?,
         )?;
-        let out = Rc::clone(&self.comm_out);
-        let locked = Rc::clone(&self.writes_locked);
+        let out = self.comm_out.clone();
+        let locked = self.writes_locked.clone();
         comm.set(
             "ws_send",
             self.lua.create_function(move |_, text: String| {
@@ -1004,8 +1015,8 @@ impl MluaBackend {
                 Ok(())
             })?,
         )?;
-        let out = Rc::clone(&self.comm_out);
-        let locked = Rc::clone(&self.writes_locked);
+        let out = self.comm_out.clone();
+        let locked = self.writes_locked.clone();
         comm.set(
             "ws_close",
             self.lua.create_function(move |_, ()| {
@@ -1015,8 +1026,8 @@ impl MluaBackend {
                 Ok(())
             })?,
         )?;
-        let out = Rc::clone(&self.comm_out);
-        let locked = Rc::clone(&self.writes_locked);
+        let out = self.comm_out.clone();
+        let locked = self.writes_locked.clone();
         comm.set(
             "mmfWrite",
             self.lua
@@ -1033,8 +1044,8 @@ impl MluaBackend {
                     Ok(())
                 })?,
         )?;
-        let out = Rc::clone(&self.comm_out);
-        let locked = Rc::clone(&self.writes_locked);
+        let out = self.comm_out.clone();
+        let locked = self.writes_locked.clone();
         let mk = alloc_id;
         comm.set(
             "mmfRead",
@@ -1053,7 +1064,7 @@ impl MluaBackend {
         // host fulfils the async requests off the emulator lock and pushes a
         // `CommResult`; the script polls it here. Returns a small Lua table the
         // script destructures (`{kind=..., id=..., status=..., body=..., ...}`).
-        let inbox = Rc::clone(&self.comm_in);
+        let inbox = self.comm_in.clone();
         comm.set(
             "receive",
             self.lua.create_function(move |lua, ()| {
@@ -1094,8 +1105,8 @@ impl MluaBackend {
     /// Install the per-frame instruction-budget hook (and reset the counter).
     fn arm_hook(&self) -> Result<(), ScriptError> {
         self.instr_count.set(0);
-        let count = Rc::clone(&self.instr_count);
-        let budget = Rc::clone(&self.budget);
+        let count = self.instr_count.clone();
+        let budget = self.budget.clone();
         // mlua 0.11 makes `set_hook` fallible. The instruction-budget hook is
         // the sandbox's runaway-script guard, so a failed install is surfaced
         // as an error rather than silently leaving scripts uncapped.
@@ -1125,11 +1136,11 @@ impl VmBackend for MluaBackend {
             mlua::LuaOptions::default(),
         )?;
 
-        let log: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
-        let controls: Rc<RefCell<Vec<ControlCmd>>> = Rc::new(RefCell::new(Vec::new()));
-        let draws: Rc<RefCell<Vec<DrawCmd>>> = Rc::new(RefCell::new(Vec::new()));
-        let instr_count = Rc::new(Cell::new(0u64));
-        let budget = Rc::new(Cell::new(DEFAULT_INSTRUCTION_BUDGET));
+        let log: Shared<Vec<String>> = Shared::new(Vec::new());
+        let controls: Shared<Vec<ControlCmd>> = Shared::new(Vec::new());
+        let draws: Shared<Vec<DrawCmd>> = Shared::new(Vec::new());
+        let instr_count = SharedCounter::new(0u64);
+        let budget = SharedCounter::new(DEFAULT_INSTRUCTION_BUDGET);
 
         // Remove the unsafe base globals the sandbox must not expose.
         {
@@ -1155,37 +1166,37 @@ impl VmBackend for MluaBackend {
             log,
             controls,
             draws,
-            frame_cbs: Rc::new(RefCell::new(Vec::new())),
-            exec_cbs: Rc::new(RefCell::new(HashMap::new())),
-            read_cbs: Rc::new(RefCell::new(HashMap::new())),
-            write_cbs: Rc::new(RefCell::new(HashMap::new())),
-            nmi_cbs: Rc::new(RefCell::new(Vec::new())),
-            irq_cbs: Rc::new(RefCell::new(Vec::new())),
+            frame_cbs: Shared::new(Vec::new()),
+            exec_cbs: Shared::new(HashMap::new()),
+            read_cbs: Shared::new(HashMap::new()),
+            write_cbs: Shared::new(HashMap::new()),
+            nmi_cbs: Shared::new(Vec::new()),
+            irq_cbs: Shared::new(Vec::new()),
             instr_count,
             budget,
-            writes_locked: Rc::new(Cell::new(false)),
-            breakpoint_cbs: Rc::new(RefCell::new(HashMap::new())),
-            pause_frames: Rc::new(RefCell::new(Vec::new())),
-            state_slots: Rc::new(RefCell::new(HashMap::new())),
-            sym_by_addr: Rc::new(RefCell::new(HashMap::new())),
-            sym_by_name: Rc::new(RefCell::new(HashMap::new())),
-            driver: Rc::new(RefCell::new(None)),
+            writes_locked: SharedFlag::new(false),
+            breakpoint_cbs: Shared::new(HashMap::new()),
+            pause_frames: Shared::new(Vec::new()),
+            state_slots: Shared::new(HashMap::new()),
+            sym_by_addr: Shared::new(HashMap::new()),
+            sym_by_name: Shared::new(HashMap::new()),
+            driver: Shared::new(None),
             tas: TasState::new(),
-            event_start_frame: Rc::new(RefCell::new(Vec::new())),
-            event_end_frame: Rc::new(RefCell::new(Vec::new())),
-            event_input_polled: Rc::new(RefCell::new(Vec::new())),
-            event_state_loaded: Rc::new(RefCell::new(Vec::new())),
-            event_state_saved: Rc::new(RefCell::new(Vec::new())),
-            modify_write_cbs: Rc::new(RefCell::new(HashMap::new())),
-            script_data_folder: Rc::new(RefCell::new(None)),
-            clients: Rc::new(RefCell::new(Vec::new())),
-            userdata: Rc::new(RefCell::new(HashMap::new())),
+            event_start_frame: Shared::new(Vec::new()),
+            event_end_frame: Shared::new(Vec::new()),
+            event_input_polled: Shared::new(Vec::new()),
+            event_state_loaded: Shared::new(Vec::new()),
+            event_state_saved: Shared::new(Vec::new()),
+            modify_write_cbs: Shared::new(HashMap::new()),
+            script_data_folder: Shared::new(None),
+            clients: Shared::new(Vec::new()),
+            userdata: Shared::new(HashMap::new()),
             #[cfg(feature = "script-ipc")]
-            comm_out: Rc::new(RefCell::new(Vec::new())),
+            comm_out: Shared::new(Vec::new()),
             #[cfg(feature = "script-ipc")]
-            comm_in: Rc::new(RefCell::new(std::collections::VecDeque::new())),
+            comm_in: Shared::new(std::collections::VecDeque::new()),
             #[cfg(feature = "script-ipc")]
-            comm_next_id: Rc::new(Cell::new(1)),
+            comm_next_id: SharedCounter::new(1),
         };
         engine.install_prelude()?;
         engine.install_platform_tables()?;
@@ -1201,12 +1212,22 @@ impl VmBackend for MluaBackend {
     }
 
     fn set_symbols(&self, pairs: &[(u16, String)]) {
-        let mut by_addr = self.sym_by_addr.borrow_mut();
+        // Scope both lock guards to the rebuild so they release as soon as the
+        // map is repopulated (clippy flags a `MutexGuard` held to scope end).
+        {
+            let mut by_addr = self.sym_by_addr.borrow_mut();
+            by_addr.clear();
+            // Pre-allocate for the incoming pairs so the inserts below don't
+            // rehash as the map grows.
+            by_addr.reserve(pairs.len());
+            for (addr, name) in pairs {
+                by_addr.insert(*addr, name.clone());
+            }
+        }
         let mut by_name = self.sym_by_name.borrow_mut();
-        by_addr.clear();
         by_name.clear();
+        by_name.reserve(pairs.len());
         for (addr, name) in pairs {
-            by_addr.insert(*addr, name.clone());
             by_name.insert(name.clone(), *addr);
         }
     }
@@ -1317,24 +1338,24 @@ impl VmBackend for MluaBackend {
         let lua = &self.lua;
         // Rust-side callback registries (clones of the `Rc`s) — used inside the
         // scope without aliasing `self`.
-        let frame_cbs = Rc::clone(&self.frame_cbs);
-        let exec_cbs = Rc::clone(&self.exec_cbs);
-        let read_cbs = Rc::clone(&self.read_cbs);
-        let write_cbs = Rc::clone(&self.write_cbs);
-        let nmi_cbs = Rc::clone(&self.nmi_cbs);
-        let irq_cbs = Rc::clone(&self.irq_cbs);
-        let breakpoint_cbs = Rc::clone(&self.breakpoint_cbs);
-        let state_slots = Rc::clone(&self.state_slots);
-        let controls = Rc::clone(&self.controls);
-        let driver = Rc::clone(&self.driver);
+        let frame_cbs = self.frame_cbs.clone();
+        let exec_cbs = self.exec_cbs.clone();
+        let read_cbs = self.read_cbs.clone();
+        let write_cbs = self.write_cbs.clone();
+        let nmi_cbs = self.nmi_cbs.clone();
+        let irq_cbs = self.irq_cbs.clone();
+        let breakpoint_cbs = self.breakpoint_cbs.clone();
+        let state_slots = self.state_slots.clone();
+        let controls = self.controls.clone();
+        let driver = self.driver.clone();
         // v1.7.0 "Forge" Workstream B (B3) — the additional event lists +
         // the value-modifying write callbacks, cloned for use inside the scope.
-        let event_start_frame = Rc::clone(&self.event_start_frame);
-        let event_end_frame = Rc::clone(&self.event_end_frame);
-        let event_input_polled = Rc::clone(&self.event_input_polled);
-        let event_state_loaded = Rc::clone(&self.event_state_loaded);
-        let event_state_saved = Rc::clone(&self.event_state_saved);
-        let modify_write_cbs = Rc::clone(&self.modify_write_cbs);
+        let event_start_frame = self.event_start_frame.clone();
+        let event_end_frame = self.event_end_frame.clone();
+        let event_input_polled = self.event_input_polled.clone();
+        let event_state_loaded = self.event_state_loaded.clone();
+        let event_state_saved = self.event_state_saved.clone();
+        let modify_write_cbs = self.modify_write_cbs.clone();
         // v1.5.0 B4 — drain the pause-at-frame targets reached this frame, OUTSIDE
         // the scope (no `nes` access): each reached target queues a Pause control.
         {
@@ -1352,8 +1373,8 @@ impl VmBackend for MluaBackend {
         }
 
         self.instr_count.set(0);
-        let count = Rc::clone(&self.instr_count);
-        let budget = Rc::clone(&self.budget);
+        let count = self.instr_count.clone();
+        let budget = self.budget.clone();
         // mlua 0.11: `set_hook` is fallible. Surface a failed install as an
         // error rather than silently running the frame's callbacks without the
         // runaway-script budget guard (see arm_hook).

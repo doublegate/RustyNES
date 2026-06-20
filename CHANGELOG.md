@@ -15,6 +15,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.6] - 2026-06-20 - "Android" (Connectivity & scripting)
+
+The connectivity & scripting pass: **Lua**, **RetroAchievements**, and **Netplay** on
+Android — each reusing the desktop engine over the shared `rustynes-mobile` bridge,
+which is now connectivity-complete (so v1.9.0 iOS inherits all three for free). The
+emulation core stays byte-identical, so **AccuracyCoin holds 100% (139/139)** and the
+desktop is unchanged. The Google Play launch (flip `PLAY_BUILD` + the `$2.99` Full
+Unlock) is the decoupled capstone; CGNAT/TURN netplay is deferred to v1.8.7.
+
+### Added
+
+- **Lua scripting on Android.** Settings → "Lua script" → Load .lua… / Unload (SAF),
+  running the same sandboxed engine the desktop uses (per-frame `on_frame`, gated
+  writes, no io/os/net); its `print`/`emu.log` output shows in an on-screen overlay.
+  The engine was made `Send` (mlua `send` feature + `Arc`/atomic internals) so the
+  UniFFI bridge can hold it; mlua's vendored Lua 5.4 C cross-compiles via the NDK.
+- **RetroAchievements on Android.** Settings → "RetroAchievements" → log in (username +
+  password → persisted token), hardcore toggle; achievement unlocks show as toasts, and
+  per-game progress persists to a `.rap` sidecar. The session orchestration was extracted
+  into a new shared `rustynes-ra` crate; `RaClient` is `unsafe impl Send` (rc_client
+  callbacks run synchronously on the driving thread). TLS is `ureq` + `rustls` + `ring`
+  (no OpenSSL — cross-compiles cleanly). `load_state` is refused in hardcore mode.
+- **Netplay on Android (direct-IP / same-LAN).** A "Netplay" panel hosts (shows the
+  bound port + this device's LAN IP) or joins (`ip:port`); GGPO rollback runs over the
+  mature `rustynes-netplay` UDP transport, with the emulation loop calling
+  `np_advance_frame` (which owns the rollback) instead of `run_frame` while a session is
+  active. CGNAT/TURN traversal is a v1.8.7 carryover (the `deploy/` relay bundle exists).
+- **Open / Close ROM toggle.** The control-bar "Open" button becomes "Close" while a ROM
+  is running and reverts once closed (returns to the Open + recent-ROMs idle screen),
+  persisting RetroAchievements progress on close.
+
+### Fixed
+
+- **Windows CI line endings.** Added `.gitattributes` (`*.wgsl` / `*.glsl` → `eol=lf`)
+  so a Windows autocrlf checkout no longer turns the committed `bisqwit.wgsl` into CRLF
+  and breaks the `shared_bisqwit_wgsl_matches_generator` drift test; the test also
+  normalizes line endings defensively.
+
 ## [1.8.5] - 2026-06-20 - "Android" (Power-user features)
 
 The creator / power-user pass: custom palettes, compressed-ROM loading, the Bisqwit

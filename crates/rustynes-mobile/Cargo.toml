@@ -31,6 +31,26 @@ rustynes-core = { workspace = true, features = ["hd-pack"] }
 # v1.8.5 — the HD-pack loader + compositor (now a shared std crate). The compositor
 # takes the framebuffer / watched memory / chr-peek as args, fed from the core.
 rustynes-hdpack.workspace = true
+# v1.8.6 — Lua scripting on mobile. The same sandboxed engine the desktop uses
+# (per-frame `on_frame`, gated writes, no io/os/net); made `Send` (mlua `send`
+# feature + Arc<Mutex> internals) so this UniFFI bridge can hold it. The default
+# `mlua-backend` (vendored Lua 5.4 C) cross-compiles with the NDK.
+rustynes-script.workspace = true
+# v1.8.6 — RetroAchievements on mobile. The session state (login state machine,
+# HUD model, per-game progress) extracted into `rustynes-ra` over the safe
+# `RaClient` (now `Send`). `rustynes-cheevos` links the vendored rcheevos C
+# runtime; its TLS stack (`ureq` + `rustls` + `ring`, no OpenSSL) cross-compiles
+# with the NDK. Native-only by construction (empty crate on wasm32) — the mobile
+# bridge is never a wasm target.
+rustynes-ra.workspace = true
+# v1.8.6 — direct-IP / same-LAN netplay on mobile. The native UDP rollback path
+# (`UdpTransport` + `NetplayConnection` + `RollbackSession`) is all `std::net` +
+# `Send`, so this UniFFI bridge can hold a session across the FFI boundary; it
+# cross-compiles to `aarch64-linux-android` with the NDK. Direct-IP/LAN only —
+# STUN/TURN is deferred, so no NAT-traversal wiring is pulled in here. The
+# in-memory `MemoryTransport`/`MeshTransport` are `!Send` test-only and never
+# used by the bridge.
+rustynes-netplay.workspace = true
 thiserror.workspace = true
 # UniFFI generates the foreign-language bindings from the `#[uniffi::export]`
 # surface (proc-macro mode — no UDL file). The `cli` feature backs the

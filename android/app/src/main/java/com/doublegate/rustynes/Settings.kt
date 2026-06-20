@@ -9,20 +9,27 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 
@@ -82,6 +89,36 @@ class AppSettings(context: Context) {
     var useGpuRenderer: Boolean
         get() = _useGpuRenderer.value
         set(v) { _useGpuRenderer.value = v; prefs.edit().putBoolean("gpuRenderer", v).apply() }
+
+    // RetroAchievements (v1.8.6). The login token (NOT the password) is persisted so
+    // a relaunch can token-login silently; the password is never stored. `raHardcore`
+    // gates whether save-states/cheats are permitted while a game is identified.
+    private val _raEnabled = mutableStateOf(prefs.getBoolean("raEnabled", false))
+    var raEnabled: Boolean
+        get() = _raEnabled.value
+        set(v) { _raEnabled.value = v; prefs.edit().putBoolean("raEnabled", v).apply() }
+
+    private val _raHardcore = mutableStateOf(prefs.getBoolean("raHardcore", false))
+    var raHardcore: Boolean
+        get() = _raHardcore.value
+        set(v) { _raHardcore.value = v; prefs.edit().putBoolean("raHardcore", v).apply() }
+
+    /** The RA username (persisted; pairs with the saved token for silent re-login). */
+    var raUsername: String
+        get() = prefs.getString("raUsername", "") ?: ""
+        set(v) { prefs.edit().putString("raUsername", v).apply() }
+
+    /** The RA login token — persisted (NEVER the password) for a silent re-login. */
+    var raToken: String
+        get() = prefs.getString("raToken", "") ?: ""
+        set(v) { prefs.edit().putString("raToken", v).apply() }
+
+    /** Direct-IP / LAN netplay (v1.8.6): the last "ip:port" the user joined, so the
+     *  Join field prefills it. Host-only state (the bound port + LAN IP) is derived
+     *  live and not persisted. */
+    var lastJoinAddress: String
+        get() = prefs.getString("npLastJoin", "") ?: ""
+        set(v) { prefs.edit().putString("npLastJoin", v).apply() }
 
     // Per-screen-mode (cover / inner / cast) controller size + opacity (item 5).
     // Each mode keeps its own values, so the controller is right on the narrow
@@ -172,6 +209,16 @@ fun SettingsSheet(
     onMovieStop: () -> Unit = {},
     onLoadHdpack: () -> Unit = {},
     onUnloadHdpack: () -> Unit = {},
+    onLoadScript: () -> Unit = {},
+    onUnloadScript: () -> Unit = {},
+    raStatus: String = "Logged out",
+    raUser: String? = null,
+    onRaLogin: (String, String) -> Unit = { _, _ -> },
+    onRaLogout: () -> Unit = {},
+    raEnabled: Boolean = false,
+    onRaEnabledChange: (Boolean) -> Unit = {},
+    raHardcore: Boolean = false,
+    onRaHardcoreChange: (Boolean) -> Unit = {},
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -272,6 +319,54 @@ fun SettingsSheet(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick = onLoadHdpack) { Text("Load .zip…") }
                 TextButton(onClick = onUnloadHdpack) { Text("Unload") }
+            }
+
+            // Lua scripting (v1.8.6) — load a sandboxed `.lua` script (per-frame
+            // callback, gated writes, no io/os/net); its print output shows on-screen.
+            Text("Lua script")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onLoadScript) { Text("Load .lua…") }
+                TextButton(onClick = onUnloadScript) { Text("Unload") }
+            }
+
+            // RetroAchievements (v1.8.6) — opt-in login + hardcore toggle. The token
+            // (never the password) is persisted for a silent re-login. While logged in
+            // the user + score are shown with a Log out button; otherwise the login
+            // fields. Hardcore disables save-states/rewind while a game is identified.
+            Text("RetroAchievements")
+            ToggleRow("Enable RetroAchievements", raEnabled, onRaEnabledChange)
+            if (raEnabled) {
+                if (raUser != null) {
+                    Text("Signed in as $raUser")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = onRaLogout) { Text("Log out") }
+                    }
+                } else {
+                    var raName by remember { mutableStateOf("") }
+                    var raPass by remember { mutableStateOf("") }
+                    OutlinedTextField(
+                        value = raName,
+                        onValueChange = { raName = it },
+                        label = { Text("Username") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = raPass,
+                        onValueChange = { raPass = it },
+                        label = { Text("Password") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Button(
+                        onClick = { onRaLogin(raName.trim(), raPass) },
+                        enabled = raName.isNotBlank() && raPass.isNotEmpty(),
+                    ) { Text("Log in") }
+                }
+                ToggleRow("Hardcore mode", raHardcore, onRaHardcoreChange)
+                Text(raStatus)
             }
 
             ToggleRow("Mute audio", settings.muted) { settings.muted = it }
