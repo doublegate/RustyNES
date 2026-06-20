@@ -1,0 +1,28 @@
+[package]
+name = "rustynes-hdpack"
+description = "HD-pack loader + compositor (and HD audio) for RustyNES — shared by the desktop frontend and the mobile bridge"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords = ["nes", "emulator", "hd-pack"]
+categories = ["emulators"]
+
+[lints]
+workspace = true
+
+[dependencies]
+# The per-pixel `HdTileSource` telemetry the compositor reads (behind the ppu's
+# `hd-pack` feature). The compositor takes the framebuffer / watched memory /
+# chr-peek as arguments, so this crate never needs `rustynes-core`.
+rustynes-ppu = { workspace = true, features = ["hd-pack"] }
+# Decode replacement tiles (png), load `.zip` packs (deflate only), and decode
+# HD-audio OGG tracks (lewton is pure-Rust, so it cross-compiles to Android).
+png = "0.18"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+lewton = "0.10"
+
+[dev-dependencies]
+pretty_assertions.workspace = true

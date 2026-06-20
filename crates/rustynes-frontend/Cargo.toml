@@ -123,7 +123,7 @@ gpu-timing = []
 # also byte-identical (the substitution path is `Option`-gated). Reuses the
 # already-present native-only `png` (decode replacement images) and `zip`
 # (archive packs) deps. See `docs/ppu-2c02.md` §HD-pack tile-source export.
-hd-pack = ["rustynes-core/hd-pack", "dep:lewton"]
+hd-pack = ["rustynes-core/hd-pack", "dep:rustynes-hdpack"]
 
 # v1.5.0 "Lens" Workstream G — EXPERIMENTAL casual-mode browser RetroAchievements
 # (default OFF, wasm-only). The ADR 0015 carryover. Activates the wasm-only
@@ -317,15 +317,12 @@ png = "0.18"
 # browser file picker, so it never needs zip.
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
-# v1.6.0 "Studio" Workstream H — HD-pack HD AUDIO OGG decoder (native-only,
-# behind the default-OFF `hd-pack` feature via `dep:lewton`). `lewton` is a
-# pure-Rust Vorbis decoder (MIT/ISC/Apache-2.0 — no C, no extra system deps), so
-# it adds no build complexity and is kept out of the default + wasm builds (it is
-# `optional = true` and only lives in this `cfg(not(wasm32))` table). It decodes
-# the pack's `<bgm>`/`<sfx>` OGG tracks to mono PCM that `src/hd_audio.rs` mixes
-# into the already-produced frontend audio buffer (output-only — the core's
-# deterministic per-frame audio is untouched).
-lewton = { version = "0.10", optional = true }
+# v1.8.5 — the HD-pack loader + compositor + HD audio moved to `rustynes-hdpack`
+# (so the mobile bridge can reach it; the core is no_std). The frontend re-exports
+# its `hdpack`/`hd_audio` modules, so existing `crate::hdpack`/`crate::hd_audio`
+# paths keep working. Optional + behind the default-OFF `hd-pack` feature; it pulls
+# the png/zip/lewton decode deps itself, so they leave the frontend's tree.
+rustynes-hdpack = { workspace = true, optional = true }
 
 # v2.8.0 Phase 5 increment 3 — best-effort emulation-thread priority
 # elevation (Linux only). `elevate_thread_priority()` in `emu_thread.rs`

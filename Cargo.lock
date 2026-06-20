@@ -4152,7 +4152,6 @@ dependencies = [
  "gilrs",
  "hex",
  "js-sys",
- "lewton",
  "libc",
  "md-5",
  "naga 25.0.1",
@@ -4163,6 +4162,7 @@ dependencies = [
  "rustynes-cheevos",
  "rustynes-core",
  "rustynes-gfx-shaders",
+ "rustynes-hdpack",
  "rustynes-netplay",
  "rustynes-script",
  "serde",
@@ -4185,6 +4185,17 @@ dependencies = [
 [[package]]
 name = "rustynes-gfx-shaders"
 version = "1.8.5"
+
+[[package]]
+name = "rustynes-hdpack"
+version = "1.8.5"
+dependencies = [
+ "lewton",
+ "png",
+ "pretty_assertions",
+ "rustynes-ppu",
+ "zip",
+]
 
 [[package]]
 name = "rustynes-mappers"
