@@ -15,6 +15,7 @@ members = [
     "crates/rustynes-android",
     "crates/rustynes-gfx-shaders",
     "crates/rustynes-hdpack",
+    "crates/rustynes-ra",
 ]
 
 [workspace.package]
@@ -46,6 +47,13 @@ rustynes-gfx-shaders = { path = "crates/rustynes-gfx-shaders", version = "1.8.4"
 # v1.8.5 — HD-pack loader + compositor + HD audio, extracted from the frontend so
 # the mobile bridge can reach it (the core is no_std, so it can't live there).
 rustynes-hdpack = { path = "crates/rustynes-hdpack", version = "1.8.5" }
+# v2.7.0 (cheevos line) — the safe RaClient over vendored rcheevos. Native-only
+# (empty crate on wasm32). Consumed by rustynes-ra (and, transitively, the
+# frontend's `retroachievements` feature + the mobile bridge).
+rustynes-cheevos = { path = "crates/rustynes-cheevos", version = "1.8.3" }
+# v1.8.6 — RetroAchievements session state extracted from the frontend so the
+# mobile bridge can reach it (RaClient is now Send). Native-only.
+rustynes-ra = { path = "crates/rustynes-ra", version = "1.8.6" }
 
 # v1.1.0 beta.3 (Workstream E) — Lua scripting. `vendored` compiles Lua 5.4
 # from source (no system Lua needed); native-only (the wasm/no_std builds never

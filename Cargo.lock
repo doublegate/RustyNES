@@ -4164,6 +4164,7 @@ dependencies = [
  "rustynes-gfx-shaders",
  "rustynes-hdpack",
  "rustynes-netplay",
+ "rustynes-ra",
  "rustynes-script",
  "serde",
  "serde_json",
@@ -4215,6 +4216,7 @@ version = "1.8.6"
 dependencies = [
  "rustynes-core",
  "rustynes-hdpack",
+ "rustynes-ra",
  "rustynes-script",
  "thiserror 2.0.18",
  "uniffi",
@@ -4245,6 +4247,13 @@ dependencies = [
  "pretty_assertions",
  "proptest",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "rustynes-ra"
+version = "1.8.6"
+dependencies = [
+ "rustynes-cheevos",
 ]
 
 [[package]]

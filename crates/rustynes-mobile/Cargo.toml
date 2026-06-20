@@ -36,6 +36,13 @@ rustynes-hdpack.workspace = true
 # feature + Arc<Mutex> internals) so this UniFFI bridge can hold it. The default
 # `mlua-backend` (vendored Lua 5.4 C) cross-compiles with the NDK.
 rustynes-script.workspace = true
+# v1.8.6 — RetroAchievements on mobile. The session state (login state machine,
+# HUD model, per-game progress) extracted into `rustynes-ra` over the safe
+# `RaClient` (now `Send`). `rustynes-cheevos` links the vendored rcheevos C
+# runtime; its TLS stack (`ureq` + `rustls` + `ring`, no OpenSSL) cross-compiles
+# with the NDK. Native-only by construction (empty crate on wasm32) — the mobile
+# bridge is never a wasm target.
+rustynes-ra.workspace = true
 thiserror.workspace = true
 # UniFFI generates the foreign-language bindings from the `#[uniffi::export]`
 # surface (proc-macro mode — no UDL file). The `cli` feature backs the

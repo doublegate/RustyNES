@@ -1,0 +1,21 @@
+[package]
+name = "rustynes-ra"
+description = "RetroAchievements session state (login state machine, HUD model, per-game progress) over rustynes-cheevos — shared by the desktop frontend and the mobile bridge"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords = ["nes", "emulator", "retroachievements"]
+categories = ["emulators"]
+
+[lints]
+workspace = true
+
+[dependencies]
+# The safe `RaClient` wrapper over the vendored rcheevos C runtime. `RaSession`
+# bundles it with the frontend/HUD-side state. The whole crate is native-only
+# (rustynes-cheevos compiles to an empty crate on wasm32), so the desktop wasm
+# build never pulls this in.
+rustynes-cheevos = { workspace = true }

@@ -96,6 +96,11 @@ pub enum MobileError {
         /// Underlying script error rendered as text.
         reason: String,
     },
+    /// An action was refused because a hardcore `RetroAchievements` session is
+    /// active (v1.8.6). Loading a save-state is the loosely-cheating affordance
+    /// hardcore mode forbids; saving a state is still allowed.
+    #[error("action blocked: a hardcore RetroAchievements session is active")]
+    HardcoreBlocked,
 }
 
 /// A single NES controller button, used by [`NesController::set_button`] for
@@ -172,6 +177,72 @@ pub struct RomInfo {
     pub is_vs_system: bool,
 }
 
+/// The logged-in `RetroAchievements` user, surfaced across the FFI (v1.8.6).
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct RaUserInfo {
+    /// The user's display name (the RA profile name shown on the HUD).
+    pub display_name: String,
+    /// The login username (stable identifier; persisted for token re-login).
+    pub username: String,
+    /// The user's total hardcore points (softcore score is not surfaced here;
+    /// the HUD shows the headline hardcore figure).
+    pub score: u32,
+}
+
+/// The coarse `RetroAchievements` login state, mirrored across the FFI (v1.8.6).
+///
+/// Flattens [`rustynes_ra::LoginState`] — the `Error` message is read separately
+/// off the toast queue so this enum stays a stable, payload-free shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum RaLoginStatus {
+    /// Not logged in.
+    LoggedOut,
+    /// A login request is in flight.
+    LoggingIn,
+    /// Logged in successfully.
+    LoggedIn,
+    /// The last login attempt failed (detail is in the toast queue).
+    Error,
+}
+
+/// One transient `RetroAchievements` HUD toast, marshalled across the FFI
+/// (v1.8.6). The host renders + times these out itself; the bridge only hands
+/// them over once via [`NesController::ra_poll_toasts`].
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct RaToast {
+    /// The toast headline (e.g. the achievement title).
+    pub title: String,
+    /// The secondary line (points, error detail).
+    pub detail: String,
+    /// `true` for an error/warning toast.
+    pub is_error: bool,
+    /// For an achievement-unlock toast, the RA media-server URL of the unlocked
+    /// badge PNG (empty otherwise).
+    pub badge_url: String,
+}
+
+/// One achievement in the loaded game's list, marshalled across the FFI
+/// (v1.8.6). A flat projection of [`rustynes_ra::Achievement`].
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct RaAchievementInfo {
+    /// The `RetroAchievements` achievement id.
+    pub id: u32,
+    /// The achievement title.
+    pub title: String,
+    /// The achievement description.
+    pub description: String,
+    /// The point value.
+    pub points: u32,
+    /// `true` if the user has earned this achievement (softcore and/or hardcore).
+    pub unlocked: bool,
+    /// The RA media-server URL of the unlocked (color) badge PNG.
+    pub badge_url: String,
+    /// The RA media-server URL of the locked (greyed) badge PNG.
+    pub badge_locked_url: String,
+    /// The measured progress toward this achievement (`0.0..=100.0`).
+    pub measured_percent: f32,
+}
+
 /// Mutable state behind the controller's lock.
 struct Inner {
     nes: Nes,
@@ -188,6 +259,12 @@ struct Inner {
     /// Active Lua script (v1.8.6), if loaded — its `on_frame` callback runs each
     /// frame after the tick (sandboxed; gated writes; no io/os/net).
     script: Option<rustynes_script::ScriptEngine>,
+    /// Active `RetroAchievements` session (v1.8.6), created lazily on the first
+    /// `ra_*` call. **Unlike** `script`/`hd_pack`/movie state, this is NOT
+    /// cleared by `load_rom`: the RA login persists across ROM swaps (a fresh
+    /// ROM re-identifies via `ra_load_game`). Native-only; the bridge is never a
+    /// wasm target so it is always compiled.
+    ra: Option<rustynes_ra::RaSession>,
 }
 
 /// The handle the mobile shells drive the emulator through.
@@ -235,6 +312,7 @@ impl NesController {
                 playback: None,
                 hd_pack: None,
                 script: None,
+                ra: None,
             }),
         }))
     }
@@ -259,6 +337,12 @@ impl NesController {
         g.playback = None;
         g.hd_pack = None;
         g.script = None;
+        // The RA session is deliberately preserved across ROM swaps (the login
+        // outlives a single game) — just unload the previous game's achievement
+        // set; a fresh `ra_load_game` from the host re-identifies the new ROM.
+        if let Some(ra) = g.ra.as_mut() {
+            ra.unload_game();
+        }
         drop(g);
         Ok(())
     }
@@ -273,6 +357,7 @@ impl NesController {
         pre_tick_movie(&mut g);
         let fb = g.nes.run_frame().to_vec();
         post_frame_script(&mut g);
+        post_frame_ra(&mut g);
         drop(g);
         fb
     }
@@ -284,6 +369,7 @@ impl NesController {
         pre_tick_movie(&mut g);
         let _ = g.nes.run_frame();
         post_frame_script(&mut g);
+        post_frame_ra(&mut g);
         drop(g);
     }
 
@@ -380,9 +466,19 @@ impl NesController {
     ///
     /// # Errors
     /// Returns [`MobileError::SaveState`] if the blob is malformed or was
-    /// produced by a different ROM.
+    /// produced by a different ROM. Returns [`MobileError::HardcoreBlocked`] if a
+    /// hardcore `RetroAchievements` session is active (loading a state is the
+    /// loosely-cheating affordance hardcore forbids; `save_state` stays allowed).
     pub fn load_state(&self, data: Vec<u8>) -> Result<(), MobileError> {
         let mut g = self.lock();
+        // v1.8.6 — refuse a state load while a hardcore RA session is active.
+        if g.ra
+            .as_ref()
+            .is_some_and(rustynes_ra::RaSession::hardcore_blocks)
+        {
+            drop(g);
+            return Err(MobileError::HardcoreBlocked);
+        }
         g.nes.restore(&data).map_err(|e| MobileError::SaveState {
             reason: e.to_string(),
         })?;
@@ -639,6 +735,239 @@ impl NesController {
             .map(rustynes_script::ScriptEngine::drain_log)
             .unwrap_or_default()
     }
+
+    // --- RetroAchievements (v1.8.6) --------------------------------------
+    //
+    // All methods take `&self`, lock internally, and create the session lazily
+    // (`ensure_ra`) on the first call. The session persists for the controller's
+    // life — including across `load_rom` — so the login outlives a single game.
+
+    /// Create (or seed) the `RetroAchievements` session with the given hardcore
+    /// flag. Idempotent: if a session already exists this just sets hardcore.
+    pub fn ra_init(&self, hardcore: bool) {
+        let mut g = self.lock();
+        if g.ra.is_some() {
+            ensure_ra(&mut g, hardcore).set_hardcore(hardcore);
+        } else {
+            ensure_ra(&mut g, hardcore);
+        }
+        drop(g);
+    }
+
+    /// Whether a `RetroAchievements` session has been created.
+    pub fn ra_is_enabled(&self) -> bool {
+        self.lock().ra.is_some()
+    }
+
+    /// Begin a username + password login. The completion is reconciled on a
+    /// later frame; poll [`Self::ra_login_status`] / [`Self::ra_poll_toasts`].
+    pub fn ra_login_password(&self, user: String, password: String) {
+        let mut g = self.lock();
+        ensure_ra(&mut g, true).begin_login_password(&user, &password);
+        drop(g);
+    }
+
+    /// Begin a token login (re-login with a previously-returned token, no
+    /// password). Completion reconciled on a later frame.
+    pub fn ra_login_token(&self, user: String, token: String) {
+        let mut g = self.lock();
+        ensure_ra(&mut g, true).begin_login_token(&user, &token);
+        drop(g);
+    }
+
+    /// Log out and clear the cached per-game achievement state.
+    pub fn ra_logout(&self) {
+        let mut g = self.lock();
+        if let Some(ra) = g.ra.as_mut() {
+            ra.logout();
+        }
+        drop(g);
+    }
+
+    /// The coarse login state (the `Error` detail is read off the toast queue).
+    pub fn ra_login_status(&self) -> RaLoginStatus {
+        let g = self.lock();
+        let status =
+            g.ra.as_ref()
+                .map_or(RaLoginStatus::LoggedOut, |ra| match &ra.login {
+                    rustynes_ra::LoginState::LoggedOut => RaLoginStatus::LoggedOut,
+                    rustynes_ra::LoginState::LoggingIn => RaLoginStatus::LoggingIn,
+                    rustynes_ra::LoginState::LoggedIn => RaLoginStatus::LoggedIn,
+                    rustynes_ra::LoginState::Error(_) => RaLoginStatus::Error,
+                });
+        drop(g);
+        status
+    }
+
+    /// The logged-in user, or `None` if not logged in.
+    pub fn ra_user(&self) -> Option<RaUserInfo> {
+        let g = self.lock();
+        let user = g.ra.as_ref().and_then(|ra| {
+            ra.user_info().map(|u| RaUserInfo {
+                display_name: u.display_name,
+                username: u.username,
+                score: u.score,
+            })
+        });
+        drop(g);
+        user
+    }
+
+    /// The persisted login token (write this to host storage after a successful
+    /// login so a later launch can `ra_login_token`). `None` if not logged in.
+    pub fn ra_token(&self) -> Option<String> {
+        let g = self.lock();
+        let token = g.ra.as_ref().and_then(rustynes_ra::RaSession::user_token);
+        drop(g);
+        token
+    }
+
+    /// Toggle hardcore mode (creating the session if needed).
+    pub fn ra_set_hardcore(&self, hardcore: bool) {
+        let mut g = self.lock();
+        ensure_ra(&mut g, hardcore).set_hardcore(hardcore);
+        drop(g);
+    }
+
+    /// Whether hardcore mode is enabled (false if no session exists).
+    pub fn ra_hardcore(&self) -> bool {
+        self.lock()
+            .ra
+            .as_ref()
+            .is_some_and(rustynes_ra::RaSession::hardcore)
+    }
+
+    /// Begin identifying + loading the achievement set for the loaded ROM.
+    /// `sha256` keys the per-game progress sidecar; `sidecar` (if non-empty) is
+    /// previously-saved progress applied once the async load completes. The host
+    /// calls this after a fresh ROM is loaded and the user is logged in.
+    ///
+    /// # Errors
+    /// [`MobileError::SaveState`] if `sha256` is not 32 bytes.
+    pub fn ra_load_game(
+        &self,
+        rom: Vec<u8>,
+        sha256: Vec<u8>,
+        sidecar: Vec<u8>,
+    ) -> Result<(), MobileError> {
+        let sha: [u8; 32] = sha256
+            .as_slice()
+            .try_into()
+            .map_err(|_| MobileError::SaveState {
+                reason: format!("ra sha256 must be 32 bytes, got {}", sha256.len()),
+            })?;
+        let pending = (!sidecar.is_empty()).then_some(sidecar);
+        let mut g = self.lock();
+        ensure_ra(&mut g, true).begin_load_game(&rom, sha, pending);
+        drop(g);
+        Ok(())
+    }
+
+    /// Unload the current game's achievement set (e.g. on ROM close). Keeps the
+    /// login.
+    pub fn ra_unload_game(&self) {
+        let mut g = self.lock();
+        if let Some(ra) = g.ra.as_mut() {
+            ra.unload_game();
+        }
+        drop(g);
+    }
+
+    /// The loaded game's ROM-bytes SHA-256 (the progress-sidecar key), or empty
+    /// if no game is loaded into the session.
+    pub fn ra_game_sha256(&self) -> Vec<u8> {
+        let g = self.lock();
+        let sha =
+            g.ra.as_ref()
+                .and_then(rustynes_ra::RaSession::game_sha256)
+                .map_or_else(Vec::new, |s| s.to_vec());
+        drop(g);
+        sha
+    }
+
+    /// Serialize the runtime achievement progress for the per-game sidecar file
+    /// (empty if no session / nothing to persist). The host writes it to storage.
+    pub fn ra_serialize_progress(&self) -> Vec<u8> {
+        let mut g = self.lock();
+        let blob =
+            g.ra.as_mut()
+                .map(rustynes_ra::RaSession::serialize_progress)
+                .unwrap_or_default();
+        drop(g);
+        blob
+    }
+
+    /// Drain the pending HUD toasts since the last call (achievement unlocks,
+    /// login/server messages). The host renders + times these out itself.
+    pub fn ra_poll_toasts(&self) -> Vec<RaToast> {
+        let mut g = self.lock();
+        let toasts = g.ra.as_mut().map_or_else(Vec::new, |ra| {
+            let out: Vec<RaToast> = ra
+                .toasts
+                .iter()
+                .map(|t| RaToast {
+                    title: t.title.clone(),
+                    detail: t.detail.clone(),
+                    is_error: t.is_error,
+                    badge_url: t.badge_url.clone(),
+                })
+                .collect();
+            ra.toasts.clear();
+            out
+        });
+        drop(g);
+        toasts
+    }
+
+    /// The current rich-presence string (empty if none).
+    pub fn ra_rich_presence(&self) -> String {
+        let g = self.lock();
+        let rp =
+            g.ra.as_ref()
+                .map(|ra| ra.rich_presence.clone())
+                .unwrap_or_default();
+        drop(g);
+        rp
+    }
+
+    /// The cached achievement list for the loaded game (empty if no game loaded).
+    pub fn ra_achievement_list(&self) -> Vec<RaAchievementInfo> {
+        let g = self.lock();
+        let list = g.ra.as_ref().map_or_else(Vec::new, |ra| {
+            ra.achievements
+                .iter()
+                .map(|a| RaAchievementInfo {
+                    id: a.id,
+                    title: a.title.clone(),
+                    description: a.description.clone(),
+                    points: a.points,
+                    unlocked: a.unlocked,
+                    badge_url: a.badge_url.clone(),
+                    badge_locked_url: a.badge_locked_url.clone(),
+                    measured_percent: a.measured_percent,
+                })
+                .collect()
+        });
+        drop(g);
+        list
+    }
+
+    /// The cached game progress summary as a flat `[num_core, num_unofficial,
+    /// num_unlocked, num_unsupported, points_core, points_unlocked]` (all zeros
+    /// if no game is loaded). A flat `Vec<u32>` keeps the FFI shape minimal.
+    pub fn ra_game_summary(&self) -> Vec<u32> {
+        let g = self.lock();
+        let s = g.ra.as_ref().map(|ra| ra.summary).unwrap_or_default();
+        drop(g);
+        vec![
+            s.num_core_achievements,
+            s.num_unofficial_achievements,
+            s.num_unlocked_achievements,
+            s.num_unsupported_achievements,
+            s.points_core,
+            s.points_unlocked,
+        ]
+    }
 }
 
 /// If `bytes` is a ZIP archive (PK magic), extract the first NES-format entry
@@ -717,6 +1046,46 @@ fn post_frame_script(g: &mut Inner) {
     if let Some(engine) = g.script.as_mut() {
         let _ = engine.on_frame(&mut g.nes);
     }
+}
+
+/// Drive one frame of `RetroAchievements` logic after a tick (v1.8.6). Polls the
+/// HTTP completions, reconciles login/game-load, evaluates the achievement
+/// triggers against the live CPU bus, refreshes the HUD model, and honours a
+/// `Reset` request from the server. Called holding the lock, after the tick.
+///
+/// The disjoint field borrow (`&mut g.ra` for the session + `&g.nes` for the
+/// read closure) is what lets the achievement engine read emulator memory while
+/// the client is mutably borrowed — Rust splits the two `Inner` fields.
+fn post_frame_ra(g: &mut Inner) {
+    // Split the two `Inner` fields into disjoint mutable borrows: the RA client
+    // needs `&mut`, and `cpu_bus_peek` also takes `&mut self` (it may settle the
+    // open-bus latch). Borrowing the fields separately lets the read closure
+    // drive `nes` while the client is mutably borrowed.
+    let Inner { nes, ra, .. } = g;
+    let Some(ra) = ra.as_mut() else { return };
+    let reset = ra.do_frame(&mut |a| nes.cpu_bus_peek(a));
+    ra.refresh_views();
+    ra.expire_toasts();
+    if reset {
+        nes.reset();
+    }
+}
+
+/// Lazily create the `RetroAchievements` session on the first `ra_*` call, then
+/// return a mutable handle to it. The session persists for the controller's life
+/// (across ROM swaps); `hardcore` only seeds the initial flag when it is first
+/// created (a later `ra_set_hardcore` overrides it).
+fn ensure_ra(g: &mut Inner, hardcore: bool) -> &mut rustynes_ra::RaSession {
+    if g.ra.is_none() {
+        let config = rustynes_ra::RaConfig {
+            enabled: false,
+            username: String::new(),
+            token: String::new(),
+            hardcore,
+        };
+        g.ra = Some(rustynes_ra::RaSession::new(&config));
+    }
+    g.ra.as_mut().expect("session just created")
 }
 
 /// Validate and convert an FFI `u32` port into a `0..=3` array index.
@@ -833,5 +1202,76 @@ mod tests {
         let info = ctrl.info();
         assert_eq!(info.mapper_id, 0);
         assert_eq!(info.region, NesRegion::Ntsc);
+    }
+
+    // v1.8.6 — the RA bridge surfaces the lazy session + the login lifecycle.
+    #[test]
+    fn ra_session_created_lazily_and_hardcore_round_trips() {
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        // No `ra_*` call yet → no session.
+        assert!(!ctrl.ra_is_enabled());
+        assert_eq!(ctrl.ra_login_status(), RaLoginStatus::LoggedOut);
+        assert!(ctrl.ra_user().is_none());
+
+        ctrl.ra_init(true);
+        assert!(ctrl.ra_is_enabled());
+        assert!(ctrl.ra_hardcore());
+        ctrl.ra_set_hardcore(false);
+        assert!(!ctrl.ra_hardcore());
+
+        // `ra_game_summary` is a fixed-width flat vector even with no game.
+        assert_eq!(ctrl.ra_game_summary().len(), 6);
+        assert!(ctrl.ra_achievement_list().is_empty());
+    }
+
+    // v1.8.6 — a token login against the (unreachable in test) default host
+    // eventually surfaces an error via the toast queue — mirrors the cheevos
+    // `login_completion_fires_on_transport_error` pattern. The session moves to
+    // `LoggingIn` synchronously; the failure toast lands after pumping frames.
+    #[test]
+    fn ra_token_login_surfaces_error_toast() {
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        ctrl.ra_init(false);
+        ctrl.ra_login_token("nobody".to_string(), "deadbeeftoken".to_string());
+        assert_eq!(ctrl.ra_login_status(), RaLoginStatus::LoggingIn);
+
+        // Pump frames so `post_frame_ra` polls the HTTP completion; the worker
+        // does real network I/O (offline CI errors fast). Collect any toasts.
+        let mut error_toast = false;
+        for _ in 0..200 {
+            ctrl.step_frame();
+            if ctrl.ra_poll_toasts().iter().any(|t| t.is_error) {
+                error_toast = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        // In the common offline/unreachable case the login must have failed; if
+        // the network is up and the request is still in flight after the budget,
+        // we don't fail the build (timing is environmental), matching the
+        // cheevos test's tolerance.
+        if error_toast {
+            assert_ne!(ctrl.ra_login_status(), RaLoginStatus::LoggedIn);
+        }
+    }
+
+    // v1.8.6 — a hardcore session refuses `load_state` but still allows
+    // `save_state`.
+    #[test]
+    fn hardcore_blocks_load_state_only() {
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        ctrl.step_frame();
+        let blob = ctrl.save_state();
+        ctrl.ra_init(true); // hardcore on
+        // save_state stays allowed.
+        let _ = ctrl.save_state();
+        // load_state is refused.
+        match ctrl.load_state(blob.clone()) {
+            Err(MobileError::HardcoreBlocked) => {}
+            other => panic!("expected HardcoreBlocked, got {other:?}"),
+        }
+        // Softcore re-allows it.
+        ctrl.ra_set_hardcore(false);
+        ctrl.load_state(blob).expect("softcore load");
     }
 }

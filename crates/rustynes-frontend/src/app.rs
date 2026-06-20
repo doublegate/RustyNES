@@ -728,7 +728,7 @@ pub struct App {
     /// user is logged in), and the hardcore-gating predicate refuses save-state
     /// load / rewind / cheats / RAM-watch.
     #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
-    ra: Option<crate::ra_session::RaSession>,
+    ra: Option<rustynes_ra::RaSession>,
     /// v1.5.0 "Lens" Workstream G — EXPERIMENTAL casual-only browser
     /// `RetroAchievements` session (ADR 0015). wasm-only + behind the
     /// default-OFF `browser-cheevos` feature. Structurally casual-only (no
@@ -917,15 +917,31 @@ impl App {
     /// drive idles cheaply when no user is logged in / no game is loaded.
     /// Native-only + feature-gated.
     #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
-    fn init_ra_session() -> crate::ra_session::RaSession {
+    fn init_ra_session() -> rustynes_ra::RaSession {
         // The config used here is loaded freshly so the helper is callable from
         // the struct literal (it cannot borrow `self.config`); the caller has
         // the same config in hand. Keeping it a free read keeps `new` simple.
         let config = Config::load_or_default();
-        let mut session = crate::ra_session::RaSession::new(&config.retroachievements);
+        // v1.8.6 — map the frontend's `RetroAchievementsConfig` onto the
+        // host-agnostic `rustynes_ra::RaConfig` (the `host` field is not part of
+        // the session's config surface — rcheevos uses its default host).
+        let ra_config = Self::ra_config_from(&config.retroachievements);
+        let mut session = rustynes_ra::RaSession::new(&ra_config);
         // `auto_login` is a no-op unless `enabled` + a saved username/token.
-        session.auto_login(&config.retroachievements);
+        session.auto_login(&ra_config);
         session
+    }
+
+    /// Map the persisted frontend `RetroAchievementsConfig` onto the
+    /// host-agnostic [`rustynes_ra::RaConfig`] the session consumes.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
+    fn ra_config_from(c: &crate::config::RetroAchievementsConfig) -> rustynes_ra::RaConfig {
+        rustynes_ra::RaConfig {
+            enabled: c.enabled,
+            username: c.username.clone(),
+            token: c.token.clone(),
+            hardcore: c.hardcore,
+        }
     }
 
     /// v1.3.0 Sprint 1.4 — build an empty app for wasm32 (no ROM
@@ -3299,7 +3315,7 @@ impl App {
     )]
     fn sync_sinks<'a>(
         audio: &'a mut Option<AudioOutput>,
-        #[cfg(feature = "retroachievements")] ra: &'a mut Option<crate::ra_session::RaSession>,
+        #[cfg(feature = "retroachievements")] ra: &'a mut Option<rustynes_ra::RaSession>,
     ) -> crate::emu::FrameSinks<'a> {
         crate::emu::FrameSinks {
             audio: audio
@@ -3660,7 +3676,7 @@ impl App {
                 let mut guard = self.emu.lock();
                 self.ra.as_mut().map_or((None, false), |ra| {
                     let s = crate::emu::drive_ra(guard.nes.as_mut(), ra, true);
-                    let jl = crate::ra_session::RaSession::take_just_logged_in(ra);
+                    let jl = rustynes_ra::RaSession::take_just_logged_in(ra);
                     (Some(s), jl)
                 })
             };
@@ -3754,7 +3770,7 @@ impl App {
     fn ra_hardcore_blocks(&self) -> bool {
         self.ra
             .as_ref()
-            .is_some_and(crate::ra_session::RaSession::hardcore_blocks)
+            .is_some_and(rustynes_ra::RaSession::hardcore_blocks)
     }
 
     /// v2.7.0 — the hardcore-gating predicate, always `false` when the
@@ -3846,7 +3862,7 @@ impl App {
         let Some(sha) = self
             .ra
             .as_ref()
-            .and_then(crate::ra_session::RaSession::game_sha256)
+            .and_then(rustynes_ra::RaSession::game_sha256)
         else {
             return;
         };
@@ -3856,7 +3872,7 @@ impl App {
         let blob = self
             .ra
             .as_mut()
-            .map(crate::ra_session::RaSession::serialize_progress);
+            .map(rustynes_ra::RaSession::serialize_progress);
         if let Some(blob) = blob {
             if blob.is_empty() {
                 return;
@@ -3908,7 +3924,7 @@ impl App {
         let Some(token) = self
             .ra
             .as_ref()
-            .and_then(crate::ra_session::RaSession::user_token)
+            .and_then(rustynes_ra::RaSession::user_token)
         else {
             return;
         };
@@ -3918,7 +3934,7 @@ impl App {
             if let Some(name) = self
                 .ra
                 .as_ref()
-                .and_then(crate::ra_session::RaSession::user_info)
+                .and_then(rustynes_ra::RaSession::user_info)
                 .map(|u| u.username)
             {
                 self.config.retroachievements.username = name;
