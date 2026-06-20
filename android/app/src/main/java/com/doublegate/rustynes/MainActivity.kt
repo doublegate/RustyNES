@@ -1,6 +1,9 @@
 package com.doublegate.rustynes
 
 import android.graphics.Bitmap
+import android.media.AudioAttributes
+import android.media.AudioFormat
+import android.media.AudioTrack
 import android.os.Bundle
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
@@ -139,6 +142,74 @@ class EmulatorHandle {
 private const val NES_WIDTH = 256
 private const val NES_HEIGHT = 240
 
+// NTSC frame period in nanoseconds (the wall-clock pacing floor for ROMs that
+// emit little/no audio; sound-producing ROMs are paced by the blocking audio
+// write). PAL/Dendy refinement is a later increment.
+private const val FRAME_NANOS = 16_639_267L
+
+/**
+ * Low-latency mono audio sink fed by the core's [NesController.drainAudio].
+ *
+ * The core emits deterministic `f32` samples at the host rate; this is a pure
+ * sink (the determinism contract is timing-only and lives outside the emitted
+ * stream). A blocking `AudioTrack` write paces the emulation loop to real time
+ * whenever sound is present — the audio clock, not the wall clock, drives frame
+ * cadence — while a small buffer absorbs scheduling jitter.
+ */
+private class AudioPlayer(sampleRate: Int) {
+    private val track: AudioTrack
+    init {
+        val minBuf = AudioTrack.getMinBufferSize(
+            sampleRate,
+            AudioFormat.CHANNEL_OUT_MONO,
+            AudioFormat.ENCODING_PCM_FLOAT,
+        )
+        // ~4 NES frames of headroom (>= the platform minimum) absorbs jitter
+        // without adding noticeable latency.
+        val bufBytes = maxOf(minBuf, sampleRate * 4 / 60 * 4)
+        track = AudioTrack.Builder()
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_GAME)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build(),
+            )
+            .setAudioFormat(
+                AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
+                    .setSampleRate(sampleRate)
+                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                    .build(),
+            )
+            .setBufferSizeInBytes(bufBytes)
+            .setTransferMode(AudioTrack.MODE_STREAM)
+            .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
+            .build()
+        track.play()
+    }
+
+    /**
+     * Write one frame of samples; blocks while the ring is full (paces the loop).
+     *
+     * UniFFI maps the core's `Vec<f32>` to a boxed `List<Float>`, so this copies
+     * into a primitive `FloatArray` for the `AudioTrack` write. The per-frame
+     * boxing is a known cost; a later increment moves the audio pull into the
+     * `rustynes-android` JNI hot path (a primitive `float[]`/native ring) per the
+     * v1.8.0 plan's Workstream C.
+     */
+    fun write(samples: List<Float>) {
+        if (samples.isNotEmpty()) {
+            val buf = samples.toFloatArray()
+            track.write(buf, 0, buf.size, AudioTrack.WRITE_BLOCKING)
+        }
+    }
+
+    fun release() {
+        runCatching { track.pause(); track.flush(); track.stop() }
+        track.release()
+    }
+}
+
 @Composable
 private fun EmulatorScreen(emulator: EmulatorHandle) {
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -215,23 +286,37 @@ private fun EmulatorScreen(emulator: EmulatorHandle) {
         TouchOverlay(emulator)
     }
 
-    // Emulation loop: run frames on a background dispatcher, pacing to ~60 Hz,
-    // and publish each frame to Compose. (beta.3 replaces the wall-clock delay
-    // with audio-clocked pacing via the AAudio sink + DRC.)
+    // Emulation loop: run frames + render audio on a background dispatcher, then
+    // publish each frame to Compose. Pacing is audio-clocked when sound is present
+    // (the blocking AudioTrack write paces the loop to real time) with a wall-clock
+    // floor so silent ROMs still run at ~60 Hz.
     LaunchedEffect(Unit) {
         val reuse = Bitmap.createBitmap(NES_WIDTH, NES_HEIGHT, Bitmap.Config.ARGB_8888)
         val pixels = IntArray(NES_WIDTH * NES_HEIGHT)
-        while (isActive) {
-            val ctrl = emulator.controller
-            if (ctrl == null) {
-                delay(100)
-                continue
+        val audio = AudioPlayer(48_000)
+        try {
+            while (isActive) {
+                val ctrl = emulator.controller
+                if (ctrl == null) {
+                    delay(100)
+                    continue
+                }
+                val start = System.nanoTime()
+                // Emulate + play this frame's audio off the main thread (the
+                // blocking audio write must never run on the UI thread).
+                val rgba = withContext(Dispatchers.Default) {
+                    val fb = ctrl.runFrame()
+                    audio.write(ctrl.drainAudio())
+                    fb
+                }
+                packRgbaToArgb(rgba, pixels)
+                reuse.setPixels(pixels, 0, NES_WIDTH, 0, 0, NES_WIDTH, NES_HEIGHT)
+                frame = reuse.asImageBitmap()
+                val remainingMs = (FRAME_NANOS - (System.nanoTime() - start)) / 1_000_000
+                if (remainingMs > 0) delay(remainingMs)
             }
-            val rgba = withContext(Dispatchers.Default) { ctrl.runFrame() }
-            packRgbaToArgb(rgba, pixels)
-            reuse.setPixels(pixels, 0, NES_WIDTH, 0, 0, NES_WIDTH, NES_HEIGHT)
-            frame = reuse.asImageBitmap()
-            delay(16) // ~60 FPS; refined in beta.3.
+        } finally {
+            audio.release()
         }
     }
 
