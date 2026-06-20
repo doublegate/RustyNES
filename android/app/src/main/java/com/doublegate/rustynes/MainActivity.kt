@@ -531,7 +531,20 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                     Text(status, color = Color.White)
                     if (recents.isNotEmpty()) {
                         Spacer(Modifier.height(16.dp))
-                        Text("Recent", color = Color.Gray)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Text("Recent", color = Color.Gray)
+                            Text(
+                                "Clear Recent",
+                                color = Color(0xFFEF9A9A),
+                                modifier = Modifier.clickable {
+                                    RomLibrary.clear(context)
+                                    recents = RomLibrary.recents(context)
+                                },
+                            )
+                        }
                         recents.forEach { rom ->
                             Text(
                                 rom.name,

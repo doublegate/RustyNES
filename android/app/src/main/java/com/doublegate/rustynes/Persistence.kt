@@ -44,6 +44,11 @@ object RomLibrary {
     fun forget(ctx: Context, uri: String) {
         file(ctx).writeText(recents(ctx).filterNot { it.uri == uri }.joinToString("\n") { "${it.uri}\t${it.name}" })
     }
+
+    /** Clear the entire recently-played list. */
+    fun clear(ctx: Context) {
+        file(ctx).delete()
+    }
 }
 
 /**
