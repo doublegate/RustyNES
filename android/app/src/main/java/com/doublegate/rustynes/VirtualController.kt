@@ -11,11 +11,15 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import android.content.Context
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalContext
 import kotlin.math.hypot
 
 /**
@@ -40,7 +44,8 @@ import kotlin.math.hypot
 fun VirtualController(emulator: EmulatorHandle, modifier: Modifier) {
     // The live pressed-button mask, used both to drive input and to light the art.
     var mask by remember { mutableIntStateOf(0) }
-    val haptic = LocalHapticFeedback.current
+    val context = LocalContext.current
+    val vibrator = remember { systemVibrator(context) }
     Canvas(
         modifier = modifier.pointerInput(Unit) {
             awaitPointerEventScope {
@@ -57,9 +62,7 @@ fun VirtualController(emulator: EmulatorHandle, modifier: Modifier) {
                     }
                     if (m != mask) {
                         // Light tick when a new button engages (not on release).
-                        if (m and mask.inv() != 0) {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        }
+                        if (m and mask.inv() != 0) tick(vibrator)
                         mask = m
                         emulator.setTouchMask(m)
                     }
@@ -69,6 +72,30 @@ fun VirtualController(emulator: EmulatorHandle, modifier: Modifier) {
     ) {
         drawNesController(size.width, size.height, mask)
     }
+}
+
+// --- haptics (system Vibrator — reliable where Compose's TextHandleMove tick is
+//     too subtle / gated on Samsung) ---
+
+private fun systemVibrator(context: Context): Vibrator? =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        (context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager)?.defaultVibrator
+    } else {
+        @Suppress("DEPRECATION")
+        context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+    }
+
+/** A short, clearly-felt click on a button press. */
+private fun tick(vibrator: Vibrator?) {
+    val v = vibrator ?: return
+    if (!v.hasVibrator()) return
+    val effect = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK)
+    } else {
+        @Suppress("DEPRECATION")
+        VibrationEffect.createOneShot(20, VibrationEffect.DEFAULT_AMPLITUDE)
+    }
+    runCatching { v.vibrate(effect) }
 }
 
 // --- hit testing (regions derived from the same fractional geometry as the art) ---
