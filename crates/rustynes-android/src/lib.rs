@@ -108,7 +108,7 @@ mod android {
         use crate::gfx::AndroidGfx;
         use jni::JNIEnv;
         use jni::objects::{JByteArray, JObject};
-        use jni::sys::{jint, jlong};
+        use jni::sys::{jfloat, jint, jlong};
         use ndk::native_window::NativeWindow;
 
         /// `NativeRenderer.nativeInitSurface(surface, w, h): Long` — returns an
@@ -187,8 +187,10 @@ mod android {
             gfx.render(&bytes);
         }
 
-        /// `NativeRenderer.nativeSetFilter(handle, filter)` — 0 none / 1 scanlines /
-        /// 2 CRT (the shared CRT/scanline shader's `params`).
+        /// `NativeRenderer.nativeSetFilter(handle, filter, p0..p3)` — 0 none /
+        /// 1 scanlines / 2 CRT / 3 NTSC, plus the shader `params` (filter-specific:
+        /// Scanlines = [intensity, _, rows]; CRT = [intensity, mask, rows];
+        /// NTSC = [saturation, sharpness, tint, phase]).
         ///
         /// # Safety
         /// `handle` must be a live value returned by `nativeInitSurface`.
@@ -198,13 +200,17 @@ mod android {
             _this: JObject,
             handle: jlong,
             filter: jint,
+            p0: jfloat,
+            p1: jfloat,
+            p2: jfloat,
+            p3: jfloat,
         ) {
             if handle == 0 {
                 return;
             }
             // SAFETY: live handle (see `nativeResize`).
             let gfx = unsafe { &mut *(handle as *mut AndroidGfx) };
-            gfx.set_filter(filter.max(0) as u8);
+            gfx.set_filter(filter.max(0) as u8, [p0, p1, p2, p3]);
         }
 
         /// `NativeRenderer.nativeDestroy(handle)` — drop the renderer (releases the

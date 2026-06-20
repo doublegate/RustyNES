@@ -59,6 +59,9 @@ pub struct AndroidGfx {
     ntsc_pipeline: wgpu::RenderPipeline,
     /// Active video filter: 0 = none, 1 = scanlines, 2 = CRT, 3 = NTSC.
     filter: u8,
+    /// The shader `params` for the active filter (meaning is filter-specific:
+    /// Scanlines = [scan]; CRT = [scan, mask]; NTSC = [sat, sharp, tint, phase]).
+    params: [f32; 4],
     _window: NativeWindow,
 }
 
@@ -292,6 +295,7 @@ impl AndroidGfx {
             pipeline,
             ntsc_pipeline,
             filter: 0,
+            params: [0.0; 4],
             _window: window,
         };
         gfx.write_uniforms();
@@ -306,10 +310,12 @@ impl AndroidGfx {
         self.write_uniforms();
     }
 
-    /// Set the active video filter (0 = none, 1 = scanlines, 2 = CRT) and rewrite
-    /// the shader uniform.
-    pub fn set_filter(&mut self, filter: u8) {
+    /// Set the active video filter (0 = none, 1 = scanlines, 2 = CRT, 3 = NTSC) and
+    /// its shader `params` (filter-specific — see the field doc; supplied by the
+    /// Settings sliders), then rewrite the uniform.
+    pub fn set_filter(&mut self, filter: u8, params: [f32; 4]) {
         self.filter = filter;
+        self.params = params;
         self.write_uniforms();
     }
 
@@ -322,27 +328,13 @@ impl AndroidGfx {
         } else {
             (1.0, screen_aspect / IMG_ASPECT) // letterbox
         };
-        // params depend on the active filter; aux carries NTSC's PAL-mode flag.
-        let (params, aux) = if self.filter == 3 {
-            // NTSC: (saturation, sharpness, tint, phase); PAL off. Tuned softer than
-            // the desktop default (sat 1.0 / sharp 0.5) — the composite chroma
-            // artifacts are much harsher at phone DPI, so mute the chroma and widen
-            // the luma window for a gentler dot-crawl.
-            ([0.55, 0.08, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0])
-        } else {
-            // CRT/scanline: (scanline, mask, _, _); (0,0) = plain letterboxed blit.
-            let (scan, mask) = match self.filter {
-                1 => (0.5, 0.0),  // scanlines
-                2 => (0.5, 0.10), // CRT (scanlines + aperture grille)
-                _ => (0.0, 0.0),  // none
-            };
-            ([scan, mask, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0])
-        };
+        // The shader `params` come straight from the caller (the per-filter sliders);
+        // `aux.x` is NTSC's PAL flag (off). None just leaves params at (0,0,0,0).
         let u = Uniforms {
             rect: [sx, sy, 0.0, 0.0],
             crop: [1.0, 0.0, 1.0, 0.0],
-            params,
-            aux,
+            params: self.params,
+            aux: [0.0, 0.0, 0.0, 0.0],
         };
         self.queue
             .write_buffer(&self.uniform_buf, 0, bytemuck::bytes_of(&u));

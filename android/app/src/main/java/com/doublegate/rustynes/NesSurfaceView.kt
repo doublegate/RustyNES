@@ -36,6 +36,9 @@ class NesSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Cal
     private var filter = 0
 
     @Volatile
+    private var fparams = FloatArray(4)
+
+    @Volatile
     private var filterDirty = false
 
     @Volatile
@@ -51,10 +54,11 @@ class NesSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Cal
         latestFrame = fb
     }
 
-    /** Set the video filter (0 = none, 1 = scanlines, 2 = CRT); applied on the
-     *  render thread before the next frame. */
-    fun setFilter(f: Int) {
+    /** Set the video filter (0 none / 1 scanlines / 2 CRT / 3 NTSC) and its four
+     *  shader params; applied on the render thread before the next frame. */
+    fun setFilter(f: Int, params: FloatArray) {
         filter = f
+        fparams = params
         filterDirty = true
     }
 
@@ -111,7 +115,8 @@ class NesSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Cal
                     handle = if (handle == 0L) {
                         val newHandle = NativeRenderer.nativeInitSurface(surface!!, w, h)
                         if (newHandle != 0L) {
-                            NativeRenderer.nativeSetFilter(newHandle, filter)
+                            val p = fparams
+                            NativeRenderer.nativeSetFilter(newHandle, filter, p[0], p[1], p[2], p[3])
                             filterDirty = false
                         }
                         newHandle
@@ -121,7 +126,8 @@ class NesSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Cal
                     }
                 }
                 if (filterDirty && handle != 0L) {
-                    NativeRenderer.nativeSetFilter(handle, filter)
+                    val p = fparams
+                    NativeRenderer.nativeSetFilter(handle, filter, p[0], p[1], p[2], p[3])
                     filterDirty = false
                 }
                 val fb = latestFrame

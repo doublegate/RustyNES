@@ -78,9 +78,12 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let scan_amt = u.params.x;
     let mask_amt = u.params.y;
 
-    // Scanlines in NES source-row space (240 rows). Parabolic profile: 1.0 at the
-    // row centre, (1 - scan_amt) at the row boundary.
-    let src_y = suv.y * 240.0;
+    // Scanlines in source-row space. The row count is params.z (so the host can
+    // expose a 'number of scanlines' control); fall back to the NES's 240 rows when
+    // unset (params.z < 1, e.g. the desktop, which leaves it 0 -> unchanged).
+    // Parabolic profile: 1.0 at the row centre, (1 - scan_amt) at the row boundary.
+    let rows = select(240.0, u.params.z, u.params.z >= 1.0);
+    let src_y = suv.y * rows;
     let d = fract(src_y) - 0.5;
     let scan = (1.0 - scan_amt) + scan_amt * (1.0 - 4.0 * d * d);
     rgb = rgb * scan;
