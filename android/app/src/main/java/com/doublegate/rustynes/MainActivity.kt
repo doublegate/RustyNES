@@ -570,6 +570,18 @@ private fun EmulatorScreen(
         castManager.register()
         onDispose { castManager.unregister() }
     }
+    // Experimental Chromecast (CAF) spectator mirror (v1.8.7, #38) — PREPPED but
+    // gated behind the default-off BuildConfig.CHROMECAST_ENABLED flag. When off,
+    // the sender never touches CastContext, no Cast button is shown, and the
+    // sendFrame call below compiles out. The Presentation-API cast above is the
+    // primary low-latency path and is untouched.
+    val chromecast = remember { ChromecastSender(context) }
+    if (BuildConfig.CHROMECAST_ENABLED) {
+        DisposableEffect(Unit) {
+            chromecast.register()
+            onDispose { chromecast.unregister() }
+        }
+    }
     // Current screen mode (item 5): each remembers its own controller size/opacity.
     // Cast wins; otherwise a narrow width means the folded cover screen.
     val config = androidx.compose.ui.platform.LocalConfiguration.current
@@ -1196,6 +1208,25 @@ private fun EmulatorScreen(
                     Text(if (castManager.casting) "Stop Cast" else "Cast to TV")
                 }
             }
+            // Experimental Chromecast (CAF) spectator mirror (v1.8.7, #38). Only
+            // compiled in / shown when the default-off flag is set. The standard CAF
+            // MediaRouteButton handles device discovery + the chooser/controller
+            // dialog; once a session connects, the emulation loop streams ~20-30fps
+            // frames to the custom Web Receiver. Label clarifies it's a spectator view.
+            if (BuildConfig.CHROMECAST_ENABLED) {
+                Text(
+                    if (chromecast.isCasting) "Casting…" else "Cast to TV (spectator ~20-30fps):",
+                    color = Color.Gray,
+                )
+                androidx.compose.ui.viewinterop.AndroidView(
+                    factory = { ctx ->
+                        androidx.mediarouter.app.MediaRouteButton(ctx).also { btn ->
+                            com.google.android.gms.cast.framework.CastButtonFactory
+                                .setUpMediaRouteButton(ctx.applicationContext, btn)
+                        }
+                    },
+                )
+            }
             // Demo: an always-visible unlock affordance + the session countdown.
             if (!unlocked) {
                 val price = license.product
@@ -1513,6 +1544,13 @@ private fun EmulatorScreen(
                     // Mirror the picture to the external display while casting (no-op
                     // otherwise). Same main-thread publish point as the Compose frame.
                     castManager.pushFrame(reuse)
+                    // Experimental Chromecast (CAF) spectator mirror (v1.8.7, #38):
+                    // stream the palette-index plane to the Web Receiver, internally
+                    // throttled to ~20-30fps and 64 KB-capped. Compiled out entirely
+                    // in default builds (flag off); a cheap no-op when no Cast session.
+                    if (BuildConfig.CHROMECAST_ENABLED) {
+                        chromecast.sendFrame(ctrl.indexFramebufferBytes())
+                    }
                 }
                 // Netplay status poll (v1.8.6): refresh the panel/overlay snapshot at a
                 // low cadence whether or not a frame was produced (so a stall / connect

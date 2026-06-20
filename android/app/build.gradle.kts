@@ -39,6 +39,15 @@ android {
         // Play AAB sets it true (v1.8.8 "Atlas" launch — postponed from v1.8.6). See
         // the v1.8.0 plan's monetization timing.
         buildConfigField("boolean", "PLAY_BUILD", "false")
+        // CHROMECAST_ENABLED gates the experimental Cast Application Framework
+        // (CAF) sender path (v1.8.7, #38) — a ~20-30fps SPECTATOR mirror to a
+        // custom Web Receiver, distinct from the primary low-latency Presentation
+        // API cast (Cast.kt, which is always available). Default false: no Cast
+        // button, no CastContext init, zero behavior change. It stays off until the
+        // maintainer does the deferred ops (a $5 Cast Developer Console account, a
+        // registered Receiver App ID, and HTTPS hosting of android/cast-receiver/).
+        // See android/cast-receiver/README.md + ChromecastSender.kt.
+        buildConfigField("boolean", "CHROMECAST_ENABLED", "false")
     }
 
     // Release signing reads `keystore.properties` (gitignored) or env vars; when
@@ -161,4 +170,8 @@ dependencies {
     implementation("net.java.dev.jna:jna:5.15.0@aar")
     // Play Billing — the one-time "Full Unlock" IAP (Workstream M, freemium model).
     implementation("com.android.billingclient:billing-ktx:8.0.0")
+    // Cast Application Framework sender (v1.8.7, #38). Linked but DORMANT: it does
+    // nothing until CastContext is initialized, which only happens behind the
+    // default-off BuildConfig.CHROMECAST_ENABLED flag (see ChromecastSender.kt).
+    implementation("com.google.android.gms:play-services-cast-framework:21.5.0")
 }

@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<!--
+  RustyNES Chromecast Web Receiver (v1.8.7, #38) — a SPECTATOR mirror.
+
+  This static page is the custom Cast Web Receiver the Android sender
+  (ChromecastSender.kt) streams palette-index frames to. It is INERT until the
+  maintainer:
+    1. Registers a Cast Receiver App ID at https://cast.google.com/publish
+       (a "Custom Receiver" pointing at the HTTPS URL where this file is hosted),
+    2. Hosts this file over HTTPS (GitHub Pages works), and
+    3. Pastes that App ID into ChromecastConstants.APP_ID and flips the
+       BuildConfig.CHROMECAST_ENABLED flag in android/app/build.gradle.kts.
+  See README.md in this folder.
+
+  Frame protocol (custom message on "urn:x-cast:com.doublegate.rustynes.fb"):
+    JSON { w:128, h:120, fmt:"i6", data:"<base64>" }
+  where the decoded bytes are a w*h, 1-byte-per-pixel plane of 6-bit NES palette
+  colour indices (0..63). The sender 2x down-samples the native 256x240 frame to
+  128x120 so the base64 message fits the 64 KB Cast custom-message cap; we draw
+  it to a w*h canvas backing-store and let CSS nearest-neighbour upscale it to the
+  TV. Emphasis is dropped by the sender; the picture stays faithful for the
+  overwhelming majority of frames. (The w/h fields are read from the message, so
+  if the sender's resolution ever changes the receiver adapts.)
+-->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RustyNES Cast Receiver</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+      /* Letterbox the 256x240 NES image full-screen, nearest-neighbour upscale. */
+      #screen {
+        position: absolute; inset: 0; margin: auto;
+        max-width: 100%; max-height: 100%;
+        width: auto; height: 100%;
+        image-rendering: pixelated;
+        image-rendering: crisp-edges;
+      }
+      #hint {
+        position: absolute; left: 0; right: 0; bottom: 6%;
+        text-align: center; color: #888; font: 24px sans-serif;
+      }
+    </style>
+    <!-- CAF Web Receiver SDK. -->
+    <script src="//www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+  </head>
+  <body>
+    <!-- Backing-store is sized to the incoming frame (default 128x120); CSS
+         nearest-neighbour upscales it to the TV. -->
+    <canvas id="screen" width="128" height="120"></canvas>
+    <div id="hint">RustyNES — waiting for gameplay…</div>
+
+    <script>
+      // The standard NES (2C02) composite palette — byte-identical to the core's
+      // NES_PALETTE (crates/rustynes-ppu/src/palette.rs) and the Android
+      // NetplayPalette.BASE table, as 0xRRGGBB.
+      const NES_PALETTE = [
+        0x6A6D6A, 0x001380, 0x1E008A, 0x39007A, 0x550056, 0x5A0018, 0x4F1000, 0x3D1C00,
+        0x253A00, 0x004E00, 0x004600, 0x004A18, 0x00405A, 0x000000, 0x000000, 0x000000,
+        0xB9BCB9, 0x184BCF, 0x4B24E8, 0x7C12E0, 0xAB13B5, 0xB72164, 0xAB3718, 0x8B5A00,
+        0x5C7A00, 0x209000, 0x008F00, 0x008C42, 0x007D8A, 0x000000, 0x000000, 0x000000,
+        0xFFFFFF, 0x64A0FF, 0x8479FF, 0xAC68FF, 0xDA60FF, 0xE26BC5, 0xDC834C, 0xC39A18,
+        0x9CB000, 0x60C000, 0x30C83C, 0x28C58C, 0x3CB7C9, 0x4C4C4C, 0x000000, 0x000000,
+        0xFFFFFF, 0xC8DDFF, 0xD5CCFF, 0xE5C7FF, 0xF5C5FF, 0xFAC9E6, 0xF8D2BD, 0xEFDA99,
+        0xE1E188, 0xC8E788, 0xB0EA9C, 0xA4EBBD, 0xAAE5E2, 0xB0B0B0, 0x000000, 0x000000,
+      ];
+      // Pre-expand the 64-entry palette to packed little-endian RGBA (0xAABBGGRR)
+      // for direct assignment into a Uint32 view of the canvas ImageData.
+      const RGBA = new Uint32Array(64);
+      for (let i = 0; i < 64; i++) {
+        const c = NES_PALETTE[i];
+        const r = (c >> 16) & 0xFF, g = (c >> 8) & 0xFF, b = c & 0xFF;
+        RGBA[i] = (0xFF << 24) | (b << 16) | (g << 8) | r; // little-endian RGBA
+      }
+
+      const canvas = document.getElementById("screen");
+      const ctx2d = canvas.getContext("2d");
+      const hint = document.getElementById("hint");
+      let gotFrame = false;
+      // (Re)created when the incoming frame size differs from the current canvas.
+      let frameW = 0, frameH = 0, imageData = null, u32 = null;
+
+      function ensureSize(w, h) {
+        if (w === frameW && h === frameH && imageData) return;
+        frameW = w; frameH = h;
+        canvas.width = w; canvas.height = h;
+        imageData = ctx2d.createImageData(w, h);
+        u32 = new Uint32Array(imageData.data.buffer);
+      }
+
+      // Decode a base64 colour-index plane and blit it to the canvas. The plane is
+      // w*h, 1 byte/pixel (6-bit colour index); CSS upscales the canvas to the TV.
+      function drawFrame(w, h, b64) {
+        ensureSize(w, h);
+        const bin = atob(b64);
+        const n = Math.min(bin.length, w * h);
+        for (let p = 0; p < n; p++) {
+          u32[p] = RGBA[bin.charCodeAt(p) & 0x3F];
+        }
+        ctx2d.putImageData(imageData, 0, 0);
+        if (!gotFrame) { gotFrame = true; hint.style.display = "none"; }
+      }
+
+      // --- CAF Web Receiver wiring -----------------------------------------
+      const context = cast.framework.CastReceiverContext.getInstance();
+      const NAMESPACE = "urn:x-cast:com.doublegate.rustynes.fb";
+
+      context.addCustomMessageListener(NAMESPACE, function (event) {
+        try {
+          const msg = (typeof event.data === "string")
+            ? JSON.parse(event.data)
+            : event.data;
+          if (msg && msg.fmt === "i6" && msg.data) {
+            drawFrame(msg.w || 128, msg.h || 120, msg.data);
+          }
+        } catch (e) {
+          // Ignore malformed frames — the previous picture stays up.
+        }
+      });
+
+      // Idle-timeout disabled: this is a live mirror with no media playback, so
+      // the default media-inactivity teardown would drop the session.
+      const options = new cast.framework.CastReceiverOptions();
+      options.disableIdleTimeout = true;
+      context.start(options);
+    </script>
+  </body>
+</html>
