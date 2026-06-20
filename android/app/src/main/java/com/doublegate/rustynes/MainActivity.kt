@@ -227,15 +227,21 @@ class EmulatorHandle {
 
     /** Set the on-screen virtual-controller mask (the full set of pressed buttons). */
     fun setTouchMask(mask: Int) {
-        touchMask = mask
-        applyP1()
+        // Touch + key updates can race (different threads); synchronize the
+        // read-modify-combine so neither source clobbers the other's mask.
+        synchronized(this) {
+            touchMask = mask
+            applyP1()
+        }
     }
 
     /** Returns true if the key was consumed (a mapped NES button). */
     fun onKey(keyCode: Int, pressed: Boolean): Boolean {
         val bit = keyToBit(keyCode) ?: return false
-        keyMask = if (pressed) keyMask or bit else keyMask and bit.inv()
-        applyP1()
+        synchronized(this) {
+            keyMask = if (pressed) keyMask or bit else keyMask and bit.inv()
+            applyP1()
+        }
         return true
     }
 

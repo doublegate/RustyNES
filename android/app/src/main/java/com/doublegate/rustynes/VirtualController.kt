@@ -54,8 +54,21 @@ fun VirtualController(
     var mask by remember { mutableIntStateOf(0) }
     val context = LocalContext.current
     val vibrator = remember { systemVibrator(context) }
+    // Remembered so the draw pass allocates no Paint (its textSize is set per use).
+    val labelPaint = remember {
+        android.graphics.Paint().apply {
+            color = android.graphics.Color.parseColor("#E60012")
+            textAlign = android.graphics.Paint.Align.CENTER
+            isFakeBoldText = true
+            isAntiAlias = true
+        }
+    }
     Canvas(
         modifier = modifier.pointerInput(Unit) {
+            // try/finally so a cancelled gesture (parent intercept, focus loss,
+            // disposal) always clears the mask — otherwise the last-pressed
+            // buttons stay stuck in the emulator until the next touch.
+            try {
             awaitPointerEventScope {
                 // Track every active pointer by id, so arbitrarily many fingers
                 // (e.g. D-pad + B + A at once in SMB) are all live — recompute the
@@ -89,9 +102,13 @@ fun VirtualController(
                     }
                 }
             }
+            } finally {
+                mask = 0
+                emulator.setTouchMask(0)
+            }
         },
     ) {
-        drawNesController(size.width, size.height, mask)
+        drawNesController(size.width, size.height, mask, labelPaint)
     }
 }
 
@@ -144,8 +161,8 @@ private fun hitTest(px: Float, py: Float, w: Float, h: Float): Int {
     val abx = 0.805f * w
     val aby = cy + 0.10f * h
     val br = 0.118f * h * 1.30f
-    if (hypot((px - (abx + 0.068f * w)).toDouble(), (py - aby).toDouble()) < br) m = m or NesBit.A
-    if (hypot((px - (abx - 0.068f * w)).toDouble(), (py - aby).toDouble()) < br) m = m or NesBit.B
+    if (hypot(px - (abx + 0.068f * w), py - aby) < br) m = m or NesBit.A
+    if (hypot(px - (abx - 0.068f * w), py - aby) < br) m = m or NesBit.B
 
     // Select / Start: rounded rects (generous hit area for the small pills).
     val ssx = 0.485f * w
@@ -175,7 +192,7 @@ private val BTN_RED = Color(0xFF9A1C1C)
 private val RED = Color(0xFFE60012)
 private val LIT = Color(0x66FFFFFF) // pressed-state highlight overlay
 
-private fun DrawScope.drawNesController(w: Float, h: Float, mask: Int) {
+private fun DrawScope.drawNesController(w: Float, h: Float, mask: Int, label: android.graphics.Paint) {
     val cy = h / 2f
     fun rr(r: Float) = androidx.compose.ui.geometry.CornerRadius(r, r)
 
@@ -209,10 +226,13 @@ private fun DrawScope.drawNesController(w: Float, h: Float, mask: Int) {
     drawRoundRect(HOUSING_EDGE, Offset(ssx - 0.125f * w, ssy - 0.10f * h), Size(0.25f * w, 0.20f * h), rr(0.10f * h), style = Stroke(0.008f * h))
     val pw = 0.092f * w
     val ph = 0.066f * h
-    for ((bit, bx) in listOf(NesBit.SELECT to ssx - 0.064f * w, NesBit.START to ssx + 0.064f * w)) {
-        drawRoundRect(PILL, Offset(bx - pw / 2, ssy - ph / 2), Size(pw, ph), rr(ph / 2))
-        if (mask and bit != 0) drawRoundRect(LIT, Offset(bx - pw / 2, ssy - ph / 2), Size(pw, ph), rr(ph / 2))
-    }
+    // Inline (no per-frame listOf/Pair allocation on this 60fps draw path).
+    val selBx = ssx - 0.064f * w
+    drawRoundRect(PILL, Offset(selBx - pw / 2, ssy - ph / 2), Size(pw, ph), rr(ph / 2))
+    if (mask and NesBit.SELECT != 0) drawRoundRect(LIT, Offset(selBx - pw / 2, ssy - ph / 2), Size(pw, ph), rr(ph / 2))
+    val staBx = ssx + 0.064f * w
+    drawRoundRect(PILL, Offset(staBx - pw / 2, ssy - ph / 2), Size(pw, ph), rr(ph / 2))
+    if (mask and NesBit.START != 0) drawRoundRect(LIT, Offset(staBx - pw / 2, ssy - ph / 2), Size(pw, ph), rr(ph / 2))
 
     // Red racetrack logo capsule (upper-right of the plate) carrying a "RustyNES"
     // wordmark (drawn in the labels block below); it doubles as the menu toggle.
@@ -228,20 +248,18 @@ private fun DrawScope.drawNesController(w: Float, h: Float, mask: Int) {
     val br = 0.118f * h
     drawRoundRect(HOUSING, Offset(abx - 0.155f * w, aby - 0.16f * h), Size(0.31f * w, 0.32f * h), rr(0.10f * h))
     drawRoundRect(HOUSING_EDGE, Offset(abx - 0.155f * w, aby - 0.16f * h), Size(0.31f * w, 0.32f * h), rr(0.10f * h), style = Stroke(0.008f * h))
-    for ((bit, bx) in listOf(NesBit.B to abx - 0.068f * w, NesBit.A to abx + 0.068f * w)) {
-        drawCircle(BTN_WELL, br + 0.025f * h, Offset(bx, aby))
-        drawCircle(BTN_RED, br, Offset(bx, aby))
-        if (mask and bit != 0) drawCircle(LIT, br, Offset(bx, aby))
-    }
+    val bBx = abx - 0.068f * w
+    drawCircle(BTN_WELL, br + 0.025f * h, Offset(bBx, aby))
+    drawCircle(BTN_RED, br, Offset(bBx, aby))
+    if (mask and NesBit.B != 0) drawCircle(LIT, br, Offset(bBx, aby))
+    val aBx = abx + 0.068f * w
+    drawCircle(BTN_WELL, br + 0.025f * h, Offset(aBx, aby))
+    drawCircle(BTN_RED, br, Offset(aBx, aby))
+    if (mask and NesBit.A != 0) drawCircle(LIT, br, Offset(aBx, aby))
 
     // Labels (native canvas): SELECT/START above the pills, B/A below the buttons.
+    // The Paint is remembered by the caller (allocation-free draw pass).
     drawContext.canvas.nativeCanvas.apply {
-        val label = android.graphics.Paint().apply {
-            color = android.graphics.Color.parseColor("#E60012")
-            textAlign = android.graphics.Paint.Align.CENTER
-            isFakeBoldText = true
-            isAntiAlias = true
-        }
         label.textSize = 0.06f * h
         drawText("SELECT", ssx - 0.064f * w, ssy - 0.13f * h, label)
         drawText("START", ssx + 0.064f * w, ssy - 0.13f * h, label)
