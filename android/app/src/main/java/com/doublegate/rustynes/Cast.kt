@@ -28,7 +28,7 @@ import androidx.compose.runtime.setValue
  * native AirPlay, so the Presentation API is the supported route for sending a
  * dedicated game surface to a connected/cast display (ADR: v1.8.3 casting).
  */
-class CastManager(context: Context) {
+class CastManager(private val context: Context) {
     private val appContext = context.applicationContext
     private val dm = appContext.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
 
@@ -82,7 +82,18 @@ class CastManager(context: Context) {
 
     private fun start() {
         val d = presentationDisplay() ?: return
-        val p = GamePresentation(appContext, d)
+        // A Presentation is a Dialog, so it needs a UI (Activity) context with a
+        // valid window token — the application context throws BadTokenException.
+        val p = GamePresentation(context, d)
+        // Keep our state in sync if the system dismisses it (e.g. the display
+        // disconnects, or another presentation takes the display).
+        p.setOnDismissListener {
+            if (presentation === p) {
+                presentation = null
+                casting = false
+                displayName = null
+            }
+        }
         runCatching { p.show() }
             .onSuccess {
                 presentation = p
