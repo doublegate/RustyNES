@@ -1,13 +1,22 @@
 # RustyNES on Android
 
-> **Status: v1.8.0 "Android" — beta.1 (foundation & build) landed.** The shared
-> `rustynes-mobile` bridge, the `rustynes-android` platform crate, the Gradle
-> module, the Android CI gate, and a first-boot Compose shell are in place and the
-> NDK cross-build + UniFFI binding pipeline are verified end-to-end. The wgpu
-> `SurfaceView` shader path (beta.2), AAudio sink (beta.3), full SAF library +
-> persistable grants (beta.4), the Material-3 feature port (beta.5), and Play
-> signing/packaging (rc.1) land in subsequent betas. See the release train in
+> **Status: v1.8.0 "Android" — a working emulator, verified on hardware.** The
+> shared `rustynes-mobile` bridge, the `rustynes-android` platform crate, the
+> Gradle/Compose app, and the Android CI gate are in place, and the app has been
+> run end-to-end on a **Samsung Galaxy Z Fold 7** (Android 16, arm64): nestest
+> passes all 14 CPU suites (the core is cycle-accurate on ARM), audio plays
+> through `AudioTrack`, touch + hardware-gamepad input drive P1, save-states /
+> SRAM / a recent-ROMs library persist, and the app runs full-screen on both the
+> cover and the unfolded inner display with the system bars auto-hidden.
+> **Shipped so far:** core + video (RGBA `Bitmap` blit) + audio + touch/gamepad +
+> save-states/auto-resume + pause/fast-forward/mute + SAF ROM library. **Next
+> increment (documented, not yet built):** the wgpu `SurfaceView` render path +
+> the NTSC/CRT shader stack (Workstream B/F-shaders) — the current `Bitmap`
+> renderer is complete and performant, so wgpu is a fidelity/perf upgrade rather
+> than a blocker. See the release train in
 > [`to-dos/plans/v1.8.0-android-plan.md`](../to-dos/plans/v1.8.0-android-plan.md).
+> Per the locked MVP, netplay / RetroAchievements / Lua remain deferred to a
+> follow-up mobile point release.
 
 ## Architecture
 
@@ -137,15 +146,18 @@ arm64 + x86_64, generates the Kotlin bindings (smoke), checks **16 KB ELF
 alignment** on the shipped arm64 `.so`, and best-effort-bundles the AAB. It is
 **not** a required check — accuracy is gated only on host CI.
 
-## Remaining work (subsequent betas)
+## Workstream status
 
-| Beta | Workstream | Adds |
-|---|---|---|
-| beta.2 | B | wgpu on a `SurfaceView` + the surface-loss lifecycle + Choreographer pacing |
-| beta.3 | C + D | AAudio low-latency sink + audio focus; gamepad/haptics polish |
-| beta.4 | E | full SAF library + **persistable URI grants**; `.rns`/SRAM in `filesDir`; save-on-background |
-| beta.5 | F | Material-3 feature port (shaders, TAS, palettes, per-game DB, HD-pack) |
-| rc.1 | G | Play App Signing, IARC rating, data-safety, the sideload/F-Droid channel |
+| Workstream | State |
+|---|---|
+| **A** Foundation / build (bridge + platform crate + Gradle/Compose + CI) | **Done** — on-device |
+| **C** Audio (`AudioTrack` sink, blocking-write pacing) | **Done** — on-device |
+| **D** Input (touch overlay + hardware gamepad → one late-latched mask) | **Done** — touch on-device |
+| **E** Save-states / SRAM / auto-resume / persistable ROM library | **Done** — save/load on-device |
+| **F** QoL (pause / fast-forward / mute) + responsive/foldable/immersive UI | **Done** — on-device |
+| **G** Play packaging (release AAB, signing config, distribution) | Config in place; signing is maintainer-manual |
+| **B** wgpu `SurfaceView` + surface-loss lifecycle | **Next increment** (Bitmap blit ships now) |
+| **F** shaders / palettes / per-game DB / TAS UI | **Next increment** (depends on B for shaders) |
 
 **Deferred to a follow-up mobile point release** (per the locked MVP): netplay
 (mobile NAT/CGNAT/TURN), RetroAchievements (Compose login UI over rcheevos), and
