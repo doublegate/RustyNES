@@ -15,6 +15,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.5] - 2026-06-20 - "Android" (Power-user features)
+
+The creator / power-user pass: custom palettes, compressed-ROM loading, the Bisqwit
+composite NTSC filter, TAS movies, per-game settings, and HD-packs — all on Android,
+all reusing the desktop code. Presentation / host-side only: the emulation core is
+byte-identical, so **AccuracyCoin holds 100% (139/139)** and the desktop is unchanged.
+Verified on-device (SMB, Zelda, AccuracyCoin) on a Galaxy Z Fold 7.
+
+### Added
+
+- **Custom `.pal` palette loading.** Settings → "Custom palette" → Load .pal… / Reset,
+  via a SAF picker, applied live through the bridge (a 192-byte RGB table over the
+  core's `set_custom_palette`). Presentation-only; byte-identical once reset.
+- **Compressed `.zip` ROM loading.** A `decompress_rom` step in the bridge detects a
+  ZIP archive and extracts the first NES-format entry (`.nes`/`.fds`/`.unf`/`.unif`),
+  so a still-zipped pick loads straight through — the same convenience the desktop has,
+  shared by Android (and future iOS).
+- **Bisqwit composite NTSC on the GPU.** The desktop's Bisqwit WGSL is now shared via
+  the `rustynes-gfx-shaders` crate (a drift test keeps it byte-identical to the
+  generator). The Android wgpu renderer gains an `R16Uint` palette-index texture + a
+  Bisqwit pipeline fed by the bridge's `index_framebuffer_bytes()` + `ntsc_phase()`.
+  Selectable as the **Bisqwit NTSC** video filter (GPU renderer only).
+- **TAS `.rnm` movies.** Settings → "TAS movie (.rnm)" → Record / Stop & save… /
+  Play… / Stop, over the core `Movie`/`MovieRecorder` through SAF. Playback drives
+  input from the recorded stream; recording captures each frame's input.
+  Determinism-exact replay (same start point + ROM + input stream).
+- **Per-game settings DB.** Each game reopens with the video filter you last chose for
+  it — a small JSON store (`game_config.json`) keyed by ROM SHA-256; games with no
+  entry use the global default.
+- **HD-packs on Android.** Settings → "HD-pack" → Load .zip… / Unload (SAF). A loaded
+  Mesen-style pack composites the upscaled picture each frame (via the Bitmap path,
+  since the GPU SurfaceView is fixed at 256×240). Output-only; determinism untouched.
+
+### Changed
+
+- **HD-pack subsystem extracted to `rustynes-hdpack`.** The HD-pack loader +
+  compositor + HD audio moved out of the frontend into a new shared `std` crate (the
+  emulation core is `#![no_std]`, so they could not live there) — making them reachable
+  by the mobile bridge. The desktop frontend keeps thin re-exports, so all existing
+  `crate::hdpack` / `crate::hd_audio` paths are unchanged; the loader also gained
+  `HdPack::load_from_zip_bytes` so SAF byte streams load without a filesystem path.
+
 ## [1.8.4] - 2026-06-20 - "Android" (Native wgpu renderer & shaders)
 
 The native GPU render path: the NES picture now draws through **wgpu on a

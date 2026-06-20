@@ -14,10 +14,11 @@ members = [
     "crates/rustynes-mobile",
     "crates/rustynes-android",
     "crates/rustynes-gfx-shaders",
+    "crates/rustynes-hdpack",
 ]
 
 [workspace.package]
-version = "1.8.4"
+version = "1.8.5"
 edition = "2024"
 rust-version = "1.96"
 license = "MIT OR Apache-2.0"
@@ -42,6 +43,9 @@ rustynes-mobile = { path = "crates/rustynes-mobile", version = "1.8.3" }
 # v1.8.4 — shared WGSL presentation shaders for both the desktop frontend and the
 # Android wgpu renderer (single source of truth, no copy-paste drift).
 rustynes-gfx-shaders = { path = "crates/rustynes-gfx-shaders", version = "1.8.4" }
+# v1.8.5 — HD-pack loader + compositor + HD audio, extracted from the frontend so
+# the mobile bridge can reach it (the core is no_std, so it can't live there).
+rustynes-hdpack = { path = "crates/rustynes-hdpack", version = "1.8.5" }
 
 # v1.1.0 beta.3 (Workstream E) — Lua scripting. `vendored` compiles Lua 5.4
 # from source (no system Lua needed); native-only (the wasm/no_std builds never

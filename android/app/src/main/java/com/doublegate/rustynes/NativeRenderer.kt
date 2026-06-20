@@ -40,9 +40,13 @@ object NativeRenderer {
     /** Upload + present one 256×240 RGBA8 frame (`fb` = 245_760 bytes). */
     external fun nativeRender(handle: Long, fb: ByteArray)
 
-    /** Set the video filter (0 none / 1 scanlines / 2 CRT / 3 NTSC) and its four
-     *  shader params (filter-specific — see AndroidGfx). */
+    /** Set the video filter (0 none / 1 scanlines / 2 CRT / 3 NTSC / 4 Bisqwit) and
+     *  its four shader params (filter-specific — see AndroidGfx). */
     external fun nativeSetFilter(handle: Long, filter: Int, p0: Float, p1: Float, p2: Float, p3: Float)
+
+    /** Upload the palette-index frame (256*240*2 LE u16 bytes) + NTSC phase for the
+     *  Bisqwit pass. Only called while filter 4 is active. */
+    external fun nativeSetIndexFrame(handle: Long, idx: ByteArray, phase: Int)
 
     /** Drop the renderer (releases the wgpu surface before the ANativeWindow). */
     external fun nativeDestroy(handle: Long)

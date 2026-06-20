@@ -10,7 +10,7 @@
 
 [![Build Status](https://github.com/doublegate/RustyNES/workflows/CI/badge.svg)](https://github.com/doublegate/RustyNES/actions)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
-[![Version](https://img.shields.io/badge/version-v1.8.3-blue.svg)](https://github.com/doublegate/RustyNES/releases)
+[![Version](https://img.shields.io/badge/version-v1.8.5-blue.svg)](https://github.com/doublegate/RustyNES/releases)
 [![Rust: 1.96](https://img.shields.io/badge/rust-1.96-orange.svg)](rust-toolchain.toml)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web-lightgrey.svg)](#platform-support)
 [![AccuracyCoin](<https://img.shields.io/badge/AccuracyCoin-100%25%20(139%2F139)-brightgreen.svg>)](#compatibility-and-accuracy)
@@ -645,7 +645,7 @@ workspace API docs (rustdoc) at
 
 ## Version History
 
-The current release is **v1.8.3 "Android"**, continuing the first **platform** (not
+The current release is **v1.8.5 "Android"**, continuing the first **platform** (not
 accuracy) release line **v1.8.0 "Android"** — a complete Android app, verified
 end-to-end on a Samsung Galaxy Z Fold 7. It builds on the bugfix patch **v1.7.1** and
 the writable + programmable **v1.7.0 "Forge"** line, on the cycle-accurate v1.0.0
@@ -654,6 +654,8 @@ v1.8.0–v1.8.5 are GitHub-Releases / sideload, full-featured.) The road so far:
 
 | Version    | Highlights                                                                                  |
 | ---------- | ------------------------------------------------------------------------------------------- |
+| **v1.8.5** | "Android" — power-user features. **Custom `.pal` palettes** + **compressed `.zip` ROM loading** (extract the first NES entry, like desktop); **Bisqwit composite NTSC on the GPU** (the desktop WGSL shared via `rustynes-gfx-shaders`, an `R16Uint` palette-index pipeline fed by the bridge); **TAS `.rnm` movies** (record / play / save via SAF, determinism-exact); a **per-game settings DB** (each game reopens with its last video filter, keyed by ROM SHA); and **HD-packs on Android** — the HD-pack loader + compositor + HD audio were **extracted into a new shared `rustynes-hdpack` crate** (the core is `#![no_std]`) so the bridge can composite the upscaled picture (Bitmap path). All presentation / host-side; AccuracyCoin holds 100% (139/139). |
+| **v1.8.4** | "Android" — native wgpu renderer & shaders. The NES picture now draws through **wgpu on a `SurfaceView`** (Vulkan/GLES) instead of the Compose `Bitmap` blit, reusing the desktop WGSL: a shared **`rustynes-gfx-shaders`** crate serves the **CRT / scanline + LMP88959 NTSC** post-passes to both desktop and Android, with **per-filter tuning sliders** (intensity / count / mask / saturation / sharpness …) and a native-audio hot path (bytes, no boxing). Opt-in behind a "GPU renderer" setting (API 33+); the Bitmap path stays the fallback. |
 | **v1.8.3** | "Android" — controller, casting & polish. An **authentic NES-004 on-screen controller** (the real "NES Controller" font, reference-measured geometry, a D-pad with directional arrows, the **MENU pill**); **cast gameplay-only to a TV / external presentation display** (`Presentation` API, controller stays on the phone); **per-screen-mode** controller size + opacity (cover / inner / cast); a **25–110% size slider** with snap ticks + haptics; **Off / Low / Medium / High** haptics; **first-run onboarding** + an **About** dialog (tappable repo link); **Clear Recent**; a Material-3 **Settings sheet** (theme / video-filter / mute / haptics / per-mode controller) and a **save-state manager** (four explicit slots keyed by ROM SHA, with last-saved time + Save/Load/Delete); the control bar is decluttered to Open / States / Reset / Pause / Fast-forward / Settings / About / Cast. |
 | **v1.8.2** | "Android" — input & the virtual controller. A **multi-touch** on-screen **NES controller** (one Canvas draws the NES-001 pad styled per the RustyNES icon **and** collects all pressed pointers → simultaneous presses, D-pad diagonals, slide) that **resizes + remaps across the Z Fold 7 cover/inner displays**, with pressed-state lighting + light haptics; the real **RustyNES app icon** for the launcher; and a **`PLAY_BUILD`** flag so sideload/GitHub builds are full-featured (freemium engages only in the deferred Play AAB). |
 | **v1.8.1** | "Android" patch — the free-tier demo is trimmed from 10 minutes to **8 minutes** per launch (the paid Full Unlock is unaffected), and the debug "Full Unlock" override is confirmed **R8-stripped from the release AAB** (0 occurrences of the debug-toggle symbols in the shipped `classes*.dex`). |
@@ -793,7 +795,7 @@ If you use RustyNES in academic research, please cite:
   author  = {RustyNES Contributors},
   title   = {RustyNES: A Cycle-Accurate NES Emulator in Rust},
   year    = {2026},
-  version = {1.8.3},
+  version = {1.8.5},
   url     = {https://github.com/doublegate/RustyNES},
   note    = {Cycle-accurate NES emulator on a master-clock-precise scheduler;
              AccuracyCoin 100\% (139/139), nestest 0-diff; 168 mapper families,

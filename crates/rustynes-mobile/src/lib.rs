@@ -72,6 +72,24 @@ pub enum MobileError {
         /// The out-of-range port index the caller passed.
         port: u32,
     },
+    /// A custom palette blob was not a valid `.pal` (needs ≥ 192 bytes).
+    #[error("invalid palette: {reason}")]
+    Palette {
+        /// What was wrong with the palette bytes.
+        reason: String,
+    },
+    /// A `.rnm` movie failed to decode or seek.
+    #[error("movie error: {reason}")]
+    Movie {
+        /// Underlying movie error rendered as text.
+        reason: String,
+    },
+    /// An HD-pack `.zip` failed to load.
+    #[error("HD-pack error: {reason}")]
+    HdPack {
+        /// What was wrong with the HD-pack.
+        reason: String,
+    },
 }
 
 /// A single NES controller button, used by [`NesController::set_button`] for
@@ -153,6 +171,14 @@ struct Inner {
     nes: Nes,
     masks: [u8; 4],
     sample_rate: u32,
+    /// Active TAS recording (`.rnm`), if any — captured each frame before the tick.
+    recorder: Option<rustynes_core::MovieRecorder>,
+    /// Active TAS playback: the loaded movie + the next frame index. While set,
+    /// `run_frame` drives input from the movie instead of the host masks.
+    playback: Option<(rustynes_core::Movie, usize)>,
+    /// Active HD-pack compositor (v1.8.5), if a pack is loaded. `composite_hd_frame`
+    /// runs it over the current frame's snapshots.
+    hd_pack: Option<rustynes_hdpack::hdpack::HdCompositor>,
 }
 
 /// The handle the mobile shells drive the emulator through.
@@ -185,6 +211,7 @@ impl NesController {
     /// added in later increments).
     #[uniffi::constructor]
     pub fn new(rom: Vec<u8>, sample_rate: u32) -> Result<Arc<Self>, MobileError> {
+        let rom = decompress_rom(rom);
         let nes = Nes::from_rom_with_sample_rate(&rom, sample_rate).map_err(|e| {
             MobileError::RomLoad {
                 reason: e.to_string(),
@@ -195,6 +222,9 @@ impl NesController {
                 nes,
                 masks: [0; 4],
                 sample_rate,
+                recorder: None,
+                playback: None,
+                hd_pack: None,
             }),
         }))
     }
@@ -204,6 +234,7 @@ impl NesController {
     /// # Errors
     /// Returns [`MobileError::RomLoad`] if `rom` is not a valid cartridge image.
     pub fn load_rom(&self, rom: Vec<u8>, sample_rate: u32) -> Result<(), MobileError> {
+        let rom = decompress_rom(rom);
         let nes = Nes::from_rom_with_sample_rate(&rom, sample_rate).map_err(|e| {
             MobileError::RomLoad {
                 reason: e.to_string(),
@@ -213,6 +244,10 @@ impl NesController {
         g.nes = nes;
         g.masks = [0; 4];
         g.sample_rate = sample_rate;
+        // A new cartridge invalidates any in-flight movie + HD-pack.
+        g.recorder = None;
+        g.playback = None;
+        g.hd_pack = None;
         drop(g);
         Ok(())
     }
@@ -224,6 +259,7 @@ impl NesController {
     /// copying; this owned-`Vec` form is the typed-surface convenience.
     pub fn run_frame(&self) -> Vec<u8> {
         let mut g = self.lock();
+        pre_tick_movie(&mut g);
         g.nes.run_frame().to_vec()
     }
 
@@ -231,6 +267,7 @@ impl NesController {
     /// the framebuffer through the native surface path and only need the tick.
     pub fn step_frame(&self) {
         let mut g = self.lock();
+        pre_tick_movie(&mut g);
         let _ = g.nes.run_frame();
     }
 
@@ -365,6 +402,257 @@ impl NesController {
             chr_rom_len: g.nes.chr_rom_len() as u64,
             is_vs_system: g.nes.is_vs_system(),
         }
+    }
+
+    /// Load a custom 64-colour palette from `.pal` bytes (≥ 192 bytes, RGB triples;
+    /// extra colours — e.g. a 512-colour Mesen palette — are ignored). Presentation
+    /// only; the rendered output is byte-identical to the built-in palette once
+    /// [`Self::clear_palette`] restores it.
+    ///
+    /// # Errors
+    /// [`MobileError::Palette`] if fewer than 192 bytes were supplied.
+    pub fn load_palette(&self, bytes: Vec<u8>) -> Result<(), MobileError> {
+        if bytes.len() < 192 {
+            return Err(MobileError::Palette {
+                reason: format!("need >= 192 bytes, got {}", bytes.len()),
+            });
+        }
+        let mut pal = [[0u8; 3]; 64];
+        for (i, chunk) in bytes[..192].chunks_exact(3).enumerate() {
+            pal[i] = [chunk[0], chunk[1], chunk[2]];
+        }
+        self.lock().nes.set_custom_palette(Some(pal));
+        Ok(())
+    }
+
+    /// Clear the custom palette, restoring the built-in NES palette.
+    pub fn clear_palette(&self) {
+        self.lock().nes.set_custom_palette(None);
+    }
+
+    /// The per-pixel **palette-index** framebuffer (256×240 `u16`s as little-endian
+    /// bytes, 2 per pixel; each value is `(emphasis << 6) | colour`, 0..=511). Feeds
+    /// the GPU Bisqwit-NTSC composite, which needs the raw indices, not the RGBA.
+    pub fn index_framebuffer_bytes(&self) -> Vec<u8> {
+        // Copy the indices out under the lock (one statement), then build the bytes
+        // lock-free — keeps the guard's hold tight (clippy significant_drop).
+        let idx = self.lock().nes.index_framebuffer().to_vec();
+        let mut out = Vec::with_capacity(idx.len() * 2);
+        for v in idx {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        out
+    }
+
+    /// The current frame's NTSC colour phase (`0..=2` NTSC, `0..=1` PAL/Dendy) —
+    /// the Bisqwit composite's `videoPhase`.
+    pub fn ntsc_phase(&self) -> u8 {
+        self.lock().nes.ntsc_phase()
+    }
+
+    /// Start recording a TAS movie from a fresh power-on (the ROM is power-cycled so
+    /// the recording starts from the same state a replay reconstructs).
+    pub fn movie_record_from_power_on(&self) {
+        let mut g = self.lock();
+        g.nes.power_cycle();
+        g.playback = None;
+        g.recorder = Some(rustynes_core::MovieRecorder::power_on(&g.nes));
+    }
+
+    /// Start recording a TAS movie branching from the current state (embeds a
+    /// save-state as the start point).
+    pub fn movie_record_from_here(&self) {
+        let mut g = self.lock();
+        g.playback = None;
+        g.recorder = Some(rustynes_core::MovieRecorder::from_current_state(&g.nes));
+    }
+
+    /// Finish recording and return the serialized `.rnm` movie bytes (empty if not
+    /// recording). The caller writes them to storage.
+    pub fn movie_stop_recording(&self) -> Vec<u8> {
+        let rec = self.lock().recorder.take();
+        rec.map(|r| r.finish().serialize()).unwrap_or_default()
+    }
+
+    /// Load + play a `.rnm` movie: seek the emulator to its start point and drive
+    /// input from the recorded stream each frame until it ends. Stops any recording.
+    ///
+    /// # Errors
+    /// [`MobileError::Movie`] if the bytes are not a valid movie or the ROM differs.
+    pub fn movie_play(&self, bytes: Vec<u8>) -> Result<(), MobileError> {
+        let movie = rustynes_core::Movie::deserialize(&bytes).map_err(|e| MobileError::Movie {
+            reason: e.to_string(),
+        })?;
+        let mut g = self.lock();
+        movie
+            .seek_to_start(&mut g.nes)
+            .map_err(|e| MobileError::Movie {
+                reason: e.to_string(),
+            })?;
+        g.recorder = None;
+        g.playback = Some((movie, 0));
+        drop(g);
+        Ok(())
+    }
+
+    /// Stop any active movie recording or playback.
+    pub fn movie_stop(&self) {
+        let mut g = self.lock();
+        g.recorder = None;
+        g.playback = None;
+    }
+
+    /// Whether a TAS recording is in progress.
+    pub fn movie_is_recording(&self) -> bool {
+        self.lock().recorder.is_some()
+    }
+
+    /// Whether a TAS movie is playing back.
+    pub fn movie_is_playing(&self) -> bool {
+        self.lock().playback.is_some()
+    }
+
+    /// Load an HD-pack from `.zip` bytes (a SAF stream). Replaces any active pack.
+    ///
+    /// # Errors
+    /// [`MobileError::HdPack`] if the bytes are not a valid HD-pack archive.
+    pub fn load_hdpack_from_zip_bytes(&self, bytes: Vec<u8>) -> Result<(), MobileError> {
+        let pack =
+            rustynes_hdpack::hdpack::HdPack::load_from_zip_bytes(&bytes).ok_or_else(|| {
+                MobileError::HdPack {
+                    reason: "not a valid HD-pack zip (no usable hires.txt)".into(),
+                }
+            })?;
+        self.lock().hd_pack = Some(rustynes_hdpack::hdpack::HdCompositor::new(pack));
+        Ok(())
+    }
+
+    /// Unload the active HD-pack (revert to the stock framebuffer).
+    pub fn unload_hdpack(&self) {
+        self.lock().hd_pack = None;
+    }
+
+    /// `[width, height]` of the active HD-pack's upscaled output, or `[0, 0]` if no
+    /// pack is loaded.
+    pub fn hdpack_dimensions(&self) -> Vec<u32> {
+        self.lock().hd_pack.as_ref().map_or_else(
+            || vec![0, 0],
+            |c| {
+                let (w, h) = c.dimensions();
+                vec![w, h]
+            },
+        )
+    }
+
+    /// Composite the current frame through the active HD-pack and return the upscaled
+    /// RGBA8 bytes (`hdpack_dimensions` w*h*4), or empty if no pack is loaded. Call
+    /// after `run_frame`.
+    pub fn composite_hd_frame(&self) -> Vec<u8> {
+        let mut g = self.lock();
+        if g.hd_pack.is_none() {
+            return Vec::new();
+        }
+        // Snapshot the per-pixel tile source, the CHR (0x0000..0x2000), and the frame.
+        let hd_tiles = g.nes.hd_tile_source().to_vec();
+        let framebuffer = g.nes.framebuffer().to_vec();
+        let mut chr = vec![0u8; 0x2000];
+        for (addr, slot) in (0u16..0x2000).zip(chr.iter_mut()) {
+            *slot = g.nes.peek_ppu(addr);
+        }
+        // Snapshot the pack's watched memory (PPU bus or CPU bus per the tag bit).
+        let watched_addrs = g
+            .hd_pack
+            .as_ref()
+            .map_or_else(Vec::new, |c| c.watched_addresses().to_vec());
+        let mut watched = rustynes_hdpack::hdpack::WatchedMemory::new();
+        for tagged in watched_addrs {
+            let lo = (tagged & 0xFFFF) as u16;
+            let val = if tagged & rustynes_hdpack::hdpack::PPU_MEMORY_MARKER != 0 {
+                g.nes.ppu_bus_peek(lo)
+            } else {
+                g.nes.cpu_bus_peek(lo)
+            };
+            watched.set(tagged, val);
+        }
+        let Some(comp) = g.hd_pack.as_mut() else {
+            return Vec::new();
+        };
+        let out = comp
+            .composite(&framebuffer, &hd_tiles, &watched, |addr| {
+                chr.get((addr & 0x1FFF) as usize).copied().unwrap_or(0)
+            })
+            .to_vec();
+        drop(g);
+        out
+    }
+}
+
+/// If `bytes` is a ZIP archive (PK magic), extract the first NES-format entry
+/// (`.nes` / `.fds` / `.unf` / `.unif`); otherwise return `bytes` unchanged. Lets
+/// the host hand a still-compressed ROM straight through — the same convenience the
+/// desktop has — without unzipping on the Kotlin/Swift side. A malformed archive or
+/// a zip with no ROM entry falls back to the original bytes (the cartridge loader
+/// then reports a clean error).
+fn decompress_rom(bytes: Vec<u8>) -> Vec<u8> {
+    use std::io::Read;
+    // Bound both the declared size AND the actual read so a zip bomb (or a bogus huge
+    // entry) can't OOM the app — any real NES/FDS/UNIF image is well under 16 MiB.
+    const MAX_ROM_BYTES: u64 = 16 * 1024 * 1024;
+    if bytes.len() < 4 || &bytes[..4] != b"PK\x03\x04" {
+        return bytes;
+    }
+    // The archive borrows `bytes`, so do every read inside this closure and hand
+    // back an owned `Vec`; only then is it safe to fall back to moving `bytes`.
+    let extracted = (|| {
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).ok()?;
+        let idx = (0..archive.len()).find(|&i| {
+            archive.by_index(i).is_ok_and(|e| {
+                std::path::Path::new(e.name())
+                    .extension()
+                    .is_some_and(|ext| {
+                        ["nes", "fds", "unf", "unif"]
+                            .iter()
+                            .any(|k| ext.eq_ignore_ascii_case(k))
+                    })
+            })
+        })?;
+        let e = archive.by_index(idx).ok()?;
+        if e.size() > MAX_ROM_BYTES {
+            return None;
+        }
+        let mut out = Vec::new();
+        e.take(MAX_ROM_BYTES).read_to_end(&mut out).ok()?;
+        (!out.is_empty()).then_some(out)
+    })();
+    extracted.unwrap_or(bytes)
+}
+
+/// Apply movie playback (drive input from the loaded movie) and recording (capture
+/// the upcoming frame's input) around a tick. Called holding the lock, immediately
+/// before `Nes::run_frame`.
+fn pre_tick_movie(g: &mut Inner) {
+    // Playback: drive input from the next movie frame, then advance the index.
+    let pb = g.playback.as_mut().and_then(|(movie, idx)| {
+        let fi = movie.frames.get(*idx).copied();
+        if fi.is_some() {
+            *idx += 1;
+        }
+        fi
+    });
+    if let Some(fi) = pb {
+        g.nes.set_buttons(0, fi.p1);
+        g.nes.set_buttons(1, fi.p2);
+    }
+    // Stop playback once the movie is exhausted.
+    if g.playback
+        .as_ref()
+        .is_some_and(|(m, i)| *i >= m.frames.len())
+    {
+        g.playback = None;
+    }
+    // Recording: capture the inputs the upcoming frame will consume.
+    if let Some(rec) = g.recorder.as_mut() {
+        rec.capture(&g.nes);
     }
 }
 

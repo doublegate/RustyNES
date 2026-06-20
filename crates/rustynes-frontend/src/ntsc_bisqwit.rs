@@ -388,7 +388,10 @@ impl NtscBisqwitFilter {
     ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ntsc-bisqwit-shader"),
-            source: wgpu::ShaderSource::Wgsl(shader_src().into()),
+            // The shared, byte-identical WGSL (also used by the Android renderer).
+            // `shader_src()` remains the generator/source of truth; a drift test
+            // (below) asserts the two are equal.
+            source: wgpu::ShaderSource::Wgsl(rustynes_gfx_shaders::BISQWIT_WGSL.into()),
         });
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("ntsc-bisqwit-bgl"),
@@ -553,6 +556,15 @@ impl NtscBisqwitFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The shared `rustynes_gfx_shaders::BISQWIT_WGSL` const (used at runtime by
+    /// both the desktop filter and the Android renderer) must stay byte-identical to
+    /// this crate's generator. If the Bisqwit model here changes, regenerate the
+    /// committed `crates/rustynes-gfx-shaders/src/bisqwit.wgsl`.
+    #[test]
+    fn shared_bisqwit_wgsl_matches_generator() {
+        assert_eq!(shader_src(), rustynes_gfx_shaders::BISQWIT_WGSL);
+    }
 
     /// The generated WGSL must parse AND validate (the same naga front-end +
     /// validator wgpu runs at `create_shader_module`) — guards against baked-in

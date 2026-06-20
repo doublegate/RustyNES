@@ -47,6 +47,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -65,6 +66,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import uniffi.rustynes_mobile.NesController
@@ -288,11 +290,16 @@ private fun loadRom(
     uri: Uri?,
     name: String?,
     unlocked: Boolean,
+    settings: AppSettings,
 ): String {
     val ctrl = NesController(bytes, 48_000u)
     val sha = sha256Hex(bytes)
     emulator.controller = ctrl
     emulator.romSha = sha
+    // Apply this game's remembered video filter (per-game DB), if any.
+    GameConfig.filter(context, sha)?.let { f ->
+        settings.filter = VideoFilter.entries.getOrElse(f) { VideoFilter.None }
+    }
     // Auto-resume the on-background save-state is a paid feature; the demo always
     // cold-boots the ROM.
     if (unlocked) {
@@ -424,6 +431,12 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
     // Freemium is active only in the Play build; sideload/dev builds are unlimited.
     val unlocked = !BuildConfig.PLAY_BUILD || license.isUnlocked
     var frame by remember { mutableStateOf<ImageBitmap?>(null) }
+    // HD-pack (v1.8.5): `hdActive` switches the UI to the Bitmap path (the GPU
+    // SurfaceView is fixed 256x240; HD output is upscaled), `hd` holds its bitmap.
+    var hdActive by remember { mutableStateOf(false) }
+    val hd = remember { HdRender() }
+    // Off-main-thread scope for the one-shot SAF loads (HD-pack parse, config I/O).
+    val scope = rememberCoroutineScope()
     var status by remember { mutableStateOf("Open a .nes ROM to start") }
     var recents by remember { mutableStateOf(RomLibrary.recents(context)) }
     // Demo session clock: seconds remaining this launch (full unlock = no limit).
@@ -487,6 +500,18 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
         gpuSurface?.setFilter(settings.filter.ordinal, settings.filterParams(settings.filter))
     }
 
+    // Per-game DB (v1.8.5): remember the chosen filter for the loaded ROM (by SHA),
+    // so it reopens with that look. Fires on filter change; a no-op without a ROM.
+    LaunchedEffect(settings.filter) {
+        emulator.romSha?.takeIf { it.isNotEmpty() }?.let { sha ->
+            // The JSON read+write is small but still disk I/O — keep it off the main
+            // thread (this effect runs on the main dispatcher).
+            withContext(Dispatchers.IO) {
+                GameConfig.setFilter(context, sha, settings.filter.ordinal)
+            }
+        }
+    }
+
     // SAF document picker — no broad storage permission required. The picked
     // bytes are handed straight to the core (no path), a persistable read grant
     // is taken, and the ROM is recorded in the recents list (Workstream E).
@@ -497,9 +522,82 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
             runCatching {
                 val name = displayName(context, uri)
                 val bytes = context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
-                status = loadRom(context, emulator, bytes, uri, name, unlocked)
+                status = loadRom(context, emulator, bytes, uri, name, unlocked, settings)
                 recents = RomLibrary.recents(context)
             }.onFailure { status = "Failed to load ROM: ${it.message}" }
+        }
+    }
+
+    // SAF picker for a custom .pal palette (a 192-byte RGB table; extra colours,
+    // e.g. a 512-colour Mesen palette, are ignored). Applied live to the running
+    // core via the bridge; presentation-only, so determinism is untouched.
+    val palettePicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            runCatching {
+                val bytes = context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+                emulator.controller?.loadPalette(bytes)
+                status = "Palette loaded: ${displayName(context, uri)}"
+            }.onFailure { status = "Failed to load palette: ${it.message}" }
+        }
+    }
+
+    // SAF picker to play a .rnm TAS movie (reads the bytes, seeks to its start).
+    val moviePicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            runCatching {
+                val bytes = context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+                emulator.controller?.moviePlay(bytes)
+                status = "Playing movie: ${displayName(context, uri)}"
+            }.onFailure { status = "Failed to play movie: ${it.message}" }
+        }
+    }
+
+    // SAF document creator to save the just-recorded .rnm movie (finalizes + writes).
+    val movieSaver = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/octet-stream"),
+    ) { uri ->
+        if (uri != null) {
+            runCatching {
+                val bytes = emulator.controller?.movieStopRecording() ?: ByteArray(0)
+                context.contentResolver.openOutputStream(uri)!!.use { it.write(bytes) }
+                status = "Saved movie (${bytes.size} bytes)"
+            }.onFailure { status = "Failed to save movie: ${it.message}" }
+        }
+    }
+
+    // SAF picker for an HD-pack .zip (Mesen-style hires.txt + PNG tiles). Loads it,
+    // sizes the upscaled output bitmap, and switches the UI to the Bitmap path.
+    val hdpackPicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            // Read + parse + decode the pack off the main thread (it can be large);
+            // the bitmap/state updates land back on the main dispatcher.
+            scope.launch {
+                runCatching {
+                    val dims = withContext(Dispatchers.IO) {
+                        val bytes = context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+                        emulator.controller?.loadHdpackFromZipBytes(bytes)
+                        emulator.controller?.hdpackDimensions() ?: listOf(0u, 0u)
+                    }
+                    val w = dims[0].toInt()
+                    val h = dims[1].toInt()
+                    if (w > 0 && h > 0) {
+                        hd.w = w
+                        hd.h = h
+                        hd.bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                        hd.pixels = IntArray(w * h)
+                        hdActive = true
+                        status = "HD-pack loaded (${w}x$h)"
+                    } else {
+                        status = "HD-pack: no usable tiles"
+                    }
+                }.onFailure { status = "Failed to load HD-pack: ${it.message}" }
+            }
         }
     }
 
@@ -508,7 +606,7 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
         runCatching {
             val uri = Uri.parse(rom.uri)
             val bytes = context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
-            status = loadRom(context, emulator, bytes, uri, rom.name, unlocked)
+            status = loadRom(context, emulator, bytes, uri, rom.name, unlocked, settings)
             recents = RomLibrary.recents(context)
         }.onFailure { status = "Can't open ${rom.name}: ${it.message}" }
     }
@@ -542,7 +640,7 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
             val auto = java.io.File(context.getExternalFilesDir(null), "autoload.nes")
             if (auto.exists()) {
                 runCatching {
-                    status = loadRom(context, emulator, auto.readBytes(), null, "autoload", unlocked)
+                    status = loadRom(context, emulator, auto.readBytes(), null, "autoload", unlocked, settings)
                 }.onFailure { status = "Autoload failed: ${it.message}" }
             }
         }
@@ -565,13 +663,15 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
             val current = frame
             // GPU SurfaceView render path (opt-in, v1.8.4). Mounted continuously and
             // draws each submitted frame on the GPU (black until the first frame).
-            if (gpuSurface != null) {
+            // GPU path is bypassed while an HD-pack is active (its output is upscaled,
+            // but the GPU texture is fixed 256x240 — HD goes through the Bitmap path).
+            if (gpuSurface != null && !hdActive) {
                 androidx.compose.ui.viewinterop.AndroidView(
                     factory = { gpuSurface },
                     modifier = Modifier.fillMaxSize(),
                 )
             }
-            if (gpuSurface == null && current != null) {
+            if ((gpuSurface == null || hdActive) && current != null) {
                 Image(
                     bitmap = current,
                     contentDescription = "NES screen",
@@ -733,7 +833,33 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
 
     // Settings + save-state manager sheets (v1.8.3).
     if (showSettings) {
-        SettingsSheet(settings, screenMode, onDismiss = { showSettings = false })
+        SettingsSheet(
+            settings,
+            screenMode,
+            onLoadPalette = { palettePicker.launch(arrayOf("*/*")) },
+            onClearPalette = {
+                emulator.controller?.clearPalette()
+                status = "Palette reset to default"
+            },
+            onMovieRecord = {
+                emulator.controller?.movieRecordFromPowerOn()
+                status = "Recording movie from power-on"
+            },
+            onMoviePlay = { moviePicker.launch(arrayOf("*/*")) },
+            onMovieSave = { movieSaver.launch("movie.rnm") },
+            onMovieStop = {
+                emulator.controller?.movieStop()
+                status = "Movie stopped"
+            },
+            onLoadHdpack = { hdpackPicker.launch(arrayOf("*/*")) },
+            onUnloadHdpack = {
+                emulator.controller?.unloadHdpack()
+                hdActive = false
+                hd.bitmap = null
+                status = "HD-pack unloaded"
+            },
+            onDismiss = { showSettings = false },
+        )
     }
     if (showStates) {
         StatesSheet(
@@ -782,21 +908,48 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                 // off the main thread (the blocking audio write and the 61k-pixel
                 // RGBA->ARGB pack must never run on the UI thread). Only the cheap
                 // setPixels + asImageBitmap stay on the UI thread.
+                var usedHd = false
+                // Capture the HD bitmap once per iteration so an Unload on the UI
+                // thread can't null it mid-frame (the local keeps the object alive).
+                val hdBmp = if (hdActive) hd.bitmap else null
                 withContext(Dispatchers.Default) {
                     val fb = ctrl.runFrame()
-                    // Hand the raw RGBA frame to the GPU SurfaceView (opt-in path);
-                    // no-op when the GPU renderer is off.
-                    gpuSurface?.submitFrame(fb)
+                    if (hdBmp != null) {
+                        // HD-pack: composite the upscaled frame (Bitmap path only —
+                        // the GPU SurfaceView is fixed at 256x240).
+                        val comp = ctrl.compositeHdFrame()
+                        if (comp.size == hd.w * hd.h * 4) {
+                            packRgbaToArgb(comp, hd.pixels)
+                            usedHd = true
+                        } else {
+                            packRgbaToArgb(fb, pixels)
+                        }
+                    } else {
+                        // Bisqwit needs the palette-index frame + NTSC phase; submit it
+                        // BEFORE the frame so the render thread pairs them (it consumes
+                        // the frame first). Only fetched while that filter is active.
+                        if (gpuSurface != null && settings.filter == VideoFilter.Bisqwit) {
+                            gpuSurface.submitIndexFrame(ctrl.indexFramebufferBytes(), ctrl.ntscPhase().toInt())
+                        }
+                        // Hand the raw RGBA frame to the GPU SurfaceView (opt-in path);
+                        // no-op when the GPU renderer is off.
+                        gpuSurface?.submitFrame(fb)
+                        packRgbaToArgb(fb, pixels)
+                    }
                     // Hot path: drain audio as raw bytes (no per-sample Float boxing)
                     // and write straight to the PCM_FLOAT track.
                     val audioBytes = ctrl.drainAudioBytes()
                     // In fast-forward the audio is dropped (writing it would block
                     // the loop back to real time); otherwise play unless muted.
                     if (!turbo && !emulator.muted) audio.writeBytes(audioBytes)
-                    packRgbaToArgb(fb, pixels)
                 }
-                reuse.setPixels(pixels, 0, NES_WIDTH, 0, 0, NES_WIDTH, NES_HEIGHT)
-                frame = reuse.asImageBitmap()
+                if (usedHd && hdBmp != null) {
+                    hdBmp.setPixels(hd.pixels, 0, hd.w, 0, 0, hd.w, hd.h)
+                    frame = hdBmp.asImageBitmap()
+                } else {
+                    reuse.setPixels(pixels, 0, NES_WIDTH, 0, 0, NES_WIDTH, NES_HEIGHT)
+                    frame = reuse.asImageBitmap()
+                }
                 // Mirror the picture to the external display while casting (no-op
                 // otherwise). Same main-thread publish point as the Compose frame.
                 castManager.pushFrame(reuse)
@@ -814,6 +967,19 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
     DisposableEffect(Unit) {
         onDispose { emulator.controller = null }
     }
+}
+
+/**
+ * Render state for an active HD-pack (v1.8.5): the upscaled output bitmap + its
+ * scratch ARGB buffer and dimensions. Plain holder (not Compose state) read by the
+ * emulation loop; the `hdActive` flag that switches the UI to the Bitmap path is a
+ * separate Compose state.
+ */
+private class HdRender {
+    var bitmap: Bitmap? = null
+    var pixels: IntArray = IntArray(0)
+    var w = 0
+    var h = 0
 }
 
 /** Convert the core's RGBA8 framebuffer into packed ARGB_8888 pixels. */

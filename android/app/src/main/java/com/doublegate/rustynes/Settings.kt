@@ -152,13 +152,28 @@ class AppSettings(context: Context) {
         VideoFilter.Scanlines -> floatArrayOf(scanlineIntensity, 0f, scanlineRows, 0f)
         VideoFilter.Crt -> floatArrayOf(scanlineIntensity, apertureMask, scanlineRows, 0f)
         VideoFilter.Ntsc -> floatArrayOf(ntscSaturation, ntscSharpness, ntscTint, ntscPhase)
+        // Bisqwit: the picture knobs (contrast/sat/bright/hue) ride in `aux`; neutral
+        // (all 0) is byte-identical to the desktop default. videoPhase is per-frame.
+        VideoFilter.Bisqwit -> floatArrayOf(0f, 0f, 0f, 0f)
         VideoFilter.None -> floatArrayOf(0f, 0f, 0f, 0f)
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsSheet(settings: AppSettings, mode: ScreenMode, onDismiss: () -> Unit) {
+fun SettingsSheet(
+    settings: AppSettings,
+    mode: ScreenMode,
+    onLoadPalette: () -> Unit = {},
+    onClearPalette: () -> Unit = {},
+    onMovieRecord: () -> Unit = {},
+    onMoviePlay: () -> Unit = {},
+    onMovieSave: () -> Unit = {},
+    onMovieStop: () -> Unit = {},
+    onLoadHdpack: () -> Unit = {},
+    onUnloadHdpack: () -> Unit = {},
+    onDismiss: () -> Unit,
+) {
     val context = LocalContext.current
     val vibrator = remember { systemVibrator(context) }
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -223,8 +238,40 @@ fun SettingsSheet(settings: AppSettings, mode: ScreenMode, onDismiss: () -> Unit
                             ParamSlider("Tint", settings.ntscTint, -0.5f..0.5f) { settings.ntscTint = it }
                             ParamSlider("Phase", settings.ntscPhase, 0f..1f) { settings.ntscPhase = it }
                         }
+                        // Bisqwit runs at its neutral picture knobs (matching the
+                        // desktop default); no sliders for now.
+                        VideoFilter.Bisqwit -> {}
                     }
                 }
+            }
+
+            // Custom NES palette (v1.8.5) — load a .pal file (a 192-byte RGB table)
+            // applied live to the running core, or reset to the built-in palette.
+            Text("Custom palette")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onLoadPalette) { Text("Load .pal…") }
+                TextButton(onClick = onClearPalette) { Text("Reset") }
+            }
+
+            // TAS movie (v1.8.5) — record/play deterministic .rnm movies. Record
+            // power-cycles; Stop & save writes the .rnm; Play seeks to its start.
+            Text("TAS movie (.rnm)")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onMovieRecord) { Text("Record") }
+                TextButton(onClick = onMovieSave) { Text("Stop & save…") }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onMoviePlay) { Text("Play…") }
+                TextButton(onClick = onMovieStop) { Text("Stop") }
+            }
+
+            // HD-pack (v1.8.5) — load a Mesen-style .zip pack (hires.txt + PNG tiles).
+            // While active the picture upscales through the Bitmap path (the GPU
+            // renderer is bypassed, since its texture is fixed at 256x240).
+            Text("HD-pack")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onLoadHdpack) { Text("Load .zip…") }
+                TextButton(onClick = onUnloadHdpack) { Text("Unload") }
             }
 
             ToggleRow("Mute audio", settings.muted) { settings.muted = it }

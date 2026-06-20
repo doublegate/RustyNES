@@ -1,24 +1,26 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v1.8.3 "Android"** (2026-06-20) — the controller / casting /
-> polish increment on the first **platform** (not accuracy) release line **v1.8.0
+> **Current release: v1.8.5 "Android"** (2026-06-20) — the power-user-features
+> increment on the first **platform** (not accuracy) release line **v1.8.0
 > "Android"**: a complete Android app (shared `rustynes-mobile` UniFFI bridge +
 > `rustynes-android` platform crate + a Jetpack Compose shell; audio /
 > touch+gamepad input / save-states+SRAM+recent-ROMs / pause-FF-mute /
-> foldable+immersive UI / AGSL CRT+scanline filters; a freemium $2.99 Play unlock +
-> an 8-minute demo, **held to the v1.8.6 Play launch** — interim builds are
-> full-featured via `PLAY_BUILD=false`), verified on a Galaxy Z Fold 7. **v1.8.3**
-> redraws the on-screen pad as an **authentic NES-004 controller** (real "NES
-> Controller" font, measured geometry, directional-arrow D-pad, MENU pill), adds
-> **cast-gameplay-only to a TV** (`Presentation` API), **per-screen-mode**
-> (cover/inner/cast) controller size+opacity, a 25–110% size slider, Off/Low/Medium/
-> High haptics, **first-run onboarding** + an **About** dialog (tappable repo link),
-> **Clear Recent**, a Material-3 **Settings sheet** (theme / filter / mute / haptics
-> / per-mode controller) + a **save-state manager** (4 slots), on top of v1.8.2's
-> multi-touch on-screen NES controller + the real app icon. The
-> pure-Rust core is **byte-identical on ARM** (additive host only), so
-> **AccuracyCoin holds 100% (139/139)** and every desktop gate is unchanged. The
-> full wgpu-`SurfaceView` native renderer is the documented next increment. Built on
+> foldable+immersive UI; a freemium $2.99 Play unlock + an 8-minute demo, **held to
+> the v1.8.6 Play launch** — interim builds are full-featured via `PLAY_BUILD=false`),
+> verified on a Galaxy Z Fold 7 (SMB / Zelda / AccuracyCoin). **v1.8.5** adds custom
+> **`.pal` palettes**, compressed **`.zip` ROM loading** (extract the first NES entry,
+> like desktop), **Bisqwit composite NTSC on the GPU** (desktop WGSL shared via
+> `rustynes-gfx-shaders`, an `R16Uint` palette-index pipeline fed by the bridge),
+> **TAS `.rnm` movies** (record / play / save via SAF), a **per-game settings DB**
+> (each game reopens with its last video filter, keyed by ROM SHA), and **HD-packs** —
+> the HD-pack loader + compositor + HD audio **extracted into a new shared
+> `rustynes-hdpack` crate** (the core is `#![no_std]`) so the bridge composites the
+> upscaled picture (Bitmap path). **v1.8.4** brought the native **wgpu `SurfaceView`
+> renderer** reusing the desktop CRT / scanline / LMP88959-NTSC shaders (shared via
+> `rustynes-gfx-shaders`) with per-filter tuning sliders, on top of v1.8.3's authentic
+> NES-004 controller + casting + polish and v1.8.2's multi-touch pad. The pure-Rust
+> core is **byte-identical on ARM** (additive host only), so **AccuracyCoin holds
+> 100% (139/139)** and every desktop gate is unchanged. Built on
 > the patches **v1.8.1** / **v1.7.1** on **v1.7.0 "Forge"** (framed below). v1.7.1's seven fixes: #1 ROM-close GPU abort
 > (skip the `write_texture` upload on a pixel-slice length mismatch; `close_rom`
 > presents a clean blank frame) · #6 clean pause/unpause (pacing-timer
