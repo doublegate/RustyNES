@@ -126,6 +126,14 @@ class AppSettings(context: Context) {
         get() = _autofireAB.value
         set(v) { _autofireAB.value = v; prefs.edit().putBoolean("gpAutofireAB", v).apply() }
 
+    /** Controller-aware UI (v1.8.7, #41): when a hardware pad is connected, hide the
+     *  on-screen virtual controller and maximize the game view; disconnect restores
+     *  it. Default on; the user can keep the touch controller visible regardless. */
+    private val _autoHideControllerOnPad = mutableStateOf(prefs.getBoolean("gpAutoHide", true))
+    var autoHideControllerOnPad: Boolean
+        get() = _autoHideControllerOnPad.value
+        set(v) { _autoHideControllerOnPad.value = v; prefs.edit().putBoolean("gpAutoHide", v).apply() }
+
     /** Direct-IP / LAN netplay (v1.8.6): the last "ip:port" the user joined, so the
      *  Join field prefills it. Host-only state (the bound port + LAN IP) is derived
      *  live and not persisted. */
@@ -488,6 +496,13 @@ fun SettingsSheet(
                     )
                 }
             }
+
+            // Controller-aware UI (v1.8.7, #41): hide the on-screen pad + maximize the
+            // game view while a hardware controller is connected (restored on unplug).
+            ToggleRow(
+                "Hide on-screen pad with a controller",
+                settings.autoHideControllerOnPad,
+            ) { settings.autoHideControllerOnPad = it }
 
             // Per-screen-mode controller size + opacity (item 5). The active mode
             // is shown so it's clear which screen these apply to.

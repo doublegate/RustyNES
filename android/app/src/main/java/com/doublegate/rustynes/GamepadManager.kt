@@ -5,6 +5,9 @@ import android.hardware.input.InputManager
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONObject
 
 /**
@@ -57,6 +60,53 @@ class GamepadManager(
     /** Global A/B autofire toggle (applies to whichever inputs map to plain A/B). */
     @Volatile
     var autofireAB: Boolean = false
+
+    // ---- controller-aware UI (v1.8.7, #41) --------------------------------
+
+    /** True while >= 1 hardware pad is assigned to a NES port. Drives the
+     *  auto-hide of the on-screen controller + the maximized game view. Backed by
+     *  [deviceToPort]; updated alongside [notifyChanged] on every add/remove/reassign.
+     *  Seeded by [register]'s enumeration, so a pad connected at launch is covered. */
+    private val _hardwareControllerActive = MutableStateFlow(false)
+    val hardwareControllerActive: StateFlow<Boolean> = _hardwareControllerActive.asStateFlow()
+
+    private fun refreshControllerActive() {
+        _hardwareControllerActive.value = deviceToPort.isNotEmpty()
+    }
+
+    /** Per-port Start+Select chord latch: true once both bits were seen held, reset
+     *  when either releases, so the menu opens once per chord (not every frame). */
+    private val chordLatched = BooleanArray(4)
+
+    /** Invoked (on the input-dispatch thread) when the player asks for the system
+     *  menu via the Guide button or the Start+Select chord. The frontend marshals to
+     *  the UI thread. Opening the menu must also set [menuOpen] = true so subsequent
+     *  pad input drives menu navigation instead of the emulator. */
+    @Volatile
+    var onSystemMenu: (() -> Unit)? = null
+
+    /** True while the (touch-pill / Guide / chord) menu surface is open. While set,
+     *  [onKey]/[onMotion] translate the pad to menu navigation + consume the input so
+     *  the emulator never sees it. The frontend keeps this in sync with the menu's
+     *  visibility (the pill's touch toggle also updates it). */
+    @Volatile
+    var menuOpen: Boolean = false
+
+    /** Menu-navigation callbacks, invoked on the input-dispatch thread while
+     *  [menuOpen]; the frontend marshals to the UI thread (move focus / activate /
+     *  dismiss). [onMenuNav] gets a [MenuDir]. */
+    @Volatile
+    var onMenuNav: ((MenuDir) -> Unit)? = null
+
+    @Volatile
+    var onMenuSelect: (() -> Unit)? = null
+
+    @Volatile
+    var onMenuDismiss: (() -> Unit)? = null
+
+    /** Edge-tracking for menu d-pad nav so a held direction fires once per press
+     *  (HAT/stick MotionEvents repeat). Keyed off the last-seen direction set. */
+    private var menuNavHeld = 0
 
     private var inputManager: InputManager? = null
     private var listener: InputManager.InputDeviceListener? = null
@@ -117,6 +167,7 @@ class GamepadManager(
         listener = l
         // Seed with whatever is already plugged in.
         for (id in im.inputDeviceIds) addDevice(id)
+        refreshControllerActive()
         notifyChanged()
     }
 
@@ -146,6 +197,7 @@ class GamepadManager(
             val port = firstFreePort() ?: return // all four ports taken; ignore extra pads
             deviceToPort[deviceId] = port
             updateFourScore()
+            refreshControllerActive()
         }
     }
 
@@ -155,8 +207,10 @@ class GamepadManager(
         // Clear that port's contribution so a yanked pad doesn't leave buttons held.
         baseMask[port] = 0
         turboBits[port] = 0
+        chordLatched[port] = false
         emulator.setGamepadMask(port, 0)
         updateFourScore()
+        refreshControllerActive()
     }
 
     private fun firstFreePort(): Int? {
@@ -181,6 +235,7 @@ class GamepadManager(
             emulator.setGamepadMask(p, 0)
         }
         updateFourScore()
+        refreshControllerActive()
         notifyChanged()
     }
 
@@ -207,12 +262,71 @@ class GamepadManager(
         if (captureDescriptor != null && event.action == KeyEvent.ACTION_DOWN) {
             if (tryCapture(deviceId, event.keyCode)) return true
         }
+        val down = event.action == KeyEvent.ACTION_DOWN
+
+        // Guide / Home button (A): a best-effort menu opener. Many pads' Guide button
+        // is swallowed by the OS (Xbox-BT, DualSense often emit nothing here), so this
+        // is the convenience path — the Start+Select chord below is the guaranteed one.
+        // NEVER consume KEYCODE_HOME / KEYCODE_BACK (system navigation); only the pad's
+        // dedicated MODE/Guide keycode, and only the initial (non-repeat) press.
+        if (down && event.repeatCount == 0 && isFromGamepad(event) &&
+            event.keyCode in GUIDE_KEYCODES
+        ) {
+            onSystemMenu?.invoke()
+            return true
+        }
+
+        // While the menu is open, the pad drives menu navigation, not the emulator —
+        // translate d-pad/A/B and CONSUME so the core never sees these inputs.
+        if (menuOpen && isFromGamepad(event)) {
+            if (down && event.repeatCount == 0) {
+                when (event.keyCode) {
+                    KeyEvent.KEYCODE_DPAD_UP -> onMenuNav?.invoke(MenuDir.UP)
+                    KeyEvent.KEYCODE_DPAD_DOWN -> onMenuNav?.invoke(MenuDir.DOWN)
+                    KeyEvent.KEYCODE_DPAD_LEFT -> onMenuNav?.invoke(MenuDir.LEFT)
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> onMenuNav?.invoke(MenuDir.RIGHT)
+                    KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_DPAD_CENTER ->
+                        onMenuSelect?.invoke()
+                    KeyEvent.KEYCODE_BUTTON_B -> onMenuDismiss?.invoke()
+                    else -> {}
+                }
+            }
+            // Swallow every pad key (incl. up events + the chord) while navigating.
+            return true
+        }
+
         val port = deviceToPort[deviceId] ?: return false
         val descriptor = deviceDescriptors[deviceId]
         val profile = descriptor?.let { remaps[it] } ?: ControllerProfile.default()
         val action = profile.actionForKey(event.keyCode) ?: return false
-        applyAction(port, action, event.action == KeyEvent.ACTION_DOWN)
+        applyAction(port, action, down)
+        // Start+Select chord (B): the guaranteed menu opener. Edge-detect both NES
+        // bits held on this port and fire once (per-port latch reset when either
+        // releases). Checked after applyAction so baseMask reflects this event.
+        checkMenuChord(port)
         return true
+    }
+
+    /** Fire [onSystemMenu] once when both START and SELECT are held on [port]. */
+    private fun checkMenuChord(port: Int) {
+        val both = NesBit.START or NesBit.SELECT
+        val held = (baseMask[port] and both) == both
+        if (held && !chordLatched[port]) {
+            chordLatched[port] = true
+            onSystemMenu?.invoke()
+        } else if (!held) {
+            chordLatched[port] = false
+        }
+    }
+
+    /** Source check mirroring [onMotion]: true if the event came from a gamepad /
+     *  joystick / d-pad device (so a soft-keyboard key never trips Guide/menu logic). */
+    private fun isFromGamepad(event: KeyEvent): Boolean {
+        val s = event.source
+        return (s and InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD ||
+            (s and InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK ||
+            (s and InputDevice.SOURCE_DPAD) == InputDevice.SOURCE_DPAD ||
+            deviceToPort.containsKey(event.deviceId)
     }
 
     /**
@@ -235,6 +349,13 @@ class GamepadManager(
             if (lt > 0.7f && tryCapture(event.deviceId, ControllerProfile.AXIS_LTRIGGER)) return true
             if (rt > 0.7f && tryCapture(event.deviceId, ControllerProfile.AXIS_RTRIGGER)) return true
         }
+        // While the menu is open, the d-pad-as-HAT / left stick drives menu
+        // navigation (edge-detected) instead of the emulator — and we CONSUME the
+        // motion so no port mask changes.
+        if (menuOpen) {
+            navigateMenuFromMotion(event)
+            return true
+        }
         val port = deviceToPort[event.deviceId] ?: return false
         val dev = event.device
         val descriptor = deviceDescriptors[event.deviceId]
@@ -244,6 +365,28 @@ class GamepadManager(
         for (i in 0 until hist) decodeMotion(port, event, dev, profile, i)
         decodeMotion(port, event, dev, profile, -1)
         return true
+    }
+
+    /** Translate the d-pad-as-HAT / left-stick into a single edge-triggered
+     *  [onMenuNav] per fresh direction (so a held stick doesn't repeat-fire). */
+    private fun navigateMenuFromMotion(event: MotionEvent) {
+        val dev = event.device
+        val hatX = event.getAxisValue(MotionEvent.AXIS_HAT_X)
+        val hatY = event.getAxisValue(MotionEvent.AXIS_HAT_Y)
+        val lx = centeredAxis(event.getAxisValue(MotionEvent.AXIS_X), dev, MotionEvent.AXIS_X, event.source)
+        val ly = centeredAxis(event.getAxisValue(MotionEvent.AXIS_Y), dev, MotionEvent.AXIS_Y, event.source)
+        var dirs = 0
+        if (hatX < -0.5f || lx < -STICK_THRESHOLD) dirs = dirs or NesBit.LEFT
+        if (hatX > 0.5f || lx > STICK_THRESHOLD) dirs = dirs or NesBit.RIGHT
+        if (hatY < -0.5f || ly < -STICK_THRESHOLD) dirs = dirs or NesBit.UP
+        if (hatY > 0.5f || ly > STICK_THRESHOLD) dirs = dirs or NesBit.DOWN
+        // Fire only on newly-pressed directions (rising edge vs. the last sample).
+        val fresh = dirs and menuNavHeld.inv()
+        if (fresh and NesBit.UP != 0) onMenuNav?.invoke(MenuDir.UP)
+        if (fresh and NesBit.DOWN != 0) onMenuNav?.invoke(MenuDir.DOWN)
+        if (fresh and NesBit.LEFT != 0) onMenuNav?.invoke(MenuDir.LEFT)
+        if (fresh and NesBit.RIGHT != 0) onMenuNav?.invoke(MenuDir.RIGHT)
+        menuNavHeld = dirs
     }
 
     private fun decodeMotion(
@@ -419,8 +562,18 @@ class GamepadManager(
 
         /** Turbo pulse: toggle every 2 frames ≈ 15 Hz (on for 2, off for 2). */
         private const val TURBO_PERIOD_FRAMES = 2
+
+        /** Keycodes that open the system menu (the Guide / Home / "Mode" button). Kept
+         *  tiny + dedicated: NEVER include KEYCODE_HOME/KEYCODE_BACK (those are system
+         *  navigation). The Guide button is unreliable across pads — Xbox-BT and
+         *  DualSense frequently swallow it at the OS layer, so the Start+Select chord
+         *  is the guaranteed path; this is a best-effort convenience on top. */
+        private val GUIDE_KEYCODES = setOf(KeyEvent.KEYCODE_BUTTON_MODE)
     }
 }
+
+/** A menu-navigation direction (the d-pad while the system menu is open). */
+enum class MenuDir { UP, DOWN, LEFT, RIGHT }
 
 /** What a mapped input does on the NES pad. */
 enum class ActionKind { BUTTON }

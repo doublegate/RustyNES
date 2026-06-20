@@ -53,7 +53,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.FilterQuality
@@ -62,6 +66,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
@@ -563,6 +569,90 @@ private fun EmulatorScreen(
     var showOnboarding by remember { mutableStateOf(!settings.onboardingSuppressed) }
     var screenSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
 
+    // Controller-aware UI (v1.8.7, #41). True while >= 1 hardware pad is assigned;
+    // collected from the manager's StateFlow (seeded by its launch enumeration, so a
+    // pad connected at start-up is covered, and disconnect flips it back declaratively).
+    val controllerActive by gamepad.hardwareControllerActive.collectAsStateWithLifecycle()
+    // When a pad is active AND the user left auto-hide on, the on-screen pad collapses
+    // and the game view takes the freed space. Reverts automatically on unplug.
+    val controlsHidden = controllerActive && settings.autoHideControllerOnPad
+    // The control bar / menu surface, shared by the touch "MENU pill" and the
+    // pad's Guide button / Start+Select chord. `menuOpen` mirrors into the manager so
+    // it knows to route the pad to menu navigation (and consume those inputs).
+    var controlsVisible by remember { mutableStateOf(false) }
+    val focusManager = LocalFocusManager.current
+    // First-item focus anchor so opening via pad lands focus on the menu (so the
+    // d-pad immediately moves between entries, A activates, B dismisses).
+    val menuFocusRequester = remember { FocusRequester() }
+    // Set when the menu is opened by the pad (Guide/chord) so a LaunchedEffect grabs
+    // focus once it's composed; cleared on close. Touch-opened menus don't grab focus.
+    var menuWantsFocus by remember { mutableStateOf(false) }
+
+    // Keep the manager's menuOpen flag in lockstep with the control bar's visibility,
+    // so pad input is routed to navigation exactly while the menu is on screen.
+    LaunchedEffect(controlsVisible) { gamepad.menuOpen = controlsVisible }
+
+    // Wire the pad's system-menu + navigation callbacks. They fire on the input
+    // dispatch thread; marshal to the UI thread before touching Compose state/focus.
+    DisposableEffect(gamepad) {
+        gamepad.onSystemMenu = {
+            activity?.runOnUiThread {
+                controlsVisible = true
+                menuWantsFocus = true
+            }
+        }
+        gamepad.onMenuNav = { dir ->
+            activity?.runOnUiThread {
+                focusManager.moveFocus(
+                    when (dir) {
+                        MenuDir.UP -> FocusDirection.Up
+                        MenuDir.DOWN -> FocusDirection.Down
+                        MenuDir.LEFT -> FocusDirection.Left
+                        MenuDir.RIGHT -> FocusDirection.Right
+                    },
+                )
+            }
+        }
+        // A activates the focused entry by dispatching a synthetic Enter key (the
+        // Material Button's default key-activation), so no per-button plumbing is
+        // needed. The Activity is the focus owner's window for KeyEvent dispatch.
+        gamepad.onMenuSelect = {
+            activity?.runOnUiThread {
+                val v = activity.window?.decorView?.findFocus()
+                if (v != null) {
+                    val now = android.os.SystemClock.uptimeMillis()
+                    v.dispatchKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER, 0))
+                    v.dispatchKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_CENTER, 0))
+                }
+            }
+        }
+        gamepad.onMenuDismiss = {
+            activity?.runOnUiThread {
+                menuWantsFocus = false
+                controlsVisible = false
+                focusManager.clearFocus()
+            }
+        }
+        onDispose {
+            gamepad.onSystemMenu = null
+            gamepad.onMenuNav = null
+            gamepad.onMenuSelect = null
+            gamepad.onMenuDismiss = null
+            gamepad.menuOpen = false
+        }
+    }
+
+    // When the menu is opened by the pad, grab focus onto its first entry once the bar
+    // is composed (a frame after controlsVisible flips), so the d-pad drives it.
+    LaunchedEffect(controlsVisible, menuWantsFocus) {
+        if (controlsVisible && menuWantsFocus) {
+            // Yield a frame so the control-bar Row (and its FocusRequester) exist.
+            delay(50)
+            runCatching { menuFocusRequester.requestFocus() }
+            menuWantsFocus = false
+        }
+    }
+
     // Casting (item 1): track external presentation displays and present the
     // gameplay there while the phone keeps the controller.
     val castManager = remember { CastManager(context) }
@@ -997,11 +1087,24 @@ private fun EmulatorScreen(
                 )
             }
             if ((gpuSurface == null || hdActive || npActive) && current != null) {
+                // Crisp 8:7 PAR on the Bitmap path: the source bitmap is 256x240
+                // (1:1), so constrain the Image to the NES 8:7 display aspect and
+                // centre it — height-bounded + letterboxed on a wide (unfolded) inner
+                // screen, not stretched. The GPU SurfaceView path already applies this
+                // PAR letterbox internally (gfx.rs), so it is NOT wrapped here (no
+                // double-apply). HD-pack frames carry their own aspect (the upscaled
+                // bitmap), so they keep fillMaxSize + ContentScale.Fit instead.
+                val nesAspect = if (hdActive) {
+                    Modifier.fillMaxSize()
+                } else {
+                    Modifier
+                        .aspectRatio(8f / 7f, matchHeightConstraintsFirst = true)
+                        .align(Alignment.Center)
+                }
                 Image(
                     bitmap = current,
                     contentDescription = "NES screen",
-                    modifier = Modifier
-                        .fillMaxSize()
+                    modifier = nesAspect
                         .onSizeChanged { screenSize = it }
                         .then(
                             if (videoFiltersSupported && settings.filter != VideoFilter.None && screenSize.width > 0) {
@@ -1145,7 +1248,8 @@ private fun EmulatorScreen(
         // narrow cover screen.
         var paused by remember { mutableStateOf(false) }
         var turbo by remember { mutableStateOf(false) }
-        var controlsVisible by remember { mutableStateOf(false) }
+        // `controlsVisible` is hoisted to EmulatorScreen scope (v1.8.7, #41) so the
+        // pad's Guide/chord can open the same menu the touch "MENU pill" toggles.
         // Close the current ROM: persist RA progress, unload, and return to the idle
         // screen (Open button + recent-ROMs list). Mirrors the desktop close_rom.
         fun closeRom() {
@@ -1164,18 +1268,29 @@ private fun EmulatorScreen(
         }
         if (controlsVisible) {
             Row(
+            // focusGroup so the d-pad can move between entries when the menu is
+            // opened via the pad's Guide button / Start+Select chord (v1.8.7, #41).
+            // The Buttons are focusable by default; the first carries a FocusRequester
+            // that a LaunchedEffect requests so focus lands here on a pad-open.
             modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState())
+                .focusGroup()
                 .padding(horizontal = 8.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             // Open a ROM, or Close the running one (toggles on whether one is loaded).
             if (romLoaded) {
-                Button(onClick = { closeRom() }) { Text("Close") }
+                Button(
+                    onClick = { closeRom() },
+                    modifier = Modifier.focusRequester(menuFocusRequester),
+                ) { Text("Close") }
             } else {
-                Button(onClick = { picker.launch(arrayOf("*/*")) }) { Text("Open") }
+                Button(
+                    onClick = { picker.launch(arrayOf("*/*")) },
+                    modifier = Modifier.focusRequester(menuFocusRequester),
+                ) { Text("Open") }
             }
             // Save-states are a paid feature; the demo hides the manager.
             if (unlocked) {
@@ -1259,22 +1374,31 @@ private fun EmulatorScreen(
         // from the measured size). The host Box reserves the LARGEST (110%)
         // controller height, so changing the size never reflows/shifts the
         // gameplay view above it (item 7).
-        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-            val mw = maxWidth // capture: not visible inside the inner BoxScope
-            val reserved = mw * 1.1f * 53f / 123f
-            Box(
-                modifier = Modifier.fillMaxWidth().height(reserved),
-                contentAlignment = Alignment.Center,
-            ) {
-                VirtualController(
-                    emulator,
-                    settings.hapticLevel,
-                    { controlsVisible = !controlsVisible },
-                    Modifier
-                        .width(mw * settings.controllerScale(screenMode))
-                        .aspectRatio(123f / 53f)
-                        .alpha(settings.controllerOpacity(screenMode)),
-                )
+        //
+        // Controller-aware UI (v1.8.7, #41): when a hardware pad is connected (and
+        // auto-hide is on) the whole reserved block collapses, so its height frees up
+        // and the gameplay Box above (which has weight(1f)) grows to fill it — the
+        // game maximizes, especially on the unfolded inner screen. The pad's
+        // Guide/chord still reaches the menu, and the touch "MENU pill" path is
+        // unaffected when the controller is shown. Disconnect restores it declaratively.
+        if (!controlsHidden) {
+            BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                val mw = maxWidth // capture: not visible inside the inner BoxScope
+                val reserved = mw * 1.1f * 53f / 123f
+                Box(
+                    modifier = Modifier.fillMaxWidth().height(reserved),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    VirtualController(
+                        emulator,
+                        settings.hapticLevel,
+                        { controlsVisible = !controlsVisible },
+                        Modifier
+                            .width(mw * settings.controllerScale(screenMode))
+                            .aspectRatio(123f / 53f)
+                            .alpha(settings.controllerOpacity(screenMode)),
+                    )
+                }
             }
         }
     }
