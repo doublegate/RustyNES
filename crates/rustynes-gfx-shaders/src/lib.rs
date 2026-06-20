@@ -244,3 +244,15 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     return vec4<f32>(clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
 }
 ";
+
+/// The Bisqwit composite NES NTSC post-pass (a faithful port of Bisqwit's
+/// `nes_ntsc` signal model).
+///
+/// Unlike CRT/LMP it samples the **palette-index** framebuffer as an `R16Uint`
+/// texture (`@group(0) @binding(0) idx_tex`), not the RGBA, plus the per-frame NTSC
+/// phase + picture knobs in a 64-byte uniform
+/// (`rect`/`crop`/`params[videoPhase]`/`knobs[contrast,sat,bright,hue]`). All the
+/// static tables are baked in. Generated verbatim from the desktop's
+/// `ntsc_bisqwit::shader_src()`; a drift test in `rustynes-frontend` asserts the two
+/// stay identical, so editing the model there regenerates this file.
+pub const BISQWIT_WGSL: &str = include_str!("bisqwit.wgsl");
