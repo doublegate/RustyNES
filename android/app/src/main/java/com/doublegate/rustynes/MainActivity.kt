@@ -25,7 +25,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,7 +33,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -63,7 +62,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
-import uniffi.rustynes_mobile.NesButton
 import uniffi.rustynes_mobile.NesController
 
 /**
@@ -93,7 +91,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         license = LicenseManager(applicationContext)
-        license.connect()
+        // Only connect to Play Billing in the Play build; off-Play it can't transact.
+        if (BuildConfig.PLAY_BUILD) license.connect()
         registerThermalBackoff()
         enableEdgeToEdge()
         hideSystemBars()
@@ -110,7 +109,7 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         // Re-verify entitlement against Play on each foreground (a purchase made
         // elsewhere, a refund, or a restore reflects here).
-        if (::license.isInitialized) license.refreshEntitlement()
+        if (BuildConfig.PLAY_BUILD && ::license.isInitialized) license.refreshEntitlement()
     }
 
     // Cancel fast-forward when the device starts thermally throttling — the NES
@@ -160,9 +159,9 @@ class MainActivity : ComponentActivity() {
     // consistent; it is a quick in-memory encode, fine to do on the main thread.
     override fun onPause() {
         super.onPause()
-        // Save-on-background is a paid feature: the demo never persists state
-        // (no resume, no battery-backed SRAM survives a close).
-        if (!::license.isInitialized || !license.isUnlocked) return
+        // Save-on-background is a paid feature in the Play build; sideload builds
+        // (PLAY_BUILD=false) always persist. The demo never persists state.
+        if (BuildConfig.PLAY_BUILD && (!::license.isInitialized || !license.isUnlocked)) return
         val ctrl = emulator.controller
         val sha = emulator.romSha
         if (ctrl != null && sha != null) {
@@ -202,24 +201,63 @@ class EmulatorHandle {
     @Volatile
     var muted: Boolean = false
 
+    // P1 input is the OR of two sources that must not clobber each other: the
+    // on-screen virtual controller (multi-touch) and any hardware gamepad/keyboard.
+    // Each updates its own mask; applyP1() combines them into the bridge's single
+    // late-latched P1 mask.
+    @Volatile
+    private var touchMask: Int = 0
+
+    @Volatile
+    private var keyMask: Int = 0
+
+    /** Set the on-screen virtual-controller mask (the full set of pressed buttons). */
+    fun setTouchMask(mask: Int) {
+        // Touch + key updates can race (different threads); synchronize the
+        // read-modify-combine so neither source clobbers the other's mask.
+        synchronized(this) {
+            touchMask = mask
+            applyP1()
+        }
+    }
+
     /** Returns true if the key was consumed (a mapped NES button). */
     fun onKey(keyCode: Int, pressed: Boolean): Boolean {
-        val button = keyToButton(keyCode) ?: return false
-        controller?.setButton(0u, button, pressed)
+        val bit = keyToBit(keyCode) ?: return false
+        synchronized(this) {
+            keyMask = if (pressed) keyMask or bit else keyMask and bit.inv()
+            applyP1()
+        }
         return true
     }
 
-    private fun keyToButton(keyCode: Int): NesButton? = when (keyCode) {
-        KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_DPAD_CENTER -> NesButton.A
-        KeyEvent.KEYCODE_BUTTON_B -> NesButton.B
-        KeyEvent.KEYCODE_BUTTON_START, KeyEvent.KEYCODE_ENTER -> NesButton.START
-        KeyEvent.KEYCODE_BUTTON_SELECT, KeyEvent.KEYCODE_SPACE -> NesButton.SELECT
-        KeyEvent.KEYCODE_DPAD_UP -> NesButton.UP
-        KeyEvent.KEYCODE_DPAD_DOWN -> NesButton.DOWN
-        KeyEvent.KEYCODE_DPAD_LEFT -> NesButton.LEFT
-        KeyEvent.KEYCODE_DPAD_RIGHT -> NesButton.RIGHT
+    private fun applyP1() {
+        controller?.setButtons(0u, (touchMask or keyMask).toUByte())
+    }
+
+    private fun keyToBit(keyCode: Int): Int? = when (keyCode) {
+        KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_DPAD_CENTER -> NesBit.A
+        KeyEvent.KEYCODE_BUTTON_B -> NesBit.B
+        KeyEvent.KEYCODE_BUTTON_START, KeyEvent.KEYCODE_ENTER -> NesBit.START
+        KeyEvent.KEYCODE_BUTTON_SELECT, KeyEvent.KEYCODE_SPACE -> NesBit.SELECT
+        KeyEvent.KEYCODE_DPAD_UP -> NesBit.UP
+        KeyEvent.KEYCODE_DPAD_DOWN -> NesBit.DOWN
+        KeyEvent.KEYCODE_DPAD_LEFT -> NesBit.LEFT
+        KeyEvent.KEYCODE_DPAD_RIGHT -> NesBit.RIGHT
         else -> null
     }
+}
+
+/** NES controller button bits — matches `rustynes_core::Buttons`. */
+object NesBit {
+    const val A = 0x01
+    const val B = 0x02
+    const val SELECT = 0x04
+    const val START = 0x08
+    const val UP = 0x10
+    const val DOWN = 0x20
+    const val LEFT = 0x40
+    const val RIGHT = 0x80
 }
 
 /**
@@ -352,7 +390,8 @@ private class AudioPlayer(sampleRate: Int) {
 private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val activity = context as? Activity
-    val unlocked = license.isUnlocked
+    // Freemium is active only in the Play build; sideload/dev builds are unlimited.
+    val unlocked = !BuildConfig.PLAY_BUILD || license.isUnlocked
     var frame by remember { mutableStateOf<ImageBitmap?>(null) }
     var status by remember { mutableStateOf("Open a .nes ROM to start") }
     var recents by remember { mutableStateOf(RomLibrary.recents(context)) }
@@ -561,16 +600,25 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager) {
                     color = Color.Gray,
                 )
             }
-            // Debug-only: simulate the Full Unlock (the real Play purchase flow
-            // can't run on a sideloaded build). No-op / absent in release.
-            if (BuildConfig.DEBUG) {
+            // Debug-only (and only meaningful when the freemium is active, i.e. a
+            // PLAY_BUILD debug build): simulate the Full Unlock without Play.
+            if (BuildConfig.DEBUG && BuildConfig.PLAY_BUILD) {
                 OutlinedButton(onClick = { license.debugForceUnlocked(!unlocked) }) {
                     Text(if (unlocked) "DBG:demo" else "DBG:unlock")
                 }
             }
         }
 
-        TouchOverlay(emulator)
+        // The multi-touch virtual NES controller, sized to the NES-001 aspect
+        // (232:94); it fills the width, so it rescales for the active display
+        // (cover vs unfolded inner) and its hit regions remap in lockstep.
+        VirtualController(
+            emulator,
+            Modifier
+                .fillMaxWidth()
+                .aspectRatio(232f / 94f)
+                .padding(horizontal = 6.dp, vertical = 4.dp),
+        )
     }
 
     // Demo-expired gate: a blocking sheet over everything with Unlock + Restore.
@@ -671,56 +719,6 @@ private fun DemoExpiredOverlay(price: String, onUnlock: () -> Unit, onRestore: (
     }
 }
 
-/** On-screen D-pad + A/B/Select/Start, feeding P1 via [NesController.setButton]. */
-@Composable
-private fun TouchOverlay(emulator: EmulatorHandle) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(16.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        // D-pad cluster.
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            PadButton("▲", emulator, NesButton.UP)
-            Row {
-                PadButton("◀", emulator, NesButton.LEFT)
-                PadButton("▶", emulator, NesButton.RIGHT)
-            }
-            PadButton("▼", emulator, NesButton.DOWN)
-        }
-        // Select / Start.
-        Row {
-            PadButton("SEL", emulator, NesButton.SELECT)
-            PadButton("STA", emulator, NesButton.START)
-        }
-        // Face buttons.
-        Row {
-            PadButton("B", emulator, NesButton.B)
-            PadButton("A", emulator, NesButton.A)
-        }
-    }
-}
-
-@Composable
-private fun PadButton(label: String, emulator: EmulatorHandle, button: NesButton) {
-    Box(
-        modifier = Modifier
-            .padding(4.dp)
-            .size(56.dp)
-            .background(Color.DarkGray)
-            .pointerInput(button) {
-                detectTapGestures(
-                    onPress = {
-                        emulator.controller?.setButton(0u, button, true)
-                        // Suspends until release/cancel; the button is released
-                        // either way so a slide-off can't leave it stuck.
-                        tryAwaitRelease()
-                        emulator.controller?.setButton(0u, button, false)
-                    },
-                )
-            },
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(label, color = Color.White)
-    }
-}
+// The on-screen controls now live in `VirtualController.kt` — a single multi-touch
+// Canvas (the old per-button `TouchOverlay`/`PadButton` registered one input at a
+// time and was replaced in v1.8.2).
