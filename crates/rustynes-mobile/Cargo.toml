@@ -1,0 +1,40 @@
+[package]
+name = "rustynes-mobile"
+description = "Platform-agnostic mobile control surface over rustynes-core (UniFFI-generated Kotlin/Swift bindings), shared by the Android and iOS hosts"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords = ["nes", "emulator", "android", "ios", "uniffi"]
+categories = ["emulators"]
+
+# v1.8.0 "Android" Workstream A — the shared mobile bridge. UniFFI consumes the
+# `lib` crate-type to generate Kotlin (Android) + Swift (iOS) bindings; the
+# `cdylib`/`staticlib` outputs are the `.so`/static archive the platform shells
+# link. The `lib` output keeps the crate host-testable (`cargo test --workspace`)
+# so the typed control surface is exercised on host CI — the device build only
+# proves the same code links against the NDK toolchain.
+[lib]
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[lints]
+workspace = true
+
+[dependencies]
+# Default features include `std`; the bridge is a hosted (std) target, never the
+# `no_std` chip-stack gate. It re-exports the byte-identical core unchanged.
+rustynes-core.workspace = true
+thiserror.workspace = true
+# UniFFI generates the foreign-language bindings from the `#[uniffi::export]`
+# surface (proc-macro mode — no UDL file). The `cli` feature backs the
+# `uniffi-bindgen` binary used by the Gradle/Xcode build to emit Kotlin/Swift.
+uniffi = { version = "0.31", features = ["cli"] }
+
+[[bin]]
+# The binding generator the platform builds invoke:
+#   cargo run -p rustynes-mobile --bin uniffi-bindgen -- generate \
+#     --library <librustynes_mobile.so> --language kotlin --out-dir <gen>
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"

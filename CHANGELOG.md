@@ -15,6 +15,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-06-19 - "Android" (Platform Release)
+
+> The first **platform** (not accuracy) release: a complete, shippable Android
+> app, verified on a Samsung Galaxy Z Fold 7. The pure-Rust core is **byte-
+> identical** on ARM — only a new host shell is added — so **AccuracyCoin 100%
+> (139/139)** and every desktop gate are unchanged. Distributed on Google Play as
+> a free download with a one-time **$2.99 "Full Unlock"** (10-minute demo without
+> save-states / resume / battery-SRAM). The wgpu `SurfaceView` native renderer +
+> the desktop WGSL shader stack remain a documented next increment; this release
+> ships the RGBA `Bitmap` render path with AGSL CRT/scanline post-processing.
+
+### Added
+
+- **v1.8.0 "Android" — Workstream A (foundation & build).** The first *platform*
+  release begins: RustyNES now has a shared mobile bridge, an Android platform
+  crate, a Gradle/Compose app module, an Android CI gate, and a first-boot
+  Compose shell — all additive, with the byte-identical core untouched, so
+  **AccuracyCoin 100% (139/139)** and every host gate stay green.
+  - **`crates/rustynes-mobile`** — a new platform-agnostic bridge crate that owns
+    the typed control surface over `rustynes_core::Nes` (load ROM from bytes, set
+    the per-port `Buttons` mask / individual buttons, run a frame, drain audio,
+    save/restore the `.rns` state, query cartridge metadata) and lets **UniFFI**
+    generate the Kotlin (Android) and Swift (iOS, v1.9.0) bindings from the
+    `#[uniffi::export]` surface. `std`, host-testable (6 unit tests boot a
+    synthetic NROM image and round-trip input + save-state on host CI), and adds
+    **no new determinism surface** — every method forwards straight into the
+    core. Shared verbatim with the future iOS host.
+  - **`crates/rustynes-android`** — the Android platform crate, carrying only the
+    narrow JNI/surface/audio hot glue UniFFI can't express (the `ANativeWindow` →
+    wgpu handoff + audio sink, filled in across beta.2/beta.3) plus the
+    `android_main` entry for the beta.1 winit+wgpu+egui spike. Everything
+    Android-specific is behind `#[cfg(target_os = "android")]`, so on a host build
+    it is a near-empty lint-only shell; it is the one mobile crate that carries
+    `unsafe` (each site with a `// SAFETY:` note).
+  - **`android/`** — a Jetpack Compose (Material 3) Gradle module: a first-boot
+    shell that opens a ROM via the Storage Access Framework (no path, raw bytes →
+    the core), runs the emulator through the generated `NesController`, blits each
+    RGBA frame to a `Bitmap`, and routes an on-screen D-pad/A/B/Select/Start
+    overlay + hardware gamepad keys into the single late-latched controller mask.
+    `cargo-ndk` and `uniffi-bindgen` are wired as Gradle build steps; the release
+    build targets an **AAB** (`minSdk 26`, `targetSdk 35`, arm64 ship ABI +
+    x86_64 for the emulator).
+  - **`.github/workflows/android.yml`** — the platform-build gate: installs the
+    Android Rust targets + cargo-ndk, cross-compiles both crates for arm64 +
+    x86_64 against the NDK, generates the Kotlin bindings (smoke), checks **16 KB
+    ELF alignment** on the shipped arm64 `.so` (a Play requirement for Android
+    15+), and best-effort-bundles the AAB. Not a required check — accuracy is
+    gated only on host CI.
+  - Docs: [`docs/android.md`](docs/android.md) (architecture, build, signing,
+    CI, the remaining-beta map) and
+    [ADR 0024](docs/adr/0024-mobile-bridge-and-hybrid-android-host.md) (the
+    UniFFI-bridge + hybrid-wgpu/Compose-host decision). The cross-build + UniFFI
+    binding pipeline are verified end-to-end (host build/tests, Kotlin
+    generation, NDK cross-compile to arm64 producing both `.so` libraries).
+  - **A working emulator, verified on hardware (Samsung Galaxy Z Fold 7, Android
+    16, arm64).** Beyond the foundation, the app now does: **audio** (a low-latency
+    mono `AudioTrack` sink pulling the core's samples, blocking-write paced);
+    **input** (the on-screen D-pad/A/B/Select/Start overlay + hardware gamepad
+    keys → the single late-latched mask); **save-states / SRAM / a recent-ROMs
+    library** (`.rns` blobs keyed by ROM SHA-256 in `filesDir`, persistable SAF
+    URI grants, save-on-background + auto-resume); **QoL** (pause, fast-forward,
+    mute); a **responsive, foldable-aware, sticky-immersive** UI (runs full-screen
+    on both the cover and the unfolded inner display with the system bars hidden);
+    and a verified **release AAB** (R8-minified, arm64-only, 3.2 MB). On-device:
+    nestest passes all 14 CPU suites (the core is cycle-accurate on ARM).
+  - **Freemium monetization (Play Billing).** A free download with a one-time,
+    non-consumable **"Full Unlock" IAP at $2.99** (`full_unlock`); the free tier is
+    a **10-minute demo** with save-states, save-on-background/resume, and on-cart
+    battery-backed SRAM persistence disabled — otherwise feature-complete. Every
+    gate is host policy over persistence + a session clock, so the emulated
+    framebuffer/audio is byte-identical between demo and paid (core / `.rns` /
+    AccuracyCoin untouched). The gating, timer, and demo-expiry/unlock UI are
+    verified on-device; the Play Console product + the real purchase transaction
+    are maintainer-manual. See [`docs/android.md`](docs/android.md).
+  - **Video filters + perf.** GPU **CRT / Scanlines** post-processing via an AGSL
+    `RuntimeShader` (API 33+) over the Compose render path (an "FX:" cycle with the
+    choice persisted; the plain `Bitmap` blit is the always-on fallback) — post-
+    processing only, so determinism holds. Plus a `PowerManager` thermal-throttle
+    listener that cancels fast-forward when the device runs hot.
+  - **Documented next increment** (not in this cut): the **full wgpu `SurfaceView`
+    native renderer** reusing the desktop WGSL NTSC/CRT/Bisqwit shader stack — the
+    current `Bitmap` + AGSL path is complete and performant, so this is a
+    fidelity/perf upgrade, not a blocker. Netplay / RetroAchievements / Lua remain
+    deferred per the locked MVP.
+
 ## [1.7.1] - 2026-06-19
 
 ### Fixed

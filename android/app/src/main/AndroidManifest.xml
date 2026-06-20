@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Hardware gamepads are supported but not required; the on-screen touch
+         overlay is always available. No network, storage, or sensor permissions:
+         ROM access is mediated entirely by the Storage Access Framework document
+         picker (no broad storage permission needed), and the app collects nothing. -->
+    <uses-feature android:name="android.hardware.gamepad" android:required="false" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <uses-feature android:name="android.software.leanback" android:required="false" />
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:hardwareAccelerated="true"
+        android:resizeableActivity="true"
+        android:theme="@style/Theme.RustyNES">
+
+        <!-- Foldable / large-screen support: the activity is resizeable and
+             absorbs the fold/unfold + posture config changes itself (so the
+             emulation thread + GL surface survive the transition with no
+             restart). `smallestScreenSize`/`screenLayout` cover the cover↔inner
+             screen swap on the Z Fold; the Compose layout is responsive (the NES
+             image letterboxes into the available space on either display). The
+             orientation is left UNLOCKED so the large inner screen can present
+             the app in whatever posture the user holds it. -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode|density|navigation|keyboard"
+            android:launchMode="singleTop"
+            android:resizeableActivity="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Also launches as a TV/leanback app. -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
