@@ -167,6 +167,13 @@ class ChromecastSender(context: Context) {
         val now = SystemClock.uptimeMillis()
         if (now - lastSentMs < ChromecastConstants.MIN_FRAME_INTERVAL_MS) return
 
+        // Validate the source plane size before down-sampling: the loop indexes the
+        // full 256x240 u16 index plane (256*240*2 = 122,880 bytes). A short/empty
+        // buffer (e.g. a closed-ROM blank frame) would throw
+        // ArrayIndexOutOfBoundsException, so skip the frame instead.
+        val expected = ChromecastConstants.NES_WIDTH * ChromecastConstants.NES_HEIGHT * 2
+        if (indexBytes.size < expected) return
+
         // Size budget: the full 256x240 6-bit colour plane is 61,440 bytes, which
         // base64-encodes to ~81,920 chars — OVER the 64 KB Cast custom-message cap.
         // So we down-sample 2x to a 128x120 6-bit colour plane (15,360 bytes ->

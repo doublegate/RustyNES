@@ -44,6 +44,11 @@ class GamepadManager(
     /** Live per-port assignment: deviceId -> port (0..3). First-seen order. */
     private val deviceToPort = LinkedHashMap<Int, Int>()
 
+    /** Guards the per-port mask state ([baseMask]/[turboBits]/[turboPhaseMask]/
+     *  [chordLatched]) shared between the emulation-loop thread ([onFrameTick]) and
+     *  the UI thread (input handlers, [assignPort], [removeDevice]). */
+    private val maskLock = Any()
+
     /** Per-port logical (non-turbo) button mask, before the turbo pulse is mixed in. */
     private val baseMask = IntArray(4)
 
@@ -205,10 +210,12 @@ class GamepadManager(
         val port = deviceToPort.remove(deviceId) ?: return
         deviceDescriptors.remove(deviceId)
         // Clear that port's contribution so a yanked pad doesn't leave buttons held.
-        baseMask[port] = 0
-        turboBits[port] = 0
-        chordLatched[port] = false
-        emulator.setGamepadMask(port, 0)
+        synchronized(maskLock) {
+            baseMask[port] = 0
+            turboBits[port] = 0
+            chordLatched[port] = false
+            emulator.setGamepadMask(port, 0)
+        }
         updateFourScore()
         refreshControllerActive()
     }
@@ -229,10 +236,12 @@ class GamepadManager(
         if (other != null) deviceToPort[other] = oldPort
         // Recompute both affected ports' masks from scratch (held state is dropped —
         // a reassign mid-press is rare and a clean slate is the safe choice).
-        for (p in setOf(oldPort, newPort)) {
-            baseMask[p] = 0
-            turboBits[p] = 0
-            emulator.setGamepadMask(p, 0)
+        synchronized(maskLock) {
+            for (p in setOf(oldPort, newPort)) {
+                baseMask[p] = 0
+                turboBits[p] = 0
+                emulator.setGamepadMask(p, 0)
+            }
         }
         updateFourScore()
         refreshControllerActive()
@@ -450,25 +459,26 @@ class GamepadManager(
         }
     }
 
-    private fun setBit(port: Int, bit: Int, on: Boolean) {
+    private fun setBit(port: Int, bit: Int, on: Boolean) = synchronized(maskLock) {
         val nv = if (on) baseMask[port] or bit else baseMask[port] and bit.inv()
         if (nv != baseMask[port]) {
             baseMask[port] = nv
-            pushPort(port)
+            pushPortLocked(port)
         }
     }
 
-    private fun setTurbo(port: Int, bit: Int, on: Boolean) {
+    private fun setTurbo(port: Int, bit: Int, on: Boolean) = synchronized(maskLock) {
         val nv = if (on) turboBits[port] or bit else turboBits[port] and bit.inv()
         if (nv != turboBits[port]) {
             turboBits[port] = nv
             // Release: drop the bit immediately so it doesn't stick.
-            if (!on) { baseMask[port] = baseMask[port] and bit.inv(); pushPort(port) }
+            if (!on) { baseMask[port] = baseMask[port] and bit.inv(); pushPortLocked(port) }
         }
     }
 
-    /** Combine the base mask with the current turbo-pulse phase and push the port. */
-    private fun pushPort(port: Int) {
+    /** Combine the base mask with the current turbo-pulse phase and push the port.
+     *  MUST be called while holding [maskLock] (it reads the shared mask state). */
+    private fun pushPortLocked(port: Int) {
         val mask = baseMask[port] or (turboBits[port] and turboPhaseMask)
         emulator.setGamepadMask(port, mask)
     }
@@ -491,9 +501,11 @@ class GamepadManager(
     fun onFrameTick() {
         frameCount++
         if (frameCount % TURBO_PERIOD_FRAMES != 0) return
-        turboPhaseMask = turboPhaseMask.inv() and 0xFF
-        for (port in 0..3) {
-            if (turboBits[port] != 0) pushPort(port)
+        synchronized(maskLock) {
+            turboPhaseMask = turboPhaseMask.inv() and 0xFF
+            for (port in 0..3) {
+                if (turboBits[port] != 0) pushPortLocked(port)
+            }
         }
     }
 

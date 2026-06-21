@@ -44,6 +44,7 @@
 
 #![cfg(all(not(target_arch = "wasm32"), feature = "netplay-client"))]
 
+use std::net::ToSocketAddrs;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::thread::JoinHandle;
 
@@ -126,8 +127,14 @@ impl Drop for SignalingClient {
 /// frames until either side closes. Polls non-blockingly with a short read
 /// timeout so it can interleave the outbound queue without an async runtime.
 fn worker_loop(url: &str, out_rx: &Receiver<SignalMessage>, event_tx: &Sender<SignalEvent>) {
-    let (mut socket, _resp) = match tungstenite::connect(url) {
-        Ok(pair) => pair,
+    // A *bounded* connect: `tungstenite::connect` blocks indefinitely on a TCP
+    // connect to an unreachable/offline relay, so resolve the host + dial with a
+    // `connect_timeout`, set read/write timeouts on the raw stream, then hand it
+    // to `client_tls` (which upgrades to TLS for `wss://` and stays plain for
+    // `ws://`, per the URI scheme). The read timeout is set on the underlying
+    // `TcpStream` BEFORE the TLS wrap, so it survives into the `wss://` path too.
+    let mut socket = match connect_bounded(url, CONNECT_TIMEOUT, READ_TIMEOUT) {
+        Ok(socket) => socket,
         Err(e) => {
             let _ = event_tx.send(SignalEvent::Closed(format!("connect failed: {e}")));
             return;
@@ -137,9 +144,10 @@ fn worker_loop(url: &str, out_rx: &Receiver<SignalMessage>, event_tx: &Sender<Si
         return; // caller dropped already.
     }
 
-    // A short non-blocking read so the loop can also drain the outbound queue.
+    // Re-assert the short read timeout on the (now-handshaken) stream so the loop
+    // can also drain the outbound queue. Reaches through the TLS stream for wss.
     if let Some(stream) = stream_of(&socket) {
-        let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(20)));
+        let _ = stream.set_read_timeout(Some(READ_TIMEOUT));
     }
 
     loop {
@@ -195,16 +203,84 @@ fn worker_loop(url: &str, out_rx: &Receiver<SignalMessage>, event_tx: &Sender<Si
     }
 }
 
-/// Best-effort access to the underlying TCP stream to set a read timeout. Only
-/// the plain (`ws://`) maybe-TLS stream variants are handled; if the timeout
-/// can't be set the loop still functions (it just blocks on `read` and relies on
-/// the outbound channel disconnect to exit on drop). Returns `None` for the TLS
-/// case, where tungstenite does not expose the raw stream uniformly.
+/// How long to wait for the TCP connect to the relay before giving up. Bounds
+/// the otherwise-indefinite block when the relay is offline/unreachable.
+const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// The read timeout that lets the worker loop interleave the outbound drain and
+/// notice a disconnect (set on the raw `TcpStream`, so it holds for `wss://`).
+const READ_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(20);
+
+/// A bounded WebSocket connect: resolve the host, dial with `connect_timeout`,
+/// set read/write timeouts on the raw `TcpStream`, then run the WS (and, for
+/// `wss://`, TLS) handshake via `client_tls`. Mirrors what `tungstenite::connect`
+/// does internally, minus the unbounded TCP connect.
+fn connect_bounded(
+    url: &str,
+    connect_timeout: std::time::Duration,
+    read_timeout: std::time::Duration,
+) -> Result<tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>, String>
+{
+    use tungstenite::client::{IntoClientRequest, uri_mode};
+    use tungstenite::stream::Mode;
+
+    let request = url.into_client_request().map_err(|e| e.to_string())?;
+    let uri = request.uri().clone();
+    let mode = uri_mode(&uri).map_err(|e| e.to_string())?;
+    let host = uri
+        .host()
+        .ok_or_else(|| "no host in signaling URL".to_string())?;
+    // Strip the brackets around an IPv6 literal before DNS resolution.
+    let host = host
+        .strip_prefix('[')
+        .map_or(host, |h| h.strip_suffix(']').unwrap_or(h));
+    let port = uri.port_u16().unwrap_or(match mode {
+        Mode::Plain => 80,
+        Mode::Tls => 443,
+    });
+
+    // Resolve + dial with a bounded connect; try each resolved address in turn.
+    let addrs: Vec<std::net::SocketAddr> = (host, port)
+        .to_socket_addrs()
+        .map_err(|e| format!("resolve {host}:{port}: {e}"))?
+        .collect();
+    let mut last_err = format!("no addresses resolved for {host}:{port}");
+    let mut stream = None;
+    for addr in &addrs {
+        match std::net::TcpStream::connect_timeout(addr, connect_timeout) {
+            Ok(s) => {
+                stream = Some(s);
+                break;
+            }
+            Err(e) => last_err = format!("connect {addr}: {e}"),
+        }
+    }
+    let stream = stream.ok_or(last_err)?;
+    stream.set_nodelay(true).ok();
+    stream
+        .set_read_timeout(Some(read_timeout))
+        .map_err(|e| e.to_string())?;
+    stream
+        .set_write_timeout(Some(connect_timeout))
+        .map_err(|e| e.to_string())?;
+
+    // `client_tls` upgrades to TLS for `wss://` and stays plain for `ws://`.
+    let (socket, _resp) = tungstenite::client_tls(request, stream).map_err(|e| e.to_string())?;
+    Ok(socket)
+}
+
+/// Best-effort access to the underlying TCP stream to set a read timeout. Both
+/// the plain (`ws://`) and the rustls (`wss://`) variants are reached — the
+/// rustls `StreamOwned` exposes the raw socket via its public `sock` field — so
+/// the worker can set a short read timeout for either transport (without it,
+/// `socket.read()` blocks and the loop can't interleave the outbound drain or
+/// notice a disconnect). Returns `None` only for the unused native-tls variant.
 fn stream_of(
     socket: &tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>,
 ) -> Option<&std::net::TcpStream> {
     match socket.get_ref() {
         tungstenite::stream::MaybeTlsStream::Plain(s) => Some(s),
+        tungstenite::stream::MaybeTlsStream::Rustls(s) => Some(&s.sock),
         _ => None,
     }
 }

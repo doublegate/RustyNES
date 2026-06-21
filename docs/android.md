@@ -202,9 +202,11 @@ optional TURN trio, overridable in Settings. The same signaling + coturn stack i
 `deploy/` serves both this path and the browser path; the app ships with a
 **placeholder** relay URL until the maintainer hosts it. The cone-NAT hole-punch
 is end-to-end and loopback/mock-verified in CI; the symmetric-NAT TURN
-relay-transport hand-off and live two-cellular-device play are tracked
-carryovers. See `docs/netplay-webrtc.md` §2.5 and the **Mobile room-code
-checklist** in `deploy/README.md`.
+relay-transport hand-off is now wired (`UdpTransport::from_relay` + `NpStatus.
+relayed`, mock-TURN-verified by `relay_loopback`). Only a **live verify** — a
+hosted coturn + two real cellular/symmetric-NAT devices — remains. See
+`docs/netplay-webrtc.md` §2.5 and the **Mobile room-code checklist** in
+`deploy/README.md`.
 
 **Deferred to a follow-up mobile point release** (per the locked MVP):
 RetroAchievements (Compose login UI over rcheevos) and Lua scripting. The egui
