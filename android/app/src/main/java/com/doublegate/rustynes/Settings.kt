@@ -5,9 +5,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -28,6 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.foundation.text.KeyboardOptions
@@ -74,6 +77,25 @@ enum class LanguageMode(val tag: String) {
     }
 }
 
+/**
+ * Accessibility chrome theme (v1.8.8 "Atlas", Workstream I). Recolors ONLY the app
+ * chrome (bars / menus / controls / Settings / status indicators) — the gameplay NES
+ * picture is the ROM's own palette and is never touched. [Default] follows the normal
+ * Material You / brand theme; the others are accessibility overrides that take
+ * precedence over Material You dynamic color (a high-contrast or colorblind-safe
+ * palette is a stronger user need than the wallpaper-derived one). The colorblind sets
+ * use the Okabe-Ito qualitative palette (the de-facto colorblind-safe standard, shared
+ * with the desktop v1.5.0 accessibility themes), with the hues chosen so the primary /
+ * secondary / error roles stay distinguishable under each common CVD type.
+ */
+enum class AccessibilityTheme {
+    Default,
+    HighContrast,
+    Deuteranopia,
+    Protanopia,
+    Tritanopia,
+}
+
 class AppSettings(context: Context) {
     private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
@@ -100,6 +122,18 @@ class AppSettings(context: Context) {
     var language: LanguageMode
         get() = _language.value
         set(v) { _language.value = v; prefs.edit().putString("uiLanguage", v.tag).apply() }
+
+    /** Accessibility chrome theme (v1.8.8 "Atlas", Workstream I): high-contrast or a
+     *  colorblind-safe (Okabe-Ito) palette for the UI chrome only. When set to anything
+     *  other than [AccessibilityTheme.Default] it overrides Material You dynamic color
+     *  (the accessibility need wins). The gameplay picture is never recolored. Defaults
+     *  to Default (no override). */
+    private val _accessibilityTheme = mutableStateOf(
+        AccessibilityTheme.entries.getOrElse(prefs.getInt("a11yTheme", 0)) { AccessibilityTheme.Default },
+    )
+    var accessibilityTheme: AccessibilityTheme
+        get() = _accessibilityTheme.value
+        set(v) { _accessibilityTheme.value = v; prefs.edit().putInt("a11yTheme", v.ordinal).apply() }
 
     private val _filter =
         mutableStateOf(VideoFilter.entries.getOrElse(prefs.getInt("filter", 0)) { VideoFilter.None })
@@ -382,6 +416,24 @@ fun SettingsSheet(
                     stringResource(R.string.settings_dynamic_color),
                     settings.dynamicColor,
                 ) { settings.dynamicColor = it }
+            }
+
+            // Accessibility chrome theme (v1.8.8 "Atlas", Workstream I): high-contrast
+            // or a colorblind-safe (Okabe-Ito) palette for the UI chrome. Overrides
+            // Material You dynamic color when set (the accessibility need wins). The
+            // gameplay NES picture is the ROM's palette and is never recolored.
+            Text(stringResource(R.string.settings_accessibility))
+            Row(
+                modifier = Modifier.fillMaxWidth().selectableGroup(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                AccessibilityTheme.entries.forEach { a ->
+                    FilterChip(
+                        selected = settings.accessibilityTheme == a,
+                        onClick = { settings.accessibilityTheme = a },
+                        label = { Text(accessibilityLabel(a)) },
+                    )
+                }
             }
 
             // In-app UI language (v1.8.8 "Atlas", Workstream B). System / English /
@@ -675,15 +727,41 @@ private fun languageLabel(lang: LanguageMode): String = when (lang) {
     LanguageMode.Spanish -> "Español"
 }
 
+/** The picker label for an [AccessibilityTheme] (v1.8.8 "Atlas", Workstream I). */
+@Composable
+private fun accessibilityLabel(theme: AccessibilityTheme): String = stringResource(
+    when (theme) {
+        AccessibilityTheme.Default -> R.string.a11y_default
+        AccessibilityTheme.HighContrast -> R.string.a11y_high_contrast
+        AccessibilityTheme.Deuteranopia -> R.string.a11y_deuteranopia
+        AccessibilityTheme.Protanopia -> R.string.a11y_protanopia
+        AccessibilityTheme.Tritanopia -> R.string.a11y_tritanopia
+    },
+)
+
+/**
+ * A label + Switch row. v1.8.8 "Atlas" (Workstream I): the whole row is the toggle
+ * (a >=48 dp d-pad/switch-access target) and its semantics are merged so TalkBack
+ * reads the row as one node — "<label>, switch, on/off" — with the Switch's own
+ * `toggleableState` carried up, instead of two separate unlabeled stops. The inner
+ * Switch is `null`-handled (the row owns the click) so it isn't a second focus stop.
+ */
 @Composable
 private fun ToggleRow(label: String, value: Boolean, onChange: (Boolean) -> Unit) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .toggleable(
+                value = value,
+                onValueChange = onChange,
+                role = Role.Switch,
+            ),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(label)
-        Switch(checked = value, onCheckedChange = onChange)
+        Switch(checked = value, onCheckedChange = null)
     }
 }
 

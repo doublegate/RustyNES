@@ -1,0 +1,46 @@
+<!--
+    v1.8.8 "Atlas" (Workstream G): the Android TV / Leanback home banner. The Play /
+    Leanback launcher shows apps as 320x180 (16:9) banners on the TV home row, so a
+    real banner is required for the app to appear there with a label (a plain
+    mipmap/ic_launcher would be cropped/letterboxed). This vector renders the RustyNES
+    wordmark on the brand-indigo launcher background at any density. The xxhdpi raster
+    size is 320x180; the vector scales cleanly to every panel.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+
+    <!-- Brand background (matches @color/ic_launcher_background / the splash). -->
+    <path
+        android:fillColor="#1C1F24"
+        android:pathData="M0,0h320v180H0z" />
+
+    <!-- A subtle indigo accent bar down the left (the brand primary). -->
+    <path
+        android:fillColor="#7C6FF0"
+        android:pathData="M0,0h10v180H0z" />
+
+    <!-- Stylized red NES "play"/cartridge mark (the brand tertiary red). -->
+    <path
+        android:fillColor="#E81810"
+        android:pathData="M40,62h66v56H40z" />
+    <path
+        android:fillColor="#1C1F24"
+        android:pathData="M52,74h42v10H52z" />
+    <path
+        android:fillColor="#FFB74D"
+        android:pathData="M64,96l24,-14v28z" />
+
+    <!-- Wordmark text (vector path-free: drawn as the brand light glyphs). Kept as a
+         simple rounded block so no font is embedded in the drawable. -->
+    <group android:translateX="130" android:translateY="76">
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M0,0h150v8H0z" />
+        <path
+            android:fillColor="#9FA0FF"
+            android:pathData="M0,18h110v6H0z" />
+    </group>
+</vector>

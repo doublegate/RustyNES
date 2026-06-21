@@ -137,6 +137,17 @@
     <string name="settings_tgdb_key">TheGamesDB API key (optional)</string>
     <string name="settings_mute_audio">Mute audio</string>
     <string name="settings_dynamic_color">Material You (dynamic color)</string>
+
+    <!-- ===== Accessibility (Workstream I) ===== -->
+    <string name="settings_accessibility">Accessibility theme</string>
+    <string name="a11y_default">Default</string>
+    <string name="a11y_high_contrast">High contrast</string>
+    <string name="a11y_deuteranopia">Deuteranopia</string>
+    <string name="a11y_protanopia">Protanopia</string>
+    <string name="a11y_tritanopia">Tritanopia</string>
+    <!-- TalkBack content descriptions for the gameplay surface + on-screen controls -->
+    <string name="cd_nes_screen">Game screen</string>
+    <string name="cd_virtual_controller">On-screen NES controller. Use the directional pad, A, B, Select, Start, and the Menu button. Tap the Menu button to open the menu bar.</string>
     <string name="settings_gpu_renderer">GPU renderer (restart to apply)</string>
     <string name="settings_haptics">Haptics</string>
     <string name="settings_hide_pad_with_controller">Hide on-screen pad with a controller</string>

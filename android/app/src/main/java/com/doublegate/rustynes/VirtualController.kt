@@ -26,6 +26,9 @@ import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.changedToDown
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import kotlin.math.hypot
 
 /**
@@ -57,6 +60,9 @@ fun VirtualController(
     var mask by remember { mutableIntStateOf(0) }
     val context = LocalContext.current
     val vibrator = remember { systemVibrator(context) }
+    // v1.8.8 "Atlas" (Workstream I): the Canvas draws all controls itself, so TalkBack
+    // sees one node — label it so the on-screen pad isn't an unlabeled blank region.
+    val controllerLabel = stringResource(R.string.cd_virtual_controller)
     // SELECT/START/B/A/MENU use a bold sans; only "RustyNES" uses the icon's
     // Press Start 2P face. Both are NES red.
     val labelPaint = remember {
@@ -77,7 +83,9 @@ fun VirtualController(
         }
     }
     Canvas(
-        modifier = modifier.pointerInput(Unit) {
+        modifier = modifier
+            .semantics { contentDescription = controllerLabel }
+            .pointerInput(Unit) {
             // try/finally so a cancelled gesture (parent intercept, focus loss,
             // disposal) always clears the mask — otherwise the last-pressed
             // buttons stay stuck in the emulator until the next touch.

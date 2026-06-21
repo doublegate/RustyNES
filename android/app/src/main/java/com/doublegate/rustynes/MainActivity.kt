@@ -197,7 +197,7 @@ class MainActivity : AppCompatActivity() {
             // black so the letterboxed NES picture sits on black (the gameplay area is
             // NEVER tinted), and only the chrome (bars, menus, controls, Settings) picks
             // up the dynamic/brand color.
-            val colorScheme = rememberColorScheme(dark, settings.dynamicColor)
+            val colorScheme = rememberColorScheme(dark, settings.dynamicColor, settings.accessibilityTheme)
             MaterialTheme(colorScheme = colorScheme.copy(background = Color.Black)) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
@@ -415,16 +415,23 @@ private fun rustyNesDarkColors() = darkColorScheme(
 /**
  * v1.8.8 "Atlas" (Workstream B): resolve the active Material 3 [ColorScheme].
  *
- * When [dynamicColor] is requested AND the device is Android 12+ (API 31), the
- * scheme is derived from the system wallpaper (Material You) via
- * `dynamicLight/DarkColorScheme(context)`; otherwise the RustyNES brand scheme is
- * used. Light vs. dark is driven by [dark] (which already folds in the user's
- * Light/Dark/System theme choice + `isSystemInDarkTheme()`). The caller forces the
- * `background` to black so the gameplay letterbox is never tinted.
+ * Precedence (v1.8.8 WS I): an [accessibility] override (high-contrast / colorblind)
+ * wins over everything — it is a stronger user need than the wallpaper palette. Else,
+ * when [dynamicColor] is requested AND the device is Android 12+ (API 31), the scheme
+ * is derived from the system wallpaper (Material You); otherwise the RustyNES brand
+ * scheme is used. Light vs. dark is driven by [dark] (which already folds in the
+ * user's Light/Dark/System theme choice + `isSystemInDarkTheme()`). The caller forces
+ * the `background` to black so the gameplay letterbox is never tinted.
  */
 @Composable
-private fun rememberColorScheme(dark: Boolean, dynamicColor: Boolean): ColorScheme {
+private fun rememberColorScheme(
+    dark: Boolean,
+    dynamicColor: Boolean,
+    accessibility: AccessibilityTheme,
+): ColorScheme {
     val context = androidx.compose.ui.platform.LocalContext.current
+    // Accessibility theme overrides dynamic color + the brand scheme entirely.
+    accessibilityColorScheme(accessibility, dark)?.let { return it }
     return when {
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
             if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
@@ -1612,7 +1619,7 @@ private fun EmulatorScreen(
                 }
                 Image(
                     bitmap = current,
-                    contentDescription = "NES screen",
+                    contentDescription = stringResource(R.string.cd_nes_screen),
                     modifier = nesAspect
                         .onSizeChanged { screenSize = it }
                         .then(

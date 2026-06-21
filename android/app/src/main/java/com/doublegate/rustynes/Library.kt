@@ -1,6 +1,7 @@
 package com.doublegate.rustynes
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -37,9 +38,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -218,12 +222,23 @@ private fun GameTile(
     onRemove: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
+    // v1.8.8 "Atlas" (Workstream G): a visible focus indicator for d-pad / TV
+    // navigation. `combinedClickable` already makes the tile focusable + Enter-
+    // activatable; this draws a clear border + lift when the d-pad lands on it so the
+    // user can see which tile is selected (touch users never see it — focus only
+    // appears under d-pad/keyboard).
+    var focused by remember { mutableStateOf(false) }
+    val borderColor = if (focused) MaterialTheme.colorScheme.primary else Color.Transparent
+    val borderWidth: Dp = if (focused) 3.dp else 0.dp
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .onFocusChanged { focused = it.isFocused }
             .combinedClickable(
                 onClick = onPlay,
                 onLongClick = { menuOpen = true },
+                role = Role.Button,
+                onClickLabel = entry.name,
             ),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -232,7 +247,8 @@ private fun GameTile(
                 .fillMaxWidth()
                 // NES box art is roughly 5:7 portrait; keep tiles uniform regardless.
                 .aspectRatio(0.72f)
-                .clip(RoundedCornerShape(8.dp)),
+                .clip(RoundedCornerShape(8.dp))
+                .border(borderWidth, borderColor, RoundedCornerShape(8.dp)),
             contentAlignment = Alignment.TopEnd,
         ) {
             if (entry.boxArtUri.isNotEmpty()) {
@@ -261,7 +277,11 @@ private fun GameTile(
                     modifier = Modifier.size(18.dp),
                 )
             }
-            // The long-press context menu anchors to the tile.
+            // The long-press context menu anchors to the tile. TODO(v1.8.8 WS G):
+            // a d-pad-only TV has no long-press, so favorite/box-art/move/remove are
+            // currently touch-only — the d-pad primary action (Enter = play) and the
+            // focusable star (favorite) cover the common cases; a future pass adds a
+            // d-pad context affordance (e.g. a long-press-equivalent menu key handler).
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                 DropdownMenuItem(
                     text = {

@@ -127,6 +127,16 @@
     <string name="settings_tgdb_key">Clave de API de TheGamesDB (opcional)</string>
     <string name="settings_mute_audio">Silenciar audio</string>
     <string name="settings_dynamic_color">Material You (color dinámico)</string>
+
+    <!-- ===== Accesibilidad (Workstream I) ===== -->
+    <string name="settings_accessibility">Tema de accesibilidad</string>
+    <string name="a11y_default">Predeterminado</string>
+    <string name="a11y_high_contrast">Alto contraste</string>
+    <string name="a11y_deuteranopia">Deuteranopía</string>
+    <string name="a11y_protanopia">Protanopía</string>
+    <string name="a11y_tritanopia">Tritanopía</string>
+    <string name="cd_nes_screen">Pantalla de juego</string>
+    <string name="cd_virtual_controller">Mando NES en pantalla. Usa la cruceta, A, B, Select, Start y el botón Menú. Toca el botón Menú para abrir la barra de menú.</string>
     <string name="settings_gpu_renderer">Renderizador GPU (reinicia para aplicar)</string>
     <string name="settings_haptics">Vibración</string>
     <string name="settings_hide_pad_with_controller">Ocultar el mando en pantalla con un control</string>
