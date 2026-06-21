@@ -423,7 +423,9 @@ fn handle_signal(ws: &WebSocket, shared: &Rc<RefCell<Shared>>, msg: SignalMessag
             s.message = reason;
         }
         // `Join` is a client->server message; never inbound to a client.
-        SignalMessage::Join { .. } => {}
+        // `PublicAddr` is the native-UDP (mobile) rendezvous address; the
+        // browser SDP/ICE path does not use it.
+        SignalMessage::Join { .. } | SignalMessage::PublicAddr { .. } => {}
     }
 }
 
