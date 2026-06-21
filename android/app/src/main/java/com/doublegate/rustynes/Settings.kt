@@ -178,6 +178,22 @@ class AppSettings(context: Context) {
         get() = _raHardcore.value
         set(v) { _raHardcore.value = v; prefs.edit().putBoolean("raHardcore", v).apply() }
 
+    /** Cloud saves via Play Games Snapshots (v1.8.8 "Atlas", Workstream D). Opt-in; the
+     *  toggle only has effect when BuildConfig.PGS_ENABLED is true AND the user is signed
+     *  in to Play Games. Off by default — local saves are untouched. DISTINCT from RA. */
+    private val _cloudSaves = mutableStateOf(prefs.getBoolean("cloudSaves", false))
+    var cloudSavesEnabled: Boolean
+        get() = _cloudSaves.value
+        set(v) { _cloudSaves.value = v; prefs.edit().putBoolean("cloudSaves", v).apply() }
+
+    /** Opt-in crash reporting (v1.8.8 "Atlas", Workstream L). Off by default to keep the
+     *  "collects nothing by default" data-safety posture. When on, an uncaught-exception
+     *  handler writes a LOCAL crash log the user can share — nothing is uploaded. */
+    private val _crashReports = mutableStateOf(prefs.getBoolean("crashReports", false))
+    var crashReportsEnabled: Boolean
+        get() = _crashReports.value
+        set(v) { _crashReports.value = v; prefs.edit().putBoolean("crashReports", v).apply() }
+
     /** The RA username (persisted; pairs with the saved token for silent re-login). */
     var raUsername: String
         get() = prefs.getString("raUsername", "") ?: ""
@@ -378,6 +394,12 @@ fun SettingsSheet(
     onRaEnabledChange: (Boolean) -> Unit = {},
     raHardcore: Boolean = false,
     onRaHardcoreChange: (Boolean) -> Unit = {},
+    // Play Games cloud saves (v1.8.8 "Atlas", Workstream D) — DISTINCT from RA above.
+    // Only surfaced when the Play Games build is active (BuildConfig.PGS_ENABLED).
+    pgsSignedIn: Boolean = false,
+    cloudSavesEnabled: Boolean = false,
+    onCloudSavesChange: (Boolean) -> Unit = {},
+    onPgsSignIn: () -> Unit = {},
     onLanguageChange: (LanguageMode) -> Unit = {},
     onDismiss: () -> Unit,
 ) {
@@ -578,6 +600,48 @@ fun SettingsSheet(
                 ToggleRow(stringResource(R.string.settings_hardcore_mode), raHardcore, onRaHardcoreChange)
                 Text(raStatus)
             }
+
+            // Play Games — cloud saves (v1.8.8 "Atlas", Workstream D). DELIBERATELY
+            // SEPARATE from RetroAchievements above: PGS is the native Google Play
+            // games-UX layer (cloud-synced save-states + platform achievements), RA is
+            // the per-game retro-achievement community service. Only shown when the Play
+            // Games build is active; sign-in is PGS v2 auto-sign-in with a manual nudge.
+            if (BuildConfig.PGS_ENABLED) {
+                Text(stringResource(R.string.settings_play_games))
+                if (pgsSignedIn) {
+                    ToggleRow(
+                        stringResource(R.string.settings_cloud_saves),
+                        cloudSavesEnabled,
+                        onCloudSavesChange,
+                    )
+                    Text(
+                        stringResource(R.string.settings_cloud_saves_hint),
+                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                    )
+                } else {
+                    Text(
+                        stringResource(R.string.settings_play_games_signin_hint),
+                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                    )
+                    Button(onClick = onPgsSignIn) {
+                        Text(stringResource(R.string.settings_play_games_signin))
+                    }
+                }
+            }
+
+            // Opt-in crash reporting (v1.8.8 "Atlas", Workstream L). Off by default to
+            // keep the "collects nothing by default" posture; when on, an uncaught-
+            // exception handler writes a LOCAL crash log the user can share — nothing is
+            // uploaded by the app. Always available (no Play project needed).
+            Text(stringResource(R.string.settings_diagnostics))
+            ToggleRow(
+                stringResource(R.string.settings_crash_reports),
+                settings.crashReportsEnabled,
+            ) { settings.crashReportsEnabled = it }
+            Text(
+                stringResource(R.string.settings_crash_reports_hint),
+                style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+            )
 
             // Netplay (online) endpoints (v1.8.7). The bridge has NO hardcoded
             // defaults, so these supply them. The signaling URL defaults to the

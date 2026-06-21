@@ -53,6 +53,22 @@
 -keep class com.doublegate.rustynes.RustyNesCastOptionsProvider { <init>(...); *; }
 -keep class * implements com.google.android.gms.cast.framework.OptionsProvider { <init>(...); *; }
 
+# --- Play Games Services v2 (Workstreams D+E) + Play Integrity / Core (L) ------
+# The Play services / Play Core libraries ship their own consumer ProGuard rules in
+# their AARs (so most of this is belt-and-suspenders under R8 strict-full-mode), but
+# pin the public client surfaces RustyNES reflects/Task-chains through (PlayGames
+# sign-in/achievements/leaderboards/Snapshots, the Integrity StandardIntegrity*
+# builders, the AppUpdate/Review managers) so a strict pass can't strip a builder or
+# a Task callback type. These are all DORMANT in the default build (PGS_ENABLED /
+# PLAY_INTEGRITY_ENABLED / PLAY_BUILD are false), but R8 has no way to know that.
+-keep class com.google.android.gms.games.** { *; }
+-keep interface com.google.android.gms.games.** { *; }
+-keep class com.google.android.play.core.integrity.** { *; }
+-keep class com.google.android.play.core.appupdate.** { *; }
+-keep class com.google.android.play.core.review.** { *; }
+-keep class com.google.android.play.core.install.** { *; }
+-dontwarn com.google.android.play.core.**
+
 # --- ProfileInstaller -------------------------------------------------------
 # The Baseline Profile installer ships a manifest ContentProvider + receiver it
 # resolves reflectively; AGP usually keeps these, but pin them so a strict-full

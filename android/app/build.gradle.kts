@@ -57,6 +57,25 @@ android {
         // registered Receiver App ID, and HTTPS hosting of android/cast-receiver/).
         // See android/cast-receiver/README.md + ChromecastSender.kt.
         buildConfigField("boolean", "CHROMECAST_ENABLED", "false")
+        // v1.8.8 "Atlas" (Workstreams D+E): Play Games Services v2 — cloud-save
+        // Snapshots (D) + PGS achievements/leaderboards (E). Default false: no PGS
+        // sign-in, no Snapshots/Achievements calls, zero behavior change. The deps
+        // link but stay dormant until the maintainer creates the linked Play Games
+        // project (game_ids / OAuth client) + the achievement/leaderboard IDs in the
+        // Play Console and flips this on. DISTINCT from RetroAchievements (rustynes-ra,
+        // v1.8.6) which stays untouched. See CloudSave.kt + PlayGames.kt.
+        buildConfigField("boolean", "PGS_ENABLED", "false")
+        // v1.8.8 "Atlas" (Workstream L): Play Integrity anti-tamper layer OVER Billing
+        // (Billing remains the entitlement source of truth). Default false: no token
+        // request, no verdict handling, zero behavior change. The verdict DECRYPTION
+        // requires a linked Google Cloud project + a server endpoint (maintainer ops),
+        // so the on-device handler is a documented stub until that lands. A failed/
+        // absent verdict must NEVER revoke a legitimate purchase. See Integrity.kt.
+        buildConfigField("boolean", "PLAY_INTEGRITY_ENABLED", "false")
+        // v1.8.8 "Atlas" (Workstream L): the maintainer's linked Google Cloud project
+        // NUMBER for Play Integrity's PrepareIntegrityTokenRequest. 0L = unset (the
+        // Integrity client no-ops even if PLAY_INTEGRITY_ENABLED were on without it).
+        buildConfigField("long", "INTEGRITY_CLOUD_PROJECT_NUMBER", "0L")
     }
 
     // Release signing reads `keystore.properties` (gitignored) or env vars; when
@@ -291,6 +310,27 @@ dependencies {
     // nothing until CastContext is initialized, which only happens behind the
     // default-off BuildConfig.CHROMECAST_ENABLED flag (see ChromecastSender.kt).
     implementation("com.google.android.gms:play-services-cast-framework:22.1.0")
+    // v1.8.8 "Atlas" (Workstreams D+E): Play Games Services v2 — the cloud-save
+    // Snapshots client (D), the PGS achievements + leaderboards clients (E), and the
+    // PGS v2 auto-sign-in (GamesSignInClient). 21.0.0 is the current v2 SDK (the v1
+    // SDK is end-of-life). Linked but DORMANT: nothing initializes PlayGames until
+    // behind the default-off BuildConfig.PGS_ENABLED flag (see CloudSave.kt /
+    // PlayGames.kt). DISTINCT from RetroAchievements (rustynes-ra). The PGS sign-in
+    // also reads the manifest <meta-data app_id>, which is a maintainer-supplied
+    // placeholder (@string/game_services_project_id) until the Play Games project lands.
+    implementation("com.google.android.gms:play-services-games-v2:21.0.0")
+    // v1.8.8 "Atlas" (Workstream L): Play Integrity API — the anti-tamper layer over
+    // Billing. 1.6.0 (SafetyNet Attestation was turned down Jan 2025; this is the modern
+    // replacement). Linked but DORMANT: no token is requested until behind the default-
+    // off BuildConfig.PLAY_INTEGRITY_ENABLED flag (see Integrity.kt). Verdict decryption
+    // needs the maintainer's linked Cloud project + server endpoint.
+    implementation("com.google.android.play:integrity:1.6.0")
+    // v1.8.8 "Atlas" (Workstream L): in-app updates (flexible) + in-app review. 2.1.0
+    // is the in-app-update floor for targeting Android 14+; review 2.0.2 is current.
+    // These need NO Cloud project — they no-op gracefully on a sideloaded (non-Play)
+    // install, so they are safe to call unconditionally (still flavor-gated for clarity).
+    implementation("com.google.android.play:app-update-ktx:2.1.0")
+    implementation("com.google.android.play:review-ktx:2.0.2")
     // v1.8.8 "Atlas" (Workstream J): pull the generated Baseline + Startup Profiles
     // from the Macrobenchmark module. The baselineprofile plugin wires the produced
     // `baseline-prof.txt` / `startup-prof.txt` into this variant's merged assets.

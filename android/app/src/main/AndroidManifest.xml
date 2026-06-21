@@ -61,6 +61,16 @@
             android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
             android:value="com.doublegate.rustynes.RustyNesCastOptionsProvider" />
 
+        <!-- v1.8.8 "Atlas" (Workstreams D+E): Play Games Services v2 app id. REQUIRED
+             by the PGS SDK to be declared, but only read when PlayGames is initialized,
+             which happens exclusively behind the default-off BuildConfig.PGS_ENABLED
+             flag (see PlayGames.kt + CloudSave.kt). The value is a maintainer-supplied
+             placeholder (@string/game_services_project_id = "0") until the Play Games
+             project lands, so PGS sign-in fails closed and the app launches unchanged. -->
+        <meta-data
+            android:name="com.google.android.gms.games.APP_ID"
+            android:value="@string/game_services_project_id" />
+
         <!-- Foldable / large-screen support: the activity is resizeable and
              absorbs the fold/unfold + posture config changes itself (so the
              emulation thread + GL surface survive the transition with no

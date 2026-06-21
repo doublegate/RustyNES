@@ -142,6 +142,29 @@
     <string name="settings_hide_pad_with_controller">Ocultar el mando en pantalla con un control</string>
     <string name="settings_controller_screen">Mando — pantalla %1$s</string>
 
+    <!-- ===== Play Games / estados en la nube (Workstream D+E) — DISTINTO de RetroAchievements ===== -->
+    <string name="settings_play_games">Play Games</string>
+    <string name="settings_cloud_saves">Estados en la nube (Play Games)</string>
+    <string name="settings_cloud_saves_hint">Sincroniza tus estados guardados entre dispositivos con Google Play Games. Gana la última escritura; ante un conflicto divergente se te pregunta qué copia conservar. Independiente de RetroAchievements.</string>
+    <string name="settings_play_games_signin">Iniciar sesión en Play Games</string>
+    <string name="settings_play_games_signin_hint">Inicia sesión en Google Play Games para activar los estados guardados en la nube y los logros de Play.</string>
+
+    <!-- ===== Diagnóstico / informes de fallos opcionales (Workstream L) ===== -->
+    <string name="settings_diagnostics">Diagnóstico</string>
+    <string name="settings_crash_reports">Enviar informes de fallos</string>
+    <string name="settings_crash_reports_hint">Desactivado por defecto. Cuando está activado, un fallo escribe un registro local que puedes compartir — RustyNES no sube nada.</string>
+
+    <!-- ===== Actualización dentro de la app (Workstream L) ===== -->
+    <string name="update_ready_title">Actualización descargada</string>
+    <string name="update_ready_restart">Reiniciar</string>
+    <string name="update_ready_body">Se ha descargado una actualización de RustyNES. Reinicia para instalarla.</string>
+
+    <!-- ===== Selector de conflicto de estado en la nube (Workstream D) ===== -->
+    <string name="cloud_conflict_title">Conflicto de estado en la nube</string>
+    <string name="cloud_conflict_body">Este estado guardado difiere entre este dispositivo y la nube. ¿Qué copia quieres conservar?</string>
+    <string name="cloud_conflict_keep_local">Conservar este dispositivo</string>
+    <string name="cloud_conflict_keep_cloud">Conservar la nube</string>
+
     <!-- ===== About dialog ===== -->
     <string name="about_close">Cerrar</string>
     <string name="about_body">RustyNES — un emulador de Nintendo Entertainment System de precisión de ciclo escrito en Rust puro.\n\nLicencia: MIT OR Apache-2.0\nAutor: DoubleGate\nPrecisión: AccuracyCoin 100%% (139/139); nestest sin diferencias; suites blargg / kevtris en verde.\n\nCaracterísticas: 168 familias de mappers, el Famicom Disk System, Vs. System / PlayChoice-10, juego en red con rollback, RetroAchievements, películas TAS + el editor TAStudio, estados guardados, rebobinado, run-ahead, scripting Lua + automatización, paquetes HD y grabación de A/V — todo bajo un estricto contrato de determinismo de bits.</string>

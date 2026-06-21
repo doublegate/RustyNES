@@ -154,6 +154,39 @@
     <!-- %s = the active screen mode label (Cover / Inner / Cast) -->
     <string name="settings_controller_screen">Controller — %1$s screen</string>
 
+    <!-- ===== Play Games project id (Workstream D+E) =====
+         PLACEHOLDER. The Play Games SDK requires the linked project's numeric app id in
+         the manifest (<meta-data com.google.android.gms.games.APP_ID>). The maintainer
+         creates the Play Games Services project in the Play Console and replaces "0"
+         with the generated numeric id (the games-ids.xml value). "0" is intentionally
+         not a valid project id, so PGS sign-in fails closed until then — belt-and-
+         suspenders on top of the default-off BuildConfig.PGS_ENABLED flag. Marked
+         translatable="false" (a numeric id, never localized). -->
+    <string name="game_services_project_id" translatable="false">0</string>
+
+    <!-- ===== Play Games / cloud saves (Workstream D+E) — DISTINCT from RetroAchievements ===== -->
+    <string name="settings_play_games">Play Games</string>
+    <string name="settings_cloud_saves">Cloud saves (Play Games)</string>
+    <string name="settings_cloud_saves_hint">Sync your save-states across devices via Google Play Games. Last write wins; a divergent conflict asks which copy to keep. Separate from RetroAchievements.</string>
+    <string name="settings_play_games_signin">Sign in to Play Games</string>
+    <string name="settings_play_games_signin_hint">Sign in to Google Play Games to enable cloud-synced save-states and Play achievements.</string>
+
+    <!-- ===== Diagnostics / opt-in crash reporting (Workstream L) ===== -->
+    <string name="settings_diagnostics">Diagnostics</string>
+    <string name="settings_crash_reports">Send crash reports</string>
+    <string name="settings_crash_reports_hint">Off by default. When on, a crash writes a local log you can share — RustyNES uploads nothing.</string>
+
+    <!-- ===== In-app update (Workstream L) ===== -->
+    <string name="update_ready_title">Update downloaded</string>
+    <string name="update_ready_restart">Restart</string>
+    <string name="update_ready_body">A RustyNES update has been downloaded. Restart to install it.</string>
+
+    <!-- ===== Cloud-save conflict picker (Workstream D) ===== -->
+    <string name="cloud_conflict_title">Cloud save conflict</string>
+    <string name="cloud_conflict_body">This save differs between this device and the cloud. Which copy do you want to keep?</string>
+    <string name="cloud_conflict_keep_local">Keep this device</string>
+    <string name="cloud_conflict_keep_cloud">Keep cloud</string>
+
     <!-- ===== About dialog ===== -->
     <string name="about_close">Close</string>
     <string name="about_body">RustyNES — a cycle-accurate Nintendo Entertainment System emulator written in pure Rust.\n\nLicense: MIT OR Apache-2.0\nAuthor: DoubleGate\nAccuracy: AccuracyCoin 100%% (139/139); nestest 0-diff; blargg / kevtris suites green.\n\nFeatures: 168 mapper families, the Famicom Disk System, Vs. System / PlayChoice-10, rollback netplay, RetroAchievements, TAS movies + the TAStudio editor, save-states, rewind, run-ahead, Lua scripting + automation, HD packs, and A/V recording — all on a strict bit-determinism contract.</string>

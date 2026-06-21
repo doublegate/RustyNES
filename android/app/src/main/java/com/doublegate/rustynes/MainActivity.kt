@@ -125,6 +125,31 @@ class MainActivity : AppCompatActivity() {
     /** Freemium entitlement (Workstream M); created in onCreate. */
     private lateinit var license: LicenseManager
 
+    /** Play Games Services v2 (Workstreams D+E): sign-in + achievements + leaderboards.
+     *  Created in onCreate; all calls no-op behind the default-off PGS_ENABLED flag.
+     *  DISTINCT from RetroAchievements (rustynes-ra, v1.8.6). */
+    lateinit var playGames: PlayGamesManager
+        private set
+
+    /** Play Games cloud-save Snapshots (Workstream D); rides on [playGames] sign-in. */
+    lateinit var cloudSave: CloudSaveManager
+        private set
+
+    /** Play Integrity anti-tamper client over Billing (Workstream L); no-op behind the
+     *  default-off PLAY_INTEGRITY_ENABLED flag + a real cloud project number. */
+    private lateinit var integrity: IntegrityManager
+
+    /** In-app update (flexible) + in-app review (Workstream L); no-op on sideload. */
+    private lateinit var playUpdates: PlayUpdatesManager
+
+    /** v1.8.8 "Atlas" (Workstream L): the in-app FLEXIBLE-update result launcher,
+     *  registered in onCreate (must happen before the Activity is STARTED). */
+    private lateinit var updateLauncher: androidx.activity.result.ActivityResultLauncher<androidx.activity.result.IntentSenderRequest>
+
+    /** Set true once a flexible update finished downloading — the shell shows a
+     *  "Restart to install" prompt (Compose state so it recomposes). */
+    val updateReadyState = androidx.compose.runtime.mutableStateOf(false)
+
     /** Thermal-throttle listener (perf/battery); cancels fast-forward when hot. */
     private var thermalListener: android.os.PowerManager.OnThermalStatusChangedListener? = null
 
@@ -175,6 +200,23 @@ class MainActivity : AppCompatActivity() {
         // in the LicenseManager ctor, so the demo gate is already correct before connect.
         gamepad = GamepadManager(applicationContext, emulator)
         registerThermalBackoff()
+        // v1.8.8 "Atlas" (Workstreams D+E+L): Play services managers. All are cheap
+        // no-op shells when their gates (PGS_ENABLED / PLAY_INTEGRITY_ENABLED /
+        // PLAY_BUILD) are off — the default build constructs them but they do nothing.
+        playGames = PlayGamesManager(applicationContext)
+        cloudSave = CloudSaveManager(applicationContext, playGames)
+        integrity = IntegrityManager(applicationContext)
+        playUpdates = PlayUpdatesManager(applicationContext)
+        // PGS v2 auto-sign-in (no-op when off). Initialize early; sign-in is silent.
+        playGames.initialize()
+        // The in-app FLEXIBLE-update launcher must be registered before STARTED.
+        updateLauncher = registerForActivityResult(
+            androidx.activity.result.contract.ActivityResultContracts.StartIntentSenderForResult(),
+        ) { /* a cancelled/failed flexible update is non-fatal; the user can retry */ }
+        playUpdates.onUpdateDownloaded = { updateReadyState.value = true }
+        // Opt-in crash reporter (Workstream L): off by default; installs the handler
+        // only when the user has opted in (read synchronously from prefs).
+        CrashReporter.install(applicationContext, AppSettings(this).crashReportsEnabled)
         // v1.8.8 "Atlas" (Workstream H): a launch from a tile / shortcut / widget
         // carries the deep-link action; seed it for the shell to consume.
         deepLinkState.value = intent?.getStringExtra(DeepLink.EXTRA_ACTION)
@@ -229,7 +271,27 @@ class MainActivity : AppCompatActivity() {
         }
         // Start listening for controller hot-plug + enumerate connected pads.
         if (::gamepad.isInitialized) gamepad.register()
+        // v1.8.8 "Atlas" (Workstream L): Play-services foreground work, all off the
+        // cold-start path (first/each resume). Each no-ops on sideload / behind its flag.
+        if (::playUpdates.isInitialized && !updateChecked) {
+            // Flexible in-app update check (no-op on a non-Play install).
+            playUpdates.checkForFlexibleUpdate(updateLauncher)
+            updateChecked = true
+        }
+        if (::playUpdates.isInitialized) playUpdates.resumeStalledUpdate()
+        // Warm the Play Integrity Standard token provider (no-op without the flag + a
+        // real cloud project number). Defense-in-depth over Billing; never blocks.
+        if (::integrity.isInitialized) integrity.prepareToken()
+        // Confirm PGS sign-in state (PGS v2 auto-signs-in; refresh the flag silently).
+        // The PGS v2 client factories need an Activity — bind this one (held weakly).
+        if (::playGames.isInitialized) {
+            playGames.attachActivity(this)
+            playGames.ensureSignedIn()
+        }
     }
+
+    /** Guards the one-time in-app update check (Workstream L). */
+    private var updateChecked = false
 
     override fun onPause() {
         super.onPause()
@@ -256,6 +318,23 @@ class MainActivity : AppCompatActivity() {
         thermalListener?.let {
             (getSystemService(POWER_SERVICE) as android.os.PowerManager).removeThermalStatusListener(it)
         }
+        // v1.8.8 "Atlas" (Workstream L): detach the in-app-update install listener.
+        if (::playUpdates.isInitialized) playUpdates.release()
+        // v1.8.8 "Atlas" (Workstreams D+E): clear the weakly-held Activity so PGS can't
+        // touch a destroyed Activity.
+        if (::playGames.isInitialized) playGames.attachActivity(null)
+    }
+
+    /** v1.8.8 "Atlas" (Workstream L): finish a downloaded flexible update (restarts the
+     *  app). Called from the shell's "Restart to install" prompt. */
+    fun completeFlexibleUpdate() {
+        if (::playUpdates.isInitialized) playUpdates.completeFlexibleUpdate()
+    }
+
+    /** v1.8.8 "Atlas" (Workstream L): request the in-app review flow after a satisfying
+     *  session (the API enforces its own quota; no CTA). No-op on sideload. */
+    fun requestInAppReview() {
+        if (::playUpdates.isInitialized) playUpdates.maybeRequestReview(this)
     }
 
     // v1.8.8 "Atlas" (Workstream H): a singleTop re-launch from a tile / shortcut /
@@ -371,6 +450,14 @@ class MainActivity : AppCompatActivity() {
         if (BuildConfig.PLAY_BUILD && (!::license.isInitialized || !license.isUnlocked)) return
         if (ctrl != null && sha != null) {
             runCatching { SaveStateStore.save(this, sha, SaveStateStore.AUTO_SLOT, ctrl.saveState()) }
+            // v1.8.8 "Atlas" (Workstream D): mirror the auto-resume slot to the cloud as
+            // its own Snapshot (one independently-updatable unit) so the next device
+            // resumes where this one left off. No-op unless cloud saves are active
+            // (PGS_ENABLED + signed-in + the toggle); local saves stay authoritative.
+            val cfg = AppSettings(this)
+            if (::cloudSave.isInitialized && cloudSave.isActive(cfg)) {
+                cloudSave.pushSlot(sha, SaveStateStore.AUTO_SLOT, cfg)
+            }
         }
     }
 
@@ -810,6 +897,10 @@ private fun EmulatorScreen(
     LaunchedEffect(settings.muted) { emulator.muted = settings.muted }
     var showSettings by remember { mutableStateOf(false) }
     var showStates by remember { mutableStateOf(false) }
+    // v1.8.8 "Atlas" (Workstream D): a surfaced cloud-save conflict awaiting the user's
+    // keep-local / keep-cloud choice (null = none). Set by a Snapshots open/push that
+    // diverged; cleared once resolved or dismissed.
+    var cloudConflict by remember { mutableStateOf<SaveConflict?>(null) }
     var showAbout by remember { mutableStateOf(false) }
     var showControllers by remember { mutableStateOf(false) }
     // First-run onboarding shows until the user ticks "Do not show again".
@@ -1215,6 +1306,7 @@ private fun EmulatorScreen(
                 val ip = localWifiIpv4(context) ?: "<this device's IP>"
                 npHostInfo = "$ip:$bound"
                 status = "Hosting on $ip:$bound — waiting for a player"
+                host?.playGames?.unlock(PgsIds.ACH_FIRST_NETPLAY)
             }.onFailure { status = "Host failed: ${it.message}" }
         }
     }
@@ -1232,6 +1324,7 @@ private fun EmulatorScreen(
             runCatching {
                 withContext(Dispatchers.IO) { ctrl.npJoin(address) }
                 status = "Joining $address…"
+                host?.playGames?.unlock(PgsIds.ACH_FIRST_NETPLAY)
             }.onFailure { status = "Join failed: ${it.message}" }
         }
     }
@@ -1255,6 +1348,7 @@ private fun EmulatorScreen(
                 val code = withContext(Dispatchers.IO) { ctrl.npHostRoom(2u, cfg) }
                 npRoomCode = code
                 status = "Hosting online — room code $code"
+                host?.playGames?.unlock(PgsIds.ACH_FIRST_NETPLAY)
             }.onFailure { status = "Host failed: ${it.message}" }
         }
     }
@@ -1275,6 +1369,7 @@ private fun EmulatorScreen(
                 val cfg = netplayConfig(settings)
                 withContext(Dispatchers.IO) { ctrl.npJoinRoom(code, cfg) }
                 status = "Joining room $code…"
+                host?.playGames?.unlock(PgsIds.ACH_FIRST_NETPLAY)
             }.onFailure { status = "Join failed: ${it.message}" }
         }
     }
@@ -1418,7 +1513,29 @@ private fun EmulatorScreen(
 
     // v1.8.8 "Atlas" (Workstream H): keep the host's PiP gate in sync with whether a
     // ROM is actually running, so onUserLeaveHint only auto-enters PiP during play.
-    LaunchedEffect(romLoaded) { host?.romRunningForPip = romLoaded }
+    LaunchedEffect(romLoaded) {
+        host?.romRunningForPip = romLoaded
+        // v1.8.8 "Atlas" (Workstream E): "first ROM loaded" PGS achievement. No-op
+        // behind the default-off PGS_ENABLED flag / when not signed in; unlock is
+        // idempotent server-side. DISTINCT from RetroAchievements (per-game) above.
+        if (romLoaded) host?.playGames?.unlock(PgsIds.ACH_FIRST_ROM)
+        // v1.8.8 "Atlas" (Workstream D): on first open of a ROM, pull any cloud copy of
+        // its auto save-slot down so a save made on another device resumes here. No-op
+        // unless cloud saves are active (flag + signed-in + toggle); local saves stay
+        // authoritative otherwise. Runs off the main thread (Snapshot I/O is blocking).
+        val sha = emulator.romSha
+        if (romLoaded && sha != null && host?.cloudSave?.isActive(settings) == true) {
+            // The Snapshots Tasks dispatch their own callbacks; just kick it off. The
+            // pull writes into the local `.rns` (so a subsequent open auto-resumes it).
+            host.cloudSave.pullSlot(
+                sha,
+                SaveStateStore.AUTO_SLOT,
+                settings,
+                onConflict = { c -> cloudConflict = c },
+                onDone = { if (it) host.playGames.unlock(PgsIds.ACH_FIRST_CLOUD_SYNC) },
+            )
+        }
+    }
 
     // v1.8.8 "Atlas" (Workstream H): consume a deep-link action from a Quick Settings
     // tile / app shortcut / widget launch. "resume" opens the last-played library
@@ -1782,6 +1899,11 @@ private fun EmulatorScreen(
             capture.latestFrame = null
             recording = false
             status = "No ROM loaded"
+            // v1.8.8 "Atlas" (Workstream L): closing a ROM is a natural "finished a
+            // satisfying session" moment — request the in-app review flow. The Play API
+            // enforces its own quota (so this no-ops most of the time, with no CTA) and
+            // no-ops entirely on a sideloaded / non-Play install.
+            host?.requestInAppReview()
         }
         // v1.8.8 "Atlas" (Workstream H): in the small PiP window, show only the
         // gameplay picture — the control bar is hidden (and the on-screen pad below).
@@ -2045,6 +2167,12 @@ private fun EmulatorScreen(
                     }
                 }
             },
+            // Play Games cloud saves (Workstreams D+E) — DISTINCT from RA above. Only
+            // surfaced when the Play Games build is active (BuildConfig.PGS_ENABLED).
+            pgsSignedIn = host?.playGames?.isSignedIn == true,
+            cloudSavesEnabled = settings.cloudSavesEnabled,
+            onCloudSavesChange = { settings.cloudSavesEnabled = it },
+            onPgsSignIn = { host?.playGames?.ensureSignedIn() },
             // v1.8.8 "Atlas" (Workstream B): apply the picked UI language immediately.
             // setApplicationLocales recreates the Activity so the new locale's resources
             // load; AppCompat persists the choice (and our AppSettings mirror is the
@@ -2065,7 +2193,67 @@ private fun EmulatorScreen(
         StatesSheet(
             context, emulator.romSha, emulator,
             onStatus = { status = it },
+            onSlotSaved = { slot ->
+                // v1.8.8 "Atlas" (Workstream E): "first save-state" PGS achievement
+                // (idempotent; no-op behind the default-off gate). DISTINCT from RA.
+                host?.playGames?.unlock(PgsIds.ACH_FIRST_SAVE_STATE)
+                // v1.8.8 "Atlas" (Workstream D): push the just-saved slot to the cloud
+                // as its own Snapshot (one independently-updatable unit). No-op unless
+                // cloud saves are active; a divergent conflict surfaces the picker.
+                val sha = emulator.romSha
+                if (sha != null && host?.cloudSave?.isActive(settings) == true) {
+                    host.cloudSave.pushSlot(
+                        sha, slot, settings,
+                        onConflict = { c -> cloudConflict = c },
+                        onDone = { if (it) host.playGames.unlock(PgsIds.ACH_FIRST_CLOUD_SYNC) },
+                    )
+                }
+            },
             onDismiss = { showStates = false },
+        )
+    }
+    // v1.8.8 "Atlas" (Workstream L): a FLEXIBLE in-app update finished downloading —
+    // offer a "Restart to install" prompt (the user chose when; flexible never forces).
+    if (host?.updateReadyState?.value == true) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { host.updateReadyState.value = false },
+            title = { Text(stringResource(R.string.update_ready_title)) },
+            text = { Text(stringResource(R.string.update_ready_body)) },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    host.updateReadyState.value = false
+                    host.completeFlexibleUpdate()
+                }) { Text(stringResource(R.string.update_ready_restart)) }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    host.updateReadyState.value = false
+                }) { Text(stringResource(R.string.about_close)) }
+            },
+        )
+    }
+
+    // v1.8.8 "Atlas" (Workstream D): the cloud-save conflict picker. Surfaced when a
+    // Snapshot open/push diverged between this device and the cloud; the user picks
+    // which copy to keep (last-write-wins is the auto path; this is the manual
+    // fallback). A richer 3-way merge UI is a deliberate TODO.
+    cloudConflict?.let { conflict ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { cloudConflict = null },
+            title = { Text(stringResource(R.string.cloud_conflict_title)) },
+            text = { Text(stringResource(R.string.cloud_conflict_body)) },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    host?.cloudSave?.resolveConflict(conflict, keepLocal = true)
+                    cloudConflict = null
+                }) { Text(stringResource(R.string.cloud_conflict_keep_local)) }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    host?.cloudSave?.resolveConflict(conflict, keepLocal = false)
+                    cloudConflict = null
+                }) { Text(stringResource(R.string.cloud_conflict_keep_cloud)) }
+            },
         )
     }
     if (showAbout) {
@@ -2159,6 +2347,12 @@ private fun EmulatorScreen(
         // Netplay status is polled at the same low cadence as RA, on its own
         // always-advancing counter (the RA counter only ticks when RA is enabled).
         var npFrame = 0
+        // v1.8.8 "Atlas" (Workstream E): accumulate frames run with fast-forward
+        // (turbo) engaged and post the PGS incremental achievement in batches (every
+        // ~30 turbo frames) to avoid a per-frame FFI/Task hit. No-op behind the
+        // default-off PGS_ENABLED gate; the increment auto-unlocks at the Console step
+        // target. DISTINCT from RetroAchievements.
+        var turboFrames = 0
         try {
             while (isActive) {
                 val ctrl = emulator.controller
@@ -2183,6 +2377,14 @@ private fun EmulatorScreen(
                 // present + drain audio only on a frame that actually advanced.
                 val np = ctrl.npIsActive()
                 val turbo = !np && emulator.turbo
+                // v1.8.8 "Atlas" (Workstream E): batch the turbo-frames achievement.
+                if (turbo) {
+                    turboFrames++
+                    if (turboFrames >= 30) {
+                        host?.playGames?.increment(PgsIds.ACH_TURBO_100, turboFrames)
+                        turboFrames = 0
+                    }
+                }
                 val start = System.nanoTime()
                 // Emulate, play this frame's audio, and pack the framebuffer all
                 // off the main thread (the blocking audio write and the 61k-pixel

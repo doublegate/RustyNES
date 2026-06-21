@@ -35,6 +35,10 @@ fun StatesSheet(
     sha: String?,
     emulator: EmulatorHandle,
     onStatus: (String) -> Unit,
+    // v1.8.8 "Atlas" (Workstreams D+E): notified with the slot id after a successful
+    // user save, so the host can fire the "first save-state" PGS achievement and push
+    // the slot to the cloud (both no-ops behind their default-off gates).
+    onSlotSaved: (String) -> Unit = {},
     onDismiss: () -> Unit,
 ) {
     // Bump to recompute slot timestamps after a save/delete.
@@ -89,7 +93,7 @@ fun StatesSheet(
                             val ctrl = emulator.controller
                             if (ctrl != null) {
                                 runCatching { SaveStateStore.save(context, sha, slot, ctrl.saveState()) }
-                                    .onSuccess { onStatus("Saved slot $slot"); refresh++ }
+                                    .onSuccess { onStatus("Saved slot $slot"); refresh++; onSlotSaved(slot) }
                                     .onFailure { onStatus("Save failed: ${it.message}") }
                             }
                         }) { Text("Save") }
