@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    v1.8.8 "Atlas" (Workstream H): static app shortcuts (long-press the launcher
+    icon). Each deep-links into MainActivity with the extra DeepLink.EXTRA_ACTION;
+    the activity reads it in onCreate / onNewIntent and the Compose shell reacts.
+    "Resume last game" leans on the library's last-played entry; "Open ROM" raises
+    the SAF picker; "Library" shows the box-art grid.
+-->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="resume"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_resume"
+        android:shortcutShortLabel="@string/shortcut_resume_short"
+        android:shortcutLongLabel="@string/shortcut_resume_long">
+        <intent
+            android:action="android.intent.action.MAIN"
+            android:targetPackage="com.doublegate.rustynes"
+            android:targetClass="com.doublegate.rustynes.MainActivity">
+            <extra
+                android:name="com.doublegate.rustynes.extra.ACTION"
+                android:value="resume" />
+        </intent>
+    </shortcut>
+
+    <shortcut
+        android:shortcutId="open"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_open"
+        android:shortcutShortLabel="@string/shortcut_open_short"
+        android:shortcutLongLabel="@string/shortcut_open_long">
+        <intent
+            android:action="android.intent.action.MAIN"
+            android:targetPackage="com.doublegate.rustynes"
+            android:targetClass="com.doublegate.rustynes.MainActivity">
+            <extra
+                android:name="com.doublegate.rustynes.extra.ACTION"
+                android:value="open" />
+        </intent>
+    </shortcut>
+
+    <shortcut
+        android:shortcutId="library"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_library"
+        android:shortcutShortLabel="@string/shortcut_library_short"
+        android:shortcutLongLabel="@string/shortcut_library_long">
+        <intent
+            android:action="android.intent.action.MAIN"
+            android:targetPackage="com.doublegate.rustynes"
+            android:targetClass="com.doublegate.rustynes.MainActivity">
+            <extra
+                android:name="com.doublegate.rustynes.extra.ACTION"
+                android:value="library" />
+        </intent>
+    </shortcut>
+</shortcuts>

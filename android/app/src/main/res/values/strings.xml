@@ -70,6 +70,32 @@
     <!-- %s = the connected display's name -->
     <string name="casting_to">Casting to %1$s</string>
 
+    <!-- ===== Capture / share (Workstream F) ===== -->
+    <string name="action_screenshot">Screenshot</string>
+    <string name="action_record">Record</string>
+    <string name="action_stop_record">Stop</string>
+    <string name="action_pip">PiP</string>
+    <string name="capture_screenshot_saved">Screenshot saved</string>
+    <string name="capture_screenshot_failed">Couldn\'t save screenshot</string>
+    <string name="capture_recording">Recording clip…</string>
+    <string name="capture_clip_saved">Clip saved</string>
+    <string name="capture_clip_failed">Couldn\'t save clip</string>
+    <string name="capture_unsupported">Capture needs Android 10 or newer</string>
+    <string name="capture_share">Share</string>
+
+    <!-- ===== Platform surfaces (Workstream H) ===== -->
+    <string name="tile_resume_label">Resume RustyNES</string>
+    <string name="tile_resume_none">No recent game</string>
+    <string name="shortcut_resume_short">Resume</string>
+    <string name="shortcut_resume_long">Resume last game</string>
+    <string name="shortcut_open_short">Open ROM</string>
+    <string name="shortcut_open_long">Open a ROM</string>
+    <string name="shortcut_library_short">Library</string>
+    <string name="shortcut_library_long">Open the library</string>
+    <string name="widget_resume_title">Resume</string>
+    <string name="widget_resume_none">RustyNES — open a game</string>
+    <string name="widget_resume_description">Resume your last RustyNES game.</string>
+
     <!-- ===== Settings sheet ===== -->
     <string name="settings_title">Settings</string>
     <string name="settings_theme">Theme</string>

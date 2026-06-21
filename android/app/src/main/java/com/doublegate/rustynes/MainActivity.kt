@@ -78,6 +78,8 @@ import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
@@ -131,6 +133,27 @@ class MainActivity : AppCompatActivity() {
     @Volatile
     private var contentReady: Boolean = false
 
+    /** v1.8.8 "Atlas" (Workstream H): whether we are currently in Picture-in-Picture.
+     *  Compose reads it to hide the controls/HUD in the small PiP window; the loop
+     *  keeps running so gameplay continues. A Compose [mutableStateOf] so a change
+     *  recomposes the shell. */
+    val inPipState = androidx.compose.runtime.mutableStateOf(false)
+
+    /** v1.8.8 "Atlas" (Workstream H): the pending deep-link action from a Quick
+     *  Settings tile / app shortcut / widget launch (resume / open / library), read
+     *  by the Compose shell which then clears it. Seeded from the launch intent and
+     *  refreshed on each onNewIntent (singleTop re-launch). */
+    val deepLinkState = androidx.compose.runtime.mutableStateOf<String?>(null)
+
+    /** v1.8.8 "Atlas" (Workstream H): the on-screen bounds of the gameplay image, set
+     *  by the shell via [setGameplayBounds], used as the PiP `sourceRectHint` so the
+     *  enter-PiP animation crops from the picture (not the whole window). */
+    private var gameplayBounds: android.graphics.Rect? = null
+
+    /** True while a ROM is loaded + running — gates auto-enter-PiP on leave-hint. */
+    @Volatile
+    var romRunningForPip: Boolean = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // Install the Android-12+ system splash BEFORE super.onCreate(); keep it up
         // until the first Compose frame is ready (the bridge/ROM-DB load is brief).
@@ -152,6 +175,9 @@ class MainActivity : AppCompatActivity() {
         // in the LicenseManager ctor, so the demo gate is already correct before connect.
         gamepad = GamepadManager(applicationContext, emulator)
         registerThermalBackoff()
+        // v1.8.8 "Atlas" (Workstream H): a launch from a tile / shortcut / widget
+        // carries the deep-link action; seed it for the shell to consume.
+        deepLinkState.value = intent?.getStringExtra(DeepLink.EXTRA_ACTION)
         enableEdgeToEdge()
         hideSystemBars()
         setContent {
@@ -230,6 +256,63 @@ class MainActivity : AppCompatActivity() {
         thermalListener?.let {
             (getSystemService(POWER_SERVICE) as android.os.PowerManager).removeThermalStatusListener(it)
         }
+    }
+
+    // v1.8.8 "Atlas" (Workstream H): a singleTop re-launch from a tile / shortcut /
+    // widget delivers its deep-link here (the existing Activity instance is reused).
+    // Update the backing intent + publish the action for the shell to consume.
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        intent.getStringExtra(DeepLink.EXTRA_ACTION)?.let { deepLinkState.value = it }
+    }
+
+    // v1.8.8 "Atlas" (Workstream H): record the on-screen gameplay-image bounds so
+    // enter-PiP can use them as the sourceRectHint (the PiP shrink animates from the
+    // picture, not the whole window). Called by the shell on layout.
+    fun setGameplayBounds(rect: android.graphics.Rect) {
+        gameplayBounds = rect
+    }
+
+    /**
+     * v1.8.8 "Atlas" (Workstream H): enter Picture-in-Picture with the NES 8:7
+     * display aspect + the gameplay sourceRectHint, so the emulator keeps running in
+     * a floating window when the user leaves the app. PiP is API 26+ (== minSdk).
+     */
+    fun enterPip() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        if (!packageManager.hasSystemFeature(
+                android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE,
+            )
+        ) {
+            return
+        }
+        val params = android.app.PictureInPictureParams.Builder()
+            // NES picture is 8:7 PAR-corrected; PiP clamps extreme ratios but 8:7 is fine.
+            .setAspectRatio(android.util.Rational(8, 7))
+            .also { b -> gameplayBounds?.let { b.setSourceRectHint(it) } }
+            .build()
+        runCatching { enterPictureInPictureMode(params) }
+    }
+
+    // Auto-enter PiP when the user navigates Home (or to recents) while a ROM is
+    // running — the gameplay continues in the floating window instead of pausing.
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (romRunningForPip && !inPipState.value && !emulator.paused) {
+            enterPip()
+        }
+    }
+
+    // PiP enter/exit: publish the mode so the shell hides the controls + HUD in the
+    // small window (and restores them on exit). The emulation loop is untouched — it
+    // keeps producing frames, so gameplay continues in PiP.
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: android.content.res.Configuration,
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        inPipState.value = isInPictureInPictureMode
     }
 
     // v1.8.8 "Atlas" (Workstream B): apply the persisted in-app UI language. An empty
@@ -647,9 +730,19 @@ private fun EmulatorScreen(
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val activity = context as? Activity
+    // v1.8.8 "Atlas" (Workstream F/H): the typed host for PiP + deep-link + capture.
+    val host = context as? MainActivity
     // Freemium is active only in the Play build; sideload/dev builds are unlimited.
     val unlocked = !BuildConfig.PLAY_BUILD || license.isUnlocked
     var frame by remember { mutableStateOf<ImageBitmap?>(null) }
+    // v1.8.8 "Atlas" (Workstream H): true while we are in the PiP window — drives the
+    // controls/HUD hide so only the gameplay picture shows in the floating window.
+    val inPip = host?.inPipState?.value ?: false
+    // v1.8.8 "Atlas" (Workstream F): the latest gameplay-frame bitmap (a reference to
+    // the loop's reused buffer + the HD-pack buffer), captured for screenshot/clip.
+    // Plain holder (not Compose state) read on a capture tap; the loop writes it.
+    val capture = remember { CaptureState() }
+    var recording by remember { mutableStateOf(false) }
     // Whether a ROM is currently loaded — drives the Open/Close toggle button and
     // gates the gameplay view vs. the idle (Open + recents) screen.
     var romLoaded by remember { mutableStateOf(false) }
@@ -1237,6 +1330,104 @@ private fun EmulatorScreen(
         }.onFailure { status = "Can't open ${entry.name}: ${it.message}" }
     }
 
+    // v1.8.8 "Atlas" (Workstream F): capture a screenshot of the current gameplay
+    // frame to Pictures/RustyNES (MediaStore) and offer a share. The save (PNG
+    // encode + ContentResolver I/O) runs off the main thread; a brief status/toast
+    // reports the result. Gameplay-only — the captured bitmap carries no UI chrome.
+    fun takeScreenshot() {
+        if (!Capture.supported) {
+            status = context.getString(R.string.capture_unsupported)
+            return
+        }
+        val src = capture.latestFrame
+        if (src == null) {
+            status = context.getString(R.string.capture_screenshot_failed)
+            return
+        }
+        // Snapshot the frame on the main thread (the loop reuses it in place), then
+        // encode + save off-thread.
+        val snapshot = runCatching { src.copy(Bitmap.Config.ARGB_8888, false) }.getOrNull()
+        if (snapshot == null) {
+            status = context.getString(R.string.capture_screenshot_failed)
+            return
+        }
+        scope.launch {
+            val uri = withContext(Dispatchers.IO) { Capture.saveScreenshot(context, snapshot) }
+            runCatching { snapshot.recycle() }
+            if (uri != null) {
+                status = context.getString(R.string.capture_screenshot_saved)
+                android.widget.Toast.makeText(
+                    context,
+                    context.getString(R.string.capture_screenshot_saved),
+                    android.widget.Toast.LENGTH_SHORT,
+                ).show()
+                Capture.share(context, uri, image = true)
+            } else {
+                status = context.getString(R.string.capture_screenshot_failed)
+            }
+        }
+    }
+
+    // v1.8.8 "Atlas" (Workstream F): toggle gameplay-clip recording. Start arms a
+    // rolling ring buffer (the loop offers frames to it); Stop drains it, encodes the
+    // MP4 off-thread to Movies/RustyNES, and offers a share. Video-only for now (the
+    // audio mux is a documented TODO in Capture.kt).
+    fun toggleRecording() {
+        if (!Capture.supported) {
+            status = context.getString(R.string.capture_unsupported)
+            return
+        }
+        val existing = capture.clip
+        if (existing == null) {
+            // Start: size the ring from the active picture (HD-pack vs base NES).
+            val w = if (hdActive && hd.w > 0) hd.w else NES_WIDTH
+            val h = if (hdActive && hd.h > 0) hd.h else NES_HEIGHT
+            capture.clip = Capture.ClipBuffer(w, h)
+            recording = true
+            status = context.getString(R.string.capture_recording)
+        } else {
+            // Stop: detach the ring + encode it.
+            capture.clip = null
+            recording = false
+            val w = existing.width
+            val h = existing.height
+            scope.launch {
+                val frames = existing.drain()
+                val uri = withContext(Dispatchers.IO) { Capture.encodeClip(context, frames, w, h) }
+                if (uri != null) {
+                    status = context.getString(R.string.capture_clip_saved)
+                    android.widget.Toast.makeText(
+                        context,
+                        context.getString(R.string.capture_clip_saved),
+                        android.widget.Toast.LENGTH_SHORT,
+                    ).show()
+                    Capture.share(context, uri, image = false)
+                } else {
+                    status = context.getString(R.string.capture_clip_failed)
+                }
+            }
+        }
+    }
+
+    // v1.8.8 "Atlas" (Workstream H): keep the host's PiP gate in sync with whether a
+    // ROM is actually running, so onUserLeaveHint only auto-enters PiP during play.
+    LaunchedEffect(romLoaded) { host?.romRunningForPip = romLoaded }
+
+    // v1.8.8 "Atlas" (Workstream H): consume a deep-link action from a Quick Settings
+    // tile / app shortcut / widget launch. "resume" opens the last-played library
+    // game; "open" raises the SAF picker; "library" shows the idle/library screen.
+    // The action is cleared once handled so a recomposition/config-change doesn't
+    // re-fire it.
+    LaunchedEffect(host?.deepLinkState?.value) {
+        val action = host?.deepLinkState?.value ?: return@LaunchedEffect
+        when (action) {
+            DeepLink.ACTION_RESUME -> DeepLink.lastPlayed(context)?.let { playGame(it) }
+            DeepLink.ACTION_OPEN -> picker.launch(arrayOf("*/*"))
+            DeepLink.ACTION_LIBRARY -> { /* idle screen already shows the library */ }
+        }
+        host.deepLinkState.value = null
+    }
+
     // Demo countdown: tick once per second while a ROM is running, unpaused, and
     // not yet unlocked; on expiry, pause the emulator and raise the unlock sheet.
     // Purchasing (unlocked -> true) cancels the limit immediately.
@@ -1376,7 +1567,18 @@ private fun EmulatorScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
-                .background(Color.Black),
+                .background(Color.Black)
+                // v1.8.8 "Atlas" (Workstream H): publish the gameplay-image bounds in
+                // window coordinates so enter-PiP can crop the shrink animation from
+                // the picture (sourceRectHint), not the whole window.
+                .onGloballyPositioned { coords ->
+                    val b = coords.boundsInWindow()
+                    host?.setGameplayBounds(
+                        android.graphics.Rect(
+                            b.left.toInt(), b.top.toInt(), b.right.toInt(), b.bottom.toInt(),
+                        ),
+                    )
+                },
             contentAlignment = Alignment.Center,
         ) {
             val current = frame
@@ -1566,9 +1768,17 @@ private fun EmulatorScreen(
             romLoaded = false
             paused = false
             emulator.paused = false
+            // v1.8.8 "Atlas" (Workstream F): discard any in-progress clip + the last
+            // captured frame so a closed ROM leaves nothing to capture/encode.
+            capture.clip?.clear()
+            capture.clip = null
+            capture.latestFrame = null
+            recording = false
             status = "No ROM loaded"
         }
-        if (controlsVisible) {
+        // v1.8.8 "Atlas" (Workstream H): in the small PiP window, show only the
+        // gameplay picture — the control bar is hidden (and the on-screen pad below).
+        if (controlsVisible && !inPip) {
             Row(
             // focusGroup so the d-pad can move between entries when the menu is
             // opened via the pad's Guide button / Start+Select chord (v1.8.7, #41).
@@ -1617,6 +1827,29 @@ private fun EmulatorScreen(
                 },
                 enabled = !npActive,
             ) { Text(if (turbo) ">> On" else ">>") }
+            // v1.8.8 "Atlas" (Workstream F): screenshot + gameplay-clip capture.
+            // Both gated to a running ROM and to API 29+ (scoped MediaStore). The
+            // screenshot grabs the current frame; Record toggles a rolling MP4 clip.
+            if (romLoaded && Capture.supported) {
+                OutlinedButton(onClick = { takeScreenshot() }) {
+                    Text(stringResource(R.string.action_screenshot))
+                }
+                OutlinedButton(onClick = { toggleRecording() }) {
+                    Text(
+                        stringResource(
+                            if (recording) R.string.action_stop_record else R.string.action_record,
+                        ),
+                    )
+                }
+            }
+            // v1.8.8 "Atlas" (Workstream H): enter Picture-in-Picture — gameplay keeps
+            // running in a floating window. API 26+; shown only with a ROM loaded.
+            if (romLoaded && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                OutlinedButton(onClick = {
+                    controlsVisible = false
+                    host?.enterPip()
+                }) { Text(stringResource(R.string.action_pip)) }
+            }
             OutlinedButton(onClick = { showSettings = true }) { Text(stringResource(R.string.action_settings)) }
             // Hardware controllers (v1.8.7): port assignment, remapping, autofire.
             OutlinedButton(onClick = { showControllers = true }) { Text(stringResource(R.string.action_controllers)) }
@@ -1689,7 +1922,7 @@ private fun EmulatorScreen(
         // game maximizes, especially on the unfolded inner screen. The pad's
         // Guide/chord still reaches the menu, and the touch "MENU pill" path is
         // unaffected when the controller is shown. Disconnect restores it declaratively.
-        if (!controlsHidden) {
+        if (!controlsHidden && !inPip) {
             BoxWithConstraints(
                 // v1.8.8 "Atlas" (Workstream K): keep the on-screen pad's bottom row
                 // clear of the gesture-nav bar / cutout under edge-to-edge. Only the
@@ -2012,13 +2245,22 @@ private fun EmulatorScreen(
                     if (scriptLoaded) logLines = ctrl.drainScriptLog()
                 }
                 if (producedFrame) {
+                    val presented: Bitmap
                     if (usedHd && hdBmp != null) {
                         hdBmp.setPixels(hd.pixels, 0, hd.w, 0, 0, hd.w, hd.h)
                         frame = hdBmp.asImageBitmap()
+                        presented = hdBmp
                     } else {
                         reuse.setPixels(pixels, 0, NES_WIDTH, 0, 0, NES_WIDTH, NES_HEIGHT)
                         frame = reuse.asImageBitmap()
+                        presented = reuse
                     }
+                    // v1.8.8 "Atlas" (Workstream F): publish the gameplay frame for
+                    // capture (a reference to the just-blitted buffer, no UI chrome),
+                    // and feed the clip ring when recording (it copies on the throttle
+                    // beat). Both are cheap; the encode happens off-loop on Stop.
+                    capture.latestFrame = presented
+                    capture.clip?.offer(presented)
                     // Append new script log lines (keep the last 8 for the overlay).
                     if (logLines.isNotEmpty()) {
                         scriptLog = (scriptLog.split("\n").filter { it.isNotEmpty() } + logLines)
@@ -2108,6 +2350,24 @@ private class HdRender {
     var pixels: IntArray = IntArray(0)
     var w = 0
     var h = 0
+}
+
+/**
+ * v1.8.8 "Atlas" (Workstream F): capture state shared between the emulation loop and
+ * the screenshot/clip controls. The loop publishes the latest gameplay-frame bitmap
+ * each presented frame (the same buffer it blits to Compose — no UI chrome) and, when
+ * a clip is recording, offers each frame to the ring buffer. Reads/writes are cheap
+ * references; the encode (on Stop) happens off the loop.
+ */
+private class CaptureState {
+    /** The latest gameplay-frame bitmap (the loop's reused 256x240 buffer, or the
+     *  HD-pack upscaled buffer when active). A capture copies from it. */
+    @Volatile
+    var latestFrame: Bitmap? = null
+
+    /** Live clip ring buffer while recording (null when not). */
+    @Volatile
+    var clip: Capture.ClipBuffer? = null
 }
 
 /** Convert the core's RGBA8 framebuffer into packed ARGB_8888 pixels. */

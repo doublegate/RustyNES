@@ -262,6 +262,14 @@ dependencies {
     // auto-match (BoxArt.kt) does its own one-shot HttpURLConnection download to a
     // file:// cache, so no Coil network fetcher (coil-network-*) is pulled in either.
     implementation("io.coil-kt.coil3:coil-compose:3.5.0")
+    // v1.8.8 "Atlas" (Workstream H): the home-screen "Resume <last game>" widget is
+    // authored with Glance (Compose-idiomatic, matching the rest of the app). 1.3.0-
+    // alpha01 is the Glance line that explicitly bumped its Compose compileSdk to API
+    // 37 / AGP 9.2 — the exact toolchain this module uses (compileSdk 37, AGP 9) — so
+    // the 1.1.x/1.2.x stable lines (compileSdk 34/35) would mismatch the build's
+    // newer Compose runtime. glance-appwidget pulls glance + the AppWidget host glue.
+    implementation("androidx.glance:glance-appwidget:1.3.0-alpha01")
+    implementation("androidx.glance:glance-material3:1.3.0-alpha01")
     // v1.8.8 "Atlas" (Workstream J): persistent immutable collections. Lists handed
     // to Compose (the library grid entries/folders) become `ImmutableList`/`PersistentList`
     // so the compiler treats them as STABLE and the strong-skipping pass can skip the

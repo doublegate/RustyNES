@@ -61,6 +61,32 @@
     <string name="status_no_rom">Sin ROM cargada</string>
     <string name="casting_to">Enviando a %1$s</string>
 
+    <!-- ===== Captura / compartir (Workstream F) ===== -->
+    <string name="action_screenshot">Captura</string>
+    <string name="action_record">Grabar</string>
+    <string name="action_stop_record">Detener</string>
+    <string name="action_pip">PiP</string>
+    <string name="capture_screenshot_saved">Captura guardada</string>
+    <string name="capture_screenshot_failed">No se pudo guardar la captura</string>
+    <string name="capture_recording">Grabando clip…</string>
+    <string name="capture_clip_saved">Clip guardado</string>
+    <string name="capture_clip_failed">No se pudo guardar el clip</string>
+    <string name="capture_unsupported">La captura requiere Android 10 o posterior</string>
+    <string name="capture_share">Compartir</string>
+
+    <!-- ===== Superficies del sistema (Workstream H) ===== -->
+    <string name="tile_resume_label">Reanudar RustyNES</string>
+    <string name="tile_resume_none">Sin juego reciente</string>
+    <string name="shortcut_resume_short">Reanudar</string>
+    <string name="shortcut_resume_long">Reanudar el último juego</string>
+    <string name="shortcut_open_short">Abrir ROM</string>
+    <string name="shortcut_open_long">Abrir una ROM</string>
+    <string name="shortcut_library_short">Biblioteca</string>
+    <string name="shortcut_library_long">Abrir la biblioteca</string>
+    <string name="widget_resume_title">Reanudar</string>
+    <string name="widget_resume_none">RustyNES — abre un juego</string>
+    <string name="widget_resume_description">Reanuda tu último juego de RustyNES.</string>
+
     <!-- ===== Settings sheet ===== -->
     <string name="settings_title">Configuración</string>
     <string name="settings_theme">Tema</string>

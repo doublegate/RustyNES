@@ -62,7 +62,16 @@
             android:exported="true"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode|density|navigation|keyboard"
             android:launchMode="singleTop"
-            android:resizeableActivity="true">
+            android:resizeableActivity="true"
+            android:supportsPictureInPicture="true">
+            <!-- v1.8.8 "Atlas" (Workstream H): Picture-in-Picture. The activity
+                 absorbs the PiP enter/exit + resize config changes itself (the
+                 emulation thread + GL/Compose surface survive with no restart), so
+                 `screenSize|smallestScreenSize|screenLayout|orientation` above
+                 already cover the transition. Gameplay keeps running in the PiP
+                 window when the user leaves the app (or via the "PiP" control);
+                 onPictureInPictureModeChanged hides the HUD/controls in PiP. PiP is
+                 API 26+ (== minSdk), so no extra guard is needed at the manifest. -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -72,6 +81,41 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
+            <!-- v1.8.8 "Atlas" (Workstream H): static app shortcuts (long-press the
+                 launcher icon) — Resume last game / Open ROM / Library. Each deep-
+                 links via the DeepLink.EXTRA_ACTION extra. -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
         </activity>
+
+        <!-- v1.8.8 "Atlas" (Workstream H): "Resume RustyNES" Quick Settings tile.
+             Launches the app to the last-played ROM. Requires the
+             BIND_QUICK_SETTINGS_TILE permission + the QS_TILE intent-filter. The
+             user adds it from the Quick Settings edit tray. -->
+        <service
+            android:name=".ResumeTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_tile_resume"
+            android:label="@string/tile_resume_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <!-- v1.8.8 "Atlas" (Workstream H): "Resume <last game>" home-screen widget
+             (Glance). Shows the last-played game's name and launches into it on tap. -->
+        <receiver
+            android:name=".ResumeWidgetReceiver"
+            android:exported="false"
+            android:label="@string/widget_resume_title">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/resume_widget_info" />
+        </receiver>
     </application>
 </manifest>
