@@ -1,13 +1,28 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v1.8.7 "Android"** (2026-06-20) — the connectivity-completion
-> increment on the first **platform** (not accuracy) release line **v1.8.0
-> "Android"**: a complete Android app (shared `rustynes-mobile` UniFFI bridge +
-> `rustynes-android` platform crate + a Jetpack Compose shell; audio /
+> **Current release: v1.8.8 "Atlas"** (2026-06-20) — the Google-Play-launch +
+> Android-native-excellence increment on the first **platform** (not accuracy) release
+> line **v1.8.0 "Android"**: a complete Android app (shared `rustynes-mobile` UniFFI
+> bridge + `rustynes-android` platform crate + a Jetpack Compose shell; audio /
 > touch+gamepad input / save-states+SRAM+recent-ROMs / pause-FF-mute /
-> foldable+immersive UI; a freemium $2.99 Play unlock + an 8-minute demo, **held to
-> v1.8.8 "Atlas"** — interim builds are full-featured via `PLAY_BUILD=false`),
-> verified on a Galaxy Z Fold 7 (SMB / Zelda / AccuracyCoin). **v1.8.7** completes
+> foldable+immersive UI; a freemium $2.99 Play unlock + an 8-minute demo — interim
+> builds are full-featured via `PLAY_BUILD=false`), verified on a Galaxy Z Fold 7
+> (SMB / Zelda / AccuracyCoin). **v1.8.8** modernizes the toolchain to the **Android 16
+> / API 36 target mandate** (AGP 9.2.1 / Gradle 9.4.1 / compileSdk 37 / targetSdk 36,
+> Compose BOM 2026.06) and lands **adaptive / foldable / TV** layouts + modern UX
+> (edge-to-edge, predictive back, splash), **Material You** + **EN / ES** i18n, a
+> **box-art ROM library** (SHA-256-keyed grid + libretro / TheGamesDB scrapers +
+> Keystore AES-256-GCM secrets), a **performance** pass (a `:baselineprofile` module,
+> R8 full-mode keeps, Compose stability), **capture / share** (screenshot + MP4) +
+> **platform surfaces** (PiP, a Quick-Settings tile, app shortcuts, a Glance widget),
+> **Android TV / Leanback** + **accessibility** (high-contrast + Okabe-Ito colorblind
+> palettes), and the **Google-Play-integration readiness** — Play Games cloud-save
+> Snapshots, achievements / leaderboards (distinct from RetroAchievements), Play
+> Integrity, and in-app update / review — **all default-off** (`PGS_ENABLED` /
+> `PLAY_INTEGRITY_ENABLED`) until the maintainer wires the Play projects. All
+> presentation / Gradle-side; AccuracyCoin holds 100% (139/139) on host CI. The
+> **sideload** build ships to GitHub Releases now; the **Google Play production**
+> promotion is a maintainer step gated on a batched on-device pass. **v1.8.7** completed
 > the connectivity work: **CGNAT / TURN room-code netplay** (a `NatConnect` STUN /
 > hole-punch / `PublicAddr`-signaling / TURN-relay-fallback orchestrator + room-code
 > `np_host_room` / `np_join_room` + an "Online (room code)" UI; loopback / mock-verified,
@@ -15,8 +30,7 @@
 > `onGenericMotionEvent` fix for analog-stick / d-pad-as-HAT pads + per-port P1–P4
 > masks + hot-plug + remapping + turbo), a **controller-aware UI** (auto-hide the
 > on-screen pad + a Guide / Start+Select menu), and **Chromecast prep** behind a
-> default-off `CHROMECAST_ENABLED` flag — sideload-only, Play launch deferred to
-> v1.8.8. **v1.8.6** brought **Lua** (the sandboxed desktop engine over the bridge,
+> default-off `CHROMECAST_ENABLED` flag. **v1.8.6** brought **Lua** (the sandboxed desktop engine over the bridge,
 > made `Send`), **RetroAchievements** (login + hardcore + unlock toasts + a `.rap`
 > sidecar; the new shared `rustynes-ra` crate, `ureq` + `rustls` + `ring` TLS), and
 > **direct-IP / LAN netplay** (GGPO rollback over `rustynes-netplay`), plus an Open /
@@ -896,8 +910,8 @@ unless the default flips.
 off-by-default feature releases **v1.1.0 "Scriptable" → v1.2.0 "Curator" →
 v1.3.0 "Bedrock" → v1.4.0 "Fidelity" (+ the v1.4.1 patch) → v1.5.0 "Lens" →
 v1.6.0 "Studio" → v1.7.0 "Forge" → v1.7.1 (patch)** on top, then the **v1.8.x
-"Android"** platform line (v1.8.0 → … → **v1.8.7 "Android" (Connectivity completion)**,
-the current release). The
+"Android"** platform line (v1.8.0 → … → v1.8.7 "Android" (Connectivity completion) →
+**v1.8.8 "Atlas" (Google Play launch readiness)**, the current release). The
 table below is the **engine-lineage** version history
 — the internal engine line whose increments produced the v1.0.0 technology. Its
 `v0.9.x` / `v1.x` / `v2.x` markers are the engine's own line, retained as

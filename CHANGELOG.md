@@ -15,6 +15,115 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.8] - 2026-06-20 - "Atlas" (Google Play launch readiness)
+
+The Google-Play-launch + Android-native-excellence release: it modernizes the Android
+toolchain to the **Android 16 (API 36) target mandate**, lands **adaptive / foldable /
+TV** layouts and a **modern-UX** pass (edge-to-edge, predictive back, splash), brings
+**Material You** + **EN/ES i18n**, a **box-art ROM library** with scrapers and secure
+secret storage, a **performance / startup / app-size** pass (Baseline Profiles, R8
+full-mode, Compose stability), **capture / share + platform surfaces** (screenshots,
+MP4 clips, Picture-in-Picture, a Quick-Settings tile, app shortcuts, a home-screen
+widget), **Android TV / Leanback + accessibility**, and the **Google-Play-integration
+readiness** (Play Games cloud saves, achievements / leaderboards, Play Integrity, in-app
+update / review). Everything is presentation / Gradle-side: the emulation core stays
+**byte-identical**, so **AccuracyCoin holds 100% (139/139)** on host CI and the desktop
+is unchanged. The Play-services / Integrity / Chromecast features are **default-off**
+(the maintainer flips them on with the Play projects). This is the **sideload** build
+shipping to GitHub Releases now; the **Google Play production** promotion is a maintainer
+step gated on a batched on-device pass.
+
+### Changed
+
+- **Toolchain modernized for the API 36/37 target mandate.** AGP 8.7.3 → **9.2.1**,
+  Gradle 8.13 → **9.4.1** (AGP-9 built-in Kotlin, dropping the standalone
+  `kotlin-android` plugin; Compose compiler 2.3.10), **compileSdk 35 → 37** (core-ktx
+  1.19 / lifecycle 2.11 require it) and **targetSdk 35 → 36** (the Android-16 Play
+  mandate). Compose BOM **2026.06** (M3 1.4 stable) + adaptive 1.2 / window 1.5.1 /
+  core-splashscreen 1.2. (AGP-9 built-in Kotlin needs the generated UniFFI bindings on
+  the `kotlin` source set, not `java`.)
+
+### Added
+
+- **(A) Adaptive / foldable layouts (targetSdk 36).** **Window Size Classes**
+  (`currentWindowAdaptiveInfo` + `isWidthAtLeastBreakpoint`) replace the ad-hoc 520dp
+  test; an expanded width (≥ 840dp tablet / unfolded / desktop) gets a **two-pane**
+  layout (a `LibraryRail` beside the player), with `appCategory="game"` as the ≥ 600dp
+  safety net and 8:7-PAR pillarbox carrying correctness at any size / orientation.
+- **(K) Modern UX.** **Edge-to-edge** (`enableEdgeToEdge` + `WindowInsets.safeDrawing`,
+  gameplay full-bleed), **predictive back** (`enableOnBackInvokedCallback` + a Compose
+  `BackHandler`, since `onBackPressed` is gone at targetSdk 36), the **Splash Screen
+  API** (keep-on-screen-until-ready), a Material 3 brand `ColorScheme`, and a
+  **monochrome** (Material You themed) launcher-icon layer.
+- **(B) Material You dynamic color.** Gated API 31+ **and** a `dynamicColor` setting
+  (default on): qualifying devices tint the **chrome** from the wallpaper palette, while
+  **gameplay stays black**; light / dark / system are unchanged. A Settings "Material
+  You" toggle (API 31+ only).
+- **(B) EN / ES internationalization.** ~70 user-facing strings externalized to
+  `res/values/strings.xml` (EN) + `res/values-es/strings.xml` (ES), Spanish reusing the
+  desktop **ADR-0023** catalog where it lines up, plus a **per-app Language picker**
+  (System / English / Español via `AppCompatDelegate.setApplicationLocales`, back-compat
+  to minSdk 26) wired to the system **Settings → Apps → RustyNES → Language** entry on
+  Android 13+. (`MainActivity` is now an `AppCompatActivity`; Compose still draws all UI.)
+- **(C) Box-art ROM library.** A library model keyed by **ROM SHA-256** (name / mapper /
+  region / last-played / favorite / box-art / folder) with a JSON store and a one-time
+  recents → library migration; a `LazyVerticalGrid` (stable SHA key + `contentType`)
+  with **All / Favorites / folder** filter chips, search, sort, favorite stars, and a
+  long-press context menu. Compact = the idle grid; expanded ≥ 840dp = a 340dp library
+  side-pane beside the player. A **batch SAF-tree import** enumerates `.nes` / `.fds` /
+  `.unf` / `.unif` / `.zip`, dedups by SHA, and auto-links sibling box-art off-thread.
+- **(C) Box-art scrapers.** User-triggered box-art auto-download with a preview —
+  **libretro-thumbnails** (no account, default on) + **TheGamesDB** (user API key);
+  **ScreenScraper** is fully implemented but gated off until a devid is registered.
+  Sources are user-supplied / local only, so the no-bundled-content posture holds. Coil
+  3 loads / caches local thumbnails; the save-state store gains a THM PNG thumbnail API.
+- **(C) Secure secret storage.** **Android Keystore AES-256-GCM** at-rest encryption
+  (per-record IV, non-exportable key) for the RA token, TURN secret, and scraper keys,
+  replacing the deprecated `EncryptedSharedPreferences`; legacy plaintext is read and
+  re-encrypted on the next write.
+- **(J) Performance, startup & app-size.** A new **`:baselineprofile`** module
+  (baselineprofile / benchmark 1.5.0-alpha06, the first AGP-9-ready line) with cold-launch
+  Baseline + Startup Profile generators (device generation is a maintainer step); **R8
+  full-mode keeps** rewritten for AGP-9 `strictFullModeForKeepRules` (UniFFI / JNA /
+  renderer / Cast — `assembleRelease` builds and the dex retains the FFI / Cast / renderer
+  refs); **Compose stability** (`@Immutable` + `ImmutableList` so the library grid is
+  restartable / skippable instead of recomposing every emulated frame); a deferred Play
+  Billing connect off cold start; `ndk debugSymbolLevel = SYMBOL_TABLE`; and
+  `Surface.setFrameRate(60.0988)`.
+- **(F) Capture & share.** A **screenshot** (PNG → MediaStore via scoped storage, no
+  `WRITE_EXTERNAL_STORAGE`) and a **~30s / ~30fps MP4 clip** (a bitmap ring buffer encoded
+  on Stop with `MediaCodec` + `MediaMuxer` to H.264, off the loop's critical path), both
+  gameplay-only with an `ACTION_SEND` share. (Audio in the clip is a documented TODO.)
+- **(H) Platform surfaces.** **Picture-in-Picture** (8:7 aspect + `sourceRectHint`,
+  auto-enter on user-leave while a ROM runs); a **Quick-Settings tile**, three **app
+  shortcuts** (resume / open / library), and a **Glance "Resume" home-screen widget** —
+  all deep-linking the last-played game via a shared resume / open / library contract.
+- **(G) Android TV / Leanback.** The adaptive Compose UI **is** the TV UI (no separate
+  `androidx.leanback`): a TV banner + the `LEANBACK_LAUNCHER` filter + `touchscreen
+  required=false`, full **d-pad navigation** reusing the v1.8.7 focus infra (a focusable
+  library grid, control bar, chips, search, Settings, and the gamepad-driven Guide /
+  Start + Select menu).
+- **(I) Accessibility.** A **high-contrast** scheme (~19:1) + three **Okabe-Ito
+  colorblind** palettes (deuteranopia / protanopia / tritanopia), chrome-only (gameplay
+  palette untouched), applied with **precedence over Material You** dynamic color; plus
+  TalkBack semantics, 48dp touch targets, and a font-scale audit. A Settings
+  "Accessibility theme" picker.
+- **(D) Play Games cloud saves (default-off, `PGS_ENABLED`).** Play Games Services v2
+  **Snapshots** sync of the SHA-keyed `.rns` save-states — one snapshot per (ROM-SHA,
+  slot) with a `MOST_RECENTLY_MODIFIED` policy and a keep-device / keep-cloud dialog for
+  true conflicts; push on save, pull on first open. (A 3-way merge UI is a TODO.)
+- **(E) Play Games achievements / leaderboards (default-off, `PGS_ENABLED`).** PGS v2
+  auto-sign-in + unlock / increment / submit-score with placeholder achievement IDs
+  (first-rom / save / netplay / turbo-100 / first-cloud-sync) and a play-time leaderboard,
+  wired at the triggers — **distinct from RetroAchievements** (the v1.8.6 commercial-game
+  system, untouched and kept separate).
+- **(L) Play quality / integrity (default-off, `PLAY_INTEGRITY_ENABLED`).** A **Play
+  Integrity** client (defense-in-depth over Billing — Billing stays the entitlement
+  truth, a failed verdict never revokes a purchase; a decryption stub awaits the
+  maintainer's server endpoint), **in-app update** + **in-app review** (no-op on non-Play
+  installs), and an **opt-in local crash-log** handler (no upload / Firebase) with a
+  Settings Diagnostics toggle.
+
 ## [1.8.7] - 2026-06-20 - "Android" (Connectivity completion)
 
 Completes v1.8.6's connectivity work: **CGNAT / TURN room-code netplay** so phones on
