@@ -1,9 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Compose owns the UI; this is the launch/splash theme only. -->
+    <!-- Compose owns the in-app UI; this is the launch / splash theme only.
+         v1.8.8 "Atlas" (Workstream K):
+
+         - The launch theme is now the SplashScreen-API theme so Android 12+ shows the
+           RustyNES icon on a branded background instead of a blank window. The Activity
+           swaps to Theme.RustyNES (below) in installSplashScreen() before super.onCreate().
+         - The deprecated android:statusBarColor / android:navigationBarColor items are
+           gone: under edge-to-edge (enforced at SDK 35+) the system bars are transparent
+           and those attributes are ignored on gesture nav. enableEdgeToEdge() + the
+           Compose WindowInsets.safeDrawing handling own bar appearance now. -->
+
+    <!-- The splash theme: parent is the AndroidX SplashScreen back-compat theme. -->
+    <style name="Theme.RustyNES.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/ic_launcher_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_foreground</item>
+        <item name="postSplashScreenTheme">@style/Theme.RustyNES</item>
+    </style>
+
+    <!-- The in-app theme (post-splash). Material — Compose applies the M3 color
+         scheme/typography at runtime; this only needs a no-action-bar, edge-to-edge
+         shell with a black window background (the NES picture is letterboxed on black). -->
     <style name="Theme.RustyNES" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">@android:color/black</item>
-        <item name="android:statusBarColor">@android:color/black</item>
-        <item name="android:navigationBarColor">@android:color/black</item>
     </style>
 </resources>

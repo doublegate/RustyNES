@@ -22,7 +22,21 @@
         android:supportsRtl="true"
         android:hardwareAccelerated="true"
         android:resizeableActivity="true"
-        android:theme="@style/Theme.RustyNES">
+        android:appCategory="game"
+        android:enableOnBackInvokedCallback="true"
+        android:theme="@style/Theme.RustyNES.Splash">
+
+        <!-- v1.8.8 "Atlas" (Workstream A): appCategory="game" opts RustyNES into the
+             Android 16 large-screen "games" exception (API 36 otherwise ignores
+             screenOrientation/aspect/resizability on screens >= 600 dp). It is a
+             safety net only — the app ships real adaptive layouts (Window Size
+             Classes) and the wgpu renderer pillarboxes the NES image at any aspect,
+             so it lays out correctly with or without the exemption.
+             (Workstream K): enableOnBackInvokedCallback="true" turns on the
+             predictive-back system animation. Back is dispatched via
+             OnBackPressedDispatcher / Compose BackHandler (Activity.onBackPressed is
+             no longer called under targetSdk 36 on Android 16). -->
+
 
         <!-- Cast Application Framework OptionsProvider (v1.8.7, #38). REQUIRED by
              the SDK to be declared, but only instantiated when CastContext is

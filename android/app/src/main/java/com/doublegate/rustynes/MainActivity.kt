@@ -24,8 +24,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.OutlinedButton
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.aspectRatio
@@ -34,9 +36,16 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
+import androidx.window.core.layout.WindowSizeClass
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
@@ -111,7 +120,16 @@ class MainActivity : ComponentActivity() {
     /** Thermal-throttle listener (perf/battery); cancels fast-forward when hot. */
     private var thermalListener: android.os.PowerManager.OnThermalStatusChangedListener? = null
 
+    /** v1.8.8 "Atlas" (Workstream K): held true to keep the system splash on screen
+     *  until the Compose shell has produced its first frame (set from the shell). */
+    @Volatile
+    private var contentReady: Boolean = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Install the Android-12+ system splash BEFORE super.onCreate(); keep it up
+        // until the first Compose frame is ready (the bridge/ROM-DB load is brief).
+        val splash = installSplashScreen()
+        splash.setKeepOnScreenCondition { !contentReady }
         super.onCreate(savedInstanceState)
         license = LicenseManager(applicationContext)
         // Only connect to Play Billing in the Play build; off-Play it can't transact.
@@ -129,7 +147,14 @@ class MainActivity : ComponentActivity() {
                 ThemeMode.Light -> false
                 ThemeMode.Dark -> true
             }
-            MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme()) {
+            // v1.8.8 "Atlas" (Workstream K): a real Material 3 theme. RustyNES brand
+            // colors drive the scheme (dynamic color is deferred to Workstream B). The
+            // background is black so the letterboxed NES picture sits on black, not the
+            // M3 surface tint.
+            MaterialTheme(
+                colorScheme = (if (dark) rustyNesDarkColors() else rustyNesLightColors())
+                    .copy(background = Color.Black),
+            ) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background,
@@ -137,6 +162,8 @@ class MainActivity : ComponentActivity() {
                     EmulatorScreen(emulator, gamepad, license, settings)
                 }
             }
+            // The first composition has been laid out — let the splash dismiss.
+            LaunchedEffect(Unit) { contentReady = true }
         }
     }
 
@@ -236,6 +263,28 @@ class MainActivity : ComponentActivity() {
     override fun onGenericMotionEvent(event: MotionEvent): Boolean =
         gamepad.onMotion(event) || super.onGenericMotionEvent(event)
 }
+
+// v1.8.8 "Atlas" (Workstream K): the RustyNES Material 3 brand color schemes. A
+// deep indigo/violet primary (the launcher background family) with an amber/red
+// secondary nods to the NES palette. Workstream B later folds in dynamic color
+// (wallpaper-derived) on API 31+, falling back to these.
+private val BrandPrimary = Color(0xFF7C6FF0)
+private val BrandSecondary = Color(0xFFFFB74D)
+private val BrandTertiary = Color(0xFFE57373)
+
+/** Light Material 3 scheme seeded with the RustyNES brand colors. */
+private fun rustyNesLightColors() = lightColorScheme(
+    primary = BrandPrimary,
+    secondary = BrandSecondary,
+    tertiary = BrandTertiary,
+)
+
+/** Dark Material 3 scheme seeded with the RustyNES brand colors. */
+private fun rustyNesDarkColors() = darkColorScheme(
+    primary = BrandPrimary,
+    secondary = BrandSecondary,
+    tertiary = BrandTertiary,
+)
 
 /**
  * Thin holder around the optional [NesController] plus the hardware-key mapping.
@@ -672,12 +721,22 @@ private fun EmulatorScreen(
             onDispose { chromecast.unregister() }
         }
     }
+    // v1.8.8 "Atlas" (Workstream A): drive layout off Window Size Classes — the
+    // single adaptive layout driver across phone / foldable cover+inner / tablet /
+    // free-form / desktop / ChromeOS / TV windows. Replaces the ad-hoc
+    // screenWidthDp threshold. `compact` width (< 600 dp) is the phone / folded
+    // cover screen; `medium` (>= 600 dp) and `expanded` (>= 840 dp) are tablets,
+    // the Z Fold inner display, and resizable desktop windows.
+    val windowSizeClass = currentWindowAdaptiveInfo().windowSizeClass
+    val isMediumWidth = windowSizeClass.isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_MEDIUM_LOWER_BOUND)
+    val isExpandedWidth = windowSizeClass.isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_EXPANDED_LOWER_BOUND)
+
     // Current screen mode (item 5): each remembers its own controller size/opacity.
-    // Cast wins; otherwise a narrow width means the folded cover screen.
-    val config = androidx.compose.ui.platform.LocalConfiguration.current
+    // Cast wins; otherwise a compact-width window is the folded cover screen and a
+    // medium/expanded window (unfolded inner display, tablet, desktop) is "Inner".
     val screenMode = when {
         castManager.casting -> ScreenMode.Cast
-        config.screenWidthDp < 520 -> ScreenMode.Cover
+        !isMediumWidth -> ScreenMode.Cover
         else -> ScreenMode.Inner
     }
 
@@ -1058,8 +1117,48 @@ private fun EmulatorScreen(
         }
     }
 
+    // v1.8.8 "Atlas" (Workstream K): predictive back. Under targetSdk 36 on Android
+    // 16, Activity.onBackPressed is no longer called, so every dismissable surface is
+    // closed through OnBackPressedDispatcher via Compose BackHandler. The Compose
+    // Dialog / ModalBottomSheet surfaces (Settings/States/About/Controllers/Netplay/
+    // Onboarding) wire their own back-to-dismiss internally; these handlers cover the
+    // custom (non-dialog) overlays the in-app menu opens. Ordering: Compose dispatches
+    // to the most-recently-composed enabled handler first, so the menu bar closes
+    // before any "exit app" fallthrough. We intentionally do NOT consume back when
+    // nothing is open, so the system performs the default (predictive) exit.
+    BackHandler(enabled = controlsVisible) {
+        controlsVisible = false
+        menuWantsFocus = false
+        focusManager.clearFocus()
+    }
+
+    // v1.8.8 "Atlas" (Workstream A): expanded-width adaptive two-pane. On a tablet,
+    // the Z Fold inner display, or a resized desktop/ChromeOS window (width >= 840 dp)
+    // a persistent library rail is shown beside the player so the extra horizontal
+    // space is used — tap a recent ROM in the rail to load it without opening a menu.
+    // Compact/medium widths keep the single-pane phone layout. This is a solid first
+    // version of the list-detail pane; TODO(v1.8.8 WS C): grow the rail into the full
+    // box-art library grid (favorites / folders / search) via NavigableListDetailPaneScaffold.
+    Row(modifier = Modifier.fillMaxSize()) {
+        if (isExpandedWidth) {
+            LibraryRail(
+                recents = recents,
+                onOpen = { picker.launch(arrayOf("*/*")) },
+                onOpenRecent = { openRecent(it) },
+                onClearRecents = {
+                    RomLibrary.clear(context)
+                    recents = RomLibrary.recents(context)
+                },
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .width(280.dp)
+                    .windowInsetsPadding(WindowInsets.safeDrawing),
+            )
+        }
     Column(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxHeight()
+            .weight(1f),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         // The NES image takes the remaining vertical space and letterboxes
@@ -1198,9 +1297,14 @@ private fun EmulatorScreen(
                 )
             }
             if (current == null) {
-                // Idle: status + the recent-ROMs list (tap to resume).
+                // Idle: status + the recent-ROMs list (tap to resume). Inset-padded so
+                // the list never tucks under the system bars on the idle screen (the
+                // bars are visible here — immersive only kicks in during gameplay).
                 Column(
-                    modifier = Modifier.verticalScroll(rememberScrollState()).padding(16.dp),
+                    modifier = Modifier
+                        .safeDrawingPadding()
+                        .verticalScroll(rememberScrollState())
+                        .padding(16.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     Text(status, color = Color.White)
@@ -1274,6 +1378,11 @@ private fun EmulatorScreen(
             // that a LaunchedEffect requests so focus lands here on a pad-open.
             modifier = Modifier
                 .fillMaxWidth()
+                // v1.8.8 "Atlas" (Workstream K): edge-to-edge is enforced at SDK 35+,
+                // so pad the control bar in from the system bars / display cutout — the
+                // gameplay Box above stays full-bleed, but the controls never sit under
+                // a transient status/nav bar, a cutout, or the large-screen taskbar.
+                .windowInsetsPadding(WindowInsets.safeDrawing)
                 .horizontalScroll(rememberScrollState())
                 .focusGroup()
                 .padding(horizontal = 8.dp, vertical = 4.dp),
@@ -1382,7 +1491,15 @@ private fun EmulatorScreen(
         // Guide/chord still reaches the menu, and the touch "MENU pill" path is
         // unaffected when the controller is shown. Disconnect restores it declaratively.
         if (!controlsHidden) {
-            BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            BoxWithConstraints(
+                // v1.8.8 "Atlas" (Workstream K): keep the on-screen pad's bottom row
+                // clear of the gesture-nav bar / cutout under edge-to-edge. Only the
+                // safeDrawing insets are consumed (left/right/bottom) so the pad sits
+                // fully in the safe area; the gameplay Box above remains full-bleed.
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .windowInsetsPadding(WindowInsets.safeDrawing),
+            ) {
                 val mw = maxWidth // capture: not visible inside the inner BoxScope
                 val reserved = mw * 1.1f * 53f / 123f
                 Box(
@@ -1401,7 +1518,8 @@ private fun EmulatorScreen(
                 }
             }
         }
-    }
+    } // end emulator Column
+    } // end adaptive Row (the expanded-width library rail + the player column)
 
     // Settings + save-state manager sheets (v1.8.3).
     if (showSettings) {
@@ -1762,6 +1880,63 @@ private fun packRgbaToArgb(rgba: ByteArray, out: IntArray) {
         out[p] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
         i += 4
         p += 1
+    }
+}
+
+/**
+ * v1.8.8 "Atlas" (Workstream A): the expanded-width library rail — a persistent
+ * side pane (tablet / unfolded foldable / desktop window) listing recent ROMs with
+ * an Open button. The compact/medium phone layout keeps the in-Box recents list
+ * instead; this is the "list" pane of the adaptive list-detail layout (the player is
+ * the "detail" pane). TODO(WS C): replace with the full box-art grid.
+ */
+@Composable
+private fun LibraryRail(
+    recents: List<RecentRom>,
+    onOpen: () -> Unit,
+    onOpenRecent: (RecentRom) -> Unit,
+    onClearRecents: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
+    ) {
+        Text(
+            "Library",
+            color = MaterialTheme.colorScheme.onSurface,
+            fontSize = 18.sp,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+        )
+        Spacer(Modifier.height(12.dp))
+        Button(onClick = onOpen, modifier = Modifier.fillMaxWidth()) { Text("Open ROM") }
+        if (recents.isNotEmpty()) {
+            Spacer(Modifier.height(16.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text("Recent", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    "Clear",
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.clickable { onClearRecents() },
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            recents.forEach { rom ->
+                Text(
+                    rom.name,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp)
+                        .clickable { onOpenRecent(rom) },
+                )
+            }
+        }
     }
 }
 

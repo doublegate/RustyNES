@@ -3,7 +3,9 @@ import java.util.Properties
 
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
+    // v1.8.8 "Atlas": AGP 9 supplies Kotlin itself (built-in Kotlin), so the
+    // standalone `org.jetbrains.kotlin.android` plugin is no longer applied. The
+    // Compose compiler plugin remains a separate, explicitly versioned plugin.
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
@@ -24,12 +26,16 @@ val shipAbi = "arm64-v8a"
 
 android {
     namespace = "com.doublegate.rustynes"
-    compileSdk = 35
+    // v1.8.8 "Atlas" (Workstream A): Android 16 QPR (API 37). The Play mandate
+    // requires new submissions/updates to target Android 16 (API 36) after
+    // 2026-08-31; we compile against the newer 37 SDK (AGP 9.2 supports it) so the
+    // latest AndroidX (core 1.19 / lifecycle 2.11, which require compileSdk 37) link.
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.doublegate.rustynes"
         minSdk = 26 // AAudio floor.
-        targetSdk = 35 // Play mandate since 2025-08-31.
+        targetSdk = 36 // Play mandate (Android 16) from 2026-08-31.
         versionCode = 10808 // 1.8.8
         versionName = "1.8.8"
         // No abiFilters here — set per buildType so release ships arm64 only
@@ -99,19 +105,32 @@ android {
         buildConfig = true // exposes BuildConfig.DEBUG for the debug-only ROM autoload.
     }
 
-    sourceSets["main"].java.srcDir(uniffiGenDir)
+    // The UniFFI-generated bindings are Kotlin (.kt). Under AGP 9's built-in Kotlin,
+    // generated Kotlin sources must be registered on the source set's `kotlin`
+    // directories — adding them to `.java` (the pre-AGP-9 way) no longer feeds the
+    // Kotlin compiler, so the binding types (NesController, NpStatus, …) go
+    // unresolved. See AGP 9 built-in-Kotlin migration notes.
+    sourceSets["main"].kotlin.srcDir(uniffiGenDir)
     sourceSets["main"].jniLibs.srcDir(jniLibsDir)
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = "17" }
 
     // 16 KB page alignment (Play requirement for Android 15+). NDK r27+ aligns
     // by default; AGP packages the aligned `.so` unchanged.
     packaging {
         jniLibs { useLegacyPackaging = false }
+    }
+}
+
+// Built-in Kotlin (AGP 9): the old `android.kotlinOptions { jvmTarget }` DSL moved
+// to the top-level `kotlin.compilerOptions` block. The target defaults to
+// `compileOptions.targetCompatibility` (17 above); set it explicitly for clarity.
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
 }
 
@@ -156,24 +175,44 @@ val uniffiBindgen by tasks.registering(Exec::class) {
 tasks.named("preBuild") { dependsOn(uniffiBindgen) }
 
 dependencies {
-    val composeBom = platform("androidx.compose:compose-bom:2024.12.01")
+    // v1.8.8 "Atlas": Compose BOM 2025.09.01 (material3 1.4.0 — the stable M3 set
+    // for the launch; M3 Expressive's spring-physics/wavy components live in the
+    // 1.5.0-alpha line and are deliberately not pulled in here). Bumped from
+    // 2024.12.01 so the adaptive APIs (Window Size Classes, ListDetailPaneScaffold)
+    // and a current Compose runtime are available.
+    val composeBom = platform("androidx.compose:compose-bom:2026.06.00")
     implementation(composeBom)
-    implementation("androidx.core:core-ktx:1.15.0")
-    implementation("androidx.activity:activity-compose:1.9.3")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
+    implementation("androidx.core:core-ktx:1.19.0")
+    implementation("androidx.activity:activity-compose:1.13.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.11.0")
     // collectAsStateWithLifecycle for the controller-connect StateFlow (v1.8.7, #41).
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.11.0")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
+    // v1.8.8 "Atlas" (Workstream A): adaptive layouts. `adaptive` carries
+    // currentWindowAdaptiveInfo()/WindowSizeClass (the single layout driver);
+    // -layout carries ListDetailPaneScaffold; -navigation carries the predictive-
+    // back-aware NavigableListDetailPaneScaffold for the expanded two-pane.
+    implementation("androidx.compose.material3.adaptive:adaptive:1.2.0")
+    implementation("androidx.compose.material3.adaptive:adaptive-layout:1.2.0")
+    implementation("androidx.compose.material3.adaptive:adaptive-navigation:1.2.0")
+    // WindowInfoTracker / FoldingFeature for foldable-posture awareness.
+    implementation("androidx.window:window:1.5.1")
+    // v1.8.8 "Atlas" (Workstream K): Android-12+ system splash via the back-compat
+    // SplashScreen API (installSplashScreen() before super.onCreate()).
+    implementation("androidx.core:core-splashscreen:1.2.0")
     // UniFFI's generated Kotlin loads the cdylib through JNA; the `@aar`
     // classifier pulls the Android-native JNA dispatcher.
-    implementation("net.java.dev.jna:jna:5.15.0@aar")
+    implementation("net.java.dev.jna:jna:5.18.1@aar")
     // Play Billing — the one-time "Full Unlock" IAP (Workstream M, freemium model).
+    // Pinned at 8.0.0 here: Billing 9.x is an API-breaking major (the v1.8.8 Play
+    // launch / Workstream P revisits the entitlement code), and this Atlas-foundation
+    // pass is presentation/Gradle only — bumping it would touch Billing.kt/LicenseManager.
     implementation("com.android.billingclient:billing-ktx:8.0.0")
     // Cast Application Framework sender (v1.8.7, #38). Linked but DORMANT: it does
     // nothing until CastContext is initialized, which only happens behind the
     // default-off BuildConfig.CHROMECAST_ENABLED flag (see ChromecastSender.kt).
-    implementation("com.google.android.gms:play-services-cast-framework:21.5.0")
+    implementation("com.google.android.gms:play-services-cast-framework:22.1.0")
 }
