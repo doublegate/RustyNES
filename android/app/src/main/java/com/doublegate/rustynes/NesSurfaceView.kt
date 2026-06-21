@@ -1,6 +1,7 @@
 package com.doublegate.rustynes
 
 import android.content.Context
+import android.os.Build
 import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
@@ -88,6 +89,20 @@ class NesSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Cal
             sizeDirty = true
             surfaceGone = false
         }
+        // v1.8.8 "Atlas" (Workstream J): declare the exact NES NTSC frame rate so the
+        // system picks/keeps the closest display mode and paces correctly. Without this,
+        // Android 15+ defaults games to 60 Hz, but the NES master clock yields ~60.0988
+        // fps — the ~0.1 Hz mismatch causes a periodic dropped/duplicated frame (judder).
+        // FRAME_RATE_COMPATIBILITY_DEFAULT lets the system honor it without forcing a
+        // mode switch on panels that can't hit it exactly. API 30+ only (no-op below).
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            runCatching {
+                holder.surface.setFrameRate(
+                    60.0988f,
+                    Surface.FRAME_RATE_COMPATIBILITY_DEFAULT,
+                )
+            }
+        }
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
@@ -125,7 +140,7 @@ class NesSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Cal
                 if (gone) break
                 if (resize && surface != null) {
                     handle = if (handle == 0L) {
-                        NativeRenderer.nativeInitSurface(surface!!, w, h)
+                        NativeRenderer.nativeInitSurface(surface, w, h)
                     } else {
                         NativeRenderer.nativeResize(handle, w, h)
                         handle

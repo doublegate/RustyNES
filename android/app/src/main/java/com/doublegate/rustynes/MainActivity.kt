@@ -145,8 +145,11 @@ class MainActivity : AppCompatActivity() {
         // any override and follows the device / per-app system language.
         applyPersistedLocale()
         license = LicenseManager(applicationContext)
-        // Only connect to Play Billing in the Play build; off-Play it can't transact.
-        if (BuildConfig.PLAY_BUILD) license.connect()
+        // v1.8.8 "Atlas" (Workstream J): the Play Billing `startConnection()` is
+        // DEFERRED off the cold-start path to the first foreground (onResume) — it
+        // does network/IPC and is not needed to draw the first frame (BillingClient is
+        // designed to init lazily). The local entitlement cache is read synchronously
+        // in the LicenseManager ctor, so the demo gate is already correct before connect.
         gamepad = GamepadManager(applicationContext, emulator)
         registerThermalBackoff()
         enableEdgeToEdge()
@@ -182,11 +185,22 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** Guards the one-time deferred Billing connect (v1.8.8 WS J cold-start deferral). */
+    private var billingConnected = false
+
     override fun onResume() {
         super.onResume()
-        // Re-verify entitlement against Play on each foreground (a purchase made
-        // elsewhere, a refund, or a restore reflects here).
-        if (BuildConfig.PLAY_BUILD && ::license.isInitialized) license.refreshEntitlement()
+        // v1.8.8 "Atlas" (Workstream J): connect to Play Billing on the FIRST foreground
+        // (kept off onCreate / the cold-start path). Subsequent resumes just re-verify.
+        if (BuildConfig.PLAY_BUILD && ::license.isInitialized) {
+            if (!billingConnected) {
+                license.connect()
+                billingConnected = true
+            }
+            // Re-verify entitlement against Play on each foreground (a purchase made
+            // elsewhere, a refund, or a restore reflects here).
+            license.refreshEntitlement()
+        }
         // Start listening for controller hot-plug + enumerate connected pads.
         if (::gamepad.isInitialized) gamepad.register()
     }

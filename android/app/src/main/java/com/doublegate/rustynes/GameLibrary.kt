@@ -1,6 +1,9 @@
 package com.doublegate.rustynes
 
 import android.content.Context
+import androidx.compose.runtime.Immutable
+import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.toImmutableList
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -20,7 +23,10 @@ import java.io.File
  * determinism contract is untouched.
  */
 
-/** One game in the library. [sha] is the lowercase-hex ROM SHA-256 (stable key). */
+/** One game in the library. [sha] is the lowercase-hex ROM SHA-256 (stable key).
+ *  v1.8.8 WS J: @Immutable — every field is a stable read-only val, so Compose can
+ *  treat instances as immutable and skip recompositions when the reference is equal. */
+@Immutable
 data class GameEntry(
     val sha: String,
     val name: String,
@@ -160,9 +166,11 @@ object GameLibrary {
         }
     }
 
-    /** The distinct, sorted set of non-empty folder tags currently in use. */
-    fun folders(ctx: Context): List<String> =
+    /** The distinct, sorted set of non-empty folder tags currently in use.
+     *  v1.8.8 WS J: ImmutableList — handed straight to a Compose param. */
+    fun folders(ctx: Context): ImmutableList<String> =
         all(ctx).mapNotNull { it.folder.takeIf { f -> f.isNotEmpty() } }.distinct().sorted()
+            .toImmutableList()
 
     /**
      * The library filtered + sorted for display. [folder] of null = All; "" never
@@ -175,7 +183,7 @@ object GameLibrary {
         favoritesOnly: Boolean = false,
         query: String = "",
         sort: LibrarySort = LibrarySort.RECENT,
-    ): List<GameEntry> {
+    ): ImmutableList<GameEntry> {
         val q = query.trim().lowercase()
         var list = all(ctx).asSequence()
         if (favoritesOnly) list = list.filter { it.favorite }
@@ -187,7 +195,7 @@ object GameLibrary {
                 compareByDescending<GameEntry> { it.favorite }.thenByDescending { it.lastPlayed }
             LibrarySort.RECENT -> compareByDescending<GameEntry> { it.lastPlayed }.thenBy { it.name.lowercase() }
         }
-        return list.sortedWith(comparator).toList()
+        return list.sortedWith(comparator).toImmutableList()
     }
 
     /**

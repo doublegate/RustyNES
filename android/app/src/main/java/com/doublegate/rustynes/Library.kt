@@ -46,6 +46,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
+import kotlinx.collections.immutable.ImmutableList
 
 /**
  * The box-art game library grid (v1.8.8 "Atlas", Workstream C).
@@ -62,8 +63,11 @@ import coil3.compose.AsyncImage
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryScreen(
-    entries: List<GameEntry>,
-    folders: List<String>,
+    // v1.8.8 WS J: ImmutableList so Compose reads these as STABLE params — a plain
+    // List<> is inferred unstable, which would force LibraryScreen to recompose on
+    // every parent recomposition (and the parent recomposes every emulated frame).
+    entries: ImmutableList<GameEntry>,
+    folders: ImmutableList<String>,
     selectedFolder: String?,
     favoritesOnly: Boolean,
     query: String,
