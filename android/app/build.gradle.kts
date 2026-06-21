@@ -105,6 +105,17 @@ android {
         buildConfig = true // exposes BuildConfig.DEBUG for the debug-only ROM autoload.
     }
 
+    // v1.8.8 "Atlas" (Workstream B): auto-generate the per-app `locales_config.xml`
+    // from the `values-*` resource folders and reference it in the merged manifest
+    // (so the system Settings -> Apps -> RustyNES -> Language entry appears on
+    // Android 13+). AGP reads `res/resources.properties` (unqualifiedResLocale=en) to
+    // know the default `values/` locale, and the `values-es/` folder to add Spanish.
+    // The in-app picker (AppCompatDelegate.setApplicationLocales) back-ports the same
+    // selection to API 24+ via androidx.appcompat below.
+    androidResources {
+        generateLocaleConfig = true
+    }
+
     // The UniFFI-generated bindings are Kotlin (.kt). Under AGP 9's built-in Kotlin,
     // generated Kotlin sources must be registered on the source set's `kotlin`
     // directories — adding them to `.java` (the pre-AGP-9 way) no longer feeds the
@@ -183,6 +194,12 @@ dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2026.06.00")
     implementation(composeBom)
     implementation("androidx.core:core-ktx:1.19.0")
+    // v1.8.8 "Atlas" (Workstream B): per-app language. AppCompat 1.6.0+ supplies the
+    // back-compat AppCompatDelegate.setApplicationLocales (delegating to the platform
+    // LocaleManager on API 33+, and a manual override on API 24..32). MainActivity must
+    // extend AppCompatActivity and the launch theme must derive from an AppCompat theme
+    // for the locale APIs to take effect under Compose.
+    implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.11.0")
     // collectAsStateWithLifecycle for the controller-connect StateFlow (v1.8.7, #41).

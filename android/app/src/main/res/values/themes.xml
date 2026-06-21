@@ -18,10 +18,18 @@
         <item name="postSplashScreenTheme">@style/Theme.RustyNES</item>
     </style>
 
-    <!-- The in-app theme (post-splash). Material — Compose applies the M3 color
-         scheme/typography at runtime; this only needs a no-action-bar, edge-to-edge
-         shell with a black window background (the NES picture is letterboxed on black). -->
-    <style name="Theme.RustyNES" parent="android:Theme.Material.NoActionBar">
+    <!-- The in-app theme (post-splash). Compose applies the M3 color scheme /
+         typography at runtime, so this XML theme only needs a no-action-bar,
+         edge-to-edge shell with a black window background (the NES picture is
+         letterboxed on black).
+         v1.8.8 "Atlas" (Workstream B): the parent is an AppCompat theme
+         (Theme.AppCompat.NoActionBar) rather than the framework Material theme,
+         because androidx.appcompat's per-app-language APIs
+         (AppCompatDelegate.setApplicationLocales, used by the in-app Language
+         picker) require the host Activity's theme to derive from an AppCompat
+         theme. Compose draws all visible UI, so the AppCompat theme's own colors
+         are never seen — only its locale-management plumbing is used. -->
+    <style name="Theme.RustyNES" parent="Theme.AppCompat.NoActionBar">
         <item name="android:windowBackground">@android:color/black</item>
     </style>
 </resources>

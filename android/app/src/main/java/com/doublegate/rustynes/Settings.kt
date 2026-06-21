@@ -27,6 +27,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.foundation.text.KeyboardOptions
@@ -51,6 +52,28 @@ enum class HapticLevel(val label: String) { Off("Off"), Low("Low"), Medium("Medi
  */
 enum class ScreenMode(val label: String) { Cover("Cover"), Inner("Inner"), Cast("Cast") }
 
+/**
+ * In-app UI language (v1.8.8 "Atlas", Workstream B). [System] follows the device /
+ * per-app system language (an empty BCP-47 tag = "use the platform default"); the
+ * others force the named language regardless. The actual switch is applied via
+ * androidx.appcompat's `AppCompatDelegate.setApplicationLocales`, which back-ports
+ * Android 13's per-app language to API 24+; the chosen value is also persisted here
+ * so the picker reflects it. `tag` is the BCP-47 language tag handed to
+ * `LocaleListCompat.forLanguageTags` (empty = system).
+ */
+enum class LanguageMode(val tag: String) {
+    System(""),
+    English("en"),
+    Spanish("es"),
+    ;
+
+    companion object {
+        /** Resolve a persisted BCP-47 tag back to the enum (defaults to [System]). */
+        fun fromTag(tag: String): LanguageMode =
+            entries.firstOrNull { it.tag == tag } ?: System
+    }
+}
+
 class AppSettings(context: Context) {
     private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
@@ -59,6 +82,24 @@ class AppSettings(context: Context) {
     var themeMode: ThemeMode
         get() = _themeMode.value
         set(v) { _themeMode.value = v; prefs.edit().putInt("theme", v.ordinal).apply() }
+
+    /** Material You dynamic color (v1.8.8 "Atlas", Workstream B). When on AND the
+     *  device is Android 12+ (API 31), the chrome (bars, menus, controls, Settings)
+     *  is themed from the wallpaper-derived palette; off, or on older devices, the
+     *  RustyNES brand scheme is used. The gameplay letterbox stays black regardless.
+     *  Defaults on (the platform default look on Android 12+); a no-op below API 31. */
+    private val _dynamicColor = mutableStateOf(prefs.getBoolean("dynamicColor", true))
+    var dynamicColor: Boolean
+        get() = _dynamicColor.value
+        set(v) { _dynamicColor.value = v; prefs.edit().putBoolean("dynamicColor", v).apply() }
+
+    /** In-app UI language (v1.8.8 "Atlas", Workstream B). Persisted as its BCP-47
+     *  tag; applied via AppCompatDelegate.setApplicationLocales. Defaults to System. */
+    private val _language =
+        mutableStateOf(LanguageMode.fromTag(prefs.getString("uiLanguage", "") ?: ""))
+    var language: LanguageMode
+        get() = _language.value
+        set(v) { _language.value = v; prefs.edit().putString("uiLanguage", v.tag).apply() }
 
     private val _filter =
         mutableStateOf(VideoFilter.entries.getOrElse(prefs.getInt("filter", 0)) { VideoFilter.None })
@@ -276,6 +317,7 @@ fun SettingsSheet(
     onRaEnabledChange: (Boolean) -> Unit = {},
     raHardcore: Boolean = false,
     onRaHardcoreChange: (Boolean) -> Unit = {},
+    onLanguageChange: (LanguageMode) -> Unit = {},
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -288,10 +330,10 @@ fun SettingsSheet(
                 .padding(horizontal = 20.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("Settings")
+            Text(stringResource(R.string.settings_title))
 
             // Theme (Light / Dark / System).
-            Text("Theme")
+            Text(stringResource(R.string.settings_theme))
             Row(
                 modifier = Modifier.fillMaxWidth().selectableGroup(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -305,9 +347,41 @@ fun SettingsSheet(
                 }
             }
 
+            // Material You dynamic color (v1.8.8 "Atlas", Workstream B) — only on
+            // Android 12+ (API 31), where wallpaper-derived palettes exist. The
+            // gameplay letterbox stays black; this themes the chrome only.
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                ToggleRow(
+                    stringResource(R.string.settings_dynamic_color),
+                    settings.dynamicColor,
+                ) { settings.dynamicColor = it }
+            }
+
+            // In-app UI language (v1.8.8 "Atlas", Workstream B). System / English /
+            // Español. Applied via AppCompatDelegate.setApplicationLocales (host
+            // callback), which recreates the Activity so the new locale's resources
+            // take effect; the system Settings -> Apps -> RustyNES -> Language entry
+            // mirrors it (auto-generated locales_config.xml).
+            Text(stringResource(R.string.settings_language))
+            Row(
+                modifier = Modifier.fillMaxWidth().selectableGroup(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                LanguageMode.entries.forEach { lang ->
+                    FilterChip(
+                        selected = settings.language == lang,
+                        onClick = {
+                            settings.language = lang
+                            onLanguageChange(lang)
+                        },
+                        label = { Text(languageLabel(lang)) },
+                    )
+                }
+            }
+
             // Video filter (replaces the old FX cycle button).
             if (videoFiltersSupported) {
-                Text("Video filter")
+                Text(stringResource(R.string.settings_video_filter))
                 Row(
                     modifier = Modifier.fillMaxWidth().selectableGroup(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -351,52 +425,52 @@ fun SettingsSheet(
 
             // Custom NES palette (v1.8.5) — load a .pal file (a 192-byte RGB table)
             // applied live to the running core, or reset to the built-in palette.
-            Text("Custom palette")
+            Text(stringResource(R.string.settings_custom_palette))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = onLoadPalette) { Text("Load .pal…") }
-                TextButton(onClick = onClearPalette) { Text("Reset") }
+                TextButton(onClick = onLoadPalette) { Text(stringResource(R.string.settings_load_pal)) }
+                TextButton(onClick = onClearPalette) { Text(stringResource(R.string.settings_reset)) }
             }
 
             // TAS movie (v1.8.5) — record/play deterministic .rnm movies. Record
             // power-cycles; Stop & save writes the .rnm; Play seeks to its start.
-            Text("TAS movie (.rnm)")
+            Text(stringResource(R.string.settings_tas_movie))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = onMovieRecord) { Text("Record") }
-                TextButton(onClick = onMovieSave) { Text("Stop & save…") }
+                TextButton(onClick = onMovieRecord) { Text(stringResource(R.string.settings_record)) }
+                TextButton(onClick = onMovieSave) { Text(stringResource(R.string.settings_stop_save)) }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = onMoviePlay) { Text("Play…") }
-                TextButton(onClick = onMovieStop) { Text("Stop") }
+                TextButton(onClick = onMoviePlay) { Text(stringResource(R.string.settings_play)) }
+                TextButton(onClick = onMovieStop) { Text(stringResource(R.string.settings_stop)) }
             }
 
             // HD-pack (v1.8.5) — load a Mesen-style .zip pack (hires.txt + PNG tiles).
             // While active the picture upscales through the Bitmap path (the GPU
             // renderer is bypassed, since its texture is fixed at 256x240).
-            Text("HD-pack")
+            Text(stringResource(R.string.settings_hdpack))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = onLoadHdpack) { Text("Load .zip…") }
-                TextButton(onClick = onUnloadHdpack) { Text("Unload") }
+                TextButton(onClick = onLoadHdpack) { Text(stringResource(R.string.settings_load_zip)) }
+                TextButton(onClick = onUnloadHdpack) { Text(stringResource(R.string.settings_unload)) }
             }
 
             // Lua scripting (v1.8.6) — load a sandboxed `.lua` script (per-frame
             // callback, gated writes, no io/os/net); its print output shows on-screen.
-            Text("Lua script")
+            Text(stringResource(R.string.settings_lua_script))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = onLoadScript) { Text("Load .lua…") }
-                TextButton(onClick = onUnloadScript) { Text("Unload") }
+                TextButton(onClick = onLoadScript) { Text(stringResource(R.string.settings_load_lua)) }
+                TextButton(onClick = onUnloadScript) { Text(stringResource(R.string.settings_unload)) }
             }
 
             // RetroAchievements (v1.8.6) — opt-in login + hardcore toggle. The token
             // (never the password) is persisted for a silent re-login. While logged in
             // the user + score are shown with a Log out button; otherwise the login
             // fields. Hardcore disables save-states/rewind while a game is identified.
-            Text("RetroAchievements")
-            ToggleRow("Enable RetroAchievements", raEnabled, onRaEnabledChange)
+            Text(stringResource(R.string.settings_retroachievements))
+            ToggleRow(stringResource(R.string.settings_enable_ra), raEnabled, onRaEnabledChange)
             if (raEnabled) {
                 if (raUser != null) {
-                    Text("Signed in as $raUser")
+                    Text(stringResource(R.string.settings_signed_in_as, raUser))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(onClick = onRaLogout) { Text("Log out") }
+                        TextButton(onClick = onRaLogout) { Text(stringResource(R.string.settings_log_out)) }
                     }
                 } else {
                     var raName by remember { mutableStateOf("") }
@@ -404,14 +478,14 @@ fun SettingsSheet(
                     OutlinedTextField(
                         value = raName,
                         onValueChange = { raName = it },
-                        label = { Text("Username") },
+                        label = { Text(stringResource(R.string.settings_username)) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     OutlinedTextField(
                         value = raPass,
                         onValueChange = { raPass = it },
-                        label = { Text("Password") },
+                        label = { Text(stringResource(R.string.settings_password)) },
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
@@ -420,9 +494,9 @@ fun SettingsSheet(
                     Button(
                         onClick = { onRaLogin(raName.trim(), raPass) },
                         enabled = raName.isNotBlank() && raPass.isNotEmpty(),
-                    ) { Text("Log in") }
+                    ) { Text(stringResource(R.string.settings_log_in)) }
                 }
-                ToggleRow("Hardcore mode", raHardcore, onRaHardcoreChange)
+                ToggleRow(stringResource(R.string.settings_hardcore_mode), raHardcore, onRaHardcoreChange)
                 Text(raStatus)
             }
 
@@ -432,17 +506,16 @@ fun SettingsSheet(
             // stack and sets a real URL here, only LAN netplay works. TURN is
             // optional (cone-NAT hole-punch works without it); fill all three to
             // enable the symmetric-NAT relay fallback.
-            Text("Netplay (online)")
+            Text(stringResource(R.string.settings_netplay_online))
             Text(
-                "Room-code play needs a relay server. The default URL is a " +
-                    "placeholder — set your hosted signaling relay to enable it.",
+                stringResource(R.string.settings_netplay_online_hint),
                 style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
             )
             var npSig by remember { mutableStateOf(settings.npSignalingUrl) }
             OutlinedTextField(
                 value = npSig,
                 onValueChange = { npSig = it; settings.npSignalingUrl = it },
-                label = { Text("Signaling URL (wss://…)") },
+                label = { Text(stringResource(R.string.settings_signaling_url)) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -450,7 +523,7 @@ fun SettingsSheet(
             OutlinedTextField(
                 value = npTUrl,
                 onValueChange = { npTUrl = it; settings.npTurnUrl = it },
-                label = { Text("TURN URL (optional, host:port)") },
+                label = { Text(stringResource(R.string.settings_turn_url)) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -458,7 +531,7 @@ fun SettingsSheet(
             OutlinedTextField(
                 value = npTUser,
                 onValueChange = { npTUser = it; settings.npTurnUser = it },
-                label = { Text("TURN username (optional)") },
+                label = { Text(stringResource(R.string.settings_turn_user)) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -466,24 +539,24 @@ fun SettingsSheet(
             OutlinedTextField(
                 value = npTSecret,
                 onValueChange = { npTSecret = it; settings.npTurnSecret = it },
-                label = { Text("TURN secret (optional)") },
+                label = { Text(stringResource(R.string.settings_turn_secret)) },
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 modifier = Modifier.fillMaxWidth(),
             )
 
-            ToggleRow("Mute audio", settings.muted) { settings.muted = it }
+            ToggleRow(stringResource(R.string.settings_mute_audio), settings.muted) { settings.muted = it }
 
             // Native wgpu SurfaceView renderer (v1.8.4, API 33+). Applies on restart.
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-                ToggleRow("GPU renderer (restart to apply)", settings.useGpuRenderer) {
+                ToggleRow(stringResource(R.string.settings_gpu_renderer), settings.useGpuRenderer) {
                     settings.useGpuRenderer = it
                 }
             }
 
             // Haptic intensity (Off / Low / Medium / High).
-            Text("Haptics")
+            Text(stringResource(R.string.settings_haptics))
             Row(
                 modifier = Modifier.fillMaxWidth().selectableGroup(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -500,13 +573,13 @@ fun SettingsSheet(
             // Controller-aware UI (v1.8.7, #41): hide the on-screen pad + maximize the
             // game view while a hardware controller is connected (restored on unplug).
             ToggleRow(
-                "Hide on-screen pad with a controller",
+                stringResource(R.string.settings_hide_pad_with_controller),
                 settings.autoHideControllerOnPad,
             ) { settings.autoHideControllerOnPad = it }
 
             // Per-screen-mode controller size + opacity (item 5). The active mode
             // is shown so it's clear which screen these apply to.
-            Text("Controller — ${mode.label} screen")
+            Text(stringResource(R.string.settings_controller_screen, mode.label))
             ControllerSizeSlider(settings.controllerScale(mode), mode, vibrator, settings.hapticLevel) {
                 settings.setControllerScale(mode, it)
             }
@@ -518,6 +591,19 @@ fun SettingsSheet(
             )
         }
     }
+}
+
+/**
+ * The picker label for a [LanguageMode]: System uses the localized "System default"
+ * string (so it reads in the active UI language); English and Español name
+ * themselves natively (the language-selector convention — each language is listed in
+ * its own language regardless of the current locale). v1.8.8 "Atlas" (Workstream B).
+ */
+@Composable
+private fun languageLabel(lang: LanguageMode): String = when (lang) {
+    LanguageMode.System -> stringResource(R.string.language_system)
+    LanguageMode.English -> "English"
+    LanguageMode.Spanish -> "Español"
 }
 
 @Composable

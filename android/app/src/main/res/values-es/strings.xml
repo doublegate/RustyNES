@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    v1.8.8 "Atlas" (Workstream B): Spanish (Español) string catalog.
+
+    Translations reuse the desktop ADR-0023 catalog (crates/rustynes-frontend/
+    src/i18n.rs) verbatim where the strings line up — "Configuración" (Settings),
+    "Tema" (Theme), "Idioma" (Language), "Restablecer" (Reset), "Cerrar" (Close),
+    "Pausa" (Pause), "Sin ROM cargada" — and translate the Android-specific
+    surfaces (control bar, RA/netplay/onboarding) accurately to match the same
+    register. app_name is intentionally NOT overridden (the brand name is the same
+    in every locale, so it falls through to values/).
+-->
+<resources>
+    <!-- ===== In-game control bar ===== -->
+    <string name="action_open">Abrir</string>
+    <string name="action_close">Cerrar</string>
+    <string name="action_states">Estados</string>
+    <string name="action_reset">Reiniciar</string>
+    <string name="action_pause">Pausa</string>
+    <string name="action_resume">Reanudar</string>
+    <string name="action_settings">Configuración</string>
+    <string name="action_controllers">Mandos</string>
+    <string name="action_netplay">Juego en red</string>
+    <string name="action_netplay_active">Juego en red*</string>
+    <string name="action_about">Acerca de</string>
+    <string name="action_cast_to_tv">Enviar a TV</string>
+    <string name="action_stop_cast">Detener envío</string>
+    <string name="action_open_rom">Abrir ROM</string>
+    <string name="label_recent">Recientes</string>
+    <string name="label_clear_recent">Borrar recientes</string>
+    <string name="label_clear">Borrar</string>
+    <string name="label_library">Biblioteca</string>
+    <string name="action_unlock">Desbloquear %1$s</string>
+    <string name="demo_remaining">Demo · %1$d:%2$02d</string>
+    <string name="status_open_rom">Abre una ROM .nes para empezar</string>
+    <string name="status_no_rom">Sin ROM cargada</string>
+    <string name="casting_to">Enviando a %1$s</string>
+
+    <!-- ===== Settings sheet ===== -->
+    <string name="settings_title">Configuración</string>
+    <string name="settings_theme">Tema</string>
+    <string name="settings_language">Idioma</string>
+    <string name="language_system">Predeterminado del sistema</string>
+    <string name="settings_video_filter">Filtro de vídeo</string>
+    <string name="settings_custom_palette">Paleta personalizada</string>
+    <string name="settings_load_pal">Cargar .pal…</string>
+    <string name="settings_reset">Restablecer</string>
+    <string name="settings_tas_movie">Película TAS (.rnm)</string>
+    <string name="settings_record">Grabar</string>
+    <string name="settings_stop_save">Detener y guardar…</string>
+    <string name="settings_play">Reproducir…</string>
+    <string name="settings_stop">Detener</string>
+    <string name="settings_hdpack">Paquete HD</string>
+    <string name="settings_load_zip">Cargar .zip…</string>
+    <string name="settings_unload">Descargar</string>
+    <string name="settings_lua_script">Script Lua</string>
+    <string name="settings_load_lua">Cargar .lua…</string>
+    <string name="settings_retroachievements">RetroAchievements</string>
+    <string name="settings_enable_ra">Habilitar RetroAchievements</string>
+    <string name="settings_signed_in_as">Sesión iniciada como %1$s</string>
+    <string name="settings_log_out">Cerrar sesión</string>
+    <string name="settings_username">Usuario</string>
+    <string name="settings_password">Contraseña</string>
+    <string name="settings_log_in">Iniciar sesión</string>
+    <string name="settings_hardcore_mode">Modo hardcore</string>
+    <string name="settings_netplay_online">Juego en red (en línea)</string>
+    <string name="settings_netplay_online_hint">El juego con código de sala necesita un servidor de retransmisión. La URL predeterminada es un marcador de posición: configura tu relé de señalización para habilitarlo.</string>
+    <string name="settings_signaling_url">URL de señalización (wss://…)</string>
+    <string name="settings_turn_url">URL TURN (opcional, host:puerto)</string>
+    <string name="settings_turn_user">Usuario TURN (opcional)</string>
+    <string name="settings_turn_secret">Secreto TURN (opcional)</string>
+    <string name="settings_mute_audio">Silenciar audio</string>
+    <string name="settings_dynamic_color">Material You (color dinámico)</string>
+    <string name="settings_gpu_renderer">Renderizador GPU (reinicia para aplicar)</string>
+    <string name="settings_haptics">Vibración</string>
+    <string name="settings_hide_pad_with_controller">Ocultar el mando en pantalla con un control</string>
+    <string name="settings_controller_screen">Mando — pantalla %1$s</string>
+
+    <!-- ===== About dialog ===== -->
+    <string name="about_close">Cerrar</string>
+    <string name="about_body">RustyNES — un emulador de Nintendo Entertainment System de precisión de ciclo escrito en Rust puro.\n\nLicencia: MIT OR Apache-2.0\nAutor: DoubleGate\nPrecisión: AccuracyCoin 100%% (139/139); nestest sin diferencias; suites blargg / kevtris en verde.\n\nCaracterísticas: 168 familias de mappers, el Famicom Disk System, Vs. System / PlayChoice-10, juego en red con rollback, RetroAchievements, películas TAS + el editor TAStudio, estados guardados, rebobinado, run-ahead, scripting Lua + automatización, paquetes HD y grabación de A/V — todo bajo un estricto contrato de determinismo de bits.</string>
+
+    <!-- ===== First-run onboarding dialogs ===== -->
+    <string name="onboarding_continue">Continuar…</string>
+    <string name="onboarding_close">Cerrar</string>
+    <string name="onboarding_welcome_title">Bienvenido a RustyNES</string>
+    <string name="onboarding_welcome_body">Un emulador de NES de precisión de ciclo en tu bolsillo.\n\nLos controles se ocultan para una vista despejada: toca la pastilla roja \"MENU\" del mando en pantalla para abrir la barra de menú (abrir una ROM, estados guardados, configuración y más). Tócala de nuevo para ocultarla.</string>
+    <string name="onboarding_legal_title">Juega con responsabilidad</string>
+    <string name="onboarding_legal_body">Juega únicamente con ROMs de las que poseas una copia física. RustyNES no distribuye ROMs comerciales de ningún tipo: proporcionar los archivos de juego es tu responsabilidad, y solo tuya.</string>
+    <string name="onboarding_dont_show_again">No volver a mostrar</string>
+</resources>

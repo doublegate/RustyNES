@@ -27,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.core.net.toUri
 import androidx.core.graphics.drawable.toBitmap
@@ -37,23 +38,12 @@ import androidx.compose.ui.unit.dp
  * touches emulation.
  */
 
-private const val ABOUT_TEXT =
-    "RustyNES — a cycle-accurate Nintendo Entertainment System emulator written in " +
-        "pure Rust.\n\n" +
-        "License: MIT OR Apache-2.0\n" +
-        "Author: DoubleGate\n" +
-        "Accuracy: AccuracyCoin 100% (139/139); nestest 0-diff; blargg / kevtris suites green.\n\n" +
-        "Features: 168 mapper families, the Famicom Disk System, Vs. System / " +
-        "PlayChoice-10, rollback netplay, RetroAchievements, TAS movies + the TAStudio " +
-        "editor, save-states, rewind, run-ahead, Lua scripting + automation, HD packs, " +
-        "and A/V recording — all on a strict bit-determinism contract."
-
 /** The About dialog: the RustyNES icon + the desktop project's About text. */
 @Composable
 fun AboutDialog(onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.about_close)) } },
         icon = {
             // Render the (adaptive) launcher icon as a bitmap — painterResource
             // throws on an AdaptiveIconDrawable, which was crashing the dialog.
@@ -67,11 +57,11 @@ fun AboutDialog(onDismiss: () -> Unit) {
                 modifier = Modifier.size(72.dp),
             )
         },
-        title = { Text("RustyNES") },
+        title = { Text(stringResource(R.string.app_name)) },
         text = {
             val ctx = LocalContext.current
             Column(modifier = Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
-                Text(ABOUT_TEXT)
+                Text(stringResource(R.string.about_body))
                 Spacer(Modifier.height(10.dp))
                 Text(
                     "github.com/doublegate/RustyNES",
@@ -104,15 +94,10 @@ fun OnboardingDialogs(onSuppress: () -> Unit, onFinished: () -> Unit) {
     if (step == 0) {
         AlertDialog(
             onDismissRequest = {}, // advance only via Continue
-            confirmButton = { TextButton(onClick = { step = 1 }) { Text("Continue…") } },
-            title = { Text("Welcome to RustyNES") },
+            confirmButton = { TextButton(onClick = { step = 1 }) { Text(stringResource(R.string.onboarding_continue)) } },
+            title = { Text(stringResource(R.string.onboarding_welcome_title)) },
             text = {
-                Text(
-                    "A cycle-accurate NES emulator in your pocket.\n\n" +
-                        "The controls hide for a clean view — tap the red \"MENU\" pill on the " +
-                        "on-screen controller to open the menu bar (Open a ROM, save states, " +
-                        "settings, and more). Tap it again to hide it.",
-                )
+                Text(stringResource(R.string.onboarding_welcome_body))
             },
         )
     } else {
@@ -122,22 +107,18 @@ fun OnboardingDialogs(onSuppress: () -> Unit, onFinished: () -> Unit) {
                 TextButton(onClick = {
                     if (dontShow) onSuppress()
                     onFinished()
-                }) { Text("Close") }
+                }) { Text(stringResource(R.string.onboarding_close)) }
             },
-            title = { Text("Play responsibly") },
+            title = { Text(stringResource(R.string.onboarding_legal_title)) },
             text = {
                 Column {
-                    Text(
-                        "Only play game ROMs for which you own a physical copy. RustyNES " +
-                            "distributes no commercial ROMs of any kind — supplying game files " +
-                            "is your responsibility, and yours alone.",
-                    )
+                    Text(stringResource(R.string.onboarding_legal_body))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Checkbox(checked = dontShow, onCheckedChange = { dontShow = it })
-                        Text("Do not show again")
+                        Text(stringResource(R.string.onboarding_dont_show_again))
                     }
                 }
             },

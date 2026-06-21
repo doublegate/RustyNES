@@ -23,7 +23,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.OutlinedButton
-import androidx.activity.ComponentActivity
+import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.os.LocaleListCompat
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -47,8 +49,11 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
 import androidx.window.core.layout.WindowSizeClass
 import androidx.compose.material3.Button
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -76,6 +81,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -103,7 +109,7 @@ import uniffi.rustynes_mobile.RaToast
  * touches the determinism contract — input converges on one mask per port,
  * exactly as the desktop and wasm hosts do.
  */
-class MainActivity : ComponentActivity() {
+class MainActivity : AppCompatActivity() {
 
     /** Holds the live controller so hardware key events (dispatched to the
      *  Activity, not Compose) can reach the same instance the UI drives. */
@@ -131,6 +137,13 @@ class MainActivity : ComponentActivity() {
         val splash = installSplashScreen()
         splash.setKeepOnScreenCondition { !contentReady }
         super.onCreate(savedInstanceState)
+        // v1.8.8 "Atlas" (Workstream B): apply the persisted in-app UI language before
+        // the first composition. AppCompat itself persists the last
+        // setApplicationLocales() choice and restores it on relaunch, but we keep our
+        // SharedPreferences as the single source of truth and re-assert it here so a
+        // backup/restore or a prefs edit stays authoritative. System (empty tag) clears
+        // any override and follows the device / per-app system language.
+        applyPersistedLocale()
         license = LicenseManager(applicationContext)
         // Only connect to Play Billing in the Play build; off-Play it can't transact.
         if (BuildConfig.PLAY_BUILD) license.connect()
@@ -147,14 +160,16 @@ class MainActivity : ComponentActivity() {
                 ThemeMode.Light -> false
                 ThemeMode.Dark -> true
             }
-            // v1.8.8 "Atlas" (Workstream K): a real Material 3 theme. RustyNES brand
-            // colors drive the scheme (dynamic color is deferred to Workstream B). The
-            // background is black so the letterboxed NES picture sits on black, not the
-            // M3 surface tint.
-            MaterialTheme(
-                colorScheme = (if (dark) rustyNesDarkColors() else rustyNesLightColors())
-                    .copy(background = Color.Black),
-            ) {
+            // v1.8.8 "Atlas" (Workstream B): a real Material 3 theme with Material You
+            // dynamic color. On Android 12+ (API 31), when the user leaves "Material You"
+            // on (default), the chrome is themed from the wallpaper-derived palette
+            // (dynamicLight/DarkColorScheme); otherwise — older device, or toggled off —
+            // the RustyNES brand scheme is used. Either way the background is forced
+            // black so the letterboxed NES picture sits on black (the gameplay area is
+            // NEVER tinted), and only the chrome (bars, menus, controls, Settings) picks
+            // up the dynamic/brand color.
+            val colorScheme = rememberColorScheme(dark, settings.dynamicColor)
+            MaterialTheme(colorScheme = colorScheme.copy(background = Color.Black)) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background,
@@ -201,6 +216,20 @@ class MainActivity : ComponentActivity() {
         thermalListener?.let {
             (getSystemService(POWER_SERVICE) as android.os.PowerManager).removeThermalStatusListener(it)
         }
+    }
+
+    // v1.8.8 "Atlas" (Workstream B): apply the persisted in-app UI language. An empty
+    // tag (LanguageMode.System) clears any per-app override (follows the system /
+    // per-app system language); a non-empty tag forces that language. This delegates
+    // to LocaleManager on API 33+ and to AppCompat's own override on API 24..32.
+    private fun applyPersistedLocale() {
+        val tag = AppSettings(this).language.tag
+        val locales = if (tag.isEmpty()) {
+            LocaleListCompat.getEmptyLocaleList()
+        } else {
+            LocaleListCompat.forLanguageTags(tag)
+        }
+        AppCompatDelegate.setApplicationLocales(locales)
     }
 
     // Re-assert immersive mode whenever the window regains focus: the system
@@ -266,8 +295,8 @@ class MainActivity : ComponentActivity() {
 
 // v1.8.8 "Atlas" (Workstream K): the RustyNES Material 3 brand color schemes. A
 // deep indigo/violet primary (the launcher background family) with an amber/red
-// secondary nods to the NES palette. Workstream B later folds in dynamic color
-// (wallpaper-derived) on API 31+, falling back to these.
+// secondary nods to the NES palette. v1.8.8 Workstream B folds in dynamic color
+// (wallpaper-derived) on API 31+ via rememberColorScheme(), falling back to these.
 private val BrandPrimary = Color(0xFF7C6FF0)
 private val BrandSecondary = Color(0xFFFFB74D)
 private val BrandTertiary = Color(0xFFE57373)
@@ -285,6 +314,27 @@ private fun rustyNesDarkColors() = darkColorScheme(
     secondary = BrandSecondary,
     tertiary = BrandTertiary,
 )
+
+/**
+ * v1.8.8 "Atlas" (Workstream B): resolve the active Material 3 [ColorScheme].
+ *
+ * When [dynamicColor] is requested AND the device is Android 12+ (API 31), the
+ * scheme is derived from the system wallpaper (Material You) via
+ * `dynamicLight/DarkColorScheme(context)`; otherwise the RustyNES brand scheme is
+ * used. Light vs. dark is driven by [dark] (which already folds in the user's
+ * Light/Dark/System theme choice + `isSystemInDarkTheme()`). The caller forces the
+ * `background` to black so the gameplay letterbox is never tinted.
+ */
+@Composable
+private fun rememberColorScheme(dark: Boolean, dynamicColor: Boolean): ColorScheme {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    return when {
+        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
+            if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+        dark -> rustyNesDarkColors()
+        else -> rustyNesLightColors()
+    }
+}
 
 /**
  * Thin holder around the optional [NesController] plus the hardware-key mapping.
@@ -602,7 +652,7 @@ private fun EmulatorScreen(
     var raWasLoggedIn by remember { mutableStateOf(false) }
     // Off-main-thread scope for the one-shot SAF loads (HD-pack parse, config I/O).
     val scope = rememberCoroutineScope()
-    var status by remember { mutableStateOf("Open a .nes ROM to start") }
+    var status by remember { mutableStateOf(context.getString(R.string.status_open_rom)) }
     var recents by remember { mutableStateOf(RomLibrary.recents(context)) }
     // Demo session clock: seconds remaining this launch (full unlock = no limit).
     var demoSecondsLeft by remember { mutableStateOf(DEMO_SESSION_SECONDS) }
@@ -1307,6 +1357,9 @@ private fun EmulatorScreen(
                         .padding(16.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
+                    // TODO(i18n): `status` is a dynamic, frequently-reassigned string
+                    // (load results, error messages); these transient status lines are
+                    // a deferred i18n surface and read English until translated.
                     Text(status, color = Color.White)
                     if (recents.isNotEmpty()) {
                         Spacer(Modifier.height(16.dp))
@@ -1314,9 +1367,9 @@ private fun EmulatorScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
-                            Text("Recent", color = Color.Gray)
+                            Text(stringResource(R.string.label_recent), color = Color.Gray)
                             Text(
-                                "Clear Recent",
+                                stringResource(R.string.label_clear_recent),
                                 color = Color(0xFFEF9A9A),
                                 modifier = Modifier.clickable {
                                     RomLibrary.clear(context)
@@ -1339,7 +1392,7 @@ private fun EmulatorScreen(
             // While casting, a small banner over the (still-mirrored) phone picture.
             if (castManager.casting) {
                 Text(
-                    "Casting to ${castManager.displayName ?: "TV"}",
+                    stringResource(R.string.casting_to, castManager.displayName ?: "TV"),
                     color = Color(0xFF80D8FF),
                     modifier = Modifier.align(Alignment.TopCenter).padding(8.dp),
                 )
@@ -1394,23 +1447,24 @@ private fun EmulatorScreen(
                 Button(
                     onClick = { closeRom() },
                     modifier = Modifier.focusRequester(menuFocusRequester),
-                ) { Text("Close") }
+                ) { Text(stringResource(R.string.action_close)) }
             } else {
                 Button(
                     onClick = { picker.launch(arrayOf("*/*")) },
                     modifier = Modifier.focusRequester(menuFocusRequester),
-                ) { Text("Open") }
+                ) { Text(stringResource(R.string.action_open)) }
             }
             // Save-states are a paid feature; the demo hides the manager.
             if (unlocked) {
-                OutlinedButton(onClick = { showStates = true }) { Text("States") }
+                OutlinedButton(onClick = { showStates = true }) { Text(stringResource(R.string.action_states)) }
             }
-            OutlinedButton(onClick = { emulator.controller?.reset() }) { Text("Reset") }
+            OutlinedButton(onClick = { emulator.controller?.reset() }) { Text(stringResource(R.string.action_reset)) }
             OutlinedButton(onClick = {
                 paused = !paused
                 emulator.paused = paused
-            }) { Text(if (paused) "Resume" else "Pause") }
-            // Fast-forward — disabled during netplay (rollback owns pacing).
+            }) { Text(stringResource(if (paused) R.string.action_resume else R.string.action_pause)) }
+            // Fast-forward — disabled during netplay (rollback owns pacing). The ">>"
+            // glyph is a universal fast-forward symbol, not a translatable word.
             OutlinedButton(
                 onClick = {
                     turbo = !turbo
@@ -1418,18 +1472,18 @@ private fun EmulatorScreen(
                 },
                 enabled = !npActive,
             ) { Text(if (turbo) ">> On" else ">>") }
-            OutlinedButton(onClick = { showSettings = true }) { Text("Settings") }
+            OutlinedButton(onClick = { showSettings = true }) { Text(stringResource(R.string.action_settings)) }
             // Hardware controllers (v1.8.7): port assignment, remapping, autofire.
-            OutlinedButton(onClick = { showControllers = true }) { Text("Controllers") }
+            OutlinedButton(onClick = { showControllers = true }) { Text(stringResource(R.string.action_controllers)) }
             // Direct-IP / LAN netplay (v1.8.6). Ungated (not a paid feature here).
             OutlinedButton(onClick = { showNetplay = true }) {
-                Text(if (npActive) "Netplay*" else "Netplay")
+                Text(stringResource(if (npActive) R.string.action_netplay_active else R.string.action_netplay))
             }
-            OutlinedButton(onClick = { showAbout = true }) { Text("About") }
+            OutlinedButton(onClick = { showAbout = true }) { Text(stringResource(R.string.action_about)) }
             // Cast gameplay to a connected TV/external display (only when present).
             if (castManager.available) {
                 OutlinedButton(onClick = { castManager.toggle() }) {
-                    Text(if (castManager.casting) "Stop Cast" else "Cast to TV")
+                    Text(stringResource(if (castManager.casting) R.string.action_stop_cast else R.string.action_cast_to_tv))
                 }
             }
             // Experimental Chromecast (CAF) spectator mirror (v1.8.7, #38). Only
@@ -1456,12 +1510,12 @@ private fun EmulatorScreen(
                 val price = license.product
                     ?.oneTimePurchaseOfferDetails?.formattedPrice ?: "$2.99"
                 Button(onClick = { activity?.let { license.purchase(it) } }) {
-                    Text("Unlock $price")
+                    Text(stringResource(R.string.action_unlock, price))
                 }
                 val mins = demoSecondsLeft / 60
                 val secs = demoSecondsLeft % 60
                 Text(
-                    "Demo · %d:%02d".format(mins, secs),
+                    stringResource(R.string.demo_remaining, mins, secs),
                     color = Color.Gray,
                 )
             }
@@ -1605,6 +1659,19 @@ private fun EmulatorScreen(
                         runCatching { emulator.controller?.raSetHardcore(hc) }
                     }
                 }
+            },
+            // v1.8.8 "Atlas" (Workstream B): apply the picked UI language immediately.
+            // setApplicationLocales recreates the Activity so the new locale's resources
+            // load; AppCompat persists the choice (and our AppSettings mirror is the
+            // source of truth, re-asserted in onCreate). System (empty tag) clears the
+            // override and follows the per-app / system language.
+            onLanguageChange = { lang ->
+                val locales = if (lang.tag.isEmpty()) {
+                    LocaleListCompat.getEmptyLocaleList()
+                } else {
+                    LocaleListCompat.forLanguageTags(lang.tag)
+                }
+                AppCompatDelegate.setApplicationLocales(locales)
             },
             onDismiss = { showSettings = false },
         )
@@ -1905,22 +1972,22 @@ private fun LibraryRail(
             .padding(16.dp),
     ) {
         Text(
-            "Library",
+            stringResource(R.string.label_library),
             color = MaterialTheme.colorScheme.onSurface,
             fontSize = 18.sp,
             fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
         )
         Spacer(Modifier.height(12.dp))
-        Button(onClick = onOpen, modifier = Modifier.fillMaxWidth()) { Text("Open ROM") }
+        Button(onClick = onOpen, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.action_open_rom)) }
         if (recents.isNotEmpty()) {
             Spacer(Modifier.height(16.dp))
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text("Recent", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(stringResource(R.string.label_recent), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(
-                    "Clear",
+                    stringResource(R.string.label_clear),
                     color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.clickable { onClearRecents() },
                 )
