@@ -1,4 +1,4 @@
-//! The **NAT-traversal orchestrator** — a non-blocking pump wiring the building
+//! The **NAT-traversal orchestrator** — a steppable pump wiring the building
 //! blocks into one end-to-end flow (v1.8.7).
 //!
 //! It composes the previously-isolated pieces ([signaling](crate::signaling),
@@ -18,10 +18,12 @@
 //!               └─ (symmetric NAT: punch times out) ────────▶ Relaying ─▶ Synced
 //! ```
 //!
-//! Each [`pump`](NatConnect::pump) call is non-blocking and steppable once per
-//! tick. The whole thing reuses one UDP socket for STUN discovery, the punch
-//! packets, AND the eventual gameplay transport, so the public mapping the peer
-//! learns is the one gameplay flows over.
+//! Each [`pump`](NatConnect::pump) call advances one step per tick. STUN
+//! discovery and TURN allocation do read-timeout-bounded blocking probes
+//! (sub-second), not strictly non-blocking I/O. The whole thing reuses one UDP
+//! socket for STUN discovery, the punch packets, AND the eventual gameplay
+//! transport, so the public mapping the peer learns is the one gameplay flows
+//! over.
 //!
 //! Native-only and gated behind `netplay-client` (it drives the blocking
 //! [`SignalingClient`]).
@@ -485,20 +487,27 @@ impl NatConnect {
             let Some(socket) = self.socket.take() else {
                 return;
             };
-            let blocking = socket.set_nonblocking(false);
+            // TURN allocation AND permission install both do read-timeout-
+            // bounded BLOCKING `recv_response`s, so the socket must stay blocking
+            // across BOTH (a non-blocking socket would make every recv return
+            // WouldBlock instantly and the bounded reads would never land).
+            // Mirror `tick_discovering`: flip blocking for the bounded ops, then
+            // restore non-blocking for the punch/gameplay path.
+            let _ = socket.set_nonblocking(false);
             let alloc = TurnClient::allocate(
                 &socket,
                 &turn_cfg,
                 Duration::from_secs(5),
                 self.rng.next_u64(),
             );
-            let _ = socket.set_nonblocking(true);
-            let _ = blocking;
             match alloc {
                 Ok(mut turn) => {
                     if let Some(peer) = self.punch.peer_public() {
                         let _ = turn.create_permission(&socket, peer, Duration::from_secs(2));
                     }
+                    // Restore non-blocking now that the bounded TURN reads are
+                    // done; gameplay datagrams drain non-blocking from here.
+                    let _ = socket.set_nonblocking(true);
                     let relayed = turn.relayed_addr();
                     self.relay_socket = Some(RelayUdpSocket::new(socket, turn));
                     self.relayed = true;
@@ -513,6 +522,7 @@ impl NatConnect {
                     }
                 }
                 Err(e) => {
+                    let _ = socket.set_nonblocking(true);
                     self.socket = Some(socket);
                     self.phase = NatPhase::Failed(format!("TURN allocate failed: {e}"));
                     return;

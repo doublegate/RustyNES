@@ -71,8 +71,10 @@ private enum class NetplayMode(val label: String) { Lan("LAN"), Online("Online (
  * Until then the UI shows a caveat and host/join will fail fast on the placeholder.
  */
 object NetplayEndpoints {
-    /** Placeholder signaling relay — REPLACE with the hosted `deploy/` stack URL. */
-    const val SIGNALING_URL = "wss://relay.rustynes.example/ws"
+    /** Placeholder signaling relay — REPLACE with the hosted `deploy/` stack URL.
+     *  Pathless (`wss://<DOMAIN>`): the `deploy/Caddyfile` proxies the WebSocket at
+     *  the site root, so no `/ws` path segment is appended. */
+    const val SIGNALING_URL = "wss://relay.rustynes.example"
 }
 
 /**
@@ -353,7 +355,9 @@ private fun NetplayStatusRow(status: NpStatus) {
             }
             val roleLabel = if (status.isHost) "Host" else "Joiner"
             Text("$phaseLabel · $roleLabel", fontSize = 13.sp)
-            // "via relay" badge — gated on relayed (reserved; currently always false).
+            // "via relay" badge — shown when the connection fell back to a TURN
+            // relay (symmetric NAT). Now wired by #40 (NpStatus.relayed reflects the
+            // relay-transport hand-off).
             if (status.relayed) {
                 Spacer(Modifier.size(8.dp))
                 Text(

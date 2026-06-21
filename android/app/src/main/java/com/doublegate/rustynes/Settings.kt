@@ -154,8 +154,9 @@ class AppSettings(context: Context) {
     // a fresh install at least has a coherent — if non-functional until hosted —
     // config. Empty STUN falls back to the bridge's public Google STUN list.
 
-    /** The signaling relay URL (`wss://…/ws`). Placeholder default until the
-     *  maintainer hosts the `deploy/` stack and replaces it. */
+    /** The signaling relay URL — pathless `wss://<DOMAIN>` (the `deploy/Caddyfile`
+     *  proxies the WebSocket at the site root, no `/ws` segment). Placeholder
+     *  default until the maintainer hosts the `deploy/` stack and replaces it. */
     var npSignalingUrl: String
         get() = prefs.getString("npSignalingUrl", NetplayEndpoints.SIGNALING_URL)
             ?: NetplayEndpoints.SIGNALING_URL

@@ -220,7 +220,7 @@ private fun InputCaptureDialog(
         title = { Text("Rebind ${NesAction.label(target.action)}") },
         text = {
             Box(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
-                Text("Press a button or move a stick on the controller…")
+                Text("Press a button or pull a trigger on the controller…")
             }
         },
         confirmButton = {

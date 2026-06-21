@@ -48,7 +48,8 @@ only relays the SDP offer/answer + ICE candidates, and for the mobile path it
 only relays the `PublicAddr` reflexive addresses; in both cases the game state
 flows directly between peers (over the WebRTC data channel, or over the punched
 UDP socket). The lone exception is a **TURN-relayed** symmetric-NAT pair, where
-coturn carries the media (browser path only today — see the mobile caveat below).
+coturn carries the media (both the browser and the mobile paths now relay — see
+the mobile note below).
 
 > **No COOP/COEP / SharedArrayBuffer required.** Browser netplay uses a WebRTC
 > `RtcDataChannel` (and the audio path is an `AudioWorklet`); neither needs
@@ -155,16 +156,19 @@ present**; otherwise the session is punch-or-fail (cone-NAT only). An empty
 `stun_servers` falls back to `DEFAULT_STUN_SERVERS`.
 
 > **Placeholder default — replace it.** The shipped app defaults
-> `signaling_url` to a **placeholder** `wss://relay.rustynes.example/ws`, which
+> `signaling_url` to a **placeholder** `wss://relay.rustynes.example`, which
 > does not resolve. Until you host this `deploy/` stack and substitute your real
 > `wss://<DOMAIN>`, mobile room-code netplay cannot connect. (Direct-IP / LAN
 > netplay is unaffected — it needs no relay.)
 >
-> **Symmetric-NAT relay is not yet wired for mobile.** The TURN *client* is
-> implemented and a `turn_url`/creds trio configures it, but routing live
-> gameplay over the relay is a tracked carryover (`docs/netplay-webrtc.md` §2.5):
-> symmetric-NAT mobile pairs do not yet relay. Cone NAT (the common home/CGNAT
-> case) hole-punches end-to-end without TURN.
+> **Symmetric-NAT relay is wired for mobile.** The TURN *client* + the
+> relay-transport hand-off both exist: a `turn_url`/creds trio configures it, and
+> when both peers are behind a symmetric NAT `UdpTransport::from_relay` routes
+> live gameplay over the relay (`NpStatus.relayed` flips true; the Android UI
+> shows a "via relay" badge — `docs/netplay-webrtc.md` §2.5, mock-TURN-verified
+> by `relay_loopback`). The remaining limitation is a **live coturn run with two
+> real symmetric-NAT devices**. Cone NAT (the common home/CGNAT case)
+> hole-punches end-to-end without TURN.
 
 ### Mobile room-code checklist (maintainer ops)
 
@@ -174,7 +178,7 @@ the app at it:
 - [ ] Host this `deploy/` stack (the **Ops / hosting** steps below) — host,
       domain, TLS, coturn — once; it serves both the browser and mobile paths.
 - [ ] In the app's Settings, set `signaling_url` to `wss://<DOMAIN>` (replace
-      the `wss://relay.rustynes.example/ws` placeholder).
+      the `wss://relay.rustynes.example` placeholder).
 - [ ] (Optional) set the TURN trio (`turn_url`/`turn_user`/`turn_secret`) to
       match `.env` for the symmetric-NAT fallback; leave STUN empty for the
       default servers.
