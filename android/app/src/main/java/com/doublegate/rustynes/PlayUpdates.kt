@@ -51,6 +51,11 @@ class PlayUpdatesManager(context: Context) {
         }
     }
 
+    /** Guards against registering [installListener] more than once (each
+     *  [checkForFlexibleUpdate] would otherwise add a duplicate / leak the callback). */
+    @Volatile
+    private var listenerRegistered = false
+
     /**
      * Check Play for an available update and, if a FLEXIBLE update is allowed, launch
      * the flexible flow via [launcher]. Call at a sensible point (e.g. first foreground
@@ -58,7 +63,12 @@ class PlayUpdatesManager(context: Context) {
      */
     fun checkForFlexibleUpdate(launcher: ActivityResultLauncher<IntentSenderRequest>) {
         val mgr = updateManager ?: return
-        mgr.registerListener(installListener)
+        // Register at most once — repeated calls would otherwise stack duplicate
+        // listeners / leak callbacks.
+        if (!listenerRegistered) {
+            mgr.registerListener(installListener)
+            listenerRegistered = true
+        }
         mgr.appUpdateInfo.addOnSuccessListener { info ->
             val available = info.updateAvailability() == UpdateAvailability.UPDATE_AVAILABLE
             if (available && info.isUpdateTypeAllowed(AppUpdateType.FLEXIBLE)) {
@@ -89,7 +99,10 @@ class PlayUpdatesManager(context: Context) {
 
     /** Detach the install listener (call from onDestroy). */
     fun release() {
-        updateManager?.unregisterListener(installListener)
+        if (listenerRegistered) {
+            updateManager?.unregisterListener(installListener)
+            listenerRegistered = false
+        }
     }
 
     /**

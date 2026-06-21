@@ -62,6 +62,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -90,6 +91,8 @@ import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -879,10 +882,23 @@ private fun EmulatorScreen(
     var libFavoritesOnly by remember { mutableStateOf(false) }
     var libQuery by remember { mutableStateOf("") }
     var librarySort by remember { mutableStateOf(LibrarySort.RECENT) }
-    val libraryEntries = remember(libraryVersion, libFolder, libFavoritesOnly, libQuery, librarySort) {
-        GameLibrary.view(context, libFolder, libFavoritesOnly, libQuery, librarySort)
+    // GameLibrary.view/folders read+parse library.json (and may run a one-time
+    // migration WRITE) — keep that file I/O off the main thread so composition never
+    // janks. produceState starts empty and posts the computed result when ready.
+    val libraryEntries by produceState<ImmutableList<GameEntry>>(
+        initialValue = persistentListOf(),
+        libraryVersion, libFolder, libFavoritesOnly, libQuery, librarySort,
+    ) {
+        value = withContext(Dispatchers.IO) {
+            GameLibrary.view(context, libFolder, libFavoritesOnly, libQuery, librarySort)
+        }
     }
-    val libraryFolders = remember(libraryVersion) { GameLibrary.folders(context) }
+    val libraryFolders by produceState<ImmutableList<String>>(
+        initialValue = persistentListOf(),
+        libraryVersion,
+    ) {
+        value = withContext(Dispatchers.IO) { GameLibrary.folders(context) }
+    }
     // The game a long-press/context action currently targets (set box art / move).
     var boxArtTarget by remember { mutableStateOf<GameEntry?>(null) }
     var folderTarget by remember { mutableStateOf<GameEntry?>(null) }
@@ -1527,12 +1543,38 @@ private fun EmulatorScreen(
         if (romLoaded && sha != null && host?.cloudSave?.isActive(settings) == true) {
             // The Snapshots Tasks dispatch their own callbacks; just kick it off. The
             // pull writes into the local `.rns` (so a subsequent open auto-resumes it).
+            //
+            // RACE FIX (#166): loadRom already auto-loaded the OLD local auto-slot into
+            // the running emulator before this async pull completes. If the pull
+            // supersedes local with a newer cloud snapshot, we must reload the
+            // just-pulled state into the LIVE controller — otherwise the user silently
+            // keeps playing the stale (pre-pull) state. So on a successful pull, re-read
+            // the (now-updated) local auto-slot and apply it, but only if the SAME ROM is
+            // still loaded and auto-resume is allowed (unlocked; the demo cold-boots and
+            // never auto-loads, so it must not be force-loaded here either).
             host.cloudSave.pullSlot(
                 sha,
                 SaveStateStore.AUTO_SLOT,
                 settings,
                 onConflict = { c -> cloudConflict = c },
-                onDone = { if (it) host.playGames.unlock(PgsIds.ACH_FIRST_CLOUD_SYNC) },
+                onDone = { pulled ->
+                    if (pulled) {
+                        host.playGames.unlock(PgsIds.ACH_FIRST_CLOUD_SYNC)
+                        if (unlocked && emulator.romSha == sha) {
+                            scope.launch {
+                                val blob = withContext(Dispatchers.IO) {
+                                    SaveStateStore.load(context, sha, SaveStateStore.AUTO_SLOT)
+                                }
+                                // Guard again post-await: the ROM could have changed.
+                                if (blob != null && emulator.romSha == sha) {
+                                    withContext(Dispatchers.IO) {
+                                        runCatching { emulator.controller?.loadState(blob) }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
             )
         }
     }

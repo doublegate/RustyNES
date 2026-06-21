@@ -164,7 +164,16 @@ object ScraperSources {
                     }
                 }
             }
-            if (tmp.length() == 0L) { tmp.delete(); false } else { tmp.renameTo(out); out.length() > 0 }
+            if (tmp.length() == 0L) {
+                tmp.delete()
+                false
+            } else {
+                // Replace any existing file, then move the temp into place. renameTo
+                // fails (returns false) if the destination exists on some filesystems,
+                // so delete first and clean up the temp if the move still fails.
+                if (out.exists()) out.delete()
+                if (!tmp.renameTo(out)) { tmp.delete(); false } else out.length() > 0
+            }
         } catch (_: Exception) {
             false
         } finally {

@@ -3,6 +3,7 @@ package com.doublegate.rustynes
 import android.content.Context
 import android.net.Uri
 import android.provider.DocumentsContract
+import java.security.MessageDigest
 
 /**
  * Batch SAF-tree ROM import (v1.8.8 "Atlas", Workstream C).
@@ -85,21 +86,28 @@ object LibraryImport {
         var added = 0
         roms.forEachIndexed { i, rom ->
             runCatching {
-                val bytes = resolver.openInputStream(rom.uri)?.use { it.readBytes() }
-                if (bytes != null && bytes.isNotEmpty()) {
-                    val sha = sha256Hex(bytes)
+                // Stream the ROM/.zip through the digest in a fixed buffer rather than
+                // reading the whole file into memory (a large archive could OOM).
+                val sha = resolver.openInputStream(rom.uri)?.use { stream ->
+                    val md = MessageDigest.getInstance("SHA-256")
+                    val buf = ByteArray(64 * 1024)
+                    var any = false
+                    while (true) {
+                        val n = stream.read(buf)
+                        if (n < 0) break
+                        if (n > 0) { md.update(buf, 0, n); any = true }
+                    }
+                    if (any) md.digest().joinToString("") { "%02x".format(it) } else null
+                }
+                if (sha != null) {
                     val display = rom.name
-                    // Sibling box-art match by base name (case-insensitive).
+                    // Sibling box-art match by base name (case-insensitive). The box-art
+                    // image is a descendant of the same SAF tree, so the persistable grant
+                    // already taken on the root tree URI covers it — taking a per-child
+                    // persistable permission throws SecurityException (only the tree root
+                    // is grantable), so we deliberately do NOT take one here.
                     val base = rom.name.substringBeforeLast('.').lowercase()
                     val art = imagesByBase[base]
-                    if (art != null) {
-                        runCatching {
-                            resolver.takePersistableUriPermission(
-                                art,
-                                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION,
-                            )
-                        }
-                    }
                     GameLibrary.upsert(
                         ctx,
                         GameEntry(

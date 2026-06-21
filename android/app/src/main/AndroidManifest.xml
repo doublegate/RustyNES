@@ -130,7 +130,7 @@
              (Glance). Shows the last-played game's name and launches into it on tap. -->
         <receiver
             android:name=".ResumeWidgetReceiver"
-            android:exported="false"
+            android:exported="true"
             android:label="@string/widget_resume_title">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />

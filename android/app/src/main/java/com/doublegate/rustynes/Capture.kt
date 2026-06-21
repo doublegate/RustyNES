@@ -100,19 +100,48 @@ object Capture {
     class ClipBuffer(val width: Int, val height: Int, seconds: Int = 30) {
         val capacity: Int = CLIP_FPS * seconds
         private val frames = ArrayDeque<Bitmap>(capacity)
+        // A small pool of reusable, pre-sized bitmaps reclaimed when a frame is evicted
+        // from the (full) ring. At steady state the ring is full, so every new frame
+        // pulls a recycled buffer from the pool and overwrites its pixels in place —
+        // ZERO per-frame allocation (vs. the old src.copy() that allocated ~900 bitmaps /
+        // ~216 MB over a 30 s clip). Only the initial fill (capacity frames) allocates.
+        private val pool = ArrayDeque<Bitmap>(2)
+        // Scratch pixel row used to copy frame contents without allocating a Bitmap.
+        private val scratch = IntArray(width * height)
         // Throttle to CLIP_FPS: skip frames so a 60 Hz loop records every other one.
         private var accum = 0
         private val step = 2 // ~60 Hz loop -> ~30 fps clip.
 
-        /** Offer a presented gameplay frame; copies + retains it on the throttle beat. */
+        /** Offer a presented gameplay frame; snapshots it into a (pooled) bitmap on the
+         *  throttle beat without allocating once the ring is full. */
         @Synchronized
         fun offer(src: Bitmap) {
             accum += 1
             if (accum % step != 0) return
-            // Copy (the loop reuses its bitmap in place; we must snapshot).
-            val copy = src.copy(Bitmap.Config.ARGB_8888, false) ?: return
-            if (frames.size >= capacity) frames.removeFirst().recycle()
-            frames.addLast(copy)
+            // Reclaim the oldest frame's bitmap into the pool when the ring is full, so
+            // we reuse its buffer instead of allocating a new one.
+            if (frames.size >= capacity) {
+                val evicted = frames.removeFirst()
+                pool.addLast(evicted)
+            }
+            // Pull a reusable bitmap from the pool, or allocate one only if the pool is
+            // empty (i.e. during the initial fill). The dest is always width x height.
+            val dest = pool.removeFirstOrNull()?.takeIf { !it.isRecycled }
+                ?: Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            // Copy the source pixels into the reused buffer (handles the in-place loop
+            // bitmap correctly: we snapshot now). If the source size differs (shouldn't
+            // for a fixed framebuffer), fall back to a fresh copy so output isn't wrong.
+            if (src.width == width && src.height == height) {
+                src.getPixels(scratch, 0, width, 0, 0, width, height)
+                dest.setPixels(scratch, 0, width, 0, 0, width, height)
+                frames.addLast(dest)
+            } else {
+                // Size mismatch: don't reuse the pooled buffer; recycle it back and take
+                // a true copy so the recorded frame stays correct.
+                if (dest.width == width && dest.height == height) pool.addLast(dest)
+                val copy = src.copy(Bitmap.Config.ARGB_8888, false) ?: return
+                frames.addLast(copy)
+            }
         }
 
         /** Snapshot + clear the retained frames (caller owns + recycles them). */
@@ -120,6 +149,9 @@ object Capture {
         fun drain(): List<Bitmap> {
             val out = frames.toList()
             frames.clear()
+            // The pooled spares aren't handed out; recycle them here.
+            pool.forEach { it.recycle() }
+            pool.clear()
             return out
         }
 
@@ -127,6 +159,8 @@ object Capture {
         fun clear() {
             frames.forEach { it.recycle() }
             frames.clear()
+            pool.forEach { it.recycle() }
+            pool.clear()
         }
     }
 

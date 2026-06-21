@@ -120,7 +120,11 @@ object BoxArt {
                 }
             }
             if (tmp.length() == 0L) { tmp.delete(); return false }
-            tmp.renameTo(out)
+            // Replace any existing file, then move the temp into place. renameTo fails
+            // (returns false) if the destination exists on some filesystems, so delete
+            // first and clean up the temp if the move still fails — no .tmp leak.
+            if (out.exists()) out.delete()
+            if (!tmp.renameTo(out)) { tmp.delete(); return false }
             return out.exists() && out.length() > 0
         } finally {
             conn.disconnect()

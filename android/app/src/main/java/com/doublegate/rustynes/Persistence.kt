@@ -122,11 +122,20 @@ object SaveStateStore {
     fun saveThumb(ctx: Context, sha: String, slot: String, pixels: IntArray, w: Int, h: Int) {
         runCatching {
             val bmp = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
-            bmp.setPixels(pixels, 0, w, 0, 0, w, h)
-            thumbFile(ctx, sha, slot).outputStream().use {
-                bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, it)
+            try {
+                bmp.setPixels(pixels, 0, w, 0, 0, w, h)
+                val out = thumbFile(ctx, sha, slot)
+                // The `states/<rom-sha256>` parent may not exist yet (e.g. thumbnail
+                // saved before any `.rns`) -> ensure it before opening the stream.
+                out.parentFile?.mkdirs()
+                out.outputStream().use {
+                    bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, it)
+                }
+            } finally {
+                // Recycle on every path so an exception in setPixels/compress/IO can't
+                // leak the bitmap.
+                bmp.recycle()
             }
-            bmp.recycle()
         }
     }
 }

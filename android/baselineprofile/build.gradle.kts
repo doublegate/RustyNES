@@ -9,13 +9,16 @@
 //   2. StartupBenchmark — measures cold-start (TimeToInitialDisplay) and scroll jank
 //      (FrameTimingMetric) so a regression is catchable (the release vitals gate).
 //
-// Both REQUIRE a connected device or a booted AVD — they cannot run on the headless
-// host CI. The maintainer generates the profile with, from android/:
+// Both REQUIRE a connected device or a booted AVD to RUN. The Gradle-Managed Virtual
+// Device below CAN spin one up headlessly in CI when the runner has nested
+// virtualization / KVM (a managed AOSP AVD + KVM is the supported headless path) — but
+// this repo's host CI does NOT run generation by default; it is a maintainer / device
+// step. The maintainer generates the profile with, from android/:
 //   ./gradlew :app:generateReleaseBaselineProfile
 // (uses the managed `pixel6Api34` AVD below; -Pandroid.testInstrumentationRunnerArguments
 //  or `useConnectedDevices` can switch to a plugged-in phone). This module is built
 // (compiled) on every Gradle run so it stays one command away; only the *run* needs a
-// device. The generated baseline-prof.txt is committed under :app so a normal release
+// device/AVD. The generated baseline-prof.txt is committed under :app so a normal release
 // build ships the profile without a device in the loop.
 
 plugins {
@@ -43,10 +46,12 @@ android {
     targetProjectPath = ":app"
 
     // A Gradle-Managed Virtual Device so `generateBaselineProfile` can spin up an
-    // emulator headlessly in CI (an AOSP image — no Play Services, fastest to boot,
-    // and exactly what the profile generation needs). `useConnectedDevices = false`
-    // (in the baselineProfile block) routes generation through this AVD; flip it true
-    // to use a plugged-in device instead.
+    // emulator headlessly on a runner with KVM (an AOSP image — no Play Services,
+    // fastest to boot, and exactly what the profile generation needs). This repo's host
+    // CI doesn't invoke generation by default (it's a maintainer/device step), but this
+    // managed device is the path that WOULD run it headlessly in a KVM-capable CI.
+    // `useConnectedDevices = false` (in the baselineProfile block) routes generation
+    // through this AVD; flip it true to use a plugged-in device instead.
     @Suppress("UnstableApiUsage")
     testOptions {
         managedDevices {

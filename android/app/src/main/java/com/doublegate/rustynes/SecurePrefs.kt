@@ -69,7 +69,13 @@ object SecurePrefs {
             val iv = cipher.iv
             val ct = cipher.doFinal(plain.toByteArray(Charsets.UTF_8))
             ENC_PREFIX + Base64.encodeToString(iv + ct, Base64.NO_WRAP)
-        }.getOrDefault(plain)
+        }.getOrElse {
+            // Fail CLOSED: if Keystore init / encryption fails we must NEVER persist the
+            // plaintext secret in the clear. Return "" so the caller stores nothing (the
+            // secret is simply not saved) rather than leaking a token to disk.
+            android.util.Log.w("RustyNES", "SecurePrefs.encrypt failed; not persisting plaintext", it)
+            ""
+        }
     }
 
     /** Decrypt a value written by [encrypt]; pass through legacy plaintext unchanged. */
