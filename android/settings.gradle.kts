@@ -30,3 +30,8 @@ dependencyResolutionManagement {
 
 rootProject.name = "RustyNES"
 include(":app")
+// v1.8.8 "Atlas" (Workstream J): the Macrobenchmark module that generates the
+// Baseline + Startup Profiles (and the startup/jank benchmarks). A
+// `com.android.test` module targeting :app; it is built/run on a device or AVD
+// (`./gradlew :app:generateReleaseBaselineProfile`), never on the host CI path.
+include(":baselineprofile")

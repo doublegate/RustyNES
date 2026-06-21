@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -34,6 +35,10 @@ fun StatesSheet(
     sha: String?,
     emulator: EmulatorHandle,
     onStatus: (String) -> Unit,
+    // v1.8.8 "Atlas" (Workstreams D+E): notified with the slot id after a successful
+    // user save, so the host can fire the "first save-state" PGS achievement and push
+    // the slot to the cloud (both no-ops behind their default-off gates).
+    onSlotSaved: (String) -> Unit = {},
     onDismiss: () -> Unit,
 ) {
     // Bump to recompute slot timestamps after a save/delete.
@@ -56,6 +61,20 @@ fun StatesSheet(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
+                        // THM thumbnail beside the slot (v1.8.8 WS C), if one was
+                        // captured. TODO(WS C): wire live-framebuffer capture at Save
+                        // time (the emulation loop owns the pixel buffer) via
+                        // SaveStateStore.saveThumb so this populates for new saves.
+                        val thumb = remember(refresh, slot, sha) {
+                            SaveStateStore.thumbFile(context, sha, slot).takeIf { it.exists() }
+                        }
+                        if (thumb != null) {
+                            coil3.compose.AsyncImage(
+                                model = thumb,
+                                contentDescription = "Slot $slot thumbnail",
+                                modifier = Modifier.size(48.dp, 45.dp),
+                            )
+                        }
                         Column(modifier = Modifier.weight(1f)) {
                             Text("Slot $slot")
                             Text(
@@ -74,7 +93,7 @@ fun StatesSheet(
                             val ctrl = emulator.controller
                             if (ctrl != null) {
                                 runCatching { SaveStateStore.save(context, sha, slot, ctrl.saveState()) }
-                                    .onSuccess { onStatus("Saved slot $slot"); refresh++ }
+                                    .onSuccess { onStatus("Saved slot $slot"); refresh++; onSlotSaved(slot) }
                                     .onFailure { onStatus("Save failed: ${it.message}") }
                             }
                         }) { Text("Save") }

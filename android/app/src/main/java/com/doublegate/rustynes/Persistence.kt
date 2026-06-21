@@ -111,4 +111,31 @@ object SaveStateStore {
 
     fun delete(ctx: Context, sha: String, slot: String): Boolean =
         slotFile(ctx, sha, slot).delete()
+
+    /** The `THM`-style PNG thumbnail beside a save slot (v1.8.8, Workstream C). */
+    fun thumbFile(ctx: Context, sha: String, slot: String): File =
+        File(dir(ctx, sha), "$slot.thm.png")
+
+    /** Save a small PNG thumbnail for a slot from raw ARGB pixels (the framebuffer
+     *  packed by the emulation loop). Best-effort: a failure to encode is swallowed
+     *  (the thumbnail is purely cosmetic; the `.rns` is the real save). */
+    fun saveThumb(ctx: Context, sha: String, slot: String, pixels: IntArray, w: Int, h: Int) {
+        runCatching {
+            val bmp = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
+            try {
+                bmp.setPixels(pixels, 0, w, 0, 0, w, h)
+                val out = thumbFile(ctx, sha, slot)
+                // The `states/<rom-sha256>` parent may not exist yet (e.g. thumbnail
+                // saved before any `.rns`) -> ensure it before opening the stream.
+                out.parentFile?.mkdirs()
+                out.outputStream().use {
+                    bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, it)
+                }
+            } finally {
+                // Recycle on every path so an exception in setPixels/compress/IO can't
+                // leak the bitmap.
+                bmp.recycle()
+            }
+        }
+    }
 }

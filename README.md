@@ -10,7 +10,7 @@
 
 [![Build Status](https://github.com/doublegate/RustyNES/workflows/CI/badge.svg)](https://github.com/doublegate/RustyNES/actions)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
-[![Version](https://img.shields.io/badge/version-v1.8.7-blue.svg)](https://github.com/doublegate/RustyNES/releases)
+[![Version](https://img.shields.io/badge/version-v1.8.8-blue.svg)](https://github.com/doublegate/RustyNES/releases)
 [![Rust: 1.96](https://img.shields.io/badge/rust-1.96-orange.svg)](rust-toolchain.toml)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web-lightgrey.svg)](#platform-support)
 [![AccuracyCoin](<https://img.shields.io/badge/AccuracyCoin-100%25%20(139%2F139)-brightgreen.svg>)](#compatibility-and-accuracy)
@@ -645,17 +645,22 @@ workspace API docs (rustdoc) at
 
 ## Version History
 
-The current release is **v1.8.7 "Android"**, continuing the first **platform** (not
-accuracy) release line **v1.8.0 "Android"** — a complete Android app, verified
-end-to-end on a Samsung Galaxy Z Fold 7. It builds on the bugfix patch **v1.7.1** and
-the writable + programmable **v1.7.0 "Forge"** line, on the cycle-accurate v1.0.0
-production core. (v1.8.7 completes the connectivity work — **CGNAT / TURN room-code
-netplay**, robust **hardware controllers**, and a controller-aware UI — atop the
-feature-complete v1.8.6; v1.8.0–v1.8.7 are GitHub-Releases / sideload, full-featured.
-The **Google Play launch** moves to **v1.8.8 "Atlas"**.) The road so far:
+The current release is **v1.8.8 "Atlas"**, the Google-Play-launch + Android-native-
+excellence increment on the first **platform** (not accuracy) release line **v1.8.0
+"Android"** — a complete Android app, verified end-to-end on a Samsung Galaxy Z Fold 7.
+It builds on the bugfix patch **v1.7.1** and the writable + programmable **v1.7.0
+"Forge"** line, on the cycle-accurate v1.0.0 production core. (v1.8.8 modernizes the
+toolchain to the **Android 16 / API 36 target mandate** and lands **adaptive / foldable
+/ TV** layouts, **Material You + EN/ES i18n**, a **box-art ROM library**, **capture /
+PiP / widgets**, **accessibility**, and the **Google-Play-integration readiness** —
+Play Games cloud saves, achievements, Play Integrity, in-app update / review — all
+default-off until the maintainer wires the Play projects. v1.8.0–v1.8.8 ship as
+GitHub-Releases / sideload, full-featured; the **Google Play production** promotion is a
+maintainer step gated on a batched on-device pass.) The road so far:
 
 | Version    | Highlights                                                                                  |
 | ---------- | ------------------------------------------------------------------------------------------- |
+| **v1.8.8** | "Atlas" — Google Play launch readiness. The Android toolchain moves to the **Android 16 / API 36 target mandate** (AGP 9.2.1 / Gradle 9.4.1 / compileSdk 37 / targetSdk 36, Compose BOM 2026.06). **(A+K)** adaptive **Window Size Classes** + a two-pane ≥ 840dp layout, edge-to-edge, predictive back, splash, a Material 3 brand theme + monochrome icon. **(B)** **Material You** dynamic color (chrome only; gameplay stays black) + **EN / ES** i18n with a per-app Language picker. **(C)** a **box-art ROM library** (SHA-256-keyed grid, favorites, search, folders, batch SAF import) with **libretro / TheGamesDB** scrapers (user-supplied only) and **Keystore AES-256-GCM** secret encryption. **(J)** a `:baselineprofile` module, **R8 full-mode** keeps, and Compose stability. **(F+H)** **screenshot / MP4 capture**, **Picture-in-Picture**, a Quick-Settings tile, app shortcuts, and a **Glance "Resume" widget**. **(G+I)** **Android TV / Leanback** d-pad nav + a high-contrast theme and three **Okabe-Ito** colorblind palettes (over dynamic color). **(D+E+L, default-off)** **Play Games** cloud-save Snapshots + placeholder achievements / leaderboards (distinct from RetroAchievements), **Play Integrity** (defense-in-depth over Billing), and in-app update / review. All presentation / Gradle-side; AccuracyCoin holds 100% (139/139) on host CI. **Sideload** ships now; the **Google Play production** promotion + the Play / Integrity / Chromecast projects are maintainer post-verify steps. |
 | **v1.8.7** | "Android" — connectivity completion. **CGNAT / TURN room-code netplay** completes v1.8.6's direct-IP / LAN netplay: a **`NatConnect`** orchestrator (STUN discovery → UDP hole-punch → a `SignalMessage::PublicAddr` exchange over the same `signaling::Relay` → a **TURN relay fallback** for symmetric NAT, `is_relayed`) with `np_host_room` / `np_join_room` bridge methods and an **"Online (room code)"** Android UI (share a 6-char code, join by code, Registering / Punching / Relaying progress + a "via relay" badge). Plus **robust hardware controllers** (the input pipeline gains `onGenericMotionEvent` — analog sticks + the d-pad-as-HAT axis silently failed on 8BitDo / DualSense / OTG pads before — with per-port P1–P4 masks, `InputManager` hot-plug, per-descriptor remapping, and turbo / autofire; no Rust change), a **controller-aware UI** (connect a pad → the on-screen controller hides + the ROM display maximizes; Guide or Start + Select opens a d-pad-navigable menu), and **Chromecast prep** behind a default-off `CHROMECAST_ENABLED` flag (a CAF sender + a static Web Receiver spectator mirror; the Presentation API stays primary). Loopback / mock-verified; live cross-NAT + the hosted relay are maintainer carryovers. All host-side; AccuracyCoin holds 100% (139/139). Sideload-only — the **Google Play launch** is **v1.8.8 "Atlas"**. |
 | **v1.8.6** | "Android" — connectivity & scripting. **Lua** (the sandboxed desktop engine over the bridge — made `Send`; SAF `.lua` load + an on-screen log overlay), **RetroAchievements** (login + hardcore + unlock toasts + a `.rap` progress sidecar; the session extracted into a new shared **`rustynes-ra`** crate, `ureq` + `rustls` + `ring` TLS — no OpenSSL), and **direct-IP / LAN netplay** (GGPO rollback over `rustynes-netplay`; the loop calls `np_advance_frame` instead of `run_frame` while connected), plus an **Open / Close ROM** toggle. The shared `rustynes-mobile` bridge is now connectivity-complete, so **v1.9.0 iOS inherits all three**. All host-side; AccuracyCoin holds 100% (139/139). The **Google Play launch** (`$2.99` Full Unlock) is the decoupled capstone; CGNAT/TURN netplay is deferred to v1.8.7. |
 | **v1.8.5** | "Android" — power-user features. **Custom `.pal` palettes** + **compressed `.zip` ROM loading** (extract the first NES entry, like desktop); **Bisqwit composite NTSC on the GPU** (the desktop WGSL shared via `rustynes-gfx-shaders`, an `R16Uint` palette-index pipeline fed by the bridge); **TAS `.rnm` movies** (record / play / save via SAF, determinism-exact); a **per-game settings DB** (each game reopens with its last video filter, keyed by ROM SHA); and **HD-packs on Android** — the HD-pack loader + compositor + HD audio were **extracted into a new shared `rustynes-hdpack` crate** (the core is `#![no_std]`) so the bridge can composite the upscaled picture (Bitmap path). All presentation / host-side; AccuracyCoin holds 100% (139/139). |
@@ -799,7 +804,7 @@ If you use RustyNES in academic research, please cite:
   author  = {RustyNES Contributors},
   title   = {RustyNES: A Cycle-Accurate NES Emulator in Rust},
   year    = {2026},
-  version = {1.8.7},
+  version = {1.8.8},
   url     = {https://github.com/doublegate/RustyNES},
   note    = {Cycle-accurate NES emulator on a master-clock-precise scheduler;
              AccuracyCoin 100\% (139/139), nestest 0-diff; 168 mapper families,

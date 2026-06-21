@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    v1.8.8 "Atlas" (Workstream H): the AppWidgetProviderInfo for the Glance
+    "Resume <last game>" widget. `initialLayout` is the placeholder shown until
+    Glance composes; the real UI comes from ResumeWidget (provideGlance). Sized for
+    a small 2x1 tile, resizable.
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="180dp"
+    android:minHeight="58dp"
+    android:targetCellWidth="2"
+    android:targetCellHeight="1"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen"
+    android:description="@string/widget_resume_description"
+    android:initialLayout="@layout/widget_resume_loading" />

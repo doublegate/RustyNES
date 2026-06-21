@@ -7,7 +7,18 @@
          picker (no broad storage permission needed), and the app collects nothing. -->
     <uses-feature android:name="android.hardware.gamepad" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <!-- v1.8.8 "Atlas" (Workstream G): Android TV / Leanback. `leanback` not-required
+         keeps the app installable on phones/tablets while letting it surface on the TV
+         home (paired with the LEANBACK_LAUNCHER intent-filter + the TV banner below).
+         touchscreen not-required (above) is the hard gate that lets the Play Store list
+         it on a d-pad-only TV — a TV box has no touchscreen, so requiring one would
+         exclude every TV. The adaptive Compose UI (expanded width) IS the TV UI; there
+         is no separate androidx.leanback fragment surface. -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
+    <!-- This is NOT a VR / AR app — declare it so the TV / headset stores classify it
+         as a standard d-pad app, not an immersive XR experience. -->
+    <uses-feature android:name="android.software.vr.mode" android:required="false" />
+    <uses-feature android:name="android.hardware.vr.high_performance" android:required="false" />
 
     <!-- Light haptic tick on on-screen button presses (the virtual controller). -->
     <uses-permission android:name="android.permission.VIBRATE" />
@@ -18,11 +29,26 @@
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
+        android:banner="@drawable/tv_banner"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:hardwareAccelerated="true"
         android:resizeableActivity="true"
-        android:theme="@style/Theme.RustyNES">
+        android:appCategory="game"
+        android:enableOnBackInvokedCallback="true"
+        android:theme="@style/Theme.RustyNES.Splash">
+
+        <!-- v1.8.8 "Atlas" (Workstream A): appCategory="game" opts RustyNES into the
+             Android 16 large-screen "games" exception (API 36 otherwise ignores
+             screenOrientation/aspect/resizability on screens >= 600 dp). It is a
+             safety net only — the app ships real adaptive layouts (Window Size
+             Classes) and the wgpu renderer pillarboxes the NES image at any aspect,
+             so it lays out correctly with or without the exemption.
+             (Workstream K): enableOnBackInvokedCallback="true" turns on the
+             predictive-back system animation. Back is dispatched via
+             OnBackPressedDispatcher / Compose BackHandler (Activity.onBackPressed is
+             no longer called under targetSdk 36 on Android 16). -->
+
 
         <!-- Cast Application Framework OptionsProvider (v1.8.7, #38). REQUIRED by
              the SDK to be declared, but only instantiated when CastContext is
@@ -34,6 +60,16 @@
         <meta-data
             android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
             android:value="com.doublegate.rustynes.RustyNesCastOptionsProvider" />
+
+        <!-- v1.8.8 "Atlas" (Workstreams D+E): Play Games Services v2 app id. REQUIRED
+             by the PGS SDK to be declared, but only read when PlayGames is initialized,
+             which happens exclusively behind the default-off BuildConfig.PGS_ENABLED
+             flag (see PlayGames.kt + CloudSave.kt). The value is a maintainer-supplied
+             placeholder (@string/game_services_project_id = "0") until the Play Games
+             project lands, so PGS sign-in fails closed and the app launches unchanged. -->
+        <meta-data
+            android:name="com.google.android.gms.games.APP_ID"
+            android:value="@string/game_services_project_id" />
 
         <!-- Foldable / large-screen support: the activity is resizeable and
              absorbs the fold/unfold + posture config changes itself (so the
@@ -48,7 +84,16 @@
             android:exported="true"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode|density|navigation|keyboard"
             android:launchMode="singleTop"
-            android:resizeableActivity="true">
+            android:resizeableActivity="true"
+            android:supportsPictureInPicture="true">
+            <!-- v1.8.8 "Atlas" (Workstream H): Picture-in-Picture. The activity
+                 absorbs the PiP enter/exit + resize config changes itself (the
+                 emulation thread + GL/Compose surface survive with no restart), so
+                 `screenSize|smallestScreenSize|screenLayout|orientation` above
+                 already cover the transition. Gameplay keeps running in the PiP
+                 window when the user leaves the app (or via the "PiP" control);
+                 onPictureInPictureModeChanged hides the HUD/controls in PiP. PiP is
+                 API 26+ (== minSdk), so no extra guard is needed at the manifest. -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -58,6 +103,41 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
+            <!-- v1.8.8 "Atlas" (Workstream H): static app shortcuts (long-press the
+                 launcher icon) — Resume last game / Open ROM / Library. Each deep-
+                 links via the DeepLink.EXTRA_ACTION extra. -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
         </activity>
+
+        <!-- v1.8.8 "Atlas" (Workstream H): "Resume RustyNES" Quick Settings tile.
+             Launches the app to the last-played ROM. Requires the
+             BIND_QUICK_SETTINGS_TILE permission + the QS_TILE intent-filter. The
+             user adds it from the Quick Settings edit tray. -->
+        <service
+            android:name=".ResumeTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_tile_resume"
+            android:label="@string/tile_resume_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <!-- v1.8.8 "Atlas" (Workstream H): "Resume <last game>" home-screen widget
+             (Glance). Shows the last-played game's name and launches into it on tap. -->
+        <receiver
+            android:name=".ResumeWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_resume_title">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/resume_widget_info" />
+        </receiver>
     </application>
 </manifest>

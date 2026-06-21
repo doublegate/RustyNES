@@ -2,4 +2,8 @@
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@color/ic_launcher_background" />
     <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+    <!-- v1.8.8 "Atlas" (Workstream K): Material You themed icon. The system tints
+         this layer to the wallpaper palette on API 33+ when the user enables themed
+         icons; the foreground silhouette's alpha drives the shape. -->
+    <monochrome android:drawable="@mipmap/ic_launcher_foreground" />
 </adaptive-icon>

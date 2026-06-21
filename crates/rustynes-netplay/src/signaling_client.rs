@@ -133,7 +133,7 @@ fn worker_loop(url: &str, out_rx: &Receiver<SignalMessage>, event_tx: &Sender<Si
     // to `client_tls` (which upgrades to TLS for `wss://` and stays plain for
     // `ws://`, per the URI scheme). The read timeout is set on the underlying
     // `TcpStream` BEFORE the TLS wrap, so it survives into the `wss://` path too.
-    let mut socket = match connect_bounded(url, CONNECT_TIMEOUT, READ_TIMEOUT) {
+    let mut socket = match connect_bounded(url, CONNECT_TIMEOUT) {
         Ok(socket) => socket,
         Err(e) => {
             let _ = event_tx.send(SignalEvent::Closed(format!("connect failed: {e}")));
@@ -144,8 +144,12 @@ fn worker_loop(url: &str, out_rx: &Receiver<SignalMessage>, event_tx: &Sender<Si
         return; // caller dropped already.
     }
 
-    // Re-assert the short read timeout on the (now-handshaken) stream so the loop
-    // can also drain the outbound queue. Reaches through the TLS stream for wss.
+    // Now the (blocking) handshake is done, set the short read timeout on the
+    // stream so the loop can interleave the outbound drain. The handshake itself
+    // ran with the generous connect timeout (set in connect_bounded) — a slow
+    // loopback handshake (observed on macOS CI) otherwise hits the 20 ms loop
+    // timeout and tungstenite aborts with `Interrupted handshake (WouldBlock)`.
+    // Reaches through the TLS stream for wss.
     if let Some(stream) = stream_of(&socket) {
         let _ = stream.set_read_timeout(Some(READ_TIMEOUT));
     }
@@ -212,13 +216,17 @@ const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const READ_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(20);
 
 /// A bounded WebSocket connect: resolve the host, dial with `connect_timeout`,
-/// set read/write timeouts on the raw `TcpStream`, then run the WS (and, for
-/// `wss://`, TLS) handshake via `client_tls`. Mirrors what `tungstenite::connect`
-/// does internally, minus the unbounded TCP connect.
+/// set a *generous* (`connect_timeout`) read/write timeout on the raw `TcpStream`
+/// for the WS (and, for `wss://`, TLS) handshake via `client_tls`, then let the
+/// caller re-assert the short per-loop read timeout. Mirrors what
+/// `tungstenite::connect` does internally, minus the unbounded TCP connect.
+///
+/// The handshake MUST run with the generous timeout, not the 20 ms loop timeout:
+/// a slow loopback handshake (observed on macOS CI) otherwise hits the short read
+/// timeout and tungstenite aborts with `Interrupted handshake (WouldBlock)`.
 fn connect_bounded(
     url: &str,
     connect_timeout: std::time::Duration,
-    read_timeout: std::time::Duration,
 ) -> Result<tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>, String>
 {
     use tungstenite::client::{IntoClientRequest, uri_mode};
@@ -257,8 +265,10 @@ fn connect_bounded(
     }
     let stream = stream.ok_or(last_err)?;
     stream.set_nodelay(true).ok();
+    // Generous read/write timeout for the handshake; the worker loop re-asserts
+    // the short READ_TIMEOUT once the handshake completes.
     stream
-        .set_read_timeout(Some(read_timeout))
+        .set_read_timeout(Some(connect_timeout))
         .map_err(|e| e.to_string())?;
     stream
         .set_write_timeout(Some(connect_timeout))

@@ -23,9 +23,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.OutlinedButton
-import androidx.activity.ComponentActivity
+import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.os.LocaleListCompat
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.aspectRatio
@@ -34,12 +38,22 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
+import androidx.window.core.layout.WindowSizeClass
 import androidx.compose.material3.Button
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -48,6 +62,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -64,15 +79,20 @@ import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -94,7 +114,7 @@ import uniffi.rustynes_mobile.RaToast
  * touches the determinism contract — input converges on one mask per port,
  * exactly as the desktop and wasm hosts do.
  */
-class MainActivity : ComponentActivity() {
+class MainActivity : AppCompatActivity() {
 
     /** Holds the live controller so hardware key events (dispatched to the
      *  Activity, not Compose) can reach the same instance the UI drives. */
@@ -108,16 +128,101 @@ class MainActivity : ComponentActivity() {
     /** Freemium entitlement (Workstream M); created in onCreate. */
     private lateinit var license: LicenseManager
 
+    /** Play Games Services v2 (Workstreams D+E): sign-in + achievements + leaderboards.
+     *  Created in onCreate; all calls no-op behind the default-off PGS_ENABLED flag.
+     *  DISTINCT from RetroAchievements (rustynes-ra, v1.8.6). */
+    lateinit var playGames: PlayGamesManager
+        private set
+
+    /** Play Games cloud-save Snapshots (Workstream D); rides on [playGames] sign-in. */
+    lateinit var cloudSave: CloudSaveManager
+        private set
+
+    /** Play Integrity anti-tamper client over Billing (Workstream L); no-op behind the
+     *  default-off PLAY_INTEGRITY_ENABLED flag + a real cloud project number. */
+    private lateinit var integrity: IntegrityManager
+
+    /** In-app update (flexible) + in-app review (Workstream L); no-op on sideload. */
+    private lateinit var playUpdates: PlayUpdatesManager
+
+    /** v1.8.8 "Atlas" (Workstream L): the in-app FLEXIBLE-update result launcher,
+     *  registered in onCreate (must happen before the Activity is STARTED). */
+    private lateinit var updateLauncher: androidx.activity.result.ActivityResultLauncher<androidx.activity.result.IntentSenderRequest>
+
+    /** Set true once a flexible update finished downloading — the shell shows a
+     *  "Restart to install" prompt (Compose state so it recomposes). */
+    val updateReadyState = androidx.compose.runtime.mutableStateOf(false)
+
     /** Thermal-throttle listener (perf/battery); cancels fast-forward when hot. */
     private var thermalListener: android.os.PowerManager.OnThermalStatusChangedListener? = null
 
+    /** v1.8.8 "Atlas" (Workstream K): held true to keep the system splash on screen
+     *  until the Compose shell has produced its first frame (set from the shell). */
+    @Volatile
+    private var contentReady: Boolean = false
+
+    /** v1.8.8 "Atlas" (Workstream H): whether we are currently in Picture-in-Picture.
+     *  Compose reads it to hide the controls/HUD in the small PiP window; the loop
+     *  keeps running so gameplay continues. A Compose [mutableStateOf] so a change
+     *  recomposes the shell. */
+    val inPipState = androidx.compose.runtime.mutableStateOf(false)
+
+    /** v1.8.8 "Atlas" (Workstream H): the pending deep-link action from a Quick
+     *  Settings tile / app shortcut / widget launch (resume / open / library), read
+     *  by the Compose shell which then clears it. Seeded from the launch intent and
+     *  refreshed on each onNewIntent (singleTop re-launch). */
+    val deepLinkState = androidx.compose.runtime.mutableStateOf<String?>(null)
+
+    /** v1.8.8 "Atlas" (Workstream H): the on-screen bounds of the gameplay image, set
+     *  by the shell via [setGameplayBounds], used as the PiP `sourceRectHint` so the
+     *  enter-PiP animation crops from the picture (not the whole window). */
+    private var gameplayBounds: android.graphics.Rect? = null
+
+    /** True while a ROM is loaded + running — gates auto-enter-PiP on leave-hint. */
+    @Volatile
+    var romRunningForPip: Boolean = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Install the Android-12+ system splash BEFORE super.onCreate(); keep it up
+        // until the first Compose frame is ready (the bridge/ROM-DB load is brief).
+        val splash = installSplashScreen()
+        splash.setKeepOnScreenCondition { !contentReady }
         super.onCreate(savedInstanceState)
+        // v1.8.8 "Atlas" (Workstream B): apply the persisted in-app UI language before
+        // the first composition. AppCompat itself persists the last
+        // setApplicationLocales() choice and restores it on relaunch, but we keep our
+        // SharedPreferences as the single source of truth and re-assert it here so a
+        // backup/restore or a prefs edit stays authoritative. System (empty tag) clears
+        // any override and follows the device / per-app system language.
+        applyPersistedLocale()
         license = LicenseManager(applicationContext)
-        // Only connect to Play Billing in the Play build; off-Play it can't transact.
-        if (BuildConfig.PLAY_BUILD) license.connect()
+        // v1.8.8 "Atlas" (Workstream J): the Play Billing `startConnection()` is
+        // DEFERRED off the cold-start path to the first foreground (onResume) — it
+        // does network/IPC and is not needed to draw the first frame (BillingClient is
+        // designed to init lazily). The local entitlement cache is read synchronously
+        // in the LicenseManager ctor, so the demo gate is already correct before connect.
         gamepad = GamepadManager(applicationContext, emulator)
         registerThermalBackoff()
+        // v1.8.8 "Atlas" (Workstreams D+E+L): Play services managers. All are cheap
+        // no-op shells when their gates (PGS_ENABLED / PLAY_INTEGRITY_ENABLED /
+        // PLAY_BUILD) are off — the default build constructs them but they do nothing.
+        playGames = PlayGamesManager(applicationContext)
+        cloudSave = CloudSaveManager(applicationContext, playGames)
+        integrity = IntegrityManager(applicationContext)
+        playUpdates = PlayUpdatesManager(applicationContext)
+        // PGS v2 auto-sign-in (no-op when off). Initialize early; sign-in is silent.
+        playGames.initialize()
+        // The in-app FLEXIBLE-update launcher must be registered before STARTED.
+        updateLauncher = registerForActivityResult(
+            androidx.activity.result.contract.ActivityResultContracts.StartIntentSenderForResult(),
+        ) { /* a cancelled/failed flexible update is non-fatal; the user can retry */ }
+        playUpdates.onUpdateDownloaded = { updateReadyState.value = true }
+        // Opt-in crash reporter (Workstream L): off by default; installs the handler
+        // only when the user has opted in (read synchronously from prefs).
+        CrashReporter.install(applicationContext, AppSettings(this).crashReportsEnabled)
+        // v1.8.8 "Atlas" (Workstream H): a launch from a tile / shortcut / widget
+        // carries the deep-link action; seed it for the shell to consume.
+        deepLinkState.value = intent?.getStringExtra(DeepLink.EXTRA_ACTION)
         enableEdgeToEdge()
         hideSystemBars()
         setContent {
@@ -129,7 +234,16 @@ class MainActivity : ComponentActivity() {
                 ThemeMode.Light -> false
                 ThemeMode.Dark -> true
             }
-            MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme()) {
+            // v1.8.8 "Atlas" (Workstream B): a real Material 3 theme with Material You
+            // dynamic color. On Android 12+ (API 31), when the user leaves "Material You"
+            // on (default), the chrome is themed from the wallpaper-derived palette
+            // (dynamicLight/DarkColorScheme); otherwise — older device, or toggled off —
+            // the RustyNES brand scheme is used. Either way the background is forced
+            // black so the letterboxed NES picture sits on black (the gameplay area is
+            // NEVER tinted), and only the chrome (bars, menus, controls, Settings) picks
+            // up the dynamic/brand color.
+            val colorScheme = rememberColorScheme(dark, settings.dynamicColor, settings.accessibilityTheme)
+            MaterialTheme(colorScheme = colorScheme.copy(background = Color.Black)) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background,
@@ -137,17 +251,50 @@ class MainActivity : ComponentActivity() {
                     EmulatorScreen(emulator, gamepad, license, settings)
                 }
             }
+            // The first composition has been laid out — let the splash dismiss.
+            LaunchedEffect(Unit) { contentReady = true }
         }
     }
 
+    /** Guards the one-time deferred Billing connect (v1.8.8 WS J cold-start deferral). */
+    private var billingConnected = false
+
     override fun onResume() {
         super.onResume()
-        // Re-verify entitlement against Play on each foreground (a purchase made
-        // elsewhere, a refund, or a restore reflects here).
-        if (BuildConfig.PLAY_BUILD && ::license.isInitialized) license.refreshEntitlement()
+        // v1.8.8 "Atlas" (Workstream J): connect to Play Billing on the FIRST foreground
+        // (kept off onCreate / the cold-start path). Subsequent resumes just re-verify.
+        if (BuildConfig.PLAY_BUILD && ::license.isInitialized) {
+            if (!billingConnected) {
+                license.connect()
+                billingConnected = true
+            }
+            // Re-verify entitlement against Play on each foreground (a purchase made
+            // elsewhere, a refund, or a restore reflects here).
+            license.refreshEntitlement()
+        }
         // Start listening for controller hot-plug + enumerate connected pads.
         if (::gamepad.isInitialized) gamepad.register()
+        // v1.8.8 "Atlas" (Workstream L): Play-services foreground work, all off the
+        // cold-start path (first/each resume). Each no-ops on sideload / behind its flag.
+        if (::playUpdates.isInitialized && !updateChecked) {
+            // Flexible in-app update check (no-op on a non-Play install).
+            playUpdates.checkForFlexibleUpdate(updateLauncher)
+            updateChecked = true
+        }
+        if (::playUpdates.isInitialized) playUpdates.resumeStalledUpdate()
+        // Warm the Play Integrity Standard token provider (no-op without the flag + a
+        // real cloud project number). Defense-in-depth over Billing; never blocks.
+        if (::integrity.isInitialized) integrity.prepareToken()
+        // Confirm PGS sign-in state (PGS v2 auto-signs-in; refresh the flag silently).
+        // The PGS v2 client factories need an Activity — bind this one (held weakly).
+        if (::playGames.isInitialized) {
+            playGames.attachActivity(this)
+            playGames.ensureSignedIn()
+        }
     }
+
+    /** Guards the one-time in-app update check (Workstream L). */
+    private var updateChecked = false
 
     override fun onPause() {
         super.onPause()
@@ -174,6 +321,94 @@ class MainActivity : ComponentActivity() {
         thermalListener?.let {
             (getSystemService(POWER_SERVICE) as android.os.PowerManager).removeThermalStatusListener(it)
         }
+        // v1.8.8 "Atlas" (Workstream L): detach the in-app-update install listener.
+        if (::playUpdates.isInitialized) playUpdates.release()
+        // v1.8.8 "Atlas" (Workstreams D+E): clear the weakly-held Activity so PGS can't
+        // touch a destroyed Activity.
+        if (::playGames.isInitialized) playGames.attachActivity(null)
+    }
+
+    /** v1.8.8 "Atlas" (Workstream L): finish a downloaded flexible update (restarts the
+     *  app). Called from the shell's "Restart to install" prompt. */
+    fun completeFlexibleUpdate() {
+        if (::playUpdates.isInitialized) playUpdates.completeFlexibleUpdate()
+    }
+
+    /** v1.8.8 "Atlas" (Workstream L): request the in-app review flow after a satisfying
+     *  session (the API enforces its own quota; no CTA). No-op on sideload. */
+    fun requestInAppReview() {
+        if (::playUpdates.isInitialized) playUpdates.maybeRequestReview(this)
+    }
+
+    // v1.8.8 "Atlas" (Workstream H): a singleTop re-launch from a tile / shortcut /
+    // widget delivers its deep-link here (the existing Activity instance is reused).
+    // Update the backing intent + publish the action for the shell to consume.
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        intent.getStringExtra(DeepLink.EXTRA_ACTION)?.let { deepLinkState.value = it }
+    }
+
+    // v1.8.8 "Atlas" (Workstream H): record the on-screen gameplay-image bounds so
+    // enter-PiP can use them as the sourceRectHint (the PiP shrink animates from the
+    // picture, not the whole window). Called by the shell on layout.
+    fun setGameplayBounds(rect: android.graphics.Rect) {
+        gameplayBounds = rect
+    }
+
+    /**
+     * v1.8.8 "Atlas" (Workstream H): enter Picture-in-Picture with the NES 8:7
+     * display aspect + the gameplay sourceRectHint, so the emulator keeps running in
+     * a floating window when the user leaves the app. PiP is API 26+ (== minSdk).
+     */
+    fun enterPip() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        if (!packageManager.hasSystemFeature(
+                android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE,
+            )
+        ) {
+            return
+        }
+        val params = android.app.PictureInPictureParams.Builder()
+            // NES picture is 8:7 PAR-corrected; PiP clamps extreme ratios but 8:7 is fine.
+            .setAspectRatio(android.util.Rational(8, 7))
+            .also { b -> gameplayBounds?.let { b.setSourceRectHint(it) } }
+            .build()
+        runCatching { enterPictureInPictureMode(params) }
+    }
+
+    // Auto-enter PiP when the user navigates Home (or to recents) while a ROM is
+    // running — the gameplay continues in the floating window instead of pausing.
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (romRunningForPip && !inPipState.value && !emulator.paused) {
+            enterPip()
+        }
+    }
+
+    // PiP enter/exit: publish the mode so the shell hides the controls + HUD in the
+    // small window (and restores them on exit). The emulation loop is untouched — it
+    // keeps producing frames, so gameplay continues in PiP.
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: android.content.res.Configuration,
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        inPipState.value = isInPictureInPictureMode
+    }
+
+    // v1.8.8 "Atlas" (Workstream B): apply the persisted in-app UI language. An empty
+    // tag (LanguageMode.System) clears any per-app override (follows the system /
+    // per-app system language); a non-empty tag forces that language. This delegates
+    // to LocaleManager on API 33+ and to AppCompat's own override on API 24..32.
+    private fun applyPersistedLocale() {
+        val tag = AppSettings(this).language.tag
+        val locales = if (tag.isEmpty()) {
+            LocaleListCompat.getEmptyLocaleList()
+        } else {
+            LocaleListCompat.forLanguageTags(tag)
+        }
+        AppCompatDelegate.setApplicationLocales(locales)
     }
 
     // Re-assert immersive mode whenever the window regains focus: the system
@@ -218,6 +453,14 @@ class MainActivity : ComponentActivity() {
         if (BuildConfig.PLAY_BUILD && (!::license.isInitialized || !license.isUnlocked)) return
         if (ctrl != null && sha != null) {
             runCatching { SaveStateStore.save(this, sha, SaveStateStore.AUTO_SLOT, ctrl.saveState()) }
+            // v1.8.8 "Atlas" (Workstream D): mirror the auto-resume slot to the cloud as
+            // its own Snapshot (one independently-updatable unit) so the next device
+            // resumes where this one left off. No-op unless cloud saves are active
+            // (PGS_ENABLED + signed-in + the toggle); local saves stay authoritative.
+            val cfg = AppSettings(this)
+            if (::cloudSave.isInitialized && cloudSave.isActive(cfg)) {
+                cloudSave.pushSlot(sha, SaveStateStore.AUTO_SLOT, cfg)
+            }
         }
     }
 
@@ -235,6 +478,56 @@ class MainActivity : ComponentActivity() {
     // many pads' d-pads did nothing. Routed to the manager which decodes them per port.
     override fun onGenericMotionEvent(event: MotionEvent): Boolean =
         gamepad.onMotion(event) || super.onGenericMotionEvent(event)
+}
+
+// v1.8.8 "Atlas" (Workstream K): the RustyNES Material 3 brand color schemes. A
+// deep indigo/violet primary (the launcher background family) with an amber/red
+// secondary nods to the NES palette. v1.8.8 Workstream B folds in dynamic color
+// (wallpaper-derived) on API 31+ via rememberColorScheme(), falling back to these.
+private val BrandPrimary = Color(0xFF7C6FF0)
+private val BrandSecondary = Color(0xFFFFB74D)
+private val BrandTertiary = Color(0xFFE57373)
+
+/** Light Material 3 scheme seeded with the RustyNES brand colors. */
+private fun rustyNesLightColors() = lightColorScheme(
+    primary = BrandPrimary,
+    secondary = BrandSecondary,
+    tertiary = BrandTertiary,
+)
+
+/** Dark Material 3 scheme seeded with the RustyNES brand colors. */
+private fun rustyNesDarkColors() = darkColorScheme(
+    primary = BrandPrimary,
+    secondary = BrandSecondary,
+    tertiary = BrandTertiary,
+)
+
+/**
+ * v1.8.8 "Atlas" (Workstream B): resolve the active Material 3 [ColorScheme].
+ *
+ * Precedence (v1.8.8 WS I): an [accessibility] override (high-contrast / colorblind)
+ * wins over everything — it is a stronger user need than the wallpaper palette. Else,
+ * when [dynamicColor] is requested AND the device is Android 12+ (API 31), the scheme
+ * is derived from the system wallpaper (Material You); otherwise the RustyNES brand
+ * scheme is used. Light vs. dark is driven by [dark] (which already folds in the
+ * user's Light/Dark/System theme choice + `isSystemInDarkTheme()`). The caller forces
+ * the `background` to black so the gameplay letterbox is never tinted.
+ */
+@Composable
+private fun rememberColorScheme(
+    dark: Boolean,
+    dynamicColor: Boolean,
+    accessibility: AccessibilityTheme,
+): ColorScheme {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    // Accessibility theme overrides dynamic color + the brand scheme entirely.
+    accessibilityColorScheme(accessibility, dark)?.let { return it }
+    return when {
+        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
+            if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+        dark -> rustyNesDarkColors()
+        else -> rustyNesLightColors()
+    }
 }
 
 /**
@@ -400,6 +693,23 @@ private fun loadRom(
         }
         RomLibrary.remember(context, uri.toString(), name ?: uri.lastPathSegment ?: "ROM")
     }
+    // v1.8.8 "Atlas" (Workstream C): record / refresh this game in the box-art
+    // library, keyed by the real ROM SHA-256. The mapper/region come cheaply from
+    // the just-built controller's RomInfo; lastPlayed is stamped now. The user-owned
+    // fields (favorite / box art / folder) are preserved by GameLibrary.upsert.
+    val display = name ?: uri?.lastPathSegment ?: "ROM"
+    val info = runCatching { ctrl.info() }.getOrNull()
+    GameLibrary.upsert(
+        context,
+        GameEntry(
+            sha = sha,
+            name = display,
+            uri = uri?.toString() ?: "",
+            mapper = info?.mapperId?.toInt() ?: -1,
+            region = info?.region?.name ?: "",
+            lastPlayed = System.currentTimeMillis(),
+        ),
+    )
     return "Running" + (name?.let { " · $it" } ?: "")
 }
 
@@ -517,9 +827,19 @@ private fun EmulatorScreen(
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val activity = context as? Activity
+    // v1.8.8 "Atlas" (Workstream F/H): the typed host for PiP + deep-link + capture.
+    val host = context as? MainActivity
     // Freemium is active only in the Play build; sideload/dev builds are unlimited.
     val unlocked = !BuildConfig.PLAY_BUILD || license.isUnlocked
     var frame by remember { mutableStateOf<ImageBitmap?>(null) }
+    // v1.8.8 "Atlas" (Workstream H): true while we are in the PiP window — drives the
+    // controls/HUD hide so only the gameplay picture shows in the floating window.
+    val inPip = host?.inPipState?.value ?: false
+    // v1.8.8 "Atlas" (Workstream F): the latest gameplay-frame bitmap (a reference to
+    // the loop's reused buffer + the HD-pack buffer), captured for screenshot/clip.
+    // Plain holder (not Compose state) read on a capture tap; the loop writes it.
+    val capture = remember { CaptureState() }
+    var recording by remember { mutableStateOf(false) }
     // Whether a ROM is currently loaded — drives the Open/Close toggle button and
     // gates the gameplay view vs. the idle (Open + recents) screen.
     var romLoaded by remember { mutableStateOf(false) }
@@ -553,8 +873,38 @@ private fun EmulatorScreen(
     var raWasLoggedIn by remember { mutableStateOf(false) }
     // Off-main-thread scope for the one-shot SAF loads (HD-pack parse, config I/O).
     val scope = rememberCoroutineScope()
-    var status by remember { mutableStateOf("Open a .nes ROM to start") }
+    var status by remember { mutableStateOf(context.getString(R.string.status_open_rom)) }
     var recents by remember { mutableStateOf(RomLibrary.recents(context)) }
+    // v1.8.8 "Atlas" (Workstream C): the box-art library state. `libraryVersion` is
+    // bumped on every mutation to recompute the filtered/sorted view + folder list.
+    var libraryVersion by remember { mutableStateOf(0) }
+    var libFolder by remember { mutableStateOf<String?>(null) }
+    var libFavoritesOnly by remember { mutableStateOf(false) }
+    var libQuery by remember { mutableStateOf("") }
+    var librarySort by remember { mutableStateOf(LibrarySort.RECENT) }
+    // GameLibrary.view/folders read+parse library.json (and may run a one-time
+    // migration WRITE) — keep that file I/O off the main thread so composition never
+    // janks. produceState starts empty and posts the computed result when ready.
+    val libraryEntries by produceState<ImmutableList<GameEntry>>(
+        initialValue = persistentListOf(),
+        libraryVersion, libFolder, libFavoritesOnly, libQuery, librarySort,
+    ) {
+        value = withContext(Dispatchers.IO) {
+            GameLibrary.view(context, libFolder, libFavoritesOnly, libQuery, librarySort)
+        }
+    }
+    val libraryFolders by produceState<ImmutableList<String>>(
+        initialValue = persistentListOf(),
+        libraryVersion,
+    ) {
+        value = withContext(Dispatchers.IO) { GameLibrary.folders(context) }
+    }
+    // The game a long-press/context action currently targets (set box art / move).
+    var boxArtTarget by remember { mutableStateOf<GameEntry?>(null) }
+    var folderTarget by remember { mutableStateOf<GameEntry?>(null) }
+    var boxArtPreview by remember { mutableStateOf<BoxArtPreview?>(null) }
+    // Folder batch-import progress (null = idle): (done, total).
+    var importProgress by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     // Demo session clock: seconds remaining this launch (full unlock = no limit).
     var demoSecondsLeft by remember { mutableStateOf(DEMO_SESSION_SECONDS) }
     var demoExpired by remember { mutableStateOf(false) }
@@ -563,6 +913,10 @@ private fun EmulatorScreen(
     LaunchedEffect(settings.muted) { emulator.muted = settings.muted }
     var showSettings by remember { mutableStateOf(false) }
     var showStates by remember { mutableStateOf(false) }
+    // v1.8.8 "Atlas" (Workstream D): a surfaced cloud-save conflict awaiting the user's
+    // keep-local / keep-cloud choice (null = none). Set by a Snapshots open/push that
+    // diverged; cleared once resolved or dismissed.
+    var cloudConflict by remember { mutableStateOf<SaveConflict?>(null) }
     var showAbout by remember { mutableStateOf(false) }
     var showControllers by remember { mutableStateOf(false) }
     // First-run onboarding shows until the user ticks "Do not show again".
@@ -672,12 +1026,22 @@ private fun EmulatorScreen(
             onDispose { chromecast.unregister() }
         }
     }
+    // v1.8.8 "Atlas" (Workstream A): drive layout off Window Size Classes — the
+    // single adaptive layout driver across phone / foldable cover+inner / tablet /
+    // free-form / desktop / ChromeOS / TV windows. Replaces the ad-hoc
+    // screenWidthDp threshold. `compact` width (< 600 dp) is the phone / folded
+    // cover screen; `medium` (>= 600 dp) and `expanded` (>= 840 dp) are tablets,
+    // the Z Fold inner display, and resizable desktop windows.
+    val windowSizeClass = currentWindowAdaptiveInfo().windowSizeClass
+    val isMediumWidth = windowSizeClass.isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_MEDIUM_LOWER_BOUND)
+    val isExpandedWidth = windowSizeClass.isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_EXPANDED_LOWER_BOUND)
+
     // Current screen mode (item 5): each remembers its own controller size/opacity.
-    // Cast wins; otherwise a narrow width means the folded cover screen.
-    val config = androidx.compose.ui.platform.LocalConfiguration.current
+    // Cast wins; otherwise a compact-width window is the folded cover screen and a
+    // medium/expanded window (unfolded inner display, tablet, desktop) is "Inner".
     val screenMode = when {
         castManager.casting -> ScreenMode.Cast
-        config.screenWidthDp < 520 -> ScreenMode.Cover
+        !isMediumWidth -> ScreenMode.Cover
         else -> ScreenMode.Inner
     }
 
@@ -840,6 +1204,73 @@ private fun EmulatorScreen(
         }
     }
 
+    // v1.8.8 "Atlas" (Workstream C): SAF image picker to set a game's box art. The
+    // picked content URI is persisted (a read grant taken) and stored on the entry.
+    val boxArtPicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        val target = boxArtTarget
+        if (uri != null && target != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                )
+            }
+            GameLibrary.setBoxArt(context, target.sha, uri.toString())
+            libraryVersion++
+        }
+        boxArtTarget = null
+        boxArtPreview = null
+    }
+
+    // v1.8.8 "Atlas" (Workstream C): batch folder import. ACTION_OPEN_DOCUMENT_TREE
+    // grants a persistable read over a whole directory; we enumerate it for ROM files
+    // (+ sibling box-art images) off the main thread and register each in the library.
+    val treeImporter = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocumentTree(),
+    ) { treeUri ->
+        if (treeUri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    treeUri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                )
+            }
+            scope.launch {
+                importProgress = 0 to 0
+                val added = withContext(Dispatchers.IO) {
+                    LibraryImport.importTree(context, treeUri) { done, total ->
+                        importProgress = done to total
+                    }
+                }
+                importProgress = null
+                libraryVersion++
+                status = context.getString(R.string.library_imported_count, added)
+            }
+        }
+    }
+
+    // v1.8.8 "Atlas" (Workstream C): auto-match box art from the libretro library for
+    // a game (user-triggered). Shows a preview before applying; on no match offers the
+    // manual SAF picker. Network fetch + decode run off the main thread.
+    fun findBoxArt(entry: GameEntry) {
+        boxArtTarget = entry
+        boxArtPreview = BoxArtPreview.Searching(entry.name)
+        scope.launch {
+            val file = withContext(Dispatchers.IO) {
+                // Prefer the user's ScreenScraper / TheGamesDB credentials if set;
+                // fall back to the no-account libretro-thumbnails corpus.
+                ScraperSources.fetchBoxArt(context, settings, entry.sha, entry.name)
+            }
+            boxArtPreview = if (file != null) {
+                BoxArtPreview.Found(android.net.Uri.fromFile(file).toString(), entry.name)
+            } else {
+                BoxArtPreview.NotFound(entry.name)
+            }
+        }
+    }
+
     // Identify the loaded ROM to RetroAchievements: compute its SHA-256, read any
     // saved progress sidecar, and call raLoadGame off-thread. A no-op unless RA is
     // enabled, a ROM is loaded, and the session is logged in. Marks raGameLoaded so
@@ -891,6 +1322,7 @@ private fun EmulatorScreen(
                 val ip = localWifiIpv4(context) ?: "<this device's IP>"
                 npHostInfo = "$ip:$bound"
                 status = "Hosting on $ip:$bound — waiting for a player"
+                host?.playGames?.unlock(PgsIds.ACH_FIRST_NETPLAY)
             }.onFailure { status = "Host failed: ${it.message}" }
         }
     }
@@ -908,6 +1340,7 @@ private fun EmulatorScreen(
             runCatching {
                 withContext(Dispatchers.IO) { ctrl.npJoin(address) }
                 status = "Joining $address…"
+                host?.playGames?.unlock(PgsIds.ACH_FIRST_NETPLAY)
             }.onFailure { status = "Join failed: ${it.message}" }
         }
     }
@@ -931,6 +1364,7 @@ private fun EmulatorScreen(
                 val code = withContext(Dispatchers.IO) { ctrl.npHostRoom(2u, cfg) }
                 npRoomCode = code
                 status = "Hosting online — room code $code"
+                host?.playGames?.unlock(PgsIds.ACH_FIRST_NETPLAY)
             }.onFailure { status = "Host failed: ${it.message}" }
         }
     }
@@ -951,6 +1385,7 @@ private fun EmulatorScreen(
                 val cfg = netplayConfig(settings)
                 withContext(Dispatchers.IO) { ctrl.npJoinRoom(code, cfg) }
                 status = "Joining room $code…"
+                host?.playGames?.unlock(PgsIds.ACH_FIRST_NETPLAY)
             }.onFailure { status = "Join failed: ${it.message}" }
         }
     }
@@ -991,7 +1426,172 @@ private fun EmulatorScreen(
                 ?: throw java.io.IOException("can't open recent ROM stream")).use { it.readBytes() }
             status = loadRom(context, emulator, bytes, uri, rom.name, unlocked, settings)
             recents = RomLibrary.recents(context)
+            libraryVersion++
         }.onFailure { status = "Can't open ${rom.name}: ${it.message}" }
+    }
+
+    // v1.8.8 "Atlas" (Workstream C): open a library game by its entry. Loads from the
+    // persistable SAF URI; an entry with no URI (a migrated recent that was never
+    // re-opened, or a debug autoload) can't be loaded that way and reports as much.
+    fun playGame(entry: GameEntry) {
+        if (entry.uri.isEmpty()) {
+            status = "No file for ${entry.name} — open it once to link it"
+            return
+        }
+        runCatching {
+            val uri = Uri.parse(entry.uri)
+            val bytes = (context.contentResolver.openInputStream(uri)
+                ?: throw java.io.IOException("can't open ROM stream")).use { it.readBytes() }
+            status = loadRom(context, emulator, bytes, uri, entry.name, unlocked, settings)
+            recents = RomLibrary.recents(context)
+            libraryVersion++
+        }.onFailure { status = "Can't open ${entry.name}: ${it.message}" }
+    }
+
+    // v1.8.8 "Atlas" (Workstream F): capture a screenshot of the current gameplay
+    // frame to Pictures/RustyNES (MediaStore) and offer a share. The save (PNG
+    // encode + ContentResolver I/O) runs off the main thread; a brief status/toast
+    // reports the result. Gameplay-only — the captured bitmap carries no UI chrome.
+    fun takeScreenshot() {
+        if (!Capture.supported) {
+            status = context.getString(R.string.capture_unsupported)
+            return
+        }
+        val src = capture.latestFrame
+        if (src == null) {
+            status = context.getString(R.string.capture_screenshot_failed)
+            return
+        }
+        // Snapshot the frame on the main thread (the loop reuses it in place), then
+        // encode + save off-thread.
+        val snapshot = runCatching { src.copy(Bitmap.Config.ARGB_8888, false) }.getOrNull()
+        if (snapshot == null) {
+            status = context.getString(R.string.capture_screenshot_failed)
+            return
+        }
+        scope.launch {
+            val uri = withContext(Dispatchers.IO) { Capture.saveScreenshot(context, snapshot) }
+            runCatching { snapshot.recycle() }
+            if (uri != null) {
+                status = context.getString(R.string.capture_screenshot_saved)
+                android.widget.Toast.makeText(
+                    context,
+                    context.getString(R.string.capture_screenshot_saved),
+                    android.widget.Toast.LENGTH_SHORT,
+                ).show()
+                Capture.share(context, uri, image = true)
+            } else {
+                status = context.getString(R.string.capture_screenshot_failed)
+            }
+        }
+    }
+
+    // v1.8.8 "Atlas" (Workstream F): toggle gameplay-clip recording. Start arms a
+    // rolling ring buffer (the loop offers frames to it); Stop drains it, encodes the
+    // MP4 off-thread to Movies/RustyNES, and offers a share. Video-only for now (the
+    // audio mux is a documented TODO in Capture.kt).
+    fun toggleRecording() {
+        if (!Capture.supported) {
+            status = context.getString(R.string.capture_unsupported)
+            return
+        }
+        val existing = capture.clip
+        if (existing == null) {
+            // Start: size the ring from the active picture (HD-pack vs base NES).
+            val w = if (hdActive && hd.w > 0) hd.w else NES_WIDTH
+            val h = if (hdActive && hd.h > 0) hd.h else NES_HEIGHT
+            capture.clip = Capture.ClipBuffer(w, h)
+            recording = true
+            status = context.getString(R.string.capture_recording)
+        } else {
+            // Stop: detach the ring + encode it.
+            capture.clip = null
+            recording = false
+            val w = existing.width
+            val h = existing.height
+            scope.launch {
+                val frames = existing.drain()
+                val uri = withContext(Dispatchers.IO) { Capture.encodeClip(context, frames, w, h) }
+                if (uri != null) {
+                    status = context.getString(R.string.capture_clip_saved)
+                    android.widget.Toast.makeText(
+                        context,
+                        context.getString(R.string.capture_clip_saved),
+                        android.widget.Toast.LENGTH_SHORT,
+                    ).show()
+                    Capture.share(context, uri, image = false)
+                } else {
+                    status = context.getString(R.string.capture_clip_failed)
+                }
+            }
+        }
+    }
+
+    // v1.8.8 "Atlas" (Workstream H): keep the host's PiP gate in sync with whether a
+    // ROM is actually running, so onUserLeaveHint only auto-enters PiP during play.
+    LaunchedEffect(romLoaded) {
+        host?.romRunningForPip = romLoaded
+        // v1.8.8 "Atlas" (Workstream E): "first ROM loaded" PGS achievement. No-op
+        // behind the default-off PGS_ENABLED flag / when not signed in; unlock is
+        // idempotent server-side. DISTINCT from RetroAchievements (per-game) above.
+        if (romLoaded) host?.playGames?.unlock(PgsIds.ACH_FIRST_ROM)
+        // v1.8.8 "Atlas" (Workstream D): on first open of a ROM, pull any cloud copy of
+        // its auto save-slot down so a save made on another device resumes here. No-op
+        // unless cloud saves are active (flag + signed-in + toggle); local saves stay
+        // authoritative otherwise. Runs off the main thread (Snapshot I/O is blocking).
+        val sha = emulator.romSha
+        if (romLoaded && sha != null && host?.cloudSave?.isActive(settings) == true) {
+            // The Snapshots Tasks dispatch their own callbacks; just kick it off. The
+            // pull writes into the local `.rns` (so a subsequent open auto-resumes it).
+            //
+            // RACE FIX (#166): loadRom already auto-loaded the OLD local auto-slot into
+            // the running emulator before this async pull completes. If the pull
+            // supersedes local with a newer cloud snapshot, we must reload the
+            // just-pulled state into the LIVE controller — otherwise the user silently
+            // keeps playing the stale (pre-pull) state. So on a successful pull, re-read
+            // the (now-updated) local auto-slot and apply it, but only if the SAME ROM is
+            // still loaded and auto-resume is allowed (unlocked; the demo cold-boots and
+            // never auto-loads, so it must not be force-loaded here either).
+            host.cloudSave.pullSlot(
+                sha,
+                SaveStateStore.AUTO_SLOT,
+                settings,
+                onConflict = { c -> cloudConflict = c },
+                onDone = { pulled ->
+                    if (pulled) {
+                        host.playGames.unlock(PgsIds.ACH_FIRST_CLOUD_SYNC)
+                        if (unlocked && emulator.romSha == sha) {
+                            scope.launch {
+                                val blob = withContext(Dispatchers.IO) {
+                                    SaveStateStore.load(context, sha, SaveStateStore.AUTO_SLOT)
+                                }
+                                // Guard again post-await: the ROM could have changed.
+                                if (blob != null && emulator.romSha == sha) {
+                                    withContext(Dispatchers.IO) {
+                                        runCatching { emulator.controller?.loadState(blob) }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+            )
+        }
+    }
+
+    // v1.8.8 "Atlas" (Workstream H): consume a deep-link action from a Quick Settings
+    // tile / app shortcut / widget launch. "resume" opens the last-played library
+    // game; "open" raises the SAF picker; "library" shows the idle/library screen.
+    // The action is cleared once handled so a recomposition/config-change doesn't
+    // re-fire it.
+    LaunchedEffect(host?.deepLinkState?.value) {
+        val action = host?.deepLinkState?.value ?: return@LaunchedEffect
+        when (action) {
+            DeepLink.ACTION_RESUME -> DeepLink.lastPlayed(context)?.let { playGame(it) }
+            DeepLink.ACTION_OPEN -> picker.launch(arrayOf("*/*"))
+            DeepLink.ACTION_LIBRARY -> { /* idle screen already shows the library */ }
+        }
+        host.deepLinkState.value = null
     }
 
     // Demo countdown: tick once per second while a ROM is running, unpaused, and
@@ -1058,8 +1658,72 @@ private fun EmulatorScreen(
         }
     }
 
+    // v1.8.8 "Atlas" (Workstream K): predictive back. Under targetSdk 36 on Android
+    // 16, Activity.onBackPressed is no longer called, so every dismissable surface is
+    // closed through OnBackPressedDispatcher via Compose BackHandler. The Compose
+    // Dialog / ModalBottomSheet surfaces (Settings/States/About/Controllers/Netplay/
+    // Onboarding) wire their own back-to-dismiss internally; these handlers cover the
+    // custom (non-dialog) overlays the in-app menu opens. Ordering: Compose dispatches
+    // to the most-recently-composed enabled handler first, so the menu bar closes
+    // before any "exit app" fallthrough. We intentionally do NOT consume back when
+    // nothing is open, so the system performs the default (predictive) exit.
+    BackHandler(enabled = controlsVisible) {
+        controlsVisible = false
+        menuWantsFocus = false
+        focusManager.clearFocus()
+    }
+
+    // v1.8.8 "Atlas" (Workstream A): expanded-width adaptive two-pane. On a tablet,
+    // the Z Fold inner display, or a resized desktop/ChromeOS window (width >= 840 dp)
+    // a persistent library rail is shown beside the player so the extra horizontal
+    // space is used — tap a recent ROM in the rail to load it without opening a menu.
+    // Compact/medium widths keep the single-pane phone layout. This is a solid first
+    // version of the list-detail pane; TODO(v1.8.8 WS C): grow the rail into the full
+    // box-art library grid (favorites / folders / search) via NavigableListDetailPaneScaffold.
+    // v1.8.8 "Atlas" (Workstream C): the shared box-art library content, used as the
+    // expanded-width list pane (below) and the compact idle screen (when no ROM is
+    // loaded). The same handlers drive both so a phone and a tablet behave identically.
+    val libraryContent: @Composable (Modifier) -> Unit = { mod ->
+        LibraryScreen(
+            entries = libraryEntries,
+            folders = libraryFolders,
+            selectedFolder = libFolder,
+            favoritesOnly = libFavoritesOnly,
+            query = libQuery,
+            sort = librarySort,
+            onOpen = { picker.launch(arrayOf("*/*")) },
+            onImportFolder = { treeImporter.launch(null) },
+            onSelectFolder = { folder, favs -> libFolder = folder; libFavoritesOnly = favs },
+            onQueryChange = { libQuery = it },
+            onSortChange = { librarySort = it },
+            onPlay = { playGame(it) },
+            onToggleFavorite = {
+                GameLibrary.setFavorite(context, it.sha, !it.favorite)
+                libraryVersion++
+            },
+            onSetBoxArt = { findBoxArt(it) },
+            onMoveToFolder = { folderTarget = it },
+            onRemove = {
+                GameLibrary.remove(context, it.sha)
+                libraryVersion++
+            },
+            modifier = mod,
+        )
+    }
+
+    Row(modifier = Modifier.fillMaxSize()) {
+        if (isExpandedWidth) {
+            libraryContent(
+                Modifier
+                    .fillMaxHeight()
+                    .width(340.dp)
+                    .windowInsetsPadding(WindowInsets.safeDrawing),
+            )
+        }
     Column(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxHeight()
+            .weight(1f),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         // The NES image takes the remaining vertical space and letterboxes
@@ -1069,7 +1733,18 @@ private fun EmulatorScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
-                .background(Color.Black),
+                .background(Color.Black)
+                // v1.8.8 "Atlas" (Workstream H): publish the gameplay-image bounds in
+                // window coordinates so enter-PiP can crop the shrink animation from
+                // the picture (sourceRectHint), not the whole window.
+                .onGloballyPositioned { coords ->
+                    val b = coords.boundsInWindow()
+                    host?.setGameplayBounds(
+                        android.graphics.Rect(
+                            b.left.toInt(), b.top.toInt(), b.right.toInt(), b.bottom.toInt(),
+                        ),
+                    )
+                },
             contentAlignment = Alignment.Center,
         ) {
             val current = frame
@@ -1103,7 +1778,7 @@ private fun EmulatorScreen(
                 }
                 Image(
                     bitmap = current,
-                    contentDescription = "NES screen",
+                    contentDescription = stringResource(R.string.cd_nes_screen),
                     modifier = nesAspect
                         .onSizeChanged { screenSize = it }
                         .then(
@@ -1198,44 +1873,39 @@ private fun EmulatorScreen(
                 )
             }
             if (current == null) {
-                // Idle: status + the recent-ROMs list (tap to resume).
-                Column(
-                    modifier = Modifier.verticalScroll(rememberScrollState()).padding(16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Text(status, color = Color.White)
-                    if (recents.isNotEmpty()) {
-                        Spacer(Modifier.height(16.dp))
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        ) {
-                            Text("Recent", color = Color.Gray)
-                            Text(
-                                "Clear Recent",
-                                color = Color(0xFFEF9A9A),
-                                modifier = Modifier.clickable {
-                                    RomLibrary.clear(context)
-                                    recents = RomLibrary.recents(context)
-                                },
-                            )
-                        }
-                        recents.forEach { rom ->
-                            Text(
-                                rom.name,
-                                color = Color(0xFFB39DDB),
-                                modifier = Modifier
-                                    .padding(vertical = 8.dp)
-                                    .clickable { openRecent(rom) },
-                            )
-                        }
-                    }
+                // Idle screen. On a compact / medium-width window (phone, folded cover
+                // screen) show the full box-art library grid here (v1.8.8 WS C). On an
+                // expanded-width window the library already lives in the persistent side
+                // pane, so the player area just shows the status line. Inset-padded so
+                // nothing tucks under the system bars (visible on the idle screen).
+                if (isExpandedWidth) {
+                    // TODO(i18n): `status` is a dynamic, frequently-reassigned string
+                    // (load results, error messages) — a deferred i18n surface.
+                    Text(
+                        status,
+                        color = Color.White,
+                        modifier = Modifier.safeDrawingPadding().padding(16.dp),
+                    )
+                } else {
+                    libraryContent(
+                        Modifier
+                            .fillMaxSize()
+                            .safeDrawingPadding(),
+                    )
                 }
+            }
+            // Folder batch-import progress banner (v1.8.8 WS C).
+            importProgress?.let { (done, total) ->
+                ImportProgressBanner(
+                    done,
+                    total,
+                    modifier = Modifier.align(Alignment.BottomCenter).padding(12.dp),
+                )
             }
             // While casting, a small banner over the (still-mirrored) phone picture.
             if (castManager.casting) {
                 Text(
-                    "Casting to ${castManager.displayName ?: "TV"}",
+                    stringResource(R.string.casting_to, castManager.displayName ?: "TV"),
                     color = Color(0xFF80D8FF),
                     modifier = Modifier.align(Alignment.TopCenter).padding(8.dp),
                 )
@@ -1264,9 +1934,22 @@ private fun EmulatorScreen(
             romLoaded = false
             paused = false
             emulator.paused = false
+            // v1.8.8 "Atlas" (Workstream F): discard any in-progress clip + the last
+            // captured frame so a closed ROM leaves nothing to capture/encode.
+            capture.clip?.clear()
+            capture.clip = null
+            capture.latestFrame = null
+            recording = false
             status = "No ROM loaded"
+            // v1.8.8 "Atlas" (Workstream L): closing a ROM is a natural "finished a
+            // satisfying session" moment — request the in-app review flow. The Play API
+            // enforces its own quota (so this no-ops most of the time, with no CTA) and
+            // no-ops entirely on a sideloaded / non-Play install.
+            host?.requestInAppReview()
         }
-        if (controlsVisible) {
+        // v1.8.8 "Atlas" (Workstream H): in the small PiP window, show only the
+        // gameplay picture — the control bar is hidden (and the on-screen pad below).
+        if (controlsVisible && !inPip) {
             Row(
             // focusGroup so the d-pad can move between entries when the menu is
             // opened via the pad's Guide button / Start+Select chord (v1.8.7, #41).
@@ -1274,6 +1957,11 @@ private fun EmulatorScreen(
             // that a LaunchedEffect requests so focus lands here on a pad-open.
             modifier = Modifier
                 .fillMaxWidth()
+                // v1.8.8 "Atlas" (Workstream K): edge-to-edge is enforced at SDK 35+,
+                // so pad the control bar in from the system bars / display cutout — the
+                // gameplay Box above stays full-bleed, but the controls never sit under
+                // a transient status/nav bar, a cutout, or the large-screen taskbar.
+                .windowInsetsPadding(WindowInsets.safeDrawing)
                 .horizontalScroll(rememberScrollState())
                 .focusGroup()
                 .padding(horizontal = 8.dp, vertical = 4.dp),
@@ -1285,23 +1973,24 @@ private fun EmulatorScreen(
                 Button(
                     onClick = { closeRom() },
                     modifier = Modifier.focusRequester(menuFocusRequester),
-                ) { Text("Close") }
+                ) { Text(stringResource(R.string.action_close)) }
             } else {
                 Button(
                     onClick = { picker.launch(arrayOf("*/*")) },
                     modifier = Modifier.focusRequester(menuFocusRequester),
-                ) { Text("Open") }
+                ) { Text(stringResource(R.string.action_open)) }
             }
             // Save-states are a paid feature; the demo hides the manager.
             if (unlocked) {
-                OutlinedButton(onClick = { showStates = true }) { Text("States") }
+                OutlinedButton(onClick = { showStates = true }) { Text(stringResource(R.string.action_states)) }
             }
-            OutlinedButton(onClick = { emulator.controller?.reset() }) { Text("Reset") }
+            OutlinedButton(onClick = { emulator.controller?.reset() }) { Text(stringResource(R.string.action_reset)) }
             OutlinedButton(onClick = {
                 paused = !paused
                 emulator.paused = paused
-            }) { Text(if (paused) "Resume" else "Pause") }
-            // Fast-forward — disabled during netplay (rollback owns pacing).
+            }) { Text(stringResource(if (paused) R.string.action_resume else R.string.action_pause)) }
+            // Fast-forward — disabled during netplay (rollback owns pacing). The ">>"
+            // glyph is a universal fast-forward symbol, not a translatable word.
             OutlinedButton(
                 onClick = {
                     turbo = !turbo
@@ -1309,18 +1998,41 @@ private fun EmulatorScreen(
                 },
                 enabled = !npActive,
             ) { Text(if (turbo) ">> On" else ">>") }
-            OutlinedButton(onClick = { showSettings = true }) { Text("Settings") }
+            // v1.8.8 "Atlas" (Workstream F): screenshot + gameplay-clip capture.
+            // Both gated to a running ROM and to API 29+ (scoped MediaStore). The
+            // screenshot grabs the current frame; Record toggles a rolling MP4 clip.
+            if (romLoaded && Capture.supported) {
+                OutlinedButton(onClick = { takeScreenshot() }) {
+                    Text(stringResource(R.string.action_screenshot))
+                }
+                OutlinedButton(onClick = { toggleRecording() }) {
+                    Text(
+                        stringResource(
+                            if (recording) R.string.action_stop_record else R.string.action_record,
+                        ),
+                    )
+                }
+            }
+            // v1.8.8 "Atlas" (Workstream H): enter Picture-in-Picture — gameplay keeps
+            // running in a floating window. API 26+; shown only with a ROM loaded.
+            if (romLoaded && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                OutlinedButton(onClick = {
+                    controlsVisible = false
+                    host?.enterPip()
+                }) { Text(stringResource(R.string.action_pip)) }
+            }
+            OutlinedButton(onClick = { showSettings = true }) { Text(stringResource(R.string.action_settings)) }
             // Hardware controllers (v1.8.7): port assignment, remapping, autofire.
-            OutlinedButton(onClick = { showControllers = true }) { Text("Controllers") }
+            OutlinedButton(onClick = { showControllers = true }) { Text(stringResource(R.string.action_controllers)) }
             // Direct-IP / LAN netplay (v1.8.6). Ungated (not a paid feature here).
             OutlinedButton(onClick = { showNetplay = true }) {
-                Text(if (npActive) "Netplay*" else "Netplay")
+                Text(stringResource(if (npActive) R.string.action_netplay_active else R.string.action_netplay))
             }
-            OutlinedButton(onClick = { showAbout = true }) { Text("About") }
+            OutlinedButton(onClick = { showAbout = true }) { Text(stringResource(R.string.action_about)) }
             // Cast gameplay to a connected TV/external display (only when present).
             if (castManager.available) {
                 OutlinedButton(onClick = { castManager.toggle() }) {
-                    Text(if (castManager.casting) "Stop Cast" else "Cast to TV")
+                    Text(stringResource(if (castManager.casting) R.string.action_stop_cast else R.string.action_cast_to_tv))
                 }
             }
             // Experimental Chromecast (CAF) spectator mirror (v1.8.7, #38). Only
@@ -1347,12 +2059,12 @@ private fun EmulatorScreen(
                 val price = license.product
                     ?.oneTimePurchaseOfferDetails?.formattedPrice ?: "$2.99"
                 Button(onClick = { activity?.let { license.purchase(it) } }) {
-                    Text("Unlock $price")
+                    Text(stringResource(R.string.action_unlock, price))
                 }
                 val mins = demoSecondsLeft / 60
                 val secs = demoSecondsLeft % 60
                 Text(
-                    "Demo · %d:%02d".format(mins, secs),
+                    stringResource(R.string.demo_remaining, mins, secs),
                     color = Color.Gray,
                 )
             }
@@ -1381,8 +2093,16 @@ private fun EmulatorScreen(
         // game maximizes, especially on the unfolded inner screen. The pad's
         // Guide/chord still reaches the menu, and the touch "MENU pill" path is
         // unaffected when the controller is shown. Disconnect restores it declaratively.
-        if (!controlsHidden) {
-            BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        if (!controlsHidden && !inPip) {
+            BoxWithConstraints(
+                // v1.8.8 "Atlas" (Workstream K): keep the on-screen pad's bottom row
+                // clear of the gesture-nav bar / cutout under edge-to-edge. Only the
+                // safeDrawing insets are consumed (left/right/bottom) so the pad sits
+                // fully in the safe area; the gameplay Box above remains full-bleed.
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .windowInsetsPadding(WindowInsets.safeDrawing),
+            ) {
                 val mw = maxWidth // capture: not visible inside the inner BoxScope
                 val reserved = mw * 1.1f * 53f / 123f
                 Box(
@@ -1401,7 +2121,8 @@ private fun EmulatorScreen(
                 }
             }
         }
-    }
+    } // end emulator Column
+    } // end adaptive Row (the expanded-width library rail + the player column)
 
     // Settings + save-state manager sheets (v1.8.3).
     if (showSettings) {
@@ -1488,6 +2209,25 @@ private fun EmulatorScreen(
                     }
                 }
             },
+            // Play Games cloud saves (Workstreams D+E) — DISTINCT from RA above. Only
+            // surfaced when the Play Games build is active (BuildConfig.PGS_ENABLED).
+            pgsSignedIn = host?.playGames?.isSignedIn == true,
+            cloudSavesEnabled = settings.cloudSavesEnabled,
+            onCloudSavesChange = { settings.cloudSavesEnabled = it },
+            onPgsSignIn = { host?.playGames?.ensureSignedIn() },
+            // v1.8.8 "Atlas" (Workstream B): apply the picked UI language immediately.
+            // setApplicationLocales recreates the Activity so the new locale's resources
+            // load; AppCompat persists the choice (and our AppSettings mirror is the
+            // source of truth, re-asserted in onCreate). System (empty tag) clears the
+            // override and follows the per-app / system language.
+            onLanguageChange = { lang ->
+                val locales = if (lang.tag.isEmpty()) {
+                    LocaleListCompat.getEmptyLocaleList()
+                } else {
+                    LocaleListCompat.forLanguageTags(lang.tag)
+                }
+                AppCompatDelegate.setApplicationLocales(locales)
+            },
             onDismiss = { showSettings = false },
         )
     }
@@ -1495,7 +2235,67 @@ private fun EmulatorScreen(
         StatesSheet(
             context, emulator.romSha, emulator,
             onStatus = { status = it },
+            onSlotSaved = { slot ->
+                // v1.8.8 "Atlas" (Workstream E): "first save-state" PGS achievement
+                // (idempotent; no-op behind the default-off gate). DISTINCT from RA.
+                host?.playGames?.unlock(PgsIds.ACH_FIRST_SAVE_STATE)
+                // v1.8.8 "Atlas" (Workstream D): push the just-saved slot to the cloud
+                // as its own Snapshot (one independently-updatable unit). No-op unless
+                // cloud saves are active; a divergent conflict surfaces the picker.
+                val sha = emulator.romSha
+                if (sha != null && host?.cloudSave?.isActive(settings) == true) {
+                    host.cloudSave.pushSlot(
+                        sha, slot, settings,
+                        onConflict = { c -> cloudConflict = c },
+                        onDone = { if (it) host.playGames.unlock(PgsIds.ACH_FIRST_CLOUD_SYNC) },
+                    )
+                }
+            },
             onDismiss = { showStates = false },
+        )
+    }
+    // v1.8.8 "Atlas" (Workstream L): a FLEXIBLE in-app update finished downloading —
+    // offer a "Restart to install" prompt (the user chose when; flexible never forces).
+    if (host?.updateReadyState?.value == true) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { host.updateReadyState.value = false },
+            title = { Text(stringResource(R.string.update_ready_title)) },
+            text = { Text(stringResource(R.string.update_ready_body)) },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    host.updateReadyState.value = false
+                    host.completeFlexibleUpdate()
+                }) { Text(stringResource(R.string.update_ready_restart)) }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    host.updateReadyState.value = false
+                }) { Text(stringResource(R.string.about_close)) }
+            },
+        )
+    }
+
+    // v1.8.8 "Atlas" (Workstream D): the cloud-save conflict picker. Surfaced when a
+    // Snapshot open/push diverged between this device and the cloud; the user picks
+    // which copy to keep (last-write-wins is the auto path; this is the manual
+    // fallback). A richer 3-way merge UI is a deliberate TODO.
+    cloudConflict?.let { conflict ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { cloudConflict = null },
+            title = { Text(stringResource(R.string.cloud_conflict_title)) },
+            text = { Text(stringResource(R.string.cloud_conflict_body)) },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    host?.cloudSave?.resolveConflict(conflict, keepLocal = true)
+                    cloudConflict = null
+                }) { Text(stringResource(R.string.cloud_conflict_keep_local)) }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    host?.cloudSave?.resolveConflict(conflict, keepLocal = false)
+                    cloudConflict = null
+                }) { Text(stringResource(R.string.cloud_conflict_keep_cloud)) }
+            },
         )
     }
     if (showAbout) {
@@ -1536,6 +2336,35 @@ private fun EmulatorScreen(
         )
     }
 
+    // v1.8.8 "Atlas" (Workstream C): move-to-folder dialog (pick/create a collection).
+    folderTarget?.let { target ->
+        MoveToFolderDialog(
+            current = target.folder,
+            folders = libraryFolders,
+            onConfirm = { folder ->
+                GameLibrary.setFolder(context, target.sha, folder)
+                libraryVersion++
+                folderTarget = null
+            },
+            onDismiss = { folderTarget = null },
+        )
+    }
+
+    // v1.8.8 "Atlas" (Workstream C): box-art preview dialog (auto-match -> preview ->
+    // apply, or fall back to the manual SAF image picker).
+    boxArtPreview?.let { preview ->
+        BoxArtPreviewDialog(
+            state = preview,
+            onApply = { uri ->
+                boxArtTarget?.let { GameLibrary.setBoxArt(context, it.sha, uri); libraryVersion++ }
+                boxArtPreview = null
+                boxArtTarget = null
+            },
+            onPickManually = { boxArtPicker.launch(arrayOf("image/*")) },
+            onDismiss = { boxArtPreview = null; boxArtTarget = null },
+        )
+    }
+
     // Demo-expired gate: a blocking sheet over everything with Unlock + Restore.
     if (!unlocked && demoExpired) {
         DemoExpiredOverlay(
@@ -1560,6 +2389,12 @@ private fun EmulatorScreen(
         // Netplay status is polled at the same low cadence as RA, on its own
         // always-advancing counter (the RA counter only ticks when RA is enabled).
         var npFrame = 0
+        // v1.8.8 "Atlas" (Workstream E): accumulate frames run with fast-forward
+        // (turbo) engaged and post the PGS incremental achievement in batches (every
+        // ~30 turbo frames) to avoid a per-frame FFI/Task hit. No-op behind the
+        // default-off PGS_ENABLED gate; the increment auto-unlocks at the Console step
+        // target. DISTINCT from RetroAchievements.
+        var turboFrames = 0
         try {
             while (isActive) {
                 val ctrl = emulator.controller
@@ -1584,6 +2419,14 @@ private fun EmulatorScreen(
                 // present + drain audio only on a frame that actually advanced.
                 val np = ctrl.npIsActive()
                 val turbo = !np && emulator.turbo
+                // v1.8.8 "Atlas" (Workstream E): batch the turbo-frames achievement.
+                if (turbo) {
+                    turboFrames++
+                    if (turboFrames >= 30) {
+                        host?.playGames?.increment(PgsIds.ACH_TURBO_100, turboFrames)
+                        turboFrames = 0
+                    }
+                }
                 val start = System.nanoTime()
                 // Emulate, play this frame's audio, and pack the framebuffer all
                 // off the main thread (the blocking audio write and the 61k-pixel
@@ -1653,13 +2496,22 @@ private fun EmulatorScreen(
                     if (scriptLoaded) logLines = ctrl.drainScriptLog()
                 }
                 if (producedFrame) {
+                    val presented: Bitmap
                     if (usedHd && hdBmp != null) {
                         hdBmp.setPixels(hd.pixels, 0, hd.w, 0, 0, hd.w, hd.h)
                         frame = hdBmp.asImageBitmap()
+                        presented = hdBmp
                     } else {
                         reuse.setPixels(pixels, 0, NES_WIDTH, 0, 0, NES_WIDTH, NES_HEIGHT)
                         frame = reuse.asImageBitmap()
+                        presented = reuse
                     }
+                    // v1.8.8 "Atlas" (Workstream F): publish the gameplay frame for
+                    // capture (a reference to the just-blitted buffer, no UI chrome),
+                    // and feed the clip ring when recording (it copies on the throttle
+                    // beat). Both are cheap; the encode happens off-loop on Stop.
+                    capture.latestFrame = presented
+                    capture.clip?.offer(presented)
                     // Append new script log lines (keep the last 8 for the overlay).
                     if (logLines.isNotEmpty()) {
                         scriptLog = (scriptLog.split("\n").filter { it.isNotEmpty() } + logLines)
@@ -1751,6 +2603,24 @@ private class HdRender {
     var h = 0
 }
 
+/**
+ * v1.8.8 "Atlas" (Workstream F): capture state shared between the emulation loop and
+ * the screenshot/clip controls. The loop publishes the latest gameplay-frame bitmap
+ * each presented frame (the same buffer it blits to Compose — no UI chrome) and, when
+ * a clip is recording, offers each frame to the ring buffer. Reads/writes are cheap
+ * references; the encode (on Stop) happens off the loop.
+ */
+private class CaptureState {
+    /** The latest gameplay-frame bitmap (the loop's reused 256x240 buffer, or the
+     *  HD-pack upscaled buffer when active). A capture copies from it. */
+    @Volatile
+    var latestFrame: Bitmap? = null
+
+    /** Live clip ring buffer while recording (null when not). */
+    @Volatile
+    var clip: Capture.ClipBuffer? = null
+}
+
 /** Convert the core's RGBA8 framebuffer into packed ARGB_8888 pixels. */
 private fun packRgbaToArgb(rgba: ByteArray, out: IntArray) {
     var i = 0
@@ -1764,6 +2634,7 @@ private fun packRgbaToArgb(rgba: ByteArray, out: IntArray) {
         p += 1
     }
 }
+
 
 /** Blocking sheet shown when the free 10-minute demo session expires. */
 @Composable

@@ -1,0 +1,10 @@
+<!-- v1.8.8 "Atlas" (Workstream H): "Resume last game" app-shortcut icon. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FF7C6FF0"
+        android:pathData="M8,5v14l11,-7z" />
+</vector>
