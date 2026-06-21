@@ -118,11 +118,16 @@ The caller then points the live `UdpTransport`'s remote at `peer_public()` (via
 - **Real cross-NAT traversal** needs a reachable STUN server and two real NATs —
   not reproducible in CI/offline, hence the `#[ignore]`d probe.
 - **Symmetric NATs** (which assign a different external port per destination)
-  defeat basic hole punching; the fallback is a **TURN relay** (RFC 8656), which
-  is out of scope here.
+  defeat basic hole punching; the fallback is a **TURN relay** (RFC 8656). The
+  TURN *client* + the relay-transport hand-off are now wired (§2.5, `relay.rs` +
+  `UdpTransport::from_relay`, mock-TURN-verified by `relay_loopback`); the only
+  remaining item is a **live coturn + two real symmetric-NAT devices** verify
+  (see §5).
 - **Plumbing** `HolePunch` into `NetplayConnection` end to end (discover →
-  exchange → punch → handshake as one flow) is a small follow-up; the pieces are
-  all present and tested in isolation.
+  exchange → punch → handshake as one flow) **landed in v1.8.7** — the
+  `NatConnect` orchestrator (§2.5). The cone-NAT path is end-to-end and
+  loopback/mock-verified in CI; live cross-NAT play is still the maintainer's
+  manual run (see §5).
 
 ### 2.4 N-peer UDP roster handshake
 
@@ -168,6 +173,107 @@ handshake, exchanges the roster, runs ~120 frames of N-player input over the
 each other *and* a single no-rollback reference run (Four Score on for >2
 players). This is the same proof shape as the in-memory
 `n_player_rollback_matches_reference` determinism test, but over real sockets.
+
+### 2.5 Native UDP rendezvous (mobile) — the room-code / CGNAT path (v1.8.7)
+
+§2.1–§2.2 give the *pieces* (STUN discovery + the hole-punch state machine);
+§2.3 listed "plumb them into `NetplayConnection` end to end" as the small
+follow-up. v1.8.7 lands that orchestrator so a mobile (or any native) peer can
+host/join an **internet** match by sharing a short **room code** — the path that
+matters for Android, where two phones are typically behind **carrier-grade NAT
+(CGNAT)** and cannot exchange addresses by hand.
+
+**`NatConnect` — the steppable pump.** `rustynes-netplay::nat_connect`
+(native-only, gated behind the `netplay-client` feature) wires the isolated
+building blocks into one steppable flow. Each `pump()` call advances one step and
+returns the current `NatPhase`; STUN discovery and TURN allocation do
+read-timeout-bounded *blocking* probes (sub-second), not strictly non-blocking
+I/O. The caller drives it once per tick (the mobile bridge does this inside
+`np_advance_frame`) until `Synced`,
+then takes the ready `NetplayConnection` with `into_connection()`:
+
+```text
+Registering ─ connect to signaling + Join/host the room ──────────▶ Discovering
+Discovering ─ STUN: learn our public reflexive addr (§2.1) ───────▶ Exchanging
+Exchanging  ─ send/receive PublicAddr over signaling ─────────────▶ Punching
+Punching    ─ send Sync packets at the peer's public addr (§2.2) ─▶ Synced
+              └─ (symmetric NAT: punch times out, TURN configured) ▶ Relaying ─▶ Synced
+```
+
+Key properties:
+
+- **One socket throughout.** The same bound `UdpSocket` carries the STUN probe,
+  the punch packets, *and* the eventual gameplay transport — so the public
+  mapping the peer learns is exactly the mapping gameplay flows over. During the
+  bounded STUN probe — and again during the bounded TURN allocate + permission —
+  the socket is briefly made blocking, then restored to non-blocking for the
+  punch / gameplay path.
+- **Deterministic, look-alike-free room codes.** `host()` returns a 6-char code
+  from a SplitMix64-seeded alphabet that omits `0/O/1/I/L` (so a verbally-shared
+  code is unambiguous). The seed also drives the STUN transaction ids; the mobile
+  bridge seeds it non-deterministically per session so two concurrent hosts never
+  collide on a code. This is host-side orchestration only — it never touches the
+  emulator's determinism contract (the ROM + input + core seed are untouched).
+- **It hands off to the existing session unchanged.** Once `Synced`,
+  `into_connection()` builds a `UdpTransport` fixed at the peer's punched public
+  address and runs the normal `NetplayConnection` handshake; a standard
+  `RollbackSession<UdpTransport>` then drives the match exactly as the LAN /
+  direct-IP path does. The 2-player room-code path completes the first joiner
+  (mirroring the direct-IP `np_host`).
+
+**The `PublicAddr` signaling extension — one relay, two rendezvous shapes.**
+The address exchange in the `Exchanging` phase rides the **same signaling relay**
+that brokers the browser SDP/ICE handshake (§3.2). A new
+`SignalMessage::PublicAddr { from, to, addr }` variant carries a single
+`IP:port` string (a `SocketAddr` rendered to text) from one slot to another.
+Unlike `Offer` / `Answer` / `Candidate` (which carry browser WebRTC SDP/ICE),
+`PublicAddr` carries the raw reflexive address the native client feeds to
+`HolePunch::peer_discovered`. The relay routes it **by slot exactly like the SDP
+messages** — `signaling::Relay` already had the room bookkeeping + slot routing,
+so the same deployed server serves *both* the browser path and the mobile
+native-UDP path with no new service. The mobile **signaling client**
+(`signaling_client.rs`) is a small blocking-worker `tungstenite` WebSocket client
+behind the `netplay-client` feature (no tokio; it mirrors the
+`rustynes-cheevos/http.rs` blocking-worker shape), so it slots into the
+single-threaded mobile tick without an async runtime.
+
+**TURN relay fallback (`relay.rs`) — with its transport hand-off now wired.** A
+**symmetric NAT** assigns a different external port per destination, which
+defeats basic hole punching. When the punch times out *and* a TURN relay is
+configured, `NatConnect` enters `Relaying`: `relay.rs` is an RFC 8656 TURN client
+(long-term-credential `Allocate` → `XOR-RELAYED-ADDRESS`, `Send`/`Data`
+indications) plus a `RelayUdpSocket` shim, and the orchestrator allocates a relay,
+installs a permission for the peer, and exchanges the **relayed** address over the
+same `PublicAddr` channel. Once both relayed addresses are exchanged,
+`into_connection()` builds a relay-backed `UdpTransport` via
+`UdpTransport::from_relay`, so live gameplay flows over the relay (§2.5 below).
+
+> **Status — the relay-transport hand-off is wired and mock-TURN-verified;
+> only a live coturn run is pending.** `#40` added `UdpTransport::from_relay`,
+> so when both peers are symmetric-NAT-bound `NatConnect::into_connection` now
+> builds a **relay-backed** `UdpTransport` over `RelayUdpSocket` and live
+> gameplay flows over the TURN relay (the bridge reports `relayed = true` and the
+> Android UI shows the "via relay" badge). The end-to-end relay path (allocate,
+> permission, relayed-address exchange, and the gameplay transport) is exercised
+> by the `relay_loopback` test against a mock TURN endpoint. The **only** remaining
+> item is a **live verify with a real coturn server and two real symmetric-NAT
+> devices**, which CI/offline cannot reproduce (see §5). Cone NAT (the common
+> home/CGNAT-cone case) does not need the relay and works end-to-end regardless.
+
+**Bridge + Android surface.** The mobile bridge (`rustynes-mobile`) exposes
+`np_host_room(num_players, NpNetConfig) -> room code` and
+`np_join_room(room_code, NpNetConfig)`. `NpNetConfig { stun_servers, turn_url,
+turn_user, turn_secret, signaling_url }` is projected onto `NatConfig`: an empty
+`stun_servers` falls back to the crate's `DEFAULT_STUN_SERVERS`
+(`stun.l.google.com:19302` + `stun1`), and a TURN relay is configured only when
+the URL resolves *and* both credentials are present (otherwise the session is
+punch-or-fail / cone-NAT-only). The session begins in a new `Negotiating` phase
+(surfaced by `np_status` with a short sub-step string — `"Discovering"`,
+`"Exchanging"`, `"Punching"`, `"Relaying"`) and converges on the existing
+`Connecting` → `InGame`. The Android UI is a create-and-share-a-room-code /
+join-by-code flow with the endpoints overridable in Settings; it ships defaulting
+to a **placeholder** relay URL (`wss://relay.rustynes.example/ws`) until the
+maintainer hosts the `deploy/` stack (§3.4) and substitutes a real one.
 
 ---
 
@@ -310,7 +416,10 @@ present.
 The `deploy/` directory is a **turn-key** bundle for the server side — a
 maintainer can `docker compose up` on a host with a domain and get a working
 signaling + STUN/TURN stack with no source edits (all per-deploy values come
-from a `.env`):
+from a `.env`). The **same** stack serves both the browser (SDP/ICE) and the
+mobile (`PublicAddr`, §2.5) rendezvous — one relay, both clients. The mobile
+client maps `.env` onto its `NpNetConfig` (`signaling_url` = `wss://<DOMAIN>`,
+the TURN URL/creds from `TURN_*`, STUN default), as `deploy/README.md` lays out:
 
 | File | Role |
 |---|---|
@@ -390,8 +499,9 @@ spectator *broadcast/relay* (a host fanning the confirmed input stream to N
 spectators) + the `deploy/` relay config are deployment-ready but not
 self-certifiable headlessly. The frontend driver + the determinism-safety
 property are exercised by unit tests (see the verified table below). Until the
-relay is wired, the panel's Spectate control dials a host and waits for a stream;
-the byte-identical replay path it runs on receipt is the tested-and-proven part.
+host-side spectator broadcast lands, the panel's Spectate control dials a host
+and waits for a stream; the byte-identical replay path it runs on receipt is the
+tested-and-proven part.
 
 ---
 
@@ -404,7 +514,10 @@ the byte-identical replay path it runs on receipt is the tested-and-proven part.
 | STUN request encode + response decode (XOR-MAPPED + MAPPED, v4/v6) | Unit tests |
 | Malformed/short/wrong-cookie/wrong-id rejection | Unit tests |
 | Hole-punch state machine transitions | Unit tests |
+| Native UDP rendezvous orchestration (`NatConnect`: register → discover → exchange → punch → hand-off) end to end (v1.8.7, §2.5) | Loopback integration test (`tests/nat_loopback.rs`) — drives two orchestrators over **real loopback UDP sockets** through an **in-process WS signaling relay** (the production `signaling::Relay`) + a **mock STUN responder**, both reach `Synced`, hand off `NetplayConnection`s, and run an N-frame `RollbackSession` whose confirmed digests agree (the §2.4 proof shape) |
+| Deterministic, look-alike-free 6-char room codes + `PublicAddr` slot routing | Unit tests (`nat_connect` room-code determinism/alphabet; `signaling::Relay` routes `PublicAddr` by slot like SDP) |
 | `rustynes-netplay` compiles on `wasm32-unknown-unknown` | Build + clippy |
+| TURN relay-transport hand-off for symmetric-NAT pairs (v1.8.7 #40, §2.5) | Integration test (`relay_loopback`) — `UdpTransport::from_relay` routes gameplay over `RelayUdpSocket` against a **mock TURN endpoint** (allocate + permission + relayed-address exchange + N-frame `RollbackSession`); `NpStatus.relayed` reflects the hand-off |
 | N-peer UDP roster handshake (3-4 players) | Loopback integration test (`tests/mesh_udp.rs`, real sockets) |
 | Signaling room/relay protocol (`signaling::Relay`) | Unit tests (default build) |
 | Signaling server builds with its feature | `--features signaling-server` build |
@@ -432,5 +545,7 @@ and never feeds back into the rollback — pure telemetry, determinism intact.
 | Item | Needs |
 |---|---|
 | Real cross-NAT UDP traversal | A STUN server + two real NATs |
+| Live mobile room-code play across two cellular devices (§2.5) | The hosted `deploy/` relay (the same signaling + coturn stack) + two real devices behind carrier NAT; live STUN through CGNAT + the punch are exercised against the *real* network, which CI cannot reproduce |
+| Live TURN relay play for symmetric-NAT pairs (§2.5) | A **live coturn** server + **two real symmetric-NAT devices**. The relay-transport hand-off itself is wired and mock-TURN-verified (`UdpTransport::from_relay` + `relay_loopback`, see Verified); only the live cross-network run — which CI/offline cannot reproduce — remains. Cone NAT works end-to-end without the relay. |
 | Full browser WebRTC netplay (2-4 players) | The deploy bundle **running** on a host/domain + N real browsers — cannot verify headlessly. Walk the checklist in `deploy/README.md` (2-tab → 2-machine → 4-player matrix + ops/DNS/TLS/TURN-bandwidth steps). |
 | Host-side spectator broadcast/relay + live spectate (H8) | A spectator-aware host fanning the confirmed input stream to N spectators + the `deploy/` relay config running — the frontend driver + byte-identical replay are unit-tested, the live relay is the maintainer's manual run. |

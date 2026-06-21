@@ -268,6 +268,18 @@ impl StunClient {
         self.last_tx
     }
 
+    /// Consume the client, returning the wrapped [`UdpSocket`](std::net::UdpSocket).
+    ///
+    /// The NAT-traversal orchestrator
+    /// ([`NatConnect`](crate::nat_connect::NatConnect), v1.8.7) constructs a
+    /// `StunClient` transiently for one bounded discovery probe, then reclaims
+    /// the SAME socket so the public mapping STUN opened is the one gameplay
+    /// flows over.
+    #[must_use]
+    pub fn into_socket(self) -> std::net::UdpSocket {
+        self.socket
+    }
+
     /// Encode + send one Binding Request to `stun_server`, recording the
     /// transaction id for later matching. Does not wait for the response — call
     /// [`recv_response`](Self::recv_response) (or drain a shared socket and call

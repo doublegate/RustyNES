@@ -46,11 +46,19 @@ rustynes-ra.workspace = true
 # v1.8.6 — direct-IP / same-LAN netplay on mobile. The native UDP rollback path
 # (`UdpTransport` + `NetplayConnection` + `RollbackSession`) is all `std::net` +
 # `Send`, so this UniFFI bridge can hold a session across the FFI boundary; it
-# cross-compiles to `aarch64-linux-android` with the NDK. Direct-IP/LAN only —
-# STUN/TURN is deferred, so no NAT-traversal wiring is pulled in here. The
-# in-memory `MemoryTransport`/`MeshTransport` are `!Send` test-only and never
-# used by the bridge.
-rustynes-netplay.workspace = true
+# cross-compiles to `aarch64-linux-android` with the NDK. The in-memory
+# `MemoryTransport`/`MeshTransport` are `!Send` test-only and never used by the
+# bridge.
+#
+# v1.8.7 Phase B — internet play by room code. The `netplay-client` feature
+# (default-on for native; `cfg(not(wasm32))` throughout) pulls in `NatConnect`,
+# the NAT-traversal orchestrator (signaling room + STUN hole-punch + TURN
+# fallback). Its WebSocket signaling client is the BLOCKING `tungstenite` +
+# rustls path (NO tokio), so it cross-compiles to `aarch64-linux-android` with
+# the NDK like the rest of the bridge. Requested explicitly here (not relied on
+# as a transitive default) so a future default change can't silently drop the
+# room-code path.
+rustynes-netplay = { workspace = true, features = ["netplay-client"] }
 thiserror.workspace = true
 # UniFFI generates the foreign-language bindings from the `#[uniffi::export]`
 # surface (proc-macro mode — no UDL file). The `cli` feature backs the
@@ -60,6 +68,14 @@ uniffi = { version = "0.31", features = ["cli"] }
 # same convenience the desktop has. `deflate` is the only codec real NES zips use;
 # default features off keeps bzip2/zstd/aes out of the mobile binary.
 zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+# v1.8.7 Phase B — the room-code loopback test stands up an in-process WebSocket
+# signaling relay (driving the production `signaling::Relay` routing) + a mock
+# STUN responder, exactly like `rustynes-netplay`'s `tests/nat_loopback.rs`. The
+# blocking `tungstenite` server side mirrors the client the bridge uses; same
+# version + pure-rustls features (no OpenSSL) so the dev build stays consistent.
+tungstenite = { version = "0.29", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
 
 [[bin]]
 # The binding generator the platform builds invoke:

@@ -30,15 +30,24 @@ android {
         applicationId = "com.doublegate.rustynes"
         minSdk = 26 // AAudio floor.
         targetSdk = 35 // Play mandate since 2025-08-31.
-        versionCode = 10806 // 1.8.6
-        versionName = "1.8.6"
+        versionCode = 10807 // 1.8.7
+        versionName = "1.8.7"
         // No abiFilters here — set per buildType so release ships arm64 only
         // while debug keeps x86_64 for the emulator.
         // PLAY_BUILD gates the freemium (demo timer + persistence locks + Billing).
         // Default false → sideload/GitHub/dev builds are full-featured; the Google
-        // Play AAB sets it true (v1.8.6 launch). See the v1.8.0 plan's monetization
-        // timing.
+        // Play AAB sets it true (v1.8.8 "Atlas" launch — postponed from v1.8.6). See
+        // the v1.8.0 plan's monetization timing.
         buildConfigField("boolean", "PLAY_BUILD", "false")
+        // CHROMECAST_ENABLED gates the experimental Cast Application Framework
+        // (CAF) sender path (v1.8.7, #38) — a ~20-30fps SPECTATOR mirror to a
+        // custom Web Receiver, distinct from the primary low-latency Presentation
+        // API cast (Cast.kt, which is always available). Default false: no Cast
+        // button, no CastContext init, zero behavior change. It stays off until the
+        // maintainer does the deferred ops (a $5 Cast Developer Console account, a
+        // registered Receiver App ID, and HTTPS hosting of android/cast-receiver/).
+        // See android/cast-receiver/README.md + ChromecastSender.kt.
+        buildConfigField("boolean", "CHROMECAST_ENABLED", "false")
     }
 
     // Release signing reads `keystore.properties` (gitignored) or env vars; when
@@ -152,6 +161,8 @@ dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
+    // collectAsStateWithLifecycle for the controller-connect StateFlow (v1.8.7, #41).
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.material3:material3")
@@ -161,4 +172,8 @@ dependencies {
     implementation("net.java.dev.jna:jna:5.15.0@aar")
     // Play Billing — the one-time "Full Unlock" IAP (Workstream M, freemium model).
     implementation("com.android.billingclient:billing-ktx:8.0.0")
+    // Cast Application Framework sender (v1.8.7, #38). Linked but DORMANT: it does
+    // nothing until CastContext is initialized, which only happens behind the
+    // default-off BuildConfig.CHROMECAST_ENABLED flag (see ChromecastSender.kt).
+    implementation("com.google.android.gms:play-services-cast-framework:21.5.0")
 }

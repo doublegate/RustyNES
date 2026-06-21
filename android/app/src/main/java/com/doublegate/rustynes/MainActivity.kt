@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.view.KeyEvent
+import android.view.MotionEvent
 import java.security.MessageDigest
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -52,7 +53,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.FilterQuality
@@ -61,6 +66,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
@@ -93,6 +100,11 @@ class MainActivity : ComponentActivity() {
      *  Activity, not Compose) can reach the same instance the UI drives. */
     private val emulator = EmulatorHandle()
 
+    /** Hardware game-controller manager (v1.8.7): device->port assignment, hot-plug,
+     *  per-pad remapping, analog/HAT decode, and turbo/autofire. Created in onCreate
+     *  (needs the application Context) and registered/unregistered in onResume/onPause. */
+    private lateinit var gamepad: GamepadManager
+
     /** Freemium entitlement (Workstream M); created in onCreate. */
     private lateinit var license: LicenseManager
 
@@ -104,11 +116,14 @@ class MainActivity : ComponentActivity() {
         license = LicenseManager(applicationContext)
         // Only connect to Play Billing in the Play build; off-Play it can't transact.
         if (BuildConfig.PLAY_BUILD) license.connect()
+        gamepad = GamepadManager(applicationContext, emulator)
         registerThermalBackoff()
         enableEdgeToEdge()
         hideSystemBars()
         setContent {
             val settings = remember { AppSettings(this@MainActivity) }
+            // Load any persisted per-pad remap tables + the autofire toggle once.
+            LaunchedEffect(Unit) { gamepad.loadRemaps(settings) }
             val dark = when (settings.themeMode) {
                 ThemeMode.System -> isSystemInDarkTheme()
                 ThemeMode.Light -> false
@@ -119,7 +134,7 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background,
                 ) {
-                    EmulatorScreen(emulator, license, settings)
+                    EmulatorScreen(emulator, gamepad, license, settings)
                 }
             }
         }
@@ -130,6 +145,15 @@ class MainActivity : ComponentActivity() {
         // Re-verify entitlement against Play on each foreground (a purchase made
         // elsewhere, a refund, or a restore reflects here).
         if (BuildConfig.PLAY_BUILD && ::license.isInitialized) license.refreshEntitlement()
+        // Start listening for controller hot-plug + enumerate connected pads.
+        if (::gamepad.isInitialized) gamepad.register()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // Stop listening for controller hot-plug while backgrounded.
+        if (::gamepad.isInitialized) gamepad.unregister()
+        onPauseSaveState()
     }
 
     // Cancel fast-forward when the device starts thermally throttling — the NES
@@ -177,8 +201,7 @@ class MainActivity : ComponentActivity() {
     // next open of it resumes where the player left off. The bridge's internal
     // lock serialises this against the emulation thread, so the snapshot is
     // consistent; it is a quick in-memory encode, fine to do on the main thread.
-    override fun onPause() {
-        super.onPause()
+    private fun onPauseSaveState() {
         val ctrl = emulator.controller
         val sha = emulator.romSha
         // RetroAchievements progress sidecar (v1.8.6) is persisted unconditionally —
@@ -199,12 +222,19 @@ class MainActivity : ComponentActivity() {
     }
 
     // Hardware gamepad / keyboard: Android dispatches KeyEvents to the Activity.
-    // Map them onto P1 and feed the same controller the touch overlay drives.
+    // Try the assigned-gamepad path first (device->port + per-pad remap); if the key
+    // wasn't from an assigned pad, fall back to the fixed keyboard profile (P1).
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
-        emulator.onKey(keyCode, true) || super.onKeyDown(keyCode, event)
+        gamepad.onKey(event) || emulator.onKeyboard(keyCode, true) || super.onKeyDown(keyCode, event)
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean =
-        emulator.onKey(keyCode, false) || super.onKeyUp(keyCode, event)
+        gamepad.onKey(event) || emulator.onKeyboard(keyCode, false) || super.onKeyUp(keyCode, event)
+
+    // Joystick motion: analog sticks, L/R triggers, and the d-pad-as-HAT axis arrive
+    // here (NOT as KeyEvents). Without this override they were silently dropped, so
+    // many pads' d-pads did nothing. Routed to the manager which decodes them per port.
+    override fun onGenericMotionEvent(event: MotionEvent): Boolean =
+        gamepad.onMotion(event) || super.onGenericMotionEvent(event)
 }
 
 /**
@@ -234,15 +264,21 @@ class EmulatorHandle {
     @Volatile
     var muted: Boolean = false
 
-    // P1 input is the OR of two sources that must not clobber each other: the
-    // on-screen virtual controller (multi-touch) and any hardware gamepad/keyboard.
-    // Each updates its own mask; applyP1() combines them into the bridge's single
-    // late-latched P1 mask.
+    // Each NES port's mask is the OR of two sources that must not clobber each
+    // other: P1 also gets the on-screen virtual controller (multi-touch), and every
+    // port gets its assigned hardware gamepad (via GamepadManager). applyPort()
+    // combines them into that port's single late-latched bridge mask.
     @Volatile
     private var touchMask: Int = 0
 
+    /** Per-port hardware-gamepad masks (port 0..3), set by [GamepadManager]. Index 0
+     *  is OR'd with [touchMask] for P1. */
+    private val gamepadMasks = IntArray(4)
+
+    /** Hardware-keyboard mask — a default profile that always feeds P1 (so a USB/BT
+     *  keyboard works even with no game pad assigned to port 0). */
     @Volatile
-    private var keyMask: Int = 0
+    private var keyboardMask: Int = 0
 
     /** Set the on-screen virtual-controller mask (the full set of pressed buttons). */
     fun setTouchMask(mask: Int) {
@@ -250,34 +286,59 @@ class EmulatorHandle {
         // read-modify-combine so neither source clobbers the other's mask.
         synchronized(this) {
             touchMask = mask
-            applyP1()
+            applyPort(0)
         }
     }
 
-    /** Returns true if the key was consumed (a mapped NES button). */
-    fun onKey(keyCode: Int, pressed: Boolean): Boolean {
-        val bit = keyToBit(keyCode) ?: return false
+    /** Set a port's hardware-gamepad mask (the full pressed set), from the manager. */
+    fun setGamepadMask(port: Int, mask: Int) {
+        if (port !in 0..3) return
         synchronized(this) {
-            keyMask = if (pressed) keyMask or bit else keyMask and bit.inv()
-            applyP1()
+            gamepadMasks[port] = mask
+            applyPort(port)
+        }
+    }
+
+    /**
+     * Hardware-keyboard fallback: a fixed default profile feeding P1, used when a
+     * KeyEvent wasn't consumed by an assigned gamepad. Returns true if the key was a
+     * mapped NES button.
+     */
+    fun onKeyboard(keyCode: Int, pressed: Boolean): Boolean {
+        val bit = keyboardKeyToBit(keyCode) ?: return false
+        synchronized(this) {
+            keyboardMask = if (pressed) keyboardMask or bit else keyboardMask and bit.inv()
+            applyPort(0)
         }
         return true
     }
 
-    private fun applyP1() {
-        controller?.setButtons(0u, (touchMask or keyMask).toUByte())
+    private fun applyPort(port: Int) {
+        val mask = if (port == 0) {
+            touchMask or gamepadMasks[0] or keyboardMask
+        } else {
+            gamepadMasks[port]
+        }
+        controller?.setButtons(port.toUInt(), mask.toUByte())
     }
 
-    /** The current combined P1 mask (touch | key) — the `local_mask` netplay feeds
-     *  to `npAdvanceFrame` (where the bridge owns the latch, so `setButtons` is not
-     *  the input path). Synchronized against the touch/key updaters. */
-    fun p1Mask(): Int = synchronized(this) { touchMask or keyMask }
+    /** Re-push every port's mask — used after a fresh ROM load so the new controller
+     *  immediately reflects any held inputs (and so port 0 isn't left stale). */
+    fun reapplyAllPorts() {
+        synchronized(this) { for (p in 0..3) applyPort(p) }
+    }
 
-    private fun keyToBit(keyCode: Int): Int? = when (keyCode) {
-        KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_DPAD_CENTER -> NesBit.A
-        KeyEvent.KEYCODE_BUTTON_B -> NesBit.B
-        KeyEvent.KEYCODE_BUTTON_START, KeyEvent.KEYCODE_ENTER -> NesBit.START
-        KeyEvent.KEYCODE_BUTTON_SELECT, KeyEvent.KEYCODE_SPACE -> NesBit.SELECT
+    /** The current combined P1 mask (touch | gamepad[0] | keyboard) — the
+     *  `local_mask` netplay feeds to `npAdvanceFrame` (where the bridge owns the
+     *  latch, so `setButtons` is not the input path). Synchronized against the
+     *  touch/key updaters. */
+    fun p1Mask(): Int = synchronized(this) { touchMask or gamepadMasks[0] or keyboardMask }
+
+    private fun keyboardKeyToBit(keyCode: Int): Int? = when (keyCode) {
+        KeyEvent.KEYCODE_ENTER -> NesBit.START
+        KeyEvent.KEYCODE_SPACE -> NesBit.SELECT
+        KeyEvent.KEYCODE_Z -> NesBit.A
+        KeyEvent.KEYCODE_X -> NesBit.B
         KeyEvent.KEYCODE_DPAD_UP -> NesBit.UP
         KeyEvent.KEYCODE_DPAD_DOWN -> NesBit.DOWN
         KeyEvent.KEYCODE_DPAD_LEFT -> NesBit.LEFT
@@ -448,7 +509,12 @@ private class AudioPlayer(sampleRate: Int) {
 }
 
 @Composable
-private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, settings: AppSettings) {
+private fun EmulatorScreen(
+    emulator: EmulatorHandle,
+    gamepad: GamepadManager,
+    license: LicenseManager,
+    settings: AppSettings,
+) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val activity = context as? Activity
     // Freemium is active only in the Play build; sideload/dev builds are unlimited.
@@ -479,6 +545,9 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
     var showNetplay by remember { mutableStateOf(false) }
     var npStatus by remember { mutableStateOf<uniffi.rustynes_mobile.NpStatus?>(null) }
     var npHostInfo by remember { mutableStateOf<String?>(null) }
+    // Online (room-code) netplay (v1.8.7): the host's 6-char code to share, set once
+    // np_host_room returns (null otherwise).
+    var npRoomCode by remember { mutableStateOf<String?>(null) }
     var npActive by remember { mutableStateOf(false) }
     // Tracks the previous login status to detect the LOGGED_OUT -> LOGGED_IN edge.
     var raWasLoggedIn by remember { mutableStateOf(false) }
@@ -495,9 +564,94 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
     var showSettings by remember { mutableStateOf(false) }
     var showStates by remember { mutableStateOf(false) }
     var showAbout by remember { mutableStateOf(false) }
+    var showControllers by remember { mutableStateOf(false) }
     // First-run onboarding shows until the user ticks "Do not show again".
     var showOnboarding by remember { mutableStateOf(!settings.onboardingSuppressed) }
     var screenSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
+
+    // Controller-aware UI (v1.8.7, #41). True while >= 1 hardware pad is assigned;
+    // collected from the manager's StateFlow (seeded by its launch enumeration, so a
+    // pad connected at start-up is covered, and disconnect flips it back declaratively).
+    val controllerActive by gamepad.hardwareControllerActive.collectAsStateWithLifecycle()
+    // When a pad is active AND the user left auto-hide on, the on-screen pad collapses
+    // and the game view takes the freed space. Reverts automatically on unplug.
+    val controlsHidden = controllerActive && settings.autoHideControllerOnPad
+    // The control bar / menu surface, shared by the touch "MENU pill" and the
+    // pad's Guide button / Start+Select chord. `menuOpen` mirrors into the manager so
+    // it knows to route the pad to menu navigation (and consume those inputs).
+    var controlsVisible by remember { mutableStateOf(false) }
+    val focusManager = LocalFocusManager.current
+    // First-item focus anchor so opening via pad lands focus on the menu (so the
+    // d-pad immediately moves between entries, A activates, B dismisses).
+    val menuFocusRequester = remember { FocusRequester() }
+    // Set when the menu is opened by the pad (Guide/chord) so a LaunchedEffect grabs
+    // focus once it's composed; cleared on close. Touch-opened menus don't grab focus.
+    var menuWantsFocus by remember { mutableStateOf(false) }
+
+    // Keep the manager's menuOpen flag in lockstep with the control bar's visibility,
+    // so pad input is routed to navigation exactly while the menu is on screen.
+    LaunchedEffect(controlsVisible) { gamepad.menuOpen = controlsVisible }
+
+    // Wire the pad's system-menu + navigation callbacks. They fire on the input
+    // dispatch thread; marshal to the UI thread before touching Compose state/focus.
+    DisposableEffect(gamepad) {
+        gamepad.onSystemMenu = {
+            activity?.runOnUiThread {
+                controlsVisible = true
+                menuWantsFocus = true
+            }
+        }
+        gamepad.onMenuNav = { dir ->
+            activity?.runOnUiThread {
+                focusManager.moveFocus(
+                    when (dir) {
+                        MenuDir.UP -> FocusDirection.Up
+                        MenuDir.DOWN -> FocusDirection.Down
+                        MenuDir.LEFT -> FocusDirection.Left
+                        MenuDir.RIGHT -> FocusDirection.Right
+                    },
+                )
+            }
+        }
+        // A activates the focused entry by dispatching a synthetic Enter key (the
+        // Material Button's default key-activation), so no per-button plumbing is
+        // needed. The Activity is the focus owner's window for KeyEvent dispatch.
+        gamepad.onMenuSelect = {
+            activity?.runOnUiThread {
+                val v = activity.window?.decorView?.findFocus()
+                if (v != null) {
+                    val now = android.os.SystemClock.uptimeMillis()
+                    v.dispatchKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER, 0))
+                    v.dispatchKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_CENTER, 0))
+                }
+            }
+        }
+        gamepad.onMenuDismiss = {
+            activity?.runOnUiThread {
+                menuWantsFocus = false
+                controlsVisible = false
+                focusManager.clearFocus()
+            }
+        }
+        onDispose {
+            gamepad.onSystemMenu = null
+            gamepad.onMenuNav = null
+            gamepad.onMenuSelect = null
+            gamepad.onMenuDismiss = null
+            gamepad.menuOpen = false
+        }
+    }
+
+    // When the menu is opened by the pad, grab focus onto its first entry once the bar
+    // is composed (a frame after controlsVisible flips), so the d-pad drives it.
+    LaunchedEffect(controlsVisible, menuWantsFocus) {
+        if (controlsVisible && menuWantsFocus) {
+            // Yield a frame so the control-bar Row (and its FocusRequester) exist.
+            delay(50)
+            runCatching { menuFocusRequester.requestFocus() }
+            menuWantsFocus = false
+        }
+    }
 
     // Casting (item 1): track external presentation displays and present the
     // gameplay there while the phone keeps the controller.
@@ -505,6 +659,18 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
     DisposableEffect(Unit) {
         castManager.register()
         onDispose { castManager.unregister() }
+    }
+    // Experimental Chromecast (CAF) spectator mirror (v1.8.7, #38) — PREPPED but
+    // gated behind the default-off BuildConfig.CHROMECAST_ENABLED flag. When off,
+    // the sender never touches CastContext, no Cast button is shown, and the
+    // sendFrame call below compiles out. The Presentation-API cast above is the
+    // primary low-latency path and is untouched.
+    val chromecast = remember { ChromecastSender(context) }
+    if (BuildConfig.CHROMECAST_ENABLED) {
+        DisposableEffect(Unit) {
+            chromecast.register()
+            onDispose { chromecast.unregister() }
+        }
     }
     // Current screen mode (item 5): each remembers its own controller size/opacity.
     // Cast wins; otherwise a narrow width means the folded cover screen.
@@ -746,11 +912,71 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
         }
     }
 
+    // Netplay (v1.8.7): host an online (room-code) session. Registers with the
+    // signaling relay + STUN/NAT traversal (all network I/O, so off the main thread);
+    // on success the bridge returns a 6-char room code to share. A ROM must be loaded
+    // (the ROM hash gates the handshake). The NpNetConfig endpoints come from Settings
+    // (defaulting to the placeholder relay), so an unconfigured relay fails here fast.
+    fun netplayHostRoom() {
+        val ctrl = emulator.controller
+        if (ctrl == null) {
+            status = "Open a ROM first, then host"
+            return
+        }
+        npHostInfo = null
+        npRoomCode = null
+        scope.launch {
+            runCatching {
+                val cfg = netplayConfig(settings)
+                val code = withContext(Dispatchers.IO) { ctrl.npHostRoom(2u, cfg) }
+                npRoomCode = code
+                status = "Hosting online — room code $code"
+            }.onFailure { status = "Host failed: ${it.message}" }
+        }
+    }
+
+    // Netplay (v1.8.7): join an online session by its 6-char room code. NAT traversal
+    // = network I/O, so off the main thread. A ROM must be loaded so the ROM-hash check
+    // passes; the code is persisted so the Join-online field prefills it next time.
+    fun netplayJoinRoom(code: String) {
+        val ctrl = emulator.controller
+        if (ctrl == null) {
+            status = "Open the same ROM first, then join"
+            return
+        }
+        npHostInfo = null
+        npRoomCode = null
+        scope.launch {
+            runCatching {
+                val cfg = netplayConfig(settings)
+                withContext(Dispatchers.IO) { ctrl.npJoinRoom(code, cfg) }
+                status = "Joining room $code…"
+            }.onFailure { status = "Join failed: ${it.message}" }
+        }
+    }
+
+    // Share the room code via the system ACTION_SEND chooser (v1.8.7).
+    fun shareRoomCode(code: String) {
+        runCatching {
+            val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(
+                    android.content.Intent.EXTRA_TEXT,
+                    "Join my RustyNES game — room code: $code",
+                )
+            }
+            context.startActivity(
+                android.content.Intent.createChooser(send, "Share room code"),
+            )
+        }.onFailure { status = "Couldn't share: ${it.message}" }
+    }
+
     // Netplay (v1.8.6): tear the session down and return to single-player.
     fun netplayLeave() {
         scope.launch {
             withContext(Dispatchers.IO) { runCatching { emulator.controller?.npLeave() } }
             npHostInfo = null
+            npRoomCode = null
             npStatus = null
             npActive = false
             status = "Left netplay"
@@ -861,11 +1087,24 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                 )
             }
             if ((gpuSurface == null || hdActive || npActive) && current != null) {
+                // Crisp 8:7 PAR on the Bitmap path: the source bitmap is 256x240
+                // (1:1), so constrain the Image to the NES 8:7 display aspect and
+                // centre it — height-bounded + letterboxed on a wide (unfolded) inner
+                // screen, not stretched. The GPU SurfaceView path already applies this
+                // PAR letterbox internally (gfx.rs), so it is NOT wrapped here (no
+                // double-apply). HD-pack frames carry their own aspect (the upscaled
+                // bitmap), so they keep fillMaxSize + ContentScale.Fit instead.
+                val nesAspect = if (hdActive) {
+                    Modifier.fillMaxSize()
+                } else {
+                    Modifier
+                        .aspectRatio(8f / 7f, matchHeightConstraintsFirst = true)
+                        .align(Alignment.Center)
+                }
                 Image(
                     bitmap = current,
                     contentDescription = "NES screen",
-                    modifier = Modifier
-                        .fillMaxSize()
+                    modifier = nesAspect
                         .onSizeChanged { screenSize = it }
                         .then(
                             if (videoFiltersSupported && settings.filter != VideoFilter.None && screenSize.width > 0) {
@@ -919,6 +1158,8 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
             // line while a LAN session is active. Reuses the RA/Lua overlay pattern.
             npStatus?.takeIf { npActive && it.phase != uniffi.rustynes_mobile.NpPhase.IDLE }?.let { s ->
                 val line = when (s.phase) {
+                    uniffi.rustynes_mobile.NpPhase.NEGOTIATING ->
+                        "Netplay: ${s.detail.ifEmpty { "connecting" }}…"
                     uniffi.rustynes_mobile.NpPhase.CONNECTING -> "Netplay: connecting…"
                     uniffi.rustynes_mobile.NpPhase.IN_GAME ->
                         "Netplay: synced f=${s.currentFrame}" +
@@ -1007,7 +1248,8 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
         // narrow cover screen.
         var paused by remember { mutableStateOf(false) }
         var turbo by remember { mutableStateOf(false) }
-        var controlsVisible by remember { mutableStateOf(false) }
+        // `controlsVisible` is hoisted to EmulatorScreen scope (v1.8.7, #41) so the
+        // pad's Guide/chord can open the same menu the touch "MENU pill" toggles.
         // Close the current ROM: persist RA progress, unload, and return to the idle
         // screen (Open button + recent-ROMs list). Mirrors the desktop close_rom.
         fun closeRom() {
@@ -1026,18 +1268,29 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
         }
         if (controlsVisible) {
             Row(
+            // focusGroup so the d-pad can move between entries when the menu is
+            // opened via the pad's Guide button / Start+Select chord (v1.8.7, #41).
+            // The Buttons are focusable by default; the first carries a FocusRequester
+            // that a LaunchedEffect requests so focus lands here on a pad-open.
             modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState())
+                .focusGroup()
                 .padding(horizontal = 8.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             // Open a ROM, or Close the running one (toggles on whether one is loaded).
             if (romLoaded) {
-                Button(onClick = { closeRom() }) { Text("Close") }
+                Button(
+                    onClick = { closeRom() },
+                    modifier = Modifier.focusRequester(menuFocusRequester),
+                ) { Text("Close") }
             } else {
-                Button(onClick = { picker.launch(arrayOf("*/*")) }) { Text("Open") }
+                Button(
+                    onClick = { picker.launch(arrayOf("*/*")) },
+                    modifier = Modifier.focusRequester(menuFocusRequester),
+                ) { Text("Open") }
             }
             // Save-states are a paid feature; the demo hides the manager.
             if (unlocked) {
@@ -1057,6 +1310,8 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                 enabled = !npActive,
             ) { Text(if (turbo) ">> On" else ">>") }
             OutlinedButton(onClick = { showSettings = true }) { Text("Settings") }
+            // Hardware controllers (v1.8.7): port assignment, remapping, autofire.
+            OutlinedButton(onClick = { showControllers = true }) { Text("Controllers") }
             // Direct-IP / LAN netplay (v1.8.6). Ungated (not a paid feature here).
             OutlinedButton(onClick = { showNetplay = true }) {
                 Text(if (npActive) "Netplay*" else "Netplay")
@@ -1067,6 +1322,25 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                 OutlinedButton(onClick = { castManager.toggle() }) {
                     Text(if (castManager.casting) "Stop Cast" else "Cast to TV")
                 }
+            }
+            // Experimental Chromecast (CAF) spectator mirror (v1.8.7, #38). Only
+            // compiled in / shown when the default-off flag is set. The standard CAF
+            // MediaRouteButton handles device discovery + the chooser/controller
+            // dialog; once a session connects, the emulation loop streams ~20-30fps
+            // frames to the custom Web Receiver. Label clarifies it's a spectator view.
+            if (BuildConfig.CHROMECAST_ENABLED) {
+                Text(
+                    if (chromecast.isCasting) "Casting…" else "Cast to TV (spectator ~20-30fps):",
+                    color = Color.Gray,
+                )
+                androidx.compose.ui.viewinterop.AndroidView(
+                    factory = { ctx ->
+                        androidx.mediarouter.app.MediaRouteButton(ctx).also { btn ->
+                            com.google.android.gms.cast.framework.CastButtonFactory
+                                .setUpMediaRouteButton(ctx.applicationContext, btn)
+                        }
+                    },
+                )
             }
             // Demo: an always-visible unlock affordance + the session countdown.
             if (!unlocked) {
@@ -1100,22 +1374,31 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
         // from the measured size). The host Box reserves the LARGEST (110%)
         // controller height, so changing the size never reflows/shifts the
         // gameplay view above it (item 7).
-        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-            val mw = maxWidth // capture: not visible inside the inner BoxScope
-            val reserved = mw * 1.1f * 53f / 123f
-            Box(
-                modifier = Modifier.fillMaxWidth().height(reserved),
-                contentAlignment = Alignment.Center,
-            ) {
-                VirtualController(
-                    emulator,
-                    settings.hapticLevel,
-                    { controlsVisible = !controlsVisible },
-                    Modifier
-                        .width(mw * settings.controllerScale(screenMode))
-                        .aspectRatio(123f / 53f)
-                        .alpha(settings.controllerOpacity(screenMode)),
-                )
+        //
+        // Controller-aware UI (v1.8.7, #41): when a hardware pad is connected (and
+        // auto-hide is on) the whole reserved block collapses, so its height frees up
+        // and the gameplay Box above (which has weight(1f)) grows to fill it — the
+        // game maximizes, especially on the unfolded inner screen. The pad's
+        // Guide/chord still reaches the menu, and the touch "MENU pill" path is
+        // unaffected when the controller is shown. Disconnect restores it declaratively.
+        if (!controlsHidden) {
+            BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                val mw = maxWidth // capture: not visible inside the inner BoxScope
+                val reserved = mw * 1.1f * 53f / 123f
+                Box(
+                    modifier = Modifier.fillMaxWidth().height(reserved),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    VirtualController(
+                        emulator,
+                        settings.hapticLevel,
+                        { controlsVisible = !controlsVisible },
+                        Modifier
+                            .width(mw * settings.controllerScale(screenMode))
+                            .aspectRatio(123f / 53f)
+                            .alpha(settings.controllerOpacity(screenMode)),
+                    )
+                }
             }
         }
     }
@@ -1218,15 +1501,31 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
     if (showAbout) {
         AboutDialog(onDismiss = { showAbout = false })
     }
+    if (showControllers) {
+        ControllersSheet(
+            gamepad = gamepad,
+            settings = settings,
+            onDismiss = { showControllers = false },
+        )
+    }
     if (showNetplay) {
         NetplaySheet(
             status = npStatus,
             hostInfo = npHostInfo,
+            roomCode = npRoomCode,
             lastJoinAddress = settings.lastJoinAddress,
+            lastRoomCode = settings.lastRoomCode,
+            // Online play needs a real (non-placeholder) signaling relay configured.
+            onlineConfigured = settings.npSignalingUrl.trim().isNotEmpty() &&
+                settings.npSignalingUrl.trim() != NetplayEndpoints.SIGNALING_URL,
             onHost = { port, players -> netplayHost(port, players) },
             onJoin = { addr -> netplayJoin(addr) },
+            onHostRoom = { netplayHostRoom() },
+            onJoinRoom = { code -> netplayJoinRoom(code) },
             onLeave = { netplayLeave() },
             onSaveJoinAddress = { settings.lastJoinAddress = it },
+            onSaveRoomCode = { settings.lastRoomCode = it },
+            onShareRoomCode = { shareRoomCode(it) },
             onDismiss = { showNetplay = false },
         )
     }
@@ -1264,11 +1563,21 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
         try {
             while (isActive) {
                 val ctrl = emulator.controller
-                if (ctrl != null && !romLoaded) romLoaded = true
+                if (ctrl != null && !romLoaded) {
+                    romLoaded = true
+                    // A fresh controller just appeared: (re-)apply Four Score for the
+                    // current pad count and re-push every port's held mask onto it.
+                    gamepad.onControllerReady()
+                    emulator.reapplyAllPorts()
+                }
                 if (ctrl == null || emulator.paused) {
                     delay(50)
                     continue
                 }
+                // Advance the turbo/autofire pulse once per emulated frame, then push
+                // the per-port masks updated below. Cheap no-op when nothing is held
+                // in turbo. Must run BEFORE the input is latched into the core.
+                gamepad.onFrameTick()
                 // Netplay (v1.8.6): while a session is active the loop drives the core
                 // via `npAdvanceFrame` (rollback owns pacing), NOT `runFrame`. Force
                 // speed to 100% — no turbo / fast-forward / frame-skip / rewind — and
@@ -1359,6 +1668,13 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                     // Mirror the picture to the external display while casting (no-op
                     // otherwise). Same main-thread publish point as the Compose frame.
                     castManager.pushFrame(reuse)
+                    // Experimental Chromecast (CAF) spectator mirror (v1.8.7, #38):
+                    // stream the palette-index plane to the Web Receiver, internally
+                    // throttled to ~20-30fps and 64 KB-capped. Compiled out entirely
+                    // in default builds (flag off); a cheap no-op when no Cast session.
+                    if (BuildConfig.CHROMECAST_ENABLED) {
+                        chromecast.sendFrame(ctrl.indexFramebufferBytes())
+                    }
                 }
                 // Netplay status poll (v1.8.6): refresh the panel/overlay snapshot at a
                 // low cadence whether or not a frame was produced (so a stall / connect
@@ -1371,6 +1687,7 @@ private fun EmulatorScreen(emulator: EmulatorHandle, license: LicenseManager, se
                     npStatus = null
                     npActive = false
                     npHostInfo = null
+                    npRoomCode = null
                 }
                 // RetroAchievements: poll the toast queue + login status at a low
                 // cadence. Cheap when RA is off (a single `raIsEnabled` bool check).

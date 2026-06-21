@@ -15,6 +15,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.7] - 2026-06-20 - "Android" (Connectivity completion)
+
+Completes v1.8.6's connectivity work: **CGNAT / TURN room-code netplay** so phones on
+cellular (symmetric-NAT) networks can play, plus a **robust hardware-controller** input
+pipeline (wired USB + Bluetooth), a **controller-aware UI**, and **Chromecast prep**
+behind a default-off flag. Additive and host-side only — the emulation core stays
+byte-identical, so **AccuracyCoin holds 100% (139/139)** on host CI and the desktop is
+unchanged. This is a sideload-only / GitHub-Releases build (`PLAY_BUILD=false`); the
+Google Play launch moves to **v1.8.8 "Atlas"**.
+
+### Added
+
+- **CGNAT / TURN room-code netplay.** A `NatConnect` orchestrator (STUN discovery →
+  UDP hole-punch → a relay fallback for symmetric NAT) drives a `Registering →
+  Discovering → Exchanging → Punching → (Relaying) → Synced` pump, exchanging each
+  peer's public address via a new `SignalMessage::PublicAddr` routed over the same
+  `signaling::Relay` as browser SDP. The bridge gains `np_host_room` / `np_join_room`
+  (a host emits a deterministic 6-char room code; a peer joins by code), and the
+  Android UI adds an **"Online (room code)"** mode beside the v1.8.6 LAN Host/Join —
+  share the code, join by code, and watch the Registering / Punching / Relaying
+  progress. For symmetric NAT the relay-transport hand-off (`is_relayed`) routes the
+  whole GGPO session over the TURN relay via an `RelayUdpSocket` shim, so
+  `RollbackSession` stays a single transport type. The blocking `tungstenite`
+  signaling client cross-compiles with no tokio. Verified in-process via
+  `nat_loopback` (hole-punch) and `relay_loopback` (a mock RFC 8656 TURN relay,
+  90-frame confirmed-digest parity). The live cross-NAT path needs the maintainer's
+  hosted `deploy/` relay + two devices (carryover); the placeholder signaling URL is
+  overridable in Settings.
+- **Robust hardware controllers (wired USB + Bluetooth).** The Android input pipeline
+  is overhauled from "P1 buttons only" to full pad support: a new `onGenericMotionEvent`
+  handler (previously absent, so analog sticks and the d-pad-as-HAT axis silently
+  failed on 8BitDo / DualSense / OTG pads) reads `AXIS_HAT_X/Y`, sticks past the
+  reported dead-zone, and triggers; per-port P1–P4 masks with `InputManager` hot-plug
+  (auto Four Score at ≥ 3 pads); per-descriptor remapping persisted as JSON keyed by
+  `InputDevice.getDescriptor()`; and turbo / autofire. No Rust change — the bridge
+  already exposed `setButtons(port, …)` + `setFourScore`.
+- **Controller-aware UI.** Connecting a hardware controller hides the on-screen virtual
+  controller and maximizes the ROM display (8:7 PAR, valuable on the Z Fold 7 inner
+  screen); disconnecting restores it. The **Guide** button (best-effort,
+  `KEYCODE_BUTTON_MODE`) or **Start + Select** (guaranteed) opens a controller-navigable
+  menu driven by the d-pad + A/B.
+- **Chromecast prep.** A CAF sender (`ChromecastSender` + a `MediaRouteButton`) and a
+  static Web Receiver render a ~20–30 fps spectator mirror, gated behind a default-off
+  `CHROMECAST_ENABLED` BuildConfig flag — when off the sender is dead code and behaviour
+  is unchanged; the low-latency **Presentation API** stays the primary cast path. The
+  frame is down-sampled to a 128×120 6-bit index plane (~20.5 KB) under the CAF message
+  cap. AirPlay was researched and skipped (no maintained FOSS sender; FairPlay / legal).
+  Live use needs the maintainer's Cast App ID + an HTTPS-hosted receiver (carryover).
+
 ## [1.8.6] - 2026-06-20 - "Android" (Connectivity & scripting)
 
 The connectivity & scripting pass: **Lua**, **RetroAchievements**, and **Netplay** on

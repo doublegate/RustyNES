@@ -113,12 +113,70 @@ class AppSettings(context: Context) {
         get() = prefs.getString("raToken", "") ?: ""
         set(v) { prefs.edit().putString("raToken", v).apply() }
 
+    // Hardware controllers (v1.8.7). The per-pad remap tables are serialized as one
+    // JSON object keyed by InputDevice.getDescriptor (stable across reconnects);
+    // `autofireAB` is the global A/B autofire toggle.
+    /** Serialized per-descriptor gamepad remap tables (JSON; empty = all default). */
+    var gamepadRemaps: String
+        get() = prefs.getString("gpRemaps", "") ?: ""
+        set(v) { prefs.edit().putString("gpRemaps", v).apply() }
+
+    private val _autofireAB = mutableStateOf(prefs.getBoolean("gpAutofireAB", false))
+    var autofireAB: Boolean
+        get() = _autofireAB.value
+        set(v) { _autofireAB.value = v; prefs.edit().putBoolean("gpAutofireAB", v).apply() }
+
+    /** Controller-aware UI (v1.8.7, #41): when a hardware pad is connected, hide the
+     *  on-screen virtual controller and maximize the game view; disconnect restores
+     *  it. Default on; the user can keep the touch controller visible regardless. */
+    private val _autoHideControllerOnPad = mutableStateOf(prefs.getBoolean("gpAutoHide", true))
+    var autoHideControllerOnPad: Boolean
+        get() = _autoHideControllerOnPad.value
+        set(v) { _autoHideControllerOnPad.value = v; prefs.edit().putBoolean("gpAutoHide", v).apply() }
+
     /** Direct-IP / LAN netplay (v1.8.6): the last "ip:port" the user joined, so the
      *  Join field prefills it. Host-only state (the bound port + LAN IP) is derived
      *  live and not persisted. */
     var lastJoinAddress: String
         get() = prefs.getString("npLastJoin", "") ?: ""
         set(v) { prefs.edit().putString("npLastJoin", v).apply() }
+
+    /** Online (room-code) netplay (v1.8.7): the last 6-char room code the user
+     *  joined, so the Join-online field prefills it. */
+    var lastRoomCode: String
+        get() = prefs.getString("npLastRoom", "") ?: ""
+        set(v) { prefs.edit().putString("npLastRoom", v).apply() }
+
+    // Online-netplay endpoints (v1.8.7). The Phase-B bridge has NO hardcoded
+    // defaults, so Phase C supplies them and lets the user override each in the
+    // "Netplay (online)" Settings section. They default to the placeholders in
+    // [NetplayEndpoints] (which point at the maintainer's not-yet-hosted relay) so
+    // a fresh install at least has a coherent — if non-functional until hosted —
+    // config. Empty STUN falls back to the bridge's public Google STUN list.
+
+    /** The signaling relay URL — pathless `wss://<DOMAIN>` (the `deploy/Caddyfile`
+     *  proxies the WebSocket at the site root, no `/ws` segment). Placeholder
+     *  default until the maintainer hosts the `deploy/` stack and replaces it. */
+    var npSignalingUrl: String
+        get() = prefs.getString("npSignalingUrl", NetplayEndpoints.SIGNALING_URL)
+            ?: NetplayEndpoints.SIGNALING_URL
+        set(v) { prefs.edit().putString("npSignalingUrl", v).apply() }
+
+    /** Optional TURN relay `host:port` for the symmetric-NAT fallback (empty =
+     *  punch-or-fail; cone-NAT only). Needs the hosted coturn to be useful. */
+    var npTurnUrl: String
+        get() = prefs.getString("npTurnUrl", "") ?: ""
+        set(v) { prefs.edit().putString("npTurnUrl", v).apply() }
+
+    /** TURN long-term-credential username (paired with [npTurnUrl]). */
+    var npTurnUser: String
+        get() = prefs.getString("npTurnUser", "") ?: ""
+        set(v) { prefs.edit().putString("npTurnUser", v).apply() }
+
+    /** TURN shared secret / password (paired with [npTurnUrl]). */
+    var npTurnSecret: String
+        get() = prefs.getString("npTurnSecret", "") ?: ""
+        set(v) { prefs.edit().putString("npTurnSecret", v).apply() }
 
     // Per-screen-mode (cover / inner / cast) controller size + opacity (item 5).
     // Each mode keeps its own values, so the controller is right on the narrow
@@ -369,6 +427,53 @@ fun SettingsSheet(
                 Text(raStatus)
             }
 
+            // Netplay (online) endpoints (v1.8.7). The bridge has NO hardcoded
+            // defaults, so these supply them. The signaling URL defaults to the
+            // clearly-placeholder relay; until the maintainer hosts the `deploy/`
+            // stack and sets a real URL here, only LAN netplay works. TURN is
+            // optional (cone-NAT hole-punch works without it); fill all three to
+            // enable the symmetric-NAT relay fallback.
+            Text("Netplay (online)")
+            Text(
+                "Room-code play needs a relay server. The default URL is a " +
+                    "placeholder — set your hosted signaling relay to enable it.",
+                style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+            )
+            var npSig by remember { mutableStateOf(settings.npSignalingUrl) }
+            OutlinedTextField(
+                value = npSig,
+                onValueChange = { npSig = it; settings.npSignalingUrl = it },
+                label = { Text("Signaling URL (wss://…)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            var npTUrl by remember { mutableStateOf(settings.npTurnUrl) }
+            OutlinedTextField(
+                value = npTUrl,
+                onValueChange = { npTUrl = it; settings.npTurnUrl = it },
+                label = { Text("TURN URL (optional, host:port)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            var npTUser by remember { mutableStateOf(settings.npTurnUser) }
+            OutlinedTextField(
+                value = npTUser,
+                onValueChange = { npTUser = it; settings.npTurnUser = it },
+                label = { Text("TURN username (optional)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            var npTSecret by remember { mutableStateOf(settings.npTurnSecret) }
+            OutlinedTextField(
+                value = npTSecret,
+                onValueChange = { npTSecret = it; settings.npTurnSecret = it },
+                label = { Text("TURN secret (optional)") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                modifier = Modifier.fillMaxWidth(),
+            )
+
             ToggleRow("Mute audio", settings.muted) { settings.muted = it }
 
             // Native wgpu SurfaceView renderer (v1.8.4, API 33+). Applies on restart.
@@ -392,6 +497,13 @@ fun SettingsSheet(
                     )
                 }
             }
+
+            // Controller-aware UI (v1.8.7, #41): hide the on-screen pad + maximize the
+            // game view while a hardware controller is connected (restored on unplug).
+            ToggleRow(
+                "Hide on-screen pad with a controller",
+                settings.autoHideControllerOnPad,
+            ) { settings.autoHideControllerOnPad = it }
 
             // Per-screen-mode controller size + opacity (item 5). The active mode
             // is shown so it's clear which screen these apply to.

@@ -1,13 +1,26 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v1.8.5 "Android"** (2026-06-20) — the power-user-features
+> **Current release: v1.8.7 "Android"** (2026-06-20) — the connectivity-completion
 > increment on the first **platform** (not accuracy) release line **v1.8.0
 > "Android"**: a complete Android app (shared `rustynes-mobile` UniFFI bridge +
 > `rustynes-android` platform crate + a Jetpack Compose shell; audio /
 > touch+gamepad input / save-states+SRAM+recent-ROMs / pause-FF-mute /
 > foldable+immersive UI; a freemium $2.99 Play unlock + an 8-minute demo, **held to
-> the v1.8.6 Play launch** — interim builds are full-featured via `PLAY_BUILD=false`),
-> verified on a Galaxy Z Fold 7 (SMB / Zelda / AccuracyCoin). **v1.8.5** adds custom
+> v1.8.8 "Atlas"** — interim builds are full-featured via `PLAY_BUILD=false`),
+> verified on a Galaxy Z Fold 7 (SMB / Zelda / AccuracyCoin). **v1.8.7** completes
+> the connectivity work: **CGNAT / TURN room-code netplay** (a `NatConnect` STUN /
+> hole-punch / `PublicAddr`-signaling / TURN-relay-fallback orchestrator + room-code
+> `np_host_room` / `np_join_room` + an "Online (room code)" UI; loopback / mock-verified,
+> live cross-NAT a maintainer carryover), **robust hardware controllers** (the
+> `onGenericMotionEvent` fix for analog-stick / d-pad-as-HAT pads + per-port P1–P4
+> masks + hot-plug + remapping + turbo), a **controller-aware UI** (auto-hide the
+> on-screen pad + a Guide / Start+Select menu), and **Chromecast prep** behind a
+> default-off `CHROMECAST_ENABLED` flag — sideload-only, Play launch deferred to
+> v1.8.8. **v1.8.6** brought **Lua** (the sandboxed desktop engine over the bridge,
+> made `Send`), **RetroAchievements** (login + hardcore + unlock toasts + a `.rap`
+> sidecar; the new shared `rustynes-ra` crate, `ureq` + `rustls` + `ring` TLS), and
+> **direct-IP / LAN netplay** (GGPO rollback over `rustynes-netplay`), plus an Open /
+> Close ROM toggle. **v1.8.5** adds custom
 > **`.pal` palettes**, compressed **`.zip` ROM loading** (extract the first NES entry,
 > like desktop), **Bisqwit composite NTSC on the GPU** (desktop WGSL shared via
 > `rustynes-gfx-shaders`, an `R16Uint` palette-index pipeline fed by the bridge),
@@ -882,8 +895,9 @@ unless the default flips.
 **RustyNES ships at v1.0.0** (the production cut), with the additive,
 off-by-default feature releases **v1.1.0 "Scriptable" → v1.2.0 "Curator" →
 v1.3.0 "Bedrock" → v1.4.0 "Fidelity" (+ the v1.4.1 patch) → v1.5.0 "Lens" →
-v1.6.0 "Studio" → v1.7.0 "Forge" → v1.7.1 (patch)** on top — **v1.7.1 (the
-bugfix/polish patch on v1.7.0 "Forge") is the current release**. The
+v1.6.0 "Studio" → v1.7.0 "Forge" → v1.7.1 (patch)** on top, then the **v1.8.x
+"Android"** platform line (v1.8.0 → … → **v1.8.7 "Android" (Connectivity completion)**,
+the current release). The
 table below is the **engine-lineage** version history
 — the internal engine line whose increments produced the v1.0.0 technology. Its
 `v0.9.x` / `v1.x` / `v2.x` markers are the engine's own line, retained as
