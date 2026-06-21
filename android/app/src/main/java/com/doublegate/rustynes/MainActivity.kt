@@ -499,6 +499,23 @@ private fun loadRom(
         }
         RomLibrary.remember(context, uri.toString(), name ?: uri.lastPathSegment ?: "ROM")
     }
+    // v1.8.8 "Atlas" (Workstream C): record / refresh this game in the box-art
+    // library, keyed by the real ROM SHA-256. The mapper/region come cheaply from
+    // the just-built controller's RomInfo; lastPlayed is stamped now. The user-owned
+    // fields (favorite / box art / folder) are preserved by GameLibrary.upsert.
+    val display = name ?: uri?.lastPathSegment ?: "ROM"
+    val info = runCatching { ctrl.info() }.getOrNull()
+    GameLibrary.upsert(
+        context,
+        GameEntry(
+            sha = sha,
+            name = display,
+            uri = uri?.toString() ?: "",
+            mapper = info?.mapperId?.toInt() ?: -1,
+            region = info?.region?.name ?: "",
+            lastPlayed = System.currentTimeMillis(),
+        ),
+    )
     return "Running" + (name?.let { " · $it" } ?: "")
 }
 
@@ -654,6 +671,23 @@ private fun EmulatorScreen(
     val scope = rememberCoroutineScope()
     var status by remember { mutableStateOf(context.getString(R.string.status_open_rom)) }
     var recents by remember { mutableStateOf(RomLibrary.recents(context)) }
+    // v1.8.8 "Atlas" (Workstream C): the box-art library state. `libraryVersion` is
+    // bumped on every mutation to recompute the filtered/sorted view + folder list.
+    var libraryVersion by remember { mutableStateOf(0) }
+    var libFolder by remember { mutableStateOf<String?>(null) }
+    var libFavoritesOnly by remember { mutableStateOf(false) }
+    var libQuery by remember { mutableStateOf("") }
+    var librarySort by remember { mutableStateOf(LibrarySort.RECENT) }
+    val libraryEntries = remember(libraryVersion, libFolder, libFavoritesOnly, libQuery, librarySort) {
+        GameLibrary.view(context, libFolder, libFavoritesOnly, libQuery, librarySort)
+    }
+    val libraryFolders = remember(libraryVersion) { GameLibrary.folders(context) }
+    // The game a long-press/context action currently targets (set box art / move).
+    var boxArtTarget by remember { mutableStateOf<GameEntry?>(null) }
+    var folderTarget by remember { mutableStateOf<GameEntry?>(null) }
+    var boxArtPreview by remember { mutableStateOf<BoxArtPreview?>(null) }
+    // Folder batch-import progress (null = idle): (done, total).
+    var importProgress by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     // Demo session clock: seconds remaining this launch (full unlock = no limit).
     var demoSecondsLeft by remember { mutableStateOf(DEMO_SESSION_SECONDS) }
     var demoExpired by remember { mutableStateOf(false) }
@@ -949,6 +983,73 @@ private fun EmulatorScreen(
         }
     }
 
+    // v1.8.8 "Atlas" (Workstream C): SAF image picker to set a game's box art. The
+    // picked content URI is persisted (a read grant taken) and stored on the entry.
+    val boxArtPicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        val target = boxArtTarget
+        if (uri != null && target != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                )
+            }
+            GameLibrary.setBoxArt(context, target.sha, uri.toString())
+            libraryVersion++
+        }
+        boxArtTarget = null
+        boxArtPreview = null
+    }
+
+    // v1.8.8 "Atlas" (Workstream C): batch folder import. ACTION_OPEN_DOCUMENT_TREE
+    // grants a persistable read over a whole directory; we enumerate it for ROM files
+    // (+ sibling box-art images) off the main thread and register each in the library.
+    val treeImporter = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocumentTree(),
+    ) { treeUri ->
+        if (treeUri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    treeUri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                )
+            }
+            scope.launch {
+                importProgress = 0 to 0
+                val added = withContext(Dispatchers.IO) {
+                    LibraryImport.importTree(context, treeUri) { done, total ->
+                        importProgress = done to total
+                    }
+                }
+                importProgress = null
+                libraryVersion++
+                status = context.getString(R.string.library_imported_count, added)
+            }
+        }
+    }
+
+    // v1.8.8 "Atlas" (Workstream C): auto-match box art from the libretro library for
+    // a game (user-triggered). Shows a preview before applying; on no match offers the
+    // manual SAF picker. Network fetch + decode run off the main thread.
+    fun findBoxArt(entry: GameEntry) {
+        boxArtTarget = entry
+        boxArtPreview = BoxArtPreview.Searching(entry.name)
+        scope.launch {
+            val file = withContext(Dispatchers.IO) {
+                // Prefer the user's ScreenScraper / TheGamesDB credentials if set;
+                // fall back to the no-account libretro-thumbnails corpus.
+                ScraperSources.fetchBoxArt(context, settings, entry.sha, entry.name)
+            }
+            boxArtPreview = if (file != null) {
+                BoxArtPreview.Found(android.net.Uri.fromFile(file).toString(), entry.name)
+            } else {
+                BoxArtPreview.NotFound(entry.name)
+            }
+        }
+    }
+
     // Identify the loaded ROM to RetroAchievements: compute its SHA-256, read any
     // saved progress sidecar, and call raLoadGame off-thread. A no-op unless RA is
     // enabled, a ROM is loaded, and the session is logged in. Marks raGameLoaded so
@@ -1100,7 +1201,26 @@ private fun EmulatorScreen(
                 ?: throw java.io.IOException("can't open recent ROM stream")).use { it.readBytes() }
             status = loadRom(context, emulator, bytes, uri, rom.name, unlocked, settings)
             recents = RomLibrary.recents(context)
+            libraryVersion++
         }.onFailure { status = "Can't open ${rom.name}: ${it.message}" }
+    }
+
+    // v1.8.8 "Atlas" (Workstream C): open a library game by its entry. Loads from the
+    // persistable SAF URI; an entry with no URI (a migrated recent that was never
+    // re-opened, or a debug autoload) can't be loaded that way and reports as much.
+    fun playGame(entry: GameEntry) {
+        if (entry.uri.isEmpty()) {
+            status = "No file for ${entry.name} — open it once to link it"
+            return
+        }
+        runCatching {
+            val uri = Uri.parse(entry.uri)
+            val bytes = (context.contentResolver.openInputStream(uri)
+                ?: throw java.io.IOException("can't open ROM stream")).use { it.readBytes() }
+            status = loadRom(context, emulator, bytes, uri, entry.name, unlocked, settings)
+            recents = RomLibrary.recents(context)
+            libraryVersion++
+        }.onFailure { status = "Can't open ${entry.name}: ${it.message}" }
     }
 
     // Demo countdown: tick once per second while a ROM is running, unpaused, and
@@ -1189,19 +1309,43 @@ private fun EmulatorScreen(
     // Compact/medium widths keep the single-pane phone layout. This is a solid first
     // version of the list-detail pane; TODO(v1.8.8 WS C): grow the rail into the full
     // box-art library grid (favorites / folders / search) via NavigableListDetailPaneScaffold.
+    // v1.8.8 "Atlas" (Workstream C): the shared box-art library content, used as the
+    // expanded-width list pane (below) and the compact idle screen (when no ROM is
+    // loaded). The same handlers drive both so a phone and a tablet behave identically.
+    val libraryContent: @Composable (Modifier) -> Unit = { mod ->
+        LibraryScreen(
+            entries = libraryEntries,
+            folders = libraryFolders,
+            selectedFolder = libFolder,
+            favoritesOnly = libFavoritesOnly,
+            query = libQuery,
+            sort = librarySort,
+            onOpen = { picker.launch(arrayOf("*/*")) },
+            onImportFolder = { treeImporter.launch(null) },
+            onSelectFolder = { folder, favs -> libFolder = folder; libFavoritesOnly = favs },
+            onQueryChange = { libQuery = it },
+            onSortChange = { librarySort = it },
+            onPlay = { playGame(it) },
+            onToggleFavorite = {
+                GameLibrary.setFavorite(context, it.sha, !it.favorite)
+                libraryVersion++
+            },
+            onSetBoxArt = { findBoxArt(it) },
+            onMoveToFolder = { folderTarget = it },
+            onRemove = {
+                GameLibrary.remove(context, it.sha)
+                libraryVersion++
+            },
+            modifier = mod,
+        )
+    }
+
     Row(modifier = Modifier.fillMaxSize()) {
         if (isExpandedWidth) {
-            LibraryRail(
-                recents = recents,
-                onOpen = { picker.launch(arrayOf("*/*")) },
-                onOpenRecent = { openRecent(it) },
-                onClearRecents = {
-                    RomLibrary.clear(context)
-                    recents = RomLibrary.recents(context)
-                },
-                modifier = Modifier
+            libraryContent(
+                Modifier
                     .fillMaxHeight()
-                    .width(280.dp)
+                    .width(340.dp)
                     .windowInsetsPadding(WindowInsets.safeDrawing),
             )
         }
@@ -1347,47 +1491,34 @@ private fun EmulatorScreen(
                 )
             }
             if (current == null) {
-                // Idle: status + the recent-ROMs list (tap to resume). Inset-padded so
-                // the list never tucks under the system bars on the idle screen (the
-                // bars are visible here — immersive only kicks in during gameplay).
-                Column(
-                    modifier = Modifier
-                        .safeDrawingPadding()
-                        .verticalScroll(rememberScrollState())
-                        .padding(16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
+                // Idle screen. On a compact / medium-width window (phone, folded cover
+                // screen) show the full box-art library grid here (v1.8.8 WS C). On an
+                // expanded-width window the library already lives in the persistent side
+                // pane, so the player area just shows the status line. Inset-padded so
+                // nothing tucks under the system bars (visible on the idle screen).
+                if (isExpandedWidth) {
                     // TODO(i18n): `status` is a dynamic, frequently-reassigned string
-                    // (load results, error messages); these transient status lines are
-                    // a deferred i18n surface and read English until translated.
-                    Text(status, color = Color.White)
-                    if (recents.isNotEmpty()) {
-                        Spacer(Modifier.height(16.dp))
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        ) {
-                            Text(stringResource(R.string.label_recent), color = Color.Gray)
-                            Text(
-                                stringResource(R.string.label_clear_recent),
-                                color = Color(0xFFEF9A9A),
-                                modifier = Modifier.clickable {
-                                    RomLibrary.clear(context)
-                                    recents = RomLibrary.recents(context)
-                                },
-                            )
-                        }
-                        recents.forEach { rom ->
-                            Text(
-                                rom.name,
-                                color = Color(0xFFB39DDB),
-                                modifier = Modifier
-                                    .padding(vertical = 8.dp)
-                                    .clickable { openRecent(rom) },
-                            )
-                        }
-                    }
+                    // (load results, error messages) — a deferred i18n surface.
+                    Text(
+                        status,
+                        color = Color.White,
+                        modifier = Modifier.safeDrawingPadding().padding(16.dp),
+                    )
+                } else {
+                    libraryContent(
+                        Modifier
+                            .fillMaxSize()
+                            .safeDrawingPadding(),
+                    )
                 }
+            }
+            // Folder batch-import progress banner (v1.8.8 WS C).
+            importProgress?.let { (done, total) ->
+                ImportProgressBanner(
+                    done,
+                    total,
+                    modifier = Modifier.align(Alignment.BottomCenter).padding(12.dp),
+                )
             }
             // While casting, a small banner over the (still-mirrored) phone picture.
             if (castManager.casting) {
@@ -1721,6 +1852,35 @@ private fun EmulatorScreen(
         )
     }
 
+    // v1.8.8 "Atlas" (Workstream C): move-to-folder dialog (pick/create a collection).
+    folderTarget?.let { target ->
+        MoveToFolderDialog(
+            current = target.folder,
+            folders = libraryFolders,
+            onConfirm = { folder ->
+                GameLibrary.setFolder(context, target.sha, folder)
+                libraryVersion++
+                folderTarget = null
+            },
+            onDismiss = { folderTarget = null },
+        )
+    }
+
+    // v1.8.8 "Atlas" (Workstream C): box-art preview dialog (auto-match -> preview ->
+    // apply, or fall back to the manual SAF image picker).
+    boxArtPreview?.let { preview ->
+        BoxArtPreviewDialog(
+            state = preview,
+            onApply = { uri ->
+                boxArtTarget?.let { GameLibrary.setBoxArt(context, it.sha, uri); libraryVersion++ }
+                boxArtPreview = null
+                boxArtTarget = null
+            },
+            onPickManually = { boxArtPicker.launch(arrayOf("image/*")) },
+            onDismiss = { boxArtPreview = null; boxArtTarget = null },
+        )
+    }
+
     // Demo-expired gate: a blocking sheet over everything with Unlock + Restore.
     if (!unlocked && demoExpired) {
         DemoExpiredOverlay(
@@ -1950,62 +2110,6 @@ private fun packRgbaToArgb(rgba: ByteArray, out: IntArray) {
     }
 }
 
-/**
- * v1.8.8 "Atlas" (Workstream A): the expanded-width library rail — a persistent
- * side pane (tablet / unfolded foldable / desktop window) listing recent ROMs with
- * an Open button. The compact/medium phone layout keeps the in-Box recents list
- * instead; this is the "list" pane of the adaptive list-detail layout (the player is
- * the "detail" pane). TODO(WS C): replace with the full box-art grid.
- */
-@Composable
-private fun LibraryRail(
-    recents: List<RecentRom>,
-    onOpen: () -> Unit,
-    onOpenRecent: (RecentRom) -> Unit,
-    onClearRecents: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Column(
-        modifier = modifier
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-    ) {
-        Text(
-            stringResource(R.string.label_library),
-            color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 18.sp,
-            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-        )
-        Spacer(Modifier.height(12.dp))
-        Button(onClick = onOpen, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.action_open_rom)) }
-        if (recents.isNotEmpty()) {
-            Spacer(Modifier.height(16.dp))
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Text(stringResource(R.string.label_recent), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(
-                    stringResource(R.string.label_clear),
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.clickable { onClearRecents() },
-                )
-            }
-            Spacer(Modifier.height(8.dp))
-            recents.forEach { rom ->
-                Text(
-                    rom.name,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 8.dp)
-                        .clickable { onOpenRecent(rom) },
-                )
-            }
-        }
-    }
-}
 
 /** Blocking sheet shown when the free 10-minute demo session expires. */
 @Composable

@@ -30,6 +30,31 @@
     <string name="label_clear_recent">Borrar recientes</string>
     <string name="label_clear">Borrar</string>
     <string name="label_library">Biblioteca</string>
+
+    <!-- ===== Biblioteca de carátulas (Workstream C) ===== -->
+    <string name="library_import_folder">Importar carpeta…</string>
+    <string name="library_search">Buscar</string>
+    <string name="library_all">Todos</string>
+    <string name="library_favorites">Favoritos</string>
+    <string name="library_sort">Ordenar:</string>
+    <string name="library_sort_recent">Recientes</string>
+    <string name="library_sort_name">Nombre</string>
+    <string name="library_sort_favorite">Favorito</string>
+    <string name="library_empty">Aún no hay juegos. Abre una ROM o importa una carpeta.</string>
+    <string name="library_favorite">Favorito</string>
+    <string name="library_unfavorite">Quitar de favoritos</string>
+    <string name="library_set_box_art">Definir carátula…</string>
+    <string name="library_move_to_folder">Mover a carpeta…</string>
+    <string name="library_remove">Quitar de la biblioteca</string>
+    <string name="library_folder_name">Nombre de la carpeta</string>
+    <string name="library_move">Mover</string>
+    <string name="library_box_art">Carátula</string>
+    <string name="library_apply">Aplicar</string>
+    <string name="library_pick_image">Elegir imagen…</string>
+    <string name="library_searching_art">Buscando carátula para %1$s…</string>
+    <string name="library_no_art_found">No se encontró carátula para %1$s. Elige una imagen.</string>
+    <string name="library_importing">Importando %1$d de %2$d…</string>
+    <string name="library_imported_count">%1$d juegos importados</string>
     <string name="action_unlock">Desbloquear %1$s</string>
     <string name="demo_remaining">Demo · %1$d:%2$02d</string>
     <string name="status_open_rom">Abre una ROM .nes para empezar</string>
@@ -69,6 +94,11 @@
     <string name="settings_turn_url">URL TURN (opcional, host:puerto)</string>
     <string name="settings_turn_user">Usuario TURN (opcional)</string>
     <string name="settings_turn_secret">Secreto TURN (opcional)</string>
+    <string name="settings_box_art_sources">Fuentes de carátulas</string>
+    <string name="settings_box_art_hint">La opción \"Buscar carátula\" usa la base de datos gratuita libretro-thumbnails (sin cuenta). Añade tu propia clave de API de TheGamesDB para más carátulas. La compatibilidad con ScreenScraper llegará en una actualización futura.</string>
+    <string name="settings_ss_user">Usuario de ScreenScraper (próximamente)</string>
+    <string name="settings_ss_password">Contraseña de ScreenScraper (próximamente)</string>
+    <string name="settings_tgdb_key">Clave de API de TheGamesDB (opcional)</string>
     <string name="settings_mute_audio">Silenciar audio</string>
     <string name="settings_dynamic_color">Material You (color dinámico)</string>
     <string name="settings_gpu_renderer">Renderizador GPU (reinicia para aplicar)</string>

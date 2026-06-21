@@ -220,6 +220,13 @@ dependencies {
     // v1.8.8 "Atlas" (Workstream K): Android-12+ system splash via the back-compat
     // SplashScreen API (installSplashScreen() before super.onCreate()).
     implementation("androidx.core:core-splashscreen:1.2.0")
+    // v1.8.8 "Atlas" (Workstream C): async image loading + caching for the box-art
+    // library grid. Coil 3 (io.coil-kt.coil3) loads local `content://`/`file://` URIs
+    // through Android's ContentResolver WITHOUT any network artifact, so we add only
+    // `coil-compose` (the core + the AsyncImage composable). The libretro box-art
+    // auto-match (BoxArt.kt) does its own one-shot HttpURLConnection download to a
+    // file:// cache, so no Coil network fetcher (coil-network-*) is pulled in either.
+    implementation("io.coil-kt.coil3:coil-compose:3.5.0")
     // UniFFI's generated Kotlin loads the cdylib through JNA; the `@aar`
     // classifier pulls the Android-native JNA dispatcher.
     implementation("net.java.dev.jna:jna:5.18.1@aar")

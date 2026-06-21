@@ -33,6 +33,34 @@
     <string name="label_clear_recent">Clear Recent</string>
     <string name="label_clear">Clear</string>
     <string name="label_library">Library</string>
+
+    <!-- ===== Box-art library (Workstream C) ===== -->
+    <string name="library_import_folder">Import folder…</string>
+    <string name="library_search">Search</string>
+    <string name="library_all">All</string>
+    <string name="library_favorites">Favorites</string>
+    <string name="library_sort">Sort:</string>
+    <string name="library_sort_recent">Recent</string>
+    <string name="library_sort_name">Name</string>
+    <string name="library_sort_favorite">Favorite</string>
+    <string name="library_empty">No games yet. Open a ROM or import a folder.</string>
+    <string name="library_favorite">Favorite</string>
+    <string name="library_unfavorite">Remove favorite</string>
+    <string name="library_set_box_art">Set box art…</string>
+    <string name="library_move_to_folder">Move to folder…</string>
+    <string name="library_remove">Remove from library</string>
+    <string name="library_folder_name">Folder name</string>
+    <string name="library_move">Move</string>
+    <string name="library_box_art">Box art</string>
+    <string name="library_apply">Apply</string>
+    <string name="library_pick_image">Pick image…</string>
+    <!-- %s = the game name -->
+    <string name="library_searching_art">Searching for box art for %1$s…</string>
+    <string name="library_no_art_found">No box art found for %1$s. Pick an image instead.</string>
+    <!-- %1$d done, %2$d total -->
+    <string name="library_importing">Importing %1$d of %2$d…</string>
+    <!-- %d = ROMs added -->
+    <string name="library_imported_count">Imported %1$d games</string>
     <!-- %s = the formatted price, e.g. "$2.99" -->
     <string name="action_unlock">Unlock %1$s</string>
     <!-- %1$d minutes, %2$d seconds remaining in the free demo session -->
@@ -76,6 +104,11 @@
     <string name="settings_turn_url">TURN URL (optional, host:port)</string>
     <string name="settings_turn_user">TURN username (optional)</string>
     <string name="settings_turn_secret">TURN secret (optional)</string>
+    <string name="settings_box_art_sources">Box-art sources</string>
+    <string name="settings_box_art_hint">The library\'s \"Find box art\" uses the free libretro-thumbnails database (no account). Add your own TheGamesDB API key for richer art. ScreenScraper support is coming in a future update.</string>
+    <string name="settings_ss_user">ScreenScraper user (coming soon)</string>
+    <string name="settings_ss_password">ScreenScraper password (coming soon)</string>
+    <string name="settings_tgdb_key">TheGamesDB API key (optional)</string>
     <string name="settings_mute_audio">Mute audio</string>
     <string name="settings_dynamic_color">Material You (dynamic color)</string>
     <string name="settings_gpu_renderer">GPU renderer (restart to apply)</string>

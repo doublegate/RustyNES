@@ -149,10 +149,11 @@ class AppSettings(context: Context) {
         get() = prefs.getString("raUsername", "") ?: ""
         set(v) { prefs.edit().putString("raUsername", v).apply() }
 
-    /** The RA login token — persisted (NEVER the password) for a silent re-login. */
+    /** The RA login token — persisted (NEVER the password) for a silent re-login.
+     *  Encrypted at rest (AES-256-GCM, Android Keystore) via [SecurePrefs]. */
     var raToken: String
-        get() = prefs.getString("raToken", "") ?: ""
-        set(v) { prefs.edit().putString("raToken", v).apply() }
+        get() = SecurePrefs.getSecret(prefs, "raToken")
+        set(v) { SecurePrefs.putSecret(prefs, "raToken", v) }
 
     // Hardware controllers (v1.8.7). The per-pad remap tables are serialized as one
     // JSON object keyed by InputDevice.getDescriptor (stable across reconnects);
@@ -213,10 +214,11 @@ class AppSettings(context: Context) {
         get() = prefs.getString("npTurnUser", "") ?: ""
         set(v) { prefs.edit().putString("npTurnUser", v).apply() }
 
-    /** TURN shared secret / password (paired with [npTurnUrl]). */
+    /** TURN shared secret / password (paired with [npTurnUrl]). Encrypted at rest
+     *  (AES-256-GCM, Android Keystore) via [SecurePrefs]. */
     var npTurnSecret: String
-        get() = prefs.getString("npTurnSecret", "") ?: ""
-        set(v) { prefs.edit().putString("npTurnSecret", v).apply() }
+        get() = SecurePrefs.getSecret(prefs, "npTurnSecret")
+        set(v) { SecurePrefs.putSecret(prefs, "npTurnSecret", v) }
 
     // Per-screen-mode (cover / inner / cast) controller size + opacity (item 5).
     // Each mode keeps its own values, so the controller is right on the narrow
@@ -244,6 +246,30 @@ class AppSettings(context: Context) {
 
     // Per-filter shader params (v1.8.4) — tuned via the sliders that appear for the
     // selected filter on the GPU renderer. Defaults match the phone-tuned look.
+    // Box-art scraper sources (v1.8.8 "Atlas", Workstream C). The library auto-match
+    // tries these in order: ScreenScraper (if the user filled in their account) then
+    // TheGamesDB (if a public API key is set) then the no-account libretro-thumbnails
+    // corpus (always available). All are user-supplied: RustyNES bundles no art and
+    // ships no keys, so the no-bundled-content posture holds. Credentials are the
+    // USER's own personal account / key (never the developer's).
+
+    /** ScreenScraper user login (ssid). Empty = don't use ScreenScraper. */
+    var ssUser: String
+        get() = prefs.getString("ssUser", "") ?: ""
+        set(v) { prefs.edit().putString("ssUser", v).apply() }
+
+    /** ScreenScraper user password (sspassword). Encrypted at rest (AES-256-GCM,
+     *  Android Keystore) via [SecurePrefs]; stored locally only. */
+    var ssPassword: String
+        get() = SecurePrefs.getSecret(prefs, "ssPass")
+        set(v) { SecurePrefs.putSecret(prefs, "ssPass", v) }
+
+    /** TheGamesDB public API key (the user's own key). Empty = don't use TheGamesDB.
+     *  Encrypted at rest (AES-256-GCM, Android Keystore) via [SecurePrefs]. */
+    var tgdbApiKey: String
+        get() = SecurePrefs.getSecret(prefs, "tgdbKey")
+        set(v) { SecurePrefs.putSecret(prefs, "tgdbKey", v) }
+
     private fun floatState(key: String, default: Float) = mutableFloatStateOf(prefs.getFloat(key, default))
     private val _scanInt = floatState("scanInt", 0.5f)
     private val _scanRows = floatState("scanRows", 240f)
@@ -543,6 +569,48 @@ fun SettingsSheet(
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            // Box-art sources (v1.8.8 "Atlas", Workstream C). Optional power-user
+            // credentials for the library's "Find box art" auto-match. The libretro
+            // corpus always works with no account; filling in a ScreenScraper account
+            // or a TheGamesDB API key adds those richer DBs (tried first). All values
+            // are the user's own and stored locally only — RustyNES ships none.
+            Text(stringResource(R.string.settings_box_art_sources))
+            Text(
+                stringResource(R.string.settings_box_art_hint),
+                style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+            )
+            // ScreenScraper credential fields are hidden until RustyNES has a
+            // registered devid/softname (ScraperSources.SS_ENABLED). The client +
+            // persisted fields exist; they're surfaced once the dev account lands.
+            if (ScraperSources.SS_ENABLED) {
+                var ssUser by remember { mutableStateOf(settings.ssUser) }
+                OutlinedTextField(
+                    value = ssUser,
+                    onValueChange = { ssUser = it; settings.ssUser = it },
+                    label = { Text(stringResource(R.string.settings_ss_user)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                var ssPass by remember { mutableStateOf(settings.ssPassword) }
+                OutlinedTextField(
+                    value = ssPass,
+                    onValueChange = { ssPass = it; settings.ssPassword = it },
+                    label = { Text(stringResource(R.string.settings_ss_password)) },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            var tgdbKey by remember { mutableStateOf(settings.tgdbApiKey) }
+            OutlinedTextField(
+                value = tgdbKey,
+                onValueChange = { tgdbKey = it; settings.tgdbApiKey = it },
+                label = { Text(stringResource(R.string.settings_tgdb_key)) },
+                singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
 
