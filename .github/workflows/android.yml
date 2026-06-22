@@ -120,6 +120,11 @@ jobs:
         run: echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
       - uses: gradle/actions/setup-gradle@v6
         with:
+          # v6 extracted the default ("enhanced") Gradle User Home cache into the
+          # closed-source `gradle-actions-caching` library (separate Terms of Use).
+          # RustyNES is OSS, so pin the fully open-source (MIT) provider built on
+          # the standard GitHub Actions cache instead of the proprietary default.
+          cache-provider: basic
           # Publish a Gradle Build Scan for every run (the free scans.gradle.com
           # service) so CI Gradle failures have a shareable diagnostic URL in the
           # log. ToS auto-accepted for the public service.
