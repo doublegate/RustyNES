@@ -73,7 +73,7 @@ jobs:
       promotable: ${{ steps.gate.outputs.promotable }}
       speedup_pct: ${{ steps.gate.outputs.speedup_pct }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # Pinned to the project toolchain (rust-toolchain.toml = 1.96.0), matching
       # the other jobs. PGO needs the llvm-tools-preview component (profdata
@@ -192,7 +192,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/rust-setup
         with:
           toolchain: 1.96.0

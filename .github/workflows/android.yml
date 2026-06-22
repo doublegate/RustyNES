@@ -39,7 +39,7 @@ jobs:
     name: NDK cross-build + UniFFI bindings
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # The project toolchain (rust-toolchain.toml = 1.96) plus the two shipped
       # Android targets (arm64 ships; x86_64 is the emulator/CI ABI).
@@ -104,7 +104,7 @@ jobs:
     continue-on-error: true
     needs: cross-build
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install Android Rust targets
         run: rustup target add aarch64-linux-android x86_64-linux-android
       - uses: Swatinem/rust-cache@v2
@@ -112,13 +112,13 @@ jobs:
           key: android-ndk
       - name: Install cargo-ndk
         run: cargo install cargo-ndk --version "^3" --locked
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
       - name: Resolve NDK
         run: echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
         with:
           # Publish a Gradle Build Scan for every run (the free scans.gradle.com
           # service) so CI Gradle failures have a shareable diagnostic URL in the

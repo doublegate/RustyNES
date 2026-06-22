@@ -52,7 +52,7 @@ jobs:
     name: Dependency Audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       # Install the PREBUILT binary, never `cargo install` (build-from-source):
       # the repo pins rustc 1.96 (rust-toolchain.toml), but the current
       # cargo-audit release needs >= 1.88 to COMPILE. The prebuilt binary RUNS
@@ -67,7 +67,7 @@ jobs:
     name: Cargo Deny Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       # Prebuilt binary for the same reason as the audit job: the latest
       # cargo-deny needs rustc >= 1.88 to build from source, while the repo is
       # pinned to 1.96. Policy lives in `deny.toml`.
@@ -80,7 +80,7 @@ jobs:
     name: Clippy Security Lints
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/rust-setup
         with:
           toolchain: 1.96.0
