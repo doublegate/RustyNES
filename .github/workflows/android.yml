@@ -118,7 +118,7 @@ jobs:
           java-version: '17'
       - name: Resolve NDK
         run: echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
         with:
           # Publish a Gradle Build Scan for every run (the free scans.gradle.com
           # service) so CI Gradle failures have a shareable diagnostic URL in the
