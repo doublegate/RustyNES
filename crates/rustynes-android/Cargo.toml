@@ -34,7 +34,7 @@ log = "0.4"
 # `android-activity` — the `android_main` entry for the beta.1 winit+wgpu spike.
 # `android_logger` — routes `log` to logcat.
 [target.'cfg(target_os = "android")'.dependencies]
-jni = "0.21"
+jni = "0.22"
 ndk = "0.9"
 ndk-context = "0.1"
 android-activity = { version = "0.6", features = ["game-activity"] }
