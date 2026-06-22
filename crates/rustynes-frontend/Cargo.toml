@@ -321,7 +321,7 @@ png = "0.18"
 # so it reuses the already-present flate2 / miniz_oxide rather than pulling in
 # the AES / zstd / bzip2 extras. The wasm load path receives raw bytes from the
 # browser file picker, so it never needs zip.
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "8", default-features = false, features = ["deflate"] }
 
 # v1.8.5 — the HD-pack loader + compositor + HD audio moved to `rustynes-hdpack`
 # (so the mobile bridge can reach it; the core is no_std). The frontend re-exports
