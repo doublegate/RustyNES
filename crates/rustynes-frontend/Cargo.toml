@@ -232,7 +232,7 @@ sha2.workspace = true
 
 # Frontend-only utilities. Both already in the dependency tree as
 # transitive deps of wgpu; adding them as direct deps is free.
-pollster = "0.3"
+pollster = "0.4"
 bytemuck = "1"
 web-time.workspace = true
 
