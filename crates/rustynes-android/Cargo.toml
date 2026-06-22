@@ -38,7 +38,7 @@ jni = "0.21"
 ndk = "0.9"
 ndk-context = "0.1"
 android-activity = { version = "0.6", features = ["game-activity"] }
-android_logger = "0.14"
+android_logger = "0.15"
 # wgpu render path (Workstream B): draw the NES picture onto the SurfaceView's
 # `ANativeWindow` with an 8:7-PAR letterbox blit, off the UI/Bitmap thread. Same
 # wgpu major the desktop frontend uses (29); raw-window-handle 0.6 builds the
