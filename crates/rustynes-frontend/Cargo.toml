@@ -451,4 +451,4 @@ tempfile = "3"
 # NTSC filter. Pinned to wgpu 25's naga (25.x) so the validation matches what
 # ships AND the two don't duplicate (naga 28 also fails to build against the
 # resolved codespan-reporting).
-naga = { version = "25", features = ["wgsl-in"] }
+naga = { version = "29", features = ["wgsl-in"] }
