@@ -76,7 +76,7 @@ jobs:
             archive_ext: zip
             bin_name: rustynes.exe
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # Shared toolchain + Linux deps (no-op on macOS/Windows) + cargo cache.
       # The per-target cache key keeps each platform's artifacts separate.

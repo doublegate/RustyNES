@@ -39,7 +39,7 @@ jobs:
     name: NDK cross-build + UniFFI bindings
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # The project toolchain (rust-toolchain.toml = 1.96) plus the two shipped
       # Android targets (arm64 ships; x86_64 is the emulator/CI ABI).
@@ -104,7 +104,7 @@ jobs:
     continue-on-error: true
     needs: cross-build
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install Android Rust targets
         run: rustup target add aarch64-linux-android x86_64-linux-android
       - uses: Swatinem/rust-cache@v2

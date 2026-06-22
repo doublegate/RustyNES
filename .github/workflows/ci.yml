@@ -77,7 +77,7 @@ jobs:
       # the base commit. (On `pull_request` it uses the GitHub API and needs no
       # history.) Without this the push-event filter falls back to "everything
       # changed" — safe, but it loses the docs-only skip on direct main pushes.
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: dorny/paths-filter@v3
@@ -138,7 +138,7 @@ jobs:
     env:
       RUSTDOCFLAGS: -D warnings
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/rust-setup
         with:
           toolchain: 1.96.0
@@ -182,7 +182,7 @@ jobs:
       matrix:
         os: ${{ fromJSON(needs.setup.outputs.os) }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/rust-setup
         with:
           cache-key: test
@@ -197,7 +197,7 @@ jobs:
     if: ${{ needs.changes.outputs.code == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/rust-setup
         with:
           cache-key: test-roms
@@ -221,7 +221,7 @@ jobs:
     if: ${{ needs.changes.outputs.code == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/rust-setup
         with:
           targets: thumbv7em-none-eabihf
@@ -239,7 +239,7 @@ jobs:
     if: ${{ needs.changes.outputs.code == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/rust-setup
         with:
           targets: wasm32-unknown-unknown
@@ -262,7 +262,7 @@ jobs:
     if: ${{ needs.changes.outputs.code == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/rust-setup
         with:
           apt: "false"
