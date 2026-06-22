@@ -21,7 +21,7 @@ rustynes-ppu = { workspace = true, features = ["hd-pack"] }
 # Decode replacement tiles (png), load `.zip` packs (deflate only), and decode
 # HD-audio OGG tracks (lewton is pure-Rust, so it cross-compiles to Android).
 png = "0.18"
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "8", default-features = false, features = ["deflate"] }
 lewton = "0.10"
 
 [dev-dependencies]

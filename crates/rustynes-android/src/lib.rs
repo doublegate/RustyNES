@@ -106,7 +106,14 @@ mod android {
         //! destroy. The handle is a boxed [`AndroidGfx`] pointer as a `jlong`.
 
         use crate::gfx::AndroidGfx;
-        use jni::JNIEnv;
+        // jni 0.22 split the old `JNIEnv` into `Env` (owned, safe) and
+        // `EnvUnowned` (the FFI-safe wrapper the JVM hands a native method).
+        // Array/string accessors live on `Env`, reached via `EnvUnowned::with_env`
+        // (which also catches panics so they can't unwind across the JVM boundary);
+        // `LogErrorAndDefault` logs any JNI error and returns `T::default()`,
+        // preserving the old "drop this frame, keep running" behaviour.
+        use jni::EnvUnowned;
+        use jni::errors::LogErrorAndDefault;
         use jni::objects::{JByteArray, JObject};
         use jni::sys::{jfloat, jint, jlong};
         use ndk::native_window::NativeWindow;
@@ -118,7 +125,7 @@ mod android {
         /// Invoked by the JVM; `surface` is a live `android.view.Surface`.
         #[unsafe(no_mangle)]
         pub extern "C" fn Java_com_doublegate_rustynes_NativeRenderer_nativeInitSurface(
-            env: JNIEnv,
+            env: EnvUnowned,
             _this: JObject,
             surface: JObject,
             width: jint,
@@ -126,10 +133,10 @@ mod android {
         ) -> jlong {
             // SAFETY: `surface` is a valid Surface jobject for this call;
             // `ANativeWindow_fromSurface` returns a new owned reference that
-            // `NativeWindow` takes ownership of (released on drop).
-            let window = unsafe {
-                NativeWindow::from_surface(env.get_raw().cast(), surface.as_raw().cast())
-            };
+            // `NativeWindow` takes ownership of (released on drop). `as_raw` is the
+            // jni 0.22 spelling of the old `get_raw` — the same `*mut sys::JNIEnv`.
+            let window =
+                unsafe { NativeWindow::from_surface(env.as_raw().cast(), surface.as_raw().cast()) };
             let Some(window) = window else {
                 log::error!("nativeInitSurface: ANativeWindow_fromSurface returned null");
                 return 0;
@@ -149,7 +156,7 @@ mod android {
         /// `handle` must be a live value returned by `nativeInitSurface`.
         #[unsafe(no_mangle)]
         pub extern "C" fn Java_com_doublegate_rustynes_NativeRenderer_nativeResize(
-            _env: JNIEnv,
+            _env: EnvUnowned,
             _this: JObject,
             handle: jlong,
             width: jint,
@@ -171,7 +178,7 @@ mod android {
         /// `handle` must be live; `fb` a Java `byte[]` of the framebuffer.
         #[unsafe(no_mangle)]
         pub extern "C" fn Java_com_doublegate_rustynes_NativeRenderer_nativeRender(
-            env: JNIEnv,
+            mut env: EnvUnowned,
             _this: JObject,
             handle: jlong,
             fb: JByteArray,
@@ -179,22 +186,30 @@ mod android {
             if handle == 0 {
                 return;
             }
-            let Ok(len) = env.get_array_length(&fb) else {
-                return;
-            };
             // SAFETY: live handle (see `nativeResize`).
             let gfx = unsafe { &mut *(handle as *mut AndroidGfx) };
-            let buf = gfx.frame_buf_mut();
-            if len as usize != buf.len() {
-                return;
-            }
             // Copy the Java `byte[]` straight into the reused buffer (no per-frame
             // `Vec` allocation). `byte[]` is `i8` on the JVM; same bytes as `u8`.
-            let buf_i8: &mut [i8] = bytemuck::cast_slice_mut(buf);
-            if env.get_byte_array_region(&fb, 0, buf_i8).is_err() {
-                return;
+            // The `gfx` borrow is scoped to this block so `gfx.render()` can reuse
+            // it once the JNI read is done; `false` => length mismatch / JNI error,
+            // so the frame is dropped (presentation-only, determinism untouched).
+            let copied = {
+                let buf_i8: &mut [i8] = bytemuck::cast_slice_mut(gfx.frame_buf_mut());
+                env.with_env(|env| -> jni::errors::Result<bool> {
+                    // jni 0.22: array length / region access moved onto the array
+                    // wrapper itself (`JByteArray::len` / `get_region`), taking the
+                    // owned `Env` from `with_env`.
+                    if fb.len(env)? != buf_i8.len() {
+                        return Ok(false);
+                    }
+                    fb.get_region(env, 0, buf_i8)?;
+                    Ok(true)
+                })
+                .resolve::<LogErrorAndDefault>()
+            };
+            if copied {
+                gfx.render();
             }
-            gfx.render();
         }
 
         /// `NativeRenderer.nativeSetFilter(handle, filter, p0..p3)` — 0 none /
@@ -206,7 +221,7 @@ mod android {
         /// `handle` must be a live value returned by `nativeInitSurface`.
         #[unsafe(no_mangle)]
         pub extern "C" fn Java_com_doublegate_rustynes_NativeRenderer_nativeSetFilter(
-            _env: JNIEnv,
+            _env: EnvUnowned,
             _this: JObject,
             handle: jlong,
             filter: jint,
@@ -232,7 +247,7 @@ mod android {
         /// `handle` must be a live value returned by `nativeInitSurface`.
         #[unsafe(no_mangle)]
         pub extern "C" fn Java_com_doublegate_rustynes_NativeRenderer_nativeSetIndexFrame(
-            env: JNIEnv,
+            mut env: EnvUnowned,
             _this: JObject,
             handle: jlong,
             idx: JByteArray,
@@ -241,9 +256,14 @@ mod android {
             if handle == 0 {
                 return;
             }
-            let Ok(bytes) = env.convert_byte_array(&idx) else {
+            // On a JNI error `LogErrorAndDefault` yields an empty `Vec`; an empty
+            // index frame is never valid, so skip it (drop the frame).
+            let bytes = env
+                .with_env(|env| -> jni::errors::Result<Vec<u8>> { env.convert_byte_array(&idx) })
+                .resolve::<LogErrorAndDefault>();
+            if bytes.is_empty() {
                 return;
-            };
+            }
             // SAFETY: live handle (see `nativeResize`).
             let gfx = unsafe { &mut *(handle as *mut AndroidGfx) };
             gfx.set_index_frame(&bytes, phase.max(0) as u8);
@@ -256,7 +276,7 @@ mod android {
         /// `handle` must be a live value from `nativeInitSurface`, not used after.
         #[unsafe(no_mangle)]
         pub extern "C" fn Java_com_doublegate_rustynes_NativeRenderer_nativeDestroy(
-            _env: JNIEnv,
+            _env: EnvUnowned,
             _this: JObject,
             handle: jlong,
         ) {

@@ -67,7 +67,7 @@ uniffi = { version = "0.31", features = ["cli"] }
 # v1.8.5 — accept still-compressed `.zip` ROMs (extract the first NES entry), the
 # same convenience the desktop has. `deflate` is the only codec real NES zips use;
 # default features off keeps bzip2/zstd/aes out of the mobile binary.
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "8", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 # v1.8.7 Phase B — the room-code loopback test stands up an in-process WebSocket
