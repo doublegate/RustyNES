@@ -110,6 +110,128 @@ impl Container {
     }
 }
 
+/// Video encoder for an A/V recording — the ffmpeg `-c:v` encoder plus its
+/// constant-quality model. All produce `yuv420p` so the output plays anywhere.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VideoCodec {
+    /// H.264 (`libx264`) — universal playback. The default.
+    #[default]
+    H264,
+    /// H.265 / HEVC (`libx265`) — ~30% smaller at equal quality, less universal.
+    H265,
+    /// VP9 (`libvpx-vp9`) — royalty-free, ideal for `.mkv` / the web.
+    Vp9,
+}
+
+impl VideoCodec {
+    /// The ffmpeg `-c:v` encoder name.
+    #[must_use]
+    pub const fn encoder(self) -> &'static str {
+        match self {
+            Self::H264 => "libx264",
+            Self::H265 => "libx265",
+            Self::Vp9 => "libvpx-vp9",
+        }
+    }
+
+    /// Whether this encoder takes an x264 / x265-style `-preset` (VP9 uses
+    /// `-deadline` / `-cpu-used` instead).
+    #[must_use]
+    pub const fn uses_x26x_preset(self) -> bool {
+        matches!(self, Self::H264 | Self::H265)
+    }
+
+    /// All variants, for a UI picker.
+    #[must_use]
+    pub const fn all() -> [Self; 3] {
+        [Self::H264, Self::H265, Self::Vp9]
+    }
+
+    /// Human label for a UI picker.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::H264 => "H.264 (universal)",
+            Self::H265 => "H.265 / HEVC (smaller)",
+            Self::Vp9 => "VP9 (royalty-free)",
+        }
+    }
+}
+
+/// x264 / x265 speed-vs-compression preset (ignored by VP9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EncodePreset {
+    /// Fastest, largest files.
+    Ultrafast,
+    /// Fast.
+    Superfast,
+    /// Quick — the default (the NES frame is tiny, so encode time is trivial).
+    #[default]
+    Veryfast,
+    /// Balanced.
+    Faster,
+    /// ffmpeg's default tradeoff.
+    Medium,
+    /// Slower, smaller files.
+    Slow,
+}
+
+impl EncodePreset {
+    /// The ffmpeg `-preset` token.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ultrafast => "ultrafast",
+            Self::Superfast => "superfast",
+            Self::Veryfast => "veryfast",
+            Self::Faster => "faster",
+            Self::Medium => "medium",
+            Self::Slow => "slow",
+        }
+    }
+
+    /// All variants, fast→slow, for a UI picker.
+    #[must_use]
+    pub const fn all() -> [Self; 6] {
+        [
+            Self::Ultrafast,
+            Self::Superfast,
+            Self::Veryfast,
+            Self::Faster,
+            Self::Medium,
+            Self::Slow,
+        ]
+    }
+}
+
+/// User-tunable A/V encode options — the codec-depth picker state.
+///
+/// Separate from the per-recording [`AvParams`] (which also carries the output
+/// path + frame/sample rates). `Copy` so the app holds it inline and reads it
+/// at arm time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AvRecordOptions {
+    /// Video encoder.
+    pub video_codec: VideoCodec,
+    /// Constant-quality factor (CRF); see [`AvParams::crf`].
+    pub crf: u8,
+    /// x264 / x265 preset (ignored by VP9).
+    pub preset: EncodePreset,
+    /// AAC audio bitrate in kbit/s.
+    pub audio_bitrate_k: u32,
+}
+
+impl Default for AvRecordOptions {
+    fn default() -> Self {
+        Self {
+            video_codec: VideoCodec::H264,
+            crf: 18,
+            preset: EncodePreset::Veryfast,
+            audio_bitrate_k: 192,
+        }
+    }
+}
+
 /// Parameters fixed when a recording is armed (constant for its lifetime).
 #[derive(Debug, Clone)]
 pub struct AvParams {
@@ -122,6 +244,16 @@ pub struct AvParams {
     pub fps_num: u32,
     /// Video frame rate denominator.
     pub fps_den: u32,
+    /// Video encoder (default [`VideoCodec::H264`]).
+    pub video_codec: VideoCodec,
+    /// Constant-quality factor (CRF): lower = better quality + larger file.
+    /// `0..=51` for x264 / x265, `0..=63` for VP9; ~18 is visually lossless on
+    /// the tiny NES frame. Clamped into range when the args are built.
+    pub crf: u8,
+    /// x264 / x265 encode preset (ignored by VP9).
+    pub preset: EncodePreset,
+    /// AAC audio bitrate in kbit/s (e.g. 192).
+    pub audio_bitrate_k: u32,
 }
 
 /// Build the `ffmpeg` argument vector for the final (stop-time) mux.
@@ -155,21 +287,40 @@ pub fn ffmpeg_args(params: &AvParams, video_raw: &Path, audio_raw: &Path) -> Vec
         "1".into(),
         "-i".into(),
         audio_raw.to_string_lossy().into_owned(),
-        // ---- encode ----
-        "-c:v".into(),
-        "libx264".into(),
-        // The NES frame is tiny; a fast preset keeps the encode quick and is
-        // plenty for a 256x240 source.
-        "-preset".into(),
-        "veryfast".into(),
-        // yuv420p so the output plays everywhere (rgba -> yuv420p).
-        "-pix_fmt".into(),
-        "yuv420p".into(),
-        "-c:a".into(),
-        "aac".into(),
-        // Stop at the shorter stream so a slightly-uneven A/V tail doesn't pad.
-        "-shortest".into(),
     ];
+    // ---- encode ----
+    // Video: the selected encoder + its constant-quality (CRF) control.
+    args.push("-c:v".into());
+    args.push(params.video_codec.encoder().into());
+    if params.video_codec.uses_x26x_preset() {
+        // The NES frame is tiny, so any preset is cheap; the default is fast.
+        args.push("-preset".into());
+        args.push(params.preset.as_str().into());
+        // CRF range is 0..=51 for x264 / x265.
+        args.push("-crf".into());
+        args.push(u32::from(params.crf.min(51)).to_string());
+    } else {
+        // VP9 constant-quality: `-b:v 0` + a `-crf` in 0..=63, plus a moderate
+        // speed/quality `-cpu-used` (VP9 ignores `-preset`).
+        args.push("-b:v".into());
+        args.push("0".into());
+        args.push("-crf".into());
+        args.push(u32::from(params.crf.min(63)).to_string());
+        args.push("-deadline".into());
+        args.push("good".into());
+        args.push("-cpu-used".into());
+        args.push("2".into());
+    }
+    // yuv420p so the output plays everywhere (rgba -> yuv420p).
+    args.push("-pix_fmt".into());
+    args.push("yuv420p".into());
+    // Audio: AAC at the chosen bitrate.
+    args.push("-c:a".into());
+    args.push("aac".into());
+    args.push("-b:a".into());
+    args.push(format!("{}k", params.audio_bitrate_k.max(1)));
+    // Stop at the shorter stream so a slightly-uneven A/V tail doesn't pad.
+    args.push("-shortest".into());
     args.push(params.out_path.to_string_lossy().into_owned());
     args
 }
@@ -381,6 +532,10 @@ mod tests {
             sample_rate: 48_000,
             fps_num: 60_098_814,
             fps_den: 1_000_000,
+            video_codec: VideoCodec::H264,
+            crf: 18,
+            preset: EncodePreset::Veryfast,
+            audio_bitrate_k: 192,
         }
     }
 
@@ -427,6 +582,40 @@ mod tests {
         assert!(args.iter().any(|a| a == "aac"));
         assert!(args.iter().any(|a| a == "-shortest"));
         assert_eq!(args.last().unwrap(), "/tmp/out.mp4");
+    }
+
+    #[test]
+    fn ffmpeg_args_honor_codec_options() {
+        let video = Path::new("/tmp/v.raw");
+        let audio = Path::new("/tmp/a.pcm");
+
+        // H.265 with explicit CRF / preset / audio bitrate.
+        let mut p = params();
+        p.video_codec = VideoCodec::H265;
+        p.crf = 30;
+        p.preset = EncodePreset::Slow;
+        p.audio_bitrate_k = 256;
+        let a = ffmpeg_args(&p, video, audio);
+        assert!(a.iter().any(|x| x == "libx265"));
+        let preset_idx = a.iter().position(|x| x == "-preset").unwrap();
+        assert_eq!(a[preset_idx + 1], "slow");
+        let crf_idx = a.iter().position(|x| x == "-crf").unwrap();
+        assert_eq!(a[crf_idx + 1], "30");
+        let ba_idx = a.iter().position(|x| x == "-b:a").unwrap();
+        assert_eq!(a[ba_idx + 1], "256k");
+
+        // VP9 uses `-b:v 0` + `-cpu-used`, ignores `-preset`, and clamps CRF to 63.
+        let mut p = params();
+        p.video_codec = VideoCodec::Vp9;
+        p.crf = 99; // out of range -> clamped to 63
+        let a = ffmpeg_args(&p, video, audio);
+        assert!(a.iter().any(|x| x == "libvpx-vp9"));
+        assert!(!a.iter().any(|x| x == "-preset"));
+        let bv_idx = a.iter().position(|x| x == "-b:v").unwrap();
+        assert_eq!(a[bv_idx + 1], "0");
+        assert!(a.iter().any(|x| x == "-cpu-used"));
+        let crf_idx = a.iter().position(|x| x == "-crf").unwrap();
+        assert_eq!(a[crf_idx + 1], "63");
     }
 
     #[test]

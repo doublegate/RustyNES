@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A/V recording codec depth.** The off-by-default `av-record` feature now supports
+  selectable video encoders — **H.264** (`libx264`, default), **H.265 / HEVC** (`libx265`),
+  and **VP9** (`libvpx-vp9`) — plus a **CRF** constant-quality control (range-clamped per
+  codec: 0–51 for x264/x265, 0–63 for VP9), an x264 / x265 **preset**, and a configurable
+  **AAC bitrate**, replacing the previously hard-coded H.264 / veryfast / AAC pipeline. The
+  default (H.264 / CRF 18 / veryfast / 192 kbit/s) reproduces the prior output exactly. The
+  encode pipeline + the `AvRecordOptions` picker state are in place; the Settings picker that
+  exposes them in the UI is a follow-up.
 - **TAS re-record count (`.fm2` / `.bk2` `rerecordCount`).** The TAStudio piano-roll
   editor now keeps a re-record tally — incremented once per *input* edit (set / insert /
   delete a frame's input), not on lag-log / marker / cursor churn — and carries it into
