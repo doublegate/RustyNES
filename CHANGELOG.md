@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **FDS Firmware Manager (Settings → Famicom Disk System).** Browse for a `disksys.rom`
+  and have it validated — the 8 KiB size is the hard gate, plus a SHA-256 match against the
+  known Nintendo dump for a "recognized" badge (an 8 KiB file with an unrecognized hash is
+  still accepted as usable, just unverified). On accept the path persists to `config.toml`, so
+  `.fds` disk images boot without guessing which file is the BIOS. Native-only.
 - **Input macros / templates (TAStudio pattern tools).** Record a short per-frame input
   pattern from the TAStudio cursor and stamp it back at the cursor (BizHawk / FCEUX-style
   pattern-paint) — a macro bank in the TAStudio window's new "Macros" section, with editor
