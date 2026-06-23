@@ -105,7 +105,7 @@ SKAdNetwork IDs via AppLovin's Info.plist generator. Expand later with Liftoff M
 
 ## Decisions still open (ask before building purchase UI)
 - One-time "Full Version / Remove Ads" (~$3.99, recommended) vs subscription.
-- Exact tuning of the free-tier model: base 8 min / reward 2 min values and the 2-grant cap
+- Exact tuning of the free-tier model: base 8 min / reward 11 min values and the 2-grant cap
   (max +22 min). (Model itself is decided above.)
 - `PremiumFeature` set beyond `SaveStates` + `BatterySaves` (e.g. fast-forward, shaders, cheats).
 - Initial mediation networks (defaults below).

@@ -157,10 +157,10 @@ The core expansion added these to the surface above:
   pause, and in-session rewind.
 - **Free-tier budget:** **8-min** regular session, **30-min** generous first session
   (`first_session_play_ms`, applied when the session index is 1; interstitials suppressed in
-  session #1 via `suppress_first_session`), +11 min per rewarded ad (cap 11 → 30 min on a
+  session #1 via `suppress_first_session`), +11 min per rewarded ad (cap 2 → 30 min on a
   regular session). Host calls `begin_session(persisted_index, now)` at launch.
 - **Offline grace:** at run-out with no rewarded fill, `grant_offline_grace()` gives a
-  one-time +11 min so an offline user degrades gracefully (recs §1b).
+  one-time +2 min so an offline user degrades gracefully (recs §1b).
 - **Kill-relaunch:** persist `export_progress()` and `restore_progress()` to keep the
   timer/cap across a process death (recs §1a/§1f).
 - **Remote config:** fetch values, overlay on `default_ad_config()`, pass through

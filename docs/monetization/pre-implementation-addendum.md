@@ -150,7 +150,7 @@ the shared core — one tested implementation for both platforms. **This is now 
 ```rust
 // Further AdConfig fields:
 //   base_play_ms: u64                  // free-tier base budget per game session (480_000 = 8 min)
-//   reward_play_ms: u64                // play time per COMPLETED rewarded ad (120_000 = 2 min)
+//   reward_play_ms: u64                // play time per COMPLETED rewarded ad (660_000 = 11 min)
 //   max_reward_grants_per_session: u32 // cap on rewarded extensions per game session (11)
 //
 // Additional State fields:
@@ -218,7 +218,7 @@ impl AdPolicy {
 }
 ```
 
-With `max_reward_grants_per_session = 11` and `reward_play_ms = 120_000`, a fully ad-engaged
+With `max_reward_grants_per_session = 2` and `reward_play_ms = 660_000`, a fully ad-engaged
 free user reaches **8 + (2 × 11) = 30 minutes** maximum per game session.
 
 Host flow (both platforms, identical because the logic is in the core):
@@ -336,7 +336,7 @@ GPU-bound. The two must be **isolated**.
       battery-backed saves (decided — see §2c).
 - [ ] Confirm the **rewarded "+11 min" grant** and the **2-grant per-session cap**
       (max +22 min → 30 min total) — decided; confirm the values.
-- [ ] Confirm **base play minutes (8)** and **reward minutes (2)**, and whether they're
+- [ ] Confirm **base play minutes (8)** and **reward minutes (11)**, and whether they're
       remote-configurable at launch.
 - [ ] Confirm **no banners** (or menu-only).
 - [ ] Lock the **starting cadence** (see §7) and whether it's remote-configurable at launch.
@@ -410,8 +410,8 @@ Expose these fields (all already in `AdConfig`):
 | Field | Default | Typical tuning range |
 |---|---|---|
 | `base_play_ms` | 480 000 (8 min) | 300 000–900 000 (5–15 min) |
-| `reward_play_ms` | 120 000 (2 min) | 60 000–300 000 (1–5 min) |
-| `max_reward_grants_per_session` | 11 | 0–20 (0 disables the rewarded extension) |
+| `reward_play_ms` | 660 000 (11 min) | 300 000–900 000 (5–15 min) |
+| `max_reward_grants_per_session` | 2 | 0–4 (0 disables the rewarded extension) |
 | `min_interval_ms` | 240 000 (4 min) | 120 000–360 000 |
 | `launch_grace_ms` | 30 000 | 0–120 000 |
 

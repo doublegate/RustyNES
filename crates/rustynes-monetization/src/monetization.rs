@@ -551,8 +551,9 @@ pub fn clamp_ad_config(cfg: AdConfig) -> AdConfig {
         base_play_ms: cfg.base_play_ms.clamp(60_000, 3_600_000),       // 1 min .. 60 min
         reward_play_ms: cfg.reward_play_ms.clamp(30_000, 1_200_000),   // 30 s .. 20 min
         max_reward_grants_per_session: cfg.max_reward_grants_per_session.min(50),
-        // 1 min .. 4 h; 0 is allowed (host may intend an ungated first session via a huge value).
-        first_session_play_ms: cfg.first_session_play_ms.min(14_400_000),
+        // 1 min .. 4 h: floored at 60_000 so a remote `0` can't brick the first session
+        // (set a large value, not 0, for an effectively ungated first game).
+        first_session_play_ms: cfg.first_session_play_ms.clamp(60_000, 14_400_000),
         suppress_first_session: cfg.suppress_first_session,
         offline_grace_ms: cfg.offline_grace_ms.min(600_000), // .. 10 min; 0 disables
     }
@@ -840,6 +841,7 @@ mod tests {
             base_play_ms: 0,                      // -> 60_000 floor (never a 0-ms gate)
             reward_play_ms: 1,                    // -> 30_000 floor
             max_reward_grants_per_session: 9_999, // -> 50 cap
+            first_session_play_ms: 0,             // -> 60_000 floor (a 0 would brick session #1)
             ..default_ad_config()
         };
         let c = clamp_ad_config(bad);
@@ -847,6 +849,7 @@ mod tests {
         assert_eq!(c.base_play_ms, 60_000);
         assert_eq!(c.reward_play_ms, 30_000);
         assert_eq!(c.max_reward_grants_per_session, 50);
+        assert_eq!(c.first_session_play_ms, 60_000);
         // A sane config is returned unchanged.
         assert_eq!(
             clamp_ad_config(default_ad_config()).base_play_ms,

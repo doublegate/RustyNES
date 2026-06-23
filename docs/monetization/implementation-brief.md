@@ -258,8 +258,8 @@ show, or dismiss, so the grant maps to a qualifying view.
 Core additions (**now implemented** in `monetization.rs`; see addendum §2f): `start_play()`,
 `add_active_time(ms)`, `grant_rewarded_time()` (returns `bool`, enforces the 2-grant cap),
 `can_offer_rewarded()`, `reward_grants_remaining()`, `is_play_allowed()`,
-`play_time_remaining_ms()`, plus `base_play_ms` (480_000), `reward_play_ms` (120_000), and
-`max_reward_grants_per_session` (11) in `AdConfig`. All 13 unit tests pass and bindings are
+`play_time_remaining_ms()`, plus `base_play_ms` (480_000), `reward_play_ms` (660_000), and
+`max_reward_grants_per_session` (2) in `AdConfig`. All 17 unit tests pass and bindings are
 regenerated.
 
 ```rust
@@ -354,8 +354,9 @@ dashboard steps are in **runbook §5a**; the engineering view:
    emulator but is **time-gated to 8 minutes per game session**, with **no save states** and
    **no battery-backed (SRAM) saves**; a **completed rewarded ad grants +11 minutes** (see
    addendum §2c/§2f). The Full Version removes the timer and unlocks save states + battery
-   saves, so `PremiumFeature` includes at least `SaveStates` and `BatterySaves` (optionally
-   fast-forward, shaders, cheats). Still to confirm: the base 8 min / reward 2 min values.
+   saves, so `PremiumFeature` includes `SaveStates`, `SaveOnExitResume`, `BatterySaves`, and
+   (decided 2026-06-23) `FastForward`, `Shaders`, `Cheats`. Still to confirm: the base 8 min
+   / reward 11 min values.
    Extensions are **capped at 2 per session** (max +22 min → 30 min total).
 3. **Rewarded in the free tier?** Recommended yes — best eCPM and least intrusive.
 4. **Initial mediation networks** to enable in MAX.
