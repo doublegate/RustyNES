@@ -16,6 +16,7 @@ members = [
     "crates/rustynes-gfx-shaders",
     "crates/rustynes-hdpack",
     "crates/rustynes-ra",
+    "crates/rustynes-monetization",
 ]
 
 [workspace.package]

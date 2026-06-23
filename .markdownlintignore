@@ -21,3 +21,8 @@ to-dos/archive/
 # that fed them — reference, not maintained prose, kept exactly as authored
 # (like ref-docs/).
 to-dos/plans/
+
+# Harvested mobile-monetization reference set (from the rustynes-monetization
+# scaffold, 2026-06-23) — reference design docs kept largely as authored, with a
+# reconciliation banner in the index. Reference, not maintained prose (like ref-docs/).
+docs/monetization/

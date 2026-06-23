@@ -148,6 +148,17 @@ power-user build).
 
 ## Monetization (freemium $2.99 unlock)
 
+> **Model under revision (2026-06-23).** An **ad-supported** freemium model — **AppLovin
+> MAX** ads on the free tier removed by a **RevenueCat** `premium` entitlement, a one-time
+> **"Full Version / Remove Ads" ($3.99)** unlock — has been harvested into the repo as the
+> chosen **v2.1.0-launch** monetization, superseding the $2.99-no-ads model described below.
+> The shared policy core is `crates/rustynes-monetization` (`AdPolicy`) and the full design
+> set is [`monetization/`](monetization/) (start at its `README.md`). The $2.99
+> `LicenseManager` below remains the **current sideload-build behavior**; the freemium /
+> ad layer ships **default-off behind `PLAY_BUILD`** and is flipped on at the v2.1.0 joint
+> launch. The free-tier persistence gates (save-states / resume / SRAM) are **identical**
+> across both models; the change is ads + the $3.99 price + the RevenueCat provider.
+
 The app is a **free download** with a single **one-time, non-consumable in-app
 purchase** — "Full Unlock", product id `full_unlock`, **$2.99 USD** — via Play
 Billing (Workstream M, `LicenseManager`). The free tier is a time-limited demo:

@@ -49,6 +49,7 @@ The core "spec" docs — kept in sync with the code in the same PR as a change.
 | [adr/](adr/) | Architecture Decision Records (Michael Nygard format) — mapper dispatch, IRQ-timing coordination, save-state migration, VRC7 audio, DMC scheduler, TAS movie format, etc. |
 | [audit/](audit/) | Dated investigation + decision-rationale notes (the accuracy-program "why" history). Retains the engine-lineage version markers and dates. |
 | [release-notes/](release-notes/) | Per-version release notes for the engine-lineage line that produced v1.0.0 (`v2.0.0` … `v2.8.0`). Kept as lineage history; the current RustyNES release is **v1.0.0** (see the root `CHANGELOG.md`). |
+| [monetization/](monetization/) | Mobile freemium monetization design + compliance set (ad-supported model: AppLovin MAX + RevenueCat, the $3.99 "Full Version / Remove Ads" unlock). The shared policy core is the `rustynes-monetization` crate. Reference docs; launch is the v2.1.0 joint mobile release. |
 | [tooling/](tooling/) | Oracle / cross-emulator tooling setup (Mesen2 trace, AccuracyCoin extraction). |
 | [user-guide/](user-guide/) | End-user docs — getting started, controls, configuration, debugger, save states/rewind, display/audio, file locations, compatibility, troubleshooting. |
 | [archive/legacy-v0.8-docs/features/](archive/legacy-v0.8-docs/features/) | Legacy v0.8 design docs per feature (debugger, expansion audio, RetroAchievements, rewind, TAS, video filters, WASM) — historical; the shipped features are documented in the v1.0.0 docs above. |
