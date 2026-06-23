@@ -196,17 +196,15 @@ jobs:
       - uses: ./.github/actions/rust-setup
         with:
           cache-key: test
-      # cargo-nextest: a faster, parallel test runner (~1.3-1.5x on the debug
-      # suite). It does NOT execute doctests, so they run in an explicit
-      # `cargo test --doc` pass afterward — keeping doctest coverage that plain
-      # `cargo test` used to provide. Scoped to this debug job only; `test-roms`
-      # stays on `cargo test` (its cost is the release compile + the single
-      # 7200-frame AccuracyCoin battery, neither of which nextest speeds up).
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest
-      - run: cargo nextest run --workspace
-      - run: cargo test --workspace --doc
+      # NOTE: cargo-nextest is deliberately NOT adopted (§11e closed WONT-FIX).
+      # nextest builds its test graph by running `cargo metadata --all-features`,
+      # but this workspace cannot resolve `--all-features`: `scripting` (mlua) and
+      # `script-wasm` (piccolo) are mutually-exclusive rustynes-script backends
+      # (the same reason CLAUDE.md forbids `--all-features` everywhere). nextest
+      # offers no override for that internal metadata call, so it errors before
+      # running a single test (`cargo metadata --all-features` exits 101). Plain
+      # `cargo test` with explicit features stays the runner.
+      - run: cargo test --workspace
 
   test-roms:
     name: test (test-roms feature)
