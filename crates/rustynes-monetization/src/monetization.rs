@@ -118,15 +118,16 @@ impl Default for AdConfig {
     /// an interruption is more jarring than in a casual game. 4-minute spacing with a
     /// 30-second launch grace keeps ads from ever bracketing app startup.
     ///
-    /// Free-tier defaults: an 8-minute base budget, +2 minutes per completed rewarded
-    /// ad, capped at 11 grants per session — so a fully ad-engaged free user reaches at
-    /// most 8 + (11 × 2) = 30 minutes of play in a single game session.
+    /// Free-tier defaults: an **8-minute** base budget (regular sessions) with a generous
+    /// **30-minute** first session, +2 minutes per completed rewarded ad, capped at 11
+    /// grants per session — so a fully ad-engaged free user reaches at most 8 + (11 × 2) =
+    /// 30 minutes of play in a regular game session.
     fn default() -> Self {
         Self {
             min_interval_ms: 240_000,          // 4 minutes
             launch_grace_ms: 30_000,           // 30 seconds
-            base_play_ms: 480_000,             // 8 minutes
-            reward_play_ms: 120_000,           // 2 minutes
+            base_play_ms: 480_000,             // 8 minutes (regular free session)
+            reward_play_ms: 120_000,           // 2 minutes per rewarded ad
             max_reward_grants_per_session: 11, // → +22 min max → 30 min total
             first_session_play_ms: 1_800_000,  // 30 minutes — generous first game
             suppress_first_session: true,      // no interstitials in session #1
