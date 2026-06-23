@@ -227,9 +227,12 @@ including page-crossing penalties.
 2. **Run full test suite**:
 
    ```bash
-   cargo test --all-features
-   cargo clippy -- -D warnings
-   cargo fmt --check
+   # NEVER --all-features: the `scripting` (mlua) and `script-wasm` (piccolo)
+   # backends are mutually exclusive and cannot co-resolve. Use explicit features.
+   cargo test --workspace
+   cargo test --workspace --features test-roms
+   cargo clippy --workspace --all-targets -- -D warnings
+   cargo fmt --all --check
    ```
 
 3. **Update documentation**:

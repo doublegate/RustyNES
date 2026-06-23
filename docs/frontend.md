@@ -13,7 +13,7 @@ Implement the user-facing application in `crates/rustynes-frontend`: the windowi
 | Window + event loop | [winit](https://github.com/rust-windowing/winit) | Linux (X11/Wayland), macOS (AppKit), Windows (Win32), Web (`wasm-winit` / `wasm-canvas`) |
 | GPU rendering | [wgpu](https://github.com/gfx-rs/wgpu) | WebGPU API; Vulkan/Metal/D3D12/GLES backends |
 | Audio output | [cpal](https://github.com/RustAudio/cpal) | Cross-platform PCM stream |
-| GUI shell + overlays | [egui](https://github.com/emilk/egui) 0.29 + `egui-wgpu` | The always-on desktop shell (menu bar / status bar / settings) **and** the toggleable debugger panels |
+| GUI shell + overlays | [egui](https://github.com/emilk/egui) 0.34 + `egui-wgpu` | The always-on desktop shell (menu bar / status bar / settings) **and** the toggleable debugger panels |
 | Gamepads | [gilrs](https://gitlab.com/gilrs-project/gilrs) | XInput, evdev, GameController.framework (native) |
 | File dialogs | [rfd](https://github.com/PolyMeilex/rfd) | Native open/save dialogs |
 | Config paths | [directories](https://github.com/dirs-dev/directories-rs) | XDG / Apple / Windows |
@@ -1600,5 +1600,9 @@ All of the original open questions are resolved in v1.0.0:
 - **Netplay** — shipped (rollback netcode, 2-4 players, native UDP + browser
   WebRTC), enabled by the deterministic core.
 
-Future work tracked in `to-dos/ROADMAP.md`: mobile (iOS/Android) frontends and
-additional CRT/slang-shader ports.
+The **Android** frontend shipped across the v1.8.x line (a Jetpack Compose shell
+over the shared `rustynes-mobile` UniFFI bridge + the `rustynes-android` JNI
+glue; sideload now, Google Play production at v2.1.0). Future work tracked in
+`to-dos/ROADMAP.md`: the iOS/iPadOS frontend (v1.9.0, reusing the same
+`rustynes-mobile` bridge), additional CRT/slang-shader ports, and the v2.0.0
+"Timebase" one-clock + every-cycle-bus-access master-clock rewrite.

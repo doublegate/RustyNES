@@ -72,6 +72,13 @@ The directory and file are created on demand. A pristine install has no
 config files; the emulator runs from compiled-in defaults until you
 change something.
 
+The data directory (below) also holds a `per-game/` subfolder of per-game
+`<CRC8>.json` config overlays (Mesen2-style per-game overrides — region,
+mapper, mirroring, DIP switches, and similar), keyed by the ROM's CRC. A
+per-game file can also live as a sibling next to the ROM itself (`Game.json`
+beside `Game.nes`); when both exist, the `per-game/` overlay takes
+precedence, and the sibling is consulted only when no overlay is present.
+
 ### Data directory
 
 A `saves/` subdirectory, then one directory per ROM (named by the ROM's

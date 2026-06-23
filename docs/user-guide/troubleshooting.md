@@ -6,9 +6,9 @@ diagnoses about half of the issues on this page.
 
 ## "The ROM won't load — `UnsupportedMapper(N)`"
 
-The cartridge uses an iNES mapper number that v1.0 doesn't implement.
-See [Compatibility](./compatibility.md) for the supported mappers (51
-families covering well over 90% of the licensed library).
+The cartridge uses an iNES mapper number RustyNES doesn't implement.
+See [Compatibility](./compatibility.md) for the supported mappers (168
+families covering well over 95% of the licensed library).
 
 If your ROM is a homebrew title that uses a less common mapper, please
 file an issue with the mapper number, the ROM's SHA-256, and (if
@@ -103,9 +103,9 @@ Open the debugger (`~`) and check the `fps:` readout in the top toolbar.
 | ~120-300 fps regardless of region | Wall-clock pacing isn't running (would only happen on a bug — please report) | (File an issue) |
 | Below the target on a modern machine | System load, GPU driver issue, or audio device hijacking the main thread | Check other process load; try `[graphics] ntsc_filter = "off"`; try `[audio] sample_rate` matching your device |
 
-The previous frontend MVP had a real "runs at 144 / 60 = 2.4x speed on a
-high-refresh monitor" bug. That's fixed in the current release —
-emulation is paced by wall-clock time, so any monitor refresh rate works.
+Emulation is paced by wall-clock time, so any monitor refresh rate works
+(a high-refresh monitor will not run the game fast). If you do see a
+multiple-of-refresh speed-up, that would be a bug — please report it.
 
 ## "Save state load did nothing / corrupted state"
 

@@ -4,23 +4,26 @@
 > carried-over, manual-verify, staged-but-inert, and not-yet-implemented feature
 > surfaced across the whole RustyNES development history (v1.0.0 synthesis →
 > v1.2.0 "Curator" → v1.3.0 "Bedrock" → v1.4.0 "Fidelity" → v1.5.0 "Lens" →
-> v1.6.0 "Studio" → v1.7.0 "Forge" → the v1.8.0/v1.9.0 mobile plans → v2.0.0
-> "Timebase") against the **current code on `main`**. Items already shipped since
-> they were written are excluded; everything below was verified still-outstanding.
+> v1.6.0 "Studio" → v1.7.0 "Forge" → v1.8.0 … v1.8.8 "Atlas" (the Android train)
+> → the v1.9.0 iOS plan → v2.0.0 "Timebase" → the v2.0.x mobile-finalization
+> train) against the **current code on `main`**. Items already shipped since they
+> were written are excluded; everything below was verified still-outstanding.
 >
-> **Reconciled against `main` @ `de682d8` on 2026-06-19.**
+> **Reconciled against `main` @ `de682d8` on 2026-06-19** (the v1.7.0 "Forge"
+> baseline; the entries below remain the authoritative deferred backlog).
 >
-> **In-flight context.** v1.7.0 "Forge" is mid-development on `main`. **Merged so
-> far (betas 1–4):** F accuracy-hardening + G1 ASIC mappers (150 → 168 families) +
-> H7 perf (no-op); A editing-capable tools + C debugger depth; B scriptable
-> TAStudio + Lua parity + E host IPC/automation (`script-ipc`); D timeline +
-> Zwinder rewind + G2/G3 expansion audio + G4 movie import + G5 HD-Pack Builder.
-> **beta.5 (the H reach/polish workstream) is NOT yet on `de682d8`** — its items
-> are listed here as deferred/pending because they are not in this tree, even
-> though wave work is progressing on side branches. Items the plans mark "in
-> H9 / shipping in beta.5" that the maintainer has confirmed already landed in
-> wave work (Game Genie encoder UI, movie `.srt` export, `.tbl` text tables) are
-> **excluded** per the maintainer's instruction.
+> **Current state (2026-06-23).** v1.7.0 "Forge" (+ the v1.7.1 patch) and the full
+> Android train **v1.8.0 … v1.8.8 "Atlas"** have since **shipped**; **v1.8.9** is
+> now in development (Dependabot consolidation #180, the dormant
+> `rustynes-monetization` crate, a held UX fix). Mapper coverage is **168
+> families**. Most of the v1.7.0 H reach/polish items that this file lists as
+> "beta.5 / not yet on `main`" (audio depth, per-game `<rom>.json` overrides + DIP
+> editor + lag counter, web/wasm parity, i18n, spectator netplay, browser-RA HUD,
+> the `full` native build) **landed in v1.7.0**; the genuinely-future items
+> (v2.0.0 accuracy residuals, mobile follow-ups, long-tail mappers, the
+> maintainer-manual verifies) remain outstanding as listed. The **mobile-launch
+> deferral** + the **`foss`/`play` flavor split** below are the current canonical
+> forward framing.
 
 ## How to read this
 

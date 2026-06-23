@@ -1,10 +1,11 @@
 # RustyNES Documentation Index
 
-**RustyNES version:** v1.0.0
+**RustyNES version:** v1.8.8 "Atlas" (on the cycle-accurate v1.0.0 core)
 
-This index maps the `docs/` tree for RustyNES v1.0.0 — the cycle-accurate
-NES/Famicom emulator. The single source of truth for test pass counts, mapper
-coverage, feature flags, and version policy is [`STATUS.md`](STATUS.md).
+This index maps the `docs/` tree for RustyNES — the cycle-accurate
+NES/Famicom emulator (current release **v1.8.8 "Atlas"** on the v1.0.0 production
+core; the Android platform line). The single source of truth for test pass counts,
+mapper coverage, feature flags, and version policy is [`STATUS.md`](STATUS.md).
 
 ---
 
@@ -18,10 +19,11 @@ The core "spec" docs — kept in sync with the code in the same PR as a change.
 | [ppu-2c02.md](ppu-2c02.md) | 2C02 PPU — rendering pipeline, scrolling (Loopy), sprite evaluation, registers |
 | [apu-2a03.md](apu-2a03.md) | 2A03 APU — 5 channels, frame sequencer, non-linear mixer, DMC DMA |
 | [scheduler.md](scheduler.md) | PPU-master-clock lockstep scheduler (dot-resolution timing) |
-| [mappers.md](mappers.md) | Mapper system — 51 families, banking, per-mapper IRQ, expansion audio |
+| [mappers.md](mappers.md) | Mapper system — 168 families (Core / Curated / BestEffort tiers), banking, per-mapper IRQ, expansion audio |
 | [cartridge-format.md](cartridge-format.md) | iNES / NES 2.0 / FDS parsing |
 | [architecture.md](architecture.md) | Cross-cutting design (Bus owns mutable state, one-directional crate graph, determinism contract) |
 | [frontend.md](frontend.md) | The `rustynes` desktop app (winit + wgpu + cpal + egui), audio engine, pacing, run-ahead, video filters (NES_NTSC / CRT / custom `.pal`), input devices (Power Pad, turbo, input-display overlay), per-game mirroring database, debugger devtools (trace logger, event viewer), Lua Script console |
+| [android.md](android.md) | The Android app (v1.8.x "Android" line) — the `rustynes-mobile` UniFFI bridge + `rustynes-android` platform crate + the Jetpack Compose shell, wgpu `SurfaceView` renderer, AAudio, SAF, touch / gamepad input, adaptive / foldable / TV layouts, Play-services readiness |
 
 ## Cross-cutting references
 
@@ -39,6 +41,7 @@ The core "spec" docs — kept in sync with the code in the same PR as a change.
 | [scripting.md](scripting.md) | Lua scripting `emu` API reference (sandboxed Lua 5.4, `scripting` feature, native-only) |
 | [ppu-trace-tooling.md](ppu-trace-tooling.md) | PPU state-trace diagnostic tooling |
 | [ra-integration-request.md](ra-integration-request.md) | RetroAchievements allowlisting request template |
+| [cheevos-browser.md](cheevos-browser.md) | Casual-mode browser RetroAchievements scaffolding (the off-by-default `browser-cheevos` feature, ADR 0015) |
 
 ---
 
@@ -46,9 +49,9 @@ The core "spec" docs — kept in sync with the code in the same PR as a change.
 
 | Directory | Contents |
 |-----------|----------|
-| [adr/](adr/) | Architecture Decision Records (Michael Nygard format) — mapper dispatch, IRQ-timing coordination, save-state migration, VRC7 audio, DMC scheduler, TAS movie format, etc. |
+| [adr/](adr/) | Architecture Decision Records (Michael Nygard format), 0001–0025 — mapper dispatch, IRQ-timing coordination, save-state migration, VRC7 audio, DMC scheduler, TAS movie format, mapper tiering, the IPC / HD-Pack-Builder / i18n set (0016–0023), the mobile bridge + hybrid Android host (0024), and the `foss` / `play` flavor split (0025). |
 | [audit/](audit/) | Dated investigation + decision-rationale notes (the accuracy-program "why" history). Retains the engine-lineage version markers and dates. |
-| [release-notes/](release-notes/) | Per-version release notes for the engine-lineage line that produced v1.0.0 (`v2.0.0` … `v2.8.0`). Kept as lineage history; the current RustyNES release is **v1.0.0** (see the root `CHANGELOG.md`). |
+| [release-notes/](release-notes/) | Per-version release notes for the engine-lineage line that produced v1.0.0 (`v2.0.0` … `v2.8.0`). Kept as lineage history; the current RustyNES release is **v1.8.8 "Atlas"** on the v1.0.0 production core (see the root `CHANGELOG.md` and [`STATUS.md`](STATUS.md)). |
 | [monetization/](monetization/) | Mobile freemium monetization design + compliance set (ad-supported model: AppLovin MAX + RevenueCat, the $3.99 "Full Version / Remove Ads" unlock). The shared policy core is the `rustynes-monetization` crate. Reference docs; launch is the v2.1.0 joint mobile release. |
 | [tooling/](tooling/) | Oracle / cross-emulator tooling setup (Mesen2 trace, AccuracyCoin extraction). |
 | [user-guide/](user-guide/) | End-user docs — getting started, controls, configuration, debugger, save states/rewind, display/audio, file locations, compatibility, troubleshooting. |

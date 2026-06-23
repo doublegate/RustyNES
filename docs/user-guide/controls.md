@@ -196,9 +196,10 @@ A `.rnm` movie is tied to the ROM it was recorded against (by SHA-256);
 loading a movie while a different ROM is running reports a mismatch and
 declines to play.
 
-> Web build note: TAS movie record/playback is native-only in this
-> release. The browser build compiles the same machinery but the hotkeys
-> are inert there pending browser file-download / storage support.
+> Web build note: the browser build supports `.rnm` movie record /
+> playback as well, using the File System Access API (with a download /
+> upload fallback) for the file I/O. TAStudio piano-roll editing remains
+> a native-only tool.
 
 ## Gamepads
 
@@ -221,8 +222,10 @@ bindings — click **rebind** and press the pad button you want. The left
 analog stick doubles as a D-pad once it deflects past `axis_deadzone`
 (default 0.5). Bindings persist to the `[input.gamepad1]` /
 `[input.gamepad2]` sections of `config.toml` (see
-[Configuration](./configuration.md)). Gamepads are native-only — the
-browser build is keyboard-only.
+[Configuration](./configuration.md)). The browser build supports
+standard-mapping gamepads too, via the browser Gamepad API (the first
+connected pad drives Player 1); its bindings are fixed to the Xbox-style
+layout above.
 
 ## See also
 

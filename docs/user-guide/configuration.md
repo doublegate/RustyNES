@@ -231,20 +231,21 @@ hide_overscan = false     # default
 | Field | Type | Default | Accepted values | Notes |
 |-------|------|---------|-----------------|-------|
 | `present_mode` | string | `"Mailbox"` | `"Fifo"`, `"Mailbox"` | `"Mailbox"` lets the wall-clock frame pacer own timing (avoids the vsync double-pacing beat); falls back to `"Fifo"` automatically when the backend doesn't advertise Mailbox |
-| `ntsc_filter` | string | `"off"` | `"off"`, `"composite"`, `"rgb"` | `"off"` and `"composite"` are the meaningful settings (see below) |
+| `ntsc_filter` | string | `"off"` | `"off"`, `"composite"`, `"rgb"`, `"composite-rt"` | `"composite"` / `"rgb"` run the fast inline pass; `"composite-rt"` runs the real-time NTSC filter (see below) |
 | `hide_overscan` | bool | `false` | `true`, `false` | Crop the top and bottom 8 NES scanlines (the overscan area a CRT hid). Off by default = the full 256x240 image. Toggle live with **View → Hide Overscan** or the Display settings tab |
 
-The NTSC filter (when set to anything other than `"off"`) runs a
-simplified Blargg-style wgsl post-pass between the PPU framebuffer and
-the letterbox blit: a 5-tap horizontal blur, 15% scanline darkening on
-alternating lines, and a subtle chroma fringe along strong luma edges.
-It's deliberately marked "simple" — a bit-exact `nes_ntsc` port is a
-follow-up. See [Display and audio](./display-and-audio.md) for a
+With `"composite"` (or its `"rgb"` alias) the NTSC filter runs a fast
+Blargg-style wgsl post-pass between the PPU framebuffer and the letterbox
+blit: a 5-tap horizontal blur, 15% scanline darkening on alternating
+lines, and a subtle chroma fringe along strong luma edges. `"composite-rt"`
+runs a heavier real-time NTSC encode/decode pass for a more faithful
+composite signal. See [Display and audio](./display-and-audio.md) for a
 side-by-side description.
 
-The `"rgb"` value is accepted by the parser but currently produces the
-same output as `"composite"`; a distinct RGB-pixel-shaped path is
-planned for a later release.
+A richer set of post-process filters (NES_NTSC, CRT / scanline, LMP88959,
+hqNx / xBRZ, Bisqwit), the composable shader stack, and CRT presets live
+under separate `[graphics.shader_stack]` and `[graphics.shader_presets]`
+tables. These are managed from the in-app shader UI rather than hand-edited.
 
 ### `[audio]`
 

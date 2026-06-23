@@ -25,7 +25,6 @@ Pre-built binaries are published on the [GitHub Releases
 page](https://github.com/doublegate/RustyNES/releases) for:
 
 - `x86_64-unknown-linux-gnu`
-- `x86_64-apple-darwin`
 - `aarch64-apple-darwin` (Apple Silicon native)
 - `x86_64-pc-windows-msvc`
 
@@ -35,7 +34,7 @@ file with no install step.
 
 ### Option 2: build from source
 
-Building from source requires Rust 1.86 (pinned via `rust-toolchain.toml`)
+Building from source requires Rust 1.96 (pinned via `rust-toolchain.toml`)
 and a working system-library set for the windowing / audio stack.
 
 **Linux build deps (Debian / Ubuntu):**

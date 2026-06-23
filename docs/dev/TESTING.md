@@ -19,11 +19,14 @@ RustyNES employs a comprehensive testing strategy combining unit tests, integrat
 
 ### Testing Goals
 
-- **100% TASVideos test suite pass rate** (156 tests)
+- **AccuracyCoin 100% (139/139)** — held byte-identically across every release
 - **Unit test coverage** for all components
 - **Integration tests** for component interactions
-- **Regression tests** for mapper edge cases
+- **Regression tests** for mapper edge cases (168 mapper families)
 - **Game compatibility matrix** validation
+
+> `docs/STATUS.md` is the single source of truth for per-suite pass counts and
+> the mapper-coverage matrix.
 
 ---
 
@@ -277,15 +280,20 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
+      - uses: actions/checkout@v7
       - name: Run tests
-        run: cargo test --all-features
+        # NEVER --all-features: the `scripting` (mlua) and `script-wasm` (piccolo)
+        # backends are mutually exclusive. Use explicit feature sets.
+        run: cargo test --workspace
       - name: Run test ROMs
-        run: cargo test --test accuracy_suite
+        run: cargo test --workspace --features test-roms
 ```
+
+> The real CI workflows live in `.github/workflows/` (`ci.yml`, `release.yml`,
+> `web.yml`, `android.yml`). CI runs the feature-combo clippy gates
+> (`scripting`, `hd-pack`, `retroachievements`, both wasm flavours), the `no_std`
+> cross-build, `RUSTDOCFLAGS=-D warnings cargo doc --workspace --no-deps`, and a
+> markdownlint v0.39.0 pinned gate.
 
 ---
 

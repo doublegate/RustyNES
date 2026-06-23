@@ -77,11 +77,14 @@
 > output widening) · 0021 (File System Access fallback) · 0022 (settings share-link) ·
 > 0023 (i18n string-catalog).
 
-**Current release: v1.7.1 — a bugfix / polish patch on v1.7.0 "Forge"** (the
+**Current release: v1.8.8 "Atlas"** (the Google-Play-launch-readiness increment on
+the **v1.8.x "Android"** platform line — framed in the blockquote above), on the
+cycle-accurate v1.0.0 production core. The desktop-feature baseline below traces
+back through **v1.7.1 — a bugfix / polish patch on v1.7.0 "Forge"** (the
 writable + programmable tooling, accuracy, mapper-breadth, and reach feature release
-it patches, described below) on the cycle-accurate v1.0.0 production core. A
+it patches, described below). A
 NES/Famicom emulator with the Mesen2 / higan / ares accuracy bar, shipped as a
-polished desktop application. **AccuracyCoin 100.00% (139/139)**, the 60-ROM
+polished desktop application and an Android app. **AccuracyCoin 100.00% (139/139)**, the 60-ROM
 `external_real_games` + 52-entry `external_extended` oracles byte-identical,
 nestest 0-diff. v1.7.0 makes the tools *writable* and *programmable* — A
 editing-capable tools (palette/nametable/CHR/OAM writeback + iNES/NES 2.0 header
@@ -613,7 +616,7 @@ without panicking (no `$6000` status protocol).
 | `vrc24test` | — | — | — | — | **Skipped (Track B1)**: link rot. AWJ's original forum attachment (id=10017 on forums.nesdev.org/viewtopic.php?p=203716) is auth-walled; the deletion is documented at archive.nes.science. No GitHub mirror found. |
 | `AccuracyCoin` | 1 | 1 | — | — | 100thCoin / Chris Siebert single-NROM accuracy battery (MIT license, 144 tests across 20 suites + 5 visual-only `Power On State` tests sharing `$03FF`). Interactive (D-Pad menu); the harness presses `START` to "run all tests on the ROM" then takes two parallel measurements. **(1) Framebuffer decoder** reads the 10×16 on-screen result grid by exact-pixel colour (5-colour palette: `#64A0FF` = pass, `#4F1000` = fail, `#DC834C` = partial-pass, `#4C4C4C` = no-test / not-run, `#FFFFFF` = border); this is the legacy path and has a known grid-stride bug that under-samples by ~31 cells. **(2) RAM-direct decoder** reads each test's result byte from its fixed CPU-RAM address (catalogued from upstream `AccuracyCoin.asm` in `crates/rustynes-test-harness/src/accuracy_coin_catalog.rs` and `tests/roms/AccuracyCoin/SOURCE_CATALOG.tsv` — 144 `(suite, name, addr)` triples) and decodes per-test pass/fail/error-code names + per-suite breakdowns. This is the authoritative path. **Current measured pass rate (RAM-direct): 100.00%** (139/139 — pass 127 + pass-with-code 12, 0 fail, on the default master-clock build). The `90.65%`, `84.17%` and the trajectory figures below are historical engine-lineage milestones (the pre-promotion v1.0.0-rc2 / Session-26 era), retained as history. Historical trajectory: `64.03%` (post-D2 baseline) → `67.63%` (post-D3, 7 6502 bus-pattern fixes) → `69.06%` (post-Phase-3 OAM DMA parity fix, +1 strict test flipped) → `69.78%` (post-FSM-fix recovery, +1 sprite-related sub-test flipped as a side-benefit of the `crates/rustynes-ppu/src/ppu.rs` dot-64 reset removal) → `76.98%` (post-Cascade-B DMC DMA scheduler, commit `9b0c81c` — closes all 8 tests in the `APU Registers and DMA tests` suite + 3 net elsewhere as side-benefits; +11 tests flipped) → `78.42%` (post-Cascade-A OAMADDR-during-rendering reset, commit `f29f7ca` — hardware-accurate per nesdev: OAMADDR is reset to 0 during dots 257-320 of every rendered scanline; +2 tests flipped — Sprite overflow behavior PASSES, Sprite 0 Hit advances from error 1 → error 13) → `79.14%` (post-session-7 OAMADDR-walks-during-eval + $4-aligned `$2004` write, commit `c230489` — closes `Address $2004 behavior` with code 16; +1 net flip) → `79.86%` (post-session-7 RMW ABS,X/Y unfixed-address dummy read, commit `32d5b18` — 18 RMW opcodes get the canonical cycle-4 unfixed-address dummy; flips `APU Tests :: Controller Clocking` and advances `Implied Dummy Reads` 2→3 + `Frame Counter IRQ` 6→7 via the SLO $4015,X bracket; +1 net flip) → `82.73%` (post-session-8 BG-pipeline cycle-9 reload + post-emit shift, commit `086ce4d` — fixes the long-standing 1-column BG pixel off-by-one identified in `docs/audit/cascade-a-investigation-2026-05-19.md`; flips `Sprite 0 Hit behavior` + `Sprite overflow behavior` + `Suddenly Resize Sprite` + `$2007 read w/ rendering`; +4 net flips, +2.87pp) → `83.45%` (post-session-24 Controller Strobing M2-low-defer write, Session-24 Phase 3 — deferred `$4016` commit buffer on `LockstepBus` mirrors Mesen2's `NesControlManager::ProcessWrites`; flips `APU Tests :: Controller Strobing` from `[error 4]` to PASS; +1 net flip) → **`84.17%` (post-session-26 Sprint 2 iter 5 Frame-Counter-IRQ split, 2026-05-23 — separates `FrameCounter::irq_flag` ($4015 bit 6 visibility) from `FrameCounter::irq_line_active` (CPU IRQ source driver) so Tests I/J/K/L/M/N/O all PASS without spuriously asserting the CPU IRQ line on inhibited frame-counter cycles; flips `APU Tests :: Frame Counter IRQ` from `[error 19]` to PASS; +1 net flip)**. Session-26 Sprint 2 iter 4 (APU Register Activation OAM-DMA chip-select gate) advanced the same suite's APU Register Activation entry internally from `[error 4]` to `[error 6]` but did not flip the catalog-headline metric. The previous `75.93%` headline reflected the framebuffer decoder's stride bug, not real accuracy. Strict floor in CI is **60%** — see `crates/rustynes-test-harness/tests/accuracycoin.rs::MIN_PASS_RATE`. the v0.9.x 80% target and the v1.0.0 90% gate were both cleared, and the default build now measures **100.00%** — the master-clock core is the default and the former C1 + sub-cycle residuals are closed (see "Accuracy residuals" below). Implementation in `crates/rustynes-test-harness/src/accuracy_coin.rs` + `accuracy_coin_catalog.rs`. Phase D1 / D2 / D3. |
 
-**Top-line counts (workspace + `--features test-roms`) — CURRENT (v1.5.0, 2026-05-24): 661 strict + 10 ignored; with `commercial-roms`: 721 total.** The per-bullet detail below is retained for provenance — the counts it cites (545 strict, 605 total, 5 ignored) are point-in-time v1.0.0-rc2 / Session-26 figures, NOT current:
+**Top-line counts (workspace + `--features test-roms`): the suite has grown substantially across the v1.6.0 → v1.8.8 train — `cargo test --workspace --features test-roms -- --list` currently enumerates ~**2030** tests workspace-wide (AccuracyCoin holds 100.00% / 139-139; host CI is green). The per-release figures cited in this section (661 strict + 10 ignored at v1.5.0; 545 strict / 605-with-`commercial-roms` at v1.0.0-rc2 / Session-26; etc.) are point-in-time historical provenance, NOT the current count — see `CHANGELOG.md` per-version entries and CI for authoritative per-release / per-suite numbers:
 
 - Strict pass (not `#[ignore]`'d): **545** as of 2026-05-23 Session-26 (unchanged from iter 4; Session-26 Sprint 2 iter 5 lands the `FrameCounter::irq_flag` vs `irq_line_active` split, an internal-refactor with no new dedicated unit tests — the 4 MMC3 commercial canary ROMs + the custom Frame Counter IRQ ROM are the load-bearing assertions). Session-26 iter 4 (OAM-DMA chip-select gate) is unchanged from Session-25 baseline 545 too. Was 541 pre-Session-25; +4 then from the lazy-clear contract unit tests in `crates/rustynes-apu/src/frame_counter.rs` and `crates/rustynes-apu/src/snapshot.rs` that landed alongside the Frame Counter IRQ Test 7 architectural fix. Was 540 pre-Session-18; +1 then from the `vbl_race_window_2002_read_sweep` PPU-unit test; was 537 pre-Session-13; +3 then from the `Cpu::power_on`-path unit tests for the cold-boot SP fix; was 510 pre-Cascade-B; +35 net since the v1.0.0-rc1 tag. The C1 Phase 3 (2026-05-15) OAM-DMA alignment audit flipped `cpu_interrupts_v2/4-irq_and_dma` from `#[ignore]` (was paired with `_currently_fails` probe) to strict-pass + deleted the probe. **With `--features test-roms,commercial-roms`**: + 60 strict commercial-ROM tests (= **605 total**); audio FNV-1a + cumulative cycle-count invariants preserved across the session-8 BG re-baseline (only framebuffer FNV-1a hashes shifted there, all 60 visually verified) and PRESERVED byte-identical across Session-13 (SP delta not observable at the framebuffer / audio / cycle invariant layer), Session-18 (no chip-stack code change), Session-24 Phase 3 ($4016 strobe defer doesn't affect game ROMs that strobe with multi-cycle STA), and Session-25 (the Frame Counter IRQ lazy-clear surfaces only when ROMs do back-to-back $4015 reads at sub-3-cycle gaps — vanishingly rare in production game code).
 - `#[ignore]` expected-fail (run via `-- --ignored`): **5**: 3 × `cpu_interrupts_v2/{2,3,5}` + `mmc3_test_2/4-scanline_timing` + `mmc3_test_2/6-MMC3_alt` by-design. **Post-step-B4 (2026-05-14)**: `mmc3_test_2/4-scanline_timing` strict still `#[ignore]`'d, but the failure shape advanced from sub-test #2 ("Scanline 0 IRQ should occur LATER") to sub-test #3 ("Scanline 0 IRQ should occur SOONER", a 1-CPU-cycle bracket residual distinct from the structural reload-pending discriminator). The `_currently_fails` probe at `tests/mmc3.rs` is updated to expect the new failure shape.
@@ -912,6 +915,13 @@ v1.3.0 "Bedrock" → v1.4.0 "Fidelity" (+ the v1.4.1 patch) → v1.5.0 "Lens" �
 v1.6.0 "Studio" → v1.7.0 "Forge" → v1.7.1 (patch)** on top, then the **v1.8.x
 "Android"** platform line (v1.8.0 → … → v1.8.7 "Android" (Connectivity completion) →
 **v1.8.8 "Atlas" (Google Play launch readiness)**, the current release). The
+**`[Unreleased]` work toward v1.8.9** is the 13-PR Dependabot consolidation
+(jni 0.21 → 0.22, zip 2 → 8.6, naga 25 → 29, sha1 / md-5 0.10 → 0.11, pollster
+0.3 → 0.4, android_logger 0.14 → 0.15, lz4_flex 0.11 → 0.13, plus the GitHub
+Actions bumps) + the **monetization build-out** (the new, dormant
+`rustynes-monetization` crate — the shared ad-supported / freemium policy core) +
+a held UX fix; the emulation core stays byte-identical and AccuracyCoin holds 100%
+(139/139). The
 table below is the **engine-lineage** version history
 — the internal engine line whose increments produced the v1.0.0 technology. Its
 `v0.9.x` / `v1.x` / `v2.x` markers are the engine's own line, retained as
@@ -928,12 +938,18 @@ own semantic-version line starting at **v1.0.0**.
 > clock with a φ1/φ2 access split), the hard-tier accuracy-residual closure, Vs.
 > DualSystem emulation, and the breaking save-state / cross-version changes that it
 > entails (ADR 0002). The full forward path is tracked in `to-dos/ROADMAP.md` +
-> `to-dos/plans/`: v1.7.0 "Forge" shipped → the **v1.8.x "Android"** sideload line +
-> the **v1.9.0** interim-TestFlight iOS foundation → **v2.0.0 "Timebase"** → then the
-> **mobile-finalization train** (maintainer decision 2026-06-23: both app-store
+> `to-dos/plans/`: v1.7.0 "Forge" shipped → the **v1.8.x "Android"** sideload line
+> (through **v1.8.8 "Atlas"**, with **v1.8.9** the dependency-consolidation +
+> monetization-build-out interim) → the **v1.9.0** interim-TestFlight iOS foundation →
+> **v2.0.0 "Timebase"** → then the
+> **mobile-finalization train** (maintainer replan 2026-06-23: both app-store
 > launches held to post-2.0.0) — **v2.0.1–v2.0.4** final Android, **v2.0.5–v2.0.8**
 > iOS finalization, **v2.0.9** ready-for-release checks for both apps, and **v2.1.0**
-> the joint Google Play + Apple App Store launch. See
+> the **JOINT mobile launch** (Google Play + Apple App Store + F-Droid). The
+> monetization model is ad-supported with a **$3.99** premium unlock (AppLovin MAX +
+> RevenueCat, a reward-ad +11-minute × 2 demo extension, 6 premium features) under a
+> **`foss` / `play` flavor split** (ADR 0025); the shared policy core is the
+> `rustynes-monetization` crate. See
 > `to-dos/plans/v2.0.x-mobile-finalization-plan.md`.
 
 | Version | Status | Bar |

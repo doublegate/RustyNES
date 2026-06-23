@@ -8,8 +8,10 @@ What runs, what doesn't, and where the rough edges are.
 |--------|--------|-------|
 | iNES 1.0 (`.nes`) | Supported | Region defaults to NTSC (iNES 1.0 has no reliable region byte) |
 | NES 2.0 (`.nes`) | Supported | Region byte respected; submapper byte respected for MMC1 / MMC3 / VRC2 / VRC4 / Mapper 34 / Mapper 71 |
-| UNIF (`.unf`) | Not supported | Effectively obsolete in modern dumps |
+| UNIF (`.unf`) | Supported | Board-name-keyed loader for dumps that predate a stable iNES mapper assignment |
 | FDS (`.fds`) | Supported | Famicom Disk System — real-BIOS boot (user-supplied `disksys.rom`), read/write drive, multi-side, 2C33 audio |
+| `.zip` archive | Supported | A single-ROM `.zip` is opened and the inner `.nes` / `.fds` is loaded directly |
+| Soft patches | Supported | `.ips` / `.ups` / `.bps` patches are applied to a base ROM on load |
 
 A file is identified as NES 2.0 when header byte 7 bits 2-3 equal `0b10`.
 Otherwise it's parsed as iNES 1.0, and a few fields fall back to defaults
@@ -17,9 +19,11 @@ documented in `docs/cartridge-format.md`.
 
 ## Supported mappers
 
-iNES mapper numbers handled (51 mapper families; the table below lists the
-most common; the most popular set covers well over 90% of the licensed
-library):
+iNES mapper numbers handled (**168 mapper families**; the table below lists the
+most common; the most popular set covers well over 95% of the licensed
+library). Mappers are tracked in three accuracy tiers — Core, Curated, and
+BestEffort — so the breadth count is honest about which families are
+fully verified versus boot-smoke verified:
 
 | iNES # | Name | Notable games |
 |--------|------|---------------|
@@ -71,7 +75,7 @@ time with an `UnsupportedMapper(N)` error.
 | Namco 163 (1-8 channels) | Supported | Several Japanese RPGs |
 | MMC5 (2 pulse + raw PCM) | Supported (`mapper-audio`, default on) | Castlevania III JP, Just Breed, Laser Invasion |
 | VRC7 (FM, 6 channels) | Supported | Lagrange Point — clean-room emu2413 OPLL port |
-| FDS (wavetable + envelope) | Not supported (with FDS) | |
+| FDS (wavetable + envelope) | Supported | The 2C33 wavetable channel, played by FDS disk games and by the NSF/NSFe player |
 
 ## Regions
 
@@ -98,10 +102,10 @@ and the kevtris `mmc3_test_2` sub-ROMs. A 60-ROM commercial-ROM oracle
 and a 52-entry extended oracle are tracked byte-identically as
 regression gates (the ROMs themselves are user-supplied, never shipped).
 
-This accuracy was developed across the upstream emulation engine's
-v2.0–v2.8 lineage — the cycle-accurate master-clock scheduler, the
-unified DMA engine, and the cpu_interrupts_v2 / MMC3-IRQ closures — and
-ships here at v1.0.0.
+This accuracy was developed across the emulation engine's lineage — the
+cycle-accurate master-clock scheduler, the unified DMA engine, and the
+cpu_interrupts_v2 / MMC3-IRQ closures — and is held byte-identically
+through every release up to and including the current **v1.8.8 "Atlas"**.
 
 ### Remaining edge cases
 
@@ -143,6 +147,24 @@ tracker](https://github.com/doublegate/RustyNES/issues).
   both in the **Tools → Cheats…** panel, persisted per-ROM.
 - **Mid-game ROM swap** — open a different ROM at any time via
   **File → Open ROM…** (`F12`), Open Recent, or drag-and-drop.
+- **Video filters and shaders** — NES_NTSC composite, CRT / scanline,
+  LMP88959 NTSC/PAL, hqNx / xBRZ, Bisqwit, a composable shader stack with
+  a CRT preset bank, `.pal` palette loading, and an HD-pack loader.
+- **Lua scripting** — a Lua 5.4 engine (`docs/scripting.md`) for memory
+  peek/poke, breakpoint / symbol hooks, input injection, and TAStudio
+  automation.
+- **Debugger and TAS tooling** — a Mesen2-class debugger (breakpoints,
+  watchpoints, hex editor, RAM search, trace logger, event viewer, memory
+  compare, symbol-file loading) and the TAStudio piano-roll editor with
+  `.rnm` / `.fm2` / `.bk2` movie interop.
+- **NSF / NSFe player** — play NES sound files directly, with a built-in
+  EQ and waveform scope.
+- **Extra peripherals** — Zapper, Power Pad, Family BASIC keyboard,
+  SNES mouse, Arkanoid paddle (both ports), and turbo / autofire.
+- **Other platforms** — a WebAssembly build runs in the browser at
+  <https://doublegate.github.io/RustyNES/>, and an Android app (touch +
+  hardware controllers, SAF ROM library, save-states, netplay) is
+  available as a GitHub-sideloadable APK.
 
 ## See also
 
