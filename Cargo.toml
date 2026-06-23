@@ -75,7 +75,7 @@ bitflags = "2.6"
 thiserror = { version = "2.0", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 bincode = "1.3"
-sha2 = { version = "0.10", default-features = false }
+sha2 = { version = "0.11", default-features = false }
 # v1.7.0 "Forge" G4 — movie-export hash hardening. The legacy/interchange movie
 # containers identify their ROM by a different digest than RustyNES's native
 # SHA-256: `.fm2` uses an MD5 `romChecksum`, `.bk2` a SHA-1. Recompute both from
