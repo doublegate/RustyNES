@@ -195,17 +195,17 @@ Native RA is shipped and unaffected. The browser (casual-only) path landed as
 the v1.7.0 **H1/H2** workstream + a maintainer-manual deploy/verify.
 
 - `[x]` **`ra_glue.js` rc_client trampoline marshalling** — *(shipped; v1.8.9
-  reconcile: `crates/rustynes-frontend/web/cheevos/ra_glue.js` (413 lines) implements all
+  reconcile: `crates/rustynes-frontend/web/cheevos/ra_glue.js` implements all
   three trampolines — read-memory, server-call, event-handler — via `addFunction`, plus the
   session-epoch use-after-free guard, `ra_init`/`ra_do_frame`/`ra_begin_login`/`ra_load_game`.
   The auth-proxy DEPLOY + live verify remain `[M]` below.)* Source: ADR 0015;
   `docs/cheevos-browser.md` §Status; [v1.7.0](plans/v1.7.0-forge-plan.md) H1.
-  Files: `web/cheevos/ra_glue.js`, `scripts/cheevos/`.
+  Files: `crates/rustynes-frontend/web/cheevos/ra_glue.js`, `scripts/cheevos/`.
 - `[M]` **Auth-proxy deploy** — stand up a host + TLS + hardened CORS origin and
   point `RA_PROXY_BASE` at it (until set, `proxy_configured()` is `false`).
   Source: `docs/cheevos-browser.md` §Auth proxy contract; ADR 0015. Target:
   **maintainer-manual**. Files: `scripts/cheevos/auth-proxy.example.toml`,
-  `scripts/cheevos/auth_proxy_stub.py`, `web/cheevos/ra_glue.js`.
+  `scripts/cheevos/auth_proxy_stub.py`, `crates/rustynes-frontend/web/cheevos/ra_glue.js`.
 - `[M]` **Live-browser verify with a real RA account** — no headless path;
   mirrors the v1.2.0 F1/F3 carryovers the maintainer accepted. Source: ADR 0015;
   `docs/cheevos-browser.md` §Status. Target: **maintainer-manual**.
@@ -229,7 +229,8 @@ the v1.7.0 **H1/H2** workstream + a maintainer-manual deploy/verify.
   defaults. Per-APU-channel context volume is an intentional v2.0 deferral, not a gap.)*
   stereo panning, reverb/crossfeed, output device picker, 20-band EQ. Source:
   [v1.7.0](plans/v1.7.0-forge-plan.md) H3. Files:
-  `crates/rustynes-frontend/src/audio.rs`.
+  `crates/rustynes-frontend/src/{audio,audio_dsp,eq}.rs` +
+  `crates/rustynes-frontend/src/debugger/settings_panel.rs`.
 - `[ ]` **Full Mesen HD-pack parity** — beyond the shipped `<condition>` /
   `<background>` rules + HD audio: neighbor predicates / palette-key matching /
   the remaining Mesen rule set. Source:
@@ -377,7 +378,7 @@ are ROM-availability/coverage and a detection follow-up — none affect the orac
   boot-smoke polish are open. Source:
   `docs/testing/v1.6.0-e-mapper-coverage-2026-06-18.md`; the blank-boot-fixes memory
   note; the coverage-harness reuse note. Target: **v1.7.x / follow-up**. Files:
-  `crates/rustynes-test-harness/.../external_coverage.rs`, `screenshots/`.
+  `crates/rustynes-test-harness/tests/external_coverage.rs`, `screenshots/`.
 - `[ ]` **`m301` / `m348` UNIF board-map entries** — UNIF board names that still
   need wiring into the loader's board map (the UNIF loader shipped in v1.6.0;
   m301 A7-outer-bank was patched, the board-map breadth continues). Source:
@@ -392,7 +393,8 @@ are ROM-availability/coverage and a detection follow-up — none affect the orac
   `load_nes()` unwraps archives + routes FDS through `Nes::from_disk()`.)* mirror the
   frontend load dispatch so it can screenshot archived/FDS ROMs. Source: v1.7.0
   beta.5 carryover (#59). Files:
-  `crates/rustynes-test-harness/.../external_coverage.rs`.
+  `crates/rustynes-test-harness/tests/external_coverage.rs` +
+  `crates/rustynes-test-harness/tests/common/mod.rs`.
 - `[ ]` **Full ~300-mapper set + 100% TASVideos compatibility** — the original
   ambitious v1.0.0 bar, redefined down to "production-quality + hardware-accurate"
   and pursued incrementally ever since. Source:
@@ -416,7 +418,8 @@ are ROM-availability/coverage and a detection follow-up — none affect the orac
   [v1.7.0](plans/v1.7.0-forge-plan.md) H5. Files: `crates/rustynes-frontend/src/i18n.rs`.
 - `[x]` **Web / wasm parity (H6)** — *(shipped; v1.8.9 reconcile: File System Access
   API + `?settings=` in `wasm_io.rs` + `wasm_share.rs`, Gamepad API in `wasm_gamepad.rs`,
-  PWA/offline via `web/manifest.webmanifest` + `web/sw.js`.)* File System Access API,
+  PWA/offline via `crates/rustynes-frontend/web/manifest.webmanifest` +
+  `crates/rustynes-frontend/web/sw.js`.)* File System Access API,
   Gamepad API, PWA/offline, base64 `?settings=` share-links. Source:
   [v1.7.0](plans/v1.7.0-forge-plan.md) H6. Files: `crates/rustynes-frontend` (wasm) + `web/`.
 
