@@ -163,7 +163,14 @@ fn worker_loop(job_rx: &Receiver<CommCmd>, result_tx: &Sender<CommResult>) {
             }
             #[cfg(feature = "script-ipc")]
             CommCmd::HttpPost { id, url, body } => {
-                let (status, resp) = http_call(agent.post(&url).send(body.as_str()));
+                // Pass the owned `body` by value (ureq reuses the allocation) and keep
+                // ureq 2 `send_string`'s implicit `text/plain; charset=utf-8` content type.
+                let (status, resp) = http_call(
+                    agent
+                        .post(&url)
+                        .content_type("text/plain; charset=utf-8")
+                        .send(body),
+                );
                 let _ = result_tx.send(CommResult::Http {
                     id,
                     status,
