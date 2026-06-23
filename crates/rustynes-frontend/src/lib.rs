@@ -174,6 +174,12 @@ pub mod symbols;
 // the filesystem-backed actions are native-gated at the dispatch site.
 pub mod ui_shell;
 
+// v1.8.9 "Backlog" — the desktop on-screen virtual pad (clickable egui NES
+// controller for player 1). Native-only; the browser build has the touch
+// overlay (`wasm_touch`) instead.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod virtual_pad;
+
 // v1.6.0 Workstream A — the TAStudio piano-roll TAS *editor*: a frame-keyed
 // save-state greenzone + an editable input log + deterministic seek/edit
 // plumbing. The egui piano-roll grid (A2) and branches/projects (A4) layer on

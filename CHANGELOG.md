@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Desktop on-screen controls overlay (issue #111).** A clickable NES controller
+  overlaid on the bottom of the gameplay area (Tools → Virtual Pad) — translucent,
+  custom-painted buttons (D-pad bottom-left; NES-red B / A + Select / Start bottom-right)
+  drawn as chromeless `egui::Area`s so the full frame stays visible underneath, rather than
+  a separate window that shrinks the view. Held buttons fold into the per-frame input at the
+  SAME late-latch as the keyboard / gamepad, so on-screen presses record and replay
+  identically in TAS movies and netplay. Native-only (the browser build has its own touch
+  overlay); the mask is empty — byte-identical — when the overlay is hidden.
 - **A/V recording codec depth.** The off-by-default `av-record` feature now supports
   selectable video encoders — **H.264** (`libx264`, default), **H.265 / HEVC** (`libx265`),
   and **VP9** (`libvpx-vp9`) — plus a **CRF** constant-quality control (range-clamped per
