@@ -2476,14 +2476,30 @@ impl App {
     /// the movie is verifiable on `TASVideos`.
     #[cfg(not(target_arch = "wasm32"))]
     fn handle_movie_export(&self) {
-        // Prefer the in-progress recording (finished here); else the loaded
-        // playback movie. One of the two is guaranteed by the menu gate.
+        // Prefer an open, non-empty TAStudio edit — it carries the TAS
+        // re-record count (and is the most likely thing a user means by
+        // "export" while the piano-roll is up). Else the in-progress recording
+        // (finished here), else the loaded playback movie.
         let movie = {
-            let mut guard = self.emu.lock();
-            guard
-                .movie
-                .finish_recording()
-                .or_else(|| guard.movie.playing_movie())
+            let tas_movie = self
+                .debugger
+                .as_ref()
+                .and_then(crate::debugger::DebuggerOverlay::tas_editor)
+                .filter(|ed| !ed.is_empty())
+                .and_then(|ed| {
+                    let guard = self.emu.lock();
+                    guard
+                        .nes
+                        .as_ref()
+                        .map(|nes| ed.to_movie(nes.region(), *nes.rom_sha256()))
+                });
+            tas_movie.or_else(|| {
+                let mut guard = self.emu.lock();
+                guard
+                    .movie
+                    .finish_recording()
+                    .or_else(|| guard.movie.playing_movie())
+            })
         };
         let Some(movie) = movie else {
             eprintln!("rustynes: movie export: nothing to export");
@@ -2678,6 +2694,7 @@ impl App {
             let opts = rustynes_core::movie_interop::Fm2ExportOpts {
                 rom_filename: name.map(|n| format!("{n}.nes")),
                 rom_checksum_md5: hashes.map(|h| format!("base64:{}", h.md5_b64)),
+                rerecord_count: u64::from(movie.rerecord_count),
                 ..Default::default()
             };
             let text = rustynes_core::movie_interop::export_fm2(movie, &opts)
@@ -2688,6 +2705,7 @@ impl App {
             let opts = rustynes_core::bk2_interop::Bk2ExportOpts {
                 game_name: name,
                 sha1: hashes.map(|h| h.sha1.clone()),
+                rerecord_count: u64::from(movie.rerecord_count),
                 ..Default::default()
             };
             let parts =

@@ -29,7 +29,7 @@ pub use greenzone::Greenzone;
 
 use std::collections::BTreeMap;
 
-use rustynes_core::{Buttons, FrameInput, Nes};
+use rustynes_core::{Buttons, FrameInput, Movie, Nes, Region, StartPoint};
 use thiserror::Error;
 
 /// Magic prefix of a `.rnmproj` `TAStudio` project file.
@@ -226,6 +226,12 @@ pub struct TasEditor {
     /// [`Self::revision`] to skip the per-frame clone of the whole editor when
     /// nothing changed (an idle `TAStudio` costs no allocation).
     revision: u64,
+    /// TAS re-record tally — bumped once per *input-log* edit (set / insert /
+    /// delete a frame's input), the value `.fm2` / `.bk2` exports surface as the
+    /// `rerecordCount` header (via [`Self::to_movie`]). Distinct from `revision`,
+    /// which also bumps on lag-log / cursor / marker / branch churn. Saturates at
+    /// `u32::MAX` (4 billion re-records is not a real session).
+    rerecord_count: u32,
 }
 
 impl TasEditor {
@@ -246,7 +252,26 @@ impl TasEditor {
             markers: BTreeMap::new(),
             branches: Vec::new(),
             revision: 0,
+            rerecord_count: 0,
         }
+    }
+
+    /// Bump the TAS re-record tally (saturating). Called by each input-log edit.
+    const fn bump_rerecord(&mut self) {
+        self.rerecord_count = self.rerecord_count.saturating_add(1);
+    }
+
+    /// The current TAS re-record count (input edits so far). Surfaced in the
+    /// `.fm2` / `.bk2` `rerecordCount` header via [`Self::to_movie`].
+    #[must_use]
+    pub const fn rerecord_count(&self) -> u32 {
+        self.rerecord_count
+    }
+
+    /// Seed the re-record tally from a loaded movie (so editing an imported
+    /// `.fm2` / `.bk2` / `.rnm` continues counting from its recorded value).
+    pub const fn set_rerecord_count(&mut self, count: u32) {
+        self.rerecord_count = count;
     }
 
     /// Bump the snapshot-relevant edit counter (see [`Self::revision`]). Called
@@ -316,6 +341,21 @@ impl TasEditor {
     #[must_use]
     pub fn input_log(&self) -> &[FrameInput] {
         &self.input_log
+    }
+
+    /// Build a portable [`Movie`] from the current input log, carrying the TAS
+    /// [`Self::rerecord_count`] into the movie (and thus the `.fm2` / `.bk2`
+    /// `rerecordCount` header on export). `TAStudio` projects always replay from
+    /// power-on; `region` and `rom_sha256` come from the running console.
+    #[must_use]
+    pub fn to_movie(&self, region: Region, rom_sha256: [u8; 32]) -> Movie {
+        Movie {
+            region,
+            rom_sha256,
+            start: StartPoint::PowerOn,
+            frames: self.input_log.clone(),
+            rerecord_count: self.rerecord_count,
+        }
     }
 
     /// The greenzone (for the piano-roll's row colouring / diagnostics).
@@ -569,6 +609,7 @@ impl TasEditor {
         self.greenzone.invalidate_after(frame);
         self.lag_log.truncate(frame);
         self.bump();
+        self.bump_rerecord();
         true
     }
 
@@ -581,6 +622,7 @@ impl TasEditor {
         self.lag_log.truncate(at);
         self.shift_markers(at, 1);
         self.bump();
+        self.bump_rerecord();
     }
 
     /// Delete the frame at `frame`, shifting later inputs up by one. No-op past
@@ -593,6 +635,7 @@ impl TasEditor {
             self.shift_markers(frame, -1);
             self.cursor = self.cursor.min(self.input_log.len());
             self.bump();
+            self.bump_rerecord();
         }
     }
 
@@ -729,6 +772,44 @@ mod tests {
         // A seek bumps (cursor / greenzone / lag can change).
         ed.seek(&mut nes, 1);
         assert!(ed.revision() > r2, "seek must bump the revision");
+    }
+
+    #[test]
+    fn rerecord_count_tracks_input_edits_only() {
+        let nes = {
+            let mut n = Nes::from_rom(&synth_nrom()).unwrap();
+            n.power_cycle();
+            n
+        };
+        let mut ed = TasEditor::new(&nes, 1 << 20, 16);
+        assert_eq!(ed.rerecord_count(), 0);
+
+        // A real input edit bumps the re-record tally.
+        assert!(ed.set_input(0, FrameInput::new(Buttons::A, Buttons::empty())));
+        assert_eq!(ed.rerecord_count(), 1);
+
+        // A no-op set_input (unchanged value) must NOT bump.
+        assert!(!ed.set_input(0, FrameInput::new(Buttons::A, Buttons::empty())));
+        assert_eq!(ed.rerecord_count(), 1);
+
+        // A second change, then an insert + a delete: each is one re-record.
+        assert!(ed.set_input(0, FrameInput::new(Buttons::B, Buttons::empty())));
+        ed.insert_frame(0);
+        ed.delete_frame(0);
+        assert_eq!(ed.rerecord_count(), 4);
+
+        // A non-input edit (a marker) bumps `revision`, NOT the re-record tally.
+        ed.set_marker(0, "x");
+        assert_eq!(ed.rerecord_count(), 4);
+
+        // `to_movie` carries the tally into the exported movie (and thus the
+        // `.fm2` / `.bk2` rerecordCount header).
+        assert_eq!(ed.to_movie(Region::Ntsc, [0u8; 32]).rerecord_count, 4);
+
+        // Seeding from a loaded movie continues the tally from its value.
+        ed.set_rerecord_count(1000);
+        assert_eq!(ed.rerecord_count(), 1000);
+        assert_eq!(ed.to_movie(Region::Ntsc, [0u8; 32]).rerecord_count, 1000);
     }
 
     #[test]

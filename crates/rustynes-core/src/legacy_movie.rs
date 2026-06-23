@@ -193,6 +193,7 @@ pub fn import_fcm(
         rom_sha256,
         start: StartPoint::PowerOn,
         frames,
+        rerecord_count: u32::try_from(rerecord_count).unwrap_or(u32::MAX),
     };
     Ok((
         movie,
@@ -407,6 +408,7 @@ pub fn import_fmv(
         rom_sha256,
         start: StartPoint::PowerOn,
         frames,
+        rerecord_count: u32::try_from(rerecord_count).unwrap_or(u32::MAX),
     };
     Ok((
         movie,
@@ -524,6 +526,7 @@ pub fn import_vmv(
         rom_sha256,
         start: StartPoint::PowerOn,
         frames,
+        rerecord_count: u32::try_from(rerecord_count).unwrap_or(u32::MAX),
     };
     Ok((
         movie,

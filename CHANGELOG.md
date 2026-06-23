@@ -17,6 +17,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **TAS re-record count (`.fm2` / `.bk2` `rerecordCount`).** The TAStudio piano-roll
+  editor now keeps a re-record tally — incremented once per *input* edit (set / insert /
+  delete a frame's input), not on lag-log / marker / cursor churn — and carries it into
+  `.fm2` / `.bk2` exports as the standard `rerecordCount` header, so a RustyNES-authored
+  movie reports an honest re-record count to TASVideos and other tools. The count
+  round-trips through the native `.rnm` format (appended after the input stream, so older
+  `.rnm` files still load and default to 0 — no format-version bump) and is preserved on
+  `.fm2` / `.bk2` / `.fcm` / `.fmv` / `.vmv` import. Movie export now prefers an open
+  TAStudio edit (which carries the count) over the linear recorder. A straight linear
+  recording correctly reports 0.
 - **Mobile monetization core (`rustynes-monetization` crate) — dormant; ships at
   v2.1.0.** A new workspace crate holding the cross-platform ad-supported-freemium
   policy (`AdPolicy` / `AdConfig` / `PremiumFeature`, UniFFI 0.31, 17 tests) shared

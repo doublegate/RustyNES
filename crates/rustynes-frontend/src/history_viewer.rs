@@ -318,6 +318,8 @@ impl HistoryViewer {
             rom_sha256,
             start: StartPoint::SaveState(anchor.blob.clone()),
             frames,
+            // An exported rewind window is a straight capture — no re-records.
+            rerecord_count: 0,
         })
     }
 
