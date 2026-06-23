@@ -13,7 +13,7 @@ core/ (Rust)  ──UniFFI──▶  Kotlin bindings ──▶ android/  (Revenu
 The core is the **single source of truth**. Both shells convert RevenueCat's
 `CustomerInfo` into one boolean (`setPremium`) and ask the core when to show an ad
 (`shouldShowInterstitial`). Ad cadence, the launch-grace window, and the paywalled
-feature set live only in `core/src/monetization.rs`, so the two platforms cannot drift.
+feature set live only in `crates/rustynes-monetization/src/monetization.rs`, so the two platforms cannot drift.
 When a purchase completes, `setPremium(true)` makes every gate return `false`
 instantly — ads stop with no app restart.
 
@@ -24,7 +24,7 @@ instantly — ads stop with no app restart.
 ```
 core/                         shared Rust crate (rustynes-monetization)
   Cargo.toml                  cdylib + staticlib + lib; uniffi-bindgen bin
-  uniffi.toml                 fixes Kotlin package (app.rustynes.ffi) + Swift module (RustyNesMonetization)
+  uniffi.toml                 fixes Kotlin package (com.doublegate.rustynes.monetization.ffi) + Swift module (RustyNesMonetization)
   uniffi-bindgen.rs           in-crate binding generator (stable-Rust workaround)
   src/lib.rs                  crate root; uniffi::setup_scaffolding!()
   src/monetization.rs         AdPolicy / AdConfig / PremiumFeature  +  unit tests

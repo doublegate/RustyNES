@@ -330,12 +330,16 @@ impl AdPolicy {
     }
 
     /// How many rewarded extensions remain in this game session. Useful for UI such as
-    /// "3 ad-extensions left". Returns 0 for premium users (they never need them) only
-    /// incidentally — gate the offer on [`Self::can_offer_rewarded`], not on this value.
+    /// "3 ad-extensions left". Returns **0 for premium users** (they have no rewarded offer),
+    /// so the value can be shown directly without misreporting "11 left" to a paid user; the
+    /// offer itself is still gated on [`Self::can_offer_rewarded`].
     ///
     /// Generated binding names: `rewardGrantsRemaining()` (both languages).
     pub fn reward_grants_remaining(&self) -> u32 {
         let s = self.state.lock().unwrap();
+        if s.is_premium {
+            return 0; // premium has no rewarded offer; never report grants "remaining"
+        }
         self.cfg
             .max_reward_grants_per_session
             .saturating_sub(s.reward_grants_this_session)
@@ -527,6 +531,7 @@ mod tests {
         assert!(p.is_play_allowed());
         assert_eq!(p.play_time_remaining_ms(), None); // None == unlimited
         assert!(!p.can_offer_rewarded()); // premium never needs the rewarded offer
+        assert_eq!(p.reward_grants_remaining(), 0); // premium reports 0, not the cap
     }
 
     #[test]

@@ -70,7 +70,7 @@ doc). Ship **Android first (v1.8.0; Play debut v1.8.8), iOS at v1.9.0**.
 - This logic is **implemented and tested** in the Rust core (`start_play`, `add_active_time`,
   `grant_rewarded_time` → bool w/ cap, `can_offer_rewarded`, `reward_grants_remaining`,
   `is_play_allowed`, `play_time_remaining_ms`; `base_play_ms`/`reward_play_ms`/
-  `max_reward_grants_per_session` in `AdConfig`). 12 unit tests pass; bindings regenerated to
+  `max_reward_grants_per_session` in `AdConfig`). 13 unit tests pass; bindings regenerated to
   `core/generated/`. Full host flow in `docs/pre-implementation-addendum.md` §2c/§2f.
 - Drive `add_active_time(...)` from **unpaused** emulation only (stop during ads, the run-out
   prompt, and background) so paused time never burns the budget.

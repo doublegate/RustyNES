@@ -2,7 +2,7 @@
 //  RustyNesApp.swift — iOS entry point + monetization coordinator.
 //
 //  Mirrors the Android RustyNesApp.kt. It:
-//    1. Builds the single shared `AdPolicy` from the Rust core (RustyNesCore module).
+//    1. Builds the single shared `AdPolicy` from the Rust core (RustyNesMonetization module).
 //    2. Initializes AppLovin MAX with the current config-builder init API.
 //    3. Configures RevenueCat and binds the premium entitlement into the core.
 //
@@ -10,7 +10,7 @@
 //  gate so SwiftUI views can reach them through the environment or directly.
 //
 //  SDK sources (see Package.swift): RevenueCat (purchases-ios), AppLovinSDK, and the
-//  RustyNesCore Swift package produced from the Rust core by cargo-swift (see README).
+//  RustyNesMonetization Swift package produced from the Rust core by cargo-swift (see README).
 //
 
 import SwiftUI
@@ -34,7 +34,7 @@ enum Config {
 final class Monetization {
     static let shared = Monetization()
 
-    /// Shared policy core. `defaultAdConfig()` / `AdPolicy(config:nowMs:)` are RustyNesCore bindings.
+    /// Shared policy core. `defaultAdConfig()` / `AdPolicy(config:nowMs:)` are RustyNesMonetization bindings.
     let core: AdPolicy
     let billing: Billing
     let adGate: AdGate

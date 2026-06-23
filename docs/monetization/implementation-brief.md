@@ -259,7 +259,7 @@ Core additions (**now implemented** in `monetization.rs`; see addendum §2f): `s
 `add_active_time(ms)`, `grant_rewarded_time()` (returns `bool`, enforces the 11-grant cap),
 `can_offer_rewarded()`, `reward_grants_remaining()`, `is_play_allowed()`,
 `play_time_remaining_ms()`, plus `base_play_ms` (480_000), `reward_play_ms` (120_000), and
-`max_reward_grants_per_session` (11) in `AdConfig`. All 12 unit tests pass and bindings are
+`max_reward_grants_per_session` (11) in `AdConfig`. All 13 unit tests pass and bindings are
 regenerated.
 
 ```rust
@@ -387,7 +387,7 @@ brief but worth tracking):
 
 ## 12. Quick reference — generated FFI surface
 
-| Rust | Kotlin (`app.rustynes.ffi`) | Swift (`RustyNesMonetization`) |
+| Rust | Kotlin (`com.doublegate.rustynes.monetization.ffi`) | Swift (`RustyNesMonetization`) |
 |---|---|---|
 | `AdPolicy::new(cfg, now_ms)` | `AdPolicy(config, nowMs: ULong)` | `AdPolicy(config:nowMs: UInt64)` |
 | `default_ad_config()` | `defaultAdConfig()` | `defaultAdConfig()` |

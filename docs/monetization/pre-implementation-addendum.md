@@ -114,7 +114,7 @@ The existing `AdPolicy` already handles premium suppression, launch grace, and t
 Add session-awareness so the rules above live in one shared, tested place:
 
 ```rust
-// Extends core/src/monetization.rs — add to AdConfig and AdPolicy.
+// Extends crates/rustynes-monetization/src/monetization.rs — add to AdConfig and AdPolicy.
 // New AdConfig field:
 //   suppress_first_session: bool   // true → no interstitials during session #1
 //
@@ -144,7 +144,7 @@ The host persists `session_index` (e.g. SharedPreferences / UserDefaults) and pa
 
 The 8-minute timer and the "+2 minutes per ad" grant are monetization logic, so they live in
 the shared core — one tested implementation for both platforms. **This is now implemented in
-`core/src/monetization.rs`** (12 unit tests pass; Kotlin/Swift bindings regenerated). The
+`crates/rustynes-monetization/src/monetization.rs`** (13 unit tests pass; Kotlin/Swift bindings regenerated). The
 `AdConfig` and `AdPolicy` additions are:
 
 ```rust
@@ -377,11 +377,11 @@ config from day one so you can A/B without a release.
 
 ## 8. How this changes the existing skeleton
 
-- ✅ **Done:** `core/src/monetization.rs` now implements §2f (`start_play`, `add_active_time`,
+- ✅ **Done:** `crates/rustynes-monetization/src/monetization.rs` now implements §2f (`start_play`, `add_active_time`,
   `grant_rewarded_time` → bool with the 11-grant cap, `can_offer_rewarded`,
   `reward_grants_remaining`, `is_play_allowed`, `play_time_remaining_ms`, plus
   `base_play_ms` / `reward_play_ms` / `max_reward_grants_per_session` in `AdConfig`), the
-  `PremiumFeature` enum gates `SaveStates` + `BatterySaves` + `FastForward`, all 12 unit tests
+  `PremiumFeature` enum gates `SaveStates` + `BatterySaves` + `FastForward`, all 13 unit tests
   pass, and the Kotlin/Swift bindings are regenerated (`core/generated/`).
 - ⬜ **Remaining (shell wiring):** add a **`MaxRewardedAd` / `MARewardedAd`** gate in each
   shell, mirroring `AdGate`. On the reward callback (`OnUserRewarded` / `didRewardUser`), call

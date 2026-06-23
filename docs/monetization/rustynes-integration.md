@@ -43,7 +43,7 @@ The **15-tester / 14-day closed test** (runbook §5a) therefore applies to the *
 
 RustyNES already ships a workspace crate named **`rustynes-core`** (Bus/scheduler/console/save
 states), so this crate is named **`rustynes-monetization`** (lib `rustynes_monetization`), Swift
-module `RustyNesMonetization`, Kotlin package `app.rustynes.ffi`. The locked plan also factors two
+module `RustyNesMonetization`, Kotlin package `com.doublegate.rustynes.monetization.ffi`. The locked plan also factors two
 new mobile host crates you should slot beside:
 - **`rustynes-mobile`** — a platform-agnostic **UniFFI control surface** over the core (load ROM
   from a byte buffer, set the per-port `Buttons` mask, run-frame, borrow the framebuffer, save/load

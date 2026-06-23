@@ -3,14 +3,14 @@
 // Package.swift — SwiftPM wiring for the iOS app's dependencies.
 //
 // Three dependencies are declared:
-//   • RustyNesCore  — the Rust core, packaged as a Swift package by `cargo swift`
-//                     (see README). It contains the generated RustyNesCore.swift plus
-//                     the librustynes_core xcframework as a binaryTarget.
+//   • RustyNesMonetization  — the Rust core, packaged as a Swift package by `cargo swift`
+//                     (see README). It contains the generated RustyNesMonetization.swift plus
+//                     the librustynes_monetization xcframework as a binaryTarget.
 //   • RevenueCat    — purchases-ios SDK (entitlement source of truth).
 //   • AppLovinSDK   — MAX mediation SDK.
 //
 // In practice many teams add RevenueCat and AppLovinSDK through Xcode's SPM UI on the
-// app target and keep RustyNesCore as a local package. This manifest shows the
+// app target and keep RustyNesMonetization as a local package. This manifest shows the
 // all-SPM arrangement for a self-contained reference.
 //
 // NOTE: AppLovin distributes AppLovinSDK via SPM at the URL below; pin to the newest
@@ -28,7 +28,7 @@ let package = Package(
     ],
     dependencies: [
         // Local package generated from the Rust core by `cargo swift package`.
-        .package(path: "../RustyNesCore"),
+        .package(path: "../RustyNesMonetization"),
         // RevenueCat — pin to the newest tag before release.
         .package(url: "https://github.com/RevenueCat/purchases-ios.git", from: "5.0.0"),
         // AppLovin MAX — pin to the newest 13.x tag before release.
@@ -38,7 +38,7 @@ let package = Package(
         .target(
             name: "RustyNesApp",
             dependencies: [
-                .product(name: "RustyNesCore", package: "RustyNesCore"),
+                .product(name: "RustyNesMonetization", package: "RustyNesMonetization"),
                 .product(name: "RevenueCat", package: "purchases-ios"),
                 .product(name: "AppLovinSDK", package: "AppLovin-MAX-Swift-Package"),
             ],

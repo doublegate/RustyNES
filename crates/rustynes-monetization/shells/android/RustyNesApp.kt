@@ -15,7 +15,7 @@
  * Required Gradle dependencies (see build.gradle.kts):
  *   com.applovin:applovin-sdk        — MAX mediation SDK (init API used below)
  *   com.revenuecat.purchases:purchases — RevenueCat (entitlement source of truth)
- * Plus the UniFFI-generated `com.doublegate.rustynes.monetization.ffi` package and the native librustynes_core
+ * Plus the UniFFI-generated `com.doublegate.rustynes.monetization.ffi` package and the native librustynes_monetization
  * .so files under src/main/jniLibs (produced by cargo-ndk — see README).
  */
 package com.doublegate.rustynes.monetization

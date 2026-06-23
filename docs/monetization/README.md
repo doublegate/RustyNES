@@ -87,7 +87,7 @@ rustynes-monetization/
 
 - One RevenueCat entitlement, identifier **`premium`**, is the only premium signal. It flows
   into the Rust core via `AdPolicy.set_premium(bool)`; ads and paid features derive from it.
-- All ad cadence and paywall logic live in `core/src/monetization.rs` and are shared to both
+- All ad cadence and paywall logic live in `crates/rustynes-monetization/src/monetization.rs` and are shared to both
   platforms via UniFFI — never duplicated in Kotlin/Swift.
 - **Free tier is time-gated to 8 min/session** (no save states, no battery saves); a completed
   rewarded ad grants **+2 min**; the Full Version IAP removes the timer and unlocks saves. The
@@ -98,12 +98,14 @@ rustynes-monetization/
 
 ## Status
 
-- ✅ Core compiles; **all 12 Rust unit tests pass** (interstitial pacing + the free-tier
-  play-time budget and 11-grant rewarded cap); Kotlin + Swift bindings regenerated from the
-  core into `core/generated/`.
+- ✅ Core compiles; **all 13 Rust unit tests pass** (interstitial pacing + the free-tier
+  play-time budget and 11-grant rewarded cap); Kotlin + Swift bindings are generated on demand
+  from the crate (see `build-and-bindings.md` — the committed `core/generated/` snapshot was
+  dropped as a regenerable build artifact).
 - ✅ Free-tier play-time gate (8-min budget, +2 min per completed rewarded ad, 11-grant /
-  +22-min cap → 30 min max) implemented in `core/src/monetization.rs`; `PremiumFeature` gates
-  `SaveStates` + `BatterySaves` + `FastForward`.
+  +22-min cap → 30 min max) implemented in `crates/rustynes-monetization/src/monetization.rs`; `PremiumFeature` gates
+  the three persistence features `SaveStates` + `SaveOnExitResume` + `BatterySaves` (rewind +
+  fast-forward stay free).
 - ⬜ Shell wiring still to do: a rewarded-ad gate (`grantRewardedTime()` on the reward
   callback), the countdown UI, and the run-out prompt — see addendum §8.
 - ⬜ Open decisions (see `implementation-brief.md` §10): one-time vs subscription, free-tier

@@ -4,7 +4,7 @@ Considerations that go *beyond* the baseline design in the other docs: design ho
 free-tier mechanic worth closing before launch, engineering-robustness items, and
 store/product polish. The free-tier model itself (8-min budget, +2 min per rewarded ad,
 11-grant/+22-min cap → 30 min max, no save states, no battery saves) is decided and
-implemented in `core/src/monetization.rs`; this document is about the edges around it.
+implemented in `crates/rustynes-monetization/src/monetization.rs`; this document is about the edges around it.
 
 Two adjacent topics live in other docs to keep them next to the work they affect:
 **compliance/consent** (the EEA/UK/CH certified-CMP requirement and iOS SDK privacy

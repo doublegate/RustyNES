@@ -2,7 +2,7 @@
 //
 // This is NOT a complete Android Gradle file; it highlights only the pieces this
 // skeleton needs: the SDK dependencies, the BuildConfig fields the Kotlin reads, and
-// the jniLibs source set where cargo-ndk drops librustynes_core.so.
+// the jniLibs source set where cargo-ndk drops librustynes_monetization.so.
 
 plugins {
     id("com.android.application")
@@ -67,7 +67,7 @@ dependencies {
     // implementation("com.applovin.mediation:google-adapter:x.y.z")
 
     // --- UniFFI runtime --------------------------------------------------------------
-    // The generated app/rustynes/ffi/rustynes_core.kt uses JNA to load the native .so.
+    // The generated app/rustynes/ffi/rustynes_monetization.kt uses JNA to load the native .so.
     implementation("net.java.dev.jna:jna:5.14.0@aar")
 
     implementation("androidx.core:core-ktx:1.13.1")
