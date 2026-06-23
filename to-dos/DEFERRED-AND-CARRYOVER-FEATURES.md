@@ -24,6 +24,32 @@
 > maintainer-manual verifies) remain outstanding as listed. The **mobile-launch
 > deferral** + the **`foss`/`play` flavor split** below are the current canonical
 > forward framing.
+>
+> **v1.8.9 reconciliation (2026-06-23).** A full re-verification of §1–§5, §7, §8,
+> §11, §12 against current `main` reclassified every item; the per-item markers
+> below are updated to match. Three buckets:
+>
+> - **Shipped (now `[x]`):** movie import `.fcm`/`.fmv`/`.vmv`/`.fm2`/`.bk2` (§1i;
+>   `.mc2` rejected by design — PCE format), wasm-Lua done-as-designed (§2b, ADR
+>   0012), spectator netplay (§3c), the RA `ra_glue.js` trampoline (§4a), audio
+>   depth/H3 (§5a; per-APU-channel volume is an intentional v2.0 deferral),
+>   mappers→168 + zero-library present + m176 FK23c defined + m30/m80/m185
+>   blank-boot + `.zip`/`.7z`/`.fds` harness (§7a/b/c/d/g), per-game/DIP/lag H4 +
+>   i18n H5 + **web/wasm H6** (§8a/b/c), the `full` alias (§11f), Kid Icarus FDS
+>   (§12b).
+> - **Open + CI-doable → the v1.8.9 "Backlog" beta train** (additive/off-by-default,
+>   core byte-identical, AccuracyCoin 139/139 held): the §1 creator tooling (Virtual
+>   Pad, Input Macros, BasicBot, multi-viewport, A/V codec depth, FDS Firmware
+>   Manager, Multi-Disk Bundler, Batch Runner, `.fm2` rerecord-count export), §2
+>   `userdata` SQLite, §4d RA-HUD visual finish, §5b HD-pack spatial conditions, §7
+>   UNIF board-map + remaining broken-boots + ASIC-cluster continuation, §11 CI
+>   hardening (cargo-hack / arm64 leg / per-job skips / nextest), §12a NSF-viz depth,
+>   plus the `deny.toml` stale-advisory cleanup.
+> - **`[M]` maintainer-manual (cannot be CI-certified):** live WebRTC matrix +
+>   cross-NAT UDP (§3a/b), RA auth-proxy deploy + live-account verify + allowlisting
+>   (§4b/c/e), A/V-recording + shader/NTSC + HD-audio output verifies (§5c/d/e), m176
+>   `.WXN` re-staging + remaining-broken-boot snapshot re-bless (§7), the `merge_group`
+>   adoption decision (§11d) — listed under their themes below.
 
 ## How to read this
 
@@ -104,7 +130,10 @@ each but that are **not present in `crates/` on `main`** (verified absent: no
   boot-smoke harness + screenshot corpus). Source:
   [v1.7.0](plans/v1.7.0-forge-plan.md) H9 + the Batch-Runner reuse note. Target:
   **v1.7.x (beta.5)**. Files: `scripts/`, `crates/rustynes-test-harness/`.
-- `[ ]` **Broad movie-format import (G4 remainder)** — the G4 commit landed the
+- `[x]` **Broad movie-format import (G4 remainder)** — *(shipped; v1.8.9 reconcile:
+  `.fcm`/`.fmv`/`.vmv` in `legacy_movie.rs`, `.fm2`/`.bk2` in `movie_interop.rs`; `.mc2`
+  rejected by design as a PC-Engine format. The only remainder — `.fm2` rerecord-count
+  on export — is a v1.8.9 beta.2 item.)* — the G4 commit landed the
   legacy importer, but the full TASVideos pre-`.fm2` corpus breadth (`.fcm`,
   Famtasia `.fmv`, VirtuaNES, Mednafen `.mc2`) + `.fm2`/`.bk2` export hardening
   (rerecord count, MD5/SHA hashing) should be confirmed/finished. Source:
@@ -122,7 +151,10 @@ remains are the optional/SQLite tails and any beta.5 polish.
   in scope; the optional SQLite-backed persistence was scoped "optional / later"
   by the maintainer. Source: [v1.7.0](plans/v1.7.0-forge-plan.md) E3 + Maintainer
   decisions. Target: **TBD (v1.7.x or later)**. Files: `crates/rustynes-script`.
-- `[ ]` **Browser / wasm Lua maturity** — the native mlua engine is
+- `[x]` **Browser / wasm Lua maturity** — *(done-as-designed; v1.8.9 reconcile: the
+  `piccolo` backend ships in `piccolo_backend.rs` + `wasm_script.rs`; per ADR 0012 the
+  per-access callbacks are intentionally no-ops on wasm — non-parity is the design, not a
+  finish-pending.)* — the native mlua engine is
   feature-complete; the wasm piccolo hooks are **no-ops in the browser** (ADR
   0012, explicitly *not* byte-parity with native mlua). v1.7.0 H6 targets
   "Lua-in-browser." Source: [v1.7.0](plans/v1.7.0-forge-plan.md) H6 +
@@ -146,11 +178,13 @@ remains are the optional/SQLite tails and any beta.5 polish.
 - `[M]` **Real cross-NAT UDP traversal** — needs a STUN server + two real NATs;
   unverifiable in CI. Source: `docs/netplay-webrtc.md` §4. Target:
   **maintainer-manual**.
-- `[~]` **Spectator netplay (H8)** — a determinism-safe read-only extension of the
+- `[x]` **Spectator netplay (H8)** — *(shipped; v1.8.9 reconcile: complete in
+  `crates/rustynes-netplay/src/spectator.rs` — `SpectatorSession<T: Transport>`,
+  receive-only, determinism-safe, `MAX_SPECTATOR_FRAME_LOOKAHEAD` DoS bound, unit-tested;
+  wired in `netplay_ui.rs`.)* a determinism-safe read-only extension of the
   rollback stack (pairs with the live-matrix verify + adaptive input buffer +
-  auto config-resync). **Not present on `main`** (no `spectator` symbol in
-  `rustynes-netplay`). Source: [v1.7.0](plans/v1.7.0-forge-plan.md) H8. Target:
-  **v1.7.x (beta.5)**. Files: `crates/rustynes-netplay`, frontend Netplay panel.
+  auto config-resync). Source: [v1.7.0](plans/v1.7.0-forge-plan.md) H8.
+  Files: `crates/rustynes-netplay`, frontend Netplay panel.
 
 ---
 
@@ -160,11 +194,12 @@ Native RA is shipped and unaffected. The browser (casual-only) path landed as
 *scaffolding* in v1.5.0 behind off-by-default `browser-cheevos`; finishing it is
 the v1.7.0 **H1/H2** workstream + a maintainer-manual deploy/verify.
 
-- `[~]` **`ra_glue.js` rc_client trampoline marshalling** — the emcc rcheevos
-  wasm side module + structural casual-only gating + auth-proxy stub exist; the
-  `addFunction` trampoline marshalling (read-memory / server-call / event-handler)
-  is scaffolded but unfinished. Source: ADR 0015; `docs/cheevos-browser.md`
-  §Status; [v1.7.0](plans/v1.7.0-forge-plan.md) H1. Target: **v1.7.x (beta.5)**.
+- `[x]` **`ra_glue.js` rc_client trampoline marshalling** — *(shipped; v1.8.9
+  reconcile: `crates/rustynes-frontend/web/cheevos/ra_glue.js` (413 lines) implements all
+  three trampolines — read-memory, server-call, event-handler — via `addFunction`, plus the
+  session-epoch use-after-free guard, `ra_init`/`ra_do_frame`/`ra_begin_login`/`ra_load_game`.
+  The auth-proxy DEPLOY + live verify remain `[M]` below.)* Source: ADR 0015;
+  `docs/cheevos-browser.md` §Status; [v1.7.0](plans/v1.7.0-forge-plan.md) H1.
   Files: `web/cheevos/ra_glue.js`, `scripts/cheevos/`.
 - `[M]` **Auth-proxy deploy** — stand up a host + TLS + hardened CORS origin and
   point `RA_PROXY_BASE` at it (until set, `proxy_configured()` is `false`).
@@ -188,11 +223,12 @@ the v1.7.0 **H1/H2** workstream + a maintainer-manual deploy/verify.
 
 ## 5. Audio / Video (v1.7.0 H3 + HD-pack parity)
 
-- `[ ]` **Audio depth (H3)** — stereo panning, reverb/crossfeed, output **device
-  picker**, 20-band EQ, per-context volume (all in the frontend mixer; the core
-  stream stays byte-identical). **Not present on `main`** (audio.rs has only a
-  default-device path, no picker/reverb/20-band). Source:
-  [v1.7.0](plans/v1.7.0-forge-plan.md) H3. Target: **v1.7.x (beta.5)**. Files:
+- `[x]` **Audio depth (H3)** — *(shipped; v1.8.9 reconcile: stereo panning + Schroeder
+  reverb + crossfeed in `audio_dsp.rs`, the 20-band ISO third-octave EQ in `eq.rs`, the
+  output-device picker in `audio.rs` + `settings_panel.rs`; all bypass to byte-identical at
+  defaults. Per-APU-channel context volume is an intentional v2.0 deferral, not a gap.)*
+  stereo panning, reverb/crossfeed, output device picker, 20-band EQ. Source:
+  [v1.7.0](plans/v1.7.0-forge-plan.md) H3. Files:
   `crates/rustynes-frontend/src/audio.rs`.
 - `[ ]` **Full Mesen HD-pack parity** — beyond the shipped `<condition>` /
   `<background>` rules + HD audio: neighbor predicates / palette-key matching /
@@ -318,10 +354,11 @@ take this on. See [v2.0.0 plan](plans/v2.0.0-master-clock-plan.md) and
 Mapper coverage is **168 families** on `main` (BestEffort, honesty-gated). Gaps
 are ROM-availability/coverage and a detection follow-up — none affect the oracle.
 
-- `[ ]` **Next reusable-ASIC BMC/pirate cores (G1 continuation → ~170–185)** —
+- `[~]` **Next reusable-ASIC BMC/pirate cores (G1 continuation → ~170–185)** —
+  *(150 → 168 shipped in v1.7.0 beta.1 — `sprint12.rs`; the → ~170–185 continuation is a
+  v1.8.9 beta.6 item where free dumps exist.)*
   FK23C / COOLBOY / MINDKIDS / Sachen / Waixing / Kaiser clusters, honesty-gated.
-  v1.7.0 beta.1 took it 150 → 168; the plan targets ~170–185. The long-tail toward
-  the full ~300–370 set continues incrementally. Source:
+  The long-tail toward the full ~300–370 set continues incrementally. Source:
   [v1.7.0](plans/v1.7.0-forge-plan.md) G1; [v2.0.0 plan](plans/v2.0.0-master-clock-plan.md)
   E. Target: **v1.7.x → v2.0+**. Files: `crates/rustynes-mappers/src/sprintN.rs`.
 - `[ ]` **Zero-library mappers (no freely-available ROM)** — families 28, 29, 31,
@@ -346,14 +383,15 @@ are ROM-availability/coverage and a detection follow-up — none affect the orac
   m301 A7-outer-bank was patched, the board-map breadth continues). Source:
   v1.6.0 fix train; [v2.0.0 plan](plans/v2.0.0-master-clock-plan.md) E (UNIF).
   Target: **v1.7.x → v2.0+**. Files: `crates/rustynes-mappers` UNIF board map.
-- `[M]` **Snapshot re-bless after blank-boot fixes** — the m30 (Wampus/PROTO DERE)
-  / m80 (Kyonshiizu 2) boot fixes shift the rendered output away from the committed
-  `.snap` files; re-bless via the harness `INSTA_UPDATE` path and a visual diff.
-  Source: the blank-boot-fixes memory note. Target: **maintainer-manual**.
-- `[ ]` **`.zip`/`.7z`/`.fds` coverage-harness support (#59)** — the screenshot
-  coverage harness only handles `.nes` + `.unf`/`.unif`; mirror the frontend load
-  dispatch so it can screenshot archived/FDS ROMs, then re-bless. Source: v1.7.0
-  beta.5 carryover (#59). Target: **v1.7.x (beta.5)**. Files:
+- `[x]` **Snapshot re-bless after blank-boot fixes** — *(done; v1.8.9 reconcile: commit
+  `c286e63` re-blessed the `external_coverage` snapshots after the m30/m80/m185 fixes. Any
+  FUTURE broken-boot fixes in beta.6 will need their own re-bless — that residual stays `[M]`.)*
+  Source: the blank-boot-fixes memory note.
+- `[x]` **`.zip`/`.7z`/`.fds` coverage-harness support (#59)** — *(shipped; v1.8.9
+  reconcile: `external_coverage.rs` discovers `.zip`/`.7z`/`.fds` and `tests/common/mod.rs`
+  `load_nes()` unwraps archives + routes FDS through `Nes::from_disk()`.)* mirror the
+  frontend load dispatch so it can screenshot archived/FDS ROMs. Source: v1.7.0
+  beta.5 carryover (#59). Files:
   `crates/rustynes-test-harness/.../external_coverage.rs`.
 - `[ ]` **Full ~300-mapper set + 100% TASVideos compatibility** — the original
   ambitious v1.0.0 bar, redefined down to "production-quality + hardware-accurate"
@@ -365,20 +403,22 @@ are ROM-availability/coverage and a detection follow-up — none affect the orac
 
 ## 8. Reach / polish (v1.7.0 H4/H5/H6) — not yet on `main`
 
-- `[ ]` **Per-game `<rom>.json` config overrides + DIP editor + lag counter
-  (H4)** — the per-game architectural keystone layered on the v1.2.0 game-DB
-  (frontend overlay, never the core harness). The v1.2.0 game-DB exists; the
-  `<rom>.json` override layer + DIP editor do not. Source:
-  [v1.7.0](plans/v1.7.0-forge-plan.md) H4. Target: **v1.7.x (beta.5)**. Files:
-  `crates/rustynes-frontend/src/game_db.rs` + new override module.
-- `[ ]` **i18n framework (H5)** — RustyNES's one systemic gap; no localization
-  anywhere (verified: no i18n/fluent module in the frontend). A string-catalog
-  layer + egui plumbing. Source: [v1.7.0](plans/v1.7.0-forge-plan.md) H5. Target:
-  **v1.7.x (beta.5)**. Files: `crates/rustynes-frontend/src/`.
-- `[ ]` **Web / wasm parity (H6)** — File System Access API, Gamepad API,
-  PWA/offline, base64 `?settings=` share-links (plus the wasm-Lua maturity in §2).
-  Source: [v1.7.0](plans/v1.7.0-forge-plan.md) H6. Target: **v1.7.x (beta.5)**.
-  Files: `crates/rustynes-frontend` (wasm) + `web/`.
+- `[x]` **Per-game `<rom>.json` config overrides + DIP editor + lag counter
+  (H4)** — *(shipped; v1.8.9 reconcile: `crates/rustynes-frontend/src/per_game.rs` (the
+  `<rom>.json` overlay, region/mapper/submapper/mirroring/DIP, data-dir overlay wins over the
+  sibling); lag counter in `emu.rs` + `ui_shell.rs`. Determinism firewall: overrides flow
+  through the v1.2.0 game-DB path; the core + harness never read files.)* Source:
+  [v1.7.0](plans/v1.7.0-forge-plan.md) H4. Files: `crates/rustynes-frontend/src/per_game.rs`.
+- `[x]` **i18n framework (H5)** — *(shipped; v1.8.9 reconcile:
+  `crates/rustynes-frontend/src/i18n.rs` — compile-time string catalogs, `tr(Key::*)` +
+  `CURRENT_LOCALE` atomic, English (byte-identical default/fallback) + Spanish; wasm-safe.
+  Further per-panel string conversion can continue per the established pattern.)* Source:
+  [v1.7.0](plans/v1.7.0-forge-plan.md) H5. Files: `crates/rustynes-frontend/src/i18n.rs`.
+- `[x]` **Web / wasm parity (H6)** — *(shipped; v1.8.9 reconcile: File System Access
+  API + `?settings=` in `wasm_io.rs` + `wasm_share.rs`, Gamepad API in `wasm_gamepad.rs`,
+  PWA/offline via `web/manifest.webmanifest` + `web/sw.js`.)* File System Access API,
+  Gamepad API, PWA/offline, base64 `?settings=` share-links. Source:
+  [v1.7.0](plans/v1.7.0-forge-plan.md) H6. Files: `crates/rustynes-frontend` (wasm) + `web/`.
 
 ---
 
@@ -461,9 +501,10 @@ account, or a hosted deploy (all also listed under their theme above).
 - `[ ]` **`cargo-nextest` adoption** — ~1.3–1.5× test speedup but needs a separate
   `cargo test --doc` step and no retries. Source: CI-optimization note. Target:
   **TBD**.
-- `[ ]` **`full` native feature alias (#54)** — an umbrella feature for the maximal
-  native build. Source: v1.7.0 beta.5 carryover. Target: **v1.7.x (beta.5)**.
-  Files: `crates/rustynes-frontend/Cargo.toml`.
+- `[x]` **`full` native feature alias (#54)** — *(shipped; v1.8.9 reconcile: the `full`
+  feature in `crates/rustynes-frontend/Cargo.toml` + the `full-run`/`full-build` aliases in
+  `.cargo/config.toml`.)* an umbrella feature for the maximal native build. Source: v1.7.0
+  beta.5 carryover. Files: `crates/rustynes-frontend/Cargo.toml`, `.cargo/config.toml`.
 
 ---
 
@@ -473,9 +514,10 @@ account, or a hosted deploy (all also listed under their theme above).
   v1.5.0 C; broader eye-candy visualization over the NSF player was noted as a
   lower-priority deferral. Source: [v1.3.0](plans/v1.3.0-bedrock-plan.md). Target:
   **TBD**.
-- `[ ]` **Kid Icarus FDS side-B post-registration re-entry** — a niche FDS
-  behavior noted out-of-scope. Re-confirm against the v1.6.0 FDS-proper work
-  before tracking. Source: [v1.3.0](plans/v1.3.0-bedrock-plan.md). Target: **TBD**.
+- `[x]` **Kid Icarus FDS side-B post-registration re-entry** — *(resolved; v1.8.9
+  reconcile: closed by the v1.6.0 "Studio" FDS-proper work — the timed disk-head position
+  model + `$4032` auto-insert + per-game CRC quirk table close the side-B post-registration
+  replay; see CHANGELOG `[1.6.0]`.)* Source: [v1.3.0](plans/v1.3.0-bedrock-plan.md).
 - `[x]` **ROM pre-warming** — evaluated and effectively moot: the v1.0.0 core's
   run-ahead / display-sync pacing supersede the parent's pre-warming idea. Source:
   [v1.0.0 synthesis](plans/v1.0.0-synthesis-plan.md). Status: **resolved (no
