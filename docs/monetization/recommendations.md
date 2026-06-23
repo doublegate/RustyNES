@@ -2,8 +2,8 @@
 
 Considerations that go *beyond* the baseline design in the other docs: design holes in the
 free-tier mechanic worth closing before launch, engineering-robustness items, and
-store/product polish. The free-tier model itself (8-min budget, +2 min per rewarded ad,
-11-grant/+22-min cap → 30 min max, no save states, no battery saves) is decided and
+store/product polish. The free-tier model itself (8-min budget, +11 min per rewarded ad,
+2-grant/+22-min cap → 30 min max, no save states, no battery saves) is decided and
 implemented in `crates/rustynes-monetization/src/monetization.rs`; this document is about the edges around it.
 
 Two adjacent topics live in other docs to keep them next to the work they affect:
@@ -63,7 +63,7 @@ first-run generosity without a release.
 
 ### 1e. Preload the rewarded ad before run-out
 Kick off a rewarded ad load at roughly **60–90 s remaining** (read from
-`play_time_remaining_ms()`) so that when the user taps "Watch ad for +2 min" it plays
+`play_time_remaining_ms()`) so that when the user taps "Watch ad for +11 min" it plays
 instantly instead of showing a spinner at the worst possible moment. Gate the offer on
 `can_offer_rewarded()` and label it with `reward_grants_remaining()`.
 
@@ -147,7 +147,7 @@ a one-time ~$3.99 price point this is fine to accept. If it ever matters, AppLov
   the **analytics funnel** (events, headline metrics) — see
   `pre-implementation-addendum.md` §9 and §10.
 - **The free-tier core model and host flow** (`start_play` … `grant_rewarded_time` … the
-  11-grant cap) — see `pre-implementation-addendum.md` §2c/§2f and the FFI surface in
+  2-grant cap) — see `pre-implementation-addendum.md` §2c/§2f and the FFI surface in
   `build-and-bindings.md`.
 
 *Verify SDK APIs, store policy text, and consent/attribution requirements at implementation

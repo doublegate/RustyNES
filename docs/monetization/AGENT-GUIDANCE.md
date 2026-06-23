@@ -31,7 +31,7 @@ from memory.
 Freemium for the RustyNES mobile ports: **AppLovin MAX** ads on the free tier, removed by a
 **RevenueCat** `premium` entitlement (a one-time **"Full Version / Remove Ads"** purchase,
 **$3.99**). The free tier pairs interstitials at natural breaks with rewarded ads that extend an
-8-minute play session (+2 min each, capped at 11 grants → 30 min); premium removes ads and the
+8-minute play session (+11 min each, capped at 2 grants → 30 min); premium removes ads and the
 timer and unlocks the persistence features. All monetization *logic* lives in one Rust object
 (`AdPolicy`) shared to Android (Kotlin) and iOS (Swift) via **UniFFI**. The mobile app itself is a
 Compose + wgpu-`SurfaceView` hybrid over the shared `rustynes-mobile` bridge (see the integration
@@ -64,7 +64,7 @@ doc). Ship **Android first (v1.8.0; Play debut v1.8.8), iOS at v1.9.0**.
 ## Free-tier model (core product rule)
 - Free tier is **time-gated to 8 min per game session**, with **no save states** and **no
   battery-backed (SRAM) saves**. Premium removes the timer and unlocks both.
-- Each **completed** rewarded ad grants **+2 min** of play. Grant **only** on the reward
+- Each **completed** rewarded ad grants **+11 min** of play. Grant **only** on the reward
   callback (`OnUserRewarded` / `didRewardUser`), never on load/show/dismiss. **Capped at 11
   grants/session** (max +22 min → 30 min total); the cap resets each game session.
 - This logic is **implemented and tested** in the Rust core (`start_play`, `add_active_time`,
@@ -105,7 +105,7 @@ SKAdNetwork IDs via AppLovin's Info.plist generator. Expand later with Liftoff M
 
 ## Decisions still open (ask before building purchase UI)
 - One-time "Full Version / Remove Ads" (~$3.99, recommended) vs subscription.
-- Exact tuning of the free-tier model: base 8 min / reward 2 min values and the 11-grant cap
+- Exact tuning of the free-tier model: base 8 min / reward 2 min values and the 2-grant cap
   (max +22 min). (Model itself is decided above.)
 - `PremiumFeature` set beyond `SaveStates` + `BatterySaves` (e.g. fast-forward, shaders, cheats).
 - Initial mediation networks (defaults below).

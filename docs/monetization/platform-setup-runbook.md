@@ -242,7 +242,7 @@ platforms.
       (`app.rustynes`). If not yet live, add it manually by package/bundle id.
 - [ ] Get the **SDK Key** (Account → General → Keys) — used in the init call.
 - [ ] Create **Ad Units** per platform: an **Interstitial** and a **Rewarded** (both
-      required — the Rewarded unit powers the free-tier "+2 min per ad" play-time grant).
+      required — the Rewarded unit powers the free-tier "+11 min per ad" play-time grant).
       Copy each ad-unit id for the build.
 - [ ] Enter your **payout + tax** info to receive ad revenue (note payout minimums / NET terms).
 - [ ] MAX → Mediation → **Networks**: enable the recommended networks (Section 7).

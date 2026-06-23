@@ -8,13 +8,13 @@
 //  resumes the paused emulator.
 //
 //  Cadence/cap policy lives in the core: gate the offer on core.canOfferRewarded() and
-//  label it with core.rewardGrantsRemaining(); grantRewardedTime() enforces the 11-grant
+//  label it with core.rewardGrantsRemaining(); grantRewardedTime() enforces the 2-grant
 //  cap and returns false (no-op) once reached.
 //
 //  Usage from the run-out prompt:
 //    let rewarded = RewardedGate(core: core) { resumeEmulator() }
 //    rewarded.preload()                 // early, and ~60-90 s before run-out
-//    if core.canOfferRewarded() { _ = rewarded.show() }   // on "Watch ad for +2 min"
+//    if core.canOfferRewarded() { _ = rewarded.show() }   // on "Watch ad for +11 min"
 //
 
 import Foundation
@@ -35,7 +35,7 @@ final class RewardedGate: NSObject, MARewardedAdDelegate {
         self.rewarded.delegate = self
     }
 
-    /// Warm the cache so the "+2 min" tap plays instantly. Call early, and ~60-90 s before run-out.
+    /// Warm the cache so the "+11 min" tap plays instantly. Call early, and ~60-90 s before run-out.
     func preload() {
         if !core.isPremium() { rewarded.load() }
     }

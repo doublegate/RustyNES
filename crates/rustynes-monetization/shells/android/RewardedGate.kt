@@ -3,18 +3,18 @@
  *
  * Counterpart to AdGate.kt (interstitials). This owns the MAX rewarded lifecycle
  * (preload -> show -> reload) and is what extends the free-tier play budget: when the
- * user is out of time and taps "Watch ad for +2 min", show a rewarded ad, and on the
+ * user is out of time and taps "Watch ad for +11 min", show a rewarded ad, and on the
  * network's REWARD callback call the shared core's grantRewardedTime() — never on load,
  * show, or dismiss, so the grant maps exactly to a qualifying view.
  *
  * Cadence/cap policy lives in the core: gate the offer on core.canOfferRewarded() and
- * label it with core.rewardGrantsRemaining(); grantRewardedTime() enforces the 11-grant
+ * label it with core.rewardGrantsRemaining(); grantRewardedTime() enforces the 2-grant
  * cap and returns false (a no-op) once it is reached.
  *
  * Typical wiring from the run-out prompt:
  *   private val rewarded by lazy { RewardedGate(this, core) { resumeEmulator() } }
  *   override fun onCreate(...) { rewarded.preload() }
- *   // when the user taps "Watch ad for +2 min" (only shown if core.canOfferRewarded()):
+ *   // when the user taps "Watch ad for +11 min" (only shown if core.canOfferRewarded()):
  *   rewarded.show()
  */
 package com.doublegate.rustynes.monetization
@@ -41,7 +41,7 @@ class RewardedGate(
             setListener(this@RewardedGate)
         }
 
-    /** Warm the cache so the "+2 min" tap plays instantly. Call early, and ~60-90 s before run-out. */
+    /** Warm the cache so the "+11 min" tap plays instantly. Call early, and ~60-90 s before run-out. */
     fun preload() {
         if (!core.isPremium()) rewarded.loadAd()
     }

@@ -19,7 +19,7 @@
 //!      moment to show an interstitial ad? (Paced by a launch grace + a minimum interval;
 //!      there is no per-session interstitial count cap.)
 //!   3. **Free-tier play-time gate** — a free user gets a base play budget per game
-//!      session (8 min), extendable +2 min by each completed rewarded ad, capped at 11
+//!      session (8 min), extendable +11 min by each completed rewarded ad, capped at 2
 //!      grants/session (→ 30 min max). Premium removes the gate entirely.
 //!
 //! The platform shells (Kotlin / Swift) own the *plumbing*: they talk to **RevenueCat** for the
@@ -54,9 +54,9 @@
 //! // ...once per second of unpaused emulation:
 //! policy.add_active_time(1000);
 //! if !policy.is_play_allowed() {                           // budget exhausted
-//!     // pause; offer "Watch ad for +2 min" only if policy.can_offer_rewarded(),
+//!     // pause; offer "Watch ad for +11 min" only if policy.can_offer_rewarded(),
 //!     // else offer only "Buy Full Version". On the rewarded reward callback:
-//!     policy.grant_rewarded_time();                        // +2 min (capped at 11)
+//!     policy.grant_rewarded_time();                        // +11 min (capped at 2)
 //! }
 //! ```
 //!
@@ -78,7 +78,7 @@ use std::sync::Mutex;
 /// a remote config / experiment without rebuilding the Rust core.
 ///
 /// The first two fields pace *interstitials*; the last three define the free-tier
-/// *play-time budget* and the rewarded "+2 min per ad" extension (see the play-time
+/// *play-time budget* and the rewarded "+11 min per ad" extension (see the play-time
 /// methods on [`AdPolicy`]).
 ///
 /// Generated binding names (Kotlin `data class` / Swift `struct`): `minIntervalMs`,
@@ -119,19 +119,19 @@ impl Default for AdConfig {
     /// 30-second launch grace keeps ads from ever bracketing app startup.
     ///
     /// Free-tier defaults: an **8-minute** base budget (regular sessions) with a generous
-    /// **30-minute** first session, +2 minutes per completed rewarded ad, capped at 11
-    /// grants per session — so a fully ad-engaged free user reaches at most 8 + (11 × 2) =
-    /// 30 minutes of play in a regular game session.
+    /// **30-minute** first session, **+11 minutes per completed rewarded ad, capped at 2
+    /// grants** per session — so a fully ad-engaged free user reaches at most 8 + (2 × 11) =
+    /// 30 minutes of play in a regular game session with only two ad interactions.
     fn default() -> Self {
         Self {
-            min_interval_ms: 240_000,          // 4 minutes
-            launch_grace_ms: 30_000,           // 30 seconds
-            base_play_ms: 480_000,             // 8 minutes (regular free session)
-            reward_play_ms: 120_000,           // 2 minutes per rewarded ad
-            max_reward_grants_per_session: 11, // → +22 min max → 30 min total
-            first_session_play_ms: 1_800_000,  // 30 minutes — generous first game
-            suppress_first_session: true,      // no interstitials in session #1
-            offline_grace_ms: 120_000,         // a one-time +2 min when offline at run-out
+            min_interval_ms: 240_000,         // 4 minutes
+            launch_grace_ms: 30_000,          // 30 seconds
+            base_play_ms: 480_000,            // 8 minutes (regular free session)
+            reward_play_ms: 660_000,          // 11 minutes per rewarded ad
+            max_reward_grants_per_session: 2, // → +22 min max (2 × 11) → 30 min total
+            first_session_play_ms: 1_800_000, // 30 minutes — generous first game
+            suppress_first_session: true,     // no interstitials in session #1
+            offline_grace_ms: 120_000,        // a one-time +2 min when offline at run-out
         }
     }
 }
@@ -549,7 +549,7 @@ pub fn clamp_ad_config(cfg: AdConfig) -> AdConfig {
         min_interval_ms: cfg.min_interval_ms.clamp(60_000, 1_800_000), // 1 min .. 30 min
         launch_grace_ms: cfg.launch_grace_ms.min(600_000),             // .. 10 min
         base_play_ms: cfg.base_play_ms.clamp(60_000, 3_600_000),       // 1 min .. 60 min
-        reward_play_ms: cfg.reward_play_ms.clamp(30_000, 600_000),     // 30 s .. 10 min
+        reward_play_ms: cfg.reward_play_ms.clamp(30_000, 1_200_000),   // 30 s .. 20 min
         max_reward_grants_per_session: cfg.max_reward_grants_per_session.min(50),
         // 1 min .. 4 h; 0 is allowed (host may intend an ungated first session via a huge value).
         first_session_play_ms: cfg.first_session_play_ms.min(14_400_000),
@@ -564,7 +564,7 @@ mod tests {
 
     /// A tiny fixed config makes the timing assertions easy to read. The play-time
     /// values here are deliberately small (8s base, 2s reward, cap 3) so the tests run
-    /// instantly; the *production* constants (8 min / 2 min / 11) are pinned separately
+    /// instantly; the *production* constants (8 min / 11 min / 2) are pinned separately
     /// in `default_config_encodes_the_30_minute_contract`.
     fn cfg() -> AdConfig {
         AdConfig {
@@ -721,12 +721,13 @@ mod tests {
 
     #[test]
     fn default_config_encodes_the_30_minute_contract() {
-        // Pin the production constants: 8-min base, +2-min grants, 11-grant cap, which
-        // is exactly 8 + 11*2 = 30 minutes of maximum free play per game session.
+        // Pin the production constants: 8-min base, +11-min grants, 2-grant cap, which
+        // is exactly 8 + 2*11 = 30 minutes of maximum free play per game session (only
+        // two ad interactions instead of eleven).
         let c = default_ad_config();
         assert_eq!(c.base_play_ms, 480_000);
-        assert_eq!(c.reward_play_ms, 120_000);
-        assert_eq!(c.max_reward_grants_per_session, 11);
+        assert_eq!(c.reward_play_ms, 660_000);
+        assert_eq!(c.max_reward_grants_per_session, 2);
         let max_free_ms =
             c.base_play_ms + c.max_reward_grants_per_session as u64 * c.reward_play_ms;
         assert_eq!(max_free_ms, 1_800_000); // 30 minutes

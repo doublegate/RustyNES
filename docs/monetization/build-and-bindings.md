@@ -157,10 +157,10 @@ The core expansion added these to the surface above:
   pause, and in-session rewind.
 - **Free-tier budget:** **8-min** regular session, **30-min** generous first session
   (`first_session_play_ms`, applied when the session index is 1; interstitials suppressed in
-  session #1 via `suppress_first_session`), +2 min per rewarded ad (cap 11 → 30 min on a
+  session #1 via `suppress_first_session`), +11 min per rewarded ad (cap 11 → 30 min on a
   regular session). Host calls `begin_session(persisted_index, now)` at launch.
 - **Offline grace:** at run-out with no rewarded fill, `grant_offline_grace()` gives a
-  one-time +2 min so an offline user degrades gracefully (recs §1b).
+  one-time +11 min so an offline user degrades gracefully (recs §1b).
 - **Kill-relaunch:** persist `export_progress()` and `restore_progress()` to keep the
   timer/cap across a process death (recs §1a/§1f).
 - **Remote config:** fetch values, overlay on `default_ad_config()`, pass through
@@ -171,7 +171,7 @@ The core expansion added these to the surface above:
 `mach_continuous_time()` so iOS counts deep-sleep like Android).
 
 The free-tier play-time gate (`start_play` … `play_time_remaining_ms`) implements the
-budget, +2-min-per-rewarded-ad extension, and 11-grant per-session cap. Grant time
+budget, +11-min-per-rewarded-ad extension, and 2-grant per-session cap. Grant time
 **only** from the rewarded reward callback (`OnUserRewarded` / `didRewardUser`) — see
 `RewardedGate.{kt,swift}` in `shells/`. See `pre-implementation-addendum.md` §2c/§2f for
 the host flow.

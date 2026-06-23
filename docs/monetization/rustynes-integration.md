@@ -13,7 +13,7 @@ model itself is a deliberate maintainer choice** (see the banner).
 >   Billing / StoreKit, so a single entitlement drives both platforms).
 > - **Free tier = ad-supported**: **interstitials** at natural breaks (paced by a launch grace +
 >   a 4-min interval — **no per-session count cap**) plus **rewarded ads** that extend an 8-minute
->   play session **+2 min each, capped at 11 grants → 30 min**. The three persistence features
+>   play session **+11 min each, capped at 2 grants → 30 min**. The three persistence features
 >   (§4) stay paywalled.
 > - Purchasing the Full Version removes ads + the timer and unlocks the persistence features.
 >
