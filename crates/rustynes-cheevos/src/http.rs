@@ -146,10 +146,14 @@ pub(crate) const RA_USER_AGENT: &str = concat!(
 );
 
 fn worker_loop(job_rx: &Receiver<HttpJob>, completion_tx: &Sender<HttpCompletion>) {
-    let agent = ureq::AgentBuilder::new()
-        .timeout(std::time::Duration::from_secs(30))
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(std::time::Duration::from_secs(30)))
         .user_agent(RA_USER_AGENT)
-        .build();
+        // We hand rcheevos the real status code + body for 4xx/5xx, so do NOT turn
+        // those into transport errors (ureq 3's `StatusCode` error drops the body).
+        .http_status_as_error(false)
+        .build()
+        .into();
 
     // Exits when the job sender is dropped (transport Drop).
     while let Ok(job) = job_rx.recv() {
@@ -172,34 +176,28 @@ fn perform(agent: &ureq::Agent, job: &HttpJob) -> (Vec<u8>, i32) {
     let result = if let Some(post) = &job.post {
         agent
             .post(&job.url)
-            .set("Content-Type", &job.content_type)
-            .send_bytes(post)
+            .header("Content-Type", &job.content_type)
+            .send(post.as_slice())
     } else {
         agent.get(&job.url).call()
     };
 
+    // With `http_status_as_error(false)` a non-2xx response is still `Ok(resp)`, so
+    // `read_response` reports the real status + body (e.g. a 401/403/429 JSON body)
+    // exactly as RA wants. Only a transport error (DNS, TLS, refused, timeout, ...)
+    // lands in the `Err` arm.
     match result {
         Ok(resp) => read_response(resp),
-        // ureq surfaces non-2xx as Error::Status(code, response). RA wants the
-        // real HTTP status code + body for those (e.g. a 401/403/429 JSON body).
-        Err(ureq::Error::Status(code, resp)) => {
-            let (body, _) = read_response(resp);
-            (body, code as i32)
-        }
-        // Transport error (DNS, TLS, connection refused, timeout, ...).
         Err(_) => (Vec::new(), -1),
     }
 }
 
-/// Consume a `ureq::Response`, returning `(body_bytes, http_status_code)`.
-fn read_response(resp: ureq::Response) -> (Vec<u8>, i32) {
-    let status = resp.status() as i32;
-    let mut body = Vec::new();
-    // Reading the body should never fail the whole exchange; on a read error we
-    // hand rcheevos the status with an empty body.
-    if std::io::copy(&mut resp.into_reader(), &mut body).is_err() {
-        body.clear();
-    }
+/// Consume a ureq 3 `Response<Body>`, returning `(body_bytes, http_status_code)`.
+fn read_response(mut resp: ureq::http::Response<ureq::Body>) -> (Vec<u8>, i32) {
+    let status = i32::from(resp.status().as_u16());
+    // RA API bodies are small JSON; ureq's 10 MB default read cap is plenty. A read
+    // error hands rcheevos the status with an empty body.
+    let body = resp.body_mut().read_to_vec().unwrap_or_default();
     (body, status)
 }
 

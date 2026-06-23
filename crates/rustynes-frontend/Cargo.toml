@@ -309,7 +309,7 @@ rustynes-script = { workspace = true, optional = true }
 # decodes them to RGBA8 for upload as an `egui` texture. Both are kept in this
 # `cfg(not(target_arch = "wasm32"))` table so the wasm builds never see them,
 # and `optional = true` keeps them out of the default (feature-off) build.
-ureq = { version = "2", default-features = false, features = ["tls"], optional = true }
+ureq = { version = "3", default-features = false, features = ["rustls"], optional = true }
 # `png` decodes the embedded app icon (window icon + About dialog, v1.1.0) and
 # the RA badge PNGs. Non-optional on native (the icon ships in every desktop
 # build); native-only (in this `cfg(not(wasm))` table) so the wasm builds never

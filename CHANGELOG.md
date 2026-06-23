@@ -71,6 +71,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Dependency modernization.** Brought every dependency to its latest version:
+  refreshed the lockfile to the latest semver-compatible releases (`cargo update`);
+  `sha2` 0.10 → 0.11 (RustCrypto digest 0.11, aligning the whole hash set with `md-5`/`sha1`);
+  the RetroAchievements / script-IPC HTTP client `ureq` 2.12 → 3.3 (the `http`-crate-based
+  `Response<Body>` API + the rustls/webpki backend, replacing the removed `tls` feature; the
+  RA `User-Agent` is preserved); and standardized the `actions/upload-artifact` GitHub Action
+  to v7. The Android toolchain (Gradle 9.4.1 / AGP 9.2.1 / Kotlin 2.3.10 / compose-bom
+  2026.06.00) and the Rust toolchain (1.96.0) were already at their latest. No behaviour
+  change — emulation, save formats, and AccuracyCoin (139/139) are unaffected.
 - **Mobile app-store launches deferred to v2.1.0 (maintainer replan, 2026-06-23).**
   The Android (v1.8.x) and iOS (v1.9.0) store launches are held until after the
   v2.0.0 "Timebase" master-clock rewrite, then finalized (Android v2.0.1–v2.0.4, iOS
