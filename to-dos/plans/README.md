@@ -40,15 +40,23 @@ decisions locked by the maintainer. Not yet started.
 | Plan | Release | Scope decision |
 |---|---|---|
 | [`v1.7.0-forge-plan.md`](v1.7.0-forge-plan.md) | v1.7.0 "Forge" — writable + programmable tooling, on the current scheduler | **Maximal** (full A–H) |
-| [`v1.8.0-android-plan.md`](v1.8.0-android-plan.md) | v1.8.0 — Android app | **Hybrid** (Rust core + wgpu `SurfaceView` + Compose) + focused MVP; factors the shared `rustynes-mobile` bridge |
-| [`v1.9.0-ios-plan.md`](v1.9.0-ios-plan.md) | v1.9.0 — iOS / iPadOS app | **SwiftUI + wgpu→Metal** reusing the shared bridge; same focused MVP |
-| [`v2.0.0-master-clock-plan.md`](v2.0.0-master-clock-plan.md) | v2.0.0 "Timebase" — one-clock + every-cycle-bus-access rewrite | **Full rewrite + aggressive residual closure**; ships after v1.9.0 |
+| [`v1.8.0-android-plan.md`](v1.8.0-android-plan.md) | v1.8.0 — Android app | **Hybrid** (Rust core + wgpu `SurfaceView` + Compose) + focused MVP; factors the shared `rustynes-mobile` bridge. **Engineering spec; the store launch is deferred — see the mobile-finalization plan below.** |
+| [`v1.9.0-ios-plan.md`](v1.9.0-ios-plan.md) | v1.9.0 — iOS / iPadOS app | **SwiftUI + wgpu→Metal** reusing the shared bridge; same focused MVP. **Now the *interim* iOS foundation (sideload / TestFlight); release finalization moves to v2.0.5–v2.0.8.** |
+| [`v2.0.0-master-clock-plan.md`](v2.0.0-master-clock-plan.md) | v2.0.0 "Timebase" — one-clock + every-cycle-bus-access rewrite | **Full rewrite + aggressive residual closure**; the mobile-finalization train (v2.0.1 → v2.1.0) follows it |
+| [`v2.0.x-mobile-finalization-plan.md`](v2.0.x-mobile-finalization-plan.md) | v2.0.1 → v2.1.0 — mobile finalization + joint store launch | **Deferred mobile launch (maintainer, 2026-06-23):** Android final v2.0.1–v2.0.4, iOS final v2.0.5–v2.0.8, both-apps readiness v2.0.9, **joint Google Play + App Store launch v2.1.0** |
 
 > **Versioning note:** v2.0.0 is *not* "add a master clock" — that already
 > shipped (it is today's only scheduler). v2.0.0 collapses the five-counter
 > substrate to one clock with every-cycle bus access, which is what makes the
 > last accuracy residuals representable. It is the one release licensed to break
 > save-state / cross-version determinism.
+>
+> **Mobile-launch note (2026-06-23):** the Android (v1.8.x) and iOS (v1.9.0) apps
+> are held back from their app stores until **after v2.0.0**, then finalized
+> across **v2.0.1–v2.0.8**, verified for both in **v2.0.9**, and launched
+> **together at v2.1.0** (so they ship on the v2.0.0 core rather than re-releasing
+> after the breaking timebase change). Until then: Android = GitHub sideload,
+> iOS = TestFlight. See [`v2.0.x-mobile-finalization-plan.md`](v2.0.x-mobile-finalization-plan.md).
 
 ## Engine-lineage plans (`engine-lineage/`) — upstream history
 

@@ -655,8 +655,14 @@ toolchain to the **Android 16 / API 36 target mandate** and lands **adaptive / f
 PiP / widgets**, **accessibility**, and the **Google-Play-integration readiness** —
 Play Games cloud saves, achievements, Play Integrity, in-app update / review — all
 default-off until the maintainer wires the Play projects. v1.8.0–v1.8.8 ship as
-GitHub-Releases / sideload, full-featured; the **Google Play production** promotion is a
-maintainer step gated on a batched on-device pass.) The road so far:
+GitHub-Releases / sideload, full-featured; the **Google Play production** launch is
+**deferred to v2.1.0** — a 2026-06-23 replan holds both mobile app-store launches until
+after **v2.0.0 "Timebase"**, finalizes Android across **v2.0.1–v2.0.4** and iOS across
+**v2.0.5–v2.0.8**, verifies both in **v2.0.9**, and ships them **jointly to Google Play +
+the App Store at v2.1.0** (so they launch on the v2.0.0 core rather than re-releasing after
+the breaking timebase change). See
+[`to-dos/plans/v2.0.x-mobile-finalization-plan.md`](to-dos/plans/v2.0.x-mobile-finalization-plan.md).)
+The road so far:
 
 | Version    | Highlights                                                                                  |
 | ---------- | ------------------------------------------------------------------------------------------- |

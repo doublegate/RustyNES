@@ -1,5 +1,13 @@
 # RustyNES on Android
 
+> **Release replan (maintainer, 2026-06-23): the Google Play *production* launch is
+> deferred to v2.1.0.** The v1.8.x line keeps shipping as **GitHub-sideload** builds,
+> but the Play production launch is held until after **v2.0.0 "Timebase"** — the
+> Android app is finalized across **v2.0.1–v2.0.4** on the v2.0.0 core and launched
+> **jointly with iOS at v2.1.0**. The monetization / Play-Store material in this doc
+> describes that eventual v2.1.0 launch; it is not a near-term step. See
+> [`to-dos/plans/v2.0.x-mobile-finalization-plan.md`](../to-dos/plans/v2.0.x-mobile-finalization-plan.md).
+>
 > **Status: v1.8.0 "Android" — a working emulator, verified on hardware.** The
 > shared `rustynes-mobile` bridge, the `rustynes-android` platform crate, the
 > Gradle/Compose app, and the Android CI gate are in place, and the app has been

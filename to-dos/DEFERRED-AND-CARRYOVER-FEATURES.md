@@ -38,7 +38,17 @@
   [v1.7.0](plans/v1.7.0-forge-plan.md) ·
   [v1.8.0](plans/v1.8.0-android-plan.md) ·
   [v1.9.0](plans/v1.9.0-ios-plan.md) ·
-  [v2.0.0](plans/v2.0.0-master-clock-plan.md).
+  [v2.0.0](plans/v2.0.0-master-clock-plan.md) ·
+  [v2.0.x mobile finalization](plans/v2.0.x-mobile-finalization-plan.md).
+
+> **Mobile-launch deferral (maintainer, 2026-06-23).** The Android (v1.8.x) and iOS
+> (v1.9.0) **app-store launches** are deferred to **after v2.0.0 "Timebase"**:
+> Android finalized across v2.0.1–v2.0.4, iOS across v2.0.5–v2.0.8, both verified in
+> v2.0.9, and **launched jointly at v2.1.0**. Until then the apps ship as Android
+> **GitHub-sideload** + iOS **TestFlight** only; the Play-services / Integrity /
+> Chromecast flags stay default-off. The old Google-Play "Workstream P" task is now a
+> v2.1.0 line item. See
+> [v2.0.x mobile finalization](plans/v2.0.x-mobile-finalization-plan.md).
 
 ---
 
