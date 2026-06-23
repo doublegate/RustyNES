@@ -1,0 +1,16 @@
+# uniffi.toml — controls how UniFFI names the generated bindings.
+#
+# Pinning these makes the import statements in the Kotlin and Swift shells stable and
+# predictable (they are hand-written against these names in AdGate.kt / AdGate.swift).
+
+[bindings.kotlin]
+# Generated Kotlin lands in com/doublegate/rustynes/monetization/ffi/rustynes_monetization.kt under the out-dir, so
+# the shells `import com.doublegate.rustynes.monetization.ffi.AdPolicy`, etc. (package name kept stable across the
+# crate rename so the Kotlin shells need no edit).
+package_name = "com.doublegate.rustynes.monetization.ffi"
+
+[bindings.swift]
+# Generated Swift exposes a module named `RustyNesMonetization` (NOT `RustyNesCore`, which
+# would clash conceptually with the emulator's rustynes-core). The shells `import
+# RustyNesMonetization`. Match this with cargo-swift's `--name RustyNesMonetization`.
+module_name = "RustyNesMonetization"

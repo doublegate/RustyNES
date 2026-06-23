@@ -1,0 +1,53 @@
+# rustynes-monetization — the RustyNES mobile monetization bridge.
+#
+# A standalone UniFFI crate carrying ONLY the cross-platform entitlement + ad-pacing
+# policy (`AdPolicy`) the Android and iOS shells share. It is intentionally NOT part of
+# the emulator crate graph (`rustynes-cpu/ppu/apu/mappers/core`) and never feeds state
+# into the deterministic core — monetization is strictly a host/frontend concern (see
+# `src/monetization.rs` "Determinism boundary").
+#
+# Mobile-only by intent: it pulls UniFFI and is consumed by the Android/iOS app shells,
+# not by the desktop/wasm frontend. It still builds + tests on the host (cheap), so the
+# workspace gates (fmt / clippy / doc / test) cover it.
+#
+# Harvested + customized (2026-06-23) from the standalone `rustynes-monetization/`
+# scaffold: aligned to the workspace toolchain (edition 2024 / Rust 1.96) and bumped to
+# UniFFI 0.31 to match `rustynes-mobile` (one UniFFI version across the workspace).
+#
+# Built to three artifact kinds:
+#   * cdylib    -> the .so the Android app loads via UniFFI's Kotlin loader
+#   * staticlib -> the .a linked into the iOS xcframework
+#   * lib       -> the rlib `cargo test` + the in-crate uniffi-bindgen binary use
+
+[package]
+name = "rustynes-monetization"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "RustyNES mobile monetization bridge: cross-platform entitlement & ad policy."
+
+[lib]
+name = "rustynes_monetization"
+crate-type = ["cdylib", "staticlib", "lib"]
+
+# The uniffi-bindgen CLI lives in-crate so it runs on stable Rust (the standalone binary
+# needs nightly). Invoke with `--features=cli` — see docs/monetization/build-and-bindings.md.
+# `doc = false`: this is a build-tool binary, not documented API. It also shares the name
+# `uniffi-bindgen` with `rustynes-mobile`'s bindgen bin, so without this `cargo doc
+# --workspace` hits an output-filename collision between the two identically-named bins.
+[[bin]]
+name = "uniffi-bindgen"
+path = "uniffi-bindgen.rs"
+doc = false
+
+[dependencies]
+# Pinned to 0.31 to match `rustynes-mobile` so the workspace resolves a single UniFFI.
+uniffi = { version = "0.31" }
+
+[features]
+# Enables the bindgen CLI entry point only when requested, keeping the default build
+# (and the shipped library) free of CLI-only dependencies.
+cli = ["uniffi/cli"]
