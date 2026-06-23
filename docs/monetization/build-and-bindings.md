@@ -133,19 +133,53 @@ iOS Info.plist.
 | `is_play_allowed() -> bool` | `isPlayAllowed(): Boolean` | `isPlayAllowed() -> Bool` |
 | `play_time_remaining_ms() -> Option<u64>` | `playTimeRemainingMs(): ULong?` | `playTimeRemainingMs() -> UInt64?` |
 | `AdConfig { base_play_ms, reward_play_ms, max_reward_grants_per_session, … }` | `AdConfig(…, basePlayMs: ULong, rewardPlayMs: ULong, maxRewardGrantsPerSession: UInt)` | `AdConfig(…, basePlayMs: UInt64, rewardPlayMs: UInt64, maxRewardGrantsPerSession: UInt32)` |
-| `PremiumFeature::{SaveStates, SaveOnExitResume, BatterySaves}` | `PremiumFeature.{SAVE_STATES, SAVE_ON_EXIT_RESUME, BATTERY_SAVES}` | `.saveStates / .saveOnExitResume / .batterySaves` |
+| `PremiumFeature::{SaveStates, SaveOnExitResume, BatterySaves, FastForward, Shaders, Cheats}` | `PremiumFeature.{SAVE_STATES, SAVE_ON_EXIT_RESUME, BATTERY_SAVES, FAST_FORWARD, SHADERS, CHEATS}` | `.saveStates / … / .fastForward / .shaders / .cheats` |
+
+### Build-out additions (2026-06-23)
+
+The core expansion added these to the surface above:
+
+| Rust | Kotlin | Swift |
+|------|--------|-------|
+| `begin_session(session_index, now_ms)` | `beginSession(sessionIndex: UInt, nowMs: ULong)` | `beginSession(sessionIndex: UInt32, nowMs: UInt64)` |
+| `can_grant_offline_grace() -> bool` | `canGrantOfflineGrace(): Boolean` | `canGrantOfflineGrace() -> Bool` |
+| `grant_offline_grace() -> bool` | `grantOfflineGrace(): Boolean` | `grantOfflineGrace() -> Bool` |
+| `export_progress() -> PlayProgress` | `exportProgress(): PlayProgress` | `exportProgress() -> PlayProgress` |
+| `restore_progress(p)` | `restoreProgress(progress: PlayProgress)` | `restoreProgress(progress: PlayProgress)` |
+| `clamp_ad_config(cfg) -> AdConfig` | `clampAdConfig(cfg: AdConfig)` | `clampAdConfig(cfg: AdConfig)` |
+| `AdConfig { …, first_session_play_ms, suppress_first_session, offline_grace_ms }` | `…, firstSessionPlayMs: ULong, suppressFirstSession: Boolean, offlineGraceMs: ULong` | `…, firstSessionPlayMs: UInt64, suppressFirstSession: Bool, offlineGraceMs: UInt64` |
+| `PlayProgress { budget_ms, consumed_ms, reward_grants_this_session, offline_grace_used }` | `PlayProgress(budgetMs, consumedMs, rewardGrantsThisSession, offlineGraceUsed)` | `PlayProgress(budgetMs:consumedMs:rewardGrantsThisSession:offlineGraceUsed:)` |
+
+- **`PremiumFeature` now has six variants.** Per the 2026-06-23 "expand the premium set"
+  decision, **FastForward / Shaders / Cheats are now premium** — this **overrides** the
+  earlier doc stance (here and in `rustynes-integration.md` §4 / `pre-implementation-addendum.md`)
+  that fast-forward stayed free. The free tier keeps full accuracy, video, audio, input,
+  pause, and in-session rewind.
+- **Free-tier budget:** **8-min** regular session, **30-min** generous first session
+  (`first_session_play_ms`, applied when the session index is 1; interstitials suppressed in
+  session #1 via `suppress_first_session`), +2 min per rewarded ad (cap 11 → 30 min on a
+  regular session). Host calls `begin_session(persisted_index, now)` at launch.
+- **Offline grace:** at run-out with no rewarded fill, `grant_offline_grace()` gives a
+  one-time +2 min so an offline user degrades gracefully (recs §1b).
+- **Kill-relaunch:** persist `export_progress()` and `restore_progress()` to keep the
+  timer/cap across a process death (recs §1a/§1f).
+- **Remote config:** fetch values, overlay on `default_ad_config()`, pass through
+  `clamp_ad_config()` before building `AdPolicy` so a bad push can't brick the gate.
 
 `now_ms` is monotonic milliseconds: `SystemClock.elapsedRealtime()` on Android,
-`DispatchTime.now().uptimeNanoseconds / 1_000_000` on iOS.
+`DispatchTime.now().uptimeNanoseconds / 1_000_000` on iOS (the shells use
+`mach_continuous_time()` so iOS counts deep-sleep like Android).
 
 The free-tier play-time gate (`start_play` … `play_time_remaining_ms`) implements the
-8-min budget, +2-min-per-rewarded-ad extension, and 11-grant per-session cap. Grant time
-**only** from the rewarded reward callback (`OnUserRewarded` / `didRewardUser`). See
-`pre-implementation-addendum.md` §2c/§2f for the host flow.
+budget, +2-min-per-rewarded-ad extension, and 11-grant per-session cap. Grant time
+**only** from the rewarded reward callback (`OnUserRewarded` / `didRewardUser`) — see
+`RewardedGate.{kt,swift}` in `shells/`. See `pre-implementation-addendum.md` §2c/§2f for
+the host flow.
 
-A freshly regenerated snapshot of these bindings lives in `core/generated/` (Kotlin under
-`app/rustynes/ffi/`, Swift as `RustyNesMonetization.swift` + module map). They are build artifacts —
-regenerate with the library-mode commands above whenever the core changes.
+The UniFFI Kotlin/Swift bindings are **generated on demand** from the crate with the
+library-mode commands above (the Kotlin package is `com.doublegate.rustynes.monetization.ffi`,
+the Swift module `RustyNesMonetization`). Regenerate whenever the core changes; the committed
+`core/generated/` snapshot from the standalone scaffold was dropped as a build artifact.
 
 ---
 
