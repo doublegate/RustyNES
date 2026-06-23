@@ -607,6 +607,10 @@ pub struct App {
     /// per-slot thumbnails; routes Save / Load through the existing handlers.
     #[cfg(not(target_arch = "wasm32"))]
     save_states_ui: crate::save_states_ui::SaveStatesUi,
+    /// v1.8.9 — the desktop on-screen virtual pad (clickable controller for
+    /// player 1). Native-only; its held mask folds into `frame_inputs`.
+    #[cfg(not(target_arch = "wasm32"))]
+    virtual_pad: crate::virtual_pad::VirtualPad,
     /// v1.0.0 — cached previous value of `config.ui.pixel_aspect_correction`,
     /// so a change made in the menu / settings window is detected after the
     /// egui pass and pushed into the gfx letterbox (mirrors the NTSC live-apply
@@ -871,6 +875,7 @@ impl App {
             active_save_slot: 0,
             speed: 1.0,
             save_states_ui: crate::save_states_ui::SaveStatesUi::default(),
+            virtual_pad: crate::virtual_pad::VirtualPad::default(),
             prev_par_correction,
             gamepad: gilrs::Gilrs::new()
                 .map_err(|e| {
@@ -2164,11 +2169,26 @@ impl App {
             return;
         };
 
+        // Codec-depth options (encoder / CRF / preset / audio bitrate). The
+        // v1.8.9 — read the persisted codec-depth picker (Settings -> Recording).
+        // Unknown ids fall back to the defaults (H.264 / CRF 18 / veryfast / 192k),
+        // reproducing the prior fixed pipeline.
+        let rec = &self.config.recording;
+        let opts = crate::av_record::AvRecordOptions::from_parts(
+            &rec.video_codec,
+            rec.crf,
+            &rec.preset,
+            rec.audio_bitrate_k,
+        );
         let params = AvParams {
             out_path: out_path.clone(),
             sample_rate,
             fps_num,
             fps_den,
+            video_codec: opts.video_codec,
+            crf: opts.crf,
+            preset: opts.preset,
+            audio_bitrate_k: opts.audio_bitrate_k,
         };
         match AvRecorder::start(params) {
             Ok(recorder) => {
@@ -2476,14 +2496,30 @@ impl App {
     /// the movie is verifiable on `TASVideos`.
     #[cfg(not(target_arch = "wasm32"))]
     fn handle_movie_export(&self) {
-        // Prefer the in-progress recording (finished here); else the loaded
-        // playback movie. One of the two is guaranteed by the menu gate.
+        // Prefer an open, non-empty TAStudio edit — it carries the TAS
+        // re-record count (and is the most likely thing a user means by
+        // "export" while the piano-roll is up). Else the in-progress recording
+        // (finished here), else the loaded playback movie.
         let movie = {
-            let mut guard = self.emu.lock();
-            guard
-                .movie
-                .finish_recording()
-                .or_else(|| guard.movie.playing_movie())
+            let tas_movie = self
+                .debugger
+                .as_ref()
+                .and_then(crate::debugger::DebuggerOverlay::tas_editor)
+                .filter(|ed| !ed.is_empty())
+                .and_then(|ed| {
+                    let guard = self.emu.lock();
+                    guard
+                        .nes
+                        .as_ref()
+                        .map(|nes| ed.to_movie(nes.region(), *nes.rom_sha256()))
+                });
+            tas_movie.or_else(|| {
+                let mut guard = self.emu.lock();
+                guard
+                    .movie
+                    .finish_recording()
+                    .or_else(|| guard.movie.playing_movie())
+            })
         };
         let Some(movie) = movie else {
             eprintln!("rustynes: movie export: nothing to export");
@@ -2678,6 +2714,7 @@ impl App {
             let opts = rustynes_core::movie_interop::Fm2ExportOpts {
                 rom_filename: name.map(|n| format!("{n}.nes")),
                 rom_checksum_md5: hashes.map(|h| format!("base64:{}", h.md5_b64)),
+                rerecord_count: u64::from(movie.rerecord_count),
                 ..Default::default()
             };
             let text = rustynes_core::movie_interop::export_fm2(movie, &opts)
@@ -2688,6 +2725,7 @@ impl App {
             let opts = rustynes_core::bk2_interop::Bk2ExportOpts {
                 game_name: name,
                 sha1: hashes.map(|h| h.sha1.clone()),
+                rerecord_count: u64::from(movie.rerecord_count),
                 ..Default::default()
             };
             let parts =
@@ -2811,6 +2849,9 @@ impl App {
                     ed.load_branch(i, nes);
                 }
                 TasRequest::DeleteBranch(i) => ed.delete_branch(i),
+                TasRequest::StampMacro { start, frames } => {
+                    ed.stamp_macro(start, &frames);
+                }
                 // Handled in the first pass (outside the lock — they open dialogs).
                 TasRequest::SaveProject | TasRequest::LoadProject => {}
             }
@@ -3448,12 +3489,20 @@ impl App {
             buttons[0] |= crate::wasm_gamepad::gamepad_buttons();
         }
         #[cfg(not(target_arch = "wasm32"))]
-        let buttons = [
+        let mut buttons = [
             self.input.player1(),
             self.input.player2(),
             self.input.player3(),
             self.input.player4(),
         ];
+        // Fold the desktop on-screen virtual pad into player 1, at the SAME
+        // late-latch the keyboard / gamepad use, so an on-screen press records +
+        // replays identically in TAS movies and netplay. Empty (byte-identical)
+        // when the pad window is closed or no button is held.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            buttons[0] |= self.virtual_pad.mask();
+        }
         crate::emu::FrameInputs {
             buttons,
             four_score: self.config.input.four_score,
@@ -4137,6 +4186,12 @@ impl App {
             }
             MenuAction::FrameAdvance => {
                 self.request_frame_advance();
+            }
+            MenuAction::ToggleVirtualPad => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    self.virtual_pad.visible = !self.virtual_pad.visible;
+                }
             }
             MenuAction::OpenSaveStates => {
                 #[cfg(not(target_arch = "wasm32"))]
@@ -8144,6 +8199,8 @@ impl ApplicationHandler<AppEvent> for App {
                         .map(crate::wasm_cheevos::BrowserRaSession::caveat_banner);
                     #[cfg(not(target_arch = "wasm32"))]
                     let save_states_ui = &mut self.save_states_ui;
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let virtual_pad = &mut self.virtual_pad;
                     let index_arg = want_index
                         .then_some((self.present_index_staging.as_slice(), self.present_phase));
                     let overlay = |device: &wgpu::Device,
@@ -8176,6 +8233,9 @@ impl ApplicationHandler<AppEvent> for App {
                                 ss_slot,
                                 rom_loaded,
                             );
+                            // v1.8.9 — the on-screen virtual pad (a floating
+                            // egui window; no-op + empty mask when hidden).
+                            virtual_pad.show(ctx);
                             #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
                             Self::paint_script_overlay(
                                 ctx,
@@ -8411,6 +8471,8 @@ impl ApplicationHandler<AppEvent> for App {
                         .map(crate::wasm_cheevos::BrowserRaSession::caveat_banner);
                     #[cfg(not(target_arch = "wasm32"))]
                     let save_states_ui = &mut self.save_states_ui;
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let virtual_pad = &mut self.virtual_pad;
                     let index_arg = want_index
                         .then_some((self.present_index_staging.as_slice(), self.present_phase));
                     let overlay = |device: &wgpu::Device,
@@ -8443,6 +8505,9 @@ impl ApplicationHandler<AppEvent> for App {
                                 ss_slot,
                                 rom_loaded,
                             );
+                            // v1.8.9 — the on-screen virtual pad (a floating
+                            // egui window; no-op + empty mask when hidden).
+                            virtual_pad.show(ctx);
                             #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
                             Self::paint_script_overlay(
                                 ctx,

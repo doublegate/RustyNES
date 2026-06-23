@@ -71,6 +71,9 @@ pub mod help_tui;
 // frontend already latched and copies the save-states the core already produced,
 // so it cannot perturb the deterministic timeline. Native + `wasm-winit`.
 pub mod history_viewer;
+// v1.8.9 "Backlog" — input macros / templates: reusable per-frame input patterns
+// stamped into the TAStudio piano-roll.
+pub mod input_macros;
 // v1.2.0 beta.2 (Workstream C3) — HD-pack / mod loader (native-only, default OFF).
 #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
 pub mod hdpack;
@@ -173,6 +176,12 @@ pub mod symbols;
 // window, welcome/about/shortcuts modals). Runs on native + `wasm-winit`; only
 // the filesystem-backed actions are native-gated at the dispatch site.
 pub mod ui_shell;
+
+// v1.8.9 "Backlog" — the desktop on-screen virtual pad (clickable egui NES
+// controller for player 1). Native-only; the browser build has the touch
+// overlay (`wasm_touch`) instead.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod virtual_pad;
 
 // v1.6.0 Workstream A — the TAStudio piano-roll TAS *editor*: a frame-keyed
 // save-state greenzone + an editable input log + deterministic seek/edit

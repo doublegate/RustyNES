@@ -192,6 +192,8 @@ pub fn import_bk2(
         rom_sha256,
         start: StartPoint::PowerOn,
         frames,
+        // Carry the `.bk2` rerecordCount through (saturating into the `.rnm` u32).
+        rerecord_count: u32::try_from(meta.rerecord_count).unwrap_or(u32::MAX),
     };
     Ok((movie, meta))
 }
@@ -457,6 +459,7 @@ mod tests {
             rom_sha256: TEST_SHA,
             start: StartPoint::PowerOn,
             frames: varied_frames(),
+            rerecord_count: 0,
         };
         let opts = Bk2ExportOpts {
             rerecord_count: 99,
@@ -489,6 +492,7 @@ mod tests {
                 FrameInput::new(Buttons::A, Buttons::empty()),
                 FrameInput::new(Buttons::UP, Buttons::empty()),
             ],
+            rerecord_count: 0,
         };
         let text = export_bk2(&movie, &Bk2ExportOpts::default()).expect("export");
         let lines: Vec<&str> = text
@@ -537,6 +541,7 @@ mod tests {
             rom_sha256: TEST_SHA,
             start: StartPoint::PowerOn,
             frames: vec![FrameInput::new(Buttons::empty(), Buttons::empty())],
+            rerecord_count: 0,
         };
         let out = export_bk2(&pal_movie, &Bk2ExportOpts::default()).expect("export");
         assert!(out.header.lines().any(|l| l == "PAL 1"));
@@ -621,6 +626,7 @@ mod tests {
             rom_sha256: TEST_SHA,
             start: StartPoint::SaveState(vec![1, 2, 3]),
             frames: vec![],
+            rerecord_count: 0,
         };
         assert!(matches!(
             export_bk2(&movie, &Bk2ExportOpts::default()),

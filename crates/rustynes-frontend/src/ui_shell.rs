@@ -167,6 +167,9 @@ pub enum MenuAction {
     LoadStateSlot(u8),
     /// v1.0.0 — open the Save-States manager window (thumbnail grid; native).
     OpenSaveStates,
+    /// v1.8.9 — toggle the desktop on-screen virtual pad (a clickable egui
+    /// controller for player 1; native-only).
+    ToggleVirtualPad,
     /// v1.0.0 — toggle TAS movie recording.
     MovieRecordToggle,
     /// v1.0.0 — toggle TAS movie playback.
@@ -1218,6 +1221,14 @@ impl UiShell {
                     // Shot / Four Score), real-time button/axis state.
                     if ui.button(ic(glyph::GAMEPAD, "Input Display")).clicked() {
                         out.action = Some(MenuAction::OpenPanel(ToolPanel::InputDisplay));
+                        ui.close();
+                    }
+                    // v1.8.9 "Backlog" — the desktop on-screen virtual pad: a
+                    // clickable egui controller that feeds player 1. Native-only
+                    // (the browser build has the touch overlay).
+                    #[cfg(not(target_arch = "wasm32"))]
+                    if ui.button(ic(glyph::GAMEPAD, "Virtual Pad")).clicked() {
+                        out.action = Some(MenuAction::ToggleVirtualPad);
                         ui.close();
                     }
                     // v1.3.0 menu reorg — NSF/NSFe music player (moved here from

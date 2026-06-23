@@ -159,6 +159,11 @@ pub struct Movie {
     pub start: StartPoint,
     /// Per-frame controller inputs, in playback order.
     pub frames: Vec<FrameInput>,
+    /// TAS re-record count — how many times the author re-recorded a frame
+    /// (the TAS piano-roll editor's edit tally; 0 for a straight linear
+    /// recording). Round-trips through `.rnm` (appended after the input stream,
+    /// so older readers ignore it) and the `.fm2` / `.bk2` `rerecordCount` header.
+    pub rerecord_count: u32,
 }
 
 impl Movie {
@@ -201,6 +206,11 @@ impl Movie {
             w.u8(f.p2.bits());
             w.u8(f.expansion);
         }
+        // Trailing re-record count (v1.8.9). Appended AFTER the fixed-count input
+        // stream so a reader that stops at `frame_count` records — including older
+        // builds — simply ignores it; deserialize below reads it when present and
+        // defaults to 0 otherwise. No format-version bump needed.
+        w.u32(self.rerecord_count);
         w.into_vec()
     }
 
@@ -274,11 +284,15 @@ impl Movie {
             let expansion = rec.get(2).copied().unwrap_or(0);
             frames.push(FrameInput { p1, p2, expansion });
         }
+        // Optional trailing re-record count (v1.8.9). Absent in pre-v1.8.9 `.rnm`
+        // files, which stop exactly at the input stream — default to 0.
+        let rerecord_count = r.u32().unwrap_or(0);
         Ok(Self {
             region,
             rom_sha256,
             start,
             frames,
+            rerecord_count,
         })
     }
 
@@ -394,6 +408,9 @@ impl MovieRecorder {
             rom_sha256: self.rom_sha256,
             start: self.start,
             frames: self.frames,
+            // A linear recording has no re-records by construction; TAStudio
+            // sets a real count when it exports an edited movie.
+            rerecord_count: 0,
         }
     }
 }
@@ -576,10 +593,32 @@ mod tests {
             rom_sha256: [0xAB; 32],
             start: StartPoint::PowerOn,
             frames: inputs,
+            rerecord_count: 0,
         };
         let bytes = movie.serialize();
         let back = Movie::deserialize(&bytes).expect("round-trip");
         assert_eq!(movie, back);
+    }
+
+    #[test]
+    fn rerecord_count_round_trips_and_defaults_for_legacy_rnm() {
+        let movie = Movie {
+            region: Region::Ntsc,
+            rom_sha256: [0x5A; 32],
+            start: StartPoint::PowerOn,
+            frames: synthetic_inputs(10),
+            rerecord_count: 4242,
+        };
+        let bytes = movie.serialize();
+        // A full round-trip preserves the count.
+        assert_eq!(Movie::deserialize(&bytes).unwrap().rerecord_count, 4242);
+        // A pre-v1.8.9 `.rnm` ends exactly at the input stream (no trailing
+        // count). Dropping the appended u32 must still parse, defaulting the
+        // count to 0 rather than erroring — the back-compat contract.
+        let legacy = &bytes[..bytes.len() - 4];
+        let back = Movie::deserialize(legacy).expect("legacy .rnm still parses");
+        assert_eq!(back.rerecord_count, 0);
+        assert_eq!(back.frames.len(), 10);
     }
 
     #[test]
@@ -589,6 +628,7 @@ mod tests {
             rom_sha256: [0x11; 32],
             start: StartPoint::SaveState(vec![1, 2, 3, 4, 5, 6, 7, 8]),
             frames: synthetic_inputs(8),
+            rerecord_count: 0,
         };
         let bytes = movie.serialize();
         let back = Movie::deserialize(&bytes).expect("round-trip");
@@ -612,6 +652,7 @@ mod tests {
             rom_sha256: [0; 32],
             start: StartPoint::PowerOn,
             frames: Vec::new(),
+            rerecord_count: 0,
         };
         let mut bytes = movie.serialize();
         // Bump the format-version field (offset 8) past what we support.
@@ -638,6 +679,7 @@ mod tests {
             rom_sha256: [0; 32],
             start: StartPoint::PowerOn,
             frames: synthetic_inputs(10),
+            rerecord_count: 0,
         };
         let bytes = movie.serialize();
         // Lop off the last few input bytes — must error, not panic.
@@ -708,6 +750,7 @@ mod tests {
             rom_sha256: *Nes::from_rom(&rom).unwrap().rom_sha256(),
             start: StartPoint::PowerOn,
             frames: synthetic_inputs(20),
+            rerecord_count: 0,
         };
 
         let run = |movie: &Movie| -> (u64, u64, u64) {
@@ -798,6 +841,7 @@ mod tests {
             rom_sha256: [0xFF; 32], // deliberately wrong
             start: StartPoint::PowerOn,
             frames: Vec::new(),
+            rerecord_count: 0,
         };
         let mut nes = Nes::from_rom(&rom).unwrap();
         assert!(matches!(
@@ -818,6 +862,7 @@ mod tests {
                 Buttons::A | Buttons::RIGHT,
                 Buttons::B | Buttons::START,
             )],
+            rerecord_count: 0,
         };
         let bytes = movie.serialize();
         // Input stream begins right after the 49-byte fixed header (no

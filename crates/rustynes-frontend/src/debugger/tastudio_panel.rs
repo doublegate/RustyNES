@@ -70,6 +70,14 @@ pub enum TasRequest {
     SaveProject,
     /// Load a project from a `.rnmproj` file (app opens the open dialog).
     LoadProject,
+    /// v1.8.9 — stamp an input-macro pattern into the log starting at `start`
+    /// (one `set_input` per frame).
+    StampMacro {
+        /// First frame to write.
+        start: usize,
+        /// The per-frame pattern.
+        frames: Vec<FrameInput>,
+    },
 }
 
 /// An in-progress left-drag that paints one button column to a single value,
@@ -103,6 +111,11 @@ pub struct TasStudioPanelState {
     /// Last cursor frame observed, so `follow_cursor` can detect advancement
     /// (playback / seek) and auto-scroll without fighting a manual scroll.
     last_cursor: Option<usize>,
+    /// v1.8.9 — the input-macro / pattern bank (session-local; record from the
+    /// cursor, stamp at the cursor).
+    macros: crate::input_macros::MacroBank,
+    /// v1.8.9 — number of frames to capture when recording a new macro.
+    macro_len: usize,
 }
 
 impl Default for TasStudioPanelState {
@@ -114,6 +127,8 @@ impl Default for TasStudioPanelState {
             follow_cursor: true,
             scroll_to: None,
             last_cursor: None,
+            macros: crate::input_macros::MacroBank::default(),
+            macro_len: 8,
         }
     }
 }
@@ -229,8 +244,65 @@ pub fn show(
             ui.separator();
             branches(ui, state, editor);
             ui.separator();
+            macros(ui, state, editor);
+            ui.separator();
             grid(ui, state, editor);
         });
+}
+
+/// v1.8.9 — the input-macro / pattern bank: record a pattern from the cursor and
+/// stamp a saved pattern at the cursor (the FCEUX / `BizHawk` pattern-paint).
+fn macros(ui: &mut egui::Ui, state: &mut TasStudioPanelState, editor: &TasEditor) {
+    let cursor = editor.cursor();
+    ui.collapsing("Macros", |ui| {
+        ui.horizontal(|ui| {
+            ui.label("Record");
+            ui.add(
+                egui::DragValue::new(&mut state.macro_len)
+                    .range(1..=600)
+                    .suffix(" fr"),
+            );
+            if ui
+                .button("\u{23fa} from cursor")
+                .on_hover_text("Capture this many frames starting at the cursor as a macro")
+                .clicked()
+            {
+                let frames = editor.extract_macro(cursor, state.macro_len.max(1));
+                let name = format!("macro {}", state.macros.macros.len() + 1);
+                state
+                    .macros
+                    .macros
+                    .push(crate::input_macros::InputMacro { name, frames });
+            }
+        });
+        // Collect actions during the immutable iter, apply after.
+        let mut stamp: Option<Vec<FrameInput>> = None;
+        let mut remove: Option<usize> = None;
+        for (i, m) in state.macros.macros.iter().enumerate() {
+            ui.horizontal(|ui| {
+                ui.label(format!("{} ({} fr)", m.name, m.frames.len()));
+                if ui
+                    .button("Stamp")
+                    .on_hover_text("Stamp this pattern at the cursor")
+                    .clicked()
+                {
+                    stamp = Some(m.frames.clone());
+                }
+                if ui.button("\u{2716}").on_hover_text("Delete").clicked() {
+                    remove = Some(i);
+                }
+            });
+        }
+        if let Some(frames) = stamp {
+            state.emit(TasRequest::StampMacro {
+                start: cursor,
+                frames,
+            });
+        }
+        if let Some(i) = remove {
+            state.macros.macros.remove(i);
+        }
+    });
 }
 
 fn header(ui: &mut egui::Ui, state: &mut TasStudioPanelState, editor: &TasEditor) {
