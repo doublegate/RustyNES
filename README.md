@@ -93,6 +93,7 @@ platform for NES emulation.
 | **HD Audio** *(v1.6.0)* | HD-pack `<bgm>` / `<sfx>` OGG tracks triggered through the `$4100` register, mixed on top of the produced APU buffer (default-off `hd-pack`) |
 | **Shader Ecosystem** *(v1.6.0)* | LMP88959 NTSC/PAL, hqNx / xBRZ upscalers, and a constrained `.slangp` / `.cgp` preset import on the composable ShaderStack |
 | **Writable + Programmable** *(v1.7.0)* | Editing-capable debug tools (palette / nametable / CHR / OAM writeback, an iNES / NES 2.0 header editor, an inline 6502 assembler), a scriptable `tastudio.*` Lua API, host IPC automation (`script-ipc`), `.dbg` source maps, Zwinder tiered rewind, audio depth (stereo / reverb / 20-band EQ), web parity, and an i18n framework |
+| **Android App** *(v1.8.x)* | A complete native Android app on the byte-identical core — a multi-touch + hardware-controller (P1–P4) UI, wgpu `SurfaceView` rendering, save-states, Lua, RetroAchievements, direct-IP / CGNAT-TURN netplay, and a box-art ROM library (GitHub-sideload now; Google Play at v2.1.0) |
 | **Pure Rust**          | `winit` + `wgpu` + `cpal` + `egui` frontend; safe `no_std + alloc` chip stack                 |
 
 <p align="center">
@@ -305,6 +306,31 @@ The browser build closes several desktop-parity gaps with web-specific implement
   theme, aspect, zoom, FPS, volume) round-trips through a compact URL-safe blob, with a
   "Copy share link" button (ADR 0022).
 
+### Android *(v1.8.x)*
+
+RustyNES runs as a complete native **Android app** on the byte-identical core (so
+AccuracyCoin holds 100% / 139/139 unchanged), built on a shared **`rustynes-mobile`**
+UniFFI bridge, a **`rustynes-android`** JNI layer, and a Jetpack **Compose** shell:
+
+- **Rendering + audio** — wgpu on a `SurfaceView`, reusing the desktop WGSL CRT /
+  scanline / NTSC shaders (shared via `rustynes-gfx-shaders`), plus low-latency
+  `AudioTrack`.
+- **Input** — a multi-touch on-screen NES controller (foldable-aware and resizable) and
+  full hardware-gamepad support (players 1–4, hot-plug, per-pad remapping, turbo).
+- **Library + state** — a SHA-256-keyed box-art ROM library with SAF import, save-states
+  and battery-SRAM, and save-on-background / auto-resume.
+- **Connectivity** — Lua scripting, RetroAchievements, and direct-IP / LAN plus
+  CGNAT / TURN room-code rollback netplay over the same `rustynes-script` / `rustynes-ra`
+  / `rustynes-netplay` cores as desktop.
+- **Platform polish** — adaptive / foldable / TV (Leanback) layouts, Material You and
+  EN/ES i18n, screenshot / MP4 capture, Picture-in-Picture, widgets, and accessibility
+  (high-contrast + Okabe-Ito).
+
+The apps ship now as **GitHub-Releases / sideload**, full-featured; the Google Play
+production launch — with an ad-supported-freemium model and the `foss` / `play` flavor
+split — is **deferred to v2.1.0** (see [Roadmap](#roadmap)). Details in
+[`docs/android.md`](docs/android.md).
+
 ---
 
 ## Quick Start
@@ -313,8 +339,8 @@ The browser build closes several desktop-parity gaps with web-specific implement
 
 Pre-built binaries for the latest release are available on the
 [Releases page](https://github.com/doublegate/RustyNES/releases), built automatically
-for `x86_64` / `aarch64` macOS, `x86_64` Linux, and `x86_64` Windows. You can also
-build from source using the instructions below.
+for `aarch64` macOS (Apple silicon), `x86_64` Linux, and `x86_64` Windows. Other targets
+(Intel macOS, Linux ARM64, Android) build from source using the instructions below.
 
 ```bash
 # Linux / macOS
@@ -441,30 +467,31 @@ Everything has a keyboard shortcut, but nothing requires one.
 
 ## Default Controls
 
-All keys are TOML-rebindable; see the user guide for the full schema.
+Every binding is TOML-rebindable (and remappable in the in-app Settings); see the
+[controls guide](docs/user-guide/controls.md) for the full schema. USB gamepads
+auto-bind to player 1 (Xbox-style: South = A, West = B, plus Start, Back / Select, and
+the D-pad), and you can drag-and-drop a `.nes` / `.fds` onto the window to load it any time.
 
-| Action          | Player 1        | Player 2      |     | System                  | Key                |
-| --------------- | --------------- | ------------- | --- | ----------------------- | ------------------ |
-| D-Pad           | Arrow keys      | W / A / S / D |     | Save / Load state       | F1 / F4            |
-| A / B           | Z / X           | Q / E         |     | Rewind (hold)           | F5                 |
-| Start / Select  | Enter / R-Shift | P / L         |     | Fast-forward (hold)     | Tab                |
-|                 |                 |               |     | Frame-advance (paused)  | \ (backslash)      |
-|                 |                 |               |     | Pause / Resume          | Space              |
-|                 |                 |               |     | Speed up / down / reset | = / - / 0          |
-|                 |                 |               |     | Reset / Power-cycle     | F2 / F3            |
-|                 |                 |               |     | TAS movie record / play | F6 / F7            |
-|                 |                 |               |     | TAS movie branch        | F8                 |
-|                 |                 |               |     | Swap disk side (FDS)     | F9                 |
-|                 |                 |               |     | Insert coin (Vs.)       | F10                |
-|                 |                 |               |     | Fullscreen              | F11                |
-|                 |                 |               |     | Open ROM                | F12                |
-|                 |                 |               |     | Toggle menu bar         | M                  |
-|                 |                 |               |     | Debugger                | `` ` `` (backtick) |
-|                 |                 |               |     | Quit / exit fullscreen  | Esc                |
+### Gamepad
 
-USB gamepads auto-bind to player 1 (Xbox-style: South = A, West = B, Start,
-Back / Select, D-Pad). Drag and drop a `.nes` file onto the window to load it at any
-time.
+| Action         | Player 1            | Player 2      |
+| -------------- | ------------------- | ------------- |
+| D-Pad          | Arrow keys          | W / A / S / D |
+| A / B          | Z / X               | Q / E         |
+| Start / Select | Enter / Right-Shift | P / L         |
+
+### System and tools
+
+| Action                       | Key                | Action                  | Key       |
+| ---------------------------- | ------------------ | ----------------------- | --------- |
+| Pause / Resume               | Space              | Save / Load state       | F1 / F4   |
+| Fast-forward (hold)          | Tab                | Rewind (hold)           | F5        |
+| Frame-advance (while paused) | `\` (backslash)    | Reset / Power-cycle     | F2 / F3   |
+| Speed up / down / reset      | = / - / 0          | Open ROM                | F12       |
+| TAS record / play / branch   | F6 / F7 / F8       | Swap disk side (FDS)    | F9        |
+| Toggle menu bar              | M                  | Insert coin (Vs.)       | F10       |
+| Toggle debugger              | `` ` `` (backtick) | Fullscreen              | F11       |
+| Quit / exit fullscreen       | Esc                | Save-state slot         | 0 – 9     |
 
 ---
 
@@ -513,8 +540,8 @@ in [`docs/architecture.md`](docs/architecture.md) and [`docs/scheduler.md`](docs
 
 ```text
 crates/        Cargo workspace: the crates above
-docs/          Implementation specs, ADRs, audit reports, the user guide,
-               STATUS.md (single source of truth), and per-version release notes
+docs/          Implementation specs, ADRs, the user guide, the monetization
+               design set, STATUS.md (single source of truth), and release notes
 deploy/        Docker / compose for the browser-netplay signaling server + STUN/TURN
 ref-docs/      Deep-research NES hardware reference
 tests/         Integration tests + vendored CC0 / MIT / zlib test ROMs (no commercial ROMs)
@@ -601,10 +628,11 @@ The reproducible record (methodology, all benches, and the historical A/B) is in
 
 | Platform            | Status  |
 | ------------------- | ------- |
-| **Windows x64**     | Primary |
-| **Linux x64**       | Primary |
-| **macOS x64/ARM64** | Primary |
-| **WebAssembly**     | Primary |
+| **Windows x64**     | Primary (release binary) |
+| **Linux x64**       | Primary (release binary) |
+| **macOS ARM64**     | Primary (release binary; Apple silicon) |
+| **macOS x64**       | Supported (Intel; build from source) |
+| **WebAssembly**     | Primary (hosted demo + build) |
 | **Android (arm64)** | Supported (v1.8.x; GitHub-Releases / sideload — see [`docs/android.md`](docs/android.md)) |
 | **Linux ARM64**     | Supported (cross-compile) |
 | **iOS / iPadOS**    | Planned (v1.9.0 TestFlight foundation; App Store at v2.1.0) |
@@ -656,61 +684,39 @@ workspace API docs (rustdoc) at
 
 ## Version History
 
-The current release is **v1.8.8 "Atlas"**, the Google-Play-launch + Android-native-
-excellence increment on the first **platform** (not accuracy) release line **v1.8.0
-"Android"** — a complete Android app, verified end-to-end on a Samsung Galaxy Z Fold 7.
-It builds on the bugfix patch **v1.7.1** and the writable + programmable **v1.7.0
-"Forge"** line, on the cycle-accurate v1.0.0 production core. (v1.8.8 modernizes the
-toolchain to the **Android 16 / API 36 target mandate** and lands **adaptive / foldable
-/ TV** layouts, **Material You + EN/ES i18n**, a **box-art ROM library**, **capture /
-PiP / widgets**, **accessibility**, and the **Google-Play-integration readiness** —
-Play Games cloud saves, achievements, Play Integrity, in-app update / review — all
-default-off until the maintainer wires the Play projects. v1.8.0–v1.8.8 ship as
-GitHub-Releases / sideload, full-featured; the **Google Play production** launch is
-**deferred to v2.1.0** — a 2026-06-23 replan holds both mobile app-store launches until
-after **v2.0.0 "Timebase"**, finalizes Android across **v2.0.1–v2.0.4** and iOS across
-**v2.0.5–v2.0.8**, verifies both in **v2.0.9**, and ships them **jointly to Google Play +
-the App Store at v2.1.0** (so they launch on the v2.0.0 core rather than re-releasing after
-the breaking timebase change). See
-[`to-dos/plans/v2.0.x-mobile-finalization-plan.md`](to-dos/plans/v2.0.x-mobile-finalization-plan.md).)
-
-In development toward **v1.8.9** (`[Unreleased]`): a consolidated 13-PR Dependabot
-maintenance pass (jni 0.21 → 0.22, zip 2 → 8, naga 25 → 29, sha1 / md-5 0.10 → 0.11,
-pollster, android_logger, lz4_flex, plus GitHub Actions bumps — the chip stack stays
-`no_std` + byte-identical, AccuracyCoin holds 100% / 139/139), and a dormant mobile
-**monetization** build-out: a new `rustynes-monetization` crate (the `AdPolicy`
-ad-supported-freemium policy core) plus dormant Android wiring, both inert until the
-v2.1.0 store launch. The earlier `$2.99` Play-Billing "Full Unlock" model in the v1.8.0–
-v1.8.6 notes below is superseded by the v2.1.0 plan: an **ad-supported freemium** model
-(AppLovin MAX + RevenueCat, a one-time **$3.99** "Full Version / Remove Ads" unlock; the
-free tier runs an 8-minute regular session — 30 minutes on a generous first session —
-extendable +11 minutes per rewarded ad up to a 30-minute cap, with six premium features
-behind the unlock), and a clean **`foss` / `play` Android flavor split** (ADR 0025) so an
-ad-free, Google-services-free **F-Droid / sideload** build (`foss`) ships alongside the
-full Google-Play build (`play`).
+RustyNES's current release is **v1.8.8 "Atlas"** — the latest increment in the
+**v1.8.0 "Android"** platform line, built on the writable-and-programmable **v1.7.0
+"Forge"** desktop core and the cycle-accurate **v1.0.0** production engine. Every
+release since v1.0.0 has been additive and off-by-default, so the shipped / native /
+`no_std` / wasm builds stay byte-identical and **AccuracyCoin holds 100% (139/139)**
+throughout. **v1.8.9** is in development (`[Unreleased]`: a consolidated 13-PR Dependabot
+maintenance pass + a dormant mobile-monetization build-out). The forward path — through
+**v2.0.0 "Timebase"** to the joint **v2.1.0** mobile store launch — is in
+[Roadmap](#roadmap) below; see [`CHANGELOG.md`](CHANGELOG.md) for the full per-version
+detail behind every line in the table.
 
 The road so far:
 
 | Version    | Highlights                                                                                  |
 | ---------- | ------------------------------------------------------------------------------------------- |
-| **v1.8.8** | "Atlas" — Google Play launch readiness. The Android toolchain moves to the **Android 16 / API 36 target mandate** (AGP 9.2.1 / Gradle 9.4.1 / compileSdk 37 / targetSdk 36, Compose BOM 2026.06). **(A+K)** adaptive **Window Size Classes** + a two-pane ≥ 840dp layout, edge-to-edge, predictive back, splash, a Material 3 brand theme + monochrome icon. **(B)** **Material You** dynamic color (chrome only; gameplay stays black) + **EN / ES** i18n with a per-app Language picker. **(C)** a **box-art ROM library** (SHA-256-keyed grid, favorites, search, folders, batch SAF import) with **libretro / TheGamesDB** scrapers (user-supplied only) and **Keystore AES-256-GCM** secret encryption. **(J)** a `:baselineprofile` module, **R8 full-mode** keeps, and Compose stability. **(F+H)** **screenshot / MP4 capture**, **Picture-in-Picture**, a Quick-Settings tile, app shortcuts, and a **Glance "Resume" widget**. **(G+I)** **Android TV / Leanback** d-pad nav + a high-contrast theme and three **Okabe-Ito** colorblind palettes (over dynamic color). **(D+E+L, default-off)** **Play Games** cloud-save Snapshots + placeholder achievements / leaderboards (distinct from RetroAchievements), **Play Integrity** (defense-in-depth over Billing), and in-app update / review. All presentation / Gradle-side; AccuracyCoin holds 100% (139/139) on host CI. **Sideload** ships now; the **Google Play production** promotion + the Play / Integrity / Chromecast projects are maintainer post-verify steps. |
-| **v1.8.7** | "Android" — connectivity completion. **CGNAT / TURN room-code netplay** completes v1.8.6's direct-IP / LAN netplay: a **`NatConnect`** orchestrator (STUN discovery → UDP hole-punch → a `SignalMessage::PublicAddr` exchange over the same `signaling::Relay` → a **TURN relay fallback** for symmetric NAT, `is_relayed`) with `np_host_room` / `np_join_room` bridge methods and an **"Online (room code)"** Android UI (share a 6-char code, join by code, Registering / Punching / Relaying progress + a "via relay" badge). Plus **robust hardware controllers** (the input pipeline gains `onGenericMotionEvent` — analog sticks + the d-pad-as-HAT axis silently failed on 8BitDo / DualSense / OTG pads before — with per-port P1–P4 masks, `InputManager` hot-plug, per-descriptor remapping, and turbo / autofire; no Rust change), a **controller-aware UI** (connect a pad → the on-screen controller hides + the ROM display maximizes; Guide or Start + Select opens a d-pad-navigable menu), and **Chromecast prep** behind a default-off `CHROMECAST_ENABLED` flag (a CAF sender + a static Web Receiver spectator mirror; the Presentation API stays primary). Loopback / mock-verified; live cross-NAT + the hosted relay are maintainer carryovers. All host-side; AccuracyCoin holds 100% (139/139). Sideload-only — the **Google Play launch** is **v1.8.8 "Atlas"**. |
-| **v1.8.6** | "Android" — connectivity & scripting. **Lua** (the sandboxed desktop engine over the bridge — made `Send`; SAF `.lua` load + an on-screen log overlay), **RetroAchievements** (login + hardcore + unlock toasts + a `.rap` progress sidecar; the session extracted into a new shared **`rustynes-ra`** crate, `ureq` + `rustls` + `ring` TLS — no OpenSSL), and **direct-IP / LAN netplay** (GGPO rollback over `rustynes-netplay`; the loop calls `np_advance_frame` instead of `run_frame` while connected), plus an **Open / Close ROM** toggle. The shared `rustynes-mobile` bridge is now connectivity-complete, so **v1.9.0 iOS inherits all three**. All host-side; AccuracyCoin holds 100% (139/139). The **Google Play launch** (`$2.99` Full Unlock) is the decoupled capstone; CGNAT/TURN netplay is deferred to v1.8.7. |
-| **v1.8.5** | "Android" — power-user features. **Custom `.pal` palettes** + **compressed `.zip` ROM loading** (extract the first NES entry, like desktop); **Bisqwit composite NTSC on the GPU** (the desktop WGSL shared via `rustynes-gfx-shaders`, an `R16Uint` palette-index pipeline fed by the bridge); **TAS `.rnm` movies** (record / play / save via SAF, determinism-exact); a **per-game settings DB** (each game reopens with its last video filter, keyed by ROM SHA); and **HD-packs on Android** — the HD-pack loader + compositor + HD audio were **extracted into a new shared `rustynes-hdpack` crate** (the core is `#![no_std]`) so the bridge can composite the upscaled picture (Bitmap path). All presentation / host-side; AccuracyCoin holds 100% (139/139). |
-| **v1.8.4** | "Android" — native wgpu renderer & shaders. The NES picture now draws through **wgpu on a `SurfaceView`** (Vulkan/GLES) instead of the Compose `Bitmap` blit, reusing the desktop WGSL: a shared **`rustynes-gfx-shaders`** crate serves the **CRT / scanline + LMP88959 NTSC** post-passes to both desktop and Android, with **per-filter tuning sliders** (intensity / count / mask / saturation / sharpness …) and a native-audio hot path (bytes, no boxing). Opt-in behind a "GPU renderer" setting (API 33+); the Bitmap path stays the fallback. |
-| **v1.8.3** | "Android" — controller, casting & polish. An **authentic NES-004 on-screen controller** (the real "NES Controller" font, reference-measured geometry, a D-pad with directional arrows, the **MENU pill**); **cast gameplay-only to a TV / external presentation display** (`Presentation` API, controller stays on the phone); **per-screen-mode** controller size + opacity (cover / inner / cast); a **25–110% size slider** with snap ticks + haptics; **Off / Low / Medium / High** haptics; **first-run onboarding** + an **About** dialog (tappable repo link); **Clear Recent**; a Material-3 **Settings sheet** (theme / video-filter / mute / haptics / per-mode controller) and a **save-state manager** (four explicit slots keyed by ROM SHA, with last-saved time + Save/Load/Delete); the control bar is decluttered to Open / States / Reset / Pause / Fast-forward / Settings / About / Cast. |
-| **v1.8.2** | "Android" — input & the virtual controller. A **multi-touch** on-screen **NES controller** (one Canvas draws the NES-001 pad styled per the RustyNES icon **and** collects all pressed pointers → simultaneous presses, D-pad diagonals, slide) that **resizes + remaps across the Z Fold 7 cover/inner displays**, with pressed-state lighting + light haptics; the real **RustyNES app icon** for the launcher; and a **`PLAY_BUILD`** flag so sideload/GitHub builds are full-featured (freemium engages only in the deferred Play AAB). |
-| **v1.8.1** | "Android" patch — the free-tier demo is trimmed from 10 minutes to **8 minutes** per launch (the paid Full Unlock is unaffected), and the debug "Full Unlock" override is confirmed **R8-stripped from the release AAB** (0 occurrences of the debug-toggle symbols in the shipped `classes*.dex`). |
-| **v1.8.0** | "Android" — the first **platform** release: a complete Android app on the byte-identical core (so AccuracyCoin holds 100% / 139/139 unchanged). A shared **`rustynes-mobile`** UniFFI bridge + a **`rustynes-android`** platform crate + a Jetpack **Compose** shell; **audio** (`AudioTrack`), **touch + hardware-gamepad** input, **save-states / battery-SRAM / a recent-ROMs library** (SAF persistable URIs, save-on-background + auto-resume), **pause / fast-forward / mute**, a responsive **foldable-aware + immersive** UI (cover + unfolded inner screen), **GPU CRT / scanline** post-processing (AGSL `RuntimeShader`), and a thermal-throttle fast-forward backoff. Distributed on **Google Play** as a free download with a one-time **$2.99 "Full Unlock"** (Play Billing) — the free tier is a **10-minute demo** without save-states / resume / battery-SRAM, otherwise feature-complete. Verified **arm64 R8 release AAB**. A freemium **$2.99 Full Unlock** (Play Billing) is built + verified but the **Google Play launch is held to v1.8.6** (feature-complete); interim releases are sideload/full-featured. The full wgpu-`SurfaceView` native renderer (reusing the desktop WGSL shader stack) + netplay / RetroAchievements / Lua on mobile are the documented next increment. |
-| **v1.7.1** | Patch on "Forge" — seven fixes: a **ROM-close crash** (skip the `write_texture` upload on a pixel-slice length mismatch so the release build no longer aborts wgpu; `close_rom` presents a clean blank frame); **clean pause/unpause** (a pacing-timer `break_phase()` reset on resume + a sticky audio pause gate → no spurious `produced_max_ms` spike, zero underruns); a **Documentation pane overhaul** (word-wrap at any UI scale, a collapsible multi-level sidebar tree with intra-doc links, `[Unreleased]` ordered last); an **exhaustive README rewrite**; **Tools-menu icon** fixes for NSF Player / Pixel Inspector (glyph swap dodging egui's Ubuntu-Light `fi`/`fl` PUA-ligature collision); **removal of the vestigial "Show Debugger" checkbox** + dead plumbing; and **HD-pack tile substitution** now applying in the debugger / tool render branch. Bugfix-only; with optional features off the shipped / native / `no_std` / wasm builds behave as v1.7.0 and AccuracyCoin holds 100% (139/139). |
-| **v1.7.0** | "Forge" — the tools become **writable** and **programmable**. **F** accuracy hardening (battery-save round-trip oracle + length-halt/reload + DMC even/odd-defer pins + an off-by-default PPU extra-scanlines overclock); mapper breadth → **168 families** (G1 reusable-ASIC: FK23C / COOLBOY / MINDKIDS / Sachen / Waixing / Kaiser, BestEffort honesty-gated); **A** editing-capable tools (palette / nametable / CHR / OAM writeback, an iNES / NES 2.0 header editor, an inline 6502 assembler); **C** debugger depth (CallstackManager + step modes, MemoryAccessCounter + uninit-read, ca65 / cc65 `.dbg` source maps); **B** scriptable **TAStudio** (`tastudio.*` Lua API + analysis-canvas callbacks) + full Lua parity; **E** host IPC / automation (`comm.*` / `client.*` / `userdata.*`) behind a new off-by-default `script-ipc` feature (host-mediated sandbox, ADR 0016); **D** rewind (HistoryViewer + Export-Last-30s `.rnm` + a Zwinder XOR-delta + LZ4 tiered greenzone); **G** expansion-audio (NSF router reusing VRC6/7 / FDS / MMC5 / N163 / 5B + MMC5 audio), movie import (`.fcm` / `.fmv` / `.vmv`; `.fm2` / `.bk2` export hashing), and an **HD-Pack Builder** (ADR 0017) + the HD-pack loader real-Mesen-`<tile>`-format fix (ADR 0018); a UI overhaul (consolidated Input Display, modernized menu / status bar, a polished Documentation pane); plus the **H1–H9 reach wave** — browser-RA finish + an RA HUD, spectator netplay + Game-Genie-encoder / `.srt` / `.tbl`, coverage-harness `.zip` / `.7z` / `.fds` discovery, per-game `<rom>.json` config overrides + a DIP editor + a lag counter (ADR 0019), audio depth (stereo panning / Schroeder reverb / crossfeed / output-device picker / 20-band EQ, ADR 0020), web/wasm parity (browser Lua / File-System-Access-API / Gamepad-API / PWA-offline / `?settings=` share-links, ADRs 0021+0022), an **i18n** framework (compile-time string catalog + a language picker, English + Spanish, ADR 0023), and a `full` maximal-native-feature build + `cargo full-run` alias. Additive / off-by-default; the shipped / native / `no_std` / wasm builds stay byte-identical and AccuracyCoin holds 100% (139/139). |
-| **v1.6.0** | "Studio" — creator-power + accuracy-polish + reach. A **TAStudio-class piano-roll TAS editor** (save-state greenzone + lag log + markers + forkable branches + `.rnmproj` projects, with a drag-paint egui grid + deterministic seek); **`.fm2` (FCEUX) and `.bk2` (BizHawk) movie interop** ↔ `.rnm`; **Lua movie driving** (`emu.run` / `emu.frameadvance`) + data breadth (memory domains, sized reads, `joypad`); **Mesen2-class debugger depth** (expression / conditional breakpoints, R/W/X watchpoints, a watch window, conditional trace, a full hex editor, RAM watch / search); an **off-axis accuracy** verification + documentation pass (DMC/OAM-DMA controller corruption, `$2007` read-during-render, sprite-overflow + open-bus decay — verified, no engine change); mapper breadth → **150 families** (J.Y. ASIC + a discrete-multicart batch) + a **UNIF (`.unf`) loader**; **FDS-proper** (timed disk-head + `$4032` auto-insert + per-game CRC quirk table); **A/V recording** (ffmpeg → mp4 / mkv, default-off `av-record`); **HD-pack HD audio** (`<bgm>` / `<sfx>` OGG via `$4100`, default-off `hd-pack`); and a **shader / filter ecosystem** (LMP88959 NTSC/PAL, hqNx / xBRZ, a constrained `.slangp` / `.cgp` import). Additive / off-by-default; the shipped / native / `no_std` / wasm builds stay byte-identical and AccuracyCoin holds 100% (139/139). |
-| **v1.5.0** | "Lens" — insight + scriptability + creator tooling + polish: debugger **visualization** (Input Miniatures overlay, a graphical PPU event-viewer heatmap, a per-scanline trace, an HD-pack pixel inspector), a Lua **dev/TAS API** (memory/cart/save-state/symbol queries), a **TASVideos** compatibility pass + replay/TAS-window polish + an NSF waveform scope, a measure-first **frontend pacing & audio-sync** perf pass with perf-log↔panel parity, **UX polish** (named-palette editor, per-side overscan WYSIWYG, an Enhancements settings group, device-config controls), **accessibility** (UI scaling, high-contrast + Okabe-Ito colorblind themes, keyboard-only nav), a **native-UI overhaul** + in-app **Documentation** pane, mapper coverage 113 → **123 families**, and **casual-mode browser RetroAchievements** scaffolding (ADR 0015, off by default — emcc-built rcheevos side module + auth-proxy contract; live-browser verify is maintainer-manual). All additive / off-by-default so shipped / native / `no_std` / wasm stay byte-identical; AccuracyCoin 100% (139/139) held. |
-| **v1.4.1** | Patch — four more BestEffort mapper boot/decode fixes from the boot-smoke-vs-real-dumps pass (m92 Jaleco JF-19 PRG layout, m94 UN1ROM bank decode + bus conflict, m145 Sachen 16 KiB PRG, m147 Sachen 3018 / TXC JV001 protection handshake), plus the boot-smoke screenshot corpus reorganized to mirror the per-mapper `tests/roms/` tier layout. BestEffort-only; AccuracyCoin 100% (139/139) held, byte-identical to v1.4.0. |
-| **v1.4.0** | "Fidelity" — compatibility + finish: accuracy polish (triangle ultrasonic silence, DMC-DMA ↔ controller-read conflict verified), per-channel audio mixing, devtools finish (symbol-file `.sym`/`.mlb`/`.nl` loading + event breakpoints), browser QoL (wasm `.rnm` movie I/O + IndexedDB save-states), a measure-first perf pass (−8% on the rendering-heavy bench), a colorful **`rustynes help` TUI** + styled `--help` (clap 4 + ratatui), and mapper coverage 101 → **113 families** (boot-smoke verified, with reset-vector / decode fixes to m132/m143/m225/m226/m233/m242/m246). AccuracyCoin 100% (139/139) held. |
-| **v1.3.0** | "Bedrock" — foundation + breadth: edition 2024 / Rust 1.96 / egui 0.34 + wgpu 29 toolchain, the frame-pacing fix, Memory Compare + menu/Settings reorg + auto-save, mapper coverage 87 → **101 families** + Vs. DualSystem detection, HD-pack `<condition>`/`<background>` rules, netplay desync diagnostics + niche peripheral aliases, and the exercised PGO/BOLT gate. AccuracyCoin 100% held. (Casual-mode browser RetroAchievements is a documented carryover — ADR 0015.) |
-| **v1.2.0** | "Curator" — library breadth + compatibility + reach: mapper coverage 51 → **87 families** (accuracy-tiering honesty gate), `.zip` loading + `.ips`/`.ups`/`.bps` soft-patching, a per-game DB + in-app ROM-Database editor, live NTSC knobs + a composable shader stack + CRT preset bank + a (default-off) HD-pack loader, new peripherals (Family BASIC keyboard, SNES mouse, Arkanoid-both-ports, Game Genie code DB), Lua `onNmi`/`onIrq`/`setInput`, menu-bar polish (contextual enable/disable + remappable shortcuts + Font Awesome icons), web touch controls + Power Pad + experimental wasm Lua, a turn-key netplay `deploy/` bundle, and a PGO CI promotion gate. AccuracyCoin 100% held |
-| **v1.1.0** | First feature release — visual filters (full NES_NTSC + CRT/scanline shader + `.pal` loading), input & peripherals (Power Pad, turbo/autofire, input-display overlay, per-game mirroring database), debugger devtools (breakpoints, trace logger, event viewer), audio (NSF/NSFe player, 5-band EQ), and the flagship **Lua scripting** engine |
+| **v1.8.8** | "Atlas" — Google-Play launch readiness: the Android 16 / API 36 toolchain (AGP 9.2.1 / compileSdk 37), adaptive / foldable / TV layouts, Material You + EN/ES i18n, a box-art library, capture / PiP / widgets, accessibility, and default-off Play-services integration. |
+| **v1.8.7** | "Android" — connectivity completion: CGNAT / TURN room-code netplay, robust hardware controllers (P1–P4), and a controller-aware UI. |
+| **v1.8.6** | "Android" — Lua, RetroAchievements (the new shared `rustynes-ra` crate), and direct-IP / LAN netplay on mobile. |
+| **v1.8.5** | "Android" — power-user features: `.pal` palettes, `.zip` ROMs, GPU Bisqwit NTSC, `.rnm` movies, a per-game DB, and HD-packs (the new shared `rustynes-hdpack` crate). |
+| **v1.8.4** | "Android" — the native wgpu `SurfaceView` renderer + CRT / scanline / NTSC shaders (the shared `rustynes-gfx-shaders` crate). |
+| **v1.8.3** | "Android" — an authentic NES-004 on-screen controller, cast-to-TV, a save-state manager, and onboarding / Settings polish. |
+| **v1.8.2** | "Android" — the multi-touch, foldable-aware on-screen controller, the app icon, and the `PLAY_BUILD` flag. |
+| **v1.8.1** | "Android" patch — the free-tier demo trimmed 10 → 8 minutes; the debug unlock confirmed R8-stripped from the release AAB. |
+| **v1.8.0** | "Android" — the first **platform** release: a complete Android app on the byte-identical core (the shared `rustynes-mobile` UniFFI bridge + `rustynes-android` + a Jetpack Compose shell). |
+| **v1.7.1** | Patch on "Forge" — seven fixes (ROM-close crash, clean pause / unpause, the Documentation pane, Tools-menu icons, HD-pack tile substitution). |
+| **v1.7.0** | "Forge" — the tools become **writable + programmable**: editing-capable editors + an inline 6502 assembler, deeper debugger + `.dbg` source maps, a scriptable TAStudio + host IPC, Zwinder rewind, expansion-audio NSF, an HD-Pack Builder, web/wasm parity, i18n, and mapper breadth → **168 families**. |
+| **v1.6.0** | "Studio" — a piano-roll TAStudio + `.fm2` / `.bk2` interop, Mesen2-class debugger depth, off-axis accuracy, FDS-proper, A/V recording, an HD-audio + shader ecosystem, and mapper breadth → **150 families**. |
+| **v1.5.0** | "Lens" — debugger visualization, a Lua dev/TAS API, a TASVideos pass, accessibility, an in-app Documentation pane, browser-RA scaffolding, and mapper breadth → **123 families**. |
+| **v1.4.1** | Patch — four more BestEffort mapper boot / decode fixes (m92 / m94 / m145 / m147). |
+| **v1.4.0** | "Fidelity" — per-channel audio mixing, symbol-file loading + event breakpoints, browser save-states, a `rustynes help` TUI, and mapper breadth → **113 families**. |
+| **v1.3.0** | "Bedrock" — the edition 2024 / Rust 1.96 / egui 0.34 + wgpu 29 toolchain, a frame-pacing fix, Memory Compare, Vs. DualSystem detection, and mapper breadth → **101 families**. |
+| **v1.2.0** | "Curator" — mapper tiering → **87 families**, `.zip` + soft-patching, a per-game DB + ROM-Database editor, a composable shader stack, new peripherals, and web touch controls. |
+| **v1.1.0** | "Scriptable" — visual filters, peripherals + an input overlay, debugger devtools, an NSF player + EQ, and the flagship **Lua scripting** engine. |
 | **v1.0.0** | First stable release — the production UX (menu bar, themes, tabbed settings, debugger) and documentation synthesis on top of the cycle-accurate engine |
 | v0.9.7     | Performance pass: display-sync pacing, lock-free audio + dynamic rate control, run-ahead, a dedicated emulation thread, core micro-opts |
 | v0.9.6     | RetroAchievements; Vs. DIP / palette database; deployable browser netplay; netplay hardening |
@@ -721,18 +727,10 @@ The road so far:
 | v0.9.1     | Expansion audio (VRC6/7, FME-7 5B, N163, MMC5), the WebAssembly target, TAS movies, Game Genie |
 | v0.9.0     | The cycle-accurate core: per-cycle CPU bus interleaving, the lockstep PPU, the band-limited APU |
 
-> Note: **v1.0.0** was RustyNES's first stable release. The original RustyNES line
-> (v0.8.x) used an earlier, less-accurate emulation core; v1.0.0 replaced that core
-> wholesale with the cycle-accurate engine described above; **v1.1.0** added the
-> scripting/filters/peripherals feature set; **v1.2.0 "Curator"** added the library /
-> compatibility / reach set; **v1.3.0 "Bedrock"** added the toolchain + breadth set;
-> **v1.4.0 "Fidelity"** (+ the v1.4.1 patch) added the compatibility-and-finish set;
-> **v1.5.0 "Lens"** added the insight / scriptability / creator-tooling / polish set;
-> **v1.6.0 "Studio"** added the TAS-authoring / debugger-depth / accuracy / breadth set;
-> **v1.7.0 "Forge"** (+ the v1.7.1 patch) added the writable + programmable tooling /
-> accuracy / mapper-breadth / reach set; and the **v1.8.0 "Android"** line (through
-> **v1.8.8 "Atlas"**) added the first **platform** release — a complete Android app on
-> the byte-identical core. See [`CHANGELOG.md`](CHANGELOG.md) for full per-version detail.
+> Note: **v1.0.0** was RustyNES's first stable release — it replaced the original
+> RustyNES line's (v0.8.x) less-accurate emulation core wholesale with the cycle-accurate
+> engine described above. The **v0.9.x** rows are the documentary lineage of how that core
+> was built. See [`CHANGELOG.md`](CHANGELOG.md) for full per-version detail.
 
 ### Roadmap
 
