@@ -115,6 +115,13 @@ name = "render_smoke"
 path = "src/bin/render_smoke.rs"
 required-features = ["commercial-roms"]
 
+# v1.8.9 "Backlog" — headless batch runner (manifest -> screenshots + fb-hash +
+# blank verdict, JSON out). Writes PNGs, so it needs the optional `png` dep.
+[[bin]]
+name = "batch_runner"
+path = "src/bin/batch_runner.rs"
+required-features = ["commercial-roms"]
+
 [[bin]]
 name = "repro_smb3"
 path = "src/bin/repro_smb3.rs"

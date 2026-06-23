@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Headless batch runner (`batch_runner`).** A test-harness binary that runs a manifest,
+  directory, or list of ROMs headless and emits one JSON object per ROM — a deterministic FNV
+  framebuffer hash, a blank-frame health verdict, distinct-colour count, and a written
+  screenshot — consolidating the ad-hoc boot-smoke verifiers into one scriptable,
+  regression-friendly entry point (`--frames` / `--start-at` / `--out`). Backed by a reusable
+  `coverage::run_rom_headless` lib helper. Built with `--features commercial-roms`.
 - **Multi-disk side selector (Emulation → Disk Side).** For multi-disk FDS games, a submenu
   inserts any specific disk side directly — or ejects — with the current side shown, instead
   of only the cycle-through F9 swap (a game that prompts "insert side B" can now be answered
