@@ -156,6 +156,26 @@ impl VideoCodec {
             Self::Vp9 => "VP9 (royalty-free)",
         }
     }
+
+    /// Stable lowercase id for config persistence.
+    #[must_use]
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::H264 => "h264",
+            Self::H265 => "h265",
+            Self::Vp9 => "vp9",
+        }
+    }
+
+    /// Parse a config id (falls back to the default H.264 on an unknown value).
+    #[must_use]
+    pub fn from_id(id: &str) -> Self {
+        match id {
+            "h265" => Self::H265,
+            "vp9" => Self::Vp9,
+            _ => Self::H264,
+        }
+    }
 }
 
 /// x264 / x265 speed-vs-compression preset (ignored by VP9).
@@ -202,6 +222,20 @@ impl EncodePreset {
             Self::Slow,
         ]
     }
+
+    /// Parse a config token (the same string `as_str` emits; falls back to the
+    /// default Veryfast on an unknown value).
+    #[must_use]
+    pub fn from_id(id: &str) -> Self {
+        match id {
+            "ultrafast" => Self::Ultrafast,
+            "superfast" => Self::Superfast,
+            "faster" => Self::Faster,
+            "medium" => Self::Medium,
+            "slow" => Self::Slow,
+            _ => Self::Veryfast,
+        }
+    }
 }
 
 /// User-tunable A/V encode options — the codec-depth picker state.
@@ -228,6 +262,22 @@ impl Default for AvRecordOptions {
             crf: 18,
             preset: EncodePreset::Veryfast,
             audio_bitrate_k: 192,
+        }
+    }
+}
+
+impl AvRecordOptions {
+    /// Build from persisted config fields (the codec / preset id strings plus
+    /// the numeric knobs), so the Settings picker round-trips through
+    /// `config.toml`. Unknown ids fall back to the defaults; CRF is clamped to a
+    /// sane 0..=51 (the ffmpeg ceiling for x264/x265).
+    #[must_use]
+    pub fn from_parts(codec_id: &str, crf: u8, preset_id: &str, audio_bitrate_k: u32) -> Self {
+        Self {
+            video_codec: VideoCodec::from_id(codec_id),
+            crf: crf.min(51),
+            preset: EncodePreset::from_id(preset_id),
+            audio_bitrate_k: audio_bitrate_k.clamp(32, 512),
         }
     }
 }
@@ -582,6 +632,22 @@ mod tests {
         assert!(args.iter().any(|a| a == "aac"));
         assert!(args.iter().any(|a| a == "-shortest"));
         assert_eq!(args.last().unwrap(), "/tmp/out.mp4");
+    }
+
+    #[test]
+    fn from_parts_parses_config_ids_and_clamps() {
+        let o = AvRecordOptions::from_parts("vp9", 70, "slow", 1000);
+        assert_eq!(o.video_codec, VideoCodec::Vp9);
+        assert_eq!(o.preset, EncodePreset::Slow);
+        assert_eq!(o.crf, 51); // clamped from 70
+        assert_eq!(o.audio_bitrate_k, 512); // clamped from 1000
+        // Unknown ids fall back to the defaults.
+        let d = AvRecordOptions::from_parts("???", 18, "???", 192);
+        assert_eq!(d.video_codec, VideoCodec::H264);
+        assert_eq!(d.preset, EncodePreset::Veryfast);
+        // The persisted id round-trips through `id()` / `as_str()`.
+        assert_eq!(VideoCodec::Vp9.id(), "vp9");
+        assert_eq!(EncodePreset::Slow.as_str(), "slow");
     }
 
     #[test]

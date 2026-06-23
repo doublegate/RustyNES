@@ -346,7 +346,70 @@ pub fn body(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &mut Conf
     ui.add_space(8.0);
     audio_section(ui, state, config);
     ui.add_space(8.0);
+    recording_section(ui, config);
+    ui.add_space(8.0);
     advanced_section(ui, state, config);
+}
+
+/// v1.8.9 — the A/V recording codec-depth picker (encoder / CRF / preset / audio
+/// bitrate).
+///
+/// Writes plain `config.recording` strings + numbers (persisted to `config.toml`);
+/// the recorder's arm path (gated by `av-record`) parses them via
+/// `AvRecordOptions::from_parts`. Deliberately un-gated so the picker shows even in
+/// a build without the feature — the values just have no effect there.
+fn recording_section(ui: &mut egui::Ui, config: &mut Config) {
+    egui::CollapsingHeader::new("Recording (A/V codec depth)").show(ui, |ui| {
+        let rec = &mut config.recording;
+        const CODECS: [(&str, &str); 3] = [
+            ("H.264 (universal)", "h264"),
+            ("H.265 / HEVC (smaller)", "h265"),
+            ("VP9 (royalty-free)", "vp9"),
+        ];
+        const PRESETS: [(&str, &str); 6] = [
+            ("Ultrafast", "ultrafast"),
+            ("Superfast", "superfast"),
+            ("Veryfast", "veryfast"),
+            ("Faster", "faster"),
+            ("Medium", "medium"),
+            ("Slow", "slow"),
+        ];
+        ui.horizontal(|ui| {
+            ui.label("Video codec");
+            let cur = CODECS
+                .iter()
+                .find(|(_, id)| *id == rec.video_codec)
+                .map_or("H.264 (universal)", |(label, _)| *label);
+            egui::ComboBox::from_id_salt("rec-codec")
+                .selected_text(cur)
+                .show_ui(ui, |ui| {
+                    for (label, id) in CODECS {
+                        if ui.selectable_label(rec.video_codec == id, label).clicked() {
+                            id.clone_into(&mut rec.video_codec);
+                        }
+                    }
+                });
+        });
+        ui.add(egui::Slider::new(&mut rec.crf, 0..=51).text("CRF (lower = better)"));
+        ui.horizontal(|ui| {
+            ui.label("Preset");
+            let cur = PRESETS
+                .iter()
+                .find(|(_, id)| *id == rec.preset)
+                .map_or("Veryfast", |(label, _)| *label);
+            egui::ComboBox::from_id_salt("rec-preset")
+                .selected_text(cur)
+                .show_ui(ui, |ui| {
+                    for (label, id) in PRESETS {
+                        if ui.selectable_label(rec.preset == id, label).clicked() {
+                            id.clone_into(&mut rec.preset);
+                        }
+                    }
+                });
+            ui.weak("(x264/x265 only)");
+        });
+        ui.add(egui::Slider::new(&mut rec.audio_bitrate_k, 32..=512).text("Audio kbit/s"));
+    });
 }
 
 /// The Graphics section: present mode, pacing, swapchain depth, NTSC filter.

@@ -1414,6 +1414,35 @@ impl Default for UiConfig {
     }
 }
 
+/// A/V recording codec-depth options (v1.8.9), persisted so the Settings picker
+/// round-trips through `config.toml`.
+///
+/// Deliberately plain (un-gated) strings / numbers — the picker UI works even in a
+/// build without the `av-record` feature, and the arming path (gated) parses the
+/// codec / preset ids via `AvRecordOptions::from_parts`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RecordingConfig {
+    /// Video codec id: `h264` | `h265` | `vp9`.
+    pub video_codec: String,
+    /// Constant-quality factor (CRF), 0..=51 (lower = higher quality / bigger).
+    pub crf: u8,
+    /// x264 / x265 preset id: `ultrafast`..`slow` (ignored by VP9).
+    pub preset: String,
+    /// AAC audio bitrate in kbit/s.
+    pub audio_bitrate_k: u32,
+}
+
+impl Default for RecordingConfig {
+    fn default() -> Self {
+        Self {
+            video_codec: "h264".into(),
+            crf: 18,
+            preset: "veryfast".into(),
+            audio_bitrate_k: 192,
+        }
+    }
+}
+
 /// Top-level config struct.
 //
 // Not `Eq`: `InputConfig` carries the `f32` gamepad `axis_deadzone`, so
@@ -1432,6 +1461,10 @@ pub struct Config {
     /// Audio defaults.
     #[serde(default)]
     pub audio: AudioConfig,
+    /// A/V recording codec depth (v1.8.9): encoder / CRF / preset / audio
+    /// bitrate the Settings picker writes; read at arm time (`av-record`).
+    #[serde(default)]
+    pub recording: RecordingConfig,
     /// Famicom Disk System defaults (BIOS path) (v2.2.0).
     #[serde(default)]
     pub fds: FdsConfig,

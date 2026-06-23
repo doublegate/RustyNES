@@ -2170,9 +2170,16 @@ impl App {
         };
 
         // Codec-depth options (encoder / CRF / preset / audio bitrate). The
-        // Settings picker that mutates these is the next increment; the default
-        // (H.264 / CRF 18 / veryfast / 192k) reproduces the prior fixed pipeline.
-        let opts = crate::av_record::AvRecordOptions::default();
+        // v1.8.9 — read the persisted codec-depth picker (Settings -> Recording).
+        // Unknown ids fall back to the defaults (H.264 / CRF 18 / veryfast / 192k),
+        // reproducing the prior fixed pipeline.
+        let rec = &self.config.recording;
+        let opts = crate::av_record::AvRecordOptions::from_parts(
+            &rec.video_codec,
+            rec.crf,
+            &rec.preset,
+            rec.audio_bitrate_k,
+        );
         let params = AvParams {
             out_path: out_path.clone(),
             sample_rate,
