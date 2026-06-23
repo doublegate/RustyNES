@@ -38,6 +38,11 @@ script-wasm = ["dep:piccolo"]
 # automation verbs (E2) + the `userdata.*` KV store (E3) are UNCONDITIONAL (no
 # net, no new non-determinism) and ship with the base `scripting` surface.
 script-ipc = []
+# v1.8.9 "Backlog" — an OPTIONAL SQLite backing for the `userdata.*` KV store, so
+# a script's persistent values survive across runs in a real on-disk database
+# (vs the in-memory map). OFF by default; pulls a vendored (bundled) SQLite C, so
+# the default / shipped build stays dependency-free + byte-identical.
+script-sqlite = ["dep:rusqlite"]
 
 [dependencies]
 # `debug-hooks` exposes the trace + bus-access logs the onExec / onRead /
@@ -51,4 +56,7 @@ mlua = { workspace = true, optional = true }
 # piccolo: the EXPERIMENTAL pure-Rust wasm backend (behind `script-wasm`). See
 # `docs/adr/0012-wasm-lua-piccolo-backend.md` for the documented divergence.
 piccolo = { workspace = true, optional = true }
+# rusqlite (bundled SQLite C): the optional `script-sqlite` userdata backing.
+# `bundled` vendors SQLite so no system lib is needed. Optional + off by default.
+rusqlite = { version = "0.40", optional = true, features = ["bundled"] }
 thiserror = { workspace = true }

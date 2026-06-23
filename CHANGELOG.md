@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Optional SQLite userdata backing (`script-sqlite` feature).** A script's `userdata.*`
+  KV store can now be persisted to / loaded from a real on-disk SQLite database (instead of
+  only the in-memory map), so values survive across runs and are queryable with external
+  tooling — via `ScriptEngine::userdata_save_sqlite` / `userdata_load_sqlite`. Off by default:
+  the `script-sqlite` feature pulls a vendored (bundled) SQLite, so the default / shipped build
+  stays dependency-free and byte-identical.
 - **Headless batch runner (`batch_runner`).** A test-harness binary that runs a manifest,
   directory, or list of ROMs headless and emits one JSON object per ROM — a deterministic FNV
   framebuffer hash, a blank-frame health verdict, distinct-colour count, and a written
