@@ -49,6 +49,16 @@
 > Chromecast flags stay default-off. The old Google-Play "Workstream P" task is now a
 > v2.1.0 line item. See
 > [v2.0.x mobile finalization](plans/v2.0.x-mobile-finalization-plan.md).
+>
+> **`foss` / `play` Android flavor split (v2.1.0, ADR 0025).** Split the Android build into
+> a **`foss`** flavor (default — no Google SDKs, no ads, no tracking; the **F-Droid** +
+> sideload artifact) and a **`play`** flavor (all proprietary SDKs — Billing / Cast / Play
+> Games / Integrity / update-review **+ AppLovin + RevenueCat** — for Google Play). F-Droid
+> requires a Google-/ad-free build, so the flavor is the only way to reach that channel. The
+> five existing proprietary subsystems move behind `src/play/` façades (no-op in `src/foss/`),
+> with an `installDebug` alias; both flavors verified on-device at v2.0.9. **Done in v1.8.9
+> (dormant):** the clean `rustynes-monetization` crate `.so` + UniFFI bindings are wired into
+> the Android build. Target: **v2.0.1–v2.0.4 (lands by v2.1.0)**.
 
 ---
 
