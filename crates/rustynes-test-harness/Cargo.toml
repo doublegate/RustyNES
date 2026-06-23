@@ -74,10 +74,10 @@ png = "0.18"
 # SHA-256 for ROM dump pinning in the commercial-roms harness. The
 # snapshot files record the SHA-256 of each ROM's bytes so a user with
 # a different dump gets a clear "ROM mismatch" error instead of a
-# cryptic framebuffer-hash mismatch. `default-features = false` keeps
-# the no_std-compat constraint of the workspace `sha2` setup, but the
-# `std` feature is fine here because this is dev-only test code.
-sha2 = { workspace = true, features = ["std"] }
+# cryptic framebuffer-hash mismatch. sha2 0.11 dropped the `std` feature
+# (it is std-agnostic for fixed-output hashing), so the workspace dep is used
+# as-is here.
+sha2 = { workspace = true }
 
 # Session-10 PPU-state-trace diff tool. Feature-gated so the
 # binary doesn't compile (and its dependencies don't link) under

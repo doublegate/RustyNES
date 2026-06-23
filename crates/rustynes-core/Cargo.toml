@@ -19,8 +19,9 @@ serde = ["dep:serde"]
 # `std` is the default for desktop / hosted builds. Disabling it
 # (`cargo build --no-default-features`) builds the chip stack against
 # `core + alloc` only — proven by the `thumbv7em-none-eabihf` CI gate.
-# `lz4_flex` and `sha2` both fall back to a no_std mode in that case.
-std = ["lz4_flex/std", "sha2/std", "thiserror/std", "rustynes-apu/std"]
+# `lz4_flex` falls back to a no_std mode in that case; `sha2` 0.11 is std-agnostic
+# for fixed-output hashing (no `std` feature exists in 0.11 — it was dropped).
+std = ["lz4_flex/std", "thiserror/std", "rustynes-apu/std"]
 # `irq-timing-trace` enables the per-CPU-cycle IRQ tracing fixture used
 # by the Track C1 coordinated IRQ-timing rework. See ADR-0002 "Decision"
 # section and `crates/rustynes-core/src/irq_trace.rs`. Off by default (CI gate

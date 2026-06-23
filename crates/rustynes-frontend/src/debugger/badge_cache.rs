@@ -186,9 +186,10 @@ fn decode_png(bytes: &[u8]) -> Option<egui::ColorImage> {
 /// The worker loop: fetch each requested URL with a shared agent and ship the
 /// bytes back. Exits when the job sender is dropped (cache Drop).
 fn worker_loop(job_rx: &Receiver<String>, fetch_tx: &Sender<BadgeFetch>) {
-    let agent = ureq::AgentBuilder::new()
-        .timeout(std::time::Duration::from_secs(20))
-        .build();
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(std::time::Duration::from_secs(20)))
+        .build()
+        .into();
     while let Ok(url) = job_rx.recv() {
         let bytes = fetch(&agent, &url);
         if fetch_tx.send(BadgeFetch { url, bytes }).is_err() {
@@ -199,9 +200,9 @@ fn worker_loop(job_rx: &Receiver<String>, fetch_tx: &Sender<BadgeFetch>) {
 
 /// Fetch one badge PNG, returning its bytes or `None` on any error.
 fn fetch(agent: &ureq::Agent, url: &str) -> Option<Vec<u8>> {
-    let resp = agent.get(url).call().ok()?;
-    let mut bytes = Vec::new();
-    if std::io::copy(&mut resp.into_reader(), &mut bytes).is_err() || bytes.is_empty() {
+    // RA badge PNGs are small; ureq's 10 MB default read cap is plenty.
+    let bytes = agent.get(url).call().ok()?.body_mut().read_to_vec().ok()?;
+    if bytes.is_empty() {
         return None;
     }
     Some(bytes)

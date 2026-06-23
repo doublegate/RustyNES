@@ -124,9 +124,13 @@ fn worker_loop(job_rx: &Receiver<CommCmd>, result_tx: &Sender<CommResult>) {
     // Host-owned connection state — the script can NEVER name any of these
     // handles; it only ever sees the marshalled `CommResult` values below.
     #[cfg(feature = "script-ipc")]
-    let agent = ureq::AgentBuilder::new()
-        .timeout(std::time::Duration::from_secs(20))
-        .build();
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(std::time::Duration::from_secs(20)))
+        // Report the real status + body for non-2xx instead of an `Err` (ureq 3's
+        // `StatusCode` error drops the body the script wants).
+        .http_status_as_error(false)
+        .build()
+        .into();
     // A single outbound TCP socket (`socketServerSend`) — lazily connected to the
     // host's configured endpoint via the env override (off-by-default; an
     // unconfigured host simply drops the byte stream). Kept host-side.
@@ -159,7 +163,14 @@ fn worker_loop(job_rx: &Receiver<CommCmd>, result_tx: &Sender<CommResult>) {
             }
             #[cfg(feature = "script-ipc")]
             CommCmd::HttpPost { id, url, body } => {
-                let (status, resp) = http_call(agent.post(&url).send_string(&body));
+                // Pass the owned `body` by value (ureq reuses the allocation) and keep
+                // ureq 2 `send_string`'s implicit `text/plain; charset=utf-8` content type.
+                let (status, resp) = http_call(
+                    agent
+                        .post(&url)
+                        .content_type("text/plain; charset=utf-8")
+                        .send(body),
+                );
                 let _ = result_tx.send(CommResult::Http {
                     id,
                     status,
@@ -235,17 +246,18 @@ fn try_connect_tcp(last_attempt: &mut Option<Instant>) -> Option<TcpStream> {
 /// transport error becomes `status = 0` with an empty body so the script gets a
 /// deterministic, non-panicking signal.
 #[cfg(feature = "script-ipc")]
-fn http_call(result: Result<ureq::Response, ureq::Error>) -> (u16, String) {
-    match result {
-        Ok(resp) => {
-            let status = resp.status();
-            let body = resp.into_string().unwrap_or_default();
+fn http_call(result: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> (u16, String) {
+    result.map_or_else(
+        // Only a transport error lands here -> status 0 + an empty body.
+        |_| (0, String::new()),
+        // With `http_status_as_error(false)`, non-2xx responses arrive as `Ok` too,
+        // so the script gets the real status code + body.
+        |mut resp| {
+            let status = resp.status().as_u16();
+            let body = resp.body_mut().read_to_string().unwrap_or_default();
             (status, body)
-        }
-        // A non-2xx HTTP status is `ureq::Error::Status`; surface the code + body.
-        Err(ureq::Error::Status(code, resp)) => (code, resp.into_string().unwrap_or_default()),
-        Err(_) => (0, String::new()),
-    }
+        },
+    )
 }
 
 #[cfg(test)]

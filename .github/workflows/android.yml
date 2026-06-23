@@ -88,7 +88,7 @@ jobs:
           echo "All LOAD segments >= 16 KB aligned."
 
       - name: Upload cross-built libraries
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rustynes-android-so
           path: |
@@ -135,7 +135,7 @@ jobs:
         working-directory: android
         run: ./gradlew :app:bundleRelease --no-daemon
       - name: Upload AAB
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rustynes-aab
           path: android/app/build/outputs/bundle/release/*.aab
