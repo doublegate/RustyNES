@@ -390,7 +390,9 @@ fn recording_section(ui: &mut egui::Ui, config: &mut Config) {
                     }
                 });
         });
-        ui.add(egui::Slider::new(&mut rec.crf, 0..=51).text("CRF (lower = better)"));
+        // VP9's CRF ceiling is 63; x264/x265 cap at 51.
+        let max_crf = if rec.video_codec == "vp9" { 63 } else { 51 };
+        ui.add(egui::Slider::new(&mut rec.crf, 0..=max_crf).text("CRF (lower = better)"));
         ui.horizontal(|ui| {
             ui.label("Preset");
             let cur = PRESETS

@@ -81,6 +81,12 @@ impl MacroBank {
             if frame_count > MAX_FRAMES {
                 return None;
             }
+            // Don't pre-allocate for more frames than the buffer can actually hold
+            // (3 bytes each) — guards against an OOM from a truncated / malicious
+            // blob that claims a huge count with few bytes behind it.
+            if frame_count.checked_mul(3)? > r.remaining() {
+                return None;
+            }
             let mut frames = Vec::with_capacity(frame_count);
             for _ in 0..frame_count {
                 let rec = r.take(3)?;
@@ -105,6 +111,10 @@ struct Reader<'a> {
 impl<'a> Reader<'a> {
     const fn new(buf: &'a [u8]) -> Self {
         Self { buf, pos: 0 }
+    }
+    /// Bytes not yet consumed (`pos <= buf.len()` is a `take` invariant).
+    const fn remaining(&self) -> usize {
+        self.buf.len() - self.pos
     }
     fn take(&mut self, n: usize) -> Option<&'a [u8]> {
         let end = self.pos.checked_add(n)?;

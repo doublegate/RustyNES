@@ -143,16 +143,16 @@ fn dpad(ui: &mut egui::Ui, held: &Cell<Buttons>) {
     ui.spacing_mut().item_spacing = egui::vec2(2.0, 2.0);
     ui.vertical(|ui| {
         ui.horizontal(|ui| {
-            ui.add_space(BTN + 2.0);
+            ui.add_space(BTN);
             round_button(ui, held, "\u{2191}", Buttons::UP, BTN, WHITE);
         });
         ui.horizontal(|ui| {
             round_button(ui, held, "\u{2190}", Buttons::LEFT, BTN, WHITE);
-            ui.add_space(BTN + 2.0);
+            ui.add_space(BTN);
             round_button(ui, held, "\u{2192}", Buttons::RIGHT, BTN, WHITE);
         });
         ui.horizontal(|ui| {
-            ui.add_space(BTN + 2.0);
+            ui.add_space(BTN);
             round_button(ui, held, "\u{2193}", Buttons::DOWN, BTN, WHITE);
         });
     });

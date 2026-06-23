@@ -273,9 +273,16 @@ impl AvRecordOptions {
     /// sane 0..=51 (the ffmpeg ceiling for x264/x265).
     #[must_use]
     pub fn from_parts(codec_id: &str, crf: u8, preset_id: &str, audio_bitrate_k: u32) -> Self {
+        let video_codec = VideoCodec::from_id(codec_id);
+        // VP9's CRF ceiling is 63; x264/x265 cap at 51.
+        let max_crf = if matches!(video_codec, VideoCodec::Vp9) {
+            63
+        } else {
+            51
+        };
         Self {
-            video_codec: VideoCodec::from_id(codec_id),
-            crf: crf.min(51),
+            video_codec,
+            crf: crf.min(max_crf),
             preset: EncodePreset::from_id(preset_id),
             audio_bitrate_k: audio_bitrate_k.clamp(32, 512),
         }
@@ -639,8 +646,10 @@ mod tests {
         let o = AvRecordOptions::from_parts("vp9", 70, "slow", 1000);
         assert_eq!(o.video_codec, VideoCodec::Vp9);
         assert_eq!(o.preset, EncodePreset::Slow);
-        assert_eq!(o.crf, 51); // clamped from 70
+        assert_eq!(o.crf, 63); // clamped from 70 to the VP9 ceiling (63)
         assert_eq!(o.audio_bitrate_k, 512); // clamped from 1000
+        // x264/x265 cap at 51.
+        assert_eq!(AvRecordOptions::from_parts("h265", 70, "slow", 192).crf, 51);
         // Unknown ids fall back to the defaults.
         let d = AvRecordOptions::from_parts("???", 18, "???", 192);
         assert_eq!(d.video_codec, VideoCodec::H264);
