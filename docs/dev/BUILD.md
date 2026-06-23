@@ -21,9 +21,9 @@
 
 ### Required
 
-- **Rust** 1.86.0 (pinned in `rust-toolchain.toml`; the channel auto-installs).
-  Edition 2021. MSRV 1.86 is required by transitive edition-2024 deps
-  (`icu_*` via `directories`/`url`/`idna`).
+- **Rust** 1.96.0 (pinned in `rust-toolchain.toml`; the channel auto-installs).
+  Edition 2024. MSRV 1.96 unblocks the edition-2024 + egui 0.34.3 / wgpu 29 /
+  rfd 0.17.2 dependency tier (bumped from 1.86 in v1.3.0 "Bedrock").
 - **Cargo** (included with Rust).
 
 ### System libraries
@@ -44,14 +44,14 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 **Or visit**: <https://rustup.rs>
 
-The pinned toolchain (1.86.0) and the `wasm32-unknown-unknown` target are both
-declared in `rust-toolchain.toml`, so `rustup` installs them automatically on
-first build.
+The pinned toolchain (1.96.0) and the cross-compile targets
+(`thumbv7em-none-eabihf` and `wasm32-unknown-unknown`) are all declared in
+`rust-toolchain.toml`, so `rustup` installs them automatically on first build.
 
 ### Verify Installation
 
 ```bash
-rustc --version  # Should report 1.86.0 (the pinned channel)
+rustc --version  # Should report 1.96.0 (the pinned channel)
 cargo --version
 ```
 
@@ -99,12 +99,23 @@ developer-relevant ones:
 | `std` | `rustynes-core` | **Yes** | Host build; off enables the `no_std + alloc` chip stack. |
 | `test-roms` | `rustynes-test-harness` | No | Gates the vendored test-ROM integration suite. |
 | `commercial-roms` | `rustynes-test-harness` | No | 60-ROM oracle against user-supplied dumps (not committed). |
-| `retroachievements` | `rustynes-cheevos` + frontend | No | RetroAchievements (native-only; vendored `rcheevos` C lib). |
+| `retroachievements` | `rustynes-cheevos` + `rustynes-ra` + frontend | No | RetroAchievements (native-only; vendored `rcheevos` C lib). |
+| `scripting` | `rustynes-script` + frontend | No | Lua 5.4 engine (mlua, vendored; native). Mutually exclusive with `script-wasm`. |
+| `script-wasm` | `rustynes-script` + frontend | No | Pure-Rust piccolo Lua VM for the wasm backend (ADR 0012). Mutually exclusive with `scripting`. |
+| `script-ipc` | `rustynes-frontend` | No | Host-mediated IPC/automation (`comm.*`/`client.*`/`userdata.*`; ADR 0016). |
+| `hd-pack` | `rustynes-frontend` + `rustynes-hdpack` | No | HD-pack tile-substitution loader/compositor + HD audio. |
+| `debug-hooks` | `rustynes-frontend` | No | Debugger visualization hooks (event viewer, trace, inspector). |
+| `av-record` | `rustynes-frontend` | No | A/V recording. |
+| `browser-cheevos` | `rustynes-frontend` | No | Casual-mode browser RetroAchievements scaffolding (ADR 0015; maintainer-manual carryover). |
+| `full` | `rustynes-frontend` | No | Aggregates every native feature (`retroachievements` + `scripting` + `script-ipc` + `hd-pack` + `debug-hooks` + `av-record`). Use `cargo full-run` / `cargo full-build` (aliases in `.cargo/config.toml`). |
 | `wasm-winit` / `wasm-canvas` | `rustynes-frontend` | (wasm only) | The two browser build flavours (mutually exclusive). |
 
-> **Note:** netplay and TAS movie support ship in the default frontend build —
-> they are not behind opt-in feature flags. Lua scripting is **not** built yet
-> (post-1.0).
+> **Note:** netplay and TAS movie (`.rnm`) support ship in the default frontend
+> build — they are not behind opt-in feature flags. The Lua scripting engine is
+> shipped (since v1.1.0 "Scriptable") behind the off-by-default `scripting`
+> feature. **Never** `--all-features`: the `scripting` (mlua) and `script-wasm`
+> (piccolo) backends are mutually exclusive and cannot co-resolve; CI and the
+> pre-commit hook use explicit feature sets.
 
 ### Build Examples
 
@@ -125,6 +136,13 @@ cargo test --workspace --features test-roms
 ```bash
 rustup target add thumbv7em-none-eabihf
 cargo build -p rustynes-core --target thumbv7em-none-eabihf --no-default-features
+```
+
+**Maximal native build** (every native feature; aliases in `.cargo/config.toml`):
+
+```bash
+cargo full-build                 # = --release -p rustynes-frontend --features full
+cargo full-run path/to/rom.nes   # build + run the maximal native binary
 ```
 
 ---
@@ -198,8 +216,23 @@ trunk build --release --no-default-features --features wasm-canvas   # lightweig
 ```
 
 CI deploys the `wasm-winit` build to GitHub Pages
-(<https://doublegate.github.io/RustyNES/>). The compressed size budget gate is
+(<https://doublegate.github.io/RustyNES/>, with the workspace rustdoc at
+`/api/`). The compressed size budget gate is
 `scripts/wasm_size_budget.sh crates/rustynes-frontend/web/dist 5242880`.
+
+> **Gotcha:** `web/Trunk.toml` pins the wasm-bindgen CLI version, which must
+> exactly match the wasm-bindgen library in `Cargo.lock`
+> (`grep -A1 'name = "wasm-bindgen"' Cargo.lock`). A mismatch fails `trunk build`
+> (and the Pages deploy) at the wasm-bindgen step even though wasm clippy still
+> passes — bump the pin whenever a resolve moves the library version.
+
+## Android Build
+
+The Android app cross-compiles the `rustynes-mobile` UniFFI bridge +
+`rustynes-android` JNI glue + `rustynes-monetization` ad-policy crate via
+`cargo ndk`, then builds the Jetpack Compose shell with Gradle (AGP 9.2.1 /
+Gradle 9.4.1 / compileSdk 37 / targetSdk 36 / minSdk 26). See
+[`../android.md`](../android.md) for the full setup.
 
 ---
 

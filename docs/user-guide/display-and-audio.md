@@ -39,16 +39,25 @@ What that does, end to end:
    blue chroma fringe (Blargg's well-known composite artifacting
    trick).
 
-It's a deliberately simplified Blargg-style look — not a bit-exact port
-of `nes_ntsc`. A full port is a follow-up release. The filter is
-labelled "simple" in the source for that reason; expect it to look
-*like* composite video, not *as* composite video.
+This inline `"composite"` look is a fast, always-available Blargg-style
+approximation. For a heavier, more faithful composite signal, set
+`ntsc_filter = "composite-rt"` to run a real-time NTSC encode/decode pass
+instead.
 
 Disable it again by setting `ntsc_filter = "off"` (the default).
 
-The accepted values are `"off"`, `"composite"`, and `"rgb"`. `"rgb"` is
-currently the same as `"composite"`; a distinct RGB-look path is
-planned.
+The accepted `ntsc_filter` values are `"off"`, `"composite"`, `"rgb"`,
+and `"composite-rt"`. `"composite"` and `"rgb"` both run the simplified
+inline pass; `"composite-rt"` runs the real-time NTSC filter.
+
+### Shaders and palettes
+
+Beyond the built-in `ntsc_filter`, RustyNES ships a composable **shader
+stack** with a CRT preset bank, plus a set of post-process filters —
+NES_NTSC, CRT / scanline, LMP88959 NTSC/PAL, hqNx / xBRZ, and Bisqwit —
+and an HD-pack loader for per-tile graphics replacement. You can also
+load a custom 64-color palette from a `.pal` file. These are all
+presentation-only and never affect emulation accuracy or determinism.
 
 ### Vsync and present mode
 
@@ -101,10 +110,12 @@ Detection sources:
   byte.
 
 If you have a PAL ROM that ships with a plain iNES 1.0 header, it will
-play at NTSC frame rate — gameplay will run at about 120% real speed.
-The fix is to re-dump or re-header the ROM with an NES 2.0 header that
-sets the region byte to 1 (PAL). A user-visible "force PAL" toggle is
-on the post-v1.0 roadmap.
+play at NTSC frame rate — gameplay will run at about 120% real speed. You
+can fix it without re-dumping: edit the cartridge header in the in-app
+iNES / NES 2.0 header editor (under the debugger / Tools), or set
+`"region": "PAL"` in the per-game `<rom>.json` override (see
+[File locations](./file-locations.md)). Re-dumping or re-headering the
+ROM with a correct NES 2.0 region byte also works.
 
 The status bar shows the detected region and the live FPS (toggle the FPS
 readout under **View → Show FPS**), which makes region misdetection
@@ -147,8 +158,9 @@ APU channel:
 
 ```toml
 [audio]
-# order: Pulse 1, Pulse 2, Triangle, Noise, DMC, Mapper Audio
-channel_mask = [true, true, true, true, true, true]
+# bitmask: bit 0 Pulse 1, 1 Pulse 2, 2 Triangle, 3 Noise, 4 DMC, 5 Mapper Audio.
+# A set bit = audible. 63 (0x3F) = all six on.
+channel_mask = 63
 ```
 
 This is a studio/debug overlay applied at playback only — it does **not**

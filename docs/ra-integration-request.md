@@ -18,7 +18,7 @@ and hardcore unlocks count.
 
 ## Project
 
-- Name / version: **RustyNES v1.0.0**
+- Name / version: **RustyNES v1.8.8**
 - Source (open-source, dual **MIT OR Apache-2.0**): `[https://github.com/<you>/RustyNES]`
 - Live web build (wasm): <https://doublegate.github.io/RustyNES/>
 - Platforms: Linux / macOS / Windows (native) + WebAssembly. RA is a native-only,
@@ -43,7 +43,9 @@ and hardcore unlocks count.
   Reads go through a side-effect-free bus peek (no I/O side effects, no open-bus
   mutation), and the rc_client is single-threaded (HTTP runs on a worker thread;
   completions are dispatched back on the main thread).
-- **User-Agent**: requests are sent as `RustyNES/<version> rcheevos`.
+- **User-Agent**: requests are sent as `RustyNES/<version> rcheevos/<version>`
+  (the `RA_USER_AGENT` const in `crates/rustynes-cheevos/src/http.rs`; a
+  regression test guards the leading `RustyNES/` token).
 
 **Hardcore enforcement** (this is the part you care about most — happy to walk
 through the code). In hardcore mode RustyNES disables every state-manipulation
@@ -85,5 +87,5 @@ RustyNES.
   pointer to where hardcore is enforced (`crates/rustynes-cheevos/` + the frontend RA
   session). Offering a short screen-share / code walkthrough of the hardcore gates
   speeds up approval.
-- **Before sending:** ship a stable release (v1.0.0) so the version you cite is
-  the one they'd test, and confirm your public repo URL.
+- **Before sending:** cite the current stable release (v1.8.8) so the version
+  you reference is the one they'd test, and confirm your public repo URL.

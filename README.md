@@ -12,7 +12,7 @@
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 [![Version](https://img.shields.io/badge/version-v1.8.8-blue.svg)](https://github.com/doublegate/RustyNES/releases)
 [![Rust: 1.96](https://img.shields.io/badge/rust-1.96-orange.svg)](rust-toolchain.toml)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web-lightgrey.svg)](#platform-support)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android-lightgrey.svg)](#platform-support)
 [![AccuracyCoin](<https://img.shields.io/badge/AccuracyCoin-100%25%20(139%2F139)-brightgreen.svg>)](#compatibility-and-accuracy)
 [![nestest](https://img.shields.io/badge/nestest-0--diff-brightgreen.svg)](#compatibility-and-accuracy)
 [![Try in browser](https://img.shields.io/badge/play-in%20browser-success.svg)](https://doublegate.github.io/RustyNES/)
@@ -61,8 +61,9 @@ platform for NES emulation.
 - **Determinism as a hard contract** — same seed, ROM, and input sequence yield a
   bit-identical framebuffer and audio. This is what makes save-state round-trips,
   regression testing, and rollback netplay correct by construction.
-- **Modern features** — RetroAchievements, rollback netplay, TAS tools, run-ahead,
-  display-sync pacing, and a read-only debugger.
+- **Modern features** — RetroAchievements, rollback netplay, a scriptable TAStudio,
+  run-ahead, display-sync pacing, an Android app, and a Mesen2-class, editing-capable
+  debugger (read-only by default, determinism-preserving).
 - **Safe, modular Rust** — the chip stack is `no_std + alloc` with a one-directional
   workspace graph, so each component (CPU, PPU, APU) is independently fuzzable and
   benchmarkable. The only `unsafe` lives behind opt-in feature boundaries.
@@ -499,7 +500,13 @@ in [`docs/architecture.md`](docs/architecture.md) and [`docs/scheduler.md`](docs
 | `rustynes-script`        | Sandboxed Lua 5.4 scripting engine (native `mlua`, wasm `piccolo`) |
 | `rustynes-frontend`      | `winit` + `wgpu` + `cpal` + `egui` app (binary: `rustynes`) |
 | `rustynes-netplay`       | GGPO-style rollback netcode (UDP + WebRTC)                  |
-| `rustynes-cheevos`       | RetroAchievements FFI (opt-in, native-only)                 |
+| `rustynes-cheevos`       | RetroAchievements `rcheevos` FFI (opt-in, native-only)      |
+| `rustynes-ra`            | Shared RetroAchievements session state (`RaClient`, native-only) |
+| `rustynes-gfx-shaders`   | Shared WGSL presentation shaders (desktop + Android renderers) |
+| `rustynes-hdpack`        | HD-pack loader + compositor + HD audio (shared desktop + mobile) |
+| `rustynes-mobile`        | UniFFI bridge for the mobile platforms (Android, and v1.9.0 iOS) |
+| `rustynes-android`       | Android JNI glue over the mobile bridge                      |
+| `rustynes-monetization`  | `AdPolicy` ad-supported-freemium policy core (v2.1.0; dormant) |
 | `rustynes-test-harness`  | Integration tests and the accuracy / commercial-ROM oracles |
 
 ### Project layout
@@ -598,7 +605,9 @@ The reproducible record (methodology, all benches, and the historical A/B) is in
 | **Linux x64**       | Primary |
 | **macOS x64/ARM64** | Primary |
 | **WebAssembly**     | Primary |
+| **Android (arm64)** | Supported (v1.8.x; GitHub-Releases / sideload — see [`docs/android.md`](docs/android.md)) |
 | **Linux ARM64**     | Supported (cross-compile) |
+| **iOS / iPadOS**    | Planned (v1.9.0 TestFlight foundation; App Store at v2.1.0) |
 
 ### System requirements
 
@@ -633,7 +642,9 @@ The reproducible record (methodology, all benches, and the historical A/B) is in
 | Testing    | [docs/testing-strategy.md](docs/testing-strategy.md) |
 | Netplay    | [docs/netplay-webrtc.md](docs/netplay-webrtc.md) |
 
-Architecture Decision Records live in [`docs/adr/`](docs/adr/) (0001–0023). (The deeper
+Architecture Decision Records live in [`docs/adr/`](docs/adr/) (0001–0025, including
+0024 mobile bridge + hybrid-Android host and 0025 the `foss` / `play` Android flavor
+split). (The deeper
 engine-development audit logs are kept locally, outside the public repo.)
 
 The hosted GitHub Pages deployment serves both the playable WebAssembly demo at
@@ -662,6 +673,22 @@ after **v2.0.0 "Timebase"**, finalizes Android across **v2.0.1–v2.0.4** and iO
 the App Store at v2.1.0** (so they launch on the v2.0.0 core rather than re-releasing after
 the breaking timebase change). See
 [`to-dos/plans/v2.0.x-mobile-finalization-plan.md`](to-dos/plans/v2.0.x-mobile-finalization-plan.md).)
+
+In development toward **v1.8.9** (`[Unreleased]`): a consolidated 13-PR Dependabot
+maintenance pass (jni 0.21 → 0.22, zip 2 → 8, naga 25 → 29, sha1 / md-5 0.10 → 0.11,
+pollster, android_logger, lz4_flex, plus GitHub Actions bumps — the chip stack stays
+`no_std` + byte-identical, AccuracyCoin holds 100% / 139/139), and a dormant mobile
+**monetization** build-out: a new `rustynes-monetization` crate (the `AdPolicy`
+ad-supported-freemium policy core) plus dormant Android wiring, both inert until the
+v2.1.0 store launch. The earlier `$2.99` Play-Billing "Full Unlock" model in the v1.8.0–
+v1.8.6 notes below is superseded by the v2.1.0 plan: an **ad-supported freemium** model
+(AppLovin MAX + RevenueCat, a one-time **$3.99** "Full Version / Remove Ads" unlock; the
+free tier runs an 8-minute regular session — 30 minutes on a generous first session —
+extendable +11 minutes per rewarded ad up to a 30-minute cap, with six premium features
+behind the unlock), and a clean **`foss` / `play` Android flavor split** (ADR 0025) so an
+ad-free, Google-services-free **F-Droid / sideload** build (`foss`) ships alongside the
+full Google-Play build (`play`).
+
 The road so far:
 
 | Version    | Highlights                                                                                  |
@@ -702,25 +729,43 @@ The road so far:
 > **v1.4.0 "Fidelity"** (+ the v1.4.1 patch) added the compatibility-and-finish set;
 > **v1.5.0 "Lens"** added the insight / scriptability / creator-tooling / polish set;
 > **v1.6.0 "Studio"** added the TAS-authoring / debugger-depth / accuracy / breadth set;
-> and **v1.7.0 "Forge"** adds the writable + programmable tooling / accuracy /
-> mapper-breadth / reach set above. See [`CHANGELOG.md`](CHANGELOG.md) for full
-> per-version detail.
+> **v1.7.0 "Forge"** (+ the v1.7.1 patch) added the writable + programmable tooling /
+> accuracy / mapper-breadth / reach set; and the **v1.8.0 "Android"** line (through
+> **v1.8.8 "Atlas"**) added the first **platform** release — a complete Android app on
+> the byte-identical core. See [`CHANGELOG.md`](CHANGELOG.md) for full per-version detail.
 
 ### Roadmap
 
-With **v1.7.0 "Forge"** shipped, the non-architectural backlog is essentially consumed:
-emulation accuracy is at or beyond the Mesen2 / GeraNES bar, the TAS-authoring and debugger
-surfaces are now both *writable* and *programmable* (editing-capable tools + a scriptable
-TAStudio + host IPC), the off-axis accuracy cluster is verified and documented, and
-mapper / format breadth reaches **168 families** plus the UNIF loader and FDS-proper. The remaining accuracy residuals all converge on a single future **v2.0
-master-clock (fractional-timebase) refactor** (ADR 0002), which remains the next architectural
-milestone — the one release expected to break byte-identity and save-state compatibility.
+With the **v1.7.0 "Forge"** creator-tooling line and the **v1.8.0 "Android"** platform
+line (through **v1.8.8 "Atlas"**) shipped, the non-architectural backlog is essentially
+consumed: emulation accuracy is at or beyond the Mesen2 / GeraNES bar, the TAS-authoring
+and debugger surfaces are now both *writable* and *programmable* (editing-capable tools +
+a scriptable TAStudio + host IPC), the off-axis accuracy cluster is verified and documented,
+mapper / format breadth reaches **168 families** plus the UNIF loader and FDS-proper, and
+the emulator now runs as a complete Android app on the byte-identical core.
+
+The forward arc (a 2026-06-23 maintainer replan) is:
+
+- **v1.8.9** *(current dev, `[Unreleased]`)* — a consolidated 13-PR Dependabot maintenance
+  pass, the dormant `rustynes-monetization` crate + Android wiring, and a held foldable /
+  side-pane UX fix. Byte-identical core; AccuracyCoin holds 100% (139/139).
+- **v2.0.0 "Timebase"** — the master-clock (one-clock + every-cycle-bus-access)
+  fractional-timebase refactor (ADR 0002) that closes the documented hard-tier accuracy
+  residuals and adds Vs. DualSystem. The one release expected to break byte-identity and
+  save-state compatibility.
+- **v2.0.1–v2.0.4 / v2.0.5–v2.0.8 / v2.0.9** — Android finalization, then iOS finalization
+  (the v1.9.0 SwiftUI + Metal TestFlight foundation, sharing the `rustynes-mobile` bridge),
+  then a ready-for-release verification of both apps on the v2.0.0 core.
+- **v2.1.0** — the **joint mobile store launch** (Google Play + Apple App Store + F-Droid),
+  with the ad-supported-freemium monetization (AppLovin MAX + RevenueCat, a one-time
+  **$3.99** unlock) and the `foss` / `play` flavor split (ADR 0025) going live. Both
+  app-store launches are deferred to here so the apps ship on the post-timebase v2.0.0 core
+  rather than re-releasing after the breaking change.
+
 Browser RetroAchievements has its buildable scaffolding in v1.5.0 (ADR 0015); finishing it
-(deploy the auth proxy, live-browser verify) is a near-term carryover. The longer forward arc is
-captured as concrete, research-grounded design plans in
-[`to-dos/plans/`](to-dos/plans/README.md): **v1.7.0** (writable + programmable creator tooling),
-a native **v1.8.0** Android app and **v1.9.0** iOS / iPadOS app sharing one Rust core, and the
-**v2.0.0** timebase refactor that makes the remaining accuracy residuals representable. See
+(deploy the auth proxy, live-browser verify) is a near-term carryover. The longer forward
+arc is captured as concrete, research-grounded design plans in
+[`to-dos/plans/`](to-dos/plans/README.md). See
 [`docs/STATUS.md`](docs/STATUS.md) for the authoritative current state and
 [`to-dos/ROADMAP.md`](to-dos/ROADMAP.md) for the full roadmap.
 

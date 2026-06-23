@@ -15,8 +15,8 @@ Coding conventions and best practices for contributing to RustyNES.
 
 ```toml
 [package]
-edition = "2021"
-rust-version = "1.75"  # Minimum Supported Rust Version
+edition = "2024"
+rust-version = "1.96"  # Minimum Supported Rust Version (pinned in rust-toolchain.toml)
 ```
 
 ### Formatting
@@ -30,7 +30,7 @@ cargo fmt --all
 Configuration in `rustfmt.toml`:
 
 ```toml
-edition = "2021"
+edition = "2024"
 max_width = 100
 use_small_heuristics = "Default"
 ```

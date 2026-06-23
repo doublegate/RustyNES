@@ -15,8 +15,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Mobile monetization core (`rustynes-monetization` crate) — dormant; ships at
+  v2.1.0.** A new workspace crate holding the cross-platform ad-supported-freemium
+  policy (`AdPolicy` / `AdConfig` / `PremiumFeature`, UniFFI 0.31, 17 tests) shared
+  by the Android and iOS app shells. The model: AppLovin MAX ads on the free tier,
+  removed by a RevenueCat `premium` entitlement — a one-time **"Full Version /
+  Remove Ads" ($3.99)** unlock (overriding the prior $2.99-no-ads default). Free
+  tier: an 8-minute regular session (30-minute generous first session, interstitials
+  suppressed in session #1), **+11 minutes per completed rewarded ad, capped at 2
+  grants → 30 minutes** total; six premium features (save-states, save-on-exit /
+  resume, battery SRAM, fast-forward, shaders, cheats); plus offline grace,
+  kill-relaunch progress persistence, and remote-config clamping. The crate is wired
+  into the Android build (the `.so` + UniFFI Kotlin bindings) but **dormant** — it is
+  our own Rust core (no Google SDKs, no ads), and the proprietary AppLovin/RevenueCat
+  glue lands at v2.1.0. Design + compliance set under `docs/monetization/`.
+- **`foss` / `play` Android flavor split decided (ADR 0025; lands at v2.1.0).** A
+  `foss` flavor (no Google SDKs, no ads, no tracking — the F-Droid + GitHub-sideload
+  build) versus a `play` flavor (all proprietary SDKs + ads — Google Play), so
+  RustyNES can ship a genuinely clean F-Droid channel.
+
 ### Changed
 
+- **Mobile app-store launches deferred to v2.1.0 (maintainer replan, 2026-06-23).**
+  The Android (v1.8.x) and iOS (v1.9.0) store launches are held until after the
+  v2.0.0 "Timebase" master-clock rewrite, then finalized (Android v2.0.1–v2.0.4, iOS
+  v2.0.5–v2.0.8), verified (v2.0.9), and launched **together at v2.1.0** (Google Play,
+  the Apple App Store, and F-Droid). Until then the apps ship as GitHub-sideload (Android)
+  and TestFlight (iOS). Plan: `to-dos/plans/v2.0.x-mobile-finalization-plan.md`.
 - **Dependency maintenance — consolidated 13 Dependabot updates.** A single
   branch folding the 4 GitHub Actions bumps (`actions/checkout` 6 → 7,
   `dorny/paths-filter` 3 → 4, `actions/setup-java` 4 → 5,

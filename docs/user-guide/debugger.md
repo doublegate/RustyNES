@@ -2,12 +2,20 @@
 
 Press `` ` `` (Backquote, the `~` key on US keyboards) at any time to
 toggle the egui debug overlay. It draws on top of the running game; the
-emulator continues to run while the overlay is open. Every panel is
-read-only — opening the debugger never advances emulator-visible state.
+emulator continues to run while the overlay is open. The inspection
+panels are read-only — opening, scrolling, or interacting with them never
+advances emulator-visible state. (A few opt-in *editing* tools — the hex
+editor's write mode, the inline 6502 assembler, and the iNES / NES 2.0
+header editor — do write into emulator state when you ask them to; they
+are clearly separate from the read-only inspectors.)
 
 The debugger is most useful if you're poking at a homebrew ROM, writing
 your own NES game, or chasing a compatibility issue. End-users who only
 want to play games can leave it closed.
+
+This page tours the core inspection panels. RustyNES also ships a
+Mesen2-class set of advanced debug tools — see
+[Advanced debug tools](#advanced-debug-tools) at the end.
 
 ## Top toolbar
 
@@ -138,11 +146,13 @@ writes back into the in-memory config; "Save to disk" persists it. See
 
 ## Notes on overlay behavior
 
-- The overlay is **read-only**: opening, closing, or interacting with
-  panels never advances emulator-visible state. Snapshot APIs are
-  designed so the inspection methods only peek; the determinism contract
-  (same seed + ROM + input ⇒ bit-identical framebuffer) holds whether
-  the overlay is open or closed.
+- The inspection panels are **read-only**: opening, closing, or
+  interacting with them never advances emulator-visible state. Snapshot
+  APIs are designed so the inspection methods only peek; the determinism
+  contract (same seed + ROM + input ⇒ bit-identical framebuffer) holds
+  whether the overlay is open or closed. The separate editing tools (hex
+  write mode, the assembler, the header editor) do mutate state, but only
+  on an explicit write.
 - The overlay redraws once per emulated frame. Heavy panels (Patterns,
   Nametables, OAM grid, hex viewers) are bounded — pattern textures are
   cached and refreshed in place; the hex viewer reads exactly 256 bytes
@@ -151,6 +161,35 @@ writes back into the in-memory config; "Save to disk" persists it. See
   capture, emulator input is suspended so the captured key isn't sent
   to the running game. Once you release the capture (or it cancels via
   Esc), normal input resumes.
+
+## Advanced debug tools
+
+Beyond the core inspection panels above, RustyNES carries a Mesen2-class
+set of debugging and authoring tools, reachable from the **Tools** and
+**Debug** menus and from the debugger overlay:
+
+- **Breakpoints and watchpoints** — execute / read / write breakpoints,
+  with full expression and conditional support.
+- **Hex editor** — the Memory panel's write mode, for editing RAM live.
+- **RAM search** — Cheat-Engine-style value search to find variables.
+- **Trace logger** — log executed instructions to a file.
+- **Event viewer** — a per-dot PPU event heatmap and per-scanline trace.
+- **Callstack and step modes** — a reconstructed call stack with
+  step-into / over / out, plus a memory-access counter and uninit-read
+  detection.
+- **Symbol-file loading** — `.sym` / `.mlb` / `.nl` symbol files and
+  ca65 / cc65 `.dbg` source maps.
+- **Inline 6502 assembler** — assemble and patch instructions in place.
+- **iNES / NES 2.0 header editor** — edit the cartridge header (mapper,
+  submapper, region, mirroring) live.
+- **Palette / nametable / CHR / OAM editors** — graphical editors that can
+  write back into PPU memory.
+- **Memory compare** — diff two snapshots to track what changed.
+- **TAStudio** — the piano-roll TAS editor (see [Controls → TAS
+  movies](./controls.md#tas-movies-record--playback)).
+
+These are aimed at homebrew developers and TAS authors; you never need
+them to play a game.
 
 ## See also
 

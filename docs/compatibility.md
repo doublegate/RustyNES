@@ -157,9 +157,12 @@ the long-tail policy below.
 
 **v1.2.0** extends coverage to **87 families**: a curated (Tier-1) batch of 9
 discrete-logic boards and an aggressive best-effort (Tier-2) sweep of 27
-reference-ported multicart / Sachen / discrete boards. The best-effort tier is
-register-decode unit-tested but **not** accuracy-gated; see `docs/mappers.md`
-§Mapper accuracy tiering and `docs/adr/0011-mapper-tiering.md`.
+reference-ported multicart / Sachen / discrete boards. Subsequent best-effort
+sweeps continued the climb — **101** (v1.3.0 "Bedrock"), **113** (v1.4.0
+"Fidelity"), **123** (v1.5.0 "Lens"), **150** (v1.6.0 "Studio"), and **168**
+(v1.7.0 "Forge", the current count). The best-effort tier is register-decode
+unit-tested but **not** accuracy-gated; see `docs/mappers.md` §Mapper accuracy
+tiering and `docs/adr/0011-mapper-tiering.md`.
 
 **Resolved in v1.2.0 — mapper 89 (Sunsoft-2) bus conflict.** *Tenka no
 Goikenban: Mito Koumon* (the only iNES mapper-89 dump on hand) previously left its
@@ -221,7 +224,10 @@ edge-case 2 and `crates/rustynes-test-harness/src/bin/{repro_smb3,smb3_dma_trace
 - Vs. System and PlayChoice-10 arcade variants.
 - Network play. **(Shipped — GGPO-style rollback netcode over UDP, native; see `docs/release-notes/v2.3.0.md`.)**
 - WebAssembly target.
-- Mobile (iOS/Android).
+- Mobile (iOS/Android). **(Android shipped across the v1.8.x line — a Jetpack
+  Compose app over the shared `rustynes-mobile` UniFFI bridge + `rustynes-android`
+  JNI glue; sideload now, Google Play production at v2.1.0. iOS/iPadOS is the
+  still-future v1.9.0 milestone, reusing the same bridge.)**
 - TAS (tool-assisted speedrun) movie recording / playback. Architecture supports it (deterministic core); UI is post-v1.0.
 - Cheats / Game Genie codes.
 - Non-standard input devices beyond standard pads unless explicitly listed in

@@ -1,25 +1,32 @@
 # RustyNES Development TODO Tracker
 
-**RustyNES version:** v1.1.0 (first feature release on the v1.0.0 production core)
-**Project Status:** Released — v1.1.0 shipped on top of the v1.0.0 cycle-accurate core.
+**RustyNES version:** v1.8.8 "Atlas" (latest in the Android platform train on the v1.0.0 production core)
+**Project Status:** Released — v1.8.8 "Atlas" shipped; v1.8.9 in development.
 
 ---
 
 ## Overview
 
 This directory holds the phase-and-sprint development history that produced
-RustyNES v1.0.0 (the cycle-accurate production core) and the v1.1.0 feature
-release built on top of it. The phases below are **delivered** — RustyNES ships
-at v1.1.0 with a cycle-accurate core (AccuracyCoin 100%), 51 mapper families,
-FDS, Vs./PC10, rollback netplay, RetroAchievements, TAS movie tooling, the
-performance + desktop-UX shell, and the v1.1.0 feature set (visual filters,
-peripherals/QoL, debugger devtools, NSF player + EQ, and the Lua scripting
-engine).
+RustyNES v1.0.0 (the cycle-accurate production core) and the long line of
+feature/platform releases built on top of it. The phases below are
+**delivered** — RustyNES ships at v1.8.8 with a cycle-accurate core
+(AccuracyCoin 100%), **168 mapper families**, FDS, Vs./PC10, rollback netplay,
+RetroAchievements, TAS movie tooling, the performance + desktop-UX shell, the
+full v1.1.0 → v1.7.x feature set (Lua scripting, visual filters, the studio /
+TAS-tooling / debugger-depth suite, the writable/programmable "Forge" tools,
+audio depth, web/wasm parity, an i18n framework), and the v1.8.x **Android app**.
 
 **Release line (this project's own versions):** `v0.1.0…v0.8.6` (the parent
 emulator) → `v0.9.0…v0.9.7` (engine-lineage integration stages) → **`v1.0.0`**
 (this synthesis: the cycle-accurate engine + the ported desktop-UX shell +
-production polish). The single shipped tag is **v1.0.0**. Version markers in the
+production polish) → **`v1.1.0` "Scriptable" → `v1.2.0` "Curator" → `v1.3.0`
+"Bedrock" → `v1.4.0` "Fidelity"** (+ `v1.4.1`) **→ `v1.5.0` "Lens" → `v1.6.0`
+"Studio" → `v1.7.0` "Forge"** (+ `v1.7.1`) **→ `v1.8.0` … `v1.8.8` "Atlas"** (the
+Android platform train). The current shipped tag is **v1.8.8 "Atlas"**, with
+**v1.8.9** in development. The forward path then targets **`v2.0.0` "Timebase"**
+(the master-clock rewrite, ADR 0002) and the **v2.0.1 → v2.1.0** mobile-finalization
+train (the joint Android + iOS + F-Droid launch at v2.1.0). Version markers in the
 phase bodies that read `v1.x`/`v2.x` are the inbound **engine's** prior lineage
 (developed across its v2.0–v2.8 line, shipped here at v1.0.0), not RustyNES
 releases of their own.
@@ -59,37 +66,45 @@ notes; when it cites pass/fail numbers they should be read against
 
 ---
 
-## Forward roadmap (post-v1.1.0)
+## Forward roadmap (post-v1.8.8)
 
-**v1.1.0 is shipped** — the first feature release on the v1.0.0 production core.
-The two release-named folders that staged it (`v1.0.1-compat-hygiene/` and
-`v1.1.0-features/`, along with the engine-lineage `phase-N` plans) are now
-archived under [`archive/`](./archive/README.md). What landed in v1.1.0:
+**v1.8.8 "Atlas" is shipped** — the latest in the Android platform train on the
+v1.0.0 production core. The release-named folders that staged the early feature
+releases (`v1.0.1-compat-hygiene/`, `v1.1.0-features/`, the engine-lineage
+`phase-N` plans) are archived under [`archive/`](./archive/README.md); the
+per-version plans for v1.5.0 → the mobile train live under
+[`plans/`](./plans/). The shipped line, in brief: the **Lua scripting
+engine** + visual filters/peripherals/devtools/NSF (v1.1.0); the
+library/compatibility/reach
+pass (v1.2.0); toolchain modernization + Memory-Compare (v1.3.0); accuracy +
+finish (v1.4.0/v1.4.1); the insight/scriptability/creator-tooling/polish pass
+(v1.5.0); the studio / TAS-tooling / debugger-depth pass + mapper breadth → 150
+families (v1.6.0); the writable/programmable "Forge" tools + audio depth +
+web/wasm parity + i18n + mapper breadth → **168 families** (v1.7.0/v1.7.1); and
+the **Android app** (v1.8.0 … v1.8.8 "Atlas").
 
-- **Visual filters** — full NES_NTSC composite emulation + CRT / scanline
-  shaders + `.pal` palette-file loading.
-- **Peripherals & QoL** — NES Power Pad support, turbo / autofire, an
-  input-display overlay, and a per-game nametable-mirroring override database.
-- **Debugger devtools** — breakpoints, a cycle-accurate trace logger, and an
-  event viewer.
-- **Audio** — an NSF / NSFe music-file player + a 5-band graphic equalizer.
-- **Lua scripting engine** — the flagship feature: a scriptable hook API over
-  the emulator core.
+**In development — v1.8.9:** the 13-PR Dependabot consolidation (#180), the
+dormant `rustynes-monetization` crate build-out (activates the v2.1.0 freemium
+model), and a held UX fix.
 
-See the archived [`v1.1.0-features/`](./archive/v1.1.0-features/overview.md) for
-the shipped-feature detail.
+Genuine remaining post-v1.8.8 items (see `ROADMAP.md` for detail):
 
-Genuine remaining post-v1.1.0 items (see `ROADMAP.md` for detail):
+- **v2.0.0 "Timebase"** — the master-clock rewrite (ADR 0002): the one breaking
+  (save-state / byte-identity) release that closes the hard-tier accuracy
+  residuals + adds full Vs. DualSystem emulation. The next architectural milestone.
 
-- **Mobile (iOS / Android)** frontends — now a concrete release train: Android
-  (v1.8.x sideload) + iOS (v1.9.0 TestFlight) interim, then the app-store launches
-  deferred to **after v2.0.0** and shipped jointly at **v2.1.0** (Android final
-  v2.0.1–v2.0.4, iOS final v2.0.5–v2.0.8, both-apps readiness v2.0.9). See
+- **Mobile (iOS / Android)** frontends — a concrete release train: Android
+  (v1.8.x GitHub-sideload) + iOS (v1.9.0 TestFlight) interim, then the app-store
+  launches deferred to **after v2.0.0** and shipped jointly at **v2.1.0** —
+  **Google Play + Apple App Store + F-Droid** (Android final v2.0.1–v2.0.4, iOS
+  final v2.0.5–v2.0.8, both-apps readiness v2.0.9). v2.1.0 also lands the
+  ad-supported freemium monetization (AppLovin MAX + RevenueCat, a $3.99
+  remove-ads unlock) and the `foss`/`play` Android flavor split (ADR 0025). See
   [`plans/v2.0.x-mobile-finalization-plan.md`](plans/v2.0.x-mobile-finalization-plan.md).
 - The externally-blocked **RetroAchievements account-allowlisting** pass (a
   request to the RA team, not a code change).
-- **Vs. DualSystem** (two-CPU / two-PPU) games.
-- **Browser / wasm Lua** (the v1.1.0 Lua engine is native-only).
+- **Browser / wasm Lua** maturity (the native mlua engine is feature-complete;
+  the wasm piccolo backend, ADR 0012, is not byte-parity with native mlua).
 - **Long-tail mapper coverage** toward the ~300-mapper full set + 100%
   TASVideos compatibility.
 - The documented **hard-tier accuracy residuals** — document, don't grind.
@@ -100,6 +115,15 @@ Genuine remaining post-v1.1.0 items (see `ROADMAP.md` for detail):
 
 - [`ROADMAP.md`](./ROADMAP.md) — the phase/sprint roadmap entry point (status +
   links to every phase overview).
+- [`DEFERRED-AND-CARRYOVER-FEATURES.md`](./DEFERRED-AND-CARRYOVER-FEATURES.md) —
+  the consolidated catalogue of every deferred, carried-over, manual-verify, and
+  not-yet-implemented feature (reconciled against `main`), grouped by theme with
+  target releases and source plans/ADRs.
+- [`plans/`](./plans/README.md) — the per-version plan docs (v1.0.0 synthesis
+  through v1.7.0 "Forge", plus the staged-forward v1.8.0 Android / v1.9.0 iOS /
+  v2.0.0 master-clock / v2.0.x mobile-finalization plans), the
+  `plans/engine-lineage/` history archive, and the `plans/research/`
+  reference-mining archive.
 - [`archive/`](./archive/README.md) — all delivered development history (the
   engine-lineage `phase-N` plans, the shipped `v1.0.1`/`v1.1.0` plans, the
   legacy v0.8 tree, and the historical session reports). Phase overviews +

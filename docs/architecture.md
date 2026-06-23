@@ -23,7 +23,12 @@ Per §Architecture options of the research report, three scheduling strategies w
 
 Rejected: catch-up sacrifices sub-cycle PPU edge cases that the project exists to model. Hybrid doubles the scheduler surface area for users who can already disable rewind / tweak audio quality if performance matters.
 
-## Workspace shape (Cargo workspace, 7 crates)
+## Workspace shape (Cargo workspace)
+
+The `no_std`-friendly chip stack + the glue core form the deterministic
+emulation foundation; the remaining crates are additive host/platform/tooling
+layers that never perturb the core's per-frame output (the determinism contract
+below). The current workspace is 16 crates:
 
 ```text
 crates/
@@ -31,9 +36,27 @@ crates/
 ├── rustynes-cpu/            # Ricoh 2A03 CPU (6502 + interrupt logic). No PPU/APU deps.
 ├── rustynes-ppu/            # 2C02 PPU. Depends on rustynes-mappers (for CHR/nametable bus).
 ├── rustynes-apu/            # 2A03 APU. Depends on rustynes-cpu only for shared DMC DMA hooks.
-├── rustynes-mappers/        # Cartridge + mapper trait + implementations of top ~25 mappers.
+├── rustynes-mappers/        # Cartridge + mapper trait + 168 mapper families.
 ├── rustynes-frontend/       # The rustynes binary: winit + wgpu + cpal + egui.
 └── rustynes-test-harness/   # Test ROM runner, golden-master comparator, screenshot diff.
+```
+
+The chip stack (`cpu`/`ppu`/`apu`/`mappers`/`core`) is the `#![no_std]` +
+`alloc` deterministic foundation. The additional crates added across the v1.x
+feature releases are host-side / platform / tooling and are designed to be
+additive (the deterministic core stays byte-identical):
+
+```text
+crates/
+├── rustynes-netplay/        # GGPO-style rollback netplay (UDP native + WebRTC browser + TURN relay).
+├── rustynes-cheevos/        # RetroAchievements FFI over vendored rcheevos (native-only; empty on wasm).
+├── rustynes-ra/             # RetroAchievements session state (Send), shared by frontend + mobile (v1.8.6).
+├── rustynes-script/         # Sandboxed Lua 5.4 scripting engine (mlua native / piccolo wasm).
+├── rustynes-gfx-shaders/    # Shared WGSL presentation shaders (desktop + Android, no copy-paste drift) (v1.8.4).
+├── rustynes-hdpack/         # HD-pack loader + compositor + HD audio, extracted for the mobile bridge (v1.8.5).
+├── rustynes-mobile/         # Shared UniFFI mobile bridge (consumed by rustynes-android / a future iOS crate) (v1.8.0).
+├── rustynes-android/        # Android JNI platform glue (cfg-gated) (v1.8.0).
+└── rustynes-monetization/   # Mobile-only ad/unlock policy (never touches the deterministic core).
 ```
 
 `rustynes-core` re-exports the public types from `rustynes-cpu`, `rustynes-ppu`, `rustynes-apu`, `rustynes-mappers` so that consumers (frontend, test harness, embedders) need only depend on `rustynes-core`.
