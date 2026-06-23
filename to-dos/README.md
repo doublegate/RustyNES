@@ -81,7 +81,11 @@ the shipped-feature detail.
 
 Genuine remaining post-v1.1.0 items (see `ROADMAP.md` for detail):
 
-- **Mobile (iOS / Android)** frontends.
+- **Mobile (iOS / Android)** frontends — now a concrete release train: Android
+  (v1.8.x sideload) + iOS (v1.9.0 TestFlight) interim, then the app-store launches
+  deferred to **after v2.0.0** and shipped jointly at **v2.1.0** (Android final
+  v2.0.1–v2.0.4, iOS final v2.0.5–v2.0.8, both-apps readiness v2.0.9). See
+  [`plans/v2.0.x-mobile-finalization-plan.md`](plans/v2.0.x-mobile-finalization-plan.md).
 - The externally-blocked **RetroAchievements account-allowlisting** pass (a
   request to the RA team, not a code change).
 - **Vs. DualSystem** (two-CPU / two-PPU) games.

@@ -927,8 +927,14 @@ own semantic-version line starting at **v1.0.0**.
 > **one-clock + every-cycle-bus-access collapse** (Mesen2-style fractional master
 > clock with a φ1/φ2 access split), the hard-tier accuracy-residual closure, Vs.
 > DualSystem emulation, and the breaking save-state / cross-version changes that it
-> entails (ADR 0002). The full forward path (v1.7.0 "Forge" shipped → v1.8.0/v1.9.0
-> mobile → v2.0.0 "Timebase") is tracked in `to-dos/ROADMAP.md` + `to-dos/plans/`.
+> entails (ADR 0002). The full forward path is tracked in `to-dos/ROADMAP.md` +
+> `to-dos/plans/`: v1.7.0 "Forge" shipped → the **v1.8.x "Android"** sideload line +
+> the **v1.9.0** interim-TestFlight iOS foundation → **v2.0.0 "Timebase"** → then the
+> **mobile-finalization train** (maintainer decision 2026-06-23: both app-store
+> launches held to post-2.0.0) — **v2.0.1–v2.0.4** final Android, **v2.0.5–v2.0.8**
+> iOS finalization, **v2.0.9** ready-for-release checks for both apps, and **v2.1.0**
+> the joint Google Play + Apple App Store launch. See
+> `to-dos/plans/v2.0.x-mobile-finalization-plan.md`.
 
 | Version | Status | Bar |
 |---------|--------|-----|
