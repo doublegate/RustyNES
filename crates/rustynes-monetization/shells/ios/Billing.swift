@@ -63,7 +63,12 @@ final class Billing: NSObject, PurchasesDelegate {
     func purchasePremium(completion: @escaping (_ premium: Bool, _ error: Error?) -> Void) {
         Purchases.shared.getOfferings { [weak self] offerings, error in
             guard let self else { return }
-            guard let package = offerings?.current?.availablePackages.first else {
+            // Prefer the LIFETIME (non-consumable "Full Version / Remove Ads") package
+            // explicitly rather than assuming it is first — so adding a tier/subscription
+            // to the offering later can't silently change what gets purchased.
+            let package = offerings?.current?.availablePackages.first { $0.packageType == .lifetime }
+                ?? offerings?.current?.availablePackages.first
+            guard let package else {
                 completion(self.core.isPremium(), error) // misconfigured offering
                 return
             }

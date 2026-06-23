@@ -266,7 +266,7 @@ impl AdPolicy {
     /// Arm the cooldown. The host calls this immediately after an interstitial is
     /// *actually displayed* (e.g. AppLovin's `didDisplay` / `onAdDisplayed`), not when
     /// it merely decides to load one. Keeping this separate from
-    /// [`should_show_interstitial`] means a failed ad load does not consume the
+    /// [`Self::should_show_interstitial`] means a failed ad load does not consume the
     /// interval, so the next break point can retry.
     ///
     /// Generated binding names: `notifyInterstitialShown(nowMs)` (both languages).
@@ -331,7 +331,7 @@ impl AdPolicy {
 
     /// How many rewarded extensions remain in this game session. Useful for UI such as
     /// "3 ad-extensions left". Returns 0 for premium users (they never need them) only
-    /// incidentally — gate the offer on [`can_offer_rewarded`], not on this value.
+    /// incidentally — gate the offer on [`Self::can_offer_rewarded`], not on this value.
     ///
     /// Generated binding names: `rewardGrantsRemaining()` (both languages).
     pub fn reward_grants_remaining(&self) -> u32 {

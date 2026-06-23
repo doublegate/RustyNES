@@ -20,6 +20,7 @@ import com.doublegate.rustynes.BuildConfig
 import android.app.Activity
 import com.doublegate.rustynes.monetization.ffi.AdPolicy
 import com.revenuecat.purchases.CustomerInfo
+import com.revenuecat.purchases.PackageType
 import com.revenuecat.purchases.Purchases
 import com.revenuecat.purchases.PurchasesError
 import com.revenuecat.purchases.UpdatedCustomerInfoListener
@@ -81,7 +82,12 @@ class Billing(private val core: AdPolicy) {
         Purchases.sharedInstance.getOfferingsWith(
             onError = { error -> onResult(core.isPremium(), error) },
             onSuccess = { offerings ->
-                val pkg = offerings.current?.availablePackages?.firstOrNull()
+                // Prefer the LIFETIME (non-consumable "Full Version / Remove Ads") package
+                // explicitly rather than assuming it is first — so adding a tier/subscription
+                // to the offering later can't silently change what gets purchased.
+                val pkg = offerings.current?.availablePackages
+                    ?.firstOrNull { it.packageType == PackageType.LIFETIME }
+                    ?: offerings.current?.availablePackages?.firstOrNull()
                 if (pkg == null) {
                     onResult(core.isPremium(), null) // misconfigured offering
                     return@getOfferingsWith

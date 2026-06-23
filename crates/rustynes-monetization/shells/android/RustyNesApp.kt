@@ -51,26 +51,32 @@ class RustyNesApp : Application() {
         // anchor for its grace window. The Rust `u64` maps to Kotlin `ULong`.
         core = AdPolicy(defaultAdConfig(), SystemClock.elapsedRealtime().toULong())
 
-        // (2) Initialize AppLovin MAX with the current (config-builder) init API.
-        // Do this before loading any ad. The SDK key comes from the AppLovin dashboard
-        // (Account > General > Keys). The MAX mediation provider must be set explicitly.
-        val initConfig = AppLovinSdkInitializationConfiguration
-            .builder(BuildConfig.APPLOVIN_SDK_KEY, this)
-            .setMediationProvider(AppLovinMediationProvider.MAX)
-            .build()
-        AppLovinSdk.getInstance(this).initialize(initConfig) { _ ->
-            // SDK ready — Activities may now preload/show interstitials via AdGate.
-        }
+        // The ad + billing SDKs are initialized ONLY in the Play build. Sideload /
+        // F-Droid / GitHub-Releases builds (PLAY_BUILD=false) stay full-featured and
+        // ad-free, so the AppLovin (tracking) + RevenueCat SDKs never even initialize
+        // there — a privacy + performance win and the project's stated sideload promise.
+        if (BuildConfig.PLAY_BUILD) {
+            // (2) Initialize AppLovin MAX with the current (config-builder) init API.
+            // Do this before loading any ad. The SDK key comes from the AppLovin dashboard
+            // (Account > General > Keys). The MAX mediation provider must be set explicitly.
+            val initConfig = AppLovinSdkInitializationConfiguration
+                .builder(BuildConfig.APPLOVIN_SDK_KEY, this)
+                .setMediationProvider(AppLovinMediationProvider.MAX)
+                .build()
+            AppLovinSdk.getInstance(this).initialize(initConfig) { _ ->
+                // SDK ready — Activities may now preload/show interstitials via AdGate.
+            }
 
-        // (3) Configure RevenueCat and wire the entitlement → core. Use the Android
-        // (Google) public API key. Premium status is pushed into the core both now
-        // (initial fetch) and on every future change (purchase / restore / expiry).
-        Purchases.logLevel = LogLevel.DEBUG // drop to .INFO for release builds
-        Purchases.configure(
-            PurchasesConfiguration.Builder(this, BuildConfig.REVENUECAT_API_KEY).build()
-        )
-        billing = Billing(core)
-        billing.bindEntitlement()
+            // (3) Configure RevenueCat and wire the entitlement → core. Use the Android
+            // (Google) public API key. Premium status is pushed into the core both now
+            // (initial fetch) and on every future change (purchase / restore / expiry).
+            Purchases.logLevel = if (BuildConfig.DEBUG) LogLevel.DEBUG else LogLevel.INFO
+            Purchases.configure(
+                PurchasesConfiguration.Builder(this, BuildConfig.REVENUECAT_API_KEY).build()
+            )
+            billing = Billing(core)
+            billing.bindEntitlement()
+        }
     }
 
     companion object {

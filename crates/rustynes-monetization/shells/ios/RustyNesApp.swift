@@ -40,15 +40,31 @@ final class Monetization {
     let adGate: AdGate
 
     private init() {
-        // Monotonic milliseconds, matching the Rust core's clock model.
-        let now = UInt64(DispatchTime.now().uptimeNanoseconds / 1_000_000)
-        core = AdPolicy(config: defaultAdConfig(), nowMs: now)
+        // Monotonic milliseconds INCLUDING deep sleep, matching Android's
+        // SystemClock.elapsedRealtime() (the clock the Rust core was built against).
+        // `mach_continuous_time()` keeps ticking while the device sleeps, whereas
+        // DispatchTime.uptimeNanoseconds pauses — using the latter would let the ad
+        // cooldown + play-time pacing diverge between iOS and Android.
+        core = AdPolicy(config: defaultAdConfig(), nowMs: Self.continuousMs())
         billing = Billing(core: core)
         adGate = AdGate(core: core)
     }
 
+    /// Monotonic milliseconds including deep sleep — the iOS analogue of Android's
+    /// `SystemClock.elapsedRealtime()`. Shared by the AdGate so both clocks agree.
+    static func continuousMs() -> UInt64 {
+        var info = mach_timebase_info()
+        mach_timebase_info(&info)
+        let nanos = mach_continuous_time() * UInt64(info.numer) / UInt64(info.denom)
+        return nanos / 1_000_000
+    }
+
     /// Call once at launch (from the App's init).
     func start() {
+        // The ad + billing SDKs initialize ONLY in the App Store build. Sideload /
+        // TestFlight-without-monetization builds (PLAY_BUILD off) stay full-featured and
+        // ad-free, so the AppLovin + RevenueCat SDKs never initialize there.
+        #if PLAY_BUILD
         // (2) Initialize AppLovin MAX (config-builder API). Do this as early as possible
         // so the SDK has maximum time to pre-cache mediated networks' ads.
         let initConfig = ALSdkInitializationConfiguration(sdkKey: Config.appLovinSdkKey) { builder in
@@ -60,9 +76,14 @@ final class Monetization {
 
         // (3) Configure RevenueCat and bind the entitlement → core (initial fetch +
         // live delegate updates on purchase / restore / expiry).
-        Purchases.logLevel = .debug // drop to .info for release builds
+        #if DEBUG
+        Purchases.logLevel = .debug
+        #else
+        Purchases.logLevel = .info
+        #endif
         Purchases.configure(withAPIKey: Config.revenueCatApiKey)
         billing.bindEntitlement()
+        #endif
     }
 }
 

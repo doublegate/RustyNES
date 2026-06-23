@@ -26,9 +26,15 @@ final class AdGate: NSObject, MAAdDelegate {
         self.interstitial.delegate = self
     }
 
-    /// Monotonic ms, matching the clock model the Rust core was constructed with.
+    /// Monotonic ms INCLUDING deep sleep, matching Android's SystemClock.elapsedRealtime()
+    /// (the clock the Rust core was constructed with). `mach_continuous_time()` keeps
+    /// ticking while the device sleeps — DispatchTime.uptimeNanoseconds pauses, which would
+    /// diverge the ad cooldown / pacing from Android.
     private func nowMs() -> UInt64 {
-        UInt64(DispatchTime.now().uptimeNanoseconds / 1_000_000)
+        var info = mach_timebase_info()
+        mach_timebase_info(&info)
+        let nanos = mach_continuous_time() * UInt64(info.numer) / UInt64(info.denom)
+        return nanos / 1_000_000
     }
 
     /// Warm the cache so a later show() is instant.

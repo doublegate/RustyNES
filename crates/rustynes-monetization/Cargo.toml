@@ -35,9 +35,13 @@ crate-type = ["cdylib", "staticlib", "lib"]
 
 # The uniffi-bindgen CLI lives in-crate so it runs on stable Rust (the standalone binary
 # needs nightly). Invoke with `--features=cli` — see docs/monetization/build-and-bindings.md.
+# `doc = false`: this is a build-tool binary, not documented API. It also shares the name
+# `uniffi-bindgen` with `rustynes-mobile`'s bindgen bin, so without this `cargo doc
+# --workspace` hits an output-filename collision between the two identically-named bins.
 [[bin]]
 name = "uniffi-bindgen"
 path = "uniffi-bindgen.rs"
+doc = false
 
 [dependencies]
 # Pinned to 0.31 to match `rustynes-mobile` so the workspace resolves a single UniFFI.
