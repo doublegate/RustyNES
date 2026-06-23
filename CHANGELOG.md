@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Multi-disk side selector (Emulation → Disk Side).** For multi-disk FDS games, a submenu
+  inserts any specific disk side directly — or ejects — with the current side shown, instead
+  of only the cycle-through F9 swap (a game that prompts "insert side B" can now be answered
+  in one click). Disabled during a replay (mutating the disk would diverge the recorded
+  timeline), matching the existing swap item.
 - **FDS Firmware Manager (Settings → Famicom Disk System).** Browse for a `disksys.rom`
   and have it validated — the 8 KiB size is the hard gate, plus a SHA-256 match against the
   known Nintendo dump for a "recognized" badge (an 8 KiB file with an unrecognized hash is
