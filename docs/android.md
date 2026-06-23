@@ -158,6 +158,15 @@ power-user build).
 > ad layer ships **default-off behind `PLAY_BUILD`** and is flipped on at the v2.1.0 joint
 > launch. The free-tier persistence gates (save-states / resume / SRAM) are **identical**
 > across both models; the change is ads + the $3.99 price + the RevenueCat provider.
+>
+> **v2.1.0 `foss` / `play` flavor split (ADR 0025).** At launch the build splits into a
+> **`foss`** flavor (default — no Google SDKs, no ads, no tracking; the **F-Droid** +
+> GitHub-sideload artifact) and a **`play`** flavor (all the proprietary SDKs — Billing,
+> Cast, Play Games, Integrity, update/review **+ AppLovin + RevenueCat** — for **Google
+> Play**). F-Droid requires a Google-/ad-free build, so this is the only way to reach that
+> channel. Already wired in v1.8.9 (dormant): the `rustynes-monetization` crate's `.so` +
+> UniFFI bindings (our own clean Rust core). See
+> [`../to-dos/plans/v2.0.x-mobile-finalization-plan.md`](../to-dos/plans/v2.0.x-mobile-finalization-plan.md).
 
 The app is a **free download** with a single **one-time, non-consumable in-app
 purchase** — "Full Unlock", product id `full_unlock`, **$2.99 USD** — via Play

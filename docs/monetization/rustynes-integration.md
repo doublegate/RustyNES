@@ -13,7 +13,7 @@ model itself is a deliberate maintainer choice** (see the banner).
 >   Billing / StoreKit, so a single entitlement drives both platforms).
 > - **Free tier = ad-supported**: **interstitials** at natural breaks (paced by a launch grace +
 >   a 4-min interval — **no per-session count cap**) plus **rewarded ads** that extend an 8-minute
->   play session **+2 min each, capped at 11 grants → 30 min**. The three persistence features
+>   play session **+11 min each, capped at 2 grants → 30 min**. The three persistence features
 >   (§4) stay paywalled.
 > - Purchasing the Full Version removes ads + the timer and unlocks the persistence features.
 >
@@ -211,7 +211,7 @@ expectations rather than obscuring it.
       the Gradle module; add `rustynes-monetization` as a mobile-only member beside them.
 - [ ] Wire the shells: RevenueCat → `set_premium`; AppLovin MAX → `should_show_interstitial` /
       `notify_interstitial_shown` and the rewarded → `grant_rewarded_time` (§2).
-- [ ] Gate `SaveStates` / `SaveOnExitResume` / `BatterySaves` (§4); keep rewind + fast-forward free.
+- [ ] Gate `SaveStates` / `SaveOnExitResume` / `BatterySaves` / `FastForward` / `Shaders` / `Cheats` (§4); keep in-session rewind free (fast-forward/shaders/cheats are now premium, decided 2026-06-23).
 - [ ] Wire the `PLAY_BUILD` flavor (v1.8.2); keep sideload builds full-featured (no ads); flip the
       freemium layer on at the **v1.8.8** Play debut.
 - [ ] Create the one-time **"Remove Ads / Full Version" product ($3.99)** + the `premium`

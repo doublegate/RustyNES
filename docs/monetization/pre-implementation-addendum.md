@@ -8,7 +8,7 @@ a claim is load-bearing it cites a source in §9.
 
 > TL;DR for this app type: the retro-emulator audience is **ad-averse**. The free tier is
 > **time-gated to 8 minutes** per game session (no save states, no battery saves); each
-> **completed rewarded ad grants +2 minutes**, and a cheap one-time **Full Version / remove-ads**
+> **completed rewarded ad grants +11 minutes**, and a cheap one-time **Full Version / remove-ads**
 > unlock removes the timer and unlocks saves. Lean on **rewarded** (opt-in) ads, keep
 > interstitials sparing and never over the game, and suppress ads in the first session.
 > Aggressive interstitials or subscriptions will tank reviews and retention for this category
@@ -76,7 +76,7 @@ out, the emulator pauses and the user is offered two choices — **buy the Full 
 minutes** of play.
 
 **Primary rewarded mechanic — "earn more time":** every rewarded ad the user **completes**
-(watched for the duration the ad network requires) grants **+2 minutes** of play time. Grant
+(watched for the duration the ad network requires) grants **+11 minutes** of play time. Grant
 the time **only** from the ad network's reward callback — AppLovin `OnUserRewarded` (Kotlin)
 / `didRewardUser` (Swift) — **never** on ad load, show, or dismiss, so the grant maps exactly
 to a qualifying view. This is the ideal pattern for this audience: strictly opt-in, a clear
@@ -85,7 +85,7 @@ value exchange, and it makes the timer feel fair rather than punitive. It also m
 tolerates ads.
 
 Notes:
-- The +2 min grant is **capped at 11 rewarded ads per game session** — a maximum of
+- The +11 min grant is **capped at 2 rewarded ads per game session** — a maximum of
   **+22 minutes**, so a fully ad-engaged free user reaches **30 minutes** total (8 base + 22).
   Each of the 11 is a paid rewarded impression. Once the cap is hit, **stop offering the
   rewarded option** and present **only** the Full Version prompt — this converts the most
@@ -142,7 +142,7 @@ The host persists `session_index` (e.g. SharedPreferences / UserDefaults) and pa
 
 ### 2f. Free-tier play-time budget + rewarded extension (core)
 
-The 8-minute timer and the "+2 minutes per ad" grant are monetization logic, so they live in
+The 8-minute timer and the "+11 minutes per ad" grant are monetization logic, so they live in
 the shared core — one tested implementation for both platforms. **This is now implemented in
 `crates/rustynes-monetization/src/monetization.rs`** (13 unit tests pass; Kotlin/Swift bindings regenerated). The
 `AdConfig` and `AdPolicy` additions are:
@@ -150,13 +150,13 @@ the shared core — one tested implementation for both platforms. **This is now 
 ```rust
 // Further AdConfig fields:
 //   base_play_ms: u64                  // free-tier base budget per game session (480_000 = 8 min)
-//   reward_play_ms: u64                // play time per COMPLETED rewarded ad (120_000 = 2 min)
+//   reward_play_ms: u64                // play time per COMPLETED rewarded ad (660_000 = 11 min)
 //   max_reward_grants_per_session: u32 // cap on rewarded extensions per game session (11)
 //
 // Additional State fields:
 //   budget_ms: u64                     // total granted budget for the current game session
 //   consumed_ms: u64                   // active (unpaused) play time consumed this session
-//   reward_grants_this_session: u32    // how many +2-min grants already given this session
+//   reward_grants_this_session: u32    // how many +11-min grants already given this session
 
 #[uniffi::export]
 impl AdPolicy {
@@ -166,7 +166,7 @@ impl AdPolicy {
         let mut s = self.state.lock().unwrap();
         s.budget_ms = self.cfg.base_play_ms;
         s.consumed_ms = 0;
-        s.reward_grants_this_session = 0; // reset the 11-grant cap each game session
+        s.reward_grants_this_session = 0; // reset the 2-grant cap each game session
     }
 
     /// Host reports ACTIVE play time elapsed (e.g. once per second of unpaused emulation).
@@ -177,7 +177,7 @@ impl AdPolicy {
         s.consumed_ms = s.consumed_ms.saturating_add(delta_ms);
     }
 
-    /// Whether a rewarded "+2 min" offer should be shown right now: free user, under the
+    /// Whether a rewarded "+11 min" offer should be shown right now: free user, under the
     /// per-session cap. Once false, present ONLY the Full Version prompt.
     pub fn can_offer_rewarded(&self) -> bool {
         let s = self.state.lock().unwrap();
@@ -218,16 +218,16 @@ impl AdPolicy {
 }
 ```
 
-With `max_reward_grants_per_session = 11` and `reward_play_ms = 120_000`, a fully ad-engaged
-free user reaches **8 + (11 × 2) = 30 minutes** maximum per game session.
+With `max_reward_grants_per_session = 2` and `reward_play_ms = 660_000`, a fully ad-engaged
+free user reaches **8 + (2 × 11) = 30 minutes** maximum per game session.
 
 Host flow (both platforms, identical because the logic is in the core):
 1. On game start → `start_play()`.
 2. Each second of **unpaused** emulation → `add_active_time(1000)`; read
    `play_time_remaining_ms()` to update the countdown UI.
 3. When `is_play_allowed()` returns false → **pause the emulator** and present the run-out
-   prompt. Offer *Watch ad for +2 min* **only if `can_offer_rewarded()`** (i.e. under the
-   11-grant cap); otherwise show **only** *Buy Full Version*. Use `reward_grants_remaining()`
+   prompt. Offer *Watch ad for +11 min* **only if `can_offer_rewarded()`** (i.e. under the
+   2-grant cap); otherwise show **only** *Buy Full Version*. Use `reward_grants_remaining()`
    to label the option (e.g. "3 left").
 4. On the rewarded **reward callback** → `grant_rewarded_time()` (it returns false and is a
    no-op once the cap is hit), then resume.
@@ -334,9 +334,9 @@ GPU-bound. The two must be **isolated**.
 - [ ] Confirm **rewarded-primary + sparing-interstitial** mix (vs. interstitial-heavy).
 - [ ] Confirm the **free-tier model**: 8-min base play budget, no save states, no
       battery-backed saves (decided — see §2c).
-- [ ] Confirm the **rewarded "+2 min" grant** and the **11-grant per-session cap**
+- [ ] Confirm the **rewarded "+11 min" grant** and the **2-grant per-session cap**
       (max +22 min → 30 min total) — decided; confirm the values.
-- [ ] Confirm **base play minutes (8)** and **reward minutes (2)**, and whether they're
+- [ ] Confirm **base play minutes (8)** and **reward minutes (11)**, and whether they're
       remote-configurable at launch.
 - [ ] Confirm **no banners** (or menu-only).
 - [ ] Lock the **starting cadence** (see §7) and whether it's remote-configurable at launch.
@@ -355,15 +355,15 @@ A concrete, conservative baseline to implement first, then tune via remote confi
 | Setting | Value |
 |---|---|
 | **Free-tier play budget (base)** | **8 min** per game session |
-| **Play time per completed rewarded ad** | **+2 min** |
-| **Rewarded extension cap** | **11 per session** (max +22 min; 30 min total) |
+| **Play time per completed rewarded ad** | **+11 min** |
+| **Rewarded extension cap** | **2 per session** (max +22 min; 30 min total) |
 | **Free tier excludes** | Save states, battery-backed (SRAM) saves |
 | First session | **No interstitials** (`suppress_first_session = true`) |
 | Launch grace (sessions 2+) | 90 s |
 | Min interval between interstitials | **240 s (4 min)** |
 | Session cap | **None** (paced by interval + first-session suppression only) |
 | Interstitial placement | On **game→library exit only** |
-| Rewarded | Opt-in; **primary use = +2 min play time**; also gates fast-forward / extra save-state / shaders / cheats |
+| Rewarded | Opt-in; **primary use = +11 min play time**; also gates fast-forward / extra save-state / shaders / cheats |
 | Banners | **None** (or menu screens only) |
 | App-open ads | **None** |
 | Max ad content rating | **PG** (raise to T only if fill is too low) |
@@ -378,7 +378,7 @@ config from day one so you can A/B without a release.
 ## 8. How this changes the existing skeleton
 
 - ✅ **Done:** `crates/rustynes-monetization/src/monetization.rs` now implements §2f (`start_play`, `add_active_time`,
-  `grant_rewarded_time` → bool with the 11-grant cap, `can_offer_rewarded`,
+  `grant_rewarded_time` → bool with the 2-grant cap, `can_offer_rewarded`,
   `reward_grants_remaining`, `is_play_allowed`, `play_time_remaining_ms`, plus
   `base_play_ms` / `reward_play_ms` / `max_reward_grants_per_session` in `AdConfig`), the
   `PremiumFeature` enum gates `SaveStates` + `BatterySaves` + `FastForward`, all 13 unit tests
@@ -387,7 +387,7 @@ config from day one so you can A/B without a release.
   shell, mirroring `AdGate`. On the reward callback (`OnUserRewarded` / `didRewardUser`), call
   **`grantRewardedTime()`** then resume the emulator.
 - ⬜ **Remaining (UI):** a countdown driven by `playTimeRemainingMs()`, and a **run-out prompt**
-  ("Buy Full Version" / "Watch ad for +2 min") shown when `isPlayAllowed()` is false, with the
+  ("Buy Full Version" / "Watch ad for +11 min") shown when `isPlayAllowed()` is false, with the
   emulator paused behind it; offer the rewarded option only while `canOfferRewarded()` is true.
 - ⬜ Drive `addActiveTime(...)` only from **unpaused** emulation (stop during ads, the run-out
   prompt, and app background) so paused time never burns the budget.
@@ -410,8 +410,8 @@ Expose these fields (all already in `AdConfig`):
 | Field | Default | Typical tuning range |
 |---|---|---|
 | `base_play_ms` | 480 000 (8 min) | 300 000–900 000 (5–15 min) |
-| `reward_play_ms` | 120 000 (2 min) | 60 000–300 000 (1–5 min) |
-| `max_reward_grants_per_session` | 11 | 0–20 (0 disables the rewarded extension) |
+| `reward_play_ms` | 660 000 (11 min) | 300 000–900 000 (5–15 min) |
+| `max_reward_grants_per_session` | 2 | 0–4 (0 disables the rewarded extension) |
 | `min_interval_ms` | 240 000 (4 min) | 120 000–360 000 |
 | `launch_grace_ms` | 30 000 | 0–120 000 |
 

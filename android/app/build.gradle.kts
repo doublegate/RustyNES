@@ -218,6 +218,10 @@ val cargoNdkBuild by tasks.registering(Exec::class) {
                 "build", "--release",
                 "-p", "rustynes-mobile",
                 "-p", "rustynes-android",
+                // v1.8.9 build-out: the monetization AdPolicy core (our own clean Rust —
+                // NO Google SDKs, NO ads). Wired in dormant; nothing calls it yet (the
+                // AppLovin/RevenueCat glue is the v2.1.0 `play`-flavor step, ADR 0025).
+                "-p", "rustynes-monetization",
             ),
     )
 }
@@ -237,7 +241,25 @@ val uniffiBindgen by tasks.registering(Exec::class) {
     )
 }
 
-tasks.named("preBuild") { dependsOn(uniffiBindgen) }
+// Generate the Kotlin bindings for the monetization AdPolicy core (a second, separate
+// UniFFI crate → its own `com.doublegate.rustynes.monetization.ffi` package, written into
+// the same generated dir already on the main source set). Its bindgen bin needs the crate's
+// `cli` feature (unlike rustynes-mobile, which enables uniffi/cli unconditionally).
+val uniffiBindgenMonetization by tasks.registering(Exec::class) {
+    group = "rust"
+    description = "Generate Kotlin bindings for the rustynes-monetization AdPolicy core via UniFFI."
+    dependsOn(cargoNdkBuild)
+    workingDir = workspaceRoot
+    val lib = workspaceRoot.resolve("target/aarch64-linux-android/release/librustynes_monetization.so")
+    commandLine(
+        "cargo", "run", "-q", "-p", "rustynes-monetization", "--features", "cli",
+        "--bin", "uniffi-bindgen", "--",
+        "generate", "--library", lib.absolutePath,
+        "--language", "kotlin", "--out-dir", uniffiGenDir.absolutePath,
+    )
+}
+
+tasks.named("preBuild") { dependsOn(uniffiBindgen, uniffiBindgenMonetization) }
 
 dependencies {
     // v1.8.8 "Atlas": Compose BOM 2025.09.01 (material3 1.4.0 — the stable M3 set

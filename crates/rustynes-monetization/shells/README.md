@@ -53,8 +53,9 @@ and import the UniFFI-generated bindings from `com.doublegate.rustynes.monetizat
    self-contained skeleton, not a drop-in over the existing Compose app).
 3. Regenerate the UniFFI Kotlin bindings from the crate (see
    [`../../../docs/monetization/build-and-bindings.md`](../../../docs/monetization/build-and-bindings.md)).
-4. Gate `SaveStates` / `SaveOnExitResume` / `BatterySaves` on `feature_enabled(...)`; keep
-   rewind + fast-forward free (per `docs/monetization/rustynes-integration.md` §4).
+4. Gate all six `PremiumFeature`s on `feature_enabled(...)` — `SaveStates` /
+   `SaveOnExitResume` / `BatterySaves` / `FastForward` / `Shaders` / `Cheats`; keep
+   in-session rewind free (per `docs/monetization/rustynes-integration.md` §4).
 5. iOS: mirror with the SPM manifest + the Swift shells once the iOS app exists (v2.0.5+).
 6. Complete the store / dashboard setup in
    [`../../../docs/monetization/platform-setup-runbook.md`](../../../docs/monetization/platform-setup-runbook.md)

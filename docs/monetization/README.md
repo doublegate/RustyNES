@@ -90,7 +90,7 @@ rustynes-monetization/
 - All ad cadence and paywall logic live in `crates/rustynes-monetization/src/monetization.rs` and are shared to both
   platforms via UniFFI — never duplicated in Kotlin/Swift.
 - **Free tier is time-gated to 8 min/session** (no save states, no battery saves); a completed
-  rewarded ad grants **+2 min**; the Full Version IAP removes the timer and unlocks saves. The
+  rewarded ad grants **+11 min**; the Full Version IAP removes the timer and unlocks saves. The
   play-time logic lives in the core (addendum §2c/§2f).
 - Bundle/package id, the `premium` entitlement, product ids, and the SDK keys must match
   across the stores, RevenueCat, AppLovin, and the build config. The runbook's §8 table maps
@@ -99,19 +99,20 @@ rustynes-monetization/
 ## Status
 
 - ✅ Core compiles; **all 13 Rust unit tests pass** (interstitial pacing + the free-tier
-  play-time budget and 11-grant rewarded cap); Kotlin + Swift bindings are generated on demand
+  play-time budget and 2-grant rewarded cap); Kotlin + Swift bindings are generated on demand
   from the crate (see `build-and-bindings.md` — the committed `core/generated/` snapshot was
   dropped as a regenerable build artifact).
-- ✅ Free-tier play-time gate (8-min budget, +2 min per completed rewarded ad, 11-grant /
+- ✅ Free-tier play-time gate (8-min budget, +11 min per completed rewarded ad, 2-grant /
   +22-min cap → 30 min max) implemented in `crates/rustynes-monetization/src/monetization.rs`; `PremiumFeature` gates
-  the three persistence features `SaveStates` + `SaveOnExitResume` + `BatterySaves` (rewind +
-  fast-forward stay free).
-- ⬜ Shell wiring still to do: a rewarded-ad gate (`grantRewardedTime()` on the reward
-  callback), the countdown UI, and the run-out prompt — see addendum §8.
+  **six** features — `SaveStates` + `SaveOnExitResume` + `BatterySaves` + `FastForward` +
+  `Shaders` + `Cheats` (the free tier keeps full accuracy, video, audio, input, pause, and
+  in-session **rewind**; fast-forward / shaders / cheats are now premium).
+- ⬜ Shell wiring still to do: the countdown UI and the run-out prompt (the rewarded-ad gate
+  `RewardedGate.{kt,swift}` is implemented) — see addendum §8.
 - ⬜ Open decisions (see `implementation-brief.md` §10): one-time vs subscription, free-tier
-  tuning (base 8 min / reward 2 min; cap = 11 grants/session, +22 min), the `PremiumFeature` set
-  beyond `SaveStates`/`BatterySaves`, and the Individual-vs-Organization account choice
-  (runbook §1a). The free-tier *model* (8-min timer, +2 min per rewarded ad, no save/battery
-  saves) is decided — see addendum §2c/§2f.
+  tuning (base 8 min / reward 11 min; cap = 2 grants/session, +22 min), and the
+  Individual-vs-Organization account choice (runbook §1a). The free-tier *model* (8-min
+  timer, +11 min per rewarded ad, no save/battery saves) and the **`PremiumFeature` set
+  (the six above)** are decided — see addendum §2c/§2f.
 
 *Verify SDK versions, fees, and store-policy text at implementation/enrollment time — they move.*

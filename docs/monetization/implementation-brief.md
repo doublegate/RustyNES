@@ -28,7 +28,7 @@ this for everything around it.
 | Ad mediation layer | **AppLovin MAX** | Strong mediation/auction for games; rewarded + interstitial + banner; one SDK fronts many demand networks. |
 | Cross-language core | **Rust + UniFFI** | RustyNES is already Rust. UniFFI generates Kotlin **and** Swift bindings from one interface, so monetization *logic* is written and tested once. |
 | Where logic lives | **In the Rust core** (`AdPolicy`) | Ad cadence, launch grace, premium suppression, and the paywalled-feature set cannot drift between Android and iOS because both call the same object. |
-| Ad formats | **Rewarded (primary)** + sparing **interstitial** | Free tier is time-gated to 8 min/session; completed rewarded ads grant +2 min (addendum §2c/§2f). Interstitials only at game→library exit. |
+| Ad formats | **Rewarded (primary)** + sparing **interstitial** | Free tier is time-gated to 8 min/session; completed rewarded ads grant +11 min (addendum §2c/§2f). Interstitials only at game→library exit. |
 | Paid model | One-time non-consumable **"Full Version / Remove Ads"** (~$3.99) | Removes the 8-min timer and unlocks save states + battery saves. Emulator users convert better on a one-time unlock than a subscription. |
 
 The contract the shells call (verbatim generated names) is in `docs/build-and-bindings.md`'s API table.
@@ -256,10 +256,10 @@ network's reward callback — Android `OnUserRewarded`, iOS `didRewardUser` — 
 show, or dismiss, so the grant maps to a qualifying view.
 
 Core additions (**now implemented** in `monetization.rs`; see addendum §2f): `start_play()`,
-`add_active_time(ms)`, `grant_rewarded_time()` (returns `bool`, enforces the 11-grant cap),
+`add_active_time(ms)`, `grant_rewarded_time()` (returns `bool`, enforces the 2-grant cap),
 `can_offer_rewarded()`, `reward_grants_remaining()`, `is_play_allowed()`,
-`play_time_remaining_ms()`, plus `base_play_ms` (480_000), `reward_play_ms` (120_000), and
-`max_reward_grants_per_session` (11) in `AdConfig`. All 13 unit tests pass and bindings are
+`play_time_remaining_ms()`, plus `base_play_ms` (480_000), `reward_play_ms` (660_000), and
+`max_reward_grants_per_session` (2) in `AdConfig`. All 17 unit tests pass and bindings are
 regenerated.
 
 ```rust
@@ -271,7 +271,7 @@ impl AdPolicy {
     pub fn can_offer_rewarded(&self) -> bool {
         !self.is_premium()
     }
-    // grant_rewarded_time() (addendum §2f) is what the reward callback calls to add +2 min.
+    // grant_rewarded_time() (addendum §2f) is what the reward callback calls to add +11 min.
 }
 ```
 Shell side: `MaxRewardedAd` (Android) / `MARewardedAd` (iOS), same delegate pattern as
@@ -320,7 +320,7 @@ RevenueCat Experiments (price/paywall) + MAX A/B (waterfall) once you have basel
     products are **active**; test purchase + restore + cancellation.
 - **Core logic:** the Rust unit tests (13, all passing) cover premium suppression, launch
   grace, interval enforcement, mid-session upgrade, feature gating, the free-tier play-time
-  budget + 11-grant cap, and `granted_entitlement_fully_unlocks_app` — which pins that a
+  budget + 2-grant cap, and `granted_entitlement_fully_unlocks_app` — which pins that a
   RevenueCat grant / sandbox purchase unlocks every gate (the contract your closed-test cohort
   relies on). Extend them as you add behavior; this is the cheapest place to catch bugs.
 - **16 KB:** test on an Android 15 **16 KB** emulator system image; confirm no native crash
@@ -352,11 +352,12 @@ dashboard steps are in **runbook §5a**; the engineering view:
    subscription? Affects product setup and the paywall copy.
 2. **Free-tier scope (largely decided):** the free tier keeps the full, cycle-accurate
    emulator but is **time-gated to 8 minutes per game session**, with **no save states** and
-   **no battery-backed (SRAM) saves**; a **completed rewarded ad grants +2 minutes** (see
+   **no battery-backed (SRAM) saves**; a **completed rewarded ad grants +11 minutes** (see
    addendum §2c/§2f). The Full Version removes the timer and unlocks save states + battery
-   saves, so `PremiumFeature` includes at least `SaveStates` and `BatterySaves` (optionally
-   fast-forward, shaders, cheats). Still to confirm: the base 8 min / reward 2 min values.
-   Extensions are **capped at 11 per session** (max +22 min → 30 min total).
+   saves, so `PremiumFeature` includes `SaveStates`, `SaveOnExitResume`, `BatterySaves`, and
+   (decided 2026-06-23) `FastForward`, `Shaders`, `Cheats`. Still to confirm: the base 8 min
+   / reward 11 min values.
+   Extensions are **capped at 2 per session** (max +22 min → 30 min total).
 3. **Rewarded in the free tier?** Recommended yes — best eCPM and least intrusive.
 4. **Initial mediation networks** to enable in MAX.
 5. **Child-directed?** Recommended **no** (rate Teen/12+); enabling kids mode would forbid

@@ -19,7 +19,7 @@
 //!      moment to show an interstitial ad? (Paced by a launch grace + a minimum interval;
 //!      there is no per-session interstitial count cap.)
 //!   3. **Free-tier play-time gate** — a free user gets a base play budget per game
-//!      session (8 min), extendable +2 min by each completed rewarded ad, capped at 11
+//!      session (8 min), extendable +11 min by each completed rewarded ad, capped at 2
 //!      grants/session (→ 30 min max). Premium removes the gate entirely.
 //!
 //! The platform shells (Kotlin / Swift) own the *plumbing*: they talk to **RevenueCat** for the
@@ -54,9 +54,9 @@
 //! // ...once per second of unpaused emulation:
 //! policy.add_active_time(1000);
 //! if !policy.is_play_allowed() {                           // budget exhausted
-//!     // pause; offer "Watch ad for +2 min" only if policy.can_offer_rewarded(),
+//!     // pause; offer "Watch ad for +11 min" only if policy.can_offer_rewarded(),
 //!     // else offer only "Buy Full Version". On the rewarded reward callback:
-//!     policy.grant_rewarded_time();                        // +2 min (capped at 11)
+//!     policy.grant_rewarded_time();                        // +11 min (capped at 2)
 //! }
 //! ```
 //!
@@ -78,14 +78,13 @@ use std::sync::Mutex;
 /// a remote config / experiment without rebuilding the Rust core.
 ///
 /// The first two fields pace *interstitials*; the last three define the free-tier
-/// *play-time budget* and the rewarded "+2 min per ad" extension (see the play-time
+/// *play-time budget* and the rewarded "+11 min per ad" extension (see the play-time
 /// methods on [`AdPolicy`]).
 ///
-/// Generated binding names:
-///   * Kotlin: `data class AdConfig(minIntervalMs: ULong, launchGraceMs: ULong,
-///     basePlayMs: ULong, rewardPlayMs: ULong, maxRewardGrantsPerSession: UInt)`
-///   * Swift:  `struct AdConfig { var minIntervalMs: UInt64; var launchGraceMs: UInt64;
-///     var basePlayMs: UInt64; var rewardPlayMs: UInt64; var maxRewardGrantsPerSession: UInt32 }`
+/// Generated binding names (Kotlin `data class` / Swift `struct`): `minIntervalMs`,
+/// `launchGraceMs`, `basePlayMs`, `rewardPlayMs`, `maxRewardGrantsPerSession`,
+/// `firstSessionPlayMs`, `suppressFirstSession`, `offlineGraceMs` — `ULong`/`UInt64` for the
+/// `*_ms` fields, `UInt`/`UInt32` for the grant cap, `Boolean`/`Bool` for the suppress flag.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct AdConfig {
     /// Minimum elapsed time between two interstitials, in milliseconds.
@@ -100,6 +99,18 @@ pub struct AdConfig {
     /// many grants have been given, the rewarded offer is withdrawn and only the
     /// Full Version prompt remains.
     pub max_reward_grants_per_session: u32,
+    /// First-session play budget, in ms — applied by [`AdPolicy::start_play`] when the
+    /// session index is 1, so a brand-new user gets a generous (or ungated) first game
+    /// before the timer bites. Set very large for an effectively ungated first session.
+    pub first_session_play_ms: u64,
+    /// When `true`, no interstitial is shown during session #1 (protect the first
+    /// impression). Paired with the session index fed via [`AdPolicy::begin_session`].
+    pub suppress_first_session: bool,
+    /// One-time, per-game-session "offline grace" budget, in ms — granted by
+    /// [`AdPolicy::grant_offline_grace`] when a free user hits the wall but no rewarded ad
+    /// can load (offline / no fill), so the session degrades gracefully instead of
+    /// dead-ending. `0` disables the grace.
+    pub offline_grace_ms: u64,
 }
 
 impl Default for AdConfig {
@@ -107,16 +118,20 @@ impl Default for AdConfig {
     /// an interruption is more jarring than in a casual game. 4-minute spacing with a
     /// 30-second launch grace keeps ads from ever bracketing app startup.
     ///
-    /// Free-tier defaults: an 8-minute base budget, +2 minutes per completed rewarded
-    /// ad, capped at 11 grants per session — so a fully ad-engaged free user reaches at
-    /// most 8 + (11 × 2) = 30 minutes of play in a single game session.
+    /// Free-tier defaults: an **8-minute** base budget (regular sessions) with a generous
+    /// **30-minute** first session, **+11 minutes per completed rewarded ad, capped at 2
+    /// grants** per session — so a fully ad-engaged free user reaches at most 8 + (2 × 11) =
+    /// 30 minutes of play in a regular game session with only two ad interactions.
     fn default() -> Self {
         Self {
-            min_interval_ms: 240_000,          // 4 minutes
-            launch_grace_ms: 30_000,           // 30 seconds
-            base_play_ms: 480_000,             // 8 minutes
-            reward_play_ms: 120_000,           // 2 minutes
-            max_reward_grants_per_session: 11, // → +22 min max → 30 min total
+            min_interval_ms: 240_000,         // 4 minutes
+            launch_grace_ms: 30_000,          // 30 seconds
+            base_play_ms: 480_000,            // 8 minutes (regular free session)
+            reward_play_ms: 660_000,          // 11 minutes per rewarded ad
+            max_reward_grants_per_session: 2, // → +22 min max (2 × 11) → 30 min total
+            first_session_play_ms: 1_800_000, // 30 minutes — generous first game
+            suppress_first_session: true,     // no interstitials in session #1
+            offline_grace_ms: 120_000,        // a one-time +2 min when offline at run-out
         }
     }
 }
@@ -131,36 +146,48 @@ pub fn default_ad_config() -> AdConfig {
     AdConfig::default()
 }
 
-/// The set of features that are gated behind the **Full Unlock** entitlement. Centralizing
+/// The set of features that are gated behind the **Full Version** entitlement. Centralizing
 /// the list here is what guarantees Android and iOS gate the identical set.
 ///
-/// These are exactly the **three persistence locks** the locked RustyNES v1.8.0 Android plan
-/// disables in the free demo (everything else — full accuracy, video, audio, input, **pause,
-/// fast-forward, rewind**, the whole ROM library — is identical in both tiers and stays free):
+/// **Two groups (maintainer decision 2026-06-23 — "expand the premium set"):**
+///
+/// *Persistence* (the original three locks the free demo disables):
 ///   * `SaveStates`       → the F1/F4 save/load slots + the thumbnail Save-States manager.
 ///   * `SaveOnExitResume` → write-an-`auto`-state on background + auto-resume on relaunch.
 ///   * `BatterySaves`     → persisting on-cart battery-backed SRAM (and FDS RAM) to disk.
 ///
-/// The free tier is also time-gated to an 8-minute demo session (see the play-time methods on
-/// [`AdPolicy`]); purchasing Full Unlock removes the timer and lifts all three locks at once.
+/// *Power features* (newly premium — this **overrides** the earlier doc stance that
+/// fast-forward was free; the free tier keeps full accuracy, video, audio, input, pause,
+/// and in-session rewind, but these power tools now require the unlock):
+///   * `FastForward`      → the fast-forward / turbo speed toggle.
+///   * `Shaders`          → the NTSC / CRT / scanline / Bisqwit shader stack (free = plain).
+///   * `Cheats`           → Game Genie + raw-RAM cheat entry.
 ///
-/// Note: in-session rewind (the 600-frame ring) and fast-forward are **free** — they are not
-/// persistence and the plan keeps them in the demo. RetroAchievements is deferred from the
-/// Android MVP, so its hardcore-mode save/rewind disabling is a later-increment concern.
+/// The free tier is also time-gated per game session (see the play-time methods on
+/// [`AdPolicy`]); purchasing the Full Version removes the timer and lifts all six locks.
+/// RetroAchievements is deferred from the Android MVP, so its hardcore-mode save/rewind
+/// disabling is a later-increment concern.
 ///
 /// Generated binding names:
-///   * Kotlin: `enum class PremiumFeature { SAVE_STATES, SAVE_ON_EXIT_RESUME, BATTERY_SAVES }`
-///   * Swift:  `enum PremiumFeature { case saveStates; case saveOnExitResume; case batterySaves }`
+///   * Kotlin: `enum class PremiumFeature { SAVE_STATES, SAVE_ON_EXIT_RESUME, BATTERY_SAVES,
+///     FAST_FORWARD, SHADERS, CHEATS }`
+///   * Swift:  `enum PremiumFeature { case saveStates; …; case fastForward; case shaders; case cheats }`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum PremiumFeature {
-    /// Save / load emulator save-states (F1/F4 + the Save-States manager). Demo: disabled.
+    /// Save / load emulator save-states (F1/F4 + the Save-States manager). Free: disabled.
     SaveStates,
     /// Save-on-background (`onPause` writes an `auto` state) + auto-resume on relaunch.
-    /// Demo: disabled (a ROM never auto-resumes; no `auto` state is written).
+    /// Free: disabled (a ROM never auto-resumes; no `auto` state is written).
     SaveOnExitResume,
     /// Persisting on-cart battery-backed SRAM (and FDS RAM) to disk so progress survives a
-    /// close. Demo: never written to disk (in-session battery RAM still works).
+    /// close. Free: never written to disk (in-session battery RAM still works).
     BatterySaves,
+    /// Fast-forward / turbo speed. Free: disabled (normal-speed play only).
+    FastForward,
+    /// The NTSC / CRT / scanline / Bisqwit shader stack. Free: plain (unfiltered) output.
+    Shaders,
+    /// Game Genie + raw-RAM cheat entry. Free: disabled.
+    Cheats,
 }
 
 /// Interior, mutable state guarded by a `Mutex` so the host may call from any thread
@@ -180,6 +207,12 @@ struct State {
     /// Number of rewarded "+time" grants already given in the current game session;
     /// compared against `AdConfig::max_reward_grants_per_session` to enforce the cap.
     reward_grants_this_session: u32,
+    /// The app-session index (1 on the very first launch, incremented by the host each
+    /// app session via `begin_session`). Drives first-session interstitial suppression
+    /// and the generous first-session play budget.
+    session_index: u32,
+    /// Whether this game session's one-time offline-grace continuation has been spent.
+    offline_grace_used: bool,
 }
 
 /// The policy object the host constructs once and holds for the app's lifetime.
@@ -215,6 +248,10 @@ impl AdPolicy {
                 budget_ms: 0,
                 consumed_ms: 0,
                 reward_grants_this_session: 0,
+                // Default to session 1 until the host calls `begin_session` with the
+                // persisted count; conservative (treats an un-counted launch as the first).
+                session_index: 1,
+                offline_grace_used: false,
             }),
         }
     }
@@ -237,6 +274,19 @@ impl AdPolicy {
         self.state.lock().unwrap().is_premium
     }
 
+    /// Record the app-session index at launch (the host persists a counter in
+    /// SharedPreferences / UserDefaults: 1 on first ever launch, +1 each app session) and
+    /// re-anchor the launch-grace window to `now_ms`. Drives first-session interstitial
+    /// suppression (`suppress_first_session`) and the generous first-session play budget
+    /// (`first_session_play_ms`, applied by the next [`Self::start_play`]).
+    ///
+    /// Generated binding names: `beginSession(sessionIndex, nowMs)` (both languages).
+    pub fn begin_session(&self, session_index: u32, now_ms: u64) {
+        let mut s = self.state.lock().unwrap();
+        s.session_index = session_index;
+        s.launched_at_ms = now_ms;
+    }
+
     /// The core decision: should the host present an interstitial *right now*?
     ///
     /// Returns `false` if any of the following hold:
@@ -253,6 +303,9 @@ impl AdPolicy {
 
         if s.is_premium {
             return false; // paid → never
+        }
+        if self.cfg.suppress_first_session && s.session_index <= 1 {
+            return false; // protect the first impression — no interstitials in session #1
         }
         if now_ms.saturating_sub(s.launched_at_ms) < self.cfg.launch_grace_ms {
             return false; // too soon after launch
@@ -284,7 +337,10 @@ impl AdPolicy {
         match feature {
             PremiumFeature::SaveStates
             | PremiumFeature::SaveOnExitResume
-            | PremiumFeature::BatterySaves => self.state.lock().unwrap().is_premium,
+            | PremiumFeature::BatterySaves
+            | PremiumFeature::FastForward
+            | PremiumFeature::Shaders
+            | PremiumFeature::Cheats => self.state.lock().unwrap().is_premium,
         }
     }
 
@@ -296,16 +352,22 @@ impl AdPolicy {
     // the interstitial pacing, the host injects elapsed time (`add_active_time`) rather
     // than the core reading a clock, so the logic stays pure and is unit-tested below.
 
-    /// Arm the play budget for a new game session: set it to the base allotment and
-    /// reset both the consumed-time counter and the per-session rewarded-grant counter.
-    /// The host calls this when a game (ROM) actually begins playing.
+    /// Arm the play budget for a new game session: set it to the allotment (the generous
+    /// `first_session_play_ms` during session #1, else `base_play_ms`) and reset the
+    /// consumed-time counter, the per-session rewarded-grant counter, and the one-time
+    /// offline-grace flag. The host calls this when a game (ROM) actually begins playing.
     ///
     /// Generated binding names: `startPlay()` (both languages).
     pub fn start_play(&self) {
         let mut s = self.state.lock().unwrap();
-        s.budget_ms = self.cfg.base_play_ms;
+        s.budget_ms = if s.session_index <= 1 {
+            self.cfg.first_session_play_ms
+        } else {
+            self.cfg.base_play_ms
+        };
         s.consumed_ms = 0;
         s.reward_grants_this_session = 0; // the cap resets each game session
+        s.offline_grace_used = false; // one offline grace per game session
     }
 
     /// Report active (unpaused) play time elapsed, in ms — typically once per second of
@@ -385,6 +447,116 @@ impl AdPolicy {
             Some(s.budget_ms.saturating_sub(s.consumed_ms))
         }
     }
+
+    // ---- Offline grace ------------------------------------------------------------
+    //
+    // When a free user hits the wall but no rewarded ad can load (offline / no fill), a
+    // one-time `offline_grace_ms` continuation keeps the session from dead-ending. It is
+    // capped at once per game session (reset by `start_play`) so it can't be farmed.
+
+    /// Whether a one-time offline-grace continuation is available right now: a free user
+    /// who hasn't used it this session, with a non-zero `offline_grace_ms` configured.
+    /// The host calls this at the run-out when a rewarded ad failed to load.
+    ///
+    /// Generated binding names: `canGrantOfflineGrace()` (both languages).
+    pub fn can_grant_offline_grace(&self) -> bool {
+        let s = self.state.lock().unwrap();
+        !s.is_premium && !s.offline_grace_used && self.cfg.offline_grace_ms > 0
+    }
+
+    /// Grant the one-time offline-grace continuation (`offline_grace_ms`) for this game
+    /// session. Returns `true` if applied, `false` if premium, already used, or disabled.
+    ///
+    /// Generated binding names: `grantOfflineGrace()` (both languages).
+    pub fn grant_offline_grace(&self) -> bool {
+        let mut s = self.state.lock().unwrap();
+        if s.is_premium || s.offline_grace_used || self.cfg.offline_grace_ms == 0 {
+            return false;
+        }
+        s.budget_ms = s.budget_ms.saturating_add(self.cfg.offline_grace_ms);
+        s.offline_grace_used = true;
+        true
+    }
+
+    // ---- In-progress persistence --------------------------------------------------
+    //
+    // The core is in-memory: it forgets the budget/consumed/grant counters when the
+    // process dies, so a free user could kill-and-relaunch the same ROM for a fresh
+    // budget. The host can close that hole by persisting `export_progress()` (e.g. in
+    // SharedPreferences / UserDefaults, keyed by ROM) and `restore_progress()` before the
+    // next `start_play()` of the same ROM. Skip it to accept restart-to-reset as intended.
+
+    /// Snapshot the current game session's play-gate state for host persistence.
+    ///
+    /// Generated binding names: `exportProgress()` (both languages).
+    pub fn export_progress(&self) -> PlayProgress {
+        let s = self.state.lock().unwrap();
+        PlayProgress {
+            budget_ms: s.budget_ms,
+            consumed_ms: s.consumed_ms,
+            reward_grants_this_session: s.reward_grants_this_session,
+            offline_grace_used: s.offline_grace_used,
+        }
+    }
+
+    /// Restore a previously-[`Self::export_progress`]'d snapshot (e.g. after a relaunch),
+    /// so the timer/cap survive a kill mid-run. Call instead of (or right after)
+    /// `start_play` when resuming the same ROM. Ignored for premium (no gate to restore).
+    ///
+    /// Generated binding names: `restoreProgress(progress)` (both languages).
+    pub fn restore_progress(&self, progress: PlayProgress) {
+        let mut s = self.state.lock().unwrap();
+        if s.is_premium {
+            return;
+        }
+        s.budget_ms = progress.budget_ms;
+        s.consumed_ms = progress.consumed_ms;
+        s.reward_grants_this_session = progress.reward_grants_this_session;
+        s.offline_grace_used = progress.offline_grace_used;
+    }
+}
+
+/// A serializable snapshot of a game session's free-tier play-gate state, for the host to
+/// persist across a process kill (closing the restart-to-reset hole). UniFFI marshals it
+/// as a plain record; the host stores the four fields however it likes.
+///
+/// Generated binding names:
+///   * Kotlin: `data class PlayProgress(budgetMs: ULong, consumedMs: ULong,
+///     rewardGrantsThisSession: UInt, offlineGraceUsed: Boolean)`
+///   * Swift:  `struct PlayProgress { var budgetMs: UInt64; var consumedMs: UInt64;
+///     var rewardGrantsThisSession: UInt32; var offlineGraceUsed: Bool }`
+#[derive(Debug, Clone, Copy, uniffi::Record)]
+pub struct PlayProgress {
+    /// Total granted budget for the session, in ms (base/first-session + rewarded + grace).
+    pub budget_ms: u64,
+    /// Active play time consumed so far this session, in ms.
+    pub consumed_ms: u64,
+    /// Rewarded "+time" grants already given this session (counts against the cap).
+    pub reward_grants_this_session: u32,
+    /// Whether this session's one-time offline grace has been spent.
+    pub offline_grace_used: bool,
+}
+
+/// Clamp every [`AdConfig`] field to a sane range so a bad remote-config push (e.g. a
+/// 0-ms base budget, or an absurd grant cap) can't brick the gate. The host fetches remote
+/// values, overlays them on [`default_ad_config`], then passes the result through this
+/// before constructing the [`AdPolicy`]. Pure + total; ranges mirror the addendum §9 table.
+///
+/// Generated binding names: `clampAdConfig(cfg)` (both languages).
+#[uniffi::export]
+pub fn clamp_ad_config(cfg: AdConfig) -> AdConfig {
+    AdConfig {
+        min_interval_ms: cfg.min_interval_ms.clamp(60_000, 1_800_000), // 1 min .. 30 min
+        launch_grace_ms: cfg.launch_grace_ms.min(600_000),             // .. 10 min
+        base_play_ms: cfg.base_play_ms.clamp(60_000, 3_600_000),       // 1 min .. 60 min
+        reward_play_ms: cfg.reward_play_ms.clamp(30_000, 1_200_000),   // 30 s .. 20 min
+        max_reward_grants_per_session: cfg.max_reward_grants_per_session.min(50),
+        // 1 min .. 4 h: floored at 60_000 so a remote `0` can't brick the first session
+        // (set a large value, not 0, for an effectively ungated first game).
+        first_session_play_ms: cfg.first_session_play_ms.clamp(60_000, 14_400_000),
+        suppress_first_session: cfg.suppress_first_session,
+        offline_grace_ms: cfg.offline_grace_ms.min(600_000), // .. 10 min; 0 disables
+    }
 }
 
 #[cfg(test)]
@@ -393,7 +565,7 @@ mod tests {
 
     /// A tiny fixed config makes the timing assertions easy to read. The play-time
     /// values here are deliberately small (8s base, 2s reward, cap 3) so the tests run
-    /// instantly; the *production* constants (8 min / 2 min / 11) are pinned separately
+    /// instantly; the *production* constants (8 min / 11 min / 2) are pinned separately
     /// in `default_config_encodes_the_30_minute_contract`.
     fn cfg() -> AdConfig {
         AdConfig {
@@ -402,6 +574,12 @@ mod tests {
             base_play_ms: 8_000,
             reward_play_ms: 2_000,
             max_reward_grants_per_session: 3,
+            // first-session budget == base, and first-session suppression OFF, so the
+            // existing pacing/budget tests below exercise the grace/interval/budget logic
+            // in isolation. The first-session behaviour has its own dedicated tests.
+            first_session_play_ms: 8_000,
+            suppress_first_session: false,
+            offline_grace_ms: 1_000,
         }
     }
 
@@ -441,13 +619,21 @@ mod tests {
     #[test]
     fn features_track_entitlement() {
         let p = AdPolicy::new(cfg(), 0);
-        assert!(!p.feature_enabled(PremiumFeature::SaveStates));
-        assert!(!p.feature_enabled(PremiumFeature::SaveOnExitResume));
-        assert!(!p.feature_enabled(PremiumFeature::BatterySaves));
+        let all = [
+            PremiumFeature::SaveStates,
+            PremiumFeature::SaveOnExitResume,
+            PremiumFeature::BatterySaves,
+            PremiumFeature::FastForward,
+            PremiumFeature::Shaders,
+            PremiumFeature::Cheats,
+        ];
+        for f in all {
+            assert!(!p.feature_enabled(f), "free tier must gate {f:?}");
+        }
         p.set_premium(true);
-        assert!(p.feature_enabled(PremiumFeature::SaveStates));
-        assert!(p.feature_enabled(PremiumFeature::SaveOnExitResume));
-        assert!(p.feature_enabled(PremiumFeature::BatterySaves));
+        for f in all {
+            assert!(p.feature_enabled(f), "premium must unlock {f:?}");
+        }
     }
 
     // ---- Free-tier play-time budget + rewarded cap --------------------------------
@@ -536,12 +722,13 @@ mod tests {
 
     #[test]
     fn default_config_encodes_the_30_minute_contract() {
-        // Pin the production constants: 8-min base, +2-min grants, 11-grant cap, which
-        // is exactly 8 + 11*2 = 30 minutes of maximum free play per game session.
+        // Pin the production constants: 8-min base, +11-min grants, 2-grant cap, which
+        // is exactly 8 + 2*11 = 30 minutes of maximum free play per game session (only
+        // two ad interactions instead of eleven).
         let c = default_ad_config();
         assert_eq!(c.base_play_ms, 480_000);
-        assert_eq!(c.reward_play_ms, 120_000);
-        assert_eq!(c.max_reward_grants_per_session, 11);
+        assert_eq!(c.reward_play_ms, 660_000);
+        assert_eq!(c.max_reward_grants_per_session, 2);
         let max_free_ms =
             c.base_play_ms + c.max_reward_grants_per_session as u64 * c.reward_play_ms;
         assert_eq!(max_free_ms, 1_800_000); // 30 minutes
@@ -574,5 +761,99 @@ mod tests {
         p.set_premium(false);
         assert!(!p.is_play_allowed()); // consumed time already exceeds the free budget
         assert!(!p.feature_enabled(PremiumFeature::SaveStates));
+    }
+
+    /// A config where the first session is generous (20s budget) + interstitials are
+    /// suppressed, but later sessions fall back to the 8s base + normal pacing.
+    fn first_session_cfg() -> AdConfig {
+        AdConfig {
+            first_session_play_ms: 20_000,
+            suppress_first_session: true,
+            ..cfg()
+        }
+    }
+
+    #[test]
+    fn first_session_is_generous_and_ad_free() {
+        let p = AdPolicy::new(first_session_cfg(), 0);
+        // Session 1 (the default): generous budget, no interstitials even past grace/interval.
+        p.start_play();
+        assert_eq!(p.play_time_remaining_ms(), Some(20_000));
+        assert!(!p.should_show_interstitial(10_000));
+
+        // Session 2: back to the base budget and normal interstitial pacing.
+        p.begin_session(2, 0);
+        p.start_play();
+        assert_eq!(p.play_time_remaining_ms(), Some(8_000));
+        assert!(p.should_show_interstitial(10_000));
+    }
+
+    #[test]
+    fn offline_grace_is_one_time_per_session() {
+        let p = AdPolicy::new(cfg(), 0); // offline_grace_ms = 1_000
+        p.start_play();
+        p.add_active_time(8_000); // exhaust the base budget
+        assert!(!p.is_play_allowed());
+
+        assert!(p.can_grant_offline_grace());
+        assert!(p.grant_offline_grace()); // +1s
+        assert_eq!(p.play_time_remaining_ms(), Some(1_000));
+        assert!(p.is_play_allowed());
+
+        // Only once per session.
+        assert!(!p.can_grant_offline_grace());
+        assert!(!p.grant_offline_grace());
+
+        // A new game session re-arms it.
+        p.start_play();
+        assert!(p.can_grant_offline_grace());
+
+        // Premium never needs it.
+        p.set_premium(true);
+        assert!(!p.can_grant_offline_grace());
+        assert!(!p.grant_offline_grace());
+    }
+
+    #[test]
+    fn progress_round_trips_across_a_relaunch() {
+        let p = AdPolicy::new(cfg(), 0);
+        p.start_play();
+        p.add_active_time(3_000);
+        assert!(p.grant_rewarded_time()); // budget 8_000 -> 10_000, 1 grant used
+        let snap = p.export_progress();
+        assert_eq!(snap.consumed_ms, 3_000);
+        assert_eq!(snap.budget_ms, 10_000);
+        assert_eq!(snap.reward_grants_this_session, 1);
+
+        // Simulate a kill + relaunch: a fresh policy, restore instead of a fresh budget.
+        let p2 = AdPolicy::new(cfg(), 0);
+        p2.restore_progress(snap);
+        assert_eq!(p2.play_time_remaining_ms(), Some(7_000)); // 10_000 - 3_000
+        assert_eq!(p2.reward_grants_remaining(), 2); // cap 3, 1 used
+    }
+
+    #[test]
+    fn clamp_ad_config_bounds_remote_values() {
+        // A hostile/bad remote push: a 0-ms base budget would brick the gate; absurd
+        // interval + cap. Clamp pulls everything back into the safe ranges.
+        let bad = AdConfig {
+            min_interval_ms: 10,                  // -> 60_000 floor
+            base_play_ms: 0,                      // -> 60_000 floor (never a 0-ms gate)
+            reward_play_ms: 1,                    // -> 30_000 floor
+            max_reward_grants_per_session: 9_999, // -> 50 cap
+            first_session_play_ms: 0,             // -> 60_000 floor (a 0 would brick session #1)
+            ..default_ad_config()
+        };
+        let c = clamp_ad_config(bad);
+        assert_eq!(c.min_interval_ms, 60_000);
+        assert_eq!(c.base_play_ms, 60_000);
+        assert_eq!(c.reward_play_ms, 30_000);
+        assert_eq!(c.max_reward_grants_per_session, 50);
+        assert_eq!(c.first_session_play_ms, 60_000);
+        // A sane config is returned unchanged.
+        assert_eq!(
+            clamp_ad_config(default_ad_config()).base_play_ms,
+            default_ad_config().base_play_ms
+        );
     }
 }
