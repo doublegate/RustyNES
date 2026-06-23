@@ -2842,6 +2842,9 @@ impl App {
                     ed.load_branch(i, nes);
                 }
                 TasRequest::DeleteBranch(i) => ed.delete_branch(i),
+                TasRequest::StampMacro { start, frames } => {
+                    ed.stamp_macro(start, &frames);
+                }
                 // Handled in the first pass (outside the lock — they open dialogs).
                 TasRequest::SaveProject | TasRequest::LoadProject => {}
             }

@@ -337,6 +337,25 @@ impl TasEditor {
         self.input_log.get(frame).copied()
     }
 
+    /// v1.8.9 — extract a `len`-frame input macro starting at `from` (frames past
+    /// the end of the log read as empty), for the input-macro / pattern bank.
+    #[must_use]
+    pub fn extract_macro(&self, from: usize, len: usize) -> Vec<FrameInput> {
+        (0..len)
+            .map(|i| self.input_at(from.saturating_add(i)).unwrap_or_default())
+            .collect()
+    }
+
+    /// v1.8.9 — stamp an input-macro pattern into the log starting at `start`
+    /// (one [`Self::set_input`] per frame; each changed frame counts as a
+    /// re-record). Returns the number of frames written.
+    pub fn stamp_macro(&mut self, start: usize, frames: &[FrameInput]) -> usize {
+        for (i, f) in frames.iter().enumerate() {
+            self.set_input(start.saturating_add(i), *f);
+        }
+        frames.len()
+    }
+
     /// Borrow the full input log (for export / the piano-roll grid).
     #[must_use]
     pub fn input_log(&self) -> &[FrameInput] {
@@ -810,6 +829,29 @@ mod tests {
         ed.set_rerecord_count(1000);
         assert_eq!(ed.rerecord_count(), 1000);
         assert_eq!(ed.to_movie(Region::Ntsc, [0u8; 32]).rerecord_count, 1000);
+    }
+
+    #[test]
+    fn stamp_and_extract_macro_round_trip() {
+        let nes = {
+            let mut n = Nes::from_rom(&synth_nrom()).unwrap();
+            n.power_cycle();
+            n
+        };
+        let mut ed = TasEditor::new(&nes, 1 << 20, 16);
+        let pattern = vec![
+            FrameInput::new(Buttons::A, Buttons::empty()),
+            FrameInput::new(Buttons::empty(), Buttons::empty()),
+            FrameInput::new(Buttons::A | Buttons::RIGHT, Buttons::empty()),
+        ];
+        // Stamp at frame 5; the log grows to fit, earlier frames stay default.
+        assert_eq!(ed.stamp_macro(5, &pattern), 3);
+        assert_eq!(ed.input_at(5), Some(pattern[0]));
+        assert_eq!(ed.input_at(7), Some(pattern[2]));
+        assert_eq!(ed.input_at(0), Some(FrameInput::default()));
+        // Extracting the same range reproduces the pattern; past the end is empty.
+        assert_eq!(ed.extract_macro(5, 3), pattern);
+        assert_eq!(ed.extract_macro(100, 2), vec![FrameInput::default(); 2]);
     }
 
     #[test]

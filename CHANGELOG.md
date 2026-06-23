@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Input macros / templates (TAStudio pattern tools).** Record a short per-frame input
+  pattern from the TAStudio cursor and stamp it back at the cursor (BizHawk / FCEUX-style
+  pattern-paint) — a macro bank in the TAStudio window's new "Macros" section, with editor
+  `extract_macro` / `stamp_macro` ops (stamped edits count as re-records, feeding the new
+  `rerecordCount`). The bank round-trips through a small versioned binary format (`RNMB`),
+  so it is save/load-ready.
 - **Desktop on-screen controls overlay (issue #111).** A clickable NES controller
   overlaid on the bottom of the gameplay area (Tools → Virtual Pad) — translucent,
   custom-painted buttons (D-pad bottom-left; NES-red B / A + Select / Start bottom-right)
