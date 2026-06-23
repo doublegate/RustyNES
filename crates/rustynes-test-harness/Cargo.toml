@@ -62,7 +62,7 @@ png = { version = "0.18", optional = true }
 # `extract_rom_from_zip`. Native-only (the harness is never compiled for wasm);
 # `deflate`-only to match the frontend's feature set. `.7z` is handled via the
 # `7z` CLI (no Rust dep), matching `scripts/coverage/coverage.py`.
-zip = { version = "2", default-features = false, features = ["deflate"], optional = true }
+zip = { version = "8", default-features = false, features = ["deflate"], optional = true }
 
 [dev-dependencies]
 insta.workspace = true

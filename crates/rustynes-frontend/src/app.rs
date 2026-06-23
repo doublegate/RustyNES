@@ -2589,7 +2589,10 @@ impl App {
     fn movie_rom_hashes(&self) -> Option<MovieRomHashes> {
         use md5::Md5;
         use sha1::Sha1;
-        use sha2::Digest as _;
+        // md-5 / sha1 are on the RustCrypto 0.11 `digest` trait family; pull
+        // `Digest` from one of them (NOT `sha2`, which the core keeps on 0.10 for
+        // its no_std Sha256) so the `Md5::digest` / `Sha1::digest` calls resolve.
+        use sha1::Digest as _;
         if self.rom_bytes.is_empty() {
             return None;
         }

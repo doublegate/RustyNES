@@ -15,6 +15,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Dependency maintenance — consolidated 13 Dependabot updates.** A single
+  branch folding the 4 GitHub Actions bumps (`actions/checkout` 6 → 7,
+  `dorny/paths-filter` 3 → 4, `actions/setup-java` 4 → 5,
+  `gradle/actions/setup-gradle` 4 → 6) and 9 Cargo bumps: **zip 2.4 → 8.6**
+  (frontend / mobile / hdpack / test-harness, deflate read path), **naga 25 → 29**
+  (matches wgpu 29, drops the duplicate naga from the lock), **jni 0.21 → 0.22**
+  (the `Env` / `EnvUnowned` split — the six `rustynes-android` native methods now
+  take `EnvUnowned` and reach the owned `Env` via `with_env(..).resolve::<…>()`
+  with the non-deprecated `JByteArray::len` / `get_region` accessors),
+  **sha1 + md-5 0.10 → 0.11** (RustCrypto `digest` 0.11; the movie-export hashes
+  import `Digest` from `sha1` so the core keeps `sha2` 0.10 for its `no_std`
+  Sha256), **pollster 0.3 → 0.4**, **android_logger 0.14 → 0.15**,
+  **lz4_flex 0.11 → 0.13**, and the production-dependencies group
+  (cc 1.2.65 / log 0.4.33 / ratatui 0.30.2). The emulation core is untouched —
+  the chip stack stays `no_std` + byte-identical, so **AccuracyCoin holds 100%
+  (139/139)** and the desktop / wasm / Android builds are behaviourally unchanged.
+
 ## [1.8.8] - 2026-06-20 - "Atlas" (Google Play launch readiness)
 
 The Google-Play-launch + Android-native-excellence release: it modernizes the Android

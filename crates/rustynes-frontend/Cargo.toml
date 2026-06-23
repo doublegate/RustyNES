@@ -232,7 +232,7 @@ sha2.workspace = true
 
 # Frontend-only utilities. Both already in the dependency tree as
 # transitive deps of wgpu; adding them as direct deps is free.
-pollster = "0.3"
+pollster = "0.4"
 bytemuck = "1"
 web-time.workspace = true
 
@@ -321,7 +321,7 @@ png = "0.18"
 # so it reuses the already-present flate2 / miniz_oxide rather than pulling in
 # the AES / zstd / bzip2 extras. The wasm load path receives raw bytes from the
 # browser file picker, so it never needs zip.
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "8", default-features = false, features = ["deflate"] }
 
 # v1.8.5 — the HD-pack loader + compositor + HD audio moved to `rustynes-hdpack`
 # (so the mobile bridge can reach it; the core is no_std). The frontend re-exports
@@ -448,7 +448,6 @@ tempfile = "3"
 # Validate the embedded WGSL shaders at test time (the same WGSL front-end +
 # validator wgpu uses at runtime), so a shader error (e.g. dynamically indexing
 # a `let` array) fails CI instead of aborting the app when the user toggles the
-# NTSC filter. Pinned to wgpu 25's naga (25.x) so the validation matches what
-# ships AND the two don't duplicate (naga 28 also fails to build against the
-# resolved codespan-reporting).
-naga = { version = "25", features = ["wgsl-in"] }
+# NTSC filter. Pinned to wgpu 29's naga (29.x) so the validation matches what
+# ships AND the two don't duplicate in the lock.
+naga = { version = "29", features = ["wgsl-in"] }

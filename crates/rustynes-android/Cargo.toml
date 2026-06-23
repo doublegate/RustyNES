@@ -34,18 +34,18 @@ log = "0.4"
 # `android-activity` — the `android_main` entry for the beta.1 winit+wgpu spike.
 # `android_logger` — routes `log` to logcat.
 [target.'cfg(target_os = "android")'.dependencies]
-jni = "0.21"
+jni = "0.22"
 ndk = "0.9"
 ndk-context = "0.1"
 android-activity = { version = "0.6", features = ["game-activity"] }
-android_logger = "0.14"
+android_logger = "0.15"
 # wgpu render path (Workstream B): draw the NES picture onto the SurfaceView's
 # `ANativeWindow` with an 8:7-PAR letterbox blit, off the UI/Bitmap thread. Same
 # wgpu major the desktop frontend uses (29); raw-window-handle 0.6 builds the
 # `AndroidNdk` window handle wgpu needs.
 wgpu = "29"
 raw-window-handle = "0.6"
-pollster = "0.3"
+pollster = "0.4"
 bytemuck = { version = "1", features = ["derive"] }
 # Shared CRT/scanline WGSL (single source of truth with the desktop frontend).
 rustynes-gfx-shaders.workspace = true
