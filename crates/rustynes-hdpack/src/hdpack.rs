@@ -145,15 +145,37 @@ enum ConditionKind {
     /// The 8x8 cell's screen pixel Y (`cell_y * 8`) `<op> value`. Mesen
     /// `positionCheckY` / `originPositionCheckY`.
     PositionCheckY { op: CmpOp, value: u8 },
-    /// The 8x8 tile `(dx, dy)` pixels away from this cell has CHR tile index
-    /// `tile`. Mesen `tileNearby`. Palette matching is intentionally dropped:
-    /// the telemetry carries the palette *group* (0..=3), not the four resolved
-    /// colours Mesen compares, so we gate on the tile index alone (effectively
-    /// Mesen's `ignorePalette`). See `docs/adr/0014`.
-    TileNearby { dx: i32, dy: i32, tile: u8 },
-    /// The 8x8 cell `(dx, dy)` pixels away is sourced from a sprite. Mesen
-    /// `spriteNearby`.
-    SpriteNearby { dx: i32, dy: i32 },
+    /// The 8x8 tile `(dx, dy)` pixels away matches `tile` (the absolute CHR-ROM
+    /// index, or the PPU-space tile for CHR-RAM) and — unless `palette` is `None`
+    /// (`ignorePalette`) — the same packed `PaletteColors`. Mesen `tileNearby`.
+    TileNearby {
+        dx: i32,
+        dy: i32,
+        tile: u32,
+        palette: Option<u32>,
+    },
+    /// The 8x8 cell `(dx, dy)` pixels away is a sprite (and matches `palette` if
+    /// set). Mesen `spriteNearby`.
+    SpriteNearby {
+        dx: i32,
+        dy: i32,
+        palette: Option<u32>,
+    },
+    /// The tile at the ABSOLUTE screen pixel `(x, y)` matches `tile` (+ palette).
+    /// Mesen `tileAtPosition`.
+    TileAtPosition {
+        x: u16,
+        y: u16,
+        tile: u32,
+        palette: Option<u32>,
+    },
+    /// The pixel at the ABSOLUTE screen position `(x, y)` is a sprite (+ palette).
+    /// Mesen `spriteAtPosition`.
+    SpriteAtPosition {
+        x: u16,
+        y: u16,
+        palette: Option<u32>,
+    },
 }
 
 /// Per-cell spatial context for the position / neighbour conditions: the current
@@ -180,6 +202,31 @@ impl SpatialCtx<'_> {
         }
         self.tile_source.get(y * NES_W as usize + x).copied()
     }
+
+    /// The tile-source record at the ABSOLUTE screen pixel `(x, y)`, or `None`
+    /// if off-screen. (`tileAtPosition` / `spriteAtPosition`.)
+    fn at(self, x: u16, y: u16) -> Option<HdTileSource> {
+        let (x, y) = (usize::from(x), usize::from(y));
+        if x >= NES_W as usize || y >= NES_H as usize {
+            return None;
+        }
+        self.tile_source.get(y * NES_W as usize + x).copied()
+    }
+}
+
+/// Whether a tile-source record `t` matches a condition's `tile` index (absolute
+/// CHR-ROM index, or PPU-space tile for CHR-RAM) and, if `palette` is `Some`, its
+/// packed `PaletteColors`. Mesen `tileNearby` / `tileAtPosition` semantics.
+fn tile_matches(t: HdTileSource, tile: u32, palette: Option<u32>) -> bool {
+    if t.chr_addr == HD_TILE_NONE {
+        return false;
+    }
+    let idx = if t.chr_tile_index == HD_CHR_RAM {
+        u32::from(tile_index(t.chr_addr))
+    } else {
+        t.chr_tile_index
+    };
+    idx == tile && palette.is_none_or(|p| t.palette_colors == p)
 }
 
 /// The CHR tile number (0..=255) carried by a [`HdTileSource::chr_addr`]
@@ -551,7 +598,8 @@ impl HdPack {
         }
 
         Some(Self {
-            scale: parsed.scale.clamp(1, 8),
+            // Mesen allows `<scale>` up to 10.
+            scale: parsed.scale.clamp(1, 10),
             images: kept,
             tiles,
             pattern_tables: parsed.pattern_tables,
@@ -616,12 +664,28 @@ impl HdPack {
                 u8::try_from(spatial.cell_y * TILE).unwrap_or(u8::MAX),
                 *value,
             ),
-            ConditionKind::TileNearby { dx, dy, tile } => spatial
+            ConditionKind::TileNearby {
+                dx,
+                dy,
+                tile,
+                palette,
+            } => spatial
                 .nearby(*dx, *dy)
-                .is_some_and(|t| t.chr_addr != HD_TILE_NONE && tile_index(t.chr_addr) == *tile),
-            ConditionKind::SpriteNearby { dx, dy } => {
-                spatial.nearby(*dx, *dy).is_some_and(|t| t.is_sprite)
-            }
+                .is_some_and(|t| tile_matches(t, *tile, *palette)),
+            ConditionKind::SpriteNearby { dx, dy, palette } => spatial
+                .nearby(*dx, *dy)
+                .is_some_and(|t| t.is_sprite && palette.is_none_or(|p| t.palette_colors == p)),
+            ConditionKind::TileAtPosition {
+                x,
+                y,
+                tile,
+                palette,
+            } => spatial
+                .at(*x, *y)
+                .is_some_and(|t| tile_matches(t, *tile, *palette)),
+            ConditionKind::SpriteAtPosition { x, y, palette } => spatial
+                .at(*x, *y)
+                .is_some_and(|t| t.is_sprite && palette.is_none_or(|p| t.palette_colors == p)),
         };
         held ^ cond.inverted
     }
@@ -1037,11 +1101,12 @@ fn parse_hex_u8(s: &str) -> Option<u8> {
 /// loader, memory addresses + operands + masks are parsed as **hex**.
 ///
 /// The spatial types `positionCheckX/Y`, `originPositionCheckX/Y`, `tileNearby`,
-/// and `spriteNearby` are supported as of v1.8.9 (the existing per-pixel
-/// tile-source telemetry carries the cell position + neighbour tiles). Still
-/// unsupported (return `None`, so a gated tile is dropped): `tileAtPosition` /
-/// `spriteAtPosition` (absolute coordinates) and `tileNearby`'s 32-char
-/// tile-data-hash + palette-colour match forms — see `docs/adr/0014`.
+/// and `spriteNearby` are supported as of v1.8.9, as are the absolute
+/// `tileAtPosition` / `spriteAtPosition` and palette-colour matching (the
+/// per-pixel telemetry carries the cell position, neighbour tiles, absolute CHR
+/// tile index, and packed `PaletteColors`). Still unsupported (return `None`, so
+/// a gated tile is dropped): the 32-char tile-data-hash (CHR-RAM content) form of
+/// `tileNearby` / `tileAtPosition` — see `docs/adr/0014`.
 fn parse_condition(rest: &str) -> Option<Condition> {
     let fields: Vec<&str> = rest.split(',').map(str::trim).collect();
     if fields.len() < 2 {
@@ -1158,30 +1223,75 @@ fn parse_spatial(ty: &str, fields: &[&str]) -> Option<ConditionKind> {
             let value = u8::try_from(parse_int(fields[3])? & 0xFF).ok()?;
             ConditionKind::PositionCheckY { op, value }
         }
-        // tileNearby: NAME,tileNearby,x,y,tileIndex(hex)[,palette][,ignorePalette].
-        // The 32-char tile-data-hash form and the palette match are unsupported
-        // (the telemetry has no tile-data hash and only the palette group), so a
-        // rule using them parses to `None` and is dropped.
+        // tileNearby: NAME,tileNearby,x,y,tileIndex(hex),palette(hex)[,ignorePalette].
+        // The 32-char tile-data-hash form (CHR-RAM content) is still dropped.
         "tileNearby" => {
-            if fields.len() < 5 {
+            if fields.len() < 5 || fields[4].len() >= 32 {
                 return None;
             }
             let dx = fields[2].parse::<i32>().ok()?;
             let dy = fields[3].parse::<i32>().ok()?;
-            let tile = parse_hex_u8(fields[4])?;
-            ConditionKind::TileNearby { dx, dy, tile }
+            let tile = u32::from_str_radix(fields[4], 16).ok()?;
+            let palette = cond_palette(fields, 5, 6);
+            ConditionKind::TileNearby {
+                dx,
+                dy,
+                tile,
+                palette,
+            }
         }
-        // spriteNearby: NAME,spriteNearby,x,y,... — only the offset matters to us.
+        // spriteNearby: NAME,spriteNearby,x,y[,tileIndex,palette,ignorePalette].
         "spriteNearby" => {
             if fields.len() < 4 {
                 return None;
             }
             let dx = fields[2].parse::<i32>().ok()?;
             let dy = fields[3].parse::<i32>().ok()?;
-            ConditionKind::SpriteNearby { dx, dy }
+            let palette = cond_palette(fields, 5, 6);
+            ConditionKind::SpriteNearby { dx, dy, palette }
+        }
+        // tileAtPosition / spriteAtPosition: NAME,type,x,y,tileIndex,palette[,ign].
+        // x,y are ABSOLUTE screen pixels (vs the relative offsets of *Nearby).
+        "tileAtPosition" => {
+            if fields.len() < 5 || fields[4].len() >= 32 {
+                return None;
+            }
+            let x = fields[2].parse::<u16>().ok()?;
+            let y = fields[3].parse::<u16>().ok()?;
+            let tile = u32::from_str_radix(fields[4], 16).ok()?;
+            let palette = cond_palette(fields, 5, 6);
+            ConditionKind::TileAtPosition {
+                x,
+                y,
+                tile,
+                palette,
+            }
+        }
+        "spriteAtPosition" => {
+            if fields.len() < 4 {
+                return None;
+            }
+            let x = fields[2].parse::<u16>().ok()?;
+            let y = fields[3].parse::<u16>().ok()?;
+            let palette = cond_palette(fields, 5, 6);
+            ConditionKind::SpriteAtPosition { x, y, palette }
         }
         _ => return None,
     })
+}
+
+/// Parse a condition's `palette` + optional `ignorePalette` fields: `Some(packed)`
+/// to require the palette, or `None` when absent / unparseable / `ignorePalette`.
+fn cond_palette(fields: &[&str], palette_idx: usize, ignore_idx: usize) -> Option<u32> {
+    let ignore = fields
+        .get(ignore_idx)
+        .is_some_and(|s| matches!(s.trim(), "1" | "true" | "Y" | "yes"));
+    if ignore {
+        return None;
+    }
+    fields
+        .get(palette_idx)
+        .and_then(|s| u32::from_str_radix(s.trim(), 16).ok())
 }
 
 /// Parse the comma-separated fields of a real Mesen `<tile>` rule into
@@ -2079,8 +2189,9 @@ mod tests {
 
     #[test]
     fn tile_gated_on_unsupported_condition_is_dropped() {
-        // tileAtPosition (absolute coords) is still outside RustyNES's telemetry
-        // -> the rule is dropped. (tileNearby / positionCheck are supported now.)
+        // The 32-char tile-DATA-hash form (CHR-RAM content) is still outside our
+        // telemetry -> the rule is dropped. (The tileAtPosition *index* form, and
+        // tileNearby / positionCheck, are all supported now.)
         let src = format!(
             "<condition>at,tileAtPosition,0,0,{ZERO_TILE_DATA},0F123712\n\
              [at]<tile>0,{ZERO_TILE_DATA},00000000,0,0,1,N\n"
@@ -2915,6 +3026,7 @@ mod tests {
             dx: 8,
             dy: 0,
             tile: 0x0A,
+            palette: None,
         });
         assert!(hit.eval_condition(0, &WatchedMemory::new(), 0, rec, ctx));
         // Wrong index, and an off-screen neighbour, both fail closed.
@@ -2922,19 +3034,25 @@ mod tests {
             dx: 8,
             dy: 0,
             tile: 0x0B,
+            palette: None,
         });
         assert!(!miss.eval_condition(0, &WatchedMemory::new(), 0, rec, ctx));
         let off = pack_with_condition(ConditionKind::TileNearby {
             dx: -8,
             dy: 0,
             tile: 0x0A,
+            palette: None,
         });
         assert!(!off.eval_condition(0, &WatchedMemory::new(), 0, rec, ctx));
     }
 
     #[test]
     fn sprite_nearby_detects_a_sprite_cell() {
-        let pack = pack_with_condition(ConditionKind::SpriteNearby { dx: 8, dy: 0 });
+        let pack = pack_with_condition(ConditionKind::SpriteNearby {
+            dx: 8,
+            dy: 0,
+            palette: None,
+        });
         let rec = HdTileSource::default();
         let mut sprite_ts = full_tile_source();
         sprite_ts[8] = HdTileSource {
@@ -2982,14 +3100,33 @@ mod tests {
             ConditionKind::TileNearby {
                 dx: 8,
                 dy: 0,
-                tile: 0x0A
+                tile: 0x0A,
+                palette: None,
             }
         ));
         assert!(matches!(
             parse_condition("c,spriteNearby,-8,0,00,0").unwrap().kind,
-            ConditionKind::SpriteNearby { dx: -8, dy: 0 }
+            ConditionKind::SpriteNearby {
+                dx: -8,
+                dy: 0,
+                palette: Some(0)
+            }
         ));
-        // Absolute-position variants remain unsupported (dropped).
-        assert!(parse_condition("c,tileAtPosition,0,0,0A,0").is_none());
+        // Absolute-position variants (tileAtPosition / spriteAtPosition) parse.
+        assert!(matches!(
+            parse_condition("c,tileAtPosition,16,32,0A,1").unwrap().kind,
+            ConditionKind::TileAtPosition {
+                x: 16,
+                y: 32,
+                tile: 0x0A,
+                palette: Some(1),
+            }
+        ));
+        assert!(matches!(
+            parse_condition("c,spriteAtPosition,8,8,00,0,1")
+                .unwrap()
+                .kind,
+            ConditionKind::SpriteAtPosition { x: 8, y: 8, .. }
+        ));
     }
 }
