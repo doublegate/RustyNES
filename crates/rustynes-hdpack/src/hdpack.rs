@@ -410,6 +410,11 @@ pub struct HdPack {
     /// fallback index's keys are tried, so a pack can route undefined variants to
     /// a defined tile. (Empty = no fallbacks.)
     fallback_tiles: HashMap<u32, u32>,
+    /// v1.8.9 — `<options>disableOriginalTiles` (Mesen). When set, an original NES
+    /// tile with no HD replacement renders as the backdrop colour instead of its
+    /// stock graphics — for full-conversion packs. The backdrop (universal bg)
+    /// pixels still show.
+    disable_original_tiles: bool,
 }
 
 impl HdPack {
@@ -631,6 +636,7 @@ impl HdPack {
             audio_decls: parsed.audio_decls,
             overscan: parsed.overscan,
             fallback_tiles: parsed.fallback_tiles,
+            disable_original_tiles: parsed.disable_original_tiles,
         })
     }
 
@@ -847,6 +853,8 @@ struct ParsedHires {
     overscan: [u32; 4],
     /// v1.8.9 — explicit `<fallback>` tileIndex -> fallbackTileIndex map.
     fallback_tiles: HashMap<u32, u32>,
+    /// v1.8.9 — `<options>disableOriginalTiles`.
+    disable_original_tiles: bool,
 }
 
 /// Strip a leading `[Cond1&Cond2&...]` condition prefix off a `hires.txt` line
@@ -897,6 +905,7 @@ fn parse_hires(src: &str) -> ParsedHires {
     let mut audio_decls: Vec<HdAudioDecl> = Vec::new();
     let mut overscan = [0u32; 4];
     let mut fallback_tiles: HashMap<u32, u32> = HashMap::new();
+    let mut disable_original_tiles = false;
 
     // First pass over `<condition>` / `<img>` (and the headers + audio decls) so
     // forward-referenced names resolve. `<img>` indices are declaration order, so
@@ -984,6 +993,11 @@ fn parse_hires(src: &str) -> ParsedHires {
                     fallback_tiles.insert(nums[0], nums[1]);
                 }
             }
+            // v1.8.9 — `<options>opt1,opt2,...`; we honor `disableOriginalTiles`.
+            "options" => {
+                disable_original_tiles |=
+                    rest.split(',').any(|o| o.trim() == "disableOriginalTiles");
+            }
             // `<ver>`, `<options>`, `<supportedRom>`, `<overscan>`, `<patch>`,
             // overlays, additions, fallbacks, etc. are accepted-and-ignored (the
             // supported-subset compositor doesn't act on them, but their presence
@@ -1057,6 +1071,7 @@ fn parse_hires(src: &str) -> ParsedHires {
         audio_decls,
         overscan,
         fallback_tiles,
+        disable_original_tiles,
     }
 }
 
@@ -1620,12 +1635,42 @@ impl HdCompositor {
         let crop_w = self.crop_w as usize;
         let crop_h = self.crop_h as usize;
 
+        // `<options>disableOriginalTiles`: a stock tile with no HD replacement
+        // renders as the backdrop (universal-bg) colour instead of its graphics.
+        // The backdrop = a framebuffer pixel whose tile is `HD_TILE_NONE`, or
+        // black if every pixel is a tile.
+        let disable_original = self.pack.disable_original_tiles;
+        let backdrop: [u8; 4] = if disable_original {
+            tile_source
+                .iter()
+                .position(|t| t.chr_addr == HD_TILE_NONE)
+                .map_or([0, 0, 0, 0xFF], |i| {
+                    let s = i * 4;
+                    [
+                        framebuffer[s],
+                        framebuffer[s + 1],
+                        framebuffer[s + 2],
+                        framebuffer[s + 3],
+                    ]
+                })
+        } else {
+            [0, 0, 0, 0xFF]
+        };
+
         // 1) Nearest-neighbour upscale of the base framebuffer (overscan-cropped:
         //    skip cropped-out pixels, shift the rest to the output origin).
         for y in ov_top..ov_top + crop_h {
             for x in ov_left..ov_left + crop_w {
                 let src = (y * NES_W as usize + x) * 4;
-                let px = &framebuffer[src..src + 4];
+                // Hide the stock tile under `disableOriginalTiles` (the tile pass
+                // then draws any HD replacement over the backdrop).
+                let px: &[u8] = if disable_original
+                    && tile_source[y * NES_W as usize + x].chr_addr != HD_TILE_NONE
+                {
+                    &backdrop
+                } else {
+                    &framebuffer[src..src + 4]
+                };
                 let (ox, oy) = (x - ov_left, y - ov_top);
                 for sy in 0..scale {
                     let row = (oy * scale + sy) * out_w;
@@ -2307,6 +2352,17 @@ mod tests {
         assert_eq!(apply_color_mask([100, 100, 100], 0x20), [110, 90, 90]);
     }
 
+    #[test]
+    fn options_disable_original_tiles_parse() {
+        assert!(parse_hires("<options>disableOriginalTiles\n").disable_original_tiles);
+        assert!(
+            parse_hires("<options>foo,disableOriginalTiles,bar\n").disable_original_tiles,
+            "honored among other options"
+        );
+        assert!(!parse_hires("<options>somethingElse\n").disable_original_tiles);
+        assert!(!parse_hires("<scale>2\n").disable_original_tiles);
+    }
+
     /// The 32-hex `tileData` of all-zero CHR bytes (the common blank tile) and
     /// the CRC-32 key it maps to — used across the real-format parse tests.
     const ZERO_TILE_DATA: &str = "00000000000000000000000000000000";
@@ -2627,6 +2683,7 @@ mod tests {
             audio_decls: Vec::new(),
             overscan: [0; 4],
             fallback_tiles: HashMap::new(),
+            disable_original_tiles: false,
         }
     }
 
@@ -2844,6 +2901,7 @@ mod tests {
             audio_decls: Vec::new(),
             overscan: [0; 4],
             fallback_tiles: HashMap::new(),
+            disable_original_tiles: false,
         };
         let mut comp = HdCompositor::new(pack);
         let (fb, ts) = one_tile_scene(0x0000);
@@ -2895,6 +2953,7 @@ mod tests {
             audio_decls: Vec::new(),
             overscan: [0; 4],
             fallback_tiles: HashMap::new(),
+            disable_original_tiles: false,
         };
         let mut comp = HdCompositor::new(pack);
         let fb = vec![0u8; (NES_W * NES_H * 4) as usize];
@@ -2941,6 +3000,7 @@ mod tests {
             audio_decls: Vec::new(),
             overscan: [0; 4],
             fallback_tiles: HashMap::new(),
+            disable_original_tiles: false,
         };
         let mut comp = HdCompositor::new(pack);
         let (fb, ts) = one_tile_scene(0x0000);
@@ -3104,6 +3164,7 @@ mod tests {
             audio_decls: Vec::new(),
             overscan: [0; 4],
             fallback_tiles: HashMap::new(),
+            disable_original_tiles: false,
         };
         let mut comp = HdCompositor::new(pack);
 
