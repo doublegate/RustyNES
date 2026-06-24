@@ -108,6 +108,13 @@ impl Mapper for CnRom {
         }
     }
 
+    fn chr_phys(&self, addr: u16) -> Option<u32> {
+        // CNROM is CHR-ROM only; the same 8 KiB-bank offset `ppu_read` resolves.
+        let bank_count = (self.chr_rom.len() / CHR_BANK_8K).max(1);
+        let bank = usize::from(self.chr_bank) % bank_count;
+        u32::try_from(bank * CHR_BANK_8K + usize::from(addr & 0x1FFF)).ok()
+    }
+
     fn ppu_read(&mut self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {

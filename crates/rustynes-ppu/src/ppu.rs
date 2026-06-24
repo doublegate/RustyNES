@@ -35,7 +35,7 @@ pub const FRAMEBUFFER_PIXELS: usize = 256 * 240;
 /// the referenced CHR bytes, and substitutes hi-res replacement tiles at blit
 /// time. See `docs/ppu-2c02.md` §HD-pack tile-source export.
 #[cfg(feature = "hd-pack")]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct HdTileSource {
     /// 16-byte CHR tile base address in pattern space (`$0000..=$1FF0`, low
     /// nibble always 0). `tile = (addr >> 4) & 0xFF`, `table = addr & 0x1000`.
@@ -65,6 +65,37 @@ pub struct HdTileSource {
     /// Which texel ROW (0..=7) of the 8x8 tile this screen pixel samples — Mesen
     /// `OffsetY`. BG = fine-Y; sprite = the row within the sprite tile.
     pub offset_y: u8,
+    /// Mesen CHR-ROM `TileIndex`: the ABSOLUTE post-banking CHR-ROM tile number
+    /// (`chr_phys(addr) / 16`) for a CHR-ROM cart, or [`HD_CHR_RAM`] when CHR is
+    /// RAM (the tile is content-hashed instead). The HD-pack key uses
+    /// `TileIndex ^ PaletteColors` for CHR-ROM and `CalculateHash(palette ++
+    /// data)` for CHR-RAM (Mesen `HdTileKey`). Captured at fetch (the only point
+    /// with mapper access). Output-only.
+    pub chr_tile_index: u32,
+}
+
+/// `chr_tile_index` sentinel meaning "CHR is RAM" — the tile is keyed by its 16
+/// CHR bytes (content) rather than by an absolute CHR-ROM tile index.
+#[cfg(feature = "hd-pack")]
+pub const HD_CHR_RAM: u32 = u32::MAX;
+
+#[cfg(feature = "hd-pack")]
+impl Default for HdTileSource {
+    /// A blank record: no tile, and the CHR-RAM sentinel (so an unwritten /
+    /// default record is content-keyed, never mistaken for CHR-ROM tile 0).
+    fn default() -> Self {
+        Self {
+            chr_addr: 0,
+            palette: 0,
+            is_sprite: false,
+            flip_h: false,
+            flip_v: false,
+            palette_colors: 0,
+            offset_x: 0,
+            offset_y: 0,
+            chr_tile_index: HD_CHR_RAM,
+        }
+    }
 }
 
 /// Sentinel `chr_addr` for a transparent / universal-background HD-pack pixel.
@@ -638,6 +669,19 @@ pub struct Ppu {
     /// `emit_pixel`-time scanline isn't enough to recover it post-shift).
     #[cfg(feature = "hd-pack")]
     pub(crate) hd_spr_off_y: [u8; 8],
+    /// Absolute CHR-ROM tile index (`chr_phys/16`, or [`HD_CHR_RAM`]) tracked in
+    /// lock-step with the `hd_bg_addr_*` cascade — the CHR-ROM HD-pack key.
+    #[cfg(feature = "hd-pack")]
+    pub(crate) hd_bg_idx_latch: u32,
+    /// CHR-ROM tile index of the BG tile feeding the shifters' high byte.
+    #[cfg(feature = "hd-pack")]
+    pub(crate) hd_bg_idx_cur: u32,
+    /// CHR-ROM tile index of the next BG tile (shifters' low byte).
+    #[cfg(feature = "hd-pack")]
+    pub(crate) hd_bg_idx_next: u32,
+    /// Absolute CHR-ROM tile index per sprite slot (or [`HD_CHR_RAM`]).
+    #[cfg(feature = "hd-pack")]
+    pub(crate) hd_spr_idx: [u32; 8],
 }
 
 /// v2.0 Phase 6 (`mc-ppu-subpos`): the analog `$2001` PPUMASK write delay.
@@ -795,6 +839,14 @@ impl Ppu {
             hd_spr_x: [0; 8],
             #[cfg(feature = "hd-pack")]
             hd_spr_off_y: [0; 8],
+            #[cfg(feature = "hd-pack")]
+            hd_bg_idx_latch: HD_CHR_RAM,
+            #[cfg(feature = "hd-pack")]
+            hd_bg_idx_cur: HD_CHR_RAM,
+            #[cfg(feature = "hd-pack")]
+            hd_bg_idx_next: HD_CHR_RAM,
+            #[cfg(feature = "hd-pack")]
+            hd_spr_idx: [HD_CHR_RAM; 8],
         };
         // Clear status flags that match power-on per nesdev wiki: VBL is
         // unspecified on power-on. We start clear.
@@ -2395,6 +2447,8 @@ impl Ppu {
         #[cfg(feature = "hd-pack")]
         {
             self.hd_bg_addr_latch = addr & 0x1FF0;
+            // CHR-ROM absolute tile index (offset/16), or the CHR-RAM sentinel.
+            self.hd_bg_idx_latch = bus.chr_phys(addr).map_or(HD_CHR_RAM, |o| o / 16);
         }
     }
 
@@ -2453,6 +2507,7 @@ impl Ppu {
         #[cfg(feature = "hd-pack")]
         {
             self.hd_bg_addr_cur = self.hd_bg_addr_next;
+            self.hd_bg_idx_cur = self.hd_bg_idx_next;
         }
     }
 
@@ -2488,6 +2543,8 @@ impl Ppu {
         {
             self.hd_bg_addr_cur = self.hd_bg_addr_next;
             self.hd_bg_addr_next = self.hd_bg_addr_latch;
+            self.hd_bg_idx_cur = self.hd_bg_idx_next;
+            self.hd_bg_idx_next = self.hd_bg_idx_latch;
         }
     }
 
@@ -2679,6 +2736,7 @@ impl Ppu {
                     palette_colors: self.hd_sprite_palette_colors(spr_pal),
                     offset_x: u8::try_from(off_x).unwrap_or(0),
                     offset_y: self.hd_spr_off_y[spr_slot], // already flip-baked at fetch
+                    chr_tile_index: self.hd_spr_idx[spr_slot],
                 }
             } else if bg_idx != 0 {
                 // Fine-X picks which of the two shifter tiles this pixel shows +
@@ -2698,6 +2756,11 @@ impl Ppu {
                     palette_colors: self.hd_bg_palette_colors(bg_pal),
                     offset_x: u8::try_from(pos & 7).unwrap_or(0),
                     offset_y: u8::try_from((self.v >> 12) & 7).unwrap_or(0),
+                    chr_tile_index: if pos < 8 {
+                        self.hd_bg_idx_cur
+                    } else {
+                        self.hd_bg_idx_next
+                    },
                 }
             } else {
                 // Universal background — no tile to substitute.
@@ -2709,6 +2772,7 @@ impl Ppu {
                     flip_v: false,
                     offset_x: 0,
                     offset_y: 0,
+                    chr_tile_index: HD_CHR_RAM,
                     palette_colors: 0,
                 }
             };
@@ -3460,6 +3524,9 @@ impl Ppu {
                 // `in_tile_row` is the post-flip-V fetch row, i.e. exactly the
                 // (unflipped) replacement texel row to sample.
                 self.hd_spr_off_y[slot] = u8::try_from(in_tile_row & 0x07).unwrap_or(0);
+                // CHR-ROM absolute tile index for the sprite, or the CHR-RAM
+                // sentinel (the common mappers share BG/sprite CHR banking).
+                self.hd_spr_idx[slot] = bus.chr_phys(addr_lo).map_or(HD_CHR_RAM, |o| o / 16);
             }
         } else {
             #[cfg(feature = "hd-pack")]

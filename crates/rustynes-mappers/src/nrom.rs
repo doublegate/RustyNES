@@ -153,6 +153,16 @@ impl Mapper for Nrom {
         // Writes to PRG-ROM ($8000-$FFFF) are silently ignored on NROM.
     }
 
+    fn chr_phys(&self, addr: u16) -> Option<u32> {
+        // NROM CHR is a single unbanked 8 KiB window, so the absolute offset is
+        // the pattern-space address itself. `None` for the CHR-RAM variant.
+        if self.chr_is_ram {
+            None
+        } else {
+            Some(u32::from(addr & 0x1FFF))
+        }
+    }
+
     fn ppu_read(&mut self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {

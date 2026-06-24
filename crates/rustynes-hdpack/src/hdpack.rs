@@ -52,7 +52,7 @@ use std::collections::HashMap;
 use std::io::Read;
 use std::path::Path;
 
-use rustynes_ppu::{HD_TILE_NONE, HdTileSource};
+use rustynes_ppu::{HD_CHR_RAM, HD_TILE_NONE, HdTileSource};
 
 use crate::hd_audio::{HdAudioDecl, TrackKind, parse_audio_decl};
 
@@ -1175,24 +1175,24 @@ fn parse_tile_fields(rest: &str) -> Option<(u32, usize, u32, u32)> {
         return None;
     }
     let bitmap_index = usize::try_from(parse_int(fields[0])?).ok()?;
-    // Only the CHR-RAM 32-hex tileData form is keyed here. A shorter field is the
-    // CHR-ROM tile-index form (handled by the future absolute-CHR path).
-    if fields[1].len() < 32 {
-        return None;
-    }
-    let mut tile_data = [0u8; 16];
-    for (i, b) in tile_data.iter_mut().enumerate() {
-        *b = u8::from_str_radix(fields[1].get(i * 2..i * 2 + 2)?, 16).ok()?;
-    }
     // field 2 = palette (Mesen `PaletteColors`, hex). A `defaultTile` (field 6 ==
-    // "Y") is palette-agnostic: key it under the wildcard so the lookup's second
-    // stage finds it.
+    // "Y") is palette-agnostic: key it under the `0xFFFFFFFF` wildcard so the
+    // lookup's second stage finds it regardless of the live palette.
     let palette = u32::from_str_radix(fields[2], 16).unwrap_or(0xFFFF_FFFF);
     let is_default = fields.get(6).is_some_and(|f| f.eq_ignore_ascii_case("Y"));
-    let key = if is_default {
-        chr_ram_key(0xFFFF_FFFF, &tile_data)
+    let key_palette = if is_default { 0xFFFF_FFFF } else { palette };
+    let key = if fields[1].len() >= 32 {
+        // CHR-RAM: 32-hex `tileData` = the 16 CHR bytes -> content key.
+        let mut tile_data = [0u8; 16];
+        for (i, b) in tile_data.iter_mut().enumerate() {
+            *b = u8::from_str_radix(fields[1].get(i * 2..i * 2 + 2)?, 16).ok()?;
+        }
+        chr_ram_key(key_palette, &tile_data)
     } else {
-        chr_ram_key(palette, &tile_data)
+        // CHR-ROM: a short field is the absolute tile INDEX (hex for v104+ packs;
+        // Mesen `TileIndex`). Key by `TileIndex ^ palette`.
+        let tile_index = u32::from_str_radix(fields[1], 16).ok()?;
+        chr_rom_key(tile_index, key_palette)
     };
     let x = parse_int(fields[3])?;
     let y = parse_int(fields[4])?;
@@ -1734,6 +1734,14 @@ fn chr_ram_key(palette_colors: u32, tile_data: &[u8; 16]) -> u32 {
 /// Reads the raw, *unflipped* CHR bytes (flips are applied later by the
 /// renderer, so a flipped sprite keys to the same tile dump).
 fn tile_keys(rec: HdTileSource, chr_peek: &mut impl FnMut(u16) -> u8) -> (u32, u32) {
+    // CHR-ROM tiles are keyed by their absolute tile index (Mesen `TileIndex ^
+    // PaletteColors`), not by content — the pack stores the index, not 16 bytes.
+    if rec.chr_tile_index != HD_CHR_RAM {
+        return (
+            chr_rom_key(rec.chr_tile_index, rec.palette_colors),
+            chr_rom_key(rec.chr_tile_index, 0xFFFF_FFFF),
+        );
+    }
     let base = rec.chr_addr & 0x1FF0;
     let mut bytes = [0u8; 16];
     for (i, b) in bytes.iter_mut().enumerate() {
@@ -1743,6 +1751,14 @@ fn tile_keys(rec: HdTileSource, chr_peek: &mut impl FnMut(u16) -> u8) -> (u32, u
         chr_ram_key(rec.palette_colors, &bytes),
         chr_ram_key(0xFFFF_FFFF, &bytes),
     )
+}
+
+/// The CHR-ROM tile key — Mesen `HdTileKey::GetHashCode` for a CHR-ROM tile is
+/// `(uint32_t)TileIndex ^ PaletteColors` (`HdData.h:39`), used directly as the
+/// map key (no `CalculateHash`). The palette-agnostic default key passes
+/// `0xFFFFFFFF`.
+const fn chr_rom_key(tile_index: u32, palette_colors: u32) -> u32 {
+    tile_index ^ palette_colors
 }
 
 #[cfg(test)]
@@ -1797,6 +1813,32 @@ mod tests {
         let dflt = format!("0,{td_hex},0F162736,16,32,1,Y");
         let (dkey, ..) = parse_tile_fields(&dflt).unwrap();
         assert_eq!(dkey, chr_ram_key(0xFFFF_FFFF, &td));
+    }
+
+    #[test]
+    fn chr_rom_tile_keys_on_index_and_palette() {
+        // A CHR-ROM rec (chr_tile_index != HD_CHR_RAM) keys by TileIndex ^ palette,
+        // NOT by content (chr_peek is never consulted).
+        let rec = HdTileSource {
+            palette_colors: 0x0F16_2736,
+            chr_tile_index: 42,
+            ..HdTileSource::default()
+        };
+        let mut peek = |_a: u16| panic!("CHR-ROM must not read CHR content");
+        let (exact, wild) = tile_keys(rec, &mut peek);
+        assert_eq!(exact, chr_rom_key(42, 0x0F16_2736));
+        assert_eq!(wild, chr_rom_key(42, 0xFFFF_FFFF));
+    }
+
+    #[test]
+    fn parses_chr_rom_tile_index_form() {
+        // bitmapIndex, tileIndex(hex), palette, x, y, brightness, defaultTile.
+        let (key, _, x, y) = parse_tile_fields("0,2A,0F162736,16,32,1,N").unwrap();
+        assert_eq!(key, chr_rom_key(0x2A, 0x0F16_2736));
+        assert_eq!((x, y), (16, 32));
+        // defaultTile=Y -> the palette wildcard.
+        let (dkey, ..) = parse_tile_fields("0,2A,0F162736,16,32,1,Y").unwrap();
+        assert_eq!(dkey, chr_rom_key(0x2A, 0xFFFF_FFFF));
     }
 
     /// The 32-hex `tileData` of all-zero CHR bytes (the common blank tile) and
@@ -2283,6 +2325,7 @@ mod tests {
             palette_colors: 0,
             offset_x: 0,
             offset_y: 0,
+            chr_tile_index: HD_CHR_RAM,
         };
         (fb, ts)
     }

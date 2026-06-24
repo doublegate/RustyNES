@@ -297,6 +297,14 @@ impl Mapper for Mmc1 {
         }
     }
 
+    fn chr_phys(&self, addr: u16) -> Option<u32> {
+        if self.chr_is_ram {
+            None
+        } else {
+            u32::try_from(self.map_chr(addr & 0x1FFF)).ok()
+        }
+    }
+
     fn ppu_read(&mut self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {

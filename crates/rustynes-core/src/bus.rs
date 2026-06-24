@@ -3676,6 +3676,9 @@ impl PpuBus for PpuBusAdapter<'_> {
     fn ppu_read_sprite(&mut self, addr: u16) -> u8 {
         self.mapper.ppu_read_sprite(addr & 0x1FFF)
     }
+    fn chr_phys(&self, addr: u16) -> Option<u32> {
+        self.mapper.chr_phys(addr & 0x1FFF)
+    }
     fn ppu_write(&mut self, addr: u16, value: u8) {
         self.mapper.ppu_write(addr & 0x1FFF, value);
     }
