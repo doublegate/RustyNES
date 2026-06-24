@@ -72,6 +72,12 @@ pub struct HdTileSource {
     /// data)` for CHR-RAM (Mesen `HdTileKey`). Captured at fetch (the only point
     /// with mapper access). Output-only.
     pub chr_tile_index: u32,
+    /// v1.8.9 — the `$2001` grayscale + emphasis bits at this pixel
+    /// (`mask.bits() & 0xE1`: bit 0 = grayscale, bits 5-7 = R/G/B emphasis). The
+    /// HD compositor re-applies them to the replacement texel (Mesen
+    /// `ProcessGrayscaleAndEmphasis`) so HD tiles track grayscale / emphasis fades
+    /// like the base frame, which already has them baked in. Output-only.
+    pub color_mask: u8,
 }
 
 /// `chr_tile_index` sentinel meaning "CHR is RAM" — the tile is keyed by its 16
@@ -94,6 +100,7 @@ impl Default for HdTileSource {
             offset_x: 0,
             offset_y: 0,
             chr_tile_index: HD_CHR_RAM,
+            color_mask: 0,
         }
     }
 }
@@ -2737,6 +2744,7 @@ impl Ppu {
                     offset_x: u8::try_from(off_x).unwrap_or(0),
                     offset_y: self.hd_spr_off_y[spr_slot], // already flip-baked at fetch
                     chr_tile_index: self.hd_spr_idx[spr_slot],
+                    color_mask: self.mask.bits() & 0xE1,
                 }
             } else if bg_idx != 0 {
                 // Fine-X picks which of the two shifter tiles this pixel shows +
@@ -2761,6 +2769,7 @@ impl Ppu {
                     } else {
                         self.hd_bg_idx_next
                     },
+                    color_mask: self.mask.bits() & 0xE1,
                 }
             } else {
                 // Universal background — no tile to substitute.
@@ -2774,6 +2783,7 @@ impl Ppu {
                     offset_y: 0,
                     chr_tile_index: HD_CHR_RAM,
                     palette_colors: 0,
+                    color_mask: 0,
                 }
             };
             self.hd_tile_source[off >> 2] = rec;

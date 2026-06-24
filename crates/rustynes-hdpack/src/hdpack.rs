@@ -1693,6 +1693,7 @@ impl HdCompositor {
                             alpha,
                             BlendMode::Alpha,
                             rule.brightness,
+                            rec.color_mask,
                         );
                     }
                 }
@@ -1934,7 +1935,17 @@ fn blit_background(
                 continue; // fully transparent.
             }
             let d = (dy * out_w + dx) * 4;
-            blend_over(out, d, &img.rgba[s..s + 4], a, bg.blend_mode, bg.brightness);
+            // Backgrounds aren't tied to a per-pixel telemetry record, so the
+            // grayscale/emphasis transform (mask = 0) doesn't apply to them.
+            blend_over(
+                out,
+                d,
+                &img.rgba[s..s + 4],
+                a,
+                bg.blend_mode,
+                bg.brightness,
+                0,
+            );
         }
     }
 }
@@ -1963,12 +1974,64 @@ fn adjust_brightness(v: u8, brightness: i32) -> u8 {
 /// `mode`, after applying `brightness` to the source RGB. `Alpha` is a
 /// premultiply-free, round-to-nearest source-over blend; `Add`/`Subtract` are
 /// saturating. Used by both the tile blit and the background blit.
-fn blend_over(out: &mut [u8], d: usize, src: &[u8], a: u8, mode: BlendMode, brightness: i32) {
-    let src_rgb = [
-        adjust_brightness(src[0], brightness),
-        adjust_brightness(src[1], brightness),
-        adjust_brightness(src[2], brightness),
-    ];
+/// Apply the NES `$2001` grayscale + emphasis transform (Mesen
+/// `ProcessGrayscaleAndEmphasis`) to an RGB triple. `mask` bit 0 = grayscale;
+/// bits 5-7 = R/G/B emphasis (each intensifies its channel x1.1 and attenuates
+/// the others x0.9, stacking multiplicatively). `mask == 0` is identity.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn apply_color_mask(rgb: [u8; 3], mask: u8) -> [u8; 3] {
+    if mask == 0 {
+        return rgb;
+    }
+    let [mut r, mut g, mut b] = rgb;
+    if mask & 0x01 != 0 {
+        let avg = ((u16::from(r) + u16::from(g) + u16::from(b)) / 3) as u8;
+        r = avg;
+        g = avg;
+        b = avg;
+    }
+    let emph = (mask >> 5) & 0x07;
+    if emph != 0 {
+        let (mut fr, mut fg, mut fb) = (1.0f32, 1.0f32, 1.0f32);
+        if emph & 0x01 != 0 {
+            fr *= 1.1;
+            fg *= 0.9;
+            fb *= 0.9;
+        }
+        if emph & 0x02 != 0 {
+            fg *= 1.1;
+            fr *= 0.9;
+            fb *= 0.9;
+        }
+        if emph & 0x04 != 0 {
+            fb *= 1.1;
+            fr *= 0.9;
+            fg *= 0.9;
+        }
+        r = (f32::from(r) * fr).min(255.0) as u8;
+        g = (f32::from(g) * fg).min(255.0) as u8;
+        b = (f32::from(b) * fb).min(255.0) as u8;
+    }
+    [r, g, b]
+}
+
+fn blend_over(
+    out: &mut [u8],
+    d: usize,
+    src: &[u8],
+    a: u8,
+    mode: BlendMode,
+    brightness: i32,
+    color_mask: u8,
+) {
+    let src_rgb = apply_color_mask(
+        [
+            adjust_brightness(src[0], brightness),
+            adjust_brightness(src[1], brightness),
+            adjust_brightness(src[2], brightness),
+        ],
+        color_mask,
+    );
     match mode {
         BlendMode::Alpha => {
             if a == 0xFF {
@@ -2156,6 +2219,16 @@ mod tests {
         assert_eq!(parsed.fallback_tiles.get(&0x0A), Some(&0x0B));
         assert_eq!(parsed.fallback_tiles.get(&0x10), Some(&0x20));
         assert_eq!(parsed.fallback_tiles.len(), 2);
+    }
+
+    #[test]
+    fn color_mask_grayscale_and_emphasis() {
+        // mask 0 -> identity.
+        assert_eq!(apply_color_mask([100, 150, 200], 0), [100, 150, 200]);
+        // grayscale (bit 0): every channel becomes the average (450/3 = 150).
+        assert_eq!(apply_color_mask([100, 150, 200], 0x01), [150, 150, 150]);
+        // red emphasis ($2001 bit 5): red x1.1, green/blue x0.9.
+        assert_eq!(apply_color_mask([100, 100, 100], 0x20), [110, 90, 90]);
     }
 
     /// The 32-hex `tileData` of all-zero CHR bytes (the common blank tile) and
@@ -2646,6 +2719,7 @@ mod tests {
             offset_x: 0,
             offset_y: 0,
             chr_tile_index: HD_CHR_RAM,
+            color_mask: 0,
         };
         (fb, ts)
     }
