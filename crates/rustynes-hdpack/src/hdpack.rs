@@ -417,6 +417,27 @@ pub struct HdPack {
     /// stock graphics — for full-conversion packs. The backdrop (universal bg)
     /// pixels still show.
     disable_original_tiles: bool,
+    /// v1.8.9 — `<addition>` rules (Mesen v107+): when a pixel's tile matches an
+    /// addition's ORIGINAL key, the ADDITIONAL tile's replacement is drawn at
+    /// `(offset_x, offset_y)` (mirror-adjusted). Empty for the common case, so the
+    /// gated post-pass is skipped and the composite is byte-identical.
+    additions: Vec<HdAddition>,
+}
+
+/// One Mesen `<addition>` rule — draw an extra tile near a matched original tile.
+#[derive(Clone, Debug)]
+struct HdAddition {
+    /// The original tile's exact key (palette-discriminated) — matched against a
+    /// pixel's exact key (or, when `ignore_palette`, its wildcard key).
+    orig_key: u32,
+    /// The additional tile's exact + wildcard keys, looked up in [`HdPack::tiles`].
+    add_exact: u32,
+    add_wild: u32,
+    /// Pixel offset from the matched tile to the additional tile.
+    offset_x: i32,
+    offset_y: i32,
+    /// When set, match the original on its palette-agnostic (wildcard) key.
+    ignore_palette: bool,
 }
 
 impl HdPack {
@@ -639,6 +660,7 @@ impl HdPack {
             overscan: parsed.overscan,
             fallback_tiles: parsed.fallback_tiles,
             disable_original_tiles: parsed.disable_original_tiles,
+            additions: parsed.additions,
         })
     }
 
@@ -864,6 +886,8 @@ struct ParsedHires {
     fallback_tiles: HashMap<u32, u32>,
     /// v1.8.9 — `<options>disableOriginalTiles`.
     disable_original_tiles: bool,
+    /// v1.8.9 — parsed `<addition>` rules.
+    additions: Vec<HdAddition>,
 }
 
 /// Strip a leading `[Cond1&Cond2&...]` condition prefix off a `hires.txt` line
@@ -915,6 +939,7 @@ fn parse_hires(src: &str) -> ParsedHires {
     let mut overscan = [0u32; 4];
     let mut fallback_tiles: HashMap<u32, u32> = HashMap::new();
     let mut disable_original_tiles = false;
+    let mut additions: Vec<HdAddition> = Vec::new();
 
     // First pass over `<condition>` / `<img>` (and the headers + audio decls) so
     // forward-referenced names resolve. `<img>` indices are declaration order, so
@@ -1007,6 +1032,33 @@ fn parse_hires(src: &str) -> ParsedHires {
                 disable_original_tiles |=
                     rest.split(',').any(|o| o.trim() == "disableOriginalTiles");
             }
+            // v1.8.9 — `<addition>` (Mesen v107+): origTile,origPal,offX,offY,
+            // addTile,addPal[,ignorePalette]. When `origTile` renders, also draw
+            // `addTile`'s replacement at `(offX, offY)`.
+            "addition" => {
+                let f: Vec<&str> = rest.split(',').map(str::trim).collect();
+                if f.len() >= 6 {
+                    let ignore_palette = f
+                        .get(6)
+                        .is_some_and(|s| matches!(*s, "1" | "true" | "Y" | "yes"));
+                    if let (Some(orig_key), Some(add_exact), Some(add_wild), Some(ox), Some(oy)) = (
+                        addition_key(f[0], f[1], ignore_palette),
+                        addition_key(f[4], f[5], false),
+                        addition_key(f[4], f[5], true),
+                        f[2].parse::<i32>().ok(),
+                        f[3].parse::<i32>().ok(),
+                    ) {
+                        additions.push(HdAddition {
+                            orig_key,
+                            add_exact,
+                            add_wild,
+                            offset_x: ox,
+                            offset_y: oy,
+                            ignore_palette,
+                        });
+                    }
+                }
+            }
             // `<ver>`, `<options>`, `<supportedRom>`, `<overscan>`, `<patch>`,
             // overlays, additions, fallbacks, etc. are accepted-and-ignored (the
             // supported-subset compositor doesn't act on them, but their presence
@@ -1081,6 +1133,7 @@ fn parse_hires(src: &str) -> ParsedHires {
         overscan,
         fallback_tiles,
         disable_original_tiles,
+        additions,
     }
 }
 
@@ -1430,6 +1483,30 @@ fn parse_tile_fields(rest: &str) -> Option<(u32, usize, u32, u32, i32)> {
     // field 5 = brightness (applied to the sampled texel).
     let brightness = parse_brightness(fields.get(5).copied());
     Some((key, bitmap_index, x, y, brightness))
+}
+
+/// Compute a tile key (Mesen `HdTileKey`) from an `<addition>` tile field +
+/// palette field. `wildcard` forces the palette-agnostic key (`0xFFFFFFFF`), as
+/// `defaultTile=Y` / `ignorePalette` does. A 32-char field is CHR-RAM tileData;
+/// a short field is the absolute CHR-ROM tile index.
+fn addition_key(tile_str: &str, palette_str: &str, wildcard: bool) -> Option<u32> {
+    let palette = if wildcard {
+        0xFFFF_FFFF
+    } else {
+        u32::from_str_radix(palette_str, 16).ok()?
+    };
+    if tile_str.len() >= 32 {
+        let mut tile_data = [0u8; 16];
+        for (i, b) in tile_data.iter_mut().enumerate() {
+            *b = u8::from_str_radix(tile_str.get(i * 2..i * 2 + 2)?, 16).ok()?;
+        }
+        Some(chr_ram_key(palette, &tile_data))
+    } else {
+        Some(chr_rom_key(
+            u32::from_str_radix(tile_str, 16).ok()?,
+            palette,
+        ))
+    }
 }
 
 /// Parse a real Mesen `<background>` line into `(imageName, x, y, priority)`.
@@ -1830,8 +1907,147 @@ impl HdCompositor {
             self.frame_scroll,
         );
 
+        // 4) `<addition>` post-pass — GATED: skipped (and the composite stays
+        //    byte-identical) unless a pack declares additions.
+        if !self.pack.additions.is_empty() {
+            self.draw_additions(tile_source, watched, frame, &mut chr_peek);
+        }
+
         self.frame = self.frame.wrapping_add(1);
         &self.out
+    }
+
+    /// `<addition>` post-pass: for each pixel whose tile matches an addition's
+    /// ORIGINAL key, sample the ADDITIONAL tile's replacement at this pixel's
+    /// intra-tile offset and write it at the target `(x±offsetX, y±offsetY)`
+    /// (mirror-adjusted) — Mesen's per-pixel additional-sprite injection, done as
+    /// a direct blit here. Output-only; only runs when `additions` is non-empty.
+    #[allow(
+        clippy::too_many_lines,
+        clippy::cast_possible_wrap,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_truncation
+    )]
+    fn draw_additions(
+        &mut self,
+        tile_source: &[HdTileSource],
+        watched: &WatchedMemory,
+        frame: u32,
+        chr_peek: &mut impl FnMut(u16) -> u8,
+    ) {
+        let scale = self.pack.scale as usize;
+        let out_w = self.out_w as usize;
+        let out_h = self.out_h as usize;
+        let ov_left = self.ov_left as usize;
+        let ov_top = self.ov_top as usize;
+        let crop_w = self.crop_w as usize;
+        let crop_h = self.crop_h as usize;
+        // Few additions; clone to a local so the loop body can borrow self.out /
+        // self.hash_cache / self.pack disjointly.
+        let additions = self.pack.additions.clone();
+        for y in ov_top..ov_top + crop_h {
+            for x in ov_left..ov_left + crop_w {
+                let rec = tile_source[y * NES_W as usize + x];
+                if rec.chr_addr == HD_TILE_NONE {
+                    continue;
+                }
+                let cache_key = (rec.chr_addr, rec.flip_h, rec.flip_v, rec.palette_colors);
+                let (exact, wild) = if let Some(&kw) = self.hash_cache.get(&cache_key) {
+                    kw
+                } else {
+                    let kw = tile_keys(rec, chr_peek);
+                    self.hash_cache.insert(cache_key, kw);
+                    kw
+                };
+                for add in &additions {
+                    let matched = if add.ignore_palette {
+                        wild == add.orig_key
+                    } else {
+                        exact == add.orig_key
+                    };
+                    if !matched {
+                        continue;
+                    }
+                    // Target (mirror-adjusted), bounds-checked to the crop window.
+                    let tx = x as i32
+                        + if rec.flip_h {
+                            -add.offset_x
+                        } else {
+                            add.offset_x
+                        };
+                    let ty = y as i32
+                        + if rec.flip_v {
+                            -add.offset_y
+                        } else {
+                            add.offset_y
+                        };
+                    if tx < ov_left as i32
+                        || tx >= (ov_left + crop_w) as i32
+                        || ty < ov_top as i32
+                        || ty >= (ov_top + crop_h) as i32
+                    {
+                        continue;
+                    }
+                    let Some(rules) = self
+                        .pack
+                        .tiles
+                        .get(&add.add_exact)
+                        .or_else(|| self.pack.tiles.get(&add.add_wild))
+                    else {
+                        continue;
+                    };
+                    let spatial = SpatialCtx {
+                        cell_x: x / TILE,
+                        cell_y: y / TILE,
+                        tile_source,
+                    };
+                    let Some(rule) = rules.iter().find(|r| {
+                        self.pack
+                            .all_hold(&r.conditions, watched, frame, rec, spatial)
+                    }) else {
+                        continue;
+                    };
+                    let Some(img) = self.pack.images.get(rule.image) else {
+                        continue;
+                    };
+                    let img_w = img.width as usize;
+                    let img_h = img.height as usize;
+                    let src_tx = rule.x as usize + usize::from(rec.offset_x) * scale;
+                    let src_ty = rule.y as usize + usize::from(rec.offset_y) * scale;
+                    let otx = tx as usize - ov_left;
+                    let oty = ty as usize - ov_top;
+                    for sub_y in 0..scale {
+                        let sy = src_ty + sub_y;
+                        let dyy = oty * scale + sub_y;
+                        if sy >= img_h || dyy >= out_h {
+                            continue;
+                        }
+                        for sub_x in 0..scale {
+                            let sx = src_tx + sub_x;
+                            let dxx = otx * scale + sub_x;
+                            if sx >= img_w || dxx >= out_w {
+                                continue;
+                            }
+                            let soff = (sy * img_w + sx) * 4;
+                            let alpha = img.rgba[soff + 3];
+                            if alpha == 0 {
+                                continue;
+                            }
+                            let doff = (dyy * out_w + dxx) * 4;
+                            blend_over(
+                                &mut self.out,
+                                doff,
+                                &img.rgba[soff..soff + 4],
+                                alpha,
+                                BlendMode::Alpha,
+                                rule.brightness,
+                                rec.color_mask,
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// v1.5.0 "Lens" Workstream A4 — per-pixel HD-pack composition trace.
@@ -2372,6 +2588,29 @@ mod tests {
         assert!(!parse_hires("<scale>2\n").disable_original_tiles);
     }
 
+    #[test]
+    fn addition_tag_parses() {
+        // <addition>origIdx,origPal,offX,offY,addIdx,addPal[,ignorePalette]
+        let parsed = parse_hires("<addition>0A,0F162736,8,-4,0B,0F162736\n");
+        assert_eq!(parsed.additions.len(), 1);
+        let a = &parsed.additions[0];
+        assert_eq!(a.orig_key, chr_rom_key(0x0A, 0x0F16_2736));
+        assert_eq!(a.add_exact, chr_rom_key(0x0B, 0x0F16_2736));
+        assert_eq!(a.add_wild, chr_rom_key(0x0B, 0xFFFF_FFFF));
+        assert_eq!((a.offset_x, a.offset_y), (8, -4));
+        assert!(!a.ignore_palette);
+        // ignorePalette -> the original is keyed on the palette wildcard.
+        let ip = parse_hires("<addition>0A,0F162736,0,0,0B,0F162736,1\n");
+        assert!(ip.additions[0].ignore_palette);
+        assert_eq!(ip.additions[0].orig_key, chr_rom_key(0x0A, 0xFFFF_FFFF));
+        // Too few fields -> dropped.
+        assert!(
+            parse_hires("<addition>0A,0F162736,8\n")
+                .additions
+                .is_empty()
+        );
+    }
+
     /// The 32-hex `tileData` of all-zero CHR bytes (the common blank tile) and
     /// the CRC-32 key it maps to — used across the real-format parse tests.
     const ZERO_TILE_DATA: &str = "00000000000000000000000000000000";
@@ -2693,6 +2932,7 @@ mod tests {
             overscan: [0; 4],
             fallback_tiles: HashMap::new(),
             disable_original_tiles: false,
+            additions: Vec::new(),
         }
     }
 
@@ -2911,6 +3151,7 @@ mod tests {
             overscan: [0; 4],
             fallback_tiles: HashMap::new(),
             disable_original_tiles: false,
+            additions: Vec::new(),
         };
         let mut comp = HdCompositor::new(pack);
         let (fb, ts) = one_tile_scene(0x0000);
@@ -2963,6 +3204,7 @@ mod tests {
             overscan: [0; 4],
             fallback_tiles: HashMap::new(),
             disable_original_tiles: false,
+            additions: Vec::new(),
         };
         let mut comp = HdCompositor::new(pack);
         let fb = vec![0u8; (NES_W * NES_H * 4) as usize];
@@ -3010,6 +3252,7 @@ mod tests {
             overscan: [0; 4],
             fallback_tiles: HashMap::new(),
             disable_original_tiles: false,
+            additions: Vec::new(),
         };
         let mut comp = HdCompositor::new(pack);
         let (fb, ts) = one_tile_scene(0x0000);
@@ -3174,6 +3417,7 @@ mod tests {
             overscan: [0; 4],
             fallback_tiles: HashMap::new(),
             disable_original_tiles: false,
+            additions: Vec::new(),
         };
         let mut comp = HdCompositor::new(pack);
 
