@@ -78,6 +78,26 @@ pub struct HdTileSource {
     /// `ProcessGrayscaleAndEmphasis`) so HD tiles track grayscale / emphasis fades
     /// like the base frame, which already has them baked in. Output-only.
     pub color_mask: u8,
+    /// v1.8.9 — every opaque sprite covering this pixel (up to 4), front-to-back,
+    /// for Mesen `spriteAtPosition` / `spriteNearby` (which match ANY covering
+    /// sprite, including ones a higher-priority BG occludes). `sprites[0]` is the
+    /// front-most. The existing `is_sprite` + tile fields still describe the
+    /// VISIBLE pixel (the winning layer); these add the hidden layers. Output-only.
+    pub sprites: [HdSprite; 4],
+    /// Number of valid entries in [`Self::sprites`] (`0..=4`).
+    pub sprite_count: u8,
+}
+
+/// One sprite covering a pixel, for the HD-pack multi-sprite conditions
+/// (`spriteAtPosition` / `spriteNearby`). Carries just the identity those
+/// conditions match on. Output-only telemetry.
+#[cfg(feature = "hd-pack")]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct HdSprite {
+    /// Absolute CHR-ROM tile index (`chr_phys/16`), or [`HD_CHR_RAM`] for CHR-RAM.
+    pub chr_tile_index: u32,
+    /// The sprite's packed `PaletteColors` (Mesen key form).
+    pub palette_colors: u32,
 }
 
 /// `chr_tile_index` sentinel meaning "CHR is RAM" — the tile is keyed by its 16
@@ -101,6 +121,8 @@ impl Default for HdTileSource {
             offset_y: 0,
             chr_tile_index: HD_CHR_RAM,
             color_mask: 0,
+            sprites: [HdSprite::default(); 4],
+            sprite_count: 0,
         }
     }
 }
@@ -2654,6 +2676,13 @@ impl Ppu {
         let mut spr_zero_pixel = false;
         #[cfg(feature = "hd-pack")]
         let mut spr_slot: usize = 0;
+        // v1.8.9 — every opaque sprite covering this pixel (slot indices), for the
+        // HD-pack multi-sprite conditions. Collected but never consulted by the
+        // winner logic below, so the framebuffer stays byte-identical.
+        #[cfg(feature = "hd-pack")]
+        let mut hd_sprites: [usize; 4] = [0; 4];
+        #[cfg(feature = "hd-pack")]
+        let mut hd_spr_n: usize = 0;
         if self.mask.contains(PpuMask::SHOW_SPRITE)
             && (pixel_x >= 8 || self.mask.contains(PpuMask::SHOW_SPRITE_LEFT))
         {
@@ -2674,16 +2703,30 @@ impl Ppu {
                 if val == 0 {
                     continue;
                 }
-                spr_idx = val;
-                spr_pal = self.spr_attr[i] & 0x03;
-                spr_priority_front = (self.spr_attr[i] & 0x20) == 0;
+                // hd-pack: record every opaque sprite covering this pixel.
                 #[cfg(feature = "hd-pack")]
-                {
-                    spr_slot = i;
+                if hd_spr_n < 4 {
+                    hd_sprites[hd_spr_n] = i;
+                    hd_spr_n += 1;
                 }
-                if i == 0 && self.spr_zero_in_line {
-                    spr_zero_pixel = true;
+                // The first opaque sprite (priority order) is the VISIBLE winner;
+                // `spr_idx == 0` gates it so only the first sets the render state.
+                if spr_idx == 0 {
+                    spr_idx = val;
+                    spr_pal = self.spr_attr[i] & 0x03;
+                    spr_priority_front = (self.spr_attr[i] & 0x20) == 0;
+                    #[cfg(feature = "hd-pack")]
+                    {
+                        spr_slot = i;
+                    }
+                    if i == 0 && self.spr_zero_in_line {
+                        spr_zero_pixel = true;
+                    }
                 }
+                // Default build stops at the winner (byte-identical); the hd-pack
+                // build keeps scanning to collect the hidden sprites above (which
+                // never touch the winner state, so the framebuffer is unchanged).
+                #[cfg(not(feature = "hd-pack"))]
                 break;
             }
         }
@@ -2740,6 +2783,19 @@ impl Ppu {
             // (the BG pixel is transparent OR the sprite has front priority) —
             // the same condition the `final_idx` priority match encodes.
             let shows_sprite = spr_idx != 0 && (bg_idx == 0 || spr_priority_front);
+            // Multi-sprite telemetry: the identity of every opaque sprite covering
+            // this pixel (front-to-back), for `spriteAtPosition` / `spriteNearby`.
+            let hd_sprite_list: [HdSprite; 4] = {
+                let mut arr = [HdSprite::default(); 4];
+                for (k, slot) in hd_sprites.iter().take(hd_spr_n).enumerate() {
+                    arr[k] = HdSprite {
+                        chr_tile_index: self.hd_spr_idx[*slot],
+                        palette_colors: self.hd_sprite_palette_colors(self.spr_attr[*slot] & 0x03),
+                    };
+                }
+                arr
+            };
+            let hd_sprite_n = u8::try_from(hd_spr_n).unwrap_or(4);
             let rec = if shows_sprite {
                 let attr = self.spr_attr[spr_slot];
                 let flip_h = (attr & 0x40) != 0;
@@ -2759,6 +2815,8 @@ impl Ppu {
                     offset_y: self.hd_spr_off_y[spr_slot], // already flip-baked at fetch
                     chr_tile_index: self.hd_spr_idx[spr_slot],
                     color_mask: self.mask.bits() & 0xE1,
+                    sprites: hd_sprite_list,
+                    sprite_count: hd_sprite_n,
                 }
             } else if bg_idx != 0 {
                 // Fine-X picks which of the two shifter tiles this pixel shows +
@@ -2784,6 +2842,8 @@ impl Ppu {
                         self.hd_bg_idx_next
                     },
                     color_mask: self.mask.bits() & 0xE1,
+                    sprites: hd_sprite_list,
+                    sprite_count: hd_sprite_n,
                 }
             } else {
                 // Universal background — no tile to substitute.
@@ -2798,6 +2858,8 @@ impl Ppu {
                     chr_tile_index: HD_CHR_RAM,
                     palette_colors: 0,
                     color_mask: 0,
+                    sprites: hd_sprite_list,
+                    sprite_count: hd_sprite_n,
                 }
             };
             self.hd_tile_source[off >> 2] = rec;

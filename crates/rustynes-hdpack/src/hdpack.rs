@@ -229,6 +229,16 @@ fn tile_matches(t: HdTileSource, tile: u32, palette: Option<u32>) -> bool {
     idx == tile && palette.is_none_or(|p| t.palette_colors == p)
 }
 
+/// Whether any of the up-to-4 sprites COVERING this pixel matches `palette` (or
+/// any covering sprite, when `palette` is `None`). Unlike `is_sprite` (the
+/// VISIBLE winner), this sees sprites a higher-priority background occludes —
+/// Mesen `spriteAtPosition` / `spriteNearby` match any covering sprite.
+fn sprite_present(t: HdTileSource, palette: Option<u32>) -> bool {
+    t.sprites[..usize::from(t.sprite_count)]
+        .iter()
+        .any(|s| palette.is_none_or(|p| s.palette_colors == p))
+}
+
 /// The CHR tile number (0..=255) carried by a [`HdTileSource::chr_addr`]
 /// (`tile = (addr >> 4) & 0xFF`).
 const fn tile_index(chr_addr: u16) -> u8 {
@@ -687,7 +697,7 @@ impl HdPack {
                 .is_some_and(|t| tile_matches(t, *tile, *palette)),
             ConditionKind::SpriteNearby { dx, dy, palette } => spatial
                 .nearby(*dx, *dy)
-                .is_some_and(|t| t.is_sprite && palette.is_none_or(|p| t.palette_colors == p)),
+                .is_some_and(|t| sprite_present(t, *palette)),
             ConditionKind::TileAtPosition {
                 x,
                 y,
@@ -698,7 +708,7 @@ impl HdPack {
                 .is_some_and(|t| tile_matches(t, *tile, *palette)),
             ConditionKind::SpriteAtPosition { x, y, palette } => spatial
                 .at(*x, *y)
-                .is_some_and(|t| t.is_sprite && palette.is_none_or(|p| t.palette_colors == p)),
+                .is_some_and(|t| sprite_present(t, *palette)),
         };
         held ^ cond.inverted
     }
@@ -2786,6 +2796,8 @@ mod tests {
             offset_y: 0,
             chr_tile_index: HD_CHR_RAM,
             color_mask: 0,
+            sprites: [rustynes_ppu::HdSprite::default(); 4],
+            sprite_count: 0,
         };
         (fb, ts)
     }
@@ -3245,9 +3257,12 @@ mod tests {
         });
         let rec = HdTileSource::default();
         let mut sprite_ts = full_tile_source();
+        // A sprite covers this cell (`spriteNearby` matches any covering sprite
+        // via `sprite_count`, even one a BG would occlude).
         sprite_ts[8] = HdTileSource {
             chr_addr: 0x010,
             is_sprite: true,
+            sprite_count: 1,
             ..HdTileSource::default()
         };
         let sprite_ctx = SpatialCtx {
@@ -3269,6 +3284,46 @@ mod tests {
             tile_source: &bg_ts,
         };
         assert!(!pack.eval_condition(0, &WatchedMemory::new(), 0, rec, bg_ctx));
+    }
+
+    #[test]
+    fn sprite_at_position_sees_occluded_sprite() {
+        // The VISIBLE pixel is BG (a higher-priority background won), but a sprite
+        // covers it — `spriteAtPosition` matches via the multi-sprite telemetry.
+        let mut ts = full_tile_source();
+        ts[16] = HdTileSource {
+            is_sprite: false, // BG won priority at this pixel
+            sprites: [
+                rustynes_ppu::HdSprite {
+                    chr_tile_index: 5,
+                    palette_colors: 0x1234,
+                },
+                rustynes_ppu::HdSprite::default(),
+                rustynes_ppu::HdSprite::default(),
+                rustynes_ppu::HdSprite::default(),
+            ],
+            sprite_count: 1,
+            ..HdTileSource::default()
+        };
+        let ctx = SpatialCtx {
+            cell_x: 0,
+            cell_y: 0,
+            tile_source: &ts,
+        };
+        let rec = HdTileSource::default();
+        let hit = pack_with_condition(ConditionKind::SpriteAtPosition {
+            x: 16,
+            y: 0,
+            palette: Some(0x1234),
+        });
+        assert!(hit.eval_condition(0, &WatchedMemory::new(), 0, rec, ctx));
+        // A different palette doesn't match the covering sprite.
+        let miss = pack_with_condition(ConditionKind::SpriteAtPosition {
+            x: 16,
+            y: 0,
+            palette: Some(0x9999),
+        });
+        assert!(!miss.eval_condition(0, &WatchedMemory::new(), 0, rec, ctx));
     }
 
     #[test]
