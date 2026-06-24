@@ -3,7 +3,7 @@
 //! best result. The search runs synchronously under the emu lock when "Run" is
 //! clicked; it restores the anchor afterwards, so the live timeline is untouched.
 
-use crate::basic_bot::{self, BotConfig, BotResult};
+use crate::basic_bot::{self, BotConfig};
 use rustynes_core::Nes;
 
 /// Persistent state of the `BasicBot` panel.
@@ -18,8 +18,6 @@ pub struct BasicBotPanel {
     attempts: usize,
     /// PRNG seed (reproducible).
     seed: u64,
-    /// The most recent result.
-    last: Option<BotResult>,
     /// A status / error line.
     status: String,
     /// v1.8.9 — detached into its own OS window (egui multi-viewport).
@@ -37,7 +35,6 @@ impl Default for BasicBotPanel {
             frames: 60,
             attempts: 200,
             seed: 0x1234_5678,
-            last: None,
             status: String::new(),
             detached: false,
             run_requested: false,
@@ -64,10 +61,10 @@ pub fn show(
                 .with_title("BasicBot")
                 .with_inner_size([340.0, 320.0]),
             |vctx, _class| {
-                // `CentralPanel::show(ctx)` is the documented top-level viewport
-                // idiom (eframe's own multi-viewport examples use it).
-                #[allow(deprecated)]
-                egui::CentralPanel::default().show(vctx, |ui| body(ui, state, can_run));
+                // A full-window Area hosts the body without the deprecated
+                // context-level `CentralPanel::show`.
+                egui::Area::new(egui::Id::new("basic_bot_detached"))
+                    .show(vctx, |ui| body(ui, state, can_run));
                 // The OS window's close button reattaches to the docked panel.
                 if vctx.input(|i| i.viewport().close_requested()) {
                     state.detached = false;
@@ -124,7 +121,12 @@ fn body(ui: &mut egui::Ui, state: &mut BasicBotPanel, can_run: bool) {
 /// Parse the address + run the search, recording a status line.
 fn run_search(state: &mut BasicBotPanel, nes: Option<&mut Nes>) {
     let Some(nes) = nes else { return };
-    let Ok(addr) = u16::from_str_radix(state.addr_hex.trim().trim_start_matches("0x"), 16) else {
+    let hex = state
+        .addr_hex
+        .trim()
+        .trim_start_matches("0x")
+        .trim_start_matches("0X");
+    let Ok(addr) = u16::from_str_radix(hex, 16) else {
         "Invalid target address (enter hex, e.g. 0075).".clone_into(&mut state.status);
         return;
     };
@@ -143,5 +145,4 @@ fn run_search(state: &mut BasicBotPanel, nes: Option<&mut Nes>) {
         r.attempts_run,
         r.best_inputs.len()
     );
-    state.last = Some(r);
 }

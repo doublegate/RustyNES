@@ -1574,8 +1574,7 @@ impl DebuggerOverlay {
             // they don't collide with the challenge/progress stack (bottom-right) or
             // the scoreboard popups (top). Captured already (and mirrored into the
             // status bar); this surfaces them on-screen the way RA's HUD does.
-            let trackers = status.trackers.clone();
-            if !trackers.is_empty() {
+            if !status.trackers.is_empty() {
                 egui::Area::new(egui::Id::new("cheevos_trackers"))
                     .anchor(egui::Align2::LEFT_BOTTOM, [12.0, -48.0])
                     .show(ctx, |ui| {
@@ -1586,7 +1585,7 @@ impl DebuggerOverlay {
                             .inner_margin(egui::Margin::same(6))
                             .corner_radius(4)
                             .show(ui, |ui| {
-                                for tr in &trackers {
+                                for tr in &status.trackers {
                                     ui.label(
                                         egui::RichText::new(format!("\u{1F3C1} {tr}"))
                                             .color(egui::Color32::from_rgb(0x9C, 0xD0, 0xF0)),

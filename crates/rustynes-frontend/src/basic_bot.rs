@@ -4,10 +4,11 @@
 //! From the current emulator state it snapshots an anchor, then repeatedly restores
 //! that anchor, plays a randomly-drawn input sequence, and scores the result by a
 //! target memory value (1 or 2 bytes). The best-scoring sequence is kept. It runs
-//! entirely on the deterministic core via [`Nes::snapshot`] / [`Nes::restore`] /
-//! [`Nes::run_frame`] / [`Nes::peek`] and its own seeded PRNG, so the same anchor +
-//! [`BotConfig`] always yields the same result — it never perturbs live output (the
-//! caller restores the anchor afterwards) and adds no hidden non-determinism.
+//! entirely on the deterministic core via [`Nes::snapshot`] / [`Nes::restore_quiet`]
+//! / [`Nes::run_frame`] / [`Nes::peek`] and its own seeded PRNG, so the same anchor +
+//! [`BotConfig`] always yields the same result. [`search`] restores the anchor with
+//! `restore_quiet` on return (which leaves the rewind ring intact), so it never
+//! perturbs the live timeline and adds no hidden non-determinism.
 
 use rustynes_core::{Buttons, Nes};
 
@@ -104,15 +105,18 @@ pub fn search(
     let mut best = BotResult::default();
     // Baseline: the target value with no input (so a search that can't improve still
     // reports the honest starting score rather than 0).
-    if nes.restore(&anchor).is_ok() {
+    if nes.restore_quiet(&anchor).is_ok() {
         best.best_score = read_target(nes, cfg);
     }
     let pool_len = cfg.pool.len();
+    // Reused across attempts (cleared each one) so a search of up to `attempts`
+    // iterations allocates the input buffer once, not per attempt.
+    let mut inputs = Vec::with_capacity(cfg.frames);
     for attempt in 0..cfg.attempts {
-        if nes.restore(&anchor).is_err() {
+        if nes.restore_quiet(&anchor).is_err() {
             break;
         }
-        let mut inputs = Vec::with_capacity(cfg.frames);
+        inputs.clear();
         for _ in 0..cfg.frames {
             let b = if pool_len == 0 {
                 Buttons::empty()
@@ -128,14 +132,14 @@ pub fn search(
         best.attempts_run = attempt + 1;
         if score > best.best_score {
             best.best_score = score;
-            best.best_inputs = inputs;
+            best.best_inputs.clone_from(&inputs);
         }
         if let Some(cb) = progress.as_deref_mut() {
             cb(attempt + 1, cfg.attempts);
         }
     }
     // Leave the emulator exactly where we found it.
-    let _ = nes.restore(&anchor);
+    let _ = nes.restore_quiet(&anchor);
     best
 }
 
@@ -183,6 +187,26 @@ mod tests {
         let _ = search(&mut nes, &cfg, None);
         // The live state is byte-identical to before the search.
         assert_eq!(nes.snapshot(), before);
+    }
+
+    #[test]
+    fn search_preserves_the_rewind_ring() {
+        // The whole point of `restore_quiet`: a search must not wipe the user's
+        // rewind history (a plain `restore` clears the ring).
+        let mut nes = booted();
+        nes.enable_rewind();
+        for _ in 0..5 {
+            nes.run_frame();
+            nes.rewind_capture();
+        }
+        let cfg = BotConfig {
+            frames: 4,
+            attempts: 8,
+            ..BotConfig::default()
+        };
+        let _ = search(&mut nes, &cfg, None);
+        // The captured frames survive the search, so a rewind step still works.
+        assert!(nes.rewind_step_back(), "search wiped the rewind ring");
     }
 
     #[test]
