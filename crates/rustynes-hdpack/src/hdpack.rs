@@ -390,6 +390,11 @@ pub struct HdPack {
     /// left]` (Mesen `<overscan>Top,Right,Bottom,Left`). The composite output is
     /// `(256-left-right) x (240-top-bottom)`, scaled. All-zero = no crop.
     overscan: [u32; 4],
+    /// v1.8.9 — explicit `<fallback>tileIndex,fallbackTileIndex` map (Mesen
+    /// `FallbackTiles`). When a CHR-ROM tile's exact + wildcard lookup misses, the
+    /// fallback index's keys are tried, so a pack can route undefined variants to
+    /// a defined tile. (Empty = no fallbacks.)
+    fallback_tiles: HashMap<u32, u32>,
 }
 
 impl HdPack {
@@ -608,6 +613,7 @@ impl HdPack {
             watched_addresses: watched,
             audio_decls: parsed.audio_decls,
             overscan: parsed.overscan,
+            fallback_tiles: parsed.fallback_tiles,
         })
     }
 
@@ -820,6 +826,8 @@ struct ParsedHires {
     audio_decls: Vec<HdAudioDecl>,
     /// v1.8.9 — `<overscan>` crop `[top, right, bottom, left]` (NES pixels).
     overscan: [u32; 4],
+    /// v1.8.9 — explicit `<fallback>` tileIndex -> fallbackTileIndex map.
+    fallback_tiles: HashMap<u32, u32>,
 }
 
 /// Strip a leading `[Cond1&Cond2&...]` condition prefix off a `hires.txt` line
@@ -869,6 +877,7 @@ fn parse_hires(src: &str) -> ParsedHires {
     let mut backgrounds: Vec<ParsedBackground> = Vec::new();
     let mut audio_decls: Vec<HdAudioDecl> = Vec::new();
     let mut overscan = [0u32; 4];
+    let mut fallback_tiles: HashMap<u32, u32> = HashMap::new();
 
     // First pass over `<condition>` / `<img>` (and the headers + audio decls) so
     // forward-referenced names resolve. `<img>` indices are declaration order, so
@@ -945,6 +954,17 @@ fn parse_hires(src: &str) -> ParsedHires {
                     overscan = [nums[0], nums[1], nums[2], nums[3]];
                 }
             }
+            // v1.8.9 — `<fallback>tileIndex,fallbackTileIndex` (hex). Routes an
+            // undefined CHR-ROM tile to a defined one when the lookup misses.
+            "fallback" => {
+                let nums: Vec<u32> = rest
+                    .split(',')
+                    .filter_map(|s| u32::from_str_radix(s.trim(), 16).ok())
+                    .collect();
+                if nums.len() == 2 {
+                    fallback_tiles.insert(nums[0], nums[1]);
+                }
+            }
             // `<ver>`, `<options>`, `<supportedRom>`, `<overscan>`, `<patch>`,
             // overlays, additions, fallbacks, etc. are accepted-and-ignored (the
             // supported-subset compositor doesn't act on them, but their presence
@@ -1017,6 +1037,7 @@ fn parse_hires(src: &str) -> ParsedHires {
         backgrounds,
         audio_decls,
         overscan,
+        fallback_tiles,
     }
 }
 
@@ -1599,12 +1620,25 @@ impl HdCompositor {
                     kw
                 };
                 // Two-stage lookup (Mesen `GetMatchingTile`): exact palette+content
-                // key first, then the palette-agnostic default key.
+                // key first, then the palette-agnostic default key; then the
+                // `<fallback>` map for an undefined CHR-ROM tile.
                 let Some(rules) = self
                     .pack
                     .tiles
                     .get(&exact)
                     .or_else(|| self.pack.tiles.get(&wild))
+                    .or_else(|| {
+                        if rec.chr_tile_index == HD_CHR_RAM {
+                            return None;
+                        }
+                        let fb = *self.pack.fallback_tiles.get(&rec.chr_tile_index)?;
+                        let fb_exact = chr_rom_key(fb, rec.palette_colors);
+                        let fb_wild = chr_rom_key(fb, 0xFFFF_FFFF);
+                        self.pack
+                            .tiles
+                            .get(&fb_exact)
+                            .or_else(|| self.pack.tiles.get(&fb_wild))
+                    })
                 else {
                     continue;
                 };
@@ -2115,6 +2149,15 @@ mod tests {
         assert_eq!(comp.dimensions(), ((256 - 32) * 2, (240 - 16) * 2));
     }
 
+    #[test]
+    fn fallback_tiles_parse() {
+        // <fallback>tileIndex,fallbackTileIndex (hex).
+        let parsed = parse_hires("<fallback>0A,0B\n<fallback>10,20\n");
+        assert_eq!(parsed.fallback_tiles.get(&0x0A), Some(&0x0B));
+        assert_eq!(parsed.fallback_tiles.get(&0x10), Some(&0x20));
+        assert_eq!(parsed.fallback_tiles.len(), 2);
+    }
+
     /// The 32-hex `tileData` of all-zero CHR bytes (the common blank tile) and
     /// the CRC-32 key it maps to — used across the real-format parse tests.
     const ZERO_TILE_DATA: &str = "00000000000000000000000000000000";
@@ -2434,6 +2477,7 @@ mod tests {
             watched_addresses: Vec::new(),
             audio_decls: Vec::new(),
             overscan: [0; 4],
+            fallback_tiles: HashMap::new(),
         }
     }
 
@@ -2647,6 +2691,7 @@ mod tests {
             watched_addresses: vec![0x10],
             audio_decls: Vec::new(),
             overscan: [0; 4],
+            fallback_tiles: HashMap::new(),
         };
         let mut comp = HdCompositor::new(pack);
         let (fb, ts) = one_tile_scene(0x0000);
@@ -2695,6 +2740,7 @@ mod tests {
             watched_addresses: vec![0x40],
             audio_decls: Vec::new(),
             overscan: [0; 4],
+            fallback_tiles: HashMap::new(),
         };
         let mut comp = HdCompositor::new(pack);
         let fb = vec![0u8; (NES_W * NES_H * 4) as usize];
@@ -2740,6 +2786,7 @@ mod tests {
             watched_addresses: Vec::new(),
             audio_decls: Vec::new(),
             overscan: [0; 4],
+            fallback_tiles: HashMap::new(),
         };
         let mut comp = HdCompositor::new(pack);
         let (fb, ts) = one_tile_scene(0x0000);
@@ -2902,6 +2949,7 @@ mod tests {
             watched_addresses: Vec::new(),
             audio_decls: Vec::new(),
             overscan: [0; 4],
+            fallback_tiles: HashMap::new(),
         };
         let mut comp = HdCompositor::new(pack);
 
