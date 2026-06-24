@@ -153,6 +153,10 @@ enum ConditionKind {
         dy: i32,
         tile: u32,
         palette: Option<u32>,
+        /// `Some(hash)` matches the cell's 16-byte CHR CONTENT (the 32-char
+        /// tileData form) instead of `tile`'s index. Needs the composite's
+        /// precomputed `content_hashes`.
+        content: Option<u32>,
     },
     /// The 8x8 cell `(dx, dy)` pixels away is a sprite (and matches `palette` if
     /// set). Mesen `spriteNearby`.
@@ -168,6 +172,8 @@ enum ConditionKind {
         y: u16,
         tile: u32,
         palette: Option<u32>,
+        /// `Some(hash)` matches the CHR CONTENT (32-char tileData form).
+        content: Option<u32>,
     },
     /// The pixel at the ABSOLUTE screen position `(x, y)` is a sprite (+ palette).
     /// Mesen `spriteAtPosition`.
@@ -186,21 +192,47 @@ struct SpatialCtx<'a> {
     cell_x: usize,
     cell_y: usize,
     tile_source: &'a [HdTileSource],
+    /// v1.8.9 — per-pixel CHR-content hash (`calculate_hash` of each cell's 16 CHR
+    /// bytes), for the `tileNearby` / `tileAtPosition` tile-DATA-hash form. Empty
+    /// unless the pack uses such a condition (the composite precomputes it then),
+    /// in which case it is indexed exactly like `tile_source`.
+    content_hashes: &'a [u32],
+}
+
+/// The flat per-pixel index of an absolute screen position, or `None` off-screen.
+fn pixel_index(x: i32, y: i32) -> Option<usize> {
+    let x = usize::try_from(x).ok()?;
+    let y = usize::try_from(y).ok()?;
+    if x >= NES_W as usize || y >= NES_H as usize {
+        return None;
+    }
+    Some(y * NES_W as usize + x)
 }
 
 impl SpatialCtx<'_> {
     /// The tile-source record of the cell `(dx, dy)` *pixels* away (the offsets
     /// are 8-aligned in practice), or `None` if it falls off-screen.
     fn nearby(self, dx: i32, dy: i32) -> Option<HdTileSource> {
-        // `try_from` after the offset rejects negatives (off the left/top edge);
-        // the `>=` checks reject the right/bottom edge. No signed casts of the
-        // screen dims (clippy::cast_possible_wrap).
-        let x = usize::try_from(i32::try_from(self.cell_x * TILE).ok()? + dx).ok()?;
-        let y = usize::try_from(i32::try_from(self.cell_y * TILE).ok()? + dy).ok()?;
-        if x >= NES_W as usize || y >= NES_H as usize {
-            return None;
-        }
-        self.tile_source.get(y * NES_W as usize + x).copied()
+        pixel_index(
+            i32::try_from(self.cell_x * TILE).ok()? + dx,
+            i32::try_from(self.cell_y * TILE).ok()? + dy,
+        )
+        .and_then(|i| self.tile_source.get(i).copied())
+    }
+
+    /// The CHR-content hash of the cell `(dx, dy)` pixels away, if precomputed.
+    fn nearby_content(self, dx: i32, dy: i32) -> Option<u32> {
+        let i = pixel_index(
+            i32::try_from(self.cell_x * TILE).ok()? + dx,
+            i32::try_from(self.cell_y * TILE).ok()? + dy,
+        )?;
+        self.content_hashes.get(i).copied()
+    }
+
+    /// The CHR-content hash at the absolute screen pixel `(x, y)`, if precomputed.
+    fn at_content(self, x: u16, y: u16) -> Option<u32> {
+        let i = pixel_index(i32::from(x), i32::from(y))?;
+        self.content_hashes.get(i).copied()
     }
 
     /// The tile-source record at the ABSOLUTE screen pixel `(x, y)`, or `None`
@@ -729,9 +761,21 @@ impl HdPack {
                 dy,
                 tile,
                 palette,
-            } => spatial
-                .nearby(*dx, *dy)
-                .is_some_and(|t| tile_matches(t, *tile, *palette)),
+                content,
+            } => content.map_or_else(
+                || {
+                    spatial
+                        .nearby(*dx, *dy)
+                        .is_some_and(|t| tile_matches(t, *tile, *palette))
+                },
+                |target| {
+                    spatial.nearby(*dx, *dy).is_some_and(|t| {
+                        t.chr_addr != HD_TILE_NONE
+                            && spatial.nearby_content(*dx, *dy) == Some(target)
+                            && palette.is_none_or(|p| t.palette_colors == p)
+                    })
+                },
+            ),
             ConditionKind::SpriteNearby { dx, dy, palette } => spatial
                 .nearby(*dx, *dy)
                 .is_some_and(|t| sprite_present(t, *palette)),
@@ -740,9 +784,21 @@ impl HdPack {
                 y,
                 tile,
                 palette,
-            } => spatial
-                .at(*x, *y)
-                .is_some_and(|t| tile_matches(t, *tile, *palette)),
+                content,
+            } => content.map_or_else(
+                || {
+                    spatial
+                        .at(*x, *y)
+                        .is_some_and(|t| tile_matches(t, *tile, *palette))
+                },
+                |target| {
+                    spatial.at(*x, *y).is_some_and(|t| {
+                        t.chr_addr != HD_TILE_NONE
+                            && spatial.at_content(*x, *y) == Some(target)
+                            && palette.is_none_or(|p| t.palette_colors == p)
+                    })
+                },
+            ),
             ConditionKind::SpriteAtPosition { x, y, palette } => spatial
                 .at(*x, *y)
                 .is_some_and(|t| sprite_present(t, *palette)),
@@ -1340,21 +1396,22 @@ fn parse_spatial(ty: &str, fields: &[&str]) -> Option<ConditionKind> {
             let value = u8::try_from(parse_int(fields[3])? & 0xFF).ok()?;
             ConditionKind::PositionCheckY { op, value }
         }
-        // tileNearby: NAME,tileNearby,x,y,tileIndex(hex),palette(hex)[,ignorePalette].
-        // The 32-char tile-data-hash form (CHR-RAM content) is still dropped.
+        // tileNearby: NAME,tileNearby,x,y,tileIndex|tileData,palette[,ignorePalette].
+        // A 32-char field is the CHR-RAM tileData (content) form.
         "tileNearby" => {
-            if fields.len() < 5 || fields[4].len() >= 32 {
+            if fields.len() < 5 {
                 return None;
             }
             let dx = fields[2].parse::<i32>().ok()?;
             let dy = fields[3].parse::<i32>().ok()?;
-            let tile = u32::from_str_radix(fields[4], 16).ok()?;
             let palette = cond_palette(fields, 5, 6);
+            let (tile, content) = parse_tile_or_content(fields[4])?;
             ConditionKind::TileNearby {
                 dx,
                 dy,
                 tile,
                 palette,
+                content,
             }
         }
         // spriteNearby: NAME,spriteNearby,x,y[,tileIndex,palette,ignorePalette].
@@ -1370,18 +1427,19 @@ fn parse_spatial(ty: &str, fields: &[&str]) -> Option<ConditionKind> {
         // tileAtPosition / spriteAtPosition: NAME,type,x,y,tileIndex,palette[,ign].
         // x,y are ABSOLUTE screen pixels (vs the relative offsets of *Nearby).
         "tileAtPosition" => {
-            if fields.len() < 5 || fields[4].len() >= 32 {
+            if fields.len() < 5 {
                 return None;
             }
             let x = fields[2].parse::<u16>().ok()?;
             let y = fields[3].parse::<u16>().ok()?;
-            let tile = u32::from_str_radix(fields[4], 16).ok()?;
             let palette = cond_palette(fields, 5, 6);
+            let (tile, content) = parse_tile_or_content(fields[4])?;
             ConditionKind::TileAtPosition {
                 x,
                 y,
                 tile,
                 palette,
+                content,
             }
         }
         "spriteAtPosition" => {
@@ -1409,6 +1467,21 @@ fn cond_palette(fields: &[&str], palette_idx: usize, ignore_idx: usize) -> Optio
     fields
         .get(palette_idx)
         .and_then(|s| u32::from_str_radix(s.trim(), 16).ok())
+}
+
+/// Parse a `tileNearby` / `tileAtPosition` tile field: a 32-char field is the
+/// CHR-RAM `tileData` (16 CHR bytes) -> `(0, Some(content_hash))`; a shorter
+/// field is the absolute tile index -> `(index, None)`.
+fn parse_tile_or_content(field: &str) -> Option<(u32, Option<u32>)> {
+    if field.len() >= 32 {
+        let mut td = [0u8; 16];
+        for (i, b) in td.iter_mut().enumerate() {
+            *b = u8::from_str_radix(field.get(i * 2..i * 2 + 2)?, 16).ok()?;
+        }
+        Some((0, Some(calculate_hash(&td))))
+    } else {
+        Some((u32::from_str_radix(field, 16).ok()?, None))
+    }
 }
 
 /// Parse the comma-separated fields of a real Mesen `<tile>` rule into
@@ -1794,6 +1867,40 @@ impl HdCompositor {
         //    (cached), so the per-pixel cost is a hash-map lookup + sample.
         self.hash_cache.clear();
         let out_h = self.out_h as usize;
+        // v1.8.9 — GATED CHR-content hashes for the `tileNearby`/`tileAtPosition`
+        // tile-DATA-hash form. Only built when a condition uses it (else empty +
+        // zero cost); `content_hashes[i]` = `calculate_hash` of cell `i`'s 16 CHR
+        // bytes (0 for a backdrop pixel).
+        let needs_content = self.pack.conditions.iter().any(|c| {
+            matches!(
+                c.kind,
+                ConditionKind::TileNearby {
+                    content: Some(_),
+                    ..
+                } | ConditionKind::TileAtPosition {
+                    content: Some(_),
+                    ..
+                }
+            )
+        });
+        let content_hashes: Vec<u32> = if needs_content {
+            tile_source
+                .iter()
+                .map(|rec| {
+                    if rec.chr_addr == HD_TILE_NONE {
+                        0
+                    } else {
+                        let mut td = [0u8; 16];
+                        for (j, b) in td.iter_mut().enumerate() {
+                            *b = chr_peek(rec.chr_addr.wrapping_add(u16::try_from(j).unwrap_or(0)));
+                        }
+                        calculate_hash(&td)
+                    }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         // Overscan-cropped: iterate the visible region; `tile_source` is still
         // indexed in full-frame NES coords (conditions key on the NES position).
         for y in ov_top..ov_top + crop_h {
@@ -1840,6 +1947,7 @@ impl HdCompositor {
                     cell_x: x / TILE,
                     cell_y: y / TILE,
                     tile_source,
+                    content_hashes: &content_hashes,
                 };
                 let Some(rule) = rules.iter().find(|r| {
                     self.pack
@@ -2000,6 +2108,7 @@ impl HdCompositor {
                         cell_x: x / TILE,
                         cell_y: y / TILE,
                         tile_source,
+                        content_hashes: &[],
                     };
                     let Some(rule) = rules.iter().find(|r| {
                         self.pack
@@ -2110,6 +2219,7 @@ impl HdCompositor {
             cell_x,
             cell_y,
             tile_source,
+            content_hashes: &[],
         };
 
         let mut out = PixelInspection {
@@ -2202,6 +2312,7 @@ impl HdCompositor {
             cell_x: 0,
             cell_y: 0,
             tile_source: &[],
+            content_hashes: &[],
         };
         for bg in &pack.backgrounds {
             if under != (bg.priority < 0) {
@@ -2475,6 +2586,7 @@ mod tests {
         cell_x: 0,
         cell_y: 0,
         tile_source: &[],
+        content_hashes: &[],
     };
 
     #[test]
@@ -2611,6 +2723,31 @@ mod tests {
         );
     }
 
+    #[test]
+    fn tiledata_hash_condition_parses() {
+        // A 32-char tileData field selects the CHR-content match (not the index).
+        let td = "0".repeat(32);
+        let c = parse_condition(&format!("c,tileNearby,8,0,{td},0F162736")).unwrap();
+        match c.kind {
+            ConditionKind::TileNearby { tile, content, .. } => {
+                assert_eq!(tile, 0);
+                assert_eq!(content, Some(calculate_hash(&[0u8; 16])));
+            }
+            _ => panic!("expected a content-form tileNearby"),
+        }
+        // The short index form stays `content: None`.
+        assert!(matches!(
+            parse_condition("c,tileNearby,8,0,2A,0F162736")
+                .unwrap()
+                .kind,
+            ConditionKind::TileNearby {
+                content: None,
+                tile: 0x2A,
+                ..
+            }
+        ));
+    }
+
     /// The 32-hex `tileData` of all-zero CHR bytes (the common blank tile) and
     /// the CRC-32 key it maps to — used across the real-format parse tests.
     const ZERO_TILE_DATA: &str = "00000000000000000000000000000000";
@@ -2685,17 +2822,17 @@ mod tests {
 
     #[test]
     fn tile_gated_on_unsupported_condition_is_dropped() {
-        // The 32-char tile-DATA-hash form (CHR-RAM content) is still outside our
-        // telemetry -> the rule is dropped. (The tileAtPosition *index* form, and
-        // tileNearby / positionCheck, are all supported now.)
+        // An UNKNOWN condition type parses to `None`, so a tile gated on it is
+        // dropped. (Every Mesen condition we recognize — incl. the tileData-hash
+        // and absolute-position forms as of v1.8.9 — is now supported.)
         let src = format!(
-            "<condition>at,tileAtPosition,0,0,{ZERO_TILE_DATA},0F123712\n\
+            "<condition>at,someUnknownCheck,0,0\n\
              [at]<tile>0,{ZERO_TILE_DATA},00000000,0,0,1,N\n"
         );
         let parsed = parse_hires(&src);
         assert!(
             parsed.tiles.is_empty(),
-            "unsupported condition -> drop rule"
+            "unknown condition -> drop the gated rule"
         );
     }
 
@@ -3504,6 +3641,7 @@ mod tests {
             cell_x: cx,
             cell_y: 0,
             tile_source: &ts,
+            content_hashes: &[],
         };
         assert!(pack.eval_condition(0, &WatchedMemory::new(), 0, rec, at(16)));
         assert!(!pack.eval_condition(0, &WatchedMemory::new(), 0, rec, at(15)));
@@ -3512,6 +3650,7 @@ mod tests {
             cell_x: 16,
             cell_y: 0,
             tile_source: &[],
+            content_hashes: &[],
         };
         assert!(!pack.eval_condition(0, &WatchedMemory::new(), 0, rec, bg));
     }
@@ -3529,6 +3668,7 @@ mod tests {
             cell_x: 0,
             cell_y: cy,
             tile_source: &ts,
+            content_hashes: &[],
         };
         assert!(pack.eval_condition(0, &WatchedMemory::new(), 0, rec, at(1)));
         assert!(!pack.eval_condition(0, &WatchedMemory::new(), 0, rec, at(2)));
@@ -3547,6 +3687,7 @@ mod tests {
             cell_x: 0,
             cell_y: 0,
             tile_source: &ts,
+            content_hashes: &[],
         };
         let rec = HdTileSource::default();
         let hit = pack_with_condition(ConditionKind::TileNearby {
@@ -3554,6 +3695,7 @@ mod tests {
             dy: 0,
             tile: 0x0A,
             palette: None,
+            content: None,
         });
         assert!(hit.eval_condition(0, &WatchedMemory::new(), 0, rec, ctx));
         // Wrong index, and an off-screen neighbour, both fail closed.
@@ -3562,6 +3704,7 @@ mod tests {
             dy: 0,
             tile: 0x0B,
             palette: None,
+            content: None,
         });
         assert!(!miss.eval_condition(0, &WatchedMemory::new(), 0, rec, ctx));
         let off = pack_with_condition(ConditionKind::TileNearby {
@@ -3569,6 +3712,7 @@ mod tests {
             dy: 0,
             tile: 0x0A,
             palette: None,
+            content: None,
         });
         assert!(!off.eval_condition(0, &WatchedMemory::new(), 0, rec, ctx));
     }
@@ -3594,6 +3738,7 @@ mod tests {
             cell_x: 0,
             cell_y: 0,
             tile_source: &sprite_ts,
+            content_hashes: &[],
         };
         assert!(pack.eval_condition(0, &WatchedMemory::new(), 0, rec, sprite_ctx));
         // A background neighbour (is_sprite = false) does not satisfy it.
@@ -3607,6 +3752,7 @@ mod tests {
             cell_x: 0,
             cell_y: 0,
             tile_source: &bg_ts,
+            content_hashes: &[],
         };
         assert!(!pack.eval_condition(0, &WatchedMemory::new(), 0, rec, bg_ctx));
     }
@@ -3634,6 +3780,7 @@ mod tests {
             cell_x: 0,
             cell_y: 0,
             tile_source: &ts,
+            content_hashes: &[],
         };
         let rec = HdTileSource::default();
         let hit = pack_with_condition(ConditionKind::SpriteAtPosition {
@@ -3672,6 +3819,7 @@ mod tests {
                 dy: 0,
                 tile: 0x0A,
                 palette: None,
+                content: None,
             }
         ));
         assert!(matches!(
@@ -3690,6 +3838,7 @@ mod tests {
                 y: 32,
                 tile: 0x0A,
                 palette: Some(1),
+                content: None,
             }
         ));
         assert!(matches!(
