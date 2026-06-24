@@ -77,6 +77,9 @@ pub mod input_macros;
 // v1.8.9 "Backlog" — FDS firmware (disksys.rom) recognition for the Settings FDS
 // picker (size + known-hash classification).
 pub mod fds_firmware;
+// v1.8.9 "Backlog" — BasicBot: a save-state-anchored brute-force input search over
+// the deterministic core.
+pub mod basic_bot;
 // v1.2.0 beta.2 (Workstream C3) — HD-pack / mod loader (native-only, default OFF).
 #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
 pub mod hdpack;
