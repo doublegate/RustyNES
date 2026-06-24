@@ -1150,22 +1150,6 @@ fn parse_spatial(ty: &str, fields: &[&str]) -> Option<ConditionKind> {
     })
 }
 
-/// Parse a 32-hex-character `tileData` string (a tile's 16 CHR bytes) into the
-/// CRC-32 lookup key the compositor computes from the live CHR snapshot. Returns
-/// `None` if the field is not at least 32 hex digits (a CHR-ROM tile referenced
-/// by index rather than raw bitmap — not supported by the hash-keyed substitution
-/// path, so its rule is skipped rather than mis-decoded).
-fn parse_tile_data_key(s: &str) -> Option<u32> {
-    if s.len() < 32 {
-        return None;
-    }
-    let mut bytes = [0u8; 16];
-    for (i, b) in bytes.iter_mut().enumerate() {
-        *b = u8::from_str_radix(s.get(i * 2..i * 2 + 2)?, 16).ok()?;
-    }
-    Some(crc32(&bytes))
-}
-
 /// Parse the comma-separated fields of a real Mesen `<tile>` rule into
 /// `(chrKey, bitmapIndex, x, y)`.
 ///
@@ -1174,18 +1158,19 @@ fn parse_tile_data_key(s: &str) -> Option<u32> {
 /// — e.g. `31,00000000000000007F3F1F0F07030100,0F162736,80,224,1,N,4018065946,231`:
 ///
 /// - field 0 = `bitmapIndex` (index into the `<img>` declarations),
-/// - field 1 = `tileData` (32 hex chars = the tile's 16 CHR bytes; the match key),
-/// - field 2 = `palette` (4-colour palette, hex; not consulted by the
-///   CRC-keyed substitution — `RustyNES`'s PPU telemetry has no palette-discriminated
-///   tile identity, a documented subset limitation),
-/// - field 3 = `x`, field 4 = `y` (the replacement rectangle's top-left in the
-///   bitmap),
-/// - field 5 = `brightness`, field 6 = `defaultTile` (Y/N) — both informational
-///   here,
+/// - field 1 = `tileData` (32 hex chars = the tile's 16 CHR bytes; CHR-RAM form),
+/// - field 2 = `palette` (the tile's 4-colour palette, hex = Mesen `PaletteColors`)
+///   — a first-class part of the tile identity (`HdTileKey`), so the key is
+///   `CalculateHash(palette ++ tileData)`,
+/// - field 3 = `x`, field 4 = `y` (the replacement rectangle's top-left),
+/// - field 5 = `brightness`, field 6 = `defaultTile` (Y/N — a `Y` tile matches
+///   regardless of palette, so it is keyed under the `0xFFFFFFFF` palette
+///   wildcard),
 /// - trailing `chrBankPage,tileIndex` for CHR-RAM tiles — informational.
 ///
 /// The conditions come from the line's `[...]` prefix, not a trailing field.
-/// Returns `None` for a CHR-ROM (index-keyed) tile or a malformed line.
+/// Returns `None` for a CHR-ROM (short index) tile — that path needs the absolute
+/// CHR offset and is a follow-up — or a malformed line.
 fn parse_tile_fields(rest: &str) -> Option<(u32, usize, u32, u32)> {
     let fields: Vec<&str> = rest.split(',').map(str::trim).collect();
     // Need at least bitmapIndex, tileData, palette, x, y.
@@ -1193,8 +1178,25 @@ fn parse_tile_fields(rest: &str) -> Option<(u32, usize, u32, u32)> {
         return None;
     }
     let bitmap_index = usize::try_from(parse_int(fields[0])?).ok()?;
-    let key = parse_tile_data_key(fields[1])?;
-    // fields[2] = palette (ignored). x = fields[3], y = fields[4].
+    // Only the CHR-RAM 32-hex tileData form is keyed here. A shorter field is the
+    // CHR-ROM tile-index form (handled by the future absolute-CHR path).
+    if fields[1].len() < 32 {
+        return None;
+    }
+    let mut tile_data = [0u8; 16];
+    for (i, b) in tile_data.iter_mut().enumerate() {
+        *b = u8::from_str_radix(fields[1].get(i * 2..i * 2 + 2)?, 16).ok()?;
+    }
+    // field 2 = palette (Mesen `PaletteColors`, hex). A `defaultTile` (field 6 ==
+    // "Y") is palette-agnostic: key it under the wildcard so the lookup's second
+    // stage finds it.
+    let palette = u32::from_str_radix(fields[2], 16).unwrap_or(0xFFFF_FFFF);
+    let is_default = fields.get(6).is_some_and(|f| f.eq_ignore_ascii_case("Y"));
+    let key = if is_default {
+        chr_ram_key(0xFFFF_FFFF, &tile_data)
+    } else {
+        chr_ram_key(palette, &tile_data)
+    };
     let x = parse_int(fields[3])?;
     let y = parse_int(fields[4])?;
     Some((key, bitmap_index, x, y))
@@ -1276,7 +1278,7 @@ pub struct HdCompositor {
     out_h: u32,
     /// CHR-hash cache keyed on `(chr_addr, flip_h, flip_v)` -> hash, refreshed
     /// per frame. Avoids re-reading + re-hashing 16 CHR bytes for repeated tiles.
-    hash_cache: HashMap<(u16, bool, bool), u32>,
+    hash_cache: HashMap<(u16, bool, bool, u32), (u32, u32)>,
     /// Monotonic frame counter for `frameRange` conditions. Advances once per
     /// [`Self::composite`]; presentation-only, never serialized.
     frame: u32,
@@ -1389,15 +1391,24 @@ impl HdCompositor {
                 if rec.chr_addr == HD_TILE_NONE {
                     continue;
                 }
-                let key = (rec.chr_addr, rec.flip_h, rec.flip_v);
-                let hash = if let Some(&h) = self.hash_cache.get(&key) {
-                    h
+                // The identity now includes the palette (Mesen keys CHR-RAM
+                // tiles by palette + content), so cache on it too.
+                let cache_key = (rec.chr_addr, rec.flip_h, rec.flip_v, rec.palette_colors);
+                let (exact, wild) = if let Some(&kw) = self.hash_cache.get(&cache_key) {
+                    kw
                 } else {
-                    let h = hash_tile(rec, &mut chr_peek);
-                    self.hash_cache.insert(key, h);
-                    h
+                    let kw = tile_keys(rec, &mut chr_peek);
+                    self.hash_cache.insert(cache_key, kw);
+                    kw
                 };
-                let Some(rules) = self.pack.tiles.get(&hash) else {
+                // Two-stage lookup (Mesen `GetMatchingTile`): the exact
+                // palette+content key first, then the palette-agnostic default key.
+                let Some(rules) = self
+                    .pack
+                    .tiles
+                    .get(&exact)
+                    .or_else(|| self.pack.tiles.get(&wild))
+                else {
                     continue;
                 };
                 // First rule whose conditions all hold wins (unconditional rules
@@ -1525,9 +1536,14 @@ impl HdCompositor {
         if rec.chr_addr == HD_TILE_NONE {
             return Some(out);
         }
-        let hash = hash_tile(rec, &mut chr_peek);
-        out.chr_hash = Some(hash);
-        let Some(rules) = self.pack.tiles.get(&hash) else {
+        let (exact, wild) = tile_keys(rec, &mut chr_peek);
+        out.chr_hash = Some(exact);
+        let Some(rules) = self
+            .pack
+            .tiles
+            .get(&exact)
+            .or_else(|| self.pack.tiles.get(&wild))
+        else {
             return Some(out);
         };
         // Walk the rules in priority order (conditional first); record the gating
@@ -1671,18 +1687,46 @@ fn blit_background(
     }
 }
 
-/// Hash a tile's 16 CHR bytes (Mesen-compatible CRC32) from the raw, *unflipped*
-/// pattern bytes. Mesen keys tile replacement on the tile's CHR content, and H/V
-/// flips are applied later by the renderer, so the hash deliberately reads the
-/// pattern bytes straight from CHR and does NOT consult `rec.flip_h` / `flip_v`
-/// — a flipped sprite hashes to the same key as its unflipped tile dump.
-fn hash_tile(rec: HdTileSource, chr_peek: &mut impl FnMut(u16) -> u8) -> u32 {
+/// Mesen's tile-key hash (`HdTileKey::CalculateHash`, `HdData.h:56-68`): an
+/// additive rolling hash with a rotate-left-2 over little-endian u32 chunks.
+/// This is NOT CRC-32 — it is the exact function the real Mesen `<tile>` keys
+/// (and CHR-RAM packs like Zelda) were generated with, so `RustyNES` must mirror
+/// it bit-for-bit or no tile matches.
+fn calculate_hash(key: &[u8]) -> u32 {
+    let mut result: u32 = 0;
+    for chunk in key.chunks_exact(4) {
+        let val = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+        result = result.wrapping_add(val).rotate_left(2);
+    }
+    result
+}
+
+/// The CHR-RAM tile key: `CalculateHash(PaletteColors(4 LE) ++ TileData(16))` —
+/// 20 bytes, palette first, exactly Mesen's `HdTileKey` memory layout for a
+/// CHR-RAM tile (`HdData.h:16-18,36-37`). Palette is a first-class part of the
+/// identity; the palette-agnostic *default* key passes `0xFFFFFFFF`.
+fn chr_ram_key(palette_colors: u32, tile_data: &[u8; 16]) -> u32 {
+    let mut buf = [0u8; 20];
+    buf[0..4].copy_from_slice(&palette_colors.to_le_bytes());
+    buf[4..20].copy_from_slice(tile_data);
+    calculate_hash(&buf)
+}
+
+/// The live tile's `(exact_key, default_key)` for the two-stage lookup: the
+/// exact key uses the pixel's actual palette, the default key uses the
+/// `0xFFFFFFFF` palette wildcard (matching pack tiles flagged `defaultTile`).
+/// Reads the raw, *unflipped* CHR bytes (flips are applied later by the
+/// renderer, so a flipped sprite keys to the same tile dump).
+fn tile_keys(rec: HdTileSource, chr_peek: &mut impl FnMut(u16) -> u8) -> (u32, u32) {
     let base = rec.chr_addr & 0x1FF0;
     let mut bytes = [0u8; 16];
     for (i, b) in bytes.iter_mut().enumerate() {
         *b = chr_peek(base + u16::try_from(i).unwrap_or(0));
     }
-    crc32(&bytes)
+    (
+        chr_ram_key(rec.palette_colors, &bytes),
+        chr_ram_key(0xFFFF_FFFF, &bytes),
+    )
 }
 
 /// Blit a replacement image rectangle over the upscaled base for one 8x8 cell.
@@ -1749,6 +1793,41 @@ mod tests {
         // Standard CRC-32 of the empty string is 0; of "123456789" is 0xCBF43926.
         assert_eq!(crc32(b""), 0);
         assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
+    }
+
+    #[test]
+    fn calculate_hash_matches_mesen_rotate_add() {
+        // Mesen's CalculateHash: additive + rotate-left-2 over LE u32 chunks.
+        // empty -> 0; one chunk val=1 -> (0+1) rl2 = 4; two chunks {1,0} ->
+        // ((1 rl2)=4 then (4+0) rl2)=16.
+        assert_eq!(calculate_hash(&[]), 0);
+        assert_eq!(calculate_hash(&[1, 0, 0, 0]), 4);
+        assert_eq!(calculate_hash(&[1, 0, 0, 0, 0, 0, 0, 0]), 16);
+    }
+
+    #[test]
+    fn chr_ram_key_is_palette_sensitive_and_deterministic() {
+        let td = [0x12u8; 16];
+        assert_ne!(chr_ram_key(0x0010_2030, &td), chr_ram_key(0x0040_5060, &td));
+        assert_eq!(chr_ram_key(0xABCD, &td), chr_ram_key(0xABCD, &td));
+    }
+
+    #[test]
+    fn tile_rule_keys_on_palette_and_default_wildcard() {
+        let td_hex = "000102030405060708090A0B0C0D0E0F";
+        let mut td = [0u8; 16];
+        for (i, b) in td.iter_mut().enumerate() {
+            *b = u8::from_str_radix(&td_hex[i * 2..i * 2 + 2], 16).unwrap();
+        }
+        // bitmapIndex, tileData, palette, x, y, brightness, defaultTile=N.
+        let line = format!("0,{td_hex},0F162736,16,32,1,N");
+        let (key, _, x, y) = parse_tile_fields(&line).unwrap();
+        assert_eq!(key, chr_ram_key(0x0F16_2736, &td));
+        assert_eq!((x, y), (16, 32));
+        // defaultTile=Y -> keyed under the 0xFFFFFFFF palette wildcard.
+        let dflt = format!("0,{td_hex},0F162736,16,32,1,Y");
+        let (dkey, ..) = parse_tile_fields(&dflt).unwrap();
+        assert_eq!(dkey, chr_ram_key(0xFFFF_FFFF, &td));
     }
 
     /// The 32-hex `tileData` of all-zero CHR bytes (the common blank tile) and
@@ -2232,13 +2311,15 @@ mod tests {
             is_sprite: false,
             flip_h: false,
             flip_v: false,
+            palette_colors: 0,
         };
         (fb, ts)
     }
 
-    /// CHR bytes (all zero) hash for the `hash_tile` path.
+    /// The CHR-RAM tile key (palette 0, all-zero CHR) the composite computes for
+    /// the test cell above — what a pack rule must be keyed under to match.
     fn zero_chr_hash() -> u32 {
-        crc32(&[0u8; 16])
+        chr_ram_key(0, &[0u8; 16])
     }
 
     #[test]
@@ -2448,23 +2529,35 @@ mod tests {
         // memoryCheckConstant 16 = hex 0x16 watched address; one background.
         assert_eq!(parsed.backgrounds.len(), 1);
         assert_eq!(parsed.backgrounds[0].priority, 11);
-        // The match keys are the CRC-32 of each tile's 16 CHR bytes.
-        let key0 = parse_tile_data_key("00000000000000007F3F1F0F07030100").unwrap();
-        assert_eq!(parsed.tiles[0].0, key0);
+        // The match key is `chr_ram_key(palette, tileData)` (palette 0F162736).
+        let mut td = [0u8; 16];
+        for (i, b) in td.iter_mut().enumerate() {
+            *b = u8::from_str_radix(&"00000000000000007F3F1F0F07030100"[i * 2..i * 2 + 2], 16)
+                .unwrap();
+        }
+        assert_eq!(parsed.tiles[0].0, chr_ram_key(0x0F16_2736, &td));
     }
 
     #[test]
-    fn real_ver106_tile_data_is_the_match_key() {
-        // The compositor's hash_tile() CRC over a tile's live 16 CHR bytes MUST
-        // equal the loader's key parsed from that same tile's `tileData` hex —
-        // this is the contract that makes a real pack actually substitute.
+    fn loader_key_matches_runtime_key_with_palette() {
+        // The loader key parsed from a `<tile>` line MUST equal the live key the
+        // compositor computes for a cell with the SAME palette + CHR bytes — the
+        // contract that makes a real pack substitute. Palette is part of both.
         let chr: [u8; 16] = [
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7F, 0x3F, 0x1F, 0x0F, 0x07, 0x03,
             0x01, 0x00,
         ];
-        let from_bytes = crc32(&chr);
-        let from_hex = parse_tile_data_key("00000000000000007F3F1F0F07030100").unwrap();
-        assert_eq!(from_bytes, from_hex);
+        let palette = 0x0F16_2736u32;
+        let line = "0,00000000000000007F3F1F0F07030100,0F162736,0,0,1,N";
+        let (loader_key, ..) = parse_tile_fields(line).unwrap();
+        let rec = HdTileSource {
+            chr_addr: 0,
+            palette_colors: palette,
+            ..HdTileSource::default()
+        };
+        let mut chr_peek = |a: u16| chr[usize::from(a & 0x0F)];
+        let (runtime_key, _) = tile_keys(rec, &mut chr_peek);
+        assert_eq!(loader_key, runtime_key);
     }
 
     /// v1.7.1 (#3) — the full runtime contract: a `<tile>` rule whose `tileData`
@@ -2484,8 +2577,9 @@ mod tests {
         for (i, b) in chr_bytes.iter_mut().enumerate() {
             *b = u8::from_str_radix(&TILE_DATA[i * 2..i * 2 + 2], 16).unwrap();
         }
-        let key = parse_tile_data_key(TILE_DATA).unwrap();
-        assert_eq!(key, crc32(&chr_bytes));
+        // The pack rule is keyed exactly as the live cell will be: palette 0
+        // (the one_tile_scene rec) + these CHR bytes.
+        let key = chr_ram_key(0, &chr_bytes);
 
         // Build the pack with a single unconditional rule keyed by that tileData,
         // mapping to a solid-red replacement image.

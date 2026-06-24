@@ -49,6 +49,12 @@ pub struct HdTileSource {
     pub flip_h: bool,
     /// Sprite vertical flip (always `false` for BG pixels).
     pub flip_v: bool,
+    /// Mesen `PaletteColors`: the tile's active palette packed as the HD-pack
+    /// tile-identity key expects. BG = `pr[base+3] | pr[base+2]<<8 |
+    /// pr[base+1]<<16 | pr[0]<<24`; sprite = `0xFF000000 | pr[base+3] |
+    /// pr[base+2]<<8 | pr[base+1]<<16` (top byte `0xFF` = the sprite/BG
+    /// discriminator). Part of the CHR-RAM/CHR-ROM tile key (HdNesPpu.h:119/167).
+    pub palette_colors: u32,
 }
 
 /// Sentinel `chr_addr` for a transparent / universal-background HD-pack pixel.
@@ -1009,6 +1015,32 @@ impl Ppu {
     #[must_use]
     pub fn index_framebuffer(&self) -> &[u16] {
         &self.index_framebuffer
+    }
+
+    /// Pack a background tile's active palette into Mesen's `PaletteColors` key
+    /// form (`pr[base+3] | pr[base+2]<<8 | pr[base+1]<<16 | pr[0]<<24`, with
+    /// `base = $3F00 | group<<2` and `pr[0]` the universal backdrop). Used only
+    /// to key HD-pack tile replacements; output-only.
+    #[cfg(feature = "hd-pack")]
+    fn hd_bg_palette_colors(&self, group: u8) -> u32 {
+        let base = 0x3F00 | (u16::from(group) << 2);
+        let p0 = u32::from(self.read_palette(0x3F00) & 0x3F);
+        let p1 = u32::from(self.read_palette(base | 1) & 0x3F);
+        let p2 = u32::from(self.read_palette(base | 2) & 0x3F);
+        let p3 = u32::from(self.read_palette(base | 3) & 0x3F);
+        p3 | (p2 << 8) | (p1 << 16) | (p0 << 24)
+    }
+
+    /// Pack a sprite tile's palette (`0xFF000000 | pr[base+3] | pr[base+2]<<8 |
+    /// pr[base+1]<<16`, `base = $3F10 | group<<2`; the `0xFF` top byte is the
+    /// sprite/BG discriminator and there is no `pr[0]` term).
+    #[cfg(feature = "hd-pack")]
+    fn hd_sprite_palette_colors(&self, group: u8) -> u32 {
+        let base = 0x3F10 | (u16::from(group) << 2);
+        let p1 = u32::from(self.read_palette(base | 1) & 0x3F);
+        let p2 = u32::from(self.read_palette(base | 2) & 0x3F);
+        let p3 = u32::from(self.read_palette(base | 3) & 0x3F);
+        0xFF00_0000 | p3 | (p2 << 8) | (p1 << 16)
     }
 
     /// v1.2.0 beta.2 (Workstream C3) — borrow the per-pixel HD-pack
@@ -2616,6 +2648,7 @@ impl Ppu {
                     is_sprite: true,
                     flip_h: (attr & 0x40) != 0,
                     flip_v: (attr & 0x80) != 0,
+                    palette_colors: self.hd_sprite_palette_colors(spr_pal),
                 }
             } else if bg_idx != 0 {
                 HdTileSource {
@@ -2624,6 +2657,7 @@ impl Ppu {
                     is_sprite: false,
                     flip_h: false,
                     flip_v: false,
+                    palette_colors: self.hd_bg_palette_colors(bg_pal),
                 }
             } else {
                 // Universal background — no tile to substitute.
@@ -2633,6 +2667,7 @@ impl Ppu {
                     is_sprite: false,
                     flip_h: false,
                     flip_v: false,
+                    palette_colors: 0,
                 }
             };
             self.hd_tile_source[off >> 2] = rec;
