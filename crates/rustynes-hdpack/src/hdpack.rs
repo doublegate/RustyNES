@@ -62,9 +62,6 @@ const NES_H: u32 = 240;
 
 /// NES tiles are 8x8.
 const TILE: usize = 8;
-/// Visible tile grid: 32 columns x 30 rows.
-const COLS: usize = NES_W as usize / TILE; // 32
-const ROWS: usize = NES_H as usize / TILE; // 30
 
 /// Bit 31 of a watched-memory address marks a PPU-space (vs CPU-space) address,
 /// matching Mesen's `HdPackBaseMemoryCondition::PpuMemoryMarker`.
@@ -1336,6 +1333,7 @@ impl HdCompositor {
     /// lock at produce time). `chr_peek(addr)` returns the CHR byte at a PPU
     /// pattern-space address — used to hash a tile's 16 CHR bytes for the
     /// replacement lookup. Returns the upscaled RGBA8 buffer.
+    #[allow(clippy::too_many_lines)] // upscale + under-bgs + per-pixel tiles + over-bgs.
     pub fn composite(
         &mut self,
         framebuffer: &[u8],
@@ -1378,21 +1376,22 @@ impl HdCompositor {
             true, // under = priority < 0
         );
 
-        // 3) Per 8x8 cell, resolve the dominant tile identity and, if a gated
-        //    replacement exists for its CHR hash, blit the hi-res image over the
-        //    upscaled base. The cell's identity is taken from its top-left pixel
-        //    (scrolling shifts whole tiles by < 8px; this keys on the aligned
-        //    grid, like Mesen's BG path).
+        // 3) PER PIXEL (Mesen's renderer model): for each NES pixel, resolve the
+        //    tile that produced it and sample the matched replacement at the
+        //    pixel's own texel offset (`offset_x`/`offset_y`). Unlike a per-cell
+        //    blit, this tracks fine-X/Y scroll and sprite position pixel-for-pixel
+        //    so the HD tile sits exactly over the original (no offset / drag).
+        //    The tile-key hash is still computed once per distinct tile identity
+        //    (cached), so the per-pixel cost is a hash-map lookup + sample.
         self.hash_cache.clear();
-        for cell_y in 0..ROWS {
-            for cell_x in 0..COLS {
-                let px = cell_y * TILE * NES_W as usize + cell_x * TILE;
-                let rec = tile_source[px];
+        let out_h = self.out_h as usize;
+        for y in 0..NES_H as usize {
+            for x in 0..NES_W as usize {
+                let rec = tile_source[y * NES_W as usize + x];
                 if rec.chr_addr == HD_TILE_NONE {
                     continue;
                 }
-                // The identity now includes the palette (Mesen keys CHR-RAM
-                // tiles by palette + content), so cache on it too.
+                // Tile identity (incl. palette) -> (exact, wildcard) keys, cached.
                 let cache_key = (rec.chr_addr, rec.flip_h, rec.flip_v, rec.palette_colors);
                 let (exact, wild) = if let Some(&kw) = self.hash_cache.get(&cache_key) {
                     kw
@@ -1401,8 +1400,8 @@ impl HdCompositor {
                     self.hash_cache.insert(cache_key, kw);
                     kw
                 };
-                // Two-stage lookup (Mesen `GetMatchingTile`): the exact
-                // palette+content key first, then the palette-agnostic default key.
+                // Two-stage lookup (Mesen `GetMatchingTile`): exact palette+content
+                // key first, then the palette-agnostic default key.
                 let Some(rules) = self
                     .pack
                     .tiles
@@ -1412,10 +1411,10 @@ impl HdCompositor {
                     continue;
                 };
                 // First rule whose conditions all hold wins (unconditional rules
-                // are sorted last, so a conditional variant gets first refusal).
+                // sorted last). Spatial conditions key on the containing 8x8 cell.
                 let spatial = SpatialCtx {
-                    cell_x,
-                    cell_y,
+                    cell_x: x / TILE,
+                    cell_y: y / TILE,
                     tile_source,
                 };
                 let Some(rule) = rules.iter().find(|r| {
@@ -1427,16 +1426,33 @@ impl HdCompositor {
                 let Some(img) = self.pack.images.get(rule.image) else {
                     continue;
                 };
-                blit_replacement(
-                    &mut self.out,
-                    out_w,
-                    self.out_h as usize,
-                    cell_x,
-                    cell_y,
-                    scale,
-                    img,
-                    rule,
-                );
+                // Sample the replacement at the texel this pixel maps to (flips are
+                // already baked into offset_x/offset_y), writing the scale*scale
+                // block. Transparent texels (alpha 0) leave the upscaled base.
+                let img_w = img.width as usize;
+                let img_h = img.height as usize;
+                let src_tx = rule.x as usize + usize::from(rec.offset_x) * scale;
+                let src_ty = rule.y as usize + usize::from(rec.offset_y) * scale;
+                for sub_y in 0..scale {
+                    let sy = src_ty + sub_y;
+                    let dy = y * scale + sub_y;
+                    if sy >= img_h || dy >= out_h {
+                        continue;
+                    }
+                    for sub_x in 0..scale {
+                        let sx = src_tx + sub_x;
+                        let dx = x * scale + sub_x;
+                        if sx >= img_w || dx >= out_w {
+                            continue;
+                        }
+                        let s = (sy * img_w + sx) * 4;
+                        if img.rgba[s + 3] == 0 {
+                            continue;
+                        }
+                        let d = (dy * out_w + dx) * 4;
+                        self.out[d..d + 4].copy_from_slice(&img.rgba[s..s + 4]);
+                    }
+                }
             }
         }
 
@@ -1729,53 +1745,6 @@ fn tile_keys(rec: HdTileSource, chr_peek: &mut impl FnMut(u16) -> u8) -> (u32, u
     )
 }
 
-/// Blit a replacement image rectangle over the upscaled base for one 8x8 cell.
-/// The replacement rectangle is `8*scale` square at `(rule.x, rule.y)` in the
-/// image. Out-of-bounds source pixels are skipped (leaving the base upscale).
-/// Fully-transparent source pixels (alpha 0) are skipped so packs can mark
-/// see-through regions.
-#[allow(clippy::too_many_arguments)]
-fn blit_replacement(
-    out: &mut [u8],
-    out_w: usize,
-    out_h: usize,
-    cell_x: usize,
-    cell_y: usize,
-    scale: usize,
-    img: &ReplacementImage,
-    rule: &TileRule,
-) {
-    let edge = TILE * scale; // replacement tile edge in pixels.
-    let img_w = img.width as usize;
-    let img_h = img.height as usize;
-    for ry in 0..edge {
-        let sy = rule.y as usize + ry;
-        if sy >= img_h {
-            break;
-        }
-        let dy = cell_y * edge + ry;
-        if dy >= out_h {
-            break;
-        }
-        for rx in 0..edge {
-            let sx = rule.x as usize + rx;
-            if sx >= img_w {
-                break;
-            }
-            let dx = cell_x * edge + rx;
-            if dx >= out_w {
-                break;
-            }
-            let s = (sy * img_w + sx) * 4;
-            if img.rgba[s + 3] == 0 {
-                continue; // transparent.
-            }
-            let d = (dy * out_w + dx) * 4;
-            out[d..d + 4].copy_from_slice(&img.rgba[s..s + 4]);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1849,8 +1818,8 @@ mod tests {
         assert_eq!(parsed.pattern_tables, vec!["bank0.png".to_string()]);
         assert_eq!(parsed.tiles.len(), 1);
         let (hash, rule) = &parsed.tiles[0];
-        // The match key is the CRC-32 of the 16 CHR bytes, not a literal field.
-        assert_eq!(*hash, crc32(&[0u8; 16]));
+        // The match key is `chr_ram_key(palette, tileData)` (palette 0F162736).
+        assert_eq!(*hash, chr_ram_key(0x0F16_2736, &[0u8; 16]));
         assert_eq!(rule.image, 0, "bitmap index 0 = first <img>");
         assert_eq!(rule.x, 16);
         assert_eq!(rule.y, 0);
@@ -1871,7 +1840,7 @@ mod tests {
             *b = u8::from_str_radix(&"00000000000000007F3F1F0F07030100"[i * 2..i * 2 + 2], 16)
                 .unwrap();
         }
-        assert_eq!(*hash, crc32(&bytes));
+        assert_eq!(*hash, chr_ram_key(0x0F16_2736, &bytes));
         assert_eq!(rule.x, 80);
         assert_eq!(rule.y, 224);
     }
@@ -2312,6 +2281,8 @@ mod tests {
             flip_h: false,
             flip_v: false,
             palette_colors: 0,
+            offset_x: 0,
+            offset_y: 0,
         };
         (fb, ts)
     }

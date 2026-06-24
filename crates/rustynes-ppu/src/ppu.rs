@@ -55,6 +55,16 @@ pub struct HdTileSource {
     /// pr[base+2]<<8 | pr[base+1]<<16` (top byte `0xFF` = the sprite/BG
     /// discriminator). Part of the CHR-RAM/CHR-ROM tile key (HdNesPpu.h:119/167).
     pub palette_colors: u32,
+    /// Which texel COLUMN (0..=7) of the 8x8 tile this screen pixel samples —
+    /// Mesen `OffsetX` (HdNesPpu.h:172). For BG it folds in fine-X scroll
+    /// (`(fineX + (pixel_x & 7)) & 7`); for a sprite it is the column within the
+    /// sprite tile. The HD compositor samples the replacement at this column so
+    /// the high-def tile tracks the scrolled / sprite position pixel-for-pixel
+    /// (flips are applied at sample time). Output-only.
+    pub offset_x: u8,
+    /// Which texel ROW (0..=7) of the 8x8 tile this screen pixel samples — Mesen
+    /// `OffsetY`. BG = fine-Y; sprite = the row within the sprite tile.
+    pub offset_y: u8,
 }
 
 /// Sentinel `chr_addr` for a transparent / universal-background HD-pack pixel.
@@ -620,6 +630,14 @@ pub struct Ppu {
     /// consumed by `emit_pixel` for HD-pack sprite substitution.
     #[cfg(feature = "hd-pack")]
     pub(crate) hd_spr_addr: [u16; 8],
+    /// The sprite's ORIGIN screen X per slot (the un-decremented `spr_x`), so
+    /// `emit_pixel` can derive the column within the sprite for HD positioning.
+    #[cfg(feature = "hd-pack")]
+    pub(crate) hd_spr_x: [u8; 8],
+    /// The sprite's flip-baked texel ROW (0..=7) per slot, captured at fetch (the
+    /// `emit_pixel`-time scanline isn't enough to recover it post-shift).
+    #[cfg(feature = "hd-pack")]
+    pub(crate) hd_spr_off_y: [u8; 8],
 }
 
 /// v2.0 Phase 6 (`mc-ppu-subpos`): the analog `$2001` PPUMASK write delay.
@@ -773,6 +791,10 @@ impl Ppu {
             hd_bg_addr_next: HD_TILE_NONE,
             #[cfg(feature = "hd-pack")]
             hd_spr_addr: [HD_TILE_NONE; 8],
+            #[cfg(feature = "hd-pack")]
+            hd_spr_x: [0; 8],
+            #[cfg(feature = "hd-pack")]
+            hd_spr_off_y: [0; 8],
         };
         // Clear status flags that match power-on per nesdev wiki: VBL is
         // unspecified on power-on. We start clear.
@@ -2642,22 +2664,40 @@ impl Ppu {
             let shows_sprite = spr_idx != 0 && (bg_idx == 0 || spr_priority_front);
             let rec = if shows_sprite {
                 let attr = self.spr_attr[spr_slot];
+                let flip_h = (attr & 0x40) != 0;
+                // Column within the sprite (screen X minus the sprite's origin X),
+                // then flip so the captured offset samples the UNFLIPPED
+                // replacement directly (composite is flip-free).
+                let col = pixel_x.wrapping_sub(u16::from(self.hd_spr_x[spr_slot])) & 7;
+                let off_x = if flip_h { 7 - col } else { col };
                 HdTileSource {
                     chr_addr: self.hd_spr_addr[spr_slot],
                     palette: spr_pal,
                     is_sprite: true,
-                    flip_h: (attr & 0x40) != 0,
+                    flip_h,
                     flip_v: (attr & 0x80) != 0,
                     palette_colors: self.hd_sprite_palette_colors(spr_pal),
+                    offset_x: u8::try_from(off_x).unwrap_or(0),
+                    offset_y: self.hd_spr_off_y[spr_slot], // already flip-baked at fetch
                 }
             } else if bg_idx != 0 {
+                // Fine-X picks which of the two shifter tiles this pixel shows +
+                // the column within it (Mesen usePrev / OffsetX); fine-Y is the row.
+                let pos = u16::from(fx) + (pixel_x & 7);
+                let chr = if pos < 8 {
+                    self.hd_bg_addr_cur
+                } else {
+                    self.hd_bg_addr_next
+                };
                 HdTileSource {
-                    chr_addr: self.hd_bg_addr_cur,
+                    chr_addr: chr,
                     palette: bg_pal,
                     is_sprite: false,
                     flip_h: false,
                     flip_v: false,
                     palette_colors: self.hd_bg_palette_colors(bg_pal),
+                    offset_x: u8::try_from(pos & 7).unwrap_or(0),
+                    offset_y: u8::try_from((self.v >> 12) & 7).unwrap_or(0),
                 }
             } else {
                 // Universal background — no tile to substitute.
@@ -2667,6 +2707,8 @@ impl Ppu {
                     is_sprite: false,
                     flip_h: false,
                     flip_v: false,
+                    offset_x: 0,
+                    offset_y: 0,
                     palette_colors: 0,
                 }
             };
@@ -3414,6 +3456,10 @@ impl Ppu {
             #[cfg(feature = "hd-pack")]
             {
                 self.hd_spr_addr[slot] = addr_lo & 0x1FF0;
+                self.hd_spr_x[slot] = xpos;
+                // `in_tile_row` is the post-flip-V fetch row, i.e. exactly the
+                // (unflipped) replacement texel row to sample.
+                self.hd_spr_off_y[slot] = u8::try_from(in_tile_row & 0x07).unwrap_or(0);
             }
         } else {
             #[cfg(feature = "hd-pack")]
