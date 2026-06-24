@@ -299,6 +299,19 @@ pub struct EmuCore {
     /// The framebuffer the renderer presents (with run-ahead active it is
     /// the visible FUTURE frame while `nes` holds the persistent one).
     pub present_fb: Vec<u8>,
+    /// v1.8.9 — the 8 KiB CHR pattern space ($0000-$1FFF) captured at PRODUCE
+    /// time (the same visible frame as `present_fb`). With run-ahead active, the
+    /// `nes` is rolled back to the persistent frame after the visible frame is
+    /// harvested, so peeking CHR at present time would read a 1-2-frame-stale
+    /// snapshot and animated HD-pack tiles (e.g. fire) would flicker. Captured
+    /// here it stays in lock-step with `present_fb` + the surviving tile-source
+    /// telemetry. Empty unless [`Self::hd_capture`] is set (a pack is loaded).
+    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+    pub hd_chr_snapshot: Vec<u8>,
+    /// v1.8.9 — set by `App` while an HD-pack compositor is loaded; gates the
+    /// produce-time CHR snapshot above (no cost when no pack is active).
+    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+    pub hd_capture: bool,
     /// v1.7.0 "Forge" Workstream D1 — the scrubbable-session `HistoryViewer`: a
     /// per-frame input log + periodic start-anchors recorded in lock-step with
     /// the rewind ring, used to scrub the timeline and export the last N seconds
@@ -397,6 +410,10 @@ impl EmuCore {
             movie: MovieUi::default(),
             perf: PerfStats::default(),
             present_fb: Vec::new(),
+            #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+            hd_chr_snapshot: Vec::new(),
+            #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+            hd_capture: false,
             history: crate::history_viewer::HistoryViewer::default(),
             raw_cheats: Vec::new(),
             debug_pokes: Vec::new(),
@@ -591,6 +608,24 @@ impl EmuCore {
         }
     }
 
+    /// v1.8.9 — snapshot the 8 KiB CHR pattern space from the VISIBLE frame at
+    /// produce time, so the HD-pack composite hashes tiles against the same frame
+    /// it presents (`present_fb`). Without this, run-ahead rolls `nes` back after
+    /// the visible frame is harvested and a present-time CHR peek would be stale,
+    /// flickering animated HD tiles. No-op unless a pack is loaded (`hd_capture`).
+    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+    fn capture_hd_chr(snapshot: &mut Vec<u8>, capture: bool, nes: &mut Nes) {
+        if !capture {
+            return;
+        }
+        if snapshot.len() != 0x2000 {
+            snapshot.resize(0x2000, 0);
+        }
+        for (addr, slot) in (0u16..0x2000).zip(snapshot.iter_mut()) {
+            *slot = nes.peek_ppu(addr);
+        }
+    }
+
     /// Advance the emulator by exactly one SINGLE-PLAYER frame and push the
     /// produced audio into the sink. Caller is responsible for the
     /// wall-clock schedule and for routing netplay AROUND this method.
@@ -671,6 +706,10 @@ impl EmuCore {
                 self.runahead.run_frame_ahead(nes, run_ahead_n);
                 self.present_fb.clear();
                 self.present_fb.extend_from_slice(nes.framebuffer());
+                // v1.8.9 — capture CHR from the VISIBLE frame BEFORE `finish()`
+                // rolls back, so animated HD-pack tiles stay in sync (no flicker).
+                #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                Self::capture_hd_chr(&mut self.hd_chr_snapshot, self.hd_capture, nes);
                 if let Some(audio) = sinks.audio.as_mut() {
                     let target = ((u64::from(audio.sample_rate()) / 50) as usize).max(1024);
                     if self.audio_buf.len() < target {
@@ -716,6 +755,10 @@ impl EmuCore {
                 // reused buffer.
                 self.present_fb.clear();
                 self.present_fb.extend_from_slice(nes.framebuffer());
+                // v1.8.9 — keep the HD-pack CHR snapshot in lock-step with the
+                // presented frame (uniform with the run-ahead path above).
+                #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                Self::capture_hd_chr(&mut self.hd_chr_snapshot, self.hd_capture, nes);
 
                 #[cfg(not(target_arch = "wasm32"))]
                 if let Some(audio) = sinks.audio.as_mut() {
