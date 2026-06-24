@@ -211,6 +211,9 @@ struct TileRule {
     /// Conditions that must ALL hold for the substitution to apply (AND).
     /// Indices into [`HdPack::conditions`]. Empty = unconditional.
     conditions: Vec<usize>,
+    /// Mesen tile `brightness` (`stof * 255`, `255` = identity), applied to the
+    /// sampled replacement texel.
+    brightness: i32,
 }
 
 /// A `<background>` region: a replacement image (full-screen or a rectangle)
@@ -229,6 +232,10 @@ struct BackgroundRegion {
     /// Conditions that must ALL hold for the region to render (AND). Empty =
     /// always.
     conditions: Vec<usize>,
+    /// Mesen background `brightness` (`stof * 255`, `255` = identity).
+    brightness: i32,
+    /// Mesen background `blendMode` (field 7; default `Alpha`).
+    blend_mode: BlendMode,
 }
 
 /// A per-frame snapshot of the watched memory addresses referenced by the
@@ -486,6 +493,7 @@ impl HdPack {
                 x: rule.x,
                 y: rule.y,
                 conditions: rule.conditions,
+                brightness: rule.brightness,
             });
             rule_count += 1;
         }
@@ -506,6 +514,8 @@ impl HdPack {
                 y: bg.y,
                 priority: bg.priority,
                 conditions: bg.conditions,
+                brightness: bg.brightness,
+                blend_mode: bg.blend_mode,
             });
         }
         backgrounds.sort_by_key(|b| b.priority);
@@ -714,6 +724,7 @@ struct ParsedTileRule {
     x: u32,
     y: u32,
     conditions: Vec<usize>,
+    brightness: i32,
 }
 
 /// A parsed background region before image reindex.
@@ -723,6 +734,8 @@ struct ParsedBackground {
     y: i32,
     priority: i32,
     conditions: Vec<usize>,
+    brightness: i32,
+    blend_mode: BlendMode,
 }
 
 /// Intermediate parse result before image decode + reindex.
@@ -871,7 +884,7 @@ fn parse_hires(src: &str) -> ParsedHires {
         };
         match tag {
             "tile" => {
-                if let Some((hash, img_idx, x, y)) = parse_tile_fields(rest) {
+                if let Some((hash, img_idx, x, y, brightness)) = parse_tile_fields(rest) {
                     let conditions = resolve_condition_refs(&prefix_conds, &cond_name_to_idx);
                     // Skip a tile rule that names a condition we never parsed.
                     let Some(conditions) = conditions else {
@@ -884,12 +897,15 @@ fn parse_hires(src: &str) -> ParsedHires {
                             x,
                             y,
                             conditions,
+                            brightness,
                         },
                     ));
                 }
             }
             "background" => {
-                if let Some((img_name, x, y, priority)) = parse_background_fields(rest) {
+                if let Some((img_name, x, y, priority, brightness, blend_mode)) =
+                    parse_background_fields(rest)
+                {
                     let image = intern_name(&mut image_names, &mut name_to_idx, &img_name);
                     let Some(conditions) = resolve_condition_refs(&prefix_conds, &cond_name_to_idx)
                     else {
@@ -901,6 +917,8 @@ fn parse_hires(src: &str) -> ParsedHires {
                         y,
                         priority,
                         conditions,
+                        brightness,
+                        blend_mode,
                     });
                 }
             }
@@ -1168,7 +1186,27 @@ fn parse_spatial(ty: &str, fields: &[&str]) -> Option<ConditionKind> {
 /// The conditions come from the line's `[...]` prefix, not a trailing field.
 /// Returns `None` for a CHR-ROM (short index) tile — that path needs the absolute
 /// CHR offset and is a follow-up — or a malformed line.
-fn parse_tile_fields(rest: &str) -> Option<(u32, usize, u32, u32)> {
+/// Parse a Mesen brightness field (`stof * 255`, default identity `255`). Bounded.
+fn parse_brightness(field: Option<&str>) -> i32 {
+    field
+        .and_then(|s| s.trim().parse::<f32>().ok())
+        .map_or(BRIGHTNESS_IDENTITY, |f| {
+            #[allow(clippy::cast_possible_truncation)]
+            let v = (f * 255.0) as i32;
+            v.clamp(0, 255 * 64)
+        })
+}
+
+/// Parse a Mesen `blendMode` field name (`Add` / `Subtract`, else `Alpha`).
+fn parse_blend_mode(field: Option<&str>) -> BlendMode {
+    match field.map(str::trim) {
+        Some("Add") => BlendMode::Add,
+        Some("Subtract") => BlendMode::Subtract,
+        _ => BlendMode::Alpha,
+    }
+}
+
+fn parse_tile_fields(rest: &str) -> Option<(u32, usize, u32, u32, i32)> {
     let fields: Vec<&str> = rest.split(',').map(str::trim).collect();
     // Need at least bitmapIndex, tileData, palette, x, y.
     if fields.len() < 5 {
@@ -1196,7 +1234,9 @@ fn parse_tile_fields(rest: &str) -> Option<(u32, usize, u32, u32)> {
     };
     let x = parse_int(fields[3])?;
     let y = parse_int(fields[4])?;
-    Some((key, bitmap_index, x, y))
+    // field 5 = brightness (applied to the sampled texel).
+    let brightness = parse_brightness(fields.get(5).copied());
+    Some((key, bitmap_index, x, y, brightness))
 }
 
 /// Parse a real Mesen `<background>` line into `(imageName, x, y, priority)`.
@@ -1213,7 +1253,7 @@ fn parse_tile_fields(rest: &str) -> Option<(u32, usize, u32, u32)> {
 /// Mesen background renders OVER the tile pass, matching Mesen). Scroll ratios +
 /// blend mode are parsed-and-ignored (subset). A bare `name` with no priority
 /// field is accepted (full-screen, the Mesen default priority 10).
-fn parse_background_fields(rest: &str) -> Option<(String, i32, i32, i32)> {
+fn parse_background_fields(rest: &str) -> Option<(String, i32, i32, i32, i32, BlendMode)> {
     let fields: Vec<&str> = rest.split(',').map(str::trim).collect();
     if fields.is_empty() || fields[0].is_empty() {
         return None;
@@ -1234,7 +1274,10 @@ fn parse_background_fields(rest: &str) -> Option<(String, i32, i32, i32)> {
         .get(6)
         .and_then(|p| p.parse::<i32>().ok())
         .unwrap_or(0);
-    Some((image, x, y, priority))
+    // field 1 = brightness; field 7 = blendMode (Mesen `<background>` layout).
+    let brightness = parse_brightness(fields.get(1).copied());
+    let blend_mode = parse_blend_mode(fields.get(7).copied());
+    Some((image, x, y, priority, brightness, blend_mode))
 }
 
 // =============================================================================
@@ -1445,12 +1488,23 @@ impl HdCompositor {
                         if sx >= img_w || dx >= out_w {
                             continue;
                         }
-                        let s = (sy * img_w + sx) * 4;
-                        if img.rgba[s + 3] == 0 {
+                        let soff = (sy * img_w + sx) * 4;
+                        let alpha = img.rgba[soff + 3];
+                        if alpha == 0 {
                             continue;
                         }
-                        let d = (dy * out_w + dx) * 4;
-                        self.out[d..d + 4].copy_from_slice(&img.rgba[s..s + 4]);
+                        // v1.8.9 — alpha-BLEND partial-alpha texels (soft edges)
+                        // instead of a hard binary cutout, with the tile's
+                        // brightness applied (Mesen DrawTile). Tiles are Alpha mode.
+                        let doff = (dy * out_w + dx) * 4;
+                        blend_over(
+                            &mut self.out,
+                            doff,
+                            &img.rgba[soff..soff + 4],
+                            alpha,
+                            BlendMode::Alpha,
+                            rule.brightness,
+                        );
                     }
                 }
             }
@@ -1684,23 +1738,68 @@ fn blit_background(
                 continue; // fully transparent.
             }
             let d = (dy * out_w + dx) * 4;
+            blend_over(out, d, &img.rgba[s..s + 4], a, bg.blend_mode, bg.brightness);
+        }
+    }
+}
+
+/// HD-pack blend mode for a replacement layer (Mesen `HdPackBlendMode`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum BlendMode {
+    /// Standard source-over alpha (the default).
+    Alpha,
+    /// Additive: `out = min(255, out + in)`.
+    Add,
+    /// Subtractive: `out = max(0, out - in)`.
+    Subtract,
+}
+
+/// Identity brightness (Mesen stores `stof(field) * 255`, so `255` ~= 1.0x).
+const BRIGHTNESS_IDENTITY: i32 = 255;
+
+/// Mesen `AdjustBrightness`: `min(255, (brightness * (v + 1)) >> 8)`. With
+/// `brightness == 255` this is ~identity; lower dims, higher brightens.
+fn adjust_brightness(v: u8, brightness: i32) -> u8 {
+    u8::try_from(((brightness * (i32::from(v) + 1)) >> 8).clamp(0, 255)).unwrap_or(0xFF)
+}
+
+/// Blend a 4-byte RGBA `src` (alpha `a`) onto the opaque base `out[d..d+4]` under
+/// `mode`, after applying `brightness` to the source RGB. `Alpha` is a
+/// premultiply-free, round-to-nearest source-over blend; `Add`/`Subtract` are
+/// saturating. Used by both the tile blit and the background blit.
+fn blend_over(out: &mut [u8], d: usize, src: &[u8], a: u8, mode: BlendMode, brightness: i32) {
+    let src_rgb = [
+        adjust_brightness(src[0], brightness),
+        adjust_brightness(src[1], brightness),
+        adjust_brightness(src[2], brightness),
+    ];
+    match mode {
+        BlendMode::Alpha => {
             if a == 0xFF {
-                out[d..d + 4].copy_from_slice(&img.rgba[s..s + 4]);
+                out[d..d + 3].copy_from_slice(&src_rgb);
             } else {
-                // Source-over alpha blend (premultiply-free, u16 math).
                 let inv = 255 - u16::from(a);
-                for c in 0..3 {
-                    let src = u16::from(img.rgba[s + c]) * u16::from(a);
-                    let dstc = u16::from(out[d + c]) * inv;
-                    // Round to nearest (+127) instead of truncating; overflow-safe
-                    // since the max numerator is 255*255 + 127 = 65152 < u16::MAX.
-                    out[d + c] = u8::try_from((src + dstc + 127) / 255).unwrap_or(0xFF);
+                for (ch, &sval) in src_rgb.iter().enumerate() {
+                    let num = u16::from(sval) * u16::from(a) + u16::from(out[d + ch]) * inv + 127;
+                    out[d + ch] = u8::try_from(num / 255).unwrap_or(0xFF);
                 }
-                // Leave dst alpha opaque (the base upscale is opaque).
-                out[d + 3] = 0xFF;
+            }
+        }
+        BlendMode::Add => {
+            for (ch, &sval) in src_rgb.iter().enumerate() {
+                out[d + ch] = u8::try_from((i32::from(out[d + ch]) + i32::from(sval)).min(255))
+                    .unwrap_or(0xFF);
+            }
+        }
+        BlendMode::Subtract => {
+            for (ch, &sval) in src_rgb.iter().enumerate() {
+                out[d + ch] =
+                    u8::try_from((i32::from(out[d + ch]) - i32::from(sval)).max(0)).unwrap_or(0);
             }
         }
     }
+    // The base upscale is opaque; keep dst alpha opaque after any mode.
+    out[d + 3] = 0xFF;
 }
 
 /// Mesen's tile-key hash (`HdTileKey::CalculateHash`, `HdData.h:56-68`): an
@@ -1806,7 +1905,7 @@ mod tests {
         }
         // bitmapIndex, tileData, palette, x, y, brightness, defaultTile=N.
         let line = format!("0,{td_hex},0F162736,16,32,1,N");
-        let (key, _, x, y) = parse_tile_fields(&line).unwrap();
+        let (key, _, x, y, _) = parse_tile_fields(&line).unwrap();
         assert_eq!(key, chr_ram_key(0x0F16_2736, &td));
         assert_eq!((x, y), (16, 32));
         // defaultTile=Y -> keyed under the 0xFFFFFFFF palette wildcard.
@@ -1833,7 +1932,7 @@ mod tests {
     #[test]
     fn parses_chr_rom_tile_index_form() {
         // bitmapIndex, tileIndex(hex), palette, x, y, brightness, defaultTile.
-        let (key, _, x, y) = parse_tile_fields("0,2A,0F162736,16,32,1,N").unwrap();
+        let (key, _, x, y, _) = parse_tile_fields("0,2A,0F162736,16,32,1,N").unwrap();
         assert_eq!(key, chr_rom_key(0x2A, 0x0F16_2736));
         assert_eq!((x, y), (16, 32));
         // defaultTile=Y -> the palette wildcard.
@@ -2349,6 +2448,7 @@ mod tests {
                 x: 0,
                 y: 0,
                 conditions: vec![0],
+                brightness: BRIGHTNESS_IDENTITY,
             }],
         );
         let pack = HdPack {
@@ -2411,6 +2511,8 @@ mod tests {
                 y: 0,
                 priority: 1,
                 conditions: vec![0],
+                brightness: BRIGHTNESS_IDENTITY,
+                blend_mode: BlendMode::Alpha,
             }],
             watched_addresses: vec![0x40],
             audio_decls: Vec::new(),
@@ -2446,6 +2548,7 @@ mod tests {
                 x: 0,
                 y: 0,
                 conditions: Vec::new(),
+                brightness: BRIGHTNESS_IDENTITY,
             }],
         );
         let pack = HdPack {
@@ -2606,6 +2709,7 @@ mod tests {
                 x: 0,
                 y: 0,
                 conditions: Vec::new(),
+                brightness: BRIGHTNESS_IDENTITY,
             }],
         );
         let pack = HdPack {
