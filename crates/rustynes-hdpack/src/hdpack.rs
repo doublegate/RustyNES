@@ -234,8 +234,10 @@ fn tile_matches(t: HdTileSource, tile: u32, palette: Option<u32>) -> bool {
 /// VISIBLE winner), this sees sprites a higher-priority background occludes —
 /// Mesen `spriteAtPosition` / `spriteNearby` match any covering sprite.
 fn sprite_present(t: HdTileSource, palette: Option<u32>) -> bool {
-    t.sprites[..usize::from(t.sprite_count)]
+    // `take` (not a slice) is panic-safe even if `sprite_count` were ever > 4.
+    t.sprites
         .iter()
+        .take(usize::from(t.sprite_count))
         .any(|s| palette.is_none_or(|p| s.palette_colors == p))
 }
 

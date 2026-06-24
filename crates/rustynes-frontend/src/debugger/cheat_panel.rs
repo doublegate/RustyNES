@@ -80,7 +80,14 @@ pub struct CheatPanelState {
     enc_result: String,
     /// Last encoder error (cleared on a successful encode).
     enc_error: String,
+    /// v1.8.9 — the loaded ROM's category-grouped DB codes, cached so the
+    /// pick-list does not re-query + sort + group the database every frame. Keyed
+    /// on the ROM CRC; rebuilt only when the CRC changes.
+    genie_cache: Option<(u32, GenieGroups)>,
 }
+
+/// Category-grouped Game Genie DB codes for one ROM: `(category, codes)` rows.
+type GenieGroups = Vec<(String, Vec<crate::genie_db::GenieDbCode>)>;
 
 impl CheatPanelState {
     /// Replace the in-memory cheat lists (called by the app after loading a
@@ -469,13 +476,21 @@ fn genie_db_picklist(ui: &mut egui::Ui, state: &mut CheatPanelState, rom_crc: Op
     let Some(crc) = rom_crc else {
         return false;
     };
-    // v1.8.9 — codes for the loaded ROM, grouped by effect category.
-    let groups = crate::genie_db::codes_for_crc_by_category(crc);
+    // v1.8.9 — codes for the loaded ROM, grouped by effect category. Cached on
+    // the CRC so the (sort + group) runs only when a new ROM loads, not per frame.
+    if state.genie_cache.as_ref().is_none_or(|(c, _)| *c != crc) {
+        state.genie_cache = Some((crc, crate::genie_db::codes_for_crc_by_category(crc)));
+    }
+    let Some((_, groups)) = state.genie_cache.as_ref() else {
+        return false;
+    };
     if groups.is_empty() {
         return false;
     }
-    let mut changed = false;
     let game = crate::genie_db::game_for_crc(crc).unwrap_or_default();
+    // Collect picks, then apply after the `&state` borrow ends (so the selection
+    // can mutate the cheat list via `add_code_by_str`).
+    let mut to_add: Vec<String> = Vec::new();
     ui.horizontal(|ui| {
         ui.label("Known codes:");
         egui::ComboBox::from_id_salt("genie-db-picklist")
@@ -485,7 +500,7 @@ fn genie_db_picklist(ui: &mut egui::Ui, state: &mut CheatPanelState, rom_crc: Op
                 format!("{game} — pick a code…")
             })
             .show_ui(ui, |ui| {
-                for (category, codes) in &groups {
+                for (category, codes) in groups {
                     // A bold category header above each group of effects.
                     ui.label(egui::RichText::new(category).strong());
                     for entry in codes {
@@ -497,13 +512,17 @@ fn genie_db_picklist(ui: &mut egui::Ui, state: &mut CheatPanelState, rom_crc: Op
                             format!("  {} ({})", entry.name, entry.code)
                         };
                         if ui.selectable_label(already, label).clicked() && !already {
-                            changed |= add_code_by_str(state, &entry.code);
+                            to_add.push(entry.code.clone());
                         }
                     }
                     ui.separator();
                 }
             });
     });
+    let mut changed = false;
+    for code in &to_add {
+        changed |= add_code_by_str(state, code);
+    }
     changed
 }
 
