@@ -26,6 +26,8 @@
 
 use std::path::{Path, PathBuf};
 
+use rustynes_core::{Buttons, Nes};
+
 /// At most this many distinct colours means treat the frame as blank.
 ///
 /// A real NES screen draws well more than four distinct RGBA values; a
@@ -135,6 +137,40 @@ pub fn walk_nes(root: &Path, out: &mut Vec<PathBuf>) {
             out.push(p);
         }
     }
+}
+
+/// Run `bytes` as a ROM headless for `frames` frames and return its 256x240 RGBA8
+/// framebuffer.
+///
+/// Deterministic: the same ROM + frame count yields the same frame (the seeded
+/// power-on alignment is fixed), so the framebuffer hash is a stable regression key.
+///
+/// Vs. System carts get their per-game RGB-PPU type + DIP from `vs_db` so colours
+/// render correctly; a START press is pulsed in a 10-frame window from `start_at`,
+/// repeating every 600 frames, to advance title / intro screens. Returns the load
+/// error string if the ROM can't be parsed.
+///
+/// # Errors
+/// Returns `Err(message)` when [`Nes::from_rom`] rejects `bytes`.
+pub fn run_rom_headless(bytes: &[u8], frames: u64, start_at: u64) -> Result<Vec<u8>, String> {
+    let mut nes = Nes::from_rom(bytes).map_err(|e| e.to_string())?;
+    if nes.is_vs_system() {
+        let dip = rustynes_core::vs_db::lookup(nes.rom_sha256()).map_or(0, |entry| {
+            nes.set_vs_ppu_type(entry.vs_ppu_type);
+            entry.vs_dip
+        });
+        nes.set_vs_dip(dip);
+    }
+    for f in 0..frames {
+        let btn = if (start_at..start_at.saturating_add(10)).contains(&(f % 600)) {
+            Buttons::START
+        } else {
+            Buttons::empty()
+        };
+        nes.set_buttons(0, btn);
+        nes.run_frame();
+    }
+    Ok(nes.framebuffer().to_vec())
 }
 
 #[cfg(test)]

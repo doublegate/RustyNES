@@ -17,6 +17,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Optional SQLite userdata backing (`script-sqlite` feature).** A script's `userdata.*`
+  KV store can now be persisted to / loaded from a real on-disk SQLite database (instead of
+  only the in-memory map), so values survive across runs and are queryable with external
+  tooling — via `ScriptEngine::userdata_save_sqlite` / `userdata_load_sqlite`. Off by default:
+  the `script-sqlite` feature pulls a vendored (bundled) SQLite, so the default / shipped build
+  stays dependency-free and byte-identical.
+- **Headless batch runner (`batch_runner`).** A test-harness binary that runs a manifest,
+  directory, or list of ROMs headless and emits one JSON object per ROM — a deterministic FNV
+  framebuffer hash, a blank-frame health verdict, distinct-colour count, and a written
+  screenshot — consolidating the ad-hoc boot-smoke verifiers into one scriptable,
+  regression-friendly entry point (`--frames` / `--start-at` / `--out`). Backed by a reusable
+  `coverage::run_rom_headless` lib helper. Built with `--features commercial-roms`.
+- **Multi-disk side selector (Emulation → Disk Side).** For multi-disk FDS games, a submenu
+  inserts any specific disk side directly — or ejects — with the current side shown, instead
+  of only the cycle-through F9 swap (a game that prompts "insert side B" can now be answered
+  in one click). Disabled during a replay (mutating the disk would diverge the recorded
+  timeline), matching the existing swap item.
+- **FDS Firmware Manager (Settings → Famicom Disk System).** Browse for a `disksys.rom`
+  and have it validated — the 8 KiB size is the hard gate, plus a SHA-256 match against the
+  known Nintendo dump for a "recognized" badge (an 8 KiB file with an unrecognized hash is
+  still accepted as usable, just unverified). On accept the path persists to `config.toml`, so
+  `.fds` disk images boot without guessing which file is the BIOS. Native-only.
 - **Input macros / templates (TAStudio pattern tools).** Record a short per-frame input
   pattern from the TAStudio cursor and stamp it back at the cursor (BizHawk / FCEUX-style
   pattern-paint) — a macro bank in the TAStudio window's new "Macros" section, with editor

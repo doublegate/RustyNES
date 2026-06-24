@@ -56,6 +56,9 @@
 
 mod backend;
 mod types;
+// v1.8.9 "Backlog" — optional SQLite backing for the `userdata.*` KV store.
+#[cfg(feature = "script-sqlite")]
+pub mod userdata_sqlite;
 
 pub use backend::VmBackend;
 pub use types::{
@@ -424,6 +427,30 @@ impl ScriptEngine {
     /// snapshot (the host restores it from a save-state / disk on script load).
     pub fn userdata_restore(&self, pairs: &[(String, String)]) {
         self.inner.userdata_restore(pairs);
+    }
+
+    /// v1.8.9 — persist the `userdata.*` KV store to a `SQLite` database at `path`
+    /// (the off-by-default `script-sqlite` feature). The live in-memory store is
+    /// unchanged; this writes its current snapshot for cross-run durability.
+    ///
+    /// # Errors
+    /// Propagates any `SQLite` open / write error.
+    #[cfg(feature = "script-sqlite")]
+    pub fn userdata_save_sqlite<P: AsRef<std::path::Path>>(&self, path: P) -> rusqlite::Result<()> {
+        let mut kv = crate::userdata_sqlite::SqliteKv::open(path)?;
+        kv.save_pairs(&self.userdata_snapshot())
+    }
+
+    /// v1.8.9 — load the `userdata.*` KV store from a `SQLite` database at `path`,
+    /// replacing the in-memory store (the off-by-default `script-sqlite` feature).
+    ///
+    /// # Errors
+    /// Propagates any `SQLite` open / read error.
+    #[cfg(feature = "script-sqlite")]
+    pub fn userdata_load_sqlite<P: AsRef<std::path::Path>>(&self, path: P) -> rusqlite::Result<()> {
+        let kv = crate::userdata_sqlite::SqliteKv::open(path)?;
+        self.userdata_restore(&kv.load_pairs()?);
+        Ok(())
     }
 }
 

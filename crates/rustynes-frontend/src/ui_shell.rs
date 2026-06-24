@@ -153,6 +153,8 @@ pub enum MenuAction {
     SetWindowScale(u32),
     /// v1.0.0 — cycle the inserted FDS disk side.
     CycleDiskSide,
+    /// v1.8.9 — insert a specific FDS disk side (`Some(i)`) or eject (`None`).
+    SetDiskSide(Option<usize>),
     /// v1.0.0 — capture a screenshot of the current framebuffer (native).
     Screenshot,
     /// v1.0.0 — copy the current framebuffer to the system clipboard (native;
@@ -388,6 +390,9 @@ pub struct ShellFrame<'a> {
     /// v1.0.0 — number of FDS disk sides (0 = not an FDS game). Enables the
     /// File-menu disk items.
     pub disk_sides: usize,
+    /// v1.8.9 — the currently inserted FDS disk side, or `None` when ejected, for
+    /// the Multi-Disk submenu's radio state.
+    pub inserted_disk_side: Option<usize>,
     /// v1.0.0 — whether the loaded game is a Vs. System title (enables the
     /// "Insert Coin" item).
     pub vs_system: bool,
@@ -951,6 +956,34 @@ impl UiShell {
                             out.action = Some(MenuAction::CycleDiskSide);
                             ui.close();
                         }
+                        // v1.8.9 — Multi-Disk: insert a specific side directly (a
+                        // multi-disk FDS game prompts "insert side N"), or eject.
+                        // Disabled during a replay (mutating the disk diverges the
+                        // recorded timeline), like the cycle item above.
+                        ui.add_enabled_ui(!replay_locked, |ui| {
+                            ui.menu_button(ic(glyph::FLOPPY_DISK, "Disk Side"), |ui| {
+                                for i in 0..frame.disk_sides {
+                                    if ui
+                                        .radio(
+                                            frame.inserted_disk_side == Some(i),
+                                            format!("Side {}", i + 1),
+                                        )
+                                        .clicked()
+                                    {
+                                        out.action = Some(MenuAction::SetDiskSide(Some(i)));
+                                        ui.close();
+                                    }
+                                }
+                                ui.separator();
+                                if ui
+                                    .radio(frame.inserted_disk_side.is_none(), "Eject")
+                                    .clicked()
+                                {
+                                    out.action = Some(MenuAction::SetDiskSide(None));
+                                    ui.close();
+                                }
+                            });
+                        });
                     }
                 });
 

@@ -156,6 +156,11 @@ pub struct SettingsPanelState {
     /// has no `config.toml` save path, so there is nothing to report.
     #[cfg(not(target_arch = "wasm32"))]
     status: String,
+    /// v1.8.9 — the last FDS BIOS (`disksys.rom`) recognition result shown in the
+    /// Settings -> FDS section, set when the user browses for one. Native-only
+    /// (the rfd file picker is native; wasm uploads the BIOS via a file input).
+    #[cfg(not(target_arch = "wasm32"))]
+    fds_bios_status: Option<String>,
     /// Warning pushed by the app when the configured present mode was not
     /// supported by the surface and the swapchain fell back to `Fifo`
     /// (v2.8.0 Phase 0 — the fallback used to be silent, leaving the
@@ -348,7 +353,71 @@ pub fn body(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &mut Conf
     ui.add_space(8.0);
     recording_section(ui, config);
     ui.add_space(8.0);
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        fds_section(ui, state, config);
+        ui.add_space(8.0);
+    }
     advanced_section(ui, state, config);
+}
+
+/// v1.8.9 — the Famicom Disk System firmware manager: point at a `disksys.rom`,
+/// validate it (8 KiB + SHA-256 recognition), and persist the path to config so
+/// `.fds` images can boot. Native-only (rfd file picker; wasm uploads the BIOS via
+/// a file input).
+#[cfg(not(target_arch = "wasm32"))]
+fn fds_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &mut Config) {
+    use crate::fds_firmware::{BiosStatus, classify};
+    egui::CollapsingHeader::new("Famicom Disk System (FDS BIOS)").show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.label("disksys.rom:");
+            let cur = config
+                .fds
+                .bios_path
+                .as_ref()
+                .map_or_else(|| "(not set)".to_owned(), |p| p.display().to_string());
+            ui.monospace(cur);
+        });
+        if ui.button("Browse for disksys.rom\u{2026}").clicked()
+            && let Some(path) = rfd::FileDialog::new()
+                .add_filter("FDS BIOS", &["rom", "bin"])
+                .pick_file()
+        {
+            // Read at most one byte past the 8 KiB BIOS size: an accidentally-huge
+            // file then can't OOM / freeze the UI thread, and `classify` rejects any
+            // length != 8192 (an oversize file yields 8193 bytes here -> WrongSize).
+            use std::io::Read as _;
+            let read = std::fs::File::open(&path).and_then(|f| {
+                let mut buf = Vec::new();
+                f.take(crate::fds_firmware::BIOS_SIZE as u64 + 1)
+                    .read_to_end(&mut buf)?;
+                Ok(buf)
+            });
+            state.fds_bios_status = Some(match read {
+                Ok(bytes) => match classify(&bytes) {
+                    BiosStatus::WrongSize(n) => {
+                        format!("Not an FDS BIOS: {n} bytes (need 8192) - path NOT changed.")
+                    }
+                    BiosStatus::Recognized(label) => {
+                        config.fds.bios_path = Some(path);
+                        format!("Recognized: {label} - path set.")
+                    }
+                    BiosStatus::Unverified(hex) => {
+                        config.fds.bios_path = Some(path);
+                        format!(
+                            "8 KiB, unverified dump (sha256 {}\u{2026}) - path set.",
+                            &hex[..16]
+                        )
+                    }
+                },
+                Err(e) => format!("read error: {e}"),
+            });
+        }
+        if let Some(s) = &state.fds_bios_status {
+            ui.label(s);
+        }
+        ui.weak("Required to boot .fds disk images. Takes effect on the next FDS load.");
+    });
 }
 
 /// v1.8.9 — the A/V recording codec-depth picker (encoder / CRF / preset / audio

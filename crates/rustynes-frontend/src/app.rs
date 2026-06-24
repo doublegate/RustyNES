@@ -1838,6 +1838,32 @@ impl App {
         }
     }
 
+    /// v1.8.9 — insert a specific FDS disk side (`Some(i)`) or eject (`None`) — the
+    /// Multi-Disk submenu's direct counterpart to [`Self::cycle_disk_side`] (a
+    /// multi-disk game prompts "insert side N"). An out-of-range side is ignored.
+    fn set_disk_side(&self, side: Option<usize>) {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.flush_fds_save();
+        let mut guard = self.emu.lock();
+        let Some(nes) = guard.nes.as_mut() else {
+            return;
+        };
+        let count = nes.disk_side_count();
+        if count == 0 {
+            return;
+        }
+        if let Some(s) = side
+            && s >= count
+        {
+            return; // stale menu click past the side count.
+        }
+        nes.set_disk_side(side);
+        match side {
+            Some(s) => eprintln!("rustynes: FDS disk -> Side {}/{count}", s + 1),
+            None => eprintln!("rustynes: FDS disk ejected"),
+        }
+    }
+
     /// Drain any pending gilrs events into the input state. Called once
     /// per pacer iteration. Cheap when no pad is connected — just a hash
     /// lookup of the connected-devices list. Native-only (gilrs);
@@ -4106,6 +4132,9 @@ impl App {
             }
             MenuAction::CycleDiskSide => {
                 self.cycle_disk_side();
+            }
+            MenuAction::SetDiskSide(side) => {
+                self.set_disk_side(side);
             }
             MenuAction::Screenshot => {
                 #[cfg(not(target_arch = "wasm32"))]
@@ -7900,6 +7929,7 @@ impl ApplicationHandler<AppEvent> for App {
                     rom_loaded,
                     fps,
                     disk_sides,
+                    inserted_disk_side,
                     vs_system,
                     mapper_label,
                     region_label,
@@ -7919,6 +7949,7 @@ impl ApplicationHandler<AppEvent> for App {
                                 false,
                                 f,
                                 0usize,
+                                None,
                                 false,
                                 String::new(),
                                 String::new(),
@@ -7937,6 +7968,7 @@ impl ApplicationHandler<AppEvent> for App {
                                 true,
                                 f,
                                 nes.disk_side_count(),
+                                nes.inserted_disk_side(),
                                 nes.is_vs_system(),
                                 nes.mapper_info().name,
                                 region.to_string(),
@@ -7957,6 +7989,7 @@ impl ApplicationHandler<AppEvent> for App {
                     fps,
                     netplay_active,
                     disk_sides,
+                    inserted_disk_side,
                     vs_system,
                     mapper_label: &mapper_label,
                     region_label: &region_label,
