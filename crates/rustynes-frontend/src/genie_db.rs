@@ -39,11 +39,17 @@ pub struct GenieDbCode {
     pub name: String,
     /// The canonical Game Genie code (6 or 8 characters), pre-validated.
     pub code: String,
+    /// Effect category for grouping / filtering (e.g. "Lives", "Items",
+    /// "Difficulty"). Defaults to "Misc" when the row omits the column.
+    pub category: String,
 }
 
-/// Parse one tab-separated `CRC<TAB>Game<TAB>Effect<TAB>Code` row. Returns
-/// `None` for comment / blank / malformed rows, or rows whose code does not
-/// validate through [`GenieCode::new`] (so only usable codes are offered).
+/// Fallback category for rows that predate / omit the category column.
+const DEFAULT_CATEGORY: &str = "Misc";
+
+/// Parse one tab-separated `CRC<TAB>Game<TAB>Effect<TAB>Code[<TAB>Category]` row.
+/// Returns `None` for comment / blank / malformed rows, or rows whose code does
+/// not validate through [`GenieCode::new`] (so only usable codes are offered).
 fn parse_row(line: &str) -> Option<GenieDbCode> {
     let line = line.trim();
     if line.is_empty() || line.starts_with('#') {
@@ -54,6 +60,12 @@ fn parse_row(line: &str) -> Option<GenieDbCode> {
     let game = fields.next()?.to_string();
     let name = fields.next()?.to_string();
     let raw_code = fields.next()?;
+    // The category column is optional (older rows omit it).
+    let category = fields
+        .next()
+        .filter(|c| !c.is_empty())
+        .unwrap_or(DEFAULT_CATEGORY)
+        .to_string();
     // Validate + canonicalize through the core decoder; drop unusable codes.
     let code = GenieCode::new(raw_code).ok()?.code().to_string();
     Some(GenieDbCode {
@@ -61,6 +73,7 @@ fn parse_row(line: &str) -> Option<GenieDbCode> {
         game,
         name,
         code,
+        category,
     })
 }
 
@@ -85,6 +98,68 @@ pub fn codes_for_crc(crc: u32) -> Vec<GenieDbCode> {
 #[must_use]
 pub fn game_for_crc(crc: u32) -> Option<String> {
     db().iter().find(|c| c.crc == crc).map(|c| c.game.clone())
+}
+
+/// All known codes for a ROM grouped by category (each group sorted by effect
+/// name). For the cheat panel's category-grouped pick-list.
+#[must_use]
+pub fn codes_for_crc_by_category(crc: u32) -> Vec<(String, Vec<GenieDbCode>)> {
+    let mut codes = codes_for_crc(crc);
+    codes.sort_by(|a, b| {
+        a.category
+            .cmp(&b.category)
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    let mut out: Vec<(String, Vec<GenieDbCode>)> = Vec::new();
+    for entry in codes {
+        match out.last_mut() {
+            Some(last) if last.0 == entry.category => last.1.push(entry),
+            _ => out.push((entry.category.clone(), vec![entry])),
+        }
+    }
+    out
+}
+
+/// The database entry for a Game Genie code, if it is a known / cataloged one.
+///
+/// Validated + canonicalized first; this is the "what game + effect is this
+/// code?" reverse lookup that lets the UI auto-identify a pasted code.
+#[must_use]
+pub fn entry_for_code(code: &str) -> Option<GenieDbCode> {
+    let canon = GenieCode::new(code).ok()?.code().to_string();
+    db().iter().find(|c| c.code == canon).cloned()
+}
+
+/// The full catalog, sorted by game -> category -> effect — for a "browse all"
+/// view with game / category filters.
+#[must_use]
+pub fn all_codes() -> Vec<GenieDbCode> {
+    let mut rows: Vec<GenieDbCode> = db().to_vec();
+    rows.sort_by(|a, b| {
+        a.game
+            .cmp(&b.game)
+            .then_with(|| a.category.cmp(&b.category))
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    rows
+}
+
+/// The distinct categories present in the database, sorted (for a filter dropdown).
+#[must_use]
+pub fn categories() -> Vec<String> {
+    let mut cats: Vec<String> = db().iter().map(|c| c.category.clone()).collect();
+    cats.sort();
+    cats.dedup();
+    cats
+}
+
+/// The distinct game titles present in the database, sorted (for a filter dropdown).
+#[must_use]
+pub fn games() -> Vec<String> {
+    let mut titles: Vec<String> = db().iter().map(|c| c.game.clone()).collect();
+    titles.sort();
+    titles.dedup();
+    titles
 }
 
 #[cfg(test)]
@@ -126,5 +201,28 @@ mod tests {
     fn lookup_miss_is_empty() {
         assert!(codes_for_crc(0xDEAD_BEEF).is_empty());
         assert_eq!(game_for_crc(0xDEAD_BEEF), None);
+    }
+
+    #[test]
+    fn category_grouping_and_reverse_lookup() {
+        // The category column parses.
+        assert!(
+            codes_for_crc(0x3337_EC46)
+                .iter()
+                .any(|c| c.category == "Lives")
+        );
+        // Category-grouped view: SMB has a "Movement" group.
+        let grouped = codes_for_crc_by_category(0x3337_EC46);
+        assert!(grouped.iter().any(
+            |(cat, codes)| cat == "Movement" && codes.iter().all(|c| c.category == "Movement")
+        ));
+        // Reverse lookup: a pasted code identifies its catalog entry.
+        let entry = entry_for_code("SXIOPO").expect("SXIOPO is cataloged");
+        assert!(!entry.game.is_empty() && !entry.category.is_empty());
+        assert!(entry_for_code("ZZZZZZ").is_none());
+        // Filter sources are populated + sorted-unique.
+        let cats = categories();
+        assert!(cats.contains(&"Lives".to_string()) && cats.windows(2).all(|w| w[0] < w[1]));
+        assert!(games().contains(&"Super Mario Bros.".to_string()));
     }
 }
