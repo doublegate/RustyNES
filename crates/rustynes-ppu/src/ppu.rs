@@ -1195,6 +1195,20 @@ impl Ppu {
         (self.v, self.t, self.x, self.w)
     }
 
+    /// v1.8.9 — the frame's background scroll `(x, y)` in NES pixels, decoded
+    /// from the `t` (temp VRAM addr) register + fine-X, including the nametable
+    /// bits (Mesen HD-pack `_scrollX`/`scrollY`). Used by the HD compositor to
+    /// offset parallax `<background>` layers by `scroll * ratio`. A frame-level
+    /// value (the scroll at `t`), not per-scanline. Output-only.
+    #[must_use]
+    pub const fn hd_bg_scroll(&self) -> (i32, i32) {
+        let t = self.t;
+        let x = ((t & 0x1F) << 3) | (self.x as u16) | if t & 0x0400 != 0 { 0x100 } else { 0 };
+        let y =
+            (((t & 0x03E0) >> 2) | ((t & 0x7000) >> 12)) + if t & 0x0800 != 0 { 240 } else { 0 };
+        (x as i32, y as i32)
+    }
+
     /// Borrow the 32-byte palette RAM (read-only).
     #[must_use]
     pub const fn palette_ram(&self) -> &[u8; 32] {

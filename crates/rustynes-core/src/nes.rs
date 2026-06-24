@@ -805,6 +805,15 @@ impl Nes {
         self.bus.hd_tile_source()
     }
 
+    /// The frame's background scroll `(x, y)` in NES pixels, for offsetting
+    /// parallax HD-pack `<background>` layers (see
+    /// [`rustynes_ppu::Ppu::hd_bg_scroll`]). Output-only.
+    #[cfg(feature = "hd-pack")]
+    #[must_use]
+    pub const fn hd_bg_scroll(&self) -> (i32, i32) {
+        self.bus.ppu().hd_bg_scroll()
+    }
+
     /// The per-frame NTSC composite colour phase consumed by the `NES_NTSC`
     /// filter (`0..=2` on NTSC; frame parity `0..=1` on PAL/Dendy). See
     /// [`rustynes_ppu::Ppu::ntsc_phase`].

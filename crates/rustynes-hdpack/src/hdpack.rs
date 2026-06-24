@@ -283,6 +283,11 @@ struct BackgroundRegion {
     brightness: i32,
     /// Mesen background `blendMode` (field 7; default `Alpha`).
     blend_mode: BlendMode,
+    /// Mesen `HorizontalScrollRatio` / `VerticalScrollRatio` (fields 2/3): the
+    /// region scrolls by `frame_scroll * ratio` for a parallax effect. `0` = the
+    /// layer is fixed; `1` = it tracks the game scroll 1:1.
+    h_scroll_ratio: f32,
+    v_scroll_ratio: f32,
 }
 
 /// A per-frame snapshot of the watched memory addresses referenced by the
@@ -572,6 +577,8 @@ impl HdPack {
                 conditions: bg.conditions,
                 brightness: bg.brightness,
                 blend_mode: bg.blend_mode,
+                h_scroll_ratio: bg.h_scroll_ratio,
+                v_scroll_ratio: bg.v_scroll_ratio,
             });
         }
         backgrounds.sort_by_key(|b| b.priority);
@@ -811,6 +818,8 @@ struct ParsedBackground {
     conditions: Vec<usize>,
     brightness: i32,
     blend_mode: BlendMode,
+    h_scroll_ratio: f32,
+    v_scroll_ratio: f32,
 }
 
 /// Intermediate parse result before image decode + reindex.
@@ -1005,22 +1014,22 @@ fn parse_hires(src: &str) -> ParsedHires {
                 }
             }
             "background" => {
-                if let Some((img_name, x, y, priority, brightness, blend_mode)) =
-                    parse_background_fields(rest)
-                {
-                    let image = intern_name(&mut image_names, &mut name_to_idx, &img_name);
+                if let Some(bg) = parse_background_fields(rest) {
+                    let image = intern_name(&mut image_names, &mut name_to_idx, &bg.image);
                     let Some(conditions) = resolve_condition_refs(&prefix_conds, &cond_name_to_idx)
                     else {
                         continue;
                     };
                     backgrounds.push(ParsedBackground {
                         image,
-                        x,
-                        y,
-                        priority,
+                        x: bg.x,
+                        y: bg.y,
+                        priority: bg.priority,
                         conditions,
-                        brightness,
-                        blend_mode,
+                        brightness: bg.brightness,
+                        blend_mode: bg.blend_mode,
+                        h_scroll_ratio: bg.h_scroll,
+                        v_scroll_ratio: bg.v_scroll,
                     });
                 }
             }
@@ -1403,7 +1412,7 @@ fn parse_tile_fields(rest: &str) -> Option<(u32, usize, u32, u32, i32)> {
 /// Mesen background renders OVER the tile pass, matching Mesen). Scroll ratios +
 /// blend mode are parsed-and-ignored (subset). A bare `name` with no priority
 /// field is accepted (full-screen, the Mesen default priority 10).
-fn parse_background_fields(rest: &str) -> Option<(String, i32, i32, i32, i32, BlendMode)> {
+fn parse_background_fields(rest: &str) -> Option<ParsedBgFields> {
     let fields: Vec<&str> = rest.split(',').map(str::trim).collect();
     if fields.is_empty() || fields[0].is_empty() {
         return None;
@@ -1424,10 +1433,39 @@ fn parse_background_fields(rest: &str) -> Option<(String, i32, i32, i32, i32, Bl
         .get(6)
         .and_then(|p| p.parse::<i32>().ok())
         .unwrap_or(0);
-    // field 1 = brightness; field 7 = blendMode (Mesen `<background>` layout).
+    // field 1 = brightness; fields 2/3 = h/v scroll ratio; field 7 = blendMode.
     let brightness = parse_brightness(fields.get(1).copied());
+    let h_scroll = fields
+        .get(2)
+        .and_then(|s| s.trim().parse::<f32>().ok())
+        .unwrap_or(0.0);
+    let v_scroll = fields
+        .get(3)
+        .and_then(|s| s.trim().parse::<f32>().ok())
+        .unwrap_or(0.0);
     let blend_mode = parse_blend_mode(fields.get(7).copied());
-    Some((image, x, y, priority, brightness, blend_mode))
+    Some(ParsedBgFields {
+        image,
+        x,
+        y,
+        priority,
+        brightness,
+        blend_mode,
+        h_scroll,
+        v_scroll,
+    })
+}
+
+/// Decoded `<background>` line fields (avoids an unwieldy positional tuple).
+struct ParsedBgFields {
+    image: String,
+    x: i32,
+    y: i32,
+    priority: i32,
+    brightness: i32,
+    blend_mode: BlendMode,
+    h_scroll: f32,
+    v_scroll: f32,
 }
 
 // =============================================================================
@@ -1479,6 +1517,10 @@ pub struct HdCompositor {
     ov_top: u32,
     crop_w: u32,
     crop_h: u32,
+    /// v1.8.9 — the current frame's background scroll `(x, y)` in NES pixels, set
+    /// by the frontend each frame ([`Self::set_frame_scroll`]); parallax
+    /// `<background>` layers offset by `frame_scroll * ratio`.
+    frame_scroll: (i32, i32),
 }
 
 impl HdCompositor {
@@ -1503,6 +1545,7 @@ impl HdCompositor {
             ov_top: top,
             crop_w,
             crop_h,
+            frame_scroll: (0, 0),
         }
     }
 
@@ -1510,6 +1553,13 @@ impl HdCompositor {
     #[must_use]
     pub const fn dimensions(&self) -> (u32, u32) {
         (self.out_w, self.out_h)
+    }
+
+    /// v1.8.9 — set the current frame's background scroll `(x, y)` in NES pixels
+    /// (from [`rustynes_ppu::Ppu::hd_bg_scroll`]); parallax `<background>` layers
+    /// offset by `scroll * ratio` on the next [`Self::composite`].
+    pub const fn set_frame_scroll(&mut self, x: i32, y: i32) {
+        self.frame_scroll = (x, y);
     }
 
     /// The most recently composited HD RGBA8 frame.
@@ -1591,6 +1641,7 @@ impl HdCompositor {
             true, // under = priority < 0
             i64::from(self.ov_left),
             i64::from(self.ov_top),
+            self.frame_scroll,
         );
 
         // 3) PER PIXEL (Mesen's renderer model): for each NES pixel, resolve the
@@ -1712,6 +1763,7 @@ impl HdCompositor {
             false, // over = priority >= 0
             i64::from(self.ov_left),
             i64::from(self.ov_top),
+            self.frame_scroll,
         );
 
         self.frame = self.frame.wrapping_add(1);
@@ -1846,6 +1898,11 @@ impl HdCompositor {
     /// memory / frameRange conditions don't depend on tile state, and per-tile
     /// conditions on a full-screen background are an unusual pack choice.
     #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss
+    )]
     fn draw_backgrounds(
         pack: &HdPack,
         out: &mut [u8],
@@ -1857,6 +1914,7 @@ impl HdCompositor {
         under: bool,
         ov_left: i64,
         ov_top: i64,
+        frame_scroll: (i32, i32),
     ) {
         // Full-screen backgrounds aren't tied to a cell, so spatial conditions
         // (position / nearby) have no cell to anchor on and fail closed here.
@@ -1881,7 +1939,14 @@ impl HdCompositor {
             let Some(img) = pack.images.get(bg.image) else {
                 continue;
             };
-            blit_background(out, out_h, out_w, scale, img, bg, ov_left, ov_top);
+            // Parallax: shift the layer by the frame scroll times its ratio.
+            let scroll_off = (
+                i64::from((frame_scroll.0 as f32 * bg.h_scroll_ratio) as i32),
+                i64::from((frame_scroll.1 as f32 * bg.v_scroll_ratio) as i32),
+            );
+            blit_background(
+                out, out_h, out_w, scale, img, bg, ov_left, ov_top, scroll_off,
+            );
         }
     }
 }
@@ -1899,14 +1964,15 @@ fn blit_background(
     bg: &BackgroundRegion,
     ov_left: i64,
     ov_top: i64,
+    scroll_off: (i64, i64),
 ) {
     let img_w = img.width as usize;
     let img_h = img.height as usize;
     let scale_i = scale as i64;
     // Destination origin in upscaled space (i64 to avoid overflow / wrap),
-    // shifted by the overscan crop origin.
-    let ox = (i64::from(bg.x) - ov_left) * scale_i;
-    let oy = (i64::from(bg.y) - ov_top) * scale_i;
+    // shifted by the overscan crop origin and the parallax scroll offset.
+    let ox = (i64::from(bg.x) + scroll_off.0 - ov_left) * scale_i;
+    let oy = (i64::from(bg.y) + scroll_off.1 - ov_top) * scale_i;
     for sy in 0..img_h {
         let dy = oy + sy as i64;
         if dy < 0 {
@@ -2810,6 +2876,8 @@ mod tests {
                 conditions: vec![0],
                 brightness: BRIGHTNESS_IDENTITY,
                 blend_mode: BlendMode::Alpha,
+                h_scroll_ratio: 0.0,
+                v_scroll_ratio: 0.0,
             }],
             watched_addresses: vec![0x40],
             audio_decls: Vec::new(),

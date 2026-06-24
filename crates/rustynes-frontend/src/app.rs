@@ -527,6 +527,10 @@ pub struct App {
     /// frontend's "never hold the emu lock during heavy work" discipline.
     #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
     present_chr_snapshot: Vec<u8>,
+    /// v1.8.9 — the frame's BG scroll `(x, y)` captured under the emu lock, used
+    /// to offset parallax HD-pack `<background>` layers in the unlocked composite.
+    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+    present_bg_scroll: (i32, i32),
     /// v1.3.0 E1 — per-frame snapshot of the watched memory addresses
     /// referenced by the HD-pack's `<condition>` declarations (Mesen's
     /// `WatchedAddressValues`). Captured under the emu lock at produce time and
@@ -851,6 +855,8 @@ impl App {
             #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
             present_chr_snapshot: Vec::new(),
             #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+            present_bg_scroll: (0, 0),
+            #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
             present_watched_mem: crate::hdpack::WatchedMemory::new(),
             audio: None,
             input,
@@ -980,6 +986,8 @@ impl App {
             present_hd_tiles: Vec::new(),
             #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
             present_chr_snapshot: Vec::new(),
+            #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+            present_bg_scroll: (0, 0),
             #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
             present_watched_mem: crate::hdpack::WatchedMemory::new(),
             input,
@@ -8142,6 +8150,9 @@ impl ApplicationHandler<AppEvent> for App {
                                 self.present_hd_tiles.clear();
                                 self.present_hd_tiles
                                     .extend_from_slice(nes.hd_tile_source());
+                                // v1.8.9 — capture the frame's BG scroll for
+                                // parallax `<background>` layers.
+                                self.present_bg_scroll = nes.hd_bg_scroll();
                                 // v1.8.9 — use the produce-time CHR snapshot (the
                                 // visible frame) so run-ahead doesn't flicker
                                 // animated tiles; fall back to a live peek before
@@ -8189,6 +8200,7 @@ impl ApplicationHandler<AppEvent> for App {
                     #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
                     if let Some(comp) = self.hd_compositor.as_mut() {
                         let (w, h) = comp.dimensions();
+                        comp.set_frame_scroll(self.present_bg_scroll.0, self.present_bg_scroll.1);
                         let chr = &self.present_chr_snapshot;
                         comp.composite(
                             &self.present_staging,
@@ -8393,6 +8405,7 @@ impl ApplicationHandler<AppEvent> for App {
                                 self.present_hd_tiles.clear();
                                 self.present_hd_tiles
                                     .extend_from_slice(nes.hd_tile_source());
+                                self.present_bg_scroll = nes.hd_bg_scroll();
                                 // v1.8.9 — prefer the produce-time CHR snapshot (the
                                 // visible frame, in lock-step with `present_fb` +
                                 // the tile-source) so run-ahead doesn't flicker
@@ -8447,6 +8460,7 @@ impl ApplicationHandler<AppEvent> for App {
                     #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
                     if let Some(comp) = self.hd_compositor.as_mut() {
                         let (w, h) = comp.dimensions();
+                        comp.set_frame_scroll(self.present_bg_scroll.0, self.present_bg_scroll.1);
                         let chr = &self.present_chr_snapshot;
                         comp.composite(
                             &self.present_staging,
