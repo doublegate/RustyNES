@@ -140,6 +140,55 @@ enum ConditionKind {
     VMirror,
     /// Per-tile: sprite palette group equals `id` (Mesen `sppalette`).
     SpritePalette { id: u8 },
+    /// The 8x8 cell's screen pixel X (`cell_x * 8`) `<op> value`. Mesen
+    /// `positionCheckX` / `originPositionCheckX` — identical here because the
+    /// composite keys on the 8-aligned cell grid, so a tile's position and its
+    /// origin coincide.
+    PositionCheckX { op: CmpOp, value: u8 },
+    /// The 8x8 cell's screen pixel Y (`cell_y * 8`) `<op> value`. Mesen
+    /// `positionCheckY` / `originPositionCheckY`.
+    PositionCheckY { op: CmpOp, value: u8 },
+    /// The 8x8 tile `(dx, dy)` pixels away from this cell has CHR tile index
+    /// `tile`. Mesen `tileNearby`. Palette matching is intentionally dropped:
+    /// the telemetry carries the palette *group* (0..=3), not the four resolved
+    /// colours Mesen compares, so we gate on the tile index alone (effectively
+    /// Mesen's `ignorePalette`). See `docs/adr/0014`.
+    TileNearby { dx: i32, dy: i32, tile: u8 },
+    /// The 8x8 cell `(dx, dy)` pixels away is sourced from a sprite. Mesen
+    /// `spriteNearby`.
+    SpriteNearby { dx: i32, dy: i32 },
+}
+
+/// Per-cell spatial context for the position / neighbour conditions: the current
+/// 8x8 cell's grid coordinates and the whole frame's per-pixel tile-source slice
+/// (so a `tileNearby` / `spriteNearby` can look up a relative cell).
+#[derive(Clone, Copy)]
+struct SpatialCtx<'a> {
+    cell_x: usize,
+    cell_y: usize,
+    tile_source: &'a [HdTileSource],
+}
+
+impl SpatialCtx<'_> {
+    /// The tile-source record of the cell `(dx, dy)` *pixels* away (the offsets
+    /// are 8-aligned in practice), or `None` if it falls off-screen.
+    fn nearby(self, dx: i32, dy: i32) -> Option<HdTileSource> {
+        // `try_from` after the offset rejects negatives (off the left/top edge);
+        // the `>=` checks reject the right/bottom edge. No signed casts of the
+        // screen dims (clippy::cast_possible_wrap).
+        let x = usize::try_from(i32::try_from(self.cell_x * TILE).ok()? + dx).ok()?;
+        let y = usize::try_from(i32::try_from(self.cell_y * TILE).ok()? + dy).ok()?;
+        if x >= NES_W as usize || y >= NES_H as usize {
+            return None;
+        }
+        self.tile_source.get(y * NES_W as usize + x).copied()
+    }
+}
+
+/// The CHR tile number (0..=255) carried by a [`HdTileSource::chr_addr`]
+/// (`tile = (addr >> 4) & 0xFF`).
+const fn tile_index(chr_addr: u16) -> u8 {
+    ((chr_addr >> 4) & 0xFF) as u8
 }
 
 /// A named, parsed condition.
@@ -509,6 +558,7 @@ impl HdPack {
         watched: &WatchedMemory,
         frame: u32,
         rec: HdTileSource,
+        spatial: SpatialCtx,
     ) -> bool {
         let Some(cond) = self.conditions.get(idx) else {
             // An unresolved condition reference fails closed.
@@ -543,6 +593,23 @@ impl HdPack {
             ConditionKind::HMirror => rec.is_sprite && rec.flip_h,
             ConditionKind::VMirror => rec.is_sprite && rec.flip_v,
             ConditionKind::SpritePalette { id } => rec.is_sprite && rec.palette == *id,
+            ConditionKind::PositionCheckX { op, value } => {
+                // cell_x * 8 <= 248, always fits u8.
+                op.apply(
+                    u8::try_from(spatial.cell_x * TILE).unwrap_or(u8::MAX),
+                    *value,
+                )
+            }
+            ConditionKind::PositionCheckY { op, value } => op.apply(
+                u8::try_from(spatial.cell_y * TILE).unwrap_or(u8::MAX),
+                *value,
+            ),
+            ConditionKind::TileNearby { dx, dy, tile } => spatial
+                .nearby(*dx, *dy)
+                .is_some_and(|t| t.chr_addr != HD_TILE_NONE && tile_index(t.chr_addr) == *tile),
+            ConditionKind::SpriteNearby { dx, dy } => {
+                spatial.nearby(*dx, *dy).is_some_and(|t| t.is_sprite)
+            }
         };
         held ^ cond.inverted
     }
@@ -554,10 +621,11 @@ impl HdPack {
         watched: &WatchedMemory,
         frame: u32,
         rec: HdTileSource,
+        spatial: SpatialCtx,
     ) -> bool {
         conditions
             .iter()
-            .all(|&i| self.eval_condition(i, watched, frame, rec))
+            .all(|&i| self.eval_condition(i, watched, frame, rec, spatial))
     }
 }
 
@@ -934,10 +1002,12 @@ fn parse_hex_u8(s: &str) -> Option<u8> {
 /// the indexed `sppalette0..3` Mesen global-condition names). Per the real Mesen
 /// loader, memory addresses + operands + masks are parsed as **hex**.
 ///
-/// Unsupported types (`tileAtPosition`, `tileNearby`, `spriteAtPosition`,
-/// `spriteNearby`, `positionCheckX/Y`, `originPositionCheckX/Y`) return `None`:
-/// they're outside the PPU telemetry `RustyNES` carries, so a tile gated on one is
-/// dropped (a documented subset limitation — see `docs/adr/0014`).
+/// The spatial types `positionCheckX/Y`, `originPositionCheckX/Y`, `tileNearby`,
+/// and `spriteNearby` are supported as of v1.8.9 (the existing per-pixel
+/// tile-source telemetry carries the cell position + neighbour tiles). Still
+/// unsupported (return `None`, so a gated tile is dropped): `tileAtPosition` /
+/// `spriteAtPosition` (absolute coordinates) and `tileNearby`'s 32-char
+/// tile-data-hash + palette-colour match forms — see `docs/adr/0014`.
 fn parse_condition(rest: &str) -> Option<Condition> {
     let fields: Vec<&str> = rest.split(',').map(str::trim).collect();
     if fields.len() < 2 {
@@ -1014,12 +1084,69 @@ fn parse_condition(rest: &str) -> Option<Condition> {
         "sppalette1" => ConditionKind::SpritePalette { id: 1 },
         "sppalette2" => ConditionKind::SpritePalette { id: 2 },
         "sppalette3" => ConditionKind::SpritePalette { id: 3 },
-        _ => return None, // unsupported condition type: ignored (inert).
+        // The v1.8.9 spatial conditions live in their own parser (keeps this one
+        // short); an unrecognized type still parses to `None` (inert).
+        other => {
+            let kind = parse_spatial(other, &fields)?;
+            return Some(Condition {
+                name: name.to_string(),
+                kind,
+                inverted: false,
+            });
+        }
     };
     Some(Condition {
         name: name.to_string(),
         kind,
         inverted: false,
+    })
+}
+
+/// Parse the v1.8.9 spatial condition types (position / tile-nearby / sprite-
+/// nearby); `None` for anything else (so it's dropped as inert).
+fn parse_spatial(ty: &str, fields: &[&str]) -> Option<ConditionKind> {
+    Some(match ty {
+        // positionCheckX/Y + originPositionCheckX/Y: NAME,type,op,value. The
+        // origin variants coincide with the plain ones on the 8-aligned cell grid.
+        "positionCheckX" | "originPositionCheckX" => {
+            if fields.len() < 4 {
+                return None;
+            }
+            let op = CmpOp::parse(fields[2])?;
+            let value = u8::try_from(parse_int(fields[3])? & 0xFF).ok()?;
+            ConditionKind::PositionCheckX { op, value }
+        }
+        "positionCheckY" | "originPositionCheckY" => {
+            if fields.len() < 4 {
+                return None;
+            }
+            let op = CmpOp::parse(fields[2])?;
+            let value = u8::try_from(parse_int(fields[3])? & 0xFF).ok()?;
+            ConditionKind::PositionCheckY { op, value }
+        }
+        // tileNearby: NAME,tileNearby,x,y,tileIndex(hex)[,palette][,ignorePalette].
+        // The 32-char tile-data-hash form and the palette match are unsupported
+        // (the telemetry has no tile-data hash and only the palette group), so a
+        // rule using them parses to `None` and is dropped.
+        "tileNearby" => {
+            if fields.len() < 5 {
+                return None;
+            }
+            let dx = fields[2].parse::<i32>().ok()?;
+            let dy = fields[3].parse::<i32>().ok()?;
+            let tile = parse_hex_u8(fields[4])?;
+            ConditionKind::TileNearby { dx, dy, tile }
+        }
+        // spriteNearby: NAME,spriteNearby,x,y,... — only the offset matters to us.
+        "spriteNearby" => {
+            if fields.len() < 4 {
+                return None;
+            }
+            let dx = fields[2].parse::<i32>().ok()?;
+            let dy = fields[3].parse::<i32>().ok()?;
+            ConditionKind::SpriteNearby { dx, dy }
+        }
+        _ => return None,
     })
 }
 
@@ -1275,10 +1402,15 @@ impl HdCompositor {
                 };
                 // First rule whose conditions all hold wins (unconditional rules
                 // are sorted last, so a conditional variant gets first refusal).
-                let Some(rule) = rules
-                    .iter()
-                    .find(|r| self.pack.all_hold(&r.conditions, watched, frame, rec))
-                else {
+                let spatial = SpatialCtx {
+                    cell_x,
+                    cell_y,
+                    tile_source,
+                };
+                let Some(rule) = rules.iter().find(|r| {
+                    self.pack
+                        .all_hold(&r.conditions, watched, frame, rec, spatial)
+                }) else {
                     continue;
                 };
                 let Some(img) = self.pack.images.get(rule.image) else {
@@ -1369,6 +1501,11 @@ impl HdCompositor {
         let cell_y = uy / TILE;
         let cell_px = cell_y * TILE * NES_W as usize + cell_x * TILE;
         let rec = tile_source[cell_px];
+        let spatial = SpatialCtx {
+            cell_x,
+            cell_y,
+            tile_source,
+        };
 
         let mut out = PixelInspection {
             x: px,
@@ -1406,7 +1543,7 @@ impl HdCompositor {
                         .conditions
                         .get(i)
                         .map_or_else(|| "?".to_string(), |c| c.name.clone()),
-                    held: self.pack.eval_condition(i, watched, frame, rec),
+                    held: self.pack.eval_condition(i, watched, frame, rec, spatial),
                 })
                 .collect();
             let holds = conds.iter().all(|c| c.held);
@@ -1441,11 +1578,24 @@ impl HdCompositor {
         frame: u32,
         under: bool,
     ) {
+        // Full-screen backgrounds aren't tied to a cell, so spatial conditions
+        // (position / nearby) have no cell to anchor on and fail closed here.
+        let no_spatial = SpatialCtx {
+            cell_x: 0,
+            cell_y: 0,
+            tile_source: &[],
+        };
         for bg in &pack.backgrounds {
             if under != (bg.priority < 0) {
                 continue;
             }
-            if !pack.all_hold(&bg.conditions, watched, frame, HdTileSource::default()) {
+            if !pack.all_hold(
+                &bg.conditions,
+                watched,
+                frame,
+                HdTileSource::default(),
+                no_spatial,
+            ) {
                 continue;
             }
             let Some(img) = pack.images.get(bg.image) else {
@@ -1586,6 +1736,14 @@ fn blit_replacement(
 mod tests {
     use super::*;
 
+    /// An empty spatial context for the non-spatial condition tests (no cell, no
+    /// neighbour slice). The spatial conditions get their own tests below.
+    const SP: SpatialCtx = SpatialCtx {
+        cell_x: 0,
+        cell_y: 0,
+        tile_source: &[],
+    };
+
     #[test]
     fn crc32_matches_known_vectors() {
         // Standard CRC-32 of the empty string is 0; of "123456789" is 0xCBF43926.
@@ -1667,10 +1825,11 @@ mod tests {
 
     #[test]
     fn tile_gated_on_unsupported_condition_is_dropped() {
-        // tileNearby is outside RustyNES's PPU telemetry -> the rule is dropped.
+        // tileAtPosition (absolute coords) is still outside RustyNES's telemetry
+        // -> the rule is dropped. (tileNearby / positionCheck are supported now.)
         let src = format!(
-            "<condition>near,tileNearby,0,-8,{ZERO_TILE_DATA},0F123712\n\
-             [near]<tile>0,{ZERO_TILE_DATA},00000000,0,0,1,N\n"
+            "<condition>at,tileAtPosition,0,0,{ZERO_TILE_DATA},0F123712\n\
+             [at]<tile>0,{ZERO_TILE_DATA},00000000,0,0,1,N\n"
         );
         let parsed = parse_hires(&src);
         assert!(
@@ -1934,7 +2093,7 @@ mod tests {
                 operand,
                 mask: 0xFF,
             });
-            let got = pack.eval_condition(0, &wm, 0, HdTileSource::default());
+            let got = pack.eval_condition(0, &wm, 0, HdTileSource::default(), SP);
             assert_eq!(got, want, "op {op:?} operand {operand}");
         }
     }
@@ -1950,7 +2109,7 @@ mod tests {
             operand: 0x05,
             mask: 0x0F,
         });
-        assert!(pack.eval_condition(0, &wm, 0, HdTileSource::default()));
+        assert!(pack.eval_condition(0, &wm, 0, HdTileSource::default(), SP));
         // Unmasked it would be 0xA5 != 0x05.
         let pack2 = pack_with_condition(ConditionKind::MemoryCheckConstant {
             addr: 0x20,
@@ -1958,7 +2117,7 @@ mod tests {
             operand: 0x05,
             mask: 0xFF,
         });
-        assert!(!pack2.eval_condition(0, &wm, 0, HdTileSource::default()));
+        assert!(!pack2.eval_condition(0, &wm, 0, HdTileSource::default(), SP));
     }
 
     #[test]
@@ -1972,9 +2131,9 @@ mod tests {
             op: CmpOp::Eq,
             mask: 0xFF,
         });
-        assert!(pack.eval_condition(0, &wm, 0, HdTileSource::default()));
+        assert!(pack.eval_condition(0, &wm, 0, HdTileSource::default(), SP));
         wm.set(0x31, 0x08);
-        assert!(!pack.eval_condition(0, &wm, 0, HdTileSource::default()));
+        assert!(!pack.eval_condition(0, &wm, 0, HdTileSource::default(), SP));
     }
 
     #[test]
@@ -1995,8 +2154,8 @@ mod tests {
             operand: 0x09,
             mask: 0xFF,
         });
-        assert!(cpu.eval_condition(0, &wm, 0, HdTileSource::default()));
-        assert!(ppu.eval_condition(0, &wm, 0, HdTileSource::default()));
+        assert!(cpu.eval_condition(0, &wm, 0, HdTileSource::default(), SP));
+        assert!(ppu.eval_condition(0, &wm, 0, HdTileSource::default(), SP));
     }
 
     #[test]
@@ -2007,11 +2166,11 @@ mod tests {
             offset: 30,
         });
         let wm = WatchedMemory::new();
-        assert!(!pack.eval_condition(0, &wm, 29, HdTileSource::default()));
-        assert!(pack.eval_condition(0, &wm, 30, HdTileSource::default()));
-        assert!(pack.eval_condition(0, &wm, 59, HdTileSource::default()));
-        assert!(!pack.eval_condition(0, &wm, 60, HdTileSource::default())); // wraps to 0
-        assert!(pack.eval_condition(0, &wm, 90, HdTileSource::default())); // 90%60=30
+        assert!(!pack.eval_condition(0, &wm, 29, HdTileSource::default(), SP));
+        assert!(pack.eval_condition(0, &wm, 30, HdTileSource::default(), SP));
+        assert!(pack.eval_condition(0, &wm, 59, HdTileSource::default(), SP));
+        assert!(!pack.eval_condition(0, &wm, 60, HdTileSource::default(), SP)); // wraps to 0
+        assert!(pack.eval_condition(0, &wm, 90, HdTileSource::default(), SP)); // 90%60=30
     }
 
     #[test]
@@ -2025,24 +2184,24 @@ mod tests {
         };
 
         let h = pack_with_condition(ConditionKind::HMirror);
-        assert!(h.eval_condition(0, &wm, 0, rec));
+        assert!(h.eval_condition(0, &wm, 0, rec, SP));
         let v = pack_with_condition(ConditionKind::VMirror);
-        assert!(!v.eval_condition(0, &wm, 0, rec));
+        assert!(!v.eval_condition(0, &wm, 0, rec, SP));
         let sp = pack_with_condition(ConditionKind::SpritePalette { id: 2 });
-        assert!(sp.eval_condition(0, &wm, 0, rec));
+        assert!(sp.eval_condition(0, &wm, 0, rec, SP));
         let sp_no = pack_with_condition(ConditionKind::SpritePalette { id: 1 });
-        assert!(!sp_no.eval_condition(0, &wm, 0, rec));
+        assert!(!sp_no.eval_condition(0, &wm, 0, rec, SP));
 
         // A background pixel never satisfies the sprite-only conditions.
         let bg = HdTileSource::default();
-        assert!(!h.eval_condition(0, &wm, 0, bg));
+        assert!(!h.eval_condition(0, &wm, 0, bg, SP));
     }
 
     #[test]
     fn unresolved_condition_index_fails_closed() {
         let pack = pack_with_condition(ConditionKind::HMirror);
         // Index 5 doesn't exist.
-        assert!(!pack.eval_condition(5, &WatchedMemory::new(), 0, HdTileSource::default()));
+        assert!(!pack.eval_condition(5, &WatchedMemory::new(), 0, HdTileSource::default(), SP));
     }
 
     // ---- end-to-end compositing with gating ----
@@ -2413,5 +2572,142 @@ mod tests {
         let pack = HdPack::load(std::path::Path::new(&dir)).expect("real pack loads");
         eprintln!("loaded rule_count={}", pack.rule_count());
         assert!(pack.rule_count() > 0);
+    }
+
+    // ---- spatial conditions (v1.8.9) ----
+
+    fn full_tile_source() -> Vec<HdTileSource> {
+        vec![HdTileSource::default(); (NES_W * NES_H) as usize]
+    }
+
+    #[test]
+    fn position_check_x_gates_on_cell_pixel() {
+        // cell_x*8 >= 128  <=>  cell_x >= 16.
+        let pack = pack_with_condition(ConditionKind::PositionCheckX {
+            op: CmpOp::Ge,
+            value: 128,
+        });
+        let rec = HdTileSource::default();
+        let at = |cx| SpatialCtx {
+            cell_x: cx,
+            cell_y: 0,
+            tile_source: &[],
+        };
+        assert!(pack.eval_condition(0, &WatchedMemory::new(), 0, rec, at(16)));
+        assert!(!pack.eval_condition(0, &WatchedMemory::new(), 0, rec, at(15)));
+    }
+
+    #[test]
+    fn position_check_y_gates_on_cell_pixel() {
+        // cell_y*8 < 16  <=>  cell_y < 2.
+        let pack = pack_with_condition(ConditionKind::PositionCheckY {
+            op: CmpOp::Lt,
+            value: 16,
+        });
+        let rec = HdTileSource::default();
+        let at = |cy| SpatialCtx {
+            cell_x: 0,
+            cell_y: cy,
+            tile_source: &[],
+        };
+        assert!(pack.eval_condition(0, &WatchedMemory::new(), 0, rec, at(1)));
+        assert!(!pack.eval_condition(0, &WatchedMemory::new(), 0, rec, at(2)));
+    }
+
+    #[test]
+    fn tile_nearby_matches_neighbour_tile_index() {
+        let mut ts = full_tile_source();
+        // Place a known tile one cell to the right of (0,0): pixel (8, 0).
+        // chr_addr 0x0A0 -> tile index (0x0A0 >> 4) & 0xFF = 0x0A.
+        ts[8] = HdTileSource {
+            chr_addr: 0x0A0,
+            ..HdTileSource::default()
+        };
+        let ctx = SpatialCtx {
+            cell_x: 0,
+            cell_y: 0,
+            tile_source: &ts,
+        };
+        let rec = HdTileSource::default();
+        let hit = pack_with_condition(ConditionKind::TileNearby {
+            dx: 8,
+            dy: 0,
+            tile: 0x0A,
+        });
+        assert!(hit.eval_condition(0, &WatchedMemory::new(), 0, rec, ctx));
+        // Wrong index, and an off-screen neighbour, both fail closed.
+        let miss = pack_with_condition(ConditionKind::TileNearby {
+            dx: 8,
+            dy: 0,
+            tile: 0x0B,
+        });
+        assert!(!miss.eval_condition(0, &WatchedMemory::new(), 0, rec, ctx));
+        let off = pack_with_condition(ConditionKind::TileNearby {
+            dx: -8,
+            dy: 0,
+            tile: 0x0A,
+        });
+        assert!(!off.eval_condition(0, &WatchedMemory::new(), 0, rec, ctx));
+    }
+
+    #[test]
+    fn sprite_nearby_detects_a_sprite_cell() {
+        let pack = pack_with_condition(ConditionKind::SpriteNearby { dx: 8, dy: 0 });
+        let rec = HdTileSource::default();
+        let mut sprite_ts = full_tile_source();
+        sprite_ts[8] = HdTileSource {
+            chr_addr: 0x010,
+            is_sprite: true,
+            ..HdTileSource::default()
+        };
+        let sprite_ctx = SpatialCtx {
+            cell_x: 0,
+            cell_y: 0,
+            tile_source: &sprite_ts,
+        };
+        assert!(pack.eval_condition(0, &WatchedMemory::new(), 0, rec, sprite_ctx));
+        // A background neighbour (is_sprite = false) does not satisfy it.
+        let mut bg_ts = full_tile_source();
+        bg_ts[8] = HdTileSource {
+            chr_addr: 0x010,
+            is_sprite: false,
+            ..HdTileSource::default()
+        };
+        let bg_ctx = SpatialCtx {
+            cell_x: 0,
+            cell_y: 0,
+            tile_source: &bg_ts,
+        };
+        assert!(!pack.eval_condition(0, &WatchedMemory::new(), 0, rec, bg_ctx));
+    }
+
+    #[test]
+    fn parses_spatial_condition_types() {
+        assert!(matches!(
+            parse_condition("c,positionCheckX,>=,80").unwrap().kind,
+            ConditionKind::PositionCheckX {
+                op: CmpOp::Ge,
+                value: 80
+            }
+        ));
+        // origin* maps to the plain position check on the cell grid.
+        assert!(matches!(
+            parse_condition("c,originPositionCheckY,<,10").unwrap().kind,
+            ConditionKind::PositionCheckY { .. }
+        ));
+        assert!(matches!(
+            parse_condition("c,tileNearby,8,0,0A").unwrap().kind,
+            ConditionKind::TileNearby {
+                dx: 8,
+                dy: 0,
+                tile: 0x0A
+            }
+        ));
+        assert!(matches!(
+            parse_condition("c,spriteNearby,-8,0,00,0").unwrap().kind,
+            ConditionKind::SpriteNearby { dx: -8, dy: 0 }
+        ));
+        // Absolute-position variants remain unsupported (dropped).
+        assert!(parse_condition("c,tileAtPosition,0,0,0A,0").is_none());
     }
 }

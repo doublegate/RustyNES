@@ -65,11 +65,20 @@ then evaluate conditions against that snapshot during the lock-free composite.
   watched-address set is finite (only what the pack references), so the per-frame
   snapshot cost is negligible and proportional to the pack, not to RAM size.
 - **Not full Mesen parity.** Implemented: memoryCheck(Constant), frameRange,
-  hmirror/vmirror, sprite-palette, and full-image/region backgrounds. Still
-  deferred (no demand / heavier model): `TileNearby` / `TileAtPos` / `SpriteNearby`
-  / `SpriteAtPos` neighbor predicates, position checks, `<addition>` /
-  `<fallback>` / `<options>`, and the full blend/priority/parallax compositor.
-  These can be added later without changing the snapshot architecture.
+  hmirror/vmirror, sprite-palette, full-image/region backgrounds, and (as of
+  v1.8.9) the spatial predicates `tileNearby` / `spriteNearby` and the position
+  checks `positionCheckX/Y` + `originPositionCheckX/Y`. The spatial set reuses the
+  existing per-pixel `HdTileSource` telemetry: the cell position is the array
+  index, and `tileNearby` / `spriteNearby` look up a relative cell in the same
+  per-frame slice — no new PPU telemetry, so the byte-identity stance is unchanged.
+  Two deliberate subset limits (telemetry-bound): `tileNearby`'s palette-colour
+  match is dropped (the telemetry carries the palette *group* 0..=3, not the four
+  resolved colours — we gate on the tile index alone, i.e. Mesen's `ignorePalette`),
+  and the 32-char tile-data-hash form of `tileNearby` plus the absolute-coordinate
+  `tileAtPosition` / `spriteAtPosition` still parse to `None` (dropped). Still
+  deferred: `<addition>` / `<fallback>` / `<options>` and the full
+  blend/priority/parallax compositor. These can be added later without changing
+  the snapshot architecture.
 - **HD audio landed in v1.6.0 "Studio" Workstream H** (the biggest remaining
   Mesen2 gap). The `hires.txt` `<bgm>` / `<sfx>` declarations are parsed in
   `hdpack.rs`; `src/hd_audio.rs` decodes their OGG tracks (pure-Rust `lewton`,
