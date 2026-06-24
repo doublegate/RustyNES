@@ -1276,6 +1276,14 @@ impl UiShell {
                         out.action = Some(MenuAction::OpenPanel(ToolPanel::Replay));
                         ui.close();
                     }
+                    // v1.8.9 "Backlog" — BasicBot input-search control panel.
+                    if ui
+                        .button(ic(glyph::WAND_MAGIC_SPARKLES, "BasicBot"))
+                        .clicked()
+                    {
+                        out.action = Some(MenuAction::OpenPanel(ToolPanel::BasicBot));
+                        ui.close();
+                    }
                     // v1.6.0 "Studio" Workstream A2 — TAStudio piano-roll TAS
                     // editor. Needs a loaded ROM (the editor anchors on the
                     // current emulator state as the project's frame 0).

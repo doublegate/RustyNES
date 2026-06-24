@@ -76,6 +76,8 @@ mod cpu_panel;
 #[cfg(not(target_arch = "wasm32"))]
 mod doc_panel;
 mod event_panel;
+// v1.8.9 "Backlog" — BasicBot input-search control panel.
+mod basic_bot_panel;
 // v1.6.0 "Studio" Workstream C (C1) — the debugger expression evaluator (CPU /
 // PPU / memory / access-context tokens + the C-style operator set). Shared by
 // the watch panel's conditional breakpoints / watchpoints / watch window /
@@ -157,6 +159,8 @@ pub enum ToolPanel {
     /// `hd-pack`). The enum variant is unconditional so the menu IA + dispatch
     /// match stay exhaustive; the actual panel + open path is feature-gated.
     HdPixelInspector,
+    /// v1.8.9 — the `BasicBot` input-search control panel.
+    BasicBot,
 }
 
 /// A chip-inspection panel surfaced from the Debug menu (v1.0.0).
@@ -222,6 +226,8 @@ pub struct DebuggerOverlay {
     /// "Studio" Workstream C).
     show_watch: bool,
     show_events: bool,
+    /// v1.8.9 — `BasicBot` control panel visible.
+    show_basic_bot: bool,
     show_nsf: bool,
     show_replay: bool,
     /// `TAStudio` piano-roll editor open flag (v1.6.0 "Studio" Workstream A2).
@@ -266,6 +272,8 @@ pub struct DebuggerOverlay {
     watch_ui: watch_panel::WatchPanelState,
     /// Event viewer panel state (T-110-C3).
     event_ui: event_panel::EventPanelState,
+    /// v1.8.9 — `BasicBot` panel state.
+    basic_bot_ui: basic_bot_panel::BasicBotPanel,
     /// NSF player panel state (T-110-D1).
     nsf_ui: nsf_panel::NsfPanelState,
     /// Replay / TAS window state (v1.5.0 "Lens" Workstream C2).
@@ -453,6 +461,7 @@ impl DebuggerOverlay {
             show_header_editor: false,
             show_watch: false,
             show_events: false,
+            show_basic_bot: false,
             show_nsf: false,
             show_replay: false,
             show_tas: false,
@@ -479,6 +488,7 @@ impl DebuggerOverlay {
             trace_ui: trace_panel::TracePanelState::default(),
             watch_ui: watch_panel::WatchPanelState::default(),
             event_ui: event_panel::EventPanelState::default(),
+            basic_bot_ui: basic_bot_panel::BasicBotPanel::default(),
             nsf_ui: nsf_panel::NsfPanelState::default(),
             replay_ui: replay_panel::ReplayPanelState::default(),
             tas_ui: tastudio_panel::TasStudioPanelState::default(),
@@ -980,6 +990,7 @@ impl DebuggerOverlay {
             ToolPanel::GameDb => self.show_game_db = true,
             ToolPanel::InputDisplay => self.show_input_display = true,
             ToolPanel::Replay => self.show_replay = true,
+            ToolPanel::BasicBot => self.show_basic_bot = true,
             ToolPanel::TasStudio => self.show_tas = true,
             ToolPanel::HdPixelInspector => {
                 #[cfg(all(not(target_arch = "wasm32"), feature = "hd-pack"))]
@@ -1394,6 +1405,17 @@ impl DebuggerOverlay {
     /// overlay is visible, so the menu bar can surface them directly. Panels
     /// that read `nes` (Cheats) no-op when `nes` is `None`.
     fn tool_panels(&mut self, ctx: &egui::Context, mut nes: Option<&mut Nes>, config: &mut Config) {
+        // v1.8.9 — BasicBot input-search control panel. Renders with the optional
+        // `nes` (reborrowed so the rest of the panels still get it); the search is
+        // disabled when no ROM is loaded.
+        if self.show_basic_bot {
+            basic_bot_panel::show(
+                ctx,
+                &mut self.show_basic_bot,
+                &mut self.basic_bot_ui,
+                nes.as_deref_mut(),
+            );
+        }
         // v2.7.0 — transient RetroAchievements unlock / event toasts, drawn as
         // a floating top-right stack so they're visible without the toolbar
         // open. The app expires them after a few seconds. v2.7.1 — an
