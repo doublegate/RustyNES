@@ -608,6 +608,15 @@ impl EmuCore {
         }
     }
 
+    /// v1.8.9 — peek the HD-pack HD-audio register file `$4100..=$4106`
+    /// (side-effect-free) into the array `apply_registers` expects.
+    #[cfg(feature = "hd-pack")]
+    fn peek_hd_audio_regs(nes: &mut Nes) -> [u8; 7] {
+        core::array::from_fn(|i| {
+            nes.cpu_bus_peek(crate::hd_audio::HD_AUDIO_CONTROL + u16::try_from(i).unwrap_or(0))
+        })
+    }
+
     /// v1.8.9 — snapshot the 8 KiB CHR pattern space from the VISIBLE frame at
     /// produce time, so the HD-pack composite hashes tiles against the same frame
     /// it presents (`present_fb`). Without this, run-ahead rolls `nes` back after
@@ -716,15 +725,15 @@ impl EmuCore {
                         self.audio_buf.resize(target, 0.0);
                     }
                     let n = nes.drain_audio_into(&mut self.audio_buf);
-                    // v1.6.0 H — HD-pack HD audio: peek the `$4100` control
-                    // register (side-effect-free) and mix the selected OGG track
-                    // into the drained buffer IN PLACE before it reaches the
-                    // queue. Output-only (see `hd_audio` docs); skipped when no
-                    // audio pack is loaded.
+                    // v1.6.0 H / v1.8.9 — HD-pack HD audio: peek the full
+                    // `$4100..=$4106` register file (side-effect-free) and mix the
+                    // selected OGG track into the drained buffer IN PLACE before it
+                    // reaches the queue. Output-only (see `hd_audio` docs); skipped
+                    // when no audio pack is loaded.
                     #[cfg(feature = "hd-pack")]
                     if let Some(mixer) = self.hd_audio.as_mut() {
-                        let control = nes.cpu_bus_peek(crate::hd_audio::HD_AUDIO_CONTROL);
-                        mixer.mix(&mut self.audio_buf[..n], control);
+                        let regs = Self::peek_hd_audio_regs(nes);
+                        mixer.mix_registers(&mut self.audio_buf[..n], regs);
                     }
                     audio.push_samples(&self.audio_buf[..n]);
                     // v1.6.0 G — record the same samples for the A/V tap (after
@@ -767,15 +776,14 @@ impl EmuCore {
                         self.audio_buf.resize(target, 0.0);
                     }
                     let n = nes.drain_audio_into(&mut self.audio_buf);
-                    // v1.6.0 H — HD-pack HD audio: peek the `$4100` control
-                    // register (side-effect-free) and mix the selected OGG track
-                    // into the drained buffer IN PLACE before the DRC stage.
-                    // Output-only (see `hd_audio` docs); skipped when no audio
-                    // pack is loaded.
+                    // v1.6.0 H / v1.8.9 — HD-pack HD audio: peek the full
+                    // `$4100..=$4106` register file (side-effect-free) and mix the
+                    // selected OGG track into the drained buffer IN PLACE before
+                    // the DRC stage. Output-only; skipped when no audio pack.
                     #[cfg(feature = "hd-pack")]
                     if let Some(mixer) = self.hd_audio.as_mut() {
-                        let control = nes.cpu_bus_peek(crate::hd_audio::HD_AUDIO_CONTROL);
-                        mixer.mix(&mut self.audio_buf[..n], control);
+                        let regs = Self::peek_hd_audio_regs(nes);
+                        mixer.mix_registers(&mut self.audio_buf[..n], regs);
                     }
                     // v2.8.0 Phase 1 — through the DRC resampler stage.
                     audio.push_samples(&self.audio_buf[..n]);
