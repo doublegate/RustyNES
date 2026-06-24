@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Detachable panel windows (multi-viewport).** The `BasicBot` panel can pop out into its own native OS window (egui `show_viewport_immediate`) via a "Detach to its own window" toggle; the window's close button reattaches it to the docked panel. The reusable mechanism for floating a debugger panel onto a second monitor.
 - **BasicBot (save-state-anchored input search).** A brute-force bot that snapshots the current state, then repeatedly restores it, plays a randomly-drawn input sequence, and keeps the one that maximizes a target memory value (1 or 2 bytes) — in the spirit of BizHawk's Basic Bot. Runs entirely on the deterministic core (snapshot / restore / run_frame / peek) with its own seeded PRNG, so a search is fully reproducible and never perturbs live output.
 - **RetroAchievements HUD: leaderboard trackers overlay (H2).** Active leaderboard trackers (the live value of each in-progress leaderboard, e.g. a speedrun timer) now render as a bottom-left on-screen HUD element, not only in the status-bar text — completing the RA HUD alongside the existing challenge / progress / scoreboard indicators.
 - **Optional SQLite userdata backing (`script-sqlite` feature).** A script's `userdata.*`

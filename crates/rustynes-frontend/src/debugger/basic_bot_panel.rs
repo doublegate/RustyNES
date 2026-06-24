@@ -22,6 +22,11 @@ pub struct BasicBotPanel {
     last: Option<BotResult>,
     /// A status / error line.
     status: String,
+    /// v1.8.9 — detached into its own OS window (egui multi-viewport).
+    detached: bool,
+    /// v1.8.9 — "Run search" was clicked this frame; the caller runs it after the
+    /// render (so `nes` never has to be captured by the viewport callback).
+    run_requested: bool,
 }
 
 impl Default for BasicBotPanel {
@@ -34,6 +39,8 @@ impl Default for BasicBotPanel {
             seed: 0x1234_5678,
             last: None,
             status: String::new(),
+            detached: false,
+            run_requested: false,
         }
     }
 }
@@ -46,39 +53,72 @@ pub fn show(
     state: &mut BasicBotPanel,
     nes: Option<&mut Nes>,
 ) {
-    egui::Window::new("BasicBot")
-        .open(open)
-        .default_width(320.0)
-        .show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.label("Target $");
-                ui.add(egui::TextEdit::singleline(&mut state.addr_hex).desired_width(60.0));
-                ui.checkbox(&mut state.two_byte, "16-bit");
-            });
-            ui.add(egui::Slider::new(&mut state.frames, 1..=600).text("frames / attempt"));
-            ui.add(egui::Slider::new(&mut state.attempts, 1..=5000).text("attempts"));
-            ui.horizontal(|ui| {
-                ui.label("seed");
-                ui.add(egui::DragValue::new(&mut state.seed).hexadecimal(8, false, true));
-            });
-            ui.weak("Maximizes the target value over random player-1 inputs.");
+    let can_run = nes.is_some();
+    if state.detached {
+        // v1.8.9 multi-viewport — render in a real OS window via egui's
+        // `show_viewport_immediate`. The body takes only `can_run` (a `Copy` bool),
+        // never `nes`, so the FnMut callback captures nothing that has to move.
+        ctx.show_viewport_immediate(
+            egui::ViewportId::from_hash_of("rustynes_basic_bot"),
+            egui::ViewportBuilder::default()
+                .with_title("BasicBot")
+                .with_inner_size([340.0, 320.0]),
+            |vctx, _class| {
+                // `CentralPanel::show(ctx)` is the documented top-level viewport
+                // idiom (eframe's own multi-viewport examples use it).
+                #[allow(deprecated)]
+                egui::CentralPanel::default().show(vctx, |ui| body(ui, state, can_run));
+                // The OS window's close button reattaches to the docked panel.
+                if vctx.input(|i| i.viewport().close_requested()) {
+                    state.detached = false;
+                }
+            },
+        );
+    } else {
+        egui::Window::new("BasicBot")
+            .open(open)
+            .default_width(320.0)
+            .show(ctx, |ui| body(ui, state, can_run));
+    }
+    // Run the search AFTER the render — `nes` is free here (not captured by any
+    // closure), so it moves into `run_search` directly, no reborrow needed.
+    if std::mem::take(&mut state.run_requested) {
+        run_search(state, nes);
+    }
+}
 
-            let can_run = nes.is_some();
-            let run = ui
-                .add_enabled(can_run, egui::Button::new("\u{25B6} Run search"))
-                .clicked();
-            if !can_run {
-                ui.weak("Load a ROM to run the bot.");
-            }
-            if run {
-                run_search(state, nes);
-            }
+/// The panel body (config + Run), shared by the docked window and the detached OS
+/// viewport. A click sets `run_requested`; [`show`] runs the search after rendering.
+fn body(ui: &mut egui::Ui, state: &mut BasicBotPanel, can_run: bool) {
+    ui.checkbox(&mut state.detached, "Detach to its own window");
+    ui.separator();
+    ui.horizontal(|ui| {
+        ui.label("Target $");
+        ui.add(egui::TextEdit::singleline(&mut state.addr_hex).desired_width(60.0));
+        ui.checkbox(&mut state.two_byte, "16-bit");
+    });
+    ui.add(egui::Slider::new(&mut state.frames, 1..=600).text("frames / attempt"));
+    ui.add(egui::Slider::new(&mut state.attempts, 1..=5000).text("attempts"));
+    ui.horizontal(|ui| {
+        ui.label("seed");
+        ui.add(egui::DragValue::new(&mut state.seed).hexadecimal(8, false, true));
+    });
+    ui.weak("Maximizes the target value over random player-1 inputs.");
 
-            if !state.status.is_empty() {
-                ui.separator();
-                ui.label(&state.status);
-            }
-        });
+    if ui
+        .add_enabled(can_run, egui::Button::new("\u{25B6} Run search"))
+        .clicked()
+    {
+        state.run_requested = true;
+    }
+    if !can_run {
+        ui.weak("Load a ROM to run the bot.");
+    }
+
+    if !state.status.is_empty() {
+        ui.separator();
+        ui.label(&state.status);
+    }
 }
 
 /// Parse the address + run the search, recording a status line.
