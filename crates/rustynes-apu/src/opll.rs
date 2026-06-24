@@ -2,17 +2,15 @@
 //! [`emu2413 v1.5.9`](https://github.com/digital-sound-antiques/emu2413)
 //! (MIT, Mitsutaka Okazaki) for the VRC7 mapper.
 //!
-//! # Status (v1.1.0 sprint 1.1 — scaffolding)
+//! # Scope
 //!
-//! This file lands the **foundation** of the OPLL port. The constants,
-//! patch ROM tables (YM2413 / VRC7 / YMF281B), exp/sin lookup tables,
-//! data structures, and public API surface are in place. `calc()` is
-//! a stub returning 0 — matching the v1.0.0 ADR-0004 deferred behavior.
-//!
-//! The phase generator (PG), envelope generator (EG), per-operator
-//! arithmetic, channel update loop, and AM/PM LFO are the next sprints
-//! (1.1 PG+EG, 1.2 operator+channel+LFO). Each sub-step lands under a
-//! per-fix unit test against emu2413 reference outputs.
+//! The full FM pipeline is implemented: the constants, patch ROM tables
+//! (YM2413 / VRC7 / YMF281B), exp/sin lookup tables, the register-write
+//! decoder ([`Opll::write_reg`]), the phase generator (PG), envelope
+//! generator (EG), per-operator arithmetic, the 2-op channel update loop,
+//! and the AM/PM LFO. [`Opll::calc`] runs the whole pipeline once per
+//! chip clock and returns the mixed sample. Each DSP stage is covered by
+//! a unit test against emu2413 reference outputs.
 //!
 //! # Algorithmic reference
 //!
@@ -34,12 +32,11 @@
 //! `i16` in the `[-4095, 4095]` range (15-bit signed magnitude per
 //! the chip's DAC).
 
-// The OPLL port lands in stages: the v1.1.0-rc scaffolding (this file
-// as committed) ships the patch ROM, LUTs, and public API but stubs
-// `calc()` to 0 — matching ADR-0004's deferred behavior. The PG/EG/
-// operator/LFO DSP fields are referenced by name in subsequent sprints;
-// silencing the dead-code lint here keeps the v1.0.0 quality-gate
-// `-D warnings` invariant green during the foundation landing.
+// A handful of patch-ROM / LUT entries and chip-state fields ported
+// verbatim from emu2413 are not read on the VRC7 path (e.g. rhythm-mode
+// state the VRC7 wiring never reaches). Allowing dead_code keeps the
+// faithful 1:1 port intact without per-field cfg gating while preserving
+// the `-D warnings` quality gate.
 #![allow(dead_code)]
 // The PG/EG ports mirror C semantics (unsigned/signed wrap, narrowing
 // casts) byte-for-byte against emu2413.cpp. The arithmetic is bounded
@@ -1288,10 +1285,9 @@ impl Opll {
     /// 1), only the 6 melodic channels are summed; the rhythm channels
     /// in slots 12..18 are not used.
     ///
-    /// Until the register-write decoder lands (Sprint 1.2), `calc`
-    /// produces silence because no slot is keyed on — but the full
-    /// pipeline runs every call (so AM/PM/EG advance and the cost
-    /// model is realistic).
+    /// With no slot keyed on, `calc` produces silence — but the full
+    /// pipeline still runs every call (so AM/PM/EG advance), keeping the
+    /// per-clock cost constant regardless of channel activity.
     pub fn calc(&mut self) -> i16 {
         self.update_output();
         self.mix_output();

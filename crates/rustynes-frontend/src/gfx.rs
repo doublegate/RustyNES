@@ -4,9 +4,15 @@
 //! uploads it to a wgpu texture; a fullscreen-triangle render pass samples
 //! that texture with nearest filtering and aspect-ratio-correct letterbox.
 //!
-//! This is the v0 MVP: no NTSC filter, no scanline shader, no second pass.
-//! The shader is inlined as a string constant; switch to `include_wgsl!` if
-//! it grows beyond a few dozen lines.
+//! [`Gfx`] also owns the optional post-process chain layered on that base
+//! blit: the single-select [`crate::crt`] / [`crate::ntsc`] /
+//! [`crate::ntsc_bisqwit`] filters and the composable [`crate::shader_pass`]
+//! `ShaderStack` (CRT / NTSC / upscalers in any order). With none of them
+//! active the direct nearest-blit is taken and the output is pixel-identical
+//! to a filter-less build. Present-mode selection (fifo / mailbox / immediate,
+//! with a non-silent fifo fallback) lives in [`select_present_mode`].
+//!
+//! See `docs/frontend.md` for the render-path architecture.
 
 use std::sync::Arc;
 

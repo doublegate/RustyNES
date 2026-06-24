@@ -7,6 +7,16 @@
 //! Dump post-battery RAM bytes for the DMA-test address range, so we
 //! can correlate the upstream catalog addresses with what actually
 //! gets set in our emulator.
+//!
+//! Runs the full `AccuracyCoin` battery (via
+//! `accuracy_coin::run_battery_capturing_ram`), then prints each named
+//! DMA/`$2007`-stress result byte at its catalog address plus the raw
+//! `$500` per-dot array and the gated `$2007` read-landing log. Honors the
+//! `RUSTYNES_2007_DELAY` / `RUSTYNES_2007_VINC` env knobs.
+//!
+//! Usage:
+//!   `cargo run -p rustynes-test-harness --release --bin dump_battery_ram
+//!     -- [max-frames]` (default 72000).
 
 use std::env;
 use std::process::ExitCode;
