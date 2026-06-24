@@ -339,6 +339,10 @@ pub struct HdPack {
     /// mixed by [`crate::hd_audio`] (frontend, output-only); empty for a
     /// video-only pack.
     audio_decls: Vec<HdAudioDecl>,
+    /// v1.8.9 — `<overscan>` crop margins in NES pixels `[top, right, bottom,
+    /// left]` (Mesen `<overscan>Top,Right,Bottom,Left`). The composite output is
+    /// `(256-left-right) x (240-top-bottom)`, scaled. All-zero = no crop.
+    overscan: [u32; 4],
 }
 
 impl HdPack {
@@ -555,6 +559,7 @@ impl HdPack {
             backgrounds,
             watched_addresses: watched,
             audio_decls: parsed.audio_decls,
+            overscan: parsed.overscan,
         })
     }
 
@@ -749,6 +754,8 @@ struct ParsedHires {
     backgrounds: Vec<ParsedBackground>,
     /// v1.6.0 H — parsed `<bgm>` / `<sfx>` HD-audio declarations.
     audio_decls: Vec<HdAudioDecl>,
+    /// v1.8.9 — `<overscan>` crop `[top, right, bottom, left]` (NES pixels).
+    overscan: [u32; 4],
 }
 
 /// Strip a leading `[Cond1&Cond2&...]` condition prefix off a `hires.txt` line
@@ -797,6 +804,7 @@ fn parse_hires(src: &str) -> ParsedHires {
     let mut cond_name_to_idx: HashMap<String, usize> = HashMap::new();
     let mut backgrounds: Vec<ParsedBackground> = Vec::new();
     let mut audio_decls: Vec<HdAudioDecl> = Vec::new();
+    let mut overscan = [0u32; 4];
 
     // First pass over `<condition>` / `<img>` (and the headers + audio decls) so
     // forward-referenced names resolve. `<img>` indices are declaration order, so
@@ -861,6 +869,16 @@ fn parse_hires(src: &str) -> ParsedHires {
             "sfx" => {
                 if let Some(d) = parse_audio_decl(TrackKind::Sfx, rest) {
                     audio_decls.push(d);
+                }
+            }
+            // v1.8.9 — `<overscan>Top,Right,Bottom,Left` (NES-pixel crop margins).
+            "overscan" => {
+                let nums: Vec<u32> = rest
+                    .split(',')
+                    .filter_map(|s| s.trim().parse::<u32>().ok())
+                    .collect();
+                if nums.len() == 4 {
+                    overscan = [nums[0], nums[1], nums[2], nums[3]];
                 }
             }
             // `<ver>`, `<options>`, `<supportedRom>`, `<overscan>`, `<patch>`,
@@ -934,6 +952,7 @@ fn parse_hires(src: &str) -> ParsedHires {
         conditions,
         backgrounds,
         audio_decls,
+        overscan,
     }
 }
 
@@ -1322,6 +1341,13 @@ pub struct HdCompositor {
     /// Monotonic frame counter for `frameRange` conditions. Advances once per
     /// [`Self::composite`]; presentation-only, never serialized.
     frame: u32,
+    /// v1.8.9 — `<overscan>` crop in NES pixels: left/top origin + the visible
+    /// width/height. The composite skips cropped-out pixels and shifts the rest
+    /// so the output is the cropped region (`crop_w*scale x crop_h*scale`).
+    ov_left: u32,
+    ov_top: u32,
+    crop_w: u32,
+    crop_h: u32,
 }
 
 impl HdCompositor {
@@ -1329,8 +1355,12 @@ impl HdCompositor {
     #[must_use]
     pub fn new(pack: HdPack) -> Self {
         let scale = pack.scale();
-        let out_w = NES_W * scale;
-        let out_h = NES_H * scale;
+        // `<overscan>` = [top, right, bottom, left]; crop, clamped to >= 1 cell.
+        let [top, right, bottom, left] = pack.overscan;
+        let crop_w = NES_W.saturating_sub(left + right).max(1);
+        let crop_h = NES_H.saturating_sub(top + bottom).max(1);
+        let out_w = crop_w * scale;
+        let out_h = crop_h * scale;
         Self {
             pack,
             out: vec![0u8; (out_w * out_h * 4) as usize],
@@ -1338,6 +1368,10 @@ impl HdCompositor {
             out_h,
             hash_cache: HashMap::new(),
             frame: 0,
+            ov_left: left,
+            ov_top: top,
+            crop_w,
+            crop_h,
         }
     }
 
@@ -1389,16 +1423,23 @@ impl HdCompositor {
         let scale = self.pack.scale as usize;
         let out_w = self.out_w as usize;
         let frame = self.frame;
+        // `<overscan>` crop origin + visible extent (NES pixels).
+        let ov_left = self.ov_left as usize;
+        let ov_top = self.ov_top as usize;
+        let crop_w = self.crop_w as usize;
+        let crop_h = self.crop_h as usize;
 
-        // 1) Nearest-neighbour upscale of the base framebuffer.
-        for y in 0..NES_H as usize {
-            for x in 0..NES_W as usize {
+        // 1) Nearest-neighbour upscale of the base framebuffer (overscan-cropped:
+        //    skip cropped-out pixels, shift the rest to the output origin).
+        for y in ov_top..ov_top + crop_h {
+            for x in ov_left..ov_left + crop_w {
                 let src = (y * NES_W as usize + x) * 4;
                 let px = &framebuffer[src..src + 4];
+                let (ox, oy) = (x - ov_left, y - ov_top);
                 for sy in 0..scale {
-                    let row = (y * scale + sy) * out_w;
+                    let row = (oy * scale + sy) * out_w;
                     for sx in 0..scale {
-                        let dst = (row + x * scale + sx) * 4;
+                        let dst = (row + ox * scale + sx) * 4;
                         self.out[dst..dst + 4].copy_from_slice(px);
                     }
                 }
@@ -1417,6 +1458,8 @@ impl HdCompositor {
             watched,
             frame,
             true, // under = priority < 0
+            i64::from(self.ov_left),
+            i64::from(self.ov_top),
         );
 
         // 3) PER PIXEL (Mesen's renderer model): for each NES pixel, resolve the
@@ -1428,8 +1471,10 @@ impl HdCompositor {
         //    (cached), so the per-pixel cost is a hash-map lookup + sample.
         self.hash_cache.clear();
         let out_h = self.out_h as usize;
-        for y in 0..NES_H as usize {
-            for x in 0..NES_W as usize {
+        // Overscan-cropped: iterate the visible region; `tile_source` is still
+        // indexed in full-frame NES coords (conditions key on the NES position).
+        for y in ov_top..ov_top + crop_h {
+            for x in ov_left..ov_left + crop_w {
                 let rec = tile_source[y * NES_W as usize + x];
                 if rec.chr_addr == HD_TILE_NONE {
                     continue;
@@ -1478,13 +1523,13 @@ impl HdCompositor {
                 let src_ty = rule.y as usize + usize::from(rec.offset_y) * scale;
                 for sub_y in 0..scale {
                     let sy = src_ty + sub_y;
-                    let dy = y * scale + sub_y;
+                    let dy = (y - ov_top) * scale + sub_y;
                     if sy >= img_h || dy >= out_h {
                         continue;
                     }
                     for sub_x in 0..scale {
                         let sx = src_tx + sub_x;
-                        let dx = x * scale + sub_x;
+                        let dx = (x - ov_left) * scale + sub_x;
                         if sx >= img_w || dx >= out_w {
                             continue;
                         }
@@ -1520,6 +1565,8 @@ impl HdCompositor {
             watched,
             frame,
             false, // over = priority >= 0
+            i64::from(self.ov_left),
+            i64::from(self.ov_top),
         );
 
         self.frame = self.frame.wrapping_add(1);
@@ -1663,6 +1710,8 @@ impl HdCompositor {
         watched: &WatchedMemory,
         frame: u32,
         under: bool,
+        ov_left: i64,
+        ov_top: i64,
     ) {
         // Full-screen backgrounds aren't tied to a cell, so spatial conditions
         // (position / nearby) have no cell to anchor on and fail closed here.
@@ -1687,7 +1736,7 @@ impl HdCompositor {
             let Some(img) = pack.images.get(bg.image) else {
                 continue;
             };
-            blit_background(out, out_h, out_w, scale, img, bg);
+            blit_background(out, out_h, out_w, scale, img, bg, ov_left, ov_top);
         }
     }
 }
@@ -1695,7 +1744,7 @@ impl HdCompositor {
 /// Alpha-blit one background region into `out`.
 // scale (≤ 8) + the source pixel indices are small + bounded, so the i64 casts
 // used to do signed destination-bounds math can never wrap.
-#[allow(clippy::cast_possible_wrap)]
+#[allow(clippy::cast_possible_wrap, clippy::too_many_arguments)]
 fn blit_background(
     out: &mut [u8],
     out_h: usize,
@@ -1703,13 +1752,16 @@ fn blit_background(
     scale: usize,
     img: &ReplacementImage,
     bg: &BackgroundRegion,
+    ov_left: i64,
+    ov_top: i64,
 ) {
     let img_w = img.width as usize;
     let img_h = img.height as usize;
     let scale_i = scale as i64;
-    // Destination origin in upscaled space (i64 to avoid overflow / wrap).
-    let ox = i64::from(bg.x) * scale_i;
-    let oy = i64::from(bg.y) * scale_i;
+    // Destination origin in upscaled space (i64 to avoid overflow / wrap),
+    // shifted by the overscan crop origin.
+    let ox = (i64::from(bg.x) - ov_left) * scale_i;
+    let oy = (i64::from(bg.y) - ov_top) * scale_i;
     for sy in 0..img_h {
         let dy = oy + sy as i64;
         if dy < 0 {
@@ -1938,6 +1990,19 @@ mod tests {
         // defaultTile=Y -> the palette wildcard.
         let (dkey, ..) = parse_tile_fields("0,2A,0F162736,16,32,1,Y").unwrap();
         assert_eq!(dkey, chr_rom_key(0x2A, 0xFFFF_FFFF));
+    }
+
+    #[test]
+    fn overscan_parses_and_crops_dimensions() {
+        // <overscan>Top,Right,Bottom,Left.
+        let parsed = parse_hires("<overscan>8,16,8,16\n");
+        assert_eq!(parsed.overscan, [8, 16, 8, 16]);
+        // The compositor output is (256-left-right) x (240-top-bottom), scaled.
+        let mut pack = pack_with_condition(ConditionKind::HMirror);
+        pack.scale = 2;
+        pack.overscan = [8, 16, 8, 16];
+        let comp = HdCompositor::new(pack);
+        assert_eq!(comp.dimensions(), ((256 - 32) * 2, (240 - 16) * 2));
     }
 
     /// The 32-hex `tileData` of all-zero CHR bytes (the common blank tile) and
@@ -2257,6 +2322,7 @@ mod tests {
             backgrounds: Vec::new(),
             watched_addresses: Vec::new(),
             audio_decls: Vec::new(),
+            overscan: [0; 4],
         }
     }
 
@@ -2469,6 +2535,7 @@ mod tests {
             backgrounds: Vec::new(),
             watched_addresses: vec![0x10],
             audio_decls: Vec::new(),
+            overscan: [0; 4],
         };
         let mut comp = HdCompositor::new(pack);
         let (fb, ts) = one_tile_scene(0x0000);
@@ -2516,6 +2583,7 @@ mod tests {
             }],
             watched_addresses: vec![0x40],
             audio_decls: Vec::new(),
+            overscan: [0; 4],
         };
         let mut comp = HdCompositor::new(pack);
         let fb = vec![0u8; (NES_W * NES_H * 4) as usize];
@@ -2560,6 +2628,7 @@ mod tests {
             backgrounds: Vec::new(),
             watched_addresses: Vec::new(),
             audio_decls: Vec::new(),
+            overscan: [0; 4],
         };
         let mut comp = HdCompositor::new(pack);
         let (fb, ts) = one_tile_scene(0x0000);
@@ -2721,6 +2790,7 @@ mod tests {
             backgrounds: Vec::new(),
             watched_addresses: Vec::new(),
             audio_decls: Vec::new(),
+            overscan: [0; 4],
         };
         let mut comp = HdCompositor::new(pack);
 
