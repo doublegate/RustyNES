@@ -79,10 +79,12 @@ then evaluate conditions against that snapshot during the lock-free composite.
   higher-priority background occludes. `<fallback>` tiles,
   `<options>disableOriginalTiles`, the alpha-blend / brightness / blend-mode /
   `<overscan>` / parallax-scroll / grayscale+emphasis compositor, and the full
-  `$4100-$4106` HD-audio register file also landed in v1.8.9. The one remaining
-  subset limit is the 32-char tile-DATA-hash (CHR-RAM content) form of `tileNearby`
-  / `tileAtPosition` (the eval path has no content hash); `<addition>` is still
-  deferred. None of this changed the snapshot architecture.
+  `$4100-$4106` HD-audio register file also landed in v1.8.9. The final two forms
+  — the 32-char tile-DATA-hash (CHR-RAM content) form of `tileNearby` /
+  `tileAtPosition` (via a gated per-cell content-hash precompute) and `<addition>`
+  (a gated post-pass) — landed too, so the supported set now has **no remaining
+  unimplemented Mesen2 HD-pack form**. None of this changed the snapshot
+  architecture, and the additions are gated so existing packs stay byte-identical.
 - **HD audio landed in v1.6.0 "Studio" Workstream H** (the biggest remaining
   Mesen2 gap). The `hires.txt` `<bgm>` / `<sfx>` declarations are parsed in
   `hdpack.rs`; `src/hd_audio.rs` decodes their OGG tracks (pure-Rust `lewton`,
