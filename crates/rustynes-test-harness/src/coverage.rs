@@ -162,7 +162,7 @@ pub fn run_rom_headless(bytes: &[u8], frames: u64, start_at: u64) -> Result<Vec<
         nes.set_vs_dip(dip);
     }
     for f in 0..frames {
-        let btn = if (start_at..start_at + 10).contains(&(f % 600)) {
+        let btn = if (start_at..start_at.saturating_add(10)).contains(&(f % 600)) {
             Buttons::START
         } else {
             Buttons::empty()

@@ -78,7 +78,16 @@ fn collect(input: &str, out: &mut Vec<(PathBuf, String)>) {
             (r, label)
         }));
     } else if is_manifest(path) {
-        let text = std::fs::read_to_string(path).unwrap_or_default();
+        let text = match std::fs::read_to_string(path) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("batch_runner: cannot read manifest {}: {e}", path.display());
+                return;
+            }
+        };
+        // Relative entries resolve against the manifest's own directory (absolute
+        // paths stay as-is) — the least-surprising behaviour for a portable list.
+        let base = path.parent();
         for line in text.lines() {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
@@ -87,7 +96,11 @@ fn collect(input: &str, out: &mut Vec<(PathBuf, String)>) {
             let (p, lbl) = line
                 .split_once('\t')
                 .map_or((line, None), |(p, l)| (p, Some(l)));
-            let pb = PathBuf::from(p);
+            let entry = Path::new(p);
+            let pb = match base {
+                Some(b) if entry.is_relative() => b.join(entry),
+                _ => entry.to_path_buf(),
+            };
             let label = lbl.map_or_else(|| label_for(&pb), str::to_owned);
             out.push((pb, label));
         }
@@ -96,15 +109,44 @@ fn collect(input: &str, out: &mut Vec<(PathBuf, String)>) {
     }
 }
 
-/// Write a 256x240 RGBA8 framebuffer to `path` as a PNG.
-fn write_png(path: &Path, fb: &[u8]) {
-    let file = std::fs::File::create(path).expect("create png");
+/// Write a 256x240 RGBA8 framebuffer to `path` as a PNG. Returns an error string
+/// (rather than panicking) so a single bad screenshot doesn't abort the batch.
+fn write_png(path: &Path, fb: &[u8]) -> Result<(), String> {
+    let file = std::fs::File::create(path).map_err(|e| format!("create png: {e}"))?;
     let w = std::io::BufWriter::new(file);
     let mut enc = png::Encoder::new(w, 256, 240);
     enc.set_color(png::ColorType::Rgba);
     enc.set_depth(png::BitDepth::Eight);
-    let mut writer = enc.write_header().expect("png header");
-    writer.write_image_data(fb).expect("png data");
+    let mut writer = enc.write_header().map_err(|e| format!("png header: {e}"))?;
+    writer
+        .write_image_data(fb)
+        .map_err(|e| format!("png data: {e}"))?;
+    Ok(())
+}
+
+/// A filesystem-safe filename component: map anything but `[A-Za-z0-9_-]` to `_`,
+/// so a manifest-supplied label can never escape `--out` or break path joins.
+fn sanitize_label(label: &str) -> String {
+    label
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// Emit a one-line JSON error record for a ROM.
+fn print_error(label: &str, path: &str, err: &str) {
+    println!(
+        "{{\"label\":{},\"path\":{},\"error\":{}}}",
+        json_str(label),
+        json_str(path),
+        json_str(err)
+    );
 }
 
 fn main() {
@@ -148,12 +190,7 @@ fn main() {
             Ok(b) => b,
             Err(e) => {
                 failed += 1;
-                println!(
-                    "{{\"label\":{},\"path\":{},\"error\":{}}}",
-                    json_str(label),
-                    json_str(&path_str),
-                    json_str(&format!("read error: {e}"))
-                );
+                print_error(label, &path_str, &format!("read error: {e}"));
                 continue;
             }
         };
@@ -165,8 +202,12 @@ fn main() {
                 let hash = fnv1a(&fb);
                 let health = frame_health(&fb);
                 let is_blank = health.looks_blank();
-                let shot = Path::new(&out_dir).join(format!("{label}.png"));
-                write_png(&shot, &fb);
+                let shot = Path::new(&out_dir).join(format!("{}.png", sanitize_label(label)));
+                if let Err(e) = write_png(&shot, &fb) {
+                    failed += 1;
+                    print_error(label, &path_str, &e);
+                    continue;
+                }
                 if is_blank {
                     blank += 1;
                 } else {
@@ -182,20 +223,11 @@ fn main() {
             }
             Ok(Err(e)) => {
                 failed += 1;
-                println!(
-                    "{{\"label\":{},\"path\":{},\"error\":{}}}",
-                    json_str(label),
-                    json_str(&path_str),
-                    json_str(&e)
-                );
+                print_error(label, &path_str, &e);
             }
             Err(_) => {
                 failed += 1;
-                println!(
-                    "{{\"label\":{},\"path\":{},\"error\":\"panicked\"}}",
-                    json_str(label),
-                    json_str(&path_str)
-                );
+                print_error(label, &path_str, "panicked");
             }
         }
     }
