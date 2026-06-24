@@ -1546,6 +1546,33 @@ impl DebuggerOverlay {
                         }
                     });
             }
+
+            // v1.8.9 H2 — active leaderboard trackers (the live value of each
+            // in-progress leaderboard, e.g. a speedrun timer), drawn bottom-left so
+            // they don't collide with the challenge/progress stack (bottom-right) or
+            // the scoreboard popups (top). Captured already (and mirrored into the
+            // status bar); this surfaces them on-screen the way RA's HUD does.
+            let trackers = status.trackers.clone();
+            if !trackers.is_empty() {
+                egui::Area::new(egui::Id::new("cheevos_trackers"))
+                    .anchor(egui::Align2::LEFT_BOTTOM, [12.0, -48.0])
+                    .show(ctx, |ui| {
+                        egui::Frame::new()
+                            .fill(egui::Color32::from_rgba_unmultiplied(
+                                0x20, 0x20, 0x30, 0xC0,
+                            ))
+                            .inner_margin(egui::Margin::same(6))
+                            .corner_radius(4)
+                            .show(ui, |ui| {
+                                for tr in &trackers {
+                                    ui.label(
+                                        egui::RichText::new(format!("\u{1F3C1} {tr}"))
+                                            .color(egui::Color32::from_rgb(0x9C, 0xD0, 0xF0)),
+                                    );
+                                }
+                            });
+                    });
+            }
         }
 
         if self.show_input {

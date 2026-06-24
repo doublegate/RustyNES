@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **RetroAchievements HUD: leaderboard trackers overlay (H2).** Active leaderboard trackers (the live value of each in-progress leaderboard, e.g. a speedrun timer) now render as a bottom-left on-screen HUD element, not only in the status-bar text — completing the RA HUD alongside the existing challenge / progress / scoreboard indicators.
 - **Optional SQLite userdata backing (`script-sqlite` feature).** A script's `userdata.*`
   KV store can now be persisted to / loaded from a real on-disk SQLite database (instead of
   only the in-memory map), so values survive across runs and are queryable with external
