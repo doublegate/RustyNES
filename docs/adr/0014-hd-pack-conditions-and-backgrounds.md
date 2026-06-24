@@ -71,14 +71,18 @@ then evaluate conditions against that snapshot during the lock-free composite.
   existing per-pixel `HdTileSource` telemetry: the cell position is the array
   index, and `tileNearby` / `spriteNearby` look up a relative cell in the same
   per-frame slice — no new PPU telemetry, so the byte-identity stance is unchanged.
-  Two deliberate subset limits (telemetry-bound): `tileNearby`'s palette-colour
-  match is dropped (the telemetry carries the palette *group* 0..=3, not the four
-  resolved colours — we gate on the tile index alone, i.e. Mesen's `ignorePalette`),
-  and the 32-char tile-data-hash form of `tileNearby` plus the absolute-coordinate
-  `tileAtPosition` / `spriteAtPosition` still parse to `None` (dropped). Still
-  deferred: `<addition>` / `<fallback>` / `<options>` and the full
-  blend/priority/parallax compositor. These can be added later without changing
-  the snapshot architecture.
+  As of **v1.8.9** `HdTileSource` carries the packed Mesen `PaletteColors` (and the
+  absolute CHR-ROM tile index), so `tileNearby` / `spriteNearby` palette matching
+  and the absolute-coordinate `tileAtPosition` / `spriteAtPosition` (index +
+  optional palette) are now implemented in `parse_spatial` / `eval_condition`;
+  multi-sprite `Sprite[4]` telemetry lets `spriteAtPosition` match a sprite a
+  higher-priority background occludes. `<fallback>` tiles,
+  `<options>disableOriginalTiles`, the alpha-blend / brightness / blend-mode /
+  `<overscan>` / parallax-scroll / grayscale+emphasis compositor, and the full
+  `$4100-$4106` HD-audio register file also landed in v1.8.9. The one remaining
+  subset limit is the 32-char tile-DATA-hash (CHR-RAM content) form of `tileNearby`
+  / `tileAtPosition` (the eval path has no content hash); `<addition>` is still
+  deferred. None of this changed the snapshot architecture.
 - **HD audio landed in v1.6.0 "Studio" Workstream H** (the biggest remaining
   Mesen2 gap). The `hires.txt` `<bgm>` / `<sfx>` declarations are parsed in
   `hdpack.rs`; `src/hd_audio.rs` decodes their OGG tracks (pure-Rust `lewton`,

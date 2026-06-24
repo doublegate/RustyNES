@@ -684,17 +684,24 @@ impl HdPack {
             ConditionKind::HMirror => rec.is_sprite && rec.flip_h,
             ConditionKind::VMirror => rec.is_sprite && rec.flip_v,
             ConditionKind::SpritePalette { id } => rec.is_sprite && rec.palette == *id,
+            // positionCheck needs a real cell anchor: full-screen backgrounds use
+            // the `tile_source: &[]` sentinel (no cell), so fail closed there —
+            // otherwise the `(0,0)` placeholder anchor would spuriously pass.
             ConditionKind::PositionCheckX { op, value } => {
                 // cell_x * 8 <= 248, always fits u8.
-                op.apply(
-                    u8::try_from(spatial.cell_x * TILE).unwrap_or(u8::MAX),
-                    *value,
-                )
+                !spatial.tile_source.is_empty()
+                    && op.apply(
+                        u8::try_from(spatial.cell_x * TILE).unwrap_or(u8::MAX),
+                        *value,
+                    )
             }
-            ConditionKind::PositionCheckY { op, value } => op.apply(
-                u8::try_from(spatial.cell_y * TILE).unwrap_or(u8::MAX),
-                *value,
-            ),
+            ConditionKind::PositionCheckY { op, value } => {
+                !spatial.tile_source.is_empty()
+                    && op.apply(
+                        u8::try_from(spatial.cell_y * TILE).unwrap_or(u8::MAX),
+                        *value,
+                    )
+            }
             ConditionKind::TileNearby {
                 dx,
                 dy,
@@ -3246,13 +3253,23 @@ mod tests {
             value: 128,
         });
         let rec = HdTileSource::default();
+        // A real per-pixel ctx has a non-empty tile_source (positionCheck fails
+        // closed for the empty-source background sentinel).
+        let ts = full_tile_source();
         let at = |cx| SpatialCtx {
             cell_x: cx,
             cell_y: 0,
-            tile_source: &[],
+            tile_source: &ts,
         };
         assert!(pack.eval_condition(0, &WatchedMemory::new(), 0, rec, at(16)));
         assert!(!pack.eval_condition(0, &WatchedMemory::new(), 0, rec, at(15)));
+        // Background sentinel (empty source) fails closed.
+        let bg = SpatialCtx {
+            cell_x: 16,
+            cell_y: 0,
+            tile_source: &[],
+        };
+        assert!(!pack.eval_condition(0, &WatchedMemory::new(), 0, rec, bg));
     }
 
     #[test]
@@ -3263,10 +3280,11 @@ mod tests {
             value: 16,
         });
         let rec = HdTileSource::default();
+        let ts = full_tile_source();
         let at = |cy| SpatialCtx {
             cell_x: 0,
             cell_y: cy,
-            tile_source: &[],
+            tile_source: &ts,
         };
         assert!(pack.eval_condition(0, &WatchedMemory::new(), 0, rec, at(1)));
         assert!(!pack.eval_condition(0, &WatchedMemory::new(), 0, rec, at(2)));

@@ -328,15 +328,17 @@ impl HdAudioMixer {
     /// `$4101..=$4106` are all zero the mixer falls back to the legacy
     /// single-`$4100`-selector convention, so packs written either way both drive.
     pub fn apply_registers(&mut self, regs: [u8; 7]) {
-        self.bgm_volume = regs[2];
-        self.sfx_volume = regs[3];
-        self.album = regs[4];
-
-        // Legacy single-register fallback: a pack that only drives $4100.
+        // Legacy single-register fallback: a pack that only drives $4100. Take
+        // this BEFORE touching the volumes so a legacy pack keeps full volume
+        // (the all-zero `$4102`/`$4103` here are "unused", not "silent").
         if regs[1..].iter().all(|&b| b == 0) {
             self.apply_control(regs[0]);
             return;
         }
+
+        self.bgm_volume = regs[2];
+        self.sfx_volume = regs[3];
+        self.album = regs[4];
 
         // $4101 control: high bit stops the BGM (Mesen convention).
         if regs[1] & 0x80 != 0 {
@@ -601,6 +603,18 @@ mod tests {
         // $4101 high bit stops the BGM.
         m.apply_registers([0, 0x80, 255, 255, 0, 1, 0]);
         assert!(!m.bgm_playing());
+    }
+
+    #[test]
+    fn legacy_4100_path_keeps_full_volume() {
+        // Only $4100 drives ($4101..=$4106 == 0): the legacy path must NOT zero
+        // the volumes from the all-zero $4102/$4103 — track 1 plays at full gain.
+        let mut m = test_mixer();
+        let mut buf = [0.0f32; 2];
+        m.mix_registers(&mut buf, [1, 0, 0, 0, 0, 0, 0]);
+        assert!(m.bgm_playing(), "legacy $4100=1 selects BGM track 1");
+        // 0.5 sample * full gain 0.8 = 0.4 (would be 0.0 with the volume bug).
+        assert!((buf[0] - 0.4).abs() < 1e-6, "buf[0] = {}", buf[0]);
     }
 
     #[test]
