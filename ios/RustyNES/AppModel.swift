@@ -103,13 +103,20 @@ final class AppModel: ObservableObject {
         // Audio interruptions (phone call / Siri) and route changes (headphones
         // unplugged) flow through the run-state composition so they don't fight the
         // scene/menu pause gates: set a sticky `audioInterrupted` flag and recompute.
+        // AVAudioSession interruption / route-change notifications are delivered on
+        // an arbitrary (often background) thread, so hop to the main actor before
+        // touching this `@MainActor` model.
         audioSession.onShouldPause = { [weak self] in
-            self?.audioInterrupted = true
-            self?.applyRunState()
+            Task { @MainActor in
+                self?.audioInterrupted = true
+                self?.applyRunState()
+            }
         }
         audioSession.onShouldResume = { [weak self] in
-            self?.audioInterrupted = false
-            self?.applyRunState()
+            Task { @MainActor in
+                self?.audioInterrupted = false
+                self?.applyRunState()
+            }
         }
         gamepads.onMaskChanged = { [weak self] port, mask in
             guard let self else { return }

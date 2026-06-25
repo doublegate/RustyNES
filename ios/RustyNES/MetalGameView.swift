@@ -74,6 +74,10 @@ struct MetalGameView: UIViewRepresentable {
         /// Cap the catch-up burst per callback so a hitch can't spiral into a flood
         /// of emulated frames (the audio DRC absorbs the small steady-state residual).
         private static let maxFramesPerCallback = 2
+        /// Cap the retained pacing debt (in console frames) so a transient stutter is
+        /// caught up over the next callbacks but a sustained slow patch can't grow an
+        /// unbounded backlog.
+        private static let maxBacklogFrames = 4
 
         private let emulator: EmulatorCore
         weak var view: MTKView?
@@ -153,10 +157,13 @@ struct MetalGameView: UIViewRepresentable {
                 frameAccumulator -= Self.consoleFramePeriod
                 budget -= 1
             }
-            // Drop unspent debt beyond one period so a sustained slow patch can't
-            // accumulate an unbounded backlog.
-            if frameAccumulator > Self.consoleFramePeriod {
-                frameAccumulator = frameAccumulator.truncatingRemainder(dividingBy: Self.consoleFramePeriod)
+            // Keep a small amount of unspent debt so a transient stutter (a few
+            // frames late) is caught up smoothly over the next callbacks instead of
+            // permanently dropped, but CLAMP it so a sustained slow patch can't grow
+            // an unbounded backlog (which would otherwise spiral on resume).
+            let maxBacklog = Self.consoleFramePeriod * Double(Self.maxBacklogFrames)
+            if frameAccumulator > maxBacklog {
+                frameAccumulator = maxBacklog
             }
         }
 
