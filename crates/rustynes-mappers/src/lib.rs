@@ -64,6 +64,7 @@ mod rambo1;
 mod sprint10;
 mod sprint11;
 mod sprint12;
+mod sprint13;
 mod sprint2;
 mod sprint3;
 mod sprint5;
@@ -1279,6 +1280,25 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
         ),
         349 => Box::new(
             sprint12::new_m349(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        // --- v1.8.9 "Backlog" beta.6, best-effort (Tier-2) NTDEC / TXC / BMC
+        // multicart cores (sprint13). Register-decode + save-state unit-tested
+        // only, NOT accuracy-gated (`tier.rs`).
+        193 => Box::new(
+            sprint13::new_m193(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        204 => Box::new(
+            sprint13::new_m204(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        221 => Box::new(
+            sprint13::new_m221(prg_rom, chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        299 => Box::new(
+            sprint13::new_m299(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         other => return Err(RomError::UnsupportedMapper(other)),

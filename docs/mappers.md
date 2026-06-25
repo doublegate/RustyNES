@@ -367,11 +367,12 @@ boards with no redistributable fixture, register-decode unit-tested only) is
 oracle ROM — is enforced at the classifier level (`BestEffort` is structurally
 never accuracy-gated; the three tier id-sets are disjoint) and by the curated
 construction of the byte-oracle corpus. See `docs/adr/0011-mapper-tiering.md`.
-Current split: **168 families** — 51 Core + 9 Curated (60 accuracy-gated) + 108
+Current split: **172 families** — 51 Core + 9 Curated (60 accuracy-gated) + 112
 BestEffort (27 from v1.2.0 `sprint6`/`sprint7` + 14 from v1.3.0 `sprint8` + 12
 from v1.4.0 `sprint9` + 10 from v1.5.0 `sprint10` + the v1.6.0 "Studio"
 J.Y. Company ASIC `jy_asic` family 35/90/209/211 + 23 from v1.6.0 "Studio"
-Workstream E `sprint11` + 18 from v1.7.0 "Forge" Workstream G1 `sprint12`). The
+Workstream E `sprint11` + 18 from v1.7.0 "Forge" Workstream G1 `sprint12` + 4
+from v1.8.9 "Backlog" beta.6 `sprint13`). The
 v1.6.0 `sprint11` batch ports MMC3-clone variants
 (44/49/52/115/134/189/205/238/245/348/366, on a shared MMC3-style core with an
 A12 falling-edge IRQ + per-board outer-bank transform), the Sachen 8259 A/B/C
@@ -391,6 +392,22 @@ up-counting M2 IRQ, 303 KS7017 with a down-counting M2 IRQ + read-ack, and the
 window boards 305/306/312), and the BMC multicarts **261**/**289**/**320**/
 **336**/**349**. All are BestEffort: register-decode + save-state round-trip
 unit-tested, outside the AccuracyCoin / oracle gate.
+
+The v1.8.9 "Backlog" beta.6 `sprint13` batch ports four more well-documented
+NTDEC / TXC / discrete-BMC multicart cores, none with an IRQ
+(`MapperCaps::NONE`): **NTDEC TC-112** (193, *Fighting Hero* — a `$6000-$7FFF`
+four-register surface with one switchable 8 KiB PRG window over three fixed and
+three 2 KiB CHR selects), the discrete **BMC 2-in-1** (204, an address-decoded
+NROM/UNROM multicart), **NTDEC N625092** (221, a `$8000` mode register + `$C000`
+inner-PRG register with NROM / UNROM / NROM-256 sub-modes), and **TXC/BMC-11160**
+(299, one value-decoded register selecting a 32 KiB PRG bank + an 8 KiB CHR
+bank + mirroring). All four are BestEffort: register-decode + save-state
+round-trip unit-tested, outside the AccuracyCoin / oracle gate. The same pass
+also widened
+the UNIF board-name table (`unif.rs`) — wiring well-known board aliases (e.g.
+`11160`→299, `N625092`→221, `COOLBOY`→268, `FK23C`→176, the Kaiser `KS70xx`
+family, `BS-5`→286, `SA-9602B`→513, `NTBROM`→68, `SL1ROM`→1, `TEROM`→4) to the
+families RustyNES already implements, with board-resolution unit tests for each.
 
 ### NSF player (synthetic mapper, v1.1.0)
 

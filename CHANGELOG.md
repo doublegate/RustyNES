@@ -17,6 +17,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mapper breadth 168 → 172 families (beta.6, `sprint13`).** Four more
+  well-documented NTDEC / TXC / discrete-BMC multicart cores, ported
+  register-for-register from the reference emulators (Mesen2 / FCEUX / puNES) and
+  the nesdev wiki, all IRQ-free (`MapperCaps::NONE`): **m193** (NTDEC TC-112,
+  *Fighting Hero* — a `$6000-$7FFF` register surface, one switchable 8 KiB PRG
+  window over three fixed + three 2 KiB CHR selects), **m204** (a discrete
+  NROM/UNROM 2-in-1 BMC, address-decoded), **m221** (NTDEC N625092 — a `$8000`
+  mode register + `$C000` inner-PRG register, NROM / UNROM / NROM-256 sub-modes),
+  and **m299** (TXC/BMC-11160 — a single value-decoded register selecting a
+  32 KiB PRG bank + 8 KiB CHR bank + mirroring). Each ships register-decode + a
+  save-state round-trip unit test; all four register as **BestEffort** (ADR 0011
+  honesty tier — outside the AccuracyCoin / oracle gate), so AccuracyCoin holds
+  100% (139/139) and the existing mappers stay byte-identical.
+- **UNIF board-map breadth (beta.6).** The UNIF (`.unf`) board-name → mapper
+  resolver (`unif.rs`) now recognizes ~35 additional well-known board aliases
+  that map to families RustyNES already implements — e.g. `11160`→299,
+  `N625092`→221, `22211`→132, `COOLBOY`/`MINDKIDS`→268, `FK23C`/`FK23CA`→176, the
+  Kaiser `KS7032`/`KS7017`/`KS7031`/`KS7016`/`KS7013B` family, the BMC multicarts
+  `60311C`/`810544-C-A1`/`830425C-4391T`/`830118C`/`K-3046`/`G-146`/`BS-5`,
+  `SA-002`→136, `SA-9602B`→513, `NTBROM`→68, `SL1ROM`→1, and `TEROM`→4 — each
+  cross-checked against Mesen2 `UnifLoader.cpp` + FCEUX `unif.cpp` and covered by
+  a board-resolution unit test. Pure name→number mapping (no new mapper
+  implementations on this path); existing board resolutions are unchanged.
 - **HD-Pack: full Mesen2 P1-P3 parity.** The reported Legend-of-Zelda texture-mapping bug was root-caused and fixed across the matching / positioning / timing stack (CHR-RAM `CalculateHash` + palette key, CHR-ROM `TileIndex ^ PaletteColors` via a new mapper `chr_phys` accessor, per-pixel `offset_x/offset_y` sampling, run-ahead CHR snapshot from the visible frame), then taken to full parity: compositing fidelity (tile alpha-blend, tile/bg brightness, Add/Subtract blend modes, `<overscan>` crop, grayscale+emphasis re-tint, parallax `<background>` scroll); conditions (`tileNearby` / `spriteNearby` / `positionCheckX/Y`, absolute `tileAtPosition` / `spriteAtPosition`, palette matching, and multi-sprite `Sprite[4]` telemetry so `spriteAtPosition` sees a BG-occluded sprite); data + options (`<fallback>` tile map, `<scale>` up to 10, the full `$4100-$4106` HD-audio register file, `<options>disableOriginalTiles`); the CHR-RAM tile-DATA-hash condition form and Mesen `<addition>` (both via gated paths); and an HD-Pack-Builder keying-consistency fix. All `hd-pack`-gated and output-only, so the core stays byte-identical and AccuracyCoin holds. RustyNES now implements **every Mesen2 HD-pack form** — no remaining unsupported feature.
 - **Game Genie database.** Categories, a code→game reverse lookup (a pasted code self-identifies), a category-grouped pick-list, and a game/category filter API; the curated catalog is user-extensible via manual entry.
 - **NSF player waveform-viz depth.** A master (mixed) scope + per-channel peak VU meters atop the existing per-channel oscilloscope (output-only).
@@ -130,6 +153,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (cc 1.2.65 / log 0.4.33 / ratatui 0.30.2). The emulation core is untouched —
   the chip stack stays `no_std` + byte-identical, so **AccuracyCoin holds 100%
   (139/139)** and the desktop / wasm / Android builds are behaviourally unchanged.
+- **Carryover (maintainer-manual).** The remaining broken-boot screenshot
+  re-bless for the BestEffort multicarts m50 / m51 / m205 / m245 / m290 and the
+  Vs. System titles still needs the maintainer's **local commercial ROM dumps**
+  and cannot be CI-self-certified — it stays deferred. The beta.6 mapper /
+  UNIF work above is decode + unit tests only (no screenshot re-bless), so it
+  does not depend on it.
 
 ## [1.8.8] - 2026-06-20 - "Atlas" (Google Play launch readiness)
 

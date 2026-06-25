@@ -125,19 +125,23 @@ pub fn board_to_mapper(board: &str) -> Option<u16> {
 // provenance and readability; some distinct board families intentionally share
 // a mapper id (e.g. several boards resolve to MMC3 = 4), so identical-body arms
 // are deliberately kept separate rather than merged.
-#[allow(clippy::match_same_arms)]
+// The board table is one large flat match by design (a name→number lookup);
+// the v1.8.9 breadth pass pushed it past the default line cap, but splitting it
+// would only obscure the per-vendor grouping.
+#[allow(clippy::match_same_arms, clippy::too_many_lines)]
 fn lookup_board(b: &str) -> Option<u16> {
     Some(match b {
         // Nintendo discrete / first-party
         "NROM" | "NROM-128" | "NROM-256" | "RROM" | "RROM-128" => 0,
         "SLROM" | "SKROM" | "SAROM" | "SBROM" | "SCROM" | "SEROM" | "SFROM" | "SGROM" | "SHROM"
-        | "SJROM" | "SKROM-MMC1B2" | "SLROM-MMC1B2" | "SNROM" | "SOROM" | "SUROM" | "SXROM" => 1,
+        | "SJROM" | "SKROM-MMC1B2" | "SLROM-MMC1B2" | "SNROM" | "SOROM" | "SUROM" | "SXROM"
+        | "SL1ROM" => 1,
         "UNROM" | "UOROM" => 2,
         "UNROM-512-8" | "UNROM-512-16" | "UNROM-512-32" => 30,
         "CNROM" => 3,
         "CPROM" => 13,
         "TLROM" | "TSROM" | "TKROM" | "TKSROM" | "TBROM" | "TFROM" | "TGROM" | "TNROM"
-        | "TVROM" | "B4" | "HKROM" => 4,
+        | "TVROM" | "TEROM" | "B4" | "HKROM" => 4,
         "TLSROM" => 118,
         "TQROM" => 119,
         "TR1ROM" => 64,
@@ -171,7 +175,7 @@ fn lookup_board(b: &str) -> Option<u16> {
         "SUNSOFT-1" => 184,
         "SUNSOFT-2" => 89,
         "SUNSOFT-3" => 67,
-        "SUNSOFT-4" => 68,
+        "SUNSOFT-4" | "NTBROM" => 68,
         "SUNSOFT-5B" | "SUNSOFT-FME-7" => 69,
         "JF-16" => 78,
         // Irem
@@ -223,6 +227,43 @@ fn lookup_board(b: &str) -> Option<u16> {
         "CALTRON6IN1" => 41,
         "MAGICFLOOR" => 218,
         "RET-CUFROM" => 29,
+        // --- v1.8.9 "Backlog" beta.6 UNIF board-map breadth: well-known board
+        // names mapping to families RustyNES already implements. Cross-checked
+        // against Mesen2 `UnifLoader.cpp` + FCEUX `unif.cpp`.
+        // NTDEC / TXC / discrete BMC (sprint13 + existing families).
+        "11160" => 299,
+        "N625092" => 221,
+        "22211" => 132,
+        "43272" | "WAIXING-FW01" => 227,
+        "603-5052" => 238,
+        "8157" => 301,
+        "GK-192" => 58,
+        "SC-127" => 35,
+        "TEK90" => 90,
+        "FS304" => 162,
+        "NTD-03" => 290,
+        "42IN1RESETSWITCH" => 226,
+        "NOVELDIAMOND9999999IN1" => 201,
+        // Sachen (TXC protection / 9602 ASIC).
+        "SA-002" => 136,
+        "SA-9602B" => 513,
+        // FK23C / COOLBOY / MINDKIDS reusable-ASIC BMC.
+        "FK23C" | "FK23CA" | "SUPER24IN1SC03" => 176,
+        "COOLBOY" | "MINDKIDS" => 268,
+        // Kaiser FDS-conversion ASIC family.
+        "KS7032" => 142,
+        "KS7017" => 303,
+        "KS7031" => 305,
+        "KS7016" => 306,
+        "KS7013B" => 312,
+        // Unlicensed discrete BMC multicarts.
+        "60311C" => 289,
+        "810544-C-A1" => 261,
+        "830425C-4391T" => 320,
+        "830118C" => 348,
+        "K-3046" => 336,
+        "G-146" => 349,
+        "BS-5" => 286,
         _ => return None,
     })
 }
@@ -448,6 +489,70 @@ mod tests {
         assert_eq!(board_to_mapper("KONAMI-VRC-2"), Some(23));
         assert_eq!(board_to_mapper("BANDAI-LZ93D50+24C01"), Some(159));
         assert_eq!(board_to_mapper("DEFINITELY-NOT-A-BOARD"), None);
+    }
+
+    #[test]
+    fn v1_8_9_added_boards_resolve_to_implemented_mappers() {
+        // Every board added in the v1.8.9 "Backlog" beta.6 breadth pass must
+        // resolve to a family RustyNES implements. Bare + UNL-/BMC-prefixed.
+        let cases: &[(&str, u16)] = &[
+            // NTDEC / TXC / discrete BMC (sprint13 + existing).
+            ("11160", 299),
+            ("N625092", 221),
+            ("22211", 132),
+            ("43272", 227),
+            ("WAIXING-FW01", 227),
+            ("603-5052", 238),
+            ("8157", 301),
+            ("GK-192", 58),
+            ("SC-127", 35),
+            ("TEK90", 90),
+            ("FS304", 162),
+            ("NTD-03", 290),
+            ("42IN1RESETSWITCH", 226),
+            ("NOVELDIAMOND9999999IN1", 201),
+            // Sachen.
+            ("SA-002", 136),
+            ("SA-9602B", 513),
+            // FK23C / COOLBOY / MINDKIDS.
+            ("FK23C", 176),
+            ("FK23CA", 176),
+            ("SUPER24IN1SC03", 176),
+            ("COOLBOY", 268),
+            ("MINDKIDS", 268),
+            // Kaiser.
+            ("KS7032", 142),
+            ("KS7017", 303),
+            ("KS7031", 305),
+            ("KS7016", 306),
+            ("KS7013B", 312),
+            // Unlicensed discrete BMC.
+            ("60311C", 289),
+            ("810544-C-A1", 261),
+            ("830425C-4391T", 320),
+            ("830118C", 348),
+            ("K-3046", 336),
+            ("G-146", 349),
+            ("BS-5", 286),
+            // Nintendo discrete aliases newly recognized.
+            ("SL1ROM", 1),
+            ("TEROM", 4),
+            ("NTBROM", 68),
+        ];
+        for &(board, mapper) in cases {
+            assert_eq!(
+                board_to_mapper(board),
+                Some(mapper),
+                "board {board:?} should resolve to mapper {mapper}"
+            );
+            // The standard UNL- vendor prefix must resolve identically.
+            let prefixed = alloc::format!("UNL-{board}");
+            assert_eq!(
+                board_to_mapper(&prefixed),
+                Some(mapper),
+                "prefixed board {prefixed:?} should resolve to mapper {mapper}"
+            );
+        }
     }
 
     #[test]
