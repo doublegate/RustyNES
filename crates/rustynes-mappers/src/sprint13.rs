@@ -173,7 +173,9 @@ impl Mapper for NtdecTc112 {
                 let slot = (addr as usize - 0x8000) / PRG_BANK_8K;
                 let bank = match slot {
                     0 => self.prg0 % count,
-                    _ => (count - (4 - slot)) % count, // last-3 fixed window
+                    // `saturating_sub` guards a malformed sub-4-bank PRG image
+                    // (the subtraction would otherwise underflow + panic).
+                    _ => count.saturating_sub(4 - slot) % count, // last-3 fixed window
                 };
                 self.prg_rom[bank * PRG_BANK_8K + (addr as usize & 0x1FFF)]
             }
@@ -323,6 +325,12 @@ impl Bmc204 {
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
         check_prg(&prg_rom, 204)?;
+        if prg_rom.len() < PRG_BANK_16K {
+            return Err(MapperError::Invalid(format!(
+                "mapper 204 PRG-ROM size {} is smaller than one 16 KiB bank",
+                prg_rom.len()
+            )));
+        }
         let (chr, chr_is_ram) = chr_or_ram(chr_rom);
         let mut m = Self {
             prg_rom,
@@ -518,6 +526,12 @@ impl NtdecN625092 {
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
         check_prg(&prg_rom, 221)?;
+        if prg_rom.len() < PRG_BANK_16K {
+            return Err(MapperError::Invalid(format!(
+                "mapper 221 PRG-ROM size {} is smaller than one 16 KiB bank",
+                prg_rom.len()
+            )));
+        }
         let (chr, chr_is_ram) = chr_or_ram(chr_rom);
         let mut m = Self {
             prg_rom,
@@ -713,6 +727,12 @@ impl Bmc11160 {
         mirroring: Mirroring,
     ) -> Result<Self, MapperError> {
         check_prg(&prg_rom, 299)?;
+        if prg_rom.len() < PRG_BANK_32K {
+            return Err(MapperError::Invalid(format!(
+                "mapper 299 PRG-ROM size {} is smaller than one 32 KiB bank",
+                prg_rom.len()
+            )));
+        }
         let (chr, chr_is_ram) = chr_or_ram(chr_rom);
         let mut m = Self {
             prg_rom,
