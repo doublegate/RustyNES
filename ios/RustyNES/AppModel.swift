@@ -146,7 +146,10 @@ final class AppModel: ObservableObject {
 
     func saveSlot(_ slot: Int) {
         guard let emulator, let sha = currentEntry?.sha else { return }
-        try? saveStates.write(emulator.saveState(), sha: sha, slot: slot)
+        let blob = emulator.saveState()
+        let frame = emulator.frame()
+        let thumbnail = emulator.snapshotPNG()
+        try? saveStates.write(blob, sha: sha, slot: slot, frame: frame, thumbnailPNG: thumbnail)
     }
 
     func loadSlot(_ slot: Int) {
@@ -159,19 +162,46 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func deleteSlot(_ slot: Int) {
+        guard let sha = currentEntry?.sha else { return }
+        saveStates.clear(sha: sha, slot: slot)
+    }
+
     func slots() -> [SaveSlot] {
         guard let sha = currentEntry?.sha else { return [] }
         return saveStates.slots(for: sha)
     }
 
-    // MARK: - App lifecycle (foreground/background pause)
+    /// Quick-save / quick-load map to slot 1 (the desktop F1/F4 analogue).
+    func quickSave() { saveSlot(SaveStateManager.quickSlot) }
+    func quickLoad() { loadSlot(SaveStateManager.quickSlot) }
+
+    // MARK: - App lifecycle (foreground/background + in-game-menu pause)
+
+    /// Whether the scene is foreground-active and whether an in-game menu/sheet is
+    /// holding the emulator paused. Tracked separately so neither clobbers the other
+    /// (e.g. foregrounding with a sheet still open must NOT resume emulation).
+    private var sceneActive = true
+    private var menuPaused = false
 
     func handleScenePhase(_ active: Bool) {
-        if active {
+        sceneActive = active
+        applyRunState()
+    }
+
+    /// Pause/resume the emulator for an in-game menu (Settings / Save States), so it
+    /// doesn't keep running (losing progress / playing audio) behind the sheet.
+    func setMenuPaused(_ paused: Bool) {
+        menuPaused = paused
+        applyRunState()
+    }
+
+    /// Resume only when the scene is active AND no menu is open; otherwise pause.
+    /// (We deliberately declare NO background-audio mode, so backgrounding pauses.)
+    private func applyRunState() {
+        if sceneActive, !menuPaused {
             emulator?.resume()
         } else {
-            // The emulator pauses on background (we deliberately declare NO
-            // background-audio mode).
             emulator?.pause()
         }
     }

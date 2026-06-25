@@ -12,8 +12,9 @@ import SwiftUI
 struct GameView: View {
     @EnvironmentObject private var model: AppModel
     @State private var showingStates = false
-    // The top bar visibility, toggled by the controller's red MENU pill (mirrors the
-    // Android MENU pill toggling `controlsVisible`).
+    @State private var showingSettings = false
+    // The top bar + pill menu visibility, toggled by the on-screen MENU pill (mirrors
+    // the Android MENU pill toggling `controlsVisible`).
     @State private var menuVisible = true
 
     var body: some View {
@@ -52,10 +53,36 @@ struct GameView: View {
                 }
                 Spacer()
             }
+
+            // The floating pill menu: one-handed quick access to the save-state
+            // manager, settings, reset, power, and the library. Trailing-edge,
+            // vertically centred, auto-hiding with the rest of the chrome.
+            if menuVisible {
+                HStack {
+                    Spacer()
+                    PillMenu(
+                        onLibrary: { model.closeGame() },
+                        onStates: { showingStates = true },
+                        onSettings: { showingSettings = true },
+                        onReset: { model.emulator?.reset() },
+                        onPower: { model.emulator?.powerCycle() }
+                    )
+                    .padding(.trailing, 8)
+                }
+                .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
         }
+        .animation(.easeInOut(duration: 0.2), value: menuVisible)
         .sheet(isPresented: $showingStates) {
-            SaveStatesSheet()
+            SaveStatesView()
         }
+        .sheet(isPresented: $showingSettings) {
+            SettingsView()
+        }
+        // Pause the emulator while a menu/sheet is open so the player doesn't lose
+        // progress or hear audio behind it; resume once both are dismissed.
+        .onChange(of: showingStates) { _ in model.setMenuPaused(showingStates || showingSettings) }
+        .onChange(of: showingSettings) { _ in model.setMenuPaused(showingStates || showingSettings) }
         .statusBarHidden(true)
     }
 
@@ -93,39 +120,5 @@ struct GameView: View {
         .padding(.horizontal)
         .padding(.vertical, 8)
         .background(Color.black.opacity(0.35))
-    }
-}
-
-/// The save-state slot picker sheet (save into / load from one of N slots).
-private struct SaveStatesSheet: View {
-    @EnvironmentObject private var model: AppModel
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            List(model.slots()) { slot in
-                HStack {
-                    VStack(alignment: .leading) {
-                        Text("Slot \(slot.index + 1)")
-                            .font(.headline)
-                        Text(slot.isEmpty ? "Empty" : "Saved \(slot.savedAt!.formatted())")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button("Save") { model.saveSlot(slot.index) }
-                        .buttonStyle(.bordered)
-                    Button("Load") { model.loadSlot(slot.index); dismiss() }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(slot.isEmpty)
-                }
-            }
-            .navigationTitle("Save States")
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
-                }
-            }
-        }
     }
 }
