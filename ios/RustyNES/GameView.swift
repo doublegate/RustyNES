@@ -79,6 +79,10 @@ struct GameView: View {
         .sheet(isPresented: $showingSettings) {
             SettingsView()
         }
+        // Pause the emulator while a menu/sheet is open so the player doesn't lose
+        // progress or hear audio behind it; resume once both are dismissed.
+        .onChange(of: showingStates) { _ in model.setMenuPaused(showingStates || showingSettings) }
+        .onChange(of: showingSettings) { _ in model.setMenuPaused(showingStates || showingSettings) }
         .statusBarHidden(true)
     }
 

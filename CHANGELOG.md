@@ -28,9 +28,10 @@ moves 1.9.2 → 1.9.3), so the shipped / native / `no_std` / wasm core stays
   `Form` (Video / Audio / Controls / About), every option grouped + footnoted, all
   existing settings preserved + persisted, presented from the pill menu.
 - **Save-state depth — 4 slots per ROM** — `SaveStateManager` extended to four
-  slots keyed by the ROM SHA-256 under `saves/<sha256>/` (reusing the `.rns`
-  format), each with metadata (timestamp / frame / thumbnail), behind a SwiftUI
-  Save-State Manager (per-slot Save / Load / Delete).
+  slots keyed by the ROM SHA-256 under `states/<sha256>/slot-N.rns` (reusing the
+  `.rns` format), each with `slot-N.json` (timestamp / frame) + `slot-N.png`
+  (thumbnail) sidecars, behind a SwiftUI Save-State Manager (per-slot Save / Load /
+  Delete).
 - **In-game pill menu** — a compact floating control cluster (Save/Load · Settings ·
   Reset/Power · Library) toggled by the on-screen MENU pill / top bar, one-handed
   and auto-hiding.

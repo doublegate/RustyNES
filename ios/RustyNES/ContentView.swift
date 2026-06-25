@@ -46,10 +46,14 @@ struct ContentView: View {
             SettingsView()
         }
         .fullScreenCover(isPresented: Binding(
+            // Symmetric: presenting (true) means not-yet-onboarded; any dismissal
+            // (false) marks onboarding done, so the cover can't re-present in a loop.
             get: { !didOnboard },
-            set: { if $0 { didOnboard = false } }
+            set: { didOnboard = !$0 }
         )) {
             OnboardingView { didOnboard = true }
+                // Completion is via Skip / Get Started, not an accidental swipe.
+                .interactiveDismissDisabled()
         }
         .alert(
             "RustyNES",

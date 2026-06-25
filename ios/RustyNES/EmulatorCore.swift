@@ -60,8 +60,18 @@ final class EmulatorCore {
 
     /// The most recently presented RGBA8888 framebuffer (256x240), retained so the
     /// save-state layer can derive a slot thumbnail without re-running a frame. nil
-    /// until the first `tick()`.
-    private(set) var lastFrame: Data?
+    /// until the first `tick()`. Written on the CADisplayLink/emulation thread and
+    /// read on the main actor (`snapshotPNG`), so all access goes through
+    /// `frameLock` — `Data` is copy-on-write and not safe for concurrent read/write.
+    private var _lastFrame: Data?
+    private let frameLock = NSLock()
+
+    /// Thread-safe snapshot of the latest framebuffer (a cheap COW reference copy).
+    var lastFrame: Data? {
+        frameLock.lock()
+        defer { frameLock.unlock() }
+        return _lastFrame
+    }
 
     /// Metadata for the loaded cartridge.
     let info: RomInfo
@@ -129,7 +139,10 @@ final class EmulatorCore {
         }
         // Retain the frame for save-state thumbnail capture (cheap: one COW Data
         // ref, swapped each tick; touched only here + on the main thread snapshot).
-        lastFrame = frame
+        // Locked because this runs off the main actor and `snapshotPNG` reads it there.
+        frameLock.lock()
+        _lastFrame = frame
+        frameLock.unlock()
 
         // Drain mono f32 audio and enqueue it (unless muted). The sink's DRC
         // absorbs the console-rate <-> device-rate beat.
@@ -198,7 +211,13 @@ final class EmulatorCore {
 
         var pixels = frame
         let colorSpace = CGColorSpaceCreateDeviceRGB()
+        // The buffer is R,G,B,A in memory order. `premultipliedLast` alone leaves the
+        // byte order as the little-endian default (which reads as BGRA on iOS and
+        // swaps red/blue); OR in `byteOrder32Big` so the 32-bit pixel's first byte is
+        // R -> the components are read as R,G,B,A. (NES pixels are opaque, so
+        // premultiplied vs straight alpha is moot.)
         let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
+            | CGBitmapInfo.byteOrder32Big.rawValue
         let cgImage: CGImage? = pixels.withUnsafeMutableBytes { raw in
             guard let base = raw.baseAddress,
                   let ctx = CGContext(
