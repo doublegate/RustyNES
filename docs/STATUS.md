@@ -960,8 +960,12 @@ own semantic-version line starting at **v1.0.0**.
 > DualSystem emulation, and the breaking save-state / cross-version changes that it
 > entails (ADR 0002). The full forward path is tracked in `to-dos/ROADMAP.md` +
 > `to-dos/plans/`: v1.7.0 "Forge" shipped → the **v1.8.x "Android"** sideload line
-> (through **v1.8.9 "Backlog"**, the current release) → the **v1.9.0**
-> interim-TestFlight iOS foundation →
+> (through **v1.8.9 "Backlog"**, the current release) → the **v1.9.0 → v1.9.9**
+> interim-TestFlight iOS train (mirroring the Android v1.8.0–v1.8.9 arc:
+> **v1.9.0 "Sunrise"** foundation → the wgpu→Metal renderer → connectivity +
+> scripting → **v1.9.8 "Horizon"** store-readiness + the §4.7 compliance pass →
+> **v1.9.9 "Workshop"** creator tools; ADRs 0026 + 0027; plan
+> `to-dos/plans/v1.9.x-ios-train-plan.md`) →
 > **v2.0.0 "Timebase"** → then the
 > **mobile-finalization train** (maintainer replan 2026-06-23: both app-store
 > launches held to post-2.0.0) — **v2.0.1–v2.0.4** final Android, **v2.0.5–v2.0.8**
