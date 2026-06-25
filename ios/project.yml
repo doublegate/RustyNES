@@ -72,6 +72,8 @@ targets:
       - sdk: GameController.framework
       - sdk: AVFoundation.framework
       - sdk: UIKit.framework
+      # v1.9.2: optional Core Haptics feedback for on-screen button presses.
+      - sdk: CoreHaptics.framework
     info:
       path: RustyNES/Info.plist
 

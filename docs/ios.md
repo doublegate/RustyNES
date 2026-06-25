@@ -120,10 +120,16 @@ AVFoundation / UIKit, and includes the generated `Generated/RustyNESCore.swift`
   `rustynes_ios_audio_push(...)`. The drawable size comes from the view; a
   bounds/scale change calls `rustynes_ios_gfx_resize`. The core emulates at the
   console rate (60.0988 Hz); the audio sink absorbs the display beat.
-- **Input:** a translucent SwiftUI `TouchControlsOverlay` (D-pad / A / B / Start /
-  Select) and a `GameControllerManager` (`GCController` discovery) both converge on
-  the same `setButtons(port, mask)` late-latch as desktop / wasm -> TAS / netplay
-  identical.
+- **Input:** the on-screen pad and a `GameControllerManager` (`GCController`
+  discovery) both converge on the same `setButtons(port, mask)` late-latch as
+  desktop / wasm -> TAS / netplay identical. **(v1.9.2)** the pad is a `UIView`-backed
+  **multi-touch** responder (`touchesBegan/Moved/Ended` over all active touches,
+  replacing the v1.9.0 single `DragGesture` so simultaneous distant presses
+  register), NES-001-styled and sized from the available geometry (iPhone / iPad /
+  split-view / Stage Manager); the GameController path handles **P1-P4** with a
+  persisted remap model; optional **Core Haptics** (off by default) gives light
+  press feedback. All of it still funnels through the one per-port bitmask, so the
+  determinism contract is untouched.
 - **ROM import (`ROMLibrary`):** `UIDocumentPicker` / `.fileImporter` /
   share-sheet, security-scoped, copied into `Application Support/RustyNES/roms/`
   keyed by SHA-256 (the desktop save-identity scheme). **Never bundle commercial

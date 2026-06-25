@@ -24,9 +24,11 @@ struct GameView: View {
                 MetalGameView(emulator: emulator)
                     .ignoresSafeArea()
 
-                // On-screen controls overlay (feeds the touch mask into the model,
-                // which ORs it with any hardware-pad mask).
-                TouchControlsOverlay { mask in
+                // On-screen controls: the v1.9.2 true multi-touch NES-001 pad (the
+                // replacement for the v1.9.0 single-DragGesture TouchControlsOverlay).
+                // It feeds the combined touch mask into the model, which ORs it with
+                // the P1 hardware-pad mask.
+                MultiTouchControlPad { mask in
                     model.setTouchMask(mask)
                 }
                 .ignoresSafeArea()

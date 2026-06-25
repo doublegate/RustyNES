@@ -30,10 +30,26 @@ final class AppModel: ObservableObject {
     @Published var muted: Bool = false {
         didSet { emulator?.isMuted = muted; UserDefaults.standard.set(muted, forKey: "muted") }
     }
+    /// Optional Core Haptics feedback on on-screen button presses (OFF by default).
+    @Published var hapticsEnabled: Bool = false {
+        didSet {
+            haptics.isEnabled = hapticsEnabled
+            if hapticsEnabled { haptics.prepare() }
+            UserDefaults.standard.set(hapticsEnabled, forKey: "hapticsEnabled")
+        }
+    }
 
-    private let gamepads = GameControllerManager()
+    /// The multi-controller (P1-P4) hardware-pad manager. Exposed so SettingsView can
+    /// list controllers, reassign ports, and edit the remap.
+    let gamepads = GameControllerManager()
+    private let haptics = HapticsManager()
+
     private var touchMask: UInt8 = 0
-    private var padMask: UInt8 = 0
+    /// Per-port hardware-pad masks (P1-P4). Touch input ORs into port 0 only.
+    private var padMasks: [UInt8] = Array(repeating: 0, count: GameControllerManager.maxPlayers)
+
+    /// Whether the device can play haptics (drives the Settings toggle's enabled state).
+    var hapticsSupported: Bool { haptics.isSupported }
 
     init() {
         if let raw = UserDefaults.standard.object(forKey: "filter") as? Int,
@@ -41,14 +57,18 @@ final class AppModel: ObservableObject {
             filter = f
         }
         muted = UserDefaults.standard.bool(forKey: "muted")
+        hapticsEnabled = UserDefaults.standard.bool(forKey: "hapticsEnabled")
 
         audioSession.onShouldPause = { [weak self] in self?.emulator?.pause() }
         audioSession.onShouldResume = { [weak self] in
             if self?.emulator != nil { self?.emulator?.resume() }
         }
-        gamepads.onMaskChanged = { [weak self] _, mask in
-            self?.padMask = mask
-            self?.pushInput()
+        gamepads.onMaskChanged = { [weak self] port, mask in
+            guard let self else { return }
+            let p = Int(port)
+            guard p >= 0, p < self.padMasks.count else { return }
+            self.padMasks[p] = mask
+            self.pushInput(port: p)
         }
         gamepads.start()
     }
@@ -92,14 +112,24 @@ final class AppModel: ObservableObject {
 
     // MARK: - Input fan-in
 
-    /// The touch overlay reports its mask here; merged with the hardware-pad mask.
+    /// The on-screen pad reports its combined multi-touch mask here; merged with the
+    /// P1 hardware-pad mask. A rising edge (any newly pressed button) fires a haptic.
     func setTouchMask(_ mask: UInt8) {
+        let newlyPressed = mask & ~touchMask
         touchMask = mask
-        pushInput()
+        if newlyPressed != 0 { haptics.tap() }
+        pushInput(port: 0)
     }
 
-    private func pushInput() {
-        emulator?.setButtons(port: 0, mask: touchMask | padMask)
+    /// Forward one port's effective mask to the core. Port 0 is touch OR P1 pad; the
+    /// other ports are their pad mask alone.
+    private func pushInput(port: Int) {
+        guard let emulator else { return }
+        if port == 0 {
+            emulator.setButtons(port: 0, mask: touchMask | padMasks[0])
+        } else {
+            emulator.setButtons(port: UInt32(port), mask: padMasks[port])
+        }
     }
 
     // MARK: - Settings application

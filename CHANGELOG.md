@@ -15,6 +15,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.2] - 2026-06-25 - "Input" (iOS multi-touch, controllers, haptics)
+
+The iOS **input** release — the analogue of Android v1.8.2. All work is in the
+SwiftUI shell; the Rust core and the `set_buttons(port, mask)` late-latch path are
+untouched (every input still converges on the same bitmask, so determinism + TAS /
+netplay parity hold). No Rust logic change (only `CARGO_PKG_VERSION` moves
+1.9.1 → 1.9.2), so the shipped / native / `no_std` / wasm core stays
+**byte-identical** and **AccuracyCoin holds 100% (139/139)**. Interim TestFlight.
+
+### Added
+
+- **True multi-touch on-screen pad** — a `UIView`-backed multi-touch responder
+  (`touchesBegan/Moved/Ended` over all active touches) replaces the v1.9.0 single
+  `DragGesture`, so simultaneous distant presses (D-pad + A/B at once) register.
+  The combined `NesButtonMask` flows through the same per-port path; the
+  translucent button visuals keep their VoiceOver accessibility labels.
+- **NES-001 controller styling** — the on-screen pad restyled (SwiftUI shapes /
+  gradients, no binary assets) as a tasteful homage to the original NES-001 pad.
+- **Responsive iPhone / iPad sizing** — the pad + game view letterbox and scale
+  cleanly across portrait / landscape / split-view / Stage Manager (sized from the
+  available geometry; larger targets on iPad).
+- **GameController P1–P4 + remapping** — discovery of up to four `GCController`s,
+  per-port assignment, and a persisted remap model (UserDefaults), surfaced in
+  Settings. Standard default mapping (South=A, West=B, Menu=Start, Options=Select,
+  D-pad/stick = directions), matching desktop.
+- **Core Haptics** (`CHHapticEngine`) — optional light haptic feedback on button
+  presses, **off by default** (a persisted Settings toggle), graceful no-op on
+  devices without haptics.
+
 ## [1.9.1] - 2026-06-25 - "Patch" (iOS TestFlight cadence + dormant freemium gate)
 
 A small patch on **v1.9.0 "Sunrise"** — the iOS analogue of the Android v1.8.1
