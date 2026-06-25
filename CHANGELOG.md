@@ -15,6 +15,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.2] - 2026-06-25 - "Input" (iOS multi-touch, controllers, haptics)
+
+The iOS **input** release — the analogue of Android v1.8.2. All work is in the
+SwiftUI shell; the Rust core and the `set_buttons(port, mask)` late-latch path are
+untouched (every input still converges on the same bitmask, so determinism + TAS /
+netplay parity hold). No Rust logic change (only `CARGO_PKG_VERSION` moves
+1.9.1 → 1.9.2), so the shipped / native / `no_std` / wasm core stays
+**byte-identical** and **AccuracyCoin holds 100% (139/139)**. Interim TestFlight.
+
+### Added
+
+- **True multi-touch on-screen pad** — a `UIView`-backed multi-touch responder
+  (`touchesBegan/Moved/Ended` over all active touches) replaces the v1.9.0 single
+  `DragGesture`, so simultaneous distant presses (D-pad + A/B at once) register.
+  The combined `NesButtonMask` flows through the same per-port path; the
+  translucent button visuals keep their VoiceOver accessibility labels.
+- **NES-001 controller render (Android parity)** — the on-screen pad is a faithful
+  SwiftUI `Canvas` port of the Android `VirtualController` render, sharing its
+  measured geometry + palette: the grey plastic shell + asymmetric bezel, near-black
+  face, the four grey decorative stripes + the "RustyNES" wordmark, the white
+  SELECT/START housing with its black inset frame + pills, the black-cross D-pad
+  (white outline, dark-grey face, outward directional arrows, centre circle), the
+  red "MENU" racetrack pill, and the two white housings with domed radial-gradient
+  A/B buttons — with live pressed-state lighting. The same measured geometry backs
+  both the art and the touch hit-test (they can't desync). Labels are set in the same
+  two bundled NES-era faces as the Android pad for **glyph-identical parity** — "Nes
+  Controller" (`Fonts/NESController.ttf`) for the buttons (SELECT/START/A/B/MENU) and
+  **Press Start 2P** (OFL-1.1, `Fonts/PressStart2P.ttf`) for the "RustyNES" wordmark —
+  each falling back to a bold monospaced face if unregistered. (The "Nes Controller"
+  file's FontCreator default placeholder copyright, `(c) (your company). 2009. All
+  Rights Reserved`, was stripped on both iOS and Android — it named no real entity.)
+- **Responsive iPhone / iPad sizing** — the pad + game view letterbox and scale
+  cleanly across portrait / landscape / split-view / Stage Manager (sized from the
+  available geometry; larger targets on iPad).
+- **GameController P1–P4 + remapping** — discovery of up to four `GCController`s,
+  per-port assignment, and a persisted remap model (UserDefaults), surfaced in
+  Settings. Standard default mapping (South=A, West=B, Menu=Start, Options=Select,
+  D-pad/stick = directions), matching desktop.
+- **Core Haptics** (`CHHapticEngine`) — optional light haptic feedback on button
+  presses, **off by default** (a persisted Settings toggle), graceful no-op on
+  devices without haptics.
+
 ## [1.9.1] - 2026-06-25 - "Patch" (iOS TestFlight cadence + dormant freemium gate)
 
 A small patch on **v1.9.0 "Sunrise"** — the iOS analogue of the Android v1.8.1

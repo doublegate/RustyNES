@@ -1,11 +1,16 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v1.9.1 "Patch"** (2026-06-25) — a small patch on the iOS line:
-> a TestFlight **build-refresh cron** (builds expire 90 days after upload) + a
-> **dormant freemium-gate scaffold** (`ios/RustyNES/Entitlements.swift`, fully
-> unlocked through v1.9.x; the present-but-inert seam the v2.1.0 monetization wiring
-> drops into). No Rust logic change (only `CARGO_PKG_VERSION` moves 1.9.0 → 1.9.1),
-> so byte-identity + AccuracyCoin 139/139 hold. The preceding
+> **Current release: v1.9.2 "Input"** (2026-06-25) — the iOS **input** release: a
+> true **multi-touch** on-screen pad (a `UIView` responder over all active touches,
+> replacing the v1.9.0 single `DragGesture` so simultaneous distant presses
+> register), **NES-001** styling, responsive iPhone/iPad sizing, **GameController
+> P1–P4** + a persisted remap model, and optional **Core Haptics** (off by default).
+> All SwiftUI-shell work; the core + the `set_buttons` late-latch path are untouched
+> (only `CARGO_PKG_VERSION` moves 1.9.1 → 1.9.2), so byte-identity + AccuracyCoin
+> 139/139 hold. The preceding **v1.9.1 "Patch"** — a TestFlight **build-refresh
+> cron** (builds expire 90 days after upload) + a **dormant freemium-gate scaffold**
+> (`ios/RustyNES/Entitlements.swift`, fully unlocked through v1.9.x; the
+> present-but-inert seam the v2.1.0 monetization wiring drops into). The preceding
 > **v1.9.0 "Sunrise"** (2026-06-25) — the first **iOS / iPadOS**
 > release: the foundation slice of the v1.9.0 → v1.9.9 TestFlight train (mirroring
 > the Android v1.8.0 → v1.8.9 arc), a native **SwiftUI** shell over the
@@ -109,12 +114,13 @@
 > output widening) · 0021 (File System Access fallback) · 0022 (settings share-link) ·
 > 0023 (i18n string-catalog).
 
-**Current release: v1.9.1 "Patch"** (an iOS-line patch — a TestFlight build-refresh
-cron + a dormant freemium-gate scaffold, framed in the blockquote above), on the
-cycle-accurate v1.0.0 production core; the preceding **v1.9.0 "Sunrise"** was the
-first iOS / iPadOS release (a native SwiftUI shell over the byte-identical core via
-the shared `rustynes-mobile` bridge + the new `rustynes-ios` Metal/CoreAudio shim),
-and on the **v1.8.x "Android"** line **v1.8.9 "Backlog"** was the
+**Current release: v1.9.2 "Input"** (the iOS input release — a true multi-touch pad,
+NES-001 styling, responsive sizing, GameController P1–P4 + remap, optional Core
+Haptics, framed in the blockquote above), on the cycle-accurate v1.0.0 production
+core; the preceding **v1.9.1 "Patch"** was an iOS-line patch (TestFlight build-refresh
+cron + a dormant freemium-gate scaffold) and **v1.9.0 "Sunrise"** the first iOS /
+iPadOS release (a native SwiftUI shell + the new `rustynes-ios` Metal/CoreAudio shim);
+on the **v1.8.x "Android"** line **v1.8.9 "Backlog"** was the
 carryover creator-tooling / debugger-depth / full-HD-pack-parity / mapper-breadth
 increment, and **v1.8.8 "Atlas"** the Google-Play-launch-readiness increment, on the
 **v1.8.x "Android"** platform line. The desktop-feature baseline below traces
