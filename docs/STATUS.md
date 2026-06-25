@@ -1,6 +1,19 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v1.8.8 "Atlas"** (2026-06-20) — the Google-Play-launch +
+> **Current release: v1.8.9 "Backlog"** (2026-06-25) — the carryover / backlog
+> increment on the **v1.8.x** line, landed as a phased beta train: creator tooling
+> (a desktop Virtual Pad, TAStudio Input Macros, A/V-codec depth, an FDS Firmware
+> Manager, a multi-disk side-selector, a headless batch runner, optional SQLite
+> userdata), debugger depth (BasicBot save-state-anchored input search + detachable
+> multi-viewport panels + the RetroAchievements leaderboard-trackers HUD), **full
+> Mesen2 HD-pack parity** (the Legend-of-Zelda texture-mapping fix taken to every
+> HD-pack form, including `<addition>` and the CHR-RAM tileData-hash conditions), a
+> Game Genie database, NSF waveform-viz depth, mapper breadth **168 → 172 families**
+> (m193/204/221/299 + ~35 UNIF board aliases), plus the 13-PR Dependabot
+> consolidation and the dormant `rustynes-monetization` build-out. All additive /
+> off-by-default, so the shipped / native / `no_std` / wasm core stays byte-identical
+> and AccuracyCoin holds 100% (139/139). The preceding **v1.8.8 "Atlas"** (2026-06-20)
+> was the Google-Play-launch +
 > Android-native-excellence increment on the first **platform** (not accuracy) release
 > line **v1.8.0 "Android"**: a complete Android app (shared `rustynes-mobile` UniFFI
 > bridge + `rustynes-android` platform crate + a Jetpack Compose shell; audio /
@@ -77,9 +90,10 @@
 > output widening) · 0021 (File System Access fallback) · 0022 (settings share-link) ·
 > 0023 (i18n string-catalog).
 
-**Current release: v1.8.8 "Atlas"** (the Google-Play-launch-readiness increment on
-the **v1.8.x "Android"** platform line — framed in the blockquote above), on the
-cycle-accurate v1.0.0 production core. The desktop-feature baseline below traces
+**Current release: v1.8.9 "Backlog"** (the carryover creator-tooling, debugger-depth,
+full-HD-pack-parity, and mapper-breadth increment — framed in the blockquote above),
+on the cycle-accurate v1.0.0 production core; the preceding **v1.8.8 "Atlas"** was the
+Google-Play-launch-readiness increment on the **v1.8.x "Android"** platform line. The desktop-feature baseline below traces
 back through **v1.7.1 — a bugfix / polish patch on v1.7.0 "Forge"** (the
 writable + programmable tooling, accuracy, mapper-breadth, and reach feature release
 it patches, described below). A
@@ -920,14 +934,15 @@ off-by-default feature releases **v1.1.0 "Scriptable" → v1.2.0 "Curator" →
 v1.3.0 "Bedrock" → v1.4.0 "Fidelity" (+ the v1.4.1 patch) → v1.5.0 "Lens" →
 v1.6.0 "Studio" → v1.7.0 "Forge" → v1.7.1 (patch)** on top, then the **v1.8.x
 "Android"** platform line (v1.8.0 → … → v1.8.7 "Android" (Connectivity completion) →
-**v1.8.8 "Atlas" (Google Play launch readiness)**, the current release). The
-**`[Unreleased]` work toward v1.8.9** is the 13-PR Dependabot consolidation
-(jni 0.21 → 0.22, zip 2 → 8.6, naga 25 → 29, sha1 / md-5 0.10 → 0.11, pollster
-0.3 → 0.4, android_logger 0.14 → 0.15, lz4_flex 0.11 → 0.13, plus the GitHub
-Actions bumps) + the **monetization build-out** (the new, dormant
-`rustynes-monetization` crate — the shared ad-supported / freemium policy core) +
-a held UX fix; the emulation core stays byte-identical and AccuracyCoin holds 100%
-(139/139). The
+**v1.8.8 "Atlas" (Google Play launch readiness)** → **v1.8.9 "Backlog"** (the
+carryover beta train, the current release). **v1.8.9** added the creator-tooling /
+debugger-depth / full-Mesen2-HD-pack-parity / mapper-breadth (168 → 172) work — see
+the blockquote at the top + `CHANGELOG.md` `[1.8.9]` — plus the 13-PR Dependabot
+consolidation (jni 0.21 → 0.22, zip 2 → 8.6, naga 25 → 29, sha1 / md-5 0.10 → 0.11,
+pollster 0.3 → 0.4, android_logger 0.14 → 0.15, lz4_flex 0.11 → 0.13, plus the GitHub
+Actions bumps) and the **monetization build-out** (the new, dormant
+`rustynes-monetization` crate — the shared ad-supported / freemium policy core); the
+emulation core stays byte-identical and AccuracyCoin holds 100% (139/139). The
 table below is the **engine-lineage** version history
 — the internal engine line whose increments produced the v1.0.0 technology. Its
 `v0.9.x` / `v1.x` / `v2.x` markers are the engine's own line, retained as
@@ -945,8 +960,8 @@ own semantic-version line starting at **v1.0.0**.
 > DualSystem emulation, and the breaking save-state / cross-version changes that it
 > entails (ADR 0002). The full forward path is tracked in `to-dos/ROADMAP.md` +
 > `to-dos/plans/`: v1.7.0 "Forge" shipped → the **v1.8.x "Android"** sideload line
-> (through **v1.8.8 "Atlas"**, with **v1.8.9** the dependency-consolidation +
-> monetization-build-out interim) → the **v1.9.0** interim-TestFlight iOS foundation →
+> (through **v1.8.9 "Backlog"**, the current release) → the **v1.9.0**
+> interim-TestFlight iOS foundation →
 > **v2.0.0 "Timebase"** → then the
 > **mobile-finalization train** (maintainer replan 2026-06-23: both app-store
 > launches held to post-2.0.0) — **v2.0.1–v2.0.4** final Android, **v2.0.5–v2.0.8**
