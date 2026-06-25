@@ -15,6 +15,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.4] - 2026-06-25 - "Lens" (iOS Metal renderer + shader stack)
+
+The iOS renderer-completion release — the analogue of Android v1.8.4. Completes and
+hardens the `wgpu→Metal` path the v1.9.0 foundation stubbed. All SwiftUI-shell /
+`rustynes-ios` host work; the Rust core is untouched (only `CARGO_PKG_VERSION` moves
+1.9.3 → 1.9.4), so the shipped / native / `no_std` / wasm core stays
+**byte-identical** and **AccuracyCoin holds 100% (139/139)**. Interim TestFlight.
+
+### Added / Changed
+
+- **Full shader stack** — the shared `rustynes-gfx-shaders` WGSL pipelines
+  (None / Scanlines / CRT / LMP88959-NTSC / **Bisqwit**) are all reachable on iOS.
+  The Bisqwit pass is fed its per-frame palette-index texture + NTSC phase
+  (`set_index_frame`) when active; the other filters keep the RGBA `gfx_render`
+  path. Per-filter **shader-param controls** in Settings (scanline / CRT / NTSC
+  knobs), persisted and re-applied on launch, drive `set_filter`'s `p0..p3`.
+- **ProMotion pacing** — `CADisplayLink` at `preferredFrameRateRange` 60–120 Hz
+  (with `CADisableMinimumFrameDurationOnPhone`), advancing one **console-rate**
+  (60.0988 Hz) frame per beat with the audio ring/DRC absorbing the 60↔120 Hz
+  difference (no double-speed at 120 Hz).
+- **Surface-loss + background lifecycle** — the `CADisplayLink` stops driving
+  frames on background / resign-active and rebuilds (re-acquiring / re-`gfx_init`
+  the drawable as needed) on foreground; drawable size/scale changes
+  (rotation / Stage Manager) reconfigure via `gfx_resize`; the renderer handle is
+  balanced (`gfx_init`/`gfx_destroy`, no leak).
+- **Audio hot path** — the cpal CoreAudio sink + AVAudioSession (`.playback`,
+  interruption / route-change handling) verified end-to-end.
+
 ## [1.9.3] - 2026-06-25 - "Workshop-lite" (iOS settings, save-state slots, onboarding)
 
 The iOS settings / persistence / onboarding release — the analogue of Android

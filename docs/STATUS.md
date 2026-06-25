@@ -1,12 +1,17 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v1.9.3 "Workshop-lite"** (2026-06-25) — the iOS settings /
-> persistence / onboarding release: an organized native **Settings sheet**, **4
-> save-state slots per ROM** (SHA-256-keyed `.rns`, with a manager UI), an in-game
-> **pill menu**, first-run **onboarding + About** (the bring-your-own-ROM §4.7
-> notice), and iPad multitasking polish. All SwiftUI-shell work; the core is
-> untouched (only `CARGO_PKG_VERSION` moves 1.9.2 → 1.9.3), so byte-identity +
-> AccuracyCoin 139/139 hold. The preceding **v1.9.2 "Input"** — a true
+> **Current release: v1.9.4 "Lens"** (2026-06-25) — the iOS renderer-completion
+> release: the full **`wgpu→Metal` shader stack** (None/Scanlines/CRT/NTSC/**Bisqwit**,
+> the Bisqwit pass fed its palette-index frame) with per-filter **shader-param
+> controls** in Settings, **ProMotion** `CADisplayLink` pacing (60–120 Hz, one
+> console-rate frame per beat), hardened **surface-loss / background lifecycle**, and
+> a verified cpal/AVAudioSession audio hot path — completing the Metal path the
+> v1.9.0 foundation stubbed. All SwiftUI-shell / `rustynes-ios` work; the core is
+> untouched (only `CARGO_PKG_VERSION` moves 1.9.3 → 1.9.4), so byte-identity +
+> AccuracyCoin 139/139 hold. The preceding **v1.9.3 "Workshop-lite"** — an organized
+> native **Settings sheet**, **4 save-state slots per ROM** (SHA-256-keyed `.rns`),
+> an in-game **pill menu**, first-run **onboarding + About**, iPad multitasking
+> polish. The preceding **v1.9.2 "Input"** — a true
 > **multi-touch** on-screen pad (a `UIView` responder over all active touches,
 > replacing the v1.9.0 single `DragGesture`), a faithful **Android-parity NES-001**
 > render with **glyph-identical bundled fonts**, responsive sizing, **GameController
@@ -118,12 +123,14 @@
 > output widening) · 0021 (File System Access fallback) · 0022 (settings share-link) ·
 > 0023 (i18n string-catalog).
 
-**Current release: v1.9.3 "Workshop-lite"** (the iOS settings / save-state-slots /
-onboarding release, framed in the blockquote above), on the cycle-accurate v1.0.0
-production core; the preceding **v1.9.2 "Input"** was the iOS input release (true
-multi-touch pad, Android-parity NES-001 render + glyph-identical fonts, GameController
-P1–P4 + remap, haptics), **v1.9.1 "Patch"** an iOS-line patch (TestFlight build-refresh
-cron + a dormant freemium-gate scaffold), and **v1.9.0 "Sunrise"** the first iOS /
+**Current release: v1.9.4 "Lens"** (the iOS renderer-completion release — the full
+wgpu->Metal shader stack + ProMotion pacing + hardened surface lifecycle, framed in
+the blockquote above), on the cycle-accurate v1.0.0 production core; the preceding
+**v1.9.3 "Workshop-lite"** was the iOS settings / save-state-slots / onboarding
+release, **v1.9.2 "Input"** the input release (multi-touch pad, Android-parity NES-001
+render + glyph-identical fonts, GameController P1–P4 + remap, haptics), **v1.9.1
+"Patch"** an iOS-line patch (TestFlight build-refresh cron + a dormant freemium-gate
+scaffold), and **v1.9.0 "Sunrise"** the first iOS /
 iPadOS release (a native SwiftUI shell + the new `rustynes-ios` Metal/CoreAudio shim);
 on the **v1.8.x "Android"** line **v1.8.9 "Backlog"** was the
 carryover creator-tooling / debugger-depth / full-HD-pack-parity / mapper-breadth
