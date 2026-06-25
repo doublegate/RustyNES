@@ -15,6 +15,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.1] - 2026-06-25 - "Patch" (iOS TestFlight cadence + dormant freemium gate)
+
+A small patch on **v1.9.0 "Sunrise"** — the iOS analogue of the Android v1.8.1
+patch. Additive / off-by-default: no Rust logic changes (only the embedded
+`CARGO_PKG_VERSION` moves 1.9.0 → 1.9.1), so the shipped / native / `no_std` /
+wasm core stays **byte-identical** and **AccuracyCoin holds 100% (139/139)**.
+Distributed as interim **TestFlight**.
+
+### Added
+
+- **TestFlight build-refresh cadence** — `.github/workflows/ios.yml` gains a
+  `schedule:` cron (06:00 UTC, the 1st of every other month, ~60-day cadence) that
+  re-builds + re-uploads the TestFlight build. A TestFlight build expires 90 days
+  after upload; the cadence keeps external testers live between feature releases.
+  No-op until the signing secrets are provisioned (the documented maintainer
+  carryover); `workflow_dispatch` covers off-cadence refreshes.
+- **Dormant freemium-gate scaffold** — `ios/RustyNES/Entitlements.swift`, an
+  app-wide `Entitlements` object that is **fully unlocked through the entire v1.9.x
+  train** (TestFlight is free + full-featured), plus a `debugForceUnlock` override.
+  It is the present-but-inert seam the v2.1.0 launch wires to the shared
+  `rustynes-monetization` crate (RevenueCat + StoreKit 2 + AppLovin MAX; the full
+  StoreKit scaffolding lands at v1.9.8 "Horizon") — the iOS analogue of the Android
+  dormant `Billing.kt`. Entitlement state never reaches the deterministic core.
+
 ## [1.9.0] - 2026-06-25 - "Sunrise" (iOS / iPadOS foundation)
 
 The first **iOS / iPadOS** release — the foundation slice of the v1.9.0 → v1.9.9

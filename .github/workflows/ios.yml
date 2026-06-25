@@ -11,6 +11,14 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+  # v1.9.1 "Patch" — TestFlight build-refresh cadence. A TestFlight build expires
+  # 90 days after upload; re-build + re-upload at 06:00 UTC on the 1st of every
+  # other month (~60-day cadence) so external testers never lose access between
+  # feature releases. No-op until the signing secrets are provisioned (the
+  # documented maintainer carryover); `workflow_dispatch` covers off-cadence
+  # refreshes.
+  schedule:
+    - cron: '0 6 1 */2 *'
 
 permissions:
   contents: read
