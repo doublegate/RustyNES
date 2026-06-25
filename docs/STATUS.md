@@ -1,6 +1,19 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v1.8.9 "Backlog"** (2026-06-25) — the carryover / backlog
+> **Current release: v1.9.0 "Sunrise"** (2026-06-25) — the first **iOS / iPadOS**
+> release: the foundation slice of the v1.9.0 → v1.9.9 TestFlight train (mirroring
+> the Android v1.8.0 → v1.8.9 arc), a native **SwiftUI** shell over the
+> byte-identical core via the shared `rustynes-mobile` UniFFI bridge. New crate
+> **`rustynes-ios`** (the wgpu→Metal + cpal-CoreAudio shim, the Apple analogue of
+> `rustynes-android`) + the `ios/` SwiftUI app + the xcframework build + a
+> tag-gated `macos-latest` TestFlight CI + fastlane; ADRs **0026** (host + shim) /
+> **0027** (distribution + §4.7). The iOS code is a host shell off-device
+> (`#[cfg(target_os = "ios")]`), so it is **additive / off-by-default** — the
+> shipped / native / `no_std` / wasm core stays byte-identical (only
+> `CARGO_PKG_VERSION` moves 1.8.9 → 1.9.0) and AccuracyCoin holds 100% (139/139).
+> Lua / RetroAchievements / netplay are deferred to the v1.9.x train; distributed
+> as interim **TestFlight** (App Store deferred to v2.1.0). The preceding
+> **v1.8.9 "Backlog"** (2026-06-25) — the carryover / backlog
 > increment on the **v1.8.x** line, landed as a phased beta train: creator tooling
 > (a desktop Virtual Pad, TAStudio Input Macros, A/V-codec depth, an FDS Firmware
 > Manager, a multi-disk side-selector, a headless batch runner, optional SQLite
@@ -90,10 +103,13 @@
 > output widening) · 0021 (File System Access fallback) · 0022 (settings share-link) ·
 > 0023 (i18n string-catalog).
 
-**Current release: v1.8.9 "Backlog"** (the carryover creator-tooling, debugger-depth,
-full-HD-pack-parity, and mapper-breadth increment — framed in the blockquote above),
-on the cycle-accurate v1.0.0 production core; the preceding **v1.8.8 "Atlas"** was the
-Google-Play-launch-readiness increment on the **v1.8.x "Android"** platform line. The desktop-feature baseline below traces
+**Current release: v1.9.0 "Sunrise"** (the first iOS / iPadOS release — a native
+SwiftUI shell over the byte-identical core via the shared `rustynes-mobile` bridge +
+the new `rustynes-ios` Metal/CoreAudio shim, framed in the blockquote above), on the
+cycle-accurate v1.0.0 production core; the preceding **v1.8.9 "Backlog"** was the
+carryover creator-tooling / debugger-depth / full-HD-pack-parity / mapper-breadth
+increment, and **v1.8.8 "Atlas"** the Google-Play-launch-readiness increment, on the
+**v1.8.x "Android"** platform line. The desktop-feature baseline below traces
 back through **v1.7.1 — a bugfix / polish patch on v1.7.0 "Forge"** (the
 writable + programmable tooling, accuracy, mapper-breadth, and reach feature release
 it patches, described below). A

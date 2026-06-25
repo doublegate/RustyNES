@@ -1,0 +1,81 @@
+# project.yml — XcodeGen spec for the RustyNES v1.9.0 "Sunrise" iOS/iPadOS app.
+#
+# A hand-written .pbxproj is too error-prone to author un-validated on Linux, so
+# the project is generated from this declarative spec. CI (and the local build
+# script) run `xcodegen generate --spec ios/project.yml` before xcodebuild /
+# fastlane. The generated ios/RustyNES.xcodeproj is a build artifact (gitignored).
+#
+# The Rust FFI ships as a STATIC xcframework (RustyNESFFI.xcframework, built by
+# scripts/build-ios-xcframework.sh). A static framework is LINKED, not embedded:
+# `embed: false` (Xcode "Do Not Embed"). It carries no code signature of its own.
+name: RustyNES
+options:
+  bundleIdPrefix: com.doublegate
+  deploymentTarget:
+    iOS: "15.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+settings:
+  base:
+    # The app is iPhone + iPad (device family 1,2 = Universal).
+    TARGETED_DEVICE_FAMILY: "1,2"
+    MARKETING_VERSION: "1.9.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+    DEVELOPMENT_LANGUAGE: en
+    # Signing is left to the CI / maintainer (fastlane match injects the team +
+    # provisioning profile). Manual signing keeps the checked-in project free of
+    # any developer-specific team id.
+    CODE_SIGN_STYLE: Manual
+
+targets:
+  RustyNES:
+    type: application
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: RustyNES
+      # The UniFFI-generated Swift surface (NesController et al.). Built by the
+      # xcframework script; checked in / regenerated as RustyNESCore.swift. The
+      # placeholder .gitkeep keeps the dir present before the first generation.
+      - path: Generated
+        excludes:
+          - ".gitkeep"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.doublegate.rustynes
+        INFOPLIST_FILE: RustyNES/Info.plist
+        CODE_SIGN_ENTITLEMENTS: RustyNES/RustyNES.entitlements
+        # The bridging header pulls in the hand-written C glue (rustynes_ios.h)
+        # so Swift can call the Metal/audio FFI directly.
+        SWIFT_OBJC_BRIDGING_HEADER: RustyNES/RustyNES-Bridging-Header.h
+        # The xcframework ships its own Clang modulemap dir per slice; point the
+        # importer at the headers so `import RustyNESHostGlue` (the glue module)
+        # and the UniFFI FFI module resolve.
+        ENABLE_USER_SCRIPT_SANDBOXING: "YES"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+    dependencies:
+      # The static Rust FFI. Linked, NOT embedded (a static archive cannot be
+      # embedded/signed) — "Do Not Embed".
+      - framework: RustyNESFFI.xcframework
+        embed: false
+      # System frameworks the host links against.
+      - sdk: Metal.framework
+      - sdk: MetalKit.framework
+      - sdk: GameController.framework
+      - sdk: AVFoundation.framework
+      - sdk: UIKit.framework
+    info:
+      path: RustyNES/Info.plist
+
+schemes:
+  RustyNES:
+    build:
+      targets:
+        RustyNES: all
+    run:
+      config: Debug
+    archive:
+      config: Release

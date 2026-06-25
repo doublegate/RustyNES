@@ -1,0 +1,63 @@
+name: iOS
+
+# v1.9.0 "Sunrise" — the iOS/iPadOS TestFlight pipeline. Host CI (ci.yml) remains
+# the authoritative accuracy/determinism gate (AccuracyCoin 100%, oracles,
+# nestest); this workflow only builds the iOS host and ships it to TestFlight. It
+# is tag- (and manual-) gated because macOS runner minutes bill ~10x Linux — the
+# same gating posture as android.yml's heavier jobs and release.yml. Accuracy is
+# never gated on a device toolchain.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  testflight:
+    name: Build xcframework + TestFlight upload
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # The project toolchain (rust-toolchain.toml = 1.96) plus the iOS targets:
+      # the device ABI + both simulator ABIs (the sim slice is lipo'd from the
+      # Apple-silicon + Intel sim builds).
+      - name: Install iOS Rust targets
+        run: rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ios-xcframework
+
+      # XcodeGen authors the .pbxproj from ios/project.yml (a hand-written project
+      # is too error-prone to maintain).
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      # Builds the per-arch staticlibs, generates the Swift bindings, assembles
+      # RustyNESFFI.xcframework, and runs `xcodegen generate`.
+      - name: Build xcframework + generate project
+        run: ./scripts/build-ios-xcframework.sh
+
+      - name: Install fastlane
+        run: gem install fastlane --no-document
+
+      # Build + sign + upload to TestFlight. All credentials come from repo
+      # secrets (the App Store Connect API key + the fastlane match signing repo);
+      # nothing secret is checked in. These are maintainer-provisioned — until
+      # they are set this job is the documented on-device / signing carryover.
+      - name: Build and upload to TestFlight
+        run: fastlane ios beta
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+          MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}

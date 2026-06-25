@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+  RustyNES.entitlements
+
+  The v1.9.0 MVP needs NO special entitlements: ROMs are user-provided through
+  the document picker (no broad file access), the app collects no data, and there
+  is no networking. iCloud save-state sync, App Groups, and Game Center are future
+  additions (kept out so App Review sees the minimal capability surface).
+-->
+<dict>
+</dict>
+</plist>

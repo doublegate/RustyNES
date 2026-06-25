@@ -1,0 +1,6 @@
+# Appfile — the RustyNES iOS app identity for fastlane.
+#
+# The Apple Developer team id + the App Store Connect account are injected via
+# environment / the App Store Connect API key in the Fastfile (so no developer
+# identity is checked in). Only the immutable bundle id lives here.
+app_identifier("com.doublegate.rustynes")
