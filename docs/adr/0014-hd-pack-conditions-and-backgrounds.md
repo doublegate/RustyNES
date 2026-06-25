@@ -65,11 +65,26 @@ then evaluate conditions against that snapshot during the lock-free composite.
   watched-address set is finite (only what the pack references), so the per-frame
   snapshot cost is negligible and proportional to the pack, not to RAM size.
 - **Not full Mesen parity.** Implemented: memoryCheck(Constant), frameRange,
-  hmirror/vmirror, sprite-palette, and full-image/region backgrounds. Still
-  deferred (no demand / heavier model): `TileNearby` / `TileAtPos` / `SpriteNearby`
-  / `SpriteAtPos` neighbor predicates, position checks, `<addition>` /
-  `<fallback>` / `<options>`, and the full blend/priority/parallax compositor.
-  These can be added later without changing the snapshot architecture.
+  hmirror/vmirror, sprite-palette, full-image/region backgrounds, and (as of
+  v1.8.9) the spatial predicates `tileNearby` / `spriteNearby` and the position
+  checks `positionCheckX/Y` + `originPositionCheckX/Y`. The spatial set reuses the
+  existing per-pixel `HdTileSource` telemetry: the cell position is the array
+  index, and `tileNearby` / `spriteNearby` look up a relative cell in the same
+  per-frame slice — no new PPU telemetry, so the byte-identity stance is unchanged.
+  As of **v1.8.9** `HdTileSource` carries the packed Mesen `PaletteColors` (and the
+  absolute CHR-ROM tile index), so `tileNearby` / `spriteNearby` palette matching
+  and the absolute-coordinate `tileAtPosition` / `spriteAtPosition` (index +
+  optional palette) are now implemented in `parse_spatial` / `eval_condition`;
+  multi-sprite `Sprite[4]` telemetry lets `spriteAtPosition` match a sprite a
+  higher-priority background occludes. `<fallback>` tiles,
+  `<options>disableOriginalTiles`, the alpha-blend / brightness / blend-mode /
+  `<overscan>` / parallax-scroll / grayscale+emphasis compositor, and the full
+  `$4100-$4106` HD-audio register file also landed in v1.8.9. The final two forms
+  — the 32-char tile-DATA-hash (CHR-RAM content) form of `tileNearby` /
+  `tileAtPosition` (via a gated per-cell content-hash precompute) and `<addition>`
+  (a gated post-pass) — landed too, so the supported set now has **no remaining
+  unimplemented Mesen2 HD-pack form**. None of this changed the snapshot
+  architecture, and the additions are gated so existing packs stay byte-identical.
 - **HD audio landed in v1.6.0 "Studio" Workstream H** (the biggest remaining
   Mesen2 gap). The `hires.txt` `<bgm>` / `<sfx>` declarations are parsed in
   `hdpack.rs`; `src/hd_audio.rs` decodes their OGG tracks (pure-Rust `lewton`,

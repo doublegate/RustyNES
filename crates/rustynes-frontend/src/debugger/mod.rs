@@ -30,15 +30,46 @@
 //! here as code spans rather than intra-doc links since they're not
 //! part of the crate's public API.)
 //!
+//! Core chip-inspector panels:
+//!
 //! - `cpu_panel` — registers + flags + scrollable disassembly.
 //! - `ppu_panel` — nametable / pattern table / palette / scroll cursor.
-//! - `oam_panel` — sprite list + visual grid.
+//! - `oam_panel` — sprite list + visual grid (+ OAM editing).
 //! - `apu_panel` — per-channel waveform scope.
-//! - `memory_panel` — CPU + PPU bus hex viewer with go-to-address.
-//! - `mapper_panel` — mapper bank registers + IRQ counter state.
-//! - `input_rebind_panel` — modal rebinding flow (T-52-007).
-//! - `cheat_panel` — Game Genie cheat list + per-ROM persistence (v1.6.0).
-//! - `settings_panel` — graphics / audio / rewind config editor (v1.7.0).
+//! - `memory_panel` — CPU / PPU / OAM hex editor with go-to-address.
+//! - `mapper_panel` — mapper identity + bank registers + IRQ + audio state.
+//!
+//! Devtools depth (mostly gated behind `debug-hooks`):
+//!
+//! - `expr` / `watch_panel` — expression evaluator + conditional
+//!   breakpoints / watchpoints / watch window / conditional trace.
+//! - `callstack` — live 6502 call stack + step verbs.
+//! - `access_counter` — per-address read/write/exec counts + uninit-read.
+//! - `source_map` — ca65/cc65 `.dbg` source-line annotations.
+//! - `trace_panel` — cycle trace logger ring.
+//! - `event_panel` — graphical PPU read/write event heatmap.
+//! - `memory_compare_panel` — RAM search + RAM watch.
+//! - `assembler` — inline 6502 assembler for the CPU panel.
+//!
+//! Tool windows + creator/casual surfaces:
+//!
+//! - `input_rebind_panel` — modal key/gamepad rebinding flow.
+//! - `input_miniatures_panel` — the live "Input Display" controller HUD.
+//! - `cheat_panel` — Game Genie + raw-RAM cheat list with per-ROM persistence.
+//! - `settings_panel` — graphics / audio / rewind config editor.
+//! - `netplay_panel` / `cheevos_panel` — netplay + `RetroAchievements`
+//!   command/view surfaces (the sessions live in `App`).
+//! - `replay_panel` / `tastudio_panel` — `.rnm` replay window + `TAStudio`
+//!   piano-roll editor.
+//! - `script_panel` — Lua script console.
+//! - `nsf_panel` — NSF music-player controls.
+//! - `header_editor` — iNES / NES 2.0 header editor (native, on-disk).
+//! - `game_db_panel` — per-game ROM-database editor.
+//! - `doc_panel` — in-app Documentation browser (native).
+//! - `hd_pixel_panel` — HD-pack per-pixel inspector (`hd-pack`).
+//! - `perf_panel` — frame-pacing / audio-health instrumentation.
+//! - `basic_bot_panel` — `BasicBot` input-search control panel.
+//! - `badge_cache` — `RetroAchievements` badge-image cache (feature-gated).
 
 use std::sync::Arc;
 

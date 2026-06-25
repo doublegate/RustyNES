@@ -246,6 +246,16 @@ pub trait Mapper: Send {
         self.ppu_read(addr)
     }
 
+    /// HD-pack tile identity: the ABSOLUTE post-banking offset into CHR-ROM for a
+    /// pattern-space address `$0000-$1FFF` (`Some(offset)`), or `None` for CHR-RAM
+    /// (content-hashed instead). `tile_index = offset / 16` is the key Mesen uses
+    /// for CHR-ROM `<tile>` replacements. Default `None` so an unported mapper
+    /// falls back to the content-hash path (no worse than before); the common
+    /// CHR-ROM mappers override it by exposing their internal CHR mapping.
+    fn chr_phys(&self, _addr: u16) -> Option<u32> {
+        None
+    }
+
     /// Write a byte to the PPU address space `$0000-$3FFF`.
     fn ppu_write(&mut self, addr: u16, value: u8);
 

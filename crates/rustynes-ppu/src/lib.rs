@@ -40,7 +40,7 @@ pub use ppu::MASK_WRITE_DELAY;
 pub use ppu::read2007_diag;
 pub use ppu::{FRAMEBUFFER_LEN, Ppu, PpuRegion};
 #[cfg(feature = "hd-pack")]
-pub use ppu::{HD_TILE_NONE, HdTileSource};
+pub use ppu::{HD_CHR_RAM, HD_TILE_NONE, HdSprite, HdTileSource};
 pub use snapshot::{PPU_SNAPSHOT_VERSION, PpuSnapshotError};
 
 #[cfg(feature = "ppu-state-trace")]

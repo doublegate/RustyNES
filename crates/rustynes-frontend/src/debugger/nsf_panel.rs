@@ -16,6 +16,11 @@
 //! expansion channels are summed into the master mix the standard APU already
 //! plays. This is output-only eye-candy: it samples a copy for display and
 //! changes no synthesis, so the deterministic audio is unaffected.
+//!
+//! v1.8.9 adds depth to the scope: a **master (mixed) scope** plotting the
+//! combined per-redraw level, and a row of **per-channel peak VU meters** (the
+//! recent max level of each channel's ring). Both derive from the same
+//! already-sampled DAC copies, so they remain output-only and determinism-neutral.
 
 use rustynes_core::Nes;
 
@@ -40,6 +45,8 @@ pub struct NsfPanelState {
     triangle: ScopeRing,
     noise: ScopeRing,
     dmc: ScopeRing,
+    /// v1.8.9 — the combined (mixed) per-redraw level, for a master scope.
+    master: ScopeRing,
 }
 
 /// A small rolling sample history for one channel scope.
@@ -61,6 +68,11 @@ impl ScopeRing {
     fn push(&mut self, v: f32) {
         self.buf[self.head] = v;
         self.head = (self.head + 1) % SCOPE_LEN;
+    }
+
+    /// The peak (max) magnitude across the ring — drives the per-channel VU bar.
+    fn peak(&self) -> f32 {
+        self.buf.iter().copied().fold(0.0_f32, f32::max)
     }
 }
 
@@ -84,11 +96,18 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut NsfPanelState, nes
     // v1.5.0 C3 — sample the live per-channel DAC levels (read-only) so the
     // scope appends one column per redraw.
     let apu = nes.apu_snapshot();
-    state.pulse1.push(f32::from(apu.pulse1) / 15.0);
-    state.pulse2.push(f32::from(apu.pulse2) / 15.0);
-    state.triangle.push(f32::from(apu.triangle) / 15.0);
-    state.noise.push(f32::from(apu.noise) / 15.0);
-    state.dmc.push(f32::from(apu.dmc) / 127.0);
+    let p1 = f32::from(apu.pulse1) / 15.0;
+    let p2 = f32::from(apu.pulse2) / 15.0;
+    let tri = f32::from(apu.triangle) / 15.0;
+    let noi = f32::from(apu.noise) / 15.0;
+    let dmc = f32::from(apu.dmc) / 127.0;
+    state.pulse1.push(p1);
+    state.pulse2.push(p2);
+    state.triangle.push(tri);
+    state.noise.push(noi);
+    state.dmc.push(dmc);
+    // v1.8.9 — the combined (averaged) level for the master scope.
+    state.master.push((p1 + p2 + tri + noi + dmc) / 5.0);
     let expansion = nes.expansion_audio_chip();
 
     egui::Window::new("NSF Player")
@@ -164,6 +183,26 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut NsfPanelState, nes
             scope(ui, "Triangle", &state.triangle, egui::Color32::LIGHT_YELLOW);
             scope(ui, "Noise", &state.noise, egui::Color32::LIGHT_RED);
             scope(ui, "DMC", &state.dmc, egui::Color32::WHITE);
+            // v1.8.9 — master (mixed) scope + per-channel peak VU meters.
+            ui.add_space(2.0);
+            scope(
+                ui,
+                "Master (mix)",
+                &state.master,
+                egui::Color32::from_rgb(0xFF, 0xC0, 0x40),
+            );
+            ui.add_space(2.0);
+            ui.strong("Levels");
+            vu_meter(ui, "P1 ", state.pulse1.peak(), egui::Color32::LIGHT_BLUE);
+            vu_meter(ui, "P2 ", state.pulse2.peak(), egui::Color32::LIGHT_GREEN);
+            vu_meter(
+                ui,
+                "Tri",
+                state.triangle.peak(),
+                egui::Color32::LIGHT_YELLOW,
+            );
+            vu_meter(ui, "Noi", state.noise.peak(), egui::Color32::LIGHT_RED);
+            vu_meter(ui, "DMC", state.dmc.peak(), egui::Color32::WHITE);
             if let Some(chip) = expansion {
                 ui.add_space(2.0);
                 ui.horizontal(|ui| {
@@ -201,6 +240,25 @@ fn scope(ui: &mut egui::Ui, label: &str, ring: &ScopeRing, color: egui::Color32)
         points.push(egui::pos2(x, y));
     }
     painter.add(egui::Shape::line(points, egui::Stroke::new(1.0, color)));
+}
+
+/// Draw one channel's peak level as a horizontal VU bar (label + filled bar).
+fn vu_meter(ui: &mut egui::Ui, label: &str, peak: f32, color: egui::Color32) {
+    ui.horizontal(|ui| {
+        ui.monospace(label);
+        let (rect, _) =
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), 12.0), egui::Sense::hover());
+        let painter = ui.painter_at(rect);
+        painter.rect_filled(rect, 2.0, egui::Color32::from_black_alpha(180));
+        let filled = rect.width() * peak.clamp(0.0, 1.0);
+        if filled > 0.5 {
+            painter.rect_filled(
+                egui::Rect::from_min_size(rect.min, egui::vec2(filled, rect.height())),
+                2.0,
+                color,
+            );
+        }
+    });
 }
 
 #[cfg(test)]

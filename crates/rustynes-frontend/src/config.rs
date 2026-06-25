@@ -14,8 +14,8 @@
 //! the private `Config::migrate_legacy` helper.
 //!
 //! The config file is read once at app startup. Writing it back is on
-//! demand (e.g. when the user changes a setting in the not-yet-built
-//! egui modal — see `TODO(sprint-5-3)` markers in `input.rs`).
+//! demand — the tabbed Settings window (`ui_shell.rs`) auto-saves the file
+//! whenever the user changes a setting.
 
 use std::fs;
 use std::io;

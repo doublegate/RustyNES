@@ -11,7 +11,16 @@
     clippy::too_many_lines,
     clippy::needless_pass_by_ref_mut
 )]
-//! OAM panel — sprite list + visual grid (T-53-004).
+//! OAM panel — sprite list + visual grid (T-53-004; editing added v1.7.0
+//! "Forge" Workstream A1).
+//!
+//! Renders the 64 OAM sprite entries both as a textual list (Y / tile / attr /
+//! X per sprite) and as a visual grid decoded into an egui texture. Read-only
+//! by default; an off-by-default edit mode lets the user poke a selected
+//! sprite's four OAM bytes via hex entry. As with every editor in the
+//! debugger, writes never touch the running `Nes` directly — they queue gated
+//! post-frame [`DebugPoke::Oam`] pokes (drained by [`OamPanelState::take_pokes`]),
+//! preserving determinism and the `emu.write` gate.
 
 use egui::ColorImage;
 use rustynes_core::Nes;

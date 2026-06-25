@@ -527,6 +527,10 @@ pub struct App {
     /// frontend's "never hold the emu lock during heavy work" discipline.
     #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
     present_chr_snapshot: Vec<u8>,
+    /// v1.8.9 — the frame's BG scroll `(x, y)` captured under the emu lock, used
+    /// to offset parallax HD-pack `<background>` layers in the unlocked composite.
+    #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+    present_bg_scroll: (i32, i32),
     /// v1.3.0 E1 — per-frame snapshot of the watched memory addresses
     /// referenced by the HD-pack's `<condition>` declarations (Mesen's
     /// `WatchedAddressValues`). Captured under the emu lock at produce time and
@@ -851,6 +855,8 @@ impl App {
             #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
             present_chr_snapshot: Vec::new(),
             #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+            present_bg_scroll: (0, 0),
+            #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
             present_watched_mem: crate::hdpack::WatchedMemory::new(),
             audio: None,
             input,
@@ -980,6 +986,8 @@ impl App {
             present_hd_tiles: Vec::new(),
             #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
             present_chr_snapshot: Vec::new(),
+            #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+            present_bg_scroll: (0, 0),
             #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
             present_watched_mem: crate::hdpack::WatchedMemory::new(),
             input,
@@ -8133,17 +8141,35 @@ impl ApplicationHandler<AppEvent> for App {
                             // present then mirror the common `else` branch. Skipped
                             // (no snapshot, no cost) when no pack is loaded.
                             #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                            {
+                                // v1.8.9 — gate the produce-time CHR snapshot.
+                                emu.hd_capture = self.hd_compositor.is_some();
+                            }
+                            #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
                             if self.hd_compositor.is_some() {
                                 self.present_hd_tiles.clear();
                                 self.present_hd_tiles
                                     .extend_from_slice(nes.hd_tile_source());
-                                if self.present_chr_snapshot.len() != 0x2000 {
-                                    self.present_chr_snapshot.resize(0x2000, 0);
-                                }
-                                for (addr, slot) in
-                                    (0u16..0x2000).zip(self.present_chr_snapshot.iter_mut())
-                                {
-                                    *slot = nes.peek_ppu(addr);
+                                // v1.8.9 — capture the frame's BG scroll for
+                                // parallax `<background>` layers.
+                                self.present_bg_scroll = nes.hd_bg_scroll();
+                                // v1.8.9 — use the produce-time CHR snapshot (the
+                                // visible frame) so run-ahead doesn't flicker
+                                // animated tiles; fall back to a live peek before
+                                // the first capture lands.
+                                if emu.hd_chr_snapshot.len() == 0x2000 {
+                                    self.present_chr_snapshot.clear();
+                                    self.present_chr_snapshot
+                                        .extend_from_slice(&emu.hd_chr_snapshot);
+                                } else {
+                                    if self.present_chr_snapshot.len() != 0x2000 {
+                                        self.present_chr_snapshot.resize(0x2000, 0);
+                                    }
+                                    for (addr, slot) in
+                                        (0u16..0x2000).zip(self.present_chr_snapshot.iter_mut())
+                                    {
+                                        *slot = nes.peek_ppu(addr);
+                                    }
                                 }
                                 let watched = &mut self.present_watched_mem;
                                 if let Some(comp) = self.hd_compositor.as_ref() {
@@ -8174,6 +8200,7 @@ impl ApplicationHandler<AppEvent> for App {
                     #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
                     if let Some(comp) = self.hd_compositor.as_mut() {
                         let (w, h) = comp.dimensions();
+                        comp.set_frame_scroll(self.present_bg_scroll.0, self.present_bg_scroll.1);
                         let chr = &self.present_chr_snapshot;
                         comp.composite(
                             &self.present_staging,
@@ -8368,23 +8395,35 @@ impl ApplicationHandler<AppEvent> for App {
                             // G5 builder is not recording (the builder needs the
                             // same tile-source + CHR snapshot to capture tiles).
                             #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
+                            {
+                                // v1.8.9 — gate the produce-time CHR snapshot.
+                                emu.hd_capture =
+                                    self.hd_compositor.is_some() || self.hd_pack_builder.is_some();
+                            }
+                            #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
                             if self.hd_compositor.is_some() || self.hd_pack_builder.is_some() {
                                 self.present_hd_tiles.clear();
                                 self.present_hd_tiles
                                     .extend_from_slice(nes.hd_tile_source());
-                                // CHR pattern space is `$0000..$2000` (8 KiB) — the
-                                // only memory `hash_tile` reads via `chr_peek`.
-                                // Persistent buffer overwritten in place (no
-                                // clear/grow churn under the lock — gemini, PR #76).
-                                if self.present_chr_snapshot.len() != 0x2000 {
-                                    self.present_chr_snapshot.resize(0x2000, 0);
-                                }
-                                // Zip a u16 address range with the buffer — no
-                                // enumerate()/`as u16` cast + suppression (gemini #76).
-                                for (addr, slot) in
-                                    (0u16..0x2000).zip(self.present_chr_snapshot.iter_mut())
-                                {
-                                    *slot = nes.peek_ppu(addr);
+                                self.present_bg_scroll = nes.hd_bg_scroll();
+                                // v1.8.9 — prefer the produce-time CHR snapshot (the
+                                // visible frame, in lock-step with `present_fb` +
+                                // the tile-source) so run-ahead doesn't flicker
+                                // animated tiles; live-peek fallback before the
+                                // first capture lands.
+                                if emu.hd_chr_snapshot.len() == 0x2000 {
+                                    self.present_chr_snapshot.clear();
+                                    self.present_chr_snapshot
+                                        .extend_from_slice(&emu.hd_chr_snapshot);
+                                } else {
+                                    if self.present_chr_snapshot.len() != 0x2000 {
+                                        self.present_chr_snapshot.resize(0x2000, 0);
+                                    }
+                                    for (addr, slot) in
+                                        (0u16..0x2000).zip(self.present_chr_snapshot.iter_mut())
+                                    {
+                                        *slot = nes.peek_ppu(addr);
+                                    }
                                 }
                                 // v1.3.0 E1 — snapshot ONLY the finite set of
                                 // watched memory addresses referenced by the
@@ -8421,6 +8460,7 @@ impl ApplicationHandler<AppEvent> for App {
                     #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
                     if let Some(comp) = self.hd_compositor.as_mut() {
                         let (w, h) = comp.dimensions();
+                        comp.set_frame_scroll(self.present_bg_scroll.0, self.present_bg_scroll.1);
                         let chr = &self.present_chr_snapshot;
                         comp.composite(
                             &self.present_staging,

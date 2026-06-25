@@ -118,6 +118,15 @@ impl Mapper for UxRom {
         }
     }
 
+    fn chr_phys(&self, addr: u16) -> Option<u32> {
+        // UxROM CHR is unbanked; offset == address. Usually CHR-RAM (-> None).
+        if self.chr_is_ram {
+            None
+        } else {
+            Some(u32::from(addr & 0x1FFF))
+        }
+    }
+
     fn ppu_read(&mut self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {

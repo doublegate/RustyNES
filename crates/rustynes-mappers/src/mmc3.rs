@@ -491,6 +491,15 @@ impl Mapper for Mmc3 {
         }
     }
 
+    fn chr_phys(&self, addr: u16) -> Option<u32> {
+        if self.chr_is_ram {
+            None
+        } else {
+            // The same per-bank offset `ppu_read` resolves (the 2/4 KiB MMC3 banks).
+            u32::try_from(self.chr_offset(addr & 0x1FFF) % self.chr.len().max(1)).ok()
+        }
+    }
+
     fn ppu_read(&mut self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {

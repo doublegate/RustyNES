@@ -52,7 +52,7 @@ use std::collections::HashMap;
 use std::io::Read;
 use std::path::Path;
 
-use rustynes_ppu::{HD_TILE_NONE, HdTileSource};
+use rustynes_ppu::{HD_CHR_RAM, HD_TILE_NONE, HdTileSource};
 
 use crate::hd_audio::{HdAudioDecl, TrackKind, parse_audio_decl};
 
@@ -62,9 +62,6 @@ const NES_H: u32 = 240;
 
 /// NES tiles are 8x8.
 const TILE: usize = 8;
-/// Visible tile grid: 32 columns x 30 rows.
-const COLS: usize = NES_W as usize / TILE; // 32
-const ROWS: usize = NES_H as usize / TILE; // 30
 
 /// Bit 31 of a watched-memory address marks a PPU-space (vs CPU-space) address,
 /// matching Mesen's `HdPackBaseMemoryCondition::PpuMemoryMarker`.
@@ -140,6 +137,146 @@ enum ConditionKind {
     VMirror,
     /// Per-tile: sprite palette group equals `id` (Mesen `sppalette`).
     SpritePalette { id: u8 },
+    /// The 8x8 cell's screen pixel X (`cell_x * 8`) `<op> value`. Mesen
+    /// `positionCheckX` / `originPositionCheckX` — identical here because the
+    /// composite keys on the 8-aligned cell grid, so a tile's position and its
+    /// origin coincide.
+    PositionCheckX { op: CmpOp, value: u8 },
+    /// The 8x8 cell's screen pixel Y (`cell_y * 8`) `<op> value`. Mesen
+    /// `positionCheckY` / `originPositionCheckY`.
+    PositionCheckY { op: CmpOp, value: u8 },
+    /// The 8x8 tile `(dx, dy)` pixels away matches `tile` (the absolute CHR-ROM
+    /// index, or the PPU-space tile for CHR-RAM) and — unless `palette` is `None`
+    /// (`ignorePalette`) — the same packed `PaletteColors`. Mesen `tileNearby`.
+    TileNearby {
+        dx: i32,
+        dy: i32,
+        tile: u32,
+        palette: Option<u32>,
+        /// `Some(hash)` matches the cell's 16-byte CHR CONTENT (the 32-char
+        /// tileData form) instead of `tile`'s index. Needs the composite's
+        /// precomputed `content_hashes`.
+        content: Option<u32>,
+    },
+    /// The 8x8 cell `(dx, dy)` pixels away is a sprite (and matches `palette` if
+    /// set). Mesen `spriteNearby`.
+    SpriteNearby {
+        dx: i32,
+        dy: i32,
+        palette: Option<u32>,
+    },
+    /// The tile at the ABSOLUTE screen pixel `(x, y)` matches `tile` (+ palette).
+    /// Mesen `tileAtPosition`.
+    TileAtPosition {
+        x: u16,
+        y: u16,
+        tile: u32,
+        palette: Option<u32>,
+        /// `Some(hash)` matches the CHR CONTENT (32-char tileData form).
+        content: Option<u32>,
+    },
+    /// The pixel at the ABSOLUTE screen position `(x, y)` is a sprite (+ palette).
+    /// Mesen `spriteAtPosition`.
+    SpriteAtPosition {
+        x: u16,
+        y: u16,
+        palette: Option<u32>,
+    },
+}
+
+/// Per-cell spatial context for the position / neighbour conditions: the current
+/// 8x8 cell's grid coordinates and the whole frame's per-pixel tile-source slice
+/// (so a `tileNearby` / `spriteNearby` can look up a relative cell).
+#[derive(Clone, Copy)]
+struct SpatialCtx<'a> {
+    cell_x: usize,
+    cell_y: usize,
+    tile_source: &'a [HdTileSource],
+    /// v1.8.9 — per-pixel CHR-content hash (`calculate_hash` of each cell's 16 CHR
+    /// bytes), for the `tileNearby` / `tileAtPosition` tile-DATA-hash form. Empty
+    /// unless the pack uses such a condition (the composite precomputes it then),
+    /// in which case it is indexed exactly like `tile_source`.
+    content_hashes: &'a [u32],
+}
+
+/// The flat per-pixel index of an absolute screen position, or `None` off-screen.
+fn pixel_index(x: i32, y: i32) -> Option<usize> {
+    let x = usize::try_from(x).ok()?;
+    let y = usize::try_from(y).ok()?;
+    if x >= NES_W as usize || y >= NES_H as usize {
+        return None;
+    }
+    Some(y * NES_W as usize + x)
+}
+
+impl SpatialCtx<'_> {
+    /// The tile-source record of the cell `(dx, dy)` *pixels* away (the offsets
+    /// are 8-aligned in practice), or `None` if it falls off-screen.
+    fn nearby(self, dx: i32, dy: i32) -> Option<HdTileSource> {
+        pixel_index(
+            i32::try_from(self.cell_x * TILE).ok()? + dx,
+            i32::try_from(self.cell_y * TILE).ok()? + dy,
+        )
+        .and_then(|i| self.tile_source.get(i).copied())
+    }
+
+    /// The CHR-content hash of the cell `(dx, dy)` pixels away, if precomputed.
+    fn nearby_content(self, dx: i32, dy: i32) -> Option<u32> {
+        let i = pixel_index(
+            i32::try_from(self.cell_x * TILE).ok()? + dx,
+            i32::try_from(self.cell_y * TILE).ok()? + dy,
+        )?;
+        self.content_hashes.get(i).copied()
+    }
+
+    /// The CHR-content hash at the absolute screen pixel `(x, y)`, if precomputed.
+    fn at_content(self, x: u16, y: u16) -> Option<u32> {
+        let i = pixel_index(i32::from(x), i32::from(y))?;
+        self.content_hashes.get(i).copied()
+    }
+
+    /// The tile-source record at the ABSOLUTE screen pixel `(x, y)`, or `None`
+    /// if off-screen. (`tileAtPosition` / `spriteAtPosition`.)
+    fn at(self, x: u16, y: u16) -> Option<HdTileSource> {
+        let (x, y) = (usize::from(x), usize::from(y));
+        if x >= NES_W as usize || y >= NES_H as usize {
+            return None;
+        }
+        self.tile_source.get(y * NES_W as usize + x).copied()
+    }
+}
+
+/// Whether a tile-source record `t` matches a condition's `tile` index (absolute
+/// CHR-ROM index, or PPU-space tile for CHR-RAM) and, if `palette` is `Some`, its
+/// packed `PaletteColors`. Mesen `tileNearby` / `tileAtPosition` semantics.
+fn tile_matches(t: HdTileSource, tile: u32, palette: Option<u32>) -> bool {
+    if t.chr_addr == HD_TILE_NONE {
+        return false;
+    }
+    let idx = if t.chr_tile_index == HD_CHR_RAM {
+        u32::from(tile_index(t.chr_addr))
+    } else {
+        t.chr_tile_index
+    };
+    idx == tile && palette.is_none_or(|p| t.palette_colors == p)
+}
+
+/// Whether any of the up-to-4 sprites COVERING this pixel matches `palette` (or
+/// any covering sprite, when `palette` is `None`). Unlike `is_sprite` (the
+/// VISIBLE winner), this sees sprites a higher-priority background occludes —
+/// Mesen `spriteAtPosition` / `spriteNearby` match any covering sprite.
+fn sprite_present(t: HdTileSource, palette: Option<u32>) -> bool {
+    // `take` (not a slice) is panic-safe even if `sprite_count` were ever > 4.
+    t.sprites
+        .iter()
+        .take(usize::from(t.sprite_count))
+        .any(|s| palette.is_none_or(|p| s.palette_colors == p))
+}
+
+/// The CHR tile number (0..=255) carried by a [`HdTileSource::chr_addr`]
+/// (`tile = (addr >> 4) & 0xFF`).
+const fn tile_index(chr_addr: u16) -> u8 {
+    ((chr_addr >> 4) & 0xFF) as u8
 }
 
 /// A named, parsed condition.
@@ -165,6 +302,9 @@ struct TileRule {
     /// Conditions that must ALL hold for the substitution to apply (AND).
     /// Indices into [`HdPack::conditions`]. Empty = unconditional.
     conditions: Vec<usize>,
+    /// Mesen tile `brightness` (`stof * 255`, `255` = identity), applied to the
+    /// sampled replacement texel.
+    brightness: i32,
 }
 
 /// A `<background>` region: a replacement image (full-screen or a rectangle)
@@ -183,6 +323,15 @@ struct BackgroundRegion {
     /// Conditions that must ALL hold for the region to render (AND). Empty =
     /// always.
     conditions: Vec<usize>,
+    /// Mesen background `brightness` (`stof * 255`, `255` = identity).
+    brightness: i32,
+    /// Mesen background `blendMode` (field 7; default `Alpha`).
+    blend_mode: BlendMode,
+    /// Mesen `HorizontalScrollRatio` / `VerticalScrollRatio` (fields 2/3): the
+    /// region scrolls by `frame_scroll * ratio` for a parallax effect. `0` = the
+    /// layer is fixed; `1` = it tracks the game scroll 1:1.
+    h_scroll_ratio: f32,
+    v_scroll_ratio: f32,
 }
 
 /// A per-frame snapshot of the watched memory addresses referenced by the
@@ -286,6 +435,41 @@ pub struct HdPack {
     /// mixed by [`crate::hd_audio`] (frontend, output-only); empty for a
     /// video-only pack.
     audio_decls: Vec<HdAudioDecl>,
+    /// v1.8.9 — `<overscan>` crop margins in NES pixels `[top, right, bottom,
+    /// left]` (Mesen `<overscan>Top,Right,Bottom,Left`). The composite output is
+    /// `(256-left-right) x (240-top-bottom)`, scaled. All-zero = no crop.
+    overscan: [u32; 4],
+    /// v1.8.9 — explicit `<fallback>tileIndex,fallbackTileIndex` map (Mesen
+    /// `FallbackTiles`). When a CHR-ROM tile's exact + wildcard lookup misses, the
+    /// fallback index's keys are tried, so a pack can route undefined variants to
+    /// a defined tile. (Empty = no fallbacks.)
+    fallback_tiles: HashMap<u32, u32>,
+    /// v1.8.9 — `<options>disableOriginalTiles` (Mesen). When set, an original NES
+    /// tile with no HD replacement renders as the backdrop colour instead of its
+    /// stock graphics — for full-conversion packs. The backdrop (universal bg)
+    /// pixels still show.
+    disable_original_tiles: bool,
+    /// v1.8.9 — `<addition>` rules (Mesen v107+): when a pixel's tile matches an
+    /// addition's ORIGINAL key, the ADDITIONAL tile's replacement is drawn at
+    /// `(offset_x, offset_y)` (mirror-adjusted). Empty for the common case, so the
+    /// gated post-pass is skipped and the composite is byte-identical.
+    additions: Vec<HdAddition>,
+}
+
+/// One Mesen `<addition>` rule — draw an extra tile near a matched original tile.
+#[derive(Clone, Debug)]
+struct HdAddition {
+    /// The original tile's exact key (palette-discriminated) — matched against a
+    /// pixel's exact key (or, when `ignore_palette`, its wildcard key).
+    orig_key: u32,
+    /// The additional tile's exact + wildcard keys, looked up in [`HdPack::tiles`].
+    add_exact: u32,
+    add_wild: u32,
+    /// Pixel offset from the matched tile to the additional tile.
+    offset_x: i32,
+    offset_y: i32,
+    /// When set, match the original on its palette-agnostic (wildcard) key.
+    ignore_palette: bool,
 }
 
 impl HdPack {
@@ -440,6 +624,7 @@ impl HdPack {
                 x: rule.x,
                 y: rule.y,
                 conditions: rule.conditions,
+                brightness: rule.brightness,
             });
             rule_count += 1;
         }
@@ -460,6 +645,10 @@ impl HdPack {
                 y: bg.y,
                 priority: bg.priority,
                 conditions: bg.conditions,
+                brightness: bg.brightness,
+                blend_mode: bg.blend_mode,
+                h_scroll_ratio: bg.h_scroll_ratio,
+                v_scroll_ratio: bg.v_scroll_ratio,
             });
         }
         backgrounds.sort_by_key(|b| b.priority);
@@ -491,7 +680,8 @@ impl HdPack {
         }
 
         Some(Self {
-            scale: parsed.scale.clamp(1, 8),
+            // Mesen allows `<scale>` up to 10.
+            scale: parsed.scale.clamp(1, 10),
             images: kept,
             tiles,
             pattern_tables: parsed.pattern_tables,
@@ -499,6 +689,10 @@ impl HdPack {
             backgrounds,
             watched_addresses: watched,
             audio_decls: parsed.audio_decls,
+            overscan: parsed.overscan,
+            fallback_tiles: parsed.fallback_tiles,
+            disable_original_tiles: parsed.disable_original_tiles,
+            additions: parsed.additions,
         })
     }
 
@@ -509,6 +703,7 @@ impl HdPack {
         watched: &WatchedMemory,
         frame: u32,
         rec: HdTileSource,
+        spatial: SpatialCtx,
     ) -> bool {
         let Some(cond) = self.conditions.get(idx) else {
             // An unresolved condition reference fails closed.
@@ -543,6 +738,70 @@ impl HdPack {
             ConditionKind::HMirror => rec.is_sprite && rec.flip_h,
             ConditionKind::VMirror => rec.is_sprite && rec.flip_v,
             ConditionKind::SpritePalette { id } => rec.is_sprite && rec.palette == *id,
+            // positionCheck needs a real cell anchor: full-screen backgrounds use
+            // the `tile_source: &[]` sentinel (no cell), so fail closed there —
+            // otherwise the `(0,0)` placeholder anchor would spuriously pass.
+            ConditionKind::PositionCheckX { op, value } => {
+                // cell_x * 8 <= 248, always fits u8.
+                !spatial.tile_source.is_empty()
+                    && op.apply(
+                        u8::try_from(spatial.cell_x * TILE).unwrap_or(u8::MAX),
+                        *value,
+                    )
+            }
+            ConditionKind::PositionCheckY { op, value } => {
+                !spatial.tile_source.is_empty()
+                    && op.apply(
+                        u8::try_from(spatial.cell_y * TILE).unwrap_or(u8::MAX),
+                        *value,
+                    )
+            }
+            ConditionKind::TileNearby {
+                dx,
+                dy,
+                tile,
+                palette,
+                content,
+            } => content.map_or_else(
+                || {
+                    spatial
+                        .nearby(*dx, *dy)
+                        .is_some_and(|t| tile_matches(t, *tile, *palette))
+                },
+                |target| {
+                    spatial.nearby(*dx, *dy).is_some_and(|t| {
+                        t.chr_addr != HD_TILE_NONE
+                            && spatial.nearby_content(*dx, *dy) == Some(target)
+                            && palette.is_none_or(|p| t.palette_colors == p)
+                    })
+                },
+            ),
+            ConditionKind::SpriteNearby { dx, dy, palette } => spatial
+                .nearby(*dx, *dy)
+                .is_some_and(|t| sprite_present(t, *palette)),
+            ConditionKind::TileAtPosition {
+                x,
+                y,
+                tile,
+                palette,
+                content,
+            } => content.map_or_else(
+                || {
+                    spatial
+                        .at(*x, *y)
+                        .is_some_and(|t| tile_matches(t, *tile, *palette))
+                },
+                |target| {
+                    spatial.at(*x, *y).is_some_and(|t| {
+                        t.chr_addr != HD_TILE_NONE
+                            && spatial.at_content(*x, *y) == Some(target)
+                            && palette.is_none_or(|p| t.palette_colors == p)
+                    })
+                },
+            ),
+            ConditionKind::SpriteAtPosition { x, y, palette } => spatial
+                .at(*x, *y)
+                .is_some_and(|t| sprite_present(t, *palette)),
         };
         held ^ cond.inverted
     }
@@ -554,10 +813,11 @@ impl HdPack {
         watched: &WatchedMemory,
         frame: u32,
         rec: HdTileSource,
+        spatial: SpatialCtx,
     ) -> bool {
         conditions
             .iter()
-            .all(|&i| self.eval_condition(i, watched, frame, rec))
+            .all(|&i| self.eval_condition(i, watched, frame, rec, spatial))
     }
 }
 
@@ -649,6 +909,7 @@ struct ParsedTileRule {
     x: u32,
     y: u32,
     conditions: Vec<usize>,
+    brightness: i32,
 }
 
 /// A parsed background region before image reindex.
@@ -658,6 +919,10 @@ struct ParsedBackground {
     y: i32,
     priority: i32,
     conditions: Vec<usize>,
+    brightness: i32,
+    blend_mode: BlendMode,
+    h_scroll_ratio: f32,
+    v_scroll_ratio: f32,
 }
 
 /// Intermediate parse result before image decode + reindex.
@@ -671,6 +936,14 @@ struct ParsedHires {
     backgrounds: Vec<ParsedBackground>,
     /// v1.6.0 H — parsed `<bgm>` / `<sfx>` HD-audio declarations.
     audio_decls: Vec<HdAudioDecl>,
+    /// v1.8.9 — `<overscan>` crop `[top, right, bottom, left]` (NES pixels).
+    overscan: [u32; 4],
+    /// v1.8.9 — explicit `<fallback>` tileIndex -> fallbackTileIndex map.
+    fallback_tiles: HashMap<u32, u32>,
+    /// v1.8.9 — `<options>disableOriginalTiles`.
+    disable_original_tiles: bool,
+    /// v1.8.9 — parsed `<addition>` rules.
+    additions: Vec<HdAddition>,
 }
 
 /// Strip a leading `[Cond1&Cond2&...]` condition prefix off a `hires.txt` line
@@ -719,6 +992,10 @@ fn parse_hires(src: &str) -> ParsedHires {
     let mut cond_name_to_idx: HashMap<String, usize> = HashMap::new();
     let mut backgrounds: Vec<ParsedBackground> = Vec::new();
     let mut audio_decls: Vec<HdAudioDecl> = Vec::new();
+    let mut overscan = [0u32; 4];
+    let mut fallback_tiles: HashMap<u32, u32> = HashMap::new();
+    let mut disable_original_tiles = false;
+    let mut additions: Vec<HdAddition> = Vec::new();
 
     // First pass over `<condition>` / `<img>` (and the headers + audio decls) so
     // forward-referenced names resolve. `<img>` indices are declaration order, so
@@ -785,6 +1062,59 @@ fn parse_hires(src: &str) -> ParsedHires {
                     audio_decls.push(d);
                 }
             }
+            // v1.8.9 — `<overscan>Top,Right,Bottom,Left` (NES-pixel crop margins).
+            "overscan" => {
+                let nums: Vec<u32> = rest
+                    .split(',')
+                    .filter_map(|s| s.trim().parse::<u32>().ok())
+                    .collect();
+                if nums.len() == 4 {
+                    overscan = [nums[0], nums[1], nums[2], nums[3]];
+                }
+            }
+            // v1.8.9 — `<fallback>tileIndex,fallbackTileIndex` (hex). Routes an
+            // undefined CHR-ROM tile to a defined one when the lookup misses.
+            "fallback" => {
+                let nums: Vec<u32> = rest
+                    .split(',')
+                    .filter_map(|s| u32::from_str_radix(s.trim(), 16).ok())
+                    .collect();
+                if nums.len() == 2 {
+                    fallback_tiles.insert(nums[0], nums[1]);
+                }
+            }
+            // v1.8.9 — `<options>opt1,opt2,...`; we honor `disableOriginalTiles`.
+            "options" => {
+                disable_original_tiles |=
+                    rest.split(',').any(|o| o.trim() == "disableOriginalTiles");
+            }
+            // v1.8.9 — `<addition>` (Mesen v107+): origTile,origPal,offX,offY,
+            // addTile,addPal[,ignorePalette]. When `origTile` renders, also draw
+            // `addTile`'s replacement at `(offX, offY)`.
+            "addition" => {
+                let f: Vec<&str> = rest.split(',').map(str::trim).collect();
+                if f.len() >= 6 {
+                    let ignore_palette = f
+                        .get(6)
+                        .is_some_and(|s| matches!(*s, "1" | "true" | "Y" | "yes"));
+                    if let (Some(orig_key), Some(add_exact), Some(add_wild), Some(ox), Some(oy)) = (
+                        addition_key(f[0], f[1], ignore_palette),
+                        addition_key(f[4], f[5], false),
+                        addition_key(f[4], f[5], true),
+                        f[2].parse::<i32>().ok(),
+                        f[3].parse::<i32>().ok(),
+                    ) {
+                        additions.push(HdAddition {
+                            orig_key,
+                            add_exact,
+                            add_wild,
+                            offset_x: ox,
+                            offset_y: oy,
+                            ignore_palette,
+                        });
+                    }
+                }
+            }
             // `<ver>`, `<options>`, `<supportedRom>`, `<overscan>`, `<patch>`,
             // overlays, additions, fallbacks, etc. are accepted-and-ignored (the
             // supported-subset compositor doesn't act on them, but their presence
@@ -806,7 +1136,7 @@ fn parse_hires(src: &str) -> ParsedHires {
         };
         match tag {
             "tile" => {
-                if let Some((hash, img_idx, x, y)) = parse_tile_fields(rest) {
+                if let Some((hash, img_idx, x, y, brightness)) = parse_tile_fields(rest) {
                     let conditions = resolve_condition_refs(&prefix_conds, &cond_name_to_idx);
                     // Skip a tile rule that names a condition we never parsed.
                     let Some(conditions) = conditions else {
@@ -819,23 +1149,28 @@ fn parse_hires(src: &str) -> ParsedHires {
                             x,
                             y,
                             conditions,
+                            brightness,
                         },
                     ));
                 }
             }
             "background" => {
-                if let Some((img_name, x, y, priority)) = parse_background_fields(rest) {
-                    let image = intern_name(&mut image_names, &mut name_to_idx, &img_name);
+                if let Some(bg) = parse_background_fields(rest) {
+                    let image = intern_name(&mut image_names, &mut name_to_idx, &bg.image);
                     let Some(conditions) = resolve_condition_refs(&prefix_conds, &cond_name_to_idx)
                     else {
                         continue;
                     };
                     backgrounds.push(ParsedBackground {
                         image,
-                        x,
-                        y,
-                        priority,
+                        x: bg.x,
+                        y: bg.y,
+                        priority: bg.priority,
                         conditions,
+                        brightness: bg.brightness,
+                        blend_mode: bg.blend_mode,
+                        h_scroll_ratio: bg.h_scroll,
+                        v_scroll_ratio: bg.v_scroll,
                     });
                 }
             }
@@ -851,6 +1186,10 @@ fn parse_hires(src: &str) -> ParsedHires {
         conditions,
         backgrounds,
         audio_decls,
+        overscan,
+        fallback_tiles,
+        disable_original_tiles,
+        additions,
     }
 }
 
@@ -934,10 +1273,13 @@ fn parse_hex_u8(s: &str) -> Option<u8> {
 /// the indexed `sppalette0..3` Mesen global-condition names). Per the real Mesen
 /// loader, memory addresses + operands + masks are parsed as **hex**.
 ///
-/// Unsupported types (`tileAtPosition`, `tileNearby`, `spriteAtPosition`,
-/// `spriteNearby`, `positionCheckX/Y`, `originPositionCheckX/Y`) return `None`:
-/// they're outside the PPU telemetry `RustyNES` carries, so a tile gated on one is
-/// dropped (a documented subset limitation — see `docs/adr/0014`).
+/// The spatial types `positionCheckX/Y`, `originPositionCheckX/Y`, `tileNearby`,
+/// and `spriteNearby` are supported as of v1.8.9, as are the absolute
+/// `tileAtPosition` / `spriteAtPosition` and palette-colour matching (the
+/// per-pixel telemetry carries the cell position, neighbour tiles, absolute CHR
+/// tile index, and packed `PaletteColors`). Still unsupported (return `None`, so
+/// a gated tile is dropped): the 32-char tile-data-hash (CHR-RAM content) form of
+/// `tileNearby` / `tileAtPosition` — see `docs/adr/0014`.
 fn parse_condition(rest: &str) -> Option<Condition> {
     let fields: Vec<&str> = rest.split(',').map(str::trim).collect();
     if fields.len() < 2 {
@@ -1014,7 +1356,16 @@ fn parse_condition(rest: &str) -> Option<Condition> {
         "sppalette1" => ConditionKind::SpritePalette { id: 1 },
         "sppalette2" => ConditionKind::SpritePalette { id: 2 },
         "sppalette3" => ConditionKind::SpritePalette { id: 3 },
-        _ => return None, // unsupported condition type: ignored (inert).
+        // The v1.8.9 spatial conditions live in their own parser (keeps this one
+        // short); an unrecognized type still parses to `None` (inert).
+        other => {
+            let kind = parse_spatial(other, &fields)?;
+            return Some(Condition {
+                name: name.to_string(),
+                kind,
+                inverted: false,
+            });
+        }
     };
     Some(Condition {
         name: name.to_string(),
@@ -1023,20 +1374,114 @@ fn parse_condition(rest: &str) -> Option<Condition> {
     })
 }
 
-/// Parse a 32-hex-character `tileData` string (a tile's 16 CHR bytes) into the
-/// CRC-32 lookup key the compositor computes from the live CHR snapshot. Returns
-/// `None` if the field is not at least 32 hex digits (a CHR-ROM tile referenced
-/// by index rather than raw bitmap — not supported by the hash-keyed substitution
-/// path, so its rule is skipped rather than mis-decoded).
-fn parse_tile_data_key(s: &str) -> Option<u32> {
-    if s.len() < 32 {
+/// Parse the v1.8.9 spatial condition types (position / tile-nearby / sprite-
+/// nearby); `None` for anything else (so it's dropped as inert).
+fn parse_spatial(ty: &str, fields: &[&str]) -> Option<ConditionKind> {
+    Some(match ty {
+        // positionCheckX/Y + originPositionCheckX/Y: NAME,type,op,value. The
+        // origin variants coincide with the plain ones on the 8-aligned cell grid.
+        "positionCheckX" | "originPositionCheckX" => {
+            if fields.len() < 4 {
+                return None;
+            }
+            let op = CmpOp::parse(fields[2])?;
+            let value = u8::try_from(parse_int(fields[3])? & 0xFF).ok()?;
+            ConditionKind::PositionCheckX { op, value }
+        }
+        "positionCheckY" | "originPositionCheckY" => {
+            if fields.len() < 4 {
+                return None;
+            }
+            let op = CmpOp::parse(fields[2])?;
+            let value = u8::try_from(parse_int(fields[3])? & 0xFF).ok()?;
+            ConditionKind::PositionCheckY { op, value }
+        }
+        // tileNearby: NAME,tileNearby,x,y,tileIndex|tileData,palette[,ignorePalette].
+        // A 32-char field is the CHR-RAM tileData (content) form.
+        "tileNearby" => {
+            if fields.len() < 5 {
+                return None;
+            }
+            let dx = fields[2].parse::<i32>().ok()?;
+            let dy = fields[3].parse::<i32>().ok()?;
+            let palette = cond_palette(fields, 5, 6);
+            let (tile, content) = parse_tile_or_content(fields[4])?;
+            ConditionKind::TileNearby {
+                dx,
+                dy,
+                tile,
+                palette,
+                content,
+            }
+        }
+        // spriteNearby: NAME,spriteNearby,x,y[,tileIndex,palette,ignorePalette].
+        "spriteNearby" => {
+            if fields.len() < 4 {
+                return None;
+            }
+            let dx = fields[2].parse::<i32>().ok()?;
+            let dy = fields[3].parse::<i32>().ok()?;
+            let palette = cond_palette(fields, 5, 6);
+            ConditionKind::SpriteNearby { dx, dy, palette }
+        }
+        // tileAtPosition / spriteAtPosition: NAME,type,x,y,tileIndex,palette[,ign].
+        // x,y are ABSOLUTE screen pixels (vs the relative offsets of *Nearby).
+        "tileAtPosition" => {
+            if fields.len() < 5 {
+                return None;
+            }
+            let x = fields[2].parse::<u16>().ok()?;
+            let y = fields[3].parse::<u16>().ok()?;
+            let palette = cond_palette(fields, 5, 6);
+            let (tile, content) = parse_tile_or_content(fields[4])?;
+            ConditionKind::TileAtPosition {
+                x,
+                y,
+                tile,
+                palette,
+                content,
+            }
+        }
+        "spriteAtPosition" => {
+            if fields.len() < 4 {
+                return None;
+            }
+            let x = fields[2].parse::<u16>().ok()?;
+            let y = fields[3].parse::<u16>().ok()?;
+            let palette = cond_palette(fields, 5, 6);
+            ConditionKind::SpriteAtPosition { x, y, palette }
+        }
+        _ => return None,
+    })
+}
+
+/// Parse a condition's `palette` + optional `ignorePalette` fields: `Some(packed)`
+/// to require the palette, or `None` when absent / unparseable / `ignorePalette`.
+fn cond_palette(fields: &[&str], palette_idx: usize, ignore_idx: usize) -> Option<u32> {
+    let ignore = fields
+        .get(ignore_idx)
+        .is_some_and(|s| matches!(s.trim(), "1" | "true" | "Y" | "yes"));
+    if ignore {
         return None;
     }
-    let mut bytes = [0u8; 16];
-    for (i, b) in bytes.iter_mut().enumerate() {
-        *b = u8::from_str_radix(s.get(i * 2..i * 2 + 2)?, 16).ok()?;
+    fields
+        .get(palette_idx)
+        .and_then(|s| u32::from_str_radix(s.trim(), 16).ok())
+}
+
+/// Parse a `tileNearby` / `tileAtPosition` tile field: a 32-char field is the
+/// CHR-RAM `tileData` (16 CHR bytes) -> `(0, Some(content_hash))`; a shorter
+/// field is the absolute tile index -> `(index, None)`.
+fn parse_tile_or_content(field: &str) -> Option<(u32, Option<u32>)> {
+    if field.len() >= 32 {
+        let mut td = [0u8; 16];
+        for (i, b) in td.iter_mut().enumerate() {
+            *b = u8::from_str_radix(field.get(i * 2..i * 2 + 2)?, 16).ok()?;
+        }
+        Some((0, Some(calculate_hash(&td))))
+    } else {
+        Some((u32::from_str_radix(field, 16).ok()?, None))
     }
-    Some(crc32(&bytes))
 }
 
 /// Parse the comma-separated fields of a real Mesen `<tile>` rule into
@@ -1047,30 +1492,94 @@ fn parse_tile_data_key(s: &str) -> Option<u32> {
 /// — e.g. `31,00000000000000007F3F1F0F07030100,0F162736,80,224,1,N,4018065946,231`:
 ///
 /// - field 0 = `bitmapIndex` (index into the `<img>` declarations),
-/// - field 1 = `tileData` (32 hex chars = the tile's 16 CHR bytes; the match key),
-/// - field 2 = `palette` (4-colour palette, hex; not consulted by the
-///   CRC-keyed substitution — `RustyNES`'s PPU telemetry has no palette-discriminated
-///   tile identity, a documented subset limitation),
-/// - field 3 = `x`, field 4 = `y` (the replacement rectangle's top-left in the
-///   bitmap),
-/// - field 5 = `brightness`, field 6 = `defaultTile` (Y/N) — both informational
-///   here,
+/// - field 1 = `tileData` (32 hex chars = the tile's 16 CHR bytes; CHR-RAM form),
+/// - field 2 = `palette` (the tile's 4-colour palette, hex = Mesen `PaletteColors`)
+///   — a first-class part of the tile identity (`HdTileKey`), so the key is
+///   `CalculateHash(palette ++ tileData)`,
+/// - field 3 = `x`, field 4 = `y` (the replacement rectangle's top-left),
+/// - field 5 = `brightness`, field 6 = `defaultTile` (Y/N — a `Y` tile matches
+///   regardless of palette, so it is keyed under the `0xFFFFFFFF` palette
+///   wildcard),
 /// - trailing `chrBankPage,tileIndex` for CHR-RAM tiles — informational.
 ///
 /// The conditions come from the line's `[...]` prefix, not a trailing field.
-/// Returns `None` for a CHR-ROM (index-keyed) tile or a malformed line.
-fn parse_tile_fields(rest: &str) -> Option<(u32, usize, u32, u32)> {
+/// Returns `None` for a CHR-ROM (short index) tile — that path needs the absolute
+/// CHR offset and is a follow-up — or a malformed line.
+/// Parse a Mesen brightness field (`stof * 255`, default identity `255`). Bounded.
+fn parse_brightness(field: Option<&str>) -> i32 {
+    field
+        .and_then(|s| s.trim().parse::<f32>().ok())
+        .map_or(BRIGHTNESS_IDENTITY, |f| {
+            #[allow(clippy::cast_possible_truncation)]
+            let v = (f * 255.0) as i32;
+            v.clamp(0, 255 * 64)
+        })
+}
+
+/// Parse a Mesen `blendMode` field name (`Add` / `Subtract`, else `Alpha`).
+fn parse_blend_mode(field: Option<&str>) -> BlendMode {
+    match field.map(str::trim) {
+        Some("Add") => BlendMode::Add,
+        Some("Subtract") => BlendMode::Subtract,
+        _ => BlendMode::Alpha,
+    }
+}
+
+fn parse_tile_fields(rest: &str) -> Option<(u32, usize, u32, u32, i32)> {
     let fields: Vec<&str> = rest.split(',').map(str::trim).collect();
     // Need at least bitmapIndex, tileData, palette, x, y.
     if fields.len() < 5 {
         return None;
     }
     let bitmap_index = usize::try_from(parse_int(fields[0])?).ok()?;
-    let key = parse_tile_data_key(fields[1])?;
-    // fields[2] = palette (ignored). x = fields[3], y = fields[4].
+    // field 2 = palette (Mesen `PaletteColors`, hex). A `defaultTile` (field 6 ==
+    // "Y") is palette-agnostic: key it under the `0xFFFFFFFF` wildcard so the
+    // lookup's second stage finds it regardless of the live palette.
+    let palette = u32::from_str_radix(fields[2], 16).unwrap_or(0xFFFF_FFFF);
+    let is_default = fields.get(6).is_some_and(|f| f.eq_ignore_ascii_case("Y"));
+    let key_palette = if is_default { 0xFFFF_FFFF } else { palette };
+    let key = if fields[1].len() >= 32 {
+        // CHR-RAM: 32-hex `tileData` = the 16 CHR bytes -> content key.
+        let mut tile_data = [0u8; 16];
+        for (i, b) in tile_data.iter_mut().enumerate() {
+            *b = u8::from_str_radix(fields[1].get(i * 2..i * 2 + 2)?, 16).ok()?;
+        }
+        chr_ram_key(key_palette, &tile_data)
+    } else {
+        // CHR-ROM: a short field is the absolute tile INDEX (hex for v104+ packs;
+        // Mesen `TileIndex`). Key by `TileIndex ^ palette`.
+        let tile_index = u32::from_str_radix(fields[1], 16).ok()?;
+        chr_rom_key(tile_index, key_palette)
+    };
     let x = parse_int(fields[3])?;
     let y = parse_int(fields[4])?;
-    Some((key, bitmap_index, x, y))
+    // field 5 = brightness (applied to the sampled texel).
+    let brightness = parse_brightness(fields.get(5).copied());
+    Some((key, bitmap_index, x, y, brightness))
+}
+
+/// Compute a tile key (Mesen `HdTileKey`) from an `<addition>` tile field +
+/// palette field. `wildcard` forces the palette-agnostic key (`0xFFFFFFFF`), as
+/// `defaultTile=Y` / `ignorePalette` does. A 32-char field is CHR-RAM tileData;
+/// a short field is the absolute CHR-ROM tile index.
+fn addition_key(tile_str: &str, palette_str: &str, wildcard: bool) -> Option<u32> {
+    let palette = if wildcard {
+        0xFFFF_FFFF
+    } else {
+        u32::from_str_radix(palette_str, 16).ok()?
+    };
+    if tile_str.len() >= 32 {
+        let mut tile_data = [0u8; 16];
+        for (i, b) in tile_data.iter_mut().enumerate() {
+            *b = u8::from_str_radix(tile_str.get(i * 2..i * 2 + 2)?, 16).ok()?;
+        }
+        Some(chr_ram_key(palette, &tile_data))
+    } else {
+        Some(chr_rom_key(
+            u32::from_str_radix(tile_str, 16).ok()?,
+            palette,
+        ))
+    }
 }
 
 /// Parse a real Mesen `<background>` line into `(imageName, x, y, priority)`.
@@ -1087,7 +1596,7 @@ fn parse_tile_fields(rest: &str) -> Option<(u32, usize, u32, u32)> {
 /// Mesen background renders OVER the tile pass, matching Mesen). Scroll ratios +
 /// blend mode are parsed-and-ignored (subset). A bare `name` with no priority
 /// field is accepted (full-screen, the Mesen default priority 10).
-fn parse_background_fields(rest: &str) -> Option<(String, i32, i32, i32)> {
+fn parse_background_fields(rest: &str) -> Option<ParsedBgFields> {
     let fields: Vec<&str> = rest.split(',').map(str::trim).collect();
     if fields.is_empty() || fields[0].is_empty() {
         return None;
@@ -1108,7 +1617,39 @@ fn parse_background_fields(rest: &str) -> Option<(String, i32, i32, i32)> {
         .get(6)
         .and_then(|p| p.parse::<i32>().ok())
         .unwrap_or(0);
-    Some((image, x, y, priority))
+    // field 1 = brightness; fields 2/3 = h/v scroll ratio; field 7 = blendMode.
+    let brightness = parse_brightness(fields.get(1).copied());
+    let h_scroll = fields
+        .get(2)
+        .and_then(|s| s.trim().parse::<f32>().ok())
+        .unwrap_or(0.0);
+    let v_scroll = fields
+        .get(3)
+        .and_then(|s| s.trim().parse::<f32>().ok())
+        .unwrap_or(0.0);
+    let blend_mode = parse_blend_mode(fields.get(7).copied());
+    Some(ParsedBgFields {
+        image,
+        x,
+        y,
+        priority,
+        brightness,
+        blend_mode,
+        h_scroll,
+        v_scroll,
+    })
+}
+
+/// Decoded `<background>` line fields (avoids an unwieldy positional tuple).
+struct ParsedBgFields {
+    image: String,
+    x: i32,
+    y: i32,
+    priority: i32,
+    brightness: i32,
+    blend_mode: BlendMode,
+    h_scroll: f32,
+    v_scroll: f32,
 }
 
 // =============================================================================
@@ -1149,10 +1690,21 @@ pub struct HdCompositor {
     out_h: u32,
     /// CHR-hash cache keyed on `(chr_addr, flip_h, flip_v)` -> hash, refreshed
     /// per frame. Avoids re-reading + re-hashing 16 CHR bytes for repeated tiles.
-    hash_cache: HashMap<(u16, bool, bool), u32>,
+    hash_cache: HashMap<(u16, bool, bool, u32), (u32, u32)>,
     /// Monotonic frame counter for `frameRange` conditions. Advances once per
     /// [`Self::composite`]; presentation-only, never serialized.
     frame: u32,
+    /// v1.8.9 — `<overscan>` crop in NES pixels: left/top origin + the visible
+    /// width/height. The composite skips cropped-out pixels and shifts the rest
+    /// so the output is the cropped region (`crop_w*scale x crop_h*scale`).
+    ov_left: u32,
+    ov_top: u32,
+    crop_w: u32,
+    crop_h: u32,
+    /// v1.8.9 — the current frame's background scroll `(x, y)` in NES pixels, set
+    /// by the frontend each frame ([`Self::set_frame_scroll`]); parallax
+    /// `<background>` layers offset by `frame_scroll * ratio`.
+    frame_scroll: (i32, i32),
 }
 
 impl HdCompositor {
@@ -1160,8 +1712,12 @@ impl HdCompositor {
     #[must_use]
     pub fn new(pack: HdPack) -> Self {
         let scale = pack.scale();
-        let out_w = NES_W * scale;
-        let out_h = NES_H * scale;
+        // `<overscan>` = [top, right, bottom, left]; crop, clamped to >= 1 cell.
+        let [top, right, bottom, left] = pack.overscan;
+        let crop_w = NES_W.saturating_sub(left + right).max(1);
+        let crop_h = NES_H.saturating_sub(top + bottom).max(1);
+        let out_w = crop_w * scale;
+        let out_h = crop_h * scale;
         Self {
             pack,
             out: vec![0u8; (out_w * out_h * 4) as usize],
@@ -1169,6 +1725,11 @@ impl HdCompositor {
             out_h,
             hash_cache: HashMap::new(),
             frame: 0,
+            ov_left: left,
+            ov_top: top,
+            crop_w,
+            crop_h,
+            frame_scroll: (0, 0),
         }
     }
 
@@ -1176,6 +1737,13 @@ impl HdCompositor {
     #[must_use]
     pub const fn dimensions(&self) -> (u32, u32) {
         (self.out_w, self.out_h)
+    }
+
+    /// v1.8.9 — set the current frame's background scroll `(x, y)` in NES pixels
+    /// (from [`rustynes_ppu::Ppu::hd_bg_scroll`]); parallax `<background>` layers
+    /// offset by `scroll * ratio` on the next [`Self::composite`].
+    pub const fn set_frame_scroll(&mut self, x: i32, y: i32) {
+        self.frame_scroll = (x, y);
     }
 
     /// The most recently composited HD RGBA8 frame.
@@ -1207,6 +1775,7 @@ impl HdCompositor {
     /// lock at produce time). `chr_peek(addr)` returns the CHR byte at a PPU
     /// pattern-space address — used to hash a tile's 16 CHR bytes for the
     /// replacement lookup. Returns the upscaled RGBA8 buffer.
+    #[allow(clippy::too_many_lines)] // upscale + under-bgs + per-pixel tiles + over-bgs.
     pub fn composite(
         &mut self,
         framebuffer: &[u8],
@@ -1219,16 +1788,53 @@ impl HdCompositor {
         let scale = self.pack.scale as usize;
         let out_w = self.out_w as usize;
         let frame = self.frame;
+        // `<overscan>` crop origin + visible extent (NES pixels).
+        let ov_left = self.ov_left as usize;
+        let ov_top = self.ov_top as usize;
+        let crop_w = self.crop_w as usize;
+        let crop_h = self.crop_h as usize;
 
-        // 1) Nearest-neighbour upscale of the base framebuffer.
-        for y in 0..NES_H as usize {
-            for x in 0..NES_W as usize {
+        // `<options>disableOriginalTiles`: a stock tile with no HD replacement
+        // renders as the backdrop (universal-bg) colour instead of its graphics.
+        // The backdrop = a framebuffer pixel whose tile is `HD_TILE_NONE`, or
+        // black if every pixel is a tile.
+        let disable_original = self.pack.disable_original_tiles;
+        let backdrop: [u8; 4] = if disable_original {
+            tile_source
+                .iter()
+                .position(|t| t.chr_addr == HD_TILE_NONE)
+                .map_or([0, 0, 0, 0xFF], |i| {
+                    let s = i * 4;
+                    [
+                        framebuffer[s],
+                        framebuffer[s + 1],
+                        framebuffer[s + 2],
+                        framebuffer[s + 3],
+                    ]
+                })
+        } else {
+            [0, 0, 0, 0xFF]
+        };
+
+        // 1) Nearest-neighbour upscale of the base framebuffer (overscan-cropped:
+        //    skip cropped-out pixels, shift the rest to the output origin).
+        for y in ov_top..ov_top + crop_h {
+            for x in ov_left..ov_left + crop_w {
                 let src = (y * NES_W as usize + x) * 4;
-                let px = &framebuffer[src..src + 4];
+                // Hide the stock tile under `disableOriginalTiles` (the tile pass
+                // then draws any HD replacement over the backdrop).
+                let px: &[u8] = if disable_original
+                    && tile_source[y * NES_W as usize + x].chr_addr != HD_TILE_NONE
+                {
+                    &backdrop
+                } else {
+                    &framebuffer[src..src + 4]
+                };
+                let (ox, oy) = (x - ov_left, y - ov_top);
                 for sy in 0..scale {
-                    let row = (y * scale + sy) * out_w;
+                    let row = (oy * scale + sy) * out_w;
                     for sx in 0..scale {
-                        let dst = (row + x * scale + sx) * 4;
+                        let dst = (row + ox * scale + sx) * 4;
                         self.out[dst..dst + 4].copy_from_slice(px);
                     }
                 }
@@ -1247,53 +1853,150 @@ impl HdCompositor {
             watched,
             frame,
             true, // under = priority < 0
+            i64::from(self.ov_left),
+            i64::from(self.ov_top),
+            self.frame_scroll,
         );
 
-        // 3) Per 8x8 cell, resolve the dominant tile identity and, if a gated
-        //    replacement exists for its CHR hash, blit the hi-res image over the
-        //    upscaled base. The cell's identity is taken from its top-left pixel
-        //    (scrolling shifts whole tiles by < 8px; this keys on the aligned
-        //    grid, like Mesen's BG path).
+        // 3) PER PIXEL (Mesen's renderer model): for each NES pixel, resolve the
+        //    tile that produced it and sample the matched replacement at the
+        //    pixel's own texel offset (`offset_x`/`offset_y`). Unlike a per-cell
+        //    blit, this tracks fine-X/Y scroll and sprite position pixel-for-pixel
+        //    so the HD tile sits exactly over the original (no offset / drag).
+        //    The tile-key hash is still computed once per distinct tile identity
+        //    (cached), so the per-pixel cost is a hash-map lookup + sample.
         self.hash_cache.clear();
-        for cell_y in 0..ROWS {
-            for cell_x in 0..COLS {
-                let px = cell_y * TILE * NES_W as usize + cell_x * TILE;
-                let rec = tile_source[px];
+        let out_h = self.out_h as usize;
+        // v1.8.9 — GATED CHR-content hashes for the `tileNearby`/`tileAtPosition`
+        // tile-DATA-hash form. Only built when a condition uses it (else empty +
+        // zero cost); `content_hashes[i]` = `calculate_hash` of cell `i`'s 16 CHR
+        // bytes (0 for a backdrop pixel).
+        let needs_content = self.pack.conditions.iter().any(|c| {
+            matches!(
+                c.kind,
+                ConditionKind::TileNearby {
+                    content: Some(_),
+                    ..
+                } | ConditionKind::TileAtPosition {
+                    content: Some(_),
+                    ..
+                }
+            )
+        });
+        let content_hashes: Vec<u32> = if needs_content {
+            tile_source
+                .iter()
+                .map(|rec| {
+                    if rec.chr_addr == HD_TILE_NONE {
+                        0
+                    } else {
+                        let mut td = [0u8; 16];
+                        for (j, b) in td.iter_mut().enumerate() {
+                            *b = chr_peek(rec.chr_addr.wrapping_add(u16::try_from(j).unwrap_or(0)));
+                        }
+                        calculate_hash(&td)
+                    }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        // Overscan-cropped: iterate the visible region; `tile_source` is still
+        // indexed in full-frame NES coords (conditions key on the NES position).
+        for y in ov_top..ov_top + crop_h {
+            for x in ov_left..ov_left + crop_w {
+                let rec = tile_source[y * NES_W as usize + x];
                 if rec.chr_addr == HD_TILE_NONE {
                     continue;
                 }
-                let key = (rec.chr_addr, rec.flip_h, rec.flip_v);
-                let hash = if let Some(&h) = self.hash_cache.get(&key) {
-                    h
+                // Tile identity (incl. palette) -> (exact, wildcard) keys, cached.
+                let cache_key = (rec.chr_addr, rec.flip_h, rec.flip_v, rec.palette_colors);
+                let (exact, wild) = if let Some(&kw) = self.hash_cache.get(&cache_key) {
+                    kw
                 } else {
-                    let h = hash_tile(rec, &mut chr_peek);
-                    self.hash_cache.insert(key, h);
-                    h
+                    let kw = tile_keys(rec, &mut chr_peek);
+                    self.hash_cache.insert(cache_key, kw);
+                    kw
                 };
-                let Some(rules) = self.pack.tiles.get(&hash) else {
+                // Two-stage lookup (Mesen `GetMatchingTile`): exact palette+content
+                // key first, then the palette-agnostic default key; then the
+                // `<fallback>` map for an undefined CHR-ROM tile.
+                let Some(rules) = self
+                    .pack
+                    .tiles
+                    .get(&exact)
+                    .or_else(|| self.pack.tiles.get(&wild))
+                    .or_else(|| {
+                        if rec.chr_tile_index == HD_CHR_RAM {
+                            return None;
+                        }
+                        let fb = *self.pack.fallback_tiles.get(&rec.chr_tile_index)?;
+                        let fb_exact = chr_rom_key(fb, rec.palette_colors);
+                        let fb_wild = chr_rom_key(fb, 0xFFFF_FFFF);
+                        self.pack
+                            .tiles
+                            .get(&fb_exact)
+                            .or_else(|| self.pack.tiles.get(&fb_wild))
+                    })
+                else {
                     continue;
                 };
                 // First rule whose conditions all hold wins (unconditional rules
-                // are sorted last, so a conditional variant gets first refusal).
-                let Some(rule) = rules
-                    .iter()
-                    .find(|r| self.pack.all_hold(&r.conditions, watched, frame, rec))
-                else {
+                // sorted last). Spatial conditions key on the containing 8x8 cell.
+                let spatial = SpatialCtx {
+                    cell_x: x / TILE,
+                    cell_y: y / TILE,
+                    tile_source,
+                    content_hashes: &content_hashes,
+                };
+                let Some(rule) = rules.iter().find(|r| {
+                    self.pack
+                        .all_hold(&r.conditions, watched, frame, rec, spatial)
+                }) else {
                     continue;
                 };
                 let Some(img) = self.pack.images.get(rule.image) else {
                     continue;
                 };
-                blit_replacement(
-                    &mut self.out,
-                    out_w,
-                    self.out_h as usize,
-                    cell_x,
-                    cell_y,
-                    scale,
-                    img,
-                    rule,
-                );
+                // Sample the replacement at the texel this pixel maps to (flips are
+                // already baked into offset_x/offset_y), writing the scale*scale
+                // block. Transparent texels (alpha 0) leave the upscaled base.
+                let img_w = img.width as usize;
+                let img_h = img.height as usize;
+                let src_tx = rule.x as usize + usize::from(rec.offset_x) * scale;
+                let src_ty = rule.y as usize + usize::from(rec.offset_y) * scale;
+                for sub_y in 0..scale {
+                    let sy = src_ty + sub_y;
+                    let dy = (y - ov_top) * scale + sub_y;
+                    if sy >= img_h || dy >= out_h {
+                        continue;
+                    }
+                    for sub_x in 0..scale {
+                        let sx = src_tx + sub_x;
+                        let dx = (x - ov_left) * scale + sub_x;
+                        if sx >= img_w || dx >= out_w {
+                            continue;
+                        }
+                        let soff = (sy * img_w + sx) * 4;
+                        let alpha = img.rgba[soff + 3];
+                        if alpha == 0 {
+                            continue;
+                        }
+                        // v1.8.9 — alpha-BLEND partial-alpha texels (soft edges)
+                        // instead of a hard binary cutout, with the tile's
+                        // brightness applied (Mesen DrawTile). Tiles are Alpha mode.
+                        let doff = (dy * out_w + dx) * 4;
+                        blend_over(
+                            &mut self.out,
+                            doff,
+                            &img.rgba[soff..soff + 4],
+                            alpha,
+                            BlendMode::Alpha,
+                            rule.brightness,
+                            rec.color_mask,
+                        );
+                    }
+                }
             }
         }
 
@@ -1307,10 +2010,153 @@ impl HdCompositor {
             watched,
             frame,
             false, // over = priority >= 0
+            i64::from(self.ov_left),
+            i64::from(self.ov_top),
+            self.frame_scroll,
         );
+
+        // 4) `<addition>` post-pass — GATED: skipped (and the composite stays
+        //    byte-identical) unless a pack declares additions.
+        if !self.pack.additions.is_empty() {
+            self.draw_additions(tile_source, watched, frame, &mut chr_peek);
+        }
 
         self.frame = self.frame.wrapping_add(1);
         &self.out
+    }
+
+    /// `<addition>` post-pass: for each pixel whose tile matches an addition's
+    /// ORIGINAL key, sample the ADDITIONAL tile's replacement at this pixel's
+    /// intra-tile offset and write it at the target `(x±offsetX, y±offsetY)`
+    /// (mirror-adjusted) — Mesen's per-pixel additional-sprite injection, done as
+    /// a direct blit here. Output-only; only runs when `additions` is non-empty.
+    #[allow(
+        clippy::too_many_lines,
+        clippy::cast_possible_wrap,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_truncation
+    )]
+    fn draw_additions(
+        &mut self,
+        tile_source: &[HdTileSource],
+        watched: &WatchedMemory,
+        frame: u32,
+        chr_peek: &mut impl FnMut(u16) -> u8,
+    ) {
+        let scale = self.pack.scale as usize;
+        let out_w = self.out_w as usize;
+        let out_h = self.out_h as usize;
+        let ov_left = self.ov_left as usize;
+        let ov_top = self.ov_top as usize;
+        let crop_w = self.crop_w as usize;
+        let crop_h = self.crop_h as usize;
+        // Few additions; clone to a local so the loop body can borrow self.out /
+        // self.hash_cache / self.pack disjointly.
+        let additions = self.pack.additions.clone();
+        for y in ov_top..ov_top + crop_h {
+            for x in ov_left..ov_left + crop_w {
+                let rec = tile_source[y * NES_W as usize + x];
+                if rec.chr_addr == HD_TILE_NONE {
+                    continue;
+                }
+                let cache_key = (rec.chr_addr, rec.flip_h, rec.flip_v, rec.palette_colors);
+                let (exact, wild) = if let Some(&kw) = self.hash_cache.get(&cache_key) {
+                    kw
+                } else {
+                    let kw = tile_keys(rec, chr_peek);
+                    self.hash_cache.insert(cache_key, kw);
+                    kw
+                };
+                for add in &additions {
+                    let matched = if add.ignore_palette {
+                        wild == add.orig_key
+                    } else {
+                        exact == add.orig_key
+                    };
+                    if !matched {
+                        continue;
+                    }
+                    // Target (mirror-adjusted), bounds-checked to the crop window.
+                    let tx = x as i32
+                        + if rec.flip_h {
+                            -add.offset_x
+                        } else {
+                            add.offset_x
+                        };
+                    let ty = y as i32
+                        + if rec.flip_v {
+                            -add.offset_y
+                        } else {
+                            add.offset_y
+                        };
+                    if tx < ov_left as i32
+                        || tx >= (ov_left + crop_w) as i32
+                        || ty < ov_top as i32
+                        || ty >= (ov_top + crop_h) as i32
+                    {
+                        continue;
+                    }
+                    let Some(rules) = self
+                        .pack
+                        .tiles
+                        .get(&add.add_exact)
+                        .or_else(|| self.pack.tiles.get(&add.add_wild))
+                    else {
+                        continue;
+                    };
+                    let spatial = SpatialCtx {
+                        cell_x: x / TILE,
+                        cell_y: y / TILE,
+                        tile_source,
+                        content_hashes: &[],
+                    };
+                    let Some(rule) = rules.iter().find(|r| {
+                        self.pack
+                            .all_hold(&r.conditions, watched, frame, rec, spatial)
+                    }) else {
+                        continue;
+                    };
+                    let Some(img) = self.pack.images.get(rule.image) else {
+                        continue;
+                    };
+                    let img_w = img.width as usize;
+                    let img_h = img.height as usize;
+                    let src_tx = rule.x as usize + usize::from(rec.offset_x) * scale;
+                    let src_ty = rule.y as usize + usize::from(rec.offset_y) * scale;
+                    let otx = tx as usize - ov_left;
+                    let oty = ty as usize - ov_top;
+                    for sub_y in 0..scale {
+                        let sy = src_ty + sub_y;
+                        let dyy = oty * scale + sub_y;
+                        if sy >= img_h || dyy >= out_h {
+                            continue;
+                        }
+                        for sub_x in 0..scale {
+                            let sx = src_tx + sub_x;
+                            let dxx = otx * scale + sub_x;
+                            if sx >= img_w || dxx >= out_w {
+                                continue;
+                            }
+                            let soff = (sy * img_w + sx) * 4;
+                            let alpha = img.rgba[soff + 3];
+                            if alpha == 0 {
+                                continue;
+                            }
+                            let doff = (dyy * out_w + dxx) * 4;
+                            blend_over(
+                                &mut self.out,
+                                doff,
+                                &img.rgba[soff..soff + 4],
+                                alpha,
+                                BlendMode::Alpha,
+                                rule.brightness,
+                                rec.color_mask,
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// v1.5.0 "Lens" Workstream A4 — per-pixel HD-pack composition trace.
@@ -1369,6 +2215,12 @@ impl HdCompositor {
         let cell_y = uy / TILE;
         let cell_px = cell_y * TILE * NES_W as usize + cell_x * TILE;
         let rec = tile_source[cell_px];
+        let spatial = SpatialCtx {
+            cell_x,
+            cell_y,
+            tile_source,
+            content_hashes: &[],
+        };
 
         let mut out = PixelInspection {
             x: px,
@@ -1388,9 +2240,14 @@ impl HdCompositor {
         if rec.chr_addr == HD_TILE_NONE {
             return Some(out);
         }
-        let hash = hash_tile(rec, &mut chr_peek);
-        out.chr_hash = Some(hash);
-        let Some(rules) = self.pack.tiles.get(&hash) else {
+        let (exact, wild) = tile_keys(rec, &mut chr_peek);
+        out.chr_hash = Some(exact);
+        let Some(rules) = self
+            .pack
+            .tiles
+            .get(&exact)
+            .or_else(|| self.pack.tiles.get(&wild))
+        else {
             return Some(out);
         };
         // Walk the rules in priority order (conditional first); record the gating
@@ -1406,7 +2263,7 @@ impl HdCompositor {
                         .conditions
                         .get(i)
                         .map_or_else(|| "?".to_string(), |c| c.name.clone()),
-                    held: self.pack.eval_condition(i, watched, frame, rec),
+                    held: self.pack.eval_condition(i, watched, frame, rec, spatial),
                 })
                 .collect();
             let holds = conds.iter().all(|c| c.held);
@@ -1431,6 +2288,11 @@ impl HdCompositor {
     /// memory / frameRange conditions don't depend on tile state, and per-tile
     /// conditions on a full-screen background are an unusual pack choice.
     #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss
+    )]
     fn draw_backgrounds(
         pack: &HdPack,
         out: &mut [u8],
@@ -1440,18 +2302,42 @@ impl HdCompositor {
         watched: &WatchedMemory,
         frame: u32,
         under: bool,
+        ov_left: i64,
+        ov_top: i64,
+        frame_scroll: (i32, i32),
     ) {
+        // Full-screen backgrounds aren't tied to a cell, so spatial conditions
+        // (position / nearby) have no cell to anchor on and fail closed here.
+        let no_spatial = SpatialCtx {
+            cell_x: 0,
+            cell_y: 0,
+            tile_source: &[],
+            content_hashes: &[],
+        };
         for bg in &pack.backgrounds {
             if under != (bg.priority < 0) {
                 continue;
             }
-            if !pack.all_hold(&bg.conditions, watched, frame, HdTileSource::default()) {
+            if !pack.all_hold(
+                &bg.conditions,
+                watched,
+                frame,
+                HdTileSource::default(),
+                no_spatial,
+            ) {
                 continue;
             }
             let Some(img) = pack.images.get(bg.image) else {
                 continue;
             };
-            blit_background(out, out_h, out_w, scale, img, bg);
+            // Parallax: shift the layer by the frame scroll times its ratio.
+            let scroll_off = (
+                i64::from((frame_scroll.0 as f32 * bg.h_scroll_ratio) as i32),
+                i64::from((frame_scroll.1 as f32 * bg.v_scroll_ratio) as i32),
+            );
+            blit_background(
+                out, out_h, out_w, scale, img, bg, ov_left, ov_top, scroll_off,
+            );
         }
     }
 }
@@ -1459,7 +2345,7 @@ impl HdCompositor {
 /// Alpha-blit one background region into `out`.
 // scale (≤ 8) + the source pixel indices are small + bounded, so the i64 casts
 // used to do signed destination-bounds math can never wrap.
-#[allow(clippy::cast_possible_wrap)]
+#[allow(clippy::cast_possible_wrap, clippy::too_many_arguments)]
 fn blit_background(
     out: &mut [u8],
     out_h: usize,
@@ -1467,13 +2353,17 @@ fn blit_background(
     scale: usize,
     img: &ReplacementImage,
     bg: &BackgroundRegion,
+    ov_left: i64,
+    ov_top: i64,
+    scroll_off: (i64, i64),
 ) {
     let img_w = img.width as usize;
     let img_h = img.height as usize;
     let scale_i = scale as i64;
-    // Destination origin in upscaled space (i64 to avoid overflow / wrap).
-    let ox = i64::from(bg.x) * scale_i;
-    let oy = i64::from(bg.y) * scale_i;
+    // Destination origin in upscaled space (i64 to avoid overflow / wrap),
+    // shifted by the overscan crop origin and the parallax scroll offset.
+    let ox = (i64::from(bg.x) + scroll_off.0 - ov_left) * scale_i;
+    let oy = (i64::from(bg.y) + scroll_off.1 - ov_top) * scale_i;
     for sy in 0..img_h {
         let dy = oy + sy as i64;
         if dy < 0 {
@@ -1502,95 +2392,360 @@ fn blit_background(
                 continue; // fully transparent.
             }
             let d = (dy * out_w + dx) * 4;
-            if a == 0xFF {
-                out[d..d + 4].copy_from_slice(&img.rgba[s..s + 4]);
-            } else {
-                // Source-over alpha blend (premultiply-free, u16 math).
-                let inv = 255 - u16::from(a);
-                for c in 0..3 {
-                    let src = u16::from(img.rgba[s + c]) * u16::from(a);
-                    let dstc = u16::from(out[d + c]) * inv;
-                    // Round to nearest (+127) instead of truncating; overflow-safe
-                    // since the max numerator is 255*255 + 127 = 65152 < u16::MAX.
-                    out[d + c] = u8::try_from((src + dstc + 127) / 255).unwrap_or(0xFF);
-                }
-                // Leave dst alpha opaque (the base upscale is opaque).
-                out[d + 3] = 0xFF;
-            }
+            // Backgrounds aren't tied to a per-pixel telemetry record, so the
+            // grayscale/emphasis transform (mask = 0) doesn't apply to them.
+            blend_over(
+                out,
+                d,
+                &img.rgba[s..s + 4],
+                a,
+                bg.blend_mode,
+                bg.brightness,
+                0,
+            );
         }
     }
 }
 
-/// Hash a tile's 16 CHR bytes (Mesen-compatible CRC32) from the raw, *unflipped*
-/// pattern bytes. Mesen keys tile replacement on the tile's CHR content, and H/V
-/// flips are applied later by the renderer, so the hash deliberately reads the
-/// pattern bytes straight from CHR and does NOT consult `rec.flip_h` / `flip_v`
-/// — a flipped sprite hashes to the same key as its unflipped tile dump.
-fn hash_tile(rec: HdTileSource, chr_peek: &mut impl FnMut(u16) -> u8) -> u32 {
+/// HD-pack blend mode for a replacement layer (Mesen `HdPackBlendMode`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum BlendMode {
+    /// Standard source-over alpha (the default).
+    Alpha,
+    /// Additive: `out = min(255, out + in)`.
+    Add,
+    /// Subtractive: `out = max(0, out - in)`.
+    Subtract,
+}
+
+/// Identity brightness (Mesen stores `stof(field) * 255`, so `255` ~= 1.0x).
+const BRIGHTNESS_IDENTITY: i32 = 255;
+
+/// Mesen `AdjustBrightness`: `min(255, (brightness * (v + 1)) >> 8)`. With
+/// `brightness == 255` this is ~identity; lower dims, higher brightens.
+fn adjust_brightness(v: u8, brightness: i32) -> u8 {
+    u8::try_from(((brightness * (i32::from(v) + 1)) >> 8).clamp(0, 255)).unwrap_or(0xFF)
+}
+
+/// Blend a 4-byte RGBA `src` (alpha `a`) onto the opaque base `out[d..d+4]` under
+/// `mode`, after applying `brightness` to the source RGB. `Alpha` is a
+/// premultiply-free, round-to-nearest source-over blend; `Add`/`Subtract` are
+/// saturating. Used by both the tile blit and the background blit.
+/// Apply the NES `$2001` grayscale + emphasis transform (Mesen
+/// `ProcessGrayscaleAndEmphasis`) to an RGB triple. `mask` bit 0 = grayscale;
+/// bits 5-7 = R/G/B emphasis (each intensifies its channel x1.1 and attenuates
+/// the others x0.9, stacking multiplicatively). `mask == 0` is identity.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn apply_color_mask(rgb: [u8; 3], mask: u8) -> [u8; 3] {
+    if mask == 0 {
+        return rgb;
+    }
+    let [mut r, mut g, mut b] = rgb;
+    if mask & 0x01 != 0 {
+        let avg = ((u16::from(r) + u16::from(g) + u16::from(b)) / 3) as u8;
+        r = avg;
+        g = avg;
+        b = avg;
+    }
+    let emph = (mask >> 5) & 0x07;
+    if emph != 0 {
+        let (mut fr, mut fg, mut fb) = (1.0f32, 1.0f32, 1.0f32);
+        if emph & 0x01 != 0 {
+            fr *= 1.1;
+            fg *= 0.9;
+            fb *= 0.9;
+        }
+        if emph & 0x02 != 0 {
+            fg *= 1.1;
+            fr *= 0.9;
+            fb *= 0.9;
+        }
+        if emph & 0x04 != 0 {
+            fb *= 1.1;
+            fr *= 0.9;
+            fg *= 0.9;
+        }
+        r = (f32::from(r) * fr).min(255.0) as u8;
+        g = (f32::from(g) * fg).min(255.0) as u8;
+        b = (f32::from(b) * fb).min(255.0) as u8;
+    }
+    [r, g, b]
+}
+
+fn blend_over(
+    out: &mut [u8],
+    d: usize,
+    src: &[u8],
+    a: u8,
+    mode: BlendMode,
+    brightness: i32,
+    color_mask: u8,
+) {
+    let src_rgb = apply_color_mask(
+        [
+            adjust_brightness(src[0], brightness),
+            adjust_brightness(src[1], brightness),
+            adjust_brightness(src[2], brightness),
+        ],
+        color_mask,
+    );
+    match mode {
+        BlendMode::Alpha => {
+            if a == 0xFF {
+                out[d..d + 3].copy_from_slice(&src_rgb);
+            } else {
+                let inv = 255 - u16::from(a);
+                for (ch, &sval) in src_rgb.iter().enumerate() {
+                    let num = u16::from(sval) * u16::from(a) + u16::from(out[d + ch]) * inv + 127;
+                    out[d + ch] = u8::try_from(num / 255).unwrap_or(0xFF);
+                }
+            }
+        }
+        BlendMode::Add => {
+            for (ch, &sval) in src_rgb.iter().enumerate() {
+                out[d + ch] = u8::try_from((i32::from(out[d + ch]) + i32::from(sval)).min(255))
+                    .unwrap_or(0xFF);
+            }
+        }
+        BlendMode::Subtract => {
+            for (ch, &sval) in src_rgb.iter().enumerate() {
+                out[d + ch] =
+                    u8::try_from((i32::from(out[d + ch]) - i32::from(sval)).max(0)).unwrap_or(0);
+            }
+        }
+    }
+    // The base upscale is opaque; keep dst alpha opaque after any mode.
+    out[d + 3] = 0xFF;
+}
+
+/// Mesen's tile-key hash (`HdTileKey::CalculateHash`, `HdData.h:56-68`): an
+/// additive rolling hash with a rotate-left-2 over little-endian u32 chunks.
+/// This is NOT CRC-32 — it is the exact function the real Mesen `<tile>` keys
+/// (and CHR-RAM packs like Zelda) were generated with, so `RustyNES` must mirror
+/// it bit-for-bit or no tile matches.
+fn calculate_hash(key: &[u8]) -> u32 {
+    let mut result: u32 = 0;
+    for chunk in key.chunks_exact(4) {
+        let val = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+        result = result.wrapping_add(val).rotate_left(2);
+    }
+    result
+}
+
+/// The CHR-RAM tile key: `CalculateHash(PaletteColors(4 LE) ++ TileData(16))` —
+/// 20 bytes, palette first, exactly Mesen's `HdTileKey` memory layout for a
+/// CHR-RAM tile (`HdData.h:16-18,36-37`). Palette is a first-class part of the
+/// identity; the palette-agnostic *default* key passes `0xFFFFFFFF`.
+fn chr_ram_key(palette_colors: u32, tile_data: &[u8; 16]) -> u32 {
+    let mut buf = [0u8; 20];
+    buf[0..4].copy_from_slice(&palette_colors.to_le_bytes());
+    buf[4..20].copy_from_slice(tile_data);
+    calculate_hash(&buf)
+}
+
+/// The live tile's `(exact_key, default_key)` for the two-stage lookup: the
+/// exact key uses the pixel's actual palette, the default key uses the
+/// `0xFFFFFFFF` palette wildcard (matching pack tiles flagged `defaultTile`).
+/// Reads the raw, *unflipped* CHR bytes (flips are applied later by the
+/// renderer, so a flipped sprite keys to the same tile dump).
+fn tile_keys(rec: HdTileSource, chr_peek: &mut impl FnMut(u16) -> u8) -> (u32, u32) {
+    // CHR-ROM tiles are keyed by their absolute tile index (Mesen `TileIndex ^
+    // PaletteColors`), not by content — the pack stores the index, not 16 bytes.
+    if rec.chr_tile_index != HD_CHR_RAM {
+        return (
+            chr_rom_key(rec.chr_tile_index, rec.palette_colors),
+            chr_rom_key(rec.chr_tile_index, 0xFFFF_FFFF),
+        );
+    }
     let base = rec.chr_addr & 0x1FF0;
     let mut bytes = [0u8; 16];
     for (i, b) in bytes.iter_mut().enumerate() {
         *b = chr_peek(base + u16::try_from(i).unwrap_or(0));
     }
-    crc32(&bytes)
+    (
+        chr_ram_key(rec.palette_colors, &bytes),
+        chr_ram_key(0xFFFF_FFFF, &bytes),
+    )
 }
 
-/// Blit a replacement image rectangle over the upscaled base for one 8x8 cell.
-/// The replacement rectangle is `8*scale` square at `(rule.x, rule.y)` in the
-/// image. Out-of-bounds source pixels are skipped (leaving the base upscale).
-/// Fully-transparent source pixels (alpha 0) are skipped so packs can mark
-/// see-through regions.
-#[allow(clippy::too_many_arguments)]
-fn blit_replacement(
-    out: &mut [u8],
-    out_w: usize,
-    out_h: usize,
-    cell_x: usize,
-    cell_y: usize,
-    scale: usize,
-    img: &ReplacementImage,
-    rule: &TileRule,
-) {
-    let edge = TILE * scale; // replacement tile edge in pixels.
-    let img_w = img.width as usize;
-    let img_h = img.height as usize;
-    for ry in 0..edge {
-        let sy = rule.y as usize + ry;
-        if sy >= img_h {
-            break;
-        }
-        let dy = cell_y * edge + ry;
-        if dy >= out_h {
-            break;
-        }
-        for rx in 0..edge {
-            let sx = rule.x as usize + rx;
-            if sx >= img_w {
-                break;
-            }
-            let dx = cell_x * edge + rx;
-            if dx >= out_w {
-                break;
-            }
-            let s = (sy * img_w + sx) * 4;
-            if img.rgba[s + 3] == 0 {
-                continue; // transparent.
-            }
-            let d = (dy * out_w + dx) * 4;
-            out[d..d + 4].copy_from_slice(&img.rgba[s..s + 4]);
-        }
-    }
+/// The CHR-ROM tile key — Mesen `HdTileKey::GetHashCode` for a CHR-ROM tile is
+/// `(uint32_t)TileIndex ^ PaletteColors` (`HdData.h:39`), used directly as the
+/// map key (no `CalculateHash`). The palette-agnostic default key passes
+/// `0xFFFFFFFF`.
+const fn chr_rom_key(tile_index: u32, palette_colors: u32) -> u32 {
+    tile_index ^ palette_colors
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// An empty spatial context for the non-spatial condition tests (no cell, no
+    /// neighbour slice). The spatial conditions get their own tests below.
+    const SP: SpatialCtx = SpatialCtx {
+        cell_x: 0,
+        cell_y: 0,
+        tile_source: &[],
+        content_hashes: &[],
+    };
+
     #[test]
     fn crc32_matches_known_vectors() {
         // Standard CRC-32 of the empty string is 0; of "123456789" is 0xCBF43926.
         assert_eq!(crc32(b""), 0);
         assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
+    }
+
+    #[test]
+    fn calculate_hash_matches_mesen_rotate_add() {
+        // Mesen's CalculateHash: additive + rotate-left-2 over LE u32 chunks.
+        // empty -> 0; one chunk val=1 -> (0+1) rl2 = 4; two chunks {1,0} ->
+        // ((1 rl2)=4 then (4+0) rl2)=16.
+        assert_eq!(calculate_hash(&[]), 0);
+        assert_eq!(calculate_hash(&[1, 0, 0, 0]), 4);
+        assert_eq!(calculate_hash(&[1, 0, 0, 0, 0, 0, 0, 0]), 16);
+    }
+
+    #[test]
+    fn chr_ram_key_is_palette_sensitive_and_deterministic() {
+        let td = [0x12u8; 16];
+        assert_ne!(chr_ram_key(0x0010_2030, &td), chr_ram_key(0x0040_5060, &td));
+        assert_eq!(chr_ram_key(0xABCD, &td), chr_ram_key(0xABCD, &td));
+    }
+
+    #[test]
+    fn tile_rule_keys_on_palette_and_default_wildcard() {
+        let td_hex = "000102030405060708090A0B0C0D0E0F";
+        let mut td = [0u8; 16];
+        for (i, b) in td.iter_mut().enumerate() {
+            *b = u8::from_str_radix(&td_hex[i * 2..i * 2 + 2], 16).unwrap();
+        }
+        // bitmapIndex, tileData, palette, x, y, brightness, defaultTile=N.
+        let line = format!("0,{td_hex},0F162736,16,32,1,N");
+        let (key, _, x, y, _) = parse_tile_fields(&line).unwrap();
+        assert_eq!(key, chr_ram_key(0x0F16_2736, &td));
+        assert_eq!((x, y), (16, 32));
+        // defaultTile=Y -> keyed under the 0xFFFFFFFF palette wildcard.
+        let dflt = format!("0,{td_hex},0F162736,16,32,1,Y");
+        let (dkey, ..) = parse_tile_fields(&dflt).unwrap();
+        assert_eq!(dkey, chr_ram_key(0xFFFF_FFFF, &td));
+    }
+
+    #[test]
+    fn chr_rom_tile_keys_on_index_and_palette() {
+        // A CHR-ROM rec (chr_tile_index != HD_CHR_RAM) keys by TileIndex ^ palette,
+        // NOT by content (chr_peek is never consulted).
+        let rec = HdTileSource {
+            palette_colors: 0x0F16_2736,
+            chr_tile_index: 42,
+            ..HdTileSource::default()
+        };
+        let mut peek = |_a: u16| panic!("CHR-ROM must not read CHR content");
+        let (exact, wild) = tile_keys(rec, &mut peek);
+        assert_eq!(exact, chr_rom_key(42, 0x0F16_2736));
+        assert_eq!(wild, chr_rom_key(42, 0xFFFF_FFFF));
+    }
+
+    #[test]
+    fn parses_chr_rom_tile_index_form() {
+        // bitmapIndex, tileIndex(hex), palette, x, y, brightness, defaultTile.
+        let (key, _, x, y, _) = parse_tile_fields("0,2A,0F162736,16,32,1,N").unwrap();
+        assert_eq!(key, chr_rom_key(0x2A, 0x0F16_2736));
+        assert_eq!((x, y), (16, 32));
+        // defaultTile=Y -> the palette wildcard.
+        let (dkey, ..) = parse_tile_fields("0,2A,0F162736,16,32,1,Y").unwrap();
+        assert_eq!(dkey, chr_rom_key(0x2A, 0xFFFF_FFFF));
+    }
+
+    #[test]
+    fn overscan_parses_and_crops_dimensions() {
+        // <overscan>Top,Right,Bottom,Left.
+        let parsed = parse_hires("<overscan>8,16,8,16\n");
+        assert_eq!(parsed.overscan, [8, 16, 8, 16]);
+        // The compositor output is (256-left-right) x (240-top-bottom), scaled.
+        let mut pack = pack_with_condition(ConditionKind::HMirror);
+        pack.scale = 2;
+        pack.overscan = [8, 16, 8, 16];
+        let comp = HdCompositor::new(pack);
+        assert_eq!(comp.dimensions(), ((256 - 32) * 2, (240 - 16) * 2));
+    }
+
+    #[test]
+    fn fallback_tiles_parse() {
+        // <fallback>tileIndex,fallbackTileIndex (hex).
+        let parsed = parse_hires("<fallback>0A,0B\n<fallback>10,20\n");
+        assert_eq!(parsed.fallback_tiles.get(&0x0A), Some(&0x0B));
+        assert_eq!(parsed.fallback_tiles.get(&0x10), Some(&0x20));
+        assert_eq!(parsed.fallback_tiles.len(), 2);
+    }
+
+    #[test]
+    fn color_mask_grayscale_and_emphasis() {
+        // mask 0 -> identity.
+        assert_eq!(apply_color_mask([100, 150, 200], 0), [100, 150, 200]);
+        // grayscale (bit 0): every channel becomes the average (450/3 = 150).
+        assert_eq!(apply_color_mask([100, 150, 200], 0x01), [150, 150, 150]);
+        // red emphasis ($2001 bit 5): red x1.1, green/blue x0.9.
+        assert_eq!(apply_color_mask([100, 100, 100], 0x20), [110, 90, 90]);
+    }
+
+    #[test]
+    fn options_disable_original_tiles_parse() {
+        assert!(parse_hires("<options>disableOriginalTiles\n").disable_original_tiles);
+        assert!(
+            parse_hires("<options>foo,disableOriginalTiles,bar\n").disable_original_tiles,
+            "honored among other options"
+        );
+        assert!(!parse_hires("<options>somethingElse\n").disable_original_tiles);
+        assert!(!parse_hires("<scale>2\n").disable_original_tiles);
+    }
+
+    #[test]
+    fn addition_tag_parses() {
+        // <addition>origIdx,origPal,offX,offY,addIdx,addPal[,ignorePalette]
+        let parsed = parse_hires("<addition>0A,0F162736,8,-4,0B,0F162736\n");
+        assert_eq!(parsed.additions.len(), 1);
+        let a = &parsed.additions[0];
+        assert_eq!(a.orig_key, chr_rom_key(0x0A, 0x0F16_2736));
+        assert_eq!(a.add_exact, chr_rom_key(0x0B, 0x0F16_2736));
+        assert_eq!(a.add_wild, chr_rom_key(0x0B, 0xFFFF_FFFF));
+        assert_eq!((a.offset_x, a.offset_y), (8, -4));
+        assert!(!a.ignore_palette);
+        // ignorePalette -> the original is keyed on the palette wildcard.
+        let ip = parse_hires("<addition>0A,0F162736,0,0,0B,0F162736,1\n");
+        assert!(ip.additions[0].ignore_palette);
+        assert_eq!(ip.additions[0].orig_key, chr_rom_key(0x0A, 0xFFFF_FFFF));
+        // Too few fields -> dropped.
+        assert!(
+            parse_hires("<addition>0A,0F162736,8\n")
+                .additions
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn tiledata_hash_condition_parses() {
+        // A 32-char tileData field selects the CHR-content match (not the index).
+        let td = "0".repeat(32);
+        let c = parse_condition(&format!("c,tileNearby,8,0,{td},0F162736")).unwrap();
+        match c.kind {
+            ConditionKind::TileNearby { tile, content, .. } => {
+                assert_eq!(tile, 0);
+                assert_eq!(content, Some(calculate_hash(&[0u8; 16])));
+            }
+            _ => panic!("expected a content-form tileNearby"),
+        }
+        // The short index form stays `content: None`.
+        assert!(matches!(
+            parse_condition("c,tileNearby,8,0,2A,0F162736")
+                .unwrap()
+                .kind,
+            ConditionKind::TileNearby {
+                content: None,
+                tile: 0x2A,
+                ..
+            }
+        ));
     }
 
     /// The 32-hex `tileData` of all-zero CHR bytes (the common blank tile) and
@@ -1612,8 +2767,8 @@ mod tests {
         assert_eq!(parsed.pattern_tables, vec!["bank0.png".to_string()]);
         assert_eq!(parsed.tiles.len(), 1);
         let (hash, rule) = &parsed.tiles[0];
-        // The match key is the CRC-32 of the 16 CHR bytes, not a literal field.
-        assert_eq!(*hash, crc32(&[0u8; 16]));
+        // The match key is `chr_ram_key(palette, tileData)` (palette 0F162736).
+        assert_eq!(*hash, chr_ram_key(0x0F16_2736, &[0u8; 16]));
         assert_eq!(rule.image, 0, "bitmap index 0 = first <img>");
         assert_eq!(rule.x, 16);
         assert_eq!(rule.y, 0);
@@ -1634,7 +2789,7 @@ mod tests {
             *b = u8::from_str_radix(&"00000000000000007F3F1F0F07030100"[i * 2..i * 2 + 2], 16)
                 .unwrap();
         }
-        assert_eq!(*hash, crc32(&bytes));
+        assert_eq!(*hash, chr_ram_key(0x0F16_2736, &bytes));
         assert_eq!(rule.x, 80);
         assert_eq!(rule.y, 224);
     }
@@ -1667,15 +2822,17 @@ mod tests {
 
     #[test]
     fn tile_gated_on_unsupported_condition_is_dropped() {
-        // tileNearby is outside RustyNES's PPU telemetry -> the rule is dropped.
+        // An UNKNOWN condition type parses to `None`, so a tile gated on it is
+        // dropped. (Every Mesen condition we recognize — incl. the tileData-hash
+        // and absolute-position forms as of v1.8.9 — is now supported.)
         let src = format!(
-            "<condition>near,tileNearby,0,-8,{ZERO_TILE_DATA},0F123712\n\
-             [near]<tile>0,{ZERO_TILE_DATA},00000000,0,0,1,N\n"
+            "<condition>at,someUnknownCheck,0,0\n\
+             [at]<tile>0,{ZERO_TILE_DATA},00000000,0,0,1,N\n"
         );
         let parsed = parse_hires(&src);
         assert!(
             parsed.tiles.is_empty(),
-            "unsupported condition -> drop rule"
+            "unknown condition -> drop the gated rule"
         );
     }
 
@@ -1909,6 +3066,10 @@ mod tests {
             backgrounds: Vec::new(),
             watched_addresses: Vec::new(),
             audio_decls: Vec::new(),
+            overscan: [0; 4],
+            fallback_tiles: HashMap::new(),
+            disable_original_tiles: false,
+            additions: Vec::new(),
         }
     }
 
@@ -1934,7 +3095,7 @@ mod tests {
                 operand,
                 mask: 0xFF,
             });
-            let got = pack.eval_condition(0, &wm, 0, HdTileSource::default());
+            let got = pack.eval_condition(0, &wm, 0, HdTileSource::default(), SP);
             assert_eq!(got, want, "op {op:?} operand {operand}");
         }
     }
@@ -1950,7 +3111,7 @@ mod tests {
             operand: 0x05,
             mask: 0x0F,
         });
-        assert!(pack.eval_condition(0, &wm, 0, HdTileSource::default()));
+        assert!(pack.eval_condition(0, &wm, 0, HdTileSource::default(), SP));
         // Unmasked it would be 0xA5 != 0x05.
         let pack2 = pack_with_condition(ConditionKind::MemoryCheckConstant {
             addr: 0x20,
@@ -1958,7 +3119,7 @@ mod tests {
             operand: 0x05,
             mask: 0xFF,
         });
-        assert!(!pack2.eval_condition(0, &wm, 0, HdTileSource::default()));
+        assert!(!pack2.eval_condition(0, &wm, 0, HdTileSource::default(), SP));
     }
 
     #[test]
@@ -1972,9 +3133,9 @@ mod tests {
             op: CmpOp::Eq,
             mask: 0xFF,
         });
-        assert!(pack.eval_condition(0, &wm, 0, HdTileSource::default()));
+        assert!(pack.eval_condition(0, &wm, 0, HdTileSource::default(), SP));
         wm.set(0x31, 0x08);
-        assert!(!pack.eval_condition(0, &wm, 0, HdTileSource::default()));
+        assert!(!pack.eval_condition(0, &wm, 0, HdTileSource::default(), SP));
     }
 
     #[test]
@@ -1995,8 +3156,8 @@ mod tests {
             operand: 0x09,
             mask: 0xFF,
         });
-        assert!(cpu.eval_condition(0, &wm, 0, HdTileSource::default()));
-        assert!(ppu.eval_condition(0, &wm, 0, HdTileSource::default()));
+        assert!(cpu.eval_condition(0, &wm, 0, HdTileSource::default(), SP));
+        assert!(ppu.eval_condition(0, &wm, 0, HdTileSource::default(), SP));
     }
 
     #[test]
@@ -2007,11 +3168,11 @@ mod tests {
             offset: 30,
         });
         let wm = WatchedMemory::new();
-        assert!(!pack.eval_condition(0, &wm, 29, HdTileSource::default()));
-        assert!(pack.eval_condition(0, &wm, 30, HdTileSource::default()));
-        assert!(pack.eval_condition(0, &wm, 59, HdTileSource::default()));
-        assert!(!pack.eval_condition(0, &wm, 60, HdTileSource::default())); // wraps to 0
-        assert!(pack.eval_condition(0, &wm, 90, HdTileSource::default())); // 90%60=30
+        assert!(!pack.eval_condition(0, &wm, 29, HdTileSource::default(), SP));
+        assert!(pack.eval_condition(0, &wm, 30, HdTileSource::default(), SP));
+        assert!(pack.eval_condition(0, &wm, 59, HdTileSource::default(), SP));
+        assert!(!pack.eval_condition(0, &wm, 60, HdTileSource::default(), SP)); // wraps to 0
+        assert!(pack.eval_condition(0, &wm, 90, HdTileSource::default(), SP)); // 90%60=30
     }
 
     #[test]
@@ -2025,24 +3186,24 @@ mod tests {
         };
 
         let h = pack_with_condition(ConditionKind::HMirror);
-        assert!(h.eval_condition(0, &wm, 0, rec));
+        assert!(h.eval_condition(0, &wm, 0, rec, SP));
         let v = pack_with_condition(ConditionKind::VMirror);
-        assert!(!v.eval_condition(0, &wm, 0, rec));
+        assert!(!v.eval_condition(0, &wm, 0, rec, SP));
         let sp = pack_with_condition(ConditionKind::SpritePalette { id: 2 });
-        assert!(sp.eval_condition(0, &wm, 0, rec));
+        assert!(sp.eval_condition(0, &wm, 0, rec, SP));
         let sp_no = pack_with_condition(ConditionKind::SpritePalette { id: 1 });
-        assert!(!sp_no.eval_condition(0, &wm, 0, rec));
+        assert!(!sp_no.eval_condition(0, &wm, 0, rec, SP));
 
         // A background pixel never satisfies the sprite-only conditions.
         let bg = HdTileSource::default();
-        assert!(!h.eval_condition(0, &wm, 0, bg));
+        assert!(!h.eval_condition(0, &wm, 0, bg, SP));
     }
 
     #[test]
     fn unresolved_condition_index_fails_closed() {
         let pack = pack_with_condition(ConditionKind::HMirror);
         // Index 5 doesn't exist.
-        assert!(!pack.eval_condition(5, &WatchedMemory::new(), 0, HdTileSource::default()));
+        assert!(!pack.eval_condition(5, &WatchedMemory::new(), 0, HdTileSource::default(), SP));
     }
 
     // ---- end-to-end compositing with gating ----
@@ -2073,13 +3234,21 @@ mod tests {
             is_sprite: false,
             flip_h: false,
             flip_v: false,
+            palette_colors: 0,
+            offset_x: 0,
+            offset_y: 0,
+            chr_tile_index: HD_CHR_RAM,
+            color_mask: 0,
+            sprites: [rustynes_ppu::HdSprite::default(); 4],
+            sprite_count: 0,
         };
         (fb, ts)
     }
 
-    /// CHR bytes (all zero) hash for the `hash_tile` path.
+    /// The CHR-RAM tile key (palette 0, all-zero CHR) the composite computes for
+    /// the test cell above — what a pack rule must be keyed under to match.
     fn zero_chr_hash() -> u32 {
-        crc32(&[0u8; 16])
+        chr_ram_key(0, &[0u8; 16])
     }
 
     #[test]
@@ -2095,6 +3264,7 @@ mod tests {
                 x: 0,
                 y: 0,
                 conditions: vec![0],
+                brightness: BRIGHTNESS_IDENTITY,
             }],
         );
         let pack = HdPack {
@@ -2115,6 +3285,10 @@ mod tests {
             backgrounds: Vec::new(),
             watched_addresses: vec![0x10],
             audio_decls: Vec::new(),
+            overscan: [0; 4],
+            fallback_tiles: HashMap::new(),
+            disable_original_tiles: false,
+            additions: Vec::new(),
         };
         let mut comp = HdCompositor::new(pack);
         let (fb, ts) = one_tile_scene(0x0000);
@@ -2157,9 +3331,17 @@ mod tests {
                 y: 0,
                 priority: 1,
                 conditions: vec![0],
+                brightness: BRIGHTNESS_IDENTITY,
+                blend_mode: BlendMode::Alpha,
+                h_scroll_ratio: 0.0,
+                v_scroll_ratio: 0.0,
             }],
             watched_addresses: vec![0x40],
             audio_decls: Vec::new(),
+            overscan: [0; 4],
+            fallback_tiles: HashMap::new(),
+            disable_original_tiles: false,
+            additions: Vec::new(),
         };
         let mut comp = HdCompositor::new(pack);
         let fb = vec![0u8; (NES_W * NES_H * 4) as usize];
@@ -2192,6 +3374,7 @@ mod tests {
                 x: 0,
                 y: 0,
                 conditions: Vec::new(),
+                brightness: BRIGHTNESS_IDENTITY,
             }],
         );
         let pack = HdPack {
@@ -2203,6 +3386,10 @@ mod tests {
             backgrounds: Vec::new(),
             watched_addresses: Vec::new(),
             audio_decls: Vec::new(),
+            overscan: [0; 4],
+            fallback_tiles: HashMap::new(),
+            disable_original_tiles: false,
+            additions: Vec::new(),
         };
         let mut comp = HdCompositor::new(pack);
         let (fb, ts) = one_tile_scene(0x0000);
@@ -2289,23 +3476,35 @@ mod tests {
         // memoryCheckConstant 16 = hex 0x16 watched address; one background.
         assert_eq!(parsed.backgrounds.len(), 1);
         assert_eq!(parsed.backgrounds[0].priority, 11);
-        // The match keys are the CRC-32 of each tile's 16 CHR bytes.
-        let key0 = parse_tile_data_key("00000000000000007F3F1F0F07030100").unwrap();
-        assert_eq!(parsed.tiles[0].0, key0);
+        // The match key is `chr_ram_key(palette, tileData)` (palette 0F162736).
+        let mut td = [0u8; 16];
+        for (i, b) in td.iter_mut().enumerate() {
+            *b = u8::from_str_radix(&"00000000000000007F3F1F0F07030100"[i * 2..i * 2 + 2], 16)
+                .unwrap();
+        }
+        assert_eq!(parsed.tiles[0].0, chr_ram_key(0x0F16_2736, &td));
     }
 
     #[test]
-    fn real_ver106_tile_data_is_the_match_key() {
-        // The compositor's hash_tile() CRC over a tile's live 16 CHR bytes MUST
-        // equal the loader's key parsed from that same tile's `tileData` hex —
-        // this is the contract that makes a real pack actually substitute.
+    fn loader_key_matches_runtime_key_with_palette() {
+        // The loader key parsed from a `<tile>` line MUST equal the live key the
+        // compositor computes for a cell with the SAME palette + CHR bytes — the
+        // contract that makes a real pack substitute. Palette is part of both.
         let chr: [u8; 16] = [
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7F, 0x3F, 0x1F, 0x0F, 0x07, 0x03,
             0x01, 0x00,
         ];
-        let from_bytes = crc32(&chr);
-        let from_hex = parse_tile_data_key("00000000000000007F3F1F0F07030100").unwrap();
-        assert_eq!(from_bytes, from_hex);
+        let palette = 0x0F16_2736u32;
+        let line = "0,00000000000000007F3F1F0F07030100,0F162736,0,0,1,N";
+        let (loader_key, ..) = parse_tile_fields(line).unwrap();
+        let rec = HdTileSource {
+            chr_addr: 0,
+            palette_colors: palette,
+            ..HdTileSource::default()
+        };
+        let mut chr_peek = |a: u16| chr[usize::from(a & 0x0F)];
+        let (runtime_key, _) = tile_keys(rec, &mut chr_peek);
+        assert_eq!(loader_key, runtime_key);
     }
 
     /// v1.7.1 (#3) — the full runtime contract: a `<tile>` rule whose `tileData`
@@ -2325,8 +3524,9 @@ mod tests {
         for (i, b) in chr_bytes.iter_mut().enumerate() {
             *b = u8::from_str_radix(&TILE_DATA[i * 2..i * 2 + 2], 16).unwrap();
         }
-        let key = parse_tile_data_key(TILE_DATA).unwrap();
-        assert_eq!(key, crc32(&chr_bytes));
+        // The pack rule is keyed exactly as the live cell will be: palette 0
+        // (the one_tile_scene rec) + these CHR bytes.
+        let key = chr_ram_key(0, &chr_bytes);
 
         // Build the pack with a single unconditional rule keyed by that tileData,
         // mapping to a solid-red replacement image.
@@ -2339,6 +3539,7 @@ mod tests {
                 x: 0,
                 y: 0,
                 conditions: Vec::new(),
+                brightness: BRIGHTNESS_IDENTITY,
             }],
         );
         let pack = HdPack {
@@ -2350,6 +3551,10 @@ mod tests {
             backgrounds: Vec::new(),
             watched_addresses: Vec::new(),
             audio_decls: Vec::new(),
+            overscan: [0; 4],
+            fallback_tiles: HashMap::new(),
+            disable_original_tiles: false,
+            additions: Vec::new(),
         };
         let mut comp = HdCompositor::new(pack);
 
@@ -2413,5 +3618,234 @@ mod tests {
         let pack = HdPack::load(std::path::Path::new(&dir)).expect("real pack loads");
         eprintln!("loaded rule_count={}", pack.rule_count());
         assert!(pack.rule_count() > 0);
+    }
+
+    // ---- spatial conditions (v1.8.9) ----
+
+    fn full_tile_source() -> Vec<HdTileSource> {
+        vec![HdTileSource::default(); (NES_W * NES_H) as usize]
+    }
+
+    #[test]
+    fn position_check_x_gates_on_cell_pixel() {
+        // cell_x*8 >= 128  <=>  cell_x >= 16.
+        let pack = pack_with_condition(ConditionKind::PositionCheckX {
+            op: CmpOp::Ge,
+            value: 128,
+        });
+        let rec = HdTileSource::default();
+        // A real per-pixel ctx has a non-empty tile_source (positionCheck fails
+        // closed for the empty-source background sentinel).
+        let ts = full_tile_source();
+        let at = |cx| SpatialCtx {
+            cell_x: cx,
+            cell_y: 0,
+            tile_source: &ts,
+            content_hashes: &[],
+        };
+        assert!(pack.eval_condition(0, &WatchedMemory::new(), 0, rec, at(16)));
+        assert!(!pack.eval_condition(0, &WatchedMemory::new(), 0, rec, at(15)));
+        // Background sentinel (empty source) fails closed.
+        let bg = SpatialCtx {
+            cell_x: 16,
+            cell_y: 0,
+            tile_source: &[],
+            content_hashes: &[],
+        };
+        assert!(!pack.eval_condition(0, &WatchedMemory::new(), 0, rec, bg));
+    }
+
+    #[test]
+    fn position_check_y_gates_on_cell_pixel() {
+        // cell_y*8 < 16  <=>  cell_y < 2.
+        let pack = pack_with_condition(ConditionKind::PositionCheckY {
+            op: CmpOp::Lt,
+            value: 16,
+        });
+        let rec = HdTileSource::default();
+        let ts = full_tile_source();
+        let at = |cy| SpatialCtx {
+            cell_x: 0,
+            cell_y: cy,
+            tile_source: &ts,
+            content_hashes: &[],
+        };
+        assert!(pack.eval_condition(0, &WatchedMemory::new(), 0, rec, at(1)));
+        assert!(!pack.eval_condition(0, &WatchedMemory::new(), 0, rec, at(2)));
+    }
+
+    #[test]
+    fn tile_nearby_matches_neighbour_tile_index() {
+        let mut ts = full_tile_source();
+        // Place a known tile one cell to the right of (0,0): pixel (8, 0).
+        // chr_addr 0x0A0 -> tile index (0x0A0 >> 4) & 0xFF = 0x0A.
+        ts[8] = HdTileSource {
+            chr_addr: 0x0A0,
+            ..HdTileSource::default()
+        };
+        let ctx = SpatialCtx {
+            cell_x: 0,
+            cell_y: 0,
+            tile_source: &ts,
+            content_hashes: &[],
+        };
+        let rec = HdTileSource::default();
+        let hit = pack_with_condition(ConditionKind::TileNearby {
+            dx: 8,
+            dy: 0,
+            tile: 0x0A,
+            palette: None,
+            content: None,
+        });
+        assert!(hit.eval_condition(0, &WatchedMemory::new(), 0, rec, ctx));
+        // Wrong index, and an off-screen neighbour, both fail closed.
+        let miss = pack_with_condition(ConditionKind::TileNearby {
+            dx: 8,
+            dy: 0,
+            tile: 0x0B,
+            palette: None,
+            content: None,
+        });
+        assert!(!miss.eval_condition(0, &WatchedMemory::new(), 0, rec, ctx));
+        let off = pack_with_condition(ConditionKind::TileNearby {
+            dx: -8,
+            dy: 0,
+            tile: 0x0A,
+            palette: None,
+            content: None,
+        });
+        assert!(!off.eval_condition(0, &WatchedMemory::new(), 0, rec, ctx));
+    }
+
+    #[test]
+    fn sprite_nearby_detects_a_sprite_cell() {
+        let pack = pack_with_condition(ConditionKind::SpriteNearby {
+            dx: 8,
+            dy: 0,
+            palette: None,
+        });
+        let rec = HdTileSource::default();
+        let mut sprite_ts = full_tile_source();
+        // A sprite covers this cell (`spriteNearby` matches any covering sprite
+        // via `sprite_count`, even one a BG would occlude).
+        sprite_ts[8] = HdTileSource {
+            chr_addr: 0x010,
+            is_sprite: true,
+            sprite_count: 1,
+            ..HdTileSource::default()
+        };
+        let sprite_ctx = SpatialCtx {
+            cell_x: 0,
+            cell_y: 0,
+            tile_source: &sprite_ts,
+            content_hashes: &[],
+        };
+        assert!(pack.eval_condition(0, &WatchedMemory::new(), 0, rec, sprite_ctx));
+        // A background neighbour (is_sprite = false) does not satisfy it.
+        let mut bg_ts = full_tile_source();
+        bg_ts[8] = HdTileSource {
+            chr_addr: 0x010,
+            is_sprite: false,
+            ..HdTileSource::default()
+        };
+        let bg_ctx = SpatialCtx {
+            cell_x: 0,
+            cell_y: 0,
+            tile_source: &bg_ts,
+            content_hashes: &[],
+        };
+        assert!(!pack.eval_condition(0, &WatchedMemory::new(), 0, rec, bg_ctx));
+    }
+
+    #[test]
+    fn sprite_at_position_sees_occluded_sprite() {
+        // The VISIBLE pixel is BG (a higher-priority background won), but a sprite
+        // covers it — `spriteAtPosition` matches via the multi-sprite telemetry.
+        let mut ts = full_tile_source();
+        ts[16] = HdTileSource {
+            is_sprite: false, // BG won priority at this pixel
+            sprites: [
+                rustynes_ppu::HdSprite {
+                    chr_tile_index: 5,
+                    palette_colors: 0x1234,
+                },
+                rustynes_ppu::HdSprite::default(),
+                rustynes_ppu::HdSprite::default(),
+                rustynes_ppu::HdSprite::default(),
+            ],
+            sprite_count: 1,
+            ..HdTileSource::default()
+        };
+        let ctx = SpatialCtx {
+            cell_x: 0,
+            cell_y: 0,
+            tile_source: &ts,
+            content_hashes: &[],
+        };
+        let rec = HdTileSource::default();
+        let hit = pack_with_condition(ConditionKind::SpriteAtPosition {
+            x: 16,
+            y: 0,
+            palette: Some(0x1234),
+        });
+        assert!(hit.eval_condition(0, &WatchedMemory::new(), 0, rec, ctx));
+        // A different palette doesn't match the covering sprite.
+        let miss = pack_with_condition(ConditionKind::SpriteAtPosition {
+            x: 16,
+            y: 0,
+            palette: Some(0x9999),
+        });
+        assert!(!miss.eval_condition(0, &WatchedMemory::new(), 0, rec, ctx));
+    }
+
+    #[test]
+    fn parses_spatial_condition_types() {
+        assert!(matches!(
+            parse_condition("c,positionCheckX,>=,80").unwrap().kind,
+            ConditionKind::PositionCheckX {
+                op: CmpOp::Ge,
+                value: 80
+            }
+        ));
+        // origin* maps to the plain position check on the cell grid.
+        assert!(matches!(
+            parse_condition("c,originPositionCheckY,<,10").unwrap().kind,
+            ConditionKind::PositionCheckY { .. }
+        ));
+        assert!(matches!(
+            parse_condition("c,tileNearby,8,0,0A").unwrap().kind,
+            ConditionKind::TileNearby {
+                dx: 8,
+                dy: 0,
+                tile: 0x0A,
+                palette: None,
+                content: None,
+            }
+        ));
+        assert!(matches!(
+            parse_condition("c,spriteNearby,-8,0,00,0").unwrap().kind,
+            ConditionKind::SpriteNearby {
+                dx: -8,
+                dy: 0,
+                palette: Some(0)
+            }
+        ));
+        // Absolute-position variants (tileAtPosition / spriteAtPosition) parse.
+        assert!(matches!(
+            parse_condition("c,tileAtPosition,16,32,0A,1").unwrap().kind,
+            ConditionKind::TileAtPosition {
+                x: 16,
+                y: 32,
+                tile: 0x0A,
+                palette: Some(1),
+                content: None,
+            }
+        ));
+        assert!(matches!(
+            parse_condition("c,spriteAtPosition,8,8,00,0,1")
+                .unwrap()
+                .kind,
+            ConditionKind::SpriteAtPosition { x: 8, y: 8, .. }
+        ));
     }
 }

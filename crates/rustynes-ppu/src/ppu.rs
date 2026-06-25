@@ -35,7 +35,7 @@ pub const FRAMEBUFFER_PIXELS: usize = 256 * 240;
 /// the referenced CHR bytes, and substitutes hi-res replacement tiles at blit
 /// time. See `docs/ppu-2c02.md` §HD-pack tile-source export.
 #[cfg(feature = "hd-pack")]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct HdTileSource {
     /// 16-byte CHR tile base address in pattern space (`$0000..=$1FF0`, low
     /// nibble always 0). `tile = (addr >> 4) & 0xFF`, `table = addr & 0x1000`.
@@ -49,6 +49,82 @@ pub struct HdTileSource {
     pub flip_h: bool,
     /// Sprite vertical flip (always `false` for BG pixels).
     pub flip_v: bool,
+    /// Mesen `PaletteColors`: the tile's active palette packed as the HD-pack
+    /// tile-identity key expects. BG = `pr[base+3] | pr[base+2]<<8 |
+    /// pr[base+1]<<16 | pr[0]<<24`; sprite = `0xFF000000 | pr[base+3] |
+    /// pr[base+2]<<8 | pr[base+1]<<16` (top byte `0xFF` = the sprite/BG
+    /// discriminator). Part of the CHR-RAM/CHR-ROM tile key (HdNesPpu.h:119/167).
+    pub palette_colors: u32,
+    /// Which texel COLUMN (0..=7) of the 8x8 tile this screen pixel samples —
+    /// Mesen `OffsetX` (HdNesPpu.h:172). For BG it folds in fine-X scroll
+    /// (`(fineX + (pixel_x & 7)) & 7`); for a sprite it is the column within the
+    /// sprite tile. The HD compositor samples the replacement at this column so
+    /// the high-def tile tracks the scrolled / sprite position pixel-for-pixel
+    /// (flips are applied at sample time). Output-only.
+    pub offset_x: u8,
+    /// Which texel ROW (0..=7) of the 8x8 tile this screen pixel samples — Mesen
+    /// `OffsetY`. BG = fine-Y; sprite = the row within the sprite tile.
+    pub offset_y: u8,
+    /// Mesen CHR-ROM `TileIndex`: the ABSOLUTE post-banking CHR-ROM tile number
+    /// (`chr_phys(addr) / 16`) for a CHR-ROM cart, or [`HD_CHR_RAM`] when CHR is
+    /// RAM (the tile is content-hashed instead). The HD-pack key uses
+    /// `TileIndex ^ PaletteColors` for CHR-ROM and `CalculateHash(palette ++
+    /// data)` for CHR-RAM (Mesen `HdTileKey`). Captured at fetch (the only point
+    /// with mapper access). Output-only.
+    pub chr_tile_index: u32,
+    /// v1.8.9 — the `$2001` grayscale + emphasis bits at this pixel
+    /// (`mask.bits() & 0xE1`: bit 0 = grayscale, bits 5-7 = R/G/B emphasis). The
+    /// HD compositor re-applies them to the replacement texel (Mesen
+    /// `ProcessGrayscaleAndEmphasis`) so HD tiles track grayscale / emphasis fades
+    /// like the base frame, which already has them baked in. Output-only.
+    pub color_mask: u8,
+    /// v1.8.9 — every opaque sprite covering this pixel (up to 4), front-to-back,
+    /// for Mesen `spriteAtPosition` / `spriteNearby` (which match ANY covering
+    /// sprite, including ones a higher-priority BG occludes). `sprites[0]` is the
+    /// front-most. The existing `is_sprite` + tile fields still describe the
+    /// VISIBLE pixel (the winning layer); these add the hidden layers. Output-only.
+    pub sprites: [HdSprite; 4],
+    /// Number of valid entries in [`Self::sprites`] (`0..=4`).
+    pub sprite_count: u8,
+}
+
+/// One sprite covering a pixel, for the HD-pack multi-sprite conditions
+/// (`spriteAtPosition` / `spriteNearby`). Carries just the identity those
+/// conditions match on. Output-only telemetry.
+#[cfg(feature = "hd-pack")]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct HdSprite {
+    /// Absolute CHR-ROM tile index (`chr_phys/16`), or [`HD_CHR_RAM`] for CHR-RAM.
+    pub chr_tile_index: u32,
+    /// The sprite's packed `PaletteColors` (Mesen key form).
+    pub palette_colors: u32,
+}
+
+/// `chr_tile_index` sentinel meaning "CHR is RAM" — the tile is keyed by its 16
+/// CHR bytes (content) rather than by an absolute CHR-ROM tile index.
+#[cfg(feature = "hd-pack")]
+pub const HD_CHR_RAM: u32 = u32::MAX;
+
+#[cfg(feature = "hd-pack")]
+impl Default for HdTileSource {
+    /// A blank record: no tile, and the CHR-RAM sentinel (so an unwritten /
+    /// default record is content-keyed, never mistaken for CHR-ROM tile 0).
+    fn default() -> Self {
+        Self {
+            chr_addr: 0,
+            palette: 0,
+            is_sprite: false,
+            flip_h: false,
+            flip_v: false,
+            palette_colors: 0,
+            offset_x: 0,
+            offset_y: 0,
+            chr_tile_index: HD_CHR_RAM,
+            color_mask: 0,
+            sprites: [HdSprite::default(); 4],
+            sprite_count: 0,
+        }
+    }
 }
 
 /// Sentinel `chr_addr` for a transparent / universal-background HD-pack pixel.
@@ -614,6 +690,27 @@ pub struct Ppu {
     /// consumed by `emit_pixel` for HD-pack sprite substitution.
     #[cfg(feature = "hd-pack")]
     pub(crate) hd_spr_addr: [u16; 8],
+    /// The sprite's ORIGIN screen X per slot (the un-decremented `spr_x`), so
+    /// `emit_pixel` can derive the column within the sprite for HD positioning.
+    #[cfg(feature = "hd-pack")]
+    pub(crate) hd_spr_x: [u8; 8],
+    /// The sprite's flip-baked texel ROW (0..=7) per slot, captured at fetch (the
+    /// `emit_pixel`-time scanline isn't enough to recover it post-shift).
+    #[cfg(feature = "hd-pack")]
+    pub(crate) hd_spr_off_y: [u8; 8],
+    /// Absolute CHR-ROM tile index (`chr_phys/16`, or [`HD_CHR_RAM`]) tracked in
+    /// lock-step with the `hd_bg_addr_*` cascade — the CHR-ROM HD-pack key.
+    #[cfg(feature = "hd-pack")]
+    pub(crate) hd_bg_idx_latch: u32,
+    /// CHR-ROM tile index of the BG tile feeding the shifters' high byte.
+    #[cfg(feature = "hd-pack")]
+    pub(crate) hd_bg_idx_cur: u32,
+    /// CHR-ROM tile index of the next BG tile (shifters' low byte).
+    #[cfg(feature = "hd-pack")]
+    pub(crate) hd_bg_idx_next: u32,
+    /// Absolute CHR-ROM tile index per sprite slot (or [`HD_CHR_RAM`]).
+    #[cfg(feature = "hd-pack")]
+    pub(crate) hd_spr_idx: [u32; 8],
 }
 
 /// v2.0 Phase 6 (`mc-ppu-subpos`): the analog `$2001` PPUMASK write delay.
@@ -767,6 +864,18 @@ impl Ppu {
             hd_bg_addr_next: HD_TILE_NONE,
             #[cfg(feature = "hd-pack")]
             hd_spr_addr: [HD_TILE_NONE; 8],
+            #[cfg(feature = "hd-pack")]
+            hd_spr_x: [0; 8],
+            #[cfg(feature = "hd-pack")]
+            hd_spr_off_y: [0; 8],
+            #[cfg(feature = "hd-pack")]
+            hd_bg_idx_latch: HD_CHR_RAM,
+            #[cfg(feature = "hd-pack")]
+            hd_bg_idx_cur: HD_CHR_RAM,
+            #[cfg(feature = "hd-pack")]
+            hd_bg_idx_next: HD_CHR_RAM,
+            #[cfg(feature = "hd-pack")]
+            hd_spr_idx: [HD_CHR_RAM; 8],
         };
         // Clear status flags that match power-on per nesdev wiki: VBL is
         // unspecified on power-on. We start clear.
@@ -1011,6 +1120,32 @@ impl Ppu {
         &self.index_framebuffer
     }
 
+    /// Pack a background tile's active palette into Mesen's `PaletteColors` key
+    /// form (`pr[base+3] | pr[base+2]<<8 | pr[base+1]<<16 | pr[0]<<24`, with
+    /// `base = $3F00 | group<<2` and `pr[0]` the universal backdrop). Used only
+    /// to key HD-pack tile replacements; output-only.
+    #[cfg(feature = "hd-pack")]
+    fn hd_bg_palette_colors(&self, group: u8) -> u32 {
+        let base = 0x3F00 | (u16::from(group) << 2);
+        let p0 = u32::from(self.read_palette(0x3F00) & 0x3F);
+        let p1 = u32::from(self.read_palette(base | 1) & 0x3F);
+        let p2 = u32::from(self.read_palette(base | 2) & 0x3F);
+        let p3 = u32::from(self.read_palette(base | 3) & 0x3F);
+        p3 | (p2 << 8) | (p1 << 16) | (p0 << 24)
+    }
+
+    /// Pack a sprite tile's palette (`0xFF000000 | pr[base+3] | pr[base+2]<<8 |
+    /// pr[base+1]<<16`, `base = $3F10 | group<<2`; the `0xFF` top byte is the
+    /// sprite/BG discriminator and there is no `pr[0]` term).
+    #[cfg(feature = "hd-pack")]
+    fn hd_sprite_palette_colors(&self, group: u8) -> u32 {
+        let base = 0x3F10 | (u16::from(group) << 2);
+        let p1 = u32::from(self.read_palette(base | 1) & 0x3F);
+        let p2 = u32::from(self.read_palette(base | 2) & 0x3F);
+        let p3 = u32::from(self.read_palette(base | 3) & 0x3F);
+        0xFF00_0000 | p3 | (p2 << 8) | (p1 << 16)
+    }
+
     /// v1.2.0 beta.2 (Workstream C3) — borrow the per-pixel HD-pack
     /// tile-source buffer (256 × 240 [`HdTileSource`] records, parallel to
     /// [`Self::index_framebuffer`]). Each entry names the CHR tile that
@@ -1080,6 +1215,20 @@ impl Ppu {
     #[must_use]
     pub const fn debug_scroll(&self) -> (u16, u16, u8, bool) {
         (self.v, self.t, self.x, self.w)
+    }
+
+    /// v1.8.9 — the frame's background scroll `(x, y)` in NES pixels, decoded
+    /// from the `t` (temp VRAM addr) register + fine-X, including the nametable
+    /// bits (Mesen HD-pack `_scrollX`/`scrollY`). Used by the HD compositor to
+    /// offset parallax `<background>` layers by `scroll * ratio`. A frame-level
+    /// value (the scroll at `t`), not per-scanline. Output-only.
+    #[must_use]
+    pub const fn hd_bg_scroll(&self) -> (i32, i32) {
+        let t = self.t;
+        let x = ((t & 0x1F) << 3) | (self.x as u16) | if t & 0x0400 != 0 { 0x100 } else { 0 };
+        let y =
+            (((t & 0x03E0) >> 2) | ((t & 0x7000) >> 12)) + if t & 0x0800 != 0 { 240 } else { 0 };
+        (x as i32, y as i32)
     }
 
     /// Borrow the 32-byte palette RAM (read-only).
@@ -2341,6 +2490,8 @@ impl Ppu {
         #[cfg(feature = "hd-pack")]
         {
             self.hd_bg_addr_latch = addr & 0x1FF0;
+            // CHR-ROM absolute tile index (offset/16), or the CHR-RAM sentinel.
+            self.hd_bg_idx_latch = bus.chr_phys(addr).map_or(HD_CHR_RAM, |o| o / 16);
         }
     }
 
@@ -2399,6 +2550,7 @@ impl Ppu {
         #[cfg(feature = "hd-pack")]
         {
             self.hd_bg_addr_cur = self.hd_bg_addr_next;
+            self.hd_bg_idx_cur = self.hd_bg_idx_next;
         }
     }
 
@@ -2434,6 +2586,8 @@ impl Ppu {
         {
             self.hd_bg_addr_cur = self.hd_bg_addr_next;
             self.hd_bg_addr_next = self.hd_bg_addr_latch;
+            self.hd_bg_idx_cur = self.hd_bg_idx_next;
+            self.hd_bg_idx_next = self.hd_bg_idx_latch;
         }
     }
 
@@ -2522,6 +2676,13 @@ impl Ppu {
         let mut spr_zero_pixel = false;
         #[cfg(feature = "hd-pack")]
         let mut spr_slot: usize = 0;
+        // v1.8.9 — every opaque sprite covering this pixel (slot indices), for the
+        // HD-pack multi-sprite conditions. Collected but never consulted by the
+        // winner logic below, so the framebuffer stays byte-identical.
+        #[cfg(feature = "hd-pack")]
+        let mut hd_sprites: [usize; 4] = [0; 4];
+        #[cfg(feature = "hd-pack")]
+        let mut hd_spr_n: usize = 0;
         if self.mask.contains(PpuMask::SHOW_SPRITE)
             && (pixel_x >= 8 || self.mask.contains(PpuMask::SHOW_SPRITE_LEFT))
         {
@@ -2542,16 +2703,30 @@ impl Ppu {
                 if val == 0 {
                     continue;
                 }
-                spr_idx = val;
-                spr_pal = self.spr_attr[i] & 0x03;
-                spr_priority_front = (self.spr_attr[i] & 0x20) == 0;
+                // hd-pack: record every opaque sprite covering this pixel.
                 #[cfg(feature = "hd-pack")]
-                {
-                    spr_slot = i;
+                if hd_spr_n < 4 {
+                    hd_sprites[hd_spr_n] = i;
+                    hd_spr_n += 1;
                 }
-                if i == 0 && self.spr_zero_in_line {
-                    spr_zero_pixel = true;
+                // The first opaque sprite (priority order) is the VISIBLE winner;
+                // `spr_idx == 0` gates it so only the first sets the render state.
+                if spr_idx == 0 {
+                    spr_idx = val;
+                    spr_pal = self.spr_attr[i] & 0x03;
+                    spr_priority_front = (self.spr_attr[i] & 0x20) == 0;
+                    #[cfg(feature = "hd-pack")]
+                    {
+                        spr_slot = i;
+                    }
+                    if i == 0 && self.spr_zero_in_line {
+                        spr_zero_pixel = true;
+                    }
                 }
+                // Default build stops at the winner (byte-identical); the hd-pack
+                // build keeps scanning to collect the hidden sprites above (which
+                // never touch the winner state, so the framebuffer is unchanged).
+                #[cfg(not(feature = "hd-pack"))]
                 break;
             }
         }
@@ -2608,22 +2783,67 @@ impl Ppu {
             // (the BG pixel is transparent OR the sprite has front priority) —
             // the same condition the `final_idx` priority match encodes.
             let shows_sprite = spr_idx != 0 && (bg_idx == 0 || spr_priority_front);
+            // Multi-sprite telemetry: the identity of every opaque sprite covering
+            // this pixel (front-to-back), for `spriteAtPosition` / `spriteNearby`.
+            let hd_sprite_list: [HdSprite; 4] = {
+                let mut arr = [HdSprite::default(); 4];
+                for (k, slot) in hd_sprites.iter().take(hd_spr_n).enumerate() {
+                    arr[k] = HdSprite {
+                        chr_tile_index: self.hd_spr_idx[*slot],
+                        palette_colors: self.hd_sprite_palette_colors(self.spr_attr[*slot] & 0x03),
+                    };
+                }
+                arr
+            };
+            let hd_sprite_n = u8::try_from(hd_spr_n).unwrap_or(4);
             let rec = if shows_sprite {
                 let attr = self.spr_attr[spr_slot];
+                let flip_h = (attr & 0x40) != 0;
+                // Column within the sprite (screen X minus the sprite's origin X),
+                // then flip so the captured offset samples the UNFLIPPED
+                // replacement directly (composite is flip-free).
+                let col = pixel_x.wrapping_sub(u16::from(self.hd_spr_x[spr_slot])) & 7;
+                let off_x = if flip_h { 7 - col } else { col };
                 HdTileSource {
                     chr_addr: self.hd_spr_addr[spr_slot],
                     palette: spr_pal,
                     is_sprite: true,
-                    flip_h: (attr & 0x40) != 0,
+                    flip_h,
                     flip_v: (attr & 0x80) != 0,
+                    palette_colors: self.hd_sprite_palette_colors(spr_pal),
+                    offset_x: u8::try_from(off_x).unwrap_or(0),
+                    offset_y: self.hd_spr_off_y[spr_slot], // already flip-baked at fetch
+                    chr_tile_index: self.hd_spr_idx[spr_slot],
+                    color_mask: self.mask.bits() & 0xE1,
+                    sprites: hd_sprite_list,
+                    sprite_count: hd_sprite_n,
                 }
             } else if bg_idx != 0 {
+                // Fine-X picks which of the two shifter tiles this pixel shows +
+                // the column within it (Mesen usePrev / OffsetX); fine-Y is the row.
+                let pos = u16::from(fx) + (pixel_x & 7);
+                let chr = if pos < 8 {
+                    self.hd_bg_addr_cur
+                } else {
+                    self.hd_bg_addr_next
+                };
                 HdTileSource {
-                    chr_addr: self.hd_bg_addr_cur,
+                    chr_addr: chr,
                     palette: bg_pal,
                     is_sprite: false,
                     flip_h: false,
                     flip_v: false,
+                    palette_colors: self.hd_bg_palette_colors(bg_pal),
+                    offset_x: u8::try_from(pos & 7).unwrap_or(0),
+                    offset_y: u8::try_from((self.v >> 12) & 7).unwrap_or(0),
+                    chr_tile_index: if pos < 8 {
+                        self.hd_bg_idx_cur
+                    } else {
+                        self.hd_bg_idx_next
+                    },
+                    color_mask: self.mask.bits() & 0xE1,
+                    sprites: hd_sprite_list,
+                    sprite_count: hd_sprite_n,
                 }
             } else {
                 // Universal background — no tile to substitute.
@@ -2633,6 +2853,13 @@ impl Ppu {
                     is_sprite: false,
                     flip_h: false,
                     flip_v: false,
+                    offset_x: 0,
+                    offset_y: 0,
+                    chr_tile_index: HD_CHR_RAM,
+                    palette_colors: 0,
+                    color_mask: 0,
+                    sprites: hd_sprite_list,
+                    sprite_count: hd_sprite_n,
                 }
             };
             self.hd_tile_source[off >> 2] = rec;
@@ -3379,6 +3606,13 @@ impl Ppu {
             #[cfg(feature = "hd-pack")]
             {
                 self.hd_spr_addr[slot] = addr_lo & 0x1FF0;
+                self.hd_spr_x[slot] = xpos;
+                // `in_tile_row` is the post-flip-V fetch row, i.e. exactly the
+                // (unflipped) replacement texel row to sample.
+                self.hd_spr_off_y[slot] = u8::try_from(in_tile_row & 0x07).unwrap_or(0);
+                // CHR-ROM absolute tile index for the sprite, or the CHR-RAM
+                // sentinel (the common mappers share BG/sprite CHR banking).
+                self.hd_spr_idx[slot] = bus.chr_phys(addr_lo).map_or(HD_CHR_RAM, |o| o / 16);
             }
         } else {
             #[cfg(feature = "hd-pack")]

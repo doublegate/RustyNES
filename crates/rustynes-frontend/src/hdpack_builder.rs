@@ -218,10 +218,11 @@ impl HdPackBuilder {
     /// `<tile>bitmapIndex,tileData,palette,x,y,brightness,defaultTile`.
     ///
     /// `bitmapIndex` is `0` (the single `<img>tiles.png` declaration). `palette`
-    /// is an all-zero placeholder — `RustyNES`'s CRC-of-CHR match key is
-    /// palette-agnostic (a documented subset of Mesen's palette-discriminated
-    /// keying), so the field is emitted for format compliance only. `brightness`
-    /// is `1` (full) and `defaultTile` is `N`.
+    /// is an all-zero placeholder and `defaultTile` is `Y`, which keys each rule
+    /// under the palette WILDCARD: `RustyNES`'s CHR-RAM match key is
+    /// palette-discriminated (`CalculateHash(palette ++ data)`), so a
+    /// palette-agnostic `defaultTile=Y` rule is what matches the running game's
+    /// tile at any palette. `brightness` is `1` (full).
     #[must_use]
     fn manifest_text(&self) -> String {
         use std::fmt::Write as _;
@@ -254,8 +255,13 @@ impl HdPackBuilder {
             for b in tile.chr {
                 let _ = write!(tile_data, "{b:02X}");
             }
-            // bitmapIndex,tileData,palette,x,y,brightness,defaultTile
-            let _ = writeln!(out, "<tile>0,{tile_data},00000000,{x},{y},1,N");
+            // bitmapIndex,tileData,palette,x,y,brightness,defaultTile.
+            // `defaultTile=Y` keys the rule under the palette WILDCARD so it
+            // matches the tile at any palette — RustyNES's CHR-RAM key is
+            // palette-discriminated (`CalculateHash(palette ++ data)`), so a
+            // `defaultTile=N` rule with the `00000000` palette placeholder would
+            // never match the running game's real palette. (v1.8.9.)
+            let _ = writeln!(out, "<tile>0,{tile_data},00000000,{x},{y},1,Y");
         }
         out
     }
@@ -406,7 +412,7 @@ mod tests {
                 "tileData hex"
             );
             assert_eq!(fields[5], "1", "brightness");
-            assert_eq!(fields[6], "N", "defaultTile");
+            assert_eq!(fields[6], "Y", "defaultTile (palette wildcard)");
         }
     }
 

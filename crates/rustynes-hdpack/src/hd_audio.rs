@@ -225,6 +225,14 @@ pub struct HdAudioMixer {
     /// Last observed `$4100` control byte, for edge detection. `None` until the
     /// first frame.
     last_control: Option<u8>,
+    /// v1.8.9 — full HD-audio register file ($4100-$4106) state. BGM/SFX volume
+    /// ($4102/$4103, 0..=255 = silent..full), the selected album ($4104), and the
+    /// last-seen $4105/$4106 track triggers for edge detection.
+    bgm_volume: u8,
+    sfx_volume: u8,
+    album: u8,
+    last_bgm_trigger: Option<u8>,
+    last_sfx_trigger: Option<u8>,
 }
 
 impl HdAudioMixer {
@@ -242,6 +250,11 @@ impl HdAudioMixer {
             bgm: None,
             sfx: Vec::new(),
             last_control: None,
+            bgm_volume: 255,
+            sfx_volume: 255,
+            album: 0,
+            last_bgm_trigger: None,
+            last_sfx_trigger: None,
         })
     }
 
@@ -263,12 +276,16 @@ impl HdAudioMixer {
         self.bgm.is_some()
     }
 
-    /// Find a track index by `(kind, track)` selector (album ignored for the
-    /// common single-album case; album-aware selection is a future extension).
-    fn find_track(&self, kind: TrackKind, track: u8) -> Option<usize> {
-        self.tracks
-            .iter()
-            .position(|t| t.kind == kind && t.track == track && !t.pcm.is_empty())
+    /// Find a track index by `(kind, track)` selector. `album` filters by album
+    /// when `Some` (the full `$4104`-aware path); `None` ignores it (the legacy
+    /// single-`$4100`-selector path).
+    fn find_track(&self, kind: TrackKind, album: Option<u8>, track: u8) -> Option<usize> {
+        self.tracks.iter().position(|t| {
+            t.kind == kind
+                && t.track == track
+                && !t.pcm.is_empty()
+                && album.is_none_or(|a| t.album == a)
+        })
     }
 
     /// Apply a `$4100` control byte, starting / stopping voices on the value's
@@ -295,12 +312,55 @@ impl HdAudioMixer {
             return;
         }
         // Select + (re)start the BGM track whose index matches the low value.
-        if let Some(track) = self.find_track(TrackKind::Bgm, control) {
+        if let Some(track) = self.find_track(TrackKind::Bgm, None, control) {
             self.bgm = Some(ActiveVoice { track, cursor: 0 });
         }
         // Fire a matching one-shot SFX, if declared for the same selector.
-        if let Some(track) = self.find_track(TrackKind::Sfx, control) {
+        if let Some(track) = self.find_track(TrackKind::Sfx, None, control) {
             self.sfx.push(ActiveVoice { track, cursor: 0 });
+        }
+    }
+
+    /// Apply the full Mesen HD-audio register file `$4100..=$4106`, in order:
+    /// `[options, control, bgmVol, sfxVol, album, bgmTrack, sfxTrack]`. BGM/SFX
+    /// (re)start on the *change edge* of `$4105`/`$4106` (album-aware via `$4104`),
+    /// `$4102`/`$4103` scale the mix, and `$4101`'s high bit stops the BGM. When
+    /// `$4101..=$4106` are all zero the mixer falls back to the legacy
+    /// single-`$4100`-selector convention, so packs written either way both drive.
+    pub fn apply_registers(&mut self, regs: [u8; 7]) {
+        // Legacy single-register fallback: a pack that only drives $4100. Take
+        // this BEFORE touching the volumes so a legacy pack keeps full volume
+        // (the all-zero `$4102`/`$4103` here are "unused", not "silent").
+        if regs[1..].iter().all(|&b| b == 0) {
+            self.apply_control(regs[0]);
+            return;
+        }
+
+        self.bgm_volume = regs[2];
+        self.sfx_volume = regs[3];
+        self.album = regs[4];
+
+        // $4101 control: high bit stops the BGM (Mesen convention).
+        if regs[1] & 0x80 != 0 {
+            self.bgm = None;
+        }
+        // $4105 BGM-track trigger (change edge, album-aware).
+        if self.last_bgm_trigger != Some(regs[5]) {
+            self.last_bgm_trigger = Some(regs[5]);
+            if regs[5] != 0
+                && let Some(track) = self.find_track(TrackKind::Bgm, Some(self.album), regs[5])
+            {
+                self.bgm = Some(ActiveVoice { track, cursor: 0 });
+            }
+        }
+        // $4106 SFX-track trigger (change edge, album-aware).
+        if self.last_sfx_trigger != Some(regs[6]) {
+            self.last_sfx_trigger = Some(regs[6]);
+            if regs[6] != 0
+                && let Some(track) = self.find_track(TrackKind::Sfx, Some(self.album), regs[6])
+            {
+                self.sfx.push(ActiveVoice { track, cursor: 0 });
+            }
         }
     }
 
@@ -313,9 +373,24 @@ impl HdAudioMixer {
     /// per-frame audio copy, never the core's synthesis state.
     pub fn mix(&mut self, buf: &mut [f32], control: u8) {
         self.apply_control(control);
+        self.mix_voices(buf);
+    }
+
+    /// Mix after applying the full `$4100..=$4106` HD-audio register file (see
+    /// [`Self::apply_registers`]) — the frontend's full-register path.
+    pub fn mix_registers(&mut self, buf: &mut [f32], regs: [u8; 7]) {
+        self.apply_registers(regs);
+        self.mix_voices(buf);
+    }
+
+    /// Mix the active HD-audio voices into `buf` in place, applying the per-role
+    /// `$4102`/`$4103` volumes, soft-clamped to `[-1, 1]`.
+    fn mix_voices(&mut self, buf: &mut [f32]) {
         if buf.is_empty() {
             return;
         }
+        let bgm_gain = HD_MIX_GAIN * f32::from(self.bgm_volume) / 255.0;
+        let sfx_gain = HD_MIX_GAIN * f32::from(self.sfx_volume) / 255.0;
 
         // --- BGM (looping) ---
         if let Some(voice) = self.bgm.as_mut() {
@@ -327,7 +402,7 @@ impl HdAudioMixer {
                         if voice.cursor >= pcm.len() {
                             voice.cursor = 0; // loop.
                         }
-                        *sample = pcm[voice.cursor].mul_add(HD_MIX_GAIN, *sample);
+                        *sample = pcm[voice.cursor].mul_add(bgm_gain, *sample);
                         voice.cursor += 1;
                     }
                 }
@@ -348,7 +423,7 @@ impl HdAudioMixer {
                 if voice.cursor >= pcm.len() {
                     return false; // exhausted; drop after this fill.
                 }
-                *sample = pcm[voice.cursor].mul_add(HD_MIX_GAIN, *sample);
+                *sample = pcm[voice.cursor].mul_add(sfx_gain, *sample);
                 voice.cursor += 1;
             }
             voice.cursor < pcm.len()
@@ -504,6 +579,42 @@ mod tests {
         m.mix(&mut buf, 1); // same control: no restart; advances cursor by 2.
         // BGM is 0.5 * gain(0.8) = 0.4 per sample.
         assert!((buf[0] - 0.4).abs() < 1e-6);
+    }
+
+    #[test]
+    fn full_register_file_album_and_volume() {
+        // [$4100, $4101, $4102 bgmVol, $4103 sfxVol, $4104 album, $4105 bgmTrk, $4106 sfxTrk]
+        let mut m = test_mixer();
+        m.apply_registers([0, 0, 255, 255, 0, 1, 0]); // album 0, BGM track 1.
+        assert!(m.bgm_playing());
+
+        // Wrong album -> no match (album 1 has no declared tracks).
+        let mut m2 = test_mixer();
+        m2.apply_registers([0, 0, 255, 255, 1, 1, 0]);
+        assert!(!m2.bgm_playing());
+
+        // $4103 SFX volume scales the one-shot ($4106 = track 2 at half volume).
+        let mut m3 = test_mixer();
+        let mut buf = [0.0f32; 2];
+        m3.mix_registers(&mut buf, [0, 0, 0, 128, 0, 0, 2]);
+        let expected = 0.25 * 0.8 * 128.0 / 255.0;
+        assert!((buf[0] - expected).abs() < 1e-5);
+
+        // $4101 high bit stops the BGM.
+        m.apply_registers([0, 0x80, 255, 255, 0, 1, 0]);
+        assert!(!m.bgm_playing());
+    }
+
+    #[test]
+    fn legacy_4100_path_keeps_full_volume() {
+        // Only $4100 drives ($4101..=$4106 == 0): the legacy path must NOT zero
+        // the volumes from the all-zero $4102/$4103 — track 1 plays at full gain.
+        let mut m = test_mixer();
+        let mut buf = [0.0f32; 2];
+        m.mix_registers(&mut buf, [1, 0, 0, 0, 0, 0, 0]);
+        assert!(m.bgm_playing(), "legacy $4100=1 selects BGM track 1");
+        // 0.5 sample * full gain 0.8 = 0.4 (would be 0.0 with the volume bug).
+        assert!((buf[0] - 0.4).abs() < 1e-6, "buf[0] = {}", buf[0]);
     }
 
     #[test]
