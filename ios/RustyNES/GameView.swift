@@ -11,8 +11,10 @@ import SwiftUI
 
 struct GameView: View {
     @EnvironmentObject private var model: AppModel
-    @State private var showingControls = false
     @State private var showingStates = false
+    // The top bar visibility, toggled by the controller's red MENU pill (mirrors the
+    // Android MENU pill toggling `controlsVisible`).
+    @State private var menuVisible = true
 
     var body: some View {
         ZStack {
@@ -27,17 +29,27 @@ struct GameView: View {
                 // On-screen controls: the v1.9.2 true multi-touch NES-001 pad (the
                 // replacement for the v1.9.0 single-DragGesture TouchControlsOverlay).
                 // It feeds the combined touch mask into the model, which ORs it with
-                // the P1 hardware-pad mask.
-                MultiTouchControlPad { mask in
-                    model.setTouchMask(mask)
+                // the P1 hardware-pad mask. Drawn at the Android NES-001 aspect ratio
+                // (123:53, `ControlPadLayout.aspectRatio`), width-driven and anchored
+                // to the bottom safe area so the proportions match the Android render.
+                VStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    MultiTouchControlPad(
+                        onMaskChanged: { mask in model.setTouchMask(mask) },
+                        onLogoTap: { menuVisible.toggle() }
+                    )
+                    .aspectRatio(ControlPadLayout.aspectRatio, contentMode: .fit)
+                    .frame(maxWidth: .infinity)
                 }
-                .ignoresSafeArea()
-                .allowsHitTesting(true)
+                .padding(.horizontal)
+                .padding(.bottom, 8)
             }
 
-            // A small top bar: menu toggle + game title.
+            // A small top bar: menu toggle + game title (toggled by the MENU pill).
             VStack {
-                topBar
+                if menuVisible {
+                    topBar
+                }
                 Spacer()
             }
         }

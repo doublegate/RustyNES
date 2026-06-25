@@ -31,8 +31,17 @@ netplay parity hold). No Rust logic change (only `CARGO_PKG_VERSION` moves
   `DragGesture`, so simultaneous distant presses (D-pad + A/B at once) register.
   The combined `NesButtonMask` flows through the same per-port path; the
   translucent button visuals keep their VoiceOver accessibility labels.
-- **NES-001 controller styling** — the on-screen pad restyled (SwiftUI shapes /
-  gradients, no binary assets) as a tasteful homage to the original NES-001 pad.
+- **NES-001 controller render (Android parity)** — the on-screen pad is a faithful
+  SwiftUI `Canvas` port of the Android `VirtualController` render, sharing its
+  measured geometry + palette: the grey plastic shell + asymmetric bezel, near-black
+  face, the four grey decorative stripes + the "RustyNES" wordmark, the white
+  SELECT/START housing with its black inset frame + pills, the black-cross D-pad
+  (white outline, dark-grey face, outward directional arrows, centre circle), the
+  red "MENU" racetrack pill, and the two white housings with domed radial-gradient
+  A/B buttons — with live pressed-state lighting. The same measured geometry backs
+  both the art and the touch hit-test (they can't desync). Labels ship in a bold
+  monospaced fallback; bundling the Press Start 2P (OFL) face for exact glyph parity
+  with Android is a maintainer asset follow-up.
 - **Responsive iPhone / iPad sizing** — the pad + game view letterbox and scale
   cleanly across portrait / landscape / split-view / Stage Manager (sized from the
   available geometry; larger targets on iPad).
