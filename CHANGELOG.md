@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.9] - 2026-06-25 - "Backlog" (creator tooling, debugger depth, full HD-pack parity, mappers 168→172)
+
 ### Added
 
 - **Mapper breadth 168 → 172 families (beta.6, `sprint13`).** Four more
