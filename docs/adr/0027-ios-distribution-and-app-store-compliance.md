@@ -25,9 +25,12 @@ The landscape (April-2024 onward):
 - **§4.7** (updated April 5, 2024, under EU DMA pressure) explicitly permits
   "retro game console and PC emulator apps" on the App Store for the first time.
   **Delta** (NES-capable) shipped April 17, 2024 and ranked #1; Provenance and
-  RetroArch also ship. NES ROMs carry **no encryption**, so the legal posture is
-  clean post-*Nintendo v. Yuzu* (no DMCA-circumvention question, unlike encrypted
-  later-console BIOS/firmware).
+  RetroArch also ship. NES ROMs carry **no encryption**, so there is **no DMCA
+  anti-circumvention question** post-*Nintendo v. Yuzu* (unlike encrypted
+  later-console BIOS/firmware) — but a ROM image is still a copyrighted work, so
+  legality rests on the user lawfully owning the ROM. That is exactly why the
+  consequence below is a hard **user-sourced-ROMs-only, no-bundling** rule, not a
+  blanket legality claim.
 - **TestFlight** is the interim channel for the whole v1.9.x train: the first
   build gets a full §4.7 review (~1–2 h), later builds usually skip review, builds
   expire after **90 days**, and up to **10,000 external testers** are allowed —
