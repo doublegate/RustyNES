@@ -146,7 +146,10 @@ final class AppModel: ObservableObject {
 
     func saveSlot(_ slot: Int) {
         guard let emulator, let sha = currentEntry?.sha else { return }
-        try? saveStates.write(emulator.saveState(), sha: sha, slot: slot)
+        let blob = emulator.saveState()
+        let frame = emulator.frame()
+        let thumbnail = emulator.snapshotPNG()
+        try? saveStates.write(blob, sha: sha, slot: slot, frame: frame, thumbnailPNG: thumbnail)
     }
 
     func loadSlot(_ slot: Int) {
@@ -159,10 +162,19 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func deleteSlot(_ slot: Int) {
+        guard let sha = currentEntry?.sha else { return }
+        saveStates.clear(sha: sha, slot: slot)
+    }
+
     func slots() -> [SaveSlot] {
         guard let sha = currentEntry?.sha else { return [] }
         return saveStates.slots(for: sha)
     }
+
+    /// Quick-save / quick-load map to slot 1 (the desktop F1/F4 analogue).
+    func quickSave() { saveSlot(SaveStateManager.quickSlot) }
+    func quickLoad() { loadSlot(SaveStateManager.quickSlot) }
 
     // MARK: - App lifecycle (foreground/background pause)
 

@@ -13,6 +13,9 @@ struct ContentView: View {
     @EnvironmentObject private var model: AppModel
     @State private var showingImporter = false
     @State private var showingSettings = false
+    // First-run onboarding gate: set true by "Get Started" / "Skip", never shown
+    // again once true (persisted in UserDefaults).
+    @AppStorage("didOnboard") private var didOnboard = false
 
     var body: some View {
         Group {
@@ -41,6 +44,12 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showingSettings) {
             SettingsView()
+        }
+        .fullScreenCover(isPresented: Binding(
+            get: { !didOnboard },
+            set: { if $0 { didOnboard = false } }
+        )) {
+            OnboardingView { didOnboard = true }
         }
         .alert(
             "RustyNES",

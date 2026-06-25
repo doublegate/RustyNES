@@ -17,16 +17,24 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Video") {
+                Section {
                     Picker("Filter", selection: $model.filter) {
                         ForEach(VideoFilter.allCases) { filter in
                             Text(filter.label).tag(filter)
                         }
                     }
+                } header: {
+                    Text("Video")
+                } footer: {
+                    Text("The picture filter the renderer applies. None is the raw, pixel-exact image.")
                 }
 
-                Section("Audio") {
+                Section {
                     Toggle("Mute", isOn: $model.muted)
+                } header: {
+                    Text("Audio")
+                } footer: {
+                    Text("Silence the emulator without pausing it.")
                 }
 
                 Section {
@@ -44,15 +52,12 @@ struct SettingsView: View {
 
                 ControllersSection(manager: model.gamepads)
 
-                Section("About") {
-                    LabeledContent("Version", value: appVersion)
-                    Text(
-                        "RustyNES is a cycle-accurate NES emulator. It plays only "
-                        + "ROM files you supply from your device. No game content is "
-                        + "bundled or downloaded."
-                    )
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                Section {
+                    NavigationLink {
+                        AboutView()
+                    } label: {
+                        LabeledContent("About", value: AppInfo.marketingVersion)
+                    }
                 }
             }
             .navigationTitle("Settings")
@@ -62,12 +67,6 @@ struct SettingsView: View {
                 }
             }
         }
-    }
-
-    private var appVersion: String {
-        let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.9.0"
-        let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
-        return "\(v) (\(b))"
     }
 }
 

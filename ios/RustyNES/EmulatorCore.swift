@@ -17,6 +17,7 @@
 
 import Foundation
 import QuartzCore
+import UIKit
 
 /// The video filter the renderer applies. Raw values match the gfx FFI's filter
 /// id (0 none, 1 scanlines, 2 CRT, 3 NTSC, 4 Bisqwit).
@@ -56,6 +57,11 @@ final class EmulatorCore {
 
     /// The host sample rate negotiated for this session (the core synthesises for it).
     let sampleRate: UInt32
+
+    /// The most recently presented RGBA8888 framebuffer (256x240), retained so the
+    /// save-state layer can derive a slot thumbnail without re-running a frame. nil
+    /// until the first `tick()`.
+    private(set) var lastFrame: Data?
 
     /// Metadata for the loaded cartridge.
     let info: RomInfo
@@ -121,6 +127,9 @@ final class EmulatorCore {
                 rustynes_ios_gfx_render(gfx, base.assumingMemoryBound(to: UInt8.self), raw.count)
             }
         }
+        // Retain the frame for save-state thumbnail capture (cheap: one COW Data
+        // ref, swapped each tick; touched only here + on the main thread snapshot).
+        lastFrame = frame
 
         // Drain mono f32 audio and enqueue it (unless muted). The sink's DRC
         // absorbs the console-rate <-> device-rate beat.
@@ -174,6 +183,39 @@ final class EmulatorCore {
 
     /// The frame index since power-on.
     func frame() -> UInt64 { controller.frame() }
+
+    /// A PNG of the most-recent framebuffer, for use as a save-slot thumbnail.
+    /// Returns nil before the first frame or if the buffer is not the expected
+    /// 256x240 RGBA8888 size. The NES emits opaque pixels (alpha 255), so the
+    /// straight RGBA bytes render correctly under a premultiplied-last context.
+    func snapshotPNG() -> Data? {
+        guard let frame = lastFrame else { return nil }
+        let w = Int(Self.frameWidth)
+        let h = Int(Self.frameHeight)
+        let bytesPerPixel = 4
+        let bytesPerRow = w * bytesPerPixel
+        guard frame.count >= bytesPerRow * h else { return nil }
+
+        var pixels = frame
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
+        let cgImage: CGImage? = pixels.withUnsafeMutableBytes { raw in
+            guard let base = raw.baseAddress,
+                  let ctx = CGContext(
+                      data: base,
+                      width: w,
+                      height: h,
+                      bitsPerComponent: 8,
+                      bytesPerRow: bytesPerRow,
+                      space: colorSpace,
+                      bitmapInfo: bitmapInfo
+                  )
+            else { return nil }
+            return ctx.makeImage()
+        }
+        guard let cg = cgImage else { return nil }
+        return UIImage(cgImage: cg).pngData()
+    }
 
     // MARK: - Teardown
 

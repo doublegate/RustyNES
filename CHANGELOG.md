@@ -15,6 +15,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.3] - 2026-06-25 - "Workshop-lite" (iOS settings, save-state slots, onboarding)
+
+The iOS settings / persistence / onboarding release — the analogue of Android
+v1.8.3. All SwiftUI-shell work; the Rust core is untouched (only `CARGO_PKG_VERSION`
+moves 1.9.2 → 1.9.3), so the shipped / native / `no_std` / wasm core stays
+**byte-identical** and **AccuracyCoin holds 100% (139/139)**. Interim TestFlight.
+
+### Added
+
+- **Organized Settings sheet** — `SettingsView` refactored into a sectioned native
+  `Form` (Video / Audio / Controls / About), every option grouped + footnoted, all
+  existing settings preserved + persisted, presented from the pill menu.
+- **Save-state depth — 4 slots per ROM** — `SaveStateManager` extended to four
+  slots keyed by the ROM SHA-256 under `saves/<sha256>/` (reusing the `.rns`
+  format), each with metadata (timestamp / frame / thumbnail), behind a SwiftUI
+  Save-State Manager (per-slot Save / Load / Delete).
+- **In-game pill menu** — a compact floating control cluster (Save/Load · Settings ·
+  Reset/Power · Library) toggled by the on-screen MENU pill / top bar, one-handed
+  and auto-hiding.
+- **First-run onboarding + About** — a UserDefaults-gated first-launch flow (the
+  bring-your-own-ROM ownership notice per §4.7, ROM import how-to, controls intro)
+  and an About screen (version, ownership notice, font/core attribution, project
+  link).
+- **iPad multitasking polish** — adaptive presentation for the settings sheet +
+  manager across Split View / Slide Over / Stage Manager; nothing assumes
+  full-screen; non-foreground scenes pause.
+
 ## [1.9.2] - 2026-06-25 - "Input" (iOS multi-touch, controllers, haptics)
 
 The iOS **input** release — the analogue of Android v1.8.2. All work is in the

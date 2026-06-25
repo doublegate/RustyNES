@@ -1,13 +1,17 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v1.9.2 "Input"** (2026-06-25) — the iOS **input** release: a
-> true **multi-touch** on-screen pad (a `UIView` responder over all active touches,
-> replacing the v1.9.0 single `DragGesture` so simultaneous distant presses
-> register), **NES-001** styling, responsive iPhone/iPad sizing, **GameController
-> P1–P4** + a persisted remap model, and optional **Core Haptics** (off by default).
-> All SwiftUI-shell work; the core + the `set_buttons` late-latch path are untouched
-> (only `CARGO_PKG_VERSION` moves 1.9.1 → 1.9.2), so byte-identity + AccuracyCoin
-> 139/139 hold. The preceding **v1.9.1 "Patch"** — a TestFlight **build-refresh
+> **Current release: v1.9.3 "Workshop-lite"** (2026-06-25) — the iOS settings /
+> persistence / onboarding release: an organized native **Settings sheet**, **4
+> save-state slots per ROM** (SHA-256-keyed `.rns`, with a manager UI), an in-game
+> **pill menu**, first-run **onboarding + About** (the bring-your-own-ROM §4.7
+> notice), and iPad multitasking polish. All SwiftUI-shell work; the core is
+> untouched (only `CARGO_PKG_VERSION` moves 1.9.2 → 1.9.3), so byte-identity +
+> AccuracyCoin 139/139 hold. The preceding **v1.9.2 "Input"** — a true
+> **multi-touch** on-screen pad (a `UIView` responder over all active touches,
+> replacing the v1.9.0 single `DragGesture`), a faithful **Android-parity NES-001**
+> render with **glyph-identical bundled fonts**, responsive sizing, **GameController
+> P1–P4** + remap, and optional haptics. The preceding **v1.9.1 "Patch"** — a
+> TestFlight **build-refresh
 > cron** (builds expire 90 days after upload) + a **dormant freemium-gate scaffold**
 > (`ios/RustyNES/Entitlements.swift`, fully unlocked through v1.9.x; the
 > present-but-inert seam the v2.1.0 monetization wiring drops into). The preceding
@@ -114,11 +118,12 @@
 > output widening) · 0021 (File System Access fallback) · 0022 (settings share-link) ·
 > 0023 (i18n string-catalog).
 
-**Current release: v1.9.2 "Input"** (the iOS input release — a true multi-touch pad,
-NES-001 styling, responsive sizing, GameController P1–P4 + remap, optional Core
-Haptics, framed in the blockquote above), on the cycle-accurate v1.0.0 production
-core; the preceding **v1.9.1 "Patch"** was an iOS-line patch (TestFlight build-refresh
-cron + a dormant freemium-gate scaffold) and **v1.9.0 "Sunrise"** the first iOS /
+**Current release: v1.9.3 "Workshop-lite"** (the iOS settings / save-state-slots /
+onboarding release, framed in the blockquote above), on the cycle-accurate v1.0.0
+production core; the preceding **v1.9.2 "Input"** was the iOS input release (true
+multi-touch pad, Android-parity NES-001 render + glyph-identical fonts, GameController
+P1–P4 + remap, haptics), **v1.9.1 "Patch"** an iOS-line patch (TestFlight build-refresh
+cron + a dormant freemium-gate scaffold), and **v1.9.0 "Sunrise"** the first iOS /
 iPadOS release (a native SwiftUI shell + the new `rustynes-ios` Metal/CoreAudio shim);
 on the **v1.8.x "Android"** line **v1.8.9 "Backlog"** was the
 carryover creator-tooling / debugger-depth / full-HD-pack-parity / mapper-breadth
