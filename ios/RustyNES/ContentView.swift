@@ -53,11 +53,13 @@ struct ContentView: View {
         )
     }
 
-    /// The importable UTTypes. The custom .nes/.fds/.nsf types are declared in
-    /// Info.plist (UTImportedTypeDeclarations); resolve them by extension so the
-    /// picker shows them even before the system fully indexes the declarations.
+    /// The importable UTTypes — ONLY the ROM / archive types, never `.data`
+    /// (`public.data` would let the picker select any file and then fail at load).
+    /// The custom .nes/.fds/.nsf types are declared in Info.plist
+    /// (UTImportedTypeDeclarations); resolve them by extension so the picker shows
+    /// them even before the system fully indexes the declarations.
     private var importableTypes: [UTType] {
-        var types: [UTType] = [.data, .zip]
+        var types: [UTType] = [.zip]
         for ext in ["nes", "fds", "nsf"] {
             if let t = UTType(filenameExtension: ext) { types.append(t) }
         }

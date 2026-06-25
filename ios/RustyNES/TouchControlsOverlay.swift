@@ -2,10 +2,15 @@
 //  TouchControlsOverlay.swift
 //
 //  The on-screen NES control pad: a translucent D-pad on the left and the A/B +
-//  Select/Start buttons on the right, overlaid on the game view. Every gesture
-//  recomputes the full pressed-button set from ALL active touches and hands the
-//  combined 8-bit mask to the EmulatorCore, so simultaneous presses and D-pad
-//  diagonals work (as the Android VirtualController does).
+//  Select/Start buttons on the right, overlaid on the game view. A single
+//  container `DragGesture` reports one primary touch location; `hitTest` OR's
+//  together every region that location falls in, so a D-pad *diagonal* (the
+//  finger straddling two adjacent arms) combines, and a face button under the
+//  same finger combines. NOTE: this is NOT full multi-touch — two fingers far
+//  apart (e.g. the D-pad AND the A button simultaneously) are not both seen,
+//  because SwiftUI's `DragGesture` surfaces only the primary touch. A hardware
+//  controller (GameControllerManager) is the path for true simultaneous input;
+//  a `UIView`-backed multi-touch overlay is a documented v1.9.x follow-up.
 //
 //  The mask bit order is NesButton (A=0x01 ... Right=0x80) — the exact order the
 //  core's `Buttons` bitflag uses (see NesButtons.swift). Touch input flows through
@@ -77,7 +82,24 @@ struct TouchControlsOverlay: View {
         )
         .frame(width: b.frame.width, height: b.frame.height)
         .position(x: b.frame.midX, y: b.frame.midY)
-        .accessibilityLabel(b.label)
+        // Use a spoken name (not the visible `label`, which is empty for the
+        // D-pad arms) so VoiceOver announces every control.
+        .accessibilityLabel(accessibilityName(b.button))
+    }
+
+    /// The VoiceOver-spoken name for a control (the visible glyph/label is empty
+    /// for the D-pad arms and terse for the rest).
+    private func accessibilityName(_ button: NesButton) -> String {
+        switch button {
+        case .up: return "D-pad Up"
+        case .down: return "D-pad Down"
+        case .left: return "D-pad Left"
+        case .right: return "D-pad Right"
+        case .a: return "A button"
+        case .b: return "B button"
+        case .select: return "Select"
+        case .start: return "Start"
+        }
     }
 
     // MARK: - Layout

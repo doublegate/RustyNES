@@ -71,8 +71,12 @@ final class ROMLibrary: ObservableObject {
 
     /// Import a ROM from a (possibly security-scoped) URL handed back by the
     /// document picker / share sheet. Copies the bytes into the sandbox keyed by
-    /// SHA-256, registers (or refreshes) the entry, and returns it.
-    /// - Throws: if the URL cannot be read or the bytes are not a usable ROM.
+    /// SHA-256, registers (or refreshes) the entry, and returns it. This does NOT
+    /// validate ROM *content* — it only reads, hashes, and stores the bytes;
+    /// whether the file is a usable ROM is decided later, when `EmulatorCore`
+    /// constructs the `NesController` (which surfaces a load error separately).
+    /// - Throws: if the URL cannot be read or the bytes cannot be written to the
+    ///   sandbox.
     @discardableResult
     func importROM(from url: URL) throws -> LibraryEntry {
         // Files-app URLs are security-scoped; bracket the read.

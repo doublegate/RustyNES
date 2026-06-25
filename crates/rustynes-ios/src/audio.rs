@@ -16,7 +16,7 @@
 //! the core samples are untouched, so the audio oracle and cross-device save
 //! portability are preserved. (A full Hermite DRC resampler, as on the desktop
 //! `resampler.rs`, is a documented v1.9.x follow-up; the foundation ships the
-//! lock-free ring with simple drop-oldest overflow + silence underrun.)
+//! lock-free ring with drop-newest-on-full overflow + silence underrun.)
 
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -27,54 +27,70 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 /// A single-producer / single-consumer lock-free ring of mono `f32` samples.
 ///
 /// The producer ([`AudioSink::push`], called on the emu thread) only advances
-/// `tail` and writes `buf[tail]`; the consumer (the cpal callback) only advances
-/// `head` and reads `buf[head]`. With exactly one of each, no locks are needed —
-/// the `Acquire`/`Release` pairing publishes each side's index to the other.
+/// `tail` and writes the cell at `tail`; the consumer (the cpal callback) only
+/// advances `head` and reads the cell at `head`. With exactly one of each, no
+/// locks are needed — the `Acquire`/`Release` pairing publishes each side's index
+/// to the other.
+///
+/// The buffer is `Box<[UnsafeCell<f32>]>` (a cell *per slot*), NOT
+/// `UnsafeCell<Box<[f32]>>`: the two threads touch *different* cells, and a
+/// per-cell `UnsafeCell` lets each form a raw `*mut f32` to only its own slot.
+/// Forming a `&mut [f32]` / `&[f32]` over the *whole* boxed slice from the two
+/// threads concurrently — as a `UnsafeCell<Box<[f32]>>` would force — is undefined
+/// behaviour under the aliasing model even for disjoint indices, so it is avoided
+/// here.
 struct Ring {
-    buf: UnsafeCell<Box<[f32]>>,
+    buf: Box<[UnsafeCell<f32>]>,
     cap: usize,
-    /// Read index, owned by the consumer (cpal callback).
+    /// Read index, owned exclusively by the consumer (cpal callback).
     head: AtomicUsize,
-    /// Write index, owned by the producer (`push`).
+    /// Write index, owned exclusively by the producer (`push`).
     tail: AtomicUsize,
 }
 
-// SAFETY: SPSC discipline — the producer only ever touches `tail` and the slot it
-// is about to publish; the consumer only ever touches `head` and the slot it is
-// about to consume. The two never alias a live slot simultaneously (a slot is
-// either ahead of `head` and behind `tail` = readable, or not), and the atomic
-// index hand-off (Release on store, Acquire on the opposing load) orders the data
-// write/read against the index publication. So sharing `&Ring` across the two
-// threads is sound despite the `UnsafeCell`.
+// SAFETY: SPSC discipline — the producer only ever writes the cell at `tail` then
+// publishes `tail`; the consumer only ever reads the cell at `head` then publishes
+// `head`. `head` is written ONLY by the consumer and `tail` ONLY by the producer
+// (no shared index is mutated by both — see `push`/`pop`), so there is no atomic
+// race. A slot is read only after `tail` advances past it (Acquire/Release orders
+// the cell write before the index publication) and overwritten only after `head`
+// advances past it, so the two never touch the same cell at once. Per-cell
+// `UnsafeCell` access never forms a reference over the whole buffer. Sharing
+// `&Ring` across the two threads is therefore sound.
 unsafe impl Sync for Ring {}
 unsafe impl Send for Ring {}
 
 impl Ring {
     fn new(cap: usize) -> Self {
         let cap = cap.max(2);
+        let buf = (0..cap)
+            .map(|_| UnsafeCell::new(0.0f32))
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
         Self {
-            buf: UnsafeCell::new(vec![0.0f32; cap].into_boxed_slice()),
+            buf,
             cap,
             head: AtomicUsize::new(0),
             tail: AtomicUsize::new(0),
         }
     }
 
-    /// Producer: enqueue mono samples. When the ring is full the OLDEST queued
-    /// samples are dropped (the consumer's `head` is advanced) so latency stays
-    /// bounded — audio favours freshness over completeness.
+    /// Producer: enqueue mono samples. When the ring is full the INCOMING
+    /// (newest) samples are dropped — the consumer-owned `head` is never written
+    /// here, which is what keeps this a sound SPSC queue (the producer touches
+    /// only `tail`). A full ring means the consumer is behind; dropping incoming
+    /// keeps latency bounded at the buffer depth.
     fn push(&self, samples: &[f32]) {
-        // SAFETY: producer-exclusive access to `buf` slots in `[tail, head)`.
-        let buf = unsafe { &mut *self.buf.get() };
         let mut tail = self.tail.load(Ordering::Relaxed);
         for &s in samples {
-            let next = (tail + 1) % self.cap;
+            let next = if tail + 1 == self.cap { 0 } else { tail + 1 };
             if next == self.head.load(Ordering::Acquire) {
-                // Full: drop the oldest by advancing head one slot.
-                let head = self.head.load(Ordering::Acquire);
-                self.head.store((head + 1) % self.cap, Ordering::Release);
+                break; // full: drop the rest (keep `head` consumer-exclusive)
             }
-            buf[tail] = s;
+            // SAFETY: `next != head`, so the cell at `tail` is a free slot the
+            // consumer is not reading; writing through the per-cell `UnsafeCell`
+            // forms no reference over the whole buffer.
+            unsafe { *self.buf[tail].get() = s }
             tail = next;
         }
         self.tail.store(tail, Ordering::Release);
@@ -86,10 +102,15 @@ impl Ring {
         if head == self.tail.load(Ordering::Acquire) {
             return 0.0; // underrun
         }
-        // SAFETY: consumer-exclusive read of the slot at `head`, which is < `tail`.
-        let buf = unsafe { &*self.buf.get() };
-        let s = buf[head];
-        self.head.store((head + 1) % self.cap, Ordering::Release);
+        // SAFETY: `head != tail` and `tail` was published with Release, so the cell
+        // at `head` holds a value the producer has finished writing and will not
+        // touch again until `head` advances past it. Per-cell read, no whole-buffer
+        // reference.
+        let s = unsafe { *self.buf[head].get() };
+        self.head.store(
+            if head + 1 == self.cap { 0 } else { head + 1 },
+            Ordering::Release,
+        );
         s
     }
 }
