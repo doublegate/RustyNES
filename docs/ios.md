@@ -145,7 +145,15 @@ CI (`.github/workflows/ios.yml`) runs this on `macos-latest`, **gated to tag
 pushes (`v*`) + manual dispatch** because macOS minutes bill ~10x — the host
 `ci.yml` remains the accuracy / determinism authority and is never gated on a
 device toolchain. `fastlane` (`match` read-only signing + `gym` + `pilot`) uploads
-to TestFlight via an App Store Connect API key.
+to TestFlight via an App Store Connect API key. **(v1.9.1)** a `schedule:` cron
+(the 1st of every other month, ~60-day cadence) re-builds + re-uploads so external
+testers don't lapse — TestFlight builds expire 90 days after upload.
+
+A **dormant freemium gate** (`ios/RustyNES/Entitlements.swift`, v1.9.1) is wired
+app-wide but fully unlocked through the v1.9.x train; it is the present-but-inert
+seam the v2.1.0 launch points at the shared `rustynes-monetization` crate (the full
+StoreKit 2 / RevenueCat scaffolding lands at v1.9.8 "Horizon"). Entitlement state
+never reaches the deterministic core.
 
 ## App Store posture (§4.7) — feasible and precedented
 

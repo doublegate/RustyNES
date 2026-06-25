@@ -20,7 +20,12 @@ settings:
   base:
     # The app is iPhone + iPad (device family 1,2 = Universal).
     TARGETED_DEVICE_FAMILY: "1,2"
-    MARKETING_VERSION: "1.9.0"
+    # Keep in step with the workspace version (CHANGELOG / Cargo `[workspace.package]`).
+    MARKETING_VERSION: "1.9.1"
+    # The build (not marketing) number. Each TestFlight upload needs a UNIQUE one;
+    # the fastlane `beta` lane overrides this with the CI run number at build time
+    # (xcargs CURRENT_PROJECT_VERSION), so this checked-in "1" is only the local /
+    # first-build default.
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.0"
     DEVELOPMENT_LANGUAGE: en
