@@ -1,0 +1,12 @@
+# Matchfile — fastlane match (code-signing-identity sync) configuration.
+#
+# match stores the signing certs + provisioning profiles in a private git repo
+# (encrypted with MATCH_PASSWORD). CI consumes them read-only; the maintainer runs
+# `fastlane match appstore` once locally to populate the repo. The repo URL is an
+# env var so it is never checked in.
+git_url(ENV["MATCH_GIT_URL"])
+storage_mode("git")
+type("appstore")
+app_identifier(["com.doublegate.rustynes"])
+# CI must never create/regenerate certs — read-only.
+readonly(true)

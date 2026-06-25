@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+  PrivacyInfo.xcprivacy — the App Privacy manifest.
+
+  RustyNES collects NO data, does NOT track, and contacts no servers in the
+  v1.9.0 MVP, so every collected-data / tracking-domain / accessed-API array is
+  empty.
+
+  NOTE for the on-device dev: the save-state and library code reads file
+  modification dates (attributesOfItem) to label save slots. If a future build
+  trips the "required reason API" check for file-timestamp access, add an
+  NSPrivacyAccessedAPITypes entry with category
+  NSPrivacyAccessedAPICategoryFileTimestamp and reason "C617.1" (accessing
+  timestamps of files inside the app's own container). It is left out here
+  because container-internal access is generally exempt; do not block on it.
+-->
+<dict>
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array/>
+</dict>
+</plist>

@@ -15,6 +15,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-06-25 - "Sunrise" (iOS / iPadOS foundation)
+
+The first **iOS / iPadOS** release — the foundation slice of the v1.9.0 → v1.9.9
+TestFlight train (mirroring the Android v1.8.0 → v1.8.9 arc), built as a native
+**SwiftUI** shell over the byte-identical Rust core via the shared
+`rustynes-mobile` UniFFI bridge. Like every release on the v1.0.0 core it is
+**additive / off-by-default**: the iOS code is a host shell off-device
+(`#[cfg(target_os = "ios")]`), so the shipped / native / `no_std` / wasm builds
+stay **byte-identical** (only the embedded `CARGO_PKG_VERSION` string moves
+1.8.9 → 1.9.0) and **AccuracyCoin holds 100% (139/139)**. Distributed as an
+interim **TestFlight** build; the App Store launch is deferred to v2.1.0 (joint
+with Android, after the v2.0.0 "Timebase" core rewrite).
+
+### Added
+
+- **`crates/rustynes-ios`** — the iOS platform shim (`staticlib`), the Apple
+  analogue of `rustynes-android`: **one core-binding layer (`rustynes-mobile`),
+  two platform shims**. It adds only the hot glue UniFFI cannot express, over a
+  small hand-written C ABI (`include/rustynes_ios.h`):
+  - **Metal rendering (Workstream B)** — `MetalGfx`: a wgpu→Metal blit from the
+    SwiftUI `MTKView`'s `CAMetalLayer` (built from the `UIView` pointer via a
+    raw-window-handle `UiKit` handle — no `objc2` dependency), 8:7-PAR letterbox,
+    reusing the shared `rustynes-gfx-shaders` CRT / LMP88959-NTSC / Bisqwit WGSL
+    pipelines (single source of truth with the desktop frontend + Android).
+  - **CoreAudio (Workstream C)** — `AudioSink`: a cpal CoreAudio output stream
+    fed by a lock-free SPSC ring (mono APU samples → device channels, silence on
+    underrun); `AVAudioSession` is configured Swift-side.
+- **`ios/`** — the SwiftUI app (an XcodeGen `project.yml`): the Metal game view +
+  `CADisplayLink` frame loop, a translucent touch-controls overlay,
+  `GameController` (MFi / Xbox / DualSense) input, `UIDocumentPicker` ROM import
+  (SHA-256-keyed sandbox), settings (video filter / mute / save slots),
+  save-states / rewind / run-ahead / TAS-playback, `ScenePhase` lifecycle, and the
+  `PrivacyInfo.xcprivacy` (no data collected) + §4.7-compliant Info.plist (UTType
+  registration, no bundled ROMs).
+- **Build + ship tooling** — `scripts/build-ios-xcframework.sh` (per-arch
+  `cargo build` → lipo sim → UniFFI Swift bindings → `xcodebuild
+  -create-xcframework` → `xcodegen`), `fastlane/` (match + gym + pilot), and
+  `.github/workflows/ios.yml` (a `macos-latest` TestFlight pipeline gated to tag
+  pushes + manual dispatch, mirroring the PGO/release gating — the host `ci.yml`
+  remains the accuracy authority).
+- **Docs / ADRs** — `docs/ios.md` (the implementation spec) and ADRs **0026** (the
+  iOS host + `rustynes-ios` shim; determinism boundary + no-JIT confirmation) and
+  **0027** (iOS distribution & §4.7 compliance; TestFlight → App Store + AltStore
+  PAL at v2.1.0; the `foss`/App-Store monetization split).
+
+### Notes
+
+- **MVP scope (locked):** Lua, RetroAchievements, and netplay are deferred to the
+  v1.9.x train (the shared bridge already exposes them, so they reduce to SwiftUI
+  chrome). A full Hermite DRC audio resampler is a v1.9.x follow-up; the foundation
+  ships the lock-free ring.
+- **Maintainer-manual carryovers** (cannot be CI-self-certified): an Apple
+  Developer account + bundle ID, the `fastlane match` + App Store Connect signing
+  secrets, app-icon art, and the **on-device TestFlight verification** (the
+  documented interim-TestFlight step). See `ios/README.md`.
+
 ## [1.8.9] - 2026-06-25 - "Backlog" (creator tooling, debugger depth, full HD-pack parity, mappers 168→172)
 
 ### Added

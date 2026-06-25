@@ -1,0 +1,596 @@
+//! iOS wgpu->Metal render path (v1.9.0 "Sunrise", Workstream B).
+//!
+//! A self-contained wgpu blit that draws the 256×240 RGBA `NES` framebuffer onto
+//! the SwiftUI `MTKView`'s `CAMetalLayer` with **8:7-PAR letterboxing**, off the
+//! main thread. This is the byte-for-byte analogue of the Android
+//! `ANativeWindow` path ([`crate::gfx_metal`] mirrors `rustynes-android`'s
+//! `gfx.rs`): only the platform window handle differs — here a `UIView` pointer
+//! (the `MTKView`, a `UIView` subclass whose backing layer is a `CAMetalLayer`),
+//! wrapped in a raw-window-handle 0.6 `UiKit` handle. wgpu reads `view.layer` and
+//! drives Metal; no `objc2` dependency is needed.
+//!
+//! Presentation only — no emulation happens here, so the determinism contract is
+//! untouched. The surface can be lost + recreated (scene background / lock /
+//! Stage-Manager resize) while the core keeps running headless; `render` tolerates
+//! `Lost`/`Outdated` by reconfiguring.
+//!
+//! The CRT / scanline + LMP88959 NTSC + Bisqwit WGSL is SHARED with the desktop
+//! frontend and the Android host (the `rustynes-gfx-shaders` crate), WGSL ->
+//! Metal via wgpu, so the on-screen filter look matches across all three
+//! platforms: the `params` uniform selects None / Scanlines / CRT on one
+//! pipeline (None = a plain letterboxed blit), a second pipeline runs the
+//! LMP88959 NTSC pass when `filter == 3`, and a third runs the Bisqwit composite
+//! (`filter == 4`) from the `R16Uint` palette-index texture.
+
+use core::ffi::c_void;
+use core::ptr::NonNull;
+use raw_window_handle::{RawDisplayHandle, RawWindowHandle, UiKitDisplayHandle, UiKitWindowHandle};
+
+/// NES framebuffer dimensions (must match `rustynes_mobile::{FRAME_WIDTH,_HEIGHT}`).
+const NES_W: u32 = 256;
+const NES_H: u32 = 240;
+/// NES pixel aspect ratio (8:7) → the displayed image is wider than 256:240.
+const PAR_W: f32 = NES_W as f32 * 8.0 / 7.0;
+const IMG_ASPECT: f32 = PAR_W / NES_H as f32;
+
+/// Uniform for the shared CRT/scanline shader (`rustynes_gfx_shaders::CRT_WGSL`):
+/// `rect` letterbox (x,y = scale of the surface; z,w = extra centre offset, 0
+/// here — the shader centres), `crop` overscan (none), and `params` (filter-
+/// specific) selected by the active filter. With `params = (0,0)` the shader is a
+/// plain letterboxed blit (the "None" filter).
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct Uniforms {
+    rect: [f32; 4],
+    crop: [f32; 4],
+    // CRT: (scanline, mask, _, _). NTSC: (saturation, sharpness, tint, phase).
+    params: [f32; 4],
+    // NTSC only: x = PAL mode. Padding for the CRT shader (which reads 12 floats).
+    aux: [f32; 4],
+}
+
+/// Owns the wgpu device/surface/pipeline + the `NES` texture for one
+/// `CAMetalLayer`. Declared field order keeps `surface` dropping before
+/// `_view`, mirroring the Android drop-order discipline (the wgpu surface
+/// releases before the host could free its window handle).
+pub struct MetalGfx {
+    surface: wgpu::Surface<'static>,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    config: wgpu::SurfaceConfiguration,
+    nes_texture: wgpu::Texture,
+    /// R16Uint palette-index texture for the Bisqwit NTSC pass (filter 4).
+    index_texture: wgpu::Texture,
+    uniform_buf: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
+    /// CRT/scanline pipeline (filters None / Scanlines / CRT, selected by `params`).
+    pipeline: wgpu::RenderPipeline,
+    /// LMP88959 NTSC pipeline (filter NTSC).
+    ntsc_pipeline: wgpu::RenderPipeline,
+    /// Bisqwit composite NTSC pipeline (filter 4; reads `index_texture`).
+    bisqwit_bind_group: wgpu::BindGroup,
+    bisqwit_pipeline: wgpu::RenderPipeline,
+    /// Active video filter: 0 = none, 1 = scanlines, 2 = CRT, 3 = NTSC, 4 = Bisqwit.
+    filter: u8,
+    /// The shader `params` for the active filter (meaning is filter-specific:
+    /// Scanlines = [scan]; CRT = [scan, mask]; NTSC = [sat, sharp, tint, phase]).
+    params: [f32; 4],
+    /// The Bisqwit pass's per-frame NTSC colour phase (`videoPhase`), set with the
+    /// index frame.
+    ntsc_phase: u8,
+    /// Reused framebuffer staging buffer — the FFI copies each frame's bytes in
+    /// place instead of allocating a fresh `Vec` per frame. Length is fixed at
+    /// `NES_W*NES_H*4`.
+    frame_buf: Vec<u8>,
+    /// The host-owned `UIView` (`MTKView`) pointer the surface was built from.
+    /// The Swift side retains the view for the surface's whole lifetime; we keep
+    /// it only as a lifetime marker so the field drop-order intent is explicit.
+    _view: *mut c_void,
+}
+
+impl MetalGfx {
+    /// Build the renderer for the `MTKView` (`UIView`) pointer at the surface size
+    /// `width`×`height` (points × `contentScaleFactor`, i.e. drawable pixels).
+    ///
+    /// # Errors
+    /// Returns a description string if `view` is null or wgpu cannot create the
+    /// surface / adapter / device.
+    pub fn new(view: *mut c_void, width: u32, height: u32) -> Result<Self, String> {
+        pollster::block_on(Self::new_async(view, width, height))
+    }
+
+    async fn new_async(view: *mut c_void, width: u32, height: u32) -> Result<Self, String> {
+        let view_nn = NonNull::new(view).ok_or_else(|| "null UIView pointer".to_string())?;
+
+        // Pin the backend to Metal explicitly — this is an iOS Metal surface.
+        let mut idesc = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
+        idesc.backends = wgpu::Backends::METAL;
+        let instance = wgpu::Instance::new(idesc);
+
+        // wgpu 29 has no `CoreAnimationLayer` variant on the public
+        // `SurfaceTargetUnsafe`; use `RawHandle` with a `UiKit` window handle
+        // built from the `UIView` pointer (wgpu-hal reads `view.layer`, the
+        // `CAMetalLayer`). This mirrors the Android `RawHandle` + `AndroidNdk`
+        // path exactly.
+        let raw_window = RawWindowHandle::UiKit(UiKitWindowHandle::new(view_nn.cast()));
+        let target = wgpu::SurfaceTargetUnsafe::RawHandle {
+            raw_display_handle: Some(RawDisplayHandle::UiKit(UiKitDisplayHandle::new())),
+            raw_window_handle: raw_window,
+        };
+        // SAFETY: `view` is a live `UIView` (`MTKView`) retained by the Swift host
+        // for the surface's whole lifetime; it is stored in `self._view` and the
+        // host guarantees it outlives the `Surface` (the renderer is destroyed via
+        // `rustynes_ios_gfx_destroy` before the view is released).
+        let surface = unsafe { instance.create_surface_unsafe(target) }
+            .map_err(|e| format!("create_surface: {e}"))?;
+
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::default(),
+                compatible_surface: Some(&surface),
+                force_fallback_adapter: false,
+            })
+            .await
+            .map_err(|e| format!("request_adapter: {e}"))?;
+
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("rustynes-ios device"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::downlevel_defaults()
+                    .using_resolution(adapter.limits()),
+                memory_hints: wgpu::MemoryHints::Performance,
+                trace: wgpu::Trace::Off,
+                experimental_features: wgpu::ExperimentalFeatures::disabled(),
+            })
+            .await
+            .map_err(|e| format!("request_device: {e}"))?;
+
+        let caps = surface.get_capabilities(&adapter);
+        // Match the NES texture format to the surface format so the sRGB round-trip
+        // is identity (the framebuffer is already in the final colour space).
+        let format = caps
+            .formats
+            .iter()
+            .copied()
+            .find(wgpu::TextureFormat::is_srgb)
+            .unwrap_or(caps.formats[0]);
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format,
+            width: width.max(1),
+            height: height.max(1),
+            present_mode: wgpu::PresentMode::Fifo,
+            desired_maximum_frame_latency: 2,
+            alpha_mode: caps.alpha_modes[0],
+            view_formats: vec![],
+        };
+        surface.configure(&device, &config);
+
+        let nes_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("nes framebuffer"),
+            size: wgpu::Extent3d {
+                width: NES_W,
+                height: NES_H,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let nes_view = nes_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("nes sampler (nearest)"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+
+        // R16Uint palette-index texture for the Bisqwit NTSC pass (filled by
+        // `set_index_frame`; the shader reads it with `textureLoad`, no sampler).
+        let index_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("nes palette-index"),
+            size: wgpu::Extent3d {
+                width: NES_W,
+                height: NES_H,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R16Uint,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let index_view = index_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("letterbox uniforms"),
+            size: core::mem::size_of::<Uniforms>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("blit bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    // The CRT shader reads the uniform in BOTH stages (vertex uses
+                    // `rect` for the letterbox; fragment uses `crop`/`params`).
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("blit bind group"),
+            layout: &bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&nes_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: uniform_buf.as_entire_binding(),
+                },
+            ],
+        });
+
+        // The CRT/scanline WGSL is shared with the desktop frontend + Android.
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("crt/blit shader"),
+            source: wgpu::ShaderSource::Wgsl(rustynes_gfx_shaders::CRT_WGSL.into()),
+        });
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("blit layout"),
+            bind_group_layouts: &[Some(&bgl)],
+            immediate_size: 0,
+        });
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("blit pipeline"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
+        // The LMP88959 NTSC pipeline (also shared), same bind-group layout
+        // (texture + sampler + the 16-float uniform).
+        let ntsc_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("ntsc shader"),
+            source: wgpu::ShaderSource::Wgsl(rustynes_gfx_shaders::NTSC_LMP_WGSL.into()),
+        });
+        let ntsc_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("ntsc pipeline"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &ntsc_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &ntsc_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
+        // The Bisqwit NTSC pipeline reads the R16Uint palette-index texture (via
+        // `textureLoad`, no sampler) + the shared 64-byte uniform — a different
+        // bind-group layout from the CRT/NTSC pipelines.
+        let bisqwit_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("bisqwit bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Uint,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let bisqwit_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("bisqwit bind group"),
+            layout: &bisqwit_bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&index_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: uniform_buf.as_entire_binding(),
+                },
+            ],
+        });
+        let bisqwit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("bisqwit shader"),
+            source: wgpu::ShaderSource::Wgsl(rustynes_gfx_shaders::BISQWIT_WGSL.into()),
+        });
+        let bisqwit_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("bisqwit layout"),
+            bind_group_layouts: &[Some(&bisqwit_bgl)],
+            immediate_size: 0,
+        });
+        let bisqwit_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("bisqwit pipeline"),
+            layout: Some(&bisqwit_layout),
+            vertex: wgpu::VertexState {
+                module: &bisqwit_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &bisqwit_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
+        let gfx = Self {
+            surface,
+            device,
+            queue,
+            config,
+            nes_texture,
+            index_texture,
+            uniform_buf,
+            bind_group,
+            pipeline,
+            ntsc_pipeline,
+            bisqwit_bind_group,
+            bisqwit_pipeline,
+            filter: 0,
+            params: [0.0; 4],
+            ntsc_phase: 0,
+            frame_buf: vec![0u8; (NES_W * NES_H * 4) as usize],
+            _view: view,
+        };
+        gfx.write_uniforms();
+        Ok(gfx)
+    }
+
+    /// Reconfigure the surface for a new drawable size and recompute the letterbox.
+    pub fn resize(&mut self, width: u32, height: u32) {
+        self.config.width = width.max(1);
+        self.config.height = height.max(1);
+        self.surface.configure(&self.device, &self.config);
+        self.write_uniforms();
+    }
+
+    /// Set the active video filter (0 = none, 1 = scanlines, 2 = CRT, 3 = NTSC,
+    /// 4 = Bisqwit) and its shader `params` (filter-specific — see the field doc;
+    /// supplied by the SwiftUI Settings sliders), then rewrite the uniform.
+    pub fn set_filter(&mut self, filter: u8, params: [f32; 4]) {
+        self.filter = filter;
+        self.params = params;
+        self.write_uniforms();
+    }
+
+    fn write_uniforms(&self) {
+        let sw = self.config.width as f32;
+        let sh = self.config.height as f32;
+        let screen_aspect = sw / sh;
+        let (sx, sy) = if screen_aspect > IMG_ASPECT {
+            (IMG_ASPECT / screen_aspect, 1.0) // pillarbox
+        } else {
+            (1.0, screen_aspect / IMG_ASPECT) // letterbox
+        };
+        // For CRT/scanline/LMP-NTSC the `params` come straight from the per-filter
+        // sliders (aux unused). For Bisqwit (filter 4) `params.x` is the per-frame
+        // videoPhase and the picture knobs ride in `aux`.
+        let (params, aux) = if self.filter == 4 {
+            ([f32::from(self.ntsc_phase), 0.0, 0.0, 0.0], self.params)
+        } else {
+            (self.params, [0.0, 0.0, 0.0, 0.0])
+        };
+        let u = Uniforms {
+            rect: [sx, sy, 0.0, 0.0],
+            crop: [1.0, 0.0, 1.0, 0.0],
+            params,
+            aux,
+        };
+        self.queue
+            .write_buffer(&self.uniform_buf, 0, bytemuck::bytes_of(&u));
+    }
+
+    /// The reused frame staging buffer; the FFI copies the incoming RGBA bytes
+    /// into this (no per-frame `Vec`). Length is fixed at `NES_W*NES_H*4`.
+    pub fn frame_buf_mut(&mut self) -> &mut [u8] {
+        &mut self.frame_buf
+    }
+
+    /// Upload one 256×240 palette-index frame (`NES_W*NES_H*2` little-endian `u16`
+    /// bytes — `(emphasis << 6) | colour`) plus the NTSC `phase`, for the Bisqwit
+    /// pass. The host calls this each frame only while the Bisqwit filter is active.
+    pub fn set_index_frame(&mut self, idx_bytes: &[u8], phase: u8) {
+        if idx_bytes.len() != (NES_W * NES_H * 2) as usize {
+            return;
+        }
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.index_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            idx_bytes,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(NES_W * 2),
+                rows_per_image: Some(NES_H),
+            },
+            wgpu::Extent3d {
+                width: NES_W,
+                height: NES_H,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.ntsc_phase = phase;
+        self.write_uniforms();
+    }
+
+    /// Upload the staged 256×240 RGBA frame and present it. Tolerates a transient
+    /// `Lost`/`Outdated` surface by reconfiguring and skipping the frame.
+    pub fn render(&mut self) {
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.nes_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &self.frame_buf,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(NES_W * 4),
+                rows_per_image: Some(NES_H),
+            },
+            wgpu::Extent3d {
+                width: NES_W,
+                height: NES_H,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        // wgpu 29 returns the `CurrentSurfaceTexture` enum, not a `Result`.
+        let frame = match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(t)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+            wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
+                self.surface.configure(&self.device, &self.config);
+                return;
+            }
+            _ => return,
+        };
+        let view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("blit encoder"),
+            });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("blit pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            if self.filter == 4 {
+                // Bisqwit reads its own R16Uint index texture via a distinct bind
+                // group (no nes_texture/sampler).
+                pass.set_pipeline(&self.bisqwit_pipeline);
+                pass.set_bind_group(0, &self.bisqwit_bind_group, &[]);
+            } else {
+                let pipeline = if self.filter == 3 {
+                    &self.ntsc_pipeline
+                } else {
+                    &self.pipeline
+                };
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(0, &self.bind_group, &[]);
+            }
+            pass.draw(0..3, 0..1);
+        }
+        self.queue.submit(Some(encoder.finish()));
+        frame.present();
+    }
+}

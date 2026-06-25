@@ -1,0 +1,52 @@
+[package]
+name = "rustynes-ios"
+description = "iOS / iPadOS platform host for RustyNES: CAMetalLayer -> wgpu-Metal surface + CoreAudio hot glue over the rustynes-mobile bridge (driven from a SwiftUI app)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords = ["nes", "emulator", "ios", "metal", "wgpu"]
+categories = ["emulators"]
+
+# Linked into the SwiftUI app as a static archive (`.a` per Apple arch, packaged
+# into an `.xcframework` by `scripts/build-ios-xcframework.sh`). `staticlib` is
+# the archive the iOS linker pulls; `lib` keeps the host build
+# (`cargo build --workspace`) green so CI lints the crate — every iOS-only entry
+# point is `#[cfg(target_os = "ios")]`, so on a Linux/macOS *host* this compiles
+# to a thin shell with no Metal/CoreAudio symbols. The real archive is produced
+# against the `aarch64-apple-ios` / `aarch64-apple-ios-sim` targets. A Rust
+# `staticlib` bundles all its rlib dependencies (including `rustynes-mobile` and
+# the byte-identical `rustynes-core`), so this one archive carries the whole
+# native side; the UniFFI-generated Swift bindings come from `rustynes-mobile`.
+[lib]
+crate-type = ["lib", "staticlib"]
+
+[lints]
+workspace = true
+
+[dependencies]
+# The shared, byte-identical control surface. UniFFI already gives Swift a
+# generated `NesController` (run_frame / drain_audio / set_buttons / save_state /
+# ...); this crate adds only the hot glue UniFFI can't express (the CAMetalLayer
+# -> wgpu surface handoff and the CoreAudio sink).
+rustynes-mobile.workspace = true
+log = "0.4"
+
+# iOS-target-only host glue. None of this is pulled into the host build, so
+# `cargo build/clippy --workspace` on Linux/macOS/Windows never sees Metal or
+# CoreAudio. The render path (Workstream B) hands the SwiftUI `MTKView`'s
+# `CAMetalLayer` to wgpu and draws the NES picture with an 8:7-PAR letterbox
+# blit; the audio path (Workstream C) opens a cpal CoreAudio output stream fed
+# by a lock-free ring. Same wgpu major (29) + cpal (0.18) the desktop frontend
+# uses; `raw-window-handle` 0.6 builds the `UiKit` handle wgpu needs.
+[target.'cfg(target_os = "ios")'.dependencies]
+wgpu = "29"
+raw-window-handle = "0.6"
+pollster = "0.4"
+bytemuck = { version = "1", features = ["derive"] }
+cpal = "0.18"
+# Shared CRT/scanline/NTSC WGSL (single source of truth with the desktop
+# frontend + the Android host) — WGSL -> Metal via wgpu.
+rustynes-gfx-shaders.workspace = true

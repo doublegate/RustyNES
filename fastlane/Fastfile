@@ -1,0 +1,48 @@
+# Fastfile — the RustyNES iOS build + TestFlight pipeline.
+#
+# The `beta` lane builds the signed app and uploads it to TestFlight. It runs on
+# the tag-gated macOS CI (.github/workflows/ios.yml) and locally. All credentials
+# come from the environment (the App Store Connect API key + match), so nothing
+# secret is checked in.
+#
+# Prereqs (CI provides these; for a local run export them yourself):
+#   ASC_KEY_ID / ASC_ISSUER_ID / ASC_KEY_CONTENT  - App Store Connect API key.
+#   MATCH_GIT_URL / MATCH_PASSWORD                - fastlane match signing repo.
+#   The xcframework + xcodeproj must already be built (run
+#   scripts/build-ios-xcframework.sh first; CI does this before the lane).
+
+default_platform(:ios)
+
+platform :ios do
+  desc "Build and upload a TestFlight beta"
+  lane :beta do
+    # Configure CI-friendly keychain handling (temporary keychain, no UI prompts).
+    setup_ci
+
+    # Authenticate to App Store Connect with the API key (no Apple ID / 2FA).
+    api_key = app_store_connect_api_key(
+      key_id: ENV["ASC_KEY_ID"],
+      issuer_id: ENV["ASC_ISSUER_ID"],
+      key_content: ENV["ASC_KEY_CONTENT"],
+      is_key_content_base64: true
+    )
+
+    # Sync the App Store distribution signing identity (read-only).
+    match(type: "appstore", readonly: true)
+
+    # Build the signed .ipa from the XcodeGen-generated project.
+    build_app(
+      project: "ios/RustyNES.xcodeproj",
+      scheme: "RustyNES",
+      export_method: "app-store"
+    )
+
+    # Push to TestFlight. Skip the (slow) post-upload processing wait so CI
+    # returns promptly; the build appears in TestFlight once Apple finishes
+    # processing it.
+    upload_to_testflight(
+      api_key: api_key,
+      skip_waiting_for_build_processing: true
+    )
+  end
+end
