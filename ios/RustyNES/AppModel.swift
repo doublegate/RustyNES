@@ -58,6 +58,10 @@ final class AppModel: ObservableObject {
         }
         muted = UserDefaults.standard.bool(forKey: "muted")
         hapticsEnabled = UserDefaults.standard.bool(forKey: "hapticsEnabled")
+        // A property's `didSet` does NOT run for in-init assignment, so sync the
+        // haptics engine to the persisted value explicitly (otherwise a stored
+        // `true` would leave the generator unprepared until the user re-toggles).
+        haptics.isEnabled = hapticsEnabled
 
         audioSession.onShouldPause = { [weak self] in self?.emulator?.pause() }
         audioSession.onShouldResume = { [weak self] in

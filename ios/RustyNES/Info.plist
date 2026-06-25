@@ -8,6 +8,15 @@
 	<string>RustyNES</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
+	<!-- v1.9.2: the on-screen controller label fonts, matching the Android pad for
+	     glyph parity. "Nes Controller" (Fonts/NESController.ttf) for the button
+	     labels (SELECT/START/A/B/MENU); "Press Start 2P" (OFL-1.1,
+	     Fonts/PressStart2P.ttf) for the "RustyNES" wordmark. -->
+	<key>UIAppFonts</key>
+	<array>
+		<string>NESController.ttf</string>
+		<string>PressStart2P.ttf</string>
+	</array>
 	<key>CFBundleIdentifier</key>
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key>

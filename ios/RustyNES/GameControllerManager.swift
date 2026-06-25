@@ -25,6 +25,7 @@
 //
 
 import Combine
+import Foundation
 import GameController
 
 // MARK: - Remap model
@@ -204,6 +205,11 @@ final class GameControllerManager: ObservableObject {
     private func connect(_ controller: GCController) {
         guard managed.count < Self.maxPlayers else { return }
         guard !managed.contains(where: { $0.controller === controller }) else { return }
+        // Only manage controllers with a usable extended-gamepad profile (the path
+        // `evaluate` reads). A controller without one (e.g. a Siri Remote) would
+        // otherwise consume a player slot + a Settings row while producing no input,
+        // and could block a real gamepad once `maxPlayers` is reached.
+        guard controller.extendedGamepad != nil else { return }
 
         let port = preferredPort(for: controller)
         let m = Managed(controller: controller, port: port)
@@ -320,11 +326,17 @@ final class GameControllerManager: ObservableObject {
     private func updateTurboTimer() {
         let anyTurbo = managed.contains { $0.turbo.bits != 0 }
         if anyTurbo, turboTimer == nil {
-            turboTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+            // Schedule on the MAIN run loop in `.common` mode (not the implicit
+            // `scheduledTimer`, which binds to the calling thread's run loop in
+            // `.default` mode): GameController handlers can be delivered off-main,
+            // and `.default` mode pauses the turbo pulse during UI tracking.
+            let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
                 guard let self else { return }
                 self.turboPhase.toggle()
                 for m in self.managed where m.turbo.bits != 0 { self.emit(m) }
             }
+            RunLoop.main.add(timer, forMode: .common)
+            turboTimer = timer
         } else if !anyTurbo, turboTimer != nil {
             turboTimer?.invalidate()
             turboTimer = nil

@@ -39,9 +39,13 @@ netplay parity hold). No Rust logic change (only `CARGO_PKG_VERSION` moves
   (white outline, dark-grey face, outward directional arrows, centre circle), the
   red "MENU" racetrack pill, and the two white housings with domed radial-gradient
   A/B buttons — with live pressed-state lighting. The same measured geometry backs
-  both the art and the touch hit-test (they can't desync). Labels ship in a bold
-  monospaced fallback; bundling the Press Start 2P (OFL) face for exact glyph parity
-  with Android is a maintainer asset follow-up.
+  both the art and the touch hit-test (they can't desync). Labels are set in the same
+  two bundled NES-era faces as the Android pad for **glyph-identical parity** — "Nes
+  Controller" (`Fonts/NESController.ttf`) for the buttons (SELECT/START/A/B/MENU) and
+  **Press Start 2P** (OFL-1.1, `Fonts/PressStart2P.ttf`) for the "RustyNES" wordmark —
+  each falling back to a bold monospaced face if unregistered. (The "Nes Controller"
+  file's FontCreator default placeholder copyright, `(c) (your company). 2009. All
+  Rights Reserved`, was stripped on both iOS and Android — it named no real entity.)
 - **Responsive iPhone / iPad sizing** — the pad + game view letterbox and scale
   cleanly across portrait / landscape / split-view / Stage Manager (sized from the
   available geometry; larger targets on iPad).

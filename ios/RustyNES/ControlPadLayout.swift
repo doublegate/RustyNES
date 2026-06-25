@@ -89,9 +89,10 @@ enum ControlPadLayout {
     /// the now-superseded single-touch overlay). The live multi-touch responder uses
     /// `hitTest(_:in:)` (the Android-geometry port) for its generous touch slop.
     ///
-    /// `idiom` is retained for source compatibility; the proportions are now fixed
-    /// fractions (the whole pad is aspect-locked to 123:53 and scales uniformly).
-    static func make(in size: CGSize, idiom: UIUserInterfaceIdiom = .phone) -> [PadButton] {
+    /// The proportions are fixed fractions (the whole pad is aspect-locked to 123:53
+    /// and scales uniformly), so the layout is idiom-independent — both call sites get
+    /// identical regions on iPhone and iPad.
+    static func make(in size: CGSize) -> [PadButton] {
         let w = size.width
         let h = size.height
 

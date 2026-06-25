@@ -34,10 +34,13 @@
 //  the SwiftUI analog of Android's `mutableIntStateOf(mask)` driving the Compose
 //  `Canvas`.
 //
-//  Font: the Android art bundles "Press Start 2P" (the NES-era face) for the labels.
-//  We deliberately do NOT add a binary font file here; the labels use a bold
-//  monospaced system font in NES red. Bundling Press Start 2P (OFL-1.1) for exact
-//  glyph parity is a maintainer asset follow-up (a documented TestFlight carryover).
+//  Font: the labels are set in the same two BUNDLED faces the Android pad uses, for
+//  glyph parity — "Nes Controller" (Fonts/NESController.ttf) for the button labels
+//  (SELECT/START/A/B/MENU) and "Press Start 2P" (OFL-1.1, Fonts/PressStart2P.ttf) for
+//  the "RustyNES" wordmark — both registered via Info.plist UIAppFonts, in NES red,
+//  each falling back to a bold monospaced system face if its font fails to register.
+//  (The "Nes Controller" .ttf's FontCreator default placeholder copyright
+//  "(c) (your company). 2009. All Rights Reserved" was stripped on both platforms.)
 //
 
 import SwiftUI
@@ -283,28 +286,49 @@ private enum NesControllerArt {
             if has(bit) { ctx.fill(Path(ellipseIn: buttonRect), with: .color(NesPad.lit)) }
         }
 
-        // --- Labels. Android draws these in the bundled Press Start 2P face; we use a
-        //     bold MONOSPACED system font in NES red (bundling Press Start 2P (OFL-1.1)
-        //     for exact glyph parity is a maintainer asset follow-up). The label TEXT +
-        //     positions match the Android layout. Font sizes are scaled from Android's
-        //     (whose NES-font caps are 0.439x its textSize) to a system monospaced
-        //     face -- on-device tuning by the iOS dev is expected.
-        func label(_ s: String, _ x: CGFloat, _ y: CGFloat, _ fontSize: CGFloat) {
-            let text = Text(verbatim: s)
-                .font(.system(size: fontSize, weight: .bold, design: .monospaced))
-                .foregroundColor(NesPad.red)
-            ctx.draw(text, at: CGPoint(x: x, y: y), anchor: .center)
+        // --- Labels, in the BUNDLED NES-era faces for glyph parity with the Android
+        //     pad: the button labels (SELECT/START/A/B/MENU) in "Nes Controller" and
+        //     the "RustyNES" wordmark in "Press Start 2P" (OFL-1.1) — exactly the two
+        //     faces and sizes the Android pad uses. In NES red; each falls back to a
+        //     bold monospaced system face if its font failed to register. Sizes are
+        //     Android's textSize fractions of h; exact cap-height centring is an
+        //     on-device tuning detail for the iOS dev.
+        func resolved(_ name: String, _ available: Bool, _ size: CGFloat) -> Font {
+            available ? .custom(name, fixedSize: size)
+                : .system(size: size, weight: .bold, design: .monospaced)
         }
-        label("SELECT", ControlPadLayout.SS_SELX * w, ControlPadLayout.SS_LABELY * h, 0.055 * h)
-        label("START", ControlPadLayout.SS_STAX * w, ControlPadLayout.SS_LABELY * h, 0.055 * h)
+        func label(_ s: String, _ x: CGFloat, _ y: CGFloat, _ font: Font) {
+            ctx.draw(
+                Text(verbatim: s).font(font).foregroundColor(NesPad.red),
+                at: CGPoint(x: x, y: y), anchor: .center
+            )
+        }
+        func nesFont(_ size: CGFloat) -> Font { resolved(nesControllerName, nesControllerAvailable, size) }
+        // Button labels in "Nes Controller" at Android's sizes (SELECT/START 0.087h,
+        // B/A 0.104h, MENU 0.087h).
+        label("SELECT", ControlPadLayout.SS_SELX * w, ControlPadLayout.SS_LABELY * h, nesFont(0.087 * h))
+        label("START", ControlPadLayout.SS_STAX * w, ControlPadLayout.SS_LABELY * h, nesFont(0.087 * h))
         // B/A sit toward the bottom-right of each square (right third), per Android.
-        label("B", ControlPadLayout.AB_BX * w + 0.05 * w, ControlPadLayout.AB_LABELY * h, 0.065 * h)
-        label("A", ControlPadLayout.AB_AX * w + 0.05 * w, ControlPadLayout.AB_LABELY * h, 0.065 * h)
-        label("M E N U", pill.midX, pill.midY, 0.07 * h)
-        // "RustyNES" wordmark, centred on the SELECT/START housing x at the grey stripe.
-        label("RustyNES", ControlPadLayout.SS_CX * w, ControlPadLayout.RUSTY_CY * h, 0.04 * h)
+        label("B", ControlPadLayout.AB_BX * w + 0.05 * w, ControlPadLayout.AB_LABELY * h, nesFont(0.104 * h))
+        label("A", ControlPadLayout.AB_AX * w + 0.05 * w, ControlPadLayout.AB_LABELY * h, nesFont(0.104 * h))
+        label("M E N U", pill.midX, pill.midY, nesFont(0.087 * h))
+        // "RustyNES" wordmark in Press Start 2P, centred on the SELECT/START housing x.
+        label(
+            "RustyNES", ControlPadLayout.SS_CX * w, ControlPadLayout.RUSTY_CY * h,
+            resolved(pressStart2PName, pressStart2PAvailable, 0.06 * h)
+        )
     }
 }
+
+/// The two bundled NES-era label faces (registered via Info.plist `UIAppFonts`),
+/// matching the Android pad for glyph parity: "Nes Controller" for the button labels,
+/// "Press Start 2P" (OFL-1.1) for the wordmark. The family names resolve for both
+/// `Font.custom` and the `UIFont` availability probes; each falls back to a bold
+/// monospaced system face if its font failed to register.
+private let nesControllerName = "Nes Controller"
+private let nesControllerAvailable = UIFont(name: nesControllerName, size: 12) != nil
+private let pressStart2PName = "Press Start 2P"
+private let pressStart2PAvailable = UIFont(name: pressStart2PName, size: 12) != nil
 
 // MARK: - Touch layer (UIKit true multi-touch)
 
