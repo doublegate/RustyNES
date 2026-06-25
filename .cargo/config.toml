@@ -43,3 +43,21 @@ incompatible-rust-versions = "fallback"
 [alias]
 full-run = "run --release -p rustynes-frontend --features full --"
 full-build = "build --release -p rustynes-frontend --features full"
+
+# Resilient crates.io downloads — the permanent fix for the recurring CI flake.
+# Jobs intermittently failed fetching crates with curl errors like
+#   "[16] Error in the HTTP2 framing layer"
+#   "[56] ... OpenSSL SSL_read: ... unexpected eof while reading"
+# a well-known interaction between curl's HTTP/2 multiplexing and the crates.io
+# CDN (Fastly). Forcing HTTP/1.1 (`multiplexing = false`) sidesteps the
+# framing-layer bug, and a higher `net.retry` lets any remaining transient blip
+# self-heal instead of failing the job. This is repo-wide, so it covers EVERY
+# cargo invocation: ci.yml, android.yml's `:app:cargoNdkBuild`, pgo.yml, web.yml,
+# release.yml, and local builds. (Index fetches already use the sparse protocol
+# by default on the pinned 1.96 toolchain; these settings harden the crate
+# *download* step, which is where the failures occurred.)
+[net]
+retry = 10
+
+[http]
+multiplexing = false
