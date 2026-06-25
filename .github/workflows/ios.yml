@@ -30,6 +30,14 @@ jobs:
   testflight:
     name: Build xcframework + TestFlight upload
     runs-on: macos-latest
+    # The unattended SCHEDULED refresh is a clean no-op until signing is
+    # provisioned: the maintainer sets the `IOS_SIGNING_READY` repo variable to
+    # "true" once the App Store Connect key + fastlane match secrets exist, so a
+    # cron run without secrets is SKIPPED (green) rather than failing the upload
+    # step every other month. Tag pushes and manual `workflow_dispatch` always run
+    # (so the build can be exercised on demand); they fail loudly at the upload
+    # step without secrets, which is the desired signal for an explicit trigger.
+    if: ${{ github.event_name != 'schedule' || vars.IOS_SIGNING_READY == 'true' }}
     steps:
       - uses: actions/checkout@v7
 

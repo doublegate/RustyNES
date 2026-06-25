@@ -30,11 +30,19 @@ platform :ios do
     # Sync the App Store distribution signing identity (read-only).
     match(type: "appstore", readonly: true)
 
-    # Build the signed .ipa from the XcodeGen-generated project.
+    # Each TestFlight upload must carry a UNIQUE build number, so the scheduled
+    # build-refresh cadence (every ~60 days) doesn't collide with the previous
+    # upload. Derive it from the monotonic CI run number (falling back to the unix
+    # time for a local build). Marketing version stays the project's MARKETING_VERSION.
+    build_number = ENV["GITHUB_RUN_NUMBER"] || Time.now.to_i.to_s
+
+    # Build the signed .ipa from the XcodeGen-generated project, stamping the build
+    # number via xcargs (CURRENT_PROJECT_VERSION) rather than mutating the project.
     build_app(
       project: "ios/RustyNES.xcodeproj",
       scheme: "RustyNES",
-      export_method: "app-store"
+      export_method: "app-store",
+      xcargs: "CURRENT_PROJECT_VERSION=#{build_number}"
     )
 
     # Push to TestFlight. Skip the (slow) post-upload processing wait so CI

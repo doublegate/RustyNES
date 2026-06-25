@@ -26,7 +26,10 @@ struct RustyNESApp: App {
                 .onOpenURL { url in
                     model.importAndOpen(url)
                 }
-                .task { entitlements.refresh() }
+                // `onAppear` runs on the main actor with a synchronous closure, so
+                // it can call the `@MainActor` `refresh()` directly (no `await`
+                // hop, clean under strict concurrency). Dormant no-op in v1.9.x.
+                .onAppear { entitlements.refresh() }
         }
         .onChange(of: scenePhase) { phase in
             model.handleScenePhase(phase == .active)
