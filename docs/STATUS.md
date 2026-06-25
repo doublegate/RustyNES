@@ -697,8 +697,10 @@ ROM dumps under `tests/roms/external/`, not committed):
 > 87**, **v1.3.0 "Bedrock" to 101**, **v1.4.0 "Fidelity" to 113**, and
 > **v1.5.0 "Lens" to 123**, **v1.6.0 "Studio" to 150** — the J.Y. Company ASIC
 > mappers (m90/209/211) + the UNIF loader + Workstream E's `sprint11` batch — and
-> **v1.7.0 "Forge" to 168** (the current released count, Workstream G1's reusable-ASIC
-> batch). See
+> **v1.7.0 "Forge" to 168** (Workstream G1's reusable-ASIC batch), and
+> **v1.8.9 "Backlog" beta.6 to 172** (the current count; the `sprint13`
+> NTDEC/TXC/BMC multicart batch — m193/204/221/299 — plus a UNIF board-map
+> breadth pass). See
 > `docs/mappers.md` §Mapper coverage matrix +
 > §Mapper accuracy tiering for the full current list. The "out of scope" notes
 > below were the early-engine scoping; they are retained as history and
@@ -710,16 +712,20 @@ v1.2.0** → **101 families at v1.3.0 "Bedrock"** → **113 families at v1.4.0
 "Fidelity"** → **123 families at v1.5.0 "Lens"** → **150 families at v1.6.0
 "Studio"** (the J.Y. Company ASIC sweep 35/90/209/211 +
 Workstream E's `sprint11` batch: MMC3-clones, Sachen 8259 A/B/C, discrete
-multicarts) → **168 families at v1.7.0 "Forge"** (the current released count;
-Workstream G1's `sprint12` reusable-ASIC batch: FK23C, COOLBOY/MINDKIDS,
-Sachen 9602/3011, Waixing 164/253/286, Kaiser 56/142/303/305/306/312, and BMC
-multicarts 261/289/320/336/349), tiered for accuracy honesty:
+multicarts) → **168 families at v1.7.0 "Forge"** (Workstream G1's `sprint12`
+reusable-ASIC batch: FK23C, COOLBOY/MINDKIDS, Sachen 9602/3011, Waixing
+164/253/286, Kaiser 56/142/303/305/306/312, and BMC multicarts
+261/289/320/336/349) → **172 families at v1.8.9 "Backlog" beta.6** (the current
+count; the `sprint13` NTDEC/TXC/BMC multicart batch — NTDEC TC-112 m193, BMC
+2-in-1 m204, NTDEC N625092 m221, TXC/BMC-11160 m299 — plus a UNIF board-map
+breadth pass wiring well-known board aliases to already-implemented families),
+tiered for accuracy honesty:
 
 | Tier | Families | Accuracy-gated? | Evidence |
 |------|----------|-----------------|----------|
 | **Core** | 51 | Yes (AccuracyCoin + commercial oracle) | spec-implemented, oracle-locked |
 | **Curated** (v1.2.0) | 9 | Yes | notable games + decode spec; register-decode unit tests |
-| **BestEffort** (v1.2.0 + v1.3.0 + v1.4.0 + v1.5.0 + v1.6.0 + v1.7.0 G1) | 108 | **No** | reference-ported long-tail; register-decode + save-state unit tests only |
+| **BestEffort** (v1.2.0 + v1.3.0 + v1.4.0 + v1.5.0 + v1.6.0 + v1.7.0 G1 + v1.8.9 beta.6) | 112 | **No** | reference-ported long-tail; register-decode + save-state unit tests only |
 
 A CI-checkable invariant forbids any `BestEffort` mapper from backing an oracle
 ROM (`rustynes-mappers::mapper_tier`; ADR 0011). The remaining tail (unlicensed
