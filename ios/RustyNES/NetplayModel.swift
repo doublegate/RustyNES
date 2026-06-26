@@ -38,9 +38,10 @@ final class NetplayModel: ObservableObject {
     // MARK: - Room-code config (v1.9.7), persisted in UserDefaults; edited in Settings
 
     /// The signaling relay URL (`wss://` / `ws://`). REQUIRED for room-code play. The
-    /// default is a placeholder the maintainer replaces with their deployed relay.
+    /// default is EMPTY so room-code play stays disabled until the user enters a real
+    /// relay URL (the Settings field shows a placeholder as its prompt only).
     @Published var signalingURL: String = UserDefaults.standard.string(forKey: Keys.signaling)
-        ?? "wss://relay.example.com" {
+        ?? "" {
         didSet { UserDefaults.standard.set(signalingURL, forKey: Keys.signaling) }
     }
     /// Optional STUN servers, one per line (`host:port`). Empty -> the bridge defaults.
@@ -55,9 +56,10 @@ final class NetplayModel: ObservableObject {
     @Published var turnUser: String = UserDefaults.standard.string(forKey: Keys.turnUser) ?? "" {
         didSet { UserDefaults.standard.set(turnUser, forKey: Keys.turnUser) }
     }
-    /// The TURN shared secret / password (required alongside `turnURL`).
-    @Published var turnSecret: String = UserDefaults.standard.string(forKey: Keys.turnSecret) ?? "" {
-        didSet { UserDefaults.standard.set(turnSecret, forKey: Keys.turnSecret) }
+    /// The TURN shared secret / password (required alongside `turnURL`). It is a
+    /// credential, so it lives in the Keychain (NOT UserDefaults), like the RA token.
+    @Published var turnSecret: String = Keychain.get(account: Keys.turnSecret) ?? "" {
+        didSet { Keychain.set(turnSecret, account: Keys.turnSecret) }
     }
 
     private enum Keys {
@@ -70,7 +72,9 @@ final class NetplayModel: ObservableObject {
 
     /// Whether the signaling URL is configured well enough to attempt room-code play.
     var signalingConfigured: Bool {
-        let u = signalingURL.trimmingCharacters(in: .whitespaces)
+        // Trim newlines too so a trailing CR/LF from a copy-pasted URL doesn't slip
+        // through (and later break the connection). `ws://` stays valid for LAN relays.
+        let u = signalingURL.trimmingCharacters(in: .whitespacesAndNewlines)
         return u.hasPrefix("wss://") || u.hasPrefix("ws://")
     }
 
@@ -171,13 +175,15 @@ final class NetplayModel: ObservableObject {
     /// URL, an optional newline-separated STUN list (empty -> bridge defaults), and the
     /// optional TURN trio (all three required together, else the relay path is off).
     private func makeNetConfig() -> NpNetConfig {
+        // Split on any newline (so Windows `\r\n` copy-paste parses) and trim each entry
+        // of surrounding whitespace AND newlines (a stray `\r`).
         let stun = stunServers
-            .split(whereSeparator: { $0 == "\n" || $0 == "," })
-            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
-        let url = turnURL.trimmingCharacters(in: .whitespaces)
-        let user = turnUser.trimmingCharacters(in: .whitespaces)
-        let secret = turnSecret.trimmingCharacters(in: .whitespaces)
+        let url = turnURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let user = turnUser.trimmingCharacters(in: .whitespacesAndNewlines)
+        let secret = turnSecret.trimmingCharacters(in: .whitespacesAndNewlines)
         // Only configure TURN when the full trio is present; otherwise leave it nil so
         // the bridge runs punch-or-fail (cone-NAT only).
         let turnComplete = !url.isEmpty && !user.isEmpty && !secret.isEmpty
@@ -186,7 +192,7 @@ final class NetplayModel: ObservableObject {
             turnUrl: turnComplete ? url : nil,
             turnUser: turnComplete ? user : nil,
             turnSecret: turnComplete ? secret : nil,
-            signalingUrl: signalingURL.trimmingCharacters(in: .whitespaces)
+            signalingUrl: signalingURL.trimmingCharacters(in: .whitespacesAndNewlines)
         )
     }
 

@@ -143,28 +143,48 @@ final class CloudSaveStateSync: ObservableObject {
         guard enabled else { return }
         setState(slot, .uploading)
         Task {
-            let ok = await performUpload(sha: sha, slot: slot)
+            let uploadedAt = await performUpload(sha: sha, slot: slot)
             // Only reflect the result if the game hasn't changed underneath us.
             guard currentSha == sha else { return }
-            setState(slot, ok ? .synced : .localOnly)
+            // If the user cleared or overwrote the slot while the upload was in flight,
+            // don't mark a now-absent (or changed) slot as synced/localOnly.
+            let meta = saveStates.slot(sha: sha, index: slot)
+            guard !meta.isEmpty else { states[slot] = nil; return }
+            if let uploadedAt, (meta.savedAt ?? .distantPast) == uploadedAt {
+                setState(slot, .synced)
+            } else {
+                setState(slot, .localOnly)
+            }
         }
     }
 
-    private func performUpload(sha: String, slot: Int) async -> Bool {
-        guard accountAvailable else { return false }
+    /// Returns the `savedAt` timestamp that was uploaded on success (so the caller can
+    /// confirm the local slot still matches), or `nil` on failure / no-op.
+    private func performUpload(sha: String, slot: Int) async -> Date? {
+        // Re-check the account live rather than trusting a possibly-stale cached flag:
+        // the initial async account check may not have finished when a save fires, which
+        // would wrongly skip the upload and leave the slot `localOnly`.
+        let status = try? await CKContainer.default().accountStatus()
+        accountAvailable = (status == .available)
+        guard accountAvailable else { return nil }
         let urls = saveStates.fileURLs(sha: sha, slot: slot)
         let meta = saveStates.slot(sha: sha, index: slot)
-        guard !meta.isEmpty else { return false }
+        guard !meta.isEmpty else { return nil }
 
+        let savedAt = meta.savedAt ?? Date()
         let record = CKRecord(recordType: Self.recordType, recordID: recordID(sha: sha, slot: slot))
         // String / Int64 / Date all conform to CKRecordValueProtocol, so assign directly.
         record["sha"] = sha
         record["slot"] = Int64(slot)
-        record["savedAt"] = meta.savedAt ?? Date()
+        record["savedAt"] = savedAt
         record["frame"] = Int64(meta.frame ?? 0)
         record["blob"] = CKAsset(fileURL: urls.state)
         if FileManager.default.fileExists(atPath: urls.thumbnail.path) {
             record["thumbnail"] = CKAsset(fileURL: urls.thumbnail)
+        } else {
+            // No local thumbnail: clear the field so a stale remote thumbnail doesn't
+            // persist after a thumbnail-less re-save (the record overwrites all keys).
+            record["thumbnail"] = nil
         }
 
         do {
@@ -173,9 +193,9 @@ final class CloudSaveStateSync: ObservableObject {
             _ = try await Self.database.modifyRecords(
                 saving: [record], deleting: [], savePolicy: .allKeys, atomically: true
             )
-            return true
+            return savedAt
         } catch {
-            return false
+            return nil
         }
     }
 
@@ -215,6 +235,9 @@ final class CloudSaveStateSync: ObservableObject {
         }
 
         for (id, result) in results {
+            // The user may have switched games while the fetch was in flight; drop the
+            // rest so we don't write files for a game we already navigated away from.
+            guard currentSha == sha else { return }
             guard let slot = slot(from: id) else { continue }
             switch result {
             case .success(let record):
@@ -233,11 +256,16 @@ final class CloudSaveStateSync: ObservableObject {
     }
 
     private func reconcileSlot(sha: String, slot: Int, record: CKRecord) async {
+        let localMeta = saveStates.slot(sha: sha, index: slot)
+        let localSlotMissing = localMeta.isEmpty
         let remoteSaved = (record["savedAt"] as? Date) ?? .distantPast
-        let localSaved = saveStates.slot(sha: sha, index: slot).savedAt ?? .distantPast
+        let localSaved = localMeta.savedAt ?? .distantPast
 
-        // Local copy is current (newer or equal) -- already uploaded; nothing to pull.
-        guard remoteSaved > localSaved else {
+        // Pull when there is NO local slot at all (a valid remote slot must seed an empty
+        // device regardless of its timestamp -- both may be `.distantPast`), and
+        // otherwise only when the remote copy is strictly newer. A current/newer local
+        // copy was already uploaded at save time; nothing to pull.
+        guard localSlotMissing || remoteSaved > localSaved else {
             if currentSha == sha { setState(slot, .synced) }
             return
         }

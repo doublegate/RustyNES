@@ -168,7 +168,7 @@ struct NetplayView: View {
                 Label("Join room", systemImage: "person.2.fill")
             }
             .disabled(!netplay.signalingConfigured
-                || joinRoomCode.trimmingCharacters(in: .whitespaces).isEmpty)
+                || joinRoomCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         } header: {
             Text("Join")
         } footer: {

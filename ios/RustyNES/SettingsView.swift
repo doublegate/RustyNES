@@ -269,7 +269,7 @@ private struct NetplaySettingsView: View {
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
                 if !netplay.signalingConfigured {
-                    Label("Enter a wss:// or ws:// relay URL.", systemImage: "exclamationmark.triangle")
+                    Label("Enter a relay URL (wss://; ws:// only for local testing).", systemImage: "exclamationmark.triangle")
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
