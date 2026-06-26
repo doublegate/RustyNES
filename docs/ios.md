@@ -139,6 +139,50 @@ AVFoundation / UIKit, and includes the generated `Generated/RustyNESCore.swift`
   pauses the loop / audio and drops the drawable on background, rebuilding on
   foreground. `PrivacyInfo.xcprivacy` declares no data collected.
 
+### Creator / power tools (v1.9.9 "Workshop")
+
+The final iOS TestFlight release before the v2.0.0 core rewrite adds a
+creator/power-tools set. Every piece is **additive / opt-in** and forwards to
+existing core APIs through additive `rustynes-mobile` bridge functions, so with
+the tools unused the app behaves as v1.9.8 and AccuracyCoin holds 139/139 (the
+determinism contract is untouched).
+
+- **Cheats (`CheatsView`, in-game pill menu):** add / remove / clear / list Game
+  Genie codes (the core's own cheat engine applies them live to PRG reads,
+  exactly like the desktop) plus a raw-RAM editor that pokes / peeks a CPU-RAM
+  byte (`$0000-$1FFF`) through the existing `poke_ram` / side-effect-free `peek`
+  paths. No per-frame mutation is added, so an empty cheat set is byte-identical.
+- **Read-only debugger inspector (`DebuggerView`), gated OFF the App-Store
+  build** via `BuildChannel` (the FOSS / TestFlight channel only, ADR 0027): a
+  CPU register view (`cpu_snapshot`), a disassembly around the PC
+  (`rustynes-cpu`'s `disassemble_at` over a bounded byte window), and a CPU-RAM
+  hex view (`peek`). All observational (never advances / mutates the core); a
+  single "Step" advances exactly one frame while the inspector holds the emulator
+  paused. Optional `.sym` / `.mlb` / `.nl` symbol files annotate the disassembly
+  (parsed host-side in `SymbolMap.swift` — the core exposes no symbol API and the
+  mobile bridge does not depend on the frontend's parser).
+- **Touch TAStudio piano-roll (`TAStudioView`):** a frame-by-frame P1 input table
+  (8 button columns). "Play" injects the table one mask per frame through the
+  existing bridge (`setButtons` + `runFrame`, deterministic); "Save .rnm" arms
+  the core's recorder (`movie_record_from_power_on`) and replays the table so the
+  captured input is written to a real native `.rnm` movie. No movie-editing API
+  is added to the core.
+- **Foreign movie import (`MoviePanelView` + `UIDocumentPicker`):** FCEUX `.fm2`,
+  BizHawk `.bk2`, Nestopia `.fcm`, Famtasia `.fmv`, and VirtuaNES `.vmv` are
+  transcoded to a native `.rnm` for the loaded game (the bridge calls the core's
+  `import_fm2` / `import_bk2` / `import_fcm` / `import_fmv` / `import_vmv`,
+  serialising the result), then saved + played via the existing movie surface.
+  Malformed files error gracefully (bounds-checked; the `.bk2` ZIP member
+  extraction caps member sizes), never crash.
+- **Host audio-depth DSP (Settings -> "Audio depth"):** an **output-only** stereo
+  enrichment stage (5-band EQ, pan, Schroeder reverb, headphone crossfeed) ported
+  from the desktop frontend, applied in the CoreAudio callback *after* the core's
+  mono master is drained — never in the synthesis. It lives in the host-safe
+  `crates/rustynes-ios/src/audio_dsp.rs` (unit-tested on the host build) and is
+  wired into the cpal sink (`audio.rs`) over a lock-free atomic config mailbox. A
+  disabled / flat / centered config is a **bit-exact passthrough**, so the audio
+  oracle and save portability are preserved.
+
 ## Build pipeline (`scripts/build-ios-xcframework.sh`)
 
 `rustup target add` the iOS targets -> `cargo build --release -p rustynes-ios`
@@ -177,16 +221,29 @@ with Android, after the v2.0.0 "Timebase" core rewrite) live in
 `docs/adr/0027-ios-distribution-and-app-store-compliance.md` and
 `to-dos/plans/v2.0.x-mobile-finalization-plan.md`.
 
-## v1.9.0 status + carryovers
+## v1.9.x status + carryovers
 
-v1.9.0 "Sunrise" lands the **foundation**: the `rustynes-ios` shim, the SwiftUI
+v1.9.0 "Sunrise" landed the **foundation**: the `rustynes-ios` shim, the SwiftUI
 app, the xcframework build + tag-gated macOS CI + fastlane, and the MVP feature
 set (core + Metal video + CoreAudio + touch / controller + save-states / rewind /
-run-ahead / TAS-playback). **Lua / RetroAchievements / netplay are deferred** to
-the v1.9.x train (the shared bridge already exposes them, so they reduce to
-SwiftUI chrome — see the train plan). The host gates (fmt / clippy `-D warnings` /
-rustdoc / `no_std` / wasm) stay green and AccuracyCoin holds 139/139, because the
-crate is a host shell off-device.
+run-ahead / TAS-playback). The v1.9.x train then shipped the deferred connectivity
+and scripting: **Lua scripting (v1.9.6), RetroAchievements (v1.9.6), and netplay
+(v1.9.6/v1.9.7)** are all live (the shared bridge already exposed them, so each
+reduced to SwiftUI chrome), plus iCloud save-state sync (v1.9.7) and the
+Google-Play-parity polish (v1.9.8). The current line is **v1.9.9 "Workshop"** —
+the creator / power-tools release (read-only debugger inspector, raw-RAM editor,
+Game Genie codes, foreign-movie import `.fm2`/`.bk2`/`.fcm`/`.fmv`/`.vmv`, the
+TAStudio piano-roll, custom palettes, HD-packs, and the audio-depth controls). The
+host gates (fmt / clippy `-D warnings` / rustdoc / `no_std` / wasm) stay green and
+AccuracyCoin holds 139/139, because the crate is a host shell off-device.
+
+**Explicitly NOT on the iOS bridge (post-v2.0.0 carryovers).** The mobile bridge is
+iNES / NES 2.0-only, so **FDS disk images (`.fds`) and NSF music files (`.nsf`)
+cannot be loaded** — the picker + Info.plist advertise only `.nes` (+ `.zip`), and
+there is correspondingly **no NSF player**. The native desktop **20-band EQ** (the
+mobile audio-depth panel ships a 5-band EQ) and the debugger's **`.dbg` ca65/cc65
+source maps** are likewise deferred to the post-v2.0.0 mobile re-port. These land
+when the iOS app re-ports onto the v2.0.0 "Timebase" core.
 
 **Maintainer-manual carryovers** (cannot be CI-self-certified, mirroring the
 Android line): an Apple Developer Program account + bundle ID; the signing secrets

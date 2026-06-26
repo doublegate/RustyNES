@@ -1,12 +1,22 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v1.9.8 "Horizon"** (2026-06-26) — the iOS store-readiness pass:
-> **accessibility** (VoiceOver / Dynamic Type / high-contrast + Okabe-Ito palettes),
-> **EN/ES i18n**, **ReplayKit** capture, opt-in **Game Center** sign-in, a **§4.7 +
+> **Current release: v1.9.9 "Workshop"** (2026-06-26) — the iOS creator / power-tools
+> release + the final pre-Timebase readiness gate: a **Cheats** editor (Game Genie +
+> raw-RAM peek/poke), a FOSS-build-gated **read-only debugger inspector** (CPU regs /
+> disassembly / hex / frame-step), a touch **TAStudio piano-roll**, **foreign movie
+> import** (`.fm2`/`.bk2`/`.fcm`/`.fmv`/`.vmv` → native `.rnm`), host-side **audio
+> depth** (5-band EQ / panning / reverb / crossfeed, bypassable to bit-identical), and
+> host-side **symbol maps** (`.sym`/`.mlb`/`.nl`). The bridge gains only **additive
+> forwarding fns** over existing core APIs — the deterministic core / chip crates are
+> untouched, so byte-identity + **AccuracyCoin 139/139** hold. Mobile ROM loading is
+> **iNES / NES 2.0 only** (FDS / NSF + 20-band EQ + `.dbg` source maps are post-v2.0.0
+> carryovers). This release shipped a full readiness pass (host gates, security audit,
+> gap analysis, completeness-critic) — see `docs/ios-v1.9.9-readiness.md`. The
+> preceding **v1.9.8 "Horizon"** — the iOS store-readiness pass: **accessibility**
+> (VoiceOver / Dynamic Type / high-contrast + Okabe-Ito palettes), **EN/ES i18n**,
+> **ReplayKit** capture, opt-in **Game Center** sign-in, a **§4.7 +
 > `PrivacyInfo.xcprivacy`** disclosure pass, and the **dormant StoreKit / `foss`-vs-
-> App-Store seam** (the real split is v2.1.0 per ADR 0027). All SwiftUI-shell work;
-> the core is untouched (only `CARGO_PKG_VERSION` moves 1.9.7 → 1.9.8), so
-> byte-identity + AccuracyCoin 139/139 hold. The preceding **v1.9.7 "Relay"** —
+> App-Store seam** (the real split is v2.1.0 per ADR 0027). The preceding **v1.9.7 "Relay"** —
 > **room-code (CGNAT/TURN) netplay**, **robust GameController hot-plug**, and opt-in
 > **iCloud save-state sync** (CloudKit). The preceding **v1.9.6 "Link"** — a **Lua**
 > console,
@@ -133,10 +143,14 @@
 > output widening) · 0021 (File System Access fallback) · 0022 (settings share-link) ·
 > 0023 (i18n string-catalog).
 
-**Current release: v1.9.8 "Horizon"** (the iOS store-readiness pass — accessibility,
-EN/ES i18n, ReplayKit, Game Center, the §4.7 + privacy-manifest pass, and the dormant
-StoreKit / foss-seam, framed in the blockquote above), on the cycle-accurate v1.0.0
-production core; the preceding **v1.9.7 "Relay"** was the connectivity-completion
+**Current release: v1.9.9 "Workshop"** (the iOS creator / power-tools release + the
+final pre-Timebase readiness gate — a Cheats editor, a FOSS-gated read-only debugger
+inspector, a touch TAStudio piano-roll, foreign movie import, host-side audio depth,
+and symbol maps, framed in the blockquote above; additive bridge forwarding fns only,
+core byte-identical, AccuracyCoin 139/139), on the cycle-accurate v1.0.0 production
+core; the preceding **v1.9.8 "Horizon"** was the iOS store-readiness pass
+(accessibility, EN/ES i18n, ReplayKit, Game Center, the §4.7 + privacy-manifest pass,
+and the dormant StoreKit / foss-seam); the preceding **v1.9.7 "Relay"** was the connectivity-completion
 release (room-code CGNAT/TURN netplay, controller hot-plug robustness, iCloud
 save-state sync via CloudKit); the preceding **v1.9.6 "Link"** was the iOS
 connectivity release (Lua console,

@@ -53,9 +53,12 @@ final class HDPackStore: ObservableObject {
         let id = url.deletingPathExtension().lastPathComponent
         let dest = self.url(for: id)
         ensureDirectory()
+        // Acquire the security scope on the calling actor so it brackets the await
+        // (acquiring it inside the detached task can fail — the scope is tied to the
+        // context that received the picked URL).
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         try await Task.detached(priority: .userInitiated) {
-            let scoped = url.startAccessingSecurityScopedResource()
-            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
             let data = try Data(contentsOf: url)
             try data.write(to: dest, options: .atomic)
         }.value

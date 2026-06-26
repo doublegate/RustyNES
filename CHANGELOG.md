@@ -15,6 +15,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.9] - 2026-06-26 - "Workshop" (iOS creator / power tools + readiness gate)
+
+The final iOS TestFlight release before the v2.0.0 "Timebase" core rewrite — the
+analogue of Android v1.8.9. It brings the desktop creator/power-tools to touch and
+runs a full pre-freeze readiness pass (verification, security audit, gap analysis, a
+completeness-critic sweep). Everything is **additive / off-by-default**: the bridge
+gains only new forwarding fns over **existing** `rustynes-core` APIs (no signature or
+behaviour change), the deterministic core / chip crates are untouched, and the
+shipped / native / `no_std` / wasm core stays **byte-identical** — **AccuracyCoin
+holds 100% (139/139)**. Interim TestFlight.
+
+### Added
+
+- **Cheats** — a Game Genie editor (persistent live codes via the core engine,
+  applied on every PRG read) plus one-shot raw-RAM peek / poke of the `$0000–$1FFF`
+  work-RAM region, behind a new Cheats sheet.
+- **Read-only debugger inspector** (FOSS / TestFlight build only, gated off the
+  App-Store channel per ADR 0027) — live CPU registers, a disassembly window around
+  the PC, a hex memory view, and single-frame step, over new observational bridge
+  fns (`debug_cpu_state` / `debug_read_memory` / `debug_disassemble`).
+- **TAStudio piano-roll** — a touch frame-input table with deterministic scripted
+  playback and record-to-`.rnm` from power-on.
+- **Foreign movie import** — `.fm2` / `.bk2` / `.fcm` / `.fmv` / `.vmv` transcoded to
+  the native `.rnm` format via new bridge importers (bounds-checked: 16 MiB
+  per-ZIP-member cap, graceful errors on malformed input — never panics).
+- **Audio depth** — a host-side DSP stage in `rustynes-ios` (5-band EQ, per-channel
+  panning, Schroeder reverb, crossfeed), fully bypassable (disabled / flat / centered
+  is bit-for-bit the v1.9.8 passthrough; the cpal callback drains one sample per
+  output frame regardless of state).
+- **Symbol maps** — host-side `.sym` / `.mlb` / `.nl` label loading feeding the
+  debugger view.
+
+### Changed
+
+- **`rustynes-mobile` bridge** gains additive forwarding fns (cheats, foreign-movie
+  importers, observational debugger reads) — the first iOS release to extend the
+  shared bridge surface; all additive, so the Android build is unaffected and the
+  core stays byte-identical.
+
+### Fixed
+
+- File imports (ROM, palette, symbol map) and foreign-movie transcoding now run off
+  the main thread (`Task.detached`), so a large user-picked file no longer hangs the
+  UI; `poke_ram` clamps the address to the work-RAM mirror bridge-side; missed
+  EN/ES catalog strings and VoiceOver labels across the new creator-tool views added.
+
+### Notes
+
+- **Mobile ROM loading is iNES / NES 2.0 only.** The import picker no longer
+  advertises `.fds` / `.nsf` (the shared bridge has no FDS / NSF load path) — FDS
+  disk + NSF playback on mobile are a post-v2.0.0 carryover, alongside the 20-band EQ,
+  `.dbg` ca65/cc65 source maps, and a cheats database.
+
 ## [1.9.8] - 2026-06-26 - "Horizon" (iOS store-readiness)
 
 The iOS store-readiness release — the analogue of Android v1.8.8 "Atlas". A broad

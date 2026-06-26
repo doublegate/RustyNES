@@ -49,6 +49,9 @@ struct SettingsView: View {
                     Text("Silence the emulator without pausing it.")
                 }
 
+                // Host audio-depth DSP (v1.9.9): EQ / pan / reverb / crossfeed.
+                AudioDepthSection(depth: model.audioDepth)
+
                 Section {
                     Toggle("Haptic feedback", isOn: $model.hapticsEnabled)
                         .disabled(!model.hapticsSupported)
@@ -187,11 +190,14 @@ private struct FilterParamSliders: View {
 
 /// A labelled `Slider` with a live numeric readout, for one shader parameter.
 private struct ParamSlider: View {
-    let title: String
+    // `LocalizedStringKey` so `Text(title)` uses the localizing initializer: the
+    // shader-param + audio-depth labels resolve through the String Catalog.
+    // Unit-style band labels ("60 Hz") have no catalog entry and render verbatim.
+    let title: LocalizedStringKey
     @Binding var value: Float
     let range: ClosedRange<Float>
 
-    init(_ title: String, value: Binding<Float>, range: ClosedRange<Float>) {
+    init(_ title: LocalizedStringKey, value: Binding<Float>, range: ClosedRange<Float>) {
         self.title = title
         self._value = value
         self.range = range
@@ -208,6 +214,49 @@ private struct ParamSlider: View {
             }
             Slider(value: $value, in: range)
         }
+    }
+}
+
+// MARK: - Audio depth (v1.9.9)
+
+/// The host audio-depth controls: a master enable, a 5-band EQ, a stereo pan, a
+/// Schroeder reverb, and a headphone crossfeed. All output-only (post-mix), so a
+/// flat / disabled config is a bit-exact passthrough. Observes the model so the
+/// per-band sliders bind live and re-apply to the running core.
+private struct AudioDepthSection: View {
+    @ObservedObject var depth: AudioDepthModel
+
+    var body: some View {
+        Section {
+            Toggle("Enable audio depth", isOn: $depth.enabled)
+            if depth.enabled {
+                ForEach(0..<AudioDepthModel.bandCount, id: \.self) { i in
+                    // Band labels are frequency units ("60 Hz"); wrap the runtime
+                    // String as a key (no catalog entry → renders verbatim).
+                    ParamSlider(
+                        LocalizedStringKey(AudioDepthModel.bandLabels[i]),
+                        value: bandBinding(i),
+                        range: -12...12
+                    )
+                }
+                ParamSlider("Pan", value: $depth.pan, range: -1...1)
+                ParamSlider("Reverb mix", value: $depth.reverbMix, range: 0...1)
+                ParamSlider("Reverb room", value: $depth.reverbRoom, range: 0...1)
+                ParamSlider("Crossfeed", value: $depth.crossfeed, range: 0...1)
+                Button("Reset to flat") { depth.resetToFlat() }
+            }
+        } header: {
+            Text("Audio depth")
+        } footer: {
+            Text("Output-only EQ, stereo pan, reverb, and headphone crossfeed. Off by default; flat = unchanged sound.")
+        }
+    }
+
+    private func bandBinding(_ i: Int) -> Binding<Float> {
+        Binding(
+            get: { i < depth.eqDb.count ? depth.eqDb[i] : 0 },
+            set: { var copy = depth.eqDb; if i < copy.count { copy[i] = $0; depth.eqDb = copy } }
+        )
     }
 }
 
@@ -499,9 +548,12 @@ struct PalettePickerSection: View {
             allowedContentTypes: PaletteTypes.importable,
             allowsMultipleSelection: false
         ) { result in
-            if case .success(let urls) = result, let url = urls.first,
-               let id = try? manager.importPalette(from: url) {
-                selectedId = id
+            if case .success(let urls) = result, let url = urls.first {
+                Task {
+                    if let id = try? await manager.importPalette(from: url) {
+                        selectedId = id
+                    }
+                }
             }
         }
     }

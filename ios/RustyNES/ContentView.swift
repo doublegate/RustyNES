@@ -37,7 +37,7 @@ struct ContentView: View {
         ) { result in
             switch result {
             case .success(let urls):
-                if let url = urls.first { model.importAndOpen(url) }
+                if let url = urls.first { Task { await model.importAndOpen(url) } }
             case .failure(let error):
                 model.errorMessage = error.localizedDescription
             }
@@ -71,12 +71,14 @@ struct ContentView: View {
 
     /// The importable UTTypes — ONLY the ROM / archive types, never `.data`
     /// (`public.data` would let the picker select any file and then fail at load).
-    /// The custom .nes/.fds/.nsf types are declared in Info.plist
-    /// (UTImportedTypeDeclarations); resolve them by extension so the picker shows
-    /// them even before the system fully indexes the declarations.
+    /// The mobile bridge is iNES/NES 2.0-only (no FDS/NSF load path), so the picker
+    /// advertises only `.nes` (+ `.zip`) — advertising `.fds`/`.nsf` would let the
+    /// user pick a file the core cannot load. The custom `.nes` type is declared in
+    /// Info.plist (UTImportedTypeDeclarations); resolve it by extension so the picker
+    /// shows it even before the system fully indexes the declarations.
     private var importableTypes: [UTType] {
         var types: [UTType] = [.zip]
-        for ext in ["nes", "fds", "nsf"] {
+        for ext in ["nes"] {
             if let t = UTType(filenameExtension: ext) { types.append(t) }
         }
         return types
@@ -101,7 +103,7 @@ private struct LibraryScreen: View {
                         LazyVGrid(columns: columns, spacing: 16) {
                             ForEach(model.library.entries) { entry in
                                 LibraryCell(entry: entry)
-                                    .onTapGesture { model.openGame(entry) }
+                                    .onTapGesture { Task { await model.openGame(entry) } }
                                     // One VoiceOver element per tile (the placeholder art
                                     // is decorative), activatable to open the game.
                                     .accessibilityElement(children: .combine)

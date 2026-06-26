@@ -16,6 +16,7 @@ struct MoviePanelView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var showingImporter = false
+    @State private var showingForeignImporter = false
     @State private var shareItem: ShareItem?
 
     var body: some View {
@@ -70,6 +71,22 @@ struct MoviePanelView: View {
                     Text("Play")
                 }
 
+                // Foreign movie import (v1.9.9): transcode an FCEUX / BizHawk /
+                // Nestopia / Famtasia / VirtuaNES movie into a native `.rnm`,
+                // save it, and play it on the running game.
+                Section {
+                    Button {
+                        showingForeignImporter = true
+                    } label: {
+                        Label("Import a foreign movie", systemImage: "arrow.down.doc")
+                    }
+                    .disabled(model.emulator == nil)
+                } header: {
+                    Text("Import")
+                } footer: {
+                    Text("Convert an FCEUX .fm2, BizHawk .bk2, Nestopia .fcm, Famtasia .fmv, or VirtuaNES .vmv into a native .rnm for this game.")
+                }
+
                 SavedMoviesSection(manager: model.movies, shareItem: $shareItem)
             }
             .navigationTitle("TAS / Movies")
@@ -85,6 +102,15 @@ struct MoviePanelView: View {
             ) { result in
                 if case .success(let urls) = result, let url = urls.first {
                     model.playMovie(at: url)
+                }
+            }
+            .fileImporter(
+                isPresented: $showingForeignImporter,
+                allowedContentTypes: MovieTypes.foreign,
+                allowsMultipleSelection: false
+            ) { result in
+                if case .success(let urls) = result, let url = urls.first {
+                    model.importForeignMovie(at: url)
                 }
             }
             .sheet(item: $shareItem) { item in
@@ -173,6 +199,15 @@ enum MovieTypes {
     static var importable: [UTType] {
         if let t = UTType(filenameExtension: "rnm") { return [t] }
         return [.data]
+    }
+
+    /// The foreign movie formats the v1.9.9 importer accepts. Resolved by
+    /// extension (none are system-known), falling back to plain data so the
+    /// picker still shows arbitrary files.
+    static var foreign: [UTType] {
+        let exts = ["fm2", "bk2", "fcm", "fmv", "vmv"]
+        let types = exts.compactMap { UTType(filenameExtension: $0) }
+        return types.isEmpty ? [.data] : types
     }
 }
 
