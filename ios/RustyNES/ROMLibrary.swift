@@ -84,11 +84,15 @@ final class ROMLibrary: ObservableObject {
         // HDPackStore.importPack: capture the main-actor-derived destination dir
         // as a value before the detached task.
         let romsDir = self.romsDir
+        // Files-app URLs are security-scoped. Acquire the scope on the main actor and
+        // hold it across the off-main read (security-scoped access is actor-bound, so
+        // it must NOT be started inside the detached task). The detached closure
+        // captures only `url` / `romsDir` — both Sendable.
+        guard url.startAccessingSecurityScopedResource() else {
+            throw AppError.fileAccessDenied
+        }
+        defer { url.stopAccessingSecurityScopedResource() }
         let sha = try await Task.detached(priority: .userInitiated) {
-            // Files-app URLs are security-scoped; bracket the read.
-            let scoped = url.startAccessingSecurityScopedResource()
-            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-
             let data = try Data(contentsOf: url)
             let sha = RomIdentity.sha256Hex(data)
             let dest = romsDir.appendingPathComponent("\(sha).nes")

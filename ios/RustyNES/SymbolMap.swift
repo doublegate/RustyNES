@@ -99,7 +99,11 @@ struct SymbolMap {
         var t = token.trimmingCharacters(in: .whitespaces)
         if let colon = t.lastIndex(of: ":") { t = String(t[t.index(after: colon)...]) }
         if t.hasPrefix("$") { t.removeFirst() }
-        guard !t.isEmpty, t.count <= 4 else { return nil }
-        return UInt16(t, radix: 16)
+        // Parse the value and range-check it against the 16-bit CPU address space,
+        // independent of the token's string length (so "$8000", "8000", and a
+        // zero-padded "008000" all work, while a 24-bit ROM offset is rejected
+        // rather than truncated into a wrong CPU address).
+        guard !t.isEmpty, let value = UInt(t, radix: 16), value <= 0xFFFF else { return nil }
+        return UInt16(value)
     }
 }

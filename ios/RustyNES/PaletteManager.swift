@@ -50,11 +50,16 @@ final class PaletteManager: ObservableObject {
         let id = url.deletingPathExtension().lastPathComponent
         let dest = self.url(for: id)
         ensureDirectory()
+        // Acquire the security scope on the main actor and hold it across the off-main
+        // read (security-scoped access is actor-bound, so it must NOT be started
+        // inside the detached task). The detached closure captures only `url` / `dest`.
+        guard url.startAccessingSecurityScopedResource() else {
+            throw AppError.fileAccessDenied
+        }
+        defer { url.stopAccessingSecurityScopedResource() }
         // The read + write run off the main actor for consistency with the other
         // importers; the `palettes` list refreshes back on the main actor.
         try await Task.detached(priority: .userInitiated) {
-            let scoped = url.startAccessingSecurityScopedResource()
-            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
             let data = try Data(contentsOf: url)
             try data.write(to: dest, options: .atomic)
         }.value

@@ -12,6 +12,7 @@
 //  running), mirroring the Movies panel.
 //
 
+import Combine
 import SwiftUI
 
 struct TAStudioView: View {
@@ -36,8 +37,12 @@ struct TAStudioView: View {
     @State private var frames: [UInt8] = Array(repeating: 0, count: 30)
     @State private var exporting = false
 
-    /// Polls for scripted-playback completion when exporting to `.rnm`.
-    private let pollTimer = Timer.publish(every: 0.2, on: .main, in: .common).autoconnect()
+    /// Polls for scripted-export completion when exporting to `.rnm`. This is a
+    /// connectable (NOT autoconnected) publisher: it is connected ONLY while an export
+    /// is in flight — `startExport` connects it, `finishExport` (and a vanished core)
+    /// cancel it — so it consumes no CPU when the panel is idle.
+    private let pollTimer = Timer.publish(every: 0.2, on: .main, in: .common)
+    @State private var pollConnection: Cancellable?
 
     var body: some View {
         NavigationStack {
@@ -55,17 +60,19 @@ struct TAStudioView: View {
                 }
             }
             .onReceive(pollTimer) { _ in
-                // While exporting, save once the core hands back the finished movie.
-                // The core stops recording at the exact last authored frame, so the
-                // saved `.rnm` carries no trailing idle frames.
-                if exporting {
-                    if let bytes = model.emulator?.tasTakeExportedMovie() {
-                        finishExport(bytes)
-                    } else if model.emulator == nil {
-                        exporting = false
-                    }
+                // The timer only fires while connected (during an export); the guard
+                // is a belt-and-suspenders no-op otherwise. Save once the core hands
+                // back the finished movie. The core stops recording at the exact last
+                // authored frame, so the saved `.rnm` carries no trailing idle frames.
+                guard exporting else { return }
+                if let bytes = model.emulator?.tasTakeExportedMovie() {
+                    finishExport(bytes)
+                } else if model.emulator == nil {
+                    stopPolling()
+                    exporting = false
                 }
             }
+            .onDisappear { stopPolling() }
         }
     }
 
@@ -87,7 +94,7 @@ struct TAStudioView: View {
                 }
                 .buttonStyle(.bordered)
                 Spacer()
-                Text("\(frames.count) frames")
+                Text(String(format: String(localized: "%lld frames"), frames.count))
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
@@ -195,12 +202,22 @@ struct TAStudioView: View {
         guard let e = model.emulator, !frames.isEmpty else { return }
         e.tasStartExport(p1Masks: frames)
         exporting = true
+        // Connect the poll timer only now that an export is actually in flight.
+        pollConnection = pollTimer.connect()
     }
 
     private func finishExport(_ bytes: Data) {
         exporting = false
+        stopPolling()
         guard !bytes.isEmpty else { return }
         let name = (model.currentEntry?.name ?? "tas") + "-tas"
         try? model.movies.save(bytes, gameName: name)
+    }
+
+    /// Tear down the poll-timer connection so it stops firing when no export is
+    /// pending. Idempotent.
+    private func stopPolling() {
+        pollConnection?.cancel()
+        pollConnection = nil
     }
 }

@@ -2,6 +2,11 @@
   "sourceLanguage" : "en",
   "version" : "1.0",
   "strings" : {
+    "Could not access the selected file." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "No se pudo acceder al archivo seleccionado." } }
+      }
+    },
     "Frame" : {
       "localizations" : {
         "es" : { "stringUnit" : { "state" : "translated", "value" : "Cuadro" } }

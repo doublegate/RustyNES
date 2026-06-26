@@ -241,11 +241,14 @@ struct DebuggerView: View {
 
     private func loadSymbols(from url: URL) async {
         guard let format = SymbolFormat.from(extension: url.pathExtension) else { return }
+        // Acquire the security scope on the main actor and hold it across the off-main
+        // read (security-scoped access is actor-bound, so it must NOT be started inside
+        // the detached task). The detached closure captures only `url` (Sendable).
+        guard url.startAccessingSecurityScopedResource() else { return }
+        defer { url.stopAccessingSecurityScopedResource() }
         // The (possibly large) symbol-file read runs off the main actor; the
         // parse + state update hop back.
         let text = await Task.detached(priority: .userInitiated) { () -> String? in
-            let scoped = url.startAccessingSecurityScopedResource()
-            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
             guard let data = try? Data(contentsOf: url) else { return nil }
             return String(data: data, encoding: .utf8)
         }.value

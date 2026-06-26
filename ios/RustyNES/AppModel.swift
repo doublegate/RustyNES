@@ -13,9 +13,11 @@ import SwiftUI
 /// Small app-level errors surfaced to the user (v1.9.6).
 enum AppError: LocalizedError {
     case noGame
+    case fileAccessDenied
     var errorDescription: String? {
         switch self {
         case .noGame: return String(localized: "No game is running.")
+        case .fileAccessDenied: return String(localized: "Could not access the selected file.")
         }
     }
 }
@@ -350,23 +352,21 @@ final class AppModel: ObservableObject {
             return
         }
         Task {
-            let rnm: Data
+            // Acquire the security scope on the main actor and hold it across the
+            // off-main read. Security-scoped access is actor-bound, so it must NOT be
+            // started inside the detached task. The detached task only reads bytes
+            // (`Data` is Sendable); the non-Sendable `emulator` never crosses into it.
+            guard url.startAccessingSecurityScopedResource() else {
+                self.errorMessage = AppError.fileAccessDenied.localizedDescription
+                return
+            }
+            defer { url.stopAccessingSecurityScopedResource() }
+
+            let data: Data
             do {
-                // Read AND transcode off the main actor: the bridge needs no
-                // main-actor state (it computes rom_sha256 internally and locks
-                // the core), so a large file read + the transcode both stay off
-                // the UI thread.
-                rnm = try await Task.detached(priority: .userInitiated) {
-                    let scoped = url.startAccessingSecurityScopedResource()
-                    defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-                    let data = try Data(contentsOf: url)
-                    switch ext {
-                    case "fm2": return try emulator.movieImportFm2(data)
-                    case "bk2": return try emulator.movieImportBk2(data)
-                    case "fcm": return try emulator.movieImportFcm(data)
-                    case "fmv": return try emulator.movieImportFmv(data)
-                    default: return try emulator.movieImportVmv(data)
-                    }
+                // Read off the main actor so a large file doesn't block the UI.
+                data = try await Task.detached(priority: .userInitiated) {
+                    try Data(contentsOf: url)
                 }.value
             } catch {
                 self.errorMessage = String(
@@ -375,7 +375,29 @@ final class AppModel: ObservableObject {
                 )
                 return
             }
-            // Back on the main actor: save, play, sync.
+
+            // Transcode on the main actor with the returned `Data`: the bridge call
+            // computes rom_sha256 internally and locks the core. Movies are small
+            // (worst case a 16 MiB `.bk2`), so the transcode on main is acceptable
+            // and keeps the non-Sendable `emulator` off any detached task.
+            let rnm: Data
+            do {
+                switch ext {
+                case "fm2": rnm = try emulator.movieImportFm2(data)
+                case "bk2": rnm = try emulator.movieImportBk2(data)
+                case "fcm": rnm = try emulator.movieImportFcm(data)
+                case "fmv": rnm = try emulator.movieImportFmv(data)
+                default: rnm = try emulator.movieImportVmv(data)
+                }
+            } catch {
+                self.errorMessage = String(
+                    format: String(localized: "Movie import failed: %@"),
+                    error.localizedDescription
+                )
+                return
+            }
+
+            // Save, play, sync.
             let name = (self.currentEntry?.name ?? "movie") + "-" + ext
             try? self.movies.save(rnm, gameName: name)
             do {

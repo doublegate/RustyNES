@@ -713,6 +713,10 @@ final class EmulatorCore {
     /// on the next host poll tick), so the saved `.rnm` carries no trailing idle
     /// frames. The finished bytes are retrieved via `tasTakeExportedMovie()`.
     func tasStartExport(p1Masks: [UInt8]) {
+        // An empty table would arm the recorder with no frames to inject: playback
+        // never activates, so the finalize path never fires and the recorder is left
+        // armed. Refuse to start instead, so it is never left in that state.
+        guard !p1Masks.isEmpty else { return }
         controller.movieRecordFromPowerOn()
         frameLock.lock()
         _tasFrames = p1Masks

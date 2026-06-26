@@ -161,7 +161,15 @@ struct CheatsView: View {
         }
     }
 
-    private var parsedAddr: UInt16? { UInt16(ramAddrHex.trimmingCharacters(in: .whitespaces), radix: 16) }
+    /// The parsed CPU-RAM address, or nil if it does not parse or is outside the
+    /// addressable CPU-RAM window the bridge accepts. The bridge clamps writes to
+    /// `$0000-$1FFF` (2 KiB RAM, mirrored), so an out-of-range value would silently
+    /// alias into the mirror; reject it here so Peek/Poke stay disabled instead.
+    private var parsedAddr: UInt16? {
+        guard let addr = UInt16(ramAddrHex.trimmingCharacters(in: .whitespaces), radix: 16),
+              addr <= 0x1FFF else { return nil }
+        return addr
+    }
     private var parsedValue: UInt8? { UInt8(ramValueHex.trimmingCharacters(in: .whitespaces), radix: 16) }
 
     private func peek() {
