@@ -26,6 +26,11 @@ final class AppModel: ObservableObject {
     let saveStates = SaveStateManager()
     let audioSession = AudioSession()
 
+    /// iCloud (CloudKit) save-state sync (v1.9.7). Opt-in / off by default; gracefully
+    /// no-ops when iCloud is unavailable. Mirrors `.rns` slots across the user's
+    /// devices without ever blocking local save/load.
+    lazy var cloudSaveStates = CloudSaveStateSync(saveStates: saveStates)
+
     // Power-user stores (v1.9.5).
     let palettes = PaletteManager()
     let hdpacks = HDPackStore()
@@ -217,6 +222,11 @@ final class AppModel: ObservableObject {
             self.pushInput(port: p)
         }
         gamepads.start()
+
+        // Check the iCloud account status at launch so the save-state sync indicator
+        // and reconciliation are ready by the time a game opens (a no-op when the
+        // sync toggle is off / iCloud is unavailable).
+        cloudSaveStates.start()
     }
 
     // MARK: - Session lifecycle
@@ -243,6 +253,8 @@ final class AppModel: ObservableObject {
             // Wire connectivity & scripting into the fresh core (no-ops when disabled).
             ra.attach(core: core, romData: data, sha: entry.sha)
             netplay.attach(core: core)
+            // Reconcile this game's cloud save-states (pull any newer-remote slots).
+            cloudSaveStates.setCurrentGame(sha: entry.sha)
         } catch {
             errorMessage = "Could not load \(entry.name): \(error.localizedDescription)"
         }
@@ -263,6 +275,7 @@ final class AppModel: ObservableObject {
         // Persist RA progress + end any netplay session while the core is still alive.
         ra.detachFromGame()
         netplay.detach()
+        cloudSaveStates.setCurrentGame(sha: nil)
         emulator?.shutdown()
         emulator = nil
         currentEntry = nil
@@ -563,6 +576,8 @@ final class AppModel: ObservableObject {
         let frame = emulator.frame()
         let thumbnail = emulator.snapshotPNG()
         try? saveStates.write(blob, sha: sha, slot: slot, frame: frame, thumbnailPNG: thumbnail)
+        // Mirror to iCloud in the background (no-op when sync is off / unavailable).
+        cloudSaveStates.upload(sha: sha, slot: slot)
     }
 
     func loadSlot(_ slot: Int) {
@@ -584,6 +599,8 @@ final class AppModel: ObservableObject {
     func deleteSlot(_ slot: Int) {
         guard let sha = currentEntry?.sha else { return }
         saveStates.clear(sha: sha, slot: slot)
+        // Remove the cloud record too (best-effort; no-op when sync is off).
+        cloudSaveStates.delete(sha: sha, slot: slot)
     }
 
     func slots() -> [SaveSlot] {

@@ -7,9 +7,10 @@
 //  menu. Like the Movies panel it does NOT pause emulation -- the netplay loop
 //  (`npAdvanceFrame`) must keep running while connecting and in-game.
 //
-//  Scope: direct-IP / same-LAN only this release. Room-code / CGNAT / TURN netplay is
-//  v1.9.7. Cross-play with desktop / Android peers on the same LAN is valid (same core
-//  + input protocol).
+//  v1.9.7 adds a ROOM-CODE (CGNAT / internet) mode alongside direct-IP / LAN: host
+//  publishes a shareable room code, join enters one. Both reuse the same in-game
+//  `npAdvanceFrame` loop; the relay / STUN / TURN endpoints come from Settings >
+//  Netplay. Cross-play with desktop / Android peers is valid (same core + protocol).
 //
 
 import SwiftUI
@@ -18,7 +19,15 @@ struct NetplayView: View {
     @ObservedObject private var netplay: NetplayModel
     @Environment(\.dismiss) private var dismiss
 
+    /// The connection mode shown while idle (direct-IP / LAN vs. room code).
+    private enum Mode: String, CaseIterable, Identifiable {
+        case lan, room
+        var id: String { rawValue }
+        var label: String { self == .lan ? "Same Wi-Fi" : "Room code" }
+    }
+    @State private var mode: Mode = .lan
     @State private var joinAddress = ""
+    @State private var joinRoomCode = ""
 
     init(netplay: NetplayModel) {
         self._netplay = ObservedObject(wrappedValue: netplay)
@@ -33,12 +42,23 @@ struct NetplayView: View {
                         Button("Leave session", role: .destructive) { netplay.leave() }
                     }
                 } else {
-                    hostSection
-                    joinSection
+                    Section {
+                        Picker("Mode", selection: $mode) {
+                            ForEach(Mode.allCases) { Text($0.label).tag($0) }
+                        }
+                        .pickerStyle(.segmented)
+                    }
+                    if mode == .lan {
+                        hostSection
+                        joinSection
+                    } else {
+                        roomHostSection
+                        roomJoinSection
+                    }
                 }
 
                 Section {
-                    Text("Direct-IP play works on the same Wi-Fi / LAN. Both players must load the same ROM. Internet (room-code) play arrives in a later update.")
+                    Text(footerText)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -104,6 +124,68 @@ struct NetplayView: View {
         }
     }
 
+    // MARK: - Room code (CGNAT / internet, v1.9.7)
+
+    private var roomHostSection: some View {
+        Section {
+            Button {
+                netplay.hostRoom()
+            } label: {
+                Label("Host a room", systemImage: "globe")
+            }
+            .disabled(!netplay.signalingConfigured)
+            if let code = netplay.hostedRoomCode {
+                LabeledContent("Room code", value: code)
+                    .textSelection(.enabled)
+                    .font(.body.monospaced())
+                // ShareLink handles the iPad popover anchoring itself (no manual
+                // UIActivityViewController popover config needed).
+                ShareLink(item: shareMessage(code: code)) {
+                    Label("Share room code", systemImage: "square.and.arrow.up")
+                }
+                Text("Share this code with the other player, then have them Join.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("Host")
+        } footer: {
+            Text(netplay.signalingConfigured
+                ? "You play as Player 1. Works across different networks via the relay."
+                : "Set a signaling relay URL in Settings > Netplay to use room codes.")
+        }
+    }
+
+    private var roomJoinSection: some View {
+        Section {
+            TextField("room code", text: $joinRoomCode)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.characters)
+                .font(.body.monospaced())
+            Button {
+                netplay.joinRoom(code: joinRoomCode)
+            } label: {
+                Label("Join room", systemImage: "person.2.fill")
+            }
+            .disabled(!netplay.signalingConfigured
+                || joinRoomCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        } header: {
+            Text("Join")
+        } footer: {
+            Text("Enter the host's room code. You play as Player 2.")
+        }
+    }
+
+    private func shareMessage(code: String) -> String {
+        "Join my RustyNES netplay session with room code: \(code)"
+    }
+
+    private var footerText: String {
+        mode == .lan
+            ? "Direct-IP play works on the same Wi-Fi / LAN. Both players must load the same ROM."
+            : "Room-code play connects across networks through a signaling relay (and a TURN server for strict NATs) the maintainer hosts. Both players must load the same ROM."
+    }
+
     // MARK: - Status
 
     @ViewBuilder
@@ -111,7 +193,17 @@ struct NetplayView: View {
         Section {
             if let status = netplay.status {
                 LabeledContent("State", value: phaseLabel(status.phase))
+                // The Negotiating sub-step (registering / discovering / punching /
+                // relaying) while NAT traversal runs on the room-code path.
+                if status.phase == .negotiating, !status.detail.isEmpty {
+                    LabeledContent("Step", value: status.detail)
+                }
                 LabeledContent("Role", value: status.isHost ? "Host (P1)" : "Joiner (P2)")
+                if status.relayed {
+                    Label("Connected via relay (TURN)", systemImage: "arrow.triangle.branch")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 if let ping = status.pingMs {
                     LabeledContent("Ping", value: "\(ping) ms")
                 }

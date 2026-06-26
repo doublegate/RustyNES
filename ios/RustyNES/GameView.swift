@@ -86,6 +86,9 @@ struct GameView: View {
             // nested-model changes).
             AchievementToastOverlay(ra: model.ra, topInset: menuVisible ? 56 : 12)
             NetplayOverlay(netplay: model.netplay)
+            // Live hardware-controller indicator: appears/updates as pads connect or
+            // disconnect mid-game (observes the manager's @Published list directly).
+            ControllerIndicatorOverlay(manager: model.gamepads, topInset: menuVisible ? 56 : 12)
         }
         .animation(.easeInOut(duration: 0.2), value: menuVisible)
         .sheet(isPresented: $showingStates) {
@@ -197,6 +200,37 @@ private struct NetplayOverlay: View {
             .padding(.leading)
             .padding(.bottom, 90)
             .allowsHitTesting(false)
+        }
+    }
+}
+
+/// A small top-trailing chip showing how many hardware controllers are connected.
+/// Observes the manager so it appears / updates live on hot-plug + disconnect.
+private struct ControllerIndicatorOverlay: View {
+    @ObservedObject var manager: GameControllerManager
+    let topInset: CGFloat
+
+    var body: some View {
+        if !manager.connected.isEmpty {
+            VStack {
+                HStack {
+                    Spacer()
+                    HStack(spacing: 4) {
+                        Image(systemName: "gamecontroller.fill")
+                        Text("\(manager.connected.count)")
+                            .font(.caption.monospacedDigit().bold())
+                    }
+                    .font(.caption)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(.ultraThinMaterial, in: Capsule())
+                }
+                Spacer()
+            }
+            .padding(.trailing, 12)
+            .padding(.top, topInset)
+            .allowsHitTesting(false)
+            .accessibilityLabel("\(manager.connected.count) controllers connected")
         }
     }
 }

@@ -539,8 +539,10 @@ final class EmulatorCore {
     // MARK: - Netplay (direct-IP / LAN) (v1.9.6)
     //
     // Host/Join start a session; the frame loop then advances via `npAdvanceFrame`
-    // (see `tickNetplay`) for as long as `npIsActive()`. STUN/TURN room-code netplay
-    // (`npHostRoom`/`npJoinRoom`) is deferred to v1.9.7 and intentionally not wired.
+    // (see `tickNetplay`) for as long as `npIsActive()`. This is true for BOTH the
+    // direct-IP / LAN path (`npHost`/`npJoin`, v1.9.6) and the room-code / CGNAT path
+    // (`npHostRoom`/`npJoinRoom`, v1.9.7): once a session is started the downstream
+    // `npAdvanceFrame` loop is identical; only the connection establishment differs.
 
     /// Host a session: bind `0.0.0.0:localPort` (pass 0 to let the OS pick) and listen
     /// as P1. Returns the actual bound port to share with the joiner.
@@ -551,6 +553,21 @@ final class EmulatorCore {
     /// Join a session at `address` ("ip:port") as P2.
     /// - Throws: `MobileError.netplay` on a bad address or bind/connect failure.
     func npJoin(address: String) throws { try controller.npJoin(address: address) }
+    /// Host a room-code (internet / CGNAT) session: register with the signaling relay
+    /// in `cfg`, begin NAT traversal, and return the room code to share with the peer.
+    /// The session then advances via `npAdvanceFrame` exactly like the direct-IP path.
+    /// - Throws: `MobileError.netplay` if the local socket bind fails. A bad relay /
+    ///   failed traversal surfaces later as the session moving to the `error` phase.
+    func npHostRoom(numPlayers: UInt8, cfg: NpNetConfig) throws -> String {
+        try controller.npHostRoom(numPlayers: numPlayers, cfg: cfg)
+    }
+    /// Join a room-code (internet / CGNAT) session by its `roomCode` using the relay /
+    /// STUN / TURN endpoints in `cfg`. Drive `npAdvanceFrame` and poll `npStatus` for
+    /// the `negotiating` sub-step; on success it converges on `connecting` -> `inGame`.
+    /// - Throws: `MobileError.netplay` if the local socket bind fails.
+    func npJoinRoom(roomCode: String, cfg: NpNetConfig) throws {
+        try controller.npJoinRoom(roomCode: roomCode, cfg: cfg)
+    }
     /// Tear down any session and return to single-player.
     func npLeave() { controller.npLeave() }
     /// Whether a session is active / connecting (the loop drives via `npAdvanceFrame`).

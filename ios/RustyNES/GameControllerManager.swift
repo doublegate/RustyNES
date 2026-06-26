@@ -220,6 +220,14 @@ final class GameControllerManager: ObservableObject {
             if let self, let m { self.evaluate(m) }
         }
 
+        // Remember this controller's (possibly auto-assigned) port keyed by model name
+        // so a later disconnect -> reconnect of the same pad reclaims the same port
+        // where it is free (preferredPort consults this). Previously only an explicit
+        // Settings reassignment persisted, so a hot-replugged pad could land on a
+        // different port. A controller hot-plugged mid-game starts driving immediately
+        // via the evaluate() below; no game state is touched.
+        persistPorts()
+
         refresh()
         evaluate(m)
     }
@@ -228,7 +236,10 @@ final class GameControllerManager: ObservableObject {
         guard let index = managed.firstIndex(where: { $0.controller === controller }) else { return }
         let port = managed[index].port
         managed.remove(at: index)
-        // Release that port so nothing sticks.
+        // Release that port so its last-held buttons don't stick (a pad yanked
+        // mid-frame must not leave a NES button latched). The port is now free for a
+        // reconnecting pad to reclaim. The input path survives the drop: the bound
+        // value handler held `m` weakly, so it no-ops once `m` is released here.
         onMaskChanged?(UInt32(port), 0)
         refresh()
         updateTurboTimer()

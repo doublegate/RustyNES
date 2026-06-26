@@ -30,7 +30,13 @@ struct SaveSlot: Identifiable {
 }
 
 /// Reads/writes per-ROM save-state slots in the sandbox.
-final class SaveStateManager {
+///
+/// SAFETY (`@unchecked Sendable`): instances are effectively stateless -- the only
+/// stored property is `FileManager.default`, which Apple documents as safe to use
+/// concurrently from multiple threads for independent operations, and every write is
+/// atomic. This lets the CloudKit sync (v1.9.7) call it from a detached task to keep
+/// blob file I/O off the main thread.
+final class SaveStateManager: @unchecked Sendable {
     /// Number of slots offered per game (matches the Android UI).
     static let slotCount = 4
 
@@ -114,6 +120,38 @@ final class SaveStateManager {
     /// Read a slot's `.rns` blob, or nil if the slot is empty.
     func read(sha: String, slot: Int) -> Data? {
         try? Data(contentsOf: slotURL(sha: sha, slot: slot))
+    }
+
+    // MARK: - CloudKit sync support (v1.9.7)
+
+    /// The on-disk URLs for a slot's blob / metadata / thumbnail. Exposed so the
+    /// CloudKit sync can hand the blob + thumbnail to `CKAsset(fileURL:)` directly
+    /// (no manual read into memory) when uploading.
+    func fileURLs(sha: String, slot: Int) -> (state: URL, meta: URL, thumbnail: URL) {
+        (slotURL(sha: sha, slot: slot), metaURL(sha: sha, slot: slot), thumbURL(sha: sha, slot: slot))
+    }
+
+    /// Write a slot pulled from the cloud, PRESERVING the remote `savedAt` (unlike
+    /// `write`, which stamps "now"). Keeping the original timestamp is what makes the
+    /// last-writer-wins reconciliation stable across repeated launches.
+    func importRemote(
+        stateData: Data, sha: String, slot: Int,
+        frame: UInt64, savedAt: Date, thumbnailPNG: Data?
+    ) throws {
+        try fileManager.createDirectory(at: dir(for: sha), withIntermediateDirectories: true)
+        try stateData.write(to: slotURL(sha: sha, slot: slot), options: .atomic)
+
+        let meta = SlotMeta(frame: frame, savedAt: savedAt.timeIntervalSince1970)
+        if let encoded = try? JSONEncoder().encode(meta) {
+            try? encoded.write(to: metaURL(sha: sha, slot: slot), options: .atomic)
+        }
+
+        let thumb = thumbURL(sha: sha, slot: slot)
+        if let png = thumbnailPNG {
+            try? png.write(to: thumb, options: .atomic)
+        } else {
+            try? fileManager.removeItem(at: thumb)
+        }
     }
 
     /// Delete a slot's saved state and its sidecars.
