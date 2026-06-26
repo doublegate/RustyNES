@@ -30,6 +30,30 @@ final class AppModel: ObservableObject {
     @Published var muted: Bool = false {
         didSet { emulator?.isMuted = muted; UserDefaults.standard.set(muted, forKey: "muted") }
     }
+
+    // Per-filter shader parameters (the tunable knobs the renderer's filter pipelines
+    // read). Each maps into the gfx `p0..p3` per `filterParams(_:)`, matching the
+    // gfx_metal.rs param layout (Scanlines [intensity]; CRT [intensity, mask]; NTSC
+    // [saturation, sharpness, tint, phase]). Defaults match the Android knob set.
+    // `didSet` re-applies live to the running renderer and persists to UserDefaults.
+    @Published var scanlineIntensity: Float = 0.5 {
+        didSet { applyFilter(); UserDefaults.standard.set(scanlineIntensity, forKey: "scanlineIntensity") }
+    }
+    @Published var crtMask: Float = 0.10 {
+        didSet { applyFilter(); UserDefaults.standard.set(crtMask, forKey: "crtMask") }
+    }
+    @Published var ntscSaturation: Float = 0.55 {
+        didSet { applyFilter(); UserDefaults.standard.set(ntscSaturation, forKey: "ntscSaturation") }
+    }
+    @Published var ntscSharpness: Float = 0.08 {
+        didSet { applyFilter(); UserDefaults.standard.set(ntscSharpness, forKey: "ntscSharpness") }
+    }
+    @Published var ntscTint: Float = 0.0 {
+        didSet { applyFilter(); UserDefaults.standard.set(ntscTint, forKey: "ntscTint") }
+    }
+    @Published var ntscPhase: Float = 0.0 {
+        didSet { applyFilter(); UserDefaults.standard.set(ntscPhase, forKey: "ntscPhase") }
+    }
     /// Optional Core Haptics feedback on on-screen button presses (OFF by default).
     @Published var hapticsEnabled: Bool = false {
         didSet {
@@ -58,14 +82,41 @@ final class AppModel: ObservableObject {
         }
         muted = UserDefaults.standard.bool(forKey: "muted")
         hapticsEnabled = UserDefaults.standard.bool(forKey: "hapticsEnabled")
+        // Restore the persisted shader params, falling back to the defaults above when
+        // a key was never written (UserDefaults.float returns 0 for a missing key, so
+        // probe `object(forKey:)` to distinguish "unset" from a stored 0).
+        let defaults = UserDefaults.standard
+        func storedFloat(_ key: String, _ fallback: Float) -> Float {
+            defaults.object(forKey: key) == nil ? fallback : defaults.float(forKey: key)
+        }
+        scanlineIntensity = storedFloat("scanlineIntensity", scanlineIntensity)
+        crtMask = storedFloat("crtMask", crtMask)
+        ntscSaturation = storedFloat("ntscSaturation", ntscSaturation)
+        ntscSharpness = storedFloat("ntscSharpness", ntscSharpness)
+        ntscTint = storedFloat("ntscTint", ntscTint)
+        ntscPhase = storedFloat("ntscPhase", ntscPhase)
         // A property's `didSet` does NOT run for in-init assignment, so sync the
         // haptics engine to the persisted value explicitly (otherwise a stored
         // `true` would leave the generator unprepared until the user re-toggles).
         haptics.isEnabled = hapticsEnabled
 
-        audioSession.onShouldPause = { [weak self] in self?.emulator?.pause() }
+        // Audio interruptions (phone call / Siri) and route changes (headphones
+        // unplugged) flow through the run-state composition so they don't fight the
+        // scene/menu pause gates: set a sticky `audioInterrupted` flag and recompute.
+        // AVAudioSession interruption / route-change notifications are delivered on
+        // an arbitrary (often background) thread, so hop to the main actor before
+        // touching this `@MainActor` model.
+        audioSession.onShouldPause = { [weak self] in
+            Task { @MainActor in
+                self?.audioInterrupted = true
+                self?.applyRunState()
+            }
+        }
         audioSession.onShouldResume = { [weak self] in
-            if self?.emulator != nil { self?.emulator?.resume() }
+            Task { @MainActor in
+                self?.audioInterrupted = false
+                self?.applyRunState()
+            }
         }
         gamepads.onMaskChanged = { [weak self] port, mask in
             guard let self else { return }
@@ -139,7 +190,23 @@ final class AppModel: ObservableObject {
     // MARK: - Settings application
 
     private func applyFilter() {
-        emulator?.setFilter(filter)
+        let p = filterParams(filter)
+        emulator?.setFilter(filter, p0: p.0, p1: p.1, p2: p.2, p3: p.3)
+    }
+
+    /// The four `p0..p3` shader params for `filter`, in the order the renderer's
+    /// pipelines expect (gfx_metal.rs): Scanlines = [intensity]; CRT = [intensity,
+    /// mask]; NTSC = [saturation, sharpness, tint, phase]. None / Bisqwit run at
+    /// neutral params (Bisqwit's per-frame phase + picture knobs are handled in the
+    /// renderer via `set_index_frame` / aux, so it has no host-tunable sliders).
+    func filterParams(_ filter: VideoFilter) -> (Float, Float, Float, Float) {
+        switch filter {
+        case .none: return (0, 0, 0, 0)
+        case .scanlines: return (scanlineIntensity, 0, 0, 0)
+        case .crt: return (scanlineIntensity, crtMask, 0, 0)
+        case .ntsc: return (ntscSaturation, ntscSharpness, ntscTint, ntscPhase)
+        case .bisqwit: return (0, 0, 0, 0)
+        }
     }
 
     // MARK: - Save states
@@ -183,9 +250,16 @@ final class AppModel: ObservableObject {
     /// (e.g. foregrounding with a sheet still open must NOT resume emulation).
     private var sceneActive = true
     private var menuPaused = false
+    /// Sticky while an audio interruption (call/Siri) or a silencing route change is
+    /// in effect; cleared by the matching "resume" event or by a fresh foreground.
+    private var audioInterrupted = false
 
     func handleScenePhase(_ active: Bool) {
         sceneActive = active
+        // A fresh foreground clears any stale audio gate: a route change (e.g.
+        // headphones unplugged) pauses without ever emitting a "resume" event, so
+        // without this the emulator could stay wedged after returning to the app.
+        if active { audioInterrupted = false }
         applyRunState()
     }
 
@@ -196,10 +270,11 @@ final class AppModel: ObservableObject {
         applyRunState()
     }
 
-    /// Resume only when the scene is active AND no menu is open; otherwise pause.
-    /// (We deliberately declare NO background-audio mode, so backgrounding pauses.)
+    /// Resume only when the scene is active AND no menu is open AND no audio
+    /// interruption is in effect; otherwise pause. (We deliberately declare NO
+    /// background-audio mode, so backgrounding pauses.)
     private func applyRunState() {
-        if sceneActive, !menuPaused {
+        if sceneActive, !menuPaused, !audioInterrupted {
             emulator?.resume()
         } else {
             emulator?.pause()

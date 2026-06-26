@@ -26,6 +26,11 @@ enum VideoFilter: UInt8, CaseIterable, Identifiable {
     case scanlines = 1
     case crt = 2
     case ntsc = 3
+    // Bisqwit composite NTSC: the renderer's pipeline reads the palette-index frame
+    // (an R16Uint texture) + the NTSC phase, fed each frame via
+    // `rustynes_ios_gfx_set_index_frame` while this filter is active. Raw 4 matches
+    // the gfx FFI / gfx_metal.rs filter numbering and the Android ordinal.
+    case bisqwit = 4
 
     var id: UInt8 { rawValue }
 
@@ -35,6 +40,7 @@ enum VideoFilter: UInt8, CaseIterable, Identifiable {
         case .scanlines: return "Scanlines"
         case .crt: return "CRT"
         case .ntsc: return "NTSC"
+        case .bisqwit: return "Bisqwit NTSC"
         }
     }
 }
@@ -49,6 +55,12 @@ final class EmulatorCore {
     private let controller: NesController
     private var gfx: OpaquePointer?
     private var audio: OpaquePointer?
+
+    /// The filter currently applied to the renderer. Tracked here (not just inside
+    /// the opaque gfx handle) so `tick()` knows when to feed the Bisqwit pass its
+    /// per-frame palette-index frame + NTSC phase — an extra copy kept off the
+    /// common (RGBA-only) path. Updated by `setFilter`.
+    private(set) var activeFilter: VideoFilter = .none
 
     /// True while the loop should advance the core (false when paused/backgrounded).
     private(set) var isRunning = false
@@ -111,6 +123,7 @@ final class EmulatorCore {
 
     /// Apply a video filter (and its up-to-four shader params).
     func setFilter(_ filter: VideoFilter, p0: Float = 0, p1: Float = 0, p2: Float = 0, p3: Float = 0) {
+        activeFilter = filter
         guard let gfx else { return }
         rustynes_ios_gfx_set_filter(gfx, filter.rawValue, p0, p1, p2, p3)
     }
@@ -132,6 +145,26 @@ final class EmulatorCore {
         // Run a frame and hand the RGBA framebuffer straight to wgpu (which
         // presents). UniFFI marshals `run_frame()` as a Swift `Data`.
         let frame = controller.runFrame()
+
+        // Bisqwit (filter 4) is a composite-NTSC pipeline that samples the
+        // palette-index frame (an R16Uint texture), not the RGBA frame, so it needs
+        // the index bytes + NTSC phase uploaded each frame. `set_index_frame` only
+        // uploads (it does not present), so we still call `gfx_render` below to
+        // present. Only fetch the index bytes while Bisqwit is active — it is an
+        // extra per-frame copy we keep off the common RGBA-only path. (Mirrors the
+        // Android renderer's `submitIndexFrame` + `submitFrame` pairing.)
+        if activeFilter == .bisqwit {
+            let index = controller.indexFramebufferBytes()
+            let phase = controller.ntscPhase()
+            index.withUnsafeBytes { raw in
+                if let base = raw.baseAddress {
+                    rustynes_ios_gfx_set_index_frame(
+                        gfx, base.assumingMemoryBound(to: UInt8.self), raw.count, phase
+                    )
+                }
+            }
+        }
+
         frame.withUnsafeBytes { raw in
             if let base = raw.baseAddress {
                 rustynes_ios_gfx_render(gfx, base.assumingMemoryBound(to: UInt8.self), raw.count)

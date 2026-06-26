@@ -23,6 +23,9 @@ struct SettingsView: View {
                             Text(filter.label).tag(filter)
                         }
                     }
+                    // Tuning sliders for the ACTIVE filter only (None / Bisqwit have
+                    // none). They drive the renderer's shader params live and persist.
+                    FilterParamSliders(model: model)
                 } header: {
                     Text("Video")
                 } footer: {
@@ -66,6 +69,58 @@ struct SettingsView: View {
                     Button("Done") { dismiss() }
                 }
             }
+        }
+    }
+}
+
+// MARK: - Filter parameters
+
+/// The per-filter shader-param sliders, shown only for the currently-selected
+/// filter (None and Bisqwit have no host-tunable knobs). Each binds to an AppModel
+/// param, which re-applies live to the renderer and persists to UserDefaults.
+private struct FilterParamSliders: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        switch model.filter {
+        case .none, .bisqwit:
+            EmptyView()
+        case .scanlines:
+            ParamSlider("Scanline intensity", value: $model.scanlineIntensity, range: 0...1)
+        case .crt:
+            ParamSlider("Scanline intensity", value: $model.scanlineIntensity, range: 0...1)
+            ParamSlider("Aperture mask", value: $model.crtMask, range: 0...0.5)
+        case .ntsc:
+            ParamSlider("Saturation", value: $model.ntscSaturation, range: 0...2)
+            ParamSlider("Sharpness", value: $model.ntscSharpness, range: 0...1)
+            ParamSlider("Tint", value: $model.ntscTint, range: -0.5...0.5)
+            ParamSlider("Phase", value: $model.ntscPhase, range: 0...1)
+        }
+    }
+}
+
+/// A labelled `Slider` with a live numeric readout, for one shader parameter.
+private struct ParamSlider: View {
+    let title: String
+    @Binding var value: Float
+    let range: ClosedRange<Float>
+
+    init(_ title: String, value: Binding<Float>, range: ClosedRange<Float>) {
+        self.title = title
+        self._value = value
+        self.range = range
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(title)
+                Spacer()
+                Text(String(format: "%.2f", value))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            Slider(value: $value, in: range)
         }
     }
 }
