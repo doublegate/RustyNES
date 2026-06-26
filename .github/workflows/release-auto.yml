@@ -1,0 +1,153 @@
+name: Auto Release
+
+# Publishes a GitHub Release automatically once a new version goes FINAL-green on
+# `main`. The flow:
+#
+#   PR merged to main (version bumped + CHANGELOG `[Unreleased]` -> `[X.Y.Z]`)
+#     -> CI runs on main and goes green (all bot threads adjudicated, fixes landed)
+#       -> this workflow fires (workflow_run: CI completed/success on main)
+#         -> if no `vX.Y.Z` tag exists yet for the workspace version, it:
+#              1. resolves the release notes (maintainer-authored) + title
+#              2. creates the tag + GitHub Release with those notes
+#              3. invokes `release.yml` (workflow_call) to build + attach the
+#                 Linux / macOS-aarch64 / Windows binaries to the release
+#
+# Why workflow_call instead of letting the tag trigger release.yml: a tag pushed
+# by the built-in GITHUB_TOKEN does NOT trigger `on: push: tags` (GitHub's
+# recursion guard), so we invoke the build directly.
+#
+# Release notes are MAINTAINER-AUTHORED, never machine-generated:
+#   * Preferred: a hand-written `.github/release-notes/vX.Y.Z.md` (the comprehensive,
+#     technically-detailed notes — see .github/release-notes/README.md). NOTE: this
+#     is deliberately NOT `docs/release-notes/`, which holds the engine-lineage
+#     history archive (its `v2.0.0.md` would collide with RustyNES's own v2.0.0).
+#   * Fallback: the `## [X.Y.Z]` section extracted from CHANGELOG.md.
+#   * If NEITHER exists, the job FAILS loudly (a release must never ship empty
+#     notes) so the maintainer adds them and re-runs.
+# The title's codename/theme is parsed from the CHANGELOG `## [X.Y.Z] - date - ...`
+# header line. release.yml never sets the release body, so the notes are preserved.
+#
+# Idempotent: if the version's tag already exists, the job is a clean no-op, so
+# this fires harmlessly on every main build (only a version bump produces a tag).
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare release (notes + tag)
+    # Only act when CI actually SUCCEEDED on a push to main (not PRs / forks).
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.decide.outputs.should_release }}
+      tag: ${{ steps.decide.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Build the release from the exact commit CI went green on. A shallow
+          # checkout suffices: we read Cargo.toml + CHANGELOG.md, and the tag
+          # existence check uses `git ls-remote` (no local tag history needed).
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Decide whether a new version needs releasing
+        id: decide
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Workspace version from [workspace.package] in Cargo.toml.
+          version="$(awk -F'"' '/^\[workspace\.package\]/{f=1} f && /^version[[:space:]]*=/{print $2; exit}' Cargo.toml)"
+          if [ -z "$version" ]; then
+            echo "::error::Could not parse [workspace.package] version from Cargo.toml"
+            exit 1
+          fi
+          tag="v${version}"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            echo "Tag ${tag} already exists - nothing to release."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Version ${version} has no ${tag} tag yet - will release."
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve release notes + title
+        if: steps.decide.outputs.should_release == 'true'
+        id: notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ steps.decide.outputs.version }}"
+          override=".github/release-notes/v${version}.md"
+          body_file="$(mktemp)"
+          if [ -f "$override" ]; then
+            echo "Using maintainer-authored notes: ${override}"
+            cp "$override" "$body_file"
+          else
+            echo "No ${override}; extracting the [${version}] section from CHANGELOG.md"
+            awk -v ver="$version" '
+              $0 ~ ("^## \\[" ver "\\]") { f=1; next }
+              f && /^## \[/ { exit }
+              f { print }
+            ' CHANGELOG.md > "$body_file"
+          fi
+          # Strip leading and trailing blank lines (drop leading blanks, reverse,
+          # drop what are now the leading blanks = the original trailing ones,
+          # reverse back). `tac` is coreutils, present on the ubuntu runner.
+          trimmed="$(mktemp)"
+          awk 'NF{p=1} p' "$body_file" | tac | awk 'NF{p=1} p' | tac > "$trimmed"
+          mv "$trimmed" "$body_file"
+          if [ ! -s "$body_file" ]; then
+            echo "::error::No release notes for ${version} - add .github/release-notes/v${version}.md or a CHANGELOG '## [${version}]' section, then re-run."
+            exit 1
+          fi
+          # Title codename/theme from the CHANGELOG header, e.g.
+          #   ## [1.9.9] - 2026-06-26 - "Workshop" (iOS ...)  ->  "Workshop" (iOS ...)
+          header="$(grep -m1 -E "^## \[${version}\]" CHANGELOG.md || true)"
+          theme="$(printf '%s' "$header" | sed -E 's/^## \[[^]]*\][[:space:]]*-[[:space:]]*[0-9-]+[[:space:]]*-[[:space:]]*//')"
+          if [ -n "$theme" ] && [ "$theme" != "$header" ]; then
+            title="RustyNES v${version} — ${theme}"
+          else
+            title="RustyNES v${version}"
+          fi
+          echo "body_file=${body_file}" >> "$GITHUB_OUTPUT"
+          echo "title=${title}" >> "$GITHUB_OUTPUT"
+          echo "Resolved title: ${title}"
+
+      - name: Create tag + GitHub Release
+        if: steps.decide.outputs.should_release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "${{ steps.decide.outputs.tag }}" \
+            --target "${{ github.event.workflow_run.head_sha }}" \
+            --title "${{ steps.notes.outputs.title }}" \
+            --notes-file "${{ steps.notes.outputs.body_file }}" \
+            --latest
+
+  build:
+    name: Build + attach artifacts
+    needs: prepare
+    if: needs.prepare.outputs.should_release == 'true'
+    permissions:
+      contents: write
+    # Reuse the Release build matrix; it attaches the platform binaries to the
+    # release created above and never overwrites the body.
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.prepare.outputs.tag }}
