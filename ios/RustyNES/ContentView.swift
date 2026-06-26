@@ -106,7 +106,7 @@ private struct LibraryScreen: View {
                                     // is decorative), activatable to open the game.
                                     .accessibilityElement(children: .combine)
                                     .accessibilityAddTraits(.isButton)
-                                    .accessibilityHint("Opens this game")
+                                    .accessibilityHint(Text("Opens this game"))
                                     .contextMenu {
                                         Button(entry.favorite ? "Unfavorite" : "Favorite") {
                                             model.library.toggleFavorite(entry.sha)

@@ -152,18 +152,18 @@ private struct SlotCard: View {
             HStack(spacing: 8) {
                 Button("Save", action: onSave)
                     .buttonStyle(.bordered)
-                    .accessibilityLabel("Save to slot \(slot.index + 1)")
+                    .accessibilityLabel(Text("Save to slot \(slot.index + 1)"))
                 Button("Load", action: onLoad)
                     .buttonStyle(.borderedProminent)
                     .disabled(slot.isEmpty)
-                    .accessibilityLabel("Load slot \(slot.index + 1)")
+                    .accessibilityLabel(Text("Load slot \(slot.index + 1)"))
                 Spacer(minLength: 0)
                 Button(role: .destructive, action: onDelete) {
                     Image(systemName: "trash")
                 }
                 .buttonStyle(.borderless)
                 .disabled(slot.isEmpty)
-                .accessibilityLabel("Delete slot \(slot.index + 1)")
+                .accessibilityLabel(Text("Delete slot \(slot.index + 1)"))
             }
             .font(.footnote)
         }

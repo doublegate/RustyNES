@@ -421,6 +421,46 @@
       "localizations" : {
         "es" : { "stringUnit" : { "state" : "translated", "value" : "Valores globales" } }
       }
+    },
+    "Could not load HD-pack: %@" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "No se pudo cargar el HD-pack: %@" } }
+      }
+    },
+    "Save to slot %lld" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Guardar en la ranura %lld" } }
+      }
+    },
+    "Load slot %lld" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Cargar la ranura %lld" } }
+      }
+    },
+    "Delete slot %lld" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Eliminar la ranura %lld" } }
+      }
+    },
+    "Opens this game" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Abre este juego" } }
+      }
+    },
+    "Muted" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Silenciado" } }
+      }
+    },
+    "Unmute" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Activar sonido" } }
+      }
+    },
+    "On" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Activado" } }
+      }
     }
   }
 }

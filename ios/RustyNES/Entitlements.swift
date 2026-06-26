@@ -116,12 +116,16 @@ final class StoreManager: ObservableObject {
 
     /// Mark `purchased` from the current StoreKit entitlements.
     private func reconcileEntitlements() async {
+        var unlocked = false
         for await result in Transaction.currentEntitlements {
             if case .verified(let transaction) = result,
                transaction.productID == Self.fullUnlockProductID,
                transaction.revocationDate == nil {
-                purchased = true
+                unlocked = true
             }
         }
+        // Assign after the loop so a revoked/refunded purchase (no verified current
+        // entitlement) correctly flips `purchased` back to false.
+        purchased = unlocked
     }
 }

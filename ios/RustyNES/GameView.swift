@@ -162,8 +162,8 @@ struct GameView: View {
             Button { model.muted.toggle() } label: {
                 Image(systemName: model.muted ? "speaker.slash" : "speaker.wave.2")
             }
-            .accessibilityLabel(model.muted ? "Unmute" : "Mute")
-            .accessibilityValue(model.muted ? "Muted" : "On")
+            .accessibilityLabel(model.muted ? Text("Unmute") : Text("Mute"))
+            .accessibilityValue(model.muted ? Text("Muted") : Text("On"))
         }
         .foregroundColor(.white)
         .padding(.horizontal)

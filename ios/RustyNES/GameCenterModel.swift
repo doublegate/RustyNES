@@ -41,7 +41,16 @@ final class GameCenterModel: NSObject, ObservableObject {
             if enabled {
                 authenticate()
             } else {
+                // Tear down so a previously-installed handler can't fire later
+                // (e.g. after returning from Settings) and re-present UI or mutate
+                // published state. Clear the system handler, hide the access point,
+                // and reset published state so the UI updates immediately.
+                GKLocalPlayer.local.authenticateHandler = nil
                 GKAccessPoint.shared.isActive = false
+                authRequest = nil
+                isAuthenticated = false
+                playerName = nil
+                lastError = nil
             }
         }
     }
@@ -71,6 +80,10 @@ final class GameCenterModel: NSObject, ObservableObject {
         local.authenticateHandler = { [weak self] viewController, error in
             Task { @MainActor in
                 guard let self else { return }
+                // The user may have toggled Game Center off while a system-triggered
+                // auth callback was in flight; bail before presenting UI or touching
+                // published state so a disabled toggle stays disabled.
+                guard self.enabled else { return }
                 if let viewController {
                     // GameKit needs the host to present its sign-in UI.
                     self.authRequest = GameCenterAuthRequest(controller: viewController)

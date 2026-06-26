@@ -361,7 +361,7 @@ final class AppModel: ObservableObject {
                 // Revert to a known renderer state (built-in palette) so the UI
                 // selection doesn't claim a palette that isn't actually loaded.
                 emulator.clearPalette()
-                errorMessage = String(localized: "Could not load palette: \(error.localizedDescription)")
+                errorMessage = String(format: String(localized: "Could not load palette: %@"), error.localizedDescription)
             }
         } else {
             emulator.clearPalette()
@@ -375,7 +375,7 @@ final class AppModel: ObservableObject {
             } catch {
                 // Unload so a stale/failed pack isn't left active, and surface it.
                 emulator.unloadHDPack()
-                errorMessage = "Could not load HD-pack: \(error.localizedDescription)"
+                errorMessage = String(format: String(localized: "Could not load HD-pack: %@"), error.localizedDescription)
             }
         } else {
             emulator.unloadHDPack()
