@@ -15,7 +15,7 @@ enum AppError: LocalizedError {
     case noGame
     var errorDescription: String? {
         switch self {
-        case .noGame: return "No game is running."
+        case .noGame: return String(localized: "No game is running.")
         }
     }
 }
@@ -40,6 +40,11 @@ final class AppModel: ObservableObject {
     // Connectivity & scripting (v1.9.6). Both opt-in / off by default.
     let ra = RetroAchievementsModel()
     let netplay = NetplayModel()
+
+    // Store-readiness additions (v1.9.8). Gameplay capture (ReplayKit) + opt-in Game
+    // Center sign-in; both no-op gracefully when unavailable.
+    let recorder = ScreenRecorder()
+    let gameCenter = GameCenterModel()
 
     /// The currently-running game, or nil when on the library screen.
     @Published var emulator: EmulatorCore?
@@ -227,6 +232,10 @@ final class AppModel: ObservableObject {
         // and reconciliation are ready by the time a game opens (a no-op when the
         // sync toggle is off / iCloud is unavailable).
         cloudSaveStates.start()
+
+        // Authenticate Game Center at launch only if the user previously opted in
+        // (a no-op when the toggle is off / Game Center is unavailable). v1.9.8.
+        gameCenter.start()
     }
 
     // MARK: - Session lifecycle
@@ -339,18 +348,20 @@ final class AppModel: ObservableObject {
         guard let emulator else { return }
         let e = effectiveDisplay()
         emulator.setFilter(e.filter, p0: e.params.0, p1: e.params.1, p2: e.params.2, p3: e.params.3)
-        // Palette: "" means the built-in NES palette; an unknown/missing id also
-        // falls back to it.
-        if e.paletteId.isEmpty {
-            emulator.clearPalette()
-        } else if let bytes = palettes.bytes(id: e.paletteId) {
+        // Palette: "" means the built-in NES palette; a "builtin.*" id selects a v1.9.8
+        // accessibility palette; otherwise it is an imported `.pal` stem. An
+        // unknown/missing id falls back to the built-in palette.
+        let paletteBytes: Data? = e.paletteId.isEmpty
+            ? nil
+            : (AccessibilityPalettes.bytes(id: e.paletteId) ?? palettes.bytes(id: e.paletteId))
+        if let bytes = paletteBytes {
             do {
                 try emulator.loadPalette(bytes)
             } catch {
                 // Revert to a known renderer state (built-in palette) so the UI
                 // selection doesn't claim a palette that isn't actually loaded.
                 emulator.clearPalette()
-                errorMessage = "Could not load palette: \(error.localizedDescription)"
+                errorMessage = String(format: String(localized: "Could not load palette: %@"), error.localizedDescription)
             }
         } else {
             emulator.clearPalette()
@@ -364,7 +375,7 @@ final class AppModel: ObservableObject {
             } catch {
                 // Unload so a stale/failed pack isn't left active, and surface it.
                 emulator.unloadHDPack()
-                errorMessage = "Could not load HD-pack: \(error.localizedDescription)"
+                errorMessage = String(format: String(localized: "Could not load HD-pack: %@"), error.localizedDescription)
             }
         } else {
             emulator.unloadHDPack()

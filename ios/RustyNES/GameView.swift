@@ -65,12 +65,14 @@ struct GameView: View {
                 HStack {
                     Spacer()
                     PillMenu(
+                        recorder: model.recorder,
                         onLibrary: { model.closeGame() },
                         onStates: { showingStates = true },
                         onMovies: { showingMovies = true },
                         onNetplay: { showingNetplay = true },
                         onAchievements: { showingAchievements = true },
                         onLua: { showingLua = true },
+                        onRecord: { model.recorder.toggle() },
                         onSettings: { showingSettings = true },
                         onReset: { model.emulator?.reset() },
                         onPower: { model.emulator?.powerCycle() }
@@ -89,6 +91,9 @@ struct GameView: View {
             // Live hardware-controller indicator: appears/updates as pads connect or
             // disconnect mid-game (observes the manager's @Published list directly).
             ControllerIndicatorOverlay(manager: model.gamepads, topInset: menuVisible ? 56 : 12)
+
+            // Presents ReplayKit's preview controller after a recording stops (v1.9.8).
+            RecordingPreviewHost(recorder: model.recorder)
         }
         .animation(.easeInOut(duration: 0.2), value: menuVisible)
         .sheet(isPresented: $showingStates) {
@@ -132,11 +137,13 @@ struct GameView: View {
                     .font(.headline)
             }
             .accessibilityLabel("Close game")
+            .accessibilityHint("Return to the game library")
 
             Text(model.currentEntry?.name ?? "RustyNES")
                 .font(.subheadline.bold())
                 .lineLimit(1)
                 .foregroundColor(.white.opacity(0.85))
+                .accessibilityAddTraits(.isHeader)
 
             Spacer()
 
@@ -144,16 +151,19 @@ struct GameView: View {
                 Image(systemName: "arrow.counterclockwise")
             }
             .accessibilityLabel("Reset")
+            .accessibilityHint("Soft-reset the console")
 
             Button { showingStates = true } label: {
                 Image(systemName: "tray.and.arrow.down")
             }
             .accessibilityLabel("Save states")
+            .accessibilityHint("Open the save-state manager")
 
             Button { model.muted.toggle() } label: {
                 Image(systemName: model.muted ? "speaker.slash" : "speaker.wave.2")
             }
-            .accessibilityLabel(model.muted ? "Unmute" : "Mute")
+            .accessibilityLabel(model.muted ? Text("Unmute") : Text("Mute"))
+            .accessibilityValue(model.muted ? Text("Muted") : Text("On"))
         }
         .foregroundColor(.white)
         .padding(.horizontal)

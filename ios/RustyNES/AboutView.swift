@@ -50,13 +50,11 @@ struct AboutView: View {
             .listRowBackground(Color.clear)
 
             Section {
-                Text(
-                    "RustyNES is a cycle-accurate Nintendo Entertainment System "
-                    + "emulator. It plays only ROM files you supply from your own "
-                    + "device. No game content is bundled with or downloaded by the "
-                    + "app. You must own the games you play."
-                )
-                .font(.footnote)
+                // A single string literal (not a `+` concatenation) so it is a
+                // `LocalizedStringKey` and localizes via the String Catalog. This is the
+                // App Review Guideline 4.7 ownership reaffirmation.
+                Text("RustyNES is a cycle-accurate Nintendo Entertainment System emulator. It plays only ROM files you supply from your own device. No game content is bundled with or downloaded by the app. You must own the games you play.")
+                    .font(.footnote)
             } header: {
                 Text("Bring your own ROMs")
             }

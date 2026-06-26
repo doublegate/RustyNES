@@ -15,6 +15,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.8] - 2026-06-26 - "Horizon" (iOS store-readiness)
+
+The iOS store-readiness release — the analogue of Android v1.8.8 "Atlas". A broad
+pre-launch pass: accessibility, EN/ES i18n, ReplayKit capture, Game Center, a §4.7 +
+privacy-manifest pass, and the dormant StoreKit / `foss`-vs-App-Store seam. All
+SwiftUI-shell work; the Rust core / chip crates / bridge are untouched (only
+`CARGO_PKG_VERSION` moves 1.9.7 → 1.9.8), so the shipped / native / `no_std` / wasm
+core stays **byte-identical** and **AccuracyCoin holds 100% (139/139)**. Interim
+TestFlight.
+
+### Added
+
+- **Accessibility** — VoiceOver labels / hints across the interactive UI, Dynamic
+  Type scaling in the chrome, and built-in **high-contrast + colorblind (Okabe-Ito)**
+  NES palettes in Settings (feeding the same `loadPalette` path as custom `.pal`).
+- **EN / ES internationalization** — a String Catalog with English (the development
+  default) + Spanish for the key user-facing strings (Settings, buttons, onboarding /
+  About, the ownership notice, errors).
+- **ReplayKit capture** — a Record-screen toggle (`RPScreenRecorder` start/stop) with
+  the preview / share flow and graceful not-available / denied handling. PiP for the
+  Metal game surface is a documented follow-up.
+- **Game Center** (opt-in, default off) — `GKLocalPlayer` sign-in + the access point;
+  the emulator defines no leaderboards / achievements of its own (RetroAchievements
+  remains the achievement system), so those stay scaffolding + a future `GKSavedGame`
+  hook. Graceful no-op when unavailable.
+- **§4.7 compliance + privacy manifest** — `PrivacyInfo.xcprivacy` updated to disclose
+  the optional RetroAchievements (third-party account / network), CloudKit (the user's
+  own iCloud), and Game Center usage precisely (the base app still collects no data);
+  the bring-your-own-ROM ownership notice reaffirmed.
+- **Dormant StoreKit 2 scaffold + `foss`/App-Store seam** — a default-off `StoreManager`
+  (inert through v1.9.x; the v2.1.0 activation per ADR 0027) + a compile-time `FOSS`
+  build flag laying the `foss` (ad/tracking-free) vs App-Store split seam. Both paths
+  behave identically (fully unlocked, no ads) until the v2.1.0 split lands.
+
 ## [1.9.7] - 2026-06-25 - "Relay" (iOS connectivity completion)
 
 The iOS connectivity-completion release — the analogue of Android v1.8.7. Adds

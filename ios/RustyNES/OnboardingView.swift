@@ -16,28 +16,24 @@ struct OnboardingView: View {
 
     @State private var page = 0
 
+    // Each title/body is a single string literal so it is a `LocalizedStringKey` and
+    // localizes via the String Catalog (see `PageView`, which renders the stored String
+    // values through `LocalizedStringKey`).
     private let pages: [OnboardingPage] = [
         OnboardingPage(
             systemImage: "gamecontroller.fill",
             title: "Welcome to RustyNES",
-            body: "A cycle-accurate NES emulator for iPhone and iPad. "
-                + "RustyNES plays only the ROM files you supply from your own "
-                + "device. No games are bundled or downloaded \u{2014} you must own "
-                + "the games you play."
+            body: "A cycle-accurate NES emulator for iPhone and iPad. RustyNES plays only the ROM files you supply from your own device. No games are bundled or downloaded \u{2014} you must own the games you play."
         ),
         OnboardingPage(
             systemImage: "square.and.arrow.down.on.square",
             title: "Import a ROM",
-            body: "Tap the + button in the library to import a .nes file from "
-                + "Files, or share a ROM to RustyNES from another app. Your games "
-                + "stay on your device."
+            body: "Tap the + button in the library to import a .nes file from Files, or share a ROM to RustyNES from another app. Your games stay on your device."
         ),
         OnboardingPage(
             systemImage: "dpad",
             title: "Play your way",
-            body: "Use the on-screen controller, or pair an MFi / Xbox / "
-                + "PlayStation controller for up to four players. Tap the MENU pill "
-                + "on the pad to show the in-game menu, save states, and settings."
+            body: "Use the on-screen controller, or pair an MFi / Xbox / PlayStation controller for up to four players. Tap the MENU pill on the pad to show the in-game menu, save states, and settings."
         )
     ]
 
@@ -91,10 +87,13 @@ private struct PageView: View {
             Image(systemName: page.systemImage)
                 .font(.system(size: 72))
                 .foregroundStyle(.tint)
-            Text(page.title)
+                .accessibilityHidden(true) // decorative; the title/body carry the meaning
+            // The stored String values are looked up as catalog keys via
+            // `LocalizedStringKey` (a plain `Text(String)` would render verbatim).
+            Text(LocalizedStringKey(page.title))
                 .font(.title.bold())
                 .multilineTextAlignment(.center)
-            Text(page.body)
+            Text(LocalizedStringKey(page.body))
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
