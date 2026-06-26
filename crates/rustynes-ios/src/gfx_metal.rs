@@ -636,10 +636,22 @@ impl MetalGfx {
     /// exactly like [`Self::render`]. A `(w, h)` of zero or a `fb` length that is
     /// not `w*h*4` drops the frame (presentation-only; determinism untouched).
     pub fn render_hd(&mut self, fb: &[u8], w: u32, h: u32) {
-        if w == 0 || h == 0 {
+        // `w`/`h` come from an untrusted HD-pack zip, so reject absurd sizes (a NES
+        // 256x240 frame at the max 10x HD scale is 2560x2400) and compute the
+        // expected length with CHECKED arithmetic — a crafted `w*h*4` could
+        // otherwise overflow `usize` to a small value and slip past the length
+        // check, then drive a bogus texture allocation / out-of-bounds copy.
+        const MAX_HD_DIM: u32 = 8192;
+        if w == 0 || h == 0 || w > MAX_HD_DIM || h > MAX_HD_DIM {
             return;
         }
-        if fb.len() != (w as usize) * (h as usize) * 4 {
+        let Some(expected) = (w as usize)
+            .checked_mul(h as usize)
+            .and_then(|wh| wh.checked_mul(4))
+        else {
+            return;
+        };
+        if fb.len() != expected {
             return;
         }
         // (Re)create the HD texture + bind group when the size changes.
@@ -683,7 +695,11 @@ impl MetalGfx {
             self.hd_dims = (w, h);
         }
 
-        let Some(tex) = self.hd_texture.as_ref() else {
+        // The texture + bind group are always created in tandem; unwrap both up
+        // front so the render pass can bind without a redundant later check.
+        let (Some(tex), Some(hd_bind_group)) =
+            (self.hd_texture.as_ref(), self.hd_bind_group.as_ref())
+        else {
             return;
         };
         self.queue.write_texture(
@@ -752,9 +768,7 @@ impl MetalGfx {
                 multiview_mask: None,
             });
             pass.set_pipeline(&self.pipeline);
-            if let Some(bind_group) = self.hd_bind_group.as_ref() {
-                pass.set_bind_group(0, bind_group, &[]);
-            }
+            pass.set_bind_group(0, hd_bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
         self.queue.submit(Some(encoder.finish()));

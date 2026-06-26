@@ -45,16 +45,20 @@ final class HDPackStore: ObservableObject {
 
     /// Import an HD-pack `.zip` from a (possibly security-scoped) picked URL. Copies
     /// the bytes into the sandbox keyed by the file's name stem and returns the id.
+    /// The (potentially large) read + write run off the main actor so the UI doesn't
+    /// block; the `packs` list is refreshed back on the main actor.
     /// - Throws: if the URL cannot be read or the bytes cannot be written.
     @discardableResult
-    func importPack(from url: URL) throws -> String {
-        let scoped = url.startAccessingSecurityScopedResource()
-        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-
-        let data = try Data(contentsOf: url)
+    func importPack(from url: URL) async throws -> String {
         let id = url.deletingPathExtension().lastPathComponent
+        let dest = self.url(for: id)
         ensureDirectory()
-        try data.write(to: self.url(for: id), options: .atomic)
+        try await Task.detached(priority: .userInitiated) {
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            let data = try Data(contentsOf: url)
+            try data.write(to: dest, options: .atomic)
+        }.value
         reload()
         return id
     }

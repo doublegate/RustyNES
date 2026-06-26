@@ -47,10 +47,22 @@ final class MovieManager: ObservableObject {
     func save(_ data: Data, gameName: String) throws -> URL {
         ensureDirectory()
         let stem = Self.fileStem(gameName: gameName)
-        let url = dir.appendingPathComponent("\(stem).rnm")
+        let url = uniqueURL(stem: stem)
         try data.write(to: url, options: .atomic)
         reload()
         return url
+    }
+
+    /// A non-colliding URL for `stem`: the bare name if free, else `<stem>-2`,
+    /// `<stem>-3`, ... Guards against two saves within the same millisecond.
+    private func uniqueURL(stem: String) -> URL {
+        var candidate = dir.appendingPathComponent("\(stem).rnm")
+        var counter = 2
+        while fileManager.fileExists(atPath: candidate.path) {
+            candidate = dir.appendingPathComponent("\(stem)-\(counter).rnm")
+            counter += 1
+        }
+        return candidate
     }
 
     /// Read a movie's bytes for playback.
@@ -73,7 +85,8 @@ final class MovieManager: ObservableObject {
         let base = safeName.isEmpty ? "movie" : safeName
 
         let formatter = DateFormatter()
-        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        // Millisecond precision so two saves in the same second don't collide.
+        formatter.dateFormat = "yyyyMMdd-HHmmss-SSS"
         return "\(base)-\(formatter.string(from: Date()))"
     }
 

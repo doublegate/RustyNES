@@ -189,7 +189,19 @@ struct ShareSheet: UIViewControllerRepresentable {
     let items: [Any]
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: items, applicationActivities: nil)
+        let controller = UIActivityViewController(activityItems: items, applicationActivities: nil)
+        // On iPad the activity sheet is presented as a popover; presenting one
+        // without a non-nil `sourceView` (+ `sourceRect`) raises an exception.
+        // Anchor it to the controller's own view, centered, with no arrow.
+        if let popover = controller.popoverPresentationController {
+            popover.sourceView = controller.view
+            popover.sourceRect = CGRect(
+                x: controller.view.bounds.midX, y: controller.view.bounds.midY,
+                width: 0, height: 0
+            )
+            popover.permittedArrowDirections = []
+        }
+        return controller
     }
 
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}

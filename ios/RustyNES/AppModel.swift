@@ -32,7 +32,9 @@ final class AppModel: ObservableObject {
     // Settings (persisted lightly via UserDefaults + mirrored to iCloud, v1.9.5).
     @Published var filter: VideoFilter = .none {
         didSet {
-            applyDisplaySettings()
+            // During a cloud pull each property is set in turn; defer the (expensive)
+            // re-apply to a single call at the end of `pullCloudConfig()`.
+            if !isApplyingCloud { applyDisplaySettings() }
             UserDefaults.standard.set(Int(filter.rawValue), forKey: "filter")
             if !isApplyingCloud { cloud.setInt(Int(filter.rawValue), forKey: "filter") }
         }
@@ -48,7 +50,7 @@ final class AppModel: ObservableObject {
     /// built-in NES palette. Per-game overrides can pick a different palette.
     @Published var globalPaletteId: String = "" {
         didSet {
-            applyDisplaySettings()
+            if !isApplyingCloud { applyDisplaySettings() }
             UserDefaults.standard.set(globalPaletteId, forKey: "paletteId")
             if !isApplyingCloud { cloud.setString(globalPaletteId, forKey: "paletteId") }
         }
@@ -94,7 +96,9 @@ final class AppModel: ObservableObject {
     /// Persist one shader param: re-apply to the renderer, write UserDefaults, and
     /// mirror to iCloud (unless we are currently applying a remote change).
     private func persistParam(_ value: Float, key: String) {
-        applyDisplaySettings()
+        // Skip the per-knob re-apply during a cloud pull; `pullCloudConfig()`
+        // applies once after all values are set.
+        if !isApplyingCloud { applyDisplaySettings() }
         UserDefaults.standard.set(value, forKey: key)
         if !isApplyingCloud { cloud.setFloat(value, forKey: key) }
     }
@@ -280,7 +284,14 @@ final class AppModel: ObservableObject {
         if e.paletteId.isEmpty {
             emulator.clearPalette()
         } else if let bytes = palettes.bytes(id: e.paletteId) {
-            try? emulator.loadPalette(bytes)
+            do {
+                try emulator.loadPalette(bytes)
+            } catch {
+                // Revert to a known renderer state (built-in palette) so the UI
+                // selection doesn't claim a palette that isn't actually loaded.
+                emulator.clearPalette()
+                errorMessage = "Could not load palette: \(error.localizedDescription)"
+            }
         } else {
             emulator.clearPalette()
         }
@@ -288,7 +299,13 @@ final class AppModel: ObservableObject {
         if e.hdpackId.isEmpty {
             emulator.unloadHDPack()
         } else if let bytes = hdpacks.bytes(id: e.hdpackId) {
-            try? emulator.loadHDPack(bytes)
+            do {
+                try emulator.loadHDPack(bytes)
+            } catch {
+                // Unload so a stale/failed pack isn't left active, and surface it.
+                emulator.unloadHDPack()
+                errorMessage = "Could not load HD-pack: \(error.localizedDescription)"
+            }
         } else {
             emulator.unloadHDPack()
         }
@@ -413,19 +430,29 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Load + play a saved or imported `.rnm` at `url`.
+    /// Load + play a saved or imported `.rnm` at `url`. The file read can block on a
+    /// large or security-scoped file, so it runs off the main actor; the core call +
+    /// state update hop back to the main actor.
     func playMovie(at url: URL) {
-        let scoped = url.startAccessingSecurityScopedResource()
-        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        guard let data = try? Data(contentsOf: url) else {
-            errorMessage = "Could not read movie file."
-            return
-        }
-        do {
-            try emulator?.moviePlay(data)
-            syncMovieState()
-        } catch {
-            errorMessage = "Movie playback failed: \(error.localizedDescription)"
+        Task {
+            let scoped = url.startAccessingSecurityScopedResource()
+            let data: Data
+            do {
+                data = try await Task.detached(priority: .userInitiated) {
+                    try Data(contentsOf: url)
+                }.value
+            } catch {
+                if scoped { url.stopAccessingSecurityScopedResource() }
+                self.errorMessage = "Could not read movie file: \(error.localizedDescription)"
+                return
+            }
+            if scoped { url.stopAccessingSecurityScopedResource() }
+            do {
+                try self.emulator?.moviePlay(data)
+                self.syncMovieState()
+            } catch {
+                self.errorMessage = "Movie playback failed: \(error.localizedDescription)"
+            }
         }
     }
 
@@ -447,7 +474,6 @@ final class AppModel: ObservableObject {
     /// property `didSet`s don't echo back to the cloud store.
     private func pullCloudConfig() {
         isApplyingCloud = true
-        defer { isApplyingCloud = false }
         if let raw = cloud.int(forKey: "filter"), let f = VideoFilter(rawValue: UInt8(clamping: raw)) {
             filter = f
             UserDefaults.standard.set(raw, forKey: "filter")
@@ -476,7 +502,9 @@ final class AppModel: ObservableObject {
         pullFloat("ntscSharpness") { ntscSharpness = $0 }
         pullFloat("ntscTint") { ntscTint = $0 }
         pullFloat("ntscPhase") { ntscPhase = $0 }
-        // Apply the merged settings to a running game.
+        // Clear the guard, then apply the merged settings to a running game ONCE
+        // (the per-property `didSet`s skipped their own re-apply above).
+        isApplyingCloud = false
         applyDisplaySettings()
     }
 

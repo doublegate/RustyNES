@@ -338,9 +338,12 @@ struct HDPackPickerSection: View {
             allowedContentTypes: HDPackTypes.importable,
             allowsMultipleSelection: false
         ) { result in
-            if case .success(let urls) = result, let url = urls.first,
-               let id = try? manager.importPack(from: url) {
-                selectedId = id
+            if case .success(let urls) = result, let url = urls.first {
+                Task {
+                    if let id = try? await manager.importPack(from: url) {
+                        selectedId = id
+                    }
+                }
             }
         }
     }
