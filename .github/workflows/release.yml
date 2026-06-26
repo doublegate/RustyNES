@@ -27,6 +27,16 @@ on:
         description: "Tag to build (e.g. v1.0.0). Used only on workflow_dispatch."
         required: true
         type: string
+  # Invoked by `release-auto.yml` after a new version goes final-green on main.
+  # A tag pushed by the built-in GITHUB_TOKEN does NOT trigger `on: push: tags`
+  # (GitHub's recursion guard), so the auto-release path calls this workflow
+  # directly via `uses:` rather than relying on the tag-push event.
+  workflow_call:
+    inputs:
+      tag:
+        description: "Tag to build + attach assets to (e.g. v1.9.9)."
+        required: true
+        type: string
 
 # Don't kill a release mid-build if a second tag lands on the same ref.
 concurrency:
@@ -89,7 +99,9 @@ jobs:
         id: tag
         shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          # `inputs.tag` is set for workflow_dispatch AND workflow_call; on a
+          # tag push it is empty, so fall back to the pushed ref.
+          if [ -n "${{ inputs.tag }}" ]; then
             tag="${{ inputs.tag }}"
           else
             tag="${GITHUB_REF#refs/tags/}"
