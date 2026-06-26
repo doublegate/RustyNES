@@ -101,6 +101,12 @@ struct SettingsView: View {
                 // iCloud save-state sync (v1.9.7).
                 CloudSyncSection(cloud: model.cloudSaveStates)
 
+                // Game Center sign-in (v1.9.8). Opt-in / off by default.
+                GameCenterSection(model: model.gameCenter)
+
+                // Screen recording (v1.9.8, ReplayKit).
+                RecordingSection(recorder: model.recorder)
+
                 Section {
                     Button {
                         showingLua = true
@@ -309,6 +315,73 @@ private struct NetplaySettingsView: View {
     }
 }
 
+// MARK: - Game Center (v1.9.8)
+
+/// The opt-in Game Center sign-in toggle + status. Auth + presence only — RustyNES
+/// defines no leaderboards or achievements of its own (RetroAchievements is the real
+/// achievement system); this is a complementary Apple-account sign-in. Observes the
+/// model so the status line updates after authentication completes.
+private struct GameCenterSection: View {
+    @ObservedObject var model: GameCenterModel
+
+    var body: some View {
+        Section {
+            Toggle("Enable Game Center", isOn: $model.enabled)
+                .accessibilityHint(Text("Sign in to your Apple Game Center account"))
+            if model.enabled {
+                LabeledContent(
+                    "Status",
+                    value: model.isAuthenticated
+                        ? (model.playerName ?? String(localized: "Signed in"))
+                        : String(localized: "Not signed in")
+                )
+                .foregroundStyle(model.isAuthenticated ? .primary : .secondary)
+            }
+        } header: {
+            Text("Game Center")
+        } footer: {
+            Text("Off by default. Signs in to your Apple Game Center account for presence. RustyNES has no leaderboards or achievements of its own \u{2014} RetroAchievements is the achievement system.")
+        }
+        .alert(
+            "Game Center",
+            isPresented: Binding(get: { model.lastError != nil }, set: { if !$0 { model.lastError = nil } }),
+            actions: { Button("OK", role: .cancel) {} },
+            message: { Text(model.lastError ?? "") }
+        )
+    }
+}
+
+// MARK: - Screen recording (v1.9.8, ReplayKit)
+
+/// A Record-screen toggle backed by ReplayKit. Disabled (with an explanation) when the
+/// device can't record. Also reachable from the in-game pill menu.
+private struct RecordingSection: View {
+    @ObservedObject var recorder: ScreenRecorder
+
+    var body: some View {
+        Section {
+            Toggle("Record screen", isOn: Binding(
+                get: { recorder.isRecording },
+                set: { $0 ? recorder.startRecording() : recorder.stopRecording() }
+            ))
+            .disabled(!recorder.isAvailable && !recorder.isRecording)
+            .accessibilityHint(Text("Capture gameplay video to save or share"))
+        } header: {
+            Text("Screen recording")
+        } footer: {
+            Text(recorder.isAvailable || recorder.isRecording
+                ? "Record gameplay, then save or share the clip. Also on the in-game menu."
+                : "Screen recording isn't available on this device right now.")
+        }
+        .alert(
+            "Screen recording",
+            isPresented: Binding(get: { recorder.lastError != nil }, set: { if !$0 { recorder.lastError = nil } }),
+            actions: { Button("OK", role: .cancel) {} },
+            message: { Text(recorder.lastError ?? "") }
+        )
+    }
+}
+
 // MARK: - iCloud save-state sync (v1.9.7)
 
 /// The opt-in CloudKit save-state sync toggle + status. Observes the sync model so the
@@ -405,6 +478,11 @@ struct PalettePickerSection: View {
     var body: some View {
         Section {
             paletteButton(title: "Default (built-in)", id: "")
+            // Built-in accessibility palettes (v1.9.8): high-contrast + Okabe-Ito
+            // colourblind, the iOS counterpart of the desktop accessibility palettes.
+            ForEach(AccessibilityPalettes.all) { palette in
+                paletteButton(title: palette.name, id: palette.id)
+            }
             ForEach(manager.palettes) { palette in
                 paletteButton(title: palette.name, id: palette.id)
             }
@@ -429,17 +507,25 @@ struct PalettePickerSection: View {
     }
 
     private func paletteButton(title: String, id: String) -> some View {
-        Button {
+        let isSelected = selectedId == id
+        // Title is rendered through `LocalizedStringKey` so the built-in palette names
+        // ("Default (built-in)", the accessibility palettes) localize via the String
+        // Catalog; an imported `.pal` stem has no catalog entry and renders verbatim.
+        return Button {
             selectedId = id
         } label: {
             HStack {
-                Text(title).foregroundStyle(.primary)
+                Text(LocalizedStringKey(title)).foregroundStyle(.primary)
                 Spacer()
-                if selectedId == id {
+                if isSelected {
                     Image(systemName: "checkmark").foregroundStyle(.tint)
                 }
             }
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text(LocalizedStringKey(title)))
+        .accessibilityHint(Text("Use this palette"))
+        .accessibilityAddTraits(isSelected ? [.isSelected, .isButton] : .isButton)
     }
 }
 

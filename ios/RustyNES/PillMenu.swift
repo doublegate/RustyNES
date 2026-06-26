@@ -14,43 +14,76 @@
 import SwiftUI
 
 struct PillMenu: View {
+    /// The ReplayKit recorder, observed so the Record pill reflects the live state.
+    @ObservedObject var recorder: ScreenRecorder
+
     var onLibrary: () -> Void
     var onStates: () -> Void
     var onMovies: () -> Void
     var onNetplay: () -> Void
     var onAchievements: () -> Void
     var onLua: () -> Void
+    var onRecord: () -> Void
     var onSettings: () -> Void
     var onReset: () -> Void
     var onPower: () -> Void
 
     var body: some View {
         VStack(spacing: 4) {
-            pillButton("rectangle.stack", "Library", action: onLibrary)
-            pillButton("tray.full", "Save states", action: onStates)
-            pillButton("film", "TAS / Movies", action: onMovies)
-            pillButton("wifi", "Netplay", action: onNetplay)
-            pillButton("trophy", "Achievements", action: onAchievements)
-            pillButton("curlybraces", "Lua console", action: onLua)
-            pillButton("gearshape", "Settings", action: onSettings)
-            pillButton("arrow.counterclockwise", "Reset", action: onReset)
-            pillButton("power", "Power cycle", action: onPower)
+            pillButton("rectangle.stack", "Library",
+                       hint: "Return to the game library", action: onLibrary)
+            pillButton("tray.full", "Save states",
+                       hint: "Open the save-state manager", action: onStates)
+            pillButton("film", "TAS / Movies",
+                       hint: "Record or play a movie", action: onMovies)
+            pillButton("wifi", "Netplay",
+                       hint: "Host or join an online session", action: onNetplay)
+            pillButton("trophy", "Achievements",
+                       hint: "View RetroAchievements progress", action: onAchievements)
+            pillButton("curlybraces", "Lua console",
+                       hint: "Run a script against the game", action: onLua)
+            // Record-screen pill: a red dot + "Stop recording" while active.
+            pillButton(
+                recorder.isRecording ? "stop.circle" : "record.circle",
+                recorder.isRecording ? "Stop recording" : "Record screen",
+                hint: "Capture gameplay video to save or share",
+                tint: recorder.isRecording ? .red : .primary,
+                action: onRecord
+            )
+            .accessibilityValue(Text(recorder.isRecording ? "Recording" : "Not recording"))
+            pillButton("gearshape", "Settings",
+                       hint: "Open settings", action: onSettings)
+            pillButton("arrow.counterclockwise", "Reset",
+                       hint: "Soft-reset the console", action: onReset)
+            pillButton("power", "Power cycle",
+                       hint: "Power-cycle the console", action: onPower)
         }
         .padding(.vertical, 10)
         .padding(.horizontal, 6)
         .background(.ultraThinMaterial, in: Capsule())
         .overlay(Capsule().strokeBorder(Color.white.opacity(0.12)))
         .shadow(radius: 8, y: 2)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Text("Game menu"))
     }
 
-    private func pillButton(_ systemImage: String, _ label: String, action: @escaping () -> Void) -> some View {
+    private func pillButton(
+        _ systemImage: String,
+        _ label: LocalizedStringKey,
+        hint: LocalizedStringKey,
+        tint: Color = .primary,
+        action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.system(size: 18, weight: .semibold))
+                // A Dynamic-Type-relative font so the glyph tracks the user's text
+                // size (capped via the fixed 44pt hit target so the pill stays tidy).
+                .font(.title3.weight(.semibold))
                 .frame(width: 44, height: 44)
                 .contentShape(Rectangle())
         }
-        .foregroundStyle(.primary)
-        .accessibilityLabel(label)
+        .foregroundStyle(tint)
+        .accessibilityLabel(Text(label))
+        .accessibilityHint(Text(hint))
     }
 }

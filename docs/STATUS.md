@@ -1,13 +1,15 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v1.9.7 "Relay"** (2026-06-25) — the iOS connectivity-completion
-> release: **room-code (CGNAT/TURN) netplay** (`npHostRoom`/`npJoinRoom` + an
-> `NpNetConfig` signaling/STUN/TURN, reusing the `npAdvanceFrame` loop), **robust
-> GameController hot-plug** (graceful port re-assignment on connect/disconnect), and
-> opt-in **iCloud save-state sync** (CloudKit — the `.rns` slots as `CKAsset`s, keyed
-> by ROM-SHA + slot, last-writer-wins). All SwiftUI-shell work; the core is untouched
-> (only `CARGO_PKG_VERSION` moves 1.9.6 → 1.9.7), so byte-identity + AccuracyCoin
-> 139/139 hold. The preceding **v1.9.6 "Link"** — a **Lua** console,
+> **Current release: v1.9.8 "Horizon"** (2026-06-26) — the iOS store-readiness pass:
+> **accessibility** (VoiceOver / Dynamic Type / high-contrast + Okabe-Ito palettes),
+> **EN/ES i18n**, **ReplayKit** capture, opt-in **Game Center** sign-in, a **§4.7 +
+> `PrivacyInfo.xcprivacy`** disclosure pass, and the **dormant StoreKit / `foss`-vs-
+> App-Store seam** (the real split is v2.1.0 per ADR 0027). All SwiftUI-shell work;
+> the core is untouched (only `CARGO_PKG_VERSION` moves 1.9.7 → 1.9.8), so
+> byte-identity + AccuracyCoin 139/139 hold. The preceding **v1.9.7 "Relay"** —
+> **room-code (CGNAT/TURN) netplay**, **robust GameController hot-plug**, and opt-in
+> **iCloud save-state sync** (CloudKit). The preceding **v1.9.6 "Link"** — a **Lua**
+> console,
 > **RetroAchievements** (Keychain login + hardcore + unlock-toast HUD + list), and
 > **direct-IP / LAN netplay** (the rollback `npAdvanceFrame` loop). The preceding
 > **v1.9.5 "Curator"** — TAS `.rnm`, `.pal`
@@ -131,10 +133,13 @@
 > output widening) · 0021 (File System Access fallback) · 0022 (settings share-link) ·
 > 0023 (i18n string-catalog).
 
-**Current release: v1.9.7 "Relay"** (the iOS connectivity-completion release —
-room-code CGNAT/TURN netplay, controller hot-plug robustness, iCloud save-state sync
-via CloudKit, framed in the blockquote above), on the cycle-accurate v1.0.0 production
-core; the preceding **v1.9.6 "Link"** was the iOS connectivity release (Lua console,
+**Current release: v1.9.8 "Horizon"** (the iOS store-readiness pass — accessibility,
+EN/ES i18n, ReplayKit, Game Center, the §4.7 + privacy-manifest pass, and the dormant
+StoreKit / foss-seam, framed in the blockquote above), on the cycle-accurate v1.0.0
+production core; the preceding **v1.9.7 "Relay"** was the connectivity-completion
+release (room-code CGNAT/TURN netplay, controller hot-plug robustness, iCloud
+save-state sync via CloudKit); the preceding **v1.9.6 "Link"** was the iOS
+connectivity release (Lua console,
 RetroAchievements, direct-IP / LAN netplay); the preceding **v1.9.5 "Curator"** was the
 iOS power-user / library release (TAS `.rnm`, `.pal` palettes, `.zip` ROMs, a per-game
 overrides DB, HD-pack, iCloud config sync), **v1.9.4 "Lens"** the renderer-completion

@@ -8,6 +8,23 @@
 # The Rust FFI ships as a STATIC xcframework (RustyNESFFI.xcframework, built by
 # scripts/build-ios-xcframework.sh). A static framework is LINKED, not embedded:
 # `embed: false` (Xcode "Do Not Embed"). It carries no code signature of its own.
+#
+# v1.9.8 "Horizon" — the foss / App-Store distribution seam (ADR 0027 §3, the iOS
+# counterpart of the Android `foss`/`play` split). The DEFAULT build is the `foss`
+# channel (AltStore PAL / GitHub / TestFlight): ad-free, tracking-free, fully
+# unlocked. To produce the future App-Store flavor, add `APPSTORE_BUILD` to that
+# build configuration's `SWIFT_ACTIVE_COMPILATION_CONDITIONS`, e.g.:
+#
+#     settings:
+#       base:
+#         SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) APPSTORE_BUILD
+#
+# `BuildChannel.swift` reads that flag; `StoreManager` (Entitlements.swift) stays
+# DORMANT until v2.1.0 regardless of channel, so both paths behave identically today.
+#
+# Localization (v1.9.8): RustyNES/Localizable.xcstrings (the EN+ES String Catalog) is
+# picked up automatically — it lives under the `RustyNES` source path below, which
+# XcodeGen includes wholesale, so no explicit resource entry is needed.
 name: RustyNES
 options:
   bundleIdPrefix: com.doublegate
@@ -74,6 +91,14 @@ targets:
       - sdk: UIKit.framework
       # v1.9.2: optional Core Haptics feedback for on-screen button presses.
       - sdk: CoreHaptics.framework
+      # v1.9.8 "Horizon" (store-readiness):
+      #   ReplayKit  — gameplay screen capture (ScreenRecorder.swift).
+      #   GameKit    — opt-in Game Center sign-in + access point (GameCenterModel.swift).
+      #   StoreKit   — the DORMANT StoreKit 2 scaffold (StoreManager in Entitlements.swift);
+      #                linked now so the v2.1.0 App-Store-flavor wiring is a drop-in.
+      - sdk: ReplayKit.framework
+      - sdk: GameKit.framework
+      - sdk: StoreKit.framework
     info:
       path: RustyNES/Info.plist
 

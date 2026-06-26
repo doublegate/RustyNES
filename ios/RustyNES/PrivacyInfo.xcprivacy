@@ -2,28 +2,98 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <!--
-  PrivacyInfo.xcprivacy — the App Privacy manifest.
+  PrivacyInfo.xcprivacy — the App Privacy manifest (v1.9.8 "Horizon" compliance pass).
 
-  RustyNES collects NO data, does NOT track, and contacts no servers in the
-  v1.9.0 MVP, so every collected-data / tracking-domain / accessed-API array is
-  empty.
+  BASE APP: collects NO data, does NOT track, contacts no servers. ROMs are
+  user-provided and stay on-device. With every optional feature OFF (the default,
+  and the only state of the foss / TestFlight build) this manifest's collected-data
+  array describes nothing that actually happens.
 
-  NOTE for the on-device dev: the save-state and library code reads file
-  modification dates (attributesOfItem) to label save slots. If a future build
-  trips the "required reason API" check for file-timestamp access, add an
-  NSPrivacyAccessedAPITypes entry with category
-  NSPrivacyAccessedAPICategoryFileTimestamp and reason "C617.1" (accessing
-  timestamps of files inside the app's own container). It is left out here
-  because container-internal access is generally exempt; do not block on it.
+  OPTIONAL FEATURES (each opt-in / OFF by default) change the disclosure:
+    - RetroAchievements (v1.9.6): an ACCOUNT LOGIN to a third party
+      (retroachievements.org) over the network, only when the user enables it and
+      signs in. The login token is kept in the Keychain (never UserDefaults / iCloud).
+      Disclosed below as a User ID collection used for app functionality.
+    - Game Center (v1.9.8): an opt-in sign-in to the user's Apple Game Center
+      account. Disclosed below as Other Data (the Game Center identity) used for app
+      functionality. Apple mediates the account; RustyNES defines no leaderboards or
+      achievements of its own.
+    - iCloud / CloudKit (v1.9.7): the optional save-state + config sync uses the
+      user's OWN PRIVATE iCloud database. Per Apple's guidance, data a developer
+      cannot access (the user's private CloudKit container) is not "data collected by
+      the developer", so it is intentionally NOT listed as a collected data type; it
+      is functionality-only and "Data Not Linked" in the App Store nutrition label.
+      ROMs are never uploaded.
+
+  ATT / ads: NONE in any v1.9.x build. App Tracking Transparency + the ad SDK are a
+  v2.1.0 App-Store-flavor (appstore channel, ADR 0027) addition; NSPrivacyTracking
+  stays false and the tracking-domains array stays empty here.
 -->
 <dict>
 	<key>NSPrivacyTracking</key>
 	<false/>
 	<key>NSPrivacyTrackingDomains</key>
 	<array/>
+
 	<key>NSPrivacyCollectedDataTypes</key>
-	<array/>
+	<array>
+		<!-- RetroAchievements account (opt-in). The login identifies the user to the
+		     third-party RA service for app functionality; it is linked to the user
+		     and is NOT used for tracking. -->
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeUserID</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+		<!-- Game Center identity (opt-in). The player's Game Center account/alias,
+		     used only for presence/app functionality, linked to the user, not used
+		     for tracking. -->
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeOtherDataTypes</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+	</array>
+
 	<key>NSPrivacyAccessedAPITypes</key>
-	<array/>
+	<array>
+		<!-- Save-state / library code reads file modification dates
+		     (attributesOfItem) to label save slots — all on files inside the app's
+		     OWN container. Required-reason category FileTimestamp, reason C617.1
+		     (timestamps of files inside the app container). -->
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>C617.1</string>
+			</array>
+		</dict>
+		<!-- UserDefaults stores this app's own settings (filter, mute, palette id,
+		     opt-in toggles). Required-reason category UserDefaults, reason CA92.1
+		     (access info accessible only to the app itself). -->
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>CA92.1</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

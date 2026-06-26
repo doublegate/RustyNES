@@ -1,0 +1,426 @@
+{
+  "sourceLanguage" : "en",
+  "version" : "1.0",
+  "strings" : {
+    "A cycle-accurate NES emulator for iPhone and iPad. RustyNES plays only the ROM files you supply from your own device. No games are bundled or downloaded — you must own the games you play." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Un emulador de NES de precisión de ciclo para iPhone y iPad. RustyNES solo reproduce los archivos ROM que tú proporcionas desde tu propio dispositivo. No se incluyen ni descargan juegos: debes ser propietario de los juegos que utilizas." } }
+      }
+    },
+    "About" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Acerca de" } }
+      }
+    },
+    "Achievements" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Logros" } }
+      }
+    },
+    "Audio" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Audio" } }
+      }
+    },
+    "Bring your own ROMs" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Trae tus propias ROMs" } }
+      }
+    },
+    "Capture gameplay video to save or share" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Captura vídeo de la partida para guardarlo o compartirlo" } }
+      }
+    },
+    "Close game" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Cerrar juego" } }
+      }
+    },
+    "Colourblind (Okabe-Ito)" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Daltónico (Okabe-Ito)" } }
+      }
+    },
+    "Could not load palette: %@" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "No se pudo cargar la paleta: %@" } }
+      }
+    },
+    "Credits" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Créditos" } }
+      }
+    },
+    "Custom" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Personalizado" } }
+      }
+    },
+    "Default (built-in)" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Predeterminada (integrada)" } }
+      }
+    },
+    "Developer" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Desarrollador" } }
+      }
+    },
+    "Done" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Hecho" } }
+      }
+    },
+    "Emulation core" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Núcleo de emulación" } }
+      }
+    },
+    "Enable Game Center" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Activar Game Center" } }
+      }
+    },
+    "Favorite" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Favorito" } }
+      }
+    },
+    "Filter" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Filtro" } }
+      }
+    },
+    "Game Center" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Game Center" } }
+      }
+    },
+    "Game menu" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Menú del juego" } }
+      }
+    },
+    "Get Started" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Empezar" } }
+      }
+    },
+    "Haptic feedback" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Respuesta háptica" } }
+      }
+    },
+    "High contrast" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Alto contraste" } }
+      }
+    },
+    "Host or join an online session" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Crea o únete a una sesión en línea" } }
+      }
+    },
+    "Import .pal" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Importar .pal" } }
+      }
+    },
+    "Import HD-pack (.zip)" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Importar HD-pack (.zip)" } }
+      }
+    },
+    "Import ROM" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Importar ROM" } }
+      }
+    },
+    "Import a .nes ROM you own from Files to start playing." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Importa una ROM .nes de tu propiedad desde Archivos para empezar a jugar." } }
+      }
+    },
+    "Import a ROM" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Importar una ROM" } }
+      }
+    },
+    "Label font" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Tipografía de etiquetas" } }
+      }
+    },
+    "Library" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Biblioteca" } }
+      }
+    },
+    "Lua console" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Consola Lua" } }
+      }
+    },
+    "Made by DoubleGate. Licensed MIT OR Apache-2.0." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Creado por DoubleGate. Licencia MIT OR Apache-2.0." } }
+      }
+    },
+    "Mute" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Silenciar" } }
+      }
+    },
+    "Netplay" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Juego en red" } }
+      }
+    },
+    "Next" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Siguiente" } }
+      }
+    },
+    "No game is running." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "No hay ningún juego en ejecución." } }
+      }
+    },
+    "No games yet" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Aún no hay juegos" } }
+      }
+    },
+    "None" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Ninguno" } }
+      }
+    },
+    "Not recording" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Sin grabar" } }
+      }
+    },
+    "Not signed in" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Sin sesión iniciada" } }
+      }
+    },
+    "Off by default. Signs in to your Apple Game Center account for presence. RustyNES has no leaderboards or achievements of its own — RetroAchievements is the achievement system." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Desactivado por defecto. Inicia sesión en tu cuenta de Apple Game Center para mostrar tu presencia. RustyNES no tiene tablas de clasificación ni logros propios: RetroAchievements es el sistema de logros." } }
+      }
+    },
+    "Open settings" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Abrir ajustes" } }
+      }
+    },
+    "Open the save-state manager" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Abrir el gestor de estados guardados" } }
+      }
+    },
+    "Palette" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Paleta" } }
+      }
+    },
+    "Per-game settings" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Ajustes por juego" } }
+      }
+    },
+    "Play your way" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Juega a tu manera" } }
+      }
+    },
+    "Power-cycle the console" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Apagar y encender la consola" } }
+      }
+    },
+    "Power cycle" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Apagar y encender" } }
+      }
+    },
+    "Project on GitHub" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Proyecto en GitHub" } }
+      }
+    },
+    "Record gameplay, then save or share the clip. Also on the in-game menu." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Graba la partida y luego guarda o comparte el clip. También en el menú del juego." } }
+      }
+    },
+    "Record or play a movie" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Graba o reproduce una película" } }
+      }
+    },
+    "Record screen" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Grabar pantalla" } }
+      }
+    },
+    "Recording" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Grabando" } }
+      }
+    },
+    "Remove" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Eliminar" } }
+      }
+    },
+    "Reset" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Reiniciar" } }
+      }
+    },
+    "Return to the game library" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Volver a la biblioteca de juegos" } }
+      }
+    },
+    "RustyNES is a cycle-accurate Nintendo Entertainment System emulator. It plays only ROM files you supply from your own device. No game content is bundled with or downloaded by the app. You must own the games you play." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "RustyNES es un emulador de Nintendo Entertainment System de precisión de ciclo. Solo reproduce archivos ROM que tú proporcionas desde tu propio dispositivo. La aplicación no incluye ni descarga contenido de juegos. Debes ser propietario de los juegos que utilizas." } }
+      }
+    },
+    "Run a script against the game" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Ejecuta un script en el juego" } }
+      }
+    },
+    "Save states" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Estados guardados" } }
+      }
+    },
+    "Screen recording" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Grabación de pantalla" } }
+      }
+    },
+    "Screen recording isn't available on this device right now." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "La grabación de pantalla no está disponible en este dispositivo en este momento." } }
+      }
+    },
+    "Screen recording isn't available right now." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "La grabación de pantalla no está disponible en este momento." } }
+      }
+    },
+    "Settings" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Ajustes" } }
+      }
+    },
+    "Sign in to your Apple Game Center account" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Inicia sesión en tu cuenta de Apple Game Center" } }
+      }
+    },
+    "Signed in" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Sesión iniciada" } }
+      }
+    },
+    "Silence the emulator without pausing it." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Silencia el emulador sin pausarlo." } }
+      }
+    },
+    "Skip" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Omitir" } }
+      }
+    },
+    "Soft-reset the console" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Reinicio suave de la consola" } }
+      }
+    },
+    "Status" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Estado" } }
+      }
+    },
+    "Stop recording" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Detener grabación" } }
+      }
+    },
+    "TAS / Movies" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "TAS / Películas" } }
+      }
+    },
+    "Tap the + button in the library to import a .nes file from Files, or share a ROM to RustyNES from another app. Your games stay on your device." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Toca el botón + en la biblioteca para importar un archivo .nes desde Archivos, o comparte una ROM con RustyNES desde otra app. Tus juegos permanecen en tu dispositivo." } }
+      }
+    },
+    "The picture filter the renderer applies. None is the raw, pixel-exact image." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "El filtro de imagen que aplica el renderizador. «Ninguno» es la imagen original, exacta al píxel." } }
+      }
+    },
+    "This game" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Este juego" } }
+      }
+    },
+    "Unfavorite" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Quitar de favoritos" } }
+      }
+    },
+    "Use the on-screen controller, or pair an MFi / Xbox / PlayStation controller for up to four players. Tap the MENU pill on the pad to show the in-game menu, save states, and settings." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Usa el mando en pantalla, o empareja un mando MFi / Xbox / PlayStation para hasta cuatro jugadores. Toca la pastilla MENU del mando para mostrar el menú del juego, los estados guardados y los ajustes." } }
+      }
+    },
+    "Use this palette" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Usar esta paleta" } }
+      }
+    },
+    "Version %@" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Versión %@" } }
+      }
+    },
+    "Video" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Vídeo" } }
+      }
+    },
+    "View RetroAchievements progress" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Ver el progreso de RetroAchievements" } }
+      }
+    },
+    "Welcome to RustyNES" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Bienvenido a RustyNES" } }
+      }
+    },
+    "Controls" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Controles" } }
+      }
+    },
+    "Global defaults" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Valores globales" } }
+      }
+    }
+  }
+}

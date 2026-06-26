@@ -45,6 +45,9 @@ struct ContentView: View {
         .sheet(isPresented: $showingSettings) {
             SettingsView()
         }
+        // Presents the GameKit sign-in controller when Game Center requests it (v1.9.8),
+        // available from the library and in-game alike.
+        .background(GameCenterAuthHost(model: model.gameCenter))
         .fullScreenCover(isPresented: Binding(
             // Symmetric: presenting (true) means not-yet-onboarded; any dismissal
             // (false) marks onboarding done, so the cover can't re-present in a loop.
@@ -99,6 +102,11 @@ private struct LibraryScreen: View {
                             ForEach(model.library.entries) { entry in
                                 LibraryCell(entry: entry)
                                     .onTapGesture { model.openGame(entry) }
+                                    // One VoiceOver element per tile (the placeholder art
+                                    // is decorative), activatable to open the game.
+                                    .accessibilityElement(children: .combine)
+                                    .accessibilityAddTraits(.isButton)
+                                    .accessibilityHint("Opens this game")
                                     .contextMenu {
                                         Button(entry.favorite ? "Unfavorite" : "Favorite") {
                                             model.library.toggleFavorite(entry.sha)
@@ -162,6 +170,7 @@ private struct LibraryCell: View {
                 Image(systemName: "tv")
                     .font(.system(size: 34))
                     .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
                 if entry.favorite {
                     VStack {
                         HStack {
@@ -169,6 +178,7 @@ private struct LibraryCell: View {
                             Image(systemName: "star.fill")
                                 .foregroundStyle(.yellow)
                                 .padding(8)
+                                .accessibilityLabel("Favorite")
                         }
                         Spacer()
                     }

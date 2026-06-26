@@ -4,6 +4,14 @@
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
+	<!-- v1.9.8 "Horizon": the app ships English (development default) + Spanish, via
+	     the Localizable.xcstrings String Catalog. English is byte-identical (the
+	     catalog keys ARE the English strings); full ES coverage is incremental. -->
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>es</string>
+	</array>
 	<key>CFBundleDisplayName</key>
 	<string>RustyNES</string>
 	<key>CFBundleExecutable</key>
