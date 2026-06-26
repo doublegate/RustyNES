@@ -15,6 +15,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.5] - 2026-06-25 - "Curator" (iOS power-user feature port)
+
+The iOS power-user / library release — the analogue of Android v1.8.5. Surfaces the
+shared bridge's power-user features (movies, palettes, HD-pack) in the SwiftUI shell;
+the Rust **core / chip crates / bridge are untouched** (only `CARGO_PKG_VERSION` moves
+1.9.4 → 1.9.5, plus an additive `cfg(ios)` HD-render path in the `rustynes-ios` host
+crate), so the shipped / native / `no_std` / wasm core stays **byte-identical** and
+**AccuracyCoin holds 100% (139/139)**. Interim TestFlight.
+
+### Added
+
+- **TAS `.rnm` movies** — record (from power-on / from here) + play, through the
+  `NesController` movie surface, with `.rnm` registered as an importable / exportable
+  type (document picker + share sheet) and the controls in the in-game menu.
+  Determinism-preserved (the input stream is recorded / replayed).
+- **`.pal` palettes** — import a custom palette (`loadPalette`) or restore the
+  default (`clearPalette`) from Settings; the choice persists + re-applies on launch.
+- **`.zip` ROMs** — verified end-to-end: the importer accepts `public.zip-archive`
+  and the core extracts the NES entry; the library lists the game by its ROM identity.
+- **Per-game overrides DB** — per-ROM display settings (filter / shader params /
+  palette / HD-pack) keyed by the ROM SHA-256, applied on load over the global
+  defaults.
+- **HD-pack** — load / unload an HD-pack `.zip` (`loadHdpackFromZipBytes`); when a
+  pack is active the loop presents the composited HD frame (`compositeHdFrame` at
+  `hdpackDimensions`) via a new `cfg(ios)` HD render path in `rustynes-ios`.
+- **iCloud config sync** — small app config synced via `NSUbiquitousKeyValueStore`
+  (the iCloud KV-store entitlement added; the maintainer enables the capability /
+  container). Save-states + ROMs are not synced in this release.
+
 ## [1.9.4] - 2026-06-25 - "Lens" (iOS Metal renderer + shader stack)
 
 The iOS renderer-completion release — the analogue of Android v1.8.4. Completes and

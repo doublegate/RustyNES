@@ -62,6 +62,11 @@ final class EmulatorCore {
     /// common (RGBA-only) path. Updated by `setFilter`.
     private(set) var activeFilter: VideoFilter = .none
 
+    /// True while an HD-pack is loaded in the core (v1.9.5). When set, `tick()`
+    /// composites the HD frame (`compositeHdFrame()` at `hdpackDimensions()`) and
+    /// presents it through the renderer's HD path instead of the 256x240 frame.
+    private(set) var hdPackLoaded = false
+
     /// True while the loop should advance the core (false when paused/backgrounded).
     private(set) var isRunning = false
     /// Suppress audio push without tearing the sink down (a user mute toggle).
@@ -146,13 +151,66 @@ final class EmulatorCore {
         // presents). UniFFI marshals `run_frame()` as a Swift `Data`.
         let frame = controller.runFrame()
 
+        // HD-pack path (v1.9.5): when a pack is loaded, present the composited HD
+        // frame (which can exceed 256x240) instead of the stock framebuffer. The
+        // pack supplies the final look, so no on-screen filter is layered on top.
+        // Fall back to the standard path if the composite is unexpectedly empty.
+        var presentedHD = false
+        if hdPackLoaded {
+            let dims = controller.hdpackDimensions()
+            if dims.count == 2, dims[0] > 0, dims[1] > 0 {
+                let hd = controller.compositeHdFrame()
+                if hd.count == Int(dims[0]) * Int(dims[1]) * 4 {
+                    hd.withUnsafeBytes { raw in
+                        if let base = raw.baseAddress {
+                            rustynes_ios_gfx_render_hd(
+                                gfx, base.assumingMemoryBound(to: UInt8.self), raw.count,
+                                dims[0], dims[1]
+                            )
+                        }
+                    }
+                    presentedHD = true
+                }
+            }
+        }
+
+        if !presentedHD {
+            presentStandard(frame, gfx: gfx)
+        }
+
+        // Retain the (stock 256x240) frame for save-state thumbnail capture (cheap:
+        // one COW Data ref, swapped each tick; touched only here + on the main
+        // thread snapshot). Locked because this runs off the main actor and
+        // `snapshotPNG` reads it there. We keep the stock frame even on the HD path
+        // so the thumbnail stays a fixed 256x240 RGBA.
+        frameLock.lock()
+        _lastFrame = frame
+        frameLock.unlock()
+
+        // Drain mono f32 audio and enqueue it (unless muted). The sink's DRC
+        // absorbs the console-rate <-> device-rate beat.
+        if !isMuted, let audio {
+            let samples = controller.drainAudio()
+            if !samples.isEmpty {
+                samples.withUnsafeBufferPointer { buf in
+                    if let base = buf.baseAddress {
+                        rustynes_ios_audio_push(audio, base, buf.count)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Present the stock 256x240 RGBA frame (the non-HD path). Feeds the Bisqwit
+    /// composite its palette-index frame + NTSC phase first when that filter is
+    /// active, then uploads + presents the RGBA frame.
+    private func presentStandard(_ frame: Data, gfx: OpaquePointer) {
         // Bisqwit (filter 4) is a composite-NTSC pipeline that samples the
         // palette-index frame (an R16Uint texture), not the RGBA frame, so it needs
         // the index bytes + NTSC phase uploaded each frame. `set_index_frame` only
         // uploads (it does not present), so we still call `gfx_render` below to
         // present. Only fetch the index bytes while Bisqwit is active — it is an
-        // extra per-frame copy we keep off the common RGBA-only path. (Mirrors the
-        // Android renderer's `submitIndexFrame` + `submitFrame` pairing.)
+        // extra per-frame copy we keep off the common RGBA-only path.
         if activeFilter == .bisqwit {
             let index = controller.indexFramebufferBytes()
             let phase = controller.ntscPhase()
@@ -168,25 +226,6 @@ final class EmulatorCore {
         frame.withUnsafeBytes { raw in
             if let base = raw.baseAddress {
                 rustynes_ios_gfx_render(gfx, base.assumingMemoryBound(to: UInt8.self), raw.count)
-            }
-        }
-        // Retain the frame for save-state thumbnail capture (cheap: one COW Data
-        // ref, swapped each tick; touched only here + on the main thread snapshot).
-        // Locked because this runs off the main actor and `snapshotPNG` reads it there.
-        frameLock.lock()
-        _lastFrame = frame
-        frameLock.unlock()
-
-        // Drain mono f32 audio and enqueue it (unless muted). The sink's DRC
-        // absorbs the console-rate <-> device-rate beat.
-        if !isMuted, let audio {
-            let samples = controller.drainAudio()
-            if !samples.isEmpty {
-                samples.withUnsafeBufferPointer { buf in
-                    if let base = buf.baseAddress {
-                        rustynes_ios_audio_push(audio, base, buf.count)
-                    }
-                }
             }
         }
     }
@@ -267,6 +306,59 @@ final class EmulatorCore {
         }
         guard let cg = cgImage else { return nil }
         return UIImage(cgImage: cg).pngData()
+    }
+
+    // MARK: - TAS movies (.rnm) (v1.9.5)
+
+    /// Start recording a movie from a fresh power-on (the core power-cycles so a
+    /// later replay reconstructs from the identical state). Determinism preserved:
+    /// the core records the input stream.
+    func movieRecordFromPowerOn() { controller.movieRecordFromPowerOn() }
+
+    /// Start recording a movie branching from the current state (embeds a state).
+    func movieRecordFromHere() { controller.movieRecordFromHere() }
+
+    /// Stop recording and return the serialized `.rnm` bytes (empty if not
+    /// recording). The host writes them to the sandbox.
+    func movieStopRecording() -> Data { controller.movieStopRecording() }
+
+    /// Load + play a `.rnm` movie (drives input from the recorded stream).
+    /// - Throws: `MobileError` if the bytes are not a valid movie / wrong ROM.
+    func moviePlay(_ data: Data) throws { try controller.moviePlay(bytes: data) }
+
+    /// Stop any active recording or playback.
+    func movieStop() { controller.movieStop() }
+
+    /// Whether a movie is being recorded.
+    var movieIsRecording: Bool { controller.movieIsRecording() }
+
+    /// Whether a movie is playing back.
+    var movieIsPlaying: Bool { controller.movieIsPlaying() }
+
+    // MARK: - Custom palette (.pal) (v1.9.5)
+
+    /// Apply a custom 64-colour palette from `.pal` bytes (>= 192 bytes).
+    /// Presentation only; byte-identical to the built-in palette once cleared.
+    /// - Throws: `MobileError.palette` if fewer than 192 bytes were supplied.
+    func loadPalette(_ data: Data) throws { try controller.loadPalette(bytes: data) }
+
+    /// Restore the built-in NES palette.
+    func clearPalette() { controller.clearPalette() }
+
+    // MARK: - HD-pack (v1.9.5)
+
+    /// Load an HD-pack from `.zip` bytes. On success the frame loop switches to the
+    /// HD composite path. Replaces any active pack.
+    /// - Throws: `MobileError.hdPack` if the bytes are not a valid HD-pack archive.
+    func loadHDPack(_ data: Data) throws {
+        try controller.loadHdpackFromZipBytes(bytes: data)
+        hdPackLoaded = true
+    }
+
+    /// Unload the active HD-pack (revert to the stock 256x240 framebuffer).
+    func unloadHDPack() {
+        controller.unloadHdpack()
+        hdPackLoaded = false
     }
 
     // MARK: - Teardown
