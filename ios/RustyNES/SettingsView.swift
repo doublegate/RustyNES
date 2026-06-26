@@ -14,6 +14,7 @@ import UniformTypeIdentifiers
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
+    @State private var showingLua = false
 
     var body: some View {
         NavigationStack {
@@ -63,6 +64,37 @@ struct SettingsView: View {
 
                 ControllersSection(manager: model.gamepads)
 
+                // Connectivity & scripting (v1.9.6).
+                Section {
+                    NavigationLink {
+                        RetroAchievementsView(ra: model.ra)
+                    } label: {
+                        LabeledContent(
+                            "RetroAchievements",
+                            value: model.ra.enabled
+                                ? (model.ra.isLoggedIn ? (model.ra.user?.displayName ?? "Signed in") : "On")
+                                : "Off"
+                        )
+                    }
+                } header: {
+                    Text("RetroAchievements")
+                } footer: {
+                    Text("Opt-in achievement tracking. Off by default.")
+                }
+
+                Section {
+                    Button {
+                        showingLua = true
+                    } label: {
+                        Label("Lua console", systemImage: "curlybraces")
+                    }
+                    .disabled(model.emulator == nil)
+                } header: {
+                    Text("Developer")
+                } footer: {
+                    Text("Run a sandboxed Lua script against the running game. Also reachable from the in-game menu (where it runs live).")
+                }
+
                 // Per-game display overrides (only when a game is running).
                 if model.currentEntry != nil {
                     Section {
@@ -94,6 +126,9 @@ struct SettingsView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }
                 }
+            }
+            .sheet(isPresented: $showingLua) {
+                LuaConsoleView()
             }
         }
     }

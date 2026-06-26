@@ -72,6 +72,26 @@ final class EmulatorCore {
     /// Suppress audio push without tearing the sink down (a user mute toggle).
     var isMuted = false
 
+    /// The live P1 (port 0) controller mask, cached from `setButtons` so the netplay
+    /// frame loop can feed it to `npAdvanceFrame(localMask:)` (v1.9.6). The bridge
+    /// maps this peer's local mask onto its own player slot internally (host = P1,
+    /// joiner = P2); the remote player's input arrives over the wire. Written on the
+    /// main thread (`setButtons`) and read on the CADisplayLink/emulation thread
+    /// (`tickNetplay`), so all access goes through `frameLock`.
+    private var _localMask: UInt8 = 0
+
+    /// The active custom palette's RGB bytes (the same `.pal` fed to the core via
+    /// `loadPalette`), cached so the netplay index->RGBA path (`NesPalette.expand`)
+    /// matches the single-player look. `nil` => the built-in master palette. Written
+    /// on the main thread (`loadPalette`/`clearPalette`) and read on the emulation
+    /// thread (`tickNetplay`), so all access goes through `frameLock` — `Data` is
+    /// copy-on-write and not safe for concurrent read/write.
+    private var _customPaletteRGB: Data?
+
+    /// Reused RGBA staging buffer for the netplay present path (filled by
+    /// `NesPalette.expand`), kept off the per-frame allocation hot path.
+    private var netplayRGBA: [UInt8] = []
+
     /// The host sample rate negotiated for this session (the core synthesises for it).
     let sampleRate: UInt32
 
@@ -88,6 +108,33 @@ final class EmulatorCore {
         frameLock.lock()
         defer { frameLock.unlock() }
         return _lastFrame
+    }
+
+    /// Thread-safe accessors for the cross-thread netplay inputs (`_localMask`,
+    /// `_customPaletteRGB`). Each holds `frameLock` only for the field access, so the
+    /// critical section stays tiny — the caller snapshots into a local before use.
+    private func loadLocalMask() -> UInt8 {
+        frameLock.lock()
+        defer { frameLock.unlock() }
+        return _localMask
+    }
+
+    private func storeLocalMask(_ mask: UInt8) {
+        frameLock.lock()
+        _localMask = mask
+        frameLock.unlock()
+    }
+
+    private func loadCustomPaletteRGB() -> Data? {
+        frameLock.lock()
+        defer { frameLock.unlock() }
+        return _customPaletteRGB
+    }
+
+    private func storeCustomPaletteRGB(_ rgb: Data?) {
+        frameLock.lock()
+        _customPaletteRGB = rgb
+        frameLock.unlock()
     }
 
     /// Metadata for the loaded cartridge.
@@ -146,6 +193,15 @@ final class EmulatorCore {
     /// sink. Called from the CADisplayLink tick. No-op while paused.
     func tick() {
         guard isRunning, let gfx else { return }
+
+        // Netplay (v1.9.6): while a session is active the rollback core owns pacing,
+        // so the loop advances via `npAdvanceFrame` instead of `runFrame` (calling
+        // `runFrame` would advance the core a second time and desync rollback). Handled
+        // entirely in `tickNetplay`; the single-player path below is skipped.
+        if controller.npIsActive() {
+            tickNetplay(gfx: gfx)
+            return
+        }
 
         // Run a frame and hand the RGBA framebuffer straight to wgpu (which
         // presents). UniFFI marshals `run_frame()` as a Swift `Data`.
@@ -230,6 +286,54 @@ final class EmulatorCore {
         }
     }
 
+    /// Advance one netplay frame (the `runFrame` replacement during a session) and
+    /// present it. `npAdvanceFrame` feeds this peer's local P1 mask into the rollback
+    /// session, advances (re-simulating on rollback), and reports whether a frame was
+    /// actually produced. A non-produced tick is a time-sync stall / connecting /
+    /// error tick: we drain + discard audio (so the ring doesn't back up) and skip the
+    /// present this tick. On a produced frame we read the framebuffer through the
+    /// NON-advancing index path and expand it to RGBA (see `NesPalette`), since
+    /// `npAdvanceFrame` does not return pixels and re-running `runFrame` would desync.
+    private func tickNetplay(gfx: OpaquePointer) {
+        // Snapshot the cross-thread inputs under `frameLock` (they are mutated on the
+        // main thread); use the locals for the rest of the tick.
+        let localMask = loadLocalMask()
+        let customPaletteRGB = loadCustomPaletteRGB()
+        let result = controller.npAdvanceFrame(localMask: localMask)
+        guard result.producedFrame else {
+            // Stall / connecting / error: keep the audio ring from backing up, no present.
+            _ = controller.drainAudio()
+            return
+        }
+
+        // The just-produced frame, read without advancing the core again.
+        let index = controller.indexFramebufferBytes()
+        if NesPalette.expand(index: index, customPaletteRGB: customPaletteRGB, into: &netplayRGBA) {
+            netplayRGBA.withUnsafeBytes { raw in
+                if let base = raw.baseAddress {
+                    rustynes_ios_gfx_render(gfx, base.assumingMemoryBound(to: UInt8.self), raw.count)
+                }
+            }
+            // Retain a 256x240 RGBA copy for save-slot thumbnails, mirroring the
+            // single-player path (locked: read on the main actor in `snapshotPNG`).
+            let copy = Data(netplayRGBA)
+            frameLock.lock()
+            _lastFrame = copy
+            frameLock.unlock()
+        }
+
+        // Drain this tick's audio (rollback produced exactly one frame's worth); play
+        // it unless muted (a muted/sinkless drain still empties the ring).
+        let samples = controller.drainAudio()
+        if !isMuted, let audio, !samples.isEmpty {
+            samples.withUnsafeBufferPointer { buf in
+                if let base = buf.baseAddress {
+                    rustynes_ios_audio_push(audio, base, buf.count)
+                }
+            }
+        }
+    }
+
     // MARK: - Run state
 
     func start() {
@@ -247,8 +351,10 @@ final class EmulatorCore {
 
     // MARK: - Input
 
-    /// Set the full 8-bit controller mask for a port (0-3).
+    /// Set the full 8-bit controller mask for a port (0-3). Caches the P1 (port 0)
+    /// mask so the netplay loop can feed it to `npAdvanceFrame`.
     func setButtons(port: UInt32, mask: UInt8) {
+        if port == 0 { storeLocalMask(mask) }
         try? controller.setButtons(port: port, mask: mask)
     }
 
@@ -340,10 +446,18 @@ final class EmulatorCore {
     /// Apply a custom 64-colour palette from `.pal` bytes (>= 192 bytes).
     /// Presentation only; byte-identical to the built-in palette once cleared.
     /// - Throws: `MobileError.palette` if fewer than 192 bytes were supplied.
-    func loadPalette(_ data: Data) throws { try controller.loadPalette(bytes: data) }
+    func loadPalette(_ data: Data) throws {
+        try controller.loadPalette(bytes: data)
+        // Cache for the netplay index->RGBA path so it matches the single-player look.
+        // Locked: read on the emulation thread in `tickNetplay`.
+        storeCustomPaletteRGB(data)
+    }
 
     /// Restore the built-in NES palette.
-    func clearPalette() { controller.clearPalette() }
+    func clearPalette() {
+        controller.clearPalette()
+        storeCustomPaletteRGB(nil)
+    }
 
     // MARK: - HD-pack (v1.9.5)
 
@@ -360,6 +474,89 @@ final class EmulatorCore {
         controller.unloadHdpack()
         hdPackLoaded = false
     }
+
+    // MARK: - Lua scripting (v1.9.6)
+
+    /// Load + start a sandboxed Lua script (its `on_frame` runs each frame after the
+    /// tick). Replaces any active script.
+    /// - Throws: `MobileError.script` if it fails to compile / load.
+    func loadScript(_ src: String) throws { try controller.loadScript(src: src) }
+
+    /// Unload the active script.
+    func unloadScript() { controller.unloadScript() }
+
+    /// Whether a script is loaded.
+    var scriptIsLoaded: Bool { controller.scriptIsLoaded() }
+
+    /// Drain the script's `print` / `emu.log` output since the last call.
+    func drainScriptLog() -> [String] { controller.drainScriptLog() }
+
+    // MARK: - RetroAchievements (v1.9.6)
+    //
+    // The RA session lives on the `NesController`. On iOS the controller is rebuilt
+    // per game (unlike Android's long-lived one), so the RA login does NOT persist
+    // across games here: `RetroAchievementsModel` re-establishes it (token re-login +
+    // `raLoadGame`) each time a game opens. All reconciliation (login completion,
+    // unlock checks, toast/rich-presence refresh) happens inside `post_frame_ra`,
+    // which only runs while the core ticks (`runFrame`/`stepFrame`).
+
+    func raInit(hardcore: Bool) { controller.raInit(hardcore: hardcore) }
+    func raLoginPassword(user: String, password: String) {
+        controller.raLoginPassword(user: user, password: password)
+    }
+    func raLoginToken(user: String, token: String) {
+        controller.raLoginToken(user: user, token: token)
+    }
+    func raLogout() { controller.raLogout() }
+    func raLoginStatus() -> RaLoginStatus { controller.raLoginStatus() }
+    func raUser() -> RaUserInfo? { controller.raUser() }
+    func raToken() -> String? { controller.raToken() }
+    func raSetHardcore(_ hardcore: Bool) { controller.raSetHardcore(hardcore: hardcore) }
+    func raHardcore() -> Bool { controller.raHardcore() }
+    /// Identify + load the achievement set for the loaded ROM. `sha256` is the raw
+    /// 32-byte digest; `sidecar` is previously-saved progress ("" / empty if none).
+    /// - Throws: `MobileError.saveState` if `sha256` is not 32 bytes.
+    func raLoadGame(rom: Data, sha256: Data, sidecar: Data) throws {
+        try controller.raLoadGame(rom: rom, sha256: sha256, sidecar: sidecar)
+    }
+    func raUnloadGame() { controller.raUnloadGame() }
+    func raSerializeProgress() -> Data { controller.raSerializeProgress() }
+    func raPollToasts() -> [RaToast] { controller.raPollToasts() }
+    func raRichPresence() -> String { controller.raRichPresence() }
+    func raAchievementList() -> [RaAchievementInfo] { controller.raAchievementList() }
+    func raGameSummary() -> [UInt32] { controller.raGameSummary() }
+
+    /// Pump the core one frame WITHOUT presenting, to let `post_frame_ra` reconcile an
+    /// in-flight RA login while the emulator is paused behind the Settings sheet. The
+    /// audio is drained + discarded so a paused login doesn't leak sound. Only intended
+    /// to be called while paused (no display-link tick) and a login is pending; calling
+    /// it while running would double-advance the core.
+    func pumpForLogin() {
+        controller.stepFrame()
+        _ = controller.drainAudio()
+    }
+
+    // MARK: - Netplay (direct-IP / LAN) (v1.9.6)
+    //
+    // Host/Join start a session; the frame loop then advances via `npAdvanceFrame`
+    // (see `tickNetplay`) for as long as `npIsActive()`. STUN/TURN room-code netplay
+    // (`npHostRoom`/`npJoinRoom`) is deferred to v1.9.7 and intentionally not wired.
+
+    /// Host a session: bind `0.0.0.0:localPort` (pass 0 to let the OS pick) and listen
+    /// as P1. Returns the actual bound port to share with the joiner.
+    /// - Throws: `MobileError.netplay` if the socket bind fails.
+    func npHost(localPort: UInt16, numPlayers: UInt8) throws -> UInt16 {
+        try controller.npHost(localPort: localPort, numPlayers: numPlayers)
+    }
+    /// Join a session at `address` ("ip:port") as P2.
+    /// - Throws: `MobileError.netplay` on a bad address or bind/connect failure.
+    func npJoin(address: String) throws { try controller.npJoin(address: address) }
+    /// Tear down any session and return to single-player.
+    func npLeave() { controller.npLeave() }
+    /// Whether a session is active / connecting (the loop drives via `npAdvanceFrame`).
+    func npIsActive() -> Bool { controller.npIsActive() }
+    /// A status snapshot for the netplay panel/HUD.
+    func npStatus() -> NpStatus { controller.npStatus() }
 
     // MARK: - Teardown
 

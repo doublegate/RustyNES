@@ -10,6 +10,16 @@ import Combine
 import Foundation
 import SwiftUI
 
+/// Small app-level errors surfaced to the user (v1.9.6).
+enum AppError: LocalizedError {
+    case noGame
+    var errorDescription: String? {
+        switch self {
+        case .noGame: return "No game is running."
+        }
+    }
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     let library = ROMLibrary()
@@ -21,6 +31,10 @@ final class AppModel: ObservableObject {
     let hdpacks = HDPackStore()
     let movies = MovieManager()
     let overrides = GameOverrides()
+
+    // Connectivity & scripting (v1.9.6). Both opt-in / off by default.
+    let ra = RetroAchievementsModel()
+    let netplay = NetplayModel()
 
     /// The currently-running game, or nil when on the library screen.
     @Published var emulator: EmulatorCore?
@@ -214,6 +228,10 @@ final class AppModel: ObservableObject {
             let data = try library.romData(for: entry)
             let core = try EmulatorCore(romData: data)
             core.isMuted = muted
+            // Tear any prior session's connectivity state down before freeing its core
+            // (RA persists per-game progress; netplay ends on a ROM swap).
+            ra.detachFromGame()
+            netplay.detach()
             emulator?.shutdown()
             emulator = core
             currentEntry = entry
@@ -222,6 +240,9 @@ final class AppModel: ObservableObject {
             // (filter + shader params + palette + HD-pack).
             applyDisplaySettings()
             syncMovieState()
+            // Wire connectivity & scripting into the fresh core (no-ops when disabled).
+            ra.attach(core: core, romData: data, sha: entry.sha)
+            netplay.attach(core: core)
         } catch {
             errorMessage = "Could not load \(entry.name): \(error.localizedDescription)"
         }
@@ -239,6 +260,9 @@ final class AppModel: ObservableObject {
 
     /// Close the running game and return to the library.
     func closeGame() {
+        // Persist RA progress + end any netplay session while the core is still alive.
+        ra.detachFromGame()
+        netplay.detach()
         emulator?.shutdown()
         emulator = nil
         currentEntry = nil
@@ -246,6 +270,29 @@ final class AppModel: ObservableObject {
         moviePlaying = false
         audioSession.deactivate()
     }
+
+    // MARK: - Lua scripting (v1.9.6)
+
+    /// The last script text entered in the Lua console, persisted for convenience.
+    var lastLuaScript: String {
+        get { UserDefaults.standard.string(forKey: "luaLastScript") ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: "luaLastScript") }
+    }
+
+    /// Load a Lua script into the running game (persisting the text).
+    /// - Throws: `MobileError.script` if it fails to compile / load.
+    func loadLuaScript(_ src: String) throws {
+        guard let emulator else { throw AppError.noGame }
+        // Persist the text BEFORE attempting the load so a failed compile (syntax
+        // error) still keeps the user's edit; the load error is rethrown so the
+        // caller can surface it.
+        lastLuaScript = src
+        try emulator.loadScript(src)
+    }
+
+    func unloadLuaScript() { emulator?.unloadScript() }
+    var luaIsLoaded: Bool { emulator?.scriptIsLoaded ?? false }
+    func drainLuaLog() -> [String] { emulator?.drainScriptLog() ?? [] }
 
     // MARK: - Input fan-in
 
@@ -519,6 +566,12 @@ final class AppModel: ObservableObject {
     }
 
     func loadSlot(_ slot: Int) {
+        // RetroAchievements hardcore mode forbids loading save-states (it would
+        // invalidate a hardcore run). Refuse and explain, matching the desktop rule.
+        if ra.enabled, ra.hardcore, ra.isLoggedIn {
+            errorMessage = "Loading save-states is disabled in RetroAchievements hardcore mode."
+            return
+        }
         guard let emulator, let sha = currentEntry?.sha,
               let data = saveStates.read(sha: sha, slot: slot) else { return }
         do {
