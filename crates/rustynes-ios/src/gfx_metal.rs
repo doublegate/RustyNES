@@ -78,6 +78,20 @@ pub struct MetalGfx {
     /// The Bisqwit pass's per-frame NTSC colour phase (`videoPhase`), set with the
     /// index frame.
     ntsc_phase: u8,
+    /// The nearest-neighbour sampler, retained so the HD-pack bind group can be
+    /// (re)built when the composited frame size changes (v1.9.5).
+    sampler: wgpu::Sampler,
+    /// The shared texture+sampler+uniform bind-group layout (the CRT/NTSC blit
+    /// layout), retained so the HD-pack bind group can be rebuilt at a new size.
+    bgl: wgpu::BindGroupLayout,
+    /// Lazily-(re)created RGBA texture holding an active HD-pack's composited frame
+    /// (v1.9.5). Sized to the pack's upscaled output, which can exceed 256x240 (up
+    /// to 10x). `None` until the first `render_hd`; rebuilt when the size changes.
+    hd_texture: Option<wgpu::Texture>,
+    /// The bind group for `hd_texture` (rebuilt alongside it).
+    hd_bind_group: Option<wgpu::BindGroup>,
+    /// The current HD-pack texture dimensions `(w, h)`, or `(0, 0)` if none.
+    hd_dims: (u32, u32),
     /// Reused framebuffer staging buffer — the FFI copies each frame's bytes in
     /// place instead of allocating a fresh `Vec` per frame. Length is fixed at
     /// `NES_W*NES_H*4`.
@@ -429,6 +443,11 @@ impl MetalGfx {
             filter: 0,
             params: [0.0; 4],
             ntsc_phase: 0,
+            sampler,
+            bgl,
+            hd_texture: None,
+            hd_bind_group: None,
+            hd_dims: (0, 0),
             frame_buf: vec![0u8; (NES_W * NES_H * 4) as usize],
             _view: view,
         };
@@ -453,15 +472,23 @@ impl MetalGfx {
         self.write_uniforms();
     }
 
-    fn write_uniforms(&self) {
+    /// The 8:7-PAR letterbox scale `(sx, sy)` for the current surface size — the
+    /// `rect.xy` the vertex shader uses to centre the image. Shared by the normal
+    /// and HD-pack render paths (the HD frame is the same NES picture upscaled, so
+    /// it letterboxes to the same aspect).
+    fn letterbox_scale(&self) -> (f32, f32) {
         let sw = self.config.width as f32;
         let sh = self.config.height as f32;
         let screen_aspect = sw / sh;
-        let (sx, sy) = if screen_aspect > IMG_ASPECT {
+        if screen_aspect > IMG_ASPECT {
             (IMG_ASPECT / screen_aspect, 1.0) // pillarbox
         } else {
             (1.0, screen_aspect / IMG_ASPECT) // letterbox
-        };
+        }
+    }
+
+    fn write_uniforms(&self) {
+        let (sx, sy) = self.letterbox_scale();
         // For CRT/scanline/LMP-NTSC the `params` come straight from the per-filter
         // sliders (aux unused). For Bisqwit (filter 4) `params.x` is the per-frame
         // videoPhase and the picture knobs ride in `aux`.
@@ -519,6 +546,10 @@ impl MetalGfx {
     /// Upload the staged 256×240 RGBA frame and present it. Tolerates a transient
     /// `Lost`/`Outdated` surface by reconfiguring and skipping the frame.
     pub fn render(&mut self) {
+        // Re-write the active filter's uniform each frame so the normal path is
+        // self-correcting after an HD-pack frame wrote a neutral (plain-blit)
+        // uniform into the shared buffer (v1.9.5). One 64-byte write — negligible.
+        self.write_uniforms();
         self.queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &self.nes_texture,
@@ -587,6 +618,142 @@ impl MetalGfx {
                 };
                 pass.set_pipeline(pipeline);
                 pass.set_bind_group(0, &self.bind_group, &[]);
+            }
+            pass.draw(0..3, 0..1);
+        }
+        self.queue.submit(Some(encoder.finish()));
+        frame.present();
+    }
+
+    /// Upload + present one HD-pack composited RGBA frame at `w`×`h` (v1.9.5).
+    ///
+    /// The bytes come from `NesController::composite_hd_frame()` (sized by
+    /// `hdpack_dimensions()`), which can exceed 256×240 (up to a 10× upscale). The
+    /// HD texture is (re)created lazily whenever the dimensions change, then the
+    /// frame is blitted with the same 8:7-PAR letterbox + plain pipeline the "None"
+    /// filter uses — the HD pack already provides the final look, so no on-screen
+    /// filter is layered on top. Tolerates a transient `Lost`/`Outdated` surface
+    /// exactly like [`Self::render`]. A `(w, h)` of zero or a `fb` length that is
+    /// not `w*h*4` drops the frame (presentation-only; determinism untouched).
+    pub fn render_hd(&mut self, fb: &[u8], w: u32, h: u32) {
+        if w == 0 || h == 0 {
+            return;
+        }
+        if fb.len() != (w as usize) * (h as usize) * 4 {
+            return;
+        }
+        // (Re)create the HD texture + bind group when the size changes.
+        if self.hd_dims != (w, h) || self.hd_texture.is_none() {
+            let format = self.config.format;
+            let tex = self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("hd-pack composited frame"),
+                size: wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            let tex_view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+            let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("hd-pack bind group"),
+                layout: &self.bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&tex_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: self.uniform_buf.as_entire_binding(),
+                    },
+                ],
+            });
+            self.hd_texture = Some(tex);
+            self.hd_bind_group = Some(bind_group);
+            self.hd_dims = (w, h);
+        }
+
+        let Some(tex) = self.hd_texture.as_ref() else {
+            return;
+        };
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            fb,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(w * 4),
+                rows_per_image: Some(h),
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        // Plain letterboxed blit: no filter params (the HD pack is the look).
+        let (sx, sy) = self.letterbox_scale();
+        let u = Uniforms {
+            rect: [sx, sy, 0.0, 0.0],
+            crop: [1.0, 0.0, 1.0, 0.0],
+            params: [0.0; 4],
+            aux: [0.0; 4],
+        };
+        self.queue
+            .write_buffer(&self.uniform_buf, 0, bytemuck::bytes_of(&u));
+
+        let frame = match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(t)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+            wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
+                self.surface.configure(&self.device, &self.config);
+                return;
+            }
+            _ => return,
+        };
+        let view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("hd blit encoder"),
+            });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("hd blit pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.pipeline);
+            if let Some(bind_group) = self.hd_bind_group.as_ref() {
+                pass.set_bind_group(0, bind_group, &[]);
             }
             pass.draw(0..3, 0..1);
         }

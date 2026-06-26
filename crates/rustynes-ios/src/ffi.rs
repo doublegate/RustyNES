@@ -78,6 +78,33 @@ pub unsafe extern "C" fn rustynes_ios_gfx_render(handle: *mut MetalGfx, fb: *con
     gfx.render();
 }
 
+/// `rustynes_ios_gfx_render_hd(handle, fb, len, w, h)` — upload + present one
+/// HD-pack composited RGBA frame (v1.9.5). `fb` is
+/// `NesController.composite_hd_frame()`'s buffer, sized `w`×`h` (from
+/// `hdpack_dimensions()`); `w`×`h` can exceed 256×240 (up to a 10× upscale). A
+/// length mismatch (`len != w*h*4`) drops the frame (presentation-only).
+///
+/// # Safety
+/// `handle` must be live; `fb` must point to `len` readable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rustynes_ios_gfx_render_hd(
+    handle: *mut MetalGfx,
+    fb: *const u8,
+    len: usize,
+    w: u32,
+    h: u32,
+) {
+    if handle.is_null() || fb.is_null() {
+        return;
+    }
+    // SAFETY: live handle (see above).
+    let gfx = unsafe { &mut *handle };
+    // SAFETY: `fb` points to `len` readable bytes (caller contract). `render_hd`
+    // re-checks `len == w*h*4` and drops the frame on a mismatch.
+    let bytes = unsafe { core::slice::from_raw_parts(fb, len) };
+    gfx.render_hd(bytes, w, h);
+}
+
 /// `rustynes_ios_gfx_set_filter(handle, filter, p0..p3)` — 0 none / 1 scanlines /
 /// 2 CRT / 3 NTSC / 4 Bisqwit, plus the filter-specific shader params.
 ///

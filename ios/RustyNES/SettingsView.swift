@@ -9,6 +9,7 @@
 //
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
@@ -32,6 +33,13 @@ struct SettingsView: View {
                     Text("The picture filter the renderer applies. None is the raw, pixel-exact image.")
                 }
 
+                // The global default palette (per-game overrides can pick another).
+                PalettePickerSection(
+                    manager: model.palettes,
+                    selectedId: $model.globalPaletteId,
+                    footer: "Import a .pal file to recolour the NES palette. Default is the built-in palette."
+                )
+
                 Section {
                     Toggle("Mute", isOn: $model.muted)
                 } header: {
@@ -54,6 +62,24 @@ struct SettingsView: View {
                 }
 
                 ControllersSection(manager: model.gamepads)
+
+                // Per-game display overrides (only when a game is running).
+                if model.currentEntry != nil {
+                    Section {
+                        NavigationLink {
+                            GameSettingsView()
+                        } label: {
+                            LabeledContent(
+                                "This game",
+                                value: model.currentGameHasOverride ? "Custom" : "Global defaults"
+                            )
+                        }
+                    } header: {
+                        Text("Per-game settings")
+                    } footer: {
+                        Text("Give this game its own filter, palette, and HD-pack.")
+                    }
+                }
 
                 Section {
                     NavigationLink {
@@ -211,6 +237,235 @@ private struct ControllerMappingView: View {
         Binding(
             get: { manager.remap.target(for: physical) },
             set: { manager.remap.mapping[physical] = $0 }
+        )
+    }
+}
+
+// MARK: - Palette / HD-pack importable UTTypes (v1.9.5)
+
+/// The `.pal` UTType for palette import (declared in Info.plist). Resolved by
+/// extension so the picker shows it before the system indexes the declaration.
+enum PaletteTypes {
+    static var importable: [UTType] {
+        if let t = UTType(filenameExtension: "pal") { return [t] }
+        return [.data]
+    }
+}
+
+/// HD-packs are `.zip` archives (the same `public.zip-archive` the ROM importer
+/// allows). The core extracts the pack from the archive bytes.
+enum HDPackTypes {
+    static var importable: [UTType] { [.zip] }
+}
+
+// MARK: - Palette picker (global + per-game)
+
+/// A reusable Settings `Section` for choosing the active palette: "Default
+/// (built-in)", the imported `.pal` files, and an import button. Binds to a
+/// palette-id string ("" = built-in).
+struct PalettePickerSection: View {
+    @ObservedObject var manager: PaletteManager
+    @Binding var selectedId: String
+    var footer: String?
+    @State private var showingImporter = false
+
+    var body: some View {
+        Section {
+            paletteButton(title: "Default (built-in)", id: "")
+            ForEach(manager.palettes) { palette in
+                paletteButton(title: palette.name, id: palette.id)
+            }
+            Button { showingImporter = true } label: {
+                Label("Import .pal", systemImage: "plus")
+            }
+        } header: {
+            Text("Palette")
+        } footer: {
+            if let footer { Text(footer) }
+        }
+        .fileImporter(
+            isPresented: $showingImporter,
+            allowedContentTypes: PaletteTypes.importable,
+            allowsMultipleSelection: false
+        ) { result in
+            if case .success(let urls) = result, let url = urls.first,
+               let id = try? manager.importPalette(from: url) {
+                selectedId = id
+            }
+        }
+    }
+
+    private func paletteButton(title: String, id: String) -> some View {
+        Button {
+            selectedId = id
+        } label: {
+            HStack {
+                Text(title).foregroundStyle(.primary)
+                Spacer()
+                if selectedId == id {
+                    Image(systemName: "checkmark").foregroundStyle(.tint)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - HD-pack picker (per-game)
+
+/// A reusable Settings `Section` for choosing an HD-pack: "None", the imported
+/// packs, and an import button. Binds to a pack-id string ("" = none).
+struct HDPackPickerSection: View {
+    @ObservedObject var manager: HDPackStore
+    @Binding var selectedId: String
+    @State private var showingImporter = false
+
+    var body: some View {
+        Section {
+            packButton(title: "None", id: "")
+            ForEach(manager.packs) { pack in
+                packButton(title: pack.name, id: pack.id)
+            }
+            Button { showingImporter = true } label: {
+                Label("Import HD-pack (.zip)", systemImage: "plus")
+            }
+        } header: {
+            Text("HD-pack")
+        } footer: {
+            Text("Loads a Mesen-format HD-pack. The composited high-resolution frame replaces the picture.")
+        }
+        .fileImporter(
+            isPresented: $showingImporter,
+            allowedContentTypes: HDPackTypes.importable,
+            allowsMultipleSelection: false
+        ) { result in
+            if case .success(let urls) = result, let url = urls.first,
+               let id = try? manager.importPack(from: url) {
+                selectedId = id
+            }
+        }
+    }
+
+    private func packButton(title: String, id: String) -> some View {
+        Button {
+            selectedId = id
+        } label: {
+            HStack {
+                Text(title).foregroundStyle(.primary)
+                Spacer()
+                if selectedId == id {
+                    Image(systemName: "checkmark").foregroundStyle(.tint)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Per-game settings editor (v1.9.5)
+
+/// Edits the running game's per-game display override: a master toggle, then (when
+/// on) the filter + shader params + palette + HD-pack, all live-applied and
+/// persisted under the ROM's SHA-256. With the toggle off, the game uses the global
+/// defaults.
+struct GameSettingsView: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        Form {
+            if let override = model.currentGameOverride {
+                Section {
+                    Toggle("Custom settings for this game", isOn: Binding(
+                        get: { true },
+                        set: { if !$0 { model.clearCurrentGameOverride() } }
+                    ))
+                }
+
+                Section {
+                    Picker("Filter", selection: filterBinding(override)) {
+                        ForEach(VideoFilter.allCases) { filter in
+                            Text(filter.label).tag(filter)
+                        }
+                    }
+                    overrideSliders(override)
+                } header: {
+                    Text("Video")
+                }
+
+                PalettePickerSection(
+                    manager: model.palettes,
+                    selectedId: paletteBinding(override),
+                    footer: nil
+                )
+
+                HDPackPickerSection(
+                    manager: model.hdpacks,
+                    selectedId: hdpackBinding(override)
+                )
+
+                Section {
+                    Button("Reset to global defaults", role: .destructive) {
+                        model.clearCurrentGameOverride()
+                    }
+                }
+            } else {
+                Section {
+                    Toggle("Custom settings for this game", isOn: Binding(
+                        get: { false },
+                        set: { if $0 { model.enableCurrentGameOverride() } }
+                    ))
+                } footer: {
+                    Text("When on, this game remembers its own filter, palette, and HD-pack, independent of the global defaults.")
+                }
+            }
+        }
+        .navigationTitle(model.currentEntry?.name ?? "This Game")
+    }
+
+    @ViewBuilder
+    private func overrideSliders(_ override: GameDisplaySettings) -> some View {
+        switch VideoFilter(rawValue: override.filter) ?? .none {
+        case .none, .bisqwit:
+            EmptyView()
+        case .scanlines:
+            ParamSlider("Scanline intensity", value: floatBinding(override, \.scanlineIntensity), range: 0...1)
+        case .crt:
+            ParamSlider("Scanline intensity", value: floatBinding(override, \.scanlineIntensity), range: 0...1)
+            ParamSlider("Aperture mask", value: floatBinding(override, \.crtMask), range: 0...0.5)
+        case .ntsc:
+            ParamSlider("Saturation", value: floatBinding(override, \.ntscSaturation), range: 0...2)
+            ParamSlider("Sharpness", value: floatBinding(override, \.ntscSharpness), range: 0...1)
+            ParamSlider("Tint", value: floatBinding(override, \.ntscTint), range: -0.5...0.5)
+            ParamSlider("Phase", value: floatBinding(override, \.ntscPhase), range: 0...1)
+        }
+    }
+
+    private func filterBinding(_ override: GameDisplaySettings) -> Binding<VideoFilter> {
+        Binding(
+            get: { VideoFilter(rawValue: override.filter) ?? .none },
+            set: { var copy = override; copy.filter = $0.rawValue; model.updateCurrentGameOverride(copy) }
+        )
+    }
+
+    private func floatBinding(
+        _ override: GameDisplaySettings,
+        _ keyPath: WritableKeyPath<GameDisplaySettings, Float>
+    ) -> Binding<Float> {
+        Binding(
+            get: { override[keyPath: keyPath] },
+            set: { var copy = override; copy[keyPath: keyPath] = $0; model.updateCurrentGameOverride(copy) }
+        )
+    }
+
+    private func paletteBinding(_ override: GameDisplaySettings) -> Binding<String> {
+        Binding(
+            get: { override.paletteId },
+            set: { var copy = override; copy.paletteId = $0; model.updateCurrentGameOverride(copy) }
+        )
+    }
+
+    private func hdpackBinding(_ override: GameDisplaySettings) -> Binding<String> {
+        Binding(
+            get: { override.hdpackId },
+            set: { var copy = override; copy.hdpackId = $0; model.updateCurrentGameOverride(copy) }
         )
     }
 }

@@ -16,6 +16,7 @@ import SwiftUI
 struct PillMenu: View {
     var onLibrary: () -> Void
     var onStates: () -> Void
+    var onMovies: () -> Void
     var onSettings: () -> Void
     var onReset: () -> Void
     var onPower: () -> Void
@@ -24,6 +25,7 @@ struct PillMenu: View {
         VStack(spacing: 4) {
             pillButton("rectangle.stack", "Library", action: onLibrary)
             pillButton("tray.full", "Save states", action: onStates)
+            pillButton("film", "TAS / Movies", action: onMovies)
             pillButton("gearshape", "Settings", action: onSettings)
             pillButton("arrow.counterclockwise", "Reset", action: onReset)
             pillButton("power", "Power cycle", action: onPower)

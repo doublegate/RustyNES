@@ -43,6 +43,12 @@ void rustynes_ios_gfx_resize(RustyNesMetalGfx *handle, uint32_t width, uint32_t 
  * A length mismatch drops the frame. */
 void rustynes_ios_gfx_render(RustyNesMetalGfx *handle, const uint8_t *fb, size_t len);
 
+/* Upload + present one HD-pack composited RGBA frame at w*h (v1.9.5;
+ * NesController.compositeHdFrame(), sized by hdpackDimensions()). w*h may exceed
+ * 256x240 (up to a 10x upscale). A length mismatch (len != w*h*4) drops it. */
+void rustynes_ios_gfx_render_hd(RustyNesMetalGfx *handle, const uint8_t *fb,
+                                size_t len, uint32_t w, uint32_t h);
+
 /* Set the video filter (0 none, 1 scanlines, 2 CRT, 3 NTSC, 4 Bisqwit) + params. */
 void rustynes_ios_gfx_set_filter(RustyNesMetalGfx *handle, uint8_t filter,
                                  float p0, float p1, float p2, float p3);

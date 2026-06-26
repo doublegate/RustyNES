@@ -102,6 +102,28 @@
 				<string>public.zip-archive</string>
 			</array>
 		</dict>
+		<!-- v1.9.5: the app owns + can open/share its own .rnm TAS movies, and
+		     imports .pal custom palettes. -->
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>RustyNES Movie</string>
+			<key>LSHandlerRank</key>
+			<string>Owner</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.doublegate.rustynes.rnm</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>NES Palette</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.doublegate.rustynes.pal</string>
+			</array>
+		</dict>
 	</array>
 
 	<!-- The own UTIs for the NES formats (the app declares them since the system
@@ -156,6 +178,48 @@
 				<key>public.filename-extension</key>
 				<array>
 					<string>nsf</string>
+				</array>
+			</dict>
+		</dict>
+		<!-- v1.9.5: the .pal custom-palette format (a community format the app
+		     imports, not one it owns). 64+ RGB triples; presentation-only. -->
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.doublegate.rustynes.pal</string>
+			<key>UTTypeDescription</key>
+			<string>NES Palette</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>pal</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
+
+	<!-- v1.9.5: the .rnm TAS-movie format is RustyNES's OWN format, so it is an
+	     EXPORTED type (the app both reads and writes it, and can share it). -->
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.doublegate.rustynes.rnm</string>
+			<key>UTTypeDescription</key>
+			<string>RustyNES Movie</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>rnm</string>
 				</array>
 			</dict>
 		</dict>
