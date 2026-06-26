@@ -36,7 +36,9 @@ For version `X.Y.Z`, the release body is resolved in this order:
 
 The release **title** is `RustyNES vX.Y.Z — <codename/theme>`, with the
 codename/theme parsed from the `CHANGELOG.md` header line
-(`## [X.Y.Z] - <date> - "<Codename>" (<theme>)`).
+(`## [X.Y.Z] - <date> - "<Codename>" (<theme>)`). Patch releases whose header
+omits the codename/theme (e.g. `## [1.7.1] - 2026-06-19`) fall back to a plain
+`RustyNES vX.Y.Z` title.
 
 ## Authoring an override file
 

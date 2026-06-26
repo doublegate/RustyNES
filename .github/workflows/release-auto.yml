@@ -57,9 +57,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          # Build the release from the exact commit CI went green on.
+          # Build the release from the exact commit CI went green on. A shallow
+          # checkout suffices: we read Cargo.toml + CHANGELOG.md, and the tag
+          # existence check uses `git ls-remote` (no local tag history needed).
           ref: ${{ github.event.workflow_run.head_sha }}
-          fetch-depth: 0 # need full tag history for the existence check
 
       - name: Decide whether a new version needs releasing
         id: decide
@@ -103,8 +104,12 @@ jobs:
               f { print }
             ' CHANGELOG.md > "$body_file"
           fi
-          # Strip leading/trailing blank lines.
-          sed -i -e '/./,$!d' "$body_file"
+          # Strip leading and trailing blank lines (drop leading blanks, reverse,
+          # drop what are now the leading blanks = the original trailing ones,
+          # reverse back). `tac` is coreutils, present on the ubuntu runner.
+          trimmed="$(mktemp)"
+          awk 'NF{p=1} p' "$body_file" | tac | awk 'NF{p=1} p' | tac > "$trimmed"
+          mv "$trimmed" "$body_file"
           if [ ! -s "$body_file" ]; then
             echo "::error::No release notes for ${version} - add .github/release-notes/v${version}.md or a CHANGELOG '## [${version}]' section, then re-run."
             exit 1
